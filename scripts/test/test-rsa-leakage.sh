@@ -21,7 +21,7 @@ echo "Welch t threshold: $RSCRYPTO_RSA_LEAKAGE_T_THRESHOLD"
 echo "Warmup iterations: $RSCRYPTO_RSA_LEAKAGE_WARMUP"
 echo ""
 
-cargo test --release --test rsa_leakage --features rsa,diag,getrandom \
+cargo test --locked --release --test rsa_leakage --features rsa,diag,getrandom \
   rsa_private_operations_do_not_show_first_order_timing_leakage \
   -- --ignored --nocapture
 

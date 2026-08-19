@@ -10,12 +10,9 @@
 //! Uses `unsafe` for aarch64 intrinsics. Callers must ensure required target
 //! features are available before selecting a kernel (the dispatcher does this).
 
-#![allow(unsafe_code)]
-#![cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
 // SAFETY: This module is intrinsics-heavy and uses tight, invariant-driven indexing
 // (e.g. fixed-size lanes and chunked processing) where bounds are proven by
 // control flow; Clippy cannot always see these invariants.
-#![allow(clippy::indexing_slicing)]
 // This module is intrinsics-heavy; unsafe blocks are per-function with SAFETY justifications.
 
 use core::{arch::aarch64::*, ptr};
@@ -28,11 +25,64 @@ use crate::checksum::common::{
 const CRC32_SHIFT8_MATRIX: Gf2Matrix32 = generate_shift8_matrix_32(CRC32_IEEE_POLY);
 const CRC32C_SHIFT8_MATRIX: Gf2Matrix32 = generate_shift8_matrix_32(CRC32C_POLY);
 
+/// Read an integer from an unaligned byte pointer.
+///
+/// # Safety
+///
+/// `source` must remain valid to read two initialized bytes from one live allocation.
+#[inline(always)]
+unsafe fn load_u16(source: *const u8) -> u16 {
+  // SAFETY: The caller provides the validity and initialization contract; `read_unaligned` does
+  // not require `source` to satisfy `u16` alignment.
+  unsafe { ptr::read_unaligned(source.cast()) }
+}
+
+/// Read an integer from an unaligned byte pointer.
+///
+/// # Safety
+///
+/// `source` must remain valid to read four initialized bytes from one live allocation.
+#[inline(always)]
+unsafe fn load_u32(source: *const u8) -> u32 {
+  // SAFETY: The caller provides the validity and initialization contract; `read_unaligned` does
+  // not require `source` to satisfy `u32` alignment.
+  unsafe { ptr::read_unaligned(source.cast()) }
+}
+
+/// Read an integer from an unaligned byte pointer.
+///
+/// # Safety
+///
+/// `source` must remain valid to read eight initialized bytes from one live allocation.
+#[inline(always)]
+unsafe fn load_u64(source: *const u8) -> u64 {
+  // SAFETY: The caller provides the validity and initialization contract; `read_unaligned` does
+  // not require `source` to satisfy `u64` alignment.
+  unsafe { ptr::read_unaligned(source.cast()) }
+}
+
+/// Load two `u64` lanes from an unaligned byte pointer.
+///
+/// # Safety
+///
+/// `source` must remain valid to read 16 initialized bytes from one live allocation. The caller
+/// must also ensure the AArch64 NEON feature is available.
+#[inline(always)]
+unsafe fn load_u64x2(source: *const u8) -> uint64x2_t {
+  // SAFETY: The caller provides the memory and target-feature contracts. `vld1q_u64` implements
+  // its load with `read_unaligned`, so `source` need not satisfy `u64` alignment.
+  unsafe { vld1q_u64(source.cast()) }
+}
+
 // Hardware CRC extension (CRC-only)
 
 /// CRC-32 (IEEE) update using ARMv8 CRC extension.
 ///
 /// `crc` is the current state (pre-inverted).
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 CRC target feature is available.
 #[inline]
 #[target_feature(enable = "crc")]
 unsafe fn crc32_armv8(crc: u32, data: &[u8]) -> u32 {
@@ -53,41 +103,41 @@ unsafe fn crc32_armv8(crc: u32, data: &[u8]) -> u32 {
     }
 
     while len >= 64 {
-      state = __crc32d(state, ptr::read_unaligned(buf as *const u64));
-      state = __crc32d(state, ptr::read_unaligned(buf.add(8) as *const u64));
-      state = __crc32d(state, ptr::read_unaligned(buf.add(16) as *const u64));
-      state = __crc32d(state, ptr::read_unaligned(buf.add(24) as *const u64));
-      state = __crc32d(state, ptr::read_unaligned(buf.add(32) as *const u64));
-      state = __crc32d(state, ptr::read_unaligned(buf.add(40) as *const u64));
-      state = __crc32d(state, ptr::read_unaligned(buf.add(48) as *const u64));
-      state = __crc32d(state, ptr::read_unaligned(buf.add(56) as *const u64));
+      state = __crc32d(state, load_u64(buf));
+      state = __crc32d(state, load_u64(buf.add(8)));
+      state = __crc32d(state, load_u64(buf.add(16)));
+      state = __crc32d(state, load_u64(buf.add(24)));
+      state = __crc32d(state, load_u64(buf.add(32)));
+      state = __crc32d(state, load_u64(buf.add(40)));
+      state = __crc32d(state, load_u64(buf.add(48)));
+      state = __crc32d(state, load_u64(buf.add(56)));
       buf = buf.add(64);
       len = len.strict_sub(64);
     }
 
     while len >= 32 {
-      state = __crc32d(state, ptr::read_unaligned(buf as *const u64));
-      state = __crc32d(state, ptr::read_unaligned(buf.add(8) as *const u64));
-      state = __crc32d(state, ptr::read_unaligned(buf.add(16) as *const u64));
-      state = __crc32d(state, ptr::read_unaligned(buf.add(24) as *const u64));
+      state = __crc32d(state, load_u64(buf));
+      state = __crc32d(state, load_u64(buf.add(8)));
+      state = __crc32d(state, load_u64(buf.add(16)));
+      state = __crc32d(state, load_u64(buf.add(24)));
       buf = buf.add(32);
       len = len.strict_sub(32);
     }
 
     while len >= 8 {
-      state = __crc32d(state, ptr::read_unaligned(buf as *const u64));
+      state = __crc32d(state, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
     }
 
     if len >= 4 {
-      state = __crc32w(state, ptr::read_unaligned(buf as *const u32));
+      state = __crc32w(state, load_u32(buf));
       buf = buf.add(4);
       len = len.strict_sub(4);
     }
 
     if len >= 2 {
-      state = __crc32h(state, ptr::read_unaligned(buf as *const u16));
+      state = __crc32h(state, load_u16(buf));
       buf = buf.add(2);
       len = len.strict_sub(2);
     }
@@ -103,6 +153,10 @@ unsafe fn crc32_armv8(crc: u32, data: &[u8]) -> u32 {
 /// CRC-32C (Castagnoli) update using ARMv8 CRC extension.
 ///
 /// `crc` is the current state (pre-inverted).
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 CRC target feature is available.
 #[inline]
 #[target_feature(enable = "crc")]
 unsafe fn crc32c_armv8(crc: u32, data: &[u8]) -> u32 {
@@ -123,41 +177,41 @@ unsafe fn crc32c_armv8(crc: u32, data: &[u8]) -> u32 {
     }
 
     while len >= 64 {
-      state = __crc32cd(state, ptr::read_unaligned(buf as *const u64));
-      state = __crc32cd(state, ptr::read_unaligned(buf.add(8) as *const u64));
-      state = __crc32cd(state, ptr::read_unaligned(buf.add(16) as *const u64));
-      state = __crc32cd(state, ptr::read_unaligned(buf.add(24) as *const u64));
-      state = __crc32cd(state, ptr::read_unaligned(buf.add(32) as *const u64));
-      state = __crc32cd(state, ptr::read_unaligned(buf.add(40) as *const u64));
-      state = __crc32cd(state, ptr::read_unaligned(buf.add(48) as *const u64));
-      state = __crc32cd(state, ptr::read_unaligned(buf.add(56) as *const u64));
+      state = __crc32cd(state, load_u64(buf));
+      state = __crc32cd(state, load_u64(buf.add(8)));
+      state = __crc32cd(state, load_u64(buf.add(16)));
+      state = __crc32cd(state, load_u64(buf.add(24)));
+      state = __crc32cd(state, load_u64(buf.add(32)));
+      state = __crc32cd(state, load_u64(buf.add(40)));
+      state = __crc32cd(state, load_u64(buf.add(48)));
+      state = __crc32cd(state, load_u64(buf.add(56)));
       buf = buf.add(64);
       len = len.strict_sub(64);
     }
 
     while len >= 32 {
-      state = __crc32cd(state, ptr::read_unaligned(buf as *const u64));
-      state = __crc32cd(state, ptr::read_unaligned(buf.add(8) as *const u64));
-      state = __crc32cd(state, ptr::read_unaligned(buf.add(16) as *const u64));
-      state = __crc32cd(state, ptr::read_unaligned(buf.add(24) as *const u64));
+      state = __crc32cd(state, load_u64(buf));
+      state = __crc32cd(state, load_u64(buf.add(8)));
+      state = __crc32cd(state, load_u64(buf.add(16)));
+      state = __crc32cd(state, load_u64(buf.add(24)));
       buf = buf.add(32);
       len = len.strict_sub(32);
     }
 
     while len >= 8 {
-      state = __crc32cd(state, ptr::read_unaligned(buf as *const u64));
+      state = __crc32cd(state, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
     }
 
     if len >= 4 {
-      state = __crc32cw(state, ptr::read_unaligned(buf as *const u32));
+      state = __crc32cw(state, load_u32(buf));
       buf = buf.add(4);
       len = len.strict_sub(4);
     }
 
     if len >= 2 {
-      state = __crc32ch(state, ptr::read_unaligned(buf as *const u16));
+      state = __crc32ch(state, load_u16(buf));
       buf = buf.add(2);
       len = len.strict_sub(2);
     }
@@ -172,20 +226,26 @@ unsafe fn crc32c_armv8(crc: u32, data: &[u8]) -> u32 {
 
 /// Safe wrapper for CRC-32 ARMv8 CRC extension kernel.
 #[inline]
-pub fn crc32_armv8_safe(crc: u32, data: &[u8]) -> u32 {
+pub(in crate::checksum) fn crc32_armv8_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies CRC extension before selecting this kernel.
   unsafe { crc32_armv8(crc, data) }
 }
 
 /// Safe wrapper for CRC-32C ARMv8 CRC extension kernel.
 #[inline]
-pub fn crc32c_armv8_safe(crc: u32, data: &[u8]) -> u32 {
+pub(in crate::checksum) fn crc32c_armv8_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies CRC extension before selecting this kernel.
   unsafe { crc32c_armv8(crc, data) }
 }
 
 // Hardware CRC extension (multi-stream wrappers)
 
+/// Update CRC-32 (IEEE) through `N` independent ARMv8 CRC streams.
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 CRC target feature is available and instantiate `N` as two
+/// or three.
 #[inline]
 #[target_feature(enable = "crc")]
 unsafe fn crc32_armv8_nway<const N: usize>(crc: u32, data: &[u8]) -> u32 {
@@ -201,7 +261,7 @@ unsafe fn crc32_armv8_nway<const N: usize>(crc: u32, data: &[u8]) -> u32 {
       return crc32_armv8(crc, data);
     }
 
-    let chunk_len = len / N;
+    let chunk_len = len.strict_div(N);
     let mut lanes = [!0u32; N];
 
     let mut i: usize = 0;
@@ -210,10 +270,7 @@ unsafe fn crc32_armv8_nway<const N: usize>(crc: u32, data: &[u8]) -> u32 {
         let mut lane_idx: usize = 0;
         while lane_idx < N {
           let base = lane_idx.strict_mul(chunk_len).strict_add(i);
-          lanes[lane_idx] = __crc32d(
-            lanes[lane_idx],
-            ptr::read_unaligned(data.as_ptr().add(base) as *const u64),
-          );
+          lanes[lane_idx] = __crc32d(lanes[lane_idx], load_u64(data.as_ptr().add(base)));
           lane_idx = lane_idx.strict_add(1);
         }
         i = i.strict_add(8);
@@ -230,7 +287,7 @@ unsafe fn crc32_armv8_nway<const N: usize>(crc: u32, data: &[u8]) -> u32 {
 
     let tail_start = chunk_len.strict_mul(N);
     if tail_start < len {
-      lanes[N - 1] = crc32_armv8(lanes[N - 1], data.get_unchecked(tail_start..));
+      lanes[N.strict_sub(1)] = crc32_armv8(lanes[N.strict_sub(1)], data.get_unchecked(tail_start..));
     }
 
     let mut data_crc_final: u32 = 0;
@@ -257,6 +314,12 @@ unsafe fn crc32_armv8_nway<const N: usize>(crc: u32, data: &[u8]) -> u32 {
   }
 }
 
+/// Update CRC-32C (Castagnoli) through `N` independent ARMv8 CRC streams.
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 CRC target feature is available and instantiate `N` as two
+/// or three.
 #[inline]
 #[target_feature(enable = "crc")]
 unsafe fn crc32c_armv8_nway<const N: usize>(crc: u32, data: &[u8]) -> u32 {
@@ -272,7 +335,7 @@ unsafe fn crc32c_armv8_nway<const N: usize>(crc: u32, data: &[u8]) -> u32 {
       return crc32c_armv8(crc, data);
     }
 
-    let chunk_len = len / N;
+    let chunk_len = len.strict_div(N);
     let mut lanes = [!0u32; N];
 
     let mut i: usize = 0;
@@ -281,10 +344,7 @@ unsafe fn crc32c_armv8_nway<const N: usize>(crc: u32, data: &[u8]) -> u32 {
         let mut lane_idx: usize = 0;
         while lane_idx < N {
           let base = lane_idx.strict_mul(chunk_len).strict_add(i);
-          lanes[lane_idx] = __crc32cd(
-            lanes[lane_idx],
-            ptr::read_unaligned(data.as_ptr().add(base) as *const u64),
-          );
+          lanes[lane_idx] = __crc32cd(lanes[lane_idx], load_u64(data.as_ptr().add(base)));
           lane_idx = lane_idx.strict_add(1);
         }
         i = i.strict_add(8);
@@ -301,7 +361,7 @@ unsafe fn crc32c_armv8_nway<const N: usize>(crc: u32, data: &[u8]) -> u32 {
 
     let tail_start = chunk_len.strict_mul(N);
     if tail_start < len {
-      lanes[N - 1] = crc32c_armv8(lanes[N - 1], data.get_unchecked(tail_start..));
+      lanes[N.strict_sub(1)] = crc32c_armv8(lanes[N.strict_sub(1)], data.get_unchecked(tail_start..));
     }
 
     let mut data_crc_final: u32 = 0;
@@ -329,25 +389,25 @@ unsafe fn crc32c_armv8_nway<const N: usize>(crc: u32, data: &[u8]) -> u32 {
 }
 
 #[inline]
-pub fn crc32_armv8_2way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32_armv8_2way_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies CRC extension before selecting this kernel.
   unsafe { crc32_armv8_nway::<2>(crc, data) }
 }
 
 #[inline]
-pub fn crc32_armv8_3way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32_armv8_3way_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies CRC extension before selecting this kernel.
   unsafe { crc32_armv8_nway::<3>(crc, data) }
 }
 
 #[inline]
-pub fn crc32c_armv8_2way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32c_armv8_2way_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies CRC extension before selecting this kernel.
   unsafe { crc32c_armv8_nway::<2>(crc, data) }
 }
 
 #[inline]
-pub fn crc32c_armv8_3way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32c_armv8_3way_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies CRC extension before selecting this kernel.
   unsafe { crc32c_armv8_nway::<3>(crc, data) }
 }
@@ -391,7 +451,7 @@ fn crc32_sve2_pmull_nway<const N: usize>(
 
   let tail_start = chunk_len.strict_mul(N);
   if tail_start < len {
-    lanes[N - 1] = update(lanes[N - 1], &data[tail_start..]);
+    lanes[N.strict_sub(1)] = update(lanes[N.strict_sub(1)], &data[tail_start..]);
   }
 
   // Combine the N independent CRCs with precomputed matrices to avoid
@@ -422,51 +482,55 @@ fn crc32_sve2_pmull_nway<const N: usize>(
 }
 
 #[inline]
-pub fn crc32_iso_hdlc_sve2_pmull_2way_safe(crc: u32, data: &[u8]) -> u32 {
+#[cfg(any(feature = "std", test))]
+pub(super) fn crc32_iso_hdlc_sve2_pmull_2way_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_sve2_pmull_nway::<2>(crc, data, crc32_iso_hdlc_pmull_v12e_v1_safe, CRC32_SHIFT8_MATRIX)
 }
 
 #[inline]
-pub fn crc32_iso_hdlc_sve2_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
+#[cfg(any(feature = "std", test))]
+pub(super) fn crc32_iso_hdlc_sve2_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_sve2_pmull_nway::<3>(crc, data, crc32_iso_hdlc_pmull_v12e_v1_safe, CRC32_SHIFT8_MATRIX)
 }
 
 #[inline]
-pub fn crc32c_iscsi_sve2_pmull_2way_safe(crc: u32, data: &[u8]) -> u32 {
+#[cfg(any(feature = "std", test))]
+pub(super) fn crc32c_iscsi_sve2_pmull_2way_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_sve2_pmull_nway::<2>(crc, data, crc32c_iscsi_pmull_v12e_v1_safe, CRC32C_SHIFT8_MATRIX)
 }
 
 #[inline]
-pub fn crc32c_iscsi_sve2_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
+#[cfg(any(feature = "std", test))]
+pub(super) fn crc32c_iscsi_sve2_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_sve2_pmull_nway::<3>(crc, data, crc32c_iscsi_pmull_v12e_v1_safe, CRC32C_SHIFT8_MATRIX)
 }
 
 // PMULL tier multi-stream wrappers (2/3-way)
 
 #[inline]
-pub fn crc32_iso_hdlc_pmull_2way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32_iso_hdlc_pmull_2way_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_sve2_pmull_nway::<2>(crc, data, crc32_iso_hdlc_pmull_v9s3x2e_s3_safe, CRC32_SHIFT8_MATRIX)
 }
 
 #[inline]
-pub fn crc32_iso_hdlc_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32_iso_hdlc_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_sve2_pmull_nway::<3>(crc, data, crc32_iso_hdlc_pmull_v9s3x2e_s3_safe, CRC32_SHIFT8_MATRIX)
 }
 
 #[inline]
-pub fn crc32c_iscsi_pmull_2way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32c_iscsi_pmull_2way_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_sve2_pmull_nway::<2>(crc, data, crc32c_iscsi_pmull_v9s3x2e_s3_safe, CRC32C_SHIFT8_MATRIX)
 }
 
 #[inline]
-pub fn crc32c_iscsi_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32c_iscsi_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_sve2_pmull_nway::<3>(crc, data, crc32c_iscsi_pmull_v9s3x2e_s3_safe, CRC32C_SHIFT8_MATRIX)
 }
 
 // EOR3 tier multi-stream wrappers (2/3-way)
 
 #[inline]
-pub fn crc32_iso_hdlc_pmull_eor3_2way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32_iso_hdlc_pmull_eor3_2way_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_sve2_pmull_nway::<2>(
     crc,
     data,
@@ -476,7 +540,7 @@ pub fn crc32_iso_hdlc_pmull_eor3_2way_safe(crc: u32, data: &[u8]) -> u32 {
 }
 
 #[inline]
-pub fn crc32_iso_hdlc_pmull_eor3_3way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32_iso_hdlc_pmull_eor3_3way_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_sve2_pmull_nway::<3>(
     crc,
     data,
@@ -486,19 +550,19 @@ pub fn crc32_iso_hdlc_pmull_eor3_3way_safe(crc: u32, data: &[u8]) -> u32 {
 }
 
 #[inline]
-pub fn crc32c_iscsi_pmull_eor3_2way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32c_iscsi_pmull_eor3_2way_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_sve2_pmull_nway::<2>(crc, data, crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe, CRC32C_SHIFT8_MATRIX)
 }
 
 #[inline]
-pub fn crc32c_iscsi_pmull_eor3_3way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32c_iscsi_pmull_eor3_3way_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_sve2_pmull_nway::<3>(crc, data, crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe, CRC32C_SHIFT8_MATRIX)
 }
 
 // Small-buffer wrappers (selected for len < fold block)
 
 #[inline]
-pub fn crc32_iso_hdlc_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32_iso_hdlc_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
   if data.len() <= 256 {
     return crc32_armv8_safe(crc, data);
   }
@@ -506,7 +570,7 @@ pub fn crc32_iso_hdlc_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
 }
 
 #[inline]
-pub fn crc32c_iscsi_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32c_iscsi_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
   if data.len() <= 256 {
     return crc32c_armv8_safe(crc, data);
   }
@@ -514,12 +578,14 @@ pub fn crc32c_iscsi_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
 }
 
 #[inline]
-pub fn crc32_iso_hdlc_sve2_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
+#[cfg(any(feature = "std", test))]
+pub(super) fn crc32_iso_hdlc_sve2_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_iso_hdlc_pmull_v12e_v1_safe(crc, data)
 }
 
 #[inline]
-pub fn crc32c_iscsi_sve2_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
+#[cfg(any(feature = "std", test))]
+pub(super) fn crc32c_iscsi_sve2_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
   crc32c_iscsi_pmull_v12e_v1_safe(crc, data)
 }
 
@@ -533,7 +599,7 @@ pub fn crc32c_iscsi_sve2_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
 ///
 /// # Safety
 ///
-/// Caller must verify that both CRC and AES (PMLL) target features are
+/// Caller must verify that both CRC and AES (PMULL) target features are
 /// available at runtime (via capability detection).
 #[inline]
 #[target_feature(enable = "crc,aes")]
@@ -546,7 +612,7 @@ pub(crate) unsafe fn crc32_ieee_fusion_inline(crc: u32, data: &[u8]) -> u32 {
 ///
 /// # Safety
 ///
-/// Caller must verify that both CRC and AES (PMLL) target features are
+/// Caller must verify that both CRC and AES (PMULL) target features are
 /// available at runtime (via capability detection).
 #[inline]
 #[target_feature(enable = "crc,aes")]
@@ -585,31 +651,47 @@ pub(crate) unsafe fn crc32c_iscsi_hwcrc_inline(crc: u32, data: &[u8]) -> u32 {
 
 // PMULL helpers (fusion kernels)
 
+/// Carry-less multiply the low lanes of two vectors.
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 AES/PMULL target feature is available.
 #[inline]
 #[target_feature(enable = "aes")]
 unsafe fn clmul_lo(a: uint64x2_t, b: uint64x2_t) -> uint64x2_t {
-  // SAFETY: Caller guarantees NEON+AES (PMULL) is available.
-  // vmull_p64, vgetq_lane_u64, vreinterpretq_u64_p128 are safe with target_feature on the fn.
   let result = vmull_p64(vgetq_lane_u64(a, 0), vgetq_lane_u64(b, 0));
   vreinterpretq_u64_p128(result)
 }
 
+/// Carry-less multiply the high lanes of two vectors.
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 AES/PMULL target feature is available.
 #[inline]
 #[target_feature(enable = "aes")]
 unsafe fn clmul_hi(a: uint64x2_t, b: uint64x2_t) -> uint64x2_t {
-  // SAFETY: Caller guarantees NEON+AES (PMULL) is available.
   let result = vmull_p64(vgetq_lane_u64(a, 1), vgetq_lane_u64(b, 1));
   vreinterpretq_u64_p128(result)
 }
 
+/// Carry-less multiply two scalar CRC values.
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 AES/PMULL target feature is available.
 #[inline]
 #[target_feature(enable = "aes")]
 unsafe fn clmul_scalar(a: u32, b: u32) -> uint64x2_t {
-  // SAFETY: Caller guarantees NEON+AES (PMULL) is available.
   let result = vmull_p64(a as u64, b as u64);
   vreinterpretq_u64_p128(result)
 }
 
+/// Carry-less multiply the low lanes, then XOR the product with `c`.
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 AES/PMULL target feature is available.
 #[inline]
 #[target_feature(enable = "aes")]
 unsafe fn clmul_lo_and_xor(a: uint64x2_t, b: uint64x2_t, c: uint64x2_t) -> uint64x2_t {
@@ -617,6 +699,11 @@ unsafe fn clmul_lo_and_xor(a: uint64x2_t, b: uint64x2_t, c: uint64x2_t) -> uint6
   unsafe { veorq_u64(clmul_lo(a, b), c) }
 }
 
+/// Carry-less multiply the high lanes, then XOR the product with `c`.
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 AES/PMULL target feature is available.
 #[inline]
 #[target_feature(enable = "aes")]
 unsafe fn clmul_hi_and_xor(a: uint64x2_t, b: uint64x2_t, c: uint64x2_t) -> uint64x2_t {
@@ -626,6 +713,12 @@ unsafe fn clmul_hi_and_xor(a: uint64x2_t, b: uint64x2_t, c: uint64x2_t) -> uint6
 
 // Fusion: CRC-32C (iSCSI) - PMULL v12e_v1
 
+/// Update CRC-32C with the 12-stream PMULL fusion kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 CRC and AES/PMULL target features are available. When `len`
+/// is nonzero, `buf` must be valid to read `len` initialized bytes from one allocation.
 #[inline]
 #[target_feature(enable = "crc,aes")]
 unsafe fn crc32c_iscsi_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut len: usize) -> u32 {
@@ -641,7 +734,7 @@ unsafe fn crc32c_iscsi_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut len:
     }
 
     if (buf as usize & 8) != 0 && len >= 8 {
-      crc0 = __crc32cd(crc0, ptr::read_unaligned(buf as *const u64));
+      crc0 = __crc32cd(crc0, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
     }
@@ -650,18 +743,18 @@ unsafe fn crc32c_iscsi_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut len:
       let end = buf.add(len);
       let limit = buf.add(len.strict_sub(192));
 
-      let mut x0 = vld1q_u64(buf as *const u64);
-      let mut x1 = vld1q_u64(buf.add(16) as *const u64);
-      let mut x2 = vld1q_u64(buf.add(32) as *const u64);
-      let mut x3 = vld1q_u64(buf.add(48) as *const u64);
-      let mut x4 = vld1q_u64(buf.add(64) as *const u64);
-      let mut x5 = vld1q_u64(buf.add(80) as *const u64);
-      let mut x6 = vld1q_u64(buf.add(96) as *const u64);
-      let mut x7 = vld1q_u64(buf.add(112) as *const u64);
-      let mut x8 = vld1q_u64(buf.add(128) as *const u64);
-      let mut x9 = vld1q_u64(buf.add(144) as *const u64);
-      let mut x10 = vld1q_u64(buf.add(160) as *const u64);
-      let mut x11 = vld1q_u64(buf.add(176) as *const u64);
+      let mut x0 = load_u64x2(buf);
+      let mut x1 = load_u64x2(buf.add(16));
+      let mut x2 = load_u64x2(buf.add(32));
+      let mut x3 = load_u64x2(buf.add(48));
+      let mut x4 = load_u64x2(buf.add(64));
+      let mut x5 = load_u64x2(buf.add(80));
+      let mut x6 = load_u64x2(buf.add(96));
+      let mut x7 = load_u64x2(buf.add(112));
+      let mut x8 = load_u64x2(buf.add(128));
+      let mut x9 = load_u64x2(buf.add(144));
+      let mut x10 = load_u64x2(buf.add(160));
+      let mut x11 = load_u64x2(buf.add(176));
 
       let k_vals: [u64; 2] = [0xa87ab8a8, 0xab7aff2a];
       let mut k = vld1q_u64(k_vals.as_ptr());
@@ -671,29 +764,29 @@ unsafe fn crc32c_iscsi_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut len:
       buf = buf.add(192);
 
       while buf <= limit {
-        let y0 = clmul_lo_and_xor(x0, k, vld1q_u64(buf as *const u64));
+        let y0 = clmul_lo_and_xor(x0, k, load_u64x2(buf));
         x0 = clmul_hi_and_xor(x0, k, y0);
-        let y1 = clmul_lo_and_xor(x1, k, vld1q_u64(buf.add(16) as *const u64));
+        let y1 = clmul_lo_and_xor(x1, k, load_u64x2(buf.add(16)));
         x1 = clmul_hi_and_xor(x1, k, y1);
-        let y2 = clmul_lo_and_xor(x2, k, vld1q_u64(buf.add(32) as *const u64));
+        let y2 = clmul_lo_and_xor(x2, k, load_u64x2(buf.add(32)));
         x2 = clmul_hi_and_xor(x2, k, y2);
-        let y3 = clmul_lo_and_xor(x3, k, vld1q_u64(buf.add(48) as *const u64));
+        let y3 = clmul_lo_and_xor(x3, k, load_u64x2(buf.add(48)));
         x3 = clmul_hi_and_xor(x3, k, y3);
-        let y4 = clmul_lo_and_xor(x4, k, vld1q_u64(buf.add(64) as *const u64));
+        let y4 = clmul_lo_and_xor(x4, k, load_u64x2(buf.add(64)));
         x4 = clmul_hi_and_xor(x4, k, y4);
-        let y5 = clmul_lo_and_xor(x5, k, vld1q_u64(buf.add(80) as *const u64));
+        let y5 = clmul_lo_and_xor(x5, k, load_u64x2(buf.add(80)));
         x5 = clmul_hi_and_xor(x5, k, y5);
-        let y6 = clmul_lo_and_xor(x6, k, vld1q_u64(buf.add(96) as *const u64));
+        let y6 = clmul_lo_and_xor(x6, k, load_u64x2(buf.add(96)));
         x6 = clmul_hi_and_xor(x6, k, y6);
-        let y7 = clmul_lo_and_xor(x7, k, vld1q_u64(buf.add(112) as *const u64));
+        let y7 = clmul_lo_and_xor(x7, k, load_u64x2(buf.add(112)));
         x7 = clmul_hi_and_xor(x7, k, y7);
-        let y8 = clmul_lo_and_xor(x8, k, vld1q_u64(buf.add(128) as *const u64));
+        let y8 = clmul_lo_and_xor(x8, k, load_u64x2(buf.add(128)));
         x8 = clmul_hi_and_xor(x8, k, y8);
-        let y9 = clmul_lo_and_xor(x9, k, vld1q_u64(buf.add(144) as *const u64));
+        let y9 = clmul_lo_and_xor(x9, k, load_u64x2(buf.add(144)));
         x9 = clmul_hi_and_xor(x9, k, y9);
-        let y10 = clmul_lo_and_xor(x10, k, vld1q_u64(buf.add(160) as *const u64));
+        let y10 = clmul_lo_and_xor(x10, k, load_u64x2(buf.add(160)));
         x10 = clmul_hi_and_xor(x10, k, y10);
-        let y11 = clmul_lo_and_xor(x11, k, vld1q_u64(buf.add(176) as *const u64));
+        let y11 = clmul_lo_and_xor(x11, k, load_u64x2(buf.add(176)));
         x11 = clmul_hi_and_xor(x11, k, y11);
         buf = buf.add(192);
       }
@@ -735,11 +828,11 @@ unsafe fn crc32c_iscsi_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut len:
 
       crc0 = __crc32cd(0, vgetq_lane_u64(x0, 0));
       crc0 = __crc32cd(crc0, vgetq_lane_u64(x0, 1));
-      len = end.offset_from(buf) as usize;
+      len = end.offset_from_unsigned(buf);
     }
 
     if len >= 16 {
-      let mut x0 = vld1q_u64(buf as *const u64);
+      let mut x0 = load_u64x2(buf);
 
       let k_vals: [u64; 2] = [0xf20c0dfe, 0x493c7d27];
       let k = vld1q_u64(k_vals.as_ptr());
@@ -750,7 +843,7 @@ unsafe fn crc32c_iscsi_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut len:
       len = len.strict_sub(16);
 
       while len >= 16 {
-        let y0 = clmul_lo_and_xor(x0, k, vld1q_u64(buf as *const u64));
+        let y0 = clmul_lo_and_xor(x0, k, load_u64x2(buf));
         x0 = clmul_hi_and_xor(x0, k, y0);
         buf = buf.add(16);
         len = len.strict_sub(16);
@@ -761,7 +854,7 @@ unsafe fn crc32c_iscsi_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut len:
     }
 
     while len >= 8 {
-      crc0 = __crc32cd(crc0, ptr::read_unaligned(buf as *const u64));
+      crc0 = __crc32cd(crc0, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
     }
@@ -778,13 +871,19 @@ unsafe fn crc32c_iscsi_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut len:
 
 /// Safe wrapper for CRC-32C fusion kernel (CRC+PMULL v12e_v1).
 #[inline]
-pub fn crc32c_iscsi_pmull_v12e_v1_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32c_iscsi_pmull_v12e_v1_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies CRC + PMULL before selecting this kernel.
   unsafe { crc32c_iscsi_pmull_v12e_v1(crc, data.as_ptr(), data.len()) }
 }
 
 // Fusion: CRC-32 (ISO-HDLC / IEEE) - PMULL v12e_v1
 
+/// Update CRC-32 (IEEE) with the 12-stream PMULL fusion kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 CRC and AES/PMULL target features are available. When `len`
+/// is nonzero, `buf` must be valid to read `len` initialized bytes from one allocation.
 #[inline]
 #[target_feature(enable = "crc,aes")]
 unsafe fn crc32_iso_hdlc_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut len: usize) -> u32 {
@@ -800,7 +899,7 @@ unsafe fn crc32_iso_hdlc_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut le
     }
 
     if (buf as usize & 8) != 0 && len >= 8 {
-      crc0 = __crc32d(crc0, ptr::read_unaligned(buf as *const u64));
+      crc0 = __crc32d(crc0, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
     }
@@ -809,18 +908,18 @@ unsafe fn crc32_iso_hdlc_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut le
       let end = buf.add(len);
       let limit = buf.add(len.strict_sub(192));
 
-      let mut x0 = vld1q_u64(buf as *const u64);
-      let mut x1 = vld1q_u64(buf.add(16) as *const u64);
-      let mut x2 = vld1q_u64(buf.add(32) as *const u64);
-      let mut x3 = vld1q_u64(buf.add(48) as *const u64);
-      let mut x4 = vld1q_u64(buf.add(64) as *const u64);
-      let mut x5 = vld1q_u64(buf.add(80) as *const u64);
-      let mut x6 = vld1q_u64(buf.add(96) as *const u64);
-      let mut x7 = vld1q_u64(buf.add(112) as *const u64);
-      let mut x8 = vld1q_u64(buf.add(128) as *const u64);
-      let mut x9 = vld1q_u64(buf.add(144) as *const u64);
-      let mut x10 = vld1q_u64(buf.add(160) as *const u64);
-      let mut x11 = vld1q_u64(buf.add(176) as *const u64);
+      let mut x0 = load_u64x2(buf);
+      let mut x1 = load_u64x2(buf.add(16));
+      let mut x2 = load_u64x2(buf.add(32));
+      let mut x3 = load_u64x2(buf.add(48));
+      let mut x4 = load_u64x2(buf.add(64));
+      let mut x5 = load_u64x2(buf.add(80));
+      let mut x6 = load_u64x2(buf.add(96));
+      let mut x7 = load_u64x2(buf.add(112));
+      let mut x8 = load_u64x2(buf.add(128));
+      let mut x9 = load_u64x2(buf.add(144));
+      let mut x10 = load_u64x2(buf.add(160));
+      let mut x11 = load_u64x2(buf.add(176));
 
       let k_vals: [u64; 2] = [0x596c8d81, 0xf5e48c85];
       let mut k = vld1q_u64(k_vals.as_ptr());
@@ -830,29 +929,29 @@ unsafe fn crc32_iso_hdlc_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut le
       buf = buf.add(192);
 
       while buf <= limit {
-        let y0 = clmul_lo_and_xor(x0, k, vld1q_u64(buf as *const u64));
+        let y0 = clmul_lo_and_xor(x0, k, load_u64x2(buf));
         x0 = clmul_hi_and_xor(x0, k, y0);
-        let y1 = clmul_lo_and_xor(x1, k, vld1q_u64(buf.add(16) as *const u64));
+        let y1 = clmul_lo_and_xor(x1, k, load_u64x2(buf.add(16)));
         x1 = clmul_hi_and_xor(x1, k, y1);
-        let y2 = clmul_lo_and_xor(x2, k, vld1q_u64(buf.add(32) as *const u64));
+        let y2 = clmul_lo_and_xor(x2, k, load_u64x2(buf.add(32)));
         x2 = clmul_hi_and_xor(x2, k, y2);
-        let y3 = clmul_lo_and_xor(x3, k, vld1q_u64(buf.add(48) as *const u64));
+        let y3 = clmul_lo_and_xor(x3, k, load_u64x2(buf.add(48)));
         x3 = clmul_hi_and_xor(x3, k, y3);
-        let y4 = clmul_lo_and_xor(x4, k, vld1q_u64(buf.add(64) as *const u64));
+        let y4 = clmul_lo_and_xor(x4, k, load_u64x2(buf.add(64)));
         x4 = clmul_hi_and_xor(x4, k, y4);
-        let y5 = clmul_lo_and_xor(x5, k, vld1q_u64(buf.add(80) as *const u64));
+        let y5 = clmul_lo_and_xor(x5, k, load_u64x2(buf.add(80)));
         x5 = clmul_hi_and_xor(x5, k, y5);
-        let y6 = clmul_lo_and_xor(x6, k, vld1q_u64(buf.add(96) as *const u64));
+        let y6 = clmul_lo_and_xor(x6, k, load_u64x2(buf.add(96)));
         x6 = clmul_hi_and_xor(x6, k, y6);
-        let y7 = clmul_lo_and_xor(x7, k, vld1q_u64(buf.add(112) as *const u64));
+        let y7 = clmul_lo_and_xor(x7, k, load_u64x2(buf.add(112)));
         x7 = clmul_hi_and_xor(x7, k, y7);
-        let y8 = clmul_lo_and_xor(x8, k, vld1q_u64(buf.add(128) as *const u64));
+        let y8 = clmul_lo_and_xor(x8, k, load_u64x2(buf.add(128)));
         x8 = clmul_hi_and_xor(x8, k, y8);
-        let y9 = clmul_lo_and_xor(x9, k, vld1q_u64(buf.add(144) as *const u64));
+        let y9 = clmul_lo_and_xor(x9, k, load_u64x2(buf.add(144)));
         x9 = clmul_hi_and_xor(x9, k, y9);
-        let y10 = clmul_lo_and_xor(x10, k, vld1q_u64(buf.add(160) as *const u64));
+        let y10 = clmul_lo_and_xor(x10, k, load_u64x2(buf.add(160)));
         x10 = clmul_hi_and_xor(x10, k, y10);
-        let y11 = clmul_lo_and_xor(x11, k, vld1q_u64(buf.add(176) as *const u64));
+        let y11 = clmul_lo_and_xor(x11, k, load_u64x2(buf.add(176)));
         x11 = clmul_hi_and_xor(x11, k, y11);
         buf = buf.add(192);
       }
@@ -894,11 +993,11 @@ unsafe fn crc32_iso_hdlc_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut le
 
       crc0 = __crc32d(0, vgetq_lane_u64(x0, 0));
       crc0 = __crc32d(crc0, vgetq_lane_u64(x0, 1));
-      len = end.offset_from(buf) as usize;
+      len = end.offset_from_unsigned(buf);
     }
 
     if len >= 16 {
-      let mut x0 = vld1q_u64(buf as *const u64);
+      let mut x0 = load_u64x2(buf);
 
       let k_vals: [u64; 2] = [0xae689191, 0xccaa009e];
       let k = vld1q_u64(k_vals.as_ptr());
@@ -909,7 +1008,7 @@ unsafe fn crc32_iso_hdlc_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut le
       len = len.strict_sub(16);
 
       while len >= 16 {
-        let y0 = clmul_lo_and_xor(x0, k, vld1q_u64(buf as *const u64));
+        let y0 = clmul_lo_and_xor(x0, k, load_u64x2(buf));
         x0 = clmul_hi_and_xor(x0, k, y0);
         buf = buf.add(16);
         len = len.strict_sub(16);
@@ -920,7 +1019,7 @@ unsafe fn crc32_iso_hdlc_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut le
     }
 
     while len >= 8 {
-      crc0 = __crc32d(crc0, ptr::read_unaligned(buf as *const u64));
+      crc0 = __crc32d(crc0, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
     }
@@ -937,19 +1036,30 @@ unsafe fn crc32_iso_hdlc_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut le
 
 /// Safe wrapper for CRC-32 fusion kernel (CRC+PMULL v12e_v1).
 #[inline]
-pub fn crc32_iso_hdlc_pmull_v12e_v1_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32_iso_hdlc_pmull_v12e_v1_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies CRC + PMULL before selecting this kernel.
   unsafe { crc32_iso_hdlc_pmull_v12e_v1(crc, data.as_ptr(), data.len()) }
 }
 
 // Fusion: PMULL v9s3x2e_s3 (no EOR3)
 
+/// XOR three vector-register values.
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 NEON target feature is available.
 #[inline]
 unsafe fn xor3_u64x2(a: uint64x2_t, b: uint64x2_t, c: uint64x2_t) -> uint64x2_t {
-  // SAFETY: Caller guarantees NEON is available. veorq_u64 operates on registers.
+  // SAFETY: The caller establishes NEON support; both intrinsics operate only on registers.
   unsafe { veorq_u64(veorq_u64(a, b), c) }
 }
 
+/// Update CRC-32C with the three-stream PMULL fusion kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 CRC and AES/PMULL target features are available. When `len`
+/// is nonzero, `buf` must be valid to read `len` initialized bytes from one allocation.
 #[inline]
 #[target_feature(enable = "crc,aes")]
 unsafe fn crc32c_iscsi_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut len: usize) -> u32 {
@@ -966,7 +1076,7 @@ unsafe fn crc32c_iscsi_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut l
     }
 
     if (buf as usize & 8) != 0 && len >= 8 {
-      crc0 = __crc32cd(crc0, ptr::read_unaligned(buf as *const u64));
+      crc0 = __crc32cd(crc0, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
     }
@@ -980,15 +1090,15 @@ unsafe fn crc32c_iscsi_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut l
       let mut crc1 = 0u32;
       let mut crc2 = 0u32;
 
-      let mut x0 = vld1q_u64(buf2 as *const u64);
-      let mut x1 = vld1q_u64(buf2.add(16) as *const u64);
-      let mut x2 = vld1q_u64(buf2.add(32) as *const u64);
-      let mut x3 = vld1q_u64(buf2.add(48) as *const u64);
-      let mut x4 = vld1q_u64(buf2.add(64) as *const u64);
-      let mut x5 = vld1q_u64(buf2.add(80) as *const u64);
-      let mut x6 = vld1q_u64(buf2.add(96) as *const u64);
-      let mut x7 = vld1q_u64(buf2.add(112) as *const u64);
-      let mut x8 = vld1q_u64(buf2.add(128) as *const u64);
+      let mut x0 = load_u64x2(buf2);
+      let mut x1 = load_u64x2(buf2.add(16));
+      let mut x2 = load_u64x2(buf2.add(32));
+      let mut x3 = load_u64x2(buf2.add(48));
+      let mut x4 = load_u64x2(buf2.add(64));
+      let mut x5 = load_u64x2(buf2.add(80));
+      let mut x6 = load_u64x2(buf2.add(96));
+      let mut x7 = load_u64x2(buf2.add(112));
+      let mut x8 = load_u64x2(buf2.add(128));
 
       let k_vals: [u64; 2] = [0x7e908048, 0xc96cfdc0];
       let mut k = vld1q_u64(k_vals.as_ptr());
@@ -1014,25 +1124,22 @@ unsafe fn crc32c_iscsi_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut l
         let y8 = clmul_lo(x8, k);
         x8 = clmul_hi(x8, k);
 
-        x0 = xor3_u64x2(x0, y0, vld1q_u64(buf2 as *const u64));
-        x1 = xor3_u64x2(x1, y1, vld1q_u64(buf2.add(16) as *const u64));
-        x2 = xor3_u64x2(x2, y2, vld1q_u64(buf2.add(32) as *const u64));
-        x3 = xor3_u64x2(x3, y3, vld1q_u64(buf2.add(48) as *const u64));
-        x4 = xor3_u64x2(x4, y4, vld1q_u64(buf2.add(64) as *const u64));
-        x5 = xor3_u64x2(x5, y5, vld1q_u64(buf2.add(80) as *const u64));
-        x6 = xor3_u64x2(x6, y6, vld1q_u64(buf2.add(96) as *const u64));
-        x7 = xor3_u64x2(x7, y7, vld1q_u64(buf2.add(112) as *const u64));
-        x8 = xor3_u64x2(x8, y8, vld1q_u64(buf2.add(128) as *const u64));
+        x0 = xor3_u64x2(x0, y0, load_u64x2(buf2));
+        x1 = xor3_u64x2(x1, y1, load_u64x2(buf2.add(16)));
+        x2 = xor3_u64x2(x2, y2, load_u64x2(buf2.add(32)));
+        x3 = xor3_u64x2(x3, y3, load_u64x2(buf2.add(48)));
+        x4 = xor3_u64x2(x4, y4, load_u64x2(buf2.add(64)));
+        x5 = xor3_u64x2(x5, y5, load_u64x2(buf2.add(80)));
+        x6 = xor3_u64x2(x6, y6, load_u64x2(buf2.add(96)));
+        x7 = xor3_u64x2(x7, y7, load_u64x2(buf2.add(112)));
+        x8 = xor3_u64x2(x8, y8, load_u64x2(buf2.add(128)));
 
-        crc0 = __crc32cd(crc0, ptr::read_unaligned(buf as *const u64));
-        crc1 = __crc32cd(crc1, ptr::read_unaligned(buf.add(klen) as *const u64));
-        crc2 = __crc32cd(crc2, ptr::read_unaligned(buf.add(klen.strict_mul(2)) as *const u64));
-        crc0 = __crc32cd(crc0, ptr::read_unaligned(buf.add(8) as *const u64));
-        crc1 = __crc32cd(crc1, ptr::read_unaligned(buf.add(klen.strict_add(8)) as *const u64));
-        crc2 = __crc32cd(
-          crc2,
-          ptr::read_unaligned(buf.add(klen.strict_mul(2).strict_add(8)) as *const u64),
-        );
+        crc0 = __crc32cd(crc0, load_u64(buf));
+        crc1 = __crc32cd(crc1, load_u64(buf.add(klen)));
+        crc2 = __crc32cd(crc2, load_u64(buf.add(klen.strict_mul(2))));
+        crc0 = __crc32cd(crc0, load_u64(buf.add(8)));
+        crc1 = __crc32cd(crc1, load_u64(buf.add(klen.strict_add(8))));
+        crc2 = __crc32cd(crc2, load_u64(buf.add(klen.strict_mul(2).strict_add(8))));
 
         buf = buf.add(16);
         buf2 = buf2.add(144);
@@ -1084,15 +1191,12 @@ unsafe fn crc32c_iscsi_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut l
       x0 = clmul_hi(x0, k);
       x0 = xor3_u64x2(x0, y0, x4);
 
-      crc0 = __crc32cd(crc0, ptr::read_unaligned(buf as *const u64));
-      crc1 = __crc32cd(crc1, ptr::read_unaligned(buf.add(klen) as *const u64));
-      crc2 = __crc32cd(crc2, ptr::read_unaligned(buf.add(klen.strict_mul(2)) as *const u64));
-      crc0 = __crc32cd(crc0, ptr::read_unaligned(buf.add(8) as *const u64));
-      crc1 = __crc32cd(crc1, ptr::read_unaligned(buf.add(klen.strict_add(8)) as *const u64));
-      crc2 = __crc32cd(
-        crc2,
-        ptr::read_unaligned(buf.add(klen.strict_mul(2).strict_add(8)) as *const u64),
-      );
+      crc0 = __crc32cd(crc0, load_u64(buf));
+      crc1 = __crc32cd(crc1, load_u64(buf.add(klen)));
+      crc2 = __crc32cd(crc2, load_u64(buf.add(klen.strict_mul(2))));
+      crc0 = __crc32cd(crc0, load_u64(buf.add(8)));
+      crc1 = __crc32cd(crc1, load_u64(buf.add(klen.strict_add(8))));
+      crc2 = __crc32cd(crc2, load_u64(buf.add(klen.strict_mul(2).strict_add(8))));
 
       let vc0 = crc_shift_iscsi(crc0, klen.strict_mul(2).strict_add(blk.strict_mul(144)));
       let vc1 = crc_shift_iscsi(crc1, klen.strict_add(blk.strict_mul(144)));
@@ -1103,7 +1207,7 @@ unsafe fn crc32c_iscsi_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut l
       crc0 = __crc32cd(crc0, vc ^ vgetq_lane_u64(x0, 1));
 
       buf = buf2;
-      len = end.offset_from(buf) as usize;
+      len = end.offset_from_unsigned(buf);
     }
 
     if len >= 32 {
@@ -1112,9 +1216,9 @@ unsafe fn crc32c_iscsi_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut l
       let mut crc2 = 0u32;
 
       loop {
-        crc0 = __crc32cd(crc0, ptr::read_unaligned(buf as *const u64));
-        crc1 = __crc32cd(crc1, ptr::read_unaligned(buf.add(klen) as *const u64));
-        crc2 = __crc32cd(crc2, ptr::read_unaligned(buf.add(klen.strict_mul(2)) as *const u64));
+        crc0 = __crc32cd(crc0, load_u64(buf));
+        crc1 = __crc32cd(crc1, load_u64(buf.add(klen)));
+        crc2 = __crc32cd(crc2, load_u64(buf.add(klen.strict_mul(2))));
         buf = buf.add(8);
         len = len.strict_sub(24);
         if len < 32 {
@@ -1128,13 +1232,13 @@ unsafe fn crc32c_iscsi_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut l
 
       buf = buf.add(klen.strict_mul(2));
       crc0 = crc2;
-      crc0 = __crc32cd(crc0, ptr::read_unaligned(buf as *const u64) ^ vc);
+      crc0 = __crc32cd(crc0, load_u64(buf) ^ vc);
       buf = buf.add(8);
       len = len.strict_sub(8);
     }
 
     while len >= 8 {
-      crc0 = __crc32cd(crc0, ptr::read_unaligned(buf as *const u64));
+      crc0 = __crc32cd(crc0, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
     }
@@ -1151,11 +1255,17 @@ unsafe fn crc32c_iscsi_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut l
 
 /// Safe wrapper for CRC-32C fusion kernel (CRC+PMULL, no EOR3).
 #[inline]
-pub fn crc32c_iscsi_pmull_v9s3x2e_s3_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32c_iscsi_pmull_v9s3x2e_s3_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies CRC + PMULL before selecting this kernel.
   unsafe { crc32c_iscsi_pmull_v9s3x2e_s3(crc, data.as_ptr(), data.len()) }
 }
 
+/// Update CRC-32 (IEEE) with the three-stream PMULL fusion kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 CRC and AES/PMULL target features are available. When `len`
+/// is nonzero, `buf` must be valid to read `len` initialized bytes from one allocation.
 #[inline]
 #[target_feature(enable = "crc,aes")]
 unsafe fn crc32_iso_hdlc_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut len: usize) -> u32 {
@@ -1172,7 +1282,7 @@ unsafe fn crc32_iso_hdlc_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut
     }
 
     if (buf as usize & 8) != 0 && len >= 8 {
-      crc0 = __crc32d(crc0, ptr::read_unaligned(buf as *const u64));
+      crc0 = __crc32d(crc0, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
     }
@@ -1186,15 +1296,15 @@ unsafe fn crc32_iso_hdlc_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut
       let mut crc1 = 0u32;
       let mut crc2 = 0u32;
 
-      let mut x0 = vld1q_u64(buf2 as *const u64);
-      let mut x1 = vld1q_u64(buf2.add(16) as *const u64);
-      let mut x2 = vld1q_u64(buf2.add(32) as *const u64);
-      let mut x3 = vld1q_u64(buf2.add(48) as *const u64);
-      let mut x4 = vld1q_u64(buf2.add(64) as *const u64);
-      let mut x5 = vld1q_u64(buf2.add(80) as *const u64);
-      let mut x6 = vld1q_u64(buf2.add(96) as *const u64);
-      let mut x7 = vld1q_u64(buf2.add(112) as *const u64);
-      let mut x8 = vld1q_u64(buf2.add(128) as *const u64);
+      let mut x0 = load_u64x2(buf2);
+      let mut x1 = load_u64x2(buf2.add(16));
+      let mut x2 = load_u64x2(buf2.add(32));
+      let mut x3 = load_u64x2(buf2.add(48));
+      let mut x4 = load_u64x2(buf2.add(64));
+      let mut x5 = load_u64x2(buf2.add(80));
+      let mut x6 = load_u64x2(buf2.add(96));
+      let mut x7 = load_u64x2(buf2.add(112));
+      let mut x8 = load_u64x2(buf2.add(128));
 
       let k_vals: [u64; 2] = [0x26b70c3d, 0x3f41287a];
       let mut k = vld1q_u64(k_vals.as_ptr());
@@ -1220,25 +1330,22 @@ unsafe fn crc32_iso_hdlc_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut
         let y8 = clmul_lo(x8, k);
         x8 = clmul_hi(x8, k);
 
-        x0 = xor3_u64x2(x0, y0, vld1q_u64(buf2 as *const u64));
-        x1 = xor3_u64x2(x1, y1, vld1q_u64(buf2.add(16) as *const u64));
-        x2 = xor3_u64x2(x2, y2, vld1q_u64(buf2.add(32) as *const u64));
-        x3 = xor3_u64x2(x3, y3, vld1q_u64(buf2.add(48) as *const u64));
-        x4 = xor3_u64x2(x4, y4, vld1q_u64(buf2.add(64) as *const u64));
-        x5 = xor3_u64x2(x5, y5, vld1q_u64(buf2.add(80) as *const u64));
-        x6 = xor3_u64x2(x6, y6, vld1q_u64(buf2.add(96) as *const u64));
-        x7 = xor3_u64x2(x7, y7, vld1q_u64(buf2.add(112) as *const u64));
-        x8 = xor3_u64x2(x8, y8, vld1q_u64(buf2.add(128) as *const u64));
+        x0 = xor3_u64x2(x0, y0, load_u64x2(buf2));
+        x1 = xor3_u64x2(x1, y1, load_u64x2(buf2.add(16)));
+        x2 = xor3_u64x2(x2, y2, load_u64x2(buf2.add(32)));
+        x3 = xor3_u64x2(x3, y3, load_u64x2(buf2.add(48)));
+        x4 = xor3_u64x2(x4, y4, load_u64x2(buf2.add(64)));
+        x5 = xor3_u64x2(x5, y5, load_u64x2(buf2.add(80)));
+        x6 = xor3_u64x2(x6, y6, load_u64x2(buf2.add(96)));
+        x7 = xor3_u64x2(x7, y7, load_u64x2(buf2.add(112)));
+        x8 = xor3_u64x2(x8, y8, load_u64x2(buf2.add(128)));
 
-        crc0 = __crc32d(crc0, ptr::read_unaligned(buf as *const u64));
-        crc1 = __crc32d(crc1, ptr::read_unaligned(buf.add(klen) as *const u64));
-        crc2 = __crc32d(crc2, ptr::read_unaligned(buf.add(klen.strict_mul(2)) as *const u64));
-        crc0 = __crc32d(crc0, ptr::read_unaligned(buf.add(8) as *const u64));
-        crc1 = __crc32d(crc1, ptr::read_unaligned(buf.add(klen.strict_add(8)) as *const u64));
-        crc2 = __crc32d(
-          crc2,
-          ptr::read_unaligned(buf.add(klen.strict_mul(2).strict_add(8)) as *const u64),
-        );
+        crc0 = __crc32d(crc0, load_u64(buf));
+        crc1 = __crc32d(crc1, load_u64(buf.add(klen)));
+        crc2 = __crc32d(crc2, load_u64(buf.add(klen.strict_mul(2))));
+        crc0 = __crc32d(crc0, load_u64(buf.add(8)));
+        crc1 = __crc32d(crc1, load_u64(buf.add(klen.strict_add(8))));
+        crc2 = __crc32d(crc2, load_u64(buf.add(klen.strict_mul(2).strict_add(8))));
 
         buf = buf.add(16);
         buf2 = buf2.add(144);
@@ -1290,15 +1397,12 @@ unsafe fn crc32_iso_hdlc_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut
       x0 = clmul_hi(x0, k);
       x0 = xor3_u64x2(x0, y0, x4);
 
-      crc0 = __crc32d(crc0, ptr::read_unaligned(buf as *const u64));
-      crc1 = __crc32d(crc1, ptr::read_unaligned(buf.add(klen) as *const u64));
-      crc2 = __crc32d(crc2, ptr::read_unaligned(buf.add(klen.strict_mul(2)) as *const u64));
-      crc0 = __crc32d(crc0, ptr::read_unaligned(buf.add(8) as *const u64));
-      crc1 = __crc32d(crc1, ptr::read_unaligned(buf.add(klen.strict_add(8)) as *const u64));
-      crc2 = __crc32d(
-        crc2,
-        ptr::read_unaligned(buf.add(klen.strict_mul(2).strict_add(8)) as *const u64),
-      );
+      crc0 = __crc32d(crc0, load_u64(buf));
+      crc1 = __crc32d(crc1, load_u64(buf.add(klen)));
+      crc2 = __crc32d(crc2, load_u64(buf.add(klen.strict_mul(2))));
+      crc0 = __crc32d(crc0, load_u64(buf.add(8)));
+      crc1 = __crc32d(crc1, load_u64(buf.add(klen.strict_add(8))));
+      crc2 = __crc32d(crc2, load_u64(buf.add(klen.strict_mul(2).strict_add(8))));
 
       let vc0 = crc_shift_iso_hdlc(crc0, klen.strict_mul(2).strict_add(blk.strict_mul(144)));
       let vc1 = crc_shift_iso_hdlc(crc1, klen.strict_add(blk.strict_mul(144)));
@@ -1309,7 +1413,7 @@ unsafe fn crc32_iso_hdlc_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut
       crc0 = __crc32d(crc0, vc ^ vgetq_lane_u64(x0, 1));
 
       buf = buf2;
-      len = end.offset_from(buf) as usize;
+      len = end.offset_from_unsigned(buf);
     }
 
     if len >= 32 {
@@ -1318,9 +1422,9 @@ unsafe fn crc32_iso_hdlc_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut
       let mut crc2 = 0u32;
 
       loop {
-        crc0 = __crc32d(crc0, ptr::read_unaligned(buf as *const u64));
-        crc1 = __crc32d(crc1, ptr::read_unaligned(buf.add(klen) as *const u64));
-        crc2 = __crc32d(crc2, ptr::read_unaligned(buf.add(klen.strict_mul(2)) as *const u64));
+        crc0 = __crc32d(crc0, load_u64(buf));
+        crc1 = __crc32d(crc1, load_u64(buf.add(klen)));
+        crc2 = __crc32d(crc2, load_u64(buf.add(klen.strict_mul(2))));
         buf = buf.add(8);
         len = len.strict_sub(24);
         if len < 32 {
@@ -1334,13 +1438,13 @@ unsafe fn crc32_iso_hdlc_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut
 
       buf = buf.add(klen.strict_mul(2));
       crc0 = crc2;
-      crc0 = __crc32d(crc0, ptr::read_unaligned(buf as *const u64) ^ vc);
+      crc0 = __crc32d(crc0, load_u64(buf) ^ vc);
       buf = buf.add(8);
       len = len.strict_sub(8);
     }
 
     while len >= 8 {
-      crc0 = __crc32d(crc0, ptr::read_unaligned(buf as *const u64));
+      crc0 = __crc32d(crc0, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
     }
@@ -1357,13 +1461,19 @@ unsafe fn crc32_iso_hdlc_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut
 
 /// Safe wrapper for CRC-32 fusion kernel (CRC+PMULL, no EOR3).
 #[inline]
-pub fn crc32_iso_hdlc_pmull_v9s3x2e_s3_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32_iso_hdlc_pmull_v9s3x2e_s3_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies CRC + PMULL before selecting this kernel.
   unsafe { crc32_iso_hdlc_pmull_v9s3x2e_s3(crc, data.as_ptr(), data.len()) }
 }
 
 // Fusion: EOR3 variants (CRC + PMULL + SHA3)
 
+/// Update CRC-32C with the three-stream PMULL/EOR3 fusion kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 CRC, AES/PMULL, and SHA3/EOR3 target features are available.
+/// When `len` is nonzero, `buf` must be valid to read `len` initialized bytes from one allocation.
 #[inline]
 #[target_feature(enable = "crc,aes,sha3")]
 unsafe fn crc32c_iscsi_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut len: usize) -> u32 {
@@ -1380,7 +1490,7 @@ unsafe fn crc32c_iscsi_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, 
     }
 
     if (buf as usize & 8) != 0 && len >= 8 {
-      crc0 = __crc32cd(crc0, ptr::read_unaligned(buf as *const u64));
+      crc0 = __crc32cd(crc0, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
     }
@@ -1394,15 +1504,15 @@ unsafe fn crc32c_iscsi_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, 
       let mut crc1 = 0u32;
       let mut crc2 = 0u32;
 
-      let mut x0 = vld1q_u64(buf2 as *const u64);
-      let mut x1 = vld1q_u64(buf2.add(16) as *const u64);
-      let mut x2 = vld1q_u64(buf2.add(32) as *const u64);
-      let mut x3 = vld1q_u64(buf2.add(48) as *const u64);
-      let mut x4 = vld1q_u64(buf2.add(64) as *const u64);
-      let mut x5 = vld1q_u64(buf2.add(80) as *const u64);
-      let mut x6 = vld1q_u64(buf2.add(96) as *const u64);
-      let mut x7 = vld1q_u64(buf2.add(112) as *const u64);
-      let mut x8 = vld1q_u64(buf2.add(128) as *const u64);
+      let mut x0 = load_u64x2(buf2);
+      let mut x1 = load_u64x2(buf2.add(16));
+      let mut x2 = load_u64x2(buf2.add(32));
+      let mut x3 = load_u64x2(buf2.add(48));
+      let mut x4 = load_u64x2(buf2.add(64));
+      let mut x5 = load_u64x2(buf2.add(80));
+      let mut x6 = load_u64x2(buf2.add(96));
+      let mut x7 = load_u64x2(buf2.add(112));
+      let mut x8 = load_u64x2(buf2.add(128));
 
       let k_vals: [u64; 2] = [0x7e908048, 0xc96cfdc0];
       let mut k = vld1q_u64(k_vals.as_ptr());
@@ -1428,22 +1538,22 @@ unsafe fn crc32c_iscsi_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, 
         let y8 = clmul_lo(x8, k);
         x8 = clmul_hi(x8, k);
 
-        x0 = veor3q_u64(x0, y0, vld1q_u64(buf2 as *const u64));
-        x1 = veor3q_u64(x1, y1, vld1q_u64(buf2.add(16) as *const u64));
-        x2 = veor3q_u64(x2, y2, vld1q_u64(buf2.add(32) as *const u64));
-        x3 = veor3q_u64(x3, y3, vld1q_u64(buf2.add(48) as *const u64));
-        x4 = veor3q_u64(x4, y4, vld1q_u64(buf2.add(64) as *const u64));
-        x5 = veor3q_u64(x5, y5, vld1q_u64(buf2.add(80) as *const u64));
-        x6 = veor3q_u64(x6, y6, vld1q_u64(buf2.add(96) as *const u64));
-        x7 = veor3q_u64(x7, y7, vld1q_u64(buf2.add(112) as *const u64));
-        x8 = veor3q_u64(x8, y8, vld1q_u64(buf2.add(128) as *const u64));
+        x0 = veor3q_u64(x0, y0, load_u64x2(buf2));
+        x1 = veor3q_u64(x1, y1, load_u64x2(buf2.add(16)));
+        x2 = veor3q_u64(x2, y2, load_u64x2(buf2.add(32)));
+        x3 = veor3q_u64(x3, y3, load_u64x2(buf2.add(48)));
+        x4 = veor3q_u64(x4, y4, load_u64x2(buf2.add(64)));
+        x5 = veor3q_u64(x5, y5, load_u64x2(buf2.add(80)));
+        x6 = veor3q_u64(x6, y6, load_u64x2(buf2.add(96)));
+        x7 = veor3q_u64(x7, y7, load_u64x2(buf2.add(112)));
+        x8 = veor3q_u64(x8, y8, load_u64x2(buf2.add(128)));
 
-        crc0 = __crc32cd(crc0, ptr::read_unaligned(buf as *const u64));
-        crc1 = __crc32cd(crc1, ptr::read_unaligned(buf.add(klen) as *const u64));
-        crc2 = __crc32cd(crc2, ptr::read_unaligned(buf.add(klen.strict_mul(2)) as *const u64));
-        crc0 = __crc32cd(crc0, ptr::read_unaligned(buf.add(8) as *const u64));
-        crc1 = __crc32cd(crc1, ptr::read_unaligned(buf.add(klen + 8) as *const u64));
-        crc2 = __crc32cd(crc2, ptr::read_unaligned(buf.add(klen.strict_mul(2) + 8) as *const u64));
+        crc0 = __crc32cd(crc0, load_u64(buf));
+        crc1 = __crc32cd(crc1, load_u64(buf.add(klen)));
+        crc2 = __crc32cd(crc2, load_u64(buf.add(klen.strict_mul(2))));
+        crc0 = __crc32cd(crc0, load_u64(buf.add(8)));
+        crc1 = __crc32cd(crc1, load_u64(buf.add(klen.strict_add(8))));
+        crc2 = __crc32cd(crc2, load_u64(buf.add(klen.strict_mul(2).strict_add(8))));
 
         buf = buf.add(16);
         buf2 = buf2.add(144);
@@ -1495,15 +1605,15 @@ unsafe fn crc32c_iscsi_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, 
       x0 = clmul_hi(x0, k);
       x0 = veor3q_u64(x0, y0, x4);
 
-      crc0 = __crc32cd(crc0, ptr::read_unaligned(buf as *const u64));
-      crc1 = __crc32cd(crc1, ptr::read_unaligned(buf.add(klen) as *const u64));
-      crc2 = __crc32cd(crc2, ptr::read_unaligned(buf.add(klen.strict_mul(2)) as *const u64));
-      crc0 = __crc32cd(crc0, ptr::read_unaligned(buf.add(8) as *const u64));
-      crc1 = __crc32cd(crc1, ptr::read_unaligned(buf.add(klen + 8) as *const u64));
-      crc2 = __crc32cd(crc2, ptr::read_unaligned(buf.add(klen.strict_mul(2) + 8) as *const u64));
+      crc0 = __crc32cd(crc0, load_u64(buf));
+      crc1 = __crc32cd(crc1, load_u64(buf.add(klen)));
+      crc2 = __crc32cd(crc2, load_u64(buf.add(klen.strict_mul(2))));
+      crc0 = __crc32cd(crc0, load_u64(buf.add(8)));
+      crc1 = __crc32cd(crc1, load_u64(buf.add(klen.strict_add(8))));
+      crc2 = __crc32cd(crc2, load_u64(buf.add(klen.strict_mul(2).strict_add(8))));
 
-      let vc0 = crc_shift_iscsi(crc0, klen.strict_mul(2) + blk.strict_mul(144));
-      let vc1 = crc_shift_iscsi(crc1, klen + blk.strict_mul(144));
+      let vc0 = crc_shift_iscsi(crc0, klen.strict_mul(2).strict_add(blk.strict_mul(144)));
+      let vc1 = crc_shift_iscsi(crc1, klen.strict_add(blk.strict_mul(144)));
       let vc2 = crc_shift_iscsi(crc2, blk.strict_mul(144));
       let vc = vgetq_lane_u64(veor3q_u64(vc0, vc1, vc2), 0);
 
@@ -1511,18 +1621,18 @@ unsafe fn crc32c_iscsi_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, 
       crc0 = __crc32cd(crc0, vc ^ vgetq_lane_u64(x0, 1));
 
       buf = buf2;
-      len = end.offset_from(buf) as usize;
+      len = end.offset_from_unsigned(buf);
     }
 
     if len >= 32 {
-      let klen = ((len.strict_sub(8)) / 24).strict_mul(8);
+      let klen = len.strict_sub(8).strict_div(24).strict_mul(8);
       let mut crc1 = 0u32;
       let mut crc2 = 0u32;
 
       loop {
-        crc0 = __crc32cd(crc0, ptr::read_unaligned(buf as *const u64));
-        crc1 = __crc32cd(crc1, ptr::read_unaligned(buf.add(klen) as *const u64));
-        crc2 = __crc32cd(crc2, ptr::read_unaligned(buf.add(klen.strict_mul(2)) as *const u64));
+        crc0 = __crc32cd(crc0, load_u64(buf));
+        crc1 = __crc32cd(crc1, load_u64(buf.add(klen)));
+        crc2 = __crc32cd(crc2, load_u64(buf.add(klen.strict_mul(2))));
         buf = buf.add(8);
         len = len.strict_sub(24);
         if len < 32 {
@@ -1530,19 +1640,19 @@ unsafe fn crc32c_iscsi_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, 
         }
       }
 
-      let vc0 = crc_shift_iscsi(crc0, klen.strict_mul(2) + 8);
-      let vc1 = crc_shift_iscsi(crc1, klen + 8);
+      let vc0 = crc_shift_iscsi(crc0, klen.strict_mul(2).strict_add(8));
+      let vc1 = crc_shift_iscsi(crc1, klen.strict_add(8));
       let vc = vgetq_lane_u64(veorq_u64(vc0, vc1), 0);
 
       buf = buf.add(klen.strict_mul(2));
       crc0 = crc2;
-      crc0 = __crc32cd(crc0, ptr::read_unaligned(buf as *const u64) ^ vc);
+      crc0 = __crc32cd(crc0, load_u64(buf) ^ vc);
       buf = buf.add(8);
       len = len.strict_sub(8);
     }
 
     while len >= 8 {
-      crc0 = __crc32cd(crc0, ptr::read_unaligned(buf as *const u64));
+      crc0 = __crc32cd(crc0, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
     }
@@ -1557,24 +1667,32 @@ unsafe fn crc32c_iscsi_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, 
   } // unsafe
 }
 
+/// Return the CRC-32C shift factor for `nbytes`.
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 CRC and AES/PMULL target features are available.
 #[inline]
 #[target_feature(enable = "aes")]
 unsafe fn crc_shift_iscsi(crc: u32, nbytes: usize) -> uint64x2_t {
-  // SAFETY: Caller guarantees AES (PMULL) is available. clmul_scalar operates on registers.
+  // SAFETY: The caller establishes CRC and AES/PMULL support; both callees operate on registers.
   unsafe { clmul_scalar(crc, xnmodp_crc32_iscsi((nbytes.strict_mul(8).strict_sub(33)) as u64)) }
 }
 
+/// Compute `x^n mod p` for the reflected CRC-32C polynomial.
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 CRC and AES/PMULL target features are available.
 #[inline]
 #[target_feature(enable = "crc,aes")]
 unsafe fn xnmodp_crc32_iscsi(mut n: u64) -> u32 {
-  // SAFETY: Caller guarantees CRC+AES target features are available (dispatch check).
-  // All CRC and NEON intrinsics operate on scalar/register values; no memory access.
   let mut stack = !1u64;
   let mut acc: u32;
   let mut low: u32;
 
   while n > 191 {
-    stack = (stack << 1) + (n & 1);
+    stack = stack.strict_shl(1) | (n & 1);
     n = (n >> 1).strict_sub(16);
   }
   stack = !stack;
@@ -1602,11 +1720,17 @@ unsafe fn xnmodp_crc32_iscsi(mut n: u64) -> u32 {
 
 /// Safe wrapper for CRC-32C fusion kernel (CRC+PMULL+EOR3 v9s3x2e_s3).
 #[inline]
-pub fn crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe(crc: u32, data: &[u8]) -> u32 {
+pub(in crate::checksum) fn crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies CRC + PMULL + SHA3/EOR3 before selecting this kernel.
   unsafe { crc32c_iscsi_pmull_eor3_v9s3x2e_s3(crc, data.as_ptr(), data.len()) }
 }
 
+/// Update CRC-32 (IEEE) with the three-stream PMULL/EOR3 fusion kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 CRC, AES/PMULL, and SHA3/EOR3 target features are available.
+/// When `len` is nonzero, `buf` must be valid to read `len` initialized bytes from one allocation.
 #[inline]
 #[target_feature(enable = "crc,aes,sha3")]
 unsafe fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut len: usize) -> u32 {
@@ -1623,7 +1747,7 @@ unsafe fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8
     }
 
     if (buf as usize & 8) != 0 && len >= 8 {
-      crc0 = __crc32d(crc0, ptr::read_unaligned(buf as *const u64));
+      crc0 = __crc32d(crc0, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
     }
@@ -1637,15 +1761,15 @@ unsafe fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8
       let mut crc1 = 0u32;
       let mut crc2 = 0u32;
 
-      let mut x0 = vld1q_u64(buf2 as *const u64);
-      let mut x1 = vld1q_u64(buf2.add(16) as *const u64);
-      let mut x2 = vld1q_u64(buf2.add(32) as *const u64);
-      let mut x3 = vld1q_u64(buf2.add(48) as *const u64);
-      let mut x4 = vld1q_u64(buf2.add(64) as *const u64);
-      let mut x5 = vld1q_u64(buf2.add(80) as *const u64);
-      let mut x6 = vld1q_u64(buf2.add(96) as *const u64);
-      let mut x7 = vld1q_u64(buf2.add(112) as *const u64);
-      let mut x8 = vld1q_u64(buf2.add(128) as *const u64);
+      let mut x0 = load_u64x2(buf2);
+      let mut x1 = load_u64x2(buf2.add(16));
+      let mut x2 = load_u64x2(buf2.add(32));
+      let mut x3 = load_u64x2(buf2.add(48));
+      let mut x4 = load_u64x2(buf2.add(64));
+      let mut x5 = load_u64x2(buf2.add(80));
+      let mut x6 = load_u64x2(buf2.add(96));
+      let mut x7 = load_u64x2(buf2.add(112));
+      let mut x8 = load_u64x2(buf2.add(128));
 
       let k_vals: [u64; 2] = [0x26b70c3d, 0x3f41287a];
       let mut k = vld1q_u64(k_vals.as_ptr());
@@ -1671,22 +1795,22 @@ unsafe fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8
         let y8 = clmul_lo(x8, k);
         x8 = clmul_hi(x8, k);
 
-        x0 = veor3q_u64(x0, y0, vld1q_u64(buf2 as *const u64));
-        x1 = veor3q_u64(x1, y1, vld1q_u64(buf2.add(16) as *const u64));
-        x2 = veor3q_u64(x2, y2, vld1q_u64(buf2.add(32) as *const u64));
-        x3 = veor3q_u64(x3, y3, vld1q_u64(buf2.add(48) as *const u64));
-        x4 = veor3q_u64(x4, y4, vld1q_u64(buf2.add(64) as *const u64));
-        x5 = veor3q_u64(x5, y5, vld1q_u64(buf2.add(80) as *const u64));
-        x6 = veor3q_u64(x6, y6, vld1q_u64(buf2.add(96) as *const u64));
-        x7 = veor3q_u64(x7, y7, vld1q_u64(buf2.add(112) as *const u64));
-        x8 = veor3q_u64(x8, y8, vld1q_u64(buf2.add(128) as *const u64));
+        x0 = veor3q_u64(x0, y0, load_u64x2(buf2));
+        x1 = veor3q_u64(x1, y1, load_u64x2(buf2.add(16)));
+        x2 = veor3q_u64(x2, y2, load_u64x2(buf2.add(32)));
+        x3 = veor3q_u64(x3, y3, load_u64x2(buf2.add(48)));
+        x4 = veor3q_u64(x4, y4, load_u64x2(buf2.add(64)));
+        x5 = veor3q_u64(x5, y5, load_u64x2(buf2.add(80)));
+        x6 = veor3q_u64(x6, y6, load_u64x2(buf2.add(96)));
+        x7 = veor3q_u64(x7, y7, load_u64x2(buf2.add(112)));
+        x8 = veor3q_u64(x8, y8, load_u64x2(buf2.add(128)));
 
-        crc0 = __crc32d(crc0, ptr::read_unaligned(buf as *const u64));
-        crc1 = __crc32d(crc1, ptr::read_unaligned(buf.add(klen) as *const u64));
-        crc2 = __crc32d(crc2, ptr::read_unaligned(buf.add(klen.strict_mul(2)) as *const u64));
-        crc0 = __crc32d(crc0, ptr::read_unaligned(buf.add(8) as *const u64));
-        crc1 = __crc32d(crc1, ptr::read_unaligned(buf.add(klen + 8) as *const u64));
-        crc2 = __crc32d(crc2, ptr::read_unaligned(buf.add(klen.strict_mul(2) + 8) as *const u64));
+        crc0 = __crc32d(crc0, load_u64(buf));
+        crc1 = __crc32d(crc1, load_u64(buf.add(klen)));
+        crc2 = __crc32d(crc2, load_u64(buf.add(klen.strict_mul(2))));
+        crc0 = __crc32d(crc0, load_u64(buf.add(8)));
+        crc1 = __crc32d(crc1, load_u64(buf.add(klen.strict_add(8))));
+        crc2 = __crc32d(crc2, load_u64(buf.add(klen.strict_mul(2).strict_add(8))));
 
         buf = buf.add(16);
         buf2 = buf2.add(144);
@@ -1738,15 +1862,15 @@ unsafe fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8
       x0 = clmul_hi(x0, k);
       x0 = veor3q_u64(x0, y0, x4);
 
-      crc0 = __crc32d(crc0, ptr::read_unaligned(buf as *const u64));
-      crc1 = __crc32d(crc1, ptr::read_unaligned(buf.add(klen) as *const u64));
-      crc2 = __crc32d(crc2, ptr::read_unaligned(buf.add(klen.strict_mul(2)) as *const u64));
-      crc0 = __crc32d(crc0, ptr::read_unaligned(buf.add(8) as *const u64));
-      crc1 = __crc32d(crc1, ptr::read_unaligned(buf.add(klen + 8) as *const u64));
-      crc2 = __crc32d(crc2, ptr::read_unaligned(buf.add(klen.strict_mul(2) + 8) as *const u64));
+      crc0 = __crc32d(crc0, load_u64(buf));
+      crc1 = __crc32d(crc1, load_u64(buf.add(klen)));
+      crc2 = __crc32d(crc2, load_u64(buf.add(klen.strict_mul(2))));
+      crc0 = __crc32d(crc0, load_u64(buf.add(8)));
+      crc1 = __crc32d(crc1, load_u64(buf.add(klen.strict_add(8))));
+      crc2 = __crc32d(crc2, load_u64(buf.add(klen.strict_mul(2).strict_add(8))));
 
-      let vc0 = crc_shift_iso_hdlc(crc0, klen.strict_mul(2) + blk.strict_mul(144));
-      let vc1 = crc_shift_iso_hdlc(crc1, klen + blk.strict_mul(144));
+      let vc0 = crc_shift_iso_hdlc(crc0, klen.strict_mul(2).strict_add(blk.strict_mul(144)));
+      let vc1 = crc_shift_iso_hdlc(crc1, klen.strict_add(blk.strict_mul(144)));
       let vc2 = crc_shift_iso_hdlc(crc2, blk.strict_mul(144));
       let vc = vgetq_lane_u64(veor3q_u64(vc0, vc1, vc2), 0);
 
@@ -1754,18 +1878,18 @@ unsafe fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8
       crc0 = __crc32d(crc0, vc ^ vgetq_lane_u64(x0, 1));
 
       buf = buf2;
-      len = end.offset_from(buf) as usize;
+      len = end.offset_from_unsigned(buf);
     }
 
     if len >= 32 {
-      let klen = ((len.strict_sub(8)) / 24).strict_mul(8);
+      let klen = len.strict_sub(8).strict_div(24).strict_mul(8);
       let mut crc1 = 0u32;
       let mut crc2 = 0u32;
 
       loop {
-        crc0 = __crc32d(crc0, ptr::read_unaligned(buf as *const u64));
-        crc1 = __crc32d(crc1, ptr::read_unaligned(buf.add(klen) as *const u64));
-        crc2 = __crc32d(crc2, ptr::read_unaligned(buf.add(klen.strict_mul(2)) as *const u64));
+        crc0 = __crc32d(crc0, load_u64(buf));
+        crc1 = __crc32d(crc1, load_u64(buf.add(klen)));
+        crc2 = __crc32d(crc2, load_u64(buf.add(klen.strict_mul(2))));
         buf = buf.add(8);
         len = len.strict_sub(24);
         if len < 32 {
@@ -1773,19 +1897,19 @@ unsafe fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8
         }
       }
 
-      let vc0 = crc_shift_iso_hdlc(crc0, klen.strict_mul(2) + 8);
-      let vc1 = crc_shift_iso_hdlc(crc1, klen + 8);
+      let vc0 = crc_shift_iso_hdlc(crc0, klen.strict_mul(2).strict_add(8));
+      let vc1 = crc_shift_iso_hdlc(crc1, klen.strict_add(8));
       let vc = vgetq_lane_u64(veorq_u64(vc0, vc1), 0);
 
       buf = buf.add(klen.strict_mul(2));
       crc0 = crc2;
-      crc0 = __crc32d(crc0, ptr::read_unaligned(buf as *const u64) ^ vc);
+      crc0 = __crc32d(crc0, load_u64(buf) ^ vc);
       buf = buf.add(8);
       len = len.strict_sub(8);
     }
 
     while len >= 8 {
-      crc0 = __crc32d(crc0, ptr::read_unaligned(buf as *const u64));
+      crc0 = __crc32d(crc0, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
     }
@@ -1800,24 +1924,32 @@ unsafe fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8
   } // unsafe
 }
 
+/// Return the CRC-32 (IEEE) shift factor for `nbytes`.
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 CRC and AES/PMULL target features are available.
 #[inline]
 #[target_feature(enable = "aes")]
 unsafe fn crc_shift_iso_hdlc(crc: u32, nbytes: usize) -> uint64x2_t {
-  // SAFETY: Caller guarantees AES (PMULL) is available. clmul_scalar operates on registers.
+  // SAFETY: The caller establishes CRC and AES/PMULL support; both callees operate on registers.
   unsafe { clmul_scalar(crc, xnmodp_iso_hdlc((nbytes.strict_mul(8).strict_sub(33)) as u64)) }
 }
 
+/// Compute `x^n mod p` for the reflected CRC-32 (IEEE) polynomial.
+///
+/// # Safety
+///
+/// The caller must ensure the AArch64 CRC and AES/PMULL target features are available.
 #[inline]
 #[target_feature(enable = "crc,aes")]
 unsafe fn xnmodp_iso_hdlc(mut n: u64) -> u32 {
-  // SAFETY: Caller guarantees CRC+AES target features are available (dispatch check).
-  // All CRC and NEON intrinsics operate on scalar/register values; no memory access.
   let mut stack = !1u64;
   let mut acc: u32;
   let mut low: u32;
 
   while n > 191 {
-    stack = (stack << 1) + (n & 1);
+    stack = stack.strict_shl(1) | (n & 1);
     n = (n >> 1).strict_sub(16);
   }
   stack = !stack;
@@ -1845,7 +1977,7 @@ unsafe fn xnmodp_iso_hdlc(mut n: u64) -> u32 {
 
 /// Safe wrapper for CRC-32 fusion kernel (CRC+PMULL+EOR3 v9s3x2e_s3).
 #[inline]
-pub fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe(crc: u32, data: &[u8]) -> u32 {
+pub(in crate::checksum) fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies CRC + PMULL + SHA3/EOR3 before selecting this kernel.
   unsafe { crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3(crc, data.as_ptr(), data.len()) }
 }
@@ -1866,25 +1998,34 @@ mod tests {
 
   fn make_data(len: usize) -> Vec<u8> {
     (0..len)
-      .map(|i| (i as u8).wrapping_mul(31).wrapping_add((i >> 8) as u8))
+      .map(|i| {
+        let [low, high, ..] = i.to_le_bytes();
+        low.wrapping_mul(31).wrapping_add(high)
+      })
       .collect()
   }
 
   fn assert_crc32_kernel(name: &str, kernel: fn(u32, &[u8]) -> u32, lens: &[usize]) {
     for &len in lens {
-      let data = make_data(len);
-      let expected = super::super::portable::crc32_slice16_ieee(!0, &data) ^ !0;
-      let got = kernel(!0, &data) ^ !0;
-      assert_eq!(got, expected, "{name} len={len}");
+      for offset in 0usize..16 {
+        let storage = make_data(len.strict_add(offset));
+        let data = &storage[offset..];
+        let expected = super::super::portable::crc32_slice16_ieee(!0, data) ^ !0;
+        let got = kernel(!0, data) ^ !0;
+        assert_eq!(got, expected, "{name} len={len} offset={offset}");
+      }
     }
   }
 
   fn assert_crc32c_kernel(name: &str, kernel: fn(u32, &[u8]) -> u32, lens: &[usize]) {
     for &len in lens {
-      let data = make_data(len);
-      let expected = super::super::portable::crc32c_slice16(!0, &data) ^ !0;
-      let got = kernel(!0, &data) ^ !0;
-      assert_eq!(got, expected, "{name} len={len}");
+      for offset in 0usize..16 {
+        let storage = make_data(len.strict_add(offset));
+        let data = &storage[offset..];
+        let expected = super::super::portable::crc32c_slice16(!0, data) ^ !0;
+        let got = kernel(!0, data) ^ !0;
+        assert_eq!(got, expected, "{name} len={len} offset={offset}");
+      }
     }
   }
 

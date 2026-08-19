@@ -22,9 +22,19 @@ fn cshake256_ref(function_name: &[u8], customization: &[u8], data: &[u8], out: &
 fn decode_hex_64(value: &str) -> [u8; 64] {
   assert_eq!(value.len(), 128);
   let mut out = [0u8; 64];
-  for (index, byte) in out.iter_mut().enumerate() {
-    let offset = index * 2;
-    *byte = u8::from_str_radix(&value[offset..offset + 2], 16).unwrap();
+  let mut digits = value.chars();
+  for byte in &mut out {
+    let high = digits
+      .next()
+      .expect("cSHAKE vector must contain 128 hexadecimal digits");
+    let low = digits.next().expect("cSHAKE vector must contain complete byte pairs");
+    let high = high
+      .to_digit(16)
+      .expect("cSHAKE vector must contain only hexadecimal digits");
+    let low = low
+      .to_digit(16)
+      .expect("cSHAKE vector must contain only hexadecimal digits");
+    *byte = u8::try_from(high.strict_mul(16).strict_add(low)).expect("two hexadecimal digits must fit in one byte");
   }
   out
 }
@@ -59,8 +69,8 @@ proptest! {
     let mut hasher = Cshake128::new(&function_name, &customization);
     let mut i = 0usize;
     while i < data.len() {
-      let step = (data[i] as usize % 97) + 1;
-      let end = core::cmp::min(data.len(), i + step);
+      let step = (usize::from(data[i]) % 97).strict_add(1);
+      let end = core::cmp::min(data.len(), i.strict_add(step));
       hasher.update(&data[i..end]);
       i = end;
     }
@@ -99,8 +109,8 @@ proptest! {
     let mut hasher = Cshake256::new(&function_name, &customization);
     let mut i = 0usize;
     while i < data.len() {
-      let step = (data[i] as usize % 97) + 1;
-      let end = core::cmp::min(data.len(), i + step);
+      let step = (usize::from(data[i]) % 97).strict_add(1);
+      let end = core::cmp::min(data.len(), i.strict_add(step));
       hasher.update(&data[i..end]);
       i = end;
     }

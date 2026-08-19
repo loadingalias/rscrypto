@@ -57,7 +57,7 @@ run_workspace_doctests() {
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "Running doctests for entire workspace"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  cargo test --workspace --doc --all-features
+  cargo test --locked --workspace --doc --all-features
 }
 
 run_crate_doctests() {
@@ -77,7 +77,7 @@ run_crate_doctests() {
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   for crate in "${crates[@]}"; do
-    cargo test -p "$crate" --doc --all-features
+    cargo test --locked -p "$crate" --doc --all-features
   done
 }
 
@@ -135,21 +135,21 @@ if [ ${#CRATES[@]} -gt 0 ]; then
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   if [ "$HAS_NEXTEST" = true ]; then
     # shellcheck disable=SC2086
-    cargo nextest run $CRATE_FLAGS -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
+    cargo nextest run --locked $CRATE_FLAGS -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
     run_crate_doctests "${CRATES[@]}"
   else
     # shellcheck disable=SC2086
-    cargo test $CRATE_FLAGS --all-features "${CARGO_TEST_TARGET_ARGS[@]:+${CARGO_TEST_TARGET_ARGS[@]}}"
+    cargo test --locked $CRATE_FLAGS --all-features "${CARGO_TEST_TARGET_ARGS[@]:+${CARGO_TEST_TARGET_ARGS[@]}}"
   fi
 elif [ "$ALL_FLAG" = true ]; then
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "Testing entire workspace"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   if [ "$HAS_NEXTEST" = true ]; then
-    cargo nextest run --workspace -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
+    cargo nextest run --locked --workspace -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
     run_workspace_doctests
   else
-    cargo test --workspace --all-features "${CARGO_TEST_TARGET_ARGS[@]:+${CARGO_TEST_TARGET_ARGS[@]}}"
+    cargo test --locked --workspace --all-features "${CARGO_TEST_TARGET_ARGS[@]:+${CARGO_TEST_TARGET_ARGS[@]}}"
   fi
 else
   # Rail-scoped (default): cargo-rail planner selects the affected crates.
@@ -173,11 +173,11 @@ else
           for crate in $affected; do
             CRATE_FLAGS+=(-p "$crate")
           done
-          cargo nextest run "${CRATE_FLAGS[@]}" -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
+          cargo nextest run --locked "${CRATE_FLAGS[@]}" -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
           run_rail_scoped_doctests
         else
           for crate in $affected; do
-            cargo test -p "$crate" --all-features "${CARGO_TEST_TARGET_ARGS[@]:+${CARGO_TEST_TARGET_ARGS[@]}}"
+            cargo test --locked -p "$crate" --all-features "${CARGO_TEST_TARGET_ARGS[@]:+${CARGO_TEST_TARGET_ARGS[@]}}"
           done
         fi
         exit 0
@@ -186,9 +186,9 @@ else
   esac
 
   if [ "$HAS_NEXTEST" = true ]; then
-    cargo nextest run --workspace -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
+    cargo nextest run --locked --workspace -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
     run_workspace_doctests
   else
-    cargo test --workspace --all-features "${CARGO_TEST_TARGET_ARGS[@]:+${CARGO_TEST_TARGET_ARGS[@]}}"
+    cargo test --locked --workspace --all-features "${CARGO_TEST_TARGET_ARGS[@]:+${CARGO_TEST_TARGET_ARGS[@]}}"
   fi
 fi

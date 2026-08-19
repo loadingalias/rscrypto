@@ -123,8 +123,16 @@ fn parse_force_env() -> Crc32Force {
 
 #[inline]
 #[must_use]
-#[allow(unused_variables)]
 fn clamp_force_to_caps(requested: Crc32Force, caps: Caps) -> Crc32Force {
+  #[cfg(not(any(
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "riscv64",
+    target_arch = "s390x",
+    target_arch = "x86_64"
+  )))]
+  let _ = caps;
+
   match requested {
     Crc32Force::Auto | Crc32Force::Reference | Crc32Force::Portable => requested,
     Crc32Force::Hwcrc => {
@@ -267,7 +275,7 @@ fn config(caps: Caps) -> Crc32Config {
 /// platform capabilities.
 #[inline]
 #[must_use]
-pub fn get() -> Crc32Config {
+pub(super) fn get() -> Crc32Config {
   #[cfg(feature = "std")]
   {
     use std::sync::OnceLock;

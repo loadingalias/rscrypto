@@ -1,7 +1,7 @@
 use rscrypto::{RsaPublicKey, RsaPublicKeyPolicy};
 use rscrypto_fuzz::{FuzzInput, some_or_return};
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let mode = some_or_return!(input.byte());
   let raw_der = input.rest();
@@ -13,7 +13,7 @@ pub fn run(data: &[u8]) {
     raw_der
   };
 
-  let parsed = match mode % 4 {
+  let parsed = match mode.rem_euclid(4) {
     0 => RsaPublicKey::from_pkcs1_der(der),
     1 => RsaPublicKey::from_spki_der(der),
     2 => RsaPublicKey::from_pkcs1_der_with_policy(der, &RsaPublicKeyPolicy::modern_verification()),
@@ -51,7 +51,7 @@ fn generated_public_key_der(mode: u8, control: &[u8]) -> Option<Vec<u8>> {
       Some(der)
     }
     Some(b'L') => Some(tlv_with_leading_zero_long_len(&public_key_der_for_mode(mode, &pkcs1))),
-    Some(b'U') if mode % 2 == 1 => Some(spki_public_key_der_with_unused_bits(&pkcs1)),
+    Some(b'U') if mode.rem_euclid(2) == 1 => Some(spki_public_key_der_with_unused_bits(&pkcs1)),
     Some(b'N') if mode.is_multiple_of(2) => Some(pkcs1_public_key_der_with_noncanonical_exponent()),
     _ => None,
   }
@@ -122,7 +122,7 @@ fn algorithm_identifier(algorithm_oid: &[u8], params: Option<&[u8]>) -> Vec<u8> 
 fn integer_unsigned(value: &[u8]) -> Vec<u8> {
   let first_nonzero = value.iter().position(|&byte| byte != 0);
   let value = first_nonzero.map_or(&[0u8][..], |index| &value[index..]);
-  let mut encoded = Vec::with_capacity(value.len() + usize::from(value[0] & 0x80 != 0));
+  let mut encoded = Vec::with_capacity(value.len().strict_add(usize::from(value[0] & 0x80 != 0)));
   if value[0] & 0x80 != 0 {
     encoded.push(0);
   }
@@ -131,7 +131,8 @@ fn integer_unsigned(value: &[u8]) -> Vec<u8> {
 }
 
 fn tlv(tag: u8, value: &[u8]) -> Vec<u8> {
-  let mut out = Vec::with_capacity(1 + der_len(value.len()).len() + value.len());
+  let encoded_len = 1usize.strict_add(der_len(value.len()).len()).strict_add(value.len());
+  let mut out = Vec::with_capacity(encoded_len);
   out.push(tag);
   out.extend_from_slice(&der_len(value.len()));
   out.extend_from_slice(value);
@@ -146,7 +147,8 @@ fn tlv_with_leading_zero_long_len(der: &[u8]) -> Vec<u8> {
 
   let mut out = Vec::with_capacity(der.len().strict_add(1));
   out.push(tag);
-  out.push(0x80 | (len_len.strict_add(1) as u8));
+  let encoded_len_len = u8::try_from(len_len.strict_add(1)).expect("DER length-of-length fits one byte");
+  out.push(0x80 | encoded_len_len);
   out.push(0);
   out.extend_from_slice(&der[2..]);
   out
@@ -154,14 +156,18 @@ fn tlv_with_leading_zero_long_len(der: &[u8]) -> Vec<u8> {
 
 fn der_len(len: usize) -> Vec<u8> {
   if len < 128 {
-    return vec![len as u8];
+    return vec![u8::try_from(len).expect("short-form DER length is below 128")];
   }
 
   let bytes = len.to_be_bytes();
-  let first_nonzero = bytes.iter().position(|&byte| byte != 0).unwrap();
+  let first_nonzero = bytes
+    .iter()
+    .position(|&byte| byte != 0)
+    .expect("long-form DER length is nonzero");
   let len_bytes = &bytes[first_nonzero..];
-  let mut out = Vec::with_capacity(1 + len_bytes.len());
-  out.push(0x80 | len_bytes.len() as u8);
+  let mut out = Vec::with_capacity(1usize.strict_add(len_bytes.len()));
+  let len_len = u8::try_from(len_bytes.len()).expect("usize DER length uses at most 16 bytes");
+  out.push(0x80 | len_len);
   out.extend_from_slice(len_bytes);
   out
 }
@@ -171,21 +177,21 @@ fn der_null() -> Vec<u8> {
 }
 
 fn hex_to_vec(hex: &str) -> Vec<u8> {
-  let mut out = Vec::with_capacity(hex.len() / 2);
+  let mut out = Vec::with_capacity(hex.len().div_euclid(2));
   for chunk in hex.as_bytes().chunks_exact(2) {
-    let hi = hex_value(chunk[0]);
-    let lo = hex_value(chunk[1]);
-    out.push((hi << 4) | lo);
+    let hi = hex_value(chunk[0]).expect("RSA modulus fixture must contain hexadecimal digits");
+    let lo = hex_value(chunk[1]).expect("RSA modulus fixture must contain hexadecimal digits");
+    out.push(hi.strict_shl(4) | lo);
   }
   out
 }
 
-fn hex_value(byte: u8) -> u8 {
+fn hex_value(byte: u8) -> Option<u8> {
   match byte {
-    b'0'..=b'9' => byte - b'0',
-    b'a'..=b'f' => byte - b'a' + 10,
-    b'A'..=b'F' => byte - b'A' + 10,
-    _ => 0,
+    b'0'..=b'9' => Some(byte.strict_sub(b'0')),
+    b'a'..=b'f' => Some(byte.strict_sub(b'a').strict_add(10)),
+    b'A'..=b'F' => Some(byte.strict_sub(b'A').strict_add(10)),
+    _ => None,
   }
 }
 

@@ -11,6 +11,16 @@
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
+#[inline(always)]
+const fn u64_to_i64_bits(value: u64) -> i64 {
+  i64::from_ne_bytes(value.to_ne_bytes())
+}
+
+#[inline(always)]
+const fn i64_to_u64_bits(value: i64) -> u64 {
+  u64::from_ne_bytes(value.to_ne_bytes())
+}
+
 #[cfg(target_arch = "x86_64")]
 macro_rules! rol {
   ($value:expr, $left:literal) => {{ _mm_rol_epi64::<$left>($value) }};
@@ -21,12 +31,12 @@ macro_rules! chi {
   ($a:expr, $b:expr, $c:expr) => {{ _mm_ternarylogic_epi64($a, $b, $c, 0xD2) }};
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "ml-kem"))]
 macro_rules! rol4 {
   ($value:expr, $left:literal) => {{ _mm256_rol_epi64::<$left>($value) }};
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "ml-kem"))]
 macro_rules! chi4 {
   ($a:expr, $b:expr, $c:expr) => {{ _mm256_ternarylogic_epi64($a, $b, $c, 0xD2) }};
 }
@@ -42,14 +52,14 @@ macro_rules! chi4 {
 unsafe fn keccakf_x86_avx512_x2_impl(state_a: &mut [u64; 25], state_b: &mut [u64; 25]) {
   macro_rules! load {
     ($i:literal) => {
-      _mm_set_epi64x(state_b[$i] as i64, state_a[$i] as i64)
+      _mm_set_epi64x(u64_to_i64_bits(state_b[$i]), u64_to_i64_bits(state_a[$i]))
     };
   }
 
   macro_rules! store {
     ($i:literal, $value:expr) => {{
-      state_a[$i] = _mm_extract_epi64::<0>($value) as u64;
-      state_b[$i] = _mm_extract_epi64::<1>($value) as u64;
+      state_a[$i] = i64_to_u64_bits(_mm_extract_epi64::<0>($value));
+      state_b[$i] = i64_to_u64_bits(_mm_extract_epi64::<1>($value));
     }};
   }
 
@@ -186,7 +196,7 @@ unsafe fn keccakf_x86_avx512_x2_impl(state_a: &mut [u64; 25], state_b: &mut [u64
     a23 = chi!(b23, b24, b20);
     a24 = chi!(b24, b20, b21);
 
-    a0 = xor!(a0, _mm_set1_epi64x(rc as i64));
+    a0 = xor!(a0, _mm_set1_epi64x(u64_to_i64_bits(rc)));
   }
 
   store!(0, a0);
@@ -235,7 +245,7 @@ pub(crate) unsafe fn keccakf_x86_avx512_x2(state_a: &mut [u64; 25], state_b: &mu
 /// # Safety
 ///
 /// Caller must ensure `avx512f`, `avx512vl`, and `sse4.1` CPU features are available.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "ml-kem"))]
 #[target_feature(enable = "avx512f,avx512vl,sse4.1")]
 #[inline]
 unsafe fn keccakf_x86_avx512_x4_impl(
@@ -247,20 +257,20 @@ unsafe fn keccakf_x86_avx512_x4_impl(
   macro_rules! load {
     ($i:literal) => {
       _mm256_set_epi64x(
-        state_d[$i] as i64,
-        state_c[$i] as i64,
-        state_b[$i] as i64,
-        state_a[$i] as i64,
+        u64_to_i64_bits(state_d[$i]),
+        u64_to_i64_bits(state_c[$i]),
+        u64_to_i64_bits(state_b[$i]),
+        u64_to_i64_bits(state_a[$i]),
       )
     };
   }
 
   macro_rules! store {
     ($i:literal, $value:expr) => {{
-      state_a[$i] = _mm256_extract_epi64::<0>($value) as u64;
-      state_b[$i] = _mm256_extract_epi64::<1>($value) as u64;
-      state_c[$i] = _mm256_extract_epi64::<2>($value) as u64;
-      state_d[$i] = _mm256_extract_epi64::<3>($value) as u64;
+      state_a[$i] = i64_to_u64_bits(_mm256_extract_epi64::<0>($value));
+      state_b[$i] = i64_to_u64_bits(_mm256_extract_epi64::<1>($value));
+      state_c[$i] = i64_to_u64_bits(_mm256_extract_epi64::<2>($value));
+      state_d[$i] = i64_to_u64_bits(_mm256_extract_epi64::<3>($value));
     }};
   }
 
@@ -397,7 +407,7 @@ unsafe fn keccakf_x86_avx512_x4_impl(
     a23 = chi4!(b23, b24, b20);
     a24 = chi4!(b24, b20, b21);
 
-    a0 = xor!(a0, _mm256_set1_epi64x(rc as i64));
+    a0 = xor!(a0, _mm256_set1_epi64x(u64_to_i64_bits(rc)));
   }
 
   store!(0, a0);
@@ -432,7 +442,7 @@ unsafe fn keccakf_x86_avx512_x4_impl(
 /// # Safety
 ///
 /// Caller must ensure `avx512f`, `avx512vl`, and `sse4.1` CPU features are available.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "ml-kem"))]
 #[inline]
 pub(crate) unsafe fn keccakf_x86_avx512_x4(
   state_a: &mut [u64; 25],

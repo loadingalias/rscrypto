@@ -13,15 +13,13 @@
 //!
 //! Used via [`define_crc_property_tests!`] macro in algorithm modules.
 
-#![cfg_attr(miri, allow(dead_code))]
-
 use crate::traits::{Checksum, ChecksumCombine};
 
 /// Generic test harness for CRC algorithms.
 ///
 /// Provides a suite of property-based tests that verify fundamental CRC invariants.
 /// These tests can be run against any type implementing `Checksum + ChecksumCombine`.
-pub struct CrcTestHarness<C> {
+pub(in crate::checksum) struct CrcTestHarness<C> {
   _phantom: core::marker::PhantomData<C>,
 }
 
@@ -36,8 +34,8 @@ where
   ///
   /// This is the fundamental combine property that enables parallel CRC computation.
   #[inline]
-  pub fn test_combine_property(data: &[u8], split: usize) {
-    let split = if data.is_empty() { 0 } else { split % data.len() };
+  pub(in crate::checksum) fn test_combine_property(data: &[u8], split: usize) {
+    let split = split.checked_rem(data.len()).unwrap_or(0);
     let (a, b) = data.split_at(split);
 
     let crc_a = C::checksum(a);
@@ -49,9 +47,9 @@ where
   }
 
   /// Test combine property at all possible split points for a given buffer.
+  #[cfg(feature = "crc64")]
   #[inline]
-  #[cfg_attr(test, allow(dead_code))]
-  pub fn test_combine_all_splits(data: &[u8]) {
+  pub(in crate::checksum) fn test_combine_all_splits(data: &[u8]) {
     let full = C::checksum(data);
 
     for split in 0..=data.len() {
@@ -66,7 +64,7 @@ where
 
   /// Test combine with empty second part (identity case).
   #[inline]
-  pub fn test_combine_empty_suffix(data: &[u8]) {
+  pub(in crate::checksum) fn test_combine_empty_suffix(data: &[u8]) {
     let crc_data = C::checksum(data);
     let crc_empty = C::checksum(&[]);
     let combined = C::combine(crc_data, crc_empty, 0);
@@ -76,7 +74,7 @@ where
 
   /// Test combine with empty first part.
   #[inline]
-  pub fn test_combine_empty_prefix(data: &[u8]) {
+  pub(in crate::checksum) fn test_combine_empty_prefix(data: &[u8]) {
     let crc_empty = C::checksum(&[]);
     let crc_data = C::checksum(data);
     let combined = C::combine(crc_empty, crc_data, data.len());
@@ -87,9 +85,9 @@ where
   // Streaming Consistency Tests
 
   /// Test that streaming updates produce the same result as one-shot.
+  #[cfg(feature = "crc64")]
   #[inline]
-  #[cfg_attr(test, allow(dead_code))]
-  pub fn test_streaming_equals_oneshot(data: &[u8]) {
+  pub(in crate::checksum) fn test_streaming_equals_oneshot(data: &[u8]) {
     let oneshot = C::checksum(data);
 
     let mut hasher = C::new();
@@ -101,7 +99,7 @@ where
 
   /// Test streaming with byte-at-a-time updates.
   #[inline]
-  pub fn test_streaming_byte_at_a_time(data: &[u8]) {
+  pub(in crate::checksum) fn test_streaming_byte_at_a_time(data: &[u8]) {
     let oneshot = C::checksum(data);
 
     let mut hasher = C::new();
@@ -115,7 +113,7 @@ where
 
   /// Test streaming across a specific chunk size boundary.
   #[inline]
-  pub fn test_streaming_chunked(data: &[u8], chunk_size: usize) {
+  pub(in crate::checksum) fn test_streaming_chunked(data: &[u8], chunk_size: usize) {
     if chunk_size == 0 {
       return;
     }
@@ -133,7 +131,7 @@ where
 
   /// Test that finalize is idempotent (can be called multiple times).
   #[inline]
-  pub fn test_finalize_idempotent(data: &[u8]) {
+  pub(in crate::checksum) fn test_finalize_idempotent(data: &[u8]) {
     let mut hasher = C::new();
     hasher.update(data);
 
@@ -149,7 +147,7 @@ where
 
   /// Test that reset returns the hasher to its initial state.
   #[inline]
-  pub fn test_reset(data: &[u8]) {
+  pub(in crate::checksum) fn test_reset(data: &[u8]) {
     let fresh = C::checksum(data);
 
     let mut hasher = C::new();
@@ -170,7 +168,7 @@ where
   /// 2. Computing second half separately
   /// 3. Combining the results
   #[inline]
-  pub fn test_streaming_and_combine(data: &[u8]) {
+  pub(in crate::checksum) fn test_streaming_and_combine(data: &[u8]) {
     if data.is_empty() {
       return;
     }
@@ -197,7 +195,7 @@ where
 
   /// Test empty input.
   #[inline]
-  pub fn test_empty_input() {
+  pub(in crate::checksum) fn test_empty_input() {
     let oneshot = C::checksum(&[]);
 
     let hasher = C::new();
@@ -208,7 +206,7 @@ where
 
   /// Test single byte inputs for all byte values.
   #[inline]
-  pub fn test_single_bytes() {
+  pub(in crate::checksum) fn test_single_bytes() {
     for byte in 0u8..=255 {
       let oneshot = C::checksum(&[byte]);
 
@@ -302,7 +300,7 @@ macro_rules! define_crc_property_tests {
 /// Used by all CRC cross-check test modules to exercise edge cases around
 /// lane widths, cache line boundaries, and page boundaries.
 #[cfg(not(miri))]
-pub const TEST_LENGTHS: &[usize] = &[
+pub(in crate::checksum) const TEST_LENGTHS: &[usize] = &[
   0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, // Tiny
   16, 17, 31, 32, 33, 63, 64, 65, // SSE/NEON boundaries
   127, 128, 129, 255, 256, 257, // Cache line boundaries
@@ -311,25 +309,23 @@ pub const TEST_LENGTHS: &[usize] = &[
   8192, 16384, 32768, 65536, // Large buffers
 ];
 #[cfg(miri)]
-pub const TEST_LENGTHS: &[usize] = &[
+pub(in crate::checksum) const TEST_LENGTHS: &[usize] = &[
   0, 1, 2, 3, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257, 511, 512, 513, 1023, 1024, 1025,
 ];
 
 /// Prime-sized chunk patterns for streaming cross-check tests.
 #[cfg(not(miri))]
-pub const STREAMING_CHUNK_SIZES: &[usize] = &[1, 3, 7, 13, 17, 31, 37, 61, 127, 251];
+pub(in crate::checksum) const STREAMING_CHUNK_SIZES: &[usize] = &[1, 3, 7, 13, 17, 31, 37, 61, 127, 251];
 #[cfg(miri)]
-pub const STREAMING_CHUNK_SIZES: &[usize] = &[1, 3, 7, 13, 31, 61];
+pub(in crate::checksum) const STREAMING_CHUNK_SIZES: &[usize] = &[1, 3, 7, 13, 31, 61];
 
 /// Generate deterministic test data of a given length.
 ///
 /// Uses a simple mixing function to produce non-trivial byte patterns
 /// that avoid accidentally passing due to regularity.
-#[cfg_attr(test, allow(dead_code))]
-pub fn generate_test_data(len: usize) -> alloc::vec::Vec<u8> {
-  (0..len)
-    .map(|i| (i as u64).wrapping_mul(17).wrapping_add(i as u64) as u8)
-    .collect()
+#[cfg(any(feature = "crc16", feature = "crc24"))]
+pub(in crate::checksum) fn generate_test_data(len: usize) -> alloc::vec::Vec<u8> {
+  (0u8..=u8::MAX).cycle().take(len).map(|i| i.wrapping_mul(18)).collect()
 }
 
 // Tests for the test harness itself

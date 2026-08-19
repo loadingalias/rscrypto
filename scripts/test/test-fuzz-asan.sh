@@ -11,6 +11,7 @@ source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/fuzz-packages.sh"
 
 maybe_disable_sccache
+activate_nightly_toolchain
 
 PACKAGE_SCOPE="full"
 
@@ -85,6 +86,7 @@ for package_dir in "${SELECTED_FUZZ_PACKAGES[@]:+${SELECTED_FUZZ_PACKAGES[@]}}";
 
   echo "ASan corpus replay package: $(fuzz_package_label "$package_dir")"
   if ! cargo test \
+    --locked \
     -Zbuild-std \
     --target "$(fuzz_host_target)" \
     --manifest-path "$package_dir/Cargo.toml" \

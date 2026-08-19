@@ -16,7 +16,7 @@ pub(crate) type CompressBlocksFn = fn(&mut [u32; 8], &[u8]);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 #[non_exhaustive]
-pub enum Sha256KernelId {
+pub(crate) enum Sha256KernelId {
   Portable = 0,
   #[cfg(target_arch = "x86_64")]
   X86Sha = 1,
@@ -34,7 +34,7 @@ impl Sha256KernelId {
   #[cfg(any(test, feature = "diag"))]
   #[inline]
   #[must_use]
-  pub const fn as_str(self) -> &'static str {
+  pub(crate) const fn as_str(self) -> &'static str {
     match self {
       Self::Portable => "portable",
       #[cfg(target_arch = "x86_64")]
@@ -52,7 +52,7 @@ impl Sha256KernelId {
 }
 
 #[cfg(test)]
-pub const ALL: &[Sha256KernelId] = &[
+pub(crate) const ALL: &[Sha256KernelId] = &[
   Sha256KernelId::Portable,
   #[cfg(target_arch = "x86_64")]
   Sha256KernelId::X86Sha,
@@ -120,7 +120,7 @@ pub(crate) fn compress_blocks_fn(id: Sha256KernelId) -> CompressBlocksFn {
 
 #[inline]
 #[must_use]
-pub const fn required_caps(id: Sha256KernelId) -> Caps {
+pub(crate) const fn required_caps(id: Sha256KernelId) -> Caps {
   match id {
     Sha256KernelId::Portable => Caps::NONE,
     #[cfg(target_arch = "x86_64")]
@@ -171,11 +171,11 @@ pub(crate) const COMPILE_TIME_HW: bool = cfg!(not(miri))
 pub(crate) fn compile_time_best() -> CompressBlocksFn {
   #[cfg(miri)]
   {
-    return Sha256::compress_blocks_portable;
+    Sha256::compress_blocks_portable
   }
   #[cfg(all(not(miri), target_arch = "x86_64", target_feature = "sha", target_feature = "sse4.1"))]
   {
-    return compress_blocks_x86_sha;
+    compress_blocks_x86_sha
   }
   #[cfg(all(
     not(miri),
@@ -183,7 +183,7 @@ pub(crate) fn compile_time_best() -> CompressBlocksFn {
     any(target_os = "macos", target_feature = "sha2")
   ))]
   {
-    return compress_blocks_aarch64_sha2;
+    compress_blocks_aarch64_sha2
   }
   #[cfg(all(
     not(miri),
@@ -191,18 +191,28 @@ pub(crate) fn compile_time_best() -> CompressBlocksFn {
     target_feature = "zknh"
   ))]
   {
-    return compress_blocks_riscv_zknh;
+    compress_blocks_riscv_zknh
   }
   #[cfg(all(not(miri), target_arch = "wasm32", target_feature = "simd128"))]
   {
-    return compress_blocks_wasm_simd128;
+    compress_blocks_wasm_simd128
   }
-  #[allow(unreachable_code)]
-  Sha256::compress_blocks_portable
+  #[cfg(all(
+    not(miri),
+    not(any(
+      all(target_arch = "x86_64", target_feature = "sha", target_feature = "sse4.1"),
+      all(target_arch = "aarch64", any(target_os = "macos", target_feature = "sha2")),
+      all(any(target_arch = "riscv64", target_arch = "riscv32"), target_feature = "zknh"),
+      all(target_arch = "wasm32", target_feature = "simd128")
+    ))
+  ))]
+  {
+    Sha256::compress_blocks_portable
+  }
 }
 
 /// Kernel name for the compile-time-best path (introspection).
-#[cfg(any(test, feature = "diag"))]
+#[cfg(feature = "diag")]
 pub(crate) const COMPILE_TIME_NAME: &str = if cfg!(miri) {
   "portable"
 } else if cfg!(all(

@@ -44,7 +44,7 @@ fn sequential_chunks(data: &[u8], lens: [usize; 3]) -> [&[u8]; 3] {
 }
 
 fn reader_step<R: Read>(reader: &mut R, seen: &mut Vec<u8>, control: u8) -> io::Result<()> {
-  match control % 3 {
+  match control.rem_euclid(3) {
     0 => {
       let mut buf = vec![0u8; scalar_len(control)];
       let n = reader.read(&mut buf)?;
@@ -68,7 +68,9 @@ fn reader_step<R: Read>(reader: &mut R, seen: &mut Vec<u8>, control: u8) -> io::
     }
     _ => {
       let n = reader.read(&mut [])?;
-      assert_eq!(n, 0, "zero-length read must report zero");
+      if n != 0 {
+        return Err(io::Error::other("zero-length read returned a nonzero length"));
+      }
     }
   }
 
@@ -82,7 +84,7 @@ fn writer_step<W: Write>(
   accepted: &mut Vec<u8>,
   control: u8,
 ) -> io::Result<()> {
-  match control % 4 {
+  match control.rem_euclid(4) {
     0 => {
       let request = scalar_len(control).min(data.len().strict_sub(*cursor));
       let end = cursor.strict_add(request);
@@ -103,7 +105,9 @@ fn writer_step<W: Write>(
     }
     2 => {
       let n = writer.write(&[])?;
-      assert_eq!(n, 0, "zero-length write must report zero");
+      if n != 0 {
+        return Err(io::Error::other("zero-length write returned a nonzero length"));
+      }
     }
     _ => writer.flush()?,
   }
@@ -275,7 +279,7 @@ fn fuzz_digest_writer(data: &[u8], ops: &[u8], max_per_call: usize) {
   assert_eq!(digest, Blake3::digest(data), "digest writer final mismatch");
 }
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let reader_limit = usize::from(some_or_return!(input.byte()) % 32).strict_add(1);
   let writer_limit = usize::from(some_or_return!(input.byte()) % 32).strict_add(1);

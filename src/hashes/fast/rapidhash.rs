@@ -2,8 +2,6 @@
 //!
 //! The portable, safe Rust implementation is the sole semantic authority.
 
-#![allow(clippy::indexing_slicing)]
-
 use crate::traits::FastHash;
 
 mod stream;
@@ -89,32 +87,49 @@ impl FastHash for RapidHash64 {
 
 #[inline(always)]
 const fn read_u32_le(input: &[u8], offset: usize) -> u32 {
-  let (_, tail) = input.split_at(offset);
+  let Some((_, tail)) = input.split_at_checked(offset) else {
+    return 0;
+  };
   let Some(bytes) = tail.first_chunk::<4>() else {
-    panic!("RapidHash u32 read exceeds input");
+    return 0;
   };
   u32::from_le_bytes(*bytes)
 }
 
 #[inline(always)]
 const fn read_u64_le(input: &[u8], offset: usize) -> u64 {
-  let (_, tail) = input.split_at(offset);
+  let Some((_, tail)) = input.split_at_checked(offset) else {
+    return 0;
+  };
   let Some(bytes) = tail.first_chunk::<8>() else {
-    panic!("RapidHash u64 read exceeds input");
+    return 0;
   };
   u64::from_le_bytes(*bytes)
 }
 
 #[inline(always)]
+const fn u128_words(value: u128) -> (u64, u64) {
+  let bytes = value.to_le_bytes();
+  let low = u64::from_le_bytes([
+    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+  ]);
+  let high = u64::from_le_bytes([
+    bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+  ]);
+  (low, high)
+}
+
+#[inline(always)]
 const fn rapid_mum(a: u64, b: u64) -> (u64, u64) {
   let product = (a as u128).wrapping_mul(b as u128);
-  (product as u64, (product >> 64) as u64)
+  u128_words(product)
 }
 
 #[inline(always)]
 const fn rapid_mix(a: u64, b: u64) -> u64 {
   let product = (a as u128).wrapping_mul(b as u128);
-  (product as u64) ^ ((product >> 64) as u64)
+  let (low, high) = u128_words(product);
+  low ^ high
 }
 
 #[inline(always)]
@@ -192,12 +207,7 @@ const fn rapidhash_core_large(data: &[u8], mut seed: u64, secrets: &[u64; 7]) ->
       // Validate the span once so the fixed-size safe reads need no per-load bounds checks.
       let (_, remaining) = data.split_at(offset);
       let (block, _) = remaining.split_at(224);
-      let Some(first) = block.first_chunk::<112>() else {
-        panic!("RapidHash block is shorter than 112 bytes");
-      };
-      let Some(second) = block.last_chunk::<112>() else {
-        panic!("RapidHash block is shorter than 224 bytes");
-      };
+      let (first, second) = block.split_at(112);
       seed = rapid_mix(read_u64_le(first, 0) ^ secrets[0], read_u64_le(first, 8) ^ seed);
       see1 = rapid_mix(read_u64_le(first, 16) ^ secrets[1], read_u64_le(first, 24) ^ see1);
       see2 = rapid_mix(read_u64_le(first, 32) ^ secrets[2], read_u64_le(first, 40) ^ see2);
@@ -218,9 +228,7 @@ const fn rapidhash_core_large(data: &[u8], mut seed: u64, secrets: &[u64; 7]) ->
 
     if data.len().strict_sub(offset) > 112 {
       let (_, remaining) = data.split_at(offset);
-      let Some(block) = remaining.first_chunk::<112>() else {
-        panic!("RapidHash block is shorter than 112 bytes");
-      };
+      let (block, _) = remaining.split_at(112);
       seed = rapid_mix(read_u64_le(block, 0) ^ secrets[0], read_u64_le(block, 8) ^ seed);
       see1 = rapid_mix(read_u64_le(block, 16) ^ secrets[1], read_u64_le(block, 24) ^ see1);
       see2 = rapid_mix(read_u64_le(block, 32) ^ secrets[2], read_u64_le(block, 40) ^ see2);
@@ -303,7 +311,9 @@ mod tests {
   const CONST_SEEDED: u64 = RapidHash64::hash_with_seed(42, b"const RapidHash");
 
   fn data(len: usize) -> Vec<u8> {
-    (0..len).map(|i| i.wrapping_mul(131).wrapping_add(17) as u8).collect()
+    (0..len)
+      .map(|i| i.wrapping_mul(131).wrapping_add(17).to_le_bytes()[0])
+      .collect()
   }
 
   fn reference(seed: u64, data: &[u8]) -> u64 {

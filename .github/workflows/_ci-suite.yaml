@@ -67,6 +67,20 @@ jobs:
       enable_rust_cache: true
       operation: quality
 
+  msrv:
+    name: MSRV
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+      timeout_minutes: 30
+      cache_key: ${{ inputs.cache_key_prefix }}-msrv
+      tools_mode: none
+      toolchain_contract: msrv
+      toolchain_components: ""
+      enable_magic_cache: true
+      enable_rust_cache: true
+      operation: msrv
+
   cargo-graph:
     if: ${{ inputs.include_cargo_graph }}
     name: Cargo Graph Assurance
@@ -126,6 +140,7 @@ jobs:
       timeout_minutes: 120
       cache_key: ${{ inputs.cache_key_prefix }}-ibm-s390x
       tools_mode: none
+      toolchain_contract: nightly
       toolchain_components: "clippy, rustfmt"
       enable_magic_cache: false
       enable_rust_cache: true
@@ -140,6 +155,7 @@ jobs:
       timeout_minutes: 120
       cache_key: ${{ inputs.cache_key_prefix }}-ibm-power10
       tools_mode: none
+      toolchain_contract: nightly
       toolchain_components: "clippy, rustfmt"
       enable_magic_cache: false
       enable_rust_cache: true
@@ -154,6 +170,7 @@ jobs:
       timeout_minutes: 30
       cache_key: ${{ inputs.cache_key_prefix }}-platform-amx-test-nodebug
       tools_mode: none
+      toolchain_contract: nightly
       toolchain_components: "rustfmt"
       enable_magic_cache: true
       enable_rust_cache: true
@@ -167,6 +184,7 @@ jobs:
       timeout_minutes: 90
       cache_key: ${{ inputs.cache_key_prefix }}-cross-targets
       tools_mode: none
+      toolchain_contract: nightly
       toolchain_components: "clippy, rust-src"
       enable_magic_cache: true
       enable_rust_cache: true

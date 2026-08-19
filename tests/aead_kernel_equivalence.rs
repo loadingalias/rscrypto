@@ -21,7 +21,7 @@ use rscrypto::{
 };
 
 /// Function pointer type for ChaCha20 XOR-keystream kernels.
-type XorKeystreamFn = fn(&[u8; 32], u32, &[u8; 12], &mut [u8]);
+type XorKeystreamFn = unsafe fn(&[u8; 32], u32, &[u8; 12], &mut [u8]);
 
 #[derive(Clone, Copy)]
 struct Backend {
@@ -119,7 +119,8 @@ fn all_chacha20_backends_match_portable_at_counter_zero() {
 
     for backend in runnable_backends() {
       let mut actual = plain.clone();
-      (backend.xor_keystream)(&key, 0, &nonce, &mut actual);
+      // SAFETY: `runnable_backends` proves the exact capability set; `TEST_SIZES` uses at most 65 blocks from zero.
+      unsafe { (backend.xor_keystream)(&key, 0, &nonce, &mut actual) };
       assert_eq!(
         actual, expected,
         "ChaCha20 backend {} diverged from portable at len={len}, counter=0",
@@ -152,7 +153,9 @@ fn all_chacha20_backends_match_portable_at_arbitrary_counters() {
 
       for backend in runnable_backends() {
         let mut actual = plain.clone();
-        (backend.xor_keystream)(&key, counter, &nonce, &mut actual);
+        // SAFETY: `runnable_backends` proves the exact capability set; at most 16 blocks from the largest tested
+        // counter, 0x1000_0000, stays within the `u32` counter range.
+        unsafe { (backend.xor_keystream)(&key, counter, &nonce, &mut actual) };
         assert_eq!(
           actual, expected,
           "ChaCha20 backend {} diverged from portable at len={len}, counter={counter}",
@@ -176,8 +179,11 @@ fn all_chacha20_backends_self_inverse() {
 
     for backend in runnable_backends() {
       let mut buffer = original.clone();
-      (backend.xor_keystream)(&key, 0, &nonce, &mut buffer);
-      (backend.xor_keystream)(&key, 0, &nonce, &mut buffer);
+      // SAFETY: `runnable_backends` proves the exact capability set; `TEST_SIZES` uses at most 65 blocks from zero.
+      unsafe {
+        (backend.xor_keystream)(&key, 0, &nonce, &mut buffer);
+        (backend.xor_keystream)(&key, 0, &nonce, &mut buffer);
+      }
       assert_eq!(
         buffer, original,
         "ChaCha20 backend {} not self-inverse at len={len}",

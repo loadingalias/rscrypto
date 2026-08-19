@@ -15,8 +15,6 @@
 //!
 //! Uses `unsafe` for NEON intrinsics. Callers must ensure NEON is available
 //! (always true on aarch64 — it is the baseline ISA).
-#![allow(unsafe_code)]
-#![allow(clippy::indexing_slicing)]
 
 use core::arch::aarch64::*;
 
@@ -32,6 +30,9 @@ const LAST_ACC_SECRET_OFFSET: usize = DEFAULT_SECRET_SIZE - STRIPE_LEN - SECRET_
 
 // SIMD accumulate + scramble
 
+/// # Safety
+///
+/// The caller must ensure NEON is available, as guaranteed by AArch64.
 #[inline]
 #[target_feature(enable = "neon")]
 unsafe fn load_acc(initial: &[u64; ACC_NB]) -> [uint64x2_t; 4] {
@@ -46,6 +47,9 @@ unsafe fn load_acc(initial: &[u64; ACC_NB]) -> [uint64x2_t; 4] {
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure NEON is available, as guaranteed by AArch64.
 #[inline]
 #[target_feature(enable = "neon")]
 unsafe fn store_acc(acc: &[uint64x2_t; 4]) -> [u64; ACC_NB] {
@@ -67,6 +71,10 @@ unsafe fn store_acc(acc: &[uint64x2_t; 4]) -> [u64; ACC_NB] {
 ///   (vs 2 separate `vmovn` + `vshrn`)
 /// - `vmlal_high_u32` for the second lane (avoids `vget_high_u32` extraction)
 /// - `vmlal(data_swap, ...)` base to break the acc→vmlal dependency chain
+///
+/// # Safety
+///
+/// The caller must ensure NEON is available and both pointers are valid for 64 readable bytes.
 #[inline]
 #[target_feature(enable = "neon")]
 unsafe fn accumulate_512(acc: &mut [uint64x2_t; 4], stripe: *const u8, secret: *const u8) {
@@ -112,6 +120,10 @@ unsafe fn accumulate_512(acc: &mut [uint64x2_t; 4], stripe: *const u8, secret: *
 }
 
 /// Scramble the accumulator at block boundaries.
+///
+/// # Safety
+///
+/// The caller must ensure NEON is available and `secret` is valid for 64 readable bytes.
 #[inline]
 #[target_feature(enable = "neon")]
 unsafe fn scramble_acc(acc: &mut [uint64x2_t; 4], secret: *const u8) {
@@ -154,11 +166,11 @@ unsafe fn scramble_acc(acc: &mut [uint64x2_t; 4], secret: *const u8) {
 /// buffer — `prfm` silently ignores invalid addresses.
 #[inline(always)]
 #[cfg(miri)]
-unsafe fn prefetch_stripe(_input_ptr: *const u8) {}
+fn prefetch_stripe(_input_ptr: *const u8) {}
 
 #[inline(always)]
 #[cfg(not(miri))]
-unsafe fn prefetch_stripe(input_ptr: *const u8) {
+fn prefetch_stripe(input_ptr: *const u8) {
   // SAFETY: PRFM is a CPU hint; invalid addresses are silently ignored.
   unsafe {
     core::arch::asm!(
@@ -171,6 +183,10 @@ unsafe fn prefetch_stripe(input_ptr: *const u8) {
 
 // Long-path loop (SIMD inner, scalar merge)
 
+/// # Safety
+///
+/// The caller must ensure NEON is available, `stripes` is nonzero, and the
+/// requested input and secret stripe ranges are in bounds.
 #[target_feature(enable = "neon")]
 unsafe fn stream_accumulate_inner(
   initial: [u64; ACC_NB],
@@ -246,8 +262,15 @@ pub(crate) unsafe fn stream_accumulate(
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure NEON is available and `input` contains an XXH3 long
+/// input of more than 240 bytes.
 #[target_feature(enable = "neon")]
-unsafe fn hash_long_internal_loop<const PREFETCH: bool>(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] {
+unsafe fn hash_long_internal_loop<const PREFETCH: bool>(
+  input: &[u8],
+  secret: &[u8; DEFAULT_SECRET_SIZE],
+) -> [u64; ACC_NB] {
   // SAFETY: NEON available via target_feature. Input/secret bounds checked by caller.
   unsafe {
     let mut acc = load_acc(&INITIAL_ACC);
@@ -300,8 +323,12 @@ unsafe fn hash_long_internal_loop<const PREFETCH: bool>(input: &[u8], secret: &[
 }
 
 #[inline]
+/// # Safety
+///
+/// The caller must ensure NEON is available and `input` contains an XXH3 long
+/// input of more than 240 bytes.
 #[target_feature(enable = "neon")]
-unsafe fn hash_long_internal_loop_for_len(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] {
+unsafe fn hash_long_internal_loop_for_len(input: &[u8], secret: &[u8; DEFAULT_SECRET_SIZE]) -> [u64; ACC_NB] {
   // Small long inputs have too few stripes to amortize software prefetch.
   // Keep PRFM for larger streaming inputs where it helps Apple/Neoverse throughput.
   // SAFETY: caller upholds the NEON and input/secret bounds contracts.
@@ -319,7 +346,7 @@ unsafe fn hash_long_internal_loop_for_len(input: &[u8], secret: &[u8]) -> [u64; 
 /// Long-path entry point (>240B) — no ≤240B branches.
 ///
 /// Called from compile-time dispatch when the caller already knows `input.len() > MID_SIZE_MAX`.
-pub fn xxh3_64_long_default(input: &[u8]) -> u64 {
+pub(crate) fn xxh3_64_long_default(input: &[u8]) -> u64 {
   // SAFETY: NEON always available on aarch64.
   let acc = unsafe {
     if input.len() <= 1024 {
@@ -336,7 +363,7 @@ pub fn xxh3_64_long_default(input: &[u8]) -> u64 {
   )
 }
 
-pub fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
+pub(crate) fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
   if seed == 0 {
     xxh3_64_long_default(input)
   } else {
@@ -359,13 +386,13 @@ pub fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
 }
 
 /// Long-path entry point (>240B) — no ≤240B branches.
-pub fn xxh3_128_long_default(input: &[u8]) -> u128 {
+pub(crate) fn xxh3_128_long_default(input: &[u8]) -> u128 {
   // SAFETY: NEON always available on aarch64.
   let acc = unsafe { hash_long_internal_loop_for_len(input, &DEFAULT_SECRET) };
   xxh3_128_long_finalize(&acc, &DEFAULT_SECRET, input.len())
 }
 
-pub fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
+pub(crate) fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
   if seed == 0 {
     xxh3_128_long_default(input)
   } else {

@@ -3,8 +3,6 @@
 //! This module owns the ABI boundary. `rsa.rs` owns all RSA validation,
 //! representative range checks, dispatch, and fallback semantics.
 
-#![allow(unsafe_code)]
-
 use core::arch::global_asm;
 
 use crate::platform::{caps, caps::x86};
@@ -73,7 +71,14 @@ pub(super) fn mont_mul_cios_words(
   // 4. All pointers are derived from live Rust slices and are valid for the assembly's fixed
   //    read/write ranges. The assembly does not retain pointers after returning.
   let _ = unsafe {
-    rscrypto_rsa_bn_mulx4x_mont_x86_64_elf(out.as_mut_ptr(), a.as_ptr(), b.as_ptr(), modulus.as_ptr(), &n0, words)
+    rscrypto_rsa_bn_mulx4x_mont_x86_64_elf(
+      out.as_mut_ptr(),
+      a.as_ptr(),
+      b.as_ptr(),
+      modulus.as_ptr(),
+      &raw const n0,
+      words,
+    )
   };
 }
 
@@ -92,7 +97,7 @@ pub(super) fn mont_square_cios_words_in_place(
 
   // SAFETY: RSA in-place Montgomery square ADX/BMI2 assembly call because:
   // 1. This module is compiled only for Linux x86-64 and embeds the matching ELF symbol.
-  // 2. `supports_bignum_mont_words` checks BMI2 and ADX before this call, matching the kernel's
+  // 2. `supports_bignum_mont_square_words` checks BMI2 and ADX before this call, matching the kernel's
   //    `mulx/adcx/adox` instruction requirements.
   // 3. The caller checks `value` and `modulus` are supported `u64` limb widths satisfying the square
   //    kernel's `num >= 8 && num % 8 == 0` precondition.
@@ -101,7 +106,14 @@ pub(super) fn mont_square_cios_words_in_place(
   //    `value` as both `out` and `a` preserves the in-place helper contract.
   // 5. All pointers are derived from live Rust slices and the assembly does not retain them.
   let _ = unsafe {
-    rscrypto_rsa_bn_sqr8x_mont_x86_64_elf(value.as_mut_ptr(), value.as_ptr(), 1, modulus.as_ptr(), &n0, words)
+    rscrypto_rsa_bn_sqr8x_mont_x86_64_elf(
+      value.as_mut_ptr(),
+      value.as_ptr(),
+      1,
+      modulus.as_ptr(),
+      &raw const n0,
+      words,
+    )
   };
 }
 
@@ -134,7 +146,7 @@ pub(super) fn mont_mul_cios_words_in_place_left(
       left.as_ptr(),
       right.as_ptr(),
       modulus.as_ptr(),
-      &n0,
+      &raw const n0,
       words,
     )
   };

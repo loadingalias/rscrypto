@@ -15,28 +15,44 @@ const ACVP_ENCAP_DECAP_PROMPT: &str = include_str!("vectors/mlkem_acvp_encapdeca
 const ACVP_ENCAP_DECAP_EXPECTED: &str = include_str!("vectors/mlkem_acvp_encapdecap_fips203_expected.json");
 
 fn parse_acvp(json: &str) -> Value {
-  serde_json::from_str(json).unwrap()
+  serde_json::from_str(json).expect("embedded ACVP fixture must contain valid JSON")
 }
 
 fn string_field<'a>(value: &'a Value, field: &str) -> &'a str {
   value
     .get(field)
     .and_then(Value::as_str)
-    .unwrap_or_else(|| panic!("missing ACVP string field `{field}`"))
+    .expect("ACVP string field must exist and contain a string")
 }
 
 fn bool_field(value: &Value, field: &str) -> bool {
   value
     .get(field)
     .and_then(Value::as_bool)
-    .unwrap_or_else(|| panic!("missing ACVP bool field `{field}`"))
+    .expect("ACVP bool field must exist and contain a boolean")
 }
 
 fn u64_field(value: &Value, field: &str) -> u64 {
   value
     .get(field)
     .and_then(Value::as_u64)
-    .unwrap_or_else(|| panic!("missing ACVP integer field `{field}`"))
+    .expect("ACVP integer field must exist and contain an unsigned integer")
+}
+
+enum ParameterSet {
+  MlKem512,
+  MlKem768,
+  MlKem1024,
+}
+
+fn parameter_set(group: &Value) -> ParameterSet {
+  let parameter_set = match string_field(group, "parameterSet") {
+    "ML-KEM-512" => Some(ParameterSet::MlKem512),
+    "ML-KEM-768" => Some(ParameterSet::MlKem768),
+    "ML-KEM-1024" => Some(ParameterSet::MlKem1024),
+    _ => None,
+  };
+  parameter_set.expect("ACVP parameterSet must name a supported ML-KEM profile")
 }
 
 fn test_groups(vectors: &Value) -> &[Value] {
@@ -59,22 +75,22 @@ fn group_by_id(vectors: &Value, tg_id: u64) -> &Value {
   test_groups(vectors)
     .iter()
     .find(|group| u64_field(group, "tgId") == tg_id)
-    .unwrap_or_else(|| panic!("missing ACVP expected group tgId {tg_id}"))
+    .expect("ACVP expected group must contain every prompt tgId")
 }
 
 fn case_by_id(group: &Value, tc_id: u64) -> &Value {
   test_cases(group)
     .iter()
     .find(|test_case| u64_field(test_case, "tcId") == tc_id)
-    .unwrap_or_else(|| panic!("missing ACVP expected tcId {tc_id}"))
+    .expect("ACVP expected group must contain every prompt tcId")
 }
 
-fn hex_nibble(byte: u8) -> u8 {
+fn hex_nibble(byte: u8) -> Option<u8> {
   match byte {
-    b'0'..=b'9' => byte - b'0',
-    b'a'..=b'f' => byte - b'a' + 10,
-    b'A'..=b'F' => byte - b'A' + 10,
-    _ => panic!("invalid hex byte {byte:#x}"),
+    b'0'..=b'9' => Some(byte.strict_sub(b'0')),
+    b'a'..=b'f' => Some(byte.strict_sub(b'a').strict_add(10)),
+    b'A'..=b'F' => Some(byte.strict_sub(b'A').strict_add(10)),
+    _ => None,
   }
 }
 
@@ -83,7 +99,9 @@ fn decode_hex(hex: &str) -> Vec<u8> {
 
   let mut out = Vec::with_capacity(hex.len() / 2);
   for pair in hex.as_bytes().chunks_exact(2) {
-    out.push((hex_nibble(pair[0]) << 4) | hex_nibble(pair[1]));
+    let high = hex_nibble(pair[0]).expect("ACVP fixture must contain only hexadecimal digits");
+    let low = hex_nibble(pair[1]).expect("ACVP fixture must contain only hexadecimal digits");
+    out.push((high << 4) | low);
   }
   out
 }
@@ -117,7 +135,7 @@ macro_rules! assert_keygen_case {
       out.copy_from_slice(&random);
       Ok::<(), MlKemError>(())
     })
-    .unwrap();
+    .expect("ML-KEM ACVP key generation must succeed");
 
     let expected_encapsulation_key =
       array_from_hex::<{ <$profile>::ENCAPSULATION_KEY_SIZE }>(string_field($expected, "ek"));
@@ -145,14 +163,15 @@ macro_rules! assert_encapsulation_case {
   ($profile:ty, $encapsulation_key:ty, $parameter_set:literal, $prompt:expr, $expected:expr) => {{
     let tc_id = u64_field($prompt, "tcId");
     let encapsulation_key_bytes = decode_hex(string_field($prompt, "ek"));
-    let encapsulation_key = <$encapsulation_key>::try_from_slice(&encapsulation_key_bytes).unwrap();
+    let encapsulation_key = <$encapsulation_key>::try_from_slice(&encapsulation_key_bytes)
+      .expect("ACVP encapsulation key must have a valid encoding");
     let random = array_from_hex::<{ <$profile>::ENCAPSULATION_RANDOM_SIZE }>(string_field($prompt, "m"));
 
     let (ciphertext, shared_secret) = <$profile>::encapsulate(&encapsulation_key, |out| {
       out.copy_from_slice(&random);
       Ok::<(), MlKemError>(())
     })
-    .unwrap();
+    .expect("ML-KEM ACVP encapsulation must succeed");
 
     let expected_ciphertext = array_from_hex::<{ <$profile>::CIPHERTEXT_SIZE }>(string_field($expected, "c"));
     let expected_shared_secret = array_from_hex::<{ <$profile>::SHARED_SECRET_SIZE }>(string_field($expected, "k"));
@@ -173,9 +192,12 @@ macro_rules! assert_decapsulation_case {
     let tc_id = u64_field($prompt, "tcId");
     let decapsulation_key_bytes = decode_hex(string_field($prompt, "dk"));
     let ciphertext_bytes = decode_hex(string_field($prompt, "c"));
-    let decapsulation_key = <$decapsulation_key>::try_from_slice(&decapsulation_key_bytes).unwrap();
-    let ciphertext = <$ciphertext>::try_from_slice(&ciphertext_bytes).unwrap();
-    let shared_secret = <$profile>::decapsulate(&decapsulation_key, &ciphertext).unwrap();
+    let decapsulation_key = <$decapsulation_key>::try_from_slice(&decapsulation_key_bytes)
+      .expect("ACVP decapsulation key must have a valid encoding");
+    let ciphertext =
+      <$ciphertext>::try_from_slice(&ciphertext_bytes).expect("ACVP ciphertext must have a valid encoding");
+    let shared_secret =
+      <$profile>::decapsulate(&decapsulation_key, &ciphertext).expect("ML-KEM ACVP decapsulation must succeed");
     let expected_shared_secret = array_from_hex::<{ <$profile>::SHARED_SECRET_SIZE }>(string_field($expected, "k"));
 
     assert_bytes_eq(
@@ -215,11 +237,10 @@ fn mlkem_matches_acvp_keygen_fips203_vectors() {
     for prompt_case in test_cases(prompt_group) {
       let expected_case = case_by_id(expected_group, u64_field(prompt_case, "tcId"));
 
-      match string_field(prompt_group, "parameterSet") {
-        "ML-KEM-512" => assert_keygen_case!(MlKem512, "ML-KEM-512", prompt_case, expected_case),
-        "ML-KEM-768" => assert_keygen_case!(MlKem768, "ML-KEM-768", prompt_case, expected_case),
-        "ML-KEM-1024" => assert_keygen_case!(MlKem1024, "ML-KEM-1024", prompt_case, expected_case),
-        parameter_set => panic!("unsupported ACVP ML-KEM parameter set `{parameter_set}`"),
+      match parameter_set(prompt_group) {
+        ParameterSet::MlKem512 => assert_keygen_case!(MlKem512, "ML-KEM-512", prompt_case, expected_case),
+        ParameterSet::MlKem768 => assert_keygen_case!(MlKem768, "ML-KEM-768", prompt_case, expected_case),
+        ParameterSet::MlKem1024 => assert_keygen_case!(MlKem1024, "ML-KEM-1024", prompt_case, expected_case),
       }
     }
   }
@@ -240,8 +261,8 @@ fn mlkem_matches_acvp_encapsulation_fips203_vectors() {
     for prompt_case in test_cases(prompt_group) {
       let expected_case = case_by_id(expected_group, u64_field(prompt_case, "tcId"));
 
-      match string_field(prompt_group, "parameterSet") {
-        "ML-KEM-512" => {
+      match parameter_set(prompt_group) {
+        ParameterSet::MlKem512 => {
           assert_encapsulation_case!(
             MlKem512,
             MlKem512EncapsulationKey,
@@ -250,7 +271,7 @@ fn mlkem_matches_acvp_encapsulation_fips203_vectors() {
             expected_case
           )
         }
-        "ML-KEM-768" => {
+        ParameterSet::MlKem768 => {
           assert_encapsulation_case!(
             MlKem768,
             MlKem768EncapsulationKey,
@@ -259,7 +280,7 @@ fn mlkem_matches_acvp_encapsulation_fips203_vectors() {
             expected_case
           )
         }
-        "ML-KEM-1024" => {
+        ParameterSet::MlKem1024 => {
           assert_encapsulation_case!(
             MlKem1024,
             MlKem1024EncapsulationKey,
@@ -268,7 +289,6 @@ fn mlkem_matches_acvp_encapsulation_fips203_vectors() {
             expected_case
           )
         }
-        parameter_set => panic!("unsupported ACVP ML-KEM parameter set `{parameter_set}`"),
       }
     }
   }
@@ -289,8 +309,8 @@ fn mlkem_matches_acvp_decapsulation_fips203_vectors() {
     for prompt_case in test_cases(prompt_group) {
       let expected_case = case_by_id(expected_group, u64_field(prompt_case, "tcId"));
 
-      match string_field(prompt_group, "parameterSet") {
-        "ML-KEM-512" => assert_decapsulation_case!(
+      match parameter_set(prompt_group) {
+        ParameterSet::MlKem512 => assert_decapsulation_case!(
           MlKem512,
           MlKem512DecapsulationKey,
           MlKem512Ciphertext,
@@ -298,7 +318,7 @@ fn mlkem_matches_acvp_decapsulation_fips203_vectors() {
           prompt_case,
           expected_case
         ),
-        "ML-KEM-768" => assert_decapsulation_case!(
+        ParameterSet::MlKem768 => assert_decapsulation_case!(
           MlKem768,
           MlKem768DecapsulationKey,
           MlKem768Ciphertext,
@@ -306,7 +326,7 @@ fn mlkem_matches_acvp_decapsulation_fips203_vectors() {
           prompt_case,
           expected_case
         ),
-        "ML-KEM-1024" => assert_decapsulation_case!(
+        ParameterSet::MlKem1024 => assert_decapsulation_case!(
           MlKem1024,
           MlKem1024DecapsulationKey,
           MlKem1024Ciphertext,
@@ -314,7 +334,6 @@ fn mlkem_matches_acvp_decapsulation_fips203_vectors() {
           prompt_case,
           expected_case
         ),
-        parameter_set => panic!("unsupported ACVP ML-KEM parameter set `{parameter_set}`"),
       }
     }
   }
@@ -335,14 +354,14 @@ fn mlkem_matches_acvp_decapsulation_key_check_fips203_vectors() {
     for prompt_case in test_cases(prompt_group) {
       let expected_case = case_by_id(expected_group, u64_field(prompt_case, "tcId"));
 
-      match string_field(prompt_group, "parameterSet") {
-        "ML-KEM-512" => {
+      match parameter_set(prompt_group) {
+        ParameterSet::MlKem512 => {
           assert_key_check_case!(MlKem512DecapsulationKey, "ML-KEM-512", prompt_case, expected_case, "dk")
         }
-        "ML-KEM-768" => {
+        ParameterSet::MlKem768 => {
           assert_key_check_case!(MlKem768DecapsulationKey, "ML-KEM-768", prompt_case, expected_case, "dk")
         }
-        "ML-KEM-1024" => {
+        ParameterSet::MlKem1024 => {
           assert_key_check_case!(
             MlKem1024DecapsulationKey,
             "ML-KEM-1024",
@@ -351,7 +370,6 @@ fn mlkem_matches_acvp_decapsulation_key_check_fips203_vectors() {
             "dk"
           )
         }
-        parameter_set => panic!("unsupported ACVP ML-KEM parameter set `{parameter_set}`"),
       }
     }
   }
@@ -372,14 +390,14 @@ fn mlkem_matches_acvp_encapsulation_key_check_fips203_vectors() {
     for prompt_case in test_cases(prompt_group) {
       let expected_case = case_by_id(expected_group, u64_field(prompt_case, "tcId"));
 
-      match string_field(prompt_group, "parameterSet") {
-        "ML-KEM-512" => {
+      match parameter_set(prompt_group) {
+        ParameterSet::MlKem512 => {
           assert_key_check_case!(MlKem512EncapsulationKey, "ML-KEM-512", prompt_case, expected_case, "ek")
         }
-        "ML-KEM-768" => {
+        ParameterSet::MlKem768 => {
           assert_key_check_case!(MlKem768EncapsulationKey, "ML-KEM-768", prompt_case, expected_case, "ek")
         }
-        "ML-KEM-1024" => {
+        ParameterSet::MlKem1024 => {
           assert_key_check_case!(
             MlKem1024EncapsulationKey,
             "ML-KEM-1024",
@@ -388,7 +406,6 @@ fn mlkem_matches_acvp_encapsulation_key_check_fips203_vectors() {
             "ek"
           )
         }
-        parameter_set => panic!("unsupported ACVP ML-KEM parameter set `{parameter_set}`"),
       }
     }
   }

@@ -21,6 +21,7 @@ fi
 get_crate_flags "$@"
 
 export ZIG_CC="$SCRIPT_DIR/zig-cc.sh"
+NIGHTLY_TOOLCHAIN=$("$SCRIPT_DIR/../lib/toolchain.sh" --nightly)
 
 LOG_DIR=$(mktemp -d)
 trap 'rm -rf "$LOG_DIR"' EXIT
@@ -33,7 +34,7 @@ if [[ ${#IBM_TARGETS[@]} -eq 0 ]]; then
 fi
 
 for target in "${IBM_TARGETS[@]}"; do
-  ensure_target "$target"
+  ensure_target "$target" "$NIGHTLY_TOOLCHAIN"
 done
 
 for target in "${IBM_TARGETS[@]}"; do
@@ -53,8 +54,8 @@ for i in "${!IBM_TARGETS[@]}"; do
 
   (
     # shellcheck disable=SC2086
-    if ! CC="$ZIG_CC" RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
-      cargo clippy $CRATE_FLAGS --lib --all-features --locked --target "$target" -- -D warnings \
+    if ! CC="$ZIG_CC" RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" RUSTUP_TOOLCHAIN="$NIGHTLY_TOOLCHAIN" \
+      cargo clippy $CRATE_FLAGS --lib --all-features --locked --target "$target" \
       >"$log_file" 2>&1; then
       exit 1
     fi

@@ -10,6 +10,8 @@ source "$SCRIPT_DIR/../lib/common.sh"
 # shellcheck source=../lib/targets.sh
 source "$SCRIPT_DIR/../lib/targets.sh"
 
+NIGHTLY_TOOLCHAIN=$("$SCRIPT_DIR/../lib/toolchain.sh" --nightly)
+
 DEFAULT_CONSTRAINED_CRATES=(
   "rscrypto"
 )
@@ -77,6 +79,16 @@ crate_supports_alloc() {
   [[ -f "$manifest" ]] && grep -q '^[[:space:]]*alloc[[:space:]]*=' "$manifest"
 }
 
+cargo_for_target() {
+  local target=$1
+  shift
+  if [[ "$target" == riscv32* ]]; then
+    RUSTUP_TOOLCHAIN="$NIGHTLY_TOOLCHAIN" cargo "$@"
+  else
+    cargo "$@"
+  fi
+}
+
 run_constrained_check() {
   local crate=$1
   local target=$2
@@ -97,7 +109,7 @@ run_constrained_check() {
     args+=(--features "$feature_set")
   fi
 
-  if ! RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" cargo "${args[@]}" >>"$log_file" 2>&1; then
+  if ! RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" cargo_for_target "$target" "${args[@]}" >>"$log_file" 2>&1; then
     return 1
   fi
 }
@@ -106,7 +118,11 @@ run_constrained_target() {
   local target=$1
   local log_dir=$2
 
-  ensure_target "$target"
+  if [[ "$target" == riscv32* ]]; then
+    ensure_target "$target" "$NIGHTLY_TOOLCHAIN"
+  else
+    ensure_target "$target"
+  fi
 
   local target_dir="target/cross-check/$target"
   mkdir -p "$target_dir"
@@ -147,7 +163,7 @@ run_constrained_target() {
     step "$target check (alloc)"
     for crate in "${alloc_crates[@]}"; do
       if ! RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
-        cargo check --locked -p "$crate" --no-default-features --features alloc --target "$target" --lib \
+        cargo_for_target "$target" check --locked -p "$crate" --no-default-features --features alloc --target "$target" --lib \
         >>"$log_file" 2>&1; then
         fail
         show_error "$log_file"
@@ -160,7 +176,7 @@ run_constrained_target() {
   step "$target build (no features)"
   for crate in "${CONSTRAINED_CRATES[@]}"; do
     if ! RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
-      cargo build --locked -p "$crate" --no-default-features --target "$target" --lib --release \
+      cargo_for_target "$target" build --locked -p "$crate" --no-default-features --target "$target" --lib --release \
       >>"$log_file" 2>&1; then
       fail
       show_error "$log_file"
@@ -173,7 +189,7 @@ run_constrained_target() {
     step "$target build (alloc)"
     for crate in "${alloc_crates[@]}"; do
       if ! RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
-        cargo build --locked -p "$crate" --no-default-features --features alloc --target "$target" --lib --release \
+      cargo_for_target "$target" build --locked -p "$crate" --no-default-features --features alloc --target "$target" --lib --release \
         >>"$log_file" 2>&1; then
         fail
         show_error "$log_file"

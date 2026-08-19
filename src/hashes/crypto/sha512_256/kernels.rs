@@ -6,7 +6,7 @@ use crate::{hashes::crypto::sha512::Sha512, platform::Caps};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 #[non_exhaustive]
-pub enum Sha512_256KernelId {
+pub(crate) enum Sha512_256KernelId {
   Portable = 0,
   #[cfg(target_arch = "aarch64")]
   Aarch64Sha512 = 1,
@@ -30,7 +30,7 @@ impl Sha512_256KernelId {
   #[cfg(any(test, feature = "diag"))]
   #[inline]
   #[must_use]
-  pub const fn as_str(self) -> &'static str {
+  pub(crate) const fn as_str(self) -> &'static str {
     match self {
       Self::Portable => "portable",
       #[cfg(target_arch = "aarch64")]
@@ -120,13 +120,13 @@ pub(crate) fn compress_blocks_fn(id: Sha512_256KernelId) -> CompressBlocksFn {
 
 #[inline]
 #[must_use]
-pub const fn required_caps(id: Sha512_256KernelId) -> Caps {
+pub(crate) const fn required_caps(id: Sha512_256KernelId) -> Caps {
   crate::hashes::crypto::sha512::kernels::required_caps(to_sha512_kernel_id(id))
 }
 
 // Keep kernel tests focused on backends that runtime dispatch can actually pick.
 #[cfg(test)]
-pub const ALL: &[Sha512_256KernelId] = &[
+pub(crate) const ALL: &[Sha512_256KernelId] = &[
   Sha512_256KernelId::Portable,
   #[cfg(target_arch = "aarch64")]
   Sha512_256KernelId::Aarch64Sha512,

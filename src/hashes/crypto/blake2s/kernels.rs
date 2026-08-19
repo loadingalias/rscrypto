@@ -1,5 +1,6 @@
 //! Blake2s portable compression function and kernel dispatch (RFC 7693).
 
+#[cfg(any(test, not(all(target_arch = "aarch64", target_os = "macos"))))]
 use crate::platform::Caps;
 #[cfg(target_arch = "riscv64")]
 use crate::platform::caps::riscv;
@@ -18,8 +19,7 @@ pub(crate) type CompressBlocksFn = fn(&mut [u32; 8], &[u8], &mut u64);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 #[non_exhaustive]
-#[cfg_attr(target_os = "macos", allow(dead_code))]
-pub enum Blake2sKernelId {
+pub(crate) enum Blake2sKernelId {
   Portable = 0,
   #[cfg(target_arch = "x86_64")]
   X86Avx2 = 1,
@@ -35,7 +35,7 @@ impl Blake2sKernelId {
   #[cfg(any(test, feature = "diag"))]
   #[inline]
   #[must_use]
-  pub const fn as_str(self) -> &'static str {
+  pub(crate) const fn as_str(self) -> &'static str {
     match self {
       Self::Portable => "portable",
       #[cfg(target_arch = "x86_64")]
@@ -77,14 +77,12 @@ fn compress_x86_avx512vl(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool)
 #[inline(always)]
 fn compress_blocks_with(h: &mut [u32; 8], blocks: &[u8], t: &mut u64, compress: CompressFn) {
   debug_assert_eq!(blocks.len() % 64, 0);
-  let mut chunks = blocks.chunks_exact(64);
-  for chunk in &mut chunks {
+  let (chunks, remainder) = blocks.as_chunks::<64>();
+  for block in chunks {
     *t = t.strict_add(64);
-    // SAFETY: `chunks_exact(64)` yields slices of exactly 64 bytes.
-    let block = unsafe { &*chunk.as_ptr().cast::<[u8; 64]>() };
     compress(h, block, *t, false);
   }
-  debug_assert!(chunks.remainder().is_empty());
+  debug_assert!(remainder.is_empty());
 }
 
 fn compress_blocks_portable(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
@@ -143,10 +141,10 @@ pub(crate) fn compress_blocks_fn(id: Blake2sKernelId) -> CompressBlocksFn {
 }
 
 /// Capabilities required to run the given kernel.
+#[cfg(any(test, not(all(target_arch = "aarch64", target_os = "macos"))))]
 #[inline]
 #[must_use]
-#[allow(dead_code)] // Used by runtime dispatch on targets that don't bypass to a fixed kernel.
-pub const fn required_caps(id: Blake2sKernelId) -> Caps {
+pub(crate) const fn required_caps(id: Blake2sKernelId) -> Caps {
   match id {
     Blake2sKernelId::Portable => Caps::NONE,
     #[cfg(target_arch = "x86_64")]
@@ -162,7 +160,7 @@ pub const fn required_caps(id: Blake2sKernelId) -> Caps {
 
 /// All kernel IDs for agreement testing.
 #[cfg(test)]
-pub const ALL: &[Blake2sKernelId] = &[
+pub(crate) const ALL: &[Blake2sKernelId] = &[
   Blake2sKernelId::Portable,
   #[cfg(target_arch = "x86_64")]
   Blake2sKernelId::X86Avx2,
@@ -197,7 +195,6 @@ pub(crate) fn compile_time_best() -> CompressFn {
   {
     return compress_x86_avx2;
   }
-  #[allow(unreachable_code)]
   compress
 }
 
@@ -215,7 +212,6 @@ pub(crate) fn compile_time_best_blocks() -> CompressBlocksFn {
   {
     return compress_blocks_x86_avx2;
   }
-  #[allow(unreachable_code)]
   compress_blocks_portable
 }
 
@@ -232,7 +228,6 @@ pub(crate) const IV: [u32; 8] = [
 ];
 
 /// Message-word permutation schedule (10 rows, reused cyclically for 10 rounds).
-#[allow(dead_code)] // Used by target-specific SIMD backends that are not compiled on every host.
 pub(crate) const SIGMA: [[u8; 16]; 10] = [
   [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
   [14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3],
@@ -386,7 +381,6 @@ fn round(v: &mut [U32x4; 4], m: &[u32; 16], s: &[u8; 16]) {
 
 /// Load 16 little-endian u32 message words from a 64-byte block.
 #[inline(always)]
-#[allow(clippy::indexing_slicing)]
 pub(crate) fn load_msg(block: &[u8; 64]) -> [u32; 16] {
   let mut m = [0u32; 16];
   let src = block.as_ptr();
@@ -398,18 +392,28 @@ pub(crate) fn load_msg(block: &[u8; 64]) -> [u32; 16] {
   m
 }
 
+#[inline(always)]
+fn split_counter(counter: u64) -> (u32, u32) {
+  let [b0, b1, b2, b3, b4, b5, b6, b7] = counter.to_le_bytes();
+  (
+    u32::from_le_bytes([b0, b1, b2, b3]),
+    u32::from_le_bytes([b4, b5, b6, b7]),
+  )
+}
+
 /// Initialize the 16-word working vector.
 #[cfg(any(target_arch = "x86_64", target_arch = "wasm32", target_arch = "riscv64"))]
 #[inline(always)]
 pub(crate) fn init_v(h: &[u32; 8], t: u64, last: bool) -> [u32; 16] {
+  let (t0, t1) = split_counter(t);
   let mut v = [0u32; 16];
   v[..8].copy_from_slice(h);
   v[8] = IV[0];
   v[9] = IV[1];
   v[10] = IV[2];
   v[11] = IV[3];
-  v[12] = IV[4] ^ (t as u32);
-  v[13] = IV[5] ^ ((t >> 32) as u32);
+  v[12] = IV[4] ^ t0;
+  v[13] = IV[5] ^ t1;
   v[14] = if last { IV[6] ^ u32::MAX } else { IV[6] };
   v[15] = IV[7];
   v
@@ -419,11 +423,9 @@ pub(crate) fn init_v(h: &[u32; 8], t: u64, last: bool) -> [u32; 16] {
 ///
 /// `t` is the total number of input bytes after this block (inclusive).
 /// `last` is `true` for the final block (sets the finalization flag).
-#[allow(clippy::indexing_slicing)]
 pub(crate) fn compress(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool) {
   let m = load_msg(block);
-  let t0 = t as u32;
-  let t1 = (t >> 32) as u32;
+  let (t0, t1) = split_counter(t);
   let f0 = if last { u32::MAX } else { 0 };
 
   let mut v = [

@@ -15,6 +15,7 @@ use crate::aead::{AeadBufferError, AeadNonce, OpenError, SealError};
 /// Zero-sized capability proving that a call came through a crate-owned nonce
 /// issuer or the explicit expert extension.
 #[doc(hidden)]
+#[derive(Debug)]
 pub struct SealToken(());
 
 impl SealToken {

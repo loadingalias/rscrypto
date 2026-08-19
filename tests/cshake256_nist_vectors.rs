@@ -6,7 +6,9 @@ mod common;
 use common::decode_hex_vec as decode_hex;
 
 fn ascending_bytes(len: usize) -> Vec<u8> {
-  (0..len).map(|byte| byte as u8).collect()
+  (0..len)
+    .map(|byte| u8::try_from(byte).expect("cSHAKE fixture byte must fit in u8"))
+    .collect()
 }
 
 #[test]

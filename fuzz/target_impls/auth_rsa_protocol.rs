@@ -28,8 +28,8 @@ const X509_PSS_DEFAULT_SHA1_ALGORITHM: &[u8] = &[
 const X509_MALFORMED_INDEFINITE_SEQUENCE: &[u8] = &[0x30, 0x80, 0x00, 0x00];
 
 const JWT_ALGS: [&str; 16] = [
-  "PS256", "PS384", "PS512", "RS256", "RS384", "RS512", "none", "HS256", "ES256", "EdDSA", "ps256", "", "PS1",
-  "RS1", "PS256\0", "RS256 ",
+  "PS256", "PS384", "PS512", "RS256", "RS384", "RS512", "none", "HS256", "ES256", "EdDSA", "ps256", "", "PS1", "RS1",
+  "PS256\0", "RS256 ",
 ];
 const COSE_ALGORITHMS: [i64; 16] = [
   -37,
@@ -50,8 +50,8 @@ const COSE_ALGORITHMS: [i64; 16] = [
   i64::MAX - 1,
 ];
 const TLS_SCHEMES: [u16; 19] = [
-  0x0804, 0x0805, 0x0806, 0x0809, 0x080a, 0x080b, 0x0401, 0x0501, 0x0601, 0x0101, 0x0201, 0x0420,
-  0x0520, 0x0620, 0x0301, 0x0203, 0x0403, 0, 0xffff,
+  0x0804, 0x0805, 0x0806, 0x0809, 0x080a, 0x080b, 0x0401, 0x0501, 0x0601, 0x0101, 0x0201, 0x0420, 0x0520, 0x0620,
+  0x0301, 0x0203, 0x0403, 0, 0xffff,
 ];
 const X509_ALGORITHMS: [&[u8]; 6] = [
   X509_PSS_SHA256_ALGORITHM,
@@ -69,7 +69,7 @@ fn signature_candidate(material: &[u8], len: usize) -> Vec<u8> {
   }
 
   for (index, byte) in out.iter_mut().enumerate() {
-    *byte = material[index % material.len()];
+    *byte = material[index.rem_euclid(material.len())];
   }
   out
 }
@@ -80,10 +80,12 @@ fn selected_signature<'a>(material: &'a [u8], full_width: &'a [u8], selector: u8
 
 #[inline]
 fn select<T>(items: &[T], selector: u8) -> &T {
-  &items[(selector as usize) % items.len()]
+  items
+    .get(usize::from(selector).rem_euclid(items.len()))
+    .expect("RSA protocol selector tables are nonempty")
 }
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let mode = some_or_return!(input.byte());
   let selector = some_or_return!(input.byte());
@@ -96,7 +98,7 @@ pub fn run(data: &[u8]) {
   let signature = selected_signature(signature_material, &full_width_signature, selector);
   let mut scratch = key.public_scratch();
 
-  match mode % 14 {
+  match mode.rem_euclid(14) {
     0 => {
       key
         .jwt_verifier(RsaJwtAlgorithm::Ps256)
@@ -134,12 +136,15 @@ pub fn run(data: &[u8]) {
         .expect("valid TLS certificate rsa_pkcs1_sha256 fixture must verify");
     }
     5 => {
-      let _ = key
-        .jwt_verifier(RsaJwtAlgorithm::Ps256)
-        .verify_with_scratch(select(&JWT_ALGS, selector), message, signature, &mut scratch);
+      let _verification_result = key.jwt_verifier(RsaJwtAlgorithm::Ps256).verify_with_scratch(
+        select(&JWT_ALGS, selector),
+        message,
+        signature,
+        &mut scratch,
+      );
     }
     6 => {
-      let _ = key.verify_cose_algorithm_id_with_scratch(
+      let _verification_result = key.verify_cose_algorithm_id_with_scratch(
         *select(&COSE_ALGORITHMS, selector),
         message,
         signature,
@@ -147,7 +152,7 @@ pub fn run(data: &[u8]) {
       );
     }
     7 => {
-      let _ = x509_key.verify_signature_from_x509_algorithm_der_with_scratch(
+      let _verification_result = x509_key.verify_signature_from_x509_algorithm_der_with_scratch(
         select(&X509_ALGORITHMS, selector),
         message,
         signature,
@@ -155,7 +160,7 @@ pub fn run(data: &[u8]) {
       );
     }
     8 => {
-      let _ =
+      let _verification_result =
         x509_key.verify_signature_from_x509_algorithm_der_with_scratch(message, MESSAGE_PSS, signature, &mut scratch);
     }
     9 => {
@@ -164,7 +169,8 @@ pub fn run(data: &[u8]) {
       } else {
         u16::from_be_bytes([selector, split])
       };
-      let _ = x509_key.verify_tls13_signature_scheme_with_scratch(scheme, message, signature, &mut scratch);
+      let _verification_result =
+        x509_key.verify_tls13_signature_scheme_with_scratch(scheme, message, signature, &mut scratch);
     }
     10 => {
       let scheme = if selector & 1 == 0 {
@@ -172,18 +178,20 @@ pub fn run(data: &[u8]) {
       } else {
         u16::from_be_bytes([selector, split])
       };
-      let _ = x509_key.verify_tls_certificate_signature_scheme_with_scratch(scheme, message, signature, &mut scratch);
+      let _verification_result =
+        x509_key.verify_tls_certificate_signature_scheme_with_scratch(scheme, message, signature, &mut scratch);
     }
     11 => {
-      let _ = RsaSignatureProfile::from_x509_signature_algorithm_der(message);
+      let _profile_result = RsaSignatureProfile::from_x509_signature_algorithm_der(message);
     }
     12 => {
-      let _ = RsaSignatureProfile::from_cose_algorithm_id(*select(&COSE_ALGORITHMS, selector));
-      let _ = RsaSignatureProfile::from_tls13_signature_scheme(u16::from_be_bytes([selector, split]));
-      let _ = RsaSignatureProfile::from_tls_certificate_signature_scheme(u16::from_be_bytes([selector, split]));
+      let _cose_profile = RsaSignatureProfile::from_cose_algorithm_id(*select(&COSE_ALGORITHMS, selector));
+      let _tls13_profile = RsaSignatureProfile::from_tls13_signature_scheme(u16::from_be_bytes([selector, split]));
+      let _certificate_profile =
+        RsaSignatureProfile::from_tls_certificate_signature_scheme(u16::from_be_bytes([selector, split]));
     }
     _ => {
-      let _ = RsaX509PublicKey::from_spki_der(message);
+      let _key_result = RsaX509PublicKey::from_spki_der(message);
     }
   }
 }

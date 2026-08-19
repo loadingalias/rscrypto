@@ -4,14 +4,14 @@
 > `Ed25519SecretKey` / `Ed25519PublicKey` / `Ed25519Signature`. Signing
 > preserves RFC 8032 output bytes, and the rscrypto verifier is always strict.
 
-Verified against `ed25519-dalek = "2.2.0"` and the `rscrypto` 0.7.8 line.
+Verified against `ed25519-dalek = "3.0.0"` and the `rscrypto` 0.8.1 line.
 Evidence: `tests/ed25519_rfc8032_vectors.rs`, `tests/ed25519_oracle.rs`, and `tests/ed25519_wycheproof.rs`.
 
 ## TL;DR
 
-| | Before (`ed25519-dalek` 2.x) | After (`rscrypto` 0.7.8) |
+| | Before (`ed25519-dalek` 3.x) | After (`rscrypto` 0.8.1) |
 |---|---|---|
-| Cargo dep | `ed25519-dalek = "2.2"` | `rscrypto = { version = "0.7.8", features = ["ed25519"] }` |
+| Cargo dep | `ed25519-dalek = "3.0"` | `rscrypto = { version = "0.8.1", features = ["ed25519"] }` |
 | Import | `use ed25519_dalek::{SigningKey, Signer, Verifier};` | `use rscrypto::{Ed25519SecretKey, Ed25519PublicKey, Ed25519Signature};` |
 | Sign | `signing_key.sign(msg)` | `secret.sign(msg)` |
 | Verify | `verifying_key.verify_strict(msg, &sig)?` | `public_key.verify(msg, &sig)?` |
@@ -21,13 +21,13 @@ Evidence: `tests/ed25519_rfc8032_vectors.rs`, `tests/ed25519_oracle.rs`, and `te
 ```toml
 # Before
 [dependencies]
-ed25519-dalek = "2.2"
+ed25519-dalek = "3.0"
 ```
 
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.7.8", features = ["ed25519"] }
+rscrypto = { version = "0.8.1", features = ["ed25519"] }
 ```
 
 The `ed25519` feature implies `sha2` (Ed25519 uses SHA-512 internally per RFC 8032).
@@ -119,7 +119,7 @@ rscrypto's `verify` is *always* strict (rejects small-order public keys, non-can
 ### Keypair (combined secret + public)
 
 ```rust
-// Before: no first-class Keypair type in dalek 2.x; use SigningKey directly.
+// Before: no first-class Keypair type in dalek 3.x; use SigningKey directly.
 let signing_key = SigningKey::from_bytes(&seed);
 let pk = signing_key.verifying_key();
 ```

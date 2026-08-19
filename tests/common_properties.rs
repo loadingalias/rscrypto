@@ -25,6 +25,18 @@ use rscrypto::{Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Cr
 
 const REF_CRC24_OPENPGP: RefCrc<u32> = RefCrc::<u32>::new(&crc::CRC_24_OPENPGP);
 
+fn reference_u16(value: u64) -> u16 {
+  u16::try_from(value).expect("CRC-16 reference output must fit in 16 bits")
+}
+
+fn reference_u32(value: u64) -> u32 {
+  u32::try_from(value).expect("CRC-32 reference output must fit in 32 bits")
+}
+
+fn low_byte(value: usize) -> u8 {
+  value.to_le_bytes()[0]
+}
+
 // Combine Correctness Tests
 //
 // These tests prove the fundamental combine property:
@@ -52,7 +64,7 @@ proptest! {
     let combined = Crc16Ccitt::combine(crc_a, crc_b, b.len());
 
     // Reference: independent crc-fast implementation over full data
-    let expected = crc_fast::checksum(CrcAlgorithm::Crc16IbmSdlc, &data) as u16;
+    let expected = reference_u16(crc_fast::checksum(CrcAlgorithm::Crc16IbmSdlc, &data));
 
     prop_assert_eq!(combined, expected,
       "combine(crc(A), crc(B), len(B)) != crc(A||B) at split {}/{}",
@@ -71,7 +83,7 @@ proptest! {
     let crc_b = Crc16Ibm::checksum(b);
     let combined = Crc16Ibm::combine(crc_a, crc_b, b.len());
 
-    let expected = crc_fast::checksum(CrcAlgorithm::Crc16Arc, &data) as u16;
+    let expected = reference_u16(crc_fast::checksum(CrcAlgorithm::Crc16Arc, &data));
 
     prop_assert_eq!(combined, expected,
       "combine(crc(A), crc(B), len(B)) != crc(A||B) at split {}/{}",
@@ -113,7 +125,7 @@ proptest! {
     let crc_b = Crc32::checksum(b);
     let combined = Crc32::combine(crc_a, crc_b, b.len());
 
-    let expected = crc_fast::checksum(CrcAlgorithm::Crc32IsoHdlc, &data) as u32;
+    let expected = reference_u32(crc_fast::checksum(CrcAlgorithm::Crc32IsoHdlc, &data));
 
     prop_assert_eq!(combined, expected,
       "combine(crc(A), crc(B), len(B)) != crc(A||B) at split {}/{}",
@@ -132,7 +144,7 @@ proptest! {
     let crc_b = Crc32C::checksum(b);
     let combined = Crc32C::combine(crc_a, crc_b, b.len());
 
-    let expected = crc_fast::checksum(CrcAlgorithm::Crc32Iscsi, &data) as u32;
+    let expected = reference_u32(crc_fast::checksum(CrcAlgorithm::Crc32Iscsi, &data));
 
     prop_assert_eq!(combined, expected,
       "combine(crc(A), crc(B), len(B)) != crc(A||B) at split {}/{}",
@@ -210,7 +222,7 @@ fn apply_chunking<C: Checksum>(data: &[u8], chunk_pattern: &[usize]) -> C::Outpu
     let end = (offset.strict_add(chunk_size)).min(data.len());
     hasher.update(&data[offset..end]);
     offset = end;
-    pattern_idx = pattern_idx.strict_add(1) % chunk_pattern.len();
+    pattern_idx = pattern_idx.strict_add(1).strict_rem(chunk_pattern.len());
   }
 
   hasher.finalize()
@@ -234,7 +246,7 @@ fn apply_chunking_vectored<C: Checksum>(data: &[u8], chunk_pattern: &[usize]) ->
     let end = (offset.strict_add(chunk_size)).min(data.len());
     chunks.push(&data[offset..end]);
     offset = end;
-    pattern_idx = pattern_idx.strict_add(1) % chunk_pattern.len();
+    pattern_idx = pattern_idx.strict_add(1).strict_rem(chunk_pattern.len());
   }
 
   hasher.update_vectored(&chunks);
@@ -352,7 +364,7 @@ macro_rules! test_combine_all_splits {
 
       // Test various small sizes including edge cases
       for size in [0, 1, 2, 3, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256] {
-        let data: Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(17)).collect();
+        let data: Vec<u8> = (0..size).map(|i| low_byte(i).wrapping_mul(17)).collect();
 
         for split in 0..=data.len() {
           let (a, b) = data.split_at(split);
@@ -379,19 +391,19 @@ macro_rules! test_combine_all_splits {
 }
 
 test_combine_all_splits!(crc16_ccitt_combine_all_splits, Crc16Ccitt, |data: &[u8]| {
-  crc_fast::checksum(CrcAlgorithm::Crc16IbmSdlc, data) as u16
+  reference_u16(crc_fast::checksum(CrcAlgorithm::Crc16IbmSdlc, data))
 });
 test_combine_all_splits!(crc16_ibm_combine_all_splits, Crc16Ibm, |data: &[u8]| {
-  crc_fast::checksum(CrcAlgorithm::Crc16Arc, data) as u16
+  reference_u16(crc_fast::checksum(CrcAlgorithm::Crc16Arc, data))
 });
 test_combine_all_splits!(crc24_openpgp_combine_all_splits, Crc24OpenPgp, |data: &[u8]| {
   REF_CRC24_OPENPGP.checksum(data) & 0x00FF_FFFF
 });
 test_combine_all_splits!(crc32_ieee_combine_all_splits, Crc32, |data: &[u8]| {
-  crc_fast::checksum(CrcAlgorithm::Crc32IsoHdlc, data) as u32
+  reference_u32(crc_fast::checksum(CrcAlgorithm::Crc32IsoHdlc, data))
 });
 test_combine_all_splits!(crc32c_combine_all_splits, Crc32C, |data: &[u8]| {
-  crc_fast::checksum(CrcAlgorithm::Crc32Iscsi, data) as u32
+  reference_u32(crc_fast::checksum(CrcAlgorithm::Crc32Iscsi, data))
 });
 test_combine_all_splits!(crc64_xz_combine_all_splits, Crc64, |data: &[u8]| {
   crc_fast::checksum(CrcAlgorithm::Crc64Xz, data)
@@ -409,7 +421,7 @@ macro_rules! test_chunking_edge_cases {
       for size in [
         0, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 512, 1024,
       ] {
-        let data: Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(23)).collect();
+        let data: Vec<u8> = (0..size).map(|i| low_byte(i).wrapping_mul(23)).collect();
         let expected = <$crc_type>::checksum(&data);
 
         // Byte-at-a-time

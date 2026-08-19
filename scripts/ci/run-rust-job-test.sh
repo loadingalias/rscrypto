@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+unset BASH_ENV
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DISPATCHER="$SCRIPT_DIR/run-rust-job.sh"
@@ -292,7 +293,7 @@ grep -Fq \
   "$CAPTURE/amx-cargo.args" \
   || fail "AMX integration test existence was not checked under the required permission contract"
 grep -Fq \
-  'RUSTFLAGS=-A unstable-features -C target-feature=+amx-tile,+amx-bf16,+amx-int8' \
+  'RUSTFLAGS=-C target-feature=+amx-tile,+amx-bf16,+amx-int8' \
   "$CAPTURE/amx-cargo.args" \
   || fail "AMX no_std test existence was not checked with forced AMX target features"
 

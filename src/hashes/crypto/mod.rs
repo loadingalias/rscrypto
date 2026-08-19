@@ -1,9 +1,5 @@
 //! Cryptographic hash functions.
 
-#![cfg_attr(not(test), deny(clippy::unwrap_used))]
-#![cfg_attr(not(test), deny(clippy::expect_used))]
-#![cfg_attr(not(test), deny(clippy::indexing_slicing))]
-
 #[cfg(any(feature = "blake2b", feature = "blake2s"))]
 use core::fmt;
 

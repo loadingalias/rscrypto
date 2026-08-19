@@ -3,19 +3,38 @@ use core::simd::i64x2;
 use super::{BLOCK_SIZE, KEY_SIZE, NONCE_SIZE, load_u32_le, xor_keystream_portable};
 
 const BLOCKS_PER_BATCH: usize = 4;
+const COUNTERS_PER_BATCH: u32 = 4;
 
+/// Generate and XOR a ChaCha20 stream with the z/Vector kernel.
+///
+/// # Safety
+///
+/// The caller must ensure that the z/Vector facility is available and that `buffer`'s 64-byte block count fits the
+/// counter range starting at `initial_counter`.
 #[inline]
-pub(super) fn xor_keystream(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {
-  // SAFETY: Backend selection guarantees the z/Vector facility before this wrapper is chosen.
+pub(super) unsafe fn xor_keystream(
+  key: &[u8; KEY_SIZE],
+  initial_counter: u32,
+  nonce: &[u8; NONCE_SIZE],
+  buffer: &mut [u8],
+) {
+  // SAFETY: Production validates the counter range and detects `s390x::VECTOR`; direct test and diagnostic callers
+  // establish the same conditions.
   unsafe { xor_keystream_impl(key, initial_counter, nonce, buffer) }
 }
 
+/// Generate and XOR a ChaCha20 stream in four-block z/Vector batches.
+///
+/// # Safety
+///
+/// The caller must ensure that the z/Vector facility is available and that `buffer`'s 64-byte block count fits the
+/// counter range starting at `initial_counter`.
 #[target_feature(enable = "vector")]
 unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {
   let mut counter = initial_counter;
-  let mut batches = buffer.chunks_exact_mut(BLOCK_SIZE * BLOCKS_PER_BATCH);
-  for chunk in &mut batches {
-    debug_assert!(counter.checked_add((BLOCKS_PER_BATCH - 1) as u32).is_some());
+  let (batches, remainder) = buffer.as_chunks_mut::<{ BLOCK_SIZE * BLOCKS_PER_BATCH }>();
+  for chunk in batches {
+    debug_assert!(counter.checked_add(COUNTERS_PER_BATCH.strict_sub(1)).is_some());
 
     let mut x0 = splat(0x6170_7865);
     let mut x1 = splat(0x3320_646e);
@@ -128,10 +147,9 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
       block_index = block_index.strict_add(1);
     }
 
-    counter = counter.wrapping_add(BLOCKS_PER_BATCH as u32);
+    counter = counter.wrapping_add(COUNTERS_PER_BATCH);
   }
 
-  let remainder = batches.into_remainder();
   if !remainder.is_empty() {
     xor_keystream_portable(key, counter, nonce, remainder);
   }
@@ -155,6 +173,10 @@ fn splat(val: u32) -> i64x2 {
 }
 
 /// Vector add fullword: `vaf`.
+///
+/// # Safety
+///
+/// The executing CPU must support the vector facility.
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn vaf(a: i64x2, b: i64x2) -> i64x2 {
@@ -173,6 +195,10 @@ unsafe fn vaf(a: i64x2, b: i64x2) -> i64x2 {
 }
 
 /// Vector exclusive OR: `vx`.
+///
+/// # Safety
+///
+/// The executing CPU must support the vector facility.
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn vx(a: i64x2, b: i64x2) -> i64x2 {
@@ -194,6 +220,10 @@ unsafe fn vx(a: i64x2, b: i64x2) -> i64x2 {
 ///
 /// ChaCha20 quarter rounds rotate LEFT by 16, 12, 8, and 7 bits, and `verll`
 /// already rotates LEFT. The immediate maps directly to the ChaCha constant.
+///
+/// # Safety
+///
+/// The executing CPU must support the vector facility.
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn rotl32_via_verll<const BITS: u32>(a: i64x2) -> i64x2 {
@@ -215,6 +245,11 @@ unsafe fn rotl32_via_verll<const BITS: u32>(a: i64x2) -> i64x2 {
   out
 }
 
+/// Apply one vectorized ChaCha20 quarter round.
+///
+/// # Safety
+///
+/// The executing CPU must support the vector facility.
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn quarter_round(a: &mut i64x2, b: &mut i64x2, c: &mut i64x2, d: &mut i64x2) {

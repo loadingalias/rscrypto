@@ -3,10 +3,23 @@ use core::simd::i64x2;
 use super::{BLOCK_SIZE, KEY_SIZE, NONCE_SIZE, load_u32_le, xor_keystream_portable};
 
 const BLOCKS_PER_BATCH: usize = 4;
+const COUNTERS_PER_BATCH: u32 = 4;
 
+/// Generate and XOR a ChaCha20 stream with the POWER8 vector kernel.
+///
+/// # Safety
+///
+/// The caller must ensure that POWER8 vector support is available and that `buffer`'s 64-byte block count fits the
+/// counter range starting at `initial_counter`.
 #[inline]
-pub(super) fn xor_keystream(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {
-  // SAFETY: Backend selection guarantees POWER vector support before this wrapper is chosen.
+pub(super) unsafe fn xor_keystream(
+  key: &[u8; KEY_SIZE],
+  initial_counter: u32,
+  nonce: &[u8; NONCE_SIZE],
+  buffer: &mut [u8],
+) {
+  // SAFETY: Production validates the counter range and detects `power::POWER8_VECTOR`; direct test and diagnostic
+  // callers establish the same conditions.
   unsafe { xor_keystream_impl(key, initial_counter, nonce, buffer) }
 }
 
@@ -42,14 +55,20 @@ impl RotShifts {
   }
 }
 
+/// Generate and XOR a ChaCha20 stream in four-block POWER8 vector batches.
+///
+/// # Safety
+///
+/// The caller must ensure that POWER8 vector support is available and that `buffer`'s 64-byte block count fits the
+/// counter range starting at `initial_counter`.
 #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
 unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {
   let rot = RotShifts::new();
 
   let mut counter = initial_counter;
-  let mut batches = buffer.chunks_exact_mut(BLOCK_SIZE * BLOCKS_PER_BATCH);
-  for chunk in &mut batches {
-    debug_assert!(counter.checked_add((BLOCKS_PER_BATCH - 1) as u32).is_some());
+  let (batches, remainder) = buffer.as_chunks_mut::<{ BLOCK_SIZE * BLOCKS_PER_BATCH }>();
+  for chunk in batches {
+    debug_assert!(counter.checked_add(COUNTERS_PER_BATCH.strict_sub(1)).is_some());
 
     let mut x0 = splat(0x6170_7865);
     let mut x1 = splat(0x3320_646e);
@@ -162,10 +181,9 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
       block_index = block_index.strict_add(1);
     }
 
-    counter = counter.wrapping_add(BLOCKS_PER_BATCH as u32);
+    counter = counter.wrapping_add(COUNTERS_PER_BATCH);
   }
 
-  let remainder = batches.into_remainder();
   if !remainder.is_empty() {
     xor_keystream_portable(key, counter, nonce, remainder);
   }
@@ -189,6 +207,10 @@ fn splat(val: u32) -> i64x2 {
 }
 
 /// Vector add unsigned word modulo: `vadduwm`.
+///
+/// # Safety
+///
+/// The executing CPU must support POWER8 vector instructions.
 #[inline(always)]
 unsafe fn vadduwm(a: i64x2, b: i64x2) -> i64x2 {
   let out: i64x2;
@@ -206,6 +228,10 @@ unsafe fn vadduwm(a: i64x2, b: i64x2) -> i64x2 {
 }
 
 /// Vector XOR: `vxor`.
+///
+/// # Safety
+///
+/// The executing CPU must support AltiVec.
 #[inline(always)]
 unsafe fn vxor(a: i64x2, b: i64x2) -> i64x2 {
   let out: i64x2;
@@ -223,6 +249,10 @@ unsafe fn vxor(a: i64x2, b: i64x2) -> i64x2 {
 }
 
 /// Vector rotate left word: `vrlw`.
+///
+/// # Safety
+///
+/// The executing CPU must support AltiVec.
 #[inline(always)]
 unsafe fn vrlw(value: i64x2, shift: i64x2) -> i64x2 {
   let out: i64x2;
@@ -239,6 +269,11 @@ unsafe fn vrlw(value: i64x2, shift: i64x2) -> i64x2 {
   out
 }
 
+/// Apply one vectorized ChaCha20 quarter round.
+///
+/// # Safety
+///
+/// The executing CPU must support POWER8 vector instructions.
 #[inline(always)]
 unsafe fn quarter_round(a: &mut i64x2, b: &mut i64x2, c: &mut i64x2, d: &mut i64x2, rot: &RotShifts) {
   // SAFETY: POWER8+ VSX available via enclosing target_feature.

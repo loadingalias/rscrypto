@@ -10,7 +10,6 @@
 //! - aarch64: PMULL folding
 //! - Power: VPMSUMD folding
 //! - s390x: VGFM folding
-//! - riscv64: ZVBC (RVV vector CLMUL) / Zbc folding
 //! - wasm32/wasm64: portable only (no CLMUL)
 
 pub(crate) mod config;
@@ -33,11 +32,7 @@ mod power;
 #[cfg(target_arch = "s390x")]
 mod s390x;
 
-#[cfg(target_arch = "riscv64")]
-mod riscv64;
-
 // Re-export config types for public API (Crc64Force only used internally on SIMD archs)
-#[allow(unused_imports)]
 pub use config::{Crc64Config, Crc64Force};
 
 #[cfg(any(test, feature = "std"))]
@@ -47,10 +42,6 @@ use crate::checksum::common::tables::generate_crc64_tables_8;
 use crate::checksum::common::tables::{CRC64_NVME_POLY, CRC64_XZ_POLY, generate_crc64_tables_16};
 #[cfg(feature = "diag")]
 use crate::checksum::diag::{Crc64Polynomial, Crc64SelectionDiag};
-// Re-export traits for test module (`use super::*`).
-#[allow(unused_imports)]
-pub(super) use crate::traits::{Checksum, ChecksumCombine};
-
 // Kernel Name Introspection
 
 /// Get the name of the CRC-64/XZ kernel that would be selected for a given buffer length.
@@ -206,23 +197,21 @@ pub(crate) fn diag_crc64_nvme(len: usize) -> Crc64SelectionDiag {
 mod kernel_tables {
   use super::*;
   #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-  pub static XZ_TABLES_8: [[u64; 256]; 8] = generate_crc64_tables_8(CRC64_XZ_POLY);
+  pub(super) static XZ_TABLES_8: [[u64; 256]; 8] = generate_crc64_tables_8(CRC64_XZ_POLY);
   #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-  pub static NVME_TABLES_8: [[u64; 256]; 8] = generate_crc64_tables_8(CRC64_NVME_POLY);
-  pub static XZ_TABLES_16: [[u64; 256]; 16] = generate_crc64_tables_16(CRC64_XZ_POLY);
-  pub static NVME_TABLES_16: [[u64; 256]; 16] = generate_crc64_tables_16(CRC64_NVME_POLY);
+  pub(super) static NVME_TABLES_8: [[u64; 256]; 8] = generate_crc64_tables_8(CRC64_NVME_POLY);
+  pub(super) static XZ_TABLES_16: [[u64; 256]; 16] = generate_crc64_tables_16(CRC64_XZ_POLY);
+  pub(super) static NVME_TABLES_16: [[u64; 256]; 16] = generate_crc64_tables_16(CRC64_NVME_POLY);
 }
 
 /// CRC-64-XZ portable kernel wrapper.
-#[cfg(any(test, feature = "std"))]
-#[cfg_attr(all(test, not(feature = "std")), allow(dead_code))]
+#[cfg(feature = "std")]
 fn crc64_xz_portable(crc: u64, data: &[u8]) -> u64 {
   portable::crc64_slice16_xz(crc, data)
 }
 
 /// CRC-64-NVME portable kernel wrapper.
-#[cfg(any(test, feature = "std"))]
-#[cfg_attr(all(test, not(feature = "std")), allow(dead_code))]
+#[cfg(feature = "std")]
 fn crc64_nvme_portable(crc: u64, data: &[u8]) -> u64 {
   portable::crc64_slice16_nvme(crc, data)
 }
@@ -849,6 +838,9 @@ impl crate::traits::ChecksumCombine for Crc64Nvme {
 
 #[cfg(feature = "alloc")]
 impl Crc64Nvme {
+  /// Buffer many short updates before dispatching to the active CRC-64/NVME kernel.
+  ///
+  /// For large contiguous buffers, use [`Crc64Nvme`] directly.
   #[must_use]
   pub fn buffered() -> BufferedCrc64Nvme {
     BufferedCrc64Nvme::new()
@@ -964,8 +956,17 @@ mod tests {
   use alloc::vec::Vec;
 
   use super::*;
+  use crate::traits::{Checksum, ChecksumCombine};
 
   const TEST_DATA: &[u8] = b"123456789";
+
+  fn patterned_data(len: usize, multiplier: u8) -> Vec<u8> {
+    (0u8..=u8::MAX)
+      .cycle()
+      .take(len)
+      .map(|byte| byte.wrapping_mul(multiplier))
+      .collect()
+  }
 
   #[test]
   fn test_crc64_xz_checksum() {
@@ -1087,11 +1088,7 @@ mod tests {
   /// regardless of whether the portable slice-by-8 or SIMD path is selected.
   #[test]
   fn test_crc64_various_lengths() {
-    // Generate predictable test data
-    let mut data = [0u8; 512];
-    for (i, byte) in data.iter_mut().enumerate() {
-      *byte = (i as u8).wrapping_mul(17).wrapping_add(i as u8);
-    }
+    let data = patterned_data(512, 18);
 
     // Test lengths around key thresholds:
     // - 0-15: always portable (below 16B lane minimum)
@@ -1136,7 +1133,7 @@ mod tests {
 
     // Generate test data larger than threshold
     let size = threshold + 128;
-    let data: Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(31)).collect();
+    let data = patterned_data(size, 31);
 
     let oneshot = Crc64::checksum(&data);
 
@@ -1237,7 +1234,7 @@ mod tests {
     let len = 4096usize;
 
     // Execute both variants to ensure the selected tier doesn't trap.
-    let data: Vec<u8> = (0..len).map(|i| (i as u8).wrapping_mul(13)).collect();
+    let data = patterned_data(len, 13);
     let ours_xz = Crc64::checksum(&data);
     let ours_nvme = Crc64Nvme::checksum(&data);
 
@@ -1335,11 +1332,7 @@ mod tests {
   #[cfg(feature = "alloc")]
   #[test]
   fn test_buffered_crc64_xz_mixed_sizes() {
-    // Generate test data
-    let mut data = [0u8; 1024];
-    for (i, byte) in data.iter_mut().enumerate() {
-      *byte = (i as u8).wrapping_mul(13);
-    }
+    let data = patterned_data(1024, 13);
     let expected = Crc64::checksum(&data);
 
     let mut buffered = BufferedCrc64::new();

@@ -3,7 +3,11 @@ use rscrypto_fuzz::{FuzzInput, some_or_return, split_at_ratio};
 
 fn encoded_string_len(len: usize) -> usize {
   let bits = len.strict_mul(8);
-  let width = ((usize::BITS - bits.leading_zeros()) as usize).div_ceil(8).max(1);
+  let width_bits = usize::BITS.strict_sub(bits.leading_zeros());
+  let width = usize::try_from(width_bits)
+    .expect("the bit width fits usize")
+    .div_ceil(8)
+    .max(1);
   1usize.strict_add(width).strict_add(len)
 }
 
@@ -15,7 +19,7 @@ fn bytepad_is_aligned(rate: usize, segments: &[usize]) -> bool {
   encoded_len.is_multiple_of(rate)
 }
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let split: u8 = some_or_return!(input.byte());
   let key_split: u8 = some_or_return!(input.byte());
@@ -24,7 +28,7 @@ pub fn run(data: &[u8]) {
 
   let (key, remainder) = split_at_ratio(rest, key_split);
   let (custom, message) = split_at_ratio(remainder, split);
-  let out_len = (out_len_byte as usize % 128).strict_add(1);
+  let out_len = usize::from(out_len_byte).rem_euclid(128).strict_add(1);
 
   // Property: streaming equivalence
   let mut expected = vec![0u8; out_len];

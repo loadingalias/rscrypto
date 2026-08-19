@@ -3,25 +3,15 @@
 //! This module provides:
 //! - [`Crc24OpenPgp`] - CRC-24/OPENPGP (RFC 4880)
 //!
-//! # Quick Start
-//!
-//! ```rust
-//! use rscrypto::checksum::{Checksum, ChecksumCombine, Crc24OpenPgp};
-//!
-//! let data = b"123456789";
-//! assert_eq!(Crc24OpenPgp::checksum(data), 0x21CF02);
-//!
-//! let (a, b) = data.split_at(4);
-//! let combined = Crc24OpenPgp::combine(
-//!   Crc24OpenPgp::checksum(a),
-//!   Crc24OpenPgp::checksum(b),
-//!   b.len(),
-//! );
-//! assert_eq!(combined, Crc24OpenPgp::checksum(data));
-//! ```
-
 pub(crate) mod config;
 pub(crate) mod kernels;
+#[cfg(any(
+  target_arch = "aarch64",
+  target_arch = "powerpc64",
+  target_arch = "riscv64",
+  target_arch = "s390x",
+  target_arch = "x86_64"
+))]
 pub(crate) mod keys;
 pub(crate) mod portable;
 #[cfg(any(
@@ -33,7 +23,6 @@ pub(crate) mod portable;
 ))]
 mod reflected;
 
-#[allow(unused_imports)]
 pub use config::{Crc24Config, Crc24Force};
 
 #[cfg(any(test, feature = "std"))]
@@ -42,10 +31,6 @@ use crate::checksum::common::{
   combine::{Gf2Matrix24, combine_crc24, generate_shift8_matrix_24},
   tables::{CRC24_OPENPGP_POLY, generate_crc24_tables_8},
 };
-// Re-export traits for test modules (`use super::*`).
-#[allow(unused_imports)]
-pub(super) use crate::traits::{Checksum, ChecksumCombine};
-
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
 #[cfg(target_arch = "powerpc64")]
@@ -61,7 +46,7 @@ mod x86_64;
 
 mod kernel_tables {
   use super::*;
-  pub static OPENPGP_TABLES_8: [[u32; 256]; 8] = generate_crc24_tables_8(CRC24_OPENPGP_POLY);
+  pub(super) static OPENPGP_TABLES_8: [[u32; 256]; 8] = generate_crc24_tables_8(CRC24_OPENPGP_POLY);
 }
 
 // Reference Kernel Wrapper
@@ -331,6 +316,7 @@ impl crate::traits::ChecksumCombine for Crc24OpenPgp {
 
 #[cfg(feature = "alloc")]
 impl Crc24OpenPgp {
+  /// Creates a buffering wrapper that coalesces short updates before CRC-24/OpenPGP dispatch.
   #[must_use]
   pub fn buffered() -> BufferedCrc24OpenPgp {
     BufferedCrc24OpenPgp::new()
@@ -373,6 +359,7 @@ mod tests {
   extern crate std;
 
   use super::*;
+  use crate::traits::{Checksum, ChecksumCombine};
 
   #[test]
   fn test_vectors_crc24_openpgp() {
@@ -429,6 +416,7 @@ mod cross_check {
 
   use super::*;
   use crate::checksum::common::tests::{STREAMING_CHUNK_SIZES, TEST_LENGTHS, generate_test_data};
+  use crate::traits::{Checksum, ChecksumCombine};
 
   // CRC-24/OPENPGP Cross-Check Tests
 

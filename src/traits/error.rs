@@ -78,9 +78,12 @@ mod tests {
 
   #[test]
   fn is_clone() {
+    fn clone_via_trait_bound<T: Clone>(value: &T) -> T {
+      value.clone()
+    }
+
     let e = VerificationError::new();
-    #[allow(clippy::clone_on_copy)]
-    let cloned = e.clone();
+    let cloned = clone_via_trait_bound(&e);
     assert_eq!(e, cloned);
   }
 
@@ -110,7 +113,7 @@ mod tests {
     fn verify_match() -> Result<(), VerificationError> {
       Ok(())
     }
-    assert!(verify_match().is_ok());
+    assert_eq!(verify_match(), Ok(()));
   }
 
   #[test]
@@ -127,7 +130,7 @@ mod tests {
     fn returns_err() -> Result<(), VerificationError> {
       Err(VerificationError::new())
     }
-    let err = returns_err().unwrap_err();
+    let err = returns_err().expect_err("returns_err must return VerificationError");
     assert_eq!(err.to_string(), "verification failed");
   }
 

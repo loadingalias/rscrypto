@@ -12,21 +12,37 @@ fn kmac256_ref(key: &[u8], customization: &[u8], data: &[u8], out: &mut [u8]) {
 }
 
 fn encoded_string_len(len: usize) -> usize {
-  let bits = len * 8;
-  let width = ((usize::BITS - bits.leading_zeros()) as usize).div_ceil(8).max(1);
-  1 + width + len
+  let bits = len.strict_mul(8);
+  let width_bits = usize::BITS.strict_sub(bits.leading_zeros());
+  let width = usize::try_from(width_bits)
+    .expect("encoded-string width must fit usize")
+    .div_ceil(8)
+    .max(1);
+  1usize.strict_add(width).strict_add(len)
 }
 
 fn bytepad_is_aligned(rate: usize, segments: &[usize]) -> bool {
-  (2 + segments.iter().map(|&len| encoded_string_len(len)).sum::<usize>()).is_multiple_of(rate)
+  2usize
+    .strict_add(segments.iter().map(|&len| encoded_string_len(len)).sum::<usize>())
+    .is_multiple_of(rate)
 }
 
 fn decode_hex_64(value: &str) -> [u8; 64] {
   assert_eq!(value.len(), 128);
   let mut out = [0u8; 64];
-  for (index, byte) in out.iter_mut().enumerate() {
-    let offset = index * 2;
-    *byte = u8::from_str_radix(&value[offset..offset + 2], 16).unwrap();
+  let mut digits = value.chars();
+  for byte in &mut out {
+    let high = digits
+      .next()
+      .expect("KMAC-256 vector must contain 128 hexadecimal digits");
+    let low = digits.next().expect("KMAC-256 vector must contain complete byte pairs");
+    let high = high
+      .to_digit(16)
+      .expect("KMAC-256 vector must contain only hexadecimal digits");
+    let low = low
+      .to_digit(16)
+      .expect("KMAC-256 vector must contain only hexadecimal digits");
+    *byte = u8::try_from(high.strict_mul(16).strict_add(low)).expect("two hexadecimal digits must fit in one byte");
   }
   out
 }
@@ -47,7 +63,7 @@ proptest! {
     let mut actual = vec![0u8; out_len];
     Kmac256::mac_into(&key, &customization, &data, &mut actual);
 
-    prop_assert_eq!(actual, expected.clone());
+    prop_assert_eq!(actual.as_slice(), expected.as_slice());
     if expected.is_empty() {
       prop_assert!(Kmac256::verify_tag(&key, &customization, &data, &expected).is_err());
     } else {
@@ -77,8 +93,8 @@ proptest! {
     let mut kmac = Kmac256::new(&key, &customization);
     let mut i = 0usize;
     while i < data.len() {
-      let step = (data[i] as usize % 97) + 1;
-      let end = core::cmp::min(data.len(), i + step);
+      let step = (usize::from(data[i]) % 97).strict_add(1);
+      let end = core::cmp::min(data.len(), i.strict_add(step));
       kmac.update(&data[i..end]);
       i = end;
     }

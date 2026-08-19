@@ -4,12 +4,13 @@
 //! Organised by cost-parameter classes so CI can run the fast groups on
 //! every push and reserve the OWASP-scale group for dedicated perf runs.
 
-#![allow(clippy::unwrap_used)]
-
 use core::{hint::black_box, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use dryoc::classic::crypto_pwhash::{PasswordHashAlgorithm, crypto_pwhash};
+use dryoc::{
+  classic::crypto_pwhash::{PasswordHashAlgorithm, crypto_pwhash},
+  constants::{CRYPTO_PWHASH_ARGON2I_OPSLIMIT_MIN, CRYPTO_PWHASH_ARGON2ID_OPSLIMIT_MIN},
+};
 use rscrypto::{
   Argon2Error, Argon2Params, Argon2d, Argon2i, Argon2id, Argon2idPassword, Scrypt, ScryptParams, ScryptPassword,
 };
@@ -22,12 +23,13 @@ const SALT: &[u8] = b"rscrypto-bench-salt-16bytes!";
 
 /// Build rscrypto params.
 fn rs_params(m_kib: u32, t: u32, p: u32, _out_len: u32) -> Argon2Params {
-  Argon2Params::new(m_kib, t, p).unwrap()
+  Argon2Params::new(m_kib, t, p).expect("supported password-hashing benchmark parameters must succeed")
 }
 
 /// Build RustCrypto oracle context.
 fn oracle_ctx(algo: argon2::Algorithm, m_kib: u32, t: u32, p: u32, out_len: usize) -> argon2::Argon2<'static> {
-  let params = argon2::Params::new(m_kib, t, p, Some(out_len)).unwrap();
+  let params = argon2::Params::new(m_kib, t, p, Some(out_len))
+    .expect("supported password-hashing benchmark parameters must succeed");
   argon2::Argon2::new(algo, argon2::Version::V0x13, params)
 }
 
@@ -39,6 +41,15 @@ const SMALL_MATRIX: &[(u32, u32, u32)] = &[
   (32, 2, 1),
   (64, 3, 2),
 ];
+
+fn dryoc_supports_small_row(algorithm: PasswordHashAlgorithm, time_cost: u32, parallelism: u32) -> bool {
+  let minimum_time_cost = match algorithm {
+    PasswordHashAlgorithm::Argon2i13 => CRYPTO_PWHASH_ARGON2I_OPSLIMIT_MIN,
+    PasswordHashAlgorithm::Argon2id13 => CRYPTO_PWHASH_ARGON2ID_OPSLIMIT_MIN,
+  };
+
+  parallelism == 1 && u64::from(time_cost) >= minimum_time_cost
+}
 
 fn bench_small_variant(
   c: &mut Criterion,
@@ -53,7 +64,12 @@ fn bench_small_variant(
   for &(m, t, p) in SMALL_MATRIX {
     let out_len = 32usize;
     let param_id = format!("m={m}_t={t}_p={p}");
-    let rs_params = rs_params(m, t, p, out_len as u32);
+    let rs_params = rs_params(
+      m,
+      t,
+      p,
+      u32::try_from(out_len).expect("benchmark output length must fit u32"),
+    );
     let oracle = oracle_ctx(oracle_algo, m, t, p, out_len);
 
     g.bench_with_input(BenchmarkId::new("rscrypto", &param_id), &rs_params, |b, params| {
@@ -65,7 +81,7 @@ fn bench_small_variant(
           black_box(SALT),
           black_box(&mut out),
         )
-        .unwrap()
+        .expect("supported password-hashing benchmark parameters must succeed")
       });
     });
 
@@ -74,28 +90,26 @@ fn bench_small_variant(
       b.iter(|| {
         ctx
           .hash_password_into(black_box(PASSWORD), black_box(SALT), black_box(&mut out))
-          .unwrap();
+          .expect("supported password-hashing benchmark parameters must succeed");
       });
     });
 
-    // dryoc wraps libsodium's `crypto_pwhash`, which fixes parallelism at p=1.
-    // Skip the row whenever the matrix asks for p>1; that case is rscrypto+rustcrypto only.
-    if p == 1
-      && let Some(ref alg) = dryoc_algo
-    {
-      let memlimit_bytes = (m as usize).saturating_mul(1024);
-      g.bench_with_input(BenchmarkId::new("dryoc", &param_id), alg, |b, algorithm| {
+    if let Some(algorithm) = dryoc_algo.filter(|&algorithm| dryoc_supports_small_row(algorithm, t, p)) {
+      let memlimit_bytes = usize::try_from(m)
+        .expect("benchmark memory cost must fit usize")
+        .strict_mul(1024);
+      g.bench_with_input(BenchmarkId::new("dryoc", &param_id), &algorithm, |b, algorithm| {
         let mut out = [0u8; 32];
         b.iter(|| {
           crypto_pwhash(
             black_box(&mut out),
             black_box(PASSWORD),
             black_box(&SALT[..16]),
-            t as u64,
+            u64::from(t),
             memlimit_bytes,
-            algorithm.clone(),
+            *algorithm,
           )
-          .unwrap();
+          .expect("supported password-hashing benchmark parameters must succeed");
         });
       });
     }
@@ -139,7 +153,12 @@ fn argon2id_owasp(c: &mut Criterion) {
   let out_len = 32usize;
 
   // OWASP 2024: m=19MiB, t=2, p=1
-  let rs_params = rs_params(19 * 1024, 2, 1, out_len as u32);
+  let rs_params = rs_params(
+    19 * 1024,
+    2,
+    1,
+    u32::try_from(out_len).expect("benchmark output length must fit u32"),
+  );
   let oracle = oracle_ctx(argon2::Algorithm::Argon2id, 19 * 1024, 2, 1, out_len);
 
   g.bench_function(BenchmarkId::new("rscrypto", "m=19MiB_t=2_p=1"), |b| {
@@ -151,7 +170,7 @@ fn argon2id_owasp(c: &mut Criterion) {
         black_box(SALT),
         black_box(&mut out),
       )
-      .unwrap()
+      .expect("supported password-hashing benchmark parameters must succeed")
     });
   });
 
@@ -160,12 +179,12 @@ fn argon2id_owasp(c: &mut Criterion) {
     b.iter(|| {
       oracle
         .hash_password_into(black_box(PASSWORD), black_box(SALT), black_box(&mut out))
-        .unwrap();
+        .expect("supported password-hashing benchmark parameters must succeed");
     });
   });
 
   // dryoc / libsodium-classic Argon2id at OWASP parameters (memlimit in bytes).
-  let dryoc_memlimit = (19 * 1024usize).saturating_mul(1024);
+  let dryoc_memlimit = 19usize.strict_mul(1024).strict_mul(1024);
   g.bench_function(BenchmarkId::new("dryoc", "m=19MiB_t=2_p=1"), |b| {
     let mut out = [0u8; 32];
     b.iter(|| {
@@ -177,7 +196,7 @@ fn argon2id_owasp(c: &mut Criterion) {
         dryoc_memlimit,
         PasswordHashAlgorithm::Argon2id13,
       )
-      .unwrap();
+      .expect("supported password-hashing benchmark parameters must succeed");
     });
   });
 
@@ -186,12 +205,12 @@ fn argon2id_owasp(c: &mut Criterion) {
 
 /// Build rscrypto scrypt params.
 fn rs_scrypt_params(log_n: u8, r: u32, p: u32, _out_len: u32) -> ScryptParams {
-  ScryptParams::new(log_n, r, p).unwrap()
+  ScryptParams::new(log_n, r, p).expect("supported password-hashing benchmark parameters must succeed")
 }
 
 /// Build RustCrypto scrypt oracle params.
 fn oracle_scrypt_params(log_n: u8, r: u32, p: u32, _out_len: usize) -> scrypt::Params {
-  scrypt::Params::new(log_n, r, p).unwrap()
+  scrypt::Params::new(log_n, r, p).expect("supported password-hashing benchmark parameters must succeed")
 }
 
 /// Small / CI-friendly scrypt matrix: (log_n, r, p).
@@ -204,7 +223,12 @@ fn scrypt_small(c: &mut Criterion) {
   for &(log_n, r, p) in SCRYPT_SMALL_MATRIX {
     let out_len = 32usize;
     let id = format!("log_n={log_n}_r={r}_p={p}");
-    let rs = rs_scrypt_params(log_n, r, p, out_len as u32);
+    let rs = rs_scrypt_params(
+      log_n,
+      r,
+      p,
+      u32::try_from(out_len).expect("benchmark output length must fit u32"),
+    );
     let oracle = oracle_scrypt_params(log_n, r, p, out_len);
 
     g.bench_with_input(BenchmarkId::new("rscrypto", &id), &rs, |b, params| {
@@ -216,14 +240,15 @@ fn scrypt_small(c: &mut Criterion) {
           black_box(SALT),
           black_box(&mut out),
         )
-        .unwrap();
+        .expect("supported password-hashing benchmark parameters must succeed");
       });
     });
 
     g.bench_with_input(BenchmarkId::new("rustcrypto", &id), &oracle, |b, params| {
       let mut out = [0u8; 32];
       b.iter(|| {
-        scrypt::scrypt(black_box(PASSWORD), black_box(SALT), params, black_box(&mut out)).unwrap();
+        scrypt::scrypt(black_box(PASSWORD), black_box(SALT), params, black_box(&mut out))
+          .expect("supported password-hashing benchmark parameters must succeed");
       });
     });
   }
@@ -238,7 +263,12 @@ fn scrypt_owasp(c: &mut Criterion) {
   g.measurement_time(Duration::from_secs(30));
 
   let out_len = 32usize;
-  let rs = rs_scrypt_params(17, 8, 1, out_len as u32);
+  let rs = rs_scrypt_params(
+    17,
+    8,
+    1,
+    u32::try_from(out_len).expect("benchmark output length must fit u32"),
+  );
   let oracle = oracle_scrypt_params(17, 8, 1, out_len);
 
   g.bench_function(BenchmarkId::new("rscrypto", "log_n=17_r=8_p=1"), |b| {
@@ -250,14 +280,15 @@ fn scrypt_owasp(c: &mut Criterion) {
         black_box(SALT),
         black_box(&mut out),
       )
-      .unwrap();
+      .expect("supported password-hashing benchmark parameters must succeed");
     });
   });
 
   g.bench_function(BenchmarkId::new("rustcrypto", "log_n=17_r=8_p=1"), |b| {
     let mut out = [0u8; 32];
     b.iter(|| {
-      scrypt::scrypt(black_box(PASSWORD), black_box(SALT), &oracle, black_box(&mut out)).unwrap();
+      scrypt::scrypt(black_box(PASSWORD), black_box(SALT), &oracle, black_box(&mut out))
+        .expect("supported password-hashing benchmark parameters must succeed");
     });
   });
 
@@ -270,17 +301,23 @@ fn scrypt_phc_roundtrip(c: &mut Criterion) {
   g.sample_size(20);
 
   let params = rs_scrypt_params(10, 8, 1, 32);
-  let password = ScryptPassword::new(params).unwrap();
+  let password = ScryptPassword::new(params).expect("supported password-hashing benchmark parameters must succeed");
   g.bench_function("hash_password", |b| {
-    b.iter(|| password.hash_password(black_box(PASSWORD)).unwrap());
+    b.iter(|| {
+      password
+        .hash_password(black_box(PASSWORD))
+        .expect("supported password-hashing benchmark parameters must succeed")
+    });
   });
 
-  let encoded = password.hash_password(PASSWORD).unwrap();
+  let encoded = password
+    .hash_password(PASSWORD)
+    .expect("supported password-hashing benchmark parameters must succeed");
   g.bench_function("verify_password", |b| {
     b.iter(|| {
       password
         .verify_password(black_box(PASSWORD), black_box(&encoded))
-        .unwrap()
+        .expect("supported password-hashing benchmark parameters must succeed")
     });
   });
 
@@ -298,17 +335,23 @@ fn argon2id_phc_roundtrip(c: &mut Criterion) {
   g.sample_size(30);
 
   let params = rs_params(32, 2, 1, 32);
-  let password = Argon2idPassword::new(params).unwrap();
+  let password = Argon2idPassword::new(params).expect("supported password-hashing benchmark parameters must succeed");
   g.bench_function("hash_password", |b| {
-    b.iter(|| password.hash_password(black_box(PASSWORD)).unwrap());
+    b.iter(|| {
+      password
+        .hash_password(black_box(PASSWORD))
+        .expect("supported password-hashing benchmark parameters must succeed")
+    });
   });
 
-  let encoded = password.hash_password(PASSWORD).unwrap();
+  let encoded = password
+    .hash_password(PASSWORD)
+    .expect("supported password-hashing benchmark parameters must succeed");
   g.bench_function("verify_password", |b| {
     b.iter(|| {
       password
         .verify_password(black_box(PASSWORD), black_box(&encoded))
-        .unwrap()
+        .expect("supported password-hashing benchmark parameters must succeed")
     });
   });
 
@@ -336,7 +379,12 @@ fn argon2id_parallel_scaling(c: &mut Criterion) {
 
   for &p in &[1u32, 4, 8, 16] {
     let id = format!("p={p}");
-    let params = rs_params(m_kib, t, p, out_len as u32);
+    let params = rs_params(
+      m_kib,
+      t,
+      p,
+      u32::try_from(out_len).expect("benchmark output length must fit u32"),
+    );
 
     g.bench_with_input(BenchmarkId::new("rscrypto", &id), &params, |b, params| {
       let mut out = [0u8; 32];
@@ -347,7 +395,7 @@ fn argon2id_parallel_scaling(c: &mut Criterion) {
           black_box(SALT),
           black_box(&mut out),
         )
-        .unwrap();
+        .expect("supported password-hashing benchmark parameters must succeed");
       });
     });
   }
@@ -369,7 +417,12 @@ fn argon2id_parallel_owasp(c: &mut Criterion) {
 
   for &p in &[1u32, 4, 8, 16] {
     let id = format!("p={p}");
-    let params = rs_params(m_kib, t, p, out_len as u32);
+    let params = rs_params(
+      m_kib,
+      t,
+      p,
+      u32::try_from(out_len).expect("benchmark output length must fit u32"),
+    );
 
     g.bench_with_input(BenchmarkId::new("rscrypto", &id), &params, |b, params| {
       let mut out = [0u8; 32];
@@ -380,7 +433,7 @@ fn argon2id_parallel_owasp(c: &mut Criterion) {
           black_box(SALT),
           black_box(&mut out),
         )
-        .unwrap();
+        .expect("supported password-hashing benchmark parameters must succeed");
       });
     });
   }

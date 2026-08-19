@@ -19,7 +19,8 @@ fn ascon_cxof128_matches_ascon_c_kat_vector() {
     "4F50159EF70BB3DAD8807E034EAEBD44C4FA2CBBC8CF1F05511AB66CDCC529905CA12083FC186AD899B270B1473DC5F7EC88D1052082DCDFE69FB75D269E7B74",
   );
 
-  let actual = squeeze_all(AsconCxof128::xof(&customization, &msg).unwrap(), expected.len());
+  let reader = AsconCxof128::xof(&customization, &msg).expect("empty Ascon-CXOF128 customization must be valid");
+  let actual = squeeze_all(reader, expected.len());
   assert_eq!(actual, expected);
 }
 
@@ -28,7 +29,7 @@ fn ascon_cxof128_reset_restores_customized_state() {
   let customization = b"ctx=v1";
   let data = b"abc";
 
-  let mut hasher = AsconCxof128::new(customization).unwrap();
+  let mut hasher = AsconCxof128::new(customization).expect("short Ascon-CXOF128 customization must be valid");
   hasher.update(data);
   let expected = squeeze_all(hasher.finalize_xof(), 64);
 
@@ -40,6 +41,6 @@ fn ascon_cxof128_reset_restores_customized_state() {
 
 #[test]
 fn ascon_cxof128_rejects_long_customization() {
-  let err = AsconCxof128::new(&[0u8; 257]).unwrap_err();
+  let err = AsconCxof128::new(&[0u8; 257]).expect_err("257-byte Ascon-CXOF128 customization must be rejected");
   assert_eq!(err.to_string(), "Ascon-CXOF128 customization exceeds 256 bytes");
 }

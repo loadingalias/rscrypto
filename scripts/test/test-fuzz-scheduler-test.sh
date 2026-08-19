@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+unset BASH_ENV
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -14,10 +15,12 @@ fail() {
 FIXTURE="$TMP_ROOT/repo"
 CAPTURE="$TMP_ROOT/capture"
 BIN="$TMP_ROOT/bin"
-mkdir -p "$FIXTURE/scripts/test" "$FIXTURE/scripts/lib" "$FIXTURE/fuzz/corpus/alpha" "$CAPTURE" "$BIN"
+mkdir -p "$FIXTURE/.config" "$FIXTURE/scripts/test" "$FIXTURE/scripts/lib" "$FIXTURE/fuzz/corpus/alpha" "$CAPTURE" "$BIN"
 cp "$REPO_ROOT/scripts/test/test-fuzz.sh" "$FIXTURE/scripts/test/"
 cp "$REPO_ROOT/scripts/lib/common.sh" "$REPO_ROOT/scripts/lib/rail-plan.sh" \
-  "$REPO_ROOT/scripts/lib/fuzz-packages.sh" "$FIXTURE/scripts/lib/"
+  "$REPO_ROOT/scripts/lib/fuzz-packages.sh" "$REPO_ROOT/scripts/lib/toolchain.sh" \
+  "$FIXTURE/scripts/lib/"
+cp "$REPO_ROOT/.config/toolchains.toml" "$FIXTURE/.config/toolchains.toml"
 
 cat >"$FIXTURE/fuzz/Cargo.toml" <<'EOF'
 [package]

@@ -1,9 +1,12 @@
-name: Setup Rust Toolchain (Dynamic)
+name: Setup Rust Toolchain
 description: |
-  Install Rust toolchain reading version from rust-toolchain.toml.
-  Single source of truth for toolchain version.
+  Install the stable development toolchain, MSRV, or pinned nightly contract.
 
 inputs:
+  contract:
+    description: Toolchain contract to install (development, msrv, or nightly)
+    required: false
+    default: "development"
   components:
     description: Comma-separated list of components to install
     required: false
@@ -11,7 +14,7 @@ inputs:
 
 outputs:
   toolchain:
-    description: The toolchain version that was installed
+    description: Exact installed toolchain version
     value: ${{ steps.read-toolchain.outputs.toolchain }}
 
 runs:
@@ -20,8 +23,15 @@ runs:
     - name: Read Toolchain Version
       id: read-toolchain
       shell: bash
+      env:
+        TOOLCHAIN_CONTRACT: ${{ inputs.contract }}
       run: |
-        TOOLCHAIN=$(bash scripts/lib/toolchain.sh)
+        case "$TOOLCHAIN_CONTRACT" in
+          development) TOOLCHAIN=$(bash scripts/lib/toolchain.sh) ;;
+          msrv) TOOLCHAIN=$(bash scripts/lib/toolchain.sh --msrv) ;;
+          nightly) TOOLCHAIN=$(bash scripts/lib/toolchain.sh --nightly) ;;
+          *) echo "Unsupported toolchain contract: $TOOLCHAIN_CONTRACT" >&2; exit 2 ;;
+        esac
         echo "toolchain=$TOOLCHAIN" >> "$GITHUB_OUTPUT"
         echo "Using toolchain: $TOOLCHAIN"
 
@@ -30,4 +40,6 @@ runs:
       env:
         TOOLCHAIN: ${{ steps.read-toolchain.outputs.toolchain }}
         TOOLCHAIN_COMPONENTS: ${{ inputs.components }}
-      run: scripts/ci/setup-toolchain.sh "$TOOLCHAIN" "$TOOLCHAIN_COMPONENTS"
+      run: |
+        scripts/ci/setup-toolchain.sh "$TOOLCHAIN" "$TOOLCHAIN_COMPONENTS" "$GITHUB_ENV"
+        RUSTUP_TOOLCHAIN="$TOOLCHAIN" rustc --version --verbose

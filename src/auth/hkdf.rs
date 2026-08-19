@@ -25,7 +25,6 @@ const SHA512_MAX_OUTPUT_SIZE: usize = 255 * SHA512_OUTPUT_SIZE;
 const SHA512_BLOCK_SIZE: usize = 128;
 
 #[inline(always)]
-#[allow(clippy::indexing_slicing)]
 fn write_u32x8_be(dst: &mut [u8; SHA256_OUTPUT_SIZE], words: &[u32; 8]) {
   dst[0..4].copy_from_slice(&words[0].to_be_bytes());
   dst[4..8].copy_from_slice(&words[1].to_be_bytes());
@@ -38,7 +37,6 @@ fn write_u32x8_be(dst: &mut [u8; SHA256_OUTPUT_SIZE], words: &[u32; 8]) {
 }
 
 #[inline(always)]
-#[allow(clippy::indexing_slicing)]
 fn write_u64x6_be(dst: &mut [u8], words: &[u64; 8]) {
   debug_assert!(dst.len() >= SHA384_OUTPUT_SIZE);
   dst[0..8].copy_from_slice(&words[0].to_be_bytes());
@@ -50,7 +48,6 @@ fn write_u64x6_be(dst: &mut [u8], words: &[u64; 8]) {
 }
 
 #[inline(always)]
-#[allow(clippy::indexing_slicing)]
 fn write_u64x8_be(dst: &mut [u8], words: &[u64; 8]) {
   debug_assert!(dst.len() >= SHA512_OUTPUT_SIZE);
   dst[0..8].copy_from_slice(&words[0].to_be_bytes());
@@ -173,7 +170,6 @@ impl HkdfSha256 {
   /// bypassing all `Sha256` struct creation, `Drop` zeroization, and dispatch
   /// overhead in the inner loop.
   #[inline]
-  #[allow(clippy::indexing_slicing)]
   pub fn expand(&self, info: &[u8], okm: &mut [u8]) -> Result<(), HkdfOutputLengthError> {
     if okm.len() > SHA256_MAX_OUTPUT_SIZE {
       return Err(HkdfOutputLengthError::new());
@@ -326,6 +322,7 @@ impl HkdfSha256 {
 #[cfg(feature = "diag")]
 #[unsafe(no_mangle)]
 #[inline(never)]
+/// Derive a portable HKDF-SHA256 diagnostic output using fixed `b"salt"` and `b"info"` inputs.
 pub fn diag_hkdf_sha256_derive_portable(input_key_material: &[u8; SHA256_OUTPUT_SIZE]) -> [u8; SHA256_OUTPUT_SIZE] {
   let compress = crate::hashes::crypto::sha256::kernels::compress_blocks_fn(
     crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable,
@@ -428,7 +425,6 @@ impl HkdfSha384 {
   /// bypassing all `Sha384` struct creation, `Drop` zeroization, and dispatch
   /// overhead in the inner loop.
   #[inline]
-  #[allow(clippy::indexing_slicing)]
   pub fn expand(&self, info: &[u8], okm: &mut [u8]) -> Result<(), HkdfOutputLengthError> {
     if okm.len() > SHA384_MAX_OUTPUT_SIZE {
       return Err(HkdfOutputLengthError::new());
@@ -565,6 +561,7 @@ impl HkdfSha384 {
 #[cfg(feature = "diag")]
 #[unsafe(no_mangle)]
 #[inline(never)]
+/// Derive a portable HKDF-SHA384 diagnostic output using fixed `b"salt"` and `b"info"` inputs.
 pub fn diag_hkdf_sha384_derive_portable(input_key_material: &[u8; SHA384_OUTPUT_SIZE]) -> [u8; SHA384_OUTPUT_SIZE] {
   let compress = crate::hashes::crypto::sha384::kernels::compress_blocks_fn(
     crate::hashes::crypto::sha384::kernels::Sha384KernelId::Portable,
@@ -648,7 +645,6 @@ impl HkdfSha512 {
 
   /// Expand the stored pseudorandom key into `okm`.
   #[inline]
-  #[allow(clippy::indexing_slicing)]
   pub fn expand(&self, info: &[u8], okm: &mut [u8]) -> Result<(), HkdfOutputLengthError> {
     if okm.len() > SHA512_MAX_OUTPUT_SIZE {
       return Err(HkdfOutputLengthError::new());
@@ -785,6 +781,7 @@ impl HkdfSha512 {
 #[cfg(feature = "diag")]
 #[unsafe(no_mangle)]
 #[inline(never)]
+/// Derive a portable HKDF-SHA512 diagnostic output using fixed `b"salt"` and `b"info"` inputs.
 pub fn diag_hkdf_sha512_derive_portable(input_key_material: &[u8; SHA512_OUTPUT_SIZE]) -> [u8; SHA512_OUTPUT_SIZE] {
   let compress = crate::hashes::crypto::sha512::kernels::compress_blocks_fn(
     crate::hashes::crypto::sha512::kernels::Sha512KernelId::Portable,
@@ -806,7 +803,6 @@ impl Drop for HkdfSha512 {
 }
 
 #[inline(always)]
-#[allow(clippy::indexing_slicing)]
 fn expand_hmac_sha256_inner(
   compress: Sha256CompressBlocksFn,
   prev: Option<&[u8; SHA256_OUTPUT_SIZE]>,
@@ -863,7 +859,6 @@ fn expand_hmac_sha256_inner(
 }
 
 #[inline(always)]
-#[allow(clippy::indexing_slicing)]
 fn expand_hmac_sha256_outer(
   compress: Sha256CompressBlocksFn,
   outer_init: &[u32; 8],
@@ -880,7 +875,6 @@ fn expand_hmac_sha256_outer(
 }
 
 #[inline(always)]
-#[allow(clippy::indexing_slicing)]
 fn expand_hmac_sha384_inner(
   compress: Sha384CompressBlocksFn,
   prev: Option<&[u8; SHA384_OUTPUT_SIZE]>,
@@ -937,7 +931,6 @@ fn expand_hmac_sha384_inner(
 }
 
 #[inline(always)]
-#[allow(clippy::indexing_slicing)]
 fn expand_hmac_sha384_outer(
   compress: Sha384CompressBlocksFn,
   outer_init: &[u64; 8],
@@ -952,7 +945,6 @@ fn expand_hmac_sha384_outer(
 }
 
 #[inline(always)]
-#[allow(clippy::indexing_slicing)]
 fn expand_hmac_sha512_inner(
   compress: Sha512CompressBlocksFn,
   prev: Option<&[u8; SHA512_OUTPUT_SIZE]>,
@@ -1009,7 +1001,6 @@ fn expand_hmac_sha512_inner(
 }
 
 #[inline(always)]
-#[allow(clippy::indexing_slicing)]
 fn expand_hmac_sha512_outer(
   compress: Sha512CompressBlocksFn,
   outer_init: &[u64; 8],
@@ -1052,9 +1043,9 @@ mod tests {
   fn pattern(len: usize, mul: u8, add: u8) -> Vec<u8> {
     (0..len)
       .map(|i| {
-        (i as u8)
+        i.to_le_bytes()[0]
           .wrapping_mul(mul)
-          .wrapping_add(((i >> 2) as u8).wrapping_add(add))
+          .wrapping_add((i >> 2).to_le_bytes()[0].wrapping_add(add))
       })
       .collect()
   }
@@ -1079,13 +1070,15 @@ mod tests {
       let mut expected = vec![0u8; out_len];
       RustCryptoHkdfSha256::new(Some(&salt), &ikm)
         .expand(&info, &mut expected)
-        .unwrap();
+        .expect("test output length should be within the HKDF-SHA256 limit");
 
       let public = HkdfSha256::new(&salt, &ikm);
       let forced = HkdfSha256::extract_with_compress_for_test(&salt, &ikm, compress);
 
       let mut public_out = vec![0u8; out_len];
-      public.expand(&info, &mut public_out).unwrap();
+      public
+        .expand(&info, &mut public_out)
+        .expect("test output length should be within the HKDF-SHA256 limit");
       assert_eq!(
         public_out,
         expected,
@@ -1098,7 +1091,9 @@ mod tests {
       );
 
       let mut forced_out = vec![0u8; out_len];
-      forced.expand(&info, &mut forced_out).unwrap();
+      forced
+        .expand(&info, &mut forced_out)
+        .expect("test output length should be within the HKDF-SHA256 limit");
       assert_eq!(
         forced_out,
         expected,
@@ -1137,13 +1132,15 @@ mod tests {
       let mut expected = vec![0u8; out_len];
       RustCryptoHkdfSha384::new(Some(&salt), &ikm)
         .expand(&info, &mut expected)
-        .unwrap();
+        .expect("test output length should be within the HKDF-SHA384 limit");
 
       let public = HkdfSha384::new(&salt, &ikm);
       let forced = HkdfSha384::extract_with_compress_for_test(&salt, &ikm, compress);
 
       let mut public_out = vec![0u8; out_len];
-      public.expand(&info, &mut public_out).unwrap();
+      public
+        .expand(&info, &mut public_out)
+        .expect("test output length should be within the HKDF-SHA384 limit");
       assert_eq!(
         public_out,
         expected,
@@ -1156,7 +1153,9 @@ mod tests {
       );
 
       let mut forced_out = vec![0u8; out_len];
-      forced.expand(&info, &mut forced_out).unwrap();
+      forced
+        .expand(&info, &mut forced_out)
+        .expect("test output length should be within the HKDF-SHA384 limit");
       assert_eq!(
         forced_out,
         expected,
@@ -1195,13 +1194,15 @@ mod tests {
       let mut expected = vec![0u8; out_len];
       RustCryptoHkdfSha512::new(Some(&salt), &ikm)
         .expand(&info, &mut expected)
-        .unwrap();
+        .expect("test output length should be within the HKDF-SHA512 limit");
 
       let public = HkdfSha512::new(&salt, &ikm);
       let forced = HkdfSha512::extract_with_compress_for_test(&salt, &ikm, compress);
 
       let mut public_out = vec![0u8; out_len];
-      public.expand(&info, &mut public_out).unwrap();
+      public
+        .expand(&info, &mut public_out)
+        .expect("test output length should be within the HKDF-SHA512 limit");
       assert_eq!(
         public_out,
         expected,
@@ -1214,7 +1215,9 @@ mod tests {
       );
 
       let mut forced_out = vec![0u8; out_len];
-      forced.expand(&info, &mut forced_out).unwrap();
+      forced
+        .expand(&info, &mut forced_out)
+        .expect("test output length should be within the HKDF-SHA512 limit");
       assert_eq!(
         forced_out,
         expected,

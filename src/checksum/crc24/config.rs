@@ -82,8 +82,16 @@ fn parse_force_env() -> Crc24Force {
 
 #[inline]
 #[must_use]
-#[allow(unused_variables)]
 fn clamp_force_to_caps(requested: Crc24Force, caps: Caps) -> Crc24Force {
+  #[cfg(not(any(
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "riscv64",
+    target_arch = "s390x",
+    target_arch = "x86_64"
+  )))]
+  let _ = caps;
+
   match requested {
     Crc24Force::Auto | Crc24Force::Reference | Crc24Force::Portable => requested,
     Crc24Force::Clmul => {
@@ -158,7 +166,7 @@ fn config(caps: Caps) -> Crc24Config {
 /// platform capabilities.
 #[inline]
 #[must_use]
-pub fn get() -> Crc24Config {
+pub(super) fn get() -> Crc24Config {
   #[cfg(feature = "std")]
   {
     use std::sync::OnceLock;

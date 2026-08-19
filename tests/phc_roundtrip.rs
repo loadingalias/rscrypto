@@ -94,38 +94,59 @@ fn allocations_during<T>(operation: impl FnOnce() -> T) -> (T, usize) {
 
 #[test]
 fn generated_password_records_are_canonical_and_self_verifying() {
-  let argon2 = Argon2idPassword::new(Argon2Params::new(32, 2, 1).unwrap()).unwrap();
-  let argon2_record = argon2.hash_password(b"correct horse battery staple").unwrap();
+  let argon2_params = Argon2Params::new(32, 2, 1).expect("Argon2 test parameters must be valid");
+  let argon2 = Argon2idPassword::new(argon2_params).expect("Argon2 password service must accept valid parameters");
+  let argon2_record = argon2
+    .hash_password(b"correct horse battery staple")
+    .expect("Argon2 password hashing must succeed");
   assert!(argon2_record.starts_with("$argon2id$v=19$m=32,t=2,p=1$"));
   assert_eq!(
     argon2.verify_password(b"correct horse battery staple", &argon2_record),
     Ok(PasswordStatus::Current)
   );
-  assert!(argon2.verify_password(b"wrong", &argon2_record).is_err());
+  argon2
+    .verify_password(b"wrong", &argon2_record)
+    .expect_err("Argon2 verification must reject the wrong password");
 
-  let scrypt = ScryptPassword::new(ScryptParams::new(4, 1, 1).unwrap()).unwrap();
-  let scrypt_record = scrypt.hash_password(b"correct horse battery staple").unwrap();
+  let scrypt_params = ScryptParams::new(4, 1, 1).expect("scrypt test parameters must be valid");
+  let scrypt = ScryptPassword::new(scrypt_params).expect("scrypt password service must accept valid parameters");
+  let scrypt_record = scrypt
+    .hash_password(b"correct horse battery staple")
+    .expect("scrypt password hashing must succeed");
   assert!(scrypt_record.starts_with("$scrypt$ln=4,r=1,p=1$"));
   assert_eq!(
     scrypt.verify_password(b"correct horse battery staple", &scrypt_record),
     Ok(PasswordStatus::Current)
   );
-  assert!(scrypt.verify_password(b"wrong", &scrypt_record).is_err());
+  scrypt
+    .verify_password(b"wrong", &scrypt_record)
+    .expect_err("scrypt verification must reject the wrong password");
 }
 
 #[test]
 fn verifier_reports_accepted_stale_profiles() {
-  let old_argon2 = Argon2idPassword::new(Argon2Params::new(32, 2, 1).unwrap()).unwrap();
-  let argon2_record = old_argon2.hash_password(b"password").unwrap();
-  let current_argon2 = Argon2idPassword::new(Argon2Params::new(40, 2, 1).unwrap()).unwrap();
+  let old_argon2_params = Argon2Params::new(32, 2, 1).expect("old Argon2 profile must be valid");
+  let old_argon2 =
+    Argon2idPassword::new(old_argon2_params).expect("old Argon2 password service must accept its profile");
+  let argon2_record = old_argon2
+    .hash_password(b"password")
+    .expect("old Argon2 profile must produce a password record");
+  let current_argon2_params = Argon2Params::new(40, 2, 1).expect("current Argon2 profile must be valid");
+  let current_argon2 =
+    Argon2idPassword::new(current_argon2_params).expect("current Argon2 password service must accept its profile");
   assert_eq!(
     current_argon2.verify_password(b"password", &argon2_record),
     Ok(PasswordStatus::NeedsRehash)
   );
 
-  let old_scrypt = ScryptPassword::new(ScryptParams::new(4, 1, 1).unwrap()).unwrap();
-  let scrypt_record = old_scrypt.hash_password(b"password").unwrap();
-  let current_scrypt = ScryptPassword::new(ScryptParams::new(5, 1, 1).unwrap()).unwrap();
+  let old_scrypt_params = ScryptParams::new(4, 1, 1).expect("old scrypt profile must be valid");
+  let old_scrypt = ScryptPassword::new(old_scrypt_params).expect("old scrypt password service must accept its profile");
+  let scrypt_record = old_scrypt
+    .hash_password(b"password")
+    .expect("old scrypt profile must produce a password record");
+  let current_scrypt_params = ScryptParams::new(5, 1, 1).expect("current scrypt profile must be valid");
+  let current_scrypt =
+    ScryptPassword::new(current_scrypt_params).expect("current scrypt password service must accept its profile");
   assert_eq!(
     current_scrypt.verify_password(b"password", &scrypt_record),
     Ok(PasswordStatus::NeedsRehash)
@@ -134,7 +155,9 @@ fn verifier_reports_accepted_stale_profiles() {
 
 #[test]
 fn every_rejected_phc_class_allocates_nothing() {
-  let argon2 = Argon2idPassword::new(Argon2Params::new(32, 2, 1).unwrap()).unwrap();
+  let argon2_params = Argon2Params::new(32, 2, 1).expect("Argon2 rejection-test parameters must be valid");
+  let argon2 =
+    Argon2idPassword::new(argon2_params).expect("Argon2 password service must accept rejection-test parameters");
   let oversized = "x".repeat(1_025);
   let argon2_rejections = [
     oversized.as_str(),
@@ -148,11 +171,13 @@ fn every_rejected_phc_class_allocates_nothing() {
   ];
   for encoded in argon2_rejections {
     let (result, allocations) = allocations_during(|| argon2.verify_password(b"password", encoded));
-    assert!(result.is_err(), "rejected Argon2 PHC: {encoded}");
+    result.expect_err("known-invalid Argon2 PHC record must be rejected");
     assert_eq!(allocations, 0, "rejected Argon2 PHC allocated: {encoded}");
   }
 
-  let scrypt = ScryptPassword::new(ScryptParams::new(4, 1, 1).unwrap()).unwrap();
+  let scrypt_params = ScryptParams::new(4, 1, 1).expect("scrypt rejection-test parameters must be valid");
+  let scrypt =
+    ScryptPassword::new(scrypt_params).expect("scrypt password service must accept rejection-test parameters");
   let scrypt_rejections = [
     oversized.as_str(),
     "not-a-phc-record",
@@ -165,34 +190,42 @@ fn every_rejected_phc_class_allocates_nothing() {
   ];
   for encoded in scrypt_rejections {
     let (result, allocations) = allocations_during(|| scrypt.verify_password(b"password", encoded));
-    assert!(result.is_err(), "rejected scrypt PHC: {encoded}");
+    result.expect_err("known-invalid scrypt PHC record must be rejected");
     assert_eq!(allocations, 0, "rejected scrypt PHC allocated: {encoded}");
   }
 }
 
 #[test]
 fn public_verifiers_reject_noncanonical_and_cross_algorithm_records() {
-  let argon2 = Argon2idPassword::new(Argon2Params::new(32, 2, 1).unwrap()).unwrap();
-  let scrypt = ScryptPassword::new(ScryptParams::new(4, 1, 1).unwrap()).unwrap();
-  let valid_argon2 = argon2.hash_password(b"password").unwrap();
-  let valid_scrypt = scrypt.hash_password(b"password").unwrap();
+  let argon2_params = Argon2Params::new(32, 2, 1).expect("Argon2 cross-algorithm parameters must be valid");
+  let argon2 =
+    Argon2idPassword::new(argon2_params).expect("Argon2 password service must accept cross-algorithm parameters");
+  let scrypt_params = ScryptParams::new(4, 1, 1).expect("scrypt cross-algorithm parameters must be valid");
+  let scrypt =
+    ScryptPassword::new(scrypt_params).expect("scrypt password service must accept cross-algorithm parameters");
+  let valid_argon2 = argon2
+    .hash_password(b"password")
+    .expect("Argon2 must produce a cross-algorithm fixture");
+  let valid_scrypt = scrypt
+    .hash_password(b"password")
+    .expect("scrypt must produce a cross-algorithm fixture");
 
-  assert!(argon2.verify_password(b"password", &valid_scrypt).is_err());
-  assert!(scrypt.verify_password(b"password", &valid_argon2).is_err());
-  assert!(
-    argon2
-      .verify_password(
-        b"password",
-        "$argon2id$v=19$t=2,m=32,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-      )
-      .is_err()
-  );
-  assert!(
-    scrypt
-      .verify_password(
-        b"password",
-        "$scrypt$r=1,ln=4,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-      )
-      .is_err()
-  );
+  argon2
+    .verify_password(b"password", &valid_scrypt)
+    .expect_err("Argon2 must reject a scrypt record");
+  scrypt
+    .verify_password(b"password", &valid_argon2)
+    .expect_err("scrypt must reject an Argon2 record");
+  argon2
+    .verify_password(
+      b"password",
+      "$argon2id$v=19$t=2,m=32,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    )
+    .expect_err("Argon2 must reject noncanonical parameter order");
+  scrypt
+    .verify_password(
+      b"password",
+      "$scrypt$r=1,ln=4,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    )
+    .expect_err("scrypt must reject noncanonical parameter order");
 }

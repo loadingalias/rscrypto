@@ -11,16 +11,6 @@
 //!
 //! [phc]: https://github.com/P-H-C/phc-string-format/blob/master/phc-sf-spec.md
 
-#![allow(clippy::indexing_slicing)]
-// Base64 and decimal helpers are only reachable when a
-// PHC-aware hasher (argon2 or scrypt) is enabled. Without either, the
-// helpers are dead code — silence the warning rather than cfg-gate every
-// symbol individually.
-#![cfg_attr(
-  all(feature = "phc-strings", not(any(feature = "argon2", feature = "scrypt"))),
-  allow(dead_code)
-)]
-
 use alloc::string::String;
 use core::fmt;
 
@@ -45,39 +35,27 @@ const B64_DECODE_TABLE: [u8; 256] = {
 /// Appends to `out` — callers managing multi-segment PHC strings reuse the
 /// same `String` buffer without intermediate allocation.
 pub(crate) fn base64_encode_into(bytes: &[u8], out: &mut String) {
-  let full_triples = bytes.len() / 3;
-  let tail = bytes.len() % 3;
-
-  for i in 0..full_triples {
-    let off = i.strict_mul(3);
-    // SAFETY: off + 3 <= bytes.len() by construction of full_triples.
-    let b0 = bytes[off] as u32;
-    let b1 = bytes[off.strict_add(1)] as u32;
-    let b2 = bytes[off.strict_add(2)] as u32;
-    let word = (b0 << 16) | (b1 << 8) | b2;
-
-    out.push(B64_ENCODE_TABLE[((word >> 18) & 0x3F) as usize] as char);
-    out.push(B64_ENCODE_TABLE[((word >> 12) & 0x3F) as usize] as char);
-    out.push(B64_ENCODE_TABLE[((word >> 6) & 0x3F) as usize] as char);
-    out.push(B64_ENCODE_TABLE[(word & 0x3F) as usize] as char);
+  let (triples, tail) = bytes.as_chunks::<3>();
+  for &[b0, b1, b2] in triples {
+    out.push(char::from(B64_ENCODE_TABLE[usize::from(b0 >> 2)]));
+    out.push(char::from(
+      B64_ENCODE_TABLE[usize::from(((b0 & 0x03) << 4) | (b1 >> 4))],
+    ));
+    out.push(char::from(
+      B64_ENCODE_TABLE[usize::from(((b1 & 0x0F) << 2) | (b2 >> 6))],
+    ));
+    out.push(char::from(B64_ENCODE_TABLE[usize::from(b2 & 0x3F)]));
   }
 
-  let off = full_triples.strict_mul(3);
-  match tail {
-    1 => {
-      let b0 = bytes[off] as u32;
-      out.push(B64_ENCODE_TABLE[((b0 >> 2) & 0x3F) as usize] as char);
-      out.push(B64_ENCODE_TABLE[((b0 << 4) & 0x3F) as usize] as char);
-    }
-    2 => {
-      let b0 = bytes[off] as u32;
-      let b1 = bytes[off.strict_add(1)] as u32;
-      let word = (b0 << 8) | b1;
-      out.push(B64_ENCODE_TABLE[((word >> 10) & 0x3F) as usize] as char);
-      out.push(B64_ENCODE_TABLE[((word >> 4) & 0x3F) as usize] as char);
-      out.push(B64_ENCODE_TABLE[((word << 2) & 0x3F) as usize] as char);
-    }
-    _ => {}
+  if let &[b0, b1] = tail {
+    out.push(char::from(B64_ENCODE_TABLE[usize::from(b0 >> 2)]));
+    out.push(char::from(
+      B64_ENCODE_TABLE[usize::from(((b0 & 0x03) << 4) | (b1 >> 4))],
+    ));
+    out.push(char::from(B64_ENCODE_TABLE[usize::from((b1 & 0x0F) << 2)]));
+  } else if let &[b0] = tail {
+    out.push(char::from(B64_ENCODE_TABLE[usize::from(b0 >> 2)]));
+    out.push(char::from(B64_ENCODE_TABLE[usize::from((b0 & 0x03) << 4)]));
   }
 }
 
@@ -106,41 +84,30 @@ pub(crate) const fn base64_decoded_len(encoded_len: usize) -> usize {
 ///   round-trip).
 pub(crate) fn base64_decode_into(s: &str, out: &mut [u8]) -> Result<usize, PhcError> {
   let bytes = s.as_bytes();
-  let full = bytes.len() / 4;
-  let tail = bytes.len() % 4;
-
-  if tail == 1 {
+  let (groups, tail) = bytes.as_chunks::<4>();
+  if tail.len() == 1 {
     return Err(PhcError::InvalidBase64);
   }
-
   let expected_out = base64_decoded_len(bytes.len());
-  if out.len() < expected_out {
-    return Err(PhcError::OutputBufferTooSmall);
-  }
+  let destination = out.get_mut(..expected_out).ok_or(PhcError::OutputBufferTooSmall)?;
+  let (output_groups, output_tail) = destination.as_chunks_mut::<3>();
 
-  let mut written = 0usize;
-  for i in 0..full {
-    let off = i.strict_mul(4);
-    let d0 = B64_DECODE_TABLE[bytes[off] as usize];
-    let d1 = B64_DECODE_TABLE[bytes[off.strict_add(1)] as usize];
-    let d2 = B64_DECODE_TABLE[bytes[off.strict_add(2)] as usize];
-    let d3 = B64_DECODE_TABLE[bytes[off.strict_add(3)] as usize];
+  for (&[b0, b1, b2, b3], output) in groups.iter().zip(output_groups) {
+    let d0 = B64_DECODE_TABLE[usize::from(b0)];
+    let d1 = B64_DECODE_TABLE[usize::from(b1)];
+    let d2 = B64_DECODE_TABLE[usize::from(b2)];
+    let d3 = B64_DECODE_TABLE[usize::from(b3)];
     if (d0 | d1 | d2 | d3) == 0xFF {
       return Err(PhcError::InvalidBase64);
     }
-    let word = ((d0 as u32) << 18) | ((d1 as u32) << 12) | ((d2 as u32) << 6) | (d3 as u32);
-    out[written] = (word >> 16) as u8;
-    out[written.strict_add(1)] = (word >> 8) as u8;
-    out[written.strict_add(2)] = word as u8;
-    written = written.strict_add(3);
+    *output = [(d0 << 2) | (d1 >> 4), (d1 << 4) | (d2 >> 2), (d2 << 6) | d3];
   }
 
-  let off = full.strict_mul(4);
-  match tail {
-    0 => {}
-    2 => {
-      let d0 = B64_DECODE_TABLE[bytes[off] as usize];
-      let d1 = B64_DECODE_TABLE[bytes[off.strict_add(1)] as usize];
+  match (tail, output_tail) {
+    ([], []) => {}
+    (&[b0, b1], [output]) => {
+      let d0 = B64_DECODE_TABLE[usize::from(b0)];
+      let d1 = B64_DECODE_TABLE[usize::from(b1)];
       if (d0 | d1) == 0xFF {
         return Err(PhcError::InvalidBase64);
       }
@@ -148,13 +115,12 @@ pub(crate) fn base64_decode_into(s: &str, out: &mut [u8]) -> Result<usize, PhcEr
       if (d1 & 0x0F) != 0 {
         return Err(PhcError::InvalidBase64);
       }
-      out[written] = (d0 << 2) | (d1 >> 4);
-      written = written.strict_add(1);
+      *output = (d0 << 2) | (d1 >> 4);
     }
-    3 => {
-      let d0 = B64_DECODE_TABLE[bytes[off] as usize];
-      let d1 = B64_DECODE_TABLE[bytes[off.strict_add(1)] as usize];
-      let d2 = B64_DECODE_TABLE[bytes[off.strict_add(2)] as usize];
+    (&[b0, b1, b2], [output0, output1]) => {
+      let d0 = B64_DECODE_TABLE[usize::from(b0)];
+      let d1 = B64_DECODE_TABLE[usize::from(b1)];
+      let d2 = B64_DECODE_TABLE[usize::from(b2)];
       if (d0 | d1 | d2) == 0xFF {
         return Err(PhcError::InvalidBase64);
       }
@@ -162,15 +128,13 @@ pub(crate) fn base64_decode_into(s: &str, out: &mut [u8]) -> Result<usize, PhcEr
       if (d2 & 0x03) != 0 {
         return Err(PhcError::InvalidBase64);
       }
-      let word = ((d0 as u32) << 10) | ((d1 as u32) << 4) | ((d2 as u32) >> 2);
-      out[written] = (word >> 8) as u8;
-      out[written.strict_add(1)] = word as u8;
-      written = written.strict_add(2);
+      *output0 = (d0 << 2) | (d1 >> 4);
+      *output1 = (d1 << 4) | (d2 >> 2);
     }
     _ => return Err(PhcError::InvalidBase64),
   }
 
-  Ok(written)
+  Ok(expected_out)
 }
 
 /// Append `n` as base-10 decimal (no leading zero) to `out`.
@@ -189,12 +153,13 @@ pub(crate) fn push_u32_decimal(out: &mut String, n: u32) {
   let mut len = 0usize;
   let mut v = n;
   while v > 0 {
-    digits[len] = b'0' + (v % 10) as u8;
+    let [digit, _, _, _] = (v % 10).to_le_bytes();
+    digits[len] = b'0'.wrapping_add(digit);
     v /= 10;
     len = len.strict_add(1);
   }
   for i in (0..len).rev() {
-    out.push(digits[i] as char);
+    out.push(char::from(digits[i]));
   }
 }
 
@@ -206,15 +171,13 @@ pub(crate) fn push_u32_decimal(out: &mut String, n: u32) {
 /// keys, empty values, missing `=`, and empty pair segments are reported as
 /// `PhcError::MalformedParams`.
 pub(crate) struct PhcParamIter<'a> {
-  rest: &'a str,
-  done: bool,
+  rest: Option<&'a str>,
 }
 
 impl<'a> PhcParamIter<'a> {
   pub(crate) fn new(params: &'a str) -> Self {
     Self {
-      rest: params,
-      done: params.is_empty(),
+      rest: (!params.is_empty()).then_some(params),
     }
   }
 }
@@ -223,35 +186,20 @@ impl<'a> Iterator for PhcParamIter<'a> {
   type Item = Result<(&'a str, &'a str), PhcError>;
 
   fn next(&mut self) -> Option<Self::Item> {
-    if self.done {
-      return None;
-    }
-    let (pair, advance) = match self.rest.find(',') {
-      Some(idx) => {
-        // SAFETY: idx is a valid char boundary (',' is ASCII).
-        let pair = &self.rest[..idx];
-        self.rest = &self.rest[idx.strict_add(1)..];
-        (pair, false)
-      }
-      None => {
-        let pair = self.rest;
-        self.rest = "";
-        (pair, true)
-      }
+    let rest = self.rest?;
+    let (pair, remaining) = match rest.split_once(',') {
+      Some((pair, remaining)) => (pair, Some(remaining)),
+      None => (rest, None),
     };
-    if advance {
-      self.done = true;
-    }
+    self.rest = remaining;
 
     if pair.is_empty() {
       return Some(Err(PhcError::MalformedParams));
     }
-    let eq = match pair.find('=') {
-      Some(i) => i,
+    let (key, value) = match pair.split_once('=') {
+      Some(fields) => fields,
       None => return Some(Err(PhcError::MalformedParams)),
     };
-    let key = &pair[..eq];
-    let value = &pair[eq.strict_add(1)..];
     if key.is_empty() || value.is_empty() {
       return Some(Err(PhcError::MalformedParams));
     }
@@ -267,20 +215,21 @@ pub(crate) fn parse_param_u32(value: &str) -> Result<u32, PhcError> {
   }
   // Reject leading zeros (e.g. "01") and leading sign (e.g. "-1", "+1").
   let bytes = value.as_bytes();
-  if bytes.len() > 1 && bytes[0] == b'0' {
+  if matches!(bytes, [b'0', _, ..]) {
     return Err(PhcError::MalformedParams);
   }
-  let mut acc: u64 = 0;
+  let mut acc = 0u32;
   for &b in bytes {
     if !b.is_ascii_digit() {
       return Err(PhcError::MalformedParams);
     }
-    acc = acc.strict_mul(10).strict_add((b - b'0') as u64);
-    if acc > u32::MAX as u64 {
-      return Err(PhcError::ParamOutOfRange);
-    }
+    let digit = u32::from(b.wrapping_sub(b'0'));
+    acc = acc
+      .checked_mul(10)
+      .and_then(|prefix| prefix.checked_add(digit))
+      .ok_or(PhcError::ParamOutOfRange)?;
   }
-  Ok(u32::try_from(acc).unwrap_or_else(|_| unreachable!("acc <= u32::MAX, enforced inside the loop")))
+  Ok(acc)
 }
 
 // ─── Segmented PHC parser ───────────────────────────────────────────────────
@@ -440,13 +389,13 @@ mod tests {
 
   #[test]
   fn base64_roundtrip_all_lengths_0_to_64() {
-    for len in 0..=64 {
-      let input: Vec<u8> = (0..len).map(|i| ((i * 31 + 7) & 0xff) as u8).collect();
+    for len in 0u8..=64 {
+      let input: Vec<u8> = (0..len).map(|i| i.wrapping_mul(31).wrapping_add(7)).collect();
       let mut encoded = String::new();
       base64_encode_into(&input, &mut encoded);
 
       let mut decoded = vec![0u8; base64_decoded_len(encoded.len())];
-      let n = base64_decode_into(&encoded, &mut decoded).unwrap();
+      let n = base64_decode_into(&encoded, &mut decoded).expect("encoder output must be canonical base64");
       decoded.truncate(n);
       assert_eq!(decoded, input, "roundtrip failed at len={len}");
     }
@@ -478,6 +427,13 @@ mod tests {
     let mut out = [0u8; 32];
     assert_eq!(base64_decode_into("A", &mut out), Err(PhcError::InvalidBase64));
     assert_eq!(base64_decode_into("AAAAA", &mut out), Err(PhcError::InvalidBase64));
+
+    let mut empty = [];
+    assert_eq!(
+      base64_decode_into("A", &mut empty),
+      Err(PhcError::InvalidBase64),
+      "an invalid tail takes precedence over destination sizing"
+    );
   }
 
   #[test]
@@ -506,16 +462,26 @@ mod tests {
   #[test]
   fn param_iter_single_pair() {
     let mut it = PhcParamIter::new("m=65536");
-    assert_eq!(it.next().unwrap().unwrap(), ("m", "65536"));
+    assert_eq!(
+      it.next()
+        .expect("one parameter must be present")
+        .expect("the parameter must be well-formed"),
+      ("m", "65536")
+    );
     assert!(it.next().is_none());
   }
 
   #[test]
   fn param_iter_multiple_pairs() {
     let mut it = PhcParamIter::new("m=65536,t=3,p=4");
-    assert_eq!(it.next().unwrap().unwrap(), ("m", "65536"));
-    assert_eq!(it.next().unwrap().unwrap(), ("t", "3"));
-    assert_eq!(it.next().unwrap().unwrap(), ("p", "4"));
+    for expected in [("m", "65536"), ("t", "3"), ("p", "4")] {
+      assert_eq!(
+        it.next()
+          .expect("the expected parameter must be present")
+          .expect("the parameter must be well-formed"),
+        expected
+      );
+    }
     assert!(it.next().is_none());
   }
 
@@ -528,34 +494,69 @@ mod tests {
   #[test]
   fn param_iter_rejects_missing_equals() {
     let mut it = PhcParamIter::new("mX65536");
-    assert_eq!(it.next().unwrap(), Err(PhcError::MalformedParams));
+    assert_eq!(
+      it.next().expect("the malformed parameter must be emitted"),
+      Err(PhcError::MalformedParams)
+    );
   }
 
   #[test]
   fn param_iter_rejects_empty_pair_segment() {
     let mut it = PhcParamIter::new("m=1,,p=2");
-    assert_eq!(it.next().unwrap().unwrap(), ("m", "1"));
-    assert_eq!(it.next().unwrap(), Err(PhcError::MalformedParams));
+    assert_eq!(
+      it.next()
+        .expect("the first parameter must be present")
+        .expect("the first parameter must be well-formed"),
+      ("m", "1")
+    );
+    assert_eq!(
+      it.next().expect("the empty parameter must be emitted"),
+      Err(PhcError::MalformedParams)
+    );
+  }
+
+  #[test]
+  fn param_iter_rejects_trailing_empty_pair_segment() {
+    let mut it = PhcParamIter::new("m=1,");
+    assert_eq!(
+      it.next()
+        .expect("the first parameter must be present")
+        .expect("the first parameter must be well-formed"),
+      ("m", "1")
+    );
+    assert_eq!(
+      it.next().expect("the trailing empty parameter must be emitted"),
+      Err(PhcError::MalformedParams)
+    );
+    assert!(it.next().is_none());
   }
 
   #[test]
   fn param_iter_rejects_empty_key() {
     let mut it = PhcParamIter::new("=65536");
-    assert_eq!(it.next().unwrap(), Err(PhcError::MalformedParams));
+    assert_eq!(
+      it.next().expect("the malformed parameter must be emitted"),
+      Err(PhcError::MalformedParams)
+    );
   }
 
   #[test]
   fn param_iter_rejects_empty_value() {
     let mut it = PhcParamIter::new("m=");
-    assert_eq!(it.next().unwrap(), Err(PhcError::MalformedParams));
+    assert_eq!(
+      it.next().expect("the malformed parameter must be emitted"),
+      Err(PhcError::MalformedParams)
+    );
   }
 
   #[test]
   fn parse_param_u32_accepts_valid() {
-    assert_eq!(parse_param_u32("0").unwrap(), 0);
-    assert_eq!(parse_param_u32("1").unwrap(), 1);
-    assert_eq!(parse_param_u32("65536").unwrap(), 65_536);
-    assert_eq!(parse_param_u32("4294967295").unwrap(), u32::MAX);
+    for (encoded, expected) in [("0", 0), ("1", 1), ("65536", 65_536), ("4294967295", u32::MAX)] {
+      assert_eq!(
+        parse_param_u32(encoded).expect("canonical u32 text must parse"),
+        expected
+      );
+    }
   }
 
   #[test]
@@ -574,7 +575,7 @@ mod tests {
   #[test]
   fn parse_argon2id_canonical() {
     let encoded = "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$c29tZWhhc2g";
-    let parts = parse(encoded).unwrap();
+    let parts = parse(encoded).expect("canonical Argon2id PHC text must parse");
     assert_eq!(parts.algorithm, "argon2id");
     assert_eq!(parts.version, Some("19"));
     assert_eq!(parts.parameters, "m=65536,t=3,p=4");
@@ -585,7 +586,7 @@ mod tests {
   #[test]
   fn parse_scrypt_no_version() {
     let encoded = "$scrypt$ln=14,r=8,p=1$c29tZXNhbHQ$c29tZWhhc2g";
-    let parts = parse(encoded).unwrap();
+    let parts = parse(encoded).expect("canonical scrypt PHC text must parse");
     assert_eq!(parts.algorithm, "scrypt");
     assert_eq!(parts.version, None);
     assert_eq!(parts.parameters, "ln=14,r=8,p=1");
@@ -636,7 +637,7 @@ mod tests {
 
   #[test]
   fn parse_without_version_segment_returns_none() {
-    let parts = parse("$argon2id$m=1,t=1,p=1$c29tZQ$c29tZQ").unwrap();
+    let parts = parse("$argon2id$m=1,t=1,p=1$c29tZQ$c29tZQ").expect("PHC text without a version segment must parse");
     assert_eq!(parts.version, None);
   }
 

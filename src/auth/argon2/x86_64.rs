@@ -36,7 +36,6 @@
 //! left shift by 1 supplies the `2 · …` factor.
 
 #![cfg(target_arch = "x86_64")]
-#![allow(clippy::cast_possible_truncation)]
 
 use core::arch::x86_64::{
   __m256i, __m512i, _mm_loadu_si128, _mm_storeu_si128, _mm256_add_epi64, _mm256_castsi128_si256,
@@ -100,25 +99,25 @@ pub(super) unsafe fn compress_avx2(
       let rv = _mm256_xor_si256(xv, yv);
       _mm256_storeu_si256(r.as_mut_ptr().add(i).cast(), rv);
       _mm256_storeu_si256(q.as_mut_ptr().add(i).cast(), rv);
-      i += 4;
+      i = i.strict_add(4);
     }
 
     // Row pass: 8 P-rounds on contiguous 16-u64 chunks of q[].
     let mut row = 0usize;
     while row < 8 {
-      let base = row * 16;
+      let base = row.strict_mul(16);
       let mut a = _mm256_loadu_si256(q.as_ptr().add(base).cast());
-      let mut b = _mm256_loadu_si256(q.as_ptr().add(base + 4).cast());
-      let mut c = _mm256_loadu_si256(q.as_ptr().add(base + 8).cast());
-      let mut d = _mm256_loadu_si256(q.as_ptr().add(base + 12).cast());
+      let mut b = _mm256_loadu_si256(q.as_ptr().add(base.strict_add(4)).cast());
+      let mut c = _mm256_loadu_si256(q.as_ptr().add(base.strict_add(8)).cast());
+      let mut d = _mm256_loadu_si256(q.as_ptr().add(base.strict_add(12)).cast());
 
       p_round_avx2(&mut a, &mut b, &mut c, &mut d);
 
       _mm256_storeu_si256(q.as_mut_ptr().add(base).cast(), a);
-      _mm256_storeu_si256(q.as_mut_ptr().add(base + 4).cast(), b);
-      _mm256_storeu_si256(q.as_mut_ptr().add(base + 8).cast(), c);
-      _mm256_storeu_si256(q.as_mut_ptr().add(base + 12).cast(), d);
-      row += 1;
+      _mm256_storeu_si256(q.as_mut_ptr().add(base.strict_add(4)).cast(), b);
+      _mm256_storeu_si256(q.as_mut_ptr().add(base.strict_add(8)).cast(), c);
+      _mm256_storeu_si256(q.as_mut_ptr().add(base.strict_add(12)).cast(), d);
+      row = row.strict_add(1);
     }
 
     // Column pass: 8 P-rounds on stride-16 u64 sequences. Each YMM holds
@@ -126,19 +125,19 @@ pub(super) unsafe fn compress_avx2(
     // high half = row 2k+1) — see RFC 9106 §3.6 column-step indexing.
     let mut col = 0usize;
     while col < 8 {
-      let base = col * 2;
-      let mut a = load_col_pair_avx2(&q, base, base + 16);
-      let mut b = load_col_pair_avx2(&q, base + 32, base + 48);
-      let mut c = load_col_pair_avx2(&q, base + 64, base + 80);
-      let mut d = load_col_pair_avx2(&q, base + 96, base + 112);
+      let base = col.strict_mul(2);
+      let mut a = load_col_pair_avx2(&q, base, base.strict_add(16));
+      let mut b = load_col_pair_avx2(&q, base.strict_add(32), base.strict_add(48));
+      let mut c = load_col_pair_avx2(&q, base.strict_add(64), base.strict_add(80));
+      let mut d = load_col_pair_avx2(&q, base.strict_add(96), base.strict_add(112));
 
       p_round_avx2(&mut a, &mut b, &mut c, &mut d);
 
-      store_col_pair_avx2(&mut q, base, base + 16, a);
-      store_col_pair_avx2(&mut q, base + 32, base + 48, b);
-      store_col_pair_avx2(&mut q, base + 64, base + 80, c);
-      store_col_pair_avx2(&mut q, base + 96, base + 112, d);
-      col += 1;
+      store_col_pair_avx2(&mut q, base, base.strict_add(16), a);
+      store_col_pair_avx2(&mut q, base.strict_add(32), base.strict_add(48), b);
+      store_col_pair_avx2(&mut q, base.strict_add(64), base.strict_add(80), c);
+      store_col_pair_avx2(&mut q, base.strict_add(96), base.strict_add(112), d);
+      col = col.strict_add(1);
     }
 
     // Final XOR with R, fused with the dst store/xor.
@@ -153,7 +152,7 @@ pub(super) unsafe fn compress_avx2(
       } else {
         _mm256_storeu_si256(dst.as_mut_ptr().add(i).cast(), f);
       }
-      i += 4;
+      i = i.strict_add(4);
     }
   }
 }
@@ -251,12 +250,18 @@ unsafe fn gb_avx2(a: &mut __m256i, b: &mut __m256i, c: &mut __m256i, d: &mut __m
 }
 
 #[inline(always)]
+/// # Safety
+///
+/// The current CPU must support AVX2.
 unsafe fn ror32_avx2(x: __m256i) -> __m256i {
   // SAFETY: AVX2 inherited; shuffle imm 0xB1 swaps adjacent u32 halves.
   unsafe { _mm256_shuffle_epi32(x, 0xB1) }
 }
 
 #[inline(always)]
+/// # Safety
+///
+/// The current CPU must support AVX2.
 unsafe fn ror24_avx2(x: __m256i) -> __m256i {
   // SAFETY: AVX2 inherited; ROT24_MASK is 32-byte aligned static data.
   unsafe {
@@ -266,6 +271,9 @@ unsafe fn ror24_avx2(x: __m256i) -> __m256i {
 }
 
 #[inline(always)]
+/// # Safety
+///
+/// The current CPU must support AVX2.
 unsafe fn ror16_avx2(x: __m256i) -> __m256i {
   // SAFETY: AVX2 inherited; ROT16_MASK is 32-byte aligned static data.
   unsafe {
@@ -275,6 +283,9 @@ unsafe fn ror16_avx2(x: __m256i) -> __m256i {
 }
 
 #[inline(always)]
+/// # Safety
+///
+/// The current CPU must support AVX2.
 unsafe fn ror63_avx2(x: __m256i) -> __m256i {
   // SAFETY: AVX2 inherited; (x << 1) | (x >> 63).
   unsafe { _mm256_or_si256(_mm256_add_epi64(x, x), _mm256_srli_epi64(x, 63)) }
@@ -319,7 +330,7 @@ pub(super) unsafe fn compress_avx512(
       let rv = _mm512_xor_si512(xv, yv);
       _mm512_storeu_si512(r.as_mut_ptr().add(i).cast(), rv);
       _mm512_storeu_si512(q.as_mut_ptr().add(i).cast(), rv);
-      i += 8;
+      i = i.strict_add(8);
     }
 
     // Row pass: 4 iterations × 2 rows per iter = 8 P-rounds done at
@@ -339,14 +350,14 @@ pub(super) unsafe fn compress_avx512(
     // Each `VSHUFI64X2` picks 4 of 8 contiguous 128-bit lanes (4 from
     // src1, 4 from src2) using a single imm8. The 0x44 imm picks lanes
     // 0,1 from each source; 0xEE picks lanes 2,3.
-    let mut iter = 0;
+    let mut iter = 0usize;
     while iter < 4 {
-      let off = iter * 32;
+      let off = iter.strict_mul(32);
 
       let r0_lo = _mm512_loadu_si512(q.as_ptr().add(off).cast());
-      let r0_hi = _mm512_loadu_si512(q.as_ptr().add(off + 8).cast());
-      let r1_lo = _mm512_loadu_si512(q.as_ptr().add(off + 16).cast());
-      let r1_hi = _mm512_loadu_si512(q.as_ptr().add(off + 24).cast());
+      let r0_hi = _mm512_loadu_si512(q.as_ptr().add(off.strict_add(8)).cast());
+      let r1_lo = _mm512_loadu_si512(q.as_ptr().add(off.strict_add(16)).cast());
+      let r1_hi = _mm512_loadu_si512(q.as_ptr().add(off.strict_add(24)).cast());
 
       let mut a = _mm512_shuffle_i64x2(r0_lo, r1_lo, 0x44);
       let mut b = _mm512_shuffle_i64x2(r0_lo, r1_lo, 0xEE);
@@ -363,10 +374,10 @@ pub(super) unsafe fn compress_avx512(
       let r1_hi_out = _mm512_shuffle_i64x2(c, d, 0xEE);
 
       _mm512_storeu_si512(q.as_mut_ptr().add(off).cast(), r0_lo_out);
-      _mm512_storeu_si512(q.as_mut_ptr().add(off + 8).cast(), r0_hi_out);
-      _mm512_storeu_si512(q.as_mut_ptr().add(off + 16).cast(), r1_lo_out);
-      _mm512_storeu_si512(q.as_mut_ptr().add(off + 24).cast(), r1_hi_out);
-      iter += 1;
+      _mm512_storeu_si512(q.as_mut_ptr().add(off.strict_add(8)).cast(), r0_hi_out);
+      _mm512_storeu_si512(q.as_mut_ptr().add(off.strict_add(16)).cast(), r1_lo_out);
+      _mm512_storeu_si512(q.as_mut_ptr().add(off.strict_add(24)).cast(), r1_hi_out);
+      iter = iter.strict_add(1);
     }
 
     // Column pass: 4-way YMM with native `VPRORQ` rotations.
@@ -379,19 +390,19 @@ pub(super) unsafe fn compress_avx512(
     // 2 × insert per GB-lane.
     let mut col = 0usize;
     while col < 8 {
-      let base = col * 2;
-      let mut a = load_col_pair_avx2(&q, base, base + 16);
-      let mut b = load_col_pair_avx2(&q, base + 32, base + 48);
-      let mut c = load_col_pair_avx2(&q, base + 64, base + 80);
-      let mut d = load_col_pair_avx2(&q, base + 96, base + 112);
+      let base = col.strict_mul(2);
+      let mut a = load_col_pair_avx2(&q, base, base.strict_add(16));
+      let mut b = load_col_pair_avx2(&q, base.strict_add(32), base.strict_add(48));
+      let mut c = load_col_pair_avx2(&q, base.strict_add(64), base.strict_add(80));
+      let mut d = load_col_pair_avx2(&q, base.strict_add(96), base.strict_add(112));
 
       p_round_avx512vl(&mut a, &mut b, &mut c, &mut d);
 
-      store_col_pair_avx2(&mut q, base, base + 16, a);
-      store_col_pair_avx2(&mut q, base + 32, base + 48, b);
-      store_col_pair_avx2(&mut q, base + 64, base + 80, c);
-      store_col_pair_avx2(&mut q, base + 96, base + 112, d);
-      col += 1;
+      store_col_pair_avx2(&mut q, base, base.strict_add(16), a);
+      store_col_pair_avx2(&mut q, base.strict_add(32), base.strict_add(48), b);
+      store_col_pair_avx2(&mut q, base.strict_add(64), base.strict_add(80), c);
+      store_col_pair_avx2(&mut q, base.strict_add(96), base.strict_add(112), d);
+      col = col.strict_add(1);
     }
 
     // Final XOR with R, fused with dst store/xor at ZMM width.
@@ -406,7 +417,7 @@ pub(super) unsafe fn compress_avx512(
       } else {
         _mm512_storeu_si512(dst.as_mut_ptr().add(i).cast(), f);
       }
-      i += 8;
+      i = i.strict_add(8);
     }
   }
 }

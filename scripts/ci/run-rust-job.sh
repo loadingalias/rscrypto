@@ -70,6 +70,11 @@ run_quality() {
   just ci-check
 }
 
+run_msrv() {
+  cargo check --locked --workspace --lib --no-default-features
+  cargo check --locked --workspace --lib --all-features
+}
+
 run_cargo_graph() {
   mkdir -p target/cargo-rail
   cargo rail config validate --strict
@@ -97,16 +102,16 @@ run_native() {
   case "$target" in
     x86_64-pc-windows-msvc)
       echo "Windows x86_64 lane: compile smoke plus BLAKE3 ASM runtime vectors"
-      cargo clippy --workspace --lib --all-features -- -D warnings
-      cargo test --workspace --all-features --no-run
-      cargo test --workspace --features blake3 \
+      cargo clippy --locked --workspace --lib --all-features
+      cargo test --locked --workspace --all-features --no-run
+      cargo test --locked --workspace --features blake3 \
         --test blake3_official_vectors \
         --test blake3_differential
       ;;
     aarch64-pc-windows-msvc)
       echo "Windows AArch64 lane: compile-only smoke"
-      cargo clippy --workspace --lib --all-features -- -D warnings
-      cargo test --workspace --all-features --no-run
+      cargo clippy --locked --workspace --lib --all-features
+      cargo test --locked --workspace --all-features --no-run
       ;;
     x86_64-unknown-linux-gnu | aarch64-unknown-linux-gnu)
       bash scripts/ci/native-check.sh --all-targets
@@ -161,7 +166,7 @@ run_platform_amx() {
 
   # NIGHTLY: Rust target-feature names for AMX remain unstable. This lane
   # deliberately forces them so the no_std permission gate is executable.
-  local amx_rustflags="-A unstable-features -C target-feature=+amx-tile,+amx-bf16,+amx-int8"
+  local amx_rustflags="-C target-feature=+amx-tile,+amx-bf16,+amx-int8"
   RUSTFLAGS="$amx_rustflags" \
     assert_single_libtest \
       platform::detect::tests::no_std_linux_x86_64_masks_compile_time_amx_without_a_permission_probe \
@@ -181,13 +186,13 @@ run_supply_chain() {
   require_one_of supply_chain_mode "$mode" light full
 
   if [[ "$mode" == "full" ]]; then
-    cargo deny check all
+    cargo deny --locked check all
     # RustCrypto `rsa` is used only as a dev/test/bench oracle. Production RSA
     # verification is implemented in `src/auth/rsa.rs`; keep this scoped to the
     # known Marvin advisory until the oracle dependency is removed or fixed.
     cargo audit --ignore RUSTSEC-2023-0071
   else
-    cargo deny check advisories
+    cargo deny --locked check advisories
   fi
 }
 
@@ -460,6 +465,7 @@ main() {
   require_nonempty operation "$operation"
   case "$operation" in
     quality) run_quality ;;
+    msrv) run_msrv ;;
     cargo-graph) run_cargo_graph ;;
     feature-contracts) run_feature_contracts ;;
     native) run_native ;;

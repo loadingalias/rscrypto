@@ -4,18 +4,36 @@ use super::{BLOCK_SIZE, KEY_SIZE, NONCE_SIZE, load_u32_le, xor_keystream_portabl
 
 const BLOCKS_PER_BATCH: usize = 4;
 
+/// Generate and XOR a ChaCha20 stream with the wasm SIMD128 kernel.
+///
+/// # Safety
+///
+/// The caller must ensure that SIMD128 is available and that `buffer`'s 64-byte block count fits the counter range
+/// starting at `initial_counter`.
 #[inline]
-pub(super) fn xor_keystream(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {
-  // SAFETY: Backend selection guarantees simd128 is available before this wrapper is chosen.
+pub(super) unsafe fn xor_keystream(
+  key: &[u8; KEY_SIZE],
+  initial_counter: u32,
+  nonce: &[u8; NONCE_SIZE],
+  buffer: &mut [u8],
+) {
+  // SAFETY: Production validates the counter range and selects this wrapper only when simd128 is available; direct
+  // test and diagnostic callers establish the same conditions.
   unsafe { xor_keystream_impl(key, initial_counter, nonce, buffer) }
 }
 
+/// Generate and XOR a ChaCha20 stream in four-block SIMD128 batches.
+///
+/// # Safety
+///
+/// The caller must ensure that SIMD128 is available and that `buffer`'s 64-byte block count fits the counter range
+/// starting at `initial_counter`.
 #[target_feature(enable = "simd128")]
 unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {
   let mut counter = initial_counter;
   let mut batches = buffer.chunks_exact_mut(BLOCK_SIZE * BLOCKS_PER_BATCH);
   for chunk in &mut batches {
-    debug_assert!(counter.checked_add((BLOCKS_PER_BATCH - 1) as u32).is_some());
+    debug_assert!(counter.checked_add(3).is_some());
 
     let mut x0 = u32x4_splat(0x6170_7865);
     let mut x1 = u32x4_splat(0x3320_646e);
@@ -88,26 +106,24 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
     x14 = u32x4_add(x14, o14);
     x15 = u32x4_add(x15, o15);
 
-    let mut words = [[0u32; BLOCKS_PER_BATCH]; 16];
-    // SAFETY: each destination is a valid four-lane `u32` array for one unaligned `v128` store.
-    unsafe {
-      v128_store(words[0].as_mut_ptr() as *mut v128, x0);
-      v128_store(words[1].as_mut_ptr() as *mut v128, x1);
-      v128_store(words[2].as_mut_ptr() as *mut v128, x2);
-      v128_store(words[3].as_mut_ptr() as *mut v128, x3);
-      v128_store(words[4].as_mut_ptr() as *mut v128, x4);
-      v128_store(words[5].as_mut_ptr() as *mut v128, x5);
-      v128_store(words[6].as_mut_ptr() as *mut v128, x6);
-      v128_store(words[7].as_mut_ptr() as *mut v128, x7);
-      v128_store(words[8].as_mut_ptr() as *mut v128, x8);
-      v128_store(words[9].as_mut_ptr() as *mut v128, x9);
-      v128_store(words[10].as_mut_ptr() as *mut v128, x10);
-      v128_store(words[11].as_mut_ptr() as *mut v128, x11);
-      v128_store(words[12].as_mut_ptr() as *mut v128, x12);
-      v128_store(words[13].as_mut_ptr() as *mut v128, x13);
-      v128_store(words[14].as_mut_ptr() as *mut v128, x14);
-      v128_store(words[15].as_mut_ptr() as *mut v128, x15);
-    }
+    let words = [
+      lanes(x0),
+      lanes(x1),
+      lanes(x2),
+      lanes(x3),
+      lanes(x4),
+      lanes(x5),
+      lanes(x6),
+      lanes(x7),
+      lanes(x8),
+      lanes(x9),
+      lanes(x10),
+      lanes(x11),
+      lanes(x12),
+      lanes(x13),
+      lanes(x14),
+      lanes(x15),
+    ];
 
     let mut block_index = 0usize;
     while block_index < BLOCKS_PER_BATCH {
@@ -124,13 +140,23 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
       block_index = block_index.strict_add(1);
     }
 
-    counter = counter.wrapping_add(BLOCKS_PER_BATCH as u32);
+    counter = counter.wrapping_add(4);
   }
 
   let remainder = batches.into_remainder();
   if !remainder.is_empty() {
     xor_keystream_portable(key, counter, nonce, remainder);
   }
+}
+
+#[inline(always)]
+fn lanes(value: v128) -> [u32; BLOCKS_PER_BATCH] {
+  [
+    u32x4_extract_lane::<0>(value),
+    u32x4_extract_lane::<1>(value),
+    u32x4_extract_lane::<2>(value),
+    u32x4_extract_lane::<3>(value),
+  ]
 }
 
 #[inline(always)]

@@ -14,29 +14,6 @@
 //! - riscv64: ZVBC (RVV vector CLMUL) / Zbc folding (CRC-32 and CRC-32C)
 //! - wasm32/wasm64: portable only (no CRC32/CLMUL instructions)
 //!
-//! # Quick Start
-//!
-//! ```rust
-//! use rscrypto::checksum::{Checksum, ChecksumCombine, Crc32, Crc32C};
-//!
-//! let data = b"123456789";
-//!
-//! // One-shot
-//! assert_eq!(Crc32::checksum(data), 0xCBF4_3926);
-//! assert_eq!(Crc32C::checksum(data), 0xE306_9283);
-//!
-//! // Streaming
-//! let mut hasher = Crc32::new();
-//! hasher.update(b"1234");
-//! hasher.update(b"56789");
-//! assert_eq!(hasher.finalize(), Crc32::checksum(data));
-//!
-//! // Combine: crc(A || B) == combine(crc(A), crc(B), len(B))
-//! let (a, b) = data.split_at(4);
-//! let combined = Crc32::combine(Crc32::checksum(a), Crc32::checksum(b), b.len());
-//! assert_eq!(combined, Crc32::checksum(data));
-//! ```
-
 #[cfg(any(target_arch = "powerpc64", target_arch = "s390x", target_arch = "riscv64"))]
 mod clmul;
 pub(crate) mod config;
@@ -58,7 +35,6 @@ mod s390x;
 #[cfg(target_arch = "riscv64")]
 mod riscv64;
 
-#[allow(unused_imports)]
 pub use config::{Crc32Config, Crc32Force};
 
 #[cfg(any(test, feature = "std"))]
@@ -69,16 +45,14 @@ use crate::checksum::common::{
 };
 #[cfg(feature = "diag")]
 use crate::checksum::diag::{Crc32Polynomial, Crc32SelectionDiag};
-#[allow(unused_imports)]
-pub(super) use crate::traits::{Checksum, ChecksumCombine};
 
 // Kernel Tables (compile-time)
 
 /// Portable kernel tables (pre-computed at compile time).
 mod kernel_tables {
   use super::*;
-  pub static IEEE_TABLES_16: [[u32; 256]; 16] = generate_crc32_tables_16(CRC32_IEEE_POLY);
-  pub static CRC32C_TABLES_16: [[u32; 256]; 16] = generate_crc32_tables_16(CRC32C_POLY);
+  pub(super) static IEEE_TABLES_16: [[u32; 256]; 16] = generate_crc32_tables_16(CRC32_IEEE_POLY);
+  pub(super) static CRC32C_TABLES_16: [[u32; 256]; 16] = generate_crc32_tables_16(CRC32C_POLY);
 }
 
 /// Block size for CRC-32 folding operations.
@@ -87,8 +61,7 @@ pub(crate) const CRC32_FOLD_BLOCK_BYTES: usize = 128;
 
 // Portable Kernel Wrappers
 
-#[cfg(any(test, feature = "std"))]
-#[cfg_attr(all(test, not(feature = "std")), allow(dead_code))]
+#[cfg(feature = "std")]
 fn crc32_portable(crc: u32, data: &[u8]) -> u32 {
   const THRESHOLD: usize = 64;
   if data.len() < THRESHOLD {
@@ -98,8 +71,7 @@ fn crc32_portable(crc: u32, data: &[u8]) -> u32 {
   }
 }
 
-#[cfg(any(test, feature = "std"))]
-#[cfg_attr(all(test, not(feature = "std")), allow(dead_code))]
+#[cfg(feature = "std")]
 fn crc32c_portable(crc: u32, data: &[u8]) -> u32 {
   const THRESHOLD: usize = 64;
   if data.len() < THRESHOLD {
@@ -791,6 +763,7 @@ impl crate::traits::ChecksumCombine for Crc32 {
 
 #[cfg(feature = "alloc")]
 impl Crc32 {
+  /// Creates a buffering wrapper that coalesces short updates before CRC-32/IEEE dispatch.
   #[must_use]
   pub fn buffered() -> BufferedCrc32 {
     BufferedCrc32::new()
@@ -934,6 +907,7 @@ impl crate::traits::ChecksumCombine for Crc32C {
 
 #[cfg(feature = "alloc")]
 impl Crc32C {
+  /// Creates a buffering wrapper that coalesces short updates before CRC-32C dispatch.
   #[must_use]
   pub fn buffered() -> BufferedCrc32C {
     BufferedCrc32C::new()
@@ -991,8 +965,17 @@ mod tests {
   use alloc::{string::String, vec::Vec};
 
   use super::*;
+  use crate::traits::{Checksum, ChecksumCombine};
 
   const TEST_DATA: &[u8] = b"123456789";
+
+  fn patterned_data(len: usize, multiplier: u8, addend: u8) -> Vec<u8> {
+    (0u8..=u8::MAX)
+      .cycle()
+      .take(len)
+      .map(|byte| byte.wrapping_mul(multiplier).wrapping_add(addend))
+      .collect()
+  }
 
   #[test]
   fn test_crc32_test_vectors() {
@@ -1063,10 +1046,7 @@ mod tests {
 
   #[test]
   fn test_crc32_various_lengths_streaming_matches_oneshot() {
-    let mut data = [0u8; 512];
-    for (i, b) in data.iter_mut().enumerate() {
-      *b = (i as u8).wrapping_mul(17).wrapping_add(i as u8);
-    }
+    let data = patterned_data(512, 18, 0);
 
     for &len in &[0usize, 1, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 400, 512] {
       let slice = &data[..len];
@@ -1098,7 +1078,7 @@ mod tests {
   #[cfg(feature = "alloc")]
   #[test]
   fn test_buffered_crc32_matches_unbuffered() {
-    let data: Vec<u8> = (0..2048).map(|i| (i as u8).wrapping_mul(31)).collect();
+    let data = patterned_data(2048, 31, 0);
     let expected = Crc32::checksum(&data);
 
     let mut buffered = BufferedCrc32::new();
@@ -1111,7 +1091,7 @@ mod tests {
   #[cfg(feature = "alloc")]
   #[test]
   fn test_buffered_crc32c_matches_unbuffered() {
-    let data: Vec<u8> = (0..2048).map(|i| (i as u8).wrapping_mul(29).wrapping_add(7)).collect();
+    let data = patterned_data(2048, 29, 7);
     let expected = Crc32C::checksum(&data);
 
     let mut buffered = BufferedCrc32C::new();
@@ -1135,7 +1115,7 @@ mod tests {
 
     for &threshold in &crc32_thresholds {
       let size = threshold + 256;
-      let data: Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(13)).collect();
+      let data = patterned_data(size, 13, 0);
 
       let oneshot32 = Crc32::checksum(&data);
 
@@ -1148,7 +1128,7 @@ mod tests {
     // Same thresholds for CRC32C
     for &threshold in &crc32_thresholds {
       let size = threshold + 256;
-      let data: Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(13)).collect();
+      let data = patterned_data(size, 13, 0);
 
       let oneshot32c = Crc32C::checksum(&data);
 
@@ -1173,7 +1153,7 @@ mod tests {
     }
 
     let len = 64 * 1024;
-    let data: Vec<u8> = (0..len).map(|i| (i as u8).wrapping_mul(31).wrapping_add(7)).collect();
+    let data = patterned_data(len, 31, 7);
     let expected = portable::crc32_slice16_ieee(!0, &data) ^ !0;
     let got = Crc32::checksum(&data);
     assert_eq!(got, expected);
@@ -1234,7 +1214,7 @@ mod tests {
     }
 
     let len = 64 * 1024;
-    let data: Vec<u8> = (0..len).map(|i| (i as u8).wrapping_mul(29).wrapping_add(7)).collect();
+    let data = patterned_data(len, 29, 7);
     let expected = portable::crc32c_slice16(!0, &data) ^ !0;
     let got = Crc32C::checksum(&data);
     assert_eq!(got, expected);

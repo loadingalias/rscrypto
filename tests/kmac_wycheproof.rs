@@ -8,16 +8,31 @@ use common::decode_hex_vec;
 
 const KMAC256_NO_CUSTOMIZATION: &str = include_str!("../testdata/auth/wycheproof/kmac256_no_customization_test.json");
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 struct Counts {
   valid: usize,
   invalid: usize,
 }
 
 fn field<'a>(value: &'a Value, name: &str) -> &'a str {
-  value[name]
-    .as_str()
-    .unwrap_or_else(|| panic!("missing string field `{name}`"))
+  value
+    .get(name)
+    .and_then(Value::as_str)
+    .expect("Wycheproof string field must exist and contain a string")
+}
+
+enum VectorResult {
+  Valid,
+  Invalid,
+}
+
+fn vector_result(test: &Value) -> VectorResult {
+  let result = match field(test, "result") {
+    "valid" => Some(VectorResult::Valid),
+    "invalid" => Some(VectorResult::Invalid),
+    _ => None,
+  };
+  result.expect("KMAC Wycheproof result must be valid or invalid")
 }
 
 fn groups(suite: &Value) -> &[Value] {
@@ -42,25 +57,20 @@ fn kmac256_no_customization_wycheproof_vectors() {
       let msg = decode_hex_vec(field(test, "msg"));
       let tag = decode_hex_vec(field(test, "tag"));
 
-      match field(test, "result") {
-        "valid" => {
-          counts.valid += 1;
+      match vector_result(test) {
+        VectorResult::Valid => {
+          counts.valid = counts.valid.strict_add(1);
           let mut actual = vec![0u8; tag.len()];
           Kmac256::mac_into(&key, b"", &msg, &mut actual);
           assert_eq!(actual, tag, "KMAC256 tcId {tc_id} tag mismatch");
-          assert!(
-            Kmac256::verify_tag_primitive(&key, b"", &msg, &tag).is_ok(),
-            "KMAC256 tcId {tc_id} verify failed"
-          );
+          Kmac256::verify_tag_primitive(&key, b"", &msg, &tag)
+            .expect("KMAC256 must verify a known-valid Wycheproof tag");
         }
-        "invalid" => {
-          counts.invalid += 1;
-          assert!(
-            Kmac256::verify_tag_primitive(&key, b"", &msg, &tag).is_err(),
-            "KMAC256 tcId {tc_id} accepted an invalid tag"
-          );
+        VectorResult::Invalid => {
+          counts.invalid = counts.invalid.strict_add(1);
+          Kmac256::verify_tag_primitive(&key, b"", &msg, &tag)
+            .expect_err("KMAC256 must reject a known-invalid Wycheproof tag");
         }
-        other => panic!("KMAC256 tcId {tc_id} has unsupported result `{other}`"),
       }
     }
   }
@@ -77,5 +87,5 @@ fn kmac256_no_customization_wycheproof_vectors() {
 
 #[test]
 fn kmac256_rejects_empty_verification_tag() {
-  assert!(Kmac256::verify_tag(b"key", b"", b"message", b"").is_err());
+  Kmac256::verify_tag(b"key", b"", b"message", b"").expect_err("KMAC256 must reject an empty verification tag");
 }

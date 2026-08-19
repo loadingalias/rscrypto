@@ -95,8 +95,16 @@ fn parse_force_value(value: &str) -> Crc16Force {
 
 #[inline]
 #[must_use]
-#[allow(unused_variables)]
 fn clamp_force_to_caps(requested: Crc16Force, caps: Caps) -> Crc16Force {
+  #[cfg(not(any(
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "riscv64",
+    target_arch = "s390x",
+    target_arch = "x86_64"
+  )))]
+  let _ = caps;
+
   match requested {
     Crc16Force::Auto | Crc16Force::Reference | Crc16Force::Portable => requested,
     Crc16Force::Clmul => {
@@ -188,7 +196,7 @@ fn config_ibm(caps: Caps) -> Crc16Config {
 /// detected platform capabilities.
 #[inline]
 #[must_use]
-pub fn get_ccitt() -> Crc16Config {
+pub(super) fn get_ccitt() -> Crc16Config {
   #[cfg(feature = "std")]
   {
     use std::sync::OnceLock;
@@ -208,7 +216,7 @@ pub fn get_ccitt() -> Crc16Config {
 /// detected platform capabilities.
 #[inline]
 #[must_use]
-pub fn get_ibm() -> Crc16Config {
+pub(super) fn get_ibm() -> Crc16Config {
   #[cfg(feature = "std")]
   {
     use std::sync::OnceLock;

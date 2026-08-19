@@ -1,4 +1,4 @@
-use core::simd::{i64x2, num::SimdUint, u32x4, u64x4};
+use core::simd::{num::SimdUint, u32x4, u64x2, u64x4};
 
 use super::{FULL_BLOCK_HIBIT, LIMB_MASK, State, compute_block_scalar_reduction, load_u32_le};
 use crate::{aead::AeadByteLengths, traits::ct};
@@ -9,6 +9,11 @@ pub(super) fn compute_block(state: &mut State, block: &[u8; 16], partial: bool) 
   unsafe { compute_block_impl(state, block, partial) }
 }
 
+/// Process one Poly1305 block through the RISC-V vector multiplier.
+///
+/// # Safety
+///
+/// The executing CPU must support the RISC-V V extension.
 #[target_feature(enable = "v")]
 unsafe fn compute_block_impl(state: &mut State, block: &[u8; 16], partial: bool) {
   compute_block_scalar_reduction(state, block, partial, |lhs, rhs| {
@@ -18,19 +23,23 @@ unsafe fn compute_block_impl(state: &mut State, block: &[u8; 16], partial: bool)
 }
 
 /// Vectorized 4-element dot product using two 64-bit RVV lane multiplies.
+///
+/// # Safety
+///
+/// The executing CPU must support the RISC-V V extension.
 #[target_feature(enable = "v")]
 unsafe fn sum4_mul(lhs: [u32; 4], rhs: [u32; 4]) -> u64 {
-  let a_lo = i64x2::from_array([i64::from(lhs[0]), i64::from(lhs[1])]);
-  let b_lo = i64x2::from_array([i64::from(rhs[0]), i64::from(rhs[1])]);
-  let prod_lo = a_lo * b_lo;
+  let a_lo = u64x2::from_array([u64::from(lhs[0]), u64::from(lhs[1])]);
+  let b_lo = u64x2::from_array([u64::from(rhs[0]), u64::from(rhs[1])]);
+  let prod_lo = wrapping_mul2(a_lo, b_lo);
 
-  let a_hi = i64x2::from_array([i64::from(lhs[2]), i64::from(lhs[3])]);
-  let b_hi = i64x2::from_array([i64::from(rhs[2]), i64::from(rhs[3])]);
-  let prod_hi = a_hi * b_hi;
+  let a_hi = u64x2::from_array([u64::from(lhs[2]), u64::from(lhs[3])]);
+  let b_hi = u64x2::from_array([u64::from(rhs[2]), u64::from(rhs[3])]);
+  let prod_hi = wrapping_mul2(a_hi, b_hi);
 
-  let sum = prod_lo + prod_hi;
+  let sum = wrapping_add2(prod_lo, prod_hi);
   let lanes = sum.to_array();
-  (lanes[0] as u64).wrapping_add(lanes[1] as u64)
+  lanes[0].wrapping_add(lanes[1])
 }
 
 #[derive(Clone, Copy)]
@@ -51,7 +60,6 @@ impl Powers {
   }
 }
 
-#[cfg_attr(not(any(feature = "xchacha20poly1305", feature = "diag", test)), allow(dead_code))]
 pub(super) fn authenticate_aead_par4(
   aad: &[u8],
   ciphertext: &[u8],
@@ -64,6 +72,12 @@ pub(super) fn authenticate_aead_par4(
   unsafe { authenticate_aead_par4_impl(aad, ciphertext, key, lengths) }
 }
 
+/// Authenticate AEAD input four Poly1305 blocks at a time.
+///
+/// # Safety
+///
+/// The executing CPU must support the RISC-V V extension, and `lengths` must
+/// encode the byte lengths of `aad` and `ciphertext`.
 #[target_feature(enable = "v")]
 unsafe fn authenticate_aead_par4_impl(
   aad: &[u8],
@@ -94,17 +108,13 @@ unsafe fn authenticate_aead_par4_impl(
     if num_cached == 0 {
       let group_len = segment.len().strict_sub(offset).strict_div(64).strict_mul(64);
       let group_end = offset.strict_add(group_len);
-      for group in segment[offset..group_end].chunks_exact(64) {
-        let (blocks, remainder) = group.as_chunks::<16>();
-        debug_assert!(remainder.is_empty());
-        let [b0, b1, b2, b3] = blocks else {
-          unreachable!("64-byte Poly1305 group must split into four blocks");
-        };
+      for group in segment[offset..group_end].as_chunks::<64>().0 {
+        let blocks = group.as_chunks::<16>().0;
         // SAFETY: direct four-block accumulation because:
         // 1. `group` is a 64-byte exact chunk split into four full Poly1305 blocks.
         // 2. This entry point is compiled with the RISC-V V target feature.
         // 3. `num_cached == 0`, so direct accumulation preserves AEAD block order.
-        unsafe { accumulate_4_block_refs([b0, b1, b2, b3], &mut state, &powers) };
+        unsafe { accumulate_4_block_refs([&blocks[0], &blocks[1], &blocks[2], &blocks[3]], &mut state, &powers) };
       }
       offset = group_end;
     }
@@ -154,6 +164,12 @@ unsafe fn authenticate_aead_par4_impl(
   tag
 }
 
+/// Queue one full Poly1305 block and fold the queue when it reaches four blocks.
+///
+/// # Safety
+///
+/// The executing CPU must support the RISC-V V extension, and `*num_cached`
+/// must be less than four.
 #[inline(always)]
 unsafe fn push_cached(
   cached: &mut [[u8; 16]; 4],
@@ -173,6 +189,11 @@ unsafe fn push_cached(
   }
 }
 
+/// Accumulate four consecutive Poly1305 blocks.
+///
+/// # Safety
+///
+/// The executing CPU must support the RISC-V V extension.
 #[inline(always)]
 unsafe fn accumulate_4_blocks(blocks: &[[u8; 16]; 4], state: &mut State, powers: &Powers) {
   // SAFETY: RVV four-block accumulation because:
@@ -181,6 +202,11 @@ unsafe fn accumulate_4_blocks(blocks: &[[u8; 16]; 4], state: &mut State, powers:
   unsafe { accumulate_4_block_refs([&blocks[0], &blocks[1], &blocks[2], &blocks[3]], state, powers) };
 }
 
+/// Accumulate four consecutive Poly1305 blocks supplied by reference.
+///
+/// # Safety
+///
+/// The executing CPU must support the RISC-V V extension.
 #[inline(always)]
 unsafe fn accumulate_4_block_refs(blocks: [&[u8; 16]; 4], state: &mut State, powers: &Powers) {
   let h = mul_unreduced(state.h, powers.r4);
@@ -197,6 +223,11 @@ unsafe fn accumulate_4_block_refs(blocks: [&[u8; 16]; 4], state: &mut State, pow
   ]);
 }
 
+/// Multiply four spaced messages by descending powers of the Poly1305 key.
+///
+/// # Safety
+///
+/// The executing CPU must support the RISC-V V extension.
 #[inline(always)]
 unsafe fn mul4_spaced_sum_refs(blocks: [&[u8; 16]; 4], powers: &Powers) -> [u64; 5] {
   let b0 = block_limbs(blocks[0]);
@@ -241,7 +272,7 @@ unsafe fn mul4_spaced_sum_refs(blocks: [&[u8; 16]; 4], powers: &Powers) -> [u64;
       r2[1].wrapping_mul(5),
       r1[1].wrapping_mul(5),
     );
-    dot5_sum(x0, x1, x2, x3, x4, r0, s4, s3, s2, s1)
+    dot5_sum([x0, x1, x2, x3, x4], [r0, s4, s3, s2, s1])
   };
   let d1 = {
     let r1v = lane4(r4[1], r3[1], r2[1], r1[1]);
@@ -264,7 +295,7 @@ unsafe fn mul4_spaced_sum_refs(blocks: [&[u8; 16]; 4], powers: &Powers) -> [u64;
       r2[2].wrapping_mul(5),
       r1[2].wrapping_mul(5),
     );
-    dot5_sum(x0, x1, x2, x3, x4, r1v, r0, s4, s3, s2)
+    dot5_sum([x0, x1, x2, x3, x4], [r1v, r0, s4, s3, s2])
   };
   let d2 = {
     let r2v = lane4(r4[2], r3[2], r2[2], r1[2]);
@@ -282,7 +313,7 @@ unsafe fn mul4_spaced_sum_refs(blocks: [&[u8; 16]; 4], powers: &Powers) -> [u64;
       r2[3].wrapping_mul(5),
       r1[3].wrapping_mul(5),
     );
-    dot5_sum(x0, x1, x2, x3, x4, r2v, r1v, r0, s4, s3)
+    dot5_sum([x0, x1, x2, x3, x4], [r2v, r1v, r0, s4, s3])
   };
   let d3 = {
     let r3v = lane4(r4[3], r3[3], r2[3], r1[3]);
@@ -295,7 +326,7 @@ unsafe fn mul4_spaced_sum_refs(blocks: [&[u8; 16]; 4], powers: &Powers) -> [u64;
       r2[4].wrapping_mul(5),
       r1[4].wrapping_mul(5),
     );
-    dot5_sum(x0, x1, x2, x3, x4, r3v, r2v, r1v, r0, s4)
+    dot5_sum([x0, x1, x2, x3, x4], [r3v, r2v, r1v, r0, s4])
   };
   let d4 = {
     let r4v = lane4(r4[4], r3[4], r2[4], r1[4]);
@@ -303,7 +334,7 @@ unsafe fn mul4_spaced_sum_refs(blocks: [&[u8; 16]; 4], powers: &Powers) -> [u64;
     let r2v = lane4(r4[2], r3[2], r2[2], r1[2]);
     let r1v = lane4(r4[1], r3[1], r2[1], r1[1]);
     let r0 = lane4(r4[0], r3[0], r2[0], r1[0]);
-    dot5_sum(x0, x1, x2, x3, x4, r4v, r3v, r2v, r1v, r0)
+    dot5_sum([x0, x1, x2, x3, x4], [r4v, r3v, r2v, r1v, r0])
   };
 
   [d0, d1, d2, d3, d4]
@@ -331,24 +362,32 @@ fn widen(value: u32x4) -> u64x4 {
 }
 
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
-fn dot5_sum(
-  x0: u32x4,
-  x1: u32x4,
-  x2: u32x4,
-  x3: u32x4,
-  x4: u32x4,
-  y0: u32x4,
-  y1: u32x4,
-  y2: u32x4,
-  y3: u32x4,
-  y4: u32x4,
-) -> u64 {
-  let sum = widen(x0) * widen(y0)
-    + widen(x1) * widen(y1)
-    + widen(x2) * widen(y2)
-    + widen(x3) * widen(y3)
-    + widen(x4) * widen(y4);
+fn wrapping_mul2(lhs: u64x2, rhs: u64x2) -> u64x2 {
+  core::ops::Mul::mul(lhs, rhs)
+}
+
+#[inline(always)]
+fn wrapping_add2(lhs: u64x2, rhs: u64x2) -> u64x2 {
+  core::ops::Add::add(lhs, rhs)
+}
+
+#[inline(always)]
+fn wrapping_mul4(lhs: u64x4, rhs: u64x4) -> u64x4 {
+  core::ops::Mul::mul(lhs, rhs)
+}
+
+#[inline(always)]
+fn wrapping_add4(lhs: u64x4, rhs: u64x4) -> u64x4 {
+  core::ops::Add::add(lhs, rhs)
+}
+
+#[inline(always)]
+fn dot5_sum(x: [u32x4; 5], y: [u32x4; 5]) -> u64 {
+  let mut sum = wrapping_mul4(widen(x[0]), widen(y[0]));
+  sum = wrapping_add4(sum, wrapping_mul4(widen(x[1]), widen(y[1])));
+  sum = wrapping_add4(sum, wrapping_mul4(widen(x[2]), widen(y[2])));
+  sum = wrapping_add4(sum, wrapping_mul4(widen(x[3]), widen(y[3])));
+  sum = wrapping_add4(sum, wrapping_mul4(widen(x[4]), widen(y[4])));
   let lanes = sum.to_array();
   lanes[0]
     .wrapping_add(lanes[1])
@@ -399,20 +438,26 @@ fn reduce_unreduced(mut d: [u64; 5]) -> [u32; 5] {
   d[2] = d[2].wrapping_add(c);
 
   c = d[2] >> 26;
-  let h2 = (d[2] as u32) & LIMB_MASK;
+  let h2 = low_u32(d[2]) & LIMB_MASK;
   d[3] = d[3].wrapping_add(c);
 
   c = d[3] >> 26;
-  let h3 = (d[3] as u32) & LIMB_MASK;
+  let h3 = low_u32(d[3]) & LIMB_MASK;
   d[4] = d[4].wrapping_add(c);
 
   c = d[4] >> 26;
-  let h4 = (d[4] as u32) & LIMB_MASK;
+  let h4 = low_u32(d[4]) & LIMB_MASK;
   h0 = h0.wrapping_add(c.wrapping_mul(5));
 
   c = h0 >> 26;
   h0 &= u64::from(LIMB_MASK);
   let h1 = h1_base.wrapping_add(c);
 
-  [h0 as u32, h1 as u32, h2, h3, h4]
+  [low_u32(h0), low_u32(h1), h2, h3, h4]
+}
+
+#[inline(always)]
+fn low_u32(value: u64) -> u32 {
+  let bytes = value.to_le_bytes();
+  u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
 }

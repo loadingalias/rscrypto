@@ -26,7 +26,9 @@ fn assert_matches_oracle(key_bytes: &[u8; 32], nonce_bytes: &[u8; 32], aad: &[u8
 
   // Encrypt with rscrypto.
   let mut ours = plaintext.to_vec();
-  let tag = cipher.encrypt_in_place(&nonce, aad, &mut ours).unwrap();
+  let tag = cipher
+    .encrypt_in_place(&nonce, aad, &mut ours)
+    .expect("rscrypto must seal valid AEGIS-256 oracle input");
 
   // Encrypt with oracle (consumes self, returns (Vec<u8>, [u8; 16])).
   let (oracle_ct, oracle_tag) = Oracle::<16>::new(key_bytes, nonce_bytes).encrypt(plaintext, aad);
@@ -35,13 +37,15 @@ fn assert_matches_oracle(key_bytes: &[u8; 32], nonce_bytes: &[u8; 32], aad: &[u8
   assert_eq!(tag.as_bytes(), &oracle_tag, "tag mismatch (len={})", plaintext.len());
 
   // Decrypt with rscrypto.
-  cipher.decrypt_in_place(&nonce, aad, &mut ours, &tag).unwrap();
+  cipher
+    .decrypt_in_place(&nonce, aad, &mut ours, &tag)
+    .expect("fresh AEGIS-256 ciphertext must authenticate");
   assert_eq!(ours, plaintext, "decrypt round-trip failed (len={})", plaintext.len());
 
   // Cross-decrypt: oracle decrypts rscrypto's ciphertext.
   let oracle_pt = Oracle::<16>::new(key_bytes, nonce_bytes)
     .decrypt(&oracle_ct, &oracle_tag, aad)
-    .unwrap();
+    .expect("AEGIS-256 oracle must authenticate rscrypto ciphertext");
   assert_eq!(
     oracle_pt,
     plaintext,
@@ -94,7 +98,7 @@ fn aegis256_oracle_varied_sizes() {
 fn aegis256_oracle_large_input() {
   let key = [0x77u8; 32];
   let nonce = [0x88u8; 32];
-  let plaintext: Vec<u8> = (0..8192).map(|i| (i & 0xFF) as u8).collect();
+  let plaintext: Vec<u8> = (0usize..8192).map(|i| i.to_le_bytes()[0]).collect();
   assert_matches_oracle(&key, &nonce, b"large", &plaintext);
 }
 
@@ -107,14 +111,15 @@ fn aegis256_rejects_modified_tag() {
   let cipher = Aegis256::new(&key);
 
   let mut buffer = *b"forgery-check";
-  let mut tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buffer).unwrap().to_bytes();
+  let mut tag = cipher
+    .encrypt_in_place(&nonce, b"aad", &mut buffer)
+    .expect("AEGIS-256 tag-forgery fixture must seal")
+    .to_bytes();
   tag[0] ^= 1;
 
-  assert!(
-    cipher
-      .decrypt_in_place(&nonce, b"aad", &mut buffer, &Aegis256Tag::from_bytes(tag))
-      .is_err()
-  );
+  cipher
+    .decrypt_in_place(&nonce, b"aad", &mut buffer, &Aegis256Tag::from_bytes(tag))
+    .expect_err("AEGIS-256 must reject a modified tag");
 }
 
 #[test]
@@ -124,10 +129,14 @@ fn aegis256_rejects_modified_ciphertext() {
   let cipher = Aegis256::new(&key);
 
   let mut buffer = *b"tamper-detect";
-  let tag = cipher.encrypt_in_place(&nonce, b"", &mut buffer).unwrap();
+  let tag = cipher
+    .encrypt_in_place(&nonce, b"", &mut buffer)
+    .expect("AEGIS-256 ciphertext-tampering fixture must seal");
   buffer[0] ^= 1;
 
-  assert!(cipher.decrypt_in_place(&nonce, b"", &mut buffer, &tag).is_err());
+  cipher
+    .decrypt_in_place(&nonce, b"", &mut buffer, &tag)
+    .expect_err("AEGIS-256 must reject modified ciphertext");
 }
 
 #[test]
@@ -137,7 +146,11 @@ fn aegis256_rejects_wrong_aad() {
   let cipher = Aegis256::new(&key);
 
   let mut buffer = *b"aad-mismatch";
-  let tag = cipher.encrypt_in_place(&nonce, b"correct", &mut buffer).unwrap();
+  let tag = cipher
+    .encrypt_in_place(&nonce, b"correct", &mut buffer)
+    .expect("AEGIS-256 AAD-mismatch fixture must seal");
 
-  assert!(cipher.decrypt_in_place(&nonce, b"wrong", &mut buffer, &tag).is_err());
+  cipher
+    .decrypt_in_place(&nonce, b"wrong", &mut buffer, &tag)
+    .expect_err("AEGIS-256 must reject incorrect associated data");
 }

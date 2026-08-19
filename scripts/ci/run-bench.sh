@@ -916,7 +916,7 @@ run_bench_cmd() {
 
   bench_features="$(bench_features_for_target "$bench")"
   cargo_bench="$(bench_binary_for_target "$bench")"
-  cmd=(cargo bench --profile bench --features "$bench_features" --bench "$cargo_bench")
+  cmd=(cargo bench --locked --profile bench --features "$bench_features" --bench "$cargo_bench")
   if [[ -n "$filter" || "${#CRITERION_ARGS[@]}" -gt 0 ]]; then
     cmd+=(--)
     if [[ -n "$filter" ]]; then
@@ -997,7 +997,7 @@ fi
 GENERIC_FEATURES="$(bench_features_for_invocation "$BENCHES_INPUT")"
 echo "Using features: $GENERIC_FEATURES" | tee -a "$LOG_PATH"
 
-cmd=(cargo bench --profile bench --features "$GENERIC_FEATURES")
+cmd=(cargo bench --locked --profile bench --features "$GENERIC_FEATURES")
 if [[ "${#BENCH_FLAGS[@]}" -gt 0 ]]; then
   cmd+=("${BENCH_FLAGS[@]}")
 fi

@@ -25,6 +25,10 @@ on:
         required: false
         type: string
         default: standard
+      toolchain_contract:
+        required: false
+        type: string
+        default: development
       toolchain_components:
         required: false
         type: string
@@ -128,6 +132,7 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
         with:
+          toolchain-contract: ${{ inputs.toolchain_contract }}
           cache-key: ${{ inputs.cache_key }}
           tools-mode: ${{ inputs.tools_mode }}
           toolchain-components: ${{ inputs.toolchain_components }}

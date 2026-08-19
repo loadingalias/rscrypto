@@ -1,30 +1,27 @@
 [graph]
-# Target coverage for rscrypto - canonical list for dependency analysis
-# See .cargo/config.toml for per-target rustflags
+# Dependency-analysis projection of .config/target-matrix.json.
 targets = [
   "aarch64-apple-darwin",
-  "aarch64-unknown-linux-gnu",
-  "x86_64-apple-darwin",
-  "x86_64-pc-windows-msvc",
-  "x86_64-unknown-linux-gnu",
-  "aarch64-unknown-linux-musl",
-  "wasm32-unknown-unknown",
-  "wasm32-wasip1",
-  "x86_64-unknown-linux-musl",
   "aarch64-pc-windows-msvc",
+  "aarch64-unknown-linux-gnu",
+  "aarch64-unknown-linux-musl",
   "aarch64-unknown-none",
-  "loongarch64-unknown-linux-gnu",
   "powerpc64le-unknown-linux-gnu",
   "riscv32imac-unknown-none-elf",
   "riscv64gc-unknown-linux-gnu",
-  "riscv64gc-unknown-none-elf",
   "s390x-unknown-linux-gnu",
   "thumbv6m-none-eabi",
+  "wasm32-unknown-unknown",
+  "wasm32-wasip1",
+  "x86_64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+  "x86_64-unknown-linux-gnu",
+  "x86_64-unknown-linux-musl",
   "x86_64-unknown-none",
 ]
 
 [advisories]
-yanked = "warn"
+yanked = "deny"
 # RustCrypto `rsa` is a dev-only differential oracle and benchmark baseline.
 # rscrypto never exposes it in production paths; production RSA verification
 # uses `src/auth/rsa.rs`. Keep this scoped to the known Marvin advisory until

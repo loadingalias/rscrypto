@@ -158,7 +158,27 @@ apply_ci_resource_profile() {
 
 ensure_target() {
   local target=$1
-  if ! rustup target list --installed 2>/dev/null | grep -q "^${target}$"; then
+  local toolchain=${2:-}
+  if [[ -n "$toolchain" ]]; then
+    if ! rustup target list --toolchain "$toolchain" --installed 2>/dev/null | grep -q "^${target}$"; then
+      rustup target add --toolchain "$toolchain" "$target" >/dev/null 2>&1 || true
+    fi
+  elif ! rustup target list --installed 2>/dev/null | grep -q "^${target}$"; then
     rustup target add "$target" >/dev/null 2>&1 || true
   fi
+}
+
+activate_nightly_toolchain() {
+  local toolchain_script="$COMMON_DIR/toolchain.sh"
+  local toolchain_contracts="$COMMON_DIR/../../.config/toolchains.toml"
+  [[ -x "$toolchain_script" ]] || {
+    echo "ERROR: nightly toolchain resolver not found: $toolchain_script" >&2
+    return 1
+  }
+  [[ -f "$toolchain_contracts" ]] || {
+    echo "ERROR: nightly toolchain authority not found: $toolchain_contracts" >&2
+    return 1
+  }
+  RUSTUP_TOOLCHAIN=$("$toolchain_script" --nightly)
+  export RUSTUP_TOOLCHAIN
 }

@@ -1,7 +1,7 @@
 use rscrypto::{Checksum, Crc16Ccitt, Crc16Ibm};
 use rscrypto_fuzz::{FuzzInput, assert_checksum_chunked, assert_checksum_combine, some_or_return};
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let split: u8 = some_or_return!(input.byte());
   let data = input.rest();

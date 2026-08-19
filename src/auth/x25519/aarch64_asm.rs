@@ -4,8 +4,6 @@
 //! byte backends. This module owns the ABI boundary and keeps the public
 //! rscrypto API semantics in `x25519.rs`.
 
-#![allow(unsafe_code)]
-
 use core::arch::global_asm;
 
 use super::POINT_LENGTH;

@@ -1,23 +1,3 @@
-//! CPU feature detection.
-//!
-//! This module provides runtime CPU capability detection with caching.
-//! It handles compile-time and runtime detection, caching, and user overrides.
-//!
-//! # Detection Tiers
-//!
-//! 1. **Compile-time**: `cfg!(target_feature)` - zero cost, dead code elimination
-//! 2. **Runtime (std)**: `is_x86_feature_detected!` + `OnceLock` caching
-//! 3. **Runtime (no_std)**: Atomic-based caching for embedded targets
-//!
-//! # Override Support
-//!
-//! ```
-//! use rscrypto::platform::{Detected, expert};
-//! expert::try_set_override(Some(Detected::portable()))?;
-//! expert::try_set_override(None)?;
-//! # Ok::<(), rscrypto::platform::expert::OverrideError>(())
-//! ```
-
 use crate::platform::caps::{Arch, Caps};
 
 /// Errors when configuring runtime detection overrides.
@@ -120,15 +100,9 @@ fn validate_override(value: Option<Detected>) -> Result<Option<Detected>, Overri
 ///
 /// Results are cached after first call.
 ///
-/// # Examples
-///
-/// ```
-/// let det = rscrypto::platform::get();
-/// assert_eq!(det.arch, rscrypto::platform::Arch::current());
-/// ```
 #[inline]
 #[must_use]
-pub fn get() -> Detected {
+pub(super) fn get() -> Detected {
   // Miri cannot interpret SIMD intrinsics
   #[cfg(miri)]
   {
@@ -137,8 +111,7 @@ pub fn get() -> Detected {
 
   #[cfg(not(miri))]
   {
-    #[allow(unused_mut)]
-    let mut det = {
+    let det = {
       #[cfg(feature = "std")]
       {
         *STD_CACHE.get_or_init(detect_with_override)
@@ -172,7 +145,7 @@ pub fn get() -> Detected {
 /// `Cargo.toml` for deployment context (FIPS / DO-178C / ISO 26262).
 #[inline]
 #[must_use]
-pub fn caps() -> Caps {
+pub(super) fn caps() -> Caps {
   #[cfg(feature = "portable-only")]
   {
     Caps::NONE
@@ -186,7 +159,7 @@ pub fn caps() -> Caps {
 /// Get the detected architecture.
 #[inline]
 #[must_use]
-pub fn arch() -> Arch {
+pub(super) fn arch() -> Arch {
   get().arch
 }
 

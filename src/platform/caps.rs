@@ -152,7 +152,11 @@ impl Caps {
   #[inline]
   #[must_use]
   pub const fn count(self) -> u32 {
-    self.0[0].count_ones() + self.0[1].count_ones() + self.0[2].count_ones() + self.0[3].count_ones()
+    self.0[0]
+      .count_ones()
+      .strict_add(self.0[1].count_ones())
+      .strict_add(self.0[2].count_ones())
+      .strict_add(self.0[3].count_ones())
   }
 
   /// Create a capability set with a single bit set.
@@ -222,18 +226,28 @@ impl core::ops::BitOrAssign for Caps {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Arch {
+  /// 64-bit x86 (`target_arch = "x86_64"`).
   X86_64,
+  /// 32-bit x86 (`target_arch = "x86"`).
   X86,
+  /// 64-bit Arm (`target_arch = "aarch64"`).
   Aarch64,
+  /// 32-bit Arm (`target_arch = "arm"`).
   Arm,
+  /// 64-bit RISC-V (`target_arch = "riscv64"`).
   Riscv64,
+  /// 32-bit RISC-V (`target_arch = "riscv32"`).
   Riscv32,
-  /// IBM POWER (Rust target_arch = "powerpc64").
+  /// 64-bit IBM POWER (`target_arch = "powerpc64"`).
   Power,
+  /// IBM Z (`target_arch = "s390x"`).
   S390x,
+  /// 32-bit WebAssembly (`target_arch = "wasm32"`).
   Wasm32,
+  /// 64-bit WebAssembly (`target_arch = "wasm64"`).
   Wasm64,
   #[default]
+  /// Any target architecture not represented by another variant.
   Other,
 }
 
@@ -334,74 +348,123 @@ pub mod x86 {
   use super::Caps;
 
   // ─── SSE Family ───
+  /// Streaming SIMD Extensions 2.
   pub const SSE2: Caps = Caps::bit(0);
+  /// Streaming SIMD Extensions 3.
   pub const SSE3: Caps = Caps::bit(1);
+  /// Supplemental Streaming SIMD Extensions 3.
   pub const SSSE3: Caps = Caps::bit(2);
+  /// Streaming SIMD Extensions 4.1.
   pub const SSE41: Caps = Caps::bit(3);
+  /// Streaming SIMD Extensions 4.2.
   pub const SSE42: Caps = Caps::bit(4);
-  pub const SSE4A: Caps = Caps::bit(5); // AMD only
+  /// AMD Streaming SIMD Extensions 4a.
+  pub const SSE4A: Caps = Caps::bit(5);
 
   // ─── AVX Family ───
+  /// Advanced Vector Extensions.
   pub const AVX: Caps = Caps::bit(6);
+  /// Advanced Vector Extensions 2.
   pub const AVX2: Caps = Caps::bit(7);
+  /// Fused multiply-add instructions.
   pub const FMA: Caps = Caps::bit(8);
+  /// Half-precision conversion instructions.
   pub const F16C: Caps = Caps::bit(9);
 
   // ─── Crypto Extensions ───
+  /// AES New Instructions.
   pub const AESNI: Caps = Caps::bit(10);
+  /// Carry-less multiplication of 64-bit operands.
   pub const PCLMULQDQ: Caps = Caps::bit(11);
+  /// SHA-1 and SHA-256 instruction extensions.
   pub const SHA: Caps = Caps::bit(12);
+  /// SHA-512 instruction extensions.
   pub const SHA512: Caps = Caps::bit(13);
 
   // ─── AVX-512 Foundation ───
+  /// AVX-512 Foundation instructions.
   pub const AVX512F: Caps = Caps::bit(14);
+  /// AVX-512 Vector Length extensions for 128- and 256-bit operands.
   pub const AVX512VL: Caps = Caps::bit(15);
+  /// AVX-512 byte and word instructions.
   pub const AVX512BW: Caps = Caps::bit(16);
+  /// AVX-512 doubleword and quadword instructions.
   pub const AVX512DQ: Caps = Caps::bit(17);
+  /// AVX-512 conflict-detection instructions.
   pub const AVX512CD: Caps = Caps::bit(18);
 
   // ─── AVX-512 Crypto/Advanced ───
+  /// Vector carry-less multiplication of 64-bit operands.
   pub const VPCLMULQDQ: Caps = Caps::bit(19);
+  /// Vector AES instructions.
   pub const VAES: Caps = Caps::bit(20);
+  /// Galois Field New Instructions.
   pub const GFNI: Caps = Caps::bit(21);
 
   // ─── AVX-512 Extended ───
+  /// AVX-512 integer fused multiply-add instructions.
   pub const AVX512IFMA: Caps = Caps::bit(22);
+  /// AVX-512 Vector Byte Manipulation Instructions.
   pub const AVX512VBMI: Caps = Caps::bit(23);
+  /// AVX-512 Vector Byte Manipulation Instructions 2.
   pub const AVX512VBMI2: Caps = Caps::bit(24);
+  /// AVX-512 Vector Neural Network Instructions.
   pub const AVX512VNNI: Caps = Caps::bit(25);
+  /// AVX-512 bit-algorithm instructions.
   pub const AVX512BITALG: Caps = Caps::bit(26);
+  /// AVX-512 population-count instructions for doubleword and quadword lanes.
   pub const AVX512VPOPCNTDQ: Caps = Caps::bit(27);
+  /// AVX-512 pairwise intersection instructions.
   pub const AVX512VP2INTERSECT: Caps = Caps::bit(28);
+  /// AVX-512 half-precision floating-point instructions.
   pub const AVX512FP16: Caps = Caps::bit(29);
+  /// AVX-512 BFloat16 instructions.
   pub const AVX512BF16: Caps = Caps::bit(30);
 
   // ─── Bit Manipulation ───
+  /// Bit Manipulation Instruction Set 1.
   pub const BMI1: Caps = Caps::bit(31);
+  /// Bit Manipulation Instruction Set 2.
   pub const BMI2: Caps = Caps::bit(32);
+  /// Population-count instruction.
   pub const POPCNT: Caps = Caps::bit(33);
+  /// Leading-zero count instruction.
   pub const LZCNT: Caps = Caps::bit(34);
+  /// Multi-precision add-carry instruction extensions.
   pub const ADX: Caps = Caps::bit(35);
 
   // ─── AVX10 (unified AVX-512 replacement) ───
+  /// Advanced Vector Extensions 10.1.
   pub const AVX10_1: Caps = Caps::bit(36);
+  /// Advanced Vector Extensions 10.2.
   pub const AVX10_2: Caps = Caps::bit(37);
 
   // ─── AMX (Advanced Matrix Extensions) ───
+  /// Advanced Matrix Extensions tile configuration and movement instructions.
   pub const AMX_TILE: Caps = Caps::bit(38);
+  /// Advanced Matrix Extensions BFloat16 operations.
   pub const AMX_BF16: Caps = Caps::bit(39);
+  /// Advanced Matrix Extensions 8-bit integer operations.
   pub const AMX_INT8: Caps = Caps::bit(40);
+  /// Advanced Matrix Extensions half-precision floating-point operations.
   pub const AMX_FP16: Caps = Caps::bit(41);
+  /// Advanced Matrix Extensions complex-number operations.
   pub const AMX_COMPLEX: Caps = Caps::bit(42);
 
   // ─── Miscellaneous ───
+  /// Direct-store instruction for register values.
   pub const MOVDIRI: Caps = Caps::bit(43);
+  /// Direct-store instruction for 64-byte memory operands.
   pub const MOVDIR64B: Caps = Caps::bit(44);
+  /// Instruction-execution serialization.
   pub const SERIALIZE: Caps = Caps::bit(45);
+  /// Hardware random-number generation.
   pub const RDRAND: Caps = Caps::bit(46);
+  /// Hardware entropy-seed generation.
   pub const RDSEED: Caps = Caps::bit(47);
 
   // ─── APX (Advanced Performance Extensions) ───
+  /// Advanced Performance Extensions foundation.
   pub const APX: Caps = Caps::bit(48);
 
   // ─── Vendor Identification ───
@@ -465,73 +528,120 @@ pub mod aarch64 {
   use super::Caps;
 
   // ─── Basic SIMD ───
-  pub const NEON: Caps = Caps::bit(64); // Baseline on AArch64
+  /// Advanced SIMD (Neon), which is part of the AArch64 baseline.
+  pub const NEON: Caps = Caps::bit(64);
 
   // ─── Crypto Extensions ───
+  /// Arm AES instructions.
   pub const AES: Caps = Caps::bit(65);
-  pub const PMULL: Caps = Caps::bit(66); // Often bundled with AES
+  /// Polynomial multiply long instructions.
+  pub const PMULL: Caps = Caps::bit(66);
+  /// Arm SHA-1 and SHA-256 instructions.
   pub const SHA2: Caps = Caps::bit(67);
-  pub const SHA3: Caps = Caps::bit(68); // Includes EOR3
+  /// Arm SHA-3 instructions, including EOR3.
+  pub const SHA3: Caps = Caps::bit(68);
+  /// Arm SHA-512 instructions.
   pub const SHA512: Caps = Caps::bit(69);
+  /// Arm SM3 instructions.
   pub const SM3: Caps = Caps::bit(70);
+  /// Arm SM4 instructions.
   pub const SM4: Caps = Caps::bit(71);
 
   // ─── CRC Extension ───
+  /// Arm CRC32 and CRC32C instructions.
   pub const CRC: Caps = Caps::bit(72);
 
   // ─── Additional SIMD ───
+  /// Advanced SIMD integer dot-product instructions.
   pub const DOTPROD: Caps = Caps::bit(73);
+  /// Advanced SIMD 8-bit integer matrix-multiply instructions.
   pub const I8MM: Caps = Caps::bit(74);
+  /// BFloat16 arithmetic instructions.
   pub const BF16: Caps = Caps::bit(75);
+  /// Half-precision floating-point arithmetic instructions.
   pub const FP16: Caps = Caps::bit(76);
+  /// Floating-point round-to-integer instructions provided by FEAT_FRINTTS.
   pub const FRINTTS: Caps = Caps::bit(77);
 
   // ─── SVE Family ───
+  /// Scalable Vector Extension.
   pub const SVE: Caps = Caps::bit(78);
+  /// Scalable Vector Extension version 2.
   pub const SVE2: Caps = Caps::bit(79);
+  /// SVE2 AES instructions.
   pub const SVE2_AES: Caps = Caps::bit(80);
+  /// SVE2 SHA-3 instructions.
   pub const SVE2_SHA3: Caps = Caps::bit(81);
+  /// SVE2 SM4 instructions.
   pub const SVE2_SM4: Caps = Caps::bit(82);
+  /// SVE2 bit-permutation instructions.
   pub const SVE2_BITPERM: Caps = Caps::bit(83);
-  pub const SVE2_PMULL: Caps = Caps::bit(97); // SVE2 PMULL
-  pub const SVE2_I8MM: Caps = Caps::bit(98); // SVE2 Int8 matmul
-  pub const SVE2_F32MM: Caps = Caps::bit(99); // SVE2 FP32 matmul
-  pub const SVE2_F64MM: Caps = Caps::bit(100); // SVE2 FP64 matmul
-  pub const SVE2_BF16: Caps = Caps::bit(101); // SVE2 BFloat16
-  pub const SVE2_EBF16: Caps = Caps::bit(102); // SVE2 Extended BFloat16
+  /// SVE2 polynomial multiply long instructions.
+  pub const SVE2_PMULL: Caps = Caps::bit(97);
+  /// SVE2 8-bit integer matrix-multiply instructions.
+  pub const SVE2_I8MM: Caps = Caps::bit(98);
+  /// SVE single-precision floating-point matrix-multiply instructions.
+  pub const SVE2_F32MM: Caps = Caps::bit(99);
+  /// SVE double-precision floating-point matrix-multiply instructions.
+  pub const SVE2_F64MM: Caps = Caps::bit(100);
+  /// SVE BFloat16 instructions.
+  pub const SVE2_BF16: Caps = Caps::bit(101);
+  /// SVE extended BFloat16 instructions.
+  pub const SVE2_EBF16: Caps = Caps::bit(102);
 
   // ─── Atomics (ARMv8.1+) ───
-  pub const LSE: Caps = Caps::bit(84); // Large System Extensions
-  pub const LSE2: Caps = Caps::bit(85); // ARMv8.4 atomics
+  /// Large System Extensions atomic instructions.
+  pub const LSE: Caps = Caps::bit(84);
+  /// Large System Extensions version 2 atomic instructions.
+  pub const LSE2: Caps = Caps::bit(85);
 
   // ─── Memory Operations ───
-  pub const MOPS: Caps = Caps::bit(86); // FEAT_MOPS memcpy acceleration
+  /// Memory Copy and Memory Set instructions.
+  pub const MOPS: Caps = Caps::bit(86);
 
   // ─── Scalable Matrix Extension ───
+  /// Scalable Matrix Extension.
   pub const SME: Caps = Caps::bit(87);
+  /// Scalable Matrix Extension version 2.
   pub const SME2: Caps = Caps::bit(88);
 
   // ─── SME2p1 and extended SME features ───
-  pub const SME2P1: Caps = Caps::bit(89); // SME version 2.1
-  pub const SME_I16I64: Caps = Caps::bit(90); // SME Int16xInt64
-  pub const SME_F64F64: Caps = Caps::bit(91); // SME Float64xFloat64
-  pub const SME_B16B16: Caps = Caps::bit(92); // SME BFloat16xBFloat16 (Apple M5)
-  pub const SME_F16F16: Caps = Caps::bit(93); // SME Float16xFloat16 (Apple M5)
-  pub const SME_I8I32: Caps = Caps::bit(103); // SME Int8xInt32
-  pub const SME_F16F32: Caps = Caps::bit(104); // SME Float16xFloat32
-  pub const SME_B16F32: Caps = Caps::bit(105); // SME BFloat16xFloat32
-  pub const SME_F32F32: Caps = Caps::bit(106); // SME Float32xFloat32
-  pub const SME_FA64: Caps = Caps::bit(107); // SME Full A64
-  pub const SME_I16I32: Caps = Caps::bit(108); // SME Int16xInt32
-  pub const SME_BI32I32: Caps = Caps::bit(109); // SME BrainInt32xInt32
-  pub const EBF16: Caps = Caps::bit(110); // Extended BFloat16 (NEON)
+  /// Scalable Matrix Extension version 2.1.
+  pub const SME2P1: Caps = Caps::bit(89);
+  /// SME 16-bit integer outer products accumulated into 64-bit elements.
+  pub const SME_I16I64: Caps = Caps::bit(90);
+  /// SME double-precision floating-point outer products.
+  pub const SME_F64F64: Caps = Caps::bit(91);
+  /// SME BFloat16 outer products accumulated into BFloat16 elements.
+  pub const SME_B16B16: Caps = Caps::bit(92);
+  /// SME half-precision outer products accumulated into half-precision elements.
+  pub const SME_F16F16: Caps = Caps::bit(93);
+  /// SME 8-bit integer outer products accumulated into 32-bit elements.
+  pub const SME_I8I32: Caps = Caps::bit(103);
+  /// SME half-precision outer products accumulated into single-precision elements.
+  pub const SME_F16F32: Caps = Caps::bit(104);
+  /// SME BFloat16 outer products accumulated into single-precision elements.
+  pub const SME_B16F32: Caps = Caps::bit(105);
+  /// SME single-precision floating-point outer products.
+  pub const SME_F32F32: Caps = Caps::bit(106);
+  /// Full A64 instruction availability in SME streaming mode.
+  pub const SME_FA64: Caps = Caps::bit(107);
+  /// SME 16-bit integer outer products accumulated into 32-bit elements.
+  pub const SME_I16I32: Caps = Caps::bit(108);
+  /// SME matrix operations selected by the architectural BI32I32 field.
+  pub const SME_BI32I32: Caps = Caps::bit(109);
+  /// Advanced SIMD extended BFloat16 instructions.
+  pub const EBF16: Caps = Caps::bit(110);
 
   // ─── SVE2.1 features ───
-  pub const SVE2P1: Caps = Caps::bit(94); // SVE version 2.1
-  pub const SVE_B16B16: Caps = Caps::bit(95); // SVE BFloat16xBFloat16
+  /// Scalable Vector Extension version 2.1.
+  pub const SVE2P1: Caps = Caps::bit(94);
+  /// SVE BFloat16 multiply-accumulate instructions with BFloat16 results.
+  pub const SVE_B16B16: Caps = Caps::bit(95);
 
   // ─── Hardware RNG ───
-  pub const RNG: Caps = Caps::bit(96); // RNDR/RNDRRS
+  /// Random-number instructions RNDR and RNDRRS.
+  pub const RNG: Caps = Caps::bit(96);
 
   // ─── Combined Capability Masks ───
 
@@ -563,45 +673,78 @@ pub mod riscv {
   use super::Caps;
 
   // ─── Vector Extension ───
+  /// Standard vector extension.
   pub const V: Caps = Caps::bit(128);
 
   // ─── Bit Manipulation ───
+  /// Basic bit-manipulation instructions.
   pub const ZBB: Caps = Caps::bit(129);
+  /// Single-bit manipulation instructions.
   pub const ZBS: Caps = Caps::bit(130);
+  /// Address-generation instructions.
   pub const ZBA: Caps = Caps::bit(131);
-  pub const ZBC: Caps = Caps::bit(132); // Carryless multiply
+  /// Carry-less multiplication instructions.
+  pub const ZBC: Caps = Caps::bit(132);
 
   // ─── Scalar Crypto ───
+  /// Bit-manipulation instructions for cryptography.
   pub const ZBKB: Caps = Caps::bit(133);
+  /// Carry-less multiplication instructions for cryptography.
   pub const ZBKC: Caps = Caps::bit(134);
+  /// Crossbar-permutation instructions for cryptography.
   pub const ZBKX: Caps = Caps::bit(135);
-  pub const ZKND: Caps = Caps::bit(136); // AES decrypt
-  pub const ZKNE: Caps = Caps::bit(137); // AES encrypt
-  pub const ZKNH: Caps = Caps::bit(138); // SHA2
-  pub const ZKSED: Caps = Caps::bit(139); // SM4
-  pub const ZKSH: Caps = Caps::bit(140); // SM3
-  pub const ZKN: Caps = Caps::bit(150); // NIST crypto bundle
-  pub const ZKS: Caps = Caps::bit(151); // ShangMi crypto bundle
-  pub const ZK: Caps = Caps::bit(152); // Standard scalar crypto bundle
-  pub const ZKT: Caps = Caps::bit(153); // Data-independent execution latency
+  /// NIST-suite AES decryption and key-schedule instructions.
+  pub const ZKND: Caps = Caps::bit(136);
+  /// NIST-suite AES encryption and key-schedule instructions.
+  pub const ZKNE: Caps = Caps::bit(137);
+  /// NIST-suite SHA-2 hash instructions.
+  pub const ZKNH: Caps = Caps::bit(138);
+  /// ShangMi-suite SM4 block-cipher instructions.
+  pub const ZKSED: Caps = Caps::bit(139);
+  /// ShangMi-suite SM3 hash instructions.
+  pub const ZKSH: Caps = Caps::bit(140);
+  /// Scalar NIST cryptography suite.
+  pub const ZKN: Caps = Caps::bit(150);
+  /// Scalar ShangMi cryptography suite.
+  pub const ZKS: Caps = Caps::bit(151);
+  /// Standard scalar cryptography suite.
+  pub const ZK: Caps = Caps::bit(152);
+  /// Scalar data-independent execution-latency guarantee.
+  pub const ZKT: Caps = Caps::bit(153);
 
   // ─── Vector Crypto ───
+  /// Vector basic bit-manipulation instructions.
   pub const ZVBB: Caps = Caps::bit(141);
+  /// Vector carry-less multiplication instructions.
   pub const ZVBC: Caps = Caps::bit(142);
+  /// Vector bit-manipulation instructions for cryptography.
   pub const ZVKB: Caps = Caps::bit(143);
+  /// Vector GCM and GMAC instructions.
   pub const ZVKG: Caps = Caps::bit(144);
+  /// Vector AES block-cipher instructions.
   pub const ZVKNED: Caps = Caps::bit(145);
+  /// Vector SHA-256 hash instructions.
   pub const ZVKNHA: Caps = Caps::bit(146);
+  /// Vector SHA-256 and SHA-512 hash instructions.
   pub const ZVKNHB: Caps = Caps::bit(147);
+  /// Vector SM4 block-cipher instructions.
   pub const ZVKSED: Caps = Caps::bit(148);
+  /// Vector SM3 hash instructions.
   pub const ZVKSH: Caps = Caps::bit(149);
-  pub const ZVKT: Caps = Caps::bit(154); // Vector data-independent execution latency
-  pub const ZVKN: Caps = Caps::bit(155); // Vector NIST crypto bundle
-  pub const ZVKNC: Caps = Caps::bit(156); // Vector NIST crypto bundle + CLMUL
-  pub const ZVKNG: Caps = Caps::bit(157); // Vector NIST crypto bundle + GCM
-  pub const ZVKS: Caps = Caps::bit(158); // Vector ShangMi crypto bundle
-  pub const ZVKSC: Caps = Caps::bit(159); // Vector ShangMi crypto bundle + CLMUL
-  pub const ZVKSG: Caps = Caps::bit(160); // Vector ShangMi crypto bundle + GCM
+  /// Vector data-independent execution-latency guarantee.
+  pub const ZVKT: Caps = Caps::bit(154);
+  /// Vector NIST cryptography suite.
+  pub const ZVKN: Caps = Caps::bit(155);
+  /// Vector NIST cryptography suite with carry-less multiplication.
+  pub const ZVKNC: Caps = Caps::bit(156);
+  /// Vector NIST cryptography suite with GCM and GMAC instructions.
+  pub const ZVKNG: Caps = Caps::bit(157);
+  /// Vector ShangMi cryptography suite.
+  pub const ZVKS: Caps = Caps::bit(158);
+  /// Vector ShangMi cryptography suite with carry-less multiplication.
+  pub const ZVKSC: Caps = Caps::bit(159);
+  /// Vector ShangMi cryptography suite with GCM and GMAC instructions.
+  pub const ZVKSG: Caps = Caps::bit(160);
 }
 
 // WebAssembly Features (bits 192-207)
@@ -610,7 +753,9 @@ pub mod riscv {
 pub mod wasm {
   use super::Caps;
 
+  /// WebAssembly 128-bit SIMD instructions.
   pub const SIMD128: Caps = Caps::bit(192);
+  /// WebAssembly relaxed SIMD instructions.
   pub const RELAXED_SIMD: Caps = Caps::bit(193);
 }
 

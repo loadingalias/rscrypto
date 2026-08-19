@@ -59,7 +59,7 @@ fn migration_docs_do_not_delegate_accuracy_to_a_validation_index() {
 #[test]
 fn migration_docs_do_not_reference_retired_rscrypto_versions() {
   for path in migration_markdown_files(&migration_root()) {
-    let text = fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+    let text = fs::read_to_string(&path).expect("migration markdown file must be readable");
     assert!(
       !text.contains("rscrypto = { version = \"0.1\""),
       "{} still contains an rscrypto 0.1 dependency example",
@@ -81,7 +81,7 @@ fn migration_docs_do_not_reference_retired_rscrypto_versions() {
 #[test]
 fn migration_docs_local_markdown_links_resolve() {
   for path in migration_markdown_files(&migration_root()) {
-    let text = fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+    let text = fs::read_to_string(&path).expect("migration markdown file must be readable");
     for link in local_markdown_links(&text) {
       let target = link.split_once('#').map_or(link.as_str(), |(base, _)| base);
       if target.is_empty() {
@@ -300,8 +300,8 @@ fn migration_markdown_files(root: &Path) -> Vec<PathBuf> {
 }
 
 fn collect_markdown_files(dir: &Path, out: &mut Vec<PathBuf>) {
-  for entry in fs::read_dir(dir).unwrap_or_else(|err| panic!("read dir {}: {err}", dir.display())) {
-    let entry = entry.unwrap_or_else(|err| panic!("read dir entry in {}: {err}", dir.display()));
+  for entry in fs::read_dir(dir).expect("migration directory must be readable") {
+    let entry = entry.expect("migration directory entry must be readable");
     let path = entry.path();
     if path.is_dir() {
       collect_markdown_files(&path, out);
@@ -315,14 +315,11 @@ fn local_markdown_links(text: &str) -> Vec<String> {
   let mut links = Vec::new();
   let mut rest = text;
 
-  while let Some(start) = rest.find("](") {
-    rest = &rest[start + 2..];
-    let Some(end) = rest.find(')') else {
+  while let Some((_, after_open)) = rest.split_once("](") {
+    let Some((target, after_close)) = after_open.split_once(')') else {
       break;
     };
-
-    let target = &rest[..end];
-    rest = &rest[end + 1..];
+    rest = after_close;
 
     if target.starts_with("http://")
       || target.starts_with("https://")

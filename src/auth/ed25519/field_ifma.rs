@@ -16,8 +16,8 @@
 //!
 //! # Arithmetic convention
 //!
-//! Field arithmetic is modular math (mod 2^255 - 19). Per CLAUDE.md rules,
-//! `wrapping_*` is the correct choice for intentional modular arithmetic.
+//! Field arithmetic is modular math (mod 2^255 - 19). Wrapping arithmetic is
+//! reserved for operations whose field representation is intentionally modular.
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
@@ -30,7 +30,7 @@ use super::{
 // Constants
 
 const MASK51: i64 = (1i64 << 51) - 1;
-#[cfg(test)]
+#[cfg(all(test, feature = "ed25519"))]
 const MASK52: i64 = (1i64 << 52) - 1;
 
 /// Subtraction bias: 2p in radix-51. Limb 0 accounts for the -19 term.
@@ -60,8 +60,7 @@ pub(crate) struct FieldElement51x4(pub(crate) [__m256i; 5]);
 /// Caller must ensure AVX2 is available.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn mul19(x: __m256i) -> __m256i {
+fn mul19(x: __m256i) -> __m256i {
   let x16 = _mm256_slli_epi64::<4>(x);
   let x2 = _mm256_slli_epi64::<1>(x);
   _mm256_add_epi64(_mm256_add_epi64(x16, x2), x)
@@ -74,8 +73,7 @@ unsafe fn mul19(x: __m256i) -> __m256i {
 /// Caller must ensure AVX-512 IFMA + VL are available.
 #[inline]
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn madd52lo(acc: __m256i, a: __m256i, b: __m256i) -> __m256i {
+fn madd52lo(acc: __m256i, a: __m256i, b: __m256i) -> __m256i {
   _mm256_madd52lo_epu64(acc, a, b)
 }
 
@@ -86,8 +84,7 @@ unsafe fn madd52lo(acc: __m256i, a: __m256i, b: __m256i) -> __m256i {
 /// Caller must ensure AVX-512 IFMA + VL are available.
 #[inline]
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn madd52hi(acc: __m256i, a: __m256i, b: __m256i) -> __m256i {
+fn madd52hi(acc: __m256i, a: __m256i, b: __m256i) -> __m256i {
   _mm256_madd52hi_epu64(acc, a, b)
 }
 
@@ -99,14 +96,18 @@ unsafe fn madd52hi(acc: __m256i, a: __m256i, b: __m256i) -> __m256i {
 /// # Safety
 ///
 /// Caller must ensure AVX2 is available.
-#[cfg(test)]
+#[cfg(all(test, feature = "ed25519"))]
 #[inline]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn select_by_bit(bit: __m256i, val: __m256i) -> __m256i {
+fn select_by_bit(bit: __m256i, val: __m256i) -> __m256i {
   // 0 → 0, 1 → 0xFFFF_FFFF_FFFF_FFFF
   let mask = _mm256_sub_epi64(_mm256_setzero_si256(), bit);
   _mm256_and_si256(mask, val)
+}
+
+#[inline(always)]
+fn u64_as_i64_bits(value: u64) -> i64 {
+  i64::from_ne_bytes(value.to_ne_bytes())
 }
 
 // FieldElement51x4 implementation
@@ -120,8 +121,7 @@ impl FieldElement51x4 {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn zero() -> Self {
+  pub(crate) fn zero() -> Self {
     Self([_mm256_setzero_si256(); 5])
   }
 
@@ -132,19 +132,43 @@ impl FieldElement51x4 {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn new(a: &FieldElement, b: &FieldElement, c: &FieldElement, d: &FieldElement) -> Self {
+  pub(crate) fn new(a: &FieldElement, b: &FieldElement, c: &FieldElement, d: &FieldElement) -> Self {
     let al = a.limbs();
     let bl = b.limbs();
     let cl = c.limbs();
     let dl = d.limbs();
 
     Self([
-      _mm256_set_epi64x(dl[0] as i64, cl[0] as i64, bl[0] as i64, al[0] as i64),
-      _mm256_set_epi64x(dl[1] as i64, cl[1] as i64, bl[1] as i64, al[1] as i64),
-      _mm256_set_epi64x(dl[2] as i64, cl[2] as i64, bl[2] as i64, al[2] as i64),
-      _mm256_set_epi64x(dl[3] as i64, cl[3] as i64, bl[3] as i64, al[3] as i64),
-      _mm256_set_epi64x(dl[4] as i64, cl[4] as i64, bl[4] as i64, al[4] as i64),
+      _mm256_set_epi64x(
+        u64_as_i64_bits(dl[0]),
+        u64_as_i64_bits(cl[0]),
+        u64_as_i64_bits(bl[0]),
+        u64_as_i64_bits(al[0]),
+      ),
+      _mm256_set_epi64x(
+        u64_as_i64_bits(dl[1]),
+        u64_as_i64_bits(cl[1]),
+        u64_as_i64_bits(bl[1]),
+        u64_as_i64_bits(al[1]),
+      ),
+      _mm256_set_epi64x(
+        u64_as_i64_bits(dl[2]),
+        u64_as_i64_bits(cl[2]),
+        u64_as_i64_bits(bl[2]),
+        u64_as_i64_bits(al[2]),
+      ),
+      _mm256_set_epi64x(
+        u64_as_i64_bits(dl[3]),
+        u64_as_i64_bits(cl[3]),
+        u64_as_i64_bits(bl[3]),
+        u64_as_i64_bits(al[3]),
+      ),
+      _mm256_set_epi64x(
+        u64_as_i64_bits(dl[4]),
+        u64_as_i64_bits(cl[4]),
+        u64_as_i64_bits(bl[4]),
+        u64_as_i64_bits(al[4]),
+      ),
     ])
   }
 
@@ -155,8 +179,7 @@ impl FieldElement51x4 {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn split(&self) -> [FieldElement; 4] {
+  pub(crate) fn split(&self) -> [FieldElement; 4] {
     let mut al = [0u64; 5];
     let mut bl = [0u64; 5];
     let mut cl = [0u64; 5];
@@ -169,7 +192,8 @@ impl FieldElement51x4 {
       .zip(self.0.iter())
     {
       let mut tmp = [0u64; 4];
-      _mm256_storeu_si256(tmp.as_mut_ptr().cast(), *vec);
+      // SAFETY: AVX2 is active in this function, and `tmp` provides 32 writable bytes for the unaligned store.
+      unsafe { _mm256_storeu_si256(tmp.as_mut_ptr().cast(), *vec) };
       *a_out = tmp[0];
       *b_out = tmp[1];
       *c_out = tmp[2];
@@ -191,8 +215,7 @@ impl FieldElement51x4 {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn add(&self, rhs: &Self) -> Self {
+  pub(crate) fn add(&self, rhs: &Self) -> Self {
     Self([
       _mm256_add_epi64(self.0[0], rhs.0[0]),
       _mm256_add_epi64(self.0[1], rhs.0[1]),
@@ -209,8 +232,7 @@ impl FieldElement51x4 {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn sub(&self, rhs: &Self) -> Self {
+  pub(crate) fn sub(&self, rhs: &Self) -> Self {
     let bias_0 = _mm256_set1_epi64x(BIAS_0);
     let bias_n = _mm256_set1_epi64x(BIAS_N);
 
@@ -230,8 +252,7 @@ impl FieldElement51x4 {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn negate_lazy(&self) -> Self {
+  pub(crate) fn negate_lazy(&self) -> Self {
     Self::zero().sub(self)
   }
 
@@ -244,8 +265,7 @@ impl FieldElement51x4 {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn shuffle(&self, pattern: Shuffle) -> Self {
+  pub(crate) fn shuffle(&self, pattern: Shuffle) -> Self {
     // _mm256_permute4x64_epi64 requires a compile-time immediate.
     // IMM8 = (d_src << 6) | (c_src << 4) | (b_src << 2) | a_src
     macro_rules! do_shuffle {
@@ -261,17 +281,21 @@ impl FieldElement51x4 {
     }
 
     match pattern {
-      Shuffle::ABCD => do_shuffle!(0b11_10_01_00),
-      Shuffle::BADC => do_shuffle!(0b10_11_00_01),
-      Shuffle::BACD => do_shuffle!(0b11_10_00_01),
-      Shuffle::ABDC => do_shuffle!(0b10_11_01_00),
-      Shuffle::AAAA => do_shuffle!(0b00_00_00_00),
-      Shuffle::BBBB => do_shuffle!(0b01_01_01_01),
-      Shuffle::CACA => do_shuffle!(0b00_10_00_10),
-      Shuffle::DBBD => do_shuffle!(0b11_01_01_11),
-      Shuffle::ADDA => do_shuffle!(0b00_11_11_00),
-      Shuffle::CBCB => do_shuffle!(0b01_10_01_10),
-      Shuffle::ABAB => do_shuffle!(0b01_00_01_00),
+      Shuffle::SwapPairs => do_shuffle!(0b10_11_00_01),
+      Shuffle::SwapAB => do_shuffle!(0b11_10_00_01),
+      Shuffle::SwapCD => do_shuffle!(0b10_11_01_00),
+      #[cfg(feature = "ed25519")]
+      Shuffle::BroadcastA => do_shuffle!(0b00_00_00_00),
+      #[cfg(feature = "ed25519")]
+      Shuffle::BroadcastB => do_shuffle!(0b01_01_01_01),
+      #[cfg(feature = "ed25519")]
+      Shuffle::AlternateCA => do_shuffle!(0b00_10_00_10),
+      #[cfg(feature = "ed25519")]
+      Shuffle::OuterDInnerB => do_shuffle!(0b11_01_01_11),
+      Shuffle::OuterAInnerD => do_shuffle!(0b00_11_11_00),
+      Shuffle::AlternateCB => do_shuffle!(0b01_10_01_10),
+      #[cfg(feature = "ed25519")]
+      Shuffle::RepeatAB => do_shuffle!(0b01_00_01_00),
     }
   }
 
@@ -285,8 +309,7 @@ impl FieldElement51x4 {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn blend(&self, other: &Self, lanes: Lanes) -> Self {
+  pub(crate) fn blend(&self, other: &Self, lanes: Lanes) -> Self {
     // u64 lane → u32 pair: A={0,1}, B={2,3}, C={4,5}, D={6,7}
     macro_rules! do_blend {
       ($imm:expr) => {
@@ -301,17 +324,17 @@ impl FieldElement51x4 {
     }
 
     match lanes {
-      Lanes::A => do_blend!(0b0000_0011),
-      Lanes::B => do_blend!(0b0000_1100),
+      #[cfg(feature = "ed25519")]
       Lanes::C => do_blend!(0b0011_0000),
       Lanes::D => do_blend!(0b1100_0000),
       Lanes::AB => do_blend!(0b0000_1111),
       Lanes::AC => do_blend!(0b0011_0011),
+      #[cfg(feature = "ed25519")]
       Lanes::AD => do_blend!(0b1100_0011),
+      #[cfg(feature = "ed25519")]
       Lanes::BC => do_blend!(0b0011_1100),
-      Lanes::BCD => do_blend!(0b1111_1100),
-      Lanes::CD => do_blend!(0b1111_0000),
-      Lanes::ABCD => do_blend!(0b1111_1111),
+      #[cfg(feature = "ed25519")]
+      Lanes::ExceptA => do_blend!(0b1111_1100),
     }
   }
 
@@ -322,9 +345,8 @@ impl FieldElement51x4 {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn select_mask(&self, other: &Self, mask: u64) -> Self {
-    let mask = _mm256_set1_epi64x(mask as i64);
+  pub(crate) fn select_mask(&self, other: &Self, mask: u64) -> Self {
+    let mask = _mm256_set1_epi64x(u64_as_i64_bits(mask));
     Self([
       _mm256_xor_si256(
         self.0[0],
@@ -356,9 +378,8 @@ impl FieldElement51x4 {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn diff_sum(&self) -> Self {
-    let swapped = self.shuffle(Shuffle::BADC); // (B, A, D, C)
+  pub(crate) fn diff_sum(&self) -> Self {
+    let swapped = self.shuffle(Shuffle::SwapPairs); // (B, A, D, C)
     let negated = self.negate_lazy(); // (-A, -B, -C, -D)
     let neg_ac = self.blend(&negated, Lanes::AC); // (-A, B, -C, D)
     swapped.add(&neg_ac) // (B-A, A+B, D-C, C+D)
@@ -371,8 +392,7 @@ impl FieldElement51x4 {
   /// Caller must ensure AVX-512 IFMA + VL are available.
   #[inline]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn reduce(mut self) -> Self {
+  pub(crate) fn reduce(mut self) -> Self {
     let mask = _mm256_set1_epi64x(MASK51);
     let r19 = _mm256_set1_epi64x(19);
 
@@ -423,8 +443,7 @@ impl FieldElement51x4 {
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn mul(&self, rhs: &Self) -> Self {
+  pub(crate) fn mul(&self, rhs: &Self) -> Self {
     let zero = _mm256_setzero_si256();
     let f = &self.0;
     let g = &rhs.0;
@@ -577,10 +596,9 @@ impl FieldElement51x4 {
   /// # Safety
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
-  #[cfg(test)]
+  #[cfg(all(test, feature = "ed25519"))]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn mul_unreduced(&self, rhs: &Self) -> Self {
+  pub(crate) fn mul_unreduced(&self, rhs: &Self) -> Self {
     let zero = _mm256_setzero_si256();
     let mask52 = _mm256_set1_epi64x(MASK52);
 
@@ -880,10 +898,9 @@ impl FieldElement51x4 {
   /// # Safety
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
-  #[cfg(test)]
+  #[cfg(all(test, feature = "ed25519"))]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn mul_small_unreduced(&self, small: &Self) -> Self {
+  pub(crate) fn mul_small_unreduced(&self, small: &Self) -> Self {
     let zero = _mm256_setzero_si256();
     let mask52 = _mm256_set1_epi64x(MASK52);
     let c = small.0[0]; // The only non-zero limb (≤18 bits, fits in 52 bits)
@@ -950,8 +967,8 @@ impl FieldElement51x4 {
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn square(&self) -> Self {
+  #[cfg(feature = "ed25519")]
+  pub(crate) fn square(&self) -> Self {
     let zero = _mm256_setzero_si256();
     let f = &self.0;
 
@@ -1054,10 +1071,9 @@ impl FieldElement51x4 {
   /// # Safety
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
-  #[cfg(test)]
+  #[cfg(all(test, feature = "ed25519"))]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  unsafe fn square_wide_fold(&self) -> [__m256i; 5] {
+  fn square_wide_fold(&self) -> [__m256i; 5] {
     let zero = _mm256_setzero_si256();
     let f = &self.0;
 
@@ -1176,11 +1192,10 @@ impl FieldElement51x4 {
   /// # Safety
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
-  #[cfg(test)]
+  #[cfg(all(test, feature = "ed25519"))]
   #[inline]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn square_and_negate_d_wide(&self) -> Self {
+  pub(crate) fn square_and_negate_d_wide(&self) -> Self {
     let mut folded = self.square_wide_fold();
 
     // Negate D lane in u64 domain using p × 2^10 bias.
@@ -1229,8 +1244,7 @@ impl FieldElement51x4 {
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn mul_small(&self, small: &Self) -> Self {
+  pub(crate) fn mul_small(&self, small: &Self) -> Self {
     let zero = _mm256_setzero_si256();
     let f = &self.0;
     let c = small.0[0]; // The only non-zero limb
@@ -1269,6 +1283,7 @@ impl FieldElement51x4 {
 
 #[cfg(test)]
 #[cfg(target_arch = "x86_64")]
+#[cfg(feature = "ed25519")]
 mod tests {
   use super::{FieldElement, *};
 
@@ -1468,7 +1483,7 @@ mod tests {
     // SAFETY: AVX2 checked above.
     unsafe {
       let packed = FieldElement51x4::new(&a, &b, &c, &d);
-      let shuffled = packed.shuffle(Shuffle::BADC);
+      let shuffled = packed.shuffle(Shuffle::SwapPairs);
       let [ra, rb, rc, rd] = shuffled.split();
 
       assert_eq!(ra.limbs(), b.limbs(), "BADC lane 0 = B");

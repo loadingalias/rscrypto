@@ -6,10 +6,6 @@
 //!
 //! Available on Apple Silicon (M1+), Graviton2+, Ampere Altra, Cortex-A76+.
 
-#![allow(unsafe_code)]
-#![allow(clippy::inline_always)]
-#![allow(clippy::indexing_slicing)]
-
 #[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
 
@@ -163,49 +159,49 @@ pub(crate) unsafe fn compress_blocks_aarch64_sha512(state: &mut [u64; 8], blocks
         cd = vaddq_u64(cd, intermed);
 
         s1 = vsha512su1q_u64(vsha512su0q_u64(s1, s2), s0, vextq_u64(s5, s6, 1));
-        initial_sum = vaddq_u64(s1, k(pair + 1));
+        initial_sum = vaddq_u64(s1, k(pair.strict_add(1)));
         sum = vaddq_u64(vextq_u64(initial_sum, initial_sum, 1), ef);
         intermed = vsha512hq_u64(sum, vextq_u64(cd, ef, 1), vextq_u64(ab, cd, 1));
         ef = vsha512h2q_u64(intermed, ab, gh);
         ab = vaddq_u64(ab, intermed);
 
         s2 = vsha512su1q_u64(vsha512su0q_u64(s2, s3), s1, vextq_u64(s6, s7, 1));
-        initial_sum = vaddq_u64(s2, k(pair + 2));
+        initial_sum = vaddq_u64(s2, k(pair.strict_add(2)));
         sum = vaddq_u64(vextq_u64(initial_sum, initial_sum, 1), cd);
         intermed = vsha512hq_u64(sum, vextq_u64(ab, cd, 1), vextq_u64(gh, ab, 1));
         cd = vsha512h2q_u64(intermed, gh, ef);
         gh = vaddq_u64(gh, intermed);
 
         s3 = vsha512su1q_u64(vsha512su0q_u64(s3, s4), s2, vextq_u64(s7, s0, 1));
-        initial_sum = vaddq_u64(s3, k(pair + 3));
+        initial_sum = vaddq_u64(s3, k(pair.strict_add(3)));
         sum = vaddq_u64(vextq_u64(initial_sum, initial_sum, 1), ab);
         intermed = vsha512hq_u64(sum, vextq_u64(gh, ab, 1), vextq_u64(ef, gh, 1));
         ab = vsha512h2q_u64(intermed, ef, cd);
         ef = vaddq_u64(ef, intermed);
 
         s4 = vsha512su1q_u64(vsha512su0q_u64(s4, s5), s3, vextq_u64(s0, s1, 1));
-        initial_sum = vaddq_u64(s4, k(pair + 4));
+        initial_sum = vaddq_u64(s4, k(pair.strict_add(4)));
         sum = vaddq_u64(vextq_u64(initial_sum, initial_sum, 1), gh);
         intermed = vsha512hq_u64(sum, vextq_u64(ef, gh, 1), vextq_u64(cd, ef, 1));
         gh = vsha512h2q_u64(intermed, cd, ab);
         cd = vaddq_u64(cd, intermed);
 
         s5 = vsha512su1q_u64(vsha512su0q_u64(s5, s6), s4, vextq_u64(s1, s2, 1));
-        initial_sum = vaddq_u64(s5, k(pair + 5));
+        initial_sum = vaddq_u64(s5, k(pair.strict_add(5)));
         sum = vaddq_u64(vextq_u64(initial_sum, initial_sum, 1), ef);
         intermed = vsha512hq_u64(sum, vextq_u64(cd, ef, 1), vextq_u64(ab, cd, 1));
         ef = vsha512h2q_u64(intermed, ab, gh);
         ab = vaddq_u64(ab, intermed);
 
         s6 = vsha512su1q_u64(vsha512su0q_u64(s6, s7), s5, vextq_u64(s2, s3, 1));
-        initial_sum = vaddq_u64(s6, k(pair + 6));
+        initial_sum = vaddq_u64(s6, k(pair.strict_add(6)));
         sum = vaddq_u64(vextq_u64(initial_sum, initial_sum, 1), cd);
         intermed = vsha512hq_u64(sum, vextq_u64(ab, cd, 1), vextq_u64(gh, ab, 1));
         cd = vsha512h2q_u64(intermed, gh, ef);
         gh = vaddq_u64(gh, intermed);
 
         s7 = vsha512su1q_u64(vsha512su0q_u64(s7, s0), s6, vextq_u64(s3, s4, 1));
-        initial_sum = vaddq_u64(s7, k(pair + 7));
+        initial_sum = vaddq_u64(s7, k(pair.strict_add(7)));
         sum = vaddq_u64(vextq_u64(initial_sum, initial_sum, 1), ab);
         intermed = vsha512hq_u64(sum, vextq_u64(gh, ab, 1), vextq_u64(ef, gh, 1));
         ab = vsha512h2q_u64(intermed, ef, cd);

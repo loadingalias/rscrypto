@@ -2,25 +2,35 @@
 
 Sources:
 
-- Linux benchmark CI run [#28710784737](https://github.com/loadingalias/rscrypto/actions/runs/28710784737), created 2026-07-04 15:26:12 UTC.
-- Linux commit: `596498f0e07e869eac71fd31c157aa1b22186239`.
-- Linux artifacts: nine successful `benchmark-*` artifacts extracted into `benchmark_results/2026-07-04/linux/*/results.txt`.
-- Local macOS run: `benchmark_results/2026-07-04/macos/aarch64/results.txt` at commit `596498f0e07e869eac71fd31c157aa1b22186239`.
+- Linux benchmark CI run [#32185659553](https://github.com/loadingalias/rscrypto/actions/runs/32185659553), created 2026-08-18 21:03:07 UTC.
+- Linux commit: `7eb44e9a38ef7a031d9181dc8c4c0fad38f46504`.
+- Linux artifacts: eight successful `benchmark-*` artifacts extracted into `benchmark_results/2026-08-18/linux/*/results.txt`.
+- Local macOS run: `benchmark_results/2026-07-04/macos/aarch64/results.txt` at commit `596498f0e07e869eac71fd31c157aa1b22186239`, carried forward unchanged.
 - Local Ed25519 direct-secret before/after diagnostic, recorded below.
 
-Scope: the 2026-07-04 nine-runner Linux CI benchmark matrix for commit `596498f`. Ratios are `external_crate_time / rscrypto_time`; higher is better. Wins are `>1.05x`, ties are `0.95x..1.05x`, and losses are `<0.95x`. Fastest-external comparisons keep only the fastest external implementation for each platform, primitive, operation, and input shape. Internal kernel, scratch-buffer, padding-only, cold-path, PHC roundtrip, parallel-scaling, threshold-selection, public-overhead, and phase-attribution microbenches are parsed as raw rows but excluded from external win/loss claims. The macOS local run is listed separately and is not mixed into Linux CI claims.
+Scope: the 2026-08-18 eight-runner Linux CI benchmark matrix for commit `7eb44e9`. Ratios are `external_crate_time / rscrypto_time`; higher is better. Wins are `>1.05x`, ties are `0.95x..1.05x`, and losses are `<0.95x`. Fastest-external comparisons keep only the fastest external implementation for each platform, primitive, operation, and input shape. Internal kernel, scratch-buffer, padding-only, cold-path, PHC roundtrip, parallel-scaling, threshold-selection, public-overhead, and phase-attribution microbenches are parsed as raw rows but excluded from external win/loss claims. The macOS local run is listed separately and is not mixed into Linux CI claims.
 
-This is a historical snapshot of commit `596498f`, not an inventory of the
+This is a historical snapshot of commit `7eb44e9`, not an inventory of the
 current public API. Primitive rows remain as measured even when a later commit
 changes or removes that surface.
 
-Equivalence correction: the historical RustCrypto HMAC-SHA-256 rows include
-key setup inside the timed loop, while rscrypto, ring, and AWS-LC use reusable
-keyed state. Consequently, the HMAC-SHA-256 row and aggregate statistics that
-include it are archival measurements, not equivalent-work performance claims.
-The current benchmark source precomputes the RustCrypto state; publish new
-HMAC-SHA-256 and aggregate ratios only after a complete benchmark artifact is
-regenerated.
+Runner coverage change: this run has eight Linux runners. The RISE RISC-V
+runner did not execute in run #32185659553, so every aggregate below is over
+eight platforms rather than the nine in the 2026-07-04 snapshot. Row counts are
+therefore not directly comparable to that snapshot; ratios and geomeans are.
+
+Equivalence correction resolved: the historical RustCrypto HMAC-SHA-256 rows
+included key setup inside the timed loop. The current benchmark source hoists
+`RustCryptoHmacSha256::new_from_slice` out of the timed loop and clones the
+keyed state per iteration, matching the reusable-keyed-state treatment given to
+rscrypto, ring, and AWS-LC. This artifact is a complete regenerated benchmark
+pass, so the HMAC-SHA-256 rows and the aggregates that include them are
+equivalent-work performance claims.
+
+Surface change since 2026-07-04: the rapidhash benchmark surface was collapsed.
+The former `rapidhash-64`, `rapidhash-128`, and `rapidhash-v3-128` primitives no
+longer exist; `rapidhash-v3-64`, `rapidhash-stream`, `rapidhash-buildhasher`,
+`rapidhash-hash-one`, and `rapidhash-hashmap` are the current rows.
 
 Coverage note: this is a full Linux CI public benchmark pass. It includes checksum, hash, XOF, MAC, KDF, password-hashing, BLAKE2/BLAKE3, RSA import/verification, ECDSA P-256/P-384 signing and verification, Ed25519, X25519, AEAD, and ML-KEM-512/768/1024 keygen, encapsulation, and decapsulation rows. ML-KEM phase/arithmetic microbenches are present in the raw artifacts and intentionally excluded from release-level competitor claims.
 
@@ -60,117 +70,121 @@ curation:
 
 | Scope | Pairs | W/T/L | Win % | Geomean | Median |
 | --- | --- | --- | --- | --- | --- |
-| Linux CI: all matched performance pairs | 10,781 | 7,542/2,470/769 | 70% | 1.76x | 1.22x |
-| Linux CI: fastest external per case | 6,750 | 4,052/2,049/649 | 60% | 1.59x | 1.11x |
+| Linux CI: all matched performance pairs | 9,674 | 6,831/2,085/758 | 71% | 1.78x | 1.24x |
+| Linux CI: fastest external per case | 6,144 | 3,780/1,695/669 | 62% | 1.62x | 1.12x |
 
 Snapshot summary:
 
-- **Headline:** 4,052 of 6,750 matched Linux CI fastest-external comparisons are wins; 6,101 are wins or ties. Linux CI fastest-external geomean is 1.59x.
-- **Checksums:** 5.18x geomean across 693 fastest-external rows; W/T/L is 517/115/61.
-- **Hashes/MACs/XOFs:** 1.35x geomean across 3,726 fastest-external rows; W/T/L is 2,028/1,457/241.
-- **Auth/KDF:** 1.25x geomean across 180 fastest-external rows; W/T/L is 159/20/1.
-- **Password hashing:** 1.07x geomean across 135 fastest-external rows; W/T/L is 69/28/38.
-- **Public-key:** 1.33x geomean across 333 fastest-external rows; W/T/L is 217/73/43.
-- **RSA:** 1.55x geomean across 99 fastest-external rows; W/T/L is 89/2/8.
-- **AEAD:** 1.56x geomean across 1,584 fastest-external rows; W/T/L is 973/354/257.
-- **ML-KEM:** 1.49x geomean across 81 fastest-external rows; W/T/L is 68/4/9.
-- **ECDSA P-256/P-384:** Linux CI 1.45x geomean across 144 fastest-external rows; W/T/L is 116/7/21.
-- **Top current loss areas:** `argon2id-owasp` / `hash`: 0.97x geomean across 9 rows; W/T/L 4/1/4; pressure `rustcrypto` 4; `ed25519` / `verify`: 1.00x geomean across 36 rows; W/T/L 7/20/9; pressure `ring` 6, `dalek` 3; `mlkem1024` / `keygen`: 1.00x geomean across 9 rows; W/T/L 6/0/3; pressure `aws-lc-rs` 3; `blake2b256` / `streaming`: 1.02x geomean across 27 rows; W/T/L 10/16/1; pressure `rustcrypto` 1; `argon2id-small` / `hash`: 1.02x geomean across 27 rows; W/T/L 12/4/11; pressure `rustcrypto` 11.
+- **Headline:** 3,780 of 6,144 matched Linux CI fastest-external comparisons are wins; 5,475 are wins or ties. Linux CI fastest-external geomean is 1.62x.
+- **Checksums:** 6.18x geomean across 616 fastest-external rows; W/T/L is 476/118/22.
+- **Hashes/MACs/XOFs:** 1.35x geomean across 3,456 fastest-external rows; W/T/L is 1,926/1,181/349.
+- **Auth/KDF:** 1.28x geomean across 160 fastest-external rows; W/T/L is 140/20/0.
+- **Password hashing:** 1.07x geomean across 120 fastest-external rows; W/T/L is 55/27/38.
+- **Public-key:** 1.09x geomean across 296 fastest-external rows; W/T/L is 187/59/50.
+- **RSA:** 1.65x geomean across 88 fastest-external rows; W/T/L is 86/2/0.
+- **AEAD:** 1.61x geomean across 1,408 fastest-external rows; W/T/L is 910/288/210.
+- **ML-KEM:** 1.55x geomean across 72 fastest-external rows; W/T/L is 64/0/8.
+- **ECDSA P-256/P-384:** Linux CI 0.87x geomean across 128 fastest-external rows; W/T/L is 88/7/33.
+- **Top current loss areas:** `ecdsa-p384` / `sign`: 0.70x geomean across 32 rows; W/T/L is 12/0/20; pressure `aws-lc-rs` 16, `rustcrypto-p384` 4; `ecdsa-p256` / `verify`: 0.84x geomean across 32 rows; W/T/L is 20/7/5; pressure `rustcrypto-p256` 4, `aws-lc-rs` 1; `rapidhash-stream` / `one-write`: 0.87x geomean across 88 rows; W/T/L is 27/25/36; pressure `rapidhash` 36; `ecdsa-p256` / `sign`: 0.91x geomean across 32 rows; W/T/L is 28/0/4; pressure `ring` 4; `argon2id-owasp` / `hash`: 0.98x geomean across 8 rows; W/T/L is 3/1/4; pressure `rustcrypto` 3, `dryoc` 1.
 
 ## Coverage Matrix
 
 | Platform | Raw Criterion rows | All pairs | Fastest rows | W/T/L | Win % | Geomean | Median |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| AMD Zen4 | 2,356 | 1,251 | 750 | 513/189/48 | 68% | 1.50x | 1.15x |
-| AMD Zen5 | 2,356 | 1,251 | 750 | 434/249/67 | 58% | 1.49x | 1.09x |
-| AWS Graviton3 | 2,367 | 1,251 | 750 | 360/298/92 | 48% | 1.37x | 1.04x |
-| AWS Graviton4 | 2,367 | 1,251 | 750 | 362/332/56 | 48% | 1.37x | 1.05x |
-| IBM Power10 | 2,107 | 1,012 | 750 | 389/324/37 | 52% | 1.89x | 1.06x |
-| IBM z16/s390x | 2,107 | 1,012 | 750 | 603/87/60 | 80% | 3.15x | 2.34x |
-| Intel Ice Lake | 2,356 | 1,251 | 750 | 523/154/73 | 70% | 1.49x | 1.19x |
-| Intel Sapphire Rapids | 2,356 | 1,251 | 750 | 533/149/68 | 71% | 1.63x | 1.20x |
-| RISE RISC-V | 2,356 | 1,251 | 750 | 335/267/148 | 45% | 1.09x | 1.03x |
+| AMD Zen4 | 2,304 | 1,269 | 768 | 525/171/72 | 68% | 1.47x | 1.14x |
+| AMD Zen5 | 2,304 | 1,269 | 768 | 447/245/76 | 58% | 1.47x | 1.10x |
+| AWS Graviton3 | 2,308 | 1,269 | 768 | 367/287/114 | 48% | 1.36x | 1.04x |
+| AWS Graviton4 | 2,308 | 1,269 | 768 | 366/337/65 | 48% | 1.37x | 1.04x |
+| IBM Power10 | 2,055 | 1,030 | 768 | 400/302/66 | 52% | 1.83x | 1.06x |
+| IBM z16/s390x | 2,055 | 1,030 | 768 | 620/67/81 | 81% | 2.77x | 2.19x |
+| Intel Ice Lake | 2,304 | 1,269 | 768 | 517/137/114 | 67% | 1.45x | 1.17x |
+| Intel Sapphire Rapids | 2,304 | 1,269 | 768 | 538/149/81 | 70% | 1.60x | 1.18x |
 
 ## Category Summary
 
 | Category | Rows | W/T/L | Win % | Geomean | Median |
 | --- | --- | --- | --- | --- | --- |
-| Checksums | 693 | 517/115/61 | 75% | 5.18x | 2.44x |
-| Hashes/MACs/XOFs | 3,726 | 2,028/1,457/241 | 54% | 1.35x | 1.07x |
-| Auth/KDF | 180 | 159/20/1 | 88% | 1.25x | 1.13x |
-| Password hashing | 135 | 69/28/38 | 51% | 1.07x | 1.05x |
-| Public-key | 333 | 217/73/43 | 65% | 1.33x | 1.17x |
-| RSA | 99 | 89/2/8 | 90% | 1.55x | 1.18x |
-| AEAD | 1,584 | 973/354/257 | 61% | 1.56x | 1.15x |
+| Checksums | 616 | 476/118/22 | 77% | 6.18x | 3.17x |
+| Hashes/MACs/XOFs | 3,456 | 1,926/1,181/349 | 56% | 1.35x | 1.08x |
+| Auth/KDF | 160 | 140/20/0 | 88% | 1.28x | 1.13x |
+| Password hashing | 120 | 55/27/38 | 46% | 1.07x | 1.02x |
+| Public-key | 296 | 187/59/50 | 63% | 1.09x | 1.14x |
+| RSA | 88 | 86/2/0 | 98% | 1.65x | 1.20x |
+| AEAD | 1,408 | 910/288/210 | 65% | 1.61x | 1.21x |
 
 ## BLAKE3 Summary
 
-BLAKE3 rows come from Linux CI run [#28710784737](https://github.com/loadingalias/rscrypto/actions/runs/28710784737). All-pair and fastest-external BLAKE3 metrics are identical because official `blake3` is the only external implementation in this bench.
+BLAKE3 rows come from Linux CI run [#32185659553](https://github.com/loadingalias/rscrypto/actions/runs/32185659553). All-pair and fastest-external BLAKE3 metrics are identical because official `blake3` is the only external implementation in this bench.
 
 | Scope | Rows | W/T/L | Geomean | Median |
 | --- | --- | --- | --- | --- |
-| All Linux BLAKE3 rows | 432 | 234/168/30 | 1.41x | 1.08x |
-| x86_64 | 192 | 92/90/10 | 1.26x | 1.05x |
-| AArch64 | 96 | 44/46/6 | 1.44x | 1.05x |
+| All Linux BLAKE3 rows | 384 | 187/134/63 | 1.35x | 1.04x |
+| x86_64 | 192 | 79/89/24 | 1.18x | 1.02x |
+| AArch64 | 96 | 44/36/16 | 1.40x | 1.04x |
 
 | Platform | Rows | W/T/L | Geomean | Median |
 | --- | --- | --- | --- | --- |
-| AMD Zen4 | 48 | 23/23/2 | 1.34x | 1.05x |
-| AMD Zen5 | 48 | 21/25/2 | 1.32x | 1.03x |
-| AWS Graviton3 | 48 | 22/21/5 | 1.40x | 0.99x |
-| AWS Graviton4 | 48 | 22/25/1 | 1.47x | 1.05x |
-| IBM Power10 | 48 | 39/9/0 | 1.98x | 1.85x |
-| IBM z16/s390x | 48 | 36/5/7 | 1.81x | 2.10x |
-| Intel Ice Lake | 48 | 19/26/3 | 1.17x | 1.02x |
-| Intel Sapphire Rapids | 48 | 29/16/3 | 1.24x | 1.08x |
-| RISE RISC-V | 48 | 23/18/7 | 1.15x | 1.02x |
+| AMD Zen4 | 48 | 20/22/6 | 1.24x | 1.01x |
+| AMD Zen5 | 48 | 18/27/3 | 1.27x | 1.02x |
+| AWS Graviton3 | 48 | 22/15/11 | 1.36x | 0.98x |
+| AWS Graviton4 | 48 | 22/21/5 | 1.44x | 1.04x |
+| IBM Power10 | 48 | 32/6/10 | 1.76x | 1.12x |
+| IBM z16/s390x | 48 | 32/3/13 | 1.69x | 1.69x |
+| Intel Ice Lake | 48 | 19/21/8 | 1.09x | 1.00x |
+| Intel Sapphire Rapids | 48 | 22/19/7 | 1.13x | 1.03x |
 
 | Operation | Rows | W/T/L | Geomean | Median |
 | --- | --- | --- | --- | --- |
-| `oneshot` | 99 | 45/47/7 | 1.32x | 1.02x |
-| `keyed` | 99 | 46/45/8 | 1.34x | 1.03x |
-| `derive-key` | 99 | 77/20/2 | 1.76x | 1.86x |
-| `streaming` | 36 | 11/21/4 | 1.16x | 1.01x |
-| `xof` | 99 | 55/35/9 | 1.35x | 1.07x |
+| `oneshot` | 88 | 35/35/18 | 1.33x | 1.00x |
+| `keyed` | 88 | 27/21/40 | 1.20x | 0.95x |
+| `derive-key` | 88 | 65/21/2 | 1.59x | 1.53x |
+| `streaming` | 32 | 10/21/1 | 1.21x | 1.02x |
+| `xof` | 88 | 50/36/2 | 1.37x | 1.07x |
 
 ## ML-KEM Summary
 
-ML-KEM public coverage is complete for the CI-selected primitive set: ML-KEM-512, ML-KEM-768, and ML-KEM-1024 each include keygen, encapsulate, and decapsulate on all nine Linux platforms. POWER10 and s390x do not have `aws-lc-rs` ML-KEM rows in this artifact set, but still have rscrypto plus `libcrux`, `fips203`, and RustCrypto comparison rows for every public operation.
+ML-KEM public coverage is complete for the CI-selected primitive set: ML-KEM-512, ML-KEM-768, and ML-KEM-1024 each include keygen, encapsulate, and decapsulate on all eight Linux platforms. POWER10 and s390x do not have `aws-lc-rs` ML-KEM rows in this artifact set, but still have rscrypto plus `libcrux`, `fips203`, and RustCrypto comparison rows for every public operation.
 
 | Platform | Raw ML-KEM rows | Fastest rows | W/T/L | Geomean | Median | Fastest external split |
 | --- | --- | --- | --- | --- | --- | --- |
-| AMD Zen4 | 45 | 9 | 9/0/0 | 1.81x | 1.70x | `libcrux` 7, `aws-lc-rs` 2 |
-| AMD Zen5 | 45 | 9 | 9/0/0 | 1.93x | 1.75x | `libcrux` 9 |
-| AWS Graviton3 | 45 | 9 | 5/0/4 | 1.08x | 1.13x | `aws-lc-rs` 9 |
-| AWS Graviton4 | 45 | 9 | 5/0/4 | 1.08x | 1.14x | `aws-lc-rs` 9 |
-| IBM Power10 | 36 | 9 | 9/0/0 | 1.47x | 1.58x | `libcrux` 9 |
-| IBM z16/s390x | 36 | 9 | 9/0/0 | 1.58x | 1.64x | `libcrux` 9 |
-| Intel Ice Lake | 45 | 9 | 9/0/0 | 1.79x | 1.74x | `libcrux` 7, `aws-lc-rs` 2 |
-| Intel Sapphire Rapids | 45 | 9 | 9/0/0 | 1.85x | 1.82x | `aws-lc-rs` 5, `libcrux` 4 |
-| RISE RISC-V | 45 | 9 | 4/4/1 | 1.13x | 1.03x | `aws-lc-rs` 9 |
+| AMD Zen4 | 45 | 9 | 9/0/0 | 1.83x | 1.82x | `libcrux` 7, `aws-lc-rs` 2 |
+| AMD Zen5 | 45 | 9 | 9/0/0 | 1.95x | 1.91x | `libcrux` 9 |
+| AWS Graviton3 | 45 | 9 | 5/0/4 | 1.09x | 1.12x | `aws-lc-rs` 9 |
+| AWS Graviton4 | 45 | 9 | 5/0/4 | 1.08x | 1.18x | `aws-lc-rs` 9 |
+| IBM Power10 | 36 | 9 | 9/0/0 | 1.41x | 1.53x | `libcrux` 9 |
+| IBM z16/s390x | 36 | 9 | 9/0/0 | 1.68x | 1.74x | `libcrux` 9 |
+| Intel Ice Lake | 45 | 9 | 9/0/0 | 1.80x | 1.75x | `libcrux` 7, `aws-lc-rs` 2 |
+| Intel Sapphire Rapids | 45 | 9 | 9/0/0 | 1.84x | 1.80x | `aws-lc-rs` 7, `libcrux` 2 |
 
 | Primitive/op | Rows | W/T/L | Win % | Geomean | Median | Pressure |
 | --- | --- | --- | --- | --- | --- | --- |
-| `mlkem1024` / `decapsulate` | 9 | 9/0/0 | 100% | 1.59x | 1.67x | none |
-| `mlkem1024` / `encapsulate` | 9 | 9/0/0 | 100% | 2.39x | 1.98x | none |
-| `mlkem1024` / `keygen` | 9 | 6/0/3 | 67% | 1.00x | 1.09x | `aws-lc-rs` 3 |
-| `mlkem512` / `decapsulate` | 9 | 6/1/2 | 67% | 1.33x | 1.51x | `aws-lc-rs` 2 |
-| `mlkem512` / `encapsulate` | 9 | 9/0/0 | 100% | 1.86x | 1.70x | none |
-| `mlkem512` / `keygen` | 9 | 6/1/2 | 67% | 1.08x | 1.18x | `aws-lc-rs` 2 |
-| `mlkem768` / `decapsulate` | 9 | 8/1/0 | 89% | 1.49x | 1.70x | none |
-| `mlkem768` / `encapsulate` | 9 | 9/0/0 | 100% | 2.27x | 2.02x | none |
-| `mlkem768` / `keygen` | 9 | 6/1/2 | 67% | 1.04x | 1.12x | `aws-lc-rs` 2 |
+| `mlkem1024` / `decapsulate` | 8 | 8/0/0 | 100% | 1.70x | 1.86x | none |
+| `mlkem1024` / `encapsulate` | 8 | 8/0/0 | 100% | 2.51x | 2.63x | none |
+| `mlkem1024` / `keygen` | 8 | 6/0/2 | 75% | 1.02x | 1.13x | `aws-lc-rs` 2 |
+| `mlkem512` / `decapsulate` | 8 | 6/0/2 | 75% | 1.41x | 1.59x | `aws-lc-rs` 2 |
+| `mlkem512` / `encapsulate` | 8 | 8/0/0 | 100% | 1.94x | 2.17x | none |
+| `mlkem512` / `keygen` | 8 | 6/0/2 | 75% | 1.09x | 1.22x | `aws-lc-rs` 2 |
+| `mlkem768` / `decapsulate` | 8 | 8/0/0 | 100% | 1.58x | 1.75x | none |
+| `mlkem768` / `encapsulate` | 8 | 8/0/0 | 100% | 2.33x | 2.54x | none |
+| `mlkem768` / `keygen` | 8 | 6/0/2 | 75% | 1.06x | 1.13x | `aws-lc-rs` 2 |
 
 ## ECDSA Summary
 
 ECDSA signing includes both deterministic and blinded rscrypto rows in raw results; aggregate fastest-external comparisons use the fastest rscrypto row for the exact case. Constant-time release evidence is tracked separately by `ct.toml` and CT workflow artifacts.
 
+Regression: every ECDSA aggregate in this snapshot is dominated by a single
+platform. On IBM z16/s390x, P-256 signing went from 137.10 µs (2026-07-04) to
+8,889.30 µs, and P-384 signing from 562.91 µs to 34,557.00 µs, while the
+external crates on the same runner moved by less than 1.4x. Excluding s390x, the
+seven-runner geomeans are `ecdsa-p256` / `sign` 1.33x, `ecdsa-p256` / `verify`
+1.19x, `ecdsa-p384` / `sign` 1.01x, and `ecdsa-p384` / `verify` 1.53x.
+
 | Operation | Rows | W/T/L | Geomean | Median |
 | --- | --- | --- | --- | --- |
-| `ecdsa-p256` / `sign` | 36 | 36/0/0 | 1.45x | 1.35x |
-| `ecdsa-p256` / `verify` | 36 | 28/7/1 | 1.59x | 1.15x |
-| `ecdsa-p384` / `sign` | 36 | 16/0/20 | 1.07x | 0.90x |
-| `ecdsa-p384` / `verify` | 36 | 36/0/0 | 1.81x | 1.39x |
+| `ecdsa-p256` / `sign` | 32 | 28/0/4 | 0.91x | 1.30x |
+| `ecdsa-p256` / `verify` | 32 | 20/7/5 | 0.84x | 1.08x |
+| `ecdsa-p384` / `sign` | 32 | 12/0/20 | 0.70x | 0.83x |
+| `ecdsa-p384` / `verify` | 32 | 28/0/4 | 1.08x | 1.36x |
 
 ## Primitive Summary
 
@@ -178,146 +192,149 @@ Linux CI primitives with matched exact `rscrypto` comparisons. Fastest columns a
 
 | Primitive | Fastest rows | Fastest W/T/L | Fastest geomean | All pairs | All W/T/L | All geomean |
 | --- | --- | --- | --- | --- | --- | --- |
-| `argon2id-owasp` | 9 | 4/1/4 | 0.97x | 18 | 11/2/5 | 1.27x |
-| `argon2id-small` | 27 | 12/4/11 | 1.02x | 45 | 29/5/11 | 1.35x |
-| `argon2d-small` | 27 | 13/6/8 | 1.03x | 27 | 13/6/8 | 1.03x |
-| `x25519` | 18 | 2/16/0 | 1.03x | 50 | 33/17/0 | 1.54x |
-| `argon2i-small` | 27 | 13/2/12 | 1.03x | 45 | 30/2/13 | 1.35x |
-| `rapidhash-v3-64` | 99 | 27/53/19 | 1.05x | 99 | 27/53/19 | 1.05x |
-| `blake2b256` | 225 | 120/100/5 | 1.07x | 351 | 238/108/5 | 1.31x |
-| `rapidhash-v3-128` | 99 | 34/44/21 | 1.07x | 99 | 34/44/21 | 1.07x |
-| `blake2b512` | 198 | 109/82/7 | 1.07x | 297 | 207/83/7 | 1.31x |
-| `xxh3-128` | 99 | 29/51/19 | 1.08x | 99 | 29/51/19 | 1.08x |
-| `scrypt-owasp` | 9 | 5/2/2 | 1.09x | 9 | 5/2/2 | 1.09x |
-| `xxh3-64` | 99 | 33/47/19 | 1.10x | 99 | 33/47/19 | 1.10x |
-| `rapidhash-64` | 99 | 32/51/16 | 1.10x | 99 | 32/51/16 | 1.10x |
-| `chacha20-poly1305` | 198 | 83/108/7 | 1.10x | 550 | 344/198/8 | 1.29x |
-| `blake2s256` | 225 | 117/107/1 | 1.10x | 225 | 117/107/1 | 1.10x |
-| `ed25519` | 90 | 31/46/13 | 1.11x | 290 | 204/69/17 | 1.36x |
-| `blake2s128` | 198 | 118/79/1 | 1.11x | 198 | 118/79/1 | 1.11x |
-| `rapidhash-128` | 99 | 38/56/5 | 1.14x | 99 | 38/56/5 | 1.14x |
-| `rsa-8192` | 18 | 14/2/2 | 1.19x | 32 | 28/2/2 | 1.25x |
-| `scrypt-small` | 36 | 22/13/1 | 1.21x | 36 | 22/13/1 | 1.21x |
-| `hmac-sha512` | 99 | 37/54/8 | 1.23x | 275 | 165/97/13 | 1.29x |
-| `hmac-sha384` | 99 | 38/52/9 | 1.24x | 275 | 167/94/14 | 1.29x |
-| `hkdf-sha384` | 36 | 33/2/1 | 1.24x | 100 | 96/3/1 | 1.53x |
-| `sha256` | 117 | 41/59/17 | 1.24x | 293 | 164/99/30 | 1.54x |
-| `sha512` | 117 | 45/61/11 | 1.25x | 293 | 172/104/17 | 1.27x |
-| `pbkdf2-sha512` | 54 | 47/7/0 | 1.25x | 150 | 143/7/0 | 1.33x |
-| `sha384` | 99 | 43/45/11 | 1.25x | 275 | 169/89/17 | 1.28x |
-| `pbkdf2-sha256` | 54 | 50/4/0 | 1.25x | 150 | 146/4/0 | 1.65x |
-| `hkdf-sha256` | 36 | 29/7/0 | 1.26x | 100 | 93/7/0 | 1.87x |
-| `ascon-hash256` | 99 | 54/43/2 | 1.27x | 99 | 54/43/2 | 1.27x |
-| `sha512-256` | 99 | 53/46/0 | 1.29x | 99 | 53/46/0 | 1.29x |
-| `ascon-aead128` | 198 | 148/50/0 | 1.33x | 198 | 148/50/0 | 1.33x |
-| `hmac-sha256` | 117 | 64/39/14 | 1.34x | 293 | 193/76/24 | 1.68x |
-| `aegis-256` | 198 | 89/88/21 | 1.37x | 198 | 89/88/21 | 1.37x |
-| `ascon-xof128` | 99 | 75/24/0 | 1.37x | 99 | 75/24/0 | 1.37x |
-| `mlkem512` | 27 | 21/2/4 | 1.39x | 102 | 96/2/4 | 2.67x |
-| `xchacha20-poly1305` | 198 | 182/16/0 | 1.39x | 198 | 182/16/0 | 1.39x |
-| `ecdsa-p384` | 72 | 52/0/20 | 1.39x | 200 | 180/0/20 | 3.17x |
-| `blake3` | 432 | 234/168/30 | 1.41x | 432 | 234/168/30 | 1.41x |
-| `ecdsa-p256` | 72 | 64/7/1 | 1.52x | 200 | 188/11/1 | 2.40x |
-| `mlkem768` | 27 | 23/2/2 | 1.52x | 102 | 98/2/2 | 3.11x |
-| `mlkem1024` | 27 | 24/0/3 | 1.56x | 102 | 99/0/3 | 3.27x |
-| `rsa-4096` | 27 | 25/0/2 | 1.56x | 59 | 57/0/2 | 2.52x |
-| `crc32c` | 99 | 45/37/17 | 1.61x | 198 | 140/40/18 | 2.19x |
-| `crc32` | 99 | 49/31/19 | 1.66x | 198 | 144/35/19 | 2.26x |
-| `rsa-3072` | 27 | 25/0/2 | 1.66x | 59 | 57/0/2 | 2.59x |
-| `aes-128-gcm` | 198 | 97/45/56 | 1.68x | 550 | 413/54/83 | 1.89x |
-| `rsa-2048` | 27 | 25/0/2 | 1.71x | 59 | 57/0/2 | 2.63x |
-| `aes-256-gcm` | 198 | 97/40/61 | 1.71x | 550 | 405/52/93 | 1.92x |
-| `kmac256` | 99 | 65/18/16 | 1.75x | 99 | 65/18/16 | 1.75x |
-| `cshake256` | 99 | 63/28/8 | 1.78x | 99 | 63/28/8 | 1.78x |
-| `shake128` | 99 | 69/29/1 | 1.85x | 99 | 69/29/1 | 1.85x |
-| `shake256` | 99 | 70/29/0 | 1.87x | 99 | 70/29/0 | 1.87x |
-| `sha224` | 99 | 52/46/1 | 1.87x | 99 | 52/46/1 | 1.87x |
-| `aes-128-gcm-siv` | 198 | 138/3/57 | 2.02x | 352 | 271/16/65 | 2.79x |
-| `sha3-256` | 117 | 104/13/0 | 2.11x | 117 | 104/13/0 | 2.11x |
-| `sha3-224` | 99 | 87/12/0 | 2.13x | 99 | 87/12/0 | 2.13x |
-| `crc64-nvme` | 99 | 56/33/10 | 2.14x | 99 | 56/33/10 | 2.14x |
-| `aes-256-gcm-siv` | 198 | 139/4/55 | 2.15x | 352 | 292/5/55 | 3.04x |
-| `sha3-384` | 99 | 89/10/0 | 2.16x | 99 | 89/10/0 | 2.16x |
-| `sha3-512` | 99 | 88/11/0 | 2.20x | 99 | 88/11/0 | 2.20x |
-| `crc64-xz` | 99 | 76/12/11 | 2.39x | 99 | 76/12/11 | 2.39x |
-| `crc24-openpgp` | 99 | 95/2/2 | 13.25x | 99 | 95/2/2 | 13.25x |
-| `crc16-ccitt` | 99 | 98/0/1 | 23.12x | 99 | 98/0/1 | 23.12x |
-| `crc16-ibm` | 99 | 98/0/1 | 24.01x | 99 | 98/0/1 | 24.01x |
+| `ecdsa-p384` | 64 | 40/0/24 | 0.87x | 176 | 144/0/32 | 2.27x |
+| `ecdsa-p256` | 64 | 48/7/9 | 0.87x | 176 | 148/11/17 | 1.57x |
+| `rapidhash-stream` | 176 | 61/33/82 | 0.92x | 176 | 61/33/82 | 0.92x |
+| `argon2id-owasp` | 8 | 3/1/4 | 0.98x | 16 | 7/4/5 | 1.25x |
+| `xxh3-buildhasher` | 88 | 41/12/35 | 0.99x | 88 | 41/12/35 | 0.99x |
+| `x25519` | 16 | 3/13/0 | 1.02x | 44 | 31/13/0 | 1.58x |
+| `argon2i-small` | 24 | 10/3/11 | 1.03x | 40 | 26/3/11 | 1.34x |
+| `argon2id-small` | 24 | 10/3/11 | 1.03x | 40 | 25/4/11 | 1.35x |
+| `argon2d-small` | 24 | 10/5/9 | 1.04x | 24 | 10/5/9 | 1.04x |
+| `rapidhash-v3-64` | 88 | 21/45/22 | 1.05x | 88 | 21/45/22 | 1.05x |
+| `blake2b256` | 200 | 101/99/0 | 1.07x | 312 | 204/108/0 | 1.31x |
+| `scrypt-owasp` | 8 | 4/2/2 | 1.08x | 8 | 4/2/2 | 1.08x |
+| `blake2b512` | 176 | 106/69/1 | 1.08x | 264 | 194/69/1 | 1.33x |
+| `blake2s256` | 200 | 114/86/0 | 1.11x | 200 | 114/86/0 | 1.11x |
+| `chacha20-poly1305` | 176 | 75/101/0 | 1.12x | 484 | 304/180/0 | 1.32x |
+| `xxh3-128` | 88 | 34/42/12 | 1.13x | 88 | 34/42/12 | 1.13x |
+| `xxh3-64` | 88 | 34/34/20 | 1.13x | 88 | 34/34/20 | 1.13x |
+| `blake2s128` | 176 | 113/63/0 | 1.13x | 176 | 113/63/0 | 1.13x |
+| `ed25519` | 80 | 32/39/9 | 1.14x | 256 | 194/48/14 | 1.41x |
+| `xxh3-hashmap` | 8 | 7/1/0 | 1.15x | 8 | 7/1/0 | 1.15x |
+| `scrypt-small` | 32 | 18/13/1 | 1.18x | 32 | 18/13/1 | 1.18x |
+| `rapidhash-buildhasher` | 88 | 44/29/15 | 1.19x | 88 | 44/29/15 | 1.19x |
+| `aegis-256` | 176 | 81/65/30 | 1.23x | 176 | 81/65/30 | 1.23x |
+| `hmac-sha256` | 104 | 42/36/26 | 1.24x | 258 | 144/78/36 | 1.60x |
+| `hmac-sha384` | 88 | 28/49/11 | 1.24x | 242 | 133/93/16 | 1.29x |
+| `hmac-sha512` | 88 | 32/44/12 | 1.27x | 242 | 137/88/17 | 1.31x |
+| `sha256` | 104 | 44/46/14 | 1.27x | 258 | 143/89/26 | 1.60x |
+| `hkdf-sha384` | 32 | 29/3/0 | 1.27x | 88 | 85/3/0 | 1.59x |
+| `rsa-8192` | 16 | 14/2/0 | 1.28x | 28 | 26/2/0 | 1.33x |
+| `hkdf-sha256` | 32 | 27/5/0 | 1.28x | 88 | 83/5/0 | 1.93x |
+| `pbkdf2-sha256` | 48 | 43/5/0 | 1.28x | 132 | 127/5/0 | 1.71x |
+| `pbkdf2-sha512` | 48 | 41/7/0 | 1.28x | 132 | 125/7/0 | 1.34x |
+| `sha512` | 104 | 48/51/5 | 1.29x | 258 | 160/88/10 | 1.31x |
+| `sha384` | 88 | 43/39/6 | 1.30x | 242 | 151/80/11 | 1.32x |
+| `ascon-hash256` | 88 | 56/31/1 | 1.30x | 88 | 56/31/1 | 1.30x |
+| `sha512-256` | 88 | 50/38/0 | 1.33x | 88 | 50/38/0 | 1.33x |
+| `blake3` | 384 | 187/134/63 | 1.35x | 384 | 187/134/63 | 1.35x |
+| `ascon-aead128` | 176 | 136/39/1 | 1.39x | 176 | 136/39/1 | 1.39x |
+| `ascon-xof128` | 88 | 66/20/2 | 1.39x | 88 | 66/20/2 | 1.39x |
+| `xchacha20-poly1305` | 176 | 173/3/0 | 1.43x | 176 | 173/3/0 | 1.43x |
+| `mlkem512` | 24 | 20/0/4 | 1.44x | 90 | 86/0/4 | 2.90x |
+| `rapidhash-hash-one` | 24 | 18/4/2 | 1.47x | 24 | 18/4/2 | 1.47x |
+| `mlkem768` | 24 | 22/0/2 | 1.57x | 90 | 88/0/2 | 3.38x |
+| `rapidhash-hashmap` | 24 | 24/0/0 | 1.61x | 24 | 24/0/0 | 1.61x |
+| `mlkem1024` | 24 | 22/0/2 | 1.63x | 90 | 88/0/2 | 3.60x |
+| `rsa-4096` | 24 | 24/0/0 | 1.70x | 52 | 52/0/0 | 2.69x |
+| `crc32c` | 88 | 42/38/8 | 1.73x | 176 | 130/38/8 | 2.41x |
+| `rsa-3072` | 24 | 24/0/0 | 1.75x | 52 | 52/0/0 | 2.73x |
+| `rsa-2048` | 24 | 24/0/0 | 1.79x | 52 | 52/0/0 | 2.77x |
+| `aes-128-gcm` | 176 | 96/42/38 | 1.80x | 484 | 390/50/44 | 2.01x |
+| `crc32` | 88 | 47/33/8 | 1.80x | 176 | 133/35/8 | 2.51x |
+| `aes-256-gcm` | 176 | 94/36/46 | 1.83x | 484 | 382/44/58 | 2.02x |
+| `kmac256` | 88 | 58/19/11 | 1.86x | 88 | 58/19/11 | 1.86x |
+| `cshake256` | 88 | 58/21/9 | 1.90x | 88 | 58/21/9 | 1.90x |
+| `shake128` | 88 | 58/30/0 | 1.94x | 88 | 58/30/0 | 1.94x |
+| `shake256` | 88 | 63/25/0 | 1.98x | 88 | 63/25/0 | 1.98x |
+| `sha224` | 88 | 51/37/0 | 2.01x | 88 | 51/37/0 | 2.01x |
+| `aes-128-gcm-siv` | 176 | 127/1/48 | 2.20x | 308 | 237/16/55 | 2.92x |
+| `sha3-224` | 88 | 77/11/0 | 2.27x | 88 | 77/11/0 | 2.27x |
+| `sha3-256` | 104 | 91/13/0 | 2.28x | 104 | 91/13/0 | 2.28x |
+| `aes-256-gcm-siv` | 176 | 128/1/47 | 2.34x | 308 | 259/2/47 | 3.16x |
+| `crc64-nvme` | 88 | 52/35/1 | 2.34x | 88 | 52/35/1 | 2.34x |
+| `sha3-384` | 88 | 79/9/0 | 2.35x | 88 | 79/9/0 | 2.35x |
+| `sha3-512` | 88 | 77/11/0 | 2.38x | 88 | 77/11/0 | 2.38x |
+| `crc64-xz` | 88 | 73/12/3 | 2.78x | 88 | 73/12/3 | 2.78x |
+| `crc24-openpgp` | 88 | 86/0/2 | 17.62x | 88 | 86/0/2 | 17.62x |
+| `crc16-ccitt` | 88 | 88/0/0 | 30.24x | 88 | 88/0/0 | 30.24x |
+| `crc16-ibm` | 88 | 88/0/0 | 32.07x | 88 | 88/0/0 | 32.07x |
 
 ## Linux Worst Individual Rows
 
 | Platform | Case | Fastest external | Ratio |
 | --- | --- | --- | --- |
-| RISE RISC-V | `xxh3-64 / 0` | `xxhash-rust` | 0.43x |
-| Intel Sapphire Rapids | `aes-256-gcm / encrypt / 32` | `rustcrypto` | 0.46x |
-| Intel Ice Lake | `aes-256-gcm-siv / encrypt / 32` | `aws-lc-rs` | 0.48x |
-| Intel Sapphire Rapids | `aes-128-gcm / encrypt / 32` | `rustcrypto` | 0.48x |
-| Intel Ice Lake | `aes-256-gcm-siv / encrypt / 0` | `aws-lc-rs` | 0.48x |
-| Intel Sapphire Rapids | `aes-256-gcm-siv / encrypt / 32` | `aws-lc-rs` | 0.49x |
-| Intel Sapphire Rapids | `aes-128-gcm-siv / encrypt / 0` | `aws-lc-rs` | 0.49x |
-| Intel Ice Lake | `aes-128-gcm-siv / encrypt / 32` | `aws-lc-rs` | 0.49x |
-| Intel Sapphire Rapids | `aes-128-gcm-siv / encrypt / 32` | `aws-lc-rs` | 0.49x |
-| AMD Zen4 | `aes-256-gcm / encrypt / 32` | `rustcrypto` | 0.49x |
-| Intel Ice Lake | `aes-256-gcm / encrypt / 32` | `rustcrypto` | 0.49x |
-| Intel Sapphire Rapids | `aes-256-gcm-siv / encrypt / 0` | `aws-lc-rs` | 0.49x |
+| IBM z16/s390x | `ecdsa-p256 / sign / 1024` | `ring` | 0.05x |
+| IBM z16/s390x | `ecdsa-p384 / sign / 16384` | `rustcrypto-p384` | 0.05x |
+| IBM z16/s390x | `ecdsa-p384 / sign / 1024` | `rustcrypto-p384` | 0.05x |
+| IBM z16/s390x | `ecdsa-p384 / sign / 0` | `rustcrypto-p384` | 0.06x |
+| IBM z16/s390x | `ecdsa-p384 / sign / 32` | `rustcrypto-p384` | 0.06x |
+| IBM z16/s390x | `ecdsa-p256 / sign / 0` | `ring` | 0.06x |
+| IBM z16/s390x | `ecdsa-p256 / sign / 32` | `ring` | 0.06x |
+| IBM z16/s390x | `ecdsa-p256 / verify / 32` | `rustcrypto-p256` | 0.06x |
+| IBM z16/s390x | `ecdsa-p256 / verify / 1024` | `rustcrypto-p256` | 0.07x |
+| IBM z16/s390x | `ecdsa-p256 / sign / 16384` | `ring` | 0.07x |
+| IBM z16/s390x | `ecdsa-p256 / verify / 0` | `rustcrypto-p256` | 0.07x |
+| IBM z16/s390x | `ecdsa-p384 / verify / 1024` | `rustcrypto-p384` | 0.09x |
 
 ## Linux Strongest Individual Rows
 
 | Platform | Case | Fastest external | Ratio |
 | --- | --- | --- | --- |
-| Intel Sapphire Rapids | `crc16-ccitt / 262144` | `crc` | 214.89x |
-| Intel Sapphire Rapids | `crc16-ibm / 262144` | `crc` | 209.87x |
-| Intel Sapphire Rapids | `crc16-ibm / 16384` | `crc` | 208.50x |
-| Intel Sapphire Rapids | `crc16-ccitt / 16384` | `crc` | 207.55x |
-| Intel Sapphire Rapids | `crc16-ccitt / 4096` | `crc` | 184.38x |
-| Intel Sapphire Rapids | `crc16-ccitt / 65536` | `crc` | 183.70x |
-| Intel Sapphire Rapids | `crc16-ibm / 65536` | `crc` | 179.68x |
-| Intel Sapphire Rapids | `crc16-ccitt / 1048576` | `crc` | 178.10x |
-| IBM Power10 | `crc16-ibm / 262144` | `crc` | 176.65x |
-| IBM Power10 | `crc16-ibm / 1048576` | `crc` | 176.64x |
-| IBM Power10 | `crc16-ccitt / 262144` | `crc` | 176.33x |
-| IBM Power10 | `crc16-ccitt / 1048576` | `crc` | 176.09x |
+| Intel Sapphire Rapids | `crc16-ibm / 262144` | `crc` | 212.60x |
+| Intel Sapphire Rapids | `crc16-ccitt / 262144` | `crc` | 209.27x |
+| Intel Sapphire Rapids | `crc16-ccitt / 16384` | `crc` | 206.40x |
+| Intel Sapphire Rapids | `crc16-ibm / 16384` | `crc` | 198.48x |
+| Intel Sapphire Rapids | `crc16-ibm / 1048576` | `crc` | 187.52x |
+| Intel Sapphire Rapids | `crc16-ibm / 4096` | `crc` | 178.55x |
+| Intel Sapphire Rapids | `crc16-ibm / 65536` | `crc` | 178.28x |
+| Intel Sapphire Rapids | `crc16-ccitt / 4096` | `crc` | 178.15x |
+| IBM Power10 | `crc16-ccitt / 1048576` | `crc` | 176.67x |
+| IBM Power10 | `crc16-ibm / 1048576` | `crc` | 176.60x |
+| Intel Sapphire Rapids | `crc16-ccitt / 1048576` | `crc` | 176.46x |
+| IBM Power10 | `crc16-ccitt / 262144` | `crc` | 175.61x |
 
 ## Top Five Loss Areas
 
-- `argon2id-owasp` / `hash`: 0.97x geomean across 9 rows; W/T/L 4/1/4; pressure `rustcrypto` 4.
-- `ed25519` / `verify`: 1.00x geomean across 36 rows; W/T/L 7/20/9; pressure `ring` 6, `dalek` 3.
-- `mlkem1024` / `keygen`: 1.00x geomean across 9 rows; W/T/L 6/0/3; pressure `aws-lc-rs` 3.
-- `blake2b256` / `streaming`: 1.02x geomean across 27 rows; W/T/L 10/16/1; pressure `rustcrypto` 1.
-- `argon2id-small` / `hash`: 1.02x geomean across 27 rows; W/T/L 12/4/11; pressure `rustcrypto` 11.
+- `ecdsa-p384` / `sign`: 0.70x geomean across 32 rows; W/T/L 12/0/20; pressure `aws-lc-rs` 16, `rustcrypto-p384` 4.
+- `ecdsa-p256` / `verify`: 0.84x geomean across 32 rows; W/T/L 20/7/5; pressure `rustcrypto-p256` 4, `aws-lc-rs` 1.
+- `rapidhash-stream` / `one-write`: 0.87x geomean across 88 rows; W/T/L 27/25/36; pressure `rapidhash` 36.
+- `ecdsa-p256` / `sign`: 0.91x geomean across 32 rows; W/T/L 28/0/4; pressure `ring` 4.
+- `argon2id-owasp` / `hash`: 0.98x geomean across 8 rows; W/T/L 3/1/4; pressure `rustcrypto` 3, `dryoc` 1.
 
 ## External Pressure
 
 | External | Pairs | W/T/L | Win % | Geomean | Median |
 | --- | --- | --- | --- | --- | --- |
-| `xxhash-rust` | 198 | 62/98/38 | 31% | 1.09x | 1.00x |
-| `rapidhash` | 396 | 131/204/61 | 33% | 1.09x | 1.01x |
-| `aws-lc-rs` | 1,673 | 1,044/384/245 | 62% | 1.25x | 1.15x |
-| `ascon-hash` | 198 | 129/67/2 | 65% | 1.32x | 1.19x |
-| `ascon-aead` | 198 | 148/50/0 | 75% | 1.33x | 1.15x |
-| `aegis-crate` | 198 | 89/88/21 | 45% | 1.37x | 1.04x |
-| `blake3` | 432 | 234/168/30 | 54% | 1.41x | 1.08x |
-| `dalek` | 108 | 85/18/5 | 79% | 1.47x | 1.27x |
-| `sha2` | 531 | 284/243/4 | 53% | 1.52x | 1.06x |
-| `ring` | 1,656 | 1,333/228/95 | 80% | 1.66x | 1.29x |
-| `rustcrypto` | 2,745 | 1,949/621/175 | 71% | 1.78x | 1.19x |
-| `libcrux` | 81 | 81/0/0 | 100% | 1.79x | 1.70x |
-| `dryoc` | 360 | 325/29/6 | 90% | 1.79x | 1.83x |
-| `tiny-keccak` | 396 | 267/104/25 | 67% | 1.81x | 1.96x |
-| `crc-fast` | 297 | 170/95/32 | 57% | 2.00x | 1.15x |
-| `sha3` | 414 | 368/46/0 | 89% | 2.15x | 2.12x |
-| `crc64fast` | 99 | 76/12/11 | 77% | 2.39x | 1.95x |
-| `crc32fast` | 99 | 81/7/11 | 82% | 2.41x | 2.01x |
-| `crc32c` | 99 | 89/6/4 | 90% | 2.71x | 2.19x |
-| `fips203` | 81 | 81/0/0 | 100% | 4.66x | 5.11x |
-| `rustcrypto-p384` | 72 | 72/0/0 | 100% | 4.79x | 5.26x |
-| `rustcrypto-p256` | 72 | 72/0/0 | 100% | 5.65x | 4.91x |
-| `rustcrypto-rsa` | 81 | 81/0/0 | 100% | 5.68x | 4.70x |
-| `crc` | 297 | 291/2/4 | 98% | 19.45x | 28.96x |
+| `rapidhash` | 400 | 168/111/121 | 42% | 1.07x | 1.01x |
+| `xxhash-rust` | 272 | 116/89/67 | 43% | 1.08x | 1.00x |
+| `aws-lc-rs` | 1,434 | 896/343/195 | 62% | 1.21x | 1.13x |
+| `aegis-crate` | 176 | 81/65/30 | 46% | 1.23x | 1.04x |
+| `ascon-hash` | 176 | 122/51/3 | 69% | 1.34x | 1.32x |
+| `blake3` | 384 | 187/134/63 | 49% | 1.35x | 1.04x |
+| `ascon-aead` | 176 | 136/39/1 | 77% | 1.39x | 1.38x |
+| `dalek` | 96 | 80/12/4 | 83% | 1.52x | 1.49x |
+| `sha2` | 472 | 276/194/2 | 58% | 1.60x | 1.07x |
+| `ring` | 1,472 | 1,154/237/81 | 78% | 1.63x | 1.28x |
+| `libcrux` | 72 | 72/0/0 | 100% | 1.79x | 1.72x |
+| `dryoc` | 320 | 293/22/5 | 92% | 1.81x | 1.85x |
+| `rustcrypto` | 2,440 | 1,783/529/128 | 73% | 1.87x | 1.21x |
+| `tiny-keccak` | 352 | 237/95/20 | 67% | 1.92x | 2.10x |
+| `crc-fast` | 264 | 153/101/10 | 58% | 2.15x | 1.20x |
+| `sha3` | 368 | 324/44/0 | 88% | 2.32x | 2.15x |
+| `crc32fast` | 88 | 79/4/5 | 90% | 2.75x | 2.06x |
+| `crc64fast` | 88 | 73/12/3 | 83% | 2.78x | 2.49x |
+| `rustcrypto-p256` | 64 | 56/0/8 | 88% | 3.03x | 3.10x |
+| `rustcrypto-p384` | 64 | 56/0/8 | 88% | 3.06x | 5.50x |
+| `crc32c` | 88 | 83/3/2 | 94% | 3.13x | 2.29x |
+| `fips203` | 72 | 72/0/0 | 100% | 5.28x | 6.07x |
+| `rustcrypto-rsa` | 72 | 72/0/0 | 100% | 6.07x | 6.50x |
+| `crc` | 264 | 262/0/2 | 99% | 25.76x | 46.98x |
 
 ## macOS Local Snapshot
 
-The macOS Apple Silicon run is local evidence from the 2026-07-04 full benchmark at commit `596498f`. It is useful for Apple Silicon planning but is not folded into Linux CI release claims. The ML-KEM row uses the same artifact's public ML-KEM rows.
+The macOS Apple Silicon run is local evidence from the 2026-07-04 full benchmark at commit `596498f`, carried forward unchanged in this refresh. It is useful for Apple Silicon planning but is not folded into Linux CI release claims. The ML-KEM row uses the same artifact's public ML-KEM rows.
 
 | Scope | Pairs | W/T/L | Win % | Geomean | Median |
 | --- | --- | --- | --- | --- | --- |
@@ -327,29 +344,28 @@ The macOS Apple Silicon run is local evidence from the 2026-07-04 full benchmark
 
 ## README Numbers
 
-- **Headline:** 4,052 of 6,750 matched Linux CI fastest-external comparisons are wins; 6,101 are wins or ties. Linux CI geomean is 1.59x.
-- **Checksums:** 5.18x geomean across 693 Linux CI fastest-external rows; W/T/L 517/115/61.
-- **Hashes/MACs/XOFs:** 1.35x geomean across 3,726 Linux CI fastest-external rows; W/T/L 2,028/1,457/241.
-- **Auth/KDF:** 1.25x geomean across 180 Linux CI fastest-external rows; W/T/L 159/20/1.
-- **Password hashing:** 1.07x geomean across 135 Linux CI fastest-external rows; W/T/L 69/28/38.
-- **Public-key:** 1.33x geomean across 333 Linux CI fastest-external rows; W/T/L 217/73/43.
-- **RSA:** 1.55x geomean across 99 Linux CI fastest-external rows; W/T/L 89/2/8.
-- **AEAD:** 1.56x geomean across 1,584 Linux CI fastest-external rows; W/T/L 973/354/257.
-- **ML-KEM:** 1.49x geomean across 81 Linux CI fastest-external rows; W/T/L 68/4/9.
-- **ECDSA P-256/P-384:** 1.45x Linux CI geomean across 144 fastest-external rows; W/T/L 116/7/21.
-- **Current top losses:** `argon2id-owasp` / `hash`: 0.97x geomean across 9 rows; W/T/L 4/1/4; pressure `rustcrypto` 4; `ed25519` / `verify`: 1.00x geomean across 36 rows; W/T/L 7/20/9; pressure `ring` 6, `dalek` 3; `mlkem1024` / `keygen`: 1.00x geomean across 9 rows; W/T/L 6/0/3; pressure `aws-lc-rs` 3; `blake2b256` / `streaming`: 1.02x geomean across 27 rows; W/T/L 10/16/1; pressure `rustcrypto` 1; `argon2id-small` / `hash`: 1.02x geomean across 27 rows; W/T/L 12/4/11; pressure `rustcrypto` 11.
+- **Headline:** 3,780 of 6,144 matched Linux CI fastest-external comparisons are wins; 5,475 are wins or ties. Linux CI geomean is 1.62x.
+- **Checksums:** 6.18x geomean across 616 Linux CI fastest-external rows; W/T/L 476/118/22.
+- **Hashes/MACs/XOFs:** 1.35x geomean across 3,456 Linux CI fastest-external rows; W/T/L 1,926/1,181/349.
+- **Auth/KDF:** 1.28x geomean across 160 Linux CI fastest-external rows; W/T/L 140/20/0.
+- **Password hashing:** 1.07x geomean across 120 Linux CI fastest-external rows; W/T/L 55/27/38.
+- **Public-key:** 1.09x geomean across 296 Linux CI fastest-external rows; W/T/L 187/59/50.
+- **RSA:** 1.65x geomean across 88 Linux CI fastest-external rows; W/T/L 86/2/0.
+- **AEAD:** 1.61x geomean across 1,408 Linux CI fastest-external rows; W/T/L 910/288/210.
+- **ML-KEM:** 1.55x geomean across 72 Linux CI fastest-external rows; W/T/L 64/0/8.
+- **ECDSA P-256/P-384:** 0.87x Linux CI geomean across 128 fastest-external rows; W/T/L 88/7/33.
+- **Current top losses:** `ecdsa-p384` / `sign`: 0.70x geomean across 32 rows; W/T/L 12/0/20; pressure `aws-lc-rs` 16, `rustcrypto-p384` 4; `ecdsa-p256` / `verify`: 0.84x geomean across 32 rows; W/T/L 20/7/5; pressure `rustcrypto-p256` 4, `aws-lc-rs` 1; `rapidhash-stream` / `one-write`: 0.87x geomean across 88 rows; W/T/L 27/25/36; pressure `rapidhash` 36; `ecdsa-p256` / `sign`: 0.91x geomean across 32 rows; W/T/L 28/0/4; pressure `ring` 4; `argon2id-owasp` / `hash`: 0.98x geomean across 8 rows; W/T/L 3/1/4; pressure `rustcrypto` 3, `dryoc` 1.
 
 ## Raw Results
 
 | Platform | Mode | Date/time | Parsed rows | Result |
 | --- | --- | --- | --- | --- |
-| AMD Zen4 | `ci` | `2026-07-04 15_26_12` | 2,356 | `benchmark_results/2026-07-04/linux/amd-zen4/results.txt` |
-| AMD Zen5 | `ci` | `2026-07-04 15_26_12` | 2,356 | `benchmark_results/2026-07-04/linux/amd-zen5/results.txt` |
-| AWS Graviton3 | `ci` | `2026-07-04 15_26_12` | 2,367 | `benchmark_results/2026-07-04/linux/graviton3/results.txt` |
-| AWS Graviton4 | `ci` | `2026-07-04 15_26_12` | 2,367 | `benchmark_results/2026-07-04/linux/graviton4/results.txt` |
-| IBM Power10 | `ci` | `2026-07-04 15_26_12` | 2,107 | `benchmark_results/2026-07-04/linux/ibm-power10/results.txt` |
-| IBM z16/s390x | `ci` | `2026-07-04 15_26_12` | 2,107 | `benchmark_results/2026-07-04/linux/ibm-s390x/results.txt` |
-| Intel Ice Lake | `ci` | `2026-07-04 15_26_12` | 2,356 | `benchmark_results/2026-07-04/linux/intel-icl/results.txt` |
-| Intel Sapphire Rapids | `ci` | `2026-07-04 15_26_12` | 2,356 | `benchmark_results/2026-07-04/linux/intel-spr/results.txt` |
-| RISE RISC-V | `ci` | `2026-07-04 15_26_12` | 2,356 | `benchmark_results/2026-07-04/linux/rise-riscv/results.txt` |
+| AMD Zen4 | `ci` | `2026-08-18 21_03_07` | 2,304 | `benchmark_results/2026-08-18/linux/amd-zen4/results.txt` |
+| AMD Zen5 | `ci` | `2026-08-18 21_03_07` | 2,304 | `benchmark_results/2026-08-18/linux/amd-zen5/results.txt` |
+| AWS Graviton3 | `ci` | `2026-08-18 21_03_07` | 2,308 | `benchmark_results/2026-08-18/linux/graviton3/results.txt` |
+| AWS Graviton4 | `ci` | `2026-08-18 21_03_07` | 2,308 | `benchmark_results/2026-08-18/linux/graviton4/results.txt` |
+| IBM Power10 | `ci` | `2026-08-18 21_03_07` | 2,055 | `benchmark_results/2026-08-18/linux/ibm-power10/results.txt` |
+| IBM z16/s390x | `ci` | `2026-08-18 21_03_07` | 2,055 | `benchmark_results/2026-08-18/linux/ibm-s390x/results.txt` |
+| Intel Ice Lake | `ci` | `2026-08-18 21_03_07` | 2,304 | `benchmark_results/2026-08-18/linux/intel-icl/results.txt` |
+| Intel Sapphire Rapids | `ci` | `2026-08-18 21_03_07` | 2,304 | `benchmark_results/2026-08-18/linux/intel-spr/results.txt` |
 | macOS Apple Silicon | `local` | `2026-07-04 12_28_04` | 2,277 | `benchmark_results/2026-07-04/macos/aarch64/results.txt` |

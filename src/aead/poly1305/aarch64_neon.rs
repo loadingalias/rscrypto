@@ -75,6 +75,12 @@ impl AeadPar4 {
     tag
   }
 
+  /// Absorbs one AEAD segment, padding its final partial block with zeros.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support AArch64 NEON. `self` must retain the cache and power-table
+  /// invariants established by [`AeadPar4::new`].
   #[target_feature(enable = "neon")]
   unsafe fn update_padded_segment_neon(&mut self, segment: &[u8]) {
     let mut offset = 0usize;
@@ -89,11 +95,14 @@ impl AeadPar4 {
     if self.num_cached == 0 {
       let group_len = segment.len().strict_sub(offset).strict_div(64).strict_mul(64);
       let group_end = offset.strict_add(group_len);
-      for group in segment[offset..group_end].chunks_exact(64) {
+      let (groups, remainder) = segment[offset..group_end].as_chunks::<64>();
+      debug_assert!(remainder.is_empty());
+      for group in groups {
         let (blocks, remainder) = group.as_chunks::<16>();
         debug_assert!(remainder.is_empty());
+        assert_eq!(blocks.len(), 4, "64-byte Poly1305 group must contain four blocks");
         let [b0, b1, b2, b3] = blocks else {
-          unreachable!("64-byte Poly1305 group must split into four blocks");
+          return;
         };
         // SAFETY: direct four-block accumulation because:
         // 1. `group` is a 64-byte exact chunk split into four full Poly1305 blocks.
@@ -121,6 +130,12 @@ impl AeadPar4 {
     }
   }
 
+  /// Caches one complete block and accumulates each full four-block group.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support AArch64 NEON. `self` must retain the cache and power-table
+  /// invariants established by [`AeadPar4::new`], including `num_cached < 4` on entry.
   #[inline(always)]
   unsafe fn push(&mut self, block: [u8; 16]) {
     self.cached[self.num_cached] = block;
@@ -133,7 +148,6 @@ impl AeadPar4 {
   }
 }
 
-#[cfg_attr(not(any(feature = "xchacha20poly1305", feature = "diag", test)), allow(dead_code))]
 pub(super) fn authenticate_aead_par4(
   aad: &[u8],
   ciphertext: &[u8],
@@ -146,12 +160,24 @@ pub(super) fn authenticate_aead_par4(
   authenticator.finalize(lengths)
 }
 
+/// Accumulates four consecutive full blocks into `state`.
+///
+/// # Safety
+///
+/// The current CPU must support AArch64 NEON, and `powers` must contain the first four powers of
+/// the same clamped Poly1305 key represented by `state`.
 #[inline(always)]
 unsafe fn accumulate_4_blocks(blocks: &[[u8; 16]; 4], state: &mut State, powers: &Powers) {
   // SAFETY: caller is NEON-enabled and `blocks` contains four full 16-byte AEAD blocks.
   unsafe { accumulate_4_block_refs([&blocks[0], &blocks[1], &blocks[2], &blocks[3]], state, powers) };
 }
 
+/// Accumulates four referenced consecutive full blocks into `state`.
+///
+/// # Safety
+///
+/// The current CPU must support AArch64 NEON, and `powers` must contain the first four powers of
+/// the same clamped Poly1305 key represented by `state`.
 #[inline(always)]
 unsafe fn accumulate_4_block_refs(blocks: [&[u8; 16]; 4], state: &mut State, powers: &Powers) {
   let h = mul_unreduced(state.h, powers.r4);
@@ -166,6 +192,12 @@ unsafe fn accumulate_4_block_refs(blocks: [&[u8; 16]; 4], state: &mut State, pow
   ]);
 }
 
+/// Computes the unreduced four-block weighted sum for consecutive blocks.
+///
+/// # Safety
+///
+/// The current CPU must support AArch64 NEON. `powers` must contain the first four powers of the
+/// clamped Poly1305 key whose accumulator will receive the returned sum.
 #[inline(always)]
 unsafe fn mul4_spaced_sum_refs(blocks: [&[u8; 16]; 4], powers: &Powers) -> [u64; 5] {
   let b0 = block_limbs(blocks[0]);
@@ -197,21 +229,21 @@ unsafe fn mul4_spaced_sum_refs(blocks: [&[u8; 16]; 4], powers: &Powers) -> [u64;
       lane4(r4[2], r3[2], r2[2], r1[2]),
       lane4(r4[3], r3[3], r2[3], r1[3]),
       lane4(r4[4], r3[4], r2[4], r1[4]),
-      lane4(r4[1] * 5, r3[1] * 5, r2[1] * 5, r1[1] * 5),
-      lane4(r4[2] * 5, r3[2] * 5, r2[2] * 5, r1[2] * 5),
-      lane4(r4[3] * 5, r3[3] * 5, r2[3] * 5, r1[3] * 5),
-      lane4(r4[4] * 5, r3[4] * 5, r2[4] * 5, r1[4] * 5),
+      lane4_fivefold(r4[1], r3[1], r2[1], r1[1]),
+      lane4_fivefold(r4[2], r3[2], r2[2], r1[2]),
+      lane4_fivefold(r4[3], r3[3], r2[3], r1[3]),
+      lane4_fivefold(r4[4], r3[4], r2[4], r1[4]),
     )
   };
 
   // SAFETY: all lanes are valid NEON vectors in this target-feature-enabled function.
   unsafe {
     [
-      dot5_sum(x0, x1, x2, x3, x4, r0, s4, s3, s2, s1),
-      dot5_sum(x0, x1, x2, x3, x4, r1v, r0, s4, s3, s2),
-      dot5_sum(x0, x1, x2, x3, x4, r2v, r1v, r0, s4, s3),
-      dot5_sum(x0, x1, x2, x3, x4, r3v, r2v, r1v, r0, s4),
-      dot5_sum(x0, x1, x2, x3, x4, r4v, r3v, r2v, r1v, r0),
+      dot5_sum([x0, x1, x2, x3, x4], [r0, s4, s3, s2, s1]),
+      dot5_sum([x0, x1, x2, x3, x4], [r1v, r0, s4, s3, s2]),
+      dot5_sum([x0, x1, x2, x3, x4], [r2v, r1v, r0, s4, s3]),
+      dot5_sum([x0, x1, x2, x3, x4], [r3v, r2v, r1v, r0, s4]),
+      dot5_sum([x0, x1, x2, x3, x4], [r4v, r3v, r2v, r1v, r0]),
     ]
   }
 }
@@ -227,6 +259,11 @@ fn block_limbs(block: &[u8; 16]) -> [u32; 5] {
   ]
 }
 
+/// Packs four scalar values into consecutive NEON lanes.
+///
+/// # Safety
+///
+/// The current CPU must support AArch64 NEON.
 #[inline(always)]
 unsafe fn lane4(a: u32, b: u32, c: u32, d: u32) -> uint32x4_t {
   // SAFETY: caller guarantees NEON is enabled; inputs are scalar lane values.
@@ -238,20 +275,37 @@ unsafe fn lane4(a: u32, b: u32, c: u32, d: u32) -> uint32x4_t {
   }
 }
 
+/// Multiplies four bounded limbs by five and packs them into consecutive NEON lanes.
+///
+/// # Safety
+///
+/// The current CPU must support AArch64 NEON. Each input must be at most 858,993,459 so its
+/// fivefold value fits in one `u32` lane.
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
-unsafe fn dot5_sum(
-  x0: uint32x4_t,
-  x1: uint32x4_t,
-  x2: uint32x4_t,
-  x3: uint32x4_t,
-  x4: uint32x4_t,
-  y0: uint32x4_t,
-  y1: uint32x4_t,
-  y2: uint32x4_t,
-  y3: uint32x4_t,
-  y4: uint32x4_t,
-) -> u64 {
+unsafe fn lane4_fivefold(a: u32, b: u32, c: u32, d: u32) -> uint32x4_t {
+  const MAX_UNSCALED: u32 = 858_993_459;
+  debug_assert!([a, b, c, d].into_iter().all(|limb| limb <= MAX_UNSCALED));
+
+  let a = u64::from(a).strict_mul(5);
+  let b = u64::from(b).strict_mul(5);
+  let c = u64::from(c).strict_mul(5);
+  let d = u64::from(d).strict_mul(5);
+
+  // SAFETY: the caller guarantees NEON. The input bound proves every widened product fits in
+  // one 32-bit lane, so the two `u64` values encode four consecutive lanes without overlap.
+  unsafe { vcombine_u32(vcreate_u32((b << 32) | a), vcreate_u32((d << 32) | c)) }
+}
+
+/// Sums five lane-wise products across four parallel Poly1305 streams.
+///
+/// # Safety
+///
+/// The current CPU must support AArch64 NEON.
+#[inline(always)]
+unsafe fn dot5_sum(x: [uint32x4_t; 5], y: [uint32x4_t; 5]) -> u64 {
+  let [x0, x1, x2, x3, x4] = x;
+  let [y0, y1, y2, y3, y4] = y;
+
   // SAFETY: caller guarantees NEON is enabled and all inputs are valid four-lane vectors.
   unsafe {
     let mut lo = vmull_u32(vget_low_u32(x0), vget_low_u32(y0));
@@ -266,6 +320,11 @@ unsafe fn dot5_sum(
   }
 }
 
+/// Adds one lane-wise product to the low and high partial sums.
+///
+/// # Safety
+///
+/// The current CPU must support AArch64 NEON.
 #[inline(always)]
 unsafe fn accumulate_mul(lo: &mut uint64x2_t, hi: &mut uint64x2_t, x: uint32x4_t, y: uint32x4_t) {
   // SAFETY: caller guarantees NEON is enabled and all inputs are valid four-lane vectors.
@@ -282,38 +341,44 @@ fn mul_mod(a: [u32; 5], b: [u32; 5]) -> [u32; 5] {
 
 #[inline(always)]
 fn mul_unreduced(a: [u32; 5], b: [u32; 5]) -> [u64; 5] {
-  let b1_5 = b[1] * 5;
-  let b2_5 = b[2] * 5;
-  let b3_5 = b[3] * 5;
-  let b4_5 = b[4] * 5;
+  let b0 = u64::from(b[0]);
+  let b1 = u64::from(b[1]);
+  let b2 = u64::from(b[2]);
+  let b3 = u64::from(b[3]);
+  let b4 = u64::from(b[4]);
+  let b1_5 = b1.strict_mul(5);
+  let b2_5 = b2.strict_mul(5);
+  let b3_5 = b3.strict_mul(5);
+  let b4_5 = b4.strict_mul(5);
 
   [
-    (u64::from(a[0]) * u64::from(b[0]))
-      + (u64::from(a[1]) * u64::from(b4_5))
-      + (u64::from(a[2]) * u64::from(b3_5))
-      + (u64::from(a[3]) * u64::from(b2_5))
-      + (u64::from(a[4]) * u64::from(b1_5)),
-    (u64::from(a[0]) * u64::from(b[1]))
-      + (u64::from(a[1]) * u64::from(b[0]))
-      + (u64::from(a[2]) * u64::from(b4_5))
-      + (u64::from(a[3]) * u64::from(b3_5))
-      + (u64::from(a[4]) * u64::from(b2_5)),
-    (u64::from(a[0]) * u64::from(b[2]))
-      + (u64::from(a[1]) * u64::from(b[1]))
-      + (u64::from(a[2]) * u64::from(b[0]))
-      + (u64::from(a[3]) * u64::from(b4_5))
-      + (u64::from(a[4]) * u64::from(b3_5)),
-    (u64::from(a[0]) * u64::from(b[3]))
-      + (u64::from(a[1]) * u64::from(b[2]))
-      + (u64::from(a[2]) * u64::from(b[1]))
-      + (u64::from(a[3]) * u64::from(b[0]))
-      + (u64::from(a[4]) * u64::from(b4_5)),
-    (u64::from(a[0]) * u64::from(b[4]))
-      + (u64::from(a[1]) * u64::from(b[3]))
-      + (u64::from(a[2]) * u64::from(b[2]))
-      + (u64::from(a[3]) * u64::from(b[1]))
-      + (u64::from(a[4]) * u64::from(b[0])),
+    scalar_dot5(a, [b0, b4_5, b3_5, b2_5, b1_5]),
+    scalar_dot5(a, [b1, b0, b4_5, b3_5, b2_5]),
+    scalar_dot5(a, [b2, b1, b0, b4_5, b3_5]),
+    scalar_dot5(a, [b3, b2, b1, b0, b4_5]),
+    scalar_dot5(a, [b4, b3, b2, b1, b0]),
   ]
+}
+
+#[inline(always)]
+fn scalar_dot5(a: [u32; 5], b: [u64; 5]) -> u64 {
+  let sum = u128::from(a[0])
+    .strict_mul(u128::from(b[0]))
+    .strict_add(u128::from(a[1]).strict_mul(u128::from(b[1])))
+    .strict_add(u128::from(a[2]).strict_mul(u128::from(b[2])))
+    .strict_add(u128::from(a[3]).strict_mul(u128::from(b[3])))
+    .strict_add(u128::from(a[4]).strict_mul(u128::from(b[4])));
+  debug_assert!(sum <= u128::from(u64::MAX));
+
+  let [b0, b1, b2, b3, b4, b5, b6, b7, _, _, _, _, _, _, _, _] = sum.to_le_bytes();
+  u64::from_le_bytes([b0, b1, b2, b3, b4, b5, b6, b7])
+}
+
+#[inline(always)]
+fn narrow_limb(value: u64) -> u32 {
+  debug_assert_eq!(value >> u32::BITS, 0);
+  let [b0, b1, b2, b3, _, _, _, _] = value.to_le_bytes();
+  u32::from_le_bytes([b0, b1, b2, b3])
 }
 
 #[inline(always)]
@@ -327,20 +392,20 @@ fn reduce_unreduced(mut d: [u64; 5]) -> [u32; 5] {
   d[2] = d[2].wrapping_add(c);
 
   c = d[2] >> 26;
-  let h2 = (d[2] as u32) & LIMB_MASK;
+  let h2 = narrow_limb(d[2] & u64::from(LIMB_MASK));
   d[3] = d[3].wrapping_add(c);
 
   c = d[3] >> 26;
-  let h3 = (d[3] as u32) & LIMB_MASK;
+  let h3 = narrow_limb(d[3] & u64::from(LIMB_MASK));
   d[4] = d[4].wrapping_add(c);
 
   c = d[4] >> 26;
-  let h4 = (d[4] as u32) & LIMB_MASK;
-  h0 = h0.wrapping_add(c * 5);
+  let h4 = narrow_limb(d[4] & u64::from(LIMB_MASK));
+  h0 = h0.wrapping_add(c.strict_mul(5));
 
   c = h0 >> 26;
   h0 &= u64::from(LIMB_MASK);
   let h1 = h1_base.wrapping_add(c);
 
-  [h0 as u32, h1 as u32, h2, h3, h4]
+  [narrow_limb(h0), narrow_limb(h1), h2, h3, h4]
 }

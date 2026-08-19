@@ -6,17 +6,16 @@ use rscrypto::{
   hashes::crypto::{AsconHash256, AsconXof},
   traits::{Digest as _, Xof as _},
 };
-use support::blobby_compat::Blob2Iterator;
+use support::blobby_compat::BlobIterator;
 
 #[test]
 fn ascon_hash256_official_vectors() {
   let data = include_bytes!("../testdata/ascon/asconhash.blb");
-  for (i, row) in Blob2Iterator::new(data)
+  for (i, row) in BlobIterator::<2>::new(data)
     .expect("ascon hash vector corpus must parse")
     .enumerate()
   {
-    let [input, output] =
-      row.unwrap_or_else(|err| panic!("ascon-hash256 vector row decode failed at case {i}: {err:?}"));
+    let [input, output] = row.expect("Ascon-Hash256 vector row must decode");
     let actual = AsconHash256::digest(input);
     assert_eq!(
       &actual[..],
@@ -30,12 +29,11 @@ fn ascon_hash256_official_vectors() {
 #[test]
 fn ascon_xof_official_vectors() {
   let data = include_bytes!("../testdata/ascon/asconxof.blb");
-  for (i, row) in Blob2Iterator::new(data)
+  for (i, row) in BlobIterator::<2>::new(data)
     .expect("ascon xof vector corpus must parse")
     .enumerate()
   {
-    let [input, output] =
-      row.unwrap_or_else(|err| panic!("ascon-xof128 vector row decode failed at case {i}: {err:?}"));
+    let [input, output] = row.expect("Ascon-XOF128 vector row must decode");
     let mut actual = vec![0u8; output.len()];
     AsconXof::xof(input).squeeze(&mut actual);
     assert_eq!(

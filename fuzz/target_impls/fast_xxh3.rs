@@ -3,7 +3,7 @@ use core::hash::Hasher;
 use rscrypto::{FastHash, Xxh3, Xxh3_128, Xxh3_128Hasher, Xxh3Hasher};
 use rscrypto_fuzz::{FuzzInput, some_or_return};
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let seed_bytes: [u8; 8] = some_or_return!(input.bytes());
   let partitions: [u8; 8] = some_or_return!(input.bytes());

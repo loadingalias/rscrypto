@@ -1,7 +1,7 @@
 use rscrypto::{Blake3, Blake3KeyedHash, Digest};
 use rscrypto_fuzz::{FuzzInput, assert_xof_prefix, some_or_return};
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let key: [u8; 32] = some_or_return!(input.bytes());
   let split: u8 = some_or_return!(input.byte());

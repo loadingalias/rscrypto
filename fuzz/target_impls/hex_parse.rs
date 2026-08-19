@@ -23,7 +23,7 @@ fn ascii_candidate(bytes: &[u8], len: usize) -> String {
     .copied()
     .cycle()
     .take(len)
-    .map(|byte| char::from(32 + (byte % 95)))
+    .map(|byte| char::from(byte.rem_euclid(95).strict_add(32)))
     .collect()
 }
 
@@ -33,10 +33,20 @@ where
 {
   let lower = value.to_string();
   let upper = format!("{value:X}");
-  let short = &lower[..lower.len().strict_sub(1)];
+  let short = lower
+    .get(..lower.len().strict_sub(1))
+    .expect("hex rendering has an ASCII boundary before its final byte");
 
-  assert_eq!(lower.parse::<T>().unwrap(), value, "public lower parse mismatch");
-  assert_eq!(upper.parse::<T>().unwrap(), value, "public upper parse mismatch");
+  assert_eq!(
+    lower.parse::<T>().expect("lowercase rendering must parse"),
+    value,
+    "public lower parse mismatch"
+  );
+  assert_eq!(
+    upper.parse::<T>().expect("uppercase rendering must parse"),
+    value,
+    "public upper parse mismatch"
+  );
   assert_eq!(
     short.parse::<T>(),
     Err(InvalidHexError::InvalidLength),
@@ -44,8 +54,19 @@ where
   );
 
   if let Ok(parsed) = candidate.parse::<T>() {
-    assert_eq!(parsed.to_string().parse::<T>().unwrap(), parsed);
-    assert_eq!(format!("{parsed:X}").parse::<T>().unwrap(), parsed);
+    assert_eq!(
+      parsed
+        .to_string()
+        .parse::<T>()
+        .expect("parsed value must round-trip through lowercase rendering"),
+      parsed
+    );
+    assert_eq!(
+      format!("{parsed:X}")
+        .parse::<T>()
+        .expect("parsed value must round-trip through uppercase rendering"),
+      parsed
+    );
   }
 }
 
@@ -58,14 +79,22 @@ fn exercise_sensitive_parse<T>(
 ) where
   T: Debug + FromStr<Err = InvalidHexError>,
 {
-  let short = &lower[..lower.len().strict_sub(1)];
+  let short = lower
+    .get(..lower.len().strict_sub(1))
+    .expect("hex rendering has an ASCII boundary before its final byte");
 
   assert!(
-    equivalent(&lower.parse::<T>().unwrap(), &value),
+    equivalent(
+      &lower.parse::<T>().expect("lowercase secret rendering must parse"),
+      &value
+    ),
     "sensitive lower parse mismatch"
   );
   assert!(
-    equivalent(&upper.parse::<T>().unwrap(), &value),
+    equivalent(
+      &upper.parse::<T>().expect("uppercase secret rendering must parse"),
+      &value
+    ),
     "sensitive upper parse mismatch"
   );
   assert!(
@@ -79,7 +108,7 @@ fn exercise_sensitive_parse<T>(
   }
 }
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let nonce_bytes: [u8; 12] = some_or_return!(input.bytes());
   let tag_bytes: [u8; 16] = some_or_return!(input.bytes());

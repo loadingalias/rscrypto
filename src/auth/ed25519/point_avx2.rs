@@ -12,19 +12,22 @@
 //! scaling all output coordinates by `d2²` — which cancels in projective
 //! coordinates.
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "ed25519"))]
 use core::arch::x86_64::_mm256_loadu_si256;
 
+#[cfg(all(target_arch = "x86_64", feature = "ed25519"))]
+use super::scalar;
 #[cfg(target_arch = "x86_64")]
 use super::{
   field::FieldElement,
   field_avx2::{FieldElement2625x4, Lanes, Shuffle},
   field_ifma::FieldElement51x4,
   point::{CachedPoint, ExtendedPoint},
-  scalar,
+  scalar_radix_16,
 };
 #[cfg(target_arch = "x86_64")]
 #[path = "basepoint_table_ifma.rs"]
+#[cfg(feature = "ed25519")]
 mod basepoint_table_ifma;
 
 /// Hamburg constants for the curve `d = -d1/d2`.
@@ -57,8 +60,7 @@ impl ExtendedPointAvx2 {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn from_extended(p: &ExtendedPoint) -> Self {
+  pub(crate) fn from_extended(p: &ExtendedPoint) -> Self {
     let (x, y, z, t) = p.components();
     Self(FieldElement2625x4::new(x, y, z, t))
   }
@@ -70,8 +72,7 @@ impl ExtendedPointAvx2 {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn to_extended(self) -> ExtendedPoint {
+  pub(crate) fn to_extended(self) -> ExtendedPoint {
     let [x, y, z, t] = self.0.split();
     ExtendedPoint::from_raw(x, y, z, t)
   }
@@ -85,8 +86,7 @@ impl ExtendedPointAvx2 {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn to_cached(self) -> CachedPointAvx2 {
+  pub(crate) fn to_cached(self) -> CachedPointAvx2 {
     // Step 1: Compute (Y-X, Y+X) in lanes A,B; keep Z,T in C,D.
     let ds = self.0.diff_sum(); // (Y-X, Y+X, T-Z, Z+T)
     let prepared = self.0.blend(&ds, Lanes::AB); // (Y-X, Y+X, Z, T)
@@ -109,8 +109,7 @@ impl ExtendedPointAvx2 {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn add_cached(&self, other: &CachedPointAvx2) -> Self {
+  pub(crate) fn add_cached(&self, other: &CachedPointAvx2) -> Self {
     // Step 1: Prepare self as (Y-X, Y+X, Z, T) by blending diff_sum into A,B.
     let ds = self.0.diff_sum();
     let tmp = self.0.blend(&ds, Lanes::AB); // (Y1-X1, Y1+X1, Z1, T1)
@@ -121,14 +120,14 @@ impl ExtendedPointAvx2 {
 
     // Step 3: Swap C↔D to align for diff_sum.
     // After swap: lane C has the T-product, lane D has the Z-product.
-    let swapped = product.shuffle(Shuffle::ABDC);
+    let swapped = product.shuffle(Shuffle::SwapCD);
 
     // Step 4: diff_sum computes (e, h, f, g) (up to Hamburg scaling).
     let ehfg = swapped.diff_sum();
 
     // Step 5: Shuffle into final multiply operands.
-    let t0 = ehfg.shuffle(Shuffle::ADDA); // (e, g, g, e)
-    let t1 = ehfg.shuffle(Shuffle::CBCB); // (f, h, f, h)
+    let t0 = ehfg.shuffle(Shuffle::OuterAInnerD); // (e, g, g, e)
+    let t1 = ehfg.shuffle(Shuffle::AlternateCB); // (f, h, f, h)
 
     // Step 6: Uniform multiply → (e·f, g·h, g·f, e·h) = (X3, Y3, Z3, T3).
     Self(t0.mul(&t1))
@@ -143,11 +142,11 @@ impl ExtendedPointAvx2 {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn double(&self) -> Self {
+  #[cfg(feature = "ed25519")]
+  pub(crate) fn double(&self) -> Self {
     // Step 1: Build (X, Y, Z, X+Y) for squaring.
-    let ab = self.0.shuffle(Shuffle::ABAB); // (X, Y, X, Y)
-    let ba = ab.shuffle(Shuffle::BADC); // (Y, X, Y, X)
+    let ab = self.0.shuffle(Shuffle::RepeatAB); // (X, Y, X, Y)
+    let ba = ab.shuffle(Shuffle::SwapPairs); // (Y, X, Y, X)
     let xy_sum = ab.add(&ba); // (X+Y, Y+X, X+Y, Y+X)
     let prepared = self.0.blend(&xy_sum, Lanes::D); // (X, Y, Z, X+Y)
 
@@ -163,8 +162,8 @@ impl ExtendedPointAvx2 {
     // Double-negations cancel in the final multiply.
 
     let zero = FieldElement2625x4::zero();
-    let s1 = sq.shuffle(Shuffle::AAAA); // (S1, S1, S1, S1)
-    let s2 = sq.shuffle(Shuffle::BBBB); // (S2, S2, S2, S2)
+    let s1 = sq.shuffle(Shuffle::BroadcastA); // (S1, S1, S1, S1)
+    let s2 = sq.shuffle(Shuffle::BroadcastB); // (S2, S2, S2, S2)
 
     // Build the target vector incrementally:
     let sq_doubled = sq.add(&sq); // (2S1, 2S2, 2S3, −2S4)
@@ -186,8 +185,8 @@ impl ExtendedPointAvx2 {
     let tmp = tmp.add(&neg_s2_in_bc); // (S5, S6, S8, S9)
 
     // Step 4: Shuffle into final multiply operands.
-    let t0 = tmp.shuffle(Shuffle::CACA); // (S8, S5, S8, S5)
-    let t1 = tmp.shuffle(Shuffle::DBBD); // (S9, S6, S6, S9)
+    let t0 = tmp.shuffle(Shuffle::AlternateCA); // (S8, S5, S8, S5)
+    let t1 = tmp.shuffle(Shuffle::OuterDInnerB); // (S9, S6, S6, S9)
 
     // Step 5: Uniform multiply → (S8·S9, S5·S6, S8·S6, S5·S9) = (X3, Y3, Z3, T3).
     Self(t0.mul(&t1))
@@ -206,9 +205,8 @@ impl CachedPointAvx2 {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn neg(&self) -> Self {
-    let swapped = self.0.shuffle(Shuffle::BACD); // swap A↔B, keep C,D
+  pub(crate) fn neg(&self) -> Self {
+    let swapped = self.0.shuffle(Shuffle::SwapAB); // swap A↔B, keep C,D
     let negated = swapped.negate_lazy();
     Self(swapped.blend(&negated, Lanes::D)) // negate D only
   }
@@ -225,16 +223,27 @@ fn ct_eq_mask_u8(lhs: u8, rhs: u8) -> u64 {
 #[inline(always)]
 #[must_use]
 fn ct_negative_mask_i8(value: i8) -> u64 {
-  let bit = ((i16::from(value) >> 15) & 1) as u64;
+  let bit = u64::from(value.to_ne_bytes()[0] >> 7);
   0u64.wrapping_sub(bit)
 }
 
 #[inline(always)]
 #[must_use]
 fn ct_abs_i8(value: i8) -> u8 {
-  let value = i16::from(value);
-  let sign = value >> 15;
-  ((value ^ sign) - sign) as u8
+  let value = value.to_ne_bytes()[0];
+  let sign = value >> 7;
+  let mask = 0u8.wrapping_sub(sign);
+  (value ^ mask).wrapping_add(sign)
+}
+
+#[inline]
+fn volatile_copy_field(field: &FieldElement) -> FieldElement {
+  let mut limbs = [0u64; 5];
+  for (output, input) in limbs.iter_mut().zip(field.limbs()) {
+    // SAFETY: `input` is an aligned reference to an initialized `u64` that remains live for this read.
+    *output = unsafe { core::ptr::read_volatile(input) };
+  }
+  FieldElement::from_limbs(limbs)
 }
 
 /// Fixed-schedule cached-point selection for AVX2 fixed-base tables.
@@ -244,8 +253,7 @@ fn ct_abs_i8(value: i8) -> u8 {
 /// Caller must ensure AVX2 is available.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn select_cached_avx2(lhs: &CachedPointAvx2, rhs: &CachedPointAvx2, mask: u64) -> CachedPointAvx2 {
+fn select_cached_avx2(lhs: &CachedPointAvx2, rhs: &CachedPointAvx2, mask: u64) -> CachedPointAvx2 {
   CachedPointAvx2(lhs.0.select_mask(&rhs.0, mask))
 }
 
@@ -256,8 +264,7 @@ unsafe fn select_cached_avx2(lhs: &CachedPointAvx2, rhs: &CachedPointAvx2, mask:
 /// Caller must ensure AVX2 is available.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn hamburg_constants() -> FieldElement2625x4 {
+fn hamburg_constants() -> FieldElement2625x4 {
   let d2_fe = FieldElement::from_small(D2);
   let d2_fe_2 = FieldElement::from_small(D2.wrapping_mul(2));
   let d1_fe_2 = FieldElement::from_small(D1.wrapping_mul(2));
@@ -274,8 +281,7 @@ unsafe fn hamburg_constants() -> FieldElement2625x4 {
 /// Caller must ensure AVX2 is available.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn hamburg_affine_constants() -> FieldElement2625x4 {
+fn hamburg_affine_constants() -> FieldElement2625x4 {
   let d2_fe = FieldElement::from_small(D2);
   let d2_fe_2 = FieldElement::from_small(D2.wrapping_mul(2));
   FieldElement2625x4::new(&d2_fe, &d2_fe, &d2_fe_2, &d2_fe)
@@ -298,8 +304,8 @@ unsafe fn hamburg_affine_constants() -> FieldElement2625x4 {
 /// Caller must ensure AVX2 is available.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn cached_from_affine(cp: &CachedPoint, constants: &FieldElement2625x4) -> CachedPointAvx2 {
+#[cfg(feature = "ed25519")]
+fn cached_from_affine(cp: &CachedPoint, constants: &FieldElement2625x4) -> CachedPointAvx2 {
   let (y_plus_x, y_minus_x, t2d) = cp.components();
   let packed = FieldElement2625x4::new(y_minus_x, y_plus_x, &FieldElement::ONE, t2d);
   CachedPointAvx2(packed.mul(constants))
@@ -312,8 +318,7 @@ unsafe fn cached_from_affine(cp: &CachedPoint, constants: &FieldElement2625x4) -
 /// Caller must ensure AVX2 is available.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn select_signed_cached_avx2(
+fn select_signed_cached_avx2(
   table: &[CachedPoint; 8],
   digit: i8,
   affine_k: &FieldElement2625x4,
@@ -321,10 +326,14 @@ unsafe fn select_signed_cached_avx2(
 ) -> CachedPointAvx2 {
   let abs = core::hint::black_box(ct_abs_i8(digit));
   let mut selected = *identity;
-  for (i, candidate) in table.iter().enumerate() {
-    let candidate = core::ptr::read_volatile(candidate);
-    let cached = cached_from_affine(&candidate, affine_k);
-    let mask = core::hint::black_box(ct_eq_mask_u8(abs, (i as u8).wrapping_add(1)));
+  for (expected, candidate) in (1u8..=8).zip(table) {
+    let (y_plus_x, y_minus_x, t2d) = candidate.components();
+    let y_plus_x = volatile_copy_field(y_plus_x);
+    let y_minus_x = volatile_copy_field(y_minus_x);
+    let t2d = volatile_copy_field(t2d);
+    let packed = FieldElement2625x4::new(&y_minus_x, &y_plus_x, &FieldElement::ONE, &t2d);
+    let cached = CachedPointAvx2(packed.mul(affine_k));
+    let mask = core::hint::black_box(ct_eq_mask_u8(abs, expected));
     selected = select_cached_avx2(&selected, &cached, mask);
   }
 
@@ -339,8 +348,8 @@ unsafe fn select_signed_cached_avx2(
 /// Caller must ensure AVX2 is available.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn add_wnaf_digit_cached_avx2(
+#[cfg(feature = "ed25519")]
+fn add_wnaf_digit_cached_avx2(
   acc: ExtendedPointAvx2,
   table: &[CachedPoint; 8],
   digit: i8,
@@ -366,8 +375,8 @@ unsafe fn add_wnaf_digit_cached_avx2(
 /// Caller must ensure AVX2 is available.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn add_signed_runtime_cached_avx2(
+#[cfg(feature = "ed25519")]
+fn add_signed_runtime_cached_avx2(
   acc: ExtendedPointAvx2,
   table: &[CachedPointAvx2; 8],
   digit: i8,
@@ -390,8 +399,8 @@ unsafe fn add_signed_runtime_cached_avx2(
 ///
 /// Caller must ensure AVX2 is available.
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn cached_multiples_avx2(point: &ExtendedPointAvx2) -> [CachedPointAvx2; 8] {
+#[cfg(feature = "ed25519")]
+fn cached_multiples_avx2(point: &ExtendedPointAvx2) -> [CachedPointAvx2; 8] {
   let mut acc = *point;
   let point_cached = point.to_cached();
   let first = acc.to_cached();
@@ -415,9 +424,9 @@ unsafe fn cached_multiples_avx2(point: &ExtendedPointAvx2) -> [CachedPointAvx2; 
 ///
 /// Caller must ensure AVX2 is available.
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
+#[cfg(feature = "ed25519")]
 pub(crate) unsafe fn scalar_mul_vartime_avx2(point: &ExtendedPoint, scalar_bytes: &[u8; 32]) -> ExtendedPoint {
-  let digits = scalar::as_radix_16(scalar_bytes);
+  let digits = scalar_radix_16(scalar_bytes);
   let avx_point = ExtendedPointAvx2::from_extended(point);
   let table = cached_multiples_avx2(&avx_point);
 
@@ -441,12 +450,18 @@ pub(crate) unsafe fn scalar_mul_vartime_avx2(point: &ExtendedPoint, scalar_bytes
 /// # Safety
 ///
 /// Caller must ensure AVX2 is available.
+#[cfg_attr(
+  all(target_os = "linux", not(any(test, miri, feature = "portable-only"))),
+  expect(
+    dead_code,
+    reason = "x86_64 Linux library builds route fixed-base multiplication through assembly"
+  )
+)]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
 pub(crate) unsafe fn scalar_mul_basepoint_avx2(scalar_bytes: &[u8; 32]) -> ExtendedPoint {
   use super::point::BASEPOINT_RADIX16_TABLE;
 
-  let digits = scalar::as_radix_16(scalar_bytes);
+  let digits = scalar_radix_16(scalar_bytes);
   let affine_k = hamburg_affine_constants();
   let mut acc = ExtendedPointAvx2::from_extended(&ExtendedPoint::identity());
   let identity = acc.to_cached();
@@ -467,7 +482,6 @@ pub(crate) unsafe fn scalar_mul_basepoint_avx2(scalar_bytes: &[u8; 32]) -> Exten
 #[cfg(feature = "diag")]
 #[inline]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe fn diag_select_basepoint_cached_avx2_limb_digest(digit: i8) -> [u64; 20] {
   use super::point::BASEPOINT_RADIX16_TABLE;
 
@@ -476,7 +490,7 @@ pub unsafe fn diag_select_basepoint_cached_avx2_limb_digest(digit: i8) -> [u64; 
   let selected = select_signed_cached_avx2(&BASEPOINT_RADIX16_TABLE[0], digit, &affine_k, &identity);
   let fields = selected.0.split();
   let mut out = [0u64; 20];
-  for (chunk, field) in out.chunks_exact_mut(5).zip(fields.iter()) {
+  for (chunk, field) in out.as_chunks_mut::<5>().0.iter_mut().zip(fields.iter()) {
     chunk.copy_from_slice(field.limbs());
   }
   out
@@ -491,8 +505,8 @@ pub unsafe fn diag_select_basepoint_cached_avx2_limb_digest(digit: i8) -> [u64; 
 ///
 /// Caller must ensure AVX2 is available.
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn odd_multiples_avx2<const N: usize>(point: &ExtendedPointAvx2) -> [CachedPointAvx2; N] {
+#[cfg(feature = "ed25519")]
+fn odd_multiples_avx2<const N: usize>(point: &ExtendedPointAvx2) -> [CachedPointAvx2; N] {
   let p2 = point.double();
   let p2_cached = p2.to_cached();
 
@@ -513,8 +527,8 @@ unsafe fn odd_multiples_avx2<const N: usize>(point: &ExtendedPointAvx2) -> [Cach
 /// Caller must ensure AVX2 is available.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn add_wnaf_digit_avx2(acc: ExtendedPointAvx2, table: &[CachedPointAvx2], digit: i8) -> ExtendedPointAvx2 {
+#[cfg(feature = "ed25519")]
+fn add_wnaf_digit_avx2(acc: ExtendedPointAvx2, table: &[CachedPointAvx2], digit: i8) -> ExtendedPointAvx2 {
   let index = usize::from((digit.unsigned_abs().wrapping_sub(1)) / 2);
   let Some(point) = table.get(index) else {
     return acc;
@@ -540,8 +554,7 @@ unsafe fn add_wnaf_digit_avx2(acc: ExtendedPointAvx2, table: &[CachedPointAvx2],
 ///
 /// Caller must ensure AVX2 is available.
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-#[allow(clippy::indexing_slicing)] // i bounded by top < 256, naf arrays are [i8; 256]
+#[cfg(feature = "ed25519")]
 pub(crate) unsafe fn straus_wnaf_vartime_avx2(s: &[u8; 32], h: &[u8; 32], a: &ExtendedPoint) -> ExtendedPoint {
   use super::point::BASEPOINT_WNAF5_TABLE;
 
@@ -608,8 +621,7 @@ impl ExtendedPointIfma {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn from_extended(p: &ExtendedPoint) -> Self {
+  pub(crate) fn from_extended(p: &ExtendedPoint) -> Self {
     let (x, y, z, t) = p.components();
     Self(FieldElement51x4::new(x, y, z, t))
   }
@@ -621,8 +633,7 @@ impl ExtendedPointIfma {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn to_extended(self) -> ExtendedPoint {
+  pub(crate) fn to_extended(self) -> ExtendedPoint {
     let [x, y, z, t] = self.0.split();
     ExtendedPoint::from_raw(x, y, z, t)
   }
@@ -634,8 +645,7 @@ impl ExtendedPointIfma {
   /// Caller must ensure AVX-512 IFMA + VL are available.
   #[inline]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn to_cached(self) -> CachedPointIfma {
+  pub(crate) fn to_cached(self) -> CachedPointIfma {
     let ds = self.0.diff_sum();
     let prepared = self.0.blend(&ds, Lanes::AB);
     let constants = hamburg_constants_ifma();
@@ -651,16 +661,15 @@ impl ExtendedPointIfma {
   /// Caller must ensure AVX-512 IFMA + VL are available.
   #[inline]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn add_cached(&self, other: &CachedPointIfma) -> Self {
+  pub(crate) fn add_cached(&self, other: &CachedPointIfma) -> Self {
     let ds = self.0.diff_sum();
     let tmp = self.0.blend(&ds, Lanes::AB);
     let product = tmp.reduce().mul(&other.0);
-    let swapped = product.shuffle(Shuffle::ABDC);
+    let swapped = product.shuffle(Shuffle::SwapCD);
     let ehfg = swapped.diff_sum();
     let reduced = ehfg.reduce();
-    let t0 = reduced.shuffle(Shuffle::ADDA);
-    let t1 = reduced.shuffle(Shuffle::CBCB);
+    let t0 = reduced.shuffle(Shuffle::OuterAInnerD);
+    let t1 = reduced.shuffle(Shuffle::AlternateCB);
     Self(t0.mul(&t1))
   }
 
@@ -674,11 +683,11 @@ impl ExtendedPointIfma {
   /// Caller must ensure AVX-512 IFMA + VL are available.
   #[inline]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn double(&self) -> Self {
+  #[cfg(feature = "ed25519")]
+  pub(crate) fn double(&self) -> Self {
     // Prepare (X, Y, Z, X+Y) for squaring.
-    let tmp0 = self.0.shuffle(Shuffle::BADC); // (Y, X, _, _)
-    let tmp1 = self.0.add(&tmp0).shuffle(Shuffle::ABAB); // (X+Y, X+Y, X+Y, X+Y)
+    let tmp0 = self.0.shuffle(Shuffle::SwapPairs); // (Y, X, _, _)
+    let tmp1 = self.0.add(&tmp0).shuffle(Shuffle::RepeatAB); // (X+Y, X+Y, X+Y, X+Y)
     let prepared = self.0.blend(&tmp1, Lanes::D); // (X, Y, Z, X+Y)
 
     // Square reduced inputs → (S1, S2, S3, S4) = (X², Y², Z², (X+Y)²)
@@ -688,8 +697,8 @@ impl ExtendedPointIfma {
     // Compute (S5, S6, S8, S9) where:
     //   S5 = S1+S2, S6 = S1-S2, S8 = S1-S2+2S3, S9 = S1+S2-S4
     let zero = FieldElement51x4::zero();
-    let s1 = sq.shuffle(Shuffle::AAAA);
-    let s2 = sq.shuffle(Shuffle::BBBB);
+    let s1 = sq.shuffle(Shuffle::BroadcastA);
+    let s2 = sq.shuffle(Shuffle::BroadcastB);
 
     // (-S2, -S2, -S2, -S4): negate S2 in A,B,C and S4 in D.
     let s2_s2_s2_s4 = s2.blend(&sq, Lanes::D).negate_lazy();
@@ -698,13 +707,13 @@ impl ExtendedPointIfma {
     // = (S1, S1, S1+2S3, S1)
     tmp0 = tmp0.add(&zero.blend(&s2, Lanes::AD));
     // = (S1+S2, S1, S1+2S3, S1+S2)
-    tmp0 = tmp0.add(&zero.blend(&s2_s2_s2_s4, Lanes::BCD));
+    tmp0 = tmp0.add(&zero.blend(&s2_s2_s2_s4, Lanes::ExceptA));
     // = (S1+S2, S1-S2, S1+2S3-S2, S1+S2-S4) = (S5, S6, S8, S9)
 
     // Reduce before final multiply.
     let reduced = tmp0.reduce();
-    let t0 = reduced.shuffle(Shuffle::CACA); // (S8, S5, S8, S5)
-    let t1 = reduced.shuffle(Shuffle::DBBD); // (S9, S6, S6, S9)
+    let t0 = reduced.shuffle(Shuffle::AlternateCA); // (S8, S5, S8, S5)
+    let t1 = reduced.shuffle(Shuffle::OuterDInnerB); // (S9, S6, S6, S9)
 
     // (S8·S9, S5·S6, S8·S6, S5·S9) = (X3, Y3, Z3, T3)
     Self(t0.mul(&t1))
@@ -720,9 +729,8 @@ impl CachedPointIfma {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn neg(&self) -> Self {
-    let swapped = self.0.shuffle(Shuffle::BACD);
+  pub(crate) fn neg(&self) -> Self {
+    let swapped = self.0.shuffle(Shuffle::SwapAB);
     let negated = swapped.negate_lazy();
     Self(swapped.blend(&negated, Lanes::D))
   }
@@ -735,8 +743,7 @@ impl CachedPointIfma {
 /// Caller must ensure AVX2 is available.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn select_cached_ifma(lhs: &CachedPointIfma, rhs: &CachedPointIfma, mask: u64) -> CachedPointIfma {
+fn select_cached_ifma(lhs: &CachedPointIfma, rhs: &CachedPointIfma, mask: u64) -> CachedPointIfma {
   CachedPointIfma(lhs.0.select_mask(&rhs.0, mask))
 }
 
@@ -747,8 +754,7 @@ unsafe fn select_cached_ifma(lhs: &CachedPointIfma, rhs: &CachedPointIfma, mask:
 /// Caller must ensure AVX2 is available.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn hamburg_constants_ifma() -> FieldElement51x4 {
+fn hamburg_constants_ifma() -> FieldElement51x4 {
   let d2_fe = FieldElement::from_small(D2);
   let d2_fe_2 = FieldElement::from_small(D2.wrapping_mul(2));
   let d1_fe_2 = FieldElement::from_small(D1.wrapping_mul(2));
@@ -762,29 +768,12 @@ unsafe fn hamburg_constants_ifma() -> FieldElement51x4 {
 /// Caller must ensure AVX2 is available.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn hamburg_affine_constants_ifma() -> FieldElement51x4 {
+fn hamburg_affine_constants_ifma() -> FieldElement51x4 {
   let d2_fe = FieldElement::from_small(D2);
   let d2_fe_2 = FieldElement::from_small(D2.wrapping_mul(2));
   FieldElement51x4::new(&d2_fe, &d2_fe, &d2_fe_2, &d2_fe)
 }
 
-/// Convert an affine `CachedPoint` to Hamburg-scaled IFMA cached format.
-///
-/// # Safety
-///
-/// Caller must ensure AVX-512 IFMA + VL are available.
-#[inline]
-#[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn cached_from_affine_ifma(cp: &CachedPoint, constants: &FieldElement51x4) -> CachedPointIfma {
-  let (y_plus_x, y_minus_x, t2d) = cp.components();
-  let packed = FieldElement51x4::new(y_minus_x, y_plus_x, &FieldElement::ONE, t2d);
-  // Affine table entries are already reduced (≤51-bit limbs from static data).
-  CachedPointIfma(packed.mul_small(constants).reduce())
-}
-
-/// Add a signed digit from an affine cached table (IFMA).
 /// Select a signed digit from an affine cached basepoint table.
 ///
 /// # Safety
@@ -792,8 +781,7 @@ unsafe fn cached_from_affine_ifma(cp: &CachedPoint, constants: &FieldElement51x4
 /// Caller must ensure AVX-512 IFMA + VL are available.
 #[inline]
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn select_signed_cached_ifma(
+fn select_signed_cached_ifma(
   table: &[CachedPoint; 8],
   digit: i8,
   affine_k: &FieldElement51x4,
@@ -801,10 +789,14 @@ unsafe fn select_signed_cached_ifma(
 ) -> CachedPointIfma {
   let abs = core::hint::black_box(ct_abs_i8(digit));
   let mut selected = *identity;
-  for (i, candidate) in table.iter().enumerate() {
-    let candidate = core::ptr::read_volatile(candidate);
-    let cached = cached_from_affine_ifma(&candidate, affine_k);
-    let mask = core::hint::black_box(ct_eq_mask_u8(abs, (i as u8).wrapping_add(1)));
+  for (expected, candidate) in (1u8..=8).zip(table) {
+    let (y_plus_x, y_minus_x, t2d) = candidate.components();
+    let y_plus_x = volatile_copy_field(y_plus_x);
+    let y_minus_x = volatile_copy_field(y_minus_x);
+    let t2d = volatile_copy_field(t2d);
+    let packed = FieldElement51x4::new(&y_minus_x, &y_plus_x, &FieldElement::ONE, &t2d);
+    let cached = CachedPointIfma(packed.mul_small(affine_k).reduce());
+    let mask = core::hint::black_box(ct_eq_mask_u8(abs, expected));
     selected = select_cached_ifma(&selected, &cached, mask);
   }
 
@@ -819,8 +811,8 @@ unsafe fn select_signed_cached_ifma(
 /// Caller must ensure AVX-512 IFMA + VL are available.
 #[inline]
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn add_signed_runtime_cached_ifma(
+#[cfg(feature = "ed25519")]
+fn add_signed_runtime_cached_ifma(
   acc: ExtendedPointIfma,
   table: &[CachedPointIfma; 8],
   digit: i8,
@@ -842,8 +834,8 @@ unsafe fn add_signed_runtime_cached_ifma(
 ///
 /// Caller must ensure AVX-512 IFMA + VL are available.
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn cached_multiples_ifma(point: &ExtendedPointIfma) -> [CachedPointIfma; 8] {
+#[cfg(feature = "ed25519")]
+fn cached_multiples_ifma(point: &ExtendedPointIfma) -> [CachedPointIfma; 8] {
   let mut acc = *point;
   let point_cached = point.to_cached();
   let first = acc.to_cached();
@@ -862,9 +854,9 @@ unsafe fn cached_multiples_ifma(point: &ExtendedPointIfma) -> [CachedPointIfma; 
 ///
 /// Caller must ensure AVX-512 IFMA + VL are available.
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[allow(unsafe_op_in_unsafe_fn)]
+#[cfg(feature = "ed25519")]
 pub(crate) unsafe fn scalar_mul_vartime_ifma(point: &ExtendedPoint, scalar_bytes: &[u8; 32]) -> ExtendedPoint {
-  let digits = scalar::as_radix_16(scalar_bytes);
+  let digits = scalar_radix_16(scalar_bytes);
   let ifma_point = ExtendedPointIfma::from_extended(point);
   let table = cached_multiples_ifma(&ifma_point);
   let mut acc = ExtendedPointIfma::from_extended(&ExtendedPoint::identity());
@@ -882,12 +874,18 @@ pub(crate) unsafe fn scalar_mul_vartime_ifma(point: &ExtendedPoint, scalar_bytes
 /// # Safety
 ///
 /// Caller must ensure AVX-512 IFMA + VL are available.
+#[cfg_attr(
+  all(target_os = "linux", not(any(test, miri, feature = "portable-only"))),
+  expect(
+    dead_code,
+    reason = "x86_64 Linux library builds route fixed-base multiplication through assembly"
+  )
+)]
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[allow(unsafe_op_in_unsafe_fn)]
 pub(crate) unsafe fn scalar_mul_basepoint_ifma(scalar_bytes: &[u8; 32]) -> ExtendedPoint {
   use super::point::BASEPOINT_RADIX16_TABLE;
 
-  let digits = scalar::as_radix_16(scalar_bytes);
+  let digits = scalar_radix_16(scalar_bytes);
   let affine_k = hamburg_affine_constants_ifma();
   let mut acc = ExtendedPointIfma::from_extended(&ExtendedPoint::identity());
   let identity = acc.to_cached();
@@ -908,7 +906,6 @@ pub(crate) unsafe fn scalar_mul_basepoint_ifma(scalar_bytes: &[u8; 32]) -> Exten
 #[cfg(feature = "diag")]
 #[inline]
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe fn diag_select_basepoint_cached_ifma_limb_digest(digit: i8) -> [u64; 20] {
   use super::point::BASEPOINT_RADIX16_TABLE;
 
@@ -917,7 +914,7 @@ pub unsafe fn diag_select_basepoint_cached_ifma_limb_digest(digit: i8) -> [u64; 
   let selected = select_signed_cached_ifma(&BASEPOINT_RADIX16_TABLE[0], digit, &affine_k, &identity);
   let fields = selected.0.split();
   let mut out = [0u64; 20];
-  for (chunk, field) in out.chunks_exact_mut(5).zip(fields.iter()) {
+  for (chunk, field) in out.as_chunks_mut::<5>().0.iter_mut().zip(fields.iter()) {
     chunk.copy_from_slice(field.limbs());
   }
   out
@@ -939,8 +936,8 @@ pub unsafe fn diag_select_basepoint_cached_ifma_limb_digest(digit: i8) -> [u64; 
 ///
 /// Caller must ensure AVX-512 IFMA + VL are available.
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn odd_multiples_ifma<const N: usize>(point: &ExtendedPointIfma) -> [CachedPointIfma; N] {
+#[cfg(feature = "ed25519")]
+fn odd_multiples_ifma<const N: usize>(point: &ExtendedPointIfma) -> [CachedPointIfma; N] {
   let p2 = point.double();
   let p2_cached = p2.to_cached();
 
@@ -964,8 +961,8 @@ unsafe fn odd_multiples_ifma<const N: usize>(point: &ExtendedPointIfma) -> [Cach
 /// Caller must ensure AVX-512 IFMA + VL are available.
 #[inline]
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn add_wnaf_digit_ifma(acc: ExtendedPointIfma, table: &[CachedPointIfma], digit: i8) -> ExtendedPointIfma {
+#[cfg(feature = "ed25519")]
+fn add_wnaf_digit_ifma(acc: ExtendedPointIfma, table: &[CachedPointIfma], digit: i8) -> ExtendedPointIfma {
   let index = usize::from((digit.unsigned_abs().wrapping_sub(1)) / 2);
   let Some(point) = table.get(index) else {
     return acc;
@@ -985,15 +982,19 @@ unsafe fn add_wnaf_digit_ifma(acc: ExtendedPointIfma, table: &[CachedPointIfma],
 /// Caller must ensure AVX2 is available.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn load_cached_ifma_raw(entry: &[[i64; 4]; 5]) -> CachedPointIfma {
-  CachedPointIfma(FieldElement51x4([
-    _mm256_loadu_si256(entry[0].as_ptr().cast()),
-    _mm256_loadu_si256(entry[1].as_ptr().cast()),
-    _mm256_loadu_si256(entry[2].as_ptr().cast()),
-    _mm256_loadu_si256(entry[3].as_ptr().cast()),
-    _mm256_loadu_si256(entry[4].as_ptr().cast()),
-  ]))
+#[cfg(feature = "ed25519")]
+fn load_cached_ifma_raw(entry: &[[i64; 4]; 5]) -> CachedPointIfma {
+  // SAFETY: AVX2 is active in this function, and every inner array provides 32 initialized bytes for an unaligned load.
+  let limbs = unsafe {
+    [
+      _mm256_loadu_si256(entry[0].as_ptr().cast()),
+      _mm256_loadu_si256(entry[1].as_ptr().cast()),
+      _mm256_loadu_si256(entry[2].as_ptr().cast()),
+      _mm256_loadu_si256(entry[3].as_ptr().cast()),
+      _mm256_loadu_si256(entry[4].as_ptr().cast()),
+    ]
+  };
+  CachedPointIfma(FieldElement51x4(limbs))
 }
 
 /// Add a signed wNAF digit from the static raw basepoint table.
@@ -1003,8 +1004,8 @@ unsafe fn load_cached_ifma_raw(entry: &[[i64; 4]; 5]) -> CachedPointIfma {
 /// Caller must ensure AVX-512 IFMA + VL are available.
 #[inline]
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn add_wnaf_digit_ifma_raw(acc: ExtendedPointIfma, table: &[[[i64; 4]; 5]], digit: i8) -> ExtendedPointIfma {
+#[cfg(feature = "ed25519")]
+fn add_wnaf_digit_ifma_raw(acc: ExtendedPointIfma, table: &[[[i64; 4]; 5]], digit: i8) -> ExtendedPointIfma {
   let index = usize::from((digit.unsigned_abs().wrapping_sub(1)) / 2);
   let Some(entry) = table.get(index) else {
     return acc;
@@ -1033,8 +1034,7 @@ unsafe fn add_wnaf_digit_ifma_raw(acc: ExtendedPointIfma, table: &[[[i64; 4]; 5]
 ///
 /// Caller must ensure AVX-512 IFMA + VL are available.
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[allow(unsafe_op_in_unsafe_fn)]
-#[allow(clippy::indexing_slicing)] // i bounded by top < 256, naf arrays are [i8; 256]
+#[cfg(feature = "ed25519")]
 pub(crate) unsafe fn straus_wnaf_vartime_ifma(s: &[u8; 32], h: &[u8; 32], a: &ExtendedPoint) -> ExtendedPoint {
   let s_naf = scalar::non_adjacent_form(s, 8);
   let h_naf = scalar::non_adjacent_form(h, 5);
@@ -1085,6 +1085,7 @@ pub(crate) unsafe fn straus_wnaf_vartime_ifma(s: &[u8; 32], h: &[u8; 32], a: &Ex
 
 #[cfg(test)]
 #[cfg(target_arch = "x86_64")]
+#[cfg(feature = "ed25519")]
 mod tests {
   use super::{ExtendedPoint, *};
 
@@ -1096,20 +1097,37 @@ mod tests {
     ExtendedPoint::basepoint()
   }
 
-  fn decode_hex_32(hex: &str) -> [u8; 32] {
-    let bytes = hex.as_bytes();
+  fn decode_hex_32(hex: &str) -> Option<[u8; 32]> {
     let mut out = [0u8; 32];
-    for (dst, chunk) in out.iter_mut().zip(bytes.chunks_exact(2)) {
-      *dst = hex_val(chunk[0]) << 4 | hex_val(chunk[1]);
-    }
-    out
+    crate::hex::from_hex(hex, &mut out).ok()?;
+    Some(out)
   }
 
-  fn hex_val(b: u8) -> u8 {
-    match b {
-      b'0'..=b'9' => b - b'0',
-      b'a'..=b'f' => b - b'a' + 10,
-      _ => panic!("invalid hex"),
+  #[test]
+  fn ifma_wnaf8_table_matches_portable_odd_multiples() {
+    let step = basepoint().double();
+    let mut point = basepoint();
+    let d2 = FieldElement::from_small(D2);
+    let d2_twice = FieldElement::from_small(D2.wrapping_mul(2));
+    let d1_twice = FieldElement::from_small(D1.wrapping_mul(2));
+
+    for entry in &basepoint_table_ifma::BASEPOINT_WNAF8_IFMA_RAW {
+      let (x, y, z, t) = point.components();
+      let a = d2.mul(&y.sub(x)).normalize();
+      let b = d2.mul(&y.add(x)).normalize();
+      let c = d2_twice.mul(z).normalize();
+      let d = d1_twice.mul(t).neg().normalize();
+
+      for ((((raw, &a_limb), &b_limb), &c_limb), &d_limb) in
+        entry.iter().zip(a.limbs()).zip(b.limbs()).zip(c.limbs()).zip(d.limbs())
+      {
+        assert_eq!(
+          (*raw).map(|value| u64::from_ne_bytes(value.to_ne_bytes())),
+          [a_limb, b_limb, c_limb, d_limb]
+        );
+      }
+
+      point = point.add(&step);
     }
   }
 
@@ -1303,7 +1321,6 @@ mod tests {
     }
   }
 
-  #[cfg(feature = "ed25519")]
   #[test]
   fn scalar_mul_basepoint_rfc8032_vector1() {
     if !std::arch::is_x86_feature_detected!("avx2") {
@@ -1311,9 +1328,9 @@ mod tests {
     }
     use crate::auth::ed25519::{Ed25519SecretKey, hash::ExpandedSecret};
 
-    let secret = Ed25519SecretKey::from_bytes(decode_hex_32(
-      "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
-    ));
+    let secret_bytes = decode_hex_32("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
+    assert!(secret_bytes.is_some());
+    let secret = Ed25519SecretKey::from_bytes(secret_bytes.unwrap_or_default());
     let expanded = ExpandedSecret::from_secret_key(&secret);
     let expected = decode_hex_32("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a");
 
@@ -1322,13 +1339,12 @@ mod tests {
       let avx_pub = scalar_mul_basepoint_avx2(expanded.scalar_bytes());
       assert_eq!(
         avx_pub.to_bytes(),
-        Some(expected),
+        expected,
         "AVX2 basepoint mul should match RFC 8032 vector 1"
       );
     }
   }
 
-  #[cfg(feature = "ed25519")]
   #[test]
   fn straus_matches_scalar() {
     if !std::arch::is_x86_feature_detected!("avx2") {
@@ -1354,7 +1370,6 @@ mod tests {
     }
   }
 
-  #[cfg(feature = "ed25519")]
   #[test]
   fn straus_matches_scalar_large_scalars() {
     if !std::arch::is_x86_feature_detected!("avx2") {
@@ -1379,9 +1394,15 @@ mod tests {
     r_bytes.copy_from_slice(&sig_bytes[..32]);
     s_bytes.copy_from_slice(&sig_bytes[32..]);
 
-    let r_point = ExtendedPoint::from_bytes(&r_bytes).unwrap();
-    let a_point = ExtendedPoint::from_bytes(public.as_bytes()).unwrap();
-    let s_scalar = super::super::scalar::from_canonical_bytes(&s_bytes).unwrap();
+    let r_point = ExtendedPoint::from_bytes(&r_bytes);
+    let a_point = ExtendedPoint::from_bytes(public.as_bytes());
+    let s_scalar = super::super::scalar::from_canonical_bytes(&s_bytes);
+    assert!(r_point.is_some());
+    assert!(a_point.is_some());
+    assert!(s_scalar.is_some());
+    let r_point = r_point.unwrap_or_default();
+    let a_point = a_point.unwrap_or_default();
+    let s_scalar = s_scalar.unwrap_or_default();
 
     let mut hasher = Sha512::new();
     hasher.update(&r_bytes);

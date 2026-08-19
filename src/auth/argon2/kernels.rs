@@ -9,7 +9,6 @@
 //! in sibling files (`aarch64.rs`, `x86_64.rs`, …) and are gated by
 //! `#[cfg(target_arch = ...)]`. The runtime dispatcher is [`super::dispatch`].
 
-#![allow(clippy::indexing_slicing)]
 // The portable kernel body is generic over the block word count (128) —
 // every index is bounds-proven by the fixed `[u64; BLOCK_WORDS]` shape.
 
@@ -97,7 +96,7 @@ pub(super) unsafe fn compress_portable(
   let mut q = r;
 
   // Row pass: apply P to each 16-word row (8 rows of 16 u64s).
-  for chunk in q.chunks_exact_mut(P_LANE_WORDS) {
+  for chunk in q.as_chunks_mut::<P_LANE_WORDS>().0 {
     p_direct!(
       chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7], chunk[8], chunk[9], chunk[10],
       chunk[11], chunk[12], chunk[13], chunk[14], chunk[15],
@@ -107,24 +106,24 @@ pub(super) unsafe fn compress_portable(
   // Column pass: each 16-word column is two u64s per row at the same
   // register index.
   for col in 0usize..8 {
-    let base = col * 2;
+    let base = col.strict_mul(2);
     p_direct!(
       q[base],
-      q[base + 1],
-      q[base + 16],
-      q[base + 17],
-      q[base + 32],
-      q[base + 33],
-      q[base + 48],
-      q[base + 49],
-      q[base + 64],
-      q[base + 65],
-      q[base + 80],
-      q[base + 81],
-      q[base + 96],
-      q[base + 97],
-      q[base + 112],
-      q[base + 113],
+      q[base.strict_add(1)],
+      q[base.strict_add(16)],
+      q[base.strict_add(17)],
+      q[base.strict_add(32)],
+      q[base.strict_add(33)],
+      q[base.strict_add(48)],
+      q[base.strict_add(49)],
+      q[base.strict_add(64)],
+      q[base.strict_add(65)],
+      q[base.strict_add(80)],
+      q[base.strict_add(81)],
+      q[base.strict_add(96)],
+      q[base.strict_add(97)],
+      q[base.strict_add(112)],
+      q[base.strict_add(113)],
     );
   }
 

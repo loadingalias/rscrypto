@@ -10,8 +10,8 @@ fn ascon_hash256_streaming(data: &[u8]) -> [u8; 32] {
   let mut hasher = AsconHash256::new();
   let mut i = 0usize;
   while i < data.len() {
-    let step = (data[i] as usize % 97) + 1;
-    let end = core::cmp::min(data.len(), i + step);
+    let step = usize::from(data[i]).strict_rem(97).strict_add(1);
+    let end = core::cmp::min(data.len(), i.strict_add(step));
     hasher.update(&data[i..end]);
     i = end;
   }
@@ -57,8 +57,8 @@ proptest! {
     split_data in any::<usize>(),
     split_out in any::<usize>(),
   ) {
-    let split_data = split_data % (data.len() + 1);
-    let split_out = split_out % (out_len + 1);
+    let split_data = split_data.strict_rem(data.len().strict_add(1));
+    let split_out = split_out.strict_rem(out_len.strict_add(1));
 
     let mut expected = vec![0u8; out_len];
     {

@@ -4,8 +4,6 @@
 //! fixed-base multiplication backend. This module owns the ABI boundary;
 //! `ed25519.rs` owns signing semantics.
 
-#![allow(unsafe_code)]
-
 use core::arch::global_asm;
 
 use super::{

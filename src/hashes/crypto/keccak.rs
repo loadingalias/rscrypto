@@ -3,14 +3,12 @@
 //! This module intentionally exposes only the minimum surface needed by SHA-3,
 //! SHAKE, and SP800-185 derived constructions.
 
-#![allow(clippy::indexing_slicing)] // Keccak state is fixed-size; indexing is audited
-
 #[cfg(all(target_arch = "aarch64", not(miri)))]
 pub(crate) mod aarch64;
-#[cfg(any(test, feature = "diag"))]
+#[cfg(feature = "diag")]
 #[doc(hidden)]
 pub(crate) mod dispatch;
-#[cfg(any(test, feature = "diag"))]
+#[cfg(feature = "diag")]
 #[doc(hidden)]
 pub(crate) mod dispatch_tables;
 #[cfg(test)]
@@ -73,16 +71,17 @@ const RC: [u64; KECCAKF_ROUNDS] = [
 /// all rounds.
 #[cfg(not(target_arch = "aarch64"))]
 #[inline]
-#[allow(unused_assignments)] // final ρ+π iteration assigns `last` which is intentionally unused
 pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
   // ρ+π chain: swap state[PI] with rotated last, hardcoded for constant folding.
   macro_rules! rho_pi {
-    ($state:ident, $last:ident, $(($pi:expr, $rho:expr)),+ $(,)?) => {
-      $(
-        let tmp = $state[$pi];
-        $state[$pi] = $last.rotate_left($rho);
-        $last = tmp;
-      )+
+    ($state:ident, $last:ident, ($pi:expr, $rho:expr) $(,)?) => {
+      $state[$pi] = $last.rotate_left($rho);
+    };
+    ($state:ident, $last:ident, ($pi:expr, $rho:expr), $(($rest_pi:expr, $rest_rho:expr)),+ $(,)?) => {
+      let tmp = $state[$pi];
+      $state[$pi] = $last.rotate_left($rho);
+      $last = tmp;
+      rho_pi!($state, $last, $(($rest_pi, $rest_rho)),+);
     };
   }
 
@@ -416,6 +415,16 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
   state[24] = a24;
 }
 
+#[inline(always)]
+fn read_unaligned_block_lane<const RATE: usize>(block: &[u8; RATE], lane: usize) -> u64 {
+  assert!(lane < RATE / 8, "Keccak lane must be inside the rate block");
+  let offset = lane.strict_mul(8);
+
+  // SAFETY: The assertion establishes `lane * 8 + 8 <= RATE`; the pointer retains `block`'s provenance, and
+  // `read_unaligned` accepts the byte array's alignment.
+  u64::from_le(unsafe { core::ptr::read_unaligned(block.as_ptr().add(offset).cast::<u64>()) })
+}
+
 /// aarch64: fused absorb + Keccak-f[1600] — XOR block data during register load.
 ///
 /// Loads `state[i] ^ block_lane_i` directly into named register variables for
@@ -427,19 +436,9 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
 /// eliminates all `if lane < lanes` branches — the result is straight-line code.
 #[cfg(target_arch = "aarch64")]
 #[inline]
-#[allow(dead_code)] // Only used by non-Miri platform permuters with absorb-block overrides.
 fn keccakf_absorb_portable<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) {
   debug_assert_eq!(RATE % 8, 0);
   let lanes = RATE / 8;
-
-  #[inline(always)]
-  fn read_block_lane(block: *const u8, i: usize) -> u64 {
-    // SAFETY: caller guarantees `i < block.len() / 8`, so the read is in bounds.
-    // `read_unaligned` supports the 1-byte alignment of `[u8; RATE]`.
-    u64::from_le(unsafe { core::ptr::read_unaligned(block.cast::<u64>().add(i)) })
-  }
-
-  let ptr = block.as_ptr();
 
   // Fused load: `state[i] ^ block_lane_i` for absorbed (rate) lanes,
   // plain `state[i]` for capacity lanes. Each `$i` is a literal, so
@@ -448,7 +447,7 @@ fn keccakf_absorb_portable<const RATE: usize>(state: &mut [u64; 25], block: &[u8
   macro_rules! fused_load {
     ($i:expr) => {
       if $i < lanes {
-        state[$i] ^ read_block_lane(ptr, $i)
+        state[$i] ^ read_unaligned_block_lane(block, $i)
       } else {
         state[$i]
       }
@@ -548,8 +547,8 @@ pub(crate) trait Permuter: Copy {
 
   /// Permute three independent states in parallel.
   /// Default: one paired permutation and one single-state permutation.
+  #[cfg(feature = "ml-kem")]
   #[inline(always)]
-  #[allow(dead_code)]
   fn permute_x3(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], state_c: &mut [u64; 25], len_hint: usize) {
     self.permute_x2(state_a, state_b, len_hint);
     self.permute(state_c, len_hint);
@@ -557,8 +556,8 @@ pub(crate) trait Permuter: Copy {
 
   /// Permute four independent states in parallel.
   /// Default: two paired permutations.
+  #[cfg(feature = "ml-kem")]
   #[inline(always)]
-  #[allow(dead_code)]
   fn permute_x4(
     self,
     state_a: &mut [u64; 25],
@@ -584,10 +583,17 @@ pub(crate) trait Permuter: Copy {
 
 /// Direct-call permuter using the portable scalar kernel. No function pointer
 /// indirection — LLVM can inline `keccakf_portable` into the absorb loop.
+#[cfg(any(
+  miri,
+  not(any(target_arch = "aarch64", target_arch = "x86_64", target_arch = "s390x"))
+))]
 #[derive(Clone, Copy, Default)]
-#[allow(dead_code)] // Reference/test permuter is target- and feature-combination dependent.
 pub(crate) struct InlinePermuter;
 
+#[cfg(any(
+  miri,
+  not(any(target_arch = "aarch64", target_arch = "x86_64", target_arch = "s390x"))
+))]
 impl Permuter for InlinePermuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
@@ -636,6 +642,7 @@ impl Permuter for X86Permuter {
     }
   }
 
+  #[cfg(feature = "ml-kem")]
   #[inline(always)]
   fn permute_x4(
     self,
@@ -672,7 +679,7 @@ pub(crate) struct Aarch64Permuter;
 #[derive(Clone, Copy)]
 pub(crate) struct Aarch64Permuter {
   has_sha3: bool,
-  #[cfg(target_os = "linux")]
+  #[cfg(all(target_os = "linux", feature = "ml-kem"))]
   has_sve2_sha3: bool,
 }
 
@@ -684,7 +691,7 @@ impl Default for Aarch64Permuter {
     let caps = crate::platform::caps();
     Self {
       has_sha3: caps.has(aarch64_caps::SHA3),
-      #[cfg(target_os = "linux")]
+      #[cfg(all(target_os = "linux", feature = "ml-kem"))]
       has_sve2_sha3: caps.has(aarch64_caps::SVE2_SHA3),
     }
   }
@@ -720,20 +727,22 @@ impl Permuter for Aarch64Permuter {
     aarch64::keccakf_aarch64_sha3_x2(state_a, state_b);
   }
 
+  #[cfg(feature = "ml-kem")]
   #[inline(always)]
   fn permute_x3(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], state_c: &mut [u64; 25], _len_hint: usize) {
-    #[cfg(all(target_os = "linux", not(target_vendor = "apple")))]
+    #[cfg(all(target_os = "linux", not(target_vendor = "apple"), feature = "ml-kem"))]
     {
       aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
     }
 
-    #[cfg(not(all(target_os = "linux", not(target_vendor = "apple"))))]
+    #[cfg(not(all(target_os = "linux", not(target_vendor = "apple"), feature = "ml-kem")))]
     {
       self.permute_x2(state_a, state_b, _len_hint);
       self.permute(state_c, _len_hint);
     }
   }
 
+  #[cfg(feature = "ml-kem")]
   #[inline(always)]
   fn permute_x4(
     self,
@@ -743,7 +752,7 @@ impl Permuter for Aarch64Permuter {
     state_d: &mut [u64; 25],
     _len_hint: usize,
   ) {
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", feature = "ml-kem"))]
     {
       use crate::platform::caps::aarch64 as aarch64_caps;
       if crate::platform::caps().has(aarch64_caps::SVE2_SHA3)
@@ -753,13 +762,13 @@ impl Permuter for Aarch64Permuter {
       }
     }
 
-    #[cfg(all(target_os = "linux", not(target_vendor = "apple")))]
+    #[cfg(all(target_os = "linux", not(target_vendor = "apple"), feature = "ml-kem"))]
     {
       aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
       keccakf_portable(state_d);
     }
 
-    #[cfg(not(all(target_os = "linux", not(target_vendor = "apple"))))]
+    #[cfg(not(all(target_os = "linux", not(target_vendor = "apple"), feature = "ml-kem")))]
     {
       self.permute_x2(state_a, state_b, _len_hint);
       self.permute_x2(state_c, state_d, _len_hint);
@@ -820,9 +829,10 @@ impl Permuter for Aarch64Permuter {
     }
   }
 
+  #[cfg(feature = "ml-kem")]
   #[inline(always)]
   fn permute_x3(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], state_c: &mut [u64; 25], len_hint: usize) {
-    #[cfg(all(target_os = "linux", not(target_vendor = "apple")))]
+    #[cfg(all(target_os = "linux", not(target_vendor = "apple"), feature = "ml-kem"))]
     if self.has_sha3 {
       aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
       return;
@@ -832,6 +842,7 @@ impl Permuter for Aarch64Permuter {
     self.permute(state_c, len_hint);
   }
 
+  #[cfg(feature = "ml-kem")]
   #[inline(always)]
   fn permute_x4(
     self,
@@ -841,12 +852,12 @@ impl Permuter for Aarch64Permuter {
     state_d: &mut [u64; 25],
     len_hint: usize,
   ) {
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", feature = "ml-kem"))]
     if self.has_sve2_sha3 && aarch64::keccakf_aarch64_sve2_sha3_x4(state_a, state_b, state_c, state_d) {
       return;
     }
 
-    #[cfg(all(target_os = "linux", not(target_vendor = "apple")))]
+    #[cfg(all(target_os = "linux", not(target_vendor = "apple"), feature = "ml-kem"))]
     if self.has_sha3 {
       aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
       keccakf_portable(state_d);
@@ -960,25 +971,6 @@ impl<const RATE: usize, const ZEROIZE: bool> Default for KeccakCoreImpl<RATE, Pl
   }
 }
 
-// On aarch64/s390x, `PlatformPermuter` is NOT `InlinePermuter`, so the
-// portable-reference type alias needs its own `Default`. On other targets
-// `PlatformPermuter = InlinePermuter` and the impl above already covers it.
-#[cfg(all(
-  any(test, feature = "std"),
-  not(miri),
-  any(target_arch = "aarch64", target_arch = "x86_64", target_arch = "s390x")
-))]
-impl<const RATE: usize, const ZEROIZE: bool> Default for KeccakCoreImpl<RATE, InlinePermuter, ZEROIZE> {
-  #[inline]
-  fn default() -> Self {
-    Self {
-      state: [0u64; 25],
-      buf_len: 0,
-      permuter: InlinePermuter,
-    }
-  }
-}
-
 impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> Drop for KeccakCoreImpl<RATE, P, ZEROIZE> {
   fn drop(&mut self) {
     if ZEROIZE {
@@ -997,7 +989,8 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakCoreImpl<RATE, P
       return;
     }
 
-    if data.len() < RATE - self.buf_len {
+    let remaining = RATE.strict_sub(self.buf_len);
+    if data.len() < remaining {
       xor_bytes_into_state::<RATE>(&mut self.state, self.buf_len, data);
       self.buf_len = self.buf_len.strict_add(data.len());
       return;
@@ -1005,7 +998,7 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakCoreImpl<RATE, P
 
     let permuter = self.permuter;
     if self.buf_len != 0 {
-      let take = core::cmp::min(RATE - self.buf_len, data.len());
+      let take = core::cmp::min(remaining, data.len());
       xor_bytes_into_state::<RATE>(&mut self.state, self.buf_len, &data[..take]);
       self.buf_len = self.buf_len.strict_add(take);
       data = &data[take..];
@@ -1076,21 +1069,16 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakCoreImpl<RATE, P
 }
 
 impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P, false> {
-  pub(crate) fn into_xof(self, ds: u8) -> KeccakXofImpl<RATE, P, false> {
-    let mut this = core::mem::ManuallyDrop::new(self);
-    let inner = &mut *this;
-    let permuter = inner.permuter;
-    let buf_len = inner.buf_len;
+  pub(crate) fn into_xof(mut self, ds: u8) -> KeccakXofImpl<RATE, P, false> {
+    let permuter = self.permuter;
+    let buf_len = self.buf_len;
 
     debug_assert!(buf_len < RATE, "buf_len={} should be < RATE={}", buf_len, RATE);
 
-    pad_absorbed_state::<RATE>(&mut inner.state, buf_len, ds);
-    permuter.permute(&mut inner.state, 0);
+    pad_absorbed_state::<RATE>(&mut self.state, buf_len, ds);
+    permuter.permute(&mut self.state, 0);
     KeccakXofImpl {
-      // SAFETY: this public Keccak core is non-zeroizing, and `this` is
-      // `ManuallyDrop`, so moving the finalized state into the reader does not
-      // bypass any required cleanup.
-      state: unsafe { core::ptr::read(&inner.state) },
+      state: self.state,
       pos: 0,
       permuter,
     }
@@ -1147,14 +1135,10 @@ pub(crate) fn oneshot_fixed<const RATE: usize, const OUT: usize>(ds: u8, data: &
 fn xor_block_into<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) {
   debug_assert_eq!(RATE % 8, 0);
   let lanes = RATE / 8;
-  let ptr = block.as_ptr() as *const u64;
   let mut i = 0usize;
   while i < lanes {
-    // SAFETY: `RATE % 8 == 0` and `i < lanes == RATE / 8`, so this reads within `block`;
-    // `read_unaligned` supports the 1-byte alignment of `[u8; RATE]`.
-    let v = unsafe { core::ptr::read_unaligned(ptr.add(i)) };
-    state[i] ^= u64::from_le(v);
-    i += 1;
+    state[i] ^= read_unaligned_block_lane(block, i);
+    i = i.strict_add(1);
   }
 }
 
@@ -1163,7 +1147,7 @@ fn xor_block_into<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) 
 fn xor_bytes_into_state<const RATE: usize>(state: &mut [u64; 25], mut offset: usize, mut data: &[u8]) {
   debug_assert_eq!(RATE % 8, 0);
   debug_assert!(offset <= RATE);
-  debug_assert!(data.len() <= RATE - offset);
+  debug_assert!(data.len() <= RATE.strict_sub(offset));
 
   while !data.is_empty() && (offset & 7) != 0 {
     state[offset / 8] ^= (data[0] as u64) << ((offset & 7).strict_mul(8));
@@ -1195,7 +1179,7 @@ fn pad_absorbed_state<const RATE: usize>(state: &mut [u64; 25], pos: usize, ds: 
 
   state[pos / 8] ^= (ds as u64) << ((pos & 7).strict_mul(8));
 
-  let last = RATE - 1;
+  let last = RATE.strict_sub(1);
   state[last / 8] ^= 0x80_u64 << ((last & 7).strict_mul(8));
 }
 
@@ -1310,7 +1294,7 @@ fn xof_seeded_32_2_base_state<const RATE: usize>(ds: u8, seed: &[u8; 32]) -> [u6
   state[3] = u64::from_le_bytes(seed_words[3]);
   state[4] = u64::from(ds) << 16;
 
-  let last = RATE - 1;
+  let last = RATE.strict_sub(1);
   state[last / 8] ^= 0x80_u64 << ((last & 7).strict_mul(8));
   state
 }
@@ -1342,7 +1326,7 @@ fn xof_seeded_32_1_state<const RATE: usize>(ds: u8, seed: &[u8; 32], x: u8) -> [
   state[3] = u64::from_le_bytes(seed_words[3]);
   state[4] = u64::from(x) | (u64::from(ds) << 8);
 
-  let last = RATE - 1;
+  let last = RATE.strict_sub(1);
   state[last / 8] ^= 0x80_u64 << ((last & 7).strict_mul(8));
   state
 }
@@ -1680,13 +1664,13 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakXofImpl<RATE, P,
   #[inline(always)]
   fn copy_state_bytes(state: &[u64; 25], mut pos: usize, mut out: &mut [u8]) {
     debug_assert!(pos <= RATE);
-    debug_assert!(out.len() <= RATE - pos);
+    debug_assert!(out.len() <= RATE.strict_sub(pos));
 
     while !out.is_empty() {
       let lane = pos / 8;
       let byte = pos % 8;
       let bytes = state[lane].to_le_bytes();
-      let take = core::cmp::min(8 - byte, out.len());
+      let take = core::cmp::min(8usize.strict_sub(byte), out.len());
       out[..take].copy_from_slice(&bytes[byte..byte.strict_add(take)]);
       pos = pos.strict_add(take);
       out = &mut out[take..];
@@ -1713,7 +1697,7 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakXofImpl<RATE, P,
         self.pos = 0;
       }
 
-      let take = core::cmp::min(RATE - self.pos, out.len());
+      let take = core::cmp::min(RATE.strict_sub(self.pos), out.len());
       Self::copy_state_bytes(&self.state, self.pos, &mut out[..take]);
       self.pos = self.pos.strict_add(take);
       out = &mut out[take..];
@@ -1749,7 +1733,7 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakXofImpl<RATE, P,
         return;
       }
 
-      let take = core::cmp::min(RATE - a.pos, out_a.len());
+      let take = core::cmp::min(RATE.strict_sub(a.pos), out_a.len());
       Self::copy_state_bytes(&a.state, a.pos, &mut out_a[..take]);
       Self::copy_state_bytes(&b.state, b.pos, &mut out_b[..take]);
       a.pos = a.pos.strict_add(take);
@@ -1810,7 +1794,7 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakXofImpl<RATE, P,
         return;
       }
 
-      let take = core::cmp::min(RATE - a.pos, out_a.len());
+      let take = core::cmp::min(RATE.strict_sub(a.pos), out_a.len());
       Self::copy_state_bytes(&a.state, a.pos, &mut out_a[..take]);
       Self::copy_state_bytes(&b.state, b.pos, &mut out_b[..take]);
       Self::copy_state_bytes(&c.state, c.pos, &mut out_c[..take]);
@@ -1824,17 +1808,9 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakXofImpl<RATE, P,
   }
 
   #[cfg(feature = "ml-kem")]
-  #[allow(clippy::too_many_arguments)]
-  pub(crate) fn squeeze_quad_into(
-    a: &mut Self,
-    b: &mut Self,
-    c: &mut Self,
-    d: &mut Self,
-    mut out_a: &mut [u8],
-    mut out_b: &mut [u8],
-    mut out_c: &mut [u8],
-    mut out_d: &mut [u8],
-  ) {
+  pub(crate) fn squeeze_quad_into(states: [&mut Self; 4], outputs: [&mut [u8]; 4]) {
+    let [a, b, c, d] = states;
+    let [mut out_a, mut out_b, mut out_c, mut out_d] = outputs;
     debug_assert_eq!(out_a.len(), out_b.len());
     debug_assert_eq!(out_a.len(), out_c.len());
     debug_assert_eq!(out_a.len(), out_d.len());
@@ -1876,7 +1852,7 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakXofImpl<RATE, P,
         return;
       }
 
-      let take = core::cmp::min(RATE - a.pos, out_a.len());
+      let take = core::cmp::min(RATE.strict_sub(a.pos), out_a.len());
       Self::copy_state_bytes(&a.state, a.pos, &mut out_a[..take]);
       Self::copy_state_bytes(&b.state, b.pos, &mut out_b[..take]);
       Self::copy_state_bytes(&c.state, c.pos, &mut out_c[..take]);

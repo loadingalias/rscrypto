@@ -4,7 +4,9 @@ use rscrypto::{X25519PublicKey, X25519SecretKey};
 use serde_json::Value;
 
 mod common;
-use common::decode_hex_array;
+#[path = "common/array.rs"]
+mod hex_array;
+use hex_array::decode_hex_array;
 
 const X25519: &str = include_str!("../testdata/auth/wycheproof/x25519_test.json");
 
@@ -16,9 +18,11 @@ struct Counts {
 }
 
 fn field<'a>(value: &'a Value, name: &str) -> &'a str {
-  value[name]
+  value
+    .get(name)
+    .expect("Wycheproof field must be present")
     .as_str()
-    .unwrap_or_else(|| panic!("missing string field `{name}`"))
+    .expect("Wycheproof field must be a string")
 }
 
 fn groups(suite: &Value) -> &[Value] {
@@ -52,26 +56,22 @@ fn wycheproof_x25519_vectors_match_or_reject_all_zero_shared_secret() {
       let expected_shared: [u8; 32] = decode_hex_array(field(test, "shared"));
       let result = secret.diffie_hellman(&public);
 
-      match field(test, "result") {
-        "valid" => counts.valid = counts.valid.strict_add(1),
-        "acceptable" => counts.acceptable = counts.acceptable.strict_add(1),
-        other => panic!("unsupported Wycheproof X25519 result `{other}`"),
+      let disposition = field(test, "result");
+      assert!(
+        matches!(disposition, "valid" | "acceptable"),
+        "unsupported Wycheproof X25519 result `{disposition}`"
+      );
+      if disposition == "valid" {
+        counts.valid = counts.valid.strict_add(1);
+      } else {
+        counts.acceptable = counts.acceptable.strict_add(1);
       }
 
       if expected_shared == [0u8; 32] {
         counts.zero_shared_rejected = counts.zero_shared_rejected.strict_add(1);
-        assert!(
-          result.is_err(),
-          "Wycheproof X25519 tcId {} must reject all-zero shared secret",
-          test["tcId"]
-        );
+        result.expect_err("Wycheproof X25519 all-zero shared secret must be rejected");
       } else {
-        let shared = result.unwrap_or_else(|error| {
-          panic!(
-            "Wycheproof X25519 tcId {} unexpectedly rejected non-zero shared secret: {error}",
-            test["tcId"]
-          )
-        });
+        let shared = result.expect("Wycheproof X25519 nonzero shared secret must be accepted");
         assert_eq!(
           *shared.as_bytes(),
           expected_shared,

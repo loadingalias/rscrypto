@@ -4,7 +4,7 @@ use core::hint::black_box;
 use std::time::Instant;
 
 use rscrypto::{
-  RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy,
+  RsaBlindingPair, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy,
   auth::rsa::diag_rsa_blinding_factor_inverse,
 };
 use serde_json::Value;
@@ -48,7 +48,7 @@ struct OnlineStats {
 
 impl OnlineStats {
   fn push(&mut self, value: f64) {
-    self.n += 1;
+    self.n = self.n.strict_add(1);
     let delta = value - self.mean;
     self.mean += delta / self.n as f64;
     let delta2 = value - self.mean;
@@ -56,7 +56,11 @@ impl OnlineStats {
   }
 
   fn variance(&self) -> f64 {
-    if self.n > 1 { self.m2 / (self.n - 1) as f64 } else { 0.0 }
+    if self.n > 1 {
+      self.m2 / self.n.strict_sub(1) as f64
+    } else {
+      0.0
+    }
   }
 }
 
@@ -114,13 +118,13 @@ where
     };
     let index = if use_random {
       let index = random_index;
-      random_index += 1;
-      random_remaining -= 1;
+      random_index = random_index.strict_add(1);
+      random_remaining = random_remaining.strict_sub(1);
       index
     } else {
       let index = fixed_index;
-      fixed_index += 1;
-      fixed_remaining -= 1;
+      fixed_index = fixed_index.strict_add(1);
+      fixed_remaining = fixed_remaining.strict_sub(1);
       index
     };
 
@@ -150,17 +154,19 @@ fn hex_to_vec(hex: &str) -> Vec<u8> {
   assert_eq!(hex.len() % 2, 0);
   let mut out = Vec::with_capacity(hex.len() / 2);
   for chunk in hex.as_bytes().chunks_exact(2) {
-    out.push((hex_value(chunk[0]) << 4) | hex_value(chunk[1]));
+    let high = hex_value(chunk[0]).expect("leakage fixture must contain hexadecimal digits");
+    let low = hex_value(chunk[1]).expect("leakage fixture must contain hexadecimal digits");
+    out.push((high << 4) | low);
   }
   out
 }
 
-fn hex_value(byte: u8) -> u8 {
+fn hex_value(byte: u8) -> Option<u8> {
   match byte {
-    b'0'..=b'9' => byte - b'0',
-    b'a'..=b'f' => byte - b'a' + 10,
-    b'A'..=b'F' => byte - b'A' + 10,
-    _ => panic!("invalid hex digit"),
+    b'0'..=b'9' => Some(byte.strict_sub(b'0')),
+    b'a'..=b'f' => Some(byte.strict_sub(b'a').strict_add(10)),
+    b'A'..=b'F' => Some(byte.strict_sub(b'A').strict_add(10)),
+    _ => None,
   }
 }
 
@@ -192,32 +198,32 @@ fn factor_two_and_inverse(modulus: &[u8]) -> (Vec<u8>, Vec<u8>) {
   let mut plus_one = modulus.to_vec();
   let mut carry = 1u16;
   for byte in plus_one.iter_mut().rev() {
-    let sum = u16::from(*byte) + carry;
-    *byte = sum as u8;
+    let sum = u16::from(*byte).strict_add(carry);
+    *byte = u8::try_from(sum & 0xff).expect("masked addition result must fit u8");
     carry = sum >> 8;
     if carry == 0 {
       break;
     }
   }
   if carry != 0 {
-    plus_one.insert(0, carry as u8);
+    plus_one.insert(0, u8::try_from(carry).expect("addition carry must fit u8"));
   }
 
   let mut quotient = Vec::with_capacity(plus_one.len());
   let mut remainder = 0u16;
   for byte in plus_one {
     let value = (remainder << 8) | u16::from(byte);
-    quotient.push((value / 2) as u8);
+    quotient.push(u8::try_from(value / 2).expect("base-256 division quotient must fit u8"));
     remainder = value % 2;
   }
   let first_nonzero = quotient
     .iter()
     .position(|&byte| byte != 0)
-    .unwrap_or(quotient.len() - 1);
+    .unwrap_or_else(|| quotient.len().strict_sub(1));
   let inverse = &quotient[first_nonzero..];
 
   let mut inverse_fixed = vec![0u8; modulus.len()];
-  inverse_fixed[modulus.len() - inverse.len()..].copy_from_slice(inverse);
+  inverse_fixed[modulus.len().strict_sub(inverse.len())..].copy_from_slice(inverse);
   (factor, inverse_fixed)
 }
 
@@ -274,7 +280,7 @@ fn fixed_and_random_oaep_ciphertexts(key: &RsaPrivateKey, count: usize) -> (Vec<
 fn fixed_and_random_pkcs1v15_ciphertexts(key: &RsaPrivateKey, count: usize) -> (Vec<u8>, Vec<Vec<u8>>) {
   let len = key.public_key().modulus().len();
   let plaintext_len = b"fixed pkcs1v15 leakage text".len();
-  let padding_len = len - plaintext_len - 3;
+  let padding_len = len.strict_sub(plaintext_len).strict_sub(3);
   let fixed_seed = vec![0x5a; padding_len];
   let mut fixed = vec![0u8; len];
   key
@@ -288,7 +294,7 @@ fn fixed_and_random_pkcs1v15_ciphertexts(key: &RsaPrivateKey, count: usize) -> (
     let mut seed = vec![0u8; padding_len];
     for byte in &mut seed {
       while *byte == 0 {
-        *byte = rng.next_u64() as u8;
+        *byte = u8::try_from(rng.next_u64() & 0xff).expect("masked PRNG output must fit u8");
       }
     }
     let mut plaintext = vec![0u8; plaintext_len];
@@ -361,8 +367,7 @@ fn rsa_private_operations_do_not_show_first_order_timing_leakage() {
         .sign_pkcs1v15_with_blinding_factor_and_scratch(
           RsaPkcs1v15Profile::Sha256,
           black_box(message),
-          &blinding_factor,
-          &blinding_inverse,
+          RsaBlindingPair::new(&blinding_factor, &blinding_inverse),
           black_box(&mut out),
           &mut scratch,
         )
@@ -389,8 +394,7 @@ fn rsa_private_operations_do_not_show_first_order_timing_leakage() {
           RsaPssProfile::Sha256,
           black_box(message),
           &pss_salt,
-          &blinding_factor,
-          &blinding_inverse,
+          RsaBlindingPair::new(&blinding_factor, &blinding_inverse),
           black_box(&mut out),
           &mut scratch,
         )
@@ -417,8 +421,7 @@ fn rsa_private_operations_do_not_show_first_order_timing_leakage() {
           RsaOaepProfile::Sha256,
           b"leakage-label",
           black_box(ciphertext),
-          &blinding_factor,
-          &blinding_inverse,
+          RsaBlindingPair::new(&blinding_factor, &blinding_inverse),
           black_box(&mut out),
           &mut scratch,
         )
@@ -443,8 +446,7 @@ fn rsa_private_operations_do_not_show_first_order_timing_leakage() {
       let plaintext_len = key
         .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
           black_box(ciphertext),
-          &blinding_factor,
-          &blinding_inverse,
+          RsaBlindingPair::new(&blinding_factor, &blinding_inverse),
           black_box(&mut out),
           &mut scratch,
         )

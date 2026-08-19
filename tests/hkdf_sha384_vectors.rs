@@ -4,7 +4,10 @@ use hkdf::Hkdf as RustCryptoHkdf;
 use rscrypto::{HkdfSha384, auth::HkdfOutputLengthError};
 
 mod common;
-use common::{decode_hex_array, decode_hex_vec};
+#[path = "common/array.rs"]
+mod hex_array;
+use common::decode_hex_vec;
+use hex_array::decode_hex_array;
 
 #[test]
 fn hkdf_sha384_case_1() {
@@ -20,7 +23,9 @@ fn hkdf_sha384_case_1() {
     )
   );
 
-  let okm = hkdf.expand_array::<42>(&info).unwrap();
+  let okm = hkdf
+    .expand_array::<42>(&info)
+    .expect("HKDF-SHA-384 case 1 expansion must succeed");
   assert_eq!(
     okm,
     decode_hex_array::<42>("9b5097a86038b805309076a44b3a9f38063e25b516dcbf369f394cfab43685f748b6457763e4f0204fc5",)
@@ -53,7 +58,9 @@ fn hkdf_sha384_case_2() {
     )
   );
 
-  let okm = hkdf.expand_array::<82>(&info).unwrap();
+  let okm = hkdf
+    .expand_array::<82>(&info)
+    .expect("HKDF-SHA-384 case 2 expansion must succeed");
   assert_eq!(
     okm,
     decode_hex_array::<82>(
@@ -65,7 +72,7 @@ fn hkdf_sha384_case_2() {
 
 #[test]
 fn hkdf_sha384_case_3() {
-  let okm = HkdfSha384::derive_array::<42>(b"", &[0x0b; 22], b"").unwrap();
+  let okm = HkdfSha384::derive_array::<42>(b"", &[0x0b; 22], b"").expect("HKDF-SHA-384 case 3 derivation must succeed");
   assert_eq!(
     okm,
     decode_hex_array::<42>("c8c96e710f89b0d7990bca68bcdec8cf854062e54c73a7abc743fade9b242daacc1cea5670415b52849c",)
@@ -84,8 +91,12 @@ fn hkdf_sha384_matches_rustcrypto() {
     let mut ours = vec![0u8; len];
     let mut theirs = vec![0u8; len];
 
-    hkdf.expand(&info, &mut ours).unwrap();
-    rustcrypto.expand(&info, &mut theirs).unwrap();
+    hkdf
+      .expand(&info, &mut ours)
+      .expect("rscrypto HKDF-SHA-384 differential expansion must succeed");
+    rustcrypto
+      .expand(&info, &mut theirs)
+      .expect("RustCrypto HKDF-SHA-384 differential expansion must succeed");
 
     assert_eq!(ours, theirs, "HKDF-SHA384 mismatch at output len {len}");
   }
@@ -98,13 +109,17 @@ fn hkdf_sha384_derive_matches_extract_then_expand() {
   let info = b"context";
 
   let extracted = HkdfSha384::new(salt, ikm);
-  let derived = HkdfSha384::derive_array::<96>(salt, ikm, info).unwrap();
-  assert_eq!(derived, extracted.expand_array::<96>(info).unwrap());
+  let derived = HkdfSha384::derive_array::<96>(salt, ikm, info).expect("HKDF-SHA-384 one-shot derivation must succeed");
+  let expanded = extracted
+    .expand_array::<96>(info)
+    .expect("HKDF-SHA-384 extracted-state expansion must succeed");
+  assert_eq!(derived, expanded);
 }
 
 #[test]
 fn hkdf_sha384_rejects_oversized_output() {
-  let mut out = vec![0u8; HkdfSha384::MAX_OUTPUT_SIZE + 1];
-  let err = HkdfSha384::derive(b"salt", b"ikm", b"info", &mut out).unwrap_err();
+  let mut out = vec![0u8; HkdfSha384::MAX_OUTPUT_SIZE.strict_add(1)];
+  let err =
+    HkdfSha384::derive(b"salt", b"ikm", b"info", &mut out).expect_err("HKDF-SHA-384 must reject oversized output");
   assert_eq!(err, HkdfOutputLengthError::new());
 }

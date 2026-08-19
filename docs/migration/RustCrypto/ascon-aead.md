@@ -4,14 +4,14 @@
 > `Payload { msg, aad }` with rscrypto's named types and a caller-buffer API.
 > NIST SP 800-232 specifies a 16-byte key, nonce, and tag.
 
-Verified against `ascon-aead = "0.6.0"` and the `rscrypto` 0.7.8 line.
+Verified against `ascon-aead = "0.6.0"` and the `rscrypto` 0.8.1 line.
 Evidence: `tests/ascon_aead_oracle.rs`.
 
 ## TL;DR
 
-| | Before (`ascon-aead` 0.6.x) | After (`rscrypto` 0.7.8) |
+| | Before (`ascon-aead` 0.6.x) | After (`rscrypto` 0.8.1) |
 |---|---|---|
-| Cargo dep | `ascon-aead = "0.6"` | `rscrypto = { version = "0.7.8", features = ["ascon-aead"] }` |
+| Cargo dep | `ascon-aead = "0.6"` | `rscrypto = { version = "0.8.1", features = ["ascon-aead"] }` |
 | Import | `use ascon_aead::{AsconAead128, Key, Nonce, aead::{Aead, KeyInit, Payload}};` | `use rscrypto::{Aead, AsconAead128, AsconAead128Key, aead::{Nonce128, expert::AeadWithNonce}};` |
 | Encrypt | `cipher.encrypt(nonce, Payload { msg, aad })?` | `cipher.encrypt(&nonce, aad, msg, &mut out)?` |
 
@@ -26,7 +26,7 @@ ascon-aead = "0.6"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.7.8", features = ["ascon-aead"] }
+rscrypto = { version = "0.8.1", features = ["ascon-aead"] }
 ```
 
 ## Algorithm map
@@ -46,10 +46,10 @@ rscrypto = { version = "0.7.8", features = ["ascon-aead"] }
 use ascon_aead::{AsconAead128, Key, Nonce};
 use ascon_aead::aead::{Aead, KeyInit, Payload};
 
-let key = Key::<AsconAead128>::from_slice(&[0u8; 16]);
-let cipher = AsconAead128::new(key);
-let nonce = Nonce::<AsconAead128>::from_slice(&[0u8; 16]);
-let ct = cipher.encrypt(nonce, Payload { msg: plaintext, aad }).unwrap();
+let key = Key::<AsconAead128>::from([0u8; 16]);
+let cipher = AsconAead128::new(&key);
+let nonce = Nonce::<AsconAead128>::from([0u8; 16]);
+let ct = cipher.encrypt(&nonce, Payload { msg: plaintext, aad }).unwrap();
 ```
 
 ```rust

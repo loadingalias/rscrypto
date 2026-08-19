@@ -56,8 +56,6 @@
 //!
 //! [owasp-passwords]: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
 
-#![allow(clippy::indexing_slicing)]
-#![allow(clippy::unwrap_used)]
 // unwraps here are on slice→array conversions whose lengths are fixed by construction.
 
 use alloc::vec::Vec;
@@ -141,15 +139,9 @@ impl MemoryBlock {
 /// repeated byte-slice transmutes.
 #[inline]
 fn zeroize_u64_slice_no_fence(words: &mut [u64]) {
-  let mut chunks = words.chunks_exact_mut(8);
-  for chunk in &mut chunks {
-    // SAFETY: chunk has exactly 8 initialized u64 values and [u64; 8] has
-    // the same alignment requirement as u64.
-    unsafe { core::ptr::write_volatile(chunk.as_mut_ptr().cast::<[u64; 8]>(), [0u64; 8]) };
-  }
-  for w in chunks.into_remainder() {
-    // SAFETY: w is a valid, aligned, dereferenceable pointer to initialized u64.
-    unsafe { core::ptr::write_volatile(w, 0) };
+  for word in words {
+    // SAFETY: `word` is a valid, aligned pointer to an initialized `u64` and remains exclusively borrowed.
+    unsafe { core::ptr::write_volatile(word, 0) };
   }
 }
 
@@ -171,8 +163,11 @@ fn zeroize_u64_slice(words: &mut [u64]) {
 ///   (RFC 9106 §3.4.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Argon2Variant {
+  /// Argon2d data-dependent addressing.
   Argon2d,
+  /// Argon2i data-independent addressing.
   Argon2i,
+  /// Argon2id hybrid addressing.
   Argon2id,
 }
 
@@ -223,6 +218,9 @@ pub enum Argon2Error {
   ResourceOverflow,
   /// The allocator refused to provide the memory matrix.
   AllocationFailed,
+  /// A forced diagnostic backend is unavailable on the current host.
+  #[cfg(feature = "diag")]
+  BackendUnavailable,
   /// Password generation parameters exceed the verifier's resource limits.
   #[cfg(feature = "phc-strings")]
   VerificationLimitTooLow,
@@ -242,6 +240,8 @@ impl fmt::Display for Argon2Error {
       Self::AssociatedDataTooLong => "Argon2 associated data exceeds 2^32-1 bytes",
       Self::ResourceOverflow => "Argon2 memory matrix exceeds the target's address space",
       Self::AllocationFailed => "Argon2 memory-matrix allocation failed",
+      #[cfg(feature = "diag")]
+      Self::BackendUnavailable => "requested Argon2 diagnostic backend is unavailable",
       #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
       Self::EntropyUnavailable => "Argon2 entropy source unavailable",
       #[cfg(feature = "phc-strings")]
@@ -392,7 +392,11 @@ struct Argon2Shape {
 
 const fn argon2_shape(params: Argon2Params) -> Argon2Shape {
   let lane_group = params.parallelism.strict_mul(SYNC_POINTS);
-  let blocks = (params.memory_cost_kib / lane_group).strict_mul(lane_group);
+  let blocks = params
+    .memory_cost_kib
+    .checked_div(lane_group)
+    .expect("validated Argon2 parallelism makes the lane group nonzero")
+    .strict_mul(lane_group);
   Argon2Shape {
     blocks,
     memory_bytes: (blocks as u64).strict_mul(BLOCK_SIZE as u64),
@@ -488,6 +492,24 @@ pub fn diag_hash_portable(
   )
 }
 
+#[cfg(all(
+  feature = "diag",
+  any(
+    target_arch = "x86_64",
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64",
+    target_arch = "wasm32",
+  )
+))]
+fn diag_compress_for(kernel: KernelId) -> Result<CompressFn, Argon2Error> {
+  if crate::platform::caps().has(dispatch::required_caps(kernel)) {
+    Ok(dispatch::compress_fn_for(kernel))
+  } else {
+    Err(Argon2Error::BackendUnavailable)
+  }
+}
+
 /// Hash via the aarch64 NEON kernel.
 ///
 /// # Errors
@@ -515,13 +537,7 @@ pub fn diag_hash_aarch64_neon(
 ///
 /// # Errors
 ///
-/// Returns [`Argon2Error`] for invalid parameters.
-///
-/// # Panics
-///
-/// Panics if the host does not support AVX2. The per-kernel tests
-/// gate this call on `crate::platform::caps()` having the kernel's
-/// required caps before invoking it.
+/// Returns [`Argon2Error`] for invalid parameters or when AVX2 is unavailable.
 #[cfg(all(feature = "diag", target_arch = "x86_64"))]
 pub fn diag_hash_x86_avx2(
   params: &Argon2Params,
@@ -530,17 +546,13 @@ pub fn diag_hash_x86_avx2(
   variant: Argon2Variant,
   out: &mut [u8],
 ) -> Result<(), Argon2Error> {
-  assert!(
-    crate::platform::caps().has(dispatch::required_caps(KernelId::X86Avx2)),
-    "AVX2 not available on host"
-  );
   argon2_hash_with_kernel(
     params,
     password,
     salt,
     variant,
     out,
-    dispatch::compress_fn_for(KernelId::X86Avx2),
+    diag_compress_for(KernelId::X86Avx2)?,
   )
 }
 
@@ -548,11 +560,7 @@ pub fn diag_hash_x86_avx2(
 ///
 /// # Errors
 ///
-/// Returns [`Argon2Error`] for invalid parameters.
-///
-/// # Panics
-///
-/// Panics if the host does not support AVX-512F + AVX-512VL.
+/// Returns [`Argon2Error`] for invalid parameters or when AVX-512F plus AVX-512VL is unavailable.
 #[cfg(all(feature = "diag", target_arch = "x86_64"))]
 pub fn diag_hash_x86_avx512(
   params: &Argon2Params,
@@ -561,17 +569,13 @@ pub fn diag_hash_x86_avx512(
   variant: Argon2Variant,
   out: &mut [u8],
 ) -> Result<(), Argon2Error> {
-  assert!(
-    crate::platform::caps().has(dispatch::required_caps(KernelId::X86Avx512)),
-    "AVX-512F + AVX-512VL not available on host"
-  );
   argon2_hash_with_kernel(
     params,
     password,
     salt,
     variant,
     out,
-    dispatch::compress_fn_for(KernelId::X86Avx512),
+    diag_compress_for(KernelId::X86Avx512)?,
   )
 }
 
@@ -579,11 +583,7 @@ pub fn diag_hash_x86_avx512(
 ///
 /// # Errors
 ///
-/// Returns [`Argon2Error`] for invalid parameters.
-///
-/// # Panics
-///
-/// Panics if the host does not support VSX.
+/// Returns [`Argon2Error`] for invalid parameters or when VSX is unavailable.
 #[cfg(all(feature = "diag", target_arch = "powerpc64"))]
 pub fn diag_hash_power_vsx(
   params: &Argon2Params,
@@ -592,17 +592,13 @@ pub fn diag_hash_power_vsx(
   variant: Argon2Variant,
   out: &mut [u8],
 ) -> Result<(), Argon2Error> {
-  assert!(
-    crate::platform::caps().has(dispatch::required_caps(KernelId::PowerVsx)),
-    "POWER VSX not available on host"
-  );
   argon2_hash_with_kernel(
     params,
     password,
     salt,
     variant,
     out,
-    dispatch::compress_fn_for(KernelId::PowerVsx),
+    diag_compress_for(KernelId::PowerVsx)?,
   )
 }
 
@@ -610,11 +606,7 @@ pub fn diag_hash_power_vsx(
 ///
 /// # Errors
 ///
-/// Returns [`Argon2Error`] for invalid parameters.
-///
-/// # Panics
-///
-/// Panics if the host does not support the z13+ vector facility.
+/// Returns [`Argon2Error`] for invalid parameters or when the z13+ vector facility is unavailable.
 #[cfg(all(feature = "diag", target_arch = "s390x"))]
 pub fn diag_hash_s390x_vector(
   params: &Argon2Params,
@@ -623,17 +615,13 @@ pub fn diag_hash_s390x_vector(
   variant: Argon2Variant,
   out: &mut [u8],
 ) -> Result<(), Argon2Error> {
-  assert!(
-    crate::platform::caps().has(dispatch::required_caps(KernelId::S390xVector)),
-    "s390x vector facility not available on host"
-  );
   argon2_hash_with_kernel(
     params,
     password,
     salt,
     variant,
     out,
-    dispatch::compress_fn_for(KernelId::S390xVector),
+    diag_compress_for(KernelId::S390xVector)?,
   )
 }
 
@@ -641,11 +629,7 @@ pub fn diag_hash_s390x_vector(
 ///
 /// # Errors
 ///
-/// Returns [`Argon2Error`] for invalid parameters.
-///
-/// # Panics
-///
-/// Panics if the host does not support the RISC-V V extension.
+/// Returns [`Argon2Error`] for invalid parameters or when the RISC-V V extension is unavailable.
 #[cfg(all(feature = "diag", target_arch = "riscv64"))]
 pub fn diag_hash_riscv64_v(
   params: &Argon2Params,
@@ -654,17 +638,13 @@ pub fn diag_hash_riscv64_v(
   variant: Argon2Variant,
   out: &mut [u8],
 ) -> Result<(), Argon2Error> {
-  assert!(
-    crate::platform::caps().has(dispatch::required_caps(KernelId::Riscv64V)),
-    "RISC-V V extension not available on host"
-  );
   argon2_hash_with_kernel(
     params,
     password,
     salt,
     variant,
     out,
-    dispatch::compress_fn_for(KernelId::Riscv64V),
+    diag_compress_for(KernelId::Riscv64V)?,
   )
 }
 
@@ -672,11 +652,7 @@ pub fn diag_hash_riscv64_v(
 ///
 /// # Errors
 ///
-/// Returns [`Argon2Error`] for invalid parameters.
-///
-/// # Panics
-///
-/// Panics if the host does not support wasm SIMD128.
+/// Returns [`Argon2Error`] for invalid parameters or when WASM SIMD128 is unavailable.
 #[cfg(all(feature = "diag", target_arch = "wasm32"))]
 pub fn diag_hash_wasm_simd128(
   params: &Argon2Params,
@@ -685,17 +661,13 @@ pub fn diag_hash_wasm_simd128(
   variant: Argon2Variant,
   out: &mut [u8],
 ) -> Result<(), Argon2Error> {
-  assert!(
-    crate::platform::caps().has(dispatch::required_caps(KernelId::WasmSimd128)),
-    "wasm simd128 not available on host"
-  );
   argon2_hash_with_kernel(
     params,
     password,
     salt,
     variant,
     out,
-    dispatch::compress_fn_for(KernelId::WasmSimd128),
+    diag_compress_for(KernelId::WasmSimd128)?,
   )
 }
 
@@ -866,7 +838,7 @@ fn h_prime(input_parts: &[&[u8]], out: &mut [u8]) {
   // Feed LE32(out_len) then the input parts into Blake2b. For out_len <= 64
   // the single-block output is the answer directly.
   let len_le = u32::try_from(out_len)
-    .unwrap_or_else(|_| unreachable!("Argon2 H' output length was checked before expansion"))
+    .expect("Argon2 output length is validated before H' expansion")
     .to_le_bytes();
 
   if out_len <= 64 {
@@ -916,13 +888,17 @@ fn h_prime_diag_blake2b_portable(input_parts: &[&[u8]], out: &mut [u8]) {
   let out_len = out.len();
   assert!(out_len > 0, "H' output length must be positive");
   let len_le = u32::try_from(out_len)
-    .unwrap_or_else(|_| unreachable!("Argon2 H' output length was checked before expansion"))
+    .expect("Argon2 output length is validated before H' expansion")
     .to_le_bytes();
 
   if out_len <= 64 {
     let parts = [&len_le[..], input_parts[0]];
     if input_parts.len() == 1 {
-      crate::hashes::crypto::blake2b::diag_hash_parts_portable(out_len as u8, &parts, out);
+      crate::hashes::crypto::blake2b::diag_hash_parts_portable(
+        u8::try_from(out_len).expect("the single-digest branch limits output to 64 bytes"),
+        &parts,
+        out,
+      );
     } else {
       let mut data = [0u8; BLOCK_SIZE + 16];
       let mut pos = 0usize;
@@ -932,7 +908,11 @@ fn h_prime_diag_blake2b_portable(input_parts: &[&[u8]], out: &mut [u8]) {
         data[pos..pos.strict_add(part.len())].copy_from_slice(part);
         pos = pos.strict_add(part.len());
       }
-      crate::hashes::crypto::blake2b::diag_hash_parts_portable(out_len as u8, &[&data[..pos]], out);
+      crate::hashes::crypto::blake2b::diag_hash_parts_portable(
+        u8::try_from(out_len).expect("the single-digest branch limits output to 64 bytes"),
+        &[&data[..pos]],
+        out,
+      );
     }
     return;
   }
@@ -960,7 +940,11 @@ fn h_prime_diag_blake2b_portable(input_parts: &[&[u8]], out: &mut [u8]) {
 
   let tail_off = r.strict_mul(32);
   let tail_len = out_len.strict_sub(tail_off);
-  crate::hashes::crypto::blake2b::diag_hash_parts_portable(tail_len as u8, &[&v_prev], &mut out[tail_off..]);
+  crate::hashes::crypto::blake2b::diag_hash_parts_portable(
+    u8::try_from(tail_len).expect("the H' tail is at most 64 bytes"),
+    &[&v_prev],
+    &mut out[tail_off..],
+  );
   ct::zeroize(&mut v_prev);
 }
 
@@ -979,26 +963,26 @@ fn compute_h0(
   // `check_inputs` before reaching here, so the `try_from` calls below are
   // infallible. We use `try_from + expect` rather than `as u32` to keep the
   // invariant readable at the call site.
-  let len_u32 = |label: &'static str, len: usize| -> [u8; 4] {
+  let len_u32 = |len: usize| -> [u8; 4] {
     u32::try_from(len)
-      .unwrap_or_else(|_| panic!("Argon2 H0: {label} length exceeded MAX_VAR_BYTES; check_inputs should have rejected"))
+      .expect("Argon2 input lengths are validated before H0 construction")
       .to_le_bytes()
   };
 
   let mut hasher = Blake2b512::new();
   hasher.update(&params.parallelism.to_le_bytes());
-  hasher.update(&len_u32("output", output_len));
+  hasher.update(&len_u32(output_len));
   hasher.update(&params.memory_cost_kib.to_le_bytes());
   hasher.update(&params.time_cost.to_le_bytes());
   hasher.update(&ARGON2_VERSION.to_le_bytes());
   hasher.update(&variant.y().to_le_bytes());
-  hasher.update(&len_u32("password", password.len()));
+  hasher.update(&len_u32(password.len()));
   hasher.update(password);
-  hasher.update(&len_u32("salt", salt.len()));
+  hasher.update(&len_u32(salt.len()));
   hasher.update(salt);
-  hasher.update(&len_u32("secret", context.secret.len()));
+  hasher.update(&len_u32(context.secret.len()));
   hasher.update(context.secret);
-  hasher.update(&len_u32("associated_data", context.associated_data.len()));
+  hasher.update(&len_u32(context.associated_data.len()));
   hasher.update(context.associated_data);
   hasher.finalize()
 }
@@ -1012,22 +996,22 @@ fn compute_h0_diag_blake2b_portable(
   variant: Argon2Variant,
   output_len: usize,
 ) -> [u8; 64] {
-  let len_u32 = |label: &'static str, len: usize| -> [u8; 4] {
+  let len_u32 = |len: usize| -> [u8; 4] {
     u32::try_from(len)
-      .unwrap_or_else(|_| panic!("Argon2 H0: {label} length exceeded MAX_VAR_BYTES; check_inputs should have rejected"))
+      .expect("Argon2 input lengths are validated before H0 construction")
       .to_le_bytes()
   };
 
   let parallelism = params.parallelism.to_le_bytes();
-  let output_len = len_u32("output", output_len);
+  let output_len = len_u32(output_len);
   let memory_cost = params.memory_cost_kib.to_le_bytes();
   let time_cost = params.time_cost.to_le_bytes();
   let version = ARGON2_VERSION.to_le_bytes();
   let variant = variant.y().to_le_bytes();
-  let password_len = len_u32("password", password.len());
-  let salt_len = len_u32("salt", salt.len());
-  let secret_len = len_u32("secret", context.secret.len());
-  let associated_data_len = len_u32("associated_data", context.associated_data.len());
+  let password_len = len_u32(password.len());
+  let salt_len = len_u32(salt.len());
+  let secret_len = len_u32(context.secret.len());
+  let associated_data_len = len_u32(context.associated_data.len());
   let mut out = [0u8; 64];
   crate::hashes::crypto::blake2b::diag_hash_parts_portable(
     64,
@@ -1057,12 +1041,8 @@ fn compute_h0_diag_blake2b_portable(
 #[inline(always)]
 fn block_from_bytes(bytes: &[u8; BLOCK_SIZE]) -> MemoryBlock {
   let mut out = MemoryBlock::zero();
-  for i in 0..BLOCK_WORDS {
-    out.0[i] = u64::from_le_bytes(
-      bytes[i.strict_mul(8)..i.strict_mul(8).strict_add(8)]
-        .try_into()
-        .unwrap(),
-    );
+  for (word, bytes) in out.0.iter_mut().zip(bytes.as_chunks::<8>().0) {
+    *word = u64::from_le_bytes(*bytes);
   }
   out
 }
@@ -1077,6 +1057,19 @@ fn block_to_bytes(block: &[u64; BLOCK_WORDS]) -> [u8; BLOCK_SIZE] {
 }
 
 // ─── Argon2i pseudo-random address stream (RFC 9106 §3.4.2) ────────────────
+
+#[derive(Clone, Copy)]
+struct SegmentConfig {
+  compress: CompressFn,
+  pass: u32,
+  slice: u32,
+  lanes: u32,
+  segment_len: u32,
+  lane_len: u32,
+  total_blocks: u32,
+  variant: Argon2Variant,
+  time_cost: u32,
+}
 
 /// Buffer of 128 `J1||J2` word pairs used for a single segment of Argon2i
 /// (or Argon2id's data-independent slices).
@@ -1094,25 +1087,14 @@ impl AddressBlock {
 
   /// Generate a fresh address block keyed by
   /// `(pass, lane, slice, blocks, total_passes, variant_y, counter)`.
-  #[allow(clippy::too_many_arguments)] // RFC 9106 §3.4.2 fixes this list; wrapping it in a struct is empty ceremony.
-  fn refresh(
-    &mut self,
-    compress: CompressFn,
-    pass: u32,
-    lane: u32,
-    slice: u32,
-    blocks: u32,
-    total_passes: u32,
-    variant_y: u32,
-    counter: u64,
-  ) {
+  fn refresh(&mut self, config: SegmentConfig, lane: u32, counter: u64) {
     let mut input = MemoryBlock::zero();
-    input.0[0] = pass as u64;
-    input.0[1] = lane as u64;
-    input.0[2] = slice as u64;
-    input.0[3] = blocks as u64;
-    input.0[4] = total_passes as u64;
-    input.0[5] = variant_y as u64;
+    input.0[0] = u64::from(config.pass);
+    input.0[1] = u64::from(lane);
+    input.0[2] = u64::from(config.slice);
+    input.0[3] = u64::from(config.total_blocks);
+    input.0[4] = u64::from(config.time_cost);
+    input.0[5] = u64::from(config.variant.y());
     input.0[6] = counter;
 
     let zero = MemoryBlock::zero();
@@ -1121,8 +1103,8 @@ impl AddressBlock {
     // `compress_fn_for` in per-kernel tests), which only returns a
     // kernel whose `required_caps` are a subset of the host's caps.
     unsafe {
-      compress(&mut intermediate.0, &zero.0, &input.0, /* xor_into = */ false);
-      compress(&mut self.words.0, &zero.0, &intermediate.0, /* xor_into = */ false);
+      (config.compress)(&mut intermediate.0, &zero.0, &input.0, /* xor_into = */ false);
+      (config.compress)(&mut self.words.0, &zero.0, &intermediate.0, /* xor_into = */ false);
     }
   }
 }
@@ -1143,12 +1125,16 @@ impl Matrix {
     let shape = argon2_shape(params);
     let lanes = params.parallelism;
     let m_prime = shape.blocks;
-    let lane_len = m_prime / lanes;
-    let segment_len = lane_len / SYNC_POINTS;
+    let lane_len = m_prime
+      .checked_div(lanes)
+      .expect("validated Argon2 parallelism is nonzero");
+    let segment_len = lane_len
+      .checked_div(SYNC_POINTS)
+      .expect("the Argon2 synchronization-point count is nonzero");
     if shape.memory_bytes > isize::MAX as u64 {
       return Err(Argon2Error::ResourceOverflow);
     }
-    let total = m_prime as usize;
+    let total = usize::try_from(m_prime).map_err(|_| Argon2Error::ResourceOverflow)?;
     let mut blocks = Vec::new();
     blocks
       .try_reserve_exact(total)
@@ -1286,27 +1272,21 @@ impl MatrixView {
 
 /// Compute the reference block `(ref_lane, ref_index)` for a position
 /// `(lane, col)` in pass `pass`, using `j1`/`j2` pseudo-random words.
-#[allow(clippy::too_many_arguments)] // RFC 9106 §3.4 ties eight fields together; a ctx struct would just forward them all.
 #[inline(always)]
-fn reference_index(
-  pass: u32,
-  lane: u32,
-  slice: u32,
-  col: u32,
-  j1: u32,
-  j2: u32,
-  lanes: u32,
-  segment_len: u32,
-  lane_len: u32,
-) -> (u32, u32) {
+fn reference_index(config: SegmentConfig, lane: u32, col: u32, j1: u32, j2: u32) -> (u32, u32) {
   // Reference lane
-  let ref_lane = if pass == 0 && slice == 0 { lane } else { j2 % lanes };
+  let ref_lane = if config.pass == 0 && config.slice == 0 {
+    lane
+  } else {
+    j2.checked_rem(config.lanes)
+      .expect("validated Argon2 parallelism is nonzero")
+  };
 
   // Reference area size
   let same_lane = ref_lane == lane;
-  let position_in_segment = col.wrapping_sub(slice.wrapping_mul(segment_len));
+  let position_in_segment = col.wrapping_sub(config.slice.wrapping_mul(config.segment_len));
   // We know position_in_segment < segment_len (by construction).
-  let area_size: u32 = if pass == 0 {
+  let area_size: u32 = if config.pass == 0 {
     // First pass: previous slices in the current lane are available.
     if same_lane {
       // Blocks 0..col − 1 available (col excludes position itself).
@@ -1316,7 +1296,7 @@ fn reference_index(
     } else {
       // Other lane: blocks in slices 0..slice completed, minus 1 if position
       // in current segment == 0 (prevents self-reference in racing lane).
-      let completed_slices = slice.wrapping_mul(segment_len);
+      let completed_slices = config.slice.wrapping_mul(config.segment_len);
       if position_in_segment == 0 {
         completed_slices.wrapping_sub(1)
       } else {
@@ -1328,13 +1308,14 @@ fn reference_index(
     // already-computed portion for same-lane references.
     if same_lane {
       // lane_len − segment_len + position_in_segment − 1
-      lane_len
-        .wrapping_sub(segment_len)
+      config
+        .lane_len
+        .wrapping_sub(config.segment_len)
         .wrapping_add(position_in_segment)
         .wrapping_sub(1)
     } else {
       // lane_len − segment_len, minus 1 if position_in_segment == 0
-      let base = lane_len.wrapping_sub(segment_len);
+      let base = config.lane_len.wrapping_sub(config.segment_len);
       if position_in_segment == 0 {
         base.wrapping_sub(1)
       } else {
@@ -1347,18 +1328,23 @@ fn reference_index(
   let j1_u64 = j1 as u64;
   let relative_position = {
     let x = (j1_u64.wrapping_mul(j1_u64)) >> 32;
-    let y = (area_size as u64).wrapping_mul(x) >> 32;
-    (area_size as u64).wrapping_sub(1).wrapping_sub(y) as u32
+    let y = u64::from(area_size).wrapping_mul(x) >> 32;
+    let relative = u64::from(area_size).wrapping_sub(1).wrapping_sub(y);
+    let [b0, b1, b2, b3, _, _, _, _] = relative.to_le_bytes();
+    u32::from_le_bytes([b0, b1, b2, b3])
   };
 
   // Absolute start position of the reference area (wraps across the lane).
-  let start_position = if pass == 0 || slice == (SYNC_POINTS - 1) {
+  let start_position = if config.pass == 0 || config.slice == (SYNC_POINTS - 1) {
     0
   } else {
-    (slice.wrapping_add(1)).wrapping_mul(segment_len)
+    (config.slice.wrapping_add(1)).wrapping_mul(config.segment_len)
   };
 
-  let ref_index = (start_position.wrapping_add(relative_position)) % lane_len;
+  let ref_index = start_position
+    .wrapping_add(relative_position)
+    .checked_rem(config.lane_len)
+    .expect("validated Argon2 geometry has a nonzero lane length");
 
   (ref_lane, ref_index)
 }
@@ -1369,7 +1355,6 @@ fn reference_index(
 /// [`MatrixView`] from the underlying block storage, and dispatches into
 /// [`fill_segment_inner`]. The exclusive borrow makes the inner kernel's
 /// safety contract trivially satisfied for single-threaded callers.
-#[allow(clippy::too_many_arguments)] // RFC 9106 §3.4 fixes this list; struct wrapper is empty ceremony.
 fn fill_segment(
   matrix: &mut Matrix,
   compress: CompressFn,
@@ -1379,29 +1364,24 @@ fn fill_segment(
   variant: Argon2Variant,
   time_cost: u32,
 ) {
-  let lanes = matrix.lanes;
-  let segment_len = matrix.segment_len;
-  let lane_len = matrix.lane_len;
-  let total_blocks = matrix.len() as u32;
+  let config = SegmentConfig {
+    compress,
+    pass,
+    slice,
+    lanes: matrix.lanes,
+    segment_len: matrix.segment_len,
+    lane_len: matrix.lane_len,
+    total_blocks: u32::try_from(matrix.len()).expect("matrix length originates from the validated u32 block count"),
+    variant,
+    time_cost,
+  };
   let view = MatrixView::from_blocks(&mut matrix.blocks);
   // SAFETY: `&mut matrix` is held exclusively for the duration of the
   // call. The view is the only handle to the matrix's storage during
   // `fill_segment_inner`; aliasing and concurrency contracts are
   // trivially upheld.
   unsafe {
-    fill_segment_inner(
-      view,
-      compress,
-      pass,
-      lane,
-      slice,
-      lanes,
-      segment_len,
-      lane_len,
-      total_blocks,
-      variant,
-      time_cost,
-    );
+    fill_segment_inner(view, lane, config);
   }
 }
 
@@ -1416,31 +1396,26 @@ fn fill_segment(
 ///
 /// Callers must guarantee that, for the indices touched by this call:
 ///
-/// - The current segment range `[lane * lane_len + slice * segment_len .. lane * lane_len + (slice
-///   + 1) * segment_len]` is exclusively writeable by this task. Same-task reads may target
-///   already-written positions in that range.
-/// - Every immutable input remains stable for the duration of `compress`. The previous and
-///   reference inputs may alias each other, but neither may alias the current mutable output.
+/// - The task has exclusive write access to the current lane and slice's segment range; same-task reads may target positions it has already written there.
+/// - Every immutable input remains stable for `compress`; previous and reference inputs may alias each other, but neither may alias the current mutable output.
 ///
 /// Both conditions are upheld by:
+///
 /// - The sequential path's exclusive `&mut Matrix` borrow, OR
 /// - The Argon2 reference-index function (RFC 9106 §3.4) when called from `fill_slice_parallel` —
 ///   see the doc-comment on [`MatrixView`] for the disjointness argument.
-#[allow(clippy::too_many_arguments, clippy::doc_lazy_continuation)]
-unsafe fn fill_segment_inner(
-  view: MatrixView,
-  compress: CompressFn,
-  pass: u32,
-  lane: u32,
-  slice: u32,
-  lanes: u32,
-  segment_len: u32,
-  lane_len: u32,
-  total_blocks: u32,
-  variant: Argon2Variant,
-  time_cost: u32,
-) {
-  let variant_y = variant.y();
+unsafe fn fill_segment_inner(view: MatrixView, lane: u32, config: SegmentConfig) {
+  let SegmentConfig {
+    compress,
+    pass,
+    slice,
+    lanes: _,
+    segment_len,
+    lane_len,
+    total_blocks: _,
+    variant,
+    time_cost: _,
+  } = config;
   let lane_len_usize = lane_len as usize;
   let lane_base = (lane as usize).strict_mul(lane_len_usize);
 
@@ -1458,16 +1433,7 @@ unsafe fn fill_segment_inner(
   let mut address_counter: u64 = 0;
   if is_independent {
     address_counter = 1; // RFC 9106: counter starts at 1 for first block.
-    address_block.refresh(
-      compress,
-      pass,
-      lane,
-      slice,
-      total_blocks,
-      time_cost,
-      variant_y,
-      address_counter,
-    );
+    address_block.refresh(config, lane, address_counter);
   }
 
   // Starting column for this segment. Skip first two blocks of lane 0 on
@@ -1491,16 +1457,7 @@ unsafe fn fill_segment_inner(
       let addr_pos = (seg_col as usize) % BLOCK_WORDS;
       if addr_pos == 0 && seg_col != 0 {
         address_counter = address_counter.strict_add(1);
-        address_block.refresh(
-          compress,
-          pass,
-          lane,
-          slice,
-          total_blocks,
-          time_cost,
-          variant_y,
-          address_counter,
-        );
+        address_block.refresh(config, lane, address_counter);
       }
       let word = address_block.words.0[addr_pos];
       ((word & 0xFFFF_FFFFu64) as u32, (word >> 32) as u32)
@@ -1515,7 +1472,7 @@ unsafe fn fill_segment_inner(
       ((word & 0xFFFF_FFFFu64) as u32, (word >> 32) as u32)
     };
 
-    let (ref_lane, ref_index) = reference_index(pass, lane, slice, col, j1, j2, lanes, segment_len, lane_len);
+    let (ref_lane, ref_index) = reference_index(config, lane, col, j1, j2);
 
     // Compute new block: G(B[lane][prev], B[ref_lane][ref_index]), optionally
     // XOR-accumulated into existing block (v1.3, pass > 0).
@@ -1591,8 +1548,19 @@ fn fill_slice_parallel(
   let lanes = matrix.lanes;
   let segment_len = matrix.segment_len;
   let lane_len = matrix.lane_len;
-  let total_blocks = matrix.len() as u32;
+  let total_blocks = u32::try_from(matrix.len()).expect("matrix length originates from the validated u32 block count");
   let view = MatrixView::from_blocks(&mut matrix.blocks);
+  let config = SegmentConfig {
+    compress,
+    pass,
+    slice,
+    lanes,
+    segment_len,
+    lane_len,
+    total_blocks,
+    variant,
+    time_cost,
+  };
 
   // Spawn lanes 1..lanes onto rayon workers; run lane 0 inline on the
   // calling thread. This is the standard Blake3 / parallel-tree-reduction
@@ -1617,19 +1585,7 @@ fn fill_slice_parallel(
         // a writer. The Send/Sync impls on `MatrixView` are sound under
         // this discipline; see the `MatrixView` doc-comment.
         unsafe {
-          fill_segment_inner(
-            view,
-            compress,
-            pass,
-            lane,
-            slice,
-            lanes,
-            segment_len,
-            lane_len,
-            total_blocks,
-            variant,
-            time_cost,
-          );
+          fill_segment_inner(view, lane, config);
         }
       });
     }
@@ -1638,19 +1594,7 @@ fn fill_slice_parallel(
     // call (no other spawned task touches lane 0). The same disjointness
     // argument used for the spawned tasks applies — see above.
     unsafe {
-      fill_segment_inner(
-        view,
-        compress,
-        pass,
-        0,
-        slice,
-        lanes,
-        segment_len,
-        lane_len,
-        total_blocks,
-        variant,
-        time_cost,
-      );
+      fill_segment_inner(view, 0, config);
     }
   });
 }
@@ -1678,6 +1622,13 @@ fn fill_slice(
 
 // ─── Full Argon2 hash function ─────────────────────────────────────────────
 
+#[derive(Clone, Copy)]
+struct HashBackend {
+  compress: CompressFn,
+  #[cfg(feature = "diag")]
+  diag_blake2b: bool,
+}
+
 fn argon2_hash(
   params: &Argon2Params,
   password: &[u8],
@@ -1696,7 +1647,19 @@ fn argon2_hash_with_context(
   variant: Argon2Variant,
   out: &mut [u8],
 ) -> Result<(), Argon2Error> {
-  argon2_hash_with_kernel_inner(params, context, password, salt, variant, out, active_compress(), false)
+  argon2_hash_with_kernel_inner(
+    params,
+    context,
+    password,
+    salt,
+    variant,
+    out,
+    HashBackend {
+      compress: active_compress(),
+      #[cfg(feature = "diag")]
+      diag_blake2b: false,
+    },
+  )
 }
 
 #[cfg(feature = "diag")]
@@ -1715,8 +1678,10 @@ fn argon2_hash_with_kernel(
     salt,
     variant,
     out,
-    compress,
-    false,
+    HashBackend {
+      compress,
+      diag_blake2b: false,
+    },
   )
 }
 
@@ -1736,12 +1701,13 @@ fn argon2_hash_with_kernel_diag_blake2b(
     salt,
     variant,
     out,
-    compress,
-    true,
+    HashBackend {
+      compress,
+      diag_blake2b: true,
+    },
   )
 }
 
-#[allow(clippy::too_many_arguments)] // Params, context, inputs, variant, output, and kernel are the real operation boundary.
 fn argon2_hash_with_kernel_inner(
   params: &Argon2Params,
   context: Argon2Context<'_>,
@@ -1749,8 +1715,7 @@ fn argon2_hash_with_kernel_inner(
   salt: &[u8],
   variant: Argon2Variant,
   out: &mut [u8],
-  compress: CompressFn,
-  #[cfg_attr(not(feature = "diag"), allow(unused_variables))] diag_blake2b: bool,
+  backend: HashBackend,
 ) -> Result<(), Argon2Error> {
   Argon2Params::check_inputs(password, salt, context)?;
   if out.len() < MIN_OUTPUT_LEN || out.len() as u64 > MAX_VAR_BYTES {
@@ -1767,7 +1732,7 @@ fn argon2_hash_with_kernel_inner(
   let mut h0 = {
     #[cfg(feature = "diag")]
     {
-      if diag_blake2b {
+      if backend.diag_blake2b {
         compute_h0_diag_blake2b_portable(params, context, password, salt, variant, out.len())
       } else {
         compute_h0(params, context, password, salt, variant, out.len())
@@ -1785,7 +1750,7 @@ fn argon2_hash_with_kernel_inner(
     // B[lane][0] = H'(H0 || LE32(0) || LE32(lane), BLOCK_SIZE)
     let lane_le = lane.to_le_bytes();
     #[cfg(feature = "diag")]
-    if diag_blake2b {
+    if backend.diag_blake2b {
       h_prime_diag_blake2b_portable(&[&h0, &0u32.to_le_bytes(), &lane_le], &mut buf);
     } else {
       h_prime(&[&h0, &0u32.to_le_bytes(), &lane_le], &mut buf);
@@ -1796,7 +1761,7 @@ fn argon2_hash_with_kernel_inner(
 
     // B[lane][1] = H'(H0 || LE32(1) || LE32(lane), BLOCK_SIZE)
     #[cfg(feature = "diag")]
-    if diag_blake2b {
+    if backend.diag_blake2b {
       h_prime_diag_blake2b_portable(&[&h0, &1u32.to_le_bytes(), &lane_le], &mut buf);
     } else {
       h_prime(&[&h0, &1u32.to_le_bytes(), &lane_le], &mut buf);
@@ -1812,21 +1777,22 @@ fn argon2_hash_with_kernel_inner(
   // skipped when `parallelism == 1` to avoid rayon overhead.
   for pass in 0..params.time_cost {
     for slice in 0..SYNC_POINTS {
-      fill_slice(&mut matrix, compress, pass, slice, variant, params.time_cost);
+      fill_slice(&mut matrix, backend.compress, pass, slice, variant, params.time_cost);
     }
   }
 
   // Finalisation: C = XOR of last block of each lane; output = H'(C, T).
-  let mut acc = *matrix.get(0, lane_len - 1);
+  let last_block = lane_len.strict_sub(1);
+  let mut acc = *matrix.get(0, last_block);
   for lane in 1..lanes {
-    let blk = matrix.get(lane, lane_len - 1);
+    let blk = matrix.get(lane, last_block);
     for i in 0..BLOCK_WORDS {
       acc[i] ^= blk[i];
     }
   }
   let mut acc_bytes = block_to_bytes(&acc);
   #[cfg(feature = "diag")]
-  if diag_blake2b {
+  if backend.diag_blake2b {
     h_prime_diag_blake2b_portable(&[&acc_bytes], out);
   } else {
     h_prime(&[&acc_bytes], out);
@@ -2148,7 +2114,7 @@ mod password_phc {
   }
 
   impl ApprovedPhc {
-    pub fn salt(&self) -> &[u8] {
+    pub(super) fn salt(&self) -> &[u8] {
       &self.salt[..self.salt_len as usize]
     }
   }
@@ -2209,7 +2175,7 @@ mod password_phc {
     Ok(ApprovedPhc {
       params,
       salt,
-      salt_len: decoded_salt_len as u8,
+      salt_len: u8::try_from(decoded_salt_len).map_err(|_| PhcError::InvalidLength)?,
       expected,
     })
   }
@@ -2252,7 +2218,7 @@ mod tests {
 
   #[cfg(not(miri))]
   fn canon_params() -> Argon2Params {
-    Argon2Params::new(32, 3, 4).unwrap()
+    Argon2Params::new(32, 3, 4).expect("RFC 9106 test parameters must be valid")
   }
 
   #[cfg(not(miri))]
@@ -2277,11 +2243,14 @@ mod tests {
     ];
 
     let mut actual = [0u8; 32];
-    Argon2d::derive_with_context(&canon_params(), canon_context(), PASSWORD, SALT, &mut actual).unwrap();
+    Argon2d::derive_with_context(&canon_params(), canon_context(), PASSWORD, SALT, &mut actual)
+      .expect("RFC 9106 Argon2d vector inputs must derive");
     assert_eq!(actual, expected_d);
-    Argon2i::derive_with_context(&canon_params(), canon_context(), PASSWORD, SALT, &mut actual).unwrap();
+    Argon2i::derive_with_context(&canon_params(), canon_context(), PASSWORD, SALT, &mut actual)
+      .expect("RFC 9106 Argon2i vector inputs must derive");
     assert_eq!(actual, expected_i);
-    Argon2id::derive_with_context(&canon_params(), canon_context(), PASSWORD, SALT, &mut actual).unwrap();
+    Argon2id::derive_with_context(&canon_params(), canon_context(), PASSWORD, SALT, &mut actual)
+      .expect("RFC 9106 Argon2id vector inputs must derive");
     assert_eq!(actual, expected_id);
   }
 
@@ -2290,11 +2259,17 @@ mod tests {
   fn raw_verify_accepts_only_the_exact_inputs() {
     let params = canon_params();
     let mut expected = [0u8; 32];
-    Argon2id::derive(&params, PASSWORD, SALT, &mut expected).unwrap();
+    Argon2id::derive(&params, PASSWORD, SALT, &mut expected).expect("canonical inputs must derive");
 
-    assert!(Argon2id::verify(&params, PASSWORD, SALT, &expected).is_ok());
-    assert!(Argon2id::verify(&params, b"wrong", SALT, &expected).is_err());
-    assert!(Argon2id::verify(&params, PASSWORD, &[0xff; 16], &expected).is_err());
+    assert_eq!(Argon2id::verify(&params, PASSWORD, SALT, &expected), Ok(()));
+    assert_eq!(
+      Argon2id::verify(&params, b"wrong", SALT, &expected),
+      Err(VerificationError::new())
+    );
+    assert_eq!(
+      Argon2id::verify(&params, PASSWORD, &[0xff; 16], &expected),
+      Err(VerificationError::new())
+    );
   }
 
   #[test]
@@ -2302,12 +2277,15 @@ mod tests {
     assert_eq!(Argon2Params::new(8, 0, 1), Err(Argon2Error::InvalidTimeCost));
     assert_eq!(Argon2Params::new(8, 1, 0), Err(Argon2Error::InvalidParallelism));
     assert_eq!(Argon2Params::new(16, 1, 4), Err(Argon2Error::InvalidMemoryCost));
-    assert!(Argon2Params::new(32, 1, 4).is_ok());
+    let valid = Argon2Params::new(32, 1, 4).expect("boundary-valid parameters must construct");
+    assert_eq!(valid.get_memory_cost_kib(), 32);
+    assert_eq!(valid.get_time_cost(), 1);
+    assert_eq!(valid.get_parallelism(), 4);
   }
 
   #[test]
   fn derive_rejects_invalid_operation_lengths() {
-    let params = Argon2Params::new(32, 1, 4).unwrap();
+    let params = Argon2Params::new(32, 1, 4).expect("test parameters must be valid");
     let mut out = [0u8; 32];
     assert_eq!(
       Argon2id::derive(&params, b"pw", &[0u8; 7], &mut out),
@@ -2347,10 +2325,13 @@ mod tests {
     parallelism: u32,
     output_len: usize,
   ) -> vec::Vec<u8> {
-    let params = argon2::Params::new(memory_kib, time, parallelism, Some(output_len)).unwrap();
+    let params =
+      argon2::Params::new(memory_kib, time, parallelism, Some(output_len)).expect("oracle parameters must be valid");
     let oracle = argon2::Argon2::new(algorithm, argon2::Version::V0x13, params);
     let mut output = alloc::vec![0u8; output_len];
-    oracle.hash_password_into(password, salt, &mut output).unwrap();
+    oracle
+      .hash_password_into(password, salt, &mut output)
+      .expect("oracle inputs must derive");
     output
   }
 
@@ -2359,10 +2340,10 @@ mod tests {
   fn all_variants_match_the_oracle() {
     let cases: &[(u32, u32, u32, usize)] = &[(8, 1, 1, 16), (16, 2, 1, 32), (32, 3, 2, 64)];
     for &(memory, time, parallelism, output_len) in cases {
-      let params = Argon2Params::new(memory, time, parallelism).unwrap();
+      let params = Argon2Params::new(memory, time, parallelism).expect("oracle-case parameters must be valid");
       let mut actual = alloc::vec![0u8; output_len];
 
-      Argon2d::derive(&params, b"password", &[0u8; 16], &mut actual).unwrap();
+      Argon2d::derive(&params, b"password", &[0u8; 16], &mut actual).expect("Argon2d oracle case must derive");
       assert_eq!(
         actual,
         oracle_hash(
@@ -2376,7 +2357,7 @@ mod tests {
         )
       );
 
-      Argon2i::derive(&params, b"password", &[0u8; 16], &mut actual).unwrap();
+      Argon2i::derive(&params, b"password", &[0u8; 16], &mut actual).expect("Argon2i oracle case must derive");
       assert_eq!(
         actual,
         oracle_hash(
@@ -2390,7 +2371,7 @@ mod tests {
         )
       );
 
-      Argon2id::derive(&params, b"password", &[0u8; 16], &mut actual).unwrap();
+      Argon2id::derive(&params, b"password", &[0u8; 16], &mut actual).expect("Argon2id oracle case must derive");
       assert_eq!(
         actual,
         oracle_hash(
@@ -2421,19 +2402,20 @@ mod tests {
     use crate::auth::{PasswordStatus, phc::PhcError};
 
     fn small_params() -> Argon2Params {
-      Argon2Params::new(32, 2, 1).unwrap()
+      Argon2Params::new(32, 2, 1).expect("small test profile must be valid")
     }
 
     fn encode(params: Argon2Params, password: &[u8], salt: &[u8], context: Argon2Context<'_>) -> alloc::string::String {
       let mut verifier = [0u8; PASSWORD_OUTPUT_LEN];
-      Argon2id::derive_with_context(&params, context, password, salt, &mut verifier).unwrap();
+      Argon2id::derive_with_context(&params, context, password, salt, &mut verifier)
+        .expect("PHC test inputs must derive");
       password_phc::encode(params, salt, &verifier)
     }
 
     #[test]
     fn canonical_password_record_round_trips() {
       let params = small_params();
-      let password = Argon2idPassword::new(params).unwrap();
+      let password = Argon2idPassword::new(params).expect("test verification profile must be admissible");
       let encoded = encode(params, b"password", &[0xaa; 16], Argon2Context::default());
 
       assert!(encoded.starts_with("$argon2id$v=19$m=32,t=2,p=1$"));
@@ -2441,13 +2423,16 @@ mod tests {
         password.verify_password(b"password", &encoded),
         Ok(PasswordStatus::Current)
       );
-      assert!(password.verify_password(b"wrong", &encoded).is_err());
+      assert_eq!(
+        password.verify_password(b"wrong", &encoded),
+        Err(VerificationError::new())
+      );
     }
 
     #[test]
     fn accepted_older_profile_requests_rehash() {
-      let generation = Argon2Params::new(40, 2, 1).unwrap();
-      let password = Argon2idPassword::new(generation).unwrap();
+      let generation = Argon2Params::new(40, 2, 1).expect("generation profile must be valid");
+      let password = Argon2idPassword::new(generation).expect("generation profile must be admissible");
       let encoded = encode(small_params(), b"password", &[0xbb; 16], Argon2Context::default());
 
       assert_eq!(
@@ -2459,7 +2444,7 @@ mod tests {
     #[test]
     fn accepted_noncurrent_salt_length_requests_rehash() {
       let params = small_params();
-      let password = Argon2idPassword::new(params).unwrap();
+      let password = Argon2idPassword::new(params).expect("test verification profile must be admissible");
       let encoded = encode(params, b"password", &[0xbb; 8], Argon2Context::default());
 
       assert_eq!(
@@ -2471,19 +2456,21 @@ mod tests {
     #[test]
     fn borrowed_context_is_required_for_context_bound_records() {
       let params = small_params();
-      let password = Argon2idPassword::new(params).unwrap();
+      let password = Argon2idPassword::new(params).expect("test verification profile must be admissible");
       let context = Argon2Context::new(b"pepper", b"tenant");
       let encoded = encode(params, b"password", &[0xcc; 16], context);
 
-      assert!(password.verify_password(b"password", &encoded).is_err());
+      assert_eq!(
+        password.verify_password(b"password", &encoded),
+        Err(VerificationError::new())
+      );
       assert_eq!(
         password.verify_password_with_context(b"password", &encoded, context),
         Ok(PasswordStatus::Current)
       );
-      assert!(
-        password
-          .verify_password_with_context(b"password", &encoded, Argon2Context::new(b"wrong", b"tenant"),)
-          .is_err()
+      assert_eq!(
+        password.verify_password_with_context(b"password", &encoded, Argon2Context::new(b"wrong", b"tenant"),),
+        Err(VerificationError::new())
       );
     }
 
@@ -2506,19 +2493,19 @@ mod tests {
     #[test]
     fn actual_argon2_shape_defines_the_limit() {
       let limits = Argon2VerificationLimits::for_profile(small_params());
-      let rounded_equivalent = Argon2Params::new(35, 2, 1).unwrap();
+      let rounded_equivalent = Argon2Params::new(35, 2, 1).expect("rounded test profile must be valid");
       assert!(limits.allows(rounded_equivalent));
-      let next_matrix = Argon2Params::new(36, 2, 1).unwrap();
+      let next_matrix = Argon2Params::new(36, 2, 1).expect("next-matrix test profile must be valid");
       assert!(!limits.allows(next_matrix));
     }
 
     #[test]
     fn generator_and_parser_share_the_full_argon2_parallelism_domain() {
-      let params = Argon2Params::new(2_048, 1, 256).unwrap();
+      let params = Argon2Params::new(2_048, 1, 256).expect("maximum-domain test profile must be valid");
       let encoded = password_phc::encode(params, &[0x44; 16], &[0u8; PASSWORD_OUTPUT_LEN]);
       let limits = Argon2VerificationLimits::for_profile(params);
 
-      assert!(password_phc::approve(&encoded, limits).is_ok());
+      password_phc::approve(&encoded, limits).expect("generator output must be accepted by the parser");
     }
 
     #[test]
@@ -2535,16 +2522,22 @@ mod tests {
         format!("$argon2id$v=19$m=32,t=2,x=1$${salt}$${hash}"),
       ];
       for encoded in cases {
-        assert!(password_phc::approve(&encoded, limits).is_err(), "{encoded}");
+        password_phc::approve(&encoded, limits)
+          .err()
+          .expect("noncanonical record must be rejected");
       }
     }
 
     #[cfg(feature = "getrandom")]
     #[test]
     fn generated_records_use_fresh_salts() {
-      let password = Argon2idPassword::new(small_params()).unwrap();
-      let first = password.hash_password(b"password").unwrap();
-      let second = password.hash_password(b"password").unwrap();
+      let password = Argon2idPassword::new(small_params()).expect("test verification profile must be admissible");
+      let first = password
+        .hash_password(b"password")
+        .expect("first salt generation must succeed");
+      let second = password
+        .hash_password(b"password")
+        .expect("second salt generation must succeed");
 
       assert_ne!(first, second);
       assert_eq!(

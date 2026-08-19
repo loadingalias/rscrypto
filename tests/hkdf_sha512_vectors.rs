@@ -4,7 +4,10 @@ use hkdf::Hkdf as RustCryptoHkdf;
 use rscrypto::{HkdfSha512, auth::HkdfOutputLengthError};
 
 mod common;
-use common::{decode_hex_array, decode_hex_vec};
+#[path = "common/array.rs"]
+mod hex_array;
+use common::decode_hex_vec;
+use hex_array::decode_hex_array;
 
 #[test]
 fn hkdf_sha512_rfc5869_case_1() {
@@ -21,7 +24,9 @@ fn hkdf_sha512_rfc5869_case_1() {
     )
   );
 
-  let okm = hkdf.expand_array::<42>(&info).unwrap();
+  let okm = hkdf
+    .expand_array::<42>(&info)
+    .expect("HKDF-SHA-512 vector expansion must succeed");
   assert_eq!(
     okm,
     decode_hex_array::<42>("832390086cda71fb47625bb5ceB168e4c8e26a1a16ed34d9fc7fe92c1481579338da362cb8d9f925d7cb",)
@@ -40,8 +45,12 @@ fn hkdf_sha512_matches_rustcrypto() {
     let mut ours = vec![0u8; len];
     let mut theirs = vec![0u8; len];
 
-    hkdf.expand(&info, &mut ours).unwrap();
-    rustcrypto.expand(&info, &mut theirs).unwrap();
+    hkdf
+      .expand(&info, &mut ours)
+      .expect("rscrypto HKDF-SHA-512 differential expansion must succeed");
+    rustcrypto
+      .expand(&info, &mut theirs)
+      .expect("RustCrypto HKDF-SHA-512 differential expansion must succeed");
 
     assert_eq!(ours, theirs, "HKDF-SHA512 mismatch at output len {len}");
   }
@@ -54,13 +63,18 @@ fn hkdf_sha512_derive_matches_extract_then_expand() {
   let info = b"context";
 
   let extracted = HkdfSha512::new(salt, ikm);
-  let derived = HkdfSha512::derive_array::<128>(salt, ikm, info).unwrap();
-  assert_eq!(derived, extracted.expand_array::<128>(info).unwrap());
+  let derived =
+    HkdfSha512::derive_array::<128>(salt, ikm, info).expect("HKDF-SHA-512 one-shot derivation must succeed");
+  let expanded = extracted
+    .expand_array::<128>(info)
+    .expect("HKDF-SHA-512 extracted-state expansion must succeed");
+  assert_eq!(derived, expanded);
 }
 
 #[test]
 fn hkdf_sha512_rejects_oversized_output() {
-  let mut out = vec![0u8; HkdfSha512::MAX_OUTPUT_SIZE + 1];
-  let err = HkdfSha512::derive(b"salt", b"ikm", b"info", &mut out).unwrap_err();
+  let mut out = vec![0u8; HkdfSha512::MAX_OUTPUT_SIZE.strict_add(1)];
+  let err =
+    HkdfSha512::derive(b"salt", b"ikm", b"info", &mut out).expect_err("HKDF-SHA-512 must reject oversized output");
   assert_eq!(err, HkdfOutputLengthError::new());
 }

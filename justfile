@@ -1,104 +1,49 @@
 # Remote dev. Provider mechanics live in ~/dev-machines.
 
-ssh target:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto "{{ target }}"
+dev_machine := env_var_or_default("DEV_MACHINE_BIN", env_var("HOME") + "/dev-machines/dev-machine")
 
-ssh-check target:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto "{{ target }}" --check
+ssh target *args="":
+    @"{{ dev_machine }}" ssh rscrypto "{{ target }}" {{ args }}
+
+ssh-check target *args="":
+    @"{{ dev_machine }}" ssh rscrypto "{{ target }}" --check {{ args }}
+
+ssh-preflight target:
+    @"{{ dev_machine }}" preflight rscrypto "{{ target }}"
 
 ssh-create target *args="":
-    @"$HOME/dev-machines/dev-machine" create rscrypto "{{ target }}" {{ args }}
+    @"{{ dev_machine }}" create rscrypto "{{ target }}" {{ args }}
+
+ssh-start target:
+    @"{{ dev_machine }}" start rscrypto "{{ target }}"
+
+ssh-deallocate target:
+    @"{{ dev_machine }}" deallocate rscrypto "{{ target }}"
 
 ssh-kill target:
-    @"$HOME/dev-machines/dev-machine" kill rscrypto "{{ target }}"
+    @"{{ dev_machine }}" kill rscrypto "{{ target }}"
 
 ssh-status target="":
-    @if [ -n "{{ target }}" ]; then "$HOME/dev-machines/dev-machine" status rscrypto "{{ target }}"; else "$HOME/dev-machines/dev-machine" status rscrypto; fi
+    @if [ -n "{{ target }}" ]; then "{{ dev_machine }}" status rscrypto "{{ target }}"; else "{{ dev_machine }}" status rscrypto; fi
 
-ssh-bootstrap target:
-    @"$HOME/dev-machines/dev-machine" bootstrap rscrypto "{{ target }}"
+ssh-bootstrap target profile="":
+    @if [ -n "{{ profile }}" ]; then "{{ dev_machine }}" bootstrap rscrypto "{{ target }}" "{{ profile }}"; else "{{ dev_machine }}" bootstrap rscrypto "{{ target }}"; fi
 
-ssh-aws-linux-x64:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-x64
+ssh-just target *args="":
+    @"{{ dev_machine }}" just rscrypto "{{ target }}" {{ args }}
 
-ssh-aws-linux-arm64:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-arm64
+ssh-collect-bench target run_id destination:
+    @"{{ dev_machine }}" collect-bench rscrypto "{{ target }}" "{{ run_id }}" "{{ destination }}"
 
-ssh-aws-windows-x64:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-windows-x64
-
-ssh-azure-linux-x64:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-linux-x64
-
-ssh-azure-linux-arm64:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-linux-arm64
-
-ssh-azure-windows-x64:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-windows-x64
-
-ssh-azure-windows-arm64:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-windows-arm64
-
-ssh-aws-linux-x64-perf:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-x64-perf
-
-ssh-aws-linux-intel-gnr-profile:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-intel-gnr-profile
-
-ssh-aws-linux-intel-spr-profile:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-intel-spr-profile
-
-ssh-aws-linux-amd-zen5-profile:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-amd-zen5-profile
-
-ssh-aws-linux-amd-zen4-profile:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-amd-zen4-profile
-
-ssh-aws-linux-arm64-graviton3-profile:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-arm64-graviton3-profile
-
-ssh-aws-linux-arm64-graviton4-profile:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-arm64-graviton4-profile
-
-ssh-azure-linux-intel-gnr-profile:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-linux-intel-gnr-profile
-
-ssh-azure-linux-intel-emr-profile:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-linux-intel-emr-profile
-
-ssh-azure-linux-amd-zen5-profile:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-linux-amd-zen5-profile
-
-ssh-azure-linux-amd-zen4-profile:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-linux-amd-zen4-profile
-
-ssh-azure-linux-arm64-cobalt-profile:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-linux-arm64-cobalt-profile
-
-ssh-azure-linux-arm64-ampere-profile:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-linux-arm64-ampere-profile
-
-ssh-azure-windows-amd-zen5-profile:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-windows-amd-zen5-profile
-
-ssh-azure-windows-intel-gnr-profile:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-windows-intel-gnr-profile
-
-ssh-azure-windows-arm64-profile:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-windows-arm64-profile
-
-ssh-aws-test-rdma:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-test-rdma
-
-ssh-azure-test-rdma:
-    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-test-rdma
+ssh-list:
+    @"{{ dev_machine }}" list
 
 # Builds
 build:
-    cargo build --workspace --all-targets --all-features
+    cargo build --locked --workspace --all-targets --all-features
 
 build-release:
-    cargo build --workspace --all-targets --all-features --release
+    cargo build --locked --workspace --all-targets --all-features --release
 
 # Checks
 check *args="":
@@ -120,9 +65,9 @@ test-feature-matrix:
     @scripts/test/test-feature-matrix.sh
 
 test-native-api:
-    cargo test --no-default-features --features 'alloc,aead,ed25519,x25519,ecdsa,ml-kem' --test api_consistency
-    cargo test --features 'aead,signatures,key-exchange,getrandom' --test api_consistency
-    cargo test --features 'signatures,key-exchange,getrandom' --test getrandom_smoke
+    cargo test --locked --no-default-features --features 'alloc,aead,ed25519,x25519,ecdsa,ml-kem' --test api_consistency
+    cargo test --locked --features 'aead,signatures,key-exchange,getrandom' --test api_consistency
+    cargo test --locked --features 'signatures,key-exchange,getrandom' --test getrandom_smoke
 
 # Tests
 test *crates="":

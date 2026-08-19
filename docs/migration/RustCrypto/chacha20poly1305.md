@@ -5,14 +5,14 @@
 > ChaCha20-Poly1305 and XChaCha20-Poly1305 operations preserve ciphertext and
 > tag bytes.
 
-Verified against `chacha20poly1305 = "0.11.0"` and the `rscrypto` 0.7.8 line.
+Verified against `chacha20poly1305 = "0.11.0"` and the `rscrypto` 0.8.1 line.
 Evidence: `tests/chacha20poly1305.rs`, `tests/xchacha20poly1305.rs`, and `tests/aead_wycheproof.rs`.
 
 ## TL;DR
 
-| | Before (`chacha20poly1305` 0.11.x) | After (`rscrypto` 0.7.8) |
+| | Before (`chacha20poly1305` 0.11.x) | After (`rscrypto` 0.8.1) |
 |---|---|---|
-| Cargo dep | `chacha20poly1305 = "0.11"` | `rscrypto = { version = "0.7.8", features = ["chacha20poly1305", "xchacha20poly1305"] }` |
+| Cargo dep | `chacha20poly1305 = "0.11"` | `rscrypto = { version = "0.8.1", features = ["chacha20poly1305", "xchacha20poly1305"] }` |
 | Import | `use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce, KeyInit, aead::{Aead, Payload}};` | `use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, aead::{Nonce96, expert::AeadWithNonce}};` |
 | Encrypt | `cipher.encrypt(nonce, Payload { msg, aad })?` | `cipher.encrypt(&nonce, aad, msg, &mut out)?` |
 
@@ -29,7 +29,7 @@ chacha20poly1305 = "0.11"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.7.8", features = ["chacha20poly1305", "xchacha20poly1305"] }
+rscrypto = { version = "0.8.1", features = ["chacha20poly1305", "xchacha20poly1305"] }
 ```
 
 ## Algorithm map
@@ -49,10 +49,10 @@ rscrypto = { version = "0.7.8", features = ["chacha20poly1305", "xchacha20poly13
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce, KeyInit};
 use chacha20poly1305::aead::{Aead, Payload};
 
-let key = Key::from_slice(&[0u8; 32]);                 // Key is non-generic
-let cipher = ChaCha20Poly1305::new(key);
-let nonce = Nonce::from_slice(&[0u8; 12]);
-let ct = cipher.encrypt(nonce, Payload { msg: plaintext, aad }).unwrap();
+let key = Key::from([0u8; 32]);                        // Key is non-generic
+let cipher = ChaCha20Poly1305::new(&key);
+let nonce = Nonce::from([0u8; 12]);
+let ct = cipher.encrypt(&nonce, Payload { msg: plaintext, aad }).unwrap();
 ```
 
 ```rust
@@ -76,10 +76,10 @@ cipher.encrypt(&nonce, aad, plaintext, &mut ct)?;
 use chacha20poly1305::{XChaCha20Poly1305, Key, XNonce, KeyInit};
 use chacha20poly1305::aead::{Aead, Payload};
 
-let key = Key::from_slice(&[0u8; 32]);
-let cipher = XChaCha20Poly1305::new(key);
-let nonce = XNonce::from_slice(&[0u8; 24]);
-let ct = cipher.encrypt(nonce, Payload { msg: plaintext, aad }).unwrap();
+let key = Key::from([0u8; 32]);
+let cipher = XChaCha20Poly1305::new(&key);
+let nonce = XNonce::from([0u8; 24]);
+let ct = cipher.encrypt(&nonce, Payload { msg: plaintext, aad }).unwrap();
 ```
 
 ```rust

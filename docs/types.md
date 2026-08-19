@@ -144,7 +144,7 @@ Features: `signatures` / `key-exchange` or `ecdsa` / `ed25519` / `rsa` / `x25519
 | `EcdsaP256Keypair` / `EcdsaP384Keypair` | secret + public | FIPS 186-5 / SEC 1 |
 | `Ed25519SecretKey` / `Ed25519PublicKey` / `Ed25519Signature` | 32/32/64B | RFC 8032 |
 | `Ed25519Keypair` | -- | RFC 8032 |
-| `RsaPublicKey`, `RsaPrivateKey`, `RsaPrivateKeyParts`, `RsaX509PublicKey`, `RsaPublicScratch`, `RsaPrivateScratch` | variable | RFC 8017 / RFC 4055 |
+| `RsaPublicKey`, `RsaPrivateKey`, `RsaPrivateKeyParts`, `RsaBlindingPair`, `RsaX509PublicKey`, `RsaPublicScratch`, `RsaPrivateScratch` | variable | RFC 8017 / RFC 4055 |
 | `RsaSignatureSigner`, `RsaSignatureVerifier` | profile-bound wrappers | RFC 8017 / RFC 4055 |
 | `RsaJwtAlgorithm`, `RsaJwtVerifier` | verifier-owned JWT/JWS policy | RFC 7515 / RFC 8725 |
 | `RsaSignatureProfile`, `RsaPssProfile`, `RsaPkcs1v15Profile`, `RsaOaepProfile`, `RsaPublicKeyPolicy`, `RsaKeyGenerationContract` | -- | RFC 8017 / RFC 4055 / FIPS 186-5 / protocol-specific profiles |

@@ -6,13 +6,6 @@ use super::{
 };
 use crate::hashes::crypto::dispatch_util::SizeClassDispatch;
 
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub struct KernelResult {
-  pub name: &'static str,
-  pub digest: [u8; 32],
-}
-
 fn hasher_for_kernel(id: Sha256KernelId) -> Sha256 {
   let compress = compress_blocks_fn(id);
   Sha256 {
@@ -34,41 +27,16 @@ fn digest_with_kernel(id: Sha256KernelId, data: &[u8]) -> [u8; 32] {
   h.finalize()
 }
 
-#[must_use]
-pub fn run_all_sha256_kernels(data: &[u8]) -> Vec<KernelResult> {
-  let caps = crate::platform::caps();
-  let mut out = Vec::with_capacity(ALL.len());
-  for &id in ALL {
-    if caps.has(required_caps(id)) {
-      out.push(KernelResult {
-        name: id.as_str(),
-        digest: digest_with_kernel(id, data),
-      });
-    }
-  }
-  out
-}
-
-pub fn verify_sha256_kernels(data: &[u8]) -> Result<(), &'static str> {
-  let results = run_all_sha256_kernels(data);
-  let Some(first) = results.first() else {
-    return Ok(());
-  };
-  for r in &results[1..] {
-    if r.digest != first.digest {
-      return Err("sha256 kernel mismatch");
-    }
-  }
-  Ok(())
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
 
   fn pattern(len: usize) -> Vec<u8> {
     (0..len)
-      .map(|i| (i as u8).wrapping_mul(31).wrapping_add((i >> 8) as u8))
+      .map(|i| {
+        let bytes = i.to_le_bytes();
+        bytes[0].wrapping_mul(31).wrapping_add(bytes[1])
+      })
       .collect()
   }
 
@@ -91,7 +59,7 @@ mod tests {
 
     #[cfg(not(miri))]
     let lens = [
-      0usize, 1, 2, 3, 55, 56, 57, 63, 64, 65, 119, 120, 121, 127, 128, 129, 1000,
+      0usize, 1, 2, 3, 55, 56, 57, 63, 64, 65, 119, 120, 121, 127, 128, 129, 1000, 4096,
     ];
     #[cfg(miri)]
     let lens = [0usize, 1, 55, 56, 57, 63, 64, 65, 127, 128, 129];
@@ -150,12 +118,6 @@ mod tests {
         }
       }
     }
-  }
-
-  #[test]
-  fn run_all_agree() {
-    verify_sha256_kernels(b"abc").expect("kernels should agree");
-    verify_sha256_kernels(&pattern(4096)).expect("kernels should agree");
   }
 
   #[test]

@@ -14,12 +14,12 @@ fn signature_candidate(material: &[u8], len: usize) -> Vec<u8> {
   }
 
   for (index, byte) in out.iter_mut().enumerate() {
-    *byte = material[index % material.len()];
+    *byte = material[index.rem_euclid(material.len())];
   }
   out
 }
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let mode = some_or_return!(input.byte());
   let split = some_or_return!(input.byte());
@@ -28,7 +28,7 @@ pub fn run(data: &[u8]) {
   let key = RsaPublicKey::from_spki_der(RSA3072_SPKI).expect("fuzz RSA fixture must parse");
   let mut scratch = key.public_scratch();
 
-  match mode % 6 {
+  match mode.rem_euclid(6) {
     0 => {
       key
         .verify_pss_with_scratch(RsaPssProfile::Sha256, MESSAGE_PSS, RSA3072_PSS_SHA256, &mut scratch)
@@ -46,17 +46,20 @@ pub fn run(data: &[u8]) {
     }
     2 => {
       let signature = signature_candidate(signature_material, key.modulus().len());
-      let _ = key.verify_pss_with_scratch(RsaPssProfile::Sha256, message, &signature, &mut scratch);
+      let _verification_result = key.verify_pss_with_scratch(RsaPssProfile::Sha256, message, &signature, &mut scratch);
     }
     3 => {
       let signature = signature_candidate(signature_material, key.modulus().len());
-      let _ = key.verify_pkcs1v15_with_scratch(RsaPkcs1v15Profile::Sha256, message, &signature, &mut scratch);
+      let _verification_result =
+        key.verify_pkcs1v15_with_scratch(RsaPkcs1v15Profile::Sha256, message, &signature, &mut scratch);
     }
     4 => {
-      let _ = key.verify_pss_with_scratch(RsaPssProfile::Sha384, message, signature_material, &mut scratch);
+      let _verification_result =
+        key.verify_pss_with_scratch(RsaPssProfile::Sha384, message, signature_material, &mut scratch);
     }
     _ => {
-      let _ = key.verify_pkcs1v15_with_scratch(RsaPkcs1v15Profile::Sha512, message, signature_material, &mut scratch);
+      let _verification_result =
+        key.verify_pkcs1v15_with_scratch(RsaPkcs1v15Profile::Sha512, message, signature_material, &mut scratch);
     }
   }
 }

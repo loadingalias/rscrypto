@@ -4,28 +4,23 @@
 //! same Curve25519 basepoint. Reuse the Ed25519 basepoint machinery instead of
 //! maintaining a second precompute stack for the identical scalar-mul problem.
 
-#[allow(dead_code)]
+#[cfg(feature = "ed25519")]
 #[path = "ed25519/constants.rs"]
 pub(crate) mod constants;
-#[allow(dead_code)]
 #[path = "ed25519/field.rs"]
 pub(crate) mod field;
 #[cfg(target_arch = "x86_64")]
-#[allow(dead_code)]
 #[path = "ed25519/field_avx2.rs"]
 pub(crate) mod field_avx2;
 #[cfg(target_arch = "x86_64")]
-#[allow(dead_code)]
 #[path = "ed25519/field_ifma.rs"]
 pub(crate) mod field_ifma;
-#[allow(dead_code)]
 #[path = "ed25519/point.rs"]
 pub(crate) mod point;
 #[cfg(target_arch = "x86_64")]
-#[allow(dead_code)]
 #[path = "ed25519/point_avx2.rs"]
 pub(crate) mod point_avx2;
-#[allow(dead_code)]
+#[cfg(feature = "ed25519")]
 #[path = "ed25519/scalar.rs"]
 pub(crate) mod scalar;
 
@@ -38,8 +33,18 @@ pub use point_avx2::{
 };
 
 /// Dispatch `[s]B` (fixed-base scalar mul) to the fastest validated CT path.
+#[cfg_attr(
+  all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    not(any(test, miri, feature = "portable-only"))
+  ),
+  expect(
+    dead_code,
+    reason = "x86_64 Linux library builds use the assembly fixed-base entry points"
+  )
+)]
 #[must_use]
-#[allow(dead_code)]
 pub(crate) fn basepoint_mul_dispatch(scalar_bytes: &[u8; 32]) -> point::ExtendedPoint {
   #[cfg(target_arch = "x86_64")]
   {
@@ -58,4 +63,71 @@ pub(crate) fn basepoint_mul_dispatch(scalar_bytes: &[u8; 32]) -> point::Extended
   }
 
   point::ExtendedPoint::scalar_mul_basepoint(scalar_bytes)
+}
+
+/// Decompose a scalar encoding into signed radix-16 digits in `[-8, 8]`.
+#[must_use]
+fn scalar_radix_16(bytes: &[u8; 32]) -> [i8; 64] {
+  debug_assert!(bytes[31] <= 127);
+
+  let mut digits = [0i8; 64];
+  for (index, byte) in bytes.iter().copied().enumerate() {
+    let low = index.strict_mul(2);
+    let high = low.strict_add(1);
+    digits[low] = i8::from_ne_bytes([byte & 0x0F]);
+    digits[high] = i8::from_ne_bytes([(byte >> 4) & 0x0F]);
+  }
+
+  for index in 0usize..63 {
+    let next = index.strict_add(1);
+    let carry = digits[index].strict_add(8) >> 4;
+    digits[index] = digits[index].strict_sub(carry << 4);
+    digits[next] = digits[next].strict_add(carry);
+  }
+
+  digits
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  // Keeps `basepoint_mul_dispatch` reachable under every feature
+  // combination: the x86_64/aarch64 assembly entry points route around it
+  // in ed25519's and x25519's own callers, so without a direct test caller
+  // it goes dead under feature sets that enable only one of the two curves.
+  // Encoding is curve-specific (`to_bytes` needs ed25519, `to_montgomery_u`
+  // needs x25519), so each active curve gets its own comparison.
+
+  #[cfg(feature = "ed25519")]
+  #[test]
+  fn basepoint_mul_dispatch_matches_portable_edwards_encoding() {
+    let mut scalar = [0u8; 32];
+    scalar[0] = 9;
+
+    let dispatched = basepoint_mul_dispatch(&scalar);
+    let portable = point::ExtendedPoint::scalar_mul_basepoint(&scalar);
+
+    assert_eq!(
+      dispatched.to_bytes(),
+      portable.to_bytes(),
+      "dispatched basepoint mul should match the portable reference"
+    );
+  }
+
+  #[cfg(feature = "x25519")]
+  #[test]
+  fn basepoint_mul_dispatch_matches_portable_montgomery_encoding() {
+    let mut scalar = [0u8; 32];
+    scalar[0] = 9;
+
+    let dispatched = basepoint_mul_dispatch(&scalar);
+    let portable = point::ExtendedPoint::scalar_mul_basepoint(&scalar);
+
+    assert_eq!(
+      dispatched.to_montgomery_u().normalize().to_bytes(),
+      portable.to_montgomery_u().normalize().to_bytes(),
+      "dispatched basepoint mul should match the portable reference"
+    );
+  }
 }

@@ -11,8 +11,6 @@
 //!
 //! Requires WASM SIMD128. Caller must verify `wasm::SIMD128`.
 
-#![allow(clippy::cast_possible_truncation, clippy::indexing_slicing)]
-
 #[cfg(target_arch = "wasm32")]
 use core::arch::wasm32::*;
 
@@ -55,45 +53,39 @@ fn ror63(x: v128) -> v128 {
 /// Blake2b G mixing on SIMD rows (2-wide).
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
-fn g2(
-  a0: &mut v128,
-  a1: &mut v128,
-  b0: &mut v128,
-  b1: &mut v128,
-  c0: &mut v128,
-  c1: &mut v128,
-  d0: &mut v128,
-  d1: &mut v128,
-  mx0: v128,
-  mx1: v128,
-  my0: v128,
-  my1: v128,
-) {
+fn g2(state: &mut WorkingState, mx: [v128; 2], my: [v128; 2]) {
   // a += b + mx
-  *a0 = i64x2_add(i64x2_add(*a0, *b0), mx0);
-  *a1 = i64x2_add(i64x2_add(*a1, *b1), mx1);
+  state.a[0] = i64x2_add(i64x2_add(state.a[0], state.b[0]), mx[0]);
+  state.a[1] = i64x2_add(i64x2_add(state.a[1], state.b[1]), mx[1]);
   // d = (d ^ a) >>> 32
-  *d0 = ror32(v128_xor(*d0, *a0));
-  *d1 = ror32(v128_xor(*d1, *a1));
+  state.d[0] = ror32(v128_xor(state.d[0], state.a[0]));
+  state.d[1] = ror32(v128_xor(state.d[1], state.a[1]));
   // c += d
-  *c0 = i64x2_add(*c0, *d0);
-  *c1 = i64x2_add(*c1, *d1);
+  state.c[0] = i64x2_add(state.c[0], state.d[0]);
+  state.c[1] = i64x2_add(state.c[1], state.d[1]);
   // b = (b ^ c) >>> 24
-  *b0 = ror24(v128_xor(*b0, *c0));
-  *b1 = ror24(v128_xor(*b1, *c1));
+  state.b[0] = ror24(v128_xor(state.b[0], state.c[0]));
+  state.b[1] = ror24(v128_xor(state.b[1], state.c[1]));
   // a += b + my
-  *a0 = i64x2_add(i64x2_add(*a0, *b0), my0);
-  *a1 = i64x2_add(i64x2_add(*a1, *b1), my1);
+  state.a[0] = i64x2_add(i64x2_add(state.a[0], state.b[0]), my[0]);
+  state.a[1] = i64x2_add(i64x2_add(state.a[1], state.b[1]), my[1]);
   // d = (d ^ a) >>> 16
-  *d0 = ror16(v128_xor(*d0, *a0));
-  *d1 = ror16(v128_xor(*d1, *a1));
+  state.d[0] = ror16(v128_xor(state.d[0], state.a[0]));
+  state.d[1] = ror16(v128_xor(state.d[1], state.a[1]));
   // c += d
-  *c0 = i64x2_add(*c0, *d0);
-  *c1 = i64x2_add(*c1, *d1);
+  state.c[0] = i64x2_add(state.c[0], state.d[0]);
+  state.c[1] = i64x2_add(state.c[1], state.d[1]);
   // b = (b ^ c) >>> 63
-  *b0 = ror63(v128_xor(*b0, *c0));
-  *b1 = ror63(v128_xor(*b1, *c1));
+  state.b[0] = ror63(v128_xor(state.b[0], state.c[0]));
+  state.b[1] = ror63(v128_xor(state.b[1], state.c[1]));
+}
+
+#[cfg(target_arch = "wasm32")]
+struct WorkingState {
+  a: [v128; 2],
+  b: [v128; 2],
+  c: [v128; 2],
+  d: [v128; 2],
 }
 
 // ─── Diagonalize / Un-diagonalize ─────────────────────────────────────────
@@ -103,41 +95,41 @@ fn g2(
 /// `i64x2_shuffle` indices: 0,1 = lanes from first operand, 2,3 = from second.
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
-fn diagonalize(b0: &mut v128, b1: &mut v128, c0: &mut v128, c1: &mut v128, d0: &mut v128, d1: &mut v128) {
+fn diagonalize(state: &mut WorkingState) {
   // B: rotate left 1: (v4,v5,v6,v7) -> (v5,v6,v7,v4)
-  let tb0 = *b0;
-  let tb1 = *b1;
-  *b0 = i64x2_shuffle::<1, 2>(tb0, tb1); // [b0[1], b1[0]] = [v5, v6]
-  *b1 = i64x2_shuffle::<1, 2>(tb1, tb0); // [b1[1], b0[0]] = [v7, v4]
+  let tb0 = state.b[0];
+  let tb1 = state.b[1];
+  state.b[0] = i64x2_shuffle::<1, 2>(tb0, tb1); // [b0[1], b1[0]] = [v5, v6]
+  state.b[1] = i64x2_shuffle::<1, 2>(tb1, tb0); // [b1[1], b0[0]] = [v7, v4]
 
   // C: rotate left 2 = swap lo/hi
-  core::mem::swap(c0, c1);
+  state.c.swap(0, 1);
 
   // D: rotate left 3 = rotate right 1: (v12,v13,v14,v15) -> (v15,v12,v13,v14)
-  let td0 = *d0;
-  let td1 = *d1;
-  *d0 = i64x2_shuffle::<1, 2>(td1, td0); // [d1[1], d0[0]] = [v15, v12]
-  *d1 = i64x2_shuffle::<1, 2>(td0, td1); // [d0[1], d1[0]] = [v13, v14]
+  let td0 = state.d[0];
+  let td1 = state.d[1];
+  state.d[0] = i64x2_shuffle::<1, 2>(td1, td0); // [d1[1], d0[0]] = [v15, v12]
+  state.d[1] = i64x2_shuffle::<1, 2>(td0, td1); // [d0[1], d1[0]] = [v13, v14]
 }
 
 /// Un-diagonalize: reverse the rotations.
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
-fn undiagonalize(b0: &mut v128, b1: &mut v128, c0: &mut v128, c1: &mut v128, d0: &mut v128, d1: &mut v128) {
+fn undiagonalize(state: &mut WorkingState) {
   // B: rotate right 1 (undo left 1)
-  let tb0 = *b0;
-  let tb1 = *b1;
-  *b0 = i64x2_shuffle::<1, 2>(tb1, tb0);
-  *b1 = i64x2_shuffle::<1, 2>(tb0, tb1);
+  let tb0 = state.b[0];
+  let tb1 = state.b[1];
+  state.b[0] = i64x2_shuffle::<1, 2>(tb1, tb0);
+  state.b[1] = i64x2_shuffle::<1, 2>(tb0, tb1);
 
   // C: swap back
-  core::mem::swap(c0, c1);
+  state.c.swap(0, 1);
 
   // D: rotate left 1 (undo right 1)
-  let td0 = *d0;
-  let td1 = *d1;
-  *d0 = i64x2_shuffle::<1, 2>(td0, td1);
-  *d1 = i64x2_shuffle::<1, 2>(td1, td0);
+  let td0 = state.d[0];
+  let td1 = state.d[1];
+  state.d[0] = i64x2_shuffle::<1, 2>(td0, td1);
+  state.d[1] = i64x2_shuffle::<1, 2>(td1, td0);
 }
 
 // ─── Load helpers ─────────────────────────────────────────────────────────
@@ -149,12 +141,18 @@ fn load_msg_pair(m: &[u64; 16], i0: u8, i1: u8) -> v128 {
   u64x2(m[i0 as usize], m[i1 as usize])
 }
 
-/// Load 2 consecutive u64 values from a pointer as v128.
+/// Load two consecutive words into a SIMD vector.
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
-unsafe fn vload_u64_pair(p: *const u64) -> v128 {
-  // SAFETY: caller ensures p is valid for 2 x u64 (16 bytes).
-  unsafe { v128_load(p as *const v128) }
+fn load_u64_pair<const N: usize>(words: &[u64; N], offset: usize) -> v128 {
+  u64x2(words[offset], words[offset.strict_add(1)])
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn store_u64_pair(words: &mut [u64; 8], offset: usize, value: v128) {
+  words[offset] = u64x2_extract_lane::<0>(value);
+  words[offset.strict_add(1)] = u64x2_extract_lane::<1>(value);
 }
 
 // ─── Compress entry point ─────────────────────────────────────────────────
@@ -170,16 +168,13 @@ pub(super) unsafe fn compress_simd128(h: &mut [u64; 8], block: &[u8; 128], t: u1
   let m = load_msg(block);
   let v = init_v(h, t, last);
 
-  // Pack into 2-wide SIMD rows: (lo, hi) for each row
-  // SAFETY: v is a [u64; 16] — pointer arithmetic is within bounds.
-  let mut a0 = unsafe { vload_u64_pair(v.as_ptr()) }; // v[0], v[1]
-  let mut a1 = unsafe { vload_u64_pair(v.as_ptr().add(2)) }; // v[2], v[3]
-  let mut b0 = unsafe { vload_u64_pair(v.as_ptr().add(4)) }; // v[4], v[5]
-  let mut b1 = unsafe { vload_u64_pair(v.as_ptr().add(6)) }; // v[6], v[7]
-  let mut c0 = unsafe { vload_u64_pair(v.as_ptr().add(8)) }; // v[8], v[9]
-  let mut c1 = unsafe { vload_u64_pair(v.as_ptr().add(10)) }; // v[10], v[11]
-  let mut d0 = unsafe { vload_u64_pair(v.as_ptr().add(12)) }; // v[12], v[13]
-  let mut d1 = unsafe { vload_u64_pair(v.as_ptr().add(14)) }; // v[14], v[15]
+  // Pack into 2-wide SIMD rows: (lo, hi) for each row.
+  let mut state = WorkingState {
+    a: [load_u64_pair(&v, 0), load_u64_pair(&v, 2)],
+    b: [load_u64_pair(&v, 4), load_u64_pair(&v, 6)],
+    c: [load_u64_pair(&v, 8), load_u64_pair(&v, 10)],
+    d: [load_u64_pair(&v, 12), load_u64_pair(&v, 14)],
+  };
 
   // 12 rounds
   for round in 0..12u8 {
@@ -191,11 +186,9 @@ pub(super) unsafe fn compress_simd128(h: &mut [u64; 8], block: &[u8; 128], t: u1
     let my0 = load_msg_pair(&m, s[1], s[3]);
     let my1 = load_msg_pair(&m, s[5], s[7]);
 
-    g2(
-      &mut a0, &mut a1, &mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1, mx0, mx1, my0, my1,
-    );
+    g2(&mut state, [mx0, mx1], [my0, my1]);
 
-    diagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
+    diagonalize(&mut state);
 
     // Diagonal step
     let mx0 = load_msg_pair(&m, s[8], s[10]);
@@ -203,30 +196,24 @@ pub(super) unsafe fn compress_simd128(h: &mut [u64; 8], block: &[u8; 128], t: u1
     let my0 = load_msg_pair(&m, s[9], s[11]);
     let my1 = load_msg_pair(&m, s[13], s[15]);
 
-    g2(
-      &mut a0, &mut a1, &mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1, mx0, mx1, my0, my1,
-    );
+    g2(&mut state, [mx0, mx1], [my0, my1]);
 
-    undiagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
+    undiagonalize(&mut state);
   }
 
   // Finalize: h[i] ^= v[i] ^ v[i+8]
-  // SAFETY: h is a [u64; 8] — pointer arithmetic is within bounds.
-  let h0 = unsafe { vload_u64_pair(h.as_ptr()) };
-  let h1 = unsafe { vload_u64_pair(h.as_ptr().add(2)) };
-  let h2 = unsafe { vload_u64_pair(h.as_ptr().add(4)) };
-  let h3 = unsafe { vload_u64_pair(h.as_ptr().add(6)) };
+  let h0 = load_u64_pair(h, 0);
+  let h1 = load_u64_pair(h, 2);
+  let h2 = load_u64_pair(h, 4);
+  let h3 = load_u64_pair(h, 6);
 
-  let r0 = v128_xor(h0, v128_xor(a0, c0));
-  let r1 = v128_xor(h1, v128_xor(a1, c1));
-  let r2 = v128_xor(h2, v128_xor(b0, d0));
-  let r3 = v128_xor(h3, v128_xor(b1, d1));
+  let r0 = v128_xor(h0, v128_xor(state.a[0], state.c[0]));
+  let r1 = v128_xor(h1, v128_xor(state.a[1], state.c[1]));
+  let r2 = v128_xor(h2, v128_xor(state.b[0], state.d[0]));
+  let r3 = v128_xor(h3, v128_xor(state.b[1], state.d[1]));
 
-  // SAFETY: h is a [u64; 8] — pointer arithmetic is within bounds.
-  unsafe {
-    v128_store(h.as_mut_ptr() as *mut v128, r0);
-    v128_store(h.as_mut_ptr().add(2) as *mut v128, r1);
-    v128_store(h.as_mut_ptr().add(4) as *mut v128, r2);
-    v128_store(h.as_mut_ptr().add(6) as *mut v128, r3);
-  }
+  store_u64_pair(h, 0, r0);
+  store_u64_pair(h, 2, r1);
+  store_u64_pair(h, 4, r2);
+  store_u64_pair(h, 6, r3);
 }

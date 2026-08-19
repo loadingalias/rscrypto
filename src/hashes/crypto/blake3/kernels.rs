@@ -1,6 +1,15 @@
 use super::{
   BLOCK_LEN, CHUNK_LEN, CHUNK_START, OUT_LEN, PARENT, first_8_words, words8_from_le_bytes_32, words16_from_le_bytes_64,
 };
+#[cfg(any(
+  test,
+  feature = "diag",
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  target_arch = "s390x",
+  target_arch = "powerpc64",
+  target_arch = "riscv64"
+))]
 use crate::platform::Caps;
 #[cfg(target_arch = "aarch64")]
 use crate::platform::caps::aarch64;
@@ -12,6 +21,33 @@ use crate::platform::caps::riscv;
 use crate::platform::caps::s390x;
 #[cfg(target_arch = "x86_64")]
 use crate::platform::caps::x86;
+
+const BLOCK_LEN_U32: u32 = 64;
+
+#[cfg(all(
+  target_arch = "x86_64",
+  any(target_os = "linux", target_os = "macos", target_os = "windows")
+))]
+#[inline(always)]
+fn assembly_flags(flags: u32) -> u8 {
+  u8::try_from(flags).expect("BLAKE3 flags must fit the assembly ABI")
+}
+
+#[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
+#[inline(always)]
+fn counter_words(counter: u64) -> (u32, u32) {
+  let [c0, c1, c2, c3, c4, c5, c6, c7] = counter.to_le_bytes();
+  (
+    u32::from_le_bytes([c0, c1, c2, c3]),
+    u32::from_le_bytes([c4, c5, c6, c7]),
+  )
+}
+
+#[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
+#[inline(always)]
+fn wrapping_add4(lhs: core::simd::u32x4, rhs: core::simd::u32x4) -> core::simd::u32x4 {
+  core::ops::Add::add(lhs, rhs)
+}
 
 // Kernel function types
 
@@ -61,8 +97,7 @@ pub(crate) struct Kernel {
   #[cfg(all(feature = "diag", target_arch = "x86_64"))]
   pub(crate) force_x86_avx512_exact_block_asm: bool,
   /// Kernel name for debugging/tuning.
-  #[cfg(any(test, feature = "diag"))]
-  #[cfg_attr(test, allow(dead_code))]
+  #[cfg(feature = "diag")]
   pub(crate) name: &'static str,
 }
 
@@ -71,7 +106,7 @@ pub(crate) struct Kernel {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 #[non_exhaustive]
-pub enum Blake3KernelId {
+pub(crate) enum Blake3KernelId {
   Portable = 0,
   #[cfg(target_arch = "x86_64")]
   X86Sse41 = 2,
@@ -93,7 +128,7 @@ impl Blake3KernelId {
   #[cfg(any(test, feature = "diag"))]
   #[inline]
   #[must_use]
-  pub const fn as_str(self) -> &'static str {
+  pub(crate) const fn as_str(self) -> &'static str {
     match self {
       Self::Portable => "portable",
       #[cfg(target_arch = "x86_64")]
@@ -116,7 +151,7 @@ impl Blake3KernelId {
   /// Returns the SIMD degree for this kernel.
   #[inline]
   #[must_use]
-  pub const fn simd_degree(self) -> usize {
+  pub(crate) const fn simd_degree(self) -> usize {
     match self {
       Self::Portable => 1,
       #[cfg(target_arch = "x86_64")]
@@ -153,7 +188,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       owned_x86_hash_many: false,
       #[cfg(all(feature = "diag", target_arch = "x86_64"))]
       force_x86_avx512_exact_block_asm: false,
-      #[cfg(any(test, feature = "diag"))]
+      #[cfg(feature = "diag")]
       name: id.as_str(),
     },
     #[cfg(target_arch = "x86_64")]
@@ -172,7 +207,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       owned_x86_hash_many: false,
       #[cfg(all(feature = "diag", target_arch = "x86_64"))]
       force_x86_avx512_exact_block_asm: false,
-      #[cfg(any(test, feature = "diag"))]
+      #[cfg(feature = "diag")]
       name: id.as_str(),
     },
     #[cfg(target_arch = "x86_64")]
@@ -191,7 +226,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       owned_x86_hash_many: false,
       #[cfg(all(feature = "diag", target_arch = "x86_64"))]
       force_x86_avx512_exact_block_asm: false,
-      #[cfg(any(test, feature = "diag"))]
+      #[cfg(feature = "diag")]
       name: id.as_str(),
     },
     #[cfg(target_arch = "x86_64")]
@@ -210,7 +245,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       owned_x86_hash_many: false,
       #[cfg(all(feature = "diag", target_arch = "x86_64"))]
       force_x86_avx512_exact_block_asm: false,
-      #[cfg(any(test, feature = "diag"))]
+      #[cfg(feature = "diag")]
       name: id.as_str(),
     },
     #[cfg(target_arch = "aarch64")]
@@ -223,7 +258,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_neon_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_neon_wrapper,
       hash_many_contiguous: hash_many_contiguous_neon_wrapper,
-      #[cfg(any(test, feature = "diag"))]
+      #[cfg(feature = "diag")]
       name: id.as_str(),
     },
     #[cfg(target_arch = "s390x")]
@@ -232,7 +267,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_s390x_vector_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_s390x_vector_wrapper,
       hash_many_contiguous: hash_many_contiguous_s390x_vector_wrapper,
-      #[cfg(any(test, feature = "diag"))]
+      #[cfg(feature = "diag")]
       name: id.as_str(),
     },
     #[cfg(target_arch = "powerpc64")]
@@ -241,7 +276,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_power_vsx_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_power_vsx_wrapper,
       hash_many_contiguous: hash_many_contiguous_power_vsx_wrapper,
-      #[cfg(any(test, feature = "diag"))]
+      #[cfg(feature = "diag")]
       name: id.as_str(),
     },
     #[cfg(target_arch = "riscv64")]
@@ -250,7 +285,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       compress: compress_riscv_v_wrapper,
       chunk_compress_blocks: chunk_compress_blocks_riscv_v_wrapper,
       hash_many_contiguous: hash_many_contiguous_riscv_v_wrapper,
-      #[cfg(any(test, feature = "diag"))]
+      #[cfg(feature = "diag")]
       name: id.as_str(),
     },
   }
@@ -366,7 +401,7 @@ pub(crate) unsafe fn compress_block_asm_inline(
           chaining_value,
           block.as_ptr(),
           chunk_counter,
-          BLOCK_LEN as u32,
+          BLOCK_LEN_U32,
           flags,
         );
       }
@@ -379,7 +414,7 @@ pub(crate) unsafe fn compress_block_asm_inline(
           chaining_value,
           block.as_ptr(),
           chunk_counter,
-          BLOCK_LEN as u32,
+          BLOCK_LEN_U32,
           flags,
         );
       }
@@ -392,7 +427,7 @@ pub(crate) unsafe fn compress_block_asm_inline(
           chaining_value,
           block.as_ptr(),
           chunk_counter,
-          BLOCK_LEN as u32,
+          BLOCK_LEN_U32,
           flags,
         );
       }
@@ -408,12 +443,19 @@ pub(crate) unsafe fn compress_block_asm_inline(
     chaining_value,
     &block_words,
     chunk_counter,
-    BLOCK_LEN as u32,
+    BLOCK_LEN_U32,
     flags,
   ));
 }
 
 #[inline(always)]
+/// Dispatches contiguous full chunks through a selected kernel.
+///
+/// # Safety
+///
+/// `input` must reference `num_chunks * CHUNK_LEN` readable bytes, `out` must
+/// reference `num_chunks * OUT_LEN` writable bytes, and the CPU must support
+/// every target feature required by `id`.
 pub(crate) unsafe fn hash_many_contiguous_inline(
   id: Blake3KernelId,
   input: *const u8,
@@ -545,8 +587,8 @@ fn write_root_output_words(out: &mut [u8; 2 * OUT_LEN], words: &[u32; 16]) {
   }
 
   for (idx, word) in words.iter().copied().enumerate() {
-    let offset = idx * 4;
-    out[offset..offset + 4].copy_from_slice(&word.to_le_bytes());
+    let offset = idx.strict_mul(4);
+    out[offset..offset.strict_add(4)].copy_from_slice(&word.to_le_bytes());
   }
 }
 
@@ -1039,12 +1081,12 @@ where
 {
   debug_assert!(rem != 0);
   debug_assert!(rem <= DEGREE);
-  let last_ptr = ptr_at(total - 1);
+  let last_ptr = ptr_at(total.strict_sub(1));
   let mut ptrs = [last_ptr; DEGREE];
   let mut lane = 0usize;
   while lane < rem {
-    ptrs[lane] = ptr_at(start + lane);
-    lane += 1;
+    ptrs[lane] = ptr_at(start.strict_add(lane));
+    lane = lane.strict_add(1);
   }
   ptrs
 }
@@ -1064,15 +1106,15 @@ fn reduce_parent_blocks_lanes<const DEGREE: usize, PtrAt, HashMany, Sink>(
   let mut tmp = [[0u8; OUT_LEN]; DEGREE];
   let mut i = 0usize;
   while i < count {
-    let rem = core::cmp::min(DEGREE, count - i);
+    let rem = core::cmp::min(DEGREE, count.strict_sub(i));
     let ptrs = parent_block_ptrs::<DEGREE, _>(i, rem, count, &mut ptr_at);
     hash_many(&ptrs, rem, &mut tmp);
     let mut lane = 0usize;
     while lane < rem {
-      sink(i + lane, &tmp[lane]);
-      lane += 1;
+      sink(i.strict_add(lane), &tmp[lane]);
+      lane = lane.strict_add(1);
     }
-    i += rem;
+    i = i.strict_add(rem);
   }
 }
 
@@ -1087,24 +1129,24 @@ pub(crate) fn diag_chunk_cvs_many_avx2_pair_from_bytes(
   debug_assert!(!input.is_empty());
   debug_assert_eq!(input.len() % CHUNK_LEN, 0);
   let chunks = input.len() / CHUNK_LEN;
-  debug_assert_eq!(out.len(), chunks * OUT_LEN);
+  debug_assert_eq!(out.len(), chunks.strict_mul(OUT_LEN));
 
   let mut idx = 0usize;
-  while idx + 1 < chunks {
+  while idx.strict_add(1) < chunks {
     // SAFETY: Diagnostic owned AVX2 two-chunk batch because:
     // 1. Diagnostic availability checks AVX2 support before this helper is called.
     // 2. `idx + 1 < chunks`, so `input + idx * CHUNK_LEN` is readable for two full chunks.
     // 3. `out + idx * OUT_LEN` is writable for two OUT_LEN-byte CV outputs.
     unsafe {
       super::x86_64::avx2::hash2_chunks_owned(
-        input.as_ptr().add(idx * CHUNK_LEN),
+        input.as_ptr().add(idx.strict_mul(CHUNK_LEN)),
         &key_words,
-        counter.wrapping_add(idx as u64),
+        counter.wrapping_add(u64::try_from(idx).expect("chunk index must fit u64")),
         flags,
-        out.as_mut_ptr().add(idx * OUT_LEN),
+        out.as_mut_ptr().add(idx.strict_mul(OUT_LEN)),
       );
     }
-    idx += 2;
+    idx = idx.strict_add(2);
   }
 
   if idx < chunks {
@@ -1114,11 +1156,11 @@ pub(crate) fn diag_chunk_cvs_many_avx2_pair_from_bytes(
     // 3. Diagnostic availability checks AVX2 support before this helper is called.
     unsafe {
       hash_one_chunk_avx2_owned_serial(
-        input.as_ptr().add(idx * CHUNK_LEN),
+        input.as_ptr().add(idx.strict_mul(CHUNK_LEN)),
         &key_words,
-        counter.wrapping_add(idx as u64),
+        counter.wrapping_add(u64::try_from(idx).expect("chunk index must fit u64")),
         flags,
-        out.as_mut_ptr().add(idx * OUT_LEN),
+        out.as_mut_ptr().add(idx.strict_mul(OUT_LEN)),
       );
     }
   }
@@ -1131,7 +1173,7 @@ pub(crate) fn diag_parent_cvs_many_avx2_owned_from_bytes(
   flags: u32,
   out: &mut [[u8; OUT_LEN]],
 ) {
-  debug_assert_eq!(children.len(), out.len() * 2);
+  debug_assert_eq!(children.len(), out.len().strict_mul(2));
   if out.is_empty() {
     return;
   }
@@ -1139,24 +1181,24 @@ pub(crate) fn diag_parent_cvs_many_avx2_owned_from_bytes(
   let parent_flags = PARENT | flags;
   reduce_parent_blocks_lanes::<{ super::x86_64::avx2::DEGREE }, _, _, _>(
     out.len(),
-    |idx| children[2 * idx].as_ptr(),
+    |idx| children[2usize.strict_mul(idx)].as_ptr(),
     |ptrs, _rem, tmp| {
       // SAFETY: Diagnostic owned AVX2 parent batch because:
       // 1. Diagnostic availability checks AVX2 support before this helper is called.
       // 2. `parent_block_ptrs` fills every lane with a valid 64-byte parent block pointer.
       // 3. `tmp` has space for all 8 output CV lanes; callers copy only real lanes.
       unsafe {
-        super::x86_64::avx2::hash8_owned(
-          ptrs,
-          1,
-          &key_words,
-          0,
-          false,
-          parent_flags,
-          0,
-          0,
-          tmp.as_mut_ptr().cast::<u8>(),
-        );
+        super::x86_64::avx2::hash8_owned(super::x86_64::HashManyRequest {
+          inputs: ptrs,
+          blocks: 1,
+          key: &key_words,
+          counter: 0,
+          increment_counter: false,
+          flags: parent_flags,
+          flags_start: 0,
+          flags_end: 0,
+          out: tmp.as_mut_ptr().cast::<u8>(),
+        });
       }
     },
     |idx, bytes| out[idx] = *bytes,
@@ -1170,10 +1212,13 @@ pub(crate) fn diag_parent_cvs_many_avx2_pair_from_bytes(
   flags: u32,
   out: &mut [[u8; OUT_LEN]],
 ) {
-  debug_assert_eq!(children.len(), out.len() * 2);
+  debug_assert_eq!(children.len(), out.len().strict_mul(2));
   let mut idx = 0usize;
-  while idx + 1 < out.len() {
-    let parents = [children[2 * idx].as_ptr(), children[2 * (idx + 1)].as_ptr()];
+  while idx.strict_add(1) < out.len() {
+    let parents = [
+      children[2usize.strict_mul(idx)].as_ptr(),
+      children[2usize.strict_mul(idx.strict_add(1))].as_ptr(),
+    ];
     // SAFETY: Diagnostic owned AVX2 two-parent batch because:
     // 1. Diagnostic availability checks AVX2 support before this helper is called.
     // 2. `parents` points to two adjacent 64-byte parent blocks.
@@ -1181,7 +1226,7 @@ pub(crate) fn diag_parent_cvs_many_avx2_pair_from_bytes(
     unsafe {
       super::x86_64::avx2::parent_cv2_owned(&parents, &key_words, flags, out[idx].as_mut_ptr());
     }
-    idx += 2;
+    idx = idx.strict_add(2);
   }
 
   if idx < out.len() {
@@ -1190,12 +1235,26 @@ pub(crate) fn diag_parent_cvs_many_avx2_pair_from_bytes(
     // 2. `idx < out.len()`, so `out[idx]` is writable for one OUT_LEN-byte CV.
     // 3. Diagnostic availability checks AVX2 support before this helper is called.
     unsafe {
-      parent_one_avx2_owned_serial_from_block(children[2 * idx].as_ptr(), key_words, flags, &mut out[idx]);
+      parent_one_avx2_owned_serial_from_block(
+        children[2usize.strict_mul(idx)].as_ptr(),
+        key_words,
+        flags,
+        &mut out[idx],
+      );
     }
   }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(
+  target_arch = "x86_64",
+  any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows")
+))]
+/// Hash one packed parent block through the serial AVX2 path.
+///
+/// # Safety
+///
+/// AVX2 must be available, `parent_block` must be readable for 64 bytes, and
+/// `out` must be writable for one chaining value.
 unsafe fn parent_one_avx2_owned_serial_from_block(
   parent_block: *const u8,
   key_words: [u32; 8],
@@ -1240,7 +1299,7 @@ pub(crate) fn diag_parent_cvs_many_avx512_owned_from_bytes(
   flags: u32,
   out: &mut [[u8; OUT_LEN]],
 ) {
-  debug_assert_eq!(children.len(), out.len() * 2);
+  debug_assert_eq!(children.len(), out.len().strict_mul(2));
   if out.is_empty() {
     return;
   }
@@ -1248,24 +1307,24 @@ pub(crate) fn diag_parent_cvs_many_avx512_owned_from_bytes(
   let parent_flags = PARENT | flags;
   reduce_parent_blocks_lanes::<{ super::x86_64::avx512::DEGREE }, _, _, _>(
     out.len(),
-    |idx| children[2 * idx].as_ptr(),
+    |idx| children[2usize.strict_mul(idx)].as_ptr(),
     |ptrs, _rem, tmp| {
       // SAFETY: Diagnostic owned AVX-512 parent batch because:
       // 1. Diagnostic availability checks AVX-512F/VL/DQ plus AVX2 support before this helper is called.
       // 2. `parent_block_ptrs` fills every lane with a valid 64-byte parent block pointer.
       // 3. `tmp` has space for all 16 output CV lanes; callers copy only real lanes.
       unsafe {
-        super::x86_64::avx512::hash16_owned(
-          ptrs,
-          1,
-          &key_words,
-          0,
-          false,
-          parent_flags,
-          0,
-          0,
-          tmp.as_mut_ptr().cast::<u8>(),
-        );
+        super::x86_64::avx512::hash16_owned(super::x86_64::HashManyRequest {
+          inputs: ptrs,
+          blocks: 1,
+          key: &key_words,
+          counter: 0,
+          increment_counter: false,
+          flags: parent_flags,
+          flags_start: 0,
+          flags_end: 0,
+          out: tmp.as_mut_ptr().cast::<u8>(),
+        });
       }
     },
     |idx, bytes| out[idx] = *bytes,
@@ -1284,13 +1343,13 @@ pub(crate) fn parent_cvs_many_from_cvs_inline(
   flags: u32,
   out: &mut [[u32; 8]],
 ) {
-  debug_assert_eq!(children.len(), out.len() * 2);
+  debug_assert_eq!(children.len(), out.len().strict_mul(2));
   if out.is_empty() {
     return;
   }
 
   if id == Blake3KernelId::Portable {
-    for (pair, out_cv) in children.chunks_exact(2).zip(out.iter_mut()) {
+    for (pair, out_cv) in children.as_chunks::<2>().0.iter().zip(out.iter_mut()) {
       *out_cv = parent_cv_inline(id, pair[0], pair[1], key_words, flags);
     }
     return;
@@ -1313,7 +1372,7 @@ pub(crate) fn parent_cvs_many_from_cvs_inline(
   #[cfg(not(target_endian = "little"))]
   {
     // Big-endian fallback keeps explicit LE conversion.
-    for (pair, out_cv) in children.chunks_exact(2).zip(out.iter_mut()) {
+    for (pair, out_cv) in children.as_chunks::<2>().0.iter().zip(out.iter_mut()) {
       *out_cv = parent_cv_inline(id, pair[0], pair[1], key_words, flags);
     }
   }
@@ -1334,7 +1393,7 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
   flags: u32,
   out: &mut [[u8; OUT_LEN]],
 ) {
-  debug_assert_eq!(children.len(), out.len() * 2);
+  debug_assert_eq!(children.len(), out.len().strict_mul(2));
   if out.is_empty() {
     return;
   }
@@ -1368,21 +1427,21 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
       let parent_flags = PARENT | flags;
       reduce_parent_blocks_lanes::<{ super::x86_64::sse41::DEGREE }, _, _, _>(
         out.len(),
-        |idx| children[2 * idx].as_ptr(),
+        |idx| children[2usize.strict_mul(idx)].as_ptr(),
         |ptrs, _rem, tmp| {
           // SAFETY: SSE4.1 is available per dispatch; pointers and outputs are valid.
           unsafe {
-            super::x86_64::sse41::hash4(
-              ptrs,
-              1,
-              &key_words,
-              0,
-              false,
-              parent_flags,
-              0,
-              0,
-              tmp.as_mut_ptr().cast::<u8>(),
-            );
+            super::x86_64::sse41::hash4(super::x86_64::HashManyRequest {
+              inputs: ptrs,
+              blocks: 1,
+              key: &key_words,
+              counter: 0,
+              increment_counter: false,
+              flags: parent_flags,
+              flags_start: 0,
+              flags_end: 0,
+              out: tmp.as_mut_ptr().cast::<u8>(),
+            });
           }
         },
         |idx, bytes| out[idx] = *bytes,
@@ -1395,10 +1454,9 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
       {
         let parent_flags = PARENT | flags;
         const DEGREE: usize = 16;
-        debug_assert!(parent_flags <= u8::MAX as u32);
         reduce_parent_blocks_lanes::<DEGREE, _, _, _>(
           out.len(),
-          |idx| children[2 * idx].as_ptr(),
+          |idx| children[2usize.strict_mul(idx)].as_ptr(),
           |ptrs, rem, tmp| {
             if rem == 15 && avx512_owned_hash_many_available() {
               // SAFETY: Use the owned AVX-512 parent tail because:
@@ -1408,35 +1466,35 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
               //    real parent block.
               // 4. `tmp` has space for all 16 OUT_LEN-byte outputs.
               unsafe {
-                super::x86_64::avx512::hash16_owned(
-                  ptrs,
-                  1,
-                  &key_words,
-                  0,
-                  false,
-                  parent_flags,
-                  0,
-                  0,
-                  tmp.as_mut_ptr().cast::<u8>(),
-                );
+                super::x86_64::avx512::hash16_owned(super::x86_64::HashManyRequest {
+                  inputs: ptrs,
+                  blocks: 1,
+                  key: &key_words,
+                  counter: 0,
+                  increment_counter: false,
+                  flags: parent_flags,
+                  flags_start: 0,
+                  flags_end: 0,
+                  out: tmp.as_mut_ptr().cast::<u8>(),
+                });
               }
               return;
             }
             // SAFETY: AVX-512 is available per dispatch; pointers are valid for
             // one parent block each, `rem <= DEGREE`, and output is large enough.
             unsafe {
-              super::x86_64::asm::hash_many_avx512(
-                ptrs.as_ptr(),
-                rem,
-                1,
-                key_words.as_ptr(),
-                0,
-                false,
-                parent_flags as u8,
-                0,
-                0,
-                tmp.as_mut_ptr().cast::<u8>(),
-              );
+              super::x86_64::asm::hash_many_avx512(super::x86_64::asm::HashManyRequest {
+                inputs: ptrs.as_ptr(),
+                num_inputs: rem,
+                blocks: 1,
+                key: key_words.as_ptr(),
+                counter: 0,
+                increment_counter: false,
+                flags: assembly_flags(parent_flags),
+                flags_start: 0,
+                flags_end: 0,
+                out: tmp.as_mut_ptr().cast::<u8>(),
+              });
             }
           },
           |idx, bytes| out[idx] = *bytes,
@@ -1449,7 +1507,7 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
         // Keep AVX-512 semantics on non-asm targets as well: run the parent
         // fold through the AVX-512 per-parent entrypoint instead of delegating
         // into AVX2.
-        for (pair, out_cv) in children.chunks_exact(2).zip(out.iter_mut()) {
+        for (pair, out_cv) in children.as_chunks::<2>().0.iter().zip(out.iter_mut()) {
           let left = words8_from_le_bytes_32(&pair[0]);
           let right = words8_from_le_bytes_32(&pair[1]);
           *out_cv = super::words8_to_le_bytes(&parent_cv_inline(
@@ -1516,25 +1574,24 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
             parent_block_ptr_from_children(children, 2),
             parent_block_ptr_from_children(children, 3),
           ];
-          debug_assert!(parent_flags <= u8::MAX as u32);
           // SAFETY: Keep the four-parent AVX2 assembly tail but write it directly because:
           // 1. Dispatch selected the AVX2 kernel, so AVX2 is available.
           // 2. `ptrs` points to four readable packed 64-byte parent blocks.
           // 3. `out` is writable for four contiguous OUT_LEN-byte parent CV outputs.
           // 4. Direct output avoids the generic reducer's temporary copy.
           unsafe {
-            super::x86_64::asm::hash_many_avx2(
-              ptrs.as_ptr(),
-              4,
-              1,
-              key_words.as_ptr(),
-              0,
-              false,
-              parent_flags as u8,
-              0,
-              0,
-              out[0].as_mut_ptr(),
-            );
+            super::x86_64::asm::hash_many_avx2(super::x86_64::asm::HashManyRequest {
+              inputs: ptrs.as_ptr(),
+              num_inputs: 4,
+              blocks: 1,
+              key: key_words.as_ptr(),
+              counter: 0,
+              increment_counter: false,
+              flags: assembly_flags(parent_flags),
+              flags_start: 0,
+              flags_end: 0,
+              out: out[0].as_mut_ptr(),
+            });
           }
           return;
         }
@@ -1551,7 +1608,17 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
           // 3. `out` is writable for 8 contiguous OUT_LEN-byte parent CV outputs.
           // 4. Direct output avoids the generic reducer's temporary copy.
           unsafe {
-            super::x86_64::avx2::hash8_owned(&ptrs, 1, &key_words, 0, false, parent_flags, 0, 0, out[0].as_mut_ptr());
+            super::x86_64::avx2::hash8_owned(super::x86_64::HashManyRequest {
+              inputs: &ptrs,
+              blocks: 1,
+              key: &key_words,
+              counter: 0,
+              increment_counter: false,
+              flags: parent_flags,
+              flags_start: 0,
+              flags_end: 0,
+              out: out[0].as_mut_ptr(),
+            });
           }
           return;
         }
@@ -1559,12 +1626,11 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
 
       reduce_parent_blocks_lanes::<{ super::x86_64::avx2::DEGREE }, _, _, _>(
         out.len(),
-        |idx| children[2 * idx].as_ptr(),
+        |idx| children[2usize.strict_mul(idx)].as_ptr(),
         |ptrs, _rem, tmp| {
           #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
           {
             let rem = _rem;
-            debug_assert!(parent_flags <= u8::MAX as u32);
             if rem == 1 {
               // SAFETY: Use the owned AVX2 one-parent tail because:
               // 1. Dispatch selected the AVX2 kernel, so AVX2 is available.
@@ -1585,17 +1651,17 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
               // 4. The `rem` guard keeps 2/3/4 generic-reducer tails on assembly and promotes only 5/6/7, which
               //    won on Sapphire Rapids. Exact 2/3/8 parent reductions use direct fast paths above.
               unsafe {
-                super::x86_64::avx2::hash8_owned(
-                  ptrs,
-                  1,
-                  &key_words,
-                  0,
-                  false,
-                  parent_flags,
-                  0,
-                  0,
-                  tmp.as_mut_ptr().cast::<u8>(),
-                );
+                super::x86_64::avx2::hash8_owned(super::x86_64::HashManyRequest {
+                  inputs: ptrs,
+                  blocks: 1,
+                  key: &key_words,
+                  counter: 0,
+                  increment_counter: false,
+                  flags: parent_flags,
+                  flags_start: 0,
+                  flags_end: 0,
+                  out: tmp.as_mut_ptr().cast::<u8>(),
+                });
               }
               return;
             }
@@ -1603,18 +1669,18 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
             // dispatch. Each pointer is valid for one 64-byte parent block.
             // `rem <= DEGREE`, and `tmp` is large enough.
             unsafe {
-              super::x86_64::asm::hash_many_avx2(
-                ptrs.as_ptr(),
-                rem,
-                1,
-                key_words.as_ptr(),
-                0,
-                false,
-                parent_flags as u8,
-                0,
-                0,
-                tmp.as_mut_ptr().cast::<u8>(),
-              );
+              super::x86_64::asm::hash_many_avx2(super::x86_64::asm::HashManyRequest {
+                inputs: ptrs.as_ptr(),
+                num_inputs: rem,
+                blocks: 1,
+                key: key_words.as_ptr(),
+                counter: 0,
+                increment_counter: false,
+                flags: assembly_flags(parent_flags),
+                flags_start: 0,
+                flags_end: 0,
+                out: tmp.as_mut_ptr().cast::<u8>(),
+              });
             }
           }
 
@@ -1622,17 +1688,17 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
           {
             // SAFETY: AVX2 is available for this wrapper; pointers and outputs are valid.
             unsafe {
-              super::x86_64::avx2::hash8(
-                ptrs,
-                1,
-                &key_words,
-                0,
-                false,
-                parent_flags,
-                0,
-                0,
-                tmp.as_mut_ptr().cast::<u8>(),
-              )
+              super::x86_64::avx2::hash8(super::x86_64::HashManyRequest {
+                inputs: ptrs,
+                blocks: 1,
+                key: &key_words,
+                counter: 0,
+                increment_counter: false,
+                flags: parent_flags,
+                flags_start: 0,
+                flags_end: 0,
+                out: tmp.as_mut_ptr().cast::<u8>(),
+              })
             };
           }
         },
@@ -1643,7 +1709,7 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
   }
 
   // Scalar fallback.
-  for (pair, out_cv) in children.chunks_exact(2).zip(out.iter_mut()) {
+  for (pair, out_cv) in children.as_chunks::<2>().0.iter().zip(out.iter_mut()) {
     let left = words8_from_le_bytes_32(&pair[0]);
     let right = words8_from_le_bytes_32(&pair[1]);
     *out_cv = super::words8_to_le_bytes(&parent_cv_inline(id, left, right, key_words, flags));
@@ -1656,7 +1722,16 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
 /// `[left_cv (8 words), right_cv (8 words)]`.
 #[inline]
 #[must_use]
-pub const fn required_caps(id: Blake3KernelId) -> Caps {
+#[cfg(any(
+  test,
+  feature = "diag",
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  target_arch = "s390x",
+  target_arch = "powerpc64",
+  target_arch = "riscv64"
+))]
+pub(crate) const fn required_caps(id: Blake3KernelId) -> Caps {
   match id {
     Blake3KernelId::Portable => Caps::NONE,
     #[cfg(target_arch = "x86_64")]
@@ -1702,7 +1777,7 @@ pub const fn required_caps(id: Blake3KernelId) -> Caps {
 #[cfg(all(feature = "diag", target_arch = "x86_64"))]
 #[inline]
 #[must_use]
-pub const fn required_caps_owned_hash_many(id: Blake3KernelId) -> Caps {
+pub(crate) const fn required_caps_owned_hash_many(id: Blake3KernelId) -> Caps {
   match id {
     Blake3KernelId::X86Avx2 => required_caps(Blake3KernelId::X86Avx2),
     Blake3KernelId::X86Avx512 => x86::AVX512F
@@ -1718,7 +1793,7 @@ pub const fn required_caps_owned_hash_many(id: Blake3KernelId) -> Caps {
 #[cfg(all(feature = "diag", target_arch = "x86_64"))]
 #[inline]
 #[must_use]
-pub const fn required_caps_owned_compress(id: Blake3KernelId) -> Caps {
+pub(crate) const fn required_caps_owned_compress(id: Blake3KernelId) -> Caps {
   match id {
     Blake3KernelId::X86Avx512 => required_caps(Blake3KernelId::X86Avx512),
     _ => required_caps(id),
@@ -1735,27 +1810,24 @@ fn chunk_compress_blocks_portable(
   blocks_compressed: &mut u8,
   blocks: &[u8],
 ) {
-  debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
+  let (block_slices, remainder) = blocks.as_chunks::<BLOCK_LEN>();
+  debug_assert!(remainder.is_empty());
 
   // Hot path for streaming callers that feed one full block at a time.
-  if blocks.len() == BLOCK_LEN {
-    // SAFETY: `blocks` is exactly one block, and `[u8; BLOCK_LEN]` has 1-byte alignment.
-    let block_bytes: &[u8; BLOCK_LEN] = unsafe { &*(blocks.as_ptr().cast()) };
+  if let [block_bytes] = block_slices {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
     let block_words = words16_from_le_bytes_64(block_bytes);
     *chaining_value = first_8_words((super::compress)(
       chaining_value,
       &block_words,
       chunk_counter,
-      BLOCK_LEN as u32,
+      BLOCK_LEN_U32,
       flags | start,
     ));
-    *blocks_compressed = blocks_compressed.wrapping_add(1);
+    *blocks_compressed = (*blocks_compressed).strict_add(1);
     return;
   }
 
-  let (block_slices, remainder) = blocks.as_chunks::<BLOCK_LEN>();
-  debug_assert!(remainder.is_empty());
   for block_bytes in block_slices {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
     let block_words = words16_from_le_bytes_64(block_bytes);
@@ -1763,10 +1835,10 @@ fn chunk_compress_blocks_portable(
       chaining_value,
       &block_words,
       chunk_counter,
-      BLOCK_LEN as u32,
+      BLOCK_LEN_U32,
       flags | start,
     ));
-    *blocks_compressed = blocks_compressed.wrapping_add(1);
+    *blocks_compressed = (*blocks_compressed).strict_add(1);
   }
 }
 
@@ -1779,11 +1851,17 @@ fn parent_cv_portable(left_child_cv: [u32; 8], right_child_cv: [u32; 8], key_wor
     &key_words,
     &block_words,
     0,
-    BLOCK_LEN as u32,
+    BLOCK_LEN_U32,
     PARENT | flags,
   ))
 }
 
+/// Hashes contiguous chunks with the portable compression function.
+///
+/// # Safety
+///
+/// `input` must reference `num_chunks * CHUNK_LEN` readable bytes and `out`
+/// must reference `num_chunks * OUT_LEN` writable bytes.
 unsafe fn hash_many_contiguous_portable(
   input: *const u8,
   num_chunks: usize,
@@ -1795,13 +1873,17 @@ unsafe fn hash_many_contiguous_portable(
   debug_assert!(num_chunks != 0);
 
   for chunk_idx in 0..num_chunks {
-    let chunk_counter = counter.wrapping_add(chunk_idx as u64);
+    let chunk_counter = counter.wrapping_add(u64::try_from(chunk_idx).expect("BLAKE3 chunk index fits in u64"));
     let mut cv = *key;
 
-    for block_idx in 0..(CHUNK_LEN / BLOCK_LEN) {
+    for block_idx in 0..CHUNK_LEN.strict_div(BLOCK_LEN) {
       // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`.
       let block_words = unsafe {
-        let src = input.add(chunk_idx * CHUNK_LEN + block_idx * BLOCK_LEN);
+        let src = input.add(
+          chunk_idx
+            .strict_mul(CHUNK_LEN)
+            .strict_add(block_idx.strict_mul(BLOCK_LEN)),
+        );
         // SAFETY:
         // - Caller guarantees `src` is valid for `BLOCK_LEN` bytes.
         // - `[u8; BLOCK_LEN]` has alignment 1, so this reference doesn't assume any alignment of the input
@@ -1810,7 +1892,7 @@ unsafe fn hash_many_contiguous_portable(
       };
 
       let start = if block_idx == 0 { CHUNK_START } else { 0 };
-      let end = if block_idx + 1 == (CHUNK_LEN / BLOCK_LEN) {
+      let end = if block_idx.strict_add(1) == CHUNK_LEN.strict_div(BLOCK_LEN) {
         super::CHUNK_END
       } else {
         0
@@ -1820,26 +1902,32 @@ unsafe fn hash_many_contiguous_portable(
         &cv,
         &block_words,
         chunk_counter,
-        BLOCK_LEN as u32,
+        BLOCK_LEN_U32,
         block_flags,
       ));
     }
 
     for (j, &word) in cv.iter().enumerate() {
       let bytes = word.to_le_bytes();
+      let offset = chunk_idx.strict_mul(OUT_LEN).strict_add(j.strict_mul(4));
       // SAFETY: caller guarantees out is valid for `num_chunks * OUT_LEN`.
-      unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), out.add(chunk_idx * OUT_LEN + j * 4), 4) };
+      unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), out.add(offset), 4) };
     }
   }
 }
 
 #[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
 #[inline(always)]
+/// Writes one chaining value in little-endian byte order.
+///
+/// # Safety
+///
+/// `out` must reference at least `OUT_LEN` writable bytes.
 unsafe fn write_cv_words(out: *mut u8, cv: &[u32; 8]) {
   for (j, &word) in cv.iter().enumerate() {
     let bytes = word.to_le_bytes();
     // SAFETY: caller guarantees one full CV output is writable at `out`.
-    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), out.add(j * 4), 4) };
+    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), out.add(j.strict_mul(4)), 4) };
   }
 }
 
@@ -1866,8 +1954,8 @@ fn rot_lanes_left_3(v: core::simd::u32x4) -> core::simd::u32x4 {
 fn rotr32<const N: u32>(v: core::simd::u32x4) -> core::simd::u32x4 {
   debug_assert!(N > 0 && N < 32);
   let s0 = core::simd::u32x4::splat(N);
-  let s1 = core::simd::u32x4::splat(32 - N);
-  (v >> s0) | (v << s1)
+  let s1 = core::simd::u32x4::splat(32u32.strict_sub(N));
+  core::ops::BitOr::bitor(core::ops::Shr::shr(v, s0), core::ops::Shl::shl(v, s1))
 }
 
 #[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
@@ -1919,22 +2007,23 @@ fn compress_simd_leaf(
     chaining_value[7],
   ]);
   let mut row2 = Vec4::from_array([super::IV[0], super::IV[1], super::IV[2], super::IV[3]]);
-  let mut row3 = Vec4::from_array([counter as u32, (counter >> 32) as u32, block_len, flags]);
+  let (counter_low, counter_high) = counter_words(counter);
+  let mut row3 = Vec4::from_array([counter_low, counter_high, block_len, flags]);
 
   macro_rules! g {
     ($mx:expr, $my:expr) => {{
-      row0 += row1;
-      row0 += $mx;
+      row0 = wrapping_add4(row0, row1);
+      row0 = wrapping_add4(row0, $mx);
       row3 ^= row0;
       row3 = rotr32::<16>(row3);
-      row2 += row3;
+      row2 = wrapping_add4(row2, row3);
       row1 ^= row2;
       row1 = rotr32::<12>(row1);
-      row0 += row1;
-      row0 += $my;
+      row0 = wrapping_add4(row0, row1);
+      row0 = wrapping_add4(row0, $my);
       row3 ^= row0;
       row3 = rotr32::<8>(row3);
-      row2 += row3;
+      row2 = wrapping_add4(row2, row3);
       row1 ^= row2;
       row1 = rotr32::<7>(row1);
     }};
@@ -1999,16 +2088,29 @@ fn load_msg_lanes4_contiguous(base: *const u8, block_offset: usize) -> [core::si
   // SAFETY: caller provides 4 contiguous full chunks; each block load is in-bounds.
   let b0 = unsafe { words16_from_le_bytes_64(&*base.add(block_offset).cast::<[u8; BLOCK_LEN]>()) };
   // SAFETY: see above.
-  let b1 = unsafe { words16_from_le_bytes_64(&*base.add(CHUNK_LEN + block_offset).cast::<[u8; BLOCK_LEN]>()) };
+  let b1 =
+    unsafe { words16_from_le_bytes_64(&*base.add(CHUNK_LEN.strict_add(block_offset)).cast::<[u8; BLOCK_LEN]>()) };
   // SAFETY: see above.
-  let b2 = unsafe { words16_from_le_bytes_64(&*base.add(2 * CHUNK_LEN + block_offset).cast::<[u8; BLOCK_LEN]>()) };
+  let b2 = unsafe {
+    words16_from_le_bytes_64(
+      &*base
+        .add(2usize.strict_mul(CHUNK_LEN).strict_add(block_offset))
+        .cast::<[u8; BLOCK_LEN]>(),
+    )
+  };
   // SAFETY: see above.
-  let b3 = unsafe { words16_from_le_bytes_64(&*base.add(3 * CHUNK_LEN + block_offset).cast::<[u8; BLOCK_LEN]>()) };
+  let b3 = unsafe {
+    words16_from_le_bytes_64(
+      &*base
+        .add(3usize.strict_mul(CHUNK_LEN).strict_add(block_offset))
+        .cast::<[u8; BLOCK_LEN]>(),
+    )
+  };
   let mut out = [core::simd::u32x4::splat(0); 16];
   let mut i = 0usize;
   while i < 16 {
     out[i] = core::simd::u32x4::from_array([b0[i], b1[i], b2[i], b3[i]]);
-    i += 1;
+    i = i.strict_add(1);
   }
   out
 }
@@ -2024,18 +2126,18 @@ fn g4_simd(
   mx: core::simd::u32x4,
   my: core::simd::u32x4,
 ) {
-  v[a] += v[b];
-  v[a] += mx;
+  v[a] = wrapping_add4(v[a], v[b]);
+  v[a] = wrapping_add4(v[a], mx);
   v[d] ^= v[a];
   v[d] = rotr32::<16>(v[d]);
-  v[c] += v[d];
+  v[c] = wrapping_add4(v[c], v[d]);
   v[b] ^= v[c];
   v[b] = rotr32::<12>(v[b]);
-  v[a] += v[b];
-  v[a] += my;
+  v[a] = wrapping_add4(v[a], v[b]);
+  v[a] = wrapping_add4(v[a], my);
   v[d] ^= v[a];
   v[d] = rotr32::<8>(v[d]);
-  v[c] += v[d];
+  v[c] = wrapping_add4(v[c], v[d]);
   v[b] ^= v[c];
   v[b] = rotr32::<7>(v[b]);
 }
@@ -2059,27 +2161,27 @@ fn round4_simd(v: &mut [core::simd::u32x4; 16], m: &[core::simd::u32x4; 16], r: 
 fn load_parent_msg_lanes4(children: &[[u8; OUT_LEN]], base: usize, rem: usize) -> [core::simd::u32x4; 16] {
   type Vec4 = core::simd::u32x4;
   debug_assert!(rem > 0 && rem <= 4);
-  let last = base + rem - 1;
+  let last = base.strict_add(rem).strict_sub(1);
   let idx0 = base;
-  let idx1 = if rem > 1 { base + 1 } else { last };
-  let idx2 = if rem > 2 { base + 2 } else { last };
-  let idx3 = if rem > 3 { base + 3 } else { last };
+  let idx1 = if rem > 1 { base.strict_add(1) } else { last };
+  let idx2 = if rem > 2 { base.strict_add(2) } else { last };
+  let idx3 = if rem > 3 { base.strict_add(3) } else { last };
 
-  let l0 = words8_from_le_bytes_32(&children[2 * idx0]);
-  let r0 = words8_from_le_bytes_32(&children[2 * idx0 + 1]);
-  let l1 = words8_from_le_bytes_32(&children[2 * idx1]);
-  let r1 = words8_from_le_bytes_32(&children[2 * idx1 + 1]);
-  let l2 = words8_from_le_bytes_32(&children[2 * idx2]);
-  let r2 = words8_from_le_bytes_32(&children[2 * idx2 + 1]);
-  let l3 = words8_from_le_bytes_32(&children[2 * idx3]);
-  let r3 = words8_from_le_bytes_32(&children[2 * idx3 + 1]);
+  let l0 = words8_from_le_bytes_32(&children[2usize.strict_mul(idx0)]);
+  let r0 = words8_from_le_bytes_32(&children[2usize.strict_mul(idx0).strict_add(1)]);
+  let l1 = words8_from_le_bytes_32(&children[2usize.strict_mul(idx1)]);
+  let r1 = words8_from_le_bytes_32(&children[2usize.strict_mul(idx1).strict_add(1)]);
+  let l2 = words8_from_le_bytes_32(&children[2usize.strict_mul(idx2)]);
+  let r2 = words8_from_le_bytes_32(&children[2usize.strict_mul(idx2).strict_add(1)]);
+  let l3 = words8_from_le_bytes_32(&children[2usize.strict_mul(idx3)]);
+  let r3 = words8_from_le_bytes_32(&children[2usize.strict_mul(idx3).strict_add(1)]);
 
   let mut msg = [Vec4::splat(0); 16];
   let mut w = 0usize;
   while w < 8 {
     msg[w] = Vec4::from_array([l0[w], l1[w], l2[w], l3[w]]);
-    msg[w + 8] = Vec4::from_array([r0[w], r1[w], r2[w], r3[w]]);
-    w += 1;
+    msg[w.strict_add(8)] = Vec4::from_array([r0[w], r1[w], r2[w], r3[w]]);
+    w = w.strict_add(1);
   }
   msg
 }
@@ -2088,7 +2190,7 @@ fn load_parent_msg_lanes4(children: &[[u8; OUT_LEN]], base: usize, rem: usize) -
 #[inline(always)]
 fn parent_cvs_many4_simd(children: &[[u8; OUT_LEN]], key_words: [u32; 8], flags: u32, out: &mut [[u8; OUT_LEN]]) {
   type Vec4 = core::simd::u32x4;
-  debug_assert_eq!(children.len(), out.len() * 2);
+  debug_assert_eq!(children.len(), out.len().strict_mul(2));
   if out.is_empty() {
     return;
   }
@@ -2096,7 +2198,7 @@ fn parent_cvs_many4_simd(children: &[[u8; OUT_LEN]], key_words: [u32; 8], flags:
 
   let mut i = 0usize;
   while i < out.len() {
-    let rem = core::cmp::min(4, out.len() - i);
+    let rem = core::cmp::min(4, out.len().strict_sub(i));
     let msg = load_parent_msg_lanes4(children, i, rem);
 
     let mut v = [
@@ -2114,7 +2216,7 @@ fn parent_cvs_many4_simd(children: &[[u8; OUT_LEN]], key_words: [u32; 8], flags:
       Vec4::splat(super::IV[3]),
       Vec4::splat(0),
       Vec4::splat(0),
-      Vec4::splat(BLOCK_LEN as u32),
+      Vec4::splat(BLOCK_LEN_U32),
       Vec4::splat(parent_flags),
     ];
 
@@ -2129,8 +2231,8 @@ fn parent_cvs_many4_simd(children: &[[u8; OUT_LEN]], key_words: [u32; 8], flags:
     let mut x = [Vec4::splat(0); 8];
     let mut j = 0usize;
     while j < 8 {
-      x[j] = v[j] ^ v[j + 8];
-      j += 1;
+      x[j] = v[j] ^ v[j.strict_add(8)];
+      j = j.strict_add(1);
     }
     let xa0 = x[0].to_array();
     let xa1 = x[1].to_array();
@@ -2143,17 +2245,23 @@ fn parent_cvs_many4_simd(children: &[[u8; OUT_LEN]], key_words: [u32; 8], flags:
 
     let mut lane = 0usize;
     while lane < rem {
-      out[i + lane] = super::words8_to_le_bytes(&[
+      out[i.strict_add(lane)] = super::words8_to_le_bytes(&[
         xa0[lane], xa1[lane], xa2[lane], xa3[lane], xa4[lane], xa5[lane], xa6[lane], xa7[lane],
       ]);
-      lane += 1;
+      lane = lane.strict_add(1);
     }
-    i += rem;
+    i = i.strict_add(rem);
   }
 }
 
 #[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
 #[inline(always)]
+/// Hashes four contiguous full chunks with the portable SIMD kernel.
+///
+/// # Safety
+///
+/// `input` must reference four readable chunks and `out` must reference four
+/// writable chaining values.
 unsafe fn hash4_contiguous_full_chunks_simd(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
   type Vec4 = core::simd::u32x4;
   let mut h = [
@@ -2166,25 +2274,22 @@ unsafe fn hash4_contiguous_full_chunks_simd(input: *const u8, key: &[u32; 8], co
     Vec4::splat(key[6]),
     Vec4::splat(key[7]),
   ];
-  let counter_low = Vec4::from_array([
-    counter as u32,
-    counter.wrapping_add(1) as u32,
-    counter.wrapping_add(2) as u32,
-    counter.wrapping_add(3) as u32,
-  ]);
-  let counter_high = Vec4::from_array([
-    (counter >> 32) as u32,
-    (counter.wrapping_add(1) >> 32) as u32,
-    (counter.wrapping_add(2) >> 32) as u32,
-    (counter.wrapping_add(3) >> 32) as u32,
-  ]);
+  let [(low0, high0), (low1, high1), (low2, high2), (low3, high3)] = [
+    counter,
+    counter.wrapping_add(1),
+    counter.wrapping_add(2),
+    counter.wrapping_add(3),
+  ]
+  .map(counter_words);
+  let counter_low = Vec4::from_array([low0, low1, low2, low3]);
+  let counter_high = Vec4::from_array([high0, high1, high2, high3]);
 
   let mut block_idx = 0usize;
-  while block_idx < (CHUNK_LEN / BLOCK_LEN) {
-    let msg = load_msg_lanes4_contiguous(input, block_idx * BLOCK_LEN);
+  while block_idx < CHUNK_LEN.strict_div(BLOCK_LEN) {
+    let msg = load_msg_lanes4_contiguous(input, block_idx.strict_mul(BLOCK_LEN));
     let block_flags = flags
       | if block_idx == 0 { CHUNK_START } else { 0 }
-      | if block_idx + 1 == (CHUNK_LEN / BLOCK_LEN) {
+      | if block_idx.strict_add(1) == CHUNK_LEN.strict_div(BLOCK_LEN) {
         super::CHUNK_END
       } else {
         0
@@ -2204,7 +2309,7 @@ unsafe fn hash4_contiguous_full_chunks_simd(input: *const u8, key: &[u32; 8], co
       Vec4::splat(super::IV[3]),
       counter_low,
       counter_high,
-      Vec4::splat(BLOCK_LEN as u32),
+      Vec4::splat(BLOCK_LEN_U32),
       Vec4::splat(block_flags),
     ];
     round4_simd(&mut v, &msg, 0);
@@ -2216,10 +2321,10 @@ unsafe fn hash4_contiguous_full_chunks_simd(input: *const u8, key: &[u32; 8], co
     round4_simd(&mut v, &msg, 6);
     let mut i = 0usize;
     while i < 8 {
-      h[i] = v[i] ^ v[i + 8];
-      i += 1;
+      h[i] = v[i] ^ v[i.strict_add(8)];
+      i = i.strict_add(1);
     }
-    block_idx += 1;
+    block_idx = block_idx.strict_add(1);
   }
 
   let h0 = h[0].to_array();
@@ -2234,7 +2339,7 @@ unsafe fn hash4_contiguous_full_chunks_simd(input: *const u8, key: &[u32; 8], co
   let mut lane = 0usize;
   while lane < 4 {
     // SAFETY: caller guarantees `out` is valid for 4 contiguous `OUT_LEN` outputs.
-    let dst = unsafe { out.add(lane * OUT_LEN) };
+    let dst = unsafe { out.add(lane.strict_mul(OUT_LEN)) };
     let words = [
       h0[lane], h1[lane], h2[lane], h3[lane], h4[lane], h5[lane], h6[lane], h7[lane],
     ];
@@ -2242,16 +2347,21 @@ unsafe fn hash4_contiguous_full_chunks_simd(input: *const u8, key: &[u32; 8], co
     while word < 8 {
       let bytes = words[word].to_le_bytes();
       // SAFETY: caller guarantees out is valid for 4 CV outputs.
-      unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), dst.add(word * 4), 4) };
-      word += 1;
+      unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), dst.add(word.strict_mul(4)), 4) };
+      word = word.strict_add(1);
     }
-    lane += 1;
+    lane = lane.strict_add(1);
   }
 }
 
 // s390x vector wrappers
 
 #[cfg(target_arch = "s390x")]
+/// Compresses one block with the s390x vector implementation.
+///
+/// # Safety
+///
+/// The executing CPU must support the vector facility.
 #[target_feature(enable = "vector")]
 unsafe fn compress_s390x_vector(
   chaining_value: &[u32; 8],
@@ -2276,6 +2386,12 @@ fn compress_s390x_vector_wrapper(
 }
 
 #[cfg(target_arch = "s390x")]
+/// Writes one root-output block with the s390x vector implementation.
+///
+/// # Safety
+///
+/// The executing CPU must support the vector facility, and `out` must reference
+/// one writable BLAKE3 output block.
 #[target_feature(enable = "vector")]
 unsafe fn root_output_blocks1_s390x_vector(
   chaining_value: &[u32; 8],
@@ -2293,6 +2409,11 @@ unsafe fn root_output_blocks1_s390x_vector(
 }
 
 #[cfg(target_arch = "s390x")]
+/// Compresses full chunk blocks with the s390x vector implementation.
+///
+/// # Safety
+///
+/// The executing CPU must support the vector facility.
 #[target_feature(enable = "vector")]
 unsafe fn chunk_compress_blocks_s390x_vector(
   chaining_value: &mut [u32; 8],
@@ -2323,11 +2444,11 @@ unsafe fn chunk_compress_blocks_s390x_vector(
         chaining_value,
         &block_words,
         chunk_counter,
-        BLOCK_LEN as u32,
+        BLOCK_LEN_U32,
         flags | start,
       )
     });
-    *blocks_compressed = blocks_compressed.wrapping_add(1);
+    *blocks_compressed = blocks_compressed.strict_add(1);
     return;
   }
 
@@ -2342,11 +2463,11 @@ unsafe fn chunk_compress_blocks_s390x_vector(
         chaining_value,
         &block_words,
         chunk_counter,
-        BLOCK_LEN as u32,
+        BLOCK_LEN_U32,
         flags | start,
       )
     });
-    *blocks_compressed = blocks_compressed.wrapping_add(1);
+    *blocks_compressed = blocks_compressed.strict_add(1);
   }
 }
 
@@ -2363,6 +2484,11 @@ fn chunk_compress_blocks_s390x_vector_wrapper(
 }
 
 #[cfg(target_arch = "s390x")]
+/// Compresses a parent node with the s390x vector implementation.
+///
+/// # Safety
+///
+/// The executing CPU must support the vector facility.
 #[target_feature(enable = "vector")]
 unsafe fn parent_cv_s390x_vector(
   left_child_cv: [u32; 8],
@@ -2377,7 +2503,7 @@ unsafe fn parent_cv_s390x_vector(
     &key_words,
     &block_words,
     0,
-    BLOCK_LEN as u32,
+    BLOCK_LEN_U32,
     PARENT | flags,
   ))
 }
@@ -2394,6 +2520,12 @@ fn parent_cv_s390x_vector_wrapper(
 }
 
 #[cfg(target_arch = "s390x")]
+/// Hashes one full chunk with the s390x vector implementation.
+///
+/// # Safety
+///
+/// The executing CPU must support the vector facility, `input` must reference
+/// one readable chunk, and `out` must reference one writable chaining value.
 #[target_feature(enable = "vector")]
 unsafe fn hash_one_chunk_s390x_vector(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
   let mut cv = *key;
@@ -2412,12 +2544,19 @@ unsafe fn hash_one_chunk_s390x_vector(input: *const u8, key: &[u32; 8], counter:
   let start = if blocks_compressed == 0 { CHUNK_START } else { 0 };
   let tail_flags = flags | start | super::CHUNK_END;
   // SAFETY: `compress_s390x_vector` is gated by the current function's vector target feature.
-  cv = first_8_words(unsafe { compress_s390x_vector(&cv, &tail_words, counter, BLOCK_LEN as u32, tail_flags) });
+  cv = first_8_words(unsafe { compress_s390x_vector(&cv, &tail_words, counter, BLOCK_LEN_U32, tail_flags) });
   // SAFETY: caller guarantees one full CV output is writable at `out`.
   unsafe { write_cv_words(out, &cv) };
 }
 
 #[cfg(target_arch = "s390x")]
+/// Hashes contiguous chunks with the s390x vector implementation.
+///
+/// # Safety
+///
+/// The executing CPU must support the vector facility, `input` must reference
+/// `num_chunks` readable chunks, and `out` must reference `num_chunks` writable
+/// chaining values.
 #[target_feature(enable = "vector")]
 unsafe fn hash_many_contiguous_s390x_vector(
   input: *const u8,
@@ -2430,36 +2569,43 @@ unsafe fn hash_many_contiguous_s390x_vector(
   debug_assert!(num_chunks != 0);
 
   let mut idx = 0usize;
-  while idx + 4 <= num_chunks {
+  while idx.strict_add(4) <= num_chunks {
     // SAFETY: `idx + 4 <= num_chunks` guarantees four full contiguous chunks and outputs remain.
     unsafe {
       hash4_contiguous_full_chunks_simd(
-        input.add(idx * CHUNK_LEN),
+        input.add(idx.strict_mul(CHUNK_LEN)),
         key,
-        counter.wrapping_add(idx as u64),
+        counter.wrapping_add(u64::try_from(idx).expect("BLAKE3 chunk index fits in u64")),
         flags,
-        out.add(idx * OUT_LEN),
+        out.add(idx.strict_mul(OUT_LEN)),
       );
     }
-    idx += 4;
+    idx = idx.strict_add(4);
   }
 
   while idx < num_chunks {
     // SAFETY: `idx < num_chunks` guarantees one full chunk/output remains.
     unsafe {
       hash_one_chunk_s390x_vector(
-        input.add(idx * CHUNK_LEN),
+        input.add(idx.strict_mul(CHUNK_LEN)),
         key,
-        counter.wrapping_add(idx as u64),
+        counter.wrapping_add(u64::try_from(idx).expect("BLAKE3 chunk index fits in u64")),
         flags,
-        out.add(idx * OUT_LEN),
+        out.add(idx.strict_mul(OUT_LEN)),
       );
     }
-    idx += 1;
+    idx = idx.strict_add(1);
   }
 }
 
 #[cfg(target_arch = "s390x")]
+/// Dispatches contiguous chunks through the s390x vector implementation.
+///
+/// # Safety
+///
+/// `input` must reference `num_chunks` readable chunks, `out` must reference
+/// `num_chunks` writable chaining values, and the executing CPU must support
+/// the vector facility.
 unsafe fn hash_many_contiguous_s390x_vector_wrapper(
   input: *const u8,
   num_chunks: usize,
@@ -2476,6 +2622,11 @@ unsafe fn hash_many_contiguous_s390x_vector_wrapper(
 
 #[cfg(target_arch = "powerpc64")]
 #[target_feature(enable = "vsx")]
+/// Compresses one block with the PowerPC64 VSX implementation.
+///
+/// # Safety
+///
+/// The current CPU must support VSX.
 unsafe fn compress_power_vsx(
   chaining_value: &[u32; 8],
   block_words: &[u32; 16],
@@ -2500,6 +2651,12 @@ fn compress_power_vsx_wrapper(
 
 #[cfg(target_arch = "powerpc64")]
 #[target_feature(enable = "vsx")]
+/// Writes one root-output block with the PowerPC64 VSX implementation.
+///
+/// # Safety
+///
+/// The current CPU must support VSX and `out` must reference one writable
+/// BLAKE3 output block.
 unsafe fn root_output_blocks1_power_vsx(
   chaining_value: &[u32; 8],
   block_words: &[u32; 16],
@@ -2517,6 +2674,11 @@ unsafe fn root_output_blocks1_power_vsx(
 
 #[cfg(target_arch = "powerpc64")]
 #[target_feature(enable = "vsx")]
+/// Compresses full chunk blocks with the PowerPC64 VSX implementation.
+///
+/// # Safety
+///
+/// The current CPU must support VSX.
 unsafe fn chunk_compress_blocks_power_vsx(
   chaining_value: &mut [u32; 8],
   chunk_counter: u64,
@@ -2524,11 +2686,10 @@ unsafe fn chunk_compress_blocks_power_vsx(
   blocks_compressed: &mut u8,
   blocks: &[u8],
 ) {
-  debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
+  let (block_slices, remainder) = blocks.as_chunks::<BLOCK_LEN>();
+  debug_assert!(remainder.is_empty());
 
-  if blocks.len() == BLOCK_LEN {
-    // SAFETY: `blocks` is exactly one block, and `[u8; BLOCK_LEN]` has 1-byte alignment.
-    let block_bytes: &[u8; BLOCK_LEN] = unsafe { &*(blocks.as_ptr().cast()) };
+  if let [block_bytes] = block_slices {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
     let block_words = words16_from_le_bytes_64(block_bytes);
     // SAFETY: `compress_power_vsx` is gated by the current function's VSX target feature.
@@ -2537,16 +2698,14 @@ unsafe fn chunk_compress_blocks_power_vsx(
         chaining_value,
         &block_words,
         chunk_counter,
-        BLOCK_LEN as u32,
+        BLOCK_LEN_U32,
         flags | start,
       )
     });
-    *blocks_compressed = blocks_compressed.wrapping_add(1);
+    *blocks_compressed = (*blocks_compressed).strict_add(1);
     return;
   }
 
-  let (block_slices, remainder) = blocks.as_chunks::<BLOCK_LEN>();
-  debug_assert!(remainder.is_empty());
   for block_bytes in block_slices {
     let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
     let block_words = words16_from_le_bytes_64(block_bytes);
@@ -2556,11 +2715,11 @@ unsafe fn chunk_compress_blocks_power_vsx(
         chaining_value,
         &block_words,
         chunk_counter,
-        BLOCK_LEN as u32,
+        BLOCK_LEN_U32,
         flags | start,
       )
     });
-    *blocks_compressed = blocks_compressed.wrapping_add(1);
+    *blocks_compressed = (*blocks_compressed).strict_add(1);
   }
 }
 
@@ -2578,6 +2737,11 @@ fn chunk_compress_blocks_power_vsx_wrapper(
 
 #[cfg(target_arch = "powerpc64")]
 #[target_feature(enable = "vsx")]
+/// Compresses a parent node with the PowerPC64 VSX implementation.
+///
+/// # Safety
+///
+/// The current CPU must support VSX.
 unsafe fn parent_cv_power_vsx(
   left_child_cv: [u32; 8],
   right_child_cv: [u32; 8],
@@ -2591,7 +2755,7 @@ unsafe fn parent_cv_power_vsx(
     &key_words,
     &block_words,
     0,
-    BLOCK_LEN as u32,
+    BLOCK_LEN_U32,
     PARENT | flags,
   ))
 }
@@ -2609,10 +2773,16 @@ fn parent_cv_power_vsx_wrapper(
 
 #[cfg(target_arch = "powerpc64")]
 #[target_feature(enable = "vsx")]
+/// Hashes one full chunk with the PowerPC64 VSX implementation.
+///
+/// # Safety
+///
+/// The current CPU must support VSX, `input` must reference one readable
+/// chunk, and `out` must reference one writable chaining value.
 unsafe fn hash_one_chunk_power_vsx(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
   let mut cv = *key;
   let mut blocks_compressed = 0u8;
-  let body_len = CHUNK_LEN - BLOCK_LEN;
+  let body_len = CHUNK_LEN.strict_sub(BLOCK_LEN);
   // SAFETY: caller guarantees one full chunk is readable from `input`.
   let body = unsafe { core::slice::from_raw_parts(input, body_len) };
   // SAFETY: caller upholds the chunk pointer/length precondition.
@@ -2626,13 +2796,20 @@ unsafe fn hash_one_chunk_power_vsx(input: *const u8, key: &[u32; 8], counter: u6
   let start = if blocks_compressed == 0 { CHUNK_START } else { 0 };
   let tail_flags = flags | start | super::CHUNK_END;
   // SAFETY: `compress_power_vsx` is gated by the current function's VSX target feature.
-  cv = first_8_words(unsafe { compress_power_vsx(&cv, &tail_words, counter, BLOCK_LEN as u32, tail_flags) });
+  cv = first_8_words(unsafe { compress_power_vsx(&cv, &tail_words, counter, BLOCK_LEN_U32, tail_flags) });
   // SAFETY: caller guarantees one full CV output is writable at `out`.
   unsafe { write_cv_words(out, &cv) };
 }
 
 #[cfg(target_arch = "powerpc64")]
 #[target_feature(enable = "vsx")]
+/// Hashes contiguous chunks with the PowerPC64 VSX implementation.
+///
+/// # Safety
+///
+/// The current CPU must support VSX, `input` must reference `num_chunks`
+/// readable chunks, and `out` must reference `num_chunks` writable chaining
+/// values.
 unsafe fn hash_many_contiguous_power_vsx(
   input: *const u8,
   num_chunks: usize,
@@ -2644,36 +2821,42 @@ unsafe fn hash_many_contiguous_power_vsx(
   debug_assert!(num_chunks != 0);
 
   let mut idx = 0usize;
-  while idx + 4 <= num_chunks {
+  while idx.strict_add(4) <= num_chunks {
     // SAFETY: `idx + 4 <= num_chunks` guarantees four full contiguous chunks and outputs remain.
     unsafe {
       hash4_contiguous_full_chunks_simd(
-        input.add(idx * CHUNK_LEN),
+        input.add(idx.strict_mul(CHUNK_LEN)),
         key,
-        counter.wrapping_add(idx as u64),
+        counter.wrapping_add(u64::try_from(idx).expect("BLAKE3 chunk index fits in u64")),
         flags,
-        out.add(idx * OUT_LEN),
+        out.add(idx.strict_mul(OUT_LEN)),
       );
     }
-    idx += 4;
+    idx = idx.strict_add(4);
   }
 
   while idx < num_chunks {
     // SAFETY: `idx < num_chunks` guarantees one full chunk/output remains.
     unsafe {
       hash_one_chunk_power_vsx(
-        input.add(idx * CHUNK_LEN),
+        input.add(idx.strict_mul(CHUNK_LEN)),
         key,
-        counter.wrapping_add(idx as u64),
+        counter.wrapping_add(u64::try_from(idx).expect("BLAKE3 chunk index fits in u64")),
         flags,
-        out.add(idx * OUT_LEN),
+        out.add(idx.strict_mul(OUT_LEN)),
       );
     }
-    idx += 1;
+    idx = idx.strict_add(1);
   }
 }
 
 #[cfg(target_arch = "powerpc64")]
+/// Dispatches contiguous chunks through the PowerPC64 VSX implementation.
+///
+/// # Safety
+///
+/// `input` must reference `num_chunks` readable chunks, `out` must reference
+/// `num_chunks` writable chaining values, and the current CPU must support VSX.
 unsafe fn hash_many_contiguous_power_vsx_wrapper(
   input: *const u8,
   num_chunks: usize,
@@ -2703,7 +2886,7 @@ fn compress_simd_leaf_riscv(
   let mut w = 0usize;
   while w < 16 {
     msg[w] = Vec4::splat(block_words[w]);
-    w += 1;
+    w = w.strict_add(1);
   }
 
   let mut v = [
@@ -2719,8 +2902,8 @@ fn compress_simd_leaf_riscv(
     Vec4::splat(super::IV[1]),
     Vec4::splat(super::IV[2]),
     Vec4::splat(super::IV[3]),
-    Vec4::splat(counter as u32),
-    Vec4::splat((counter >> 32) as u32),
+    Vec4::splat(counter_words(counter).0),
+    Vec4::splat(counter_words(counter).1),
     Vec4::splat(block_len),
     Vec4::splat(flags),
   ];
@@ -2756,6 +2939,11 @@ fn compress_simd_leaf_riscv(
 }
 
 #[cfg(target_arch = "riscv64")]
+/// Compresses one block with the RISC-V vector implementation.
+///
+/// # Safety
+///
+/// The executing CPU must support the RISC-V V extension.
 #[target_feature(enable = "v")]
 unsafe fn compress_riscv_v(
   chaining_value: &[u32; 8],
@@ -2780,6 +2968,12 @@ fn compress_riscv_v_wrapper(
 }
 
 #[cfg(target_arch = "riscv64")]
+/// Writes one root-output block with the RISC-V vector implementation.
+///
+/// # Safety
+///
+/// The executing CPU must support the RISC-V V extension, and `out` must
+/// reference one writable BLAKE3 output block.
 #[target_feature(enable = "v")]
 unsafe fn root_output_blocks1_riscv_v(
   chaining_value: &[u32; 8],
@@ -2797,6 +2991,11 @@ unsafe fn root_output_blocks1_riscv_v(
 }
 
 #[cfg(target_arch = "riscv64")]
+/// Compresses full chunk blocks with the RISC-V vector implementation.
+///
+/// # Safety
+///
+/// The executing CPU must support the RISC-V V extension.
 #[target_feature(enable = "v")]
 unsafe fn chunk_compress_blocks_riscv_v(
   chaining_value: &mut [u32; 8],
@@ -2818,11 +3017,11 @@ unsafe fn chunk_compress_blocks_riscv_v(
         chaining_value,
         &block_words,
         chunk_counter,
-        BLOCK_LEN as u32,
+        BLOCK_LEN_U32,
         flags | start,
       )
     });
-    *blocks_compressed = blocks_compressed.wrapping_add(1);
+    *blocks_compressed = blocks_compressed.strict_add(1);
     return;
   }
 
@@ -2837,11 +3036,11 @@ unsafe fn chunk_compress_blocks_riscv_v(
         chaining_value,
         &block_words,
         chunk_counter,
-        BLOCK_LEN as u32,
+        BLOCK_LEN_U32,
         flags | start,
       )
     });
-    *blocks_compressed = blocks_compressed.wrapping_add(1);
+    *blocks_compressed = blocks_compressed.strict_add(1);
   }
 }
 
@@ -2858,6 +3057,11 @@ fn chunk_compress_blocks_riscv_v_wrapper(
 }
 
 #[cfg(target_arch = "riscv64")]
+/// Compresses a parent node with the RISC-V vector implementation.
+///
+/// # Safety
+///
+/// The executing CPU must support the RISC-V V extension.
 #[target_feature(enable = "v")]
 unsafe fn parent_cv_riscv_v(
   left_child_cv: [u32; 8],
@@ -2872,7 +3076,7 @@ unsafe fn parent_cv_riscv_v(
     &key_words,
     &block_words,
     0,
-    BLOCK_LEN as u32,
+    BLOCK_LEN_U32,
     PARENT | flags,
   ))
 }
@@ -2889,11 +3093,17 @@ fn parent_cv_riscv_v_wrapper(
 }
 
 #[cfg(target_arch = "riscv64")]
+/// Hashes one full chunk with the RISC-V vector implementation.
+///
+/// # Safety
+///
+/// The executing CPU must support the RISC-V V extension, `input` must reference
+/// one readable chunk, and `out` must reference one writable chaining value.
 #[target_feature(enable = "v")]
 unsafe fn hash_one_chunk_riscv_v(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
   let mut cv = *key;
   let mut blocks_compressed = 0u8;
-  let body_len = CHUNK_LEN - BLOCK_LEN;
+  let body_len = CHUNK_LEN.strict_sub(BLOCK_LEN);
   // SAFETY: caller guarantees one full chunk is readable from `input`.
   let body = unsafe { core::slice::from_raw_parts(input, body_len) };
   // SAFETY: caller upholds the chunk pointer/length precondition.
@@ -2907,12 +3117,19 @@ unsafe fn hash_one_chunk_riscv_v(input: *const u8, key: &[u32; 8], counter: u64,
   let start = if blocks_compressed == 0 { CHUNK_START } else { 0 };
   let tail_flags = flags | start | super::CHUNK_END;
   // SAFETY: this kernel is only dispatched when `riscv::V` is available.
-  cv = first_8_words(unsafe { compress_riscv_v(&cv, &tail_words, counter, BLOCK_LEN as u32, tail_flags) });
+  cv = first_8_words(unsafe { compress_riscv_v(&cv, &tail_words, counter, BLOCK_LEN_U32, tail_flags) });
   // SAFETY: caller guarantees one full CV output is writable at `out`.
   unsafe { write_cv_words(out, &cv) };
 }
 
 #[cfg(target_arch = "riscv64")]
+/// Hashes contiguous chunks with the RISC-V vector implementation.
+///
+/// # Safety
+///
+/// The executing CPU must support the RISC-V V extension, `input` must reference
+/// `num_chunks` readable chunks, and `out` must reference `num_chunks` writable
+/// chaining values.
 #[target_feature(enable = "v")]
 unsafe fn hash_many_contiguous_riscv_v(
   input: *const u8,
@@ -2925,36 +3142,43 @@ unsafe fn hash_many_contiguous_riscv_v(
   debug_assert!(num_chunks != 0);
 
   let mut idx = 0usize;
-  while idx + 4 <= num_chunks {
+  while idx.strict_add(4) <= num_chunks {
     // SAFETY: `idx + 4 <= num_chunks` guarantees four full contiguous chunks and outputs remain.
     unsafe {
       hash4_contiguous_full_chunks_simd(
-        input.add(idx * CHUNK_LEN),
+        input.add(idx.strict_mul(CHUNK_LEN)),
         key,
-        counter.wrapping_add(idx as u64),
+        counter.wrapping_add(u64::try_from(idx).expect("BLAKE3 chunk index fits in u64")),
         flags,
-        out.add(idx * OUT_LEN),
+        out.add(idx.strict_mul(OUT_LEN)),
       );
     }
-    idx += 4;
+    idx = idx.strict_add(4);
   }
 
   while idx < num_chunks {
     // SAFETY: `idx < num_chunks` guarantees one full chunk/output remains.
     unsafe {
       hash_one_chunk_riscv_v(
-        input.add(idx * CHUNK_LEN),
+        input.add(idx.strict_mul(CHUNK_LEN)),
         key,
-        counter.wrapping_add(idx as u64),
+        counter.wrapping_add(u64::try_from(idx).expect("BLAKE3 chunk index fits in u64")),
         flags,
-        out.add(idx * OUT_LEN),
+        out.add(idx.strict_mul(OUT_LEN)),
       );
     }
-    idx += 1;
+    idx = idx.strict_add(1);
   }
 }
 
 #[cfg(target_arch = "riscv64")]
+/// Dispatches contiguous chunks through the RISC-V vector implementation.
+///
+/// # Safety
+///
+/// `input` must reference `num_chunks` readable chunks, `out` must reference
+/// `num_chunks` writable chaining values, and the executing CPU must support
+/// the RISC-V V extension.
 unsafe fn hash_many_contiguous_riscv_v_wrapper(
   input: *const u8,
   num_chunks: usize,
@@ -2983,6 +3207,11 @@ fn x86_compress_cv_portable_wrapper(
 }
 
 #[cfg(target_arch = "x86_64")]
+/// Compress one block with the SSE4.1 kernel.
+///
+/// # Safety
+///
+/// SSE4.1 must be available and `block` must be readable for 64 bytes.
 unsafe fn x86_compress_cv_sse41_wrapper(
   cv: &[u32; 8],
   block: *const u8,
@@ -2996,6 +3225,11 @@ unsafe fn x86_compress_cv_sse41_wrapper(
 }
 
 #[cfg(target_arch = "x86_64")]
+/// Compress one block with the AVX2 kernel.
+///
+/// # Safety
+///
+/// AVX2 must be available and `block` must be readable for 64 bytes.
 unsafe fn x86_compress_cv_avx2_wrapper(
   cv: &[u32; 8],
   block: *const u8,
@@ -3009,6 +3243,12 @@ unsafe fn x86_compress_cv_avx2_wrapper(
 }
 
 #[cfg(target_arch = "x86_64")]
+/// Compress one block with the AVX-512 kernel.
+///
+/// # Safety
+///
+/// The AVX-512 dispatch requirements must hold and `block` must be readable
+/// for 64 bytes.
 unsafe fn x86_compress_cv_avx512_wrapper(
   cv: &[u32; 8],
   block: *const u8,
@@ -3031,6 +3271,12 @@ unsafe fn x86_compress_cv_avx512_wrapper(
 }
 
 #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+/// Compress one block with the owned AVX-512 kernel.
+///
+/// # Safety
+///
+/// The owned AVX-512 dispatch requirements must hold and `block` must be
+/// readable for 64 bytes.
 unsafe fn x86_compress_cv_avx512_owned_wrapper(
   cv: &[u32; 8],
   block: *const u8,
@@ -3129,11 +3375,11 @@ fn chunk_compress_blocks_avx512_owned_wrapper(
         chaining_value,
         block_bytes.as_ptr(),
         chunk_counter,
-        BLOCK_LEN as u32,
+        BLOCK_LEN_U32,
         flags | start,
       );
     }
-    *blocks_compressed = blocks_compressed.wrapping_add(1);
+    *blocks_compressed = blocks_compressed.strict_add(1);
   }
 }
 
@@ -3186,6 +3432,12 @@ fn parent_cv_sse41_wrapper(
 }
 
 #[cfg(target_arch = "x86_64")]
+/// Hash contiguous chunks with the SSE4.1 kernel.
+///
+/// # Safety
+///
+/// SSE4.1 must be available. `input` and `out` must cover `num_chunks` full
+/// chunks and chaining values, respectively, without overlapping.
 unsafe fn hash_many_contiguous_sse41_wrapper(
   input: *const u8,
   mut num_chunks: usize,
@@ -3210,22 +3462,22 @@ unsafe fn hash_many_contiguous_sse41_wrapper(
     // SAFETY: dispatch selects this kernel only when SSE4.1 is available; the
     // caller guarantees `input`/`out` cover the full `num_chunks` buffer.
     unsafe {
-      super::x86_64::sse41::hash4(
-        &ptrs,
-        CHUNK_LEN / BLOCK_LEN,
+      super::x86_64::sse41::hash4(super::x86_64::HashManyRequest {
+        inputs: &ptrs,
+        blocks: CHUNK_LEN / BLOCK_LEN,
         key,
         counter,
-        true,
+        increment_counter: true,
         flags,
-        CHUNK_START,
-        super::CHUNK_END,
+        flags_start: CHUNK_START,
+        flags_end: super::CHUNK_END,
         out,
-      );
-      input = input.add(super::x86_64::sse41::DEGREE * CHUNK_LEN);
-      out = out.add(super::x86_64::sse41::DEGREE * OUT_LEN);
+      });
+      input = input.add(super::x86_64::sse41::DEGREE.strict_mul(CHUNK_LEN));
+      out = out.add(super::x86_64::sse41::DEGREE.strict_mul(OUT_LEN));
     }
     counter = counter.wrapping_add(super::x86_64::sse41::DEGREE as u64);
-    num_chunks -= super::x86_64::sse41::DEGREE;
+    num_chunks = num_chunks.strict_sub(super::x86_64::sse41::DEGREE);
   }
 
   if num_chunks != 0 {
@@ -3233,7 +3485,7 @@ unsafe fn hash_many_contiguous_sse41_wrapper(
     // the final chunk pointer into unused lanes and only copy the needed
     // outputs.
     // SAFETY: `num_chunks != 0`, and `input` is valid for `num_chunks * CHUNK_LEN` bytes.
-    let last = unsafe { input.add((num_chunks - 1) * CHUNK_LEN) };
+    let last = unsafe { input.add(num_chunks.strict_sub(1).strict_mul(CHUNK_LEN)) };
     // SAFETY: all pointers are within the caller-provided `input` buffer.
     let ptrs = unsafe {
       [
@@ -3248,23 +3500,26 @@ unsafe fn hash_many_contiguous_sse41_wrapper(
     // SAFETY: SSE4.1 is available for this wrapper, `ptrs` are in-bounds for
     // full chunks, and `tmp`/`out` are large enough for the copied outputs.
     unsafe {
-      super::x86_64::sse41::hash4(
-        &ptrs,
-        CHUNK_LEN / BLOCK_LEN,
+      super::x86_64::sse41::hash4(super::x86_64::HashManyRequest {
+        inputs: &ptrs,
+        blocks: CHUNK_LEN / BLOCK_LEN,
         key,
         counter,
-        true,
+        increment_counter: true,
         flags,
-        CHUNK_START,
-        super::CHUNK_END,
-        tmp.as_mut_ptr(),
-      );
-      core::ptr::copy_nonoverlapping(tmp.as_ptr(), out, num_chunks * OUT_LEN);
+        flags_start: CHUNK_START,
+        flags_end: super::CHUNK_END,
+        out: tmp.as_mut_ptr(),
+      });
+      core::ptr::copy_nonoverlapping(tmp.as_ptr(), out, num_chunks.strict_mul(OUT_LEN));
     }
   }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(
+  target_arch = "x86_64",
+  any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows")
+))]
 /// Hash a sub-degree contiguous AVX2 chunk tail by duplicating the final lane.
 ///
 /// # Safety
@@ -3288,7 +3543,7 @@ unsafe fn hash_many_avx2_owned_duplicate_tail(
   // SAFETY: Computing the final real chunk pointer because:
   // 1. The caller guarantees `num_chunks` is non-zero.
   // 2. The caller guarantees `input` is readable for `num_chunks * CHUNK_LEN` bytes.
-  let last = unsafe { input.add((num_chunks - 1) * CHUNK_LEN) };
+  let last = unsafe { input.add(num_chunks.strict_sub(1).strict_mul(CHUNK_LEN)) };
   // SAFETY: Constructing a full 8-lane batch because:
   // 1. Lanes `< num_chunks` point at distinct real chunks in the caller-provided input.
   // 2. Extra lanes duplicate `last`, which is valid for one full chunk.
@@ -3312,23 +3567,32 @@ unsafe fn hash_many_avx2_owned_duplicate_tail(
   // 2. `ptrs` is a valid full 8-lane batch and `tmp` holds all lane outputs.
   // 3. `out` is writable for the first `num_chunks * OUT_LEN` bytes.
   unsafe {
-    super::x86_64::avx2::hash8_owned(
-      &ptrs,
-      CHUNK_LEN / BLOCK_LEN,
+    super::x86_64::avx2::hash8_owned(super::x86_64::HashManyRequest {
+      inputs: &ptrs,
+      blocks: CHUNK_LEN / BLOCK_LEN,
       key,
       counter,
-      true,
+      increment_counter: true,
       flags,
-      CHUNK_START,
-      super::CHUNK_END,
-      tmp.as_mut_ptr(),
-    );
-    core::ptr::copy_nonoverlapping(tmp.as_ptr(), out, num_chunks * OUT_LEN);
+      flags_start: CHUNK_START,
+      flags_end: super::CHUNK_END,
+      out: tmp.as_mut_ptr(),
+    });
+    core::ptr::copy_nonoverlapping(tmp.as_ptr(), out, num_chunks.strict_mul(OUT_LEN));
   }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(
+  target_arch = "x86_64",
+  any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows")
+))]
 #[inline(always)]
+/// Hash one full chunk through the serial AVX2 compressor.
+///
+/// # Safety
+///
+/// AVX2 must be available. `input` must be readable for one full chunk, and
+/// `out` must be writable for one chaining value without overlapping `input`.
 unsafe fn hash_one_chunk_avx2_owned_serial(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
   let mut cv = *key;
   for block_idx in 0..(CHUNK_LEN / BLOCK_LEN) {
@@ -3336,7 +3600,7 @@ unsafe fn hash_one_chunk_avx2_owned_serial(input: *const u8, key: &[u32; 8], cou
     if block_idx == 0 {
       block_flags |= CHUNK_START;
     }
-    if block_idx + 1 == CHUNK_LEN / BLOCK_LEN {
+    if block_idx.strict_add(1) == CHUNK_LEN / BLOCK_LEN {
       block_flags |= super::CHUNK_END;
     }
 
@@ -3348,9 +3612,9 @@ unsafe fn hash_one_chunk_avx2_owned_serial(input: *const u8, key: &[u32; 8], cou
     cv = unsafe {
       super::x86_64::compress_cv_avx2_bytes(
         &cv,
-        input.add(block_idx * BLOCK_LEN),
+        input.add(block_idx.strict_mul(BLOCK_LEN)),
         counter,
-        BLOCK_LEN as u32,
+        BLOCK_LEN_U32,
         block_flags,
       )
     };
@@ -3364,6 +3628,12 @@ unsafe fn hash_one_chunk_avx2_owned_serial(input: *const u8, key: &[u32; 8], cou
 }
 
 #[cfg(target_arch = "x86_64")]
+/// Hash contiguous chunks with the production AVX2 routing policy.
+///
+/// # Safety
+///
+/// AVX2 must be available. `input` and `out` must cover `num_chunks` full
+/// chunks and chaining values, respectively, without overlapping.
 unsafe fn hash_many_contiguous_avx2_inner(
   input: *const u8,
   mut num_chunks: usize,
@@ -3396,19 +3666,19 @@ unsafe fn hash_many_contiguous_avx2_inner(
     // 3. `out` is valid for `DEGREE * OUT_LEN` bytes.
     // 4. Sub-degree tails are handled below by the explicit per-degree policy.
     unsafe {
-      super::x86_64::avx2::hash8_owned(
-        &ptrs,
-        CHUNK_LEN / BLOCK_LEN,
+      super::x86_64::avx2::hash8_owned(super::x86_64::HashManyRequest {
+        inputs: &ptrs,
+        blocks: CHUNK_LEN / BLOCK_LEN,
         key,
         counter,
-        true,
+        increment_counter: true,
         flags,
-        CHUNK_START,
-        super::CHUNK_END,
+        flags_start: CHUNK_START,
+        flags_end: super::CHUNK_END,
         out,
-      );
-      input = input.add(super::x86_64::avx2::DEGREE * CHUNK_LEN);
-      out = out.add(super::x86_64::avx2::DEGREE * OUT_LEN);
+      });
+      input = input.add(super::x86_64::avx2::DEGREE.strict_mul(CHUNK_LEN));
+      out = out.add(super::x86_64::avx2::DEGREE.strict_mul(OUT_LEN));
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -3417,29 +3687,28 @@ unsafe fn hash_many_contiguous_avx2_inner(
       // caller guarantees `input`/`out` cover the full `num_chunks` buffer.
       // SAFETY: AVX2 is available for this wrapper, `ptrs` are in-bounds for
       // full chunks, and `out` is large enough for `DEGREE * OUT_LEN` bytes.
-      super::x86_64::avx2::hash8(
-        &ptrs,
-        CHUNK_LEN / BLOCK_LEN,
+      super::x86_64::avx2::hash8(super::x86_64::HashManyRequest {
+        inputs: &ptrs,
+        blocks: CHUNK_LEN / BLOCK_LEN,
         key,
         counter,
-        true,
+        increment_counter: true,
         flags,
-        CHUNK_START,
-        super::CHUNK_END,
+        flags_start: CHUNK_START,
+        flags_end: super::CHUNK_END,
         out,
-      );
-      input = input.add(super::x86_64::avx2::DEGREE * CHUNK_LEN);
-      out = out.add(super::x86_64::avx2::DEGREE * OUT_LEN);
+      });
+      input = input.add(super::x86_64::avx2::DEGREE.strict_mul(CHUNK_LEN));
+      out = out.add(super::x86_64::avx2::DEGREE.strict_mul(OUT_LEN));
     }
     counter = counter.wrapping_add(super::x86_64::avx2::DEGREE as u64);
-    num_chunks -= super::x86_64::avx2::DEGREE;
+    num_chunks = num_chunks.strict_sub(super::x86_64::avx2::DEGREE);
   }
 
   if num_chunks != 0 {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     {
       debug_assert!(num_chunks < super::x86_64::avx2::DEGREE);
-      debug_assert!(flags <= u8::MAX as u32);
       if num_chunks == 1 {
         // SAFETY: Use the owned AVX2 one-chunk tail because:
         // 1. This wrapper is only selected after AVX2 dispatch.
@@ -3479,32 +3748,28 @@ unsafe fn hash_many_contiguous_avx2_inner(
       // Use the upstream-grade AVX2 asm `hash_many` backend for the remaining
       // sub-degree tails. Passing `num_inputs = num_chunks` avoids wasting lanes
       // for the four-chunk shape assigned to assembly by the tail policy.
-      // SAFETY: This wrapper is only selected when AVX2 is available (checked
-      // by dispatch). `input` is valid for `num_chunks * CHUNK_LEN` bytes, so
-      // each `input.add(i * CHUNK_LEN)` stays in-bounds. `out` is valid for
-      // `num_chunks * OUT_LEN` bytes.
       let mut ptrs = [input; super::x86_64::avx2::DEGREE];
       for (i, ptr) in ptrs.iter_mut().enumerate().take(num_chunks) {
         // SAFETY: `i < num_chunks` and the caller guarantees `input` is valid
         // for `num_chunks * CHUNK_LEN` bytes.
-        *ptr = unsafe { input.add(i * CHUNK_LEN) };
+        *ptr = unsafe { input.add(i.strict_mul(CHUNK_LEN)) };
       }
       // SAFETY: AVX2 is available for this kernel per dispatch. `ptrs` points
       // to `num_chunks` valid chunk inputs, and `out` is valid for
       // `num_chunks * OUT_LEN` bytes.
       unsafe {
-        super::x86_64::asm::hash_many_avx2(
-          ptrs.as_ptr(),
-          num_chunks,
-          CHUNK_LEN / BLOCK_LEN,
-          key.as_ptr(),
+        super::x86_64::asm::hash_many_avx2(super::x86_64::asm::HashManyRequest {
+          inputs: ptrs.as_ptr(),
+          num_inputs: num_chunks,
+          blocks: CHUNK_LEN / BLOCK_LEN,
+          key: key.as_ptr(),
           counter,
-          true,
-          flags as u8,
-          CHUNK_START as u8,
-          super::CHUNK_END as u8,
+          increment_counter: true,
+          flags: assembly_flags(flags),
+          flags_start: assembly_flags(CHUNK_START),
+          flags_end: assembly_flags(super::CHUNK_END),
           out,
-        );
+        });
       }
     }
 
@@ -3513,7 +3778,7 @@ unsafe fn hash_many_contiguous_avx2_inner(
       // Non-Linux fallback: hash an 8-lane batch with duplicated final pointers
       // and copy only the needed outputs.
       // SAFETY: `num_chunks != 0`, and `input` is valid for `num_chunks * CHUNK_LEN` bytes.
-      let last = unsafe { input.add((num_chunks - 1) * CHUNK_LEN) };
+      let last = unsafe { input.add(num_chunks.strict_sub(1).strict_mul(CHUNK_LEN)) };
       // SAFETY: all pointers are within the caller-provided `input` buffer.
       let ptrs = unsafe {
         [
@@ -3532,24 +3797,30 @@ unsafe fn hash_many_contiguous_avx2_inner(
       // SAFETY: AVX2 is available for this wrapper, `ptrs` are in-bounds for
       // full chunks, and `tmp`/`out` are large enough for the copied outputs.
       unsafe {
-        super::x86_64::avx2::hash8(
-          &ptrs,
-          CHUNK_LEN / BLOCK_LEN,
+        super::x86_64::avx2::hash8(super::x86_64::HashManyRequest {
+          inputs: &ptrs,
+          blocks: CHUNK_LEN / BLOCK_LEN,
           key,
           counter,
-          true,
+          increment_counter: true,
           flags,
-          CHUNK_START,
-          super::CHUNK_END,
-          tmp.as_mut_ptr(),
-        );
-        core::ptr::copy_nonoverlapping(tmp.as_ptr(), out, num_chunks * OUT_LEN);
+          flags_start: CHUNK_START,
+          flags_end: super::CHUNK_END,
+          out: tmp.as_mut_ptr(),
+        });
+        core::ptr::copy_nonoverlapping(tmp.as_ptr(), out, num_chunks.strict_mul(OUT_LEN));
       }
     }
   }
 }
 
 #[cfg(target_arch = "x86_64")]
+/// Forward contiguous chunks into the production AVX2 implementation.
+///
+/// # Safety
+///
+/// AVX2 must be available. `input` and `out` must satisfy
+/// [`HashManyContiguousFn`]'s buffer and non-overlap contract.
 unsafe fn hash_many_contiguous_avx2_wrapper(
   input: *const u8,
   num_chunks: usize,
@@ -3564,7 +3835,10 @@ unsafe fn hash_many_contiguous_avx2_wrapper(
   unsafe { hash_many_contiguous_avx2_inner(input, num_chunks, key, counter, flags, out) };
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(
+  target_arch = "x86_64",
+  any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows")
+))]
 #[inline]
 fn avx512_owned_hash_many_available() -> bool {
   crate::platform::caps().has(
@@ -3577,7 +3851,17 @@ fn avx512_owned_hash_many_available() -> bool {
   )
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(
+  target_arch = "x86_64",
+  any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows")
+))]
+/// Hash a sub-degree contiguous AVX-512 chunk tail with duplicate lanes.
+///
+/// # Safety
+///
+/// The owned AVX-512 dispatch requirements must hold. `num_chunks` must be in
+/// `1..avx512::DEGREE`, and `input`/`out` must cover that many chunks/CVs
+/// without overlapping.
 unsafe fn hash_many_avx512_owned_duplicate_tail(
   input: *const u8,
   num_chunks: usize,
@@ -3598,14 +3882,14 @@ unsafe fn hash_many_avx512_owned_duplicate_tail(
     // 3. Source and destination ranges are disjoint allocations.
     unsafe {
       core::ptr::copy_nonoverlapping(
-        input.add(i * CHUNK_LEN),
-        tmp_input.as_mut_ptr().add(i * CHUNK_LEN),
+        input.add(i.strict_mul(CHUNK_LEN)),
+        tmp_input.as_mut_ptr().add(i.strict_mul(CHUNK_LEN)),
         CHUNK_LEN,
       );
     }
   }
 
-  let last_src_offset = (num_chunks - 1) * CHUNK_LEN;
+  let last_src_offset = num_chunks.strict_sub(1).strict_mul(CHUNK_LEN);
   for i in num_chunks..super::x86_64::avx512::DEGREE {
     // SAFETY: Duplicating the final real tail chunk because:
     // 1. `num_chunks != 0`, so `last_src_offset` names an initialized lane.
@@ -3614,7 +3898,7 @@ unsafe fn hash_many_avx512_owned_duplicate_tail(
     unsafe {
       core::ptr::copy_nonoverlapping(
         tmp_input.as_ptr().add(last_src_offset),
-        tmp_input.as_mut_ptr().add(i * CHUNK_LEN),
+        tmp_input.as_mut_ptr().add(i.strict_mul(CHUNK_LEN)),
         CHUNK_LEN,
       );
     }
@@ -3626,11 +3910,18 @@ unsafe fn hash_many_avx512_owned_duplicate_tail(
   // 3. `out` is writable for the first `num_chunks * OUT_LEN` bytes.
   unsafe {
     super::x86_64::avx512::hash16_contiguous_owned(tmp_input.as_ptr(), key, counter, flags, tmp_out.as_mut_ptr());
-    core::ptr::copy_nonoverlapping(tmp_out.as_ptr(), out, num_chunks * OUT_LEN);
+    core::ptr::copy_nonoverlapping(tmp_out.as_ptr(), out, num_chunks.strict_mul(OUT_LEN));
   }
 }
 
 #[cfg(target_arch = "x86_64")]
+/// Hash contiguous chunks with the production AVX-512 routing policy.
+///
+/// # Safety
+///
+/// The AVX-512 dispatch requirements must hold. `input` and `out` must cover
+/// `num_chunks` full chunks and chaining values, respectively, without
+/// overlapping.
 unsafe fn hash_many_contiguous_avx512_wrapper(
   input: *const u8,
   mut num_chunks: usize,
@@ -3646,7 +3937,6 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
     // by dispatch), the constructed `ptrs` all stay in-bounds for full chunks,
     // and `out` is valid for `DEGREE * OUT_LEN` bytes.
     unsafe {
-      debug_assert!(flags <= u8::MAX as u32);
       let ptrs = [
         input,
         input.add(CHUNK_LEN),
@@ -3665,20 +3955,20 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
         input.add(14 * CHUNK_LEN),
         input.add(15 * CHUNK_LEN),
       ];
-      super::x86_64::asm::hash_many_avx512(
-        ptrs.as_ptr(),
-        super::x86_64::avx512::DEGREE,
-        CHUNK_LEN / BLOCK_LEN,
-        key.as_ptr(),
+      super::x86_64::asm::hash_many_avx512(super::x86_64::asm::HashManyRequest {
+        inputs: ptrs.as_ptr(),
+        num_inputs: super::x86_64::avx512::DEGREE,
+        blocks: CHUNK_LEN / BLOCK_LEN,
+        key: key.as_ptr(),
         counter,
-        true,
-        flags as u8,
-        CHUNK_START as u8,
-        super::CHUNK_END as u8,
+        increment_counter: true,
+        flags: assembly_flags(flags),
+        flags_start: assembly_flags(CHUNK_START),
+        flags_end: assembly_flags(super::CHUNK_END),
         out,
-      );
-      input = input.add(super::x86_64::avx512::DEGREE * CHUNK_LEN);
-      out = out.add(super::x86_64::avx512::DEGREE * OUT_LEN);
+      });
+      input = input.add(super::x86_64::avx512::DEGREE.strict_mul(CHUNK_LEN));
+      out = out.add(super::x86_64::avx512::DEGREE.strict_mul(OUT_LEN));
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -3686,18 +3976,17 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
       // SAFETY: dispatch selects this kernel only when AVX-512 is available;
       // the caller guarantees `input`/`out` cover the full `num_chunks` buffer.
       super::x86_64::avx512::hash16_contiguous(input, key, counter, flags, out);
-      input = input.add(super::x86_64::avx512::DEGREE * CHUNK_LEN);
-      out = out.add(super::x86_64::avx512::DEGREE * OUT_LEN);
+      input = input.add(super::x86_64::avx512::DEGREE.strict_mul(CHUNK_LEN));
+      out = out.add(super::x86_64::avx512::DEGREE.strict_mul(OUT_LEN));
     }
     counter = counter.wrapping_add(super::x86_64::avx512::DEGREE as u64);
-    num_chunks -= super::x86_64::avx512::DEGREE;
+    num_chunks = num_chunks.strict_sub(super::x86_64::avx512::DEGREE);
   }
 
   if num_chunks != 0 {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     {
       debug_assert!(num_chunks < super::x86_64::avx512::DEGREE);
-      debug_assert!(flags <= u8::MAX as u32);
       // Use the AVX-512 asm `hash_many` backend for the sub-degree tail
       // (1–15 chunks). The assembly performs its internal cascade with lane
       // masking.
@@ -3716,30 +4005,28 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
         return;
       }
 
-      // SAFETY: This wrapper is only selected when the AVX-512 kernel is
-      // available per dispatch. `input`/`out` cover `num_chunks` full chunks.
       let mut ptrs = [input; super::x86_64::avx512::DEGREE];
       for (i, ptr) in ptrs.iter_mut().enumerate().take(num_chunks) {
         // SAFETY: `i < num_chunks` and the caller guarantees `input` is valid
         // for `num_chunks * CHUNK_LEN` bytes.
-        *ptr = unsafe { input.add(i * CHUNK_LEN) };
+        *ptr = unsafe { input.add(i.strict_mul(CHUNK_LEN)) };
       }
       // SAFETY: AVX-512 is available for this kernel per dispatch. `ptrs`
       // points to `num_chunks` valid chunk inputs, and `out` is valid for
       // `num_chunks * OUT_LEN` bytes.
       unsafe {
-        super::x86_64::asm::hash_many_avx512(
-          ptrs.as_ptr(),
-          num_chunks,
-          CHUNK_LEN / BLOCK_LEN,
-          key.as_ptr(),
+        super::x86_64::asm::hash_many_avx512(super::x86_64::asm::HashManyRequest {
+          inputs: ptrs.as_ptr(),
+          num_inputs: num_chunks,
+          blocks: CHUNK_LEN / BLOCK_LEN,
+          key: key.as_ptr(),
           counter,
-          true,
-          flags as u8,
-          CHUNK_START as u8,
-          super::CHUNK_END as u8,
+          increment_counter: true,
+          flags: assembly_flags(flags),
+          flags_start: assembly_flags(CHUNK_START),
+          flags_end: assembly_flags(super::CHUNK_END),
           out,
-        );
+        });
       }
     }
 
@@ -3756,21 +4043,21 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
         // `DEGREE * CHUNK_LEN`, so each destination lane is in-bounds.
         unsafe {
           core::ptr::copy_nonoverlapping(
-            input.add(i * CHUNK_LEN),
-            tmp_input.as_mut_ptr().add(i * CHUNK_LEN),
+            input.add(i.strict_mul(CHUNK_LEN)),
+            tmp_input.as_mut_ptr().add(i.strict_mul(CHUNK_LEN)),
             CHUNK_LEN,
           );
         }
       }
 
-      let last_src_offset = (num_chunks - 1) * CHUNK_LEN;
+      let last_src_offset = num_chunks.strict_sub(1).strict_mul(CHUNK_LEN);
       for i in num_chunks..super::x86_64::avx512::DEGREE {
         // SAFETY: `last_src_offset` points to a previously materialized lane in
         // `tmp_input`, and destination lane `i` is within the fixed-size buffer.
         unsafe {
           core::ptr::copy_nonoverlapping(
             tmp_input.as_ptr().add(last_src_offset),
-            tmp_input.as_mut_ptr().add(i * CHUNK_LEN),
+            tmp_input.as_mut_ptr().add(i.strict_mul(CHUNK_LEN)),
             CHUNK_LEN,
           );
         }
@@ -3780,13 +4067,19 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
       // valid for the full 16-lane contiguous contract.
       unsafe {
         super::x86_64::avx512::hash16_contiguous(tmp_input.as_ptr(), key, counter, flags, tmp_out.as_mut_ptr());
-        core::ptr::copy_nonoverlapping(tmp_out.as_ptr(), out, num_chunks * OUT_LEN);
+        core::ptr::copy_nonoverlapping(tmp_out.as_ptr(), out, num_chunks.strict_mul(OUT_LEN));
       }
     }
   }
 }
 
 #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+/// Hash contiguous chunks with the owned AVX2 diagnostic kernel.
+///
+/// # Safety
+///
+/// The owned AVX2 dispatch requirements must hold. `input` and `out` must
+/// cover `num_chunks` full chunks and chaining values without overlapping.
 unsafe fn hash_many_contiguous_avx2_owned_wrapper(
   input: *const u8,
   mut num_chunks: usize,
@@ -3819,22 +4112,22 @@ unsafe fn hash_many_contiguous_avx2_owned_wrapper(
     // 2. `ptrs` cover 8 full chunks and `out` covers 8 output CVs.
     // 3. Pointer advancement stays within the caller-provided input/output ranges.
     unsafe {
-      super::x86_64::avx2::hash8_owned(
-        &ptrs,
-        CHUNK_LEN / BLOCK_LEN,
+      super::x86_64::avx2::hash8_owned(super::x86_64::HashManyRequest {
+        inputs: &ptrs,
+        blocks: CHUNK_LEN / BLOCK_LEN,
         key,
         counter,
-        true,
+        increment_counter: true,
         flags,
-        CHUNK_START,
-        super::CHUNK_END,
+        flags_start: CHUNK_START,
+        flags_end: super::CHUNK_END,
         out,
-      );
-      input = input.add(super::x86_64::avx2::DEGREE * CHUNK_LEN);
-      out = out.add(super::x86_64::avx2::DEGREE * OUT_LEN);
+      });
+      input = input.add(super::x86_64::avx2::DEGREE.strict_mul(CHUNK_LEN));
+      out = out.add(super::x86_64::avx2::DEGREE.strict_mul(OUT_LEN));
     }
     counter = counter.wrapping_add(super::x86_64::avx2::DEGREE as u64);
-    num_chunks -= super::x86_64::avx2::DEGREE;
+    num_chunks = num_chunks.strict_sub(super::x86_64::avx2::DEGREE);
   }
 
   if num_chunks != 0 {
@@ -3848,6 +4141,12 @@ unsafe fn hash_many_contiguous_avx2_owned_wrapper(
 }
 
 #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+/// Hash contiguous chunks with the owned AVX-512 diagnostic kernel.
+///
+/// # Safety
+///
+/// The owned AVX-512 dispatch requirements must hold. `input` and `out` must
+/// cover `num_chunks` full chunks and chaining values without overlapping.
 unsafe fn hash_many_contiguous_avx512_owned_wrapper(
   input: *const u8,
   mut num_chunks: usize,
@@ -3864,11 +4163,11 @@ unsafe fn hash_many_contiguous_avx512_owned_wrapper(
     // 3. `out` is writable for `DEGREE * OUT_LEN` bytes.
     unsafe {
       super::x86_64::avx512::hash16_contiguous_owned(input, key, counter, flags, out);
-      input = input.add(super::x86_64::avx512::DEGREE * CHUNK_LEN);
-      out = out.add(super::x86_64::avx512::DEGREE * OUT_LEN);
+      input = input.add(super::x86_64::avx512::DEGREE.strict_mul(CHUNK_LEN));
+      out = out.add(super::x86_64::avx512::DEGREE.strict_mul(OUT_LEN));
     }
     counter = counter.wrapping_add(super::x86_64::avx512::DEGREE as u64);
-    num_chunks -= super::x86_64::avx512::DEGREE;
+    num_chunks = num_chunks.strict_sub(super::x86_64::avx512::DEGREE);
   }
 
   if num_chunks != 0 {
@@ -3920,6 +4219,13 @@ fn parent_cv_neon_wrapper(
 }
 
 #[cfg(target_arch = "aarch64")]
+/// Dispatches contiguous chunks through the AArch64 NEON implementation.
+///
+/// # Safety
+///
+/// `input` must reference `num_chunks` readable chunks, `out` must reference
+/// `num_chunks` writable chaining values, and the current CPU must support
+/// NEON.
 unsafe fn hash_many_contiguous_neon_wrapper(
   input: *const u8,
   num_chunks: usize,

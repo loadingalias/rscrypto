@@ -3,7 +3,9 @@
 use rscrypto::{HmacSha256, HmacSha256Tag};
 
 mod common;
-use common::decode_hex_array as decode_hex;
+#[path = "common/array.rs"]
+mod hex_array;
+use hex_array::decode_hex_array as decode_hex;
 
 #[test]
 fn hmac_sha256_rfc4231_vectors() {
@@ -37,7 +39,7 @@ fn hmac_sha256_rfc4231_vectors() {
       actual.ct_eq(&expected).declassify(),
       "HMAC-SHA256 RFC 4231 vector {i} mismatch"
     );
-    assert!(HmacSha256::verify_tag(key, data, &expected).is_ok());
+    HmacSha256::verify_tag(key, data, &expected).expect("HMAC-SHA-256 must verify an RFC 4231 tag");
   }
 }
 
@@ -51,10 +53,7 @@ fn hmac_sha256_verify_rejects_corrupted_tag() {
     let mut corrupted = tag.to_bytes();
     corrupted[index] ^= 0x80;
     let corrupted = HmacSha256Tag::from_bytes(corrupted);
-    assert!(
-      HmacSha256::verify_tag(key, data, &corrupted).is_err(),
-      "HMAC-SHA256 accepted a tag corrupted at byte {index}"
-    );
+    HmacSha256::verify_tag(key, data, &corrupted).expect_err("HMAC-SHA-256 must reject a corrupted full-length tag");
   }
 }
 
@@ -64,14 +63,13 @@ fn hmac_sha256_verifies_rfc4231_tag_truncated_to_64_bits() {
   let data = b"Hi There";
   let expected = decode_hex::<8>("b0344c61d8db3853");
 
-  assert!(HmacSha256::verify_truncated_tag_64(&key, data, &expected).is_ok());
+  HmacSha256::verify_truncated_tag_64(&key, data, &expected)
+    .expect("HMAC-SHA-256 must verify the RFC 4231 truncated tag");
   for index in 0..expected.len() {
     let mut corrupted = expected;
     corrupted[index] ^= 0x80;
-    assert!(
-      HmacSha256::verify_truncated_tag_64(&key, data, &corrupted).is_err(),
-      "HMAC-SHA256 accepted a 64-bit tag corrupted at byte {index}"
-    );
+    HmacSha256::verify_truncated_tag_64(&key, data, &corrupted)
+      .expect_err("HMAC-SHA-256 must reject a corrupted 64-bit tag");
   }
 }
 

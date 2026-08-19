@@ -9,30 +9,28 @@ use crate::checksum::common::portable;
 // Polynomial-specific wrappers
 
 /// CRC-64-XZ slice-by-8 computation.
-#[cfg_attr(miri, allow(dead_code))]
 #[inline]
 #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
-pub fn crc64_slice8_xz(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_slice8_xz(crc: u64, data: &[u8]) -> u64 {
   crc64_slice8(crc, data, &kernel_tables::XZ_TABLES_8)
 }
 
 /// CRC-64-NVME slice-by-8 computation.
-#[cfg_attr(miri, allow(dead_code))]
 #[inline]
 #[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
-pub fn crc64_slice8_nvme(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_slice8_nvme(crc: u64, data: &[u8]) -> u64 {
   crc64_slice8(crc, data, &kernel_tables::NVME_TABLES_8)
 }
 
 /// CRC-64-XZ slice-by-16 computation.
 #[inline]
-pub fn crc64_slice16_xz(crc: u64, data: &[u8]) -> u64 {
+pub(in crate::checksum) fn crc64_slice16_xz(crc: u64, data: &[u8]) -> u64 {
   crc64_slice16(crc, data, &kernel_tables::XZ_TABLES_16)
 }
 
 /// CRC-64-NVME slice-by-16 computation.
 #[inline]
-pub fn crc64_slice16_nvme(crc: u64, data: &[u8]) -> u64 {
+pub(in crate::checksum) fn crc64_slice16_nvme(crc: u64, data: &[u8]) -> u64 {
   crc64_slice16(crc, data, &kernel_tables::NVME_TABLES_16)
 }
 
@@ -42,7 +40,7 @@ pub fn crc64_slice16_nvme(crc: u64, data: &[u8]) -> u64 {
 ///
 /// Uses one 256-entry table rather than the slice-by-16 table set.
 #[inline(always)]
-pub fn crc64_xz_bytewise(crc: u64, data: &[u8]) -> u64 {
+pub(in crate::checksum) fn crc64_xz_bytewise(crc: u64, data: &[u8]) -> u64 {
   crc64_bytewise(crc, data, &kernel_tables::XZ_TABLES_16[0])
 }
 
@@ -50,13 +48,12 @@ pub fn crc64_xz_bytewise(crc: u64, data: &[u8]) -> u64 {
 ///
 /// Uses one 256-entry table rather than the slice-by-16 table set.
 #[inline(always)]
-pub fn crc64_nvme_bytewise(crc: u64, data: &[u8]) -> u64 {
+pub(in crate::checksum) fn crc64_nvme_bytewise(crc: u64, data: &[u8]) -> u64 {
   crc64_bytewise(crc, data, &kernel_tables::NVME_TABLES_16[0])
 }
 
 /// Update CRC-64 state using a byte-at-a-time lookup table.
 #[inline(always)]
-#[allow(clippy::indexing_slicing)] // index is 0..=255 by mask, table is [u64; 256]
 fn crc64_bytewise(mut crc: u64, data: &[u8], table: &[u64; 256]) -> u64 {
   for &b in data {
     let index = ((crc ^ (b as u64)) & 0xFF) as usize;
@@ -76,7 +73,7 @@ fn crc64_bytewise(mut crc: u64, data: &[u8], table: &[u64; 256]) -> u64 {
 /// * `tables` - 8 lookup tables (256 entries each)
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline]
-pub fn crc64_slice8(crc: u64, data: &[u8], tables: &[[u64; 256]; 8]) -> u64 {
+pub(super) fn crc64_slice8(crc: u64, data: &[u8], tables: &[[u64; 256]; 8]) -> u64 {
   portable::slice8_64(crc, data, tables)
 }
 
@@ -88,7 +85,7 @@ pub fn crc64_slice8(crc: u64, data: &[u8], tables: &[[u64; 256]; 8]) -> u64 {
 /// * `data` - Input data
 /// * `tables` - 16 lookup tables (256 entries each)
 #[inline]
-pub fn crc64_slice16(crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
+pub(super) fn crc64_slice16(crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
   portable::slice16_64(crc, data, tables)
 }
 

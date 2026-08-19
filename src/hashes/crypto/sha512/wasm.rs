@@ -7,8 +7,6 @@
 //! (they depend on W[t-2]/W[t-1] respectively, both from prior rounds), so
 //! we get true 2-wide parallelism for sigma computations and additions.
 
-#![allow(clippy::indexing_slicing)] // Fixed-size arrays + compression schedule
-
 #[cfg(target_arch = "wasm32")]
 use core::arch::wasm32::*;
 
@@ -38,12 +36,20 @@ fn small_sigma1_v(x: v128) -> v128 {
 // Message schedule helpers
 
 /// Load 2 big-endian u64 message words from `ptr`, byte-swapping each.
+///
+/// # Safety
+///
+/// `ptr` must be valid for an unaligned 16-byte read. The caller must execute
+/// this function only when WebAssembly SIMD128 is enabled.
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
 unsafe fn load_be(ptr: *const u8) -> v128 {
-  // SAFETY: caller guarantees `ptr` is valid for a 16-byte read
-  // and the simd128 target feature is enabled.
-  let raw = unsafe { v128_load(ptr as *const v128) };
+  // SAFETY: the caller guarantees that `ptr..ptr+16` is readable. The byte
+  // array has alignment one, and `read_unaligned` accepts any address.
+  let bytes = unsafe { ptr.cast::<[u8; 16]>().read_unaligned() };
+  // SAFETY: `[u8; 16]` and `v128` have the same size, and every SIMD bit
+  // pattern is valid.
+  let raw = unsafe { core::mem::transmute::<[u8; 16], v128>(bytes) };
   i8x16_shuffle::<7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8>(raw, raw)
 }
 
@@ -82,6 +88,11 @@ fn schedule_pair(w: &mut [v128; 8], i: usize) {
 ///
 /// Message schedule is computed with SIMD (2 u64 words per v128).
 /// Compression rounds are scalar (sequential dependency chain).
+///
+/// # Safety
+///
+/// The caller must ensure WebAssembly SIMD128 is available and `blocks`
+/// contains only complete SHA-512 blocks.
 #[cfg(target_arch = "wasm32")]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn compress_blocks_wasm_simd(state: &mut [u64; 8], blocks: &[u8]) {
@@ -136,24 +147,23 @@ pub(crate) unsafe fn compress_blocks_wasm_simd(state: &mut [u64; 8], blocks: &[u
     }
 
     // Rounds 0-15: extract from loaded vectors.
-    for pair in 0..8 {
-      let v = wv[pair];
-      let w_lo = i64x2_extract_lane::<0>(v) as u64;
-      let w_hi = i64x2_extract_lane::<1>(v) as u64;
+    for (pair, &v) in wv.iter().enumerate() {
+      let w_lo = i64x2_extract_lane::<0>(v).cast_unsigned();
+      let w_hi = i64x2_extract_lane::<1>(v).cast_unsigned();
       let r = pair.strict_mul(2);
       sha_round!(K[r], w_lo);
-      sha_round!(K[r + 1], w_hi);
+      sha_round!(K[r.strict_add(1)], w_hi);
     }
 
     // Rounds 16-79: expand schedule with SIMD, then extract for scalar rounds.
     for pair in 8..40 {
       schedule_pair(&mut wv, pair);
       let v = wv[pair & 7];
-      let w_lo = i64x2_extract_lane::<0>(v) as u64;
-      let w_hi = i64x2_extract_lane::<1>(v) as u64;
+      let w_lo = i64x2_extract_lane::<0>(v).cast_unsigned();
+      let w_hi = i64x2_extract_lane::<1>(v).cast_unsigned();
       let r = pair.strict_mul(2);
       sha_round!(K[r], w_lo);
-      sha_round!(K[r + 1], w_hi);
+      sha_round!(K[r.strict_add(1)], w_hi);
     }
 
     state[0] = state[0].wrapping_add(a);

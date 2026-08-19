@@ -1,26 +1,23 @@
 //! BLAKE3 x86_64 AVX2 throughput kernel (8-way).
 
-#![allow(unsafe_code)]
-#![allow(clippy::inline_always)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::many_single_char_names)]
 // Supported OS builds still keep the assembly ABI around for sub-degree tails
 // and parent reductions. The owned intrinsic body is also used directly for
 // full contiguous batches and by diagnostic benches.
-#![cfg_attr(
-  any(target_os = "linux", target_os = "macos", target_os = "windows"),
-  allow(dead_code, unused_imports)
-)]
 
 use core::arch::x86_64::*;
 
+#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
+use super::super::{CHUNK_END, CHUNK_LEN, CHUNK_START, OUT_LEN, PARENT};
 use super::{
-  super::{BLOCK_LEN, CHUNK_END, CHUNK_LEN, CHUNK_START, IV, MSG_SCHEDULE, OUT_LEN, PARENT},
-  counter_high, counter_low,
+  super::{BLOCK_LEN, BLOCK_LEN_U32, IV, MSG_SCHEDULE},
+  HashManyRequest, counter_high, counter_low,
 };
 
-pub const DEGREE: usize = 8;
+pub(crate) const DEGREE: usize = 8;
 
+/// # Safety
+///
+/// AVX2 must be available and `src` must be readable for 32 bytes.
 #[inline(always)]
 unsafe fn loadu(src: *const u8) -> __m256i {
   // SAFETY: Unaligned AVX2 load because:
@@ -30,6 +27,9 @@ unsafe fn loadu(src: *const u8) -> __m256i {
   unsafe { _mm256_loadu_si256(src.cast()) }
 }
 
+/// # Safety
+///
+/// AVX2 must be available and `dest` must be writable for 32 bytes.
 #[inline(always)]
 unsafe fn storeu(src: __m256i, dest: *mut u8) {
   // SAFETY: Unaligned AVX2 store because:
@@ -39,6 +39,9 @@ unsafe fn storeu(src: __m256i, dest: *mut u8) {
   unsafe { _mm256_storeu_si256(dest.cast(), src) }
 }
 
+/// # Safety
+///
+/// AVX2 must be available.
 #[inline(always)]
 unsafe fn add(a: __m256i, b: __m256i) -> __m256i {
   // SAFETY: AVX2 lane add because:
@@ -47,6 +50,9 @@ unsafe fn add(a: __m256i, b: __m256i) -> __m256i {
   unsafe { _mm256_add_epi32(a, b) }
 }
 
+/// # Safety
+///
+/// AVX2 must be available.
 #[inline(always)]
 unsafe fn xor(a: __m256i, b: __m256i) -> __m256i {
   // SAFETY: AVX2 lane xor because:
@@ -55,6 +61,9 @@ unsafe fn xor(a: __m256i, b: __m256i) -> __m256i {
   unsafe { _mm256_xor_si256(a, b) }
 }
 
+/// # Safety
+///
+/// AVX2 must be available.
 #[inline(always)]
 unsafe fn set1(x: u32) -> __m256i {
   // SAFETY: AVX2 scalar broadcast because:
@@ -63,25 +72,31 @@ unsafe fn set1(x: u32) -> __m256i {
   unsafe { _mm256_set1_epi32(x.cast_signed()) }
 }
 
+/// # Safety
+///
+/// AVX2 must be available.
 #[inline(always)]
-unsafe fn set8(a: u32, b: u32, c: u32, d: u32, e: u32, f: u32, g: u32, h: u32) -> __m256i {
+unsafe fn set8(lanes: [u32; DEGREE]) -> __m256i {
   // SAFETY: AVX2 lane construction because:
   // 1. Any `u32` bit pattern is valid lane data after reinterpretation as `i32`.
   // 2. The caller only reaches this helper with AVX2 available.
   unsafe {
     _mm256_setr_epi32(
-      a.cast_signed(),
-      b.cast_signed(),
-      c.cast_signed(),
-      d.cast_signed(),
-      e.cast_signed(),
-      f.cast_signed(),
-      g.cast_signed(),
-      h.cast_signed(),
+      lanes[0].cast_signed(),
+      lanes[1].cast_signed(),
+      lanes[2].cast_signed(),
+      lanes[3].cast_signed(),
+      lanes[4].cast_signed(),
+      lanes[5].cast_signed(),
+      lanes[6].cast_signed(),
+      lanes[7].cast_signed(),
     )
   }
 }
 
+/// # Safety
+///
+/// AVX2 must be available.
 #[inline(always)]
 unsafe fn rot12(x: __m256i) -> __m256i {
   // SAFETY: AVX2 rotate-right-by-12 sequence because:
@@ -90,6 +105,9 @@ unsafe fn rot12(x: __m256i) -> __m256i {
   unsafe { _mm256_or_si256(_mm256_srli_epi32(x, 12), _mm256_slli_epi32(x, 20)) }
 }
 
+/// # Safety
+///
+/// AVX2 must be available.
 #[inline(always)]
 unsafe fn rot7(x: __m256i) -> __m256i {
   // SAFETY: AVX2 rotate-right-by-7 sequence because:
@@ -98,6 +116,9 @@ unsafe fn rot7(x: __m256i) -> __m256i {
   unsafe { _mm256_or_si256(_mm256_srli_epi32(x, 7), _mm256_slli_epi32(x, 25)) }
 }
 
+/// # Safety
+///
+/// AVX2 must be available and `r` must be in `0..7`.
 #[inline(always)]
 unsafe fn round(v: &mut [__m256i; 16], m: &[__m256i; 16], r: usize, rot16_mask: __m256i, rot8_mask: __m256i) {
   // SAFETY: One AVX2 BLAKE3 round because:
@@ -223,6 +244,9 @@ unsafe fn round(v: &mut [__m256i; 16], m: &[__m256i; 16], r: usize, rot16_mask: 
   }
 }
 
+/// # Safety
+///
+/// AVX2 must be available.
 #[inline(always)]
 unsafe fn interleave128(a: __m256i, b: __m256i) -> (__m256i, __m256i) {
   // SAFETY: AVX2 128-bit lane interleave because:
@@ -237,6 +261,9 @@ unsafe fn interleave128(a: __m256i, b: __m256i) -> (__m256i, __m256i) {
   }
 }
 
+/// # Safety
+///
+/// AVX2 must be available.
 #[inline(always)]
 pub(super) unsafe fn transpose8x8(vecs: &mut [__m256i; 8]) {
   // SAFETY: AVX2 8x8 register transpose because:
@@ -278,6 +305,10 @@ pub(super) unsafe fn transpose8x8(vecs: &mut [__m256i; 8]) {
   }
 }
 
+/// # Safety
+///
+/// AVX2 must be available and every input must be readable for a complete
+/// block starting at `block_offset`.
 #[inline(always)]
 unsafe fn transpose_msg_vecs(inputs: &[*const u8; DEGREE], block_offset: usize) -> [__m256i; 16] {
   // SAFETY: AVX2 message transpose because:
@@ -287,7 +318,7 @@ unsafe fn transpose_msg_vecs(inputs: &[*const u8; DEGREE], block_offset: usize) 
   //    dereferenced by Rust.
   // 4. The transpose operates only on local vector registers.
   unsafe {
-    let stride = 4 * DEGREE;
+    let stride = 4usize.strict_mul(DEGREE);
     let mut half0 = [
       loadu(inputs[0].add(block_offset)),
       loadu(inputs[1].add(block_offset)),
@@ -299,18 +330,21 @@ unsafe fn transpose_msg_vecs(inputs: &[*const u8; DEGREE], block_offset: usize) 
       loadu(inputs[7].add(block_offset)),
     ];
     let mut half1 = [
-      loadu(inputs[0].add(block_offset + stride)),
-      loadu(inputs[1].add(block_offset + stride)),
-      loadu(inputs[2].add(block_offset + stride)),
-      loadu(inputs[3].add(block_offset + stride)),
-      loadu(inputs[4].add(block_offset + stride)),
-      loadu(inputs[5].add(block_offset + stride)),
-      loadu(inputs[6].add(block_offset + stride)),
-      loadu(inputs[7].add(block_offset + stride)),
+      loadu(inputs[0].add(block_offset.strict_add(stride))),
+      loadu(inputs[1].add(block_offset.strict_add(stride))),
+      loadu(inputs[2].add(block_offset.strict_add(stride))),
+      loadu(inputs[3].add(block_offset.strict_add(stride))),
+      loadu(inputs[4].add(block_offset.strict_add(stride))),
+      loadu(inputs[5].add(block_offset.strict_add(stride))),
+      loadu(inputs[6].add(block_offset.strict_add(stride))),
+      loadu(inputs[7].add(block_offset.strict_add(stride))),
     ];
 
     for &input in inputs.iter() {
-      _mm_prefetch(input.wrapping_add(block_offset + 256).cast::<i8>(), _MM_HINT_T0);
+      _mm_prefetch(
+        input.wrapping_add(block_offset.strict_add(256)).cast::<i8>(),
+        _MM_HINT_T0,
+      );
     }
 
     transpose8x8(&mut half0);
@@ -323,6 +357,9 @@ unsafe fn transpose_msg_vecs(inputs: &[*const u8; DEGREE], block_offset: usize) 
   }
 }
 
+/// # Safety
+///
+/// AVX2 must be available.
 #[inline(always)]
 unsafe fn load_counters(counter: u64, increment_counter: bool) -> (__m256i, __m256i) {
   let mask = if increment_counter { !0u64 } else { 0u64 };
@@ -332,7 +369,7 @@ unsafe fn load_counters(counter: u64, increment_counter: bool) -> (__m256i, __m2
   // 3. The caller only reaches this helper with AVX2 available.
   unsafe {
     (
-      set8(
+      set8([
         counter_low(counter),
         counter_low(counter.wrapping_add(mask & 1)),
         counter_low(counter.wrapping_add(mask & 2)),
@@ -341,8 +378,8 @@ unsafe fn load_counters(counter: u64, increment_counter: bool) -> (__m256i, __m2
         counter_low(counter.wrapping_add(mask & 5)),
         counter_low(counter.wrapping_add(mask & 6)),
         counter_low(counter.wrapping_add(mask & 7)),
-      ),
-      set8(
+      ]),
+      set8([
         counter_high(counter),
         counter_high(counter.wrapping_add(mask & 1)),
         counter_high(counter.wrapping_add(mask & 2)),
@@ -351,23 +388,30 @@ unsafe fn load_counters(counter: u64, increment_counter: bool) -> (__m256i, __m2
         counter_high(counter.wrapping_add(mask & 5)),
         counter_high(counter.wrapping_add(mask & 6)),
         counter_high(counter.wrapping_add(mask & 7)),
-      ),
+      ]),
     )
   }
 }
 
+#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
 macro_rules! avx2_shuffle {
   ($z:expr, $y:expr, $x:expr, $w:expr) => {
     ($z << 6) | ($y << 4) | ($x << 2) | $w
   };
 }
 
+#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
 macro_rules! shuffle2 {
   ($a:expr, $b:expr, $c:expr) => {
     _mm256_castps_si256(_mm256_shuffle_ps(_mm256_castsi256_ps($a), _mm256_castsi256_ps($b), $c))
   };
 }
 
+/// # Safety
+///
+/// AVX2 must be available, and both pointers must be readable for 16 bytes
+/// starting at `offset`.
+#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[inline(always)]
 unsafe fn load2x128(lo: *const u8, hi: *const u8, offset: usize) -> __m256i {
   // SAFETY: Loading two 128-bit halves into one YMM register because:
@@ -381,6 +425,10 @@ unsafe fn load2x128(lo: *const u8, hi: *const u8, offset: usize) -> __m256i {
   }
 }
 
+/// # Safety
+///
+/// AVX2 must be available.
+#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[inline(always)]
 unsafe fn set2x128(row: __m128i) -> __m256i {
   // SAFETY: Duplicating one 128-bit row into both halves because:
@@ -389,6 +437,10 @@ unsafe fn set2x128(row: __m128i) -> __m256i {
   unsafe { _mm256_broadcastsi128_si256(row) }
 }
 
+/// # Safety
+///
+/// AVX2 must be available.
+#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[inline(always)]
 unsafe fn g1_2(
   row0: &mut __m256i,
@@ -412,6 +464,10 @@ unsafe fn g1_2(
   }
 }
 
+/// # Safety
+///
+/// AVX2 must be available.
+#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[inline(always)]
 unsafe fn g2_2(
   row0: &mut __m256i,
@@ -435,6 +491,10 @@ unsafe fn g2_2(
   }
 }
 
+/// # Safety
+///
+/// AVX2 must be available.
+#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[inline(always)]
 unsafe fn diagonalize_2(row0: &mut __m256i, row2: &mut __m256i, row3: &mut __m256i) {
   // SAFETY: Two-lane AVX2 diagonalization because:
@@ -447,6 +507,10 @@ unsafe fn diagonalize_2(row0: &mut __m256i, row2: &mut __m256i, row3: &mut __m25
   }
 }
 
+/// # Safety
+///
+/// AVX2 must be available.
+#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[inline(always)]
 unsafe fn undiagonalize_2(row0: &mut __m256i, row2: &mut __m256i, row3: &mut __m256i) {
   // SAFETY: Two-lane AVX2 undiagonalization because:
@@ -459,16 +523,14 @@ unsafe fn undiagonalize_2(row0: &mut __m256i, row2: &mut __m256i, row3: &mut __m
   }
 }
 
+/// # Safety
+///
+/// AVX2 must be available.
+#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[inline(always)]
 unsafe fn compress2_pre(
-  mut row0: __m256i,
-  mut row1: __m256i,
-  mut row2: __m256i,
-  mut row3: __m256i,
-  mut m0: __m256i,
-  mut m1: __m256i,
-  mut m2: __m256i,
-  mut m3: __m256i,
+  [mut row0, mut row1, mut row2, mut row3]: [__m256i; 4],
+  [mut m0, mut m1, mut m2, mut m3]: [__m256i; 4],
 ) -> [__m256i; 4] {
   // SAFETY: Two-lane AVX2 compression preimage because:
   // 1. The caller only reaches this helper with AVX2 available.
@@ -565,6 +627,10 @@ unsafe fn compress2_pre(
   }
 }
 
+/// # Safety
+///
+/// AVX2 must be available.
+#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[inline(always)]
 unsafe fn iv_row2x128() -> __m256i {
   // SAFETY: Duplicating the fixed BLAKE3 IV row because:
@@ -580,6 +646,10 @@ unsafe fn iv_row2x128() -> __m256i {
   }
 }
 
+/// # Safety
+///
+/// AVX2 must be available and `out` must be writable for two chaining values.
+#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[inline(always)]
 unsafe fn store2_cvs(row0: __m256i, row1: __m256i, out: *mut u8) {
   // SAFETY: Storing two 32-byte CVs from two independent 128-bit lanes because:
@@ -590,10 +660,17 @@ unsafe fn store2_cvs(row0: __m256i, row1: __m256i, out: *mut u8) {
     _mm_storeu_si128(out.cast(), _mm256_castsi256_si128(row0));
     _mm_storeu_si128(out.add(16).cast(), _mm256_castsi256_si128(row1));
     _mm_storeu_si128(out.add(OUT_LEN).cast(), _mm256_extracti128_si256(row0, 1));
-    _mm_storeu_si128(out.add(OUT_LEN + 16).cast(), _mm256_extracti128_si256(row1, 1));
+    _mm_storeu_si128(
+      out.add(OUT_LEN.strict_add(16)).cast(),
+      _mm256_extracti128_si256(row1, 1),
+    );
   }
 }
 
+/// # Safety
+///
+/// AVX2 must be available.
+#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[inline(always)]
 unsafe fn compress2_parent_pre(
   key: &[u32; 8],
@@ -609,19 +686,18 @@ unsafe fn compress2_parent_pre(
   // 3. `m0..m3` are the two 64-byte parent blocks.
   unsafe {
     compress2_pre(
-      set2x128(_mm_loadu_si128(key.as_ptr().cast())),
-      set2x128(_mm_loadu_si128(key.as_ptr().add(4).cast())),
-      iv_row2x128(),
-      set2x128(_mm_setr_epi32(
-        0,
-        0,
-        (BLOCK_LEN as u32).cast_signed(),
-        (PARENT | flags).cast_signed(),
-      )),
-      m0,
-      m1,
-      m2,
-      m3,
+      [
+        set2x128(_mm_loadu_si128(key.as_ptr().cast())),
+        set2x128(_mm_loadu_si128(key.as_ptr().add(4).cast())),
+        iv_row2x128(),
+        set2x128(_mm_setr_epi32(
+          0,
+          0,
+          BLOCK_LEN_U32.cast_signed(),
+          (PARENT | flags).cast_signed(),
+        )),
+      ],
+      [m0, m1, m2, m3],
     )
   }
 }
@@ -634,6 +710,7 @@ unsafe fn compress2_parent_pre(
 /// 1. AVX2 is available on the current CPU.
 /// 2. `parents[0]` and `parents[1]` are each readable for one 64-byte parent block.
 /// 3. `out` is writable for two 32-byte CV outputs.
+#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn parent_cv2_owned(parents: &[*const u8; 2], key: &[u32; 8], flags: u32, out: *mut u8) {
   // SAFETY: Two-parent AVX2 CV reduction because:
@@ -663,6 +740,7 @@ pub(crate) unsafe fn parent_cv2_owned(parents: &[*const u8; 2], key: &[u32; 8], 
 /// 1. AVX2 is available on the current CPU.
 /// 2. `input` is readable for two full BLAKE3 chunks.
 /// 3. `out` is writable for two 32-byte CV outputs.
+#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn hash2_chunks_owned(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
   // SAFETY: Two-chunk AVX2 CV reduction because:
@@ -680,14 +758,14 @@ pub(crate) unsafe fn hash2_chunks_owned(input: *const u8, key: &[u32; 8], counte
     let counter1 = counter.wrapping_add(1);
     let counter1_low = counter_low(counter1).cast_signed();
     let counter1_high = counter_high(counter1).cast_signed();
-    let block_len = (BLOCK_LEN as u32).cast_signed();
+    let block_len = BLOCK_LEN_U32.cast_signed();
 
     for block_idx in 0..(CHUNK_LEN / BLOCK_LEN) {
       let mut block_flags = flags;
       if block_idx == 0 {
         block_flags |= CHUNK_START;
       }
-      if block_idx + 1 == CHUNK_LEN / BLOCK_LEN {
+      if block_idx.strict_add(1) == CHUNK_LEN / BLOCK_LEN {
         block_flags |= CHUNK_END;
       }
 
@@ -702,16 +780,15 @@ pub(crate) unsafe fn hash2_chunks_owned(input: *const u8, key: &[u32; 8], counte
         _mm_setr_epi32(counter1_low, counter1_high, block_len, block_flags.cast_signed()),
         1,
       );
-      let offset = block_idx * BLOCK_LEN;
+      let offset = block_idx.strict_mul(BLOCK_LEN);
       let [mut v0, mut v1, v2, v3] = compress2_pre(
-        row0,
-        row1,
-        row2,
-        row3,
-        load2x128(input, input1, offset),
-        load2x128(input, input1, offset + 16),
-        load2x128(input, input1, offset + 32),
-        load2x128(input, input1, offset + 48),
+        [row0, row1, row2, row3],
+        [
+          load2x128(input, input1, offset),
+          load2x128(input, input1, offset.strict_add(16)),
+          load2x128(input, input1, offset.strict_add(32)),
+          load2x128(input, input1, offset.strict_add(48)),
+        ],
       );
       v0 = xor(v0, v2);
       v1 = xor(v1, v3);
@@ -735,15 +812,17 @@ pub(crate) unsafe fn hash2_chunks_owned(input: *const u8, key: &[u32; 8], counte
 /// `DEGREE * OUT_LEN` writable bytes.
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn hash8_owned(
-  inputs: &[*const u8; DEGREE],
-  blocks: usize,
-  key: &[u32; 8],
-  counter: u64,
-  increment_counter: bool,
-  flags: u32,
-  flags_start: u32,
-  flags_end: u32,
-  out: *mut u8,
+  HashManyRequest {
+    inputs,
+    blocks,
+    key,
+    counter,
+    increment_counter,
+    flags,
+    flags_start,
+    flags_end,
+    out,
+  }: HashManyRequest<'_, DEGREE>,
 ) {
   // SAFETY: 8-way AVX2 BLAKE3 hash-many because:
   // 1. The caller guarantees AVX2 availability for this target-feature function.
@@ -758,7 +837,7 @@ pub(crate) unsafe fn hash8_owned(
       1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12, 1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12,
     );
 
-    let block_len_vec = set1(BLOCK_LEN as u32);
+    let block_len_vec = set1(BLOCK_LEN_U32);
     let iv0 = set1(IV[0]);
     let iv1 = set1(IV[1]);
     let iv2 = set1(IV[2]);
@@ -782,12 +861,12 @@ pub(crate) unsafe fn hash8_owned(
       if block == 0 {
         block_flags |= flags_start;
       }
-      if block + 1 == blocks {
+      if block.strict_add(1) == blocks {
         block_flags |= flags_end;
       }
 
       let block_flags_vec = set1(block_flags);
-      let msg_vecs = transpose_msg_vecs(inputs, block * BLOCK_LEN);
+      let msg_vecs = transpose_msg_vecs(inputs, block.strict_mul(BLOCK_LEN));
 
       let mut v = [
         h_vecs[0],
@@ -829,15 +908,15 @@ pub(crate) unsafe fn hash8_owned(
     // Unlike SSE4.1, this transpose yields output vecs already ordered by word.
     transpose8x8(&mut h_vecs);
 
-    let stride = 4 * DEGREE;
+    let stride = 4usize.strict_mul(DEGREE);
     storeu(h_vecs[0], out);
     storeu(h_vecs[1], out.add(stride));
-    storeu(h_vecs[2], out.add(2 * stride));
-    storeu(h_vecs[3], out.add(3 * stride));
-    storeu(h_vecs[4], out.add(4 * stride));
-    storeu(h_vecs[5], out.add(5 * stride));
-    storeu(h_vecs[6], out.add(6 * stride));
-    storeu(h_vecs[7], out.add(7 * stride));
+    storeu(h_vecs[2], out.add(2usize.strict_mul(stride)));
+    storeu(h_vecs[3], out.add(3usize.strict_mul(stride)));
+    storeu(h_vecs[4], out.add(4usize.strict_mul(stride)));
+    storeu(h_vecs[5], out.add(5usize.strict_mul(stride)));
+    storeu(h_vecs[6], out.add(6usize.strict_mul(stride)));
+    storeu(h_vecs[7], out.add(7usize.strict_mul(stride)));
   }
 }
 
@@ -849,33 +928,11 @@ pub(crate) unsafe fn hash8_owned(
 /// for `blocks * BLOCK_LEN` bytes.
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn hash8(
-  inputs: &[*const u8; DEGREE],
-  blocks: usize,
-  key: &[u32; 8],
-  counter: u64,
-  increment_counter: bool,
-  flags: u32,
-  flags_start: u32,
-  flags_end: u32,
-  out: *mut u8,
-) {
+pub(crate) unsafe fn hash8(request: HashManyRequest<'_, DEGREE>) {
   // SAFETY: Forwarding to the owned AVX2 implementation because:
   // 1. This function has the same AVX2 target-feature requirement.
   // 2. The caller's pointer/output contract is identical to `hash8_owned`.
-  unsafe {
-    hash8_owned(
-      inputs,
-      blocks,
-      key,
-      counter,
-      increment_counter,
-      flags,
-      flags_start,
-      flags_end,
-      out,
-    )
-  }
+  unsafe { hash8_owned(request) }
 }
 
 /// Generate 8 root output blocks (64 bytes each) in parallel.
@@ -999,7 +1056,7 @@ pub(crate) unsafe fn root_output_blocks8(
     transpose8x8(&mut out_hi);
 
     for lane in 0..DEGREE {
-      let base = out.add(lane * 64);
+      let base = out.add(lane.strict_mul(64));
       storeu(out_lo[lane], base);
       storeu(out_hi[lane], base.add(32));
     }

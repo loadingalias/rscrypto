@@ -26,12 +26,11 @@
 //!
 //! # Rotations
 //!
-//! Lane-wise u64 rotate is expressed as a shift-right + shift-left + OR
-//! vector sequence. Whether the compiler selects a native rotate instruction
-//! is a generated-code property, not a source contract.
+//! Lane-wise u64 rotation uses `rotate_right`. Whether the compiler selects a
+//! native vector rotate instruction is a generated-code property, not a source
+//! contract.
 
 #![cfg(target_arch = "powerpc64")]
-#![allow(clippy::cast_possible_truncation)]
 
 use core::simd::u64x2;
 
@@ -53,94 +52,93 @@ pub(super) unsafe fn compress_vsx(
   y: &[u64; BLOCK_WORDS],
   xor_into: bool,
 ) {
-  // SAFETY: VSX is enabled by this function's `#[target_feature]`.
-  // `core::simd::u64x2` arithmetic is always wrapping per the SIMD
-  // contract, so no further unsafe is needed for the algorithm itself.
   let mut r = [0u64; BLOCK_WORDS];
   let mut q = [0u64; BLOCK_WORDS];
-  let mut i = 0;
+  let mut i = 0usize;
   while i < BLOCK_WORDS {
-    let xv = u64x2::from_array([x[i], x[i + 1]]);
-    let yv = u64x2::from_array([y[i], y[i + 1]]);
+    let next = i.strict_add(1);
+    let xv = u64x2::from_array([x[i], x[next]]);
+    let yv = u64x2::from_array([y[i], y[next]]);
     let rv = (xv ^ yv).to_array();
     r[i] = rv[0];
-    r[i + 1] = rv[1];
+    r[next] = rv[1];
     q[i] = rv[0];
-    q[i + 1] = rv[1];
-    i += 2;
+    q[next] = rv[1];
+    i = i.strict_add(2);
   }
 
   // Row pass.
   let mut row = 0usize;
   while row < 8 {
-    let base = row * 16;
-    let mut a: Pair = [load_pair(&q, base), load_pair(&q, base + 2)];
-    let mut b: Pair = [load_pair(&q, base + 4), load_pair(&q, base + 6)];
-    let mut c: Pair = [load_pair(&q, base + 8), load_pair(&q, base + 10)];
-    let mut d: Pair = [load_pair(&q, base + 12), load_pair(&q, base + 14)];
+    let base = row.strict_mul(16);
+    let mut a: Pair = [load_pair(&q, base), load_pair(&q, base.strict_add(2))];
+    let mut b: Pair = [load_pair(&q, base.strict_add(4)), load_pair(&q, base.strict_add(6))];
+    let mut c: Pair = [load_pair(&q, base.strict_add(8)), load_pair(&q, base.strict_add(10))];
+    let mut d: Pair = [load_pair(&q, base.strict_add(12)), load_pair(&q, base.strict_add(14))];
 
     p_round(&mut a, &mut b, &mut c, &mut d);
 
     store_pair(&mut q, base, a[0]);
-    store_pair(&mut q, base + 2, a[1]);
-    store_pair(&mut q, base + 4, b[0]);
-    store_pair(&mut q, base + 6, b[1]);
-    store_pair(&mut q, base + 8, c[0]);
-    store_pair(&mut q, base + 10, c[1]);
-    store_pair(&mut q, base + 12, d[0]);
-    store_pair(&mut q, base + 14, d[1]);
-    row += 1;
+    store_pair(&mut q, base.strict_add(2), a[1]);
+    store_pair(&mut q, base.strict_add(4), b[0]);
+    store_pair(&mut q, base.strict_add(6), b[1]);
+    store_pair(&mut q, base.strict_add(8), c[0]);
+    store_pair(&mut q, base.strict_add(10), c[1]);
+    store_pair(&mut q, base.strict_add(12), d[0]);
+    store_pair(&mut q, base.strict_add(14), d[1]);
+    row = row.strict_add(1);
   }
 
   // Column pass.
   let mut col = 0usize;
   while col < 8 {
-    let base = col * 2;
-    let mut a: Pair = [load_pair(&q, base), load_pair(&q, base + 16)];
-    let mut b: Pair = [load_pair(&q, base + 32), load_pair(&q, base + 48)];
-    let mut c: Pair = [load_pair(&q, base + 64), load_pair(&q, base + 80)];
-    let mut d: Pair = [load_pair(&q, base + 96), load_pair(&q, base + 112)];
+    let base = col.strict_mul(2);
+    let mut a: Pair = [load_pair(&q, base), load_pair(&q, base.strict_add(16))];
+    let mut b: Pair = [load_pair(&q, base.strict_add(32)), load_pair(&q, base.strict_add(48))];
+    let mut c: Pair = [load_pair(&q, base.strict_add(64)), load_pair(&q, base.strict_add(80))];
+    let mut d: Pair = [load_pair(&q, base.strict_add(96)), load_pair(&q, base.strict_add(112))];
 
     p_round(&mut a, &mut b, &mut c, &mut d);
 
     store_pair(&mut q, base, a[0]);
-    store_pair(&mut q, base + 16, a[1]);
-    store_pair(&mut q, base + 32, b[0]);
-    store_pair(&mut q, base + 48, b[1]);
-    store_pair(&mut q, base + 64, c[0]);
-    store_pair(&mut q, base + 80, c[1]);
-    store_pair(&mut q, base + 96, d[0]);
-    store_pair(&mut q, base + 112, d[1]);
-    col += 1;
+    store_pair(&mut q, base.strict_add(16), a[1]);
+    store_pair(&mut q, base.strict_add(32), b[0]);
+    store_pair(&mut q, base.strict_add(48), b[1]);
+    store_pair(&mut q, base.strict_add(64), c[0]);
+    store_pair(&mut q, base.strict_add(80), c[1]);
+    store_pair(&mut q, base.strict_add(96), d[0]);
+    store_pair(&mut q, base.strict_add(112), d[1]);
+    col = col.strict_add(1);
   }
 
   // Final XOR with R, fused with dst store/xor.
-  let mut i = 0;
+  let mut i = 0usize;
   while i < BLOCK_WORDS {
+    let next = i.strict_add(1);
     let qv = load_pair(&q, i);
     let rv = load_pair(&r, i);
     let f = (qv ^ rv).to_array();
     if xor_into {
       dst[i] ^= f[0];
-      dst[i + 1] ^= f[1];
+      dst[next] ^= f[1];
     } else {
       dst[i] = f[0];
-      dst[i + 1] = f[1];
+      dst[next] = f[1];
     }
-    i += 2;
+    i = i.strict_add(2);
   }
 }
 
 #[inline(always)]
 fn load_pair(buf: &[u64; BLOCK_WORDS], idx: usize) -> u64x2 {
-  u64x2::from_array([buf[idx], buf[idx + 1]])
+  u64x2::from_array([buf[idx], buf[idx.strict_add(1)]])
 }
 
 #[inline(always)]
 fn store_pair(buf: &mut [u64; BLOCK_WORDS], idx: usize, v: u64x2) {
   let a = v.to_array();
   buf[idx] = a[0];
-  buf[idx + 1] = a[1];
+  buf[idx.strict_add(1)] = a[1];
 }
 
 // ─── 4-way P-round ─────────────────────────────────────────────────────────
@@ -201,32 +199,32 @@ fn gb(a: &mut Pair, b: &mut Pair, c: &mut Pair, d: &mut Pair) {
   // Step 1: a = a + b + 2·lsb(a)·lsb(b)
   let p0 = bla_mul(a[0], b[0]);
   let p1 = bla_mul(a[1], b[1]);
-  a[0] = a[0] + b[0] + p0;
-  a[1] = a[1] + b[1] + p1;
+  a[0] = bla_add(a[0], b[0], p0);
+  a[1] = bla_add(a[1], b[1], p1);
   d[0] = ror::<32>(d[0] ^ a[0]);
   d[1] = ror::<32>(d[1] ^ a[1]);
 
   // Step 2: c = c + d + 2·lsb(c)·lsb(d)
   let p0 = bla_mul(c[0], d[0]);
   let p1 = bla_mul(c[1], d[1]);
-  c[0] = c[0] + d[0] + p0;
-  c[1] = c[1] + d[1] + p1;
+  c[0] = bla_add(c[0], d[0], p0);
+  c[1] = bla_add(c[1], d[1], p1);
   b[0] = ror::<24>(b[0] ^ c[0]);
   b[1] = ror::<24>(b[1] ^ c[1]);
 
   // Step 3: a = a + b + 2·lsb(a)·lsb(b)
   let p0 = bla_mul(a[0], b[0]);
   let p1 = bla_mul(a[1], b[1]);
-  a[0] = a[0] + b[0] + p0;
-  a[1] = a[1] + b[1] + p1;
+  a[0] = bla_add(a[0], b[0], p0);
+  a[1] = bla_add(a[1], b[1], p1);
   d[0] = ror::<16>(d[0] ^ a[0]);
   d[1] = ror::<16>(d[1] ^ a[1]);
 
   // Step 4: c = c + d + 2·lsb(c)·lsb(d)
   let p0 = bla_mul(c[0], d[0]);
   let p1 = bla_mul(c[1], d[1]);
-  c[0] = c[0] + d[0] + p0;
-  c[1] = c[1] + d[1] + p1;
+  c[0] = bla_add(c[0], d[0], p0);
+  c[1] = bla_add(c[1], d[1], p1);
   b[0] = ror::<63>(b[0] ^ c[0]);
   b[1] = ror::<63>(b[1] ^ c[1]);
 }
@@ -237,9 +235,14 @@ fn gb(a: &mut Pair, b: &mut Pair, c: &mut Pair, d: &mut Pair) {
 #[inline(always)]
 fn ror<const N: u32>(v: u64x2) -> u64x2 {
   const { assert!(N > 0 && N < 64) }
-  let s = u64x2::splat(N as u64);
-  let r = u64x2::splat((64 - N) as u64);
-  (v >> s) | (v << r)
+  let right = core::ops::Shr::shr(v, u64x2::splat(u64::from(N)));
+  let left = core::ops::Shl::shl(v, u64x2::splat(u64::from(64u32.strict_sub(N))));
+  core::ops::BitOr::bitor(right, left)
+}
+
+#[inline(always)]
+fn bla_add(a: u64x2, b: u64x2, product: u64x2) -> u64x2 {
+  simd_wrapping_add(simd_wrapping_add(a, b), product)
 }
 
 /// `2 · lsb(a) · lsb(b)` lane-wise via masked `u64x2 *`. The product
@@ -248,7 +251,16 @@ fn ror<const N: u32>(v: u64x2) -> u64x2 {
 #[inline(always)]
 fn bla_mul(a: u64x2, b: u64x2) -> u64x2 {
   let mask = u64x2::splat(0xffff_ffff);
-  let al = a & mask;
-  let bl = b & mask;
-  (al * bl) << u64x2::splat(1)
+  let product = simd_wrapping_mul(a & mask, b & mask);
+  core::ops::Shl::shl(product, u64x2::splat(1))
+}
+
+#[inline(always)]
+fn simd_wrapping_add(a: u64x2, b: u64x2) -> u64x2 {
+  core::ops::Add::add(a, b)
+}
+
+#[inline(always)]
+fn simd_wrapping_mul(a: u64x2, b: u64x2) -> u64x2 {
+  core::ops::Mul::mul(a, b)
 }

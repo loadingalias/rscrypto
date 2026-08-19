@@ -1,5 +1,3 @@
-#![allow(clippy::identity_op, clippy::indexing_slicing)]
-
 //! Internal Ed25519 scalar arithmetic mod the group order `L`.
 //!
 //! This is the correctness-first baseline for signing and verification. It
@@ -53,7 +51,30 @@ struct Scalar52([u64; 5]);
 #[inline(always)]
 #[must_use]
 fn wide_mul(lhs: u64, rhs: u64) -> u128 {
-  u128::from(lhs) * u128::from(rhs)
+  u128::from(lhs).strict_mul(u128::from(rhs))
+}
+
+#[inline(always)]
+#[must_use]
+fn split_u128(value: u128) -> (u64, u64) {
+  let [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15] = value.to_le_bytes();
+  (
+    u64::from_le_bytes([b0, b1, b2, b3, b4, b5, b6, b7]),
+    u64::from_le_bytes([b8, b9, b10, b11, b12, b13, b14, b15]),
+  )
+}
+
+#[inline(always)]
+#[must_use]
+fn low_u64(value: u128) -> u64 {
+  split_u128(value).0
+}
+
+#[inline(always)]
+#[must_use]
+fn low_u8(value: u64) -> u8 {
+  let [low, ..] = value.to_le_bytes();
+  low
 }
 
 impl Scalar52 {
@@ -148,44 +169,20 @@ impl Scalar52 {
     Self::add(&hi, &lo)
   }
 
-  #[rustfmt::skip]
   #[must_use]
   fn as_bytes(&self) -> [u8; 32] {
     let limbs = &self.0;
-    [
-      ( limbs[0] >>  0) as u8,
-      ( limbs[0] >>  8) as u8,
-      ( limbs[0] >> 16) as u8,
-      ( limbs[0] >> 24) as u8,
-      ( limbs[0] >> 32) as u8,
-      ( limbs[0] >> 40) as u8,
-      ((limbs[0] >> 48) | (limbs[1] <<  4)) as u8,
-      ( limbs[1] >>  4) as u8,
-      ( limbs[1] >> 12) as u8,
-      ( limbs[1] >> 20) as u8,
-      ( limbs[1] >> 28) as u8,
-      ( limbs[1] >> 36) as u8,
-      ( limbs[1] >> 44) as u8,
-      ( limbs[2] >>  0) as u8,
-      ( limbs[2] >>  8) as u8,
-      ( limbs[2] >> 16) as u8,
-      ( limbs[2] >> 24) as u8,
-      ( limbs[2] >> 32) as u8,
-      ( limbs[2] >> 40) as u8,
-      ((limbs[2] >> 48) | (limbs[3] <<  4)) as u8,
-      ( limbs[3] >>  4) as u8,
-      ( limbs[3] >> 12) as u8,
-      ( limbs[3] >> 20) as u8,
-      ( limbs[3] >> 28) as u8,
-      ( limbs[3] >> 36) as u8,
-      ( limbs[3] >> 44) as u8,
-      ( limbs[4] >>  0) as u8,
-      ( limbs[4] >>  8) as u8,
-      ( limbs[4] >> 16) as u8,
-      ( limbs[4] >> 24) as u8,
-      ( limbs[4] >> 32) as u8,
-      ( limbs[4] >> 40) as u8,
-    ]
+    let words = [
+      limbs[0] | (limbs[1] << 52),
+      (limbs[1] >> 12) | (limbs[2] << 40),
+      (limbs[2] >> 24) | (limbs[3] << 28),
+      (limbs[3] >> 36) | (limbs[4] << 16),
+    ];
+    let mut bytes = [0u8; 32];
+    for (chunk, word) in bytes.as_chunks_mut::<8>().0.iter_mut().zip(words) {
+      chunk.copy_from_slice(&word.to_le_bytes());
+    }
+    bytes
   }
 
   #[must_use]
@@ -207,7 +204,7 @@ impl Scalar52 {
     fn barrier(value: u64) -> u64 {
       // SAFETY: `value` is a local `u64`; reading it through a volatile pointer
       // preserves the arithmetic shape without violating aliasing or lifetime rules.
-      unsafe { core::ptr::read_volatile(&value) }
+      unsafe { core::ptr::read_volatile(core::ptr::from_ref(&value)) }
     }
 
     let mut out = [0u64; 5];
@@ -236,7 +233,7 @@ impl Scalar52 {
     fn barrier(value: u64) -> u64 {
       // SAFETY: `value` is a local `u64`; reading it through a volatile pointer
       // preserves the arithmetic shape without violating aliasing or lifetime rules.
-      unsafe { core::ptr::read_volatile(&value) }
+      unsafe { core::ptr::read_volatile(core::ptr::from_ref(&value)) }
     }
 
     let mut out = [0u64; 5];
@@ -261,18 +258,31 @@ impl Scalar52 {
     result
   }
 
-  #[rustfmt::skip]
   #[must_use]
   fn mul_internal(lhs: &Self, rhs: &Self) -> [u128; 9] {
     [
       wide_mul(lhs.0[0], rhs.0[0]),
-      wide_mul(lhs.0[0], rhs.0[1]) + wide_mul(lhs.0[1], rhs.0[0]),
-      wide_mul(lhs.0[0], rhs.0[2]) + wide_mul(lhs.0[1], rhs.0[1]) + wide_mul(lhs.0[2], rhs.0[0]),
-      wide_mul(lhs.0[0], rhs.0[3]) + wide_mul(lhs.0[1], rhs.0[2]) + wide_mul(lhs.0[2], rhs.0[1]) + wide_mul(lhs.0[3], rhs.0[0]),
-      wide_mul(lhs.0[0], rhs.0[4]) + wide_mul(lhs.0[1], rhs.0[3]) + wide_mul(lhs.0[2], rhs.0[2]) + wide_mul(lhs.0[3], rhs.0[1]) + wide_mul(lhs.0[4], rhs.0[0]),
-      wide_mul(lhs.0[1], rhs.0[4]) + wide_mul(lhs.0[2], rhs.0[3]) + wide_mul(lhs.0[3], rhs.0[2]) + wide_mul(lhs.0[4], rhs.0[1]),
-      wide_mul(lhs.0[2], rhs.0[4]) + wide_mul(lhs.0[3], rhs.0[3]) + wide_mul(lhs.0[4], rhs.0[2]),
-      wide_mul(lhs.0[3], rhs.0[4]) + wide_mul(lhs.0[4], rhs.0[3]),
+      wide_mul(lhs.0[0], rhs.0[1]).strict_add(wide_mul(lhs.0[1], rhs.0[0])),
+      wide_mul(lhs.0[0], rhs.0[2])
+        .strict_add(wide_mul(lhs.0[1], rhs.0[1]))
+        .strict_add(wide_mul(lhs.0[2], rhs.0[0])),
+      wide_mul(lhs.0[0], rhs.0[3])
+        .strict_add(wide_mul(lhs.0[1], rhs.0[2]))
+        .strict_add(wide_mul(lhs.0[2], rhs.0[1]))
+        .strict_add(wide_mul(lhs.0[3], rhs.0[0])),
+      wide_mul(lhs.0[0], rhs.0[4])
+        .strict_add(wide_mul(lhs.0[1], rhs.0[3]))
+        .strict_add(wide_mul(lhs.0[2], rhs.0[2]))
+        .strict_add(wide_mul(lhs.0[3], rhs.0[1]))
+        .strict_add(wide_mul(lhs.0[4], rhs.0[0])),
+      wide_mul(lhs.0[1], rhs.0[4])
+        .strict_add(wide_mul(lhs.0[2], rhs.0[3]))
+        .strict_add(wide_mul(lhs.0[3], rhs.0[2]))
+        .strict_add(wide_mul(lhs.0[4], rhs.0[1])),
+      wide_mul(lhs.0[2], rhs.0[4])
+        .strict_add(wide_mul(lhs.0[3], rhs.0[3]))
+        .strict_add(wide_mul(lhs.0[4], rhs.0[2])),
+      wide_mul(lhs.0[3], rhs.0[4]).strict_add(wide_mul(lhs.0[4], rhs.0[3])),
       wide_mul(lhs.0[4], rhs.0[4]),
     ]
   }
@@ -298,13 +308,13 @@ impl Scalar52 {
   fn montgomery_reduce_unreduced(limbs: &[u128; 9]) -> Self {
     #[inline(always)]
     fn part1(sum: u128) -> (u128, u64) {
-      let p = (sum as u64).wrapping_mul(LFACTOR52) & RADIX52_MASK;
+      let p = low_u64(sum).wrapping_mul(LFACTOR52) & RADIX52_MASK;
       ((sum.strict_add(wide_mul(p, ORDER52.0[0]))) >> 52, p)
     }
 
     #[inline(always)]
     fn part2(sum: u128) -> (u128, u64) {
-      let word = (sum as u64) & RADIX52_MASK;
+      let word = low_u64(sum) & RADIX52_MASK;
       (sum >> 52, word)
     }
 
@@ -345,7 +355,7 @@ impl Scalar52 {
     );
     let (carry, r2) = part2(carry.strict_add(limbs[7]).strict_add(wide_mul(n3, ORDER52.0[4])));
     let (carry, r3) = part2(carry.strict_add(limbs[8]).strict_add(wide_mul(n4, ORDER52.0[4])));
-    let r4 = carry as u64;
+    let r4 = low_u64(carry);
 
     Self([r0, r1, r2, r3, r4])
   }
@@ -413,7 +423,7 @@ pub(crate) fn clamp_secret_scalar(bytes: &mut [u8; SECRET_KEY_LENGTH]) {
 #[must_use]
 pub(crate) fn decode_words_le(bytes: &[u8; SECRET_KEY_LENGTH]) -> Scalar {
   let mut limbs = [0u64; SCALAR_LIMBS];
-  for (limb, chunk) in limbs.iter_mut().zip(bytes.as_slice().chunks_exact(8)) {
+  for (limb, chunk) in limbs.iter_mut().zip(bytes.as_chunks::<8>().0) {
     *limb = read_u64_le(chunk);
   }
   limbs
@@ -434,15 +444,8 @@ pub(crate) fn from_canonical_bytes(bytes: &[u8; SECRET_KEY_LENGTH]) -> Option<Sc
 #[must_use]
 pub(crate) fn to_bytes(words: &Scalar) -> [u8; SECRET_KEY_LENGTH] {
   let mut out = [0u8; SECRET_KEY_LENGTH];
-  for (chunk, limb) in out.as_mut_slice().chunks_exact_mut(8).zip(words.iter().copied()) {
-    chunk[0] = limb as u8;
-    chunk[1] = (limb >> 8) as u8;
-    chunk[2] = (limb >> 16) as u8;
-    chunk[3] = (limb >> 24) as u8;
-    chunk[4] = (limb >> 32) as u8;
-    chunk[5] = (limb >> 40) as u8;
-    chunk[6] = (limb >> 48) as u8;
-    chunk[7] = (limb >> 56) as u8;
+  for (chunk, limb) in out.as_chunks_mut::<8>().0.iter_mut().zip(words.iter().copied()) {
+    chunk.copy_from_slice(&limb.to_le_bytes());
   }
   out
 }
@@ -521,28 +524,6 @@ pub(crate) fn negate_mod(s: &Scalar) -> Scalar {
   }
 }
 
-/// Decompose a scalar encoding into signed radix-16 digits in `[-8, 8]`.
-#[must_use]
-#[allow(clippy::indexing_slicing)]
-pub(crate) fn as_radix_16(bytes: &[u8; SECRET_KEY_LENGTH]) -> [i8; 64] {
-  debug_assert!(bytes[31] <= 127);
-
-  let mut digits = [0i8; 64];
-
-  for (i, byte) in bytes.iter().copied().enumerate() {
-    digits[2 * i] = (byte & 0x0F) as i8;
-    digits[2 * i + 1] = ((byte >> 4) & 0x0F) as i8;
-  }
-
-  for i in 0..63 {
-    let carry = (digits[i] + 8) >> 4;
-    digits[i] -= carry << 4;
-    digits[i + 1] += carry;
-  }
-
-  digits
-}
-
 /// Decompose a scalar into width-`w` non-adjacent form (wNAF).
 ///
 /// Returns a 256-element array of signed digits. Non-zero digits are odd
@@ -556,7 +537,6 @@ pub(crate) fn as_radix_16(bytes: &[u8; SECRET_KEY_LENGTH]) -> [i8; 64] {
 ///
 /// Debug-panics if `w < 2` or `w > 8`.
 #[must_use]
-#[allow(clippy::indexing_slicing)]
 pub(crate) fn non_adjacent_form(bytes: &[u8; 32], w: usize) -> [i8; 256] {
   debug_assert!((2..=8).contains(&w));
 
@@ -565,7 +545,7 @@ pub(crate) fn non_adjacent_form(bytes: &[u8; 32], w: usize) -> [i8; 256] {
   // Load scalar into mutable u64 words. The 5th word absorbs carry from
   // the 256th bit position.
   let mut x = [0u64; 5];
-  for (dst, chunk) in x.iter_mut().zip(bytes.as_slice().chunks_exact(8)) {
+  for (dst, chunk) in x.iter_mut().zip(bytes.as_chunks::<8>().0) {
     *dst = read_u64_le(chunk);
   }
 
@@ -597,10 +577,10 @@ pub(crate) fn non_adjacent_form(bytes: &[u8; 32], w: usize) -> [i8; 256] {
 
     // Odd window: emit a signed digit.
     if window < width / 2 {
-      naf[pos] = window as i8;
+      naf[pos] = i8::from_ne_bytes([low_u8(window)]);
       carry = 0;
     } else {
-      naf[pos] = (window as i8).wrapping_sub(width as i8);
+      naf[pos] = i8::from_ne_bytes([low_u8(window).wrapping_sub(low_u8(width))]);
       carry = 1;
     }
 
@@ -613,22 +593,15 @@ pub(crate) fn non_adjacent_form(bytes: &[u8; 32], w: usize) -> [i8; 256] {
 
 #[inline]
 #[must_use]
-fn read_u64_le(chunk: &[u8]) -> u64 {
-  u64::from(chunk[0])
-    | (u64::from(chunk[1]) << 8)
-    | (u64::from(chunk[2]) << 16)
-    | (u64::from(chunk[3]) << 24)
-    | (u64::from(chunk[4]) << 32)
-    | (u64::from(chunk[5]) << 40)
-    | (u64::from(chunk[6]) << 48)
-    | (u64::from(chunk[7]) << 56)
+fn read_u64_le(chunk: &[u8; 8]) -> u64 {
+  u64::from_le_bytes(*chunk)
 }
 
 #[inline]
 #[must_use]
 fn read_words_le_32(bytes: &[u8; 32]) -> [u64; 4] {
   let mut out = [0u64; 4];
-  for (dst, chunk) in out.iter_mut().zip(bytes.as_slice().chunks_exact(8)) {
+  for (dst, chunk) in out.iter_mut().zip(bytes.as_chunks::<8>().0) {
     *dst = read_u64_le(chunk);
   }
   out
@@ -638,7 +611,7 @@ fn read_words_le_32(bytes: &[u8; 32]) -> [u64; 4] {
 #[must_use]
 fn read_words_le_64(bytes: &[u8; 64]) -> [u64; 8] {
   let mut out = [0u64; 8];
-  for (dst, chunk) in out.iter_mut().zip(bytes.as_slice().chunks_exact(8)) {
+  for (dst, chunk) in out.iter_mut().zip(bytes.as_chunks::<8>().0) {
     *dst = read_u64_le(chunk);
   }
   out
@@ -710,15 +683,16 @@ fn compare(lhs: &Scalar, rhs: &Scalar) -> Ordering {
 #[must_use]
 fn add_raw(lhs: &Scalar, rhs: &Scalar) -> (Scalar, u64) {
   let mut out = ZERO;
-  let mut carry = 0u128;
+  let mut carry = 0u64;
 
   for (dst, (&left, &right)) in out.iter_mut().zip(lhs.iter().zip(rhs.iter())) {
-    let sum = u128::from(left).strict_add(u128::from(right)).strict_add(carry);
-    *dst = sum as u64;
-    carry = sum >> 64;
+    let sum = u128::from(left)
+      .strict_add(u128::from(right))
+      .strict_add(u128::from(carry));
+    (*dst, carry) = split_u128(sum);
   }
 
-  (out, carry as u64)
+  (out, carry)
 }
 
 #[inline]
@@ -751,13 +725,21 @@ fn maybe_sub_order(words: Scalar) -> Scalar {
 #[cfg(test)]
 mod tests {
   use super::{
-    ORDER, Scalar, add_mod, as_radix_16, clamp_secret_scalar, decode_words_le, from_canonical_bytes, mul_add_mod,
-    mul_add_mod_secret, non_adjacent_form, reduce_64_bytes_mod_order_secret, reduce_bytes_mod_order,
+    ORDER, Scalar, add_mod, clamp_secret_scalar, decode_words_le, from_canonical_bytes, mul_add_mod,
+    mul_add_mod_secret, non_adjacent_form, read_u64_le, reduce_64_bytes_mod_order_secret, reduce_bytes_mod_order,
     reduce_bytes_mod_order_fallback, to_bytes,
   };
 
   fn from_u64(value: u64) -> Scalar {
     [value, 0, 0, 0]
+  }
+
+  fn patterned_bytes(mut value: u8, step: u8) -> [u8; 64] {
+    core::array::from_fn(|_| {
+      let current = value;
+      value = value.wrapping_add(step);
+      current
+    })
   }
 
   #[test]
@@ -816,14 +798,14 @@ mod tests {
 
   #[test]
   fn wide_reduction_matches_fallback_for_fixed_input() {
-    let bytes = core::array::from_fn::<_, 64, _>(|i| (i as u8).wrapping_mul(17).wrapping_add(9));
+    let bytes = patterned_bytes(9, 17);
 
     assert_eq!(reduce_bytes_mod_order(&bytes), reduce_bytes_mod_order_fallback(&bytes));
   }
 
   #[test]
   fn secret_wide_reduction_matches_public_reduction() {
-    let bytes = core::array::from_fn::<_, 64, _>(|i| (i as u8).wrapping_mul(29).wrapping_add(13));
+    let bytes = patterned_bytes(13, 29);
 
     assert_eq!(reduce_64_bytes_mod_order_secret(&bytes), reduce_bytes_mod_order(&bytes));
   }
@@ -832,7 +814,7 @@ mod tests {
   fn radix16_recenters_nibbles_into_signed_digits() {
     let mut bytes = [0u8; 32];
     bytes[0] = 0x19;
-    let digits = as_radix_16(&bytes);
+    let digits = super::super::scalar_radix_16(&bytes);
 
     assert_eq!(digits[0], -7);
     assert_eq!(digits[1], 2);
@@ -843,7 +825,7 @@ mod tests {
 
   #[test]
   fn modular_addition_wraps_order_boundary() {
-    let near_order = [ORDER[0] - 1, ORDER[1], ORDER[2], ORDER[3]];
+    let near_order = [ORDER[0].strict_sub(1), ORDER[1], ORDER[2], ORDER[3]];
     let wrapped = add_mod(&near_order, &from_u64(1));
 
     assert_eq!(wrapped, [0, 0, 0, 0]);
@@ -907,7 +889,7 @@ mod tests {
           let word = i / 64;
           let bit = i % 64;
           if digit > 0 {
-            let d = digit as u64;
+            let d = u64::from(digit.unsigned_abs());
             let (new_val, carry) = reconstructed[word].overflowing_add(d << bit);
             reconstructed[word] = new_val;
             if carry {
@@ -920,11 +902,12 @@ mod tests {
               }
             }
             // Handle cross-word shift
-            if bit > 0 && word + 1 < 5 {
-              reconstructed[word + 1] = reconstructed[word + 1].wrapping_add(d >> (64 - bit));
+            let next_word = word.strict_add(1);
+            if bit > 0 && next_word < 5 {
+              reconstructed[next_word] = reconstructed[next_word].wrapping_add(d >> 64usize.strict_sub(bit));
             }
           } else {
-            let d = (-digit) as u64;
+            let d = u64::from(digit.unsigned_abs());
             let (new_val, borrow) = reconstructed[word].overflowing_sub(d << bit);
             reconstructed[word] = new_val;
             if borrow {
@@ -936,16 +919,17 @@ mod tests {
                 }
               }
             }
-            if bit > 0 && word + 1 < 5 {
-              reconstructed[word + 1] = reconstructed[word + 1].wrapping_sub(d >> (64 - bit));
+            let next_word = word.strict_add(1);
+            if bit > 0 && next_word < 5 {
+              reconstructed[next_word] = reconstructed[next_word].wrapping_sub(d >> 64usize.strict_sub(bit));
             }
           }
         }
 
         // Compare lower 4 words (256 bits)
         let mut expected = [0u64; 4];
-        for (dst, chunk) in expected.iter_mut().zip(scalar_bytes.chunks_exact(8)) {
-          *dst = u64::from_le_bytes(chunk.try_into().unwrap());
+        for (dst, chunk) in expected.iter_mut().zip(scalar_bytes.as_chunks::<8>().0) {
+          *dst = read_u64_le(chunk);
         }
         assert_eq!(&reconstructed[..4], &expected, "wNAF({w}) reconstruction failed");
       }
@@ -962,7 +946,7 @@ mod tests {
 
     for w in [5, 8] {
       let naf = non_adjacent_form(&s, w);
-      let max_abs = (1i16 << (w - 1)) - 1; // 2^(w-1) - 1
+      let max_abs = (1i16 << w.strict_sub(1)).strict_sub(1); // 2^(w-1) - 1
       for (i, &digit) in naf.iter().enumerate() {
         if digit != 0 {
           assert!(digit.abs() % 2 == 1, "wNAF({w}) digit[{i}] = {digit} is even");

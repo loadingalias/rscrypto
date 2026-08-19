@@ -12,13 +12,8 @@
 //!
 //! # Safety
 //!
-//! All functions in this module are marked `unsafe` and require NEON
-//! to be present. Callers must verify CPU capabilities before calling.
-
-#![allow(unsafe_code)]
-#![allow(clippy::inline_always)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::many_single_char_names)]
+//! Unsafe entry points require NEON to be present. Callers must verify CPU
+//! capabilities before calling them.
 
 #[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
@@ -32,11 +27,32 @@ mod asm;
 // Constants
 use super::{BLOCK_LEN, CHUNK_LEN, CHUNK_START, IV, MSG_SCHEDULE, OUT_LEN, PARENT, words16_from_le_bytes_64};
 
+const BLOCK_LEN_U32: u32 = 64;
+
+#[inline(always)]
+fn counter_words(counter: u64) -> (u32, u32) {
+  let [b0, b1, b2, b3, b4, b5, b6, b7] = counter.to_le_bytes();
+  (
+    u32::from_le_bytes([b0, b1, b2, b3]),
+    u32::from_le_bytes([b4, b5, b6, b7]),
+  )
+}
+
+#[inline(always)]
+fn counter_lanes(counter: u64, deltas: [u64; 4]) -> ([u32; 4], [u32; 4]) {
+  let [d0, d1, d2, d3] = deltas;
+  let w0 = counter_words(counter.wrapping_add(d0));
+  let w1 = counter_words(counter.wrapping_add(d1));
+  let w2 = counter_words(counter.wrapping_add(d2));
+  let w3 = counter_words(counter.wrapping_add(d3));
+  ([w0.0, w1.0, w2.0, w3.0], [w0.1, w1.1, w2.1, w3.1])
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[inline(always)]
 fn ptr_is_aligned(ptr: *const u8, align: usize) -> bool {
   debug_assert!(align.is_power_of_two());
-  (ptr as usize) & (align - 1) == 0
+  (ptr as usize) & align.strict_sub(1) == 0
 }
 
 // Strategy:
@@ -69,6 +85,14 @@ struct ChunkStateAsmScratch {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[inline(always)]
+/// Dispatches full blocks to the platform assembly compressor.
+///
+/// # Safety
+///
+/// The current CPU must support NEON. `blocks` must be aligned as required by
+/// the assembly backend and readable for `num_blocks * BLOCK_LEN` bytes.
+/// `chaining_value` must reference eight writable `u32`s, and
+/// `blocks_compressed` must reference one writable byte.
 unsafe fn chunk_compress_blocks_asm(
   blocks: *const u8,
   chaining_value: *mut u32,
@@ -112,6 +136,10 @@ static ROT8_TABLE: [u8; 16] = [1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15,
 
 /// Rotate right by 16 bits (each u32 lane).
 /// Uses vrev32q_u16 which reverses 16-bit elements within 32-bit containers.
+///
+/// # Safety
+///
+/// The current CPU must support NEON.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn rotr16(v: uint32x4_t) -> uint32x4_t {
@@ -125,6 +153,10 @@ unsafe fn rotr16(v: uint32x4_t) -> uint32x4_t {
 
 /// Rotate right by 12 bits (each u32 lane).
 /// Uses shift+OR which allows parallel execution on superscalar cores.
+///
+/// # Safety
+///
+/// The current CPU must support NEON.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn rotr12(v: uint32x4_t) -> uint32x4_t {
@@ -138,6 +170,10 @@ unsafe fn rotr12(v: uint32x4_t) -> uint32x4_t {
 
 /// Rotate right by 8 bits (each u32 lane).
 /// Uses vqtbl1q_u8 (table lookup) for byte-level rotation - single cycle.
+///
+/// # Safety
+///
+/// The current CPU must support NEON.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn rotr8_tbl(v: uint32x4_t, tbl: uint8x16_t) -> uint32x4_t {
@@ -153,6 +189,10 @@ unsafe fn rotr8_tbl(v: uint32x4_t, tbl: uint8x16_t) -> uint32x4_t {
 ///
 /// Some cores have relatively high-latency `tbl`/`vtbl` paths; for the per-block
 /// compressor (latency-sensitive), prefer a shift/or implementation.
+///
+/// # Safety
+///
+/// The current CPU must support NEON.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn rotr8(v: uint32x4_t) -> uint32x4_t {
@@ -163,6 +203,10 @@ unsafe fn rotr8(v: uint32x4_t) -> uint32x4_t {
 
 /// Rotate right by 7 bits (each u32 lane).
 /// Uses shift+OR which allows parallel execution on superscalar cores.
+///
+/// # Safety
+///
+/// The current CPU must support NEON.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn rotr7(v: uint32x4_t) -> uint32x4_t {
@@ -176,6 +220,10 @@ unsafe fn rotr7(v: uint32x4_t) -> uint32x4_t {
 // Lane rotation helpers (for diagonalization)
 
 /// Rotate lanes left by 1: [a, b, c, d] -> [b, c, d, a]
+///
+/// # Safety
+///
+/// The current CPU must support NEON.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn rot_lanes_left_1(v: uint32x4_t) -> uint32x4_t {
@@ -184,6 +232,10 @@ unsafe fn rot_lanes_left_1(v: uint32x4_t) -> uint32x4_t {
 }
 
 /// Rotate lanes left by 2: [a, b, c, d] -> [c, d, a, b]
+///
+/// # Safety
+///
+/// The current CPU must support NEON.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn rot_lanes_left_2(v: uint32x4_t) -> uint32x4_t {
@@ -192,6 +244,10 @@ unsafe fn rot_lanes_left_2(v: uint32x4_t) -> uint32x4_t {
 }
 
 /// Rotate lanes left by 3: [a, b, c, d] -> [d, a, b, c]
+///
+/// # Safety
+///
+/// The current CPU must support NEON.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn rot_lanes_left_3(v: uint32x4_t) -> uint32x4_t {
@@ -218,6 +274,10 @@ unsafe fn rot_lanes_left_3(v: uint32x4_t) -> uint32x4_t {
 ///   vecs[2] = [a2, b2, c2, d2]
 ///   vecs[3] = [a3, b3, c3, d3]
 /// ```
+///
+/// # Safety
+///
+/// The current CPU must support NEON.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn transpose_vecs(vecs: &mut [uint32x4_t; 4]) {
@@ -237,6 +297,11 @@ unsafe fn transpose_vecs(vecs: &mut [uint32x4_t; 4]) {
 
 /// Load and transpose message words from 4 input blocks.
 /// After transpose, m[i] contains word i from all 4 inputs.
+///
+/// # Safety
+///
+/// The current CPU must support NEON. Each input pointer must be readable for
+/// `block_offset + block_len` bytes, and `block_len` must not exceed `BLOCK_LEN`.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn load_msg_vecs_transposed(inputs: [*const u8; 4], block_offset: usize, block_len: usize) -> [uint32x4_t; 16] {
@@ -248,6 +313,9 @@ unsafe fn load_msg_vecs_transposed(inputs: [*const u8; 4], block_offset: usize, 
   }
 
   #[inline(always)]
+  /// # Safety
+  ///
+  /// The current CPU must support NEON, and `src` must be readable for 16 bytes.
   unsafe fn loadu_128(src: *const u8) -> uint32x4_t {
     // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
     // pointers are within bounds of caller-provided slices.
@@ -265,8 +333,8 @@ unsafe fn load_msg_vecs_transposed(inputs: [*const u8; 4], block_offset: usize, 
       let mut out = [vdupq_n_u32(0); 16];
 
       // Load four 16-byte chunks per input and transpose each 4x4.
-      for lane_block in 0..4 {
-        let off = block_offset + lane_block * 16;
+      for lane_block in 0usize..4 {
+        let off = block_offset.strict_add(lane_block.strict_mul(16));
         let mut vecs = [
           loadu_128(inputs[0].add(off)),
           loadu_128(inputs[1].add(off)),
@@ -274,10 +342,11 @@ unsafe fn load_msg_vecs_transposed(inputs: [*const u8; 4], block_offset: usize, 
           loadu_128(inputs[3].add(off)),
         ];
         transpose_vecs(&mut vecs);
-        out[lane_block * 4] = vecs[0];
-        out[lane_block * 4 + 1] = vecs[1];
-        out[lane_block * 4 + 2] = vecs[2];
-        out[lane_block * 4 + 3] = vecs[3];
+        let dst = lane_block.strict_mul(4);
+        out[dst] = vecs[0];
+        out[dst.strict_add(1)] = vecs[1];
+        out[dst.strict_add(2)] = vecs[2];
+        out[dst.strict_add(3)] = vecs[3];
       }
 
       return out;
@@ -313,6 +382,11 @@ unsafe fn load_msg_vecs_transposed(inputs: [*const u8; 4], block_offset: usize, 
 /// - lane 3: `base + 3 * CHUNK_LEN`
 ///
 /// This path is only valid for full 64-byte blocks.
+///
+/// # Safety
+///
+/// The current CPU must support NEON. `base` must be readable for four full
+/// chunks, and `block_offset` must identify a complete block within each chunk.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn load_msg_vecs_transposed_contiguous(base: *const u8, block_offset: usize) -> [uint32x4_t; 16] {
@@ -324,6 +398,9 @@ unsafe fn load_msg_vecs_transposed_contiguous(base: *const u8, block_offset: usi
   }
 
   #[inline(always)]
+  /// # Safety
+  ///
+  /// The current CPU must support NEON, and `src` must be readable for 16 bytes.
   unsafe fn loadu_128(src: *const u8) -> uint32x4_t {
     // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
     // pointers are within bounds of caller-provided slices.
@@ -339,18 +416,19 @@ unsafe fn load_msg_vecs_transposed_contiguous(base: *const u8, block_offset: usi
     let mut out = [vdupq_n_u32(0); 16];
     macro_rules! load_and_transpose {
       ($dst:expr, $off:expr) => {{
-        let off = block_offset + $off;
+        let off = block_offset.strict_add($off);
+        let dst: usize = $dst;
         let mut vecs = [
           loadu_128(base.add(off)),
-          loadu_128(base.add(CHUNK_LEN + off)),
-          loadu_128(base.add(2 * CHUNK_LEN + off)),
-          loadu_128(base.add(3 * CHUNK_LEN + off)),
+          loadu_128(base.add(CHUNK_LEN.strict_add(off))),
+          loadu_128(base.add(CHUNK_LEN.strict_mul(2).strict_add(off))),
+          loadu_128(base.add(CHUNK_LEN.strict_mul(3).strict_add(off))),
         ];
         transpose_vecs(&mut vecs);
-        out[$dst] = vecs[0];
-        out[$dst + 1] = vecs[1];
-        out[$dst + 2] = vecs[2];
-        out[$dst + 3] = vecs[3];
+        out[dst] = vecs[0];
+        out[dst.strict_add(1)] = vecs[1];
+        out[dst.strict_add(2)] = vecs[2];
+        out[dst.strict_add(3)] = vecs[3];
       }};
     }
 
@@ -365,6 +443,10 @@ unsafe fn load_msg_vecs_transposed_contiguous(base: *const u8, block_offset: usi
 // Single-block compression (NEON accelerated)
 
 /// Helper: take the low 64-bit lane (2x u32) from each input and concatenate.
+///
+/// # Safety
+///
+/// The current CPU must support NEON.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn concat_low64_u32(a: uint32x4_t, b: uint32x4_t) -> uint32x4_t {
@@ -384,6 +466,10 @@ unsafe fn concat_low64_u32(a: uint32x4_t, b: uint32x4_t) -> uint32x4_t {
 /// Each round uses the same access pattern for message words, and the message
 /// vectors are permuted between rounds. This avoids the expensive per-round
 /// gather/extract machinery that dominated the previous per-block compressor.
+///
+/// # Safety
+///
+/// The current CPU must support NEON.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn permute_msg(m0: uint32x4_t, m1: uint32x4_t, m2: uint32x4_t, m3: uint32x4_t) -> [uint32x4_t; 4] {
@@ -418,6 +504,12 @@ unsafe fn permute_msg(m0: uint32x4_t, m1: uint32x4_t, m2: uint32x4_t, m3: uint32
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 #[inline]
+/// Runs the NEON compression core without its final output transform.
+///
+/// # Safety
+///
+/// The current CPU must support NEON, and `block` must be readable for
+/// `BLOCK_LEN` bytes.
 unsafe fn compress_neon_core(
   chaining_value: &[u32; 8],
   block: *const u8,
@@ -433,6 +525,9 @@ unsafe fn compress_neon_core(
   }
 
   #[inline(always)]
+  /// # Safety
+  ///
+  /// The current CPU must support NEON, and `src` must be readable for 16 bytes.
   unsafe fn loadu_u32x4(src: *const u8) -> uint32x4_t {
     // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
     // pointers are within bounds of caller-provided slices.
@@ -452,8 +547,7 @@ unsafe fn compress_neon_core(
     let mut row2 = vld1q_u32(IV.as_ptr());
 
     // Build row3 from counter, block_len, and flags.
-    let counter_lo = counter as u32;
-    let counter_hi = (counter >> 32) as u32;
+    let (counter_lo, counter_hi) = counter_words(counter);
     let row3_arr: [u32; 4] = [counter_lo, counter_hi, block_len, flags];
     let mut row3 = vld1q_u32(row3_arr.as_ptr());
 
@@ -547,6 +641,12 @@ pub(crate) unsafe fn compress_neon(
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
+/// Compresses one byte-oriented block and returns the full compression output.
+///
+/// # Safety
+///
+/// The current CPU must support NEON, and `block` must be readable for
+/// `BLOCK_LEN` bytes.
 unsafe fn compress_neon_bytes(
   chaining_value: &[u32; 8],
   block: *const u8,
@@ -577,23 +677,27 @@ unsafe fn compress_neon_bytes(
 
 // 4-way parallel hashing (hash4_neon)
 
+#[derive(Clone, Copy)]
+struct Hash4Flags {
+  base: u32,
+  start: u32,
+  end: u32,
+}
+
 /// Parallel G function for 4 independent chunks.
 ///
 /// In this model:
 /// - v[0..4] are the four rows of state from 4 different chunks
 /// - Each vector lane i corresponds to chunk i
+///
+/// # Safety
+///
+/// The current CPU must support NEON. Every index in `indices` must be less
+/// than 16 and the four indices must be distinct.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-unsafe fn g4(
-  v: &mut [uint32x4_t; 16],
-  a: usize,
-  b: usize,
-  c: usize,
-  d: usize,
-  mx: uint32x4_t,
-  my: uint32x4_t,
-  rot8_tbl: uint8x16_t,
-) {
+unsafe fn g4(v: &mut [uint32x4_t; 16], indices: [usize; 4], mx: uint32x4_t, my: uint32x4_t, rot8_tbl: uint8x16_t) {
+  let [a, b, c, d] = indices;
   // SAFETY: NEON intrinsics are available via this function's #[target_feature] attribute.
   unsafe {
     // a = a + b + mx
@@ -622,6 +726,11 @@ unsafe fn g4(
 }
 
 /// One round of the parallel compression function for 4 chunks.
+///
+/// # Safety
+///
+/// The current CPU must support NEON, and `r` must be less than
+/// `MSG_SCHEDULE.len()`.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn round4(v: &mut [uint32x4_t; 16], m: &[uint32x4_t; 16], r: usize, rot8_tbl: uint8x16_t) {
@@ -635,24 +744,30 @@ unsafe fn round4(v: &mut [uint32x4_t; 16], m: &[uint32x4_t; 16], r: usize, rot8_
 
     // Column step: G(0,4,8,12), G(1,5,9,13), G(2,6,10,14), G(3,7,11,15)
     // SAFETY: `s` contains fixed schedule indices in 0..16, and `m` is `[T; 16]`.
-    g4(v, 0, 4, 8, 12, *m.get_unchecked(s[0]), *m.get_unchecked(s[1]), rot8_tbl);
-    g4(v, 1, 5, 9, 13, *m.get_unchecked(s[2]), *m.get_unchecked(s[3]), rot8_tbl);
     g4(
       v,
-      2,
-      6,
-      10,
-      14,
+      [0, 4, 8, 12],
+      *m.get_unchecked(s[0]),
+      *m.get_unchecked(s[1]),
+      rot8_tbl,
+    );
+    g4(
+      v,
+      [1, 5, 9, 13],
+      *m.get_unchecked(s[2]),
+      *m.get_unchecked(s[3]),
+      rot8_tbl,
+    );
+    g4(
+      v,
+      [2, 6, 10, 14],
       *m.get_unchecked(s[4]),
       *m.get_unchecked(s[5]),
       rot8_tbl,
     );
     g4(
       v,
-      3,
-      7,
-      11,
-      15,
+      [3, 7, 11, 15],
       *m.get_unchecked(s[6]),
       *m.get_unchecked(s[7]),
       rot8_tbl,
@@ -661,40 +776,28 @@ unsafe fn round4(v: &mut [uint32x4_t; 16], m: &[uint32x4_t; 16], r: usize, rot8_
     // Diagonal step: G(0,5,10,15), G(1,6,11,12), G(2,7,8,13), G(3,4,9,14)
     g4(
       v,
-      0,
-      5,
-      10,
-      15,
+      [0, 5, 10, 15],
       *m.get_unchecked(s[8]),
       *m.get_unchecked(s[9]),
       rot8_tbl,
     );
     g4(
       v,
-      1,
-      6,
-      11,
-      12,
+      [1, 6, 11, 12],
       *m.get_unchecked(s[10]),
       *m.get_unchecked(s[11]),
       rot8_tbl,
     );
     g4(
       v,
-      2,
-      7,
-      8,
-      13,
+      [2, 7, 8, 13],
       *m.get_unchecked(s[12]),
       *m.get_unchecked(s[13]),
       rot8_tbl,
     );
     g4(
       v,
-      3,
-      4,
-      9,
-      14,
+      [3, 4, 9, 14],
       *m.get_unchecked(s[14]),
       *m.get_unchecked(s[15]),
       rot8_tbl,
@@ -708,18 +811,17 @@ unsafe fn round4(v: &mut [uint32x4_t; 16], m: &[uint32x4_t; 16], r: usize, rot8_
 ///
 /// # Safety
 ///
-/// Caller must ensure NEON is available.
+/// The current CPU must support NEON. Each input pointer must be readable for
+/// `input_len` bytes, and `input_len` must be in `1..=CHUNK_LEN`.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-pub(crate) unsafe fn hash4_neon(
+unsafe fn hash4_neon(
   inputs: [*const u8; 4],
   input_len: usize,
   key: &[u32; 8],
   counter: u64,
   increment_counter: bool,
-  flags: u32,
-  flags_start: u32,
-  flags_end: u32,
+  flags: Hash4Flags,
   out: &mut [[u8; OUT_LEN]; 4],
 ) {
   debug_assert!(input_len > 0);
@@ -730,10 +832,13 @@ pub(crate) unsafe fn hash4_neon(
   // can skip the generic load/pad path and use a tighter contiguous loader.
   let contiguous_full_chunks = input_len == CHUNK_LEN
     && (inputs[1] as usize).wrapping_sub(inputs[0] as usize) == CHUNK_LEN
-    && (inputs[2] as usize).wrapping_sub(inputs[0] as usize) == 2 * CHUNK_LEN
-    && (inputs[3] as usize).wrapping_sub(inputs[0] as usize) == 3 * CHUNK_LEN;
+    && (inputs[2] as usize).wrapping_sub(inputs[0] as usize) == CHUNK_LEN.strict_mul(2)
+    && (inputs[3] as usize).wrapping_sub(inputs[0] as usize) == CHUNK_LEN.strict_mul(3);
 
   #[inline(always)]
+  /// # Safety
+  ///
+  /// The current CPU must support NEON, and `dest` must be writable for 16 bytes.
   unsafe fn storeu_128(src: uint32x4_t, dest: *mut u8) {
     // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
     // pointers are within bounds of caller-provided slices.
@@ -763,41 +868,26 @@ pub(crate) unsafe fn hash4_neon(
     } else {
       (0u64, 0, 0, 0)
     };
-    let counter_low_vec = vld1q_u32(
-      [
-        (counter.wrapping_add(d0) as u32),
-        (counter.wrapping_add(d1) as u32),
-        (counter.wrapping_add(d2) as u32),
-        (counter.wrapping_add(d3) as u32),
-      ]
-      .as_ptr(),
-    );
-    let counter_high_vec = vld1q_u32(
-      [
-        ((counter.wrapping_add(d0) >> 32) as u32),
-        ((counter.wrapping_add(d1) >> 32) as u32),
-        ((counter.wrapping_add(d2) >> 32) as u32),
-        ((counter.wrapping_add(d3) >> 32) as u32),
-      ]
-      .as_ptr(),
-    );
+    let (counter_low, counter_high) = counter_lanes(counter, [d0, d1, d2, d3]);
+    let counter_low_vec = vld1q_u32(counter_low.as_ptr());
+    let counter_high_vec = vld1q_u32(counter_high.as_ptr());
 
     // Process each block
-    let mut block_flags = flags | flags_start;
+    let mut block_flags = flags.base | flags.start;
     let rot8_tbl = vld1q_u8(ROT8_TABLE.as_ptr());
     for block_idx in 0..num_blocks {
-      let block_offset = block_idx * BLOCK_LEN;
-      let is_last = block_idx == num_blocks - 1;
+      let block_offset = block_idx.strict_mul(BLOCK_LEN);
+      let is_last = block_idx == num_blocks.strict_sub(1);
 
       // Calculate block length for last block
       let block_len = if is_last && !input_len.is_multiple_of(BLOCK_LEN) {
-        (input_len % BLOCK_LEN) as u32
+        u32::try_from(input_len % BLOCK_LEN).expect("a partial BLAKE3 block length fits in u32")
       } else {
-        BLOCK_LEN as u32
+        BLOCK_LEN_U32
       };
 
       if is_last {
-        block_flags |= flags_end;
+        block_flags |= flags.end;
       }
 
       // Load and transpose message blocks (pads the last block if needed).
@@ -846,7 +936,7 @@ pub(crate) unsafe fn hash4_neon(
       h_vecs[6] = veorq_u32(v[6], v[14]);
       h_vecs[7] = veorq_u32(v[7], v[15]);
 
-      block_flags = flags;
+      block_flags = flags.base;
     }
 
     // Transpose the CV vectors so we can store each output contiguously.
@@ -855,7 +945,7 @@ pub(crate) unsafe fn hash4_neon(
     transpose_vecs(&mut lo);
     transpose_vecs(&mut hi);
 
-    for lane in 0..4 {
+    for lane in 0usize..4 {
       let dst = out[lane].as_mut_ptr();
       storeu_128(lo[lane], dst.add(0));
       storeu_128(hi[lane], dst.add(16));
@@ -867,6 +957,11 @@ pub(crate) unsafe fn hash4_neon(
 ///
 /// This is the hot-path worker used by `hash_many_contiguous_neon` to avoid
 /// generic variable-size handling and repeated contiguous-shape checks.
+///
+/// # Safety
+///
+/// The current CPU must support NEON. `input0` must be readable for four full
+/// chunks, and `out` must be writable for four outputs.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 unsafe fn hash4_contiguous_full_chunks_neon_to_out(
@@ -877,6 +972,9 @@ unsafe fn hash4_contiguous_full_chunks_neon_to_out(
   out: *mut u8,
 ) {
   #[inline(always)]
+  /// # Safety
+  ///
+  /// The current CPU must support NEON, and `dest` must be writable for 16 bytes.
   unsafe fn storeu_128(src: uint32x4_t, dest: *mut u8) {
     // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
     // pointers are within bounds of caller-provided slices.
@@ -899,34 +997,19 @@ unsafe fn hash4_contiguous_full_chunks_neon_to_out(
       vdupq_n_u32(key[7]),
     ];
 
-    let counter_low_vec = vld1q_u32(
-      [
-        counter as u32,
-        counter.wrapping_add(1) as u32,
-        counter.wrapping_add(2) as u32,
-        counter.wrapping_add(3) as u32,
-      ]
-      .as_ptr(),
-    );
-    let counter_high_vec = vld1q_u32(
-      [
-        (counter >> 32) as u32,
-        (counter.wrapping_add(1) >> 32) as u32,
-        (counter.wrapping_add(2) >> 32) as u32,
-        (counter.wrapping_add(3) >> 32) as u32,
-      ]
-      .as_ptr(),
-    );
+    let (counter_low, counter_high) = counter_lanes(counter, [0, 1, 2, 3]);
+    let counter_low_vec = vld1q_u32(counter_low.as_ptr());
+    let counter_high_vec = vld1q_u32(counter_high.as_ptr());
 
-    let block_len_vec = vdupq_n_u32(BLOCK_LEN as u32);
+    let block_len_vec = vdupq_n_u32(BLOCK_LEN_U32);
     let mut block_flags = flags | CHUNK_START;
     let rot8_tbl = vld1q_u8(ROT8_TABLE.as_ptr());
 
     for block_idx in 0..(CHUNK_LEN / BLOCK_LEN) {
-      if block_idx + 1 == (CHUNK_LEN / BLOCK_LEN) {
+      if block_idx.strict_add(1) == (CHUNK_LEN / BLOCK_LEN) {
         block_flags |= super::CHUNK_END;
       }
-      let msg = load_msg_vecs_transposed_contiguous(input0, block_idx * BLOCK_LEN);
+      let msg = load_msg_vecs_transposed_contiguous(input0, block_idx.strict_mul(BLOCK_LEN));
       let block_flags_vec = vdupq_n_u32(block_flags);
 
       let mut v = [
@@ -973,8 +1056,8 @@ unsafe fn hash4_contiguous_full_chunks_neon_to_out(
     transpose_vecs(&mut lo);
     transpose_vecs(&mut hi);
 
-    for lane in 0..4 {
-      let dst = out.add(lane * OUT_LEN);
+    for lane in 0usize..4 {
+      let dst = out.add(lane.strict_mul(OUT_LEN));
       storeu_128(lo[lane], dst.add(0));
       storeu_128(hi[lane], dst.add(16));
     }
@@ -1009,7 +1092,9 @@ pub(crate) unsafe fn root_hash_one_chunk_root_aarch64(input: *const u8, key: &[u
 
         let mut out = [0u8; OUT_LEN];
         for (j, word) in out_words.iter().copied().enumerate() {
-          out[j * 4..j * 4 + 4].copy_from_slice(&word.to_le_bytes());
+          let start = j.strict_mul(4);
+          let end = start.strict_add(4);
+          out[start..end].copy_from_slice(&word.to_le_bytes());
         }
         return out;
       }
@@ -1056,29 +1141,20 @@ pub(crate) unsafe fn chunk_cv_one_chunk_aarch64_out(
     // Fallback: per-block NEON compressor.
     let mut cv = *key;
     for block_idx in 0..(CHUNK_LEN / BLOCK_LEN) {
-      let block_bytes: &[u8; BLOCK_LEN] = {
-        let src = input.add(block_idx * BLOCK_LEN);
-        &*(src as *const [u8; BLOCK_LEN])
-      };
+      let block = input.add(block_idx.strict_mul(BLOCK_LEN));
 
       let start = if block_idx == 0 { CHUNK_START } else { 0 };
-      let end = if block_idx + 1 == (CHUNK_LEN / BLOCK_LEN) {
+      let end = if block_idx.strict_add(1) == (CHUNK_LEN / BLOCK_LEN) {
         super::CHUNK_END
       } else {
         0
       };
-      cv = compress_cv_neon_bytes(
-        &cv,
-        block_bytes.as_ptr(),
-        counter,
-        BLOCK_LEN as u32,
-        flags | start | end,
-      );
+      cv = compress_cv_neon_bytes(&cv, block, counter, BLOCK_LEN_U32, flags | start | end);
     }
 
     for (j, &word) in cv.iter().enumerate() {
       let bytes = word.to_le_bytes();
-      core::ptr::copy_nonoverlapping(bytes.as_ptr(), out.add(j * 4), 4);
+      core::ptr::copy_nonoverlapping(bytes.as_ptr(), out.add(j.strict_mul(4)), 4);
     }
   }
 }
@@ -1169,21 +1245,18 @@ pub(crate) unsafe fn chunk_state_one_chunk_aarch64_out(
 
     // Fallback: per-block NEON compressor for blocks 0..14, then copy the final block bytes.
     let mut cv = *key;
-    for block_idx in 0..15 {
-      let block_bytes: &[u8; BLOCK_LEN] = {
-        let src = input.add(block_idx * BLOCK_LEN);
-        &*(src as *const [u8; BLOCK_LEN])
-      };
+    for block_idx in 0usize..15 {
+      let block = input.add(block_idx.strict_mul(BLOCK_LEN));
 
       let start = if block_idx == 0 { CHUNK_START } else { 0 };
-      cv = compress_cv_neon_bytes(&cv, block_bytes.as_ptr(), counter, BLOCK_LEN as u32, flags | start);
+      cv = compress_cv_neon_bytes(&cv, block, counter, BLOCK_LEN_U32, flags | start);
     }
 
     // Store cv.
     core::ptr::copy_nonoverlapping(cv.as_ptr(), out_cv, 8);
 
     // Copy final block bytes.
-    core::ptr::copy_nonoverlapping(input.add(15 * BLOCK_LEN), out_last_block, BLOCK_LEN);
+    core::ptr::copy_nonoverlapping(input.add(15usize.strict_mul(BLOCK_LEN)), out_last_block, BLOCK_LEN);
   }
 }
 
@@ -1212,9 +1285,11 @@ pub(crate) unsafe fn root_hash_one_chunk_neon(input: *const u8, key: &[u32; 8], 
       key,
       0,
       false,
-      flags,
-      CHUNK_START,
-      super::CHUNK_END | super::ROOT,
+      Hash4Flags {
+        base: flags,
+        start: CHUNK_START,
+        end: super::CHUNK_END | super::ROOT,
+      },
       &mut out,
     );
     out[0]
@@ -1247,16 +1322,17 @@ pub(crate) unsafe fn hash_many_contiguous_neon(
 
     // Process 8 chunks per loop iteration when possible: two specialized 4-chunk
     // kernels with fixed contiguous/full-chunk shape.
-    while idx + 8 <= num_chunks {
+    while num_chunks.strict_sub(idx) >= 8 {
       // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`.
-      let src0 = input.add(idx * CHUNK_LEN);
+      let src0 = input.add(idx.strict_mul(CHUNK_LEN));
       // SAFETY: caller guarantees `out` is valid for `num_chunks * OUT_LEN`.
-      let dst0 = out.add(idx * OUT_LEN);
+      let dst0 = out.add(idx.strict_mul(OUT_LEN));
 
       // Prefetch next batch while processing current.
-      if idx + 16 <= num_chunks {
+      if num_chunks.strict_sub(idx) >= 16 {
         // SAFETY: prefetch is a CPU hint — invalid addresses are silently ignored by hardware.
-        crate::hashes::common::prefetch::prefetch_read_l1(input.add((idx + 8) * CHUNK_LEN));
+        let next = idx.strict_add(8).strict_mul(CHUNK_LEN);
+        crate::hashes::common::prefetch::prefetch_read_l1(input.add(next));
       }
 
       hash4_contiguous_full_chunks_neon_to_out(src0, key, counter, flags, dst0);
@@ -1267,24 +1343,25 @@ pub(crate) unsafe fn hash_many_contiguous_neon(
         flags,
         dst0.add(4 * OUT_LEN),
       );
-      idx += 8;
+      idx = idx.strict_add(8);
       counter = counter.wrapping_add(8);
     }
 
-    while idx + 4 <= num_chunks {
+    while num_chunks.strict_sub(idx) >= 4 {
       // SAFETY: caller guarantees `input` is valid for `num_chunks * CHUNK_LEN`.
-      let src = input.add(idx * CHUNK_LEN);
+      let src = input.add(idx.strict_mul(CHUNK_LEN));
       // SAFETY: caller guarantees `out` is valid for `num_chunks * OUT_LEN`.
-      let dst = out.add(idx * OUT_LEN);
+      let dst = out.add(idx.strict_mul(OUT_LEN));
 
       // Prefetch next batch while processing current.
-      if idx + 8 <= num_chunks {
+      if num_chunks.strict_sub(idx) >= 8 {
         // SAFETY: prefetch is a CPU hint — invalid addresses are silently ignored by hardware.
-        crate::hashes::common::prefetch::prefetch_read_l1(input.add((idx + 4) * CHUNK_LEN));
+        let next = idx.strict_add(4).strict_mul(CHUNK_LEN);
+        crate::hashes::common::prefetch::prefetch_read_l1(input.add(next));
       }
 
       hash4_contiguous_full_chunks_neon_to_out(src, key, counter, flags, dst);
-      idx += 4;
+      idx = idx.strict_add(4);
       counter = counter.wrapping_add(4);
     }
 
@@ -1300,9 +1377,10 @@ pub(crate) unsafe fn hash_many_contiguous_neon(
     for lane in 0..remaining {
       // SAFETY: `lane < remaining <= num_chunks - idx`, so per-lane source and
       // destination pointers are within caller-provided buffers.
-      let src = input.add((idx + lane) * CHUNK_LEN);
-      let dst = out.add((idx + lane) * OUT_LEN);
-      let chunk_counter = counter.wrapping_add(lane as u64);
+      let item = idx.strict_add(lane);
+      let src = input.add(item.strict_mul(CHUNK_LEN));
+      let dst = out.add(item.strict_mul(OUT_LEN));
+      let chunk_counter = counter.wrapping_add(u64::try_from(lane).expect("BLAKE3 tail lane fits in u64"));
       chunk_cv_one_chunk_aarch64_out(src, key, chunk_counter, flags, dst);
     }
   }
@@ -1313,6 +1391,11 @@ pub(crate) unsafe fn hash_many_contiguous_neon(
 /// `children` is interpreted as `[left0, right0, left1, right1, ...]`.
 /// This path is alignment-agnostic and is the canonical aarch64 parent combine
 /// fast path (asm is only used for chunk-state loops).
+///
+/// # Safety
+///
+/// The current CPU must support NEON. `children.len()` must equal
+/// `2 * out.len()`.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn parent_cvs_many_neon(
@@ -1321,40 +1404,62 @@ pub(crate) unsafe fn parent_cvs_many_neon(
   flags: u32,
   out: &mut [[u8; OUT_LEN]],
 ) {
-  debug_assert_eq!(children.len(), out.len() * 2);
+  debug_assert_eq!(children.len(), out.len().strict_mul(2));
   if out.is_empty() {
     return;
   }
 
   let parent_flags = PARENT | flags;
-  debug_assert!(parent_flags <= u8::MAX as u32);
 
   // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
   // pointers are within bounds of caller-provided slices.
   unsafe {
     let mut idx = 0usize;
     while idx < out.len() {
-      let rem = core::cmp::min(4usize, out.len() - idx);
-      let last_ptr = children[2 * (idx + rem - 1)].as_ptr();
+      let rem = core::cmp::min(4usize, out.len().strict_sub(idx));
+      let last_child = idx.strict_add(rem).strict_sub(1).strict_mul(2);
+      let last_ptr = children[last_child].as_ptr();
       let mut ptrs = [last_ptr; 4];
-      for lane in 0..rem {
-        ptrs[lane] = children[2 * (idx + lane)].as_ptr();
+      for (lane, ptr) in ptrs.iter_mut().enumerate().take(rem) {
+        let child = idx.strict_add(lane).strict_mul(2);
+        *ptr = children[child].as_ptr();
       }
 
       if rem == 4 {
-        // SAFETY:
-        // - `idx + 4 <= out.len()` by `rem == 4`.
-        // - `out` is `[[u8; OUT_LEN]]`, so taking a 4-element window as `[[u8; OUT_LEN]; 4]` is
-        //   layout-compatible.
-        // - We write exactly those 4 outputs.
-        let out4 = &mut *(out.as_mut_ptr().add(idx) as *mut [[u8; OUT_LEN]; 4]);
-        hash4_neon(ptrs, BLOCK_LEN, &key_words, 0, false, parent_flags, 0, 0, out4);
+        let out4 = out[idx..]
+          .first_chunk_mut::<4>()
+          .expect("four remaining BLAKE3 parents provide four output slots");
+        hash4_neon(
+          ptrs,
+          BLOCK_LEN,
+          &key_words,
+          0,
+          false,
+          Hash4Flags {
+            base: parent_flags,
+            start: 0,
+            end: 0,
+          },
+          out4,
+        );
       } else {
         let mut tmp = [[0u8; OUT_LEN]; 4];
-        hash4_neon(ptrs, BLOCK_LEN, &key_words, 0, false, parent_flags, 0, 0, &mut tmp);
-        out[idx..idx + rem].copy_from_slice(&tmp[..rem]);
+        hash4_neon(
+          ptrs,
+          BLOCK_LEN,
+          &key_words,
+          0,
+          false,
+          Hash4Flags {
+            base: parent_flags,
+            start: 0,
+            end: 0,
+          },
+          &mut tmp,
+        );
+        out[idx..idx.strict_add(rem)].copy_from_slice(&tmp[..rem]);
       }
-      idx += rem;
+      idx = idx.strict_add(rem);
     }
   }
 }
@@ -1365,7 +1470,8 @@ pub(crate) unsafe fn parent_cvs_many_neon(
 ///
 /// # Safety
 ///
-/// Caller must ensure NEON is available.
+/// The current CPU must support NEON. `blocks` must contain only complete
+/// BLAKE3 blocks, and `blocks_compressed` must remain within one chunk.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn chunk_compress_blocks_neon(
@@ -1395,7 +1501,7 @@ pub(crate) unsafe fn chunk_compress_blocks_neon(
           chaining_value.as_mut_ptr(),
           chunk_counter,
           flags,
-          blocks_compressed as *mut u8,
+          core::ptr::from_mut(blocks_compressed),
           num_blocks,
         );
         return;
@@ -1410,10 +1516,10 @@ pub(crate) unsafe fn chunk_compress_blocks_neon(
         chaining_value,
         block_bytes.as_ptr(),
         chunk_counter,
-        BLOCK_LEN as u32,
+        BLOCK_LEN_U32,
         flags | start,
       );
-      *blocks_compressed = blocks_compressed.wrapping_add(1);
+      *blocks_compressed = blocks_compressed.strict_add(1);
     }
   }
 }
@@ -1422,6 +1528,11 @@ pub(crate) unsafe fn chunk_compress_blocks_neon(
 ///
 /// Returns the 8-word chaining value result (row0^row2, row1^row3), avoiding
 /// materializing the full 16-word compression output.
+///
+/// # Safety
+///
+/// The current CPU must support NEON, and `block` must be readable for
+/// `BLOCK_LEN` bytes.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 pub(crate) unsafe fn compress_cv_neon_bytes(
@@ -1469,7 +1580,7 @@ pub(crate) unsafe fn parent_cv_neon(
       &key_words,
       block_words.as_ptr().cast(),
       0,
-      BLOCK_LEN as u32,
+      BLOCK_LEN_U32,
       PARENT | flags,
     )
   }
@@ -1494,6 +1605,9 @@ pub(crate) unsafe fn root_output_blocks4_neon(
   out: *mut u8,
 ) {
   #[inline(always)]
+  /// # Safety
+  ///
+  /// The current CPU must support NEON, and `dest` must be writable for 16 bytes.
   unsafe fn storeu_128(src: uint32x4_t, dest: *mut u8) {
     // SAFETY: NEON intrinsics and pointer ops are sound: intrinsics require NEON via #[target_feature],
     // pointers are within bounds of caller-provided slices.
@@ -1533,24 +1647,9 @@ pub(crate) unsafe fn root_output_blocks4_neon(
       vdupq_n_u32(block_words[15]),
     ];
 
-    let counter_low_vec = vld1q_u32(
-      [
-        counter as u32,
-        counter.wrapping_add(1) as u32,
-        counter.wrapping_add(2) as u32,
-        counter.wrapping_add(3) as u32,
-      ]
-      .as_ptr(),
-    );
-    let counter_high_vec = vld1q_u32(
-      [
-        (counter >> 32) as u32,
-        (counter.wrapping_add(1) >> 32) as u32,
-        (counter.wrapping_add(2) >> 32) as u32,
-        (counter.wrapping_add(3) >> 32) as u32,
-      ]
-      .as_ptr(),
-    );
+    let (counter_low, counter_high) = counter_lanes(counter, [0, 1, 2, 3]);
+    let counter_low_vec = vld1q_u32(counter_low.as_ptr());
+    let counter_high_vec = vld1q_u32(counter_high.as_ptr());
 
     let block_len_vec = vdupq_n_u32(block_len);
     let flags_vec = vdupq_n_u32(flags);
@@ -1616,8 +1715,8 @@ pub(crate) unsafe fn root_output_blocks4_neon(
     transpose_vecs(&mut g2);
     transpose_vecs(&mut g3);
 
-    for lane in 0..4 {
-      let base = out.add(lane * 64);
+    for lane in 0usize..4 {
+      let base = out.add(lane.strict_mul(BLOCK_LEN));
       storeu_128(g0[lane], base);
       storeu_128(g1[lane], base.add(16));
       storeu_128(g2[lane], base.add(32));

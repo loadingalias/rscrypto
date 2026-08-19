@@ -8,9 +8,6 @@
 //! All functions require `sha` and `sse4.1` target features.
 //! Callers must verify CPU capabilities before calling.
 
-#![allow(unsafe_code)]
-#![allow(clippy::inline_always)]
-
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 

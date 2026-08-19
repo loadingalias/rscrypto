@@ -66,8 +66,8 @@ proptest! {
     let mut h = Sha3_224::new();
     let mut i = 0usize;
     while i < data.len() {
-      let step = (data[i] as usize % 97) + 1;
-      let end = core::cmp::min(data.len(), i + step);
+      let step = (usize::from(data[i]) % 97).strict_add(1);
+      let end = core::cmp::min(data.len(), i.strict_add(step));
       h.update(&data[i..end]);
       i = end;
     }
@@ -82,8 +82,8 @@ proptest! {
     let mut h = Sha3_256::new();
     let mut i = 0usize;
     while i < data.len() {
-      let step = (data[i] as usize % 97) + 1;
-      let end = core::cmp::min(data.len(), i + step);
+      let step = (usize::from(data[i]) % 97).strict_add(1);
+      let end = core::cmp::min(data.len(), i.strict_add(step));
       h.update(&data[i..end]);
       i = end;
     }
@@ -98,8 +98,8 @@ proptest! {
     let mut h = Sha3_384::new();
     let mut i = 0usize;
     while i < data.len() {
-      let step = (data[i] as usize % 97) + 1;
-      let end = core::cmp::min(data.len(), i + step);
+      let step = (usize::from(data[i]) % 97).strict_add(1);
+      let end = core::cmp::min(data.len(), i.strict_add(step));
       h.update(&data[i..end]);
       i = end;
     }
@@ -114,8 +114,8 @@ proptest! {
     let mut h = Sha3_512::new();
     let mut i = 0usize;
     while i < data.len() {
-      let step = (data[i] as usize % 97) + 1;
-      let end = core::cmp::min(data.len(), i + step);
+      let step = (usize::from(data[i]) % 97).strict_add(1);
+      let end = core::cmp::min(data.len(), i.strict_add(step));
       h.update(&data[i..end]);
       i = end;
     }

@@ -5,8 +5,8 @@ extern crate alloc;
 use alloc::collections::BTreeMap;
 
 use rscrypto::{
-  RsaKeyError, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateKeyParts, RsaPssProfile, RsaPublicKey, RsaPublicKeyPolicy,
-  RsaSignatureProfile,
+  RsaBlindingPair, RsaKeyError, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateKeyParts, RsaPssProfile, RsaPublicKey,
+  RsaPublicKeyPolicy, RsaSignatureProfile,
 };
 use serde_json::Value;
 
@@ -19,24 +19,41 @@ struct Counts {
   invalid: usize,
 }
 
+#[derive(Clone, Copy)]
+enum SigGenScheme {
+  Pkcs1v15,
+  Pss,
+}
+
+#[derive(Clone, Copy)]
+enum CavpResult {
+  Pass,
+  Fail,
+}
+
 fn der_len(len: usize) -> Vec<u8> {
   if len < 128 {
-    return vec![len as u8];
+    return vec![u8::try_from(len).expect("short DER length must fit in one byte")];
   }
 
   let bytes = len.to_be_bytes();
-  let first_nonzero = bytes.iter().position(|&byte| byte != 0).unwrap();
+  let first_nonzero = bytes
+    .iter()
+    .position(|&byte| byte != 0)
+    .expect("long DER length must contain a non-zero byte");
   let len_bytes = &bytes[first_nonzero..];
-  let mut out = Vec::with_capacity(1 + len_bytes.len());
-  out.push(0x80 | len_bytes.len() as u8);
+  let mut out = Vec::with_capacity(1usize.strict_add(len_bytes.len()));
+  out.push(0x80 | u8::try_from(len_bytes.len()).expect("DER length-of-length must fit in one byte"));
   out.extend_from_slice(len_bytes);
   out
 }
 
 fn tlv(tag: u8, value: &[u8]) -> Vec<u8> {
-  let mut out = Vec::with_capacity(1 + der_len(value.len()).len() + value.len());
+  let encoded_len = der_len(value.len());
+  let capacity = 1usize.strict_add(encoded_len.len()).strict_add(value.len());
+  let mut out = Vec::with_capacity(capacity);
   out.push(tag);
-  out.extend_from_slice(&der_len(value.len()));
+  out.extend_from_slice(&encoded_len);
   out.extend_from_slice(value);
   out
 }
@@ -44,7 +61,7 @@ fn tlv(tag: u8, value: &[u8]) -> Vec<u8> {
 fn integer_unsigned(value: &[u8]) -> Vec<u8> {
   let first_nonzero = value.iter().position(|&byte| byte != 0);
   let value = first_nonzero.map_or(&[0u8][..], |index| &value[index..]);
-  let mut encoded = Vec::with_capacity(value.len() + usize::from(value[0] & 0x80 != 0));
+  let mut encoded = Vec::with_capacity(value.len().strict_add(usize::from(value[0] & 0x80 != 0)));
   if value[0] & 0x80 != 0 {
     encoded.push(0);
   }
@@ -72,7 +89,9 @@ fn hex_to_vec(hex: &str) -> Vec<u8> {
 
   let mut out = Vec::with_capacity(hex.len() / 2);
   for chunk in hex.as_bytes().chunks_exact(2) {
-    out.push((hex_value(chunk[0]) << 4) | hex_value(chunk[1]));
+    let high = hex_value(chunk[0]).expect("CAVP fixture must contain hexadecimal digits");
+    let low = hex_value(chunk[1]).expect("CAVP fixture must contain hexadecimal digits");
+    out.push((high << 4) | low);
   }
   out
 }
@@ -82,7 +101,7 @@ fn hex_to_canonical_vec(hex: &str) -> Vec<u8> {
   let first_nonzero = value
     .iter()
     .position(|&byte| byte != 0)
-    .unwrap_or(value.len().strict_sub(1));
+    .unwrap_or_else(|| value.len().strict_sub(1));
   if first_nonzero != 0 {
     value.drain(..first_nonzero);
   }
@@ -99,44 +118,67 @@ fn hex_to_u64(hex: &str) -> u64 {
   value
 }
 
-fn hex_value(byte: u8) -> u8 {
+fn hex_value(byte: u8) -> Option<u8> {
   match byte {
-    b'0'..=b'9' => byte - b'0',
-    b'a'..=b'f' => byte - b'a' + 10,
-    b'A'..=b'F' => byte - b'A' + 10,
-    _ => panic!("invalid hex digit"),
+    b'0'..=b'9' => Some(byte.strict_sub(b'0')),
+    b'a'..=b'f' => Some(byte.strict_sub(b'a').strict_add(10)),
+    b'A'..=b'F' => Some(byte.strict_sub(b'A').strict_add(10)),
+    _ => None,
   }
 }
 
 fn field<'a>(value: &'a Value, name: &'static str) -> &'a str {
   value[name]
     .as_str()
-    .unwrap_or_else(|| panic!("missing string field `{name}`"))
+    .expect("CAVP fixture must contain the requested string field")
 }
 
 fn pkcs1_profile(sha: &str) -> RsaPkcs1v15Profile {
   match sha {
-    "SHA256" => RsaPkcs1v15Profile::Sha256,
-    "SHA384" => RsaPkcs1v15Profile::Sha384,
-    "SHA512" => RsaPkcs1v15Profile::Sha512,
-    other => panic!("unsupported CAVP PKCS1v1.5 hash `{other}`"),
+    "SHA256" => Some(RsaPkcs1v15Profile::Sha256),
+    "SHA384" => Some(RsaPkcs1v15Profile::Sha384),
+    "SHA512" => Some(RsaPkcs1v15Profile::Sha512),
+    _ => None,
   }
+  .expect("CAVP fixture must use a supported PKCS#1 v1.5 hash")
 }
 
 fn pss_profile(sha: &str) -> RsaPssProfile {
   match sha {
-    "SHA256" => RsaPssProfile::Sha256,
-    "SHA384" => RsaPssProfile::Sha384,
-    "SHA512" => RsaPssProfile::Sha512,
-    other => panic!("unsupported CAVP PSS hash `{other}`"),
+    "SHA256" => Some(RsaPssProfile::Sha256),
+    "SHA384" => Some(RsaPssProfile::Sha384),
+    "SHA512" => Some(RsaPssProfile::Sha512),
+    _ => None,
   }
+  .expect("CAVP fixture must use a supported PSS hash")
+}
+
+fn siggen_scheme(scheme: &str) -> SigGenScheme {
+  match scheme {
+    "pkcs1v15" => Some(SigGenScheme::Pkcs1v15),
+    "pss" => Some(SigGenScheme::Pss),
+    _ => None,
+  }
+  .expect("CAVP fixture must use a supported RSA signature scheme")
+}
+
+fn cavp_result(result: &str) -> CavpResult {
+  match result {
+    "P" => Some(CavpResult::Pass),
+    "F" => Some(CavpResult::Fail),
+    _ => None,
+  }
+  .expect("CAVP fixture result must be P or F")
 }
 
 fn signature_profile(scheme: &str, sha: &str, salt_len: Option<u64>) -> RsaSignatureProfile {
-  match scheme {
-    "pkcs1v15" => RsaSignatureProfile::pkcs1v15(pkcs1_profile(sha)),
-    "pss" => RsaSignatureProfile::pss_with_salt_len(pss_profile(sha), salt_len.unwrap() as usize),
-    other => panic!("unsupported CAVP RSA signature scheme `{other}`"),
+  match siggen_scheme(scheme) {
+    SigGenScheme::Pkcs1v15 => RsaSignatureProfile::pkcs1v15(pkcs1_profile(sha)),
+    SigGenScheme::Pss => RsaSignatureProfile::pss_with_salt_len(
+      pss_profile(sha),
+      usize::try_from(salt_len.expect("CAVP PSS case must provide a salt length"))
+        .expect("CAVP PSS salt length must fit usize"),
+    ),
   }
 }
 
@@ -187,7 +229,8 @@ fn nist_cavp_odd_public_exponents_require_explicit_policy() {
   );
 
   let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_odd_exponents();
-  let key = RsaPublicKey::from_pkcs1_der_with_policy(&key_der, &policy).unwrap();
+  let key = RsaPublicKey::from_pkcs1_der_with_policy(&key_der, &policy)
+    .expect("CAVP odd-exponent RSA key must parse under the explicit legacy policy");
   assert_eq!(key.modulus_bits(), 2048);
 }
 
@@ -242,15 +285,14 @@ fn nist_cavp_sha2_siggen_private_operations_match_expected_signatures() {
     let blinding_factor = fixed_width_one(key.public_key().modulus().len());
     let blinding_factor_inverse = fixed_width_one(key.public_key().modulus().len());
 
-    match field(test, "scheme") {
-      "pkcs1v15" => {
+    match siggen_scheme(field(test, "scheme")) {
+      SigGenScheme::Pkcs1v15 => {
         pkcs1v15 = pkcs1v15.strict_add(1);
         key
           .sign_pkcs1v15_with_blinding_factor(
             pkcs1_profile(field(test, "sha")),
             &message,
-            &blinding_factor,
-            &blinding_factor_inverse,
+            RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
             &mut signature,
           )
           .expect("CAVP PKCS1v1.5 private signing must succeed");
@@ -259,8 +301,7 @@ fn nist_cavp_sha2_siggen_private_operations_match_expected_signatures() {
           .sign_pkcs1v15_with_blinding_factor_and_scratch(
             pkcs1_profile(field(test, "sha")),
             &message,
-            &blinding_factor,
-            &blinding_factor_inverse,
+            RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
             &mut scratch_signature,
             &mut scratch,
           )
@@ -274,7 +315,7 @@ fn nist_cavp_sha2_siggen_private_operations_match_expected_signatures() {
           .verify_pkcs1v15(pkcs1_profile(field(test, "sha")), &message, &signature)
           .expect("CAVP PKCS1v1.5 generated signature must verify");
       }
-      "pss" => {
+      SigGenScheme::Pss => {
         pss = pss.strict_add(1);
         let salt = hex_to_vec(field(test, "salt"));
         key
@@ -282,8 +323,7 @@ fn nist_cavp_sha2_siggen_private_operations_match_expected_signatures() {
             pss_profile(field(test, "sha")),
             &message,
             &salt,
-            &blinding_factor,
-            &blinding_factor_inverse,
+            RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
             &mut signature,
           )
           .expect("CAVP PSS private signing must succeed");
@@ -293,8 +333,7 @@ fn nist_cavp_sha2_siggen_private_operations_match_expected_signatures() {
             pss_profile(field(test, "sha")),
             &message,
             &salt,
-            &blinding_factor,
-            &blinding_factor_inverse,
+            RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
             &mut scratch_signature,
             &mut scratch,
           )
@@ -312,7 +351,6 @@ fn nist_cavp_sha2_siggen_private_operations_match_expected_signatures() {
           )
           .expect("CAVP PSS generated signature must verify");
       }
-      other => panic!("unsupported CAVP SigGen scheme `{other}`"),
     }
   }
 
@@ -386,8 +424,7 @@ fn nist_cavp_same_width_private_scratch_rebinds_between_keys() {
       pss_profile(field(test_b, "sha")),
       &message,
       &salt,
-      &blinding_factor,
-      &blinding_factor_inverse,
+      RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
       &mut signature,
       &mut scratch,
     )
@@ -411,8 +448,8 @@ fn nist_cavp_sha2_siggen_profile_signing_matches_expected_results() {
     let mut scratch_signature = vec![0u8; key.public_key().modulus().len()];
     let mut scratch = key.private_scratch();
 
-    match field(test, "scheme") {
-      "pkcs1v15" => {
+    match siggen_scheme(field(test, "scheme")) {
+      SigGenScheme::Pkcs1v15 => {
         pkcs1v15 = pkcs1v15.strict_add(1);
         let profile = RsaSignatureProfile::pkcs1v15(pkcs1_profile(field(test, "sha")));
         key
@@ -430,7 +467,7 @@ fn nist_cavp_sha2_siggen_profile_signing_matches_expected_results() {
           "CAVP PKCS1v1.5 scratch profile signature mismatch"
         );
       }
-      "pss" => {
+      SigGenScheme::Pss => {
         pss = pss.strict_add(1);
         let salt_len = hex_to_vec(field(test, "salt")).len();
         let profile = RsaSignatureProfile::pss_with_salt_len(pss_profile(field(test, "sha")), salt_len);
@@ -449,7 +486,6 @@ fn nist_cavp_sha2_siggen_profile_signing_matches_expected_results() {
           .verify_signature(profile, &message, &scratch_signature)
           .expect("CAVP PSS scratch profile signature must verify");
       }
-      other => panic!("unsupported CAVP SigGen scheme `{other}`"),
     }
   }
 
@@ -515,12 +551,12 @@ fn nist_cavp_supported_sha2_sigver_subset_matches_expected_results() {
       )
       .is_ok();
 
-    match field(test, "result") {
-      "P" => {
+    match cavp_result(field(test, "result")) {
+      CavpResult::Pass => {
         counts.valid = counts.valid.strict_add(1);
         assert!(verified, "CAVP tcId {} rejected valid signature", test["tc_id"]);
       }
-      "F" => {
+      CavpResult::Fail => {
         counts.invalid = counts.invalid.strict_add(1);
         assert!(
           !verified,
@@ -528,7 +564,6 @@ fn nist_cavp_supported_sha2_sigver_subset_matches_expected_results() {
           test["tc_id"], scheme
         );
       }
-      other => panic!("unknown CAVP result `{other}`"),
     }
   }
 

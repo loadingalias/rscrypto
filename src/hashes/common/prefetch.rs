@@ -8,7 +8,6 @@
 // SAFETY: This module provides low-level prefetch intrinsics that require unsafe.
 // Prefetch instructions are hints to the CPU and cannot cause memory unsafety;
 // invalid addresses are silently ignored.
-#![allow(unsafe_code)]
 
 /// Prefetch data for read into L1 cache (PLDL1KEEP).
 ///

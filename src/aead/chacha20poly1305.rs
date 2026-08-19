@@ -1,5 +1,3 @@
-#![allow(clippy::indexing_slicing)]
-
 //! ChaCha20-Poly1305 public AEAD surface.
 
 use core::fmt;
@@ -20,7 +18,9 @@ const POWER_SHORT_FAST_MAX: usize = chacha20::BLOCK_SIZE;
 #[cfg(target_arch = "aarch64")]
 const AARCH64_INTERLEAVED_MIN: usize = 1024;
 #[cfg(target_arch = "aarch64")]
-const AARCH64_INTERLEAVED_CHUNK: usize = 1024 * 1024;
+const AARCH64_INTERLEAVED_BLOCKS: u32 = 16 * 1024;
+#[cfg(target_arch = "aarch64")]
+const AARCH64_INTERLEAVED_CHUNK: usize = (AARCH64_INTERLEAVED_BLOCKS as usize) * chacha20::BLOCK_SIZE;
 #[cfg(all(
   target_arch = "x86_64",
   target_os = "linux",
@@ -323,7 +323,9 @@ impl ChaCha20Poly1305 {
       return None;
     }
 
-    let tag = x86_64_asm::seal_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer);
+    // SAFETY: the diagnostic entry validated the ChaCha20 length bound; the guards above prove a nonempty buffer and
+    // AVX2+BMI2 availability.
+    let tag = unsafe { x86_64_asm::seal_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer) };
     Some(Ok(ChaCha20Poly1305Tag::from_bytes(tag)))
   }
 
@@ -348,7 +350,9 @@ impl ChaCha20Poly1305 {
       return None;
     }
 
-    let expected = x86_64_asm::open_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer);
+    // SAFETY: the diagnostic entry validated the ChaCha20 length bound; the guards above prove a nonempty buffer and
+    // AVX2+BMI2 availability.
+    let expected = unsafe { x86_64_asm::open_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer) };
     if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       return Some(Err(OpenError::verification()));
@@ -377,7 +381,9 @@ impl ChaCha20Poly1305 {
       return None;
     }
 
-    let tag = x86_64_asm::seal_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer);
+    // SAFETY: the public AEAD entry validated the ChaCha20 length bound, and the recommendation gate proves a
+    // nonempty buffer plus AVX2+BMI2 availability.
+    let tag = unsafe { x86_64_asm::seal_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer) };
     Some(Ok(ChaCha20Poly1305Tag::from_bytes(tag)))
   }
 
@@ -403,7 +409,9 @@ impl ChaCha20Poly1305 {
       return None;
     }
 
-    let expected = x86_64_asm::open_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer);
+    // SAFETY: the public AEAD entry validated the ChaCha20 length bound, and the recommendation gate proves a
+    // nonempty buffer plus AVX2+BMI2 availability.
+    let expected = unsafe { x86_64_asm::open_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer) };
     if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       return Some(Err(OpenError::verification()));
@@ -488,16 +496,21 @@ impl ChaCha20Poly1305 {
     authenticator.update_padded_segment(aad);
 
     let mut counter = 1u32;
-    let mut chunks = buffer.chunks_exact_mut(AARCH64_INTERLEAVED_CHUNK);
-    for chunk in &mut chunks {
-      chacha20::xor_keystream_aarch64_neon(self.key.as_bytes(), counter, nonce.as_bytes(), chunk);
+    let (chunks, remainder) = buffer.as_chunks_mut::<AARCH64_INTERLEAVED_CHUNK>();
+    for chunk in chunks {
+      // SAFETY: the capability gate proves NEON. Every caller reaches this private helper after the public or
+      // diagnostic length bound, or from a same-module test with a bounded buffer; the fixed-size chunks and exact
+      // counter advance preserve that whole-buffer bound for this segment.
+      unsafe { chacha20::xor_keystream_aarch64_neon(self.key.as_bytes(), counter, nonce.as_bytes(), chunk) };
       authenticator.update_padded_segment(chunk);
-      counter = counter.wrapping_add((AARCH64_INTERLEAVED_CHUNK / chacha20::BLOCK_SIZE) as u32);
+      counter = counter.wrapping_add(AARCH64_INTERLEAVED_BLOCKS);
     }
 
-    let remainder = chunks.into_remainder();
     if !remainder.is_empty() {
-      chacha20::xor_keystream_aarch64_neon(self.key.as_bytes(), counter, nonce.as_bytes(), remainder);
+      // SAFETY: the capability gate proves NEON. Every caller reaches this private helper after the public or
+      // diagnostic length bound, or from a same-module test with a bounded buffer; `counter` tracks the preceding
+      // full chunks exactly, so the final remainder cannot exhaust the counter range.
+      unsafe { chacha20::xor_keystream_aarch64_neon(self.key.as_bytes(), counter, nonce.as_bytes(), remainder) };
       authenticator.update_padded_segment(remainder);
     }
 
@@ -539,17 +552,22 @@ impl ChaCha20Poly1305 {
     authenticator.update_padded_segment(aad);
 
     let mut counter = 1u32;
-    let mut chunks = buffer.chunks_exact_mut(AARCH64_INTERLEAVED_CHUNK);
-    for chunk in &mut chunks {
+    let (chunks, remainder) = buffer.as_chunks_mut::<AARCH64_INTERLEAVED_CHUNK>();
+    for chunk in chunks {
       authenticator.update_padded_segment(chunk);
-      chacha20::xor_keystream_aarch64_neon(self.key.as_bytes(), counter, nonce.as_bytes(), chunk);
-      counter = counter.wrapping_add((AARCH64_INTERLEAVED_CHUNK / chacha20::BLOCK_SIZE) as u32);
+      // SAFETY: the capability gate proves NEON. Every caller reaches this private helper after the public or
+      // diagnostic length bound, or from a same-module test with a bounded buffer; the fixed-size chunks and exact
+      // counter advance preserve that whole-buffer bound for this segment.
+      unsafe { chacha20::xor_keystream_aarch64_neon(self.key.as_bytes(), counter, nonce.as_bytes(), chunk) };
+      counter = counter.wrapping_add(AARCH64_INTERLEAVED_BLOCKS);
     }
 
-    let remainder = chunks.into_remainder();
     if !remainder.is_empty() {
       authenticator.update_padded_segment(remainder);
-      chacha20::xor_keystream_aarch64_neon(self.key.as_bytes(), counter, nonce.as_bytes(), remainder);
+      // SAFETY: the capability gate proves NEON. Every caller reaches this private helper after the public or
+      // diagnostic length bound, or from a same-module test with a bounded buffer; `counter` tracks the preceding
+      // full chunks exactly, so the final remainder cannot exhaust the counter range.
+      unsafe { chacha20::xor_keystream_aarch64_neon(self.key.as_bytes(), counter, nonce.as_bytes(), remainder) };
     }
 
     let expected = authenticator.finalize(lengths);
@@ -622,6 +640,10 @@ impl ChaCha20Poly1305 {
   }
 }
 
+/// Encrypts in place without using a platform-specific integrated ChaCha20-Poly1305 assembly entrypoint.
+///
+/// Lower-level ChaCha20 and Poly1305 dispatch remains enabled. Returns an error when the input lengths exceed the
+/// supported limits.
 #[cfg(feature = "diag")]
 pub fn diag_chacha20poly1305_encrypt_in_place_owned(
   cipher: &ChaCha20Poly1305,
@@ -634,6 +656,9 @@ pub fn diag_chacha20poly1305_encrypt_in_place_owned(
 }
 
 #[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+/// Encrypts in place through the Linux x86-64 assembly entrypoint when that entrypoint is available.
+///
+/// Returns `None` when the current CPU cannot execute the assembly backend.
 pub fn diag_chacha20poly1305_encrypt_in_place_x86_64_asm(
   cipher: &ChaCha20Poly1305,
   nonce: &Nonce96,
@@ -648,6 +673,9 @@ pub fn diag_chacha20poly1305_encrypt_in_place_x86_64_asm(
 }
 
 #[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+/// Authenticates and decrypts in place through the Linux x86-64 assembly entrypoint when it is available.
+///
+/// Returns `None` when the current CPU cannot execute the assembly backend.
 pub fn diag_chacha20poly1305_decrypt_in_place_x86_64_asm(
   cipher: &ChaCha20Poly1305,
   nonce: &Nonce96,
@@ -662,6 +690,11 @@ pub fn diag_chacha20poly1305_decrypt_in_place_x86_64_asm(
   cipher.decrypt_in_place_asm_x86_64_forced(nonce, aad, buffer, tag)
 }
 
+/// Authenticates and decrypts in place without using a platform-specific integrated ChaCha20-Poly1305 assembly
+/// entrypoint.
+///
+/// Lower-level ChaCha20 and Poly1305 dispatch remains enabled. Authentication failure zeroes `buffer` and returns an
+/// opaque verification error; unsupported input lengths also return an error.
 #[cfg(feature = "diag")]
 pub fn diag_chacha20poly1305_decrypt_in_place_owned(
   cipher: &ChaCha20Poly1305,
@@ -803,8 +836,12 @@ mod tests {
     let cipher = ChaCha20Poly1305::new(&key);
 
     let mut buf = *b"hello chacha";
-    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
-    cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &tag).unwrap();
+    let tag = cipher
+      .encrypt_in_place(&nonce, b"aad", &mut buf)
+      .expect("valid input must encrypt");
+    cipher
+      .decrypt_in_place(&nonce, b"aad", &mut buf, &tag)
+      .expect("matching nonce, AAD, and tag must decrypt");
     assert_eq!(&buf, b"hello chacha");
   }
 
@@ -815,7 +852,9 @@ mod tests {
     let cipher = ChaCha20Poly1305::new(&key);
 
     let mut buf = *b"nonce test";
-    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
+    let tag = cipher
+      .encrypt_in_place(&nonce, b"aad", &mut buf)
+      .expect("valid input must encrypt");
 
     let wrong_nonce = Nonce96::from_bytes([0x08u8; 12]);
     let result = cipher.decrypt_in_place(&wrong_nonce, b"aad", &mut buf, &tag);
@@ -829,7 +868,9 @@ mod tests {
     let cipher = ChaCha20Poly1305::new(&key);
 
     let mut buf = *b"zero me on failure";
-    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
+    let tag = cipher
+      .encrypt_in_place(&nonce, b"aad", &mut buf)
+      .expect("valid input must encrypt");
 
     let mut bad_tag = tag.to_bytes();
     bad_tag[0] ^= 0xFF;
@@ -900,14 +941,15 @@ mod tests {
     let cipher = ChaCha20Poly1305::new(&key);
 
     for aad_len in [0usize, 1, 14, 15, 16, 17, 31, 32, 33, 63, 64] {
-      let aad = (0..aad_len)
-        .map(|index| 0xa7u8.wrapping_add((index as u8).wrapping_mul(7)))
+      let aad = (0u8..)
+        .take(aad_len)
+        .map(|index| 0xa7u8.wrapping_add(index.wrapping_mul(7)))
         .collect::<Vec<_>>();
       let mut ciphertext = Vec::new();
 
       let expected_tag = cipher
         .encrypt_in_place_owned_unchecked(&nonce, &aad, &mut ciphertext)
-        .unwrap();
+        .expect("owned path must produce an empty-text tag");
       let actual = cipher.decrypt_empty_text_fast(&nonce, &aad, &expected_tag);
 
       if aad_len > SMALL_AAD_FAST_MAX {
@@ -918,9 +960,10 @@ mod tests {
         continue;
       }
 
-      actual
-        .expect("empty decrypt fast path must apply inside its configured gate")
-        .unwrap();
+      assert_eq!(
+        actual.expect("empty decrypt fast path must apply inside its configured gate"),
+        Ok(())
+      );
 
       let mut bad_tag = expected_tag.to_bytes();
       bad_tag[0] ^= 0x80;
@@ -947,21 +990,26 @@ mod tests {
     for plaintext_len in [
       1usize, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257, 1024,
     ] {
-      let plaintext = (0..plaintext_len)
-        .map(|index| 0x51u8.wrapping_add((index as u8).wrapping_mul(13)))
+      let plaintext = (0u8..=u8::MAX)
+        .cycle()
+        .take(plaintext_len)
+        .map(|index| 0x51u8.wrapping_add(index.wrapping_mul(13)))
         .collect::<Vec<_>>();
 
       for aad_len in [0usize, 1, 13, 14, 15, 16, 17, 31, 32, 63, 64] {
-        let aad = (0..aad_len)
-          .map(|index| 0xa7u8.wrapping_add((index as u8).wrapping_mul(7)))
+        let aad = (0u8..)
+          .take(aad_len)
+          .map(|index| 0xa7u8.wrapping_add(index.wrapping_mul(7)))
           .collect::<Vec<_>>();
 
         let mut ciphertext = plaintext.clone();
         let tag = cipher
           .encrypt_in_place_owned_unchecked(&nonce, &aad, &mut ciphertext)
-          .unwrap();
+          .expect("bounded test input must encrypt through the owned path");
         let mut actual = ciphertext.clone();
-        let actual_tag = x86_64_asm::open_in_place(key.as_bytes(), nonce.as_bytes(), &aad, &mut actual);
+        // SAFETY: the test returned unless AVX2+BMI2 are available; every selected ciphertext is nonempty and well
+        // below ChaCha20's 2^32-block limit.
+        let actual_tag = unsafe { x86_64_asm::open_in_place(key.as_bytes(), nonce.as_bytes(), &aad, &mut actual) };
 
         assert_eq!(
           actual, plaintext,
@@ -984,13 +1032,15 @@ mod tests {
     let cipher = ChaCha20Poly1305::new(&key);
 
     for plaintext_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65] {
-      let plaintext = (0..plaintext_len)
-        .map(|index| 0x51u8.wrapping_add((index as u8).wrapping_mul(13)))
+      let plaintext = (0u8..)
+        .take(plaintext_len)
+        .map(|index| 0x51u8.wrapping_add(index.wrapping_mul(13)))
         .collect::<Vec<_>>();
 
       for aad_len in [0usize, 1, 14, 15, 16, 17, 31, 32, 33, 63, 64] {
-        let aad = (0..aad_len)
-          .map(|index| 0xa7u8.wrapping_add((index as u8).wrapping_mul(7)))
+        let aad = (0u8..)
+          .take(aad_len)
+          .map(|index| 0xa7u8.wrapping_add(index.wrapping_mul(7)))
           .collect::<Vec<_>>();
 
         let mut actual = plaintext.clone();
@@ -1008,10 +1058,10 @@ mod tests {
         let mut expected = plaintext.clone();
         let expected_tag = cipher
           .encrypt_in_place_owned_unchecked(&nonce, &aad, &mut expected)
-          .unwrap();
+          .expect("bounded test input must encrypt through the owned path");
         let actual_tag = actual_tag
           .expect("Power short fast path must apply inside its configured gate")
-          .unwrap();
+          .expect("bounded test input must encrypt through the Power fast path");
 
         assert_eq!(
           actual, expected,
@@ -1033,19 +1083,21 @@ mod tests {
     let cipher = ChaCha20Poly1305::new(&key);
 
     for plaintext_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65] {
-      let plaintext = (0..plaintext_len)
-        .map(|index| 0x51u8.wrapping_add((index as u8).wrapping_mul(13)))
+      let plaintext = (0u8..)
+        .take(plaintext_len)
+        .map(|index| 0x51u8.wrapping_add(index.wrapping_mul(13)))
         .collect::<Vec<_>>();
 
       for aad_len in [0usize, 1, 14, 15, 16, 17, 31, 32, 33, 63, 64] {
-        let aad = (0..aad_len)
-          .map(|index| 0xa7u8.wrapping_add((index as u8).wrapping_mul(7)))
+        let aad = (0u8..)
+          .take(aad_len)
+          .map(|index| 0xa7u8.wrapping_add(index.wrapping_mul(7)))
           .collect::<Vec<_>>();
 
         let mut ciphertext = plaintext.clone();
         let tag = cipher
           .encrypt_in_place_owned_unchecked(&nonce, &aad, &mut ciphertext)
-          .unwrap();
+          .expect("bounded test input must encrypt through the owned path");
         let mut actual = ciphertext.clone();
         let actual_result = cipher.decrypt_short_text_power_fast(&nonce, &aad, &mut actual, &tag);
 
@@ -1059,9 +1111,10 @@ mod tests {
           continue;
         }
 
-        actual_result
-          .expect("Power short decrypt fast path must apply inside its configured gate")
-          .unwrap();
+        assert_eq!(
+          actual_result.expect("Power short decrypt fast path must apply inside its configured gate"),
+          Ok(())
+        );
         assert_eq!(
           actual, plaintext,
           "Power short plaintext mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
@@ -1091,7 +1144,9 @@ mod tests {
     let cipher = ChaCha20Poly1305::new(&key);
 
     let mut buf = *b"aad test";
-    let tag = cipher.encrypt_in_place(&nonce, b"correct", &mut buf).unwrap();
+    let tag = cipher
+      .encrypt_in_place(&nonce, b"correct", &mut buf)
+      .expect("valid input must encrypt");
 
     let result = cipher.decrypt_in_place(&nonce, b"wrong", &mut buf, &tag);
     assert!(result.is_err());

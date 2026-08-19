@@ -36,8 +36,8 @@ proptest! {
     let mut h = Shake256::new();
     let mut i = 0usize;
     while i < data.len() {
-      let step = (data[i] as usize % 97) + 1;
-      let end = core::cmp::min(data.len(), i + step);
+      let step = usize::from(data[i]).strict_rem(97).strict_add(1);
+      let end = core::cmp::min(data.len(), i.strict_add(step));
       h.update(&data[i..end]);
       i = end;
     }
@@ -55,7 +55,7 @@ proptest! {
     out_len in 0usize..2048,
     split in any::<usize>(),
   ) {
-    let split = split % (out_len + 1);
+    let split = split.strict_rem(out_len.strict_add(1));
 
     let mut expected = vec![0u8; out_len];
     {

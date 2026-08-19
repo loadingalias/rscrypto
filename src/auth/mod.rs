@@ -47,28 +47,28 @@
 //! ```toml
 //! [dependencies]
 //! # MAC bundle: HMAC-SHA-2/SHA-3, KMAC128/256, and standalone Poly1305
-//! rscrypto = { version = "0.6.4", default-features = false, features = ["macs"] }
+//! rscrypto = { version = "0.8.1", default-features = false, features = ["macs"] }
 //!
 //! # HKDF only
-//! rscrypto = { version = "0.6.4", default-features = false, features = ["hkdf"] }
+//! rscrypto = { version = "0.8.1", default-features = false, features = ["hkdf"] }
 //!
 //! # Ed25519 only
-//! rscrypto = { version = "0.6.4", default-features = false, features = ["ed25519"] }
+//! rscrypto = { version = "0.8.1", default-features = false, features = ["ed25519"] }
 //!
 //! # ECDSA P-256/P-384 signing and verification
-//! rscrypto = { version = "0.6.4", default-features = false, features = ["ecdsa"] }
+//! rscrypto = { version = "0.8.1", default-features = false, features = ["ecdsa"] }
 //!
 //! # RSA
-//! rscrypto = { version = "0.6.4", default-features = false, features = ["rsa"] }
+//! rscrypto = { version = "0.8.1", default-features = false, features = ["rsa"] }
 //!
 //! # Signature primitives
-//! rscrypto = { version = "0.6.4", default-features = false, features = ["signatures"] }
+//! rscrypto = { version = "0.8.1", default-features = false, features = ["signatures"] }
 //!
 //! # X25519 only
-//! rscrypto = { version = "0.6.4", default-features = false, features = ["key-exchange"] }
+//! rscrypto = { version = "0.8.1", default-features = false, features = ["key-exchange"] }
 //!
 //! # Everything in auth/key-derivation
-//! rscrypto = { version = "0.6.4", default-features = false, features = ["auth"] }
+//! rscrypto = { version = "0.8.1", default-features = false, features = ["auth"] }
 //! ```
 //!
 //! # API Conventions
@@ -115,7 +115,24 @@
 
 #[cfg(feature = "argon2")]
 pub mod argon2;
-#[cfg(any(feature = "ed25519", feature = "x25519"))]
+#[cfg(any(
+  feature = "ed25519",
+  all(
+    feature = "x25519",
+    any(
+      test,
+      miri,
+      not(any(
+        all(
+          target_arch = "aarch64",
+          any(target_os = "macos", target_os = "linux"),
+          not(feature = "portable-only")
+        ),
+        all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+      ))
+    )
+  )
+))]
 pub(crate) mod curve25519_edwards;
 #[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
 pub mod ecdsa;
@@ -133,7 +150,7 @@ pub mod kmac;
 pub mod mlkem;
 #[cfg(feature = "pbkdf2")]
 pub mod pbkdf2;
-#[cfg(feature = "phc-strings")]
+#[cfg(all(feature = "phc-strings", any(feature = "argon2", feature = "scrypt")))]
 pub(crate) mod phc;
 #[cfg(feature = "poly1305")]
 pub mod poly1305;
@@ -297,10 +314,10 @@ pub use pbkdf2::{diag_pbkdf2_sha256_verify_portable, diag_pbkdf2_sha512_verify_p
 pub use poly1305::{Poly1305, Poly1305OneTimeKey, Poly1305Tag};
 #[cfg(feature = "rsa")]
 pub use rsa::{
-  RsaEncryptionError, RsaJwtAlgorithm, RsaJwtVerifier, RsaKeyError, RsaKeyGenerationContract, RsaKeyGenerationError,
-  RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateKeyParts, RsaPrivateOpError, RsaPrivateScratch,
-  RsaProtocolAlgorithmError, RsaPssProfile, RsaPublicExponent, RsaPublicExponentPolicy, RsaPublicKey,
-  RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch, RsaSignatureProfile, RsaSignatureSigner,
+  RsaBlindingPair, RsaEncryptionError, RsaJwtAlgorithm, RsaJwtVerifier, RsaKeyError, RsaKeyGenerationContract,
+  RsaKeyGenerationError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateKeyParts, RsaPrivateOpError,
+  RsaPrivateScratch, RsaProtocolAlgorithmError, RsaPssProfile, RsaPublicExponent, RsaPublicExponentPolicy,
+  RsaPublicKey, RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch, RsaSignatureProfile, RsaSignatureSigner,
   RsaSignatureVerifier, RsaTlsSignatureSchemes, RsaX509PublicKey, RsaX509PublicKeyAlgorithm,
 };
 #[cfg(all(feature = "rsa", feature = "diag"))]

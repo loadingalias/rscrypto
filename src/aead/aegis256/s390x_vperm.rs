@@ -48,7 +48,7 @@ fn and_vec(a: i64x2, b: i64x2) -> i64x2 {
 /// Broadcast a byte to all 16 positions of a vector.
 #[inline(always)]
 fn splat_byte(b: u8) -> i64x2 {
-  let w = u64::from_ne_bytes([b; 8]) as i64;
+  let w = i64::from_ne_bytes([b; 8]);
   i64x2::from_array([w, w])
 }
 
@@ -297,38 +297,31 @@ impl VpermTables {
 // ── AEGIS-256 state operations ──────────────────────────────────────────
 
 #[target_feature(enable = "vector")]
-#[allow(clippy::too_many_arguments)]
 #[inline]
 /// # Safety
 ///
 /// Caller must ensure the s390x vector facility is available and all state
 /// registers belong to a valid AEGIS-256 state.
-unsafe fn update_regs(
-  s0: &mut i64x2,
-  s1: &mut i64x2,
-  s2: &mut i64x2,
-  s3: &mut i64x2,
-  s4: &mut i64x2,
-  s5: &mut i64x2,
-  m: i64x2,
-  tables: &VpermTables,
-) {
+unsafe fn update_regs(state: &mut [i64x2; 6], m: i64x2, tables: &VpermTables) {
   // SAFETY: caller guarantees the s390x vector facility is available for
   // this helper and all state registers are valid local values.
   unsafe {
-    let tmp = *s5;
-    *s5 = aes_round(*s4, *s5, tables);
-    *s4 = aes_round(*s3, *s4, tables);
-    *s3 = aes_round(*s2, *s3, tables);
-    *s2 = aes_round(*s1, *s2, tables);
-    *s1 = aes_round(*s0, *s1, tables);
-    *s0 = xor_vec(aes_round(tmp, *s0, tables), m);
+    let tmp = state[5];
+    state[5] = aes_round(state[4], state[5], tables);
+    state[4] = aes_round(state[3], state[4], tables);
+    state[3] = aes_round(state[2], state[3], tables);
+    state[2] = aes_round(state[1], state[2], tables);
+    state[1] = aes_round(state[0], state[1], tables);
+    state[0] = xor_vec(aes_round(tmp, state[0], tables), m);
   }
 }
 
 #[inline(always)]
-fn keystream_regs(s1: i64x2, s2: i64x2, s3: i64x2, s4: i64x2, s5: i64x2) -> i64x2 {
-  xor_vec(xor_vec(s1, s4), xor_vec(s5, and_vec(s2, s3)))
+fn keystream_regs(state: &[i64x2; 6]) -> i64x2 {
+  xor_vec(
+    xor_vec(state[1], state[4]),
+    xor_vec(state[5], and_vec(state[2], state[3])),
+  )
 }
 
 // ── Fused encrypt/decrypt ─────────────────────────────────────────────
@@ -357,64 +350,45 @@ pub(super) unsafe fn encrypt_fused(
     let c1 = load_be(&C1);
     let k0_xor_n0 = xor_vec(k0, n0);
     let k1_xor_n1 = xor_vec(k1, n1);
-    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) =
-      (k0_xor_n0, k1_xor_n1, c1, c0, xor_vec(k0, c0), xor_vec(k1, c1));
+    let mut state = [k0_xor_n0, k1_xor_n1, c1, c0, xor_vec(k0, c0), xor_vec(k1, c1)];
     for _ in 0..4 {
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0, &tables);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1, &tables);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0_xor_n0, &tables);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1_xor_n1, &tables);
+      update_regs(&mut state, k0, &tables);
+      update_regs(&mut state, k1, &tables);
+      update_regs(&mut state, k0_xor_n0, &tables);
+      update_regs(&mut state, k1_xor_n1, &tables);
     }
     let mut offset = 0usize;
     while offset.strict_add(BLOCK_SIZE) <= aad.len() {
       let mut tmp = [0u8; 16];
       tmp.copy_from_slice(&aad[offset..offset.strict_add(BLOCK_SIZE)]);
-      update_regs(
-        &mut s0,
-        &mut s1,
-        &mut s2,
-        &mut s3,
-        &mut s4,
-        &mut s5,
-        load_be(&tmp),
-        &tables,
-      );
+      update_regs(&mut state, load_be(&tmp), &tables);
       offset = offset.strict_add(BLOCK_SIZE);
     }
     if offset < aad.len() {
       let mut pad = [0u8; BLOCK_SIZE];
       pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
-      update_regs(
-        &mut s0,
-        &mut s1,
-        &mut s2,
-        &mut s3,
-        &mut s4,
-        &mut s5,
-        load_be(&pad),
-        &tables,
-      );
+      update_regs(&mut state, load_be(&pad), &tables);
     }
     let msg_len = buffer.len();
     let len = buffer.len();
     offset = 0;
     while offset.strict_add(BLOCK_SIZE) <= len {
-      let z = keystream_regs(s1, s2, s3, s4, s5);
+      let z = keystream_regs(&state);
       let mut tmp = [0u8; 16];
       tmp.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
       let xi = load_be(&tmp);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi, &tables);
+      update_regs(&mut state, xi, &tables);
       store_be(xor_vec(xi, z), &mut tmp);
       buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp);
       offset = offset.strict_add(BLOCK_SIZE);
     }
     if offset < len {
-      let z = keystream_regs(s1, s2, s3, s4, s5);
+      let z = keystream_regs(&state);
       let tail_len = len.strict_sub(offset);
       let mut pad = [0u8; BLOCK_SIZE];
       pad[..tail_len].copy_from_slice(&buffer[offset..]);
       let xi = load_be(&pad);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi, &tables);
+      update_regs(&mut state, xi, &tables);
       let mut ct_bytes = [0u8; BLOCK_SIZE];
       store_be(xor_vec(xi, z), &mut ct_bytes);
       buffer[offset..].copy_from_slice(&ct_bytes[..tail_len]);
@@ -424,11 +398,14 @@ pub(super) unsafe fn encrypt_fused(
     let mut len_bytes = [0u8; BLOCK_SIZE];
     len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
     len_bytes[8..].copy_from_slice(&msg_bits.to_le_bytes());
-    let t = xor_vec(s3, load_be(&len_bytes));
+    let t = xor_vec(state[3], load_be(&len_bytes));
     for _ in 0..7 {
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t, &tables);
+      update_regs(&mut state, t, &tables);
     }
-    let tag_vec = xor_vec(xor_vec(xor_vec(s0, s1), xor_vec(s2, s3)), xor_vec(s4, s5));
+    let tag_vec = xor_vec(
+      xor_vec(xor_vec(state[0], state[1]), xor_vec(state[2], state[3])),
+      xor_vec(state[4], state[5]),
+    );
     let mut tag = [0u8; TAG_SIZE];
     store_be(tag_vec, &mut tag);
     tag
@@ -459,59 +436,40 @@ pub(super) unsafe fn decrypt_fused(
     let c1 = load_be(&C1);
     let k0_xor_n0 = xor_vec(k0, n0);
     let k1_xor_n1 = xor_vec(k1, n1);
-    let (mut s0, mut s1, mut s2, mut s3, mut s4, mut s5) =
-      (k0_xor_n0, k1_xor_n1, c1, c0, xor_vec(k0, c0), xor_vec(k1, c1));
+    let mut state = [k0_xor_n0, k1_xor_n1, c1, c0, xor_vec(k0, c0), xor_vec(k1, c1)];
     for _ in 0..4 {
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0, &tables);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1, &tables);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k0_xor_n0, &tables);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, k1_xor_n1, &tables);
+      update_regs(&mut state, k0, &tables);
+      update_regs(&mut state, k1, &tables);
+      update_regs(&mut state, k0_xor_n0, &tables);
+      update_regs(&mut state, k1_xor_n1, &tables);
     }
     let mut offset = 0usize;
     while offset.strict_add(BLOCK_SIZE) <= aad.len() {
       let mut tmp = [0u8; 16];
       tmp.copy_from_slice(&aad[offset..offset.strict_add(BLOCK_SIZE)]);
-      update_regs(
-        &mut s0,
-        &mut s1,
-        &mut s2,
-        &mut s3,
-        &mut s4,
-        &mut s5,
-        load_be(&tmp),
-        &tables,
-      );
+      update_regs(&mut state, load_be(&tmp), &tables);
       offset = offset.strict_add(BLOCK_SIZE);
     }
     if offset < aad.len() {
       let mut pad = [0u8; BLOCK_SIZE];
       pad[..aad.len().strict_sub(offset)].copy_from_slice(&aad[offset..]);
-      update_regs(
-        &mut s0,
-        &mut s1,
-        &mut s2,
-        &mut s3,
-        &mut s4,
-        &mut s5,
-        load_be(&pad),
-        &tables,
-      );
+      update_regs(&mut state, load_be(&pad), &tables);
     }
     let ct_len = buffer.len();
     let len = buffer.len();
     offset = 0;
     while offset.strict_add(BLOCK_SIZE) <= len {
-      let z = keystream_regs(s1, s2, s3, s4, s5);
+      let z = keystream_regs(&state);
       let mut tmp = [0u8; 16];
       tmp.copy_from_slice(&buffer[offset..offset.strict_add(BLOCK_SIZE)]);
       let xi = xor_vec(load_be(&tmp), z);
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, xi, &tables);
+      update_regs(&mut state, xi, &tables);
       store_be(xi, &mut tmp);
       buffer[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&tmp);
       offset = offset.strict_add(BLOCK_SIZE);
     }
     if offset < len {
-      let z = keystream_regs(s1, s2, s3, s4, s5);
+      let z = keystream_regs(&state);
       let tail_len = len.strict_sub(offset);
       let mut pad = [0u8; BLOCK_SIZE];
       pad[..tail_len].copy_from_slice(&buffer[offset..]);
@@ -521,16 +479,7 @@ pub(super) unsafe fn decrypt_fused(
       for i in 0..tail_len {
         pt_pad[i] = pad[i] ^ z_bytes[i];
       }
-      update_regs(
-        &mut s0,
-        &mut s1,
-        &mut s2,
-        &mut s3,
-        &mut s4,
-        &mut s5,
-        load_be(&pt_pad),
-        &tables,
-      );
+      update_regs(&mut state, load_be(&pt_pad), &tables);
       buffer[offset..].copy_from_slice(&pt_pad[..tail_len]);
     }
     let ad_bits = (aad.len() as u64).strict_mul(8);
@@ -538,11 +487,14 @@ pub(super) unsafe fn decrypt_fused(
     let mut len_bytes = [0u8; BLOCK_SIZE];
     len_bytes[..8].copy_from_slice(&ad_bits.to_le_bytes());
     len_bytes[8..].copy_from_slice(&ct_bits.to_le_bytes());
-    let t = xor_vec(s3, load_be(&len_bytes));
+    let t = xor_vec(state[3], load_be(&len_bytes));
     for _ in 0..7 {
-      update_regs(&mut s0, &mut s1, &mut s2, &mut s3, &mut s4, &mut s5, t, &tables);
+      update_regs(&mut state, t, &tables);
     }
-    let tag_vec = xor_vec(xor_vec(xor_vec(s0, s1), xor_vec(s2, s3)), xor_vec(s4, s5));
+    let tag_vec = xor_vec(
+      xor_vec(xor_vec(state[0], state[1]), xor_vec(state[2], state[3])),
+      xor_vec(state[4], state[5]),
+    );
     let mut tag = [0u8; TAG_SIZE];
     store_be(tag_vec, &mut tag);
     tag

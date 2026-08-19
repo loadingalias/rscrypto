@@ -63,7 +63,7 @@ fn parallel_chunks() {
   println!("Parallel chunk processing\n");
 
   // Simulate large data (in practice, this could be a memory-mapped file)
-  let data: Vec<u8> = (0..1_000_000).map(|i| (i % 256) as u8).collect();
+  let data: Vec<u8> = (0usize..1_000_000).map(|i| i.to_le_bytes()[0]).collect();
 
   let chunk_size = 250_000; // 4 chunks of 250KB each
 
@@ -74,12 +74,9 @@ fn parallel_chunks() {
   // Parallel: compute each chunk's CRC, then combine
   let chunks: Vec<_> = data.chunks(chunk_size).collect();
   let chunk_crcs: Vec<_> = thread::scope(|scope| {
-    let handles: Vec<_> = chunks
+    chunks
       .iter()
       .map(|&chunk| scope.spawn(move || Crc64::checksum(chunk)))
-      .collect();
-    handles
-      .into_iter()
       .map(|handle| handle.join().expect("thread panicked"))
       .collect()
   });
@@ -100,7 +97,12 @@ fn threaded_example() {
   println!("Threaded processing\n");
 
   // Generate test data
-  let data: Vec<u8> = (0..4_000_000).map(|i| ((i * 17) % 256) as u8).collect();
+  let data: Vec<u8> = (0usize..4_000_000)
+    .map(|i| {
+      let value = i.strict_mul(17).strict_rem(256);
+      u8::try_from(value).expect("threaded fixture byte must fit in u8")
+    })
+    .collect();
 
   let num_threads = 4;
   let chunk_size = data.len() / num_threads;
@@ -114,12 +116,9 @@ fn threaded_example() {
 
   // Spawn scoped threads to compute each chunk's CRC without copying chunk data.
   let mut results: Vec<(usize, u64, usize)> = thread::scope(|scope| {
-    let handles: Vec<_> = chunks
+    chunks
       .iter()
       .map(|&(idx, chunk)| scope.spawn(move || (idx, Crc64::checksum(chunk), chunk.len())))
-      .collect();
-    handles
-      .into_iter()
       .map(|handle| handle.join().expect("thread panicked"))
       .collect()
   });

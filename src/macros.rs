@@ -9,6 +9,7 @@ macro_rules! define_unit_error {
     $vis struct $name;
 
     impl $name {
+      /// Construct this error value.
       #[inline]
       #[must_use]
       pub const fn new() -> Self {
@@ -37,7 +38,6 @@ macro_rules! define_unit_error {
 macro_rules! impl_std_io_write_for_checksum {
   ($type:ty) => {
     #[cfg(feature = "std")]
-    #[allow(clippy::std_instead_of_core)]
     impl std::io::Write for $type {
       #[inline]
       fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -54,9 +54,7 @@ macro_rules! impl_std_io_write_for_checksum {
       fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
         let mut written = 0usize;
         for buf in bufs {
-          written = written
-            .checked_add(buf.len())
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "vectored write length overflow"))?;
+          written = written.saturating_add(buf.len());
         }
         for buf in bufs {
           <Self as crate::traits::Checksum>::update(self, buf.as_ref());
@@ -78,7 +76,6 @@ macro_rules! impl_std_io_write_for_checksum {
 macro_rules! impl_std_io_write_for_digest {
   ($type:ty) => {
     #[cfg(feature = "std")]
-    #[allow(clippy::std_instead_of_core)]
     impl std::io::Write for $type {
       #[inline]
       fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -95,9 +92,7 @@ macro_rules! impl_std_io_write_for_digest {
       fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
         let mut written = 0usize;
         for buf in bufs {
-          written = written
-            .checked_add(buf.len())
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "vectored write length overflow"))?;
+          written = written.saturating_add(buf.len());
         }
         for buf in bufs {
           <Self as crate::traits::Digest>::update(self, buf.as_ref());
@@ -109,7 +104,7 @@ macro_rules! impl_std_io_write_for_digest {
 }
 
 #[cfg(all(
-  any(target_arch = "aarch64", target_arch = "riscv64", target_arch = "x86_64"),
+  any(target_arch = "aarch64", target_arch = "x86_64"),
   any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
 ))]
 macro_rules! define_target_feature_forwarder {
@@ -128,6 +123,7 @@ macro_rules! define_target_feature_forwarder {
     }
 
     #[target_feature(enable = $feature)]
+    #[doc = concat!("Forward through the `", $feature, "` target-feature boundary.\n\n# Safety\n\nThe current CPU must support the named target feature. The safe outer wrapper may call this function only after its dispatch invariant has established that capability.")]
     unsafe fn __target_feature_forwarder_impl($($arg : $arg_ty),*) $(-> $ret)? {
       // SAFETY: $inner_safety
       unsafe { $call }
@@ -158,8 +154,7 @@ macro_rules! define_sha_family_dispatch {
     #[derive(Clone, Copy)]
     struct Entry {
       compress_blocks: $compress_fn_ty,
-      #[cfg(any(test, feature = "diag"))]
-      #[allow(dead_code)]
+      #[cfg(feature = "diag")]
       name: &'static str,
     }
 
@@ -200,22 +195,22 @@ macro_rules! define_sha_family_dispatch {
           boundaries: table.boundaries,
           xs: Entry {
             compress_blocks: $compress_fn(xs_id),
-            #[cfg(any(test, feature = "diag"))]
+            #[cfg(feature = "diag")]
             name: xs_id.as_str(),
           },
           s: Entry {
             compress_blocks: $compress_fn(s_id),
-            #[cfg(any(test, feature = "diag"))]
+            #[cfg(feature = "diag")]
             name: s_id.as_str(),
           },
           m: Entry {
             compress_blocks: $compress_fn(m_id),
-            #[cfg(any(test, feature = "diag"))]
+            #[cfg(feature = "diag")]
             name: m_id.as_str(),
           },
           l: Entry {
             compress_blocks: $compress_fn(l_id),
-            #[cfg(any(test, feature = "diag"))]
+            #[cfg(feature = "diag")]
             name: l_id.as_str(),
           },
         }
@@ -237,11 +232,10 @@ macro_rules! define_sha_family_dispatch {
       }
     }
 
-    #[cfg(any(test, feature = "diag"))]
-    #[allow(dead_code)]
+    #[cfg(feature = "diag")]
     #[inline]
     #[must_use]
-    pub fn kernel_name_for_len(len: usize) -> &'static str {
+    pub(crate) fn kernel_name_for_len(len: usize) -> &'static str {
       if $compile_time_hw {
         return $compile_time_name;
       }
@@ -251,7 +245,7 @@ macro_rules! define_sha_family_dispatch {
 
     #[inline]
     #[must_use]
-    pub fn digest(data: &[u8]) -> [u8; $output_len] {
+    pub(crate) fn digest(data: &[u8]) -> [u8; $output_len] {
       if $compile_time_hw {
         return digest_oneshot(data, $compile_time_best);
       }
@@ -332,8 +326,7 @@ macro_rules! define_blake2_dispatch {
     struct Resolved {
       compress: $compress_fn_ty,
       compress_blocks: $compress_blocks_fn_ty,
-      #[cfg(any(test, feature = "diag"))]
-      #[allow(dead_code)]
+      #[cfg(feature = "diag")]
       name: &'static str,
     }
 
@@ -350,7 +343,7 @@ macro_rules! define_blake2_dispatch {
           return Resolved {
             compress: $compress_fn(id),
             compress_blocks: $compress_blocks_fn(id),
-            #[cfg(any(test, feature = "diag"))]
+            #[cfg(feature = "diag")]
             name: id.as_str(),
           };
         }
@@ -359,7 +352,7 @@ macro_rules! define_blake2_dispatch {
       Resolved {
         compress: $compress_fn($portable_kernel),
         compress_blocks: $compress_blocks_fn($portable_kernel),
-        #[cfg(any(test, feature = "diag"))]
+        #[cfg(feature = "diag")]
         name: $portable_kernel.as_str(),
       }
     }
@@ -392,11 +385,10 @@ macro_rules! define_blake2_dispatch {
       ACTIVE.get_or_init(resolve).compress_blocks
     }
 
-    #[cfg(any(test, feature = "diag"))]
-    #[allow(dead_code)]
+    #[cfg(feature = "diag")]
     #[inline]
     #[must_use]
-    pub fn kernel_name_for_len(_len: usize) -> &'static str {
+    pub(super) fn kernel_name_for_len(_len: usize) -> &'static str {
       if super::kernels::COMPILE_TIME_HW {
         return compile_time_name();
       }
@@ -408,8 +400,7 @@ macro_rules! define_blake2_dispatch {
       ACTIVE.get_or_init(resolve).name
     }
 
-    #[cfg(any(test, feature = "diag"))]
-    #[allow(dead_code)]
+    #[cfg(feature = "diag")]
     const fn compile_time_name() -> &'static str {
       if cfg!(all(
         target_arch = "x86_64",

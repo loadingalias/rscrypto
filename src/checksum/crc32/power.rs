@@ -8,16 +8,15 @@
 //! Uses `unsafe` for Power SIMD + inline assembly. Callers must ensure the
 //! required CPU features are available before executing the accelerated path
 //! (the dispatcher does this).
-#![allow(unsafe_code)]
-#![allow(dead_code)] // Kernels wired up via dispatcher
 // SAFETY: All indexing is over fixed-size arrays with in-bounds constant indices.
-#![allow(clippy::indexing_slicing)]
 
 use core::{
   arch::asm,
   ops::{BitAnd, BitXor, BitXorAssign},
   simd::i64x2,
 };
+
+use crate::checksum::common::low_u32;
 
 use super::clmul::{Crc32ClmulConstants, Crc32StreamConstants};
 
@@ -78,6 +77,10 @@ impl Simd {
   /// On `powerpc64le` this is a no-op. On big-endian `powerpc64`, we byte-swap
   /// each 64-bit lane so the folding algorithm sees the same lane values as on
   /// little-endian platforms.
+  ///
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, and POWER8 vector instructions are available.
   #[inline]
   #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
   unsafe fn to_le(self) -> Self {
@@ -103,6 +106,9 @@ impl Simd {
     }
   }
 
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
   #[inline]
   #[target_feature(
     enable = "altivec",
@@ -125,6 +131,9 @@ impl Simd {
     }
   }
 
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
   #[inline]
   #[target_feature(
     enable = "altivec",
@@ -144,6 +153,10 @@ impl Simd {
 
   /// Fold 16 bytes (reflected CRC32 folding primitive):
   /// `self.low ⊗ coeff.high ⊕ self.high ⊗ coeff.low`.
+  ///
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
   #[inline]
   #[target_feature(
     enable = "altivec",
@@ -162,6 +175,10 @@ impl Simd {
   }
 
   /// Fold 16B → CRC32 width (reflected), returning an intermediate 128-bit state.
+  ///
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
   #[inline]
   #[target_feature(
     enable = "altivec",
@@ -190,6 +207,10 @@ impl Simd {
   }
 
   /// Barrett reduction for reflected CRC32; returns the updated (pre-inverted) CRC.
+  ///
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
   #[inline]
   #[target_feature(
     enable = "altivec",
@@ -204,13 +225,16 @@ impl Simd {
       // Mirror the x86 reduction scheme (2 multiplies + xor, extract hi32).
       let t1 = Self::mul64(self.low_64(), mu);
       let l = Self::mul64(t1.low_64(), poly);
-      (self ^ l).high_64() as u32
+      low_u32((self ^ l).high_64())
     }
   }
 }
 
 // Folding helpers
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline(always)]
 unsafe fn fold_tail(x: [Simd; 8], consts: &Crc32ClmulConstants) -> u32 {
   // SAFETY: All target-feature-gated calls require power8-crypto, ensured by callers'
@@ -239,6 +263,9 @@ unsafe fn fold_tail(x: [Simd; 8], consts: &Crc32ClmulConstants) -> u32 {
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -261,6 +288,9 @@ unsafe fn fold_block_128(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: Simd) {
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[target_feature(
   enable = "altivec",
   enable = "vsx",
@@ -293,6 +323,9 @@ unsafe fn update_simd(state: u32, first: &[Simd; 8], rest: &[[Simd; 8]], consts:
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[target_feature(
   enable = "altivec",
   enable = "vsx",
@@ -348,7 +381,7 @@ unsafe fn update_simd_2way(
     let mut i = 2usize;
     while i < even {
       fold_block_128(&mut s0, &blocks[i], coeff_256);
-      fold_block_128(&mut s1, &blocks[i + 1], coeff_256);
+      fold_block_128(&mut s1, &blocks[i.strict_add(1)], coeff_256);
       i = i.strict_add(2);
     }
 
@@ -371,6 +404,9 @@ unsafe fn update_simd_2way(
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[target_feature(
   enable = "altivec",
   enable = "vsx",
@@ -396,7 +432,7 @@ unsafe fn update_simd_4way(
       return update_simd(state, first, rest, consts);
     }
 
-    let aligned = (blocks.len() / 4) * 4;
+    let aligned = blocks.len() & !3_usize;
 
     let coeff_512 = Simd::new(fold_512b.0, fold_512b.1);
     let coeff_128 = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
@@ -450,9 +486,9 @@ unsafe fn update_simd_4way(
     let mut i = 4usize;
     while i < aligned {
       fold_block_128(&mut s0, &blocks[i], coeff_512);
-      fold_block_128(&mut s1, &blocks[i + 1], coeff_512);
-      fold_block_128(&mut s2, &blocks[i + 2], coeff_512);
-      fold_block_128(&mut s3, &blocks[i + 3], coeff_512);
+      fold_block_128(&mut s1, &blocks[i.strict_add(1)], coeff_512);
+      fold_block_128(&mut s2, &blocks[i.strict_add(2)], coeff_512);
+      fold_block_128(&mut s3, &blocks[i.strict_add(3)], coeff_512);
       i = i.strict_add(4);
     }
 
@@ -503,6 +539,9 @@ unsafe fn update_simd_4way(
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[target_feature(
   enable = "altivec",
   enable = "vsx",
@@ -528,7 +567,7 @@ unsafe fn update_simd_8way(
       return update_simd(state, first, rest, consts);
     }
 
-    let aligned = (blocks.len() / 8) * 8;
+    let aligned = blocks.len() & !7_usize;
 
     let coeff_1024 = Simd::new(fold_1024b.0, fold_1024b.1);
     let coeff_128 = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
@@ -568,13 +607,13 @@ unsafe fn update_simd_8way(
     let mut idx = 8usize;
     while idx < aligned {
       fold_block_128(&mut s0, &blocks[idx], coeff_1024);
-      fold_block_128(&mut s1, &blocks[idx + 1], coeff_1024);
-      fold_block_128(&mut s2, &blocks[idx + 2], coeff_1024);
-      fold_block_128(&mut s3, &blocks[idx + 3], coeff_1024);
-      fold_block_128(&mut s4, &blocks[idx + 4], coeff_1024);
-      fold_block_128(&mut s5, &blocks[idx + 5], coeff_1024);
-      fold_block_128(&mut s6, &blocks[idx + 6], coeff_1024);
-      fold_block_128(&mut s7, &blocks[idx + 7], coeff_1024);
+      fold_block_128(&mut s1, &blocks[idx.strict_add(1)], coeff_1024);
+      fold_block_128(&mut s2, &blocks[idx.strict_add(2)], coeff_1024);
+      fold_block_128(&mut s3, &blocks[idx.strict_add(3)], coeff_1024);
+      fold_block_128(&mut s4, &blocks[idx.strict_add(4)], coeff_1024);
+      fold_block_128(&mut s5, &blocks[idx.strict_add(5)], coeff_1024);
+      fold_block_128(&mut s6, &blocks[idx.strict_add(6)], coeff_1024);
+      fold_block_128(&mut s7, &blocks[idx.strict_add(7)], coeff_1024);
       idx = idx.strict_add(8);
     }
 
@@ -611,6 +650,9 @@ unsafe fn update_simd_8way(
 
 // Public kernels (IEEE + CRC32C)
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -635,6 +677,9 @@ unsafe fn crc32_fold_kernel(crc: u32, data: &[u8], consts: &Crc32ClmulConstants)
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -658,6 +703,9 @@ unsafe fn crc32c_fold_kernel(crc: u32, data: &[u8], consts: &Crc32ClmulConstants
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -693,6 +741,9 @@ unsafe fn crc32_fold_kernel_nway<const N: usize>(
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -731,13 +782,13 @@ unsafe fn crc32c_fold_kernel_nway<const N: usize>(
 // Safe wrappers (dispatcher entrypoints)
 
 #[inline]
-pub fn crc32_ieee_vpmsum_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32_ieee_vpmsum_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe { crc32_fold_kernel(crc, data, &super::clmul::CRC32_IEEE_CLMUL) }
 }
 
 #[inline]
-pub fn crc32_ieee_vpmsum_2way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32_ieee_vpmsum_2way_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe {
     crc32_fold_kernel_nway::<2>(
@@ -750,7 +801,7 @@ pub fn crc32_ieee_vpmsum_2way_safe(crc: u32, data: &[u8]) -> u32 {
 }
 
 #[inline]
-pub fn crc32_ieee_vpmsum_4way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32_ieee_vpmsum_4way_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe {
     crc32_fold_kernel_nway::<4>(
@@ -763,7 +814,7 @@ pub fn crc32_ieee_vpmsum_4way_safe(crc: u32, data: &[u8]) -> u32 {
 }
 
 #[inline]
-pub fn crc32_ieee_vpmsum_8way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32_ieee_vpmsum_8way_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe {
     crc32_fold_kernel_nway::<8>(
@@ -776,25 +827,25 @@ pub fn crc32_ieee_vpmsum_8way_safe(crc: u32, data: &[u8]) -> u32 {
 }
 
 #[inline]
-pub fn crc32c_vpmsum_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32c_vpmsum_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe { crc32c_fold_kernel(crc, data, &super::clmul::CRC32C_CLMUL) }
 }
 
 #[inline]
-pub fn crc32c_vpmsum_2way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32c_vpmsum_2way_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe { crc32c_fold_kernel_nway::<2>(crc, data, &super::clmul::CRC32C_STREAM, &super::clmul::CRC32C_CLMUL) }
 }
 
 #[inline]
-pub fn crc32c_vpmsum_4way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32c_vpmsum_4way_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe { crc32c_fold_kernel_nway::<4>(crc, data, &super::clmul::CRC32C_STREAM, &super::clmul::CRC32C_CLMUL) }
 }
 
 #[inline]
-pub fn crc32c_vpmsum_8way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc32c_vpmsum_8way_safe(crc: u32, data: &[u8]) -> u32 {
   // SAFETY: Dispatcher verifies VPMSUM-ready CPU features before selecting this kernel.
   unsafe { crc32c_fold_kernel_nway::<8>(crc, data, &super::clmul::CRC32C_STREAM, &super::clmul::CRC32C_CLMUL) }
 }

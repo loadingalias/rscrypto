@@ -96,7 +96,8 @@ fn hwcap_batch_aarch64() -> Caps {
 
     // Parse as array of (u64, u64) pairs
     let entries = buf.get(..n)?;
-    for chunk in entries.chunks_exact(16) {
+    let (entries, _) = entries.as_chunks::<16>();
+    for chunk in entries {
       let a_type = u64::from_ne_bytes(chunk.get(0..8)?.try_into().ok()?);
       let a_val = u64::from_ne_bytes(chunk.get(8..16)?.try_into().ok()?);
 
@@ -380,6 +381,7 @@ fn runtime_aarch64() -> Caps {
 #[cfg(all(
   target_arch = "aarch64",
   feature = "std",
+  any(test, feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"),
   any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -403,7 +405,6 @@ enum AppleSiliconGen {
   feature = "std",
   any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
-#[cfg_attr(miri, allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Aarch64TuneFamily {
   #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
@@ -427,6 +428,7 @@ pub(crate) enum Aarch64TuneFamily {
 #[cfg(all(
   target_arch = "aarch64",
   feature = "std",
+  any(test, feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"),
   any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
 fn detect_apple_silicon_gen() -> Option<AppleSiliconGen> {
@@ -459,9 +461,7 @@ fn detect_apple_silicon_gen() -> Option<AppleSiliconGen> {
 
   // Direct extern "C" linkage to libSystem's sysctlbyname
   // (libSystem is always linked on Apple platforms)
-  // SAFETY: This extern block declares a C function from libSystem.
   // The function signature matches Apple's sysctlbyname(3).
-  #[allow(unsafe_code)]
   unsafe extern "C" {
     fn sysctlbyname(
       name: *const u8,
@@ -478,7 +478,6 @@ fn detect_apple_silicon_gen() -> Option<AppleSiliconGen> {
   // SAFETY: sysctlbyname is safe to call with valid pointers.
   // "hw.cpufamily" is a valid null-terminated string.
   // The output buffer is properly sized for u32.
-  #[allow(unsafe_code)]
   let ret = unsafe {
     sysctlbyname(
       c"hw.cpufamily".as_ptr().cast(),
@@ -500,10 +499,10 @@ fn detect_apple_silicon_gen() -> Option<AppleSiliconGen> {
     CPUFAMILY_ARM_DONAN | CPUFAMILY_ARM_BRAVA => Some(AppleSiliconGen::M4),
     CPUFAMILY_ARM_HIDRA | CPUFAMILY_ARM_SOTRA => Some(AppleSiliconGen::M5),
     // A-series chips - treat as M-series equivalent for tuning
-    CPUFAMILY_ARM_COLL => Some(AppleSiliconGen::M2),                        // A17 Pro ≈ M2 architecture
+    CPUFAMILY_ARM_COLL => Some(AppleSiliconGen::M2), // A17 Pro ≈ M2 architecture
     CPUFAMILY_ARM_TAHITI | CPUFAMILY_ARM_TUPAI => Some(AppleSiliconGen::M4), // A18 ≈ M4 architecture
-    CPUFAMILY_ARM_TILOS | CPUFAMILY_ARM_THERA => Some(AppleSiliconGen::M5),  // A19 ≈ M5 architecture
-    _ => None, // Unknown future chip - will fall back to feature-based detection
+    CPUFAMILY_ARM_TILOS | CPUFAMILY_ARM_THERA => Some(AppleSiliconGen::M5), // A19 ≈ M5 architecture
+    _ => None,                                       // Unknown future chip - will fall back to feature-based detection
   }
 }
 
@@ -514,7 +513,6 @@ fn detect_apple_silicon_gen() -> Option<AppleSiliconGen> {
   any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
 #[must_use]
-#[cfg_attr(miri, allow(dead_code))]
 pub(crate) fn detect_aarch64_tune_family() -> Option<Aarch64TuneFamily> {
   #[cfg(all(
     feature = "std",
@@ -552,8 +550,6 @@ fn detect_apple_sme_features() -> Caps {
   // Helper to read a u32 sysctl value (returns 0 on error or false, 1 on true)
   fn sysctl_u32(name: &[u8]) -> u32 {
     // Direct extern "C" linkage to libSystem's sysctlbyname
-    // SAFETY: This extern block declares a C function from libSystem.
-    #[allow(unsafe_code)]
     unsafe extern "C" {
       fn sysctlbyname(
         name: *const u8,
@@ -570,7 +566,6 @@ fn detect_apple_sme_features() -> Caps {
     // SAFETY: sysctlbyname is safe to call with valid pointers.
     // name is a valid null-terminated C string.
     // The output buffer is properly sized for u32.
-    #[allow(unsafe_code)]
     let ret = unsafe {
       sysctlbyname(
         name.as_ptr(),
@@ -612,171 +607,6 @@ fn detect_apple_sme_features() -> Caps {
   }
 
   caps
-}
-
-// TODO(T7): Feed Apple SVL into production SME dispatch only after an
-// SVL-sensitive kernel wins representative target-native benchmarks.
-/// Detect SME streaming vector length in bytes on Apple platforms.
-///
-/// Returns the maximum SVL in bytes, or 0 if SME is not supported or detection failed.
-///
-/// On Apple Silicon:
-/// - M4: SME with 128-bit tiles (SVL = 16 bytes)
-/// - M5: SME2p1 with 128-bit tiles (SVL = 16 bytes)
-///
-/// Note: Apple's implementation uses fixed 128-bit SVL, unlike server ARM chips
-/// which may support 128-512 bit configurable SVL.
-#[cfg(all(
-  target_arch = "aarch64",
-  feature = "std",
-  any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")
-))]
-#[allow(dead_code)]
-fn detect_apple_sme_tile_size() -> u16 {
-  fn sysctl_u32(name: &[u8]) -> u32 {
-    #[allow(unsafe_code)]
-    unsafe extern "C" {
-      fn sysctlbyname(
-        name: *const u8,
-        oldp: *mut core::ffi::c_void,
-        oldlenp: *mut usize,
-        newp: *const core::ffi::c_void,
-        newlen: usize,
-      ) -> i32;
-    }
-
-    let mut value: u32 = 0;
-    let mut size = core::mem::size_of::<u32>();
-
-    #[allow(unsafe_code)]
-    // SAFETY: `sysctlbyname` expects `name` to be a valid NUL-terminated C string (caller provides this),
-    // `oldp`/`oldlenp` point to writable locals, and `newp` is null with `newlen = 0` (no write).
-    let ret = unsafe {
-      sysctlbyname(
-        name.as_ptr(),
-        core::ptr::addr_of_mut!(value).cast(),
-        core::ptr::addr_of_mut!(size),
-        core::ptr::null(),
-        0,
-      )
-    };
-
-    if ret == 0 { value } else { 0 }
-  }
-
-  let svl_bytes = sysctl_u32(c"hw.optional.arm.sme_max_svl_b".to_bytes_with_nul());
-  if svl_bytes > 0 {
-    return svl_bytes as u16;
-  }
-
-  if let Some(AppleSiliconGen::M4 | AppleSiliconGen::M5) = detect_apple_silicon_gen() {
-    return 16;
-  }
-
-  0
-}
-
-// TODO(T7): Feed SVE VL into production dispatch only after a length-sensitive
-// SVE kernel wins representative target-native benchmarks.
-/// Detect SVE vector length in bits via prctl(PR_SVE_GET_VL).
-///
-/// Uses raw syscall to avoid libc dependency. Returns 0 if SVE is not supported.
-#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "std"))]
-#[allow(dead_code)]
-fn detect_sve_vlen() -> u16 {
-  const SYS_PRCTL: u64 = 167;
-  const PR_SVE_GET_VL: u64 = 51;
-  const PR_SVE_VL_LEN_MASK: u64 = 0xFFFF;
-
-  let result: i64;
-
-  // SAFETY: prctl(PR_SVE_GET_VL) is always safe to call.
-  // Returns the vector length in bytes on success, or -EINVAL if SVE unsupported.
-  #[allow(unsafe_code)]
-  unsafe {
-    core::arch::asm!(
-      "svc #0",
-      in("x8") SYS_PRCTL,
-      in("x0") PR_SVE_GET_VL,
-      in("x1") 0u64,
-      in("x2") 0u64,
-      in("x3") 0u64,
-      in("x4") 0u64,
-      lateout("x0") result,
-      options(nostack)
-    );
-  }
-
-  if result < 0 {
-    return 0;
-  }
-
-  let vl_bytes = (result as u64) & PR_SVE_VL_LEN_MASK;
-  let vl_bits = vl_bytes.strict_mul(8);
-  if vl_bits > u16::MAX as u64 {
-    u16::MAX
-  } else {
-    vl_bits as u16
-  }
-}
-
-/// Fallback SVE vector length detection for non-Linux platforms.
-#[cfg(all(target_arch = "aarch64", not(all(target_os = "linux", feature = "std"))))]
-#[allow(dead_code)]
-fn detect_sve_vlen() -> u16 {
-  0
-}
-
-// TODO(T7): Feed SME VL into production dispatch only after a length-sensitive
-// SME kernel wins representative target-native benchmarks.
-/// Detect SME streaming vector length in bits via prctl(PR_SME_GET_VL).
-///
-/// Uses raw syscall to avoid libc dependency. Returns 0 if SME is not supported.
-/// The SME vector length determines the tile size (SVL × SVL bits).
-#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "std"))]
-#[allow(dead_code)]
-fn detect_sme_vlen() -> u16 {
-  const SYS_PRCTL: u64 = 167;
-  const PR_SME_GET_VL: u64 = 63;
-  const PR_SME_VL_LEN_MASK: u64 = 0xFFFF;
-
-  let result: i64;
-
-  // SAFETY: prctl(PR_SME_GET_VL) is always safe to call.
-  // Returns the streaming vector length in bytes on success, or -EINVAL if SME unsupported.
-  #[allow(unsafe_code)]
-  unsafe {
-    core::arch::asm!(
-      "svc #0",
-      in("x8") SYS_PRCTL,
-      in("x0") PR_SME_GET_VL,
-      in("x1") 0u64,
-      in("x2") 0u64,
-      in("x3") 0u64,
-      in("x4") 0u64,
-      lateout("x0") result,
-      options(nostack)
-    );
-  }
-
-  if result < 0 {
-    return 0;
-  }
-
-  let vl_bytes = (result as u64) & PR_SME_VL_LEN_MASK;
-  let vl_bits = vl_bytes.strict_mul(8);
-  if vl_bits > u16::MAX as u64 {
-    u16::MAX
-  } else {
-    vl_bits as u16
-  }
-}
-
-/// Fallback SME vector length detection for non-Linux platforms.
-#[cfg(all(target_arch = "aarch64", not(all(target_os = "linux", feature = "std"))))]
-#[allow(dead_code)]
-fn detect_sme_vlen() -> u16 {
-  0
 }
 
 // MIDR_EL1 Detection (Linux aarch64)
@@ -859,7 +689,10 @@ fn parse_u32_auto_radix(value: &str) -> Option<u32> {
     return u32::from_str_radix(hex, 16).ok();
   }
 
-  value.parse::<u32>().ok().or_else(|| u32::from_str_radix(value, 16).ok())
+  value
+    .parse::<u32>()
+    .ok()
+    .or_else(|| u32::from_str_radix(value, 16).ok())
 }
 
 #[cfg(all(

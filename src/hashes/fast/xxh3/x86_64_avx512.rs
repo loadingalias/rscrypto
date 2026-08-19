@@ -7,8 +7,6 @@
 //!
 //! Uses `unsafe` for AVX-512F intrinsics. Callers must ensure AVX-512F is
 //! available before executing the accelerated path (the dispatcher does this).
-#![allow(unsafe_code)]
-#![allow(clippy::indexing_slicing)]
 
 use core::arch::x86_64::*;
 
@@ -27,18 +25,26 @@ const SWAP32: i32 = 0x4E;
 
 #[inline]
 #[target_feature(enable = "avx512f")]
+/// # Safety
+///
+/// The current CPU must support AVX-512F.
 unsafe fn load_acc(initial: &[u64; ACC_NB]) -> __m512i {
-  // SAFETY: AVX-512F available via target_feature. Pointer valid for 8 × u64.
-  unsafe { _mm512_loadu_si512(initial.as_ptr() as *const __m512i) }
+  // SAFETY: The function attribute enables the unaligned AVX-512F load, and
+  // `initial` contains the eight readable lanes loaded here.
+  unsafe { _mm512_loadu_si512(initial.as_ptr().cast()) }
 }
 
 #[inline]
 #[target_feature(enable = "avx512f")]
+/// # Safety
+///
+/// The current CPU must support AVX-512F.
 unsafe fn store_acc(acc: __m512i) -> [u64; ACC_NB] {
-  // SAFETY: AVX-512F available via target_feature.
+  // SAFETY: The function attribute enables the unaligned AVX-512F store, and
+  // `out` contains the eight writable lanes stored here.
   unsafe {
     let mut out = [0u64; ACC_NB];
-    _mm512_storeu_si512(out.as_mut_ptr() as *mut __m512i, acc);
+    _mm512_storeu_si512(out.as_mut_ptr().cast(), acc);
     out
   }
 }
@@ -48,14 +54,19 @@ unsafe fn store_acc(acc: __m512i) -> [u64; ACC_NB] {
 /// Processes all 8 u64 accumulators simultaneously:
 /// 1. Load full 64 B stripe + 64 B secret in one shot
 /// 2. XOR → shift → multiply → shuffle-swap → accumulate
+///
+/// # Safety
+///
+/// The current CPU must support AVX-512F. `stripe` and `secret` must each
+/// remain valid to read 64 initialized bytes from one allocation.
 #[inline]
 #[target_feature(enable = "avx512f")]
 unsafe fn accumulate_512(acc: &mut __m512i, stripe: *const u8, secret: *const u8) {
   // SAFETY: AVX-512F available via target_feature. Caller ensures stripe and
   // secret point to ≥64 valid bytes.
   unsafe {
-    let data_vec = _mm512_loadu_si512(stripe as *const __m512i);
-    let key_vec = _mm512_loadu_si512(secret as *const __m512i);
+    let data_vec = _mm512_loadu_si512(stripe.cast());
+    let key_vec = _mm512_loadu_si512(secret.cast());
     let data_key = _mm512_xor_si512(data_vec, key_vec);
 
     // u32 × u32 → u64 multiply: low32(data_key) × high32(data_key)
@@ -70,18 +81,23 @@ unsafe fn accumulate_512(acc: &mut __m512i, stripe: *const u8, secret: *const u8
 }
 
 /// Scramble the accumulator at block boundaries — single iteration.
+///
+/// # Safety
+///
+/// The current CPU must support AVX-512F. `secret` must remain valid to read
+/// 64 initialized bytes from one allocation.
 #[inline]
 #[target_feature(enable = "avx512f")]
 unsafe fn scramble_acc(acc: &mut __m512i, secret: *const u8) {
   // SAFETY: AVX-512F available via target_feature. Caller ensures secret
   // points to ≥64 valid bytes.
   unsafe {
-    let prime32 = _mm512_set1_epi32(PRIME32_1 as i32);
+    let prime32 = _mm512_set1_epi32(PRIME32_1.cast_signed());
 
     let shifted = _mm512_srli_epi64::<47>(*acc);
     let data_vec = _mm512_xor_si512(*acc, shifted);
 
-    let key_vec = _mm512_loadu_si512(secret as *const __m512i);
+    let key_vec = _mm512_loadu_si512(secret.cast());
     let data_key = _mm512_xor_si512(data_vec, key_vec);
 
     // 64-bit multiply by PRIME32_1 (split into lo + hi halves)
@@ -95,6 +111,10 @@ unsafe fn scramble_acc(acc: &mut __m512i, secret: *const u8) {
 // Long-path loop (SIMD inner, scalar merge)
 
 #[target_feature(enable = "avx512f")]
+/// # Safety
+///
+/// The current CPU must support AVX-512F. `stripes` must be nonzero, and the
+/// requested input and secret stripes must be within their slices.
 unsafe fn stream_accumulate_inner(
   initial: [u64; ACC_NB],
   input: &[u8],
@@ -114,7 +134,8 @@ unsafe fn stream_accumulate_inner(
   );
   // SAFETY: Accumulating validated XXH3 stripes because:
   // 1. The dispatcher selects this function only when AVX-512F is available.
-  // 2. The assertions above prove every 64-byte input and secret load is in bounds.
+  // 2. The caller contract keeps every 64-byte input and secret load in bounds;
+  //    the assertions above check that contract in debug builds.
   // 3. `initial` and the returned array each contain exactly eight `u64` lanes.
   unsafe {
     let mut acc = load_acc(&initial);
@@ -170,15 +191,19 @@ pub(crate) unsafe fn stream_accumulate(
 }
 
 #[target_feature(enable = "avx512f")]
-unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] {
+/// # Safety
+///
+/// The current CPU must support AVX-512F, and `input` must contain more than
+/// 240 bytes.
+unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8; DEFAULT_SECRET_SIZE]) -> [u64; ACC_NB] {
   // SAFETY: AVX-512F available via target_feature. Input/secret bounds checked
   // by caller.
   unsafe {
     let mut acc = load_acc(&INITIAL_ACC);
 
-    let nb_stripes = (secret.len().strict_sub(STRIPE_LEN)) / SECRET_CONSUME_RATE;
+    let nb_stripes = secret.len().strict_sub(STRIPE_LEN).strict_div(SECRET_CONSUME_RATE);
     let block_len = STRIPE_LEN.strict_mul(nb_stripes);
-    let nb_blocks = (input.len().strict_sub(1)) / block_len;
+    let nb_blocks = input.len().strict_sub(1).strict_div(block_len);
 
     let mut block = 0usize;
     while block < nb_blocks {
@@ -194,7 +219,11 @@ unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] 
     }
 
     // Remaining stripes in final partial block
-    let nb_stripes_final = (input.len().strict_sub(1).strict_sub(block_len.strict_mul(nb_blocks))) / STRIPE_LEN;
+    let nb_stripes_final = input
+      .len()
+      .strict_sub(1)
+      .strict_sub(block_len.strict_mul(nb_blocks))
+      .strict_div(STRIPE_LEN);
     let mut stripe = 0usize;
     while stripe < nb_stripes_final {
       let input_off = nb_blocks
@@ -221,7 +250,7 @@ unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] 
 // Top-level kernel functions (safe wrappers)
 
 /// Long-path entry point (>240B) — no ≤240B branches.
-pub fn xxh3_64_long_default(input: &[u8]) -> u64 {
+pub(crate) fn xxh3_64_long_default(input: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies AVX-512F before selecting this kernel.
   let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };
   super::merge_accs(
@@ -232,7 +261,7 @@ pub fn xxh3_64_long_default(input: &[u8]) -> u64 {
   )
 }
 
-pub fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
+pub(crate) fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
   if seed == 0 {
     xxh3_64_long_default(input)
   } else {
@@ -249,13 +278,13 @@ pub fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
 }
 
 /// Long-path entry point (>240B) — no ≤240B branches.
-pub fn xxh3_128_long_default(input: &[u8]) -> u128 {
+pub(crate) fn xxh3_128_long_default(input: &[u8]) -> u128 {
   // SAFETY: Dispatcher verifies AVX-512F before selecting this kernel.
   let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };
   xxh3_128_long_finalize(&acc, &DEFAULT_SECRET, input.len())
 }
 
-pub fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
+pub(crate) fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
   if seed == 0 {
     xxh3_128_long_default(input)
   } else {

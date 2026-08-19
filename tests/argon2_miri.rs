@@ -62,8 +62,10 @@ fn argon2id_minimal_verify_no_ub() {
   let params = Argon2Params::new(8, 1, 1).expect("minimal params are valid");
 
   let mut hash = [0u8; 4];
-  Argon2id::derive(&params, b"correct", b"saltsalt", &mut hash).unwrap();
+  Argon2id::derive(&params, b"correct", b"saltsalt", &mut hash)
+    .expect("Argon2id Miri verification fixture must derive");
 
-  assert!(Argon2id::verify(&params, b"correct", b"saltsalt", &hash).is_ok());
-  assert!(Argon2id::verify(&params, b"wrong", b"saltsalt", &hash).is_err());
+  Argon2id::verify(&params, b"correct", b"saltsalt", &hash).expect("fresh Argon2id Miri hash must verify");
+  Argon2id::verify(&params, b"wrong", b"saltsalt", &hash)
+    .expect_err("Argon2id Miri verification must reject the wrong password");
 }

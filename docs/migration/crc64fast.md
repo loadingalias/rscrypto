@@ -2,14 +2,14 @@
 
 > Same CRC-64/XZ output with method renames from `Digest` / `write` / `sum64` to `Crc64` / `update` / `finalize`. The aside below also covers `crc64fast-nvme` → `Crc64Nvme`.
 
-Verified against `crc64fast = "1.1.0"` for `Crc64`; `Crc64Nvme` oracle coverage uses `crc-fast = "1.10.0"` and the `rscrypto` 0.7.8 line.
+Verified against `crc64fast = "1.1.0"` for `Crc64`; `Crc64Nvme` oracle coverage uses `crc-fast = "1.10.0"` and the `rscrypto` 0.8.1 line.
 Evidence: `tests/crc64_properties.rs` compares one-shot, streaming, and combine output against those oracle crates.
 
 ## TL;DR
 
-| | Before (`crc64fast` 1.x) | After (`rscrypto` 0.7.8) |
+| | Before (`crc64fast` 1.x) | After (`rscrypto` 0.8.1) |
 |---|---|---|
-| Cargo dep | `crc64fast = "1.1"` | `rscrypto = { version = "0.7.8", features = ["crc64"] }` |
+| Cargo dep | `crc64fast = "1.1"` | `rscrypto = { version = "0.8.1", features = ["crc64"] }` |
 | Import | `use crc64fast::Digest;` | `use rscrypto::checksum::{Checksum, Crc64};` |
 | Call | `Digest::new(); .write(data); .sum64()` | `Crc64::new(); .update(data); .finalize()` |
 
@@ -24,7 +24,7 @@ crc64fast = "1.1"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.7.8", features = ["crc64"] }
+rscrypto = { version = "0.8.1", features = ["crc64"] }
 ```
 
 `features = ["crc64"]` enables both `Crc64` (XZ / ECMA-182) and `Crc64Nvme`.
@@ -120,7 +120,7 @@ Drop both `crc64fast` and `crc64fast-nvme` from Cargo.toml; `features = ["crc64"
   also matter. Do not substitute CRC-64/ISO.
 - **No reset, no resume in `crc64fast`.** Build a fresh `Digest` per checksum. rscrypto adds `.reset()` and `Crc64::resume(prev)` on top of the same shape.
 - **`no_std`.** `crc64fast` requires `std` for SIMD detection. rscrypto's `Crc64` is `no_std`-capable; runtime detection is gated on the `std` feature, with compile-time `target_feature` selection in `no_std` builds and a portable fallback always present.
-- **Hardware coverage.** `crc64fast` ships x86_64 (PCLMUL) and aarch64 (PMULL) backends. rscrypto adds VPCLMULQDQ (large buffers on x86_64), SVE2 PMULL (aarch64), VPMSUMD (Power), VGFM (s390x), and Zbc/Zvbc (RISC-V).
+- **Hardware coverage.** `crc64fast` ships x86_64 (PCLMUL) and aarch64 (PMULL) backends. rscrypto adds VPCLMULQDQ (large buffers on x86_64), SVE2 PMULL (aarch64), VPMSUMD (Power), and VGFM (s390x). RISC-V uses the portable slice-by-16 implementation.
 - **Force a backend.** `RSCRYPTO_CRC64_FORCE=portable` selects the portable
   CRC-64 runtime backend in `std` builds. The `portable-only` feature makes
   runtime capability detection ignore host acceleration; see

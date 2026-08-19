@@ -3,7 +3,7 @@ use rscrypto::{
 };
 use rscrypto_fuzz::{FuzzInput, some_or_return};
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let key_random: [u8; MlKem1024::KEY_GENERATION_RANDOM_SIZE] = some_or_return!(input.bytes());
   let encaps_random: [u8; MlKem1024::ENCAPSULATION_RANDOM_SIZE] = some_or_return!(input.bytes());
@@ -27,9 +27,9 @@ pub fn run(data: &[u8]) {
   );
 
   let parse_material = input.rest();
-  let _ = MlKem1024EncapsulationKey::try_from_slice(parse_material);
-  let _ = MlKem1024DecapsulationKey::try_from_slice(parse_material);
-  let _ = MlKem1024Ciphertext::try_from_slice(parse_material);
+  let _encapsulation_key_result = MlKem1024EncapsulationKey::try_from_slice(parse_material);
+  let _decapsulation_key_result = MlKem1024DecapsulationKey::try_from_slice(parse_material);
+  let _ciphertext_result = MlKem1024Ciphertext::try_from_slice(parse_material);
 
   let Some(byte_idx) = input.byte() else {
     return;
@@ -39,7 +39,7 @@ pub fn run(data: &[u8]) {
   };
 
   let mut modified = ciphertext.to_bytes();
-  modified[byte_idx as usize % MlKem1024::CIPHERTEXT_SIZE] ^= 1u8 << (bit_idx & 7);
+  modified[usize::from(byte_idx).rem_euclid(MlKem1024::CIPHERTEXT_SIZE)] ^= 1u8.strict_shl(u32::from(bit_idx & 7));
   let rejected = MlKem1024::decapsulate(&dk, &MlKem1024Ciphertext::from_bytes(modified))
     .expect("ML-KEM implicit rejection returns a shared secret");
   assert!(

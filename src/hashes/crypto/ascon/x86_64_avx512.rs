@@ -31,15 +31,15 @@ macro_rules! ror_epi64x8 {
 #[target_feature(enable = "avx512f,avx512vl")]
 #[inline]
 unsafe fn permute_12_x86_avx512_impl(state: &mut [u64; 5]) {
-  let mut x0 = _mm256_set1_epi64x(state[0] as i64);
-  let mut x1 = _mm256_set1_epi64x(state[1] as i64);
-  let mut x2 = _mm256_set1_epi64x(state[2] as i64);
-  let mut x3 = _mm256_set1_epi64x(state[3] as i64);
-  let mut x4 = _mm256_set1_epi64x(state[4] as i64);
+  let mut x0 = _mm256_set1_epi64x(state[0].cast_signed());
+  let mut x1 = _mm256_set1_epi64x(state[1].cast_signed());
+  let mut x2 = _mm256_set1_epi64x(state[2].cast_signed());
+  let mut x3 = _mm256_set1_epi64x(state[3].cast_signed());
+  let mut x4 = _mm256_set1_epi64x(state[4].cast_signed());
   let ones = _mm256_set1_epi64x(-1);
 
   for &c in &super::RC {
-    x2 = _mm256_xor_si256(x2, _mm256_set1_epi64x(c as i64));
+    x2 = _mm256_xor_si256(x2, _mm256_set1_epi64x(c.cast_signed()));
 
     x0 = _mm256_xor_si256(x0, x4);
     x4 = _mm256_xor_si256(x4, x3);
@@ -75,11 +75,11 @@ unsafe fn permute_12_x86_avx512_impl(state: &mut [u64; 5]) {
     x4 = _mm256_xor_si256(y4, _mm256_xor_si256(ror_epi64!(y4, 57), ror_epi64!(y4, 23)));
   }
 
-  state[0] = _mm256_extract_epi64::<0>(x0) as u64;
-  state[1] = _mm256_extract_epi64::<0>(x1) as u64;
-  state[2] = _mm256_extract_epi64::<0>(x2) as u64;
-  state[3] = _mm256_extract_epi64::<0>(x3) as u64;
-  state[4] = _mm256_extract_epi64::<0>(x4) as u64;
+  state[0] = _mm256_extract_epi64::<0>(x0).cast_unsigned();
+  state[1] = _mm256_extract_epi64::<0>(x1).cast_unsigned();
+  state[2] = _mm256_extract_epi64::<0>(x2).cast_unsigned();
+  state[3] = _mm256_extract_epi64::<0>(x3).cast_unsigned();
+  state[4] = _mm256_extract_epi64::<0>(x4).cast_unsigned();
 }
 
 /// Apply the Ascon-p[12] permutation using x86_64 AVX-512.
@@ -96,64 +96,63 @@ pub(crate) fn permute_12_x86_avx512(state: &mut [u64; 5]) {
 ///
 /// Caller must ensure the `avx512f` and `avx512vl` CPU features are available.
 #[cfg(target_arch = "x86_64")]
-#[cfg_attr(not(any(test, feature = "std")), allow(dead_code))]
 #[target_feature(enable = "avx512f,avx512vl")]
 #[inline]
 unsafe fn permute_12_x86_avx512_x8_impl(states: &mut [[u64; 5]; 8]) {
   let mut x0 = _mm512_set_epi64(
-    states[7][0] as i64,
-    states[6][0] as i64,
-    states[5][0] as i64,
-    states[4][0] as i64,
-    states[3][0] as i64,
-    states[2][0] as i64,
-    states[1][0] as i64,
-    states[0][0] as i64,
+    states[7][0].cast_signed(),
+    states[6][0].cast_signed(),
+    states[5][0].cast_signed(),
+    states[4][0].cast_signed(),
+    states[3][0].cast_signed(),
+    states[2][0].cast_signed(),
+    states[1][0].cast_signed(),
+    states[0][0].cast_signed(),
   );
   let mut x1 = _mm512_set_epi64(
-    states[7][1] as i64,
-    states[6][1] as i64,
-    states[5][1] as i64,
-    states[4][1] as i64,
-    states[3][1] as i64,
-    states[2][1] as i64,
-    states[1][1] as i64,
-    states[0][1] as i64,
+    states[7][1].cast_signed(),
+    states[6][1].cast_signed(),
+    states[5][1].cast_signed(),
+    states[4][1].cast_signed(),
+    states[3][1].cast_signed(),
+    states[2][1].cast_signed(),
+    states[1][1].cast_signed(),
+    states[0][1].cast_signed(),
   );
   let mut x2 = _mm512_set_epi64(
-    states[7][2] as i64,
-    states[6][2] as i64,
-    states[5][2] as i64,
-    states[4][2] as i64,
-    states[3][2] as i64,
-    states[2][2] as i64,
-    states[1][2] as i64,
-    states[0][2] as i64,
+    states[7][2].cast_signed(),
+    states[6][2].cast_signed(),
+    states[5][2].cast_signed(),
+    states[4][2].cast_signed(),
+    states[3][2].cast_signed(),
+    states[2][2].cast_signed(),
+    states[1][2].cast_signed(),
+    states[0][2].cast_signed(),
   );
   let mut x3 = _mm512_set_epi64(
-    states[7][3] as i64,
-    states[6][3] as i64,
-    states[5][3] as i64,
-    states[4][3] as i64,
-    states[3][3] as i64,
-    states[2][3] as i64,
-    states[1][3] as i64,
-    states[0][3] as i64,
+    states[7][3].cast_signed(),
+    states[6][3].cast_signed(),
+    states[5][3].cast_signed(),
+    states[4][3].cast_signed(),
+    states[3][3].cast_signed(),
+    states[2][3].cast_signed(),
+    states[1][3].cast_signed(),
+    states[0][3].cast_signed(),
   );
   let mut x4 = _mm512_set_epi64(
-    states[7][4] as i64,
-    states[6][4] as i64,
-    states[5][4] as i64,
-    states[4][4] as i64,
-    states[3][4] as i64,
-    states[2][4] as i64,
-    states[1][4] as i64,
-    states[0][4] as i64,
+    states[7][4].cast_signed(),
+    states[6][4].cast_signed(),
+    states[5][4].cast_signed(),
+    states[4][4].cast_signed(),
+    states[3][4].cast_signed(),
+    states[2][4].cast_signed(),
+    states[1][4].cast_signed(),
+    states[0][4].cast_signed(),
   );
   let ones = _mm512_set1_epi64(-1);
 
   for &c in &super::RC {
-    x2 = _mm512_xor_si512(x2, _mm512_set1_epi64(c as i64));
+    x2 = _mm512_xor_si512(x2, _mm512_set1_epi64(c.cast_signed()));
 
     x0 = _mm512_xor_si512(x0, x4);
     x4 = _mm512_xor_si512(x4, x3);
@@ -213,7 +212,6 @@ unsafe fn permute_12_x86_avx512_x8_impl(states: &mut [[u64; 5]; 8]) {
 
 /// Apply the Ascon-p[12] permutation to eight independent states in parallel.
 #[cfg(target_arch = "x86_64")]
-#[cfg_attr(not(any(test, feature = "std")), allow(dead_code))]
 #[inline]
 pub(crate) fn permute_12_x86_avx512_x8(states: &mut [[u64; 5]; 8]) {
   // SAFETY: Dispatch verifies x86::AVX512F + x86::AVX512VL before selecting this kernel.

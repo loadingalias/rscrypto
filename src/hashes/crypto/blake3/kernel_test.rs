@@ -25,7 +25,7 @@ const ALL: &[Blake3KernelId] = &[
 ];
 
 #[derive(Clone, Debug)]
-pub struct KernelResult {
+pub(super) struct KernelResult {
   pub digest: [u8; 32],
 }
 
@@ -48,7 +48,7 @@ fn digest_with_kernel(id: Blake3KernelId, data: &[u8]) -> [u8; 32] {
 }
 
 #[must_use]
-pub fn run_all_blake3_kernels(data: &[u8]) -> Vec<KernelResult> {
+pub(super) fn run_all_blake3_kernels(data: &[u8]) -> Vec<KernelResult> {
   let caps = crate::platform::caps();
   let mut out = Vec::with_capacity(ALL.len());
   for &id in ALL {
@@ -61,7 +61,7 @@ pub fn run_all_blake3_kernels(data: &[u8]) -> Vec<KernelResult> {
   out
 }
 
-pub fn verify_blake3_kernels(data: &[u8]) -> Result<(), &'static str> {
+pub(super) fn verify_blake3_kernels(data: &[u8]) -> Result<(), &'static str> {
   let results = run_all_blake3_kernels(data);
   let Some(first) = results.first() else {
     return Ok(());
@@ -93,7 +93,9 @@ mod tests {
   }
 
   fn pattern(len: usize) -> Vec<u8> {
-    (0..len).map(|i| (i % 251) as u8).collect()
+    (0..len)
+      .map(|i| u8::try_from(i % 251).expect("test pattern byte fits in u8"))
+      .collect()
   }
 
   #[test]
@@ -335,7 +337,9 @@ mod tests {
     for chunk_idx in 0..num_chunks {
       let base = chunk_idx * CHUNK_LEN;
       for i in 0..CHUNK_LEN {
-        input[base + i] = ((i % 251) as u8).wrapping_add(chunk_idx as u8);
+        let byte = u8::try_from(i % 251).expect("test pattern byte fits in u8");
+        let chunk = u8::try_from(chunk_idx).expect("test chunk index fits in u8");
+        input[base + i] = byte.wrapping_add(chunk);
       }
     }
 
@@ -383,7 +387,9 @@ mod tests {
       for chunk_idx in 0..num_chunks {
         let base = chunk_idx * CHUNK_LEN;
         for i in 0..CHUNK_LEN {
-          input[base + i] = ((i % 251) as u8).wrapping_add(chunk_idx as u8);
+          let byte = u8::try_from(i % 251).expect("test pattern byte fits in u8");
+          let chunk = u8::try_from(chunk_idx).expect("test chunk index fits in u8");
+          input[base + i] = byte.wrapping_add(chunk);
         }
       }
 

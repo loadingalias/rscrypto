@@ -4,6 +4,10 @@ description: |
   Unified host setup for GHA + runs-on.com + IBM/RISC-V runners.
 
 inputs:
+  toolchain-contract:
+    description: Toolchain contract to install (development, msrv, or nightly).
+    required: false
+    default: "development"
   cache-key:
     description: Suffix for the rust-cache key (workflow + target).
     required: false
@@ -31,11 +35,12 @@ runs:
     # runs-on.com S3-backed cache intercept. No-op on non-runs-on pools.
     - name: Setup MagicCache
       if: inputs.enable-magic-cache == 'true'
-      uses: runs-on/action@4e5f72399b6b17f2e79c511c1b38a315a64d22dc  # v2.2.0
+      uses: runs-on/action@46910bf61b41721b0579f237e186afb35477007a  # v2.3.0
 
     - name: Setup Toolchain
       uses: ./.github/actions/setup-toolchain
       with:
+        contract: ${{ inputs.toolchain-contract }}
         components: ${{ inputs.toolchain-components }}
 
     - name: Install Cargo Tools
@@ -47,7 +52,7 @@ runs:
 
     - name: Setup Rust Cache
       if: inputs.enable-rust-cache == 'true'
-      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
+      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
       with:
         shared-key: "rscrypto-v1-${{ inputs.cache-key }}"
         cache-directories: ${{ inputs.tools-mode == 'rail' && 'target/cargo-rail/cache' || '' }}

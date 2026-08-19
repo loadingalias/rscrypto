@@ -1,5 +1,3 @@
-#![allow(clippy::indexing_slicing)]
-
 //! Fixed-schedule, table-free GHASH universal hash (NIST SP 800-38D).
 //!
 //! Generated-code timing claims remain configuration- and
@@ -52,6 +50,7 @@ pub(crate) fn h_to_polyval(h_bytes: &[u8; KEY_SIZE]) -> u128 {
   mul_x_polyval(h)
 }
 
+/// Computes one GHASH block with the portable POLYVAL-domain reduction.
 #[cfg(feature = "diag")]
 #[must_use]
 pub fn diag_ghash_block_portable(h_bytes: &[u8; KEY_SIZE], block: &[u8; KEY_SIZE]) -> [u8; KEY_SIZE] {
@@ -129,10 +128,11 @@ impl Ghash {
 #[cfg(test)]
 impl Drop for Ghash {
   fn drop(&mut self) {
-    // SAFETY: self.acc/self.h are valid, aligned, dereferenceable pointers to initialized memory.
+    // SAFETY: the raw pointers address initialized, aligned `u128` fields owned
+    // exclusively by `self` for the duration of `drop`.
     unsafe {
-      core::ptr::write_volatile(&mut self.acc, 0);
-      core::ptr::write_volatile(&mut self.h, 0);
+      core::ptr::write_volatile(&raw mut self.acc, 0);
+      core::ptr::write_volatile(&raw mut self.h, 0);
     }
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
@@ -143,6 +143,8 @@ impl Drop for Ghash {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  const TEST_H: [u8; 16] = 0x66e9_4bd4_ef8a_2c3b_884c_fa59_ca34_2b2eu128.to_be_bytes();
 
   /// GHASH with empty input should return zero.
   #[test]
@@ -165,26 +167,26 @@ mod tests {
   /// Verify update_padded matches manual block-by-block.
   #[test]
   fn ghash_padded_matches_manual() {
-    let h = hex_to_16("66e94bd4ef8a2c3b884cfa59ca342b2e");
     let data = b"Hello, World! This is test data for GHASH padding.";
 
     // Manual: split into 16-byte blocks, pad last one.
-    let mut manual = Ghash::new(&h);
-    let mut offset = 0;
-    while offset + 16 <= data.len() {
-      let block: [u8; 16] = data[offset..offset + 16].try_into().unwrap();
+    let mut manual = Ghash::new(&TEST_H);
+    let mut chunks = data.chunks_exact(BLOCK_SIZE);
+    for chunk in chunks.by_ref() {
+      let mut block = [0u8; BLOCK_SIZE];
+      block.copy_from_slice(chunk);
       manual.update_block(&block);
-      offset += 16;
     }
-    if offset < data.len() {
-      let mut block = [0u8; 16];
-      block[..data.len() - offset].copy_from_slice(&data[offset..]);
+    let remainder = chunks.remainder();
+    if !remainder.is_empty() {
+      let mut block = [0u8; BLOCK_SIZE];
+      block[..remainder.len()].copy_from_slice(remainder);
       manual.update_block(&block);
     }
     let manual_result = manual.finalize();
 
     // Padded API.
-    let mut padded = Ghash::new(&h);
+    let mut padded = Ghash::new(&TEST_H);
     padded.update_padded(data);
     let padded_result = padded.finalize();
 
@@ -212,15 +214,5 @@ mod tests {
       result, POLYVAL_FEEDBACK,
       "mulX(x^127) should reduce to feedback polynomial"
     );
-  }
-
-  fn hex_to_16(hex: &str) -> [u8; 16] {
-    let mut out = [0u8; 16];
-    let mut i = 0;
-    while i < 16 {
-      out[i] = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap();
-      i = i.strict_add(1);
-    }
-    out
   }
 }

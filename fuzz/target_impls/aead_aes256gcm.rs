@@ -3,7 +3,7 @@ use rscrypto_fuzz::{
   FuzzInput, assert_aead_against_oracle, assert_aead_forgery, assert_aead_roundtrip, some_or_return,
 };
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let key_bytes: [u8; 32] = some_or_return!(input.bytes());
   let nonce_bytes: [u8; 12] = some_or_return!(input.bytes());
@@ -18,14 +18,22 @@ pub fn run(data: &[u8]) {
 
   // Differential: rscrypto ↔ aes-gcm crate.
   use aes_gcm::aead::{Aead as _, KeyInit, Payload};
-  let oracle = aes_gcm::Aes256Gcm::new_from_slice(&key_bytes).unwrap();
+  let oracle = aes_gcm::Aes256Gcm::new_from_slice(&key_bytes).expect("AES-256-GCM accepts a 32-byte key");
   let on = aes_gcm::Nonce::from(nonce_bytes);
   assert_aead_against_oracle(
     &cipher,
     &nonce,
     aad,
     plaintext,
-    |pt, aad| oracle.encrypt(&on, Payload { msg: pt, aad }).unwrap(),
-    |ct, aad| oracle.decrypt(&on, Payload { msg: ct, aad }).unwrap(),
+    |pt, aad| {
+      oracle
+        .encrypt(&on, Payload { msg: pt, aad })
+        .expect("oracle encryption accepts the fuzz input")
+    },
+    |ct, aad| {
+      oracle
+        .decrypt(&on, Payload { msg: ct, aad })
+        .expect("oracle must accept the equivalent rscrypto ciphertext")
+    },
   );
 }

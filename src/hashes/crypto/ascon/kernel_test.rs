@@ -3,9 +3,7 @@ use alloc::{vec, vec::Vec};
 use super::kernels::{ALL, permute_fn, required_caps};
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub struct KernelResult {
-  pub name: &'static str,
+pub(super) struct KernelResult {
   pub state: [u64; 5],
 }
 
@@ -25,7 +23,7 @@ fn state_from_bytes(data: &[u8]) -> [u64; 5] {
 }
 
 #[must_use]
-pub fn run_all_ascon_p12_kernels(data: &[u8]) -> Vec<KernelResult> {
+pub(super) fn run_all_ascon_p12_kernels(data: &[u8]) -> Vec<KernelResult> {
   let caps = crate::platform::caps();
   let mut out = Vec::with_capacity(ALL.len());
   let init = state_from_bytes(data);
@@ -36,16 +34,13 @@ pub fn run_all_ascon_p12_kernels(data: &[u8]) -> Vec<KernelResult> {
     }
     let mut st = init;
     (permute_fn(id))(&mut st);
-    out.push(KernelResult {
-      name: id.as_str(),
-      state: st,
-    });
+    out.push(KernelResult { state: st });
   }
 
   out
 }
 
-pub fn verify_ascon_p12_kernels(data: &[u8]) -> Result<(), &'static str> {
+pub(super) fn verify_ascon_p12_kernels(data: &[u8]) -> Result<(), &'static str> {
   let results = run_all_ascon_p12_kernels(data);
   let Some(first) = results.first() else {
     return Ok(());
@@ -106,7 +101,7 @@ mod tests {
 
       for (input, actual) in inputs.iter().zip(batch.iter()) {
         let expected = crate::hashes::crypto::AsconHash256::digest(input);
-        assert_eq!(*actual, expected, "digest_many mismatch for {}", id.as_str());
+        assert_eq!(*actual, expected, "digest_many mismatch for {id:?}");
       }
     }
   }
@@ -138,8 +133,7 @@ mod tests {
         assert_eq!(
           &batch[base..base + out_len],
           expected.as_slice(),
-          "xof_many mismatch for {}",
-          id.as_str()
+          "xof_many mismatch for {id:?}"
         );
       }
     }
@@ -186,6 +180,18 @@ mod tests {
       crate::hashes::crypto::AsconXof::hash_into(input, &mut expected);
       let base = index * out_len;
       assert_eq!(&actual[base..base + out_len], expected.as_slice());
+    }
+  }
+
+  #[test]
+  fn xof_many_accepts_zero_length_outputs() {
+    let input = b"same-length input".as_slice();
+    let inputs = [input; 8];
+    let mut output = [];
+
+    crate::hashes::crypto::AsconXof::hash_many_into(&inputs, 0, &mut output);
+    for &id in ALL {
+      crate::hashes::crypto::AsconXof::hash_many_into_with_kernel(id, &inputs, 0, &mut output);
     }
   }
 }

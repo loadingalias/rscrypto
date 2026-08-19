@@ -17,6 +17,7 @@ fake_home="$TMP_ROOT/home"
 command_log="$TMP_ROOT/commands.log"
 preflight_marker="$TMP_ROOT/locked-metadata-preflight"
 mkdir -p \
+  "$fixture/.config" \
   "$fixture/scripts/check" \
   "$fixture/scripts/ct" \
   "$fixture/scripts/lib" \
@@ -31,12 +32,15 @@ cp \
   "$REPO_ROOT/scripts/check/check-feature-matrix.sh" \
   "$REPO_ROOT/scripts/check/check-ibm.sh" \
   "$REPO_ROOT/scripts/check/check-linux.sh" \
+  "$REPO_ROOT/scripts/check/lint-independent-workspaces.sh" \
   "$REPO_ROOT/scripts/check/check-win.sh" \
   "$REPO_ROOT/scripts/check/check.sh" \
   "$REPO_ROOT/scripts/check/zig-cc.sh" \
   "$fixture/scripts/check/"
 cp "$REPO_ROOT/scripts/lib/common.sh" "$REPO_ROOT/scripts/lib/rail-plan.sh" \
-  "$REPO_ROOT/scripts/lib/feature-profiles.sh" "$fixture/scripts/lib/"
+  "$REPO_ROOT/scripts/lib/feature-profiles.sh" "$REPO_ROOT/scripts/lib/toolchain.sh" \
+  "$fixture/scripts/lib/"
+cp "$REPO_ROOT/.config/toolchains.toml" "$fixture/.config/toolchains.toml"
 cp "$REPO_ROOT/scripts/test/test-feature-matrix.sh" "$fixture/scripts/test/test-feature-matrix.sh"
 
 cat >"$fixture/scripts/lib/targets.sh" <<'EOF'
@@ -104,6 +108,7 @@ case "${1:-}" in
   metadata)
     require_locked "$@"
     : >"$MOCK_PREFLIGHT_MARKER"
+    printf '{"workspace_root":"%s"}\n' "$MOCK_REPO_ROOT"
     ;;
   rail)
     if [[ "${2:-}" == "plan" ]]; then

@@ -31,12 +31,16 @@ fn chacha20_xor_kernel(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("aarch64-neon", len), data, |b, d| {
       b.iter(|| {
         buf.copy_from_slice(d);
-        rscrypto::aead::diag_chacha20_xor_keystream_aarch64_neon(
-          black_box(&KEY_32),
-          black_box(1),
-          black_box(&NONCE_12),
-          black_box(&mut buf),
-        );
+        // SAFETY: AArch64 NEON is part of this target's compile-time baseline. `comp_sizes` tops out at 1,048,576
+        // bytes (16,384 blocks), which fits the `u32` counter range starting at 1.
+        unsafe {
+          rscrypto::aead::diag_chacha20_xor_keystream_aarch64_neon(
+            black_box(&KEY_32),
+            black_box(1),
+            black_box(&NONCE_12),
+            black_box(&mut buf),
+          );
+        }
         black_box(buf.as_ptr())
       })
     });
@@ -59,7 +63,7 @@ fn poly1305_auth_kernel(c: &mut Criterion) {
       b.iter(|| {
         black_box(
           rscrypto::aead::diag_chacha20poly1305_authenticate_aead(black_box(AAD), black_box(d), black_box(&POLY_KEY))
-            .unwrap(),
+            .expect("selected AEAD benchmark kernel must be available"),
         )
       })
     });
@@ -73,7 +77,7 @@ fn poly1305_auth_kernel(c: &mut Criterion) {
             black_box(d),
             black_box(&POLY_KEY),
           )
-          .unwrap(),
+          .expect("selected AEAD benchmark kernel must be available"),
         )
       })
     });

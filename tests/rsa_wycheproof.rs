@@ -2,7 +2,9 @@
 
 use core::ops::Range;
 
-use rscrypto::{RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKey, RsaPublicKeyPolicy};
+use rscrypto::{
+  RsaBlindingPair, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKey, RsaPublicKeyPolicy,
+};
 use serde_json::Value;
 
 const PKCS1_SHA256: &str = include_str!("../testdata/rsa/wycheproof/rsa_signature_2048_sha256_test.json");
@@ -55,21 +57,30 @@ struct ExpectedCounts {
   invalid: usize,
 }
 
+#[derive(Clone, Copy)]
+enum WycheproofResult {
+  Valid,
+  Acceptable,
+  Invalid,
+}
+
 fn hex_to_vec(hex: &str) -> Vec<u8> {
   assert_eq!(hex.len() % 2, 0);
   let mut out = Vec::with_capacity(hex.len() / 2);
   for chunk in hex.as_bytes().chunks_exact(2) {
-    out.push((hex_value(chunk[0]) << 4) | hex_value(chunk[1]));
+    let high = hex_value(chunk[0]).expect("Wycheproof fixture must contain hexadecimal digits");
+    let low = hex_value(chunk[1]).expect("Wycheproof fixture must contain hexadecimal digits");
+    out.push((high << 4) | low);
   }
   out
 }
 
-fn hex_value(byte: u8) -> u8 {
+fn hex_value(byte: u8) -> Option<u8> {
   match byte {
-    b'0'..=b'9' => byte - b'0',
-    b'a'..=b'f' => byte - b'a' + 10,
-    b'A'..=b'F' => byte - b'A' + 10,
-    _ => panic!("invalid hex digit"),
+    b'0'..=b'9' => Some(byte.strict_sub(b'0')),
+    b'a'..=b'f' => Some(byte.strict_sub(b'a').strict_add(10)),
+    b'A'..=b'F' => Some(byte.strict_sub(b'A').strict_add(10)),
+    _ => None,
   }
 }
 
@@ -87,7 +98,17 @@ fn test_cases(group: &Value) -> &[Value] {
 fn field<'a>(value: &'a Value, name: &str) -> &'a str {
   value[name]
     .as_str()
-    .unwrap_or_else(|| panic!("missing string field `{name}`"))
+    .expect("Wycheproof fixture must contain the requested string field")
+}
+
+fn wycheproof_result(result: &str) -> WycheproofResult {
+  match result {
+    "valid" => Some(WycheproofResult::Valid),
+    "acceptable" => Some(WycheproofResult::Acceptable),
+    "invalid" => Some(WycheproofResult::Invalid),
+    _ => None,
+  }
+  .expect("Wycheproof result must be valid, acceptable, or invalid")
 }
 
 fn public_key_from_wycheproof_spki(der: &[u8], key_size: u64, context: &str) -> RsaPublicKey {
@@ -133,8 +154,8 @@ fn assert_pkcs1v15_wycheproof_vectors(
         .verify_pkcs1v15_with_scratch(profile, &msg, &sig, &mut scratch)
         .is_ok();
 
-      match field(test, "result") {
-        "valid" => {
+      match wycheproof_result(field(test, "result")) {
+        WycheproofResult::Valid => {
           valid = valid.strict_add(1);
           assert!(
             verified,
@@ -142,7 +163,7 @@ fn assert_pkcs1v15_wycheproof_vectors(
             test["tcId"]
           );
         }
-        "invalid" => {
+        WycheproofResult::Invalid => {
           invalid = invalid.strict_add(1);
           assert!(
             !verified,
@@ -151,10 +172,9 @@ fn assert_pkcs1v15_wycheproof_vectors(
             field(test, "comment")
           );
         }
-        "acceptable" => {
+        WycheproofResult::Acceptable => {
           acceptable = acceptable.strict_add(1);
         }
-        other => panic!("unknown Wycheproof result `{other}`"),
       }
     }
   }
@@ -199,8 +219,8 @@ fn assert_pss_wycheproof_vectors(
         .verify_pss_with_salt_len_and_scratch(profile, expected_salt_len, &msg, &sig, &mut scratch)
         .is_ok();
 
-      match field(test, "result") {
-        "valid" => {
+      match wycheproof_result(field(test, "result")) {
+        WycheproofResult::Valid => {
           valid = valid.strict_add(1);
           assert!(
             verified,
@@ -208,7 +228,7 @@ fn assert_pss_wycheproof_vectors(
             test["tcId"]
           );
         }
-        "invalid" => {
+        WycheproofResult::Invalid => {
           invalid = invalid.strict_add(1);
           assert!(
             !verified,
@@ -217,10 +237,9 @@ fn assert_pss_wycheproof_vectors(
             field(test, "comment")
           );
         }
-        "acceptable" => {
+        WycheproofResult::Acceptable => {
           acceptable = acceptable.strict_add(1);
         }
-        other => panic!("unknown Wycheproof result `{other}`"),
       }
     }
   }
@@ -295,20 +314,14 @@ fn assert_oaep_wycheproof_vectors(
         profile,
         &label,
         &ciphertext,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut plaintext,
       );
 
-      match field(test, "result") {
-        "valid" => {
+      match wycheproof_result(field(test, "result")) {
+        WycheproofResult::Valid => {
           valid = valid.strict_add(1);
-          let plaintext_len = decrypted.unwrap_or_else(|error| {
-            panic!(
-              "Wycheproof OAEP tcId {} rejected valid ciphertext: {error}",
-              test["tcId"]
-            )
-          });
+          let plaintext_len = decrypted.expect("Wycheproof valid OAEP ciphertext must decrypt");
           assert_eq!(
             &plaintext[..plaintext_len],
             hex_to_vec(field(test, "msg")).as_slice(),
@@ -322,8 +335,7 @@ fn assert_oaep_wycheproof_vectors(
                 profile,
                 &label,
                 &ciphertext,
-                &blinding_factor,
-                &blinding_factor_inverse,
+                RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
                 &mut scratch_plaintext,
                 &mut scratch,
               )
@@ -337,7 +349,7 @@ fn assert_oaep_wycheproof_vectors(
             scratch_valid_checked = true;
           }
         }
-        "invalid" => {
+        WycheproofResult::Invalid => {
           invalid = invalid.strict_add(1);
           assert!(
             decrypted.is_err(),
@@ -358,8 +370,7 @@ fn assert_oaep_wycheproof_vectors(
                   profile,
                   &label,
                   &ciphertext,
-                  &blinding_factor,
-                  &blinding_factor_inverse,
+                  RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
                   &mut scratch_plaintext,
                   &mut scratch,
                 )
@@ -376,10 +387,9 @@ fn assert_oaep_wycheproof_vectors(
             scratch_invalid_checked = true;
           }
         }
-        "acceptable" => {
+        WycheproofResult::Acceptable => {
           acceptable = acceptable.strict_add(1);
         }
-        other => panic!("unknown Wycheproof result `{other}`"),
       }
     }
     if group_has_valid {
@@ -447,8 +457,7 @@ fn assert_oaep_mgf1sha1_vectors_are_rejected(
         profile,
         &label,
         &ciphertext,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut plaintext,
       );
       let mut scratch_plaintext = vec![0xa5; key.public_key().modulus().len()];
@@ -456,14 +465,13 @@ fn assert_oaep_mgf1sha1_vectors_are_rejected(
         profile,
         &label,
         &ciphertext,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut scratch_plaintext,
         &mut scratch,
       );
 
-      match field(test, "result") {
-        "valid" => {
+      match wycheproof_result(field(test, "result")) {
+        WycheproofResult::Valid => {
           valid = valid.strict_add(1);
           assert!(
             decrypted.is_err(),
@@ -476,7 +484,7 @@ fn assert_oaep_mgf1sha1_vectors_are_rejected(
             test["tcId"]
           );
         }
-        "invalid" => {
+        WycheproofResult::Invalid => {
           invalid = invalid.strict_add(1);
           assert!(
             decrypted.is_err(),
@@ -491,7 +499,7 @@ fn assert_oaep_mgf1sha1_vectors_are_rejected(
             field(test, "comment")
           );
         }
-        "acceptable" => {
+        WycheproofResult::Acceptable => {
           acceptable = acceptable.strict_add(1);
           assert!(
             decrypted.is_err(),
@@ -504,7 +512,6 @@ fn assert_oaep_mgf1sha1_vectors_are_rejected(
             test["tcId"]
           );
         }
-        other => panic!("unknown Wycheproof result `{other}`"),
       }
       assert!(
         plaintext.iter().all(|&byte| byte == 0),
@@ -583,20 +590,14 @@ fn assert_rsaes_pkcs1v15_wycheproof_vectors(
       let mut plaintext = vec![0xa5; key.public_key().modulus().len()];
       let decrypted = key.decrypt_pkcs1v15_with_blinding_factor(
         &ciphertext,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut plaintext,
       );
 
-      match field(test, "result") {
-        "valid" => {
+      match wycheproof_result(field(test, "result")) {
+        WycheproofResult::Valid => {
           valid = valid.strict_add(1);
-          let plaintext_len = decrypted.unwrap_or_else(|error| {
-            panic!(
-              "Wycheproof RSAES-PKCS1-v1_5 tcId {} rejected valid ciphertext: {error}",
-              test["tcId"]
-            )
-          });
+          let plaintext_len = decrypted.expect("Wycheproof valid RSAES-PKCS1-v1_5 ciphertext must decrypt");
           assert_eq!(
             &plaintext[..plaintext_len],
             hex_to_vec(field(test, "msg")).as_slice(),
@@ -608,8 +609,7 @@ fn assert_rsaes_pkcs1v15_wycheproof_vectors(
             let scratch_plaintext_len = key
               .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
                 &ciphertext,
-                &blinding_factor,
-                &blinding_factor_inverse,
+                RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
                 &mut scratch_plaintext,
                 &mut scratch,
               )
@@ -623,7 +623,7 @@ fn assert_rsaes_pkcs1v15_wycheproof_vectors(
             scratch_valid_checked = true;
           }
         }
-        "invalid" => {
+        WycheproofResult::Invalid => {
           invalid = invalid.strict_add(1);
           assert!(
             decrypted.is_err(),
@@ -642,8 +642,7 @@ fn assert_rsaes_pkcs1v15_wycheproof_vectors(
               key
                 .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
                   &ciphertext,
-                  &blinding_factor,
-                  &blinding_factor_inverse,
+                  RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
                   &mut scratch_plaintext,
                   &mut scratch,
                 )
@@ -660,10 +659,9 @@ fn assert_rsaes_pkcs1v15_wycheproof_vectors(
             scratch_invalid_checked = true;
           }
         }
-        "acceptable" => {
+        WycheproofResult::Acceptable => {
           acceptable = acceptable.strict_add(1);
         }
-        other => panic!("unknown Wycheproof result `{other}`"),
       }
     }
     if group_has_valid {
@@ -716,8 +714,8 @@ fn assert_pkcs1v15_sig_gen_wycheproof_vectors(json: &str, expected_key_size: u64
     let blinding_factor_inverse = fixed_width_one(key.public_key().modulus().len());
 
     for test in test_cases(group) {
-      match field(test, "result") {
-        "valid" => {
+      match wycheproof_result(field(test, "result")) {
+        WycheproofResult::Valid => {
           valid = valid.strict_add(1);
           let message = hex_to_vec(field(test, "msg"));
           let expected_signature = hex_to_vec(field(test, "sig"));
@@ -728,8 +726,7 @@ fn assert_pkcs1v15_sig_gen_wycheproof_vectors(json: &str, expected_key_size: u64
             .sign_pkcs1v15_with_blinding_factor(
               profile,
               &message,
-              &blinding_factor,
-              &blinding_factor_inverse,
+              RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
               &mut signature,
             )
             .expect("Wycheproof PKCS1v1.5 private signing must succeed");
@@ -742,8 +739,7 @@ fn assert_pkcs1v15_sig_gen_wycheproof_vectors(json: &str, expected_key_size: u64
             .sign_pkcs1v15_with_blinding_factor_and_scratch(
               profile,
               &message,
-              &blinding_factor,
-              &blinding_factor_inverse,
+              RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
               &mut scratch_signature,
               &mut scratch,
             )
@@ -758,10 +754,9 @@ fn assert_pkcs1v15_sig_gen_wycheproof_vectors(json: &str, expected_key_size: u64
             .verify_pkcs1v15(profile, &message, &signature)
             .expect("Wycheproof PKCS1v1.5 generated signature must verify");
         }
-        "acceptable" | "invalid" => {
+        WycheproofResult::Acceptable | WycheproofResult::Invalid => {
           skipped = skipped.strict_add(1);
         }
-        other => panic!("unknown Wycheproof result `{other}`"),
       }
     }
   }
@@ -769,7 +764,12 @@ fn assert_pkcs1v15_sig_gen_wycheproof_vectors(json: &str, expected_key_size: u64
   assert_eq!(valid, expected_valid);
   assert_eq!(
     valid.strict_add(skipped),
-    suite["numberOfTests"].as_u64().unwrap() as usize
+    usize::try_from(
+      suite["numberOfTests"]
+        .as_u64()
+        .expect("Wycheproof numberOfTests must be numeric")
+    )
+    .expect("Wycheproof numberOfTests must fit usize")
   );
 }
 

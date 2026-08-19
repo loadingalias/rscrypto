@@ -2,7 +2,7 @@
 //!
 //! This module stores compact per-family profiles used by runtime dispatch.
 
-pub use super::kernels::Blake3KernelId as KernelId;
+pub(crate) use super::kernels::Blake3KernelId as KernelId;
 use crate::platform::Caps;
 #[cfg(target_arch = "aarch64")]
 use crate::platform::caps::aarch64;
@@ -15,7 +15,7 @@ use crate::platform::caps::s390x;
 #[cfg(target_arch = "x86_64")]
 use crate::platform::caps::x86;
 
-pub const DEFAULT_BOUNDARIES: [usize; 3] = [64, 256, 4096];
+pub(crate) const DEFAULT_BOUNDARIES: [usize; 3] = [64, 256, 4096];
 
 // Architecture-specific thresholds for when to switch from table bulk kernel to size-class
 // selection. These are tuned based on SIMD width and latency characteristics.
@@ -28,12 +28,19 @@ const THRESHOLD_NEON: usize = 16 * 1024; // NEON - slightly higher due to differ
 #[cfg(not(target_arch = "x86_64"))]
 const THRESHOLD_PORTABLE: usize = 32 * 1024; // Conservative for scalar
 
+#[cfg(feature = "parallel")]
 const DEFAULT_PAR_SPAWN_COST_BYTES: usize = 24 * 1024;
+#[cfg(feature = "parallel")]
 const DEFAULT_PAR_MERGE_COST_BYTES: usize = 16 * 1024;
+#[cfg(feature = "parallel")]
 const DEFAULT_PAR_BYTES_PER_CORE_SMALL: usize = 256 * 1024;
+#[cfg(feature = "parallel")]
 const DEFAULT_PAR_BYTES_PER_CORE_MEDIUM: usize = 128 * 1024;
+#[cfg(feature = "parallel")]
 const DEFAULT_PAR_BYTES_PER_CORE_LARGE: usize = 64 * 1024;
+#[cfg(feature = "parallel")]
 const DEFAULT_PAR_SMALL_LIMIT_BYTES: usize = 256 * 1024;
+#[cfg(feature = "parallel")]
 const DEFAULT_PAR_MEDIUM_LIMIT_BYTES: usize = 2 * 1024 * 1024;
 
 /// Parallel hashing policy for large inputs (std-only).
@@ -41,9 +48,9 @@ const DEFAULT_PAR_MEDIUM_LIMIT_BYTES: usize = 2 * 1024 * 1024;
 /// The scheduler treats this as an explicit cost model:
 /// - fixed terms: `spawn_cost_bytes`, `merge_cost_bytes`
 /// - work terms: `bytes_per_core_*` for small/medium/large payload classes
-#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
+#[cfg(feature = "parallel")]
 #[derive(Clone, Copy, Debug)]
-pub struct ParallelTable {
+pub(crate) struct ParallelTable {
   /// Minimum total input bytes before parallel hashing is considered.
   pub min_bytes: usize,
   /// Minimum number of full chunks to commit in one batch.
@@ -76,14 +83,14 @@ pub struct ParallelTable {
 /// `bulk_sizeclass_threshold` is the minimum input length to use size-class-based bulk kernel
 /// selection instead of the table's default bulk kernel. This is architecture-specific.
 #[derive(Clone, Copy, Debug)]
-pub struct StreamingTable {
+pub(crate) struct StreamingTable {
   pub stream: KernelId,
   pub bulk: KernelId,
   pub bulk_sizeclass_threshold: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct DispatchTable {
+pub(crate) struct DispatchTable {
   pub boundaries: [usize; 3],
   pub xs: KernelId,
   pub s: KernelId,
@@ -92,12 +99,13 @@ pub struct DispatchTable {
 }
 
 /// Compact profile for one microarchitecture family.
-#[cfg_attr(not(feature = "parallel"), allow(dead_code))]
 #[derive(Clone, Copy, Debug)]
-pub struct FamilyProfile {
+pub(crate) struct FamilyProfile {
   pub dispatch: DispatchTable,
   pub streaming: StreamingTable,
+  #[cfg(feature = "parallel")]
   pub parallel: ParallelTable,
+  #[cfg(feature = "parallel")]
   pub streaming_parallel: ParallelTable,
 }
 
@@ -216,6 +224,7 @@ const DEFAULT_STREAM_KERNEL: KernelId = KernelId::Portable;
 #[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
 const DEFAULT_BULK_KERNEL: KernelId = SIMD_KERNEL;
 
+#[cfg(feature = "parallel")]
 #[derive(Clone, Copy, Debug)]
 struct ParallelCostModel {
   spawn_cost_bytes: usize,
@@ -227,6 +236,7 @@ struct ParallelCostModel {
   medium_limit_bytes: usize,
 }
 
+#[cfg(feature = "parallel")]
 #[inline]
 #[must_use]
 const fn parallel_cost_model(
@@ -249,6 +259,7 @@ const fn parallel_cost_model(
   }
 }
 
+#[cfg(feature = "parallel")]
 #[inline]
 #[must_use]
 const fn parallel_table(
@@ -271,7 +282,7 @@ const fn parallel_table(
   }
 }
 
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
+#[cfg(all(feature = "parallel", any(target_arch = "s390x", target_arch = "powerpc64")))]
 macro_rules! parallel_costs {
   (
     $min_bytes:expr,
@@ -302,6 +313,7 @@ macro_rules! parallel_costs {
   };
 }
 
+#[cfg(feature = "parallel")]
 #[inline]
 #[must_use]
 const fn default_parallel_costs(min_bytes: usize, min_chunks: usize, max_threads: u8) -> ParallelTable {
@@ -323,7 +335,7 @@ const fn default_parallel_costs(min_bytes: usize, min_chunks: usize, max_threads
 
 #[inline]
 #[must_use]
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
+#[cfg(all(feature = "parallel", any(target_arch = "s390x", target_arch = "powerpc64")))]
 const fn scalar_profile_parallel(
   min_bytes: usize,
   min_chunks: usize,
@@ -431,14 +443,14 @@ const fn default_kind_streaming_table() -> StreamingTable {
   }
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
+#[cfg(all(feature = "parallel", any(target_arch = "x86_64", target_arch = "riscv64")))]
 #[inline]
 #[must_use]
 const fn default_kind_parallel_table() -> ParallelTable {
   default_parallel_costs(128 * 1024, 64, 0)
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
+#[cfg(all(feature = "parallel", any(target_arch = "x86_64", target_arch = "riscv64")))]
 #[inline]
 #[must_use]
 const fn default_kind_streaming_parallel_table() -> ParallelTable {
@@ -452,7 +464,9 @@ const fn default_kind_profile() -> FamilyProfile {
   FamilyProfile {
     dispatch: default_kind_table(),
     streaming: default_kind_streaming_table(),
+    #[cfg(feature = "parallel")]
     parallel: default_kind_parallel_table(),
+    #[cfg(feature = "parallel")]
     streaming_parallel: default_kind_streaming_parallel_table(),
   }
 }
@@ -474,21 +488,20 @@ const fn portable_profile() -> FamilyProfile {
       bulk: KernelId::Portable,
       bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
     },
+    #[cfg(feature = "parallel")]
     parallel: default_parallel_costs(128 * 1024, 64, 0),
+    #[cfg(feature = "parallel")]
     streaming_parallel: default_parallel_costs(128 * 1024, 64, 0),
   }
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
-// Family Profile: DEFAULT_KIND
-pub static PROFILE_DEFAULT_KIND: FamilyProfile = default_kind_profile();
-// Family Profile: PORTABLE
+pub(crate) static PROFILE_DEFAULT_KIND: FamilyProfile = default_kind_profile();
 #[cfg(not(target_arch = "x86_64"))]
-pub static PROFILE_PORTABLE: FamilyProfile = portable_profile();
+pub(crate) static PROFILE_PORTABLE: FamilyProfile = portable_profile();
 
-// Family Profile: INTEL_SAPPHIRE_RAPIDS
 #[cfg(target_arch = "x86_64")]
-pub static PROFILE_INTEL_SAPPHIRE_RAPIDS: FamilyProfile = FamilyProfile {
+pub(crate) static PROFILE_INTEL_SAPPHIRE_RAPIDS: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 1024, 4096],
     // This profile uses AVX-512 for every size class; its selector has no
@@ -503,6 +516,7 @@ pub static PROFILE_INTEL_SAPPHIRE_RAPIDS: FamilyProfile = FamilyProfile {
     bulk: KernelId::X86Avx512,
     bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
+  #[cfg(feature = "parallel")]
   parallel: ParallelTable {
     min_bytes: 65536,
     min_chunks: 64,
@@ -515,6 +529,7 @@ pub static PROFILE_INTEL_SAPPHIRE_RAPIDS: FamilyProfile = FamilyProfile {
     small_limit_bytes: 1048576,
     medium_limit_bytes: 4194304,
   },
+  #[cfg(feature = "parallel")]
   streaming_parallel: ParallelTable {
     min_bytes: 0,
     min_chunks: 0,
@@ -528,9 +543,8 @@ pub static PROFILE_INTEL_SAPPHIRE_RAPIDS: FamilyProfile = FamilyProfile {
     medium_limit_bytes: 2097152,
   },
 };
-// Family Profile: X86_AVX512
 #[cfg(target_arch = "x86_64")]
-pub static PROFILE_X86_AVX512: FamilyProfile = FamilyProfile {
+pub(crate) static PROFILE_X86_AVX512: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 1024, 4096],
     // This profile uses AVX-512 for every size class; its selector has no
@@ -545,6 +559,7 @@ pub static PROFILE_X86_AVX512: FamilyProfile = FamilyProfile {
     bulk: KernelId::X86Avx512,
     bulk_sizeclass_threshold: THRESHOLD_AVX512,
   },
+  #[cfg(feature = "parallel")]
   parallel: ParallelTable {
     min_bytes: 65536,
     min_chunks: 64,
@@ -557,6 +572,7 @@ pub static PROFILE_X86_AVX512: FamilyProfile = FamilyProfile {
     small_limit_bytes: 262144,
     medium_limit_bytes: 2097152,
   },
+  #[cfg(feature = "parallel")]
   streaming_parallel: ParallelTable {
     min_bytes: 0,
     min_chunks: 0,
@@ -572,7 +588,7 @@ pub static PROFILE_X86_AVX512: FamilyProfile = FamilyProfile {
 };
 // Family Profile: AARCH64_NEON
 #[cfg(target_arch = "aarch64")]
-pub static PROFILE_AARCH64_NEON: FamilyProfile = FamilyProfile {
+pub(crate) static PROFILE_AARCH64_NEON: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 4095, 4096],
     // Graviton-class attribution shows that for short inputs (<4KiB), the
@@ -589,6 +605,7 @@ pub static PROFILE_AARCH64_NEON: FamilyProfile = FamilyProfile {
     bulk: KernelId::Aarch64Neon,
     bulk_sizeclass_threshold: THRESHOLD_NEON,
   },
+  #[cfg(feature = "parallel")]
   parallel: ParallelTable {
     min_bytes: 65536,
     min_chunks: 64,
@@ -601,6 +618,7 @@ pub static PROFILE_AARCH64_NEON: FamilyProfile = FamilyProfile {
     small_limit_bytes: 262144,
     medium_limit_bytes: 2097152,
   },
+  #[cfg(feature = "parallel")]
   streaming_parallel: ParallelTable {
     min_bytes: 0,
     min_chunks: 0,
@@ -616,33 +634,37 @@ pub static PROFILE_AARCH64_NEON: FamilyProfile = FamilyProfile {
 };
 // Family Profile: Z13
 #[cfg(target_arch = "s390x")]
-pub static PROFILE_Z13: FamilyProfile = FamilyProfile {
+pub(crate) static PROFILE_Z13: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
     stream: KernelId::Portable,
     bulk: S390X_VECTOR_KERNEL,
     bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
+  #[cfg(feature = "parallel")]
   parallel: scalar_profile_parallel(256 * 1024, 128, 8, 0),
+  #[cfg(feature = "parallel")]
   streaming_parallel: scalar_profile_parallel(256 * 1024, 128, 8, 0),
 };
 
 // Family Profile: Z14
 #[cfg(target_arch = "s390x")]
-pub static PROFILE_Z14: FamilyProfile = FamilyProfile {
+pub(crate) static PROFILE_Z14: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
     stream: KernelId::Portable,
     bulk: S390X_VECTOR_KERNEL,
     bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
+  #[cfg(feature = "parallel")]
   parallel: scalar_profile_parallel(192 * 1024, 96, 8, 1),
+  #[cfg(feature = "parallel")]
   streaming_parallel: scalar_profile_parallel(192 * 1024, 96, 8, 1),
 };
 
 // Family Profile: Z15
 #[cfg(target_arch = "s390x")]
-pub static PROFILE_Z15: FamilyProfile = FamilyProfile {
+pub(crate) static PROFILE_Z15: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 256, 4096],
     xs: KernelId::Portable,
@@ -655,6 +677,7 @@ pub static PROFILE_Z15: FamilyProfile = FamilyProfile {
     bulk: S390X_VECTOR_KERNEL,
     bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
+  #[cfg(feature = "parallel")]
   parallel: ParallelTable {
     min_bytes: 65536,
     min_chunks: 64,
@@ -667,6 +690,7 @@ pub static PROFILE_Z15: FamilyProfile = FamilyProfile {
     small_limit_bytes: 262144,
     medium_limit_bytes: 8388608,
   },
+  #[cfg(feature = "parallel")]
   streaming_parallel: ParallelTable {
     min_bytes: 0,
     min_chunks: 0,
@@ -682,46 +706,52 @@ pub static PROFILE_Z15: FamilyProfile = FamilyProfile {
 };
 // Family Profile: POWER7
 #[cfg(target_arch = "powerpc64")]
-pub static PROFILE_POWER7: FamilyProfile = FamilyProfile {
+pub(crate) static PROFILE_POWER7: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
     stream: KernelId::Portable,
     bulk: POWER_VSX_KERNEL,
     bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
+  #[cfg(feature = "parallel")]
   parallel: scalar_profile_parallel(256 * 1024, 128, 8, 0),
+  #[cfg(feature = "parallel")]
   streaming_parallel: scalar_profile_parallel(256 * 1024, 128, 8, 0),
 };
 
 // Family Profile: POWER8
 #[cfg(target_arch = "powerpc64")]
-pub static PROFILE_POWER8: FamilyProfile = FamilyProfile {
+pub(crate) static PROFILE_POWER8: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
     stream: KernelId::Portable,
     bulk: POWER_VSX_KERNEL,
     bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
+  #[cfg(feature = "parallel")]
   parallel: scalar_profile_parallel(192 * 1024, 96, 8, 1),
+  #[cfg(feature = "parallel")]
   streaming_parallel: scalar_profile_parallel(192 * 1024, 96, 8, 1),
 };
 
 // Family Profile: POWER9
 #[cfg(target_arch = "powerpc64")]
-pub static PROFILE_POWER9: FamilyProfile = FamilyProfile {
+pub(crate) static PROFILE_POWER9: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
     stream: KernelId::Portable,
     bulk: POWER_VSX_KERNEL,
     bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
+  #[cfg(feature = "parallel")]
   parallel: scalar_profile_parallel(128 * 1024, 64, 16, 3),
+  #[cfg(feature = "parallel")]
   streaming_parallel: scalar_profile_parallel(128 * 1024, 64, 16, 3),
 };
 
 // Family Profile: POWER10
 #[cfg(target_arch = "powerpc64")]
-pub static PROFILE_POWER10: FamilyProfile = FamilyProfile {
+pub(crate) static PROFILE_POWER10: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 256, 4096],
     xs: KernelId::Portable,
@@ -734,6 +764,7 @@ pub static PROFILE_POWER10: FamilyProfile = FamilyProfile {
     bulk: POWER_VSX_KERNEL,
     bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
   },
+  #[cfg(feature = "parallel")]
   parallel: ParallelTable {
     min_bytes: 65536,
     min_chunks: 64,
@@ -746,6 +777,7 @@ pub static PROFILE_POWER10: FamilyProfile = FamilyProfile {
     small_limit_bytes: 262144,
     medium_limit_bytes: 8388608,
   },
+  #[cfg(feature = "parallel")]
   streaming_parallel: ParallelTable {
     min_bytes: 0,
     min_chunks: 0,
@@ -762,7 +794,7 @@ pub static PROFILE_POWER10: FamilyProfile = FamilyProfile {
 
 #[inline]
 #[must_use]
-pub fn select_profile_for_caps(caps: Caps) -> &'static FamilyProfile {
+pub(crate) fn select_profile_for_caps(caps: Caps) -> &'static FamilyProfile {
   #[cfg(target_arch = "x86_64")]
   {
     if caps.has(x86::AVX512_READY) {
@@ -837,27 +869,27 @@ pub fn select_profile_for_caps(caps: Caps) -> &'static FamilyProfile {
 
 #[inline]
 #[must_use]
-pub fn select_table_for_caps(caps: Caps) -> &'static DispatchTable {
+pub(crate) fn select_table_for_caps(caps: Caps) -> &'static DispatchTable {
   &select_profile_for_caps(caps).dispatch
 }
 
 #[inline]
 #[must_use]
-pub fn select_streaming_table_for_caps(caps: Caps) -> &'static StreamingTable {
+pub(crate) fn select_streaming_table_for_caps(caps: Caps) -> &'static StreamingTable {
   &select_profile_for_caps(caps).streaming
 }
 
 #[cfg(feature = "parallel")]
 #[inline]
 #[must_use]
-pub fn select_parallel_table_for_caps(caps: Caps) -> &'static ParallelTable {
+pub(crate) fn select_parallel_table_for_caps(caps: Caps) -> &'static ParallelTable {
   &select_profile_for_caps(caps).parallel
 }
 
 #[cfg(feature = "parallel")]
 #[inline]
 #[must_use]
-pub fn select_streaming_parallel_table_for_caps(caps: Caps) -> &'static ParallelTable {
+pub(crate) fn select_streaming_parallel_table_for_caps(caps: Caps) -> &'static ParallelTable {
   &select_profile_for_caps(caps).streaming_parallel
 }
 
@@ -876,19 +908,19 @@ mod tests {
     let sapphire_rapids = x86::AVX512_READY | x86::INTEL_SAPPHIRE_RAPIDS;
     assert!(core::ptr::eq(
       select_profile_for_caps(sapphire_rapids),
-      &PROFILE_INTEL_SAPPHIRE_RAPIDS
+      &raw const PROFILE_INTEL_SAPPHIRE_RAPIDS
     ));
     assert!(core::ptr::eq(
       select_profile_for_caps(sapphire_rapids | ALL_AMX),
-      &PROFILE_INTEL_SAPPHIRE_RAPIDS
+      &raw const PROFILE_INTEL_SAPPHIRE_RAPIDS
     ));
     assert!(core::ptr::eq(
       select_profile_for_caps(x86::AVX512_READY),
-      &PROFILE_X86_AVX512
+      &raw const PROFILE_X86_AVX512
     ));
     assert!(core::ptr::eq(
       select_profile_for_caps(x86::AVX512_READY | ALL_AMX),
-      &PROFILE_X86_AVX512
+      &raw const PROFILE_X86_AVX512
     ));
   }
 }

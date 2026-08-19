@@ -6,7 +6,9 @@ mod common;
 use common::decode_hex_vec as decode_hex;
 
 fn ascending_bytes(len: usize) -> Vec<u8> {
-  (0..len).map(|byte| byte as u8).collect()
+  (0..len)
+    .map(|byte| u8::try_from(byte).expect("NIST KMAC-256 sample index must fit in one byte"))
+    .collect()
 }
 
 fn key_bytes() -> Vec<u8> {
@@ -25,7 +27,7 @@ fn kmac256_nist_sample_4_matches() {
   let mut actual = vec![0u8; expected.len()];
   Kmac256::mac_into(&key, b"My Tagged Application", &data, &mut actual);
   assert_eq!(actual, expected, "kmac256 sample 4 one-shot mismatch");
-  assert!(Kmac256::verify_tag(&key, b"My Tagged Application", &data, &expected).is_ok());
+  Kmac256::verify_tag(&key, b"My Tagged Application", &data, &expected).expect("KMAC-256 must verify NIST sample 4");
 
   let mut streaming = Kmac256::new(&key, b"My Tagged Application");
   streaming.update(&data[..1]);
@@ -47,7 +49,7 @@ fn kmac256_nist_sample_5_matches() {
   let mut actual = vec![0u8; expected.len()];
   Kmac256::mac_into(&key, b"", &data, &mut actual);
   assert_eq!(actual, expected, "kmac256 sample 5 one-shot mismatch");
-  assert!(Kmac256::verify_tag(&key, b"", &data, &expected).is_ok());
+  Kmac256::verify_tag(&key, b"", &data, &expected).expect("KMAC-256 must verify NIST sample 5");
 
   let mut streaming = Kmac256::new(&key, b"");
   streaming.update(&data[..136]);
@@ -69,7 +71,7 @@ fn kmac256_nist_sample_6_matches() {
   let mut actual = vec![0u8; expected.len()];
   Kmac256::mac_into(&key, b"My Tagged Application", &data, &mut actual);
   assert_eq!(actual, expected, "kmac256 sample 6 one-shot mismatch");
-  assert!(Kmac256::verify_tag(&key, b"My Tagged Application", &data, &expected).is_ok());
+  Kmac256::verify_tag(&key, b"My Tagged Application", &data, &expected).expect("KMAC-256 must verify NIST sample 6");
 
   let mut streaming = Kmac256::new(&key, b"My Tagged Application");
   streaming.update(&data[..136]);
@@ -85,23 +87,17 @@ fn kmac256_verify_rejects_empty_and_corrupted_tags() {
   let data = ascending_bytes(200);
   let expected = Kmac256::mac_array::<64>(&key, b"My Tagged Application", &data);
 
-  assert!(
-    Kmac256::verify_tag(&key, b"My Tagged Application", &data, &[]).is_err(),
-    "KMAC256 must reject an empty expected tag"
-  );
+  Kmac256::verify_tag(&key, b"My Tagged Application", &data, &[])
+    .expect_err("KMAC-256 must reject an empty expected tag");
 
   let one_byte = [expected[0] ^ 0x80];
-  assert!(
-    Kmac256::verify_tag(&key, b"My Tagged Application", &data, &one_byte).is_err(),
-    "KMAC256 accepted a corrupted one-byte tag"
-  );
+  Kmac256::verify_tag(&key, b"My Tagged Application", &data, &one_byte)
+    .expect_err("KMAC-256 must reject a corrupted one-byte tag");
 
   for index in [0, expected.len() / 2, expected.len() - 1] {
     let mut corrupted = expected;
     corrupted[index] ^= 0x80;
-    assert!(
-      Kmac256::verify_tag(&key, b"My Tagged Application", &data, &corrupted).is_err(),
-      "KMAC256 accepted a tag corrupted at byte {index}"
-    );
+    Kmac256::verify_tag(&key, b"My Tagged Application", &data, &corrupted)
+      .expect_err("KMAC-256 must reject a corrupted full-length tag");
   }
 }

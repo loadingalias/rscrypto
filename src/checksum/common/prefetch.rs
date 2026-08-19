@@ -3,15 +3,6 @@
 // SAFETY: This module provides low-level prefetch intrinsics that require unsafe.
 // Prefetch instructions are hints to the CPU and cannot cause memory unsafety;
 // invalid addresses are silently ignored.
-#![allow(unsafe_code)]
-#![cfg_attr(
-  all(
-    target_arch = "aarch64",
-    feature = "crc32",
-    not(any(feature = "crc16", feature = "crc24", feature = "crc64", test))
-  ),
-  allow(dead_code, unused_imports)
-)]
 //! This module provides architecture-specific prefetch distances and inline
 //! helpers for large-buffer CRC computation.
 //!
@@ -27,18 +18,20 @@
 //! ```text
 //! use crate::checksum::common::prefetch::{prefetch_read_l1, LARGE_BLOCK_DISTANCE};
 //!
-//! // In a double-unrolled loop processing 512B per iteration:
-//! while ptr.add(DOUBLE_BLOCK) <= end {
-//!     // Prefetch 2 iterations ahead (1KB for 512B blocks)
-//!     prefetch_read_l1(ptr.add(LARGE_BLOCK_DISTANCE));
+//! if end.offset_from_unsigned(ptr) >= DOUBLE_BLOCK {
+//!     let last_double_block = end.sub(DOUBLE_BLOCK);
+//!     while ptr <= last_double_block {
+//!         // Prefetch accepts arbitrary addresses, so use wrapping addition.
+//!         prefetch_read_l1(ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
 //!
-//!     // Process first 256B block
-//!     // ... fold operations ...
+//!         // Process first 256B block
+//!         // ... fold operations ...
 //!
-//!     // Process second 256B block
-//!     // ... fold operations ...
+//!         // Process second 256B block
+//!         // ... fold operations ...
 //!
-//!     ptr = ptr.add(DOUBLE_BLOCK);
+//!         ptr = ptr.add(DOUBLE_BLOCK);
+//!     }
 //! }
 //! ```
 
@@ -48,13 +41,13 @@
 ///
 /// The x86-64 folding loops use this 1,024-byte lookahead.
 #[cfg(target_arch = "x86_64")]
-pub const LARGE_BLOCK_DISTANCE: usize = 1024;
+pub(in crate::checksum) const LARGE_BLOCK_DISTANCE: usize = 1024;
 
 /// Prefetch distance for large buffer kernels on ARM64.
 ///
 /// The AArch64 folding loops use this 768-byte lookahead.
 #[cfg(target_arch = "aarch64")]
-pub const LARGE_BLOCK_DISTANCE: usize = 768;
+pub(in crate::checksum) const LARGE_BLOCK_DISTANCE: usize = 768;
 
 // x86-64 Prefetch Intrinsics
 
@@ -72,7 +65,7 @@ mod x86_64_impl {
   /// The pointer does not need to be valid or aligned. Prefetch is a hint;
   /// invalid addresses are silently ignored by the CPU.
   #[inline(always)]
-  pub(crate) unsafe fn prefetch_read_l1(ptr: *const u8) {
+  pub(in crate::checksum) unsafe fn prefetch_read_l1(ptr: *const u8) {
     // SAFETY: Prefetch is a CPU hint; invalid addresses are silently ignored.
     // The _mm_prefetch intrinsic cannot cause memory unsafety.
     unsafe {
@@ -101,7 +94,7 @@ mod aarch64_impl {
   /// The pointer does not need to be valid or aligned. Prefetch is a hint;
   /// invalid addresses are silently ignored by the CPU.
   #[inline(always)]
-  pub(crate) unsafe fn prefetch_read_l1(ptr: *const u8) {
+  pub(in crate::checksum) unsafe fn prefetch_read_l1(ptr: *const u8) {
     // SAFETY: Inline assembly for PRFM prefetch hint. Prefetch instructions
     // are CPU hints that cannot cause memory unsafety; invalid addresses
     // are silently ignored by the hardware.
@@ -120,13 +113,13 @@ mod aarch64_impl {
 // Public API
 
 #[cfg(target_arch = "aarch64")]
-pub(crate) use aarch64_impl::prefetch_read_l1;
+pub(in crate::checksum) use aarch64_impl::prefetch_read_l1;
 #[cfg(target_arch = "x86_64")]
-pub(crate) use x86_64_impl::prefetch_read_l1;
+pub(in crate::checksum) use x86_64_impl::prefetch_read_l1;
 
 // Fallback for other architectures (no-op)
 #[cfg(all(not(any(target_arch = "x86_64", target_arch = "aarch64")), test))]
-pub const LARGE_BLOCK_DISTANCE: usize = 512;
+pub(in crate::checksum) const LARGE_BLOCK_DISTANCE: usize = 512;
 
 #[cfg(all(not(any(target_arch = "x86_64", target_arch = "aarch64")), test))]
 #[inline(always)]
@@ -135,7 +128,7 @@ pub const LARGE_BLOCK_DISTANCE: usize = 512;
 /// # Safety
 ///
 /// This function performs no memory access and is always safe to call.
-pub(crate) unsafe fn prefetch_read_l1(_ptr: *const u8) {}
+pub(in crate::checksum) unsafe fn prefetch_read_l1(_ptr: *const u8) {}
 
 // Tests
 

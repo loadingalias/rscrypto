@@ -32,8 +32,7 @@ const MODULUS_N: u64 = MASK51;
 /// chains.
 const SUB_BIAS_0: u64 = ((1u64 << RADIX_BITS) - 19).wrapping_mul(16);
 const SUB_BIAS_N: u64 = MASK51.wrapping_mul(16);
-#[allow(dead_code)]
-#[cfg(any(feature = "ed25519", feature = "x25519"))]
+#[cfg(feature = "ed25519")]
 const SQRT_M1: FieldElement = FieldElement::from_limbs([
   1_718_705_420_411_056,
   234_908_883_556_509,
@@ -63,7 +62,6 @@ impl FieldElement {
   /// Construct a small field element without reduction.
   #[inline]
   #[must_use]
-  #[allow(dead_code)]
   pub(crate) const fn from_small(value: u64) -> Self {
     Self([value, 0, 0, 0, 0])
   }
@@ -71,7 +69,6 @@ impl FieldElement {
   /// Borrow the raw radix-51 limbs.
   #[inline]
   #[must_use]
-  #[allow(dead_code)]
   #[cfg(any(feature = "ed25519", feature = "x25519"))]
   pub(crate) const fn limbs(&self) -> &[u64; FIELD_LIMBS] {
     &self.0
@@ -180,7 +177,6 @@ impl FieldElement {
   /// Negate the field element modulo `2^255 - 19`.
   #[inline]
   #[must_use]
-  #[allow(dead_code)]
   #[cfg(any(feature = "ed25519", feature = "x25519"))]
   pub(crate) fn neg(&self) -> Self {
     Self::ZERO.sub(self)
@@ -217,8 +213,7 @@ impl FieldElement {
 
   /// Decode a canonical 32-byte field element.
   #[must_use]
-  #[allow(dead_code)]
-  #[cfg(any(feature = "ed25519", feature = "x25519"))]
+  #[cfg(feature = "ed25519")]
   pub(crate) fn from_bytes(bytes: &[u8; 32]) -> Option<Self> {
     let mut acc = 0u128;
     let mut acc_bits = 0u32;
@@ -235,7 +230,7 @@ impl FieldElement {
         }
       }
 
-      *limb = (acc & u128::from(MASK51)) as u64;
+      *limb = u64::try_from(acc & u128::from(MASK51)).expect("masked field limb fits u64");
       acc >>= RADIX_BITS;
       acc_bits = acc_bits.wrapping_sub(RADIX_BITS);
     }
@@ -267,7 +262,7 @@ impl FieldElement {
 
       while acc_bits >= 8 {
         if let Some(byte) = out_iter.next() {
-          *byte = acc as u8;
+          *byte = u8::try_from(acc & 0xff).expect("masked field byte fits u8");
         }
         acc >>= 8;
         acc_bits = acc_bits.wrapping_sub(8);
@@ -275,7 +270,7 @@ impl FieldElement {
     }
 
     if let Some(byte) = out_iter.next() {
-      *byte = acc as u8;
+      *byte = u8::try_from(acc & 0xff).expect("masked field byte fits u8");
     }
 
     out
@@ -283,7 +278,6 @@ impl FieldElement {
 
   /// Return `true` when the canonical field element is zero.
   #[must_use]
-  #[allow(dead_code)]
   #[cfg(any(feature = "ed25519", feature = "x25519"))]
   pub(crate) fn is_zero(&self) -> bool {
     self.normalize().0.iter().all(|&limb| limb == 0)
@@ -291,8 +285,22 @@ impl FieldElement {
 
   /// Branchless conditional swap at the Rust source level.
   #[inline]
-  #[cfg(feature = "x25519")]
-  #[allow(dead_code)]
+  #[cfg(all(
+    feature = "x25519",
+    any(
+      feature = "diag",
+      test,
+      miri,
+      not(any(
+        all(
+          target_arch = "aarch64",
+          any(target_os = "macos", target_os = "linux"),
+          not(feature = "portable-only")
+        ),
+        all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+      ))
+    )
+  ))]
   pub(crate) fn conditional_swap(lhs: &mut Self, rhs: &mut Self, swap: u8) {
     let mask = 0u64.wrapping_sub(u64::from(swap & 1));
     for (lhs_limb, rhs_limb) in lhs.0.iter_mut().zip(rhs.0.iter_mut()) {
@@ -304,16 +312,14 @@ impl FieldElement {
 
   /// Return the low-bit sign of the canonical encoding.
   #[must_use]
-  #[allow(dead_code)]
-  #[cfg(any(feature = "ed25519", feature = "x25519"))]
+  #[cfg(feature = "ed25519")]
   pub(crate) fn is_negative(&self) -> bool {
     ((*self).to_bytes()[0] & 1) == 1
   }
 
   /// Square root in `GF(2^255 - 19)` when one exists.
   #[must_use]
-  #[allow(dead_code)]
-  #[cfg(any(feature = "ed25519", feature = "x25519"))]
+  #[cfg(feature = "ed25519")]
   pub(crate) fn sqrt(&self) -> Option<Self> {
     let normalized = self.normalize();
     self
@@ -360,16 +366,14 @@ impl FieldElement {
   }
 
   #[must_use]
-  #[allow(dead_code)]
-  #[cfg(any(feature = "ed25519", feature = "x25519"))]
+  #[cfg(feature = "ed25519")]
   fn pow_p58(&self) -> Self {
     let (t19, _) = self.pow22501();
     self.mul(&t19.pow2k(2))
   }
 
   #[must_use]
-  #[allow(dead_code)]
-  #[cfg(any(feature = "ed25519", feature = "x25519"))]
+  #[cfg(feature = "ed25519")]
   pub(crate) fn sqrt_ratio_i(&self, denominator: &Self) -> Option<Self> {
     let numerator = self.normalize();
     let denominator = denominator.normalize();
@@ -454,7 +458,7 @@ fn reduce_wide(wide: [u128; FIELD_LIMBS]) -> [u64; FIELD_LIMBS] {
   h0 = h0.wrapping_add((h4 >> RADIX_BITS).wrapping_mul(19));
   h4 &= mask;
 
-  [h0 as u64, h1 as u64, h2 as u64, h3 as u64, h4 as u64]
+  [h0, h1, h2, h3, h4].map(|limb| u64::try_from(limb).expect("reduced field limb fits u64"))
 }
 
 /// Single-round carry propagation on u64 limbs (sub output, normalize).
@@ -518,7 +522,7 @@ mod tests {
   fn from_u128(mut value: u128) -> FieldElement {
     let mut limbs = [0u64; 5];
     for limb in &mut limbs {
-      *limb = (value & u128::from(MASK51)) as u64;
+      *limb = u64::try_from(value & u128::from(MASK51)).expect("masked test limb fits u64");
       value >>= 51;
     }
     FieldElement::from_limbs(limbs)

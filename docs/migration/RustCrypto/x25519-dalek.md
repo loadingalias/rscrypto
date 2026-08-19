@@ -5,14 +5,14 @@
 > `X25519SharedSecret`. Valid RFC 7748 inputs produce the same shared-secret
 > bytes; rscrypto returns an explicit error for an all-zero result.
 
-Verified against `x25519-dalek = "2.0.1"` and the `rscrypto` 0.7.8 line.
+Verified against `x25519-dalek = "3.0.0"` and the `rscrypto` 0.8.1 line.
 Evidence: `tests/x25519_vectors.rs`, `tests/x25519_oracle.rs`, and `tests/x25519_wycheproof.rs`.
 
 ## TL;DR
 
-| | Before (`x25519-dalek` 2.x) | After (`rscrypto` 0.7.8) |
+| | Before (`x25519-dalek` 3.x) | After (`rscrypto` 0.8.1) |
 |---|---|---|
-| Cargo dep | `x25519-dalek = { version = "2.0", features = ["static_secrets"] }` | `rscrypto = { version = "0.7.8", features = ["x25519"] }` |
+| Cargo dep | `x25519-dalek = { version = "3.0", features = ["static_secrets"] }` | `rscrypto = { version = "0.8.1", features = ["x25519"] }` |
 | Import | `use x25519_dalek::{StaticSecret, PublicKey};` | `use rscrypto::{X25519SecretKey, X25519PublicKey};` |
 | DH | `secret.diffie_hellman(&peer_pub)` (returns `SharedSecret`) | `secret.diffie_hellman(&peer_pub)?` (returns `Result<X25519SharedSecret, _>`) |
 
@@ -21,13 +21,13 @@ Evidence: `tests/x25519_vectors.rs`, `tests/x25519_oracle.rs`, and `tests/x25519
 ```toml
 # Before
 [dependencies]
-x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+x25519-dalek = { version = "3.0", features = ["static_secrets"] }
 ```
 
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.7.8", features = ["x25519"] }
+rscrypto = { version = "0.8.1", features = ["x25519"] }
 ```
 
 The `x25519` feature has no transitive dependencies: X25519 needs nothing beyond Curve25519 arithmetic.

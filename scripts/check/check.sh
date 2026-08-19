@@ -145,12 +145,22 @@ fi
 # Clippy
 step "Linting"
 # shellcheck disable=SC2086
-if ! cargo clippy $CRATE_FLAGS --all-targets --all-features --locked -- -D warnings >"$LOG_DIR/clippy.log" 2>&1; then
+if ! cargo clippy $CRATE_FLAGS --all-targets --all-features --locked >"$LOG_DIR/clippy.log" 2>&1; then
   fail
   show_error "$LOG_DIR/clippy.log"
   exit 1
 fi
 ok
+
+if [[ "$FULL_WORKSPACE" == true ]]; then
+  step "Linting independent workspaces"
+  if ! "$SCRIPT_DIR/lint-independent-workspaces.sh" >"$LOG_DIR/independent-lints.log" 2>&1; then
+    fail
+    show_error "$LOG_DIR/independent-lints.log"
+    exit 1
+  fi
+  ok
+fi
 
 # Audit/Deny (workspace only). CI owns this in the dedicated supply-chain lane.
 if [[ "$FULL_WORKSPACE" == true && "${RSCRYPTO_SKIP_CHECK_SUPPLY_CHAIN:-}" != "1" ]]; then

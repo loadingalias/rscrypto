@@ -13,9 +13,6 @@
 //!
 //! Requires the MSA facility (CPACF). Caller must verify `s390x::MSA`.
 
-#![allow(unsafe_code)]
-#![allow(clippy::indexing_slicing)]
-
 use super::BLOCK_LEN;
 
 /// SHA-512 block compression via KIMD instruction.

@@ -8,13 +8,8 @@
 //!
 //! # Safety
 //!
-//! All functions in this module are marked `unsafe` and require specific CPU
-//! features to be present. Callers must verify CPU capabilities before calling.
-
-#![allow(unsafe_code)]
-#![allow(clippy::inline_always)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::many_single_char_names)]
+//! Unsafe entry points require specific CPU features to be present. Callers
+//! must verify CPU capabilities before calling them.
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
@@ -25,25 +20,55 @@ pub(crate) mod avx2;
 pub(crate) mod avx512;
 pub(crate) mod sse41;
 
-use super::{BLOCK_LEN, CHUNK_START, IV, PARENT};
+use super::{BLOCK_LEN, BLOCK_LEN_U32, CHUNK_START, IV, PARENT};
+
+/// Inputs shared by the x86 intrinsic hash-many kernels.
+pub(crate) struct HashManyRequest<'a, const DEGREE: usize> {
+  /// One pointer per SIMD lane.
+  pub(crate) inputs: &'a [*const u8; DEGREE],
+  /// Complete BLAKE3 blocks in every input.
+  pub(crate) blocks: usize,
+  /// Eight-word chaining key.
+  pub(crate) key: &'a [u32; 8],
+  /// Initial chunk counter.
+  pub(crate) counter: u64,
+  /// Whether to advance the counter for each lane.
+  pub(crate) increment_counter: bool,
+  /// Flags applied to every block.
+  pub(crate) flags: u32,
+  /// Flags added to the first block.
+  pub(crate) flags_start: u32,
+  /// Flags added to the last block.
+  pub(crate) flags_end: u32,
+  /// Destination for one chaining value per lane.
+  pub(crate) out: *mut u8,
+}
 
 // Shared helpers for SIMD kernels.
 
 #[inline(always)]
 pub(crate) const fn counter_low(counter: u64) -> u32 {
-  counter as u32
+  let [c0, c1, c2, c3, _, _, _, _] = counter.to_le_bytes();
+  u32::from_le_bytes([c0, c1, c2, c3])
 }
 
 #[inline(always)]
 pub(crate) const fn counter_high(counter: u64) -> u32 {
-  (counter >> 32) as u32
+  let [_, _, _, _, c4, c5, c6, c7] = counter.to_le_bytes();
+  u32::from_le_bytes([c4, c5, c6, c7])
 }
 
 // CV-only compression helpers (avoid `[u32; 16]` materialization)
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-unsafe fn load_msg_vecs(block: *const u8) -> (__m128i, __m128i, __m128i, __m128i) {
+/// Loads one unaligned BLAKE3 block into four SIMD registers.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2, and `block` must be readable for
+/// `BLOCK_LEN` bytes.
+unsafe fn load_msg_vecs(block: *const u8) -> [__m128i; 4] {
   // SAFETY: Caller guarantees block pointer is valid for 64 bytes. Intrinsics require SSSE3 via
   // caller's #[target_feature].
   unsafe {
@@ -51,12 +76,18 @@ unsafe fn load_msg_vecs(block: *const u8) -> (__m128i, __m128i, __m128i, __m128i
     let m1 = _mm_loadu_si128(block.add(16).cast());
     let m2 = _mm_loadu_si128(block.add(32).cast());
     let m3 = _mm_loadu_si128(block.add(48).cast());
-    (m0, m1, m2, m3)
+    [m0, m1, m2, m3]
   }
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.1,ssse3")]
+/// Compresses one byte-oriented block in place with SSE4.1.
+///
+/// # Safety
+///
+/// The current CPU must support SSE4.1 and SSSE3, and `block` must be readable
+/// for `BLOCK_LEN` bytes.
 pub(crate) unsafe fn compress_in_place_sse41_bytes(
   chaining_value: &mut [u32; 8],
   block: *const u8,
@@ -66,8 +97,8 @@ pub(crate) unsafe fn compress_in_place_sse41_bytes(
 ) {
   // SAFETY: SSE4.1/SSSE3 intrinsics are available via this function's #[target_feature] attribute.
   unsafe {
-    let (m0, m1, m2, m3) = load_msg_vecs(block);
-    let [row0, row1, row2, row3] = compress_pre_sse41_impl(chaining_value, m0, m1, m2, m3, counter, block_len, flags);
+    let message = load_msg_vecs(block);
+    let [row0, row1, row2, row3] = compress_pre_sse41_impl(chaining_value, message, counter, block_len, flags);
     _mm_storeu_si128(chaining_value.as_mut_ptr().cast(), _mm_xor_si128(row0, row2));
     _mm_storeu_si128(chaining_value.as_mut_ptr().add(4).cast(), _mm_xor_si128(row1, row3));
   }
@@ -75,6 +106,12 @@ pub(crate) unsafe fn compress_in_place_sse41_bytes(
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.1,ssse3")]
+/// Compresses one byte-oriented block to a chaining value with SSE4.1.
+///
+/// # Safety
+///
+/// The current CPU must support SSE4.1 and SSSE3, and `block` must be readable
+/// for `BLOCK_LEN` bytes.
 pub(crate) unsafe fn compress_cv_sse41_bytes(
   chaining_value: &[u32; 8],
   block: *const u8,
@@ -84,8 +121,8 @@ pub(crate) unsafe fn compress_cv_sse41_bytes(
 ) -> [u32; 8] {
   // SAFETY: SSE4.1/SSSE3 intrinsics are available via this function's #[target_feature] attribute.
   unsafe {
-    let (m0, m1, m2, m3) = load_msg_vecs(block);
-    let [row0, row1, row2, row3] = compress_pre_sse41_impl(chaining_value, m0, m1, m2, m3, counter, block_len, flags);
+    let message = load_msg_vecs(block);
+    let [row0, row1, row2, row3] = compress_pre_sse41_impl(chaining_value, message, counter, block_len, flags);
     let row0 = _mm_xor_si128(row0, row2);
     let row1 = _mm_xor_si128(row1, row3);
 
@@ -96,6 +133,12 @@ pub(crate) unsafe fn compress_cv_sse41_bytes(
   }
 }
 
+/// Compresses one byte-oriented block to a chaining value with AVX2.
+///
+/// # Safety
+///
+/// The current CPU must support AVX2, SSE4.1, and SSSE3, and `block` must be
+/// readable for `BLOCK_LEN` bytes.
 pub(crate) unsafe fn compress_cv_avx2_bytes(
   chaining_value: &[u32; 8],
   block: *const u8,
@@ -105,13 +148,19 @@ pub(crate) unsafe fn compress_cv_avx2_bytes(
 ) -> [u32; 8] {
   // SAFETY: AVX2/SSE4.1/SSSE3 intrinsics are available via caller's target_feature guarantee.
   unsafe {
-    let (m0, m1, m2, m3) = load_msg_vecs(block);
-    compress_cv_avx2(chaining_value, m0, m1, m2, m3, counter, block_len, flags)
+    let message = load_msg_vecs(block);
+    compress_cv_avx2(chaining_value, message, counter, block_len, flags)
   }
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,sse4.1,ssse3")]
+/// Compresses one byte-oriented block in place with AVX2.
+///
+/// # Safety
+///
+/// The current CPU must support AVX2, SSE4.1, and SSSE3, and `block` must be
+/// readable for `BLOCK_LEN` bytes.
 pub(crate) unsafe fn compress_in_place_avx2_bytes(
   chaining_value: &mut [u32; 8],
   block: *const u8,
@@ -128,12 +177,17 @@ pub(crate) unsafe fn compress_in_place_avx2_bytes(
 
 // On ASM-supported platforms, we prefer the handwritten assembly. This intrinsics
 // version is kept as fallback for other x86_64 platforms (e.g., FreeBSD, illumos).
-#[cfg(target_arch = "x86_64")]
-#[cfg_attr(
-  any(target_os = "linux", target_os = "macos", target_os = "windows"),
-  allow(dead_code)
-)]
+#[cfg(any(
+  feature = "diag",
+  not(any(target_os = "linux", target_os = "macos", target_os = "windows"))
+))]
 #[target_feature(enable = "avx512f,avx512vl,avx2,sse4.1,ssse3")]
+/// Compresses one byte-oriented block in place with AVX-512.
+///
+/// # Safety
+///
+/// The current CPU must support the declared AVX-512, AVX2, SSE4.1, and SSSE3
+/// features, and `block` must be readable for `BLOCK_LEN` bytes.
 pub(crate) unsafe fn compress_in_place_avx512_bytes(
   chaining_value: &mut [u32; 8],
   block: *const u8,
@@ -144,19 +198,24 @@ pub(crate) unsafe fn compress_in_place_avx512_bytes(
   // SAFETY: AVX-512/AVX2/SSE4.1/SSSE3 intrinsics are available via this function's #[target_feature]
   // attribute.
   unsafe {
-    let (m0, m1, m2, m3) = load_msg_vecs(block);
-    let [row0, row1, row2, row3] = compress_pre_sse41_impl(chaining_value, m0, m1, m2, m3, counter, block_len, flags);
+    let message = load_msg_vecs(block);
+    let [row0, row1, row2, row3] = compress_pre_sse41_impl(chaining_value, message, counter, block_len, flags);
     _mm_storeu_si128(chaining_value.as_mut_ptr().cast(), _mm_xor_si128(row0, row2));
     _mm_storeu_si128(chaining_value.as_mut_ptr().add(4).cast(), _mm_xor_si128(row1, row3));
   }
 }
 
-#[cfg(target_arch = "x86_64")]
-#[cfg_attr(
-  any(target_os = "linux", target_os = "macos", target_os = "windows"),
-  allow(dead_code)
-)]
+#[cfg(any(
+  feature = "diag",
+  not(any(target_os = "linux", target_os = "macos", target_os = "windows"))
+))]
 #[target_feature(enable = "avx512f,avx512vl,avx2,sse4.1,ssse3")]
+/// Compresses one byte-oriented block to a chaining value with AVX-512.
+///
+/// # Safety
+///
+/// The current CPU must support the declared AVX-512, AVX2, SSE4.1, and SSSE3
+/// features, and `block` must be readable for `BLOCK_LEN` bytes.
 pub(crate) unsafe fn compress_cv_avx512_bytes(
   chaining_value: &[u32; 8],
   block: *const u8,
@@ -167,8 +226,8 @@ pub(crate) unsafe fn compress_cv_avx512_bytes(
   // SAFETY: AVX-512/AVX2/SSE4.1/SSSE3 intrinsics are available via this function's #[target_feature]
   // attribute.
   unsafe {
-    let (m0, m1, m2, m3) = load_msg_vecs(block);
-    compress_cv_avx512(chaining_value, m0, m1, m2, m3, counter, block_len, flags)
+    let message = load_msg_vecs(block);
+    compress_cv_avx512(chaining_value, message, counter, block_len, flags)
   }
 }
 
@@ -182,6 +241,9 @@ pub(crate) unsafe fn compress_cv_avx512_bytes(
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
+/// # Safety
+///
+/// The current CPU must support SSE2.
 unsafe fn rot16_sse41(a: __m128i) -> __m128i {
   // SAFETY: SSE2 intrinsics are available via caller's #[target_feature] attribute.
   unsafe { _mm_or_si128(_mm_srli_epi32(a, 16), _mm_slli_epi32(a, 16)) }
@@ -189,6 +251,9 @@ unsafe fn rot16_sse41(a: __m128i) -> __m128i {
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
+/// # Safety
+///
+/// The current CPU must support SSE2.
 unsafe fn rot12_sse41(a: __m128i) -> __m128i {
   // SAFETY: SSE2 intrinsics are available via caller's #[target_feature] attribute.
   unsafe { _mm_or_si128(_mm_srli_epi32(a, 12), _mm_slli_epi32(a, 20)) }
@@ -196,6 +261,9 @@ unsafe fn rot12_sse41(a: __m128i) -> __m128i {
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
+/// # Safety
+///
+/// The current CPU must support SSE2.
 unsafe fn rot8_sse41(a: __m128i) -> __m128i {
   // SAFETY: SSE2 intrinsics are available via caller's #[target_feature] attribute.
   unsafe { _mm_or_si128(_mm_srli_epi32(a, 8), _mm_slli_epi32(a, 24)) }
@@ -203,6 +271,9 @@ unsafe fn rot8_sse41(a: __m128i) -> __m128i {
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
+/// # Safety
+///
+/// The current CPU must support SSE2.
 unsafe fn rot7_sse41(a: __m128i) -> __m128i {
   // SAFETY: SSE2 intrinsics are available via caller's #[target_feature] attribute.
   unsafe { _mm_or_si128(_mm_srli_epi32(a, 7), _mm_slli_epi32(a, 25)) }
@@ -210,6 +281,11 @@ unsafe fn rot7_sse41(a: __m128i) -> __m128i {
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
+/// Executes the first half of the BLAKE3 mixing function.
+///
+/// # Safety
+///
+/// The current CPU must support SSE4.1 and SSSE3.
 unsafe fn g1_sse41(row0: &mut __m128i, row1: &mut __m128i, row2: &mut __m128i, row3: &mut __m128i, m: __m128i) {
   // SAFETY: SSE4.1/SSSE3 intrinsics are available via caller's #[target_feature] attribute.
   unsafe {
@@ -224,6 +300,11 @@ unsafe fn g1_sse41(row0: &mut __m128i, row1: &mut __m128i, row2: &mut __m128i, r
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
+/// Executes the second half of the BLAKE3 mixing function.
+///
+/// # Safety
+///
+/// The current CPU must support SSE4.1 and SSSE3.
 unsafe fn g2_sse41(row0: &mut __m128i, row1: &mut __m128i, row2: &mut __m128i, row3: &mut __m128i, m: __m128i) {
   // SAFETY: SSE4.1/SSSE3 intrinsics are available via caller's #[target_feature] attribute.
   unsafe {
@@ -251,6 +332,9 @@ macro_rules! shuffle2 {
 // Leave row1 unrotated and diagonalize the other rows.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
+/// # Safety
+///
+/// The current CPU must support SSE2.
 unsafe fn diagonalize_sse41(row0: &mut __m128i, row2: &mut __m128i, row3: &mut __m128i) {
   // SAFETY: SSE2 intrinsics are available via caller's #[target_feature] attribute.
   unsafe {
@@ -262,6 +346,9 @@ unsafe fn diagonalize_sse41(row0: &mut __m128i, row2: &mut __m128i, row3: &mut _
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
+/// # Safety
+///
+/// The current CPU must support SSE2.
 unsafe fn undiagonalize_sse41(row0: &mut __m128i, row2: &mut __m128i, row3: &mut __m128i) {
   // SAFETY: SSE2 intrinsics are available via caller's #[target_feature] attribute.
   unsafe {
@@ -273,18 +360,21 @@ unsafe fn undiagonalize_sse41(row0: &mut __m128i, row2: &mut __m128i, row3: &mut
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
+/// Runs the shared SSE4.1 compression schedule without the output transform.
+///
+/// # Safety
+///
+/// The current CPU must support SSE4.1 and SSSE3.
 unsafe fn compress_pre_sse41_impl(
   chaining_value: &[u32; 8],
-  mut m0: __m128i,
-  mut m1: __m128i,
-  mut m2: __m128i,
-  mut m3: __m128i,
+  message: [__m128i; 4],
   counter: u64,
   block_len: u32,
   flags: u32,
 ) -> [__m128i; 4] {
   // SAFETY: SSE4.1/SSSE3 intrinsics are available via caller's #[target_feature] attribute.
   unsafe {
+    let [mut m0, mut m1, mut m2, mut m3] = message;
     let mut row0 = _mm_loadu_si128(chaining_value.as_ptr().cast());
     let mut row1 = _mm_loadu_si128(chaining_value.as_ptr().add(4).cast());
     let mut row2 = _mm_setr_epi32(
@@ -294,8 +384,8 @@ unsafe fn compress_pre_sse41_impl(
       IV[3].cast_signed(),
     );
     let mut row3 = _mm_setr_epi32(
-      (counter as u32).cast_signed(),
-      ((counter >> 32) as u32).cast_signed(),
+      counter_low(counter).cast_signed(),
+      counter_high(counter).cast_signed(),
       block_len.cast_signed(),
       flags.cast_signed(),
     );
@@ -396,10 +486,7 @@ unsafe fn compress_pre_sse41_impl(
 #[target_feature(enable = "avx2,sse4.1,ssse3")]
 unsafe fn compress_cv_avx2(
   chaining_value: &[u32; 8],
-  m0: __m128i,
-  m1: __m128i,
-  m2: __m128i,
-  m3: __m128i,
+  message: [__m128i; 4],
   counter: u64,
   block_len: u32,
   flags: u32,
@@ -407,7 +494,7 @@ unsafe fn compress_cv_avx2(
   // SAFETY: AVX2/SSE4.1/SSSE3 intrinsics are available via this function's #[target_feature]
   // attribute.
   unsafe {
-    let [row0, row1, row2, row3] = compress_pre_sse41_impl(chaining_value, m0, m1, m2, m3, counter, block_len, flags);
+    let [row0, row1, row2, row3] = compress_pre_sse41_impl(chaining_value, message, counter, block_len, flags);
     let row0 = _mm_xor_si128(row0, row2);
     let row1 = _mm_xor_si128(row1, row3);
     let mut out = [0u32; 8];
@@ -425,10 +512,7 @@ unsafe fn compress_cv_avx2(
 #[target_feature(enable = "avx512f,avx512vl,avx2,sse4.1,ssse3")]
 unsafe fn compress_cv_avx512(
   chaining_value: &[u32; 8],
-  m0: __m128i,
-  m1: __m128i,
-  m2: __m128i,
-  m3: __m128i,
+  message: [__m128i; 4],
   counter: u64,
   block_len: u32,
   flags: u32,
@@ -436,7 +520,7 @@ unsafe fn compress_cv_avx512(
   // SAFETY: AVX-512/AVX2/SSE4.1/SSSE3 intrinsics are available via this function's #[target_feature]
   // attribute.
   unsafe {
-    let [row0, row1, row2, row3] = compress_pre_sse41_impl(chaining_value, m0, m1, m2, m3, counter, block_len, flags);
+    let [row0, row1, row2, row3] = compress_pre_sse41_impl(chaining_value, message, counter, block_len, flags);
     let row0 = _mm_xor_si128(row0, row2);
     let row1 = _mm_xor_si128(row1, row3);
     let mut out = [0u32; 8];
@@ -472,7 +556,7 @@ pub(crate) unsafe fn compress_avx2(
     let m2 = _mm_loadu_si128(block_words.as_ptr().add(8).cast());
     let m3 = _mm_loadu_si128(block_words.as_ptr().add(12).cast());
     let [mut row0, mut row1, mut row2, mut row3] =
-      compress_pre_sse41_impl(chaining_value, m0, m1, m2, m3, counter, block_len, flags);
+      compress_pre_sse41_impl(chaining_value, [m0, m1, m2, m3], counter, block_len, flags);
 
     let cv_lo = _mm_loadu_si128(chaining_value.as_ptr().cast());
     let cv_hi = _mm_loadu_si128(chaining_value.as_ptr().add(4).cast());
@@ -515,7 +599,7 @@ pub(crate) unsafe fn compress_sse41(
     let m2 = _mm_loadu_si128(block_words.as_ptr().add(8).cast());
     let m3 = _mm_loadu_si128(block_words.as_ptr().add(12).cast());
     let [mut row0, mut row1, mut row2, mut row3] =
-      compress_pre_sse41_impl(chaining_value, m0, m1, m2, m3, counter, block_len, flags);
+      compress_pre_sse41_impl(chaining_value, [m0, m1, m2, m3], counter, block_len, flags);
 
     let cv_lo = _mm_loadu_si128(chaining_value.as_ptr().cast());
     let cv_hi = _mm_loadu_si128(chaining_value.as_ptr().add(4).cast());
@@ -558,10 +642,10 @@ pub(crate) unsafe fn chunk_compress_blocks_sse41(
         chaining_value,
         blocks.as_ptr(),
         chunk_counter,
-        BLOCK_LEN as u32,
+        BLOCK_LEN_U32,
         flags | start,
       );
-      *blocks_compressed = blocks_compressed.wrapping_add(1);
+      *blocks_compressed = blocks_compressed.strict_add(1);
       return;
     }
 
@@ -573,10 +657,10 @@ pub(crate) unsafe fn chunk_compress_blocks_sse41(
         chaining_value,
         block_bytes.as_ptr(),
         chunk_counter,
-        BLOCK_LEN as u32,
+        BLOCK_LEN_U32,
         flags | start,
       );
-      *blocks_compressed = blocks_compressed.wrapping_add(1);
+      *blocks_compressed = blocks_compressed.strict_add(1);
     }
   }
 }
@@ -600,7 +684,7 @@ pub(crate) unsafe fn parent_cv_sse41(
     let m2 = _mm_loadu_si128(right_child_cv.as_ptr().cast());
     let m3 = _mm_loadu_si128(right_child_cv.as_ptr().add(4).cast());
     let [row0, row1, row2, row3] =
-      compress_pre_sse41_impl(&key_words, m0, m1, m2, m3, 0, BLOCK_LEN as u32, PARENT | flags);
+      compress_pre_sse41_impl(&key_words, [m0, m1, m2, m3], 0, BLOCK_LEN_U32, PARENT | flags);
     let row0 = _mm_xor_si128(row0, row2);
     let row1 = _mm_xor_si128(row1, row3);
     let mut out = [0u32; 8];
@@ -636,10 +720,10 @@ pub(crate) unsafe fn chunk_compress_blocks_avx2(
         chaining_value,
         blocks.as_ptr(),
         chunk_counter,
-        BLOCK_LEN as u32,
+        BLOCK_LEN_U32,
         flags | start,
       );
-      *blocks_compressed = blocks_compressed.wrapping_add(1);
+      *blocks_compressed = blocks_compressed.strict_add(1);
       return;
     }
 
@@ -651,10 +735,10 @@ pub(crate) unsafe fn chunk_compress_blocks_avx2(
         chaining_value,
         block_bytes.as_ptr(),
         chunk_counter,
-        BLOCK_LEN as u32,
+        BLOCK_LEN_U32,
         flags | start,
       );
-      *blocks_compressed = blocks_compressed.wrapping_add(1);
+      *blocks_compressed = blocks_compressed.strict_add(1);
     }
   }
 }
@@ -678,7 +762,7 @@ pub(crate) unsafe fn parent_cv_avx2(
     let m1 = _mm_loadu_si128(left_child_cv.as_ptr().add(4).cast());
     let m2 = _mm_loadu_si128(right_child_cv.as_ptr().cast());
     let m3 = _mm_loadu_si128(right_child_cv.as_ptr().add(4).cast());
-    compress_cv_avx2(&key_words, m0, m1, m2, m3, 0, BLOCK_LEN as u32, PARENT | flags)
+    compress_cv_avx2(&key_words, [m0, m1, m2, m3], 0, BLOCK_LEN_U32, PARENT | flags)
   }
 }
 
@@ -730,7 +814,7 @@ pub(crate) unsafe fn chunk_compress_blocks_avx512(
           chaining_value,
           blocks.as_ptr(),
           chunk_counter,
-          BLOCK_LEN as u32,
+          BLOCK_LEN_U32,
           flags | start,
         );
       }
@@ -740,11 +824,11 @@ pub(crate) unsafe fn chunk_compress_blocks_avx512(
           chaining_value,
           blocks.as_ptr(),
           chunk_counter,
-          BLOCK_LEN as u32,
+          BLOCK_LEN_U32,
           flags | start,
         );
       }
-      *blocks_compressed = blocks_compressed.wrapping_add(1);
+      *blocks_compressed = blocks_compressed.strict_add(1);
       return;
     }
 
@@ -758,7 +842,7 @@ pub(crate) unsafe fn chunk_compress_blocks_avx512(
           chaining_value,
           block_bytes.as_ptr(),
           chunk_counter,
-          BLOCK_LEN as u32,
+          BLOCK_LEN_U32,
           flags | start,
         );
       }
@@ -768,11 +852,11 @@ pub(crate) unsafe fn chunk_compress_blocks_avx512(
           chaining_value,
           block_bytes.as_ptr(),
           chunk_counter,
-          BLOCK_LEN as u32,
+          BLOCK_LEN_U32,
           flags | start,
         );
       }
-      *blocks_compressed = blocks_compressed.wrapping_add(1);
+      *blocks_compressed = blocks_compressed.strict_add(1);
     }
   }
 }
@@ -796,6 +880,6 @@ pub(crate) unsafe fn parent_cv_avx512(
     let m1 = _mm_loadu_si128(left_child_cv.as_ptr().add(4).cast());
     let m2 = _mm_loadu_si128(right_child_cv.as_ptr().cast());
     let m3 = _mm_loadu_si128(right_child_cv.as_ptr().add(4).cast());
-    compress_cv_avx512(&key_words, m0, m1, m2, m3, 0, BLOCK_LEN as u32, PARENT | flags)
+    compress_cv_avx512(&key_words, [m0, m1, m2, m3], 0, BLOCK_LEN_U32, PARENT | flags)
   }
 }

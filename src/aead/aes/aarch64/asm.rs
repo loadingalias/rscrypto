@@ -1,7 +1,5 @@
 //! AArch64 rscrypto-owned AES-GCM assembly kernels.
 
-#![allow(unsafe_code)]
-
 use core::arch::global_asm;
 
 global_asm!(include_str!("asm/rscrypto_aes_gcm_aarch64_apple_darwin.s"));
@@ -19,8 +17,8 @@ impl AesGcmAarch64State {
   #[inline]
   pub(super) fn new(acc: u128, ctr: u32) -> Self {
     Self {
-      acc_lo: acc as u64,
-      acc_hi: (acc >> 64) as u64,
+      acc_lo: u64::try_from(acc & u128::from(u64::MAX)).expect("masked accumulator half fits u64"),
+      acc_hi: u64::try_from(acc >> 64).expect("shifted accumulator half fits u64"),
       ctr,
       _pad: 0,
       processed: 0,

@@ -281,7 +281,6 @@ impl X25519SecretKey {
     X25519SharedSecret::diffie_hellman(self, public)
   }
 
-  #[allow(dead_code)]
   #[cfg(any(
     not(any(
       all(
@@ -352,7 +351,6 @@ impl Drop for X25519SecretKey {
 #[derive(Clone, Copy)]
 pub struct X25519PublicKey {
   bytes: [u8; Self::LENGTH],
-  #[allow(dead_code)]
   #[cfg(any(
     not(any(
       all(
@@ -362,8 +360,7 @@ pub struct X25519PublicKey {
       ),
       all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
     )),
-    miri,
-    test
+    miri
   ))]
   u: FieldElement,
 }
@@ -389,8 +386,7 @@ impl X25519PublicKey {
           ),
           all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
         )),
-        miri,
-        test
+        miri
       ))]
       u: decode_u_coordinate(&bytes),
     }
@@ -405,7 +401,6 @@ impl X25519PublicKey {
 
   #[inline]
   #[must_use]
-  #[allow(dead_code)]
   #[cfg(any(
     not(any(
       all(
@@ -430,8 +425,7 @@ impl X25519PublicKey {
           ),
           all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
         )),
-        miri,
-        test
+        miri
       ))]
       u,
     }
@@ -596,7 +590,6 @@ impl Drop for X25519SharedSecret {
   }
 }
 
-#[allow(clippy::indexing_slicing)]
 #[must_use]
 #[cfg(any(
   not(any(
@@ -715,7 +708,7 @@ fn decode_u_coordinate(bytes: &[u8; POINT_LENGTH]) -> FieldElement {
       acc_bits = acc_bits.wrapping_add(8);
     }
 
-    *limb = (acc & u128::from(MASK51)) as u64;
+    *limb = u64::try_from(acc & u128::from(MASK51)).expect("masked field limb fits u64");
     acc >>= RADIX_BITS;
     acc_bits = acc_bits.wrapping_sub(RADIX_BITS);
   }
@@ -760,18 +753,18 @@ mod tests {
 
     fn scalar(seed: u8) -> [u8; POINT_LENGTH] {
       let mut out = [0u8; POINT_LENGTH];
-      for (index, byte) in out.iter_mut().enumerate() {
-        *byte = seed.wrapping_mul(37).wrapping_add((index as u8).wrapping_mul(19));
+      for (index, byte) in (0u8..).zip(&mut out) {
+        *byte = seed.wrapping_mul(37).wrapping_add(index.wrapping_mul(19));
       }
       out
     }
 
     fn peer(seed: u8) -> [u8; POINT_LENGTH] {
       let mut out = [0u8; POINT_LENGTH];
-      for (index, byte) in out.iter_mut().enumerate() {
+      for (index, byte) in (0u8..).zip(&mut out) {
         *byte = seed
           .wrapping_mul(53)
-          .wrapping_add((index as u8).wrapping_mul(11))
+          .wrapping_add(index.wrapping_mul(11))
           .wrapping_add(7);
       }
       out[POINT_LENGTH - 1] |= 0x80;

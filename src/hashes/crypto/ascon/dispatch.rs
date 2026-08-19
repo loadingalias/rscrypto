@@ -1,13 +1,17 @@
-#![cfg_attr(test, allow(dead_code))]
-
+#[cfg(feature = "diag")]
+use super::kernels::permute_fn;
 use super::{
   dispatch_tables::DispatchTable,
-  kernels::{AsconPermute12KernelId, permute_fn, required_caps},
+  kernels::{AsconPermute12KernelId, required_caps},
 };
-use crate::{backend::cache::OnceCache, platform::Caps};
+#[cfg(feature = "diag")]
+use crate::backend::cache::OnceCache;
+use crate::platform::Caps;
 
+#[cfg(feature = "diag")]
 type PermuteFn = fn(&mut [u64; 5]);
 
+#[cfg(feature = "diag")]
 #[derive(Clone, Copy)]
 struct ActiveDispatch {
   boundaries: [usize; 3],
@@ -21,6 +25,7 @@ struct ActiveDispatch {
   l_name: &'static str,
 }
 
+#[cfg(feature = "diag")]
 static ACTIVE: OnceCache<ActiveDispatch> = OnceCache::new();
 
 #[inline]
@@ -33,6 +38,7 @@ fn resolve(id: AsconPermute12KernelId, caps: Caps) -> AsconPermute12KernelId {
   }
 }
 
+#[cfg(feature = "diag")]
 #[inline]
 #[must_use]
 fn active() -> ActiveDispatch {
@@ -59,6 +65,7 @@ fn active() -> ActiveDispatch {
   })
 }
 
+#[cfg(feature = "diag")]
 #[inline]
 #[must_use]
 fn select(d: &ActiveDispatch, len: usize) -> (PermuteFn, &'static str) {
@@ -74,27 +81,12 @@ fn select(d: &ActiveDispatch, len: usize) -> (PermuteFn, &'static str) {
   }
 }
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(feature = "diag")]
 #[inline]
 #[must_use]
-pub fn kernel_name_for_len(len: usize) -> &'static str {
+pub(crate) fn kernel_name_for_len(len: usize) -> &'static str {
   let d = active();
   select(&d, len).1
-}
-
-/// Apply the configured Ascon permutation kernel for a specific workload size.
-///
-/// The `len` parameter is a hint representing the total amount of work (bytes)
-/// associated with the sponge operation. This allows tuned size-class tables to
-/// take effect for one-shot and long-running streaming workloads.
-///
-/// Production code uses `InlinePermuter` directly; this is retained for the
-/// test/bench harness.
-#[inline]
-#[allow(dead_code)]
-pub fn permute_12_for_len(state: &mut [u64; 5], len: usize) {
-  let d = active();
-  (select(&d, len).0)(state);
 }
 
 #[cfg(any(test, feature = "std"))]

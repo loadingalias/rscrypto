@@ -12,8 +12,8 @@
 
 use rscrypto::{Argon2Params, Argon2d, Argon2i, Argon2id};
 
-fn rs_params(m_kib: u32, t: u32, p: u32, _out_len: u32) -> Argon2Params {
-  Argon2Params::new(m_kib, t, p).unwrap()
+fn rs_params(m_kib: u32, t: u32, p: u32) -> Argon2Params {
+  Argon2Params::new(m_kib, t, p).expect("Argon2 parallel-test parameters must be valid")
 }
 
 fn oracle_hash(
@@ -25,10 +25,13 @@ fn oracle_hash(
   p: u32,
   out_len: usize,
 ) -> Vec<u8> {
-  let params = argon2::Params::new(m_kib, t, p, Some(out_len)).unwrap();
+  let params = argon2::Params::new(m_kib, t, p, Some(out_len))
+    .expect("RustCrypto must accept valid Argon2 parallel-test parameters");
   let ctx = argon2::Argon2::new(algo, argon2::Version::V0x13, params);
   let mut out = vec![0u8; out_len];
-  ctx.hash_password_into(password, salt, &mut out).unwrap();
+  ctx
+    .hash_password_into(password, salt, &mut out)
+    .expect("RustCrypto Argon2 parallel-test derivation must succeed");
   out
 }
 
@@ -46,9 +49,9 @@ fn argon2id_p8_matches_oracle() {
   let p = 8u32;
   let out_len = 32usize;
 
-  let params = rs_params(m, t, p, out_len as u32);
+  let params = rs_params(m, t, p);
   let mut actual = vec![0u8; out_len];
-  Argon2id::derive(&params, PASSWORD, SALT, &mut actual).unwrap();
+  Argon2id::derive(&params, PASSWORD, SALT, &mut actual).expect("Argon2id p=8 derivation must succeed");
 
   let expected = oracle_hash(argon2::Algorithm::Argon2id, PASSWORD, SALT, m, t, p, out_len);
   assert_eq!(actual, expected, "argon2id p=8 mismatch vs RustCrypto oracle");
@@ -61,9 +64,9 @@ fn argon2d_p8_matches_oracle() {
   let p = 8u32;
   let out_len = 32usize;
 
-  let params = rs_params(m, t, p, out_len as u32);
+  let params = rs_params(m, t, p);
   let mut actual = vec![0u8; out_len];
-  Argon2d::derive(&params, PASSWORD, SALT, &mut actual).unwrap();
+  Argon2d::derive(&params, PASSWORD, SALT, &mut actual).expect("Argon2d p=8 derivation must succeed");
 
   let expected = oracle_hash(argon2::Algorithm::Argon2d, PASSWORD, SALT, m, t, p, out_len);
   assert_eq!(actual, expected, "argon2d p=8 mismatch vs RustCrypto oracle");
@@ -76,9 +79,9 @@ fn argon2i_p8_matches_oracle() {
   let p = 8u32;
   let out_len = 32usize;
 
-  let params = rs_params(m, t, p, out_len as u32);
+  let params = rs_params(m, t, p);
   let mut actual = vec![0u8; out_len];
-  Argon2i::derive(&params, PASSWORD, SALT, &mut actual).unwrap();
+  Argon2i::derive(&params, PASSWORD, SALT, &mut actual).expect("Argon2i p=8 derivation must succeed");
 
   let expected = oracle_hash(argon2::Algorithm::Argon2i, PASSWORD, SALT, m, t, p, out_len);
   assert_eq!(actual, expected, "argon2i p=8 mismatch vs RustCrypto oracle");
@@ -91,9 +94,9 @@ fn argon2id_p16_matches_oracle() {
   let p = 16u32;
   let out_len = 32usize;
 
-  let params = rs_params(m, t, p, out_len as u32);
+  let params = rs_params(m, t, p);
   let mut actual = vec![0u8; out_len];
-  Argon2id::derive(&params, PASSWORD, SALT, &mut actual).unwrap();
+  Argon2id::derive(&params, PASSWORD, SALT, &mut actual).expect("Argon2id p=16 derivation must succeed");
 
   let expected = oracle_hash(argon2::Algorithm::Argon2id, PASSWORD, SALT, m, t, p, out_len);
   assert_eq!(actual, expected, "argon2id p=16 mismatch vs RustCrypto oracle");
@@ -105,28 +108,29 @@ fn argon2id_p16_matches_oracle() {
 /// produce the same tag. Any non-determinism would indicate a data race.
 #[test]
 fn argon2id_parallel_is_deterministic() {
-  let params = rs_params(1024, 2, 8, 32);
+  let params = rs_params(1024, 2, 8);
 
   let mut reference = [0u8; 32];
-  Argon2id::derive(&params, PASSWORD, SALT, &mut reference).unwrap();
+  Argon2id::derive(&params, PASSWORD, SALT, &mut reference)
+    .expect("reference Argon2id parallel derivation must succeed");
 
   for trial in 0..16 {
     let mut out = [0u8; 32];
-    Argon2id::derive(&params, PASSWORD, SALT, &mut out).unwrap();
+    Argon2id::derive(&params, PASSWORD, SALT, &mut out).expect("repeated Argon2id derivation must succeed");
     assert_eq!(out, reference, "non-deterministic output on trial {trial}");
   }
 }
 
 #[test]
 fn argon2d_parallel_is_deterministic() {
-  let params = rs_params(1024, 2, 8, 32);
+  let params = rs_params(1024, 2, 8);
 
   let mut reference = [0u8; 32];
-  Argon2d::derive(&params, PASSWORD, SALT, &mut reference).unwrap();
+  Argon2d::derive(&params, PASSWORD, SALT, &mut reference).expect("reference Argon2d parallel derivation must succeed");
 
   for trial in 0..16 {
     let mut out = [0u8; 32];
-    Argon2d::derive(&params, PASSWORD, SALT, &mut out).unwrap();
+    Argon2d::derive(&params, PASSWORD, SALT, &mut out).expect("repeated Argon2d derivation must succeed");
     assert_eq!(out, reference, "non-deterministic output on trial {trial}");
   }
 }
@@ -142,9 +146,9 @@ fn argon2id_p1_fast_path_matches_oracle() {
   let p = 1u32;
   let out_len = 32usize;
 
-  let params = rs_params(m, t, p, out_len as u32);
+  let params = rs_params(m, t, p);
   let mut actual = vec![0u8; out_len];
-  Argon2id::derive(&params, PASSWORD, SALT, &mut actual).unwrap();
+  Argon2id::derive(&params, PASSWORD, SALT, &mut actual).expect("Argon2id p=1 derivation must succeed");
 
   let expected = oracle_hash(argon2::Algorithm::Argon2id, PASSWORD, SALT, m, t, p, out_len);
   assert_eq!(actual, expected, "argon2id p=1 fast-path mismatch vs oracle");
@@ -152,10 +156,11 @@ fn argon2id_p1_fast_path_matches_oracle() {
 
 #[test]
 fn argon2id_parallel_verify_round_trip() {
-  let params = rs_params(256, 2, 8, 32);
+  let params = rs_params(256, 2, 8);
   let mut hash = [0u8; 32];
-  Argon2id::derive(&params, PASSWORD, SALT, &mut hash).unwrap();
+  Argon2id::derive(&params, PASSWORD, SALT, &mut hash).expect("Argon2id verification fixture must derive");
 
-  assert!(Argon2id::verify(&params, PASSWORD, SALT, &hash).is_ok());
-  assert!(Argon2id::verify(&params, b"wrong-password-zzzzzzzzzzzzzzzzzz", SALT, &hash).is_err());
+  Argon2id::verify(&params, PASSWORD, SALT, &hash).expect("fresh Argon2id hash must verify");
+  Argon2id::verify(&params, b"wrong-password-zzzzzzzzzzzzzzzzzz", SALT, &hash)
+    .expect_err("Argon2id must reject the wrong password");
 }

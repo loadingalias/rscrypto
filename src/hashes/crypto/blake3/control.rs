@@ -25,7 +25,7 @@ fn compute_derive_context_key_words(context: &str) -> [u32; 8] {
 }
 
 #[inline]
-#[cfg_attr(feature = "std", allow(dead_code))]
+#[cfg(not(feature = "std"))]
 pub(super) fn derive_context_key_words(context: &str) -> [u32; 8] {
   let context_bytes = context.as_bytes();
   let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
@@ -171,23 +171,23 @@ pub(super) fn streaming_parallel_threads_for_flags(
 
 #[cfg(feature = "parallel")]
 #[inline]
-#[allow(clippy::manual_saturating_arithmetic)] // Explicit clamp semantics are preferred here.
 fn clamp_add_usize(lhs: usize, rhs: usize) -> usize {
-  lhs.checked_add(rhs).unwrap_or(usize::MAX)
+  lhs.saturating_add(rhs)
 }
 
 #[cfg(feature = "parallel")]
 #[inline]
-#[allow(clippy::manual_saturating_arithmetic)] // Explicit clamp semantics are preferred here.
 fn clamp_mul_usize(lhs: usize, rhs: usize) -> usize {
-  lhs.checked_mul(rhs).unwrap_or(usize::MAX)
+  lhs.saturating_mul(rhs)
 }
 
 #[cfg(feature = "parallel")]
 #[inline]
 fn ceil_div_usize(value: usize, divisor: usize) -> usize {
   let adjusted = clamp_add_usize(value, divisor.strict_sub(1));
-  adjusted / divisor
+  adjusted
+    .checked_div(divisor)
+    .expect("parallel policy divisor is nonzero")
 }
 
 #[cfg(feature = "parallel")]
@@ -252,7 +252,7 @@ pub(super) fn parallel_admission_decision(
         threads: candidate,
       };
     }
-    candidate -= 1;
+    candidate = candidate.strict_sub(1);
   }
   ParallelAdmissionDecision {
     would_parallelize: false,
@@ -270,7 +270,10 @@ fn parallel_merge_divisor(mode: ParallelPolicyKind, commit_full_chunks: usize, t
     ParallelPolicyKind::Update | ParallelPolicyKind::KeyedUpdate | ParallelPolicyKind::DeriveUpdate => 1,
     ParallelPolicyKind::Xof | ParallelPolicyKind::KeyedXof | ParallelPolicyKind::DeriveXof => 3,
   };
-  1 + chunk_depth + thread_depth + mode_bias
+  1usize
+    .strict_add(chunk_depth)
+    .strict_add(thread_depth)
+    .strict_add(mode_bias)
 }
 
 #[cfg(feature = "parallel")]

@@ -43,7 +43,8 @@ capability for permanent retention.
 | ML-KEM prepared decapsulation keys | Explicit duplicate; no `Clone` or `Copy` | Masked | `SecretBytes` export; no Serde | Inline | Reuse of validated private arithmetic without making implicit copies |
 | `RsaPrivateKey` | Neither | Public key plus a redacted private-components field | PKCS#1/PKCS#8 DER into `SecretVec`; no Serde | Heap-backed big integers and Montgomery state | Standards-compatible private-key storage/export while keeping the returned allocation typed as secret |
 | `RsaPrivateScratch` | Neither | Public sizing metadata only | None | Reusable heap buffers and limb vectors | Amortizes private-operation allocation while keeping intermediate ownership with the caller |
-| `RsaPrivateKeyParts<'a>` | `Clone + Copy` | No `Debug` | Borrowed import fields; no Serde | Borrowed | Pass-by-value import description; copying duplicates references, not private bytes |
+| `RsaPrivateKeyParts<'a>` | `Clone + Copy` | Modulus size and public exponent only; private fields masked | Borrowed import fields; no Serde | Borrowed | Pass-by-value import description; copying duplicates references, not private bytes |
+| `RsaBlindingPair<'a>` | `Clone + Copy` | Factor and inverse masked | Borrowed factor and inverse; no Serde | Borrowed | Couples the two caller-blinding inputs; private operations validate them against the selected key |
 | `RsaSignatureSigner<'a>` | `Clone + Copy` | Signature profile only | None | Borrowed | Reusable profile-bound signing handle; copying duplicates a private-key reference, not the key |
 | HMAC-SHA-2 and HMAC-SHA-3 states | Neither | Masked | None | Inline | Reuse through `reset`; independent streamed owners require explicit keyed construction rather than an implicit state copy |
 | HKDF-SHA-2 states | Neither | Masked | None | Inline | Repeated expansion borrows one extracted PRK owner, which can also be shared by reference |

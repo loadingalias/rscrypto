@@ -1,5 +1,3 @@
-#![allow(clippy::indexing_slicing)]
-
 //! Fixed-schedule, table-free POLYVAL universal hash (RFC 8452).
 //!
 //! Generated-code timing claims remain configuration- and
@@ -31,6 +29,32 @@ pub(crate) const KEY_SIZE: usize = 16;
 #[cfg(test)]
 const POLY: u128 = (1u128 << 127) | (1u128 << 126) | (1u128 << 121) | 1;
 
+#[inline(always)]
+fn split_u128_le(value: u128) -> (u64, u64) {
+  let [
+    lo_0,
+    lo_1,
+    lo_2,
+    lo_3,
+    lo_4,
+    lo_5,
+    lo_6,
+    lo_7,
+    hi_0,
+    hi_1,
+    hi_2,
+    hi_3,
+    hi_4,
+    hi_5,
+    hi_6,
+    hi_7,
+  ] = value.to_le_bytes();
+  (
+    u64::from_le_bytes([lo_0, lo_1, lo_2, lo_3, lo_4, lo_5, lo_6, lo_7]),
+    u64::from_le_bytes([hi_0, hi_1, hi_2, hi_3, hi_4, hi_5, hi_6, hi_7]),
+  )
+}
+
 // x86_64 PCLMULQDQ backend
 
 #[cfg(target_arch = "x86_64")]
@@ -47,8 +71,8 @@ mod pclmul {
   pub(super) unsafe fn clmul128_reduce(a: u128, b: u128) -> u128 {
     // SAFETY: target_feature gate guarantees PCLMULQDQ + SSE2.
     unsafe {
-      let a_xmm = _mm_loadu_si128((&a as *const u128).cast());
-      let b_xmm = _mm_loadu_si128((&b as *const u128).cast());
+      let a_xmm = _mm_loadu_si128(core::ptr::from_ref(&a).cast());
+      let b_xmm = _mm_loadu_si128(core::ptr::from_ref(&b).cast());
 
       // Schoolbook 128×128 → 256-bit product (4 PCLMULQDQ instructions).
       let lo = _mm_clmulepi64_si128(a_xmm, b_xmm, 0x00); // a_lo × b_lo
@@ -65,7 +89,7 @@ mod pclmul {
       let result = mont_reduce_sse2(lo_128, hi_128);
 
       let mut out = 0u128;
-      _mm_storeu_si128((&mut out as *mut u128).cast(), result);
+      _mm_storeu_si128(core::ptr::from_mut(&mut out).cast(), result);
       out
     }
   }
@@ -83,14 +107,14 @@ mod pclmul {
     // fixed-size stack/reference values.
     unsafe {
       let b0 = acc ^ blocks[0];
-      let d0 = _mm_loadu_si128((&b0 as *const u128).cast());
-      let d1 = _mm_loadu_si128((&blocks[1] as *const u128).cast());
-      let d2 = _mm_loadu_si128((&blocks[2] as *const u128).cast());
-      let d3 = _mm_loadu_si128((&blocks[3] as *const u128).cast());
-      let h0 = _mm_loadu_si128((&h_powers_rev[0] as *const u128).cast());
-      let h1 = _mm_loadu_si128((&h_powers_rev[1] as *const u128).cast());
-      let h2 = _mm_loadu_si128((&h_powers_rev[2] as *const u128).cast());
-      let h3 = _mm_loadu_si128((&h_powers_rev[3] as *const u128).cast());
+      let d0 = _mm_loadu_si128(core::ptr::from_ref(&b0).cast());
+      let d1 = _mm_loadu_si128(core::ptr::from_ref(&blocks[1]).cast());
+      let d2 = _mm_loadu_si128(core::ptr::from_ref(&blocks[2]).cast());
+      let d3 = _mm_loadu_si128(core::ptr::from_ref(&blocks[3]).cast());
+      let h0 = _mm_loadu_si128(core::ptr::from_ref(&h_powers_rev[0]).cast());
+      let h1 = _mm_loadu_si128(core::ptr::from_ref(&h_powers_rev[1]).cast());
+      let h2 = _mm_loadu_si128(core::ptr::from_ref(&h_powers_rev[2]).cast());
+      let h3 = _mm_loadu_si128(core::ptr::from_ref(&h_powers_rev[3]).cast());
 
       aggregate_xmms([d0, d1, d2, d3], [h0, h1, h2, h3])
     }
@@ -118,20 +142,22 @@ mod pclmul {
     // fixed-size references, and PSHUFB only shuffles bytes within each register.
     unsafe {
       let reverse_bytes = _mm_set_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
-      let acc_xmm = _mm_loadu_si128((&acc as *const u128).cast());
+      let acc_xmm = _mm_loadu_si128(core::ptr::from_ref(&acc).cast());
       let d0 = _mm_xor_si128(_mm_shuffle_epi8(raw0, reverse_bytes), acc_xmm);
       let d1 = _mm_shuffle_epi8(raw1, reverse_bytes);
       let d2 = _mm_shuffle_epi8(raw2, reverse_bytes);
       let d3 = _mm_shuffle_epi8(raw3, reverse_bytes);
-      let h0 = _mm_loadu_si128((&h_powers_rev[0] as *const u128).cast());
-      let h1 = _mm_loadu_si128((&h_powers_rev[1] as *const u128).cast());
-      let h2 = _mm_loadu_si128((&h_powers_rev[2] as *const u128).cast());
-      let h3 = _mm_loadu_si128((&h_powers_rev[3] as *const u128).cast());
+      let h0 = _mm_loadu_si128(core::ptr::from_ref(&h_powers_rev[0]).cast());
+      let h1 = _mm_loadu_si128(core::ptr::from_ref(&h_powers_rev[1]).cast());
+      let h2 = _mm_loadu_si128(core::ptr::from_ref(&h_powers_rev[2]).cast());
+      let h3 = _mm_loadu_si128(core::ptr::from_ref(&h_powers_rev[3]).cast());
 
       aggregate_xmms([d0, d1, d2, d3], [h0, h1, h2, h3])
     }
   }
 
+  /// # Safety
+  /// Caller must ensure PCLMULQDQ and SSE2 are available.
   #[target_feature(enable = "pclmulqdq,sse2")]
   #[inline]
   unsafe fn aggregate_xmms(data: [__m128i; 4], h: [__m128i; 4]) -> u128 {
@@ -159,7 +185,7 @@ mod pclmul {
 
       let result = mont_reduce_sse2(lo_sum, hi_sum);
       let mut out = 0u128;
-      _mm_storeu_si128((&mut out as *mut u128).cast(), result);
+      _mm_storeu_si128(core::ptr::from_mut(&mut out).cast(), result);
       out
     }
   }
@@ -168,7 +194,7 @@ mod pclmul {
   ///
   /// Equivalent to the portable `mont_reduce` but uses SSE2 lane-parallel shifts.
   #[inline]
-  pub(super) unsafe fn mont_reduce_sse2(lo: __m128i, hi: __m128i) -> __m128i {
+  pub(super) fn mont_reduce_sse2(lo: __m128i, hi: __m128i) -> __m128i {
     // SAFETY: caller guarantees SSE2 availability via target_feature chain.
     unsafe {
       // Phase 1: Compute left-shift contribution from both lo lanes.
@@ -204,6 +230,7 @@ mod pclmul {
 
 #[cfg(target_arch = "aarch64")]
 mod pmull {
+  use super::split_u128_le;
   use core::arch::aarch64::*;
 
   /// Core PMULL multiply + reduce — `#[inline(always)]` for guaranteed inlining.
@@ -212,15 +239,18 @@ mod pmull {
   /// features on the immediate caller. Combined with `#[inline(always)]`,
   /// the function body is inlined into the caller — no function call boundary,
   /// no register spills.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON and PMULL. The caller must enter through
+  /// an `aes,neon` target-feature scope selected by validated runtime capabilities.
   #[target_feature(enable = "neon", enable = "aes")]
   #[inline]
   pub(super) unsafe fn clmul128_reduce_core(a: u128, b: u128) -> u128 {
     // SAFETY: caller guarantees NEON + PMULL via target_feature chain.
     unsafe {
-      let a_lo = a as u64;
-      let a_hi = (a >> 64) as u64;
-      let b_lo = b as u64;
-      let b_hi = (b >> 64) as u64;
+      let (a_lo, a_hi) = split_u128_le(a);
+      let (b_lo, b_hi) = split_u128_le(b);
 
       // Karatsuba 128×128 → 256-bit product (3 PMULL instructions).
       let ll = vreinterpretq_u64_p128(vmull_p64(a_lo, b_lo));
@@ -266,6 +296,11 @@ mod pmull {
   /// Uses NEON lane-parallel shifts (`vshlq_n_u64`, `vshrq_n_u64`) and
   /// `vextq_u64` for cross-lane propagation — structurally identical to
   /// the SSE2 `mont_reduce_sse2` path.
+  ///
+  /// # Safety
+  ///
+  /// The caller must execute in a NEON target-feature scope. Every bit pattern
+  /// in `lo` and `hi` is a valid unreduced field product.
   #[inline]
   unsafe fn mont_reduce_neon(lo: uint64x2_t, hi: uint64x2_t) -> uint64x2_t {
     // SAFETY: caller guarantees NEON availability via target_feature chain.
@@ -300,6 +335,11 @@ mod pmull {
   /// Computes `(acc ^ b0) * H^4 ^ b1 * H^3 ^ b2 * H^2 ^ b3 * H` using
   /// 12 independent `vmull_p64` instructions that the OOO core on Neoverse
   /// V1/V2 (2 crypto pipes) can schedule freely, then a single reduction.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON and PMULL. The caller must enter through
+  /// an `aes,neon` target-feature scope selected by validated runtime capabilities.
   #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
   #[target_feature(enable = "neon", enable = "aes")]
   #[inline]
@@ -312,34 +352,26 @@ mod pmull {
       let b3 = blocks[3];
 
       // 12 vmull_p64: 4 blocks × 3 Karatsuba products.
-      let b0_lo = b0 as u64;
-      let b0_hi = (b0 >> 64) as u64;
-      let h0_lo = h_powers_rev[0] as u64;
-      let h0_hi = (h_powers_rev[0] >> 64) as u64;
+      let (b0_lo, b0_hi) = split_u128_le(b0);
+      let (h0_lo, h0_hi) = split_u128_le(h_powers_rev[0]);
       let ll0 = vreinterpretq_u64_p128(vmull_p64(b0_lo, h0_lo));
       let hh0 = vreinterpretq_u64_p128(vmull_p64(b0_hi, h0_hi));
       let mm0 = vreinterpretq_u64_p128(vmull_p64(b0_lo ^ b0_hi, h0_lo ^ h0_hi));
 
-      let b1_lo = b1 as u64;
-      let b1_hi = (b1 >> 64) as u64;
-      let h1_lo = h_powers_rev[1] as u64;
-      let h1_hi = (h_powers_rev[1] >> 64) as u64;
+      let (b1_lo, b1_hi) = split_u128_le(b1);
+      let (h1_lo, h1_hi) = split_u128_le(h_powers_rev[1]);
       let ll1 = vreinterpretq_u64_p128(vmull_p64(b1_lo, h1_lo));
       let hh1 = vreinterpretq_u64_p128(vmull_p64(b1_hi, h1_hi));
       let mm1 = vreinterpretq_u64_p128(vmull_p64(b1_lo ^ b1_hi, h1_lo ^ h1_hi));
 
-      let b2_lo = b2 as u64;
-      let b2_hi = (b2 >> 64) as u64;
-      let h2_lo = h_powers_rev[2] as u64;
-      let h2_hi = (h_powers_rev[2] >> 64) as u64;
+      let (b2_lo, b2_hi) = split_u128_le(b2);
+      let (h2_lo, h2_hi) = split_u128_le(h_powers_rev[2]);
       let ll2 = vreinterpretq_u64_p128(vmull_p64(b2_lo, h2_lo));
       let hh2 = vreinterpretq_u64_p128(vmull_p64(b2_hi, h2_hi));
       let mm2 = vreinterpretq_u64_p128(vmull_p64(b2_lo ^ b2_hi, h2_lo ^ h2_hi));
 
-      let b3_lo = b3 as u64;
-      let b3_hi = (b3 >> 64) as u64;
-      let h3_lo = h_powers_rev[3] as u64;
-      let h3_hi = (h_powers_rev[3] >> 64) as u64;
+      let (b3_lo, b3_hi) = split_u128_le(b3);
+      let (h3_lo, h3_hi) = split_u128_le(h_powers_rev[3]);
       let ll3 = vreinterpretq_u64_p128(vmull_p64(b3_lo, h3_lo));
       let hh3 = vreinterpretq_u64_p128(vmull_p64(b3_hi, h3_hi));
       let mm3 = vreinterpretq_u64_p128(vmull_p64(b3_lo ^ b3_hi, h3_lo ^ h3_hi));
@@ -363,6 +395,11 @@ mod pmull {
   }
 
   /// 8-block GHASH aggregate from big-endian ciphertext lanes already held in NEON registers.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON and PMULL. The caller must enter through
+  /// an `aes,neon` target-feature scope selected by validated runtime capabilities.
   #[cfg(feature = "aes-gcm")]
   #[target_feature(enable = "neon", enable = "aes")]
   #[inline]
@@ -375,6 +412,12 @@ mod pmull {
     // GHASH lanes to the little-endian POLYVAL-domain lane representation.
     unsafe {
       #[inline(always)]
+      /// Loads one little-endian field element into two NEON lanes.
+      ///
+      /// # Safety
+      ///
+      /// `power` must be valid to read one initialized `u128`. The caller must
+      /// execute in a NEON target-feature scope.
       unsafe fn load_power(power: *const u128) -> uint64x2_t {
         // SAFETY: caller passes a pointer into `h_powers_rev`; `vld1q_u64`
         // accepts arbitrary alignment and reads exactly one initialized u128.
@@ -382,10 +425,16 @@ mod pmull {
       }
 
       #[inline(always)]
+      /// Places one little-endian field element into two NEON lanes.
+      ///
+      /// # Safety
+      ///
+      /// The caller must execute in a NEON target-feature scope.
       unsafe fn u128_to_lanes(x: u128) -> uint64x2_t {
+        let (lo, hi) = split_u128_le(x);
         // SAFETY: caller is inside a NEON target scope. `vcreate_u64`
         // initializes one 64-bit lane and `vcombine_u64` builds the pair.
-        unsafe { vcombine_u64(vcreate_u64(x as u64), vcreate_u64((x >> 64) as u64)) }
+        unsafe { vcombine_u64(vcreate_u64(lo), vcreate_u64(hi)) }
       }
 
       let mut ll = vdupq_n_u64(0);
@@ -447,7 +496,6 @@ mod pmull {
 // s390x VGFM backend (Galois field multiply)
 
 #[cfg(target_arch = "s390x")]
-#[allow(unsafe_code)]
 mod s390x_vgfm {
   use core::{arch::asm, simd::i64x2};
 
@@ -455,11 +503,14 @@ mod s390x_vgfm {
   ///
   /// Places operands in the low lane (element 1) with the high lane zeroed,
   /// so VGFM computes `0*0 XOR a*b = a*b`.
+  ///
+  /// # Safety
+  /// Caller must ensure the z/Vector facility is available.
   #[inline]
   #[target_feature(enable = "vector")]
   unsafe fn mul64(a: u64, b: u64) -> i64x2 {
-    let va = i64x2::from_array([0, a as i64]);
-    let vb = i64x2::from_array([0, b as i64]);
+    let va = i64x2::from_array([0, a.cast_signed()]);
+    let vb = i64x2::from_array([0, b.cast_signed()]);
     // SAFETY: Caller guarantees z/Vector facility is available.
     unsafe {
       let out: i64x2;
@@ -475,6 +526,9 @@ mod s390x_vgfm {
   }
 
   /// Per-lane left shift of both 64-bit elements.
+  ///
+  /// # Safety
+  /// Caller must ensure the z/Vector facility is available.
   #[inline]
   #[target_feature(enable = "vector")]
   unsafe fn veslg<const N: u32>(a: i64x2) -> i64x2 {
@@ -493,6 +547,9 @@ mod s390x_vgfm {
   }
 
   /// Per-lane logical right shift of both 64-bit elements.
+  ///
+  /// # Safety
+  /// Caller must ensure the z/Vector facility is available.
   #[inline]
   #[target_feature(enable = "vector")]
   unsafe fn vesrlg<const N: u32>(a: i64x2) -> i64x2 {
@@ -514,6 +571,9 @@ mod s390x_vgfm {
   ///
   /// - `vsldb(v, zero, 8)`: moves low lane to high, zeros low = `v << 64`
   /// - `vsldb(zero, v, 8)`: moves high lane to low, zeros high = `v >> 64`
+  ///
+  /// # Safety
+  /// Caller must ensure the z/Vector facility is available.
   #[inline]
   #[target_feature(enable = "vector")]
   unsafe fn vsldb<const N: u32>(a: i64x2, b: i64x2) -> i64x2 {
@@ -537,6 +597,9 @@ mod s390x_vgfm {
   /// Structurally identical to `mont_reduce_sse2` / `mont_reduce_neon`,
   /// using s390x VESLG/VESRLG for per-lane shifts and VSLDB for cross-lane
   /// byte shifts.
+  ///
+  /// # Safety
+  /// Caller must ensure the z/Vector facility is available.
   #[inline]
   #[target_feature(enable = "vector")]
   unsafe fn mont_reduce(lo: i64x2, hi: i64x2) -> i64x2 {
@@ -564,15 +627,16 @@ mod s390x_vgfm {
   }
 
   /// Core VGFM multiply + reduce — `#[inline(always)]` for guaranteed inlining.
+  ///
+  /// # Safety
+  /// Caller must ensure the z/Vector facility is available.
   #[target_feature(enable = "vector")]
   #[inline]
   pub(super) unsafe fn clmul128_reduce_core(a: u128, b: u128) -> u128 {
     // SAFETY: caller guarantees z/Vector availability via target_feature chain.
     unsafe {
-      let a_lo = a as u64;
-      let a_hi = (a >> 64) as u64;
-      let b_lo = b as u64;
-      let b_hi = (b >> 64) as u64;
+      let (a_lo, a_hi) = super::split_u128_le(a);
+      let (b_lo, b_hi) = super::split_u128_le(b);
       let zero = i64x2::from_array([0, 0]);
 
       // Karatsuba: 3 VGFM multiplies.
@@ -587,7 +651,7 @@ mod s390x_vgfm {
 
       let result = mont_reduce(lo_128, hi_128);
       let arr = result.to_array();
-      ((arr[0] as u64 as u128) << 64) | (arr[1] as u64 as u128)
+      (u128::from(arr[0].cast_unsigned()) << 64) | u128::from(arr[1].cast_unsigned())
     }
   }
 
@@ -607,6 +671,9 @@ mod s390x_vgfm {
   ///
   /// 12 independent VGFM (4 × 3 Karatsuba), then one vector
   /// Montgomery reduction.
+  ///
+  /// # Safety
+  /// Caller must ensure the z/Vector facility is available.
   #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
   #[target_feature(enable = "vector")]
   #[inline]
@@ -617,36 +684,32 @@ mod s390x_vgfm {
       let b1 = blocks[1];
       let b2 = blocks[2];
       let b3 = blocks[3];
+      let (b0_lo, b0_hi) = super::split_u128_le(b0);
+      let (b1_lo, b1_hi) = super::split_u128_le(b1);
+      let (b2_lo, b2_hi) = super::split_u128_le(b2);
+      let (b3_lo, b3_hi) = super::split_u128_le(b3);
+      let (h0_lo, h0_hi) = super::split_u128_le(h_powers_rev[0]);
+      let (h1_lo, h1_hi) = super::split_u128_le(h_powers_rev[1]);
+      let (h2_lo, h2_hi) = super::split_u128_le(h_powers_rev[2]);
+      let (h3_lo, h3_hi) = super::split_u128_le(h_powers_rev[3]);
       let zero = i64x2::from_array([0, 0]);
 
       // 12 VGFM: 4 blocks × 3 Karatsuba multiplies.
-      let v0_0 = mul64(b0 as u64, h_powers_rev[0] as u64);
-      let v1_0 = mul64((b0 >> 64) as u64, (h_powers_rev[0] >> 64) as u64);
-      let v2_0 = mul64(
-        b0 as u64 ^ (b0 >> 64) as u64,
-        h_powers_rev[0] as u64 ^ (h_powers_rev[0] >> 64) as u64,
-      );
+      let v0_0 = mul64(b0_lo, h0_lo);
+      let v1_0 = mul64(b0_hi, h0_hi);
+      let v2_0 = mul64(b0_lo ^ b0_hi, h0_lo ^ h0_hi);
 
-      let v0_1 = mul64(b1 as u64, h_powers_rev[1] as u64);
-      let v1_1 = mul64((b1 >> 64) as u64, (h_powers_rev[1] >> 64) as u64);
-      let v2_1 = mul64(
-        b1 as u64 ^ (b1 >> 64) as u64,
-        h_powers_rev[1] as u64 ^ (h_powers_rev[1] >> 64) as u64,
-      );
+      let v0_1 = mul64(b1_lo, h1_lo);
+      let v1_1 = mul64(b1_hi, h1_hi);
+      let v2_1 = mul64(b1_lo ^ b1_hi, h1_lo ^ h1_hi);
 
-      let v0_2 = mul64(b2 as u64, h_powers_rev[2] as u64);
-      let v1_2 = mul64((b2 >> 64) as u64, (h_powers_rev[2] >> 64) as u64);
-      let v2_2 = mul64(
-        b2 as u64 ^ (b2 >> 64) as u64,
-        h_powers_rev[2] as u64 ^ (h_powers_rev[2] >> 64) as u64,
-      );
+      let v0_2 = mul64(b2_lo, h2_lo);
+      let v1_2 = mul64(b2_hi, h2_hi);
+      let v2_2 = mul64(b2_lo ^ b2_hi, h2_lo ^ h2_hi);
 
-      let v0_3 = mul64(b3 as u64, h_powers_rev[3] as u64);
-      let v1_3 = mul64((b3 >> 64) as u64, (h_powers_rev[3] >> 64) as u64);
-      let v2_3 = mul64(
-        b3 as u64 ^ (b3 >> 64) as u64,
-        h_powers_rev[3] as u64 ^ (h_powers_rev[3] >> 64) as u64,
-      );
+      let v0_3 = mul64(b3_lo, h3_lo);
+      let v1_3 = mul64(b3_hi, h3_hi);
+      let v2_3 = mul64(b3_lo ^ b3_hi, h3_lo ^ h3_hi);
 
       // XOR all 4 Karatsuba intermediates (i64x2 vector XOR).
       let v0 = v0_0 ^ v0_1 ^ v0_2 ^ v0_3;
@@ -659,7 +722,7 @@ mod s390x_vgfm {
 
       let result = mont_reduce(lo_128, hi_128);
       let arr = result.to_array();
-      ((arr[0] as u64 as u128) << 64) | (arr[1] as u64 as u128)
+      (u128::from(arr[0].cast_unsigned()) << 64) | u128::from(arr[1].cast_unsigned())
     }
   }
 }
@@ -667,7 +730,6 @@ mod s390x_vgfm {
 // powerpc64 VPMSUMD backend (polynomial multiply-sum doubleword)
 
 #[cfg(target_arch = "powerpc64")]
-#[allow(unsafe_code)]
 mod ppc_vpmsum {
   use core::{arch::asm, simd::i64x2};
 
@@ -675,11 +737,14 @@ mod ppc_vpmsum {
   ///
   /// Match the existing POWER checksum kernels' lane convention:
   /// lane 0 carries the low 64 bits, lane 1 the high 64 bits.
+  ///
+  /// # Safety
+  /// Caller must ensure POWER8 vector crypto is available.
   #[inline]
   #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
   unsafe fn mul64(a: u64, b: u64) -> (u64, u64) {
-    let va = i64x2::from_array([a as i64, 0]);
-    let vb = i64x2::from_array([b as i64, 0]);
+    let va = i64x2::from_array([a.cast_signed(), 0]);
+    let vb = i64x2::from_array([b.cast_signed(), 0]);
     // SAFETY: Caller guarantees POWER8 crypto availability.
     unsafe {
       let out: i64x2;
@@ -691,20 +756,21 @@ mod ppc_vpmsum {
         options(nomem, nostack, pure),
       );
       let [lo, hi] = out.to_array();
-      (lo as u64, hi as u64)
+      (lo.cast_unsigned(), hi.cast_unsigned())
     }
   }
 
   /// Core VPMSUMD multiply + reduce — `#[inline(always)]` for guaranteed inlining.
+  ///
+  /// # Safety
+  /// Caller must ensure POWER8 vector crypto is available.
   #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
   #[inline]
   pub(super) unsafe fn clmul128_reduce_core(a: u128, b: u128) -> u128 {
     // SAFETY: caller guarantees POWER8 crypto availability via target_feature chain.
     unsafe {
-      let a_lo = a as u64;
-      let a_hi = (a >> 64) as u64;
-      let b_lo = b as u64;
-      let b_hi = (b >> 64) as u64;
+      let (a_lo, a_hi) = super::split_u128_le(a);
+      let (b_lo, b_hi) = super::split_u128_le(b);
 
       // Karatsuba: 3 vpmsumd multiplies.
       let (v0_lo, v0_hi) = mul64(a_lo, b_lo);
@@ -735,6 +801,9 @@ mod ppc_vpmsum {
   ///
   /// 12 independent `vpmsumd` (4 × 3 Karatsuba), then one scalar
   /// Montgomery reduction.
+  ///
+  /// # Safety
+  /// Caller must ensure POWER8 vector crypto is available.
   #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
   #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
   #[inline]
@@ -745,35 +814,31 @@ mod ppc_vpmsum {
       let b1 = blocks[1];
       let b2 = blocks[2];
       let b3 = blocks[3];
+      let (b0_lo, b0_hi) = super::split_u128_le(b0);
+      let (b1_lo, b1_hi) = super::split_u128_le(b1);
+      let (b2_lo, b2_hi) = super::split_u128_le(b2);
+      let (b3_lo, b3_hi) = super::split_u128_le(b3);
+      let (h0_lo, h0_hi) = super::split_u128_le(h_powers_rev[0]);
+      let (h1_lo, h1_hi) = super::split_u128_le(h_powers_rev[1]);
+      let (h2_lo, h2_hi) = super::split_u128_le(h_powers_rev[2]);
+      let (h3_lo, h3_hi) = super::split_u128_le(h_powers_rev[3]);
 
       // 12 vpmsumd: 4 blocks × 3 Karatsuba multiplies.
-      let (z0_0l, z0_0h) = mul64(b0 as u64, h_powers_rev[0] as u64);
-      let (z1_0l, z1_0h) = mul64((b0 >> 64) as u64, (h_powers_rev[0] >> 64) as u64);
-      let (z2_0l, z2_0h) = mul64(
-        b0 as u64 ^ (b0 >> 64) as u64,
-        h_powers_rev[0] as u64 ^ (h_powers_rev[0] >> 64) as u64,
-      );
+      let (z0_0l, z0_0h) = mul64(b0_lo, h0_lo);
+      let (z1_0l, z1_0h) = mul64(b0_hi, h0_hi);
+      let (z2_0l, z2_0h) = mul64(b0_lo ^ b0_hi, h0_lo ^ h0_hi);
 
-      let (z0_1l, z0_1h) = mul64(b1 as u64, h_powers_rev[1] as u64);
-      let (z1_1l, z1_1h) = mul64((b1 >> 64) as u64, (h_powers_rev[1] >> 64) as u64);
-      let (z2_1l, z2_1h) = mul64(
-        b1 as u64 ^ (b1 >> 64) as u64,
-        h_powers_rev[1] as u64 ^ (h_powers_rev[1] >> 64) as u64,
-      );
+      let (z0_1l, z0_1h) = mul64(b1_lo, h1_lo);
+      let (z1_1l, z1_1h) = mul64(b1_hi, h1_hi);
+      let (z2_1l, z2_1h) = mul64(b1_lo ^ b1_hi, h1_lo ^ h1_hi);
 
-      let (z0_2l, z0_2h) = mul64(b2 as u64, h_powers_rev[2] as u64);
-      let (z1_2l, z1_2h) = mul64((b2 >> 64) as u64, (h_powers_rev[2] >> 64) as u64);
-      let (z2_2l, z2_2h) = mul64(
-        b2 as u64 ^ (b2 >> 64) as u64,
-        h_powers_rev[2] as u64 ^ (h_powers_rev[2] >> 64) as u64,
-      );
+      let (z0_2l, z0_2h) = mul64(b2_lo, h2_lo);
+      let (z1_2l, z1_2h) = mul64(b2_hi, h2_hi);
+      let (z2_2l, z2_2h) = mul64(b2_lo ^ b2_hi, h2_lo ^ h2_hi);
 
-      let (z0_3l, z0_3h) = mul64(b3 as u64, h_powers_rev[3] as u64);
-      let (z1_3l, z1_3h) = mul64((b3 >> 64) as u64, (h_powers_rev[3] >> 64) as u64);
-      let (z2_3l, z2_3h) = mul64(
-        b3 as u64 ^ (b3 >> 64) as u64,
-        h_powers_rev[3] as u64 ^ (h_powers_rev[3] >> 64) as u64,
-      );
+      let (z0_3l, z0_3h) = mul64(b3_lo, h3_lo);
+      let (z1_3l, z1_3h) = mul64(b3_hi, h3_hi);
+      let (z2_3l, z2_3h) = mul64(b3_lo ^ b3_hi, h3_lo ^ h3_hi);
 
       // XOR all 4 Karatsuba intermediates.
       let z0_lo = z0_0l ^ z0_1l ^ z0_2l ^ z0_3l;
@@ -794,7 +859,6 @@ mod ppc_vpmsum {
 // riscv64 Zvbc backend (vector carryless multiply)
 
 #[cfg(target_arch = "riscv64")]
-#[allow(unsafe_code)]
 mod rv_clmul {
   use core::arch::asm;
 
@@ -802,6 +866,9 @@ mod rv_clmul {
   ///
   /// Uses the clobber-only vreg workaround: data shuttled through GPRs
   /// and memory; vector registers referenced by explicit names.
+  ///
+  /// # Safety
+  /// Caller must ensure the V and Zvbc extensions are available.
   #[inline]
   #[target_feature(enable = "v", enable = "zvbc")]
   unsafe fn mul64(a: u64, b: u64) -> (u64, u64) {
@@ -840,10 +907,8 @@ mod rv_clmul {
   pub(super) unsafe fn clmul128_reduce(a: u128, b: u128) -> u128 {
     // SAFETY: target_feature gate guarantees Zvbc availability.
     unsafe {
-      let a_lo = a as u64;
-      let a_hi = (a >> 64) as u64;
-      let b_lo = b as u64;
-      let b_hi = (b >> 64) as u64;
+      let (a_lo, a_hi) = super::split_u128_le(a);
+      let (b_lo, b_hi) = super::split_u128_le(b);
 
       // Karatsuba: 3 multiplies.
       let (v0_lo, v0_hi) = mul64(a_lo, b_lo);
@@ -869,13 +934,15 @@ mod rv_clmul {
 // riscv64 Zbc backend (scalar carryless multiply)
 
 #[cfg(target_arch = "riscv64")]
-#[allow(unsafe_code)]
 mod rv_scalar_clmul {
   use core::arch::asm;
 
   /// 64×64→128 carryless multiply using scalar Zbc (clmul + clmulh).
   ///
   /// Identical encoding to Zbkc — dispatch checks either cap at runtime.
+  ///
+  /// # Safety
+  /// Caller must ensure the Zbc or Zbkc extension is available.
   #[inline]
   #[target_feature(enable = "zbc")]
   unsafe fn mul64(a: u64, b: u64) -> (u64, u64) {
@@ -909,10 +976,8 @@ mod rv_scalar_clmul {
     // SAFETY: target_feature gate guarantees Zbc availability. mul64 calls
     // are safe within this target_feature scope.
     unsafe {
-      let a_lo = a as u64;
-      let a_hi = (a >> 64) as u64;
-      let b_lo = b as u64;
-      let b_hi = (b >> 64) as u64;
+      let (a_lo, a_hi) = super::split_u128_le(a);
+      let (b_lo, b_hi) = super::split_u128_le(b);
 
       // Karatsuba: 3 multiplies instead of 4.
       let (v0_lo, v0_hi) = mul64(a_lo, b_lo);
@@ -981,7 +1046,7 @@ mod vpclmul {
       let result = super::pclmul::mont_reduce_sse2(lo_sum, hi_sum);
 
       let mut out = 0u128;
-      _mm_storeu_si128((&mut out as *mut u128).cast(), result);
+      _mm_storeu_si128(core::ptr::from_mut(&mut out).cast(), result);
       out
     }
   }
@@ -1039,57 +1104,7 @@ mod vpclmul {
 
       let result = super::pclmul::mont_reduce_sse2(lo, hi);
       let mut out = 0u128;
-      _mm_storeu_si128((&mut out as *mut u128).cast(), result);
-      out
-    }
-  }
-
-  /// Reduce eight POLYVAL-domain lanes using 256-bit VPCLMULQDQ.
-  ///
-  /// # Safety
-  /// Caller must ensure AVX2 + AVX-512F + AVX-512VL + VPCLMULQDQ +
-  /// PCLMULQDQ + SSE2.
-  #[cfg(feature = "aes-gcm")]
-  #[target_feature(enable = "avx2,avx512f,avx512vl,vpclmulqdq,pclmulqdq,sse2")]
-  #[inline]
-  #[allow(dead_code)]
-  unsafe fn aggregate_8_lanes_256(data: [__m256i; 4], h_powers_rev: &[u128; 8]) -> u128 {
-    // SAFETY: x86 VPCLMUL 8-block aggregation because:
-    // 1. This function's caller guarantees all required target features.
-    // 2. `data` contains eight initialized POLYVAL-domain lanes in order.
-    // 3. `h_powers_rev` contains exactly [H^8, H^7, ..., H], matching the lanes.
-    unsafe {
-      let mut lo_sum = _mm256_setzero_si256();
-      let mut hi_sum = _mm256_setzero_si256();
-
-      macro_rules! fold_lanes {
-        ($data:expr, $power_offset:expr) => {{
-          let h_vec = _mm256_loadu_si256(h_powers_rev.as_ptr().add($power_offset).cast());
-          let lo = _mm256_clmulepi64_epi128($data, h_vec, 0x00);
-          let hi = _mm256_clmulepi64_epi128($data, h_vec, 0x11);
-          let data_mid = _mm256_xor_si256($data, _mm256_shuffle_epi32::<0x4e>($data));
-          let h_mid = _mm256_xor_si256(h_vec, _mm256_shuffle_epi32::<0x4e>(h_vec));
-          let mid = _mm256_xor_si256(
-            _mm256_xor_si256(_mm256_clmulepi64_epi128(data_mid, h_mid, 0x00), lo),
-            hi,
-          );
-
-          lo_sum = _mm256_xor_si256(lo_sum, _mm256_xor_si256(lo, _mm256_bslli_epi128(mid, 8)));
-          hi_sum = _mm256_xor_si256(hi_sum, _mm256_xor_si256(hi, _mm256_bsrli_epi128(mid, 8)));
-        }};
-      }
-
-      fold_lanes!(data[0], 0);
-      fold_lanes!(data[1], 2);
-      fold_lanes!(data[2], 4);
-      fold_lanes!(data[3], 6);
-
-      let lo = _mm_xor_si128(_mm256_castsi256_si128(lo_sum), _mm256_extracti128_si256(lo_sum, 1));
-      let hi = _mm_xor_si128(_mm256_castsi256_si128(hi_sum), _mm256_extracti128_si256(hi_sum, 1));
-
-      let result = super::pclmul::mont_reduce_sse2(lo, hi);
-      let mut out = 0u128;
-      _mm_storeu_si128((&mut out as *mut u128).cast(), result);
+      _mm_storeu_si128(core::ptr::from_mut(&mut out).cast(), result);
       out
     }
   }
@@ -1123,28 +1138,6 @@ mod vpclmul {
     _mm512_shuffle_epi8(raw, reverse_bytes)
   }
 
-  /// Convert two big-endian GHASH lanes into POLYVAL-domain lanes.
-  ///
-  /// # Safety
-  /// Caller must ensure AVX2 is available.
-  #[cfg(feature = "aes-gcm")]
-  #[target_feature(enable = "avx2")]
-  #[inline]
-  #[allow(dead_code)]
-  unsafe fn be_lanes_256(raw: __m256i) -> __m256i {
-    let reverse_bytes = _mm256_set_epi32(
-      0x0001_0203,
-      0x0405_0607,
-      0x0809_0a0b,
-      0x0c0d_0e0f,
-      0x0001_0203,
-      0x0405_0607,
-      0x0809_0a0b,
-      0x0c0d_0e0f,
-    );
-    _mm256_shuffle_epi8(raw, reverse_bytes)
-  }
-
   /// Convert four big-endian GHASH lanes and XOR `acc` into the first lane.
   ///
   /// # Safety
@@ -1158,27 +1151,8 @@ mod vpclmul {
     // 2. `raw` contains four initialized big-endian GHASH lanes and `acc` is initialized.
     unsafe {
       let data = be_lanes(raw);
-      let acc_lane = _mm512_zextsi128_si512(_mm_loadu_si128((&acc as *const u128).cast()));
+      let acc_lane = _mm512_zextsi128_si512(_mm_loadu_si128(core::ptr::from_ref(&acc).cast()));
       _mm512_xor_si512(data, acc_lane)
-    }
-  }
-
-  /// Convert two big-endian GHASH lanes and XOR `acc` into the first lane.
-  ///
-  /// # Safety
-  /// Caller must ensure AVX2 and SSE2 are available.
-  #[cfg(feature = "aes-gcm")]
-  #[target_feature(enable = "avx2,sse2")]
-  #[inline]
-  #[allow(dead_code)]
-  unsafe fn be_lanes_256_with_acc(acc: u128, raw: __m256i) -> __m256i {
-    // SAFETY: direct GHASH lane conversion because:
-    // 1. This function's caller guarantees the required x86 target features.
-    // 2. `raw` contains two initialized big-endian GHASH lanes and `acc` is initialized.
-    unsafe {
-      let data = be_lanes_256(raw);
-      let acc_lane = _mm256_castsi128_si256(_mm_loadu_si128((&acc as *const u128).cast()));
-      _mm256_xor_si256(data, acc_lane)
     }
   }
 
@@ -1272,7 +1246,7 @@ mod vpclmul {
     //    representation expected by `aggregate_lanes`.
     unsafe {
       let data = _mm512_loadu_si512(block_ptr.cast());
-      let acc_lane = _mm512_zextsi128_si512(_mm_loadu_si128((&acc as *const u128).cast()));
+      let acc_lane = _mm512_zextsi128_si512(_mm_loadu_si128(core::ptr::from_ref(&acc).cast()));
       aggregate_lanes(_mm512_xor_si512(data, acc_lane), h_powers_rev)
     }
   }
@@ -1292,7 +1266,7 @@ mod vpclmul {
     // 3. Only the first lane receives the incoming accumulator, matching the POLYVAL recurrence.
     unsafe {
       let data0 = _mm512_loadu_si512(block_ptr.cast());
-      let acc_lane = _mm512_zextsi128_si512(_mm_loadu_si128((&acc as *const u128).cast()));
+      let acc_lane = _mm512_zextsi128_si512(_mm_loadu_si128(core::ptr::from_ref(&acc).cast()));
       aggregate_16_lanes(
         [
           _mm512_xor_si512(data0, acc_lane),
@@ -1363,39 +1337,6 @@ mod vpclmul {
           be_lanes(raw1),
           be_lanes(raw2),
           be_lanes(raw3),
-        ],
-        h_powers_rev,
-      )
-    }
-  }
-
-  /// Process 8 big-endian GHASH lanes already resident in 256-bit SIMD registers.
-  ///
-  /// # Safety
-  /// Caller must ensure AVX2 + AVX-512F + AVX-512VL + VPCLMULQDQ +
-  /// PCLMULQDQ + SSE2.
-  #[cfg(feature = "aes-gcm")]
-  #[target_feature(enable = "avx2,avx512f,avx512vl,vpclmulqdq,pclmulqdq,sse2")]
-  #[allow(dead_code)]
-  pub(super) unsafe fn aggregate_8blocks_be_lanes_256(
-    acc: u128,
-    h_powers_rev: &[u128; 8],
-    raw0: __m256i,
-    raw1: __m256i,
-    raw2: __m256i,
-    raw3: __m256i,
-  ) -> u128 {
-    // SAFETY: direct-lane GHASH aggregation because:
-    // 1. This function's caller guarantees all required x86 target features.
-    // 2. `raw*` contain eight initialized 16-byte ciphertext lanes in memory byte order.
-    // 3. Only the first lane receives the incoming accumulator, matching GHASH recurrence.
-    unsafe {
-      aggregate_8_lanes_256(
-        [
-          be_lanes_256_with_acc(acc, raw0),
-          be_lanes_256(raw1),
-          be_lanes_256(raw2),
-          be_lanes_256(raw3),
         ],
         h_powers_rev,
       )
@@ -1559,29 +1500,6 @@ pub(super) unsafe fn x86_aggregate_16blocks_be_lanes_inline(
   // 2. `h_powers_rev` and `raw*` are initialized inputs matching the backend contract.
   // 3. The helper folds the incoming accumulator only into the first lane.
   unsafe { vpclmul::aggregate_16blocks_be_lanes(acc, h_powers_rev, raw0, raw1, raw2, raw3) }
-}
-
-/// 8-block VPCLMULQDQ aggregate helper for big-endian GHASH lanes already in 256-bit registers.
-///
-/// # Safety
-/// Caller must ensure AVX2 + AVX-512F + AVX-512VL + VPCLMULQDQ +
-/// PCLMULQDQ + SSE2 are available.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
-#[target_feature(enable = "avx2,avx512f,avx512vl,vpclmulqdq,pclmulqdq,sse2")]
-#[inline]
-pub(super) unsafe fn x86_aggregate_8blocks_be_lanes_256_inline(
-  acc: u128,
-  h_powers_rev: &[u128; 8],
-  raw0: core::arch::x86_64::__m256i,
-  raw1: core::arch::x86_64::__m256i,
-  raw2: core::arch::x86_64::__m256i,
-  raw3: core::arch::x86_64::__m256i,
-) -> u128 {
-  // SAFETY: direct-lane VPCLMUL aggregation because:
-  // 1. Caller guarantees all required target features.
-  // 2. `h_powers_rev` and `raw*` are initialized inputs matching the backend contract.
-  // 3. The helper folds the incoming accumulator only into the first lane.
-  unsafe { vpclmul::aggregate_8blocks_be_lanes_256(acc, h_powers_rev, raw0, raw1, raw2, raw3) }
 }
 
 // aarch64: inline helper for fused paths (#[target_feature] + #[inline(always)])
@@ -1848,6 +1766,8 @@ pub(super) fn clmul128_reduce(a: u128, b: u128) -> u128 {
   clmul(a, b)
 }
 
+/// Multiplies two little-endian POLYVAL field elements with the portable
+/// carryless-multiply and reduction implementation.
 #[cfg(all(feature = "diag", feature = "aes-gcm-siv"))]
 #[must_use]
 pub fn diag_polyval_reduce_portable(a: &[u8; 16], b: &[u8; 16]) -> [u8; 16] {
@@ -1968,7 +1888,8 @@ pub(super) fn precompute_powers_128(h: u128) -> [u128; 128] {
 pub(super) fn precompute_powers_16_mid(h_powers_rev_16: &[u128; 16]) -> [u128; 16] {
   core::array::from_fn(|i| {
     let h = h_powers_rev_16[i];
-    ((h as u64) ^ ((h >> 64) as u64)) as u128
+    let (lo, hi) = split_u128_le(h);
+    (lo ^ hi) as u128
   })
 }
 
@@ -1985,10 +1906,8 @@ pub(super) fn precompute_powers_16_pair(h_powers_rev_16: &[u128; 16]) -> [u128; 
     let lane = i % 3;
     let h0 = h_powers_rev_16[pair.strict_mul(2)];
     let h1 = h_powers_rev_16[pair.strict_mul(2).strict_add(1)];
-    let lo0 = h0 as u64;
-    let hi0 = (h0 >> 64) as u64;
-    let lo1 = h1 as u64;
-    let hi1 = (h1 >> 64) as u64;
+    let (lo0, hi0) = split_u128_le(h0);
+    let (lo1, hi1) = split_u128_le(h1);
 
     let low = match lane {
       0 => lo0,
@@ -2251,10 +2170,11 @@ impl Polyval {
 #[cfg(feature = "aes-gcm-siv")]
 impl Drop for Polyval {
   fn drop(&mut self) {
-    // SAFETY: self.acc/self.h are valid, aligned, dereferenceable pointers to initialized memory.
+    // SAFETY: the raw pointers address initialized, aligned `u128` fields owned
+    // exclusively by `self` for the duration of `drop`.
     unsafe {
-      core::ptr::write_volatile(&mut self.acc, 0);
-      core::ptr::write_volatile(&mut self.h, 0);
+      core::ptr::write_volatile(&raw mut self.acc, 0);
+      core::ptr::write_volatile(&raw mut self.h, 0);
     }
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
@@ -2313,10 +2233,8 @@ fn bmul64(x: u64, y: u64) -> u64 {
 /// Uses Karatsuba decomposition: 3 sub-products × 2 (normal + bit-reversed
 /// for the high halves) = 6 bmul64 calls = 96 integer multiplies.
 pub(super) fn clmul128(a: u128, b: u128) -> [u64; 4] {
-  let a0 = a as u64;
-  let a1 = (a >> 64) as u64;
-  let b0 = b as u64;
-  let b1 = (b >> 64) as u64;
+  let (a0, a1) = split_u128_le(a);
+  let (b0, b1) = split_u128_le(b);
 
   // Karatsuba middle term operands.
   let a2 = a0 ^ a1;
@@ -2395,21 +2313,24 @@ pub(super) fn mont_reduce(v: [u64; 4]) -> u128 {
 mod tests {
   use super::*;
 
+  const RFC_H: [u8; 16] = 0x2562_9347_5892_4276_1d31_f826_ba4b_757bu128.to_be_bytes();
+  const RFC_X1: [u8; 16] = 0x4f4f_9566_8c83_dfb6_4017_62bb_2d01_a262u128.to_be_bytes();
+  const RFC_X2: [u8; 16] = 0xd1a2_4ddd_2721_d006_bbe4_5f20_d3c9_f362u128.to_be_bytes();
+  #[cfg(feature = "aes-gcm-siv")]
+  const RFC_EXPECTED: [u8; 16] = 0xf7a3_b47b_8461_19fa_e5b7_866c_f5e5_b77eu128.to_be_bytes();
+  const AGGREGATE_X3: [u8; 16] = 0x0100_0000_0000_0000_0000_0000_0000_000fu128.to_be_bytes();
+  const AGGREGATE_X4: [u8; 16] = 0xabcd_ef01_2345_6789_abcd_ef01_2345_6789u128.to_be_bytes();
+
   /// RFC 8452 Appendix A: POLYVAL test vector.
   #[cfg(feature = "aes-gcm-siv")]
   #[test]
   fn polyval_rfc8452_appendix_a() {
-    let h = hex_to_16("25629347589242761d31f826ba4b757b");
-    let x1 = hex_to_16("4f4f95668c83dfb6401762bb2d01a262");
-    let x2 = hex_to_16("d1a24ddd2721d006bbe45f20d3c9f362");
-    let expected = hex_to_16("f7a3b47b846119fae5b7866cf5e5b77e");
-
-    let mut pv = Polyval::new(&h);
-    pv.update_block(&x1);
-    pv.update_block(&x2);
+    let mut pv = Polyval::new(&RFC_H);
+    pv.update_block(&RFC_X1);
+    pv.update_block(&RFC_X2);
     let result = pv.finalize();
 
-    assert_eq!(result, expected, "POLYVAL mismatch");
+    assert_eq!(result, RFC_EXPECTED, "POLYVAL mismatch");
   }
 
   /// POLYVAL with empty input should return zero.
@@ -2436,26 +2357,26 @@ mod tests {
   #[cfg(feature = "aes-gcm-siv")]
   #[test]
   fn polyval_padded_matches_manual() {
-    let h = hex_to_16("25629347589242761d31f826ba4b757b");
     let data = b"Hello, World! This is test data for POLYVAL padding.";
 
     // Manual: split into 16-byte blocks, pad last one.
-    let mut manual = Polyval::new(&h);
-    let mut offset = 0;
-    while offset + 16 <= data.len() {
-      let block: [u8; 16] = data[offset..offset + 16].try_into().unwrap();
+    let mut manual = Polyval::new(&RFC_H);
+    let mut chunks = data.chunks_exact(BLOCK_SIZE);
+    for chunk in chunks.by_ref() {
+      let mut block = [0u8; BLOCK_SIZE];
+      block.copy_from_slice(chunk);
       manual.update_block(&block);
-      offset += 16;
     }
-    if offset < data.len() {
-      let mut block = [0u8; 16];
-      block[..data.len() - offset].copy_from_slice(&data[offset..]);
+    let remainder = chunks.remainder();
+    if !remainder.is_empty() {
+      let mut block = [0u8; BLOCK_SIZE];
+      block[..remainder.len()].copy_from_slice(remainder);
       manual.update_block(&block);
     }
     let manual_result = manual.finalize();
 
     // Padded API.
-    let mut padded = Polyval::new(&h);
+    let mut padded = Polyval::new(&RFC_H);
     padded.update_padded(data);
     let padded_result = padded.finalize();
 
@@ -2498,8 +2419,9 @@ mod tests {
   fn clmul128_by_one() {
     let val: u128 = 0x7b75_4bba_26f8_311d_7642_9258_4793_6225;
     let v = clmul128(1, val);
-    assert_eq!(v[0], val as u64, "v0 should be val_lo");
-    assert_eq!(v[1], (val >> 64) as u64, "v1 should be val_hi");
+    let (val_lo, val_hi) = split_u128_le(val);
+    assert_eq!(v[0], val_lo, "v0 should be val_lo");
+    assert_eq!(v[1], val_hi, "v1 should be val_hi");
     assert_eq!(v[2], 0, "v2 should be 0");
     assert_eq!(v[3], 0, "v3 should be 0");
   }
@@ -2508,7 +2430,8 @@ mod tests {
   /// in the low half gives x^128 * x^{-128} = 1.
   #[test]
   fn mont_reduce_of_poly() {
-    let v = [POLY as u64, (POLY >> 64) as u64, 0u64, 0u64];
+    let (poly_lo, poly_hi) = split_u128_le(POLY);
+    let v = [poly_lo, poly_hi, 0u64, 0u64];
     let result = mont_reduce(v);
     assert_eq!(result, 1, "mont_reduce(POLY) should be 1");
   }
@@ -2516,7 +2439,7 @@ mod tests {
   /// Verify precompute_powers produces correct powers of H.
   #[test]
   fn precompute_powers_correct() {
-    let h = u128::from_le_bytes(hex_to_16("25629347589242761d31f826ba4b757b"));
+    let h = u128::from_le_bytes(RFC_H);
     let powers = precompute_powers(h);
     assert_eq!(powers[0], h, "powers[0] should be H");
     assert_eq!(powers[1], clmul128_reduce(h, h), "powers[1] should be H^2");
@@ -2527,7 +2450,7 @@ mod tests {
   /// Verify precompute_powers_16 extends the same power chain to H^16.
   #[test]
   fn precompute_powers_16_correct() {
-    let h = u128::from_le_bytes(hex_to_16("25629347589242761d31f826ba4b757b"));
+    let h = u128::from_le_bytes(RFC_H);
     let powers = precompute_powers_16(h);
     assert_eq!(powers[0], h, "powers[0] should be H");
 
@@ -2545,7 +2468,7 @@ mod tests {
   /// Verify precompute_powers_32 extends the same power chain to H^32.
   #[test]
   fn precompute_powers_32_correct() {
-    let h = u128::from_le_bytes(hex_to_16("25629347589242761d31f826ba4b757b"));
+    let h = u128::from_le_bytes(RFC_H);
     let powers = precompute_powers_32(h);
     assert_eq!(powers[0], h, "powers[0] should be H");
 
@@ -2563,7 +2486,7 @@ mod tests {
   /// Verify precompute_powers_64 extends the same power chain to H^64.
   #[test]
   fn precompute_powers_64_correct() {
-    let h = u128::from_le_bytes(hex_to_16("25629347589242761d31f826ba4b757b"));
+    let h = u128::from_le_bytes(RFC_H);
     let powers = precompute_powers_64(h);
     assert_eq!(powers[0], h, "powers[0] should be H");
 
@@ -2581,7 +2504,7 @@ mod tests {
   /// Verify precompute_powers_128 extends the same power chain to H^128.
   #[test]
   fn precompute_powers_128_correct() {
-    let h = u128::from_le_bytes(hex_to_16("25629347589242761d31f826ba4b757b"));
+    let h = u128::from_le_bytes(RFC_H);
     let powers = precompute_powers_128(h);
     assert_eq!(powers[0], h, "powers[0] should be H");
 
@@ -2599,16 +2522,15 @@ mod tests {
   /// Verify accumulate_4blocks matches sequential block-by-block processing.
   #[test]
   fn accumulate_4blocks_matches_sequential() {
-    let h_bytes = hex_to_16("25629347589242761d31f826ba4b757b");
-    let h = u128::from_le_bytes(h_bytes);
+    let h = u128::from_le_bytes(RFC_H);
     let powers = precompute_powers(h);
     let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
 
     let blocks = [
-      u128::from_le_bytes(hex_to_16("4f4f95668c83dfb6401762bb2d01a262")),
-      u128::from_le_bytes(hex_to_16("d1a24ddd2721d006bbe45f20d3c9f362")),
-      u128::from_le_bytes(hex_to_16("0100000000000000000000000000000f")),
-      u128::from_le_bytes(hex_to_16("abcdef0123456789abcdef0123456789")),
+      u128::from_le_bytes(RFC_X1),
+      u128::from_le_bytes(RFC_X2),
+      u128::from_le_bytes(AGGREGATE_X3),
+      u128::from_le_bytes(AGGREGATE_X4),
     ];
     let acc = 0x42u128;
 
@@ -2631,15 +2553,18 @@ mod tests {
   /// Verify accumulate_16blocks matches sequential block-by-block processing.
   #[test]
   fn accumulate_16blocks_matches_sequential() {
-    let h_bytes = hex_to_16("25629347589242761d31f826ba4b757b");
-    let h = u128::from_le_bytes(h_bytes);
+    let h = u128::from_le_bytes(RFC_H);
     let powers = precompute_powers_16(h);
     let h_powers_rev = core::array::from_fn(|i| powers[15usize.strict_sub(i)]);
-    let blocks = core::array::from_fn(|i| {
-      let lane = (i as u128).wrapping_add(1);
-      0x4f4f_9566_8c83_dfb6_4017_62bb_2d01_a262u128.wrapping_mul(lane)
-        ^ 0xd1a2_4ddd_2721_d006_bbe4_5f20_d3c9_f362u128.rotate_left(i as u32)
-    });
+    let mut blocks = [0u128; 16];
+    let mut lane = 1u128;
+    let mut rotation = 0u32;
+    for block in &mut blocks {
+      *block = 0x4f4f_9566_8c83_dfb6_4017_62bb_2d01_a262u128.wrapping_mul(lane)
+        ^ 0xd1a2_4ddd_2721_d006_bbe4_5f20_d3c9_f362u128.rotate_left(rotation);
+      lane = lane.wrapping_add(1);
+      rotation = rotation.strict_add(1);
+    }
     let acc = 0x42u128;
 
     let mut seq = acc;
@@ -2654,76 +2579,11 @@ mod tests {
     assert_eq!(wide, seq, "16-block aggregate must match sequential processing");
   }
 
-  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
-  #[target_feature(enable = "avx2,avx512f,avx512vl,vpclmulqdq,pclmulqdq,sse2")]
-  /// # Safety
-  ///
-  /// Caller must ensure AVX2 + AVX-512F + AVX-512VL + VPCLMULQDQ +
-  /// PCLMULQDQ + SSE2 are available.
-  unsafe fn x86_aggregate_8blocks_be_lanes_256_test_call(
-    acc: u128,
-    h_powers_rev: &[u128; 8],
-    bytes: &[u8; 128],
-  ) -> u128 {
-    use core::arch::x86_64::*;
-
-    // SAFETY: test-only x86 lane aggregation because:
-    // 1. The caller verified the CPU features required by this target-feature helper.
-    // 2. `bytes` is exactly 128 initialized bytes, so all four 32-byte loads are in bounds.
-    // 3. The loaded lanes are passed directly to the helper under test.
-    unsafe {
-      let raw0 = _mm256_loadu_si256(bytes.as_ptr().cast());
-      let raw1 = _mm256_loadu_si256(bytes.as_ptr().add(32).cast());
-      let raw2 = _mm256_loadu_si256(bytes.as_ptr().add(64).cast());
-      let raw3 = _mm256_loadu_si256(bytes.as_ptr().add(96).cast());
-      x86_aggregate_8blocks_be_lanes_256_inline(acc, h_powers_rev, raw0, raw1, raw2, raw3)
-    }
-  }
-
-  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
-  #[test]
-  fn x86_aggregate_8blocks_be_lanes_256_matches_sequential() {
-    let required = crate::platform::caps::x86::VPCLMUL_READY | crate::platform::caps::x86::AVX2;
-    if !crate::platform::caps().has(required) {
-      return;
-    }
-
-    let h = u128::from_le_bytes(hex_to_16("25629347589242761d31f826ba4b757b"));
-    let powers = precompute_powers_8(h);
-    let h_powers_rev = core::array::from_fn(|i| powers[7usize.strict_sub(i)]);
-    let acc = 0x1122_3344_5566_7788_99aa_bbcc_ddee_ff00u128;
-
-    let mut bytes = [0u8; 128];
-    let mut i = 0usize;
-    while i < bytes.len() {
-      bytes[i] = i.wrapping_mul(37).wrapping_add(19) as u8;
-      i = i.strict_add(1);
-    }
-
-    let mut expected = acc;
-    let mut offset = 0usize;
-    while offset < bytes.len() {
-      let mut block = [0u8; 16];
-      block.copy_from_slice(&bytes[offset..offset.strict_add(16)]);
-      expected ^= u128::from_be_bytes(block);
-      expected = clmul128_reduce(expected, h);
-      offset = offset.strict_add(16);
-    }
-
-    // SAFETY: Runtime caps above confirmed AVX2 + VPCLMUL_READY before calling the target-feature
-    // helper. The byte array and H-power table are fully initialized.
-    let wide = unsafe { x86_aggregate_8blocks_be_lanes_256_test_call(acc, &h_powers_rev, &bytes) };
-    assert_eq!(
-      wide, expected,
-      "8-block 256-bit VPCLMUL GHASH aggregate must match sequential fold"
-    );
-  }
-
   /// Verify the x86 padded wide path matches scalar POLYVAL over boundary sizes.
   #[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
   #[test]
   fn accumulate_padded_x86_matches_sequential_boundaries() {
-    let h = u128::from_le_bytes(hex_to_16("25629347589242761d31f826ba4b757b"));
+    let h = u128::from_le_bytes(RFC_H);
     let powers = precompute_powers_16(h);
     let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
     let h_powers_rev_16 = core::array::from_fn(|i| powers[15usize.strict_sub(i)]);
@@ -2736,7 +2596,7 @@ mod tests {
       let mut data = [0u8; 321];
       let mut i = 0usize;
       while i < len {
-        data[i] = i.wrapping_mul(37).wrapping_add(19) as u8;
+        data[i] = i.to_le_bytes()[0].wrapping_mul(37).wrapping_add(19);
         i = i.strict_add(1);
       }
 
@@ -2770,15 +2630,5 @@ mod tests {
     let blocks = [0u128; 4];
     let result = accumulate_4blocks(0, h, &h_powers_rev, &blocks);
     assert_eq!(result, 0);
-  }
-
-  fn hex_to_16(hex: &str) -> [u8; 16] {
-    let mut out = [0u8; 16];
-    let mut i = 0;
-    while i < 16 {
-      out[i] = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap();
-      i = i.strict_add(1);
-    }
-    out
   }
 }

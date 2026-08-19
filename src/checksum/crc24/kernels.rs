@@ -24,22 +24,22 @@
 //! state back to the MSB-first OpenPGP representation.
 
 /// Reference (bitwise) kernel name.
-pub use kernels::REFERENCE;
+pub(in crate::checksum) use kernels::REFERENCE;
 
 use crate::checksum::common::kernels;
 
 /// Portable slice-by-8 kernel name.
-pub const PORTABLE_SLICE8: &str = kernels::PORTABLE_SLICE8;
+pub(in crate::checksum) const PORTABLE_SLICE8: &str = kernels::PORTABLE_SLICE8;
 
 // Kernel Name Tables and Functions (per architecture)
 
 #[cfg(target_arch = "x86_64")]
-pub mod x86_64 {
+pub(in crate::checksum) mod x86_64 {
   use super::super::x86_64 as arch;
   use crate::checksum::dispatchers::Crc24Fn;
 
   /// OpenPGP PCLMUL kernel.
-  pub const OPENPGP_PCLMUL: [Crc24Fn; 5] = [
+  pub(in crate::checksum) const OPENPGP_PCLMUL: [Crc24Fn; 5] = [
     arch::crc24_openpgp_pclmul_safe,
     arch::crc24_openpgp_pclmul_2way_safe,
     arch::crc24_openpgp_pclmul_4way_safe,
@@ -48,10 +48,10 @@ pub mod x86_64 {
   ];
 
   /// OpenPGP PCLMUL small-buffer kernel.
-  pub const OPENPGP_PCLMUL_SMALL_KERNEL: Crc24Fn = arch::crc24_openpgp_pclmul_small_safe;
+  pub(in crate::checksum) const OPENPGP_PCLMUL_SMALL_KERNEL: Crc24Fn = arch::crc24_openpgp_pclmul_small_safe;
 
   /// OpenPGP VPCLMUL kernel.
-  pub const OPENPGP_VPCLMUL: [Crc24Fn; 5] = [
+  pub(in crate::checksum) const OPENPGP_VPCLMUL: [Crc24Fn; 5] = [
     arch::crc24_openpgp_vpclmul_safe,
     arch::crc24_openpgp_vpclmul_2way_safe,
     arch::crc24_openpgp_vpclmul_4way_safe,
@@ -61,12 +61,12 @@ pub mod x86_64 {
 }
 
 #[cfg(target_arch = "aarch64")]
-pub mod aarch64 {
+pub(in crate::checksum) mod aarch64 {
   use super::super::aarch64 as arch;
   use crate::checksum::dispatchers::Crc24Fn;
 
   /// OpenPGP PMULL kernels: [1-way, 2-way, 3-way, 3-way(dup), 3-way(dup)].
-  pub const OPENPGP_PMULL: [Crc24Fn; 5] = [
+  pub(in crate::checksum) const OPENPGP_PMULL: [Crc24Fn; 5] = [
     arch::crc24_openpgp_pmull_safe,
     arch::crc24_openpgp_pmull_2way_safe,
     arch::crc24_openpgp_pmull_3way_safe,
@@ -75,16 +75,16 @@ pub mod aarch64 {
   ];
 
   /// OpenPGP PMULL small-buffer kernel.
-  pub const OPENPGP_PMULL_SMALL_KERNEL: Crc24Fn = arch::crc24_openpgp_pmull_small_safe;
+  pub(in crate::checksum) const OPENPGP_PMULL_SMALL_KERNEL: Crc24Fn = arch::crc24_openpgp_pmull_small_safe;
 }
 
 #[cfg(target_arch = "powerpc64")]
-pub mod power {
+pub(in crate::checksum) mod power {
   use super::super::power as arch;
   use crate::checksum::dispatchers::Crc24Fn;
 
   /// OpenPGP VPMSUM kernels: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
-  pub const OPENPGP_VPMSUM: [Crc24Fn; 5] = [
+  pub(in crate::checksum) const OPENPGP_VPMSUM: [Crc24Fn; 5] = [
     arch::crc24_openpgp_vpmsum_safe,
     arch::crc24_openpgp_vpmsum_2way_safe,
     arch::crc24_openpgp_vpmsum_4way_safe,
@@ -94,12 +94,12 @@ pub mod power {
 }
 
 #[cfg(target_arch = "s390x")]
-pub mod s390x {
+pub(in crate::checksum) mod s390x {
   use super::super::s390x as arch;
   use crate::checksum::dispatchers::Crc24Fn;
 
   /// OpenPGP VGFM kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
-  pub const OPENPGP_VGFM: [Crc24Fn; 5] = [
+  pub(in crate::checksum) const OPENPGP_VGFM: [Crc24Fn; 5] = [
     arch::crc24_openpgp_vgfm_safe,
     arch::crc24_openpgp_vgfm_2way_safe,
     arch::crc24_openpgp_vgfm_4way_safe,
@@ -109,31 +109,12 @@ pub mod s390x {
 }
 
 #[cfg(target_arch = "riscv64")]
-#[allow(dead_code)]
-pub mod riscv64 {
+pub(in crate::checksum) mod riscv64 {
   use super::super::riscv64 as arch;
   use crate::checksum::dispatchers::Crc24Fn;
 
-  /// Zbc kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
-  pub const ZBC_NAMES: &[&str] = &[
-    "riscv64/zbc",
-    "riscv64/zbc-2way",
-    "riscv64/zbc-4way",
-    "riscv64/zbc-4way", // dup for index consistency
-    "riscv64/zbc-4way", // dup for index consistency
-  ];
-
-  /// Zvbc kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
-  pub const ZVBC_NAMES: &[&str] = &[
-    "riscv64/zvbc",
-    "riscv64/zvbc-2way",
-    "riscv64/zvbc-4way",
-    "riscv64/zvbc-4way", // dup for index consistency
-    "riscv64/zvbc-4way", // dup for index consistency
-  ];
-
   /// OpenPGP Zbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
-  pub const OPENPGP_ZBC: [Crc24Fn; 5] = [
+  pub(in crate::checksum) const OPENPGP_ZBC: [Crc24Fn; 5] = [
     arch::crc24_openpgp_zbc_safe,
     arch::crc24_openpgp_zbc_2way_safe,
     arch::crc24_openpgp_zbc_4way_safe,
@@ -142,7 +123,7 @@ pub mod riscv64 {
   ];
 
   /// OpenPGP Zvbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
-  pub const OPENPGP_ZVBC: [Crc24Fn; 5] = [
+  pub(in crate::checksum) const OPENPGP_ZVBC: [Crc24Fn; 5] = [
     arch::crc24_openpgp_zvbc_safe,
     arch::crc24_openpgp_zvbc_2way_safe,
     arch::crc24_openpgp_zvbc_4way_safe,

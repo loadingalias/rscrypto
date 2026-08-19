@@ -6,10 +6,8 @@
 //!
 //! # Safety
 //!
-//! Uses `unsafe` for ARM SIMD intrinsics. Callers must ensure PMULL is
-//! available before executing these kernels (the dispatcher does this).
-#![allow(unsafe_code)]
-#![allow(clippy::indexing_slicing)]
+//! Uses `unsafe` for ARM SIMD intrinsics. Callers must establish NEON, AES
+//! (PMULL), and SHA3 (EOR3) support as required by each accelerated path.
 
 use core::{
   arch::aarch64::*,
@@ -42,33 +40,57 @@ impl BitXorAssign for Simd {
 }
 
 impl Simd {
+  /// Creates a vector from its high and low 64-bit lanes.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON.
   #[inline]
   #[target_feature(enable = "neon")]
   unsafe fn new(high: u64, low: u64) -> Self {
     Self(vcombine_u8(vcreate_u8(low), vcreate_u8(high)))
   }
 
+  /// Loads 16 bytes from `ptr` without requiring alignment.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON, and `ptr` must address at least 16 initialized readable
+  /// bytes.
   #[inline]
   #[target_feature(enable = "neon")]
   unsafe fn load(ptr: *const u8) -> Self {
-    // SAFETY: Caller guarantees:
-    // 1. NEON target features are available (dispatch check).
-    // 2. All SIMD operations are pure register computations after loads.
+    // SAFETY: The caller guarantees NEON support and 16 initialized readable bytes at `ptr`.
     unsafe { Self(vld1q_u8(ptr)) }
   }
 
+  /// Computes the bitwise AND of two vectors.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON.
   #[inline]
   #[target_feature(enable = "neon")]
   unsafe fn and(self, mask: Self) -> Self {
     Self(vandq_u8(self.0, mask.0))
   }
 
+  /// Shifts the vector right by eight bytes, filling the high bytes with zero.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON.
   #[inline]
   #[target_feature(enable = "neon")]
   unsafe fn shift_right_8(self) -> Self {
     Self(vextq_u8(self.0, vdupq_n_u8(0), 8))
   }
 
+  /// Moves the low 32-bit lane to the high 32-bit lane and clears the rest.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON.
   #[inline]
   #[target_feature(enable = "neon")]
   unsafe fn shift_left_12(self) -> Self {
@@ -77,6 +99,11 @@ impl Simd {
     Self(vreinterpretq_u8_u32(result))
   }
 
+  /// Multiplies the low polynomial lanes.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support AES (PMULL) and NEON.
   #[inline]
   #[target_feature(enable = "aes")]
   unsafe fn clmul00(self, other: Self) -> Self {
@@ -85,6 +112,11 @@ impl Simd {
     Self(vreinterpretq_u8_p128(vmull_p64(a, b)))
   }
 
+  /// Multiplies this vector's high polynomial lane by the other vector's low lane.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support AES (PMULL) and NEON.
   #[inline]
   #[target_feature(enable = "aes")]
   unsafe fn clmul01(self, other: Self) -> Self {
@@ -93,6 +125,11 @@ impl Simd {
     Self(vreinterpretq_u8_p128(vmull_p64(a, b)))
   }
 
+  /// Multiplies this vector's low polynomial lane by the other vector's high lane.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support AES (PMULL) and NEON.
   #[inline]
   #[target_feature(enable = "aes")]
   unsafe fn clmul10(self, other: Self) -> Self {
@@ -101,6 +138,11 @@ impl Simd {
     Self(vreinterpretq_u8_p128(vmull_p64(a, b)))
   }
 
+  /// Multiplies the high polynomial lanes.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support AES (PMULL) and NEON.
   #[inline]
   #[target_feature(enable = "aes")]
   unsafe fn clmul11(self, other: Self) -> Self {
@@ -109,6 +151,11 @@ impl Simd {
     Self(vreinterpretq_u8_p128(vmull_p64(a, b)))
   }
 
+  /// Folds one reflected 16-byte lane and XORs the supplied input lane.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support AES (PMULL) and NEON.
   #[inline]
   #[target_feature(enable = "aes")]
   unsafe fn fold_16_reflected(self, coeff: Self, data_to_xor: Self) -> Self {
@@ -122,6 +169,11 @@ impl Simd {
     }
   }
 
+  /// Folds a reflected CRC state from 128 bits to the width-32 reduction state.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support AES (PMULL) and NEON.
   #[inline]
   #[target_feature(enable = "aes", enable = "neon")]
   unsafe fn fold_width32_reflected(self, high: u64, low: u64) -> Self {
@@ -146,9 +198,14 @@ impl Simd {
     }
   }
 
+  /// Applies Barrett reduction and returns the low CRC-16 state.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support AES (PMULL) and NEON.
   #[inline]
   #[target_feature(enable = "aes", enable = "neon")]
-  unsafe fn barrett_width32_reflected(self, poly: u64, mu: u64) -> u32 {
+  unsafe fn barrett_width32_reflected(self, poly: u64, mu: u64) -> u16 {
     // SAFETY: Caller guarantees:
     // 1. AES + NEON target features are available (dispatch check).
     // 2. All SIMD operations are pure register computations after loads.
@@ -159,14 +216,19 @@ impl Simd {
       let xorred = self ^ clmul2;
 
       let hi = xorred.shift_right_8();
-      vgetq_lane_u32(vreinterpretq_u32_u8(hi.0), 0)
+      vgetq_lane_u16(vreinterpretq_u16_u8(hi.0), 0)
     }
   }
 }
 
+/// Reduces eight folded SIMD lanes to a CRC-16 state.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL) and NEON.
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
-unsafe fn finalize_lanes_width32_reflected(x: [Simd; 8], keys: &[u64; 23]) -> u32 {
+unsafe fn finalize_lanes_width32_reflected(x: [Simd; 8], keys: &[u64; 23]) -> u16 {
   // SAFETY: Caller guarantees:
   // 1. AES + NEON target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
@@ -185,6 +247,11 @@ unsafe fn finalize_lanes_width32_reflected(x: [Simd; 8], keys: &[u64; 23]) -> u3
   }
 }
 
+/// Folds one reflected 128-byte block into the current SIMD state.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL) and NEON.
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn fold_block_128_width32_reflected(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: Simd) {
@@ -203,8 +270,17 @@ unsafe fn fold_block_128_width32_reflected(x: &mut [Simd; 8], chunk: &[Simd; 8],
   }
 }
 
+/// Folds one reflected 16-byte lane with a three-input XOR.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL), NEON, and SHA3 (EOR3).
 #[inline]
-#[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+  any(test, feature = "std"),
+  not(miri),
+  any(target_os = "linux", target_os = "android")
+))]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn fold_lane_width32_reflected_eor3(x: Simd, coeff: Simd, data_to_xor: Simd) -> Simd {
   // SAFETY: Caller guarantees:
@@ -217,8 +293,17 @@ unsafe fn fold_lane_width32_reflected_eor3(x: Simd, coeff: Simd, data_to_xor: Si
   }
 }
 
+/// Folds one reflected 128-byte block with EOR3 into the current SIMD state.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL), NEON, and SHA3 (EOR3).
 #[inline]
-#[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+  any(test, feature = "std"),
+  not(miri),
+  any(target_os = "linux", target_os = "android")
+))]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn fold_block_128_width32_reflected_eor3(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: Simd) {
   // SAFETY: Caller guarantees:
@@ -236,13 +321,18 @@ unsafe fn fold_block_128_width32_reflected_eor3(x: &mut [Simd; 8], chunk: &[Simd
   }
 }
 
+/// Folds reflected 128-byte blocks through two independent PMULL streams.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL) and NEON.
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn update_simd_width32_reflected_2way(
-  state: u32,
+  state: u16,
   blocks: &[[Simd; 8]],
   fold_256b: (u64, u64),
   keys: &[u64; 23],
-) -> u32 {
+) -> u16 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
   // SAFETY: Caller guarantees:
@@ -250,10 +340,11 @@ unsafe fn update_simd_width32_reflected_2way(
   // 2. All pointer arithmetic stays within bounds via loop guards.
   // 3. All SIMD operations are pure register computations after loads.
   unsafe {
-    debug_assert!(blocks.len() >= 2);
     if blocks.len() < 2 {
-      // SAFETY: this function is only called when there are at least 2 blocks.
-      core::hint::unreachable_unchecked()
+      let Some((first, rest)) = blocks.split_first() else {
+        return state;
+      };
+      return update_simd_width32_reflected(state, first, rest, keys);
     }
 
     let coeff_256b = Simd::new(fold_256b.0, fold_256b.1);
@@ -267,7 +358,7 @@ unsafe fn update_simd_width32_reflected_2way(
     let mut s1 = *blocks_ptr.add(1);
 
     // Inject CRC into stream 0 (block 0).
-    s0[0] ^= Simd::new(0, state as u64);
+    s0[0] ^= Simd::new(0, u64::from(state));
 
     // Pointer-walk variant to keep the hot loop free of index bounds checks.
     const BLOCK_SIZE: usize = 128;
@@ -276,7 +367,7 @@ unsafe fn update_simd_width32_reflected_2way(
 
     let blocks_end = blocks_ptr.add(blocks.len());
     let mut ptr = blocks_ptr.add(2);
-    let mut rem = blocks.len() - 2;
+    let mut rem = blocks.len().strict_sub(2);
 
     while rem >= DOUBLE_GROUP {
       let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
@@ -293,7 +384,7 @@ unsafe fn update_simd_width32_reflected_2way(
       fold_block_128_width32_reflected(&mut s1, &*ptr.add(3), coeff_256b);
 
       ptr = ptr.add(DOUBLE_GROUP);
-      rem -= DOUBLE_GROUP;
+      rem = rem.strict_sub(DOUBLE_GROUP);
     }
 
     // Handle remaining pairs.
@@ -301,7 +392,7 @@ unsafe fn update_simd_width32_reflected_2way(
       fold_block_128_width32_reflected(&mut s0, &*ptr, coeff_256b);
       fold_block_128_width32_reflected(&mut s1, &*ptr.add(1), coeff_256b);
       ptr = ptr.add(2);
-      rem -= 2;
+      rem = rem.strict_sub(2);
     }
 
     // Merge streams: A·s0 ⊕ s1 (A = shift by 128B).
@@ -324,14 +415,19 @@ unsafe fn update_simd_width32_reflected_2way(
   }
 }
 
+/// Folds reflected 128-byte blocks through three independent PMULL streams.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL) and NEON.
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn update_simd_width32_reflected_3way(
-  state: u32,
+  state: u16,
   blocks: &[[Simd; 8]],
   fold_384b: (u64, u64),
   fold_256b: (u64, u64),
   keys: &[u64; 23],
-) -> u32 {
+) -> u16 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
   // SAFETY: Caller guarantees:
@@ -356,7 +452,7 @@ unsafe fn update_simd_width32_reflected_3way(
     let mut s2 = blocks[2];
 
     // Inject CRC into stream 0 (block 0).
-    s0[0] ^= Simd::new(0, state as u64);
+    s0[0] ^= Simd::new(0, u64::from(state));
 
     // Double-unrolled main loop: process 6 blocks (768B) per iteration.
     const BLOCK_SIZE: usize = 128;
@@ -366,7 +462,12 @@ unsafe fn update_simd_width32_reflected_3way(
     let blocks_ptr = blocks.as_ptr();
     let blocks_end = blocks_ptr.add(blocks.len());
     let mut ptr = blocks_ptr.add(3);
-    let double_end = blocks_ptr.add(3 + ((blocks.len() - 3) / DOUBLE_GROUP) * DOUBLE_GROUP);
+    let double_blocks = blocks
+      .len()
+      .strict_sub(3)
+      .strict_div(DOUBLE_GROUP)
+      .strict_mul(DOUBLE_GROUP);
+    let double_end = blocks_ptr.add(3usize.strict_add(double_blocks));
 
     while ptr < double_end {
       let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
@@ -388,7 +489,7 @@ unsafe fn update_simd_width32_reflected_3way(
     }
 
     // Handle remaining triplets.
-    let triple_end = blocks_ptr.add((blocks.len() / 3) * 3);
+    let triple_end = blocks_ptr.add(blocks.len().strict_div(3).strict_mul(3));
     while ptr < triple_end {
       fold_block_128_width32_reflected(&mut s0, &*ptr, coeff_384b);
       fold_block_128_width32_reflected(&mut s1, &*ptr.add(1), coeff_384b);
@@ -427,9 +528,14 @@ unsafe fn update_simd_width32_reflected_3way(
   }
 }
 
+/// Folds a reflected sequence of 128-byte blocks and reduces it to CRC-16.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL) and NEON.
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
-unsafe fn update_simd_width32_reflected(state: u32, first: &[Simd; 8], rest: &[[Simd; 8]], keys: &[u64; 23]) -> u32 {
+unsafe fn update_simd_width32_reflected(state: u16, first: &[Simd; 8], rest: &[[Simd; 8]], keys: &[u64; 23]) -> u16 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
   // SAFETY: Caller guarantees:
@@ -439,7 +545,7 @@ unsafe fn update_simd_width32_reflected(state: u32, first: &[Simd; 8], rest: &[[
   unsafe {
     let mut x = *first;
 
-    x[0] ^= Simd::new(0, state as u64);
+    x[0] ^= Simd::new(0, u64::from(state));
 
     let coeff_128b = Simd::new(keys[4], keys[3]);
 
@@ -451,7 +557,7 @@ unsafe fn update_simd_width32_reflected(state: u32, first: &[Simd; 8], rest: &[[
     let rest_ptr = rest.as_ptr();
     let rest_end = rest_ptr.add(rest.len());
     let mut ptr = rest_ptr;
-    let double_end = rest_ptr.add((rest.len() / DOUBLE_GROUP) * DOUBLE_GROUP);
+    let double_end = rest_ptr.add(rest.len().strict_div(DOUBLE_GROUP).strict_mul(DOUBLE_GROUP));
 
     while ptr < double_end {
       let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
@@ -499,15 +605,24 @@ unsafe fn update_simd_width32_reflected(state: u32, first: &[Simd; 8], rest: &[[
   }
 }
 
+/// Folds a reflected sequence of 128-byte blocks with EOR3 and reduces it to CRC-16.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL), NEON, and SHA3 (EOR3).
 #[inline]
-#[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+  any(test, feature = "std"),
+  not(miri),
+  any(target_os = "linux", target_os = "android")
+))]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn update_simd_width32_reflected_eor3(
-  state: u32,
+  state: u16,
   first: &[Simd; 8],
   rest: &[[Simd; 8]],
   keys: &[u64; 23],
-) -> u32 {
+) -> u16 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
   // SAFETY: Caller guarantees:
@@ -517,7 +632,7 @@ unsafe fn update_simd_width32_reflected_eor3(
   unsafe {
     let mut x = *first;
 
-    x[0] ^= Simd::new(0, state as u64);
+    x[0] ^= Simd::new(0, u64::from(state));
 
     let coeff_128b = Simd::new(keys[4], keys[3]);
 
@@ -528,7 +643,7 @@ unsafe fn update_simd_width32_reflected_eor3(
     let rest_ptr = rest.as_ptr();
     let rest_end = rest_ptr.add(rest.len());
     let mut ptr = rest_ptr;
-    let double_end = rest_ptr.add((rest.len() / DOUBLE_GROUP) * DOUBLE_GROUP);
+    let double_end = rest_ptr.add(rest.len().strict_div(DOUBLE_GROUP).strict_mul(DOUBLE_GROUP));
 
     while ptr < double_end {
       let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
@@ -550,14 +665,23 @@ unsafe fn update_simd_width32_reflected_eor3(
   }
 }
 
-#[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
+/// Folds reflected 128-byte blocks through two EOR3-assisted PMULL streams.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL), NEON, and SHA3 (EOR3).
+#[cfg(all(
+  any(test, feature = "std"),
+  not(miri),
+  any(target_os = "linux", target_os = "android")
+))]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn update_simd_width32_reflected_eor3_2way(
-  state: u32,
+  state: u16,
   blocks: &[[Simd; 8]],
   fold_256b: (u64, u64),
   keys: &[u64; 23],
-) -> u32 {
+) -> u16 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
   // SAFETY: Caller guarantees:
@@ -565,10 +689,11 @@ unsafe fn update_simd_width32_reflected_eor3_2way(
   // 2. All pointer arithmetic stays within bounds via loop guards.
   // 3. All SIMD operations are pure register computations after loads.
   unsafe {
-    debug_assert!(blocks.len() >= 2);
     if blocks.len() < 2 {
-      // SAFETY: this function is only called when there are at least 2 blocks.
-      core::hint::unreachable_unchecked()
+      let Some((first, rest)) = blocks.split_first() else {
+        return state;
+      };
+      return update_simd_width32_reflected_eor3(state, first, rest, keys);
     }
 
     let coeff_256b = Simd::new(fold_256b.0, fold_256b.1);
@@ -578,7 +703,7 @@ unsafe fn update_simd_width32_reflected_eor3_2way(
     let mut s0 = *blocks_ptr;
     let mut s1 = *blocks_ptr.add(1);
 
-    s0[0] ^= Simd::new(0, state as u64);
+    s0[0] ^= Simd::new(0, u64::from(state));
 
     const BLOCK_SIZE: usize = 128;
     const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
@@ -586,7 +711,7 @@ unsafe fn update_simd_width32_reflected_eor3_2way(
 
     let blocks_end = blocks_ptr.add(blocks.len());
     let mut ptr = blocks_ptr.add(2);
-    let mut rem = blocks.len() - 2;
+    let mut rem = blocks.len().strict_sub(2);
 
     while rem >= DOUBLE_GROUP {
       let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
@@ -600,14 +725,14 @@ unsafe fn update_simd_width32_reflected_eor3_2way(
       fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(3), coeff_256b);
 
       ptr = ptr.add(DOUBLE_GROUP);
-      rem -= DOUBLE_GROUP;
+      rem = rem.strict_sub(DOUBLE_GROUP);
     }
 
     while rem >= 2 {
       fold_block_128_width32_reflected_eor3(&mut s0, &*ptr, coeff_256b);
       fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(1), coeff_256b);
       ptr = ptr.add(2);
-      rem -= 2;
+      rem = rem.strict_sub(2);
     }
 
     let mut combined = s1;
@@ -628,15 +753,24 @@ unsafe fn update_simd_width32_reflected_eor3_2way(
   }
 }
 
-#[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
+/// Folds reflected 128-byte blocks through three EOR3-assisted PMULL streams.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL), NEON, and SHA3 (EOR3).
+#[cfg(all(
+  any(test, feature = "std"),
+  not(miri),
+  any(target_os = "linux", target_os = "android")
+))]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn update_simd_width32_reflected_eor3_3way(
-  state: u32,
+  state: u16,
   blocks: &[[Simd; 8]],
   fold_384b: (u64, u64),
   fold_256b: (u64, u64),
   keys: &[u64; 23],
-) -> u32 {
+) -> u16 {
   use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
   // SAFETY: Caller guarantees:
@@ -659,7 +793,7 @@ unsafe fn update_simd_width32_reflected_eor3_3way(
     let mut s1 = blocks[1];
     let mut s2 = blocks[2];
 
-    s0[0] ^= Simd::new(0, state as u64);
+    s0[0] ^= Simd::new(0, u64::from(state));
 
     const BLOCK_SIZE: usize = 128;
     const DOUBLE_GROUP: usize = 6; // 2 × 3-way = 6 blocks = 768B
@@ -668,7 +802,12 @@ unsafe fn update_simd_width32_reflected_eor3_3way(
     let blocks_ptr = blocks.as_ptr();
     let blocks_end = blocks_ptr.add(blocks.len());
     let mut ptr = blocks_ptr.add(3);
-    let double_end = blocks_ptr.add(3 + ((blocks.len() - 3) / DOUBLE_GROUP) * DOUBLE_GROUP);
+    let double_blocks = blocks
+      .len()
+      .strict_sub(3)
+      .strict_div(DOUBLE_GROUP)
+      .strict_mul(DOUBLE_GROUP);
+    let double_end = blocks_ptr.add(3usize.strict_add(double_blocks));
 
     while ptr < double_end {
       let prefetch_ptr = ptr.add(PREFETCH_BLOCKS);
@@ -686,7 +825,7 @@ unsafe fn update_simd_width32_reflected_eor3_3way(
       ptr = ptr.add(DOUBLE_GROUP);
     }
 
-    let triple_end = blocks_ptr.add((blocks.len() / 3) * 3);
+    let triple_end = blocks_ptr.add(blocks.len().strict_div(3).strict_mul(3));
     while ptr < triple_end {
       fold_block_128_width32_reflected_eor3(&mut s0, &*ptr, coeff_384b);
       fold_block_128_width32_reflected_eor3(&mut s1, &*ptr.add(1), coeff_384b);
@@ -722,6 +861,11 @@ unsafe fn update_simd_width32_reflected_eor3_3way(
   }
 }
 
+/// Computes CRC-16 with single-lane PMULL folding for small buffers.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL) and NEON.
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn crc16_width32_pmull_small(
@@ -745,7 +889,7 @@ unsafe fn crc16_width32_pmull_small(
     let coeff_16b = Simd::new(keys[2], keys[1]);
 
     let mut x0 = Simd::load(buf);
-    x0 ^= Simd::new(0, state as u64);
+    x0 ^= Simd::new(0, u64::from(state));
     buf = buf.add(16);
     len = len.strict_sub(16);
 
@@ -757,13 +901,18 @@ unsafe fn crc16_width32_pmull_small(
     }
 
     let x0 = x0.fold_width32_reflected(keys[6], keys[5]);
-    state = x0.barrett_width32_reflected(keys[8], keys[7]) as u16;
+    state = x0.barrett_width32_reflected(keys[8], keys[7]);
 
     let tail = core::slice::from_raw_parts(buf, len);
     portable(state, tail)
   }
 }
 
+/// Computes CRC-16 with PMULL folding.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL) and NEON.
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn crc16_width32_pmull(mut state: u16, data: &[u8], keys: &[u64; 23], portable: fn(u16, &[u8]) -> u16) -> u16 {
@@ -777,12 +926,16 @@ unsafe fn crc16_width32_pmull(mut state: u16, data: &[u8], keys: &[u64; 23], por
     };
 
     state = portable(state, left);
-    let state32 = update_simd_width32_reflected(state as u32, first, rest, keys);
-    state = state32 as u16;
+    state = update_simd_width32_reflected(state, first, rest, keys);
     portable(state, right)
   }
 }
 
+/// Computes CRC-16 with two independent PMULL streams.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL) and NEON.
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn crc16_width32_pmull_2way(
@@ -802,19 +955,23 @@ unsafe fn crc16_width32_pmull_2way(
     }
 
     state = portable(state, left);
-    let state32 = if middle.len() >= 2 {
-      update_simd_width32_reflected_2way(state as u32, middle, fold_256b, keys)
+    state = if middle.len() >= 2 {
+      update_simd_width32_reflected_2way(state, middle, fold_256b, keys)
     } else {
       let Some((first, rest)) = middle.split_first() else {
         return crc16_width32_pmull_small(state, data, keys, portable);
       };
-      update_simd_width32_reflected(state as u32, first, rest, keys)
+      update_simd_width32_reflected(state, first, rest, keys)
     };
-    state = state32 as u16;
     portable(state, right)
   }
 }
 
+/// Computes CRC-16 with three independent PMULL streams.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL) and NEON.
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn crc16_width32_pmull_3way(
@@ -835,14 +992,22 @@ unsafe fn crc16_width32_pmull_3way(
     }
 
     state = portable(state, left);
-    let state32 = update_simd_width32_reflected_3way(state as u32, middle, fold_384b, fold_256b, keys);
-    state = state32 as u16;
+    state = update_simd_width32_reflected_3way(state, middle, fold_384b, fold_256b, keys);
     portable(state, right)
   }
 }
 
+/// Computes CRC-16 with EOR3-assisted PMULL folding.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL), NEON, and SHA3 (EOR3).
 #[inline]
-#[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+  any(test, feature = "std"),
+  not(miri),
+  any(target_os = "linux", target_os = "android")
+))]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn crc16_width32_pmull_eor3(
   mut state: u16,
@@ -860,14 +1025,22 @@ unsafe fn crc16_width32_pmull_eor3(
     };
 
     state = portable(state, left);
-    let state32 = update_simd_width32_reflected_eor3(state as u32, first, rest, keys);
-    state = state32 as u16;
+    state = update_simd_width32_reflected_eor3(state, first, rest, keys);
     portable(state, right)
   }
 }
 
+/// Computes CRC-16 with two EOR3-assisted PMULL streams.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL), NEON, and SHA3 (EOR3).
 #[inline]
-#[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+  any(test, feature = "std"),
+  not(miri),
+  any(target_os = "linux", target_os = "android")
+))]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn crc16_width32_pmull_eor3_2way(
   mut state: u16,
@@ -886,21 +1059,29 @@ unsafe fn crc16_width32_pmull_eor3_2way(
     }
 
     state = portable(state, left);
-    let state32 = if middle.len() >= 2 {
-      update_simd_width32_reflected_eor3_2way(state as u32, middle, fold_256b, keys)
+    state = if middle.len() >= 2 {
+      update_simd_width32_reflected_eor3_2way(state, middle, fold_256b, keys)
     } else {
       let Some((first, rest)) = middle.split_first() else {
         return crc16_width32_pmull_small(state, data, keys, portable);
       };
-      update_simd_width32_reflected_eor3(state as u32, first, rest, keys)
+      update_simd_width32_reflected_eor3(state, first, rest, keys)
     };
-    state = state32 as u16;
     portable(state, right)
   }
 }
 
+/// Computes CRC-16 with three EOR3-assisted PMULL streams.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL), NEON, and SHA3 (EOR3).
 #[inline]
-#[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
+#[cfg(all(
+  any(test, feature = "std"),
+  not(miri),
+  any(target_os = "linux", target_os = "android")
+))]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn crc16_width32_pmull_eor3_3way(
   mut state: u16,
@@ -920,22 +1101,17 @@ unsafe fn crc16_width32_pmull_eor3_3way(
     }
 
     state = portable(state, left);
-    let state32 = update_simd_width32_reflected_eor3_3way(state as u32, middle, fold_384b, fold_256b, keys);
-    state = state32 as u16;
+    state = update_simd_width32_reflected_eor3_3way(state, middle, fold_384b, fold_256b, keys);
     portable(state, right)
   }
 }
 
-// Public Safe Kernels (matching CRC-64 pure fn(u16, &[u8]) -> u16 signature)
+// Safe kernel wrappers matching the CRC-64 `fn(u16, &[u8]) -> u16` signature.
 
 /// CRC-16/CCITT PMULL kernel.
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL before selecting this kernel.
 #[inline]
-pub fn crc16_ccitt_pmull_safe(crc: u16, data: &[u8]) -> u16 {
-  // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
+pub(super) fn crc16_ccitt_pmull_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: All callers establish PMULL support before invoking this private wrapper.
   unsafe {
     crc16_width32_pmull(
       crc,
@@ -949,13 +1125,9 @@ pub fn crc16_ccitt_pmull_safe(crc: u16, data: &[u8]) -> u16 {
 /// CRC-16/CCITT PMULL small-buffer kernel.
 ///
 /// Optimized for inputs smaller than a folding block (128 bytes).
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL before selecting this kernel.
 #[inline]
-pub fn crc16_ccitt_pmull_small_safe(crc: u16, data: &[u8]) -> u16 {
-  // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
+pub(super) fn crc16_ccitt_pmull_small_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: All callers establish PMULL support before invoking this private wrapper.
   unsafe {
     crc16_width32_pmull_small(
       crc,
@@ -967,13 +1139,9 @@ pub fn crc16_ccitt_pmull_small_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 /// CRC-16/CCITT PMULL kernel (2-way striping).
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL before selecting this kernel.
 #[inline]
-pub fn crc16_ccitt_pmull_2way_safe(crc: u16, data: &[u8]) -> u16 {
-  // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
+pub(super) fn crc16_ccitt_pmull_2way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: All callers establish PMULL support before invoking this private wrapper.
   unsafe {
     crc16_width32_pmull_2way(
       crc,
@@ -986,13 +1154,9 @@ pub fn crc16_ccitt_pmull_2way_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 /// CRC-16/CCITT PMULL kernel (3-way striping).
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL before selecting this kernel.
 #[inline]
-pub fn crc16_ccitt_pmull_3way_safe(crc: u16, data: &[u8]) -> u16 {
-  // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
+pub(super) fn crc16_ccitt_pmull_3way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: All callers establish PMULL support before invoking this private wrapper.
   unsafe {
     crc16_width32_pmull_3way(
       crc,
@@ -1006,14 +1170,14 @@ pub fn crc16_ccitt_pmull_3way_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 /// CRC-16/CCITT PMULL+EOR3 kernel.
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL+SHA3 before selecting this kernel.
 #[inline]
-#[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
-pub fn crc16_ccitt_pmull_eor3_safe(crc: u16, data: &[u8]) -> u16 {
-  // SAFETY: Dispatcher verifies PMULL+SHA3 before selecting this kernel.
+#[cfg(all(
+  any(test, feature = "std"),
+  not(miri),
+  any(target_os = "linux", target_os = "android")
+))]
+pub(super) fn crc16_ccitt_pmull_eor3_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: All callers establish PMULL and SHA3 support before invoking this private wrapper.
   unsafe {
     crc16_width32_pmull_eor3(
       crc,
@@ -1025,14 +1189,14 @@ pub fn crc16_ccitt_pmull_eor3_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 /// CRC-16/CCITT PMULL+EOR3 kernel (2-way striping).
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL+SHA3 before selecting this kernel.
 #[inline]
-#[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
-pub fn crc16_ccitt_pmull_eor3_2way_safe(crc: u16, data: &[u8]) -> u16 {
-  // SAFETY: Dispatcher verifies PMULL+SHA3 before selecting this kernel.
+#[cfg(all(
+  any(test, feature = "std"),
+  not(miri),
+  any(target_os = "linux", target_os = "android")
+))]
+pub(super) fn crc16_ccitt_pmull_eor3_2way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: All callers establish PMULL and SHA3 support before invoking this private wrapper.
   unsafe {
     crc16_width32_pmull_eor3_2way(
       crc,
@@ -1045,14 +1209,14 @@ pub fn crc16_ccitt_pmull_eor3_2way_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 /// CRC-16/CCITT PMULL+EOR3 kernel (3-way striping).
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL+SHA3 before selecting this kernel.
 #[inline]
-#[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
-pub fn crc16_ccitt_pmull_eor3_3way_safe(crc: u16, data: &[u8]) -> u16 {
-  // SAFETY: Dispatcher verifies PMULL+SHA3 before selecting this kernel.
+#[cfg(all(
+  any(test, feature = "std"),
+  not(miri),
+  any(target_os = "linux", target_os = "android")
+))]
+pub(super) fn crc16_ccitt_pmull_eor3_3way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: All callers establish PMULL and SHA3 support before invoking this private wrapper.
   unsafe {
     crc16_width32_pmull_eor3_3way(
       crc,
@@ -1066,37 +1230,25 @@ pub fn crc16_ccitt_pmull_eor3_3way_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 /// CRC-16/IBM PMULL kernel.
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL before selecting this kernel.
 #[inline]
-pub fn crc16_ibm_pmull_safe(crc: u16, data: &[u8]) -> u16 {
-  // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
+pub(super) fn crc16_ibm_pmull_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: All callers establish PMULL support before invoking this private wrapper.
   unsafe { crc16_width32_pmull(crc, data, &CRC16_IBM_KEYS_REFLECTED, super::portable::crc16_ibm_slice8) }
 }
 
 /// CRC-16/IBM PMULL small-buffer kernel.
 ///
 /// Optimized for inputs smaller than a folding block (128 bytes).
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL before selecting this kernel.
 #[inline]
-pub fn crc16_ibm_pmull_small_safe(crc: u16, data: &[u8]) -> u16 {
-  // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
+pub(super) fn crc16_ibm_pmull_small_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: All callers establish PMULL support before invoking this private wrapper.
   unsafe { crc16_width32_pmull_small(crc, data, &CRC16_IBM_KEYS_REFLECTED, super::portable::crc16_ibm_slice8) }
 }
 
 /// CRC-16/IBM PMULL kernel (2-way striping).
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL before selecting this kernel.
 #[inline]
-pub fn crc16_ibm_pmull_2way_safe(crc: u16, data: &[u8]) -> u16 {
-  // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
+pub(super) fn crc16_ibm_pmull_2way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: All callers establish PMULL support before invoking this private wrapper.
   unsafe {
     crc16_width32_pmull_2way(
       crc,
@@ -1109,13 +1261,9 @@ pub fn crc16_ibm_pmull_2way_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 /// CRC-16/IBM PMULL kernel (3-way striping).
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL before selecting this kernel.
 #[inline]
-pub fn crc16_ibm_pmull_3way_safe(crc: u16, data: &[u8]) -> u16 {
-  // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
+pub(super) fn crc16_ibm_pmull_3way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: All callers establish PMULL support before invoking this private wrapper.
   unsafe {
     crc16_width32_pmull_3way(
       crc,
@@ -1129,26 +1277,26 @@ pub fn crc16_ibm_pmull_3way_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 /// CRC-16/IBM PMULL+EOR3 kernel.
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL+SHA3 before selecting this kernel.
 #[inline]
-#[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
-pub fn crc16_ibm_pmull_eor3_safe(crc: u16, data: &[u8]) -> u16 {
-  // SAFETY: Dispatcher verifies PMULL+SHA3 before selecting this kernel.
+#[cfg(all(
+  any(test, feature = "std"),
+  not(miri),
+  any(target_os = "linux", target_os = "android")
+))]
+pub(super) fn crc16_ibm_pmull_eor3_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: All callers establish PMULL and SHA3 support before invoking this private wrapper.
   unsafe { crc16_width32_pmull_eor3(crc, data, &CRC16_IBM_KEYS_REFLECTED, super::portable::crc16_ibm_slice8) }
 }
 
 /// CRC-16/IBM PMULL+EOR3 kernel (2-way striping).
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL+SHA3 before selecting this kernel.
 #[inline]
-#[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
-pub fn crc16_ibm_pmull_eor3_2way_safe(crc: u16, data: &[u8]) -> u16 {
-  // SAFETY: Dispatcher verifies PMULL+SHA3 before selecting this kernel.
+#[cfg(all(
+  any(test, feature = "std"),
+  not(miri),
+  any(target_os = "linux", target_os = "android")
+))]
+pub(super) fn crc16_ibm_pmull_eor3_2way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: All callers establish PMULL and SHA3 support before invoking this private wrapper.
   unsafe {
     crc16_width32_pmull_eor3_2way(
       crc,
@@ -1161,14 +1309,14 @@ pub fn crc16_ibm_pmull_eor3_2way_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 /// CRC-16/IBM PMULL+EOR3 kernel (3-way striping).
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL+SHA3 before selecting this kernel.
 #[inline]
-#[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
-pub fn crc16_ibm_pmull_eor3_3way_safe(crc: u16, data: &[u8]) -> u16 {
-  // SAFETY: Dispatcher verifies PMULL+SHA3 before selecting this kernel.
+#[cfg(all(
+  any(test, feature = "std"),
+  not(miri),
+  any(target_os = "linux", target_os = "android")
+))]
+pub(super) fn crc16_ibm_pmull_eor3_3way_safe(crc: u16, data: &[u8]) -> u16 {
+  // SAFETY: All callers establish PMULL and SHA3 support before invoking this private wrapper.
   unsafe {
     crc16_width32_pmull_eor3_3way(
       crc,
@@ -1194,8 +1342,11 @@ mod tests {
   const STATES: &[u16] = &[0, 0x1d0f, 0xa5a5, u16::MAX];
 
   fn data() -> Vec<u8> {
-    (0..4111)
-      .map(|i| (i as u8).wrapping_mul(29).wrapping_add((i >> 8) as u8))
+    (0u16..4111)
+      .map(|i| {
+        let [low, high] = i.to_le_bytes();
+        low.wrapping_mul(29).wrapping_add(high)
+      })
       .collect()
   }
 
@@ -1204,7 +1355,7 @@ mod tests {
     for &state in STATES {
       for &offset in OFFSETS {
         for &len in LENS {
-          let slice = &input[offset..offset + len];
+          let slice = &input[offset..offset.strict_add(len)];
           assert_eq!(
             kernel(state, slice),
             portable(state, slice),

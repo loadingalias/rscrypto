@@ -187,7 +187,7 @@ fn crc64_empty_input() {
 fn crc32_various_sizes() {
   // Just verify that different sizes don't panic and produce consistent results
   for size in [1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 1024] {
-    let data: Vec<u8> = (0..size).map(|i| (i & 0xFF) as u8).collect();
+    let data: Vec<u8> = (0..size).map(|i: usize| i.to_le_bytes()[0]).collect();
 
     let oneshot = Crc32::checksum(&data);
 
@@ -205,7 +205,7 @@ fn crc32_various_sizes() {
 #[test]
 fn crc64_various_sizes() {
   for size in [1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 1024] {
-    let data: Vec<u8> = (0..size).map(|i| (i & 0xFF) as u8).collect();
+    let data: Vec<u8> = (0..size).map(|i: usize| i.to_le_bytes()[0]).collect();
 
     let oneshot = Crc64::checksum(&data);
 

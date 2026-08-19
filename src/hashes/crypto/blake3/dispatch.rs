@@ -1,5 +1,3 @@
-#![cfg_attr(test, allow(dead_code))]
-
 #[cfg(feature = "parallel")]
 use super::dispatch_tables::ParallelTable;
 #[cfg(any(
@@ -64,7 +62,10 @@ struct ResolvedDispatch {
   avx2_hash_many_one_chunk_fast_path: bool,
   #[cfg(target_arch = "x86_64")]
   hash_many_wide_pipeline: bool,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "linux", target_os = "macos", target_os = "windows")
+  ))]
   avx2_available: bool,
 }
 
@@ -269,7 +270,10 @@ fn resolved() -> ResolvedDispatch {
       avx2_hash_many_one_chunk_fast_path: allow_avx2_hash_many_one_chunk_fast_path(caps),
       #[cfg(target_arch = "x86_64")]
       hash_many_wide_pipeline: is_wide_pipeline_for_hash_many(caps),
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(
+        target_arch = "x86_64",
+        any(target_os = "linux", target_os = "macos", target_os = "windows")
+      ))]
       avx2_available: caps.has(required_caps(Blake3KernelId::X86Avx2)),
     }
   })
@@ -303,17 +307,17 @@ fn select(d: &ActiveDispatch, len: usize) -> Entry {
   }
 }
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(feature = "diag")]
 #[inline]
 #[must_use]
-pub fn kernel_name_for_len(len: usize) -> &'static str {
+pub(crate) fn kernel_name_for_len(len: usize) -> &'static str {
   let d = active();
   select(&d, len).kernel.name
 }
 
 #[inline]
 #[must_use]
-pub fn xof(data: &[u8]) -> super::Blake3XofReader {
+pub(crate) fn xof(data: &[u8]) -> super::Blake3XofReader {
   let d = active();
   let kernel = select(&d, data.len()).kernel;
 
@@ -360,7 +364,10 @@ pub(crate) fn hash_many_wide_pipeline() -> bool {
   resolved().hash_many_wide_pipeline
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(
+  target_arch = "x86_64",
+  any(target_os = "linux", target_os = "macos", target_os = "windows")
+))]
 #[inline]
 #[must_use]
 pub(crate) fn avx2_available() -> bool {

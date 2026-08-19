@@ -2,7 +2,7 @@ use core::hash::{BuildHasher, Hasher};
 
 use super::{
   DEFAULT_SECRETS, RapidSecrets, premix_seed, rapid_mix, rapid_mum, rapidhash_core, rapidhash_seed_cpp, read_u32_le,
-  read_u64_le,
+  read_u64_le, u128_words,
 };
 
 const CHUNK_SIZE: usize = 112;
@@ -76,7 +76,11 @@ impl RapidStreamHasher {
       &data[copy_len..]
     };
 
-    let stop = remaining.len().saturating_sub(1) / CHUNK_SIZE * CHUNK_SIZE;
+    let stop = remaining
+      .len()
+      .saturating_sub(1)
+      .strict_div(CHUNK_SIZE)
+      .strict_mul(CHUNK_SIZE);
     let mut last_chunk = None;
     let mut offset = 0usize;
     while offset < stop {
@@ -242,10 +246,8 @@ impl RapidHasher {
   #[inline(always)]
   fn flush_sponge(&mut self) {
     if self.sponge_bits != 0 {
-      self.seed = rapid_mix(
-        self.sponge as u64 ^ self.seed,
-        (self.sponge >> 64) as u64 ^ self.word0(),
-      );
+      let (low, high) = u128_words(self.sponge);
+      self.seed = rapid_mix(low ^ self.seed, high ^ self.word0());
       self.sponge = 0;
       self.sponge_bits = 0;
     }
@@ -256,10 +258,8 @@ impl RapidHasher {
     if self.sponge_bits == 0 {
       self.seed
     } else {
-      rapid_mix(
-        self.sponge as u64 ^ self.seed,
-        (self.sponge >> 64) as u64 ^ self.word0(),
-      )
+      let (low, high) = u128_words(self.sponge);
+      rapid_mix(low ^ self.seed, high ^ self.word0())
     }
   }
 }
@@ -284,20 +284,26 @@ fn hash_deterministic(bytes: &[u8], seed: u64) -> u64 {
 }
 
 macro_rules! write_integer {
-  ($($method:ident, $ty:ty, $unsigned:ty),+ $(,)?) => {
+  (@convert unsigned, $value:expr) => {
+    $value as u128
+  };
+  (@convert signed, $value:expr) => {
+    $value.cast_unsigned() as u128
+  };
+  ($kind:ident; $($method:ident, $ty:ty),+ $(,)?) => {
     $(
       #[inline(always)]
       fn $method(&mut self, value: $ty) {
-        const BITS: u8 = core::mem::size_of::<$ty>() as u8 * 8;
-        let value = (value as $unsigned) as u128;
-        let next_bits = self.sponge_bits.strict_add(BITS);
+        let bits = u8::try_from(<$ty>::BITS).expect("Rust integer width should fit in u8");
+        let value = write_integer!(@convert $kind, value);
+        let next_bits = self.sponge_bits.strict_add(bits);
         if next_bits <= 128 {
           self.sponge |= value << self.sponge_bits;
           self.sponge_bits = next_bits;
         } else {
           self.flush_sponge();
           self.sponge = value;
-          self.sponge_bits = BITS;
+          self.sponge_bits = bits;
         }
       }
     )+
@@ -324,36 +330,20 @@ impl Hasher for RapidHasher {
   }
 
   write_integer!(
-    write_u8,
-    u8,
-    u8,
-    write_u16,
-    u16,
-    u16,
-    write_u32,
-    u32,
-    u32,
-    write_u64,
-    u64,
-    u64,
-    write_usize,
-    usize,
-    usize,
-    write_i8,
-    i8,
-    u8,
-    write_i16,
-    i16,
-    u16,
-    write_i32,
-    i32,
-    u32,
-    write_i64,
-    i64,
-    u64,
-    write_isize,
-    isize,
-    usize,
+    unsigned;
+    write_u8, u8,
+    write_u16, u16,
+    write_u32, u32,
+    write_u64, u64,
+    write_usize, usize,
+  );
+  write_integer!(
+    signed;
+    write_i8, i8,
+    write_i16, i16,
+    write_i32, i32,
+    write_i64, i64,
+    write_isize, isize,
   );
 
   #[inline(always)]
@@ -365,7 +355,7 @@ impl Hasher for RapidHasher {
 
   #[inline(always)]
   fn write_i128(&mut self, value: i128) {
-    self.write_u128(value as u128);
+    self.write_u128(value.cast_unsigned());
   }
 }
 
@@ -452,7 +442,9 @@ mod tests {
   use super::*;
 
   fn data(len: usize) -> Vec<u8> {
-    (0..len).map(|i| i.wrapping_mul(131).wrapping_add(17) as u8).collect()
+    (0..len)
+      .map(|i| i.wrapping_mul(131).wrapping_add(17).to_le_bytes()[0])
+      .collect()
   }
 
   fn seeded_hasher(seed: u64) -> RapidHasher {
@@ -571,21 +563,22 @@ mod tests {
       seed.copy_from_slice(&1u64.to_le_bytes());
       Ok::<_, ()>(())
     })
-    .unwrap();
+    .expect("caller-provided entropy should initialize the first state");
     let same = RapidRandomState::try_new_with(|seed| {
       seed.copy_from_slice(&1u64.to_le_bytes());
       Ok::<_, ()>(())
     })
-    .unwrap();
+    .expect("caller-provided entropy should initialize the matching state");
     let second = RapidRandomState::try_new_with(|seed| {
       seed.copy_from_slice(&2u64.to_le_bytes());
       Ok::<_, ()>(())
     })
-    .unwrap();
+    .expect("caller-provided entropy should initialize the second state");
 
     assert_eq!(first.hash_one(b"collection key"), same.hash_one(b"collection key"));
     assert_ne!(first.hash_one(b"collection key"), second.hash_one(b"collection key"));
-    assert!(RapidRandomState::try_new_with(|_| Err::<(), _>("entropy unavailable")).is_err());
+    RapidRandomState::try_new_with(|_| Err::<(), _>("entropy unavailable"))
+      .expect_err("entropy-source failures should be returned");
   }
 
   #[test]

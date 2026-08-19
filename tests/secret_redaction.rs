@@ -11,7 +11,21 @@ fn generic_secret_owner_debug_is_redacted() {
 
 #[test]
 fn keyed_state_debug_snapshots_are_redacted() {
+  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "ascon-aead"))]
   const KEY_16: [u8; 16] = [0x53; 16];
+  #[cfg(any(
+    feature = "aegis256",
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "chacha20poly1305",
+    feature = "hkdf",
+    feature = "hmac",
+    feature = "hmac-sha3",
+    feature = "kmac",
+    feature = "pbkdf2",
+    feature = "poly1305",
+    feature = "xchacha20poly1305"
+  ))]
   const KEY_32: [u8; 32] = [0x53; 32];
 
   #[cfg(feature = "aes-gcm")]
@@ -132,11 +146,13 @@ fn keyed_state_debug_snapshots_are_redacted() {
 
 #[test]
 fn keyed_hash_debug_snapshots_are_redacted() {
+  #[cfg(any(feature = "blake2b", feature = "blake2s", feature = "blake3"))]
   const KEY: [u8; 32] = [0x53; 32];
 
   #[cfg(feature = "blake2s")]
   {
-    let params = rscrypto::Blake2sParams::new().key(rscrypto::Blake2sKey::new(&KEY).unwrap());
+    let key = rscrypto::Blake2sKey::new(&KEY).expect("32-byte BLAKE2s key must be valid");
+    let params = rscrypto::Blake2sParams::new().key(key);
     assert_debug_snapshot(
       &params,
       "Blake2sParams { key_len: 32, salt: [0, 0, 0, 0, 0, 0, 0, 0], personal: [0, 0, 0, 0, 0, 0, 0, 0] }",
@@ -147,7 +163,8 @@ fn keyed_hash_debug_snapshots_are_redacted() {
 
   #[cfg(feature = "blake2b")]
   {
-    let params = rscrypto::Blake2bParams::new().key(rscrypto::Blake2bKey::new(&KEY).unwrap());
+    let key = rscrypto::Blake2bKey::new(&KEY).expect("32-byte BLAKE2b key must be valid");
+    let params = rscrypto::Blake2bParams::new().key(key);
     assert_debug_snapshot(
       &params,
       "Blake2bParams { key_len: 32, salt: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], personal: [0, 0, 0, 0, 0, \
@@ -155,7 +172,8 @@ fn keyed_hash_debug_snapshots_are_redacted() {
     );
     assert_debug_snapshot(&params.build_256(), "Blake2b256 { .. }");
     assert_debug_snapshot(&params.build_512(), "Blake2b512 { .. }");
-    assert_debug_snapshot(&params.build(32).unwrap(), "Blake2b { output_len: 32, .. }");
+    let variable = params.build(32).expect("32-byte BLAKE2b output must be valid");
+    assert_debug_snapshot(&variable, "Blake2b { output_len: 32, .. }");
   }
 
   #[cfg(feature = "blake3")]
@@ -243,7 +261,8 @@ fn private_key_and_shared_secret_debug_snapshots_are_redacted() {
 
         let (_, key) = <$profile>::generate_keypair(|out| {
           for (index, byte) in out.iter_mut().enumerate() {
-            *byte = 0x53u8.wrapping_add(index as u8);
+            let index = u8::try_from(index).expect("ML-KEM entropy index must fit in u8");
+            *byte = 0x53u8.wrapping_add(index);
           }
           Ok::<(), rscrypto::MlKemError>(())
         })
@@ -297,7 +316,8 @@ fn secret_input_error_snapshots_do_not_echo_input_bytes() {
 
     impl core::error::Error for EntropyStateError {}
 
-    let passwords = rscrypto::Argon2idPassword::new(rscrypto::Argon2Params::new(32, 2, 1).unwrap()).unwrap();
+    let params = rscrypto::Argon2Params::new(32, 2, 1).expect("test Argon2 parameters must be valid");
+    let passwords = rscrypto::Argon2idPassword::new(params).expect("test Argon2 policy must be valid");
     let error = passwords
       .hash_password_with(b"password", |_| Err(EntropyStateError))
       .expect_err("entropy-source failure must be preserved as an opaque error");

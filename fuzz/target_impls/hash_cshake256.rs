@@ -1,7 +1,7 @@
 use rscrypto::{Cshake256, Xof};
 use rscrypto_fuzz::{FuzzInput, some_or_return, split_at_ratio};
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let name_split: u8 = some_or_return!(input.byte());
   let custom_split: u8 = some_or_return!(input.byte());

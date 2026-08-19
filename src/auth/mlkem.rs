@@ -815,7 +815,7 @@ macro_rules! impl_mlkem_profile_ops {
         >(
           decapsulation_key.as_bytes(),
           ciphertext.as_bytes(),
-        )))
+        )?))
       }
     }
   };

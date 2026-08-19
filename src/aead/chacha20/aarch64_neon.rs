@@ -1,21 +1,37 @@
 use core::arch::aarch64::{
-  uint32x4_t, vaddq_u32, vcombine_u32, vdupq_n_u32, veorq_u32, vget_high_u32, vget_low_u32, vld1q_u32,
-  vreinterpretq_u16_u32, vreinterpretq_u32_u16, vrev32q_u16, vshrq_n_u32, vsliq_n_u32, vst1q_u32, vzip1q_u32,
-  vzip2q_u32,
+  uint32x4_t, vaddq_u32, vcombine_u32, vdupq_n_u32, veorq_u32, vget_high_u32, vget_low_u32, vld1q_u8, vld1q_u32,
+  vreinterpretq_u8_u32, vreinterpretq_u16_u32, vreinterpretq_u32_u8, vreinterpretq_u32_u16, vrev32q_u16, vshrq_n_u32,
+  vsliq_n_u32, vst1q_u8, vzip1q_u32, vzip2q_u32,
 };
 
 use super::{BLOCK_SIZE, KEY_SIZE, NONCE_SIZE, load_u32_le, xor_keystream_portable};
 
 const BLOCKS_PER_BATCH: usize = 4;
+const COUNTERS_PER_BATCH: u32 = 4;
+const COUNTERS_PER_DOUBLE_BATCH: u32 = 8;
 
+/// Generate and XOR a ChaCha20 stream with the NEON kernel.
+///
+/// # Safety
+///
+/// The caller must ensure that NEON is available and that `buffer`'s 64-byte block count fits the counter range
+/// starting at `initial_counter`.
 #[inline]
-pub(super) fn xor_keystream(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {
-  // SAFETY: Backend selection guarantees NEON is available before this wrapper is chosen because:
-  // 1. Runtime dispatch selects this module only after `aarch64::NEON` is present.
-  // 2. `xor_keystream_impl` is annotated with `#[target_feature(enable = "neon")]`.
+pub(super) unsafe fn xor_keystream(
+  key: &[u8; KEY_SIZE],
+  initial_counter: u32,
+  nonce: &[u8; NONCE_SIZE],
+  buffer: &mut [u8],
+) {
+  // SAFETY: Production validates the counter range and detects `aarch64::NEON`; direct test and diagnostic callers
+  // establish the same conditions. `xor_keystream_impl` enables NEON.
   unsafe { xor_keystream_impl(key, initial_counter, nonce, buffer) }
 }
 
+/// # Safety
+///
+/// The caller must ensure that NEON is available and that `buffer`'s 64-byte block count fits the counter range
+/// starting at `initial_counter`.
 #[target_feature(enable = "neon")]
 unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {
   let c0 = vdupq_n_u32(0x6170_7865);
@@ -35,9 +51,9 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
   let n15 = vdupq_n_u32(load_u32_le(&nonce[8..12]));
 
   let mut counter = initial_counter;
-  let mut double_batches = buffer.chunks_exact_mut(BLOCK_SIZE * BLOCKS_PER_BATCH * 2);
-  for chunk in &mut double_batches {
-    debug_assert!(counter.checked_add((BLOCKS_PER_BATCH * 2 - 1) as u32).is_some());
+  let (double_batches, double_remainder) = buffer.as_chunks_mut::<{ BLOCK_SIZE * BLOCKS_PER_BATCH * 2 }>();
+  for chunk in double_batches {
+    debug_assert!(counter.checked_add(COUNTERS_PER_DOUBLE_BATCH.strict_sub(1)).is_some());
 
     let mut x0 = c0;
     let mut x1 = c1;
@@ -159,7 +175,7 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
 
     let ptr = chunk.as_mut_ptr();
     // SAFETY: vector transpose and XOR stores because:
-    // 1. `chunk` is exactly eight ChaCha20 blocks from `chunks_exact_mut`.
+    // 1. `chunk` is an array of exactly eight ChaCha20 blocks.
     // 2. The first four-block group starts at `ptr`; the second starts at `ptr + 256`.
     // 3. NEON is guaranteed by the enclosing `#[target_feature(enable = "neon")]`.
     unsafe {
@@ -175,14 +191,12 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
       xor_store_word_group(hi, 12, y12, y13, y14, y15);
     }
 
-    counter = counter.wrapping_add((BLOCKS_PER_BATCH * 2) as u32);
+    counter = counter.wrapping_add(COUNTERS_PER_DOUBLE_BATCH);
   }
 
-  let mut batches = double_batches
-    .into_remainder()
-    .chunks_exact_mut(BLOCK_SIZE * BLOCKS_PER_BATCH);
-  for chunk in &mut batches {
-    debug_assert!(counter.checked_add((BLOCKS_PER_BATCH - 1) as u32).is_some());
+  let (batches, remainder) = double_remainder.as_chunks_mut::<{ BLOCK_SIZE * BLOCKS_PER_BATCH }>();
+  for chunk in batches {
+    debug_assert!(counter.checked_add(COUNTERS_PER_BATCH.strict_sub(1)).is_some());
 
     let mut x0 = c0;
     let mut x1 = c1;
@@ -269,7 +283,7 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
 
     let ptr = chunk.as_mut_ptr();
     // SAFETY: vector transpose and XOR stores because:
-    // 1. `chunk` is exactly `BLOCKS_PER_BATCH * BLOCK_SIZE` bytes from `chunks_exact_mut`.
+    // 1. `chunk` is an array of exactly `BLOCKS_PER_BATCH * BLOCK_SIZE` bytes.
     // 2. Each call stores four 16-byte word groups at offsets inside the 256-byte chunk.
     // 3. NEON is guaranteed by the enclosing `#[target_feature(enable = "neon")]`.
     unsafe {
@@ -279,16 +293,20 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
       xor_store_word_group(ptr, 12, x12, x13, x14, x15);
     }
 
-    counter = counter.wrapping_add(BLOCKS_PER_BATCH as u32);
+    counter = counter.wrapping_add(COUNTERS_PER_BATCH);
   }
 
-  let remainder = batches.into_remainder();
   if !remainder.is_empty() {
     xor_keystream_portable(key, counter, nonce, remainder);
   }
 }
 
 /// Transpose four word-major ChaCha vectors into four block-major 16-byte word groups.
+///
+/// # Safety
+///
+/// The caller must ensure NEON is available, `chunk` is valid for exclusive writes across four complete ChaCha20
+/// blocks, and `word_start` is one of 0, 4, 8, or 12.
 #[inline(always)]
 unsafe fn xor_store_word_group(
   chunk: *mut u8,
@@ -320,18 +338,25 @@ unsafe fn xor_store_word_group(
   }
 }
 
+/// XOR one 16-byte word group into a block of a four-block ChaCha20 batch.
+///
+/// # Safety
+///
+/// The caller must ensure NEON is available, `chunk` is valid for exclusive writes across four complete ChaCha20
+/// blocks, `block_index < 4`, and `word_start <= 12`.
 #[inline(always)]
 unsafe fn xor_store_block_words(chunk: *mut u8, block_index: usize, word_start: usize, keystream: uint32x4_t) {
   // SAFETY: in-place 16-byte XOR/store because:
   // 1. Caller guarantees `chunk` points to a full four-block chunk.
   // 2. `block_index < 4` and `word_start <= 12`, so `block_index * 64 + word_start * 4 + 16` stays
   //    within the 256-byte chunk.
-  // 3. `vld1q_u32`/`vst1q_u32` support unaligned addresses and the pointer does not escape.
+  // 3. The byte-typed NEON load/store accepts every address alignment and the pointer does not escape.
   unsafe {
     let offset = block_index.strict_mul(BLOCK_SIZE).strict_add(word_start.strict_mul(4));
-    let ptr = chunk.add(offset).cast::<u32>();
-    let plaintext = vld1q_u32(ptr);
-    vst1q_u32(ptr, veorq_u32(plaintext, keystream));
+    let ptr = chunk.add(offset);
+    let plaintext = vreinterpretq_u32_u8(vld1q_u8(ptr));
+    let ciphertext = veorq_u32(plaintext, keystream);
+    vst1q_u8(ptr, vreinterpretq_u8_u32(ciphertext));
   }
 }
 

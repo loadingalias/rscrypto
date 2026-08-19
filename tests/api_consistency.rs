@@ -1,12 +1,23 @@
-#![allow(unused_imports)]
-
 #[cfg(all(feature = "checksums", feature = "std"))]
-use std::io::{Cursor, Read, Write};
+use std::io::Write;
 
 #[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
 use rscrypto::EcdsaKeyGenerationError;
+use rscrypto::Kem;
 #[cfg(any(feature = "hmac", feature = "hmac-sha3"))]
 use rscrypto::Mac;
+#[cfg(any(
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
+  feature = "ed25519",
+  all(feature = "rsa", feature = "getrandom")
+))]
+use rscrypto::TrySigner;
+#[cfg(all(feature = "rsa", feature = "getrandom"))]
+use rscrypto::TrySignerInto;
+use rscrypto::VerificationError;
+#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "ed25519", feature = "rsa"))]
+use rscrypto::Verifier;
 #[cfg(feature = "aead")]
 use rscrypto::aead::expert::AeadWithNonce;
 #[cfg(feature = "aead")]
@@ -24,7 +35,7 @@ use rscrypto::{
 #[cfg(feature = "ecdsa-p256")]
 use rscrypto::{EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey};
 #[cfg(feature = "ecdsa-p384")]
-use rscrypto::{EcdsaP384Keypair, EcdsaP384PublicKey, EcdsaP384SecretKey};
+use rscrypto::{EcdsaP384Keypair, EcdsaP384PublicKey};
 #[cfg(feature = "ed25519")]
 use rscrypto::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey};
 #[cfg(feature = "hkdf")]
@@ -33,7 +44,6 @@ use rscrypto::{HkdfSha256, HkdfSha384, HkdfSha512, auth::HkdfOutputLengthError};
 use rscrypto::{HmacSha3_224, HmacSha3_256, HmacSha3_384, HmacSha3_512};
 #[cfg(feature = "hmac")]
 use rscrypto::{HmacSha256, HmacSha384, HmacSha512};
-use rscrypto::{Kem, TrySigner, TrySignerInto, VerificationError, Verifier};
 #[cfg(feature = "kmac")]
 use rscrypto::{Kmac128, Kmac256};
 #[cfg(feature = "poly1305")]
@@ -123,7 +133,9 @@ fn assert_mac_api<M: Mac>() {
   let expected = mac.finalize();
   mac.reset();
   mac.update(b"abc");
-  assert!(mac.verify(&expected).is_ok());
+  mac
+    .verify(&expected)
+    .expect("MAC must verify its freshly finalized tag");
 }
 
 #[cfg(any(feature = "hmac", feature = "hmac-sha3"))]
@@ -174,27 +186,41 @@ where
   let plaintext = b"abc";
 
   let mut sealed = [0u8; 19];
-  aead.encrypt(&nonce, b"aad", plaintext, &mut sealed).unwrap();
+  aead
+    .encrypt(&nonce, b"aad", plaintext, &mut sealed)
+    .expect("fixed-size AEAD seal buffer must fit plaintext and tag");
 
   let mut opened = [0u8; 3];
-  aead.decrypt(&nonce, b"aad", &sealed, &mut opened).unwrap();
+  aead
+    .decrypt(&nonce, b"aad", &sealed, &mut opened)
+    .expect("freshly sealed AEAD ciphertext must authenticate");
   assert_eq!(&opened, plaintext);
 
   #[cfg(feature = "alloc")]
   {
-    let sealed_vec = aead.encrypt_to_vec(&nonce, b"aad", plaintext).unwrap();
+    let sealed_vec = aead
+      .encrypt_to_vec(&nonce, b"aad", plaintext)
+      .expect("AEAD vector allocation must accept a three-byte plaintext");
     assert_eq!(sealed_vec.as_slice(), sealed);
-    let opened_vec = aead.decrypt_to_vec(&nonce, b"aad", &sealed_vec).unwrap();
+    let opened_vec = aead
+      .decrypt_to_vec(&nonce, b"aad", &sealed_vec)
+      .expect("freshly sealed AEAD vector must authenticate");
     assert_eq!(opened_vec.as_slice(), plaintext);
 
     let mut tampered = sealed_vec;
     tampered[0] ^= 1;
-    assert!(aead.decrypt_to_vec(&nonce, b"aad", &tampered).is_err());
+    aead
+      .decrypt_to_vec(&nonce, b"aad", &tampered)
+      .expect_err("tampered AEAD ciphertext must fail authentication");
   }
 
   let mut detached = *b"abc";
-  let tag = aead.encrypt_in_place_detached(&nonce, b"aad", &mut detached).unwrap();
-  aead.decrypt_in_place(&nonce, b"aad", &mut detached, &tag).unwrap();
+  let tag = aead
+    .encrypt_in_place_detached(&nonce, b"aad", &mut detached)
+    .expect("detached AEAD seal must accept a three-byte plaintext");
+  aead
+    .decrypt_in_place(&nonce, b"aad", &mut detached, &tag)
+    .expect("freshly sealed detached AEAD ciphertext must authenticate");
   assert_eq!(&detached, plaintext);
 }
 
@@ -248,7 +274,7 @@ fn all_xofs_follow_new_update_finalize_xof_and_xof() {
   cshake.update(data);
   assert_eq!(streaming, squeeze_32(cshake.finalize_xof()));
 
-  let mut cxof = AsconCxof128::new(b"ctx=v1").unwrap();
+  let mut cxof = AsconCxof128::new(b"ctx=v1").expect("short Ascon-CXOF customization must be valid");
   cxof.update(data);
   let streaming = squeeze_32(cxof.finalize_xof());
   cxof.reset();
@@ -292,7 +318,9 @@ fn kmac_follows_new_update_finalize_into_reset_and_verify() {
   kmac128.update(b"abc");
   kmac128.finalize_into(&mut actual128);
   assert_eq!(actual128, expected128);
-  assert!(kmac128.verify(&expected128).is_ok());
+  kmac128
+    .verify(&expected128)
+    .expect("KMAC128 must verify its freshly finalized tag");
 
   let mut kmac = Kmac256::new(b"api-consistency-key", b"ctx=v1");
   kmac.update(b"abc");
@@ -304,7 +332,9 @@ fn kmac_follows_new_update_finalize_into_reset_and_verify() {
   kmac.update(b"abc");
   kmac.finalize_into(&mut actual);
   assert_eq!(actual, expected);
-  assert!(kmac.verify(&expected).is_ok());
+  kmac
+    .verify(&expected)
+    .expect("KMAC256 must verify its freshly finalized tag");
 }
 
 #[test]
@@ -314,32 +344,38 @@ fn hkdfs_follow_new_expand_and_derive_array_conventions() {
   let hkdf384 = HkdfSha384::new(b"salt", b"ikm");
   let hkdf512 = HkdfSha512::new(b"salt", b"ikm");
 
-  let okm256 = hkdf256.expand_array::<32>(b"info").unwrap();
-  let okm384 = hkdf384.expand_array::<48>(b"info").unwrap();
-  let okm512 = hkdf512.expand_array::<64>(b"info").unwrap();
+  let okm256 = hkdf256
+    .expand_array::<32>(b"info")
+    .expect("32-byte HKDF-SHA-256 output must be valid");
+  let okm384 = hkdf384
+    .expand_array::<48>(b"info")
+    .expect("48-byte HKDF-SHA-384 output must be valid");
+  let okm512 = hkdf512
+    .expand_array::<64>(b"info")
+    .expect("64-byte HKDF-SHA-512 output must be valid");
 
   assert_eq!(
     okm256,
-    HkdfSha256::derive_array::<32>(b"salt", b"ikm", b"info").unwrap()
+    HkdfSha256::derive_array::<32>(b"salt", b"ikm", b"info").expect("32-byte HKDF-SHA-256 derivation must be valid")
   );
   assert_eq!(
     okm384,
-    HkdfSha384::derive_array::<48>(b"salt", b"ikm", b"info").unwrap()
+    HkdfSha384::derive_array::<48>(b"salt", b"ikm", b"info").expect("48-byte HKDF-SHA-384 derivation must be valid")
   );
   assert_eq!(
     okm512,
-    HkdfSha512::derive_array::<64>(b"salt", b"ikm", b"info").unwrap()
+    HkdfSha512::derive_array::<64>(b"salt", b"ikm", b"info").expect("64-byte HKDF-SHA-512 derivation must be valid")
   );
   assert_eq!(
-    HkdfSha256::derive_array::<32>(b"salt", b"ikm", b"info").unwrap(),
+    HkdfSha256::derive_array::<32>(b"salt", b"ikm", b"info").expect("32-byte HKDF-SHA-256 derivation must be valid"),
     okm256
   );
   assert_eq!(
-    HkdfSha384::derive_array::<48>(b"salt", b"ikm", b"info").unwrap(),
+    HkdfSha384::derive_array::<48>(b"salt", b"ikm", b"info").expect("48-byte HKDF-SHA-384 derivation must be valid"),
     okm384
   );
   assert_eq!(
-    HkdfSha512::derive_array::<64>(b"salt", b"ikm", b"info").unwrap(),
+    HkdfSha512::derive_array::<64>(b"salt", b"ikm", b"info").expect("64-byte HKDF-SHA-512 derivation must be valid"),
     okm512
   );
   assert_eq!(hkdf256.prk().len(), 32);
@@ -361,7 +397,8 @@ fn poly1305_consumes_one_time_key_and_verifies() {
   assert_eq!(tag.as_bytes().len(), Poly1305Tag::LENGTH);
 
   let key = Poly1305OneTimeKey::from_bytes([0x42; Poly1305OneTimeKey::LENGTH]);
-  assert!(Poly1305::verify_once(key, b"api-consistency-poly1305", &tag).is_ok());
+  Poly1305::verify_once(key, b"api-consistency-poly1305", &tag)
+    .expect("Poly1305 must verify its freshly generated tag");
 }
 
 #[test]
@@ -371,17 +408,21 @@ fn ed25519_types_follow_byte_roundtrip_and_verify_conventions() {
     out.fill(0x24);
     Ok::<(), ()>(())
   })
-  .unwrap();
+  .expect("deterministic Ed25519 entropy callback must generate a key");
   let keypair = Ed25519Keypair::from_secret_key(secret.duplicate_secret());
   let public = Ed25519PublicKey::from_bytes(keypair.public_key().to_bytes());
-  let signature = TrySigner::try_sign(&keypair, b"api-consistency-ed25519").unwrap();
+  let signature = TrySigner::try_sign(&keypair, b"api-consistency-ed25519")
+    .expect("Ed25519 signing with a valid generated key must succeed");
 
   assert_eq!(*secret.expose_secret().as_bytes(), *secret.as_bytes());
   assert_eq!(secret.duplicate_secret().as_bytes(), secret.as_bytes());
   assert_eq!(public.to_bytes(), *public.as_bytes());
   assert_eq!(signature.to_bytes(), *signature.as_bytes());
-  assert!(public.verify(b"api-consistency-ed25519", &signature).is_ok());
-  assert!(Verifier::verify(&public, b"api-consistency-ed25519", &signature).is_ok());
+  public
+    .verify(b"api-consistency-ed25519", &signature)
+    .expect("Ed25519 public-key method must verify the fresh signature");
+  Verifier::verify(&public, b"api-consistency-ed25519", &signature)
+    .expect("Ed25519 Verifier trait must verify the fresh signature");
 }
 
 #[test]
@@ -391,9 +432,11 @@ fn x25519_types_follow_byte_roundtrip_conventions() {
     out.fill(0x42);
     Ok::<(), ()>(())
   })
-  .unwrap();
+  .expect("deterministic X25519 entropy callback must generate a key");
   let public = X25519PublicKey::from_bytes(secret.public_key().to_bytes());
-  let shared = secret.diffie_hellman(&public).unwrap();
+  let shared = secret
+    .diffie_hellman(&public)
+    .expect("X25519 with a valid public key must produce a nonzero shared secret");
 
   assert_eq!(*secret.expose_secret().as_bytes(), *secret.as_bytes());
   assert_eq!(public.to_bytes(), *public.as_bytes());
@@ -407,20 +450,24 @@ fn ecdsa_p256_keygen_and_native_signature_traits_are_consistent() {
     out.fill(1);
     Ok::<(), ()>(())
   })
-  .unwrap();
-  let public = EcdsaP256PublicKey::from_sec1_bytes(&keypair.public_key().to_sec1_bytes()).unwrap();
-  let signature = TrySigner::try_sign(&keypair, b"api-consistency-ecdsa-p256").unwrap();
+  .expect("deterministic P-256 entropy callback must generate a key");
+  let public = EcdsaP256PublicKey::from_sec1_bytes(&keypair.public_key().to_sec1_bytes())
+    .expect("generated P-256 public key must round-trip through SEC1");
+  let signature = TrySigner::try_sign(&keypair, b"api-consistency-ecdsa-p256")
+    .expect("P-256 signing with a valid generated key must succeed");
 
-  assert!(Verifier::verify(&public, b"api-consistency-ecdsa-p256", &signature).is_ok());
+  Verifier::verify(&public, b"api-consistency-ecdsa-p256", &signature)
+    .expect("P-256 Verifier trait must verify the fresh signature");
 
   let rejected = EcdsaP256SecretKey::try_generate_with(|out| {
     out.fill(0);
     Ok::<(), ()>(())
   })
-  .unwrap_err();
+  .expect_err("an all-zero P-256 secret key must be rejected");
   assert_eq!(rejected, EcdsaKeyGenerationError::InvalidSecretKey);
 
-  let rng_error = EcdsaP256SecretKey::try_generate_with(|_| Err("rng")).unwrap_err();
+  let rng_error = EcdsaP256SecretKey::try_generate_with(|_| Err("rng"))
+    .expect_err("P-256 key generation must preserve entropy-source failure");
   assert_eq!(rng_error, EcdsaKeyGenerationError::Random("rng"));
 }
 
@@ -431,26 +478,35 @@ fn ecdsa_p384_keygen_and_native_signature_traits_are_consistent() {
     out.fill(1);
     Ok::<(), ()>(())
   })
-  .unwrap();
-  let public = EcdsaP384PublicKey::from_sec1_bytes(&keypair.public_key().to_sec1_bytes()).unwrap();
-  let signature = TrySigner::try_sign(&keypair, b"api-consistency-ecdsa-p384").unwrap();
+  .expect("deterministic P-384 entropy callback must generate a key");
+  let public = EcdsaP384PublicKey::from_sec1_bytes(&keypair.public_key().to_sec1_bytes())
+    .expect("generated P-384 public key must round-trip through SEC1");
+  let signature = TrySigner::try_sign(&keypair, b"api-consistency-ecdsa-p384")
+    .expect("P-384 signing with a valid generated key must succeed");
 
-  assert!(Verifier::verify(&public, b"api-consistency-ecdsa-p384", &signature).is_ok());
+  Verifier::verify(&public, b"api-consistency-ecdsa-p384", &signature)
+    .expect("P-384 Verifier trait must verify the fresh signature");
 }
 
 #[test]
 #[cfg(feature = "rsa")]
 fn rsa_signature_verifier_requires_a_bound_profile() {
-  let key = RsaPublicKey::from_spki_der(include_bytes!("../benches/rsa_fixtures/rsa3072_spki.der")).unwrap();
+  let key = RsaPublicKey::from_spki_der(include_bytes!("../benches/rsa_fixtures/rsa3072_spki.der"))
+    .expect("embedded RSA-3072 SPKI fixture must parse");
   let message = b"rscrypto RSA-PSS verification fixture";
   let pss_signature = include_bytes!("../benches/rsa_fixtures/rsa3072_pss_sha256.sig");
   let pss_verifier = key.verifier(RsaSignatureProfile::pss(RsaPssProfile::Sha256));
 
-  assert!(pss_verifier.verify(message, pss_signature).is_ok());
-  assert!(Verifier::verify(&pss_verifier, message, pss_signature.as_slice()).is_ok());
+  pss_verifier
+    .verify(message, pss_signature)
+    .expect("profile-bound RSA verifier must accept the matching PSS fixture");
+  Verifier::verify(&pss_verifier, message, pss_signature.as_slice())
+    .expect("RSA Verifier trait must accept the matching PSS fixture");
 
   let wrong_profile = key.verifier(RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256));
-  assert!(wrong_profile.verify(message, pss_signature).is_err());
+  wrong_profile
+    .verify(message, pss_signature)
+    .expect_err("RSA verifier must reject a PSS signature under the PKCS1-v1_5 profile");
 }
 
 #[test]
@@ -483,7 +539,7 @@ fn kem_trait_uses_typed_key_ciphertext_and_secret_outputs() {
     out.copy_from_slice(&[1, 2, 3, 4]);
     Ok(())
   })
-  .unwrap();
+  .expect("infallible ToyKem key generation must succeed");
   assert_eq!(encapsulation_key.as_ref(), &[1, 2, 3]);
   assert_eq!(decapsulation_key.as_ref(), &[1, 2, 3, 4]);
 
@@ -491,11 +547,12 @@ fn kem_trait_uses_typed_key_ciphertext_and_secret_outputs() {
     out.copy_from_slice(&[8, 9]);
     Ok(())
   })
-  .unwrap();
+  .expect("infallible ToyKem encapsulation must succeed");
   assert_eq!(ciphertext.as_ref(), &[1, 2, 3, 8, 9]);
   assert_eq!(encapsulated_secret.as_ref(), &[8, 9]);
 
-  let decapsulated_secret = ToyKem::decapsulate(&decapsulation_key, &ciphertext).unwrap();
+  let decapsulated_secret =
+    ToyKem::decapsulate(&decapsulation_key, &ciphertext).expect("infallible ToyKem decapsulation must succeed");
   assert_eq!(decapsulated_secret.as_ref(), &[4, 9]);
 }
 
@@ -576,24 +633,30 @@ fn all_aeads_follow_new_encrypt_decrypt_and_detached_aliases() {
 #[cfg(all(feature = "aead", feature = "getrandom", feature = "alloc"))]
 fn aead_random_to_vec_seals_and_opens() {
   let cipher = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes([0x33; ChaCha20Poly1305::KEY_SIZE]));
-  let (nonce, sealed) = cipher.seal_random_to_vec(b"aad", b"plaintext").unwrap();
-  let opened = cipher.decrypt_to_vec(&nonce, b"aad", &sealed).unwrap();
+  let (nonce, sealed) = cipher
+    .seal_random_to_vec(b"aad", b"plaintext")
+    .expect("random-nonce AEAD sealing must succeed");
+  let opened = cipher
+    .decrypt_to_vec(&nonce, b"aad", &sealed)
+    .expect("freshly sealed random-nonce ciphertext must authenticate");
 
   assert_eq!(opened, b"plaintext");
 }
 
 #[test]
 #[cfg(all(feature = "checksums", feature = "std"))]
-fn checksum_adapters_use_checksum() -> std::io::Result<()> {
+fn checksum_adapters_use_checksum() {
   use rscrypto::{Checksum as _, Crc32C};
 
-  let mut reader = Crc32C::reader(Cursor::new(b"abc".to_vec()));
-  std::io::copy(&mut reader, &mut std::io::sink())?;
+  let mut reader = Crc32C::reader(&b"abc"[..]);
+  let mut copied = Vec::new();
+  std::io::copy(&mut reader, &mut copied).expect("checksum reader must stream into a Vec");
+  assert_eq!(copied, b"abc");
   assert_eq!(reader.checksum(), Crc32C::checksum(b"abc"));
 
   let mut writer = Crc32C::writer(Vec::new());
-  writer.write_all(b"abc")?;
+  writer
+    .write_all(b"abc")
+    .expect("Vec-backed checksum writer must accept three bytes");
   assert_eq!(writer.checksum(), Crc32C::checksum(b"abc"));
-
-  Ok(())
 }

@@ -17,12 +17,23 @@
 
 use rscrypto::{Pbkdf2Sha256, Pbkdf2Sha512};
 
-fn hex_to_bytes(s: &str) -> Vec<u8> {
-  let s: String = s.chars().filter(|c| !c.is_ascii_whitespace()).collect();
-  (0..s.len())
-    .step_by(2)
-    .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
-    .collect()
+fn hex_to_bytes(source: &str) -> Vec<u8> {
+  let mut digits = source.chars().filter(|character| !character.is_ascii_whitespace());
+  let mut output = Vec::new();
+
+  while let Some(high) = digits.next() {
+    let low = digits.next().expect("KAT hex input must contain complete byte pairs");
+    let high = high
+      .to_digit(16)
+      .expect("KAT input must contain only hexadecimal digits");
+    let low = low
+      .to_digit(16)
+      .expect("KAT input must contain only hexadecimal digits");
+    let byte = high.strict_mul(16).strict_add(low);
+    output.push(u8::try_from(byte).expect("two hexadecimal digits must fit in one byte"));
+  }
+
+  output
 }
 
 #[test]
@@ -30,7 +41,8 @@ fn pbkdf2_sha256_kat_c1_dk32() {
   // P="password" S="salt" c=1 dk_len=32
   let expected = hex_to_bytes("120fb6cffcf8b32c43e7225256c4f837 a86548c92ccc35480805987cb70be17b");
   let mut out = [0u8; 32];
-  Pbkdf2Sha256::derive_key_primitive(b"password", b"salt", 1, &mut out).unwrap();
+  Pbkdf2Sha256::derive_key_primitive(b"password", b"salt", 1, &mut out)
+    .expect("PBKDF2-SHA-256 c=1 KAT derivation must succeed");
   assert_eq!(out.as_slice(), expected.as_slice());
 }
 
@@ -39,7 +51,8 @@ fn pbkdf2_sha256_kat_c2_dk32() {
   // P="password" S="salt" c=2 dk_len=32
   let expected = hex_to_bytes("ae4d0c95af6b46d32d0adff928f06dd0 2a303f8ef3c251dfd6e2d85a95474c43");
   let mut out = [0u8; 32];
-  Pbkdf2Sha256::derive_key_primitive(b"password", b"salt", 2, &mut out).unwrap();
+  Pbkdf2Sha256::derive_key_primitive(b"password", b"salt", 2, &mut out)
+    .expect("PBKDF2-SHA-256 c=2 KAT derivation must succeed");
   assert_eq!(out.as_slice(), expected.as_slice());
 }
 
@@ -49,7 +62,8 @@ fn pbkdf2_sha256_kat_c4096_dk32() {
   // P="password" S="salt" c=4096 dk_len=32
   let expected = hex_to_bytes("c5e478d59288c841aa530db6845c4c8d 962893a001ce4e11a4963873aa98134a");
   let mut out = [0u8; 32];
-  Pbkdf2Sha256::derive_key_primitive(b"password", b"salt", 4096, &mut out).unwrap();
+  Pbkdf2Sha256::derive_key_primitive(b"password", b"salt", 4096, &mut out)
+    .expect("PBKDF2-SHA-256 c=4096 KAT derivation must succeed");
   assert_eq!(out.as_slice(), expected.as_slice());
 }
 
@@ -65,7 +79,7 @@ fn pbkdf2_sha256_kat_long_inputs_c4096_dk40() {
     4096,
     &mut out,
   )
-  .unwrap();
+  .expect("PBKDF2-SHA-256 long-input KAT derivation must succeed");
   assert_eq!(out.as_slice(), expected.as_slice());
 }
 
@@ -75,7 +89,8 @@ fn pbkdf2_sha256_kat_embedded_nul_c4096_dk16() {
   // NUL-termination bugs in the HMAC key/salt path.
   let expected = hex_to_bytes("89b69d0516f829893c696226650a8687");
   let mut out = [0u8; 16];
-  Pbkdf2Sha256::derive_key_primitive(b"pass\x00word", b"sa\x00lt", 4096, &mut out).unwrap();
+  Pbkdf2Sha256::derive_key_primitive(b"pass\x00word", b"sa\x00lt", 4096, &mut out)
+    .expect("PBKDF2-SHA-256 embedded-NUL KAT derivation must succeed");
   assert_eq!(out.as_slice(), expected.as_slice());
 }
 
@@ -87,7 +102,8 @@ fn pbkdf2_sha512_kat_c1_dk64() {
      050235d7d68b1da55e63f73b60a57fce",
   );
   let mut out = [0u8; 64];
-  Pbkdf2Sha512::derive_key_primitive(b"password", b"salt", 1, &mut out).unwrap();
+  Pbkdf2Sha512::derive_key_primitive(b"password", b"salt", 1, &mut out)
+    .expect("PBKDF2-SHA-512 c=1 KAT derivation must succeed");
   assert_eq!(out.as_slice(), expected.as_slice());
 }
 
@@ -99,7 +115,8 @@ fn pbkdf2_sha512_kat_c2_dk64() {
      be67335c77a6068e04112754f27ccf4e",
   );
   let mut out = [0u8; 64];
-  Pbkdf2Sha512::derive_key_primitive(b"password", b"salt", 2, &mut out).unwrap();
+  Pbkdf2Sha512::derive_key_primitive(b"password", b"salt", 2, &mut out)
+    .expect("PBKDF2-SHA-512 c=2 KAT derivation must succeed");
   assert_eq!(out.as_slice(), expected.as_slice());
 }
 
@@ -112,7 +129,8 @@ fn pbkdf2_sha512_kat_c4096_dk64() {
      376060ecd532e039b742a239434af2d5",
   );
   let mut out = [0u8; 64];
-  Pbkdf2Sha512::derive_key_primitive(b"password", b"salt", 4096, &mut out).unwrap();
+  Pbkdf2Sha512::derive_key_primitive(b"password", b"salt", 4096, &mut out)
+    .expect("PBKDF2-SHA-512 c=4096 KAT derivation must succeed");
   assert_eq!(out.as_slice(), expected.as_slice());
 }
 
@@ -120,19 +138,25 @@ fn pbkdf2_sha512_kat_c4096_dk64() {
 fn pbkdf2_sha256_state_reuse_matches_oneshot() {
   let state = Pbkdf2Sha256::new(b"password");
   let mut from_state = [0u8; 32];
-  state.derive(b"salt", 100, &mut from_state).unwrap();
+  state
+    .derive(b"salt", 100, &mut from_state)
+    .expect("PBKDF2-SHA-256 cached-state derivation must succeed");
 
   let mut from_oneshot = [0u8; 32];
-  Pbkdf2Sha256::derive_key_primitive(b"password", b"salt", 100, &mut from_oneshot).unwrap();
+  Pbkdf2Sha256::derive_key_primitive(b"password", b"salt", 100, &mut from_oneshot)
+    .expect("PBKDF2-SHA-256 one-shot derivation must succeed");
 
   assert_eq!(from_state, from_oneshot);
 
   // The cached state must be reusable for a second derivation.
   let mut from_state_again = [0u8; 32];
-  state.derive(b"salt2", 50, &mut from_state_again).unwrap();
+  state
+    .derive(b"salt2", 50, &mut from_state_again)
+    .expect("second PBKDF2-SHA-256 cached-state derivation must succeed");
 
   let mut from_oneshot_again = [0u8; 32];
-  Pbkdf2Sha256::derive_key_primitive(b"password", b"salt2", 50, &mut from_oneshot_again).unwrap();
+  Pbkdf2Sha256::derive_key_primitive(b"password", b"salt2", 50, &mut from_oneshot_again)
+    .expect("second PBKDF2-SHA-256 one-shot derivation must succeed");
 
   assert_eq!(from_state_again, from_oneshot_again);
 }
@@ -141,10 +165,13 @@ fn pbkdf2_sha256_state_reuse_matches_oneshot() {
 fn pbkdf2_sha512_state_reuse_matches_oneshot() {
   let state = Pbkdf2Sha512::new(b"password");
   let mut from_state = [0u8; 64];
-  state.derive(b"salt", 100, &mut from_state).unwrap();
+  state
+    .derive(b"salt", 100, &mut from_state)
+    .expect("PBKDF2-SHA-512 cached-state derivation must succeed");
 
   let mut from_oneshot = [0u8; 64];
-  Pbkdf2Sha512::derive_key_primitive(b"password", b"salt", 100, &mut from_oneshot).unwrap();
+  Pbkdf2Sha512::derive_key_primitive(b"password", b"salt", 100, &mut from_oneshot)
+    .expect("PBKDF2-SHA-512 one-shot derivation must succeed");
 
   assert_eq!(from_state, from_oneshot);
 }

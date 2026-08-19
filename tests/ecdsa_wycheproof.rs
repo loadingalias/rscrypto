@@ -29,9 +29,11 @@ struct Suite<'a> {
 }
 
 fn field<'a>(value: &'a Value, name: &str) -> &'a str {
-  value[name]
+  value
+    .get(name)
+    .expect("Wycheproof field must be present")
     .as_str()
-    .unwrap_or_else(|| panic!("missing string field `{name}`"))
+    .expect("Wycheproof field must be a string")
 }
 
 fn assert_der_vectors<Key>(
@@ -47,7 +49,10 @@ fn assert_der_vectors<Key>(
   assert_eq!(suite["schema"].as_str(), Some("ecdsa_verify_schema_v1.json"));
   assert_eq!(
     suite["numberOfTests"].as_u64(),
-    Some((spec.expected.valid + spec.expected.invalid) as u64)
+    Some(
+      u64::try_from(spec.expected.valid.strict_add(spec.expected.invalid))
+        .expect("Wycheproof test count must fit in u64")
+    )
   );
 
   let groups = suite["testGroups"]
@@ -70,7 +75,12 @@ fn assert_der_vectors<Key>(
       let signature = decode_hex_vec(field(test, "sig"));
       let verified = verify_der(&public, &message, &signature);
 
-      match field(test, "result") {
+      let disposition = field(test, "result");
+      assert!(
+        matches!(disposition, "valid" | "invalid"),
+        "unsupported Wycheproof ECDSA result `{disposition}`"
+      );
+      match disposition {
         "valid" => {
           counts.valid = counts.valid.strict_add(1);
           assert!(
@@ -89,7 +99,7 @@ fn assert_der_vectors<Key>(
             field(test, "comment")
           );
         }
-        other => panic!("unsupported Wycheproof ECDSA result `{other}`"),
+        _ => {}
       }
     }
   }

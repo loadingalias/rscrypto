@@ -27,20 +27,24 @@ fn deterministic_bytes(seed: u8, len: usize) -> Vec<u8> {
 fn assert_aes128_matches_oracle(len: usize, aad: &[u8]) {
   let key_bytes = [0x31u8; 16];
   let mut nonce_bytes = [0x42u8; 12];
-  nonce_bytes[4..8].copy_from_slice(&(aad.len() as u32).to_be_bytes());
-  nonce_bytes[8..12].copy_from_slice(&(len as u32).to_be_bytes());
-  let plaintext = deterministic_bytes(0x80 ^ len as u8, len);
+  let aad_len = u32::try_from(aad.len()).expect("oracle AAD length must fit the 32-bit nonce field");
+  let text_len = u32::try_from(len).expect("oracle text length must fit the 32-bit nonce field");
+  nonce_bytes[4..8].copy_from_slice(&aad_len.to_be_bytes());
+  nonce_bytes[8..12].copy_from_slice(&text_len.to_be_bytes());
+  let plaintext = deterministic_bytes(0x80 ^ len.to_le_bytes()[0], len);
 
   let cipher = Aes128Gcm::new(&Aes128GcmKey::from_bytes(key_bytes));
   let nonce = Nonce96::from_bytes(nonce_bytes);
   let mut ours = plaintext.clone();
-  let tag = cipher.encrypt_in_place(&nonce, aad, &mut ours).unwrap();
+  let tag = cipher
+    .encrypt_in_place(&nonce, aad, &mut ours)
+    .expect("bounded AES-128-GCM oracle input must seal");
 
   let oracle = Aes128Oracle::new(&Array(key_bytes));
   let mut expected = plaintext.clone();
   let expected_tag = oracle
     .encrypt_inout_detached(&Array(nonce_bytes), aad, expected.as_mut_slice().into())
-    .unwrap();
+    .expect("bounded AES-128-GCM oracle input must seal");
 
   assert_eq!(ours, expected, "AES-128-GCM ciphertext mismatch at len {len}");
   assert_eq!(
@@ -49,27 +53,33 @@ fn assert_aes128_matches_oracle(len: usize, aad: &[u8]) {
     "AES-128-GCM tag mismatch at len {len}"
   );
 
-  cipher.decrypt_in_place(&nonce, aad, &mut ours, &tag).unwrap();
+  cipher
+    .decrypt_in_place(&nonce, aad, &mut ours, &tag)
+    .expect("fresh AES-128-GCM ciphertext and tag must open");
   assert_eq!(ours, plaintext, "AES-128-GCM open mismatch at len {len}");
 }
 
 fn assert_aes256_matches_oracle(len: usize, aad: &[u8]) {
   let key_bytes = [0x53u8; 32];
   let mut nonce_bytes = [0x64u8; 12];
-  nonce_bytes[4..8].copy_from_slice(&(aad.len() as u32).to_be_bytes());
-  nonce_bytes[8..12].copy_from_slice(&(len as u32).to_be_bytes());
-  let plaintext = deterministic_bytes(0xA0 ^ len as u8, len);
+  let aad_len = u32::try_from(aad.len()).expect("oracle AAD length must fit the 32-bit nonce field");
+  let text_len = u32::try_from(len).expect("oracle text length must fit the 32-bit nonce field");
+  nonce_bytes[4..8].copy_from_slice(&aad_len.to_be_bytes());
+  nonce_bytes[8..12].copy_from_slice(&text_len.to_be_bytes());
+  let plaintext = deterministic_bytes(0xA0 ^ len.to_le_bytes()[0], len);
 
   let cipher = Aes256Gcm::new(&Aes256GcmKey::from_bytes(key_bytes));
   let nonce = Nonce96::from_bytes(nonce_bytes);
   let mut ours = plaintext.clone();
-  let tag = cipher.encrypt_in_place(&nonce, aad, &mut ours).unwrap();
+  let tag = cipher
+    .encrypt_in_place(&nonce, aad, &mut ours)
+    .expect("bounded AES-256-GCM oracle input must seal");
 
   let oracle = Aes256Oracle::new(&Array(key_bytes));
   let mut expected = plaintext.clone();
   let expected_tag = oracle
     .encrypt_inout_detached(&Array(nonce_bytes), aad, expected.as_mut_slice().into())
-    .unwrap();
+    .expect("bounded AES-256-GCM oracle input must seal");
 
   assert_eq!(ours, expected, "AES-256-GCM ciphertext mismatch at len {len}");
   assert_eq!(
@@ -78,7 +88,9 @@ fn assert_aes256_matches_oracle(len: usize, aad: &[u8]) {
     "AES-256-GCM tag mismatch at len {len}"
   );
 
-  cipher.decrypt_in_place(&nonce, aad, &mut ours, &tag).unwrap();
+  cipher
+    .decrypt_in_place(&nonce, aad, &mut ours, &tag)
+    .expect("fresh AES-256-GCM ciphertext and tag must open");
   assert_eq!(ours, plaintext, "AES-256-GCM open mismatch at len {len}");
 }
 

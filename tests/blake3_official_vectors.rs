@@ -3,7 +3,7 @@
 mod support;
 
 use rscrypto::{Digest, hashes::crypto::Blake3, traits::Xof as _};
-use support::blobby_compat::Blob6Iterator;
+use support::blobby_compat::BlobIterator;
 
 fn update_input_pattern(hasher: &mut Blake3, len: usize) {
   let mut remaining = len;
@@ -12,11 +12,12 @@ fn update_input_pattern(hasher: &mut Blake3, len: usize) {
   while remaining != 0 {
     let take = core::cmp::min(remaining, buf.len());
     for (i, b) in buf[..take].iter_mut().enumerate() {
-      *b = ((offset + i) % 251) as u8;
+      let value = offset.strict_add(i).strict_rem(251);
+      *b = u8::try_from(value).expect("BLAKE3 fixture byte must fit in u8");
     }
     hasher.update(&buf[..take]);
-    offset += take;
-    remaining -= take;
+    offset = offset.strict_add(take);
+    remaining = remaining.strict_sub(take);
   }
 }
 
@@ -28,7 +29,7 @@ fn decode_u64_le(bytes: &[u8]) -> u64 {
 #[test]
 fn blake3_official_test_vectors() {
   let blb = include_bytes!("../testdata/blake3/test_vectors.blb");
-  for (i, row) in Blob6Iterator::new(blb)
+  for (i, row) in BlobIterator::<6>::new(blb)
     .expect("blake3 vector corpus must parse")
     .enumerate()
   {
@@ -39,14 +40,15 @@ fn blake3_official_test_vectors() {
       hash_xof,
       keyed_hash_xof,
       derive_key_xof,
-    ] = row.unwrap_or_else(|err| panic!("blake3 vector row decode failed at case {i}: {err:?}"));
+    ] = row.expect("BLAKE3 vector row must decode");
 
     assert_eq!(key_bytes.len(), 32, "blake3 key length mismatch at case {i}");
     let mut key = [0u8; 32];
     key.copy_from_slice(key_bytes);
 
     let context = core::str::from_utf8(context_bytes).expect("blake3 context_string is valid UTF-8");
-    let input_len = decode_u64_le(input_len_bytes) as usize;
+    let input_len =
+      usize::try_from(decode_u64_le(input_len_bytes)).expect("BLAKE3 vector input length must fit in usize");
 
     // Hash mode
     {

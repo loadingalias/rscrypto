@@ -3,13 +3,13 @@
 //! SHA-512/256 uses identical compression to SHA-512, so the same hardware kernels
 //! and cascade order apply.
 
-pub use super::kernels::Sha512_256KernelId as KernelId;
+pub(crate) use super::kernels::Sha512_256KernelId as KernelId;
 use crate::platform::Caps;
 
-pub const DEFAULT_BOUNDARIES: [usize; 3] = [64, 256, 4096];
+pub(crate) const DEFAULT_BOUNDARIES: [usize; 3] = [64, 256, 4096];
 
 #[derive(Clone, Copy, Debug)]
-pub struct DispatchTable {
+pub(crate) struct DispatchTable {
   pub boundaries: [usize; 3],
   pub xs: KernelId,
   pub s: KernelId,
@@ -17,7 +17,7 @@ pub struct DispatchTable {
   pub l: KernelId,
 }
 
-pub static DEFAULT_TABLE: DispatchTable = DispatchTable {
+pub(crate) static DEFAULT_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
   xs: KernelId::Portable,
   s: KernelId::Portable,
@@ -26,7 +26,7 @@ pub static DEFAULT_TABLE: DispatchTable = DispatchTable {
 };
 
 #[cfg(target_arch = "aarch64")]
-pub static AARCH64_SHA512_TABLE: DispatchTable = DispatchTable {
+pub(crate) static AARCH64_SHA512_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
   xs: KernelId::Aarch64Sha512,
   s: KernelId::Aarch64Sha512,
@@ -35,7 +35,7 @@ pub static AARCH64_SHA512_TABLE: DispatchTable = DispatchTable {
 };
 
 #[cfg(target_arch = "x86_64")]
-pub static X86_SHA512_TABLE: DispatchTable = DispatchTable {
+pub(crate) static X86_SHA512_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
   xs: KernelId::X86Sha512,
   s: KernelId::X86Sha512,
@@ -44,7 +44,7 @@ pub static X86_SHA512_TABLE: DispatchTable = DispatchTable {
 };
 
 #[cfg(target_arch = "x86_64")]
-pub static X86_AVX512VL_TABLE: DispatchTable = DispatchTable {
+pub(crate) static X86_AVX512VL_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
   xs: KernelId::X86Avx512vl,
   s: KernelId::X86Avx512vl,
@@ -53,7 +53,7 @@ pub static X86_AVX512VL_TABLE: DispatchTable = DispatchTable {
 };
 
 #[cfg(target_arch = "x86_64")]
-pub static X86_AVX2_DECOUPLED_TABLE: DispatchTable = DispatchTable {
+pub(crate) static X86_AVX2_DECOUPLED_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
   xs: KernelId::X86Avx2Decoupled,
   s: KernelId::X86Avx2Decoupled,
@@ -62,7 +62,7 @@ pub static X86_AVX2_DECOUPLED_TABLE: DispatchTable = DispatchTable {
 };
 
 #[cfg(target_arch = "x86_64")]
-pub static X86_AVX512VL_DECOUPLED_TABLE: DispatchTable = DispatchTable {
+pub(crate) static X86_AVX512VL_DECOUPLED_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
   xs: KernelId::X86Avx512vlDecoupled,
   s: KernelId::X86Avx512vlDecoupled,
@@ -71,7 +71,7 @@ pub static X86_AVX512VL_DECOUPLED_TABLE: DispatchTable = DispatchTable {
 };
 
 #[cfg(target_arch = "riscv64")]
-pub static RISCV_ZKNH_TABLE: DispatchTable = DispatchTable {
+pub(crate) static RISCV_ZKNH_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
   xs: KernelId::Riscv64Zknh,
   s: KernelId::Riscv64Zknh,
@@ -80,7 +80,7 @@ pub static RISCV_ZKNH_TABLE: DispatchTable = DispatchTable {
 };
 
 #[cfg(target_arch = "wasm32")]
-pub static WASM_SIMD128_TABLE: DispatchTable = DispatchTable {
+pub(crate) static WASM_SIMD128_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
   xs: KernelId::WasmSimd128,
   s: KernelId::WasmSimd128,
@@ -89,7 +89,7 @@ pub static WASM_SIMD128_TABLE: DispatchTable = DispatchTable {
 };
 
 #[cfg(target_arch = "s390x")]
-pub static S390X_KIMD_TABLE: DispatchTable = DispatchTable {
+pub(crate) static S390X_KIMD_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
   xs: KernelId::S390xKimd,
   s: KernelId::S390xKimd,
@@ -99,7 +99,7 @@ pub static S390X_KIMD_TABLE: DispatchTable = DispatchTable {
 
 #[inline]
 #[must_use]
-pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static DispatchTable {
+pub(crate) fn select_runtime_table(caps: Caps) -> &'static DispatchTable {
   // x86_64 cascade: SHA-512 NI > vendor-aware AVX2/AVX-512VL > Portable
   // AMD: AVX2 decoupled > AVX-512VL; Intel: AVX-512VL decoupled > AVX2 decoupled.
   // See sha512/dispatch_tables.rs for full rationale.
@@ -157,5 +157,6 @@ pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static D
       return &S390X_KIMD_TABLE;
     }
   }
+  let _ = caps;
   &DEFAULT_TABLE
 }

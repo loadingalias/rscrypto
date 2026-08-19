@@ -16,7 +16,7 @@ use crate::{hashes::crypto::sha256::Sha256, platform::Caps};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 #[non_exhaustive]
-pub enum Sha224KernelId {
+pub(crate) enum Sha224KernelId {
   Portable = 0,
   #[cfg(target_arch = "x86_64")]
   X86Sha = 1,
@@ -34,7 +34,7 @@ impl Sha224KernelId {
   #[cfg(any(test, feature = "diag"))]
   #[inline]
   #[must_use]
-  pub const fn as_str(self) -> &'static str {
+  pub(crate) const fn as_str(self) -> &'static str {
     match self {
       Self::Portable => "portable",
       #[cfg(target_arch = "x86_64")]
@@ -52,7 +52,7 @@ impl Sha224KernelId {
 }
 
 #[cfg(test)]
-pub const ALL: &[Sha224KernelId] = &[
+pub(crate) const ALL: &[Sha224KernelId] = &[
   Sha224KernelId::Portable,
   #[cfg(target_arch = "x86_64")]
   Sha224KernelId::X86Sha,
@@ -96,7 +96,7 @@ pub(crate) fn compress_blocks_fn(id: Sha224KernelId) -> CompressBlocksFn {
 
 #[inline]
 #[must_use]
-pub const fn required_caps(id: Sha224KernelId) -> Caps {
+pub(crate) const fn required_caps(id: Sha224KernelId) -> Caps {
   match id {
     Sha224KernelId::Portable => Caps::NONE,
     #[cfg(target_arch = "x86_64")]

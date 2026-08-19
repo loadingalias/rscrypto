@@ -1,10 +1,10 @@
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
-use rscrypto_fuzz::{FuzzInput, some_or_return};
-#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 use rscrypto::auth::rsa::fuzz_rsa_import_der;
+#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
+use rscrypto_fuzz::{FuzzInput, some_or_return};
 
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let format = some_or_return!(input.byte());
   let (der, expected) = if input.rest().first().copied() == Some(b'V') {
@@ -15,12 +15,15 @@ pub fn run(data: &[u8]) {
 
   let accepted = fuzz_rsa_import_der(format, &der);
   if let Some(expected) = expected {
-    assert_eq!(accepted, expected, "generated RSA private-key import fixture expectation drifted");
+    assert_eq!(
+      accepted, expected,
+      "generated RSA private-key import fixture expectation drifted"
+    );
   }
 }
 
 #[cfg(not(any(fuzzing, rscrypto_internal_fuzzing)))]
-pub fn run(_data: &[u8]) {}
+pub(super) fn run(_data: &[u8]) {}
 
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn decoded_der(input: &[u8]) -> Vec<u8> {
@@ -57,9 +60,21 @@ fn hex_value(byte: u8) -> Option<u8> {
 fn valid_private_key_der(format: u8, control: &[u8]) -> (Vec<u8>, Option<bool>) {
   let control = control.strip_suffix(b"\n").unwrap_or(control);
   let pkcs1 = match control.first().copied() {
-    Some(b'P') => pkcs1_private_key_der_with_crt(&[1], &hex_to_vec(RSA_PRIVATE_EXPONENT_Q_HEX), &hex_to_vec(RSA_PRIVATE_COEFFICIENT_HEX)),
-    Some(b'Q') => pkcs1_private_key_der_with_crt(&hex_to_vec(RSA_PRIVATE_EXPONENT_P_HEX), &[1], &hex_to_vec(RSA_PRIVATE_COEFFICIENT_HEX)),
-    Some(b'C') => pkcs1_private_key_der_with_crt(&hex_to_vec(RSA_PRIVATE_EXPONENT_P_HEX), &hex_to_vec(RSA_PRIVATE_EXPONENT_Q_HEX), &[1]),
+    Some(b'P') => pkcs1_private_key_der_with_crt(
+      &[1],
+      &hex_to_vec(RSA_PRIVATE_EXPONENT_Q_HEX),
+      &hex_to_vec(RSA_PRIVATE_COEFFICIENT_HEX),
+    ),
+    Some(b'Q') => pkcs1_private_key_der_with_crt(
+      &hex_to_vec(RSA_PRIVATE_EXPONENT_P_HEX),
+      &[1],
+      &hex_to_vec(RSA_PRIVATE_COEFFICIENT_HEX),
+    ),
+    Some(b'C') => pkcs1_private_key_der_with_crt(
+      &hex_to_vec(RSA_PRIVATE_EXPONENT_P_HEX),
+      &hex_to_vec(RSA_PRIVATE_EXPONENT_Q_HEX),
+      &[1],
+    ),
     Some(b'N') => pkcs1_private_key_der_with_noncanonical_version(),
     _ => valid_pkcs1_private_key_der(),
   };
@@ -94,7 +109,7 @@ fn valid_private_key_der(format: u8, control: &[u8]) -> (Vec<u8>, Option<bool>) 
 }
 
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
-pub fn valid_pkcs1_private_key_der() -> Vec<u8> {
+pub(super) fn valid_pkcs1_private_key_der() -> Vec<u8> {
   pkcs1_private_key_der_with_crt(
     &hex_to_vec(RSA_PRIVATE_EXPONENT_P_HEX),
     &hex_to_vec(RSA_PRIVATE_EXPONENT_Q_HEX),
@@ -143,7 +158,11 @@ fn private_key_der_for_format(format: u8, pkcs1: &[u8]) -> Vec<u8> {
 
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn valid_pkcs8_private_key_der(pkcs1: &[u8]) -> Vec<u8> {
-  sequence(&[integer_unsigned(&[0]), algorithm_identifier(RSA_ENCRYPTION_OID, Some(&der_null())), tlv(0x04, pkcs1)])
+  sequence(&[
+    integer_unsigned(&[0]),
+    algorithm_identifier(RSA_ENCRYPTION_OID, Some(&der_null())),
+    tlv(0x04, pkcs1),
+  ])
 }
 
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]

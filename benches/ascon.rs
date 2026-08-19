@@ -140,8 +140,8 @@ fn ascon_xof128_many(c: &mut Criterion) {
         let mut hasher = rscrypto::AsconXof::new();
         hasher.update(black_box(input));
         let mut reader = hasher.finalize_xof();
-        let base = index * OUT_LEN;
-        reader.squeeze(&mut out[base..base + OUT_LEN]);
+        let base = index.strict_mul(OUT_LEN);
+        reader.squeeze(&mut out[base..base.strict_add(OUT_LEN)]);
       }
       black_box(out[0])
     })
@@ -163,7 +163,8 @@ fn ascon_cxof128(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
       b.iter(|| {
         let mut out = [0u8; OUT_LEN];
-        rscrypto::AsconCxof128::hash_into(black_box(CUSTOMIZATION), black_box(d), &mut out).unwrap();
+        rscrypto::AsconCxof128::hash_into(black_box(CUSTOMIZATION), black_box(d), &mut out)
+          .expect("valid Ascon benchmark operation must succeed");
         black_box(out)
       })
     });

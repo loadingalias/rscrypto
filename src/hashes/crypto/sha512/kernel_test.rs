@@ -6,13 +6,6 @@ use super::{
 };
 use crate::{hashes::crypto::dispatch_util::SizeClassDispatch, traits::Digest as _};
 
-#[allow(dead_code)]
-#[derive(Clone, Debug)]
-pub struct KernelResult {
-  pub name: &'static str,
-  pub digest: [u8; 64],
-}
-
 fn hasher_for_kernel(id: Sha512KernelId) -> Sha512 {
   let compress = compress_blocks_fn(id);
   Sha512 {
@@ -67,43 +60,16 @@ fn digest_64_byte_prefix_with_kernel(id: Sha512KernelId, prefix: &[u8; 64], data
   Sha512::digest_64_byte_prefix_with(prefix, data, compress_blocks_fn(id))
 }
 
-#[allow(dead_code)]
-#[must_use]
-pub fn run_all_sha512_kernels(data: &[u8]) -> Vec<KernelResult> {
-  let caps = crate::platform::caps();
-  let mut out = Vec::with_capacity(ALL.len());
-  for &id in ALL {
-    if caps.has(required_caps(id)) {
-      out.push(KernelResult {
-        name: id.as_str(),
-        digest: digest_with_kernel(id, data),
-      });
-    }
-  }
-  out
-}
-
-#[allow(dead_code)]
-pub fn verify_sha512_kernels(data: &[u8]) -> Result<(), &'static str> {
-  let results = run_all_sha512_kernels(data);
-  let Some(first) = results.first() else {
-    return Ok(());
-  };
-  for r in &results[1..] {
-    if r.digest != first.digest {
-      return Err("sha512 kernel mismatch");
-    }
-  }
-  Ok(())
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
 
   fn pattern(len: usize) -> Vec<u8> {
     (0..len)
-      .map(|i| (i as u8).wrapping_mul(13).wrapping_add((i >> 8) as u8))
+      .map(|i| {
+        let bytes = i.to_le_bytes();
+        bytes[0].wrapping_mul(13).wrapping_add(bytes[1])
+      })
       .collect()
   }
 
@@ -112,7 +78,7 @@ mod tests {
     let caps = crate::platform::caps();
     #[cfg(not(miri))]
     let lens = [
-      0usize, 1, 2, 3, 111, 112, 113, 127, 128, 129, 239, 240, 241, 255, 256, 257, 1000,
+      0usize, 1, 2, 3, 111, 112, 113, 127, 128, 129, 239, 240, 241, 255, 256, 257, 1000, 4096,
     ];
     #[cfg(miri)]
     let lens = [0usize, 1, 111, 112, 113, 127, 128, 129, 255, 256, 257];
@@ -195,7 +161,10 @@ mod tests {
 
     let mut prefix = [0u8; 64];
     for (i, byte) in prefix.iter_mut().enumerate() {
-      *byte = (i as u8).wrapping_mul(17).wrapping_add(0x5a);
+      *byte = u8::try_from(i)
+        .expect("SHA-512 prefix index fits in u8")
+        .wrapping_mul(17)
+        .wrapping_add(0x5a);
     }
 
     for &id in ALL {
@@ -221,11 +190,5 @@ mod tests {
         );
       }
     }
-  }
-
-  #[test]
-  fn run_all_agree() {
-    verify_sha512_kernels(b"abc").expect("kernels should agree");
-    verify_sha512_kernels(&pattern(4096)).expect("kernels should agree");
   }
 }

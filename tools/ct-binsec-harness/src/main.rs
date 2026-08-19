@@ -2,10 +2,9 @@ use core::ptr;
 
 use rscrypto::aead::expert::AeadWithNonce;
 use rscrypto::{
-  Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey,
-  Aes256GcmSiv, Aes256GcmSivKey, AsconAead128, AsconAead128Key, Blake3KeyedHash, ChaCha20Poly1305,
-  ChaCha20Poly1305Key, HmacSha384Tag, HmacSha512Tag, Kmac256, X25519SecretKey, XChaCha20Poly1305,
-  XChaCha20Poly1305Key,
+  Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey, Aes256GcmSiv,
+  Aes256GcmSivKey, AsconAead128, AsconAead128Key, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key,
+  HmacSha384Tag, HmacSha512Tag, Kmac256, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
   aead::{Nonce96, Nonce128, Nonce192, Nonce256},
 };
 
@@ -20,20 +19,31 @@ const RSA_WINDOW_TABLE_LIMBS: usize = 16 * RSA_WINDOW_LIMBS;
 
 #[unsafe(no_mangle)]
 #[inline(never)]
+/// C-compatible volatile byte fill for the analysis harness.
+///
+/// # Safety
+///
+/// `dst` must be valid and writable for `len` bytes.
 pub unsafe extern "C" fn memset(dst: *mut u8, value: i32, len: usize) -> *mut u8 {
   let mut offset = 0usize;
   while offset < len {
     // SAFETY: C callers require `dst..dst+len` to be writable. Volatile writes
     // keep zeroization visible to BINSEC and prevent this shim from becoming a
     // recursive compiler intrinsic.
-    unsafe { ptr::write_volatile(dst.add(offset), value as u8) };
-    offset += 1;
+    unsafe { ptr::write_volatile(dst.add(offset), value.to_le_bytes()[0]) };
+    offset = offset.strict_add(1);
   }
   dst
 }
 
 #[unsafe(no_mangle)]
 #[inline(never)]
+/// C-compatible overlapping byte copy for the analysis harness.
+///
+/// # Safety
+///
+/// `src` must be readable and `dst` writable for `len` bytes. Both pointers
+/// must satisfy Rust's pointer provenance requirements for those ranges.
 pub unsafe extern "C" fn memmove(dst: *mut u8, src: *const u8, len: usize) -> *mut u8 {
   if (dst as usize) <= (src as usize) {
     let mut offset = 0usize;
@@ -42,12 +52,12 @@ pub unsafe extern "C" fn memmove(dst: *mut u8, src: *const u8, len: usize) -> *m
       let byte = unsafe { ptr::read(src.add(offset)) };
       // SAFETY: C callers require source and destination ranges to be valid.
       unsafe { ptr::write(dst.add(offset), byte) };
-      offset += 1;
+      offset = offset.strict_add(1);
     }
   } else {
     let mut remaining = len;
     while remaining != 0 {
-      remaining -= 1;
+      remaining = remaining.strict_sub(1);
       // SAFETY: C callers require source and destination ranges to be valid.
       let byte = unsafe { ptr::read(src.add(remaining)) };
       // SAFETY: C callers require source and destination ranges to be valid.
@@ -59,6 +69,12 @@ pub unsafe extern "C" fn memmove(dst: *mut u8, src: *const u8, len: usize) -> *m
 
 #[unsafe(no_mangle)]
 #[inline(never)]
+/// C-compatible non-overlapping byte copy for the analysis harness.
+///
+/// # Safety
+///
+/// `src` must be readable and `dst` writable for `len` bytes, and the two
+/// ranges must not overlap.
 pub unsafe extern "C" fn memcpy(dst: *mut u8, src: *const u8, len: usize) -> *mut u8 {
   // SAFETY: `memcpy` has the same validity contract as `memmove`, with the
   // additional non-overlap precondition. The `memmove` implementation is valid
@@ -68,6 +84,11 @@ pub unsafe extern "C" fn memcpy(dst: *mut u8, src: *const u8, len: usize) -> *mu
 
 #[unsafe(no_mangle)]
 #[inline(never)]
+/// C-compatible byte comparison for the analysis harness.
+///
+/// # Safety
+///
+/// `lhs` and `rhs` must each be readable for `len` bytes.
 pub unsafe extern "C" fn bcmp(lhs: *const u8, rhs: *const u8, len: usize) -> i32 {
   let mut acc = 0u8;
   let mut offset = 0usize;
@@ -77,7 +98,7 @@ pub unsafe extern "C" fn bcmp(lhs: *const u8, rhs: *const u8, len: usize) -> i32
     // SAFETY: C callers require both ranges to be readable for `len` bytes.
     let r = unsafe { ptr::read(rhs.add(offset)) };
     acc |= l ^ r;
-    offset += 1;
+    offset = offset.strict_add(1);
   }
   i32::from(acc)
 }
@@ -243,6 +264,12 @@ pub static mut CT_BINSEC_RSA_OTHER_32: [u8; 32] = [0u8; 32];
 pub static mut CT_BINSEC_RESULT: u8 = 0;
 
 #[inline(always)]
+/// Read a fixed-size byte array from a harness global.
+///
+/// # Safety
+///
+/// `ptr` must point to a valid, initialized array that remains readable for
+/// the duration of the volatile read.
 unsafe fn array_from_global<const N: usize>(ptr: *const [u8; N]) -> [u8; N] {
   // SAFETY: BINSEC harness globals are fixed-size byte arrays with static
   // storage duration. `read_volatile` keeps the symbolic bytes observable.
@@ -250,6 +277,12 @@ unsafe fn array_from_global<const N: usize>(ptr: *const [u8; N]) -> [u8; N] {
 }
 
 #[inline(always)]
+/// Read a fixed-size limb array from a harness global.
+///
+/// # Safety
+///
+/// `ptr` must point to a valid, initialized array that remains readable for
+/// the duration of the volatile read.
 unsafe fn limbs_from_global<const N: usize>(ptr: *const [u64; N]) -> [u64; N] {
   // SAFETY: BINSEC harness globals are fixed-size limb arrays with static
   // storage duration. `read_volatile` keeps the symbolic limbs observable.
@@ -555,8 +588,22 @@ macro_rules! aead_open_entry {
   };
 }
 
-aead_seal_entry!(ct_binsec_aes128gcm_seal, Aes128Gcm, Aes128GcmKey, Nonce96, CT_BINSEC_KEY_16, 0xA1);
-aead_seal_entry!(ct_binsec_aes256gcm_seal, Aes256Gcm, Aes256GcmKey, Nonce96, CT_BINSEC_KEY_32, 0xA2);
+aead_seal_entry!(
+  ct_binsec_aes128gcm_seal,
+  Aes128Gcm,
+  Aes128GcmKey,
+  Nonce96,
+  CT_BINSEC_KEY_16,
+  0xA1
+);
+aead_seal_entry!(
+  ct_binsec_aes256gcm_seal,
+  Aes256Gcm,
+  Aes256GcmKey,
+  Nonce96,
+  CT_BINSEC_KEY_32,
+  0xA2
+);
 aead_seal_entry!(
   ct_binsec_aes128gcmsiv_seal,
   Aes128GcmSiv,
@@ -589,7 +636,14 @@ aead_seal_entry!(
   CT_BINSEC_KEY_32,
   0xA6
 );
-aead_seal_entry!(ct_binsec_aegis256_seal, Aegis256, Aegis256Key, Nonce256, CT_BINSEC_KEY_32, 0xA7);
+aead_seal_entry!(
+  ct_binsec_aegis256_seal,
+  Aegis256,
+  Aegis256Key,
+  Nonce256,
+  CT_BINSEC_KEY_32,
+  0xA7
+);
 aead_seal_entry!(
   ct_binsec_ascon_aead128_seal,
   AsconAead128,
@@ -599,8 +653,22 @@ aead_seal_entry!(
   0xA8
 );
 
-aead_open_entry!(ct_binsec_aes128gcm_open, Aes128Gcm, Aes128GcmKey, Nonce96, CT_BINSEC_KEY_16, 0xB1);
-aead_open_entry!(ct_binsec_aes256gcm_open, Aes256Gcm, Aes256GcmKey, Nonce96, CT_BINSEC_KEY_32, 0xB2);
+aead_open_entry!(
+  ct_binsec_aes128gcm_open,
+  Aes128Gcm,
+  Aes128GcmKey,
+  Nonce96,
+  CT_BINSEC_KEY_16,
+  0xB1
+);
+aead_open_entry!(
+  ct_binsec_aes256gcm_open,
+  Aes256Gcm,
+  Aes256GcmKey,
+  Nonce96,
+  CT_BINSEC_KEY_32,
+  0xB2
+);
 aead_open_entry!(
   ct_binsec_aes128gcmsiv_open,
   Aes128GcmSiv,
@@ -633,7 +701,14 @@ aead_open_entry!(
   CT_BINSEC_KEY_32,
   0xB6
 );
-aead_open_entry!(ct_binsec_aegis256_open, Aegis256, Aegis256Key, Nonce256, CT_BINSEC_KEY_32, 0xB7);
+aead_open_entry!(
+  ct_binsec_aegis256_open,
+  Aegis256,
+  Aegis256Key,
+  Nonce256,
+  CT_BINSEC_KEY_32,
+  0xB7
+);
 aead_open_entry!(
   ct_binsec_ascon_aead128_open,
   AsconAead128,
@@ -658,7 +733,8 @@ pub extern "C" fn ct_binsec_argon2i_hash() -> ! {
   for word in dst {
     acc ^= word;
   }
-  ct_binsec_done((acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56)) as u8)
+  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+  ct_binsec_done(folded.to_le_bytes()[0])
 }
 
 #[unsafe(no_mangle)]
@@ -726,7 +802,8 @@ pub extern "C" fn ct_binsec_curve25519_conditional_swap() -> ! {
   for limb in lhs.into_iter().chain(rhs) {
     acc ^= limb;
   }
-  ct_binsec_done((acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56)) as u8)
+  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+  ct_binsec_done(folded.to_le_bytes()[0])
 }
 
 #[unsafe(no_mangle)]
@@ -740,7 +817,8 @@ pub extern "C" fn ct_binsec_ed25519_select_basepoint_cached() -> ! {
   for limb in limbs {
     acc ^= limb;
   }
-  ct_binsec_done((acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56)) as u8)
+  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+  ct_binsec_done(folded.to_le_bytes()[0])
 }
 
 #[unsafe(no_mangle)]
@@ -754,7 +832,8 @@ pub extern "C" fn ct_binsec_ecdsa_p256_select_signing_generator_affine() -> ! {
   for limb in limbs {
     acc ^= limb;
   }
-  ct_binsec_done((acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56)) as u8)
+  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+  ct_binsec_done(folded.to_le_bytes()[0])
 }
 
 #[unsafe(no_mangle)]
@@ -768,7 +847,8 @@ pub extern "C" fn ct_binsec_ecdsa_p384_select_signing_generator_affine() -> ! {
   for limb in limbs {
     acc ^= limb;
   }
-  ct_binsec_done((acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56)) as u8)
+  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+  ct_binsec_done(folded.to_le_bytes()[0])
 }
 
 #[unsafe(no_mangle)]
@@ -784,7 +864,8 @@ pub extern "C" fn ct_binsec_rsa_private_select_window_power_4() -> ! {
   for limb in limbs {
     acc ^= limb;
   }
-  ct_binsec_done((acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56)) as u8)
+  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+  ct_binsec_done(folded.to_le_bytes()[0])
 }
 
 #[unsafe(no_mangle)]
@@ -804,6 +885,9 @@ pub extern "C" fn ct_binsec_rsa_private_component_validation_32() -> ! {
 #[unsafe(no_mangle)]
 #[inline(never)]
 #[target_feature(enable = "avx2")]
+/// # Safety
+///
+/// The caller must ensure AVX2 is available before invoking this entrypoint.
 pub unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_avx2() -> ! {
   // SAFETY: This pointer references a fixed harness global with static storage.
   let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ED25519_DIGIT)) };
@@ -815,13 +899,18 @@ pub unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_avx2() -> ! {
   for limb in limbs {
     acc ^= limb;
   }
-  ct_binsec_done((acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56)) as u8)
+  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+  ct_binsec_done(folded.to_le_bytes()[0])
 }
 
 #[cfg(target_arch = "x86_64")]
 #[unsafe(no_mangle)]
 #[inline(never)]
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+/// # Safety
+///
+/// The caller must ensure AVX2, AVX-512 IFMA, and AVX-512 VL are available
+/// before invoking this entrypoint.
 pub unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_ifma() -> ! {
   // SAFETY: This pointer references a fixed harness global with static storage.
   let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ED25519_DIGIT)) };
@@ -833,7 +922,8 @@ pub unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_ifma() -> ! {
   for limb in limbs {
     acc ^= limb;
   }
-  ct_binsec_done((acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56)) as u8)
+  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+  ct_binsec_done(folded.to_le_bytes()[0])
 }
 
 #[unsafe(no_mangle)]

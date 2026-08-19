@@ -34,31 +34,34 @@ fn oracle_hash(
   p: u32,
   out_len: usize,
 ) -> Vec<u8> {
-  let params = argon2::Params::new(m_kib, t, p, Some(out_len)).unwrap();
+  let params = argon2::Params::new(m_kib, t, p, Some(out_len))
+    .expect("RustCrypto must accept generated Argon2 differential parameters");
   let ctx = argon2::Argon2::new(algo, argon2::Version::V0x13, params);
   let mut out = vec![0u8; out_len];
-  ctx.hash_password_into(password, salt, &mut out).unwrap();
+  ctx
+    .hash_password_into(password, salt, &mut out)
+    .expect("RustCrypto Argon2 differential derivation must succeed");
   out
 }
 
 fn rs_hash_id(password: &[u8], salt: &[u8], m_kib: u32, t: u32, p: u32, out_len: usize) -> Vec<u8> {
-  let params = Argon2Params::new(m_kib, t, p).unwrap();
+  let params = Argon2Params::new(m_kib, t, p).expect("generated Argon2id parameters must be valid");
   let mut out = vec![0u8; out_len];
-  Argon2id::derive(&params, password, salt, &mut out).unwrap();
+  Argon2id::derive(&params, password, salt, &mut out).expect("Argon2id differential derivation must succeed");
   out
 }
 
 fn rs_hash_d(password: &[u8], salt: &[u8], m_kib: u32, t: u32, p: u32, out_len: usize) -> Vec<u8> {
-  let params = Argon2Params::new(m_kib, t, p).unwrap();
+  let params = Argon2Params::new(m_kib, t, p).expect("generated Argon2d parameters must be valid");
   let mut out = vec![0u8; out_len];
-  Argon2d::derive(&params, password, salt, &mut out).unwrap();
+  Argon2d::derive(&params, password, salt, &mut out).expect("Argon2d differential derivation must succeed");
   out
 }
 
 fn rs_hash_i(password: &[u8], salt: &[u8], m_kib: u32, t: u32, p: u32, out_len: usize) -> Vec<u8> {
-  let params = Argon2Params::new(m_kib, t, p).unwrap();
+  let params = Argon2Params::new(m_kib, t, p).expect("generated Argon2i parameters must be valid");
   let mut out = vec![0u8; out_len];
-  Argon2i::derive(&params, password, salt, &mut out).unwrap();
+  Argon2i::derive(&params, password, salt, &mut out).expect("Argon2i differential derivation must succeed");
   out
 }
 
@@ -74,7 +77,7 @@ proptest! {
     p in 1u32..=2,
     out_len in proptest::sample::select(vec![16usize, 32, 48]),
   ) {
-    prop_assume!(m >= 8 * p);
+    prop_assume!(m >= p.strict_mul(8));
     let actual = rs_hash_id(&password, &salt, m, t, p, out_len);
     let expected = oracle_hash(argon2::Algorithm::Argon2id, &password, &salt, m, t, p, out_len);
     prop_assert_eq!(actual, expected);
@@ -89,7 +92,7 @@ proptest! {
     p in 1u32..=2,
     out_len in proptest::sample::select(vec![16usize, 32, 48]),
   ) {
-    prop_assume!(m >= 8 * p);
+    prop_assume!(m >= p.strict_mul(8));
     let actual = rs_hash_d(&password, &salt, m, t, p, out_len);
     let expected = oracle_hash(argon2::Algorithm::Argon2d, &password, &salt, m, t, p, out_len);
     prop_assert_eq!(actual, expected);
@@ -104,7 +107,7 @@ proptest! {
     p in 1u32..=2,
     out_len in proptest::sample::select(vec![16usize, 32, 48]),
   ) {
-    prop_assume!(m >= 8 * p);
+    prop_assume!(m >= p.strict_mul(8));
     let actual = rs_hash_i(&password, &salt, m, t, p, out_len);
     let expected = oracle_hash(argon2::Algorithm::Argon2i, &password, &salt, m, t, p, out_len);
     prop_assert_eq!(actual, expected);
@@ -118,12 +121,14 @@ proptest! {
     t in 1u32..=2,
     p in 1u32..=2,
   ) {
-    prop_assume!(m >= 8 * p);
+    prop_assume!(m >= p.strict_mul(8));
     let params = Argon2Params::new(m, t, p)
-      .unwrap();
+      .expect("generated Argon2 verification parameters must be valid");
     let mut hash = [0u8; 32];
-    Argon2id::derive(&params, &password, &salt, &mut hash).unwrap();
-    prop_assert!(Argon2id::verify(&params, &password, &salt, &hash).is_ok());
+    Argon2id::derive(&params, &password, &salt, &mut hash)
+      .expect("Argon2id verification fixture must derive");
+    Argon2id::verify(&params, &password, &salt, &hash)
+      .expect("fresh Argon2id property-test hash must verify");
   }
 }
 
@@ -173,45 +178,43 @@ fn argon2id_p8_matches_oracle() {
 /// — see the doc comment on `verify` in `src/auth/argon2/mod.rs`.
 #[test]
 fn argon2id_verify_rejects_length_mismatch() {
-  let params = Argon2Params::new(8, 1, 1).unwrap();
+  let params = Argon2Params::new(8, 1, 1).expect("length-mismatch test parameters must be valid");
   let password = b"pw";
   let salt = b"saltsalt";
   let mut hash = [0u8; 32];
-  Argon2id::derive(&params, password, salt, &mut hash).unwrap();
+  Argon2id::derive(&params, password, salt, &mut hash).expect("length-mismatch fixture must derive");
 
   // Sanity: correct length verifies.
-  assert!(Argon2id::verify(&params, password, salt, &hash).is_ok());
+  Argon2id::verify(&params, password, salt, &hash).expect("fresh Argon2id hash must verify");
 
   // Various wrong lengths: shorter, longer, empty.
   let too_short: &[u8] = &hash[..16];
   let too_long: &[u8] = &[hash.as_ref(), &[0u8; 8]].concat()[..40];
   let empty: &[u8] = &[];
 
-  assert!(Argon2id::verify(&params, password, salt, too_short).is_err());
-  assert!(Argon2id::verify(&params, password, salt, too_long).is_err());
-  assert!(Argon2id::verify(&params, password, salt, empty).is_err());
+  Argon2id::verify(&params, password, salt, too_short).expect_err("Argon2id must reject a short hash");
+  Argon2id::verify(&params, password, salt, too_long).expect_err("Argon2id must reject a long hash");
+  Argon2id::verify(&params, password, salt, empty).expect_err("Argon2id must reject an empty hash");
 
   // And a length one byte off in either direction — the boundary cases.
   let off_minus_one: &[u8] = &hash[..31];
   let off_plus_one: &[u8] = &[hash.as_ref(), &[0u8; 1]].concat();
-  assert!(Argon2id::verify(&params, password, salt, off_minus_one).is_err());
-  assert!(Argon2id::verify(&params, password, salt, off_plus_one).is_err());
+  Argon2id::verify(&params, password, salt, off_minus_one).expect_err("Argon2id must reject a hash one byte too short");
+  Argon2id::verify(&params, password, salt, off_plus_one).expect_err("Argon2id must reject a hash one byte too long");
 }
 
 #[test]
 fn argon2id_verify_rejects_byte_flip_at_every_position() {
-  let params = Argon2Params::new(32, 2, 1).unwrap();
+  let params = Argon2Params::new(32, 2, 1).expect("byte-flip test parameters must be valid");
   let password = b"correct horse battery staple";
   let salt = b"random-salt-1234";
   let mut hash = [0u8; 32];
-  Argon2id::derive(&params, password, salt, &mut hash).unwrap();
+  Argon2id::derive(&params, password, salt, &mut hash).expect("byte-flip fixture must derive");
 
   for pos in 0..hash.len() {
     let mut tampered = hash;
     tampered[pos] ^= 0x01;
-    assert!(
-      Argon2id::verify(&params, password, salt, &tampered).is_err(),
-      "verify must reject flip at byte {pos}"
-    );
+    Argon2id::verify(&params, password, salt, &tampered)
+      .expect_err("Argon2id must reject a hash with any flipped byte");
   }
 }

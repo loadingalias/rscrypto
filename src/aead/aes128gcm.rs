@@ -1,5 +1,3 @@
-#![allow(clippy::indexing_slicing)]
-
 //! AES-128-GCM public AEAD surface (NIST SP 800-38D).
 
 use core::fmt;
@@ -277,9 +275,9 @@ fn ghash_update_padded(mut acc: u128, h_polyval: u128, data: &[u8]) -> u128 {
 #[inline]
 fn ghash_update_padded_wide(mut acc: u128, h_polyval: u128, h_powers_rev: &[u128; 4], data: &[u8]) -> u128 {
   let (full_blocks, remainder) = data.as_chunks::<16>();
-  let mut chunks = full_blocks.chunks_exact(4);
+  let (chunks, trailing_blocks) = full_blocks.as_chunks::<4>();
 
-  for chunk in &mut chunks {
+  for chunk in chunks {
     let blocks = [
       u128::from_be_bytes(chunk[0]),
       u128::from_be_bytes(chunk[1]),
@@ -289,7 +287,7 @@ fn ghash_update_padded_wide(mut acc: u128, h_polyval: u128, h_powers_rev: &[u128
     acc = polyval::accumulate_4blocks(acc, h_polyval, h_powers_rev, &blocks);
   }
 
-  for block in chunks.remainder() {
+  for block in trailing_blocks {
     acc ^= u128::from_be_bytes(*block);
     acc = polyval::clmul128_reduce(acc, h_polyval);
   }
@@ -380,6 +378,7 @@ fn encrypt_j0_tag(ek: &aes::Aes128EncKey, j0: &[u8; 16], acc: u128) -> [u8; TAG_
 }
 
 #[cfg(feature = "diag")]
+/// Exercise AES-128 counter-mode encryption and fold the fixed diagnostic output to one block.
 #[must_use]
 pub fn diag_aes128gcm_ctr32_be(cipher: &Aes128Gcm, nonce: &Nonce96, plaintext: &[u8; 44]) -> [u8; 16] {
   let (_, ctr_block) = make_j0_and_ctr(nonce);
@@ -389,6 +388,7 @@ pub fn diag_aes128gcm_ctr32_be(cipher: &Aes128Gcm, nonce: &Nonce96, plaintext: &
 }
 
 #[cfg(feature = "diag")]
+/// Return the AES-128-GCM GHASH accumulator for diagnostic backend comparison.
 #[unsafe(no_mangle)]
 #[inline(never)]
 #[must_use]
@@ -412,6 +412,7 @@ pub fn diag_aes128gcm_ghash(cipher: &Aes128Gcm, aad: &[u8], ciphertext: &[u8]) -
 }
 
 #[cfg(feature = "diag")]
+/// Encrypt a diagnostic GHASH accumulator into the final AES-128-GCM tag.
 #[must_use]
 pub fn diag_aes128gcm_tag_aes(cipher: &Aes128Gcm, nonce: &Nonce96, acc: &[u8; 16]) -> [u8; 16] {
   let (j0, _) = make_j0_and_ctr(nonce);
@@ -505,9 +506,9 @@ unsafe fn ghash_update_padded_wide_aarch64(
   data: &[u8],
 ) -> u128 {
   let (full_blocks, remainder) = data.as_chunks::<16>();
-  let mut chunks = full_blocks.chunks_exact(4);
+  let (chunks, trailing_blocks) = full_blocks.as_chunks::<4>();
 
-  for chunk in &mut chunks {
+  for chunk in chunks {
     let blocks = [
       u128::from_be_bytes(chunk[0]),
       u128::from_be_bytes(chunk[1]),
@@ -520,7 +521,7 @@ unsafe fn ghash_update_padded_wide_aarch64(
     acc = unsafe { polyval::aarch64_aggregate_4blocks_inline(acc, h_powers_rev, &blocks) };
   }
 
-  for block in chunks.remainder() {
+  for block in trailing_blocks {
     acc ^= u128::from_be_bytes(*block);
     // SAFETY: PMULL carryless multiply because:
     // 1. This function's caller must guarantee AES-CE/PMULL availability.
@@ -549,9 +550,9 @@ unsafe fn ghash_update_padded_wide_aarch64(
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 unsafe fn ghash_update_padded_wide_ppc(mut acc: u128, h_polyval: u128, h_powers_rev: &[u128; 4], data: &[u8]) -> u128 {
   let (full_blocks, remainder) = data.as_chunks::<16>();
-  let mut chunks = full_blocks.chunks_exact(4);
+  let (chunks, trailing_blocks) = full_blocks.as_chunks::<4>();
 
-  for chunk in &mut chunks {
+  for chunk in chunks {
     let blocks = [
       u128::from_be_bytes(chunk[0]),
       u128::from_be_bytes(chunk[1]),
@@ -564,7 +565,7 @@ unsafe fn ghash_update_padded_wide_ppc(mut acc: u128, h_polyval: u128, h_powers_
     acc = unsafe { polyval::ppc_aggregate_4blocks_inline(acc, h_powers_rev, &blocks) };
   }
 
-  for block in chunks.remainder() {
+  for block in trailing_blocks {
     acc ^= u128::from_be_bytes(*block);
     // SAFETY: POWER8 carryless multiply because:
     // 1. This function's caller must guarantee POWER8 crypto availability.
@@ -775,10 +776,6 @@ impl Aead for Aes128Gcm {
       // 2. `aad` is a valid byte slice; padding is handled inside the helper.
       let mut acc =
         GhashAccumulator(unsafe { ghash_update_padded_wide_aarch64(0, h_polyval, &self.h_powers_rev, aad) });
-      // SAFETY: fused intrinsic AArch64 AES-GCM sealing because:
-      // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed AES-CE
-      //    and PMULL.
-      // 2. The helper encrypts `buffer` in place and folds the resulting ciphertext into GHASH.
       let tables = aes::Aarch64GcmTables {
         h_polyval,
         h_powers_rev: &self.h_powers_rev,
@@ -929,10 +926,6 @@ impl Aead for Aes128Gcm {
       // 2. `aad` is a valid byte slice; padding is handled inside the helper.
       let mut acc =
         GhashAccumulator(unsafe { ghash_update_padded_wide_aarch64(0, h_polyval, &self.h_powers_rev, aad) });
-      // SAFETY: fused intrinsic AArch64 AES-GCM open because:
-      // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed AES-CE
-      //    and PMULL.
-      // 2. The helper GHASHes ciphertext bytes before decrypting each chunk in place.
       let tables = aes::Aarch64GcmTables {
         h_polyval,
         h_powers_rev: &self.h_powers_rev,
@@ -1076,10 +1069,13 @@ impl Drop for Aes128Gcm {
 
 #[cfg(test)]
 mod tests {
-  use alloc::{vec, vec::Vec};
+  use alloc::vec;
 
   use super::*;
-  use crate::aead::expert::AeadWithNonce;
+  use crate::aead::{
+    expert::AeadWithNonce,
+    test_vectors::{hex_vec, hex12, hex16},
+  };
 
   // NIST SP 800-38D Test Case 1: AES-128-GCM, empty plaintext, empty AAD.
   // Key:  00000000000000000000000000000000
@@ -1097,10 +1093,14 @@ mod tests {
     let expected_tag = hex16("58e2fccefa7e3061367f1d57a4e7455a");
 
     let mut buf = vec![];
-    let tag = cipher.encrypt_in_place(&nonce, &[], &mut buf).unwrap();
+    let tag = cipher
+      .encrypt_in_place(&nonce, &[], &mut buf)
+      .expect("NIST empty AES-128-GCM encryption must succeed");
     assert_eq!(tag.0, expected_tag, "Tag mismatch on encrypt");
 
-    cipher.decrypt_in_place(&nonce, &[], &mut buf, &tag).unwrap();
+    cipher
+      .decrypt_in_place(&nonce, &[], &mut buf, &tag)
+      .expect("NIST empty AES-128-GCM decryption must succeed");
   }
 
   // NIST SP 800-38D Test Case 2: AES-128-GCM, 16-byte zero plaintext, empty AAD.
@@ -1120,11 +1120,15 @@ mod tests {
     let expected_tag = hex16("ab6e47d42cec13bdf53a67b21257bddf");
 
     let mut buf = vec![0u8; 16];
-    let tag = cipher.encrypt_in_place(&nonce, &[], &mut buf).unwrap();
+    let tag = cipher
+      .encrypt_in_place(&nonce, &[], &mut buf)
+      .expect("NIST one-block AES-128-GCM encryption must succeed");
     assert_eq!(buf, expected_ct, "Ciphertext mismatch");
     assert_eq!(tag.0, expected_tag, "Tag mismatch");
 
-    cipher.decrypt_in_place(&nonce, &[], &mut buf, &tag).unwrap();
+    cipher
+      .decrypt_in_place(&nonce, &[], &mut buf, &tag)
+      .expect("NIST one-block AES-128-GCM decryption must succeed");
     assert_eq!(buf, vec![0u8; 16], "Plaintext mismatch after decrypt");
   }
 
@@ -1150,11 +1154,15 @@ mod tests {
     let cipher = Aes128Gcm::new(&key);
 
     let mut buf = plaintext.clone();
-    let tag = cipher.encrypt_in_place(&nonce, &[], &mut buf).unwrap();
+    let tag = cipher
+      .encrypt_in_place(&nonce, &[], &mut buf)
+      .expect("NIST multi-block AES-128-GCM encryption must succeed");
     assert_eq!(buf, expected_ct, "Ciphertext mismatch");
     assert_eq!(tag.0, expected_tag, "Tag mismatch");
 
-    cipher.decrypt_in_place(&nonce, &[], &mut buf, &tag).unwrap();
+    cipher
+      .decrypt_in_place(&nonce, &[], &mut buf, &tag)
+      .expect("NIST multi-block AES-128-GCM decryption must succeed");
     assert_eq!(buf, plaintext, "Plaintext mismatch after decrypt");
   }
 
@@ -1181,11 +1189,15 @@ mod tests {
     let cipher = Aes128Gcm::new(&key);
 
     let mut buf = plaintext.clone();
-    let tag = cipher.encrypt_in_place(&nonce, &aad, &mut buf).unwrap();
+    let tag = cipher
+      .encrypt_in_place(&nonce, &aad, &mut buf)
+      .expect("NIST AES-128-GCM encryption with AAD must succeed");
     assert_eq!(buf, expected_ct, "Ciphertext mismatch");
     assert_eq!(tag.0, expected_tag, "Tag mismatch");
 
-    cipher.decrypt_in_place(&nonce, &aad, &mut buf, &tag).unwrap();
+    cipher
+      .decrypt_in_place(&nonce, &aad, &mut buf, &tag)
+      .expect("NIST AES-128-GCM decryption with AAD must succeed");
     assert_eq!(buf, plaintext, "Plaintext mismatch after decrypt");
   }
 
@@ -1197,11 +1209,15 @@ mod tests {
     let cipher = Aes128Gcm::new(&key);
 
     let mut buf = vec![0u8; 16];
-    let mut tag = cipher.encrypt_in_place(&nonce, &[], &mut buf).unwrap();
+    let mut tag = cipher
+      .encrypt_in_place(&nonce, &[], &mut buf)
+      .expect("AES-128-GCM test setup encryption must succeed");
     tag.0[0] ^= 1;
 
-    let result = cipher.decrypt_in_place(&nonce, &[], &mut buf, &tag);
-    assert!(result.is_err());
+    assert_eq!(
+      cipher.decrypt_in_place(&nonce, &[], &mut buf, &tag),
+      Err(OpenError::verification())
+    );
   }
 
   /// Decryption with wrong AAD should fail.
@@ -1210,14 +1226,17 @@ mod tests {
     let key = Aes128GcmKey::from_bytes(hex16("feffe9928665731c6d6a8f9467308308"));
     let nonce = Nonce96::from_bytes(hex12("cafebabefacedbaddecaf888"));
     let aad = hex_vec("feedfacedeadbeeffeedfacedeadbeefabaddad2");
-    let plaintext = hex_vec("d9313225f88406e5a55909c5aff5269a");
     let cipher = Aes128Gcm::new(&key);
 
-    let mut buf = plaintext.clone();
-    let tag = cipher.encrypt_in_place(&nonce, &aad, &mut buf).unwrap();
+    let mut buf = hex_vec("d9313225f88406e5a55909c5aff5269a");
+    let tag = cipher
+      .encrypt_in_place(&nonce, &aad, &mut buf)
+      .expect("AES-128-GCM test setup encryption must succeed");
 
-    let result = cipher.decrypt_in_place(&nonce, b"wrong aad", &mut buf, &tag);
-    assert!(result.is_err());
+    assert_eq!(
+      cipher.decrypt_in_place(&nonce, b"wrong aad", &mut buf, &tag),
+      Err(OpenError::verification())
+    );
   }
 
   /// Ciphertext tampering should fail verification.
@@ -1228,11 +1247,15 @@ mod tests {
     let cipher = Aes128Gcm::new(&key);
 
     let mut buf = vec![0u8; 32];
-    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
+    let tag = cipher
+      .encrypt_in_place(&nonce, b"aad", &mut buf)
+      .expect("AES-128-GCM test setup encryption must succeed");
 
     buf[0] ^= 1;
-    let result = cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &tag);
-    assert!(result.is_err());
+    assert_eq!(
+      cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &tag),
+      Err(OpenError::verification())
+    );
   }
 
   /// Detached encrypt/decrypt round-trip.
@@ -1245,10 +1268,14 @@ mod tests {
     let cipher = Aes128Gcm::new(&key);
 
     let mut buf = plaintext.to_vec();
-    let tag = cipher.encrypt_in_place(&nonce, aad, &mut buf).unwrap();
+    let tag = cipher
+      .encrypt_in_place(&nonce, aad, &mut buf)
+      .expect("AES-128-GCM detached encryption must succeed");
     assert_ne!(&buf[..], &plaintext[..]);
 
-    cipher.decrypt_in_place(&nonce, aad, &mut buf, &tag).unwrap();
+    cipher
+      .decrypt_in_place(&nonce, aad, &mut buf, &tag)
+      .expect("AES-128-GCM detached decryption must succeed");
     assert_eq!(&buf[..], &plaintext[..]);
   }
 
@@ -1262,20 +1289,34 @@ mod tests {
     let cipher = Aes128Gcm::new(&key);
 
     let mut out = vec![0u8; plaintext.len().strict_add(TAG_SIZE)];
-    cipher.encrypt(&nonce, aad, plaintext, &mut out).unwrap();
+    cipher
+      .encrypt(&nonce, aad, plaintext, &mut out)
+      .expect("AES-128-GCM combined encryption must succeed");
 
     let mut pt_out = vec![0u8; plaintext.len()];
-    cipher.decrypt(&nonce, aad, &out, &mut pt_out).unwrap();
+    cipher
+      .decrypt(&nonce, aad, &out, &mut pt_out)
+      .expect("AES-128-GCM combined decryption must succeed");
     assert_eq!(&pt_out[..], &plaintext[..]);
   }
 
   /// `tag_from_slice` rejects wrong-length input.
   #[test]
   fn tag_from_slice_rejects_bad_length() {
-    assert!(Aes128Gcm::tag_from_slice(&[0u8; 15]).is_err());
-    assert!(Aes128Gcm::tag_from_slice(&[0u8; 17]).is_err());
-    assert!(Aes128Gcm::tag_from_slice(&[0u8; 0]).is_err());
-    assert!(Aes128Gcm::tag_from_slice(&[0u8; 16]).is_ok());
+    assert_eq!(
+      Aes128Gcm::tag_from_slice(&[0u8; 15]).expect_err("short AES-128-GCM tag must be rejected"),
+      AeadBufferError::new()
+    );
+    assert_eq!(
+      Aes128Gcm::tag_from_slice(&[0u8; 17]).expect_err("long AES-128-GCM tag must be rejected"),
+      AeadBufferError::new()
+    );
+    assert_eq!(
+      Aes128Gcm::tag_from_slice(&[]).expect_err("empty AES-128-GCM tag must be rejected"),
+      AeadBufferError::new()
+    );
+    let tag = Aes128Gcm::tag_from_slice(&[0u8; 16]).expect("16-byte AES-128-GCM tag must be accepted");
+    assert_eq!(tag.as_bytes(), &[0u8; 16]);
   }
 
   /// Decryption with wrong nonce must fail.
@@ -1286,11 +1327,15 @@ mod tests {
     let cipher = Aes128Gcm::new(&key);
 
     let mut buf = *b"hello gcm";
-    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
+    let tag = cipher
+      .encrypt_in_place(&nonce, b"aad", &mut buf)
+      .expect("AES-128-GCM test setup encryption must succeed");
 
     let wrong_nonce = Nonce96::from_bytes([0x08u8; 12]);
-    let result = cipher.decrypt_in_place(&wrong_nonce, b"aad", &mut buf, &tag);
-    assert!(result.is_err());
+    assert_eq!(
+      cipher.decrypt_in_place(&wrong_nonce, b"aad", &mut buf, &tag),
+      Err(OpenError::verification())
+    );
   }
 
   /// On authentication failure, the output buffer must be zeroed.
@@ -1302,42 +1347,18 @@ mod tests {
 
     let plaintext = *b"zero me on failure";
     let mut buf = plaintext;
-    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
+    let tag = cipher
+      .encrypt_in_place(&nonce, b"aad", &mut buf)
+      .expect("AES-128-GCM test setup encryption must succeed");
 
     let mut bad_tag = tag.to_bytes();
     bad_tag[0] ^= 0xFF;
     let bad_tag = Aes128GcmTag::from_bytes(bad_tag);
 
-    let result = cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &bad_tag);
-    assert!(result.is_err());
+    assert_eq!(
+      cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &bad_tag),
+      Err(OpenError::verification())
+    );
     assert!(buf.iter().all(|&b| b == 0), "buffer not zeroed on auth failure");
-  }
-
-  // --- Hex helpers ---
-
-  fn hex16(hex: &str) -> [u8; 16] {
-    let mut out = [0u8; 16];
-    for i in 0..16 {
-      out[i] = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap();
-    }
-    out
-  }
-
-  fn hex12(hex: &str) -> [u8; 12] {
-    let mut out = [0u8; 12];
-    for i in 0..12 {
-      out[i] = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap();
-    }
-    out
-  }
-
-  fn hex_vec(hex: &str) -> Vec<u8> {
-    let mut out = Vec::with_capacity(hex.len() / 2);
-    let mut i = 0;
-    while i < hex.len() {
-      out.push(u8::from_str_radix(&hex[i..i + 2], 16).unwrap());
-      i += 2;
-    }
-    out
   }
 }

@@ -344,8 +344,15 @@ release_intent_condition=$(yq eval '.jobs."rail-plan".steps[] | select(.name == 
 [[ "$release_intent_condition" == *"startsWith(github.head_ref, 'rail/release-')"* \
   && "$release_intent_condition" == *"github.event.pull_request.head.repo.full_name == github.repository"* ]] \
   || fail "only repository-owned Cargo Rail release PRs may consume change intent"
-grep -Fq 'scripts/ci/setup-toolchain.sh "$TOOLCHAIN" "$TOOLCHAIN_COMPONENTS"' "$TOOLCHAIN_ACTION" \
+grep -Fq 'scripts/ci/setup-toolchain.sh "$TOOLCHAIN" "$TOOLCHAIN_COMPONENTS" "$GITHUB_ENV"' "$TOOLCHAIN_ACTION" \
   || fail "toolchain setup must use the repository-owned rustup policy"
+grep -Fq "printf 'RUSTUP_TOOLCHAIN=%s\\n' \"\$toolchain\" >>\"\$github_env\"" "$SETUP_TOOLCHAIN" \
+  || fail "toolchain setup must activate the resolved contract for later steps"
+grep -Fq 'RUSTUP_TOOLCHAIN="$TOOLCHAIN" rustc --version --verbose' "$TOOLCHAIN_ACTION" \
+  || fail "toolchain setup must verify the activated contract without a rust-toolchain override"
+if grep -Fq 'rustup default ' "$SETUP_TOOLCHAIN"; then
+  fail "toolchain setup must not mutate a runner-global default"
+fi
 if grep -Eq '[.]cargo/(bin|[.]crates)|[.]opam' "$SETUP_ACTION"; then
   fail "CI tool executables and OPAM switches must not be restored from caches"
 fi
@@ -686,7 +693,7 @@ group_musl=$(jq '[.groups.linux[] | select(contains("musl"))] | length' "$MANIFE
 [[ "$group_musl" -eq 2 ]] || fail "the target manifest must retain both MUSL triples"
 
 # shellcheck disable=SC2016 # `$target` is an intentional literal in the workflow contract regex.
-[[ $(count_matches 'cargo (check|clippy|build) --target "\$target"' "$CROSS_SCRIPT") -ge 3 ]] \
+[[ $(count_matches 'cargo (check|clippy|build) --locked --target "\$target"' "$CROSS_SCRIPT") -ge 3 ]] \
   || fail "MUSL evidence must pass the target triple explicitly to Cargo"
 
 echo "CI ownership contract passed"

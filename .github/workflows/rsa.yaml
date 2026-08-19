@@ -38,6 +38,7 @@ jobs:
       timeout_minutes: 60
       cache_key: rsa-miri-linux-x64
       tools_mode: minimal
+      toolchain_contract: nightly
       toolchain_components: "miri, rust-src"
       enable_magic_cache: true
       enable_rust_cache: true

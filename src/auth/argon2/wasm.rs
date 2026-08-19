@@ -36,14 +36,31 @@
 //! - ROR 63 ≡ ROL 1: shift-right + shift-left + OR.
 
 #![cfg(target_arch = "wasm32")]
-#![allow(clippy::cast_possible_truncation)]
 
 use core::arch::wasm32::{
-  i8x16_shuffle, i64x2_add, i64x2_mul, i64x2_shuffle, u64x2_shl, u64x2_shr, u64x2_splat, v128, v128_and, v128_load,
-  v128_or, v128_store, v128_xor,
+  i8x16_shuffle, i64x2_add, i64x2_mul, i64x2_shuffle, u64x2, u64x2_extract_lane, u64x2_shl, u64x2_shr, u64x2_splat,
+  v128, v128_and, v128_or, v128_xor,
 };
 
 use super::BLOCK_WORDS;
+
+struct RoundState {
+  a: [v128; 2],
+  b: [v128; 2],
+  c: [v128; 2],
+  d: [v128; 2],
+}
+
+#[inline(always)]
+fn load_pair<const N: usize>(words: &[u64; N], offset: usize) -> v128 {
+  u64x2(words[offset], words[offset.strict_add(1)])
+}
+
+#[inline(always)]
+fn store_pair<const N: usize>(words: &mut [u64; N], offset: usize, value: v128) {
+  words[offset] = u64x2_extract_lane::<0>(value);
+  words[offset.strict_add(1)] = u64x2_extract_lane::<1>(value);
+}
 
 /// WebAssembly SIMD128 BlaMka compression kernel.
 ///
@@ -60,190 +77,150 @@ pub(super) unsafe fn compress_simd128(
   y: &[u64; BLOCK_WORDS],
   xor_into: bool,
 ) {
-  // SAFETY: simd128 is enabled by this function's `#[target_feature]`
-  // attribute, so all `v128`/`u64x2_*` ops below are valid to call.
-  unsafe {
-    // R = X XOR Y, materialised to scratch for re-reads during the
-    // row + column passes plus the final XOR.
-    let mut r = [0u64; BLOCK_WORDS];
-    let mut q = [0u64; BLOCK_WORDS];
-    let mut i = 0;
-    while i < BLOCK_WORDS {
-      let xv = v128_load(x.as_ptr().add(i).cast());
-      let yv = v128_load(y.as_ptr().add(i).cast());
-      let rv = v128_xor(xv, yv);
-      v128_store(r.as_mut_ptr().add(i).cast(), rv);
-      v128_store(q.as_mut_ptr().add(i).cast(), rv);
-      i += 2;
-    }
+  // R = X XOR Y, materialised to scratch for re-reads during the
+  // row + column passes plus the final XOR.
+  let mut r = [0u64; BLOCK_WORDS];
+  let mut q = [0u64; BLOCK_WORDS];
+  let mut i = 0usize;
+  while i < BLOCK_WORDS {
+    let rv = v128_xor(load_pair(x, i), load_pair(y, i));
+    store_pair(&mut r, i, rv);
+    store_pair(&mut q, i, rv);
+    i = i.strict_add(2);
+  }
 
-    // Row pass: 8 P-rounds on contiguous 16-u64 chunks of q[].
-    let mut row = 0usize;
-    while row < 8 {
-      let base = row * 16;
-      let mut a_lo = v128_load(q.as_ptr().add(base).cast());
-      let mut a_hi = v128_load(q.as_ptr().add(base + 2).cast());
-      let mut b_lo = v128_load(q.as_ptr().add(base + 4).cast());
-      let mut b_hi = v128_load(q.as_ptr().add(base + 6).cast());
-      let mut c_lo = v128_load(q.as_ptr().add(base + 8).cast());
-      let mut c_hi = v128_load(q.as_ptr().add(base + 10).cast());
-      let mut d_lo = v128_load(q.as_ptr().add(base + 12).cast());
-      let mut d_hi = v128_load(q.as_ptr().add(base + 14).cast());
+  // Row pass: 8 P-rounds on contiguous 16-u64 chunks of q[].
+  let mut row = 0usize;
+  while row < 8 {
+    let base = row.strict_mul(16);
+    let mut state = RoundState {
+      a: [load_pair(&q, base), load_pair(&q, base.strict_add(2))],
+      b: [load_pair(&q, base.strict_add(4)), load_pair(&q, base.strict_add(6))],
+      c: [load_pair(&q, base.strict_add(8)), load_pair(&q, base.strict_add(10))],
+      d: [load_pair(&q, base.strict_add(12)), load_pair(&q, base.strict_add(14))],
+    };
 
-      p_round(
-        &mut a_lo, &mut a_hi, &mut b_lo, &mut b_hi, &mut c_lo, &mut c_hi, &mut d_lo, &mut d_hi,
-      );
+    p_round(&mut state);
 
-      v128_store(q.as_mut_ptr().add(base).cast(), a_lo);
-      v128_store(q.as_mut_ptr().add(base + 2).cast(), a_hi);
-      v128_store(q.as_mut_ptr().add(base + 4).cast(), b_lo);
-      v128_store(q.as_mut_ptr().add(base + 6).cast(), b_hi);
-      v128_store(q.as_mut_ptr().add(base + 8).cast(), c_lo);
-      v128_store(q.as_mut_ptr().add(base + 10).cast(), c_hi);
-      v128_store(q.as_mut_ptr().add(base + 12).cast(), d_lo);
-      v128_store(q.as_mut_ptr().add(base + 14).cast(), d_hi);
-      row += 1;
-    }
+    store_pair(&mut q, base, state.a[0]);
+    store_pair(&mut q, base.strict_add(2), state.a[1]);
+    store_pair(&mut q, base.strict_add(4), state.b[0]);
+    store_pair(&mut q, base.strict_add(6), state.b[1]);
+    store_pair(&mut q, base.strict_add(8), state.c[0]);
+    store_pair(&mut q, base.strict_add(10), state.c[1]);
+    store_pair(&mut q, base.strict_add(12), state.d[0]);
+    store_pair(&mut q, base.strict_add(14), state.d[1]);
+    row = row.strict_add(1);
+  }
 
-    // Column pass: 8 P-rounds on stride-16 u64 sequences. Each lane of
-    // 2 u64 is loaded directly from the natural row-major positions —
-    // see RFC 9106 §3.6 column-step indexing.
-    let mut col = 0usize;
-    while col < 8 {
-      let base = col * 2;
-      let mut a_lo = v128_load(q.as_ptr().add(base).cast());
-      let mut a_hi = v128_load(q.as_ptr().add(base + 16).cast());
-      let mut b_lo = v128_load(q.as_ptr().add(base + 32).cast());
-      let mut b_hi = v128_load(q.as_ptr().add(base + 48).cast());
-      let mut c_lo = v128_load(q.as_ptr().add(base + 64).cast());
-      let mut c_hi = v128_load(q.as_ptr().add(base + 80).cast());
-      let mut d_lo = v128_load(q.as_ptr().add(base + 96).cast());
-      let mut d_hi = v128_load(q.as_ptr().add(base + 112).cast());
+  // Column pass: 8 P-rounds on stride-16 u64 sequences. Each lane of
+  // 2 u64 is loaded directly from the natural row-major positions —
+  // see RFC 9106 §3.6 column-step indexing.
+  let mut col = 0usize;
+  while col < 8 {
+    let base = col.strict_mul(2);
+    let mut state = RoundState {
+      a: [load_pair(&q, base), load_pair(&q, base.strict_add(16))],
+      b: [load_pair(&q, base.strict_add(32)), load_pair(&q, base.strict_add(48))],
+      c: [load_pair(&q, base.strict_add(64)), load_pair(&q, base.strict_add(80))],
+      d: [load_pair(&q, base.strict_add(96)), load_pair(&q, base.strict_add(112))],
+    };
 
-      p_round(
-        &mut a_lo, &mut a_hi, &mut b_lo, &mut b_hi, &mut c_lo, &mut c_hi, &mut d_lo, &mut d_hi,
-      );
+    p_round(&mut state);
 
-      v128_store(q.as_mut_ptr().add(base).cast(), a_lo);
-      v128_store(q.as_mut_ptr().add(base + 16).cast(), a_hi);
-      v128_store(q.as_mut_ptr().add(base + 32).cast(), b_lo);
-      v128_store(q.as_mut_ptr().add(base + 48).cast(), b_hi);
-      v128_store(q.as_mut_ptr().add(base + 64).cast(), c_lo);
-      v128_store(q.as_mut_ptr().add(base + 80).cast(), c_hi);
-      v128_store(q.as_mut_ptr().add(base + 96).cast(), d_lo);
-      v128_store(q.as_mut_ptr().add(base + 112).cast(), d_hi);
-      col += 1;
-    }
+    store_pair(&mut q, base, state.a[0]);
+    store_pair(&mut q, base.strict_add(16), state.a[1]);
+    store_pair(&mut q, base.strict_add(32), state.b[0]);
+    store_pair(&mut q, base.strict_add(48), state.b[1]);
+    store_pair(&mut q, base.strict_add(64), state.c[0]);
+    store_pair(&mut q, base.strict_add(80), state.c[1]);
+    store_pair(&mut q, base.strict_add(96), state.d[0]);
+    store_pair(&mut q, base.strict_add(112), state.d[1]);
+    col = col.strict_add(1);
+  }
 
-    // Final XOR with R, fused with dst store/xor.
-    let mut i = 0;
-    while i < BLOCK_WORDS {
-      let qv = v128_load(q.as_ptr().add(i).cast());
-      let rv = v128_load(r.as_ptr().add(i).cast());
-      let f = v128_xor(qv, rv);
-      if xor_into {
-        let cur = v128_load(dst.as_ptr().add(i).cast());
-        v128_store(dst.as_mut_ptr().add(i).cast(), v128_xor(cur, f));
-      } else {
-        v128_store(dst.as_mut_ptr().add(i).cast(), f);
-      }
-      i += 2;
-    }
+  // Final XOR with R, fused with dst store/xor.
+  let mut i = 0usize;
+  while i < BLOCK_WORDS {
+    let f = v128_xor(load_pair(&q, i), load_pair(&r, i));
+    let output = if xor_into { v128_xor(load_pair(dst, i), f) } else { f };
+    store_pair(dst, i, output);
+    i = i.strict_add(2);
   }
 }
 
 // ─── 4-way P-round ─────────────────────────────────────────────────────────
 
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
-fn p_round(
-  a_lo: &mut v128,
-  a_hi: &mut v128,
-  b_lo: &mut v128,
-  b_hi: &mut v128,
-  c_lo: &mut v128,
-  c_hi: &mut v128,
-  d_lo: &mut v128,
-  d_hi: &mut v128,
-) {
+fn p_round(state: &mut RoundState) {
   // Column step.
-  gb(a_lo, a_hi, b_lo, b_hi, c_lo, c_hi, d_lo, d_hi);
+  gb(state);
 
   // Diagonalise: rotate b by 1, c by 2, d by 3 across the 4-lane row.
-  let tb_lo = *b_lo;
-  let tb_hi = *b_hi;
-  *b_lo = i64x2_shuffle::<1, 2>(tb_lo, tb_hi);
-  *b_hi = i64x2_shuffle::<1, 2>(tb_hi, tb_lo);
+  let tb_lo = state.b[0];
+  let tb_hi = state.b[1];
+  state.b[0] = i64x2_shuffle::<1, 2>(tb_lo, tb_hi);
+  state.b[1] = i64x2_shuffle::<1, 2>(tb_hi, tb_lo);
 
-  core::mem::swap(c_lo, c_hi);
+  state.c.swap(0, 1);
 
-  let td_lo = *d_lo;
-  let td_hi = *d_hi;
-  *d_lo = i64x2_shuffle::<1, 2>(td_hi, td_lo);
-  *d_hi = i64x2_shuffle::<1, 2>(td_lo, td_hi);
+  let td_lo = state.d[0];
+  let td_hi = state.d[1];
+  state.d[0] = i64x2_shuffle::<1, 2>(td_hi, td_lo);
+  state.d[1] = i64x2_shuffle::<1, 2>(td_lo, td_hi);
 
   // Diagonal step.
-  gb(a_lo, a_hi, b_lo, b_hi, c_lo, c_hi, d_lo, d_hi);
+  gb(state);
 
   // Undo diagonalisation.
-  let tb_lo = *b_lo;
-  let tb_hi = *b_hi;
-  *b_lo = i64x2_shuffle::<1, 2>(tb_hi, tb_lo);
-  *b_hi = i64x2_shuffle::<1, 2>(tb_lo, tb_hi);
+  let tb_lo = state.b[0];
+  let tb_hi = state.b[1];
+  state.b[0] = i64x2_shuffle::<1, 2>(tb_hi, tb_lo);
+  state.b[1] = i64x2_shuffle::<1, 2>(tb_lo, tb_hi);
 
-  core::mem::swap(c_lo, c_hi);
+  state.c.swap(0, 1);
 
-  let td_lo = *d_lo;
-  let td_hi = *d_hi;
-  *d_lo = i64x2_shuffle::<1, 2>(td_lo, td_hi);
-  *d_hi = i64x2_shuffle::<1, 2>(td_hi, td_lo);
+  let td_lo = state.d[0];
+  let td_hi = state.d[1];
+  state.d[0] = i64x2_shuffle::<1, 2>(td_lo, td_hi);
+  state.d[1] = i64x2_shuffle::<1, 2>(td_hi, td_lo);
 }
 
 // ─── 4-way BlaMka G ────────────────────────────────────────────────────────
 
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
-fn gb(
-  a_lo: &mut v128,
-  a_hi: &mut v128,
-  b_lo: &mut v128,
-  b_hi: &mut v128,
-  c_lo: &mut v128,
-  c_hi: &mut v128,
-  d_lo: &mut v128,
-  d_hi: &mut v128,
-) {
+fn gb(state: &mut RoundState) {
   // Step 1: a = a + b + 2·lsb(a)·lsb(b)
-  let p_lo = bla_mul(*a_lo, *b_lo);
-  let p_hi = bla_mul(*a_hi, *b_hi);
-  *a_lo = i64x2_add(i64x2_add(*a_lo, *b_lo), p_lo);
-  *a_hi = i64x2_add(i64x2_add(*a_hi, *b_hi), p_hi);
-  *d_lo = ror32(v128_xor(*d_lo, *a_lo));
-  *d_hi = ror32(v128_xor(*d_hi, *a_hi));
+  let p_lo = bla_mul(state.a[0], state.b[0]);
+  let p_hi = bla_mul(state.a[1], state.b[1]);
+  state.a[0] = i64x2_add(i64x2_add(state.a[0], state.b[0]), p_lo);
+  state.a[1] = i64x2_add(i64x2_add(state.a[1], state.b[1]), p_hi);
+  state.d[0] = ror32(v128_xor(state.d[0], state.a[0]));
+  state.d[1] = ror32(v128_xor(state.d[1], state.a[1]));
 
   // Step 2: c = c + d + 2·lsb(c)·lsb(d)
-  let p_lo = bla_mul(*c_lo, *d_lo);
-  let p_hi = bla_mul(*c_hi, *d_hi);
-  *c_lo = i64x2_add(i64x2_add(*c_lo, *d_lo), p_lo);
-  *c_hi = i64x2_add(i64x2_add(*c_hi, *d_hi), p_hi);
-  *b_lo = ror24(v128_xor(*b_lo, *c_lo));
-  *b_hi = ror24(v128_xor(*b_hi, *c_hi));
+  let p_lo = bla_mul(state.c[0], state.d[0]);
+  let p_hi = bla_mul(state.c[1], state.d[1]);
+  state.c[0] = i64x2_add(i64x2_add(state.c[0], state.d[0]), p_lo);
+  state.c[1] = i64x2_add(i64x2_add(state.c[1], state.d[1]), p_hi);
+  state.b[0] = ror24(v128_xor(state.b[0], state.c[0]));
+  state.b[1] = ror24(v128_xor(state.b[1], state.c[1]));
 
   // Step 3: a = a + b + 2·lsb(a)·lsb(b)
-  let p_lo = bla_mul(*a_lo, *b_lo);
-  let p_hi = bla_mul(*a_hi, *b_hi);
-  *a_lo = i64x2_add(i64x2_add(*a_lo, *b_lo), p_lo);
-  *a_hi = i64x2_add(i64x2_add(*a_hi, *b_hi), p_hi);
-  *d_lo = ror16(v128_xor(*d_lo, *a_lo));
-  *d_hi = ror16(v128_xor(*d_hi, *a_hi));
+  let p_lo = bla_mul(state.a[0], state.b[0]);
+  let p_hi = bla_mul(state.a[1], state.b[1]);
+  state.a[0] = i64x2_add(i64x2_add(state.a[0], state.b[0]), p_lo);
+  state.a[1] = i64x2_add(i64x2_add(state.a[1], state.b[1]), p_hi);
+  state.d[0] = ror16(v128_xor(state.d[0], state.a[0]));
+  state.d[1] = ror16(v128_xor(state.d[1], state.a[1]));
 
   // Step 4: c = c + d + 2·lsb(c)·lsb(d)
-  let p_lo = bla_mul(*c_lo, *d_lo);
-  let p_hi = bla_mul(*c_hi, *d_hi);
-  *c_lo = i64x2_add(i64x2_add(*c_lo, *d_lo), p_lo);
-  *c_hi = i64x2_add(i64x2_add(*c_hi, *d_hi), p_hi);
-  *b_lo = ror63(v128_xor(*b_lo, *c_lo));
-  *b_hi = ror63(v128_xor(*b_hi, *c_hi));
+  let p_lo = bla_mul(state.c[0], state.d[0]);
+  let p_hi = bla_mul(state.c[1], state.d[1]);
+  state.c[0] = i64x2_add(i64x2_add(state.c[0], state.d[0]), p_lo);
+  state.c[1] = i64x2_add(i64x2_add(state.c[1], state.d[1]), p_hi);
+  state.b[0] = ror63(v128_xor(state.b[0], state.c[0]));
+  state.b[1] = ror63(v128_xor(state.b[1], state.c[1]));
 }
 
 // ─── Micro-ops ─────────────────────────────────────────────────────────────

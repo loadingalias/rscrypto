@@ -5,8 +5,6 @@
 //! backends. This module owns the ABI boundary; `ed25519.rs` owns
 //! public-key/signature validation semantics.
 
-#![allow(unsafe_code)]
-
 use core::arch::global_asm;
 
 use super::constants::{PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH};

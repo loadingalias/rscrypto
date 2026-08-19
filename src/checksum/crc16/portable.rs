@@ -5,13 +5,13 @@ use crate::checksum::common::portable;
 
 /// CRC-16/CCITT (X25 / IBM-SDLC) slice-by-8 computation.
 #[inline]
-pub fn crc16_ccitt_slice8(crc: u16, data: &[u8]) -> u16 {
+pub(in crate::checksum) fn crc16_ccitt_slice8(crc: u16, data: &[u8]) -> u16 {
   portable::slice8_16(crc, data, &kernel_tables::CCITT_TABLES_8)
 }
 
 /// CRC-16/IBM (ARC) slice-by-8 computation.
 #[inline]
-pub fn crc16_ibm_slice8(crc: u16, data: &[u8]) -> u16 {
+pub(in crate::checksum) fn crc16_ibm_slice8(crc: u16, data: &[u8]) -> u16 {
   portable::slice8_16(crc, data, &kernel_tables::IBM_TABLES_8)
 }
 
@@ -21,7 +21,7 @@ pub fn crc16_ibm_slice8(crc: u16, data: &[u8]) -> u16 {
 ///
 /// Uses one 256-entry table rather than the slice-by-8 table set.
 #[inline(always)]
-pub fn crc16_ccitt_bytewise(crc: u16, data: &[u8]) -> u16 {
+pub(in crate::checksum) fn crc16_ccitt_bytewise(crc: u16, data: &[u8]) -> u16 {
   crc16_bytewise(crc, data, &kernel_tables::CCITT_TABLES_8[0])
 }
 
@@ -29,13 +29,12 @@ pub fn crc16_ccitt_bytewise(crc: u16, data: &[u8]) -> u16 {
 ///
 /// Uses one 256-entry table rather than the slice-by-8 table set.
 #[inline(always)]
-pub fn crc16_ibm_bytewise(crc: u16, data: &[u8]) -> u16 {
+pub(in crate::checksum) fn crc16_ibm_bytewise(crc: u16, data: &[u8]) -> u16 {
   crc16_bytewise(crc, data, &kernel_tables::IBM_TABLES_8[0])
 }
 
 /// Update CRC-16 state using a byte-at-a-time lookup table.
 #[inline(always)]
-#[allow(clippy::indexing_slicing)] // index is 0..=255 by mask, table is [u16; 256]
 fn crc16_bytewise(mut crc: u16, data: &[u8], table: &[u16; 256]) -> u16 {
   for &b in data {
     let index = ((crc ^ (b as u16)) & 0xFF) as usize;

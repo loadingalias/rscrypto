@@ -7,9 +7,6 @@
 //! All functions require the `sha2` target feature.
 //! Callers must verify CPU capabilities before calling.
 
-#![allow(unsafe_code)]
-#![allow(clippy::inline_always)]
-
 #[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
 
@@ -258,19 +255,19 @@ pub(crate) unsafe fn compress_blocks_aarch64_sha2(state: &mut [u32; 8], blocks: 
         efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
 
         s1 = vsha256su1q_u32(vsha256su0q_u32(s1, s2), s3, s0);
-        tmp = vaddq_u32(s1, vld1q_u32(kp.add(t + 4)));
+        tmp = vaddq_u32(s1, vld1q_u32(kp.add(t.strict_add(4))));
         abcd_prev = abcd;
         abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
         efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
 
         s2 = vsha256su1q_u32(vsha256su0q_u32(s2, s3), s0, s1);
-        tmp = vaddq_u32(s2, vld1q_u32(kp.add(t + 8)));
+        tmp = vaddq_u32(s2, vld1q_u32(kp.add(t.strict_add(8))));
         abcd_prev = abcd;
         abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
         efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
 
         s3 = vsha256su1q_u32(vsha256su0q_u32(s3, s0), s1, s2);
-        tmp = vaddq_u32(s3, vld1q_u32(kp.add(t + 12)));
+        tmp = vaddq_u32(s3, vld1q_u32(kp.add(t.strict_add(12))));
         abcd_prev = abcd;
         abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
         efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);

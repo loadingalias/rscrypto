@@ -98,6 +98,14 @@ pub fn arch() -> Arch {
 ///
 /// Normal callers should use [`get()`], [`caps()`], or [`arch()`]. Overrides
 /// must be configured before the first cached detection.
+///
+/// ```
+/// use rscrypto::platform::{Detected, expert};
+///
+/// expert::try_set_override(Some(Detected::portable()))?;
+/// expert::try_set_override(None)?;
+/// # Ok::<(), rscrypto::platform::expert::OverrideError>(())
+/// ```
 pub mod expert {
   pub use super::detect::{OverrideError, detect_uncached, has_override, try_set_override};
 }
@@ -108,6 +116,27 @@ pub mod expert {
 /// or `-C target-cpu=native`. Use this for zero-overhead dispatch.
 ///
 /// This is a compile-time constant and performs no runtime detection.
+/// For generic binaries that run on multiple CPUs, use [`caps()`] instead.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::platform::caps_static;
+///
+/// const CAPS: rscrypto::platform::Caps = caps_static();
+///
+/// #[cfg(target_arch = "x86_64")]
+/// {
+///   use rscrypto::platform::caps::x86;
+///   assert!(CAPS.has(x86::SSE2));
+/// }
+///
+/// #[cfg(target_arch = "aarch64")]
+/// {
+///   use rscrypto::platform::caps::aarch64;
+///   assert!(CAPS.has(aarch64::NEON));
+/// }
+/// ```
 #[inline(always)]
 #[must_use]
 pub const fn caps_static() -> Caps {

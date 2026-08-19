@@ -266,6 +266,11 @@ pub(super) unsafe fn encrypt_6blocks_core(keys: &CeRoundKeys, blocks: &mut [[u8;
 
 #[cfg(feature = "aes-gcm")]
 #[inline]
+/// Convert one initialized GHASH byte vector to its big-endian `u128` value.
+///
+/// # Safety
+///
+/// The caller must execute this function only when AArch64 NEON is available.
 unsafe fn ghash_be_u128_from_vec(block: uint8x16_t) -> u128 {
   // SAFETY: GHASH lane conversion because:
   // 1. The caller is already inside an AArch64 NEON target scope.
@@ -282,16 +287,48 @@ unsafe fn ghash_be_u128_from_vec(block: uint8x16_t) -> u128 {
 
 #[cfg(feature = "aes-gcm")]
 #[inline(always)]
+/// Split one GHASH accumulator into its low and high 64-bit NEON lanes.
+///
+/// # Safety
+///
+/// The caller must execute this function only when AArch64 NEON is available.
 unsafe fn ghash_u128_to_lanes(x: u128) -> uint64x2_t {
+  let [
+    lo_0,
+    lo_1,
+    lo_2,
+    lo_3,
+    lo_4,
+    lo_5,
+    lo_6,
+    lo_7,
+    hi_0,
+    hi_1,
+    hi_2,
+    hi_3,
+    hi_4,
+    hi_5,
+    hi_6,
+    hi_7,
+  ] = x.to_le_bytes();
+  let lo = u64::from_le_bytes([lo_0, lo_1, lo_2, lo_3, lo_4, lo_5, lo_6, lo_7]);
+  let hi = u64::from_le_bytes([hi_0, hi_1, hi_2, hi_3, hi_4, hi_5, hi_6, hi_7]);
+
   // SAFETY: GHASH accumulator lane construction because:
   // 1. The caller is already inside an AArch64 NEON target scope.
   // 2. `vcreate_u64` initializes one 64-bit lane from an integer value.
   // 3. `vcombine_u64` builds a fully initialized two-lane vector.
-  unsafe { vcombine_u64(vcreate_u64(x as u64), vcreate_u64((x >> 64) as u64)) }
+  unsafe { vcombine_u64(vcreate_u64(lo), vcreate_u64(hi)) }
 }
 
 #[cfg(feature = "aes-gcm")]
 #[inline(always)]
+/// Reduce one 256-bit GHASH carryless product to two Montgomery-form lanes.
+///
+/// # Safety
+///
+/// The caller must execute this function only when AArch64 NEON is available and pass initialized low and high
+/// product halves.
 unsafe fn ghash_mont_reduce_neon(lo: uint64x2_t, hi: uint64x2_t) -> uint64x2_t {
   // SAFETY: GHASH Montgomery reduction because:
   // 1. The caller is already inside an AArch64 NEON target scope.
@@ -315,6 +352,12 @@ unsafe fn ghash_mont_reduce_neon(lo: uint64x2_t, hi: uint64x2_t) -> uint64x2_t {
 
 #[cfg(feature = "aes-gcm")]
 #[inline(always)]
+/// Finish the three Karatsuba accumulators and return the reduced GHASH value.
+///
+/// # Safety
+///
+/// The caller must execute this function only when AArch64 NEON is available and pass initialized low, high, and
+/// middle product accumulators for the same fold.
 unsafe fn ghash_finish_products(ll: uint64x2_t, hh: uint64x2_t, mm: uint64x2_t) -> u128 {
   // SAFETY: GHASH Karatsuba accumulator finalization because:
   // 1. The caller is already inside an AArch64 NEON target scope.
@@ -332,6 +375,12 @@ unsafe fn ghash_finish_products(ll: uint64x2_t, hh: uint64x2_t, mm: uint64x2_t) 
 
 #[cfg(feature = "aes-gcm")]
 #[inline(always)]
+/// Load one ciphertext block without imposing an alignment requirement.
+///
+/// # Safety
+///
+/// The caller must execute this function only when AArch64 NEON is available. `ptr` must remain valid and readable
+/// for 16 initialized bytes for the duration of the call; it need not be aligned.
 unsafe fn gcm_load_ciphertext_block(ptr: *const u8) -> uint8x16_t {
   // SAFETY: opaque 16-byte ciphertext load for GCM open because:
   // 1. The caller passes a pointer into a 128-byte chunk already bounds-checked by the enclosing
@@ -353,6 +402,12 @@ unsafe fn gcm_load_ciphertext_block(ptr: *const u8) -> uint8x16_t {
 
 #[cfg(feature = "aes-gcm")]
 #[inline(always)]
+/// Load one GHASH key power as two unaligned 64-bit lanes.
+///
+/// # Safety
+///
+/// The caller must execute this function only when AArch64 NEON is available. `power` must remain valid and readable
+/// for one initialized `u128` for the duration of the call; it need not be aligned.
 unsafe fn ghash_load_power(power: *const u128) -> uint64x2_t {
   // SAFETY: GHASH H-power vector load because:
   // 1. The caller passes a pointer into a live H-power table.
@@ -395,6 +450,11 @@ macro_rules! gcm_schedule_barrier {
 
 #[cfg(feature = "aes-gcm")]
 #[inline(always)]
+/// Build the fixed 96-bit prefix of an AES-GCM big-endian counter block.
+///
+/// # Safety
+///
+/// The caller must execute this function only when AArch64 NEON is available.
 unsafe fn gcm_ctr32_base(iv_prefix: &[u8; 12]) -> uint8x16_t {
   let mut block = [0u8; 16];
   block[..12].copy_from_slice(iv_prefix);
@@ -407,6 +467,11 @@ unsafe fn gcm_ctr32_base(iv_prefix: &[u8; 12]) -> uint8x16_t {
 
 #[cfg(feature = "aes-gcm")]
 #[inline(always)]
+/// Insert one AES-GCM counter into the big-endian final lane.
+///
+/// # Safety
+///
+/// The caller must execute this function only when AArch64 NEON is available and pass an initialized counter base.
 unsafe fn gcm_ctr32_block(base: uint8x16_t, ctr: u32) -> uint8x16_t {
   // SAFETY: GCM counter lane update because:
   // 1. The caller is already inside an AArch64 NEON target scope.
@@ -417,6 +482,11 @@ unsafe fn gcm_ctr32_block(base: uint8x16_t, ctr: u32) -> uint8x16_t {
 
 #[cfg(feature = "aes-gcm-siv")]
 #[inline(always)]
+/// Build the fixed 96-bit suffix of an AES-GCM-SIV little-endian counter block.
+///
+/// # Safety
+///
+/// The caller must execute this function only when AArch64 NEON is available.
 unsafe fn gcmsiv_ctr32_base(iv_suffix: &[u8; 12]) -> uint8x16_t {
   let mut block = [0u8; 16];
   block[4..16].copy_from_slice(iv_suffix);
@@ -429,6 +499,11 @@ unsafe fn gcmsiv_ctr32_base(iv_suffix: &[u8; 12]) -> uint8x16_t {
 
 #[cfg(feature = "aes-gcm-siv")]
 #[inline(always)]
+/// Insert one AES-GCM-SIV counter into the little-endian first lane.
+///
+/// # Safety
+///
+/// The caller must execute this function only when AArch64 NEON is available and pass an initialized counter base.
 unsafe fn gcmsiv_ctr32_block(base: uint8x16_t, ctr: u32) -> uint8x16_t {
   // SAFETY: GCM-SIV counter lane update because:
   // 1. The caller is inside a NEON target scope.
@@ -751,6 +826,12 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_8blocks_core(
 #[cfg(feature = "aes-gcm")]
 #[target_feature(enable = "aes,neon")]
 #[inline]
+/// Encrypt eight AES-256-GCM blocks while folding the preceding ciphertext group.
+///
+/// # Safety
+///
+/// The caller must ensure AES, PMULL, and NEON are available; `data` contains at least 128 bytes; and the round keys,
+/// accumulator, GHASH powers, and preceding ciphertext lanes belong to the same GCM key and stream.
 pub(super) unsafe fn encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_core(
   keys: &CeRoundKeys,
   iv_prefix: &[u8; 12],
@@ -883,6 +964,12 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_core(
 #[cfg(feature = "aes-gcm")]
 #[target_feature(enable = "aes,neon")]
 #[inline]
+/// Fold and decrypt eight current AES-256-GCM ciphertext blocks.
+///
+/// # Safety
+///
+/// The caller must ensure AES, PMULL, and NEON are available; `data` contains at least 128 bytes; and the round keys,
+/// accumulator, and GHASH powers belong to the same GCM key and stream.
 pub(super) unsafe fn decrypt_ctr32_be_xor_8blocks_ghash_current_core(
   keys: &CeRoundKeys,
   iv_prefix: &[u8; 12],
@@ -1071,6 +1158,12 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_8blocks_ghash_current_core(
 #[cfg(feature = "aes-gcm")]
 #[target_feature(enable = "aes,neon")]
 #[inline(never)]
+/// Encrypt complete 128-byte AES-256-GCM chunks and fold their ciphertext into GHASH.
+///
+/// # Safety
+///
+/// The caller must ensure AES, PMULL, and NEON are available; `data` contains at least 128 bytes; and the round keys,
+/// counter prefix, accumulator, and GHASH tables belong to the same GCM key and stream.
 pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_core(
   keys: &CeRoundKeys,
   iv_prefix: &[u8; 12],
@@ -1102,7 +1195,7 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_core(
           tables.h_powers_rev_16.as_ptr(),
           tables.h_powers_rev_16_mid.as_ptr(),
           tables.h_powers_rev_16_pair.as_ptr(),
-          &mut state,
+          &raw mut state,
         );
         if state.processed != 0 {
           return (state.acc(), state.ctr, state.processed);
@@ -1116,7 +1209,7 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_core(
         data.as_mut_ptr(),
         data.len(),
         tables.h_powers_rev_8.as_ptr(),
-        &mut state,
+        &raw mut state,
       );
       if state.processed != 0 {
         return (state.acc(), state.ctr, state.processed);
@@ -1157,6 +1250,12 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_core(
 #[cfg(feature = "aes-gcm")]
 #[target_feature(enable = "aes,neon")]
 #[inline(never)]
+/// Fold and decrypt complete 128-byte AES-256-GCM ciphertext chunks.
+///
+/// # Safety
+///
+/// The caller must ensure AES, PMULL, and NEON are available and the round keys, counter prefix, accumulator, and
+/// GHASH tables belong to the same GCM key and stream. `data` may be shorter than one complete chunk.
 pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_core(
   keys: &CeRoundKeys,
   iv_prefix: &[u8; 12],
@@ -1184,7 +1283,7 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_core(
           tables.h_powers_rev_16.as_ptr(),
           tables.h_powers_rev_16_mid.as_ptr(),
           tables.h_powers_rev_16_pair.as_ptr(),
-          &mut state,
+          &raw mut state,
         );
         if state.processed != 0 {
           return (state.acc(), state.ctr, state.processed);
@@ -1198,7 +1297,7 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_core(
         data.as_mut_ptr(),
         data.len(),
         tables.h_powers_rev_8.as_ptr(),
-        &mut state,
+        &raw mut state,
       );
       if state.processed != 0 {
         return (state.acc(), state.ctr, state.processed);
@@ -1733,6 +1832,12 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_8blocks_128_core(
 #[cfg(feature = "aes-gcm")]
 #[target_feature(enable = "aes,neon")]
 #[inline]
+/// Encrypt eight AES-128-GCM blocks while folding the preceding ciphertext group.
+///
+/// # Safety
+///
+/// The caller must ensure AES, PMULL, and NEON are available; `data` contains at least 128 bytes; and the round keys,
+/// accumulator, GHASH powers, and preceding ciphertext lanes belong to the same GCM key and stream.
 pub(super) unsafe fn encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_128_core(
   keys: &Ce128RoundKeys,
   iv_prefix: &[u8; 12],
@@ -1858,6 +1963,12 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_128_core(
 #[cfg(feature = "aes-gcm")]
 #[target_feature(enable = "aes,neon")]
 #[inline]
+/// Fold and decrypt eight current AES-128-GCM ciphertext blocks.
+///
+/// # Safety
+///
+/// The caller must ensure AES, PMULL, and NEON are available; `data` contains at least 128 bytes; and the round keys,
+/// accumulator, and GHASH powers belong to the same GCM key and stream.
 pub(super) unsafe fn decrypt_ctr32_be_xor_8blocks_ghash_current_128_core(
   keys: &Ce128RoundKeys,
   iv_prefix: &[u8; 12],
@@ -2039,6 +2150,12 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_8blocks_ghash_current_128_core(
 #[cfg(feature = "aes-gcm")]
 #[target_feature(enable = "aes,neon")]
 #[inline(never)]
+/// Encrypt complete 128-byte AES-128-GCM chunks and fold their ciphertext into GHASH.
+///
+/// # Safety
+///
+/// The caller must ensure AES, PMULL, and NEON are available; `data` contains at least 128 bytes; and the round keys,
+/// counter prefix, accumulator, and GHASH tables belong to the same GCM key and stream.
 pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
   keys: &Ce128RoundKeys,
   iv_prefix: &[u8; 12],
@@ -2070,7 +2187,7 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
           tables.h_powers_rev_16.as_ptr(),
           tables.h_powers_rev_16_mid.as_ptr(),
           tables.h_powers_rev_16_pair.as_ptr(),
-          &mut state,
+          &raw mut state,
         );
         if state.processed != 0 {
           return (state.acc(), state.ctr, state.processed);
@@ -2084,7 +2201,7 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
         data.as_mut_ptr(),
         data.len(),
         tables.h_powers_rev_8.as_ptr(),
-        &mut state,
+        &raw mut state,
       );
       if state.processed != 0 {
         return (state.acc(), state.ctr, state.processed);
@@ -2125,6 +2242,12 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
 #[cfg(feature = "aes-gcm")]
 #[target_feature(enable = "aes,neon")]
 #[inline(never)]
+/// Fold and decrypt complete 128-byte AES-128-GCM ciphertext chunks.
+///
+/// # Safety
+///
+/// The caller must ensure AES, PMULL, and NEON are available and the round keys, counter prefix, accumulator, and
+/// GHASH tables belong to the same GCM key and stream. `data` may be shorter than one complete chunk.
 pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
   keys: &Ce128RoundKeys,
   iv_prefix: &[u8; 12],
@@ -2152,7 +2275,7 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
           tables.h_powers_rev_16.as_ptr(),
           tables.h_powers_rev_16_mid.as_ptr(),
           tables.h_powers_rev_16_pair.as_ptr(),
-          &mut state,
+          &raw mut state,
         );
         if state.processed != 0 {
           return (state.acc(), state.ctr, state.processed);
@@ -2166,7 +2289,7 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
         data.as_mut_ptr(),
         data.len(),
         tables.h_powers_rev_8.as_ptr(),
-        &mut state,
+        &raw mut state,
       );
       if state.processed != 0 {
         return (state.acc(), state.ctr, state.processed);

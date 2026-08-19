@@ -1,7 +1,5 @@
 //! Standalone Poly1305 one-time authenticator (RFC 8439).
 
-#![allow(clippy::indexing_slicing)] // Poly1305 uses fixed 16-byte block and limb offsets.
-
 use core::fmt;
 
 use crate::{
@@ -20,6 +18,22 @@ fn load_u32_le(input: &[u8]) -> u32 {
   let mut bytes = [0u8; 4];
   bytes.copy_from_slice(input);
   u32::from_le_bytes(bytes)
+}
+
+#[inline(always)]
+fn low_u32(value: u64) -> u32 {
+  let bytes = value.to_le_bytes();
+  u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+}
+
+#[inline(always)]
+fn limb_product(left: u32, right: u32) -> u64 {
+  u64::from(left).wrapping_mul(u64::from(right))
+}
+
+#[inline(always)]
+fn limb_multiply_accumulate(accumulator: u64, left: u32, right: u32) -> u64 {
+  accumulator.wrapping_add(limb_product(left, right))
 }
 
 /// Poly1305 one-time key.
@@ -231,10 +245,10 @@ impl State {
     let r3 = self.r[3];
     let r4 = self.r[4];
 
-    let s1 = r1 * 5;
-    let s2 = r2 * 5;
-    let s3 = r3 * 5;
-    let s4 = r4 * 5;
+    let s1 = r1.wrapping_mul(5);
+    let s2 = r2.wrapping_mul(5);
+    let s3 = r3.wrapping_mul(5);
+    let s4 = r4.wrapping_mul(5);
 
     let mut h0 = self.h[0];
     let mut h1 = self.h[1];
@@ -248,51 +262,55 @@ impl State {
     h3 = h3.wrapping_add((load_u32_le(&block[9..13]) >> 6) & LIMB_MASK);
     h4 = h4.wrapping_add((load_u32_le(&block[12..16]) >> 8) | hibit);
 
-    let d0 = (u64::from(h0) * u64::from(r0))
-      + (u64::from(h1) * u64::from(s4))
-      + (u64::from(h2) * u64::from(s3))
-      + (u64::from(h3) * u64::from(s2))
-      + (u64::from(h4) * u64::from(s1));
-    let mut d1 = (u64::from(h0) * u64::from(r1))
-      + (u64::from(h1) * u64::from(r0))
-      + (u64::from(h2) * u64::from(s4))
-      + (u64::from(h3) * u64::from(s3))
-      + (u64::from(h4) * u64::from(s2));
-    let mut d2 = (u64::from(h0) * u64::from(r2))
-      + (u64::from(h1) * u64::from(r1))
-      + (u64::from(h2) * u64::from(r0))
-      + (u64::from(h3) * u64::from(s4))
-      + (u64::from(h4) * u64::from(s3));
-    let mut d3 = (u64::from(h0) * u64::from(r3))
-      + (u64::from(h1) * u64::from(r2))
-      + (u64::from(h2) * u64::from(r1))
-      + (u64::from(h3) * u64::from(r0))
-      + (u64::from(h4) * u64::from(s4));
-    let mut d4 = (u64::from(h0) * u64::from(r4))
-      + (u64::from(h1) * u64::from(r3))
-      + (u64::from(h2) * u64::from(r2))
-      + (u64::from(h3) * u64::from(r1))
-      + (u64::from(h4) * u64::from(r0));
+    let mut d0 = limb_product(h0, r0);
+    d0 = limb_multiply_accumulate(d0, h1, s4);
+    d0 = limb_multiply_accumulate(d0, h2, s3);
+    d0 = limb_multiply_accumulate(d0, h3, s2);
+    d0 = limb_multiply_accumulate(d0, h4, s1);
 
-    let mut c = (d0 >> 26) as u32;
-    h0 = (d0 as u32) & LIMB_MASK;
-    d1 += u64::from(c);
+    let mut d1 = limb_product(h0, r1);
+    d1 = limb_multiply_accumulate(d1, h1, r0);
+    d1 = limb_multiply_accumulate(d1, h2, s4);
+    d1 = limb_multiply_accumulate(d1, h3, s3);
+    d1 = limb_multiply_accumulate(d1, h4, s2);
 
-    c = (d1 >> 26) as u32;
-    h1 = (d1 as u32) & LIMB_MASK;
-    d2 += u64::from(c);
+    let mut d2 = limb_product(h0, r2);
+    d2 = limb_multiply_accumulate(d2, h1, r1);
+    d2 = limb_multiply_accumulate(d2, h2, r0);
+    d2 = limb_multiply_accumulate(d2, h3, s4);
+    d2 = limb_multiply_accumulate(d2, h4, s3);
 
-    c = (d2 >> 26) as u32;
-    h2 = (d2 as u32) & LIMB_MASK;
-    d3 += u64::from(c);
+    let mut d3 = limb_product(h0, r3);
+    d3 = limb_multiply_accumulate(d3, h1, r2);
+    d3 = limb_multiply_accumulate(d3, h2, r1);
+    d3 = limb_multiply_accumulate(d3, h3, r0);
+    d3 = limb_multiply_accumulate(d3, h4, s4);
 
-    c = (d3 >> 26) as u32;
-    h3 = (d3 as u32) & LIMB_MASK;
-    d4 += u64::from(c);
+    let mut d4 = limb_product(h0, r4);
+    d4 = limb_multiply_accumulate(d4, h1, r3);
+    d4 = limb_multiply_accumulate(d4, h2, r2);
+    d4 = limb_multiply_accumulate(d4, h3, r1);
+    d4 = limb_multiply_accumulate(d4, h4, r0);
 
-    c = (d4 >> 26) as u32;
-    h4 = (d4 as u32) & LIMB_MASK;
-    h0 = h0.wrapping_add(c * 5);
+    let mut c = low_u32(d0 >> 26);
+    h0 = low_u32(d0) & LIMB_MASK;
+    d1 = d1.wrapping_add(u64::from(c));
+
+    c = low_u32(d1 >> 26);
+    h1 = low_u32(d1) & LIMB_MASK;
+    d2 = d2.wrapping_add(u64::from(c));
+
+    c = low_u32(d2 >> 26);
+    h2 = low_u32(d2) & LIMB_MASK;
+    d3 = d3.wrapping_add(u64::from(c));
+
+    c = low_u32(d3 >> 26);
+    h3 = low_u32(d3) & LIMB_MASK;
+    d4 = d4.wrapping_add(u64::from(c));
+
+    c = low_u32(d4 >> 26);
+    h4 = low_u32(d4) & LIMB_MASK;
+    h0 = h0.wrapping_add(c.wrapping_mul(5));
 
     c = h0 >> 26;
     h0 &= LIMB_MASK;
@@ -323,7 +341,7 @@ impl State {
 
     c = h4 >> 26;
     h4 &= LIMB_MASK;
-    h0 = h0.wrapping_add(c * 5);
+    h0 = h0.wrapping_add(c.wrapping_mul(5));
 
     c = h0 >> 26;
     h0 &= LIMB_MASK;
@@ -366,14 +384,14 @@ impl State {
     h2 = (h2 >> 12) | (h3 << 14);
     h3 = (h3 >> 18) | (h4 << 8);
 
-    let mut f = u64::from(h0) + u64::from(self.pad[0]);
-    h0 = f as u32;
-    f = u64::from(h1) + u64::from(self.pad[1]) + (f >> 32);
-    h1 = f as u32;
-    f = u64::from(h2) + u64::from(self.pad[2]) + (f >> 32);
-    h2 = f as u32;
-    f = u64::from(h3) + u64::from(self.pad[3]) + (f >> 32);
-    h3 = f as u32;
+    let mut f = u64::from(h0).wrapping_add(u64::from(self.pad[0]));
+    h0 = low_u32(f);
+    f = u64::from(h1).wrapping_add(u64::from(self.pad[1])).wrapping_add(f >> 32);
+    h1 = low_u32(f);
+    f = u64::from(h2).wrapping_add(u64::from(self.pad[2])).wrapping_add(f >> 32);
+    h2 = low_u32(f);
+    f = u64::from(h3).wrapping_add(u64::from(self.pad[3])).wrapping_add(f >> 32);
+    h3 = low_u32(f);
 
     let mut tag = [0u8; TAG_SIZE];
     tag[0..4].copy_from_slice(&h0.to_le_bytes());
@@ -433,7 +451,7 @@ impl Poly1305 {
   #[inline]
   pub fn update(&mut self, mut data: &[u8]) {
     if self.buffer_len != 0 {
-      let take = core::cmp::min(TAG_SIZE - self.buffer_len, data.len());
+      let take = core::cmp::min(TAG_SIZE.strict_sub(self.buffer_len), data.len());
       self.buffer[self.buffer_len..self.buffer_len.strict_add(take)].copy_from_slice(&data[..take]);
       self.buffer_len = self.buffer_len.strict_add(take);
       data = &data[take..];
@@ -445,15 +463,11 @@ impl Poly1305 {
       }
     }
 
-    let mut blocks = data.chunks_exact(TAG_SIZE);
-    for chunk in &mut blocks {
-      let mut block = [0u8; TAG_SIZE];
-      block.copy_from_slice(chunk);
-      self.state.compute_block(&block, false);
-      ct::zeroize_no_fence(&mut block);
+    let (blocks, rem) = data.as_chunks::<TAG_SIZE>();
+    for block in blocks {
+      self.state.compute_block(block, false);
     }
 
-    let rem = blocks.remainder();
     if !rem.is_empty() {
       self.buffer[..rem.len()].copy_from_slice(rem);
       self.buffer_len = rem.len();
@@ -512,7 +526,7 @@ impl Drop for Poly1305 {
   fn drop(&mut self) {
     ct::zeroize(&mut self.buffer);
     // SAFETY: field is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(&mut self.buffer_len, 0) };
+    unsafe { core::ptr::write_volatile(&raw mut self.buffer_len, 0) };
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 }

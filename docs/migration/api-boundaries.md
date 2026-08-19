@@ -40,6 +40,28 @@ protocol defines a shorter value.
 Panicking `random()` constructors were removed. Use `try_random()` or the
 type-specific `try_generate()` method and propagate entropy failures.
 
+## RSA caller-supplied blinding
+
+Caller-supplied RSA blinding methods now take one borrowed `RsaBlindingPair`
+instead of adjacent factor and inverse slices:
+
+```rust
+use rscrypto::{RsaBlindingPair, RsaPkcs1v15Profile};
+
+let blinding = RsaBlindingPair::new(blinding_factor, blinding_factor_inverse);
+private_key.sign_pkcs1v15_with_blinding_factor(
+  RsaPkcs1v15Profile::Sha256,
+  message,
+  blinding,
+  signature,
+)?;
+# Ok::<(), rscrypto::RsaPrivateOpError>(())
+```
+
+The pair borrows both inputs without allocation or copying their bytes. Every
+accepting operation still validates their width, range, and inverse relation
+against its RSA key. Error variants and output clearing are unchanged.
+
 ## AEAD nonces
 
 Normal `Aead` sealing generates a fresh OS nonce. AES-GCM also supports the

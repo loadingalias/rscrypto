@@ -47,12 +47,13 @@ use kernels::IV;
 use super::Blake2Error;
 use crate::traits::{Digest, ct};
 
-const BLOCK_SIZE: usize = 64;
-const MAX_KEY_LEN: usize = 32;
-const MAX_OUTPUT_LEN: usize = 32;
+const BLOCK_SIZE_U8: u8 = 64;
+const BLOCK_SIZE: usize = BLOCK_SIZE_U8 as usize;
+const MAX_KEY_LEN_U8: u8 = 32;
+const MAX_KEY_LEN: usize = MAX_KEY_LEN_U8 as usize;
+const MAX_OUTPUT_LEN_U8: u8 = 32;
 
-#[cfg(any(test, feature = "diag"))]
-#[allow(dead_code)]
+#[cfg(feature = "diag")]
 #[inline]
 #[must_use]
 pub(crate) fn kernel_name_for_len(len: usize) -> &'static str {
@@ -155,15 +156,14 @@ impl Core {
     Self::new_with_params(nn, key, &[0u8; SALT_LEN], &[0u8; PERSONAL_LEN])
   }
 
-  #[allow(clippy::indexing_slicing)]
   fn new_with_params(nn: u8, key: &[u8], salt: &[u8; SALT_LEN], personal: &[u8; PERSONAL_LEN]) -> Self {
     assert!(
-      nn >= 1 && nn as usize <= MAX_OUTPUT_LEN,
+      (1..=MAX_OUTPUT_LEN_U8).contains(&nn),
       "Blake2s output length must be 1-32"
     );
     assert!(key.len() <= MAX_KEY_LEN, "Blake2s key must be at most 32 bytes");
 
-    let kk = key.len() as u8;
+    let kk = u8::try_from(key.len()).expect("validated Blake2s key length fits in u8");
     let h = init_state_with_params(nn, kk, salt, personal);
 
     let stored_key = if kk > 0 {
@@ -177,7 +177,7 @@ impl Core {
     let mut buf = [0u8; BLOCK_SIZE];
     let buf_len = if kk > 0 {
       buf[..key.len()].copy_from_slice(key);
-      BLOCK_SIZE as u8
+      BLOCK_SIZE_U8
     } else {
       0
     };
@@ -201,29 +201,23 @@ impl Core {
   fn zeroize_key_if_any(&mut self) {
     if self.kk > 0 {
       // SAFETY: when `kk > 0`, `self.key` was initialized in `new`.
-      unsafe { ct::zeroize_no_fence(&mut *self.key.as_mut_ptr()) };
+      unsafe { ct::zeroize_no_fence(self.key.assume_init_mut()) };
     }
   }
 
   #[inline(always)]
   fn wipe(&mut self) {
-    for word in self.h.iter_mut() {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
-    }
+    ct::zeroize_words_no_fence(&mut self.h);
     ct::zeroize_no_fence(&mut self.buf);
     self.zeroize_key_if_any();
-    // SAFETY: fields are valid, aligned, dereferenceable pointers.
-    unsafe {
-      core::ptr::write_volatile(&mut self.buf_len, 0);
-      core::ptr::write_volatile(&mut self.t, 0);
-      core::ptr::write_volatile(&mut self.nn, 0);
-      core::ptr::write_volatile(&mut self.kk, 0);
-    }
+    ct::zeroize_no_fence(core::slice::from_mut(&mut self.buf_len));
+    ct::zeroize_words_no_fence(core::slice::from_mut(&mut self.t));
+    ct::zeroize_no_fence(core::slice::from_mut(&mut self.nn));
+    ct::zeroize_no_fence(core::slice::from_mut(&mut self.kk));
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 
-  #[cfg(any(test, feature = "diag"))]
+  #[cfg(test)]
   fn new_with_compress_for_test(
     nn: u8,
     key: &[u8],
@@ -236,7 +230,6 @@ impl Core {
     core
   }
 
-  #[allow(clippy::indexing_slicing)]
   fn update(&mut self, data: &[u8]) {
     if data.is_empty() {
       return;
@@ -248,7 +241,7 @@ impl Core {
     if self.buf_len > 0 && (self.buf_len as usize).strict_add(data_len) > BLOCK_SIZE {
       let fill = BLOCK_SIZE.strict_sub(self.buf_len as usize);
       self.buf[self.buf_len as usize..BLOCK_SIZE].copy_from_slice(&data[..fill]);
-      self.t = self.t.strict_add(BLOCK_SIZE as u64);
+      self.t = self.t.strict_add(u64::from(BLOCK_SIZE_U8));
       (self.compress)(&mut self.h, &self.buf, self.t, false);
       self.buf_len = 0;
       offset = fill;
@@ -256,7 +249,7 @@ impl Core {
 
     let available = data_len.strict_sub(offset);
     if available > BLOCK_SIZE {
-      let blocks_len = available.strict_sub(1) / BLOCK_SIZE * BLOCK_SIZE;
+      let blocks_len = (available.strict_sub(1) / BLOCK_SIZE).strict_mul(BLOCK_SIZE);
       let end = offset.strict_add(blocks_len);
       (self.compress_blocks)(&mut self.h, &data[offset..end], &mut self.t);
       offset = end;
@@ -266,11 +259,11 @@ impl Core {
     if remaining > 0 {
       let start = self.buf_len as usize;
       self.buf[start..start.strict_add(remaining)].copy_from_slice(&data[offset..]);
-      self.buf_len = self.buf_len.strict_add(remaining as u8);
+      let remaining = u8::try_from(remaining).expect("Blake2s buffer remainder fits in u8");
+      self.buf_len = self.buf_len.strict_add(remaining);
     }
   }
 
-  #[allow(clippy::indexing_slicing)]
   fn finalize_into(&self, out: &mut [u8]) {
     debug_assert!(out.len() == self.nn as usize);
 
@@ -287,30 +280,21 @@ impl Core {
 
     write_output(&h, self.nn, out);
 
-    for word in h.iter_mut() {
-      // SAFETY: Volatile zeroization of a stack word is sound because:
-      // 1. `word` comes from `h.iter_mut()`, so it is valid and uniquely borrowed.
-      // 2. `u32` has no invalid bit patterns; writing zero preserves validity.
-      // 3. The pointer does not escape this loop iteration.
-      unsafe { core::ptr::write_volatile(word, 0) };
-    }
+    ct::zeroize_words_no_fence(&mut h);
   }
 
   /// Reset to the initial state (including re-buffering the key if keyed and
   /// re-applying any salt/personalization parameter-block bytes).
-  #[allow(clippy::indexing_slicing)]
   fn reset(&mut self) {
     self.h = init_state_with_params(self.nn, self.kk, &self.salt, &self.personal);
 
     if self.kk > 0 {
       let key_len = self.kk as usize;
       self.buf = [0u8; BLOCK_SIZE];
-      // SAFETY: when `kk > 0`, `self.key` was initialized in `new`, and `self.buf`
-      // has at least `key_len` bytes available.
-      unsafe {
-        core::ptr::copy_nonoverlapping(self.key.as_ptr().cast::<u8>(), self.buf.as_mut_ptr(), key_len);
-      }
-      self.buf_len = BLOCK_SIZE as u8;
+      // SAFETY: when `kk > 0`, `self.key` was initialized in `new`.
+      let key = unsafe { self.key.assume_init_ref() };
+      self.buf[..key_len].copy_from_slice(&key[..key_len]);
+      self.buf_len = BLOCK_SIZE_U8;
     } else {
       self.buf = [0u8; BLOCK_SIZE];
       self.buf_len = 0;
@@ -346,7 +330,6 @@ const BLAKE2S256_H0: [u32; 8] = init_unkeyed_fixed_state(32);
 /// digest length / key length / fanout / depth bits, and `h[4..8]` carry the
 /// salt and personalization words.
 #[inline]
-#[allow(clippy::indexing_slicing)]
 fn init_state_with_params(nn: u8, kk: u8, salt: &[u8; SALT_LEN], personal: &[u8; PERSONAL_LEN]) -> [u32; 8] {
   let p0 = nn as u32 | ((kk as u32) << 8) | (1u32 << 16) | (1u32 << 24);
   let mut h = IV;
@@ -364,7 +347,6 @@ fn init_state_with_params(nn: u8, kk: u8, salt: &[u8; SALT_LEN], personal: &[u8;
 }
 
 #[inline(always)]
-#[allow(clippy::indexing_slicing)]
 fn write_output(h: &[u32; 8], nn: u8, out: &mut [u8]) {
   let nn = nn as usize;
   let full_words = nn / 4;
@@ -393,7 +375,6 @@ fn write_output(h: &[u32; 8], nn: u8, out: &mut [u8]) {
 }
 
 #[inline(always)]
-#[allow(clippy::indexing_slicing)]
 fn oneshot_small_into_with_params(
   nn: u8,
   key: &[u8],
@@ -402,7 +383,7 @@ fn oneshot_small_into_with_params(
   out: &mut [u8],
   compress: kernels::CompressFn,
 ) {
-  let kk = key.len() as u8;
+  let kk = u8::try_from(key.len()).expect("validated Blake2s key length fits in u8");
   let mut h = match params {
     Some((salt, personal)) => init_state_with_params(nn, kk, salt, personal),
     None => init_state(nn, kk),
@@ -420,10 +401,10 @@ fn oneshot_small_into_with_params(
   key_block[..key.len()].copy_from_slice(key);
 
   if data.is_empty() {
-    compress(&mut h, &key_block, BLOCK_SIZE as u64, true);
+    compress(&mut h, &key_block, u64::from(BLOCK_SIZE_U8), true);
     ct::zeroize(&mut key_block);
   } else {
-    compress(&mut h, &key_block, BLOCK_SIZE as u64, false);
+    compress(&mut h, &key_block, u64::from(BLOCK_SIZE_U8), false);
     ct::zeroize(&mut key_block);
 
     let mut data_block = [0u8; BLOCK_SIZE];
@@ -431,20 +412,16 @@ fn oneshot_small_into_with_params(
     compress(
       &mut h,
       &data_block,
-      (BLOCK_SIZE as u64).strict_add(data.len() as u64),
+      u64::from(BLOCK_SIZE_U8).strict_add(data.len() as u64),
       true,
     );
   }
 
   write_output(&h, nn, out);
-  for word in &mut h {
-    // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(word, 0) };
-  }
+  ct::zeroize_words_no_fence(&mut h);
 }
 
 #[inline(always)]
-#[allow(clippy::indexing_slicing)]
 fn oneshot_hash_into_inner(
   nn: u8,
   key: &[u8],
@@ -454,7 +431,7 @@ fn oneshot_hash_into_inner(
 ) {
   debug_assert!(out.len() == nn as usize);
   assert!(
-    nn >= 1 && nn as usize <= MAX_OUTPUT_LEN,
+    (1..=MAX_OUTPUT_LEN_U8).contains(&nn),
     "Blake2s output length must be 1-32"
   );
   assert!(key.len() <= MAX_KEY_LEN, "Blake2s key must be at most 32 bytes");
@@ -465,7 +442,7 @@ fn oneshot_hash_into_inner(
     return;
   }
 
-  let kk = key.len() as u8;
+  let kk = u8::try_from(key.len()).expect("validated Blake2s key length fits in u8");
   let mut h = match params {
     Some((salt, personal)) => init_state_with_params(nn, kk, salt, personal),
     None => init_state(nn, kk),
@@ -473,7 +450,7 @@ fn oneshot_hash_into_inner(
   let mut buf = [0u8; BLOCK_SIZE];
   let mut buf_len = if kk > 0 {
     buf[..key.len()].copy_from_slice(key);
-    BLOCK_SIZE as u8
+    BLOCK_SIZE_U8
   } else {
     0
   };
@@ -486,7 +463,7 @@ fn oneshot_hash_into_inner(
     if fill > 0 {
       buf[buf_len as usize..BLOCK_SIZE].copy_from_slice(&data[..fill]);
     }
-    t = t.strict_add(BLOCK_SIZE as u64);
+    t = t.strict_add(u64::from(BLOCK_SIZE_U8));
     compress(&mut h, &buf, t, false);
     ct::zeroize(&mut buf);
     buf_len = 0;
@@ -495,7 +472,7 @@ fn oneshot_hash_into_inner(
 
   let available = data_len.strict_sub(offset);
   if available > BLOCK_SIZE {
-    let blocks_len = available.strict_sub(1) / BLOCK_SIZE * BLOCK_SIZE;
+    let blocks_len = (available.strict_sub(1) / BLOCK_SIZE).strict_mul(BLOCK_SIZE);
     let end = offset.strict_add(blocks_len);
     let compress_blocks = dispatch::compress_blocks_dispatch();
     compress_blocks(&mut h, &data[offset..end], &mut t);
@@ -505,7 +482,7 @@ fn oneshot_hash_into_inner(
   let remaining = data_len.strict_sub(offset);
   if remaining > 0 {
     buf[..remaining].copy_from_slice(&data[offset..]);
-    buf_len = remaining as u8;
+    buf_len = u8::try_from(remaining).expect("Blake2s buffer remainder fits in u8");
   }
 
   t = t.strict_add(buf_len as u64);
@@ -513,10 +490,7 @@ fn oneshot_hash_into_inner(
   write_output(&h, nn, out);
 
   if kk > 0 {
-    for word in &mut h {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
-    }
+    ct::zeroize_words_no_fence(&mut h);
     ct::zeroize(&mut buf);
   }
 }
@@ -633,12 +607,11 @@ impl Blake2sParams {
 
   /// Set a validated MAC key. Omit this method for unkeyed hashing.
   #[must_use]
-  #[allow(clippy::indexing_slicing)]
   pub fn key(mut self, key: Blake2sKey<'_>) -> Self {
     let key = key.as_bytes();
     self.key_buf = [0u8; MAX_KEY_LEN];
     self.key_buf[..key.len()].copy_from_slice(key);
-    self.key_len = key.len() as u8;
+    self.key_len = u8::try_from(key.len()).expect("validated Blake2s key length fits in u8");
     self
   }
 
@@ -656,7 +629,6 @@ impl Blake2sParams {
     self
   }
 
-  #[allow(clippy::indexing_slicing)]
   fn key_slice(&self) -> &[u8] {
     &self.key_buf[..usize::from(self.key_len)]
   }
@@ -748,7 +720,6 @@ impl Blake2s256 {
   #[must_use]
   pub fn new_keyed(key: Blake2sKey<'_>) -> Self {
     let key = key.as_bytes();
-    assert!(!key.is_empty(), "validated Blake2s key must not be empty");
     Self(Core::new(32, key))
   }
 
@@ -756,12 +727,10 @@ impl Blake2s256 {
   #[must_use]
   pub fn keyed_digest(key: Blake2sKey<'_>, data: &[u8]) -> [u8; 32] {
     let key = key.as_bytes();
-    assert!(!key.is_empty(), "validated Blake2s key must not be empty");
     oneshot_hash_array::<32>(32, key, data)
   }
 
-  #[cfg(any(test, feature = "diag"))]
-  #[allow(dead_code)]
+  #[cfg(test)]
   pub(crate) fn new_with_compress_for_test(
     compress: kernels::CompressFn,
     compress_blocks: kernels::CompressBlocksFn,
@@ -769,8 +738,7 @@ impl Blake2s256 {
     Self(Core::new_with_compress_for_test(32, &[], compress, compress_blocks))
   }
 
-  #[cfg(any(test, feature = "diag"))]
-  #[allow(dead_code)]
+  #[cfg(test)]
   pub(crate) fn keyed_with_compress_for_test(
     key: &[u8],
     compress: kernels::CompressFn,
@@ -782,6 +750,7 @@ impl Blake2s256 {
 }
 
 #[cfg(feature = "diag")]
+/// Derive a keyed Blake2s-256 diagnostic digest with the portable backend.
 #[must_use]
 pub fn diag_blake2s256_keyed_digest_portable(key: &[u8; 32]) -> [u8; 32] {
   let mut out = [0u8; 32];
@@ -867,7 +836,6 @@ impl Blake2s128 {
   #[must_use]
   pub fn new_keyed(key: Blake2sKey<'_>) -> Self {
     let key = key.as_bytes();
-    assert!(!key.is_empty(), "validated Blake2s key must not be empty");
     Self(Core::new(16, key))
   }
 
@@ -875,7 +843,6 @@ impl Blake2s128 {
   #[must_use]
   pub fn keyed_digest(key: Blake2sKey<'_>, data: &[u8]) -> [u8; 16] {
     let key = key.as_bytes();
-    assert!(!key.is_empty(), "validated Blake2s key must not be empty");
     oneshot_hash_array::<16>(16, key, data)
   }
 
@@ -939,9 +906,13 @@ impl_std_io_write_for_digest!(Blake2s128);
 
 #[cfg(test)]
 mod tests {
-  use blake2::{Blake2s128 as OracleBlake2s128, Blake2s256 as OracleBlake2s256, Blake2sMac, Digest as _};
-  use digest::typenum::{U16, U32};
-  use hmac::{Mac as _, digest::KeyInit};
+  use blake2::{
+    Blake2s as OracleBlake2s, Blake2s256 as OracleBlake2s256, Blake2sMac,
+    digest::{
+      Digest as _, Mac as _,
+      consts::{U16, U32},
+    },
+  };
 
   use super::{
     kernels::{
@@ -953,9 +924,10 @@ mod tests {
 
   type OracleBlake2sMac128 = Blake2sMac<U16>;
   type OracleBlake2sMac256 = Blake2sMac<U32>;
+  type OracleBlake2s128 = OracleBlake2s<U16>;
 
   fn validated_key(key: &[u8]) -> Blake2sKey<'_> {
-    Blake2sKey::new(key).unwrap()
+    Blake2sKey::new(key).expect("test Blake2s key length is valid")
   }
 
   const ORACLE_CASES: &[&[u8]] = &[
@@ -1064,7 +1036,7 @@ mod tests {
     let key = b"secret-key";
     let data = b"hello world";
 
-    let mut oracle = OracleBlake2sMac256::new_from_slice(key).unwrap();
+    let mut oracle = OracleBlake2sMac256::new_from_slice(key).expect("oracle accepts a valid Blake2s-256 key");
     oracle.update(data);
     let expected = oracle.finalize().into_bytes();
 
@@ -1077,7 +1049,7 @@ mod tests {
     let key = b"tiny-key";
     let data = b"hello world";
 
-    let mut oracle = OracleBlake2sMac128::new_from_slice(key).unwrap();
+    let mut oracle = OracleBlake2sMac128::new_from_slice(key).expect("oracle accepts a valid Blake2s-128 key");
     oracle.update(data);
     let expected = oracle.finalize().into_bytes();
 
@@ -1090,7 +1062,7 @@ mod tests {
     let key = &[0xAA; 32];
     let data = &[0xBB; 512];
 
-    let mut oracle = OracleBlake2sMac256::new_from_slice(key).unwrap();
+    let mut oracle = OracleBlake2sMac256::new_from_slice(key).expect("oracle accepts a valid Blake2s-256 key");
     oracle.update(data);
     let expected = oracle.finalize().into_bytes();
 
@@ -1134,12 +1106,18 @@ mod tests {
 
   #[test]
   fn keyed_empty_key_is_rejected() {
-    assert_eq!(Blake2sKey::new(b"").unwrap_err(), Blake2Error::InvalidKeyLength);
+    assert_eq!(
+      Blake2sKey::new(b"").expect_err("empty Blake2s keys must be rejected"),
+      Blake2Error::InvalidKeyLength
+    );
   }
 
   #[test]
   fn keyed_overlength_key_is_rejected() {
-    assert_eq!(Blake2sKey::new(&[0u8; 33]).unwrap_err(), Blake2Error::InvalidKeyLength);
+    assert_eq!(
+      Blake2sKey::new(&[0u8; 33]).expect_err("overlength Blake2s keys must be rejected"),
+      Blake2Error::InvalidKeyLength
+    );
   }
 
   // ── Params (salt + personalization) ───────────────────────────────────
@@ -1244,7 +1222,7 @@ mod tests {
     let params = Blake2sParams::new().salt(*b"salty\0\0\0").personal(*b"tagging\0");
     let mut h = params.build_256();
     h.update(b"first");
-    let _ = h.finalize();
+    let _first = h.finalize();
 
     h.reset();
     h.update(b"hello world");
@@ -1291,7 +1269,8 @@ mod tests {
       (&[0xAA; 16][..], &[0x55; 257][..]),
       (&[0xCC; 32][..], &[0x11; 512][..]),
     ] {
-      let mut oracle_128 = OracleBlake2sMac128::new_from_slice(key).unwrap();
+      let mut oracle_128 =
+        OracleBlake2sMac128::new_from_slice(key).expect("oracle accepts the forced-kernel Blake2s-128 key");
       oracle_128.update(msg);
       let expected_128 = oracle_128.finalize().into_bytes();
 
@@ -1306,7 +1285,8 @@ mod tests {
         key.len(),
       );
 
-      let mut oracle_256 = OracleBlake2sMac256::new_from_slice(key).unwrap();
+      let mut oracle_256 =
+        OracleBlake2sMac256::new_from_slice(key).expect("oracle accepts the forced-kernel Blake2s-256 key");
       oracle_256.update(msg);
       let expected_256 = oracle_256.finalize().into_bytes();
 

@@ -47,7 +47,7 @@ impl Drop for ParallelBatchScratch {
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
-pub fn diag_zeroize_blake3_parallel_scratch(input: [u32; 8]) -> u32 {
+pub(super) fn diag_zeroize_blake3_parallel_scratch(input: [u32; 8]) -> u32 {
   let mut scratch = ParallelBatchScratch::default();
   scratch.zeroize = true;
   scratch.roots.push(input);
@@ -76,7 +76,7 @@ impl Blake3 {
     #[inline]
     fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize, mut cv: [u32; 8], zeroize: bool) {
       stack[*len].write(cv);
-      *len += 1;
+      *len = len.strict_add(1);
       if zeroize {
         ct::zeroize_words(&mut cv);
       }
@@ -84,7 +84,7 @@ impl Blake3 {
 
     #[inline]
     fn pop_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize, zeroize: bool) -> [u32; 8] {
-      *len -= 1;
+      *len = len.strict_sub(1);
       // SAFETY: `len` tracks the number of initialized entries.
       let cv = unsafe { stack[*len].assume_init_read() };
       if zeroize {
@@ -125,22 +125,28 @@ impl Blake3 {
       size = size.min(aligned_max).min(remaining_commit);
       debug_assert!(size.is_power_of_two());
 
-      let bytes_base = offset_chunks * CHUNK_LEN;
-      let subtree_bytes = size * CHUNK_LEN;
-      let subtree_input = &batch_input[bytes_base..bytes_base + subtree_bytes];
+      let bytes_base = offset_chunks.strict_mul(CHUNK_LEN);
+      let subtree_bytes = size.strict_mul(CHUNK_LEN);
+      let subtree_end = bytes_base.strict_add(subtree_bytes);
+      let subtree_input = &batch_input[bytes_base..subtree_end];
       let bulk_kernel = kernels::kernel(self.bulk_kernel_id);
 
-      let mut subtree_cv = if size >= threads && (counter == 0 || (counter & (size as u64 - 1)) == 0) {
+      let size_u64 = u64::try_from(size).expect("a BLAKE3 subtree size fits in u64");
+      let mut subtree_cv = if size >= threads && (counter == 0 || (counter & size_u64.strict_sub(1)) == 0) {
         const MAX_SUBTREE_CHUNKS: usize = 1 << 12;
 
-        let mut subtree_chunks = size / threads;
+        let mut subtree_chunks = size
+          .checked_div(threads)
+          .expect("parallel BLAKE3 thread count is nonzero");
         subtree_chunks = subtree_chunks.max(1);
         subtree_chunks = pow2_floor(subtree_chunks);
         subtree_chunks = subtree_chunks.min(MAX_SUBTREE_CHUNKS).min(size);
 
-        let roots_len = size / subtree_chunks;
+        let roots_len = size
+          .checked_div(subtree_chunks)
+          .expect("parallel BLAKE3 subtree size is nonzero");
         debug_assert!(roots_len.is_power_of_two());
-        debug_assert_eq!(roots_len * subtree_chunks, size);
+        debug_assert_eq!(roots_len.strict_mul(subtree_chunks), size);
 
         scratch.roots.resize(roots_len, [0u32; 8]);
         hash_power_of_two_subtree_roots_parallel_rayon(super::SubtreeRootsRequest {
@@ -181,7 +187,7 @@ impl Blake3 {
         )
       };
 
-      counter = counter.wrapping_add(size as u64);
+      counter = counter.strict_add(size_u64);
       let level = size.trailing_zeros();
       let mut total = counter >> level;
       let mut cv = subtree_cv;
@@ -208,12 +214,13 @@ impl Blake3 {
       }
 
       offset_chunks = offset_chunks.strict_add(size);
-      remaining_commit -= size;
+      remaining_commit = remaining_commit.strict_sub(size);
     }
 
-    self.cv_stack_len = stack_len as u8;
+    self.cv_stack_len = u8::try_from(stack_len).expect("BLAKE3 CV stack length fits in u8");
 
-    let new_counter = base_counter.strict_add(batch.batch_chunks as u64);
+    let batch_chunks = u64::try_from(batch.batch_chunks).expect("a BLAKE3 batch size fits in u64");
+    let new_counter = base_counter.strict_add(batch_chunks);
     self.chunk_state = ChunkState::new(
       self.key_words,
       new_counter,
@@ -253,12 +260,16 @@ impl Blake3 {
     let base_counter = self.chunk_state.chunk_counter;
 
     let keep_last_full_chunk = input.len().is_multiple_of(CHUNK_LEN) && batch == full_chunks;
-    let commit = if keep_last_full_chunk { batch - 1 } else { batch };
+    let commit = if keep_last_full_chunk {
+      batch.strict_sub(1)
+    } else {
+      batch
+    };
     if commit == 0 {
       return None;
     }
 
-    let bytes = batch * CHUNK_LEN;
+    let bytes = batch.strict_mul(CHUNK_LEN);
     let threads = self.streaming_parallel_threads(bytes, batch, commit)?;
     if threads <= 1 {
       return None;
@@ -310,9 +321,15 @@ fn compress_parents_parallel_bytes(
   debug_assert!(out.len() >= child_cvs.len().div_ceil(2));
 
   let pairs = child_cvs.len() / 2;
-  kernels::parent_cvs_many_from_bytes_inline(kernel.id, &child_cvs[..pairs * 2], key_words, flags, &mut out[..pairs]);
+  kernels::parent_cvs_many_from_bytes_inline(
+    kernel.id,
+    &child_cvs[..pairs.strict_mul(2)],
+    key_words,
+    flags,
+    &mut out[..pairs],
+  );
   if (child_cvs.len() & 1) == 1 {
-    out[pairs] = child_cvs[child_cvs.len() - 1];
+    out[pairs] = child_cvs[child_cvs.len().strict_sub(1)];
     pairs.strict_add(1)
   } else {
     pairs
@@ -334,10 +351,10 @@ fn compress_subtree_wide_bytes<J: join::Join>(
   let simd_degree = kernel.id.simd_degree();
   let max_leaf_bytes = simd_degree.strict_mul(CHUNK_LEN);
   if input.len() <= max_leaf_bytes {
-    let chunks_exact = input.chunks_exact(CHUNK_LEN);
-    let full_chunks = chunks_exact.len();
+    let (chunks, remainder) = input.as_chunks::<CHUNK_LEN>();
+    let full_chunks = chunks.len();
     debug_assert!(full_chunks <= simd_degree);
-    debug_assert!(out.len() >= full_chunks.strict_add(usize::from(!chunks_exact.remainder().is_empty())));
+    debug_assert!(out.len() >= full_chunks.strict_add(usize::from(!remainder.is_empty())));
 
     if full_chunks != 0 {
       // SAFETY: `input` has at least `full_chunks * CHUNK_LEN` bytes and
@@ -355,12 +372,12 @@ fn compress_subtree_wide_bytes<J: join::Join>(
     }
 
     let mut out_len = full_chunks;
-    let rem = chunks_exact.remainder();
+    let rem = remainder;
     if !rem.is_empty() {
       let mut cv_words = single_chunk_output(
         kernel,
         key_words,
-        chunk_counter.strict_add(full_chunks as u64),
+        chunk_counter.strict_add(u64::try_from(full_chunks).expect("a BLAKE3 chunk count fits in u64")),
         flags,
         rem,
       )
@@ -378,7 +395,8 @@ fn compress_subtree_wide_bytes<J: join::Join>(
   debug_assert!(out.len() >= simd_degree.max(2));
   let left_len = left_subtree_len_bytes(input.len());
   let (left, right) = input.split_at(left_len);
-  let right_chunk_counter = chunk_counter.strict_add((left.len() / CHUNK_LEN) as u64);
+  let left_chunks = u64::try_from(left.len() / CHUNK_LEN).expect("a BLAKE3 subtree chunk count fits in u64");
+  let right_chunk_counter = chunk_counter.strict_add(left_chunks);
 
   const MAX_SIMD_DEGREE: usize = 16;
   let mut cv_array = [[0u8; OUT_LEN]; 2 * MAX_SIMD_DEGREE];
@@ -494,7 +512,7 @@ pub(super) fn root_output_oneshot_join_parallel(
   debug_assert!(threads > 1);
 
   // Cap Rayon recursion depth to approximately match `threads` leaves.
-  let depth = (usize::BITS - 1 - threads.leading_zeros()) as usize;
+  let depth = usize::try_from(threads.ilog2()).expect("parallel recursion depth fits in usize");
   let budget = depth.max(1);
 
   let mut parent_block =
@@ -505,7 +523,7 @@ pub(super) fn root_output_oneshot_join_parallel(
     input_chaining_value: key_words,
     block_words,
     counter: 0,
-    block_len: BLOCK_LEN as u32,
+    block_len: u32::try_from(BLOCK_LEN).expect("BLAKE3 block length fits in u32"),
     flags: super::PARENT | flags,
   };
   if flags & (super::KEYED_HASH | super::DERIVE_KEY_MATERIAL) != 0 {

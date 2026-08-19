@@ -9,9 +9,9 @@ use sha3::Digest as _;
 fn pattern(len: usize, mul: u8, add: u8) -> Vec<u8> {
   (0..len)
     .map(|i| {
-      (i as u8)
+      i.to_le_bytes()[0]
         .wrapping_mul(mul)
-        .wrapping_add(((i >> 3) as u8).wrapping_add(add))
+        .wrapping_add((i >> 3).to_le_bytes()[0].wrapping_add(add))
     })
     .collect()
 }
@@ -71,7 +71,7 @@ macro_rules! assert_hmac_sha3 {
         key_len,
         data_len
       );
-      assert!(<$ours>::verify_tag(&key, &data, &expected).is_ok());
+      <$ours>::verify_tag(&key, &data, &expected).expect("HMAC-SHA3 must verify the independent-oracle tag");
 
       let mut streaming = <$ours>::new(&key);
       for chunk in data.chunks(chunk_len) {
@@ -98,7 +98,8 @@ macro_rules! assert_hmac_sha3 {
       if !corrupted.is_empty() {
         corrupted[corrupted.len() / 2] ^= 0x80;
       }
-      assert!(<$ours>::verify_tag(&key, &data, &<$tag>::from_bytes(corrupted)).is_err());
+      <$ours>::verify_tag(&key, &data, &<$tag>::from_bytes(corrupted))
+        .expect_err("HMAC-SHA3 must reject a corrupted tag");
     }
   }};
 }

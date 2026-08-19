@@ -20,8 +20,6 @@
 // - chunks_exact guarantees chunk sizes
 // - Table indices use `& 0xFF` (0..255) or explicit byte extraction
 // Clippy cannot prove this in const fn contexts, but bounds are statically guaranteed.
-#![allow(clippy::indexing_slicing)]
-#![cfg_attr(all(target_arch = "wasm32", target_feature = "simd128"), allow(unsafe_code))]
 
 #[cfg(any(feature = "crc16", feature = "crc32", feature = "crc64"))]
 macro_rules! tail_step {
@@ -241,7 +239,7 @@ pub(crate) fn slice8_24(crc: u32, data: &[u8], tables: &[[u32; 256]; 8]) -> u32 
 /// * `tables` - 8 lookup tables (256 entries each)
 #[cfg(all(test, feature = "crc32"))]
 #[inline]
-pub fn slice8_32(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 8]) -> u32 {
+fn slice8_32(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 8]) -> u32 {
   let (chunks, remainder) = data.as_chunks::<8>();
 
   for chunk in chunks {
@@ -275,9 +273,9 @@ pub fn slice8_32(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 8]) -> u32 {
 #[inline]
 fn slice16_32_scalar(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 16]) -> u32 {
   let (chunks4, remainder) = data.as_chunks::<4>();
-  let mut quads = chunks4.chunks_exact(4);
+  let (quads, trailing_chunks) = chunks4.as_chunks::<4>();
 
-  for quad in quads.by_ref() {
+  for quad in quads {
     let a = u32::from_le_bytes(quad[0]) ^ crc;
     let b = u32::from_le_bytes(quad[1]);
     let c = u32::from_le_bytes(quad[2]);
@@ -302,7 +300,7 @@ fn slice16_32_scalar(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 16]) -> u3
   }
 
   // Handle a 4-byte tail (one to three u32 chunks)
-  for chunk in quads.remainder() {
+  for chunk in trailing_chunks {
     let val = u32::from_le_bytes(*chunk) ^ crc;
     crc = tables[3][(val & 0xFF) as usize]
       ^ tables[2][((val >> 8) & 0xFF) as usize]
@@ -325,7 +323,7 @@ fn slice16_32_scalar(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 16]) -> u3
 /// * `tables` - 16 lookup tables (256 entries each)
 #[cfg(all(feature = "crc32", not(all(target_arch = "wasm32", target_feature = "simd128"))))]
 #[inline]
-pub fn slice16_32(crc: u32, data: &[u8], tables: &[[u32; 256]; 16]) -> u32 {
+pub(in crate::checksum) fn slice16_32(crc: u32, data: &[u8], tables: &[[u32; 256]; 16]) -> u32 {
   slice16_32_scalar(crc, data, tables)
 }
 
@@ -335,7 +333,7 @@ pub fn slice16_32(crc: u32, data: &[u8], tables: &[[u32; 256]; 16]) -> u32 {
 /// `v128` loads when `target_feature = "simd128"` is enabled.
 #[cfg(all(feature = "crc32", target_arch = "wasm32", target_feature = "simd128"))]
 #[inline]
-pub fn slice16_32(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 16]) -> u32 {
+pub(in crate::checksum) fn slice16_32(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 16]) -> u32 {
   use core::arch::wasm32::v128;
 
   let mut ptr = data.as_ptr();
@@ -343,7 +341,7 @@ pub fn slice16_32(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 16]) -> u32 {
 
   while len >= 16 {
     // SAFETY: `ptr` is within `data` and `len >= 16`.
-    let v = unsafe { core::ptr::read_unaligned(ptr as *const v128) };
+    let v = unsafe { core::ptr::read_unaligned(ptr.cast::<v128>()) };
     // Extract lanes using WASM SIMD intrinsics (avoids transmute layout assumptions).
     let a = core::arch::wasm32::u32x4_extract_lane::<0>(v) ^ crc;
     let b = core::arch::wasm32::u32x4_extract_lane::<1>(v);
@@ -390,7 +388,7 @@ pub fn slice16_32(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 16]) -> u32 {
 /// * `tables` - 8 lookup tables (256 entries each)
 #[cfg(all(feature = "crc64", any(target_arch = "x86_64", target_arch = "aarch64", test)))]
 #[inline]
-pub fn slice8_64(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 8]) -> u64 {
+pub(in crate::checksum) fn slice8_64(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 8]) -> u64 {
   let (chunks, remainder) = data.as_chunks::<8>();
 
   for chunk in chunks {
@@ -423,9 +421,9 @@ pub fn slice8_64(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 8]) -> u64 {
 #[inline]
 fn slice16_64_scalar(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
   let (chunks8, remainder) = data.as_chunks::<8>();
-  let mut pairs = chunks8.chunks_exact(2);
+  let (pairs, trailing_chunks) = chunks8.as_chunks::<2>();
 
-  for pair in pairs.by_ref() {
+  for pair in pairs {
     let a = u64::from_le_bytes(pair[0]) ^ crc;
     let b = u64::from_le_bytes(pair[1]);
 
@@ -448,7 +446,7 @@ fn slice16_64_scalar(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u6
   }
 
   // Handle an odd 8-byte tail
-  if let [chunk] = pairs.remainder() {
+  if let [chunk] = trailing_chunks {
     let val = u64::from_le_bytes(*chunk) ^ crc;
     crc = tables[7][(val & 0xFF) as usize]
       ^ tables[6][((val >> 8) & 0xFF) as usize]
@@ -475,7 +473,7 @@ fn slice16_64_scalar(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u6
 /// * `tables` - 16 lookup tables (256 entries each)
 #[cfg(all(feature = "crc64", not(all(target_arch = "wasm32", target_feature = "simd128"))))]
 #[inline]
-pub fn slice16_64(crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
+pub(in crate::checksum) fn slice16_64(crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
   slice16_64_scalar(crc, data, tables)
 }
 
@@ -485,7 +483,7 @@ pub fn slice16_64(crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
 /// loads when `target_feature = "simd128"` is enabled.
 #[cfg(all(feature = "crc64", target_arch = "wasm32", target_feature = "simd128"))]
 #[inline]
-pub fn slice16_64(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
+pub(in crate::checksum) fn slice16_64(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
   use core::arch::wasm32::v128;
 
   let mut ptr = data.as_ptr();
@@ -493,7 +491,7 @@ pub fn slice16_64(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
 
   while len >= 16 {
     // SAFETY: `ptr` is within `data` and `len >= 16`.
-    let v = unsafe { core::ptr::read_unaligned(ptr as *const v128) };
+    let v = unsafe { core::ptr::read_unaligned(ptr.cast::<v128>()) };
     // Extract lanes using WASM SIMD intrinsics (avoids transmute layout assumptions).
     let a = core::arch::wasm32::u64x2_extract_lane::<0>(v) ^ crc;
     let b = core::arch::wasm32::u64x2_extract_lane::<1>(v);
@@ -530,45 +528,12 @@ pub fn slice16_64(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
 #[cfg(test)]
 mod tests {
   use super::*;
+  #[cfg(feature = "crc16")]
+  use crate::checksum::common::tables::{CRC16_CCITT_POLY, generate_crc16_tables_8};
+  #[cfg(feature = "crc64")]
+  use crate::checksum::common::tables::{CRC64_XZ_POLY, generate_crc64_tables_8, generate_crc64_tables_16};
 
   // CRC-16 Tests
-
-  /// Generate CRC-16 tables for testing (CCITT polynomial 0x8408 reflected).
-  #[cfg(feature = "crc16")]
-  const fn crc16_table_entry(poly: u16, index: u8) -> u16 {
-    let mut crc = index as u16;
-    let mut i: u32 = 0;
-    while i < 8 {
-      if crc & 1 != 0 {
-        crc = (crc >> 1) ^ poly;
-      } else {
-        crc >>= 1;
-      }
-      i = i.strict_add(1);
-    }
-    crc
-  }
-
-  #[cfg(feature = "crc16")]
-  const fn generate_crc16_tables_8(poly: u16) -> [[u16; 256]; 8] {
-    let mut tables = [[0u16; 256]; 8];
-    let mut i = 0u16;
-    while i < 256 {
-      tables[0][i as usize] = crc16_table_entry(poly, i as u8);
-      i = i.strict_add(1);
-    }
-    let mut k = 1usize;
-    while k < 8 {
-      i = 0;
-      while i < 256 {
-        let prev = tables[k - 1][i as usize];
-        tables[k][i as usize] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
-        i = i.strict_add(1);
-      }
-      k = k.strict_add(1);
-    }
-    tables
-  }
 
   // CRC-32 Tests
 
@@ -600,9 +565,6 @@ mod tests {
     assert_eq!(slice8_32(!0, data, &tables8), slice16_32(!0, data, &tables16));
   }
 
-  #[cfg(feature = "crc16")]
-  const CRC16_CCITT_POLY: u16 = 0x8408; // Reflected
-
   #[test]
   #[cfg(feature = "crc16")]
   fn test_slice8_16_empty() {
@@ -633,67 +595,6 @@ mod tests {
   }
 
   // CRC-64 Tests
-
-  /// Generate CRC-64 tables for testing.
-  #[cfg(feature = "crc64")]
-  const fn crc64_table_entry(poly: u64, index: u8) -> u64 {
-    let mut crc = index as u64;
-    let mut i: u32 = 0;
-    while i < 8 {
-      if crc & 1 != 0 {
-        crc = (crc >> 1) ^ poly;
-      } else {
-        crc >>= 1;
-      }
-      i = i.strict_add(1);
-    }
-    crc
-  }
-
-  #[cfg(feature = "crc64")]
-  const fn generate_crc64_tables_8(poly: u64) -> [[u64; 256]; 8] {
-    let mut tables = [[0u64; 256]; 8];
-    let mut i = 0u16;
-    while i < 256 {
-      tables[0][i as usize] = crc64_table_entry(poly, i as u8);
-      i = i.strict_add(1);
-    }
-    let mut k = 1usize;
-    while k < 8 {
-      i = 0;
-      while i < 256 {
-        let prev = tables[k - 1][i as usize];
-        tables[k][i as usize] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
-        i = i.strict_add(1);
-      }
-      k = k.strict_add(1);
-    }
-    tables
-  }
-
-  #[cfg(feature = "crc64")]
-  const fn generate_crc64_tables_16(poly: u64) -> [[u64; 256]; 16] {
-    let mut tables = [[0u64; 256]; 16];
-    let mut i = 0u16;
-    while i < 256 {
-      tables[0][i as usize] = crc64_table_entry(poly, i as u8);
-      i = i.strict_add(1);
-    }
-    let mut k = 1usize;
-    while k < 16 {
-      i = 0;
-      while i < 256 {
-        let prev = tables[k - 1][i as usize];
-        tables[k][i as usize] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
-        i = i.strict_add(1);
-      }
-      k = k.strict_add(1);
-    }
-    tables
-  }
-
-  #[cfg(feature = "crc64")]
-  const CRC64_XZ_POLY: u64 = 0xC96C_5795_D787_0F42; // Reflected
 
   #[test]
   #[cfg(feature = "crc64")]

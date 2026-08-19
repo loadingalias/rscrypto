@@ -3,7 +3,9 @@
 use rscrypto::{HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Mac};
 
 mod common;
-use common::decode_hex_array as decode_hex;
+#[path = "common/array.rs"]
+mod hex_array;
+use hex_array::decode_hex_array as decode_hex;
 
 #[test]
 fn hmac_sha384_rfc4231_vectors() {
@@ -50,7 +52,7 @@ fn hmac_sha384_rfc4231_vectors() {
       actual.ct_eq(&expected).declassify(),
       "HMAC-SHA384 RFC 4231 vector {i} mismatch"
     );
-    assert!(HmacSha384::verify_tag(key, data, &expected).is_ok());
+    HmacSha384::verify_tag(key, data, &expected).expect("HMAC-SHA-384 must verify an RFC 4231 tag");
   }
 
   let truncated = HmacSha384::mac(&[0x0c; 20], b"Test With Truncation");
@@ -105,7 +107,7 @@ fn hmac_sha512_rfc4231_vectors() {
       actual.ct_eq(&expected).declassify(),
       "HMAC-SHA512 RFC 4231 vector {i} mismatch"
     );
-    assert!(HmacSha512::verify_tag(key, data, &expected).is_ok());
+    HmacSha512::verify_tag(key, data, &expected).expect("HMAC-SHA-512 must verify an RFC 4231 tag");
   }
 
   let truncated = HmacSha512::mac(&[0x0c; 20], b"Test With Truncation");
@@ -125,10 +127,7 @@ fn hmac_sha384_verify_rejects_corrupted_tag_positions() {
     let mut corrupted = tag.to_bytes();
     corrupted[index] ^= 0x80;
     let corrupted = HmacSha384Tag::from_bytes(corrupted);
-    assert!(
-      HmacSha384::verify_tag(key, data, &corrupted).is_err(),
-      "HMAC-SHA384 accepted a tag corrupted at byte {index}"
-    );
+    HmacSha384::verify_tag(key, data, &corrupted).expect_err("HMAC-SHA-384 must reject a corrupted tag");
   }
 }
 
@@ -142,10 +141,7 @@ fn hmac_sha512_verify_rejects_corrupted_tag_positions() {
     let mut corrupted = tag.to_bytes();
     corrupted[index] ^= 0x80;
     let corrupted = HmacSha512Tag::from_bytes(corrupted);
-    assert!(
-      HmacSha512::verify_tag(key, data, &corrupted).is_err(),
-      "HMAC-SHA512 accepted a tag corrupted at byte {index}"
-    );
+    HmacSha512::verify_tag(key, data, &corrupted).expect_err("HMAC-SHA-512 must reject a corrupted tag");
   }
 }
 

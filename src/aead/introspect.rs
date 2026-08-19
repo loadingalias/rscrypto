@@ -18,8 +18,7 @@
   feature = "aes-gcm-siv",
   feature = "chacha20poly1305",
   feature = "xchacha20poly1305",
-  feature = "aegis256",
-  feature = "ascon-aead"
+  feature = "aegis256"
 ))]
 use crate::aead::targets::{AeadPrimitive, select_backend};
 pub use crate::platform::DispatchInfo;
@@ -29,8 +28,7 @@ pub use crate::platform::DispatchInfo;
   feature = "aes-gcm-siv",
   feature = "chacha20poly1305",
   feature = "xchacha20poly1305",
-  feature = "aegis256",
-  feature = "ascon-aead"
+  feature = "aegis256"
 ))]
 #[inline]
 fn backend_for(primitive: AeadPrimitive) -> &'static str {
@@ -98,7 +96,10 @@ pub fn aegis256_backend() -> &'static str {
 #[inline]
 #[must_use]
 pub fn ascon_aead128_backend() -> &'static str {
-  backend_for(AeadPrimitive::AsconAead128)
+  match crate::platform::arch() {
+    crate::platform::Arch::Wasm32 | crate::platform::Arch::Wasm64 => "wasm32/portable",
+    _ => "portable",
+  }
 }
 
 #[cfg(test)]

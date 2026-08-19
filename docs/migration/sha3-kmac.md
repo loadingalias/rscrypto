@@ -13,9 +13,9 @@ Evidence: `tests/kmac128_nist_vectors.rs`, `tests/kmac128_differential.rs`,
 
 ## TL;DR
 
-| | Before (`sha3-kmac` 0.3.x) | After (`rscrypto` 0.7.8) |
+| | Before (`sha3-kmac` 0.3.x) | After (`rscrypto` 0.8.1) |
 |---|---|---|
-| Cargo dep | `sha3-kmac = "0.3"` | `rscrypto = { version = "0.7.8", features = ["kmac"] }` |
+| Cargo dep | `sha3-kmac = "0.3"` | `rscrypto = { version = "0.8.1", features = ["kmac"] }` |
 | Import | `use sha3_kmac::Kmac256;` | `use rscrypto::Kmac256;` |
 | Call | `let mut k = Kmac256::new(key, custom)?; k.update(data); k.finalize_into(&mut tag);` | `Kmac256::mac_into(key, custom, data, &mut tag);` |
 
@@ -30,7 +30,7 @@ sha3-kmac = "0.3"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.7.8", features = ["kmac"] }
+rscrypto = { version = "0.8.1", features = ["kmac"] }
 ```
 
 The `kmac` feature implies `sha3`.

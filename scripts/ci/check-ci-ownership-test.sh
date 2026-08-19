@@ -128,7 +128,7 @@ expect_failure "$invalid_tool_digest" "direct tool digest is malformed"
 
 mutable_tool_url="$TMP_ROOT/mutable-tool-url"
 make_fixture "$mutable_tool_url"
-sed -i.bak 's#/download/v46\.0\.1/#/download/Latest/#' \
+sed -i.bak 's#/download/v47\.0\.3/#/download/Latest/#' \
   "$mutable_tool_url/.config/ci-tool-archives.tsv"
 rm -f "$mutable_tool_url/.config/ci-tool-archives.tsv.bak"
 expect_failure "$mutable_tool_url" "direct tool URL resolves a mutable release"
@@ -165,6 +165,13 @@ make_fixture "$unauthenticated_rustup"
 printf '\n    - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9\n' \
   >>"$unauthenticated_rustup/.github/actions/setup-toolchain/action.yaml"
 expect_failure "$unauthenticated_rustup" "toolchain setup can run a network bootstrap installer"
+
+inactive_toolchain_contract="$TMP_ROOT/inactive-toolchain-contract"
+make_fixture "$inactive_toolchain_contract"
+sed -i.bak 's/ "\$GITHUB_ENV"$//' \
+  "$inactive_toolchain_contract/.github/actions/setup-toolchain/action.yaml"
+rm -f "$inactive_toolchain_contract/.github/actions/setup-toolchain/action.yaml.bak"
+expect_failure "$inactive_toolchain_contract" "toolchain contract is installed but not activated"
 
 floating_rail_action="$TMP_ROOT/floating-rail-action"
 make_fixture "$floating_rail_action"

@@ -12,7 +12,10 @@ struct Vector<'a> {
 }
 
 mod common;
-use common::{decode_hex_array as decode_hex, decode_hex_vec};
+#[path = "common/array.rs"]
+mod hex_array;
+use common::decode_hex_vec;
+use hex_array::decode_hex_array as decode_hex;
 
 #[test]
 fn ed25519_rfc8032_vectors() {

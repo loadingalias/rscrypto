@@ -1,15 +1,18 @@
-#![allow(clippy::indexing_slicing)]
-
 //! AES-128-GCM-SIV public AEAD surface (RFC 8452).
 
 use core::fmt;
 
 #[cfg(target_arch = "x86_64")]
 use super::polyval::{accumulate_padded_x86, precompute_powers, precompute_powers_16};
-use super::{
-  AeadBufferError, Nonce96, OpenError, SealError, aes, polyval,
-  targets::{AeadBackend, AeadPrimitive, select_backend},
-};
+#[cfg(any(
+  target_arch = "aarch64",
+  target_arch = "powerpc64",
+  target_arch = "riscv64",
+  target_arch = "s390x",
+  target_arch = "x86_64",
+))]
+use super::targets::{AeadBackend, AeadPrimitive, select_backend};
+use super::{AeadBufferError, Nonce96, OpenError, SealError, aes, polyval};
 use crate::traits::{Aead, ct};
 
 const KEY_SIZE: usize = 16;
@@ -85,7 +88,13 @@ define_aead_tag_type!(
 /// timing claims are configuration- and release-evidence-bound; see `ct.toml`.
 pub struct Aes128GcmSiv {
   master_ek: aes::Aes128EncKey,
-  #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+  #[cfg(any(
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "riscv64",
+    target_arch = "s390x",
+    target_arch = "x86_64",
+  ))]
   backend: AeadBackend,
 }
 
@@ -219,12 +228,14 @@ fn compute_tag(
 }
 
 #[cfg(feature = "diag")]
+/// Derive the per-nonce authentication and encryption keys for diagnostic comparison.
 #[must_use]
 pub fn diag_aes128gcmsiv_derive_keys(cipher: &Aes128GcmSiv, nonce: &Nonce96) -> ([u8; 16], [u8; 16]) {
   derive_keys(&cipher.master_ek, nonce)
 }
 
 #[cfg(feature = "diag")]
+/// Return the AES-128-GCM-SIV POLYVAL digest before nonce and AES tag finalization.
 #[must_use]
 pub fn diag_aes128gcmsiv_polyval_digest(auth_key: &[u8; 16], aad: &[u8], plaintext: &[u8]) -> [u8; 16] {
   let mut pv = polyval::Polyval::new(auth_key);
@@ -236,6 +247,7 @@ pub fn diag_aes128gcmsiv_polyval_digest(auth_key: &[u8; 16], aad: &[u8], plainte
 }
 
 #[cfg(feature = "diag")]
+/// Encrypt one diagnostic tag block with a raw AES-128 key.
 #[must_use]
 pub fn diag_aes128gcmsiv_raw_tag_aes(enc_key: &[u8; 16], block: &[u8; 16]) -> [u8; 16] {
   let mut out = *block;
@@ -253,6 +265,7 @@ pub fn diag_aes128gcmsiv_raw_tag_aes(enc_key: &[u8; 16], block: &[u8; 16]) -> [u
 }
 
 #[cfg(feature = "diag")]
+/// Exercise AES-128 counter-mode encryption and fold the fixed diagnostic output to one block.
 #[must_use]
 pub fn diag_aes128gcmsiv_ctr32(enc_key: &[u8; 16], tag: &[u8; 16], plaintext: &[u8; 44]) -> [u8; 16] {
   let mut counter_block = *tag;
@@ -404,7 +417,6 @@ fn expand_key_riscv_for_backend(key: &[u8; 16], backend: AeadBackend) -> aes::Ae
   match backend {
     AeadBackend::Riscv64VectorCrypto => aes::aes128_expand_key_riscv_vector(key),
     AeadBackend::Riscv64ScalarCrypto => aes::aes128_expand_key_riscv_scalar(key),
-    AeadBackend::Riscv64Vperm => aes::aes128_expand_key_riscv_vperm(key),
     AeadBackend::Portable => aes::aes128_expand_key_riscv_ttable(key),
     _ => aes::aes128_expand_key_riscv_ttable(key),
   }
@@ -416,6 +428,13 @@ fn expand_message_key_riscv(enc_key: &[u8; 16], backend: AeadBackend) -> aes::Ae
   expand_key_riscv_for_backend(enc_key, backend)
 }
 
+#[cfg(any(
+  target_arch = "aarch64",
+  target_arch = "powerpc64",
+  target_arch = "riscv64",
+  target_arch = "s390x",
+  target_arch = "x86_64",
+))]
 #[inline]
 fn resolve_backend() -> AeadBackend {
   select_backend(
@@ -431,7 +450,7 @@ fn riscv_polyval_backend(backend: AeadBackend) -> RiscvPolyvalBackend {
   match backend {
     AeadBackend::Riscv64VectorCrypto => RiscvPolyvalBackend::Vector,
     AeadBackend::Riscv64ScalarCrypto => RiscvPolyvalBackend::Scalar,
-    AeadBackend::Portable | AeadBackend::Riscv64Vperm => {
+    AeadBackend::Portable => {
       let caps = crate::platform::caps();
       if caps.has(crate::platform::caps::riscv::ZBC) || caps.has(crate::platform::caps::riscv::ZBKC) {
         RiscvPolyvalBackend::Scalar
@@ -559,6 +578,12 @@ fn compute_tag_wide(
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "aes,neon")]
+/// Seal one message through the fused AArch64 AES-128-GCM-SIV path.
+///
+/// # Safety
+///
+/// The current CPU must support AArch64 AES, NEON, and PMULL. Callers must establish those
+/// capabilities through validated backend selection before entering this function.
 unsafe fn encrypt_fused_aarch64(
   auth_key: &mut [u8; 16],
   enc_key_bytes: &mut [u8; 16],
@@ -705,6 +730,12 @@ unsafe fn encrypt_fused_aarch64(
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "aes,neon")]
+/// Open one message through the fused AArch64 AES-128-GCM-SIV path.
+///
+/// # Safety
+///
+/// The current CPU must support AArch64 AES, NEON, and PMULL. Callers must establish those
+/// capabilities through validated backend selection before entering this function.
 unsafe fn decrypt_fused_aarch64(
   auth_key: &mut [u8; 16],
   enc_key_bytes: &mut [u8; 16],
@@ -857,6 +888,11 @@ unsafe fn decrypt_fused_aarch64(
 
 // powerpc64 fused encrypt/decrypt (single #[target_feature] scope)
 
+/// Encrypt with the fused POWER8 AES-128-GCM-SIV backend.
+///
+/// # Safety
+///
+/// The executing CPU must support AltiVec, VSX, POWER8 vector, and POWER8 crypto.
 #[cfg(target_arch = "powerpc64")]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 unsafe fn encrypt_fused_ppc(
@@ -986,6 +1022,11 @@ unsafe fn encrypt_fused_ppc(
   }
 }
 
+/// Decrypt and authenticate with the fused POWER8 AES-128-GCM-SIV backend.
+///
+/// # Safety
+///
+/// The executing CPU must support AltiVec, VSX, POWER8 vector, and POWER8 crypto.
 #[cfg(target_arch = "powerpc64")]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 unsafe fn decrypt_fused_ppc(
@@ -1122,6 +1163,11 @@ unsafe fn decrypt_fused_ppc(
 
 // s390x fused encrypt/decrypt
 
+/// XOR an AES-128 counter stream into `buffer` using s390x CPACF.
+///
+/// # Safety
+///
+/// The executing CPU must support MSA AES instructions.
 #[cfg(target_arch = "s390x")]
 unsafe fn s390x_ctr32_le_xor_raw(enc_key_bytes: &[u8; 16], counter_block: &mut [u8; 16], buffer: &mut [u8]) {
   let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
@@ -1147,12 +1193,17 @@ unsafe fn s390x_ctr32_le_xor_raw(enc_key_bytes: &[u8; 16], counter_block: &mut [
 
     let processed = aes::xor_keystream_tail(buffer, offset, &keystream, block_count);
     offset = offset.strict_add(processed);
-    ctr = ctr.wrapping_add(block_count as u32);
+    ctr = ctr.wrapping_add(u32::from(block_count.to_le_bytes()[0]));
   }
 
   counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
 }
 
+/// Encrypt with the fused s390x AES-128-GCM-SIV backend.
+///
+/// # Safety
+///
+/// The executing CPU must support the vector facility and MSA AES instructions.
 #[cfg(target_arch = "s390x")]
 #[target_feature(enable = "vector")]
 unsafe fn encrypt_fused_s390x(
@@ -1257,6 +1308,11 @@ unsafe fn encrypt_fused_s390x(
   }
 }
 
+/// Decrypt and authenticate with the fused s390x AES-128-GCM-SIV backend.
+///
+/// # Safety
+///
+/// The executing CPU must support the vector facility and MSA AES instructions.
 #[cfg(target_arch = "s390x")]
 #[target_feature(enable = "vector")]
 unsafe fn decrypt_fused_s390x(
@@ -1376,6 +1432,13 @@ impl Aead for Aes128GcmSiv {
   type Tag = Aes128GcmSivTag;
 
   fn new(key: &Self::Key) -> Self {
+    #[cfg(any(
+      target_arch = "aarch64",
+      target_arch = "powerpc64",
+      target_arch = "riscv64",
+      target_arch = "s390x",
+      target_arch = "x86_64",
+    ))]
     let backend = resolve_backend();
 
     Self {
@@ -1383,6 +1446,13 @@ impl Aead for Aes128GcmSiv {
       master_ek: expand_key_riscv_for_backend(key.as_bytes(), backend),
       #[cfg(not(target_arch = "riscv64"))]
       master_ek: aes::aes128_expand_key(key.as_bytes()),
+      #[cfg(any(
+        target_arch = "aarch64",
+        target_arch = "powerpc64",
+        target_arch = "riscv64",
+        target_arch = "s390x",
+        target_arch = "x86_64",
+      ))]
       backend,
     }
   }
@@ -1460,10 +1530,7 @@ impl Aead for Aes128GcmSiv {
     #[cfg(target_arch = "riscv64")]
     {
       match self.backend {
-        AeadBackend::Portable
-        | AeadBackend::Riscv64VectorCrypto
-        | AeadBackend::Riscv64ScalarCrypto
-        | AeadBackend::Riscv64Vperm => {
+        AeadBackend::Portable | AeadBackend::Riscv64VectorCrypto | AeadBackend::Riscv64ScalarCrypto => {
           let tag_bytes = encrypt_riscv(&self.master_ek, self.backend, nonce, aad, buffer);
           return Ok(Aes128GcmSivTag::from_bytes(tag_bytes));
         }
@@ -1556,10 +1623,7 @@ impl Aead for Aes128GcmSiv {
     #[cfg(target_arch = "riscv64")]
     {
       match self.backend {
-        AeadBackend::Portable
-        | AeadBackend::Riscv64VectorCrypto
-        | AeadBackend::Riscv64ScalarCrypto
-        | AeadBackend::Riscv64Vperm => {
+        AeadBackend::Portable | AeadBackend::Riscv64VectorCrypto | AeadBackend::Riscv64ScalarCrypto => {
           return decrypt_riscv(&self.master_ek, self.backend, nonce, aad, buffer, tag).map_err(OpenError::from);
         }
         _ => {}
@@ -1590,10 +1654,13 @@ impl Aead for Aes128GcmSiv {
 
 #[cfg(test)]
 mod tests {
-  use alloc::{vec, vec::Vec};
+  use alloc::vec;
 
   use super::*;
-  use crate::aead::expert::AeadWithNonce;
+  use crate::aead::{
+    expert::AeadWithNonce,
+    test_vectors::{hex_vec, hex12, hex16},
+  };
 
   /// RFC 8452 Appendix C.1, test 1: empty plaintext, empty AAD.
   #[test]
@@ -1604,11 +1671,15 @@ mod tests {
 
     let cipher = Aes128GcmSiv::new(&key);
     let mut out = vec![0u8; expected_ct_tag.len()];
-    cipher.encrypt(&nonce, &[], &[], &mut out).unwrap();
+    cipher
+      .encrypt(&nonce, &[], &[], &mut out)
+      .expect("RFC 8452 empty AES-128-GCM-SIV encryption must succeed");
     assert_eq!(out, expected_ct_tag);
 
     let mut pt_out = vec![0u8; 0];
-    cipher.decrypt(&nonce, &[], &expected_ct_tag, &mut pt_out).unwrap();
+    cipher
+      .decrypt(&nonce, &[], &expected_ct_tag, &mut pt_out)
+      .expect("RFC 8452 empty AES-128-GCM-SIV decryption must succeed");
     assert!(pt_out.is_empty());
   }
 
@@ -1622,11 +1693,15 @@ mod tests {
 
     let cipher = Aes128GcmSiv::new(&key);
     let mut out = vec![0u8; plaintext.len().strict_add(TAG_SIZE)];
-    cipher.encrypt(&nonce, &[], &plaintext, &mut out).unwrap();
+    cipher
+      .encrypt(&nonce, &[], &plaintext, &mut out)
+      .expect("RFC 8452 AES-128-GCM-SIV encryption must succeed");
     assert_eq!(out, expected_ct_tag);
 
     let mut pt_out = vec![0u8; plaintext.len()];
-    cipher.decrypt(&nonce, &[], &expected_ct_tag, &mut pt_out).unwrap();
+    cipher
+      .decrypt(&nonce, &[], &expected_ct_tag, &mut pt_out)
+      .expect("RFC 8452 AES-128-GCM-SIV decryption must succeed");
     assert_eq!(pt_out, plaintext);
   }
 
@@ -1642,11 +1717,15 @@ mod tests {
     let cipher = Aes128GcmSiv::new(&key);
 
     let mut out = vec![0u8; plaintext.len().strict_add(TAG_SIZE)];
-    cipher.encrypt(&nonce, &aad, &plaintext, &mut out).unwrap();
+    cipher
+      .encrypt(&nonce, &aad, &plaintext, &mut out)
+      .expect("RFC 8452 AES-128-GCM-SIV encryption with AAD must succeed");
     assert_eq!(out, expected_ct_tag);
 
     let mut pt_out = vec![0u8; plaintext.len()];
-    cipher.decrypt(&nonce, &aad, &expected_ct_tag, &mut pt_out).unwrap();
+    cipher
+      .decrypt(&nonce, &aad, &expected_ct_tag, &mut pt_out)
+      .expect("RFC 8452 AES-128-GCM-SIV decryption with AAD must succeed");
     assert_eq!(pt_out, plaintext);
   }
 
@@ -1659,22 +1738,16 @@ mod tests {
     let plaintext = hex_vec(
       "0200000000000000000000000000000003000000000000000000000000000000040000000000000000000000000000000500000000000000000000000000000000",
     );
-    let expected_ct_tag = hex_vec(
-      "2f5c64059db55ee0fb847ed51300374651a8c75e07ecbef82c1ed1bf48bb1ff5c1cdf0a4a3aa6a17ce7022eafd1129b25aafdca1fa9706ce0d1e23df1ce04c4a8e10cb44ed62b9a3a39d61b8b3eba23586eb6df746a45dd8d6ce80e7f5d33d39",
-    );
-
-    // The expected vector above is illustrative; oracle tests at
-    // tests/aes128gcmsiv_oracle.rs are the authoritative byte-equivalence
-    // check. This unit test fixes the 4-block + AAD shape against the
-    // round-trip rather than a hand-transcribed vector.
-    let _ = expected_ct_tag;
-
     let cipher = Aes128GcmSiv::new(&key);
     let mut out = vec![0u8; plaintext.len().strict_add(TAG_SIZE)];
-    cipher.encrypt(&nonce, &aad, &plaintext, &mut out).unwrap();
+    cipher
+      .encrypt(&nonce, &aad, &plaintext, &mut out)
+      .expect("multi-block AES-128-GCM-SIV encryption must succeed");
 
     let mut pt_out = vec![0u8; plaintext.len()];
-    cipher.decrypt(&nonce, &aad, &out, &mut pt_out).unwrap();
+    cipher
+      .decrypt(&nonce, &aad, &out, &mut pt_out)
+      .expect("multi-block AES-128-GCM-SIV decryption must succeed");
     assert_eq!(pt_out, plaintext);
   }
 
@@ -1688,8 +1761,10 @@ mod tests {
 
     let cipher = Aes128GcmSiv::new(&key);
     let mut pt_out = vec![0u8; 0];
-    let result = cipher.decrypt(&nonce, &[], &bad_ct_tag, &mut pt_out);
-    assert!(result.is_err());
+    assert_eq!(
+      cipher.decrypt(&nonce, &[], &bad_ct_tag, &mut pt_out),
+      Err(OpenError::verification())
+    );
   }
 
   /// Decryption with wrong AAD should fail.
@@ -1701,8 +1776,10 @@ mod tests {
 
     let cipher = Aes128GcmSiv::new(&key);
     let mut pt_out = vec![0u8; 8];
-    let result = cipher.decrypt(&nonce, &[0x02], &ct_tag, &mut pt_out);
-    assert!(result.is_err());
+    assert_eq!(
+      cipher.decrypt(&nonce, &[0x02], &ct_tag, &mut pt_out),
+      Err(OpenError::verification())
+    );
   }
 
   /// Decryption with wrong nonce should fail.
@@ -1715,8 +1792,10 @@ mod tests {
     let cipher = Aes128GcmSiv::new(&key);
     let mut pt_out = vec![0u8; 8];
     let wrong_nonce = Nonce96::from_bytes(hex12("040000000000000000000000"));
-    let result = cipher.decrypt(&wrong_nonce, &aad, &ct_tag, &mut pt_out);
-    assert!(result.is_err());
+    assert_eq!(
+      cipher.decrypt(&wrong_nonce, &aad, &ct_tag, &mut pt_out),
+      Err(OpenError::verification())
+    );
   }
 
   /// Ciphertext tampering should fail verification.
@@ -1732,8 +1811,10 @@ mod tests {
 
     let cipher = Aes128GcmSiv::new(&key);
     let mut pt_out = vec![0u8; plaintext.len()];
-    let result = cipher.decrypt(&nonce, &aad, &ct_tag, &mut pt_out);
-    assert!(result.is_err());
+    assert_eq!(
+      cipher.decrypt(&nonce, &aad, &ct_tag, &mut pt_out),
+      Err(OpenError::verification())
+    );
   }
 
   /// On authentication failure, the output buffer must be zeroed.
@@ -1746,14 +1827,18 @@ mod tests {
 
     let cipher = Aes128GcmSiv::new(&key);
     let mut out = vec![0u8; plaintext.len().strict_add(TAG_SIZE)];
-    cipher.encrypt(&nonce, &aad, &plaintext, &mut out).unwrap();
+    cipher
+      .encrypt(&nonce, &aad, &plaintext, &mut out)
+      .expect("AES-128-GCM-SIV test setup encryption must succeed");
 
     let last = out.len().strict_sub(1);
     out[last] ^= 0xff;
 
     let mut pt_out = vec![0xffu8; plaintext.len()];
-    let result = cipher.decrypt(&nonce, &aad, &out, &mut pt_out);
-    assert!(result.is_err());
+    assert_eq!(
+      cipher.decrypt(&nonce, &aad, &out, &mut pt_out),
+      Err(OpenError::verification())
+    );
     assert!(pt_out.iter().all(|&b| b == 0), "buffer not zeroed on auth failure");
   }
 
@@ -1768,57 +1853,51 @@ mod tests {
     let cipher = Aes128GcmSiv::new(&key);
 
     let mut buf = plaintext.clone();
-    let tag = cipher.encrypt_in_place(&nonce, &aad, &mut buf).unwrap();
+    let tag = cipher
+      .encrypt_in_place(&nonce, &aad, &mut buf)
+      .expect("AES-128-GCM-SIV detached encryption must succeed");
 
     assert_ne!(buf, plaintext);
 
-    cipher.decrypt_in_place(&nonce, &aad, &mut buf, &tag).unwrap();
+    cipher
+      .decrypt_in_place(&nonce, &aad, &mut buf, &tag)
+      .expect("AES-128-GCM-SIV detached decryption must succeed");
     assert_eq!(buf, plaintext);
   }
 
   /// `tag_from_slice` rejects wrong-length input.
   #[test]
   fn aes128gcmsiv_tag_from_slice_rejects_bad_length() {
-    assert!(Aes128GcmSiv::tag_from_slice(&[0u8; 15]).is_err());
-    assert!(Aes128GcmSiv::tag_from_slice(&[0u8; 17]).is_err());
-    assert!(Aes128GcmSiv::tag_from_slice(&[0u8; 0]).is_err());
-    assert!(Aes128GcmSiv::tag_from_slice(&[0u8; 16]).is_ok());
+    assert_eq!(
+      Aes128GcmSiv::tag_from_slice(&[0u8; 15]).expect_err("short AES-128-GCM-SIV tag must be rejected"),
+      AeadBufferError::new()
+    );
+    assert_eq!(
+      Aes128GcmSiv::tag_from_slice(&[0u8; 17]).expect_err("long AES-128-GCM-SIV tag must be rejected"),
+      AeadBufferError::new()
+    );
+    assert_eq!(
+      Aes128GcmSiv::tag_from_slice(&[]).expect_err("empty AES-128-GCM-SIV tag must be rejected"),
+      AeadBufferError::new()
+    );
+    let tag = Aes128GcmSiv::tag_from_slice(&[0u8; 16]).expect("16-byte AES-128-GCM-SIV tag must be accepted");
+    assert_eq!(tag.as_bytes(), &[0u8; 16]);
   }
 
   #[test]
   #[cfg(target_pointer_width = "64")]
   fn aes128gcmsiv_input_limit_matches_rfc8452() {
     for len in [MAX_INPUT_LEN.strict_sub(1), MAX_INPUT_LEN] {
-      assert!(super::super::try_bounded_length_as_u64(len as usize, MAX_INPUT_LEN).is_ok());
+      let platform_len = usize::try_from(len).expect("RFC 8452 input limit fits 64-bit usize");
+      assert_eq!(
+        super::super::try_bounded_length_as_u64(platform_len, MAX_INPUT_LEN),
+        Ok(len)
+      );
     }
-    assert!(super::super::try_bounded_length_as_u64(MAX_INPUT_LEN.strict_add(1) as usize, MAX_INPUT_LEN).is_err());
-  }
-
-  // --- Hex helpers ---
-
-  fn hex16(hex: &str) -> [u8; 16] {
-    let mut out = [0u8; 16];
-    for i in 0..16 {
-      out[i] = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap();
-    }
-    out
-  }
-
-  fn hex12(hex: &str) -> [u8; 12] {
-    let mut out = [0u8; 12];
-    for i in 0..12 {
-      out[i] = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap();
-    }
-    out
-  }
-
-  fn hex_vec(hex: &str) -> Vec<u8> {
-    let mut out = Vec::with_capacity(hex.len() / 2);
-    let mut i = 0;
-    while i < hex.len() {
-      out.push(u8::from_str_radix(&hex[i..i + 2], 16).unwrap());
-      i += 2;
-    }
-    out
+    let too_large = usize::try_from(MAX_INPUT_LEN.strict_add(1)).expect("RFC 8452 input limit fits 64-bit usize");
+    assert_eq!(
+      super::super::try_bounded_length_as_u64(too_large, MAX_INPUT_LEN),
+      Err(super::super::LengthOverflow)
+    );
   }
 }

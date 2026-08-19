@@ -2,15 +2,15 @@
 //!
 //! This module is the checked-in runtime table used by capability-driven dispatch.
 
-pub use super::kernels::Xxh3KernelId as KernelId;
+pub(crate) use super::kernels::Xxh3KernelId as KernelId;
 use crate::platform::Caps;
 
 #[derive(Clone, Copy, Debug)]
-pub struct DispatchTable {
+pub(crate) struct DispatchTable {
   pub long: KernelId,
 }
 
-pub static DEFAULT_TABLE: DispatchTable = DispatchTable {
+pub(crate) static DEFAULT_TABLE: DispatchTable = DispatchTable {
   long: KernelId::Portable,
 };
 
@@ -18,27 +18,27 @@ pub static DEFAULT_TABLE: DispatchTable = DispatchTable {
 
 /// x86-64 with AVX-512F: single-iteration per stripe.
 #[cfg(target_arch = "x86_64")]
-pub static AVX512_TABLE: DispatchTable = DispatchTable { long: KernelId::Avx512 };
+pub(crate) static AVX512_TABLE: DispatchTable = DispatchTable { long: KernelId::Avx512 };
 
 /// x86-64 with AVX2 (no AVX-512): two iterations per stripe.
 #[cfg(target_arch = "x86_64")]
-pub static AVX2_TABLE: DispatchTable = DispatchTable { long: KernelId::Avx2 };
+pub(crate) static AVX2_TABLE: DispatchTable = DispatchTable { long: KernelId::Avx2 };
 
 /// aarch64 with NEON: four iterations per stripe.
 #[cfg(target_arch = "aarch64")]
-pub static NEON_TABLE: DispatchTable = DispatchTable { long: KernelId::Neon };
+pub(crate) static NEON_TABLE: DispatchTable = DispatchTable { long: KernelId::Neon };
 
 /// POWER8+ with VSX: four iterations per stripe (128-bit vectors).
 #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
-pub static VSX_TABLE: DispatchTable = DispatchTable { long: KernelId::Vsx };
+pub(crate) static VSX_TABLE: DispatchTable = DispatchTable { long: KernelId::Vsx };
 
 /// s390x z13+ with z/Vector: four iterations per stripe (128-bit vectors).
 #[cfg(target_arch = "s390x")]
-pub static ZVECTOR_TABLE: DispatchTable = DispatchTable { long: KernelId::Vector };
+pub(crate) static ZVECTOR_TABLE: DispatchTable = DispatchTable { long: KernelId::Vector };
 
 #[inline]
 #[must_use]
-pub fn select_runtime_table(caps: Caps) -> &'static DispatchTable {
+pub(crate) fn select_runtime_table(caps: Caps) -> &'static DispatchTable {
   let _ = caps;
   #[cfg(target_arch = "x86_64")]
   {

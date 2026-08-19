@@ -18,13 +18,15 @@ std::thread_local! {
 }
 
 fn record_allocation() {
-  let _ = ALLOCATIONS.try_with(|allocations| {
+  discard_measurement_result(ALLOCATIONS.try_with(|allocations| {
     let count = allocations.get();
     if count != MEASUREMENT_DISABLED {
       allocations.set(count.strict_add(1));
     }
-  });
+  }));
 }
+
+fn discard_measurement_result(_result: Result<(), std::thread::AccessError>) {}
 
 // SAFETY: Delegating allocation to `System` because:
 // 1. Every operation forwards the original pointer and layout unchanged.
@@ -66,7 +68,7 @@ struct AllocationMeasurement;
 
 impl Drop for AllocationMeasurement {
   fn drop(&mut self) {
-    let _ = ALLOCATIONS.try_with(|allocations| allocations.set(MEASUREMENT_DISABLED));
+    discard_measurement_result(ALLOCATIONS.try_with(|allocations| allocations.set(MEASUREMENT_DISABLED)));
   }
 }
 
@@ -99,7 +101,8 @@ fn fast_hashers_and_preallocated_maps_hash_without_allocating() {
     for chunk in long_input.chunks(127) {
       xxh3.write(chunk);
     }
-    let _ = xxh3.finish();
+    let hash = xxh3.finish();
+    assert_eq!(xxh3.finish(), hash);
   });
 
   let xxh3_128_direct = measure_allocations(|| {
@@ -107,13 +110,15 @@ fn fast_hashers_and_preallocated_maps_hash_without_allocating() {
     for chunk in long_input.chunks(127) {
       xxh3_128.write(chunk);
     }
-    let _ = xxh3_128.finish();
+    let hash = xxh3_128.finish();
+    assert_eq!(xxh3_128.finish(), hash);
   });
 
   let rapid_direct = measure_allocations(|| {
     let mut rapid = rapid_builder.build_hasher();
     rapid.write(&long_input);
-    let _ = rapid.finish();
+    let hash = rapid.finish();
+    assert_eq!(rapid.finish(), hash);
   });
 
   let rapid_stream_direct = measure_allocations(|| {
@@ -121,17 +126,18 @@ fn fast_hashers_and_preallocated_maps_hash_without_allocating() {
     for chunk in long_input.chunks(127) {
       rapid_stream.write(chunk);
     }
-    let _ = rapid_stream.finish();
+    let hash = rapid_stream.finish();
+    assert_eq!(rapid_stream.finish(), hash);
   });
 
   let xxh3_map_ops = measure_allocations(|| {
     xxh3_map.insert("allocation-free", 1);
-    let _ = xxh3_map.get("allocation-free");
+    assert_eq!(xxh3_map.get("allocation-free"), Some(&1));
   });
 
   let rapid_map_ops = measure_allocations(|| {
     rapid_map.insert("allocation-free", 1);
-    let _ = rapid_map.get("allocation-free");
+    assert_eq!(rapid_map.get("allocation-free"), Some(&1));
   });
 
   assert_eq!(xxh3_direct, 0, "XXH3 Hasher must not allocate");

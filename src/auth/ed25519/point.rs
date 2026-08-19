@@ -5,16 +5,23 @@
 
 use core::fmt;
 
-use super::{field::FieldElement, scalar};
+#[cfg(feature = "ed25519")]
+use super::scalar;
+use super::{field::FieldElement, scalar_radix_16};
+#[cfg(feature = "ed25519")]
 use crate::traits::ct;
 
 #[path = "basepoint_tables.rs"]
 mod basepoint_tables;
+#[cfg(feature = "ed25519")]
 #[path = "basepoint_wnaf5_table.rs"]
 mod basepoint_wnaf5_table;
 
-pub(crate) use self::{basepoint_tables::BASEPOINT_RADIX16_TABLE, basepoint_wnaf5_table::BASEPOINT_WNAF5_TABLE};
+pub(crate) use self::basepoint_tables::BASEPOINT_RADIX16_TABLE;
+#[cfg(feature = "ed25519")]
+pub(crate) use self::basepoint_wnaf5_table::BASEPOINT_WNAF5_TABLE;
 
+#[cfg(feature = "ed25519")]
 const EDWARDS_D: FieldElement = FieldElement::from_limbs([
   929_955_233_495_203,
   466_365_720_129_213,
@@ -22,6 +29,7 @@ const EDWARDS_D: FieldElement = FieldElement::from_limbs([
   2_033_849_074_728_123,
   1_442_794_654_840_575,
 ]);
+#[cfg(feature = "ed25519")]
 const EDWARDS_D2: FieldElement = FieldElement::from_limbs([
   1_859_910_466_990_425,
   932_731_440_258_426,
@@ -29,6 +37,7 @@ const EDWARDS_D2: FieldElement = FieldElement::from_limbs([
   1_815_898_335_770_999,
   633_789_495_995_903,
 ]);
+#[cfg(feature = "ed25519")]
 const BASEPOINT_X: FieldElement = FieldElement::from_limbs([
   1_738_742_601_995_546,
   1_146_398_526_822_698,
@@ -36,6 +45,7 @@ const BASEPOINT_X: FieldElement = FieldElement::from_limbs([
   562_264_141_797_630,
   587_772_402_128_613,
 ]);
+#[cfg(feature = "ed25519")]
 const BASEPOINT_Y: FieldElement = FieldElement::from_limbs([
   1_801_439_850_948_184,
   1_351_079_888_211_148,
@@ -95,6 +105,7 @@ impl CachedPoint {
 /// multiply per addition than affine `CachedPoint`, but avoids the
 /// expensive field inversion required to convert runtime tables to affine.
 #[derive(Clone, Copy)]
+#[cfg(feature = "ed25519")]
 struct ProjectiveCachedPoint {
   y_plus_x: FieldElement,
   y_minus_x: FieldElement,
@@ -102,6 +113,7 @@ struct ProjectiveCachedPoint {
   t2d: FieldElement,
 }
 
+#[cfg(feature = "ed25519")]
 impl ProjectiveCachedPoint {
   const IDENTITY: Self = Self {
     y_plus_x: FieldElement::ONE,
@@ -144,6 +156,7 @@ impl ExtendedPoint {
   }
 
   /// Construct an extended point from affine coordinates.
+  #[cfg(feature = "ed25519")]
   #[must_use]
   pub(crate) fn from_affine(x: FieldElement, y: FieldElement) -> Self {
     Self {
@@ -155,6 +168,7 @@ impl ExtendedPoint {
   }
 
   /// Add two extended Edwards points.
+  #[cfg(feature = "ed25519")]
   #[must_use]
   pub(crate) fn add(&self, rhs: &Self) -> Self {
     let a = self.y.sub(&self.x).mul(&rhs.y.sub(&rhs.x));
@@ -197,6 +211,7 @@ impl ExtendedPoint {
 
   /// Add a projective cached point (8M — 1 more than affine cached, but
   /// avoids the inversion needed to build affine runtime tables).
+  #[cfg(feature = "ed25519")]
   #[must_use]
   fn add_projective_cached(&self, rhs: &ProjectiveCachedPoint) -> Self {
     let a = self.y.sub(&self.x).mul(&rhs.y_minus_x);
@@ -223,6 +238,7 @@ impl ExtendedPoint {
   /// multiplications, no curve-constant multiply. The general `add(self)`
   /// path costs 4 squarings + 5 multiplications and can't exploit squaring
   /// symmetry in the compiler.
+  #[cfg(feature = "ed25519")]
   #[must_use]
   pub(crate) fn double(&self) -> Self {
     let a = self.x.square();
@@ -244,6 +260,7 @@ impl ExtendedPoint {
   }
 
   /// Compress the point into the standard Ed25519 encoding.
+  #[cfg(feature = "ed25519")]
   #[must_use]
   pub(crate) fn to_bytes(self) -> Option<[u8; 32]> {
     let (x, y) = self.to_affine()?;
@@ -253,6 +270,7 @@ impl ExtendedPoint {
   }
 
   /// Decode a compressed Ed25519 point.
+  #[cfg(feature = "ed25519")]
   #[must_use]
   pub(crate) fn from_bytes(bytes: &[u8; 32]) -> Option<Self> {
     let sign = (bytes[31] >> 7) != 0;
@@ -275,12 +293,14 @@ impl ExtendedPoint {
   }
 
   /// Standard Ed25519 basepoint.
+  #[cfg(feature = "ed25519")]
   #[must_use]
   pub(crate) fn basepoint() -> Self {
     Self::from_affine(BASEPOINT_X, BASEPOINT_Y)
   }
 
   /// Scalar multiplication by a little-endian 32-byte scalar.
+  #[cfg(feature = "ed25519")]
   #[must_use]
   pub(crate) fn scalar_mul(&self, scalar: &[u8; 32]) -> Self {
     let mut acc = Self::identity();
@@ -301,9 +321,10 @@ impl ExtendedPoint {
 
   /// Variable-base signed radix-16 multiplication using a projective runtime
   /// table (no field inversion).
+  #[cfg(feature = "ed25519")]
   #[must_use]
   pub(crate) fn scalar_mul_vartime(&self, scalar: &[u8; 32]) -> Self {
-    let digits = scalar::as_radix_16(scalar);
+    let digits = scalar_radix_16(scalar);
     let table = projective_cached_multiples(self);
     let mut acc = Self::identity();
 
@@ -324,7 +345,7 @@ impl ExtendedPoint {
   /// repeated-doubling work from the fixed-base path.
   #[must_use]
   pub(crate) fn scalar_mul_basepoint(scalar: &[u8; 32]) -> Self {
-    let digits = scalar::as_radix_16(scalar);
+    let digits = scalar_radix_16(scalar);
     let mut acc = Self::identity();
 
     for (digit, table) in digits.iter().copied().zip(BASEPOINT_RADIX16_TABLE.iter()) {
@@ -338,18 +359,21 @@ impl ExtendedPoint {
   // Radix-16 Straus removed — superseded by straus_wnaf_basepoint_vartime.
 
   /// Multiply by the Edwards cofactor.
+  #[cfg(feature = "ed25519")]
   #[must_use]
   pub(crate) fn mul_by_cofactor(&self) -> Self {
     self.double().double().double()
   }
 
   /// Whether this point lies in the low-order torsion subgroup.
+  #[cfg(feature = "ed25519")]
   #[must_use]
   pub(crate) fn is_small_order(&self) -> bool {
     self.mul_by_cofactor().equals_projective(&Self::identity())
   }
 
   /// Convert the point to affine coordinates when `Z != 0`.
+  #[cfg(feature = "ed25519")]
   #[must_use]
   pub(crate) fn to_affine(self) -> Option<(FieldElement, FieldElement)> {
     if self.z.is_zero() {
@@ -365,8 +389,22 @@ impl ExtendedPoint {
   /// `u = (Z + Y) / (Z - Y)` is the standard birational map from
   /// Edwards25519 to Curve25519. The identity maps to the Montgomery
   /// 2-torsion point `u = 0`.
+  #[cfg(all(
+    feature = "x25519",
+    any(
+      test,
+      miri,
+      not(any(
+        all(
+          target_arch = "aarch64",
+          any(target_os = "macos", target_os = "linux"),
+          not(feature = "portable-only")
+        ),
+        all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+      ))
+    )
+  ))]
   #[must_use]
-  #[allow(dead_code)]
   pub(crate) fn to_montgomery_u(self) -> FieldElement {
     let numerator = self.z.add(&self.y);
     let denominator = self.z.sub(&self.y);
@@ -378,6 +416,7 @@ impl ExtendedPoint {
   }
 
   /// Compare two extended points without converting to affine coordinates.
+  #[cfg(feature = "ed25519")]
   #[must_use]
   pub(crate) fn equals_projective(&self, rhs: &Self) -> bool {
     let zero = [0u8; 32];
@@ -402,6 +441,7 @@ impl ExtendedPoint {
   }
 
   /// Borrow the extended-coordinate components.
+  #[cfg(any(feature = "ed25519", target_arch = "x86_64"))]
   #[must_use]
   pub(crate) const fn components(&self) -> (&FieldElement, &FieldElement, &FieldElement, &FieldElement) {
     (&self.x, &self.y, &self.z, &self.t)
@@ -419,16 +459,27 @@ fn ct_eq_mask_u8(lhs: u8, rhs: u8) -> u64 {
 #[inline(always)]
 #[must_use]
 fn ct_negative_mask_i8(value: i8) -> u64 {
-  let bit = ((i16::from(value) >> 15) & 1) as u64;
+  let bit = u64::from(value.to_ne_bytes()[0] >> 7);
   0u64.wrapping_sub(bit)
 }
 
 #[inline(always)]
 #[must_use]
 fn ct_abs_i8(value: i8) -> u8 {
-  let value = i16::from(value);
-  let sign = value >> 15;
-  ((value ^ sign) - sign) as u8
+  let value = value.to_ne_bytes()[0];
+  let sign = value >> 7;
+  let mask = 0u8.wrapping_sub(sign);
+  (value ^ mask).wrapping_add(sign)
+}
+
+#[inline]
+fn volatile_copy_field(field: &FieldElement) -> FieldElement {
+  let mut limbs = [0u64; 5];
+  for (output, input) in limbs.iter_mut().zip(field.limbs()) {
+    // SAFETY: `input` is an aligned reference to an initialized `u64` that remains live for this read.
+    *output = unsafe { core::ptr::read_volatile(input) };
+  }
+  FieldElement::from_limbs(limbs)
 }
 
 #[inline(always)]
@@ -456,15 +507,13 @@ fn select_cached(lhs: &CachedPoint, rhs: &CachedPoint, mask: u64) -> CachedPoint
 fn select_signed_cached(table: &[CachedPoint; 8], digit: i8) -> CachedPoint {
   let abs = core::hint::black_box(ct_abs_i8(digit));
   let mut selected = CachedPoint::IDENTITY;
-  for (i, candidate) in table.iter().enumerate() {
-    // SAFETY: Volatile table read is used as a compiler barrier because:
-    // 1. `candidate` is a valid shared reference to one `CachedPoint` entry.
-    // 2. `CachedPoint` is `Copy`, so the volatile read does not create ownership aliasing.
-    // 3. Every table entry is read unconditionally; the selected digit affects only masks below.
-    // Without this barrier, LLVM can rewrite the masked selection into a secret-dependent branch
-    // ladder.
-    let candidate = unsafe { core::ptr::read_volatile(candidate) };
-    let mask = core::hint::black_box(ct_eq_mask_u8(abs, (i as u8).wrapping_add(1)));
+  for (expected, candidate) in (1u8..=8).zip(table) {
+    let candidate = CachedPoint {
+      y_plus_x: volatile_copy_field(&candidate.y_plus_x),
+      y_minus_x: volatile_copy_field(&candidate.y_minus_x),
+      t2d: volatile_copy_field(&candidate.t2d),
+    };
+    let mask = core::hint::black_box(ct_eq_mask_u8(abs, expected));
     selected = select_cached(&selected, &candidate, mask);
   }
 
@@ -472,6 +521,7 @@ fn select_signed_cached(table: &[CachedPoint; 8], digit: i8) -> CachedPoint {
   select_cached(&selected, &neg, core::hint::black_box(ct_negative_mask_i8(digit)))
 }
 
+/// Select one signed digit from the first portable basepoint table and return its field limbs.
 #[cfg(feature = "diag")]
 #[inline(always)]
 pub fn diag_select_basepoint_cached_limb_digest(digit: i8) -> [u64; 15] {
@@ -484,6 +534,7 @@ pub fn diag_select_basepoint_cached_limb_digest(digit: i8) -> [u64; 15] {
 }
 
 /// Add a signed digit from a projective cached table (runtime table).
+#[cfg(feature = "ed25519")]
 #[inline]
 #[must_use]
 fn add_signed_projective_cached(acc: ExtendedPoint, table: &[ProjectiveCachedPoint; 8], digit: i8) -> ExtendedPoint {
@@ -502,6 +553,7 @@ fn add_signed_projective_cached(acc: ExtendedPoint, table: &[ProjectiveCachedPoi
 /// Build a projective cached table of `[1P, 2P, ..., 8P]` without any
 /// field inversion. Each entry stores `(Y+X, Y-X, Z, 2dT)` in extended
 /// projective coordinates.
+#[cfg(feature = "ed25519")]
 #[must_use]
 fn projective_cached_multiples(point: &ExtendedPoint) -> [ProjectiveCachedPoint; 8] {
   let mut out = [ProjectiveCachedPoint::IDENTITY; 8];
@@ -517,6 +569,7 @@ fn projective_cached_multiples(point: &ExtendedPoint) -> [ProjectiveCachedPoint;
 }
 
 /// Build odd multiples `[1P, 3P, 5P, ..., (2n-1)P]` in projective cached format.
+#[cfg(feature = "ed25519")]
 #[must_use]
 fn odd_projective_cached_multiples<const N: usize>(point: &ExtendedPoint) -> [ProjectiveCachedPoint; N] {
   let p2 = point.double();
@@ -533,6 +586,7 @@ fn odd_projective_cached_multiples<const N: usize>(point: &ExtendedPoint) -> [Pr
 }
 
 /// Add a signed wNAF digit from an odd-multiples projective cached table.
+#[cfg(feature = "ed25519")]
 #[inline]
 #[must_use]
 fn add_wnaf_digit_projective(acc: ExtendedPoint, table: &[ProjectiveCachedPoint], digit: i8) -> ExtendedPoint {
@@ -549,6 +603,7 @@ fn add_wnaf_digit_projective(acc: ExtendedPoint, table: &[ProjectiveCachedPoint]
 }
 
 /// Add a signed wNAF digit from an affine cached table.
+#[cfg(feature = "ed25519")]
 #[inline]
 #[must_use]
 fn add_wnaf_digit_cached(acc: ExtendedPoint, table: &[CachedPoint], digit: i8) -> ExtendedPoint {
@@ -567,8 +622,8 @@ fn add_wnaf_digit_cached(acc: ExtendedPoint, table: &[CachedPoint], digit: i8) -
 /// wNAF-based portable Straus: `[s]B + [h]A`.
 ///
 /// Uses wNAF(5) for both scalars (8-entry odd-multiples tables).
+#[cfg(feature = "ed25519")]
 #[must_use]
-#[allow(clippy::indexing_slicing)] // i bounded by top < 256, naf arrays are [i8; 256]
 pub(crate) fn straus_wnaf_basepoint_vartime(s: &[u8; 32], h: &[u8; 32], a: &ExtendedPoint) -> ExtendedPoint {
   let s_naf = scalar::non_adjacent_form(s, 5);
   let h_naf = scalar::non_adjacent_form(h, 5);
@@ -617,75 +672,18 @@ impl fmt::Debug for ExtendedPoint {
   }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "ed25519"))]
 mod tests {
   use super::{ExtendedPoint, FieldElement};
-
-  /// Generates the wNAF(8) basepoint table for IFMA verify.
-  /// Run with `--nocapture` to print the table source.
-  #[cfg(feature = "std")]
-  #[test]
-  fn gen_basepoint_wnaf8_ifma_table() {
-    let bp = ExtendedPoint::basepoint();
-    let bp2 = bp.double();
-
-    let d2_fe = FieldElement::from_small(121_666);
-    let d2_2_fe = FieldElement::from_small(121_666u64.wrapping_mul(2));
-    let d1_2_fe = FieldElement::from_small(121_665u64.wrapping_mul(2));
-
-    let mut acc = bp;
-    eprintln!("pub(crate) static BASEPOINT_WNAF8_IFMA_RAW: [[[i64; 4]; 5]; 64] = [");
-    for i in 0..64u32 {
-      if i > 0 {
-        acc = acc.add(&bp2);
-      }
-      let (x, y, z, t) = acc.components();
-
-      let a = d2_fe.mul(&y.sub(x)).normalize();
-      let b = d2_fe.mul(&y.add(x)).normalize();
-      let c = d2_2_fe.mul(z).normalize();
-      let d = d1_2_fe.mul(t).neg().normalize();
-
-      let al = a.limbs();
-      let bl = b.limbs();
-      let cl = c.limbs();
-      let dl = d.limbs();
-
-      eprintln!("  // {}B", 2 * i + 1);
-      eprintln!("  [");
-      for k in 0..5 {
-        eprintln!(
-          "    [{}, {}, {}, {}],",
-          al[k] as i64, bl[k] as i64, cl[k] as i64, dl[k] as i64
-        );
-      }
-      eprintln!("  ],");
-    }
-    eprintln!("];");
-  }
 
   fn basepoint() -> ExtendedPoint {
     ExtendedPoint::basepoint()
   }
 
-  fn decode_hex_32(hex: &str) -> [u8; 32] {
-    let bytes = hex.as_bytes();
+  fn decode_hex_32(hex: &str) -> Result<[u8; 32], crate::hex::InvalidHexError> {
     let mut out = [0u8; 32];
-
-    for (dst, chunk) in out.iter_mut().zip(bytes.chunks_exact(2)) {
-      *dst = hex_value(chunk[0]) << 4 | hex_value(chunk[1]);
-    }
-
-    out
-  }
-
-  fn hex_value(byte: u8) -> u8 {
-    match byte {
-      b'0'..=b'9' => byte - b'0',
-      b'a'..=b'f' => byte - b'a' + 10,
-      b'A'..=b'F' => byte - b'A' + 10,
-      _ => panic!("invalid hex"),
-    }
+    crate::hex::from_hex(hex, &mut out)?;
+    Ok(out)
   }
 
   #[test]
@@ -722,15 +720,15 @@ mod tests {
 
   #[test]
   fn basepoint_roundtrips_compressed_encoding() {
-    let expected = decode_hex_32("5866666666666666666666666666666666666666666666666666666666666666");
+    let expected = decode_hex_32("5866666666666666666666666666666666666666666666666666666666666666").ok();
     let encoded = basepoint().to_bytes();
 
-    assert_eq!(encoded, Some(expected));
+    assert_eq!(encoded, expected);
     assert_eq!(
       encoded
         .and_then(|bytes| ExtendedPoint::from_bytes(&bytes))
         .and_then(|point| point.to_bytes()),
-      Some(expected)
+      expected
     );
   }
 
@@ -781,8 +779,7 @@ mod tests {
 
   #[test]
   fn basepoint_wnaf5_table_matches_odd_basepoint_multiples() {
-    for (i, cached) in super::BASEPOINT_WNAF5_TABLE.iter().enumerate() {
-      let scalar = (2 * i + 1) as u8;
+    for (scalar, cached) in (1u8..).step_by(2).zip(&super::BASEPOINT_WNAF5_TABLE) {
       let mut scalar_bytes = [0u8; 32];
       scalar_bytes[0] = scalar;
 
@@ -808,13 +805,13 @@ mod tests {
   fn rfc8032_public_key_derivation_matches_vector_1() {
     use crate::auth::ed25519::{Ed25519SecretKey, hash::ExpandedSecret};
 
-    let secret = Ed25519SecretKey::from_bytes(decode_hex_32(
-      "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
-    ));
+    let secret_bytes = decode_hex_32("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60").ok();
+    assert!(secret_bytes.is_some());
+    let secret = Ed25519SecretKey::from_bytes(secret_bytes.unwrap_or_default());
     let expanded = ExpandedSecret::from_secret_key(&secret);
     let public = ExtendedPoint::scalar_mul_basepoint(expanded.scalar_bytes()).to_bytes();
-    let expected = decode_hex_32("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a");
+    let expected = decode_hex_32("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a").ok();
 
-    assert_eq!(public, Some(expected));
+    assert_eq!(public, expected);
   }
 }

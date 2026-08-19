@@ -6,8 +6,8 @@
 //! Lanes: `(d2·(Y−X), d2·(Y+X), 2·d2·Z, −2·d1·T)`.
 //!
 //! Generated from the canonical Ed25519 basepoint using portable scalar math.
-//! Validated by `gen_basepoint_wnaf8_ifma_table` test in `point.rs`.
-#![allow(clippy::unreadable_literal)]
+//! Validated by `ifma_wnaf8_table_matches_portable_odd_multiples` in
+//! `point_avx2.rs`.
 
 pub(crate) static BASEPOINT_WNAF8_IFMA_RAW: [[[i64; 4]; 5]; 64] = [
   // 1B

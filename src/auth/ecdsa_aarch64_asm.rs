@@ -5,8 +5,6 @@
 //! ABI boundary; `ecdsa.rs` owns scalar validation, blinding, affine
 //! conversion, and public API semantics.
 
-#![allow(unsafe_code)]
-
 use core::arch::global_asm;
 
 use super::ZeroizingWords;

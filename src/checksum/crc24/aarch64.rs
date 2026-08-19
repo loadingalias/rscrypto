@@ -6,10 +6,8 @@
 //!
 //! # Safety
 //!
-//! Uses `unsafe` for ARM SIMD intrinsics. Callers must ensure PMULL is
-//! available before executing these kernels (the dispatcher does this).
-#![allow(unsafe_code)]
-#![allow(clippy::indexing_slicing)]
+//! Uses `unsafe` for ARM SIMD intrinsics. Callers must establish NEON and AES
+//! (PMULL) support before executing the accelerated kernels.
 
 use core::{
   arch::aarch64::*,
@@ -45,33 +43,57 @@ impl BitXorAssign for Simd {
 }
 
 impl Simd {
+  /// Creates a vector from its high and low 64-bit lanes.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON.
   #[inline]
   #[target_feature(enable = "neon")]
   unsafe fn new(high: u64, low: u64) -> Self {
     Self(vcombine_u8(vcreate_u8(low), vcreate_u8(high)))
   }
 
+  /// Loads 16 bytes from `ptr` without requiring alignment.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON, and `ptr` must address at least 16 initialized readable
+  /// bytes.
   #[inline]
   #[target_feature(enable = "neon")]
   unsafe fn load(ptr: *const u8) -> Self {
-    // SAFETY: Caller guarantees:
-    // 1. NEON target features are available (dispatch check).
-    // 2. All SIMD operations are pure register computations after loads.
+    // SAFETY: The caller guarantees NEON support and 16 initialized readable bytes at `ptr`.
     unsafe { Self(vld1q_u8(ptr)) }
   }
 
+  /// Computes the bitwise AND of two vectors.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON.
   #[inline]
   #[target_feature(enable = "neon")]
   unsafe fn and(self, mask: Self) -> Self {
     Self(vandq_u8(self.0, mask.0))
   }
 
+  /// Shifts the vector right by eight bytes, filling the high bytes with zero.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON.
   #[inline]
   #[target_feature(enable = "neon")]
   unsafe fn shift_right_8(self) -> Self {
     Self(vextq_u8(self.0, vdupq_n_u8(0), 8))
   }
 
+  /// Moves the low 32-bit lane to the high 32-bit lane and clears the rest.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON.
   #[inline]
   #[target_feature(enable = "neon")]
   unsafe fn shift_left_12(self) -> Self {
@@ -80,13 +102,22 @@ impl Simd {
     Self(vreinterpretq_u8_u32(result))
   }
 
-  /// Reverse bits within each byte (u8::reverse_bits), lane-wise.
+  /// Reverses the bits within each byte lane.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON.
   #[inline]
   #[target_feature(enable = "neon")]
   unsafe fn bitrev_bytes(self) -> Self {
     Self(vrbitq_u8(self.0))
   }
 
+  /// Multiplies the low polynomial lanes.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support AES (PMULL) and NEON.
   #[inline]
   #[target_feature(enable = "aes")]
   unsafe fn clmul00(self, other: Self) -> Self {
@@ -95,6 +126,11 @@ impl Simd {
     Self(vreinterpretq_u8_p128(vmull_p64(a, b)))
   }
 
+  /// Multiplies this vector's high polynomial lane by the other vector's low lane.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support AES (PMULL) and NEON.
   #[inline]
   #[target_feature(enable = "aes")]
   unsafe fn clmul01(self, other: Self) -> Self {
@@ -103,6 +139,11 @@ impl Simd {
     Self(vreinterpretq_u8_p128(vmull_p64(a, b)))
   }
 
+  /// Multiplies this vector's low polynomial lane by the other vector's high lane.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support AES (PMULL) and NEON.
   #[inline]
   #[target_feature(enable = "aes")]
   unsafe fn clmul10(self, other: Self) -> Self {
@@ -111,6 +152,11 @@ impl Simd {
     Self(vreinterpretq_u8_p128(vmull_p64(a, b)))
   }
 
+  /// Multiplies the high polynomial lanes.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support AES (PMULL) and NEON.
   #[inline]
   #[target_feature(enable = "aes")]
   unsafe fn clmul11(self, other: Self) -> Self {
@@ -119,6 +165,11 @@ impl Simd {
     Self(vreinterpretq_u8_p128(vmull_p64(a, b)))
   }
 
+  /// Folds one reflected 16-byte lane and XORs the supplied input lane.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support AES (PMULL) and NEON.
   #[inline]
   #[target_feature(enable = "aes")]
   unsafe fn fold_16_reflected(self, coeff: Self, data_to_xor: Self) -> Self {
@@ -132,6 +183,11 @@ impl Simd {
     }
   }
 
+  /// Folds a reflected CRC state from 128 bits to the width-32 reduction state.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support AES (PMULL) and NEON.
   #[inline]
   #[target_feature(enable = "aes", enable = "neon")]
   unsafe fn fold_width32_reflected(self, high: u64, low: u64) -> Self {
@@ -156,6 +212,11 @@ impl Simd {
     }
   }
 
+  /// Applies Barrett reduction and returns the low CRC-24 state in a `u32`.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support AES (PMULL) and NEON.
   #[inline]
   #[target_feature(enable = "aes", enable = "neon")]
   unsafe fn barrett_width32_reflected(self, poly: u64, mu: u64) -> u32 {
@@ -176,6 +237,11 @@ impl Simd {
 
 // 8-lane width32 update (128B blocks)
 
+/// Reduces eight folded SIMD lanes to a reflected CRC-24 state.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL) and NEON.
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn finalize_lanes_width32_reflected(x: [Simd; 8], keys: &[u64; 23]) -> u32 {
@@ -197,6 +263,11 @@ unsafe fn finalize_lanes_width32_reflected(x: [Simd; 8], keys: &[u64; 23]) -> u3
   }
 }
 
+/// Reverses the bits within every byte of a 128-byte block.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL) and NEON.
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn bitrev_block(block: &[Simd; 8]) -> [Simd; 8] {
@@ -217,6 +288,11 @@ unsafe fn bitrev_block(block: &[Simd; 8]) -> [Simd; 8] {
   }
 }
 
+/// Bit-reverses and folds one 128-byte block into the current SIMD state.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL) and NEON.
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn fold_block_128_width32_reflected_bitrev_bytes(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: Simd) {
@@ -244,6 +320,11 @@ unsafe fn fold_block_128_width32_reflected_bitrev_bytes(x: &mut [Simd; 8], chunk
   }
 }
 
+/// Bit-reverses and folds 128-byte blocks through two independent PMULL streams.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL) and NEON.
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn update_simd_width32_reflected_bitrev_bytes_2way(
   state: u32,
@@ -274,7 +355,7 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_2way(
     const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
 
     let mut i: usize = 2;
-    let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+    let aligned = blocks.len().strict_div(DOUBLE_GROUP).strict_mul(DOUBLE_GROUP);
 
     while i.strict_add(DOUBLE_GROUP) <= aligned {
       let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
@@ -321,6 +402,11 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_2way(
   }
 }
 
+/// Bit-reverses and folds 128-byte blocks through three independent PMULL streams.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL) and NEON.
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn update_simd_width32_reflected_bitrev_bytes_3way(
   state: u32,
@@ -359,7 +445,7 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_3way(
     const DOUBLE_GROUP: usize = 6; // 2 × 3-way = 6 blocks = 768B
 
     let mut i: usize = 3;
-    let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+    let aligned = blocks.len().strict_div(DOUBLE_GROUP).strict_mul(DOUBLE_GROUP);
 
     while i.strict_add(DOUBLE_GROUP) <= aligned {
       let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
@@ -381,7 +467,7 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_3way(
     }
 
     // Handle remaining triplets.
-    let triple_aligned = (blocks.len() / 3) * 3;
+    let triple_aligned = blocks.len().strict_div(3).strict_mul(3);
     while i < triple_aligned {
       fold_block_128_width32_reflected_bitrev_bytes(&mut s0, &blocks[i], coeff_384b);
       fold_block_128_width32_reflected_bitrev_bytes(&mut s1, &blocks[i.strict_add(1)], coeff_384b);
@@ -419,6 +505,11 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_3way(
   }
 }
 
+/// Bit-reverses and folds a reflected sequence of 128-byte blocks.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL) and NEON.
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn update_simd_width32_reflected_bitrev_bytes(
@@ -471,6 +562,11 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes(
 
 // Single-stream kernel entry points
 
+/// Computes reflected CRC-24 with single-lane PMULL folding for small buffers.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL) and NEON.
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn crc24_width32_pmull_small(mut state: u32, data: &[u8], keys: &[u64; 23]) -> u32 {
@@ -508,6 +604,11 @@ unsafe fn crc24_width32_pmull_small(mut state: u32, data: &[u8], keys: &[u64; 23
   }
 }
 
+/// Computes reflected CRC-24 with PMULL folding.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL) and NEON.
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn crc24_width32_pmull(mut state: u32, data: &[u8], keys: &[u64; 23]) -> u32 {
@@ -527,6 +628,11 @@ unsafe fn crc24_width32_pmull(mut state: u32, data: &[u8], keys: &[u64; 23]) -> 
   }
 }
 
+/// Computes reflected CRC-24 with two independent PMULL streams.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL) and NEON.
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn crc24_width32_pmull_2way(mut state: u32, data: &[u8], fold_256b: (u64, u64), keys: &[u64; 23]) -> u32 {
@@ -549,6 +655,11 @@ unsafe fn crc24_width32_pmull_2way(mut state: u32, data: &[u8], fold_256b: (u64,
   }
 }
 
+/// Computes reflected CRC-24 with three independent PMULL streams.
+///
+/// # Safety
+///
+/// The current CPU must support AES (PMULL) and NEON.
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn crc24_width32_pmull_3way(
@@ -573,17 +684,13 @@ unsafe fn crc24_width32_pmull_3way(
   }
 }
 
-// Public Safe Kernel
+// Safe kernel wrappers.
 
 /// CRC-24/OPENPGP PMULL kernel.
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL before selecting this kernel.
 #[inline]
-pub fn crc24_openpgp_pmull_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc24_openpgp_pmull_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
-  // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
+  // SAFETY: All callers establish PMULL support before invoking this private wrapper.
   state = unsafe { crc24_width32_pmull(state, data, &CRC24_OPENPGP_KEYS_REFLECTED) };
   from_reflected_state(state)
 }
@@ -591,27 +698,19 @@ pub fn crc24_openpgp_pmull_safe(crc: u32, data: &[u8]) -> u32 {
 /// CRC-24/OPENPGP PMULL small-buffer kernel.
 ///
 /// Optimized for inputs smaller than a folding block (128 bytes).
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL before selecting this kernel.
 #[inline]
-pub fn crc24_openpgp_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc24_openpgp_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
-  // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
+  // SAFETY: All callers establish PMULL support before invoking this private wrapper.
   state = unsafe { crc24_width32_pmull_small(state, data, &CRC24_OPENPGP_KEYS_REFLECTED) };
   from_reflected_state(state)
 }
 
 /// CRC-24/OPENPGP PMULL kernel (2-way striping).
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL before selecting this kernel.
 #[inline]
-pub fn crc24_openpgp_pmull_2way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc24_openpgp_pmull_2way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
-  // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
+  // SAFETY: All callers establish PMULL support before invoking this private wrapper.
   state = unsafe {
     crc24_width32_pmull_2way(
       state,
@@ -624,14 +723,10 @@ pub fn crc24_openpgp_pmull_2way_safe(crc: u32, data: &[u8]) -> u32 {
 }
 
 /// CRC-24/OPENPGP PMULL kernel (3-way striping).
-///
-/// # Safety
-///
-/// Dispatcher verifies PMULL before selecting this kernel.
 #[inline]
-pub fn crc24_openpgp_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc24_openpgp_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
-  // SAFETY: Dispatcher verifies PMULL before selecting this kernel.
+  // SAFETY: All callers establish PMULL support before invoking this private wrapper.
   state = unsafe {
     crc24_width32_pmull_3way(
       state,
@@ -657,8 +752,11 @@ mod tests {
   const STATES: &[u32] = &[0, 0x00b7_04ce, 0x005a_a5a5, 0x00ff_ffff];
 
   fn data() -> Vec<u8> {
-    (0..4111)
-      .map(|i| (i as u8).wrapping_mul(31).wrapping_add((i >> 8) as u8))
+    (0u16..4111)
+      .map(|i| {
+        let [low, high] = i.to_le_bytes();
+        low.wrapping_mul(31).wrapping_add(high)
+      })
       .collect()
   }
 
@@ -678,7 +776,7 @@ mod tests {
       for &state in STATES {
         for &offset in OFFSETS {
           for &len in LENS {
-            let slice = &input[offset..offset + len];
+            let slice = &input[offset..offset.strict_add(len)];
             assert_eq!(
               kernel(state, slice),
               super::super::portable::crc24_openpgp_slice8(state, slice),

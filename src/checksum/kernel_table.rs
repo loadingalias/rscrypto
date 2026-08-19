@@ -331,7 +331,7 @@ pub(crate) struct KernelSet {
 impl KernelSet {
   /// Extract the hot-path function pointer set.
   #[inline]
-  pub const fn fns(&self) -> KernelFnSet {
+  const fn fns(&self) -> KernelFnSet {
     KernelFnSet {
       #[cfg(feature = "crc16")]
       crc16_ccitt: self.crc16_ccitt,
@@ -352,7 +352,7 @@ impl KernelSet {
 
   /// Extract the cold-path name set.
   #[inline]
-  pub const fn names(&self) -> KernelNameSet {
+  const fn names(&self) -> KernelNameSet {
     KernelNameSet {
       #[cfg(feature = "crc16")]
       crc16_ccitt_name: self.crc16_ccitt_name,
@@ -410,7 +410,7 @@ const L: usize = 3;
 impl KernelTable {
   /// Construct a `KernelTable` from four [`KernelSet`] definitions, splitting
   /// function pointers from name strings at compile time.
-  pub const fn from_sets(
+  const fn from_sets(
     requires: Caps,
     boundaries: [usize; 3],
     xs: KernelSet,
@@ -428,7 +428,7 @@ impl KernelTable {
 
   /// Select the hot-path function pointer set for the given buffer length.
   #[inline]
-  pub const fn select_fns(&self, len: usize) -> &KernelFnSet {
+  pub(in crate::checksum) const fn select_fns(&self, len: usize) -> &KernelFnSet {
     if len <= self.boundaries[0] {
       &self.fns[XS]
     } else if len <= self.boundaries[1] {
@@ -444,7 +444,7 @@ impl KernelTable {
   ///
   /// Used only for introspection / diagnostics; never called on the hot path.
   #[inline]
-  pub const fn select_names(&self, len: usize) -> &KernelNameSet {
+  pub(in crate::checksum) const fn select_names(&self, len: usize) -> &KernelNameSet {
     if len <= self.boundaries[0] {
       &self.names[XS]
     } else if len <= self.boundaries[1] {
@@ -460,10 +460,9 @@ impl KernelTable {
   ///
   /// A table is hardware-accelerated if it requires any CPU capabilities
   /// beyond the baseline (i.e., `requires != Caps::NONE`).
-  #[cfg(any(test, feature = "diag"))]
-  #[cfg_attr(test, allow(dead_code))]
+  #[cfg(feature = "diag")]
   #[inline]
-  pub const fn is_hardware_accelerated(&self) -> bool {
+  const fn is_hardware_accelerated(&self) -> bool {
     !self.requires.is_empty()
   }
 }
@@ -474,6 +473,13 @@ impl KernelTable {
 /// Accepts the same field layout as the old monolithic `KernelTable { ... }`
 /// struct literal (with `requires`, `boundaries`, `xs`, `s`, `m`, `l` labels),
 /// converting it to `KernelTable::from_sets(...)` under the hood.
+#[cfg(any(
+  target_arch = "aarch64",
+  target_arch = "powerpc64",
+  target_arch = "riscv64",
+  target_arch = "s390x",
+  target_arch = "x86_64"
+))]
 macro_rules! kernel_table {
   (
     requires: $req:expr,
@@ -488,8 +494,7 @@ macro_rules! kernel_table {
 }
 
 /// Returns `true` if the active kernel table uses hardware-accelerated CRC kernels.
-#[cfg(any(test, feature = "diag"))]
-#[cfg_attr(test, allow(dead_code))]
+#[cfg(feature = "diag")]
 #[inline]
 pub fn is_hardware_accelerated() -> bool {
   active_table().is_hardware_accelerated()
@@ -669,18 +674,6 @@ fn capability_match(caps: Caps) -> Option<&'static KernelTable> {
 #[cfg(feature = "crc64")]
 #[inline]
 fn capability_match_crc64(caps: Caps) -> Option<&'static KernelTable> {
-  #[cfg(target_arch = "riscv64")]
-  {
-    use crate::platform::caps::riscv::{V, ZBC, ZVBC};
-    let v_zvbc = V.union(ZVBC);
-    if caps.has(v_zvbc) {
-      return Some(&RISCV64_CRC64_ZVBC_TABLE);
-    }
-    if caps.has(ZBC) {
-      return Some(&RISCV64_CRC64_ZBC_TABLE);
-    }
-  }
-
   capability_match(caps)
 }
 
@@ -720,7 +713,7 @@ const PORTABLE_SET: KernelSet = KernelSet {
   crc64_nvme_name: "portable/slice16",
 };
 
-pub static PORTABLE_TABLE: KernelTable = KernelTable::from_sets(
+static PORTABLE_TABLE: KernelTable = KernelTable::from_sets(
   Caps::NONE,
   [64, 256, 4096],
   PORTABLE_SET,
@@ -743,14 +736,24 @@ mod aarch64_tables {
   #[cfg(feature = "crc64")]
   use crate::checksum::crc64::kernels::aarch64 as crc64_k;
 
-  #[cfg(all(feature = "crc16", not(miri), any(target_os = "linux", target_os = "android")))]
+  #[cfg(all(
+    feature = "crc16",
+    feature = "std",
+    not(miri),
+    any(target_os = "linux", target_os = "android")
+  ))]
   const G3_CRC16_PMULL_EOR3_2WAY_MAX_LEN: usize = 262_144;
 
   /// Graviton3 CRC16/CCITT large-path PMULL+EOR3 hybrid.
   ///
   /// PMULL+EOR3 2-way improves lower "large" buffers, while PMULL+EOR3 1-way
   /// remains safer for very large buffers on G3.
-  #[cfg(all(feature = "crc16", not(miri), any(target_os = "linux", target_os = "android")))]
+  #[cfg(all(
+    feature = "crc16",
+    feature = "std",
+    not(miri),
+    any(target_os = "linux", target_os = "android")
+  ))]
   #[inline]
   fn g3_crc16_ccitt_l_hybrid(crc: u16, data: &[u8]) -> u16 {
     if data.len() <= G3_CRC16_PMULL_EOR3_2WAY_MAX_LEN {
@@ -764,7 +767,12 @@ mod aarch64_tables {
   ///
   /// Empirically, 2-way PMULL+EOR3 helps lower "large" buffers while 1-way
   /// PMULL+EOR3 remains safer for very large buffers on G3.
-  #[cfg(all(feature = "crc16", not(miri), any(target_os = "linux", target_os = "android")))]
+  #[cfg(all(
+    feature = "crc16",
+    feature = "std",
+    not(miri),
+    any(target_os = "linux", target_os = "android")
+  ))]
   #[inline]
   fn g3_crc16_ibm_l_hybrid(crc: u16, data: &[u8]) -> u16 {
     if data.len() <= G3_CRC16_PMULL_EOR3_2WAY_MAX_LEN {
@@ -777,7 +785,7 @@ mod aarch64_tables {
   // Apple M1-M3 table.
   //
   // Features: PMULL + SHA3 (EOR3)
-  pub static APPLE_M1M3_TABLE: KernelTable = kernel_table! {
+  pub(super) static APPLE_M1M3_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::aarch64::CRC_READY
       .union(crate::platform::caps::aarch64::PMULL_EOR3_READY)
       .union(crate::platform::caps::aarch64::PMULL_READY),
@@ -911,8 +919,8 @@ mod aarch64_tables {
   // Graviton2 table.
   //
   // Features: PMULL (no EOR3/SHA3)
-  #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
-  pub static GRAVITON2_TABLE: KernelTable = kernel_table! {
+  #[cfg(all(feature = "std", not(miri), any(target_os = "linux", target_os = "android")))]
+  pub(super) static GRAVITON2_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_EOR3_READY),
     boundaries: [64, 256, 4096],
 
@@ -1044,7 +1052,7 @@ mod aarch64_tables {
   // Graviton3 table.
   //
   // Features: PMULL + SHA3/EOR3
-  #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
+  #[cfg(all(feature = "std", not(miri), any(target_os = "linux", target_os = "android")))]
   const G3_XS: KernelSet = KernelSet {
     #[cfg(feature = "crc16")]
     crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
@@ -1076,7 +1084,7 @@ mod aarch64_tables {
     crc64_nvme_name: "aarch64/pmull-small",
   };
 
-  #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
+  #[cfg(all(feature = "std", not(miri), any(target_os = "linux", target_os = "android")))]
   const G3_S: KernelSet = KernelSet {
     #[cfg(feature = "crc16")]
     crc16_ccitt: crc16_k::CCITT_PMULL[0],
@@ -1108,7 +1116,7 @@ mod aarch64_tables {
     crc64_nvme_name: "aarch64/pmull",
   };
 
-  #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
+  #[cfg(all(feature = "std", not(miri), any(target_os = "linux", target_os = "android")))]
   const G3_M: KernelSet = KernelSet {
     #[cfg(feature = "crc16")]
     crc16_ccitt: crc16_k::CCITT_PMULL_EOR3[0], // PMULL+EOR3 cuts XOR chain in large lanes.
@@ -1140,7 +1148,7 @@ mod aarch64_tables {
     crc64_nvme_name: "aarch64/pmull-2way",
   };
 
-  #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
+  #[cfg(all(feature = "std", not(miri), any(target_os = "linux", target_os = "android")))]
   const G3_L: KernelSet = KernelSet {
     #[cfg(feature = "crc16")]
     crc16_ccitt: g3_crc16_ccitt_l_hybrid,
@@ -1172,8 +1180,8 @@ mod aarch64_tables {
     crc64_nvme_name: "aarch64/pmull-eor3",
   };
 
-  #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
-  pub static GRAVITON3_TABLE: KernelTable = KernelTable::from_sets(
+  #[cfg(all(feature = "std", not(miri), any(target_os = "linux", target_os = "android")))]
+  pub(super) static GRAVITON3_TABLE: KernelTable = KernelTable::from_sets(
     crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_EOR3_READY),
     [64, 256, 4096],
     G3_XS,
@@ -1185,8 +1193,8 @@ mod aarch64_tables {
   // Graviton4 Table
   //
   // Starts from Graviton3, but keeps 2-way PMULL+EOR3 for CRC16 large classes.
-  #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
-  pub static GRAVITON4_TABLE: KernelTable = KernelTable::from_sets(
+  #[cfg(all(feature = "std", not(miri), any(target_os = "linux", target_os = "android")))]
+  pub(super) static GRAVITON4_TABLE: KernelTable = KernelTable::from_sets(
     crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_EOR3_READY),
     [64, 256, 4096],
     G3_XS,
@@ -1200,7 +1208,26 @@ mod aarch64_tables {
       crc16_ibm: crc16_k::IBM_PMULL_EOR3[1],
       #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull-eor3-2way",
-      ..G3_M
+      #[cfg(feature = "crc24")]
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      #[cfg(feature = "crc24")]
+      crc24_openpgp_name: "aarch64/pmull",
+      #[cfg(feature = "crc32")]
+      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc32")]
+      crc32_ieee_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc32")]
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
+      #[cfg(feature = "crc32")]
+      crc32c_name: "aarch64/pmull-small",
+      #[cfg(feature = "crc64")]
+      crc64_xz: crc64_k::XZ_PMULL[0],
+      #[cfg(feature = "crc64")]
+      crc64_xz_name: "aarch64/pmull",
+      #[cfg(feature = "crc64")]
+      crc64_nvme: crc64_k::NVME_PMULL[1],
+      #[cfg(feature = "crc64")]
+      crc64_nvme_name: "aarch64/pmull-2way",
     },
     KernelSet {
       #[cfg(feature = "crc16")]
@@ -1211,7 +1238,26 @@ mod aarch64_tables {
       crc16_ibm: crc16_k::IBM_PMULL_EOR3[1],
       #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull-eor3-2way",
-      ..G3_L
+      #[cfg(feature = "crc24")]
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
+      #[cfg(feature = "crc24")]
+      crc24_openpgp_name: "aarch64/pmull",
+      #[cfg(feature = "crc32")]
+      crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0],
+      #[cfg(feature = "crc32")]
+      crc32_ieee_name: "aarch64/pmull-eor3-v9s3x2e-s3",
+      #[cfg(feature = "crc32")]
+      crc32c: crc32_k::CRC32C_PMULL_EOR3[0],
+      #[cfg(feature = "crc32")]
+      crc32c_name: "aarch64/pmull-eor3-v9s3x2e-s3",
+      #[cfg(feature = "crc64")]
+      crc64_xz: crc64_k::XZ_PMULL_EOR3[0],
+      #[cfg(feature = "crc64")]
+      crc64_xz_name: "aarch64/pmull-eor3",
+      #[cfg(feature = "crc64")]
+      crc64_nvme: crc64_k::NVME_PMULL_EOR3[0],
+      #[cfg(feature = "crc64")]
+      crc64_nvme_name: "aarch64/pmull-eor3",
     },
   );
 
@@ -1219,12 +1265,12 @@ mod aarch64_tables {
   //
   // For unknown ARM platforms with PMULL + SHA3 features.
   // Uses Apple M1-M3 selections (good EOR3 support).
-  pub static GENERIC_ARM_PMULL_EOR3_TABLE: KernelTable = APPLE_M1M3_TABLE;
+  pub(super) static GENERIC_ARM_PMULL_EOR3_TABLE: KernelTable = APPLE_M1M3_TABLE;
 
   // Generic ARM PMULL Table (conservative)
   //
   // For unknown ARM platforms with CRC + PMULL but *without* SHA3/EOR3.
-  pub static GENERIC_ARM_PMULL_TABLE: KernelTable = kernel_table! {
+  pub(super) static GENERIC_ARM_PMULL_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_READY),
     boundaries: [64, 256, 4096],
 
@@ -1354,7 +1400,7 @@ mod aarch64_tables {
   };
 
   /// PMULL-only table for platforms without the CRC extension.
-  pub static GENERIC_ARM_PMULL_NO_CRC_TABLE: KernelTable = kernel_table! {
+  pub(super) static GENERIC_ARM_PMULL_NO_CRC_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::aarch64::PMULL_READY,
     boundaries: [64, 256, 4096],
 
@@ -1484,7 +1530,7 @@ mod aarch64_tables {
   };
 
   /// CRC-only table for platforms without PMULL.
-  pub static GENERIC_ARM_CRC_ONLY_TABLE: KernelTable = kernel_table! {
+  pub(super) static GENERIC_ARM_CRC_ONLY_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::aarch64::CRC_READY,
     boundaries: [64, 256, 4096],
 
@@ -1648,7 +1694,7 @@ mod x86_64_tables {
   // Zen4 table.
   //
   // Features: VPCLMULQDQ + AVX-512
-  pub static ZEN4_TABLE: KernelTable = kernel_table! {
+  pub(super) static ZEN4_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::x86::VPCLMUL_READY
       .union(crate::platform::caps::x86::PCLMUL_READY)
       .union(crate::platform::caps::x86::CRC32C_READY),
@@ -1783,12 +1829,12 @@ mod x86_64_tables {
   //
   // For unknown x86-64 platforms with VPCLMULQDQ.
   // Uses Zen4 selections (good AVX-512/VPCLMUL support).
-  pub static GENERIC_X86_VPCLMUL_TABLE: KernelTable = ZEN4_TABLE;
+  pub(super) static GENERIC_X86_VPCLMUL_TABLE: KernelTable = ZEN4_TABLE;
 
   /// VPCLMUL table that never selects SSE4.2 CRC32C instructions/fusion.
   ///
   /// Use on systems with VPCLMUL but without SSE4.2 (`CRC32C_READY`).
-  pub static GENERIC_X86_VPCLMUL_NO_CRC32C_TABLE: KernelTable = kernel_table! {
+  pub(super) static GENERIC_X86_VPCLMUL_NO_CRC32C_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::x86::VPCLMUL_READY.union(crate::platform::caps::x86::PCLMUL_READY),
     boundaries: [64, 256, 4096],
 
@@ -1920,7 +1966,7 @@ mod x86_64_tables {
   // Generic x86-64 PCLMUL Table (conservative)
   //
   // Features: PCLMULQDQ only
-  pub static GENERIC_X86_PCLMUL_TABLE: KernelTable = kernel_table! {
+  pub(super) static GENERIC_X86_PCLMUL_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::x86::PCLMUL_READY.union(crate::platform::caps::x86::CRC32C_READY),
     boundaries: [64, 256, 4096],
 
@@ -2052,7 +2098,7 @@ mod x86_64_tables {
   /// PCLMUL table that never selects SSE4.2 CRC32C instructions/fusion.
   ///
   /// Use on systems with PCLMUL but without SSE4.2 (`CRC32C_READY`).
-  pub static GENERIC_X86_PCLMUL_NO_CRC32C_TABLE: KernelTable = kernel_table! {
+  pub(super) static GENERIC_X86_PCLMUL_NO_CRC32C_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::x86::PCLMUL_READY,
     boundaries: [64, 256, 4096],
 
@@ -2182,7 +2228,7 @@ mod x86_64_tables {
   };
 
   /// SSE4.2-only table: accelerate CRC32C, keep other variants portable.
-  pub static GENERIC_X86_CRC32C_ONLY_TABLE: KernelTable = kernel_table! {
+  pub(super) static GENERIC_X86_CRC32C_ONLY_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::x86::CRC32C_READY,
     boundaries: [64, 256, 4096],
 
@@ -2313,7 +2359,7 @@ mod x86_64_tables {
 }
 
 #[cfg(target_arch = "x86_64")]
-pub use x86_64_tables::*;
+use x86_64_tables::*;
 
 // s390x Platform Tables
 
@@ -2329,7 +2375,7 @@ mod s390x_tables {
   #[cfg(feature = "crc64")]
   use crate::checksum::crc64::kernels::s390x as crc64_k;
 
-  pub static S390X_Z13_TABLE: KernelTable = kernel_table! {
+  pub(super) static S390X_Z13_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::s390x::Z13_READY,
     boundaries: [64, 256, 4096],
     xs: PORTABLE_SET,
@@ -2396,7 +2442,7 @@ mod s390x_tables {
     },
   };
 
-  pub static S390X_Z14_TABLE: KernelTable = kernel_table! {
+  pub(super) static S390X_Z14_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::s390x::Z13_READY,
     boundaries: [64, 128, 4096],
     xs: PORTABLE_SET,
@@ -2463,7 +2509,7 @@ mod s390x_tables {
     },
   };
 
-  pub static S390X_Z15_TABLE: KernelTable = kernel_table! {
+  pub(super) static S390X_Z15_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::s390x::Z13_READY,
     boundaries: [63, 63, 4096],
     xs: PORTABLE_SET,
@@ -2532,7 +2578,7 @@ mod s390x_tables {
 }
 
 #[cfg(target_arch = "s390x")]
-pub use s390x_tables::*;
+use s390x_tables::*;
 
 // powerpc64 Platform Tables
 
@@ -2548,7 +2594,7 @@ mod power_tables {
   #[cfg(feature = "crc64")]
   use crate::checksum::crc64::kernels::power as crc64_k;
 
-  pub static POWER8_TABLE: KernelTable = kernel_table! {
+  pub(super) static POWER8_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::power::VPMSUM_READY,
     boundaries: [64, 128, 4096],
     xs: PORTABLE_SET,
@@ -2615,7 +2661,7 @@ mod power_tables {
     },
   };
 
-  pub static POWER9_TABLE: KernelTable = kernel_table! {
+  pub(super) static POWER9_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::power::VPMSUM_READY,
     boundaries: [64, 64, 4096],
     xs: PORTABLE_SET,
@@ -2682,7 +2728,7 @@ mod power_tables {
     },
   };
 
-  pub static POWER10_TABLE: KernelTable = kernel_table! {
+  pub(super) static POWER10_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::power::VPMSUM_READY,
     boundaries: [63, 63, 4096],
     xs: PORTABLE_SET,
@@ -2751,7 +2797,7 @@ mod power_tables {
 }
 
 #[cfg(target_arch = "powerpc64")]
-pub use power_tables::*;
+use power_tables::*;
 
 // riscv64 Platform Tables
 
@@ -2764,10 +2810,8 @@ mod riscv64_tables {
   use crate::checksum::crc24::kernels::riscv64 as crc24_k;
   #[cfg(feature = "crc32")]
   use crate::checksum::crc32::kernels::riscv64 as crc32_k;
-  #[cfg(feature = "crc64")]
-  use crate::checksum::crc64::kernels::riscv64 as crc64_k;
 
-  pub static RISCV64_ZBC_TABLE: KernelTable = kernel_table! {
+  pub(super) static RISCV64_ZBC_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::riscv::ZBC,
     boundaries: [63, 1024, 4096],
     xs: PORTABLE_SET,
@@ -2866,7 +2910,7 @@ mod riscv64_tables {
     },
   };
 
-  pub static RISCV64_ZVBC_TABLE: KernelTable = kernel_table! {
+  pub(super) static RISCV64_ZVBC_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::riscv::V.union(crate::platform::caps::riscv::ZVBC),
     boundaries: [63, 1024, 4096],
     xs: PORTABLE_SET,
@@ -2892,13 +2936,13 @@ mod riscv64_tables {
       #[cfg(feature = "crc32")]
       crc32c_name: "riscv64/zvbc",
       #[cfg(feature = "crc64")]
-      crc64_xz: crc64_k::XZ_ZVBC[0],
+      crc64_xz: crate::checksum::crc64::portable::crc64_slice16_xz,
       #[cfg(feature = "crc64")]
-      crc64_xz_name: "riscv64/zvbc",
+      crc64_xz_name: "portable/slice16",
       #[cfg(feature = "crc64")]
-      crc64_nvme: crc64_k::NVME_ZVBC[0],
+      crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
       #[cfg(feature = "crc64")]
-      crc64_nvme_name: "riscv64/zvbc",
+      crc64_nvme_name: "portable/slice16",
     },
     m: KernelSet {
       #[cfg(feature = "crc16")]
@@ -2922,13 +2966,13 @@ mod riscv64_tables {
       #[cfg(feature = "crc32")]
       crc32c_name: "riscv64/zvbc-2way",
       #[cfg(feature = "crc64")]
-      crc64_xz: crc64_k::XZ_ZVBC[1],
+      crc64_xz: crate::checksum::crc64::portable::crc64_slice16_xz,
       #[cfg(feature = "crc64")]
-      crc64_xz_name: "riscv64/zvbc-2way",
+      crc64_xz_name: "portable/slice16",
       #[cfg(feature = "crc64")]
-      crc64_nvme: crc64_k::NVME_ZVBC[1],
+      crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
       #[cfg(feature = "crc64")]
-      crc64_nvme_name: "riscv64/zvbc-2way",
+      crc64_nvme_name: "portable/slice16",
     },
     l: KernelSet {
       #[cfg(feature = "crc16")]
@@ -2952,44 +2996,19 @@ mod riscv64_tables {
       #[cfg(feature = "crc32")]
       crc32c_name: "riscv64/zvbc-4way",
       #[cfg(feature = "crc64")]
-      crc64_xz: crc64_k::XZ_ZVBC[2],
+      crc64_xz: crate::checksum::crc64::portable::crc64_slice16_xz,
       #[cfg(feature = "crc64")]
-      crc64_xz_name: "riscv64/zvbc-4way",
+      crc64_xz_name: "portable/slice16",
       #[cfg(feature = "crc64")]
-      crc64_nvme: crc64_k::NVME_ZVBC[2],
+      crc64_nvme: crate::checksum::crc64::portable::crc64_slice16_nvme,
       #[cfg(feature = "crc64")]
-      crc64_nvme_name: "riscv64/zvbc-4way",
+      crc64_nvme_name: "portable/slice16",
     },
-  };
-
-  #[cfg(feature = "crc64")]
-  // Keep CRC64 auto on portable slice-by-16 for now.
-  //
-  // No tracked target evidence currently justifies selecting the accelerated
-  // CRC64 kernels by default.
-  #[cfg(feature = "crc64")]
-  pub static RISCV64_CRC64_ZBC_TABLE: KernelTable = kernel_table! {
-    requires: crate::platform::caps::riscv::ZBC,
-    boundaries: [128, 4096, 16384],
-    xs: PORTABLE_SET,
-    s: PORTABLE_SET,
-    m: PORTABLE_SET,
-    l: PORTABLE_SET,
-  };
-
-  #[cfg(feature = "crc64")]
-  pub static RISCV64_CRC64_ZVBC_TABLE: KernelTable = kernel_table! {
-    requires: crate::platform::caps::riscv::V.union(crate::platform::caps::riscv::ZVBC),
-    boundaries: [63, 1024, 4096],
-    xs: PORTABLE_SET,
-    s: PORTABLE_SET,
-    m: PORTABLE_SET,
-    l: PORTABLE_SET,
   };
 }
 
 #[cfg(target_arch = "riscv64")]
-pub use riscv64_tables::*;
+use riscv64_tables::*;
 
 // Tests
 
@@ -3004,14 +3023,55 @@ mod tests {
     // Verify portable table returns correct sets for each size class
     let table = &PORTABLE_TABLE;
 
-    assert!(core::ptr::eq(table.select_fns(0), &table.fns[XS]));
-    assert!(core::ptr::eq(table.select_fns(64), &table.fns[XS]));
-    assert!(core::ptr::eq(table.select_fns(65), &table.fns[S]));
-    assert!(core::ptr::eq(table.select_fns(256), &table.fns[S]));
-    assert!(core::ptr::eq(table.select_fns(257), &table.fns[M]));
-    assert!(core::ptr::eq(table.select_fns(4096), &table.fns[M]));
-    assert!(core::ptr::eq(table.select_fns(4097), &table.fns[L]));
-    assert!(core::ptr::eq(table.select_fns(1_000_000), &table.fns[L]));
+    assert!(core::ptr::eq(
+      core::ptr::from_ref(table.select_fns(0)),
+      core::ptr::from_ref(&table.fns[XS])
+    ));
+    assert!(core::ptr::eq(
+      core::ptr::from_ref(table.select_fns(64)),
+      core::ptr::from_ref(&table.fns[XS])
+    ));
+    assert!(core::ptr::eq(
+      core::ptr::from_ref(table.select_fns(65)),
+      core::ptr::from_ref(&table.fns[S])
+    ));
+    assert!(core::ptr::eq(
+      core::ptr::from_ref(table.select_fns(256)),
+      core::ptr::from_ref(&table.fns[S])
+    ));
+    assert!(core::ptr::eq(
+      core::ptr::from_ref(table.select_fns(257)),
+      core::ptr::from_ref(&table.fns[M])
+    ));
+    assert!(core::ptr::eq(
+      core::ptr::from_ref(table.select_fns(4096)),
+      core::ptr::from_ref(&table.fns[M])
+    ));
+    assert!(core::ptr::eq(
+      core::ptr::from_ref(table.select_fns(4097)),
+      core::ptr::from_ref(&table.fns[L])
+    ));
+    assert!(core::ptr::eq(
+      core::ptr::from_ref(table.select_fns(1_000_000)),
+      core::ptr::from_ref(&table.fns[L])
+    ));
+  }
+
+  #[test]
+  #[cfg(all(target_arch = "x86_64", feature = "crc64"))]
+  fn test_vpclmul_without_crc32c_selects_crc64_xz_4x512_above_4096() {
+    use crate::platform::caps::x86::{CRC32C_READY, VPCLMUL_READY};
+
+    assert!(!VPCLMUL_READY.has(CRC32C_READY));
+    let table = select_crc64_table(VPCLMUL_READY);
+    assert!(core::ptr::eq(table, &raw const GENERIC_X86_VPCLMUL_NO_CRC32C_TABLE));
+    assert_eq!(table.select_names(4096).crc64_xz_name, "x86_64/vpclmul-2way");
+    assert_eq!(table.select_names(4097).crc64_xz_name, "x86_64/vpclmul-4x512");
+    assert_eq!(table.select_names(4097).crc64_nvme_name, "x86_64/vpclmul-4way");
+    assert!(core::ptr::fn_addr_eq(
+      table.select_fns(4097).crc64_xz,
+      crate::checksum::crc64::kernels::x86_64::XZ_VPCLMUL_4X512
+    ));
   }
 
   #[test]
@@ -3045,7 +3105,7 @@ mod tests {
 
     #[cfg(feature = "crc64")]
     {
-      let crc64_names = RISCV64_CRC64_ZVBC_TABLE.select_names(64);
+      let crc64_names = RISCV64_ZVBC_TABLE.select_names(64);
       assert_eq!(crc64_names.crc64_xz_name, "portable/slice16");
       assert_eq!(crc64_names.crc64_nvme_name, "portable/slice16");
     }
@@ -3055,7 +3115,10 @@ mod tests {
   fn test_select_table_fallback() {
     // With no capabilities, should return portable table
     let table = select_table(Caps::NONE);
-    assert!(core::ptr::eq(table, &PORTABLE_TABLE));
+    assert!(core::ptr::eq(
+      core::ptr::from_ref(table),
+      core::ptr::from_ref(&PORTABLE_TABLE)
+    ));
   }
 
   // Oneshot Function Tests
@@ -3146,7 +3209,7 @@ mod tests {
     let sizes = [1, 64, 65, 256, 257, 4096, 4097, 65536];
 
     for &size in &sizes {
-      let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
+      let data: Vec<u8> = (0u8..=u8::MAX).cycle().take(size).collect();
       // Just verify no panics and consistent non-zero results for non-empty data
       #[cfg(feature = "crc64")]
       let _ = crc64_xz(&data);

@@ -66,8 +66,10 @@ Build coverage does not establish a constant-time claim; use
 
 ## Per-platform benchmark evidence
 
-The historical 2026-07-04 per-platform results live in
-[`benchmark_results/OVERVIEW.md`](../benchmark_results/OVERVIEW.md#coverage-matrix).
-Its aggregate includes the equivalent-work limitation documented in
-[`benchmarking.md`](benchmarking.md). Benchmark the deployment workload on its
-target CPU before choosing a performance-sensitive backend or feature set.
+The 2026-08-18 per-platform results live in
+[`benchmark_results/OVERVIEW.md`](../benchmark_results/OVERVIEW.md#coverage-matrix),
+covering eight Linux CI runners; the RISE RISC-V runner did not execute in that
+run. Per-platform results diverge: the same commit measures `2.77x` on IBM
+z16/s390x and `1.36x` on AWS Graviton3, and s390x carries a large ECDSA
+regression in this snapshot. Benchmark the deployment workload on its target CPU
+before choosing a performance-sensitive backend or feature set.

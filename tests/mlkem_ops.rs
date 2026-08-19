@@ -11,7 +11,8 @@ use rscrypto::{
 fn deterministic_bytes<const N: usize>(offset: u8) -> [u8; N] {
   let mut out = [0u8; N];
   for (i, byte) in out.iter_mut().enumerate() {
-    *byte = offset.wrapping_add(i as u8);
+    let i = u8::try_from(i).expect("ML-KEM deterministic entropy index must fit in u8");
+    *byte = offset.wrapping_add(i);
   }
   out
 }

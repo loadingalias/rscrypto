@@ -4,26 +4,18 @@
 //! - [`Crc16Ccitt`] - CRC-16/X25 (also known as IBM-SDLC)
 //! - [`Crc16Ibm`] - CRC-16/ARC (also known as CRC-16/IBM)
 //!
-//! # Quick Start
-//!
-//! ```rust
-//! use rscrypto::checksum::{Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm};
-//!
-//! let data = b"123456789";
-//! assert_eq!(Crc16Ccitt::checksum(data), 0x906E);
-//! assert_eq!(Crc16Ibm::checksum(data), 0xBB3D);
-//!
-//! let (a, b) = data.split_at(4);
-//! let combined = Crc16Ccitt::combine(Crc16Ccitt::checksum(a), Crc16Ccitt::checksum(b), b.len());
-//! assert_eq!(combined, Crc16Ccitt::checksum(data));
-//! ```
-
 pub(crate) mod config;
 pub(crate) mod kernels;
+#[cfg(any(
+  target_arch = "aarch64",
+  target_arch = "powerpc64",
+  target_arch = "riscv64",
+  target_arch = "s390x",
+  target_arch = "x86_64"
+))]
 pub(crate) mod keys;
 pub(crate) mod portable;
 
-#[allow(unused_imports)]
 pub use config::{Crc16Config, Crc16Force};
 
 #[cfg(any(test, feature = "std"))]
@@ -32,10 +24,6 @@ use crate::checksum::common::{
   combine::{Gf2Matrix16, combine_crc16, generate_shift8_matrix_16},
   tables::{CRC16_CCITT_POLY, CRC16_IBM_POLY, generate_crc16_tables_8},
 };
-// Re-export traits for test modules (`use super::*`).
-#[allow(unused_imports)]
-pub(super) use crate::traits::{Checksum, ChecksumCombine};
-
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
 #[cfg(target_arch = "powerpc64")]
@@ -52,9 +40,9 @@ mod x86_64;
 mod kernel_tables {
   use super::*;
 
-  pub static CCITT_TABLES_8: [[u16; 256]; 8] = generate_crc16_tables_8(CRC16_CCITT_POLY);
+  pub(super) static CCITT_TABLES_8: [[u16; 256]; 8] = generate_crc16_tables_8(CRC16_CCITT_POLY);
 
-  pub static IBM_TABLES_8: [[u16; 256]; 8] = generate_crc16_tables_8(CRC16_IBM_POLY);
+  pub(super) static IBM_TABLES_8: [[u16; 256]; 8] = generate_crc16_tables_8(CRC16_IBM_POLY);
 }
 
 // Reference Kernel Wrappers
@@ -404,6 +392,7 @@ impl crate::traits::ChecksumCombine for Crc16Ccitt {
 
 #[cfg(feature = "alloc")]
 impl Crc16Ccitt {
+  /// Creates a buffering wrapper that coalesces short updates before CRC-16/X25 dispatch.
   #[must_use]
   pub fn buffered() -> BufferedCrc16Ccitt {
     BufferedCrc16Ccitt::new()
@@ -546,6 +535,7 @@ impl crate::traits::ChecksumCombine for Crc16Ibm {
 
 #[cfg(feature = "alloc")]
 impl Crc16Ibm {
+  /// Creates a buffering wrapper that coalesces short updates before CRC-16/ARC dispatch.
   #[must_use]
   pub fn buffered() -> BufferedCrc16Ibm {
     BufferedCrc16Ibm::new()
@@ -611,6 +601,7 @@ mod tests {
   extern crate std;
 
   use super::*;
+  use crate::traits::{Checksum, ChecksumCombine};
 
   #[test]
   fn test_vectors_crc16_ccitt_x25() {
@@ -694,6 +685,7 @@ mod cross_check {
 
   use super::*;
   use crate::checksum::common::tests::{STREAMING_CHUNK_SIZES, TEST_LENGTHS, generate_test_data};
+  use crate::traits::{Checksum, ChecksumCombine};
 
   // CRC-16/CCITT Cross-Check Tests
 

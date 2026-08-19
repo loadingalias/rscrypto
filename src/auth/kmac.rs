@@ -1,7 +1,5 @@
 //! KMAC128 and KMAC256 (SP 800-185).
 
-#![allow(clippy::indexing_slicing)] // Fixed-size scratch buffers and encoded suffix slices.
-
 use core::fmt;
 
 use crate::{
@@ -190,6 +188,7 @@ define_kmac!(Kmac256, Cshake256, "256", 32);
 #[cfg(test)]
 mod tests {
   use super::{Kmac128, Kmac256};
+  use crate::traits::VerificationError;
 
   #[test]
   fn reset_restores_keyed_state() {
@@ -226,11 +225,16 @@ mod tests {
     ] {
       let mut tag = [0u8; Kmac128::MIN_AUTH_TAG_SIZE + 1];
       Kmac128::mac_into(KEY, CUSTOMIZATION, MESSAGE, &mut tag[..len]);
+      let expected = if len >= Kmac128::MIN_AUTH_TAG_SIZE {
+        Ok(())
+      } else {
+        Err(VerificationError::new())
+      };
+      assert_eq!(Kmac128::verify_tag(KEY, CUSTOMIZATION, MESSAGE, &tag[..len]), expected);
       assert_eq!(
-        Kmac128::verify_tag(KEY, CUSTOMIZATION, MESSAGE, &tag[..len]).is_ok(),
-        len >= Kmac128::MIN_AUTH_TAG_SIZE
+        Kmac128::verify_tag_primitive(KEY, CUSTOMIZATION, MESSAGE, &tag[..len]),
+        Ok(())
       );
-      assert!(Kmac128::verify_tag_primitive(KEY, CUSTOMIZATION, MESSAGE, &tag[..len]).is_ok());
     }
 
     for len in [
@@ -240,11 +244,16 @@ mod tests {
     ] {
       let mut tag = [0u8; Kmac256::MIN_AUTH_TAG_SIZE + 1];
       Kmac256::mac_into(KEY, CUSTOMIZATION, MESSAGE, &mut tag[..len]);
+      let expected = if len >= Kmac256::MIN_AUTH_TAG_SIZE {
+        Ok(())
+      } else {
+        Err(VerificationError::new())
+      };
+      assert_eq!(Kmac256::verify_tag(KEY, CUSTOMIZATION, MESSAGE, &tag[..len]), expected);
       assert_eq!(
-        Kmac256::verify_tag(KEY, CUSTOMIZATION, MESSAGE, &tag[..len]).is_ok(),
-        len >= Kmac256::MIN_AUTH_TAG_SIZE
+        Kmac256::verify_tag_primitive(KEY, CUSTOMIZATION, MESSAGE, &tag[..len]),
+        Ok(())
       );
-      assert!(Kmac256::verify_tag_primitive(KEY, CUSTOMIZATION, MESSAGE, &tag[..len]).is_ok());
     }
   }
 }

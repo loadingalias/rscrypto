@@ -52,6 +52,7 @@ jobs:
       timeout_minutes: 240
       cache_key: weekly-riscv64
       tools_mode: none
+      toolchain_contract: nightly
       toolchain_components: "clippy, rustfmt"
       enable_magic_cache: false
       enable_rust_cache: true
@@ -83,6 +84,7 @@ jobs:
       timeout_minutes: 240
       cache_key: bench-rise-riscv
       tools_mode: ibm
+      toolchain_contract: nightly
       toolchain_components: "clippy, rustfmt"
       enable_magic_cache: false
       enable_rust_cache: true

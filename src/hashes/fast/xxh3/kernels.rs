@@ -1,12 +1,12 @@
 use super::{ACC_NB, DEFAULT_SECRET_SIZE};
 use crate::platform::Caps;
 
-pub type StreamAccumulateFn =
+pub(crate) type StreamAccumulateFn =
   unsafe fn([u64; ACC_NB], &[u8], usize, &[u8; DEFAULT_SECRET_SIZE], usize, usize, bool) -> [u64; ACC_NB];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
-pub enum Xxh3KernelId {
+pub(crate) enum Xxh3KernelId {
   Portable = 0,
   #[cfg(target_arch = "x86_64")]
   Avx2 = 1,
@@ -21,10 +21,10 @@ pub enum Xxh3KernelId {
 }
 
 impl Xxh3KernelId {
-  #[cfg(any(test, feature = "diag"))]
+  #[cfg(feature = "diag")]
   #[inline]
   #[must_use]
-  pub const fn as_str(self) -> &'static str {
+  pub(crate) const fn as_str(self) -> &'static str {
     match self {
       Self::Portable => "portable",
       #[cfg(target_arch = "x86_64")]
@@ -42,8 +42,16 @@ impl Xxh3KernelId {
 }
 
 /// Long-path-only entry for 64-bit hash (>240B, no ≤240B length checks).
+#[cfg(any(
+  test,
+  not(any(
+    all(target_arch = "x86_64", any(target_feature = "avx512f", target_feature = "avx2")),
+    all(target_arch = "aarch64", target_feature = "neon"),
+    target_arch = "riscv64"
+  ))
+))]
 #[must_use]
-pub fn hash64_long_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u64 {
+pub(crate) fn hash64_long_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u64 {
   match id {
     Xxh3KernelId::Portable => super::xxh3_64_long,
     #[cfg(target_arch = "x86_64")]
@@ -60,8 +68,16 @@ pub fn hash64_long_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u64 {
 }
 
 /// Long-path-only entry for 128-bit hash (>240B, no ≤240B length checks).
+#[cfg(any(
+  test,
+  not(any(
+    all(target_arch = "x86_64", any(target_feature = "avx512f", target_feature = "avx2")),
+    all(target_arch = "aarch64", target_feature = "neon"),
+    target_arch = "riscv64"
+  ))
+))]
 #[must_use]
-pub fn hash128_long_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u128 {
+pub(crate) fn hash128_long_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u128 {
   match id {
     Xxh3KernelId::Portable => super::xxh3_128_long,
     #[cfg(target_arch = "x86_64")]
@@ -78,7 +94,7 @@ pub fn hash128_long_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u128 {
 }
 
 #[must_use]
-pub fn stream_accumulate_fn(id: Xxh3KernelId) -> StreamAccumulateFn {
+pub(crate) fn stream_accumulate_fn(id: Xxh3KernelId) -> StreamAccumulateFn {
   match id {
     Xxh3KernelId::Portable => super::stream_accumulate_portable,
     #[cfg(target_arch = "x86_64")]
@@ -96,7 +112,7 @@ pub fn stream_accumulate_fn(id: Xxh3KernelId) -> StreamAccumulateFn {
 
 #[inline]
 #[must_use]
-pub const fn required_caps(id: Xxh3KernelId) -> Caps {
+pub(crate) const fn required_caps(id: Xxh3KernelId) -> Caps {
   match id {
     Xxh3KernelId::Portable => Caps::NONE,
     #[cfg(target_arch = "x86_64")]

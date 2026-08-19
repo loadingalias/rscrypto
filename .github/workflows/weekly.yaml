@@ -90,6 +90,7 @@ jobs:
       timeout_minutes: 60
       cache_key: weekly-miri-${{ matrix.target.name }}
       tools_mode: minimal
+      toolchain_contract: nightly
       toolchain_components: "miri, rust-src"
       enable_magic_cache: true
       enable_rust_cache: true
@@ -104,6 +105,7 @@ jobs:
       timeout_minutes: 60
       cache_key: weekly-miri-tree-borrows
       tools_mode: minimal
+      toolchain_contract: nightly
       toolchain_components: "miri, rust-src"
       enable_magic_cache: true
       enable_rust_cache: true
@@ -128,6 +130,7 @@ jobs:
       timeout_minutes: 120
       cache_key: weekly-fuzz-${{ matrix.target.name }}
       tools_mode: fuzz
+      toolchain_contract: nightly
       enable_magic_cache: true
       enable_rust_cache: true
       operation: fuzz
@@ -155,6 +158,7 @@ jobs:
       timeout_minutes: 120
       cache_key: weekly-asan-fuzz-${{ matrix.target.name }}
       tools_mode: fuzz
+      toolchain_contract: nightly
       toolchain_components: "rust-src"
       enable_magic_cache: true
       enable_rust_cache: true

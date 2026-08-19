@@ -15,9 +15,10 @@ use common::decode_hex_vec as decode_hex;
 fn pattern_bytes(len: usize, seed: u8) -> Vec<u8> {
   let mut out = vec![0u8; len];
   for (index, byte) in out.iter_mut().enumerate() {
+    let index = index.to_le_bytes()[0];
     *byte = seed
-      .wrapping_add((index as u8).wrapping_mul(19))
-      .wrapping_add((index as u8).rotate_left(2));
+      .wrapping_add(index.wrapping_mul(19))
+      .wrapping_add(index.rotate_left(2));
   }
   out
 }
@@ -35,18 +36,26 @@ fn xchacha20poly1305_matches_draft_vector() {
   );
   let expected_tag = decode_hex("c0875924c1c7987947deafd8780acf49");
 
-  let key = XChaCha20Poly1305Key::from_bytes(key.try_into().unwrap());
-  let nonce = Nonce192::from_bytes(nonce.try_into().unwrap());
+  let key = XChaCha20Poly1305Key::from_bytes(key.try_into().expect("draft XChaCha20-Poly1305 key must be 32 bytes"));
+  let nonce = Nonce192::from_bytes(
+    nonce
+      .try_into()
+      .expect("draft XChaCha20-Poly1305 nonce must be 24 bytes"),
+  );
   let cipher = XChaCha20Poly1305::new(&key);
 
   let mut sealed = vec![0u8; plaintext.len() + XChaCha20Poly1305::TAG_SIZE];
-  cipher.encrypt(&nonce, &aad, &plaintext, &mut sealed).unwrap();
+  cipher
+    .encrypt(&nonce, &aad, &plaintext, &mut sealed)
+    .expect("draft XChaCha20-Poly1305 seal buffer must fit plaintext and tag");
 
   assert_eq!(&sealed[..plaintext.len()], expected_ciphertext.as_slice());
   assert_eq!(&sealed[plaintext.len()..], expected_tag.as_slice());
 
   let mut opened = vec![0u8; plaintext.len()];
-  cipher.decrypt(&nonce, &aad, &sealed, &mut opened).unwrap();
+  cipher
+    .decrypt(&nonce, &aad, &sealed, &mut opened)
+    .expect("draft XChaCha20-Poly1305 ciphertext and tag must authenticate");
   assert_eq!(opened, plaintext);
 }
 
@@ -65,18 +74,22 @@ fn xchacha20poly1305_matches_rustcrypto_oracle() {
   let oracle_nonce = Array(nonce_bytes);
 
   let mut ours = plaintext.to_vec();
-  let tag = cipher.encrypt_in_place(&nonce, aad, &mut ours).unwrap();
+  let tag = cipher
+    .encrypt_in_place(&nonce, aad, &mut ours)
+    .expect("rscrypto XChaCha20-Poly1305 oracle input must seal");
 
   let mut oracle_buffer = plaintext.to_vec();
   let oracle_tag = oracle
     .encrypt_inout_detached(&oracle_nonce, aad, oracle_buffer.as_mut_slice().into())
-    .unwrap();
+    .expect("RustCrypto XChaCha20-Poly1305 oracle input must seal");
 
   assert_eq!(ours, oracle_buffer);
   assert_eq!(tag.as_bytes(), oracle_tag.as_slice());
 
   let typed_tag = XChaCha20Poly1305Tag::from_bytes(tag.to_bytes());
-  cipher.decrypt_in_place(&nonce, aad, &mut ours, &typed_tag).unwrap();
+  cipher
+    .decrypt_in_place(&nonce, aad, &mut ours, &typed_tag)
+    .expect("fresh rscrypto XChaCha20-Poly1305 ciphertext must authenticate");
   assert_eq!(ours, plaintext);
 }
 
@@ -87,22 +100,23 @@ fn xchacha20poly1305_rejects_modified_tag() {
   let cipher = XChaCha20Poly1305::new(&key);
 
   let mut buffer = *b"forgery-check";
-  let mut tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buffer).unwrap().to_bytes();
+  let mut tag = cipher
+    .encrypt_in_place(&nonce, b"aad", &mut buffer)
+    .expect("XChaCha20-Poly1305 forgery fixture must seal")
+    .to_bytes();
   tag[0] ^= 1;
 
-  assert!(
-    cipher
-      .decrypt_in_place(&nonce, b"aad", &mut buffer, &XChaCha20Poly1305Tag::from_bytes(tag))
-      .is_err()
-  );
+  cipher
+    .decrypt_in_place(&nonce, b"aad", &mut buffer, &XChaCha20Poly1305Tag::from_bytes(tag))
+    .expect_err("modified XChaCha20-Poly1305 tag must fail authentication");
 }
 
 #[test]
 fn xchacha20poly1305_rejects_wrong_tag_length() {
-  assert!(XChaCha20Poly1305::tag_from_slice(&[0u8; 0]).is_err());
-  assert!(XChaCha20Poly1305::tag_from_slice(&[0u8; 15]).is_err());
-  assert!(XChaCha20Poly1305::tag_from_slice(&[0u8; 17]).is_err());
-  assert!(XChaCha20Poly1305::tag_from_slice(&[0u8; 16]).is_ok());
+  XChaCha20Poly1305::tag_from_slice(&[0u8; 0]).expect_err("empty XChaCha20-Poly1305 tag must be rejected");
+  XChaCha20Poly1305::tag_from_slice(&[0u8; 15]).expect_err("short XChaCha20-Poly1305 tag must be rejected");
+  XChaCha20Poly1305::tag_from_slice(&[0u8; 17]).expect_err("long XChaCha20-Poly1305 tag must be rejected");
+  let _tag = XChaCha20Poly1305::tag_from_slice(&[0u8; 16]).expect("16-byte XChaCha20-Poly1305 tag must be accepted");
 }
 
 #[test]
@@ -128,7 +142,9 @@ fn xchacha20poly1305_boundary_and_large_inputs_match_oracle() {
       let aad = pattern_bytes(aad_len, 0xc4);
 
       let mut combined = vec![0u8; plaintext_len + XChaCha20Poly1305::TAG_SIZE];
-      cipher.encrypt(&nonce, &aad, &plaintext, &mut combined).unwrap();
+      cipher
+        .encrypt(&nonce, &aad, &plaintext, &mut combined)
+        .expect("rscrypto combined XChaCha20-Poly1305 oracle input must seal");
 
       let oracle_combined = oracle
         .encrypt(
@@ -138,14 +154,16 @@ fn xchacha20poly1305_boundary_and_large_inputs_match_oracle() {
             aad: &aad,
           },
         )
-        .unwrap();
+        .expect("RustCrypto combined XChaCha20-Poly1305 oracle input must seal");
       assert_eq!(
         combined, oracle_combined,
         "combined ciphertext mismatch pt_len={plaintext_len} aad_len={aad_len}"
       );
 
       let mut opened = vec![0u8; plaintext_len];
-      cipher.decrypt(&nonce, &aad, &oracle_combined, &mut opened).unwrap();
+      cipher
+        .decrypt(&nonce, &aad, &oracle_combined, &mut opened)
+        .expect("RustCrypto XChaCha20-Poly1305 ciphertext must open in rscrypto");
       assert_eq!(
         opened, plaintext,
         "combined decrypt mismatch pt_len={plaintext_len} aad_len={aad_len}"
@@ -159,14 +177,16 @@ fn xchacha20poly1305_boundary_and_large_inputs_match_oracle() {
             aad: &aad,
           },
         )
-        .unwrap();
+        .expect("rscrypto XChaCha20-Poly1305 ciphertext must open in RustCrypto");
       assert_eq!(
         oracle_opened, plaintext,
         "oracle decrypt mismatch pt_len={plaintext_len} aad_len={aad_len}"
       );
 
       let mut detached = plaintext.clone();
-      let tag = cipher.encrypt_in_place(&nonce, &aad, &mut detached).unwrap();
+      let tag = cipher
+        .encrypt_in_place(&nonce, &aad, &mut detached)
+        .expect("rscrypto detached XChaCha20-Poly1305 oracle input must seal");
       assert_eq!(
         detached,
         oracle_combined[..plaintext_len],
@@ -181,7 +201,7 @@ fn xchacha20poly1305_boundary_and_large_inputs_match_oracle() {
       let typed_tag = XChaCha20Poly1305Tag::from_bytes(tag.to_bytes());
       cipher
         .decrypt_in_place(&nonce, &aad, &mut detached, &typed_tag)
-        .unwrap();
+        .expect("fresh detached XChaCha20-Poly1305 ciphertext must authenticate");
       assert_eq!(
         detached, plaintext,
         "detached decrypt mismatch pt_len={plaintext_len} aad_len={aad_len}"

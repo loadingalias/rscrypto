@@ -11,20 +11,24 @@ use crc_fast::CrcAlgorithm;
 use proptest::prelude::*;
 use rscrypto::{Checksum, ChecksumCombine, Crc32, Crc32C};
 
+fn reference_u32(value: u64) -> u32 {
+  u32::try_from(value).expect("CRC-32 reference output must fit in 32 bits")
+}
+
 proptest! {
   // Cross-validation against crc-fast-rust
 
   #[test]
   fn crc32_matches_crc_fast_rust(data in proptest::collection::vec(any::<u8>(), 0..=4096)) {
     let ours = Crc32::checksum(&data);
-    let reference = crc_fast::checksum(CrcAlgorithm::Crc32IsoHdlc, &data) as u32;
+    let reference = reference_u32(crc_fast::checksum(CrcAlgorithm::Crc32IsoHdlc, &data));
     prop_assert_eq!(ours, reference);
   }
 
   #[test]
   fn crc32c_matches_crc_fast_rust(data in proptest::collection::vec(any::<u8>(), 0..=4096)) {
     let ours = Crc32C::checksum(&data);
-    let reference = crc_fast::checksum(CrcAlgorithm::Crc32Iscsi, &data) as u32;
+    let reference = reference_u32(crc_fast::checksum(CrcAlgorithm::Crc32Iscsi, &data));
     prop_assert_eq!(ours, reference);
   }
 
@@ -38,7 +42,7 @@ proptest! {
       reference.update(part);
     }
 
-    prop_assert_eq!(ours.finalize(), reference.finalize() as u32);
+    prop_assert_eq!(ours.finalize(), reference_u32(reference.finalize()));
   }
 
   #[test]
@@ -51,7 +55,7 @@ proptest! {
       reference.update(part);
     }
 
-    prop_assert_eq!(ours.finalize(), reference.finalize() as u32);
+    prop_assert_eq!(ours.finalize(), reference_u32(reference.finalize()));
   }
 
   #[test]
@@ -65,7 +69,12 @@ proptest! {
 
     let ref_crc_a = crc_fast::checksum(CrcAlgorithm::Crc32IsoHdlc, a);
     let ref_crc_b = crc_fast::checksum(CrcAlgorithm::Crc32IsoHdlc, b);
-    let ref_combined = crc_fast::checksum_combine(CrcAlgorithm::Crc32IsoHdlc, ref_crc_a, ref_crc_b, b.len() as u64) as u32;
+    let ref_combined = reference_u32(crc_fast::checksum_combine(
+      CrcAlgorithm::Crc32IsoHdlc,
+      ref_crc_a,
+      ref_crc_b,
+      u64::try_from(b.len()).expect("test input length must fit in u64"),
+    ));
 
     prop_assert_eq!(combined, ref_combined);
   }
@@ -81,7 +90,12 @@ proptest! {
 
     let ref_crc_a = crc_fast::checksum(CrcAlgorithm::Crc32Iscsi, a);
     let ref_crc_b = crc_fast::checksum(CrcAlgorithm::Crc32Iscsi, b);
-    let ref_combined = crc_fast::checksum_combine(CrcAlgorithm::Crc32Iscsi, ref_crc_a, ref_crc_b, b.len() as u64) as u32;
+    let ref_combined = reference_u32(crc_fast::checksum_combine(
+      CrcAlgorithm::Crc32Iscsi,
+      ref_crc_a,
+      ref_crc_b,
+      u64::try_from(b.len()).expect("test input length must fit in u64"),
+    ));
 
     prop_assert_eq!(combined, ref_combined);
   }

@@ -42,10 +42,7 @@ macro_rules! crc_vectored_dispatch {
 /// This covers the repeated "resolve once under std, otherwise use auto"
 /// pattern shared by CRC-16/32/64 variants while leaving the actual kernel
 /// wrappers and force-specific architecture helpers local to each module.
-#[cfg_attr(
-  not(any(feature = "crc16", feature = "crc32", feature = "crc64")),
-  allow(unused_macros)
-)]
+#[cfg(any(feature = "crc16", feature = "crc32", feature = "crc64"))]
 macro_rules! define_crc_dispatch {
   (
     word_ty: $word_ty:ty,
@@ -190,7 +187,6 @@ macro_rules! define_buffered_crc {
       ///
       /// Data is buffered internally until enough accumulates for efficient
       /// SIMD processing.
-      #[allow(clippy::indexing_slicing)]
       // Safety: All slice indices are bounds-checked by the algorithm:
       // - self.len < buffer_size (invariant maintained by this function)
       // - fill = min(input.len(), space), so input[..fill] and buffer[len..len+fill] are valid
@@ -250,7 +246,6 @@ macro_rules! define_buffered_crc {
       ///
       /// Flushes any remaining buffered data before computing the final CRC.
       #[must_use]
-      #[allow(clippy::indexing_slicing)]
       // Safety: self.len < buffer_size (invariant)
       pub fn finalize(&self) -> <$inner as $crate::Checksum>::Output {
         if self.len > 0 {

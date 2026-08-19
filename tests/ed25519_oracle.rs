@@ -5,7 +5,7 @@ use rscrypto::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signat
 
 fn patterned_message(len: usize, mul: u8, add: u8) -> Vec<u8> {
   (0..len)
-    .map(|i| (i as u8).wrapping_mul(mul).wrapping_add(add))
+    .map(|i| i.to_le_bytes()[0].wrapping_mul(mul).wrapping_add(add))
     .collect()
 }
 
@@ -32,12 +32,18 @@ fn ed25519_matches_dalek_for_deterministic_cases() {
 
     assert_eq!(public.to_bytes(), verifying_key.to_bytes());
     assert_eq!(ours.to_bytes(), oracle.to_bytes());
-    assert!(public.verify(&message, &ours).is_ok());
+    public
+      .verify(&message, &ours)
+      .expect("rscrypto signature must verify with its public key");
 
     let oracle_public = Ed25519PublicKey::from_bytes(verifying_key.to_bytes());
     let oracle_signature = Ed25519Signature::from_bytes(oracle.to_bytes());
-    assert!(oracle_public.verify(&message, &oracle_signature).is_ok());
-    assert!(verifying_key.verify_strict(&message, &oracle).is_ok());
+    oracle_public
+      .verify(&message, &oracle_signature)
+      .expect("Dalek signature must verify through rscrypto");
+    verifying_key
+      .verify_strict(&message, &oracle)
+      .expect("Dalek signature must verify through Dalek");
   }
 }
 
@@ -56,6 +62,10 @@ fn ed25519_and_dalek_agree_on_rejection_for_tampered_signature() {
   let ours = Ed25519Signature::from_bytes(signature);
   let oracle = DalekSignature::from_bytes(&signature);
 
-  assert!(public.verify(&message, &ours).is_err());
-  assert!(verifying_key.verify_strict(&message, &oracle).is_err());
+  public
+    .verify(&message, &ours)
+    .expect_err("rscrypto must reject a tampered signature");
+  verifying_key
+    .verify_strict(&message, &oracle)
+    .expect_err("Dalek must reject a tampered signature");
 }

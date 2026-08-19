@@ -1,5 +1,3 @@
-#![allow(clippy::indexing_slicing)]
-
 //! Portable Poly1305 core.
 
 #[cfg(feature = "std")]
@@ -21,8 +19,10 @@ const RISCV64_PAR4_MIN: u64 = 4096;
 type ComputeBlockFn = fn(&mut State, &[u8; 16], bool);
 
 #[cfg(feature = "std")]
+#[cfg(feature = "xchacha20poly1305")]
 static XCHACHA20POLY1305_COMPUTE_BLOCK_DISPATCH: OnceCache<ComputeBlockFn> = OnceCache::new();
 #[cfg(feature = "std")]
+#[cfg(feature = "chacha20poly1305")]
 static CHACHA20POLY1305_COMPUTE_BLOCK_DISPATCH: OnceCache<ComputeBlockFn> = OnceCache::new();
 
 #[inline]
@@ -30,6 +30,29 @@ fn load_u32_le(input: &[u8]) -> u32 {
   let mut bytes = [0u8; 4];
   bytes.copy_from_slice(input);
   u32::from_le_bytes(bytes)
+}
+
+#[cfg(any(
+  all(target_arch = "powerpc64", target_endian = "little"),
+  target_arch = "riscv64",
+  target_arch = "s390x",
+  target_arch = "wasm32",
+))]
+#[inline(always)]
+fn low_u32(value: u64) -> u32 {
+  let [b0, b1, b2, b3, _, _, _, _] = value.to_le_bytes();
+  u32::from_le_bytes([b0, b1, b2, b3])
+}
+
+#[cfg(any(
+  all(target_arch = "powerpc64", target_endian = "little"),
+  target_arch = "riscv64",
+  target_arch = "s390x",
+  target_arch = "wasm32",
+))]
+#[inline(always)]
+fn add_limb_product(accumulator: u64, left: u32, right: u32) -> u64 {
+  accumulator.wrapping_add(u64::from(left).wrapping_mul(u64::from(right)))
 }
 
 #[cfg(any(
@@ -52,10 +75,10 @@ fn compute_block_scalar_reduction(
   let r3 = state.r[3];
   let r4 = state.r[4];
 
-  let s1 = r1 * 5;
-  let s2 = r2 * 5;
-  let s3 = r3 * 5;
-  let s4 = r4 * 5;
+  let s1 = r1.wrapping_mul(5);
+  let s2 = r2.wrapping_mul(5);
+  let s3 = r3.wrapping_mul(5);
+  let s4 = r4.wrapping_mul(5);
 
   let mut h0 = state.h[0];
   let mut h1 = state.h[1];
@@ -69,31 +92,31 @@ fn compute_block_scalar_reduction(
   h3 = h3.wrapping_add((load_u32_le(&block[9..13]) >> 6) & LIMB_MASK);
   h4 = h4.wrapping_add((load_u32_le(&block[12..16]) >> 8) | hibit);
 
-  let d0 = sum4_mul([h0, h1, h2, h3], [r0, s4, s3, s2]) + (u64::from(h4) * u64::from(s1));
-  let mut d1 = sum4_mul([h0, h1, h2, h3], [r1, r0, s4, s3]) + (u64::from(h4) * u64::from(s2));
-  let mut d2 = sum4_mul([h0, h1, h2, h3], [r2, r1, r0, s4]) + (u64::from(h4) * u64::from(s3));
-  let mut d3 = sum4_mul([h0, h1, h2, h3], [r3, r2, r1, r0]) + (u64::from(h4) * u64::from(s4));
-  let mut d4 = sum4_mul([h0, h1, h2, h3], [r4, r3, r2, r1]) + (u64::from(h4) * u64::from(r0));
+  let d0 = add_limb_product(sum4_mul([h0, h1, h2, h3], [r0, s4, s3, s2]), h4, s1);
+  let mut d1 = add_limb_product(sum4_mul([h0, h1, h2, h3], [r1, r0, s4, s3]), h4, s2);
+  let mut d2 = add_limb_product(sum4_mul([h0, h1, h2, h3], [r2, r1, r0, s4]), h4, s3);
+  let mut d3 = add_limb_product(sum4_mul([h0, h1, h2, h3], [r3, r2, r1, r0]), h4, s4);
+  let mut d4 = add_limb_product(sum4_mul([h0, h1, h2, h3], [r4, r3, r2, r1]), h4, r0);
 
-  let mut c = (d0 >> 26) as u32;
-  h0 = (d0 as u32) & LIMB_MASK;
-  d1 += u64::from(c);
+  let mut c = low_u32(d0 >> 26);
+  h0 = low_u32(d0) & LIMB_MASK;
+  d1 = d1.wrapping_add(u64::from(c));
 
-  c = (d1 >> 26) as u32;
-  h1 = (d1 as u32) & LIMB_MASK;
-  d2 += u64::from(c);
+  c = low_u32(d1 >> 26);
+  h1 = low_u32(d1) & LIMB_MASK;
+  d2 = d2.wrapping_add(u64::from(c));
 
-  c = (d2 >> 26) as u32;
-  h2 = (d2 as u32) & LIMB_MASK;
-  d3 += u64::from(c);
+  c = low_u32(d2 >> 26);
+  h2 = low_u32(d2) & LIMB_MASK;
+  d3 = d3.wrapping_add(u64::from(c));
 
-  c = (d3 >> 26) as u32;
-  h3 = (d3 as u32) & LIMB_MASK;
-  d4 += u64::from(c);
+  c = low_u32(d3 >> 26);
+  h3 = low_u32(d3) & LIMB_MASK;
+  d4 = d4.wrapping_add(u64::from(c));
 
-  c = (d4 >> 26) as u32;
-  h4 = (d4 as u32) & LIMB_MASK;
-  h0 = h0.wrapping_add(c * 5);
+  c = low_u32(d4 >> 26);
+  h4 = low_u32(d4) & LIMB_MASK;
+  h0 = h0.wrapping_add(c.wrapping_mul(5));
 
   c = h0 >> 26;
   h0 &= LIMB_MASK;
@@ -120,12 +143,15 @@ fn compute_block_resolved(primitive: AeadPrimitive) -> ComputeBlockFn {
   #[cfg(feature = "std")]
   {
     match primitive {
+      #[cfg(feature = "xchacha20poly1305")]
       AeadPrimitive::XChaCha20Poly1305 => {
         XCHACHA20POLY1305_COMPUTE_BLOCK_DISPATCH.get_or_init(|| resolve_compute_block(primitive))
       }
+      #[cfg(feature = "chacha20poly1305")]
       AeadPrimitive::ChaCha20Poly1305 => {
         CHACHA20POLY1305_COMPUTE_BLOCK_DISPATCH.get_or_init(|| resolve_compute_block(primitive))
       }
+      #[cfg(any(test, feature = "aegis256", feature = "aes-gcm", feature = "aes-gcm-siv"))]
       _ => resolve_compute_block(primitive),
     }
   }
@@ -159,21 +185,84 @@ fn resolve_compute_block(primitive: AeadPrimitive) -> ComputeBlockFn {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
+/// Absorbs one Poly1305 block with the x86-64 AVX2 multiplier.
+///
+/// # Safety
+///
+/// The current CPU must support AVX2. `state` must satisfy the internal clamped-key and reduced-accumulator limb
+/// bounds established by `State::new` and the Poly1305 block kernels.
 unsafe fn compute_block_x86_avx2(state: &mut State, block: &[u8; 16], partial: bool) {
   use core::arch::x86_64::{__m256i, _mm256_mul_epu32, _mm256_setr_epi32, _mm256_storeu_si256};
+  use core::ptr::NonNull;
 
   #[inline(always)]
   fn sum4_mul(lhs: [u32; 4], rhs: [u32; 4]) -> u64 {
-    // SAFETY: the enclosing kernel enables AVX2 and the destination array is a valid
-    // unaligned store target for one `__m256i`.
+    let mut lanes = [0u64; 4];
+    let destination = NonNull::from(&mut lanes).cast::<__m256i>().as_ptr();
+
+    // SAFETY: this helper is called only from the enclosing AVX2 kernel. `destination` retains the provenance of
+    // the writable 32-byte `lanes` array, and `_mm256_storeu_si256` permits its 8-byte alignment.
     unsafe {
-      let a = _mm256_setr_epi32(lhs[0] as i32, 0, lhs[1] as i32, 0, lhs[2] as i32, 0, lhs[3] as i32, 0);
-      let b = _mm256_setr_epi32(rhs[0] as i32, 0, rhs[1] as i32, 0, rhs[2] as i32, 0, rhs[3] as i32, 0);
+      let a = _mm256_setr_epi32(
+        lhs[0].cast_signed(),
+        0,
+        lhs[1].cast_signed(),
+        0,
+        lhs[2].cast_signed(),
+        0,
+        lhs[3].cast_signed(),
+        0,
+      );
+      let b = _mm256_setr_epi32(
+        rhs[0].cast_signed(),
+        0,
+        rhs[1].cast_signed(),
+        0,
+        rhs[2].cast_signed(),
+        0,
+        rhs[3].cast_signed(),
+        0,
+      );
       let products = _mm256_mul_epu32(a, b);
-      let mut lanes = [0u64; 4];
-      _mm256_storeu_si256(lanes.as_mut_ptr() as *mut __m256i, products);
-      lanes[0] + lanes[1] + lanes[2] + lanes[3]
+      _mm256_storeu_si256(destination, products);
     }
+
+    let sum = u128::from(lanes[0])
+      .strict_add(u128::from(lanes[1]))
+      .strict_add(u128::from(lanes[2]))
+      .strict_add(u128::from(lanes[3]));
+    debug_assert!(sum <= u128::from(u64::MAX));
+    let [b0, b1, b2, b3, b4, b5, b6, b7, _, _, _, _, _, _, _, _] = sum.to_le_bytes();
+    u64::from_le_bytes([b0, b1, b2, b3, b4, b5, b6, b7])
+  }
+
+  #[inline(always)]
+  fn fivefold_limb(limb: u32) -> u32 {
+    const MAX_UNSCALED: u32 = 858_993_459;
+    debug_assert!(limb <= MAX_UNSCALED);
+
+    let product = u64::from(limb).strict_mul(5);
+    let [b0, b1, b2, b3, _, _, _, _] = product.to_le_bytes();
+    u32::from_le_bytes([b0, b1, b2, b3])
+  }
+
+  #[inline(always)]
+  fn sum5_mul(lhs: [u32; 5], rhs: [u32; 5]) -> u64 {
+    let [l0, l1, l2, l3, l4] = lhs;
+    let [r0, r1, r2, r3, r4] = rhs;
+    let sum =
+      u128::from(sum4_mul([l0, l1, l2, l3], [r0, r1, r2, r3])).strict_add(u128::from(l4).strict_mul(u128::from(r4)));
+    debug_assert!(sum <= u128::from(u64::MAX));
+
+    let [b0, b1, b2, b3, b4, b5, b6, b7, _, _, _, _, _, _, _, _] = sum.to_le_bytes();
+    u64::from_le_bytes([b0, b1, b2, b3, b4, b5, b6, b7])
+  }
+
+  #[inline(always)]
+  fn narrow_limb(value: u64) -> u32 {
+    debug_assert_eq!(value >> u32::BITS, 0);
+    let [b0, b1, b2, b3, _, _, _, _] = value.to_le_bytes();
+    u32::from_le_bytes([b0, b1, b2, b3])
   }
 
   let hibit = if partial { 0 } else { FULL_BLOCK_HIBIT };
@@ -184,10 +273,10 @@ unsafe fn compute_block_x86_avx2(state: &mut State, block: &[u8; 16], partial: b
   let r3 = state.r[3];
   let r4 = state.r[4];
 
-  let s1 = r1 * 5;
-  let s2 = r2 * 5;
-  let s3 = r3 * 5;
-  let s4 = r4 * 5;
+  let s1 = fivefold_limb(r1);
+  let s2 = fivefold_limb(r2);
+  let s3 = fivefold_limb(r3);
+  let s4 = fivefold_limb(r4);
 
   let mut h0 = state.h[0];
   let mut h1 = state.h[1];
@@ -201,33 +290,33 @@ unsafe fn compute_block_x86_avx2(state: &mut State, block: &[u8; 16], partial: b
   h3 = h3.wrapping_add((load_u32_le(&block[9..13]) >> 6) & LIMB_MASK);
   h4 = h4.wrapping_add((load_u32_le(&block[12..16]) >> 8) | hibit);
 
-  let d0 = sum4_mul([h0, h1, h2, h3], [r0, s4, s3, s2]) + (u64::from(h4) * u64::from(s1));
-  let mut d1 = sum4_mul([h0, h1, h2, h3], [r1, r0, s4, s3]) + (u64::from(h4) * u64::from(s2));
-  let mut d2 = sum4_mul([h0, h1, h2, h3], [r2, r1, r0, s4]) + (u64::from(h4) * u64::from(s3));
-  let mut d3 = sum4_mul([h0, h1, h2, h3], [r3, r2, r1, r0]) + (u64::from(h4) * u64::from(s4));
-  let mut d4 = sum4_mul([h0, h1, h2, h3], [r4, r3, r2, r1]) + (u64::from(h4) * u64::from(r0));
+  let d0 = sum5_mul([h0, h1, h2, h3, h4], [r0, s4, s3, s2, s1]);
+  let mut d1 = sum5_mul([h0, h1, h2, h3, h4], [r1, r0, s4, s3, s2]);
+  let mut d2 = sum5_mul([h0, h1, h2, h3, h4], [r2, r1, r0, s4, s3]);
+  let mut d3 = sum5_mul([h0, h1, h2, h3, h4], [r3, r2, r1, r0, s4]);
+  let mut d4 = sum5_mul([h0, h1, h2, h3, h4], [r4, r3, r2, r1, r0]);
 
-  let mut c = (d0 >> 26) as u32;
-  h0 = (d0 as u32) & LIMB_MASK;
-  d1 += u64::from(c);
+  let mut c = d0 >> 26;
+  h0 = narrow_limb(d0 & u64::from(LIMB_MASK));
+  d1 = d1.strict_add(c);
 
-  c = (d1 >> 26) as u32;
-  h1 = (d1 as u32) & LIMB_MASK;
-  d2 += u64::from(c);
+  c = d1 >> 26;
+  h1 = narrow_limb(d1 & u64::from(LIMB_MASK));
+  d2 = d2.strict_add(c);
 
-  c = (d2 >> 26) as u32;
-  h2 = (d2 as u32) & LIMB_MASK;
-  d3 += u64::from(c);
+  c = d2 >> 26;
+  h2 = narrow_limb(d2 & u64::from(LIMB_MASK));
+  d3 = d3.strict_add(c);
 
-  c = (d3 >> 26) as u32;
-  h3 = (d3 as u32) & LIMB_MASK;
-  d4 += u64::from(c);
+  c = d3 >> 26;
+  h3 = narrow_limb(d3 & u64::from(LIMB_MASK));
+  d4 = d4.strict_add(c);
 
-  c = (d4 >> 26) as u32;
-  h4 = (d4 as u32) & LIMB_MASK;
-  h0 = h0.wrapping_add(c * 5);
+  c = d4 >> 26;
+  h4 = narrow_limb(d4 & u64::from(LIMB_MASK));
+  h0 = h0.wrapping_add(fivefold_limb(narrow_limb(c)));
 
-  c = h0 >> 26;
+  let c = h0 >> 26;
   h0 &= LIMB_MASK;
   h1 = h1.wrapping_add(c);
 
@@ -236,63 +325,108 @@ unsafe fn compute_block_x86_avx2(state: &mut State, block: &[u8; 16], partial: b
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq")]
+/// Absorbs one Poly1305 block with the x86-64 AVX-512 multiplier.
+///
+/// # Safety
+///
+/// The current CPU must support AVX-512F, AVX-512VL, AVX-512BW, and AVX-512DQ. `state` must satisfy the internal
+/// clamped-key and reduced-accumulator limb bounds established by `State::new` and the Poly1305 block kernels.
 unsafe fn compute_block_x86_avx512(state: &mut State, block: &[u8; 16], partial: bool) {
   use core::arch::x86_64::{__m512i, _mm512_mul_epu32, _mm512_setr_epi32, _mm512_storeu_si512};
+  use core::ptr::NonNull;
+
+  #[inline(always)]
+  fn narrow_sum(value: u128) -> u64 {
+    debug_assert!(value <= u128::from(u64::MAX));
+    let [b0, b1, b2, b3, b4, b5, b6, b7, _, _, _, _, _, _, _, _] = value.to_le_bytes();
+    u64::from_le_bytes([b0, b1, b2, b3, b4, b5, b6, b7])
+  }
+
+  #[inline(always)]
+  fn fivefold_limb(limb: u32) -> u32 {
+    const MAX_UNSCALED: u32 = 858_993_459;
+    debug_assert!(limb <= MAX_UNSCALED);
+
+    let product = u64::from(limb).strict_mul(5);
+    let [b0, b1, b2, b3, _, _, _, _] = product.to_le_bytes();
+    u32::from_le_bytes([b0, b1, b2, b3])
+  }
 
   #[inline(always)]
   fn pair_sum4_mul(lhs: [u32; 4], rhs_lo: [u32; 4], rhs_hi: [u32; 4]) -> (u64, u64) {
-    // SAFETY: the enclosing kernel enables AVX-512F, and the destination array is a valid
-    // unaligned store target for one `__m512i`.
+    let mut lanes = [0u64; 8];
+    let destination = NonNull::from(&mut lanes).cast::<__m512i>().as_ptr();
+
+    // SAFETY: this helper is called only from the enclosing AVX-512 kernel. `destination` retains the provenance of
+    // the writable 64-byte `lanes` array, and `_mm512_storeu_si512` permits its 8-byte alignment.
     unsafe {
       let a = _mm512_setr_epi32(
-        lhs[0] as i32,
+        lhs[0].cast_signed(),
         0,
-        lhs[1] as i32,
+        lhs[1].cast_signed(),
         0,
-        lhs[2] as i32,
+        lhs[2].cast_signed(),
         0,
-        lhs[3] as i32,
+        lhs[3].cast_signed(),
         0,
-        lhs[0] as i32,
+        lhs[0].cast_signed(),
         0,
-        lhs[1] as i32,
+        lhs[1].cast_signed(),
         0,
-        lhs[2] as i32,
+        lhs[2].cast_signed(),
         0,
-        lhs[3] as i32,
+        lhs[3].cast_signed(),
         0,
       );
       let b = _mm512_setr_epi32(
-        rhs_lo[0] as i32,
+        rhs_lo[0].cast_signed(),
         0,
-        rhs_lo[1] as i32,
+        rhs_lo[1].cast_signed(),
         0,
-        rhs_lo[2] as i32,
+        rhs_lo[2].cast_signed(),
         0,
-        rhs_lo[3] as i32,
+        rhs_lo[3].cast_signed(),
         0,
-        rhs_hi[0] as i32,
+        rhs_hi[0].cast_signed(),
         0,
-        rhs_hi[1] as i32,
+        rhs_hi[1].cast_signed(),
         0,
-        rhs_hi[2] as i32,
+        rhs_hi[2].cast_signed(),
         0,
-        rhs_hi[3] as i32,
+        rhs_hi[3].cast_signed(),
         0,
       );
       let products = _mm512_mul_epu32(a, b);
-      let mut lanes = [0u64; 8];
-      _mm512_storeu_si512(lanes.as_mut_ptr() as *mut __m512i, products);
-      (
-        lanes[0] + lanes[1] + lanes[2] + lanes[3],
-        lanes[4] + lanes[5] + lanes[6] + lanes[7],
-      )
+      _mm512_storeu_si512(destination, products);
     }
+
+    let low = u128::from(lanes[0])
+      .strict_add(u128::from(lanes[1]))
+      .strict_add(u128::from(lanes[2]))
+      .strict_add(u128::from(lanes[3]));
+    let high = u128::from(lanes[4])
+      .strict_add(u128::from(lanes[5]))
+      .strict_add(u128::from(lanes[6]))
+      .strict_add(u128::from(lanes[7]));
+    (narrow_sum(low), narrow_sum(high))
   }
 
   #[inline(always)]
   fn single_sum4_mul(lhs: [u32; 4], rhs: [u32; 4]) -> u64 {
     pair_sum4_mul(lhs, rhs, [0; 4]).0
+  }
+
+  #[inline(always)]
+  fn add_product(base: u64, lhs: u32, rhs: u32) -> u64 {
+    let sum = u128::from(base).strict_add(u128::from(lhs).strict_mul(u128::from(rhs)));
+    narrow_sum(sum)
+  }
+
+  #[inline(always)]
+  fn narrow_limb(value: u64) -> u32 {
+    debug_assert_eq!(value >> u32::BITS, 0);
+    let [b0, b1, b2, b3, _, _, _, _] = value.to_le_bytes();
+    u32::from_le_bytes([b0, b1, b2, b3])
   }
 
   let hibit = if partial { 0 } else { FULL_BLOCK_HIBIT };
@@ -303,10 +437,10 @@ unsafe fn compute_block_x86_avx512(state: &mut State, block: &[u8; 16], partial:
   let r3 = state.r[3];
   let r4 = state.r[4];
 
-  let s1 = r1 * 5;
-  let s2 = r2 * 5;
-  let s3 = r3 * 5;
-  let s4 = r4 * 5;
+  let s1 = fivefold_limb(r1);
+  let s2 = fivefold_limb(r2);
+  let s3 = fivefold_limb(r3);
+  let s4 = fivefold_limb(r4);
 
   let mut h0 = state.h[0];
   let mut h1 = state.h[1];
@@ -324,39 +458,44 @@ unsafe fn compute_block_x86_avx512(state: &mut State, block: &[u8; 16], partial:
   let (d2_base, d3_base) = pair_sum4_mul([h0, h1, h2, h3], [r2, r1, r0, s4], [r3, r2, r1, r0]);
   let d4_base = single_sum4_mul([h0, h1, h2, h3], [r4, r3, r2, r1]);
 
-  let d0 = d0_base + (u64::from(h4) * u64::from(s1));
-  let mut d1 = d1_base + (u64::from(h4) * u64::from(s2));
-  let mut d2 = d2_base + (u64::from(h4) * u64::from(s3));
-  let mut d3 = d3_base + (u64::from(h4) * u64::from(s4));
-  let mut d4 = d4_base + (u64::from(h4) * u64::from(r0));
+  let d0 = add_product(d0_base, h4, s1);
+  let mut d1 = add_product(d1_base, h4, s2);
+  let mut d2 = add_product(d2_base, h4, s3);
+  let mut d3 = add_product(d3_base, h4, s4);
+  let mut d4 = add_product(d4_base, h4, r0);
 
-  let mut c = (d0 >> 26) as u32;
-  h0 = (d0 as u32) & LIMB_MASK;
-  d1 += u64::from(c);
+  let mut c = d0 >> 26;
+  h0 = narrow_limb(d0 & u64::from(LIMB_MASK));
+  d1 = d1.strict_add(c);
 
-  c = (d1 >> 26) as u32;
-  h1 = (d1 as u32) & LIMB_MASK;
-  d2 += u64::from(c);
+  c = d1 >> 26;
+  h1 = narrow_limb(d1 & u64::from(LIMB_MASK));
+  d2 = d2.strict_add(c);
 
-  c = (d2 >> 26) as u32;
-  h2 = (d2 as u32) & LIMB_MASK;
-  d3 += u64::from(c);
+  c = d2 >> 26;
+  h2 = narrow_limb(d2 & u64::from(LIMB_MASK));
+  d3 = d3.strict_add(c);
 
-  c = (d3 >> 26) as u32;
-  h3 = (d3 as u32) & LIMB_MASK;
-  d4 += u64::from(c);
+  c = d3 >> 26;
+  h3 = narrow_limb(d3 & u64::from(LIMB_MASK));
+  d4 = d4.strict_add(c);
 
-  c = (d4 >> 26) as u32;
-  h4 = (d4 as u32) & LIMB_MASK;
-  h0 = h0.wrapping_add(c * 5);
+  c = d4 >> 26;
+  h4 = narrow_limb(d4 & u64::from(LIMB_MASK));
+  h0 = h0.wrapping_add(fivefold_limb(narrow_limb(c)));
 
-  c = h0 >> 26;
+  let c = h0 >> 26;
   h0 &= LIMB_MASK;
   h1 = h1.wrapping_add(c);
 
   state.h = [h0, h1, h2, h3, h4];
 }
 
+/// Absorbs one full Poly1305 block with the AArch64 NEON multiplier.
+///
+/// # Safety
+///
+/// The current CPU must support AArch64 NEON.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 unsafe fn compute_block_aarch64_neon(state: &mut State, block: &[u8; 16], partial: bool) {
@@ -379,77 +518,33 @@ unsafe fn compute_block_aarch64_neon(state: &mut State, block: &[u8; 16], partia
     }
   }
 
-  let hibit = if partial { 0 } else { FULL_BLOCK_HIBIT };
+  #[inline(always)]
+  fn fivefold_limb(limb: u32) -> u32 {
+    const MAX_UNSCALED: u32 = 858_993_459;
+    debug_assert!(limb <= MAX_UNSCALED);
 
-  let r0 = state.r[0];
-  let r1 = state.r[1];
-  let r2 = state.r[2];
-  let r3 = state.r[3];
-  let r4 = state.r[4];
-
-  let s1 = r1 * 5;
-  let s2 = r2 * 5;
-  let s3 = r3 * 5;
-  let s4 = r4 * 5;
-
-  let mut h0 = state.h[0];
-  let mut h1 = state.h[1];
-  let mut h2 = state.h[2];
-  let mut h3 = state.h[3];
-  let mut h4 = state.h[4];
-
-  h0 = h0.wrapping_add(load_u32_le(&block[0..4]) & LIMB_MASK);
-  h1 = h1.wrapping_add((load_u32_le(&block[3..7]) >> 2) & LIMB_MASK);
-  h2 = h2.wrapping_add((load_u32_le(&block[6..10]) >> 4) & LIMB_MASK);
-  h3 = h3.wrapping_add((load_u32_le(&block[9..13]) >> 6) & LIMB_MASK);
-  h4 = h4.wrapping_add((load_u32_le(&block[12..16]) >> 8) | hibit);
-
-  let d0 = sum4_mul([h0, h1, h2, h3], [r0, s4, s3, s2]) + (u64::from(h4) * u64::from(s1));
-  let mut d1 = sum4_mul([h0, h1, h2, h3], [r1, r0, s4, s3]) + (u64::from(h4) * u64::from(s2));
-  let mut d2 = sum4_mul([h0, h1, h2, h3], [r2, r1, r0, s4]) + (u64::from(h4) * u64::from(s3));
-  let mut d3 = sum4_mul([h0, h1, h2, h3], [r3, r2, r1, r0]) + (u64::from(h4) * u64::from(s4));
-  let mut d4 = sum4_mul([h0, h1, h2, h3], [r4, r3, r2, r1]) + (u64::from(h4) * u64::from(r0));
-
-  let mut c = (d0 >> 26) as u32;
-  h0 = (d0 as u32) & LIMB_MASK;
-  d1 += u64::from(c);
-
-  c = (d1 >> 26) as u32;
-  h1 = (d1 as u32) & LIMB_MASK;
-  d2 += u64::from(c);
-
-  c = (d2 >> 26) as u32;
-  h2 = (d2 as u32) & LIMB_MASK;
-  d3 += u64::from(c);
-
-  c = (d3 >> 26) as u32;
-  h3 = (d3 as u32) & LIMB_MASK;
-  d4 += u64::from(c);
-
-  c = (d4 >> 26) as u32;
-  h4 = (d4 as u32) & LIMB_MASK;
-  h0 = h0.wrapping_add(c * 5);
-
-  c = h0 >> 26;
-  h0 &= LIMB_MASK;
-  h1 = h1.wrapping_add(c);
-
-  state.h = [h0, h1, h2, h3, h4];
-}
-
-#[cfg(target_arch = "wasm32")]
-#[target_feature(enable = "simd128")]
-unsafe fn compute_block_wasm_simd128(state: &mut State, block: &[u8; 16], partial: bool) {
-  use core::arch::wasm32::{i64x2_add, u32x4, u64x2_extmul_high_u32x4, u64x2_extmul_low_u32x4, u64x2_extract_lane};
+    let product = u64::from(limb).strict_mul(5);
+    let [b0, b1, b2, b3, _, _, _, _] = product.to_le_bytes();
+    u32::from_le_bytes([b0, b1, b2, b3])
+  }
 
   #[inline(always)]
-  fn sum4_mul(lhs: [u32; 4], rhs: [u32; 4]) -> u64 {
-    let a = u32x4(lhs[0], lhs[1], lhs[2], lhs[3]);
-    let b = u32x4(rhs[0], rhs[1], rhs[2], rhs[3]);
-    let lo = u64x2_extmul_low_u32x4(a, b);
-    let hi = u64x2_extmul_high_u32x4(a, b);
-    let sum = i64x2_add(lo, hi);
-    u64x2_extract_lane::<0>(sum) + u64x2_extract_lane::<1>(sum)
+  fn sum5_mul(lhs: [u32; 5], rhs: [u32; 5]) -> u64 {
+    let [l0, l1, l2, l3, l4] = lhs;
+    let [r0, r1, r2, r3, r4] = rhs;
+    let sum =
+      u128::from(sum4_mul([l0, l1, l2, l3], [r0, r1, r2, r3])).strict_add(u128::from(l4).strict_mul(u128::from(r4)));
+    debug_assert!(sum <= u128::from(u64::MAX));
+
+    let [b0, b1, b2, b3, b4, b5, b6, b7, _, _, _, _, _, _, _, _] = sum.to_le_bytes();
+    u64::from_le_bytes([b0, b1, b2, b3, b4, b5, b6, b7])
+  }
+
+  #[inline(always)]
+  fn narrow_limb(value: u64) -> u32 {
+    debug_assert_eq!(value >> u32::BITS, 0);
+    let [b0, b1, b2, b3, _, _, _, _] = value.to_le_bytes();
+    u32::from_le_bytes([b0, b1, b2, b3])
   }
 
   let hibit = if partial { 0 } else { FULL_BLOCK_HIBIT };
@@ -460,10 +555,10 @@ unsafe fn compute_block_wasm_simd128(state: &mut State, block: &[u8; 16], partia
   let r3 = state.r[3];
   let r4 = state.r[4];
 
-  let s1 = r1 * 5;
-  let s2 = r2 * 5;
-  let s3 = r3 * 5;
-  let s4 = r4 * 5;
+  let s1 = fivefold_limb(r1);
+  let s2 = fivefold_limb(r2);
+  let s3 = fivefold_limb(r3);
+  let s4 = fivefold_limb(r4);
 
   let mut h0 = state.h[0];
   let mut h1 = state.h[1];
@@ -477,31 +572,110 @@ unsafe fn compute_block_wasm_simd128(state: &mut State, block: &[u8; 16], partia
   h3 = h3.wrapping_add((load_u32_le(&block[9..13]) >> 6) & LIMB_MASK);
   h4 = h4.wrapping_add((load_u32_le(&block[12..16]) >> 8) | hibit);
 
-  let d0 = sum4_mul([h0, h1, h2, h3], [r0, s4, s3, s2]) + (u64::from(h4) * u64::from(s1));
-  let mut d1 = sum4_mul([h0, h1, h2, h3], [r1, r0, s4, s3]) + (u64::from(h4) * u64::from(s2));
-  let mut d2 = sum4_mul([h0, h1, h2, h3], [r2, r1, r0, s4]) + (u64::from(h4) * u64::from(s3));
-  let mut d3 = sum4_mul([h0, h1, h2, h3], [r3, r2, r1, r0]) + (u64::from(h4) * u64::from(s4));
-  let mut d4 = sum4_mul([h0, h1, h2, h3], [r4, r3, r2, r1]) + (u64::from(h4) * u64::from(r0));
+  let d0 = sum5_mul([h0, h1, h2, h3, h4], [r0, s4, s3, s2, s1]);
+  let mut d1 = sum5_mul([h0, h1, h2, h3, h4], [r1, r0, s4, s3, s2]);
+  let mut d2 = sum5_mul([h0, h1, h2, h3, h4], [r2, r1, r0, s4, s3]);
+  let mut d3 = sum5_mul([h0, h1, h2, h3, h4], [r3, r2, r1, r0, s4]);
+  let mut d4 = sum5_mul([h0, h1, h2, h3, h4], [r4, r3, r2, r1, r0]);
 
-  let mut c = (d0 >> 26) as u32;
-  h0 = (d0 as u32) & LIMB_MASK;
-  d1 += u64::from(c);
+  let mut c = d0 >> 26;
+  h0 = narrow_limb(d0 & u64::from(LIMB_MASK));
+  d1 = d1.strict_add(c);
 
-  c = (d1 >> 26) as u32;
-  h1 = (d1 as u32) & LIMB_MASK;
-  d2 += u64::from(c);
+  c = d1 >> 26;
+  h1 = narrow_limb(d1 & u64::from(LIMB_MASK));
+  d2 = d2.strict_add(c);
 
-  c = (d2 >> 26) as u32;
-  h2 = (d2 as u32) & LIMB_MASK;
-  d3 += u64::from(c);
+  c = d2 >> 26;
+  h2 = narrow_limb(d2 & u64::from(LIMB_MASK));
+  d3 = d3.strict_add(c);
 
-  c = (d3 >> 26) as u32;
-  h3 = (d3 as u32) & LIMB_MASK;
-  d4 += u64::from(c);
+  c = d3 >> 26;
+  h3 = narrow_limb(d3 & u64::from(LIMB_MASK));
+  d4 = d4.strict_add(c);
 
-  c = (d4 >> 26) as u32;
-  h4 = (d4 as u32) & LIMB_MASK;
-  h0 = h0.wrapping_add(c * 5);
+  c = d4 >> 26;
+  h4 = narrow_limb(d4 & u64::from(LIMB_MASK));
+  h0 = h0.wrapping_add(fivefold_limb(narrow_limb(c)));
+
+  let c = h0 >> 26;
+  h0 &= LIMB_MASK;
+  h1 = h1.wrapping_add(c);
+
+  state.h = [h0, h1, h2, h3, h4];
+}
+
+#[cfg(target_arch = "wasm32")]
+#[target_feature(enable = "simd128")]
+/// Absorbs one Poly1305 block with the WASM SIMD128 multiplier.
+///
+/// # Safety
+///
+/// The current WebAssembly instance must support SIMD128. `state` must satisfy the internal clamped-key and
+/// reduced-accumulator limb bounds established by `State::new` and the Poly1305 block kernels.
+unsafe fn compute_block_wasm_simd128(state: &mut State, block: &[u8; 16], partial: bool) {
+  use core::arch::wasm32::{i64x2_add, u32x4, u64x2_extmul_high_u32x4, u64x2_extmul_low_u32x4, u64x2_extract_lane};
+
+  #[inline(always)]
+  fn sum4_mul(lhs: [u32; 4], rhs: [u32; 4]) -> u64 {
+    let a = u32x4(lhs[0], lhs[1], lhs[2], lhs[3]);
+    let b = u32x4(rhs[0], rhs[1], rhs[2], rhs[3]);
+    let lo = u64x2_extmul_low_u32x4(a, b);
+    let hi = u64x2_extmul_high_u32x4(a, b);
+    let sum = i64x2_add(lo, hi);
+    u64x2_extract_lane::<0>(sum).wrapping_add(u64x2_extract_lane::<1>(sum))
+  }
+
+  let hibit = if partial { 0 } else { FULL_BLOCK_HIBIT };
+
+  let r0 = state.r[0];
+  let r1 = state.r[1];
+  let r2 = state.r[2];
+  let r3 = state.r[3];
+  let r4 = state.r[4];
+
+  let s1 = r1.wrapping_mul(5);
+  let s2 = r2.wrapping_mul(5);
+  let s3 = r3.wrapping_mul(5);
+  let s4 = r4.wrapping_mul(5);
+
+  let mut h0 = state.h[0];
+  let mut h1 = state.h[1];
+  let mut h2 = state.h[2];
+  let mut h3 = state.h[3];
+  let mut h4 = state.h[4];
+
+  h0 = h0.wrapping_add(load_u32_le(&block[0..4]) & LIMB_MASK);
+  h1 = h1.wrapping_add((load_u32_le(&block[3..7]) >> 2) & LIMB_MASK);
+  h2 = h2.wrapping_add((load_u32_le(&block[6..10]) >> 4) & LIMB_MASK);
+  h3 = h3.wrapping_add((load_u32_le(&block[9..13]) >> 6) & LIMB_MASK);
+  h4 = h4.wrapping_add((load_u32_le(&block[12..16]) >> 8) | hibit);
+
+  let d0 = add_limb_product(sum4_mul([h0, h1, h2, h3], [r0, s4, s3, s2]), h4, s1);
+  let mut d1 = add_limb_product(sum4_mul([h0, h1, h2, h3], [r1, r0, s4, s3]), h4, s2);
+  let mut d2 = add_limb_product(sum4_mul([h0, h1, h2, h3], [r2, r1, r0, s4]), h4, s3);
+  let mut d3 = add_limb_product(sum4_mul([h0, h1, h2, h3], [r3, r2, r1, r0]), h4, s4);
+  let mut d4 = add_limb_product(sum4_mul([h0, h1, h2, h3], [r4, r3, r2, r1]), h4, r0);
+
+  let mut c = low_u32(d0 >> 26);
+  h0 = low_u32(d0) & LIMB_MASK;
+  d1 = d1.wrapping_add(u64::from(c));
+
+  c = low_u32(d1 >> 26);
+  h1 = low_u32(d1) & LIMB_MASK;
+  d2 = d2.wrapping_add(u64::from(c));
+
+  c = low_u32(d2 >> 26);
+  h2 = low_u32(d2) & LIMB_MASK;
+  d3 = d3.wrapping_add(u64::from(c));
+
+  c = low_u32(d3 >> 26);
+  h3 = low_u32(d3) & LIMB_MASK;
+  d4 = d4.wrapping_add(u64::from(c));
+
+  c = low_u32(d4 >> 26);
+  h4 = low_u32(d4) & LIMB_MASK;
+  h0 = h0.wrapping_add(c.wrapping_mul(5));
 
   c = h0 >> 26;
   h0 &= LIMB_MASK;
@@ -549,6 +723,39 @@ impl State {
 
   #[inline(always)]
   fn compute_block_portable(&mut self, block: &[u8; 16], partial: bool) {
+    #[inline(always)]
+    fn fivefold_limb(limb: u32) -> u32 {
+      const MAX_UNSCALED: u32 = 858_993_459;
+      debug_assert!(limb <= MAX_UNSCALED);
+
+      let product = u64::from(limb).strict_mul(5);
+      let [b0, b1, b2, b3, _, _, _, _] = product.to_le_bytes();
+      u32::from_le_bytes([b0, b1, b2, b3])
+    }
+
+    #[inline(always)]
+    fn scalar_dot5(lhs: [u32; 5], rhs: [u32; 5]) -> u64 {
+      let [l0, l1, l2, l3, l4] = lhs;
+      let [r0, r1, r2, r3, r4] = rhs;
+      let sum = u128::from(l0)
+        .strict_mul(u128::from(r0))
+        .strict_add(u128::from(l1).strict_mul(u128::from(r1)))
+        .strict_add(u128::from(l2).strict_mul(u128::from(r2)))
+        .strict_add(u128::from(l3).strict_mul(u128::from(r3)))
+        .strict_add(u128::from(l4).strict_mul(u128::from(r4)));
+      debug_assert!(sum <= u128::from(u64::MAX));
+
+      let [b0, b1, b2, b3, b4, b5, b6, b7, _, _, _, _, _, _, _, _] = sum.to_le_bytes();
+      u64::from_le_bytes([b0, b1, b2, b3, b4, b5, b6, b7])
+    }
+
+    #[inline(always)]
+    fn narrow_limb(value: u64) -> u32 {
+      debug_assert_eq!(value >> u32::BITS, 0);
+      let [b0, b1, b2, b3, _, _, _, _] = value.to_le_bytes();
+      u32::from_le_bytes([b0, b1, b2, b3])
+    }
+
     let hibit = if partial { 0 } else { FULL_BLOCK_HIBIT };
 
     let r0 = self.r[0];
@@ -557,10 +764,10 @@ impl State {
     let r3 = self.r[3];
     let r4 = self.r[4];
 
-    let s1 = r1 * 5;
-    let s2 = r2 * 5;
-    let s3 = r3 * 5;
-    let s4 = r4 * 5;
+    let s1 = fivefold_limb(r1);
+    let s2 = fivefold_limb(r2);
+    let s3 = fivefold_limb(r3);
+    let s4 = fivefold_limb(r4);
 
     let mut h0 = self.h[0];
     let mut h1 = self.h[1];
@@ -574,53 +781,33 @@ impl State {
     h3 = h3.wrapping_add((load_u32_le(&block[9..13]) >> 6) & LIMB_MASK);
     h4 = h4.wrapping_add((load_u32_le(&block[12..16]) >> 8) | hibit);
 
-    let d0 = (u64::from(h0) * u64::from(r0))
-      + (u64::from(h1) * u64::from(s4))
-      + (u64::from(h2) * u64::from(s3))
-      + (u64::from(h3) * u64::from(s2))
-      + (u64::from(h4) * u64::from(s1));
-    let mut d1 = (u64::from(h0) * u64::from(r1))
-      + (u64::from(h1) * u64::from(r0))
-      + (u64::from(h2) * u64::from(s4))
-      + (u64::from(h3) * u64::from(s3))
-      + (u64::from(h4) * u64::from(s2));
-    let mut d2 = (u64::from(h0) * u64::from(r2))
-      + (u64::from(h1) * u64::from(r1))
-      + (u64::from(h2) * u64::from(r0))
-      + (u64::from(h3) * u64::from(s4))
-      + (u64::from(h4) * u64::from(s3));
-    let mut d3 = (u64::from(h0) * u64::from(r3))
-      + (u64::from(h1) * u64::from(r2))
-      + (u64::from(h2) * u64::from(r1))
-      + (u64::from(h3) * u64::from(r0))
-      + (u64::from(h4) * u64::from(s4));
-    let mut d4 = (u64::from(h0) * u64::from(r4))
-      + (u64::from(h1) * u64::from(r3))
-      + (u64::from(h2) * u64::from(r2))
-      + (u64::from(h3) * u64::from(r1))
-      + (u64::from(h4) * u64::from(r0));
+    let d0 = scalar_dot5([h0, h1, h2, h3, h4], [r0, s4, s3, s2, s1]);
+    let mut d1 = scalar_dot5([h0, h1, h2, h3, h4], [r1, r0, s4, s3, s2]);
+    let mut d2 = scalar_dot5([h0, h1, h2, h3, h4], [r2, r1, r0, s4, s3]);
+    let mut d3 = scalar_dot5([h0, h1, h2, h3, h4], [r3, r2, r1, r0, s4]);
+    let mut d4 = scalar_dot5([h0, h1, h2, h3, h4], [r4, r3, r2, r1, r0]);
 
-    let mut c = (d0 >> 26) as u32;
-    h0 = (d0 as u32) & LIMB_MASK;
-    d1 += u64::from(c);
+    let mut c = d0 >> 26;
+    h0 = narrow_limb(d0 & u64::from(LIMB_MASK));
+    d1 = d1.strict_add(c);
 
-    c = (d1 >> 26) as u32;
-    h1 = (d1 as u32) & LIMB_MASK;
-    d2 += u64::from(c);
+    c = d1 >> 26;
+    h1 = narrow_limb(d1 & u64::from(LIMB_MASK));
+    d2 = d2.strict_add(c);
 
-    c = (d2 >> 26) as u32;
-    h2 = (d2 as u32) & LIMB_MASK;
-    d3 += u64::from(c);
+    c = d2 >> 26;
+    h2 = narrow_limb(d2 & u64::from(LIMB_MASK));
+    d3 = d3.strict_add(c);
 
-    c = (d3 >> 26) as u32;
-    h3 = (d3 as u32) & LIMB_MASK;
-    d4 += u64::from(c);
+    c = d3 >> 26;
+    h3 = narrow_limb(d3 & u64::from(LIMB_MASK));
+    d4 = d4.strict_add(c);
 
-    c = (d4 >> 26) as u32;
-    h4 = (d4 as u32) & LIMB_MASK;
-    h0 = h0.wrapping_add(c * 5);
+    c = d4 >> 26;
+    h4 = narrow_limb(d4 & u64::from(LIMB_MASK));
+    h0 = h0.wrapping_add(fivefold_limb(narrow_limb(c)));
 
-    c = h0 >> 26;
+    let c = h0 >> 26;
     h0 &= LIMB_MASK;
     h1 = h1.wrapping_add(c);
 
@@ -629,14 +816,11 @@ impl State {
 
   #[cfg(test)]
   fn update_message(&mut self, message: &[u8], compute_block: ComputeBlockFn) {
-    let mut blocks = message.chunks_exact(16);
-    for chunk in &mut blocks {
-      let mut block = [0u8; 16];
-      block.copy_from_slice(chunk);
-      compute_block(self, &block, false);
+    let (blocks, remainder) = message.as_chunks::<16>();
+    for block in blocks {
+      compute_block(self, block, false);
     }
 
-    let remainder = blocks.remainder();
     if remainder.is_empty() {
       return;
     }
@@ -648,14 +832,11 @@ impl State {
   }
 
   fn update_padded_segment(&mut self, segment: &[u8], compute_block: ComputeBlockFn) {
-    let mut blocks = segment.chunks_exact(16);
-    for chunk in &mut blocks {
-      let mut block = [0u8; 16];
-      block.copy_from_slice(chunk);
-      compute_block(self, &block, false);
+    let (blocks, remainder) = segment.as_chunks::<16>();
+    for block in blocks {
+      compute_block(self, block, false);
     }
 
-    let remainder = blocks.remainder();
     if remainder.is_empty() {
       return;
     }
@@ -672,6 +853,22 @@ impl State {
 
   #[inline(always)]
   fn finalize_in_place(&mut self) -> [u8; 16] {
+    #[inline(always)]
+    fn fivefold_carry(carry: u32) -> u32 {
+      const MAX_UNSCALED: u32 = 858_993_459;
+      debug_assert!(carry <= MAX_UNSCALED);
+
+      let product = u64::from(carry).strict_mul(5);
+      let [b0, b1, b2, b3, _, _, _, _] = product.to_le_bytes();
+      u32::from_le_bytes([b0, b1, b2, b3])
+    }
+
+    #[inline(always)]
+    fn low_word(value: u64) -> u32 {
+      let [b0, b1, b2, b3, _, _, _, _] = value.to_le_bytes();
+      u32::from_le_bytes([b0, b1, b2, b3])
+    }
+
     let mut h0 = self.h[0];
     let mut h1 = self.h[1];
     let mut h2 = self.h[2];
@@ -692,7 +889,7 @@ impl State {
 
     c = h4 >> 26;
     h4 &= LIMB_MASK;
-    h0 = h0.wrapping_add(c * 5);
+    h0 = h0.wrapping_add(fivefold_carry(c));
 
     c = h0 >> 26;
     h0 &= LIMB_MASK;
@@ -735,14 +932,14 @@ impl State {
     h2 = (h2 >> 12) | (h3 << 14);
     h3 = (h3 >> 18) | (h4 << 8);
 
-    let mut f = u64::from(h0) + u64::from(self.pad[0]);
-    h0 = f as u32;
-    f = u64::from(h1) + u64::from(self.pad[1]) + (f >> 32);
-    h1 = f as u32;
-    f = u64::from(h2) + u64::from(self.pad[2]) + (f >> 32);
-    h2 = f as u32;
-    f = u64::from(h3) + u64::from(self.pad[3]) + (f >> 32);
-    h3 = f as u32;
+    let mut f = u64::from(h0).strict_add(u64::from(self.pad[0]));
+    h0 = low_word(f);
+    f = u64::from(h1).strict_add(u64::from(self.pad[1])).strict_add(f >> 32);
+    h1 = low_word(f);
+    f = u64::from(h2).strict_add(u64::from(self.pad[2])).strict_add(f >> 32);
+    h2 = low_word(f);
+    f = u64::from(h3).strict_add(u64::from(self.pad[3])).strict_add(f >> 32);
+    h3 = low_word(f);
 
     let mut tag = [0u8; 16];
     tag[0..4].copy_from_slice(&h0.to_le_bytes());
@@ -761,7 +958,6 @@ pub(crate) fn authenticate(message: &[u8], key: &[u8; 32]) -> [u8; 16] {
   state.finalize()
 }
 
-#[cfg_attr(not(any(feature = "xchacha20poly1305", feature = "diag")), allow(dead_code))]
 pub(crate) fn authenticate_aead(
   primitive: AeadPrimitive,
   aad: &[u8],
@@ -774,7 +970,8 @@ pub(crate) fn authenticate_aead(
   {
     use crate::platform::caps::x86;
     if lengths.total_at_least(64) && current_caps().has(x86::AVX2) {
-      return Ok(avx2_par4::authenticate_aead_par4(aad, ciphertext, key, lengths));
+      // SAFETY: this branch verifies AVX2 before selecting the x86-64 parallel kernel.
+      return Ok(unsafe { avx2_par4::authenticate_aead_par4(aad, ciphertext, key, lengths) });
     }
   }
   #[cfg(target_arch = "aarch64")]
@@ -794,14 +991,11 @@ pub(crate) fn authenticate_aead(
   authenticate_aead_with(aad, ciphertext, key, compute_block_resolved(primitive), lengths)
 }
 
-#[cfg_attr(
-  not(any(
-    test,
-    target_arch = "x86_64",
-    all(target_arch = "powerpc64", target_endian = "little")
-  )),
-  allow(dead_code)
-)]
+#[cfg(any(
+  test,
+  target_arch = "x86_64",
+  all(target_arch = "powerpc64", target_endian = "little")
+))]
 fn authenticate_aead_portable_blocks(
   aad: &[u8],
   ciphertext: &[u8],
@@ -820,19 +1014,16 @@ fn authenticate_aead_portable_blocks(
   tag
 }
 
-#[cfg_attr(
-  not(any(
-    test,
-    target_arch = "x86_64",
-    all(target_arch = "powerpc64", target_endian = "little")
-  )),
-  allow(dead_code)
-)]
+#[cfg(any(
+  test,
+  target_arch = "x86_64",
+  all(target_arch = "powerpc64", target_endian = "little")
+))]
 pub(crate) fn authenticate_aead_empty_text_portable(aad: &[u8], key: &[u8; 32]) -> [u8; 16] {
   authenticate_aead_portable_blocks(aad, &[], key, super::AeadByteLengths::from_usize(aad.len(), 0))
 }
 
-#[cfg_attr(not(all(target_arch = "powerpc64", target_endian = "little")), allow(dead_code))]
+#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
 pub(crate) fn authenticate_aead_short_text_portable(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
   authenticate_aead_portable_blocks(
     aad,
@@ -843,13 +1034,23 @@ pub(crate) fn authenticate_aead_short_text_portable(aad: &[u8], ciphertext: &[u8
 }
 
 #[cfg(feature = "diag")]
+/// Computes a ChaCha20-Poly1305 authenticator through the selected Poly1305 backend.
+///
+/// Returns `None` when the associated-data or ciphertext length cannot be encoded by the AEAD construction.
 pub fn diag_chacha20poly1305_authenticate_aead(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> Option<[u8; 16]> {
-  authenticate_aead(AeadPrimitive::ChaCha20Poly1305, aad, ciphertext, key).ok()
+  #[cfg(feature = "chacha20poly1305")]
+  let primitive = AeadPrimitive::ChaCha20Poly1305;
+  #[cfg(all(not(feature = "chacha20poly1305"), feature = "xchacha20poly1305"))]
+  let primitive = AeadPrimitive::XChaCha20Poly1305;
+  authenticate_aead(primitive, aad, ciphertext, key).ok()
 }
 
 #[cfg(feature = "diag")]
 #[unsafe(no_mangle)]
 #[inline(never)]
+/// Computes a diagnostic Poly1305 tag after one block using the portable backend.
+///
+/// `partial` suppresses the full-block high bit for a caller-prepared partial-block encoding.
 pub fn diag_poly1305_block_portable_digest(key: &[u8; 32], block: &[u8; 16], partial: bool) -> [u8; 16] {
   let mut state = State::new(key);
   state.compute_block_portable(block, partial);
@@ -861,6 +1062,9 @@ pub fn diag_poly1305_block_portable_digest(key: &[u8; 32], block: &[u8; 16], par
   target_arch = "aarch64",
   any(target_os = "linux", target_os = "macos")
 ))]
+/// Computes a ChaCha20-Poly1305 authenticator with the four-lane AArch64 NEON backend.
+///
+/// Returns `None` when the associated-data or ciphertext length cannot be encoded by the AEAD construction.
 pub fn diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4(
   aad: &[u8],
   ciphertext: &[u8],
@@ -870,7 +1074,6 @@ pub fn diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4(
   Some(aarch64_neon::authenticate_aead_par4(aad, ciphertext, key, lengths))
 }
 
-#[cfg_attr(not(any(feature = "xchacha20poly1305", feature = "diag", test)), allow(dead_code))]
 fn authenticate_aead_with(
   aad: &[u8],
   ciphertext: &[u8],
@@ -894,7 +1097,6 @@ fn authenticate_aead_with(
 #[path = "poly1305/aarch64_neon.rs"]
 pub(crate) mod aarch64_neon;
 #[cfg(target_arch = "x86_64")]
-#[allow(unsafe_op_in_unsafe_fn)]
 #[path = "poly1305/x86_64_avx2_par4.rs"]
 mod avx2_par4;
 #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
@@ -921,16 +1123,36 @@ mod tests {
 
   use super::authenticate;
   #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64"))]
-  use super::{ComputeBlockFn, State, authenticate_aead_with};
+  use super::{ComputeBlockFn, authenticate_aead_with};
   #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64"))]
   use crate::aead::AeadByteLengths;
   use crate::aead::targets::AeadPrimitive;
+
+  fn primitive() -> AeadPrimitive {
+    #[cfg(feature = "chacha20poly1305")]
+    {
+      AeadPrimitive::ChaCha20Poly1305
+    }
+    #[cfg(all(not(feature = "chacha20poly1305"), feature = "xchacha20poly1305"))]
+    {
+      AeadPrimitive::XChaCha20Poly1305
+    }
+  }
   #[cfg(target_arch = "aarch64")]
   use crate::platform::caps::aarch64;
   #[cfg(target_arch = "riscv64")]
   use crate::platform::caps::riscv;
   #[cfg(target_arch = "x86_64")]
   use crate::platform::caps::x86;
+
+  fn patterned_bytes(length: usize, factor: usize, offset: usize) -> Vec<u8> {
+    (0..length)
+      .map(|index| {
+        let [byte, ..] = index.strict_mul(factor).strict_add(offset).to_le_bytes();
+        byte
+      })
+      .collect()
+  }
 
   #[test]
   fn poly1305_matches_rfc_8439_section_2_5_2() {
@@ -965,10 +1187,8 @@ mod tests {
       0x1a, 0xe1, 0x0b, 0x59, 0x4f, 0x09, 0xe2, 0x6a, 0x7e, 0x90, 0x2e, 0xcb, 0xd0, 0x60, 0x06, 0x91,
     ];
 
-    assert_eq!(
-      super::authenticate_aead(AeadPrimitive::ChaCha20Poly1305, &aad, &ciphertext, &poly_key).unwrap(),
-      expected
-    );
+    let actual = super::authenticate_aead(primitive(), &aad, &ciphertext, &poly_key);
+    assert_eq!(actual, Ok(expected));
   }
 
   #[test]
@@ -976,13 +1196,12 @@ mod tests {
     let key = [0x5au8; 32];
 
     for aad_len in [0usize, 1, 14, 15, 16, 17, 31, 32, 33, 63] {
-      let aad = (0..aad_len)
-        .map(|index| index.strict_mul(11).strict_add(7) as u8)
-        .collect::<Vec<_>>();
-      let expected = super::authenticate_aead(AeadPrimitive::ChaCha20Poly1305, &aad, &[], &key).unwrap();
+      let aad = patterned_bytes(aad_len, 11, 7);
+      let expected = super::authenticate_aead(primitive(), &aad, &[], &key);
       let actual = super::authenticate_aead_empty_text_portable(&aad, &key);
       assert_eq!(
-        actual, expected,
+        expected,
+        Ok(actual),
         "empty-text authentication mismatch at aad_len={aad_len}"
       );
     }
@@ -990,8 +1209,8 @@ mod tests {
 
   #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64"))]
   fn authenticate_aead_portable(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
-    let lengths = AeadByteLengths::try_new(aad.len(), ciphertext.len()).unwrap();
-    authenticate_aead_with(aad, ciphertext, key, State::compute_block_portable, lengths).unwrap()
+    let lengths = AeadByteLengths::from_usize(aad.len(), ciphertext.len());
+    super::authenticate_aead_portable_blocks(aad, ciphertext, key, lengths)
   }
 
   #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64"))]
@@ -999,16 +1218,12 @@ mod tests {
     let key = [0x5au8; 32];
     for aad_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 80] {
       for ciphertext_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 191, 256] {
-        let aad = (0..aad_len)
-          .map(|index| index.strict_mul(11).strict_add(7) as u8)
-          .collect::<Vec<_>>();
-        let ciphertext = (0..ciphertext_len)
-          .map(|index| index.strict_mul(17).strict_add(3) as u8)
-          .collect::<Vec<_>>();
+        let aad = patterned_bytes(aad_len, 11, 7);
+        let ciphertext = patterned_bytes(ciphertext_len, 17, 3);
         let portable = authenticate_aead_portable(&aad, &ciphertext, &key);
-        let lengths = AeadByteLengths::try_new(aad.len(), ciphertext.len()).unwrap();
-        let accelerated = authenticate_aead_with(&aad, &ciphertext, &key, backend, lengths).unwrap();
-        assert_eq!(accelerated, portable);
+        let lengths = AeadByteLengths::from_usize(aad.len(), ciphertext.len());
+        let accelerated = authenticate_aead_with(&aad, &ciphertext, &key, backend, lengths);
+        assert_eq!(accelerated, Ok(portable));
       }
     }
   }
@@ -1063,11 +1278,12 @@ mod tests {
     let key = [0x5au8; 32];
     for aad_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 80, 128] {
       for ct_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 191, 256, 1024, 4096] {
-        let aad: Vec<u8> = (0..aad_len).map(|i| i.strict_mul(11).strict_add(7) as u8).collect();
-        let ct: Vec<u8> = (0..ct_len).map(|i| i.strict_mul(17).strict_add(3) as u8).collect();
-        let lengths = AeadByteLengths::try_new(aad.len(), ct.len()).unwrap();
+        let aad = patterned_bytes(aad_len, 11, 7);
+        let ct = patterned_bytes(ct_len, 17, 3);
+        let lengths = AeadByteLengths::from_usize(aad.len(), ct.len());
         let portable = authenticate_aead_portable(&aad, &ct, &key);
-        let parallel = super::avx2_par4::authenticate_aead_par4(&aad, &ct, &key, lengths);
+        // SAFETY: the test returned above unless AVX2 is available.
+        let parallel = unsafe { super::avx2_par4::authenticate_aead_par4(&aad, &ct, &key, lengths) };
         assert_eq!(parallel, portable, "mismatch at aad={aad_len} ct={ct_len}");
       }
     }
@@ -1083,9 +1299,9 @@ mod tests {
     let key = [0x5au8; 32];
     for aad_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 80, 128] {
       for ct_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 191, 256, 1024, 4096] {
-        let aad: Vec<u8> = (0..aad_len).map(|i| i.strict_mul(11).strict_add(7) as u8).collect();
-        let ct: Vec<u8> = (0..ct_len).map(|i| i.strict_mul(17).strict_add(3) as u8).collect();
-        let lengths = AeadByteLengths::try_new(aad.len(), ct.len()).unwrap();
+        let aad = patterned_bytes(aad_len, 11, 7);
+        let ct = patterned_bytes(ct_len, 17, 3);
+        let lengths = AeadByteLengths::from_usize(aad.len(), ct.len());
         let portable = authenticate_aead_portable(&aad, &ct, &key);
         let parallel = super::aarch64_neon::authenticate_aead_par4(&aad, &ct, &key, lengths);
         assert_eq!(parallel, portable, "mismatch at aad={aad_len} ct={ct_len}");
@@ -1103,14 +1319,32 @@ mod tests {
     let key = [0x5au8; 32];
     for aad_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 80, 128] {
       for ct_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 191, 256, 1024, 4096] {
-        let aad: Vec<u8> = (0..aad_len).map(|i| i.strict_mul(11).strict_add(7) as u8).collect();
-        let ct: Vec<u8> = (0..ct_len).map(|i| i.strict_mul(17).strict_add(3) as u8).collect();
-        let lengths = AeadByteLengths::try_new(aad.len(), ct.len()).unwrap();
+        let aad = patterned_bytes(aad_len, 11, 7);
+        let ct = patterned_bytes(ct_len, 17, 3);
+        let lengths = AeadByteLengths::from_usize(aad.len(), ct.len());
         let portable = authenticate_aead_portable(&aad, &ct, &key);
         let parallel = super::riscv64_vector::authenticate_aead_par4(&aad, &ct, &key, lengths);
         assert_eq!(parallel, portable, "mismatch at aad={aad_len} ct={ct_len}");
       }
     }
+  }
+
+  #[test]
+  #[cfg(target_arch = "x86_64")]
+  fn avx2_par4_handles_high_carry_reduction() {
+    if !crate::platform::caps().has(x86::AVX2) {
+      return;
+    }
+
+    let key = [0xffu8; 32];
+    let aad = [0xffu8; 257];
+    let ct = [0xffu8; 4112];
+    let lengths = AeadByteLengths::from_usize(aad.len(), ct.len());
+
+    let portable = authenticate_aead_portable(&aad, &ct, &key);
+    // SAFETY: the test returned above unless AVX2 is available.
+    let parallel = unsafe { super::avx2_par4::authenticate_aead_par4(&aad, &ct, &key, lengths) };
+    assert_eq!(parallel, portable);
   }
 
   #[test]
@@ -1123,7 +1357,7 @@ mod tests {
     let key = [0xffu8; 32];
     let aad = [0xffu8; 257];
     let ct = [0xffu8; 4096];
-    let lengths = AeadByteLengths::try_new(aad.len(), ct.len()).unwrap();
+    let lengths = AeadByteLengths::from_usize(aad.len(), ct.len());
 
     let portable = authenticate_aead_portable(&aad, &ct, &key);
     let parallel = super::aarch64_neon::authenticate_aead_par4(&aad, &ct, &key, lengths);
@@ -1140,7 +1374,7 @@ mod tests {
     let key = [0xffu8; 32];
     let aad = [0xffu8; 257];
     let ct = [0xffu8; 4096];
-    let lengths = AeadByteLengths::try_new(aad.len(), ct.len()).unwrap();
+    let lengths = AeadByteLengths::from_usize(aad.len(), ct.len());
 
     let portable = authenticate_aead_portable(&aad, &ct, &key);
     let parallel = super::riscv64_vector::authenticate_aead_par4(&aad, &ct, &key, lengths);
@@ -1172,8 +1406,9 @@ mod tests {
       0x1a, 0xe1, 0x0b, 0x59, 0x4f, 0x09, 0xe2, 0x6a, 0x7e, 0x90, 0x2e, 0xcb, 0xd0, 0x60, 0x06, 0x91,
     ];
 
-    let lengths = AeadByteLengths::try_new(aad.len(), ciphertext.len()).unwrap();
-    let result = super::avx2_par4::authenticate_aead_par4(&aad, &ciphertext, &poly_key, lengths);
+    let lengths = AeadByteLengths::from_usize(aad.len(), ciphertext.len());
+    // SAFETY: the test returned above unless AVX2 is available.
+    let result = unsafe { super::avx2_par4::authenticate_aead_par4(&aad, &ciphertext, &poly_key, lengths) };
     assert_eq!(result, expected);
   }
 
@@ -1202,7 +1437,7 @@ mod tests {
       0x1a, 0xe1, 0x0b, 0x59, 0x4f, 0x09, 0xe2, 0x6a, 0x7e, 0x90, 0x2e, 0xcb, 0xd0, 0x60, 0x06, 0x91,
     ];
 
-    let lengths = AeadByteLengths::try_new(aad.len(), ciphertext.len()).unwrap();
+    let lengths = AeadByteLengths::from_usize(aad.len(), ciphertext.len());
     let result = super::aarch64_neon::authenticate_aead_par4(&aad, &ciphertext, &poly_key, lengths);
     assert_eq!(result, expected);
   }

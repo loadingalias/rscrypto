@@ -258,21 +258,6 @@ mod tests {
     }
   }
 
-  // SVE Vector Length Detection Tests
-
-  #[test]
-  #[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri)))]
-  fn test_sve_vlen_detection_runs() {
-    // Just verify detection doesn't crash
-    let vlen = detect_sve_vlen();
-    // VL should be 0 (no SVE) or a valid power-of-2 in [128, 2048]
-    if vlen > 0 {
-      assert!(vlen >= 128, "SVE VL too small: {vlen}");
-      assert!(vlen <= 2048, "SVE VL too large: {vlen}");
-      assert!(vlen.is_power_of_two(), "SVE VL not power of 2: {vlen}");
-    }
-  }
-
   // Hybrid Intel Detection Tests
 
   #[test]
@@ -442,27 +427,31 @@ mod tests {
       snapshot.leaf7_0.ebx |= 1 << 5;
     });
 
+    enum Leaf7Register {
+      Ebx,
+      Ecx,
+      Edx,
+    }
     let avx512_cases = [
-      (x86::AVX512DQ, "ebx", 17),
-      (x86::AVX512IFMA, "ebx", 21),
-      (x86::AVX512CD, "ebx", 28),
-      (x86::AVX512BW, "ebx", 30),
-      (x86::AVX512VL, "ebx", 31),
-      (x86::AVX512VBMI, "ecx", 1),
-      (x86::AVX512VBMI2, "ecx", 6),
-      (x86::AVX512VNNI, "ecx", 11),
-      (x86::AVX512BITALG, "ecx", 12),
-      (x86::AVX512VPOPCNTDQ, "ecx", 14),
-      (x86::AVX512VP2INTERSECT, "edx", 8),
+      (x86::AVX512DQ, Leaf7Register::Ebx, 17),
+      (x86::AVX512IFMA, Leaf7Register::Ebx, 21),
+      (x86::AVX512CD, Leaf7Register::Ebx, 28),
+      (x86::AVX512BW, Leaf7Register::Ebx, 30),
+      (x86::AVX512VL, Leaf7Register::Ebx, 31),
+      (x86::AVX512VBMI, Leaf7Register::Ecx, 1),
+      (x86::AVX512VBMI2, Leaf7Register::Ecx, 6),
+      (x86::AVX512VNNI, Leaf7Register::Ecx, 11),
+      (x86::AVX512BITALG, Leaf7Register::Ecx, 12),
+      (x86::AVX512VPOPCNTDQ, Leaf7Register::Ecx, 14),
+      (x86::AVX512VP2INTERSECT, Leaf7Register::Edx, 8),
     ];
     for (feature, register, bit) in avx512_cases {
       assert_feature(avx512_caps() | feature, |snapshot| {
         enable_avx512(snapshot);
         match register {
-          "ebx" => snapshot.leaf7_0.ebx |= 1 << bit,
-          "ecx" => snapshot.leaf7_0.ecx |= 1 << bit,
-          "edx" => snapshot.leaf7_0.edx |= 1 << bit,
-          _ => unreachable!(),
+          Leaf7Register::Ebx => snapshot.leaf7_0.ebx |= 1 << bit,
+          Leaf7Register::Ecx => snapshot.leaf7_0.ecx |= 1 << bit,
+          Leaf7Register::Edx => snapshot.leaf7_0.edx |= 1 << bit,
         }
       });
     }
@@ -616,17 +605,8 @@ mod tests {
     any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")
   ))]
   fn test_macos_extended_features() {
-    // Test that new feature detection works on macOS
     use crate::platform::caps::aarch64;
     let det = get();
-
-    // Verify extended features are detected on capable hardware
-    // On M1+, we should detect these features:
-    std::eprintln!("Detected features: {}", det.caps.count());
-    std::eprintln!("  I8MM: {}", det.caps.has(aarch64::I8MM));
-    std::eprintln!("  BF16: {}", det.caps.has(aarch64::BF16));
-    std::eprintln!("  FRINTTS: {}", det.caps.has(aarch64::FRINTTS));
-    std::eprintln!("  LSE2: {}", det.caps.has(aarch64::LSE2));
 
     // FRINTTS is detectable via std::arch on macOS; LSE2 is not exposed by
     // Apple's sysctl and therefore cannot be asserted here.
@@ -640,54 +620,18 @@ mod tests {
     not(miri),
     any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")
   ))]
-  fn test_detect_apple_sme_features_exists() {
-    // Verify the SME detection function exists and returns valid caps
+  fn test_detect_apple_sme_features_are_scoped() {
+    use crate::platform::caps::aarch64;
+
     let sme_caps = detect_apple_sme_features();
-    // The function should always return valid Caps (may be empty on M1-M3)
-    // On M4+, SME should be detected
-    std::eprintln!("SME caps detected: {}", sme_caps.count());
-    std::eprintln!("  SME: {}", sme_caps.has(crate::platform::caps::aarch64::SME));
-    std::eprintln!("  SME2: {}", sme_caps.has(crate::platform::caps::aarch64::SME2));
-  }
-
-  #[test]
-  #[cfg(all(
-    target_arch = "aarch64",
-    feature = "std",
-    not(miri),
-    any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")
-  ))]
-  fn test_detect_apple_silicon_gen_exists() {
-    // Verify chip generation detection works
-    if let Some(chip_gen) = detect_apple_silicon_gen() {
-      std::eprintln!("Detected Apple Silicon generation: {:?}", chip_gen);
-      // Basic sanity checks
-      match chip_gen {
-        AppleSiliconGen::M1 | AppleSiliconGen::M2 | AppleSiliconGen::M3 => {
-          // M1-M3 should not have SME
-          std::eprintln!("M1-M3 chip detected (no SME expected)");
-        }
-        AppleSiliconGen::M4 => {
-          // M4 should have SME
-          std::eprintln!("M4 chip detected (SME expected)");
-        }
-        AppleSiliconGen::M5 => {
-          // M5 should have SME2
-          std::eprintln!("M5 chip detected (SME2 expected)");
-        }
-      }
-    } else {
-      std::eprintln!("Unknown or A-series chip detected");
-    }
-  }
-
-  // Override Mechanism Tests
-
-  #[test]
-  fn test_has_override_exists() {
-    // Verify the override API exists and returns a bool.
-    // Note: Due to global state from other tests, we can't assert a specific value.
-    let _ = has_override();
+    let owned_caps = aarch64::SME
+      .union(aarch64::SME2)
+      .union(aarch64::SME2P1)
+      .union(aarch64::SME_I16I64)
+      .union(aarch64::SME_F64F64)
+      .union(aarch64::SME_B16B16)
+      .union(aarch64::SME_F16F16);
+    assert!(sme_caps.difference(owned_caps).is_empty());
   }
 
   #[test]

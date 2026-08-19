@@ -4,14 +4,14 @@ Replace the `Aes256Gcm` / `Key<Aes256Gcm>` / `Nonce` /
 `Payload { msg, aad }` builder with rscrypto's named types and a caller-buffer
 API. The combined ciphertext-and-tag bytes remain interoperable.
 
-Verified against `aes-gcm = "0.11.0"` and the `rscrypto` 0.7.8 line.
+Verified against `aes-gcm = "0.11.0"` and the `rscrypto` 0.8.1 line.
 Evidence: `tests/aes128gcm_oracle.rs`, `tests/aes256gcm_oracle.rs`, and `tests/aead_wycheproof.rs`.
 
 ## TL;DR
 
-| | Before (`aes-gcm` 0.11.x) | After (`rscrypto` 0.7.8) |
+| | Before (`aes-gcm` 0.11.x) | After (`rscrypto` 0.8.1) |
 |---|---|---|
-| Cargo dep | `aes-gcm = "0.11"` | `rscrypto = { version = "0.7.8", features = ["aes-gcm"] }` |
+| Cargo dep | `aes-gcm = "0.11"` | `rscrypto = { version = "0.8.1", features = ["aes-gcm"] }` |
 | Import | `use aes_gcm::{Aes256Gcm, Key, Nonce, KeyInit, aead::{Aead, Payload}};` | `use rscrypto::{Aead, Aes256Gcm, Aes256GcmKey, aead::{Nonce96, expert::AeadWithNonce}};` |
 | Encrypt | `cipher.encrypt(nonce, Payload { msg, aad })?` (returns `Vec<u8>`) | `cipher.encrypt(&nonce, aad, msg, &mut out)?` (writes into caller buffer) |
 
@@ -26,7 +26,7 @@ aes-gcm = "0.11"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.7.8", features = ["aes-gcm"] }
+rscrypto = { version = "0.8.1", features = ["aes-gcm"] }
 ```
 
 ## Algorithm map
@@ -50,10 +50,10 @@ The migration recipe below uses `Aes256Gcm` throughout; substitute
 use aes_gcm::{Aes256Gcm, Key, Nonce, KeyInit};
 use aes_gcm::aead::{Aead, Payload};
 
-let key = Key::<Aes256Gcm>::from_slice(&[0u8; 32]);
-let cipher = Aes256Gcm::new(key);
-let nonce = Nonce::from_slice(&[0u8; 12]);
-let ct = cipher.encrypt(nonce, Payload { msg: plaintext, aad }).unwrap();
+let key = Key::<Aes256Gcm>::from([0u8; 32]);
+let cipher = Aes256Gcm::new(&key);
+let nonce = Nonce::from([0u8; 12]);
+let ct = cipher.encrypt(&nonce, Payload { msg: plaintext, aad }).unwrap();
 // ct: Vec<u8>, last 16 bytes are the tag.
 ```
 
