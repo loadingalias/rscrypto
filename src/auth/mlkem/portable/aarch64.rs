@@ -62,9 +62,9 @@ unsafe extern "C" {
     input2: *const u8,
     caps: *const usize,
   ) -> u64;
-  #[cfg(any(test, feature = "diag"))]
+  #[cfg(test)]
   fn rscrypto_mlkem_rej_uniform_3blocks_aarch64_linux(out: *mut u16, input: *const u8) -> usize;
-  #[cfg(any(test, feature = "diag"))]
+  #[cfg(test)]
   fn rscrypto_mlkem_basemul_accumulate_aarch64_linux(
     acc: *mut u16,
     a: *const u16,
@@ -187,7 +187,7 @@ pub(super) unsafe fn sample_ntt_rej_uniform_triple_block_bounded_asm(
   unpack_triple_counts(packed)
 }
 
-#[cfg(all(any(test, feature = "diag"), target_os = "linux"))]
+#[cfg(all(test, target_os = "linux"))]
 #[inline]
 pub(super) unsafe fn sample_ntt_rej_uniform_3blocks_asm(out: *mut u16, input: *const u8) -> usize {
   // SAFETY: Linux aarch64 three-block SampleNTT rejection parser call because:
@@ -200,7 +200,7 @@ pub(super) unsafe fn sample_ntt_rej_uniform_3blocks_asm(out: *mut u16, input: *c
 }
 
 #[inline]
-#[cfg(any(test, feature = "diag", target_os = "macos"))]
+#[cfg(any(test, target_os = "macos"))]
 /// # Safety
 ///
 /// The active platform must provide the matching ML-KEM AArch64 assembly

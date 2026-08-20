@@ -114,7 +114,7 @@ fi
 OUT_DIR="$ROOT/target/ct/$TARGET/$PROFILE"
 ARTIFACT_DIR="$OUT_DIR/artifacts"
 BUILD_TARGET_DIR="$ROOT/target/ct-build/$TARGET/$PROFILE"
-DEPS_DIR="$BUILD_TARGET_DIR/$TARGET/$PROFILE/deps"
+EMIT_ROOT="$BUILD_TARGET_DIR/$TARGET/$PROFILE"
 rm -rf "$OUT_DIR"
 rm -rf "$BUILD_TARGET_DIR"
 mkdir -p "$ARTIFACT_DIR"
@@ -138,7 +138,7 @@ LIB_EMITTED=()
 while IFS= read -r artifact; do
   LIB_EMITTED+=("$artifact")
 done < <(
-  find "$DEPS_DIR" -maxdepth 1 -type f \
+  find "$EMIT_ROOT" -type f \
     \( -name 'rscrypto_ct_harness*.ll' \
     -o -name 'rscrypto_ct_harness*.s' \
     -o -name 'rscrypto_ct_harness*.o' \
@@ -147,7 +147,7 @@ done < <(
 )
 
 if [[ ${#LIB_EMITTED[@]} -eq 0 ]]; then
-  echo "no CT harness emitted artifacts found in $DEPS_DIR" >&2
+  echo "no CT harness emitted artifacts found under $EMIT_ROOT" >&2
   exit 1
 fi
 if [[ ${#LIB_EMITTED[@]} -ne 3 ]]; then
@@ -201,7 +201,7 @@ BIN_EMITTED=()
 while IFS= read -r artifact; do
   BIN_EMITTED+=("$artifact")
 done < <(
-  find "$DEPS_DIR" -maxdepth 1 -type f \
+  find "$EMIT_ROOT" -type f \
     \( -name 'rscrypto_ct_evidence*.ll' \
     -o -name 'rscrypto_ct_evidence*.s' \
     -o -name 'rscrypto_ct_evidence*.o' \

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -242,7 +243,11 @@ def compiler_public_api_snapshot(
     "--output-format",
     "json",
   ]
-  completed = subprocess.run(command, cwd=root, capture_output=True, text=True, check=False)
+  rustdoc_env = os.environ.copy()
+  # rustdoc JSON is unstable even when the selected release compiler supports it. Scope the escape hatch to
+  # rscrypto so the inventory describes the exact compiler used by this CT evidence lane.
+  rustdoc_env["RUSTC_BOOTSTRAP"] = "rscrypto"
+  completed = subprocess.run(command, cwd=root, capture_output=True, text=True, check=False, env=rustdoc_env)
   if completed.returncode != 0:
     detail = completed.stderr.strip().splitlines()
     suffix = f": {detail[-1]}" if detail else ""

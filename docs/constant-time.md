@@ -87,9 +87,10 @@ opaque authentication success/failure result may leak.
 Secret-bearing fixed-size keys, shared secrets, authentication tags, keypairs,
 and keyed outputs do not implement `PartialEq` or `Eq`. Their inherent `ct_eq`
 methods return `CtDecision`, an opaque, non-`Copy` value with no public
-constructor, formatting, equality, or implicit boolean conversion. Decisions
-can be composed with bitwise `&`, `|`, and `!`; the consuming `declassify()`
-method is the only public route to a branchable equality bit.
+constructor, equality, or implicit boolean conversion. Its `Debug` output is
+the fixed redacted string `CtDecision(..)` and does not expose the decision.
+Decisions can be composed with bitwise `&`, `|`, and `!`; the consuming
+`declassify()` method is the only public route to a branchable equality bit.
 
 Verification APIs keep that boundary inside the primitive and return one opaque
 `Result`. Public keys, nonces, signatures, and ciphertext containers are public
