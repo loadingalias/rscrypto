@@ -43,7 +43,7 @@ impl Xxh3KernelId {
 
 /// Long-path-only entry for 64-bit hash (>240B, no ≤240B length checks).
 #[cfg(any(
-  test,
+  all(test, not(miri)),
   not(any(
     all(target_arch = "x86_64", any(target_feature = "avx512f", target_feature = "avx2")),
     all(target_arch = "aarch64", target_feature = "neon"),
@@ -69,7 +69,7 @@ pub(crate) fn hash64_long_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u64 {
 
 /// Long-path-only entry for 128-bit hash (>240B, no ≤240B length checks).
 #[cfg(any(
-  test,
+  all(test, not(miri)),
   not(any(
     all(target_arch = "x86_64", any(target_feature = "avx512f", target_feature = "avx2")),
     all(target_arch = "aarch64", target_feature = "neon"),

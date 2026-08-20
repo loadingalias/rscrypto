@@ -10,14 +10,14 @@ use crate::checksum::common::portable;
 
 /// CRC-64-XZ slice-by-8 computation.
 #[inline]
-#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(test, not(miri), any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub(super) fn crc64_slice8_xz(crc: u64, data: &[u8]) -> u64 {
   crc64_slice8(crc, data, &kernel_tables::XZ_TABLES_8)
 }
 
 /// CRC-64-NVME slice-by-8 computation.
 #[inline]
-#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(test, not(miri), any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub(super) fn crc64_slice8_nvme(crc: u64, data: &[u8]) -> u64 {
   crc64_slice8(crc, data, &kernel_tables::NVME_TABLES_8)
 }

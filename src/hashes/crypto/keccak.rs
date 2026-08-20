@@ -434,7 +434,7 @@ fn read_unaligned_block_lane<const RATE: usize>(block: &[u8; RATE], lane: usize)
 ///
 /// Since `RATE` is a const generic, `RATE / 8` is compile-time known and LLVM
 /// eliminates all `if lane < lanes` branches — the result is straight-line code.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 #[inline]
 fn keccakf_absorb_portable<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) {
   debug_assert_eq!(RATE % 8, 0);

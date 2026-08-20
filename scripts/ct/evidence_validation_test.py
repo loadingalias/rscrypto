@@ -142,6 +142,36 @@ def main() -> None:
   configure_target_environment("powerpc64le-unknown-linux-gnu", unrelated_environment)
   assert unrelated_environment == {}
 
+  captured_rustdoc: dict[str, object] = {}
+  original_run = manifest_validation.subprocess.run
+
+  def capture_rustdoc(command, **kwargs):
+    captured_rustdoc["command"] = command
+    captured_rustdoc["env"] = kwargs.get("env")
+    return subprocess.CompletedProcess(command, 1, "", "rustdoc unavailable")
+
+  manifest_validation.subprocess.run = capture_rustdoc
+  try:
+    with tempfile.TemporaryDirectory() as temporary:
+      inventory_errors: list[str] = []
+      assert (
+        manifest_validation.compiler_public_api_snapshot(
+          Path(temporary),
+          "aarch64-apple-darwin",
+          ("rscrypto::auth",),
+          inventory_errors,
+        )
+        is None
+      )
+      assert inventory_errors == ["compiler public-API inventory failed: rustdoc unavailable"]
+  finally:
+    manifest_validation.subprocess.run = original_run
+
+  rustdoc_env = captured_rustdoc["env"]
+  assert isinstance(rustdoc_env, dict)
+  assert rustdoc_env["RUSTC_BOOTSTRAP"] == "rscrypto"
+  assert captured_rustdoc["command"][-4:] == ["-Z", "unstable-options", "--output-format", "json"]
+
   commit = "a" * 40
   validate_exact_candidate("1.2.3", commit, "1.2.3", commit)
   expect_failure(lambda: validate_exact_candidate("1.2.3", commit, "1.2.4", commit))

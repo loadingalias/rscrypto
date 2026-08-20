@@ -33,6 +33,7 @@ where
   /// Test that combine produces crc(A || B) from crc(A) and crc(B).
   ///
   /// This is the fundamental combine property that enables parallel CRC computation.
+  #[cfg(not(miri))]
   #[inline]
   pub(in crate::checksum) fn test_combine_property(data: &[u8], split: usize) {
     let split = split.checked_rem(data.len()).unwrap_or(0);
@@ -63,6 +64,7 @@ where
   }
 
   /// Test combine with empty second part (identity case).
+  #[cfg(not(miri))]
   #[inline]
   pub(in crate::checksum) fn test_combine_empty_suffix(data: &[u8]) {
     let crc_data = C::checksum(data);
@@ -73,6 +75,7 @@ where
   }
 
   /// Test combine with empty first part.
+  #[cfg(not(miri))]
   #[inline]
   pub(in crate::checksum) fn test_combine_empty_prefix(data: &[u8]) {
     let crc_empty = C::checksum(&[]);
@@ -98,6 +101,7 @@ where
   }
 
   /// Test streaming with byte-at-a-time updates.
+  #[cfg(not(miri))]
   #[inline]
   pub(in crate::checksum) fn test_streaming_byte_at_a_time(data: &[u8]) {
     let oneshot = C::checksum(data);
@@ -112,6 +116,7 @@ where
   }
 
   /// Test streaming across a specific chunk size boundary.
+  #[cfg(not(miri))]
   #[inline]
   pub(in crate::checksum) fn test_streaming_chunked(data: &[u8], chunk_size: usize) {
     if chunk_size == 0 {
@@ -167,6 +172,7 @@ where
   /// 1. Streaming first half
   /// 2. Computing second half separately
   /// 3. Combining the results
+  #[cfg(not(miri))]
   #[inline]
   pub(in crate::checksum) fn test_streaming_and_combine(data: &[u8]) {
     if data.is_empty() {
