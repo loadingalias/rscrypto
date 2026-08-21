@@ -110,6 +110,22 @@ the required `Complete` check. Resolve every open review thread and review the
 final diff before merging in the GitHub UI. GitHub enforces the current
 approval policy.
 
+For a broad or release-sensitive pull request, run the slow physical assurance
+lanes on the pushed branch before merging:
+
+```bash
+branch=$(git branch --show-current)
+test -n "$branch" && test "$branch" != main
+test "$(git rev-parse HEAD)" = "$(git rev-parse '@{upstream}')"
+gh workflow run weekly.yaml --ref "$branch" -f mode=assurance
+gh workflow run riscv.yaml --ref "$branch" -f mode=evidence
+```
+
+These branch runs expose platform, constant-time, and RISC-V failures before
+they reach `main`. They do not replace the release runbook's post-merge,
+exact-commit evidence: a squash or merge commit has a different SHA, and
+ancestor evidence is never promoted into a release claim.
+
 ## Clean up after merge
 
 After GitHub reports the pull request merged:

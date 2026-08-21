@@ -1125,7 +1125,19 @@ left_class = "valid RSA-2048 key with 128-byte canonical CRT exponents"
 right_class = "valid same-factor-width RSA-2048 key with a 127-byte canonical dQ"
 samples = 512
 smoke_samples = 128
-notes = "Both imported keys retain 128-byte CRT exponent buffers. The whole-operation comparison also varies secret key values, as required by the private-operation CT boundary."
+gate = "diagnostic"
+reason = "The unrelated valid keys have different public moduli, which may leak by policy; this comparison cannot attribute timing separation to canonical CRT exponent width."
+notes = "Broad whole-operation diagnostic retained for trend analysis. Required fixed-width exponent evidence uses one public modulus and representative."
+
+[[dudect_case]]
+name = "rsa_private_exponent_fixed_width_high_byte"
+primitive = "rsa.private_ops"
+filter = "rsa_private_exponent_fixed_width_high_byte"
+left_class = "fixed-width exponent with a nonzero high byte"
+right_class = "same fixed-width exponent with a zero high byte"
+samples = 512
+smoke_samples = 128
+notes = "The public modulus, representative, buffer lengths, and all lower exponent bytes are identical across classes."
 
 [[dudect_case]]
 name = "rsa_oaep_decrypt_fixed_vs_random_plaintext"
@@ -1809,7 +1821,7 @@ binsec = ["aead.symmetric_transform.ascon_aead128_tag_portable.all"]
 id = "rsa.private_ops.pkcs1v15_sign"
 primitive = "rsa.private_ops"
 variant = "Pkcs1v15Sign"
-dudect = ["rsa_pkcs1v15_fixed_vs_random_message", "rsa_pkcs1v15_full_width_vs_short_canonical_crt_exponent"]
+dudect = ["rsa_pkcs1v15_fixed_vs_random_message", "rsa_private_exponent_fixed_width_high_byte"]
 binsec = ["rsa.private_ops.window_select.portable.all"]
 
 [[evidence_unit]]

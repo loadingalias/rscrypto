@@ -848,6 +848,33 @@ pub fn diag_rsa_public_operation_bitserial(
   clear_output_on_error(result, out)
 }
 
+/// Apply the production RSA private fixed-window exponentiation loop to a caller-supplied public modulus.
+///
+/// This diagnostic-only primitive isolates fixed-width secret-exponent handling
+/// without exposing a private key. It is raw modular arithmetic without RSA
+/// key validation, padding, or blinding and must not be used as a cryptographic
+/// protocol API.
+///
+/// # Errors
+///
+/// Returns [`RsaPrivateOpError`] if the modulus is empty or even, if `exponent`,
+/// `input`, or `out` is not exactly the modulus length, or if `input >= n`.
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+pub fn diag_rsa_private_exponentiate_fixed_width(
+  modulus: &[u8],
+  exponent: &[u8],
+  input: &[u8],
+  out: &mut [u8],
+) -> Result<(), RsaPrivateOpError> {
+  let result = match modulus.last() {
+    Some(last) if last & 1 == 1 => private_component_modulus(modulus)
+      .and_then(|modulus| private_exponentiate_representative(&modulus, exponent, input, out)),
+    _ => Err(RsaPrivateOpError::RepresentativeOutOfRange),
+  };
+  clear_output_on_error(result, out)
+}
+
 /// Apply the RSA public operation with product-then-reduce Montgomery multiplication.
 ///
 /// Diagnostic-only benchmark baseline for threshold selection. This forces the
