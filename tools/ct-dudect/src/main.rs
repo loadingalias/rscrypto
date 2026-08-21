@@ -1581,7 +1581,7 @@ fn rsa_private_exponent_fixed_width_high_byte(runner: &mut CtRunner, rng: &mut B
     } else {
       &leading_zero_exponent
     };
-    let exponent = std::hint::black_box(exponent);
+    let exponent = core::hint::black_box(exponent);
     runner.run_one(class, || {
       let mut out = vec![0u8; len];
       let result = diag_rsa_private_exponentiate_fixed_width(&modulus, exponent, &input, &mut out);
