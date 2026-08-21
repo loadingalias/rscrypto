@@ -1570,18 +1570,11 @@ fn rsa_private_exponent_fixed_width_high_byte(runner: &mut CtRunner, rng: &mut B
   let mut input = vec![0u8; len];
   *input.last_mut().expect("RSA representatives must be nonempty") = 2;
 
-  let mut leading_zero_exponent = vec![0x5a; len];
-  leading_zero_exponent[0] = 0;
-  let mut full_width_exponent = leading_zero_exponent.clone();
-  full_width_exponent[0] = 1;
+  let mut exponent = vec![0x5a; len];
 
   for class in balanced_classes(rng, samples()) {
-    let exponent = if matches!(class, Class::Left) {
-      &full_width_exponent
-    } else {
-      &leading_zero_exponent
-    };
-    let exponent = core::hint::black_box(exponent);
+    exponent[0] = u8::from(matches!(class, Class::Left));
+    let exponent = core::hint::black_box(exponent.as_slice());
     runner.run_one(class, || {
       let mut out = vec![0u8; len];
       let result = diag_rsa_private_exponentiate_fixed_width(&modulus, exponent, &input, &mut out);
@@ -2298,10 +2291,7 @@ ctbench_main_with_seeds!(
     rsa_pkcs1v15_full_width_vs_short_canonical_crt_exponent,
     Some(0x7273615f6372746c)
   ),
-  (
-    rsa_private_exponent_fixed_width_high_byte,
-    Some(0x7273615f65787068)
-  ),
+  (rsa_private_exponent_fixed_width_high_byte, Some(0x7273615f65787068)),
   (rsa_oaep_decrypt_fixed_vs_random_plaintext, Some(0x7273615f6f616570)),
   (rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext, Some(0x7273615f64656331)),
   (
