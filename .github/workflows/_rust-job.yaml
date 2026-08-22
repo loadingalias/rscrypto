@@ -123,7 +123,7 @@ jobs:
     timeout-minutes: ${{ inputs.timeout_minutes }}
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -163,7 +163,7 @@ jobs:
 
       - name: Upload Artifact after completion
         if: ${{ !cancelled() && inputs.artifact_name != '' && inputs.artifact_path != '' && inputs.artifact_always }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ inputs.artifact_name }}
           path: ${{ inputs.artifact_path }}
@@ -172,7 +172,7 @@ jobs:
 
       - name: Upload Artifact (success)
         if: inputs.artifact_name != '' && inputs.artifact_path != '' && !inputs.artifact_always
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ inputs.artifact_name }}
           path: ${{ inputs.artifact_path }}

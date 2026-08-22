@@ -9,12 +9,12 @@ Evidence: `tests/ed25519_rfc8032_vectors.rs`, `tests/ed25519_oracle.rs`, and `te
 
 ## TL;DR
 
-| | Before (`ed25519-dalek` 3.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `ed25519-dalek = "3.0"` | `rscrypto = { version = "0.8.1", features = ["ed25519"] }` |
-| Import | `use ed25519_dalek::{SigningKey, Signer, Verifier};` | `use rscrypto::{Ed25519SecretKey, Ed25519PublicKey, Ed25519Signature};` |
-| Sign | `signing_key.sign(msg)` | `secret.sign(msg)` |
-| Verify | `verifying_key.verify_strict(msg, &sig)?` | `public_key.verify(msg, &sig)?` |
+|           | Before (`ed25519-dalek` 3.x)                         | After (`rscrypto` 0.8.1)                                                |
+| --------- | ---------------------------------------------------- | ----------------------------------------------------------------------- |
+| Cargo dep | `ed25519-dalek = "3.0"`                              | `rscrypto = { version = "0.8.1", features = ["ed25519"] }`              |
+| Import    | `use ed25519_dalek::{SigningKey, Signer, Verifier};` | `use rscrypto::{Ed25519SecretKey, Ed25519PublicKey, Ed25519Signature};` |
+| Sign      | `signing_key.sign(msg)`                              | `secret.sign(msg)`                                                      |
+| Verify    | `verifying_key.verify_strict(msg, &sig)?`            | `public_key.verify(msg, &sig)?`                                         |
 
 ## Cargo.toml
 
@@ -34,12 +34,12 @@ The `ed25519` feature implies `sha2` (Ed25519 uses SHA-512 internally per RFC 80
 
 ## Type map
 
-| `ed25519-dalek` type | rscrypto type | Bytes |
-|---|---|---|
-| `SigningKey` | `Ed25519SecretKey` | `[u8; 32]` (seed) |
-| `VerifyingKey` | `Ed25519PublicKey` | `[u8; 32]` |
-| `Signature` | `Ed25519Signature` | `[u8; 64]` |
-| (implicit pair) | `Ed25519Keypair` | secret + public + expanded form |
+| `ed25519-dalek` type | rscrypto type      | Bytes                           |
+| -------------------- | ------------------ | ------------------------------- |
+| `SigningKey`         | `Ed25519SecretKey` | `[u8; 32]` (seed)               |
+| `VerifyingKey`       | `Ed25519PublicKey` | `[u8; 32]`                      |
+| `Signature`          | `Ed25519Signature` | `[u8; 64]`                      |
+| (implicit pair)      | `Ed25519Keypair`   | secret + public + expanded form |
 
 ## API patterns
 
@@ -114,7 +114,7 @@ verifying_key.verify(b"message", &sig)?;                    // legacy lax mode
 public_key.verify(b"message", &sig)?;                       // strict by default: there is no lax mode
 ```
 
-rscrypto's `verify` is *always* strict (rejects small-order public keys, non-canonical S values per RFC 8032 §5.1.7). There is no separate `verify_strict` method; the only verifier is the strict one.
+rscrypto's `verify` is _always_ strict (rejects small-order public keys, non-canonical S values per RFC 8032 §5.1.7). There is no separate `verify_strict` method; the only verifier is the strict one.
 
 ### Keypair (combined secret + public)
 

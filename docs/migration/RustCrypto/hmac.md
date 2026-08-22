@@ -7,11 +7,11 @@ Evidence: `tests/hmac_sha256_vectors.rs`, `tests/hmac_sha2_family_vectors.rs`, `
 
 ## TL;DR
 
-| | Before (`hmac` 0.13.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `hmac = "0.13"` + `sha2 = "0.11"` | `rscrypto = { version = "0.8.1", features = ["hmac"] }` |
-| Import | `use hmac::{Hmac, Mac, KeyInit}; use sha2::Sha256;` | `use rscrypto::{HmacSha256, Mac};` |
-| Call | `Hmac::<Sha256>::new_from_slice(key).unwrap().chain_update(data).finalize().into_bytes()` | `HmacSha256::mac(key, data)` |
+|           | Before (`hmac` 0.13.x)                                                                    | After (`rscrypto` 0.8.1)                                |
+| --------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Cargo dep | `hmac = "0.13"` + `sha2 = "0.11"`                                                         | `rscrypto = { version = "0.8.1", features = ["hmac"] }` |
+| Import    | `use hmac::{Hmac, Mac, KeyInit}; use sha2::Sha256;`                                       | `use rscrypto::{HmacSha256, Mac};`                      |
+| Call      | `Hmac::<Sha256>::new_from_slice(key).unwrap().chain_update(data).finalize().into_bytes()` | `HmacSha256::mac(key, data)`                            |
 
 ## Cargo.toml
 
@@ -32,16 +32,16 @@ The `hmac` feature implies `sha2`: no second dep to manage for SHA-2 HMAC. Use `
 
 ## Algorithm map
 
-| `hmac` instantiation | rscrypto type | Tag size |
-|---|---|---|
-| `Hmac<Sha256>` | `HmacSha256` | `HmacSha256Tag` |
-| `Hmac<Sha384>` | `HmacSha384` | `HmacSha384Tag` |
-| `Hmac<Sha512>` | `HmacSha512` | `HmacSha512Tag` |
-| `Hmac<Sha3_224>` | `HmacSha3_224` | `HmacSha3_224Tag` |
-| `Hmac<Sha3_256>` | `HmacSha3_256` | `HmacSha3_256Tag` |
-| `Hmac<Sha3_384>` | `HmacSha3_384` | `HmacSha3_384Tag` |
-| `Hmac<Sha3_512>` | `HmacSha3_512` | `HmacSha3_512Tag` |
-| `Hmac<Sha224>` / `Hmac<Sha512_224>` / `Hmac<Sha512_256>` | not mapped: keep RustCrypto HMAC |  |
+| `hmac` instantiation                                     | rscrypto type                    | Tag size          |
+| -------------------------------------------------------- | -------------------------------- | ----------------- |
+| `Hmac<Sha256>`                                           | `HmacSha256`                     | `HmacSha256Tag`   |
+| `Hmac<Sha384>`                                           | `HmacSha384`                     | `HmacSha384Tag`   |
+| `Hmac<Sha512>`                                           | `HmacSha512`                     | `HmacSha512Tag`   |
+| `Hmac<Sha3_224>`                                         | `HmacSha3_224`                   | `HmacSha3_224Tag` |
+| `Hmac<Sha3_256>`                                         | `HmacSha3_256`                   | `HmacSha3_256Tag` |
+| `Hmac<Sha3_384>`                                         | `HmacSha3_384`                   | `HmacSha3_384Tag` |
+| `Hmac<Sha3_512>`                                         | `HmacSha3_512`                   | `HmacSha3_512Tag` |
+| `Hmac<Sha224>` / `Hmac<Sha512_224>` / `Hmac<Sha512_256>` | not mapped: keep RustCrypto HMAC |                   |
 
 ## API patterns
 

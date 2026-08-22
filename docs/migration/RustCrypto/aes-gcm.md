@@ -9,11 +9,11 @@ Evidence: `tests/aes128gcm_oracle.rs`, `tests/aes256gcm_oracle.rs`, and `tests/a
 
 ## TL;DR
 
-| | Before (`aes-gcm` 0.11.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `aes-gcm = "0.11"` | `rscrypto = { version = "0.8.1", features = ["aes-gcm"] }` |
-| Import | `use aes_gcm::{Aes256Gcm, Key, Nonce, KeyInit, aead::{Aead, Payload}};` | `use rscrypto::{Aead, Aes256Gcm, Aes256GcmKey, aead::{Nonce96, expert::AeadWithNonce}};` |
-| Encrypt | `cipher.encrypt(nonce, Payload { msg, aad })?` (returns `Vec<u8>`) | `cipher.encrypt(&nonce, aad, msg, &mut out)?` (writes into caller buffer) |
+|           | Before (`aes-gcm` 0.11.x)                                               | After (`rscrypto` 0.8.1)                                                                 |
+| --------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Cargo dep | `aes-gcm = "0.11"`                                                      | `rscrypto = { version = "0.8.1", features = ["aes-gcm"] }`                               |
+| Import    | `use aes_gcm::{Aes256Gcm, Key, Nonce, KeyInit, aead::{Aead, Payload}};` | `use rscrypto::{Aead, Aes256Gcm, Aes256GcmKey, aead::{Nonce96, expert::AeadWithNonce}};` |
+| Encrypt   | `cipher.encrypt(nonce, Payload { msg, aad })?` (returns `Vec<u8>`)      | `cipher.encrypt(&nonce, aad, msg, &mut out)?` (writes into caller buffer)                |
 
 ## Cargo.toml
 
@@ -32,9 +32,9 @@ rscrypto = { version = "0.8.1", features = ["aes-gcm"] }
 ## Algorithm map
 
 | `aes-gcm` type | rscrypto type | Key bytes |
-|---|---|---|
-| `Aes128Gcm` | `Aes128Gcm` | 16 |
-| `Aes256Gcm` | `Aes256Gcm` | 32 |
+| -------------- | ------------- | --------- |
+| `Aes128Gcm`    | `Aes128Gcm`   | 16        |
+| `Aes256Gcm`    | `Aes256Gcm`   | 32        |
 
 Both variants share the same typed surface (`Aes128GcmKey`/`Aes256GcmKey`,
 `Nonce96`, `Aes128GcmTag`/`Aes256GcmTag`) and the same `Aead` trait.

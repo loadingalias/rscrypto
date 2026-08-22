@@ -10,13 +10,13 @@ Evidence: `tests/kmac128_differential.rs`, `tests/kmac256_differential.rs`, `tes
 
 ## TL;DR
 
-| | Before (`tiny-keccak` 2.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `tiny-keccak = { version = "2.0", features = ["kmac", "cshake"] }` | `rscrypto = { version = "0.8.1", features = ["kmac"] }` |
-| KMAC import | `use tiny_keccak::{Hasher, Kmac};` | `use rscrypto::{Kmac128, Kmac256};` |
-| KMAC call | `let mut k = Kmac::v256(key, custom); k.update(data); k.finalize(&mut tag);` | `Kmac256::mac_into(key, custom, data, &mut tag);` |
-| cSHAKE import | `use tiny_keccak::{Hasher, CShake};` | `use rscrypto::{Cshake128, Cshake256, Xof};` |
-| cSHAKE call | `let mut x = CShake::v256(name, custom); x.update(data); x.finalize(&mut out);` | `Cshake256::xof(name, custom, data).squeeze(&mut out);` |
+|               | Before (`tiny-keccak` 2.x)                                                      | After (`rscrypto` 0.8.1)                                |
+| ------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Cargo dep     | `tiny-keccak = { version = "2.0", features = ["kmac", "cshake"] }`              | `rscrypto = { version = "0.8.1", features = ["kmac"] }` |
+| KMAC import   | `use tiny_keccak::{Hasher, Kmac};`                                              | `use rscrypto::{Kmac128, Kmac256};`                     |
+| KMAC call     | `let mut k = Kmac::v256(key, custom); k.update(data); k.finalize(&mut tag);`    | `Kmac256::mac_into(key, custom, data, &mut tag);`       |
+| cSHAKE import | `use tiny_keccak::{Hasher, CShake};`                                            | `use rscrypto::{Cshake128, Cshake256, Xof};`            |
+| cSHAKE call   | `let mut x = CShake::v256(name, custom); x.update(data); x.finalize(&mut out);` | `Cshake256::xof(name, custom, data).squeeze(&mut out);` |
 
 ## Cargo.toml
 
@@ -38,14 +38,14 @@ If you only use cSHAKE and not KMAC, swap the feature for `sha3` alone. That exp
 
 ## Algorithm map
 
-| `tiny-keccak` type | rscrypto type | Spec |
-|---|---|---|
-| `Kmac::v256(key, custom)` | `Kmac256` | NIST SP 800-185 §4.3 |
-| `Kmac::v128(key, custom)` | `Kmac128` | NIST SP 800-185 §4.3 |
-| `KmacXof::v128` / `KmacXof::v256` | not mapped | Keep `tiny-keccak` for KMACXOF |
-| `CShake::v256(name, custom)` | `Cshake256` | NIST SP 800-185 §3 |
-| `CShake::v128(name, custom)` | `Cshake128` | NIST SP 800-185 §3 |
-| `Sha3*`, `Keccak*`, `Shake*`, `ParallelHash*`, `TupleHash*` | covered by `RustCrypto/sha3.md` (SHA-3/SHAKE) or unsupported (Keccak, ParallelHash, TupleHash) | FIPS 202 / SP 800-185 |
+| `tiny-keccak` type                                          | rscrypto type                                                                                  | Spec                           |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------ |
+| `Kmac::v256(key, custom)`                                   | `Kmac256`                                                                                      | NIST SP 800-185 §4.3           |
+| `Kmac::v128(key, custom)`                                   | `Kmac128`                                                                                      | NIST SP 800-185 §4.3           |
+| `KmacXof::v128` / `KmacXof::v256`                           | not mapped                                                                                     | Keep `tiny-keccak` for KMACXOF |
+| `CShake::v256(name, custom)`                                | `Cshake256`                                                                                    | NIST SP 800-185 §3             |
+| `CShake::v128(name, custom)`                                | `Cshake128`                                                                                    | NIST SP 800-185 §3             |
+| `Sha3*`, `Keccak*`, `Shake*`, `ParallelHash*`, `TupleHash*` | covered by `RustCrypto/sha3.md` (SHA-3/SHAKE) or unsupported (Keccak, ParallelHash, TupleHash) | FIPS 202 / SP 800-185          |
 
 If you migrate from `tiny-keccak` for SHA-3 / SHAKE specifically (not KMAC / cSHAKE), follow `RustCrypto/sha3.md` instead: same destination types, slightly different upstream API.
 
@@ -70,9 +70,9 @@ let tag: [u8; 32] = Kmac256::mac_array(key, custom, data);
 
 Two changes:
 
-| `tiny-keccak` | rscrypto |
-|---|---|
-| `Hasher` trait import required | inherent methods on `Kmac256` |
+| `tiny-keccak`                        | rscrypto                                                                           |
+| ------------------------------------ | ---------------------------------------------------------------------------------- |
+| `Hasher` trait import required       | inherent methods on `Kmac256`                                                      |
 | `finalize(&mut tag)` consumes `self` | `mac_into` / `mac_array` are static; streaming `finalize_into` borrows `&mut self` |
 
 ### KMAC256: streaming
@@ -101,7 +101,7 @@ k.finalize_into(&mut tag);               // borrows &mut self
 
 ### KMAC256: variable-length output
 
-The output length is part of the KMAC tag derivation per SP 800-185: a 32-byte tag is *not* the prefix of a 64-byte tag. Both crates encode the length identically (verified at 32 and 64 bytes in the harness):
+The output length is part of the KMAC tag derivation per SP 800-185: a 32-byte tag is _not_ the prefix of a 64-byte tag. Both crates encode the length identically (verified at 32 and 64 bytes in the harness):
 
 ```rust
 // After
@@ -177,11 +177,11 @@ reader.squeeze(&mut out);
 
 Three changes from `tiny-keccak`:
 
-| `tiny-keccak` | rscrypto |
-|---|---|
+| `tiny-keccak`                                                       | rscrypto                                                                                                                             |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `Hasher::finalize` consumes the sponge and writes to a fixed buffer | `Cshake256` has a fused one-shot `xof(name, custom, data)` that returns a reader; streaming `finalize_xof()` returns the same reader |
-| Cannot squeeze more bytes after `finalize` | Reader is a dedicated XOF type: call `squeeze` repeatedly for additional bytes |
-| `Hasher::update` adds chunks | `Digest::update` plays the same role |
+| Cannot squeeze more bytes after `finalize`                          | Reader is a dedicated XOF type: call `squeeze` repeatedly for additional bytes                                                       |
+| `Hasher::update` adds chunks                                        | `Digest::update` plays the same role                                                                                                 |
 
 ## Notes
 

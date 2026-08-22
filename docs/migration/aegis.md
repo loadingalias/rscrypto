@@ -9,11 +9,11 @@ Evidence: `tests/aegis256_oracle.rs` and `tests/aead_wycheproof.rs`.
 
 ## TL;DR
 
-| | Before (`aegis` 0.9.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `aegis = "0.9"` | `rscrypto = { version = "0.8.1", features = ["aegis256"] }` |
-| Import | `use aegis::aegis256::Aegis256;` | `use rscrypto::{Aead, Aegis256, Aegis256Key, aead::{Nonce256, expert::AeadWithNonce}};` |
-| Encrypt | `Aegis256::<16>::new(&key, &nonce).encrypt(msg, aad) -> (Vec<u8>, [u8; 16])` | `cipher.encrypt(&nonce, aad, msg, &mut out)?` |
+|           | Before (`aegis` 0.9.x)                                                       | After (`rscrypto` 0.8.1)                                                                |
+| --------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Cargo dep | `aegis = "0.9"`                                                              | `rscrypto = { version = "0.8.1", features = ["aegis256"] }`                             |
+| Import    | `use aegis::aegis256::Aegis256;`                                             | `use rscrypto::{Aead, Aegis256, Aegis256Key, aead::{Nonce256, expert::AeadWithNonce}};` |
+| Encrypt   | `Aegis256::<16>::new(&key, &nonce).encrypt(msg, aad) -> (Vec<u8>, [u8; 16])` | `cipher.encrypt(&nonce, aad, msg, &mut out)?`                                           |
 
 ## Cargo.toml
 
@@ -31,12 +31,12 @@ rscrypto = { version = "0.8.1", features = ["aegis256"] }
 
 ## Algorithm map
 
-| `aegis` type | rscrypto type | Key | Nonce | Tag |
-|---|---|---|---|---|
-| `aegis::aegis256::Aegis256` | `Aegis256` | 32 bytes | 32 bytes | 16 bytes (or 32 in upstream) |
-| `aegis::aegis128l::Aegis128L` | not currently mapped: open an issue | 16 bytes | 16 bytes | 16/32 bytes |
-| `aegis::aegis128x2::Aegis128X2` | not currently mapped | 16 bytes | 16 bytes | 16/32 bytes |
-| `aegis::aegis128x4::Aegis128X4` | not currently mapped | 16 bytes | 16 bytes | 16/32 bytes |
+| `aegis` type                    | rscrypto type                       | Key      | Nonce    | Tag                          |
+| ------------------------------- | ----------------------------------- | -------- | -------- | ---------------------------- |
+| `aegis::aegis256::Aegis256`     | `Aegis256`                          | 32 bytes | 32 bytes | 16 bytes (or 32 in upstream) |
+| `aegis::aegis128l::Aegis128L`   | not currently mapped: open an issue | 16 bytes | 16 bytes | 16/32 bytes                  |
+| `aegis::aegis128x2::Aegis128X2` | not currently mapped                | 16 bytes | 16 bytes | 16/32 bytes                  |
+| `aegis::aegis128x4::Aegis128X4` | not currently mapped                | 16 bytes | 16 bytes | 16/32 bytes                  |
 
 rscrypto ships only AEGIS-256 with a 16-byte tag. The `aegis` crate is parameterised over tag size (`Aegis256<16>` or `Aegis256<32>`): fix the upstream tag at 16 to match.
 
@@ -71,11 +71,11 @@ caller-supplied nonce. Prefer `seal_random` for new protocols.
 
 Three structural differences:
 
-| `aegis` | rscrypto |
-|---|---|
+| `aegis`                                                         | rscrypto                                                                |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | `(key, nonce)` together at construction; one cipher per message | `key` at construction; `nonce` per call (cipher reused across messages) |
-| Returns `(ciphertext, tag)` separately | Returns single buffer `[ciphertext || tag]` |
-| Construction-then-call shape | `Aead`-trait-style call shape |
+| Returns `(ciphertext, tag)` separately                          | Returns single buffer `[ciphertext                                      |     | tag]` |
+| Construction-then-call shape                                    | `Aead`-trait-style call shape                                           |
 
 To rebuild the exact `(ct, tag)` pair, take the last 16 bytes of `ct` as the tag:
 

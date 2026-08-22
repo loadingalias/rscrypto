@@ -7,11 +7,11 @@ Evidence: `tests/xxh3_differential.rs`.
 
 ## TL;DR
 
-| | Before (`xxhash-rust` 0.8.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
+|           | Before (`xxhash-rust` 0.8.x)                             | After (`rscrypto` 0.8.1)                                |
+| --------- | -------------------------------------------------------- | ------------------------------------------------------- |
 | Cargo dep | `xxhash-rust = { version = "0.8", features = ["xxh3"] }` | `rscrypto = { version = "0.8.1", features = ["xxh3"] }` |
-| Import | `use xxhash_rust::xxh3::xxh3_64;` | `use rscrypto::{FastHash, Xxh3};` |
-| Call | `xxh3_64(data)` | `Xxh3::hash(data)` |
+| Import    | `use xxhash_rust::xxh3::xxh3_64;`                        | `use rscrypto::{FastHash, Xxh3};`                       |
+| Call      | `xxh3_64(data)`                                          | `Xxh3::hash(data)`                                      |
 
 ## Cargo.toml
 
@@ -29,12 +29,12 @@ rscrypto = { version = "0.8.1", features = ["xxh3"] }
 
 ## Algorithm map
 
-| `xxhash-rust` function | rscrypto type | Output |
-|---|---|---|
-| `xxh3::xxh3_64` | `Xxh3` (alias for `Xxh3_64`) | `u64` |
-| `xxh3::xxh3_64_with_seed` | `Xxh3::hash_with_seed` | `u64` |
-| `xxh3::xxh3_128` | `Xxh3_128` | `u128` |
-| `xxh3::xxh3_128_with_seed` | `Xxh3_128::hash_with_seed` | `u128` |
+| `xxhash-rust` function     | rscrypto type                | Output |
+| -------------------------- | ---------------------------- | ------ |
+| `xxh3::xxh3_64`            | `Xxh3` (alias for `Xxh3_64`) | `u64`  |
+| `xxh3::xxh3_64_with_seed`  | `Xxh3::hash_with_seed`       | `u64`  |
+| `xxh3::xxh3_128`           | `Xxh3_128`                   | `u128` |
+| `xxh3::xxh3_128_with_seed` | `Xxh3_128::hash_with_seed`   | `u128` |
 
 ## API patterns
 
@@ -107,12 +107,12 @@ let h: u64 = hasher.finish();
 
 Renames at the streaming layer:
 
-| `xxhash-rust` | rscrypto | Notes |
-|---|---|---|
-| `Xxh3::new()` | `Xxh3Hasher::default()` | both unseeded |
-| `Xxh3::with_seed(seed)` | `Xxh3Hasher::with_seed(seed)` | seeded ctor |
-| `.update(&[u8])` | `.write(&[u8])` | matches `core::hash::Hasher` |
-| `.digest() -> u64` | `.finish() -> u64` | matches `core::hash::Hasher` |
+| `xxhash-rust`           | rscrypto                      | Notes                        |
+| ----------------------- | ----------------------------- | ---------------------------- |
+| `Xxh3::new()`           | `Xxh3Hasher::default()`       | both unseeded                |
+| `Xxh3::with_seed(seed)` | `Xxh3Hasher::with_seed(seed)` | seeded ctor                  |
+| `.update(&[u8])`        | `.write(&[u8])`               | matches `core::hash::Hasher` |
+| `.digest() -> u64`      | `.finish() -> u64`            | matches `core::hash::Hasher` |
 
 `Xxh3Hasher` implements `core::hash::Hasher` directly. Drop the `xxhash-rust` crate from your `Hasher` / `BuildHasher` bounds and use `Xxh3Hasher` / `Xxh3BuildHasher` (e.g., `HashMap<K, V, Xxh3BuildHasher>`).
 

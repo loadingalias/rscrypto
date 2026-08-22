@@ -9,11 +9,11 @@ Evidence: `tests/ascon_aead_oracle.rs`.
 
 ## TL;DR
 
-| | Before (`ascon-aead` 0.6.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `ascon-aead = "0.6"` | `rscrypto = { version = "0.8.1", features = ["ascon-aead"] }` |
-| Import | `use ascon_aead::{AsconAead128, Key, Nonce, aead::{Aead, KeyInit, Payload}};` | `use rscrypto::{Aead, AsconAead128, AsconAead128Key, aead::{Nonce128, expert::AeadWithNonce}};` |
-| Encrypt | `cipher.encrypt(nonce, Payload { msg, aad })?` | `cipher.encrypt(&nonce, aad, msg, &mut out)?` |
+|           | Before (`ascon-aead` 0.6.x)                                                   | After (`rscrypto` 0.8.1)                                                                        |
+| --------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Cargo dep | `ascon-aead = "0.6"`                                                          | `rscrypto = { version = "0.8.1", features = ["ascon-aead"] }`                                   |
+| Import    | `use ascon_aead::{AsconAead128, Key, Nonce, aead::{Aead, KeyInit, Payload}};` | `use rscrypto::{Aead, AsconAead128, AsconAead128Key, aead::{Nonce128, expert::AeadWithNonce}};` |
+| Encrypt   | `cipher.encrypt(nonce, Payload { msg, aad })?`                                | `cipher.encrypt(&nonce, aad, msg, &mut out)?`                                                   |
 
 ## Cargo.toml
 
@@ -31,11 +31,11 @@ rscrypto = { version = "0.8.1", features = ["ascon-aead"] }
 
 ## Algorithm map
 
-| `ascon-aead` type | rscrypto type | Key | Nonce | Tag |
-|---|---|---|---|---|
-| `AsconAead128` | `AsconAead128` | 16 bytes | 16 bytes | 16 bytes |
-| `AsconAead128a` (legacy) | not mapped: superseded by NIST SP 800-232 |  |  |  |
-| `AsconAead80pq` (post-quantum-flavored) | not mapped |  |  |  |
+| `ascon-aead` type                       | rscrypto type                             | Key      | Nonce    | Tag      |
+| --------------------------------------- | ----------------------------------------- | -------- | -------- | -------- |
+| `AsconAead128`                          | `AsconAead128`                            | 16 bytes | 16 bytes | 16 bytes |
+| `AsconAead128a` (legacy)                | not mapped: superseded by NIST SP 800-232 |          |          |          |
+| `AsconAead80pq` (post-quantum-flavored) | not mapped                                |          |          |          |
 
 ## API patterns
 
@@ -98,7 +98,7 @@ cipher.decrypt_in_place(&nonce, aad, &mut buffer, &tag)?;
   [release evidence](../../constant-time.md).
 - **128-bit key is the only key length.** Ascon-AEAD does not have a 256-bit
   variant; SP 800-232 specifies the 128-bit parameter set.
-- **Nonce reuse semantics.** Ascon-AEAD-128 is *not* nonce-misuse-resistant. Reusing `(key, nonce)` reveals plaintext XORs. Prefer deterministic uniqueness. A uniformly random 128-bit nonce has lower collision probability than a uniformly random 96-bit nonce at the same message count, but the deployment must still define a message limit.
+- **Nonce reuse semantics.** Ascon-AEAD-128 is _not_ nonce-misuse-resistant. Reusing `(key, nonce)` reveals plaintext XORs. Prefer deterministic uniqueness. A uniformly random 128-bit nonce has lower collision probability than a uniformly random 96-bit nonce at the same message count, but the deployment must still define a message limit.
 - **No `Payload`, no `KeyInit` import.** Same simplification as the rest of the AEAD lane.
 - **Failed-open buffer semantics change.** RustCrypto keeps the in-place buffer
   unchanged on error. rscrypto clears it on authentication failure. Combined

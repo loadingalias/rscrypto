@@ -9,11 +9,11 @@ Evidence: `tests/ascon_official_vectors.rs`, `tests/ascon_hash_oracle.rs`, `test
 
 ## TL;DR
 
-| | Before (`ascon-hash` 0.4.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `ascon-hash = "0.4"` | `rscrypto = { version = "0.8.1", features = ["ascon-hash"] }` |
-| Import | `use ascon_hash::{AsconHash256, digest::Digest};` | `use rscrypto::{AsconHash256, Digest};` |
-| Call | `AsconHash256::digest(data)` | `AsconHash256::digest(data)` |
+|           | Before (`ascon-hash` 0.4.x)                       | After (`rscrypto` 0.8.1)                                      |
+| --------- | ------------------------------------------------- | ------------------------------------------------------------- |
+| Cargo dep | `ascon-hash = "0.4"`                              | `rscrypto = { version = "0.8.1", features = ["ascon-hash"] }` |
+| Import    | `use ascon_hash::{AsconHash256, digest::Digest};` | `use rscrypto::{AsconHash256, Digest};`                       |
+| Call      | `AsconHash256::digest(data)`                      | `AsconHash256::digest(data)`                                  |
 
 ## Cargo.toml
 
@@ -31,11 +31,11 @@ rscrypto = { version = "0.8.1", features = ["ascon-hash"] }
 
 ## Algorithm map
 
-| `ascon-hash` type | rscrypto type | Output |
-|---|---|---|
-| `AsconHash256` | `AsconHash256` | `[u8; 32]` |
-| `AsconXof128` | `AsconXof` (XOF) | variable |
-| `AsconCxof128` | `AsconCxof128` (customizable XOF) | variable |
+| `ascon-hash` type | rscrypto type                     | Output     |
+| ----------------- | --------------------------------- | ---------- |
+| `AsconHash256`    | `AsconHash256`                    | `[u8; 32]` |
+| `AsconXof128`     | `AsconXof` (XOF)                  | variable   |
+| `AsconCxof128`    | `AsconCxof128` (customizable XOF) | variable   |
 
 ## API patterns
 

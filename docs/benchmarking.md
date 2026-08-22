@@ -54,18 +54,18 @@ result does not imply the same result on aarch64, Power, s390x, RISC-V, WASM, or
 The comparison set in the published snapshot is Rust-focused and
 shape-compatible:
 
-| Area | Compared against |
-|---|---|
-| AEAD | RustCrypto AEADs, `aws-lc-rs`, `ring`, `aegis` |
-| SHA-2 / HMAC / HKDF / PBKDF2 | RustCrypto, `aws-lc-rs`, `ring` |
-| BLAKE2 / BLAKE3 | RustCrypto, `dryoc`, upstream `blake3` |
-| ECDSA P-256/P-384 | RustCrypto `p256`/`p384`, `aws-lc-rs`, `ring` |
-| Ed25519 / X25519 | dalek, `aws-lc-rs`, `ring` where API-compatible, `dryoc` |
-| ML-KEM-512/768/1024 | `libcrux`, `fips203`, RustCrypto `ml-kem`, and target-available `aws-lc-rs` |
-| RSA import / verification | RustCrypto `rsa`, `ring`, target-available `aws-lc-rs` |
-| Password hashing | RustCrypto, `dryoc` where API-compatible |
-| XXH3 / RapidHash | upstream crates |
-| CRC | `crc`, `crc-fast`, `crc32fast`, `crc32c`, `crc64fast` |
+| Area                         | Compared against                                                            |
+| ---------------------------- | --------------------------------------------------------------------------- |
+| AEAD                         | RustCrypto AEADs, `aws-lc-rs`, `ring`, `aegis`                              |
+| SHA-2 / HMAC / HKDF / PBKDF2 | RustCrypto, `aws-lc-rs`, `ring`                                             |
+| BLAKE2 / BLAKE3              | RustCrypto, `dryoc`, upstream `blake3`                                      |
+| ECDSA P-256/P-384            | RustCrypto `p256`/`p384`, `aws-lc-rs`, `ring`                               |
+| Ed25519 / X25519             | dalek, `aws-lc-rs`, `ring` where API-compatible, `dryoc`                    |
+| ML-KEM-512/768/1024          | `libcrux`, `fips203`, RustCrypto `ml-kem`, and target-available `aws-lc-rs` |
+| RSA import / verification    | RustCrypto `rsa`, `ring`, target-available `aws-lc-rs`                      |
+| Password hashing             | RustCrypto, `dryoc` where API-compatible                                    |
+| XXH3 / RapidHash             | upstream crates                                                             |
+| CRC                          | `crc`, `crc-fast`, `crc32fast`, `crc32c`, `crc64fast`                       |
 
 Some common libraries are not primary benchmark baselines:
 

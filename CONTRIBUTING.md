@@ -5,12 +5,12 @@ releasable history; it is not a working branch.
 
 ## Gate model
 
-| Action | Purpose |
-|---|---|
-| Commit | Creates a local, reviewable checkpoint. |
-| Push | Shares the branch after fast, change-aware local checks. |
+| Action       | Purpose                                                   |
+| ------------ | --------------------------------------------------------- |
+| Commit       | Creates a local, reviewable checkpoint.                   |
+| Push         | Shares the branch after fast, change-aware local checks.  |
 | Pull request | Declares merge intent and runs CI on the proposed change. |
-| Merge | Adds the reviewed change to protected `main`. |
+| Merge        | Adds the reviewed change to protected `main`.             |
 
 The protected branch requires an up-to-date `Complete` result and has no bypass
 actors, so merged commits do not repeat the pull-request suite. Release
@@ -63,15 +63,15 @@ just test --all
 
 Use deeper checks where the risk requires them:
 
-| Change | Required validation |
-|---|---|
-| Parser, import, DER, PHC, hex, or untrusted input | `just test-fuzz <target>` or `just test-fuzz --all` |
-| `unsafe`, SIMD, ASM, or dispatch | Backend equivalence tests and `just test-fuzz-asan --all` where the target runs natively |
-| Portable unsafe path | `just test-miri` |
-| Constant-time claim boundary | `just ct-full --target <triple>`; update `ct.toml` only with matching evidence |
-| Apple Silicon RSA assembly | `just test-rsa-macos-asm` on a physical local Arm64 Mac; GitHub Actions intentionally has no macOS runner |
-| Public API change | `cargo semver-checks --package rscrypto --all-features` |
-| Dependency or release change | `cargo deny check all` and `cargo audit --ignore RUSTSEC-2023-0071` |
+| Change                                            | Required validation                                                                                       |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Parser, import, DER, PHC, hex, or untrusted input | `just test-fuzz <target>` or `just test-fuzz --all`                                                       |
+| `unsafe`, SIMD, ASM, or dispatch                  | Backend equivalence tests and `just test-fuzz-asan --all` where the target runs natively                  |
+| Portable unsafe path                              | `just test-miri`                                                                                          |
+| Constant-time claim boundary                      | `just ct-full --target <triple>`; update `ct.toml` only with matching evidence                            |
+| Apple Silicon RSA assembly                        | `just test-rsa-macos-asm` on a physical local Arm64 Mac; GitHub Actions intentionally has no macOS runner |
+| Public API change                                 | `cargo semver-checks --package rscrypto --all-features`                                                   |
+| Dependency or release change                      | `cargo deny check all` and `cargo audit --ignore RUSTSEC-2023-0071`                                       |
 
 ## Review and commit
 
@@ -109,6 +109,22 @@ Mark the pull request ready only when its head is ready for CI, then wait for
 the required `Complete` check. Resolve every open review thread and review the
 final diff before merging in the GitHub UI. GitHub enforces the current
 approval policy.
+
+For a broad or release-sensitive pull request, run the slow physical assurance
+lanes on the pushed branch before merging:
+
+```bash
+branch=$(git branch --show-current)
+test -n "$branch" && test "$branch" != main
+test "$(git rev-parse HEAD)" = "$(git rev-parse '@{upstream}')"
+gh workflow run weekly.yaml --ref "$branch" -f mode=assurance
+gh workflow run riscv.yaml --ref "$branch" -f mode=evidence
+```
+
+These branch runs expose platform, constant-time, and RISC-V failures before
+they reach `main`. They do not replace the release runbook's post-merge,
+exact-commit evidence: a squash or merge commit has a different SHA, and
+ancestor evidence is never promoted into a release claim.
 
 ## Clean up after merge
 

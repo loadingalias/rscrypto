@@ -7,11 +7,11 @@ Evidence: `tests/crc64_properties.rs` compares one-shot, streaming, and combine 
 
 ## TL;DR
 
-| | Before (`crc64fast` 1.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `crc64fast = "1.1"` | `rscrypto = { version = "0.8.1", features = ["crc64"] }` |
-| Import | `use crc64fast::Digest;` | `use rscrypto::checksum::{Checksum, Crc64};` |
-| Call | `Digest::new(); .write(data); .sum64()` | `Crc64::new(); .update(data); .finalize()` |
+|           | Before (`crc64fast` 1.x)                | After (`rscrypto` 0.8.1)                                 |
+| --------- | --------------------------------------- | -------------------------------------------------------- |
+| Cargo dep | `crc64fast = "1.1"`                     | `rscrypto = { version = "0.8.1", features = ["crc64"] }` |
+| Import    | `use crc64fast::Digest;`                | `use rscrypto::checksum::{Checksum, Crc64};`             |
+| Call      | `Digest::new(); .write(data); .sum64()` | `Crc64::new(); .update(data); .finalize()`               |
 
 ## Cargo.toml
 
@@ -31,10 +31,10 @@ rscrypto = { version = "0.8.1", features = ["crc64"] }
 
 ## Algorithm map
 
-| Upstream crate | Polynomial label | rscrypto type |
-|---|---|---|
-| `crc64fast::Digest` | "ECMA" (== ECMA-182, == XZ) | `Crc64` (alias `Crc64Xz`) |
-| `crc64fast_nvme::Digest` | NVMe (Rocksoft) | `Crc64Nvme` |
+| Upstream crate           | Polynomial label            | rscrypto type             |
+| ------------------------ | --------------------------- | ------------------------- |
+| `crc64fast::Digest`      | "ECMA" (== ECMA-182, == XZ) | `Crc64` (alias `Crc64Xz`) |
+| `crc64fast_nvme::Digest` | NVMe (Rocksoft)             | `Crc64Nvme`               |
 
 `crc64fast` calls its polynomial "ECMA". This is the ECMA-182 polynomial used by XZ Utils, 7-Zip, and `CRC_64_XZ` in `crc`. Map it to `Crc64` / `Crc64Xz`.
 
@@ -62,10 +62,10 @@ let value = hasher.finalize();
 
 Three method renames:
 
-| `crc64fast` | rscrypto |
-|---|---|
-| `Digest::new()` | `Crc64::new()` |
-| `.write(&[u8])` | `.update(&[u8])` |
+| `crc64fast`       | rscrypto             |
+| ----------------- | -------------------- |
+| `Digest::new()`   | `Crc64::new()`       |
+| `.write(&[u8])`   | `.update(&[u8])`     |
 | `.sum64() -> u64` | `.finalize() -> u64` |
 
 ### One-shot (rscrypto-only)

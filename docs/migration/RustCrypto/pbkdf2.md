@@ -7,11 +7,11 @@ Evidence: `tests/pbkdf2_kat_vectors.rs`, `tests/pbkdf2_differential.rs`, and `te
 
 ## TL;DR
 
-| | Before (`pbkdf2` 0.13.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `pbkdf2 = "0.13"` + `sha2 = "0.11"` | `rscrypto = { version = "0.8.1", features = ["pbkdf2"] }` |
-| Import | `use pbkdf2::pbkdf2_hmac; use sha2::Sha256;` | `use rscrypto::Pbkdf2Sha256;` |
-| Call | `pbkdf2_hmac::<Sha256>(pw, salt, iters, &mut okm)` | `Pbkdf2Sha256::derive_key(pw, salt, iters, &mut okm)?` |
+|           | Before (`pbkdf2` 0.13.x)                           | After (`rscrypto` 0.8.1)                                  |
+| --------- | -------------------------------------------------- | --------------------------------------------------------- |
+| Cargo dep | `pbkdf2 = "0.13"` + `sha2 = "0.11"`                | `rscrypto = { version = "0.8.1", features = ["pbkdf2"] }` |
+| Import    | `use pbkdf2::pbkdf2_hmac; use sha2::Sha256;`       | `use rscrypto::Pbkdf2Sha256;`                             |
+| Call      | `pbkdf2_hmac::<Sha256>(pw, salt, iters, &mut okm)` | `Pbkdf2Sha256::derive_key(pw, salt, iters, &mut okm)?`    |
 
 ## Cargo.toml
 
@@ -32,11 +32,11 @@ The `pbkdf2` feature implies `hmac` which implies `sha2`.
 
 ## Algorithm map
 
-| `pbkdf2` instantiation | rscrypto type | OWASP Password Storage Cheat Sheet minimum, checked 2026-07-29 |
-|---|---|---|
-| `pbkdf2_hmac::<Sha256>` | `Pbkdf2Sha256` | `Pbkdf2Sha256::MIN_RECOMMENDED_ITERATIONS` (600,000) |
-| `pbkdf2_hmac::<Sha512>` | `Pbkdf2Sha512` | `Pbkdf2Sha512::MIN_RECOMMENDED_ITERATIONS` (220,000) |
-| `pbkdf2_hmac::<Sha1>` | not mapped: SHA-1 deprecated for KDF since 2010 |  |
+| `pbkdf2` instantiation  | rscrypto type                                   | OWASP Password Storage Cheat Sheet minimum, checked 2026-07-29 |
+| ----------------------- | ----------------------------------------------- | -------------------------------------------------------------- |
+| `pbkdf2_hmac::<Sha256>` | `Pbkdf2Sha256`                                  | `Pbkdf2Sha256::MIN_RECOMMENDED_ITERATIONS` (600,000)           |
+| `pbkdf2_hmac::<Sha512>` | `Pbkdf2Sha512`                                  | `Pbkdf2Sha512::MIN_RECOMMENDED_ITERATIONS` (220,000)           |
+| `pbkdf2_hmac::<Sha1>`   | not mapped: SHA-1 deprecated for KDF since 2010 |                                                                |
 
 ## API patterns
 

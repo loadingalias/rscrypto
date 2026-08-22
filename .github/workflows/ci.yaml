@@ -29,7 +29,7 @@ jobs:
       surfaces_json: ${{ steps.rail.outputs.surfaces-json }}
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -37,7 +37,7 @@ jobs:
       - name: Build Plan (PR)
         if: github.event_name == 'pull_request'
         id: rail
-        uses: loadingalias/cargo-rail-action@ebc8ef2740efefe2cd5c42826344a8f1213113ae  # v6.1.2
+        uses: loadingalias/cargo-rail-action@ebc8ef2740efefe2cd5c42826344a8f1213113ae # v6.1.2
         with:
           version: "0.21.0"
           checksum: required

@@ -246,8 +246,14 @@ p256 = { version = "0.14.0", default-features = false, features = ["ecdsa", "pkc
 p384 = { version = "0.14.0", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
 ed25519-dalek = "3.0.0"
 x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
-fips203 = { version = "0.4.3", default-features = false, features = ["ml-kem-512", "ml-kem-768", "ml-kem-1024"] }
-rustcrypto-ml-kem = { package = "ml-kem", version = "0.3.2", default-features = false, features = ["hazmat"] }
+fips203 = { version = "0.4.3", default-features = false, features = [
+  "ml-kem-512",
+  "ml-kem-768",
+  "ml-kem-1024",
+] }
+rustcrypto-ml-kem = { package = "ml-kem", version = "0.3.2", default-features = false, features = [
+  "hazmat",
+] }
 hmac = "0.13.0"
 hkdf = "0.13.0"
 chacha20poly1305 = "0.11.0"
