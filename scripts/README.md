@@ -29,6 +29,7 @@ the recipes reported by `just --list`.
 | `test/test-rsa-macos-asm.sh`              | `just test-rsa-macos-asm` on a physical local Apple Silicon Mac                                                                   |
 | `test/test-coverage.sh`                   | `just test-coverage`, `just test-fuzz-coverage`, `weekly.yaml`                                                                    |
 | `bench/bench.sh`                          | `just bench`, `just bench-quick`                                                                                                  |
+| `bench/profile.sh`                        | `just profile`                                                                                                                    |
 | `ci/check-action-pins.sh`                 | `just check-actions`, `ci/ci-check.sh`, `ci/dependabot-smoke.sh`                                                                  |
 | `ci/check-action-pins-test.sh`            | `just check-actions`, `ci/dependabot-smoke.sh`                                                                                    |
 | `ci/tool-integrity-test.sh`               | `just check-actions`                                                                                                              |
@@ -78,10 +79,12 @@ claim in [`docs/secret-lifecycle.md`](../docs/secret-lifecycle.md).
 
 ## Bench Internals
 
-| Script                     | Callers                                                                    |
-| -------------------------- | -------------------------------------------------------------------------- |
-| `ci/run-bench.sh`          | `scripts/bench/bench.sh`, `ci/mlkem-aarch64-gate.sh`, `ci/run-rust-job.sh` |
-| `bench/blake3-gap-gate.sh` | `scripts/ci/run-bench.sh`                                                  |
+| Script                            | Callers                                                                    |
+| --------------------------------- | -------------------------------------------------------------------------- |
+| `ci/run-bench.sh`                 | `scripts/bench/bench.sh`, `ci/mlkem-aarch64-gate.sh`, `ci/run-rust-job.sh` |
+| `bench/blake3-gap-gate.sh`        | `scripts/ci/run-bench.sh`                                                  |
+| `bench/benchmark_catalog.py`      | `ci/run-bench.sh`, `bench/profile.sh`, `benchmark_catalog_test.py`         |
+| `bench/benchmark_catalog_test.py` | `scripts/check/check.sh`                                                   |
 
 ## CI-only (not surfaced via `just`)
 

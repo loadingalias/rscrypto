@@ -219,6 +219,7 @@ criterion = { version = "^0.8.2", default-features = false, features = [
   "html_reports",
   "plotters",
 ] }
+gungraun = "=0.19.4"
 proptest = "^1.11.0"
 
 # Oracles
@@ -404,6 +405,11 @@ required-features = ["checksums"]
 name = "kmac_cshake"
 harness = false
 required-features = ["sha3", "kmac"]
+
+[[bench]]
+name = "structural"
+harness = false
+required-features = ["checksums", "sha2", "blake3"]
 
 [profile.dev]
 opt-level = 0

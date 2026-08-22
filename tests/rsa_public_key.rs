@@ -36,8 +36,9 @@ use rsa::{
 use rscrypto::RsaEncryptionError;
 #[cfg(feature = "diag")]
 use rscrypto::auth::rsa::{
-  diag_rsa_private_exponentiate_fixed_width, diag_rsa_public_operation_bitserial, diag_rsa_public_operation_cios,
-  diag_rsa_public_operation_cios_portable, diag_rsa_public_operation_comba_product, diag_rsa_public_operation_product,
+  diag_rsa_private_exponentiate_fixed_width, diag_rsa_private_exponentiate_fixed_width_with_scratch,
+  diag_rsa_public_operation_bitserial, diag_rsa_public_operation_cios, diag_rsa_public_operation_cios_portable,
+  diag_rsa_public_operation_comba_product, diag_rsa_public_operation_product,
   diag_rsa_public_operation_window2_exponent, diag_rsa_verify_pkcs1v15_encoded, diag_rsa_verify_pss_encoded,
   diag_rsa_verify_pss_encoded_with_scratch,
 };
@@ -3550,6 +3551,36 @@ fn diagnostic_private_exponentiation_matches_independent_fixed_width_reference()
     Err(rscrypto::RsaPrivateOpError::RepresentativeOutOfRange)
   );
   assert!(out.iter().all(|&byte| byte == 0));
+
+  let rustcrypto_key = rustcrypto_fixture_private_key();
+  let component_modulus = rustcrypto_key.primes()[0].clone();
+  let private_der = rustcrypto_key
+    .to_pkcs8_der()
+    .expect("the fixed private key must encode as PKCS#8");
+  let key =
+    RsaPrivateKey::from_pkcs8_der_with_policy(private_der.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
+      .expect("the fixed private key must import for reusable-scratch diagnostics");
+  let component_len = component_modulus.to_bytes_be().len();
+  let mut component_input = vec![0u8; component_len];
+  *component_input
+    .last_mut()
+    .expect("an RSA component representative must be nonempty") = 2;
+  let mut component_exponent = vec![0x5a; component_len];
+  component_exponent[0] = 1;
+  let mut component_out = vec![0u8; component_len];
+  let mut scratch = key.private_scratch();
+
+  diag_rsa_private_exponentiate_fixed_width_with_scratch(
+    &key,
+    &component_exponent,
+    &component_input,
+    &mut component_out,
+    &mut scratch,
+  )
+  .expect("reusable-scratch diagnostic exponentiation must accept the valid representative");
+  let reference =
+    BigUint::from_bytes_be(&component_input).modpow(&BigUint::from_bytes_be(&component_exponent), &component_modulus);
+  assert_eq!(component_out, left_pad_to_len(&reference.to_bytes_be(), component_len));
 }
 
 #[test]

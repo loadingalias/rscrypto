@@ -33,7 +33,7 @@ ci_tool_validate_record() {
   local digest=$7
 
   case "$tool" in
-    wasmtime | codecov) ;;
+    wasmtime | wasm-tools | codecov) ;;
     *) ci_tool_fail "unknown direct CI tool: $tool" || return ;;
   esac
   [[ "$version" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+[-+A-Za-z0-9.]*$ ]] \
@@ -103,9 +103,9 @@ ci_tool_resolve() {
 
 ci_tool_validate_manifest() {
   local tool
-  for tool in wasmtime codecov; do
+  for tool in wasmtime wasm-tools codecov; do
     case "$tool" in
-      wasmtime)
+      wasmtime | wasm-tools)
         local expected_platforms=(linux:x86_64 linux:aarch64 macos:x86_64 macos:aarch64)
         ;;
       codecov)

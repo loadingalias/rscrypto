@@ -1145,7 +1145,7 @@ left_class = "fixed-width exponent with a nonzero high byte"
 right_class = "same fixed-width exponent with a zero high byte"
 samples = 512
 smoke_samples = 128
-notes = "The public modulus, representative, buffer lengths, and all lower exponent bytes are identical across classes."
+notes = "The precomputed CRT component modulus, representative, reusable scratch addresses, buffer lengths, and all lower exponent bytes are identical across classes. AArch64 execution enters FEAT_DIT when the target advertises it."
 
 [[dudect_case]]
 name = "rsa_oaep_decrypt_fixed_vs_random_plaintext"
@@ -3718,7 +3718,7 @@ evidence = [
   "unit:rsa.private_ops.oaep_decrypt",
   "unit:rsa.private_ops.pkcs1v15_decrypt",
 ]
-limitation = "Retained CRT exponents are normalized to the corresponding factor width before arithmetic, so canonical exponent encoding length is not a steady-state control or address input. Full private operations remain target-artifact/DudeCT evidence, not source-only claims."
+limitation = "Retained CRT exponents are normalized to the corresponding factor width before arithmetic, so canonical exponent encoding length is not a steady-state control or address input. AArch64 private exponentiation scopes FEAT_DIT when runtime or compile-time detection advertises it. Full private operations remain target-artifact/DudeCT evidence, not source-only claims."
 
 [[operation]]
 id = "rsa.public_operations"

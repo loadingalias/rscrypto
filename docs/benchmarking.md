@@ -49,6 +49,10 @@ Platform-specific claims need platform-specific raw results. A strong x86_64
 result does not imply the same result on aarch64, Power, s390x, RISC-V, WASM, or
 `no_std`.
 
+`.config/benchmark-matrix.json` is the source of truth for benchmark binaries,
+features, selectors, aliases, and algorithm filters. Keep it synchronized with
+Cargo benchmark targets; `just check` validates that contract.
+
 ## Competitor set
 
 The comparison set in the published snapshot is Rust-focused and
@@ -103,6 +107,24 @@ just bench crate=rscrypto bench=auth filter='^ecdsa-p256/'
 just bench crate=rscrypto bench=auth filter='^ecdsa-p384/'
 just bench mlkem
 ```
+
+Criterion is the wall-clock authority. The small `just bench-structural` suite
+uses Gungraun and Valgrind to inspect instruction and cache-cost structure on a
+supported Linux host. Structural counts are compiler- and model-sensitive; do
+not convert them into elapsed-time claims.
+
+Use the diagnostic recipes only after a benchmark establishes a concrete
+question:
+
+```sh
+just profile sha2 'sha256/64' 10
+just perf-codegen --asm <function>
+just perf-llvm-lines --filter <pattern>
+```
+
+`just profile` saves a Samply capture under `target/profiles/`.
+`perf-codegen` and `perf-llvm-lines` explain generated code and IR volume; they
+do not prove that a change is faster.
 
 Local runs are useful for capacity planning on your hardware. They should not be
 mixed with published claims unless the run metadata and raw results are kept.

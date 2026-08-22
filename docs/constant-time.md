@@ -125,6 +125,12 @@ Release CI exercises multiple x86_64 and AArch64 microarchitectures. The exact
 CPU, target features, compiler, linker, tools, and artifact hashes are recorded
 per lane rather than generalized to every CPU implementing the same triple.
 
+On AArch64 targets that advertise FEAT_DIT, RSA private exponentiation enters
+data-independent-timing state for the complete fixed-window arithmetic loop and
+restores the caller's prior PSTATE afterward. Generic `no_std` AArch64 builds
+use this hardening only when compiled with `+dit`; physical evidence remains
+bound to the exact release lanes above.
+
 ECDSA P-256/P-384 signing uses multiplication-free, fixed-work limb arithmetic
 on s390x and RISC-V to avoid the variable-latency scalar multiply observed in
 earlier native runs. That source and disassembly property is necessary, not

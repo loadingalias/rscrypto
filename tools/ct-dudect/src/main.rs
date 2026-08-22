@@ -1,3 +1,5 @@
+use core::cell::RefCell;
+
 use dudect_bencher::{BenchRng, Class, CtRunner, ctbench_main_with_seeds, rand::RngExt};
 use rscrypto::aead::expert::AeadWithNonce;
 use rscrypto::{
@@ -30,7 +32,7 @@ use rscrypto::{
     diag_mlkem512_keygen_secret_noise_digest, diag_mlkem768_keygen_secret_noise_digest,
     diag_mlkem1024_keygen_secret_noise_digest, diag_mlkem1024_multiply_ntts_accumulate_input_digest,
     diag_rsa_import_pkcs8_private_key_der_stage, diag_rsa_private_component_validation_32,
-    diag_rsa_private_exponentiate_fixed_width, diag_rsa_validate_pkcs8_private_key_der,
+    diag_rsa_private_exponentiate_fixed_width_with_scratch, diag_rsa_validate_pkcs8_private_key_der,
     diag_rsa_validate_pkcs8_private_key_der_stage,
   },
   traits::Kem as _,
@@ -1565,24 +1567,22 @@ fn rsa_pkcs1v15_full_width_vs_short_canonical_crt_exponent(runner: &mut CtRunner
 }
 
 fn rsa_private_exponent_fixed_width_high_byte(runner: &mut CtRunner, rng: &mut BenchRng) {
-  let len = 128;
-  let modulus = vec![0xa5; len];
+  let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
+  let len = key.signature_len().div_euclid(2);
   let mut input = vec![0u8; len];
   *input.last_mut().expect("RSA representatives must be nonempty") = 2;
 
   let mut exponent = vec![0x5a; len];
+  let state = RefCell::new((key.private_scratch(), vec![0u8; len]));
 
   for class in balanced_classes(rng, samples()) {
     exponent[0] = u8::from(matches!(class, Class::Left));
     let exponent = core::hint::black_box(exponent.as_slice());
     runner.run_one(class, || {
-      let mut out = vec![0u8; len];
-      let result = diag_rsa_private_exponentiate_fixed_width(&modulus, exponent, &input, &mut out);
-      let output_digest = out
-        .iter()
-        .copied()
-        .fold(0u64, |digest, byte| digest.rotate_left(7) ^ u64::from(byte));
-      (result.is_ok(), output_digest)
+      let mut state = state.borrow_mut();
+      let (scratch, out) = &mut *state;
+      let result = diag_rsa_private_exponentiate_fixed_width_with_scratch(&key, exponent, &input, out, scratch);
+      (result.is_ok(), core::hint::black_box(out.as_slice())[0])
     });
   }
 }

@@ -389,6 +389,8 @@ grep -Fq 'actual=$(dpkg-query -W -f=' "$INSTALL_TOOLS" \
   || fail "APT packages must be validated against exact versions"
 grep -Fq 'ci_tool_download wasmtime' "$NOSTD_WASM" \
   || fail "Wasmtime must use the direct archive integrity contract"
+grep -Fq 'ci_tool_download wasm-tools' "$NOSTD_WASM" \
+  || fail "wasm-tools must use the direct archive integrity contract"
 if grep -Eiq '(^|[^[:alnum:]_])zig([^[:alnum:]_]|$)' "$CROSS_SCRIPT"; then
   fail "cross-target CI must not depend on Zig"
 fi
