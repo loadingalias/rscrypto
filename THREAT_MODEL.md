@@ -46,13 +46,13 @@ lifecycle, transport, and access control.
 
 Inputs crossing the boundary:
 
-| Input | Source | Assumption |
-|---|---|---|
-| Keys, passwords, seeds | Caller | The caller protects confidentiality and supplies the required entropy. Imports enforce documented shape and algorithm constraints, not key quality. |
-| Messages, AAD, ciphertexts, tags, signatures, encoded keys | Caller, usually relayed from a network peer | Untrusted. |
-| Randomness | `getrandom` or caller-supplied fill closures | The operating system or caller provides the required entropy quality. Output lengths are fixed by the API. |
-| CPU capability reports | CPUID, auxv, sysctl, OS APIs | The host reports capabilities correctly. Forced-backend overrides are validated before use. |
-| Build configuration | Cargo features, target features | The builder selects and records the intended configuration. |
+| Input                                                      | Source                                       | Assumption                                                                                                                                          |
+| ---------------------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Keys, passwords, seeds                                     | Caller                                       | The caller protects confidentiality and supplies the required entropy. Imports enforce documented shape and algorithm constraints, not key quality. |
+| Messages, AAD, ciphertexts, tags, signatures, encoded keys | Caller, usually relayed from a network peer  | Untrusted.                                                                                                                                          |
+| Randomness                                                 | `getrandom` or caller-supplied fill closures | The operating system or caller provides the required entropy quality. Output lengths are fixed by the API.                                          |
+| CPU capability reports                                     | CPUID, auxv, sysctl, OS APIs                 | The host reports capabilities correctly. Forced-backend overrides are validated before use.                                                         |
+| Build configuration                                        | Cargo features, target features              | The builder selects and records the intended configuration.                                                                                         |
 
 Outputs are digests, tags, ciphertexts, signatures, derived keys, and opaque
 errors. Direct comparison of fixed-size secret-bearing owners returns an opaque
@@ -102,25 +102,25 @@ The following threats are out of scope:
 
 Ordered by exposure to untrusted input:
 
-| Surface | Entry points | Primary risks |
-|---|---|---|
-| Parsers | RSA DER/SPKI/PKCS#8 import, ECDSA DER signatures and SEC1 points, ML-KEM key and ciphertext parsing, PHC strings, hex | Memory safety, panics, accepting what should be rejected |
-| Verification oracles | MAC `verify_tag`, AEAD open, signature `verify`, ML-KEM implicit rejection | Timing or error detail beyond the single failure bit |
-| Secret-bearing compute | Sign, decrypt, decapsulate, derive; the release-evidenced subset of `ct.toml` | Timing leakage, incorrect arithmetic |
-| `unsafe` low-level code | SIMD/assembly kernels, raw buffer helpers, zeroization, and dispatch | Undefined behavior, divergence from the portable authority |
-| Dispatch | `src/platform`, `src/backend` | Selecting a kernel the CPU cannot run, or one that produces wrong output |
+| Surface                 | Entry points                                                                                                          | Primary risks                                                            |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Parsers                 | RSA DER/SPKI/PKCS#8 import, ECDSA DER signatures and SEC1 points, ML-KEM key and ciphertext parsing, PHC strings, hex | Memory safety, panics, accepting what should be rejected                 |
+| Verification oracles    | MAC `verify_tag`, AEAD open, signature `verify`, ML-KEM implicit rejection                                            | Timing or error detail beyond the single failure bit                     |
+| Secret-bearing compute  | Sign, decrypt, decapsulate, derive; the release-evidenced subset of `ct.toml`                                         | Timing leakage, incorrect arithmetic                                     |
+| `unsafe` low-level code | SIMD/assembly kernels, raw buffer helpers, zeroization, and dispatch                                                  | Undefined behavior, divergence from the portable authority               |
+| Dispatch                | `src/platform`, `src/backend`                                                                                         | Selecting a kernel the CPU cannot run, or one that produces wrong output |
 
 ## Mitigations and evidence
 
-| Risk | Mitigation | Evidence |
-|---|---|---|
-| Memory safety | Unsafe operations are lint-gated and require local `SAFETY` proofs; the portable Rust path remains authoritative | Miri on portable paths in CI |
-| Parser abuse | Strict imports, `strict_*` arithmetic, release overflow checks | Fuzz targets, Wycheproof where mapped, official vectors |
-| Wrong output from accelerated kernels | Portable path is the byte-for-byte authority | Portable-vs-accelerated differential tests and native CI |
-| Timing leakage | Constant-time coding rules on claimed paths | `ct.toml` evidence gate: timing tests, generated-code review, binary checks where supported |
-| Oracle behavior | Opaque errors, failed-open output clearing, single-bit failure shape | AEAD and verification tests, fuzz targets |
-| Secret exposure at rest | Zeroize at the last owned use and on drop, masked `Debug` and errors, and sealed fixed-size comparison only on semantic secret owners | [`docs/secret-ownership.md`](docs/secret-ownership.md), [`docs/secret-lifecycle.md`](docs/secret-lifecycle.md), `scripts/check/zeroize-evidence.sh`, and `tests/secret_redaction.rs` |
-| Supply chain | Minimal optional runtime dependencies, `cargo deny`, `cargo audit`, signed tags, Trusted Publishing, release attestations | [`deny.toml`](deny.toml), [`.github/workflows/release.yaml`](.github/workflows/release.yaml), [`docs/release.md`](docs/release.md) |
+| Risk                                  | Mitigation                                                                                                                            | Evidence                                                                                                                                                                             |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Memory safety                         | Unsafe operations are lint-gated and require local `SAFETY` proofs; the portable Rust path remains authoritative                      | Miri on portable paths in CI                                                                                                                                                         |
+| Parser abuse                          | Strict imports, `strict_*` arithmetic, release overflow checks                                                                        | Fuzz targets, Wycheproof where mapped, official vectors                                                                                                                              |
+| Wrong output from accelerated kernels | Portable path is the byte-for-byte authority                                                                                          | Portable-vs-accelerated differential tests and native CI                                                                                                                             |
+| Timing leakage                        | Constant-time coding rules on claimed paths                                                                                           | `ct.toml` evidence gate: timing tests, generated-code review, binary checks where supported                                                                                          |
+| Oracle behavior                       | Opaque errors, failed-open output clearing, single-bit failure shape                                                                  | AEAD and verification tests, fuzz targets                                                                                                                                            |
+| Secret exposure at rest               | Zeroize at the last owned use and on drop, masked `Debug` and errors, and sealed fixed-size comparison only on semantic secret owners | [`docs/secret-ownership.md`](docs/secret-ownership.md), [`docs/secret-lifecycle.md`](docs/secret-lifecycle.md), `scripts/check/zeroize-evidence.sh`, and `tests/secret_redaction.rs` |
+| Supply chain                          | Minimal optional runtime dependencies, `cargo deny`, `cargo audit`, signed tags, Trusted Publishing, release attestations             | [`deny.toml`](deny.toml), [`.github/workflows/release.yaml`](.github/workflows/release.yaml), [`docs/release.md`](docs/release.md)                                                   |
 
 ## Known gaps
 

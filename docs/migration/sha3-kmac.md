@@ -13,11 +13,11 @@ Evidence: `tests/kmac128_nist_vectors.rs`, `tests/kmac128_differential.rs`,
 
 ## TL;DR
 
-| | Before (`sha3-kmac` 0.3.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `sha3-kmac = "0.3"` | `rscrypto = { version = "0.8.1", features = ["kmac"] }` |
-| Import | `use sha3_kmac::Kmac256;` | `use rscrypto::Kmac256;` |
-| Call | `let mut k = Kmac256::new(key, custom)?; k.update(data); k.finalize_into(&mut tag);` | `Kmac256::mac_into(key, custom, data, &mut tag);` |
+|           | Before (`sha3-kmac` 0.3.x)                                                           | After (`rscrypto` 0.8.1)                                |
+| --------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| Cargo dep | `sha3-kmac = "0.3"`                                                                  | `rscrypto = { version = "0.8.1", features = ["kmac"] }` |
+| Import    | `use sha3_kmac::Kmac256;`                                                            | `use rscrypto::Kmac256;`                                |
+| Call      | `let mut k = Kmac256::new(key, custom)?; k.update(data); k.finalize_into(&mut tag);` | `Kmac256::mac_into(key, custom, data, &mut tag);`       |
 
 ## Cargo.toml
 
@@ -37,11 +37,11 @@ The `kmac` feature implies `sha3`.
 
 ## Algorithm map
 
-| `sha3-kmac` type | rscrypto type | Security |
-|---|---|---|
-| `Kmac128` | `Kmac128` | 128-bit |
-| `Kmac256` | `Kmac256` | 256-bit |
-| `KmacXof128` / `KmacXof256` | not mapped | Keep `sha3-kmac` for KMACXOF |
+| `sha3-kmac` type            | rscrypto type | Security                     |
+| --------------------------- | ------------- | ---------------------------- |
+| `Kmac128`                   | `Kmac128`     | 128-bit                      |
+| `Kmac256`                   | `Kmac256`     | 256-bit                      |
+| `KmacXof128` / `KmacXof256` | not mapped    | Keep `sha3-kmac` for KMACXOF |
 
 ## API patterns
 
@@ -64,10 +64,10 @@ let tag: [u8; 32] = Kmac256::mac_array(key, custom, data);
 
 Two changes:
 
-| `sha3-kmac` | rscrypto |
-|---|---|
+| `sha3-kmac`                                                                               | rscrypto                                                                                                 |
+| ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `Kmac256::new(key, custom)` returns `Result<Self, InvalidLength>` (key < 32 bytes errors) | `Kmac256::new(key, custom)` is infallible (no minimum key size enforced; SP 800-185 leaves it to caller) |
-| `k.finalize_into(&mut tag)` consumes `k` | `Kmac256::mac_into(...)` and the streaming `.finalize_into(&mut [u8])` borrow |
+| `k.finalize_into(&mut tag)` consumes `k`                                                  | `Kmac256::mac_into(...)` and the streaming `.finalize_into(&mut [u8])` borrow                            |
 
 If your code relied on `sha3-kmac` rejecting keys shorter than 32 bytes, port
 that application policy explicitly:

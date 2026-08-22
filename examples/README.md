@@ -95,17 +95,17 @@ surface requires the opt-in `diag` feature.
 
 ## Pattern reference
 
-| To do this | See |
-|---|---|
-| Hash data (one-shot or streaming) | `basic` (digest section) |
-| Compute and verify a MAC | `basic` (auth section) |
-| Encrypt and decrypt with AEAD | `aead_seal_open`, `basic` (AEAD section) |
-| Sign and verify messages | `signatures`, `rsa_pss_verify` |
-| Encapsulate and decapsulate a KEM shared secret | `mlkem_encapsulation` |
-| Hash a password and verify safely | `password_hashing` |
-| Process a large file in parallel | `parallel` |
-| Inspect runtime backend selection | `introspect` |
-| Stream a digest through `std::io::Read` | `basic` (I/O adapters section) |
+| To do this                                      | See                                      |
+| ----------------------------------------------- | ---------------------------------------- |
+| Hash data (one-shot or streaming)               | `basic` (digest section)                 |
+| Compute and verify a MAC                        | `basic` (auth section)                   |
+| Encrypt and decrypt with AEAD                   | `aead_seal_open`, `basic` (AEAD section) |
+| Sign and verify messages                        | `signatures`, `rsa_pss_verify`           |
+| Encapsulate and decapsulate a KEM shared secret | `mlkem_encapsulation`                    |
+| Hash a password and verify safely               | `password_hashing`                       |
+| Process a large file in parallel                | `parallel`                               |
+| Inspect runtime backend selection               | `introspect`                             |
+| Stream a digest through `std::io::Read`         | `basic` (I/O adapters section)           |
 
 ## Beyond examples
 

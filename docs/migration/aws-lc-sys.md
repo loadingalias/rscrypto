@@ -8,11 +8,11 @@ FFI surface for AWS-LC; rscrypto exposes safe Rust primitive APIs.
 If your code uses `aws-lc-sys` directly, first identify the safe operation you
 need:
 
-| `aws-lc-sys` use | Better migration target |
-|---|---|
-| Hashing, MAC, KDF, AEAD, signatures, X25519, RSA verify | rscrypto primitive APIs |
-| TLS provider integration | keep AWS-LC through `aws-lc-rs` / your TLS stack |
-| Raw BIGNUM, ASN.1, EVP, provider, engine, or FIPS-module plumbing | keep AWS-LC/OpenSSL-family bindings |
+| `aws-lc-sys` use                                                  | Better migration target                          |
+| ----------------------------------------------------------------- | ------------------------------------------------ |
+| Hashing, MAC, KDF, AEAD, signatures, X25519, RSA verify           | rscrypto primitive APIs                          |
+| TLS provider integration                                          | keep AWS-LC through `aws-lc-rs` / your TLS stack |
+| Raw BIGNUM, ASN.1, EVP, provider, engine, or FIPS-module plumbing | keep AWS-LC/OpenSSL-family bindings              |
 
 ## Notes
 

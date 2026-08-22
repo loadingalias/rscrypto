@@ -17,18 +17,18 @@ rscrypto = { version = "0.8.1", default-features = false, features = ["sha2", "h
 
 ## Map
 
-| `aws-lc-rs` | rscrypto | Status |
-|---|---|---|
-| `digest::{SHA256, SHA384, SHA512}` | `Sha256`, `Sha384`, `Sha512` | Supported |
-| `hmac::{HMAC_SHA256, HMAC_SHA384, HMAC_SHA512}` | `HmacSha256`, `HmacSha384`, `HmacSha512` | Supported |
-| `hkdf::{HKDF_SHA256, HKDF_SHA384}` | `HkdfSha256`, `HkdfSha384` | Supported |
-| `pbkdf2::{PBKDF2_HMAC_SHA256, PBKDF2_HMAC_SHA512}` | `Pbkdf2Sha256`, `Pbkdf2Sha512` | Supported |
-| `aead::{AES_128_GCM, AES_256_GCM, CHACHA20_POLY1305}` | `Aes128Gcm`, `Aes256Gcm`, `ChaCha20Poly1305` | Supported |
-| Ed25519 signing / verification | `Ed25519SecretKey`, `Ed25519PublicKey` | Supported |
-| X25519 agreement | `X25519SecretKey`, `X25519PublicKey` | Supported |
-| RSA-PSS / RSASSA-PKCS1-v1_5 verification | `RsaPublicKey`, `RsaPssProfile`, `RsaPkcs1v15Profile` | Supported |
-| ECDSA P-256/P-384 SHA-2 signing and verification | `EcdsaP256SecretKey`, `EcdsaP384SecretKey`, `EcdsaP256PublicKey`, `EcdsaP384PublicKey` | Supported for raw and DER signatures |
-| ML-DSA, TLS helpers, provider configuration, FIPS mode | none | Keep `aws-lc-rs` |
+| `aws-lc-rs`                                            | rscrypto                                                                               | Status                               |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------- | ------------------------------------ |
+| `digest::{SHA256, SHA384, SHA512}`                     | `Sha256`, `Sha384`, `Sha512`                                                           | Supported                            |
+| `hmac::{HMAC_SHA256, HMAC_SHA384, HMAC_SHA512}`        | `HmacSha256`, `HmacSha384`, `HmacSha512`                                               | Supported                            |
+| `hkdf::{HKDF_SHA256, HKDF_SHA384}`                     | `HkdfSha256`, `HkdfSha384`                                                             | Supported                            |
+| `pbkdf2::{PBKDF2_HMAC_SHA256, PBKDF2_HMAC_SHA512}`     | `Pbkdf2Sha256`, `Pbkdf2Sha512`                                                         | Supported                            |
+| `aead::{AES_128_GCM, AES_256_GCM, CHACHA20_POLY1305}`  | `Aes128Gcm`, `Aes256Gcm`, `ChaCha20Poly1305`                                           | Supported                            |
+| Ed25519 signing / verification                         | `Ed25519SecretKey`, `Ed25519PublicKey`                                                 | Supported                            |
+| X25519 agreement                                       | `X25519SecretKey`, `X25519PublicKey`                                                   | Supported                            |
+| RSA-PSS / RSASSA-PKCS1-v1_5 verification               | `RsaPublicKey`, `RsaPssProfile`, `RsaPkcs1v15Profile`                                  | Supported                            |
+| ECDSA P-256/P-384 SHA-2 signing and verification       | `EcdsaP256SecretKey`, `EcdsaP384SecretKey`, `EcdsaP256PublicKey`, `EcdsaP384PublicKey` | Supported for raw and DER signatures |
+| ML-DSA, TLS helpers, provider configuration, FIPS mode | none                                                                                   | Keep `aws-lc-rs`                     |
 
 ## Digest
 

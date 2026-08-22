@@ -7,11 +7,11 @@ Evidence: `tests/sha2_official_vectors.rs`, `tests/sha256_differential.rs`, and 
 
 ## TL;DR
 
-| | Before (`sha2` 0.11.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `sha2 = "0.11"` | `rscrypto = { version = "0.8.1", features = ["sha2"] }` |
-| Import | `use sha2::{Sha256, Digest};` | `use rscrypto::Sha256;` |
-| Call | `Sha256::digest(data)` | `Sha256::digest(data)` |
+|           | Before (`sha2` 0.11.x)        | After (`rscrypto` 0.8.1)                                |
+| --------- | ----------------------------- | ------------------------------------------------------- |
+| Cargo dep | `sha2 = "0.11"`               | `rscrypto = { version = "0.8.1", features = ["sha2"] }` |
+| Import    | `use sha2::{Sha256, Digest};` | `use rscrypto::Sha256;`                                 |
+| Call      | `Sha256::digest(data)`        | `Sha256::digest(data)`                                  |
 
 ## Cargo.toml
 
@@ -29,12 +29,12 @@ rscrypto = { version = "0.8.1", features = ["sha2"] }
 
 ## Algorithm map
 
-| `sha2` type | rscrypto type | Output |
-|---|---|---|
-| `sha2::Sha224` | `rscrypto::Sha224` | `[u8; 28]` |
-| `sha2::Sha256` | `rscrypto::Sha256` | `[u8; 32]` |
-| `sha2::Sha384` | `rscrypto::Sha384` | `[u8; 48]` |
-| `sha2::Sha512` | `rscrypto::Sha512` | `[u8; 64]` |
+| `sha2` type        | rscrypto type          | Output     |
+| ------------------ | ---------------------- | ---------- |
+| `sha2::Sha224`     | `rscrypto::Sha224`     | `[u8; 28]` |
+| `sha2::Sha256`     | `rscrypto::Sha256`     | `[u8; 32]` |
+| `sha2::Sha384`     | `rscrypto::Sha384`     | `[u8; 48]` |
+| `sha2::Sha512`     | `rscrypto::Sha512`     | `[u8; 64]` |
 | `sha2::Sha512_256` | `rscrypto::Sha512_256` | `[u8; 32]` |
 
 `sha2::Sha512_224` is not mapped; keep RustCrypto SHA-2 for that variant.

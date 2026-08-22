@@ -29,14 +29,14 @@ every listed backend. A target-specific candidate is eligible only when it wins
 representative target-native measurements. Otherwise dispatch uses a proven
 lower tier, including portable Rust.
 
-| Target family | Backends used (when CPU advertises them) |
-|---|---|
-| x86_64 | SSE4.2 CRC32; SSSE3 / PCLMULQDQ; AVX2; AES-NI; SHA-NI; AVX-512F / VL / BW / DQ; AVX-512IFMA; VPCLMULQDQ; VAES |
-| aarch64 / Apple Silicon | NEON; AES; PMULL; CRC; SHA2; SHA3 / EOR3; SHA512; SVE2-PMULL where available |
-| s390x (IBM Z) | z/Vector; vector enhancements; CPACF / MSA; VGFM; fixed-work ML-KEM arithmetic |
-| ppc64le (POWER) | AltiVec; VSX; POWER8 vector / crypto and atomics; POWER9 / POWER10 vector; VPMSUMD |
-| riscv64 | V / RVV; Zbc; Zvbc; Zbkc; Zkne / Zknd; Zvkned; Zkt / Zvkt |
-| wasm32 | SIMD128 where enabled |
+| Target family           | Backends used (when CPU advertises them)                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------- |
+| x86_64                  | SSE4.2 CRC32; SSSE3 / PCLMULQDQ; AVX2; AES-NI; SHA-NI; AVX-512F / VL / BW / DQ; AVX-512IFMA; VPCLMULQDQ; VAES |
+| aarch64 / Apple Silicon | NEON; AES; PMULL; CRC; SHA2; SHA3 / EOR3; SHA512; SVE2-PMULL where available                                  |
+| s390x (IBM Z)           | z/Vector; vector enhancements; CPACF / MSA; VGFM; fixed-work ML-KEM arithmetic                                |
+| ppc64le (POWER)         | AltiVec; VSX; POWER8 vector / crypto and atomics; POWER9 / POWER10 vector; VPMSUMD                            |
+| riscv64                 | V / RVV; Zbc; Zvbc; Zbkc; Zkne / Zknd; Zvkned; Zkt / Zvkt                                                     |
+| wasm32                  | SIMD128 where enabled                                                                                         |
 
 ECDSA P-256/P-384 always has a portable Rust path. x86_64 and aarch64 targets
 also use assembly helpers for selected scalar, field, and basepoint operations

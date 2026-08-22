@@ -18,18 +18,18 @@ rscrypto = { version = "0.8.1", default-features = false, features = ["sha2", "h
 
 ## Map
 
-| `ring` | rscrypto | Status |
-|---|---|---|
-| `digest::{SHA256, SHA384, SHA512}` | `Sha256`, `Sha384`, `Sha512` | Supported |
-| `hmac::{HMAC_SHA256, HMAC_SHA384, HMAC_SHA512}` | `HmacSha256`, `HmacSha384`, `HmacSha512` | Supported |
-| `hkdf::{HKDF_SHA256, HKDF_SHA384}` | `HkdfSha256`, `HkdfSha384` | Supported |
-| `pbkdf2::{PBKDF2_HMAC_SHA256, PBKDF2_HMAC_SHA512}` | `Pbkdf2Sha256`, `Pbkdf2Sha512` | Supported |
-| `aead::{AES_128_GCM, AES_256_GCM, CHACHA20_POLY1305}` | `Aes128Gcm`, `Aes256Gcm`, `ChaCha20Poly1305` | Supported |
-| `signature::Ed25519KeyPair` | `Ed25519SecretKey`, `Ed25519PublicKey` | Supported |
-| ECDSA P-256/P-384 SHA-2 signing and verification | `EcdsaP256SecretKey`, `EcdsaP384SecretKey`, `EcdsaP256PublicKey`, `EcdsaP384PublicKey` | Supported for raw and DER signatures |
-| RSA-PSS / RSASSA-PKCS1-v1_5 public verification | `RsaPublicKey` profiles | Supported |
-| X25519 agreement | `X25519SecretKey` | Not a direct call-site migration; `ring` is ephemeral-agreement shaped |
-| ECDH P-256/P-384, random, TLS wrappers | none | Keep `ring` or another protocol crate |
+| `ring`                                                | rscrypto                                                                               | Status                                                                 |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `digest::{SHA256, SHA384, SHA512}`                    | `Sha256`, `Sha384`, `Sha512`                                                           | Supported                                                              |
+| `hmac::{HMAC_SHA256, HMAC_SHA384, HMAC_SHA512}`       | `HmacSha256`, `HmacSha384`, `HmacSha512`                                               | Supported                                                              |
+| `hkdf::{HKDF_SHA256, HKDF_SHA384}`                    | `HkdfSha256`, `HkdfSha384`                                                             | Supported                                                              |
+| `pbkdf2::{PBKDF2_HMAC_SHA256, PBKDF2_HMAC_SHA512}`    | `Pbkdf2Sha256`, `Pbkdf2Sha512`                                                         | Supported                                                              |
+| `aead::{AES_128_GCM, AES_256_GCM, CHACHA20_POLY1305}` | `Aes128Gcm`, `Aes256Gcm`, `ChaCha20Poly1305`                                           | Supported                                                              |
+| `signature::Ed25519KeyPair`                           | `Ed25519SecretKey`, `Ed25519PublicKey`                                                 | Supported                                                              |
+| ECDSA P-256/P-384 SHA-2 signing and verification      | `EcdsaP256SecretKey`, `EcdsaP384SecretKey`, `EcdsaP256PublicKey`, `EcdsaP384PublicKey` | Supported for raw and DER signatures                                   |
+| RSA-PSS / RSASSA-PKCS1-v1_5 public verification       | `RsaPublicKey` profiles                                                                | Supported                                                              |
+| X25519 agreement                                      | `X25519SecretKey`                                                                      | Not a direct call-site migration; `ring` is ephemeral-agreement shaped |
+| ECDH P-256/P-384, random, TLS wrappers                | none                                                                                   | Keep `ring` or another protocol crate                                  |
 
 ## Digest
 

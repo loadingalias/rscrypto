@@ -49,7 +49,7 @@ require_changelog_entries = false
 require_release_notes = true
 release_notes_dir = "release-notes"
 pre_1_breaking_bump = "minor"
-unconventional_commits = "allow"  # Required .changes files own bumps and user-facing release notes.
+unconventional_commits = "allow" # Required .changes files own bumps and user-facing release notes.
 semver_check = "warn"
 change_dir = ".changes"
 require_change_files = ["rscrypto"]
@@ -58,16 +58,16 @@ remote_effects = "push" # Release automation pushes commits/tags; the repository
 [release.changelog]
 path = "CHANGELOG.md"
 relative_to = "workspace"
-entry_format = "- {scope}{breaking}{description}{prs} ({sha_link})"  # Entry placeholders: scope, breaking, description, prs, sha, sha_link, type
-emoji = true  # Render emoji in changelog section headers
-group_order = []  # Render reviewed .changes entries only; commit subjects are not release notes.
-fallback = "skip"  # Drop commit-derived entries.
+entry_format = "- {scope}{breaking}{description}{prs} ({sha_link})" # Entry placeholders: scope, breaking, description, prs, sha, sha_link, type
+emoji = true # Render emoji in changelog section headers
+group_order = [] # Render reviewed .changes entries only; commit subjects are not release notes.
+fallback = "skip" # Drop commit-derived entries.
 
 [release.changelog.filters]
 skip_types = ["chore", "ci"]
 skip_scopes = []
-include_paths = []  # Optional changelog attribution include globs
-exclude_paths = []  # Optional changelog attribution exclude globs
+include_paths = [] # Optional changelog attribution include globs
+exclude_paths = [] # Optional changelog attribution exclude globs
 
 
 [change-detection]

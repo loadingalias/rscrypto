@@ -20,14 +20,14 @@ rscrypto = { version = "0.8.1", default-features = false, features = ["sha2", "h
 
 ## Map
 
-| OpenSSL use | rscrypto | Status |
-|---|---|---|
-| SHA-2 / SHA-3 / BLAKE2 hashing | hash types | Supported primitive replacement |
-| HMAC / HKDF / PBKDF2 | auth types | Supported primitive replacement |
-| AES-GCM, ChaCha20-Poly1305 | AEAD types | Supported primitive replacement |
-| Ed25519, X25519 | auth key types | Supported primitive replacement |
-| RSA-PSS, RSASSA-PKCS1-v1_5, OAEP, RSAES-PKCS1-v1_5 | RSA key/profile APIs | Supported for implemented profiles |
-| TLS, X.509 path validation, engines, providers, CMS, PKCS#12, OCSP | none | Keep OpenSSL or a protocol crate |
+| OpenSSL use                                                        | rscrypto             | Status                             |
+| ------------------------------------------------------------------ | -------------------- | ---------------------------------- |
+| SHA-2 / SHA-3 / BLAKE2 hashing                                     | hash types           | Supported primitive replacement    |
+| HMAC / HKDF / PBKDF2                                               | auth types           | Supported primitive replacement    |
+| AES-GCM, ChaCha20-Poly1305                                         | AEAD types           | Supported primitive replacement    |
+| Ed25519, X25519                                                    | auth key types       | Supported primitive replacement    |
+| RSA-PSS, RSASSA-PKCS1-v1_5, OAEP, RSAES-PKCS1-v1_5                 | RSA key/profile APIs | Supported for implemented profiles |
+| TLS, X.509 path validation, engines, providers, CMS, PKCS#12, OCSP | none                 | Keep OpenSSL or a protocol crate   |
 
 ## Practical Path
 

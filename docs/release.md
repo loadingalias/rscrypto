@@ -30,7 +30,7 @@ never run `cargo publish` locally.
    lockfiles, and pushes that follow-up commit. It does not tag or publish.
    The adapter is required because Cargo Rail does not yet include auxiliary
    workspace lockfiles in its release mutation. Running `cargo rail release
-   run rscrypto --bump auto --yes --pr` directly would leave the CT workspaces
+run rscrypto --bump auto --yes --pr` directly would leave the CT workspaces
    stale under `--locked`.
 
 3. Wait for the release pull request's required `Complete` check. Review the
@@ -80,15 +80,15 @@ never run `cargo publish` locally.
 
 ## Why each gate exists
 
-| Gate | What it prevents |
-|---|---|
-| Release pull request | An unreviewed version or changelog mutation reaching protected `main`. |
-| Exact-commit Weekly release mode | Tagging a candidate without an explicitly requested full suite, compiler-backed Cargo graph assurance, raw CT artifacts, and complete CT/RSA gates. |
-| Weekly and RISC-V evidence | Publishing cryptographic claims without the required platform and timing evidence. |
-| Signed immutable tag | Moving a released version to different source later. |
-| Immutable, attested GitHub Release | Publishing artifacts that cannot be tied back to the tag and build. |
-| Environment approval | A tag or compromised workflow publishing to crates.io without a final human decision. |
-| Trusted Publishing | Long-lived crates.io credentials becoming a repository secret. |
+| Gate                               | What it prevents                                                                                                                                    |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Release pull request               | An unreviewed version or changelog mutation reaching protected `main`.                                                                              |
+| Exact-commit Weekly release mode   | Tagging a candidate without an explicitly requested full suite, compiler-backed Cargo graph assurance, raw CT artifacts, and complete CT/RSA gates. |
+| Weekly and RISC-V evidence         | Publishing cryptographic claims without the required platform and timing evidence.                                                                  |
+| Signed immutable tag               | Moving a released version to different source later.                                                                                                |
+| Immutable, attested GitHub Release | Publishing artifacts that cannot be tied back to the tag and build.                                                                                 |
+| Environment approval               | A tag or compromised workflow publishing to crates.io without a final human decision.                                                               |
+| Trusted Publishing                 | Long-lived crates.io credentials becoming a repository secret.                                                                                      |
 
 Pull-request CI answers "may this change merge?" once. Scheduled Weekly assurance
 keeps routine safety coverage current with compact, short-lived reports. Only a
@@ -99,12 +99,12 @@ manually dispatched exact-commit Weekly release run and RISC-V evidence answer
 
 Configure the crate on crates.io:
 
-| Field | Value |
-|---|---|
-| Repository owner | `loadingalias` |
-| Repository name | `rscrypto` |
+| Field             | Value          |
+| ----------------- | -------------- |
+| Repository owner  | `loadingalias` |
+| Repository name   | `rscrypto`     |
 | Workflow filename | `release.yaml` |
-| Environment | `crates-io` |
+| Environment       | `crates-io`    |
 
 After the first successful Trusted Publishing release, enable crates.io
 Trusted Publishing Only Mode for `rscrypto`. That disables traditional API

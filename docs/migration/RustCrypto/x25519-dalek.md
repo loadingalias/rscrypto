@@ -10,11 +10,11 @@ Evidence: `tests/x25519_vectors.rs`, `tests/x25519_oracle.rs`, and `tests/x25519
 
 ## TL;DR
 
-| | Before (`x25519-dalek` 3.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `x25519-dalek = { version = "3.0", features = ["static_secrets"] }` | `rscrypto = { version = "0.8.1", features = ["x25519"] }` |
-| Import | `use x25519_dalek::{StaticSecret, PublicKey};` | `use rscrypto::{X25519SecretKey, X25519PublicKey};` |
-| DH | `secret.diffie_hellman(&peer_pub)` (returns `SharedSecret`) | `secret.diffie_hellman(&peer_pub)?` (returns `Result<X25519SharedSecret, _>`) |
+|           | Before (`x25519-dalek` 3.x)                                         | After (`rscrypto` 0.8.1)                                                      |
+| --------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Cargo dep | `x25519-dalek = { version = "3.0", features = ["static_secrets"] }` | `rscrypto = { version = "0.8.1", features = ["x25519"] }`                     |
+| Import    | `use x25519_dalek::{StaticSecret, PublicKey};`                      | `use rscrypto::{X25519SecretKey, X25519PublicKey};`                           |
+| DH        | `secret.diffie_hellman(&peer_pub)` (returns `SharedSecret`)         | `secret.diffie_hellman(&peer_pub)?` (returns `Result<X25519SharedSecret, _>`) |
 
 ## Cargo.toml
 
@@ -34,12 +34,12 @@ The `x25519` feature has no transitive dependencies: X25519 needs nothing beyond
 
 ## Type map
 
-| `x25519-dalek` type | rscrypto type | Notes |
-|---|---|---|
-| `StaticSecret` | `X25519SecretKey` | reusable scalar; zeroizes on drop |
-| `EphemeralSecret` | `X25519SecretKey` | rscrypto unifies the two: see "Ephemeral vs static" below |
-| `PublicKey` | `X25519PublicKey` | 32-byte little-endian Montgomery u-coordinate |
-| `SharedSecret` | `X25519SharedSecret` | zeroizes on drop |
+| `x25519-dalek` type | rscrypto type        | Notes                                                     |
+| ------------------- | -------------------- | --------------------------------------------------------- |
+| `StaticSecret`      | `X25519SecretKey`    | reusable scalar; zeroizes on drop                         |
+| `EphemeralSecret`   | `X25519SecretKey`    | rscrypto unifies the two: see "Ephemeral vs static" below |
+| `PublicKey`         | `X25519PublicKey`    | 32-byte little-endian Montgomery u-coordinate             |
+| `SharedSecret`      | `X25519SharedSecret` | zeroizes on drop                                          |
 
 ## API patterns
 

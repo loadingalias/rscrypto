@@ -3,8 +3,8 @@
 The vectors in this directory come from the Ascon reference implementation at
 `ascon/ascon-c` commit `446347f21b209f3921c65ece70027c366cbe1693`:
 
-| Local file | Upstream file | SHA-256 |
-| --- | --- | --- |
+| Local file         | Upstream file                                       | SHA-256                                                            |
+| ------------------ | --------------------------------------------------- | ------------------------------------------------------------------ |
 | `asconaead128.txt` | `crypto_aead/asconaead128/LWC_AEAD_KAT_128_128.txt` | `bbbc34692fe05e5fda0a3b025585622ab3e3747495e5e3655b29aae8c2a4bd33` |
 | `asconcxof128.txt` | `crypto_cxof/asconcxof128/LWC_CXOF_KAT_128_512.txt` | `abcbb0cc851a7f9cfc5ea2bcaf3eba5b2056e37fcb8ce541ceda1d1b960fc9dc` |
 

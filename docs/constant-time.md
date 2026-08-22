@@ -113,13 +113,13 @@ The release workflow requires native evidence for these LLVM-generated target
 classes. A row is covered only when it appears as a passing lane in the
 matching release bundle:
 
-| Target class | Required release evidence |
-|---|---|
-| Linux `x86_64-unknown-linux-gnu` | Artifact review, generated-code heuristics, empirical timing tests, and binary checks where supported. |
-| Linux `aarch64-unknown-linux-gnu` | Artifact review, generated-code heuristics, empirical timing tests, and binary checks where supported. |
-| Linux `riscv64gc-unknown-linux-gnu` | Artifact review, generated-code heuristics, and empirical timing tests. |
-| Linux `s390x-unknown-linux-gnu` | Artifact review, generated-code heuristics, and empirical timing tests. |
-| Linux `powerpc64le-unknown-linux-gnu` | Artifact review, generated-code heuristics, and empirical timing tests. |
+| Target class                          | Required release evidence                                                                              |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Linux `x86_64-unknown-linux-gnu`      | Artifact review, generated-code heuristics, empirical timing tests, and binary checks where supported. |
+| Linux `aarch64-unknown-linux-gnu`     | Artifact review, generated-code heuristics, empirical timing tests, and binary checks where supported. |
+| Linux `riscv64gc-unknown-linux-gnu`   | Artifact review, generated-code heuristics, and empirical timing tests.                                |
+| Linux `s390x-unknown-linux-gnu`       | Artifact review, generated-code heuristics, and empirical timing tests.                                |
+| Linux `powerpc64le-unknown-linux-gnu` | Artifact review, generated-code heuristics, and empirical timing tests.                                |
 
 Release CI exercises multiple x86_64 and AArch64 microarchitectures. The exact
 CPU, target features, compiler, linker, tools, and artifact hashes are recorded

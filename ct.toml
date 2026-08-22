@@ -192,7 +192,11 @@ limited_call_count = 0
 id = "rsa.public_modulus_and_profile_shapes"
 source = "src/auth/rsa.rs"
 call_count = 12
-operations = ["rsa.private_key_import_export_and_generation", "rsa.private_sign_and_decrypt", "rsa.public_operations"]
+operations = [
+  "rsa.private_key_import_export_and_generation",
+  "rsa.private_sign_and_decrypt",
+  "rsa.public_operations",
+]
 public_length = "Widths derive from the public modulus, digest algorithm, DER/padding profile, or caller-visible encoded length."
 secret_contents = "Private representatives, decoded plaintext/hash fields, or validation intermediates are compared without content-dependent exits after public shape checks."
 tests = "RSA official/Wycheproof/differential/private-operation tests and RSA CT harness/DudeCT cases."
@@ -231,7 +235,11 @@ operations = ["password.argon2i", "password.argon2d_and_argon2id"]
 public_length = "Primitive verification derives exactly the caller-supplied expected output length after public bounds checks."
 secret_contents = "The freshly derived password verifier and expected bytes are traversed fully before the temporary is cleared."
 tests = "Argon2 vectors/differentials/parallel tests and variant CT harness/DudeCT cases."
-evidence_symbols = ["ct_entry_argon2i_verify", "ct_entry_argon2d_verify", "ct_entry_argon2id_verify"]
+evidence_symbols = [
+  "ct_entry_argon2i_verify",
+  "ct_entry_argon2d_verify",
+  "ct_entry_argon2id_verify",
+]
 evidenced_call_count = 1
 limited_call_count = 0
 
@@ -2967,7 +2975,9 @@ features = ["algorithm owner feature"]
 targets = ["all-supported"]
 secret_inputs = ["left owner bytes", "right owner bytes"]
 public_inputs = ["concrete owner type and fixed size"]
-variable_time_components = ["none at the Rust source boundary; optimized lowering is target-specific evidence"]
+variable_time_components = [
+  "none at the Rust source boundary; optimized lowering is target-specific evidence",
+]
 permitted_leakage = ["owner type", "fixed owner size", "explicitly declassified equality result"]
 claim = "ct-intended"
 evidence = [
@@ -2990,10 +3000,16 @@ features = ["always", "alloc for SecretVec"]
 targets = ["all-supported"]
 secret_inputs = ["wrapped bytes", "bytes being cleared"]
 public_inputs = ["wrapper size", "allocation length", "explicit exposure request"]
-variable_time_components = ["public-length copy and clear loops", "allocator behavior for SecretVec extraction/drop"]
+variable_time_components = [
+  "public-length copy and clear loops",
+  "allocator behavior for SecretVec extraction/drop",
+]
 permitted_leakage = ["wrapper type", "public length", "explicitly exposed bytes"]
 claim = "best-effort"
-evidence = ["primitive:secret_wrappers.exposure_and_display", "harness:ct_entry_secret_bytes32_debug_masked"]
+evidence = [
+  "primitive:secret_wrappers.exposure_and_display",
+  "harness:ct_entry_secret_bytes32_debug_masked",
+]
 limitation = "SecretBytes and SecretVec intentionally provide no equality. Explicit extraction transfers secret-lifecycle responsibility to the caller; zeroization evidence is maintained separately from timing claims."
 
 [[operation]]
@@ -3008,8 +3024,17 @@ features = ["algorithm owner feature", "getrandom", "serde-secrets"]
 targets = ["all-supported"]
 secret_inputs = ["raw secret bytes", "generated entropy", "serialized secret material"]
 public_inputs = ["concrete owner type", "fixed owner size", "parse success", "exposure request"]
-variable_time_components = ["entropy-source latency", "public parse/feature paths", "explicit formatting and serialization"]
-permitted_leakage = ["owner type", "fixed size", "construction success", "caller-authorized secret exposure"]
+variable_time_components = [
+  "entropy-source latency",
+  "public parse/feature paths",
+  "explicit formatting and serialization",
+]
+permitted_leakage = [
+  "owner type",
+  "fixed size",
+  "construction success",
+  "caller-authorized secret exposure",
+]
 claim = "best-effort"
 evidence = ["primitive:secret_wrappers.exposure_and_display"]
 limitation = "display_secret, expose_secret, AsRef/as_bytes, and serde-secrets are explicit escape hatches. Debug remains masked; the manifest does not claim that authorized formatting or serialization hides the secret."
@@ -3021,14 +3046,27 @@ api = [
   "rscrypto::{Aes128Gcm,Aes256Gcm,Aes128GcmSiv,Aes256GcmSiv,ChaCha20Poly1305,XChaCha20Poly1305,Aegis256,AsconAead128}::{new,encrypt_in_place,encrypt}",
   "rscrypto::NonceCounter::*::encrypt*",
 ]
-features = ["aead algorithm feature", "alloc/std for allocating helpers", "getrandom for random nonces"]
+features = [
+  "aead algorithm feature",
+  "alloc/std for allocating helpers",
+  "getrandom for random nonces",
+]
 targets = ["all-supported", "backend selected by public target capabilities"]
 secret_inputs = ["key", "plaintext", "derived authentication/encryption subkeys", "cipher state"]
 public_inputs = ["nonce", "AAD", "plaintext length", "output capacity", "backend capabilities"]
-variable_time_components = ["public-length loops", "public buffer errors", "public backend dispatch", "entropy-source latency for random nonces"]
+variable_time_components = [
+  "public-length loops",
+  "public buffer errors",
+  "public backend dispatch",
+  "entropy-source latency for random nonces",
+]
 permitted_leakage = ["algorithm", "lengths", "nonce", "AAD", "backend", "opaque success/failure"]
 claim = "ct-intended"
-evidence = ["primitive:aead.symmetric_transform", "unit:aead.symmetric_transform.aes128gcm", "unit:aead.symmetric_transform.chacha20poly1305"]
+evidence = [
+  "primitive:aead.symmetric_transform",
+  "unit:aead.symmetric_transform.aes128gcm",
+  "unit:aead.symmetric_transform.chacha20poly1305",
+]
 limitation = "Release claims require exact target artifacts. Random-nonce helper timing includes the platform entropy source."
 
 [[operation]]
@@ -3041,10 +3079,20 @@ features = ["aead algorithm feature", "alloc/std for allocating helpers"]
 targets = ["all-supported", "backend selected by public target capabilities"]
 secret_inputs = ["key", "derived authentication/encryption subkeys", "authenticated plaintext"]
 public_inputs = ["nonce", "AAD", "ciphertext", "tag owner", "lengths", "backend capabilities"]
-variable_time_components = ["public-length loops", "public buffer-shape rejection", "public backend dispatch", "opaque authentication result"]
+variable_time_components = [
+  "public-length loops",
+  "public buffer-shape rejection",
+  "public backend dispatch",
+  "opaque authentication result",
+]
 permitted_leakage = ["algorithm", "lengths", "nonce", "AAD", "backend", "opaque success/failure"]
 claim = "ct-intended"
-evidence = ["primitive:aead.open_authentication", "primitive:aead.symmetric_transform", "unit:aead.open_authentication.aes128gcm", "unit:aead.open_authentication.ascon_aead128"]
+evidence = [
+  "primitive:aead.open_authentication",
+  "primitive:aead.symmetric_transform",
+  "unit:aead.open_authentication.aes128gcm",
+  "unit:aead.open_authentication.ascon_aead128",
+]
 limitation = "The bool-like authentication decision is surfaced only as an opaque Result, but exact release-machine-code evidence remains T3.3 work."
 
 [[operation]]
@@ -3077,7 +3125,12 @@ public_inputs = ["message length", "algorithm", "backend capabilities"]
 variable_time_components = ["public message-length loops", "public backend dispatch"]
 permitted_leakage = ["algorithm", "message length", "backend", "returned tag"]
 claim = "ct-intended"
-evidence = ["primitive:mac.hmac_verify", "primitive:mac.kmac256_verify", "harness:ct_entry_hmac_sha256_verify", "harness:ct_entry_kmac256_verify"]
+evidence = [
+  "primitive:mac.hmac_verify",
+  "primitive:mac.kmac256_verify",
+  "harness:ct_entry_hmac_sha256_verify",
+  "harness:ct_entry_kmac256_verify",
+]
 limitation = "The HMAC verification evidence computes and finalizes HMAC-SHA-2; the KMAC evidence covers KMAC256. Other MAC variants and downstream Mac implementations are inventoried separately without generated-code evidence."
 
 [[operation]]
@@ -3090,24 +3143,35 @@ features = ["hmac-sha3", "kmac", "poly1305", "alloc/std for Vec/IoSlice helpers"
 targets = ["all-supported", "backend selected by public target capabilities"]
 secret_inputs = ["MAC key", "MAC state", "message when caller classifies it secret", "computed tag"]
 public_inputs = ["message length", "algorithm", "backend capabilities"]
-variable_time_components = ["public message-length loops", "public backend dispatch", "allocation for Vec helpers"]
+variable_time_components = [
+  "public message-length loops",
+  "public backend dispatch",
+  "allocation for Vec helpers",
+]
 permitted_leakage = ["algorithm", "message length", "backend", "returned tag"]
 claim = "best-effort"
 limitation = "No generated-code unit currently covers HMAC-SHA-3, KMAC128, standalone Poly1305, allocating trait helpers, or downstream Mac implementations. This row records source intent only."
 
 [[operation]]
 id = "mac.verify_typed_tag"
-api = [
-  "rscrypto::{HmacSha256,HmacSha384,HmacSha512}::{verify,verify_tag}",
-]
+api = ["rscrypto::{HmacSha256,HmacSha384,HmacSha512}::{verify,verify_tag}"]
 features = ["hmac"]
 targets = ["all-supported"]
 secret_inputs = ["MAC key/state", "computed tag"]
 public_inputs = ["message", "typed expected tag", "public lengths"]
-variable_time_components = ["MAC computation over public length", "sealed fixed-owner comparison", "opaque result conversion"]
+variable_time_components = [
+  "MAC computation over public length",
+  "sealed fixed-owner comparison",
+  "opaque result conversion",
+]
 permitted_leakage = ["message length", "tag size", "opaque verification result"]
 claim = "ct-intended"
-evidence = ["primitive:mac.hmac_verify", "unit:mac.hmac_verify.sha256", "unit:mac.hmac_verify.sha384", "unit:mac.hmac_verify.sha512"]
+evidence = [
+  "primitive:mac.hmac_verify",
+  "unit:mac.hmac_verify.sha256",
+  "unit:mac.hmac_verify.sha384",
+  "unit:mac.hmac_verify.sha512",
+]
 limitation = "Evidence is variant-specific to the three built-in HMAC-SHA-2 implementations."
 
 [[operation]]
@@ -3121,33 +3185,75 @@ features = ["hmac-sha3", "poly1305"]
 targets = ["all-supported"]
 secret_inputs = ["MAC key/state", "computed tag"]
 public_inputs = ["message", "typed expected tag", "public lengths"]
-variable_time_components = ["MAC computation over public length", "sealed fixed-owner comparison", "opaque result conversion"]
+variable_time_components = [
+  "MAC computation over public length",
+  "sealed fixed-owner comparison",
+  "opaque result conversion",
+]
 permitted_leakage = ["message length", "tag size", "opaque verification result"]
 claim = "best-effort"
 limitation = "No generated-code unit currently covers the HMAC-SHA-3 or standalone Poly1305 verification paths. Downstream Mac implementations remain an explicit evidence boundary."
 
 [[operation]]
 id = "kmac.variable_output_and_verify"
-api = ["rscrypto::Kmac256::{new,update,finalize_into,mac_into,mac_array,verify,verify_tag,verify_primitive,verify_tag_primitive}"]
+api = [
+  "rscrypto::Kmac256::{new,update,finalize_into,mac_into,mac_array,verify,verify_tag,verify_primitive,verify_tag_primitive}",
+]
 features = ["kmac", "alloc for allocating outputs"]
 targets = ["all-supported"]
 secret_inputs = ["KMAC key", "state", "computed output"]
-public_inputs = ["customization", "message", "requested output length", "expected output length", "authentication minimum policy"]
-variable_time_components = ["public-length sponge absorption/squeeze", "public authentication-length policy rejection", "public-length full-content comparison"]
-permitted_leakage = ["customization", "message/output lengths", "authentication-length policy decision", "opaque verification result"]
+public_inputs = [
+  "customization",
+  "message",
+  "requested output length",
+  "expected output length",
+  "authentication minimum policy",
+]
+variable_time_components = [
+  "public-length sponge absorption/squeeze",
+  "public authentication-length policy rejection",
+  "public-length full-content comparison",
+]
+permitted_leakage = [
+  "customization",
+  "message/output lengths",
+  "authentication-length policy decision",
+  "opaque verification result",
+]
 claim = "ct-intended"
-evidence = ["primitive:mac.kmac256_verify", "harness:ct_entry_kmac256_verify", "dudect:kmac256_valid_vs_invalid_tag"]
+evidence = [
+  "primitive:mac.kmac256_verify",
+  "harness:ct_entry_kmac256_verify",
+  "dudect:kmac256_valid_vs_invalid_tag",
+]
 limitation = "KMAC has protocol-defined variable output. The default authentication verifier rejects tags below 32 bytes; explicit primitive verification permits shorter nonempty protocol outputs. Length and the policy decision are public."
 
 [[operation]]
 id = "kmac128.variable_output_and_verify"
-api = ["rscrypto::Kmac128::{new,update,finalize_into,mac_into,mac_array,verify,verify_tag,verify_primitive,verify_tag_primitive}"]
+api = [
+  "rscrypto::Kmac128::{new,update,finalize_into,mac_into,mac_array,verify,verify_tag,verify_primitive,verify_tag_primitive}",
+]
 features = ["kmac", "alloc for allocating outputs"]
 targets = ["all-supported"]
 secret_inputs = ["KMAC key", "state", "computed output"]
-public_inputs = ["customization", "message", "requested output length", "expected output length", "authentication minimum policy"]
-variable_time_components = ["public-length sponge absorption/squeeze", "public authentication-length policy rejection", "public-length full-content comparison"]
-permitted_leakage = ["customization", "message/output lengths", "authentication-length policy decision", "opaque verification result"]
+public_inputs = [
+  "customization",
+  "message",
+  "requested output length",
+  "expected output length",
+  "authentication minimum policy",
+]
+variable_time_components = [
+  "public-length sponge absorption/squeeze",
+  "public authentication-length policy rejection",
+  "public-length full-content comparison",
+]
+permitted_leakage = [
+  "customization",
+  "message/output lengths",
+  "authentication-length policy decision",
+  "opaque verification result",
+]
 claim = "best-effort"
 limitation = "The source follows the same structure as KMAC256 and the default verifier rejects tags below 16 bytes, but no KMAC128 generated-code evidence unit currently exists."
 
@@ -3160,12 +3266,27 @@ api = [
 ]
 features = ["blake2b", "blake2s", "blake3", "parallel"]
 targets = ["all-supported", "backend selected by public target capabilities"]
-secret_inputs = ["key", "derive-key material", "keyed state", "keyed output when caller keeps it secret"]
+secret_inputs = [
+  "key",
+  "derive-key material",
+  "keyed state",
+  "keyed output when caller keeps it secret",
+]
 public_inputs = ["message", "context", "message/output lengths", "backend capabilities"]
-variable_time_components = ["public-length chunking", "public parallel threshold", "public backend dispatch", "fixed owner comparison for Blake3 verification"]
+variable_time_components = [
+  "public-length chunking",
+  "public parallel threshold",
+  "public backend dispatch",
+  "fixed owner comparison for Blake3 verification",
+]
 permitted_leakage = ["algorithm", "context", "lengths", "backend", "verification result"]
 claim = "ct-intended"
-evidence = ["primitive:keyed_hash.blake2_blake3", "primitive:keyed_hash.blake3_verify", "harness:ct_entry_blake3_keyed_digest", "harness:ct_entry_blake3_verify_keyed"]
+evidence = [
+  "primitive:keyed_hash.blake2_blake3",
+  "primitive:keyed_hash.blake3_verify",
+  "harness:ct_entry_blake3_keyed_digest",
+  "harness:ct_entry_blake3_verify_keyed",
+]
 limitation = "Keyed outputs are explicitly extractable/serializable. Only Blake3KeyedHash has a typed built-in verification path."
 
 [[operation]]
@@ -3207,9 +3328,27 @@ api = [
 features = ["pbkdf2", "alloc", "phc-strings"]
 targets = ["all-supported"]
 secret_inputs = ["password", "derived key", "computed verifier"]
-public_inputs = ["salt", "iteration count", "caller-selected maximum iteration count", "output length", "PHC string", "verification policy"]
-variable_time_components = ["public iteration count", "public output-length loops", "PHC parsing and public work-policy rejection", "public-length full-content comparison"]
-permitted_leakage = ["parameters", "salt", "lengths", "public work-policy decision", "opaque verification result"]
+public_inputs = [
+  "salt",
+  "iteration count",
+  "caller-selected maximum iteration count",
+  "output length",
+  "PHC string",
+  "verification policy",
+]
+variable_time_components = [
+  "public iteration count",
+  "public output-length loops",
+  "PHC parsing and public work-policy rejection",
+  "public-length full-content comparison",
+]
+permitted_leakage = [
+  "parameters",
+  "salt",
+  "lengths",
+  "public work-policy decision",
+  "opaque verification result",
+]
 claim = "ct-intended"
 evidence = ["primitive:kdf.pbkdf2", "unit:kdf.pbkdf2.sha256", "unit:kdf.pbkdf2.sha512"]
 limitation = "Iteration count, policy minima, and max_iterations are public. Bounded verification rejects excessive public work before constructing password-derived HMAC state; primitive and compatibility methods deliberately do not cap it."
@@ -3220,21 +3359,56 @@ api = ["rscrypto::Argon2i::{derive,derive_with_context,verify}"]
 features = ["argon2", "alloc", "parallel"]
 targets = ["all-supported", "backend selected by public target capabilities"]
 secret_inputs = ["password", "secret/pepper", "computed output", "working memory"]
-public_inputs = ["salt", "associated data", "Argon2 parameters", "output length", "backend capabilities"]
-variable_time_components = ["public resource parameters", "public output length", "allocation/thread scheduling", "public backend dispatch"]
-permitted_leakage = ["parameters", "lengths", "backend", "allocation failure", "opaque verification result"]
+public_inputs = [
+  "salt",
+  "associated data",
+  "Argon2 parameters",
+  "output length",
+  "backend capabilities",
+]
+variable_time_components = [
+  "public resource parameters",
+  "public output length",
+  "allocation/thread scheduling",
+  "public backend dispatch",
+]
+permitted_leakage = [
+  "parameters",
+  "lengths",
+  "backend",
+  "allocation failure",
+  "opaque verification result",
+]
 claim = "ct-intended"
-evidence = ["primitive:password.argon2i", "harness:ct_entry_argon2i_hash", "harness:ct_entry_argon2i_verify"]
+evidence = [
+  "primitive:password.argon2i",
+  "harness:ct_entry_argon2i_hash",
+  "harness:ct_entry_argon2i_verify",
+]
 limitation = "OS allocation and parallel scheduling are outside instruction-level CT claims."
 
 [[operation]]
 id = "password.argon2d_and_argon2id"
-api = ["rscrypto::{Argon2d,Argon2id}::{derive,derive_with_context,verify}", "rscrypto::Argon2idPassword::{hash_password,verify_password,verify_password_with_context}"]
+api = [
+  "rscrypto::{Argon2d,Argon2id}::{derive,derive_with_context,verify}",
+  "rscrypto::Argon2idPassword::{hash_password,verify_password,verify_password_with_context}",
+]
 features = ["argon2", "alloc", "parallel", "phc-strings", "getrandom"]
 targets = ["all-supported", "backend selected by public target capabilities"]
 secret_inputs = ["password", "secret/pepper", "computed output", "working memory"]
-public_inputs = ["salt", "associated data", "resource parameters", "PHC string/policy", "backend capabilities"]
-variable_time_components = ["Argon2d/Argon2id data-dependent memory addressing", "public resource parameters", "allocation/thread scheduling", "PHC parsing"]
+public_inputs = [
+  "salt",
+  "associated data",
+  "resource parameters",
+  "PHC string/policy",
+  "backend capabilities",
+]
+variable_time_components = [
+  "Argon2d/Argon2id data-dependent memory addressing",
+  "public resource parameters",
+  "allocation/thread scheduling",
+  "PHC parsing",
+]
 permitted_leakage = ["parameters", "salt", "lengths", "backend", "opaque verification result"]
 claim = "best-effort"
 evidence = ["primitive:password.argon2d_argon2id", "harness:ct_entry_argon2id_verify"]
@@ -3242,12 +3416,21 @@ limitation = "Argon2d and the data-dependent Argon2id phase intentionally use pa
 
 [[operation]]
 id = "password.scrypt"
-api = ["rscrypto::Scrypt::{derive,verify}", "rscrypto::ScryptPassword::{hash_password,verify_password}", "rscrypto::ScryptParams::*"]
+api = [
+  "rscrypto::Scrypt::{derive,verify}",
+  "rscrypto::ScryptPassword::{hash_password,verify_password}",
+  "rscrypto::ScryptParams::*",
+]
 features = ["scrypt", "alloc", "parallel", "phc-strings", "getrandom"]
 targets = ["all-supported"]
 secret_inputs = ["password", "computed output", "ROMix working memory"]
 public_inputs = ["salt", "resource parameters", "output length", "PHC string/policy"]
-variable_time_components = ["password-dependent ROMix memory addressing", "public resource parameters", "allocation/thread scheduling", "PHC parsing"]
+variable_time_components = [
+  "password-dependent ROMix memory addressing",
+  "public resource parameters",
+  "allocation/thread scheduling",
+  "PHC parsing",
+]
 permitted_leakage = ["parameters", "salt", "lengths", "opaque verification result"]
 claim = "best-effort"
 evidence = ["primitive:password.scrypt", "harness:ct_entry_scrypt_verify"]
@@ -3255,62 +3438,162 @@ limitation = "scrypt intentionally uses password-dependent memory addressing and
 
 [[operation]]
 id = "kx.x25519_key_agreement"
-api = ["rscrypto::X25519SecretKey::{public_key,diffie_hellman}", "rscrypto::X25519SharedSecret::diffie_hellman", "rscrypto::X25519PublicKey::{from_bytes,basepoint,to_bytes,as_bytes}"]
+api = [
+  "rscrypto::X25519SecretKey::{public_key,diffie_hellman}",
+  "rscrypto::X25519SharedSecret::diffie_hellman",
+  "rscrypto::X25519PublicKey::{from_bytes,basepoint,to_bytes,as_bytes}",
+]
 features = ["x25519", "getrandom", "serde-secrets"]
 targets = ["all-supported", "aarch64/x86_64 assembly where selected", "portable fallback"]
 secret_inputs = ["secret scalar", "shared secret", "clamped scalar scratch"]
 public_inputs = ["peer public key", "backend capabilities"]
 variable_time_components = ["public backend dispatch", "opaque all-zero shared-secret rejection"]
-permitted_leakage = ["public key", "backend", "opaque success/failure", "caller-authorized shared-secret exposure"]
+permitted_leakage = [
+  "public key",
+  "backend",
+  "opaque success/failure",
+  "caller-authorized shared-secret exposure",
+]
 claim = "ct-intended"
-evidence = ["primitive:kx.x25519", "harness:ct_entry_x25519", "dudect:x25519_fixed_vs_random_scalar"]
+evidence = [
+  "primitive:kx.x25519",
+  "harness:ct_entry_x25519",
+  "dudect:x25519_fixed_vs_random_scalar",
+]
 limitation = "Exact assembly and portable lowering are target-specific evidence. Shared-secret comparison returns CtDecision; downstream declassification and codegen remain outside this operation's release evidence."
 
 [[operation]]
 id = "kem.mlkem512"
-api = ["rscrypto::MlKem512::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}", "rscrypto::MlKem512*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret}", "rscrypto::MlKem512{DecapsulationKey,PreparedDecapsulationKey,SharedSecret}::ct_eq", "rscrypto::MlKem512{EncapsulationKey,PreparedEncapsulationKey,Ciphertext}::eq"]
+api = [
+  "rscrypto::MlKem512::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}",
+  "rscrypto::MlKem512*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret}",
+  "rscrypto::MlKem512{DecapsulationKey,PreparedDecapsulationKey,SharedSecret}::ct_eq",
+  "rscrypto::MlKem512{EncapsulationKey,PreparedEncapsulationKey,Ciphertext}::eq",
+]
 features = ["ml-kem", "getrandom", "serde", "serde-secrets"]
 targets = ["all-supported", "portable implementation"]
-secret_inputs = ["key-generation secret seed", "decapsulation key", "encapsulation randomness", "shared secret", "implicit-rejection fallback"]
+secret_inputs = [
+  "key-generation secret seed",
+  "decapsulation key",
+  "encapsulation randomness",
+  "shared secret",
+  "implicit-rejection fallback",
+]
 public_inputs = ["encapsulation key", "ciphertext", "parameter set", "encoded lengths"]
-variable_time_components = ["public matrix rejection sampling", "public fixed-shape parsing", "full fixed-shape implicit-rejection comparison"]
-permitted_leakage = ["parameter set", "public key", "ciphertext", "fixed sizes", "caller-authorized secret exposure"]
+variable_time_components = [
+  "public matrix rejection sampling",
+  "public fixed-shape parsing",
+  "full fixed-shape implicit-rejection comparison",
+]
+permitted_leakage = [
+  "parameter set",
+  "public key",
+  "ciphertext",
+  "fixed sizes",
+  "caller-authorized secret exposure",
+]
 claim = "ct-intended"
-evidence = ["primitive:kem.mlkem512", "unit:kem.mlkem512.keygen", "unit:kem.mlkem512.encapsulate", "unit:kem.mlkem512.decapsulate"]
+evidence = [
+  "primitive:kem.mlkem512",
+  "unit:kem.mlkem512.keygen",
+  "unit:kem.mlkem512.encapsulate",
+  "unit:kem.mlkem512.decapsulate",
+]
 limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret owners return CtDecision and require explicit declassification."
 
 [[operation]]
 id = "kem.mlkem768"
-api = ["rscrypto::MlKem768::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}", "rscrypto::MlKem768*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret}", "rscrypto::MlKem768{DecapsulationKey,PreparedDecapsulationKey,SharedSecret}::ct_eq", "rscrypto::MlKem768{EncapsulationKey,PreparedEncapsulationKey,Ciphertext}::eq"]
+api = [
+  "rscrypto::MlKem768::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}",
+  "rscrypto::MlKem768*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret}",
+  "rscrypto::MlKem768{DecapsulationKey,PreparedDecapsulationKey,SharedSecret}::ct_eq",
+  "rscrypto::MlKem768{EncapsulationKey,PreparedEncapsulationKey,Ciphertext}::eq",
+]
 features = ["ml-kem", "getrandom", "serde", "serde-secrets"]
 targets = ["all-supported", "portable implementation"]
-secret_inputs = ["key-generation secret seed", "decapsulation key", "encapsulation randomness", "shared secret", "implicit-rejection fallback"]
+secret_inputs = [
+  "key-generation secret seed",
+  "decapsulation key",
+  "encapsulation randomness",
+  "shared secret",
+  "implicit-rejection fallback",
+]
 public_inputs = ["encapsulation key", "ciphertext", "parameter set", "encoded lengths"]
-variable_time_components = ["public matrix rejection sampling", "public fixed-shape parsing", "full fixed-shape implicit-rejection comparison"]
-permitted_leakage = ["parameter set", "public key", "ciphertext", "fixed sizes", "caller-authorized secret exposure"]
+variable_time_components = [
+  "public matrix rejection sampling",
+  "public fixed-shape parsing",
+  "full fixed-shape implicit-rejection comparison",
+]
+permitted_leakage = [
+  "parameter set",
+  "public key",
+  "ciphertext",
+  "fixed sizes",
+  "caller-authorized secret exposure",
+]
 claim = "ct-intended"
-evidence = ["primitive:kem.mlkem768", "unit:kem.mlkem768.keygen", "unit:kem.mlkem768.encapsulate", "unit:kem.mlkem768.decapsulate"]
+evidence = [
+  "primitive:kem.mlkem768",
+  "unit:kem.mlkem768.keygen",
+  "unit:kem.mlkem768.encapsulate",
+  "unit:kem.mlkem768.decapsulate",
+]
 limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret owners return CtDecision and require explicit declassification."
 
 [[operation]]
 id = "kem.mlkem1024"
-api = ["rscrypto::MlKem1024::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}", "rscrypto::MlKem1024*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret}", "rscrypto::MlKem1024{DecapsulationKey,PreparedDecapsulationKey,SharedSecret}::ct_eq", "rscrypto::MlKem1024{EncapsulationKey,PreparedEncapsulationKey,Ciphertext}::eq"]
+api = [
+  "rscrypto::MlKem1024::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}",
+  "rscrypto::MlKem1024*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret}",
+  "rscrypto::MlKem1024{DecapsulationKey,PreparedDecapsulationKey,SharedSecret}::ct_eq",
+  "rscrypto::MlKem1024{EncapsulationKey,PreparedEncapsulationKey,Ciphertext}::eq",
+]
 features = ["ml-kem", "getrandom", "serde", "serde-secrets"]
 targets = ["all-supported", "portable implementation"]
-secret_inputs = ["key-generation secret seed", "decapsulation key", "encapsulation randomness", "shared secret", "implicit-rejection fallback"]
+secret_inputs = [
+  "key-generation secret seed",
+  "decapsulation key",
+  "encapsulation randomness",
+  "shared secret",
+  "implicit-rejection fallback",
+]
 public_inputs = ["encapsulation key", "ciphertext", "parameter set", "encoded lengths"]
-variable_time_components = ["public matrix rejection sampling", "public fixed-shape parsing", "full fixed-shape implicit-rejection comparison"]
-permitted_leakage = ["parameter set", "public key", "ciphertext", "fixed sizes", "caller-authorized secret exposure"]
+variable_time_components = [
+  "public matrix rejection sampling",
+  "public fixed-shape parsing",
+  "full fixed-shape implicit-rejection comparison",
+]
+permitted_leakage = [
+  "parameter set",
+  "public key",
+  "ciphertext",
+  "fixed sizes",
+  "caller-authorized secret exposure",
+]
 claim = "ct-intended"
-evidence = ["primitive:kem.mlkem1024", "unit:kem.mlkem1024.keygen", "unit:kem.mlkem1024.encapsulate", "unit:kem.mlkem1024.decapsulate"]
+evidence = [
+  "primitive:kem.mlkem1024",
+  "unit:kem.mlkem1024.keygen",
+  "unit:kem.mlkem1024.encapsulate",
+  "unit:kem.mlkem1024.decapsulate",
+]
 limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret owners return CtDecision and require explicit declassification."
 
 [[operation]]
 id = "signature.ed25519_signing"
-api = ["rscrypto::Ed25519SecretKey::{public_key,sign}", "rscrypto::Ed25519Keypair::{from_secret_key,sign,try_sign}"]
+api = [
+  "rscrypto::Ed25519SecretKey::{public_key,sign}",
+  "rscrypto::Ed25519Keypair::{from_secret_key,sign,try_sign}",
+]
 features = ["ed25519", "getrandom", "serde-secrets"]
 targets = ["all-supported", "target-selected fixed-base backend"]
-secret_inputs = ["secret seed", "expanded scalar", "nonce prefix", "deterministic nonce", "signing intermediates"]
+secret_inputs = [
+  "secret seed",
+  "expanded scalar",
+  "nonce prefix",
+  "deterministic nonce",
+  "signing intermediates",
+]
 public_inputs = ["message", "public key", "backend capabilities"]
 variable_time_components = ["public message-length hashing", "public backend dispatch"]
 permitted_leakage = ["message length", "public key", "signature", "backend"]
@@ -3320,25 +3603,45 @@ limitation = "Target-specific fixed-base kernels require their own release artif
 
 [[operation]]
 id = "signature.ecdsa_signing"
-api = ["rscrypto::EcdsaP{256,384}SecretKey::{try_sign,try_sign_blinded}", "rscrypto::EcdsaP{256,384}Keypair::{try_sign,try_sign_blinded}"]
+api = [
+  "rscrypto::EcdsaP{256,384}SecretKey::{try_sign,try_sign_blinded}",
+  "rscrypto::EcdsaP{256,384}Keypair::{try_sign,try_sign_blinded}",
+]
 features = ["ecdsa-p256", "ecdsa-p384", "getrandom", "serde-secrets"]
 targets = ["all-supported", "target-selected arithmetic backend"]
 secret_inputs = ["private scalar", "deterministic nonce", "blinding input", "signing intermediates"]
 public_inputs = ["message", "public key", "backend capabilities"]
-variable_time_components = ["public message-length hashing", "public backend dispatch", "opaque invalid-scalar/signing failure"]
+variable_time_components = [
+  "public message-length hashing",
+  "public backend dispatch",
+  "opaque invalid-scalar/signing failure",
+]
 permitted_leakage = ["message length", "public key", "signature", "backend", "opaque failure"]
 claim = "ct-intended"
-evidence = ["primitive:signature.ecdsa_p256_sign", "primitive:signature.ecdsa_p384_sign", "harness:ct_entry_ecdsa_p256_sign", "harness:ct_entry_ecdsa_p384_sign"]
+evidence = [
+  "primitive:signature.ecdsa_p256_sign",
+  "primitive:signature.ecdsa_p384_sign",
+  "harness:ct_entry_ecdsa_p256_sign",
+  "harness:ct_entry_ecdsa_p384_sign",
+]
 limitation = "Blinding closures and entropy-source behavior are external. Exact arithmetic kernels require target-specific release evidence."
 
 [[operation]]
 id = "signature.public_parse_serialize_and_verify"
-api = ["rscrypto::{Ed25519,EcdsaP256,EcdsaP384}PublicKey::{from_bytes,to_bytes,as_bytes,verify}", "rscrypto::{Ed25519,EcdsaP256,EcdsaP384}Signature::{from_bytes,from_der,to_bytes,as_bytes}"]
+api = [
+  "rscrypto::{Ed25519,EcdsaP256,EcdsaP384}PublicKey::{from_bytes,to_bytes,as_bytes,verify}",
+  "rscrypto::{Ed25519,EcdsaP256,EcdsaP384}Signature::{from_bytes,from_der,to_bytes,as_bytes}",
+]
 features = ["ed25519", "ecdsa-p256", "ecdsa-p384", "serde"]
 targets = ["all-supported"]
 secret_inputs = []
 public_inputs = ["public key", "message", "signature", "encoding"]
-variable_time_components = ["public parsing and validation", "public message-length hashing", "public scalar/point arithmetic", "ordinary public-value equality"]
+variable_time_components = [
+  "public parsing and validation",
+  "public message-length hashing",
+  "public scalar/point arithmetic",
+  "ordinary public-value equality",
+]
 permitted_leakage = ["all inputs", "parse failure", "opaque verification result"]
 claim = "best-effort"
 evidence = ["primitive:signature.ed25519_verify_failure_shape", "harness:ct_entry_ed25519_verify"]
@@ -3346,64 +3649,151 @@ limitation = "Signature verification inputs are public and are not blanket const
 
 [[operation]]
 id = "rsa.private_key_import_export_and_generation"
-api = ["rscrypto::RsaPrivateKey::{from_components,from_pkcs1_der*,from_pkcs8_der*,to_pkcs1_der,to_pkcs8_der,generate*}", "rscrypto::RsaPrivateKey::{modulus_bits,public_key}"]
+api = [
+  "rscrypto::RsaPrivateKey::{from_components,from_pkcs1_der*,from_pkcs8_der*,to_pkcs1_der,to_pkcs8_der,generate*}",
+  "rscrypto::RsaPrivateKey::{modulus_bits,public_key}",
+]
 features = ["rsa", "alloc", "getrandom for generation"]
 targets = ["all-supported"]
-secret_inputs = ["private components", "private DER", "generated prime candidates", "exported secret DER"]
+secret_inputs = [
+  "private components",
+  "private DER",
+  "generated prime candidates",
+  "exported secret DER",
+]
 public_inputs = ["public exponent", "policy", "requested modulus size", "DER shape"]
-variable_time_components = ["DER parsing", "big-integer allocation", "secret prime search and rejection", "entropy-source latency"]
-permitted_leakage = ["public modulus size/exponent", "parse/policy result", "generation progress/timing", "caller-authorized DER exposure"]
+variable_time_components = [
+  "DER parsing",
+  "big-integer allocation",
+  "secret prime search and rejection",
+  "entropy-source latency",
+]
+permitted_leakage = [
+  "public modulus size/exponent",
+  "parse/policy result",
+  "generation progress/timing",
+  "caller-authorized DER exposure",
+]
 claim = "ct-intended"
-evidence = ["primitive:rsa.private_key_material", "unit:rsa.private_key_material.component_validation_32", "harness:ct_entry_rsa_private_key_pkcs8_roundtrip"]
+evidence = [
+  "primitive:rsa.private_key_material",
+  "unit:rsa.private_key_material.component_validation_32",
+  "harness:ct_entry_rsa_private_key_pkcs8_roundtrip",
+]
 limitation = "Prime generation is inherently variable-work and not a CT claim. Secret DER export is an explicit SecretVec escape hatch. The ct-intended claim covers fixed-shape private-component validation/import leaves tracked by evidence."
 
 [[operation]]
 id = "rsa.private_sign_and_decrypt"
-api = ["rscrypto::RsaPrivateKey::{sign_signature*,sign_pkcs1v15*,sign_pss*,decrypt_oaep*,decrypt_pkcs1v15*}"]
+api = [
+  "rscrypto::RsaPrivateKey::{sign_signature*,sign_pkcs1v15*,sign_pss*,decrypt_oaep*,decrypt_pkcs1v15*}",
+]
 features = ["rsa", "alloc", "getrandom for blinding/randomized padding"]
 targets = ["all-supported"]
-secret_inputs = ["private exponent/components", "plaintext", "blinding factor", "PSS salt", "private arithmetic scratch"]
-public_inputs = ["message/digest", "ciphertext", "padding profile", "modulus size", "output capacity"]
-variable_time_components = ["public modulus-width loops", "public padding/hash profiles", "entropy-source latency", "opaque input-shape rejection"]
+secret_inputs = [
+  "private exponent/components",
+  "plaintext",
+  "blinding factor",
+  "PSS salt",
+  "private arithmetic scratch",
+]
+public_inputs = [
+  "message/digest",
+  "ciphertext",
+  "padding profile",
+  "modulus size",
+  "output capacity",
+]
+variable_time_components = [
+  "public modulus-width loops",
+  "public padding/hash profiles",
+  "entropy-source latency",
+  "opaque input-shape rejection",
+]
 permitted_leakage = ["modulus/profile/lengths", "opaque success/failure"]
 claim = "ct-intended"
-evidence = ["primitive:rsa.private_ops", "unit:rsa.private_ops.pkcs1v15_sign", "unit:rsa.private_ops.pss_sign", "unit:rsa.private_ops.oaep_decrypt", "unit:rsa.private_ops.pkcs1v15_decrypt"]
+evidence = [
+  "primitive:rsa.private_ops",
+  "unit:rsa.private_ops.pkcs1v15_sign",
+  "unit:rsa.private_ops.pss_sign",
+  "unit:rsa.private_ops.oaep_decrypt",
+  "unit:rsa.private_ops.pkcs1v15_decrypt",
+]
 limitation = "Retained CRT exponents are normalized to the corresponding factor width before arithmetic, so canonical exponent encoding length is not a steady-state control or address input. Full private operations remain target-artifact/DudeCT evidence, not source-only claims."
 
 [[operation]]
 id = "rsa.public_operations"
-api = ["rscrypto::RsaPublicKey::{from_pkcs1_der,from_spki_der,to_pkcs1_der,to_spki_der,encrypt*,verify*}", "rscrypto::Rsa*Profile::*", "rscrypto::RsaPublicKeyPolicy::*"]
+api = [
+  "rscrypto::RsaPublicKey::{from_pkcs1_der,from_spki_der,to_pkcs1_der,to_spki_der,encrypt*,verify*}",
+  "rscrypto::Rsa*Profile::*",
+  "rscrypto::RsaPublicKeyPolicy::*",
+]
 features = ["rsa", "alloc", "getrandom for randomized encryption"]
 targets = ["all-supported"]
 secret_inputs = ["plaintext passed to encryption"]
-public_inputs = ["public key", "message/digest", "signature", "ciphertext length", "padding/profile/policy"]
-variable_time_components = ["public DER parsing", "public-key arithmetic", "public padding validation", "entropy-source latency"]
+public_inputs = [
+  "public key",
+  "message/digest",
+  "signature",
+  "ciphertext length",
+  "padding/profile/policy",
+]
+variable_time_components = [
+  "public DER parsing",
+  "public-key arithmetic",
+  "public padding validation",
+  "entropy-source latency",
+]
 permitted_leakage = ["public key/profile/lengths", "parse/policy result", "verification result"]
 claim = "best-effort"
 limitation = "Public verification/parsing inputs are not CT claims. Encryption consumes plaintext but necessarily reveals ciphertext length and includes external randomness; no secret-dependent private-key arithmetic occurs."
 
 [[operation]]
 id = "public.hash_checksum_and_xof"
-api = ["rscrypto::{Digest,Xof,Checksum,ChecksumCombine,FastHash}::*", "rscrypto::{Sha*,Blake*,AsconHash*,Shake*,Cshake*,Crc*,Xxh3*,RapidHash*}::*"]
+api = [
+  "rscrypto::{Digest,Xof,Checksum,ChecksumCombine,FastHash}::*",
+  "rscrypto::{Sha*,Blake*,AsconHash*,Shake*,Cshake*,Crc*,Xxh3*,RapidHash*}::*",
+]
 features = ["hash/checksum algorithm feature", "std/alloc for I/O wrappers"]
 targets = ["all-supported", "backend selected by public target capabilities"]
 secret_inputs = []
-public_inputs = ["data", "seed", "initial checksum", "requested output length", "backend capabilities"]
+public_inputs = [
+  "data",
+  "seed",
+  "initial checksum",
+  "requested output length",
+  "backend capabilities",
+]
 variable_time_components = ["public-length loops", "public backend dispatch", "public I/O behavior"]
 permitted_leakage = ["all inputs/results", "lengths", "backend"]
 claim = "best-effort"
-evidence = ["primitive:public_hashes_and_checksums", "harness:ct_entry_public_sha256_digest", "harness:ct_entry_public_crc32_checksum"]
+evidence = [
+  "primitive:public_hashes_and_checksums",
+  "harness:ct_entry_public_sha256_digest",
+  "harness:ct_entry_public_crc32_checksum",
+]
 limitation = "Unkeyed hashes/checksums are public-data APIs and make no whole-API CT claim. Callers hashing secrets must use a separately inventoried keyed construction where appropriate."
 
 [[operation]]
 id = "traits.downstream_security_defaults"
-api = ["rscrypto::TrySigner::try_sign", "rscrypto::TrySignerInto::{try_sign_into,try_sign_to_vec}", "rscrypto::Verifier::verify", "rscrypto::Kem::{generate_keypair,encapsulate,decapsulate}"]
+api = [
+  "rscrypto::TrySigner::try_sign",
+  "rscrypto::TrySignerInto::{try_sign_into,try_sign_to_vec}",
+  "rscrypto::Verifier::verify",
+  "rscrypto::Kem::{generate_keypair,encapsulate,decapsulate}",
+]
 features = ["always", "alloc for try_sign_to_vec"]
 targets = ["all-supported"]
-secret_inputs = ["implementation-defined signing key, decapsulation key, randomness, and derived secret"]
+secret_inputs = [
+  "implementation-defined signing key, decapsulation key, randomness, and derived secret",
+]
 public_inputs = ["implementation-defined message, signature, public key, and ciphertext"]
-variable_time_components = ["entirely implementation-defined except for each built-in implementation's separately inventoried path"]
-permitted_leakage = ["implementation-defined", "opaque verification failure where the contract requires it"]
+variable_time_components = [
+  "entirely implementation-defined except for each built-in implementation's separately inventoried path",
+]
+permitted_leakage = [
+  "implementation-defined",
+  "opaque verification failure where the contract requires it",
+]
 claim = "unsupported"
 limitation = "These public traits are downstream implementation boundaries. Built-in rscrypto implementations map to their algorithm operation rows; the traits cannot enforce timing, zeroization, or error-opacity properties on external implementations."
 
@@ -3415,7 +3805,10 @@ targets = ["host or explicitly cfg-gated diagnostic target"]
 secret_inputs = ["operation-specific diagnostic key, password, scalar, state, or intermediate"]
 public_inputs = ["operation-specific fixed diagnostic shape and backend selector"]
 variable_time_components = ["operation-specific; each linked primitive/harness owns classification"]
-permitted_leakage = ["diagnostic digest/result intentionally returned to the caller", "feature and target"]
+permitted_leakage = [
+  "diagnostic digest/result intentionally returned to the caller",
+  "feature and target",
+]
 claim = "unsupported"
 limitation = "The diag feature is an evidence/test surface, not a production secrecy boundary. Diagnostic return values deliberately declassify intermediates for harnesses and must not be enabled as an application security API."
 
@@ -3603,7 +3996,13 @@ secrets = [
   "encapsulation_random",
   "implicit_rejection_seed",
 ]
-public = ["encapsulation_key", "ciphertext", "ciphertext_length", "public_shape_error", "rng_failure"]
+public = [
+  "encapsulation_key",
+  "ciphertext",
+  "ciphertext_length",
+  "public_shape_error",
+  "rng_failure",
+]
 may_leak = ["input_length", "public_shape_error", "public_rng_failure", "opaque_success_or_failure"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
@@ -3639,7 +4038,13 @@ secrets = [
   "encapsulation_random",
   "implicit_rejection_seed",
 ]
-public = ["encapsulation_key", "ciphertext", "ciphertext_length", "public_shape_error", "rng_failure"]
+public = [
+  "encapsulation_key",
+  "ciphertext",
+  "ciphertext_length",
+  "public_shape_error",
+  "rng_failure",
+]
 may_leak = ["input_length", "public_shape_error", "public_rng_failure", "opaque_success_or_failure"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
@@ -3675,7 +4080,13 @@ secrets = [
   "encapsulation_random",
   "implicit_rejection_seed",
 ]
-public = ["encapsulation_key", "ciphertext", "ciphertext_length", "public_shape_error", "rng_failure"]
+public = [
+  "encapsulation_key",
+  "ciphertext",
+  "ciphertext_length",
+  "public_shape_error",
+  "rng_failure",
+]
 may_leak = ["input_length", "public_shape_error", "public_rng_failure", "opaque_success_or_failure"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
@@ -3722,10 +4133,7 @@ id = "signature.ecdsa_p256_sign"
 tier = "A"
 claim = "ct-intended"
 features = ["ecdsa-p256"]
-entrypoints = [
-  "EcdsaP256SecretKey::try_sign_blinded",
-  "EcdsaP256Keypair::try_sign_blinded",
-]
+entrypoints = ["EcdsaP256SecretKey::try_sign_blinded", "EcdsaP256Keypair::try_sign_blinded"]
 secrets = ["secret_key", "nonce_material", "nonce_scalar", "private_scalar", "coordinate_blinding"]
 public = ["message", "message_length", "signature"]
 may_leak = ["message_length", "signature"]
@@ -3741,10 +4149,7 @@ id = "signature.ecdsa_p384_sign"
 tier = "A"
 claim = "ct-intended"
 features = ["ecdsa-p384"]
-entrypoints = [
-  "EcdsaP384SecretKey::try_sign_blinded",
-  "EcdsaP384Keypair::try_sign_blinded",
-]
+entrypoints = ["EcdsaP384SecretKey::try_sign_blinded", "EcdsaP384Keypair::try_sign_blinded"]
 secrets = ["secret_key", "nonce_material", "nonce_scalar", "private_scalar", "coordinate_blinding"]
 public = ["message", "message_length", "signature"]
 may_leak = ["message_length", "signature"]
@@ -3899,10 +4304,7 @@ id = "password.argon2i"
 tier = "A"
 claim = "ct-intended"
 features = ["argon2"]
-entrypoints = [
-  "Argon2i::derive",
-  "Argon2i::verify",
-]
+entrypoints = ["Argon2i::derive", "Argon2i::verify"]
 secrets = ["password", "derived_key", "expected_key"]
 public = ["salt", "params", "phc_string"]
 may_leak = ["input_length", "public_parameter_error", "opaque_success_or_failure"]
@@ -3946,11 +4348,7 @@ id = "password.scrypt"
 tier = "A"
 claim = "best-effort"
 features = ["scrypt"]
-entrypoints = [
-  "Scrypt::derive",
-  "Scrypt::verify",
-  "ScryptPassword::verify_password",
-]
+entrypoints = ["Scrypt::derive", "Scrypt::verify", "ScryptPassword::verify_password"]
 secrets = ["password", "derived_key", "expected_key"]
 public = ["salt", "params", "phc_string"]
 may_leak = ["input_length", "public_parameter_error", "opaque_success_or_failure"]

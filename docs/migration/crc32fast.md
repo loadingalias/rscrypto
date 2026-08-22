@@ -6,11 +6,11 @@ Output is covered by the CRC-32 oracle/property tests in `tests/crc32_properties
 
 ## TL;DR
 
-| | Before (`crc32fast` 1.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `crc32fast = "1.5"` | `rscrypto = { version = "0.8.1", features = ["crc32"] }` |
-| Import | `use crc32fast::Hasher;` | `use rscrypto::checksum::{Checksum, Crc32};` |
-| Call | `crc32fast::hash(data)` | `Crc32::checksum(data)` |
+|           | Before (`crc32fast` 1.x) | After (`rscrypto` 0.8.1)                                 |
+| --------- | ------------------------ | -------------------------------------------------------- |
+| Cargo dep | `crc32fast = "1.5"`      | `rscrypto = { version = "0.8.1", features = ["crc32"] }` |
+| Import    | `use crc32fast::Hasher;` | `use rscrypto::checksum::{Checksum, Crc32};`             |
+| Call      | `crc32fast::hash(data)`  | `Crc32::checksum(data)`                                  |
 
 ## Cargo.toml
 

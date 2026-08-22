@@ -10,11 +10,11 @@ Evidence: `tests/chacha20poly1305.rs`, `tests/xchacha20poly1305.rs`, and `tests/
 
 ## TL;DR
 
-| | Before (`chacha20poly1305` 0.11.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `chacha20poly1305 = "0.11"` | `rscrypto = { version = "0.8.1", features = ["chacha20poly1305", "xchacha20poly1305"] }` |
-| Import | `use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce, KeyInit, aead::{Aead, Payload}};` | `use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, aead::{Nonce96, expert::AeadWithNonce}};` |
-| Encrypt | `cipher.encrypt(nonce, Payload { msg, aad })?` | `cipher.encrypt(&nonce, aad, msg, &mut out)?` |
+|           | Before (`chacha20poly1305` 0.11.x)                                                      | After (`rscrypto` 0.8.1)                                                                               |
+| --------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Cargo dep | `chacha20poly1305 = "0.11"`                                                             | `rscrypto = { version = "0.8.1", features = ["chacha20poly1305", "xchacha20poly1305"] }`               |
+| Import    | `use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce, KeyInit, aead::{Aead, Payload}};` | `use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, aead::{Nonce96, expert::AeadWithNonce}};` |
+| Encrypt   | `cipher.encrypt(nonce, Payload { msg, aad })?`                                          | `cipher.encrypt(&nonce, aad, msg, &mut out)?`                                                          |
 
 Drop `xchacha20poly1305` from the feature list if you don't use the 192-bit-nonce variant.
 
@@ -34,11 +34,11 @@ rscrypto = { version = "0.8.1", features = ["chacha20poly1305", "xchacha20poly13
 
 ## Algorithm map
 
-| `chacha20poly1305` type | rscrypto type | Nonce |
-|---|---|---|
-| `ChaCha20Poly1305` (RFC 8439, 96-bit nonce) | `ChaCha20Poly1305` | `Nonce96` |
-| `XChaCha20Poly1305` (extended, 192-bit nonce) | `XChaCha20Poly1305` | `Nonce192` |
-| `ChaCha8Poly1305`, `ChaCha12Poly1305` (reduced rounds) | not mapped: keep `chacha20poly1305` |  |
+| `chacha20poly1305` type                                | rscrypto type                       | Nonce      |
+| ------------------------------------------------------ | ----------------------------------- | ---------- |
+| `ChaCha20Poly1305` (RFC 8439, 96-bit nonce)            | `ChaCha20Poly1305`                  | `Nonce96`  |
+| `XChaCha20Poly1305` (extended, 192-bit nonce)          | `XChaCha20Poly1305`                 | `Nonce192` |
+| `ChaCha8Poly1305`, `ChaCha12Poly1305` (reduced rounds) | not mapped: keep `chacha20poly1305` |            |
 
 ## API patterns
 

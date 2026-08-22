@@ -10,7 +10,9 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 rscrypto = { path = "../..", features = ["std", "aegis256"] }
-rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support", features = ["aead"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support", features = [
+  "aead",
+] }
 aegis = "0.9"
 
 [workspace]
