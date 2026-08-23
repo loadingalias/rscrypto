@@ -967,6 +967,16 @@ gate = "diagnostic"
 reason = "ECDSA signing CT root-cause isolation."
 
 [[dudect_case]]
+name = "ecdsa_p256_diag_reduce_wide_blinded_fixed_vs_random_input"
+primitive = "signature.ecdsa_p256_sign"
+filter = "ecdsa_p256_diag_reduce_wide_blinded_fixed_vs_random_input"
+left_class = "P-256 diagnostic caller-blinded order reduction of fixed wide input"
+right_class = "P-256 diagnostic caller-blinded order reduction of random wide input"
+samples = 20000
+smoke_samples = 2000
+notes = "Required leaf evidence for the caller-blinded s390x wide nonce reduction path."
+
+[[dudect_case]]
 name = "ecdsa_p256_diag_basepoint_blinded_fixed_vs_random_secret"
 primitive = "signature.ecdsa_p256_sign"
 filter = "ecdsa_p256_diag_basepoint_blinded_fixed_vs_random_secret"
@@ -1018,7 +1028,18 @@ left_class = "P-256 diagnostic nonce inverse from fixed secret"
 right_class = "P-256 diagnostic nonce inverse from random secret"
 samples = 20000
 smoke_samples = 2000
-notes = "Required leaf evidence for the ECDSA signing nonce inverse path."
+gate = "diagnostic"
+reason = "Unblinded control for the s390x nonce-inversion mitigation."
+
+[[dudect_case]]
+name = "ecdsa_p256_diag_nonce_inverse_blinded_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p256_sign"
+filter = "ecdsa_p256_diag_nonce_inverse_blinded_fixed_vs_random_secret"
+left_class = "P-256 diagnostic caller-blinded nonce inverse from fixed secret"
+right_class = "P-256 diagnostic caller-blinded nonce inverse from random secret"
+samples = 20000
+smoke_samples = 2000
+notes = "Required leaf evidence for the caller-blinded ECDSA signing nonce inverse path."
 
 [[dudect_case]]
 name = "ecdsa_p256_diag_final_multiply_fixed_vs_random_secret"
@@ -1052,6 +1073,16 @@ samples = 20000
 smoke_samples = 2000
 gate = "diagnostic"
 reason = "ECDSA signing CT root-cause isolation."
+
+[[dudect_case]]
+name = "ecdsa_p384_diag_reduce_wide_blinded_fixed_vs_random_input"
+primitive = "signature.ecdsa_p384_sign"
+filter = "ecdsa_p384_diag_reduce_wide_blinded_fixed_vs_random_input"
+left_class = "P-384 diagnostic caller-blinded order reduction of fixed wide input"
+right_class = "P-384 diagnostic caller-blinded order reduction of random wide input"
+samples = 20000
+smoke_samples = 2000
+notes = "Required leaf evidence for the caller-blinded s390x wide nonce reduction path."
 
 [[dudect_case]]
 name = "ecdsa_p384_diag_basepoint_blinded_fixed_vs_random_secret"
@@ -1094,7 +1125,18 @@ left_class = "P-384 diagnostic nonce inverse from fixed secret"
 right_class = "P-384 diagnostic nonce inverse from random secret"
 samples = 20000
 smoke_samples = 2000
-notes = "Required leaf evidence for the ECDSA signing nonce inverse path."
+gate = "diagnostic"
+reason = "Unblinded control for the s390x nonce-inversion mitigation."
+
+[[dudect_case]]
+name = "ecdsa_p384_diag_nonce_inverse_blinded_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p384_sign"
+filter = "ecdsa_p384_diag_nonce_inverse_blinded_fixed_vs_random_secret"
+left_class = "P-384 diagnostic caller-blinded nonce inverse from fixed secret"
+right_class = "P-384 diagnostic caller-blinded nonce inverse from random secret"
+samples = 20000
+smoke_samples = 2000
+notes = "Required leaf evidence for the caller-blinded ECDSA signing nonce inverse path."
 
 [[dudect_case]]
 name = "ecdsa_p384_diag_final_multiply_fixed_vs_random_secret"
@@ -2757,8 +2799,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2236
-compiler_api_sha256 = "ec37f397970ac2d9bce6c5188c48c0e1dfbd9b1d321674bce13395acdd6781f8"
+compiler_api_item_count = 2240
+compiler_api_sha256 = "ffd47461384a496e4a27529a44409b2528decaaab883b040583f8a3d6a00fbf7"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -2769,8 +2811,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2230
-compiler_api_sha256 = "2f64f9277c6acbb0510f9b6bb2753b6adcf862f6e8f2945831c5b7607d0a9240"
+compiler_api_item_count = 2234
+compiler_api_sha256 = "68af9f681c2c4b9b0174b8fc1693035c82d848fe861e923f165cbdd4bf7f6f44"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -2829,8 +2871,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 2230
-compiler_api_sha256 = "2f64f9277c6acbb0510f9b6bb2753b6adcf862f6e8f2945831c5b7607d0a9240"
+compiler_api_item_count = 2234
+compiler_api_sha256 = "68af9f681c2c4b9b0174b8fc1693035c82d848fe861e923f165cbdd4bf7f6f44"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2854,8 +2896,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2229
-compiler_api_sha256 = "8c5e606f4792a7a5052da0e00093fbaa01f56f2223264b7df67bc3ada774d4d5"
+compiler_api_item_count = 2233
+compiler_api_sha256 = "9dcaae976ea557ef5e27e09fc5604f9fe79d3e092e38d8a4df2298cf64d0898e"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2867,8 +2909,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2229
-compiler_api_sha256 = "24448b0c3dc339211793edc2999bcb77b57956ddde4c1d1111247c52067b9c9f"
+compiler_api_item_count = 2233
+compiler_api_sha256 = "94c7f652a30325284f2b98d4ed070904a54ce8de0ec892eda38131b1789cff8c"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2880,8 +2922,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2229
-compiler_api_sha256 = "3d1b7cfa425696e8d060773d2f2778119ce27b8aac3f69daaef1c24ddfb6e677"
+compiler_api_item_count = 2233
+compiler_api_sha256 = "bff7be67a8b322ec0af48a9ef523da664b49701fd8ab223ecfff2d3f04681343"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -4139,7 +4181,7 @@ public = ["message", "message_length", "signature"]
 may_leak = ["message_length", "signature"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "Release CT evidence covers the blinded signing APIs. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while P-256 portable blinded signing adds a random multiple of the group order and blinds the projective accumulator before fixed-base multiplication, reblinds before affine conversion, and masks the private-scalar product. On s390x and RISC-V, secret-fed limb products use multiplication-free fixed-work arithmetic and remain subject to the native weekly timing gate."
+notes = "Release CT evidence covers the blinded signing APIs. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while P-256 portable blinded signing adds a random multiple of the group order and blinds the projective accumulator before fixed-base multiplication, reblinds before affine conversion, and masks the private-scalar product. On s390x, two independent caller-random scalars also mask wide reduction, nonce inversion, and final scalar arithmetic around the multiplication-free order kernel. RISC-V secret-fed limb products remain multiplication-free and subject to the native timing gate."
 [primitive.harness]
 status = "covered"
 symbols = ["ct_entry_ecdsa_p256_sign"]
@@ -4155,7 +4197,7 @@ public = ["message", "message_length", "signature"]
 may_leak = ["message_length", "signature"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "Release CT evidence covers the blinded signing APIs. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while portable blinded signing blinds the projective accumulator before fixed-base multiplication, reblinds before affine conversion, and masks the private-scalar product. On s390x and RISC-V, secret-fed limb products use multiplication-free fixed-work arithmetic and remain subject to the native weekly timing gate."
+notes = "Release CT evidence covers the blinded signing APIs. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while portable blinded signing blinds the projective accumulator before fixed-base multiplication, reblinds before affine conversion, and masks the private-scalar product. On s390x, two independent caller-random scalars also mask wide reduction, nonce inversion, and final scalar arithmetic around the multiplication-free order kernel. RISC-V secret-fed limb products remain multiplication-free and subject to the native timing gate."
 [primitive.harness]
 status = "covered"
 symbols = ["ct_entry_ecdsa_p384_sign"]

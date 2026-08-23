@@ -243,6 +243,11 @@ CASE_METADATA = {
     "gate": "diagnostic",
     "reason": "ECDSA signing CT root-cause isolation.",
   },
+  "ecdsa_p256_diag_reduce_wide_blinded_fixed_vs_random_input": {
+    "primitive": "signature.ecdsa_p256_sign",
+    "left_class": "P-256 diagnostic caller-blinded order reduction of fixed wide input",
+    "right_class": "P-256 diagnostic caller-blinded order reduction of random wide input",
+  },
   "ecdsa_p256_diag_basepoint_blinded_fixed_vs_random_secret": {
     "primitive": "signature.ecdsa_p256_sign",
     "left_class": "P-256 diagnostic blinded basepoint multiplication from fixed secret",
@@ -275,6 +280,13 @@ CASE_METADATA = {
     "primitive": "signature.ecdsa_p256_sign",
     "left_class": "P-256 diagnostic nonce inverse from fixed secret",
     "right_class": "P-256 diagnostic nonce inverse from random secret",
+    "gate": "diagnostic",
+    "reason": "Unblinded control for the s390x nonce-inversion mitigation.",
+  },
+  "ecdsa_p256_diag_nonce_inverse_blinded_fixed_vs_random_secret": {
+    "primitive": "signature.ecdsa_p256_sign",
+    "left_class": "P-256 diagnostic caller-blinded nonce inverse from fixed secret",
+    "right_class": "P-256 diagnostic caller-blinded nonce inverse from random secret",
   },
   "ecdsa_p256_diag_final_multiply_fixed_vs_random_secret": {
     "primitive": "signature.ecdsa_p256_sign",
@@ -296,6 +308,11 @@ CASE_METADATA = {
     "right_class": "P-384 diagnostic order reduction of random wide input",
     "gate": "diagnostic",
     "reason": "ECDSA signing CT root-cause isolation.",
+  },
+  "ecdsa_p384_diag_reduce_wide_blinded_fixed_vs_random_input": {
+    "primitive": "signature.ecdsa_p384_sign",
+    "left_class": "P-384 diagnostic caller-blinded order reduction of fixed wide input",
+    "right_class": "P-384 diagnostic caller-blinded order reduction of random wide input",
   },
   "ecdsa_p384_diag_basepoint_blinded_fixed_vs_random_secret": {
     "primitive": "signature.ecdsa_p384_sign",
@@ -322,6 +339,13 @@ CASE_METADATA = {
     "primitive": "signature.ecdsa_p384_sign",
     "left_class": "P-384 diagnostic nonce inverse from fixed secret",
     "right_class": "P-384 diagnostic nonce inverse from random secret",
+    "gate": "diagnostic",
+    "reason": "Unblinded control for the s390x nonce-inversion mitigation.",
+  },
+  "ecdsa_p384_diag_nonce_inverse_blinded_fixed_vs_random_secret": {
+    "primitive": "signature.ecdsa_p384_sign",
+    "left_class": "P-384 diagnostic caller-blinded nonce inverse from fixed secret",
+    "right_class": "P-384 diagnostic caller-blinded nonce inverse from random secret",
   },
   "ecdsa_p384_diag_final_multiply_fixed_vs_random_secret": {
     "primitive": "signature.ecdsa_p384_sign",

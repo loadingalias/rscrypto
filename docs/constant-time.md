@@ -134,8 +134,11 @@ bound to the exact release lanes above.
 ECDSA P-256/P-384 signing uses multiplication-free, fixed-work limb arithmetic
 on s390x and RISC-V to avoid the variable-latency scalar multiply observed in
 earlier native runs. That source and disassembly property is necessary, not
-sufficient: those targets are promoted only after their native required
-DudeCT cases pass in the matching release evidence.
+sufficient. Caller-blinded signing on s390x splits the supplied CSPRNG buffer
+into independent scalar masks for wide nonce reduction and for projective,
+private-product, nonce-inversion, and final-scalar arithmetic. Both targets are
+promoted only after their native required DudeCT cases pass in the matching
+release evidence.
 
 For ML-KEM, the s390x claim covers the fixed-work z/Vector arithmetic kernels
 present in the release evidence. It does not cover native scalar multiply or

@@ -930,7 +930,9 @@ impl EcdsaP256SecretKey {
   /// The closure should fill the buffer from a CSPRNG. The ECDSA nonce remains
   /// deterministic; the random bytes blind the internal projective `kG` point
   /// and the private-scalar product. The portable backend also adds a random
-  /// multiple of the group order before fixed-base multiplication.
+  /// multiple of the group order before fixed-base multiplication. On s390x,
+  /// they also mask wide nonce reduction, nonce inversion, and final scalar
+  /// arithmetic.
   ///
   /// # Errors
   ///
@@ -1092,7 +1094,8 @@ impl EcdsaP384SecretKey {
   ///
   /// The closure should fill the buffer from a CSPRNG. The ECDSA nonce remains
   /// deterministic; the random bytes blind the internal projective `kG` point
-  /// and mask the private-scalar product.
+  /// and mask the private-scalar product. On s390x, they also mask wide nonce
+  /// reduction, nonce inversion, and final scalar arithmetic.
   ///
   /// # Errors
   ///
@@ -1992,7 +1995,11 @@ impl<const L: usize> SecretScalar<L> {
   }
 
   fn from_be_bytes<const N: usize>(bytes: &[u8; N]) -> Self {
-    debug_assert!(N <= L.strict_mul(8));
+    Self::from_be_slice(bytes)
+  }
+
+  fn from_be_slice(bytes: &[u8]) -> Self {
+    debug_assert!(bytes.len() <= L.strict_mul(8));
 
     let mut out = Uint::ZERO;
     for (out_limb, chunk) in out.0.iter_mut().zip(bytes.rchunks(8)) {
@@ -2448,7 +2455,17 @@ fn sign_digest_p256_blinded(
   let secret_scalar = SecretScalar::from_be_bytes(secret);
   let mut wide = ZeroizingBytes::zeroed();
   hmac_expand_p256(secret, digest, wide.as_mut_array());
+  #[cfg(target_arch = "s390x")]
+  let (reduction_blind, nonce_blind) = scalar_blind_pair(blind, &P256_ORDER_MODULUS);
+  #[cfg(target_arch = "s390x")]
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero_blinded(
+    wide.as_array(),
+    &reduction_blind,
+    &P256_ORDER_MODULUS,
+  ));
+  #[cfg(not(target_arch = "s390x"))]
   let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P256_ORDER_MODULUS));
+  #[cfg(not(target_arch = "s390x"))]
   let nonce_blind = SecretScalar::new(reduce_wide_order_nonzero(blind, &P256_ORDER_MODULUS));
   let result = sign_digest_with_nonce_blinded(&P256, &secret_scalar, &nonce, &nonce_blind, digest);
   match result {
@@ -2477,7 +2494,17 @@ fn sign_digest_p384_blinded(
   let secret_scalar = SecretScalar::from_be_bytes(secret);
   let mut wide = ZeroizingBytes::zeroed();
   hmac_expand_p384(secret, digest, wide.as_mut_array());
+  #[cfg(target_arch = "s390x")]
+  let (reduction_blind, nonce_blind) = scalar_blind_pair(blind, &P384_ORDER_MODULUS);
+  #[cfg(target_arch = "s390x")]
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero_blinded(
+    wide.as_array(),
+    &reduction_blind,
+    &P384_ORDER_MODULUS,
+  ));
+  #[cfg(not(target_arch = "s390x"))]
   let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
+  #[cfg(not(target_arch = "s390x"))]
   let nonce_blind = SecretScalar::new(reduce_wide_order_nonzero(blind, &P384_ORDER_MODULUS));
   let result = sign_digest_with_nonce_blinded(&P384, &secret_scalar, &nonce, &nonce_blind, digest);
   match result {
@@ -2615,7 +2642,14 @@ fn sign_digest_with_nonce_blinded<const L: usize>(
     nonce_blind.value(),
     curve.scalar_modulus,
   ));
-  sign_digest_with_r_product(curve, nonce, digest, r, rd)
+  #[cfg(target_arch = "s390x")]
+  {
+    sign_digest_with_r_product_blinded(curve, nonce, nonce_blind, digest, r, rd)
+  }
+  #[cfg(not(target_arch = "s390x"))]
+  {
+    sign_digest_with_r_product(curve, nonce, digest, r, rd)
+  }
 }
 
 fn sign_digest_with_r_point<const L: usize>(
@@ -2670,6 +2704,66 @@ fn sign_digest_with_r_product<const L: usize>(
     r,
     normalize_low_s(s.value(), curve.scalar_modulus.value, curve.half_order),
   ))
+}
+
+#[cfg(any(test, target_arch = "s390x"))]
+fn sign_digest_with_r_product_blinded<const L: usize>(
+  curve: &Curve<L>,
+  nonce: &SecretScalar<L>,
+  nonce_blind: &SecretScalar<L>,
+  digest: &[u8],
+  r: Uint<L>,
+  rd: SecretScalar<L>,
+) -> Result<(Uint<L>, Uint<L>), EcdsaError> {
+  let z = reduce_digest_for_scalar(digest, curve.scalar_modulus.value);
+  let sum = SecretScalar::new(z.add_mod_ct(&rd.value(), curve.scalar_modulus.value));
+  let blinded_nonce_inverse = blinded_nonce_inverse_montgomery(curve, nonce, nonce_blind);
+  let blinded_s = SecretScalar::new(montgomery_mul(
+    blinded_nonce_inverse.value(),
+    sum.value(),
+    curve.scalar_modulus,
+  ));
+  let blind_montgomery = SecretScalar::new(montgomery_mul(
+    nonce_blind.value(),
+    curve.scalar_modulus.r2,
+    curve.scalar_modulus,
+  ));
+  let s = SecretScalar::new(montgomery_mul(
+    blinded_s.value(),
+    blind_montgomery.value(),
+    curve.scalar_modulus,
+  ));
+  let failure_mask = r.ct_is_zero_mask() | s.value().ct_is_zero_mask();
+  if failure_mask != 0 {
+    return Err(EcdsaError::SigningFailure);
+  }
+
+  Ok((
+    r,
+    normalize_low_s(s.value(), curve.scalar_modulus.value, curve.half_order),
+  ))
+}
+
+#[cfg(any(test, feature = "diag", target_arch = "s390x"))]
+fn blinded_nonce_inverse_montgomery<const L: usize>(
+  curve: &Curve<L>,
+  nonce: &SecretScalar<L>,
+  nonce_blind: &SecretScalar<L>,
+) -> SecretScalar<L> {
+  // For nonzero k and b, (k*b)^-1 remains randomized until finalization
+  // multiplies by b. Using b as the lhs and as an additive share of k keeps
+  // every multiplication operand masked on the s390x bit-serial path.
+  let blinded_nonce = SecretScalar::new(mul_mod_montgomery_blinded_ct(
+    nonce_blind.value(),
+    nonce.value(),
+    nonce_blind.value(),
+    curve.scalar_modulus,
+  ));
+  SecretScalar::new(
+    blinded_nonce
+      .value()
+      .inv_mod_ct_montgomery(curve.scalar_modulus, curve.scalar_inverse_exponent),
+  )
 }
 
 fn public_key_from_secret_p256(secret: &[u8; 32]) -> Affine<4> {
@@ -2762,6 +2856,60 @@ fn reduce_wide_order_nonzero_owned<const L: usize, const N: usize>(
   debug_assert!(remainder.is_empty());
   for chunk in chunks {
     acc = mul_mod_montgomery_ct(acc, radix, modulus);
+    let word = chunk
+      .iter()
+      .copied()
+      .fold(0u64, |value, byte| (value << 8) | u64::from(byte));
+    acc = acc.add_mod_ct(&Uint::from_u64(word), modulus.value);
+  }
+  Uint::select(acc, Uint::ONE, acc.ct_is_zero_mask())
+}
+
+#[cfg(any(test, feature = "diag", target_arch = "s390x"))]
+fn scalar_blind_pair<const L: usize, const N: usize>(
+  bytes: &[u8; N],
+  modulus: &'static Modulus<L>,
+) -> (SecretScalar<L>, SecretScalar<L>) {
+  let scalar_bytes = L.strict_mul(8);
+  debug_assert_eq!(N, scalar_bytes.strict_mul(2));
+  debug_assert_ne!(modulus.value.0.last().copied().unwrap_or(0) >> 63, 0);
+  let (first, second) = bytes.split_at(scalar_bytes);
+  (scalar_blind_from_be_slice(first), scalar_blind_from_be_slice(second))
+}
+
+#[cfg(any(test, feature = "diag", target_arch = "s390x"))]
+fn scalar_blind_from_be_slice<const L: usize>(bytes: &[u8]) -> SecretScalar<L> {
+  let mut blind = SecretScalar::from_be_slice(bytes);
+  // Both NIST curve orders exceed 2^(bits-1). Clearing only the top bit yields
+  // a valid full-width scalar without feeding the secret mask through modular
+  // multiplication; zero is selected to one so every mask stays invertible.
+  if let Some(high) = blind.value.0.last_mut() {
+    *high &= u64::MAX >> 1;
+  }
+  blind.value = Uint::select(blind.value, Uint::ONE, blind.value.ct_is_zero_mask());
+  blind
+}
+
+#[cfg(any(test, feature = "diag", target_arch = "s390x"))]
+fn reduce_wide_order_nonzero_blinded<const L: usize, const N: usize>(
+  bytes: &[u8; N],
+  blind: &SecretScalar<L>,
+  modulus: &'static Modulus<L>,
+) -> Uint<L> {
+  debug_assert_eq!(N % 8, 0);
+
+  let mut radix = Uint::ZERO;
+  if let Some(limb) = radix.0.get_mut(1) {
+    *limb = 1;
+  }
+
+  let mut acc = Uint::ZERO;
+  let (chunks, remainder) = bytes.as_chunks::<8>();
+  debug_assert!(remainder.is_empty());
+  for chunk in chunks {
+    // Horner reduction is linear in acc. Split acc under the caller-random
+    // scalar so the s390x order multiplier never observes an unmasked nonce.
+    acc = mul_mod_montgomery_blinded_ct(radix, acc, blind.value(), modulus);
     let word = chunk
       .iter()
       .copied()
@@ -3444,6 +3592,20 @@ pub fn diag_ecdsa_p256_reduce_wide_order_limb_digest(wide: [u8; 64]) -> [u64; 4]
   nonce.value().0
 }
 
+/// Reduce a wide P-256 nonce candidate through the caller-blinded s390x path.
+#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+pub fn diag_ecdsa_p256_reduce_wide_order_blinded_limb_digest(wide: [u8; 64], blind: [u8; 64]) -> [u64; 4] {
+  let wide = ZeroizingBytes::new(wide);
+  let blind = ZeroizingBytes::new(blind);
+  let (reduction_blind, _) = scalar_blind_pair(blind.as_array(), &P256_ORDER_MODULUS);
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero_blinded(
+    wide.as_array(),
+    &reduction_blind,
+    &P256_ORDER_MODULUS,
+  ));
+  nonce.value().0
+}
+
 /// Return the affine limbs produced by blinded P-256 basepoint multiplication.
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_basepoint_blinded_limb_digest(secret: [u8; 32], blind: [u8; 64], message: &[u8]) -> [u64; 8] {
@@ -3520,6 +3682,27 @@ pub fn diag_ecdsa_p256_nonce_inverse_limb_digest(secret: [u8; 32], message: &[u8
   inverse.value().0
 }
 
+/// Derive and invert the deterministic P-256 nonce through the caller-blinded s390x path.
+#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+pub fn diag_ecdsa_p256_nonce_inverse_blinded_limb_digest(
+  secret: [u8; 32],
+  blind: [u8; 64],
+  message: &[u8],
+) -> [u64; 4] {
+  let secret = ZeroizingBytes::new(secret);
+  let blind = ZeroizingBytes::new(blind);
+  let digest = Sha256::digest(message);
+  let mut wide = ZeroizingBytes::zeroed();
+  hmac_expand_p256(secret.as_array(), &digest, wide.as_mut_array());
+  let (reduction_blind, nonce_blind) = scalar_blind_pair(blind.as_array(), &P256_ORDER_MODULUS);
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero_blinded(
+    wide.as_array(),
+    &reduction_blind,
+    &P256_ORDER_MODULUS,
+  ));
+  blinded_nonce_inverse_montgomery(&P256, &nonce, &nonce_blind).value().0
+}
+
 /// Run the final P-256 signing multiplication with supplied nonce material and return its limbs.
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_final_multiply_limb_digest(secret: [u8; 32], nonce_wide: [u8; 64], message: &[u8]) -> [u64; 4] {
@@ -3591,6 +3774,20 @@ pub fn diag_ecdsa_p384_nonce_reduce_limb_digest(secret: [u8; 48], message: &[u8]
 pub fn diag_ecdsa_p384_reduce_wide_order_limb_digest(wide: [u8; 96]) -> [u64; 6] {
   let wide = ZeroizingBytes::new(wide);
   let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
+  nonce.value().0
+}
+
+/// Reduce a wide P-384 nonce candidate through the caller-blinded s390x path.
+#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+pub fn diag_ecdsa_p384_reduce_wide_order_blinded_limb_digest(wide: [u8; 96], blind: [u8; 96]) -> [u64; 6] {
+  let wide = ZeroizingBytes::new(wide);
+  let blind = ZeroizingBytes::new(blind);
+  let (reduction_blind, _) = scalar_blind_pair(blind.as_array(), &P384_ORDER_MODULUS);
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero_blinded(
+    wide.as_array(),
+    &reduction_blind,
+    &P384_ORDER_MODULUS,
+  ));
   nonce.value().0
 }
 
@@ -3668,6 +3865,27 @@ pub fn diag_ecdsa_p384_nonce_inverse_limb_digest(secret: [u8; 48], message: &[u8
       .inv_mod_ct_montgomery(&P384_ORDER_MODULUS, P384_ORDER_MINUS_TWO),
   );
   inverse.value().0
+}
+
+/// Derive and invert the deterministic P-384 nonce through the caller-blinded s390x path.
+#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+pub fn diag_ecdsa_p384_nonce_inverse_blinded_limb_digest(
+  secret: [u8; 48],
+  blind: [u8; 96],
+  message: &[u8],
+) -> [u64; 6] {
+  let secret = ZeroizingBytes::new(secret);
+  let blind = ZeroizingBytes::new(blind);
+  let digest = Sha384::digest(message);
+  let mut wide = ZeroizingBytes::zeroed();
+  hmac_expand_p384(secret.as_array(), &digest, wide.as_mut_array());
+  let (reduction_blind, nonce_blind) = scalar_blind_pair(blind.as_array(), &P384_ORDER_MODULUS);
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero_blinded(
+    wide.as_array(),
+    &reduction_blind,
+    &P384_ORDER_MODULUS,
+  ));
+  blinded_nonce_inverse_montgomery(&P384, &nonce, &nonce_blind).value().0
 }
 
 /// Run the final P-384 signing multiplication with supplied nonce material and return its limbs.
@@ -4792,6 +5010,138 @@ mod tests {
         .expect("P-384 signature scalar has the fixed field width")
         .cmp(&P384_ORDER_HALF)
         .is_le()
+    );
+  }
+
+  #[test]
+  fn scalar_blind_pairs_are_nonzero_full_width_scalars() {
+    for bytes in [[0u8; 64], [0xff; 64], {
+      let mut bytes = [0u8; 64];
+      let mut value = 0x5au8;
+      for byte in &mut bytes {
+        *byte = value;
+        value = value.wrapping_add(0x3d);
+      }
+      bytes
+    }] {
+      let (first, second) = scalar_blind_pair(&bytes, &P256_ORDER_MODULUS);
+      for blind in [first.value(), second.value()] {
+        assert!(blind.is_in_range(&P256_ORDER));
+        assert_eq!(blind.0[3] >> 63, 0);
+      }
+    }
+
+    for bytes in [[0u8; 96], [0xff; 96], {
+      let mut bytes = [0u8; 96];
+      let mut value = 0xa5u8;
+      for byte in &mut bytes {
+        *byte = value;
+        value = value.wrapping_add(0x71);
+      }
+      bytes
+    }] {
+      let (first, second) = scalar_blind_pair(&bytes, &P384_ORDER_MODULUS);
+      for blind in [first.value(), second.value()] {
+        assert!(blind.is_in_range(&P384_ORDER));
+        assert_eq!(blind.0[5] >> 63, 0);
+      }
+    }
+  }
+
+  #[test]
+  fn caller_blinded_wide_order_reduction_matches_portable_authority() {
+    let p256_wide_inputs = [[0u8; 64], [0xff; 64], {
+      let mut bytes = [0u8; 64];
+      let mut value = 0x3cu8;
+      for byte in &mut bytes {
+        *byte = value;
+        value = value.wrapping_add(0x29);
+      }
+      bytes
+    }];
+    let p256_blinds = [[0u8; 64], [0xff; 64], [0x69; 64]];
+    for wide in p256_wide_inputs {
+      let expected = reduce_wide_order_nonzero_owned(&wide, &P256_ORDER_MODULUS);
+      for blind in p256_blinds {
+        let (reduction_blind, _) = scalar_blind_pair(&blind, &P256_ORDER_MODULUS);
+        assert!(reduce_wide_order_nonzero_blinded(&wide, &reduction_blind, &P256_ORDER_MODULUS) == expected);
+      }
+    }
+
+    let p384_wide_inputs = [[0u8; 96], [0xff; 96], {
+      let mut bytes = [0u8; 96];
+      let mut value = 0xc3u8;
+      for byte in &mut bytes {
+        *byte = value;
+        value = value.wrapping_add(0x47);
+      }
+      bytes
+    }];
+    let p384_blinds = [[0u8; 96], [0xff; 96], [0x96; 96]];
+    for wide in p384_wide_inputs {
+      let expected = reduce_wide_order_nonzero_owned(&wide, &P384_ORDER_MODULUS);
+      for blind in p384_blinds {
+        let (reduction_blind, _) = scalar_blind_pair(&blind, &P384_ORDER_MODULUS);
+        assert!(reduce_wide_order_nonzero_blinded(&wide, &reduction_blind, &P384_ORDER_MODULUS) == expected);
+      }
+    }
+  }
+
+  fn assert_blinded_scalar_finish_matches<const L: usize>(
+    curve: &Curve<L>,
+    secret: Uint<L>,
+    nonce: Uint<L>,
+    blind: Uint<L>,
+    digest: &[u8],
+    r: Uint<L>,
+  ) {
+    let rd = mul_mod_montgomery_ct(r, secret, curve.scalar_modulus);
+    let expected = sign_digest_with_r_product(curve, &SecretScalar::new(nonce), digest, r, SecretScalar::new(rd));
+    let actual = sign_digest_with_r_product_blinded(
+      curve,
+      &SecretScalar::new(nonce),
+      &SecretScalar::new(blind),
+      digest,
+      r,
+      SecretScalar::new(rd),
+    );
+    assert!(actual == expected);
+
+    let blinded_inverse = blinded_nonce_inverse_montgomery(curve, &SecretScalar::new(nonce), &SecretScalar::new(blind));
+    let blind_montgomery = montgomery_mul(blind, curve.scalar_modulus.r2, curve.scalar_modulus);
+    let unblinded_inverse = montgomery_mul(blinded_inverse.value(), blind_montgomery, curve.scalar_modulus);
+    assert!(unblinded_inverse == nonce.inv_mod_ct_montgomery(curve.scalar_modulus, curve.scalar_inverse_exponent));
+  }
+
+  #[test]
+  fn caller_blinded_scalar_finish_matches_unblinded_authority() {
+    assert_blinded_scalar_finish_matches(
+      &P256,
+      Uint::from_u64(0x1234_5678_9abc_def0),
+      Uint::from_u64(0xfedc_ba98_7654_3210),
+      Uint([
+        0x6a09_e667_f3bc_c908,
+        0xbb67_ae85_84ca_a73b,
+        0x3c6e_f372_fe94_f82b,
+        0x1fff_ffff_ffff_ffff,
+      ]),
+      &[0x42; 32],
+      P256_GX.reduce_once_ct(P256_ORDER),
+    );
+    assert_blinded_scalar_finish_matches(
+      &P384,
+      Uint::from_u64(0x1234_5678_9abc_def0),
+      Uint::from_u64(0xfedc_ba98_7654_3210),
+      Uint([
+        0x6a09_e667_f3bc_c908,
+        0xbb67_ae85_84ca_a73b,
+        0x3c6e_f372_fe94_f82b,
+        0xa54f_f53a_5f1d_36f1,
+        0x510e_527f_ade6_82d1,
+        0x1fff_ffff_ffff_ffff,
+      ]),
+      &[0x24; 48],
+      P384_GX.reduce_once_ct(P384_ORDER),
     );
   }
 

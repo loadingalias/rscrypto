@@ -1,9 +1,6 @@
 {
   "source_url": "https://csrc.nist.gov/CSRC/media/Projects/Cryptographic-Algorithm-Validation-Program/documents/dss/186-3rsatestvectors.zip",
-  "source_files": [
-    "SigVer15_186-3.rsp",
-    "SigVerPSS_186-3.rsp"
-  ],
+  "source_files": ["SigVer15_186-3.rsp", "SigVerPSS_186-3.rsp"],
   "note": "Curated SHA-2 NIST CAVP 186-3 RSA SigVer subset matching rscrypto supported verification profiles: PKCS1v1.5 RSA-2048/3072 with SHA-256/384/512, and PSS RSA-2048/3072 with SHA-256/384/512 using explicit salt lengths from the response files. SHA-1, SHA-224, and RSA-1024 are intentionally excluded.",
   "counts": {
     "total": 216,
@@ -91,13 +88,8 @@
     }
   ],
   "excluded": {
-    "hashes": [
-      "SHA1",
-      "SHA224"
-    ],
-    "moduli": [
-      1024
-    ]
+    "hashes": ["SHA1", "SHA224"],
+    "moduli": [1024]
   },
   "tests": [
     {
