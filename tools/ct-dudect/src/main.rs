@@ -22,13 +22,13 @@ use rscrypto::{
     diag_ecdsa_p256_basepoint_blinded_limb_digest, diag_ecdsa_p256_final_multiply_limb_digest,
     diag_ecdsa_p256_nonce_inverse_blinded_limb_digest, diag_ecdsa_p256_nonce_inverse_limb_digest,
     diag_ecdsa_p256_nonce_reduce_limb_digest, diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest,
-    diag_ecdsa_p256_order_mul_fixed_r_limb_digest, diag_ecdsa_p256_reduce_wide_order_blinded_limb_digest,
-    diag_ecdsa_p256_reduce_wide_order_limb_digest, diag_ecdsa_p256_scalar_finish_limb_digest,
+    diag_ecdsa_p256_order_mul_fixed_r_limb_digest, diag_ecdsa_p256_reduce_wide_order_limb_digest,
+    diag_ecdsa_p256_scalar_finish_limb_digest,
     diag_ecdsa_p384_basepoint_blinded_limb_digest, diag_ecdsa_p384_final_multiply_limb_digest,
     diag_ecdsa_p384_nonce_inverse_blinded_limb_digest, diag_ecdsa_p384_nonce_inverse_limb_digest,
     diag_ecdsa_p384_nonce_reduce_limb_digest, diag_ecdsa_p384_order_mul_fixed_r_limb_digest,
-    diag_ecdsa_p384_reduce_wide_order_blinded_limb_digest, diag_ecdsa_p384_reduce_wide_order_limb_digest,
-    diag_ecdsa_p384_scalar_finish_limb_digest, diag_mlkem_from_montgomery_product_domain_input_digest,
+    diag_ecdsa_p384_reduce_wide_order_limb_digest, diag_ecdsa_p384_scalar_finish_limb_digest,
+    diag_mlkem_from_montgomery_product_domain_input_digest,
     diag_mlkem_inverse_ntt_montgomery_product_input_digest, diag_mlkem_multiply_ntts_add_assign_input_digest,
     diag_mlkem_ntt_input_digest, diag_mlkem_to_montgomery_product_domain_input_digest,
     diag_mlkem512_keygen_secret_noise_digest, diag_mlkem768_keygen_secret_noise_digest,
@@ -1243,24 +1243,6 @@ fn ecdsa_p256_diag_reduce_wide_fixed_vs_random_input(runner: &mut CtRunner, rng:
   }
 }
 
-fn ecdsa_p256_diag_reduce_wide_blinded_fixed_vs_random_input(runner: &mut CtRunner, rng: &mut BenchRng) {
-  let mut inputs = Vec::with_capacity(samples());
-  for class in balanced_classes(rng, samples()) {
-    let wide = if matches!(class, Class::Left) {
-      [0x42; 64]
-    } else {
-      rand_array::<64>(rng)
-    };
-    inputs.push((class, wide, rand_array::<64>(rng)));
-  }
-
-  for (class, wide, blind) in inputs {
-    runner.run_one(class, || {
-      core::hint::black_box(diag_ecdsa_p256_reduce_wide_order_blinded_limb_digest(wide, blind))[0]
-    });
-  }
-}
-
 fn ecdsa_p256_diag_basepoint_blinded_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
   for class in balanced_classes(rng, samples()) {
@@ -1421,24 +1403,6 @@ fn ecdsa_p384_diag_reduce_wide_fixed_vs_random_input(runner: &mut CtRunner, rng:
   for (class, wide) in inputs {
     runner.run_one(class, || {
       core::hint::black_box(diag_ecdsa_p384_reduce_wide_order_limb_digest(wide))[0]
-    });
-  }
-}
-
-fn ecdsa_p384_diag_reduce_wide_blinded_fixed_vs_random_input(runner: &mut CtRunner, rng: &mut BenchRng) {
-  let mut inputs = Vec::with_capacity(samples());
-  for class in balanced_classes(rng, samples()) {
-    let wide = if matches!(class, Class::Left) {
-      [0x42; 96]
-    } else {
-      rand_array::<96>(rng)
-    };
-    inputs.push((class, wide, rand_array::<96>(rng)));
-  }
-
-  for (class, wide, blind) in inputs {
-    runner.run_one(class, || {
-      core::hint::black_box(diag_ecdsa_p384_reduce_wide_order_blinded_limb_digest(wide, blind))[0]
     });
   }
 }
@@ -2312,10 +2276,6 @@ ctbench_main_with_seeds!(
     Some(0x7032353672656475)
   ),
   (
-    ecdsa_p256_diag_reduce_wide_blinded_fixed_vs_random_input,
-    Some(0x7032353672656462)
-  ),
-  (
     ecdsa_p256_diag_basepoint_blinded_fixed_vs_random_secret,
     Some(0x7032353662617365)
   ),
@@ -2350,10 +2310,6 @@ ctbench_main_with_seeds!(
   (
     ecdsa_p384_diag_reduce_wide_fixed_vs_random_input,
     Some(0x7033383472656475)
-  ),
-  (
-    ecdsa_p384_diag_reduce_wide_blinded_fixed_vs_random_input,
-    Some(0x7033383472656462)
   ),
   (
     ecdsa_p384_diag_basepoint_blinded_fixed_vs_random_secret,

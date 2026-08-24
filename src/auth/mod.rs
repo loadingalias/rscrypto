@@ -243,18 +243,16 @@ pub use ecdsa::{
   diag_ecdsa_p256_basepoint_blinded_limb_digest, diag_ecdsa_p256_final_multiply_limb_digest,
   diag_ecdsa_p256_nonce_inverse_blinded_limb_digest, diag_ecdsa_p256_nonce_inverse_limb_digest,
   diag_ecdsa_p256_nonce_reduce_limb_digest, diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest,
-  diag_ecdsa_p256_order_mul_fixed_r_limb_digest, diag_ecdsa_p256_reduce_wide_order_blinded_limb_digest,
-  diag_ecdsa_p256_reduce_wide_order_limb_digest, diag_ecdsa_p256_scalar_finish_limb_digest,
-  diag_ecdsa_p256_select_signing_generator_affine_limb_digest,
+  diag_ecdsa_p256_order_mul_fixed_r_limb_digest, diag_ecdsa_p256_reduce_wide_order_limb_digest,
+  diag_ecdsa_p256_scalar_finish_limb_digest, diag_ecdsa_p256_select_signing_generator_affine_limb_digest,
 };
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub use ecdsa::{
   diag_ecdsa_p384_basepoint_blinded_limb_digest, diag_ecdsa_p384_basepoint_r_limb_digest,
   diag_ecdsa_p384_final_multiply_limb_digest, diag_ecdsa_p384_nonce_inverse_blinded_limb_digest,
   diag_ecdsa_p384_nonce_inverse_limb_digest, diag_ecdsa_p384_nonce_reduce_limb_digest,
-  diag_ecdsa_p384_order_mul_fixed_r_limb_digest, diag_ecdsa_p384_reduce_wide_order_blinded_limb_digest,
-  diag_ecdsa_p384_reduce_wide_order_limb_digest, diag_ecdsa_p384_scalar_finish_limb_digest,
-  diag_ecdsa_p384_select_signing_generator_affine_limb_digest,
+  diag_ecdsa_p384_order_mul_fixed_r_limb_digest, diag_ecdsa_p384_reduce_wide_order_limb_digest,
+  diag_ecdsa_p384_scalar_finish_limb_digest, diag_ecdsa_p384_select_signing_generator_affine_limb_digest,
 };
 #[cfg(all(
   feature = "diag",
