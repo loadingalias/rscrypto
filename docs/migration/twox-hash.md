@@ -7,11 +7,11 @@ The `twox-hash` mapping is API migration guidance for its 2.x XXH3 surface.
 
 ## TL;DR
 
-| | Before (`twox-hash` 2.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `twox-hash = "2.1"` | `rscrypto = { version = "0.8.1", features = ["xxh3"] }` |
-| Import | `use twox_hash::XxHash3_64;` | `use rscrypto::{FastHash, Xxh3};` |
-| Call | `XxHash3_64::oneshot(data)` | `Xxh3::hash(data)` |
+|           | Before (`twox-hash` 2.x)     | After (`rscrypto` 0.8.1)                                |
+| --------- | ---------------------------- | ------------------------------------------------------- |
+| Cargo dep | `twox-hash = "2.1"`          | `rscrypto = { version = "0.8.1", features = ["xxh3"] }` |
+| Import    | `use twox_hash::XxHash3_64;` | `use rscrypto::{FastHash, Xxh3};`                       |
+| Call      | `XxHash3_64::oneshot(data)`  | `Xxh3::hash(data)`                                      |
 
 ## Cargo.toml
 
@@ -29,12 +29,12 @@ rscrypto = { version = "0.8.1", features = ["xxh3"] }
 
 ## Algorithm map
 
-| `twox-hash` type | rscrypto type | Output |
-|---|---|---|
-| `XxHash3_64` | `Xxh3` (alias for `Xxh3_64`) | `u64` |
-| `XxHash3_128` | `Xxh3_128` | `u128` |
-| `XxHash64` (legacy XXH64) | not mapped: keep `twox-hash` | `u64` |
-| `XxHash32` (legacy XXH32) | not mapped: keep `twox-hash` | `u32` |
+| `twox-hash` type          | rscrypto type                | Output |
+| ------------------------- | ---------------------------- | ------ |
+| `XxHash3_64`              | `Xxh3` (alias for `Xxh3_64`) | `u64`  |
+| `XxHash3_128`             | `Xxh3_128`                   | `u128` |
+| `XxHash64` (legacy XXH64) | not mapped: keep `twox-hash` | `u64`  |
+| `XxHash32` (legacy XXH32) | not mapped: keep `twox-hash` | `u32`  |
 
 ## API patterns
 

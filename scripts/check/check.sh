@@ -88,6 +88,14 @@ if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/auth-vector-provenance.py" >"$LO
 fi
 ok
 
+step "Checking benchmark catalog"
+if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/../bench/benchmark_catalog_test.py" >"$LOG_DIR/benchmark-catalog.log" 2>&1; then
+  fail
+  show_error "$LOG_DIR/benchmark-catalog.log"
+  exit 1
+fi
+ok
+
 step "Checking CT assembly scanner"
 if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/../ct/asm_heuristics_test.py" >"$LOG_DIR/ct-asm-scanner.log" 2>&1; then
   fail

@@ -48,18 +48,67 @@ install_wasmtime() {
   export PATH="$install_dir/bin:$PATH"
 }
 
+install_wasm_tools() {
+  local platform tmpdir install_dir installed_version
+  tmpdir="$(mktemp -d)"
+  install_dir="${WASM_TOOLS_HOME:-$HOME/.wasm-tools}"
+
+  ci_tool_download wasm-tools "$tmpdir"
+  platform="${CI_TOOL_HOST_ARCH}-${CI_TOOL_HOST_OS}"
+  echo "Installing wasm-tools $CI_TOOL_VERSION for $platform"
+  tar -xzf "$CI_TOOL_ARCHIVE_PATH" -C "$tmpdir"
+  mkdir -p "$install_dir/bin"
+  cp "$tmpdir/wasm-tools-${CI_TOOL_VERSION}-${platform}/wasm-tools" "$install_dir/bin/wasm-tools"
+  chmod +x "$install_dir/bin/wasm-tools"
+
+  installed_version=$("$install_dir/bin/wasm-tools" --version)
+  if [[ "$installed_version" =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+    installed_version=${BASH_REMATCH[1]}
+  else
+    echo "wasm-tools version mismatch: expected $CI_TOOL_VERSION, got $installed_version" >&2
+    return 1
+  fi
+  [[ "$installed_version" == "$CI_TOOL_VERSION" ]] || {
+    echo "wasm-tools version mismatch: expected $CI_TOOL_VERSION, got $installed_version" >&2
+    return 1
+  }
+
+  rm -rf "$tmpdir"
+  export PATH="$install_dir/bin:$PATH"
+}
+
+build_validate_run_wasm_vectors() {
+  local variant=$1
+  local rustflags=$2
+  local target_dir="$CI_TOOL_REPO_ROOT/target/wasm-runtime-vectors/$variant"
+  local artifact="$target_dir/$TARGET/debug/rscrypto-wasm-runtime-vectors.wasm"
+  local wat="$artifact.wat"
+  local manifest="tools/wasm-runtime-vectors/Cargo.toml"
+
+  CARGO_TARGET_DIR="$target_dir" RUSTFLAGS="$rustflags" \
+    cargo build --locked --manifest-path "$manifest" --target "$TARGET"
+
+  wasm-tools validate "$artifact"
+  if [[ "$variant" == simd128 ]]; then
+    wasm-tools print "$artifact" >"$wat"
+    grep -Eq '\b(v128\.(load|store|const)|i(8x16|16x8|32x4|64x2)\.|f(32x4|64x2)\.)' "$wat" || {
+      echo "SIMD WASM artifact contains no SIMD instruction" >&2
+      return 1
+    }
+  fi
+
+  wasmtime "$artifact"
+}
+
 run_wasm_runtime_vectors() {
   if [[ "$TARGET" != "wasm32-wasip1" ]]; then
     return
   fi
 
   install_wasmtime
-  export CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime"
-
-  local manifest="tools/wasm-runtime-vectors/Cargo.toml"
-  cargo run --locked --manifest-path "$manifest" --target "$TARGET"
-  RUSTFLAGS="-C target-feature=+simd128" \
-    cargo run --locked --manifest-path "$manifest" --target "$TARGET"
+  install_wasm_tools
+  build_validate_run_wasm_vectors default ""
+  build_validate_run_wasm_vectors simd128 "-C target-feature=+simd128"
 }
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

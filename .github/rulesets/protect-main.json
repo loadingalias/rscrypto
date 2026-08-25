@@ -5,9 +5,7 @@
   "conditions": {
     "ref_name": {
       "exclude": [],
-      "include": [
-        "~DEFAULT_BRANCH"
-      ]
+      "include": ["~DEFAULT_BRANCH"]
     }
   },
   "bypass_actors": [],
@@ -27,11 +25,7 @@
         "require_code_owner_review": false,
         "require_last_push_approval": false,
         "required_review_thread_resolution": true,
-        "allowed_merge_methods": [
-          "merge",
-          "squash",
-          "rebase"
-        ]
+        "allowed_merge_methods": ["merge", "squash", "rebase"]
       }
     },
     {

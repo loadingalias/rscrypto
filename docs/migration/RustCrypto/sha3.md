@@ -7,11 +7,11 @@ Evidence: `tests/sha3_official_vectors.rs`, `tests/sha3_differential.rs`, `tests
 
 ## TL;DR
 
-| | Before (`sha3` 0.12.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `sha3 = "0.12"` | `rscrypto = { version = "0.8.1", features = ["sha3"] }` |
-| Import | `use sha3::{Sha3_256, Digest};` | `use rscrypto::{Sha3_256, Digest};` |
-| Call | `Sha3_256::digest(data)` | `Sha3_256::digest(data)` |
+|           | Before (`sha3` 0.12.x)          | After (`rscrypto` 0.8.1)                                |
+| --------- | ------------------------------- | ------------------------------------------------------- |
+| Cargo dep | `sha3 = "0.12"`                 | `rscrypto = { version = "0.8.1", features = ["sha3"] }` |
+| Import    | `use sha3::{Sha3_256, Digest};` | `use rscrypto::{Sha3_256, Digest};`                     |
+| Call      | `Sha3_256::digest(data)`        | `Sha3_256::digest(data)`                                |
 
 ## Cargo.toml
 
@@ -29,14 +29,14 @@ rscrypto = { version = "0.8.1", features = ["sha3"] }
 
 ## Algorithm map
 
-| `sha3` type | rscrypto type | Output |
-|---|---|---|
-| `sha3::Sha3_224` | `rscrypto::Sha3_224` | `[u8; 28]` |
-| `sha3::Sha3_256` | `rscrypto::Sha3_256` | `[u8; 32]` |
-| `sha3::Sha3_384` | `rscrypto::Sha3_384` | `[u8; 48]` |
-| `sha3::Sha3_512` | `rscrypto::Sha3_512` | `[u8; 64]` |
-| `sha3::Shake128` | `rscrypto::Shake128` | XOF (variable) |
-| `sha3::Shake256` | `rscrypto::Shake256` | XOF (variable) |
+| `sha3` type       | rscrypto type         | Output                       |
+| ----------------- | --------------------- | ---------------------------- |
+| `sha3::Sha3_224`  | `rscrypto::Sha3_224`  | `[u8; 28]`                   |
+| `sha3::Sha3_256`  | `rscrypto::Sha3_256`  | `[u8; 32]`                   |
+| `sha3::Sha3_384`  | `rscrypto::Sha3_384`  | `[u8; 48]`                   |
+| `sha3::Sha3_512`  | `rscrypto::Sha3_512`  | `[u8; 64]`                   |
+| `sha3::Shake128`  | `rscrypto::Shake128`  | XOF (variable)               |
+| `sha3::Shake256`  | `rscrypto::Shake256`  | XOF (variable)               |
 | `sha3::CShake128` | `rscrypto::Cshake128` | XOF (variable, customizable) |
 | `sha3::CShake256` | `rscrypto::Cshake256` | XOF (variable, customizable) |
 
@@ -103,11 +103,11 @@ reader.squeeze(&mut out);
 
 Three changes:
 
-| RustCrypto | rscrypto |
-|---|---|
-| `Shake128::default()` | `Shake128::new()` |
-| `XofReader::read(&mut out)` | `Xof::squeeze(&mut out)` |
-| imports `ExtendableOutput`, `Update`, `XofReader` separately | one trait `Xof` |
+| RustCrypto                                                   | rscrypto                 |
+| ------------------------------------------------------------ | ------------------------ |
+| `Shake128::default()`                                        | `Shake128::new()`        |
+| `XofReader::read(&mut out)`                                  | `Xof::squeeze(&mut out)` |
+| imports `ExtendableOutput`, `Update`, `XofReader` separately | one trait `Xof`          |
 
 The one-shot form is `Shake128::xof(data)`: returns the reader directly, no `new`/`update`/`finalize_xof` chain.
 

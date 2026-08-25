@@ -1,8 +1,6 @@
 {
   "source_url": "https://csrc.nist.gov/CSRC/media/Projects/Cryptographic-Algorithm-Validation-Program/documents/dss/186-3rsatestvectors.zip",
-  "source_files": [
-    "KeyGen_186-3_RandomProbablyPrime3_3_KAT.txt"
-  ],
+  "source_files": ["KeyGen_186-3_RandomProbablyPrime3_3_KAT.txt"],
   "note": "Curated NIST CAVP 186-3 RSA key-generation probable-prime success candidates. rscrypto fixes e=65537, so these vectors validate key derivation and private operations from NIST probable-prime p/q candidates, not byte-for-byte replay of the CAVP random-exponent key-generation transcript.",
   "counts": {
     "total": 2,

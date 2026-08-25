@@ -81,8 +81,13 @@ cat >"$direct_bin/tar" <<'SH'
 set -euo pipefail
 printf 'tar %s\n' "$*" >>"$MOCK_COMMAND_LOG"
 destination=""
+archive=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -xJf | -xzf)
+      archive=$2
+      shift 2
+      ;;
     -C)
       destination=$2
       shift 2
@@ -90,20 +95,46 @@ while [[ $# -gt 0 ]]; do
     *) shift ;;
   esac
 done
-[[ -n "$destination" ]]
-root="$destination/wasmtime-v47.0.3-x86_64-linux"
-mkdir -p "$root"
-cat >"$root/wasmtime" <<'EOF'
+[[ -n "$destination" && -n "$archive" ]]
+case "${archive##*/}" in
+  wasmtime-*)
+    root="$destination/wasmtime-v48.0.0-x86_64-linux"
+    mkdir -p "$root"
+    cat >"$root/wasmtime" <<'EOF'
 #!/usr/bin/env bash
-printf 'wasmtime 47.0.3 (mock)\n'
-printf 'wasmtime executed\n' >>"$MOCK_EXEC_LOG"
+if [[ "${1:-}" == --version ]]; then
+  printf 'wasmtime 48.0.0 (mock)\n'
+else
+  printf 'wasmtime executed\n' >>"$MOCK_EXEC_LOG"
+fi
 EOF
-chmod +x "$root/wasmtime"
+    chmod +x "$root/wasmtime"
+    ;;
+  wasm-tools-*)
+    root="$destination/wasm-tools-1.257.1-x86_64-linux"
+    mkdir -p "$root"
+    cat >"$root/wasm-tools" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  --version) printf 'wasm-tools 1.257.1\n' ;;
+  validate) printf 'wasm-tools validated\n' >>"$MOCK_EXEC_LOG" ;;
+  print) printf '(module (func (drop (v128.const i32x4 0 0 0 0))))\n' ;;
+  *) exit 2 ;;
+esac
+EOF
+    chmod +x "$root/wasm-tools"
+    ;;
+  *) exit 2 ;;
+esac
 SH
 
 cat >"$direct_bin/cargo" <<'SH'
 #!/usr/bin/env bash
 printf 'cargo %s\n' "$*" >>"$MOCK_COMMAND_LOG"
+if [[ "${1:-}" == build && -n "${CARGO_TARGET_DIR:-}" ]]; then
+  mkdir -p "$CARGO_TARGET_DIR/wasm32-wasip1/debug"
+  : >"$CARGO_TARGET_DIR/wasm32-wasip1/debug/rscrypto-wasm-runtime-vectors.wasm"
+fi
 SH
 
 cat >"$direct_bin/rustup" <<'SH'
@@ -216,21 +247,27 @@ wasmtime_artifact="$TMP_ROOT/wasmtime.tar.xz"
 printf 'authenticated mock Wasmtime archive\n' >"$wasmtime_artifact"
 wasmtime_digest=$(sha256_file "$wasmtime_artifact")
 set_manifest_digest "$direct_fixture" wasmtime linux x86_64 "$wasmtime_digest"
+set_manifest_digest "$direct_fixture" wasm-tools linux x86_64 "$wasmtime_digest"
 wasmtime_home="$TMP_ROOT/wasmtime-home"
+wasm_tools_home="$TMP_ROOT/wasm-tools-home"
 wasmtime_exec="$TMP_ROOT/wasmtime.exec"
 : >"$direct_log"
 (
   cd "$direct_fixture"
   PATH="$direct_bin:$PATH" \
     WASMTIME_HOME="$wasmtime_home" \
+    WASM_TOOLS_HOME="$wasm_tools_home" \
     MOCK_COMMAND_LOG="$direct_log" \
     MOCK_DOWNLOAD_FILE="$wasmtime_artifact" \
     MOCK_EXEC_LOG="$wasmtime_exec" \
     scripts/ci/nostd-wasm-suite.sh wasm32-wasip1 shallow
 ) >/dev/null
 [[ -x "$wasmtime_home/bin/wasmtime" ]] || fail "verified Wasmtime was not installed"
+[[ -x "$wasm_tools_home/bin/wasm-tools" ]] || fail "verified wasm-tools was not installed"
 grep -Fq 'tar -xJf' "$direct_log" || fail "verified Wasmtime was not extracted"
+grep -Fq 'tar -xzf' "$direct_log" || fail "verified wasm-tools was not extracted"
 grep -Fqx 'wasmtime executed' "$wasmtime_exec" || fail "verified Wasmtime was not executed"
+grep -Fqx 'wasm-tools validated' "$wasmtime_exec" || fail "verified wasm-tools did not validate artifacts"
 
 : >"$direct_log"
 bad_wasmtime_exec="$TMP_ROOT/bad-wasmtime.exec"
@@ -238,6 +275,7 @@ if (
   cd "$direct_fixture"
   PATH="$direct_bin:$PATH" \
     WASMTIME_HOME="$TMP_ROOT/bad-wasmtime-home" \
+    WASM_TOOLS_HOME="$TMP_ROOT/bad-wasm-tools-home" \
     MOCK_COMMAND_LOG="$direct_log" \
     MOCK_DOWNLOAD_FILE="$invalid_artifact" \
     MOCK_EXEC_LOG="$bad_wasmtime_exec" \
@@ -299,7 +337,10 @@ version=${required#=}
 awk -v package="$package" '$1 != package' "$MOCK_CARGO_STATE" >"$MOCK_CARGO_STATE.tmp"
 printf '%s %s\n' "$package" "$version" >>"$MOCK_CARGO_STATE.tmp"
 mv "$MOCK_CARGO_STATE.tmp" "$MOCK_CARGO_STATE"
-binary="$CARGO_HOME/bin/$package"
+case "$package" in
+  cargo-show-asm) binary="$CARGO_HOME/bin/cargo-asm" ;;
+  *) binary="$CARGO_HOME/bin/$package" ;;
+esac
 mkdir -p "$(dirname "$binary")"
 printf '#!/usr/bin/env bash\nprintf "%%s %%s\\n" %q %q\n' "$package" "$version" >"$binary"
 chmod +x "$binary"
@@ -345,7 +386,7 @@ package_temp="$TMP_ROOT/package-temp"
 mkdir -p "$package_home/.cargo/bin"
 mkdir -p "$package_temp"
 : >"$package_log"
-for mode in standard quality release semver rail ci supply-chain ibm bench fuzz coverage minimal none; do
+for mode in standard quality release semver rail ci supply-chain ibm bench structural-bench profile fuzz coverage minimal none; do
   HOME="$package_home" \
     RUNNER_TEMP="$package_temp" \
     PATH="$package_bin:$PATH" \
@@ -548,8 +589,12 @@ for contract in \
   'zizmor =1.29.0' \
   'cargo-criterion =1.1.0' \
   'critcmp =0.1.8' \
+  'gungraun-runner =0.19.4' \
+  'cargo-show-asm =0.2.62' \
+  'samply =0.13.1' \
+  'cargo-llvm-lines =0.4.48' \
   'cargo-fuzz =0.13.2' \
-  'cargo-llvm-cov =0.8.7'; do
+  'cargo-llvm-cov =0.9.0'; do
   package=${contract%% *}
   version=${contract#* }
   grep -Fq "cargo install --registry crates-io $package --locked --version $version --force" \

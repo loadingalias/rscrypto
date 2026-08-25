@@ -219,7 +219,7 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -234,7 +234,7 @@ jobs:
           enable-rust-cache: "true"
 
       - name: Download fuzz corpus artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: fuzz-output-weekly-*
           path: fuzz-output-artifacts
@@ -261,7 +261,7 @@ jobs:
         run: scripts/ci/install-codecov.sh
 
       - name: Upload to Codecov
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           binary: ${{ steps.codecov.outputs.binary }}
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -271,7 +271,7 @@ jobs:
           fail_ci_if_error: true
 
       - name: Upload Coverage Artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-reports
           path: |
@@ -283,7 +283,19 @@ jobs:
   # The mode-specific terminal name is part of the release qualification contract.
   complete:
     name: Complete (${{ needs.mode.outputs.mode }})
-    needs: [mode, suite, miri, miri-tree-borrows, fuzzing, asan-fuzzing, mlkem-graviton, ct, rsa, coverage]
+    needs:
+      [
+        mode,
+        suite,
+        miri,
+        miri-tree-borrows,
+        fuzzing,
+        asan-fuzzing,
+        mlkem-graviton,
+        ct,
+        rsa,
+        coverage,
+      ]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:

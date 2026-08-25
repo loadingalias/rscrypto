@@ -7,11 +7,11 @@ Evidence: `tests/hkdf_sha256_vectors.rs`, `tests/hkdf_sha384_vectors.rs`, `tests
 
 ## TL;DR
 
-| | Before (`hkdf` 0.13.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `hkdf = "0.13"` + `sha2 = "0.11"` | `rscrypto = { version = "0.8.1", features = ["hkdf"] }` |
-| Import | `use hkdf::Hkdf; use sha2::Sha256;` | `use rscrypto::HkdfSha256;` |
-| Call | `Hkdf::<Sha256>::new(Some(salt), ikm).expand(info, &mut okm)?` | `HkdfSha256::new(salt, ikm).expand(info, &mut okm)?` |
+|           | Before (`hkdf` 0.13.x)                                         | After (`rscrypto` 0.8.1)                                |
+| --------- | -------------------------------------------------------------- | ------------------------------------------------------- |
+| Cargo dep | `hkdf = "0.13"` + `sha2 = "0.11"`                              | `rscrypto = { version = "0.8.1", features = ["hkdf"] }` |
+| Import    | `use hkdf::Hkdf; use sha2::Sha256;`                            | `use rscrypto::HkdfSha256;`                             |
+| Call      | `Hkdf::<Sha256>::new(Some(salt), ikm).expand(info, &mut okm)?` | `HkdfSha256::new(salt, ikm).expand(info, &mut okm)?`    |
 
 ## Cargo.toml
 
@@ -33,10 +33,10 @@ The `hkdf` feature implies `hmac` which implies `sha2`.
 ## Algorithm map
 
 | `hkdf` instantiation | rscrypto type | HashLen / PRK size |
-|---|---|---|
-| `Hkdf<Sha256>` | `HkdfSha256` | 32 bytes |
-| `Hkdf<Sha384>` | `HkdfSha384` | 48 bytes |
-| `Hkdf<Sha512>` | `HkdfSha512` | 64 bytes |
+| -------------------- | ------------- | ------------------ |
+| `Hkdf<Sha256>`       | `HkdfSha256`  | 32 bytes           |
+| `Hkdf<Sha384>`       | `HkdfSha384`  | 48 bytes           |
+| `Hkdf<Sha512>`       | `HkdfSha512`  | 64 bytes           |
 
 ## API patterns
 

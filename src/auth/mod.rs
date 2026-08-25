@@ -241,18 +241,18 @@ pub use ecdsa::{EcdsaP384Keypair, EcdsaP384PublicKey, EcdsaP384SecretKey, EcdsaP
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub use ecdsa::{
   diag_ecdsa_p256_basepoint_blinded_limb_digest, diag_ecdsa_p256_final_multiply_limb_digest,
-  diag_ecdsa_p256_nonce_inverse_limb_digest, diag_ecdsa_p256_nonce_reduce_limb_digest,
-  diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest, diag_ecdsa_p256_order_mul_fixed_r_limb_digest,
-  diag_ecdsa_p256_reduce_wide_order_limb_digest, diag_ecdsa_p256_scalar_finish_limb_digest,
-  diag_ecdsa_p256_select_signing_generator_affine_limb_digest,
+  diag_ecdsa_p256_nonce_inverse_blinded_limb_digest, diag_ecdsa_p256_nonce_inverse_limb_digest,
+  diag_ecdsa_p256_nonce_reduce_limb_digest, diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest,
+  diag_ecdsa_p256_order_mul_fixed_r_limb_digest, diag_ecdsa_p256_reduce_wide_order_limb_digest,
+  diag_ecdsa_p256_scalar_finish_limb_digest, diag_ecdsa_p256_select_signing_generator_affine_limb_digest,
 };
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub use ecdsa::{
   diag_ecdsa_p384_basepoint_blinded_limb_digest, diag_ecdsa_p384_basepoint_r_limb_digest,
-  diag_ecdsa_p384_final_multiply_limb_digest, diag_ecdsa_p384_nonce_inverse_limb_digest,
-  diag_ecdsa_p384_nonce_reduce_limb_digest, diag_ecdsa_p384_order_mul_fixed_r_limb_digest,
-  diag_ecdsa_p384_reduce_wide_order_limb_digest, diag_ecdsa_p384_scalar_finish_limb_digest,
-  diag_ecdsa_p384_select_signing_generator_affine_limb_digest,
+  diag_ecdsa_p384_final_multiply_limb_digest, diag_ecdsa_p384_nonce_inverse_blinded_limb_digest,
+  diag_ecdsa_p384_nonce_inverse_limb_digest, diag_ecdsa_p384_nonce_reduce_limb_digest,
+  diag_ecdsa_p384_order_mul_fixed_r_limb_digest, diag_ecdsa_p384_reduce_wide_order_limb_digest,
+  diag_ecdsa_p384_scalar_finish_limb_digest, diag_ecdsa_p384_select_signing_generator_affine_limb_digest,
 };
 #[cfg(all(
   feature = "diag",
@@ -323,6 +323,7 @@ pub use rsa::{
 #[cfg(all(feature = "rsa", feature = "diag"))]
 pub use rsa::{
   diag_rsa_import_pkcs8_private_key_der_stage, diag_rsa_private_component_validation_32,
+  diag_rsa_private_exponentiate_fixed_width, diag_rsa_private_exponentiate_fixed_width_with_scratch,
   diag_rsa_private_select_window_power_4, diag_rsa_validate_pkcs8_private_key_der,
   diag_rsa_validate_pkcs8_private_key_der_stage,
 };

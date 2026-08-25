@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Verify the pinned authentication Wycheproof corpus."""
+"""Verify the pinned, format-normalized authentication Wycheproof corpus."""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 LOCAL_DIR = ROOT / "testdata/auth/wycheproof"
 UPSTREAM_COMMIT = "b61843a9a5115bb758134b6a1f5d5e502d445342"
-FILES = {
+UPSTREAM_FILES = {
     "ecdsa_secp256r1_sha256_test.json": "182db4f3e230f6f9fa9f800d2a614dede30284b8e8438bbfe1171905402e9332",
     "ecdsa_secp384r1_sha384_test.json": "8a5b3ae1760975143414811f13588c24d951d9d8c904195087ba327591dfe9cc",
     "ed25519_test.json": "70471c053c711731f2195ef4875b60ea7f5d6793939d99058ac12da810cb8e00",
@@ -24,6 +25,20 @@ FILES = {
     "pbkdf2_hmacsha256_test.json": "fa21062c95e385aab1714d607c320d534c75082f9594bdf965dba3d934fd17ef",
     "pbkdf2_hmacsha512_test.json": "3bc72b80f5c3d79cc2565b9b98dd982e7b1e1082df3a356d648a4d77470aa1d7",
     "x25519_test.json": "35c3f5231cf25cc640b524d403461deee9e49441d5d915a3a25b2c8ff5adbe7d",
+}
+LOCAL_FILES = {
+    "ecdsa_secp256r1_sha256_test.json": "0fdda72545bff71a635255242a9efb76abb03378718d26e02d37ef7dec9713cd",
+    "ecdsa_secp384r1_sha384_test.json": "d4f0c12f6f81f75d8895af1232a63c719913224e05b471823ea3c80aeba886dc",
+    "ed25519_test.json": "62bea6ae2ac471a3307a2494813d39d4a82ca962fac29608617619ce47fc704e",
+    "hkdf_sha256_test.json": "9e64dbd3f63e46ea505a8ee81e40c49188df5b6d5203afd92e6ede8a2c873d2a",
+    "hkdf_sha384_test.json": "e35e585d05c7d81fe1ec3791cb4073460fbcc3c452aacaf7cc8790b83f612d48",
+    "hmac_sha256_test.json": "cb5ae2081056393a6b95622e63870df023837212c4bcd16f80fb716f364f51bc",
+    "hmac_sha384_test.json": "e78ab52be42de3b0122e933ce7c6afc1e0058157ae29754a6ea54daaf13f84cb",
+    "hmac_sha512_test.json": "6f00cc2656af6c53cbf68b4646dbdb4503d4db0085ff69459ac7c9627b4999fe",
+    "kmac256_no_customization_test.json": "c3e6acc89e304464dd6c4f8eb9a6c867088a29c7bfee3d4d3afda4e0188c6576",
+    "pbkdf2_hmacsha256_test.json": "6bf02f2d48262d97e6ac62bf29e45549d8ef9d4be165aef54568b22262e5d260",
+    "pbkdf2_hmacsha512_test.json": "212634c805075f1691e5add5c48c720b80784d3975ae9dc9eef06f77aa7c03f6",
+    "x25519_test.json": "558cb1584593dcb204e1cea51fce82b49d10de94c3c822f63f91bfc0f24708ed",
 }
 
 
@@ -71,29 +86,41 @@ def read_upstream_blob(root: Path, name: str, expected: str) -> bytes:
     return data
 
 
+def require_same_json(name: str, local: bytes, upstream: bytes) -> None:
+    try:
+        local_document = json.loads(local)
+        upstream_document = json.loads(upstream)
+    except json.JSONDecodeError as error:
+        fail(f"cannot parse {name}: {error}")
+    if local_document != upstream_document:
+        fail(f"{name} differs semantically from the pinned upstream blob")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--upstream-root", type=Path)
     args = parser.parse_args()
 
     actual_files = {path.name for path in LOCAL_DIR.glob("*.json")}
-    expected_files = set(FILES)
+    expected_files = set(LOCAL_FILES)
     if actual_files != expected_files:
         missing = sorted(expected_files - actual_files)
         extra = sorted(actual_files - expected_files)
         fail(f"corpus coverage drift; missing={missing}, extra={extra}")
 
-    for name, expected in FILES.items():
-        local = read_pinned(LOCAL_DIR / name, expected)
+    if set(UPSTREAM_FILES) != expected_files:
+        fail("local and upstream provenance inventories differ")
+
+    for name, local_expected in LOCAL_FILES.items():
+        local = read_pinned(LOCAL_DIR / name, local_expected)
         if args.upstream_root is not None:
-            upstream = read_upstream_blob(args.upstream_root, name, expected)
-            if upstream != local:
-                fail(f"{name} differs from pinned upstream bytes")
+            upstream = read_upstream_blob(args.upstream_root, name, UPSTREAM_FILES[name])
+            require_same_json(name, local, upstream)
 
     if args.upstream_root is not None:
         require_exact_checkout(args.upstream_root)
 
-    print("auth-vector-provenance: committed corpus matches the pinned C2SP/Wycheproof commit")
+    print("auth-vector-provenance: formatted corpus matches the pinned C2SP/Wycheproof commit")
 
 
 if __name__ == "__main__":

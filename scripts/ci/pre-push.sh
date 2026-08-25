@@ -193,7 +193,7 @@ needs_host_checks() {
     return 0
   fi
 
-  changed_file_matches '^scripts/check/|^scripts/lib/(common|rail-plan|feature-profiles)\.sh$|^scripts/test/(test-feature-matrix|test-fuzz)\.sh$'
+  changed_file_matches '^\.config/benchmark-matrix\.json$|^benches/structural\.rs$|^scripts/bench/(benchmark_catalog(_test)?\.py|profile\.sh)$|^scripts/check/|^scripts/lib/(common|rail-plan|feature-profiles)\.sh$|^scripts/test/(test-feature-matrix|test-fuzz)\.sh$'
 }
 
 run_actions_check() {

@@ -10,11 +10,11 @@ Evidence: `tests/crc16_properties.rs`, `tests/crc32_properties.rs`, and
 
 ## TL;DR
 
-| | Before (`crc-fast` 1.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `crc-fast = "1.10"` | `rscrypto = { version = "0.8.1", features = ["crc32", "crc64"] }` |
-| Import | `use crc_fast::{checksum, CrcAlgorithm};` | `use rscrypto::checksum::{Checksum, Crc32};` |
-| Call | `checksum(CrcAlgorithm::Crc32IsoHdlc, data) as u32` | `Crc32::checksum(data)` |
+|           | Before (`crc-fast` 1.x)                             | After (`rscrypto` 0.8.1)                                          |
+| --------- | --------------------------------------------------- | ----------------------------------------------------------------- |
+| Cargo dep | `crc-fast = "1.10"`                                 | `rscrypto = { version = "0.8.1", features = ["crc32", "crc64"] }` |
+| Import    | `use crc_fast::{checksum, CrcAlgorithm};`           | `use rscrypto::checksum::{Checksum, Crc32};`                      |
+| Call      | `checksum(CrcAlgorithm::Crc32IsoHdlc, data) as u32` | `Crc32::checksum(data)`                                           |
 
 ## Cargo.toml
 
@@ -37,14 +37,14 @@ families. Use `features = ["checksums"]` to enable every CRC family.
 
 `crc-fast` exposes the full RevEng catalogue via `CrcAlgorithm`. The intersection with rscrypto:
 
-| `CrcAlgorithm` variant | rscrypto type | Feature flag |
-|---|---|---|
-| `Crc32IsoHdlc` (IEEE 802.3) | `Crc32` | `crc32` |
-| `Crc32Iscsi` (Castagnoli) | `Crc32C` | `crc32` |
-| `Crc64Xz` (ECMA-182) | `Crc64` | `crc64` |
-| `Crc64Nvme` | `Crc64Nvme` | `crc64` |
-| (CRC-16 variants) | `Crc16Ccitt`, `Crc16Ibm` | `crc16` |
-| (CRC-24 variants) | `Crc24OpenPgp` | `crc24` |
+| `CrcAlgorithm` variant      | rscrypto type            | Feature flag |
+| --------------------------- | ------------------------ | ------------ |
+| `Crc32IsoHdlc` (IEEE 802.3) | `Crc32`                  | `crc32`      |
+| `Crc32Iscsi` (Castagnoli)   | `Crc32C`                 | `crc32`      |
+| `Crc64Xz` (ECMA-182)        | `Crc64`                  | `crc64`      |
+| `Crc64Nvme`                 | `Crc64Nvme`              | `crc64`      |
+| (CRC-16 variants)           | `Crc16Ccitt`, `Crc16Ibm` | `crc16`      |
+| (CRC-24 variants)           | `Crc24OpenPgp`           | `crc24`      |
 
 For variants outside this list, keep `crc-fast` as a sibling dependency or open a feature request.
 

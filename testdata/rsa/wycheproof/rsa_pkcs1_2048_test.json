@@ -35,16 +35,12 @@
     "CVE-2020-14967": {
       "bugType": "KNOWN_BUG",
       "description": "jsrsasign package before 8.0.18 for Node.js. Its RSA PKCS1 v1.5 decryption implementation does not detect ciphertext modification by prepending 0-bytes to ciphertexts.",
-      "cves": [
-        "CVE-2020-14967"
-      ]
+      "cves": ["CVE-2020-14967"]
     },
     "CVE-2021-3580": {
       "bugType": "KNOWN_BUG",
       "description": "Some implementations fail when the ciphertext is too long.",
-      "cves": [
-        "CVE-2021-3580"
-      ]
+      "cves": ["CVE-2021-3580"]
     }
   },
   "testGroups": [
@@ -84,9 +80,7 @@
         {
           "tcId": 1,
           "comment": "Message of length 0.",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "msg": "",
           "ct": "5999ccb0cfdd584a3fd9daf247b9cd7314323f8bba4864258f98c6bafc068fe672641bab25ef5b1a7a2b88f67f12af3ca4fe3c493b2062bbb11ad3b1ba0640025c814326ff50ed52b176bd7f606ea9e209bcdcc67c0a0c4b8ed30b9959c57e90fd1efdf99895e2608095f92caff9070dec900fb96d5ce5efd2b2e66b80cff27d482d242b307cb813e7dc818fce31b67ac9a94501b5bc4621b547ba9d81808dd297d600dfc1a7deeb061570cde8894e398453328740adfd77cf76075a109d41ad296651ac817382424a4907d5a342d06cf19c09d5b37a147dd69045bf7d378e19dbbbbfb25282e3d9a4dc9793c8c32ab5a45c0b43dba4daca367b6eb5f4432a62",
           "result": "valid"
@@ -94,9 +88,7 @@
         {
           "tcId": 2,
           "comment": "Message of length 20.",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "msg": "0000000000000000000000000000000000000000",
           "ct": "a9acec7e58761d9191249ff7ea5db499cadccc51d29f8e7fd0aa2cb9962095626f1cadae29666f04ce2afd4b650be59d071d06446d59107eb508cc60545727b0567dfb4f2f94ca60b939c60be111172f367dfd235516e4a60061648c67f5536650821ac2a60744be3cf6befa8f66e76a3e7c5fbc6dfa4dda55ecbdbffdc98d610de5667a4f485f6168b52bbe470e6014253874ce7b78e509937e0bc5f02857e1ad3cf55139bbe6dc7ac4b1ed5097bf781b7671ca9bb58187aa6c71c58ac0561c5aacf96c35deb24e395b6823de7fc96b8031b5906a34c4dc57e4f1226157b9abd849e1367dda014fbf9ed4ca515a7a04cf87787945007e4f63c0366a5bbc3489",
           "result": "valid"
@@ -104,9 +96,7 @@
         {
           "tcId": 3,
           "comment": "Message of length 4.",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "msg": "54657374",
           "ct": "4501b4d669e01b9ef2dc800aa1b06d49196f5a09fe8fbcd037323c60eaf027bfb98432be4e4a26c567ffec718bcbea977dd26812fa071c33808b4d5ebb742d9879806094b6fbeea63d25ea3141733b60e31c6912106e1b758a7fe0014f075193faa8b4622bfd5d3013f0a32190a95de61a3604711bc62945f95a6522bd4dfed0a994ef185b28c281f7b5e4c8ed41176d12d9fc1b837e6a0111d0132d08a6d6f0580de0c9eed8ed105531799482d1e466c68c23b0c222af7fc12ac279bc4ff57e7b4586d209371b38c4c1035edd418dc5f960441cb21ea2bedbfea86de0d7861e81021b650a1de51002c315f1e7c12debe4dcebf790caaa54a2f26b149cf9e77d",
           "result": "valid"
@@ -114,9 +104,7 @@
         {
           "tcId": 4,
           "comment": "Message of length 6.",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "msg": "313233343030",
           "ct": "455fe8c7c59d08c068b5ff739d8dab912b639c8e9eade5d0519d58f4ead7208d5a753b4a88fe771475adc82d10ab29ded28caf03f9034d3a111b520440c02276e1b6417c42eec0257f1f05482868987f2f75bd33d1ec3dbc799d7b5bf25c4a0543793a4d3ce305cc43646bc450344e624fd381e24d8e57ef2840dd9d576da554ba408ee6580159e6d88438a28d66250b3b3fe3bc6624406022a9e4ee2778c38230674f635f56b9d6adcf2be6bfab34a8a431169d769876422f7077ded31fa6f29993dd1972b2d2d24b0513a7a193f6a88d53c49cde2c030f85e3ddfbc9f99b4a667fd9c652382238166f3d39eb2b78de53ad24c97699fe5738a7a705a2ab141b",
           "result": "valid"
@@ -124,9 +112,7 @@
         {
           "tcId": 5,
           "comment": "Message of length 7.",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "msg": "4d657373616765",
           "ct": "1cf861ef8b6c29474666605d3ddb663a259a9ae838417abcc7f7dd42d471d5f3812cdf90e3041c4c5bfd38ac1e4d95fd71661bddac45f5f8e3e89629a335bbf2eff116030f1c5ace8336cf7e94c2e8bf5a1d6116e54ec42b9da5fc651a41ac8fd38194e5029489cfde1f7fc850c0dfb3dc00021f74ae3847327c69afdb1355c7587bb93d5f4d2cfb35a7f70bcabd43eb32300585b6ee32f14a68c2a08434e923adb76dfcdf3ea5133edffa5ca20425083b28ecb045e69562b44286d320d87285e7a2e3bedded083c010401ae22c8f278b080112c4264a3cad3ed9fa31cf19e052aabbda9f8ecef1d64786258202bb61128b3140a355d65b982b0239764d77d24",
           "result": "valid"
@@ -134,9 +120,7 @@
         {
           "tcId": 6,
           "comment": "Message of length 1.",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "msg": "61",
           "ct": "8122b33665648346f6cf728f285667cff7f3c20907e76438e64db81a6a5e74c34c5694fb5b4c826067bae94c5176e152eb16884d9c2b63d2ff41d06140c9c39469a4ae05cda86c81ccb208894266f6b24a0f79132f71521e10683faa05c8e68b77dd6c0c04cbfef55a9d1b68291c286e08907c3df029c52e15539027f534c7df8da5637db99355b24576b873c119ff1d74b3c913b70c48f366887ccbe6d206c11657401f41baad9290fe6ae01855a99891700d71775fb36237bd3597ad240fff4c03d1fe599cdec65baef11fbc4889575a55f255b51ec8298595dbcc89659382d35c2b85a941c33746a7937f3d18e27079fc3d2252904aa533fbfd2ebed2e059",
           "result": "valid"
@@ -144,9 +128,7 @@
         {
           "tcId": 7,
           "comment": "Message of length 32.",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "msg": "e0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
           "ct": "18e280e8b03d8588b923842d15fddb0493285ecd7ad2d9a9878045ce615ba07cb811fd4a0737e91ece5a63b70b1edc23e0da939ec654333eb77e956108b040bd6b92927e25a6922d1b92302036985915fedf9fb38431bbce1feee3ec42ff15bc4a4b6d10b3da41ec96667b81163b30b46eef4f46fb22f187da8fd536461e5594bf557a6dfc2337883bee8d6187192a3b4bea70398b01f3ea8c1547f6c57248243365b3c46b117924d8bb6845ea382c389c648d3e65ff0b8711bbe1a6fd3bea028f5808725f198cda0407a0ff46b5af261a37184547250f496800e697290e39d46d6bce67b767d73a63bd98f699c1828180abfd51a3048d050d496236edf1e99d",
           "result": "valid"
@@ -154,9 +136,7 @@
         {
           "tcId": 8,
           "comment": "Longest valid message size",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "msg": "7878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878",
           "ct": "7e151b7b34e3b4abe045cf708640e61501c50fdca629aeca10259d45d15eeec6a2008b6336f57021ac6fdad9a6b29d65f098abff76f93722a8e23fb5e153db075005575dad6adccb7c020cd741c3419946b82d369a07fad5b0d55d51774f8991bd65e9e828d8f5a989c866a024a4a78434e9affd0af2c72f9185d450b627008a8a0968fc6373ca340410306a58921cce1207bb6f6c14e3d1f214304f9f6bb9199909e1610322e834b0ce9f55b1835d7623b82ef548545f984ea51466250159344dde902a0f021ba4baf26b16d8c6a42003f4d5dcae531187dc7e3f87c9e04470599eb623e04fca266e86f98cabb6866004e7fc80b36c3977456e51eb64f4b65f",
           "result": "valid"
@@ -164,9 +144,7 @@
         {
           "tcId": 9,
           "comment": "The padding string is all 0.",
-          "flags": [
-            "InvalidPkcs1Padding"
-          ],
+          "flags": ["InvalidPkcs1Padding"],
           "msg": "54657374",
           "ct": "6e0d507f66e16d4b7373a504c6d48692aaa541fdd59eeb5d4a2cd91f6000ce9b5734a232d6541a78729ac82152d3a30b51950a24ae379a108ed20fa4ec7542fe2281c2dd5de685564d15182f3c73e9c0135ebc993f5acd240a343d3257997582328c31be215c7349375406aa78a3ac35327226839bee2f1a4a0f8e6e06986cb33806c93e0b0c1d6cfd23f4a68c1f2a38c74b8df70f280984a840c710c52279034d04f61e313d4bcd8b3b5c58468a44565a1acb2eefc6d49044be7163e64ed84b5e7991ecba274a3a7ee4defb842a86ac4cbf2d3bfc9cf870ae025a3e2fbc775916a59579763c06eb84ad8edd1d03787e609ad446de43ebed16330ab06716fa73",
           "result": "invalid"
@@ -174,9 +152,7 @@
         {
           "tcId": 10,
           "comment": "The padding string is all 1 bits.",
-          "flags": [
-            "SpecialCasePadding"
-          ],
+          "flags": ["SpecialCasePadding"],
           "msg": "54657374",
           "ct": "633546723d13ef2712561abfa5b477a36ce7c8dc5a9f43589ea289a15f749c89e4e3ba3ca6a615333e9bb5ff3efb62b32e7f11870c8bbeffe884a5ef2b1006045bd97bb29699084dac4212c217e10113232683445091fa7224abc02ad37feaf10d5b4af6f288fa01d85bcd944bf411ac56c0b7bf1037452f540f286114b14b2208fb4282b6829c594aa27ad5ef1dc67b5696ed2a4b9a4ee2354cc05315fff5e8a4e0e75675c1eed34d46effa73ea96e748340771dfec01dae937edd8924ece8470542a8251c31e9130e2c5f80152b4c66111df52f7e5f9b40835b44bf8e8e273b075dc04f758a30c24dc2c2abeaf639f4fca4dacd509250378ad0e5276374b99",
           "result": "valid"
@@ -184,9 +160,7 @@
         {
           "tcId": 11,
           "comment": "rsa_sslv23_padding",
-          "flags": [
-            "Sslv23Padding"
-          ],
+          "flags": ["Sslv23Padding"],
           "msg": "54657374",
           "ct": "94a6ecdadcc3a9c5645d0410929ba8f01c89b8426b889d3064cf1811f2caaa1e1a55a29a1869a7d719226bcea637407bb80383e76b5966e2ea4d56fbb2fb325da12546071b65898b12e36d0ea0e47245930eb051cecc4b8dede18adb4f1ca318cf0e36820f1cfd4911f076e0f3fbf9c197a0ed32063f72405477888f13cbab4649e3c8df4f022a4109ecb91fbeedbc4df4d89ad9cacbbd7e8e27a2f1fe1813d3f1b537ecf41878f05918171504bf800631781a7c36451abbc32dda5b55f05f4ba7b5414089d9d679248cf042756a4f06c37c8b5a18a6ba8f97853cc6763235ee841d96e61f2d75c188ca53d222d3d925a3d701551758feb79ccf8709cb61b793",
           "result": "valid"
@@ -194,9 +168,7 @@
         {
           "tcId": 12,
           "comment": "Byte 0 of the padding string is 0. All bytes should be non-zero.",
-          "flags": [
-            "InvalidPkcs1Padding"
-          ],
+          "flags": ["InvalidPkcs1Padding"],
           "msg": "54657374",
           "ct": "6a8b8c01247d9d4d1c3bbaac58e077e37926854dc8bdb58fb7b98979ba9102934469836480a0b96a5b452e54dff55e77b52dc1cb93656f6802b7fbe06ca0923e38e549dabcdbce909fdd10d677d896384af75e7146794bfa009ebbb2d6890b1cfcad4698d297c759b0a01151bdfe1d48cf92e80896be923d02371930cafb155e543d9a21e52faf2395234e65d575fa9f5276c80ae4cd6ec18ac6d954ad043d2a46932763ca44476180b397215d95651fba63220998e06ab2dcc4935dadaae8660ac8c6356b871e0b1397af20d6fe937c3211e21559a3d0eb39c2949a96611b13740ae0c26ce67c373a9225a3c1773ec662ca20dee620c0acef1475b362ee9b9f",
           "result": "invalid"
@@ -204,9 +176,7 @@
         {
           "tcId": 13,
           "comment": "Byte 1 of the padding string is 0. All bytes should be non-zero.",
-          "flags": [
-            "InvalidPkcs1Padding"
-          ],
+          "flags": ["InvalidPkcs1Padding"],
           "msg": "54657374",
           "ct": "84c149c378f3f12ce202bb561456257057709114ecbaa4c3a7dbfbcbfaf2fe9a19cebabd72e39474b6bd7871c3dae41a9c87c5cb2fafc2d06d49c60ac401ed1e125522d0854fe8fb8611f8efb90d2b89a14eaeb6e991f19329dd7d183ef72cf0543dabedcdecc9977cc9395e2629a1dc8d359b2bc0fea6ef250c4cfa2ac8ad22a6a587e32859a8c99e4f7cdf938527e9e0bb597721517067d83fab31457e52e7a11b0393135d30e619d7cc47caf970facdd8dc4bd613b151f93cc53c1307cef68feb5a67d32337cf2ff954be7a553d3f07c9f657aebd9e8d4ee99e8736c152804295f366a4ffaf2a72e29c2f87b03b28b99da1f6a7ee0d9364ef711eda4f0793",
           "result": "invalid"
@@ -214,9 +184,7 @@
         {
           "tcId": 14,
           "comment": "Byte 7 of the padding string is 0. All bytes should be non-zero.",
-          "flags": [
-            "InvalidPkcs1Padding"
-          ],
+          "flags": ["InvalidPkcs1Padding"],
           "msg": "54657374",
           "ct": "3307264f64d4ca8b62c4e7da4cac117262e5d3a3dbc19a529ac5167c1987bce56e358726d0ecfc6cb591a12bd5f7531cd2249439254c366ad3cb7a608f845e1eca931018295208ba5c6198027b22191224c4568856ab331e2acf530fc434870865d3321ac90327a8c61f27cac9859dac8e3c38d8453349d2ef8e4a7e8011f6badd1530eae710e0c60d35905f20d7a2d118e7ce18ebb220f04b4089778cbf091bcb3e02aca83b4b9ba5319c3069188c7b00c7d32ebe1dd6e6535b5f667ce972f00ba773d4cf6a556ccf65bacc1eca2312881caf6a89ff5d83960846a5d9dd31477dcc9ee4ae50ab0cb2e574a685bd9d7b7a74c7ca9876f08fd64d1d5f196786be",
           "result": "invalid"
@@ -224,9 +192,7 @@
         {
           "tcId": 15,
           "comment": "The padding string has been truncated.",
-          "flags": [
-            "InvalidPkcs1Padding"
-          ],
+          "flags": ["InvalidPkcs1Padding"],
           "msg": "54657374",
           "ct": "16d56b7a9e672e387016e8b1c9cff474d560faa8ca14a565fba086015c5f9d53b205c4ccfe77ed5f3d10a04a23bc031d9c7fc809668ceb5c4e31ba8760475de713413b1ae5666e93087e146a2607c00d6492ed095973c7ccd79996aa26023a2c6623f382e94a4c595fbb596be074f87559267186cc475175152277cccaf9513dcb95a1f6540bb633a9a65182f2a53838b85329c9544c24740b24b27ce5d760f051c47e6cc107c264bc1a87ba7bd2bf27675547bda28b3d2a7281d6732f9dbc3c20eecb280f2ba6f25cd49c930dcc3a413987ab4de0fe9314a61e092b3708c75c9bf96831df05e4dbe31f75b2ddaf3bde7f01c7940ec62758006a652871d72b75",
           "result": "invalid"
@@ -234,9 +200,7 @@
         {
           "tcId": 16,
           "comment": "The padding string has been removed.",
-          "flags": [
-            "InvalidPkcs1Padding"
-          ],
+          "flags": ["InvalidPkcs1Padding"],
           "msg": "54657374",
           "ct": "25f67bc6c1320a13fa91a23d4d1801cc73594161a7f344ffa195d6dd1894c1e39d6cd81866462d05e0e16c02459a3f1dc5f0ecc52657f70385fd0b33de214216a2298b4814550af1ecd929170bc69b74e08299bea50de33021468f4fe2a2e4a43233d6872d15379ccea03450145d909c5eb11ca5f524e17b2065768b9bb06438e81b0b8ca816bfcc7eddcffba59b33e2a0b4ad8df215c2eafa240e553f1526dad66038e54f305a6d3fd6460e781239c9dc424ab6df7f75bb4327d873d0e8d7ecab1b09b8779cb841e002ee45f8dbebd2d483de2d7136ae7e350580dc8a48bcd6359a677bccd689bbdf879f2520d8976fc2b92e64dda8e7399719a13b8182c739",
           "result": "invalid"
@@ -244,9 +208,7 @@
         {
           "tcId": 17,
           "comment": "The block type is 0.",
-          "flags": [
-            "InvalidPkcs1Padding"
-          ],
+          "flags": ["InvalidPkcs1Padding"],
           "msg": "54657374",
           "ct": "371e281730bbc289cd77a64ab49b370ed7900c48f5625615ff28beeeeabc860b4673ab16003fd5e13c89c8b6a0e5c9b732044981ddf2bc45d4613bf409cb2e98123ceb661c1093773d71c67fd198288d6e9b832596894834c3955799ea20e242b632335baf8e8787c104499fb5d0eaa331f05a8b46383dd13cc05f0518d05d9b03bdfdc2dbc9299a04210c33f5dbed3779fb1548ead0022622234a6a2ffe5ca42a43db40f272d6633c7151360b5b90e135283a6aaf69b0491edda637dea0989e3a5dd0c3aac267074662443c37ce1b3fd4b2e9743fb0d00dc136d8df10b6fd0b60d30c1399ab52d75e2db559d8faefc45008c2d9100ed08caa88bdc11aea04df",
           "result": "invalid"
@@ -254,9 +216,7 @@
         {
           "tcId": 18,
           "comment": "The block type is 1. This block type is used for signatures.",
-          "flags": [
-            "InvalidPkcs1Padding"
-          ],
+          "flags": ["InvalidPkcs1Padding"],
           "msg": "54657374",
           "ct": "92210e5bbf24d2cd9527f6e24ffafafdfee242b146539f3731715fff42092cc8f5a1a4919417c9df9a5a32e61201f4354a87ab06e97f827f69e6cc13e7b9c79515145f210713523e6f64def697406a4929b2e09c31890b695b7b8bb851a22c7b541c5dc53cc75954c0246eae5a12af304133f4dcdb90f8c6f54847165612f7ef70f51dd493899d6e09ae9fed16fb1f1225d09750177893c5e5482e3cd427931ffd3fef3e901d51f39aa17e34443a34754533a887474e19213a5e24298071495d18c6ac77dece094c56bb34ed8274f5d75f99162a58dfc4240f5393baae58f484ef0a0259b56ad647ad81fe88c91b75a36b1acc67a56ec379bba03a8be91dc0cd",
           "result": "invalid"
@@ -264,9 +224,7 @@
         {
           "tcId": 19,
           "comment": "The block type is 0xff.",
-          "flags": [
-            "InvalidPkcs1Padding"
-          ],
+          "flags": ["InvalidPkcs1Padding"],
           "msg": "54657374",
           "ct": "6dbc27d33371f8cb3c3a54185a687a66eea8114f26cd234617b2f567d6013e222f33d7fe05298b73f8bf20266483571a52b1da2c0b1a431c257c62ed441215f57cd2a4af4628eeb21a9cd66a350a161cce446f25224a9acbdcdd709b14b810fafb02f3879605402e3fa6404e6e9a13b3f4fd3bd0e6c32f188a367a94aea813aebf4bd31635e5843a27bf7300419365d00ab97cb535866ba521dd0a8460fbc368ab9337caeee54f719f8998b126a111ffc6cff6d3c43ced45e8dce6565c00bf0be00694c339f7fdbe064c60e040a95b5d5b4af15fb7f14e00da6a591f187277e0c453eef7ffcef2a4efab93afdaa58e0bc1bb25286d9ce202176f395e29f92136",
           "result": "invalid"
@@ -274,9 +232,7 @@
         {
           "tcId": 20,
           "comment": "The first byte of the encoded message is 1.",
-          "flags": [
-            "InvalidPkcs1Padding"
-          ],
+          "flags": ["InvalidPkcs1Padding"],
           "msg": "54657374",
           "ct": "794ab724aeb176c4415a597e9d69cb567cece4479e6e4c9c19530b0877b53719d7f6318be8e970874c4be19984c632825dee7a38561a6904e23c776ccce71128847c24d5609e6790e3c9112393660ffd208771916d2e80d2c2fb35ff7936bab6c03e07646f15d09a88fd2ff8e70b624c66da4eb7dae241907ef328697c219d1ff347ada945e24ab526b6cea4e6b7f386560ab56f16751f6e2de0f7922a8946ae9afb9ce95369418f540163827f452f5d2a5029a1ce417453324eb015fd83ca2147331c02c762c457fc52ca5f097610c60430b69b6b0fc1c0877513bdb51923bca03e9af9174d3094530a007253958bfed03606e6f75cb5854443eaa363614116",
           "result": "invalid"
@@ -284,9 +240,7 @@
         {
           "tcId": 21,
           "comment": "The first byte of the encoded message is 3.",
-          "flags": [
-            "InvalidPkcs1Padding"
-          ],
+          "flags": ["InvalidPkcs1Padding"],
           "msg": "54657374",
           "ct": "8c7b80188818f63e6a0110cf94a169c78a0db75917caaf47405e8384b79a8f40de94f28f749186c4f16aeffb66168ac7c319d47de699ccae0edcb51a6822f88e27e99a1a0bb39d292e7d6e0922c1d2fd649376d81160d15cce10fc7082b88e8cd80dff13a33b54b8c00178a35fbbca633f4987f117aa9ec8e5f123dadcf29700ed5dbdad05bcd8e990985d950b210edae1ca1f6ecabf50a27e4bb23d4e80bf3955852e2ca18fd3e3c2f570fbeece943ef5c10ed1265049eac0d5b549713368703ad02311193ba0d3dac6073eb799139229a4aa0bfbc25bd5e886ad213dc321131ed12cf1008ee8af3a1588d06c75d7cf7375998e5a03af0ec8aa92276bd51b21",
           "result": "invalid"
@@ -294,9 +248,7 @@
         {
           "tcId": 22,
           "comment": "Using signature padding instead of encryption padding.",
-          "flags": [
-            "InvalidPkcs1Padding"
-          ],
+          "flags": ["InvalidPkcs1Padding"],
           "msg": "54657374",
           "ct": "34bc8b1a4646f2db8b10fdae22d6b5cb300229114015f25293d4b28e8f58783e1c5e6894da18dea527e4d843b51cf984170d56853e45f6ac77b1179eb0aa74fc556cbd632d576524b820a2c74a4c8159885fa08937e9c73ca0385c7a19676f2789b62f7a8b359a29132d74bc2b850e2335b5c7da8bf52d8d6fadd83ff9db32239bb737e890a32d561b10e9163c2fe4d35624e3e5faf664374c972a8d2e5b873c9a465e108bbdff1296c5557f314026558441a055d4b9cbb54179356787bd4bd02015cb3bbe02633711f266e915a0b4591415983610a2714adce1b0716675b95877bcef618784f2b3cd23fcdd0636e5856edb96852a32c9632c2e6e4b9a6f881e",
           "result": "invalid"
@@ -304,9 +256,7 @@
         {
           "tcId": 23,
           "comment": "The byte after the padding string is not 0.",
-          "flags": [
-            "InvalidPkcs1Padding"
-          ],
+          "flags": ["InvalidPkcs1Padding"],
           "msg": "54657374",
           "ct": "4629027bfdd6c33abda030f0cb3ac1b55bddddd11292520f142248bbd1efad14adcb7ec50d278471f4a98dc9a674c202d823677d2606cd639fda443d7c14f0aa35f472189abe1b639f0856743212aab46ae35160ab4e6c08a20e5b82210b07b6eed11a315ef1b1f831b52bfd3abc06382b51c41a665ca6428e4bb6bd0df7895d056b8c17093e73c8129916e3abab3f61ce9a94c9d2fd30902076104b0e7fbde8da601f6c1bcc56a0100104848da6e9fbb28d893274b40885b3003ec7781aa710c83fbf4d4bc197630b1455853c4d6d6050011a7f7377e9034d29e4396f52b24ee6875feef883274cb0842b4b177d3fa3b416095c6ff96f6de0d9123dd9ce6d31",
           "result": "invalid"
@@ -314,9 +264,7 @@
         {
           "tcId": 24,
           "comment": "Using no padding (rsp. an all-zero padding)",
-          "flags": [
-            "InvalidPkcs1Padding"
-          ],
+          "flags": ["InvalidPkcs1Padding"],
           "msg": "54657374",
           "ct": "910ad40ae0d8af151f512354e1cf12af7c4851cff0b659026e90a9ec4dea6c1e4b2b33cbe8260501493df2e7fa2cd77f020a7cfac1ca379eed3fe6d003335653a5f022f6bf5010e5f58c41fc91253d75eac2072479d4bb3509e1351a66f700ff4ac470115490021734bb8099e66c35f904f09d167303e26163393ed556cdccdfae95f239ebf0bd361a8adad927fb9544ca30132195735cb026dd0dc66c6efa0db41b73fc1c917be384a430e0788f5f872785cd709f70793204753d7b207fbce2d0bfbab11d3d614b99bf87bcc9a34db639fd203c9c081ddeecb9c85221e03cb9171685dafcfeaba470c5f1921a6fe016ba4b816a2328eee9853fa6994ec313d8",
           "result": "invalid"
@@ -324,9 +272,7 @@
         {
           "tcId": 25,
           "comment": "Replacing encoded message em with a single byte",
-          "flags": [
-            "InvalidPkcs1Padding"
-          ],
+          "flags": ["InvalidPkcs1Padding"],
           "msg": "54657374",
           "ct": "6294ddf0fcd137390cb2193e050b5f61bf0183972912dca88ddcef7d54388665a7ff9be1f074b5e33b55dbf7c4212554a4e6243d3974aef4d95794dc72261883a45842da69497a36ed22c3590b0110e857bd0fc729663df53c831836f890b2b2012c9f56fc6dff36daada1a1e1cb2d654fee868c7c6fd58435dc8edb95dfe0271787074c2be9aace1f33ebd07ee6112cfb62f52487934af0c22ac93dafccfb01c561b370f05f3e604e92e5380103ba91113d007ab97b21ff3feb22f37c1a358215467d0a0223d43792f4947aa30c38f14246d1db9918c94600e7d0a393079dec2d9ad368ef378b2fff72cdd7c572f11074caca0995ca3e576428f651e1cf3764",
           "result": "invalid"
@@ -334,9 +280,7 @@
         {
           "tcId": 26,
           "comment": "m = n-2",
-          "flags": [
-            "InvalidPkcs1Padding"
-          ],
+          "flags": ["InvalidPkcs1Padding"],
           "msg": "54657374",
           "ct": "50bc2c3ad07baf0bb9037b704b4e81c97003c7ce644ac8ed0c52ef9b1d7f825695f44a46e204786e6f7fe52cf01ab4f098e438a1125a79f2e3f76add9a8e9ebf175e92c5aa81e99abd17c6871b26de6b40f81c45d43194136f687545a33d590caeed0916deea9cb44ef815aa1695d9f7178dfb47b4805b3e2f47ec1e3de933e5b3de2950dbf702f3d09d7120ff94f43082409169beb5814955e445aa4914ecafbb36efc82aeda8b5d005f042f7a58d50f06763681d40a88119fa4d7b21e4a372701de8f5a4ef18e30e99f4126fd031af5aa28cf4316b03150a2e0a66355ce17124b13bc586e918116c2355f3169c186a80a85c1302fe01b33d01fd3c61fba0e9",
           "result": "invalid"
@@ -344,9 +288,7 @@
         {
           "tcId": 27,
           "comment": "c = 0",
-          "flags": [
-            "InvalidPkcs1Padding"
-          ],
+          "flags": ["InvalidPkcs1Padding"],
           "msg": "54657374",
           "ct": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
           "result": "invalid"
@@ -354,9 +296,7 @@
         {
           "tcId": 28,
           "comment": "c = 1",
-          "flags": [
-            "InvalidPkcs1Padding"
-          ],
+          "flags": ["InvalidPkcs1Padding"],
           "msg": "54657374",
           "ct": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
           "result": "invalid"
@@ -364,9 +304,7 @@
         {
           "tcId": 29,
           "comment": "c = n-1",
-          "flags": [
-            "InvalidPkcs1Padding"
-          ],
+          "flags": ["InvalidPkcs1Padding"],
           "msg": "54657374",
           "ct": "b3510a2bcd4ce644c5b594ae5059e12b2f054b658d5da5959a2fdf1871b808bc3df3e628d2792e51aad5c124b43bda453dca5cde4bcf28e7bd4effba0cb4b742bbb6d5a013cb63d1aa3a89e02627ef5398b52c0cfd97d208abeb8d7c9bce0bbeb019a86ddb589beb29a5b74bf861075c677c81d430f030c265247af9d3c9140ccb65309d07e0adc1efd15cf17e7b055d7da3868e4648cc3a180f0ee7f8e1e7b18098a3391b4ce7161e98d57af8a947e201a463e2d6bbca8059e5706e9dfed8f4856465ffa712ed1aa18e888d12dc6aa09ce95ecfca83cc5b0b15db09c8647f5d524c0f2e7620a3416b9623cadc0f097af573261c98c8400aa12af38e43cad84c",
           "result": "invalid"
@@ -374,10 +312,7 @@
         {
           "tcId": 30,
           "comment": "c = n",
-          "flags": [
-            "CVE-2021-3580",
-            "InvalidCiphertextFormat"
-          ],
+          "flags": ["CVE-2021-3580", "InvalidCiphertextFormat"],
           "msg": "54657374",
           "ct": "b3510a2bcd4ce644c5b594ae5059e12b2f054b658d5da5959a2fdf1871b808bc3df3e628d2792e51aad5c124b43bda453dca5cde4bcf28e7bd4effba0cb4b742bbb6d5a013cb63d1aa3a89e02627ef5398b52c0cfd97d208abeb8d7c9bce0bbeb019a86ddb589beb29a5b74bf861075c677c81d430f030c265247af9d3c9140ccb65309d07e0adc1efd15cf17e7b055d7da3868e4648cc3a180f0ee7f8e1e7b18098a3391b4ce7161e98d57af8a947e201a463e2d6bbca8059e5706e9dfed8f4856465ffa712ed1aa18e888d12dc6aa09ce95ecfca83cc5b0b15db09c8647f5d524c0f2e7620a3416b9623cadc0f097af573261c98c8400aa12af38e43cad84d",
           "result": "invalid"
@@ -385,9 +320,7 @@
         {
           "tcId": 31,
           "comment": "ciphertext not reduced",
-          "flags": [
-            "InvalidCiphertextFormat"
-          ],
+          "flags": ["InvalidCiphertextFormat"],
           "msg": "54657374",
           "ct": "0ac6c14d67716199a68880364156f49ed0dabec4fd470c709440004ecf94b8aac75aceaf22a363dd8e6a863d981b4db4a61cadd9196b2a81c7982c49457a0aea817936e4f5dfe6c7ef3693fe537dca4146d5b9fdd4ec5369f79d4d2a4e701a01c04c2992d2062e7ff784a660951e58cc502a819fdff9d904a9e67d99c626162b909482c84bd152f0df04fa56ef567667e76f6ede71a1c261687ab1f2c49de36a56e0ff7122885a775c2025fbc914bd1aa4df2dfdfb57238d05059c58f4fe3eabd24c2780ccd352ffc83c1b03a2f82bcd2f2b0cd2498fd79c1482467e009ebafc965376ff1df60775e5508f2ed4cca2bc20469c27a484866af41476b06a95dc9400",
           "result": "invalid"
@@ -395,9 +328,7 @@
         {
           "tcId": 32,
           "comment": "ciphertext is empty",
-          "flags": [
-            "InvalidCiphertextFormat"
-          ],
+          "flags": ["InvalidCiphertextFormat"],
           "msg": "54657374",
           "ct": "",
           "result": "invalid"
@@ -405,10 +336,7 @@
         {
           "tcId": 33,
           "comment": "Prepended bytes to ciphertext",
-          "flags": [
-            "CVE-2020-14967",
-            "InvalidCiphertextFormat"
-          ],
+          "flags": ["CVE-2020-14967", "InvalidCiphertextFormat"],
           "msg": "54657374",
           "ct": "00004501b4d669e01b9ef2dc800aa1b06d49196f5a09fe8fbcd037323c60eaf027bfb98432be4e4a26c567ffec718bcbea977dd26812fa071c33808b4d5ebb742d9879806094b6fbeea63d25ea3141733b60e31c6912106e1b758a7fe0014f075193faa8b4622bfd5d3013f0a32190a95de61a3604711bc62945f95a6522bd4dfed0a994ef185b28c281f7b5e4c8ed41176d12d9fc1b837e6a0111d0132d08a6d6f0580de0c9eed8ed105531799482d1e466c68c23b0c222af7fc12ac279bc4ff57e7b4586d209371b38c4c1035edd418dc5f960441cb21ea2bedbfea86de0d7861e81021b650a1de51002c315f1e7c12debe4dcebf790caaa54a2f26b149cf9e77d",
           "result": "invalid"
@@ -416,9 +344,7 @@
         {
           "tcId": 34,
           "comment": "appended bytes to ciphertext",
-          "flags": [
-            "InvalidCiphertextFormat"
-          ],
+          "flags": ["InvalidCiphertextFormat"],
           "msg": "54657374",
           "ct": "4501b4d669e01b9ef2dc800aa1b06d49196f5a09fe8fbcd037323c60eaf027bfb98432be4e4a26c567ffec718bcbea977dd26812fa071c33808b4d5ebb742d9879806094b6fbeea63d25ea3141733b60e31c6912106e1b758a7fe0014f075193faa8b4622bfd5d3013f0a32190a95de61a3604711bc62945f95a6522bd4dfed0a994ef185b28c281f7b5e4c8ed41176d12d9fc1b837e6a0111d0132d08a6d6f0580de0c9eed8ed105531799482d1e466c68c23b0c222af7fc12ac279bc4ff57e7b4586d209371b38c4c1035edd418dc5f960441cb21ea2bedbfea86de0d7861e81021b650a1de51002c315f1e7c12debe4dcebf790caaa54a2f26b149cf9e77d0000",
           "result": "invalid"
@@ -426,9 +352,7 @@
         {
           "tcId": 35,
           "comment": "truncated ciphertext",
-          "flags": [
-            "InvalidCiphertextFormat"
-          ],
+          "flags": ["InvalidCiphertextFormat"],
           "msg": "54657374",
           "ct": "01b4d669e01b9ef2dc800aa1b06d49196f5a09fe8fbcd037323c60eaf027bfb98432be4e4a26c567ffec718bcbea977dd26812fa071c33808b4d5ebb742d9879806094b6fbeea63d25ea3141733b60e31c6912106e1b758a7fe0014f075193faa8b4622bfd5d3013f0a32190a95de61a3604711bc62945f95a6522bd4dfed0a994ef185b28c281f7b5e4c8ed41176d12d9fc1b837e6a0111d0132d08a6d6f0580de0c9eed8ed105531799482d1e466c68c23b0c222af7fc12ac279bc4ff57e7b4586d209371b38c4c1035edd418dc5f960441cb21ea2bedbfea86de0d7861e81021b650a1de51002c315f1e7c12debe4dcebf790caaa54a2f26b149cf9e77d",
           "result": "invalid"
@@ -471,9 +395,7 @@
         {
           "tcId": 36,
           "comment": "edge case for ciphertext",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "52a61193b56236922dde714383c6bfc5a3c3a4515707521ebc84220bed615b28cf50222c2cfb7da7e5bf8ed088333d360a1f95d428d0563c3757f400f582cccc1c06e43cb575545f0cdc6bf29c585d8feda2522234415317bc5d8641737b9cf657620499a1d4fd69e4fa109e068511cfee4d2b3c9f9904fb370cb28dbc7e0e",
           "ct": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002",
           "result": "valid"
@@ -516,9 +438,7 @@
         {
           "tcId": 37,
           "comment": "edge case for ciphertext",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "f50d8c4dbfdd67f1018ef2bded1a74c6ddbf7db395af1b56a91507ee381689d9e06d1b71b783d895dd7a7289a20ccd5c2b5f38be6d248fde32fa02ba825047c14caf35f96873aad739a31f02b2433e871d1265c58245191cc5a1dfd299b160edcafc5ca7a37c056dbac9e7dd1195c20451",
           "ct": "c6e320b47282afaf1c18f55f28aa278d401163529e605c1ec6ff403d25c726f547407e4cc128c1aaf397dee2e881c20144616ca16f3d9a1794a70ae05f9722e9feab650c21b886aacaa34163bd8254ea53a8c1dba6bb8eecba38aad49be9d6658230fb3950382a5dc8d5c0538e50f976e4ee673f8faa2ab8b3805605642c6d770579736e410c9ecb32e0559d82b6f22b3ac79cdf57ea9a3fd4b5e8df66bca92b8478b971afb0d6b185b642c362daaa79d330d14069b9e917a3f84433ac32b56cbe2760e9507bd39749d18a1b13e923c7efc9fad13d12568e5d910c1cbe9a6069d0fe80e3aa57bf5e74fa5d86433eaf5690175f13e4c3148c7300799244c566bd",
           "result": "valid"
@@ -561,9 +481,7 @@
         {
           "tcId": 38,
           "comment": "ciphertext has low hamming weight",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "636d26280a49b4207bd30e67e5e15ddb5455",
           "ct": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
           "result": "valid"
@@ -606,9 +524,7 @@
         {
           "tcId": 39,
           "comment": "ciphertext has high hamming weight",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "44fadc2b07145f74c552f37b2140338aef1b46d7d4aabcb041faf19f22d6d18fc40a5e9aa4fa7013ee7953f180323d4affd3adf4c358084b057e48ee001ff567f5f509d8d429aecdac397447893d81323132b141ed345e0c52a980d470deb3951b6feb4c",
           "ct": "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
           "result": "valid"
@@ -651,9 +567,7 @@
         {
           "tcId": 40,
           "comment": "ciphertext has high hamming weight",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "a4f7ea4da2d695750150d5c9889a6b4ad0a183184a9561b9dfe0afafaccf16010628cc51c68d5035919edaa1ed462d06c4b5feb649be3c60f7bdc1e4a964e758bb0541382b61b49a77314e08b3a88f65d3b5ca2d49b15ff8afa229f462535fcf7f3f20dc01d824927040446a8136cc22ef049b2c",
           "ct": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
           "result": "valid"
@@ -696,9 +610,7 @@
         {
           "tcId": 41,
           "comment": "ciphertext mod p,q has high hamming weight",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "0148726644c9d20762c9546d18d3c13c620f4b3b4073c68c4f9dca924acede084e66cc1e31cc7135b53b483fd32d866517aee3db019e56d161787ee6e873f6c4f08acfc58222871dd6ccec5e2dd1898990c6cd98340a12fb7f7b404d15a5dbc26bbcb2f18547ba2d62c5a5923f9ed5b90ceffd597e8dda192de98fc3c7ebc169863de9f56bdd549404a690b3ef50a59e29375557c88f",
           "ct": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000007fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
           "result": "valid"
@@ -741,9 +653,7 @@
         {
           "tcId": 42,
           "comment": "ciphertext mod p,q has low hamming weight",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "30bc6828ea18265687b8bd3bae90a8c1",
           "ct": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
           "result": "valid"
@@ -786,9 +696,7 @@
         {
           "tcId": 43,
           "comment": "special case ciphertext",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "5428c34ab4a93dedef450347e9b89b894fa6c6b1c07e0205f5b4505cf0e65954760e3ce92a170499dfc10d5f3b4ee72843bd394d04f0310db1f7dc47950ebe88b3d32492d7170814dde0e0564560740f6bc7c34a64a9547977b446e8f9edbec97246e113e6f86a2e81cdbdef6531016638196eaa8cab3cd7c6f6fbdc8a60e5b48698993310872429cf5baa34f32c6fd9320265",
           "ct": "537d28a7255dad06383c7a6dbd176def69b06c20cbd4feaec611e9f21b20efad4d618da12800f3b31c33a8eddd0854127cb4daf82e97ab3957117d6c7b35d10de119e539643cc3ab2b02df38c73c38a117c005238e3fcb022390e987c79f6aadad081aaa13862d4cf7bb9b0113ce43f324f8ae9e9d50eb7c769fb184412dcba1a4bafb29acdf3a9b15ecadb531a3dcca4a8ed8d956cbf709710e41427c11c97b68467932387bb625dfdfe3046a4cd0d931cb44b109a67fc0085978ae1e3d8ce042c631f37a09393e8cb7e114e92328e41c849a334c1540de1339fac5b74312c1877f851151d7b35ce4e0f23d4cd502bd5c6068b58b5da3cd3a8f79d1f8b29e30",
           "result": "valid"
@@ -831,9 +739,7 @@
         {
           "tcId": 44,
           "comment": "ciphertext is a simple fraction",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "9d01acafe3375c444a74d3ed74166e8728eb6657c7644677579720aa8ffebe64f52e36b449f8a0fe79e07bd59e46aa48c83088ac38bf10a3e036158c198a2a3fed283b2710b632e0741f970969b475bc4ae8355e60c440f71f304a1363b24819a351d5147836febbe249d65ef3c483a76df46a019a2f3eecfdf0c18c0ab11de90313cd9af93a857dbaf8049c6efede83274440ece9c2103d00e942ca65a8efbebe6190d9e5ed61816804d941d027cccae2966854b38ea07bcef857e5fc3fb4aa5f3c4c56360007f972d5d6d6740a585d000df619d3466032930a856c2ee14db5e6960c8e9ffe79107e212cdd6e082eccb10a",
           "ct": "171759da87532242dcbd4821488d4861c1d87a2479c655e945d02cb5de9799f5f6199413101e0caf24bcfa7319b91da481b3c717dbd894f9f7fe814964cdc5d2f5daab161c5d36346ec30a5d8e8e959df25fc107ce2fe831aeceafcd580dd9d6e862b0dc67c97786947a06788dc037794ba3bac7d6c1dd87f0d0acc4b65d0f05965884a3a6b57c50a3cd7b758907b45f877bace2102e28e61dac68cafdb0cafe635664f27d005bf03c809114e6d2d3ef06f18effdcd8f4b223506259765efbd632be128b67b268df2e6f99714325d7cf089110aedbb55d0556c76a164cb6534b36c0ab6fee98e4d0f8db7a76bac1d9b8328b928e6601092ff61caf0298175a39",
           "result": "valid"
@@ -876,9 +782,7 @@
         {
           "tcId": 45,
           "comment": "ciphertext is a simple fraction",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "6742f1e5ba666a102747f6c90b7afe5700249cf60192b201c6c29bfff1487b0ca4100091e9e1d94df3af18021822835b40b9c20e2bf83ef174deaebc94ac9770d8b128ade611c19256d6fb62a41301898af074254c756f8a241851f3d4a052d7745f99d9e161434af4940a80610cb2fe63520bcefda74564b02c99ee9b0d88036ac39ce547cf103fee0c1666f0757734c29577fbd2f88e11058b5f3e81f82ff3f456ddc8018f7ed740979b15da66469b",
           "ct": "46a9ee986efc30f16a6d46521865f3ebf97ee2c02d693f8f3ae746c99716ee5d10a25a8fb34fb75c735062bed816c2a2cfcc6733c9d1f1b23df893cbaa8c92dbf0e8bf93a80d8a21c1d4cd2af3da728d9aa476ae55ca700820435c02cd872d3835b4cb0f4626feecb0bbe45f35e2f80c704d9a4e1e2bc613bf06fb52f26ca5cba69c3bd96b1a3845a3fed672a52110a9e710a7710a4ffa44f1ff890c1d698882eb27b27cd8184a9f5e3d4b33a51885f23b80e97887e7099c3bea6aa76db83ac9ec6880ce784d34a4cecf841404d6295f531e6f1262ddfef28f06412670ccd2af404b76f94d98ae6c2789944b66cea2a033e2f405217624fea444666ef30c7b84",
           "result": "valid"
@@ -921,9 +825,7 @@
         {
           "tcId": 46,
           "comment": "edge case for Montgomery reduction (32 bit)",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "a41ebd80b15cbe50842790f7f30b680aaac807afeeb4e5306dee48e6d7946ab8378fa6112ae86874f7b14233ef62ce90e3c0f0eb5551a256c0759e3b14cd70411a897150640bca5d78298a557992ae3bede97b981b6950689c74d7ad90651870d8f5657a202f6dcc2d6fd2698f03642aebc489c3ac9a68c7a2c184017f8b8ea81b80ccd7871e01c9d7b3496070c2508cb69eb71667649819e803a0c0fdca45c7c21c986baab12f986f37c3132d77b5861d87753f6147a7aa39e70029c024d5896d8add076e517ef0b40049d7fd0495a3e3b63eda",
           "ct": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000",
           "result": "valid"
@@ -966,9 +868,7 @@
         {
           "tcId": 47,
           "comment": "edge case for Montgomery reduction (32 bit)",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "f530f3adef7fc80a148531103d79369d741ca40cfedfb9ae1d150eeb73a4acdf71aea6defd3c493ec032f2db51758ad4e02e2bd9d48364bc0adc0a70793727455be33abdec47cb9904c7cb0bd2bbd13a5a1071d326921faedeec73b6bf0aabfb1b8d84432615d7ceb2a943d1fc5679978ac18adab009c86cc381c18878dace1351d1de94ea458465d291ee9cf591eb98284e0d497f699e7443ba15eb851907aa01cebb864ba3a6fb1227a736cdb000fff70ad25daba26a4c4af00141015a049b9dcd4ed2c1996f",
           "ct": "bb11e68c71d58bf30658751bc3218e68be87dc8afa5ff98ae62c06501548985959ed95172a9d3659ee6ec34bc417cee12b878001c54bc1e085ebbfc0e8d977d35ebc250618bfe6caa1d018f2f4067c3f825016c648c188166560056be9d6a95143bdd4fea6ebaab56f397ec78c9915afe0a18be3f33085c2ae2af3a798d862ec997ff556d91b3a80bd675fd2ce4f1cebfbbeb27bec856a29d267669e2d78f0e7f5a1559853ea7cbe50c3a1051f71b74591c5ab4efb2d1eda47e21f49866e80d75e237486852d5a24b72017d9334e958424ed32f5a02db7cc2cdf743b58864a219a8667890b396c73ca9e7c72c74351dd317583f463094014cedcc12279168ccb",
           "result": "valid"
@@ -1011,9 +911,7 @@
         {
           "tcId": 48,
           "comment": "edge case for Montgomery reduction (64 bit)",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "c0e17fbe480115f5fe7a66236adcd3477fb6d7d2ac5cfcda26afb21b3de59b36b7889c9baccd91dd7dbe7fe744cc48b301ce799ce393452c6bb24a14e5db72cd8ae761a04f3972943c3b59aed2b80246ada1965bc0bd0bd52856d7ba97fe8fa80406d9c9d9af367443df036b1549d1ca1836e676cb0f4a962273c3410d29b7805a7b150c23070da72a7e5198df322c6bcc2798e8ba706854ea2f5d5428f50c01edac19d25295fd239ff86eb8edd9fb53e634044e21079c605a9d3232a61c939e7c87c339b0481a04fe2aecbcbb15f19d2389fe3f6a2dc35fb289cc6818598dce505a11f9aceddd1a",
           "ct": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000000000000000",
           "result": "valid"
@@ -1056,9 +954,7 @@
         {
           "tcId": 49,
           "comment": "edge case for Montgomery reduction (64 bit)",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "e0f57a6334f97163fb65a0f924259ca5558e5149bc094b06bbdb2cfe2b5cc4e52eea015afac6a4fd124dd4a0c3c25c9f7f36fc465fda623661c963a1eb6bd48663ede99ec3bed21274",
           "ct": "d96b1ed7a5071af8c48b1a162d9a3c336bb0d8b893f54719b21e2bd8581b46de773fb906a99585b777b7aab4130e15d0fd576c7968dc940019a568c6b425f0017843472c698b25253676fb0d6d1dba59ca4fdf90173af5f28b9ea93d9a95c61500fb89131f2d93217aea06910d415b551ed8e8503254c6256fe8831e1152f407cbc5ce89e991719fead2cecbe62359bde60adc480efc6b0cea5177cd5663f99aba8c8f9a670b5060c9ea5231a95d655eef14485caf68a688b242e1e6a6543af239cf65c8d4aec626fae444baecf1c70b2d3da3c8b063e09e20aa441eca372b9b13a813dacfd333c491350ed348834375febfb885ae00e16b1828484675f870e1",
           "result": "valid"
@@ -1101,9 +997,7 @@
         {
           "tcId": 50,
           "comment": "edge case for Montgomery reduction (1024 bit)",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "a3807f5d34acd39123d2ec83648225b54590b45750e13c6cacf587dac4fe9c9e32a747b6b7f073d94b07311a0e",
           "ct": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
           "result": "valid"
@@ -1146,9 +1040,7 @@
         {
           "tcId": 51,
           "comment": "edge case for Montgomery reduction (1024 bit)",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "f9077aa629cac80d",
           "ct": "9a298a64d73b644bb4f184c8cebaa01fcc9b9b1fea5e93d3463a28e73284123a1abfae36ef57edd72ab9676c66b629cf42450dbf7c6347047746ff62c22f1e0b854500cd31384f6fadcf996828d96500b6b023619e2378230553e9b9226367ab7b8a06169e1325fb9e8a73c264400855c3b10229b6a661d67e1826bb32fc6ab44e4b6712066c2546bd4e47ac2789867b5e1f29c4e597a19ba715e6f6c011181f758442263355931115f9471fa7654e5fa85b69545482cadea81362b762aa2794f7f132856dea85c65f7d6b581edc89022f4cb1f6f99d5bb4a8cffde294ed5fde28692aa610e83272406cb4697f970ef16f689425e8a5174580184bb223fbb919",
           "result": "valid"
@@ -1191,9 +1083,7 @@
         {
           "tcId": 52,
           "comment": "edge case for Montgomery reduction over Z/nZ (32 bit)",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "67d3329433843fbf8516d807417f96e34ad7be1f8a8c4d4c1ca614e4255938fa622bdab0733b117506aaf3b39ae5c468894d79fc6aa451d837612df52c73eb18df7e8272de79d8621ec3e0c1e725746fd8f4eacc39a0207f91310c35a12401d1b34cf9a6bfc1c44b8b39ff4725fcbcd95c38fe1461361106e8e11be28e0d3ff81d406963db76c073ce41e4e770f9b59f3c99a8d683c5b415e6237cca91dcc31b8c1a3008",
           "ct": "13648644122d5be6e56d210076b9bc59deaf16fff664777a2d6348b1e0da0efc4a77fe2bfe2aeb592ee56fb3208ea0e04d2026a433bdd6ff11b89839f058832d732dda51bfcd5cced8fa7cc58a91fd435fe0aac17a6084c7619b9209d83136c19161aeaca90bd5c92d5ad0d2a99efb392f29a2dd06f0c19d204fe997800e4e7df66efb9a2bc19820e8dd3cf48f3e74f17c50316ab323055366430c21b97171ac776b14ae49fb124cd9df5ead69d267659abfa21676e62b3a0e7d3fb1c575e5c116513d1b654d09d637706d94bf3b252086771398b5934e23f7de652a9906a143eb56bb54e739e53fbb21d73a55da793c82768b3ad880d1e732b5ebce5817debe",
           "result": "valid"
@@ -1236,9 +1126,7 @@
         {
           "tcId": 53,
           "comment": "edge case for Montgomery reduction over Z/nZ (32 bit)",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "5d72b875a66301022bc2cb5128ec54abf1ca18e0b5b73c3fd566890796eb7172a45abcc4d806d69ae9d85ff45b717f922c",
           "ct": "181f37c923f2f1ddc6ad1de954439dabd8915ae9a3afd379ee5ffbebf877ecc26f83df5e945b0832d267fae35bbad4772c9f50be51490ddb7e61083da7b3b007a89e0fb996fca9de05c1d071d29fcfec33e8814ebada7fd8bf8f4c8fb92ad020923342a0232a2e7416d2d6343ff9c5a562faaac8a49aca35a3e2cbf3f6c04efd56f524e9afe4dc96a72c146b452307c9360c0187147ea2fcc2bd7a8fdfe05282944530482e678bcd506ac491b34da46fbb15ad573929c257dd190e1a84a5d26c30e8ae8501597883292f56cc0863a0186731d88ade418c87fb977cbf224b259fbd5ea2521ffb33c845f2b591bcc68294e0882c1742dcb4d5f23eb7d89ab28570",
           "result": "valid"
@@ -1281,9 +1169,7 @@
         {
           "tcId": 54,
           "comment": "edge case for Montgomery reduction over Z/nZ (64 bit)",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "7259cfb45f3651d59b996115be31006e82243cb1317d23418d64a047b984f4f8345ea0b8b193b532c2769b8fa0d4aba9642446eed61b037b87f045f2992738640f3fe81236d5dc36a384d0d408c4b3273a6dad21526815c29955224ea85d3ea7e77e45738dd27411c57f7b33878dd5472cb9f19fee68fd8daf7e40e6e210135d02f1bc5a6660c23418b6499cb1749336c7074df3452a88fdb723f591a70781",
           "ct": "b3b6ce381b69a43046647e000c1ab2bb9456c7022dd1ea19a2761d85963e56f7337d04529bc975c34880552ca51497ced06bdbd8c54bf4ba83540185273b55c81b86c0a337df5fe8ebb4b43db0ac105a78f8de8240c2b3a0fb7b8f7e7fc8a70a462618387edb8a77195f8a43ba2ef1ad3f1216598cf1b4f02f2bcdd2fbe9885cdeb74754ffba96d978e68045b1754e35ba8c54183106fb2c9f5685adb5f14d239e8c8e19b39c142b0f01e3934ae1b7315b0db5986c7d9b39bbe960faa32337342b3d02ca5148f308fcaa718001e39d0c0bfcedf9e91e2d12919bcd739c431e37ddd20abf4a35644246da2951983f1d6fa32ac259f222501c4c8640b43279bb03",
           "result": "valid"
@@ -1326,9 +1212,7 @@
         {
           "tcId": 55,
           "comment": "edge case for Montgomery reduction over Z/nZ (64 bit)",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "224bcda382d96b12ef56ee0fc56b67431b6490aa2f0e8f6528424c32d6611c4c0b9753a167a633e6a74465ca068ff40f802b43726a65f1251e2a075a2cffb1510249dbbda0f1877fc014310bf4c428295d5c1fa3fcca34441d4e84b1834f40079ca09ce1a52915dcf9d5472b9aec1a862d619c310cf9680fe7cbc03bfeb9cde565ca4666625ee2cd6725327c942dbb5b836f0cef24b2e646c91924543a07b6c5925ea8820b909e2040e2d50b7edf9fe5f241",
           "ct": "97e090014478c58f681840c5170ee90584f734f154ed9b4850df6c20ac5470fa8b44c4f985ffcb52024917c51bd12a6773caa1d1d29c6b5fbd42963dfda4473cc573188ea41b3e254de9f9dd3472e00e4f22b0246fd3452f25fc607f16ac4f07d8cea65722606642b4f3ade0115ebc1cb56f3a5c600efd07e2d7e5b90977aa6cd5fcdda7bcd8123b15f71bd8f07b8440b540067de6677efe57a25eeb5d90dd4c6262e1a3b15a6a93d0e901e205420e2169bc4e1e4f55bb36432c50b92c22798c3c5c703461b99bc06ba22ec5c0fb17db74fa4faaf889f95718ae0c1d1b83e5e6421dd1327682e25c04061cfd30a7b9b4d470d736dd0c11788afa830598d8a06b",
           "result": "valid"
@@ -1371,9 +1255,7 @@
         {
           "tcId": 56,
           "comment": "edge case for Montgomery reduction over Z/nZ (2048 bit)",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "991d040b49f1338a65d2f996e4f1e651f075f143db4ed0a29ae936ecef91a85d4edebb806e50735522ef88f4bbf5ce47c12eeba0f768216b9dc304544db563e53bf41a26360440997d06ba6e46c2c7c02272e00852a95e5bce8f0223f6dd235c3c7bf8132ab4ce68ef53f82dac02f142abe7db2b5ca67d7ac3857423e5df927f2eceb0c003c087e55dcaa923181ce629e3464592711a86bf0d07c80c58416b74f35ac14b2d4747818eb8cb16b6d3b6de0a21f27d4f1271439aad21024d",
           "ct": "8c97556b822e64cc85ff36d1cd977620da4a72e765d12f742ec57732064cf19e2215b67aadf1d38a5ac23462372be206732038945001fd1991b3e3cbc10c81a073dd54e2da890f6c9d7b8e8154be1b3dc5e2c544ba8ce09687d62b707ef8dcbff88c6c33ccf72edc71d91b9e3ad51562a82c6414efe6cf7ed938bb22381e6846da3917fb2503725977ddd4750120a21a7bf6dca949b397a8e7824f2aee231fb0d16b00ed927f2fede4e7043f1ea18430b22a4767796085ea68d3ff29f5082972746d2f4e2f465534ad87088f03a8fb699f3bc840d47953bbd4cb3a29c00fccdebff359d651bfdb6fbbbebf1ecbcc748a06738ebd3f027b646920963eeb067c33",
           "result": "valid"
@@ -1416,9 +1298,7 @@
         {
           "tcId": 57,
           "comment": "edge case for Montgomery reduction over Z/nZ (2048 bit)",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "5b1d0e30c1973a87ed29cf3b7b4b48ae3d2e054698a86ebfbb43c5041ce7fd5146018abcb2bda195928b4820b6ce60df34c97c650c75b4dc274b35c7dd33f97839189fddd46c960f996423fb1c30a1c94c01c8ce575903d4c1af7b805443289d653b9cfcbc1482e84fe8c19cda33f9324b1aaf3e232699017d67d281450ed445265ff1aaa52e2a74b43097e590dbab20eca6b8bbd6df182b2e963e374f32f76b700661598ff707512e0f99849c73a49f7c068122952185855f254d3473246818894740b06c0f74b0711fffa7caacd403f886b4982f71a1d940d0b3118cdcb4135bec8d46b266cd2719873751a82b46f5a924",
           "ct": "0e3f66a0127d21df1128701a777a5338d5727bc8041c3b8c25bcaa5bfc83b0261150a5bf41658c08cc019e3ebeeabb729c3bde84ffd2023f63313b3d1ac00ab4637b36e855a0d8e368971b2ba99ad1eeb74f2db48fa9abb125ea9e7568c612c1ad48110d1008141ac34c98e8952347142470171ddb4dcd914a3dc0d0ca4f51a247758da924d5ea041c8789b26974349af3a9bfb83ecd9107414a5f17c3abe5250e6891ab465ffea8b0e2fc2b43a9c1231d8a8631ea6f4a2817edbc5e918258c7b3155396b7a1cbd19a09c9b2397945eb4b767238a8833e63e79b84e143be8a4dcedeaa51cb936c08f364b74817dd1cc6a98a2cb3223f2532f17530570e6e693e",
           "result": "valid"
@@ -1461,9 +1341,7 @@
         {
           "tcId": 58,
           "comment": "edge case for montgomery reduction with special primes",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "63f6d1ccf5c03442d3b1b29b4e83e02242c26183fcbede9b6d7881a819d6cb48448da49ecc0ed0172713a17f24154f47461928aed551cb10cf0f7ffd47dd728edbf6c2060a340d95e980d466302439cac9aaaff9d54622ca0a4429aa891ed3cd210999ba4f442af8ecf63ba9c1cbc4b9cc4940f6854e75f789858bd429b1a398093b4dfa0018a98bba620e37f840c6a37edce04fdb739b2b7d0c9fe5a8eaaecf14d9e6e27f131742c1129769901f512bbe6b578ccc8a6f25a7cfc7fbcf743c318f2346b1cb4709",
           "ct": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000007fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
           "result": "valid"
@@ -1506,9 +1384,7 @@
         {
           "tcId": 59,
           "comment": "edge case for montgomery reduction with special primes",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "ca095311d2c3cba494ca686bf451a3ee1ff4ecff1fe7738001c9d8f494e2375efbf0b03e832bcbd1d8d1a319d262c844fc1aedaaae7c06bc654e4af0412265aa0dd1cf46652460d43b14436ba8cc7c72870fcb92554e1c2c468fdcc2e31769437b57d47a348c6af331ac9e0132d41607ee95300330537fbd74e25e661ddc9989d201155f388a93cf8ffa7d44b33a4c1baf7a1b056ca80eef22a14d1f1c4460d6136ae6601fb19afed2b78f333047e8bdaace0a6c61b056c23a360829e632d1e847f9f57aac7322e27d6fd1a77c941743605405c037ebcc8ad0b68b034f954af5fb47943f5580abc20d59b6d419",
           "ct": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
           "result": "valid"
@@ -1551,9 +1427,7 @@
         {
           "tcId": 60,
           "comment": "edge case for montgomery reduction with special primes",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "575b819ff5b00428d51e8ce5df4a02d588ce49f9540cb6f27a53f0f27b2741d2ba97d9192fb67c90f564a48965",
           "ct": "970c802f8bc69e2e7e9f5c38834600446ef0d5f037311c6b143ed35258f9523bdc9b8bd753b68e842e7399769d9d428b8ce68f0ab97427205896b66b4d26b45c99b3dc5d0268ce20e33270121f50ebe23bd24c8e378b31fc30fd079f1918fc54d9e57229db62eb454ca45eba505bc4166f80d24784e58b14bac6b3435c4fc6ea68a14d67a06eda445ec46e9826d3f75da0a63f4a295c8478cccc9d19177d74f57a5ee66d9a1004bddf546eea046a9c9eb78e3b1bae5fe7f8240703bca97d7224c7f2f9ad549d87f5a9b64957ab85e92ca22cd6543f36595412bf535f258b2233dae92da91cffa8a0a2215bfbbef75d078cc516e388db733da5cd656f93b0eb58",
           "result": "valid"
@@ -1596,9 +1470,7 @@
         {
           "tcId": 61,
           "comment": "edge case for montgomery reduction with special primes",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "1f7926bf036e2dc744b3591cdc9575b7f1e6cab9a3766de85b56b9e975f13046b41ca9df17fbf93ef4f260f8bd263182dd4a4fd87edd9716d63b99e9ad30212e9f506c345838e34b3d784d1785bebd59c52e24f7748361c670c29999f4766f84702f3997550989ec36ced0eca73bfe167c8b1913abc69f537d7171dc84b268198681228c71e6a6b9d402de2302e4704392a4e946ac0c6a6e29184659ee",
           "ct": "b5b356e62591aa12b607c9541e081020a8e48752f9e1bc50989494ad5c5a22079a00b607d8f5ba364475515ca5c9c204b8f294c0a42fa3265f9a3337f3331cc52db473dd4644f9ccbdbf3742f3dde513b3d6df9cea6e94e2e2295147ce03685d42515c2e1a869529d41a51c06cd0c608932adc5b5ce790b4e8f9c72a34d0e5b215c01253c22ebe6eb71917812ec899df666b94e0a2290e75197063ea55e3390e2a7ddcf9c47e2543030f69195a3379d4739090dfcd07295bfc9a8e2891ee9ef286623cb9963c056d934749fd2bcd73e47b816595d54bc2635fea68098f7807687996c1826023459bb4211ff1e98ac140823a36b70345b6c4c6bfdf7aadc5d350",
           "result": "valid"
@@ -1641,9 +1513,7 @@
         {
           "tcId": 62,
           "comment": "edge case for montgomery reduction with special primes",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "d59187caba5dbdbc43e6523e1163ee57187cf0999abd64e0de5d238118677b17855f588352f2208b2a92b1c296ddfa9e2bc2b271404034ef96b04122d55d3509f1f9f75658c13172caef5c1ead5d33245c1c1ead84ebfd6f7bf321c0c513c1a2e248ba9805fd3d59d84146032887ae0b0da75d65846aff104366c1e3501d09f3edacc6ce9e41f60f489bd7b0afeecc080110daf9372e18a2e26bf870d640d27cbbc92855a2ca16bbc08c7e0845cd10c964",
           "ct": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
           "result": "valid"
@@ -1686,9 +1556,7 @@
         {
           "tcId": 63,
           "comment": "edge case for montgomery reduction with special primes",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "69fc21cfdfdaf947da0c6ca5c9d78967fac976579659c93a8991e93d12120b10bc6342cc128912af3093696afb4937dacb30bca328b5aea273a2d512c5b98fdc050c213b87d23ce11957b08d74d3ac5a89234d9022f1a132e0b4d6afc411082569ede3f1d71d94886159d7eb8eb8",
           "ct": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000007fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
           "result": "valid"
@@ -1731,9 +1599,7 @@
         {
           "tcId": 64,
           "comment": "edge case for montgomery reduction with special primes",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "8923733a345f80b10575ce05c18cb8543de89cbf37886f51c6b9369ecc01b880587e9c41f1848b2539a6919752d07429f3b012e9ac62e5d192cb980489ec54ee54a432a1f6adc583477b404d816e499666b4c91d2fc4e7d1844631997afdd05f190c433a6bffe334de4476284e8e6b30f4fd6da692",
           "ct": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
           "result": "valid"
@@ -1776,9 +1642,7 @@
         {
           "tcId": 65,
           "comment": "edge case for montgomery reduction with special primes",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "4947c8c3306ed0cc1841318746a17078557b686f0dc45c6289e02ef4c595b5d0c2c92d7cab1e93ce0e1470a2a5e116e4a49de188c149bcebebfe669ba256d64fadab70fd7e36734eaf10b90f7b4a5004c04ada14a0ef75c0f25a3094010d2b43d5c023",
           "ct": "bf00ce8851532bb7cb0574acfa4f8992e37ececd04364f3d920a4bbf8b17523d967854dd28291c9adb51760356f24b8694995cad1f91fdd3c738b307b36f27f95d185fc331f5d614a4238f3f2157c1ae3a91bf6c5ac632259f2eff08f7bcffbfa6351bffaeb91ceedca6779b5c82e07b4ea2791196ced821793332ea313dfaa5c064eb5e8f71de0ad1cdf680fec6a5617fcf970cc4eeac5ff017009400944997e8c36b1ab87a08545b027480815b78fd04ee3bd8daa31460246e9e258b31243ddae72fa770ac0fff907a6e99622b7b936529137a5b96b43562037459e5dff9abb3bfa7b4fb9d57a9345d86a72ea636fda36ee36eb913677c494bab01042b982c",
           "result": "valid"
@@ -1821,9 +1685,7 @@
         {
           "tcId": 66,
           "comment": "edge case for montgomery reduction with special primes",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "841ee52c94cac3dda367429494b2a07274e19f7f9567bceae1a940df892b8e44c7c86bdcc6ea7232774ee2195b19bfe932a88c12401c06fe0b865583d989ed3236fdb18264499a36b6ae6ba1bfc68b8220a0e3fa2f8221bb3e72e267115469c8648b5ec81d04393f8357daea9b849b95d2707a3b13e4e27a5be8e75e803f41b081c7accae863211f5357a4c81c",
           "ct": "cc890f82986e18c35e18a2ea354bd2c7e88dca9f0e1981497b31342b893992a49f36380fbe9829995e9aec1b3ec88dfbcbfb11bd2a00140f8f6647c5e3bdda527799ef0571f45427f10d2463ee096fda48c41085d3a90bf7072d06fb7a3d2286cd10255a82a52452ea3e61e2d8e35eff9f6b831b48f09b522df104f48ac58f76cc241b9fddc042e7683774117808681693536600e1cd3035dcf6ec30a6bdf659b15e0417c3bfc4c9a591f2f858081df1243477d41812a6ac74bc4fbb6485b18aaf6a00c32593751a527723b4802d318038698de9063818044cca1b035b8800193fed71d3c38ed3296fddb336552b68d380d1214b13a1c86e6f687bd37e5fd22c",
           "result": "valid"
@@ -1866,9 +1728,7 @@
         {
           "tcId": 67,
           "comment": "edge case for montgomery reduction with special primes",
-          "flags": [
-            "SpecialCase"
-          ],
+          "flags": ["SpecialCase"],
           "msg": "a3b94a63d4937de4bf024bce52957cd9af5efb3b0defef908d5f2ce35941b10168128951a1c5093dcdcebaa0622fdfc1e481daac4ce5675ed6690cec5f8ef20305185ed5b61db798e7a13626831fa9",
           "ct": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
           "result": "valid"

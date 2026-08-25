@@ -118,6 +118,86 @@ const PRIVATE_FIXED_WINDOW_TABLE_ENTRIES: usize = 16;
 const RSA_KEYGEN_PUBLIC_EXPONENT: u64 = 65_537;
 #[cfg(feature = "getrandom")]
 const RSA_KEYGEN_MILLER_RABIN_ROUNDS: usize = 32;
+
+#[cfg(all(target_arch = "aarch64", not(miri)))]
+#[must_use = "the guard must remain alive for the complete secret arithmetic operation"]
+struct Aarch64DitGuard {
+  restore_disabled: bool,
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri)))]
+impl Aarch64DitGuard {
+  #[inline]
+  fn supported() -> bool {
+    #[cfg(feature = "std")]
+    {
+      std::arch::is_aarch64_feature_detected!("dit")
+    }
+    #[cfg(not(feature = "std"))]
+    {
+      cfg!(target_feature = "dit")
+    }
+  }
+
+  #[inline]
+  fn state_if_supported() -> Option<u64> {
+    if !Self::supported() {
+      return None;
+    }
+
+    let state: u64;
+    // SAFETY: `supported` establishes FEAT_DIT before the DIT system register is
+    // accessed. `.inst 0xd53b42a8` encodes `mrs x8, DIT`; the explicit late
+    // output declares the complete register effect. MRS DIT is available at
+    // EL0, touches no memory or stack, and the conservative asm options keep it
+    // ordered with the guarded arithmetic.
+    unsafe {
+      core::arch::asm!(
+        ".inst 0xd53b42a8",
+        lateout("x8") state,
+        options(nostack, preserves_flags)
+      );
+    }
+    Some(state)
+  }
+
+  #[inline]
+  fn enter() -> Self {
+    let Some(previous) = Self::state_if_supported() else {
+      return Self {
+        restore_disabled: false,
+      };
+    };
+    let restore_disabled = previous == 0;
+    if restore_disabled {
+      // SAFETY: `state_if_supported` established FEAT_DIT. `.inst 0xd503415f`
+      // encodes `msr DIT, #1`; it has no register operands. MSR DIT is available
+      // at EL0, writes only PSTATE.DIT, and the guard restores the prior disabled
+      // state on every normal or unwinding exit.
+      unsafe {
+        core::arch::asm!(".inst 0xd503415f", options(nostack, preserves_flags));
+      }
+    }
+    Self { restore_disabled }
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri)))]
+impl Drop for Aarch64DitGuard {
+  #[inline]
+  fn drop(&mut self) {
+    if self.restore_disabled {
+      // SAFETY: `restore_disabled` can be true only after FEAT_DIT was
+      // established and this guard successfully enabled PSTATE.DIT. `.inst
+      // 0xd503405f` encodes `msr DIT, #0`; it restores the caller's prior state,
+      // has no register operands, and touches no memory.
+      unsafe {
+        core::arch::asm!(".inst 0xd503405f", options(nostack, preserves_flags));
+      }
+    }
+  }
+}
+
 const RSA_IMPORT_MILLER_RABIN_BASES: [u16; 32] = [
   2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109,
   113, 127, 131,
@@ -845,6 +925,67 @@ pub fn diag_rsa_public_operation_bitserial(
   out: &mut [u8],
 ) -> Result<(), RsaPublicOpError> {
   let result = key.modulus.public_operation_bitserial(key.exponent, input, out);
+  clear_output_on_error(result, out)
+}
+
+/// Apply the production RSA private fixed-window exponentiation loop to a caller-supplied public modulus.
+///
+/// This diagnostic-only primitive isolates fixed-width secret-exponent handling
+/// without exposing a private key. It is raw modular arithmetic without RSA
+/// key validation, padding, or blinding and must not be used as a cryptographic
+/// protocol API.
+///
+/// # Errors
+///
+/// Returns [`RsaPrivateOpError`] if the modulus is empty or even, if `exponent`,
+/// `input`, or `out` is not exactly the modulus length, or if `input >= n`.
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+pub fn diag_rsa_private_exponentiate_fixed_width(
+  modulus: &[u8],
+  exponent: &[u8],
+  input: &[u8],
+  out: &mut [u8],
+) -> Result<(), RsaPrivateOpError> {
+  let result = match modulus.last() {
+    Some(last) if last & 1 == 1 => private_component_modulus(modulus)
+      .and_then(|modulus| private_exponentiate_representative(&modulus, exponent, input, out)),
+    _ => Err(RsaPrivateOpError::RepresentativeOutOfRange),
+  };
+  clear_output_on_error(result, out)
+}
+
+/// Apply the production RSA private fixed-window exponentiation loop with reusable scratch.
+///
+/// This diagnostic-only primitive uses the first precomputed CRT component
+/// modulus from `key`, matching the steady-state production path without
+/// timing component-modulus construction or heap allocation. It is raw
+/// modular arithmetic without padding or blinding and must not be used as a
+/// cryptographic protocol API.
+///
+/// # Errors
+///
+/// Returns [`RsaPrivateOpError`] if `scratch` has another public modulus width,
+/// if `exponent`, `input`, or `out` is not exactly the first CRT component
+/// width, or if `input` is outside that component modulus.
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+pub fn diag_rsa_private_exponentiate_fixed_width_with_scratch(
+  key: &RsaPrivateKey,
+  exponent: &[u8],
+  input: &[u8],
+  out: &mut [u8],
+  scratch: &mut RsaPrivateScratch,
+) -> Result<(), RsaPrivateOpError> {
+  let result = scratch.ensure_len(key.signature_len()).and_then(|()| {
+    private_exponentiate_representative_with_scratch(
+      &key.components.prime_p_modulus,
+      exponent,
+      input,
+      out,
+      &mut scratch.exponent_scratch,
+    )
+  });
   clear_output_on_error(result, out)
 }
 
@@ -8831,6 +8972,9 @@ fn private_exponentiate_representative(
   input: &[u8],
   out: &mut [u8],
 ) -> Result<(), RsaPrivateOpError> {
+  #[cfg(all(target_arch = "aarch64", not(miri)))]
+  let _dit_guard = Aarch64DitGuard::enter();
+
   let bytes = modulus.bytes.len();
   let limbs = modulus.limbs.len();
   if input.len() != bytes || out.len() != bytes || exponent.len() != bytes {
@@ -8909,6 +9053,9 @@ fn private_exponentiate_representative_with_scratch(
   out: &mut [u8],
   scratch: &mut RsaPrivateExponentScratch,
 ) -> Result<(), RsaPrivateOpError> {
+  #[cfg(all(target_arch = "aarch64", not(miri)))]
+  let _dit_guard = Aarch64DitGuard::enter();
+
   let bytes = modulus.bytes.len();
   let limbs = modulus.limbs.len();
   if input.len() != bytes || out.len() != bytes || exponent.len() != bytes {
@@ -10471,6 +10618,19 @@ mod tests {
   use serde_json::Value;
 
   use super::*;
+
+  #[test]
+  #[cfg(all(target_arch = "aarch64", not(miri)))]
+  fn aarch64_dit_guard_enables_and_restores_data_independent_timing() {
+    let Some(before) = Aarch64DitGuard::state_if_supported() else {
+      return;
+    };
+    {
+      let _guard = Aarch64DitGuard::enter();
+      assert_ne!(Aarch64DitGuard::state_if_supported(), Some(0));
+    }
+    assert_eq!(Aarch64DitGuard::state_if_supported(), Some(before));
+  }
 
   #[cfg(feature = "getrandom")]
   const CAVP_KEYGEN_186_3_PROBABLE_PRIME: &str =

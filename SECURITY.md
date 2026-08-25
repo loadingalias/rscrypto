@@ -51,7 +51,7 @@ Out of scope:
 
 | Version | Supported |
 | ------- | --------- |
-| `0.8.x` | Yes |
+| `0.8.x` | Yes       |
 
 Only the latest patch release in the current minor line receives security
 fixes. Upgrade to the latest published `0.8.x` release before reporting an issue

@@ -113,23 +113,32 @@ The release workflow requires native evidence for these LLVM-generated target
 classes. A row is covered only when it appears as a passing lane in the
 matching release bundle:
 
-| Target class | Required release evidence |
-|---|---|
-| Linux `x86_64-unknown-linux-gnu` | Artifact review, generated-code heuristics, empirical timing tests, and binary checks where supported. |
-| Linux `aarch64-unknown-linux-gnu` | Artifact review, generated-code heuristics, empirical timing tests, and binary checks where supported. |
-| Linux `riscv64gc-unknown-linux-gnu` | Artifact review, generated-code heuristics, and empirical timing tests. |
-| Linux `s390x-unknown-linux-gnu` | Artifact review, generated-code heuristics, and empirical timing tests. |
-| Linux `powerpc64le-unknown-linux-gnu` | Artifact review, generated-code heuristics, and empirical timing tests. |
+| Target class                          | Required release evidence                                                                              |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Linux `x86_64-unknown-linux-gnu`      | Artifact review, generated-code heuristics, empirical timing tests, and binary checks where supported. |
+| Linux `aarch64-unknown-linux-gnu`     | Artifact review, generated-code heuristics, empirical timing tests, and binary checks where supported. |
+| Linux `riscv64gc-unknown-linux-gnu`   | Artifact review, generated-code heuristics, and empirical timing tests.                                |
+| Linux `s390x-unknown-linux-gnu`       | Artifact review, generated-code heuristics, and empirical timing tests.                                |
+| Linux `powerpc64le-unknown-linux-gnu` | Artifact review, generated-code heuristics, and empirical timing tests.                                |
 
 Release CI exercises multiple x86_64 and AArch64 microarchitectures. The exact
 CPU, target features, compiler, linker, tools, and artifact hashes are recorded
 per lane rather than generalized to every CPU implementing the same triple.
 
+On AArch64 targets that advertise FEAT_DIT, RSA private exponentiation enters
+data-independent-timing state for the complete fixed-window arithmetic loop and
+restores the caller's prior PSTATE afterward. Generic `no_std` AArch64 builds
+use this hardening only when compiled with `+dit`; physical evidence remains
+bound to the exact release lanes above.
+
 ECDSA P-256/P-384 signing uses multiplication-free, fixed-work limb arithmetic
 on s390x and RISC-V to avoid the variable-latency scalar multiply observed in
 earlier native runs. That source and disassembly property is necessary, not
-sufficient: those targets are promoted only after their native required
-DudeCT cases pass in the matching release evidence.
+sufficient. On s390x, wide nonce reduction uses multiplication-free fixed-work
+shift/add arithmetic. Caller-blinded signing splits the supplied CSPRNG buffer
+into independent scalar masks for projective arithmetic and for private-product,
+nonce-inversion, and final-scalar arithmetic. Both targets are promoted only
+after their native required DudeCT cases pass in the matching release evidence.
 
 For ML-KEM, the s390x claim covers the fixed-work z/Vector arithmetic kernels
 present in the release evidence. It does not cover native scalar multiply or

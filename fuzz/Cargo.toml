@@ -8,21 +8,30 @@ edition = "2024"
 cargo-fuzz = true
 
 [lints.rust]
-unexpected_cfgs = { level = "deny", check-cfg = [
-  'cfg(fuzzing)',
-  'cfg(rscrypto_internal_fuzzing)',
-] }
+unexpected_cfgs = { level = "deny", check-cfg = ['cfg(fuzzing)', 'cfg(rscrypto_internal_fuzzing)'] }
 
 [dependencies]
 libfuzzer-sys = "0.4"
-rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "support", features = ["aead", "traits_io"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "support", features = [
+  "aead",
+  "traits_io",
+] }
 
 # Crate under test. The full-surface fuzz package activates every feature
 # that any individual scoped package under `fuzz-packages/` activates — the
 # union must stay in sync. When adding a feature to a scoped package, mirror
 # it here; CI's full-build smoke test surfaces drift as a build error rather
 # than as silent coverage loss.
-rscrypto = { path = "..", features = ["std", "checksums", "hashes", "auth", "aead", "argon2", "scrypt", "phc-strings"] }
+rscrypto = { path = "..", features = [
+  "std",
+  "checksums",
+  "hashes",
+  "auth",
+  "aead",
+  "argon2",
+  "scrypt",
+  "phc-strings",
+] }
 
 # ── Oracle crates for differential testing ────────────────────────────────────
 # AEAD

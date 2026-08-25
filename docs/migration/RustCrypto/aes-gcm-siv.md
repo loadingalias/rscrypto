@@ -9,11 +9,11 @@ Evidence: `tests/aes128gcmsiv_oracle.rs`, `tests/aes256gcmsiv_oracle.rs`, and `t
 
 ## TL;DR
 
-| | Before (`aes-gcm-siv` 0.12.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `aes-gcm-siv = "0.12"` | `rscrypto = { version = "0.8.1", features = ["aes-gcm-siv"] }` |
-| Import | `use aes_gcm_siv::{Aes256GcmSiv, Key, Nonce, KeyInit, aead::{Aead, Payload}};` | `use rscrypto::{Aead, Aes256GcmSiv, Aes256GcmSivKey, aead::{Nonce96, expert::AeadWithNonce}};` |
-| Encrypt | `cipher.encrypt(nonce, Payload { msg, aad })?` | `cipher.encrypt(&nonce, aad, msg, &mut out)?` |
+|           | Before (`aes-gcm-siv` 0.12.x)                                                  | After (`rscrypto` 0.8.1)                                                                       |
+| --------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| Cargo dep | `aes-gcm-siv = "0.12"`                                                         | `rscrypto = { version = "0.8.1", features = ["aes-gcm-siv"] }`                                 |
+| Import    | `use aes_gcm_siv::{Aes256GcmSiv, Key, Nonce, KeyInit, aead::{Aead, Payload}};` | `use rscrypto::{Aead, Aes256GcmSiv, Aes256GcmSivKey, aead::{Nonce96, expert::AeadWithNonce}};` |
+| Encrypt   | `cipher.encrypt(nonce, Payload { msg, aad })?`                                 | `cipher.encrypt(&nonce, aad, msg, &mut out)?`                                                  |
 
 ## Cargo.toml
 
@@ -31,10 +31,10 @@ rscrypto = { version = "0.8.1", features = ["aes-gcm-siv"] }
 
 ## Algorithm map
 
-| `aes-gcm-siv` type | rscrypto type | Key bytes |
-|---|---|---|
-| `Aes128GcmSiv` | `Aes128GcmSiv` | 16 |
-| `Aes256GcmSiv` | `Aes256GcmSiv` | 32 |
+| `aes-gcm-siv` type | rscrypto type  | Key bytes |
+| ------------------ | -------------- | --------- |
+| `Aes128GcmSiv`     | `Aes128GcmSiv` | 16        |
+| `Aes256GcmSiv`     | `Aes256GcmSiv` | 32        |
 
 Both variants share the same typed surface (`Aes128GcmSivKey`/`Aes256GcmSivKey`,
 `Nonce96`, `Aes128GcmSivTag`/`Aes256GcmSivTag`) and the same `Aead` trait.

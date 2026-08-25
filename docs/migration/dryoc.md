@@ -19,13 +19,13 @@ rscrypto = { version = "0.8.1", default-features = false, features = ["blake2b",
 
 ## Map
 
-| `dryoc` use | rscrypto | Status |
-|---|---|---|
-| `crypto_generichash` BLAKE2b | `Blake2b256`, `Blake2b512`, `Blake2bParams` | Supported for matching output/keyed modes |
-| `crypto_sign_*` Ed25519 | `Ed25519SecretKey`, `Ed25519PublicKey` | Supported |
-| `crypto_scalarmult*` X25519 | `X25519SecretKey`, `X25519PublicKey` | Supported |
-| `crypto_pwhash` Argon2id / Argon2i | `Argon2id`, `Argon2i` | Partial; map parameters explicitly |
-| `secretbox`, `box`, sealed boxes, secretstream | none | Keep `dryoc` or a protocol crate |
+| `dryoc` use                                    | rscrypto                                    | Status                                    |
+| ---------------------------------------------- | ------------------------------------------- | ----------------------------------------- |
+| `crypto_generichash` BLAKE2b                   | `Blake2b256`, `Blake2b512`, `Blake2bParams` | Supported for matching output/keyed modes |
+| `crypto_sign_*` Ed25519                        | `Ed25519SecretKey`, `Ed25519PublicKey`      | Supported                                 |
+| `crypto_scalarmult*` X25519                    | `X25519SecretKey`, `X25519PublicKey`        | Supported                                 |
+| `crypto_pwhash` Argon2id / Argon2i             | `Argon2id`, `Argon2i`                       | Partial; map parameters explicitly        |
+| `secretbox`, `box`, sealed boxes, secretstream | none                                        | Keep `dryoc` or a protocol crate          |
 
 ## BLAKE2b Generic Hash
 

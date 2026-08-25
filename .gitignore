@@ -12,7 +12,6 @@ Thumbs.db
 # LLM/AI Harness/Agents
 .claude
 .agents
-.codex
 AGENTS.md
 
 # Zed/IDE

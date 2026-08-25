@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install CI tools through authenticated package-manager boundaries.
-# Usage: install-tools.sh [standard|quality|release|semver|rail|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]
+# Usage: install-tools.sh [standard|quality|release|semver|rail|ci|supply-chain|bench|structural-bench|profile|ibm|fuzz|coverage|ct-linux|minimal|none]
 
 set -euo pipefail
 
@@ -15,8 +15,12 @@ JUST_VERSION=1.58.0
 ZIZMOR_VERSION=1.29.0
 CARGO_CRITERION_VERSION=1.1.0
 CRITCMP_VERSION=0.1.8
+GUNGRAUN_RUNNER_VERSION=0.19.4
+CARGO_SHOW_ASM_VERSION=0.2.62
+SAMPLY_VERSION=0.13.1
+CARGO_LLVM_LINES_VERSION=0.4.48
 CARGO_FUZZ_VERSION=0.13.2
-CARGO_LLVM_COV_VERSION=0.8.7
+CARGO_LLVM_COV_VERSION=0.9.0
 ACTIONLINT_VERSION=1.7.12
 
 OPAM_REPOSITORY_COMMIT=49f6d620cf20ae0168cfcbeb2c33932e06cb4b74
@@ -331,6 +335,16 @@ case "$MODE" in
     install_cargo_tool critcmp "$CRITCMP_VERSION"
     install_cargo_tool just "$JUST_VERSION"
     ;;
+  structural-bench)
+    install_cargo_tool gungraun-runner "$GUNGRAUN_RUNNER_VERSION"
+    install_cargo_tool just "$JUST_VERSION"
+    ;;
+  profile)
+    install_cargo_tool cargo-show-asm "$CARGO_SHOW_ASM_VERSION" cargo-asm
+    install_cargo_tool samply "$SAMPLY_VERSION"
+    install_cargo_tool cargo-llvm-lines "$CARGO_LLVM_LINES_VERSION"
+    install_cargo_tool just "$JUST_VERSION"
+    ;;
   fuzz)
     install_cargo_tool cargo-fuzz "$CARGO_FUZZ_VERSION"
     install_cargo_tool just "$JUST_VERSION"
@@ -353,7 +367,7 @@ case "$MODE" in
     ;;
   *)
     echo "Unknown mode: $MODE" >&2
-    echo "Usage: install-tools.sh [standard|quality|release|rail|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]" >&2
+    echo "Usage: install-tools.sh [standard|quality|release|semver|rail|ci|supply-chain|bench|structural-bench|profile|ibm|fuzz|coverage|ct-linux|minimal|none]" >&2
     exit 2
     ;;
 esac

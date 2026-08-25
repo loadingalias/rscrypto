@@ -25,13 +25,13 @@ rscrypto = { version = "0.8.1", default-features = false, features = ["rsa", "ge
 
 ## Map
 
-| RustCrypto `rsa` | rscrypto |
-|---|---|
-| `RsaPublicKey` | `RsaPublicKey` |
-| `RsaPrivateKey` | `RsaPrivateKey` |
-| PKCS#1 / PKCS#8 / SPKI import-export traits | inherent DER import-export methods |
-| `Pss`, `Pkcs1v15Sign`, `Oaep` | `RsaPssProfile`, `RsaPkcs1v15Profile`, `RsaOaepProfile` |
-| caller-managed RNG | `getrandom` wrappers, or encryption `*_with_random_fill` methods for no-std callers |
+| RustCrypto `rsa`                            | rscrypto                                                                            |
+| ------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `RsaPublicKey`                              | `RsaPublicKey`                                                                      |
+| `RsaPrivateKey`                             | `RsaPrivateKey`                                                                     |
+| PKCS#1 / PKCS#8 / SPKI import-export traits | inherent DER import-export methods                                                  |
+| `Pss`, `Pkcs1v15Sign`, `Oaep`               | `RsaPssProfile`, `RsaPkcs1v15Profile`, `RsaOaepProfile`                             |
+| caller-managed RNG                          | `getrandom` wrappers, or encryption `*_with_random_fill` methods for no-std callers |
 
 ## Import Keys
 

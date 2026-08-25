@@ -2,9 +2,7 @@
   "algorithm": "HKDF-SHA-384",
   "schema": "hkdf_test_schema_v1.json",
   "numberOfTests": 83,
-  "header": [
-    "Test vector of type HkdfTest are intended for the verification of HKDF."
-  ],
+  "header": ["Test vector of type HkdfTest are intended for the verification of HKDF."],
   "notes": {
     "EmptySalt": {
       "bugType": "FUNCTIONALITY",
@@ -41,10 +39,7 @@
         {
           "tcId": 1,
           "comment": "",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "24aeff2645e3e0f5494a9a102778c43a",
           "salt": "",
           "info": "",
@@ -55,10 +50,7 @@
         {
           "tcId": 2,
           "comment": "",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "a23632e18ec76b59b1c87008da3f8a7e",
           "salt": "",
           "info": "",
@@ -69,10 +61,7 @@
         {
           "tcId": 3,
           "comment": "",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "a4748031a14d3e6aafe42aa20c568f5f",
           "salt": "",
           "info": "",
@@ -83,10 +72,7 @@
         {
           "tcId": 4,
           "comment": "",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "06eb26f8ccf28580c8f28d5b4dc47a49",
           "salt": "",
           "info": "d5f081e81e8cf9ded199f3ae43c80a2dfe3d9cf2",
@@ -97,10 +83,7 @@
         {
           "tcId": 5,
           "comment": "",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "c181696a19ab1a32eb6e81b2925d8990",
           "salt": "",
           "info": "d8c8de92fe5422c9825996354db1821ba43a81ac",
@@ -111,10 +94,7 @@
         {
           "tcId": 6,
           "comment": "",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "55fb6dcc7802354e55a45a6e41858c05",
           "salt": "",
           "info": "dcd590e418b259c64fb9e139b3a1280d5de8400b",
@@ -125,9 +105,7 @@
         {
           "tcId": 7,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "c27718560fae2515acb17a874991d357",
           "salt": "4487f538b65c9058625057b4bbdd93e7",
           "info": "",
@@ -138,9 +116,7 @@
         {
           "tcId": 8,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "be0df9811ad0bf3b08358a3dc4a05981",
           "salt": "c98618bfeb59295f8bf1dd3804b1bf2c",
           "info": "",
@@ -151,9 +127,7 @@
         {
           "tcId": 9,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "529e91a61895f1c4ceb5b6994f48783b",
           "salt": "12e4ae515328983bab2d88da3cb32a95",
           "info": "",
@@ -164,9 +138,7 @@
         {
           "tcId": 10,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "c360e16084cfd13cb44b0dc02d8665de",
           "salt": "685ac7df93701d6c78babd847861bb3c",
           "info": "e0ddfaaaa7afb53f59a007a205c7149b5b5a72be",
@@ -177,9 +149,7 @@
         {
           "tcId": 11,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "0cbd136d66d15a4ffefde1303b430821",
           "salt": "2614d80275b08a1cf90bae0eb607d4d5",
           "info": "ee991de21aeb6baa6a5f683dbb755e6f80db1c1d",
@@ -190,9 +160,7 @@
         {
           "tcId": 12,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "7a00817689a3d79001825a864c69c120",
           "salt": "08bc01c053a6406c7c4a667c9b9b3894",
           "info": "967ccd75395be6e96a67759f070487c9e2107791",
@@ -203,9 +171,7 @@
         {
           "tcId": 13,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "d003dd047181bd66420b529c78aaee1b",
           "salt": "5a2737f637eb905ba5a480d51a721c012f3ff9701d9c4fa1424f1f5f540f",
           "info": "",
@@ -216,9 +182,7 @@
         {
           "tcId": 14,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "75d085427d397b263fb3c6c8e0c40b6f",
           "salt": "e2141b0dc65348632396a25c6d7b6ffabf55686532544c351860635b7c86",
           "info": "",
@@ -229,9 +193,7 @@
         {
           "tcId": 15,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "63984079a2540d0bba5d2700642104c6",
           "salt": "70b2a476c9a80e52352b503901a7afea41c186bdc872d5053448769299e8",
           "info": "",
@@ -242,9 +204,7 @@
         {
           "tcId": 16,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "ef7c6fecad5a8674b65b78c1d696d9a0",
           "salt": "ee9d00f7d448d4b3a206bd7e7fb8a9a6564ca80c9e0eb6ef61a4933c157c",
           "info": "35054b8177e4ee42e4e51bf60e91c3f56dcbaa12",
@@ -255,9 +215,7 @@
         {
           "tcId": 17,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "f403b6c59bdb751b3f7b9c97fae5226f",
           "salt": "9139e549297ee26eae5afea7ee012e683cd7e59b5b8966f55f6d18ded11c",
           "info": "27d06c3a2fdb5c97de4506e1bc1311991660c5f5",
@@ -268,9 +226,7 @@
         {
           "tcId": 18,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "d515f58eed428b2bac233c8538580e2f",
           "salt": "c2a3ad9db6621fceb7498c0e6287522077acd2d47b55c09d52e114943b37",
           "info": "14de8cffd89e49275f69d2e1e6b43fa0c3775451",
@@ -281,9 +237,7 @@
         {
           "tcId": 19,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "df27ab960ad87bfe2e173a4659e3546b",
           "salt": "1e7ec49981fd4b0b7c20dd4dd5bdfbf2195e707f4d0354611b4893b8a86f61467aca2cf726ccc3ef0b0b4f3240d945ce506197e2be00322b17b48209c312ef9f",
           "info": "",
@@ -294,9 +248,7 @@
         {
           "tcId": 20,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "24a37db03dbcffbe9e28d582d0d8c60a",
           "salt": "4c3d3b4f5436418713fbe2fbc4d647095ce5d5392dcfffd20327187e14fb68360b94c5122203292d8b648a754ab70f6d3d61e0650f06d55c4b5762cba0231e27",
           "info": "8cd9e7b786a74bd370bae434e31a559bdf75d65f",
@@ -307,9 +259,7 @@
         {
           "tcId": 21,
           "comment": "maximal output size",
-          "flags": [
-            "MaximalOutputSize"
-          ],
+          "flags": ["MaximalOutputSize"],
           "ikm": "d19f24915e80b5ba3b0a9f87b9acd21b",
           "salt": "be99dc17920c2da449ed11592d1a134f5d97b631ce06a8b4070113ca5f18e6aa7b129a2c8d2120b38779c6ec8ac43e08",
           "info": "aecafc9c85b224c2",
@@ -320,9 +270,7 @@
         {
           "tcId": 22,
           "comment": "invalid output size",
-          "flags": [
-            "SizeTooLarge"
-          ],
+          "flags": ["SizeTooLarge"],
           "ikm": "2ea7f38feeb05b81dcae938af2f8e5ab",
           "salt": "519ba8ec8bbccca06a7dbb54ea2dd6fc7074a7caa700101092272ec85113d0fff39a32d960d4ccc4990a3467ec935bd8",
           "info": "7bd521a6fc9c4e24",
@@ -333,10 +281,7 @@
         {
           "tcId": 23,
           "comment": "empty salt",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "d04f44faa4542b34f958d8a863801f2c",
           "salt": "",
           "info": "ff6b5b655cbf2421a66d2f28408395a2ce57264f76bd60befd51cbfd9474faa47a97a9aa0f0e4338635633023cb36da12a3051f1f369355b687304e74c5218b315",
@@ -357,10 +302,7 @@
         {
           "tcId": 24,
           "comment": "",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "fa4f94e9cdbf725c1ee98decddbe42ec06196116",
           "salt": "",
           "info": "",
@@ -371,10 +313,7 @@
         {
           "tcId": 25,
           "comment": "",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "094db4e2eaae8fc9dca0d9bc14b29387fd476921",
           "salt": "",
           "info": "",
@@ -385,10 +324,7 @@
         {
           "tcId": 26,
           "comment": "",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "bfbe4f1edace02b2a3afcaada5f319103996dec9",
           "salt": "",
           "info": "",
@@ -399,10 +335,7 @@
         {
           "tcId": 27,
           "comment": "",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "71220f185f4f2d436fa88b61f7ddf4a10948385e",
           "salt": "",
           "info": "f392a656590cdd585a06ad4892d2381ad0616a99",
@@ -413,10 +346,7 @@
         {
           "tcId": 28,
           "comment": "",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "3a0c2c84ea46c152104d794261413412bad2e846",
           "salt": "",
           "info": "1cf4f37e0cab71a252100a2925a8703231292a7e",
@@ -427,10 +357,7 @@
         {
           "tcId": 29,
           "comment": "",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "59b7fce05176a56f9b086b2e9e526b4491d05d27",
           "salt": "",
           "info": "d0e410792d888f355baaae8e17288e982032c231",
@@ -441,9 +368,7 @@
         {
           "tcId": 30,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "e1dfecb28787a93133763ba4760a55a2c20ab407",
           "salt": "0b86a968f9d45bd38ffc2369a92bc66d",
           "info": "",
@@ -454,9 +379,7 @@
         {
           "tcId": 31,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "0941f7af65e6848cc218317a9ec1ecf26d21ae3f",
           "salt": "eacad2915534af8106c4abc66970ff0d",
           "info": "",
@@ -467,9 +390,7 @@
         {
           "tcId": 32,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "1e242658cbd889dcc0096092311e9311b94c5bf6",
           "salt": "7318740eb205a76ee4ed0df45d0dac47",
           "info": "",
@@ -480,9 +401,7 @@
         {
           "tcId": 33,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "163f690d4439dbdf6dc57042fecb79354bd3e7c4",
           "salt": "30ea55b5fdc7e509d001d710b3a032c9",
           "info": "6a05fa82515f27deb3d27c80fa63d2b6edcbb372",
@@ -493,9 +412,7 @@
         {
           "tcId": 34,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "f7ca016ff5fae1cc11628196efef8ad174c1dcb9",
           "salt": "e3519f32e44952385308db5455878cc4",
           "info": "53b94ea0d6e0da9145a0ffdb5cf708889b9747fc",
@@ -506,9 +423,7 @@
         {
           "tcId": 35,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "1c352e65590b2f763aee9f4404c801e7a04b2a8c",
           "salt": "ecd6a227d7ab14c068bb917c861c8ec0",
           "info": "3acb9582af1a9019126d09422e715519fd335032",
@@ -519,9 +434,7 @@
         {
           "tcId": 36,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "2e4a156988235208a93e4aef6143653b55e2ed41",
           "salt": "9d5b4c7c1b7537300d4dec31f0395e8da6eb826d7fe38a0abf4b762d696b",
           "info": "",
@@ -532,9 +445,7 @@
         {
           "tcId": 37,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "61a281d49fc0bd3012e1b7f5dc17e980cf611ea9",
           "salt": "80f768a758ec5e45c0f2e3fd349e432347be89d25e00817aaea4a1c510a9",
           "info": "",
@@ -545,9 +456,7 @@
         {
           "tcId": 38,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "e94ac367c6f7ce07a3e7f83a1ea4a0ea264ddcd8",
           "salt": "5c139fd7769291e5101cc8c1ba44a356b5c3fe3d13b0a68e69b6c09f28fe",
           "info": "",
@@ -558,9 +467,7 @@
         {
           "tcId": 39,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "f5d21e4aac89fa725632c707bd89d100b90e5288",
           "salt": "989b8b9b79ab82253703ce669a0540d3cfed69d754c902a9365e03c92236",
           "info": "b092e1dd4faff8177a97e86716de72f94beecc4f",
@@ -571,9 +478,7 @@
         {
           "tcId": 40,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "0d3909b7c4593f4469ddc4484a2082ab2ee18be3",
           "salt": "9138ad17dacdd0a2a3a3a37fa782ec243258aec9ecd6b3fb5964b2b3dd91",
           "info": "6ee1df3a970b9506a3892b59f1acea5e3ca2cf47",
@@ -584,9 +489,7 @@
         {
           "tcId": 41,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "611710557b5f54c91ee635c38f16222b00a71533",
           "salt": "4f7e27c2efd4e2ae3774fd948d95e30d40a16ff799d31bad27b37eda9bc7",
           "info": "f3cfd0fe4090c2927217405f339b450553a51140",
@@ -597,9 +500,7 @@
         {
           "tcId": 42,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "8759ccbb7c28d95d8f6cd65c3f5fb517451f3768",
           "salt": "bd76fd163a2bea5c840730b4870d168d097cba61ab3aa060a38816a007117dbc245d288c671b6ae1d2d1182a6c6765b13ff2910565660f853d0d871d0baffda3",
           "info": "",
@@ -610,9 +511,7 @@
         {
           "tcId": 43,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "3b9304bebc8547501091857b81f4e7701218901f",
           "salt": "d63f8caf65f43c2b4a5efc56b6f5860450e237cf172552b184b09820784e32967f5ba6400e14315c7e78182c1ed2f5d6964a239d92559c5ddbe16c8e27e62079",
           "info": "e239a9e88dad237d5557336ecbd72737122ab752",
@@ -623,9 +522,7 @@
         {
           "tcId": 44,
           "comment": "maximal output size",
-          "flags": [
-            "MaximalOutputSize"
-          ],
+          "flags": ["MaximalOutputSize"],
           "ikm": "11099d669fbd4f9c715f8c2b8aa87603a8760ed7",
           "salt": "4a20d46003fb71744df9f8e290df8865df367d17471414c71ca3869c4affad2df11263e7f94ef3349b30314212bf3c63",
           "info": "6522851dd450779c",
@@ -636,9 +533,7 @@
         {
           "tcId": 45,
           "comment": "invalid output size",
-          "flags": [
-            "SizeTooLarge"
-          ],
+          "flags": ["SizeTooLarge"],
           "ikm": "66683e47d2c3961c3000dc31c5a91dacd6fe40b4",
           "salt": "d9d493c21b80bdbb684b78b28baf39121416f8ca40c51f03039e700156a49e43e50f8f2b186b479bcc353ff2405f4b70",
           "info": "ce8a7506d996c474",
@@ -649,10 +544,7 @@
         {
           "tcId": 46,
           "comment": "empty salt",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "8e9dfcf668a8b7e22c8d403c35af78324dafeadf",
           "salt": "",
           "info": "b4d6ce377ee98d0e1614e3865354cda02dfeb92010ffbade5d1f7e4329f166995a67415d56221128b04de3e8c49437b9e322986b5fe1256c7f8c81021b99ea96ae",
@@ -673,10 +565,7 @@
         {
           "tcId": 47,
           "comment": "",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "7ef7d4f8c11d940471cf9a3048d66b3b3a3d9db9fed5f81419fe75dd50116f4e",
           "salt": "",
           "info": "",
@@ -687,10 +576,7 @@
         {
           "tcId": 48,
           "comment": "",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "1b6c7d5da045bf8bd4ac3083e8de2b90904bc7f7830bef876e355b74466cef91",
           "salt": "",
           "info": "",
@@ -701,10 +587,7 @@
         {
           "tcId": 49,
           "comment": "",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "b9da242c02bfe79364aedd7a323692191092edb2094f112675c2609a387c3b21",
           "salt": "",
           "info": "",
@@ -715,10 +598,7 @@
         {
           "tcId": 50,
           "comment": "",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "23624191960916aad7039c8e9dc2ec4e04ac61a233a02ec6045021598123f0cd",
           "salt": "",
           "info": "60dd0d1381a014491b34f0af15e4bebb8f64cbd5",
@@ -729,10 +609,7 @@
         {
           "tcId": 51,
           "comment": "",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "ad75f83c7fef898ab33a429af351c10caaf39ef27b161a6806d34f1f4f8be229",
           "salt": "",
           "info": "69546d578a213b7f2af101c8ef532339324d43ea",
@@ -743,10 +620,7 @@
         {
           "tcId": 52,
           "comment": "",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "cb55dbea8b91ae1ce0a07b23b1508c2a930560b8fe7255fcc3e37835803661fe",
           "salt": "",
           "info": "b57d6aaedf30bd8e25867059761a02c5d0478f2e",
@@ -757,9 +631,7 @@
         {
           "tcId": 53,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "583bb04b870b4b176e58257b67ffa3b8d4e339248fb0c38105673fe7097ce47c",
           "salt": "aef10b993ba2f9c390d429441bd6612f",
           "info": "",
@@ -770,9 +642,7 @@
         {
           "tcId": 54,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "fd4e56ade648e1cd9d797b0e341700c637b0fa69d64b9088f187107f22dced5c",
           "salt": "d7b1397162d311e603b5214fbea09dd1",
           "info": "",
@@ -783,9 +653,7 @@
         {
           "tcId": 55,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "9ee52bce034b6c2b86d280a16cd67556de34c38c6fed2166a00f90c13164a435",
           "salt": "56aaaea767cb8a0d5178c94d4761459a",
           "info": "",
@@ -796,9 +664,7 @@
         {
           "tcId": 56,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "cb785e569837f730a147fd2d4f53f6e297453817eb117270e2d5c286bffa691c",
           "salt": "545a0de785e5820ec65268b63e543c03",
           "info": "63421fe4d31283e2dc3d8d09bbd3f9509bfd7b4b",
@@ -809,9 +675,7 @@
         {
           "tcId": 57,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "101fe3335e827789564e7ef23a2a0401ae336d646ab15ed4b5edce6801f128f0",
           "salt": "317a34d74b046e021493b750d058227d",
           "info": "8f9b9f4bb9ed5ebda37ea28f97aee40d533a56c9",
@@ -822,9 +686,7 @@
         {
           "tcId": 58,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "62dc1cecc7f444d924e20e9e3cdef183b5120b1f5bf863519826fad284c883d9",
           "salt": "1956ce69bc08e45ce86f5dca57d0723a",
           "info": "0cf3a7823b830f3542ed7e66b47be87c47e6da99",
@@ -835,9 +697,7 @@
         {
           "tcId": 59,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "2c1fdbf9a2fe9bfddccfd8edd7235551fb50e642500f29e5425ef7f0e78d3905",
           "salt": "be744780200ed6f2027fae8b64f2de0da992369a19509e590c36f82d81f3",
           "info": "",
@@ -848,9 +708,7 @@
         {
           "tcId": 60,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "99e1688fbc1d2f2cab80ab95a86b301be9c6d996aac4f13ff7e707487126bb89",
           "salt": "bb869fb1182f74b65154d5e53f45b0fc3a1d8a6eac58eae2c077fb29574c",
           "info": "",
@@ -861,9 +719,7 @@
         {
           "tcId": 61,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "d8ba14145c3b749c50e22ff58f552dde9dcbce9fce3c3290ca3a2ca04f3d1eac",
           "salt": "026ae3d9c6b5175426c0cd000b06a8eaa9887941820608602a01cd5fd891",
           "info": "",
@@ -874,9 +730,7 @@
         {
           "tcId": 62,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "3933360960bcbb94262644f81fc832b15eb47834f797577fd9fa6c2110ee22d0",
           "salt": "f29df8b80352ca0c08109e0fcedd4c24dd0547f4f2c67cf51caf3553e7cc",
           "info": "ffbb2b91b560790cef1eb610e013082986b47fdb",
@@ -887,9 +741,7 @@
         {
           "tcId": 63,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "5ad1ac7eb76fa7cc05a30a6f6236e25d906bb0160cbf5f89350887523cb3f7fe",
           "salt": "91840321a9a3030285df668afec60a46579b7095f3c357bfa3e403eb2080",
           "info": "7da7c7a79c9d94bee3b561e532766f8cb329a11e",
@@ -900,9 +752,7 @@
         {
           "tcId": 64,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "59ee8495dd1744f06cd1009858da52fc81490e1547e0f8b173da0818dcfa0ad3",
           "salt": "31a144d8fd2c31ec7d6fd63de0c70e15149ec0f10595ea2d3e4a7db54826",
           "info": "4d5ca4ab21d09ad04d3c7a71b5c8a8822f1ec808",
@@ -913,9 +763,7 @@
         {
           "tcId": 65,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "26c100db697f01ab998be43afbc294cdd0554e43ad75a6ce5de4c5fa427760dc",
           "salt": "80169781fc54f9c49e852e49b7246174b7017e02d2ce71bc7ce851b82151688b34ce1f203930e00b7f6e8d56b51b3d33d688fe24dc17a935332ed32372cad575",
           "info": "",
@@ -926,9 +774,7 @@
         {
           "tcId": 66,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "5e4c5e300cd1337f3b833ce4d3a0bc13b5a457577e157a94715b041833882fc2",
           "salt": "e365c68a08cc9a36d6044c5e108d784e801da10f66ae266fec614d63c68caf222ba75ac7699befa2e9f303038d0e2d07fe3818fff864068d2b714f1758a5f11d",
           "info": "496eb6088ebcfd20d1611bd18ae36ea8b6a6259e",
@@ -939,9 +785,7 @@
         {
           "tcId": 67,
           "comment": "maximal output size",
-          "flags": [
-            "MaximalOutputSize"
-          ],
+          "flags": ["MaximalOutputSize"],
           "ikm": "be0bd5fe669eea69f9e8755c3b69e96c6079ebe6f3722e7fb391d8f7af81b112",
           "salt": "6e8b3fcecd2bec25b7b24dfa32db7dbe3ba98329a45f0de44b1650373ec343f5f840612a8eb9f13e469f6d2d988e476e",
           "info": "d6aa7700ec54fa25",
@@ -952,9 +796,7 @@
         {
           "tcId": 68,
           "comment": "invalid output size",
-          "flags": [
-            "SizeTooLarge"
-          ],
+          "flags": ["SizeTooLarge"],
           "ikm": "1af5bad5973f44912d10a573d3f49e682f850453121e71d4d63bdc990951fcff",
           "salt": "c1ad98d3e98fc97d906d738b215ffc82c3c921b87d7bf0af200b9eb97ff29f5831f4f8355589b4a1c8285a9980e743c3",
           "info": "68bc905009adcbbe",
@@ -965,10 +807,7 @@
         {
           "tcId": 69,
           "comment": "empty salt",
-          "flags": [
-            "Normal",
-            "EmptySalt"
-          ],
+          "flags": ["Normal", "EmptySalt"],
           "ikm": "d2ee6859f3e52e456f4b0e19252f3ba453102fb4de685b9823a652acb2f87039",
           "salt": "",
           "info": "086e8dc0aa05538926dc74e89857232aa7d1fdc3f6ca29dddaba48dd682bcf1cfe08700e2a5a7102d01e57a93bca2668dee95339d5db6b6a2e7e5fa66667b8d5b8",
@@ -989,9 +828,7 @@
         {
           "tcId": 70,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "85ba55d5efee8d65e66197a87baea00f10d589670aa73e923cf71c8424bf2149c88366e5b4967586c198e8e540c85940",
           "salt": "329975ce0abab183674171fe82098db2b5b5e594160e7f5e94c9c69fcf9a16ff7193a45f572fe7a08eaf2122012abe40",
           "info": "ff957fdd4c71518f",
@@ -1002,9 +839,7 @@
         {
           "tcId": 71,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "66c33e63e4260280ac52898eff61a515465cb005a4b80ec2a62e3d430b9e9e9381f6e6d9fbb1a2a633e8b75dce8c2929",
           "salt": "718c78be3e85766bc454f19becd469bc2eb1d58e606894091700420d9f97bcb03db02c43e742808fc2e2ba88185fdba9",
           "info": "ad03d32ef7b7aaf2",
@@ -1015,9 +850,7 @@
         {
           "tcId": 72,
           "comment": "",
-          "flags": [
-            "Normal"
-          ],
+          "flags": ["Normal"],
           "ikm": "76e9c1f541dfa15faf8409d291e47418a8639829ddc7d4ee500f885e8e1404c152fc28ceb59b7d0bff276b552dbdde36",
           "salt": "fb2e11af97a64cf620d727ca79d64afbcde3d145456c1b1f4f67d7ef3eeab059f67c8ecf56e1082f1e2122826ae23d70",
           "info": "80337d09f9acd738",
@@ -1028,10 +861,7 @@
         {
           "tcId": 73,
           "comment": "output collision for different salts",
-          "flags": [
-            "OutputCollision",
-            "EmptySalt"
-          ],
+          "flags": ["OutputCollision", "EmptySalt"],
           "ikm": "b77c1b4a865339d78c8e3ed7454ac6823b678d81126ce613c9e82ffab9e38ea88328d9eab8e88b409c1cedba7a74e8d7",
           "salt": "",
           "info": "6a5253cb802bf83c3b3941aabc08d524beedf003",
@@ -1042,9 +872,7 @@
         {
           "tcId": 74,
           "comment": "output collision for different salts",
-          "flags": [
-            "OutputCollision"
-          ],
+          "flags": ["OutputCollision"],
           "ikm": "b77c1b4a865339d78c8e3ed7454ac6823b678d81126ce613c9e82ffab9e38ea88328d9eab8e88b409c1cedba7a74e8d7",
           "salt": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
           "info": "6a5253cb802bf83c3b3941aabc08d524beedf003",
@@ -1055,9 +883,7 @@
         {
           "tcId": 75,
           "comment": "a salt longer than the block size of the hash is equivalent to the hash of the salt",
-          "flags": [
-            "OutputCollision"
-          ],
+          "flags": ["OutputCollision"],
           "ikm": "b77c1b4a865339d78c8e3ed7454ac6823b678d81126ce613c9e82ffab9e38ea88328d9eab8e88b409c1cedba7a74e8d7",
           "salt": "1ce459b88ed2529c24ade0334476e89f869de08e7814604027a9aa1cbbed99b5691898ea46c8ca8f51ab970d6bffb6983a8158b0b82bdbcb98e3014e41d6e625c7",
           "info": "6a5253cb802bf83c3b3941aabc08d524beedf003",
@@ -1068,9 +894,7 @@
         {
           "tcId": 76,
           "comment": "a salt longer than the block size of the hash is equivalent to the hash of the salt",
-          "flags": [
-            "OutputCollision"
-          ],
+          "flags": ["OutputCollision"],
           "ikm": "b77c1b4a865339d78c8e3ed7454ac6823b678d81126ce613c9e82ffab9e38ea88328d9eab8e88b409c1cedba7a74e8d7",
           "salt": "8d3d37becca0ee5e808b3c9835888d39c2ae96ede1dceb4bf6fe7f0d18b9a3a8230231ce28e493b86593e31ddd580523",
           "info": "6a5253cb802bf83c3b3941aabc08d524beedf003",
@@ -1081,9 +905,7 @@
         {
           "tcId": 77,
           "comment": "a salt shorter than the block size is padded with zeros.",
-          "flags": [
-            "OutputCollision"
-          ],
+          "flags": ["OutputCollision"],
           "ikm": "b77c1b4a865339d78c8e3ed7454ac6823b678d81126ce613c9e82ffab9e38ea88328d9eab8e88b409c1cedba7a74e8d7",
           "salt": "c38f0e60711bb9d9",
           "info": "6a5253cb802bf83c3b3941aabc08d524beedf003",
@@ -1094,9 +916,7 @@
         {
           "tcId": 78,
           "comment": "a salt shorter than the block size is padded with zeros.",
-          "flags": [
-            "OutputCollision"
-          ],
+          "flags": ["OutputCollision"],
           "ikm": "b77c1b4a865339d78c8e3ed7454ac6823b678d81126ce613c9e82ffab9e38ea88328d9eab8e88b409c1cedba7a74e8d7",
           "salt": "c38f0e60711bb9d90000000000000000",
           "info": "6a5253cb802bf83c3b3941aabc08d524beedf003",
@@ -1107,9 +927,7 @@
         {
           "tcId": 79,
           "comment": "a salt shorter than the block size is padded with zeros.",
-          "flags": [
-            "OutputCollision"
-          ],
+          "flags": ["OutputCollision"],
           "ikm": "b77c1b4a865339d78c8e3ed7454ac6823b678d81126ce613c9e82ffab9e38ea88328d9eab8e88b409c1cedba7a74e8d7",
           "salt": "c38f0e60711bb9d900000000000000000000000000000000",
           "info": "6a5253cb802bf83c3b3941aabc08d524beedf003",
@@ -1120,9 +938,7 @@
         {
           "tcId": 80,
           "comment": "a salt shorter than the block size is padded with zeros.",
-          "flags": [
-            "OutputCollision"
-          ],
+          "flags": ["OutputCollision"],
           "ikm": "b77c1b4a865339d78c8e3ed7454ac6823b678d81126ce613c9e82ffab9e38ea88328d9eab8e88b409c1cedba7a74e8d7",
           "salt": "c38f0e60711bb9d9000000000000000000000000000000000000000000000000",
           "info": "6a5253cb802bf83c3b3941aabc08d524beedf003",
@@ -1133,9 +949,7 @@
         {
           "tcId": 81,
           "comment": "a salt shorter than the block size is padded with zeros.",
-          "flags": [
-            "OutputCollision"
-          ],
+          "flags": ["OutputCollision"],
           "ikm": "b77c1b4a865339d78c8e3ed7454ac6823b678d81126ce613c9e82ffab9e38ea88328d9eab8e88b409c1cedba7a74e8d7",
           "salt": "c38f0e60711bb9d90000000000000000000000000000000000000000000000000000000000000000",
           "info": "6a5253cb802bf83c3b3941aabc08d524beedf003",
@@ -1146,9 +960,7 @@
         {
           "tcId": 82,
           "comment": "a salt shorter than the block size is padded with zeros.",
-          "flags": [
-            "OutputCollision"
-          ],
+          "flags": ["OutputCollision"],
           "ikm": "b77c1b4a865339d78c8e3ed7454ac6823b678d81126ce613c9e82ffab9e38ea88328d9eab8e88b409c1cedba7a74e8d7",
           "salt": "c38f0e60711bb9d900000000000000000000000000000000000000000000000000000000000000000000000000000000",
           "info": "6a5253cb802bf83c3b3941aabc08d524beedf003",
@@ -1159,9 +971,7 @@
         {
           "tcId": 83,
           "comment": "a salt shorter than the block size is padded with zeros.",
-          "flags": [
-            "OutputCollision"
-          ],
+          "flags": ["OutputCollision"],
           "ikm": "b77c1b4a865339d78c8e3ed7454ac6823b678d81126ce613c9e82ffab9e38ea88328d9eab8e88b409c1cedba7a74e8d7",
           "salt": "c38f0e60711bb9d9000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
           "info": "6a5253cb802bf83c3b3941aabc08d524beedf003",

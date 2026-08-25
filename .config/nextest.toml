@@ -21,6 +21,10 @@ slow-timeout = { period = "60s", terminate-after = 8 }
 filter = 'binary(=rsa_wycheproof) & (test(=wycheproof_oaep_mgf1sha1_vectors_are_rejected_by_sha2_mgf1sha2_profiles) | test(=wycheproof_pkcs1v15_sha2_sig_gen_vectors_match_expected_signatures))'
 slow-timeout = { period = "60s", terminate-after = 4 }
 
+[[profile.default.overrides]]
+filter = 'binary(=rsa_wycheproof) & test(=wycheproof_oaep_sha2_decrypt_vectors_match_expected_results)'
+slow-timeout = { period = "60s", terminate-after = 4 }
+
 [profile.commit]
 status-level = "fail"
 success-output = "never"

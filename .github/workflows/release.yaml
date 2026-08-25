@@ -54,7 +54,7 @@ jobs:
       s390x_ct_run_url: ${{ steps.s390x_ct.outputs.s390x_run_url }}
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -109,7 +109,7 @@ jobs:
 
       - name: Checkout reviewed recovery tooling
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           path: target/release-automation
@@ -152,7 +152,7 @@ jobs:
         run: scripts/ci/release-preflight.sh --crate rscrypto --tag "$RELEASE_TAG"
 
       - name: Preserve validated release inputs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-inputs-${{ steps.identity.outputs.release_commit }}
           path: |
@@ -176,7 +176,7 @@ jobs:
       artifact-metadata: write
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -192,7 +192,7 @@ jobs:
           enable-rust-cache: true
 
       - name: Restore validated release inputs
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-inputs-${{ needs.preflight.outputs.release_commit }}
           path: target/package
@@ -234,12 +234,12 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Attest crate provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ steps.package.outputs.crate_path }}
 
       - name: Attest source archive provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ steps.package.outputs.source_path }}
 
@@ -256,12 +256,12 @@ jobs:
             --allow-redacted-bypass
 
       - name: Attest repository controls
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ steps.repository_controls.outputs.evidence_path }}
 
       - name: Download non-RISC-V CT evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: ct-*
           path: ct-release-artifacts
@@ -274,7 +274,7 @@ jobs:
 
       - name: Download recovered s390x CT evidence
         if: needs.preflight.outputs.s390x_ct_run_id != ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ct-raw-ibm-s390x
           path: ct-release-artifacts/ct-raw-ibm-s390x
@@ -282,7 +282,7 @@ jobs:
           run-id: ${{ needs.preflight.outputs.s390x_ct_run_id }}
 
       - name: Download RISC-V CT evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ct-raw-rise-riscv
           path: ct-release-artifacts/ct-raw-rise-riscv
@@ -304,7 +304,7 @@ jobs:
             --evidence-commit "$EVIDENCE_COMMIT"
 
       - name: Attest CT evidence provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ steps.ct_evidence.outputs.bundle_path }}
 
@@ -334,7 +334,7 @@ jobs:
             --output "release-artifacts/rscrypto-${CRATE_VERSION}-release-manifest.json"
 
       - name: Attest release identity manifest
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ steps.release_manifest.outputs.manifest_path }}
 
@@ -382,7 +382,7 @@ jobs:
           } > SHA256SUMS
 
       - name: Attest release checksums
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: SHA256SUMS
 
@@ -473,7 +473,7 @@ jobs:
       - name: Authenticate with crates.io
         if: steps.existing.outputs.published != 'true'
         id: auth
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18  # v1.0.5
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
 
       - name: Publish to crates.io
         if: steps.existing.outputs.published != 'true'

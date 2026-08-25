@@ -5,9 +5,7 @@
   "conditions": {
     "ref_name": {
       "exclude": [],
-      "include": [
-        "refs/tags/v*"
-      ]
+      "include": ["refs/tags/v*"]
     }
   },
   "bypass_actors": [],

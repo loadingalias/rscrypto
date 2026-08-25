@@ -36,6 +36,7 @@ use rsa::{
 use rscrypto::RsaEncryptionError;
 #[cfg(feature = "diag")]
 use rscrypto::auth::rsa::{
+  diag_rsa_private_exponentiate_fixed_width, diag_rsa_private_exponentiate_fixed_width_with_scratch,
   diag_rsa_public_operation_bitserial, diag_rsa_public_operation_cios, diag_rsa_public_operation_cios_portable,
   diag_rsa_public_operation_comba_product, diag_rsa_public_operation_product,
   diag_rsa_public_operation_window2_exponent, diag_rsa_verify_pkcs1v15_encoded, diag_rsa_verify_pss_encoded,
@@ -3510,6 +3511,76 @@ fn public_operation_boundary_representatives_match_independent_reference_across_
     );
     assert!(out.iter().all(|&byte| byte == 0));
   }
+}
+
+#[test]
+#[cfg(feature = "diag")]
+fn diagnostic_private_exponentiation_matches_independent_fixed_width_reference() {
+  let len = 128;
+  let modulus = vec![0xa5; len];
+  let mut input = vec![0u8; len];
+  *input.last_mut().expect("an RSA representative must be nonempty") = 2;
+
+  let mut leading_zero_exponent = vec![0x5a; len];
+  leading_zero_exponent[0] = 0;
+  let mut full_width_exponent = leading_zero_exponent.clone();
+  full_width_exponent[0] = 1;
+
+  for exponent in [full_width_exponent, leading_zero_exponent] {
+    let mut out = vec![0u8; len];
+    diag_rsa_private_exponentiate_fixed_width(&modulus, &exponent, &input, &mut out)
+      .expect("fixed-width diagnostic exponentiation must accept the valid representative");
+    let reference =
+      BigUint::from_bytes_be(&input).modpow(&BigUint::from_bytes_be(&exponent), &BigUint::from_bytes_be(&modulus));
+    assert_eq!(out, left_pad_to_len(&reference.to_bytes_be(), len));
+  }
+
+  let mut out = vec![0xa5; len];
+  assert_eq!(
+    diag_rsa_private_exponentiate_fixed_width(&modulus, &[1, 2, 3], &input, &mut out),
+    Err(rscrypto::RsaPrivateOpError::InvalidLength)
+  );
+  assert!(out.iter().all(|&byte| byte == 0));
+
+  let mut even_modulus = modulus;
+  *even_modulus.last_mut().expect("an RSA modulus must be nonempty") &= !1;
+  let exponent = vec![1; len];
+  out.fill(0xa5);
+  assert_eq!(
+    diag_rsa_private_exponentiate_fixed_width(&even_modulus, &exponent, &input, &mut out),
+    Err(rscrypto::RsaPrivateOpError::RepresentativeOutOfRange)
+  );
+  assert!(out.iter().all(|&byte| byte == 0));
+
+  let rustcrypto_key = rustcrypto_fixture_private_key();
+  let component_modulus = rustcrypto_key.primes()[0].clone();
+  let private_der = rustcrypto_key
+    .to_pkcs8_der()
+    .expect("the fixed private key must encode as PKCS#8");
+  let key =
+    RsaPrivateKey::from_pkcs8_der_with_policy(private_der.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
+      .expect("the fixed private key must import for reusable-scratch diagnostics");
+  let component_len = component_modulus.to_bytes_be().len();
+  let mut component_input = vec![0u8; component_len];
+  *component_input
+    .last_mut()
+    .expect("an RSA component representative must be nonempty") = 2;
+  let mut component_exponent = vec![0x5a; component_len];
+  component_exponent[0] = 1;
+  let mut component_out = vec![0u8; component_len];
+  let mut scratch = key.private_scratch();
+
+  diag_rsa_private_exponentiate_fixed_width_with_scratch(
+    &key,
+    &component_exponent,
+    &component_input,
+    &mut component_out,
+    &mut scratch,
+  )
+  .expect("reusable-scratch diagnostic exponentiation must accept the valid representative");
+  let reference =
+    BigUint::from_bytes_be(&component_input).modpow(&BigUint::from_bytes_be(&component_exponent), &component_modulus);
+  assert_eq!(component_out, left_pad_to_len(&reference.to_bytes_be(), component_len));
 }
 
 #[test]

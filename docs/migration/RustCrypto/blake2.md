@@ -9,11 +9,11 @@ shape for existing projects.
 
 ## TL;DR
 
-| | Before (`blake2` 0.10.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `blake2 = "0.10"` | `rscrypto = { version = "0.8.1", features = ["blake2b", "blake2s"] }` |
-| Import | `use blake2::{Blake2b512, Digest};` | `use rscrypto::{Blake2b512, Digest};` |
-| Call | `Blake2b512::digest(data)` | `Blake2b512::digest(data)` |
+|           | Before (`blake2` 0.10.x)            | After (`rscrypto` 0.8.1)                                              |
+| --------- | ----------------------------------- | --------------------------------------------------------------------- |
+| Cargo dep | `blake2 = "0.10"`                   | `rscrypto = { version = "0.8.1", features = ["blake2b", "blake2s"] }` |
+| Import    | `use blake2::{Blake2b512, Digest};` | `use rscrypto::{Blake2b512, Digest};`                                 |
+| Call      | `Blake2b512::digest(data)`          | `Blake2b512::digest(data)`                                            |
 
 Drop one or both of `blake2b` / `blake2s` from the feature list if you don't use that family.
 
@@ -33,16 +33,16 @@ rscrypto = { version = "0.8.1", features = ["blake2b", "blake2s"] }
 
 ## Algorithm map
 
-| `blake2` type | rscrypto type | Output |
-|---|---|---|
-| `Blake2b<U32>` (generic) | `Blake2b256` | `[u8; 32]` |
-| `Blake2b<U64>` or `Blake2b512` | `Blake2b512` | `[u8; 64]` |
-| `Blake2b<UN>` (variable, runtime) | `Blake2b` | 1-64 bytes via `digest_into` |
-| `Blake2s<U16>` | `Blake2s128` | `[u8; 16]` |
-| `Blake2s<U32>` or `Blake2s256` | `Blake2s256` | `[u8; 32]` |
-| `Blake2bMac<U32>` (keyed) | `Blake2b256::keyed_digest(...)` | `[u8; 32]` |
-| `Blake2bMac512` (keyed, 512-bit) | `Blake2b512::keyed_digest(...)` | `[u8; 64]` |
-| `Blake2sMac<U32>` (keyed) | `Blake2s256::keyed_digest(...)` | `[u8; 32]` |
+| `blake2` type                     | rscrypto type                   | Output                       |
+| --------------------------------- | ------------------------------- | ---------------------------- |
+| `Blake2b<U32>` (generic)          | `Blake2b256`                    | `[u8; 32]`                   |
+| `Blake2b<U64>` or `Blake2b512`    | `Blake2b512`                    | `[u8; 64]`                   |
+| `Blake2b<UN>` (variable, runtime) | `Blake2b`                       | 1-64 bytes via `digest_into` |
+| `Blake2s<U16>`                    | `Blake2s128`                    | `[u8; 16]`                   |
+| `Blake2s<U32>` or `Blake2s256`    | `Blake2s256`                    | `[u8; 32]`                   |
+| `Blake2bMac<U32>` (keyed)         | `Blake2b256::keyed_digest(...)` | `[u8; 32]`                   |
+| `Blake2bMac512` (keyed, 512-bit)  | `Blake2b512::keyed_digest(...)` | `[u8; 64]`                   |
+| `Blake2sMac<U32>` (keyed)         | `Blake2s256::keyed_digest(...)` | `[u8; 32]`                   |
 
 `Blake2bp` / `Blake2sp` (parallel variants) are not currently mapped.
 

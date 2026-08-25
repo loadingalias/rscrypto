@@ -9,11 +9,11 @@ Evidence: `tests/blake3_official_vectors.rs` and `tests/blake3_differential.rs`.
 
 ## TL;DR
 
-| | Before (`blake3` 1.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `blake3 = "1.8"` | `rscrypto = { version = "0.8.1", features = ["blake3"] }` |
-| Import | `use blake3::Hasher;` | `use rscrypto::{Blake3, prelude::*};` |
-| Call | `blake3::hash(data).as_bytes()` | `&Blake3::digest(data)` |
+|           | Before (`blake3` 1.x)           | After (`rscrypto` 0.8.1)                                  |
+| --------- | ------------------------------- | --------------------------------------------------------- |
+| Cargo dep | `blake3 = "1.8"`                | `rscrypto = { version = "0.8.1", features = ["blake3"] }` |
+| Import    | `use blake3::Hasher;`           | `use rscrypto::{Blake3, prelude::*};`                     |
+| Call      | `blake3::hash(data).as_bytes()` | `&Blake3::digest(data)`                                   |
 
 ## Cargo.toml
 

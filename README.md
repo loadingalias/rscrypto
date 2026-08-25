@@ -72,28 +72,28 @@ The common API shape is one-shot when convenient and streaming when needed.
 
 ## Common workflows
 
-| Task | Features | Start here |
-|---|---|---|
-| AEAD seal/open | `chacha20poly1305`, `getrandom` | [`examples/aead_seal_open.rs`](examples/aead_seal_open.rs) |
-| Ed25519 and ECDSA signatures | `ed25519`, `ecdsa-p256`, `getrandom` | [`examples/signatures.rs`](examples/signatures.rs) |
-| RSA-PSS verification | `rsa` | [`examples/rsa_pss_verify.rs`](examples/rsa_pss_verify.rs) |
-| ML-KEM shared secret | `ml-kem`, `getrandom` | [`examples/mlkem_encapsulation.rs`](examples/mlkem_encapsulation.rs) |
-| Argon2id and scrypt password hashing | `password-hashing`, `getrandom` | [`examples/password_hashing.rs`](examples/password_hashing.rs) |
+| Task                                 | Features                             | Start here                                                           |
+| ------------------------------------ | ------------------------------------ | -------------------------------------------------------------------- |
+| AEAD seal/open                       | `chacha20poly1305`, `getrandom`      | [`examples/aead_seal_open.rs`](examples/aead_seal_open.rs)           |
+| Ed25519 and ECDSA signatures         | `ed25519`, `ecdsa-p256`, `getrandom` | [`examples/signatures.rs`](examples/signatures.rs)                   |
+| RSA-PSS verification                 | `rsa`                                | [`examples/rsa_pss_verify.rs`](examples/rsa_pss_verify.rs)           |
+| ML-KEM shared secret                 | `ml-kem`, `getrandom`                | [`examples/mlkem_encapsulation.rs`](examples/mlkem_encapsulation.rs) |
+| Argon2id and scrypt password hashing | `password-hashing`, `getrandom`      | [`examples/password_hashing.rs`](examples/password_hashing.rs)       |
 
 Use [`docs/types.md`](docs/types.md) when you need the full type map, and
 [`docs/features.md`](docs/features.md) when you need the smallest feature set.
 
 ## Capabilities
 
-| Need | Included | Feature path |
-|---|---|---|
-| Cryptographic hashes | SHA-2, SHA-3, SHAKE, cSHAKE128/256, BLAKE2, BLAKE3, Ascon-Hash/XOF/CXOF | `hashes` or leaf features |
-| MACs and KDFs | HMAC-SHA-2/SHA-3, KMAC128/256, standalone Poly1305, HKDF-SHA-2, PBKDF2-HMAC-SHA-2 | `macs`, `kdfs`, or leaf features |
-| Password hashing | Raw Argon2d/i/id and scrypt KDFs; generated, bounded PHC password records | `password-hashing` or leaf features |
+| Need                  | Included                                                                                                                                                                 | Feature path                                   |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| Cryptographic hashes  | SHA-2, SHA-3, SHAKE, cSHAKE128/256, BLAKE2, BLAKE3, Ascon-Hash/XOF/CXOF                                                                                                  | `hashes` or leaf features                      |
+| MACs and KDFs         | HMAC-SHA-2/SHA-3, KMAC128/256, standalone Poly1305, HKDF-SHA-2, PBKDF2-HMAC-SHA-2                                                                                        | `macs`, `kdfs`, or leaf features               |
+| Password hashing      | Raw Argon2d/i/id and scrypt KDFs; generated, bounded PHC password records                                                                                                | `password-hashing` or leaf features            |
 | Public-key primitives | ECDSA P-256/P-384 signing/verification, Ed25519 signatures, RSA signing/verification/OAEP/RSAES-PKCS1-v1_5/key generation, X25519 key exchange, ML-KEM-512/768/1024 KEMs | `signatures`, `key-exchange`, or leaf features |
-| AEAD encryption | AES-128/256-GCM, AES-128/256-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128 | `aead` or leaf features |
-| Checksums | CRC-16, CRC-24, CRC-32, CRC-32C, CRC-64/XZ, CRC-64/NVMe | `checksums` or leaf features |
-| Fast hashes | XXH3-64/128, RapidHash V3-64 | `xxh3`, `rapidhash` |
+| AEAD encryption       | AES-128/256-GCM, AES-128/256-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128                                                                    | `aead` or leaf features                        |
+| Checksums             | CRC-16, CRC-24, CRC-32, CRC-32C, CRC-64/XZ, CRC-64/NVMe                                                                                                                  | `checksums` or leaf features                   |
+| Fast hashes           | XXH3-64/128, RapidHash V3-64                                                                                                                                             | `xxh3`, `rapidhash`                            |
 
 Feature layers:
 

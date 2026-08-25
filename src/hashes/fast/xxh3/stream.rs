@@ -636,7 +636,14 @@ mod tests {
   #[test]
   #[cfg(not(miri))]
   fn available_long_kernels_match_independent_oracle_across_alignments_and_tails() {
-    use super::super::kernels::{Xxh3KernelId, hash64_long_fn, hash128_long_fn, required_caps};
+    #[cfg(any(
+      target_arch = "x86_64",
+      target_arch = "aarch64",
+      all(target_arch = "powerpc64", target_endian = "little"),
+      target_arch = "s390x"
+    ))]
+    use super::super::kernels::Xxh3KernelId;
+    use super::super::kernels::{hash64_long_fn, hash128_long_fn, required_caps};
 
     #[cfg(target_arch = "x86_64")]
     let kernels = &[Xxh3KernelId::Avx2, Xxh3KernelId::Avx512][..];

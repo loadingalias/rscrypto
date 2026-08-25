@@ -1,3 +1,5 @@
+use core::cell::RefCell;
+
 use dudect_bencher::{BenchRng, Class, CtRunner, ctbench_main_with_seeds, rand::RngExt};
 use rscrypto::aead::expert::AeadWithNonce;
 use rscrypto::{
@@ -18,19 +20,22 @@ use rscrypto::{
   },
   auth::{
     diag_ecdsa_p256_basepoint_blinded_limb_digest, diag_ecdsa_p256_final_multiply_limb_digest,
-    diag_ecdsa_p256_nonce_inverse_limb_digest, diag_ecdsa_p256_nonce_reduce_limb_digest,
-    diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest, diag_ecdsa_p256_order_mul_fixed_r_limb_digest,
-    diag_ecdsa_p256_reduce_wide_order_limb_digest, diag_ecdsa_p256_scalar_finish_limb_digest,
+    diag_ecdsa_p256_nonce_inverse_blinded_limb_digest, diag_ecdsa_p256_nonce_inverse_limb_digest,
+    diag_ecdsa_p256_nonce_reduce_limb_digest, diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest,
+    diag_ecdsa_p256_order_mul_fixed_r_limb_digest, diag_ecdsa_p256_reduce_wide_order_limb_digest,
+    diag_ecdsa_p256_scalar_finish_limb_digest,
     diag_ecdsa_p384_basepoint_blinded_limb_digest, diag_ecdsa_p384_final_multiply_limb_digest,
-    diag_ecdsa_p384_nonce_inverse_limb_digest, diag_ecdsa_p384_nonce_reduce_limb_digest,
-    diag_ecdsa_p384_order_mul_fixed_r_limb_digest, diag_ecdsa_p384_reduce_wide_order_limb_digest,
-    diag_ecdsa_p384_scalar_finish_limb_digest, diag_mlkem_from_montgomery_product_domain_input_digest,
+    diag_ecdsa_p384_nonce_inverse_blinded_limb_digest, diag_ecdsa_p384_nonce_inverse_limb_digest,
+    diag_ecdsa_p384_nonce_reduce_limb_digest, diag_ecdsa_p384_order_mul_fixed_r_limb_digest,
+    diag_ecdsa_p384_reduce_wide_order_limb_digest, diag_ecdsa_p384_scalar_finish_limb_digest,
+    diag_mlkem_from_montgomery_product_domain_input_digest,
     diag_mlkem_inverse_ntt_montgomery_product_input_digest, diag_mlkem_multiply_ntts_add_assign_input_digest,
     diag_mlkem_ntt_input_digest, diag_mlkem_to_montgomery_product_domain_input_digest,
     diag_mlkem512_keygen_secret_noise_digest, diag_mlkem768_keygen_secret_noise_digest,
     diag_mlkem1024_keygen_secret_noise_digest, diag_mlkem1024_multiply_ntts_accumulate_input_digest,
     diag_rsa_import_pkcs8_private_key_der_stage, diag_rsa_private_component_validation_32,
-    diag_rsa_validate_pkcs8_private_key_der, diag_rsa_validate_pkcs8_private_key_der_stage,
+    diag_rsa_private_exponentiate_fixed_width_with_scratch, diag_rsa_validate_pkcs8_private_key_der,
+    diag_rsa_validate_pkcs8_private_key_der_stage,
   },
   traits::Kem as _,
 };
@@ -1328,6 +1333,26 @@ fn ecdsa_p256_diag_nonce_inverse_fixed_vs_random_secret(runner: &mut CtRunner, r
   }
 }
 
+fn ecdsa_p256_diag_nonce_inverse_blinded_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let secret = if matches!(class, Class::Left) {
+      [0x42; EcdsaP256SecretKey::LENGTH]
+    } else {
+      valid_p256_secret(rng)
+    };
+    inputs.push((class, secret, rand_array::<64>(rng)));
+  }
+
+  for (class, secret, blind) in inputs {
+    runner.run_one(class, || {
+      core::hint::black_box(diag_ecdsa_p256_nonce_inverse_blinded_limb_digest(
+        secret, blind, MESSAGE,
+      ))[0]
+    });
+  }
+}
+
 fn ecdsa_p256_diag_final_multiply_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
   for class in balanced_classes(rng, samples()) {
@@ -1454,6 +1479,26 @@ fn ecdsa_p384_diag_nonce_inverse_fixed_vs_random_secret(runner: &mut CtRunner, r
   }
 }
 
+fn ecdsa_p384_diag_nonce_inverse_blinded_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let secret = if matches!(class, Class::Left) {
+      [0x42; EcdsaP384SecretKey::LENGTH]
+    } else {
+      valid_p384_secret(rng)
+    };
+    inputs.push((class, secret, rand_array::<96>(rng)));
+  }
+
+  for (class, secret, blind) in inputs {
+    runner.run_one(class, || {
+      core::hint::black_box(diag_ecdsa_p384_nonce_inverse_blinded_limb_digest(
+        secret, blind, MESSAGE,
+      ))[0]
+    });
+  }
+}
+
 fn ecdsa_p384_diag_final_multiply_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
   for class in balanced_classes(rng, samples()) {
@@ -1559,6 +1604,27 @@ fn rsa_pkcs1v15_full_width_vs_short_canonical_crt_exponent(runner: &mut CtRunner
           &mut out,
         )
         .is_ok()
+    });
+  }
+}
+
+fn rsa_private_exponent_fixed_width_high_byte(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
+  let len = key.signature_len().div_euclid(2);
+  let mut input = vec![0u8; len];
+  *input.last_mut().expect("RSA representatives must be nonempty") = 2;
+
+  let mut exponent = vec![0x5a; len];
+  let state = RefCell::new((key.private_scratch(), vec![0u8; len]));
+
+  for class in balanced_classes(rng, samples()) {
+    exponent[0] = u8::from(matches!(class, Class::Left));
+    let exponent = core::hint::black_box(exponent.as_slice());
+    runner.run_one(class, || {
+      let mut state = state.borrow_mut();
+      let (scratch, out) = &mut *state;
+      let result = diag_rsa_private_exponentiate_fixed_width_with_scratch(&key, exponent, &input, out, scratch);
+      (result.is_ok(), core::hint::black_box(out.as_slice())[0])
     });
   }
 }
@@ -2230,6 +2296,10 @@ ctbench_main_with_seeds!(
     Some(0x70323536696e766b)
   ),
   (
+    ecdsa_p256_diag_nonce_inverse_blinded_fixed_vs_random_secret,
+    Some(0x70323536696e7662)
+  ),
+  (
     ecdsa_p256_diag_final_multiply_fixed_vs_random_secret,
     Some(0x703235366d756c73)
   ),
@@ -2258,6 +2328,10 @@ ctbench_main_with_seeds!(
     Some(0x70333834696e766b)
   ),
   (
+    ecdsa_p384_diag_nonce_inverse_blinded_fixed_vs_random_secret,
+    Some(0x70333834696e7662)
+  ),
+  (
     ecdsa_p384_diag_final_multiply_fixed_vs_random_secret,
     Some(0x703338346d756c73)
   ),
@@ -2267,6 +2341,7 @@ ctbench_main_with_seeds!(
     rsa_pkcs1v15_full_width_vs_short_canonical_crt_exponent,
     Some(0x7273615f6372746c)
   ),
+  (rsa_private_exponent_fixed_width_high_byte, Some(0x7273615f65787068)),
   (rsa_oaep_decrypt_fixed_vs_random_plaintext, Some(0x7273615f6f616570)),
   (rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext, Some(0x7273615f64656331)),
   (

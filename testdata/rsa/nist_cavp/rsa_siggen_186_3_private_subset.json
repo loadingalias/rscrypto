@@ -1,9 +1,6 @@
 {
   "source_url": "https://csrc.nist.gov/CSRC/media/Projects/Cryptographic-Algorithm-Validation-Program/documents/dss/186-3rsatestvectors.zip",
-  "source_files": [
-    "SigGen15_186-3.txt",
-    "SigGenPSS_186-3.txt"
-  ],
+  "source_files": ["SigGen15_186-3.txt", "SigGenPSS_186-3.txt"],
   "note": "Curated SHA-2 NIST CAVP 186-3 RSA SigGen private-operation subset. The official SigGen text files provide n, e, d, messages, signatures, and PSS salt. The p, q, dp, dq, and qinv fields were derived offline from the NIST n/e/d values solely so rscrypto's CRT-only private-key import can execute the official private signing vectors.",
   "counts": {
     "total": 12,

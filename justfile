@@ -139,6 +139,26 @@ bench *args="":
 bench-quick *args="":
     @scripts/bench/bench.sh --quick {{ args }}
 
+# Stable instruction/cache-cost benchmarks. Requires gungraun-runner and Valgrind.
+bench-structural:
+    @command -v gungraun-runner >/dev/null || { echo "error: gungraun-runner is required" >&2; exit 1; }
+    @command -v valgrind >/dev/null || { echo "error: Valgrind is required" >&2; exit 1; }
+    cargo bench --locked --profile bench --features 'checksums,sha2,blake3' --bench structural
+
+# Record one Criterion profiling window with samply.
+profile bench filter="" seconds="10":
+    @scripts/bench/profile.sh "{{ bench }}" "{{ filter }}" "{{ seconds }}"
+
+# Inspect optimized MIR, LLVM IR, assembly, WASM, or llvm-mca output.
+perf-codegen *args="":
+    @command -v cargo-asm >/dev/null || { echo "error: cargo-show-asm is required" >&2; exit 1; }
+    cargo asm --locked --lib --features full {{ args }}
+
+# Attribute generic instantiation and LLVM IR volume.
+perf-llvm-lines *args="":
+    @command -v cargo-llvm-lines >/dev/null || { echo "error: cargo-llvm-lines is required" >&2; exit 1; }
+    cargo llvm-lines --locked --release --lib --features full {{ args }}
+
 # Maintenance
 
 # Release adapters not yet expressible as typed Cargo Rail release policy.

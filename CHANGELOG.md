@@ -1,13 +1,10 @@
 # Changelog
 
-
-
 ## [0.8.1](https://github.com/loadingalias/rscrypto/compare/v0.8.0...v0.8.1) - 2026-08-11
 
 - Align canonical install examples and the security support matrix with rscrypto 0.8.0.
 
 - Allow Argon2idPassword and ScryptPassword to generate canonical PHC records from a caller-owned entropy source without enabling getrandom. Add exact-width HMAC-SHA256 verification for protocols that specify a 64-bit truncated tag.
-
 
 ## [0.8.0](https://github.com/loadingalias/rscrypto/compare/v0.7.8...v0.8.0) - 2026-08-02
 
@@ -118,7 +115,7 @@
   also no longer do, because they can retain a MAC key. The `Mac` trait no longer
   requires `Clone`; reuse or share one owner, or construct another keyed state
   explicitly.
-  
+
   Secret-bearing SHA/HMAC, Ed25519, Keccak, BLAKE2, and BLAKE3 temporaries now
   clear at their actual finalization, reset, transfer, or drop boundary, including
   keyed XOF and parallel heap scratch. The optimized zeroization gate covers
@@ -136,7 +133,6 @@
   verification APIs have been removed.
 
 - Verify imported assembly and cryptographic test vectors against immutable upstream sources and deterministic transforms.
-
 
 ## [0.7.8](https://github.com/loadingalias/rscrypto/compare/v0.6.4...v0.7.8) - 2026-07-15
 
@@ -180,7 +176,6 @@
 - Refreshed the development lockfile to remove the crossbeam-epoch advisory from
   test tooling.
 - Updated the ECDSA differential-test oracles for the current `p256` behavior.
-
 
 ## [0.6.2](https://github.com/loadingalias/rscrypto/compare/v0.6.1...v0.6.2) - 2026-07-04
 
@@ -232,15 +227,11 @@
 - hashes: delete Darwin SHA-2 assembly for owned aarch64 kernels aead: expose owned ChaCha20-Poly1305 diagnostic path auth: widen public RSA CIOS threshold and add portable diagnostics bench: split AEAD and RSA assembly replacement benchmarks benchmarks: refresh BLAKE3 overview and README perf chart docs: track assembly ownership notebook decisions ([76f4fa3](https://github.com/loadingalias/rscrypto/commit/76f4fa343412c39c8c6a3bd1b7f3e866a42513aa))
 - hashes: retarget BLAKE3 x86 compression and expose diag kernels aead: mark AES-GCM assembly as rscrypto-owned auth: mark RSA assembly as rscrypto-owned bench: add BLAKE3 diagnostic benches and gap report build: gate assembly provenance with ledger check ([e643fe5](https://github.com/loadingalias/rscrypto/commit/e643fe55af7311aa2ccf17f18613e8a63871d08a))
 
-
-
 ## [0.6.1](https://github.com/loadingalias/rscrypto/compare/v0.6.0...v0.6.1) - 2026-06-24
 
 ### 📦 Other Changes
 
 - crypto: validate platform overrides and gate s390x AEGIS ([83bcde8](https://github.com/loadingalias/rscrypto/commit/83bcde865334691387c2d7abb5242f1cfc3479e1))
-
-
 
 ## [0.6.0](https://github.com/loadingalias/rscrypto/compare/v0.5.0...v0.6.0) - 2026-06-23
 
@@ -290,8 +281,6 @@
 - auth: fix s390x ML-KEM barrier build mode ([75e7d0a](https://github.com/loadingalias/rscrypto/commit/75e7d0a8821a4cdaa89082e1fef3e00f9334fcd5))
 - auth: harden s390x ML-KEM constant-time arithmetic ([446e3d4](https://github.com/loadingalias/rscrypto/commit/446e3d46fc2b3298b79d502904bab4bb0131e1c8))
 
-
-
 ## [0.5.0](https://github.com/loadingalias/rscrypto/compare/v0.4.1...v0.5.0) - 2026-06-14
 
 ### 📝 Documentation
@@ -302,8 +291,6 @@
 
 - auth: fix RSA-2048 leakage fixture policy ([c8f6886](https://github.com/loadingalias/rscrypto/commit/c8f6886f343c3771d7bdab14261b703b7277b8a4))
 - crypto: harden secret handling and CT validation paths ci: scope CT evidence to required primitives and repair macOS RSA fixtures docs: align migration guidance with hardened verification defaults bench: refresh crypto benches for typed APIs checksum: clarify CRC64 reference constants workspace: align feature metadata and lockfiles for CT tooling ([30ddfb6](https://github.com/loadingalias/rscrypto/commit/30ddfb6632d2d364574e9c4379775cb669219f53))
-
-
 
 ## [0.4.1](https://github.com/loadingalias/rscrypto/compare/v0.4.0...v0.4.1) - 2026-06-13
 
@@ -318,8 +305,6 @@
 - auth: harden HMAC pads against AArch64 SVE division ci: disable native RISC-V Rust cache restore ([62be628](https://github.com/loadingalias/rscrypto/commit/62be628d1ceb3d347ffcbb7ef3af67f046bc22ac))
 - auth: harden ECDSA P-256/P-384 CT backends ci: add ECDSA DudeCT diagnostics and target-scoped CT policy ([82db892](https://github.com/loadingalias/rscrypto/commit/82db8924e88136ac3070e892602cb38f4a25d620))
 - auth: add ECDSA P-256/P-384 signing and CT coverage ([f24375d](https://github.com/loadingalias/rscrypto/commit/f24375d31784527ee0964b9dd871d64d5c0a6991))
-
-
 
 ## [0.4.0](https://github.com/loadingalias/rscrypto/compare/v0.3.1...v0.4.0) - 2026-06-09
 
@@ -348,16 +333,12 @@
 - auth: clear CT helper slice lints hashes: clear Blake2b diagnostic slice lints ([32f0e12](https://github.com/loadingalias/rscrypto/commit/32f0e12c5cfb5b0a15e72651d8aff57af8c66a9a))
 - auth: align RSA keygen with FIPS 186-5 A.1.3 ([5ceb703](https://github.com/loadingalias/rscrypto/commit/5ceb703cea4b5355eff022fbb1013f2bdcf30e19))
 
-
-
 ## [0.3.1](https://github.com/loadingalias/rscrypto/compare/v0.3.0...v0.3.1) - 2026-06-01
 
 ### 📦 Other Changes
 
 - workspace: enable cargo-rail release publishing ([bb7ec88](https://github.com/loadingalias/rscrypto/commit/bb7ec88d59a2cce916d82af9b182f4905be6600b))
 - bench: add Ascon coverage and refresh HMAC measurement shape ([b06b946](https://github.com/loadingalias/rscrypto/commit/b06b946d217248d634c43688211c9ebe5c2692e8))
-
-
 
 ## [0.3.0](https://github.com/loadingalias/rscrypto/compare/v0.2.0...v0.3.0) - 2026-05-28
 
@@ -384,8 +365,6 @@
 - workspace: refresh README release snippets and local asset ignores ([1d838fe](https://github.com/loadingalias/rscrypto/commit/1d838febe1e8d2d751b8c38d32d838b9a5c2db04))
 - workspace: fix fuzz support path dependency and refresh locks ci: refresh weekly action pins ([a906007](https://github.com/loadingalias/rscrypto/commit/a906007a4b91c691c99ada30883243c714061cd2))
 
-
-
 ## [0.2.0](https://github.com/loadingalias/rscrypto/compare/v0.1.1...v0.2.0) - 2026-05-17
 
 ### 📦 Other Changes
@@ -408,15 +387,11 @@
 - aead: ship AES-128-GCM and AES-128-GCM-SIV with full SIMD kernel coverage hashes: add Blake3KeyedHash type with constant-time equality bench: add aws-lc-rs, ring, dryoc, gxhash, ahash, and foldhash competitor rows workspace: wire competitor dev-deps, ungate internal hex module, refresh docs ([0a39948](https://github.com/loadingalias/rscrypto/commit/0a39948a73df05c816163dc7c49b043efc976326))
 - workspace: sharpen adoption docs and publish migration guides ([30f9846](https://github.com/loadingalias/rscrypto/commit/30f9846d52a8e6ce0a3d39adf9e0dacfda5cd5f4))
 
-
-
 ## [0.1.1](https://github.com/loadingalias/rscrypto/compare/v0.1.0...v0.1.1) - 2026-05-02
 
 ### 🏗️ Build
 
 - trim tests/testdata/benches from published crate include list docs: fix README quick start imports and add Xxh3 FastHash trait workspace: wire README into doctest harness via ReadmeDoctests hook ([f16a44f](https://github.com/loadingalias/rscrypto/commit/f16a44f5db5527f77ad294e717c64f1b12930bdb))
-
-
 
 ## [0.1.0](https://github.com/loadingalias/rscrypto/releases/tag/v0.1.0) - 2026-05-02
 
@@ -746,7 +721,7 @@
 - Revert "hashes/blake3: debranch streaming chunk compression and simplify xof" ([b0c088b](https://github.com/loadingalias/rscrypto/commit/b0c088b48e262a4abc234a5cf62f2bdaadca1372))
 - hashes/blake3: document AJ bench regression and reject via 70e7519 ([ea7f2c5](https://github.com/loadingalias/rscrypto/commit/ea7f2c5c9b6413e561bdbe01174e3c2602d74918))
 - Revert "hashes/blake3: use kernel-aware xof root-hash path and retune x86" ([70e7519](https://github.com/loadingalias/rscrypto/commit/70e7519ec2670b53f46f32b0f347bb572bca1477))
-- hashes/blake3: record AI regression from run 22559324946 and revert  decision ([ddf5c5a](https://github.com/loadingalias/rscrypto/commit/ddf5c5ac25e440f5a26a46bb2e3b892d42f2a353))
+- hashes/blake3: record AI regression from run 22559324946 and revert decision ([ddf5c5a](https://github.com/loadingalias/rscrypto/commit/ddf5c5ac25e440f5a26a46bb2e3b892d42f2a353))
 - Revert "hashes: inline blake3 OutputState compress dispatch" ([a787d48](https://github.com/loadingalias/rscrypto/commit/a787d4811af15ed848dcf633a8b0cbde8f069e1e))
 - hashes/blake3: revert AH lazy tiny xof tail-hint path; record 22556963869 regression ([800445d](https://github.com/loadingalias/rscrypto/commit/800445deda3f0634bfce48bbd1389a2b4fe9034a))
 - hashes/blake3: lazily optimize tiny xof init+read with single-chunk tail hint ([03d9943](https://github.com/loadingalias/rscrypto/commit/03d9943e50fad6b5c7bbe5f9e09ace4d0fa6e7d8))
@@ -762,7 +737,7 @@
 - hashes: select size-class kernel for single-chunk finalize_xof ([aea12be](https://github.com/loadingalias/rscrypto/commit/aea12be21542ba146af042819f0dd4546c4ec62a))
 - ashes: revert Blake3Xof lazy scratch-buffer initialization ([19bc72b](https://github.com/loadingalias/rscrypto/commit/19bc72b286c43140a48497b9f06d1fa92753e156))
 - hashes: lazily initialize Blake3Xof scratch buffers ([bd61c53](https://github.com/loadingalias/rscrypto/commit/bd61c5392b35289685ab277815aefa1414f93f83))
-- hashes/blake3: optimize short streaming/xof paths and retune 64KiB+  parallel admission ([b493be1](https://github.com/loadingalias/rscrypto/commit/b493be1a0bb220ee01703aa9ba8f9c6d0e84acdc))
+- hashes/blake3: optimize short streaming/xof paths and retune 64KiB+ parallel admission ([b493be1](https://github.com/loadingalias/rscrypto/commit/b493be1a0bb220ee01703aa9ba8f9c6d0e84acdc))
 - checksum: add aarch64 crc16 pmull+eor3 kernels and wire graviton dispatch ([b34a9b9](https://github.com/loadingalias/rscrypto/commit/b34a9b9e0ede0b02661aef95847fe8a8006b9b5a))
 - hashes: promote streaming kernel after first full chunk ([b160f5a](https://github.com/loadingalias/rscrypto/commit/b160f5acda892e6f4f4aa879bff7ed2736f2f2d5))
 - checksum/hashes: remove hot-path overhead in arm crc16 2way and blake3 dispatch accessors ([171d60d](https://github.com/loadingalias/rscrypto/commit/171d60de8df636e0040257965ec5784fb07aed19))
@@ -971,7 +946,7 @@
 - rscrypto: fixing the tests ([88ec68c](https://github.com/loadingalias/rscrypto/commit/88ec68c5a8aaa900d7ce9cfcd5ee919b23c39f63))
 - rscrypto: tuning ([0938d5e](https://github.com/loadingalias/rscrypto/commit/0938d5e1b49873484193ef6fe62e310679a32fab))
 - rscrypto: update for CI ([eef34c9](https://github.com/loadingalias/rscrypto/commit/eef34c9702c82b66dde8148b2c1b2c68c0a5e36b))
-- rscrypto: refactor: pre-release cleanup for v0.1.0 - De-macro CRC-64 types for better auditability Replace   define_crc64_type! macro with explicit implementations matching the   CRC-32 pattern - Fix repository URLs in CONTRIBUTING.md - Document tuning coverage in README.md - Add platform coverage matrix   showing measured vs inferred presets and list hardware we need   contributions for - Remove speculative flag from Tune struct. The field added complexity   without practical benefit; tuning docs now indicate extrapolated   values in comments instead ([f89284d](https://github.com/loadingalias/rscrypto/commit/f89284db0f44f71fe3eae5df4b1c50193bf7f28b))
+- rscrypto: refactor: pre-release cleanup for v0.1.0 - De-macro CRC-64 types for better auditability Replace define_crc64_type! macro with explicit implementations matching the CRC-32 pattern - Fix repository URLs in CONTRIBUTING.md - Document tuning coverage in README.md - Add platform coverage matrix showing measured vs inferred presets and list hardware we need contributions for - Remove speculative flag from Tune struct. The field added complexity without practical benefit; tuning docs now indicate extrapolated values in comments instead ([f89284d](https://github.com/loadingalias/rscrypto/commit/f89284db0f44f71fe3eae5df4b1c50193bf7f28b))
 - rscrypto: fixing the tuning engine to use the KernelSet and update the existing tables in dispatch.rs ([ce9b4a5](https://github.com/loadingalias/rscrypto/commit/ce9b4a51e844f40d2f8187d929e1576ed6674195))
 - rscrypto: improved performance everywhere via an architectural update. dropped the policy/runtime code for the determinism of compile-time - based on benches. ([89a5dcf](https://github.com/loadingalias/rscrypto/commit/89a5dcfbf7a4969623987f115446a052f0b5e1c7))
 - rscrypto: tuning ([179c144](https://github.com/loadingalias/rscrypto/commit/179c1443ceece7b81ce4dae8f006803a292f5935))
@@ -1088,7 +1063,7 @@
 - rscrypto: added the weekly.yaml for fuzzing/etc. ([9081378](https://github.com/loadingalias/rscrypto/commit/9081378dcf5170dab22c5fbae90d45b2e6cdda96))
 - rscrypto: fixing the Barrett reduction order; it was backwards. ([1f4b4ab](https://github.com/loadingalias/rscrypto/commit/1f4b4ab5fbc43a7bd46085567874a5defca127e9))
 - rscrypto: added new no_std targets; removed the 'std' gate because it's just not needed and then added hand-rolled errors ([51283a0](https://github.com/loadingalias/rscrypto/commit/51283a05f6f19dfb0aaff944eea48e3dfec89fa5))
-- rscrypto: ci: fix CI failures and expand no_std target coverage; setup  new Namespace 'profiles' for rscrypto, too. ([625044e](https://github.com/loadingalias/rscrypto/commit/625044e71d469de09f80b5d7d7a7f11a6f4fd4ca))
+- rscrypto: ci: fix CI failures and expand no_std target coverage; setup new Namespace 'profiles' for rscrypto, too. ([625044e](https://github.com/loadingalias/rscrypto/commit/625044e71d469de09f80b5d7d7a7f11a6f4fd4ca))
 - rscrypto: fix the cicd issues; simple ([632a18a](https://github.com/loadingalias/rscrypto/commit/632a18ac4779e3939d95c0cb9b1ec59d1a4e3925))
 - rscrypto: wiring the 'pre-push' hook/script. ([e76634f](https://github.com/loadingalias/rscrypto/commit/e76634f87b5a88a2b97216f9ac4935e0d05789e2))
 - rscrypto: initial commit ([3d06ff9](https://github.com/loadingalias/rscrypto/commit/3d06ff975c0baaed6b2067df041b11266bca696b))
@@ -1106,7 +1081,7 @@
 - CRC32 aarch64 dispatch bypass, SHA-3 sponge output extraction; XXH3 small-input codegen overhaul — cold dispatch + typed mix16_b ([09f0dc2](https://github.com/loadingalias/rscrypto/commit/09f0dc2f44b055c1fb88ca5a97713415cd996536))
 - SHA-512 single-block rotation schedule + vector K addition ([a291d28](https://github.com/loadingalias/rscrypto/commit/a291d28a7fcdb6a8538d09ceb7c23cc5c61fbed0))
 - SHA-512 Zen5 dispatch fix, Keccak θ rewrite, RapidHash codegen tune ([8a23f40](https://github.com/loadingalias/rscrypto/commit/8a23f40b5ad8313de53a80dc169ed0a2d575a3c8))
-- RapidHashFast inner core, HKDF midstate cache, Ed25519 field/point optimizations RapidHash: - RapidHashFast64/128 now uses a dedicated inner-algorithm core instead   of   V3-no-avalanche. Size-tuned dispatch: 3-stream (49-400B), 7-stream   (>400B),   cold-path separation for codegen quality. Oracle:   rapidhash::fast::RapidHasher. - RapidHash64/128 (standard V3) unchanged.   Auth: - HKDF-SHA256: cache HmacSha256 keyed with PRK at extract time. expand()   now   resets (1 memcpy) instead of re-creating (2 SHA-256 compressions) per   chunk. - Ed25519 field: dedicated squaring — 15 wide muls vs 25 (40% fewer). - Ed25519 point: dedicated dbl-2008-hwcd doubling — 4 sq + 4 mul, no D2   multiply. - Ed25519 point: precomputed 16-entry basepoint table with 4-bit   windowed   scalar mul — adds drop from ~128 to ~60. - Ed25519 verify: Straus/Shamir interleaved [s]B + [-h]A in one 256-bit   scan,   halving doublings from 512 to 256. ([89dbfc2](https://github.com/loadingalias/rscrypto/commit/89dbfc2c29dd27feb37736e155f2d57996560953))
+- RapidHashFast inner core, HKDF midstate cache, Ed25519 field/point optimizations RapidHash: - RapidHashFast64/128 now uses a dedicated inner-algorithm core instead of V3-no-avalanche. Size-tuned dispatch: 3-stream (49-400B), 7-stream (>400B), cold-path separation for codegen quality. Oracle: rapidhash::fast::RapidHasher. - RapidHash64/128 (standard V3) unchanged. Auth: - HKDF-SHA256: cache HmacSha256 keyed with PRK at extract time. expand() now resets (1 memcpy) instead of re-creating (2 SHA-256 compressions) per chunk. - Ed25519 field: dedicated squaring — 15 wide muls vs 25 (40% fewer). - Ed25519 point: dedicated dbl-2008-hwcd doubling — 4 sq + 4 mul, no D2 multiply. - Ed25519 point: precomputed 16-entry basepoint table with 4-bit windowed scalar mul — adds drop from ~128 to ~60. - Ed25519 verify: Straus/Shamir interleaved [s]B + [-h]A in one 256-bit scan, halving doublings from 512 to 256. ([89dbfc2](https://github.com/loadingalias/rscrypto/commit/89dbfc2c29dd27feb37736e155f2d57996560953))
 - bypass dispatch overhead for small fast-hash inputs ([e12085c](https://github.com/loadingalias/rscrypto/commit/e12085c77afc42cceb70d63102a3c1a2ee7ea95a))
 - cascade AVX-512 sub-degree tails to AVX2 for BLAKE3 hash_many and parent compression ([17f47d6](https://github.com/loadingalias/rscrypto/commit/17f47d6a52df857a03bce7a5473965f70b962d66))
 - fix BLAKE3 XOF ~250ns Drop overhead, upgrade zeroize to word-sized writes feat: add SHA-NI/SHA2 CE hardware acceleration for SHA-256/SHA-224 ([9f76def](https://github.com/loadingalias/rscrypto/commit/9f76defed3d793386ae9d058df3bdd7e9a08945d))
@@ -1121,7 +1096,5 @@
 ### 💄 Styling
 
 - rustfmt ([1c28ea2](https://github.com/loadingalias/rscrypto/commit/1c28ea2c1142013360ea446ad3bc5a6c04c29543))
-
-
 
 All notable changes to rscrypto will be documented in this file.

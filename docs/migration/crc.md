@@ -9,11 +9,11 @@ Evidence: `tests/crc16_properties.rs`, `tests/crc24_properties.rs`, `tests/crc32
 
 ## TL;DR
 
-| | Before (`crc` 3.x) | After (`rscrypto` 0.8.1) |
-|---|---|---|
-| Cargo dep | `crc = "3.4"` | `rscrypto = { version = "0.8.1", features = ["checksums"] }` |
-| Import | `use crc::{Crc, CRC_32_ISO_HDLC};` | `use rscrypto::checksum::{Checksum, Crc32};` |
-| Call | `Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(data)` | `Crc32::checksum(data)` |
+|           | Before (`crc` 3.x)                                 | After (`rscrypto` 0.8.1)                                     |
+| --------- | -------------------------------------------------- | ------------------------------------------------------------ |
+| Cargo dep | `crc = "3.4"`                                      | `rscrypto = { version = "0.8.1", features = ["checksums"] }` |
+| Import    | `use crc::{Crc, CRC_32_ISO_HDLC};`                 | `use rscrypto::checksum::{Checksum, Crc32};`                 |
+| Call      | `Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(data)` | `Crc32::checksum(data)`                                      |
 
 ## Cargo.toml
 
@@ -33,15 +33,15 @@ rscrypto = { version = "0.8.1", features = ["checksums"] }
 
 ## Algorithm map
 
-| `crc` constant | rscrypto type | Feature flag |
-|---|---|---|
-| `CRC_16_IBM_SDLC` (CRC-16/X25) | `Crc16Ccitt` | `crc16` |
-| `CRC_16_ARC` (CRC-16/IBM) | `Crc16Ibm` | `crc16` |
-| `CRC_24_OPENPGP` | `Crc24OpenPgp` | `crc24` |
-| `CRC_32_ISO_HDLC` (IEEE 802.3) | `Crc32` (alias `Crc32Ieee`) | `crc32` |
-| `CRC_32_ISCSI` (Castagnoli) | `Crc32C` (alias `Crc32Castagnoli`) | `crc32` |
-| `CRC_64_XZ` (ECMA-182) | `Crc64` (alias `Crc64Xz`) | `crc64` |
-| `CRC_64_NVME` | `Crc64Nvme` | `crc64` |
+| `crc` constant                 | rscrypto type                      | Feature flag |
+| ------------------------------ | ---------------------------------- | ------------ |
+| `CRC_16_IBM_SDLC` (CRC-16/X25) | `Crc16Ccitt`                       | `crc16`      |
+| `CRC_16_ARC` (CRC-16/IBM)      | `Crc16Ibm`                         | `crc16`      |
+| `CRC_24_OPENPGP`               | `Crc24OpenPgp`                     | `crc24`      |
+| `CRC_32_ISO_HDLC` (IEEE 802.3) | `Crc32` (alias `Crc32Ieee`)        | `crc32`      |
+| `CRC_32_ISCSI` (Castagnoli)    | `Crc32C` (alias `Crc32Castagnoli`) | `crc32`      |
+| `CRC_64_XZ` (ECMA-182)         | `Crc64` (alias `Crc64Xz`)          | `crc64`      |
+| `CRC_64_NVME`                  | `Crc64Nvme`                        | `crc64`      |
 
 ## API patterns
 
