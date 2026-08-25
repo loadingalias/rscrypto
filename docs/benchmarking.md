@@ -62,6 +62,7 @@ shape-compatible:
 | ---------------------------- | --------------------------------------------------------------------------- |
 | AEAD                         | RustCrypto AEADs, `aws-lc-rs`, `ring`, `aegis`                              |
 | SHA-2 / HMAC / HKDF / PBKDF2 | RustCrypto, `aws-lc-rs`, `ring`                                             |
+| WebSocket accept digest       | RustCrypto `sha1`, with identical field bytes and fixed RFC 6455 GUID        |
 | BLAKE2 / BLAKE3              | RustCrypto, `dryoc`, upstream `blake3`                                      |
 | ECDSA P-256/P-384            | RustCrypto `p256`/`p384`, `aws-lc-rs`, `ring`                               |
 | Ed25519 / X25519             | dalek, `aws-lc-rs`, `ring` where API-compatible, `dryoc`                    |
@@ -101,6 +102,9 @@ Some common libraries are not primary benchmark baselines:
   batched inverse with reusable scratch and cleanup. Use it with the fixed- and
   caller-entropy signing rows to distinguish inverse cost from CRT
   exponentiation and whole-operation overhead.
+- The WebSocket row measures one 24-byte `Sec-WebSocket-Key` field value plus
+  the fixed 36-byte RFC 6455 GUID. Both implementations receive the same two
+  slices; Base64 and HTTP parsing are intentionally outside the timed region.
 - `ring` X25519 is excluded from static-key Diffie-Hellman rows because its
   public API exposes an ephemeral agreement shape that consumes the private key.
 - `dryoc` XChaCha20-Poly1305 is excluded from one-shot AEAD rows because the

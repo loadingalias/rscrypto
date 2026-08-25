@@ -141,6 +141,9 @@ mod hash_sha2;
 #[path = "../target_impls/hash_sha3.rs"]
 mod hash_sha3;
 
+#[path = "../target_impls/hash_websocket_sha1.rs"]
+mod hash_websocket_sha1;
+
 #[path = "../target_impls/hex_parse.rs"]
 mod hex_parse;
 
@@ -479,6 +482,16 @@ fn replay_hash_sha2_corpus() {
 fn replay_hash_sha3_corpus() {
   let replayed = replay_corpus_dir("hash_sha3", corpus_dir("hash_sha3"), hash_sha3::run);
   assert_ne!(replayed, 0, "hash_sha3 corpus should not be empty");
+}
+
+#[test]
+fn replay_hash_websocket_sha1_corpus() {
+  let replayed = replay_corpus_dir(
+    "hash_websocket_sha1",
+    corpus_dir("hash_websocket_sha1"),
+    hash_websocket_sha1::run,
+  );
+  assert_ne!(replayed, 0, "hash_websocket_sha1 corpus should not be empty");
 }
 
 #[test]

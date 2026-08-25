@@ -1,6 +1,7 @@
 use rscrypto::{
   Blake2b512, Blake3, Digest, RsaPrivateKey, RsaPrivateOpError, RsaPssProfile, RsaPublicKeyPolicy, Sha256, Sha512,
 };
+use rscrypto::hashes::legacy::WebSocketAcceptDigest;
 
 const RSA_PRIVATE_KEY_PEM: &str = include_str!("../fixtures/rsa2048_private_pkcs1.txt");
 
@@ -170,6 +171,17 @@ fn assert_rsa_caller_random_signing_roundtrips() {
   assert!(signature.iter().all(|&byte| byte == 0));
 }
 
+fn assert_websocket_accept_digest_matches_rfc_6455() {
+  let digest = WebSocketAcceptDigest::compute(b"dGhlIHNhbXBsZSBub25jZQ==");
+  assert_eq!(
+    digest.as_ref(),
+    [
+      0xb3, 0x7a, 0x4f, 0x2c, 0xc0, 0x62, 0x4f, 0x16, 0x90, 0xf6, 0x46, 0x06, 0xcf, 0x38, 0x59, 0x45, 0xb2,
+      0xbe, 0xc4, 0xea,
+    ]
+  );
+}
+
 #[cfg(target_feature = "simd128")]
 fn assert_simd128_runtime_caps_are_detected() {
   assert!(rscrypto::platform::caps().has(rscrypto::platform::caps::wasm::SIMD128));
@@ -182,5 +194,6 @@ fn main() {
   assert_core_hash_vectors_match_known_outputs();
   assert_streaming_hashes_match_oneshot_across_block_boundaries();
   assert_rsa_caller_random_signing_roundtrips();
+  assert_websocket_accept_digest_matches_rfc_6455();
   assert_simd128_runtime_caps_are_detected();
 }

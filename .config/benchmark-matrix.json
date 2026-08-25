@@ -3,7 +3,17 @@
   "default_features": ["parallel", "full"],
   "crates": {
     "checksum": ["crc"],
-    "hashes": ["sha2", "sha3", "kmac_cshake", "ascon", "xxh3", "rapidhash", "blake2", "blake3"],
+    "hashes": [
+      "sha2",
+      "sha3",
+      "websocket_sha1",
+      "kmac_cshake",
+      "ascon",
+      "xxh3",
+      "rapidhash",
+      "blake2",
+      "blake3"
+    ],
     "auth": ["auth", "kmac_cshake", "password_hashing", "rsa"],
     "rsa": ["rsa"],
     "aead": ["aead"]
@@ -26,6 +36,12 @@
       "kind": "criterion",
       "required": true,
       "features": ["parallel", "sha3"]
+    },
+    "websocket_sha1": {
+      "binary": "websocket_sha1",
+      "kind": "criterion",
+      "required": true,
+      "features": ["websocket-sha1"]
     },
     "kmac_cshake": {
       "binary": "kmac_cshake",
@@ -151,6 +167,11 @@
     "sha3-256": { "crate": "hashes", "bench": "sha3", "filter": "sha3-256" },
     "sha3-384": { "crate": "hashes", "bench": "sha3", "filter": "sha3-384" },
     "sha3-512": { "crate": "hashes", "bench": "sha3", "filter": "sha3-512" },
+    "websocket-accept-digest": {
+      "crate": "hashes",
+      "bench": "websocket_sha1",
+      "filter": "websocket-accept-digest"
+    },
     "shake128": { "crate": "hashes", "bench": "sha3", "filter": "shake128" },
     "shake256": { "crate": "hashes", "bench": "sha3", "filter": "shake256" },
     "cshake256": { "crate": "auth", "bench": "kmac_cshake", "filter": "cshake256" },
@@ -213,6 +234,7 @@
       "sha3-256",
       "sha3-384",
       "sha3-512",
+      "websocket-accept-digest",
       "shake128",
       "shake256",
       "cshake256",
@@ -316,6 +338,7 @@
       "sha3-256",
       "sha3-384",
       "sha3-512",
+      "websocket-accept-digest",
       "shake128",
       "shake256",
       "cshake256",
@@ -337,6 +360,7 @@
       "sha3-256",
       "sha3-384",
       "sha3-512",
+      "websocket-accept-digest",
       "shake128",
       "shake256",
       "cshake256",
@@ -360,6 +384,7 @@
       "crc",
       "sha2",
       "sha3",
+      "websocket_sha1",
       "kmac_cshake",
       "ascon",
       "auth",
@@ -371,7 +396,16 @@
     "kernels": ["blake3"],
     "checksum_comp": ["crc"],
     "checksum_kernels": ["crc"],
-    "hashes_comp": ["sha2", "sha3", "kmac_cshake", "ascon", "xxh3", "rapidhash", "blake3"],
+    "hashes_comp": [
+      "sha2",
+      "sha3",
+      "websocket_sha1",
+      "kmac_cshake",
+      "ascon",
+      "xxh3",
+      "rapidhash",
+      "blake3"
+    ],
     "auth_comp": ["auth"],
     "aead_comp": ["aead"],
     "hashes_kernels": ["blake3"]
