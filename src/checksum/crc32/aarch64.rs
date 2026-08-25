@@ -96,7 +96,7 @@ unsafe fn crc32_armv8(crc: u32, data: &[u8]) -> u32 {
     let mut len = data.len();
 
     // Align to 8-byte boundary for the hot loop.
-    while len > 0 && (buf as usize & 7) != 0 {
+    while len > 0 && (buf.addr() & 7) != 0 {
       state = __crc32b(state, *buf);
       buf = buf.add(1);
       len = len.strict_sub(1);
@@ -170,7 +170,7 @@ unsafe fn crc32c_armv8(crc: u32, data: &[u8]) -> u32 {
     let mut len = data.len();
 
     // Align to 8-byte boundary for the hot loop.
-    while len > 0 && (buf as usize & 7) != 0 {
+    while len > 0 && (buf.addr() & 7) != 0 {
       state = __crc32cb(state, *buf);
       buf = buf.add(1);
       len = len.strict_sub(1);
@@ -727,13 +727,13 @@ unsafe fn crc32c_iscsi_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut len:
   // All pointer arithmetic stays within bounds via loop guards on `len`.
   // All SIMD intrinsics operate on valid register values after loads.
   unsafe {
-    while len > 0 && (buf as usize & 7) != 0 {
+    while len > 0 && (buf.addr() & 7) != 0 {
       crc0 = __crc32cb(crc0, *buf);
       buf = buf.add(1);
       len = len.strict_sub(1);
     }
 
-    if (buf as usize & 8) != 0 && len >= 8 {
+    if (buf.addr() & 8) != 0 && len >= 8 {
       crc0 = __crc32cd(crc0, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
@@ -892,13 +892,13 @@ unsafe fn crc32_iso_hdlc_pmull_v12e_v1(mut crc0: u32, mut buf: *const u8, mut le
   // All pointer arithmetic stays within bounds via loop guards on `len`.
   // All SIMD intrinsics operate on valid register values after loads.
   unsafe {
-    while len > 0 && (buf as usize & 7) != 0 {
+    while len > 0 && (buf.addr() & 7) != 0 {
       crc0 = __crc32b(crc0, *buf);
       buf = buf.add(1);
       len = len.strict_sub(1);
     }
 
-    if (buf as usize & 8) != 0 && len >= 8 {
+    if (buf.addr() & 8) != 0 && len >= 8 {
       crc0 = __crc32d(crc0, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
@@ -1069,13 +1069,13 @@ unsafe fn crc32c_iscsi_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut l
   // All SIMD intrinsics operate on valid register values after loads.
   unsafe {
     // Non-EOR3 equivalent of fast-crc32 neon_eor3 CRC32C (v9s3x2e_s3).
-    while len > 0 && (buf as usize & 7) != 0 {
+    while len > 0 && (buf.addr() & 7) != 0 {
       crc0 = __crc32cb(crc0, *buf);
       buf = buf.add(1);
       len = len.strict_sub(1);
     }
 
-    if (buf as usize & 8) != 0 && len >= 8 {
+    if (buf.addr() & 8) != 0 && len >= 8 {
       crc0 = __crc32cd(crc0, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
@@ -1275,13 +1275,13 @@ unsafe fn crc32_iso_hdlc_pmull_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, mut
   // All SIMD intrinsics operate on valid register values after loads.
   unsafe {
     // Non-EOR3 equivalent of fast-crc32 neon_eor3 ISO-HDLC (v9s3x2e_s3).
-    while len > 0 && (buf as usize & 7) != 0 {
+    while len > 0 && (buf.addr() & 7) != 0 {
       crc0 = __crc32b(crc0, *buf);
       buf = buf.add(1);
       len = len.strict_sub(1);
     }
 
-    if (buf as usize & 8) != 0 && len >= 8 {
+    if (buf.addr() & 8) != 0 && len >= 8 {
       crc0 = __crc32d(crc0, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
@@ -1483,13 +1483,13 @@ unsafe fn crc32c_iscsi_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8, 
   // All SIMD intrinsics operate on valid register values after loads.
   unsafe {
     // Ported from fast-crc32 neon_eor3 CRC32C (v9s3x2e_s3).
-    while len > 0 && (buf as usize & 7) != 0 {
+    while len > 0 && (buf.addr() & 7) != 0 {
       crc0 = __crc32cb(crc0, *buf);
       buf = buf.add(1);
       len = len.strict_sub(1);
     }
 
-    if (buf as usize & 8) != 0 && len >= 8 {
+    if (buf.addr() & 8) != 0 && len >= 8 {
       crc0 = __crc32cd(crc0, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
@@ -1740,13 +1740,13 @@ unsafe fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3(mut crc0: u32, mut buf: *const u8
   // All SIMD intrinsics operate on valid register values after loads.
   unsafe {
     // Ported from fast-crc32 neon_eor3 ISO-HDLC (v9s3x2e_s3).
-    while len > 0 && (buf as usize & 7) != 0 {
+    while len > 0 && (buf.addr() & 7) != 0 {
       crc0 = __crc32b(crc0, *buf);
       buf = buf.add(1);
       len = len.strict_sub(1);
     }
 
-    if (buf as usize & 8) != 0 && len >= 8 {
+    if (buf.addr() & 8) != 0 && len >= 8 {
       crc0 = __crc32d(crc0, load_u64(buf));
       buf = buf.add(8);
       len = len.strict_sub(8);
