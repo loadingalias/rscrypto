@@ -414,6 +414,33 @@ fn root_surface_rsa_exports_compile() {
   assert_eq!(advertised.len(), 3);
   assert!(advertised.contains(0x0804));
   let _maximum_scheme_count = RsaTlsSignatureSchemes::MAX_LEN;
+  fn consume_result<T, E>(_: Result<T, E>) {}
+  let _caller_random_signing_surface = |key: &RsaPrivateKey, out: &mut [u8], scratch: &mut RsaPrivateScratch| {
+    let message = b"root-surface-caller-random-rsa";
+    let profile = RsaSignatureProfile::pss(RsaPssProfile::Sha256);
+    consume_result(key.sign_signature_with_random_fill(profile, message, out, |_| Ok::<(), ()>(())));
+    consume_result(
+      key.sign_signature_with_random_fill_and_scratch(profile, message, out, scratch, |_| Ok::<(), ()>(())),
+    );
+    consume_result(key.sign_pss_with_random_fill(RsaPssProfile::Sha256, message, out, |_| Ok::<(), ()>(())));
+    consume_result(
+      key.sign_pss_with_random_fill_and_scratch(RsaPssProfile::Sha256, message, out, scratch, |_| Ok::<(), ()>(())),
+    );
+    consume_result(key.sign_tls13_signature_scheme_with_random_fill(0x0804, message, out, |_| Ok::<(), ()>(())));
+    consume_result(
+      key.sign_tls13_signature_scheme_with_random_fill_and_scratch(0x0804, message, out, scratch, |_| Ok::<(), ()>(())),
+    );
+    consume_result(
+      key.sign_tls_certificate_signature_scheme_with_random_fill(0x0401, message, out, |_| Ok::<(), ()>(())),
+    );
+    consume_result(key.sign_tls_certificate_signature_scheme_with_random_fill_and_scratch(
+      0x0401,
+      message,
+      out,
+      scratch,
+      |_| Ok::<(), ()>(()),
+    ));
+  };
 }
 
 #[test]

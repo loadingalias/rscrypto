@@ -95,7 +95,7 @@
       "binary": "rsa",
       "kind": "criterion",
       "required": true,
-      "features": ["parallel", "rsa", "diag"]
+      "features": ["parallel", "rsa", "diag", "getrandom"]
     },
     "aead_diag": {
       "binary": "aead",

@@ -10,8 +10,6 @@ echo "Running RSA first-order timing leakage gate..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-maybe_disable_sccache
-
 export RSCRYPTO_RSA_LEAKAGE_SAMPLES="${RSCRYPTO_RSA_LEAKAGE_SAMPLES:-2000}"
 export RSCRYPTO_RSA_LEAKAGE_T_THRESHOLD="${RSCRYPTO_RSA_LEAKAGE_T_THRESHOLD:-8.0}"
 export RSCRYPTO_RSA_LEAKAGE_WARMUP="${RSCRYPTO_RSA_LEAKAGE_WARMUP:-64}"

@@ -3,7 +3,14 @@
 
 from pathlib import Path
 
-from asm_heuristics import FunctionBody, all_direct_callees, direct_callees, is_call_relocation, is_riscv_conditional_branch
+from asm_heuristics import (
+  FunctionBody,
+  all_direct_callees,
+  direct_callees,
+  is_call_relocation,
+  is_riscv_conditional_branch,
+  is_rsa_inverse_scope,
+)
 
 
 def main() -> None:
@@ -11,6 +18,18 @@ def main() -> None:
   assert is_call_relocation(relocation)
   assert is_riscv_conditional_branch("riscv64gc-unknown-linux-gnu", "bnez")
   assert not is_riscv_conditional_branch("x86_64-unknown-linux-gnu", "bnez")
+  assert is_rsa_inverse_scope(
+    ["rsa.private_ops"],
+    "rscrypto::auth::rsa::private_i31_co_reduce_mod",
+  )
+  assert not is_rsa_inverse_scope(
+    ["rsa.private_ops"],
+    "rscrypto::auth::rsa::mont_mul_cios_portable",
+  )
+  assert not is_rsa_inverse_scope(
+    ["rsa.private_key_material"],
+    "rscrypto::auth::rsa::private_i31_co_reduce_mod",
+  )
 
   callee = "rscrypto::auth::ecdsa::sign_digest_p256_blinded"
   root = FunctionBody(

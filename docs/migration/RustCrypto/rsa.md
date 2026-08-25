@@ -16,22 +16,22 @@ interoperability tests used by the stack migration guides.
 # Before
 rsa = { version = "0.9", features = ["sha2"] }
 
-# After
+# After: caller-entropy signing/encryption and imported private operations
 rscrypto = { version = "0.8.1", default-features = false, features = ["rsa"] }
 
-# After, when generating keys or using randomized private/encryption APIs
+# After: add key generation and OS-entropy convenience methods
 rscrypto = { version = "0.8.1", default-features = false, features = ["rsa", "getrandom"] }
 ```
 
 ## Map
 
-| RustCrypto `rsa`                            | rscrypto                                                                            |
-| ------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `RsaPublicKey`                              | `RsaPublicKey`                                                                      |
-| `RsaPrivateKey`                             | `RsaPrivateKey`                                                                     |
-| PKCS#1 / PKCS#8 / SPKI import-export traits | inherent DER import-export methods                                                  |
-| `Pss`, `Pkcs1v15Sign`, `Oaep`               | `RsaPssProfile`, `RsaPkcs1v15Profile`, `RsaOaepProfile`                             |
-| caller-managed RNG                          | `getrandom` wrappers, or encryption `*_with_random_fill` methods for no-std callers |
+| RustCrypto `rsa`                            | rscrypto                                                                              |
+| ------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `RsaPublicKey`                              | `RsaPublicKey`                                                                        |
+| `RsaPrivateKey`                             | `RsaPrivateKey`                                                                       |
+| PKCS#1 / PKCS#8 / SPKI import-export traits | inherent DER import-export methods                                                    |
+| `Pss`, `Pkcs1v15Sign`, `Oaep`               | `RsaPssProfile`, `RsaPkcs1v15Profile`, `RsaOaepProfile`                               |
+| caller-managed RNG                          | signing and encryption `*_with_random_fill` methods; `getrandom` convenience wrappers |
 
 ## Import Keys
 
@@ -139,6 +139,25 @@ private_key.sign_pkcs1v15(RsaPkcs1v15Profile::Sha256, message, &mut pkcs1v15_sig
 
 rscrypto signs with blinding. Prefer the high-level signing methods unless a
 test needs deterministic explicit salt/blinding hooks.
+
+Without `getrandom`, pass the platform CSPRNG through the caller-entropy API:
+
+```rust
+let mut signature = vec![0u8; private_key.signature_len()];
+private_key.sign_pss_with_random_fill(
+  RsaPssProfile::Sha256,
+  message,
+  &mut signature,
+  |requested| platform_csprng_fill(requested),
+)?;
+```
+
+The callback must fill the complete requested slice with fresh unpredictable
+bytes. PSS requests salt first and then one modulus-width blinding candidate
+per bounded attempt; PKCS#1 v1.5 requests only blinding candidates. Callback
+errors become `RsaPrivateOpError::EntropyUnavailable`. Use
+`sign_pss_with_random_fill_and_scratch` when repeated signing must avoid
+steady-state allocation after `RsaPrivateScratch` setup.
 
 ## OAEP
 

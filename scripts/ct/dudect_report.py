@@ -368,6 +368,18 @@ CASE_METADATA = {
     "primitive": "rsa.private_ops",
     "left_class": "valid RSA-2048 key with 128-byte canonical CRT exponents",
     "right_class": "valid same-factor-width RSA-2048 key with a 127-byte canonical dQ",
+    "gate": "diagnostic",
+    "reason": "The unrelated valid keys have different public moduli, which may leak by policy; this comparison cannot attribute timing separation to canonical CRT exponent width.",
+  },
+  "rsa_private_exponent_fixed_width_high_byte": {
+    "primitive": "rsa.private_ops",
+    "left_class": "fixed-width exponent with a nonzero high byte",
+    "right_class": "same fixed-width exponent with a zero high byte",
+  },
+  "rsa_blinding_inverse_fixed_vs_random_factor": {
+    "primitive": "rsa.private_ops",
+    "left_class": "fixed valid blinding factor",
+    "right_class": "random valid same-width blinding factor",
   },
   "rsa_oaep_decrypt_fixed_vs_random_plaintext": {
     "primitive": "rsa.private_ops",

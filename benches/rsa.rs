@@ -10,6 +10,14 @@ use core::hint::black_box;
 use aws_lc_rs::signature as aws_signature;
 use criterion::{Criterion, criterion_group, criterion_main};
 use ring::signature as ring_signature;
+#[cfg(feature = "getrandom")]
+use rsa::{
+  RsaPrivateKey as RustCryptoRsaPrivateKey,
+  pkcs1::DecodeRsaPrivateKey,
+  pss::BlindedSigningKey as RustCryptoBlindedPssSigningKey,
+  rand_core::{CryptoRng as RustCryptoCryptoRng, Error as RustCryptoRngError, RngCore as RustCryptoRngCore},
+  signature::RandomizedSigner as _,
+};
 use rsa::{
   RsaPublicKey as RustCryptoRsaPublicKey,
   pkcs1v15::{Signature as RustCryptoPkcs1v15Signature, VerifyingKey as RustCryptoPkcs1v15VerifyingKey},
@@ -19,11 +27,14 @@ use rsa::{
 };
 #[cfg(feature = "diag")]
 use rscrypto::auth::rsa::{
-  diag_rsa_public_operation_bitserial, diag_rsa_public_operation_cios, diag_rsa_public_operation_cios_portable,
-  diag_rsa_public_operation_generic_exponent, diag_rsa_public_operation_product, diag_rsa_verify_pkcs1v15_encoded,
-  diag_rsa_verify_pss_encoded_with_scratch,
+  diag_rsa_blinding_factor_inverse_with_scratch, diag_rsa_public_operation_bitserial, diag_rsa_public_operation_cios,
+  diag_rsa_public_operation_cios_portable, diag_rsa_public_operation_generic_exponent,
+  diag_rsa_public_operation_product, diag_rsa_verify_pkcs1v15_encoded, diag_rsa_verify_pss_encoded_with_scratch,
 };
-use rscrypto::{RsaPkcs1v15Profile, RsaPssProfile, RsaPublicKey, RsaPublicKeyPolicy, Sha256, Sha384, Sha512};
+use rscrypto::{
+  Digest, RsaBlindingPair, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateKeyParts, RsaPssProfile, RsaPublicKey,
+  RsaPublicKeyPolicy, Sha256, Sha384, Sha512,
+};
 
 #[cfg(all(
   any(unix, windows),
@@ -58,9 +69,38 @@ const RSA8192_SPKI: &[u8] = include_bytes!("rsa_fixtures/rsa8192_spki.der");
 const RSA8192_PSS_SHA256: &[u8] = include_bytes!("rsa_fixtures/rsa8192_pss_sha256.sig");
 const RSA8192_PKCS1V15_SHA256: &[u8] = include_bytes!("rsa_fixtures/rsa8192_pkcs1v15_sha256.sig");
 
+const PRIVATE_SIGNING_MESSAGE: &[u8] = b"rscrypto TLS-shaped RSA private signing benchmark";
+
+#[cfg(feature = "getrandom")]
+struct GetrandomRng;
+
+#[cfg(feature = "getrandom")]
+impl RustCryptoRngCore for GetrandomRng {
+  fn next_u32(&mut self) -> u32 {
+    rsa::rand_core::impls::next_u32_via_fill(self)
+  }
+
+  fn next_u64(&mut self) -> u64 {
+    rsa::rand_core::impls::next_u64_via_fill(self)
+  }
+
+  fn fill_bytes(&mut self, dest: &mut [u8]) {
+    self
+      .try_fill_bytes(dest)
+      .expect("OS entropy must remain available during the RSA benchmark")
+  }
+
+  fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), RustCryptoRngError> {
+    getrandom::fill(dest).map_err(RustCryptoRngError::new)
+  }
+}
+
+#[cfg(feature = "getrandom")]
+impl RustCryptoCryptoRng for GetrandomRng {}
+
 fn hex_to_vec(hex: &str) -> Vec<u8> {
   let mut out = Vec::with_capacity(hex.len() / 2);
-  for chunk in hex.as_bytes().chunks_exact(2) {
+  for chunk in hex.as_bytes().as_chunks::<2>().0 {
     let high = hex_value(chunk[0]).expect("RSA benchmark fixture must contain hexadecimal digits");
     let low = hex_value(chunk[1]).expect("RSA benchmark fixture must contain hexadecimal digits");
     out.push((high << 4) | low);
@@ -239,6 +279,219 @@ fn modulus_minus_one(key: &RsaPublicKey) -> Vec<u8> {
     *byte = 0xff;
   }
   value
+}
+
+fn rsa2048_private_key() -> RsaPrivateKey {
+  let modulus = hex_to_vec(
+    "d397b84d98a4c26138ed1b695a8106ead91d553bf06041b62d3fdc50a041e222b8f4529689c1b82c5e71554f5dd69fa2f4b6158cf0dbeb57811a0fc327e1f28e74fe74d3bc166c1eabdc1b8b57b934ca8be5b00b4f29975bcc99acaf415b59bb28a6782bb41a2c3c2976b3c18dbadef62f00c6bb226640095096c0cc60d22fe7ef987d75c6a81b10d96bf292028af110dc7cc1bbc43d22adab379a0cd5d8078cc780ff5cd6209dea34c922cf784f7717e428d75b5aec8ff30e5f0141510766e2e0ab8d473c84e8710b2b98227c3db095337ad3452f19e2b9bfbccdd8148abf6776fa552775e6e75956e45229ae5a9c46949bab1e622f0e48f56524a84ed3483b",
+  );
+  let private_exponent = hex_to_vec(
+    "c4e70c689162c94c660828191b52b4d8392115df486a9adbe831e458d73958320dc1b755456e93701e9702d76fb0b92f90e01d1fe248153281fe79aa9763a92fae69d8d7ecd144de29fa135bd14f9573e349e45031e3b76982f583003826c552e89a397c1a06bd2163488630d92e8c2bb643d7abef700da95d685c941489a46f54b5316f62b5d2c3a7f1bbd134cb37353a44683fdc9d95d36458de22f6c44057fe74a0a436c4308f73f4da42f35c47ac16a7138d483afc91e41dc3a1127382e0c0f5119b0221b4fc639d6b9c38177a6de9b526ebd88c38d7982c07f98a0efd877d508aae275b946915c02e2e1106d175d74ec6777f5e80d12c053d9c7be1e341",
+  );
+  let prime_p = hex_to_vec(
+    "f827bbf3a41877c7cc59aebf42ed4b29c32defcb8ed96863d5b090a05a8930dd624a21c9dcf9838568fdfa0df65b8462a5f2ac913d6c56f975532bd8e78fb07bd405ca99a484bcf59f019bbddcb3933f2bce706300b4f7b110120c5df9018159067c35da3061a56c8635a52b54273b31271b4311f0795df6021e6355e1a42e61",
+  );
+  let prime_q = hex_to_vec(
+    "da4817ce0089dd36f2ade6a3ff410c73ec34bf1b4f6bda38431bfede11cef1f7f6efa70e5f8063a3b1f6e17296ffb15feefa0912a0325b8d1fd65a559e717b5b961ec345072e0ec5203d03441d29af4d64054a04507410cf1da78e7b6119d909ec66e6ad625bf995b279a4b3c5be7d895cd7c5b9c4c497fde730916fcdb4e41b",
+  );
+  let exponent_p = hex_to_vec(
+    "1da6e9cf80212856e87522eb59bcef094b7836ba1514a7639e8a1d8dfba37f0245176498315e6337d2c6de5542c5c6b8dee973735b6a91adf735fbfc4c1720587b8a419e40495826e55c14d70803312a103af7b4ecc5b2ff265371c4dcd730348a10d7827ddb7d1fcd9da561db09610a4b88f767b25b5e3de21ced73baa59aa1",
+  );
+  let exponent_q = hex_to_vec(
+    "d737a7c8e43d0a10c85bf0011886a16996a6371b0d46b0c5325de3003f9cc47491539f6a0b7d82407f12851cbf86e1f34da3d7d8367d104967efa7e7ad2e04cbbb8b1f4aeb165d57bd3e8afed8a62602ef304bd74f1ff106d51d44dd9f52a5ed23da1d6d2c82b4e6052fecd5978e0726ad94cd8e295510eb35cc6c49491026ab",
+  );
+  let coefficient = hex_to_vec(
+    "5268d7cf073479aebb2d2ed4dd66b8c89915b52d141e0c4932f56b0c0ed0936141894ec4d27d53bc86453cd8ca5b455045218c7e196209c1c651702ece090a15e3cbcc265971300023a86fe9d34ad527e9ef03b7adfe736e0680747abfd49839b82f2ffdec43bd0343ca30e13961b32af6cdeddd195672c76b53b76fc3ea76f8",
+  );
+
+  RsaPrivateKey::from_components_with_policy(
+    RsaPrivateKeyParts {
+      modulus: &modulus,
+      public_exponent: 65_537,
+      private_exponent: &private_exponent,
+      prime_p: &prime_p,
+      prime_q: &prime_q,
+      exponent_p: &exponent_p,
+      exponent_q: &exponent_q,
+      coefficient: &coefficient,
+    },
+    &RsaPublicKeyPolicy::legacy_verification(),
+  )
+  .expect("valid RSA private benchmark fixture must succeed")
+}
+
+fn factor_two_and_inverse(modulus: &[u8]) -> (Vec<u8>, Vec<u8>) {
+  let mut factor = vec![0u8; modulus.len()];
+  factor[modulus.len().strict_sub(1)] = 2;
+
+  let mut inverse = vec![0u8; modulus.len()];
+  let mut carry = 0u8;
+  for (dst, &byte) in inverse.iter_mut().zip(modulus) {
+    *dst = (byte >> 1) | carry;
+    carry = (byte & 1) << 7;
+  }
+  for byte in inverse.iter_mut().rev() {
+    let (sum, overflow) = byte.overflowing_add(1);
+    *byte = sum;
+    if !overflow {
+      break;
+    }
+  }
+
+  (factor, inverse)
+}
+
+fn rsa_private_signing(c: &mut Criterion) {
+  let key = rsa2048_private_key();
+  let mut scratch = key.private_scratch();
+  let mut signature = vec![0u8; key.signature_len()];
+  let salt = [0x5au8; Sha256::OUTPUT_SIZE];
+  let (factor, inverse) = factor_two_and_inverse(key.public_key().modulus());
+  #[cfg(feature = "getrandom")]
+  let rustcrypto_signing_key = {
+    let private_key_der = key.to_pkcs1_der();
+    let mut private_key = RustCryptoRsaPrivateKey::from_pkcs1_der(&private_key_der)
+      .expect("RustCrypto must import the RSA private benchmark fixture");
+    private_key
+      .precompute()
+      .expect("RustCrypto must precompute the RSA private benchmark fixture");
+    RustCryptoBlindedPssSigningKey::<rsa::sha2::Sha256>::new(private_key)
+  };
+
+  let mut group = c.benchmark_group("rsa-2048-private-signing");
+  #[cfg(feature = "diag")]
+  {
+    let mut inverse_scratch = key.private_scratch();
+    let mut computed_inverse = vec![0u8; key.signature_len()];
+    group.bench_function("blinding-inverse-scratch-rscrypto", |b| {
+      b.iter(|| {
+        diag_rsa_blinding_factor_inverse_with_scratch(
+          black_box(&key),
+          black_box(&factor),
+          black_box(&mut computed_inverse),
+          black_box(&mut inverse_scratch),
+        )
+        .expect("valid scratch-backed RSA blinding-factor inversion must succeed")
+      })
+    });
+  }
+  group.bench_function("scratch-setup-rscrypto", |b| {
+    b.iter(|| black_box(key.private_scratch()))
+  });
+  group.bench_function("sign-pss-sha256-fixed-entropy-scratch-rscrypto", |b| {
+    b.iter(|| {
+      key
+        .sign_pss_with_salt_and_blinding_factor_and_scratch(
+          RsaPssProfile::Sha256,
+          black_box(PRIVATE_SIGNING_MESSAGE),
+          black_box(&salt),
+          RsaBlindingPair::new(black_box(&factor), black_box(&inverse)),
+          black_box(&mut signature),
+          black_box(&mut scratch),
+        )
+        .expect("valid scratch-backed RSA-PSS benchmark signing must succeed")
+    })
+  });
+  group.bench_function("sign-pss-sha256-fixed-entropy-oneshot-rscrypto", |b| {
+    b.iter(|| {
+      key
+        .sign_pss_with_salt_and_blinding_factor(
+          RsaPssProfile::Sha256,
+          black_box(PRIVATE_SIGNING_MESSAGE),
+          black_box(&salt),
+          RsaBlindingPair::new(black_box(&factor), black_box(&inverse)),
+          black_box(&mut signature),
+        )
+        .expect("valid one-shot RSA-PSS benchmark signing must succeed")
+    })
+  });
+  group.bench_function("sign-pss-sha256-caller-entropy-scratch-rscrypto", |b| {
+    b.iter(|| {
+      key
+        .sign_pss_with_random_fill_and_scratch(
+          RsaPssProfile::Sha256,
+          black_box(PRIVATE_SIGNING_MESSAGE),
+          black_box(&mut signature),
+          black_box(&mut scratch),
+          |out| {
+            if out.len() == salt.len() {
+              out.copy_from_slice(black_box(&salt));
+            } else {
+              out.copy_from_slice(black_box(&factor));
+            }
+            Ok::<(), ()>(())
+          },
+        )
+        .expect("valid caller-random scratch-backed RSA-PSS benchmark signing must succeed")
+    })
+  });
+  group.bench_function("sign-pss-sha256-caller-entropy-oneshot-rscrypto", |b| {
+    b.iter(|| {
+      key
+        .sign_pss_with_random_fill(
+          RsaPssProfile::Sha256,
+          black_box(PRIVATE_SIGNING_MESSAGE),
+          black_box(&mut signature),
+          |out| {
+            if out.len() == salt.len() {
+              out.copy_from_slice(black_box(&salt));
+            } else {
+              out.copy_from_slice(black_box(&factor));
+            }
+            Ok::<(), ()>(())
+          },
+        )
+        .expect("valid caller-random one-shot RSA-PSS benchmark signing must succeed")
+    })
+  });
+  group.bench_function("sign-pkcs1v15-sha256-fixed-entropy-scratch-rscrypto", |b| {
+    b.iter(|| {
+      key
+        .sign_pkcs1v15_with_blinding_factor_and_scratch(
+          RsaPkcs1v15Profile::Sha256,
+          black_box(PRIVATE_SIGNING_MESSAGE),
+          RsaBlindingPair::new(black_box(&factor), black_box(&inverse)),
+          black_box(&mut signature),
+          black_box(&mut scratch),
+        )
+        .expect("valid scratch-backed RSA-PKCS1-v1_5 benchmark signing must succeed")
+    })
+  });
+  #[cfg(feature = "getrandom")]
+  group.bench_function("sign-pss-sha256-os-entropy-scratch-rscrypto", |b| {
+    b.iter(|| {
+      key
+        .sign_pss_with_scratch(
+          RsaPssProfile::Sha256,
+          black_box(PRIVATE_SIGNING_MESSAGE),
+          black_box(&mut signature),
+          black_box(&mut scratch),
+        )
+        .expect("valid OS-random scratch-backed RSA-PSS benchmark signing must succeed")
+    })
+  });
+  #[cfg(feature = "getrandom")]
+  group.bench_function("sign-pss-sha256-os-entropy-oneshot-rscrypto", |b| {
+    b.iter(|| {
+      key
+        .sign_pss(
+          RsaPssProfile::Sha256,
+          black_box(PRIVATE_SIGNING_MESSAGE),
+          black_box(&mut signature),
+        )
+        .expect("valid OS-random one-shot RSA-PSS benchmark signing must succeed")
+    })
+  });
+  #[cfg(feature = "getrandom")]
+  group.bench_function("sign-pss-sha256-os-entropy-oneshot-blinded-rustcrypto", |b| {
+    let mut rng = GetrandomRng;
+    b.iter(|| {
+      black_box(&rustcrypto_signing_key)
+        .try_sign_with_rng(&mut rng, black_box(PRIVATE_SIGNING_MESSAGE))
+        .expect("valid RustCrypto RSA-PSS benchmark signing must succeed")
+    })
+  });
+  group.finish();
 }
 
 fn rsa_components_for_size(
@@ -890,11 +1143,18 @@ fn rsa_components(c: &mut Criterion) {
 }
 
 #[cfg(not(feature = "diag"))]
-criterion_group!(benches, rsa_components, rsa_public_exponents, rsa_hash_components);
+criterion_group!(
+  benches,
+  rsa_components,
+  rsa_private_signing,
+  rsa_public_exponents,
+  rsa_hash_components
+);
 #[cfg(feature = "diag")]
 criterion_group!(
   benches,
   rsa_components,
+  rsa_private_signing,
   rsa_public_exponents,
   rsa_hash_components,
   rsa_montgomery_thresholds

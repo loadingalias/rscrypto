@@ -1,4 +1,8 @@
-use rscrypto::{Blake2b512, Blake3, Digest, Sha256, Sha512};
+use rscrypto::{
+  Blake2b512, Blake3, Digest, RsaPrivateKey, RsaPrivateOpError, RsaPssProfile, RsaPublicKeyPolicy, Sha256, Sha512,
+};
+
+const RSA_PRIVATE_KEY_PEM: &str = include_str!("../fixtures/rsa2048_private_pkcs1.txt");
 
 fn hex_value(byte: u8) -> Option<u8> {
   match byte {
@@ -11,12 +15,50 @@ fn hex_value(byte: u8) -> Option<u8> {
 
 fn assert_hex(actual: &[u8], expected: &str) {
   assert_eq!(actual.len().strict_mul(2), expected.len());
-  for (i, chunk) in expected.as_bytes().chunks_exact(2).enumerate() {
+  for (i, chunk) in expected.as_bytes().as_chunks::<2>().0.iter().enumerate() {
     let high = hex_value(chunk[0]).expect("known hash vector must contain hexadecimal digits");
     let low = hex_value(chunk[1]).expect("known hash vector must contain hexadecimal digits");
     let byte = high.strict_shl(4) | low;
     assert_eq!(actual[i], byte, "hex mismatch at byte {i}");
   }
+}
+
+fn base64_value(byte: u8) -> Option<u8> {
+  match byte {
+    b'A'..=b'Z' => Some(byte.strict_sub(b'A')),
+    b'a'..=b'z' => Some(byte.strict_sub(b'a').strict_add(26)),
+    b'0'..=b'9' => Some(byte.strict_sub(b'0').strict_add(52)),
+    b'+' => Some(62),
+    b'/' => Some(63),
+    b'=' => Some(0),
+    _ => None,
+  }
+}
+
+fn decode_base64(input: &str) -> Vec<u8> {
+  let mut encoded = Vec::with_capacity(input.len());
+  for line in input.lines() {
+    if !line.starts_with("-----") {
+      encoded.extend_from_slice(line.as_bytes());
+    }
+  }
+  assert_eq!(encoded.len() % 4, 0, "PEM body must contain complete base64 quanta");
+
+  let mut out = Vec::with_capacity(encoded.len().strict_div(4).strict_mul(3));
+  for quantum in encoded.as_chunks::<4>().0 {
+    let a = base64_value(quantum[0]).expect("RSA fixture must contain valid base64");
+    let b = base64_value(quantum[1]).expect("RSA fixture must contain valid base64");
+    let c = base64_value(quantum[2]).expect("RSA fixture must contain valid base64");
+    let d = base64_value(quantum[3]).expect("RSA fixture must contain valid base64");
+    out.push(a.strict_shl(2) | b.strict_shr(4));
+    if quantum[2] != b'=' {
+      out.push((b & 0x0f).strict_shl(4) | c.strict_shr(2));
+    }
+    if quantum[3] != b'=' {
+      out.push((c & 0x03).strict_shl(6) | d);
+    }
+  }
+  out
 }
 
 fn patterned_bytes(len: usize) -> Vec<u8> {
@@ -84,6 +126,50 @@ fn assert_streaming_hashes_match_oneshot_across_block_boundaries() {
   assert_eq!(blake3.finalize(), blake3_oneshot);
 }
 
+fn assert_rsa_caller_random_signing_roundtrips() {
+  // The fixture is the first RSA-2048 key from Wycheproof's
+  // `rsa_pkcs1_2048_sig_gen_test.json`; only the key is copied here so this
+  // runtime executable does not embed the complete vector corpus.
+  let private_key_der = decode_base64(RSA_PRIVATE_KEY_PEM);
+  let key = RsaPrivateKey::from_pkcs1_der_with_policy(&private_key_der, &RsaPublicKeyPolicy::legacy_verification())
+    .expect("Wycheproof RSA-2048 private key must import under the explicit legacy policy");
+  let profile = RsaPssProfile::Sha256;
+  let message = b"rscrypto caller-random RSA signing on wasm32-wasip1";
+  let modulus_len = key.signature_len();
+  let mut signature = vec![0u8; modulus_len];
+  let mut scratch = key.private_scratch();
+
+  let mut requests = 0usize;
+  key
+    .sign_pss_with_random_fill_and_scratch(profile, message, &mut signature, &mut scratch, |random| {
+      if requests == 0 {
+        assert_eq!(random.len(), Sha256::OUTPUT_SIZE);
+        random.fill(0x5a);
+      } else {
+        assert_eq!(random.len(), modulus_len);
+        random.fill(0);
+        random[modulus_len.strict_sub(1)] = 2;
+      }
+      requests = requests.strict_add(1);
+      Ok::<(), ()>(())
+    })
+    .expect("caller-random RSA-PSS signing must succeed without OS entropy");
+  assert_eq!(requests, 2, "factor two must be accepted on the first bounded attempt");
+  key
+    .public_key()
+    .verify_pss(profile, message, &signature)
+    .expect("caller-random RSA-PSS signature must verify");
+
+  let error = key
+    .sign_pss_with_random_fill_and_scratch(profile, message, &mut signature, &mut scratch, |random| {
+      random.fill(0xa5);
+      Err::<(), ()>(())
+    })
+    .expect_err("caller entropy failure must fail closed");
+  assert_eq!(error, RsaPrivateOpError::EntropyUnavailable);
+  assert!(signature.iter().all(|&byte| byte == 0));
+}
+
 #[cfg(target_feature = "simd128")]
 fn assert_simd128_runtime_caps_are_detected() {
   assert!(rscrypto::platform::caps().has(rscrypto::platform::caps::wasm::SIMD128));
@@ -95,5 +181,6 @@ fn assert_simd128_runtime_caps_are_detected() {}
 fn main() {
   assert_core_hash_vectors_match_known_outputs();
   assert_streaming_hashes_match_oneshot_across_block_boundaries();
+  assert_rsa_caller_random_signing_roundtrips();
   assert_simd128_runtime_caps_are_detected();
 }

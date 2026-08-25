@@ -91,6 +91,16 @@ Some common libraries are not primary benchmark baselines:
   and ML-KEM-1024.
 - RSA import rows measure more than raw ASN.1 parsing when the public API also
   validates key material or prepares arithmetic state.
+- RSA private-signing rows separate reusable-scratch setup, fixed test entropy,
+  caller-provided entropy, and OS entropy. The RustCrypto comparison uses the
+  same OS entropy source with private-operation blinding enabled, but its
+  high-level signer returns an owned signature while rscrypto writes into a
+  caller buffer; interpret allocation differences as part of those public API
+  shapes.
+- The diagnostic RSA blinding-inverse row isolates the production fixed-schedule
+  batched inverse with reusable scratch and cleanup. Use it with the fixed- and
+  caller-entropy signing rows to distinguish inverse cost from CRT
+  exponentiation and whole-operation overhead.
 - `ring` X25519 is excluded from static-key Diffie-Hellman rows because its
   public API exposes an ephemeral agreement shape that consumes the private key.
 - `dryoc` XChaCha20-Poly1305 is excluded from one-shot AEAD rows because the

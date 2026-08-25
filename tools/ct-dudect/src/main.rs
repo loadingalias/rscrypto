@@ -33,9 +33,9 @@ use rscrypto::{
     diag_mlkem_ntt_input_digest, diag_mlkem_to_montgomery_product_domain_input_digest,
     diag_mlkem512_keygen_secret_noise_digest, diag_mlkem768_keygen_secret_noise_digest,
     diag_mlkem1024_keygen_secret_noise_digest, diag_mlkem1024_multiply_ntts_accumulate_input_digest,
-    diag_rsa_import_pkcs8_private_key_der_stage, diag_rsa_private_component_validation_32,
-    diag_rsa_private_exponentiate_fixed_width_with_scratch, diag_rsa_validate_pkcs8_private_key_der,
-    diag_rsa_validate_pkcs8_private_key_der_stage,
+    diag_rsa_blinding_factor_inverse_with_scratch, diag_rsa_import_pkcs8_private_key_der_stage,
+    diag_rsa_private_component_validation_32, diag_rsa_private_exponentiate_fixed_width_with_scratch,
+    diag_rsa_validate_pkcs8_private_key_der, diag_rsa_validate_pkcs8_private_key_der_stage,
   },
   traits::Kem as _,
 };
@@ -161,7 +161,9 @@ fn hex_to_vec(hex: &str) -> Vec<u8> {
   let bytes = hex.as_bytes();
   assert!(bytes.len().is_multiple_of(2), "hex string must have even length");
   bytes
-    .chunks_exact(2)
+    .as_chunks::<2>()
+    .0
+    .iter()
     .map(|pair| {
       let high = hex_nibble(pair[0]).expect("RSA fixture must contain hexadecimal bytes");
       let low = hex_nibble(pair[1]).expect("RSA fixture must contain hexadecimal bytes");
@@ -1629,6 +1631,34 @@ fn rsa_private_exponent_fixed_width_high_byte(runner: &mut CtRunner, rng: &mut B
   }
 }
 
+fn rsa_blinding_inverse_fixed_vs_random_factor(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
+  let len = key.signature_len();
+  let state = RefCell::new((key.private_scratch(), vec![0u8; len]));
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let mut factor = vec![0u8; len];
+    if matches!(class, Class::Left) {
+      *factor.last_mut().expect("RSA blinding factors must be nonempty") = 3;
+    } else {
+      let random = rand_array::<8>(rng);
+      let start = len.strict_sub(random.len());
+      factor[start..].copy_from_slice(&random);
+      *factor.last_mut().expect("RSA blinding factors must be nonempty") |= 1;
+    }
+    inputs.push((class, factor));
+  }
+
+  for (class, factor) in inputs {
+    runner.run_one(class, || {
+      let mut state = state.borrow_mut();
+      let (scratch, out) = &mut *state;
+      let result = diag_rsa_blinding_factor_inverse_with_scratch(&key, &factor, out, scratch);
+      (result.is_ok(), core::hint::black_box(out.as_slice())[0])
+    });
+  }
+}
+
 fn rsa_oaep_decrypt_fixed_vs_random_plaintext(runner: &mut CtRunner, rng: &mut BenchRng) {
   let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
   let sig_len = key.signature_len();
@@ -2152,7 +2182,7 @@ mod tests {
     let classes = balanced_classes(&mut rng, 65);
 
     assert_eq!(classes.len(), 65);
-    for block in classes[..64].chunks_exact(32) {
+    for block in classes[..64].as_chunks::<32>().0 {
       let left = block.iter().filter(|class| matches!(class, Class::Left)).count();
       assert_eq!(left, 16);
     }
@@ -2342,6 +2372,7 @@ ctbench_main_with_seeds!(
     Some(0x7273615f6372746c)
   ),
   (rsa_private_exponent_fixed_width_high_byte, Some(0x7273615f65787068)),
+  (rsa_blinding_inverse_fixed_vs_random_factor, Some(0x7273615f696e7662)),
   (rsa_oaep_decrypt_fixed_vs_random_plaintext, Some(0x7273615f6f616570)),
   (rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext, Some(0x7273615f64656331)),
   (

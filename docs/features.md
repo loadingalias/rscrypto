@@ -16,10 +16,10 @@ algorithm feature explicitly.
 # One algorithm, no_std.
 rscrypto = { version = "0.8.1", default-features = false, features = ["sha2"] }
 
-# RSA public-key import and verification, no_std + alloc.
+# RSA import, verification, and caller-entropy signing/encryption, no_std + alloc.
 rscrypto = { version = "0.8.1", default-features = false, features = ["rsa"] }
 
-# RSA key generation, signing, encryption, and private-operation blinding.
+# Add OS-entropy key generation and convenience wrappers.
 rscrypto = { version = "0.8.1", default-features = false, features = ["rsa", "getrandom"] }
 
 # ECDSA P-256/SHA-256 and P-384/SHA-384 signing and verification.

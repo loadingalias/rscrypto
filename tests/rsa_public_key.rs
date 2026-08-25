@@ -1493,6 +1493,77 @@ fn private_key_der_exports_roundtrip_with_rustcrypto_rsa() {
   assert_eq!(rustcrypto_public_from_spki.e(), rustcrypto_key.e());
 }
 
+#[test]
+fn caller_random_signatures_verify_with_independent_implementations_without_getrandom() {
+  #[derive(Debug)]
+  struct ExternalEntropyError;
+
+  let rustcrypto_key = rustcrypto_fixture_private_key();
+  let rustcrypto_pkcs1 =
+    EncodeRsaPrivateKey::to_pkcs1_der(&rustcrypto_key).expect("the RustCrypto fixture must encode as PKCS#1");
+  let key =
+    RsaPrivateKey::from_pkcs1_der_with_policy(rustcrypto_pkcs1.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
+      .expect("rscrypto must decode the RustCrypto private-key fixture");
+  let public_pkcs1 = key.public_key().to_pkcs1_der();
+  let public_spki = key.public_key().to_spki_der();
+  let message = b"rscrypto caller-random signing external-oracle check";
+  let mut factor = vec![0u8; key.signature_len()];
+  *factor.last_mut().expect("an RSA modulus has a final byte") = 2;
+  let mut signature = vec![0u8; key.signature_len()];
+
+  let mut calls = 0usize;
+  key
+    .sign_tls13_signature_scheme_with_random_fill(0x0804, message, &mut signature, |out| {
+      if calls == 0 {
+        assert_eq!(out.len(), 32);
+        out.fill(0x6d);
+      } else {
+        assert_eq!(out.len(), factor.len());
+        out.copy_from_slice(&factor);
+      }
+      calls = calls.strict_add(1);
+      Ok::<(), ExternalEntropyError>(())
+    })
+    .expect("TLS RSA-PSS signing with caller entropy must succeed");
+  assert_eq!(calls, 2);
+  key
+    .public_key()
+    .verify_pss(RsaPssProfile::Sha256, message, &signature)
+    .expect("rscrypto must verify its caller-random PSS signature");
+  assert_rustcrypto_pss_sha256(&public_pkcs1, message, &signature, true);
+  assert_ring_cavp("pss", "SHA256", &public_pkcs1, message, &signature, true);
+  assert_aws_lc_rs_cavp("pss", "SHA256", &public_pkcs1, message, &signature, true);
+  assert_aws_lc_sys_cavp("pss", "SHA256", Some(32), &public_pkcs1, message, &signature, true);
+  assert_openssl_signature(
+    "-sha256",
+    &public_spki,
+    message,
+    &signature,
+    &["rsa_padding_mode:pss", "rsa_pss_saltlen:32", "rsa_mgf1_md:sha256"],
+    true,
+  );
+
+  calls = 0;
+  key
+    .sign_tls_certificate_signature_scheme_with_random_fill(0x0401, message, &mut signature, |out| {
+      assert_eq!(out.len(), factor.len());
+      out.copy_from_slice(&factor);
+      calls = calls.strict_add(1);
+      Ok::<(), ExternalEntropyError>(())
+    })
+    .expect("TLS certificate PKCS#1 v1.5 signing with caller entropy must succeed");
+  assert_eq!(calls, 1);
+  key
+    .public_key()
+    .verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, message, &signature)
+    .expect("rscrypto must verify its caller-random PKCS#1 v1.5 signature");
+  assert_rustcrypto_pkcs1v15_sha256(&public_pkcs1, message, &signature, true);
+  assert_ring_cavp("pkcs1v15", "SHA256", &public_pkcs1, message, &signature, true);
+  assert_aws_lc_rs_cavp("pkcs1v15", "SHA256", &public_pkcs1, message, &signature, true);
+  assert_aws_lc_sys_cavp("pkcs1v15", "SHA256", None, &public_pkcs1, message, &signature, true);
+  assert_openssl_signature("-sha256", &public_spki, message, &signature, &[], true);
+}
+
 #[cfg(feature = "getrandom")]
 #[test]
 fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
