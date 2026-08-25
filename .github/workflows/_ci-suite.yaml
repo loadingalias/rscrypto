@@ -76,7 +76,9 @@ jobs:
     name: Cargo Graph Assurance
     uses: ./.github/workflows/_rust-job.yaml
     with:
-      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+      # PR runners are provisioned from protected main, whose pre-transition
+      # definition still enables RunsOn MagicCache until this change lands.
+      runner: ubuntu-latest
       timeout_minutes: 90
       tools_mode: rail
       toolchain_components: "rust-src"
