@@ -1,0 +1,24 @@
+[package]
+name = "rscrypto-fuzz-aead-aes-siv-cmac256"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rscrypto = { path = "../..", features = ["std", "aes-siv"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support", features = [
+  "aead",
+] }
+aes-siv = { version = "0.8.0", default-features = false, features = ["alloc"] }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "aead_aes_siv_cmac256"
+path = "fuzz_targets/aead_aes_siv_cmac256.rs"
+doc = false

@@ -12,7 +12,8 @@ use std::format;
 
 use rscrypto::{
   Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey, Aes256GcmSiv,
-  Aes256GcmSivKey, Argon2Params, Argon2d, Argon2i, Argon2id, AsconAead128, AsconAead128Key, Blake2b256, Blake2b512,
+  Aes256GcmSivKey, AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, Argon2Params, Argon2d, Argon2i, Argon2id,
+  AsconAead128, AsconAead128Key, Blake2b256, Blake2b512,
   Blake2bKey, Blake2s128, Blake2s256, Blake2sKey, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key,
   Crc32, EcdsaP256SecretKey, EcdsaP384SecretKey, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256,
   HkdfSha384, HmacSha3_224Tag, HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag,
@@ -21,7 +22,7 @@ use rscrypto::{
   MlKem1024DecapsulationKey, MlKem1024EncapsulationKey, MlKemError, Pbkdf2Sha256, Pbkdf2Sha512, RsaBlindingPair,
   RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy, Scrypt, ScryptParams,
   SecretBytes, Sha256, X25519PublicKey, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
-  aead::{Nonce96, Nonce128, Nonce192, Nonce256},
+  aead::{Nonce96, Nonce128, Nonce192, Nonce256, diag_aes_siv_cmac256_open_portable},
   checksum::Checksum,
   traits::Kem as _,
 };
@@ -1304,6 +1305,99 @@ aead_open_entry!(
   16,
   16
 );
+
+/// AES-SIV-CMAC-256 open/authentication harness for the variable-length nonce profile.
+///
+/// # Safety
+///
+/// - `key` and `tag` must reference 32 and 16 initialized readable bytes respectively.
+/// - `nonce` must reference `nonce_len` initialized readable bytes and must be nonempty.
+/// - `aad` and `buffer` follow [`input_slice`] and [`output_slice`] bounds respectively.
+/// - The mutable buffer must not overlap the nonce, AAD, or tag ranges. It may overlap the key
+///   because the key is copied before the mutable borrow begins.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_aes_siv_cmac256_open(
+  key: *const u8,
+  nonce: *const u8,
+  nonce_len: usize,
+  aad: *const u8,
+  aad_len: usize,
+  buffer: *mut u8,
+  buffer_len: usize,
+  tag: *const u8,
+) -> u8 {
+  // SAFETY: The function contract requires exactly 32 initialized readable key bytes.
+  let Some(key) = (unsafe { read_array::<32>(key) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: The function contract establishes nonce allocation, bounds, and immutability.
+  let Some(nonce) = (unsafe { input_slice(nonce, nonce_len) }) else {
+    return STATUS_ERR;
+  };
+  let Ok(nonce) = AesSivCmac256Nonce::try_from(nonce) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: The function contract establishes AAD allocation, bounds, and immutability.
+  let Some(aad) = (unsafe { input_slice(aad, aad_len) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: The function contract establishes buffer allocation, bounds, exclusivity, and
+  // disjointness from the live nonce, AAD, and tag ranges.
+  let Some(buffer) = (unsafe { output_slice(buffer, buffer_len) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: The function contract requires exactly 16 initialized readable tag bytes disjoint
+  // from the mutable buffer.
+  let Some(tag) = (unsafe { read_array::<16>(tag) }) else {
+    return STATUS_ERR;
+  };
+
+  let key = AesSivCmac256Key::from_bytes(key);
+  let cipher = AesSivCmac256::new(&key);
+  let tag = AesSivCmac256::tag_from_slice(&tag).expect("fixed-size harness tag is valid");
+  cipher
+    .open_in_place(nonce, aad, buffer, &tag)
+    .map(|()| STATUS_OK)
+    .unwrap_or(STATUS_ERR)
+}
+
+/// Fixed-shape forced-portable AES-SIV-CMAC-256 complete-open harness.
+///
+/// # Safety
+///
+/// `key`, `nonce`, `aad`, `ciphertext`, and `tag` must reference 32, 16, 32, 48, and 16
+/// initialized readable bytes respectively. Null pointers are rejected.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_aes_siv_cmac256_open_portable(
+  key: *const u8,
+  nonce: *const u8,
+  aad: *const u8,
+  ciphertext: *const u8,
+  tag: *const u8,
+) -> u8 {
+  // SAFETY: Each read has the exact fixed-size validity requirement documented above.
+  let Some(key) = (unsafe { read_array::<32>(key) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: Each read has the exact fixed-size validity requirement documented above.
+  let Some(nonce) = (unsafe { read_array::<16>(nonce) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: Each read has the exact fixed-size validity requirement documented above.
+  let Some(aad) = (unsafe { read_array::<32>(aad) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: Each read has the exact fixed-size validity requirement documented above.
+  let Some(ciphertext) = (unsafe { read_array::<48>(ciphertext) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: Each read has the exact fixed-size validity requirement documented above.
+  let Some(tag) = (unsafe { read_array::<16>(tag) }) else {
+    return STATUS_ERR;
+  };
+
+  diag_aes_siv_cmac256_open_portable(&key, &nonce, &aad, &ciphertext, &tag)
+}
 
 macro_rules! hkdf_derive_entry {
   ($name:ident, $ty:ty) => {

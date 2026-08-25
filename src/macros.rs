@@ -426,6 +426,7 @@ macro_rules! define_blake2_dispatch {
 #[cfg(any(
   feature = "aes-gcm",
   feature = "aes-gcm-siv",
+  feature = "aes-siv",
   feature = "chacha20poly1305",
   feature = "xchacha20poly1305",
   feature = "aegis256",
@@ -529,6 +530,7 @@ macro_rules! define_aead_key_type {
 #[cfg(any(
   feature = "aes-gcm",
   feature = "aes-gcm-siv",
+  feature = "aes-siv",
   feature = "chacha20poly1305",
   feature = "xchacha20poly1305",
   feature = "aegis256",

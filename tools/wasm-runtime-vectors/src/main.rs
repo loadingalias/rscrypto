@@ -1,5 +1,6 @@
 use rscrypto::{
-  Blake2b512, Blake3, Digest, RsaPrivateKey, RsaPrivateOpError, RsaPssProfile, RsaPublicKeyPolicy, Sha256, Sha512,
+  AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, Blake2b512, Blake3, Digest, RsaPrivateKey,
+  RsaPrivateOpError, RsaPssProfile, RsaPublicKeyPolicy, Sha256, Sha512,
 };
 use rscrypto::aead::expert::header_protection::{
   Aes128HeaderProtection, Aes128HeaderProtectionKey, Aes256HeaderProtection, Aes256HeaderProtectionKey,
@@ -226,6 +227,39 @@ fn assert_header_protection_vectors_match_known_outputs() {
   );
 }
 
+fn assert_aes_siv_runtime_vector_and_failed_open_cleanup() {
+  let mut key_bytes = [0u8; 32];
+  for (index, byte) in key_bytes.iter_mut().enumerate() {
+    *byte = u8::try_from(index).expect("key index fits in one byte");
+  }
+  let cipher = AesSivCmac256::new(&AesSivCmac256Key::from_bytes(key_bytes));
+  let nonce = AesSivCmac256Nonce::try_from(&b"wasm nonce"[..]).expect("nonce is non-empty");
+  let plaintext = b"wasm AES-SIV runtime vector input";
+  let mut combined = [0u8; 49];
+  cipher
+    .seal(nonce, b"wasm associated data", plaintext, &mut combined)
+    .expect("fixed output shape is exact");
+  assert_hex(
+    &combined,
+    "c83dab6674aac8b6ba89d5d4e714eb988d9352d177d26e424465796ce9d4199aba1694731dbeab6c045dfebac553d266af",
+  );
+
+  let mut opened = [0u8; 33];
+  cipher
+    .open(nonce, b"wasm associated data", &combined, &mut opened)
+    .expect("known ciphertext authenticates");
+  assert_eq!(&opened, plaintext);
+
+  combined[15] ^= 1;
+  opened.fill(0xA5);
+  assert!(
+    cipher
+      .open(nonce, b"wasm associated data", &combined, &mut opened)
+      .is_err()
+  );
+  assert_eq!(opened, [0u8; 33]);
+}
+
 #[cfg(target_feature = "simd128")]
 fn assert_simd128_runtime_caps_are_detected() {
   assert!(rscrypto::platform::caps().has(rscrypto::platform::caps::wasm::SIMD128));
@@ -240,5 +274,6 @@ fn main() {
   assert_rsa_caller_random_signing_roundtrips();
   assert_websocket_accept_digest_matches_rfc_6455();
   assert_header_protection_vectors_match_known_outputs();
+  assert_aes_siv_runtime_vector_and_failed_open_cleanup();
   assert_simd128_runtime_caps_are_detected();
 }

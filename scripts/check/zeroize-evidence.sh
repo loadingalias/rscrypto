@@ -13,7 +13,7 @@ CARGO_RAIL_CACHE=off CARGO_TARGET_DIR="$TARGET_DIR" cargo rustc \
   --release \
   --lib \
   --no-default-features \
-  --features alloc,aegis256,aes-gcm,ascon-aead,blake3,chacha20poly1305,ecdsa-p256,ecdsa-p384,hkdf,hmac,hmac-sha3,ml-kem,parallel,rsa,diag \
+  --features alloc,aegis256,aes-gcm,aes-siv,ascon-aead,blake3,chacha20poly1305,ecdsa-p256,ecdsa-p384,hkdf,hmac,hmac-sha3,ml-kem,parallel,rsa,diag \
   -- \
   -Ccodegen-units=1 \
   --emit=mir,llvm-ir,asm
@@ -69,6 +69,7 @@ for symbol in \
   diag_zeroize_aes128_header_protection \
   diag_zeroize_aes256_header_protection \
   diag_zeroize_chacha20_header_protection \
+  diag_zeroize_aes_siv_cmac256 \
   diag_zeroize_mlkem_sha3_512 \
   diag_zeroize_mlkem_shake256_scalar \
   diag_zeroize_mlkem_shake256_pair \
@@ -115,6 +116,7 @@ for symbol in \
   diag_zeroize_aes128_header_protection \
   diag_zeroize_aes256_header_protection \
   diag_zeroize_chacha20_header_protection \
+  diag_zeroize_aes_siv_cmac256 \
   diag_zeroize_mlkem_sha3_512 \
   diag_zeroize_mlkem_shake256_scalar \
   diag_zeroize_mlkem_shake256_pair \
@@ -629,6 +631,7 @@ case "$HOST_ARCH" in
       diag_zeroize_aes128_header_protection \
       diag_zeroize_aes256_header_protection \
       diag_zeroize_chacha20_header_protection \
+      diag_zeroize_aes_siv_cmac256 \
       diag_zeroize_mlkem_sha3_512 \
       diag_zeroize_mlkem_shake256_scalar \
       diag_zeroize_mlkem_shake256_pair \
@@ -678,6 +681,7 @@ case "$HOST_ARCH" in
       diag_zeroize_aes128_header_protection \
       diag_zeroize_aes256_header_protection \
       diag_zeroize_chacha20_header_protection \
+      diag_zeroize_aes_siv_cmac256 \
       diag_zeroize_mlkem_sha3_512 \
       diag_zeroize_mlkem_shake256_scalar \
       diag_zeroize_mlkem_shake256_pair \

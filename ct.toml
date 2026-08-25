@@ -317,6 +317,8 @@ symbols = [
   "ct_entry_aes256gcm_open",
   "ct_entry_aes128gcmsiv_open",
   "ct_entry_aes256gcmsiv_open",
+  "ct_entry_aes_siv_cmac256_open",
+  "ct_entry_aes_siv_cmac256_open_portable",
   "ct_entry_xchacha20poly1305_open",
   "ct_entry_aegis256_open",
   "ct_entry_ascon_aead128_open",
@@ -1557,6 +1559,69 @@ samples = 20000
 smoke_samples = 2000
 
 [[dudect_case]]
+name = "aes_siv_cmac256_fixed_vs_random_key_seal"
+primitive = "aead.symmetric_transform"
+filter = "aes_siv_cmac256_fixed_vs_random_key_seal"
+left_class = "complete context construction and seal with fixed secret key"
+right_class = "complete context construction and seal with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "aes_siv_cmac256_fixed_vs_random_key_open"
+primitive = "aead.open_authentication"
+filter = "aes_siv_cmac256_fixed_vs_random_key_open"
+left_class = "complete context construction and valid open with fixed secret key"
+right_class = "complete context construction and valid open with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "aes_siv_cmac256_first_vs_last_tag_mismatch"
+primitive = "aead.open_authentication"
+filter = "aes_siv_cmac256_first_vs_last_tag_mismatch"
+left_class = "failed open with first synthetic-IV byte corrupted"
+right_class = "failed open with last synthetic-IV byte corrupted"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "aes_siv_cmac256_portable_s2v_fixed_vs_random_key"
+primitive = "aead.open_authentication"
+filter = "aes_siv_cmac256_portable_s2v_fixed_vs_random_key"
+left_class = "forced-portable complete CMAC/S2V state with fixed secret key"
+right_class = "forced-portable complete CMAC/S2V state with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "aes_siv_cmac256_portable_s2v_seal_fixed_vs_random_key"
+primitive = "aead.symmetric_transform"
+filter = "aes_siv_cmac256_portable_s2v_seal_fixed_vs_random_key"
+left_class = "forced-portable complete CMAC/S2V state with fixed secret key"
+right_class = "forced-portable complete CMAC/S2V state with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "aes_siv_cmac256_portable_open_fixed_vs_random_key"
+primitive = "aead.open_authentication"
+filter = "aes_siv_cmac256_portable_open_fixed_vs_random_key"
+left_class = "forced-portable complete valid open with fixed secret key"
+right_class = "forced-portable complete valid open with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "aes_siv_cmac256_portable_open_first_vs_last_tag_mismatch"
+primitive = "aead.open_authentication"
+filter = "aes_siv_cmac256_portable_open_first_vs_last_tag_mismatch"
+left_class = "forced-portable failed open with first synthetic-IV byte corrupted"
+right_class = "forced-portable failed open with last synthetic-IV byte corrupted"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
 name = "blake2b256_keyed_fixed_vs_random_key"
 primitive = "keyed_hash.blake2_blake3"
 filter = "blake2b256_keyed"
@@ -1815,6 +1880,19 @@ dudect = ["ascon_aead128_fixed_vs_random_key_open"]
 binsec = ["aead.open_authentication.ascon_aead128_tag_portable.all"]
 
 [[evidence_unit]]
+id = "aead.open_authentication.aes_siv_cmac256"
+primitive = "aead.open_authentication"
+variant = "AesSivCmac256"
+dudect = [
+  "aes_siv_cmac256_fixed_vs_random_key_open",
+  "aes_siv_cmac256_first_vs_last_tag_mismatch",
+  "aes_siv_cmac256_portable_s2v_fixed_vs_random_key",
+  "aes_siv_cmac256_portable_open_fixed_vs_random_key",
+  "aes_siv_cmac256_portable_open_first_vs_last_tag_mismatch",
+]
+binsec = ["aead.open_authentication.aes_round_portable.all"]
+
+[[evidence_unit]]
 id = "aead.symmetric_transform.aes128gcm"
 primitive = "aead.symmetric_transform"
 variant = "Aes128Gcm"
@@ -1902,6 +1980,16 @@ primitive = "aead.symmetric_transform"
 variant = "ChaCha20HeaderProtection"
 dudect = ["chacha20_header_protection_fixed_vs_random_key"]
 binsec = ["aead.symmetric_transform.chacha20poly1305_seal.portable.all"]
+
+[[evidence_unit]]
+id = "aead.symmetric_transform.aes_siv_cmac256"
+primitive = "aead.symmetric_transform"
+variant = "AesSivCmac256"
+dudect = [
+  "aes_siv_cmac256_fixed_vs_random_key_seal",
+  "aes_siv_cmac256_portable_s2v_seal_fixed_vs_random_key",
+]
+binsec = ["aead.symmetric_transform.aes_round_portable.all"]
 
 [[evidence_unit]]
 id = "rsa.private_ops.pkcs1v15_sign"
@@ -2835,8 +2923,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2268
-compiler_api_sha256 = "6e3f13819536b857ab38b6b77280db1ca7da49ca9ddc91bf964e4656f0ecea19"
+compiler_api_item_count = 2319
+compiler_api_sha256 = "8193076ea61bc84482b3993e2e02e77da9b372629bccb356994bf245158a36b4"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -2847,8 +2935,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2262
-compiler_api_sha256 = "8e85d195e87964207eaf4a142b157eef0d8f8aea85b838ee6c172279b1fe23df"
+compiler_api_item_count = 2313
+compiler_api_sha256 = "e40ba4d720685019669fdad3c452842fb50eaaba00d1159fa0ab1e4e7b4d6a0a"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -2907,8 +2995,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 2262
-compiler_api_sha256 = "8e85d195e87964207eaf4a142b157eef0d8f8aea85b838ee6c172279b1fe23df"
+compiler_api_item_count = 2313
+compiler_api_sha256 = "e40ba4d720685019669fdad3c452842fb50eaaba00d1159fa0ab1e4e7b4d6a0a"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2932,8 +3020,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2261
-compiler_api_sha256 = "daa3642fedbb5532ec987e192ef9f3f8e522237df89779dca933ea17920a3911"
+compiler_api_item_count = 2312
+compiler_api_sha256 = "3c444abfafa99a01c573fc1a32c965317659e15610798b6388c068de10005313"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2945,8 +3033,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2261
-compiler_api_sha256 = "9ea6ddaa217b1181d383fc4dd51690439005044199ae5af472d55a54d7775ea9"
+compiler_api_item_count = 2312
+compiler_api_sha256 = "6578bc51a11fe4b1f11b4634f1bcb87dcdc455243c8314d6c050433ee54b6ce1"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2958,8 +3046,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2261
-compiler_api_sha256 = "cc0faa52fd40a16280c020505643c008b1bfbc0e6f7c3b9d05e333bbb7b87eb2"
+compiler_api_item_count = 2312
+compiler_api_sha256 = "46a3f1c7f46e5cb4e6dde1ccd51864bcfba16ef5659ac2765434d7b260a0e194"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3122,6 +3210,7 @@ id = "aead.construct_and_seal"
 api = [
   "rscrypto::Aead::{new,encrypt_in_place,encrypt,seal,seal_with_random_nonce}",
   "rscrypto::{Aes128Gcm,Aes256Gcm,Aes128GcmSiv,Aes256GcmSiv,ChaCha20Poly1305,XChaCha20Poly1305,Aegis256,AsconAead128}::{new,encrypt_in_place,encrypt}",
+  "rscrypto::AesSivCmac256::{new,seal_in_place,seal}",
   "rscrypto::NonceCounter::*::encrypt*",
 ]
 features = [
@@ -3144,6 +3233,7 @@ evidence = [
   "primitive:aead.symmetric_transform",
   "unit:aead.symmetric_transform.aes128gcm",
   "unit:aead.symmetric_transform.chacha20poly1305",
+  "unit:aead.symmetric_transform.aes_siv_cmac256",
 ]
 limitation = "Release claims require exact target artifacts. Random-nonce helper timing includes the platform entropy source."
 
@@ -3172,6 +3262,7 @@ id = "aead.open_and_authenticate"
 api = [
   "rscrypto::Aead::{decrypt_in_place,decrypt,open}",
   "rscrypto::{Aes128Gcm,Aes256Gcm,Aes128GcmSiv,Aes256GcmSiv,ChaCha20Poly1305,XChaCha20Poly1305,Aegis256,AsconAead128}::{decrypt_in_place,decrypt}",
+  "rscrypto::AesSivCmac256::{open_in_place,open}",
 ]
 features = ["aead algorithm feature", "alloc/std for allocating helpers"]
 targets = ["all-supported", "backend selected by public target capabilities"]
@@ -3190,6 +3281,8 @@ evidence = [
   "primitive:aead.symmetric_transform",
   "unit:aead.open_authentication.aes128gcm",
   "unit:aead.open_authentication.ascon_aead128",
+  "unit:aead.open_authentication.aes_siv_cmac256",
+  "unit:aead.symmetric_transform.aes_siv_cmac256",
 ]
 limitation = "The bool-like authentication decision is surfaced only as an opaque Result, but exact release-machine-code evidence remains T3.3 work."
 
@@ -3197,8 +3290,9 @@ limitation = "The bool-like authentication decision is surfaced only as an opaqu
 id = "aead.public_nonce_tag_and_error_values"
 api = [
   "rscrypto::aead::Nonce*::{from_bytes,to_bytes,as_bytes,generate,try_random}",
+  "rscrypto::AesSivCmac256Nonce::{try_from,as_bytes}",
   "rscrypto::*Tag::{from_bytes,try_from,to_bytes,as_bytes,as_slice}",
-  "rscrypto::aead::{AeadBufferError,SealError,OpenError,RandomSealError,NonceCounter*}::*",
+  "rscrypto::aead::{AeadBufferError,SealError,OpenError,RandomSealError,NonceCounter*,AesSivCmac256NonceError}::*",
 ]
 features = ["aead algorithm feature", "serde"]
 targets = ["all-supported"]
@@ -4042,12 +4136,20 @@ variants = [
   "Aes256Gcm",
   "Aes128GcmSiv",
   "Aes256GcmSiv",
+  "AesSivCmac256",
   "ChaCha20Poly1305",
   "XChaCha20Poly1305",
   "Aegis256",
   "AsconAead128",
 ]
-entrypoints = ["Aead::decrypt_in_place", "Aead::decrypt", "*::decrypt_in_place", "*::decrypt"]
+entrypoints = [
+  "Aead::decrypt_in_place",
+  "Aead::decrypt",
+  "*::decrypt_in_place",
+  "*::decrypt",
+  "AesSivCmac256::open_in_place",
+  "AesSivCmac256::open",
+]
 secrets = ["key", "computed_tag", "expected_tag", "opened_plaintext"]
 public = ["nonce", "aad", "ciphertext", "ciphertext_length", "tag_length"]
 may_leak = ["input_length", "opaque_success_or_failure", "public_buffer_size_error"]
@@ -4061,6 +4163,8 @@ symbols = [
   "ct_entry_aes256gcm_open",
   "ct_entry_aes128gcmsiv_open",
   "ct_entry_aes256gcmsiv_open",
+  "ct_entry_aes_siv_cmac256_open",
+  "ct_entry_aes_siv_cmac256_open_portable",
   "ct_entry_chacha20poly1305_open",
   "ct_entry_xchacha20poly1305_open",
   "ct_entry_aegis256_open",
@@ -4495,6 +4599,7 @@ variants = [
   "Aes256Gcm",
   "Aes128GcmSiv",
   "Aes256GcmSiv",
+  "AesSivCmac256",
   "ChaCha20Poly1305",
   "XChaCha20Poly1305",
   "Aegis256",
@@ -4516,6 +4621,7 @@ entrypoints = [
   "GHASH/POLYVAL helpers",
   "ChaCha20 keystream helpers",
   "Poly1305 block helpers",
+  "AES-SIV-CMAC-256 private CMAC/S2V and CTR helpers",
 ]
 secrets = ["key", "plaintext", "opened_plaintext", "poly_key", "hash_subkey"]
 public = ["nonce", "aad", "input_length", "backend_caps"]
@@ -4529,6 +4635,8 @@ symbols = [
   "ct_entry_aes256gcm_open",
   "ct_entry_aes128gcmsiv_open",
   "ct_entry_aes256gcmsiv_open",
+  "ct_entry_aes_siv_cmac256_open",
+  "ct_entry_aes_siv_cmac256_open_portable",
   "ct_entry_chacha20poly1305_open",
   "ct_entry_xchacha20poly1305_open",
   "ct_entry_aegis256_open",

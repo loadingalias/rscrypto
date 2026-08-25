@@ -203,6 +203,7 @@ Feature: `aead` or individual leaves.
 | `Aes256Gcm`         | `Aes256GcmKey` 32B         | `Nonce96` 12B  | `Aes256GcmTag` 16B         | SP 800-38D                 |
 | `Aes128GcmSiv`      | `Aes128GcmSivKey` 16B      | `Nonce96` 12B  | `Aes128GcmSivTag` 16B      | RFC 8452                   |
 | `Aes256GcmSiv`      | `Aes256GcmSivKey` 32B      | `Nonce96` 12B  | `Aes256GcmSivTag` 16B      | RFC 8452                   |
+| `AesSivCmac256`     | `AesSivCmac256Key` 32B     | borrowed 1+B   | `AesSivCmac256Tag` 16B     | RFC 5297 / RFC 5116        |
 | `ChaCha20Poly1305`  | `ChaCha20Poly1305Key` 32B  | `Nonce96` 12B  | `ChaCha20Poly1305Tag` 16B  | RFC 8439                   |
 | `XChaCha20Poly1305` | `XChaCha20Poly1305Key` 32B | `Nonce192` 24B | `XChaCha20Poly1305Tag` 16B | draft-irtf-cfrg-xchacha    |
 | `AsconAead128`      | `AsconAead128Key` 16B      | `Nonce128` 16B | `AsconAead128Tag` 16B      | NIST SP 800-232            |
@@ -227,6 +228,14 @@ Mask generation is allocation-free. Alloc-enabled RISC-V portable AES context
 construction retains the existing boxed fixslice schedule; no-alloc builds
 store that schedule inline.
 
+`AesSivCmac256` implements only the registered 32-byte-key nonce-based profile.
+`AesSivCmac256Nonce` validates a borrowed, non-empty variable-length nonce;
+the API keeps nonce and one RFC 5116 AAD string as distinct S2V components.
+Combined output is `synthetic_iv || ciphertext`. It deliberately does not
+expose deterministic SIV, CMAC, S2V, raw AES, or a vector-of-AAD interface.
+Construction and detached operations are allocation-free except that the
+alloc-enabled RISC-V AES backend retains its existing boxed fixslice schedules.
+
 ## Error types
 
 | Error                             | When                                                                                  | Recovery                                                                      |
@@ -235,6 +244,7 @@ store that schedule inline.
 | `PasswordHashError`               | Caller entropy or password-record hashing fails                                       | Match the variant; repair the entropy source or handle the algorithm error    |
 | `EcdsaKeyGenerationError`         | ECDSA random source failure or bounded scalar rejection exhaustion                    | Fix entropy source; investigate deterministic fillers                         |
 | `AeadBufferError`                 | Output buffer wrong size                                                              | Fix buffer length                                                             |
+| `AesSivCmac256NonceError`         | Empty AES-SIV-CMAC-256 nonce                                                           | Supply a non-empty nonce                                                       |
 | `SealError`                       | Combined AEAD buffer length is wrong or input exceeds the algorithm limit             | Correct the public buffer/input length                                        |
 | `OpenError`                       | Combined AEAD buffer length is wrong, input is too large, or authentication fails     | Correct public lengths; reject opaque verification failures                   |
 | `NonceCounterSealError`           | AES-GCM nonce counter is exhausted or sealing fails                                   | Rotate the key before counter reuse, or correct the sealing input             |

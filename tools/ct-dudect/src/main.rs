@@ -8,31 +8,31 @@ use rscrypto::aead::expert::header_protection::{
 };
 use rscrypto::{
   Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey, Aes256GcmSiv,
-  Aes256GcmSivKey, Argon2Params, Argon2i, AsconAead128, AsconAead128Key, Blake2b256, Blake2b512, Blake2bKey,
-  Blake2s128, Blake2s256, Blake2sKey, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key,
-  EcdsaP256SecretKey, EcdsaP384SecretKey, Ed25519Keypair, Ed25519SecretKey, HkdfSha256, HkdfSha384, HmacSha256,
-  HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Kmac256, MlKem512, MlKem512Ciphertext,
-  MlKem512DecapsulationKey, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem1024, MlKem1024Ciphertext,
-  MlKem1024DecapsulationKey, MlKemError, Pbkdf2Sha256, Pbkdf2Sha512, RsaBlindingPair, RsaEncryptionError,
-  RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy, SecretBytes, Sha512,
-  X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  Aes256GcmSivKey, AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, AesSivCmac256Tag, Argon2Params, Argon2i,
+  AsconAead128, AsconAead128Key, Blake2b256, Blake2b512, Blake2bKey, Blake2s128, Blake2s256, Blake2sKey, Blake3,
+  Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, EcdsaP256SecretKey, EcdsaP384SecretKey, Ed25519Keypair,
+  Ed25519SecretKey, HkdfSha256, HkdfSha384, HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512,
+  HmacSha512Tag, Kmac256, MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem768, MlKem768Ciphertext,
+  MlKem768DecapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKemError, Pbkdf2Sha256,
+  Pbkdf2Sha512, RsaBlindingPair, RsaEncryptionError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile,
+  RsaPublicKeyPolicy, SecretBytes, Sha512, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
   aead::{
     Nonce96, Nonce128, Nonce192, Nonce256, diag_aes128gcm_ctr32_be, diag_aes128gcm_ghash, diag_aes128gcm_tag_aes,
     diag_aes128gcmsiv_ctr32, diag_aes128gcmsiv_derive_keys, diag_aes128gcmsiv_polyval_digest,
     diag_aes128gcmsiv_raw_tag_aes, diag_aes256gcm_ctr32_be, diag_aes256gcm_ghash, diag_aes256gcm_tag_aes,
     diag_aes256gcmsiv_ctr32, diag_aes256gcmsiv_derive_keys, diag_aes256gcmsiv_raw_tag_aes,
+    diag_aes_siv_cmac256_open_portable, diag_aes_siv_cmac256_s2v_portable,
   },
   auth::{
     diag_ecdsa_p256_basepoint_blinded_limb_digest, diag_ecdsa_p256_final_multiply_limb_digest,
     diag_ecdsa_p256_nonce_inverse_blinded_limb_digest, diag_ecdsa_p256_nonce_inverse_limb_digest,
     diag_ecdsa_p256_nonce_reduce_limb_digest, diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest,
     diag_ecdsa_p256_order_mul_fixed_r_limb_digest, diag_ecdsa_p256_reduce_wide_order_limb_digest,
-    diag_ecdsa_p256_scalar_finish_limb_digest,
-    diag_ecdsa_p384_basepoint_blinded_limb_digest, diag_ecdsa_p384_final_multiply_limb_digest,
-    diag_ecdsa_p384_nonce_inverse_blinded_limb_digest, diag_ecdsa_p384_nonce_inverse_limb_digest,
-    diag_ecdsa_p384_nonce_reduce_limb_digest, diag_ecdsa_p384_order_mul_fixed_r_limb_digest,
-    diag_ecdsa_p384_reduce_wide_order_limb_digest, diag_ecdsa_p384_scalar_finish_limb_digest,
-    diag_mlkem_from_montgomery_product_domain_input_digest,
+    diag_ecdsa_p256_scalar_finish_limb_digest, diag_ecdsa_p384_basepoint_blinded_limb_digest,
+    diag_ecdsa_p384_final_multiply_limb_digest, diag_ecdsa_p384_nonce_inverse_blinded_limb_digest,
+    diag_ecdsa_p384_nonce_inverse_limb_digest, diag_ecdsa_p384_nonce_reduce_limb_digest,
+    diag_ecdsa_p384_order_mul_fixed_r_limb_digest, diag_ecdsa_p384_reduce_wide_order_limb_digest,
+    diag_ecdsa_p384_scalar_finish_limb_digest, diag_mlkem_from_montgomery_product_domain_input_digest,
     diag_mlkem_inverse_ntt_montgomery_product_input_digest, diag_mlkem_multiply_ntts_add_assign_input_digest,
     diag_mlkem_ntt_input_digest, diag_mlkem_to_montgomery_product_domain_input_digest,
     diag_mlkem512_keygen_secret_noise_digest, diag_mlkem768_keygen_secret_noise_digest,
@@ -475,6 +475,141 @@ header_protection_fixed_vs_random_key!(
   32,
   [0x63; 32]
 );
+
+fn aes_siv_cmac256_fixed_vs_random_key_open(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let nonce_bytes = [0x5B; 16];
+  let nonce = AesSivCmac256Nonce::try_from(nonce_bytes.as_slice()).expect("timing nonce is non-empty");
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let key_bytes = if matches!(class, Class::Left) {
+      [0x5C; 32]
+    } else {
+      rand_array::<32>(rng)
+    };
+    let key = AesSivCmac256Key::from_bytes(key_bytes);
+    let cipher = AesSivCmac256::new(&key);
+    let mut ciphertext = AEAD_PLAINTEXT;
+    let tag = cipher.seal_in_place(nonce, AAD, &mut ciphertext);
+    inputs.push((class, key, ciphertext, tag));
+  }
+
+  for (class, key, ciphertext, tag) in inputs {
+    runner.run_one(class, || {
+      let cipher = AesSivCmac256::new(&key);
+      let mut buffer = ciphertext;
+      cipher.open_in_place(nonce, AAD, &mut buffer, &tag).is_ok()
+    });
+  }
+}
+
+fn aes_siv_cmac256_first_vs_last_tag_mismatch(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let nonce_bytes = [0x5D; 16];
+  let nonce = AesSivCmac256Nonce::try_from(nonce_bytes.as_slice()).expect("timing nonce is non-empty");
+  let key = AesSivCmac256Key::from_bytes([0x5E; 32]);
+  let cipher = AesSivCmac256::new(&key);
+  let mut ciphertext = AEAD_PLAINTEXT;
+  let valid_tag = cipher.seal_in_place(nonce, AAD, &mut ciphertext).to_bytes();
+  let mut inputs = Vec::with_capacity(samples());
+
+  for class in balanced_classes(rng, samples()) {
+    let mut tag = valid_tag;
+    let mismatch = if matches!(class, Class::Left) {
+      0
+    } else {
+      AesSivCmac256::TAG_SIZE.strict_sub(1)
+    };
+    tag[mismatch] ^= 1;
+    inputs.push((class, AesSivCmac256Tag::from_bytes(tag)));
+  }
+
+  for (class, tag) in inputs {
+    runner.run_one(class, || {
+      let mut buffer = ciphertext;
+      cipher.open_in_place(nonce, AAD, &mut buffer, &tag).is_err()
+    });
+  }
+}
+
+fn aes_siv_cmac256_portable_s2v_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let nonce = [0x61; 16];
+  let aad = [0x62; 32];
+  let plaintext = [0x63; 48];
+  let mut inputs = Vec::with_capacity(samples());
+
+  for class in balanced_classes(rng, samples()) {
+    let key = if matches!(class, Class::Left) {
+      [0x64; 32]
+    } else {
+      rand_array::<32>(rng)
+    };
+    inputs.push((class, key));
+  }
+
+  for (class, key) in inputs {
+    runner.run_one(class, || {
+      diag_aes_siv_cmac256_s2v_portable(&key, &nonce, &aad, &plaintext)
+    });
+  }
+}
+
+fn aes_siv_cmac256_portable_s2v_seal_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
+  aes_siv_cmac256_portable_s2v_fixed_vs_random_key(runner, rng);
+}
+
+fn aes_siv_cmac256_portable_open_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let nonce_bytes = [0x65; 16];
+  let nonce = AesSivCmac256Nonce::try_from(nonce_bytes.as_slice()).expect("timing nonce is non-empty");
+  let aad = [0x66; 32];
+  let plaintext = [0x67; 48];
+  let mut inputs = Vec::with_capacity(samples());
+
+  for class in balanced_classes(rng, samples()) {
+    let key_bytes = if matches!(class, Class::Left) {
+      [0x68; 32]
+    } else {
+      rand_array::<32>(rng)
+    };
+    let key = AesSivCmac256Key::from_bytes(key_bytes);
+    let cipher = AesSivCmac256::new(&key);
+    let mut ciphertext = plaintext;
+    let tag = cipher.seal_in_place(nonce, &aad, &mut ciphertext).to_bytes();
+    inputs.push((class, key_bytes, ciphertext, tag));
+  }
+
+  for (class, key, ciphertext, tag) in inputs {
+    runner.run_one(class, || {
+      diag_aes_siv_cmac256_open_portable(&key, &nonce_bytes, &aad, &ciphertext, &tag)
+    });
+  }
+}
+
+fn aes_siv_cmac256_portable_open_first_vs_last_tag_mismatch(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let key = [0x69; 32];
+  let nonce_bytes = [0x6A; 16];
+  let nonce = AesSivCmac256Nonce::try_from(nonce_bytes.as_slice()).expect("timing nonce is non-empty");
+  let aad = [0x6B; 32];
+  let mut ciphertext = [0x6C; 48];
+  let cipher = AesSivCmac256::new(&AesSivCmac256Key::from_bytes(key));
+  let valid_tag = cipher.seal_in_place(nonce, &aad, &mut ciphertext).to_bytes();
+  let mut inputs = Vec::with_capacity(samples());
+
+  for class in balanced_classes(rng, samples()) {
+    let mut tag = valid_tag;
+    let mismatch = if matches!(class, Class::Left) {
+      0
+    } else {
+      AesSivCmac256::TAG_SIZE.strict_sub(1)
+    };
+    tag[mismatch] ^= 1;
+    inputs.push((class, tag));
+  }
+
+  for (class, tag) in inputs {
+    runner.run_one(class, || {
+      diag_aes_siv_cmac256_open_portable(&key, &nonce_bytes, &aad, &ciphertext, &tag)
+    });
+  }
+}
 aead_fixed_vs_random_key_open!(
   aes256gcm_fixed_vs_random_key_open,
   Aes256Gcm,
@@ -2096,6 +2231,28 @@ aead_fixed_vs_random_key_seal!(
   16,
   0x33
 );
+
+fn aes_siv_cmac256_fixed_vs_random_key_seal(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let nonce_bytes = [0x5F; 16];
+  let nonce = AesSivCmac256Nonce::try_from(nonce_bytes.as_slice()).expect("timing nonce is non-empty");
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let key_bytes = if matches!(class, Class::Left) {
+      [0x60; 32]
+    } else {
+      rand_array::<32>(rng)
+    };
+    inputs.push((class, AesSivCmac256Key::from_bytes(key_bytes)));
+  }
+
+  for (class, key) in inputs {
+    runner.run_one(class, || {
+      let cipher = AesSivCmac256::new(&key);
+      let mut buffer = AEAD_PLAINTEXT;
+      cipher.seal_in_place(nonce, AAD, &mut buffer).as_bytes()[0]
+    });
+  }
+}
 aead_fixed_vs_random_key_seal!(
   aes256gcm_fixed_vs_random_key_seal,
   Aes256Gcm,
@@ -2298,6 +2455,20 @@ ctbench_main_with_seeds!(
   (
     chacha20_header_protection_fixed_vs_random_key,
     Some(0x687063686132305f)
+  ),
+  (aes_siv_cmac256_fixed_vs_random_key_open, Some(0x7369765f6f70656e)),
+  (aes_siv_cmac256_first_vs_last_tag_mismatch, Some(0x7369765f7461676d)),
+  (
+    aes_siv_cmac256_portable_s2v_fixed_vs_random_key,
+    Some(0x7369765f73327670)
+  ),
+  (
+    aes_siv_cmac256_portable_open_fixed_vs_random_key,
+    Some(0x7369765f706f706b)
+  ),
+  (
+    aes_siv_cmac256_portable_open_first_vs_last_tag_mismatch,
+    Some(0x7369765f706f746d)
   ),
   (x25519_fixed_vs_random_scalar, Some(0x7832353531395f63)),
   (mlkem512_keygen_secret_noise_fixed_vs_random, Some(0x6d6b3531326b676e)),
@@ -2521,6 +2692,11 @@ ctbench_main_with_seeds!(
   (xchacha20poly1305_fixed_vs_random_key_seal, Some(0x7863686132307365)),
   (aegis256_fixed_vs_random_key_seal, Some(0x6165676973736561)),
   (ascon_aead128_fixed_vs_random_key_seal, Some(0x6173636f6e736561)),
+  (aes_siv_cmac256_fixed_vs_random_key_seal, Some(0x7369765f7365616c)),
+  (
+    aes_siv_cmac256_portable_s2v_seal_fixed_vs_random_key,
+    Some(0x7369765f73327673)
+  ),
   (blake2b256_keyed_fixed_vs_random_key, Some(0x6232623235365f6b)),
   (blake2b512_keyed_fixed_vs_random_key, Some(0x6232623531325f6b)),
   (blake2s128_keyed_fixed_vs_random_key, Some(0x6232733132385f6b)),

@@ -600,6 +600,27 @@ pub(crate) fn aes128_expand_key(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
   }
 }
 
+/// Construct the table-free portable AES-128 key representation for proof harnesses.
+///
+/// This bypasses runtime hardware selection without creating a second AES implementation. On
+/// RISC-V, the existing table-free fixslice fallback is the portable authority.
+#[cfg(feature = "diag")]
+#[inline]
+pub(crate) fn aes128_expand_key_forced_portable(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
+  #[cfg(target_arch = "riscv64")]
+  {
+    Aes128EncKey {
+      inner: riscv64_fixslice_key_inner_128(key),
+    }
+  }
+  #[cfg(not(target_arch = "riscv64"))]
+  {
+    Aes128EncKey {
+      inner: Key128Inner::PortableRoundKeys(aes128_expand_key_portable(key)),
+    }
+  }
+}
+
 #[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
 #[inline]
 pub(crate) fn aes256_expand_key_riscv_vector(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
@@ -708,7 +729,7 @@ pub(super) unsafe fn aarch64_encrypt_block_inline(keys: &ce::CeRoundKeys, block:
 /// Caller must ensure AES-CE is available.
 #[cfg(all(
   target_arch = "aarch64",
-  any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")
+  any(test, feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")
 ))]
 #[target_feature(enable = "aes,neon")]
 #[inline]
@@ -872,7 +893,12 @@ pub(super) unsafe fn aarch64_encrypt_block_128_inline(keys: &ce::Ce128RoundKeys,
 /// Caller must ensure AES-CE is available.
 #[cfg(all(
   target_arch = "aarch64",
-  any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")
+  any(
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "aes-siv",
+    feature = "aegis256"
+  )
 ))]
 #[target_feature(enable = "aes,neon")]
 #[inline]
@@ -1020,7 +1046,7 @@ pub(super) unsafe fn ppc_encrypt_block_inline(keys: &ppc::PpcRoundKeys, block: &
 /// Caller must ensure POWER8 crypto is available.
 #[cfg(all(
   target_arch = "powerpc64",
-  any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")
+  any(test, feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")
 ))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
@@ -1088,7 +1114,12 @@ pub(super) unsafe fn ppc_encrypt_block_128_inline(keys: &ppc::Ppc128RoundKeys, b
 /// Caller must ensure POWER8 crypto is available.
 #[cfg(all(
   target_arch = "powerpc64",
-  any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")
+  any(
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "aes-siv",
+    feature = "aegis256"
+  )
 ))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
@@ -1649,7 +1680,12 @@ pub(super) unsafe fn s390x_encrypt_blocks_raw_128_inline(
 /// Caller must ensure MSA is available.
 #[cfg(all(
   target_arch = "s390x",
-  any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")
+  any(
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "aes-siv",
+    feature = "aegis256"
+  )
 ))]
 #[inline(always)]
 pub(super) unsafe fn s390x_encrypt_blocks_128_inline(key: &km::Km128Key, blocks: &mut [u8], count: usize) {
@@ -1812,18 +1848,90 @@ pub(crate) fn aes128_encrypt_block_prefix_5(ek: &Aes128EncKey, block: &[u8; BLOC
   prefix
 }
 
+/// XOR a serial block stream into `state` and AES-128-encrypt after each block.
+///
+/// This is the common chained-block kernel used by AES-CMAC. Backend selection occurs once per
+/// stream; the portable implementation remains the semantic authority.
+#[cfg(feature = "aes-siv")]
+#[inline]
+pub(crate) fn aes128_xor_encrypt_blocks(ek: &Aes128EncKey, state: &mut [u8; BLOCK_SIZE], blocks: &[[u8; BLOCK_SIZE]]) {
+  #[inline(always)]
+  fn xor_block(state: &mut [u8; BLOCK_SIZE], block: &[u8; BLOCK_SIZE]) {
+    for (state_byte, input_byte) in state.iter_mut().zip(block) {
+      *state_byte ^= *input_byte;
+    }
+  }
+
+  match &ek.inner {
+    #[cfg(not(target_arch = "riscv64"))]
+    Key128Inner::PortableRoundKeys(rk) => {
+      for block in blocks {
+        xor_block(state, block);
+        aes128_encrypt_block_portable(rk, state);
+      }
+    }
+    #[cfg(target_arch = "x86_64")]
+    Key128Inner::X86AesNi(rk) => {
+      // SAFETY: this key variant is constructed only after AES-NI runtime detection.
+      unsafe { ni::xor_encrypt_blocks_128(rk, state, blocks) }
+    }
+    #[cfg(target_arch = "aarch64")]
+    Key128Inner::Aarch64Aes(rk) => {
+      // SAFETY: this key variant is constructed only after AES-CE runtime detection.
+      unsafe { ce::xor_encrypt_blocks_128(rk, state, blocks) }
+    }
+    #[cfg(target_arch = "s390x")]
+    Key128Inner::S390xMsa(rk) => {
+      for block in blocks {
+        xor_block(state, block);
+        // SAFETY: this key variant is constructed only after MSA/CPACF runtime detection.
+        unsafe { km::encrypt_block_128(rk, state) }
+      }
+    }
+    #[cfg(target_arch = "powerpc64")]
+    Key128Inner::Power8Crypto(rk) => {
+      for block in blocks {
+        xor_block(state, block);
+        // SAFETY: this key variant is constructed only after POWER8 crypto runtime detection.
+        unsafe { ppc::encrypt_block_128(rk, state) }
+      }
+    }
+    #[cfg(target_arch = "riscv64")]
+    Key128Inner::ScalarCrypto(rk) => {
+      for block in blocks {
+        xor_block(state, block);
+        // SAFETY: this key variant is constructed only after Zkne runtime detection.
+        unsafe { rv_scalar_aes::encrypt_block_128(rk, state) }
+      }
+    }
+    #[cfg(target_arch = "riscv64")]
+    Key128Inner::VectorCrypto(rk) => {
+      for block in blocks {
+        xor_block(state, block);
+        // SAFETY: this key variant is constructed only after Zvkned runtime detection.
+        unsafe { rv_aes::encrypt_block_128(rk, state) }
+      }
+    }
+    #[cfg(target_arch = "riscv64")]
+    Key128Inner::Fixslice(rk) => {
+      for block in blocks {
+        xor_block(state, block);
+        rv_fixslice_aes::encrypt_block_128(rk, state);
+      }
+    }
+  }
+}
+
 /// Encrypt multiple independent 16-byte blocks with AES-128 ECB.
 ///
-/// Mirrors [`aes256_encrypt_blocks_ecb`]: routes to the s390x KM batch
-/// instruction or the RV64 4-block kernels when available, otherwise calls
-/// the per-block dispatcher. Used by `riscv64` from the AES-128 CTR paths
-/// and by AES-128-GCM-SIV key derivation.
-// Live callers are GCM-SIV key derivation (any arch), the batch CTR path on the
-// arches that have a block-batch kernel, and the unit tests below -- `mod aes`
-// is also compiled for `aegis256` under `cfg(test)`.
+/// Mirrors [`aes256_encrypt_blocks_ecb`]: routes to the available x86_64,
+/// AArch64, POWER, s390x, or RV64 batch kernel and otherwise uses the per-block
+/// dispatcher. Live callers are AES-SIV CTR, AES-GCM-SIV key derivation, target
+/// batch CTR paths, and the differential tests below.
 #[cfg(any(
   test,
   feature = "aes-gcm-siv",
+  feature = "aes-siv",
   all(
     feature = "aes-gcm",
     any(
@@ -1836,6 +1944,21 @@ pub(crate) fn aes128_encrypt_block_prefix_5(ek: &Aes128EncKey, block: &[u8; BLOC
 ))]
 #[inline]
 pub(crate) fn aes128_encrypt_blocks_ecb(ek: &Aes128EncKey, blocks: &mut [[u8; BLOCK_SIZE]]) {
+  #[cfg(target_arch = "x86_64")]
+  if let Key128Inner::X86AesNi(ni_rk) = &ek.inner {
+    if !blocks.is_empty() {
+      if blocks.len() >= 16 && crate::platform::caps().has(crate::platform::caps::x86::VAES_READY) {
+        // SAFETY: the key variant proves AES-NI availability, `VAES_READY` proves the required
+        // VAES/AVX-512 CPU and OS state, and `blocks` contains complete disjoint AES blocks.
+        unsafe { ni::encrypt_blocks_128_vaes512(ni_rk, blocks) };
+      } else {
+        // SAFETY: the key variant proves AES-NI availability, and `blocks` contains complete,
+        // disjoint, initialized AES blocks.
+        unsafe { ni::encrypt_blocks_128(ni_rk, blocks) };
+      }
+    }
+    return;
+  }
   #[cfg(target_arch = "aarch64")]
   if let Key128Inner::Aarch64Aes(ce_rk) = &ek.inner {
     if !blocks.is_empty() {

@@ -1467,6 +1467,134 @@ fn header_protection(c: &mut Criterion) {
   mask.finish();
 }
 
+// AES-SIV-CMAC-256 (RFC 5297 nonce-based profile)
+
+fn aes_siv_cmac256(c: &mut Criterion) {
+  use aes_siv::{KeyInit as _, siv::Aes128Siv};
+  use rscrypto::{AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce};
+
+  let nonce_rs = AesSivCmac256Nonce::try_from(NONCE_16.as_slice()).expect("benchmark nonce is non-empty");
+  let key_rs = AesSivCmac256Key::from_bytes(KEY_32);
+  let key_rc: aes_siv::Key<Aes128Siv> = KEY_32.into();
+
+  let mut construction = c.benchmark_group("aes-siv-cmac-256/construct");
+  construction.bench_function("rscrypto", |b| {
+    b.iter(|| black_box(AesSivCmac256::new(black_box(&key_rs))))
+  });
+  construction.bench_function("rustcrypto", |b| {
+    b.iter(|| black_box(Aes128Siv::new(black_box(&key_rc))))
+  });
+  construction.finish();
+
+  // NTS packet shapes: empty authenticator payload, short field, extension-field,
+  // cookie-shaped, and near-MTU protected bodies.
+  let inputs = [0usize, 16, 64, 256, 1232]
+    .into_iter()
+    .map(|len| (len, common::random_bytes(len)))
+    .collect::<Vec<_>>();
+  let cipher_rs = AesSivCmac256::new(&key_rs);
+  let mut cipher_rc = Aes128Siv::new(&key_rc);
+  let headers: [&[u8]; 2] = [AAD, &NONCE_16];
+
+  // Construction prepares different amounts of reusable work in the two libraries. Measure the
+  // complete one-context/one-seal lifecycle separately so setup deferral cannot skew the result.
+  let mut construct_and_seal = c.benchmark_group("aes-siv-cmac-256/construct-and-seal");
+  for (len, data) in &inputs {
+    common::set_throughput(&mut construct_and_seal, *len);
+    let mut buffer_rs = data.clone();
+    construct_and_seal.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, input| {
+      b.iter(|| {
+        buffer_rs.copy_from_slice(input);
+        let cipher = AesSivCmac256::new(black_box(&key_rs));
+        black_box(cipher.seal_in_place(black_box(nonce_rs), black_box(AAD), black_box(&mut buffer_rs)))
+      })
+    });
+
+    let mut buffer_rc = data.clone();
+    construct_and_seal.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, input| {
+      b.iter(|| {
+        buffer_rc.copy_from_slice(input);
+        let mut cipher = Aes128Siv::new(black_box(&key_rc));
+        black_box(
+          cipher
+            .encrypt_inout_detached(black_box(headers), black_box(buffer_rc.as_mut_slice().into()))
+            .expect("valid benchmark input must seal"),
+        )
+      })
+    });
+  }
+  construct_and_seal.finish();
+
+  let mut seal = c.benchmark_group("aes-siv-cmac-256/seal");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut seal, *len);
+    let mut buffer_rs = data.clone();
+    seal.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, input| {
+      b.iter(|| {
+        buffer_rs.copy_from_slice(input);
+        black_box(cipher_rs.seal_in_place(black_box(nonce_rs), black_box(AAD), black_box(&mut buffer_rs)))
+      })
+    });
+
+    let mut buffer_rc = data.clone();
+    seal.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, input| {
+      b.iter(|| {
+        buffer_rc.copy_from_slice(input);
+        black_box(
+          cipher_rc
+            .encrypt_inout_detached(black_box(headers), black_box(buffer_rc.as_mut_slice().into()))
+            .expect("valid benchmark input must seal"),
+        )
+      })
+    });
+  }
+  seal.finish();
+
+  let mut open = c.benchmark_group("aes-siv-cmac-256/open");
+  for (len, data) in &inputs {
+    common::set_throughput(&mut open, *len);
+
+    let mut ciphertext_rs = data.clone();
+    let tag_rs = cipher_rs.seal_in_place(nonce_rs, AAD, &mut ciphertext_rs);
+    let mut buffer_rs = ciphertext_rs.clone();
+    open.bench_with_input(BenchmarkId::new("rscrypto", len), &ciphertext_rs, |b, ciphertext| {
+      b.iter(|| {
+        buffer_rs.copy_from_slice(ciphertext);
+        cipher_rs
+          .open_in_place(
+            black_box(nonce_rs),
+            black_box(AAD),
+            black_box(&mut buffer_rs),
+            black_box(&tag_rs),
+          )
+          .expect("valid benchmark ciphertext must open");
+        black_box(&buffer_rs);
+      })
+    });
+
+    let mut ciphertext_rc = data.clone();
+    let tag_rc = cipher_rc
+      .encrypt_inout_detached(headers, ciphertext_rc.as_mut_slice().into())
+      .expect("valid benchmark input must seal");
+    let mut buffer_rc = ciphertext_rc.clone();
+    open.bench_with_input(BenchmarkId::new("rustcrypto", len), &ciphertext_rc, |b, ciphertext| {
+      b.iter(|| {
+        buffer_rc.copy_from_slice(ciphertext);
+        cipher_rc
+          .decrypt_inout_detached(
+            black_box(headers),
+            black_box(buffer_rc.as_mut_slice().into()),
+            black_box(&tag_rc),
+          )
+          .expect("valid benchmark ciphertext must open");
+        black_box(&buffer_rc);
+      })
+    });
+  }
+  open.finish();
+}
+
 // Criterion harness
 
 criterion_group!(
@@ -1488,5 +1616,6 @@ criterion_group!(
   ascon_aead128_encrypt,
   ascon_aead128_decrypt,
   header_protection,
+  aes_siv_cmac256,
 );
 criterion_main!(benches);

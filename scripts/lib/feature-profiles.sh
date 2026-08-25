@@ -32,6 +32,7 @@ COMPILE_FEATURE_SETS=(
   "rsa,getrandom"
   "x25519"
   "chacha20poly1305"
+  "aes-siv"
   "aegis256"
   "ascon-aead"
   "checksums"

@@ -63,7 +63,7 @@ rscrypto = { version = "0.8.1", features = ["full", "portable-only"] }
 | `password-hashing` | `argon2`, `scrypt`, `phc-strings`                                                           |
 | `signatures`       | `ecdsa`, `ed25519`, `rsa`                                                                   |
 | `key-exchange`     | `x25519`, `ml-kem`                                                                          |
-| `aead`             | `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead` |
+| `aead`             | `aes-gcm`, `aes-gcm-siv`, `aes-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead` |
 
 ### Algorithm leaf features
 
@@ -99,6 +99,7 @@ rscrypto = { version = "0.8.1", features = ["full", "portable-only"] }
 | `ml-kem`            | `sha3`                     | ML-KEM-512, ML-KEM-768, and ML-KEM-1024 key encapsulation                  |
 | `aes-gcm`           | --                         | AES-128-GCM, AES-256-GCM, and expert AES header-protection mask generation |
 | `aes-gcm-siv`       | --                         | AES-128-GCM-SIV and AES-256-GCM-SIV                                        |
+| `aes-siv`           | --                         | AES-SIV-CMAC-256 nonce-based profile (RFC 5297)                             |
 | `chacha20poly1305`  | --                         | ChaCha20-Poly1305 and expert ChaCha20 header-protection mask generation    |
 | `xchacha20poly1305` | --                         | XChaCha20-Poly1305                                                         |
 | `aegis256`          | --                         | AEGIS-256                                                                  |

@@ -102,6 +102,17 @@ mod aes256gcmsiv_serde {
   serde_roundtrip!(tag, Aes256GcmSivTag, 16);
 }
 
+#[cfg(feature = "aes-siv")]
+mod aes_siv_cmac256_serde {
+  #[cfg(feature = "serde-secrets")]
+  use rscrypto::aead::AesSivCmac256Key;
+  use rscrypto::aead::AesSivCmac256Tag;
+
+  #[cfg(feature = "serde-secrets")]
+  serde_roundtrip!(key, AesSivCmac256Key, 32);
+  serde_roundtrip!(tag, AesSivCmac256Tag, 16);
+}
+
 #[cfg(feature = "ascon-aead")]
 mod ascon128_serde {
   #[cfg(feature = "serde-secrets")]
