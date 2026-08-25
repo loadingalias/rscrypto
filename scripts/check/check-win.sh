@@ -17,8 +17,6 @@ if ! cargo xwin --version >/dev/null 2>&1; then
   exit 0
 fi
 
-maybe_disable_sccache
-
 # Parse args and set CRATE_FLAGS, SCOPE_DESC
 get_crate_flags "$@"
 

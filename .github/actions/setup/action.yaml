@@ -1,6 +1,6 @@
 name: Setup rscrypto Environment
 description: |
-  Install Rust toolchain, cargo tools, and configure caching.
+  Install the Rust toolchain, configure Cargo Rail compiler reuse, and install cargo tools.
   Unified host setup for GHA + runs-on.com + IBM/RISC-V runners.
 
 inputs:
@@ -8,10 +8,6 @@ inputs:
     description: Toolchain contract to install (development, msrv, or nightly).
     required: false
     default: "development"
-  cache-key:
-    description: Suffix for the rust-cache key (workflow + target).
-    required: false
-    default: ""
   tools-mode:
     description: Tool install mode (standard, quality, release, rail, ci, supply-chain, bench, ibm, fuzz, coverage, ct-linux, minimal, none).
     required: false
@@ -20,28 +16,37 @@ inputs:
     description: Comma-separated rust toolchain components.
     required: false
     default: "clippy, rustfmt, rust-src"
-  enable-magic-cache:
-    description: Enable runs-on.com MagicCache (S3-backed). Only effective on runs-on pools declaring s3-cache extras.
+  cache-url:
+    description: Machine-owned Cargo Rail L2 URL. Empty leaves existing machine cache policy unchanged.
     required: false
-    default: "false"
-  enable-rust-cache:
-    description: Enable Swatinem/rust-cache for cargo artifacts.
+    default: ""
+  cache-mode:
+    description: Cargo Rail remote authority (read or read-write).
     required: false
-    default: "true"
+    default: "read"
+  cache-max-size:
+    description: Positive bound for the job-local verified compiler cache.
+    required: false
+    default: "10GiB"
 
 runs:
   using: composite
   steps:
-    # runs-on.com S3-backed cache intercept. No-op on non-runs-on pools.
-    - name: Setup MagicCache
-      if: inputs.enable-magic-cache == 'true'
-      uses: runs-on/action@46910bf61b41721b0579f237e186afb35477007a # v2.3.0
-
     - name: Setup Toolchain
       uses: ./.github/actions/setup-toolchain
       with:
         contract: ${{ inputs.toolchain-contract }}
         components: ${{ inputs.toolchain-components }}
+
+    - name: Setup Cargo Rail Cache
+      if: inputs.cache-url != ''
+      uses: loadingalias/cargo-rail-action/cache@47e86bde928ce420b85efa5f8d3b5feb96fd0ffc # v7.0.0
+      with:
+        version: "0.22.2"
+        checksum: required
+        url: ${{ inputs.cache-url }}
+        mode: ${{ inputs.cache-mode }}
+        max-size: ${{ inputs.cache-max-size }}
 
     - name: Install Cargo Tools
       if: inputs.tools-mode != 'none'
@@ -49,15 +54,3 @@ runs:
       env:
         TOOLS_MODE: ${{ inputs.tools-mode }}
       run: scripts/ci/install-tools.sh "$TOOLS_MODE"
-
-    - name: Setup Rust Cache
-      if: inputs.enable-rust-cache == 'true'
-      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      with:
-        shared-key: "rscrypto-v1-${{ inputs.cache-key }}"
-        cache-directories: ${{ inputs.tools-mode == 'rail' && 'target/cargo-rail/cache' || '' }}
-        cache-bin: false
-        cache-on-failure: true
-        # Populate cache on main, manual dispatch, and PRs (so slow platforms
-        # like IBM/RISC-V warm their cache before merge).
-        save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' }}

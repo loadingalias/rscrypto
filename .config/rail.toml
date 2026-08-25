@@ -1,7 +1,5 @@
-# cargo-rail config for rscrypto
-# Documentation: https://github.com/loadingalias/cargo-rail
-
-# Targets
+# Additional target-resolution and compiler-evidence views owned by
+# .config/target-matrix.json and docs/platforms.md.
 targets = [
   "aarch64-apple-darwin",
   "aarch64-pc-windows-msvc",
@@ -23,67 +21,42 @@ targets = [
 ]
 
 [unify]
-include_paths = true
 include_renamed = true
-
 strict_version_compat = true
 exact_pin_handling = "warn"
 major_version_conflict = "warn"
-preserve_features = []
-skip_undeclared_patterns = []
-
-exclude = []
-include = []
-max_backups = 2
-consumer_scope = "open" # Published library: preserve dormant public feature and dependency APIs.
-msrv_policy = { mode = "disabled" } # Root package MSRV remains authoritative in this single-crate workspace.
-
+skip_undeclared_patterns = [] # Every feature spelling is actionable in this crate.
+consumer_scope = "open" # Published library: external consumers may activate dormant public features.
+msrv_policy = { mode = "disabled" } # Cargo.toml owns the tested package MSRV.
 
 [release]
-tag_prefix = "v"
-tag_format = "{prefix}{version}" # Single crate: vX.Y.Z
-
+source = "changes"
+tag_format = "{prefix}{version}"
 sign_tags = true
-
-require_changelog_entries = false
 require_release_notes = true
-release_notes_dir = "release-notes"
 pre_1_breaking_bump = "minor"
-unconventional_commits = "allow" # Required .changes files own bumps and user-facing release notes.
 semver_check = "warn"
 change_dir = ".changes"
-require_change_files = ["rscrypto"]
-remote_effects = "push" # Release automation pushes commits/tags; the repository workflow owns forge releases.
+remote_effects = "push" # The repository workflow, not Cargo Rail, owns forge release publication.
 
 [release.changelog]
 path = "CHANGELOG.md"
 relative_to = "workspace"
-entry_format = "- {scope}{breaking}{description}{prs} ({sha_link})" # Entry placeholders: scope, breaking, description, prs, sha, sha_link, type
-emoji = true # Render emoji in changelog section headers
-group_order = [] # Render reviewed .changes entries only; commit subjects are not release notes.
-fallback = "skip" # Drop commit-derived entries.
-
-[release.changelog.filters]
-skip_types = ["chore", "ci"]
-skip_scopes = []
-include_paths = [] # Optional changelog attribution include globs
-exclude_paths = [] # Optional changelog attribution exclude globs
-
 
 [change-detection]
 infrastructure = [
   ".changes/**",
   ".github/**",
   ".config/**",
+  ".cargo/**",
   "justfile",
   "Cargo.lock",
   "rust-toolchain.toml",
   "deny.toml",
   "rustfmt.toml",
-  ".cargo/config.toml",
 ]
-unknown_file_policy = "strict" # Unknown crate files build/test; unknown workspace files run infrastructure checks.
-confidence_profile = "balanced" # Planner confidence profile: strict, balanced, fast
+unknown_file_policy = "strict"
+confidence_profile = "balanced"
 
 [change-detection.custom]
 cargo_graph = [
@@ -92,12 +65,11 @@ cargo_graph = [
   "rust-toolchain.toml",
   ".cargo/**",
   ".config/rail.toml",
+  ".config/target-matrix.json",
+  ".config/toolchains.toml",
   "build.rs",
   "src/**",
   "tests/**",
   "benches/**",
   "examples/**",
 ]
-
-[run]
-default_profile = "local" # Default run profile (built-ins: local, ci, nightly)

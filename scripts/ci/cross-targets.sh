@@ -13,8 +13,6 @@ source "$SCRIPT_DIR/../lib/common.sh"
 # shellcheck source=../lib/targets.sh
 source "$SCRIPT_DIR/../lib/targets.sh"
 
-maybe_disable_sccache
-
 MUSL_TARGETS=()
 for target in "${LINUX_TARGETS[@]}"; do
   if [[ "$target" == *-musl ]]; then
@@ -35,11 +33,11 @@ for target in "${MUSL_TARGETS[@]}"; do
   target_dir="target/cross-check/$target"
   mkdir -p "$target_dir"
 
-  RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
+  CARGO_TARGET_DIR="$target_dir" \
     cargo check --locked --target "$target" --no-default-features --lib
-  RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
+  CARGO_TARGET_DIR="$target_dir" \
     cargo clippy --locked --target "$target" --lib --all-features
-  RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
+  CARGO_TARGET_DIR="$target_dir" \
     cargo build --locked --target "$target" --no-default-features --features alloc --lib --release
 done
 

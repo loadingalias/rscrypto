@@ -42,10 +42,43 @@ printf 'just %s\n' "$*" >>"$MOCK_LOG"
 SH
 chmod +x "$fake_bin/just"
 
-workspace_scope='{"scope_contract_version":2,"resolved_base":"base","resolved_head":"head","mode":"workspace","crates":[],"cargo_args":["--workspace"],"surfaces":{"bench":false,"build":true,"custom:cargo_graph":true,"docs":false,"infra":false,"test":true}}'
-empty_scope='{"scope_contract_version":2,"resolved_base":"base","resolved_head":"head","mode":"empty","crates":[],"cargo_args":[],"surfaces":{"bench":false,"build":false,"custom:cargo_graph":false,"docs":false,"infra":false,"test":false}}'
-plan="$(jq -cn --argjson scope "$workspace_scope" '{schema_version:1,command:"plan",mode:"inspect",result:"success",exit_code:0,plan_contract_version:3,files:[{path:"Cargo.toml"}],scope:$scope}')"
-empty_plan="$(jq -cn --argjson scope "$empty_scope" '{schema_version:1,command:"plan",mode:"inspect",result:"success",exit_code:0,plan_contract_version:3,files:[],scope:$scope}')"
+make_plan() {
+  local scope=$1
+  local files=${2:-'[]'}
+
+  jq -cn \
+    --argjson scope "$scope" \
+    --argjson files "$files" \
+    '{
+      plan_contract_version: 7,
+      inputs: {snapshot_id: "v1-sha256-test"},
+      resolution_universe: {
+        mode: "declared_dependencies",
+        identity: "resolution-universe-v1:sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      files: $files,
+      scope: ($scope | del(.surfaces)),
+      surfaces: (
+        $scope.surfaces
+        | with_entries(.value = {
+            enabled: .value,
+            reasons: [],
+            scope: (
+              if .value then
+                ($scope | del(.scope_contract_version, .resolved_base, .resolved_head, .surfaces))
+              else
+                {mode: "empty", crates: [], cargo_args: []}
+              end
+            )
+          })
+      )
+    }'
+}
+
+workspace_scope='{"scope_contract_version":4,"resolved_base":"base","resolved_head":"head","mode":"workspace","crates":[],"cargo_args":["--workspace"],"surfaces":{"bench":false,"build":true,"custom:cargo_graph":true,"docs":false,"infra":false,"test":true}}'
+empty_scope='{"scope_contract_version":4,"resolved_base":"base","resolved_head":"head","mode":"empty","crates":[],"cargo_args":[],"surfaces":{"bench":false,"build":false,"custom:cargo_graph":false,"docs":false,"infra":false,"test":false}}'
+plan="$(make_plan "$workspace_scope" '[{"path":"Cargo.toml"}]')"
+empty_plan="$(make_plan "$empty_scope")"
 
 normal_output="$TMP_ROOT/normal.out"
 if (
@@ -141,8 +174,7 @@ run_pre_push_case missing-scope "$(jq -c 'del(.scope)' <<<"$plan")" '' 0 true
 run_pre_push_case valid-empty "$empty_plan" '' 0 false
 
 installer_scope=$(jq -c '.surfaces.infra = true' <<<"$empty_scope")
-installer_plan=$(jq -cn --argjson scope "$installer_scope" \
-  '{schema_version:1,command:"plan",mode:"inspect",result:"success",exit_code:0,plan_contract_version:3,files:[{path:"scripts/ci/install-tools.sh"}],scope:$scope}')
+installer_plan=$(make_plan "$installer_scope" '[{"path":"scripts/ci/install-tools.sh"}]')
 : >"$mock_log"
 if ! (
   cd "$fixture"
@@ -164,8 +196,7 @@ grep -Fq 'just check-actions' "$mock_log" || {
   exit 1
 }
 
-recovery_plan=$(jq -cn --argjson scope "$installer_scope" \
-  '{schema_version:1,command:"plan",mode:"inspect",result:"success",exit_code:0,plan_contract_version:3,files:[{path:"scripts/ci/release-ct-recovery-check.sh"}],scope:$scope}')
+recovery_plan=$(make_plan "$installer_scope" '[{"path":"scripts/ci/release-ct-recovery-check.sh"}]')
 : >"$mock_log"
 if ! (
   cd "$fixture"
@@ -211,7 +242,8 @@ git -C "$plan_fixture" commit --quiet -m "edit script documentation"
 
 docs_plan=$(cd "$plan_fixture" && cargo rail plan --from HEAD~1 --to HEAD --json)
 jq -e '
-  .result == "success"
+  .plan_contract_version == 7
+    and .scope.scope_contract_version == 4
     and (.files | length == 1)
     and .files[0].path == "scripts/README.md"
     and .files[0].kind == "docs"
@@ -229,7 +261,8 @@ git -C "$plan_fixture" commit --quiet -m "add script"
 
 script_plan=$(cd "$plan_fixture" && cargo rail plan --from HEAD~1 --to HEAD --json)
 jq -e '
-  .result == "success"
+  .plan_contract_version == 7
+    and .scope.scope_contract_version == 4
     and (.files | length == 1)
     and .files[0].path == "scripts/check.sh"
     and .files[0].kind == "script"

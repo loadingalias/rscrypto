@@ -17,10 +17,6 @@ on:
         required: false
         type: number
         default: 30
-      cache_key:
-        required: false
-        type: string
-        default: ""
       tools_mode:
         required: false
         type: string
@@ -33,14 +29,6 @@ on:
         required: false
         type: string
         default: "clippy, rustfmt, rust-src"
-      enable_magic_cache:
-        required: false
-        type: boolean
-        default: false
-      enable_rust_cache:
-        required: false
-        type: boolean
-        default: true
       test_mode:
         required: false
         type: string
@@ -133,11 +121,10 @@ jobs:
         uses: ./.github/actions/setup
         with:
           toolchain-contract: ${{ inputs.toolchain_contract }}
-          cache-key: ${{ inputs.cache_key }}
           tools-mode: ${{ inputs.tools_mode }}
           toolchain-components: ${{ inputs.toolchain_components }}
-          enable-magic-cache: ${{ inputs.enable_magic_cache }}
-          enable-rust-cache: ${{ inputs.enable_rust_cache }}
+          cache-url: ${{ vars.CARGO_RAIL_CACHE_URL }}
+          cache-mode: ${{ github.event_name == 'pull_request' && 'read' || 'read-write' }}
 
       - name: Run
         shell: bash

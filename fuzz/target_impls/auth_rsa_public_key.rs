@@ -178,7 +178,7 @@ fn der_null() -> Vec<u8> {
 
 fn hex_to_vec(hex: &str) -> Vec<u8> {
   let mut out = Vec::with_capacity(hex.len().div_euclid(2));
-  for chunk in hex.as_bytes().chunks_exact(2) {
+  for chunk in hex.as_bytes().as_chunks::<2>().0 {
     let hi = hex_value(chunk[0]).expect("RSA modulus fixture must contain hexadecimal digits");
     let lo = hex_value(chunk[1]).expect("RSA modulus fixture must contain hexadecimal digits");
     out.push(hi.strict_shl(4) | lo);

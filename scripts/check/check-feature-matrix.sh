@@ -7,8 +7,6 @@ source "$SCRIPT_DIR/../lib/common.sh"
 # shellcheck source=../lib/feature-profiles.sh
 source "$SCRIPT_DIR/../lib/feature-profiles.sh"
 
-maybe_disable_sccache
-
 LOG_DIR=$(mktemp -d)
 trap 'rm -rf "$LOG_DIR"' EXIT
 TOTAL=${#COMPILE_FEATURE_SETS[@]}

@@ -30,6 +30,7 @@ RSA="$WORKFLOWS/rsa.yaml"
 SETUP_ACTION="$ACTIONS/setup/action.yaml"
 TOOLCHAIN_ACTION="$ACTIONS/setup-toolchain/action.yaml"
 MANIFEST="$ROOT/.config/target-matrix.json"
+RAIL_CONFIG="$ROOT/.config/rail.toml"
 TOOL_ARCHIVES="$ROOT/.config/ci-tool-archives.tsv"
 CARGO_CONFIG="$ROOT/.cargo/config.toml"
 CROSS_SCRIPT="$ROOT/scripts/ci/cross-targets.sh"
@@ -60,6 +61,7 @@ REPOSITORY_POLICY="$ROOT/.github/rulesets/protect-main.json"
 RELEASE_TAG_POLICY="$ROOT/.github/rulesets/protect-release-tags.json"
 RELEASE_IMMUTABILITY_POLICY="$ROOT/.github/repository-settings/release-immutability.json"
 DEPENDABOT="$ROOT/.github/dependabot.yaml"
+RUNS_ON="$ROOT/.github/runs-on.yml"
 
 fail() {
   echo "CI ownership error: $*" >&2
@@ -129,6 +131,7 @@ require_file "$RSA"
 require_file "$SETUP_ACTION"
 require_file "$TOOLCHAIN_ACTION"
 require_file "$MANIFEST"
+require_file "$RAIL_CONFIG"
 require_file "$TOOL_ARCHIVES"
 require_file "$CARGO_CONFIG"
 require_file "$CROSS_SCRIPT"
@@ -159,6 +162,7 @@ require_file "$REPOSITORY_POLICY"
 require_file "$RELEASE_TAG_POLICY"
 require_file "$RELEASE_IMMUTABILITY_POLICY"
 require_file "$DEPENDABOT"
+require_file "$RUNS_ON"
 
 [[ $(yq eval '.version' "$DEPENDABOT") == "2" ]] || fail "Dependabot config must use version 2"
 [[ $(yq eval '[.updates[] | select(."package-ecosystem" == "cargo")] | length' "$DEPENDABOT") == "1" ]] \
@@ -336,6 +340,67 @@ rail_version=$(sed -n 's/^CARGO_RAIL_VERSION=//p' "$INSTALL_TOOLS")
 rail_action_condition=$(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail") | .if' "$CI")
 [[ "$rail_action_condition" == "github.event_name == 'pull_request'" ]] \
   || fail "cargo-rail-action must run only for pull requests"
+
+cache_action=$(yq eval '.runs.steps[] | select(.name == "Setup Cargo Rail Cache") | .uses' "$SETUP_ACTION")
+expected_cache_action="${rail_action%@*}/cache@${rail_action#*@}"
+[[ "$cache_action" == "$expected_cache_action" ]] \
+  || fail "compiler reuse must use the planner action's immutable v7 cache implementation"
+[[ $(yq eval '.runs.steps[] | select(.name == "Setup Cargo Rail Cache") | .with.version' "$SETUP_ACTION") \
+  == "$rail_version" ]] \
+  || fail "the Cargo Rail cache action must use the authenticated Cargo Rail version"
+[[ $(yq eval '.runs.steps[] | select(.name == "Setup Cargo Rail Cache") | .with.checksum' "$SETUP_ACTION") \
+  == "required" ]] \
+  || fail "the Cargo Rail cache action must require release checksums"
+[[ $(yq eval '.runs.steps[] | select(.name == "Setup Cargo Rail Cache") | .with.url' "$SETUP_ACTION") \
+  == '${{ inputs.cache-url }}' ]] \
+  || fail "the Cargo Rail cache action must consume only machine-owned URL input"
+[[ $(yq eval '.runs.steps[] | select(.name == "Setup Cargo Rail Cache") | .with.mode' "$SETUP_ACTION") \
+  == '${{ inputs.cache-mode }}' ]] \
+  || fail "the Cargo Rail cache action must consume the trust-selected remote mode"
+[[ $(yq eval '.runs.steps[] | select(.name == "Setup Cargo Rail Cache") | .with."max-size"' "$SETUP_ACTION") \
+  == '${{ inputs.cache-max-size }}' ]] \
+  || fail "the Cargo Rail cache action must retain an explicit local size bound"
+[[ $(yq eval '.runs.steps[] | select(.name == "Setup Cargo Rail Cache") | .if' "$SETUP_ACTION") \
+  == "inputs.cache-url != ''" ]] \
+  || fail "Cargo Rail cache setup must skip cleanly until machine-owned L2 is configured"
+cache_step_index=$(yq eval '.runs.steps | to_entries | .[] | select(.value.name == "Setup Cargo Rail Cache") | .key' "$SETUP_ACTION")
+tools_step_index=$(yq eval '.runs.steps | to_entries | .[] | select(.value.name == "Install Cargo Tools") | .key' "$SETUP_ACTION")
+[[ "$cache_step_index" =~ ^[0-9]+$ && "$tools_step_index" =~ ^[0-9]+$ \
+  && "$cache_step_index" -lt "$tools_step_index" ]] \
+  || fail "Cargo Rail cache setup must precede repository command execution"
+
+# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
+[[ $(yq eval '.jobs.run.steps[] | select(.name == "Setup") | .with."cache-url"' "$RUST_JOB") \
+  == '${{ vars.CARGO_RAIL_CACHE_URL }}' ]] \
+  || fail "reusable Rust jobs must select the machine-owned Cargo Rail L2 URL"
+# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
+[[ $(yq eval '.jobs.run.steps[] | select(.name == "Setup") | .with."cache-mode"' "$RUST_JOB") \
+  == '${{ github.event_name == '\''pull_request'\'' && '\''read'\'' || '\''read-write'\'' }}' ]] \
+  || fail "pull-request cache authority must be read-only"
+# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
+[[ $(yq eval '.jobs.coverage.steps[] | select(.name == "Setup") | .with."cache-url"' "$WEEKLY") \
+  == '${{ vars.CARGO_RAIL_CACHE_URL }}' \
+  && $(yq eval '.jobs.coverage.steps[] | select(.name == "Setup") | .with."cache-mode"' "$WEEKLY") \
+  == "read-write" ]] \
+  || fail "trusted Weekly coverage must use the machine-owned Cargo Rail cache"
+# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
+[[ $(yq eval '.jobs.preflight.steps[] | select(.name == "Setup") | .with."cache-url"' "$RELEASE") \
+  == '${{ vars.CARGO_RAIL_CACHE_URL }}' \
+  && $(yq eval '.jobs.preflight.steps[] | select(.name == "Setup") | .with."cache-mode"' "$RELEASE") \
+  == "read-write" ]] \
+  || fail "release preflight must populate the machine-owned Cargo Rail cache"
+# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
+[[ $(yq eval '.jobs.publish.steps[] | select(.name == "Setup") | .with."cache-url"' "$RELEASE") \
+  == '${{ vars.CARGO_RAIL_CACHE_URL }}' \
+  && $(yq eval '.jobs.publish.steps[] | select(.name == "Setup") | .with."cache-mode"' "$RELEASE") \
+  == "read" ]] \
+  || fail "release publication must consume the machine-owned Cargo Rail cache read-only"
+if grep -ERn 'uses:[[:space:]]+(Swatinem/rust-cache|runs-on/action|actions/cache)@' \
+  "$WORKFLOWS" "$ACTIONS" >/dev/null; then
+  fail "Cargo Rail must be the only Rust compiler cache owner"
+fi
+[[ $(yq eval '[.runners[].extras[]? | select(. == "s3-cache")] | length' "$RUNS_ON") == "0" ]] \
+  || fail "RunsOn MagicCache must not intercept Cargo Rail compiler results"
 # shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
 [[ $(yq eval '.jobs."rail-plan".steps[] | select(.name == "Check Release Intent Coverage") | .env.RAIL_BASE_REF' "$CI") \
   == '${{ steps.rail.outputs.base-ref }}' ]] \
@@ -356,8 +421,6 @@ fi
 if grep -Eq '[.]cargo/(bin|[.]crates)|[.]opam' "$SETUP_ACTION"; then
   fail "CI tool executables and OPAM switches must not be restored from caches"
 fi
-[[ $(yq eval '.runs.steps[] | select(.name == "Setup Rust Cache") | .with."cache-bin"' "$SETUP_ACTION") \
-  == "false" ]] || fail "the Rust build cache must exclude Cargo tool executables"
 if grep -Fq 'export PATH="$HOME/.cargo/bin:$PATH"' "$CI_CHECK" "$HOST_CHECK"; then
   fail "CI checks must not place unverified runner tools ahead of the authenticated tool root"
 fi
@@ -420,10 +483,6 @@ grep -Fq 'COMPILE_FEATURE_SETS' "$COMPILE_MATRIX" \
   || fail "compile feature matrix must consume the shared profile authority"
 grep -Fq 'EXECUTABLE_FEATURE_SETS' "$EXECUTABLE_MATRIX" \
   || fail "executable feature matrix must consume the shared profile authority"
-[[ $(yq eval '.jobs.platform-amx.with.cache_key' "$SUITE") == \
-  '${{ inputs.cache_key_prefix }}-platform-amx-test-nodebug' ]] \
-  || fail "AMX cache identity must track its reduced-debug test profile"
-
 grep -Eq 'HOST_ARGS\+=\(--feature-matrix\)' "$CHECK_ALL" \
   || fail "local check-all must retain one explicit feature-matrix execution"
 

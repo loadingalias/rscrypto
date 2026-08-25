@@ -103,7 +103,7 @@ pub(super) fn double_scalar_basepoint_encoded(
 #[inline]
 fn words_from_le_bytes(bytes: &[u8; SECRET_KEY_LENGTH]) -> [u64; FIELD_LIMBS] {
   let mut words = [0u64; FIELD_LIMBS];
-  for (word, chunk) in words.iter_mut().zip(bytes.chunks_exact(8)) {
+  for (word, chunk) in words.iter_mut().zip(bytes.as_chunks::<8>().0) {
     let mut limb = [0u8; 8];
     limb.copy_from_slice(chunk);
     *word = u64::from_le_bytes(limb);
@@ -116,7 +116,9 @@ fn encode_affine_point(point: &[u64; AFFINE_POINT_LIMBS]) -> [u8; PUBLIC_KEY_LEN
   let mut encoded = [0u8; PUBLIC_KEY_LENGTH];
 
   for (dst, word) in encoded
-    .chunks_exact_mut(8)
+    .as_chunks_mut::<8>()
+    .0
+    .iter_mut()
     .zip(point[FIELD_LIMBS..AFFINE_POINT_LIMBS].iter().copied())
   {
     dst.copy_from_slice(&word.to_le_bytes());

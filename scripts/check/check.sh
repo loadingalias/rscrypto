@@ -9,8 +9,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
 
-maybe_disable_sccache
-
 RUN_FEATURE_MATRIX=false
 CHECK_ARGS=()
 for arg in "$@"; do

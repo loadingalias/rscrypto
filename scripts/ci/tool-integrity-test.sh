@@ -583,7 +583,7 @@ for contract in \
   'cargo-nextest =0.9.143' \
   'cargo-deny =0.20.2' \
   'cargo-audit =0.22.2' \
-  'cargo-rail =0.21.0' \
+  'cargo-rail =0.22.2' \
   'cargo-semver-checks =0.50.0' \
   'just =1.58.0' \
   'zizmor =1.29.0' \

@@ -37,7 +37,7 @@ make_scope() {
     --argjson test "$test" \
     --argjson infra "$infra" \
     '{
-      scope_contract_version: 2,
+      scope_contract_version: 4,
       resolved_base: "base",
       resolved_head: "head",
       mode: $mode,
@@ -62,41 +62,31 @@ make_plan() {
     --argjson scope "$scope" \
     --argjson files "$files" \
     '{
-      schema_version: 1,
-      command: "plan",
-      mode: "inspect",
-      result: "success",
-      exit_code: 0,
-      plan_contract_version: 5,
+      plan_contract_version: 7,
+      inputs: {snapshot_id: "v1-sha256-test"},
+      resolution_universe: {
+        mode: "declared_dependencies",
+        identity: "resolution-universe-v1:sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      },
       files: $files,
       scope: (
         $scope
-        | .scope_contract_version = 3
         | del(.surfaces)
       ),
       surfaces: (
         $scope.surfaces
-        | with_entries(.value = {enabled: .value})
+        | with_entries(.value = {
+            enabled: .value,
+            reasons: [],
+            scope: (
+              if .value then
+                ($scope | del(.scope_contract_version, .resolved_base, .resolved_head, .surfaces))
+              else
+                {mode: "empty", crates: [], cargo_args: []}
+              end
+            )
+          })
       )
-    }'
-}
-
-make_legacy_plan() {
-  local scope=$1
-  local files=${2:-'[]'}
-
-  jq -cn \
-    --argjson scope "$scope" \
-    --argjson files "$files" \
-    '{
-      schema_version: 1,
-      command: "plan",
-      mode: "inspect",
-      result: "success",
-      exit_code: 0,
-      plan_contract_version: 3,
-      files: $files,
-      scope: $scope
     }'
 }
 
@@ -106,7 +96,6 @@ CRATES_SCOPE="$(make_scope crates '["crate-a","crate-b"]' '["-p","crate-a","-p",
 EMPTY_PLAN="$(make_plan "$EMPTY_SCOPE")"
 WORKSPACE_PLAN="$(make_plan "$WORKSPACE_SCOPE")"
 CRATES_PLAN="$(make_plan "$CRATES_SCOPE")"
-LEGACY_WORKSPACE_PLAN="$(make_legacy_plan "$WORKSPACE_SCOPE")"
 
 planner_bin="$TMP_ROOT/planner-bin"
 mkdir -p "$planner_bin"
@@ -143,8 +132,10 @@ assert_eq workspace "$(scope_mode_for_planner '' 9)" "nonzero planner exit to fa
 assert_eq workspace "$(scope_mode_for_planner '' 0)" "empty planner output to fail closed"
 assert_eq workspace "$(scope_mode_for_cached_plan '{')" "malformed JSON to fail closed"
 
-unsuccessful_plan="$(jq -c '.result = "failure" | .exit_code = 1' <<<"$WORKSPACE_PLAN")"
-assert_eq workspace "$(scope_mode_for_cached_plan "$unsuccessful_plan")" "unsuccessful result to fail closed"
+missing_snapshot="$(jq -c 'del(.inputs.snapshot_id)' <<<"$WORKSPACE_PLAN")"
+invalid_universe="$(jq -c '.resolution_universe.identity = "invalid"' <<<"$WORKSPACE_PLAN")"
+assert_eq workspace "$(scope_mode_for_cached_plan "$missing_snapshot")" "missing snapshot identity to fail closed"
+assert_eq workspace "$(scope_mode_for_cached_plan "$invalid_universe")" "invalid resolution universe to fail closed"
 
 missing_scope="$(jq -c 'del(.scope)' <<<"$WORKSPACE_PLAN")"
 missing_mode="$(jq -c 'del(.scope.mode)' <<<"$WORKSPACE_PLAN")"
@@ -156,8 +147,8 @@ assert_eq workspace "$(scope_mode_for_cached_plan "$unsupported_mode")" "unsuppo
 empty_crate_selection="$(jq -c '.scope.mode = "crates" | .scope.cargo_args = []' <<<"$WORKSPACE_PLAN")"
 non_string_crate="$(jq -c '.scope.crates = [7] | .scope.mode = "crates" | .scope.cargo_args = ["-p", "7"]' <<<"$WORKSPACE_PLAN")"
 malformed_surface="$(jq -c '.surfaces.test.enabled = "false"' <<<"$WORKSPACE_PLAN")"
-unsupported_plan_contract="$(jq -c '.plan_contract_version = 4' <<<"$WORKSPACE_PLAN")"
-unsupported_scope_contract="$(jq -c '.scope.scope_contract_version = 2' <<<"$WORKSPACE_PLAN")"
+unsupported_plan_contract="$(jq -c '.plan_contract_version = 6' <<<"$WORKSPACE_PLAN")"
+unsupported_scope_contract="$(jq -c '.scope.scope_contract_version = 3' <<<"$WORKSPACE_PLAN")"
 assert_eq workspace "$(scope_mode_for_cached_plan "$empty_crate_selection")" "empty crate selection to fail closed"
 assert_eq workspace "$(scope_mode_for_cached_plan "$non_string_crate")" "non-string crate selection to fail closed"
 assert_eq workspace "$(scope_mode_for_cached_plan "$malformed_surface")" "malformed surface to fail closed"
@@ -167,7 +158,6 @@ assert_eq workspace "$(scope_mode_for_cached_plan "$unsupported_scope_contract")
 assert_eq empty "$(scope_mode_for_cached_plan "$EMPTY_PLAN")" "valid explicit empty scope"
 assert_eq workspace "$(scope_mode_for_cached_plan "$WORKSPACE_PLAN")" "valid workspace scope"
 assert_eq crates "$(scope_mode_for_cached_plan "$CRATES_PLAN")" "valid crate scope"
-assert_eq workspace "$(scope_mode_for_cached_plan "$LEGACY_WORKSPACE_PLAN")" "valid legacy workspace scope"
 
 crate_output="$(
   (
@@ -230,7 +220,8 @@ workspace_test='cargo test --locked --workspace --all-features --lib --tests'
 run_test_consumer planner-failure '' 9 "$workspace_test"
 run_test_consumer empty-output '' 0 "$workspace_test"
 run_test_consumer malformed-json '{' 0 "$workspace_test"
-run_test_consumer unsuccessful "$unsuccessful_plan" 0 "$workspace_test"
+run_test_consumer missing-snapshot "$missing_snapshot" 0 "$workspace_test"
+run_test_consumer invalid-universe "$invalid_universe" 0 "$workspace_test"
 run_test_consumer missing-scope "$missing_scope" 0 "$workspace_test"
 run_test_consumer missing-mode "$missing_mode" 0 "$workspace_test"
 run_test_consumer unsupported-mode "$unsupported_mode" 0 "$workspace_test"
@@ -239,7 +230,6 @@ run_test_consumer malformed-surface "$malformed_surface" 0 "$workspace_test"
 run_test_consumer valid-empty "$EMPTY_PLAN" 0 ''
 run_test_consumer valid-workspace "$WORKSPACE_PLAN" 0 "$workspace_test"
 run_test_consumer valid-crates "$CRATES_PLAN" 0 $'cargo test --locked -p crate-a --all-features --lib --tests\ncargo test --locked -p crate-b --all-features --lib --tests'
-run_test_consumer valid-legacy-workspace "$LEGACY_WORKSPACE_PLAN" 0 "$workspace_test"
 
 check_fixture="$TMP_ROOT/check-repository"
 mkdir -p "$check_fixture/scripts/check" "$check_fixture/scripts/lib" "$check_fixture/scripts/ct" "$check_fixture/scripts/test"

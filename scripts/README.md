@@ -136,6 +136,32 @@ receives only the exact stable or nightly contract declared in
 rustup, which verifies component downloads against the exact distribution
 manifest, because network bootstrap installers are rejected.
 
+## Compiler-result reuse
+
+`.github/actions/setup/action.yaml` is the only CI compiler-cache owner. It
+uses the same immutable Cargo Rail action revision and authenticated Cargo Rail
+version as pull-request planning, installs the cache before repository Cargo
+tools, and leaves tool executables and package-manager state uncached.
+
+The repository variable `CARGO_RAIL_CACHE_URL` selects the machine-owned L2
+authority. An empty value skips setup without changing an existing runner
+receipt. Before setting it, provision each participating runner or job with
+standard provider credentials restricted to that URL's bucket, container, or
+prefix. The URL contains no credentials and does not belong in
+`.config/rail.toml`.
+
+Pull-request jobs select `read`; their provider identity must also be
+read-only. Trusted branch, scheduled, and release-preflight jobs select
+`read-write`. Release publication consumes the cache read-only. Provider or
+transport failure falls back to compilation, while Cargo Rail continues to
+verify every restored compiler result.
+
+Local development uses the same machine-owned setup documented in
+[`CONTRIBUTING.md`](../CONTRIBUTING.md). Miri and optimized zeroization evidence
+set `CARGO_RAIL_CACHE=off` because those checks require a deliberately cold
+compiler path. Cross-target and otherwise unsupported compiler operations rely
+on Cargo Rail's typed bypass instead of clearing a global wrapper.
+
 ## Results layout
 
 Bench results from local runs (`just bench*`) and CI (`/extract-bench` skill

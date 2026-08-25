@@ -14,7 +14,8 @@ jq -e '
   and .[0].platform == "rise-riscv"
   and .[0].target == "riscv64gc-unknown-linux-gnu"
   and .[0].tools_mode == "none"
-  and .[0].enable_rust_cache == true
+  and (.[0] | has("enable_rust_cache") | not)
+  and (.[0] | has("enable_magic_cache") | not)
 ' <<<"$matrix" >/dev/null
 
 ct_default="$({

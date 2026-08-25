@@ -37,9 +37,9 @@ jobs:
       - name: Build Plan (PR)
         if: github.event_name == 'pull_request'
         id: rail
-        uses: loadingalias/cargo-rail-action@ebc8ef2740efefe2cd5c42826344a8f1213113ae # v6.1.2
+        uses: loadingalias/cargo-rail-action@47e86bde928ce420b85efa5f8d3b5feb96fd0ffc # v7.0.0
         with:
-          version: "0.21.0"
+          version: "0.22.2"
           checksum: required
           since: ${{ github.event.pull_request.base.sha }}
 
@@ -56,11 +56,8 @@ jobs:
     with:
       runner: ubuntu-latest
       timeout_minutes: 45
-      cache_key: dependabot-smoke
       tools_mode: supply-chain
       toolchain_components: "clippy, rustfmt"
-      enable_magic_cache: false
-      enable_rust_cache: true
       operation: dependabot-smoke
       base_sha: ${{ github.event.pull_request.base.sha }}
 
@@ -70,7 +67,6 @@ jobs:
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.actor != 'dependabot[bot]' && (needs.rail-plan.result != 'success' || needs.rail-plan.outputs.build == 'true' || needs.rail-plan.outputs.test == 'true' || needs.rail-plan.outputs.infra == 'true'))) }}
     uses: ./.github/workflows/_ci-suite.yaml
     with:
-      cache_key_prefix: commit
       supply_chain_mode: light
       test_mode: commit
       include_cargo_graph: ${{ contains(needs.rail-plan.outputs.surfaces_json, '"custom:cargo_graph":true') }}

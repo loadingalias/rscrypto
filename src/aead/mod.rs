@@ -118,7 +118,7 @@ mod test_vectors {
 
   #[track_caller]
   pub(super) fn hex_vec(hex: &str) -> Vec<u8> {
-    let mut out = vec![0u8; hex.as_bytes().chunks_exact(2).len()];
+    let mut out = vec![0u8; hex.as_bytes().as_chunks::<2>().0.len()];
     crate::hex::from_hex(hex, &mut out).expect("AEAD test vector must contain valid hexadecimal");
     out
   }

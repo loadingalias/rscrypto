@@ -50,7 +50,7 @@ fn digest_oneshot_with_kernel(id: Sha384KernelId, data: &[u8]) -> [u8; 48] {
   compress(&mut state, &block);
 
   let mut out = [0u8; 48];
-  for (chunk, &word) in out.chunks_exact_mut(8).zip(state.iter()) {
+  for (chunk, &word) in out.as_chunks_mut::<8>().0.iter_mut().zip(state.iter()) {
     chunk.copy_from_slice(&word.to_be_bytes());
   }
   out

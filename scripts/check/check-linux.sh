@@ -62,7 +62,7 @@ for i in "${!LINUX_TARGETS[@]}"; do
       toolchain_env=(env "RUSTUP_TOOLCHAIN=$NIGHTLY_TOOLCHAIN")
     fi
     # shellcheck disable=SC2086
-    if ! CC="$ZIG_CC" RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
+    if ! CC="$ZIG_CC" CARGO_TARGET_DIR="$target_dir" \
          "${toolchain_env[@]}" cargo clippy $CRATE_FLAGS --lib --all-features --locked --target "$target" \
          >"$log_file" 2>&1; then
       exit 1

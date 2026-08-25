@@ -8,8 +8,6 @@ source "$SCRIPT_DIR/../lib/common.sh"
 # shellcheck source=../lib/feature-profiles.sh
 source "$SCRIPT_DIR/../lib/feature-profiles.sh"
 
-maybe_disable_sccache
-
 LOG_DIR=$(mktemp -d)
 TARGET_DIR="$REPO_ROOT/target/feature-matrix"
 

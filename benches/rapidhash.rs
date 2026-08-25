@@ -15,7 +15,7 @@ const COLLECTION_KEYS: usize = 4096;
 fn collection_key(index: u64) -> [u8; 32] {
   let mut state = index;
   let mut key = [0u8; 32];
-  for lane in key.chunks_exact_mut(8) {
+  for lane in key.as_chunks_mut::<8>().0 {
     state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
     let mut word = state;
     word = (word ^ (word >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);

@@ -7,10 +7,6 @@ name: _ci-suite
 on:
   workflow_call:
     inputs:
-      cache_key_prefix:
-        description: "Cache-key prefix, segregates commit/weekly caches."
-        required: true
-        type: string
       supply_chain_mode:
         description: "'light' (cargo deny check advisories) or 'full' (deny all + audit)."
         required: true
@@ -60,11 +56,8 @@ jobs:
     with:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
       timeout_minutes: 30
-      cache_key: ${{ inputs.cache_key_prefix }}-quality
       tools_mode: quality
       toolchain_components: "clippy, rustfmt, rust-src"
-      enable_magic_cache: true
-      enable_rust_cache: true
       operation: quality
 
   msrv:
@@ -73,12 +66,9 @@ jobs:
     with:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
       timeout_minutes: 30
-      cache_key: ${{ inputs.cache_key_prefix }}-msrv
       tools_mode: none
       toolchain_contract: msrv
       toolchain_components: ""
-      enable_magic_cache: true
-      enable_rust_cache: true
       operation: msrv
 
   cargo-graph:
@@ -88,13 +78,10 @@ jobs:
     with:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
       timeout_minutes: 90
-      cache_key: ${{ inputs.cache_key_prefix }}-cargo-graph
       tools_mode: rail
       toolchain_components: "rust-src"
-      enable_magic_cache: true
-      enable_rust_cache: true
       operation: cargo-graph
-      artifact_name: cargo-graph-${{ inputs.cache_key_prefix }}
+      artifact_name: cargo-graph-${{ inputs.test_mode }}
       artifact_path: target/cargo-rail/unify-result.json
       artifact_always: true
       artifact_retention_days: ${{ inputs.artifact_retention_days }}
@@ -105,11 +92,8 @@ jobs:
     with:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
       timeout_minutes: 120
-      cache_key: ${{ inputs.cache_key_prefix }}-feature-contracts
       tools_mode: minimal
       toolchain_components: "rust-src"
-      enable_magic_cache: true
-      enable_rust_cache: true
       operation: feature-contracts
 
   ci:
@@ -123,11 +107,8 @@ jobs:
     with:
       runner: ${{ matrix.target.runner }}
       timeout_minutes: 180
-      cache_key: ${{ inputs.cache_key_prefix }}-${{ matrix.target.name }}
       tools_mode: ${{ contains(matrix.target.name, 'windows-msvc') && 'none' || 'ci' }}
       toolchain_components: ${{ contains(matrix.target.name, 'windows-msvc') && 'clippy' || 'clippy, rustfmt, rust-src' }}
-      enable_magic_cache: ${{ matrix.target.type == 'runson' }}
-      enable_rust_cache: true
       operation: native
       target: ${{ matrix.target.name }}
       test_mode: ${{ inputs.test_mode }}
@@ -138,12 +119,9 @@ jobs:
     with:
       runner: ubuntu-24.04-s390x
       timeout_minutes: 120
-      cache_key: ${{ inputs.cache_key_prefix }}-ibm-s390x
       tools_mode: none
       toolchain_contract: nightly
       toolchain_components: "clippy, rustfmt"
-      enable_magic_cache: false
-      enable_rust_cache: true
       operation: native-ibm
       test_mode: ${{ inputs.test_mode }}
 
@@ -153,12 +131,9 @@ jobs:
     with:
       runner: ubuntu-24.04-ppc64le-p10
       timeout_minutes: 120
-      cache_key: ${{ inputs.cache_key_prefix }}-ibm-power10
       tools_mode: none
       toolchain_contract: nightly
       toolchain_components: "clippy, rustfmt"
-      enable_magic_cache: false
-      enable_rust_cache: true
       operation: native-ibm
       test_mode: ${{ inputs.test_mode }}
 
@@ -168,12 +143,9 @@ jobs:
     with:
       runner: runs-on=${{ github.run_id }}/runner=intel-spr
       timeout_minutes: 30
-      cache_key: ${{ inputs.cache_key_prefix }}-platform-amx-test-nodebug
       tools_mode: none
       toolchain_contract: nightly
       toolchain_components: "rustfmt"
-      enable_magic_cache: true
-      enable_rust_cache: true
       operation: platform-amx
 
   cross-targets:
@@ -182,12 +154,9 @@ jobs:
     with:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
       timeout_minutes: 90
-      cache_key: ${{ inputs.cache_key_prefix }}-cross-targets
       tools_mode: none
       toolchain_contract: nightly
       toolchain_components: "clippy, rust-src"
-      enable_magic_cache: true
-      enable_rust_cache: true
       operation: cross-targets
 
   supply-chain:
@@ -196,9 +165,6 @@ jobs:
     with:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
       timeout_minutes: 45
-      cache_key: ${{ inputs.cache_key_prefix }}-supply-chain
       tools_mode: supply-chain
-      enable_magic_cache: true
-      enable_rust_cache: true
       operation: supply-chain
       supply_chain_mode: ${{ inputs.supply_chain_mode }}
