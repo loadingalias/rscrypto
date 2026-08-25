@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install CI tools through authenticated package-manager boundaries.
-# Usage: install-tools.sh [standard|quality|release|semver|rail|ci|supply-chain|bench|structural-bench|profile|ibm|fuzz|coverage|ct-linux|minimal|none]
+# Usage: install-tools.sh [standard|quality|release|rail|ci|supply-chain|bench|structural-bench|profile|ibm|fuzz|coverage|ct-linux|minimal|none]
 
 set -euo pipefail
 
@@ -10,7 +10,6 @@ CARGO_NEXTEST_VERSION=0.9.143
 CARGO_DENY_VERSION=0.20.2
 CARGO_AUDIT_VERSION=0.22.2
 CARGO_RAIL_VERSION=0.22.2
-CARGO_SEMVER_CHECKS_VERSION=0.50.0
 JUST_VERSION=1.58.0
 ZIZMOR_VERSION=1.29.0
 CARGO_CRITERION_VERSION=1.1.0
@@ -297,7 +296,6 @@ case "$MODE" in
     install_cargo_tool cargo-deny "$CARGO_DENY_VERSION"
     install_cargo_tool cargo-audit "$CARGO_AUDIT_VERSION"
     install_cargo_tool cargo-rail "$CARGO_RAIL_VERSION"
-    install_cargo_tool cargo-semver-checks "$CARGO_SEMVER_CHECKS_VERSION"
     install_cargo_tool just "$JUST_VERSION"
     ;;
   quality)
@@ -307,12 +305,8 @@ case "$MODE" in
     ;;
   release)
     install_cargo_tool cargo-rail "$CARGO_RAIL_VERSION"
-    install_cargo_tool cargo-semver-checks "$CARGO_SEMVER_CHECKS_VERSION"
     install_cargo_tool cargo-deny "$CARGO_DENY_VERSION"
     install_cargo_tool cargo-audit "$CARGO_AUDIT_VERSION"
-    ;;
-  semver)
-    install_cargo_tool cargo-semver-checks "$CARGO_SEMVER_CHECKS_VERSION"
     ;;
   rail)
     install_cargo_tool cargo-rail "$CARGO_RAIL_VERSION"
@@ -367,7 +361,7 @@ case "$MODE" in
     ;;
   *)
     echo "Unknown mode: $MODE" >&2
-    echo "Usage: install-tools.sh [standard|quality|release|semver|rail|ci|supply-chain|bench|structural-bench|profile|ibm|fuzz|coverage|ct-linux|minimal|none]" >&2
+    echo "Usage: install-tools.sh [standard|quality|release|rail|ci|supply-chain|bench|structural-bench|profile|ibm|fuzz|coverage|ct-linux|minimal|none]" >&2
     exit 2
     ;;
 esac

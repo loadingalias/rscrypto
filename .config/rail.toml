@@ -35,7 +35,10 @@ tag_format = "{prefix}{version}"
 sign_tags = true
 require_release_notes = true
 pre_1_breaking_bump = "minor"
-semver_check = "warn"
+# Before 1.0, reviewed minor releases may deliberately replace unstable API
+# shapes. Re-enable compiler-backed SemVer enforcement when rscrypto adopts a
+# stable compatibility contract.
+semver_check = "off"
 change_dir = ".changes"
 remote_effects = "push" # The repository workflow, not Cargo Rail, owns forge release publication.
 

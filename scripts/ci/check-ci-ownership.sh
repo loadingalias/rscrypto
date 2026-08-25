@@ -507,19 +507,18 @@ grep -Eq 'HOST_ARGS\+=\(--feature-matrix\)' "$CHECK_ALL" \
 identity_step=$(yq eval '.jobs.preflight.steps[] | select(.id == "identity") | .run' "$RELEASE")
 grep -Fq 'refs/heads/main' <<<"$identity_step" \
   || fail "release recovery must reject workflow code outside protected main"
-recovery_tool_step=$(yq eval '.jobs.preflight.steps[] | select(.name == "Install recovery SemVer checker") | .run' "$RELEASE")
-grep -Fq 'install-tools.sh" semver' <<<"$recovery_tool_step" \
-  || fail "release recovery must use the authenticated SemVer tool installer"
+recovery_cleanup_step=$(yq eval '.jobs.preflight.steps[] | select(.name == "Remove reviewed recovery tooling") | .run' "$RELEASE")
+grep -Fq 'rm -rf target/release-automation' <<<"$recovery_cleanup_step" \
+  || fail "release recovery must remove its reviewed tooling checkout before preflight"
 ct_recovery_step=$(yq eval '.jobs.preflight.steps[] | select(.name == "Verify s390x CT recovery evidence") | .run' "$RELEASE")
 grep -Fq 'release-ct-recovery-check.sh' <<<"$ct_recovery_step" \
   || fail "release recovery must validate replacement s390x CT evidence"
 grep -Fq -- '--workflow-commit "$WORKFLOW_COMMIT"' <<<"$ct_recovery_step" \
   || fail "replacement s390x CT evidence must come from the reviewed workflow commit"
-# shellcheck disable=SC2016 # `$crate` is an intentional literal in the release-preflight contract regex.
-[[ $(count_matches 'cargo semver-checks --package "\$crate" --all-features' "$RELEASE_PREFLIGHT") -eq 1 ]] \
-  || fail "tag preflight must have exactly one final-version SemVer owner"
-if grep -ERn 'cargo semver-checks' "$WORKFLOWS" >/dev/null; then
-  fail "ordinary workflows must leave version-aware SemVer analysis to cargo-rail release planning"
+[[ $(yq -oy -p toml eval '.release.semver_check' "$RAIL_CONFIG") == "off" ]] \
+  || fail "pre-1.0 Cargo Rail SemVer enforcement must remain explicitly disabled"
+if grep -ERn 'cargo[ -]semver-checks' "$WORKFLOWS" "$RELEASE_PREFLIGHT" "$INSTALL_TOOLS" >/dev/null; then
+  fail "pre-1.0 workflows and installers must not reintroduce SemVer enforcement"
 fi
 
 if grep -ERn 'just check --all|check-all\.sh' "$WORKFLOWS" "$RUN_RUST_JOB" >/dev/null; then

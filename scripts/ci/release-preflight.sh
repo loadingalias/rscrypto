@@ -115,7 +115,6 @@ cargo deny --locked check all
 # verification is implemented in `src/auth/rsa.rs`; keep this scoped to the
 # known Marvin advisory until the oracle dependency is removed or fixed.
 cargo audit --ignore RUSTSEC-2023-0071
-cargo semver-checks --package "$crate" --all-features
 
 # `cargo rail release check` is a pre-tag gate. The release run consumes
 # `.changes` files before creating the signed tag, so tag preflight

@@ -136,13 +136,11 @@ jobs:
           cache-url: ${{ vars.CARGO_RAIL_CACHE_URL }}
           cache-mode: read-write
 
-      - name: Install recovery SemVer checker
+      - name: Remove reviewed recovery tooling
         if: github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
-          automation_root=target/release-automation
-          "$automation_root/scripts/ci/install-tools.sh" semver
-          rm -rf "$automation_root"
+          rm -rf target/release-automation
 
       - name: Release preflight
         id: preflight
