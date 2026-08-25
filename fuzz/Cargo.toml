@@ -36,11 +36,13 @@ rscrypto = { path = "..", features = [
 
 # ── Oracle crates for differential testing ────────────────────────────────────
 # AEAD
+aes = "0.9.2"
 ascon-aead = { version = "0.6", default-features = false, features = ["alloc"] }
 aes-gcm = { version = "0.11", default-features = false, features = ["alloc", "aes"] }
 aes-gcm-siv = { version = "0.12", default-features = false, features = ["alloc", "aes"] }
 aegis = "0.9"
 chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc"] }
+chacha20 = "0.10.1"
 
 # Auth
 argon2 = { version = "0.5.3", default-features = false, features = ["alloc"] }
@@ -119,6 +121,11 @@ doc = false
 [[bin]]
 name = "aead_nonce_counter"
 path = "fuzz_targets/aead_nonce_counter.rs"
+doc = false
+
+[[bin]]
+name = "aead_header_protection"
+path = "fuzz_targets/aead_header_protection.rs"
 doc = false
 
 # ── Auth targets ──────────────────────────────────────────────────────────────

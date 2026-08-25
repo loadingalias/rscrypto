@@ -219,6 +219,14 @@ must explicitly import `aead::expert::AeadWithNonce` for caller-nonce
 detached forms remain allocation-free. With `alloc`, decryption has
 `decrypt_to_vec`; with `alloc` + `getrandom`, sealing has `seal_random_to_vec`.
 
+`aead::expert::header_protection` exposes narrow AES-128, AES-256, and ChaCha20
+mask generators for protocols that define a 16-byte sample and five-byte mask.
+The concrete key types are distinct from packet-protection keys, and the API
+does not expose ECB mode, a general stream cipher, or the unused block bytes.
+Mask generation is allocation-free. Alloc-enabled RISC-V portable AES context
+construction retains the existing boxed fixslice schedule; no-alloc builds
+store that schedule inline.
+
 ## Error types
 
 | Error                             | When                                                                                  | Recovery                                                                      |

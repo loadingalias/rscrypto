@@ -66,6 +66,9 @@ for symbol in \
   diag_aegis256_update_portable \
   diag_aes128gcm_ghash \
   diag_aes256gcm_ghash \
+  diag_zeroize_aes128_header_protection \
+  diag_zeroize_aes256_header_protection \
+  diag_zeroize_chacha20_header_protection \
   diag_zeroize_mlkem_sha3_512 \
   diag_zeroize_mlkem_shake256_scalar \
   diag_zeroize_mlkem_shake256_pair \
@@ -109,6 +112,9 @@ for symbol in \
   diag_aegis256_update_portable \
   diag_aes128gcm_ghash \
   diag_aes256gcm_ghash \
+  diag_zeroize_aes128_header_protection \
+  diag_zeroize_aes256_header_protection \
+  diag_zeroize_chacha20_header_protection \
   diag_zeroize_mlkem_sha3_512 \
   diag_zeroize_mlkem_shake256_scalar \
   diag_zeroize_mlkem_shake256_pair \
@@ -117,6 +123,18 @@ for symbol in \
   VOLATILE_STORES="$(grep -c 'store volatile .* 0' <<<"$FUNCTION_IR" || true)"
   if [[ "$VOLATILE_STORES" -lt 1 ]]; then
     echo "zeroize LLVM evidence has no volatile zero store in $symbol" >&2
+    exit 1
+  fi
+done
+
+for symbol in \
+  diag_zeroize_aes128_header_protection \
+  diag_zeroize_aes256_header_protection \
+  diag_zeroize_chacha20_header_protection; do
+  FUNCTION_IR="$(sed -n "/define .*@$symbol(/,/^}/p" "$LLVM_IR")"
+  if [[ "$(grep -c 'store volatile .* 0' <<<"$FUNCTION_IR" || true)" -lt 2 ]] || \
+    ! grep -q 'fence syncscope("singlethread") seq_cst' <<<"$FUNCTION_IR"; then
+    echo "zeroize release evidence does not clear header-protection owners and materialized output in $symbol" >&2
     exit 1
   fi
 done
@@ -608,6 +626,9 @@ case "$HOST_ARCH" in
       diag_aegis256_update_portable \
       diag_aes128gcm_ghash \
       diag_aes256gcm_ghash \
+      diag_zeroize_aes128_header_protection \
+      diag_zeroize_aes256_header_protection \
+      diag_zeroize_chacha20_header_protection \
       diag_zeroize_mlkem_sha3_512 \
       diag_zeroize_mlkem_shake256_scalar \
       diag_zeroize_mlkem_shake256_pair \
@@ -654,6 +675,9 @@ case "$HOST_ARCH" in
       diag_aegis256_update_portable \
       diag_aes128gcm_ghash \
       diag_aes256gcm_ghash \
+      diag_zeroize_aes128_header_protection \
+      diag_zeroize_aes256_header_protection \
+      diag_zeroize_chacha20_header_protection \
       diag_zeroize_mlkem_sha3_512 \
       diag_zeroize_mlkem_shake256_scalar \
       diag_zeroize_mlkem_shake256_pair \

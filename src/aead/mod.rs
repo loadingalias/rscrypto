@@ -61,9 +61,26 @@ use crate::traits::VerificationError;
 #[doc(hidden)]
 pub use crate::traits::aead::SealToken as __SealToken;
 
-/// Explicit-nonce sealing for protocols that prove nonce uniqueness.
+/// Expert cryptographic capabilities with protocol-enforced preconditions.
 pub mod expert {
   pub use crate::traits::aead::AeadWithNonce;
+
+  /// Fixed-size header-protection mask generation.
+  ///
+  /// This capability exposes only the one-sample, five-byte-mask operation. It does not expose
+  /// general AES block encryption or a raw ChaCha20 stream.
+  #[cfg(any(feature = "aes-gcm", feature = "chacha20poly1305"))]
+  #[cfg_attr(docsrs, doc(cfg(any(feature = "aes-gcm", feature = "chacha20poly1305"))))]
+  pub mod header_protection {
+    #[cfg(feature = "aes-gcm")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "aes-gcm")))]
+    pub use crate::aead::header_protection::{
+      Aes128HeaderProtection, Aes128HeaderProtectionKey, Aes256HeaderProtection, Aes256HeaderProtectionKey,
+    };
+    #[cfg(feature = "chacha20poly1305")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "chacha20poly1305")))]
+    pub use crate::aead::header_protection::{ChaCha20HeaderProtection, ChaCha20HeaderProtectionKey};
+  }
 }
 #[cfg(feature = "aegis256")]
 mod aegis256;
@@ -131,6 +148,8 @@ mod chacha20;
 mod chacha20poly1305;
 #[cfg(feature = "aes-gcm")]
 mod ghash;
+#[cfg(any(feature = "aes-gcm", feature = "chacha20poly1305"))]
+mod header_protection;
 #[cfg(feature = "diag")]
 pub mod introspect;
 #[cfg(feature = "aes-gcm")]
@@ -255,6 +274,10 @@ pub use chacha20poly1305::{
 };
 #[cfg(all(feature = "diag", feature = "aes-gcm"))]
 pub use ghash::diag_ghash_block_portable;
+#[cfg(all(feature = "diag", feature = "chacha20poly1305"))]
+pub use header_protection::diag_zeroize_chacha20_header_protection;
+#[cfg(all(feature = "diag", feature = "aes-gcm"))]
+pub use header_protection::{diag_zeroize_aes128_header_protection, diag_zeroize_aes256_header_protection};
 #[cfg(feature = "aes-gcm")]
 pub use nonce_counter::{NonceCounter, NonceCounterExhausted, NonceCounterSealError};
 #[cfg(all(

@@ -669,6 +669,18 @@ use rscrypto::DisplaySecret;
 ```
 
 ```compile_fail
+use rscrypto::Aes128HeaderProtection;
+```
+
+```compile_fail
+use rscrypto::Aes256HeaderProtection;
+```
+
+```compile_fail
+use rscrypto::ChaCha20HeaderProtection;
+```
+
+```compile_fail
 use rscrypto::platform::OverrideError;
 ```
 
@@ -694,6 +706,15 @@ cipher.encrypt(&nonce, b"", b"", &mut out)?;
 
 ```compile_fail
 let _ = rscrypto::aead::__SealToken(());
+```
+
+```compile_fail,E0308
+use rscrypto::aead::expert::header_protection::{
+  Aes128HeaderProtection, ChaCha20HeaderProtectionKey,
+};
+
+let key = ChaCha20HeaderProtectionKey::from_bytes([0u8; 32]);
+let _ = Aes128HeaderProtection::new(&key);
 ```
 
 ```rust
@@ -1165,6 +1186,48 @@ use rscrypto::RsaPrivateScratch;
 
 fn require_clone<T: Clone>() {}
 require_clone::<RsaPrivateScratch>();
+```
+
+```compile_fail,E0277
+use rscrypto::aead::expert::header_protection::Aes128HeaderProtectionKey;
+
+fn require_clone<T: Clone>() {}
+require_clone::<Aes128HeaderProtectionKey>();
+```
+
+```compile_fail,E0277
+use rscrypto::aead::expert::header_protection::Aes128HeaderProtection;
+
+fn require_clone<T: Clone>() {}
+require_clone::<Aes128HeaderProtection>();
+```
+
+```compile_fail,E0277
+use rscrypto::aead::expert::header_protection::Aes256HeaderProtectionKey;
+
+fn require_clone<T: Clone>() {}
+require_clone::<Aes256HeaderProtectionKey>();
+```
+
+```compile_fail,E0277
+use rscrypto::aead::expert::header_protection::Aes256HeaderProtection;
+
+fn require_clone<T: Clone>() {}
+require_clone::<Aes256HeaderProtection>();
+```
+
+```compile_fail,E0277
+use rscrypto::aead::expert::header_protection::ChaCha20HeaderProtectionKey;
+
+fn require_clone<T: Clone>() {}
+require_clone::<ChaCha20HeaderProtectionKey>();
+```
+
+```compile_fail,E0277
+use rscrypto::aead::expert::header_protection::ChaCha20HeaderProtection;
+
+fn require_clone<T: Clone>() {}
+require_clone::<ChaCha20HeaderProtection>();
 ```
 "#]
 pub struct __SecretCloneBoundaryAudit;

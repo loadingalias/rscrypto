@@ -21,6 +21,9 @@ mod aead_ascon128;
 #[path = "../target_impls/aead_chacha20poly1305.rs"]
 mod aead_chacha20poly1305;
 
+#[path = "../target_impls/aead_header_protection.rs"]
+mod aead_header_protection;
+
 #[path = "../target_impls/aead_nonce_counter.rs"]
 mod aead_nonce_counter;
 
@@ -186,6 +189,16 @@ fn replay_aead_chacha20poly1305_corpus() {
     aead_chacha20poly1305::run,
   );
   assert_ne!(replayed, 0, "aead_chacha20poly1305 corpus should not be empty");
+}
+
+#[test]
+fn replay_aead_header_protection_corpus() {
+  let replayed = replay_corpus_dir(
+    "aead_header_protection",
+    corpus_dir("aead_header_protection"),
+    aead_header_protection::run,
+  );
+  assert_ne!(replayed, 0, "aead_header_protection corpus should not be empty");
 }
 
 #[test]

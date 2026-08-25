@@ -30,6 +30,9 @@ fn keyed_state_debug_snapshots_are_redacted() {
 
   #[cfg(feature = "aes-gcm")]
   {
+    use rscrypto::aead::expert::header_protection::{
+      Aes128HeaderProtection, Aes128HeaderProtectionKey, Aes256HeaderProtection, Aes256HeaderProtectionKey,
+    };
     use rscrypto::{Aes128Gcm, Aes128GcmKey, Aes256Gcm, Aes256GcmKey};
 
     let key = Aes128GcmKey::from_bytes(KEY_16);
@@ -39,6 +42,14 @@ fn keyed_state_debug_snapshots_are_redacted() {
     let key = Aes256GcmKey::from_bytes(KEY_32);
     assert_debug_snapshot(&key, "Aes256GcmKey(****)");
     assert_debug_snapshot(&Aes256Gcm::new(&key), "Aes256Gcm { .. }");
+
+    let key = Aes128HeaderProtectionKey::from_bytes(KEY_16);
+    assert_debug_snapshot(&key, "Aes128HeaderProtectionKey(****)");
+    assert_debug_snapshot(&Aes128HeaderProtection::new(&key), "Aes128HeaderProtection { .. }");
+
+    let key = Aes256HeaderProtectionKey::from_bytes(KEY_32);
+    assert_debug_snapshot(&key, "Aes256HeaderProtectionKey(****)");
+    assert_debug_snapshot(&Aes256HeaderProtection::new(&key), "Aes256HeaderProtection { .. }");
   }
 
   #[cfg(feature = "aes-gcm-siv")]
@@ -56,11 +67,16 @@ fn keyed_state_debug_snapshots_are_redacted() {
 
   #[cfg(feature = "chacha20poly1305")]
   {
+    use rscrypto::aead::expert::header_protection::{ChaCha20HeaderProtection, ChaCha20HeaderProtectionKey};
     use rscrypto::{ChaCha20Poly1305, ChaCha20Poly1305Key};
 
     let key = ChaCha20Poly1305Key::from_bytes(KEY_32);
     assert_debug_snapshot(&key, "ChaCha20Poly1305Key(****)");
     assert_debug_snapshot(&ChaCha20Poly1305::new(&key), "ChaCha20Poly1305 { .. }");
+
+    let key = ChaCha20HeaderProtectionKey::from_bytes(KEY_32);
+    assert_debug_snapshot(&key, "ChaCha20HeaderProtectionKey(****)");
+    assert_debug_snapshot(&ChaCha20HeaderProtection::new(&key), "ChaCha20HeaderProtection { .. }");
   }
 
   #[cfg(feature = "xchacha20poly1305")]
@@ -377,7 +393,7 @@ fn secret_input_error_snapshots_do_not_echo_input_bytes() {
 
   #[cfg(feature = "aes-gcm")]
   {
-    let error = rscrypto::OpenError::verification();
+    let error = rscrypto::aead::OpenError::verification();
     assert_debug_snapshot(&error, "Verification(VerificationError)");
     assert_eq!(error.to_string(), "verification failed");
   }

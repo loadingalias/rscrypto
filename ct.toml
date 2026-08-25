@@ -727,6 +727,33 @@ samples = 20000
 smoke_samples = 2000
 
 [[dudect_case]]
+name = "aes128_header_protection_fixed_vs_random_key"
+primitive = "aead.symmetric_transform"
+filter = "aes128_header_protection_fixed_vs_random_key"
+left_class = "complete AES-128 header-protection operation with fixed secret key"
+right_class = "complete AES-128 header-protection operation with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "aes256_header_protection_fixed_vs_random_key"
+primitive = "aead.symmetric_transform"
+filter = "aes256_header_protection_fixed_vs_random_key"
+left_class = "complete AES-256 header-protection operation with fixed secret key"
+right_class = "complete AES-256 header-protection operation with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "chacha20_header_protection_fixed_vs_random_key"
+primitive = "aead.symmetric_transform"
+filter = "chacha20_header_protection_fixed_vs_random_key"
+left_class = "complete ChaCha20 header-protection operation with fixed secret key"
+right_class = "complete ChaCha20 header-protection operation with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
 name = "mlkem512_keygen_secret_noise_fixed_vs_random"
 primitive = "kem.mlkem512"
 filter = "mlkem512_keygen_secret_noise_fixed_vs_random"
@@ -1856,6 +1883,27 @@ dudect = ["ascon_aead128_fixed_vs_random_key_seal"]
 binsec = ["aead.symmetric_transform.ascon_aead128_tag_portable.all"]
 
 [[evidence_unit]]
+id = "aead.symmetric_transform.aes128_header_protection"
+primitive = "aead.symmetric_transform"
+variant = "Aes128HeaderProtection"
+dudect = ["aes128_header_protection_fixed_vs_random_key"]
+binsec = ["aead.symmetric_transform.aes_round_portable.all"]
+
+[[evidence_unit]]
+id = "aead.symmetric_transform.aes256_header_protection"
+primitive = "aead.symmetric_transform"
+variant = "Aes256HeaderProtection"
+dudect = ["aes256_header_protection_fixed_vs_random_key"]
+binsec = ["aead.symmetric_transform.aes_round_portable.all"]
+
+[[evidence_unit]]
+id = "aead.symmetric_transform.chacha20_header_protection"
+primitive = "aead.symmetric_transform"
+variant = "ChaCha20HeaderProtection"
+dudect = ["chacha20_header_protection_fixed_vs_random_key"]
+binsec = ["aead.symmetric_transform.chacha20poly1305_seal.portable.all"]
+
+[[evidence_unit]]
 id = "rsa.private_ops.pkcs1v15_sign"
 primitive = "rsa.private_ops"
 variant = "Pkcs1v15Sign"
@@ -2787,8 +2835,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2246
-compiler_api_sha256 = "c3584d2a5516984b8acd3189c2d73f2aa4f7b33af63e2aec4cb31a0bb3b58a4d"
+compiler_api_item_count = 2268
+compiler_api_sha256 = "6e3f13819536b857ab38b6b77280db1ca7da49ca9ddc91bf964e4656f0ecea19"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -2799,8 +2847,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2240
-compiler_api_sha256 = "c573e79dace25ef23c10cedca144416acefa9e360c48ffa8bea14636cc3dd9c3"
+compiler_api_item_count = 2262
+compiler_api_sha256 = "8e85d195e87964207eaf4a142b157eef0d8f8aea85b838ee6c172279b1fe23df"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -2859,8 +2907,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 2240
-compiler_api_sha256 = "c573e79dace25ef23c10cedca144416acefa9e360c48ffa8bea14636cc3dd9c3"
+compiler_api_item_count = 2262
+compiler_api_sha256 = "8e85d195e87964207eaf4a142b157eef0d8f8aea85b838ee6c172279b1fe23df"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2884,8 +2932,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2239
-compiler_api_sha256 = "44733fbae78fed04e9534deec1c367c411bc9f6004eceb52f5aaa6ef1ac41502"
+compiler_api_item_count = 2261
+compiler_api_sha256 = "daa3642fedbb5532ec987e192ef9f3f8e522237df89779dca933ea17920a3911"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2897,8 +2945,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2239
-compiler_api_sha256 = "b1ff2caddb915001a54731b9a0f53328c5541e9213c83da8e01b9a680eb53913"
+compiler_api_item_count = 2261
+compiler_api_sha256 = "9ea6ddaa217b1181d383fc4dd51690439005044199ae5af472d55a54d7775ea9"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2910,8 +2958,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2239
-compiler_api_sha256 = "461621913477bbb623f12d4b07af646cd49e597027c24133294aeec9251aa34b"
+compiler_api_item_count = 2261
+compiler_api_sha256 = "cc0faa52fd40a16280c020505643c008b1bfbc0e6f7c3b9d05e333bbb7b87eb2"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3098,6 +3146,26 @@ evidence = [
   "unit:aead.symmetric_transform.chacha20poly1305",
 ]
 limitation = "Release claims require exact target artifacts. Random-nonce helper timing includes the platform entropy source."
+
+[[operation]]
+id = "aead.header_protection"
+api = [
+  "rscrypto::aead::expert::header_protection::{Aes128HeaderProtection,Aes256HeaderProtection,ChaCha20HeaderProtection}::{new,mask}",
+]
+features = ["aes-gcm for AES variants", "chacha20poly1305 for the ChaCha20 variant"]
+targets = ["all-supported", "AES backend selected by public target capabilities"]
+secret_inputs = ["header-protection key", "expanded AES schedule or retained ChaCha20 key", "full cipher output block"]
+public_inputs = ["algorithm variant", "fixed-size ciphertext sample", "backend capabilities"]
+variable_time_components = ["public backend dispatch"]
+permitted_leakage = ["algorithm", "sample", "backend", "returned five-byte mask"]
+claim = "ct-intended"
+evidence = [
+  "primitive:aead.symmetric_transform",
+  "unit:aead.symmetric_transform.aes128_header_protection",
+  "unit:aead.symmetric_transform.aes256_header_protection",
+  "unit:aead.symmetric_transform.chacha20_header_protection",
+]
+limitation = "DudeCT covers complete key construction and mask generation. AES reuses the existing portable-round BINSEC leaf; ChaCha20 reuses the portable seal leaf. Exact release claims remain bound to target artifacts."
 
 [[operation]]
 id = "aead.open_and_authenticate"

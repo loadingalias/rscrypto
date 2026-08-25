@@ -220,34 +220,63 @@ pub(super) unsafe fn encrypt_16blocks(
   )
 }
 
+/// Encrypts one AES-256 state with the expanded AES-NI schedule.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the x86 `aes` and `sse2` features.
+#[target_feature(enable = "aes,sse2")]
+#[inline]
+unsafe fn encrypt_state(keys: &NiRoundKeys, mut state: __m128i) -> __m128i {
+  let k = &keys.rk;
+  state = _mm_xor_si128(state, k[0]);
+  state = _mm_aesenc_si128(state, k[1]);
+  state = _mm_aesenc_si128(state, k[2]);
+  state = _mm_aesenc_si128(state, k[3]);
+  state = _mm_aesenc_si128(state, k[4]);
+  state = _mm_aesenc_si128(state, k[5]);
+  state = _mm_aesenc_si128(state, k[6]);
+  state = _mm_aesenc_si128(state, k[7]);
+  state = _mm_aesenc_si128(state, k[8]);
+  state = _mm_aesenc_si128(state, k[9]);
+  state = _mm_aesenc_si128(state, k[10]);
+  state = _mm_aesenc_si128(state, k[11]);
+  state = _mm_aesenc_si128(state, k[12]);
+  state = _mm_aesenc_si128(state, k[13]);
+  _mm_aesenclast_si128(state, k[14])
+}
+
 /// Encrypt a single 16-byte block using AES-256 with AES-NI.
 ///
 /// # Safety
 /// Caller must ensure the CPU supports AES-NI (`target_feature = "aes"`).
 #[target_feature(enable = "aes,sse2")]
 pub(super) unsafe fn encrypt_block(keys: &NiRoundKeys, block: &mut [u8; 16]) {
-  // SAFETY: target_feature gate guarantees AES-NI + SSE2.
+  // SAFETY: target_feature gate guarantees AES-NI + SSE2. The fixed-size block
+  // supplies one complete unaligned load and store.
   unsafe {
-    let k = &keys.rk;
-    let mut state = _mm_loadu_si128(block.as_ptr().cast());
-
-    state = _mm_xor_si128(state, k[0]);
-    state = _mm_aesenc_si128(state, k[1]);
-    state = _mm_aesenc_si128(state, k[2]);
-    state = _mm_aesenc_si128(state, k[3]);
-    state = _mm_aesenc_si128(state, k[4]);
-    state = _mm_aesenc_si128(state, k[5]);
-    state = _mm_aesenc_si128(state, k[6]);
-    state = _mm_aesenc_si128(state, k[7]);
-    state = _mm_aesenc_si128(state, k[8]);
-    state = _mm_aesenc_si128(state, k[9]);
-    state = _mm_aesenc_si128(state, k[10]);
-    state = _mm_aesenc_si128(state, k[11]);
-    state = _mm_aesenc_si128(state, k[12]);
-    state = _mm_aesenc_si128(state, k[13]);
-    state = _mm_aesenclast_si128(state, k[14]);
-
+    let state = encrypt_state(keys, _mm_loadu_si128(block.as_ptr().cast()));
     _mm_storeu_si128(block.as_mut_ptr().cast(), state);
+  }
+}
+
+#[cfg(feature = "aes-gcm")]
+/// Encrypt one block and return only its first five bytes.
+///
+/// The unused eleven output bytes remain in the SIMD state and are never
+/// materialized in addressable memory.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AES-NI (`target_feature = "aes"`).
+#[target_feature(enable = "aes,sse2")]
+pub(super) unsafe fn encrypt_block_prefix_5(keys: &NiRoundKeys, block: &[u8; 16]) -> [u8; 5] {
+  // SAFETY: target_feature gate guarantees AES-NI + SSE2. The fixed-size input
+  // supplies one complete unaligned block load; lane extraction reads only the
+  // low eight bytes of the initialized encrypted state.
+  unsafe {
+    let state = encrypt_state(keys, _mm_loadu_si128(block.as_ptr().cast()));
+    let prefix = _mm_cvtsi128_si64(state).cast_unsigned().to_le_bytes();
+    [prefix[0], prefix[1], prefix[2], prefix[3], prefix[4]]
   }
 }
 
@@ -443,29 +472,58 @@ pub(super) unsafe fn encrypt_16blocks_128(
   )
 }
 
+/// Encrypts one AES-128 state with the expanded AES-NI schedule.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the x86 `aes` and `sse2` features.
+#[target_feature(enable = "aes,sse2")]
+#[inline]
+unsafe fn encrypt_state_128(keys: &Ni128RoundKeys, mut state: __m128i) -> __m128i {
+  let k = &keys.rk;
+  state = _mm_xor_si128(state, k[0]);
+  state = _mm_aesenc_si128(state, k[1]);
+  state = _mm_aesenc_si128(state, k[2]);
+  state = _mm_aesenc_si128(state, k[3]);
+  state = _mm_aesenc_si128(state, k[4]);
+  state = _mm_aesenc_si128(state, k[5]);
+  state = _mm_aesenc_si128(state, k[6]);
+  state = _mm_aesenc_si128(state, k[7]);
+  state = _mm_aesenc_si128(state, k[8]);
+  state = _mm_aesenc_si128(state, k[9]);
+  _mm_aesenclast_si128(state, k[10])
+}
+
 /// Encrypt a single 16-byte block using AES-128 with AES-NI.
 ///
 /// # Safety
 /// Caller must ensure the CPU supports AES-NI (`target_feature = "aes"`).
 #[target_feature(enable = "aes,sse2")]
 pub(super) unsafe fn encrypt_block_128(keys: &Ni128RoundKeys, block: &mut [u8; 16]) {
-  // SAFETY: target_feature gate guarantees AES-NI + SSE2.
+  // SAFETY: target_feature gate guarantees AES-NI + SSE2. The fixed-size block
+  // supplies one complete unaligned load and store.
   unsafe {
-    let k = &keys.rk;
-    let mut state = _mm_loadu_si128(block.as_ptr().cast());
-
-    state = _mm_xor_si128(state, k[0]);
-    state = _mm_aesenc_si128(state, k[1]);
-    state = _mm_aesenc_si128(state, k[2]);
-    state = _mm_aesenc_si128(state, k[3]);
-    state = _mm_aesenc_si128(state, k[4]);
-    state = _mm_aesenc_si128(state, k[5]);
-    state = _mm_aesenc_si128(state, k[6]);
-    state = _mm_aesenc_si128(state, k[7]);
-    state = _mm_aesenc_si128(state, k[8]);
-    state = _mm_aesenc_si128(state, k[9]);
-    state = _mm_aesenclast_si128(state, k[10]);
-
+    let state = encrypt_state_128(keys, _mm_loadu_si128(block.as_ptr().cast()));
     _mm_storeu_si128(block.as_mut_ptr().cast(), state);
+  }
+}
+
+#[cfg(feature = "aes-gcm")]
+/// Encrypt one block and return only its first five bytes.
+///
+/// The unused eleven output bytes remain in the SIMD state and are never
+/// materialized in addressable memory.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AES-NI (`target_feature = "aes"`).
+#[target_feature(enable = "aes,sse2")]
+pub(super) unsafe fn encrypt_block_prefix_5_128(keys: &Ni128RoundKeys, block: &[u8; 16]) -> [u8; 5] {
+  // SAFETY: target_feature gate guarantees AES-NI + SSE2. The fixed-size input
+  // supplies one complete unaligned block load; lane extraction reads only the
+  // low eight bytes of the initialized encrypted state.
+  unsafe {
+    let state = encrypt_state_128(keys, _mm_loadu_si128(block.as_ptr().cast()));
+    let prefix = _mm_cvtsi128_si64(state).cast_unsigned().to_le_bytes();
+    [prefix[0], prefix[1], prefix[2], prefix[3], prefix[4]]
   }
 }

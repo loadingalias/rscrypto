@@ -1374,6 +1374,99 @@ fn ascon_aead128_decrypt(c: &mut Criterion) {
   g.finish();
 }
 
+// Fixed-size header protection
+
+fn header_protection(c: &mut Criterion) {
+  use aes::cipher::{Array, BlockCipherEncrypt as _, KeyInit as _};
+  use chacha20::cipher::{KeyIvInit as _, StreamCipherCore as _};
+  use rscrypto::aead::expert::header_protection::{
+    Aes128HeaderProtection, Aes128HeaderProtectionKey, Aes256HeaderProtection, Aes256HeaderProtectionKey,
+    ChaCha20HeaderProtection, ChaCha20HeaderProtectionKey,
+  };
+
+  let mut construction = c.benchmark_group("header-protection/construct");
+  construction.bench_function("rscrypto/aes128", |b| {
+    b.iter(|| {
+      let key = Aes128HeaderProtectionKey::from_bytes(black_box(KEY_16));
+      black_box(Aes128HeaderProtection::new(&key))
+    })
+  });
+  construction.bench_function("rustcrypto/aes128", |b| {
+    b.iter(|| aes::Aes128::new(black_box(&Array::from(KEY_16))))
+  });
+  construction.bench_function("rscrypto/aes256", |b| {
+    b.iter(|| {
+      let key = Aes256HeaderProtectionKey::from_bytes(black_box(KEY_32));
+      black_box(Aes256HeaderProtection::new(&key))
+    })
+  });
+  construction.bench_function("rustcrypto/aes256", |b| {
+    b.iter(|| aes::Aes256::new(black_box(&Array::from(KEY_32))))
+  });
+  construction.bench_function("rscrypto/chacha20", |b| {
+    b.iter(|| {
+      let key = ChaCha20HeaderProtectionKey::from_bytes(black_box(KEY_32));
+      black_box(ChaCha20HeaderProtection::new(&key))
+    })
+  });
+  construction.bench_function("rustcrypto/chacha20", |b| {
+    b.iter(|| {
+      chacha20::ChaChaCore::<chacha20::R20, chacha20::variants::Ietf>::new(
+        black_box(&KEY_32).into(),
+        black_box(&NONCE_12).into(),
+      )
+    })
+  });
+  construction.finish();
+
+  let sample = [0x07; 16];
+  let aes128_rs = Aes128HeaderProtection::new(&Aes128HeaderProtectionKey::from_bytes(KEY_16));
+  let aes256_rs = Aes256HeaderProtection::new(&Aes256HeaderProtectionKey::from_bytes(KEY_32));
+  let chacha_rs = ChaCha20HeaderProtection::new(&ChaCha20HeaderProtectionKey::from_bytes(KEY_32));
+  let aes128_rc = aes::Aes128::new(&Array::from(KEY_16));
+  let aes256_rc = aes::Aes256::new(&Array::from(KEY_32));
+
+  let mut mask = c.benchmark_group("header-protection/mask");
+  mask.bench_function("rscrypto/aes128", |b| {
+    b.iter(|| black_box(aes128_rs.mask(black_box(&sample))))
+  });
+  mask.bench_function("rustcrypto/aes128", |b| {
+    b.iter(|| {
+      let mut block = Array::from(*black_box(&sample));
+      aes128_rc.encrypt_block(&mut block);
+      black_box(<[u8; 5]>::try_from(&block[..5]).expect("five-byte prefix has fixed length"))
+    })
+  });
+  mask.bench_function("rscrypto/aes256", |b| {
+    b.iter(|| black_box(aes256_rs.mask(black_box(&sample))))
+  });
+  mask.bench_function("rustcrypto/aes256", |b| {
+    b.iter(|| {
+      let mut block = Array::from(*black_box(&sample));
+      aes256_rc.encrypt_block(&mut block);
+      black_box(<[u8; 5]>::try_from(&block[..5]).expect("five-byte prefix has fixed length"))
+    })
+  });
+  mask.bench_function("rscrypto/chacha20", |b| {
+    b.iter(|| black_box(chacha_rs.mask(black_box(&sample))))
+  });
+  mask.bench_function("rustcrypto/chacha20", |b| {
+    b.iter(|| {
+      let counter = u32::from_le_bytes(sample[..4].try_into().expect("counter prefix has fixed length"));
+      let nonce: [u8; 12] = sample[4..].try_into().expect("nonce suffix has fixed length");
+      let mut core = chacha20::ChaChaCore::<chacha20::R20, chacha20::variants::Ietf>::new(
+        black_box(&KEY_32).into(),
+        black_box(&nonce).into(),
+      );
+      core.set_block_pos(counter);
+      let mut block = chacha20::cipher::array::Array::<u8, chacha20::cipher::consts::U64>::default();
+      core.write_keystream_block(&mut block);
+      black_box(<[u8; 5]>::try_from(&block[..5]).expect("five-byte prefix has fixed length"))
+    })
+  });
+  mask.finish();
+}
+
 // Criterion harness
 
 criterion_group!(
@@ -1394,5 +1487,6 @@ criterion_group!(
   aegis256_decrypt,
   ascon_aead128_encrypt,
   ascon_aead128_decrypt,
+  header_protection,
 );
 criterion_main!(benches);
