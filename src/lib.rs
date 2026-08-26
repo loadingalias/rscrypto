@@ -351,7 +351,8 @@ mod secret;
   feature = "blake3",
   feature = "ascon-hash",
   feature = "xxh3",
-  feature = "rapidhash"
+  feature = "rapidhash",
+  feature = "websocket-sha1"
 ))]
 pub mod hashes;
 

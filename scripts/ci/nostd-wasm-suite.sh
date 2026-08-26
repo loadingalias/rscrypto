@@ -133,6 +133,7 @@ if [[ "$DEPTH" == "deep" ]]; then
     "alloc,crc32"
     "sha2"
     "sha3"
+    "websocket-sha1"
     "xxh3"
     "hmac"
     "hmac-sha3"

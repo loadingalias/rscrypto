@@ -37,6 +37,8 @@ use rscrypto::hashes::fast::Xxh3_64;
 use rscrypto::hashes::introspect::{
   DispatchInfo as HashDispatchInfo, KernelIntrospect as HashKernelIntrospect, kernel_for as hash_kernel_for,
 };
+#[cfg(feature = "websocket-sha1")]
+use rscrypto::hashes::legacy::WebSocketAcceptDigest;
 #[cfg(all(feature = "hashes", feature = "std"))]
 use rscrypto::hashes::{DigestReader, DigestWriter};
 #[cfg(feature = "hashes")]
@@ -112,6 +114,13 @@ fn root_surface_core_exports_compile() {
   let mut secret = [0x5a; 8];
   ct::zeroize(&mut secret);
   assert_eq!(secret, [0; 8]);
+}
+
+#[test]
+#[cfg(feature = "websocket-sha1")]
+fn websocket_accept_digest_stays_on_legacy_module_surface() {
+  let digest = WebSocketAcceptDigest::compute(b"dGhlIHNhbXBsZSBub25jZQ==");
+  assert_eq!(digest.as_ref().len(), 20);
 }
 
 #[test]

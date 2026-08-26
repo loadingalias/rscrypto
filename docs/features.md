@@ -104,6 +104,21 @@ rscrypto = { version = "0.8.1", features = ["full", "portable-only"] }
 | `aegis256`          | --                         | AEGIS-256                                                                  |
 | `ascon-aead`        | --                         | Ascon-AEAD128                                                              |
 
+### Compatibility-only features
+
+| Feature          | Pulls in | Enables                                                                         |
+| ---------------- | -------- | ------------------------------------------------------------------------------- |
+| `websocket-sha1` | --       | RFC 6455 `hashes::legacy::WebSocketAcceptDigest`; no raw or streaming SHA-1 API |
+
+`websocket-sha1` is deliberately excluded from `crypto-hashes`, `hashes`, and
+`full`. Cargo's `--all-features` activates it because that flag activates every
+declared leaf, but no rscrypto feature activates it transitively. The operation
+exists only for WebSocket handshake compatibility: it hashes the field bytes
+and RFC 6455 GUID, returns the public 20-byte digest, and leaves HTTP parsing and
+Base64 encoding to the caller. SHA-1 collision resistance is broken; do not use
+this capability for authentication, signatures, certificates, content
+identity, or any new protocol.
+
 ### Auxiliary features
 
 | Feature         | Effect                                                                                                                                                                |

@@ -472,10 +472,10 @@ scorecard_action=$(yq eval '.jobs.scorecard.steps[] | select(.name == "Run Score
   == "true" ]] \
   || fail "Scorecard must publish results"
 
-[[ $(count_feature_sets "$FEATURE_PROFILES" COMPILE_FEATURE_SETS) -eq 58 ]] \
-  || fail "compile feature matrix must retain all 58 profiles"
-[[ $(count_feature_sets "$FEATURE_PROFILES" EXECUTABLE_FEATURE_SETS) -eq 8 ]] \
-  || fail "executable feature matrix must contain the eight behavior transitions"
+[[ $(count_feature_sets "$FEATURE_PROFILES" COMPILE_FEATURE_SETS) -eq 59 ]] \
+  || fail "compile feature matrix must retain all 59 profiles"
+[[ $(count_feature_sets "$FEATURE_PROFILES" EXECUTABLE_FEATURE_SETS) -eq 9 ]] \
+  || fail "executable feature matrix must contain the nine behavior transitions"
 require_unique_feature_sets "$FEATURE_PROFILES" COMPILE_FEATURE_SETS
 require_unique_feature_sets "$FEATURE_PROFILES" EXECUTABLE_FEATURE_SETS
 require_feature_subset "$FEATURE_PROFILES" EXECUTABLE_FEATURE_SETS "$FEATURE_PROFILES" COMPILE_FEATURE_SETS

@@ -13,6 +13,7 @@ pub(crate) mod ascon;
   feature = "crc64",
   feature = "argon2",
   feature = "sha2",
+  feature = "websocket-sha1",
   all(feature = "sha3", any(test, feature = "diag")),
   all(
     any(feature = "blake2b", feature = "blake2s"),

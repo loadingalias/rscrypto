@@ -161,6 +161,10 @@ ascon-hash = []
 xxh3 = []
 rapidhash = []
 
+# Compatibility-only WebSocket handshake capability. Deliberately excluded
+# from every umbrella feature, including `full`.
+websocket-sha1 = []
+
 hmac = ["sha2"]
 hmac-sha3 = ["sha3"]
 hkdf = ["hmac"]
@@ -238,6 +242,7 @@ scrypt = { version = "0.12.0", default-features = false }
 sha2 = "0.11.0"
 sha2_010 = { package = "sha2", version = "0.10.9" }
 sha3 = "0.12.0"
+sha1 = { version = "0.11.0", default-features = false }
 keccak = "0.2.1"
 xxhash-rust = { version = "0.8.18", features = ["xxh3"] }
 rapidhash = "=4.5.1"
@@ -365,6 +370,11 @@ required-features = ["sha2"]
 name = "sha3"
 harness = false
 required-features = ["sha3"]
+
+[[bench]]
+name = "websocket_sha1"
+harness = false
+required-features = ["websocket-sha1"]
 
 [[bench]]
 name = "ascon"

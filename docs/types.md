@@ -80,6 +80,19 @@ Aliases: `hashes::crypto::AsconXof128` and `hashes::crypto::AsconXof128Reader`.
 `Blake2bKey` and `Blake2sKey` make caller-facing key validation explicit while
 borrowing key bytes without allocation or copying.
 
+## Compatibility-only protocol operations
+
+Feature: `websocket-sha1` (not included by `crypto-hashes`, `hashes`, or `full`).
+
+| Type                                    | Output | Standard |
+| --------------------------------------- | ------ | -------- |
+| `hashes::legacy::WebSocketAcceptDigest` | 20B    | RFC 6455 |
+
+`WebSocketAcceptDigest::compute` hashes the caller's field value byte-for-byte
+with the fixed RFC GUID. It exposes neither raw nor streaming SHA-1. The digest
+is public compatibility data, not an authentication result; the caller owns
+HTTP parsing and Base64 encoding.
+
 ## Fast hashes
 
 Features: `fast-hashes` or `xxh3` / `rapidhash`.

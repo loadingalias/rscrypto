@@ -28,9 +28,9 @@ Review the `ct_intended` candidate core before the rest of the repository:
 
 This order prioritizes secret-dependent computation; it does not remove public
 parsers, dispatch, or unsafe kernels from the security boundary. Public parsing,
-raw hashes, checksums, non-cryptographic hashes, public-key verification math,
-benchmark paths, and unlisted build configurations carry no blanket
-constant-time claim.
+raw hashes, compatibility-only WebSocket accept digests, checksums,
+non-cryptographic hashes, public-key verification math, benchmark paths, and
+unlisted build configurations carry no blanket constant-time claim.
 
 ## System boundary
 
@@ -118,6 +118,7 @@ Ordered by exposure to untrusted input:
 | Secret-bearing compute  | Sign, decrypt, decapsulate, derive; the release-evidenced subset of `ct.toml`                                         | Timing leakage, incorrect arithmetic                                     |
 | `unsafe` low-level code | SIMD/assembly kernels, raw buffer helpers, zeroization, and dispatch                                                  | Undefined behavior, divergence from the portable authority               |
 | Dispatch                | `src/platform`, `src/backend`                                                                                         | Selecting a kernel the CPU cannot run, or one that produces wrong output |
+| Compatibility operations | `hashes::legacy::WebSocketAcceptDigest::compute`                                                                     | Capability expansion or treating broken SHA-1 collision resistance as authentication |
 
 ## Mitigations and evidence
 
@@ -130,6 +131,7 @@ Ordered by exposure to untrusted input:
 | Oracle behavior                       | Opaque errors, failed-open output clearing, single-bit failure shape                                                                  | AEAD and verification tests, fuzz targets                                                                                                                                            |
 | Secret exposure at rest               | Zeroize at the last owned use and on drop, masked `Debug` and errors, and sealed fixed-size comparison only on semantic secret owners | [`docs/secret-ownership.md`](docs/secret-ownership.md), [`docs/secret-lifecycle.md`](docs/secret-lifecycle.md), `scripts/check/zeroize-evidence.sh`, and `tests/secret_redaction.rs` |
 | Supply chain                          | Minimal optional runtime dependencies, `cargo deny`, `cargo audit`, signed tags, Trusted Publishing, release attestations             | [`deny.toml`](deny.toml), [`.github/workflows/release.yaml`](.github/workflows/release.yaml), [`docs/release.md`](docs/release.md)                                                   |
+| Legacy primitive misuse               | Semantic-only API, explicit leaf feature, no umbrella membership, no raw/streaming SHA-1                                                | Feature-boundary check, compile-fail root-surface doctest, RFC/oracle tests                                                                                                      |
 
 ## Known gaps
 

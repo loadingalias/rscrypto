@@ -26,6 +26,7 @@ rscrypto = { path = "..", features = [
   "std",
   "checksums",
   "hashes",
+  "websocket-sha1",
   "auth",
   "aead",
   "argon2",
@@ -60,6 +61,7 @@ cshake = { version = "0.2.1", default-features = false }
 digest = "0.11"
 sha2 = "0.11"
 sha3 = "0.12"
+sha1 = { version = "0.11.0", default-features = false }
 tiny-keccak = { version = "2.0", features = ["kmac", "shake"] }
 
 # Fast hashes
@@ -294,6 +296,11 @@ doc = false
 [[bin]]
 name = "hash_cshake256"
 path = "fuzz_targets/hash_cshake256.rs"
+doc = false
+
+[[bin]]
+name = "hash_websocket_sha1"
+path = "fuzz_targets/hash_websocket_sha1.rs"
 doc = false
 
 [[bin]]

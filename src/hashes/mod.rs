@@ -57,6 +57,10 @@
 //! rscrypto = { version = "0.8.1", default-features = false, features = ["hashes"] }
 //! ```
 //!
+//! The compatibility-only `websocket-sha1` feature is deliberately absent
+//! from `hashes`, `crypto-hashes`, and `full`. It exposes only the complete
+//! RFC 6455 accept-digest operation under [`legacy`].
+//!
 //! # API Conventions
 //!
 //! - Fixed-output digests use `Type::digest(data)` for one-shot and `new` / `update` / `finalize` /
@@ -69,6 +73,7 @@
 //!
 //! - `crypto` - Cryptographic hash functions (safe by default).
 //! - `fast` - Non-cryptographic hashes (**NOT CRYPTO**).
+//! - `legacy` - Capability-confined compatibility operations; never general-purpose hashes.
 //! - `introspect` (requires `diag` feature) - Advanced kernel selection reporting.
 //!
 //! # Advanced
@@ -105,6 +110,8 @@ pub mod introspect;
   )
 ))]
 pub mod io;
+#[cfg(feature = "websocket-sha1")]
+pub mod legacy;
 
 #[cfg(feature = "sha2")]
 mod util;

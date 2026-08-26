@@ -18,6 +18,7 @@ COMPILE_FEATURE_SETS=(
   "alloc,crc32"
   "sha2"
   "sha3"
+  "websocket-sha1"
   "blake2b"
   "blake2s"
   "xxh3"
@@ -69,6 +70,7 @@ COMPILE_FEATURE_SETS=(
 # Execute the full primitive surface once for each behavior-changing boundary.
 # Leaf and umbrella composition remains compile-checked above.
 EXECUTABLE_FEATURE_SETS=(
+  "websocket-sha1"
   "full"
   "std,full"
   "std,full,getrandom"

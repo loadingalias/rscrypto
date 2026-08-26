@@ -86,6 +86,14 @@ if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/auth-vector-provenance.py" >"$LO
 fi
 ok
 
+step "Checking feature boundaries"
+if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/feature-boundaries.py" >"$LOG_DIR/feature-boundaries.log" 2>&1; then
+  fail
+  show_error "$LOG_DIR/feature-boundaries.log"
+  exit 1
+fi
+ok
+
 step "Checking benchmark catalog"
 if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/../bench/benchmark_catalog_test.py" >"$LOG_DIR/benchmark-catalog.log" 2>&1; then
   fail

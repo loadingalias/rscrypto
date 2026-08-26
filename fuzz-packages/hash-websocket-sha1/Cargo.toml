@@ -1,0 +1,22 @@
+[package]
+name = "rscrypto-fuzz-hash-websocket-sha1"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rscrypto = { path = "../..", default-features = false, features = ["websocket-sha1"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
+sha1 = { version = "0.11.0", default-features = false }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "hash_websocket_sha1"
+path = "fuzz_targets/hash_websocket_sha1.rs"
+doc = false
