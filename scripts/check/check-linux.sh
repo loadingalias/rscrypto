@@ -57,9 +57,11 @@ for i in "${!LINUX_TARGETS[@]}"; do
   targets[i]="$target"
 
   (
-    toolchain_env=()
+    # Keep the command prefix non-empty: Bash 3.2 treats an empty array
+    # expansion as an unbound variable under `set -u`.
+    toolchain_env=(env)
     if [[ "$target" == riscv64* ]]; then
-      toolchain_env=(env "RUSTUP_TOOLCHAIN=$NIGHTLY_TOOLCHAIN")
+      toolchain_env+=("RUSTUP_TOOLCHAIN=$NIGHTLY_TOOLCHAIN")
     fi
     # shellcheck disable=SC2086
     if ! CC="$ZIG_CC" CARGO_TARGET_DIR="$target_dir" \
