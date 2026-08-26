@@ -1,12 +1,16 @@
-#![cfg(all(feature = "xxh3", feature = "rapidhash"))]
+#![cfg(any(all(feature = "xxh3", feature = "rapidhash"), feature = "aes-siv"))]
 
+#[cfg(all(feature = "xxh3", feature = "rapidhash"))]
+use core::hash::{BuildHasher, Hasher};
 use core::{
   alloc::{GlobalAlloc, Layout},
   cell::Cell,
-  hash::{BuildHasher, Hasher},
 };
-use std::{alloc::System, collections::HashMap};
+use std::alloc::System;
+#[cfg(all(feature = "xxh3", feature = "rapidhash"))]
+use std::collections::HashMap;
 
+#[cfg(all(feature = "xxh3", feature = "rapidhash"))]
 use rscrypto::{RapidSeededState, RapidStreamHasher, Xxh3_128Hasher, Xxh3BuildHasher};
 
 struct CountingAllocator;
@@ -89,6 +93,7 @@ fn measure_allocations(f: impl FnOnce()) -> usize {
 }
 
 #[test]
+#[cfg(all(feature = "xxh3", feature = "rapidhash"))]
 fn fast_hashers_and_preallocated_maps_hash_without_allocating() {
   let xxh3_builder = Xxh3BuildHasher::with_seed(42);
   let rapid_builder = RapidSeededState::new(42);
@@ -196,5 +201,48 @@ fn header_protection_context_construction_does_not_allocate_off_riscv64() {
   assert_eq!(
     allocations, 0,
     "header-protection context construction must not allocate off RISC-V"
+  );
+}
+
+#[test]
+#[cfg(feature = "aes-siv")]
+fn aes_siv_in_place_operations_do_not_allocate() {
+  use rscrypto::{AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce};
+
+  let key = AesSivCmac256Key::from_bytes([0x53; 32]);
+  let nonce = AesSivCmac256Nonce::try_from(&b"allocation nonce"[..]).expect("nonce is non-empty");
+
+  #[cfg(not(target_arch = "riscv64"))]
+  assert_eq!(
+    measure_allocations(|| {
+      drop(AesSivCmac256::new(&key));
+    }),
+    0,
+    "AES-SIV context construction must not allocate outside the RISC-V boxed schedule backend"
+  );
+
+  let cipher = AesSivCmac256::new(&key);
+  let mut message = [0x42; 1232];
+  let mut tag = None;
+  assert_eq!(
+    measure_allocations(|| {
+      tag = Some(cipher.seal_in_place(nonce, b"associated data", &mut message));
+    }),
+    0,
+    "AES-SIV in-place sealing must not allocate"
+  );
+  assert_eq!(
+    measure_allocations(|| {
+      cipher
+        .open_in_place(
+          nonce,
+          b"associated data",
+          &mut message,
+          tag.as_ref().expect("seal produced a tag"),
+        )
+        .expect("fresh ciphertext must authenticate");
+    }),
+    0,
+    "AES-SIV in-place opening must not allocate"
   );
 }

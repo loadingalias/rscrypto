@@ -376,7 +376,7 @@ pub(super) unsafe fn encrypt_4blocks_128(keys: &Ni128RoundKeys, blocks: __m512i)
 ///
 /// # Safety
 /// Caller must ensure AES-NI and SSE2 are available.
-#[cfg(feature = "aes-gcm")]
+#[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aes-siv"))]
 #[target_feature(enable = "aes,sse2")]
 #[inline]
 pub(super) unsafe fn encrypt_4blocks_128_aesni(
@@ -426,7 +426,7 @@ pub(super) unsafe fn encrypt_4blocks_128_aesni(
 ///
 /// # Safety
 /// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
-#[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+#[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aes-siv"))]
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
 #[inline]
 pub(super) unsafe fn encrypt_16blocks_128(
@@ -525,5 +525,80 @@ pub(super) unsafe fn encrypt_block_prefix_5_128(keys: &Ni128RoundKeys, block: &[
     let state = encrypt_state_128(keys, _mm_loadu_si128(block.as_ptr().cast()));
     let prefix = _mm_cvtsi128_si64(state).cast_unsigned().to_le_bytes();
     [prefix[0], prefix[1], prefix[2], prefix[3], prefix[4]]
+  }
+}
+
+/// Encrypt independent AES-128 blocks in four-way AES-NI batches.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AES-NI (`target_feature = "aes"`).
+#[cfg(any(test, feature = "aes-gcm-siv", feature = "aes-siv"))]
+#[target_feature(enable = "aes,sse2")]
+pub(super) unsafe fn encrypt_blocks_128(keys: &Ni128RoundKeys, blocks: &mut [[u8; 16]]) {
+  // SAFETY: AES-NI + SSE2 are enabled. Every load and store is through a complete initialized
+  // block reference, and four-block batches hold disjoint mutable elements.
+  unsafe {
+    let (batches, remainder) = blocks.as_chunks_mut::<4>();
+    for batch in batches {
+      let b0 = _mm_loadu_si128(batch[0].as_ptr().cast());
+      let b1 = _mm_loadu_si128(batch[1].as_ptr().cast());
+      let b2 = _mm_loadu_si128(batch[2].as_ptr().cast());
+      let b3 = _mm_loadu_si128(batch[3].as_ptr().cast());
+      let (b0, b1, b2, b3) = encrypt_4blocks_128_aesni(keys, b0, b1, b2, b3);
+      _mm_storeu_si128(batch[0].as_mut_ptr().cast(), b0);
+      _mm_storeu_si128(batch[1].as_mut_ptr().cast(), b1);
+      _mm_storeu_si128(batch[2].as_mut_ptr().cast(), b2);
+      _mm_storeu_si128(batch[3].as_mut_ptr().cast(), b3);
+    }
+    for block in remainder {
+      let state = encrypt_state_128(keys, _mm_loadu_si128(block.as_ptr().cast()));
+      _mm_storeu_si128(block.as_mut_ptr().cast(), state);
+    }
+  }
+}
+
+/// Encrypt independent AES-128 blocks in sixteen-way VAES-512 batches.
+///
+/// # Safety
+/// Caller must ensure the CPU and OS support AES-NI, VAES, AVX-512F, and AVX-512VL.
+#[cfg(any(test, feature = "aes-gcm-siv", feature = "aes-siv"))]
+#[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
+pub(super) unsafe fn encrypt_blocks_128_vaes512(keys: &Ni128RoundKeys, blocks: &mut [[u8; 16]]) {
+  // SAFETY: required target features are enabled. Each 256-byte batch contains sixteen complete,
+  // initialized, disjoint blocks; the four unaligned vector loads and stores stay within it.
+  unsafe {
+    let (batches, remainder) = blocks.as_chunks_mut::<16>();
+    for batch in batches {
+      let ptr = batch.as_mut_ptr().cast::<u8>();
+      let b0 = _mm512_loadu_si512(ptr.cast());
+      let b1 = _mm512_loadu_si512(ptr.add(64).cast());
+      let b2 = _mm512_loadu_si512(ptr.add(128).cast());
+      let b3 = _mm512_loadu_si512(ptr.add(192).cast());
+      let (b0, b1, b2, b3) = encrypt_16blocks_128(keys, b0, b1, b2, b3);
+      _mm512_storeu_si512(ptr.cast(), b0);
+      _mm512_storeu_si512(ptr.add(64).cast(), b1);
+      _mm512_storeu_si512(ptr.add(128).cast(), b2);
+      _mm512_storeu_si512(ptr.add(192).cast(), b3);
+    }
+    encrypt_blocks_128(keys, remainder);
+  }
+}
+
+/// XOR a serial block stream into `state` and AES-128-encrypt after every block.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AES-NI (`target_feature = "aes"`).
+#[cfg(feature = "aes-siv")]
+#[target_feature(enable = "aes,sse2")]
+pub(super) unsafe fn xor_encrypt_blocks_128(keys: &Ni128RoundKeys, state: &mut [u8; 16], blocks: &[[u8; 16]]) {
+  // SAFETY: AES-NI + SSE2 are enabled. Inputs are complete initialized blocks; the only write is
+  // the final fixed-size state store. The loop count depends solely on public input length.
+  unsafe {
+    let mut chain = _mm_loadu_si128(state.as_ptr().cast());
+    for block in blocks {
+      chain = _mm_xor_si128(chain, _mm_loadu_si128(block.as_ptr().cast()));
+      chain = encrypt_state_128(keys, chain);
+    }
+    _mm_storeu_si128(state.as_mut_ptr().cast(), chain);
   }
 }

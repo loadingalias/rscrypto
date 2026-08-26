@@ -87,9 +87,19 @@ mod aegis256;
 #[cfg(any(
   feature = "aes-gcm",
   feature = "aes-gcm-siv",
+  feature = "aes-siv",
   all(feature = "aegis256", target_arch = "riscv64"),
   all(feature = "aegis256", test),
 ))]
+// AES-SIV-CMAC-256 uses only the AES-128 half of the shared AES authority. Keep the unused
+// AES-256 sibling compiled but lint-silent for this isolated leaf instead of duplicating backends.
+#[cfg_attr(
+  all(
+    feature = "aes-siv",
+    not(any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256"))
+  ),
+  expect(dead_code, reason = "isolated AES-SIV leaf reuses the shared AES-128 authority")
+)]
 mod aes;
 #[cfg(feature = "aes-gcm")]
 mod aes128gcm;
@@ -104,7 +114,17 @@ mod aes256gcmsiv;
   all(target_arch = "riscv64", any(feature = "aes-gcm", feature = "aes-gcm-siv"))
 ))]
 mod aes_round;
-#[cfg(all(test, any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")))]
+#[cfg(feature = "aes-siv")]
+mod aes_siv_cmac256;
+#[cfg(all(
+  test,
+  any(
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "aes-siv",
+    feature = "aegis256"
+  )
+))]
 mod test_vectors {
   use alloc::{vec, vec::Vec};
 
@@ -122,13 +142,13 @@ mod test_vectors {
   }
 
   #[track_caller]
-  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aes-siv"))]
   pub(super) fn hex16(hex: &str) -> [u8; 16] {
     hex_array(hex)
   }
 
   #[track_caller]
-  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aes-siv"))]
   pub(super) fn hex32(hex: &str) -> [u8; 32] {
     hex_array(hex)
   }
@@ -194,6 +214,14 @@ pub use aegis256::diag_aegis256_update_portable;
 pub use aegis256::{Aegis256, Aegis256Key, Aegis256Tag};
 #[cfg(all(feature = "diag", feature = "aegis256"))]
 pub use aes_round::diag_aes_enc_round_portable;
+#[cfg(feature = "aes-siv")]
+pub use aes_siv_cmac256::{
+  AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, AesSivCmac256NonceError, AesSivCmac256Tag,
+};
+#[cfg(all(feature = "diag", feature = "aes-siv"))]
+pub use aes_siv_cmac256::{
+  diag_aes_siv_cmac256_open_portable, diag_aes_siv_cmac256_s2v_portable, diag_zeroize_aes_siv_cmac256,
+};
 #[cfg(feature = "aes-gcm")]
 pub use aes128gcm::{Aes128Gcm, Aes128GcmKey, Aes128GcmTag};
 #[cfg(all(feature = "diag", feature = "aes-gcm"))]

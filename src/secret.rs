@@ -160,6 +160,7 @@ impl Drop for SecretVec {
 #[cfg(any(
   feature = "aes-gcm",
   feature = "aes-gcm-siv",
+  feature = "aes-siv",
   feature = "chacha20poly1305",
   feature = "xchacha20poly1305",
   feature = "aegis256",
@@ -177,6 +178,7 @@ pub(crate) struct ZeroizingBytes<const N: usize>([u8; N]);
 #[cfg(any(
   feature = "aes-gcm",
   feature = "aes-gcm-siv",
+  feature = "aes-siv",
   feature = "chacha20poly1305",
   feature = "xchacha20poly1305",
   feature = "aegis256",
@@ -215,6 +217,7 @@ impl<const N: usize> ZeroizingBytes<N> {
 #[cfg(any(
   feature = "aes-gcm",
   feature = "aes-gcm-siv",
+  feature = "aes-siv",
   feature = "chacha20poly1305",
   feature = "xchacha20poly1305",
   feature = "aegis256",

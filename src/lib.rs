@@ -140,6 +140,7 @@ assert!(
       feature = "crc64",
       feature = "aes-gcm",
       feature = "aes-gcm-siv",
+      feature = "aes-siv",
       feature = "aegis256",
       feature = "blake3",
       feature = "xxh3",
@@ -162,6 +163,7 @@ assert!(
       feature = "crc64",
       feature = "aes-gcm",
       feature = "aes-gcm-siv",
+      feature = "aes-siv",
       feature = "aegis256",
       feature = "xxh3",
       feature = "chacha20poly1305",
@@ -207,6 +209,7 @@ assert!(
       feature = "blake3",
       feature = "aes-gcm",
       feature = "aes-gcm-siv",
+      feature = "aes-siv",
       feature = "chacha20poly1305",
       feature = "xchacha20poly1305",
       feature = "aegis256",
@@ -224,6 +227,7 @@ assert!(
       feature = "crc32",
       feature = "aes-gcm",
       feature = "aes-gcm-siv",
+      feature = "aes-siv",
       feature = "aegis256"
     )
   ),
@@ -232,7 +236,13 @@ assert!(
 #![cfg_attr(
   all(
     target_arch = "riscv64",
-    any(feature = "sha2", feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")
+    any(
+      feature = "sha2",
+      feature = "aes-gcm",
+      feature = "aes-gcm-siv",
+      feature = "aes-siv",
+      feature = "aegis256"
+    )
   ),
   feature(riscv_ext_intrinsics)
 )]
@@ -277,6 +287,7 @@ mod macros;
 #[cfg(any(
   feature = "aes-gcm",
   feature = "aes-gcm-siv",
+  feature = "aes-siv",
   feature = "chacha20poly1305",
   feature = "xchacha20poly1305",
   feature = "aegis256",
@@ -294,6 +305,7 @@ mod hex;
 #[cfg(any(
   feature = "aes-gcm",
   feature = "aes-gcm-siv",
+  feature = "aes-siv",
   feature = "chacha20poly1305",
   feature = "xchacha20poly1305",
   feature = "aegis256",
@@ -378,6 +390,8 @@ pub use aead::{Aes128GcmSiv, Aes128GcmSivKey, Aes128GcmSivTag};
 pub use aead::{Aes256Gcm, Aes256GcmKey, Aes256GcmTag};
 #[cfg(feature = "aes-gcm-siv")]
 pub use aead::{Aes256GcmSiv, Aes256GcmSivKey, Aes256GcmSivTag};
+#[cfg(feature = "aes-siv")]
+pub use aead::{AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, AesSivCmac256NonceError, AesSivCmac256Tag};
 #[cfg(feature = "ascon-aead")]
 pub use aead::{AsconAead128, AsconAead128Key, AsconAead128Tag};
 #[cfg(feature = "chacha20poly1305")]
@@ -475,6 +489,7 @@ pub use hashes::fast::{Xxh3_128Hasher, Xxh3BuildHasher, Xxh3Hasher};
 #[cfg(any(
   feature = "aes-gcm",
   feature = "aes-gcm-siv",
+  feature = "aes-siv",
   feature = "chacha20poly1305",
   feature = "xchacha20poly1305",
   feature = "aegis256",
@@ -491,6 +506,7 @@ pub use secret::SecretVec;
 #[cfg(any(
   feature = "aes-gcm",
   feature = "aes-gcm-siv",
+  feature = "aes-siv",
   feature = "chacha20poly1305",
   feature = "xchacha20poly1305",
   feature = "aegis256",
@@ -517,6 +533,7 @@ pub mod expert {
   #[cfg(any(
     feature = "aes-gcm",
     feature = "aes-gcm-siv",
+    feature = "aes-siv",
     feature = "chacha20poly1305",
     feature = "xchacha20poly1305",
     feature = "aegis256",
@@ -548,6 +565,7 @@ pub mod prelude {
   #[cfg(any(
     feature = "aes-gcm",
     feature = "aes-gcm-siv",
+    feature = "aes-siv",
     feature = "chacha20poly1305",
     feature = "xchacha20poly1305",
     feature = "aegis256",
@@ -702,6 +720,15 @@ let cipher = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes([0u8; 32]));
 let nonce = Nonce96::from_bytes([0u8; 12]);
 let mut out = [0u8; 16];
 cipher.encrypt(&nonce, b"", b"", &mut out)?;
+```
+
+```compile_fail
+use rscrypto::{AesSivCmac256, AesSivCmac256Key, aead::Nonce96};
+
+let cipher = AesSivCmac256::new(&AesSivCmac256Key::from_bytes([0u8; 32]));
+let nonce = Nonce96::from_bytes([0u8; 12]);
+let mut message = [0u8; 16];
+let _ = cipher.seal_in_place(nonce, b"", &mut message);
 ```
 
 ```compile_fail
@@ -1228,6 +1255,20 @@ use rscrypto::aead::expert::header_protection::ChaCha20HeaderProtection;
 
 fn require_clone<T: Clone>() {}
 require_clone::<ChaCha20HeaderProtection>();
+```
+
+```compile_fail,E0277
+use rscrypto::AesSivCmac256Key;
+
+fn require_clone<T: Clone>() {}
+require_clone::<AesSivCmac256Key>();
+```
+
+```compile_fail,E0277
+use rscrypto::AesSivCmac256;
+
+fn require_clone<T: Clone>() {}
+require_clone::<AesSivCmac256>();
 ```
 "#]
 pub struct __SecretCloneBoundaryAudit;

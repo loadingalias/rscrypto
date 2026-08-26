@@ -17,6 +17,7 @@ fn keyed_state_debug_snapshots_are_redacted() {
     feature = "aegis256",
     feature = "aes-gcm",
     feature = "aes-gcm-siv",
+    feature = "aes-siv",
     feature = "chacha20poly1305",
     feature = "hkdf",
     feature = "hmac",
@@ -63,6 +64,15 @@ fn keyed_state_debug_snapshots_are_redacted() {
     let key = Aes256GcmSivKey::from_bytes(KEY_32);
     assert_debug_snapshot(&key, "Aes256GcmSivKey(****)");
     assert_debug_snapshot(&Aes256GcmSiv::new(&key), "Aes256GcmSiv { .. }");
+  }
+
+  #[cfg(feature = "aes-siv")]
+  {
+    use rscrypto::{AesSivCmac256, AesSivCmac256Key};
+
+    let key = AesSivCmac256Key::from_bytes(KEY_32);
+    assert_debug_snapshot(&key, "AesSivCmac256Key(****)");
+    assert_debug_snapshot(&AesSivCmac256::new(&key), "AesSivCmac256 { .. }");
   }
 
   #[cfg(feature = "chacha20poly1305")]

@@ -22,7 +22,7 @@ Review the `ct_intended` candidate core before the rest of the repository:
 4. RSA private sign/decrypt leaves.
 5. ML-KEM secret-noise key generation, encapsulation coins, decapsulation
    secret-key material, and implicit rejection.
-6. AEAD authentication and failed-open cleanup.
+6. AEAD authentication, including AES-SIV synthetic-IV derivation, and failed-open cleanup.
 7. Header-protection mask generation.
 8. MAC/tag verification, fixed-size owner comparison/declassification, and selected
    password-verification comparisons.
@@ -95,6 +95,12 @@ claims remain limited to the release-evidenced configurations.
    parameters. The API uses typed keys and nonces, `#[must_use]` verification
    results, `NonceCounter` invocation budgets, opaque errors, and explicit drop
    cleanup for the named secret owners.
+
+   AES-SIV-CMAC-256 preserves authenticity when a nonce repeats, but it reveals
+   equality when the complete key/nonce/AAD/plaintext tuple repeats. The nonce-based
+   profile therefore still treats nonce uniqueness as the normal caller contract;
+   misuse resistance is a containment property, not permission to omit nonce
+   management.
 4. **Supply-chain attacker.** Targets the path between this repository and the
    artifact a downstream build consumes.
 

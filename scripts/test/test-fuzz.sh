@@ -150,7 +150,7 @@ fuzz_dictionary_for_target() {
   local dict=""
 
   case "$target" in
-    aead_aegis256|aead_aes256gcm|aead_aes256gcmsiv|aead_ascon128|aead_chacha20poly1305|aead_xchacha20poly1305)
+    aead_aegis256|aead_aes256gcm|aead_aes256gcmsiv|aead_aes_siv_cmac256|aead_ascon128|aead_chacha20poly1305|aead_xchacha20poly1305)
       dict="$REPO_ROOT/fuzz/dictionaries/aead_boundary.dict"
       ;;
     auth_phc)

@@ -1637,6 +1637,25 @@ pub(super) unsafe fn encrypt_block_128_core(keys: &Ce128RoundKeys, block: &mut [
   }
 }
 
+/// XOR a serial block stream into `state` and AES-128-encrypt after every block.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AES-CE and NEON.
+#[cfg(feature = "aes-siv")]
+#[target_feature(enable = "aes,neon")]
+pub(super) unsafe fn xor_encrypt_blocks_128(keys: &Ce128RoundKeys, state: &mut [u8; 16], blocks: &[[u8; 16]]) {
+  // SAFETY: AES-CE + NEON are enabled. Every load covers one complete initialized block, the
+  // final store covers the complete state, and the loop count depends only on public length.
+  unsafe {
+    let mut chain = vld1q_u8(state.as_ptr());
+    for block in blocks {
+      chain = veorq_u8(chain, vld1q_u8(block.as_ptr()));
+      chain = encrypt_state_128_core(keys, chain);
+    }
+    vst1q_u8(state.as_mut_ptr(), chain);
+  }
+}
+
 #[target_feature(enable = "aes,neon")]
 #[inline]
 /// # Safety

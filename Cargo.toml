@@ -185,6 +185,7 @@ scrypt = ["pbkdf2", "alloc"]
 
 aes-gcm = []
 aes-gcm-siv = []
+aes-siv = []
 chacha20poly1305 = []
 xchacha20poly1305 = []
 aegis256 = []
@@ -200,7 +201,7 @@ password-hashing = ["argon2", "scrypt", "phc-strings"]
 signatures = ["ecdsa", "ed25519", "rsa"]
 key-exchange = ["x25519", "ml-kem"]
 auth = ["macs", "kdfs", "password-hashing", "signatures", "key-exchange"]
-aead = ["aes-gcm", "aes-gcm-siv", "chacha20poly1305", "xchacha20poly1305", "aegis256", "ascon-aead"]
+aead = ["aes-gcm", "aes-gcm-siv", "aes-siv", "chacha20poly1305", "xchacha20poly1305", "aegis256", "ascon-aead"]
 full = ["checksums", "hashes", "auth", "aead"]
 getrandom = ["dep:getrandom"]
 serde = ["dep:serde"]
@@ -228,6 +229,7 @@ proptest = "^1.11.0"
 
 # Oracles
 aes = "0.9.2"
+aes-siv = { version = "0.8.0", default-features = false, features = ["alloc"] }
 cshake = { version = "0.2.1", default-features = false }
 crc = "3.4.0"
 crc-fast = { version = "1.10.0", default-features = false, features = ["std"] }
@@ -342,6 +344,7 @@ harness = false
 required-features = [
   "aes-gcm",
   "aes-gcm-siv",
+  "aes-siv",
   "chacha20poly1305",
   "xchacha20poly1305",
   "aegis256",

@@ -144,6 +144,7 @@ if [[ "$DEPTH" == "deep" ]]; then
     "x25519"
     "ml-kem"
     "chacha20poly1305"
+    "aes-siv"
     "ascon-aead"
     "checksums"
     "hashes"

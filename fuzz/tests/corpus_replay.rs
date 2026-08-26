@@ -24,6 +24,9 @@ mod aead_chacha20poly1305;
 #[path = "../target_impls/aead_header_protection.rs"]
 mod aead_header_protection;
 
+#[path = "../target_impls/aead_aes_siv_cmac256.rs"]
+mod aead_aes_siv_cmac256;
+
 #[path = "../target_impls/aead_nonce_counter.rs"]
 mod aead_nonce_counter;
 
@@ -199,6 +202,16 @@ fn replay_aead_header_protection_corpus() {
     aead_header_protection::run,
   );
   assert_ne!(replayed, 0, "aead_header_protection corpus should not be empty");
+}
+
+#[test]
+fn replay_aead_aes_siv_cmac256_corpus() {
+  let replayed = replay_corpus_dir(
+    "aead_aes_siv_cmac256",
+    corpus_dir("aead_aes_siv_cmac256"),
+    aead_aes_siv_cmac256::run,
+  );
+  assert_ne!(replayed, 0, "aead_aes_siv_cmac256 corpus should not be empty");
 }
 
 #[test]
