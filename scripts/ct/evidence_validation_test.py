@@ -202,6 +202,20 @@ def main() -> None:
     in manifest_errors(public_operand_primitive_without_root)
   )
 
+  def evidence_unit_with_undeclared_variant(manifest) -> None:
+    unit = next(
+      row
+      for row in manifest["evidence_unit"]
+      if row["id"] == "aead.symmetric_transform.aes128_header_protection"
+    )
+    unit["variant"] = "UndeclaredVariant"
+
+  assert (
+    "evidence unit aead.symmetric_transform.aes128_header_protection variant 'UndeclaredVariant' "
+    "is not declared by primitive aead.symmetric_transform"
+    in manifest_errors(evidence_unit_with_undeclared_variant)
+  )
+
   with tempfile.TemporaryDirectory() as temporary:
     temporary_path = Path(temporary)
     hashes = temporary_path / "hashes.txt"
