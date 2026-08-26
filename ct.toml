@@ -4600,6 +4600,9 @@ variants = [
   "Aes128GcmSiv",
   "Aes256GcmSiv",
   "AesSivCmac256",
+  "Aes128HeaderProtection",
+  "Aes256HeaderProtection",
+  "ChaCha20HeaderProtection",
   "ChaCha20Poly1305",
   "XChaCha20Poly1305",
   "Aegis256",
@@ -4622,9 +4625,10 @@ entrypoints = [
   "ChaCha20 keystream helpers",
   "Poly1305 block helpers",
   "AES-SIV-CMAC-256 private CMAC/S2V and CTR helpers",
+  "typed header-protection constructors and mask generation",
 ]
-secrets = ["key", "plaintext", "opened_plaintext", "poly_key", "hash_subkey"]
-public = ["nonce", "aad", "input_length", "backend_caps"]
+secrets = ["key", "plaintext", "opened_plaintext", "poly_key", "hash_subkey", "full cipher output block"]
+public = ["nonce", "aad", "input_length", "header-protection sample", "backend_caps"]
 may_leak = ["input_length", "public_backend_dispatch"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_b"]

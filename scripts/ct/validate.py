@@ -465,10 +465,13 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
       fail(errors, "CT harness equality retention list does not exactly match ct.toml")
 
   primitive_ids: set[str] = set()
+  primitive_by_id: dict[str, dict] = {}
   for primitive in ct.get("primitive", []):
     primitive_id = primitive.get("id", "<unnamed>")
     if primitive_id in primitive_ids:
       fail(errors, f"duplicate primitive id {primitive_id}")
+    else:
+      primitive_by_id[primitive_id] = primitive
     primitive_ids.add(primitive_id)
 
     claim = primitive.get("claim")
@@ -476,6 +479,14 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
       fail(errors, f"primitive {primitive_id} has invalid claim {claim!r}")
     if claim == "ct-claimed":
       fail(errors, f"primitive {primitive_id} is ct-claimed before release evidence gates exist")
+
+    variants = primitive.get("variants", [])
+    if (
+      not isinstance(variants, list)
+      or any(not isinstance(variant, str) or not variant for variant in variants)
+      or len(variants) != len(set(variants))
+    ):
+      fail(errors, f"primitive {primitive_id} variants must be a list of unique non-empty strings")
 
     unsupported_timing_targets = primitive.get("physical_timing_unsupported_targets", [])
     if unsupported_timing_targets and (
@@ -624,11 +635,15 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
       fail(errors, f"duplicate evidence unit id {unit_id}")
     unit_ids.add(unit_id)
 
-    primitive = unit.get("primitive")
-    if primitive not in primitive_ids:
-      fail(errors, f"evidence unit {unit_id} references unknown primitive {primitive!r}")
-    if not unit.get("variant"):
+    primitive_id = unit.get("primitive")
+    primitive = primitive_by_id.get(primitive_id)
+    if primitive is None:
+      fail(errors, f"evidence unit {unit_id} references unknown primitive {primitive_id!r}")
+    variant = unit.get("variant")
+    if not variant:
       fail(errors, f"evidence unit {unit_id} missing variant")
+    elif primitive is not None and variant not in primitive.get("variants", []):
+      fail(errors, f"evidence unit {unit_id} variant {variant!r} is not declared by primitive {primitive_id}")
 
     dudect = unit.get("dudect", [])
     if not isinstance(dudect, list):
@@ -639,7 +654,7 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
       if case is None:
         fail(errors, f"evidence unit {unit_id} references unknown DudeCT case {case_name!r}")
         continue
-      if case.get("primitive") != primitive:
+      if case.get("primitive") != primitive_id:
         fail(errors, f"evidence unit {unit_id} references DudeCT case {case_name} for different primitive {case.get('primitive')!r}")
       if case.get("gate") == "diagnostic":
         fail(errors, f"evidence unit {unit_id} cannot rely on diagnostic DudeCT case {case_name}")
@@ -945,11 +960,8 @@ def validate_strict_coverage(ct: dict, errors: list[str], target: str | None = N
       units = evidence_units_by_primitive.get(primitive_id, [])
       covered_variants = {unit.get("variant") for unit in units if unit.get("dudect")}
       missing_variants = sorted(set(variants) - covered_variants)
-      extra_variants = sorted(covered_variants - set(variants))
       if missing_variants:
         fail(errors, f"primitive {primitive_id} requires DudeCT evidence for variant(s): {', '.join(missing_variants)}")
-      if extra_variants:
-        fail(errors, f"primitive {primitive_id} has evidence unit(s) for unknown variant(s): {', '.join(extra_variants)}")
       for unit in units:
         unit_id = unit.get("id", "<unnamed>")
         for case_name in unit.get("dudect", []):
