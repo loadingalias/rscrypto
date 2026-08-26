@@ -1,6 +1,10 @@
 use rscrypto::{
   Blake2b512, Blake3, Digest, RsaPrivateKey, RsaPrivateOpError, RsaPssProfile, RsaPublicKeyPolicy, Sha256, Sha512,
 };
+use rscrypto::aead::expert::header_protection::{
+  Aes128HeaderProtection, Aes128HeaderProtectionKey, Aes256HeaderProtection, Aes256HeaderProtectionKey,
+  ChaCha20HeaderProtection, ChaCha20HeaderProtectionKey,
+};
 use rscrypto::hashes::legacy::WebSocketAcceptDigest;
 
 const RSA_PRIVATE_KEY_PEM: &str = include_str!("../fixtures/rsa2048_private_pkcs1.txt");
@@ -60,6 +64,17 @@ fn decode_base64(input: &str) -> Vec<u8> {
     }
   }
   out
+}
+
+fn decode_hex<const N: usize>(encoded: &str) -> [u8; N] {
+  assert_eq!(encoded.len(), N.strict_mul(2));
+  let mut decoded = [0u8; N];
+  for (byte, chunk) in decoded.iter_mut().zip(encoded.as_bytes().as_chunks::<2>().0) {
+    let high = hex_value(chunk[0]).expect("known vector must contain hexadecimal digits");
+    let low = hex_value(chunk[1]).expect("known vector must contain hexadecimal digits");
+    *byte = high.strict_shl(4) | low;
+  }
+  decoded
 }
 
 fn patterned_bytes(len: usize) -> Vec<u8> {
@@ -182,6 +197,35 @@ fn assert_websocket_accept_digest_matches_rfc_6455() {
   );
 }
 
+fn assert_header_protection_vectors_match_known_outputs() {
+  // RFC 9001 Appendix A.2 client Initial header-protection vector.
+  let aes128 = Aes128HeaderProtection::new(&Aes128HeaderProtectionKey::from_bytes(decode_hex(
+    "9f50449e04a0e810283a1e9933adedd2",
+  )));
+  assert_hex(
+    &aes128.mask(&decode_hex("d1b1c98dd7689fb8ec11d242b123dc9b")),
+    "437b9aec36",
+  );
+
+  // FIPS 197 Appendix C.3 AES-256 encryption vector, truncated only after encryption.
+  let aes256 = Aes256HeaderProtection::new(&Aes256HeaderProtectionKey::from_bytes(decode_hex(
+    "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  )));
+  assert_hex(
+    &aes256.mask(&decode_hex("00112233445566778899aabbccddeeff")),
+    "8ea2b7ca51",
+  );
+
+  // RFC 9001 Appendix A.5 ChaCha20 short-header protection vector.
+  let chacha20 = ChaCha20HeaderProtection::new(&ChaCha20HeaderProtectionKey::from_bytes(decode_hex(
+    "25a282b9e82f06f21f488917a4fc8f1b73573685608597d0efcb076b0ab7a7a4",
+  )));
+  assert_hex(
+    &chacha20.mask(&decode_hex("5e5cd55c41f69080575d7999c25a5bfb")),
+    "aefefe7d03",
+  );
+}
+
 #[cfg(target_feature = "simd128")]
 fn assert_simd128_runtime_caps_are_detected() {
   assert!(rscrypto::platform::caps().has(rscrypto::platform::caps::wasm::SIMD128));
@@ -195,5 +239,6 @@ fn main() {
   assert_streaming_hashes_match_oneshot_across_block_boundaries();
   assert_rsa_caller_random_signing_roundtrips();
   assert_websocket_accept_digest_matches_rfc_6455();
+  assert_header_protection_vectors_match_known_outputs();
   assert_simd128_runtime_caps_are_detected();
 }

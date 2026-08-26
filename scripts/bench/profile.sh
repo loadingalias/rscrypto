@@ -47,7 +47,7 @@ ARTIFACT=$(
   exit 1
 }
 
-COMMAND=("$ARTIFACT")
+COMMAND=("$ARTIFACT" --bench)
 [[ -n "$FILTER" ]] && COMMAND+=("$FILTER")
 COMMAND+=(--profile-time "$PROFILE_SECONDS" --noplot)
 

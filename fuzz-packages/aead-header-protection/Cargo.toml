@@ -1,0 +1,23 @@
+[package]
+name = "rscrypto-fuzz-aead-header-protection"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rscrypto = { path = "../..", features = ["std", "aes-gcm", "chacha20poly1305"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
+aes = "0.9.2"
+chacha20 = "0.10.1"
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "aead_header_protection"
+path = "fuzz_targets/aead_header_protection.rs"
+doc = false

@@ -111,8 +111,34 @@ pub(super) unsafe fn expand_key(key: &[u8; 32]) -> CeRoundKeys {
   unsafe { expand_key_hw(key) }
 }
 
-/// Core block-encrypt logic — `#[target_feature]` + `#[inline(always)]` for
-/// guaranteed inlining without register spills.
+/// Encrypts one AES-256 state with the expanded AES-CE schedule.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the AArch64 `aes` and `neon`
+/// features.
+#[target_feature(enable = "aes,neon")]
+#[inline]
+unsafe fn encrypt_state_core(keys: &CeRoundKeys, mut state: uint8x16_t) -> uint8x16_t {
+  let k = &keys.rk;
+  state = vaesmcq_u8(vaeseq_u8(state, k[0]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[1]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[2]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[3]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[4]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[5]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[6]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[7]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[8]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[9]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[10]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[11]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[12]));
+  state = vaeseq_u8(state, k[13]);
+  veorq_u8(state, k[14])
+}
+
+/// Core block-encrypt logic — target-gated and inlined to avoid register spills.
 #[target_feature(enable = "aes,neon")]
 #[inline]
 /// # Safety
@@ -125,29 +151,7 @@ pub(super) unsafe fn encrypt_block_core(keys: &CeRoundKeys, block: &mut [u8; 16]
   // 2. The caller guarantees the current CPU supports AES-CE + NEON.
   // 3. `block` is exactly one writable initialized AES block.
   unsafe {
-    let k = &keys.rk;
-    let mut state = vld1q_u8(block.as_ptr());
-
-    // Rounds 1–13: AESE absorbs the previous round's AddRoundKey,
-    // then SubBytes + ShiftRows. AESMC applies MixColumns.
-    state = vaesmcq_u8(vaeseq_u8(state, k[0]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[1]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[2]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[3]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[4]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[5]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[6]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[7]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[8]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[9]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[10]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[11]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[12]));
-
-    // Round 14 (final): SubBytes + ShiftRows, then AddRoundKey (no MixColumns).
-    state = vaeseq_u8(state, k[13]);
-    state = veorq_u8(state, k[14]);
-
+    let state = encrypt_state_core(keys, vld1q_u8(block.as_ptr()));
     vst1q_u8(block.as_mut_ptr(), state);
   }
 }
@@ -1490,6 +1494,26 @@ pub(super) unsafe fn encrypt_block(keys: &CeRoundKeys, block: &mut [u8; 16]) {
   unsafe { encrypt_block_core(keys, block) }
 }
 
+#[cfg(feature = "aes-gcm")]
+/// Encrypt one block and return only its first five bytes.
+///
+/// The unused eleven output bytes remain in the vector state and are never
+/// materialized in addressable memory.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AES-CE (`target_feature = "aes"`).
+#[target_feature(enable = "aes,neon")]
+pub(super) unsafe fn encrypt_block_prefix_5(keys: &CeRoundKeys, block: &[u8; 16]) -> [u8; 5] {
+  // SAFETY: target_feature gate guarantees AES-CE + NEON. The fixed-size input
+  // supplies one complete block load; lane extraction reads only the low eight
+  // bytes of the initialized encrypted state.
+  unsafe {
+    let state = encrypt_state_core(keys, vld1q_u8(block.as_ptr()));
+    let prefix = vgetq_lane_u64(vreinterpretq_u64_u8(state), 0).to_le_bytes();
+    [prefix[0], prefix[1], prefix[2], prefix[3], prefix[4]]
+  }
+}
+
 // AES-128 (11 round keys, 10 rounds)
 
 /// AES-128 round keys stored as 11 × 128-bit NEON vectors for AES-CE.
@@ -1573,6 +1597,29 @@ pub(super) unsafe fn expand_key_128(key: &[u8; 16]) -> Ce128RoundKeys {
   unsafe { expand_key_128_hw(key) }
 }
 
+/// Encrypts one AES-128 state with the expanded AES-CE schedule.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the AArch64 `aes` and `neon`
+/// features.
+#[target_feature(enable = "aes,neon")]
+#[inline]
+unsafe fn encrypt_state_128_core(keys: &Ce128RoundKeys, mut state: uint8x16_t) -> uint8x16_t {
+  let k = &keys.rk;
+  state = vaesmcq_u8(vaeseq_u8(state, k[0]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[1]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[2]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[3]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[4]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[5]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[6]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[7]));
+  state = vaesmcq_u8(vaeseq_u8(state, k[8]));
+  state = vaeseq_u8(state, k[9]);
+  veorq_u8(state, k[10])
+}
+
 #[target_feature(enable = "aes,neon")]
 #[inline]
 /// # Safety
@@ -1585,25 +1632,7 @@ pub(super) unsafe fn encrypt_block_128_core(keys: &Ce128RoundKeys, block: &mut [
   // 2. The caller guarantees the current CPU supports AES-CE + NEON.
   // 3. `block` is exactly one writable initialized AES block.
   unsafe {
-    let k = &keys.rk;
-    let mut state = vld1q_u8(block.as_ptr());
-
-    // Rounds 1–9: AESE absorbs the previous round's AddRoundKey,
-    // then SubBytes + ShiftRows. AESMC applies MixColumns.
-    state = vaesmcq_u8(vaeseq_u8(state, k[0]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[1]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[2]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[3]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[4]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[5]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[6]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[7]));
-    state = vaesmcq_u8(vaeseq_u8(state, k[8]));
-
-    // Round 10 (final): SubBytes + ShiftRows, then AddRoundKey (no MixColumns).
-    state = vaeseq_u8(state, k[9]);
-    state = veorq_u8(state, k[10]);
-
+    let state = encrypt_state_128_core(keys, vld1q_u8(block.as_ptr()));
     vst1q_u8(block.as_mut_ptr(), state);
   }
 }
@@ -2469,4 +2498,24 @@ pub(super) unsafe fn encrypt_ctr32_le_xor_8blocks_128_core(
 pub(super) unsafe fn encrypt_block_128(keys: &Ce128RoundKeys, block: &mut [u8; 16]) {
   // SAFETY: target_feature gate guarantees AES-CE + NEON.
   unsafe { encrypt_block_128_core(keys, block) }
+}
+
+#[cfg(feature = "aes-gcm")]
+/// Encrypt one block and return only its first five bytes.
+///
+/// The unused eleven output bytes remain in the vector state and are never
+/// materialized in addressable memory.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AES-CE (`target_feature = "aes"`).
+#[target_feature(enable = "aes,neon")]
+pub(super) unsafe fn encrypt_block_prefix_5_128(keys: &Ce128RoundKeys, block: &[u8; 16]) -> [u8; 5] {
+  // SAFETY: target_feature gate guarantees AES-CE + NEON. The fixed-size input
+  // supplies one complete block load; lane extraction reads only the low eight
+  // bytes of the initialized encrypted state.
+  unsafe {
+    let state = encrypt_state_128_core(keys, vld1q_u8(block.as_ptr()));
+    let prefix = vgetq_lane_u64(vreinterpretq_u64_u8(state), 0).to_le_bytes();
+    [prefix[0], prefix[1], prefix[2], prefix[3], prefix[4]]
+  }
 }

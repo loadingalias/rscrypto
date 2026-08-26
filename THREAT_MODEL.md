@@ -23,7 +23,8 @@ Review the `ct_intended` candidate core before the rest of the repository:
 5. ML-KEM secret-noise key generation, encapsulation coins, decapsulation
    secret-key material, and implicit rejection.
 6. AEAD authentication and failed-open cleanup.
-7. MAC/tag verification, fixed-size owner comparison/declassification, and selected
+7. Header-protection mask generation.
+8. MAC/tag verification, fixed-size owner comparison/declassification, and selected
    password-verification comparisons.
 
 This order prioritizes secret-dependent computation; it does not remove public
@@ -72,7 +73,7 @@ claims remain limited to the release-evidenced configurations.
 ## Assets
 
 1. Long-term secrets: private keys, passwords, master keys.
-2. Session secrets: X25519 and ML-KEM shared secrets, AEAD keys, signing
+2. Session secrets: X25519 and ML-KEM shared secrets, AEAD and header-protection keys, signing
    nonces, blinding factors.
 3. Intermediate secret state: key schedules, scalars, limbs, DRBG state,
    sampler buffers.
@@ -115,7 +116,7 @@ Ordered by exposure to untrusted input:
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | Parsers                 | RSA DER/SPKI/PKCS#8 import, ECDSA DER signatures and SEC1 points, ML-KEM key and ciphertext parsing, PHC strings, hex | Memory safety, panics, accepting what should be rejected                 |
 | Verification oracles    | MAC `verify_tag`, AEAD open, signature `verify`, ML-KEM implicit rejection                                            | Timing or error detail beyond the single failure bit                     |
-| Secret-bearing compute  | Sign, decrypt, decapsulate, derive; the release-evidenced subset of `ct.toml`                                         | Timing leakage, incorrect arithmetic                                     |
+| Secret-bearing compute  | Sign, decrypt, decapsulate, derive, generate header masks; the release-evidenced subset of `ct.toml`                  | Timing leakage, incorrect arithmetic                                     |
 | `unsafe` low-level code | SIMD/assembly kernels, raw buffer helpers, zeroization, and dispatch                                                  | Undefined behavior, divergence from the portable authority               |
 | Dispatch                | `src/platform`, `src/backend`                                                                                         | Selecting a kernel the CPU cannot run, or one that produces wrong output |
 | Compatibility operations | `hashes::legacy::WebSocketAcceptDigest::compute`                                                                     | Capability expansion or treating broken SHA-1 collision resistance as authentication |

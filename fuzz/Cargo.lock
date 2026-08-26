@@ -800,6 +800,7 @@ name = "rscrypto-fuzz"
 version = "0.0.0"
 dependencies = [
  "aegis",
+ "aes",
  "aes-gcm",
  "aes-gcm-siv",
  "argon2",
@@ -807,6 +808,7 @@ dependencies = [
  "ascon-hash",
  "blake2",
  "blake3",
+ "chacha20",
  "chacha20poly1305",
  "crc",
  "cshake",

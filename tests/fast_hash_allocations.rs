@@ -153,3 +153,48 @@ fn fast_hashers_and_preallocated_maps_hash_without_allocating() {
     "preallocated RapidHash HashMap operations must not allocate"
   );
 }
+
+#[cfg(all(feature = "aes-gcm", feature = "chacha20poly1305"))]
+#[test]
+fn header_protection_mask_generation_does_not_allocate() {
+  use rscrypto::aead::expert::header_protection::{
+    Aes128HeaderProtection, Aes128HeaderProtectionKey, Aes256HeaderProtection, Aes256HeaderProtectionKey,
+    ChaCha20HeaderProtection, ChaCha20HeaderProtectionKey,
+  };
+
+  let aes128 = Aes128HeaderProtection::new(&Aes128HeaderProtectionKey::from_bytes([0x11; 16]));
+  let aes256 = Aes256HeaderProtection::new(&Aes256HeaderProtectionKey::from_bytes([0x22; 32]));
+  let chacha20 = ChaCha20HeaderProtection::new(&ChaCha20HeaderProtectionKey::from_bytes([0x33; 32]));
+  let sample = [0x44; 16];
+
+  let allocations = measure_allocations(|| {
+    core::hint::black_box(aes128.mask(core::hint::black_box(&sample)));
+    core::hint::black_box(aes256.mask(core::hint::black_box(&sample)));
+    core::hint::black_box(chacha20.mask(core::hint::black_box(&sample)));
+  });
+
+  assert_eq!(allocations, 0, "header-protection mask generation must not allocate");
+}
+
+#[cfg(all(feature = "aes-gcm", feature = "chacha20poly1305", not(target_arch = "riscv64")))]
+#[test]
+fn header_protection_context_construction_does_not_allocate_off_riscv64() {
+  use rscrypto::aead::expert::header_protection::{
+    Aes128HeaderProtection, Aes128HeaderProtectionKey, Aes256HeaderProtection, Aes256HeaderProtectionKey,
+    ChaCha20HeaderProtection, ChaCha20HeaderProtectionKey,
+  };
+
+  let allocations = measure_allocations(|| {
+    let key128 = Aes128HeaderProtectionKey::from_bytes([0x11; 16]);
+    core::hint::black_box(Aes128HeaderProtection::new(&key128));
+    let key256 = Aes256HeaderProtectionKey::from_bytes([0x22; 32]);
+    core::hint::black_box(Aes256HeaderProtection::new(&key256));
+    let chacha_key = ChaCha20HeaderProtectionKey::from_bytes([0x33; 32]);
+    core::hint::black_box(ChaCha20HeaderProtection::new(&chacha_key));
+  });
+
+  assert_eq!(
+    allocations, 0,
+    "header-protection context construction must not allocate off RISC-V"
+  );
+}

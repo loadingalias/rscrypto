@@ -2,6 +2,10 @@ use core::cell::RefCell;
 
 use dudect_bencher::{BenchRng, Class, CtRunner, ctbench_main_with_seeds, rand::RngExt};
 use rscrypto::aead::expert::AeadWithNonce;
+use rscrypto::aead::expert::header_protection::{
+  Aes128HeaderProtection, Aes128HeaderProtectionKey, Aes256HeaderProtection, Aes256HeaderProtectionKey,
+  ChaCha20HeaderProtection, ChaCha20HeaderProtectionKey,
+};
 use rscrypto::{
   Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey, Aes256GcmSiv,
   Aes256GcmSivKey, Argon2Params, Argon2i, AsconAead128, AsconAead128Key, Blake2b256, Blake2b512, Blake2bKey,
@@ -423,6 +427,53 @@ aead_fixed_vs_random_key_open!(
   [0x13; Aes128Gcm::KEY_SIZE],
   16,
   0x13
+);
+
+macro_rules! header_protection_fixed_vs_random_key {
+  ($name:ident, $context:ty, $key:ty, $key_len:expr, $fixed_key:expr) => {
+    fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let sample = [0x6d; 16];
+      let mut inputs = Vec::with_capacity(samples());
+      for class in balanced_classes(rng, samples()) {
+        let key = if matches!(class, Class::Left) {
+          $fixed_key
+        } else {
+          rand_array::<$key_len>(rng)
+        };
+        inputs.push((class, key));
+      }
+
+      for (class, key) in inputs {
+        runner.run_one(class, || {
+          let key = <$key>::from_bytes(key);
+          let context = <$context>::new(&key);
+          core::hint::black_box(context.mask(&sample))[0]
+        });
+      }
+    }
+  };
+}
+
+header_protection_fixed_vs_random_key!(
+  aes128_header_protection_fixed_vs_random_key,
+  Aes128HeaderProtection,
+  Aes128HeaderProtectionKey,
+  16,
+  [0x61; 16]
+);
+header_protection_fixed_vs_random_key!(
+  aes256_header_protection_fixed_vs_random_key,
+  Aes256HeaderProtection,
+  Aes256HeaderProtectionKey,
+  32,
+  [0x62; 32]
+);
+header_protection_fixed_vs_random_key!(
+  chacha20_header_protection_fixed_vs_random_key,
+  ChaCha20HeaderProtection,
+  ChaCha20HeaderProtectionKey,
+  32,
+  [0x63; 32]
 );
 aead_fixed_vs_random_key_open!(
   aes256gcm_fixed_vs_random_key_open,
@@ -2236,6 +2287,18 @@ ctbench_main_with_seeds!(
   (xchacha20poly1305_fixed_vs_random_key_open, Some(0x7863686163686132)),
   (aegis256_fixed_vs_random_key_open, Some(0x61656769736f706e)),
   (ascon_aead128_fixed_vs_random_key_open, Some(0x6173636f6e6f706e)),
+  (
+    aes128_header_protection_fixed_vs_random_key,
+    Some(0x6870616573313238)
+  ),
+  (
+    aes256_header_protection_fixed_vs_random_key,
+    Some(0x6870616573323536)
+  ),
+  (
+    chacha20_header_protection_fixed_vs_random_key,
+    Some(0x687063686132305f)
+  ),
   (x25519_fixed_vs_random_scalar, Some(0x7832353531395f63)),
   (mlkem512_keygen_secret_noise_fixed_vs_random, Some(0x6d6b3531326b676e)),
   (mlkem512_encapsulate_fixed_vs_random_coins, Some(0x6d6b353132656e63)),

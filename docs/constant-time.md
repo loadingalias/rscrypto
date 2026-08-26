@@ -48,6 +48,7 @@ evidence gate. This is intent, not a standalone public claim:
 - MAC/tag verification and fixed-size equality owned by concrete key, secret,
   tag, and keyed-output types.
 - AEAD authentication and failed-open cleanup.
+- AES and ChaCha20 header-protection mask generation with the derived key as secret and the fixed-size sample as public.
 - X25519 scalar multiplication.
 - ML-KEM-512/768/1024 key generation secret noise, encapsulation coins,
   decapsulation secret-key material, implicit-rejection seed, and listed

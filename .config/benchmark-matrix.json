@@ -214,6 +214,7 @@
     "aes-128-gcm": { "crate": "aead", "bench": "aead", "filter": "^aes-128-gcm/" },
     "aegis-256": { "crate": "aead", "bench": "aead", "filter": "aegis-256" },
     "ascon-aead128": { "crate": "aead", "bench": "aead", "filter": "ascon-aead128" },
+    "header-protection": { "crate": "aead", "bench": "aead", "filter": "header-protection" },
     "aead-diag": { "crate": "aead", "bench": "aead_diag", "filter": "chacha20-poly1305/encrypt" }
   },
   "selectors": {
@@ -272,7 +273,8 @@
       "aes-256-gcm",
       "aes-128-gcm",
       "aegis-256",
-      "ascon-aead128"
+      "ascon-aead128",
+      "header-protection"
     ],
     "auth": [
       "hmac-sha256",
@@ -305,7 +307,8 @@
       "aes-256-gcm",
       "aes-128-gcm",
       "aegis-256",
-      "ascon-aead128"
+      "ascon-aead128",
+      "header-protection"
     ],
     "aeaddiag": ["aead-diag"],
     "chacha20poly1305diag": ["aead-diag"],

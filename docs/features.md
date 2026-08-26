@@ -97,9 +97,9 @@ rscrypto = { version = "0.8.1", features = ["full", "portable-only"] }
 | `rsa`               | `alloc`, `sha2`            | RSA public/private keys, RSA signatures, OAEP, PKCS#1 v1.5, key generation |
 | `x25519`            | --                         | X25519 key exchange                                                        |
 | `ml-kem`            | `sha3`                     | ML-KEM-512, ML-KEM-768, and ML-KEM-1024 key encapsulation                  |
-| `aes-gcm`           | --                         | AES-128-GCM and AES-256-GCM                                                |
+| `aes-gcm`           | --                         | AES-128-GCM, AES-256-GCM, and expert AES header-protection mask generation |
 | `aes-gcm-siv`       | --                         | AES-128-GCM-SIV and AES-256-GCM-SIV                                        |
-| `chacha20poly1305`  | --                         | ChaCha20-Poly1305                                                          |
+| `chacha20poly1305`  | --                         | ChaCha20-Poly1305 and expert ChaCha20 header-protection mask generation    |
 | `xchacha20poly1305` | --                         | XChaCha20-Poly1305                                                         |
 | `aegis256`          | --                         | AEGIS-256                                                                  |
 | `ascon-aead`        | --                         | Ascon-AEAD128                                                              |

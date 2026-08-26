@@ -1758,6 +1758,60 @@ pub(crate) fn aes128_encrypt_block(ek: &Aes128EncKey, block: &mut [u8; BLOCK_SIZ
   }
 }
 
+/// Encrypt one block with AES-256 and return only its first five bytes.
+///
+/// Hardware AES backends keep the unused output bytes in registers. Portable
+/// and other target backends retain the authoritative block implementation and
+/// clear its operation-local output before returning.
+#[cfg(feature = "aes-gcm")]
+#[inline]
+pub(crate) fn aes256_encrypt_block_prefix_5(ek: &Aes256EncKey, block: &[u8; BLOCK_SIZE]) -> [u8; 5] {
+  #[cfg(target_arch = "x86_64")]
+  if let KeyInner::X86AesNi(ni_rk) = &ek.inner {
+    // SAFETY: this variant is constructed only after runtime detection confirms AES-NI.
+    return unsafe { ni::encrypt_block_prefix_5(ni_rk, block) };
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  if let KeyInner::Aarch64Aes(ce_rk) = &ek.inner {
+    // SAFETY: this variant is constructed only after runtime detection confirms AES-CE.
+    return unsafe { ce::encrypt_block_prefix_5(ce_rk, block) };
+  }
+
+  let mut output = *block;
+  aes256_encrypt_block(ek, &mut output);
+  let prefix = [output[0], output[1], output[2], output[3], output[4]];
+  crate::traits::ct::zeroize(&mut output);
+  prefix
+}
+
+/// Encrypt one block with AES-128 and return only its first five bytes.
+///
+/// Hardware AES backends keep the unused output bytes in registers. Portable
+/// and other target backends retain the authoritative block implementation and
+/// clear its operation-local output before returning.
+#[cfg(feature = "aes-gcm")]
+#[inline]
+pub(crate) fn aes128_encrypt_block_prefix_5(ek: &Aes128EncKey, block: &[u8; BLOCK_SIZE]) -> [u8; 5] {
+  #[cfg(target_arch = "x86_64")]
+  if let Key128Inner::X86AesNi(ni_rk) = &ek.inner {
+    // SAFETY: this variant is constructed only after runtime detection confirms AES-NI.
+    return unsafe { ni::encrypt_block_prefix_5_128(ni_rk, block) };
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  if let Key128Inner::Aarch64Aes(ce_rk) = &ek.inner {
+    // SAFETY: this variant is constructed only after runtime detection confirms AES-CE.
+    return unsafe { ce::encrypt_block_prefix_5_128(ce_rk, block) };
+  }
+
+  let mut output = *block;
+  aes128_encrypt_block(ek, &mut output);
+  let prefix = [output[0], output[1], output[2], output[3], output[4]];
+  crate::traits::ct::zeroize(&mut output);
+  prefix
+}
+
 /// Encrypt multiple independent 16-byte blocks with AES-128 ECB.
 ///
 /// Mirrors [`aes256_encrypt_blocks_ecb`]: routes to the s390x KM batch
