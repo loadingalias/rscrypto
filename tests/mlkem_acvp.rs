@@ -98,7 +98,7 @@ fn decode_hex(hex: &str) -> Vec<u8> {
   assert_eq!(hex.len() % 2, 0, "hex input must have even length");
 
   let mut out = Vec::with_capacity(hex.len() / 2);
-  for pair in hex.as_bytes().chunks_exact(2) {
+  for pair in hex.as_bytes().as_chunks::<2>().0 {
     let high = hex_nibble(pair[0]).expect("ACVP fixture must contain only hexadecimal digits");
     let low = hex_nibble(pair[1]).expect("ACVP fixture must contain only hexadecimal digits");
     out.push((high << 4) | low);

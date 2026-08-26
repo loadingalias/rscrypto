@@ -39,8 +39,9 @@
 //! RSA signing, OAEP encryption/decryption, legacy RSAES-PKCS1-v1_5
 //! encryption/decryption, private-key import, and private-key generation are
 //! available through [`RsaPrivateKey`] and [`RsaPublicKey`]. Private operations
-//! are blinded and fault-checked; RNG-backed APIs require the `getrandom`
-//! feature.
+//! are blinded and fault-checked. Callers can provide signing entropy with the
+//! `rsa` feature alone; OS-backed convenience APIs and key generation require
+//! the `getrandom` feature.
 
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::{
@@ -289,7 +290,7 @@ pub enum RsaEncryptionError {
   InvalidLength,
   /// The message is too long for this key and encryption profile.
   MessageTooLong,
-  /// The platform entropy source was unavailable.
+  /// The caller-provided or platform entropy source was unavailable.
   EntropyUnavailable,
   /// The underlying RSA public operation failed.
   PublicOperationFailed,
@@ -362,7 +363,7 @@ pub enum RsaPrivateOpError {
   RepresentativeOutOfRange,
   /// The supplied blinding factor and inverse are invalid for this modulus.
   InvalidBlindingFactor,
-  /// The platform entropy source was unavailable.
+  /// The caller-provided or platform entropy source was unavailable.
   EntropyUnavailable,
   /// RSA decryption padding was invalid.
   DecryptionFailed,
@@ -1175,6 +1176,90 @@ pub fn diag_rsa_blinding_factor_inverse(
   key.components.blinding_factor_inverse(factor, out)
 }
 
+/// Derive a blinding-factor inverse with reusable scratch for side-channel diagnostics.
+///
+/// This diagnostic-only leaf exercises the production modular inverse without
+/// per-call allocation. Normal callers should use the signing and decryption
+/// APIs, which generate and clear blinding material internally.
+#[cfg(feature = "diag")]
+#[cfg_attr(docsrs, doc(cfg(feature = "diag")))]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn diag_rsa_blinding_factor_inverse_with_scratch(
+  key: &RsaPrivateKey,
+  factor: &[u8],
+  out: &mut [u8],
+  scratch: &mut RsaPrivateScratch,
+) -> Result<(), RsaPrivateOpError> {
+  let len = key.signature_len();
+  let result = scratch.ensure_len(len).and_then(|()| {
+    if factor.len() != len || out.len() != len {
+      return Err(RsaPrivateOpError::InvalidLength);
+    }
+    scratch.blinding_factor.as_mut_slice().copy_from_slice(factor);
+    key.components.blinding_factor_inverse_into_scratch(scratch)?;
+    out.copy_from_slice(scratch.blinding_inverse.as_slice());
+    Ok(())
+  });
+  scratch.clear();
+  clear_output_on_error(result, out)
+}
+
+/// Exercise caller-random RSA-PSS success cleanup for optimized-code evidence.
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn diag_rsa_caller_random_signing_success(
+  key: &RsaPrivateKey,
+  out: &mut [u8],
+  scratch: &mut RsaPrivateScratch,
+) -> u8 {
+  let modulus_len = key.signature_len();
+  let result = key.sign_pss_with_random_fill_and_scratch(
+    RsaPssProfile::Sha256,
+    b"rscrypto RSA caller-random zeroize success evidence",
+    out,
+    scratch,
+    |random| {
+      if random.len() == modulus_len {
+        random.fill(0);
+        if let Some(last) = random.last_mut() {
+          *last = 1;
+        }
+      } else {
+        random.fill(0x5a);
+      }
+      Ok::<(), ()>(())
+    },
+  );
+  core::hint::black_box(u8::from(result.is_ok()) ^ out.first().copied().unwrap_or_default())
+}
+
+/// Exercise caller-random RSA-PSS error cleanup for optimized-code evidence.
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn diag_rsa_caller_random_signing_error(
+  key: &RsaPrivateKey,
+  out: &mut [u8],
+  scratch: &mut RsaPrivateScratch,
+) -> u8 {
+  let result = key.sign_pss_with_random_fill_and_scratch(
+    RsaPssProfile::Sha256,
+    b"rscrypto RSA caller-random zeroize error evidence",
+    out,
+    scratch,
+    |random| {
+      random.fill(0xa5);
+      Err::<(), ()>(())
+    },
+  );
+  core::hint::black_box(u8::from(result == Err(RsaPrivateOpError::EntropyUnavailable)))
+}
+
 /// Public exponent policy for RSA public-key parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RsaPublicExponentPolicy {
@@ -1336,9 +1421,9 @@ pub struct RsaPublicKey {
 /// screening detects weak factor shapes and compositeness evidence; it is not
 /// a mathematical proof of primality.
 ///
-/// Private operations use either OS-backed blinding through the `getrandom`
-/// feature or an explicit caller-supplied blinding factor and modular inverse
-/// for deterministic tests and constrained integrations.
+/// Private operations use caller-provided entropy, OS-backed entropy through
+/// the `getrandom` feature, or an explicit caller-supplied blinding factor and
+/// modular inverse for deterministic tests and constrained integrations.
 pub struct RsaPrivateKey {
   components: RsaPrivateKeyComponents,
 }
@@ -1346,8 +1431,8 @@ pub struct RsaPrivateKey {
 /// Caller-owned scratch for RSA private operations.
 ///
 /// Reusing this scratch avoids top-level private-operation buffer allocation
-/// for deterministic blinding APIs. Scratch is bound to a modulus width, not a
-/// specific key; using it with a different width returns
+/// for caller-random and deterministic blinding APIs. Scratch is bound to a
+/// modulus width, not a specific key; using it with a different width returns
 /// [`RsaPrivateOpError::InvalidScratch`].
 pub struct RsaPrivateScratch {
   encoded: SecretBigEndianBuffer,
@@ -1361,6 +1446,7 @@ pub struct RsaPrivateScratch {
   one: SecretBigEndianBuffer,
   public_scratch: RsaPublicScratch,
   mul_scratch: RsaPrivateMulScratch,
+  inverse_scratch: RsaPrivateInverseScratch,
   exponent_scratch: RsaPrivateExponentScratch,
 }
 
@@ -1631,15 +1717,128 @@ impl RsaPrivateKey {
     self.signer(algorithm.signature_profile())
   }
 
-  /// Allocate reusable scratch space for deterministic private operations.
+  /// Allocate reusable scratch space for private operations.
   ///
-  /// Use this with the `*_with_blinding_factor_and_scratch` methods when a
-  /// caller supplies validated blinding material and wants steady-state signing
-  /// or decryption without top-level temporary buffer allocation.
+  /// Use this with the caller-random or explicit-blinding `*_and_scratch`
+  /// methods for steady-state private operations without top-level temporary
+  /// buffer allocation.
   #[inline]
   #[must_use]
   pub fn private_scratch(&self) -> RsaPrivateScratch {
     RsaPrivateScratch::new(self)
+  }
+
+  /// Sign a message using a typed RSA signature profile and caller-provided entropy.
+  ///
+  /// PKCS#1 v1.5 profiles request one modulus-width blinding candidate per
+  /// attempt. PSS profiles first request the profile's salt length, then the
+  /// blinding candidates. Invalid or non-invertible candidates are rejected for
+  /// at most 128 attempts. Requested buffer lengths depend only on public key
+  /// and profile data. The callback count also depends on whether the supplied
+  /// candidates pass rejection sampling, subject to that public retry bound.
+  ///
+  /// The entropy callback's error type is intentionally unconstrained and is
+  /// never exposed. Any callback error becomes
+  /// [`RsaPrivateOpError::EntropyUnavailable`].
+  ///
+  /// # Security
+  ///
+  /// On `Ok(())`, the callback must have overwritten every requested byte with
+  /// independent, uniformly distributed output from a cryptographically secure
+  /// random generator. A partial fill cannot be detected by this API and
+  /// invalidates the PSS salt and blinding guarantees.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`RsaPrivateOpError`] if entropy is unavailable, lengths are
+  /// invalid, the key is too small for the selected profile, no valid blinding
+  /// factor is found within the retry bound, or the post-signing public fault
+  /// check fails. `out` is cleared on every error.
+  #[must_use = "RSA signing failure must be checked; a dropped Result silently discards a failed signature"]
+  pub fn sign_signature_with_random_fill<E>(
+    &self,
+    profile: RsaSignatureProfile,
+    message: &[u8],
+    out: &mut [u8],
+    mut fill_random: impl FnMut(&mut [u8]) -> Result<(), E>,
+  ) -> Result<(), RsaPrivateOpError> {
+    if out.len() != self.signature_len() {
+      out.fill(0);
+      return Err(RsaPrivateOpError::InvalidLength);
+    }
+    if let RsaSignatureProfile::Pss { profile, salt_len } = profile
+      && !self.public_key().pss_salt_len_is_possible(profile, salt_len)
+    {
+      out.fill(0);
+      return Err(RsaPrivateOpError::MessageTooLong);
+    }
+
+    let mut scratch = self.private_scratch();
+    self.sign_signature_with_random_fill_and_scratch(profile, message, out, &mut scratch, &mut fill_random)
+  }
+
+  /// Sign using a typed RSA signature profile, caller-provided entropy, and scratch.
+  ///
+  /// This is the allocation-free steady-state signing path after `scratch`
+  /// setup. The entropy request order, retry bound, and error normalization are
+  /// the same as [`Self::sign_signature_with_random_fill`]. Scratch and `out`
+  /// are cleared on every error; scratch is also cleared after success.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`RsaPrivateOpError`] if entropy is unavailable, lengths are
+  /// invalid, `scratch` was allocated for a different modulus width, the key is
+  /// too small for the selected profile, no valid blinding factor is found
+  /// within the retry bound, or the post-signing public fault check fails.
+  #[must_use = "RSA signing failure must be checked; a dropped Result silently discards a failed signature"]
+  pub fn sign_signature_with_random_fill_and_scratch<E>(
+    &self,
+    profile: RsaSignatureProfile,
+    message: &[u8],
+    out: &mut [u8],
+    scratch: &mut RsaPrivateScratch,
+    mut fill_random: impl FnMut(&mut [u8]) -> Result<(), E>,
+  ) -> Result<(), RsaPrivateOpError> {
+    let modulus_len = self.public_key().modulus().len();
+    let result = scratch.ensure_len(modulus_len).and_then(|()| {
+      if out.len() != modulus_len {
+        return Err(RsaPrivateOpError::InvalidLength);
+      }
+
+      match profile {
+        RsaSignatureProfile::Pss { profile, salt_len } => {
+          if !self.public_key().pss_salt_len_is_possible(profile, salt_len) {
+            return Err(RsaPrivateOpError::MessageTooLong);
+          }
+          {
+            let salt = scratch
+              .salt
+              .as_mut_slice()
+              .get_mut(..salt_len)
+              .ok_or(RsaPrivateOpError::MessageTooLong)?;
+            fill_random(salt).map_err(|_| RsaPrivateOpError::EntropyUnavailable)?;
+          }
+          self
+            .components
+            .random_blinding_factor_into_scratch_with(scratch, &mut fill_random)
+            .and_then(|()| {
+              self
+                .components
+                .sign_pss_with_stored_salt_and_blinding_and_scratch(profile, message, salt_len, out, scratch)
+            })
+        }
+        RsaSignatureProfile::Pkcs1v15(profile) => self
+          .components
+          .random_blinding_factor_into_scratch_with(scratch, &mut fill_random)
+          .and_then(|()| {
+            self
+              .components
+              .sign_pkcs1v15_with_stored_blinding_and_scratch(profile, message, out, scratch)
+          }),
+      }
+    });
+    scratch.clear();
+    clear_output_on_error(result, out)
   }
 
   /// Sign a message using a typed RSA signature profile and OS-backed randomness.
@@ -1661,10 +1860,7 @@ impl RsaPrivateKey {
     message: &[u8],
     out: &mut [u8],
   ) -> Result<(), RsaPrivateOpError> {
-    match profile {
-      RsaSignatureProfile::Pss { profile, salt_len } => self.sign_pss_with_salt_len(profile, salt_len, message, out),
-      RsaSignatureProfile::Pkcs1v15(profile) => self.sign_pkcs1v15(profile, message, out),
-    }
+    self.sign_signature_with_random_fill(profile, message, out, getrandom::fill)
   }
 
   /// Sign a message using a typed RSA signature profile, OS-backed randomness,
@@ -1690,12 +1886,7 @@ impl RsaPrivateKey {
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<(), RsaPrivateOpError> {
-    match profile {
-      RsaSignatureProfile::Pss { profile, salt_len } => {
-        self.sign_pss_with_salt_len_and_scratch(profile, salt_len, message, out, scratch)
-      }
-      RsaSignatureProfile::Pkcs1v15(profile) => self.sign_pkcs1v15_with_scratch(profile, message, out, scratch),
-    }
+    self.sign_signature_with_random_fill_and_scratch(profile, message, out, scratch, getrandom::fill)
   }
 
   /// Sign using an X.509 signature `AlgorithmIdentifier` DER value.
@@ -1751,6 +1942,60 @@ impl RsaPrivateKey {
     clear_output_on_error(result, out)
   }
 
+  /// Sign a TLS 1.3 `CertificateVerify` message with caller-provided entropy.
+  ///
+  /// Primitive helper only: this does not construct the TLS transcript message
+  /// or enforce certificate-chain policy. TLS 1.3 RSA handshake signatures are
+  /// RSASSA-PSS only; legacy PKCS#1 v1.5 scheme IDs are rejected before the
+  /// entropy callback is invoked.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`RsaPrivateOpError::UnsupportedAlgorithm`] if `scheme` is not an
+  /// accepted TLS 1.3 RSA signing scheme. Other errors match
+  /// [`Self::sign_signature_with_random_fill`].
+  #[must_use = "RSA signing failure must be checked; a dropped Result silently discards a failed signature"]
+  pub fn sign_tls13_signature_scheme_with_random_fill<E>(
+    &self,
+    scheme: u16,
+    message: &[u8],
+    out: &mut [u8],
+    fill_random: impl FnMut(&mut [u8]) -> Result<(), E>,
+  ) -> Result<(), RsaPrivateOpError> {
+    let result = RsaSignatureProfile::from_tls13_signature_scheme(scheme)
+      .map_err(|_| RsaPrivateOpError::UnsupportedAlgorithm)
+      .and_then(|profile| self.sign_signature_with_random_fill(profile, message, out, fill_random));
+    clear_output_on_error(result, out)
+  }
+
+  /// Sign a TLS 1.3 `CertificateVerify` message with caller entropy and scratch.
+  ///
+  /// Parsing and rejection happen before the entropy callback is invoked. The
+  /// scratch and entropy contracts match
+  /// [`Self::sign_signature_with_random_fill_and_scratch`].
+  ///
+  /// # Errors
+  ///
+  /// Returns [`RsaPrivateOpError::UnsupportedAlgorithm`] if `scheme` is not an
+  /// accepted TLS 1.3 RSA signing scheme. Other errors match
+  /// [`Self::sign_signature_with_random_fill_and_scratch`].
+  #[must_use = "RSA signing failure must be checked; a dropped Result silently discards a failed signature"]
+  pub fn sign_tls13_signature_scheme_with_random_fill_and_scratch<E>(
+    &self,
+    scheme: u16,
+    message: &[u8],
+    out: &mut [u8],
+    scratch: &mut RsaPrivateScratch,
+    fill_random: impl FnMut(&mut [u8]) -> Result<(), E>,
+  ) -> Result<(), RsaPrivateOpError> {
+    let result = RsaSignatureProfile::from_tls13_signature_scheme(scheme)
+      .map_err(|_| RsaPrivateOpError::UnsupportedAlgorithm)
+      .and_then(|profile| {
+        self.sign_signature_with_random_fill_and_scratch(profile, message, out, scratch, fill_random)
+      });
+    clear_output_on_error(result, out)
+  }
+
   /// Sign a TLS 1.3 `CertificateVerify` message using a parsed signature scheme.
   ///
   /// Primitive helper only: this does not construct the TLS transcript message
@@ -1771,10 +2016,7 @@ impl RsaPrivateKey {
     message: &[u8],
     out: &mut [u8],
   ) -> Result<(), RsaPrivateOpError> {
-    let result = RsaSignatureProfile::from_tls13_signature_scheme(scheme)
-      .map_err(|_| RsaPrivateOpError::UnsupportedAlgorithm)
-      .and_then(|profile| self.sign_signature(profile, message, out));
-    clear_output_on_error(result, out)
+    self.sign_tls13_signature_scheme_with_random_fill(scheme, message, out, getrandom::fill)
   }
 
   /// Sign a TLS 1.3 `CertificateVerify` message using a parsed signature scheme and caller-owned
@@ -1799,9 +2041,60 @@ impl RsaPrivateKey {
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<(), RsaPrivateOpError> {
-    let result = RsaSignatureProfile::from_tls13_signature_scheme(scheme)
+    self.sign_tls13_signature_scheme_with_random_fill_and_scratch(scheme, message, out, scratch, getrandom::fill)
+  }
+
+  /// Sign using a TLS certificate signature scheme and caller-provided entropy.
+  ///
+  /// Primitive helper only: this does not build or validate certificates. It
+  /// accepts the SHA-2 PKCS#1 v1.5 certificate-signature schemes and the TLS
+  /// 1.3 RSA-PSS schemes. Unsupported schemes are rejected before the entropy
+  /// callback is invoked.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`RsaPrivateOpError::UnsupportedAlgorithm`] if `scheme` is not an
+  /// accepted RSA certificate signing scheme. Other errors match
+  /// [`Self::sign_signature_with_random_fill`].
+  #[must_use = "RSA signing failure must be checked; a dropped Result silently discards a failed signature"]
+  pub fn sign_tls_certificate_signature_scheme_with_random_fill<E>(
+    &self,
+    scheme: u16,
+    message: &[u8],
+    out: &mut [u8],
+    fill_random: impl FnMut(&mut [u8]) -> Result<(), E>,
+  ) -> Result<(), RsaPrivateOpError> {
+    let result = RsaSignatureProfile::from_tls_certificate_signature_scheme(scheme)
       .map_err(|_| RsaPrivateOpError::UnsupportedAlgorithm)
-      .and_then(|profile| self.sign_signature_with_scratch(profile, message, out, scratch));
+      .and_then(|profile| self.sign_signature_with_random_fill(profile, message, out, fill_random));
+    clear_output_on_error(result, out)
+  }
+
+  /// Sign using a TLS certificate signature scheme, caller entropy, and scratch.
+  ///
+  /// Parsing and rejection happen before the entropy callback is invoked. The
+  /// scratch and entropy contracts match
+  /// [`Self::sign_signature_with_random_fill_and_scratch`].
+  ///
+  /// # Errors
+  ///
+  /// Returns [`RsaPrivateOpError::UnsupportedAlgorithm`] if `scheme` is not an
+  /// accepted RSA certificate signing scheme. Other errors match
+  /// [`Self::sign_signature_with_random_fill_and_scratch`].
+  #[must_use = "RSA signing failure must be checked; a dropped Result silently discards a failed signature"]
+  pub fn sign_tls_certificate_signature_scheme_with_random_fill_and_scratch<E>(
+    &self,
+    scheme: u16,
+    message: &[u8],
+    out: &mut [u8],
+    scratch: &mut RsaPrivateScratch,
+    fill_random: impl FnMut(&mut [u8]) -> Result<(), E>,
+  ) -> Result<(), RsaPrivateOpError> {
+    let result = RsaSignatureProfile::from_tls_certificate_signature_scheme(scheme)
+      .map_err(|_| RsaPrivateOpError::UnsupportedAlgorithm)
+      .and_then(|profile| {
+        self.sign_signature_with_random_fill_and_scratch(profile, message, out, scratch, fill_random)
+      });
     clear_output_on_error(result, out)
   }
 
@@ -1825,10 +2118,7 @@ impl RsaPrivateKey {
     message: &[u8],
     out: &mut [u8],
   ) -> Result<(), RsaPrivateOpError> {
-    let result = RsaSignatureProfile::from_tls_certificate_signature_scheme(scheme)
-      .map_err(|_| RsaPrivateOpError::UnsupportedAlgorithm)
-      .and_then(|profile| self.sign_signature(profile, message, out));
-    clear_output_on_error(result, out)
+    self.sign_tls_certificate_signature_scheme_with_random_fill(scheme, message, out, getrandom::fill)
   }
 
   /// Sign using a TLS certificate signature scheme ID and caller-owned scratch.
@@ -1852,10 +2142,13 @@ impl RsaPrivateKey {
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<(), RsaPrivateOpError> {
-    let result = RsaSignatureProfile::from_tls_certificate_signature_scheme(scheme)
-      .map_err(|_| RsaPrivateOpError::UnsupportedAlgorithm)
-      .and_then(|profile| self.sign_signature_with_scratch(profile, message, out, scratch));
-    clear_output_on_error(result, out)
+    self.sign_tls_certificate_signature_scheme_with_random_fill_and_scratch(
+      scheme,
+      message,
+      out,
+      scratch,
+      getrandom::fill,
+    )
   }
 
   /// Sign a COSE Sig_structure using an already-parsed COSE algorithm ID.
@@ -1925,15 +2218,7 @@ impl RsaPrivateKey {
     message: &[u8],
     out: &mut [u8],
   ) -> Result<(), RsaPrivateOpError> {
-    let result = self.components.random_blinding_factor().and_then(|blinding| {
-      self.components.sign_pkcs1v15_with_blinding_factor(
-        profile,
-        message,
-        RsaBlindingPair::trusted(blinding.factor(), blinding.inverse()),
-        out,
-      )
-    });
-    clear_output_on_error(result, out)
+    self.sign_signature(RsaSignatureProfile::pkcs1v15(profile), message, out)
   }
 
   /// Sign a message using RSASSA-PKCS1-v1_5, OS-backed blinding, and caller-owned scratch.
@@ -1956,16 +2241,57 @@ impl RsaPrivateKey {
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<(), RsaPrivateOpError> {
-    let result = self
-      .components
-      .random_blinding_factor_into_scratch(scratch)
-      .and_then(|()| {
-        self
-          .components
-          .sign_pkcs1v15_with_stored_blinding_and_scratch(profile, message, out, scratch)
-      });
-    scratch.clear();
-    clear_output_on_error(result, out)
+    self.sign_signature_with_scratch(RsaSignatureProfile::pkcs1v15(profile), message, out, scratch)
+  }
+
+  /// Sign a message using RSASSA-PSS and caller-provided salt/blinding entropy.
+  ///
+  /// The salt length is the selected profile's digest length. The entropy
+  /// request and failure contracts match
+  /// [`Self::sign_signature_with_random_fill`].
+  ///
+  /// # Errors
+  ///
+  /// Returns [`RsaPrivateOpError`] if entropy is unavailable, lengths are
+  /// invalid, the key is too small for the selected profile, no valid blinding
+  /// factor is found within the retry bound, or the post-signing public fault
+  /// check fails.
+  #[must_use = "RSA signing failure must be checked; a dropped Result silently discards a failed signature"]
+  pub fn sign_pss_with_random_fill<E>(
+    &self,
+    profile: RsaPssProfile,
+    message: &[u8],
+    out: &mut [u8],
+    fill_random: impl FnMut(&mut [u8]) -> Result<(), E>,
+  ) -> Result<(), RsaPrivateOpError> {
+    self.sign_signature_with_random_fill(RsaSignatureProfile::pss(profile), message, out, fill_random)
+  }
+
+  /// Sign using RSASSA-PSS, caller-provided entropy, and reusable scratch.
+  ///
+  /// The salt length is the selected profile's digest length. This path
+  /// performs no steady-state allocation after `scratch` setup.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`RsaPrivateOpError`] under the same conditions as
+  /// [`Self::sign_signature_with_random_fill_and_scratch`].
+  #[must_use = "RSA signing failure must be checked; a dropped Result silently discards a failed signature"]
+  pub fn sign_pss_with_random_fill_and_scratch<E>(
+    &self,
+    profile: RsaPssProfile,
+    message: &[u8],
+    out: &mut [u8],
+    scratch: &mut RsaPrivateScratch,
+    fill_random: impl FnMut(&mut [u8]) -> Result<(), E>,
+  ) -> Result<(), RsaPrivateOpError> {
+    self.sign_signature_with_random_fill_and_scratch(
+      RsaSignatureProfile::pss(profile),
+      message,
+      out,
+      scratch,
+      fill_random,
+    )
   }
 
   /// Sign a message using RSASSA-PSS and OS-backed random salt/blinding.
@@ -1981,7 +2307,7 @@ impl RsaPrivateKey {
   #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
   #[must_use = "RSA signing failure must be checked; a dropped Result silently discards a failed signature"]
   pub fn sign_pss(&self, profile: RsaPssProfile, message: &[u8], out: &mut [u8]) -> Result<(), RsaPrivateOpError> {
-    self.sign_pss_with_salt_len(profile, profile.digest_len(), message, out)
+    self.sign_pss_with_random_fill(profile, message, out, getrandom::fill)
   }
 
   /// Sign a message using RSASSA-PSS, OS-backed random salt/blinding, and caller-owned scratch.
@@ -2003,7 +2329,7 @@ impl RsaPrivateKey {
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<(), RsaPrivateOpError> {
-    self.sign_pss_with_salt_len_and_scratch(profile, profile.digest_len(), message, out, scratch)
+    self.sign_pss_with_random_fill_and_scratch(profile, message, out, scratch, getrandom::fill)
   }
 
   /// Sign a message using RSASSA-PSS with an explicit random salt length.
@@ -2027,26 +2353,12 @@ impl RsaPrivateKey {
     message: &[u8],
     out: &mut [u8],
   ) -> Result<(), RsaPrivateOpError> {
-    let result = if !self.public_key().pss_salt_len_is_possible(profile, salt_len) {
-      Err(RsaPrivateOpError::MessageTooLong)
-    } else {
-      let mut salt = vec![0u8; salt_len];
-      let result = getrandom::fill(&mut salt)
-        .map_err(|_| RsaPrivateOpError::EntropyUnavailable)
-        .and_then(|()| self.components.random_blinding_factor())
-        .and_then(|blinding| {
-          self.components.sign_pss_with_salt_and_blinding_factor(
-            profile,
-            message,
-            &salt,
-            RsaBlindingPair::trusted(blinding.factor(), blinding.inverse()),
-            out,
-          )
-        });
-      ct::zeroize(&mut salt);
-      result
-    };
-    clear_output_on_error(result, out)
+    self.sign_signature_with_random_fill(
+      RsaSignatureProfile::pss_with_salt_len(profile, salt_len),
+      message,
+      out,
+      getrandom::fill,
+    )
   }
 
   /// Sign a message using RSASSA-PSS with an explicit random salt length and caller-owned scratch.
@@ -2071,27 +2383,13 @@ impl RsaPrivateKey {
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<(), RsaPrivateOpError> {
-    let result = if !self.public_key().pss_salt_len_is_possible(profile, salt_len) {
-      Err(RsaPrivateOpError::MessageTooLong)
-    } else {
-      scratch.ensure_len(self.public_key().modulus().len()).and_then(|()| {
-        let salt = scratch
-          .salt
-          .as_mut_slice()
-          .get_mut(..salt_len)
-          .ok_or(RsaPrivateOpError::MessageTooLong)?;
-        getrandom::fill(salt)
-          .map_err(|_| RsaPrivateOpError::EntropyUnavailable)
-          .and_then(|()| self.components.random_blinding_factor_into_scratch(scratch))
-          .and_then(|()| {
-            self
-              .components
-              .sign_pss_with_stored_salt_and_blinding_and_scratch(profile, message, salt_len, out, scratch)
-          })
-      })
-    };
-    scratch.clear();
-    clear_output_on_error(result, out)
+    self.sign_signature_with_random_fill_and_scratch(
+      RsaSignatureProfile::pss_with_salt_len(profile, salt_len),
+      message,
+      out,
+      scratch,
+      getrandom::fill,
+    )
   }
 
   /// Decrypt an RSAES-OAEP ciphertext using OS-backed blinding.
@@ -2658,6 +2956,7 @@ impl RsaPrivateScratch {
       one,
       public_scratch: components.public.public_scratch(),
       mul_scratch: RsaPrivateMulScratch::new(components.public.modulus.limbs.len()),
+      inverse_scratch: RsaPrivateInverseScratch::new(components.public.modulus.bits),
       exponent_scratch: RsaPrivateExponentScratch::new(components.public.modulus.limbs.len()),
     }
   }
@@ -2701,6 +3000,7 @@ impl RsaPrivateScratch {
     ct::zeroize_words(&mut self.public_scratch.limbs[..]);
     ct::zeroize(&mut self.public_scratch.bytes[..]);
     self.mul_scratch.clear();
+    self.inverse_scratch.clear();
     self.exponent_scratch.clear();
   }
 }
@@ -2769,10 +3069,18 @@ impl RsaPrivateKeyComponents {
 
   #[cfg(feature = "getrandom")]
   fn random_blinding_factor(&self) -> Result<RsaBlindingFactor, RsaPrivateOpError> {
+    self.random_blinding_factor_with(getrandom::fill)
+  }
+
+  #[cfg(feature = "getrandom")]
+  fn random_blinding_factor_with<E>(
+    &self,
+    mut fill_random: impl FnMut(&mut [u8]) -> Result<(), E>,
+  ) -> Result<RsaBlindingFactor, RsaPrivateOpError> {
     let len = self.public.modulus().len();
     for _ in 0..128 {
       let mut factor = vec![0u8; len];
-      if getrandom::fill(&mut factor).is_err() {
+      if fill_random(&mut factor).is_err() {
         ct::zeroize(&mut factor);
         return Err(RsaPrivateOpError::EntropyUnavailable);
       }
@@ -2812,16 +3120,22 @@ impl RsaPrivateKeyComponents {
 
   #[cfg(feature = "getrandom")]
   fn random_blinding_factor_into_scratch(&self, scratch: &mut RsaPrivateScratch) -> Result<(), RsaPrivateOpError> {
+    self.random_blinding_factor_into_scratch_with(scratch, getrandom::fill)
+  }
+
+  fn random_blinding_factor_into_scratch_with<E>(
+    &self,
+    scratch: &mut RsaPrivateScratch,
+    mut fill_random: impl FnMut(&mut [u8]) -> Result<(), E>,
+  ) -> Result<(), RsaPrivateOpError> {
     let len = self.public.modulus().len();
     scratch.ensure_len(len)?;
     for _ in 0..128 {
-      if getrandom::fill(scratch.blinding_factor.as_mut_slice()).is_err() {
+      if fill_random(scratch.blinding_factor.as_mut_slice()).is_err() {
         ct::zeroize(scratch.blinding_factor.as_mut_slice());
         return Err(RsaPrivateOpError::EntropyUnavailable);
       }
-      if is_zero_unsigned_be(scratch.blinding_factor.as_slice())
-        || unsigned_be_cmp(scratch.blinding_factor.as_slice(), self.public.modulus()) != core::cmp::Ordering::Less
-      {
+      if !private_valid_blinding_factor(scratch.blinding_factor.as_slice(), self.public.modulus()) {
         ct::zeroize(scratch.blinding_factor.as_mut_slice());
         continue;
       }
@@ -2876,185 +3190,17 @@ impl RsaPrivateKeyComponents {
     result
   }
 
-  #[cfg(feature = "getrandom")]
   fn blinding_factor_inverse_into_scratch(&self, scratch: &mut RsaPrivateScratch) -> Result<(), RsaPrivateOpError> {
     let n_len = self.public.modulus().len();
     scratch.ensure_len(n_len)?;
     if scratch.blinding_factor.as_slice().len() != n_len || scratch.blinding_inverse.as_slice().len() != n_len {
       return Err(RsaPrivateOpError::InvalidLength);
     }
-
-    let prime_p = self.prime_p.as_bytes();
-    let prime_q = self.prime_q.as_bytes();
-    let modulus_p = &self.prime_p_modulus;
-    let modulus_q = &self.prime_q_modulus;
-
-    {
-      let factor_p = scratch
-        .blinding_power
-        .as_mut_slice()
-        .get_mut(..prime_p.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?;
-      private_import_unsigned_be_mod_to_fixed(
-        scratch.blinding_factor.as_slice(),
-        modulus_p,
-        factor_p,
-        &mut scratch.exponent_scratch,
-      )?;
-      if is_zero_unsigned_be(factor_p) {
-        return Err(RsaPrivateOpError::InvalidBlindingFactor);
-      }
-    }
-    {
-      let factor_q = scratch
-        .checked
-        .as_mut_slice()
-        .get_mut(..prime_q.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?;
-      private_import_unsigned_be_mod_to_fixed(
-        scratch.blinding_factor.as_slice(),
-        modulus_q,
-        factor_q,
-        &mut scratch.exponent_scratch,
-      )?;
-      if is_zero_unsigned_be(factor_q) {
-        return Err(RsaPrivateOpError::InvalidBlindingFactor);
-      }
-    }
-
-    private_sub_small_unsigned_be_to_fixed(
-      prime_p,
-      2,
-      scratch
-        .blinded
-        .as_mut_slice()
-        .get_mut(..prime_p.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-    )?;
-    private_sub_small_unsigned_be_to_fixed(
-      prime_q,
-      2,
-      scratch
-        .encoded
-        .as_mut_slice()
-        .get_mut(..prime_q.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-    )?;
-
-    private_exponentiate_representative_with_scratch(
-      modulus_p,
-      scratch
-        .blinded
-        .as_slice()
-        .get(..prime_p.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      scratch
-        .blinding_power
-        .as_slice()
-        .get(..prime_p.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      scratch
-        .blinded_private_result
-        .as_mut_slice()
-        .get_mut(..prime_p.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      &mut scratch.exponent_scratch,
-    )?;
-    private_exponentiate_representative_with_scratch(
-      modulus_q,
-      scratch
-        .encoded
-        .as_slice()
-        .get(..prime_q.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      scratch
-        .checked
-        .as_slice()
-        .get(..prime_q.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      scratch
-        .blinded
-        .as_mut_slice()
-        .get_mut(..prime_q.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      &mut scratch.exponent_scratch,
-    )?;
-
-    private_import_unsigned_be_mod_to_fixed(
-      scratch
-        .blinded
-        .as_slice()
-        .get(..prime_q.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      modulus_p,
-      scratch
-        .blinding_power
-        .as_mut_slice()
-        .get_mut(..prime_p.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      &mut scratch.exponent_scratch,
-    )?;
-    private_sub_mod_unsigned_be_to_fixed(
-      scratch
-        .blinded_private_result
-        .as_slice()
-        .get(..prime_p.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      scratch
-        .blinding_power
-        .as_slice()
-        .get(..prime_p.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      prime_p,
-      scratch
-        .checked
-        .as_mut_slice()
-        .get_mut(..prime_p.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-    )?;
-
-    left_pad_be(
-      self.coefficient.as_bytes(),
-      scratch
-        .blinding_power
-        .as_mut_slice()
-        .get_mut(..prime_p.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-    )?;
-    mod_mul_representatives_with_scratch(
-      modulus_p,
-      scratch
-        .blinding_power
-        .as_slice()
-        .get(..prime_p.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      scratch
-        .checked
-        .as_slice()
-        .get(..prime_p.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      scratch
-        .blinded_private_result
-        .as_mut_slice()
-        .get_mut(..prime_p.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      &mut scratch.mul_scratch,
-    )?;
-
-    private_product_add_unsigned_be_to_fixed(
-      prime_q,
-      scratch
-        .blinded_private_result
-        .as_slice()
-        .get(..prime_p.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      scratch
-        .blinded
-        .as_slice()
-        .get(..prime_q.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
+    private_modular_inverse_odd(
+      &self.public.modulus,
+      scratch.blinding_factor.as_slice(),
       scratch.blinding_inverse.as_mut_slice(),
-      &mut scratch.mul_scratch,
+      &mut scratch.inverse_scratch,
     )
   }
 
@@ -3101,7 +3247,6 @@ impl RsaPrivateKeyComponents {
     result
   }
 
-  #[cfg(feature = "getrandom")]
   fn sign_pkcs1v15_with_stored_blinding_and_scratch(
     &self,
     profile: RsaPkcs1v15Profile,
@@ -3195,7 +3340,6 @@ impl RsaPrivateKeyComponents {
     result
   }
 
-  #[cfg(feature = "getrandom")]
   fn sign_pss_with_stored_salt_and_blinding_and_scratch(
     &self,
     profile: RsaPssProfile,
@@ -3274,7 +3418,6 @@ impl RsaPrivateKeyComponents {
     self.private_operation_with_blinding_factor_and_scratch(blinding, out, scratch)
   }
 
-  #[cfg(feature = "getrandom")]
   fn sign_encoded_message_with_stored_blinding_and_scratch(
     &self,
     out: &mut [u8],
@@ -3572,7 +3715,6 @@ impl RsaPrivateKeyComponents {
     }
   }
 
-  #[cfg(feature = "getrandom")]
   fn private_operation_from_scratch_encoded_with_stored_blinding(
     &self,
     scratch: &mut RsaPrivateScratch,
@@ -3999,6 +4141,86 @@ impl Drop for SecretLimbs {
   }
 }
 
+struct SecretI31 {
+  words: Vec<u32>,
+}
+
+impl SecretI31 {
+  fn zeroed(len: usize) -> Self {
+    Self { words: vec![0; len] }
+  }
+
+  #[cfg(test)]
+  #[inline]
+  fn as_slice(&self) -> &[u32] {
+    &self.words
+  }
+
+  #[inline]
+  fn as_mut_slice(&mut self) -> &mut [u32] {
+    &mut self.words
+  }
+}
+
+impl Drop for SecretI31 {
+  fn drop(&mut self) {
+    ct::zeroize_words(&mut self.words);
+  }
+}
+
+struct RsaPrivateInverseScratch {
+  a: SecretI31,
+  b: SecretI31,
+  u: SecretI31,
+  v: SecretI31,
+  modulus: SecretI31,
+  bit_len: usize,
+}
+
+struct RsaPrivateInverseWorkspace<'a> {
+  a: &'a mut [u32],
+  b: &'a mut [u32],
+  u: &'a mut [u32],
+  v: &'a mut [u32],
+  modulus: &'a mut [u32],
+}
+
+impl RsaPrivateInverseScratch {
+  fn new(bit_len: usize) -> Self {
+    let word_count = private_i31_word_count(bit_len);
+    Self {
+      a: SecretI31::zeroed(word_count),
+      b: SecretI31::zeroed(word_count),
+      u: SecretI31::zeroed(word_count),
+      v: SecretI31::zeroed(word_count),
+      modulus: SecretI31::zeroed(word_count),
+      bit_len,
+    }
+  }
+
+  fn workspace(&mut self, bit_len: usize) -> Result<RsaPrivateInverseWorkspace<'_>, RsaPrivateOpError> {
+    if bit_len != self.bit_len {
+      return Err(RsaPrivateOpError::InvalidScratch);
+    }
+    let word_count = private_i31_word_count(bit_len);
+    Ok(RsaPrivateInverseWorkspace {
+      a: private_i31_scratch_prefix(&mut self.a, word_count)?,
+      b: private_i31_scratch_prefix(&mut self.b, word_count)?,
+      u: private_i31_scratch_prefix(&mut self.u, word_count)?,
+      v: private_i31_scratch_prefix(&mut self.v, word_count)?,
+      modulus: private_i31_scratch_prefix(&mut self.modulus, word_count)?,
+    })
+  }
+
+  fn clear(&mut self) {
+    ct::zeroize_words(self.a.as_mut_slice());
+    ct::zeroize_words(self.b.as_mut_slice());
+    ct::zeroize_words(self.u.as_mut_slice());
+    ct::zeroize_words(self.v.as_mut_slice());
+    ct::zeroize_words(self.modulus.as_mut_slice());
+  }
+}
+
 struct RsaPrivateMulScratch {
   t: SecretLimbs,
   left_limbs: SecretLimbs,
@@ -4148,6 +4370,13 @@ impl RsaPrivateExponentScratch {
 
 fn private_scratch_prefix(limbs: &mut SecretLimbs, len: usize) -> Result<&mut [u64], RsaPrivateOpError> {
   limbs
+    .as_mut_slice()
+    .get_mut(..len)
+    .ok_or(RsaPrivateOpError::InvalidScratch)
+}
+
+fn private_i31_scratch_prefix(words: &mut SecretI31, len: usize) -> Result<&mut [u32], RsaPrivateOpError> {
+  words
     .as_mut_slice()
     .get_mut(..len)
     .ok_or(RsaPrivateOpError::InvalidScratch)
@@ -8966,6 +9195,435 @@ fn private_sub_unsigned_be_to_len(
   Ok(private_import_canonical_unsigned_be(out))
 }
 
+fn private_modular_inverse_odd(
+  modulus: &RsaPublicModulus,
+  input: &[u8],
+  out: &mut [u8],
+  scratch: &mut RsaPrivateInverseScratch,
+) -> Result<(), RsaPrivateOpError> {
+  #[cfg(all(target_arch = "aarch64", not(miri)))]
+  let _dit_guard = Aarch64DitGuard::enter();
+
+  let bytes = modulus.bytes.len();
+  if input.len() != bytes || out.len() != bytes || modulus.limbs.first().copied().unwrap_or(0) & 1 == 0 {
+    ct::zeroize(out);
+    return Err(RsaPrivateOpError::InvalidLength);
+  }
+  if !private_valid_blinding_factor(input, &modulus.bytes) {
+    ct::zeroize(out);
+    return Err(RsaPrivateOpError::InvalidBlindingFactor);
+  }
+
+  let result = (|| {
+    let RsaPrivateInverseWorkspace {
+      a,
+      b,
+      u,
+      v,
+      modulus: modulus_i31,
+    } = scratch.workspace(modulus.bits)?;
+    private_be_to_i31(input, a);
+    private_be_to_i31(&modulus.bytes, modulus_i31);
+    b.copy_from_slice(modulus_i31);
+    u.fill(0);
+    v.fill(0);
+    *u.first_mut().ok_or(RsaPrivateOpError::InvalidScratch)? = 1;
+
+    // The extended-binary-GCD state maintains:
+    //   a ≡ input * u (mod modulus)
+    //   b ≡ input * v (mod modulus)
+    // starting from (a, b, u, v) = (input, modulus, 1, 0). Each batch
+    // simulates 31 binary steps from fixed low/high approximations, then
+    // applies the resulting matrix to the full-width values. The approximation
+    // guarantees at least 30 effective reductions per batch. Binary GCD needs
+    // at most 2*k - 2 reductions for a k-bit odd modulus, so this public-width
+    // schedule includes one conservative batch beyond 2*k/30.
+    let batch_count = modulus.bits.strict_mul(2).strict_add(30) / 30;
+    for _ in 0..batch_count {
+      let (pa, pb, qa, qb) = private_i31_reduction_factors(a, b);
+      let signs = private_i31_co_reduce(a, b, pa, pb, qa, qb);
+      let a_negative = i64::from(signs & 1);
+      let b_negative = i64::from((signs >> 1) & 1);
+      let pa = private_i31_cond_negate_factor(pa, a_negative);
+      let pb = private_i31_cond_negate_factor(pb, a_negative);
+      let qa = private_i31_cond_negate_factor(qa, b_negative);
+      let qb = private_i31_cond_negate_factor(qb, b_negative);
+      private_i31_co_reduce_mod(
+        u,
+        v,
+        pa,
+        pb,
+        qa,
+        qb,
+        modulus_i31,
+        private_i31_low_u32(modulus.n0) & PRIVATE_I31_MASK,
+      );
+    }
+
+    let mut gcd_difference = (a.first().copied().unwrap_or(0) | b.first().copied().unwrap_or(0)) ^ 1;
+    for index in 1..a.len() {
+      gcd_difference |= a[index] | b[index];
+      u[index] |= v[index];
+    }
+    if ct_nonzero_u64(u64::from(gcd_difference)) != 0 {
+      return Err(RsaPrivateOpError::InvalidBlindingFactor);
+    }
+    u[0] |= v[0];
+    private_i31_to_be(u, out);
+    Ok(())
+  })();
+
+  scratch.clear();
+  if result.is_err() {
+    ct::zeroize(out);
+  }
+  result
+}
+
+const PRIVATE_I31_MASK: u32 = 0x7fff_ffff;
+
+#[inline(always)]
+const fn private_i31_low_u32(value: u64) -> u32 {
+  let bytes = value.to_le_bytes();
+  u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+}
+
+#[inline(always)]
+fn private_i31_cond_negate_factor(value: i64, negate: i64) -> i64 {
+  let mask = 0i64.wrapping_sub(negate);
+  (value ^ mask).wrapping_add(negate)
+}
+
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+#[inline(never)]
+fn private_i31_ct_mul_u64_low(lhs: u64, rhs: u64) -> u64 {
+  let mut product = 0u64;
+  let mut multiplicand = lhs;
+  let mut multiplier = rhs;
+  for _ in 0..u64::BITS {
+    // Keep LLVM from recognizing this fixed-work product and lowering it back
+    // to a target multiply. The CT artifact gate independently rejects scalar
+    // multiply in RISC-V and s390x evidence closures.
+    let selected_bit = core::hint::black_box(multiplier & 1);
+    product = product.wrapping_add(multiplicand & 0u64.wrapping_sub(selected_bit));
+    multiplicand <<= 1;
+    multiplier >>= 1;
+  }
+  product
+}
+
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+#[inline(never)]
+fn private_i31_ct_mul_u32_low(lhs: u32, rhs: u32) -> u32 {
+  let mut product = 0u32;
+  let mut multiplicand = lhs;
+  let mut multiplier = rhs;
+  for _ in 0..u32::BITS {
+    let selected_bit = core::hint::black_box(multiplier & 1);
+    product = product.wrapping_add(multiplicand & 0u32.wrapping_sub(selected_bit));
+    multiplicand <<= 1;
+    multiplier >>= 1;
+  }
+  product
+}
+
+#[inline(always)]
+fn private_i31_mul_u64_low(lhs: u64, rhs: u64) -> u64 {
+  #[cfg(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+  {
+    private_i31_ct_mul_u64_low(lhs, rhs)
+  }
+
+  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+  {
+    lhs.wrapping_mul(rhs)
+  }
+}
+
+#[inline(always)]
+fn private_i31_mul_u32_low(lhs: u32, rhs: u32) -> u32 {
+  #[cfg(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+  {
+    private_i31_ct_mul_u32_low(lhs, rhs)
+  }
+
+  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+  {
+    lhs.wrapping_mul(rhs)
+  }
+}
+
+fn private_valid_blinding_factor(factor: &[u8], modulus: &[u8]) -> bool {
+  if factor.len() != modulus.len() {
+    return false;
+  }
+  let mut nonzero = 0u8;
+  let mut borrow = 0u16;
+  for index in (0..factor.len()).rev() {
+    nonzero |= factor[index];
+    let (difference, first_borrow) = u16::from(factor[index]).overflowing_sub(u16::from(modulus[index]));
+    let (_, carry_borrow) = difference.overflowing_sub(borrow);
+    borrow = u16::from(first_borrow) | u16::from(carry_borrow);
+  }
+  ct_nonzero_u64(u64::from(nonzero)) & u64::from(borrow) == 1
+}
+
+#[inline]
+fn private_i31_word_count(bit_len: usize) -> usize {
+  bit_len.strict_add(30) / 31
+}
+
+fn private_be_to_i31(input: &[u8], out: &mut [u32]) {
+  out.fill(0);
+  let mut accumulator = 0u64;
+  let mut accumulator_bits = 0usize;
+  let mut word_index = 0usize;
+  for &byte in input.iter().rev() {
+    accumulator |= u64::from(byte) << accumulator_bits;
+    accumulator_bits = accumulator_bits.strict_add(8);
+    if accumulator_bits >= 31 {
+      out[word_index] = private_i31_low_u32(accumulator) & PRIVATE_I31_MASK;
+      word_index = word_index.strict_add(1);
+      accumulator >>= 31;
+      accumulator_bits = accumulator_bits.strict_sub(31);
+    }
+  }
+  if word_index < out.len() {
+    out[word_index] = private_i31_low_u32(accumulator);
+  }
+}
+
+fn private_i31_to_be(input: &[u32], out: &mut [u8]) {
+  let mut accumulator = 0u64;
+  let mut accumulator_bits = 0usize;
+  let mut word_index = 0usize;
+  for byte in out.iter_mut().rev() {
+    if accumulator_bits < 8 {
+      let word = input.get(word_index).copied().unwrap_or(0);
+      accumulator |= u64::from(word) << accumulator_bits;
+      accumulator_bits = accumulator_bits.strict_add(31);
+      word_index = word_index.strict_add(1);
+    }
+    *byte = accumulator.to_le_bytes()[0];
+    accumulator >>= 8;
+    accumulator_bits = accumulator_bits.strict_sub(8);
+  }
+}
+
+/*
+ * The batched extended-binary-GCD structure below is derived from BearSSL's
+ * i31 modular-division implementation:
+ * https://www.bearssl.org/gitweb/?p=BearSSL;a=blob;f=src/int/i31_moddiv.c
+ *
+ * Copyright (c) 2018 Thomas Pornin <pornin@bolet.org>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+fn private_i31_reduction_factors(a: &[u32], b: &[u32]) -> (i64, i64, i64, i64) {
+  debug_assert_eq!(a.len(), b.len());
+  let mut first_mask = u32::MAX;
+  let mut second_mask = u32::MAX;
+  let mut a_top = 0u32;
+  let mut a_next = 0u32;
+  let mut b_top = 0u32;
+  let mut b_next = 0u32;
+  for index in (0..a.len()).rev() {
+    let a_word = a[index];
+    let b_word = b[index];
+    a_top ^= (a_top ^ a_word) & first_mask;
+    a_next ^= (a_next ^ a_word) & second_mask;
+    b_top ^= (b_top ^ b_word) & first_mask;
+    b_next ^= (b_next ^ b_word) & second_mask;
+    second_mask = first_mask;
+    first_mask &= ((a_word | b_word).wrapping_add(PRIVATE_I31_MASK) >> 31).wrapping_sub(1);
+  }
+
+  a_next |= a_top & second_mask;
+  a_top &= !second_mask;
+  b_next |= b_top & second_mask;
+  b_top &= !second_mask;
+  let mut a_high = (u64::from(a_top) << 31).wrapping_add(u64::from(a_next));
+  let mut b_high = (u64::from(b_top) << 31).wrapping_add(u64::from(b_next));
+  let mut a_low = a.first().copied().unwrap_or(0);
+  let mut b_low = b.first().copied().unwrap_or(0);
+  let mut pa = 1i64;
+  let mut pb = 0i64;
+  let mut qa = 0i64;
+  let mut qb = 1i64;
+
+  for bit in 0..31 {
+    let difference = b_high.wrapping_sub(a_high);
+    let a_greater = private_i31_low_u32((difference ^ ((a_high ^ b_high) & (a_high ^ difference))) >> 63);
+    let a_odd = (a_low >> bit) & 1;
+    let b_odd = (b_low >> bit) & 1;
+    let subtract_b_from_a = a_odd & b_odd & a_greater;
+    let subtract_a_from_b = a_odd & b_odd & (a_greater ^ 1);
+    let shift_a = subtract_b_from_a | (a_odd ^ 1);
+
+    let a_mask_u32 = 0u32.wrapping_sub(subtract_b_from_a);
+    let a_mask_u64 = 0u64.wrapping_sub(u64::from(subtract_b_from_a));
+    let a_mask_i64 = 0i64.wrapping_sub(i64::from(subtract_b_from_a));
+    a_low = a_low.wrapping_sub(b_low & a_mask_u32);
+    a_high = a_high.wrapping_sub(b_high & a_mask_u64);
+    pa = pa.wrapping_sub(qa & a_mask_i64);
+    pb = pb.wrapping_sub(qb & a_mask_i64);
+
+    let b_mask_u32 = 0u32.wrapping_sub(subtract_a_from_b);
+    let b_mask_u64 = 0u64.wrapping_sub(u64::from(subtract_a_from_b));
+    let b_mask_i64 = 0i64.wrapping_sub(i64::from(subtract_a_from_b));
+    b_low = b_low.wrapping_sub(a_low & b_mask_u32);
+    b_high = b_high.wrapping_sub(a_high & b_mask_u64);
+    qa = qa.wrapping_sub(pa & b_mask_i64);
+    qb = qb.wrapping_sub(pb & b_mask_i64);
+
+    let keep_a_mask_u32 = shift_a.wrapping_sub(1);
+    let keep_a_mask_i64 = i64::from(shift_a).wrapping_sub(1);
+    a_low = a_low.wrapping_add(a_low & keep_a_mask_u32);
+    pa = pa.wrapping_add(pa & keep_a_mask_i64);
+    pb = pb.wrapping_add(pb & keep_a_mask_i64);
+    let shift_a_mask_u64 = 0u64.wrapping_sub(u64::from(shift_a));
+    a_high ^= (a_high ^ (a_high >> 1)) & shift_a_mask_u64;
+
+    let keep_b_mask_u32 = 0u32.wrapping_sub(shift_a);
+    let keep_b_mask_i64 = 0i64.wrapping_sub(i64::from(shift_a));
+    b_low = b_low.wrapping_add(b_low & keep_b_mask_u32);
+    qa = qa.wrapping_add(qa & keep_b_mask_i64);
+    qb = qb.wrapping_add(qb & keep_b_mask_i64);
+    let shift_b_mask_u64 = u64::from(shift_a).wrapping_sub(1);
+    b_high ^= (b_high ^ (b_high >> 1)) & shift_b_mask_u64;
+  }
+
+  (pa, pb, qa, qb)
+}
+
+fn private_i31_co_reduce(a: &mut [u32], b: &mut [u32], pa: i64, pb: i64, qa: i64, qb: i64) -> u32 {
+  debug_assert_eq!(a.len(), b.len());
+  let mut a_carry = 0i64;
+  let mut b_carry = 0i64;
+  for index in 0..a.len() {
+    let a_word = u64::from(a[index]);
+    let b_word = u64::from(b[index]);
+    let a_value = private_i31_mul_u64_low(a_word, pa.cast_unsigned())
+      .wrapping_add(private_i31_mul_u64_low(b_word, pb.cast_unsigned()))
+      .wrapping_add(a_carry.cast_unsigned());
+    let b_value = private_i31_mul_u64_low(a_word, qa.cast_unsigned())
+      .wrapping_add(private_i31_mul_u64_low(b_word, qb.cast_unsigned()))
+      .wrapping_add(b_carry.cast_unsigned());
+    if index > 0 {
+      a[index.strict_sub(1)] = private_i31_low_u32(a_value) & PRIVATE_I31_MASK;
+      b[index.strict_sub(1)] = private_i31_low_u32(b_value) & PRIVATE_I31_MASK;
+    }
+    a_carry = ((a_value >> 31) ^ (1u64 << 32)).wrapping_sub(1u64 << 32).cast_signed();
+    b_carry = ((b_value >> 31) ^ (1u64 << 32)).wrapping_sub(1u64 << 32).cast_signed();
+  }
+  let last = a.len().strict_sub(1);
+  a[last] = private_i31_low_u32(a_carry.cast_unsigned());
+  b[last] = private_i31_low_u32(b_carry.cast_unsigned());
+  let a_negative = private_i31_low_u32(a_carry.cast_unsigned() >> 63);
+  let b_negative = private_i31_low_u32(b_carry.cast_unsigned() >> 63);
+  private_i31_cond_negate(a, a_negative);
+  private_i31_cond_negate(b, b_negative);
+  a_negative | (b_negative << 1)
+}
+
+fn private_i31_cond_negate(value: &mut [u32], negate: u32) {
+  let mut carry = negate;
+  let mask = 0u32.wrapping_sub(negate) >> 1;
+  for word in value {
+    let negated = (*word ^ mask).wrapping_add(carry);
+    *word = negated & PRIVATE_I31_MASK;
+    carry = negated >> 31;
+  }
+}
+
+#[expect(
+  clippy::too_many_arguments,
+  reason = "the two-row batched co-reduction matrix and immutable modulus are one arithmetic operation"
+)]
+fn private_i31_co_reduce_mod(
+  u: &mut [u32],
+  v: &mut [u32],
+  pa: i64,
+  pb: i64,
+  qa: i64,
+  qb: i64,
+  modulus: &[u32],
+  modulus_inverse: u32,
+) {
+  debug_assert_eq!(u.len(), v.len());
+  debug_assert_eq!(u.len(), modulus.len());
+  let u_factor = private_i31_mul_u32_low(
+    private_i31_mul_u32_low(u[0], private_i31_low_u32(pa.cast_unsigned()))
+      .wrapping_add(private_i31_mul_u32_low(v[0], private_i31_low_u32(pb.cast_unsigned()))),
+    modulus_inverse,
+  ) & PRIVATE_I31_MASK;
+  let v_factor = private_i31_mul_u32_low(
+    private_i31_mul_u32_low(u[0], private_i31_low_u32(qa.cast_unsigned()))
+      .wrapping_add(private_i31_mul_u32_low(v[0], private_i31_low_u32(qb.cast_unsigned()))),
+    modulus_inverse,
+  ) & PRIVATE_I31_MASK;
+  let mut u_carry = 0i64;
+  let mut v_carry = 0i64;
+  for index in 0..u.len() {
+    let u_word = u64::from(u[index]);
+    let v_word = u64::from(v[index]);
+    let modulus_word = u64::from(modulus[index]);
+    let u_value = private_i31_mul_u64_low(u_word, pa.cast_unsigned())
+      .wrapping_add(private_i31_mul_u64_low(v_word, pb.cast_unsigned()))
+      .wrapping_add(private_i31_mul_u64_low(modulus_word, u64::from(u_factor)))
+      .wrapping_add(u_carry.cast_unsigned());
+    let v_value = private_i31_mul_u64_low(u_word, qa.cast_unsigned())
+      .wrapping_add(private_i31_mul_u64_low(v_word, qb.cast_unsigned()))
+      .wrapping_add(private_i31_mul_u64_low(modulus_word, u64::from(v_factor)))
+      .wrapping_add(v_carry.cast_unsigned());
+    if index > 0 {
+      u[index.strict_sub(1)] = private_i31_low_u32(u_value) & PRIVATE_I31_MASK;
+      v[index.strict_sub(1)] = private_i31_low_u32(v_value) & PRIVATE_I31_MASK;
+    }
+    u_carry = ((u_value >> 31) ^ (1u64 << 32)).wrapping_sub(1u64 << 32).cast_signed();
+    v_carry = ((v_value >> 31) ^ (1u64 << 32)).wrapping_sub(1u64 << 32).cast_signed();
+  }
+  let last = u.len().strict_sub(1);
+  u[last] = private_i31_low_u32(u_carry.cast_unsigned());
+  v[last] = private_i31_low_u32(v_carry.cast_unsigned());
+  private_i31_finish_mod(u, modulus, private_i31_low_u32(u_carry.cast_unsigned() >> 63));
+  private_i31_finish_mod(v, modulus, private_i31_low_u32(v_carry.cast_unsigned() >> 63));
+}
+
+fn private_i31_finish_mod(value: &mut [u32], modulus: &[u32], negative: u32) {
+  debug_assert_eq!(value.len(), modulus.len());
+  let mut borrow = 0u32;
+  for index in 0..value.len() {
+    borrow = value[index].wrapping_sub(modulus[index]).wrapping_sub(borrow) >> 31;
+  }
+
+  let negative_mask = 0u32.wrapping_sub(negative) >> 1;
+  let modulus_mask = 0u32.wrapping_sub(negative | 1u32.wrapping_sub(borrow));
+  let mut carry = negative;
+  for index in 0..value.len() {
+    let modulus_word = (modulus[index] ^ negative_mask) & modulus_mask;
+    let reduced = value[index].wrapping_sub(modulus_word).wrapping_sub(carry);
+    value[index] = reduced & PRIVATE_I31_MASK;
+    carry = reduced >> 31;
+  }
+}
+
 fn private_exponentiate_representative(
   modulus: &RsaPublicModulus,
   exponent: &[u8],
@@ -9600,32 +10258,6 @@ fn private_import_decrement_unsigned_be_to_fixed(bytes: &[u8], out: &mut [u8]) -
     Ok(())
   } else {
     Err(RsaKeyError::InvalidModulus)
-  }
-}
-
-#[cfg(feature = "getrandom")]
-fn private_sub_small_unsigned_be_to_fixed(
-  bytes: &[u8],
-  decrement: u8,
-  out: &mut [u8],
-) -> Result<(), RsaPrivateOpError> {
-  if bytes.is_empty() || bytes.len() != out.len() || decrement == 0 {
-    return Err(RsaPrivateOpError::InvalidLength);
-  }
-
-  out.copy_from_slice(bytes);
-  let mut borrow = u16::from(decrement);
-  for byte in out.iter_mut().rev() {
-    let low = (borrow & 0xff) as u8;
-    let (difference, overflow) = byte.overflowing_sub(low);
-    *byte = difference;
-    borrow = (borrow >> 8).strict_add(u16::from(overflow));
-  }
-
-  if borrow == 0 {
-    Ok(())
-  } else {
-    Err(RsaPrivateOpError::InvalidLength)
   }
 }
 
@@ -11331,7 +11963,56 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       one: SecretBigEndianBuffer::zeroed(wrong_len),
       public_scratch: key.public_key().public_scratch(),
       mul_scratch: RsaPrivateMulScratch::new(key.components.public.modulus.limbs.len()),
+      inverse_scratch: RsaPrivateInverseScratch::new(key.components.public.modulus.bits),
       exponent_scratch: RsaPrivateExponentScratch::new(key.components.public.modulus.limbs.len()),
+    }
+  }
+
+  fn assert_private_scratch_is_clear(scratch: &RsaPrivateScratch) {
+    for bytes in [
+      scratch.encoded.as_slice(),
+      scratch.salt.as_slice(),
+      scratch.blinding_factor.as_slice(),
+      scratch.blinding_inverse.as_slice(),
+      scratch.blinding_power.as_slice(),
+      scratch.blinded.as_slice(),
+      scratch.blinded_private_result.as_slice(),
+      scratch.checked.as_slice(),
+      scratch.one.as_slice(),
+      &scratch.public_scratch.bytes,
+    ] {
+      assert!(bytes.iter().all(|&byte| byte == 0));
+    }
+    for words in [
+      &scratch.public_scratch.limbs[..],
+      scratch.mul_scratch.t.as_slice(),
+      scratch.mul_scratch.left_limbs.as_slice(),
+      scratch.mul_scratch.right_limbs.as_slice(),
+      scratch.mul_scratch.left_mont.as_slice(),
+      scratch.mul_scratch.right_mont.as_slice(),
+      scratch.mul_scratch.product_mont.as_slice(),
+      scratch.mul_scratch.product.as_slice(),
+      scratch.exponent_scratch.t.as_slice(),
+      scratch.exponent_scratch.representative.as_slice(),
+      scratch.exponent_scratch.one.as_slice(),
+      scratch.exponent_scratch.base.as_slice(),
+      scratch.exponent_scratch.acc.as_slice(),
+      scratch.exponent_scratch.squared.as_slice(),
+      scratch.exponent_scratch.multiplied.as_slice(),
+      scratch.exponent_scratch.selected.as_slice(),
+      scratch.exponent_scratch.reduced.as_slice(),
+      scratch.exponent_scratch.table.as_slice(),
+    ] {
+      assert!(words.iter().all(|&word| word == 0));
+    }
+    for words in [
+      scratch.inverse_scratch.a.as_slice(),
+      scratch.inverse_scratch.b.as_slice(),
+      scratch.inverse_scratch.u.as_slice(),
+      scratch.inverse_scratch.v.as_slice(),
+      scratch.inverse_scratch.modulus.as_slice(),
+    ] {
+      assert!(words.iter().all(|&word| word == 0));
     }
   }
 
@@ -11709,6 +12390,312 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       )
       .expect("scratch-backed PKCS#1 v1.5 decryption with a valid blinding pair must succeed");
     assert_eq!(&pkcs1v15_decrypted[..pkcs1v15_decrypted_len], pkcs1v15_plaintext);
+  }
+
+  #[test]
+  fn private_key_caller_random_signing_rejects_candidates_then_roundtrips() {
+    let key = prevalidated_test_private_key();
+    let message = b"rscrypto caller-random rejection stream";
+    let (factor, _) = factor_two_and_inverse(key.public_key().modulus());
+    let mut modulus_candidate = key.public_key().modulus().to_vec();
+    let mut noninvertible_candidate = vec![0u8; key.signature_len()];
+    left_pad_be(&rsa_private_prime_p(), &mut noninvertible_candidate).expect("prime factor must fit modulus width");
+    let salt = [0x5au8; Sha256::OUTPUT_SIZE];
+    let mut calls = 0usize;
+    let mut signature = vec![0u8; key.signature_len()];
+    let mut scratch = key.private_scratch();
+
+    key
+      .sign_pss_with_random_fill_and_scratch(RsaPssProfile::Sha256, message, &mut signature, &mut scratch, |out| {
+        match calls {
+          0 => {
+            assert_eq!(out.len(), salt.len());
+            out.copy_from_slice(&salt);
+          }
+          1 => out.fill(0),
+          2 => out.copy_from_slice(&modulus_candidate),
+          3 => out.copy_from_slice(&noninvertible_candidate),
+          4 => out.copy_from_slice(&factor),
+          _ => return Err(()),
+        }
+        calls = calls.strict_add(1);
+        Ok::<(), ()>(())
+      })
+      .expect("a deterministic stream ending in an invertible factor must sign");
+
+    modulus_candidate.fill(0);
+    assert_eq!(calls, 5);
+    key
+      .public_key()
+      .verify_pss(RsaPssProfile::Sha256, message, &signature)
+      .expect("the caller-random signature must verify");
+    assert_private_scratch_is_clear(&scratch);
+  }
+
+  #[test]
+  fn private_key_caller_random_signing_covers_profiles_and_tls_mappings() {
+    let key = prevalidated_test_private_key();
+    let message = b"rscrypto caller-random RSA profile coverage";
+    let (factor, _) = factor_two_and_inverse(key.public_key().modulus());
+    let mut signature = vec![0u8; key.signature_len()];
+    let mut scratch = key.private_scratch();
+
+    for profile in [RsaPssProfile::Sha256, RsaPssProfile::Sha384, RsaPssProfile::Sha512] {
+      let mut calls = 0usize;
+      key
+        .sign_pss_with_random_fill_and_scratch(profile, message, &mut signature, &mut scratch, |out| {
+          if calls == 0 {
+            assert_eq!(out.len(), profile.digest_len());
+            out.fill(0x3c);
+          } else {
+            assert_eq!(out.len(), factor.len());
+            out.copy_from_slice(&factor);
+          }
+          calls = calls.strict_add(1);
+          Ok::<(), ()>(())
+        })
+        .expect("every supported PSS profile must sign with caller entropy");
+      assert_eq!(calls, 2);
+      key
+        .public_key()
+        .verify_pss(profile, message, &signature)
+        .expect("every supported caller-random PSS signature must verify");
+      assert_private_scratch_is_clear(&scratch);
+    }
+
+    for scheme in [0x0804, 0x0805, 0x0806, 0x0809, 0x080a, 0x080b] {
+      let profile = RsaSignatureProfile::from_tls13_signature_scheme(scheme)
+        .expect("the TLS PSS scheme fixture must map to a profile");
+      let mut calls = 0usize;
+      key
+        .sign_tls13_signature_scheme_with_random_fill_and_scratch(
+          scheme,
+          message,
+          &mut signature,
+          &mut scratch,
+          |out| {
+            if calls == 0 {
+              out.fill(0x7d);
+            } else {
+              out.copy_from_slice(&factor);
+            }
+            calls = calls.strict_add(1);
+            Ok::<(), ()>(())
+          },
+        )
+        .expect("TLS RSAE-PSS and PSS-PSS schemes must sign with caller entropy");
+      assert_eq!(calls, 2);
+      key
+        .public_key()
+        .verify_signature(profile, message, &signature)
+        .expect("the caller-random TLS PSS signature must verify");
+      assert_private_scratch_is_clear(&scratch);
+    }
+
+    for scheme in [0x0401, 0x0501, 0x0601] {
+      let profile = RsaSignatureProfile::from_tls_certificate_signature_scheme(scheme)
+        .expect("the TLS certificate RSA scheme fixture must map to a profile");
+      let mut calls = 0usize;
+      key
+        .sign_tls_certificate_signature_scheme_with_random_fill_and_scratch(
+          scheme,
+          message,
+          &mut signature,
+          &mut scratch,
+          |out| {
+            assert_eq!(out.len(), factor.len());
+            out.copy_from_slice(&factor);
+            calls = calls.strict_add(1);
+            Ok::<(), ()>(())
+          },
+        )
+        .expect("TLS certificate PKCS#1 v1.5 schemes must sign with caller entropy");
+      assert_eq!(calls, 1);
+      key
+        .public_key()
+        .verify_signature(profile, message, &signature)
+        .expect("the caller-random TLS certificate signature must verify");
+      assert_private_scratch_is_clear(&scratch);
+    }
+
+    let explicit_salt = RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha512, 24);
+    let mut calls = 0usize;
+    key
+      .sign_signature_with_random_fill(explicit_salt, message, &mut signature, |out| {
+        if calls == 0 {
+          assert_eq!(out.len(), 24);
+          out.fill(0x91);
+        } else {
+          out.copy_from_slice(&factor);
+        }
+        calls = calls.strict_add(1);
+        Ok::<(), ()>(())
+      })
+      .expect("the general profile boundary must preserve an explicit PSS salt length");
+    assert_eq!(calls, 2);
+    key
+      .public_key()
+      .verify_signature(explicit_salt, message, &signature)
+      .expect("the explicit-salt caller-random signature must verify");
+  }
+
+  #[test]
+  fn private_key_caller_random_failures_are_bounded_opaque_and_clear_state() {
+    #[derive(Debug)]
+    struct CallbackError;
+
+    let key = prevalidated_test_private_key();
+    let message = b"rscrypto caller-random failure schedule";
+    let profile = RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256);
+    let mut signature = vec![0xa5; key.signature_len()];
+    let mut scratch = key.private_scratch();
+
+    for fail_at in 0usize..128 {
+      signature.fill(0xa5);
+      let mut calls = 0usize;
+      assert_eq!(
+        key.sign_signature_with_random_fill_and_scratch(profile, message, &mut signature, &mut scratch, |out| {
+          let call = calls;
+          calls = calls.strict_add(1);
+          out.fill(0xa5);
+          if call == fail_at {
+            Err(CallbackError)
+          } else {
+            out.fill(0);
+            Ok(())
+          }
+        },),
+        Err(RsaPrivateOpError::EntropyUnavailable)
+      );
+      assert_eq!(calls, fail_at.strict_add(1));
+      assert!(is_zero_unsigned_be(&signature));
+      assert_private_scratch_is_clear(&scratch);
+    }
+
+    signature.fill(0xa5);
+    let mut calls = 0usize;
+    assert_eq!(
+      key.sign_signature_with_random_fill_and_scratch(profile, message, &mut signature, &mut scratch, |out| {
+        calls = calls.strict_add(1);
+        out.fill(0);
+        Ok::<(), CallbackError>(())
+      }),
+      Err(RsaPrivateOpError::InvalidBlindingFactor)
+    );
+    assert_eq!(calls, 128);
+    assert!(is_zero_unsigned_be(&signature));
+    assert_private_scratch_is_clear(&scratch);
+
+    let (factor, _) = factor_two_and_inverse(key.public_key().modulus());
+    key
+      .sign_signature_with_random_fill_and_scratch(profile, message, &mut signature, &mut scratch, |out| {
+        out.copy_from_slice(&factor);
+        Ok::<(), CallbackError>(())
+      })
+      .expect("scratch must be reusable after callback failure and retry exhaustion");
+    key
+      .public_key()
+      .verify_signature(profile, message, &signature)
+      .expect("a signature after scratch reuse must verify");
+    assert_private_scratch_is_clear(&scratch);
+  }
+
+  #[test]
+  fn private_key_caller_random_rejects_public_shape_before_entropy() {
+    let key = prevalidated_test_private_key();
+    let message = b"rscrypto caller-random public rejection";
+    let mut signature = vec![0xa5; key.signature_len()];
+    let mut scratch = key.private_scratch();
+
+    let mut calls = 0usize;
+    let impossible = RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha512, usize::MAX);
+    assert_eq!(
+      key.sign_signature_with_random_fill_and_scratch(impossible, message, &mut signature, &mut scratch, |_| {
+        calls = calls.strict_add(1);
+        Ok::<(), ()>(())
+      },),
+      Err(RsaPrivateOpError::MessageTooLong)
+    );
+    assert_eq!(calls, 0);
+    assert!(is_zero_unsigned_be(&signature));
+    assert_private_scratch_is_clear(&scratch);
+
+    signature.fill(0xa5);
+    assert_eq!(
+      key.sign_tls13_signature_scheme_with_random_fill(0x0401, message, &mut signature, |_| {
+        calls = calls.strict_add(1);
+        Ok::<(), ()>(())
+      }),
+      Err(RsaPrivateOpError::UnsupportedAlgorithm)
+    );
+    assert_eq!(calls, 0);
+    assert!(is_zero_unsigned_be(&signature));
+
+    signature.fill(0xa5);
+    assert_eq!(
+      key.sign_tls_certificate_signature_scheme_with_random_fill_and_scratch(
+        0x0201,
+        message,
+        &mut signature,
+        &mut scratch,
+        |_| {
+          calls = calls.strict_add(1);
+          Ok::<(), ()>(())
+        },
+      ),
+      Err(RsaPrivateOpError::UnsupportedAlgorithm)
+    );
+    assert_eq!(calls, 0);
+    assert!(is_zero_unsigned_be(&signature));
+    assert_private_scratch_is_clear(&scratch);
+
+    let mut short_signature = vec![0xa5; key.signature_len().strict_sub(1)];
+    assert_eq!(
+      key.sign_pss_with_random_fill_and_scratch(
+        RsaPssProfile::Sha256,
+        message,
+        &mut short_signature,
+        &mut scratch,
+        |_| {
+          calls = calls.strict_add(1);
+          Ok::<(), ()>(())
+        },
+      ),
+      Err(RsaPrivateOpError::InvalidLength)
+    );
+    assert_eq!(calls, 0);
+    assert!(is_zero_unsigned_be(&short_signature));
+    assert_private_scratch_is_clear(&scratch);
+
+    signature.fill(0xa5);
+    let mut wrong_scratch = wrong_width_private_scratch(&key);
+    assert_eq!(
+      key.sign_pss_with_random_fill_and_scratch(
+        RsaPssProfile::Sha256,
+        message,
+        &mut signature,
+        &mut wrong_scratch,
+        |_| {
+          calls = calls.strict_add(1);
+          Ok::<(), ()>(())
+        },
+      ),
+      Err(RsaPrivateOpError::InvalidScratch)
+    );
+    assert_eq!(calls, 0);
+    assert!(is_zero_unsigned_be(&signature));
+    assert_private_scratch_is_clear(&wrong_scratch);
+
+    signature.fill(0xa5);
+    assert_eq!(
+      key.sign_pss_with_random_fill_and_scratch(RsaPssProfile::Sha256, message, &mut signature, &mut scratch, |out| {
+        out.fill(0xa5);
+        Err::<(), ()>(())
+      },),
+      Err(RsaPrivateOpError::EntropyUnavailable)
+    );
+    assert!(is_zero_unsigned_be(&signature));
+    assert_private_scratch_is_clear(&scratch);
   }
 
   #[test]
@@ -12893,6 +13880,171 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
     assert!(check[..check.len().strict_sub(1)].iter().all(|&byte| byte == 0));
     assert_eq!(check.last().copied(), Some(1));
+  }
+
+  #[test]
+  fn private_i31_fixed_work_multiply_matches_wrapping_products() {
+    const U64_EDGES: [u64; 8] = [0, 1, 2, 0xffff_ffff, 1u64 << 32, 1u64 << 63, u64::MAX - 1, u64::MAX];
+    const U32_EDGES: [u32; 7] = [0, 1, 2, 0x7fff_ffff, 1u32 << 31, u32::MAX - 1, u32::MAX];
+
+    for lhs in U64_EDGES {
+      for rhs in U64_EDGES {
+        assert_eq!(private_i31_ct_mul_u64_low(lhs, rhs), lhs.wrapping_mul(rhs));
+      }
+    }
+    for lhs in U32_EDGES {
+      for rhs in U32_EDGES {
+        assert_eq!(private_i31_ct_mul_u32_low(lhs, rhs), lhs.wrapping_mul(rhs));
+      }
+    }
+
+    let mut lhs = 0x243f_6a88_85a3_08d3u64;
+    let mut rhs = 0x1319_8a2e_0370_7344u64;
+    for _ in 0..1024 {
+      lhs = lhs.wrapping_mul(0x9e37_79b9_7f4a_7c15).wrapping_add(1);
+      rhs = rhs.wrapping_mul(0xd134_2543_de82_ef95).wrapping_add(1);
+      let lhs_low = private_i31_low_u32(lhs);
+      let rhs_low = private_i31_low_u32(rhs);
+      assert_eq!(private_i31_ct_mul_u64_low(lhs, rhs), lhs.wrapping_mul(rhs));
+      assert_eq!(
+        private_i31_ct_mul_u32_low(lhs_low, rhs_low),
+        lhs_low.wrapping_mul(rhs_low)
+      );
+    }
+  }
+
+  #[test]
+  fn private_modular_inverse_matches_exhaustive_small_domain() {
+    for modulus_value in (3u16..=255).step_by(2) {
+      let modulus_byte = u8::try_from(modulus_value).expect("the exhaustive modulus is at most one byte");
+      let modulus_bytes = [modulus_byte];
+      let modulus = RsaPublicModulus::new(&modulus_bytes, unsigned_be_bit_len(&modulus_bytes));
+      let mut scratch = RsaPrivateInverseScratch::new(modulus.bits);
+
+      for input_value in 1u16..modulus_value {
+        let input = [u8::try_from(input_value).expect("the exhaustive input is at most one byte")];
+        let mut out = [0xa5];
+        let expected = (1u16..modulus_value).find(|candidate| input_value.strict_mul(*candidate) % modulus_value == 1);
+        let result = private_modular_inverse_odd(&modulus, &input, &mut out, &mut scratch);
+
+        if let Some(expected) = expected {
+          assert_eq!(result, Ok(()), "inverse rejected for {input_value} mod {modulus_value}");
+          assert_eq!(
+            u16::from(out[0]),
+            expected,
+            "wrong inverse for {input_value} mod {modulus_value}"
+          );
+        } else {
+          assert_eq!(
+            result,
+            Err(RsaPrivateOpError::InvalidBlindingFactor),
+            "non-invertible input accepted for {input_value} mod {modulus_value}"
+          );
+          assert_eq!(out, [0]);
+        }
+        for words in [
+          scratch.a.as_slice(),
+          scratch.b.as_slice(),
+          scratch.u.as_slice(),
+          scratch.v.as_slice(),
+          scratch.modulus.as_slice(),
+        ] {
+          assert!(words.iter().all(|&word| word == 0));
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn private_modular_inverse_matches_biguint_for_full_width_inputs() {
+    let modulus_bytes = rsa_private_modulus();
+    let modulus = RsaPublicModulus::new(&modulus_bytes, unsigned_be_bit_len(&modulus_bytes));
+    let modulus_oracle = rsa::BigUint::from_bytes_be(&modulus_bytes);
+    let mut scratch = RsaPrivateInverseScratch::new(modulus.bits);
+    let mut factor = vec![0u8; modulus_bytes.len()];
+    let mut inverse = vec![0u8; modulus_bytes.len()];
+    let mut state = 0x243f_6a88_85a3_08d3u64;
+
+    for _ in 0..64 {
+      state ^= state << 13;
+      state ^= state >> 7;
+      state ^= state << 17;
+      let candidate = state | 1;
+      factor.fill(0);
+      let candidate_start = factor.len().strict_sub(8);
+      factor[candidate_start..].copy_from_slice(&candidate.to_be_bytes());
+
+      private_modular_inverse_odd(&modulus, &factor, &mut inverse, &mut scratch)
+        .expect("a nonzero 64-bit factor cannot share either 1024-bit prime factor");
+      let product = rsa::BigUint::from(candidate) * rsa::BigUint::from_bytes_be(&inverse);
+      assert_eq!(product % &modulus_oracle, rsa::BigUint::from(1u8));
+      for words in [
+        scratch.a.as_slice(),
+        scratch.b.as_slice(),
+        scratch.u.as_slice(),
+        scratch.v.as_slice(),
+        scratch.modulus.as_slice(),
+      ] {
+        assert!(words.iter().all(|&word| word == 0));
+      }
+    }
+
+    // Exercise modulus-width factors independently of the small-candidate
+    // cases above. Since the RSA modulus is odd, every n - 2^k candidate is
+    // coprime to n and therefore has an inverse.
+    for sample in 0usize..64 {
+      let shift = sample.strict_mul(modulus.bits.strict_sub(2)) / 63;
+      let candidate = &modulus_oracle - (rsa::BigUint::from(1u8) << shift);
+      let candidate_bytes = candidate.to_bytes_be();
+      factor.fill(0);
+      let candidate_start = factor.len().strict_sub(candidate_bytes.len());
+      factor[candidate_start..].copy_from_slice(&candidate_bytes);
+
+      private_modular_inverse_odd(&modulus, &factor, &mut inverse, &mut scratch)
+        .expect("n - 2^k must be invertible modulo an odd RSA modulus");
+      let product = &candidate * rsa::BigUint::from_bytes_be(&inverse);
+      assert_eq!(product % &modulus_oracle, rsa::BigUint::from(1u8));
+      for words in [
+        scratch.a.as_slice(),
+        scratch.b.as_slice(),
+        scratch.u.as_slice(),
+        scratch.v.as_slice(),
+        scratch.modulus.as_slice(),
+      ] {
+        assert!(words.iter().all(|&word| word == 0));
+      }
+    }
+
+    factor.copy_from_slice(&modulus_bytes);
+    let mut borrow = 1u16;
+    for byte in factor.iter_mut().rev() {
+      let difference = u16::from(*byte).wrapping_sub(borrow);
+      *byte = difference.to_le_bytes()[0];
+      borrow = u16::from(difference > 0xff);
+    }
+    private_modular_inverse_odd(&modulus, &factor, &mut inverse, &mut scratch)
+      .expect("n - 1 must be self-inverse modulo n");
+    assert_eq!(inverse, factor);
+
+    factor.fill(0);
+    let prime = rsa_private_prime_p();
+    let prime_start = factor.len().strict_sub(prime.len());
+    factor[prime_start..].copy_from_slice(&prime);
+    inverse.fill(0xa5);
+    assert_eq!(
+      private_modular_inverse_odd(&modulus, &factor, &mut inverse, &mut scratch),
+      Err(RsaPrivateOpError::InvalidBlindingFactor)
+    );
+    assert!(inverse.iter().all(|&byte| byte == 0));
+    for words in [
+      scratch.a.as_slice(),
+      scratch.b.as_slice(),
+      scratch.u.as_slice(),
+      scratch.v.as_slice(),
+      scratch.modulus.as_slice(),
+    ] {
+      assert!(words.iter().all(|&word| word == 0));
+    }
   }
 
   #[cfg(feature = "getrandom")]
@@ -14294,7 +15446,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   ))]
   macro_rules! assert_aarch64_rsa_montgomery_backend_matches_portable {
     ($backend:ident) => {
-      for words in [32usize, 48, 64, 128] {
+      for words in [16usize, 24, 32, 48, 64, 128] {
         assert!($backend::supports_bignum_mont_words(words));
         let modulus = rsa_montgomery_test_modulus(words);
         let a = rsa_montgomery_test_limbs(words, 0x243f_6a88_85a3_08d3);
@@ -14323,6 +15475,10 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         $backend::mont_mul_cios_words_in_place_left(&mut asm_left, &b, &modulus.limbs, modulus.n0, words, &mut asm_t);
         mont_mul_cios_portable(&mut portable_out, &a, &b, &modulus, &mut portable_t);
         assert_limbs_match_as_bytes("mont_mul_in_place_left", words, &asm_left, &portable_out);
+
+        if words < 32 {
+          continue;
+        }
 
         asm_t.fill(0);
         portable_t.fill(0);
@@ -14389,7 +15545,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   ))]
   #[test]
   fn x86_64_linux_rsa_montgomery_asm_matches_portable_across_supported_widths() {
-    for words in [32usize, 48, 64, 128] {
+    for words in [16usize, 24, 32, 48, 64, 128] {
       assert!(
         rsa_x86_64_asm::supports_bignum_mont_words(words),
         "RSA x86-64 assembly evidence requires BMI2 and ADX"

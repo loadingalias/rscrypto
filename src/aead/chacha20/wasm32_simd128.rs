@@ -31,8 +31,8 @@ pub(super) unsafe fn xor_keystream(
 #[target_feature(enable = "simd128")]
 unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {
   let mut counter = initial_counter;
-  let mut batches = buffer.chunks_exact_mut(BLOCK_SIZE * BLOCKS_PER_BATCH);
-  for chunk in &mut batches {
+  let (batches, remainder) = buffer.as_chunks_mut::<{ BLOCK_SIZE * BLOCKS_PER_BATCH }>();
+  for chunk in batches {
     debug_assert!(counter.checked_add(3).is_some());
 
     let mut x0 = u32x4_splat(0x6170_7865);
@@ -143,7 +143,6 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
     counter = counter.wrapping_add(4);
   }
 
-  let remainder = batches.into_remainder();
   if !remainder.is_empty() {
     xor_keystream_portable(key, counter, nonce, remainder);
   }

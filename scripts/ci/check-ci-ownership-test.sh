@@ -17,7 +17,9 @@ make_fixture() {
   cp -R "$REPO_ROOT/.github/rulesets" "$fixture/.github/rulesets"
   cp -R "$REPO_ROOT/.github/repository-settings" "$fixture/.github/repository-settings"
   cp "$REPO_ROOT/.github/dependabot.yaml" "$fixture/.github/dependabot.yaml"
+  cp "$REPO_ROOT/.github/runs-on.yml" "$fixture/.github/runs-on.yml"
   cp "$REPO_ROOT/.config/target-matrix.json" "$fixture/.config/target-matrix.json"
+  cp "$REPO_ROOT/.config/rail.toml" "$fixture/.config/rail.toml"
   cp "$REPO_ROOT/.config/ci-tool-archives.tsv" "$fixture/.config/ci-tool-archives.tsv"
   cp -R "$REPO_ROOT/scripts/ci" "$fixture/scripts/ci"
   cp "$REPO_ROOT/scripts/lib/ci-tool-integrity.sh" "$REPO_ROOT/scripts/lib/common.sh" \
@@ -154,11 +156,17 @@ yq eval '.runs.steps += [{"name": "Restore poisonable tools", "uses": "actions/c
   "$poisonable_tool_cache/.github/actions/setup/action.yaml"
 expect_failure "$poisonable_tool_cache" "CI tool executables can be restored from a poisonable cache"
 
-rust_cache_binaries="$TMP_ROOT/rust-cache-binaries"
-make_fixture "$rust_cache_binaries"
-yq eval '(.runs.steps[] | select(.name == "Setup Rust Cache") | .with."cache-bin") = true' -i \
-  "$rust_cache_binaries/.github/actions/setup/action.yaml"
-expect_failure "$rust_cache_binaries" "the Rust build cache can restore Cargo tool executables"
+competing_rust_cache="$TMP_ROOT/competing-rust-cache"
+make_fixture "$competing_rust_cache"
+yq eval '.runs.steps += [{"name": "Competing Rust cache", "uses": "Swatinem/rust-cache@0123456789012345678901234567890123456789"}]' -i \
+  "$competing_rust_cache/.github/actions/setup/action.yaml"
+expect_failure "$competing_rust_cache" "a competing Rust compiler cache bypasses Cargo Rail"
+
+magic_cache_extra="$TMP_ROOT/magic-cache-extra"
+make_fixture "$magic_cache_extra"
+yq eval '.runners.linux-x64-ci.extras = ["s3-cache"]' -i \
+  "$magic_cache_extra/.github/runs-on.yml"
+expect_failure "$magic_cache_extra" "RunsOn MagicCache intercepts Cargo Rail compiler results"
 
 unauthenticated_rustup="$TMP_ROOT/unauthenticated-rustup"
 make_fixture "$unauthenticated_rustup"
@@ -178,6 +186,18 @@ make_fixture "$floating_rail_action"
 yq eval '(.jobs."rail-plan".steps[] | select(.id == "rail") | .uses) = "loadingalias/cargo-rail-action@v6"' -i \
   "$floating_rail_action/.github/workflows/ci.yaml"
 expect_failure "$floating_rail_action" "cargo-rail-action is not commit-pinned"
+
+floating_rail_cache="$TMP_ROOT/floating-rail-cache"
+make_fixture "$floating_rail_cache"
+yq eval '(.runs.steps[] | select(.name == "Setup Cargo Rail Cache") | .uses) = "loadingalias/cargo-rail-action/cache@v7"' -i \
+  "$floating_rail_cache/.github/actions/setup/action.yaml"
+expect_failure "$floating_rail_cache" "the Cargo Rail cache action is not commit-pinned with the planner"
+
+writable_pr_cache="$TMP_ROOT/writable-pr-cache"
+make_fixture "$writable_pr_cache"
+yq eval '(.jobs.run.steps[] | select(.name == "Setup") | .with."cache-mode") = "read-write"' -i \
+  "$writable_pr_cache/.github/workflows/_rust-job.yaml"
+expect_failure "$writable_pr_cache" "untrusted pull requests can write shared compiler results"
 
 mismatched_rail_version="$TMP_ROOT/mismatched-rail-version"
 make_fixture "$mismatched_rail_version"
@@ -454,10 +474,10 @@ sed -i.bak '/tools\/\*/d' "$missing_tools/.github/dependabot.yaml"
 rm -f "$missing_tools/.github/dependabot.yaml.bak"
 expect_failure "$missing_tools" "missing standalone tool dependency coverage"
 
-duplicate_semver_owner="$TMP_ROOT/duplicate-semver-owner"
-make_fixture "$duplicate_semver_owner"
-printf '\n# duplicate owner\n      run: cargo semver-checks --package rscrypto --all-features\n' >>"$duplicate_semver_owner/.github/workflows/weekly.yaml"
-expect_failure "$duplicate_semver_owner" "duplicate SemVer owner"
+reintroduced_semver_owner="$TMP_ROOT/reintroduced-semver-owner"
+make_fixture "$reintroduced_semver_owner"
+printf '\n# pre-1.0 SemVer enforcement reintroduced\n      run: cargo semver-checks --package rscrypto --all-features\n' >>"$reintroduced_semver_owner/.github/workflows/weekly.yaml"
+expect_failure "$reintroduced_semver_owner" "reintroduced SemVer owner"
 
 shrunk_matrix="$TMP_ROOT/shrunk-matrix"
 make_fixture "$shrunk_matrix"
@@ -471,11 +491,5 @@ sed -i.bak '/EXECUTABLE_FEATURE_SETS=(/,/^)/ s/  "full"/  "std,full,uncompiled-f
   "$uncompiled_execution/scripts/lib/feature-profiles.sh"
 rm -f "$uncompiled_execution/scripts/lib/feature-profiles.sh.bak"
 expect_failure "$uncompiled_execution" "executable feature profile without compile coverage"
-
-stale_amx_cache="$TMP_ROOT/stale-amx-cache"
-make_fixture "$stale_amx_cache"
-yq eval '.jobs.platform-amx.with.cache_key = "${{ inputs.cache_key_prefix }}-platform-amx"' -i \
-  "$stale_amx_cache/.github/workflows/_ci-suite.yaml"
-expect_failure "$stale_amx_cache" "AMX cache identity omits its reduced-debug test profile"
 
 echo "CI ownership regression tests passed"

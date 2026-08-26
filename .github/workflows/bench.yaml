@@ -69,12 +69,9 @@ jobs:
     with:
       runner: ${{ matrix.runner }}
       timeout_minutes: ${{ matrix.timeout_minutes }}
-      cache_key: bench-${{ matrix.artifact_suffix }}
       tools_mode: ${{ matrix.tools_mode }}
       toolchain_contract: ${{ (matrix.platform == 'ibm-s390x' || matrix.platform == 'ibm-power10') && 'nightly' || 'development' }}
       toolchain_components: ${{ matrix.toolchain_components }}
-      enable_magic_cache: false
-      enable_rust_cache: true
       operation: benchmark
       platform: ${{ matrix.platform }}
       bench_targets: ${{ inputs.targets || 'all' }}

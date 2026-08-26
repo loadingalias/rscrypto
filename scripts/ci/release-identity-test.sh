@@ -26,6 +26,11 @@ version = 4
 EOF
 cp "$REPO_ROOT/rust-toolchain.toml" "$fixture/rust-toolchain.toml"
 cp "$REPO_ROOT/.github/workflows/release.yaml" "$fixture/.github/workflows/release.yaml"
+toolchain_channel=$(sed -n 's/^channel = "\([^"]*\)"$/\1/p' "$fixture/rust-toolchain.toml")
+[[ -n "$toolchain_channel" ]] || {
+  echo "release identity fixture could not resolve the toolchain channel" >&2
+  exit 1
+}
 git -C "$fixture" add .
 git -C "$fixture" commit -qm "release fixture"
 commit=$(git -C "$fixture" rev-parse HEAD)
@@ -88,7 +93,7 @@ write_manifest() {
 github_output="$TMP_ROOT/github-output"
 GITHUB_OUTPUT="$github_output" write_manifest >/dev/null
 manifest="$artifacts/rscrypto-1.2.3-release-manifest.json"
-jq -e --arg commit "$commit" '
+jq -e --arg commit "$commit" --arg toolchain_channel "$toolchain_channel" '
   .schema_version == 1
   and .kind == "rscrypto.release-manifest"
   and .crate_version == "1.2.3"
@@ -96,7 +101,7 @@ jq -e --arg commit "$commit" '
   and (.release.tag_object | test("^[0-9a-f]{40}$"))
   and .release.git_commit == $commit
   and (.release.git_tree | test("^[0-9a-f]{40}$"))
-  and .toolchain.channel == "1.97.1"
+  and .toolchain.channel == $toolchain_channel
   and (.toolchain.manifest.sha256 | test("^[0-9a-f]{64}$"))
   and .evidence.git_commit == $commit
   and .evidence.mode == "exact_commit"

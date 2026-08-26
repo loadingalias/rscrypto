@@ -54,7 +54,7 @@ for i in "${!IBM_TARGETS[@]}"; do
 
   (
     # shellcheck disable=SC2086
-    if ! CC="$ZIG_CC" RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" RUSTUP_TOOLCHAIN="$NIGHTLY_TOOLCHAIN" \
+    if ! CC="$ZIG_CC" CARGO_TARGET_DIR="$target_dir" RUSTUP_TOOLCHAIN="$NIGHTLY_TOOLCHAIN" \
       cargo clippy $CRATE_FLAGS --lib --all-features --locked --target "$target" \
       >"$log_file" 2>&1; then
       exit 1

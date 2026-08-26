@@ -33,10 +33,8 @@ echo "Running Memory Safety Tests via Miri..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-maybe_disable_sccache
 activate_nightly_toolchain
-unset RUSTC_WRAPPER
-unset CARGO_BUILD_RUSTC_WRAPPER
+export CARGO_RAIL_CACHE=off
 
 # Miri cannot execute SIMD/CLMUL kernels directly. Force CRC families onto their
 # portable tiers so the lane spends time validating real pointer/length logic

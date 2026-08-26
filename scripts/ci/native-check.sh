@@ -16,7 +16,6 @@ for arg in "$@"; do
   esac
 done
 
-maybe_disable_sccache
 apply_ci_resource_profile
 
 echo "Native validation: $(rustc -vV | sed -n 's/^host: //p')"

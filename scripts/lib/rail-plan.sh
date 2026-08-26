@@ -52,16 +52,6 @@ _rail_valid_scope_json() {
       and has("test")
       and all(.[]; type == "boolean");
 
-    def valid_surface_records:
-      type == "object"
-      and has("bench")
-      and has("build")
-      and has("custom:cargo_graph")
-      and has("docs")
-      and has("infra")
-      and has("test")
-      and all(.[]; type == "object" and (.enabled | type == "boolean"));
-
     def valid_crate:
       type == "string" and test("^[A-Za-z0-9][A-Za-z0-9_-]*$");
 
@@ -74,15 +64,11 @@ _rail_valid_scope_json() {
         [.crates[] | "-p", .]
       end;
 
-    def valid_scope:
+    def valid_package_scope:
       type == "object"
-      and (.scope_contract_version == 2 or .scope_contract_version == 3)
-      and (.resolved_base | type == "string" and length > 0)
-      and (.resolved_head | type == "string" and length > 0)
       and (.mode == "empty" or .mode == "workspace" or .mode == "crates")
       and (.crates | type == "array")
       and (.cargo_args | type == "array" and all(.[]; type == "string"))
-      and (.surfaces | valid_surfaces)
       and (
         if .mode == "crates" then
           (.crates
@@ -93,7 +79,27 @@ _rail_valid_scope_json() {
           (.crates | length == 0)
         end
       )
-      and (.cargo_args == expected_cargo_args)
+      and (.cargo_args == expected_cargo_args);
+
+    def valid_surface_records:
+      type == "object"
+      and has("bench")
+      and has("build")
+      and has("custom:cargo_graph")
+      and has("docs")
+      and has("infra")
+      and has("test")
+      and all(.[].enabled; type == "boolean")
+      and all(.[].reasons; type == "array" and all(.[]; type == "number" and floor == .))
+      and all(.[].scope; valid_package_scope);
+
+    def valid_scope:
+      type == "object"
+      and .scope_contract_version == 4
+      and (.resolved_base | type == "string" and length > 0)
+      and (.resolved_head | type == "string" and length > 0)
+      and valid_package_scope
+      and (.surfaces | valid_surfaces)
       and (
         if .mode == "empty" then
           (.surfaces.bench == false and .surfaces.build == false and .surfaces.test == false)
@@ -105,23 +111,16 @@ _rail_valid_scope_json() {
     if $document_kind == "plan" then
       select(
         type == "object"
-        and .schema_version == 1
-        and .command == "plan"
-        and .mode == "inspect"
-        and .result == "success"
-        and .exit_code == 0
+        and .plan_contract_version == 7
+        and .scope.scope_contract_version == 4
+        and (.inputs.snapshot_id | type == "string" and length > 0)
+        and .resolution_universe.mode == "declared_dependencies"
         and (
-          (
-            .plan_contract_version == 3
-            and .scope.scope_contract_version == 2
-            and (.scope.surfaces | valid_surfaces)
-          )
-          or (
-            .plan_contract_version == 5
-            and .scope.scope_contract_version == 3
-            and (.surfaces | valid_surface_records)
-          )
+          .resolution_universe.identity
+          | type == "string"
+          and test("^resolution-universe-v1:sha256:[0-9a-f]{64}$")
         )
+        and (.surfaces | valid_surface_records)
         and (.files | type == "array")
         and all(.files[];
           type == "object"
@@ -130,16 +129,12 @@ _rail_valid_scope_json() {
             and length > 0
             and (explode | all(. >= 32 and . != 127))))
       )
-      | if .plan_contract_version == 5 then
-          .scope + {
-            surfaces: (
-              .surfaces
-              | with_entries(.value = .value.enabled)
-            )
-          }
-        else
-          .scope
-        end
+      | .scope + {
+          surfaces: (
+            .surfaces
+            | with_entries(.value = .value.enabled)
+          )
+        }
       | select(valid_scope)
     elif $document_kind == "scope" then
       select(valid_scope)

@@ -533,11 +533,35 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
 
   assert_one_shot_protocol_rejects_fail_before_scratch_allocation();
   let private_key = private_key();
+  assert_private_caller_random_rejects_fail_before_scratch_allocation(&private_key);
   #[cfg(feature = "getrandom")]
   assert_private_protocol_signing_rejects_fail_before_entropy_allocation(&private_key);
   assert_private_scratch_operations_do_not_allocate(&private_key);
   #[cfg(feature = "getrandom")]
   assert_rng_private_scratch_operations_do_not_allocate(&private_key);
+}
+
+fn assert_private_caller_random_rejects_fail_before_scratch_allocation(key: &RsaPrivateKey) {
+  let mut signature = vec![0xa5; key.signature_len()];
+  let mut entropy_calls = 0usize;
+
+  reset_allocations();
+  assert!(
+    key
+      .sign_signature_with_random_fill(
+        RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha256, usize::MAX),
+        b"private caller-random allocation reject",
+        &mut signature,
+        |_| {
+          entropy_calls = entropy_calls.strict_add(1);
+          Ok::<(), ()>(())
+        },
+      )
+      .is_err()
+  );
+  assert_eq!(allocation_count(), 0);
+  assert_eq!(entropy_calls, 0);
+  assert!(signature.iter().all(|&byte| byte == 0));
 }
 
 #[cfg(feature = "getrandom")]
@@ -686,6 +710,28 @@ fn assert_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
       &mut scratch,
     )
     .expect("scratch-backed blinded PSS signing must succeed");
+  assert_eq!(allocation_count(), 0);
+
+  let mut entropy_calls = 0usize;
+  reset_allocations();
+  key
+    .sign_pss_with_random_fill_and_scratch(
+      RsaPssProfile::Sha256,
+      b"private scratch allocation caller-random PSS",
+      &mut signature,
+      &mut scratch,
+      |out| {
+        if entropy_calls == 0 {
+          out.fill(0x39);
+        } else {
+          out.copy_from_slice(&blinding_factor);
+        }
+        entropy_calls = entropy_calls.strict_add(1);
+        Ok::<(), ()>(())
+      },
+    )
+    .expect("scratch-backed caller-random PSS signing must succeed");
+  assert_eq!(entropy_calls, 2);
   assert_eq!(allocation_count(), 0);
 
   let label = b"private-scratch-allocation";

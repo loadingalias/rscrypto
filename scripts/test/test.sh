@@ -5,7 +5,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
 
-maybe_disable_sccache
 apply_ci_resource_profile
 
 echo "Running Unit, Integration, and Property Tests via Nextest..."

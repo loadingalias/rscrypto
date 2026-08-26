@@ -65,6 +65,21 @@ Validated RSA keys retain each CRT exponent at its corresponding factor width
 before steady-state private arithmetic. DER import and export remain
 variable-shape operations outside that steady-state boundary.
 
+Caller-random RSA signing changes entropy provenance, not the private
+arithmetic. The callback and bounded blinding-factor rejection sampling are
+outside the constant-time claim. After a candidate is accepted, caller-random
+and OS-random methods reach the same claimed private sign leaf and public
+re-encryption fault check. No constant-time claim is made for callback code,
+entropy acquisition, or the number of rejected candidates.
+
+Accepted RSA blinding candidates are inverted directly modulo the public odd
+modulus with a fixed public-width schedule of batched extended-binary-GCD
+steps. Candidate nonzero/range validation scans the complete fixed-width
+input. The final invertible/non-invertible result is declassified only after
+the fixed schedule; no private CRT factor participates in inversion. Required
+timing evidence includes an allocation-free fixed-factor-versus-random-factor
+inverse leaf in addition to the end-to-end private-operation cases.
+
 ## Excluded unless listed
 
 The following are not constant-time claims unless a specific manifest entry says
@@ -74,7 +89,7 @@ otherwise:
 - Checksums and non-cryptographic hashes.
 - Public-key verification math.
 - Public key, signature, ciphertext-container, DER, PHC, and protocol parsing.
-- Unlisted key-generation paths and OS randomness.
+- Unlisted key-generation paths, entropy callbacks, and OS randomness.
 - Serialization and export of secret material.
 - Benchmark-only paths.
 - Unmeasured targets, compilers, linkers, target features, or crate feature sets.
@@ -129,7 +144,18 @@ On AArch64 targets that advertise FEAT_DIT, RSA private exponentiation enters
 data-independent-timing state for the complete fixed-window arithmetic loop and
 restores the caller's prior PSTATE afterward. Generic `no_std` AArch64 builds
 use this hardening only when compiled with `+dit`; physical evidence remains
-bound to the exact release lanes above.
+bound to the exact release lanes above. The existing generic Montgomery
+assembly kernel is authorized for 16- and 24-limb half-width CRT arithmetic as
+well as the full public-key widths; target-native differential tests compare
+those multiply, square, and in-place paths with portable Rust.
+
+RSA caller-blinding inversion uses a public-width batched extended binary GCD
+schedule rather than secret-dependent Euclidean division or Fermat
+exponentiation. Its RISC-V and s390x co-reduction products use fixed-work
+bit-serial multiplication so secret operands do not reach the targets' scalar
+multiply instructions. The release artifact heuristic rejects scalar multiply
+in those CT evidence closures; native DudeCT remains required because this
+generated-code property is necessary, not sufficient.
 
 ECDSA P-256/P-384 signing uses multiplication-free, fixed-work limb arithmetic
 on s390x and RISC-V to avoid the variable-latency scalar multiply observed in

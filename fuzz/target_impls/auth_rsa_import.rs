@@ -260,7 +260,7 @@ fn der_len(len: usize) -> Vec<u8> {
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn hex_to_vec(hex: &str) -> Vec<u8> {
   let mut out = Vec::with_capacity(hex.len() / 2);
-  for chunk in hex.as_bytes().chunks_exact(2) {
+  for chunk in hex.as_bytes().as_chunks::<2>().0 {
     let high = hex_value(chunk[0]).unwrap_or_else(|| panic!("invalid fixture hex"));
     let low = hex_value(chunk[1]).unwrap_or_else(|| panic!("invalid fixture hex"));
     out.push((high << 4) | low);

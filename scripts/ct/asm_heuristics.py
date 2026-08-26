@@ -675,6 +675,19 @@ def is_ecdsa_scope(primitive_ids: list[str]) -> bool:
   return any(primitive_id.startswith("signature.ecdsa_") for primitive_id in primitive_ids)
 
 
+def is_rsa_inverse_scope(primitive_ids: list[str], symbol: str) -> bool:
+  if "rsa.private_ops" not in primitive_ids:
+    return False
+  return any(
+    fragment in symbol
+    for fragment in (
+      "diag_rsa_blinding_factor_inverse_with_scratch",
+      "private_modular_inverse_odd",
+      "private_i31_",
+    )
+  )
+
+
 def is_s390x_division(target: str, inst: str) -> bool:
   return target.startswith("s390x-") and inst in S390X_DIV_MNEMONICS
 
@@ -814,7 +827,7 @@ def scan_symbol(
         )
       )
     elif (
-      is_ecdsa_scope(primitive_ids)
+      (is_ecdsa_scope(primitive_ids) or is_rsa_inverse_scope(primitive_ids, symbol))
       and (is_s390x_scalar_multiply(target, inst) or is_riscv_scalar_multiply(target, inst))
     ):
       findings.append(
@@ -825,7 +838,7 @@ def scan_symbol(
           line,
           "variable_latency_multiply",
           "fail",
-          "Scalar multiply is forbidden in s390x/RISC-V ECDSA secret arithmetic; use the fixed-work limb multiplier.",
+          "Scalar multiply is forbidden in this s390x/RISC-V secret-arithmetic scope; use the fixed-work limb multiplier.",
           scope=scope,
           primitive_ids=primitive_ids,
           roots=roots,

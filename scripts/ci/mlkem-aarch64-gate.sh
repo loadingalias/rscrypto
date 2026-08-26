@@ -8,8 +8,6 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$SCRIPT_DIR/../lib/common.sh"
 
 cd "$REPO_ROOT"
-maybe_disable_sccache
-
 ARTIFACT_DIR="${MLKEM_AARCH64_GATE_ARTIFACT_DIR:-mlkem-aarch64-gate}"
 LOG_PATH="$ARTIFACT_DIR/output.txt"
 mkdir -p "$ARTIFACT_DIR"

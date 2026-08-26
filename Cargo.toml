@@ -419,7 +419,7 @@ strip = "none"
 debug-assertions = true
 overflow-checks = true
 lto = false
-incremental = false # I get higher sccache hit rates and faster build/check cycles locally.
+incremental = false # Preserve reproducible full codegen and Cargo Rail compiler-result reuse.
 codegen-units = 256
 
 [profile.release]

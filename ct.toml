@@ -84,7 +84,7 @@ roots = [
 symbol = "rscrypto::auth::rsa::mont_mul_cios_portable"
 kind = "variable_latency_division"
 max_count = 1
-source = "src/auth/rsa.rs:10000"
+source = "src/auth/rsa.rs:10425"
 rationale = "LLVM's scalable-vector loop partition divides the public modulus-width iteration count by the target's public vector length. Private limb contents do not feed the operands."
 
 [[asm_public_operand]]
@@ -99,7 +99,7 @@ roots = [
 symbol = "rscrypto::auth::rsa::mont_reduce_cios"
 kind = "variable_latency_division"
 max_count = 1
-source = "src/auth/rsa.rs:10049"
+source = "src/auth/rsa.rs:10475"
 rationale = "LLVM's scalable-vector loop partition divides the public modulus-width iteration count by the target's public vector length. Private limb contents do not feed the operands."
 
 [[asm_public_operand]]
@@ -114,7 +114,7 @@ roots = [
 symbol = "rscrypto::auth::rsa::private_import_is_probable_prime"
 kind = "variable_latency_division"
 max_count = 2
-source = "src/auth/rsa.rs:6877"
+source = "src/auth/rsa.rs:7290"
 rationale = "LLVM's scalable-vector loop partitions divide the caller-visible private-component byte width and its derived fixed limb width by the target's public vector length. Candidate contents do not feed the operands."
 
 [[asm_public_operand]]
@@ -128,7 +128,7 @@ roots = [
 symbol = "rscrypto::auth::rsa::private_import_unsigned_be_mod_to_fixed"
 kind = "variable_latency_division"
 max_count = 1
-source = "src/auth/rsa.rs:9499"
+source = "src/auth/rsa.rs:9945"
 rationale = "LLVM's scalable-vector loop partition divides the public modulus limb width by the target's public vector length. The private representative contents do not feed the operands."
 
 [[asm_public_operand]]
@@ -143,7 +143,7 @@ roots = [
 symbol = "rscrypto::auth::rsa::private_import_unsigned_be_mod_to_len"
 kind = "variable_latency_division"
 max_count = 1
-source = "src/auth/rsa.rs:9481"
+source = "src/auth/rsa.rs:9927"
 rationale = "LLVM's scalable-vector loop partition divides the public component/modulus byte width by the target's public vector length. Private component contents do not feed the operands."
 
 [[asm_public_operand]]
@@ -158,7 +158,7 @@ roots = [
 symbol = "rscrypto::auth::rsa::public_montgomery_r2_into"
 kind = "variable_latency_division"
 max_count = 1
-source = "src/auth/rsa.rs:9597"
+source = "src/auth/rsa.rs:10040"
 rationale = "LLVM's scalable-vector loop partition divides the public modulus limb width by the target's public vector length. No private value feeds the operands."
 
 [operation_inventory]
@@ -1166,6 +1166,16 @@ right_class = "same fixed-width exponent with a zero high byte"
 samples = 512
 smoke_samples = 128
 notes = "The precomputed CRT component modulus, representative, reusable scratch addresses, buffer lengths, and all lower exponent bytes are identical across classes. AArch64 execution enters FEAT_DIT when the target advertises it."
+
+[[dudect_case]]
+name = "rsa_blinding_inverse_fixed_vs_random_factor"
+primitive = "rsa.private_ops"
+filter = "rsa_blinding_inverse_fixed_vs_random_factor"
+left_class = "fixed valid blinding factor"
+right_class = "random valid same-width blinding factor"
+samples = 20000
+smoke_samples = 2000
+notes = "Required allocation-free leaf evidence for the fixed-schedule batched modular inverse. Both classes use nonzero 64-bit factors, which cannot share either 1024-bit prime factor of the fixed RSA-2048 modulus. RISC-V and s390x artifact heuristics must also reject scalar multiply in the retained evidence closure."
 
 [[dudect_case]]
 name = "rsa_oaep_decrypt_fixed_vs_random_plaintext"
@@ -2777,8 +2787,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2238
-compiler_api_sha256 = "efda15591b99fd483fb0cced2a1a7fc472706b59702b3ac46b020e05de163ba9"
+compiler_api_item_count = 2246
+compiler_api_sha256 = "c3584d2a5516984b8acd3189c2d73f2aa4f7b33af63e2aec4cb31a0bb3b58a4d"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -2789,8 +2799,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2232
-compiler_api_sha256 = "d47bab9a296b970b5952c9bf446e378c235436289fe4f291444e3a77227cf8f3"
+compiler_api_item_count = 2240
+compiler_api_sha256 = "c573e79dace25ef23c10cedca144416acefa9e360c48ffa8bea14636cc3dd9c3"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -2849,8 +2859,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 2232
-compiler_api_sha256 = "d47bab9a296b970b5952c9bf446e378c235436289fe4f291444e3a77227cf8f3"
+compiler_api_item_count = 2240
+compiler_api_sha256 = "c573e79dace25ef23c10cedca144416acefa9e360c48ffa8bea14636cc3dd9c3"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2874,8 +2884,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2231
-compiler_api_sha256 = "778ee9f5d5f30c3a06534eec7a8c6f787c8bc778f0beb06487d7a1c21c58efeb"
+compiler_api_item_count = 2239
+compiler_api_sha256 = "44733fbae78fed04e9534deec1c367c411bc9f6004eceb52f5aaa6ef1ac41502"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2887,8 +2897,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2231
-compiler_api_sha256 = "1c2422d98996e29d752f45adcc0a073efea82d1c2fab5c1071cbf177295070ca"
+compiler_api_item_count = 2239
+compiler_api_sha256 = "b1ff2caddb915001a54731b9a0f53328c5541e9213c83da8e01b9a680eb53913"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2900,8 +2910,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2231
-compiler_api_sha256 = "952b093eb6a502497085fdc73849ead03452b963ed0230bf3b4040957cbcc126"
+compiler_api_item_count = 2239
+compiler_api_sha256 = "461621913477bbb623f12d4b07af646cd49e597027c24133294aeec9251aa34b"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3705,15 +3715,16 @@ limitation = "Prime generation is inherently variable-work and not a CT claim. S
 [[operation]]
 id = "rsa.private_sign_and_decrypt"
 api = [
-  "rscrypto::RsaPrivateKey::{sign_signature*,sign_pkcs1v15*,sign_pss*,decrypt_oaep*,decrypt_pkcs1v15*}",
+  "rscrypto::RsaPrivateKey::{sign_signature*,sign_pkcs1v15*,sign_pss*,sign_tls13_signature_scheme*,sign_tls_certificate_signature_scheme*,decrypt_oaep*,decrypt_pkcs1v15*}",
 ]
-features = ["rsa", "alloc", "getrandom for blinding/randomized padding"]
+features = ["rsa", "alloc", "getrandom only for OS-backed convenience APIs"]
 targets = ["all-supported"]
 secret_inputs = [
   "private exponent/components",
   "plaintext",
   "blinding factor",
   "PSS salt",
+  "caller-supplied entropy bytes",
   "private arithmetic scratch",
 ]
 public_inputs = [
@@ -3726,10 +3737,15 @@ public_inputs = [
 variable_time_components = [
   "public modulus-width loops",
   "public padding/hash profiles",
-  "entropy-source latency",
+  "entropy-source or caller callback latency",
+  "bounded blinding-candidate rejection",
   "opaque input-shape rejection",
 ]
-permitted_leakage = ["modulus/profile/lengths", "opaque success/failure"]
+permitted_leakage = [
+  "modulus/profile/lengths",
+  "entropy request count and lengths",
+  "opaque success/failure",
+]
 claim = "ct-intended"
 evidence = [
   "primitive:rsa.private_ops",
@@ -3738,7 +3754,7 @@ evidence = [
   "unit:rsa.private_ops.oaep_decrypt",
   "unit:rsa.private_ops.pkcs1v15_decrypt",
 ]
-limitation = "Retained CRT exponents are normalized to the corresponding factor width before arithmetic, so canonical exponent encoding length is not a steady-state control or address input. AArch64 private exponentiation scopes FEAT_DIT when runtime or compile-time detection advertises it. Full private operations remain target-artifact/DudeCT evidence, not source-only claims."
+limitation = "Caller-supplied entropy APIs feed the same private-operation leaf as OS-backed APIs; callback execution and bounded public-modulus blinding-candidate rejection are outside the leaf CT claim. Retained CRT exponents are normalized to the corresponding factor width before arithmetic, so canonical exponent encoding length is not a steady-state control or address input. AArch64 private exponentiation scopes FEAT_DIT when runtime or compile-time detection advertises it. Full private operations remain target-artifact/DudeCT evidence, not source-only claims."
 
 [[operation]]
 id = "rsa.public_operations"
@@ -4206,10 +4222,18 @@ variants = ["Pkcs1v15Sign", "PssSign", "OaepDecrypt", "Pkcs1v15Decrypt"]
 entrypoints = [
   "RsaPrivateKey::sign_signature",
   "RsaPrivateKey::sign_signature_with_scratch",
+  "RsaPrivateKey::sign_signature_with_random_fill",
+  "RsaPrivateKey::sign_signature_with_random_fill_and_scratch",
   "RsaPrivateKey::sign_pkcs1v15",
   "RsaPrivateKey::sign_pkcs1v15_with_scratch",
   "RsaPrivateKey::sign_pss",
   "RsaPrivateKey::sign_pss_with_scratch",
+  "RsaPrivateKey::sign_pss_with_random_fill",
+  "RsaPrivateKey::sign_pss_with_random_fill_and_scratch",
+  "RsaPrivateKey::sign_tls13_signature_scheme_with_random_fill",
+  "RsaPrivateKey::sign_tls13_signature_scheme_with_random_fill_and_scratch",
+  "RsaPrivateKey::sign_tls_certificate_signature_scheme_with_random_fill",
+  "RsaPrivateKey::sign_tls_certificate_signature_scheme_with_random_fill_and_scratch",
   "RsaPrivateKey::decrypt_oaep",
   "RsaPrivateKey::decrypt_oaep_with_scratch",
   "RsaPrivateKey::decrypt_pkcs1v15",
@@ -4224,11 +4248,24 @@ secrets = [
   "padding_state",
   "blinding_inverse",
 ]
-public = ["message", "ciphertext", "profile", "modulus_length", "salt_length", "rng_failure"]
-may_leak = ["input_length", "public_profile", "opaque_success_or_failure", "public_rng_failure"]
+public = [
+  "message",
+  "ciphertext",
+  "profile",
+  "modulus_length",
+  "salt_length",
+  "entropy_callback_failure",
+]
+may_leak = [
+  "input_length",
+  "public_profile",
+  "entropy_request_count_and_lengths",
+  "opaque_success_or_failure",
+  "public_entropy_failure",
+]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "Top-level OS randomness and public profile parsing may fail publicly. Validated CRT exponents are retained at the corresponding factor width before steady-state private arithmetic. Steady-state private math and same-width padding/failure behavior are CT-critical."
+notes = "Top-level OS randomness or caller entropy callbacks and public profile parsing may fail publicly. Candidate rejection uses only fresh entropy and the public modulus and is bounded before the shared private-operation leaf. Blinding inversion uses a public-width batched extended-binary-GCD schedule; its RISC-V and s390x secret-fed co-reduction products are multiplication-free and remain subject to the native timing gate. Validated CRT exponents are retained at the corresponding factor width before steady-state private arithmetic. Steady-state private math and same-width padding/failure behavior are CT-critical."
 [primitive.harness]
 status = "covered"
 symbols = [

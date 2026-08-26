@@ -334,12 +334,12 @@ mod x86_sse2 {
   #[inline]
   fn shuffle_words(blocks: &mut [u8], pivot: &[usize; 16]) {
     debug_assert_eq!(blocks.len() % super::BLOCK_SIZE, 0);
-    for chunk in blocks.chunks_exact_mut(super::BLOCK_SIZE) {
+    for chunk in blocks.as_chunks_mut::<{ super::BLOCK_SIZE }>().0 {
       let mut words = [0u32; super::BLOCK_WORDS];
       for (src, word) in chunk.as_chunks::<4>().0.iter().zip(&mut words) {
         *word = u32::from_le_bytes(*src);
       }
-      for (i, dst) in chunk.chunks_exact_mut(4).enumerate() {
+      for (i, dst) in chunk.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         dst.copy_from_slice(&words[pivot[i]].to_le_bytes());
       }
     }
@@ -382,7 +382,7 @@ mod x86_sse2 {
       let mut c = _mm_loadu_si128(last.as_ptr().add(32).cast());
       let mut d = _mm_loadu_si128(last.as_ptr().add(48).cast());
 
-      for (i, chunk) in input.chunks_exact(super::BLOCK_SIZE).enumerate() {
+      for (i, chunk) in input.as_chunks::<{ super::BLOCK_SIZE }>().0.iter().enumerate() {
         let pos = if i & 1 == 0 {
           (i >> 1).strict_mul(super::BLOCK_SIZE)
         } else {

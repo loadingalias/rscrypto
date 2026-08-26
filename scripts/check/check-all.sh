@@ -109,7 +109,7 @@ run_constrained_check() {
     args+=(--features "$feature_set")
   fi
 
-  if ! RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" cargo_for_target "$target" "${args[@]}" >>"$log_file" 2>&1; then
+  if ! CARGO_TARGET_DIR="$target_dir" cargo_for_target "$target" "${args[@]}" >>"$log_file" 2>&1; then
     return 1
   fi
 }
@@ -162,7 +162,7 @@ run_constrained_target() {
   if [[ ${#alloc_crates[@]} -gt 0 ]]; then
     step "$target check (alloc)"
     for crate in "${alloc_crates[@]}"; do
-      if ! RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
+      if ! CARGO_TARGET_DIR="$target_dir" \
         cargo_for_target "$target" check --locked -p "$crate" --no-default-features --features alloc --target "$target" --lib \
         >>"$log_file" 2>&1; then
         fail
@@ -175,7 +175,7 @@ run_constrained_target() {
 
   step "$target build (no features)"
   for crate in "${CONSTRAINED_CRATES[@]}"; do
-    if ! RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
+    if ! CARGO_TARGET_DIR="$target_dir" \
       cargo_for_target "$target" build --locked -p "$crate" --no-default-features --target "$target" --lib --release \
       >>"$log_file" 2>&1; then
       fail
@@ -188,7 +188,7 @@ run_constrained_target() {
   if [[ ${#alloc_crates[@]} -gt 0 ]]; then
     step "$target build (alloc)"
     for crate in "${alloc_crates[@]}"; do
-      if ! RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
+      if ! CARGO_TARGET_DIR="$target_dir" \
       cargo_for_target "$target" build --locked -p "$crate" --no-default-features --features alloc --target "$target" --lib --release \
         >>"$log_file" 2>&1; then
         fail
@@ -253,7 +253,6 @@ echo "Cross-platform checks"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-maybe_disable_sccache
 SCOPE_ARGS=()
 HOST_ARGS=("$@")
 FEATURE_MODE_SET=false

@@ -5,7 +5,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TARGET_DIR="$ROOT/target/zeroize-evidence"
 MANIFEST="$ROOT/Cargo.toml"
 
-RUSTC_WRAPPER="" CARGO_TARGET_DIR="$TARGET_DIR" cargo rustc \
+# Assembly evidence is a deliberate cold baseline; the custom target directory
+# would bypass reuse, and the explicit switch keeps that boundary auditable.
+CARGO_RAIL_CACHE=off CARGO_TARGET_DIR="$TARGET_DIR" cargo rustc \
   --locked \
   --manifest-path "$MANIFEST" \
   --release \
@@ -54,6 +56,8 @@ for symbol in \
   diag_zeroize_blake3_parallel_scratch \
   diag_zeroize_hmac_sha256_finalize \
   diag_zeroize_hmac_sha3_finalize \
+  diag_rsa_caller_random_signing_success \
+  diag_rsa_caller_random_signing_error \
   diag_hkdf_sha256_derive_portable \
   diag_hkdf_sha384_derive_portable \
   diag_hkdf_sha512_derive_portable \
@@ -95,6 +99,8 @@ for symbol in \
   diag_zeroize_blake3_parallel_scratch \
   diag_zeroize_hmac_sha256_finalize \
   diag_zeroize_hmac_sha3_finalize \
+  diag_rsa_caller_random_signing_success \
+  diag_rsa_caller_random_signing_error \
   diag_hkdf_sha256_derive_portable \
   diag_hkdf_sha384_derive_portable \
   diag_hkdf_sha512_derive_portable \
@@ -342,6 +348,39 @@ llvm_calls() {
     true
 }
 
+RSA_CALLER_SUCCESS_IR="$(
+  sed -n '/define .*@diag_rsa_caller_random_signing_success(/,/^}/p' "$LLVM_IR"
+)"
+RSA_CALLER_ERROR_IR="$(
+  sed -n '/define .*@diag_rsa_caller_random_signing_error(/,/^}/p' "$LLVM_IR"
+)"
+RSA_CALLER_SUCCESS_CLEAR_SYMBOL="$(
+  llvm_calls 'RsaPrivateScratch.*clear' <<<"$RSA_CALLER_SUCCESS_IR" |
+    sed -n 's/.*@\([^ (]*RsaPrivateScratch[^ (]*clear[^ (]*\).*/\1/p' |
+    head -n 1
+)"
+RSA_CALLER_ERROR_CLEAR_SYMBOL="$(
+  llvm_calls 'RsaPrivateScratch.*clear' <<<"$RSA_CALLER_ERROR_IR" |
+    sed -n 's/.*@\([^ (]*RsaPrivateScratch[^ (]*clear[^ (]*\).*/\1/p' |
+    head -n 1
+)"
+if [[ -z "$RSA_CALLER_SUCCESS_CLEAR_SYMBOL" || \
+  "$RSA_CALLER_SUCCESS_CLEAR_SYMBOL" != "$RSA_CALLER_ERROR_CLEAR_SYMBOL" ]]; then
+  echo "zeroize RSA caller-random signing paths do not share scratch cleanup" >&2
+  exit 1
+fi
+
+RSA_PRIVATE_SCRATCH_CLEAR_SYMBOL="$RSA_CALLER_SUCCESS_CLEAR_SYMBOL"
+RSA_PRIVATE_SCRATCH_CLEAR_IR="$(
+  sed -n "/define .*@$RSA_PRIVATE_SCRATCH_CLEAR_SYMBOL(/,/^}/p" "$LLVM_IR"
+)"
+if [[ "$(grep -c 'store volatile .* 0' <<<"$RSA_PRIVATE_SCRATCH_CLEAR_IR" || true)" -lt 40 ]] || \
+  [[ "$(grep -c 'fence syncscope("singlethread") seq_cst' \
+    <<<"$RSA_PRIVATE_SCRATCH_CLEAR_IR" || true)" -lt 20 ]]; then
+  echo "zeroize release evidence does not clear the complete RSA private scratch" >&2
+  exit 1
+fi
+
 RSA_VALIDATION_SYMBOL="$(
   llvm_calls 'validate_private_key_components_through_stage' \
     <<<"$RSA_VALIDATION_WRAPPER_IR" |
@@ -475,8 +514,23 @@ ordered_assembly_cleanup() {
 }
 
 FIXED_ASSEMBLY="$(function_assembly diag_zeroize_fixed_stack <"$ASSEMBLY")"
+RSA_CALLER_SUCCESS_ASSEMBLY="$(
+  function_assembly diag_rsa_caller_random_signing_success <"$ASSEMBLY"
+)"
+RSA_CALLER_ERROR_ASSEMBLY="$(
+  function_assembly diag_rsa_caller_random_signing_error <"$ASSEMBLY"
+)"
+RSA_PRIVATE_SCRATCH_CLEAR_ASSEMBLY="$(
+  function_assembly "$RSA_PRIVATE_SCRATCH_CLEAR_SYMBOL" <"$ASSEMBLY"
+)"
 RSA_VALIDATION_ASSEMBLY="$(function_assembly "$RSA_VALIDATION_SYMBOL" <"$ASSEMBLY")"
 RSA_SECRET_DROP_ASSEMBLY="$(function_assembly "$RSA_SECRET_DROP_SYMBOL" <"$ASSEMBLY")"
+if [[ "$RSA_CALLER_SUCCESS_ASSEMBLY" != *"$RSA_PRIVATE_SCRATCH_CLEAR_SYMBOL"* || \
+  "$RSA_CALLER_ERROR_ASSEMBLY" != *"$RSA_PRIVATE_SCRATCH_CLEAR_SYMBOL"* || \
+  -z "$RSA_PRIVATE_SCRATCH_CLEAR_ASSEMBLY" ]]; then
+  echo "zeroize RSA caller-random signing assembly does not retain scratch cleanup" >&2
+  exit 1
+fi
 if [[ "$RSA_VALIDATION_ASSEMBLY" != *"$RSA_SECRET_DROP_SYMBOL"* || -z "$RSA_SECRET_DROP_ASSEMBLY" ]]; then
   echo "zeroize RSA private-key validation assembly does not retain owner cleanup" >&2
   exit 1
@@ -543,6 +597,9 @@ case "$HOST_ARCH" in
       diag_zeroize_blake3_parallel_scratch \
       diag_zeroize_hmac_sha256_finalize \
       diag_zeroize_hmac_sha3_finalize \
+      diag_rsa_caller_random_signing_success \
+      diag_rsa_caller_random_signing_error \
+      "$RSA_PRIVATE_SCRATCH_CLEAR_SYMBOL" \
       diag_hkdf_sha256_derive_portable \
       diag_hkdf_sha384_derive_portable \
       diag_hkdf_sha512_derive_portable \
@@ -586,6 +643,9 @@ case "$HOST_ARCH" in
       diag_zeroize_blake3_parallel_scratch \
       diag_zeroize_hmac_sha256_finalize \
       diag_zeroize_hmac_sha3_finalize \
+      diag_rsa_caller_random_signing_success \
+      diag_rsa_caller_random_signing_error \
+      "$RSA_PRIVATE_SCRATCH_CLEAR_SYMBOL" \
       diag_hkdf_sha256_derive_portable \
       diag_hkdf_sha384_derive_portable \
       diag_hkdf_sha512_derive_portable \

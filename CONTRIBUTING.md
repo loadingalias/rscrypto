@@ -45,6 +45,32 @@ Use `minor` or `major` instead of `patch` when the compatibility impact
 requires it. The pre-push check is the final authority on whether release
 intent is missing.
 
+## Configure compiler reuse
+
+Enable Cargo Rail once for the effective Cargo home on each development
+machine:
+
+```bash
+cargo rail cache setup --check
+cargo rail cache setup
+cargo rail cache status --scope local --format json
+```
+
+The installed wrapper applies transparently to ordinary Cargo, nextest, Just,
+and IDE invocations. Cargo Rail bypasses unsupported compiler operations; do
+not add wrapper commands to recipes or scripts. To add a machine-owned remote
+authority, preview and apply it explicitly:
+
+```bash
+cargo rail cache setup --check --remote '<provider-url>' --remote-mode read-write
+cargo rail cache setup --remote '<provider-url>' --remote-mode read-write
+```
+
+Keep credentials outside the URL and repository. Use `read` for a consumer
+identity and enforce the same restriction in the provider policy. Use
+`CARGO_RAIL_CACHE=off` only when a check requires a deliberately cold compiler
+process, such as machine-code zeroization evidence or Miri.
+
 ## Validate the change
 
 Run checks proportional to the change. Common starting points are:
@@ -70,7 +96,7 @@ Use deeper checks where the risk requires them:
 | Portable unsafe path                              | `just test-miri`                                                                                          |
 | Constant-time claim boundary                      | `just ct-full --target <triple>`; update `ct.toml` only with matching evidence                            |
 | Apple Silicon RSA assembly                        | `just test-rsa-macos-asm` on a physical local Arm64 Mac; GitHub Actions intentionally has no macOS runner |
-| Public API change                                 | `cargo semver-checks --package rscrypto --all-features`                                                   |
+| Public API change                                 | Review callers, docs, migration guidance, and release intent; pre-1.0 SemVer enforcement is deferred      |
 | Dependency or release change                      | `cargo deny check all` and `cargo audit --ignore RUSTSEC-2023-0071`                                       |
 
 ## Review and commit

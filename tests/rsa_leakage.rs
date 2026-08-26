@@ -153,7 +153,7 @@ where
 fn hex_to_vec(hex: &str) -> Vec<u8> {
   assert_eq!(hex.len() % 2, 0);
   let mut out = Vec::with_capacity(hex.len() / 2);
-  for chunk in hex.as_bytes().chunks_exact(2) {
+  for chunk in hex.as_bytes().as_chunks::<2>().0 {
     let high = hex_value(chunk[0]).expect("leakage fixture must contain hexadecimal digits");
     let low = hex_value(chunk[1]).expect("leakage fixture must contain hexadecimal digits");
     out.push((high << 4) | low);

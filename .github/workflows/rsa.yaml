@@ -36,12 +36,9 @@ jobs:
     with:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
       timeout_minutes: 60
-      cache_key: rsa-miri-linux-x64
       tools_mode: minimal
       toolchain_contract: nightly
       toolchain_components: "miri, rust-src"
-      enable_magic_cache: true
-      enable_rust_cache: true
       operation: rsa-miri
       artifact_name: rsa-miri-linux-x64
       artifact_path: ci-evidence/rsa-miri-linux-x64.log
@@ -62,10 +59,7 @@ jobs:
     with:
       runner: ${{ matrix.target.runner }}
       timeout_minutes: 180
-      cache_key: rsa-leakage-${{ matrix.target.name }}
       tools_mode: minimal
-      enable_magic_cache: true
-      enable_rust_cache: true
       operation: rsa-leakage
       target: ${{ matrix.target.name }}
       artifact_name: rsa-leakage-${{ matrix.target.name }}
@@ -79,11 +73,8 @@ jobs:
     with:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
       timeout_minutes: 45
-      cache_key: rsa-linux-x86_64-asm
       tools_mode: none
       toolchain_components: ""
-      enable_magic_cache: true
-      enable_rust_cache: true
       operation: rsa-linux-x64-asm
       artifact_name: rsa-linux-x86_64-asm
       artifact_path: ci-evidence/rsa-linux-x86_64-asm.log

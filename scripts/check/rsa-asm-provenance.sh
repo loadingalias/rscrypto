@@ -156,9 +156,9 @@ verify_rsa_wrapper_fingerprints() {
     [[ "$actual" == "$expected" ]] \
       || die "$wrapper changed without a provenance review"
   done <<'EOF'
-src/auth/rsa_aarch64_asm.rs	dbcd55bc88daa1a9ab1812e964c84bfd4586ae9f6fa9b07dcd28985df6576507
-src/auth/rsa_aarch64_linux_asm.rs	69531bafa963d6d817c6a74f4a0fcaf1d98e713611874f4597768b1a6e0a0e7a
-src/auth/rsa_x86_64_asm.rs	5552b8ffa76f1ba43f6aaea1b91a28fb04a02fa167408d925bf5ccec6daefe18
+src/auth/rsa_aarch64_asm.rs	2f3207e455cd800cd0ae8c833f1f743b2f830e004e65eea2f8099db28edbb846
+src/auth/rsa_aarch64_linux_asm.rs	4cc4619203bab93baeb87511924a65853a83773ce5227d6caf94019f00a87d4a
+src/auth/rsa_x86_64_asm.rs	7c610b07b75a25900393efaf6e23f817edc756dbbb3459daa4280a79546d7c61
 EOF
 }
 

@@ -171,13 +171,10 @@ mod tests {
 
     // Manual: split into 16-byte blocks, pad last one.
     let mut manual = Ghash::new(&TEST_H);
-    let mut chunks = data.chunks_exact(BLOCK_SIZE);
-    for chunk in chunks.by_ref() {
-      let mut block = [0u8; BLOCK_SIZE];
-      block.copy_from_slice(chunk);
-      manual.update_block(&block);
+    let (chunks, remainder) = data.as_chunks::<BLOCK_SIZE>();
+    for block in chunks {
+      manual.update_block(block);
     }
-    let remainder = chunks.remainder();
     if !remainder.is_empty() {
       let mut block = [0u8; BLOCK_SIZE];
       block[..remainder.len()].copy_from_slice(remainder);

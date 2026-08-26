@@ -143,9 +143,13 @@ cargo rail change add rscrypto --bump patch --message "Describe the user-visible
 cargo rail change status
 ```
 
-Use `minor` or `major` when compatibility requires it. Before preparing a
-release, `cargo rail release check rscrypto --extended` validates the pending
-release and its SemVer contract.
+Use `minor` or `major` when compatibility requires it. Before 1.0, reviewed
+minor releases may deliberately replace unstable public shapes while the
+library converges on its audited contract. Compiler-backed SemVer enforcement
+is therefore disabled; callers, docs, migration guidance, and release intent
+still require explicit review. Re-enable enforcement when rscrypto adopts a
+stable compatibility contract. `cargo rail release check rscrypto --extended`
+still validates the pending release and its non-SemVer release contracts.
 
 Pull-request CI uses cargo-rail's planner to select checks from the actual
 changed surfaces. Weekly release mode runs the full Cargo graph proof for an
@@ -178,7 +182,7 @@ receive anything, the workflow:
 
 1. Verifies the annotated SSH signature, tag target, crate version, and
    changelog version.
-2. Revalidates configuration, dependency policy, audit results, SemVer, and the
+2. Revalidates configuration, dependency policy, audit results, and the
    exact-commit Weekly release-mode Cargo graph result.
 3. Requires the Weekly release gate, live raw CT artifacts, complete Weekly
    CT/RSA, and manually dispatched RISC-V native/CT evidence from that exact

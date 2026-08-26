@@ -116,7 +116,7 @@ case "${1:-}" in
         mutate_lockfile
       fi
       rm -f "$MOCK_PREFLIGHT_MARKER"
-      printf '%s\n' '{"schema_version":1,"command":"plan","mode":"inspect","result":"success","exit_code":0,"plan_contract_version":5,"files":[{"path":"src/lib.rs"}],"scope":{"scope_contract_version":3,"resolved_base":"base","resolved_head":"head","mode":"workspace","crates":[],"cargo_args":["--workspace"]},"surfaces":{"bench":{"enabled":false},"build":{"enabled":true},"custom:cargo_graph":{"enabled":true},"docs":{"enabled":false},"infra":{"enabled":false},"test":{"enabled":true}}}'
+      printf '%s\n' '{"plan_contract_version":7,"inputs":{"snapshot_id":"v1-sha256-test"},"resolution_universe":{"mode":"declared_dependencies","identity":"resolution-universe-v1:sha256:0000000000000000000000000000000000000000000000000000000000000000"},"files":[{"path":"src/lib.rs"}],"scope":{"scope_contract_version":4,"resolved_base":"base","resolved_head":"head","mode":"workspace","crates":[],"cargo_args":["--workspace"]},"surfaces":{"bench":{"enabled":false,"reasons":[],"scope":{"mode":"empty","crates":[],"cargo_args":[]}},"build":{"enabled":true,"reasons":[],"scope":{"mode":"workspace","crates":[],"cargo_args":["--workspace"]}},"custom:cargo_graph":{"enabled":true,"reasons":[],"scope":{"mode":"empty","crates":[],"cargo_args":[]}},"docs":{"enabled":false,"reasons":[],"scope":{"mode":"empty","crates":[],"cargo_args":[]}},"infra":{"enabled":false,"reasons":[],"scope":{"mode":"empty","crates":[],"cargo_args":[]}},"test":{"enabled":true,"reasons":[],"scope":{"mode":"workspace","crates":[],"cargo_args":["--workspace"]}}}}'
     fi
     ;;
   check | clippy | doc | test | build | rustc)

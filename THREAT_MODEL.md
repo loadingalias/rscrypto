@@ -46,13 +46,22 @@ lifecycle, transport, and access control.
 
 Inputs crossing the boundary:
 
-| Input                                                      | Source                                       | Assumption                                                                                                                                          |
-| ---------------------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Keys, passwords, seeds                                     | Caller                                       | The caller protects confidentiality and supplies the required entropy. Imports enforce documented shape and algorithm constraints, not key quality. |
-| Messages, AAD, ciphertexts, tags, signatures, encoded keys | Caller, usually relayed from a network peer  | Untrusted.                                                                                                                                          |
-| Randomness                                                 | `getrandom` or caller-supplied fill closures | The operating system or caller provides the required entropy quality. Output lengths are fixed by the API.                                          |
-| CPU capability reports                                     | CPUID, auxv, sysctl, OS APIs                 | The host reports capabilities correctly. Forced-backend overrides are validated before use.                                                         |
-| Build configuration                                        | Cargo features, target features              | The builder selects and records the intended configuration.                                                                                         |
+| Input                                                      | Source                                       | Assumption                                                                                                                                                                  |
+| ---------------------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Keys, passwords, seeds                                     | Caller                                       | The caller protects confidentiality and supplies the required entropy. Imports enforce documented shape and algorithm constraints, not key quality.                         |
+| Messages, AAD, ciphertexts, tags, signatures, encoded keys | Caller, usually relayed from a network peer  | Untrusted.                                                                                                                                                                  |
+| Randomness                                                 | `getrandom` or caller-supplied fill closures | The operating system or caller provides the required entropy quality and fills every requested byte. Request lengths are fixed by the selected operation and public inputs. |
+| CPU capability reports                                     | CPUID, auxv, sysctl, OS APIs                 | The host reports capabilities correctly. Forced-backend overrides are validated before use.                                                                                 |
+| Build configuration                                        | Cargo features, target features              | The builder selects and records the intended configuration.                                                                                                                 |
+
+RSA caller-random signing accepts bytes, not mathematical blinding values.
+rscrypto owns bounded sampling, inversion, range validation, private
+arithmetic, and the public fault check. A fill error is reduced to
+`RsaPrivateOpError::EntropyUnavailable`; the callback's error payload does not
+cross the primitive boundary. Accepted factors are inverted directly modulo
+the public RSA modulus with a fixed public-width batched schedule; inversion
+does not consume or branch on the private CRT factors. Candidate retry count
+and the final opaque success/failure remain observable as documented.
 
 Outputs are digests, tags, ciphertexts, signatures, derived keys, and opaque
 errors. Direct comparison of fixed-size secret-bearing owners returns an opaque

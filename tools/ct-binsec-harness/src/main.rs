@@ -1,3 +1,8 @@
+#![allow(
+  suspicious_runtime_symbol_definitions,
+  reason = "the freestanding Binsec artifact intentionally provides its own C memory-runtime ABI"
+)]
+
 use core::ptr;
 
 use rscrypto::aead::expert::AeadWithNonce;

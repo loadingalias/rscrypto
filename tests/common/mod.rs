@@ -7,7 +7,9 @@ pub(crate) fn decode_hex_vec(hex: &str) -> Vec<u8> {
   assert_eq!(hex.len() % 2, 0, "hex length must be even");
   hex
     .as_bytes()
-    .chunks_exact(2)
+    .as_chunks::<2>()
+    .0
+    .iter()
     .map(|pair| {
       let high = nibble(pair[0]).expect("hex input must contain only hexadecimal digits");
       let low = nibble(pair[1]).expect("hex input must contain only hexadecimal digits");

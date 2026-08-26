@@ -67,7 +67,6 @@ jobs:
     needs: mode
     uses: ./.github/workflows/_ci-suite.yaml
     with:
-      cache_key_prefix: weekly
       supply_chain_mode: ${{ needs.mode.outputs.mode == 'release' && 'full' || 'light' }}
       test_mode: weekly
       include_cargo_graph: ${{ needs.mode.outputs.mode == 'release' }}
@@ -88,12 +87,9 @@ jobs:
     with:
       runner: ${{ matrix.target.runner }}
       timeout_minutes: 60
-      cache_key: weekly-miri-${{ matrix.target.name }}
       tools_mode: minimal
       toolchain_contract: nightly
       toolchain_components: "miri, rust-src"
-      enable_magic_cache: true
-      enable_rust_cache: true
       operation: miri
 
   # ─── Miri memory-safety (tree borrows). ──
@@ -103,12 +99,9 @@ jobs:
     with:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
       timeout_minutes: 60
-      cache_key: weekly-miri-tree-borrows
       tools_mode: minimal
       toolchain_contract: nightly
       toolchain_components: "miri, rust-src"
-      enable_magic_cache: true
-      enable_rust_cache: true
       operation: miri
       miri_tree_borrows: true
 
@@ -128,11 +121,8 @@ jobs:
     with:
       runner: ${{ matrix.target.runner }}
       timeout_minutes: 120
-      cache_key: weekly-fuzz-${{ matrix.target.name }}
       tools_mode: fuzz
       toolchain_contract: nightly
-      enable_magic_cache: true
-      enable_rust_cache: true
       operation: fuzz
       artifact_name: fuzz-output-weekly-${{ matrix.target.name }}
       artifact_path: |
@@ -156,12 +146,9 @@ jobs:
     with:
       runner: ${{ matrix.target.runner }}
       timeout_minutes: 120
-      cache_key: weekly-asan-fuzz-${{ matrix.target.name }}
       tools_mode: fuzz
       toolchain_contract: nightly
       toolchain_components: "rust-src"
-      enable_magic_cache: true
-      enable_rust_cache: true
       operation: fuzz-asan
 
   # --- Native ML-KEM promotion gate on the physical AWS targets. ---
@@ -180,11 +167,8 @@ jobs:
     with:
       runner: runs-on=${{ github.run_id }}/runner=${{ matrix.platform }}
       timeout_minutes: 180
-      cache_key: weekly-mlkem-${{ matrix.platform }}
       tools_mode: minimal
       toolchain_components: "clippy, rustfmt, rust-src"
-      enable_magic_cache: false
-      enable_rust_cache: true
       operation: mlkem-aarch64
       platform: ${{ matrix.platform }}
       artifact_name: mlkem-aarch64-gate-${{ matrix.platform }}
@@ -227,11 +211,10 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
         with:
-          cache-key: weekly-coverage
           tools-mode: coverage
           toolchain-components: "rust-src"
-          enable-magic-cache: "true"
-          enable-rust-cache: "true"
+          cache-url: ${{ vars.CARGO_RAIL_CACHE_URL }}
+          cache-mode: read-write
 
       - name: Download fuzz corpus artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

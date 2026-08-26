@@ -28,7 +28,6 @@ source "$SCRIPT_DIR/../lib/common.sh"
 # shellcheck source=../lib/fuzz-packages.sh
 source "$SCRIPT_DIR/../lib/fuzz-packages.sh"
 
-maybe_disable_sccache
 activate_nightly_toolchain
 
 # Configuration (can be overridden via environment)

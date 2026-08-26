@@ -1,7 +1,7 @@
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 use rscrypto::{
-  RsaBlindingPair, RsaEncryptionError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile,
-  RsaPublicKeyPolicy, RsaSignatureProfile,
+  RsaBlindingPair, RsaEncryptionError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateOpError,
+  RsaPssProfile, RsaPublicKeyPolicy, RsaSignatureProfile,
 };
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 use rscrypto_fuzz::{FuzzInput, some_or_return, split_at_ratio};
@@ -36,7 +36,7 @@ pub(super) fn run(data: &[u8]) {
   .expect("fuzz RSA private-key fixture must parse");
   let (one, one_inverse) = factor_one(key.signature_len());
 
-  match mode.rem_euclid(10) {
+  match mode.rem_euclid(13) {
     0 => {
       let profile = PKCS1_PROFILES[usize::from(selector) % PKCS1_PROFILES.len()];
       let mut signature = vec![0u8; key.signature_len()];
@@ -173,6 +173,82 @@ pub(super) fn run(data: &[u8]) {
         &mut plaintext,
       );
     }
+    10 => {
+      let profile = PSS_PROFILES[usize::from(selector) % PSS_PROFILES.len()];
+      let salt = caller_pss_salt(profile, selector, left, right);
+      let mut calls = 0usize;
+      let mut signature = vec![0u8; key.signature_len()];
+      key
+        .sign_pss_with_random_fill(profile, left, &mut signature, |out| {
+          if calls == 0 {
+            out.copy_from_slice(&salt);
+          } else {
+            out.copy_from_slice(&one);
+          }
+          calls = calls.strict_add(1);
+          Ok::<(), ()>(())
+        })
+        .expect("fixture caller-random RSA-PSS signing must succeed");
+      assert_eq!(calls, 2);
+      key
+        .public_key()
+        .verify_pss(profile, left, &signature)
+        .expect("self-produced caller-random RSA-PSS signature must verify");
+    }
+    11 => {
+      let profile = PSS_PROFILES[usize::from(selector) % PSS_PROFILES.len()];
+      let fail_at = usize::from(split) % 130;
+      let mut calls = 0usize;
+      let mut signature = vec![0xa5; key.signature_len()];
+      let mut scratch = key.private_scratch();
+      let result = key.sign_pss_with_random_fill_and_scratch(profile, left, &mut signature, &mut scratch, |out| {
+        let call = calls;
+        calls = calls.strict_add(1);
+        out.fill(0);
+        if call == fail_at { Err(()) } else { Ok(()) }
+      });
+      assert!(matches!(
+        result,
+        Err(RsaPrivateOpError::EntropyUnavailable | RsaPrivateOpError::InvalidBlindingFactor)
+      ));
+      assert!(signature.iter().all(|&byte| byte == 0));
+
+      key
+        .sign_pss_with_random_fill_and_scratch(profile, right, &mut signature, &mut scratch, |out| {
+          if out.len() == key.signature_len() {
+            out.copy_from_slice(&one);
+          } else {
+            out.fill(selector);
+          }
+          Ok::<(), ()>(())
+        })
+        .expect("caller-random RSA scratch must be reusable after a scheduled entropy failure");
+      key
+        .public_key()
+        .verify_pss(profile, right, &signature)
+        .expect("caller-random RSA-PSS signature after scratch reuse must verify");
+    }
+    12 => {
+      const TLS_SCHEMES: [u16; 9] = [0x0401, 0x0501, 0x0601, 0x0804, 0x0805, 0x0806, 0x0809, 0x080a, 0x080b];
+      let scheme = TLS_SCHEMES[usize::from(selector) % TLS_SCHEMES.len()];
+      let profile = RsaSignatureProfile::from_tls_certificate_signature_scheme(scheme)
+        .expect("fixture TLS scheme must map to an RSA profile");
+      let mut signature = vec![0u8; key.signature_len()];
+      key
+        .sign_tls_certificate_signature_scheme_with_random_fill(scheme, left, &mut signature, |out| {
+          if out.len() == key.signature_len() {
+            out.copy_from_slice(&one);
+          } else {
+            out.fill(split);
+          }
+          Ok::<(), ()>(())
+        })
+        .expect("fixture TLS caller-random RSA signing must succeed");
+      key
+        .public_key()
+        .verify_signature(profile, left, &signature)
+        .expect("fixture TLS caller-random RSA signature must verify");
+    }
     _ => {}
   }
 }
@@ -236,6 +312,16 @@ fn oaep_seed(profile: RsaOaepProfile, selector: u8, left: &[u8], right: &[u8]) -
     seed[index % seed_len] ^= byte;
   }
   seed
+}
+
+#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
+fn caller_pss_salt(profile: RsaPssProfile, selector: u8, left: &[u8], right: &[u8]) -> Vec<u8> {
+  let mut salt = vec![selector; profile.digest_len()];
+  for (index, byte) in left.iter().chain(right.iter()).copied().enumerate() {
+    let salt_len = salt.len();
+    salt[index % salt_len] ^= byte;
+  }
+  salt
 }
 
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]

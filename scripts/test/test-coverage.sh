@@ -37,7 +37,6 @@ case "${1:-}" in
     ;;
 esac
 
-maybe_disable_sccache
 apply_ci_resource_profile
 
 export RSCRYPTO_TEST_MODE=${RSCRYPTO_TEST_MODE:-${CARGO_RAIL_TEST_MODE:-local}}
