@@ -9,266 +9,171 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 fixture="$TMP_ROOT/repository"
 fake_bin="$TMP_ROOT/bin"
 mock_log="$TMP_ROOT/commands.log"
-mkdir -p "$fixture/scripts/ci" "$fixture/scripts/lib" "$fake_bin" "$TMP_ROOT/home/.cargo/bin"
+output="$TMP_ROOT/pre-push.out"
+mkdir -p "$fixture/scripts/ci" "$fixture/scripts/lib" "$fixture/src" "$fake_bin" "$TMP_ROOT/home/.cargo/bin"
 cp "$REPO_ROOT/scripts/ci/pre-push.sh" "$fixture/scripts/ci/pre-push.sh"
 cp "$REPO_ROOT/scripts/lib/common.sh" "$REPO_ROOT/scripts/lib/rail-plan.sh" "$fixture/scripts/lib/"
 
-git -C "$fixture" init --quiet
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$fixture/scripts/example.sh"
+printf '%s\n' '#![no_std]' >"$fixture/src/lib.rs"
+
+git -C "$fixture" init --quiet --initial-branch=main
 git -C "$fixture" config user.email "ci@example.invalid"
 git -C "$fixture" config user.name "CI"
 git -C "$fixture" add .
 git -C "$fixture" commit --quiet -m "baseline"
-git -C "$fixture" update-ref refs/remotes/origin/main HEAD
-base_branch="$(git -C "$fixture" branch --show-current)"
+base_commit="$(git -C "$fixture" rev-parse HEAD)"
+git -C "$fixture" update-ref refs/remotes/origin/main "$base_commit"
 
-cat >"$fake_bin/cargo" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-printf 'cargo %s\n' "$*" >>"$MOCK_LOG"
-if [[ "${1:-}" == "rail" && "${2:-}" == "plan" ]]; then
-  printf '%s' "${MOCK_PLAN_OUTPUT:-}"
-  exit "${MOCK_PLAN_STATUS:-0}"
-fi
-if [[ "$*" == "rail change check --merge-base --required" ]]; then
-  exit "${MOCK_RELEASE_CHECK_STATUS:-42}"
-fi
-SH
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  'printf '\''cargo %s\n'\'' "$*" >>"$MOCK_LOG"' \
+  'case "$*" in' \
+  '  "rail change check --merge-base --required") exit "${MOCK_CHANGE_STATUS:-0}" ;;' \
+  '  "rail unify --check") exit "${MOCK_UNIFY_STATUS:-0}" ;;' \
+  '  "rail config validate --strict"|"rail config migrate --check") exit "${MOCK_CONFIG_STATUS:-0}" ;;' \
+  '  *) echo "unexpected cargo command: $*" >&2; exit 97 ;;' \
+  'esac' \
+  >"$fake_bin/cargo"
 chmod +x "$fake_bin/cargo"
 
-cat >"$fake_bin/just" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-printf 'just %s\n' "$*" >>"$MOCK_LOG"
-SH
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  'printf '\''just %s\n'\'' "$*" >>"$MOCK_LOG"' \
+  '[[ "$*" == "--list" ]]' \
+  >"$fake_bin/just"
 chmod +x "$fake_bin/just"
 
-make_plan() {
-  local scope=$1
-  local files=${2:-'[]'}
-
-  jq -cn \
-    --argjson scope "$scope" \
-    --argjson files "$files" \
-    '{
-      plan_contract_version: 7,
-      inputs: {snapshot_id: "v1-sha256-test"},
-      resolution_universe: {
-        mode: "declared_dependencies",
-        identity: "resolution-universe-v1:sha256:0000000000000000000000000000000000000000000000000000000000000000"
-      },
-      files: $files,
-      scope: ($scope | del(.surfaces)),
-      surfaces: (
-        $scope.surfaces
-        | with_entries(.value = {
-            enabled: .value,
-            reasons: [],
-            scope: (
-              if .value then
-                ($scope | del(.scope_contract_version, .resolved_base, .resolved_head, .surfaces))
-              else
-                {mode: "empty", crates: [], cargo_args: []}
-              end
-            )
-          })
-      )
-    }'
-}
-
-workspace_scope='{"scope_contract_version":4,"resolved_base":"base","resolved_head":"head","mode":"workspace","crates":[],"cargo_args":["--workspace"],"surfaces":{"bench":false,"build":true,"custom:cargo_graph":true,"docs":false,"infra":false,"test":true}}'
-empty_scope='{"scope_contract_version":4,"resolved_base":"base","resolved_head":"head","mode":"empty","crates":[],"cargo_args":[],"surfaces":{"bench":false,"build":false,"custom:cargo_graph":false,"docs":false,"infra":false,"test":false}}'
-plan="$(make_plan "$workspace_scope" '[{"path":"Cargo.toml"}]')"
-empty_plan="$(make_plan "$empty_scope")"
-
-normal_output="$TMP_ROOT/normal.out"
-if (
-  cd "$fixture"
-  HOME="$TMP_ROOT/home" \
-    PATH="$fake_bin:$PATH" \
-    MOCK_LOG="$mock_log" \
-    RAIL_PLAN_JSON_CACHE="$plan" \
-    RAIL_SCOPE_JSON='' \
-    RAIL_SCOPE_JSON_CACHE='' \
-    RAIL_SURFACES_JSON='' \
-    scripts/ci/pre-push.sh --light
-) >"$normal_output" 2>&1; then
-  echo "ordinary pushes must fail when release intent coverage fails" >&2
-  exit 1
-fi
-grep -Fq "cargo rail change check --merge-base --required" "$mock_log"
-
-git -C "$fixture" switch --quiet -c rail/release-test
-git -C "$fixture" commit --quiet --allow-empty \
-  -m "chore(release): prepare rail/release-test" \
-  -m "Rail-Release-Mode: prepare"
-: >"$mock_log"
-release_output="$TMP_ROOT/release.out"
-if ! (
-  cd "$fixture"
-  HOME="$TMP_ROOT/home" \
-    PATH="$fake_bin:$PATH" \
-    MOCK_LOG="$mock_log" \
-    MOCK_RELEASE_CHECK_STATUS=42 \
-    RAIL_PLAN_JSON_CACHE="$plan" \
-    RAIL_SCOPE_JSON='' \
-    RAIL_SCOPE_JSON_CACHE='' \
-    RAIL_SURFACES_JSON='' \
-    scripts/ci/pre-push.sh --light
-) >"$release_output" 2>&1; then
-  cat "$release_output" >&2
-  echo "Cargo Rail release branches must not require consumed intent" >&2
-  exit 1
-fi
-if grep -Fq "cargo rail change check --merge-base --required" "$mock_log"; then
-  echo "Cargo Rail release branch reran consumed intent coverage" >&2
-  exit 1
-fi
-grep -Fq "Cargo Rail release branch has consumed its reviewed intent" "$release_output"
-git -C "$fixture" switch --quiet "$base_branch"
-
-run_pre_push_case() {
-  local name=$1
-  local cached_plan=$2
-  local planner_output=$3
-  local planner_status=$4
-  local expect_host=$5
-  local output="$TMP_ROOT/$name.out"
+run_pre_push() {
   : >"$mock_log"
-
-  if ! (
-    unset RAIL_PLAN_JSON_CACHE RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE RAIL_SURFACES_JSON
-    if [[ -n "$cached_plan" ]]; then
-      export RAIL_PLAN_JSON_CACHE="$cached_plan"
-    fi
+  (
     cd "$fixture"
     HOME="$TMP_ROOT/home" \
       PATH="$fake_bin:$PATH" \
       MOCK_LOG="$mock_log" \
-      MOCK_PLAN_OUTPUT="$planner_output" \
-      MOCK_PLAN_STATUS="$planner_status" \
-      MOCK_RELEASE_CHECK_STATUS=0 \
-      scripts/ci/pre-push.sh --light
-  ) >"$output" 2>&1; then
-    cat "$output" >&2
-    echo "pre-push case failed: $name" >&2
-    exit 1
-  fi
-
-  if [[ "$expect_host" == true ]]; then
-    grep -Fq "just check" "$mock_log" || {
-      echo "pre-push did not select host checks for $name" >&2
-      exit 1
-    }
-    grep -Fq "cargo rail unify --check --explain" "$mock_log"
-    grep -Fq "cargo rail change check --merge-base --required" "$mock_log"
-  elif grep -Fq "just check" "$mock_log"; then
-    echo "valid empty plan selected host checks" >&2
-    exit 1
-  fi
+      MOCK_CHANGE_STATUS="${MOCK_CHANGE_STATUS:-0}" \
+      MOCK_UNIFY_STATUS="${MOCK_UNIFY_STATUS:-0}" \
+      MOCK_CONFIG_STATUS="${MOCK_CONFIG_STATUS:-0}" \
+      scripts/ci/pre-push.sh
+  ) >"$output" 2>&1
 }
 
-run_pre_push_case planner-failure '' '' 9 true
-run_pre_push_case empty-output '' '' 0 true
-run_pre_push_case malformed-plan '{' '' 0 true
-run_pre_push_case missing-scope "$(jq -c 'del(.scope)' <<<"$plan")" '' 0 true
-run_pre_push_case valid-empty "$empty_plan" '' 0 false
+git -C "$fixture" switch --quiet -c topic
+printf '%s\n' '#![no_std]' '// topic change' >"$fixture/src/lib.rs"
+git -C "$fixture" add src/lib.rs
+git -C "$fixture" commit --quiet -m "change source"
 
-installer_scope=$(jq -c '.surfaces.infra = true' <<<"$empty_scope")
-installer_plan=$(make_plan "$installer_scope" '[{"path":"scripts/ci/install-tools.sh"}]')
-: >"$mock_log"
-if ! (
-  cd "$fixture"
-  HOME="$TMP_ROOT/home" \
-    PATH="$fake_bin:$PATH" \
-    MOCK_LOG="$mock_log" \
-    MOCK_RELEASE_CHECK_STATUS=0 \
-    RAIL_PLAN_JSON_CACHE="$installer_plan" \
-    RAIL_SCOPE_JSON='' \
-    RAIL_SCOPE_JSON_CACHE='' \
-    RAIL_SURFACES_JSON='' \
-    scripts/ci/pre-push.sh --light
-) >/dev/null 2>&1; then
-  echo "pre-push installer-integrity routing failed" >&2
+if ! run_pre_push; then
+  cat "$output" >&2
   exit 1
 fi
-grep -Fq 'just check-actions' "$mock_log" || {
-  echo "installer integrity changes did not select check-actions" >&2
-  exit 1
-}
-
-recovery_plan=$(make_plan "$installer_scope" '[{"path":"scripts/ci/release-ct-recovery-check.sh"}]')
-: >"$mock_log"
-if ! (
-  cd "$fixture"
-  HOME="$TMP_ROOT/home" \
-    PATH="$fake_bin:$PATH" \
-    MOCK_LOG="$mock_log" \
-    MOCK_RELEASE_CHECK_STATUS=0 \
-    RAIL_PLAN_JSON_CACHE="$recovery_plan" \
-    RAIL_SCOPE_JSON='' \
-    RAIL_SCOPE_JSON_CACHE='' \
-    RAIL_SURFACES_JSON='' \
-    scripts/ci/pre-push.sh --light
-) >/dev/null 2>&1; then
-  echo "pre-push release-recovery routing failed" >&2
+grep -Fq 'Fast pre-push checks passed.' "$output"
+grep -Fq 'cargo rail change check --merge-base --required' "$mock_log"
+if grep -Fq 'cargo rail unify' "$mock_log"; then
+  echo "ordinary source changes must not run Cargo graph unification" >&2
   exit 1
 fi
-grep -Fq 'just check-actions' "$mock_log" || {
-  echo "release recovery changes did not select check-actions" >&2
+if grep -Fq 'just ' "$mock_log"; then
+  echo "ordinary source changes must not run Just validation or host checks" >&2
   exit 1
-}
+fi
 
-plan_fixture="$TMP_ROOT/plan-repository"
-mkdir -p "$plan_fixture/.config" "$plan_fixture/scripts" "$plan_fixture/src"
-cp "$REPO_ROOT/.config/rail.toml" "$plan_fixture/.config/rail.toml"
-printf '%s\n' \
-  '[package]' \
-  'name = "rscrypto"' \
-  'version = "0.1.0"' \
-  'edition = "2024"' \
-  >"$plan_fixture/Cargo.toml"
-printf '%s\n' '#![no_std]' >"$plan_fixture/src/lib.rs"
-printf '%s\n' '# Scripts' >"$plan_fixture/scripts/README.md"
+if (
+  cd "$fixture"
+  HOME="$TMP_ROOT/home" PATH="$fake_bin:$PATH" MOCK_LOG="$mock_log" scripts/ci/pre-push.sh --light
+) >"$output" 2>&1; then
+  echo "pre-push profiles must not be accepted" >&2
+  exit 1
+fi
+grep -Fq 'does not accept arguments' "$output"
 
-git -C "$plan_fixture" init --quiet --initial-branch=main
-git -C "$plan_fixture" config user.email "ci@example.invalid"
-git -C "$plan_fixture" config user.name "CI"
-git -C "$plan_fixture" add .
-git -C "$plan_fixture" commit --quiet -m "baseline"
+git -C "$fixture" switch --quiet main
+if run_pre_push; then
+  echo "pre-push must reject main" >&2
+  exit 1
+fi
+grep -Fq 'refusing to push directly from main' "$output"
 
-printf '%s\n' '# Scripts' '' 'Documentation-only edit.' >"$plan_fixture/scripts/README.md"
-git -C "$plan_fixture" add scripts/README.md
-git -C "$plan_fixture" commit --quiet -m "edit script documentation"
+git -C "$fixture" switch --quiet --detach topic
+if run_pre_push; then
+  echo "pre-push must reject detached HEAD" >&2
+  exit 1
+fi
+grep -Fq 'refusing to push from a detached HEAD' "$output"
+git -C "$fixture" switch --quiet topic
 
-docs_plan=$(cd "$plan_fixture" && cargo rail plan --from HEAD~1 --to HEAD --json)
-jq -e '
-  .plan_contract_version == 7
-    and .scope.scope_contract_version == 4
-    and (.files | length == 1)
-    and .files[0].path == "scripts/README.md"
-    and .files[0].kind == "docs"
-    and .scope.mode == "empty"
-    and .surfaces.docs.enabled == true
-    and .surfaces.infra.enabled == false
-    and .surfaces.build.enabled == false
-    and .surfaces.test.enabled == false
-    and .surfaces["custom:cargo_graph"].enabled == false
-' >/dev/null <<<"$docs_plan"
+git -C "$fixture" update-ref -d refs/remotes/origin/main
+if run_pre_push; then
+  echo "pre-push must reject an unavailable immutable base" >&2
+  exit 1
+fi
+grep -Fq 'refs/remotes/origin/main is unavailable' "$output"
+git -C "$fixture" update-ref refs/remotes/origin/main "$base_commit"
 
-printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' >"$plan_fixture/scripts/check.sh"
-git -C "$plan_fixture" add scripts/check.sh
-git -C "$plan_fixture" commit --quiet -m "add script"
+printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'exit 0' >"$fixture/scripts/check.sh"
+git -C "$fixture" add scripts/check.sh
+git -C "$fixture" commit --quiet -m "add shell check"
+run_pre_push
+grep -Fq 'Shell syntax' "$output"
 
-script_plan=$(cd "$plan_fixture" && cargo rail plan --from HEAD~1 --to HEAD --json)
-jq -e '
-  .plan_contract_version == 7
-    and .scope.scope_contract_version == 4
-    and (.files | length == 1)
-    and .files[0].path == "scripts/check.sh"
-    and .files[0].kind == "script"
-    and .surfaces.infra.enabled == true
-    and .surfaces.build.enabled == false
-    and .surfaces.test.enabled == false
-' >/dev/null <<<"$script_plan"
+printf '%s\n' 'default:' '    @true' >"$fixture/justfile"
+git -C "$fixture" add justfile
+git -C "$fixture" commit --quiet -m "add justfile"
+run_pre_push
+grep -Fq 'just --list' "$mock_log"
+
+mkdir -p "$fixture/tools/example"
+printf '%s\n' '[package]' 'name = "example"' 'version = "0.1.0"' >"$fixture/tools/example/Cargo.toml"
+git -C "$fixture" add tools/example/Cargo.toml
+git -C "$fixture" commit --quiet -m "add cargo manifest"
+run_pre_push
+grep -Fq 'cargo rail unify --check' "$mock_log"
+
+mkdir -p "$fixture/.config"
+printf '%s\n' '[release]' 'source = "changes"' >"$fixture/.config/rail.toml"
+git -C "$fixture" add .config/rail.toml
+git -C "$fixture" commit --quiet -m "add rail config"
+run_pre_push
+grep -Fq 'cargo rail config validate --strict' "$mock_log"
+grep -Fq 'cargo rail config migrate --check' "$mock_log"
+
+MOCK_CHANGE_STATUS=42
+if run_pre_push; then
+  echo "pre-push must fail when release intent coverage fails" >&2
+  exit 1
+fi
+unset MOCK_CHANGE_STATUS
+
+git -C "$fixture" switch --quiet main
+git -C "$fixture" switch --quiet -c rail/release-test
+printf '%s\n' 'release preparation' >"$fixture/release.txt"
+git -C "$fixture" add release.txt
+git -C "$fixture" commit --quiet \
+  -m "prepare release" \
+  -m "Rail-Release-Mode: prepare"
+MOCK_CHANGE_STATUS=42 run_pre_push
+if grep -Fq 'cargo rail change check --merge-base --required' "$mock_log"; then
+  echo "Cargo Rail release branches must not repeat consumed release intent" >&2
+  exit 1
+fi
+grep -Fq 'Cargo Rail release branch has consumed its reviewed intent' "$output"
+
+git -C "$fixture" switch --quiet main
+git -C "$fixture" switch --quiet -c whitespace-test
+printf 'trailing whitespace \n' >"$fixture/bad.txt"
+git -C "$fixture" add bad.txt
+git -C "$fixture" commit --quiet -m "add bad whitespace"
+if run_pre_push; then
+  echo "pre-push must reject outgoing diff whitespace errors" >&2
+  exit 1
+fi
+grep -Fq 'trailing whitespace' "$output"
+
+if rg -q 'just (check|test)|check-actions' "$mock_log"; then
+  echo "pre-push must never run builds, tests, or the action suite" >&2
+  exit 1
+fi
 
 echo "Pre-push regression tests passed"

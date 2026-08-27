@@ -1,57 +1,16 @@
 #!/usr/bin/env bash
-# Change-aware quality checks used by the supported push recipes.
-# Profiles:
-#   --light  skip the exhaustive rscrypto feature matrix (default)
-#   --full   preserve the existing full host lane
+# Fast, deterministic checks before publishing the current topic branch.
+# Compilation, tests, and exhaustive assurance belong to explicit validation
+# recipes and hosted CI, not the transport path.
 
 set -euo pipefail
 
 export PATH="$HOME/.cargo/bin:$PATH"
 
-usage() {
-  cat <<'USAGE'
-Usage: scripts/ci/pre-push.sh [--light|--full]
-
-Profiles:
-  --light  run pre-push checks without the exhaustive rscrypto feature matrix
-  --full   run the full host pre-push lane
-USAGE
-}
-
-PRE_PUSH_PROFILE=light
-if [[ "${RSCRYPTO_PRE_PUSH_FULL:-}" == "1" ]]; then
-  PRE_PUSH_PROFILE=full
+if [[ $# -ne 0 ]]; then
+  echo "Error: scripts/ci/pre-push.sh does not accept arguments" >&2
+  exit 2
 fi
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --light)
-      PRE_PUSH_PROFILE=light
-      shift
-      ;;
-    --full)
-      PRE_PUSH_PROFILE=full
-      shift
-      ;;
-    -h | --help)
-      usage
-      exit 0
-      ;;
-    --)
-      shift
-      break
-      ;;
-    -*)
-      echo "Error: unknown pre-push option: $1" >&2
-      usage >&2
-      exit 2
-      ;;
-    *)
-      # Git passes remote name/url to hooks; they are not profile options.
-      break
-      ;;
-  esac
-done
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [[ -z "$REPO_ROOT" ]]; then
@@ -64,83 +23,55 @@ source "$REPO_ROOT/scripts/lib/common.sh"
 
 cd "$REPO_ROOT"
 
-LOG_DIR=$(mktemp -d)
-trap 'rm -rf "$LOG_DIR"' EXIT
-
-TASK_NAMES=()
-TASK_PIDS=()
-TASK_LOGS=()
-
-unset RAIL_SURFACES_JSON
-RAIL_READY=false
-if RAIL_PLAN_JSON_CACHE="$(rail_plan_json)" \
-  && rail_plan_is_valid "$RAIL_PLAN_JSON_CACHE"; then
-  RAIL_READY=true
-  RAIL_SCOPE_JSON="$(rail_scope_json)"
-else
-  RAIL_PLAN_JSON_CACHE=""
-  RAIL_SCOPE_JSON=""
+BRANCH="$(git branch --show-current)"
+if [[ -z "$BRANCH" ]]; then
+  echo "Error: refusing to push from a detached HEAD" >&2
+  exit 1
 fi
-export RAIL_PLAN_JSON_CACHE RAIL_SCOPE_JSON
+if [[ "$BRANCH" == "main" ]]; then
+  echo "Error: refusing to push directly from main" >&2
+  exit 1
+fi
 
-changed_files() {
-  if [[ "$RAIL_READY" != true ]]; then
-    return 0
-  fi
+BASE_REF=refs/remotes/origin/main
+if ! git rev-parse --verify --quiet "$BASE_REF" >/dev/null; then
+  echo "Error: $BASE_REF is unavailable; run 'git fetch origin main' first" >&2
+  exit 1
+fi
 
-  jq -r '.files[]?.path // empty' <<<"$RAIL_PLAN_JSON_CACHE"
-}
+MERGE_BASE="$(git merge-base HEAD "$BASE_REF")"
+if [[ -z "$MERGE_BASE" ]]; then
+  echo "Error: HEAD and $BASE_REF have no merge base" >&2
+  exit 1
+fi
+
+CHANGED_FILES=()
+while IFS= read -r -d '' path; do
+  CHANGED_FILES+=("$path")
+done < <(git diff --name-only --diff-filter=ACDMRTUXB -z "$MERGE_BASE"..HEAD)
 
 changed_file_matches() {
   local pattern=$1
   local path
 
-  while IFS= read -r path; do
+  for path in "${CHANGED_FILES[@]}"; do
     if [[ "$path" =~ $pattern ]]; then
       return 0
     fi
-  done < <(changed_files)
+  done
 
   return 1
-}
-
-rail_surface_is_enabled() {
-  local surface=$1
-  [[ "$RAIL_READY" == true ]] && rail_scope_surface_enabled "$surface"
-}
-
-describe_rail_plan() {
-  if [[ "$RAIL_READY" != true ]]; then
-    echo "cargo-rail plan unavailable; running conservative pre-push lanes."
-    return 0
-  fi
-
-  local file_count scope surfaces
-  file_count="$(jq -r '.files | length' <<<"$RAIL_PLAN_JSON_CACHE")"
-  scope="$(jq -r '.scope.mode // "unknown"' <<<"$RAIL_PLAN_JSON_CACHE")"
-  surfaces="$(jq -r '[.surfaces // {} | to_entries[] | select(.value == true) | .key] | join(",")' <<<"$RAIL_SCOPE_JSON")"
-  [[ -n "$surfaces" ]] || surfaces="none"
-
-  echo "cargo-rail: ${file_count} changed file(s), scope=${scope}, surfaces=${surfaces}"
 }
 
 run_shell_syntax_checks() {
   local scripts=()
   local path
 
-  if [[ "$RAIL_READY" == true ]]; then
-    while IFS= read -r path; do
-      if [[ "$path" == scripts/*.sh && -f "$path" ]]; then
-        scripts+=("$path")
-      fi
-    done < <(changed_files)
-  else
-    while IFS= read -r path; do
-      if [[ -f "$path" ]]; then
-        scripts+=("$path")
-      fi
-    done < <(git ls-files 'scripts/*.sh')
-  fi
+  for path in "${CHANGED_FILES[@]}"; do
+    if [[ "$path" == scripts/*.sh && -f "$path" ]]; then
+      scripts+=("$path")
+    fi
+  done
 
   if [[ ${#scripts[@]} -eq 0 ]]; then
     skip "Shell syntax" "no changed shell scripts"
@@ -148,156 +79,61 @@ run_shell_syntax_checks() {
   fi
 
   step "Shell syntax"
-  for script in "${scripts[@]}"; do
-    bash -n "$script"
+  for path in "${scripts[@]}"; do
+    bash -n "$path"
   done
   ok
-}
-
-run_justfile_check() {
-  if [[ "$RAIL_READY" != true ]] || ! changed_file_matches '^justfile$'; then
-    return 0
-  fi
-
-  step "Justfile parse"
-  just --list >/dev/null
-  ok
-}
-
-needs_rail_config_check() {
-  if ! cargo rail --version >/dev/null 2>&1; then
-    return 1
-  fi
-
-  if [[ "$RAIL_READY" != true ]]; then
-    return 0
-  fi
-
-  changed_file_matches '^\.config/rail\.toml$|^\.github/(workflows|actions)/.*\.ya?ml$|^scripts/ci/(install-tools|release-preflight)\.sh$|^justfile$'
-}
-
-needs_actions_check() {
-  if [[ "$RAIL_READY" != true ]]; then
-    return 0
-  fi
-
-  changed_file_matches '^\.config/(ci-tool-archives\.tsv|target-matrix\.json)$|^\.github/(workflows|actions)/.*\.ya?ml$|^\.github/(rulesets|repository-settings)/.*\.json$|^scripts/check/check\.sh$|^scripts/ci/(check-action-pins|check-action-pins-test|check-ci-ownership|check-ci-ownership-test|ci-check|cross-targets|install-codecov|install-tools|nostd-wasm-suite|pre-push|pre-push-test|setup-toolchain|tool-integrity-test|release-evidence-check|release-evidence-check-test|release-ct-recovery-check|release-ct-recovery-check-test|repository-controls-evidence|repository-controls-evidence-test|package-release-source|write-release-manifest|release-identity-test|publish-immutable-release|publish-immutable-release-test|release-recipes-test)\.sh$|^scripts/lib/ci-tool-integrity\.sh$|^scripts/test/test-fuzz(-scheduler-test)?\.sh$'
-}
-
-needs_host_checks() {
-  if [[ "$PRE_PUSH_PROFILE" == "full" || "$RAIL_READY" != true ]]; then
-    return 0
-  fi
-
-  if rail_surface_is_enabled build || rail_surface_is_enabled docs || rail_surface_is_enabled test; then
-    return 0
-  fi
-
-  changed_file_matches '^\.config/benchmark-matrix\.json$|^benches/structural\.rs$|^scripts/bench/(benchmark_catalog(_test)?\.py|profile\.sh)$|^scripts/check/|^scripts/lib/(common|rail-plan|feature-profiles)\.sh$|^scripts/test/(test-feature-matrix|test-fuzz)\.sh$'
-}
-
-run_actions_check() {
-  just check-actions
-}
-
-run_rail_config_check() {
-  cargo rail config validate --strict
-  cargo rail config migrate --check
-}
-
-run_rail_unify_check() {
-  cargo rail unify --check --explain
-}
-
-run_rail_change_check() {
-  cargo rail change check --merge-base --required
 }
 
 is_cargo_rail_release_branch() {
-  local branch
-  branch="$(git branch --show-current)"
-  [[ "$branch" == rail/release-* ]] || return 1
-  git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null || return 1
-  git log --format=%B refs/remotes/origin/main..HEAD \
+  [[ "$BRANCH" == rail/release-* ]] || return 1
+  git log --format=%B "$BASE_REF"..HEAD \
     | grep -Fxq 'Rail-Release-Mode: prepare'
 }
 
-run_host_checks() {
-  if [[ "$PRE_PUSH_PROFILE" == "full" ]]; then
-    just check --all --feature-matrix
-  else
-    just check
-  fi
-}
+echo "Running fast pre-push checks..."
+echo "branch: $BRANCH"
+echo "outgoing files: ${#CHANGED_FILES[@]}"
 
-start_task() {
-  local name=$1
-  shift
-
-  local safe_name log_file
-  safe_name="${name//[^A-Za-z0-9_.-]/_}"
-  log_file="$LOG_DIR/$safe_name.log"
-
-  echo "  → Starting $name"
-  ("$@") >"$log_file" 2>&1 &
-  TASK_NAMES+=("$name")
-  TASK_PIDS+=("$!")
-  TASK_LOGS+=("$log_file")
-}
-
-wait_tasks() {
-  local status=0
-  local i
-
-  for i in "${!TASK_PIDS[@]}"; do
-    if wait "${TASK_PIDS[$i]}"; then
-      echo "  ${GREEN}✓${RESET} ${TASK_NAMES[$i]}"
-    else
-      echo "  ${RED}✗${RESET} ${TASK_NAMES[$i]}"
-      show_error "${TASK_LOGS[$i]}"
-      status=1
-    fi
-  done
-
-  return "$status"
-}
-
-echo "Running pre-push checks (${PRE_PUSH_PROFILE})..."
-describe_rail_plan
+step "Outgoing diff hygiene"
+git diff --check "$MERGE_BASE"..HEAD
+ok
 
 run_shell_syntax_checks
-run_justfile_check
 
-if needs_rail_config_check; then
-  start_task "cargo-rail config" run_rail_config_check
+if changed_file_matches '^justfile$'; then
+  step "Justfile parse"
+  just --list >/dev/null
+  ok
 else
-  skip "Cargo-rail config" "no release/tooling config changes"
+  skip "Justfile parse" "justfile unchanged"
 fi
 
-if [[ "$RAIL_READY" != true ]] || rail_surface_is_enabled build || rail_surface_is_enabled test; then
-  start_task "cargo-rail unify" run_rail_unify_check
-  if is_cargo_rail_release_branch; then
-    skip "Release intent coverage" "Cargo Rail release branch has consumed its reviewed intent"
-  else
-    start_task "release intent coverage" run_rail_change_check
-  fi
+if changed_file_matches '^\.config/rail\.toml$'; then
+  step "Cargo-rail config"
+  cargo rail config validate --strict
+  cargo rail config migrate --check
+  ok
 else
-  skip "Cargo-rail unify" "no build/test surface"
-  skip "Release intent coverage" "no build/test surface"
+  skip "Cargo-rail config" "rail config unchanged"
 fi
 
-if needs_actions_check; then
-  start_task "workflow action pins" run_actions_check
+if changed_file_matches '(^|/)(Cargo\.toml|Cargo\.lock|build\.rs)$|^rust-toolchain\.toml$|^\.cargo/|^\.config/(rail\.toml|target-matrix\.json|toolchains\.toml)$'; then
+  step "Cargo graph consistency"
+  cargo rail unify --check
+  ok
 else
-  skip "Workflow action pins" "no workflow/action pin changes"
+  skip "Cargo graph consistency" "cargo graph inputs unchanged"
 fi
 
-if needs_host_checks; then
-  start_task "host Rust checks" run_host_checks
+if [[ ${#CHANGED_FILES[@]} -eq 0 ]]; then
+  skip "Release intent coverage" "no outgoing changes"
+elif is_cargo_rail_release_branch; then
+  skip "Release intent coverage" "Cargo Rail release branch has consumed its reviewed intent"
 else
-  skip "Host Rust checks" "cargo-rail found no build/docs/test surface"
+  step "Release intent coverage"
+  cargo rail change check --merge-base --required
+  ok
 fi
 
-wait_tasks
-
-echo "All checks passed."
+echo "Fast pre-push checks passed."

@@ -119,9 +119,12 @@ Push the current branch with its upstream. No extra Git flags are needed:
 just push
 ```
 
-`just push` runs the light, change-aware pre-push plan once and then pushes the
-current branch. No rscrypto Git-hook installation is required. Use `just
-push-full` when the change is unusually broad or release-sensitive.
+`just push` runs one fast, change-aware pre-push plan and then pushes the
+current branch. It checks branch and diff hygiene, syntax for changed shell and
+Just files, Cargo graph consistency when graph inputs changed, and release
+intent coverage. Builds, tests, and exhaustive assurance remain explicit
+validation and CI responsibilities. No rscrypto Git-hook installation is
+required.
 
 Open a draft pull request while the change is still in progress. Expensive jobs
 wait until the pull request is ready for review; a branch push alone does not

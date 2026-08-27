@@ -7,7 +7,6 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 prepare_recipe=$(cd "$REPO_ROOT" && just --show release-prepare)
 tag_recipe=$(cd "$REPO_ROOT" && just --show release-tag)
 push_recipe=$(cd "$REPO_ROOT" && just --dry-run push 2>&1)
-push_full_recipe=$(cd "$REPO_ROOT" && just --dry-run push-full 2>&1)
 
 grep -Fq "cargo rail release check rscrypto --extended" <<<"$prepare_recipe"
 grep -Fq "cargo rail release run rscrypto --bump auto --yes --pr" <<<"$prepare_recipe"
@@ -34,16 +33,18 @@ if grep -Fq "cargo rail release check" <<<"$tag_recipe" || grep -Fq "cargo rail 
   exit 1
 fi
 
-grep -Fq 'scripts/ci/pre-push.sh --light' <<<"$push_recipe"
-grep -Fq 'git push --set-upstream "origin" HEAD' <<<"$push_recipe"
-grep -Fq 'scripts/ci/pre-push.sh --full' <<<"$push_full_recipe"
-grep -Fq 'git push --set-upstream "origin" HEAD' <<<"$push_full_recipe"
-if grep -Fq -- '--no-verify' <<<"$push_recipe$push_full_recipe"; then
+grep -Fq 'scripts/ci/pre-push.sh' <<<"$push_recipe"
+grep -Fq 'git push --set-upstream origin HEAD' <<<"$push_recipe"
+if (cd "$REPO_ROOT" && just --show push-full >/dev/null 2>&1); then
+  echo "push-full must not exist; just push is the single supported push command" >&2
+  exit 1
+fi
+if grep -Fq -- '--no-verify' <<<"$push_recipe"; then
   echo "supported push recipes must not bypass Git hooks" >&2
   exit 1
 fi
-if grep -Fq 'RSCRYPTO_PRE_PUSH_' <<<"$push_recipe$push_full_recipe"; then
-  echo "supported push recipes must not depend on hook coordination state" >&2
+if grep -Fq -- '--light' <<<"$push_recipe" || grep -Fq -- '--full' <<<"$push_recipe"; then
+  echo "the supported push recipe must not expose validation profiles" >&2
   exit 1
 fi
 
