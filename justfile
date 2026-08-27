@@ -165,11 +165,8 @@ perf-llvm-lines *args="":
 release-prepare:
     cargo rail release check rscrypto --extended
     cargo rail release run rscrypto --bump auto --yes --pr
-    cargo update --manifest-path tools/ct-harness/Cargo.toml -p rscrypto
-    cargo update --manifest-path tools/ct-dudect/Cargo.toml -p rscrypto
-    cargo update --manifest-path tools/ct-binsec-harness/Cargo.toml -p rscrypto
-    git add tools/ct-harness/Cargo.lock tools/ct-dudect/Cargo.lock tools/ct-binsec-harness/Cargo.lock
-    git diff --cached --quiet || git commit -m "workspace: sync CT tool locks for release"
+    scripts/ci/sync-release-locks.sh
+    git diff --cached --quiet || git commit -m "workspace: sync standalone tool locks for release"
     git push
 
 release-tag:

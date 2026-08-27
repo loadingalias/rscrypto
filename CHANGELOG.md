@@ -1,5 +1,53 @@
 # Changelog
 
+
+## [0.9.0](https://github.com/loadingalias/rscrypto/compare/v0.8.1...v0.9.0) - 2026-08-27
+
+- Add a misuse-resistant AES-SIV-CMAC-256 nonce-based AEAD profile with allocation-free in-place seal/open operations, typed keys, non-empty borrowed nonces, opaque failed-open errors, and complete rejected-plaintext cleanup.
+
+- Add caller-supplied entropy APIs for RSA profile and TLS signing, a fixed-schedule batched blinding inverse, and half-width CRT assembly dispatch while preserving bounded blinding, fault checks, output cleanup, and allocation-free scratch reuse.
+
+- Add Debug output for Ed25519 verification diagnostic snapshots.
+
+- Add Debug output for AES-GCM nonce-counter state.
+
+- Add narrow AES-128, AES-256, and ChaCha20 header-protection generators with allocation-free mask operations and distinct non-exportable key types.
+
+- Group caller-supplied RSA blinding inputs in `RsaBlindingPair` and add redacted `Debug` output for borrowed RSA private-key inputs.
+
+- Add an allocation-free RFC 6455 WebSocket accept-digest capability behind the explicit `websocket-sha1` feature without exposing general-purpose SHA-1.
+
+- Document checksum and digest I/O adapter state and ownership methods.
+
+- Document SHAKE128 and SHAKE256 state and output-reader APIs.
+
+- Harden the x86 and POWER8 AEGIS-256 backends against out-of-bounds pointer formation while preserving oracle-compatible ciphertext and tags.
+
+- Harden Blake2b length handling, state cleanup, and portable diagnostics.
+
+- Harden Blake2s length handling, state cleanup, and portable diagnostics.
+
+- Harden BLAKE3 tree and SIMD kernel arithmetic, bounds, and assembly ABI validation.
+
+- Harden ECDSA limb arithmetic, endian conversion, diagnostic documentation, and fixed-work RISC-V and s390x multiplication while preserving P-256 and P-384 signature semantics. On s390x, wide nonce reduction now avoids secret-fed multiplication, while caller blinding masks projective, inversion, and final order arithmetic against operand-dependent timing.
+
+- Harden Ed25519 scalar encoding, fixed-base table validation, table selection, and AVX2/AVX-512 IFMA safety boundaries while preserving signature and verification results.
+
+- Harden IBM Z AES key setup and portable fallback code generation, and replace generic ECDSA scalar-order reduction and inversion with faster fixed-shape arithmetic while preserving signatures and public APIs.
+
+- Harden ML-KEM encoding, arithmetic bounds, and key-layout validation.
+
+- Harden PBKDF2 block indexing and document portable verification diagnostics.
+
+- Remove the unused RISC-V CRC-64 Zbc/Zvbc force modes and dead accelerated backend; RISC-V CRC-64 continues to use the portable slice-by-16 implementation until target evidence justifies acceleration.
+
+- Return `Argon2Error::BackendUnavailable` when a forced diagnostic backend is unsupported.
+
+- Restore release assurance with an attributable RSA fixed-width exponent timing gate, FEAT_DIT hardening for AArch64 private exponentiation, and RISC-V-compatible XXH3 backend tests.
+
+- Make the forced hardware ChaCha20 diagnostic functions `unsafe`; callers must establish the documented CPU capabilities before invoking them.
+
+
 ## [0.8.1](https://github.com/loadingalias/rscrypto/compare/v0.8.0...v0.8.1) - 2026-08-11
 
 - Align canonical install examples and the security support matrix with rscrypto 0.8.0.
