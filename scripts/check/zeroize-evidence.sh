@@ -70,6 +70,8 @@ for symbol in \
   diag_zeroize_aes256_header_protection \
   diag_zeroize_chacha20_header_protection \
   diag_zeroize_aes_siv_cmac256 \
+  diag_zeroize_ecdsa_p256_safegcd_scratch \
+  diag_zeroize_ecdsa_p384_safegcd_scratch \
   diag_zeroize_mlkem_sha3_512 \
   diag_zeroize_mlkem_shake256_scalar \
   diag_zeroize_mlkem_shake256_pair \
@@ -117,6 +119,8 @@ for symbol in \
   diag_zeroize_aes256_header_protection \
   diag_zeroize_chacha20_header_protection \
   diag_zeroize_aes_siv_cmac256 \
+  diag_zeroize_ecdsa_p256_safegcd_scratch \
+  diag_zeroize_ecdsa_p384_safegcd_scratch \
   diag_zeroize_mlkem_sha3_512 \
   diag_zeroize_mlkem_shake256_scalar \
   diag_zeroize_mlkem_shake256_pair \
@@ -341,6 +345,28 @@ if [[ "$(rustc -vV | sed -n 's/^host: //p')" == aarch64-* ]]; then
     echo "zeroize release evidence does not clear P-384 accelerated input, reduction, and inversion scratch" >&2
     exit 1
   fi
+fi
+
+ECDSA_P256_SAFEGCD_IR="$(sed -n '/define .*@diag_zeroize_ecdsa_p256_safegcd_scratch(/,/^}/p' "$LLVM_IR")"
+ECDSA_P384_SAFEGCD_IR="$(sed -n '/define .*@diag_zeroize_ecdsa_p384_safegcd_scratch(/,/^}/p' "$LLVM_IR")"
+ECDSA_P256_SAFEGCD_INVERSE_IR="$(sed -n '/define .*ecdsa_safegcd23invert_order_montgomeryKj4/,/^}/p' "$LLVM_IR")"
+ECDSA_P384_SAFEGCD_INVERSE_IR="$(sed -n '/define .*ecdsa_safegcd23invert_order_montgomeryKj6/,/^}/p' "$LLVM_IR")"
+ECDSA_SAFEGCD_DROP_SYMBOL="$(
+  sed -n 's/^define .*@\([^ (]*ecdsa_safegcd[^ (]*DivstepState[^ (]*Drop4drop[^ (]*\).*/\1/p' "$LLVM_IR" |
+    head -n 1
+)"
+ECDSA_SAFEGCD_DROP_IR="$(sed -n "/define .*@$ECDSA_SAFEGCD_DROP_SYMBOL(/,/^}/p" "$LLVM_IR")"
+if [[ -z "$ECDSA_P256_SAFEGCD_IR" || -z "$ECDSA_P384_SAFEGCD_IR" || \
+  -z "$ECDSA_P256_SAFEGCD_INVERSE_IR" || -z "$ECDSA_P384_SAFEGCD_INVERSE_IR" || \
+  -z "$ECDSA_SAFEGCD_DROP_SYMBOL" || -z "$ECDSA_SAFEGCD_DROP_IR" ]] || \
+  ! grep -q 'ecdsa_safegcd23invert_order_montgomeryKj4' <<<"$ECDSA_P256_SAFEGCD_IR" || \
+  ! grep -q 'ecdsa_safegcd23invert_order_montgomeryKj6' <<<"$ECDSA_P384_SAFEGCD_IR" || \
+  ! grep -q "@$ECDSA_SAFEGCD_DROP_SYMBOL" <<<"$ECDSA_P256_SAFEGCD_INVERSE_IR" || \
+  ! grep -q "@$ECDSA_SAFEGCD_DROP_SYMBOL" <<<"$ECDSA_P384_SAFEGCD_INVERSE_IR" || \
+  [[ "$(grep -c 'store volatile i32 0' <<<"$ECDSA_SAFEGCD_DROP_IR" || true)" -lt 101 ]] || \
+  ! grep -q 'fence syncscope("singlethread") seq_cst' <<<"$ECDSA_SAFEGCD_DROP_IR"; then
+  echo "zeroize release evidence does not clear the complete ECDSA safegcd divstep workspace" >&2
+  exit 1
 fi
 
 HEX_ERROR_IR="$(sed -n '/define .*@diag_zeroize_hex_error(/,/^}/p' "$LLVM_IR")"
@@ -632,6 +658,8 @@ case "$HOST_ARCH" in
       diag_zeroize_aes256_header_protection \
       diag_zeroize_chacha20_header_protection \
       diag_zeroize_aes_siv_cmac256 \
+      diag_zeroize_ecdsa_p256_safegcd_scratch \
+      diag_zeroize_ecdsa_p384_safegcd_scratch \
       diag_zeroize_mlkem_sha3_512 \
       diag_zeroize_mlkem_shake256_scalar \
       diag_zeroize_mlkem_shake256_pair \
@@ -682,6 +710,8 @@ case "$HOST_ARCH" in
       diag_zeroize_aes256_header_protection \
       diag_zeroize_chacha20_header_protection \
       diag_zeroize_aes_siv_cmac256 \
+      diag_zeroize_ecdsa_p256_safegcd_scratch \
+      diag_zeroize_ecdsa_p384_safegcd_scratch \
       diag_zeroize_mlkem_sha3_512 \
       diag_zeroize_mlkem_shake256_scalar \
       diag_zeroize_mlkem_shake256_pair \

@@ -208,13 +208,9 @@ check-actions:
     @actionlint
     @zizmor .github/workflows .github/actions
 
-push remote="origin":
-    @scripts/ci/pre-push.sh --light
-    git push --set-upstream "{{ remote }}" HEAD
-
-push-full remote="origin":
-    @scripts/ci/pre-push.sh --full
-    git push --set-upstream "{{ remote }}" HEAD
+push:
+    @scripts/ci/pre-push.sh
+    git push --set-upstream origin HEAD
 
 # Assets
 

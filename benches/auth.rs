@@ -1069,14 +1069,116 @@ fn ecdsa_p384_sign(c: &mut Criterion) {
   g.finish();
 }
 
+#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+fn ecdsa_p256_internal(c: &mut Criterion) {
+  use rscrypto::auth::{
+    diag_ecdsa_p256_basepoint_blinded_limb_digest, diag_ecdsa_p256_final_multiply_limb_digest,
+    diag_ecdsa_p256_nonce_inverse_blinded_limb_digest, diag_ecdsa_p256_nonce_inverse_limb_digest,
+    diag_ecdsa_p256_nonce_reduce_limb_digest, diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest,
+    diag_ecdsa_p256_order_mul_fixed_r_limb_digest, diag_ecdsa_p256_reduce_wide_order_limb_digest,
+    diag_ecdsa_p256_scalar_finish_limb_digest, diag_ecdsa_p256_select_signing_generator_affine_limb_digest,
+  };
+
+  let secret = [0x11u8; 32];
+  let blind = [0x5cu8; 64];
+  let nonce_wide = [0x5bu8; 64];
+  let inputs = [0usize, 32, 1024, 16384]
+    .into_iter()
+    .map(|len| (len, common::random_bytes(len)))
+    .collect::<Vec<_>>();
+  let mut g = c.benchmark_group("ecdsa-p256/internal");
+
+  g.bench_function("select-generator-affine", |b| {
+    b.iter(|| {
+      black_box(diag_ecdsa_p256_select_signing_generator_affine_limb_digest(black_box(
+        173,
+      )))
+    })
+  });
+  g.bench_function("reduce-wide-order", |b| {
+    b.iter(|| black_box(diag_ecdsa_p256_reduce_wide_order_limb_digest(black_box(nonce_wide))))
+  });
+  g.bench_function("order-mul-fixed-r", |b| {
+    b.iter(|| black_box(diag_ecdsa_p256_order_mul_fixed_r_limb_digest(black_box(secret))))
+  });
+  g.bench_function("order-mul-blinded-fixed-r", |b| {
+    b.iter(|| {
+      black_box(diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest(
+        black_box(secret),
+        black_box(blind),
+      ))
+    })
+  });
+
+  for (len, data) in &inputs {
+    g.bench_with_input(BenchmarkId::new("nonce-reduce", len), data, |b, d| {
+      b.iter(|| {
+        black_box(diag_ecdsa_p256_nonce_reduce_limb_digest(
+          black_box(secret),
+          black_box(d),
+        ))
+      })
+    });
+    g.bench_with_input(BenchmarkId::new("basepoint-blinded", len), data, |b, d| {
+      b.iter(|| {
+        black_box(diag_ecdsa_p256_basepoint_blinded_limb_digest(
+          black_box(secret),
+          black_box(blind),
+          black_box(d),
+        ))
+      })
+    });
+    g.bench_with_input(BenchmarkId::new("scalar-finish", len), data, |b, d| {
+      b.iter(|| {
+        black_box(diag_ecdsa_p256_scalar_finish_limb_digest(
+          black_box(secret),
+          black_box(nonce_wide),
+          black_box(d),
+        ))
+      })
+    });
+    g.bench_with_input(BenchmarkId::new("nonce-inverse", len), data, |b, d| {
+      b.iter(|| {
+        black_box(diag_ecdsa_p256_nonce_inverse_limb_digest(
+          black_box(secret),
+          black_box(d),
+        ))
+      })
+    });
+    g.bench_with_input(BenchmarkId::new("nonce-inverse-blinded", len), data, |b, d| {
+      b.iter(|| {
+        black_box(diag_ecdsa_p256_nonce_inverse_blinded_limb_digest(
+          black_box(secret),
+          black_box(blind),
+          black_box(d),
+        ))
+      })
+    });
+    g.bench_with_input(BenchmarkId::new("final-multiply", len), data, |b, d| {
+      b.iter(|| {
+        black_box(diag_ecdsa_p256_final_multiply_limb_digest(
+          black_box(secret),
+          black_box(nonce_wide),
+          black_box(d),
+        ))
+      })
+    });
+  }
+
+  g.finish();
+}
+
+#[cfg(not(all(feature = "diag", feature = "ecdsa-p256")))]
+fn ecdsa_p256_internal(_: &mut Criterion) {}
+
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 fn ecdsa_p384_internal(c: &mut Criterion) {
   use rscrypto::auth::{
     diag_ecdsa_p384_basepoint_blinded_limb_digest, diag_ecdsa_p384_basepoint_r_limb_digest,
-    diag_ecdsa_p384_final_multiply_limb_digest, diag_ecdsa_p384_nonce_inverse_limb_digest,
-    diag_ecdsa_p384_nonce_reduce_limb_digest, diag_ecdsa_p384_order_mul_fixed_r_limb_digest,
-    diag_ecdsa_p384_reduce_wide_order_limb_digest, diag_ecdsa_p384_scalar_finish_limb_digest,
-    diag_ecdsa_p384_select_signing_generator_affine_limb_digest,
+    diag_ecdsa_p384_final_multiply_limb_digest, diag_ecdsa_p384_nonce_inverse_blinded_limb_digest,
+    diag_ecdsa_p384_nonce_inverse_limb_digest, diag_ecdsa_p384_nonce_reduce_limb_digest,
+    diag_ecdsa_p384_order_mul_fixed_r_limb_digest, diag_ecdsa_p384_reduce_wide_order_limb_digest,
+    diag_ecdsa_p384_scalar_finish_limb_digest, diag_ecdsa_p384_select_signing_generator_affine_limb_digest,
   };
 
   let secret = [0x31u8; 48];
@@ -1136,6 +1238,15 @@ fn ecdsa_p384_internal(c: &mut Criterion) {
       b.iter(|| {
         black_box(diag_ecdsa_p384_nonce_inverse_limb_digest(
           black_box(secret),
+          black_box(d),
+        ))
+      })
+    });
+    g.bench_with_input(BenchmarkId::new("nonce-inverse-blinded", len), data, |b, d| {
+      b.iter(|| {
+        black_box(diag_ecdsa_p384_nonce_inverse_blinded_limb_digest(
+          black_box(secret),
+          black_box(blind),
           black_box(d),
         ))
       })
@@ -1746,6 +1857,7 @@ criterion_group!(
   pbkdf2_sha512_derive,
   ecdsa_p256_sign,
   ecdsa_p256_verify,
+  ecdsa_p256_internal,
   ecdsa_p384_sign,
   ecdsa_p384_verify,
   ecdsa_p384_internal,

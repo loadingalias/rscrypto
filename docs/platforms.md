@@ -43,6 +43,15 @@ also use assembly helpers for selected scalar, field, and basepoint operations
 when those helpers are compiled for the target. Other target families use the
 portable implementation.
 
+s390x does not dispatch signing to MSA9 KDSA. KDSA's deterministic mode uses
+the supplied random-number field directly in signing, while its randomized mode
+derives hidden randomness and changes the signature. The instruction exposes no
+second independent input that can preserve rscrypto's deterministic signature
+while also providing the caller-supplied projective and scalar blinding required
+by `try_sign_blinded`. The software fallback therefore remains authoritative;
+see IBM's
+[z/Architecture Principles of Operation](https://www.ibm.com/docs/en/module_1678991624569/pdf/SA22-7832-14.pdf?cp=HW11W).
+
 ML-KEM-512/768/1024 always have a portable Rust path. On s390x, secret-fed
 ML-KEM arithmetic uses fixed-work z/Vector kernels where those kernels are
 compiled and selected. The implementation does not replace constant-time

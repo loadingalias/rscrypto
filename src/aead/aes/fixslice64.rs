@@ -1,9 +1,11 @@
-//! Table-free RV64 scalar AES-256 fallback.
+//! Table-free 64-bit scalar AES fallback.
 //!
 //! This is a focused adaptation of the RustCrypto AES 0.8.4 64-bit fixslice
-//! backend, reduced to AES-256 encryption over four parallel blocks. The
+//! backend, reduced to AES-128 and AES-256 encryption over four parallel blocks. The
 //! original code is MIT OR Apache-2.0 and derives from Alexandre Adomnicai's
-//! fixsliced AES implementation.
+//! fixsliced AES implementation. It is the portable authority on RV64 and
+//! s390x, where the byte-oriented arithmetic S-box is not a reliable
+//! constant-time source representation after target-specific lowering.
 //!
 //! Reference: Adomnicai et al., "Fixslicing AES-like Ciphers",
 //! <https://eprint.iacr.org/2020/1123.pdf>.
@@ -12,11 +14,11 @@ use super::{BLOCK_SIZE, KEY_SIZE, KEY_SIZE_128};
 
 type State = [u64; 8];
 
-pub(super) struct RvFixsliceRoundKeys {
+pub(super) struct FixsliceRoundKeys {
   keys: [u64; 120],
 }
 
-impl RvFixsliceRoundKeys {
+impl FixsliceRoundKeys {
   #[inline]
   pub(super) fn new(key: &[u8; KEY_SIZE]) -> Self {
     Self {
@@ -25,7 +27,7 @@ impl RvFixsliceRoundKeys {
   }
 
   #[inline]
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(any(target_arch = "riscv64", target_arch = "s390x"))]
   pub(super) fn zeroize(&mut self) {
     // SAFETY: `[u64; 120]` is contiguous and valid to view as bytes for its
     // exact initialized size.
@@ -36,11 +38,11 @@ impl RvFixsliceRoundKeys {
 }
 
 /// Bitsliced AES-128 round keys (10 rounds → 11 round keys × 8 u64 per group).
-pub(super) struct RvFixslice128RoundKeys {
+pub(super) struct Fixslice128RoundKeys {
   keys: [u64; 88],
 }
 
-impl RvFixslice128RoundKeys {
+impl Fixslice128RoundKeys {
   #[inline]
   pub(super) fn new(key: &[u8; KEY_SIZE_128]) -> Self {
     Self {
@@ -49,7 +51,7 @@ impl RvFixslice128RoundKeys {
   }
 
   #[inline]
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(any(target_arch = "riscv64", target_arch = "s390x"))]
   pub(super) fn zeroize(&mut self) {
     // SAFETY: `[u64; 88]` is contiguous and valid to view as bytes for its
     // exact initialized size.
@@ -60,14 +62,14 @@ impl RvFixslice128RoundKeys {
 }
 
 #[inline]
-pub(super) fn encrypt_block(rkeys: &RvFixsliceRoundKeys, block: &mut [u8; BLOCK_SIZE]) {
+pub(super) fn encrypt_block(rkeys: &FixsliceRoundKeys, block: &mut [u8; BLOCK_SIZE]) {
   let mut blocks = [*block; 4];
   encrypt_4blocks(rkeys, &mut blocks);
   *block = blocks[0];
 }
 
 #[inline]
-pub(super) fn encrypt_4blocks(rkeys: &RvFixsliceRoundKeys, blocks: &mut [[u8; BLOCK_SIZE]; 4]) {
+pub(super) fn encrypt_4blocks(rkeys: &FixsliceRoundKeys, blocks: &mut [[u8; BLOCK_SIZE]; 4]) {
   let mut state = State::default();
   bitslice(&mut state, &blocks[0], &blocks[1], &blocks[2], &blocks[3]);
 
@@ -108,6 +110,7 @@ pub(super) fn encrypt_4blocks(rkeys: &RvFixsliceRoundKeys, blocks: &mut [[u8; BL
 }
 
 #[inline]
+#[cfg(any(target_arch = "riscv64", all(test, not(target_arch = "s390x"))))]
 pub(super) fn cipher_round_4(blocks: &mut [[u8; BLOCK_SIZE]; 4], round_keys: &[[u8; BLOCK_SIZE]; 4]) {
   let mut state = State::default();
   bitslice(&mut state, &blocks[0], &blocks[1], &blocks[2], &blocks[3]);
@@ -126,14 +129,14 @@ pub(super) fn cipher_round_4(blocks: &mut [[u8; BLOCK_SIZE]; 4], round_keys: &[[
 }
 
 #[inline]
-pub(super) fn encrypt_block_128(rkeys: &RvFixslice128RoundKeys, block: &mut [u8; BLOCK_SIZE]) {
+pub(super) fn encrypt_block_128(rkeys: &Fixslice128RoundKeys, block: &mut [u8; BLOCK_SIZE]) {
   let mut blocks = [*block; 4];
   encrypt_4blocks_128(rkeys, &mut blocks);
   *block = blocks[0];
 }
 
 #[inline]
-pub(super) fn encrypt_4blocks_128(rkeys: &RvFixslice128RoundKeys, blocks: &mut [[u8; BLOCK_SIZE]; 4]) {
+pub(super) fn encrypt_4blocks_128(rkeys: &Fixslice128RoundKeys, blocks: &mut [[u8; BLOCK_SIZE]; 4]) {
   let mut state = State::default();
   bitslice(&mut state, &blocks[0], &blocks[1], &blocks[2], &blocks[3]);
 
@@ -674,6 +677,7 @@ fn add_round_constant_bit(state: &mut [u64], bit: usize) {
 }
 
 #[inline(always)]
+#[cfg(any(target_arch = "riscv64", all(test, not(target_arch = "s390x"))))]
 fn xor_block(dst: &mut [u8; BLOCK_SIZE], src: &[u8; BLOCK_SIZE]) {
   let mut i = 0usize;
   while i < BLOCK_SIZE {
