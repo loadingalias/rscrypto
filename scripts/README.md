@@ -56,6 +56,7 @@ the recipes reported by `just --list`.
 | `ci/publish-immutable-release.sh`         | `release.yaml`, `ci/publish-immutable-release-test.sh`                                                                            |
 | `ci/publish-immutable-release-test.sh`    | `just check-actions`                                                                                                              |
 | `ci/release-recipes-test.sh`              | `just check-actions`                                                                                                              |
+| `ci/sync-release-locks.sh`                | `just release-prepare`, `ci/release-recipes-test.sh`                                                                              |
 | `ci/pre-push.sh`                          | `just push`                                                                                                                       |
 | `ct/artifacts.sh`                         | `just ct`, `just ct-artifacts`, `scripts/ct/full.py`                                                                              |
 | `ct/dudect.sh`                            | `just ct-dudect`, `scripts/ct/full.py`                                                                                            |

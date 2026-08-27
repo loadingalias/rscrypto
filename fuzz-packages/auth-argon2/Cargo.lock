@@ -170,7 +170,7 @@ checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 
 [[package]]
 name = "rscrypto"
-version = "0.8.1"
+version = "0.9.0"
 
 [[package]]
 name = "rscrypto-fuzz-auth-argon2"
