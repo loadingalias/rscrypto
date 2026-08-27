@@ -106,6 +106,13 @@ pub(crate) struct Aes256EncKey {
   inner: KeyInner,
 }
 
+#[cfg_attr(
+  any(target_arch = "s390x", all(target_arch = "riscv64", not(feature = "alloc"))),
+  expect(
+    clippy::large_enum_variant,
+    reason = "IBM Z and no-alloc RISC-V keep the fallback schedule inline"
+  )
+)]
 enum KeyInner {
   #[cfg(not(any(target_arch = "riscv64", target_arch = "s390x")))]
   PortableRoundKeys([u32; EXPANDED_KEY_WORDS]),
@@ -121,11 +128,11 @@ enum KeyInner {
   ScalarCrypto(rv_scalar_aes::RvScalarRoundKeys),
   #[cfg(target_arch = "riscv64")]
   VectorCrypto(rv_aes::RvRoundKeys),
-  /// Four-block table-free fixslice fallback on 64-bit targets without selected AES hardware.
-  #[cfg(all(any(target_arch = "riscv64", target_arch = "s390x"), feature = "alloc"))]
+  /// Boxed four-block table-free fixslice fallback for alloc-enabled RISC-V builds.
+  #[cfg(all(target_arch = "riscv64", feature = "alloc"))]
   Fixslice(alloc::boxed::Box<fixslice64::FixsliceRoundKeys>),
-  /// No-alloc builds keep the larger fixslice key schedule inline.
-  #[cfg(all(any(target_arch = "riscv64", target_arch = "s390x"), not(feature = "alloc")))]
+  /// IBM Z and no-alloc RISC-V builds keep the fixslice key schedule inline.
+  #[cfg(any(target_arch = "s390x", all(target_arch = "riscv64", not(feature = "alloc"))))]
   Fixslice(fixslice64::FixsliceRoundKeys),
 }
 
@@ -177,6 +184,13 @@ pub(crate) struct Aes128EncKey {
   inner: Key128Inner,
 }
 
+#[cfg_attr(
+  any(target_arch = "s390x", all(target_arch = "riscv64", not(feature = "alloc"))),
+  expect(
+    clippy::large_enum_variant,
+    reason = "IBM Z and no-alloc RISC-V keep the fallback schedule inline"
+  )
+)]
 enum Key128Inner {
   #[cfg(not(any(target_arch = "riscv64", target_arch = "s390x")))]
   PortableRoundKeys([u32; EXPANDED_KEY_WORDS_128]),
@@ -192,11 +206,11 @@ enum Key128Inner {
   ScalarCrypto(rv_scalar_aes::RvScalar128RoundKeys),
   #[cfg(target_arch = "riscv64")]
   VectorCrypto(rv_aes::Rv128RoundKeys),
-  /// Four-block table-free fixslice fallback on 64-bit targets without selected AES hardware.
-  #[cfg(all(any(target_arch = "riscv64", target_arch = "s390x"), feature = "alloc"))]
+  /// Boxed four-block table-free fixslice fallback for alloc-enabled RISC-V builds.
+  #[cfg(all(target_arch = "riscv64", feature = "alloc"))]
   Fixslice(alloc::boxed::Box<fixslice64::Fixslice128RoundKeys>),
-  /// No-alloc builds keep the larger fixslice key schedule inline.
-  #[cfg(all(any(target_arch = "riscv64", target_arch = "s390x"), not(feature = "alloc")))]
+  /// IBM Z and no-alloc RISC-V builds keep the fixslice key schedule inline.
+  #[cfg(any(target_arch = "s390x", all(target_arch = "riscv64", not(feature = "alloc"))))]
   Fixslice(fixslice64::Fixslice128RoundKeys),
 }
 
@@ -447,13 +461,13 @@ pub(crate) fn aes128_expand_key_portable(key: &[u8; KEY_SIZE_128]) -> [u32; EXPA
   rk
 }
 
-#[cfg(all(any(target_arch = "riscv64", target_arch = "s390x"), feature = "alloc"))]
+#[cfg(all(target_arch = "riscv64", feature = "alloc"))]
 #[inline]
 fn fixslice64_key_inner(key: &[u8; KEY_SIZE]) -> KeyInner {
   KeyInner::Fixslice(alloc::boxed::Box::new(fixslice64::FixsliceRoundKeys::new(key)))
 }
 
-#[cfg(all(any(target_arch = "riscv64", target_arch = "s390x"), not(feature = "alloc")))]
+#[cfg(any(target_arch = "s390x", all(target_arch = "riscv64", not(feature = "alloc"))))]
 #[inline]
 fn fixslice64_key_inner(key: &[u8; KEY_SIZE]) -> KeyInner {
   KeyInner::Fixslice(fixslice64::FixsliceRoundKeys::new(key))
@@ -532,13 +546,13 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
   }
 }
 
-#[cfg(all(any(target_arch = "riscv64", target_arch = "s390x"), feature = "alloc"))]
+#[cfg(all(target_arch = "riscv64", feature = "alloc"))]
 #[inline]
 fn fixslice64_key_inner_128(key: &[u8; KEY_SIZE_128]) -> Key128Inner {
   Key128Inner::Fixslice(alloc::boxed::Box::new(fixslice64::Fixslice128RoundKeys::new(key)))
 }
 
-#[cfg(all(any(target_arch = "riscv64", target_arch = "s390x"), not(feature = "alloc")))]
+#[cfg(any(target_arch = "s390x", all(target_arch = "riscv64", not(feature = "alloc"))))]
 #[inline]
 fn fixslice64_key_inner_128(key: &[u8; KEY_SIZE_128]) -> Key128Inner {
   Key128Inner::Fixslice(fixslice64::Fixslice128RoundKeys::new(key))
