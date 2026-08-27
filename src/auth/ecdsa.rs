@@ -1952,6 +1952,10 @@ impl<const L: usize> Uint<L> {
   }
 
   fn select(lhs: Self, rhs: Self, mask: u64) -> Self {
+    #[cfg(target_arch = "s390x")]
+    // SECURITY: LLVM 23 otherwise recognizes the all-zero/all-one mask and
+    // lowers this bitwise select back to secret-dependent conditional jumps.
+    let mask = core::hint::black_box(mask);
     let mut out = [0u64; L];
     for ((dst, &left), &right) in out.iter_mut().zip(lhs.0.iter()).zip(rhs.0.iter()) {
       *dst = left ^ (mask & (left ^ right));
