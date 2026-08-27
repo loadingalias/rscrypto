@@ -30,6 +30,8 @@ mod ecdsa_generator_tables;
 ))]
 #[path = "ecdsa_p384_field.rs"]
 mod ecdsa_p384_field;
+#[path = "ecdsa_safegcd.rs"]
+mod ecdsa_safegcd;
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[path = "ecdsa_x86_64_asm.rs"]
 mod ecdsa_x86_64_asm;
@@ -932,7 +934,7 @@ impl EcdsaP256SecretKey {
   /// and the private-scalar product. The portable backend also adds a random
   /// multiple of the group order before fixed-base multiplication. On s390x,
   /// independent scalar masks protect the projective and order arithmetic,
-  /// while wide nonce reduction uses multiplication-free fixed-work arithmetic.
+  /// while a fixed-work algebraic fold reduces the wide nonce.
   ///
   /// # Errors
   ///
@@ -1095,8 +1097,8 @@ impl EcdsaP384SecretKey {
   /// The closure should fill the buffer from a CSPRNG. The ECDSA nonce remains
   /// deterministic; the random bytes blind the internal projective `kG` point
   /// and mask the private-scalar product. On s390x, independent scalar masks
-  /// protect the projective and order arithmetic, while wide nonce reduction
-  /// uses multiplication-free fixed-work arithmetic.
+  /// protect the projective and order arithmetic, while a fixed-work algebraic
+  /// fold reduces the wide nonce.
   ///
   /// # Errors
   ///
@@ -1612,6 +1614,20 @@ fn mask_not(mask: u64) -> u64 {
   !mask
 }
 
+#[cfg(target_arch = "s390x")]
+#[inline(always)]
+fn low_u32(value: u64) -> u32 {
+  let [b0, b1, b2, b3, _, _, _, _] = value.to_le_bytes();
+  u32::from_le_bytes([b0, b1, b2, b3])
+}
+
+#[cfg(target_arch = "s390x")]
+#[inline(always)]
+fn low_u32_signed(value: i64) -> u32 {
+  let [b0, b1, b2, b3, _, _, _, _] = value.to_le_bytes();
+  u32::from_le_bytes([b0, b1, b2, b3])
+}
+
 #[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 #[inline(never)]
 fn ct_mul_u64_wide(lhs: u64, rhs: u64) -> (u64, u64) {
@@ -1620,20 +1636,25 @@ fn ct_mul_u64_wide(lhs: u64, rhs: u64) -> (u64, u64) {
   let mut multiplicand_lo = lhs;
   let mut multiplicand_hi = 0u64;
   let mut multiplier = rhs;
-  for _ in 0..u64::BITS {
-    // Keep LLVM from recognizing the bit-serial product and lowering it back to a target multiply.
+  for _ in 0..(u64::BITS / 4) {
+    // Consume four multiplier bits per round. The four masked additions retain
+    // the fixed work of the bit-serial authority while removing 48 loop and
+    // optimization barriers from every wide product.
+    //
+    // Keep LLVM from recognizing the radix-16 product and lowering it back to a target multiply.
     // The CT artifact gate independently rejects scalar multiply in these ECDSA closures.
-    let selected_bit = core::hint::black_box(multiplier & 1);
-    let mask = 0u64.wrapping_sub(selected_bit);
-    let (next_lo, carry) = product_lo.overflowing_add(multiplicand_lo & mask);
-    let (next_hi, _) = product_hi.overflowing_add(multiplicand_hi & mask);
-    let (next_hi, _) = next_hi.overflowing_add(u64::from(carry));
-    product_lo = next_lo;
-    product_hi = next_hi;
+    let digit = core::hint::black_box(multiplier & 0xf);
+    for bit in 0..4 {
+      let mask = 0u64.wrapping_sub((digit >> bit) & 1);
+      let (next_lo, carry) = adc_limb(product_lo, multiplicand_lo & mask, 0);
+      let (next_hi, _) = adc_limb(product_hi, multiplicand_hi & mask, carry);
+      product_lo = next_lo;
+      product_hi = next_hi;
 
-    multiplicand_hi = (multiplicand_hi << 1) | (multiplicand_lo >> 63);
-    multiplicand_lo <<= 1;
-    multiplier >>= 1;
+      multiplicand_hi = (multiplicand_hi << 1) | (multiplicand_lo >> 63);
+      multiplicand_lo <<= 1;
+    }
+    multiplier >>= 4;
   }
 
   (product_lo, product_hi)
@@ -1804,27 +1825,76 @@ impl<const L: usize> Uint<L> {
   }
 
   fn add_raw(&self, other: &Self) -> (Self, u64) {
+    #[cfg(target_arch = "s390x")]
+    {
+      self.add_raw_s390x(other)
+    }
+
+    #[cfg(not(target_arch = "s390x"))]
+    {
+      let mut out = [0u64; L];
+      let mut carry = 0u64;
+      for ((out_limb, &left), &right) in out.iter_mut().zip(self.0.iter()).zip(other.0.iter()) {
+        let (sum, overflow0) = left.overflowing_add(right);
+        let (sum, overflow1) = sum.overflowing_add(carry);
+        *out_limb = sum;
+        carry = u64::from(overflow0 | overflow1);
+      }
+      (Self(out), carry)
+    }
+  }
+
+  #[cfg(target_arch = "s390x")]
+  fn add_raw_s390x(&self, other: &Self) -> (Self, u64) {
     let mut out = [0u64; L];
     let mut carry = 0u64;
     for ((out_limb, &left), &right) in out.iter_mut().zip(self.0.iter()).zip(other.0.iter()) {
-      let (sum, overflow0) = left.overflowing_add(right);
-      let (sum, overflow1) = sum.overflowing_add(carry);
-      *out_limb = sum;
-      carry = u64::from(overflow0 | overflow1);
+      let low = u64::from(low_u32(left))
+        .strict_add(u64::from(low_u32(right)))
+        .strict_add(carry);
+      let high = (left >> 32).strict_add(right >> 32).strict_add(low >> 32);
+      *out_limb = u64::from(low_u32(low)) | (u64::from(low_u32(high)) << 32);
+      carry = high >> 32;
     }
     (Self(out), carry)
   }
 
   fn sub_raw(&self, other: &Self) -> (Self, u64) {
-    let mut out = [0u64; L];
-    let mut borrow = 0u64;
-    for ((out_limb, &left), &right) in out.iter_mut().zip(self.0.iter()).zip(other.0.iter()) {
-      let (diff, overflow0) = left.overflowing_sub(right);
-      let (diff, overflow1) = diff.overflowing_sub(borrow);
-      *out_limb = diff;
-      borrow = u64::from(overflow0 | overflow1);
+    #[cfg(target_arch = "s390x")]
+    {
+      self.sub_raw_s390x(other)
     }
-    (Self(out), borrow)
+
+    #[cfg(not(target_arch = "s390x"))]
+    {
+      let mut out = [0u64; L];
+      let mut borrow = 0u64;
+      for ((out_limb, &left), &right) in out.iter_mut().zip(self.0.iter()).zip(other.0.iter()) {
+        let (diff, overflow0) = left.overflowing_sub(right);
+        let (diff, overflow1) = diff.overflowing_sub(borrow);
+        *out_limb = diff;
+        borrow = u64::from(overflow0 | overflow1);
+      }
+      (Self(out), borrow)
+    }
+  }
+
+  #[cfg(target_arch = "s390x")]
+  fn sub_raw_s390x(&self, other: &Self) -> (Self, u64) {
+    let mut out = [0u64; L];
+    let mut borrow = 0i64;
+    for ((out_limb, &left), &right) in out.iter_mut().zip(self.0.iter()).zip(other.0.iter()) {
+      let low = i64::from(low_u32(left))
+        .strict_sub(i64::from(low_u32(right)))
+        .strict_sub(borrow);
+      borrow = (low >> 63) & 1;
+      let high = i64::from(low_u32(left >> 32))
+        .strict_sub(i64::from(low_u32(right >> 32)))
+        .strict_sub(borrow);
+      borrow = (high >> 63) & 1;
+      *out_limb = u64::from(low_u32_signed(low)) | (u64::from(low_u32_signed(high)) << 32);
+    }
+    (Self(out), u64::from(low_u32_signed(borrow)))
   }
 
   fn add_mod_ct(&self, other: &Self, modulus: Self) -> Self {
@@ -1948,6 +2018,10 @@ impl<const L: usize> Uint<L> {
         let inverse = ZeroizingWords::new(ecdsa_platform_asm::scalar_inverse(&self.0, &modulus.value.0));
         return montgomery_mul(Uint(*inverse.as_array()), modulus.r2, modulus);
       }
+    }
+
+    if let Some(inverse) = ecdsa_safegcd::invert_order_montgomery(*self, modulus) {
+      return inverse;
     }
 
     const WINDOW_BITS: usize = 4;
@@ -2734,7 +2808,7 @@ fn blinded_nonce_inverse_montgomery<const L: usize>(
 ) -> SecretScalar<L> {
   // For nonzero k and b, (k*b)^-1 remains randomized until finalization
   // multiplies by b. Using b as the lhs and as an additive share of k keeps
-  // every multiplication operand masked on the s390x bit-serial path.
+  // every multiplication operand masked on the s390x fixed-work fallback.
   let blinded_nonce = SecretScalar::new(mul_mod_montgomery_blinded_ct(
     nonce_blind.value(),
     nonce.value(),
@@ -2791,7 +2865,7 @@ fn reduce_digest_for_scalar<const L: usize>(digest: &[u8], modulus: Uint<L>) -> 
 
 #[cfg(target_arch = "s390x")]
 fn reduce_wide_order_nonzero<const L: usize, const N: usize>(bytes: &[u8; N], modulus: &'static Modulus<L>) -> Uint<L> {
-  reduce_wide_order_nonzero_shift_ct(bytes, modulus)
+  reduce_wide_order_nonzero_fold_ct(bytes, modulus)
 }
 
 #[cfg(not(target_arch = "s390x"))]
@@ -2898,18 +2972,25 @@ fn scalar_blind_from_be_slice<const L: usize>(bytes: &[u8]) -> SecretScalar<L> {
 }
 
 #[cfg(any(test, target_arch = "s390x"))]
-fn reduce_wide_order_nonzero_shift_ct<const L: usize, const N: usize>(
+fn reduce_wide_order_nonzero_fold_ct<const L: usize, const N: usize>(
   bytes: &[u8; N],
   modulus: &'static Modulus<L>,
 ) -> Uint<L> {
-  let mut acc = Uint::ZERO;
-  for &byte in bytes {
-    for _ in 0..u8::BITS {
-      acc = acc.add_mod_ct(&acc, modulus.value);
-    }
-    acc = acc.add_mod_ct(&Uint::from_u64(u64::from(byte)), modulus.value);
-  }
-  Uint::select(acc, Uint::ONE, acc.ct_is_zero_mask())
+  let scalar_bytes = L.strict_mul(8);
+  debug_assert_eq!(N, scalar_bytes.strict_mul(2));
+  let (high_bytes, low_bytes) = bytes.split_at(scalar_bytes);
+  let high = SecretScalar::from_be_slice(high_bytes);
+  let low = SecretScalar::from_be_slice(low_bytes);
+  let high_reduced = SecretScalar::new(high.value().reduce_once_ct(modulus.value));
+  let low_reduced = SecretScalar::new(low.value().reduce_once_ct(modulus.value));
+
+  // With R = 2^(64L), bytes = high*R + low. Both halves are below R,
+  // and the NIST orders are above R/2, so one subtraction normalizes each
+  // half. Montgomery conversion computes high*R mod n in one fixed-width
+  // product instead of replaying one modular doubling for every input bit.
+  let folded_high = SecretScalar::new(montgomery_mul(high_reduced.value(), modulus.r2, modulus));
+  let reduced = folded_high.value().add_mod_ct(&low_reduced.value(), modulus.value);
+  Uint::select(reduced, Uint::ONE, reduced.ct_is_zero_mask())
 }
 
 fn is_p256_order_modulus<const L: usize>(modulus: &'static Modulus<L>) -> bool {
@@ -3566,6 +3647,20 @@ pub(crate) fn diag_zeroize_ecdsa_p256_platform_scratch(wide: [u8; 64]) -> u64 {
   core::hint::black_box(inverse.value().0[0])
 }
 
+/// Exercise P-256 safegcd inversion so release tooling can inspect its scratch cleanup.
+#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub(crate) fn diag_zeroize_ecdsa_p256_safegcd_scratch(secret: [u8; 32]) -> u64 {
+  let secret = ZeroizingBytes::new(secret);
+  let scalar = SecretScalar::from_be_bytes(secret.as_array());
+  let inverse = SecretScalar::new(
+    ecdsa_safegcd::invert_order_montgomery(scalar.value(), &P256_ORDER_MODULUS).unwrap_or(Uint::ZERO),
+  );
+  core::hint::black_box(inverse.value().0[0])
+}
+
 /// Derive the deterministic P-256 nonce for `message` and return its scalar limbs.
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_nonce_reduce_limb_digest(secret: [u8; 32], message: &[u8]) -> [u64; 4] {
@@ -3729,6 +3824,20 @@ pub(crate) fn diag_zeroize_ecdsa_p384_platform_scratch(wide: [u8; 96]) -> u64 {
     reduced
       .value()
       .inv_mod_ct_montgomery(&P384_ORDER_MODULUS, P384_ORDER_MINUS_TWO),
+  );
+  core::hint::black_box(inverse.value().0[0])
+}
+
+/// Exercise P-384 safegcd inversion so release tooling can inspect its scratch cleanup.
+#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub(crate) fn diag_zeroize_ecdsa_p384_safegcd_scratch(secret: [u8; 48]) -> u64 {
+  let secret = ZeroizingBytes::new(secret);
+  let scalar = SecretScalar::from_be_bytes(secret.as_array());
+  let inverse = SecretScalar::new(
+    ecdsa_safegcd::invert_order_montgomery(scalar.value(), &P384_ORDER_MODULUS).unwrap_or(Uint::ZERO),
   );
   core::hint::black_box(inverse.value().0[0])
 }
@@ -4503,30 +4612,60 @@ fn sub_p256_field_once(limbs: [u64; 5]) -> Uint<4> {
 
 #[inline(always)]
 fn adc_limb(lhs: u64, rhs: u64, carry: u64) -> (u64, u64) {
-  let (result, overflow0) = lhs.overflowing_add(rhs);
-  let (result, overflow1) = result.overflowing_add(carry);
-  (result, u64::from(overflow0 | overflow1))
+  #[cfg(target_arch = "s390x")]
+  {
+    let low = u64::from(low_u32(lhs))
+      .strict_add(u64::from(low_u32(rhs)))
+      .strict_add(carry);
+    let high = (lhs >> 32).strict_add(rhs >> 32).strict_add(low >> 32);
+    (u64::from(low_u32(low)) | (u64::from(low_u32(high)) << 32), high >> 32)
+  }
+
+  #[cfg(not(target_arch = "s390x"))]
+  {
+    let (result, overflow0) = lhs.overflowing_add(rhs);
+    let (result, overflow1) = result.overflowing_add(carry);
+    (result, u64::from(overflow0 | overflow1))
+  }
 }
 
 #[inline(always)]
 fn sbb_limb(lhs: u64, rhs: u64, borrow: u64) -> (u64, u64) {
-  let (diff, overflow0) = lhs.overflowing_sub(rhs);
-  let (diff, overflow1) = diff.overflowing_sub(borrow);
-  (diff, u64::from(overflow0 | overflow1))
+  #[cfg(target_arch = "s390x")]
+  {
+    let low = i64::from(low_u32(lhs))
+      .strict_sub(i64::from(low_u32(rhs)))
+      .strict_sub(i64::from(low_u32(borrow)));
+    let low_borrow = (low >> 63) & 1;
+    let high = i64::from(low_u32(lhs >> 32))
+      .strict_sub(i64::from(low_u32(rhs >> 32)))
+      .strict_sub(low_borrow);
+    (
+      u64::from(low_u32_signed(low)) | (u64::from(low_u32_signed(high)) << 32),
+      u64::from(low_u32_signed((high >> 63) & 1)),
+    )
+  }
+
+  #[cfg(not(target_arch = "s390x"))]
+  {
+    let (diff, overflow0) = lhs.overflowing_sub(rhs);
+    let (diff, overflow1) = diff.overflowing_sub(borrow);
+    (diff, u64::from(overflow0 | overflow1))
+  }
 }
 
 #[inline(always)]
 fn mac_limb(acc: u64, lhs: u64, rhs: u64, carry: u64) -> (u64, u64) {
   let (product_lo, product_hi) = mul_u64_wide(lhs, rhs);
-  let (result, carry0) = product_lo.overflowing_add(acc);
-  let (result, carry1) = result.overflowing_add(carry);
-  let (high, overflow0) = product_hi.overflowing_add(u64::from(carry0));
-  let (high, overflow1) = high.overflowing_add(u64::from(carry1));
+  let (result, carry0) = adc_limb(product_lo, acc, 0);
+  let (result, carry1) = adc_limb(result, carry, 0);
+  let (high, overflow0) = adc_limb(product_hi, carry0, 0);
+  let (high, overflow1) = adc_limb(high, carry1, 0);
 
   // lhs*rhs + acc + carry is at most 2^128 - 1, so the high limb cannot overflow.
   // Keep that invariant checked in debug builds without emitting secret-fed panic branches
   // in release ECDSA arithmetic.
-  debug_assert!(!overflow0 && !overflow1);
+  debug_assert_eq!(overflow0 | overflow1, 0);
   (result, high)
 }
 
@@ -4757,6 +4896,65 @@ mod tests {
         .strict_add(u128::from(acc))
         .strict_add(u128::from(carry));
       assert_eq!(mac_limb(acc, lhs, rhs, carry), split_u128(expected));
+    }
+  }
+
+  fn assert_safegcd_inverse_matches_vartime<const L: usize>(value: Uint<L>, modulus: &'static Modulus<L>) {
+    let inverse_montgomery =
+      ecdsa_safegcd::invert_order_montgomery(value, modulus).expect("the NIST scalar orders have a safegcd backend");
+    let inverse = montgomery_mul(inverse_montgomery, Uint::ONE, modulus);
+    assert!(inverse == value.inv_mod_vartime(modulus.value));
+
+    let product = mul_mod_montgomery(value, inverse, modulus);
+    let expected = Uint::select(Uint::ONE, Uint::ZERO, value.ct_is_zero_mask());
+    assert!(product == expected);
+  }
+
+  #[test]
+  fn safegcd_scalar_inverses_match_independent_binary_gcd() {
+    let p256_edges = [
+      Uint::ZERO,
+      Uint::ONE,
+      Uint::from_u64(2),
+      P256_ORDER_HALF,
+      P256_ORDER.sub_raw(&Uint::ONE).0,
+    ];
+    for value in p256_edges {
+      assert_safegcd_inverse_matches_vartime(value, &P256_ORDER_MODULUS);
+    }
+
+    let p384_edges = [
+      Uint::ZERO,
+      Uint::ONE,
+      Uint::from_u64(2),
+      P384_ORDER_HALF,
+      P384_ORDER.sub_raw(&Uint::ONE).0,
+    ];
+    for value in p384_edges {
+      assert_safegcd_inverse_matches_vartime(value, &P384_ORDER_MODULUS);
+    }
+
+    let mut state = 0x6a09_e667_f3bc_c909u64;
+    for _ in 0..128 {
+      let mut p256 = Uint::<4>::ZERO;
+      for limb in &mut p256.0 {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        *limb = state;
+      }
+      p256 = p256.reduce_once_ct(P256_ORDER);
+      assert_safegcd_inverse_matches_vartime(p256, &P256_ORDER_MODULUS);
+
+      let mut p384 = Uint::<6>::ZERO;
+      for limb in &mut p384.0 {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        *limb = state;
+      }
+      p384 = p384.reduce_once_ct(P384_ORDER);
+      assert_safegcd_inverse_matches_vartime(p384, &P384_ORDER_MODULUS);
     }
   }
 
@@ -5020,7 +5218,7 @@ mod tests {
     }];
     for wide in p256_wide_inputs {
       let expected = reduce_wide_order_nonzero_owned(&wide, &P256_ORDER_MODULUS);
-      assert!(reduce_wide_order_nonzero_shift_ct(&wide, &P256_ORDER_MODULUS) == expected);
+      assert!(reduce_wide_order_nonzero_fold_ct(&wide, &P256_ORDER_MODULUS) == expected);
     }
 
     let p384_wide_inputs = [[0u8; 96], [0xff; 96], {
@@ -5034,7 +5232,7 @@ mod tests {
     }];
     for wide in p384_wide_inputs {
       let expected = reduce_wide_order_nonzero_owned(&wide, &P384_ORDER_MODULUS);
-      assert!(reduce_wide_order_nonzero_shift_ct(&wide, &P384_ORDER_MODULUS) == expected);
+      assert!(reduce_wide_order_nonzero_fold_ct(&wide, &P384_ORDER_MODULUS) == expected);
     }
 
     let mut state = 0x6a09_e667_f3bc_c909u64;
@@ -5047,7 +5245,7 @@ mod tests {
         *byte = state.to_le_bytes()[0];
       }
       let expected = reduce_wide_order_nonzero_owned(&wide, &P256_ORDER_MODULUS);
-      assert!(reduce_wide_order_nonzero_shift_ct(&wide, &P256_ORDER_MODULUS) == expected);
+      assert!(reduce_wide_order_nonzero_fold_ct(&wide, &P256_ORDER_MODULUS) == expected);
     }
 
     for _ in 0..64 {
@@ -5059,7 +5257,7 @@ mod tests {
         *byte = state.to_le_bytes()[0];
       }
       let expected = reduce_wide_order_nonzero_owned(&wide, &P384_ORDER_MODULUS);
-      assert!(reduce_wide_order_nonzero_shift_ct(&wide, &P384_ORDER_MODULUS) == expected);
+      assert!(reduce_wide_order_nonzero_fold_ct(&wide, &P384_ORDER_MODULUS) == expected);
     }
   }
 

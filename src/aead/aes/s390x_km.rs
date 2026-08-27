@@ -1,44 +1,21 @@
-use super::{EXPANDED_KEY_WORDS, EXPANDED_KEY_WORDS_128};
-
 /// AES-256 key for the KM (Cipher Message) instruction.
 ///
-/// Caches the raw 32-byte key (extracted once at key-expansion time)
-/// alongside the full expanded schedule. This avoids 8 BE serializations
-/// per `encrypt_block` call — critical for GCM-SIV which does 7 AES
-/// calls for even a 0-byte message.
+/// Stores exactly the raw 32-byte parameter block consumed by KM.
 #[repr(C, align(8))]
 pub(in crate::aead) struct KmKey {
   /// Raw 32-byte AES-256 key, ready for the KM parameter block.
   raw: [u8; 32],
-  /// Full expanded schedule (kept for potential future use / uniform sizing).
-  rk: [u32; EXPANDED_KEY_WORDS],
 }
 
 impl KmKey {
-  /// Wrap an already-expanded portable round key schedule for KM.
-  pub(super) fn from_portable(rk: [u32; EXPANDED_KEY_WORDS]) -> Self {
-    // Extract the raw 32-byte key from the first 8 big-endian u32 words.
-    let mut raw = [0u8; 32];
-    let mut i = 0usize;
-    while i < 8 {
-      let off = i.strict_mul(4);
-      let bytes = rk[i].to_be_bytes();
-      raw[off] = bytes[0];
-      raw[off.strict_add(1)] = bytes[1];
-      raw[off.strict_add(2)] = bytes[2];
-      raw[off.strict_add(3)] = bytes[3];
-      i = i.strict_add(1);
-    }
-    Self { raw, rk }
+  /// Copy a raw AES-256 key into the KM parameter-block owner.
+  pub(super) fn new(raw: &[u8; 32]) -> Self {
+    Self { raw: *raw }
   }
 
-  /// Zeroize both the raw key and the full key schedule.
+  /// Zeroize the raw KM parameter block.
   pub(super) fn zeroize(&mut self) {
     crate::traits::ct::zeroize(&mut self.raw);
-    // SAFETY: [u32; 60] is layout-compatible with [u8; 240].
-    let bytes =
-      unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS.strict_mul(4)) };
-    crate::traits::ct::zeroize(bytes);
   }
 }
 
@@ -185,35 +162,17 @@ pub(super) unsafe fn encrypt_blocks(key: &KmKey, blocks: &mut [u8], count: usize
 pub(in crate::aead) struct Km128Key {
   /// Raw 16-byte AES-128 key, ready for the KM parameter block.
   raw: [u8; 16],
-  /// Full expanded schedule (kept for parity with [`KmKey`]).
-  rk: [u32; EXPANDED_KEY_WORDS_128],
 }
 
 impl Km128Key {
-  /// Wrap an already-expanded portable round key schedule for KM.
-  pub(super) fn from_portable(rk: [u32; EXPANDED_KEY_WORDS_128]) -> Self {
-    let mut raw = [0u8; 16];
-    let mut i = 0usize;
-    while i < 4 {
-      let off = i.strict_mul(4);
-      let bytes = rk[i].to_be_bytes();
-      raw[off] = bytes[0];
-      raw[off.strict_add(1)] = bytes[1];
-      raw[off.strict_add(2)] = bytes[2];
-      raw[off.strict_add(3)] = bytes[3];
-      i = i.strict_add(1);
-    }
-    Self { raw, rk }
+  /// Copy a raw AES-128 key into the KM parameter-block owner.
+  pub(super) fn new(raw: &[u8; 16]) -> Self {
+    Self { raw: *raw }
   }
 
-  /// Zeroize both the raw key and the full key schedule.
+  /// Zeroize the raw KM parameter block.
   pub(super) fn zeroize(&mut self) {
     crate::traits::ct::zeroize(&mut self.raw);
-    // SAFETY: [u32; 44] is layout-compatible with [u8; 176].
-    let bytes = unsafe {
-      core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS_128.strict_mul(4))
-    };
-    crate::traits::ct::zeroize(bytes);
   }
 }
 

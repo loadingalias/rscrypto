@@ -3,7 +3,17 @@
 
 from __future__ import annotations
 
-from dudect_report import linker_driver, owner_call_site_counts, owner_symbol_evidence
+from pathlib import Path
+
+from dudect_report import (
+  dudect_case_rows,
+  linker_driver,
+  manifest_dudect_cases,
+  owner_call_site_counts,
+  owner_symbol_evidence,
+)
+from full import validate_dudect_case_report, validated_dudect_case_report
+from toml_compat import tomllib
 
 
 def expect_failure(action) -> None:
@@ -15,6 +25,73 @@ def expect_failure(action) -> None:
 
 
 def main() -> None:
+  root = Path(__file__).resolve().parents[2]
+  with (root / "ct.toml").open("rb") as source:
+    manifest_cases = manifest_dudect_cases(tomllib.load(source))
+
+  baseline_t_values = {
+    "aes128_header_protection_fixed_vs_random_key": 516.75757,
+    "aes256_header_protection_fixed_vs_random_key": 424.57239,
+    "aes_siv_cmac256_fixed_vs_random_key_seal": 418.20301,
+    "aes_siv_cmac256_fixed_vs_random_key_open": 377.36551,
+    "aes_siv_cmac256_portable_s2v_fixed_vs_random_key": 85.85045,
+    "aes_siv_cmac256_portable_s2v_seal_fixed_vs_random_key": 97.96790,
+    "aes_siv_cmac256_portable_open_fixed_vs_random_key": 102.87448,
+    "ecdsa_p256_diag_reduce_wide_fixed_vs_random_input": 609.64484,
+    "ecdsa_p256_diag_nonce_inverse_blinded_fixed_vs_random_secret": 36.62068,
+    "ecdsa_p384_diag_reduce_wide_fixed_vs_random_input": 660.27823,
+  }
+  baseline_rows = dudect_case_rows(
+    {
+      name: {
+        "abs_max_t": abs(max_t),
+        "max_t": max_t,
+      }
+      for name, max_t in baseline_t_values.items()
+    },
+    {},
+    {},
+    manifest_cases,
+    threshold=10.0,
+    requested_samples=20_000,
+  )
+  assert len(baseline_rows) == 10
+  assert all(row["gate"] == "required" for row in baseline_rows)
+  assert sum(row["status"] == "fail" for row in baseline_rows) == 10
+  assert sum(row["status"] == "diagnostic-fail" for row in baseline_rows) == 0
+
+  required_case = manifest_cases["ecdsa_p256_diag_reduce_wide_fixed_vs_random_input"]
+  validate_dudect_case_report(
+    required_case,
+    {"name": required_case["name"], "gate": "required", "status": "fail"},
+  )
+  expect_failure(
+    lambda: validate_dudect_case_report(
+      required_case,
+      {"name": required_case["name"], "gate": "diagnostic", "status": "diagnostic-fail"},
+    )
+  )
+  expect_failure(
+    lambda: validate_dudect_case_report(
+      required_case,
+      {"name": required_case["name"], "gate": "required", "status": "diagnostic-fail"},
+    )
+  )
+  valid_required_row = {"name": required_case["name"], "gate": "required", "status": "fail"}
+  assert validated_dudect_case_report(required_case, {"cases": [valid_required_row]}) == valid_required_row
+  expect_failure(lambda: validated_dudect_case_report(required_case, {"cases": []}))
+  expect_failure(lambda: validated_dudect_case_report(required_case, {"cases": [valid_required_row] * 2}))
+  expect_failure(
+    lambda: dudect_case_rows(
+      {"undeclared_case": {"abs_max_t": 11.0}},
+      {},
+      {},
+      manifest_cases,
+      threshold=10.0,
+      requested_samples=20_000,
+    )
+  )
+
   power_linker_command = (
     'LC_ALL="C" PATH="/usr/local/bin:/usr/bin" VSLANG="1033" "cc" "-m64" '
     '"/tmp/rustc/first.o" "input.o" "-o" "/tmp/rscrypto-ct-dudect"'

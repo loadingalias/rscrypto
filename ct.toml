@@ -992,7 +992,7 @@ left_class = "P-256 diagnostic order reduction of fixed wide input"
 right_class = "P-256 diagnostic order reduction of random wide input"
 samples = 20000
 smoke_samples = 2000
-notes = "Required leaf evidence for the multiplication-free fixed-work s390x wide nonce reduction path."
+notes = "Required leaf evidence for the s390x fixed-work algebraic wide-nonce fold backed by scalar-multiply-free Montgomery arithmetic."
 
 [[dudect_case]]
 name = "ecdsa_p256_diag_basepoint_blinded_fixed_vs_random_secret"
@@ -1089,7 +1089,7 @@ left_class = "P-384 diagnostic order reduction of fixed wide input"
 right_class = "P-384 diagnostic order reduction of random wide input"
 samples = 20000
 smoke_samples = 2000
-notes = "Required leaf evidence for the multiplication-free fixed-work s390x wide nonce reduction path."
+notes = "Required leaf evidence for the s390x fixed-work algebraic wide-nonce fold backed by scalar-multiply-free Montgomery arithmetic."
 
 [[dudect_case]]
 name = "ecdsa_p384_diag_basepoint_blinded_fixed_vs_random_secret"
@@ -4347,7 +4347,7 @@ public = ["message", "message_length", "signature"]
 may_leak = ["message_length", "signature"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "Release CT evidence covers the blinded signing APIs. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while P-256 portable blinded signing adds a random multiple of the group order and blinds the projective accumulator before fixed-base multiplication, reblinds before affine conversion, and masks the private-scalar product. On s390x, multiplication-free shift/add arithmetic reduces the wide nonce, while two independent caller-random scalars mask projective and order arithmetic around the multiplication-free order kernel. RISC-V secret-fed limb products remain multiplication-free and subject to the native timing gate."
+notes = "Release CT evidence covers the blinded signing APIs. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while P-256 portable blinded signing adds a random multiple of the group order and blinds the projective accumulator before fixed-base multiplication, reblinds before affine conversion, and masks the private-scalar product. On s390x, a fixed-work algebraic fold reduces the wide nonce, fixed-iteration divsteps invert scalar-order values, and two independent caller-random scalars mask projective and order arithmetic around scalar-multiply-free kernels. RISC-V secret-fed limb products remain scalar-multiply-free and subject to the native timing gate."
 [primitive.harness]
 status = "covered"
 symbols = ["ct_entry_ecdsa_p256_sign"]
@@ -4363,7 +4363,7 @@ public = ["message", "message_length", "signature"]
 may_leak = ["message_length", "signature"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "Release CT evidence covers the blinded signing APIs. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while portable blinded signing blinds the projective accumulator before fixed-base multiplication, reblinds before affine conversion, and masks the private-scalar product. On s390x, multiplication-free shift/add arithmetic reduces the wide nonce, while two independent caller-random scalars mask projective and order arithmetic around the multiplication-free order kernel. RISC-V secret-fed limb products remain multiplication-free and subject to the native timing gate."
+notes = "Release CT evidence covers the blinded signing APIs. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while portable blinded signing blinds the projective accumulator before fixed-base multiplication, reblinds before affine conversion, and masks the private-scalar product. On s390x, a fixed-work algebraic fold reduces the wide nonce, fixed-iteration divsteps invert scalar-order values, and two independent caller-random scalars mask projective and order arithmetic around scalar-multiply-free kernels. RISC-V secret-fed limb products remain scalar-multiply-free and subject to the native timing gate."
 [primitive.harness]
 status = "covered"
 symbols = ["ct_entry_ecdsa_p384_sign"]

@@ -1,6 +1,6 @@
 use rscrypto::{
-  AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, Blake2b512, Blake3, Digest, RsaPrivateKey,
-  RsaPrivateOpError, RsaPssProfile, RsaPublicKeyPolicy, Sha256, Sha512,
+  AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, Blake2b512, Blake3, Digest, EcdsaP256SecretKey,
+  EcdsaP384SecretKey, RsaPrivateKey, RsaPrivateOpError, RsaPssProfile, RsaPublicKeyPolicy, Sha256, Sha512,
 };
 use rscrypto::aead::expert::header_protection::{
   Aes128HeaderProtection, Aes128HeaderProtectionKey, Aes256HeaderProtection, Aes256HeaderProtectionKey,
@@ -260,6 +260,34 @@ fn assert_aes_siv_runtime_vector_and_failed_open_cleanup() {
   assert_eq!(opened, [0u8; 33]);
 }
 
+fn assert_ecdsa_portable_signing_roundtrips() {
+  let message = b"rscrypto portable ECDSA signing on wasm32-wasip1";
+
+  let p256 = EcdsaP256SecretKey::from_bytes([0x42; EcdsaP256SecretKey::LENGTH])
+    .expect("fixed P-256 scalar is valid");
+  let p256_signature = p256.try_sign(message).expect("portable P-256 signing must succeed");
+  let p256_blinded = p256
+    .try_sign_blinded(message, |blind| blind.fill(0xa6))
+    .expect("portable blinded P-256 signing must succeed");
+  assert_eq!(p256_signature, p256_blinded);
+  p256
+    .public_key()
+    .verify(message, &p256_signature)
+    .expect("portable P-256 signature must verify");
+
+  let p384 = EcdsaP384SecretKey::from_bytes([0x24; EcdsaP384SecretKey::LENGTH])
+    .expect("fixed P-384 scalar is valid");
+  let p384_signature = p384.try_sign(message).expect("portable P-384 signing must succeed");
+  let p384_blinded = p384
+    .try_sign_blinded(message, |blind| blind.fill(0x5c))
+    .expect("portable blinded P-384 signing must succeed");
+  assert_eq!(p384_signature, p384_blinded);
+  p384
+    .public_key()
+    .verify(message, &p384_signature)
+    .expect("portable P-384 signature must verify");
+}
+
 #[cfg(target_feature = "simd128")]
 fn assert_simd128_runtime_caps_are_detected() {
   assert!(rscrypto::platform::caps().has(rscrypto::platform::caps::wasm::SIMD128));
@@ -275,5 +303,6 @@ fn main() {
   assert_websocket_accept_digest_matches_rfc_6455();
   assert_header_protection_vectors_match_known_outputs();
   assert_aes_siv_runtime_vector_and_failed_open_cleanup();
+  assert_ecdsa_portable_signing_roundtrips();
   assert_simd128_runtime_caps_are_detected();
 }

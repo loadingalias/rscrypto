@@ -159,12 +159,16 @@ multiply instructions. The release artifact heuristic rejects scalar multiply
 in those CT evidence closures; native DudeCT remains required because this
 generated-code property is necessary, not sufficient.
 
-ECDSA P-256/P-384 signing uses multiplication-free, fixed-work limb arithmetic
+ECDSA P-256/P-384 signing uses scalar-multiply-free, fixed-work limb arithmetic
 on s390x and RISC-V to avoid the variable-latency scalar multiply observed in
-earlier native runs. That source and disassembly property is necessary, not
-sufficient. On s390x, wide nonce reduction uses multiplication-free fixed-work
-shift/add arithmetic. Caller-blinded signing splits the supplied CSPRNG buffer
-into independent scalar masks for projective arithmetic and for private-product,
+earlier native runs. The fallback consumes four multiplier bits per round with
+masked additions, and the release artifact heuristic rejects scalar multiply,
+divide, and indirect jumps in the evidence closure. Those generated-code
+properties are necessary, not sufficient. On s390x, a fixed-work algebraic fold
+reduces the wide nonce; scalar-order inversion uses modulus-specific,
+fixed-iteration Bernstein--Yang divsteps where platform inversion assembly is
+unavailable. Caller-blinded signing splits the supplied CSPRNG buffer into
+independent scalar masks for projective arithmetic and for private-product,
 nonce-inversion, and final-scalar arithmetic. Both targets are promoted only
 after their native required DudeCT cases pass in the matching release evidence.
 

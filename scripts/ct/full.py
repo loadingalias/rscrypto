@@ -351,6 +351,31 @@ def load_json_if_exists(path: Path) -> dict[str, Any] | None:
     return None
 
 
+def validate_dudect_case_report(manifest_case: dict[str, Any], reported_case: dict[str, Any]) -> None:
+  name = str(manifest_case["name"])
+  manifest_gate = str(manifest_case.get("gate", "required"))
+  reported_gate = str(reported_case.get("gate", "required"))
+  if reported_case.get("name") != name:
+    raise ValueError(
+      f"DudeCT child report returned case {reported_case.get('name')!r} while {name!r} was requested"
+    )
+  if reported_gate != manifest_gate:
+    raise ValueError(
+      f"DudeCT case {name!r} gate disagrees with ct.toml: report={reported_gate!r}, manifest={manifest_gate!r}"
+    )
+  if manifest_gate != "diagnostic" and reported_case.get("status") == "diagnostic-fail":
+    raise ValueError(f"manifest-required DudeCT case {name!r} cannot report diagnostic-fail")
+
+
+def validated_dudect_case_report(manifest_case: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
+  name = str(manifest_case["name"])
+  matches = [row for row in report.get("cases", []) if row.get("name") == name]
+  if len(matches) != 1:
+    raise ValueError(f"DudeCT child report must contain exactly one result for requested case {name!r}")
+  validate_dudect_case_report(manifest_case, matches[0])
+  return matches[0]
+
+
 def candidate_identity(out_dir: Path) -> dict[str, Any]:
   provenance_path = out_dir / "provenance.json"
   provenance = load_json_if_exists(provenance_path)
@@ -455,15 +480,9 @@ def dudect_case_result(
   status = result.status
   failure_count = None
   if report is not None:
-    failure_count = report.get("failure_count")
-    for row in report.get("cases", []):
-      if row.get("name") == case["name"]:
-        case_report = row
-        status = str(row.get("status", status))
-        failure_count = 1 if status == "fail" else 0
-        break
-    if case_report is None and failure_count:
-      status = "fail"
+    case_report = validated_dudect_case_report(case, report)
+    status = str(case_report.get("status", status))
+    failure_count = 1 if status == "fail" else 0
 
   row = {
     "name": case["name"],
@@ -507,6 +526,7 @@ def dudect_case_result(
       "features",
       "default_features",
       "backend",
+      "ct_manifest_sha256",
       "profile_settings",
       "dudect_manifest_sha256",
       "harness_manifest_sha256",
