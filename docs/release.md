@@ -27,11 +27,11 @@ never run `cargo publish` locally.
 
    This creates a `rail/release-*` branch, commits the generated version and
    changelog, opens a pull request, refreshes the standalone constant-time tool
-   lockfiles, and pushes that follow-up commit. It does not tag or publish.
-   The adapter is required because Cargo Rail does not yet include auxiliary
-   workspace lockfiles in its release mutation. Running `cargo rail release
-run rscrypto --bump auto --yes --pr` directly would leave the CT workspaces
-   stale under `--locked`.
+   lockfiles and the WASM runtime-vector lockfile, and pushes that follow-up
+   commit. It does not tag or publish. The adapter is required because Cargo
+   Rail does not yet include auxiliary workspace lockfiles in its release
+   mutation. Running `cargo rail release run rscrypto --bump auto --yes --pr`
+   directly would leave the standalone tool workspaces stale under `--locked`.
 
 3. Wait for the release pull request's required `Complete` check. Review the
    version, changelog, and lockfile diff, then merge it in the GitHub UI.
@@ -157,10 +157,10 @@ exact release candidate; scheduled assurance does not. Release preflight
 consumes the release-mode result instead of recompiling it.
 
 `release-prepare` delegates the version, changelog, branch, commit, and pull
-request to Cargo Rail, then synchronizes the three standalone CT lockfiles.
-After that pull request merges, `release-tag` deliberately does not rerun the
-consumed pending-intent check. It proves live repository controls and
-exact-commit release evidence before using `cargo rail release finalize
+request to Cargo Rail, then synchronizes the standalone CT and WASM runtime
+lockfiles. After that pull request merges, `release-tag` deliberately does not
+rerun the consumed pending-intent check. It proves live repository controls
+and exact-commit release evidence before using `cargo rail release finalize
 --skip-publish` to create and push the signed tag.
 
 To inspect live repository controls without starting a release:

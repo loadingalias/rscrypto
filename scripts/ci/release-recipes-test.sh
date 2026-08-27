@@ -10,6 +10,20 @@ push_recipe=$(cd "$REPO_ROOT" && just --dry-run push 2>&1)
 
 grep -Fq "cargo rail release check rscrypto --extended" <<<"$prepare_recipe"
 grep -Fq "cargo rail release run rscrypto --bump auto --yes --pr" <<<"$prepare_recipe"
+for manifest in \
+  tools/ct-harness/Cargo.toml \
+  tools/ct-dudect/Cargo.toml \
+  tools/ct-binsec-harness/Cargo.toml \
+  tools/wasm-runtime-vectors/Cargo.toml; do
+  grep -Fq "cargo update --manifest-path $manifest -p rscrypto" <<<"$prepare_recipe"
+done
+for lockfile in \
+  tools/ct-harness/Cargo.lock \
+  tools/ct-dudect/Cargo.lock \
+  tools/ct-binsec-harness/Cargo.lock \
+  tools/wasm-runtime-vectors/Cargo.lock; do
+  grep -Fq "$lockfile" <<<"$prepare_recipe"
+done
 grep -Fq "git push" <<<"$prepare_recipe"
 grep -Fq "cargo rail release finalize rscrypto --yes --skip-publish" <<<"$tag_recipe"
 # shellcheck disable=SC2016 # Match the literal command rendered by just.
