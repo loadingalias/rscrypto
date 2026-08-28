@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: repository-controls-evidence.sh --commit SHA --output PATH [--repo OWNER/REPO] [--root PATH] [--allow-redacted-bypass]" >&2
+  echo "usage: repository-controls-evidence.sh --commit SHA --output PATH [--repo OWNER/REPO] [--root PATH] [--policy-root PATH] [--allow-redacted-bypass]" >&2
   exit 2
 }
 
@@ -10,6 +10,7 @@ commit=""
 output=""
 repo="${GITHUB_REPOSITORY:-loadingalias/rscrypto}"
 root="$(git rev-parse --show-toplevel)"
+policy_root=""
 allow_redacted_bypass=false
 
 while [[ $# -gt 0 ]]; do
@@ -30,6 +31,10 @@ while [[ $# -gt 0 ]]; do
       root=${2:-}
       shift 2
       ;;
+    --policy-root)
+      policy_root=${2:-}
+      shift 2
+      ;;
     --allow-redacted-bypass)
       allow_redacted_bypass=true
       shift
@@ -46,9 +51,13 @@ git -C "$root" cat-file -e "$commit^{commit}" 2>/dev/null || {
   exit 1
 }
 
-policy_path="$root/.github/rulesets/protect-main.json"
-tag_policy_path="$root/.github/rulesets/protect-release-tags.json"
-immutability_policy_path="$root/.github/repository-settings/release-immutability.json"
+if [[ -z "$policy_root" ]]; then
+  policy_root=$root
+fi
+
+policy_path="$policy_root/.github/rulesets/protect-main.json"
+tag_policy_path="$policy_root/.github/rulesets/protect-release-tags.json"
+immutability_policy_path="$policy_root/.github/repository-settings/release-immutability.json"
 [[ -f "$policy_path" ]] || {
   echo "repository controls error: missing policy $policy_path" >&2
   exit 1

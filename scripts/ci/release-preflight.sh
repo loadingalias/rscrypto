@@ -8,14 +8,16 @@ Usage: scripts/ci/release-preflight.sh [options]
 Validate a tag-triggered release before any publish step.
 
 Options:
-  --crate NAME   Crate to release (default: rscrypto)
-  --tag TAG      Git tag to validate (default: GITHUB_REF_NAME)
-  -h, --help     Show this help
+  --crate NAME                  Crate to release (default: rscrypto)
+  --tag TAG                     Git tag to validate (default: GITHUB_REF_NAME)
+  --dependency-policy-root PATH Use a reviewed compatible lockfile for recovery
+  -h, --help                    Show this help
 EOF
 }
 
 crate="rscrypto"
 tag="${GITHUB_REF_NAME:-}"
+dependency_policy_root=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -25,6 +27,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --tag)
       tag="${2:?missing value for --tag}"
+      shift 2
+      ;;
+    --dependency-policy-root)
+      dependency_policy_root="${2:?missing value for --dependency-policy-root}"
       shift 2
       ;;
     -h | --help)
@@ -106,15 +112,70 @@ if ! grep -qE "^## \\[$tag_version\\]" CHANGELOG.md; then
   exit 1
 fi
 
+if [[ -z "$dependency_policy_root" ]]; then
+  dependency_policy_root=$PWD
+fi
+dependency_policy_root="$(cd "$dependency_policy_root" && pwd)"
+for policy_input in Cargo.toml Cargo.lock deny.toml; do
+  if [[ ! -f "$dependency_policy_root/$policy_input" ]]; then
+    echo "dependency policy root is missing $policy_input: $dependency_policy_root" >&2
+    exit 1
+  fi
+done
+if [[ "$dependency_policy_root" != "$PWD" ]]; then
+  for invariant_input in Cargo.toml deny.toml; do
+    if ! cmp -s "$invariant_input" "$dependency_policy_root/$invariant_input"; then
+      echo "reviewed recovery $invariant_input does not match the release tag" >&2
+      exit 1
+    fi
+  done
+  "$python_bin" - "$PWD/Cargo.lock" "$dependency_policy_root/Cargo.lock" <<'PY'
+import sys
+import tomllib
+
+tag_path, recovery_path = sys.argv[1:]
+
+with open(tag_path, "rb") as tag_file:
+    tag_packages = tomllib.load(tag_file)["package"]
+with open(recovery_path, "rb") as recovery_file:
+    recovery_packages = tomllib.load(recovery_file)["package"]
+
+tag_chacha = [package for package in tag_packages if package["name"] == "chacha20"]
+recovery_chacha = [package for package in recovery_packages if package["name"] == "chacha20"]
+if len(tag_chacha) != 1 or len(recovery_chacha) != 1:
+    raise SystemExit("release recovery requires exactly one chacha20 package in each lockfile")
+
+if tag_chacha[0]["version"] != "0.10.1" or recovery_chacha[0]["version"] != "0.10.2":
+    raise SystemExit("release recovery permits only chacha20 0.10.1 -> 0.10.2")
+
+tag_normalized = dict(tag_chacha[0])
+recovery_normalized = dict(recovery_chacha[0])
+for package in (tag_normalized, recovery_normalized):
+    package.pop("version")
+    package.pop("checksum")
+if tag_normalized != recovery_normalized:
+    raise SystemExit("chacha20 dependency metadata changed beyond version and checksum")
+
+tag_unchanged = [package for package in tag_packages if package["name"] != "chacha20"]
+recovery_unchanged = [package for package in recovery_packages if package["name"] != "chacha20"]
+if tag_unchanged != recovery_unchanged:
+    raise SystemExit("reviewed recovery lock changes packages other than chacha20")
+PY
+  echo "Using reviewed recovery dependency policy: $dependency_policy_root"
+fi
+
 cargo rail config validate --strict
 cargo rail config migrate --check
 # Exact-commit Weekly release mode owns exhaustive compiler-backed Cargo graph
 # assurance. The release evidence gate verifies that named job before publication.
-cargo deny --locked check all
-# RustCrypto `rsa` is used only as a dev/test/bench oracle. Production RSA
-# verification is implemented in `src/auth/rsa.rs`; keep this scoped to the
-# known Marvin advisory until the oracle dependency is removed or fixed.
-cargo audit --ignore RUSTSEC-2023-0071
+(
+  cd "$dependency_policy_root"
+  cargo deny --locked check all
+  # RustCrypto `rsa` is used only as a dev/test/bench oracle. Production RSA
+  # verification is implemented in `src/auth/rsa.rs`; keep this scoped to the
+  # known Marvin advisory until the oracle dependency is removed or fixed.
+  cargo audit --ignore RUSTSEC-2023-0071
+)
 
 # `cargo rail release check` is a pre-tag gate. The release run consumes
 # `.changes` files before creating the signed tag, so tag preflight
