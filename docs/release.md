@@ -216,8 +216,8 @@ reviewed recovery path from `main`:
 gh workflow run release.yaml --ref main -f tag=vX.Y.Z
 ```
 
-If release packaging rejects only the s390x CT artifact, regenerate that lane
-against the existing tag before dispatching recovery:
+If release packaging rejects one supported CT artifact group, regenerate that
+group against the existing tag before dispatching recovery. For s390x:
 
 ```bash
 gh workflow run ct.yaml --ref main \
@@ -232,12 +232,30 @@ gh workflow run release.yaml --ref main \
   -f s390x_ct_run=RUN_ID
 ```
 
+For x86_64, the recovery group is all four physical timing lanes and runs them
+in parallel:
+
+```bash
+gh workflow run ct.yaml --ref main \
+  -f platforms=amd-zen4,intel-spr,intel-icl,amd-zen5 \
+  -f dudect_gate=required \
+  -f upload_raw_artifacts=true \
+  -f artifact_retention_days=90 \
+  -f release_tag=vX.Y.Z
+
+gh workflow run release.yaml --ref main \
+  -f tag=vX.Y.Z \
+  -f x86_64_ct_run=RUN_ID
+```
+
 Run both dispatches from the same reviewed `main` commit. The CT recovery is
-limited to the complete native s390x lane and checks out the immutable tag;
-the release preflight rejects any replacement run from another workflow,
+limited to a complete supported platform group and checks out the immutable
+tag; the release preflight rejects any replacement run from another workflow,
 branch, repository, or commit. The normal release evidence packager then
-validates the replacement artifact's tag commit, crate version, cases, hashes,
-and target provenance before publication.
+validates every replacement artifact's tag commit, crate version, cases,
+hashes, and target provenance before publication. The v0.9.0 x86_64 recovery
+records a lint-only `unreachable-code` allowance needed to compile that tag's
+AVX2/AVX-512 BINSEC harness; later tags use the corrected source structure.
 
 Recovery checks out the existing annotated tag, verifies its allowed signature,
 and binds the package, evidence, release manifest, and release notes to the

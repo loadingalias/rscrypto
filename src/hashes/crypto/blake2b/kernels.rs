@@ -232,7 +232,7 @@ pub(crate) const COMPILE_TIME_HW: bool = cfg!(any(
 pub(crate) fn compile_time_best() -> CompressFn {
   #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512vl"))]
   {
-    return compress_x86_avx512vl;
+    compress_x86_avx512vl
   }
   #[cfg(all(
     target_arch = "x86_64",
@@ -240,16 +240,22 @@ pub(crate) fn compile_time_best() -> CompressFn {
     not(all(target_feature = "avx512f", target_feature = "avx512vl"))
   ))]
   {
-    return compress_x86_avx2;
+    compress_x86_avx2
   }
-  compress
+  #[cfg(not(any(
+    all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512vl"),
+    all(target_arch = "x86_64", target_feature = "avx2")
+  )))]
+  {
+    compress
+  }
 }
 
 #[inline(always)]
 pub(crate) fn compile_time_best_blocks() -> CompressBlocksFn {
   #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512vl"))]
   {
-    return compress_blocks_x86_avx512vl;
+    compress_blocks_x86_avx512vl
   }
   #[cfg(all(
     target_arch = "x86_64",
@@ -257,9 +263,15 @@ pub(crate) fn compile_time_best_blocks() -> CompressBlocksFn {
     not(all(target_feature = "avx512f", target_feature = "avx512vl"))
   ))]
   {
-    return compress_blocks_x86_avx2;
+    compress_blocks_x86_avx2
   }
-  compress_blocks_portable
+  #[cfg(not(any(
+    all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512vl"),
+    all(target_arch = "x86_64", target_feature = "avx2")
+  )))]
+  {
+    compress_blocks_portable
+  }
 }
 
 /// Blake2b initialization vectors (same as SHA-512 fractional parts).
