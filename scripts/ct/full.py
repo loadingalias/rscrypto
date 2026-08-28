@@ -924,12 +924,9 @@ def build_findings(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
   findings: list[dict[str, Any]] = []
   diagnostics: list[dict[str, Any]] = []
-  has_binsec_kernel_reports = bool(binsec_kernels)
 
   for step in steps:
     if step["status"] not in {"fail", "timeout"}:
-      continue
-    if step["name"] == "ct-binsec" and has_binsec_kernel_reports:
       continue
     findings.append(
       {

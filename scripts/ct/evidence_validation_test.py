@@ -16,7 +16,7 @@ from asm_heuristics import (
   summarize,
   summarize_closure,
 )
-from full import configure_target_environment
+from full import build_findings, configure_target_environment
 from provenance import codegen_value
 from symbolize_linked_binary import (
   Symbol,
@@ -141,6 +141,22 @@ def main() -> None:
   unrelated_environment: dict[str, str] = {}
   configure_target_environment("powerpc64le-unknown-linux-gnu", unrelated_environment)
   assert unrelated_environment == {}
+
+  findings, diagnostics = build_findings(
+    [{"name": "ct-binsec", "status": "fail"}],
+    [],
+    [{"kernel": "completed-before-failure", "required": True, "status": "secure"}],
+    [],
+  )
+  assert diagnostics == []
+  assert findings == [
+    {
+      "kind": "gate_failure",
+      "category": "tooling_failure",
+      "severity": "blocker",
+      "summary": "ct-binsec failed before complete evidence could be collected",
+    }
+  ]
 
   captured_rustdoc: dict[str, object] = {}
   original_run = manifest_validation.subprocess.run

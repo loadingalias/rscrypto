@@ -97,6 +97,18 @@ yq eval '(.jobs.preflight.steps[] | select(.name == "Verify s390x CT recovery ev
   "$unvalidated_s390x_recovery/.github/workflows/release.yaml"
 expect_failure "$unvalidated_s390x_recovery" "release accepts unvalidated replacement s390x evidence"
 
+unvalidated_x86_64_recovery="$TMP_ROOT/unvalidated-x86_64-recovery"
+make_fixture "$unvalidated_x86_64_recovery"
+yq eval '(.jobs.preflight.steps[] | select(.name == "Verify x86_64 CT recovery evidence") | .run) = "true"' -i \
+  "$unvalidated_x86_64_recovery/.github/workflows/release.yaml"
+expect_failure "$unvalidated_x86_64_recovery" "release accepts unvalidated replacement x86_64 evidence"
+
+unplanned_recovery_rustflags="$TMP_ROOT/unplanned-recovery-rustflags"
+make_fixture "$unplanned_recovery_rustflags"
+yq eval '(.jobs.ct.with.rustflags) = "-A warnings"' -i \
+  "$unplanned_recovery_rustflags/.github/workflows/ct.yaml"
+expect_failure "$unplanned_recovery_rustflags" "CT recovery accepts unplanned compiler flags"
+
 mutable_publish_checkout="$TMP_ROOT/mutable-publish-checkout"
 make_fixture "$mutable_publish_checkout"
 yq eval '(.jobs.publish.steps[] | select(.name == "Checkout") | .with.ref) = "${{ github.ref }}"' -i \
@@ -309,9 +321,8 @@ expect_failure "$unsupported_typed_operation" "reusable Rust job caller selects 
 
 evaluated_workflow_input="$TMP_ROOT/evaluated-workflow-input"
 make_fixture "$evaluated_workflow_input"
-sed -i.bak 's#run: scripts/ci/run-rust-job.sh#run: echo "${{ inputs.operation }}"#' \
+yq eval '(.jobs.run.steps[] | select(.name == "Run") | .run) = "echo \"${{ inputs.operation }}\""' -i \
   "$evaluated_workflow_input/.github/workflows/_rust-job.yaml"
-rm -f "$evaluated_workflow_input/.github/workflows/_rust-job.yaml.bak"
 expect_failure "$evaluated_workflow_input" "workflow input is evaluated as shell code"
 
 duplicate_matrix="$TMP_ROOT/duplicate-matrix"

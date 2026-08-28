@@ -81,6 +81,10 @@ on:
         required: false
         type: number
         default: 900
+      rustflags:
+        required: false
+        type: string
+        default: ""
       upload_raw_artifacts:
         required: false
         type: boolean
@@ -130,6 +134,7 @@ jobs:
         shell: bash
         env:
           CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_RUSTFLAGS: ${{ inputs.target == 's390x-unknown-linux-gnu' && '-C target-feature=+vector' || '' }}
+          RSCRYPTO_CI_RUSTFLAGS: ${{ inputs.rustflags }}
           RSCRYPTO_CI_OPERATION: ${{ inputs.operation }}
           RSCRYPTO_CI_RUNNER: ${{ inputs.runner }}
           RSCRYPTO_CI_TEST_MODE: ${{ inputs.test_mode }}
@@ -146,7 +151,11 @@ jobs:
           RSCRYPTO_CI_DUDECT_GATE: ${{ inputs.dudect_gate }}
           RSCRYPTO_CI_BINSEC_TIMEOUT: ${{ inputs.binsec_timeout }}
           RSCRYPTO_CI_UPLOAD_RAW_ARTIFACTS: ${{ inputs.upload_raw_artifacts && 'true' || 'false' }}
-        run: scripts/ci/run-rust-job.sh
+        run: |
+          if [[ -n "$RSCRYPTO_CI_RUSTFLAGS" ]]; then
+            export RUSTFLAGS="$RSCRYPTO_CI_RUSTFLAGS"
+          fi
+          exec scripts/ci/run-rust-job.sh
 
       - name: Upload Artifact after completion
         if: ${{ !cancelled() && inputs.artifact_name != '' && inputs.artifact_path != '' && inputs.artifact_always }}

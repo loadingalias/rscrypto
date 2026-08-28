@@ -242,6 +242,8 @@ done < <(
   || fail "the reusable Rust job operation must be typed as a string"
 [[ $(yq eval '.on.workflow_call.inputs.checkout_ref.type' "$RUST_JOB") == "string" ]] \
   || fail "the reusable Rust job checkout ref must be typed as a string"
+[[ $(yq eval '.on.workflow_call.inputs.rustflags.type' "$RUST_JOB") == "string" ]] \
+  || fail "the reusable Rust job rustflags input must be typed as a string"
 # shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
 [[ $(yq eval '.jobs.run.steps[] | select(.name == "Checkout") | .with.ref' "$RUST_JOB") \
   == '${{ inputs.checkout_ref || github.sha }}' ]] \
@@ -250,9 +252,18 @@ done < <(
 [[ $(yq eval '.jobs.run.steps[] | select(.name == "Run") | .env.CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_RUSTFLAGS' "$RUST_JOB") \
   == '${{ inputs.target == '\''s390x-unknown-linux-gnu'\'' && '\''-C target-feature=+vector'\'' || '\'''\'' }}' ]] \
   || fail "s390x CT jobs must share one explicit vector target environment"
+# shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
+[[ $(yq eval '.jobs.run.steps[] | select(.name == "Run") | .env.RSCRYPTO_CI_RUSTFLAGS' "$RUST_JOB") \
+  == '${{ inputs.rustflags }}' ]] \
+  || fail "the reusable Rust job must pass reviewed rustflags as inert environment data"
 [[ $(yq eval '[.jobs.run.steps[] | select(has("run"))] | length' "$RUST_JOB") -eq 1 ]] \
   || fail "the reusable Rust job must expose one fixed command step"
-[[ $(yq eval '.jobs.run.steps[] | select(has("run")) | .run' "$RUST_JOB") == "scripts/ci/run-rust-job.sh" ]] \
+rust_job_run=$(yq eval '.jobs.run.steps[] | select(has("run")) | .run' "$RUST_JOB")
+grep -Fq 'if [[ -n "$RSCRYPTO_CI_RUSTFLAGS" ]]' <<<"$rust_job_run" \
+  || fail "the reusable Rust job must leave RUSTFLAGS unset without a reviewed override"
+grep -Fq 'export RUSTFLAGS="$RSCRYPTO_CI_RUSTFLAGS"' <<<"$rust_job_run" \
+  || fail "the reusable Rust job must export only the reviewed rustflags value"
+grep -Fq 'exec scripts/ci/run-rust-job.sh' <<<"$rust_job_run" \
   || fail "the reusable Rust job must invoke the repository-owned dispatcher"
 # shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
 grep -Fq 'RSCRYPTO_CI_OPERATION: ${{ inputs.operation }}' "$RUST_JOB" \
@@ -496,6 +507,8 @@ grep -Eq 'HOST_ARGS\+=\(--feature-matrix\)' "$CHECK_ALL" \
   || fail "release recovery tag input must be a string"
 [[ $(yq eval '.on.workflow_dispatch.inputs.s390x_ct_run.type' "$RELEASE") == "string" ]] \
   || fail "release recovery s390x CT run input must be a string"
+[[ $(yq eval '.on.workflow_dispatch.inputs.x86_64_ct_run.type' "$RELEASE") == "string" ]] \
+  || fail "release recovery x86_64 CT run input must be a string"
 # shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
 [[ $(yq eval '.jobs.preflight.steps[] | select(.name == "Checkout") | .with.ref' "$RELEASE") \
   == '${{ github.event_name == '\''workflow_dispatch'\'' && inputs.tag || github.ref }}' ]] \
@@ -525,6 +538,15 @@ grep -Fq 'release-ct-recovery-check.sh' <<<"$ct_recovery_step" \
   || fail "release recovery must validate replacement s390x CT evidence"
 grep -Fq -- '--workflow-commit "$WORKFLOW_COMMIT"' <<<"$ct_recovery_step" \
   || fail "replacement s390x CT evidence must come from the reviewed workflow commit"
+grep -Fq -- '--platform-group s390x' <<<"$ct_recovery_step" \
+  || fail "replacement s390x CT evidence must validate the s390x platform group"
+x86_ct_recovery_step=$(yq eval '.jobs.preflight.steps[] | select(.name == "Verify x86_64 CT recovery evidence") | .run' "$RELEASE")
+grep -Fq 'release-ct-recovery-check.sh' <<<"$x86_ct_recovery_step" \
+  || fail "release recovery must validate replacement x86_64 CT evidence"
+grep -Fq -- '--workflow-commit "$WORKFLOW_COMMIT"' <<<"$x86_ct_recovery_step" \
+  || fail "replacement x86_64 CT evidence must come from the reviewed workflow commit"
+grep -Fq -- '--platform-group x86_64' <<<"$x86_ct_recovery_step" \
+  || fail "replacement x86_64 CT evidence must validate the complete x86_64 platform group"
 [[ $(yq -oy -p toml eval '.release.semver_check' "$RAIL_CONFIG") == "off" ]] \
   || fail "pre-1.0 Cargo Rail SemVer enforcement must remain explicitly disabled"
 if grep -ERn 'cargo[ -]semver-checks' "$WORKFLOWS" "$RELEASE_PREFLIGHT" "$INSTALL_TOOLS" >/dev/null; then
@@ -725,6 +747,8 @@ grep -Fq 'run-id: ${{ needs.preflight.outputs.riscv_run_id }}' "$RELEASE" \
   || fail "release must consume RISC-V CT artifacts from the validated RISC-V run"
 grep -Fq 'run-id: ${{ needs.preflight.outputs.s390x_ct_run_id }}' "$RELEASE" \
   || fail "release must consume recovered s390x CT artifacts from the validated recovery run"
+grep -Fq 'run-id: ${{ needs.preflight.outputs.x86_64_ct_run_id }}' "$RELEASE" \
+  || fail "release must consume recovered x86_64 CT artifacts from the validated recovery run"
 [[ $(yq eval '.on.workflow_dispatch.inputs.release_tag.type' "$CT") == "string" ]] \
   || fail "CT recovery release tag input must be a string"
 ct_source_step=$(yq eval '.jobs.plan.steps[] | select(.name == "Resolve CT source") | .run' "$CT")
@@ -732,8 +756,14 @@ grep -Fq 'refs/heads/main' <<<"$ct_source_step" \
   || fail "release CT recovery must reject workflow code outside protected main"
 grep -Fq 'checkout_ref=$RELEASE_TAG' <<<"$ct_source_step" \
   || fail "release CT recovery must bind execution to the immutable tag"
-grep -Fq 'PLATFORMS" != "ibm-s390x' <<<"$ct_source_step" \
-  || fail "release CT recovery must be limited to the s390x lane"
+grep -Fq 'amd-zen4,intel-spr,intel-icl,amd-zen5)' <<<"$ct_source_step" \
+  || fail "release CT recovery must require the complete x86_64 platform group"
+grep -Fq 'ibm-s390x)' <<<"$ct_source_step" \
+  || fail "release CT recovery must retain the complete s390x platform group"
+grep -Fq 'RELEASE_TAG" == "v0.9.0"' <<<"$ct_source_step" \
+  || fail "the x86_64 lint-only recovery allowance must be limited to v0.9.0"
+grep -Fq 'recovery_rustflags="-C target-cpu=x86-64 -A unreachable-code"' <<<"$ct_source_step" \
+  || fail "v0.9.0 x86_64 recovery must preserve baseline codegen while allowing only unreachable-code"
 grep -Fq 'DUDECT_TIMEOUT" != "1800"' <<<"$ct_source_step" \
   || fail "release CT recovery must preserve the release DudeCT timeout"
 grep -Fq 'BINSEC_TIMEOUT" != "900"' <<<"$ct_source_step" \
@@ -745,6 +775,9 @@ grep -Fq 'ARTIFACT_RETENTION_DAYS" != "90"' <<<"$ct_source_step" \
 # shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
 [[ $(yq eval '.jobs.ct.with.checkout_ref' "$CT") == '${{ needs.plan.outputs.checkout_ref }}' ]] \
   || fail "release CT recovery must execute the resolved immutable tag source"
+# shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
+[[ $(yq eval '.jobs.ct.with.rustflags' "$CT") == '${{ needs.plan.outputs.recovery_rustflags }}' ]] \
+  || fail "release CT recovery must pass only plan-resolved rustflags"
 for input_name in dudect_timeout binsec_timeout artifact_retention_days; do
   expected="\${{ fromJSON(format('{0}', inputs.${input_name})) }}"
   [[ $(yq eval ".jobs.ct.with.${input_name}" "$CT") == "$expected" ]] \

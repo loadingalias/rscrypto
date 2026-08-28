@@ -39,7 +39,7 @@ on:
         type: number
         default: 90
       release_tag:
-        description: "Existing release tag whose s390x CT lane must be regenerated."
+        description: "Existing release tag whose supported CT recovery group must be regenerated."
         required: false
         type: string
         default: ""
@@ -85,7 +85,7 @@ on:
         type: number
         default: 90
       release_tag:
-        description: "Existing release tag whose s390x CT lane must be regenerated."
+        description: "Existing release tag whose supported CT recovery group must be regenerated."
         required: false
         type: string
         default: ""
@@ -105,6 +105,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       checkout_ref: ${{ steps.source.outputs.checkout_ref }}
+      recovery_rustflags: ${{ steps.source.outputs.recovery_rustflags }}
       has_targets: ${{ steps.plan.outputs.has_targets }}
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
@@ -131,6 +132,7 @@ jobs:
           set -euo pipefail
           if [[ -z "$RELEASE_TAG" ]]; then
             echo "checkout_ref=" >> "$GITHUB_OUTPUT"
+            echo "recovery_rustflags=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [[ "$EVENT_NAME" != "workflow_dispatch" || "$GITHUB_REF" != "refs/heads/main" ]]; then
@@ -143,14 +145,30 @@ jobs:
           fi
           git rev-parse -q --verify "${RELEASE_TAG}^{tag}" >/dev/null \
             || { echo "release CT recovery requires an annotated tag" >&2; exit 1; }
-          if [[ "$PLATFORMS" != "ibm-s390x" || "$DUDECT_GATE" != "required" \
+          case "$PLATFORMS" in
+            ibm-s390x)
+              recovery_rustflags=""
+              ;;
+            amd-zen4,intel-spr,intel-icl,amd-zen5)
+              recovery_rustflags=""
+              if [[ "$RELEASE_TAG" == "v0.9.0" ]]; then
+                recovery_rustflags="-C target-cpu=x86-64 -A unreachable-code"
+              fi
+              ;;
+            *)
+              echo "release CT recovery must run the complete raw ibm-s390x or x86_64 platform group" >&2
+              exit 1
+              ;;
+          esac
+          if [[ "$DUDECT_GATE" != "required" \
             || -n "$DUDECT_FILTER" || "$UPLOAD_RAW_ARTIFACTS" != "true" \
             || "$ARTIFACT_RETENTION_DAYS" != "90" || "$DUDECT_TIMEOUT" != "1800" \
             || "$BINSEC_TIMEOUT" != "900" ]]; then
-            echo "release CT recovery must run the complete raw ibm-s390x lane with release timeouts and 90-day retention" >&2
+            echo "release CT recovery must use the complete required gate, release timeouts, raw artifacts, and 90-day retention" >&2
             exit 1
           fi
           echo "checkout_ref=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "recovery_rustflags=$recovery_rustflags" >> "$GITHUB_OUTPUT"
 
       - name: Build CT Matrix
         id: plan
@@ -183,6 +201,7 @@ jobs:
       dudect_filter: ${{ inputs.dudect_filter }}
       dudect_gate: ${{ inputs.dudect_gate }}
       binsec_timeout: ${{ fromJSON(format('{0}', inputs.binsec_timeout)) }}
+      rustflags: ${{ needs.plan.outputs.recovery_rustflags }}
       upload_raw_artifacts: ${{ inputs.upload_raw_artifacts }}
       artifact_name: ct-${{ inputs.upload_raw_artifacts && 'raw-' || '' }}${{ matrix.artifact_suffix }}
       artifact_path: target/ct-evidence-package/
