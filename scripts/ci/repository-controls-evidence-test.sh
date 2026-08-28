@@ -141,6 +141,18 @@ grep -Fxq "evidence_name=$(basename "$output")" "$github_output"
 grep -Fxq "evidence_path=$output" "$github_output"
 grep -Eq '^evidence_sha256=[0-9a-f]{64}$' "$github_output"
 
+policy_root="$TMP_ROOT/policy-root"
+mkdir -p "$policy_root/.github/rulesets" "$policy_root/.github/repository-settings"
+cp "$REPO_ROOT/.github/rulesets/protect-main.json" "$policy_root/.github/rulesets/protect-main.json"
+cp "$REPO_ROOT/.github/rulesets/protect-release-tags.json" "$policy_root/.github/rulesets/protect-release-tags.json"
+cp "$REPO_ROOT/.github/repository-settings/release-immutability.json" "$policy_root/.github/repository-settings/release-immutability.json"
+"$CHECKER" \
+  --root "$REPO_ROOT" \
+  --policy-root "$policy_root" \
+  --repo loadingalias/rscrypto \
+  --commit "$EXPECTED_SHA" \
+  --output "$TMP_ROOT/reviewed-policy-root.json" >/dev/null
+
 for mode in bypass inactive missing-check wrong-app wrong-effective missing-tag tag-bypass inactive-tag mutable-tag \
   immutability-disabled immutability-unavailable redacted; do
   if FAKE_GH_MODE=$mode "$CHECKER" \

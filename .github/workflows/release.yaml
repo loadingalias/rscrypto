@@ -136,17 +136,26 @@ jobs:
           cache-url: ${{ vars.CARGO_RAIL_CACHE_URL }}
           cache-mode: read-write
 
+      - name: Release preflight
+        id: preflight
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ steps.identity.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          preflight=scripts/ci/release-preflight.sh
+          recovery_args=()
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            preflight=target/release-automation/scripts/ci/release-preflight.sh
+            recovery_args=(--dependency-policy-root target/release-automation)
+          fi
+          "$preflight" --crate rscrypto --tag "$RELEASE_TAG" "${recovery_args[@]}"
+
       - name: Remove reviewed recovery tooling
         if: github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
           rm -rf target/release-automation
-
-      - name: Release preflight
-        id: preflight
-        env:
-          RELEASE_TAG: ${{ steps.identity.outputs.release_tag }}
-        run: scripts/ci/release-preflight.sh --crate rscrypto --tag "$RELEASE_TAG"
 
       - name: Preserve validated release inputs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -178,6 +187,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           ref: ${{ needs.preflight.outputs.release_tag }}
+
+      - name: Checkout reviewed recovery tooling
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          path: target/release-automation
+          persist-credentials: false
+          ref: ${{ github.sha }}
 
       - name: Setup
         uses: ./.github/actions/setup
@@ -243,13 +261,22 @@ jobs:
         id: repository_controls
         env:
           CRATE_VERSION: ${{ steps.package.outputs.crate_version }}
+          EVENT_NAME: ${{ github.event_name }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_COMMIT: ${{ needs.preflight.outputs.release_commit }}
         run: |
-          scripts/ci/repository-controls-evidence.sh \
+          set -euo pipefail
+          controls=scripts/ci/repository-controls-evidence.sh
+          policy_args=()
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            controls=target/release-automation/scripts/ci/repository-controls-evidence.sh
+            policy_args=(--policy-root target/release-automation)
+          fi
+          "$controls" \
             --commit "$RELEASE_COMMIT" \
             --output "target/repository-controls/rscrypto-${CRATE_VERSION}-repository-controls.json" \
-            --allow-redacted-bypass
+            --allow-redacted-bypass \
+            "${policy_args[@]}"
 
       - name: Attest repository controls
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2

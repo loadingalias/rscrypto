@@ -509,7 +509,17 @@ grep -Fq 'refs/heads/main' <<<"$identity_step" \
   || fail "release recovery must reject workflow code outside protected main"
 recovery_cleanup_step=$(yq eval '.jobs.preflight.steps[] | select(.name == "Remove reviewed recovery tooling") | .run' "$RELEASE")
 grep -Fq 'rm -rf target/release-automation' <<<"$recovery_cleanup_step" \
-  || fail "release recovery must remove its reviewed tooling checkout before preflight"
+  || fail "release recovery must remove its reviewed tooling checkout after preflight"
+recovery_preflight_step=$(yq eval '.jobs.preflight.steps[] | select(.name == "Release preflight") | .run' "$RELEASE")
+grep -Fq 'target/release-automation/scripts/ci/release-preflight.sh' <<<"$recovery_preflight_step" \
+  || fail "release recovery must run reviewed preflight tooling from protected main"
+grep -Fq -- '--dependency-policy-root target/release-automation' <<<"$recovery_preflight_step" \
+  || fail "release recovery must use the reviewed compatible dependency lock"
+recovery_controls_step=$(yq eval '.jobs.publish.steps[] | select(.name == "Capture repository controls") | .run' "$RELEASE")
+grep -Fq 'target/release-automation/scripts/ci/repository-controls-evidence.sh' <<<"$recovery_controls_step" \
+  || fail "release recovery must capture controls with reviewed tooling from protected main"
+grep -Fq -- '--policy-root target/release-automation' <<<"$recovery_controls_step" \
+  || fail "release recovery must use the reviewed repository policy from protected main"
 ct_recovery_step=$(yq eval '.jobs.preflight.steps[] | select(.name == "Verify s390x CT recovery evidence") | .run' "$RELEASE")
 grep -Fq 'release-ct-recovery-check.sh' <<<"$ct_recovery_step" \
   || fail "release recovery must validate replacement s390x CT evidence"
