@@ -307,28 +307,21 @@ aws-lc-sys = "0.44.0"
 bench = false
 
 [[example]]
-name = "basic"
-required-features = ["full", "getrandom"]
-
-[[example]]
 name = "introspect"
-required-features = ["checksums", "hashes", "aead", "diag"]
+required-features = ["crc32", "sha2", "chacha20poly1305", "diag"]
 
 [[example]]
-name = "parallel"
-required-features = ["checksums"]
-
-[[example]]
-name = "password_hashing"
-required-features = ["password-hashing", "getrandom"]
+name = "argon2id_password_hashing"
+path = "examples/password_hashing.rs"
+required-features = ["argon2", "phc-strings", "getrandom"]
 
 [[example]]
 name = "aead_seal_open"
 required-features = ["alloc", "chacha20poly1305", "getrandom"]
 
 [[example]]
-name = "signatures"
-required-features = ["ed25519", "ecdsa-p256", "getrandom"]
+name = "ed25519_sign_verify"
+required-features = ["ed25519", "getrandom"]
 
 [[example]]
 name = "rsa_pss_verify"
@@ -337,6 +330,15 @@ required-features = ["rsa"]
 [[example]]
 name = "mlkem_encapsulation"
 required-features = ["ml-kem", "getrandom"]
+
+[[example]]
+name = "x25519_key_agreement"
+required-features = ["x25519", "getrandom"]
+
+[[test]]
+name = "websocket_accept_digest"
+path = "tests/websocket_sha1.rs"
+required-features = ["websocket-sha1"]
 
 [[bench]]
 name = "aead"
@@ -384,7 +386,7 @@ required-features = ["websocket-sha1"]
 [[bench]]
 name = "ascon"
 harness = false
-required-features = ["ascon-hash"]
+required-features = ["std", "ascon-hash"]
 
 [[bench]]
 name = "auth"

@@ -1,12 +1,12 @@
 macro_rules! define_unit_error {
   (
     $(#[$meta:meta])*
-    $vis:vis struct $name:ident;
+    pub struct $name:ident;
     $display:literal
   ) => {
     $(#[$meta])*
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    $vis struct $name;
+    pub struct $name;
 
     impl $name {
       /// Construct this error value.
@@ -109,7 +109,7 @@ macro_rules! impl_std_io_write_for_digest {
 ))]
 macro_rules! define_target_feature_forwarder {
   (
-    $vis:vis fn $name:ident($($arg:ident : $arg_ty:ty),* $(,)?) $(-> $ret:ty)? {
+    pub(super) fn $name:ident($($arg:ident : $arg_ty:ty),* $(,)?) $(-> $ret:ty)? {
       feature = $feature:literal;
       outer_safety = $outer_safety:literal;
       inner_safety = $inner_safety:literal;
@@ -117,7 +117,7 @@ macro_rules! define_target_feature_forwarder {
     }
   ) => {
     #[inline]
-    $vis fn $name($($arg : $arg_ty),*) $(-> $ret)? {
+    pub(super) fn $name($($arg : $arg_ty),*) $(-> $ret)? {
       // SAFETY: $outer_safety
       unsafe { __target_feature_forwarder_impl($($arg),*) }
     }

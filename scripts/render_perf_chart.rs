@@ -196,12 +196,11 @@ fn extract_readme_geomean(content: &str, line_starts_with: &str) -> Result<f64, 
 }
 
 fn extract_table_metric(content: &str, label: &str) -> Result<ScopeMetric, String> {
-  let needle = format!("| {label} |");
-  let line = content
+  let cells = content
     .lines()
-    .find(|line| line.starts_with(&needle))
+    .map(markdown_cells)
+    .find(|cells| cells.first().copied() == Some(label))
     .ok_or_else(|| format!("OVERVIEW.md: missing table row `{label}`"))?;
-  let cells = markdown_cells(line);
   if cells.len() < 6 {
     return Err(format!(
       "OVERVIEW.md: table row `{label}` has {} cells, expected at least 6",
@@ -594,7 +593,15 @@ fn render_group_bars(svg: &mut String, data: &ChartData) {
     "<line x1=\"{parity_x:.1}\" y1=\"{rule_top:.1}\" x2=\"{parity_x:.1}\" y2=\"{rule_bottom:.1}\" \
 stroke=\"{MUTED}\" stroke-width=\"1\"/>"
   ));
-  mono(svg, parity_x - 15.0, rule_bottom + 12.0, 9, 500, MUTED, GROUP_PARITY_NOTE);
+  mono(
+    svg,
+    parity_x - 15.0,
+    rule_bottom + 12.0,
+    9,
+    500,
+    MUTED,
+    GROUP_PARITY_NOTE,
+  );
 }
 
 /// Axis bounds for the primitive bars: always straddle parity, never clip a bar.

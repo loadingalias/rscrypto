@@ -8,11 +8,16 @@ prepare_recipe=$(cd "$REPO_ROOT" && just --show release-prepare)
 tag_recipe=$(cd "$REPO_ROOT" && just --show release-tag)
 push_recipe=$(cd "$REPO_ROOT" && just --dry-run push 2>&1)
 
-grep -Fq "cargo rail release check rscrypto --extended" <<<"$prepare_recipe"
 grep -Fq "cargo rail release run rscrypto --bump auto --yes --pr" <<<"$prepare_recipe"
-grep -Fq "scripts/ci/sync-release-locks.sh" <<<"$prepare_recipe"
-"$REPO_ROOT/scripts/ci/sync-release-locks.sh" --check
-grep -Fq "git push" <<<"$prepare_recipe"
+if grep -Fq "cargo rail release check" <<<"$prepare_recipe"; then
+  echo "release-prepare must not duplicate the plan built and applied by release run" >&2
+  exit 1
+fi
+if grep -Eq 'sync-release-locks|git (add|commit|push)' <<<"$prepare_recipe"; then
+  echo "release-prepare must remain one Cargo Rail transaction" >&2
+  exit 1
+fi
+[[ $(yq -oy -p toml eval '.release.auxiliary_cargo_manifests | length' "$REPO_ROOT/.config/rail.toml") == "39" ]]
 grep -Fq "cargo rail release finalize rscrypto --yes --skip-publish" <<<"$tag_recipe"
 # shellcheck disable=SC2016 # Match the literal command rendered by just.
 grep -Fq 'scripts/ci/release-evidence-check.sh --commit "$(git rev-parse HEAD)"' <<<"$tag_recipe"

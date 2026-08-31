@@ -3,7 +3,7 @@
 These twelve JSON files are copied byte-for-byte from
 [`C2SP/wycheproof`](https://github.com/C2SP/wycheproof) commit
 `b61843a9a5115bb758134b6a1f5d5e502d445342`, directory
-`testvectors_v1/`.
+`testvectors_v1/`. The upstream repository licenses them under Apache-2.0.
 
 Run `scripts/check/auth-vector-provenance.py` to verify the committed file set
 and SHA-256 digests. Pass `--upstream-root PATH` to additionally require an

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Windows cross-compilation checks via cargo-xwin
-# Usage: check-win.sh [--all] [crate1 crate2 ...]
+# Usage: check-win.sh
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/common.sh
@@ -10,15 +10,14 @@ source "$SCRIPT_DIR/../lib/common.sh"
 # shellcheck source=../lib/targets.sh
 source "$SCRIPT_DIR/../lib/targets.sh"
 
+[[ $# -eq 0 ]] || { echo "Usage: $0" >&2; exit 2; }
+
 # Check for cargo-xwin
 if ! cargo xwin --version >/dev/null 2>&1; then
   echo "Windows targets ${DIM}(skipped)${RESET}"
   skip "cargo-xwin not installed" "cargo install cargo-xwin && brew install llvm"
   exit 0
 fi
-
-# Parse args and set CRATE_FLAGS, SCOPE_DESC
-get_crate_flags "$@"
 
 # Keep cargo-xwin's SDK cache inside the workspace `target/` dir so this script
 # works in sandboxed environments that disallow writes to user cache locations.
@@ -29,7 +28,7 @@ mkdir -p "$XWIN_CACHE_DIR_DEFAULT"
 LOG_DIR=$(mktemp -d)
 trap 'rm -rf "$LOG_DIR"' EXIT
 
-echo "Windows targets ${DIM}($SCOPE_DESC)${RESET}"
+echo "Windows targets ${DIM}(rscrypto)${RESET}"
 
 if [[ ${#WIN_TARGETS[@]} -eq 0 ]]; then
   skip "no Windows targets configured" ".config/target-matrix.json"
@@ -80,10 +79,9 @@ for i in "${!WIN_TARGETS[@]}"; do
   targets[i]="$target"
 
   (
-    # shellcheck disable=SC2086
     if ! XWIN_CACHE_DIR="$target_cache_dir" \
          CARGO_TARGET_DIR="$target_dir" \
-         cargo xwin clippy $CRATE_FLAGS --lib --all-features --locked --target "$target" \
+         cargo xwin clippy -p rscrypto --lib --all-features --locked --target "$target" \
          >"$log_file" 2>&1; then
       exit 1
     fi

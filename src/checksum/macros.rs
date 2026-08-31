@@ -160,13 +160,13 @@ macro_rules! define_crc_dispatch {
 macro_rules! define_buffered_crc {
   (
     $(#[$outer:meta])*
-    $vis:vis struct $name:ident<$inner:ty> {
+    pub struct $name:ident<$inner:ty> {
       buffer_size: $buffer_size:expr,
       threshold_fn: $threshold_fn:expr,
     }
   ) => {
     $(#[$outer])*
-    $vis struct $name {
+    pub struct $name {
       inner: $inner,
       buffer: alloc::boxed::Box<[u8; $buffer_size]>,
       len: usize,

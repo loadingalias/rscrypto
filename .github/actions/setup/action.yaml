@@ -24,11 +24,30 @@ inputs:
     description: Cargo Rail remote authority (read or read-write).
     required: false
     default: "read"
+  cache-access-key-id:
+    description: Caller-selected Cloudflare R2 access key for the requested cache authority.
+    required: false
+    default: ""
+  cache-secret-access-key:
+    description: Caller-selected Cloudflare R2 secret key for the requested cache authority.
+    required: false
+    default: ""
   cache-max-size:
     description: Positive bound for the job-local verified compiler cache.
     required: false
     default: "10GiB"
-
+  cache-root-portability:
+    description: Qualified workspace-root policy (physical or remap).
+    required: false
+    default: "remap"
+  require-cargo-rail:
+    description: Ensure the exact Cargo Rail core is available for saved-plan verification.
+    required: false
+    default: "false"
+outputs:
+  cache-enabled:
+    description: Whether authenticated Cargo Rail cache setup and its strict probe succeeded.
+    value: ${{ steps.cargo-rail-cache.outcome == 'success' && 'true' || 'false' }}
 runs:
   using: composite
   steps:
@@ -38,19 +57,73 @@ runs:
         contract: ${{ inputs.toolchain-contract }}
         components: ${{ inputs.toolchain-components }}
 
+    - name: Select Cargo Rail Cache Capability
+      id: cache-capability
+      shell: bash
+      env:
+        CACHE_URL: ${{ inputs.cache-url }}
+      run: |
+        if [[ -z "$CACHE_URL" ]]; then
+          echo "enabled=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        case "$(uname -m)" in
+          s390x | ppc64le)
+            echo "::notice::Cargo Rail Action v8.2.0 has no verified native cache archive for $(uname -m); continuing without compiler reuse"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            ;;
+          *) echo "enabled=true" >> "$GITHUB_OUTPUT" ;;
+        esac
+
+    - name: Authenticate Cargo Rail Cache
+      if: steps.cache-capability.outputs.enabled == 'true'
+      shell: bash
+      env:
+        CACHE_ACCESS_KEY_ID: ${{ inputs.cache-access-key-id }}
+        CACHE_MODE: ${{ inputs.cache-mode }}
+        CACHE_SECRET_ACCESS_KEY: ${{ inputs.cache-secret-access-key }}
+        CACHE_URL: ${{ inputs.cache-url }}
+      run: |
+        [[ "$CACHE_URL" == r2://* ]] \
+          || { echo "rscrypto's shared Cargo Rail cache must use its canonical Cloudflare R2 authority" >&2; exit 2; }
+        case "$CACHE_MODE" in
+          read | read-write) ;;
+          *)
+            echo "Unsupported Cargo Rail cache mode: $CACHE_MODE" >&2
+            exit 2
+            ;;
+        esac
+        [[ -n "$CACHE_ACCESS_KEY_ID" && -n "$CACHE_SECRET_ACCESS_KEY" ]] \
+          || { echo "The caller-selected R2 access key and secret key are required when the shared cache is enabled" >&2; exit 2; }
+        printf '::add-mask::%s\n' "$CACHE_ACCESS_KEY_ID" "$CACHE_SECRET_ACCESS_KEY"
+        {
+          printf 'AWS_ACCESS_KEY_ID=%s\n' "$CACHE_ACCESS_KEY_ID"
+          printf 'AWS_SECRET_ACCESS_KEY=%s\n' "$CACHE_SECRET_ACCESS_KEY"
+          printf 'AWS_SESSION_TOKEN=\n'
+          printf 'AWS_PROFILE=\n'
+          printf 'AWS_SHARED_CREDENTIALS_FILE=\n'
+          printf 'AWS_REGION=auto\n'
+          printf 'AWS_DEFAULT_REGION=auto\n'
+          printf 'AWS_EC2_METADATA_DISABLED=true\n'
+        } >> "$GITHUB_ENV"
+
     - name: Setup Cargo Rail Cache
-      if: inputs.cache-url != ''
-      uses: loadingalias/cargo-rail-action/cache@47e86bde928ce420b85efa5f8d3b5feb96fd0ffc # v7.0.0
+      id: cargo-rail-cache
+      if: steps.cache-capability.outputs.enabled == 'true'
+      uses: loadingalias/cargo-rail-action/cache@78ad385a85627484a5b634cf1bc3caa1de872c6a # v8.2.0
       with:
-        version: "0.22.2"
-        checksum: required
+        version: "0.25.0"
         url: ${{ inputs.cache-url }}
         mode: ${{ inputs.cache-mode }}
         max-size: ${{ inputs.cache-max-size }}
+        root-portability: ${{ inputs.cache-root-portability }}
+        strict-probe: "true"
 
     - name: Install Cargo Tools
-      if: inputs.tools-mode != 'none'
+      if: inputs.tools-mode != 'none' || inputs.require-cargo-rail == 'true'
       shell: bash
       env:
+        RSCRYPTO_AUTHENTICATED_CARGO_RAIL: ${{ steps.cargo-rail-cache.outcome == 'success' && 'true' || 'false' }}
+        RSCRYPTO_REQUIRE_CARGO_RAIL: ${{ inputs.require-cargo-rail }}
         TOOLS_MODE: ${{ inputs.tools-mode }}
       run: scripts/ci/install-tools.sh "$TOOLS_MODE"

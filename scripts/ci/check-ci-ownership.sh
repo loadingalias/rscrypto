@@ -31,11 +31,13 @@ SETUP_ACTION="$ACTIONS/setup/action.yaml"
 TOOLCHAIN_ACTION="$ACTIONS/setup-toolchain/action.yaml"
 MANIFEST="$ROOT/.config/target-matrix.json"
 RAIL_CONFIG="$ROOT/.config/rail.toml"
+RAIL_VARIANTS="$ROOT/.config/ci-plan-variants.json"
 TOOL_ARCHIVES="$ROOT/.config/ci-tool-archives.tsv"
 CARGO_CONFIG="$ROOT/.cargo/config.toml"
 CROSS_SCRIPT="$ROOT/scripts/ci/cross-targets.sh"
 NOSTD_WASM="$ROOT/scripts/ci/nostd-wasm-suite.sh"
 INSTALL_TOOLS="$ROOT/scripts/ci/install-tools.sh"
+MATERIALIZE_RAIL_PLAN="$ROOT/scripts/ci/materialize-rail-plan.sh"
 INSTALL_CODECOV="$ROOT/scripts/ci/install-codecov.sh"
 SETUP_TOOLCHAIN="$ROOT/scripts/ci/setup-toolchain.sh"
 TOOL_INTEGRITY="$ROOT/scripts/lib/ci-tool-integrity.sh"
@@ -132,11 +134,13 @@ require_file "$SETUP_ACTION"
 require_file "$TOOLCHAIN_ACTION"
 require_file "$MANIFEST"
 require_file "$RAIL_CONFIG"
+require_file "$RAIL_VARIANTS"
 require_file "$TOOL_ARCHIVES"
 require_file "$CARGO_CONFIG"
 require_file "$CROSS_SCRIPT"
 require_file "$NOSTD_WASM"
 require_file "$INSTALL_TOOLS"
+require_file "$MATERIALIZE_RAIL_PLAN"
 require_file "$INSTALL_CODECOV"
 require_file "$SETUP_TOOLCHAIN"
 require_file "$TOOL_INTEGRITY"
@@ -182,27 +186,41 @@ fi
 [[ $(yq eval '.updates[] | select(."package-ecosystem" == "github-actions") | ."open-pull-requests-limit"' "$DEPENDABOT") == "1" ]] \
   || fail "Dependabot must limit GitHub Actions updates to one open pull request"
 
-[[ $(yq eval '.on.push // "missing"' "$CI") == "missing" ]] \
-  || fail "ordinary CI must not repeat the PR suite after merge"
+[[ $(yq eval '.on.push.branches | join(",")' "$CI") == "main" ]] \
+  || fail "CI must seed affected compiler results only after updates reach main"
 [[ $(yq eval '[.on.pull_request.types[]] | sort | join(",")' "$CI") \
   == "opened,ready_for_review,reopened,synchronize" ]] \
   || fail "CI must run when a ready pull request is opened, updated, reopened, or leaves draft"
-[[ $(yq eval '[.jobs[] | select((.if // "") | contains("pull_request.draft"))] | length' "$CI") \
-  == $(yq eval '.jobs | length' "$CI") ]] \
-  || fail "every CI job must defer draft pull requests"
+for job in rail-plan suite complete; do
+  [[ $(yq eval ".jobs.\"$job\".if" "$CI") == *"pull_request.draft"* ]] \
+    || fail "$job must defer draft pull requests"
+done
 
 suite_condition=$(yq eval '.jobs.suite."if"' "$CI")
-[[ "$suite_condition" == *"!cancelled()"* && "$suite_condition" == *"needs.rail-plan.result != 'success'"* ]] \
-  || fail "planner job failure must still run the CI suite"
+[[ "$suite_condition" == *"!cancelled()"* && "$suite_condition" == *"needs.rail-plan.result == 'success'"* \
+  && "$suite_condition" == *"needs.rail-plan.outputs.has-suite == 'true'"* \
+  && "$suite_condition" == *"github.event_name != 'push'"* ]] \
+  || fail "the CI suite must consume only a successful, non-empty Cargo Rail plan"
+cache_seed_condition=$(yq eval '.jobs."cache-seed"."if"' "$CI")
+[[ "$cache_seed_condition" == *"github.event_name == 'push'"* \
+  && "$cache_seed_condition" == *"github.ref == 'refs/heads/main'"* \
+  && "$cache_seed_condition" == *"needs.rail-plan.result == 'success'"* \
+  && "$cache_seed_condition" == *"needs.rail-plan.outputs.has-suite == 'true'"* \
+  && $(yq eval '.jobs."cache-seed".with.cache_mode' "$CI") == "read-write" ]] \
+  || fail "only the affected main-branch seeder may request cache write authority"
 # shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
-grep -Fq 'build: ${{ steps.rail.outputs.build }}' "$CI" \
-  || fail "CI must consume cargo-rail-action build output directly"
+grep -Fq 'matrix: ${{ steps.matrix.outputs.matrix }}' "$CI" \
+  || fail "CI must export the exact Cargo Rail variant matrix"
 # shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
-grep -Fq 'surfaces_json: ${{ steps.rail.outputs.surfaces-json }}' "$CI" \
-  || fail "CI must consume cargo-rail-action surfaces directly"
+grep -Fq 'identity: ${{ steps.rail.outputs.plan-identity }}' "$CI" \
+  || fail "CI must export the exact Cargo Rail plan identity"
 # shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
-grep -Fq 'include_cargo_graph: ${{ contains(needs.rail-plan.outputs.surfaces_json, '\''"custom:cargo_graph":true'\'') }}' "$CI" \
-  || fail "CI must derive Cargo graph assurance from cargo-rail-action surfaces"
+grep -Fq 'matrix: ${{ needs.rail-plan.outputs.matrix }}' "$CI" \
+  || fail "the reusable suite must consume the Cargo Rail matrix without replanning"
+[[ $(yq -oy -p toml eval '.plan.work."ci-policy".scope' "$RAIL_CONFIG") == "repository" ]] \
+  || fail "shared CI infrastructure must have one repository-scoped Cargo Rail policy decision"
+grep -Fq 'is-required "$PLAN_FILE" ci-policy' "$MATERIALIZE_RAIL_PLAN" \
+  || fail "CI matrix lowering must widen when shared Cargo Rail policy work is required"
 if grep -ERn 'always\(\)' "$WORKFLOWS" >/dev/null; then
   fail "workflow cancellation must not start or prolong cleanup and aggregate jobs"
 fi
@@ -224,10 +242,6 @@ if awk '
 ' "$CARGO_CONFIG"; then
   fail "Apple targets must not receive implicit rustflags from .cargo/config.toml"
 fi
-rust_job_calls=$(count_matches 'uses:[[:space:]]+\./\.github/workflows/_rust-job\.yaml' "$WORKFLOWS")
-rust_job_operations=$(count_matches '^[[:space:]]+operation:[[:space:]]+[-[:alnum:]]+[[:space:]]*$' "$WORKFLOWS")
-[[ "$rust_job_calls" -eq "$rust_job_operations" ]] \
-  || fail "every reusable Rust job caller must select exactly one typed operation"
 while IFS= read -r operation; do
   [[ -n "$operation" ]] || continue
   grep -Eq "^[[:space:]]+$operation\\)" "$RUN_RUST_JOB" \
@@ -236,6 +250,14 @@ done < <(
   awk '/^[[:space:]]+operation:[[:space:]]+[-[:alnum:]]+[[:space:]]*$/ { print $2 }' \
     "$WORKFLOWS"/*.yaml | sort -u
 )
+# shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
+[[ $(yq eval '.jobs.selected.with.operation' "$SUITE") == '${{ matrix.work.operation }}' ]] \
+  || fail "the reusable suite must pass only Cargo Rail catalog operations"
+while IFS= read -r operation; do
+  [[ -n "$operation" ]] || continue
+  grep -Eq "^[[:space:]]+$operation\\)" "$RUN_RUST_JOB" \
+    || fail "Cargo Rail variant catalog selects unsupported operation: $operation"
+done < <(jq -r '.variants[].dimensions.operation' "$RAIL_VARIANTS" | sort -u)
 [[ $(yq eval '.on.workflow_call.inputs.operation.required' "$RUST_JOB") == "true" ]] \
   || fail "the reusable Rust job operation must be required"
 [[ $(yq eval '.on.workflow_call.inputs.operation.type' "$RUST_JOB") == "string" ]] \
@@ -246,8 +268,20 @@ done < <(
   || fail "the reusable Rust job rustflags input must be typed as a string"
 # shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
 [[ $(yq eval '.jobs.run.steps[] | select(.name == "Checkout") | .with.ref' "$RUST_JOB") \
-  == '${{ inputs.checkout_ref || github.sha }}' ]] \
-  || fail "the reusable Rust job must bind an explicit source ref before execution"
+  == '${{ inputs.plan_head_commit || inputs.checkout_ref || github.sha }}' ]] \
+  || fail "the reusable Rust job must prefer the plan-bound source ref before execution"
+# shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
+[[ $(yq eval '.jobs.run.steps[] | select(.name == "Download exact work plan") | .with.path' "$RUST_JOB") \
+  == '${{ runner.temp }}/cargo-rail-plan' ]] \
+  || fail "saved plan artifacts must remain outside the captured checkout"
+# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
+rail_plan_file=$(yq eval '.jobs.run.steps[] | select(.name == "Run") | .env.RAIL_PLAN_FILE' "$RUST_JOB")
+rail_plan_reader=$(yq eval '.jobs.run.steps[] | select(.name == "Run") | .env.RAIL_PLAN_READER' "$RUST_JOB")
+[[ "$rail_plan_file" == *"inputs.plan_artifact"* && "$rail_plan_file" == *"runner.temp"* \
+  && "$rail_plan_file" == *"/cargo-rail-plan/plan.json"* \
+  && "$rail_plan_reader" == *"inputs.plan_artifact"* && "$rail_plan_reader" == *"runner.temp"* \
+  && "$rail_plan_reader" == *"/cargo-rail-plan/read.py"* ]] \
+  || fail "saved plan execution must consume the out-of-worktree artifact"
 # shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
 [[ $(yq eval '.jobs.run.steps[] | select(.name == "Run") | .env.CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_RUSTFLAGS' "$RUST_JOB") \
   == '${{ inputs.target == '\''s390x-unknown-linux-gnu'\'' && '\''-C target-feature=+vector'\'' || '\'''\'' }}' ]] \
@@ -256,9 +290,9 @@ done < <(
 [[ $(yq eval '.jobs.run.steps[] | select(.name == "Run") | .env.RSCRYPTO_CI_RUSTFLAGS' "$RUST_JOB") \
   == '${{ inputs.rustflags }}' ]] \
   || fail "the reusable Rust job must pass reviewed rustflags as inert environment data"
-[[ $(yq eval '[.jobs.run.steps[] | select(has("run"))] | length' "$RUST_JOB") -eq 1 ]] \
+rust_job_run=$(yq eval '.jobs.run.steps[] | select(.name == "Run") | .run' "$RUST_JOB")
+[[ -n "$rust_job_run" && "$rust_job_run" != "null" ]] \
   || fail "the reusable Rust job must expose one fixed command step"
-rust_job_run=$(yq eval '.jobs.run.steps[] | select(has("run")) | .run' "$RUST_JOB")
 grep -Fq 'if [[ -n "$RSCRYPTO_CI_RUSTFLAGS" ]]' <<<"$rust_job_run" \
   || fail "the reusable Rust job must leave RUSTFLAGS unset without a reviewed override"
 grep -Fq 'export RUSTFLAGS="$RSCRYPTO_CI_RUSTFLAGS"' <<<"$rust_job_run" \
@@ -268,6 +302,10 @@ grep -Fq 'exec scripts/ci/run-rust-job.sh' <<<"$rust_job_run" \
 # shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
 grep -Fq 'RSCRYPTO_CI_OPERATION: ${{ inputs.operation }}' "$RUST_JOB" \
   || fail "the reusable Rust job must pass its operation as environment data"
+# shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
+[[ $(yq eval '.jobs.run.steps[] | select(.name == "Run") | .env.RAIL_PLAN_CHECKOUT_VERIFIED' "$RUST_JOB") \
+  == '${{ inputs.plan_artifact != '\'''\'' && '\''true'\'' || '\''false'\'' }}' ]] \
+  || fail "only jobs with a separately verified saved plan may skip duplicate checkout verification"
 if yq eval '.. | select(tag == "!!map" and has("run") and (.run | tag == "!!str")) | .run' \
   "$WORKFLOWS"/*.yaml | grep -Eq '\$\{\{[[:space:]]*inputs\.'; then
   fail "workflow inputs must not be interpolated into shell programs"
@@ -341,27 +379,45 @@ rail_version=$(sed -n 's/^CARGO_RAIL_VERSION=//p' "$INSTALL_TOOLS")
 [[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail") | .with.version' "$CI") \
   == "$rail_version" ]] \
   || fail "cargo-rail-action must use the authenticated Cargo Rail version"
-[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail") | .with.checksum' "$CI") \
-  == "required" ]] \
-  || fail "cargo-rail-action must require release checksums"
+[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail") | .with.components' "$CI") \
+  == "surface" ]] \
+  || fail "cargo-rail-action must install and prepare the authenticated Surface component"
 # shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
-[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail") | .with.since' "$CI") \
-  == '${{ github.event.pull_request.base.sha }}' ]] \
-  || fail "cargo-rail-action must plan from the immutable pull-request base"
-rail_action_condition=$(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail") | .if' "$CI")
-[[ "$rail_action_condition" == "github.event_name == 'pull_request'" ]] \
-  || fail "cargo-rail-action must run only for pull requests"
+rail_since=$(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail") | .with.since' "$CI")
+[[ "$rail_since" == *'github.event.pull_request.base.sha'* \
+  && "$rail_since" == *'github.event.before'* && "$rail_since" == *'||'* ]] \
+  || fail "cargo-rail-action must plan pull requests and main pushes from immutable comparison commits"
+# shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
+rail_all=$(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail") | .with.all' "$CI")
+[[ "$rail_all" == *"github.event_name == 'workflow_dispatch'"* ]] \
+  || fail "manual CI must request Cargo Rail's typed all-work override"
 
 cache_action=$(yq eval '.runs.steps[] | select(.name == "Setup Cargo Rail Cache") | .uses' "$SETUP_ACTION")
 expected_cache_action="${rail_action%@*}/cache@${rail_action#*@}"
 [[ "$cache_action" == "$expected_cache_action" ]] \
-  || fail "compiler reuse must use the planner action's immutable v7 cache implementation"
+  || fail "compiler reuse must use the planner action's immutable v8 cache implementation"
+cache_auth_run=$(yq eval '.runs.steps[] | select(.name == "Authenticate Cargo Rail Cache") | .run' "$SETUP_ACTION")
+grep -Fq '[[ "$CACHE_URL" == r2://* ]]' <<<"$cache_auth_run" \
+  || fail "the shared cache must reject non-canonical providers before authentication"
+grep -Fq 'AWS_ACCESS_KEY_ID=%s' <<<"$cache_auth_run" \
+  || fail "the shared cache must export the caller-selected R2 access key for Cargo Rail"
+grep -Fq 'AWS_SECRET_ACCESS_KEY=%s' <<<"$cache_auth_run" \
+  || fail "the shared cache must export the caller-selected R2 secret key for Cargo Rail"
+grep -Fq 'AWS_SESSION_TOKEN=' <<<"$cache_auth_run" \
+  || fail "the shared cache must clear an ambient AWS session token before installing a long-lived R2 key"
+grep -Fq 'AWS_PROFILE=' <<<"$cache_auth_run" \
+  || fail "the shared cache must clear an ambient AWS profile before installing its selected R2 identity"
+grep -Fq 'AWS_SHARED_CREDENTIALS_FILE=' <<<"$cache_auth_run" \
+  || fail "the shared cache must clear an ambient AWS credentials file before installing its selected R2 identity"
+grep -Fq '::add-mask::%s' <<<"$cache_auth_run" \
+  || fail "the shared cache must mask both caller-selected R2 credential fields"
+if grep -ERn 'aws-actions/configure-aws-credentials|CARGO_RAIL_CACHE_(READ_ROLE_ARN|WRITE_ROLE_ARN|REGION)|cache-(read-role-arn|write-role-arn|region)' \
+  "$WORKFLOWS" "$ACTIONS" >/dev/null; then
+  fail "the canonical R2 integration must not retain AWS role or region compatibility plumbing"
+fi
 [[ $(yq eval '.runs.steps[] | select(.name == "Setup Cargo Rail Cache") | .with.version' "$SETUP_ACTION") \
   == "$rail_version" ]] \
   || fail "the Cargo Rail cache action must use the authenticated Cargo Rail version"
-[[ $(yq eval '.runs.steps[] | select(.name == "Setup Cargo Rail Cache") | .with.checksum' "$SETUP_ACTION") \
-  == "required" ]] \
-  || fail "the Cargo Rail cache action must require release checksums"
 [[ $(yq eval '.runs.steps[] | select(.name == "Setup Cargo Rail Cache") | .with.url' "$SETUP_ACTION") \
   == '${{ inputs.cache-url }}' ]] \
   || fail "the Cargo Rail cache action must consume only machine-owned URL input"
@@ -371,41 +427,92 @@ expected_cache_action="${rail_action%@*}/cache@${rail_action#*@}"
 [[ $(yq eval '.runs.steps[] | select(.name == "Setup Cargo Rail Cache") | .with."max-size"' "$SETUP_ACTION") \
   == '${{ inputs.cache-max-size }}' ]] \
   || fail "the Cargo Rail cache action must retain an explicit local size bound"
+[[ $(yq eval '.runs.steps[] | select(.name == "Setup Cargo Rail Cache") | .with."root-portability"' "$SETUP_ACTION") \
+  == '${{ inputs.cache-root-portability }}' ]] \
+  || fail "the Cargo Rail cache action must own the selected root-portability transaction"
+[[ $(yq eval '.runs.steps[] | select(.name == "Setup Cargo Rail Cache") | .with."strict-probe"' "$SETUP_ACTION") \
+  == "true" ]] \
+  || fail "CI cache setup must authenticate the provider and native-v6 protocol marker before compilation"
 [[ $(yq eval '.runs.steps[] | select(.name == "Setup Cargo Rail Cache") | .if' "$SETUP_ACTION") \
-  == "inputs.cache-url != ''" ]] \
-  || fail "Cargo Rail cache setup must skip cleanly until machine-owned L2 is configured"
+  == "steps.cache-capability.outputs.enabled == 'true'" \
+  && $(yq eval '.runs.steps[] | select(.name == "Authenticate Cargo Rail Cache") | .if' "$SETUP_ACTION") \
+  == "steps.cache-capability.outputs.enabled == 'true'" ]] \
+  || fail "Cargo Rail cache authentication and setup must consume one platform capability decision"
+cache_capability_run=$(yq eval '.runs.steps[] | select(.name == "Select Cargo Rail Cache Capability") | .run' "$SETUP_ACTION")
+grep -Fq '[[ -z "$CACHE_URL" ]]' <<<"$cache_capability_run" \
+  && grep -Fq 's390x | ppc64le)' <<<"$cache_capability_run" \
+  || fail "cache setup must skip absent configuration and hosts without verified native cache archives"
+auth_step_index=$(yq eval '.runs.steps | to_entries | .[] | select(.value.name == "Authenticate Cargo Rail Cache") | .key' "$SETUP_ACTION")
 cache_step_index=$(yq eval '.runs.steps | to_entries | .[] | select(.value.name == "Setup Cargo Rail Cache") | .key' "$SETUP_ACTION")
 tools_step_index=$(yq eval '.runs.steps | to_entries | .[] | select(.value.name == "Install Cargo Tools") | .key' "$SETUP_ACTION")
-[[ "$cache_step_index" =~ ^[0-9]+$ && "$tools_step_index" =~ ^[0-9]+$ \
+[[ "$auth_step_index" =~ ^[0-9]+$ && "$cache_step_index" =~ ^[0-9]+$ \
+  && "$tools_step_index" =~ ^[0-9]+$ && "$auth_step_index" -lt "$cache_step_index" \
   && "$cache_step_index" -lt "$tools_step_index" ]] \
   || fail "Cargo Rail cache setup must precede repository command execution"
+[[ $(yq eval '.inputs."cache-root-portability".default' "$SETUP_ACTION") == "remap" ]] \
+  || fail "ephemeral CI checkouts must select qualified cross-root Cargo Rail reuse"
+# shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
+[[ $(yq eval '.runs.steps[] | select(.name == "Install Cargo Tools") | .env.RSCRYPTO_AUTHENTICATED_CARGO_RAIL' "$SETUP_ACTION") \
+  == '${{ steps.cargo-rail-cache.outcome == '\''success'\'' && '\''true'\'' || '\''false'\'' }}' ]] \
+  || fail "Cargo Rail reuse must be authorized only by the exact cache-action install output"
+grep -Fq 'RSCRYPTO_AUTHENTICATED_CARGO_RAIL' "$INSTALL_TOOLS" \
+  || fail "the tool installer must reuse authenticated Cargo Rail instead of reinstalling it"
 
 # shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
+expected_cache_url="\${{ secrets.cache_access_key_id != '' && secrets.cache_secret_access_key != '' && vars.CARGO_RAIL_CACHE_URL || '' }}"
 [[ $(yq eval '.jobs.run.steps[] | select(.name == "Setup") | .with."cache-url"' "$RUST_JOB") \
-  == '${{ vars.CARGO_RAIL_CACHE_URL }}' ]] \
-  || fail "reusable Rust jobs must select the machine-owned Cargo Rail L2 URL"
+  == "$expected_cache_url" ]] \
+  || fail "reusable Rust jobs must disable L2 when a caller-selected R2 credential is unavailable"
 # shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
 [[ $(yq eval '.jobs.run.steps[] | select(.name == "Setup") | .with."cache-mode"' "$RUST_JOB") \
-  == '${{ github.event_name == '\''pull_request'\'' && '\''read'\'' || '\''read-write'\'' }}' ]] \
-  || fail "pull-request cache authority must be read-only"
+  == '${{ inputs.cache_mode }}' \
+  && $(yq eval '.on.workflow_call.inputs.cache_mode.default' "$RUST_JOB") == "read" \
+  && $(yq eval '.on.workflow_call.inputs.cache_mode.default' "$SUITE") == "read" ]] \
+  || fail "ordinary reusable compiler jobs must default to read-only cache authority"
+# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
+[[ $(yq eval '.jobs.run.steps[] | select(.name == "Setup") | .with."cache-access-key-id"' "$RUST_JOB") \
+  == '${{ secrets.cache_access_key_id }}' \
+  && $(yq eval '.jobs.run.steps[] | select(.name == "Setup") | .with."cache-secret-access-key"' "$RUST_JOB") \
+  == '${{ secrets.cache_secret_access_key }}' ]] \
+  || fail "reusable compiler jobs must consume only the caller-selected provider identity"
+[[ $(yq eval '.on.workflow_call.secrets.cache_access_key_id.required' "$RUST_JOB") == "false" \
+  && $(yq eval '.on.workflow_call.secrets.cache_secret_access_key.required' "$RUST_JOB") == "false" ]] \
+  || fail "fork and Dependabot jobs must be able to execute without repository R2 secrets"
+[[ $(yq eval '.jobs.selected.secrets.cache_access_key_id' "$SUITE") == '${{ secrets.cache_access_key_id }}' \
+  && $(yq eval '.jobs.selected.secrets.cache_secret_access_key' "$SUITE") == '${{ secrets.cache_secret_access_key }}' ]] \
+  || fail "the selected CI suite must forward only its caller-selected cache identity"
+[[ $(yq eval '.jobs.suite.secrets.cache_access_key_id' "$CI") == '${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}' \
+  && $(yq eval '.jobs.suite.secrets.cache_secret_access_key' "$CI") == '${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}' ]] \
+  || fail "ordinary pull-request CI must receive only the bucket-scoped R2 reader"
+[[ $(yq eval '.jobs."cache-seed".secrets.cache_access_key_id' "$CI") == '${{ secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID }}' \
+  && $(yq eval '.jobs."cache-seed".secrets.cache_secret_access_key' "$CI") == '${{ secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY }}' ]] \
+  || fail "the trusted main seeder must receive the distinct bucket-scoped R2 writer"
+[[ $(count_matches 'CARGO_RAIL_R2_WRITE_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)' "$WORKFLOWS") -eq 2 ]] \
+  || fail "R2 writer credentials must exist only at the trusted main seeder boundary"
 # shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
 [[ $(yq eval '.jobs.coverage.steps[] | select(.name == "Setup") | .with."cache-url"' "$WEEKLY") \
-  == '${{ vars.CARGO_RAIL_CACHE_URL }}' \
+  == *'vars.CARGO_RAIL_CACHE_URL'* \
   && $(yq eval '.jobs.coverage.steps[] | select(.name == "Setup") | .with."cache-mode"' "$WEEKLY") \
-  == "read-write" ]] \
-  || fail "trusted Weekly coverage must use the machine-owned Cargo Rail cache"
+  == "read" ]] \
+  || fail "Qualification coverage must consume the machine-owned Cargo Rail cache read-only"
 # shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
 [[ $(yq eval '.jobs.preflight.steps[] | select(.name == "Setup") | .with."cache-url"' "$RELEASE") \
-  == '${{ vars.CARGO_RAIL_CACHE_URL }}' \
+  == *'vars.CARGO_RAIL_CACHE_URL'* \
   && $(yq eval '.jobs.preflight.steps[] | select(.name == "Setup") | .with."cache-mode"' "$RELEASE") \
-  == "read-write" ]] \
-  || fail "release preflight must populate the machine-owned Cargo Rail cache"
+  == "read" ]] \
+  || fail "release preflight must consume the machine-owned Cargo Rail cache read-only"
 # shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
 [[ $(yq eval '.jobs.publish.steps[] | select(.name == "Setup") | .with."cache-url"' "$RELEASE") \
-  == '${{ vars.CARGO_RAIL_CACHE_URL }}' \
+  == *'vars.CARGO_RAIL_CACHE_URL'* \
   && $(yq eval '.jobs.publish.steps[] | select(.name == "Setup") | .with."cache-mode"' "$RELEASE") \
   == "read" ]] \
   || fail "release publication must consume the machine-owned Cargo Rail cache read-only"
+[[ $(yq eval '[.jobs.run.steps[] | select(.name == "Capture Cargo Rail Cache Status")] | length' "$RUST_JOB") == "1" \
+  && $(yq eval '[.jobs.run.steps[] | select(.name == "Upload Cargo Rail Cache Status")] | length' "$RUST_JOB") == "1" ]] \
+  || fail "representative compiler jobs must preserve one fail-closed Cargo Rail telemetry artifact"
+[[ $(yq eval '[.jobs.coverage.steps[] | select(.name == "Capture Cargo Rail Cache Status")] | length' "$WEEKLY") == "1" \
+  && $(yq eval '[.jobs.coverage.steps[] | select(.name == "Upload Cargo Rail Cache Status")] | length' "$WEEKLY") == "1" ]] \
+  || fail "Qualification coverage must preserve one fail-closed Cargo Rail telemetry artifact"
 if grep -ERn 'uses:[[:space:]]+(Swatinem/rust-cache|runs-on/action|actions/cache)@' \
   "$WORKFLOWS" "$ACTIONS" >/dev/null; then
   fail "Cargo Rail must be the only Rust compiler cache owner"
@@ -414,7 +521,7 @@ fi
   || fail "RunsOn MagicCache must not intercept Cargo Rail compiler results"
 # shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
 [[ $(yq eval '.jobs."rail-plan".steps[] | select(.name == "Check Release Intent Coverage") | .env.RAIL_BASE_REF' "$CI") \
-  == '${{ steps.rail.outputs.base-ref }}' ]] \
+  == '${{ steps.rail.outputs.base }}' ]] \
   || fail "release intent coverage must use cargo-rail-action's resolved base"
 release_intent_condition=$(yq eval '.jobs."rail-plan".steps[] | select(.name == "Check Release Intent Coverage") | .if' "$CI")
 [[ "$release_intent_condition" == *"startsWith(github.head_ref, 'rail/release-')"* \
@@ -472,7 +579,7 @@ grep -Fq 'ci_tool_download codecov' "$INSTALL_CODECOV" \
   || fail "Codecov must use the direct executable integrity contract"
 [[ $(yq eval '.jobs.coverage.steps[] | select(.id == "codecov") | .run' "$WEEKLY") \
   == "scripts/ci/install-codecov.sh" ]] \
-  || fail "Weekly coverage must install the authenticated Codecov CLI"
+  || fail "Qualification coverage must install the authenticated Codecov CLI"
 # shellcheck disable=SC2016 # GitHub expression is an intentional literal contract.
 grep -Fq 'binary: ${{ steps.codecov.outputs.binary }}' "$WEEKLY" \
   || fail "Codecov action must use the repository-verified CLI"
@@ -487,14 +594,17 @@ scorecard_action=$(yq eval '.jobs.scorecard.steps[] | select(.name == "Run Score
   || fail "compile feature matrix must retain all 60 profiles"
 [[ $(count_feature_sets "$FEATURE_PROFILES" EXECUTABLE_FEATURE_SETS) -eq 9 ]] \
   || fail "executable feature matrix must contain the nine behavior transitions"
+[[ $(count_feature_sets "$FEATURE_PROFILES" CONSTRAINED_FEATURE_SETS) -eq 32 ]] \
+  || fail "constrained feature matrix must contain all 32 portable profiles"
 require_unique_feature_sets "$FEATURE_PROFILES" COMPILE_FEATURE_SETS
 require_unique_feature_sets "$FEATURE_PROFILES" EXECUTABLE_FEATURE_SETS
+require_unique_feature_sets "$FEATURE_PROFILES" CONSTRAINED_FEATURE_SETS
 require_feature_subset "$FEATURE_PROFILES" EXECUTABLE_FEATURE_SETS "$FEATURE_PROFILES" COMPILE_FEATURE_SETS
 grep -Fq 'COMPILE_FEATURE_SETS' "$COMPILE_MATRIX" \
   || fail "compile feature matrix must consume the shared profile authority"
 grep -Fq 'EXECUTABLE_FEATURE_SETS' "$EXECUTABLE_MATRIX" \
   || fail "executable feature matrix must consume the shared profile authority"
-grep -Eq 'HOST_ARGS\+=\(--feature-matrix\)' "$CHECK_ALL" \
+grep -Fq '"$SCRIPT_DIR/check.sh" --all --feature-matrix' "$CHECK_ALL" \
   || fail "local check-all must retain one explicit feature-matrix execution"
 
 [[ $(count_matches 'just test-feature-matrix' "$WORKFLOWS" "$RUN_RUST_JOB") -eq 1 ]] \
@@ -526,8 +636,9 @@ grep -Fq 'rm -rf target/release-automation' <<<"$recovery_cleanup_step" \
 recovery_preflight_step=$(yq eval '.jobs.preflight.steps[] | select(.name == "Release preflight") | .run' "$RELEASE")
 grep -Fq 'target/release-automation/scripts/ci/release-preflight.sh' <<<"$recovery_preflight_step" \
   || fail "release recovery must run reviewed preflight tooling from protected main"
-grep -Fq -- '--dependency-policy-root target/release-automation' <<<"$recovery_preflight_step" \
-  || fail "release recovery must use the reviewed compatible dependency lock"
+if grep -Fq -- '--dependency-policy-root' <<<"$recovery_preflight_step"; then
+  fail "tag recovery must not revive a release-specific dependency compatibility path"
+fi
 recovery_controls_step=$(yq eval '.jobs.publish.steps[] | select(.name == "Capture repository controls") | .run' "$RELEASE")
 grep -Fq 'target/release-automation/scripts/ci/repository-controls-evidence.sh' <<<"$recovery_controls_step" \
   || fail "release recovery must capture controls with reviewed tooling from protected main"
@@ -561,23 +672,22 @@ if grep -En 'test-feature-matrix|check-feature-matrix' "$WEEKLY" >/dev/null; the
   fail "weekly must inherit feature contracts from the reusable suite"
 fi
 
-[[ $(count_matches 'operation:[[:space:]]+cross-targets' "$SUITE") -eq 1 ]] \
-  || fail "the reusable suite must have exactly one cross-target owner"
+[[ $(jq '[.variants[] | select(.dimensions.operation == "cross-targets")] | length' "$RAIL_VARIANTS") -eq 1 ]] \
+  || fail "the Cargo Rail catalog must have exactly one cross-target owner"
 [[ $(count_matches 'scripts/ci/cross-targets\.sh' "$RUN_RUST_JOB") -eq 1 ]] \
   || fail "the Rust job dispatcher must define exactly one cross-target operation"
-[[ $(count_matches 'operation:[[:space:]]+native$' "$SUITE") -eq 1 ]] \
-  || fail "the reusable suite must own exactly one target-matrix native operation"
-[[ $(count_matches 'operation:[[:space:]]+native-ibm' "$SUITE") -eq 2 ]] \
-  || fail "the reusable suite must own only Linux, IBM Z, and POWER10 native validation"
+[[ $(jq '[.variants[] | select(.dimensions.operation == "native")] | length' "$RAIL_VARIANTS") -eq 4 ]] \
+  || fail "the Cargo Rail catalog must own the four native Linux and Windows rows"
+[[ $(jq '[.variants[] | select(.dimensions.operation == "native-ibm")] | length' "$RAIL_VARIANTS") -eq 2 ]] \
+  || fail "the Cargo Rail catalog must own the IBM Z and POWER10 native rows"
 [[ $(count_matches 'operation:[[:space:]]+native-riscv' "$RISCV") -eq 1 ]] \
-  || fail "the RISC-V workflow must own exactly one native validation lane"
+  || fail "the manual RISC-V workflow must own exactly one native diagnostic lane"
+[[ $(count_matches 'operation:[[:space:]]+native-riscv' "$WEEKLY") -eq 1 ]] \
+  || fail "Qualification must own exactly one RISC-V native evidence lane"
 [[ $(count_matches 'scripts/ci/native-check\.sh' "$RUN_RUST_JOB") -eq 3 ]] \
   || fail "the Rust job dispatcher must retain Linux, IBM, and RISC-V native operations"
-if grep -Ein 'riscv' "$SUITE" >/dev/null; then
-  fail "the reusable CI suite must not own physical RISC-V work"
-fi
-if grep -Ein 'riscv' "$WEEKLY" >/dev/null; then
-  fail "Weekly must not own physical RISC-V work"
+if grep -Ein 'riscv' "$RAIL_VARIANTS" >/dev/null; then
+  fail "the Cargo Rail CI catalog must not own physical RISC-V work"
 fi
 if grep -Ein 'riscv' "$WORKFLOWS/bench.yaml" >/dev/null; then
   fail "the generic benchmark workflow must not expose RISC-V"
@@ -586,59 +696,64 @@ fi
   || fail "the RISC-V workflow must own the RISE native runner"
 [[ $(yq eval '.jobs.ct.with.platforms' "$RISCV") == "rise-riscv" ]] \
   || fail "the RISC-V workflow must select only the RISE CT lane"
-[[ $(yq eval '.jobs.ct.with.upload_raw_artifacts' "$RISCV") == \
-  "\${{ github.event_name == 'workflow_dispatch' }}" ]] \
-  || fail "only manually dispatched RISC-V runs may upload raw CT artifacts"
-[[ $(yq eval '.jobs.ct.with.artifact_retention_days' "$RISCV") == \
-  "\${{ github.event_name == 'workflow_dispatch' && 90 || 14 }}" ]] \
-  || fail "RISC-V CT retention must distinguish scheduled assurance from manual evidence"
-[[ $(yq eval '.jobs.native.concurrency.group' "$RISCV") == \
-  "riscv-native-\${{ github.ref }}-\${{ github.event_name == 'workflow_dispatch' && 'manual' || 'assurance' }}" ]] \
-  || fail "scheduled RISC-V native assurance must not cancel manual evidence"
-[[ $(yq eval '.jobs.ct.concurrency.group' "$RISCV") == \
-  "riscv-ct-\${{ github.ref }}-\${{ github.event_name == 'workflow_dispatch' && 'manual' || 'assurance' }}" ]] \
-  || fail "scheduled RISC-V CT assurance must not cancel manual evidence"
-[[ $(count_matches 'operation:[[:space:]]+cargo-graph' "$SUITE") -eq 1 ]] \
-  || fail "the reusable suite must have exactly one Cargo graph assurance owner"
+[[ $(yq eval '.on.schedule' "$RISCV") == "null" ]] \
+  || fail "standalone RISC-V diagnostics must not duplicate scheduled Qualification evidence"
+[[ $(yq eval '.jobs.ct.with.upload_raw_artifacts' "$RISCV") == "true" ]] \
+  || fail "manual RISC-V evidence must retain raw CT artifacts"
+[[ $(yq eval '.jobs.ct.with.artifact_retention_days' "$RISCV") == "90" ]] \
+  || fail "manual RISC-V evidence must retain release-grade artifacts"
+[[ $(jq '[.variants[] | select(.dimensions.operation == "cargo-graph")] | length' "$RAIL_VARIANTS") -eq 1 ]] \
+  || fail "the Cargo Rail catalog must have exactly one Cargo graph assurance owner"
 [[ $(count_matches 'cargo rail unify --check' "$RUN_RUST_JOB") -eq 1 ]] \
   || fail "the Rust job dispatcher must define exactly one Cargo graph assurance operation"
 if grep -En 'cargo rail unify --check' "$RELEASE_PREFLIGHT" >/dev/null; then
-  fail "tag preflight must consume exact-commit Weekly graph assurance instead of repeating it"
+  fail "tag preflight must consume exact-commit Qualification graph assurance instead of repeating it"
+fi
+if grep -En 'cargo (deny|audit)' "$RELEASE_PREFLIGHT" >/dev/null; then
+  fail "tag preflight must consume exact-commit Qualification dependency evidence instead of repeating it"
 fi
 [[ $(yq -o=json -I=0 '.on.workflow_dispatch.inputs.mode.options' "$WEEKLY") == '["assurance","release"]' ]] \
-  || fail "Weekly must expose only assurance and release modes"
+  || fail "Qualification must expose only assurance and release modes"
 [[ $(yq eval '.on.workflow_dispatch.inputs.mode.default' "$WEEKLY") == "assurance" ]] \
-  || fail "manually dispatched Weekly runs must default to assurance"
+  || fail "manually dispatched Qualification runs must default to assurance"
 [[ $(yq eval '.concurrency.group' "$WEEKLY") == \
   "\${{ github.workflow }}-\${{ github.ref }}-\${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'release' && 'release' || 'assurance' }}" ]] \
-  || fail "Weekly assurance must not cancel release evidence"
+  || fail "scheduled assurance must not cancel release qualification"
 weekly_mode_script=$(yq eval '.jobs.mode.steps[] | select(.id == "mode") | .run' "$WEEKLY")
 [[ "$weekly_mode_script" == *$'schedule)\n    mode=assurance'* ]] \
-  || fail "scheduled Weekly runs must resolve to assurance"
+  || fail "scheduled Qualification runs must resolve to assurance"
 [[ $(yq eval '.jobs.suite.with.supply_chain_mode' "$WEEKLY") == \
   "\${{ needs.mode.outputs.mode == 'release' && 'full' || 'light' }}" ]] \
-  || fail "Weekly supply-chain depth must derive from the resolved mode"
-[[ $(yq eval '.jobs.suite.with.include_cargo_graph' "$WEEKLY") == \
-  "\${{ needs.mode.outputs.mode == 'release' }}" ]] \
-  || fail "only release-mode Weekly may run Cargo Graph Assurance"
+  || fail "Qualification supply-chain depth must derive from the resolved mode"
+[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail") | .with.all' "$WEEKLY") == "true" ]] \
+  || fail "Qualification must execute one typed all-work Cargo Rail plan"
 [[ $(yq eval '.jobs.ct.with.upload_raw_artifacts' "$WEEKLY") == \
   "\${{ needs.mode.outputs.mode == 'release' }}" ]] \
-  || fail "only release-mode Weekly may upload raw CT artifacts"
+  || fail "only release-mode Qualification may upload raw CT artifacts"
 retention_expression="\${{ needs.mode.outputs.mode == 'release' && 90 || 14 }}"
 [[ $(yq eval '.jobs.suite.with.artifact_retention_days' "$WEEKLY") == "$retention_expression" ]] \
-  || fail "Weekly Cargo graph retention must derive from the resolved mode"
+  || fail "Qualification Cargo graph retention must derive from the resolved mode"
 [[ $(yq eval '.jobs.fuzzing.with.artifact_retention_days' "$WEEKLY") == "$retention_expression" ]] \
-  || fail "Weekly fuzz retention must derive from the resolved mode"
+  || fail "Qualification fuzz retention must derive from the resolved mode"
 [[ $(yq eval '.jobs.mlkem-graviton.with.artifact_retention_days' "$WEEKLY") == "$retention_expression" ]] \
-  || fail "Weekly ML-KEM retention must derive from the resolved mode"
+  || fail "Qualification ML-KEM retention must derive from the resolved mode"
 [[ $(yq eval '.jobs.ct.with.artifact_retention_days' "$WEEKLY") == "$retention_expression" ]] \
-  || fail "Weekly CT retention must derive from the resolved mode"
+  || fail "Qualification CT retention must derive from the resolved mode"
 [[ $(yq eval '.jobs.rsa.with.artifact_retention_days' "$WEEKLY") == "$retention_expression" ]] \
-  || fail "Weekly RSA retention must derive from the resolved mode"
+  || fail "Qualification RSA retention must derive from the resolved mode"
+[[ $(yq eval '.jobs.riscv-ct.with.artifact_retention_days' "$WEEKLY") == "$retention_expression" ]] \
+  || fail "Qualification RISC-V CT retention must derive from the resolved mode"
+[[ $(yq eval '.jobs.riscv-ct.with.upload_raw_artifacts' "$WEEKLY") == \
+  "\${{ needs.mode.outputs.mode == 'release' }}" ]] \
+  || fail "only release-mode Qualification may upload raw RISC-V CT artifacts"
+[[ $(yq eval '.jobs.riscv-ct.with.platforms' "$WEEKLY") == "rise-riscv" ]] \
+  || fail "Qualification must select the RISE CT evidence variant"
+[[ $(yq eval '.jobs.riscv-native.with.runner' "$WEEKLY") == "ubuntu-24.04-riscv" ]] \
+  || fail "Qualification must select the RISE native evidence runner"
 [[ $(yq eval '.jobs.coverage.steps[] | select(.name == "Upload Coverage Artifacts") | .with."retention-days"' "$WEEKLY") == "$retention_expression" ]] \
-  || fail "Weekly coverage retention must derive from the resolved mode"
+  || fail "Qualification coverage retention must derive from the resolved mode"
 [[ $(yq eval '.jobs.complete.name' "$WEEKLY") == 'Complete (${{ needs.mode.outputs.mode }})' ]] \
-  || fail "Weekly must expose a mode-specific terminal gate"
+  || fail "Qualification must expose a mode-specific terminal gate"
 ct_artifact_name="ct-\${{ inputs.upload_raw_artifacts && 'raw-' || '' }}\${{ matrix.artifact_suffix }}"
 [[ $(yq eval '.jobs.ct.with.artifact_name' "$CT") == "$ct_artifact_name" ]] \
   || fail "raw CT artifact names must be distinguishable before release"
@@ -657,6 +772,10 @@ grep -Fq 'Constant-Time Evidence (release) / Complete (CT)' "$RELEASE_EVIDENCE" 
   || fail "release evidence must require release-mode CT completion"
 grep -Fq 'RSA Evidence (release) / Complete (RSA)' "$RELEASE_EVIDENCE" \
   || fail "release evidence must require release-mode RSA completion"
+grep -Fq 'RISC-V Native Evidence / run' "$RELEASE_EVIDENCE" \
+  || fail "release evidence must require RISC-V native qualification"
+grep -Fq 'RISC-V CT Evidence (release) / Complete (CT)' "$RELEASE_EVIDENCE" \
+  || fail "release evidence must require RISC-V CT qualification"
 grep -Fq 'Complete (release)' "$RELEASE_EVIDENCE" \
   || fail "release evidence must require the release-mode terminal gate"
 grep -Fq '.event == "workflow_dispatch"' "$RELEASE_EVIDENCE" \
@@ -665,10 +784,10 @@ grep -Fq 'ct-raw-' "$RELEASE_EVIDENCE" \
   || fail "release evidence must require live raw CT artifacts"
 [[ $(yq eval '.concurrency.group' "$RSA") == 'rsa-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}' ]] \
   || fail "reusable RSA workflow concurrency must not collide with its caller"
-grep -Fq 'name: ct-raw-rise-riscv' "$RELEASE" \
-  || fail "release must download the explicitly raw RISC-V CT artifact"
+grep -Fq 'pattern: ct-raw-*' "$RELEASE" \
+  || fail "release must download the complete raw qualification evidence set"
 grep -Fq 'scripts/ci/release-evidence-check.sh --commit "$RELEASE_COMMIT"' "$RELEASE" \
-  || fail "release must require paired Weekly and RISC-V evidence from one valid commit"
+  || fail "release must require one exact-commit Qualification run"
 grep -Fq 'scripts/ci/repository-controls-evidence.sh' "$RELEASE" \
   || fail "release must capture the live repository controls"
 grep -Fq 'scripts/ci/package-release-source.sh' "$RELEASE_PREFLIGHT" \
@@ -741,10 +860,8 @@ evidence_step=$(yq eval '.jobs.preflight.steps | to_entries | .[] | select(.valu
 setup_step=$(yq eval '.jobs.preflight.steps | to_entries | .[] | select(.value.name == "Setup") | .key' "$RELEASE")
 [[ "$evidence_step" =~ ^[0-9]+$ && "$setup_step" =~ ^[0-9]+$ && "$evidence_step" -lt "$setup_step" ]] \
   || fail "release evidence must fail before expensive preflight setup"
-grep -Fq 'run-id: ${{ needs.preflight.outputs.weekly_run_id }}' "$RELEASE" \
-  || fail "release must consume non-RISC-V CT artifacts from the validated Weekly run"
-grep -Fq 'run-id: ${{ needs.preflight.outputs.riscv_run_id }}' "$RELEASE" \
-  || fail "release must consume RISC-V CT artifacts from the validated RISC-V run"
+grep -Fq 'run-id: ${{ needs.preflight.outputs.qualification_run_id }}' "$RELEASE" \
+  || fail "release must consume all CT artifacts from the validated Qualification run"
 grep -Fq 'run-id: ${{ needs.preflight.outputs.s390x_ct_run_id }}' "$RELEASE" \
   || fail "release must consume recovered s390x CT artifacts from the validated recovery run"
 grep -Fq 'run-id: ${{ needs.preflight.outputs.x86_64_ct_run_id }}' "$RELEASE" \
@@ -760,10 +877,9 @@ grep -Fq 'amd-zen4,intel-spr,intel-icl,amd-zen5)' <<<"$ct_source_step" \
   || fail "release CT recovery must require the complete x86_64 platform group"
 grep -Fq 'ibm-s390x)' <<<"$ct_source_step" \
   || fail "release CT recovery must retain the complete s390x platform group"
-grep -Fq 'RELEASE_TAG" == "v0.9.0"' <<<"$ct_source_step" \
-  || fail "the x86_64 lint-only recovery allowance must be limited to v0.9.0"
-grep -Fq 'recovery_rustflags="-C target-cpu=x86-64 -A unreachable-code"' <<<"$ct_source_step" \
-  || fail "v0.9.0 x86_64 recovery must preserve baseline codegen while allowing only unreachable-code"
+if grep -Fq 'v0.9.0' <<<"$ct_source_step"; then
+  fail "completed v0.9.0 recovery compatibility must not remain in the live workflow"
+fi
 grep -Fq 'DUDECT_TIMEOUT" != "1800"' <<<"$ct_source_step" \
   || fail "release CT recovery must preserve the release DudeCT timeout"
 grep -Fq 'BINSEC_TIMEOUT" != "900"' <<<"$ct_source_step" \
@@ -786,10 +902,10 @@ done
 if grep -Eq 'uses: ./\.github/workflows/(ct|rsa)\.yaml' "$RELEASE"; then
   fail "tag workflow must promote exact-commit evidence instead of rerunning CT or RSA"
 fi
-ci_musl=$(jq '[.ci[] | select(.name | contains("musl"))] | length' "$MANIFEST")
+ci_musl=$(jq '[.variants[] | select(.dimensions.operation == "native" and ((.dimensions.target // "") | contains("musl")))] | length' "$RAIL_VARIANTS")
 [[ "$ci_musl" -eq 0 ]] || fail "MUSL targets must not masquerade as native host jobs"
 
-ci_linux=$(jq '[.ci[] | select(.name | endswith("unknown-linux-gnu"))] | length' "$MANIFEST")
+ci_linux=$(jq '[.variants[] | select(.dimensions.operation == "native" and ((.dimensions.target // "") | endswith("unknown-linux-gnu")))] | length' "$RAIL_VARIANTS")
 [[ "$ci_linux" -eq 2 ]] || fail "native CI must contain exactly x86_64 and AArch64 GNU hosts"
 
 group_musl=$(jq '[.groups.linux[] | select(contains("musl"))] | length' "$MANIFEST")

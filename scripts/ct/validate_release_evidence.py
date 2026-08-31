@@ -10,11 +10,9 @@ import os
 import re
 import subprocess
 import tarfile
+import tomllib
 from pathlib import Path
 from typing import Any
-
-from toml_compat import tomllib
-
 
 def fail(message: str) -> None:
   raise ValueError(message)

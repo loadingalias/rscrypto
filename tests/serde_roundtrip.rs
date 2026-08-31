@@ -6,6 +6,18 @@
 
 #![cfg(feature = "serde")]
 
+#[cfg(any(
+  feature = "aead",
+  feature = "aegis256",
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "aes-siv",
+  feature = "ascon-aead",
+  feature = "chacha20poly1305",
+  feature = "ed25519",
+  feature = "x25519",
+  feature = "xchacha20poly1305"
+))]
 macro_rules! serde_roundtrip {
   ($name:ident, $ty:ty, $len:expr) => {
     #[test]

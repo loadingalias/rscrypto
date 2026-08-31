@@ -1,225 +1,92 @@
 #!/usr/bin/env bash
-# cargo-rail scope helpers for repository scripts.
+# Strict Cargo Rail v8 plan helpers for repository scripts.
 
-rail_since_args() {
-  if [[ -n "${RAIL_SINCE:-}" ]]; then
-    printf -- "--since %s" "$RAIL_SINCE"
-  else
-    printf -- "--merge-base"
-  fi
-}
+RAIL_PLAN_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-rail_plan_json() {
-  if [[ -n "${RAIL_PLAN_JSON_CACHE:-}" ]]; then
-    printf '%s\n' "$RAIL_PLAN_JSON_CACHE"
+_rail_load_plan() {
+  if [[ -n "${RAIL_PLAN_JSON_CACHE:-}" && "${RAIL_PLAN_JSON_CACHE_VALIDATED:-false}" == true ]]; then
     return 0
   fi
-
-  local since_arg
-  since_arg="$(rail_since_args)"
-
-  if ! cargo metadata --locked --format-version 1 >/dev/null 2>&1; then
-    RAIL_PLAN_JSON_CACHE=""
+  if [[ "${RAIL_PLAN_LOAD_ATTEMPTED:-false}" == true ]]; then
     return 1
   fi
+  RAIL_PLAN_LOAD_ATTEMPTED=true
 
   local plan_output
-  # shellcheck disable=SC2086
-  if ! plan_output="$(cargo rail plan $since_arg --quiet --json 2>/dev/null)"; then
-    RAIL_PLAN_JSON_CACHE=""
-    return 1
-  fi
-  if [[ -z "$plan_output" ]]; then
-    RAIL_PLAN_JSON_CACHE=""
-    return 1
+  if [[ -n "${RAIL_PLAN_FILE:-}" || -n "${RAIL_PLAN_READER:-}" ]]; then
+    [[ -n "${RAIL_PLAN_FILE:-}" && -n "${RAIL_PLAN_READER:-}" ]] || return 1
+    [[ -f "$RAIL_PLAN_FILE" && -f "$RAIL_PLAN_READER" ]] || return 1
+    local python
+    python="$("$RAIL_PLAN_LIB_DIR/python.sh" --print)" || return 1
+    "$python" "$RAIL_PLAN_READER" validate "$RAIL_PLAN_FILE" >/dev/null || return 1
+    if [[ "${RAIL_PLAN_CHECKOUT_VERIFIED:-false}" != true ]]; then
+      "$python" "$RAIL_PLAN_READER" verify-checkout "$RAIL_PLAN_FILE" >/dev/null || return 1
+    fi
+    plan_output=$(<"$RAIL_PLAN_FILE")
+  else
+    local plan_args=(rail plan --quiet --json)
+    if [[ -n "${RAIL_SINCE:-}" ]]; then
+      plan_args+=(--since "$RAIL_SINCE")
+    fi
+    plan_output=$(cargo "${plan_args[@]}" 2>/dev/null) || return 1
+
+    local plan_file
+    plan_file=$(mktemp)
+    printf '%s\n' "$plan_output" >"$plan_file"
+    if ! cargo rail plan --verify "$plan_file" >/dev/null 2>&1; then
+      rm -f "$plan_file"
+      return 1
+    fi
+    rm -f "$plan_file"
   fi
 
-  RAIL_PLAN_JSON_CACHE="$plan_output"
-  printf '%s\n' "$RAIL_PLAN_JSON_CACHE"
+  jq -e '.plan_contract_version == 8' <<<"$plan_output" >/dev/null 2>&1 || return 1
+  RAIL_PLAN_JSON_CACHE=$plan_output
+  RAIL_PLAN_JSON_CACHE_VALIDATED=true
 }
 
-_rail_valid_scope_json() {
-  local document_kind=$1
-
-  jq -ce --arg document_kind "$document_kind" '
-    def valid_surfaces:
-      type == "object"
-      and has("bench")
-      and has("build")
-      and has("custom:cargo_graph")
-      and has("docs")
-      and has("infra")
-      and has("test")
-      and all(.[]; type == "boolean");
-
-    def valid_crate:
-      type == "string" and test("^[A-Za-z0-9][A-Za-z0-9_-]*$");
-
-    def expected_cargo_args:
-      if .mode == "empty" then
-        []
-      elif .mode == "workspace" then
-        ["--workspace"]
-      else
-        [.crates[] | "-p", .]
-      end;
-
-    def valid_package_scope:
-      type == "object"
-      and (.mode == "empty" or .mode == "workspace" or .mode == "crates")
-      and (.crates | type == "array")
-      and (.cargo_args | type == "array" and all(.[]; type == "string"))
-      and (
-        if .mode == "crates" then
-          (.crates
-            | length > 0
-            and all(.[]; valid_crate)
-            and ((unique | length) == length))
-        else
-          (.crates | length == 0)
-        end
-      )
-      and (.cargo_args == expected_cargo_args);
-
-    def valid_surface_records:
-      type == "object"
-      and has("bench")
-      and has("build")
-      and has("custom:cargo_graph")
-      and has("docs")
-      and has("infra")
-      and has("test")
-      and all(.[].enabled; type == "boolean")
-      and all(.[].reasons; type == "array" and all(.[]; type == "number" and floor == .))
-      and all(.[].scope; valid_package_scope);
-
-    def valid_scope:
-      type == "object"
-      and .scope_contract_version == 4
-      and (.resolved_base | type == "string" and length > 0)
-      and (.resolved_head | type == "string" and length > 0)
-      and valid_package_scope
-      and (.surfaces | valid_surfaces)
-      and (
-        if .mode == "empty" then
-          (.surfaces.bench == false and .surfaces.build == false and .surfaces.test == false)
-        else
-          true
-        end
-      );
-
-    if $document_kind == "plan" then
-      select(
-        type == "object"
-        and .plan_contract_version == 7
-        and .scope.scope_contract_version == 4
-        and (.inputs.snapshot_id | type == "string" and length > 0)
-        and .resolution_universe.mode == "declared_dependencies"
-        and (
-          .resolution_universe.identity
-          | type == "string"
-          and test("^resolution-universe-v1:sha256:[0-9a-f]{64}$")
-        )
-        and (.surfaces | valid_surface_records)
-        and (.files | type == "array")
-        and all(.files[];
-          type == "object"
-          and (.path
-            | type == "string"
-            and length > 0
-            and (explode | all(. >= 32 and . != 127))))
-      )
-      | .scope + {
-          surfaces: (
-            .surfaces
-            | with_entries(.value = .value.enabled)
-          )
-        }
-      | select(valid_scope)
-    elif $document_kind == "scope" then
-      select(valid_scope)
-    else
-      empty
-    end
-  '
-}
-
-rail_plan_is_valid() {
-  local plan_output=$1
-  [[ -n "$plan_output" ]] || return 1
-  printf '%s\n' "$plan_output" | _rail_valid_scope_json plan >/dev/null 2>&1
+rail_prime_plan() {
+  _rail_load_plan
 }
 
 rail_scope_json() {
-  local scope_output
+  local work_id=${1:-${RAIL_WORK_ID:-cargo.build}}
+  _rail_load_plan || return 1
 
-  if [[ -n "${RAIL_SCOPE_JSON:-}" ]]; then
-    scope_output="$RAIL_SCOPE_JSON"
-    if [[ -n "${RAIL_SURFACES_JSON:-}" ]]; then
-      if ! scope_output="$(
-        jq -ce --argjson surfaces "$RAIL_SURFACES_JSON" '
-          if has("surfaces") and .surfaces != $surfaces then
-            empty
-          else
-            . + { surfaces: $surfaces }
-          end
-        ' <<<"$scope_output" 2>/dev/null
-      )"; then
-        return 1
-      fi
-    fi
-  elif [[ -n "${RAIL_SCOPE_JSON_CACHE:-}" ]]; then
-    scope_output="$RAIL_SCOPE_JSON_CACHE"
-  else
-    local plan_output
-    if ! plan_output="$(rail_plan_json)"; then
-      return 1
-    fi
-    if ! scope_output="$(printf '%s\n' "$plan_output" | _rail_valid_scope_json plan 2>/dev/null)"; then
-      return 1
-    fi
-  fi
-
-  if ! RAIL_SCOPE_JSON_CACHE="$(printf '%s\n' "$scope_output" | _rail_valid_scope_json scope 2>/dev/null)"; then
-    RAIL_SCOPE_JSON_CACHE=""
-    return 1
-  fi
-  printf '%s\n' "$RAIL_SCOPE_JSON_CACHE"
+  jq -ce --arg work_id "$work_id" '
+    .work[$work_id] as $decision
+    | if $decision.state == "skipped" then
+        {mode: "empty", cargo_args: []}
+      elif $decision.state == "required"
+        and $decision.scope.kind == "cargo"
+        and $decision.scope.selection.kind == "workspace" then
+        {mode: "workspace", cargo_args: ["--workspace"]}
+      elif $decision.state == "required"
+        and $decision.scope.kind == "cargo"
+        and $decision.scope.selection.kind == "packages" then
+        {
+          mode: "packages",
+          cargo_args: $decision.scope.selection.cargo_args
+        }
+      else
+        empty
+      end
+  ' <<<"$RAIL_PLAN_JSON_CACHE"
 }
 
 rail_scope_mode() {
   local scope_output
-  if ! scope_output="$(rail_scope_json)"; then
-    echo "workspace"
+  if ! scope_output=$(rail_scope_json "${1:-}"); then
+    echo workspace
     return 0
   fi
-
-  printf '%s\n' "$scope_output" | jq -r '.mode'
+  jq -r '.mode' <<<"$scope_output"
 }
 
-rail_scope_surface_enabled() {
-  local surface=$1
+rail_scope_cargo_args() {
   local scope_output
-  if ! scope_output="$(rail_scope_json)"; then
+  if ! scope_output=$(rail_scope_json "${1:-}"); then
     return 0
   fi
-
-  printf '%s\n' "$scope_output" \
-    | jq -e --arg surface "$surface" '.surfaces[$surface] == true' >/dev/null 2>&1
-}
-
-rail_plan_crates() {
-  local scope_output
-  if ! scope_output="$(rail_scope_json)"; then
-    echo ""
-    return 0
-  fi
-
-  printf '%s\n' "$scope_output" | jq -r '
-    if .mode == "crates" then
-      .crates[]
-    else
-      empty
-    end
-  '
+  jq -r 'select(.mode != "empty") | .cargo_args[]' <<<"$scope_output"
 }

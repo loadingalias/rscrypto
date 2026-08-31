@@ -1,59 +1,33 @@
-# Secret lifecycle and diagnostic redaction
+# Secret lifecycle
 
-This document records where rscrypto-owned secret storage is cleared and how
-that source-level policy is checked after release optimization. The type and
-capability boundary is defined in
-[`secret-ownership.md`](secret-ownership.md); this document follows those
-owners through success, failure, early return, transfer, reuse, and drop.
+`rscrypto` clears its named secret owners and explicit secret temporaries on
+success, failure, early return, reuse, and drop. Cleanup uses volatile writes
+and a compiler fence.
 
-## Claim boundary
+This claim covers crate-owned arrays, initialized heap storage, reusable
+scratch, parser and generator staging, finalized keyed-hash snapshots, and
+expanded key state.
 
-The lifecycle claim covers named owner storage and explicit source-level
-temporaries: inline arrays and words, initialized `MaybeUninit` regions,
-heap-backed vectors and boxes, reusable scratch, finalized hash snapshots, and
-parser or generator staging buffers. Cleanup uses volatile writes plus a
-compiler fence.
+It does not cover caller-owned input, ordinary bytes after explicit export,
+compiler-created register or spill copies, swapped pages, crash dumps, or
+hardware-backed storage.
 
-The claim does not extend to caller-owned input, a secret after an explicit
-export into ordinary bytes, compiler-created register or spill copies, swapped
-pages, crash dumps, or hardware-backed storage. Protocol-visible tags, keyed
-outputs, signatures, public keys, nonces, and ciphertexts are not confidential
-owners merely because they are produced by secret-bearing operations.
+## Cleanup boundaries
 
-## Source ownership and cleanup
+| Owner or operation | Cleanup boundary |
+| --- | --- |
+| Typed keys, private keys, and shared secrets | Concrete or nested `Drop`; consuming export clears the source or transfers responsibility explicitly. |
+| AEAD and header protection | Context drop clears retained keys; operation-local schedules, authentication state, and materialized cipher output are cleared after use. Failed opens clear unauthenticated plaintext. |
+| HMAC, HKDF, KMAC, PBKDF2, and keyed BLAKE2/BLAKE3 | Finalization copies, keyed prefixes, work buffers, emitted blocks, and replaced state are cleared after their last use. |
+| ECDSA, Ed25519, X25519, ML-KEM, and RSA private work | Secret scalars, digests, limbs, encoded messages, inverse state, and initialized scratch are cleared on every return path. |
+| Argon2 and scrypt | Every initialized block in owned work memory is cleared before deallocation, including error paths. |
+| Secret parsing and generation | RAII owners cover success, parse failure, entropy failure, and early return. |
 
-| Owner or flow                                                            | Retained secret state                                                                                                                                                                                   | Cleanup boundary                                                                                                                                                                                                           |
-| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SecretBytes`, `SecretVec`, typed keys, private keys, and shared secrets | Fixed or variable-length key material                                                                                                                                                                   | Concrete `Drop`; consuming export either clears the source allocation or explicitly transfers responsibility to the returned ordinary bytes                                                                                |
-| AEAD contexts and AES backend schedules                                  | Raw s390x KM keys or expanded encryption keys, plus authentication subkeys                                                                                                                               | Context and nested key/schedule `Drop`; operation-local subkeys and authentication state are cleared after use; failed open and private-output paths clear rejected output                                               |
-| Header-protection keys, contexts, and masks                               | Raw key bytes, raw s390x KM keys, expanded AES schedules or retained ChaCha20 keys, and backend-local cipher output                                                                                    | Key/context `Drop`; AES-NI/AES-CE expose only the five-byte mask from vector state, while other AES paths and ChaCha20 clear each materialized output block immediately after copying the mask                          |
-| AES-SIV construction and seal/open                                        | Borrowed typed-key halves during expansion; cached CMAC subkeys, S2V state, synthetic IV, CTR counter, keystream, and unauthenticated plaintext                                                         | Key halves are not copied into raw construction scratch; context and AES schedule `Drop` clear retained state; operation-local state is cleared after use; every authentication failure clears the complete caller output before returning one opaque verification error                 |
-| HMAC-SHA-2                                                               | Live SHA state, keyed inner/outer prefixes, oversized-key digests, and inner-digest finalization snapshots                                                                                              | Secret-specific SHA finalization clears copied state and padding blocks; reset clears the replaced live state; `Drop` clears the live state and both saved prefixes                                                        |
-| HKDF and PBKDF2                                                          | PRK or password-derived HMAC prefix words and derivation scratch                                                                                                                                        | Prefix-owner `Drop`; oversized-key/password digests and per-block working values are cleared on every return path                                                                                                          |
-| Ed25519 signing                                                          | Expanded scalar, nonce prefix, nonce hash state, digest, and scalar intermediates                                                                                                                       | Expanded-secret `Drop`; secret-specific SHA-512 digest/finalization clears hash state and padding snapshots; signing clears scalar and digest temporaries before return                                                    |
-| HMAC-SHA-3 and KMAC                                                      | Keyed Keccak state, initial snapshots, and finalized inner state                                                                                                                                        | Secret-mode Keccak owners clear on replacement and `Drop`; fixed-output finalized sponge copies and inner digests are cleared after absorption                                                                             |
-| Keyed BLAKE2                                                             | Stored key, chaining state, block buffer, and finalization copies                                                                                                                                       | Core and parameter-owner `Drop`; finalized chaining words and partial-block copies are cleared before return                                                                                                               |
-| Keyed and derive-key BLAKE3                                              | Key words, chunk/output/root state, CV stack, XOF root, and per-state, reduction, or thread-local parallel CV vectors                                                                                   | Conditional nested `Drop` follows the mode flags; emitted output blocks are cleared after copying; reusable and reduction vectors are cleared after their last keyed use, before logical `Vec::clear`, and on owner drop   |
-| ECDSA, X25519, ML-KEM, and RSA private operations                        | Secret scalars, decapsulation arithmetic, private components, caller-random salt and blinding values, 64-bit limbs, 32-bit ECDSA divstep state, 31-bit RSA inverse words, encoded-message buffers, and reusable private scratch | Typed and nested owner `Drop`; ECDSA safegcd clears both divstep states; operation wrappers clear local arrays and initialized heap regions; the RSA inverse clears all GCD/coefficient/modulus words after success or failure; rejected private outputs are cleared |
-| Argon2 and scrypt                                                        | Password/pepper-derived matrix or ROMix working set                                                                                                                                                     | Owning matrix/state `Drop` clears every initialized block; allocation and parameter failures retain the same RAII boundary                                                                                                 |
+`SecretBytes::expose()` clears its source before returning an ordinary array.
+`SecretVec::into_unprotected_vec()` transfers the existing allocation without
+clearing it. That distinction is intentional.
 
-Backend call records and fixed-size array arguments may be copied into registers
-or ABI spill slots by the compiler. Their durable source owners and explicit
-stack/heap temporaries are covered above; the compiler-created copies remain an
-explicit limitation rather than an unprovable erasure claim.
-
-## Path audit
-
-| Path             | Source audit result                                                                                                                                                                                                              | Optimized evidence                                                                                                                                                                           |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Success          | Finalized HMAC/Keccak/BLAKE copies, oversized-key digests, emitted BLAKE3 blocks, AEAD authentication state, parser staging, and private-operation scratch are cleared after the last read                                       | Fixed stack, secret hex success, HMAC-SHA-2/SHA-3 finalization, keyed BLAKE3, portable AEAD authentication, and RSA caller-random signing wrappers retain volatile zero stores               |
-| Error            | `ZeroizingBytes` and RAII owners cover parser/generator failure; AEAD and RSA clear rejected plaintext/private output, including partially filled caller-entropy scratch                                                         | The RSA caller-random error wrapper reaches the same complete private-scratch cleanup as success; RSA private-component validation routes every initialized secret buffer through owner drop |
-| Early return     | Scope-owned fixed and heap secrets retain `Drop` cleanup across `return` and `?`; explicit cleanup precedes returns from manual scratch paths                                                                                    | `diag_zeroize_early_return` retains zero stores; RSA validation stages retain the nested owner-drop chain in release MIR, LLVM IR, and assembly                                              |
-| Move or transfer | `SecretBytes::expose` clears its source before returning ordinary bytes; `SecretVec::into_unprotected_vec` transfers the allocation and responsibility; keyed XOF moves transfer one root owner whose destination clears on drop | Fixed-owner move and keyed BLAKE3 XOF move/consume wrappers retain source and destination cleanup                                                                                            |
-| Reuse            | HMAC clears replaced live SHA state; secret-mode Keccak assignment drops the replaced state; BLAKE3 replacement drops the old owner; BLAKE3 parallel vectors are wiped before reuse                                              | The BLAKE3 reset wrapper contains separate production `Drop` calls for the replaced and final owners                                                                                         |
-| Drop             | Every confidential public owner in the ownership inventory reaches a concrete or nested cleanup implementation; heap owners traverse initialized storage before deallocation                                                     | The gate follows the keyed BLAKE3 wrapper into its production `drop_in_place` and requires retained owner and heap-scratch zero stores                                                       |
-
-## Inspect an optimized binary
+## Optimized evidence
 
 Run:
 
@@ -61,68 +35,22 @@ Run:
 just check-zeroize-evidence
 ```
 
-[`scripts/check/zeroize-evidence.sh`](../scripts/check/zeroize-evidence.sh)
-builds an optimized, single-codegen-unit library with the diagnostic entry
-points needed to make each lifecycle shape observable. It requires every entry
-point in release MIR, LLVM IR, and assembly, then checks volatile LLVM zero
-stores and host-architecture zero-store instructions.
+The check builds optimized diagnostic entry points and verifies their presence
+in release MIR, LLVM IR, and assembly. It then checks for volatile LLVM zero
+stores and host-architecture zero-store instructions across these shapes:
 
-The gate maps evidence to production behavior as follows:
+- Fixed stack and variable heap owners.
+- Move, early-return, parse-success, and parse-error paths.
+- HMAC, HKDF, ECDSA, keyed BLAKE3, and ML-KEM state.
+- AEAD authentication, header protection, and AES-SIV state.
+- RSA success, entropy failure, and staged private-key validation.
 
-| Evidence entry point                                                                                       | Boundary made observable                                                                                       |
-| ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `diag_zeroize_fixed_stack`, `diag_zeroize_variable_heap`                                                   | Inline and heap owner drop                                                                                     |
-| `diag_zeroize_fixed_move`, `diag_zeroize_early_return`                                                     | Ownership transfer and early return                                                                            |
-| `diag_zeroize_hex_success`, `diag_zeroize_hex_error`                                                       | Shared secret-parser success and error cleanup                                                                 |
-| `diag_zeroize_hmac_sha256_finalize`, `diag_zeroize_hmac_sha3_finalize`                                     | SHA-2 and Keccak keyed finalization, temporary cleanup, and owner drop                                         |
-| `diag_hkdf_sha256_derive_portable`, `diag_hkdf_sha384_derive_portable`, `diag_hkdf_sha512_derive_portable` | HKDF SHA-256, SHA-384, and SHA-512 prefix-owner and expansion-scratch cleanup                                  |
-| `diag_zeroize_ecdsa_p256_platform_scratch`, `diag_zeroize_ecdsa_p384_platform_scratch`                     | Accelerated ECDSA wide-input reduction and modular-inversion workspace cleanup                                 |
-| `diag_zeroize_ecdsa_p256_safegcd_scratch`, `diag_zeroize_ecdsa_p384_safegcd_scratch`                       | Fixed-iteration ECDSA divstep current/next-state and scalar-owner cleanup                                      |
-| `diag_zeroize_blake3_drop`, `diag_zeroize_blake3_reuse`                                                    | Production keyed owner drop and replaced-state cleanup                                                         |
-| `diag_zeroize_blake3_xof_move`, `diag_zeroize_blake3_xof_consume`                                          | Keyed XOF ownership transfer and destination drop                                                              |
-| `diag_zeroize_blake3_thread_scratch`, `diag_zeroize_blake3_parallel_scratch`                               | Thread-local and per-state heap CV wipe before reuse or deallocation                                           |
-| `diag_poly1305_block_portable_digest`, `diag_ascon_aead128_tag_portable`, `diag_aegis256_update_portable`  | Portable Poly1305, Ascon-AEAD, and AEGIS-256 authentication-state cleanup                                      |
-| `diag_aes128gcm_ghash`, `diag_aes256gcm_ghash`                                                             | AES-GCM authentication-accumulator cleanup                                                                     |
-| `diag_zeroize_{aes128,aes256,chacha20}_header_protection`                                                  | Header-protection key/context cleanup and cleanup of any materialized full output block                         |
-| `diag_zeroize_aes_siv_cmac256`                                                                             | AES-SIV typed key, retained context, S2V/CMAC state, CTR keystream, and successful-open cleanup                |
-| `diag_zeroize_mlkem_sha3_512`, `diag_zeroize_mlkem_shake256_{scalar,pair,quad}`                            | ML-KEM secret SHA3-512 and scalar, paired, or quad SHAKE256 owner and seeded-state cleanup                     |
-| `diag_rsa_caller_random_signing_success`, `diag_rsa_caller_random_signing_error`                           | Shared complete private-scratch cleanup after successful signing and a partially filled entropy-error path     |
-| `diag_rsa_validate_pkcs8_private_key_der_stage`                                                            | RSA private-component validation success, staged exits, and errors through heap-owner drop before deallocation |
+This evidence binds the generated host binary. Each target needs its own run;
+source review remains the only evidence for an untested target.
 
-This is host-binary evidence, not a universal machine-code proof. The gate must
-run on each target whose generated cleanup is being claimed; unsupported
-architectures retain the source audit only.
+`tests/secret_redaction.rs` pins public `Debug` and error behavior. Errors expose
+only public sizes or opaque verification failures unless a documented variant
+explicitly returns caller data. `expert::DisplaySecret` and diagnostic APIs are
+deliberate declassification boundaries.
 
-## Formatting and error audit
-
-[`tests/secret_redaction.rs`](../tests/secret_redaction.rs) holds exact `Debug`
-and error snapshots for generic secret wrappers, AEAD and header-protection keys and contexts,
-HMAC/HKDF/KMAC/PBKDF2 state, keyed BLAKE2/BLAKE3 state and XOF readers,
-ECDSA/Ed25519 keypairs, X25519 and ML-KEM shared secrets, prepared ML-KEM
-decapsulation state, Argon2 context, and representative secret-input errors.
-RSA private components, the public-key-only private-key view, private scratch,
-`SecretVec`, and Ed25519 expanded state have adjacent unit snapshots where
-their internal fixtures are available.
-
-RSA caller-random signing discards the callback's error value and returns only
-`RsaPrivateOpError::EntropyUnavailable`; neither `Debug`, `Display`, nor an
-error source can expose a caller payload through this boundary.
-
-AES-SIV-CMAC-256 additionally pins its non-empty public nonce error text and
-verifies that every tag-byte corruption plus representative ciphertext, AAD,
-and nonce corruption returns the same opaque error after clearing all
-unauthenticated plaintext.
-
-Secret-key hex errors retain the public offending-byte field for programmatic
-inspection but omit that byte from both `Debug` and `Display`. Generic ECDSA
-and password-record entropy errors omit the caller's payload from `Debug`,
-`Display`, and the standard error-source chain; callers can still recover it by
-explicitly matching the public `Random` or `Entropy` variant. Other reviewed
-errors contain only discriminants, public sizes, or opaque verification
-failures.
-
-`expert::DisplaySecret` is the deliberate exception: constructing it
-explicitly opts into rendering borrowed secret bytes. Feature-gated diagnostic
-functions may return their declared result bytes, but they do not implicitly
-format owning keys, seeds, nonce material, intermediate state, or unmasked
-shares through `Debug` or an error value.
+See [`secret-ownership.md`](secret-ownership.md) for the capability inventory.

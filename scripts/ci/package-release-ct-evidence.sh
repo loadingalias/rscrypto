@@ -79,7 +79,7 @@ bundle_path="$out_dir/$bundle_name"
 manifest="$staging/CT-EVIDENCE-MANIFEST.txt"
 metadata="$staging/CT-EVIDENCE-BUNDLE.json"
 
-scripts/ct/python.sh scripts/ct/validate_release_evidence.py \
+scripts/lib/python.sh scripts/ct/validate_release_evidence.py \
   --version "$version" \
   --commit "$commit" \
   --evidence-version "$evidence_version" \

@@ -1,14 +1,28 @@
 name: _ci-suite
 
-# Reusable CI suite: quality, Cargo graph assurance, feature contracts, native
-# targets, cross targets, and supply-chain validation.
-# Called by ci.yaml and by Weekly assurance and release modes.
-
+# Cargo Rail owns row selection. This workflow only maps selected, typed rows
+# onto repository-owned commands and runner policy.
 on:
   workflow_call:
     inputs:
+      matrix:
+        description: "Strict Cargo Rail ci-suite matrix object."
+        required: true
+        type: string
+      plan_artifact:
+        description: "Artifact containing the exact plan and its strict reader."
+        required: true
+        type: string
+      plan_identity:
+        description: "Root-independent identity of the exact plan."
+        required: true
+        type: string
+      plan_head_commit:
+        description: "Immutable checkout commit bound to the plan."
+        required: true
+        type: string
       supply_chain_mode:
-        description: "'light' (cargo deny check advisories) or 'full' (deny all + audit)."
+        description: "'light' (advisories) or 'full' (deny all plus audit)."
         required: true
         type: string
       test_mode:
@@ -16,155 +30,52 @@ on:
         required: false
         type: string
         default: local
-      include_cargo_graph:
-        description: "Run exhaustive compiler-backed cargo-rail unification assurance."
-        required: false
-        type: boolean
-        default: true
       artifact_retention_days:
         description: "Retention for evidence artifacts produced by this suite."
         required: false
         type: number
         default: 90
+      cache_mode:
+        description: "Provider-enforced Cargo Rail cache authority for selected work."
+        required: false
+        type: string
+        default: read
+    secrets:
+      cache_access_key_id:
+        description: "Caller-selected bucket-scoped R2 access key for the selected cache mode."
+        required: false
+      cache_secret_access_key:
+        description: "Caller-selected bucket-scoped R2 secret key for the selected cache mode."
+        required: false
 
 permissions:
   contents: read
 
 jobs:
-  target-matrix:
-    name: Resolve Target Matrix
-    runs-on: ubuntu-latest
-    outputs:
-      ci: ${{ steps.matrix.outputs.ci }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Load matrix
-        id: matrix
-        env:
-          GITHUB_RUN_ID: ${{ github.run_id }}
-        run: |
-          {
-            echo "ci=$(bash scripts/lib/target-matrix.sh --format json --key ci)"
-          } >> "$GITHUB_OUTPUT"
-
-  quality:
-    name: Quality
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
-      timeout_minutes: 30
-      tools_mode: quality
-      toolchain_components: "clippy, rustfmt, rust-src"
-      operation: quality
-
-  msrv:
-    name: MSRV
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
-      timeout_minutes: 30
-      tools_mode: none
-      toolchain_contract: msrv
-      toolchain_components: ""
-      operation: msrv
-
-  cargo-graph:
-    if: ${{ inputs.include_cargo_graph }}
-    name: Cargo Graph Assurance
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
-      timeout_minutes: 90
-      tools_mode: rail
-      toolchain_components: "rust-src"
-      operation: cargo-graph
-      artifact_name: cargo-graph-${{ inputs.test_mode }}
-      artifact_path: target/cargo-rail/unify-result.json
-      artifact_always: true
-      artifact_retention_days: ${{ inputs.artifact_retention_days }}
-
-  feature-contracts:
-    name: Feature Contracts
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
-      timeout_minutes: 120
-      tools_mode: minimal
-      toolchain_components: "rust-src"
-      operation: feature-contracts
-
-  ci:
-    name: CI (${{ matrix.target.name }})
-    needs: target-matrix
+  selected:
+    name: ${{ matrix.work.display_name }}
     strategy:
       fail-fast: false
-      matrix:
-        target: ${{ fromJSON(needs.target-matrix.outputs.ci) }}
+      matrix: ${{ fromJSON(inputs.matrix) }}
     uses: ./.github/workflows/_rust-job.yaml
     with:
-      runner: ${{ matrix.target.runner }}
-      timeout_minutes: 180
-      tools_mode: ${{ contains(matrix.target.name, 'windows-msvc') && 'none' || 'ci' }}
-      toolchain_components: ${{ contains(matrix.target.name, 'windows-msvc') && 'clippy' || 'clippy, rustfmt, rust-src' }}
-      operation: native
-      target: ${{ matrix.target.name }}
+      runner: ${{ matrix.work.runner_type == 'runson' && format('runs-on={0}/runner={1}', github.run_id, matrix.work.runner) || matrix.work.runner }}
+      timeout_minutes: ${{ matrix.work.timeout_minutes }}
+      tools_mode: ${{ matrix.work.tools_mode }}
+      toolchain_contract: ${{ matrix.work.toolchain_contract }}
+      toolchain_components: ${{ matrix.work.toolchain_components }}
+      cache_mode: ${{ inputs.cache_mode }}
+      operation: ${{ matrix.work.operation }}
+      target: ${{ matrix.work.target || '' }}
       test_mode: ${{ inputs.test_mode }}
-
-  ci-ibm-s390x:
-    name: CI (IBM Z s390x)
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: ubuntu-24.04-s390x
-      timeout_minutes: 120
-      tools_mode: none
-      toolchain_contract: nightly
-      toolchain_components: "clippy, rustfmt"
-      operation: native-ibm
-      test_mode: ${{ inputs.test_mode }}
-
-  ci-ibm-power10:
-    name: CI (IBM POWER10 ppc64le)
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: ubuntu-24.04-ppc64le-p10
-      timeout_minutes: 120
-      tools_mode: none
-      toolchain_contract: nightly
-      toolchain_components: "clippy, rustfmt"
-      operation: native-ibm
-      test_mode: ${{ inputs.test_mode }}
-
-  platform-amx:
-    name: Platform (Linux x64 AMX permission)
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: runs-on=${{ github.run_id }}/runner=intel-spr
-      timeout_minutes: 30
-      tools_mode: none
-      toolchain_contract: nightly
-      toolchain_components: "rustfmt"
-      operation: platform-amx
-
-  cross-targets:
-    name: Cross Targets
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
-      timeout_minutes: 90
-      tools_mode: none
-      toolchain_contract: nightly
-      toolchain_components: "clippy, rust-src"
-      operation: cross-targets
-
-  supply-chain:
-    name: Supply Chain (${{ inputs.supply_chain_mode }})
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
-      timeout_minutes: 45
-      tools_mode: supply-chain
-      operation: supply-chain
       supply_chain_mode: ${{ inputs.supply_chain_mode }}
+      plan_artifact: ${{ inputs.plan_artifact }}
+      plan_identity: ${{ inputs.plan_identity }}
+      plan_head_commit: ${{ inputs.plan_head_commit }}
+      artifact_name: ${{ matrix.work.operation == 'cargo-graph' && format('cargo-graph-{0}', inputs.test_mode) || '' }}
+      artifact_path: ${{ matrix.work.operation == 'cargo-graph' && 'target/cargo-rail/unify-result.json' || '' }}
+      artifact_always: true
+      artifact_retention_days: ${{ inputs.artifact_retention_days }}
+    secrets:
+      cache_access_key_id: ${{ secrets.cache_access_key_id }}
+      cache_secret_access_key: ${{ secrets.cache_secret_access_key }}

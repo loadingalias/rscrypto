@@ -6,11 +6,12 @@
 //! # Examples
 //!
 //! ```
-//! use rscrypto::aead::introspect::{DispatchInfo, xchacha20poly1305_backend};
+//! use rscrypto::aead::introspect::DispatchInfo;
 //!
 //! let info = DispatchInfo::current();
 //! assert!(!format!("{info}").is_empty());
-//! assert!(!xchacha20poly1305_backend().is_empty());
+//! #[cfg(feature = "xchacha20poly1305")]
+//! assert!(!rscrypto::aead::introspect::xchacha20poly1305_backend().is_empty());
 //! ```
 
 #[cfg(any(

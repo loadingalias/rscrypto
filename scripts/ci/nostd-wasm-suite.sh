@@ -15,6 +15,8 @@ DEPTH="${2:-shallow}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/ci-tool-integrity.sh
 source "$SCRIPT_DIR/../lib/ci-tool-integrity.sh"
+# shellcheck source=../lib/feature-profiles.sh
+source "$SCRIPT_DIR/../lib/feature-profiles.sh"
 
 rustup target add "$TARGET"
 
@@ -123,44 +125,8 @@ cargo build --locked --target "$TARGET" --no-default-features --lib --release
 cargo check --locked --target "$TARGET" --no-default-features --features alloc --lib
 
 if [[ "$DEPTH" == "deep" ]]; then
-  # Union of the historical check-all facade matrix and the dedicated weekly
-  # no_std/WASM combinations. This preserves the old coverage exactly once.
-  FEATURE_SETS=(
-    "crc16"
-    "crc24"
-    "crc32"
-    "crc64"
-    "alloc,crc32"
-    "sha2"
-    "sha3"
-    "websocket-sha1"
-    "xxh3"
-    "hmac"
-    "hmac-sha3"
-    "kmac"
-    "hkdf"
-    "poly1305"
-    "rsa"
-    "x25519"
-    "ml-kem"
-    "chacha20poly1305"
-    "aes-siv"
-    "ascon-aead"
-    "checksums"
-    "hashes"
-    "macs"
-    "kdfs"
-    "signatures"
-    "key-exchange"
-    "auth"
-    "aead"
-    "full"
-    "alloc,checksums"
-    "alloc,hashes"
-    "alloc,checksums,hashes,auth,aead"
-  )
-
-  for feature_set in "${FEATURE_SETS[@]}"; do
+  # Complete no_std/WASM feature contract, executed exactly once per target.
+  for feature_set in "${CONSTRAINED_FEATURE_SETS[@]}"; do
     cargo check --locked --target "$TARGET" --no-default-features --features "$feature_set" --lib
   done
 

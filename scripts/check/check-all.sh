@@ -1,83 +1,19 @@
 #!/usr/bin/env bash
+# Complete host and cross-target validation for rscrypto.
+
 set -euo pipefail
 
-# Complete cross-platform check: host + windows + linux + constrained targets.
-# Usage: check-all.sh [--all] [crate1 crate2 ...]
+[[ $# -eq 0 ]] || { echo "Usage: $0" >&2; exit 2; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
 # shellcheck source=../lib/targets.sh
 source "$SCRIPT_DIR/../lib/targets.sh"
+# shellcheck source=../lib/feature-profiles.sh
+source "$SCRIPT_DIR/../lib/feature-profiles.sh"
 
 NIGHTLY_TOOLCHAIN=$("$SCRIPT_DIR/../lib/toolchain.sh" --nightly)
-
-DEFAULT_CONSTRAINED_CRATES=(
-  "rscrypto"
-)
-
-CONSTRAINED_CRATES=()
-CONSTRAINED_SCOPE=""
-
-select_constrained_crates() {
-  local all_flag=false
-  local crates=()
-
-  for arg in "$@"; do
-    if [[ "$arg" == "--all" ]]; then
-      all_flag=true
-    else
-      crates+=("$arg")
-    fi
-  done
-
-  if [[ ${#crates[@]} -gt 0 ]]; then
-    CONSTRAINED_CRATES=("${crates[@]}")
-    CONSTRAINED_SCOPE="${crates[*]}"
-    return 0
-  fi
-
-  if [[ "$all_flag" == true ]]; then
-    CONSTRAINED_CRATES=("${DEFAULT_CONSTRAINED_CRATES[@]}")
-    CONSTRAINED_SCOPE="workspace"
-    return 0
-  fi
-
-  local scope_mode
-  scope_mode="$(rail_scope_mode)"
-
-  case "$scope_mode" in
-    workspace)
-      CONSTRAINED_CRATES=("${DEFAULT_CONSTRAINED_CRATES[@]}")
-      CONSTRAINED_SCOPE="workspace (planner)"
-      ;;
-    crates)
-      local affected
-      affected="$(rail_plan_crates)"
-
-      if [[ -z "$affected" ]]; then
-        CONSTRAINED_CRATES=("${DEFAULT_CONSTRAINED_CRATES[@]}")
-        CONSTRAINED_SCOPE="workspace (planner fallback)"
-      else
-        CONSTRAINED_CRATES=()
-        for crate in $affected; do
-          CONSTRAINED_CRATES+=("$crate")
-        done
-        CONSTRAINED_SCOPE="affected"
-      fi
-      ;;
-    *)
-      CONSTRAINED_CRATES=("${DEFAULT_CONSTRAINED_CRATES[@]}")
-      CONSTRAINED_SCOPE="workspace (no changes)"
-      ;;
-  esac
-}
-
-crate_supports_alloc() {
-  local crate=$1
-  local manifest="Cargo.toml"
-  [[ -f "$manifest" ]] && grep -q '^[[:space:]]*alloc[[:space:]]*=' "$manifest"
-}
 
 cargo_for_target() {
   local target=$1
@@ -90,15 +26,13 @@ cargo_for_target() {
 }
 
 run_constrained_check() {
-  local crate=$1
-  local target=$2
-  local target_dir=$3
-  local log_file=$4
-  local feature_set=${5:-}
-
+  local target=$1
+  local target_dir=$2
+  local log_file=$3
+  local feature_set=${4:-}
   local args=(
     check
-    -p "$crate"
+    -p rscrypto
     --no-default-features
     --target "$target"
     --lib
@@ -109,30 +43,36 @@ run_constrained_check() {
     args+=(--features "$feature_set")
   fi
 
-  if ! CARGO_TARGET_DIR="$target_dir" cargo_for_target "$target" "${args[@]}" >>"$log_file" 2>&1; then
-    return 1
-  fi
+  CARGO_TARGET_DIR="$target_dir" cargo_for_target "$target" "${args[@]}" \
+    >>"$log_file" 2>&1
 }
 
 run_constrained_target() {
   local target=$1
   local log_dir=$2
+  local target_dir="target/cross-check/$target"
+  local log_file="$log_dir/$target.log"
 
   if [[ "$target" == riscv32* ]]; then
     ensure_target "$target" "$NIGHTLY_TOOLCHAIN"
   else
     ensure_target "$target"
   fi
-
-  local target_dir="target/cross-check/$target"
   mkdir -p "$target_dir"
-
-  local log_file="$log_dir/$target.log"
   : >"$log_file"
 
   step "$target check (no features)"
-  for crate in "${CONSTRAINED_CRATES[@]}"; do
-    if ! run_constrained_check "$crate" "$target" "$target_dir" "$log_file"; then
+  if run_constrained_check "$target" "$target_dir" "$log_file"; then
+    ok
+  else
+    fail
+    show_error "$log_file"
+    return 1
+  fi
+
+  step "$target check (feature contract)"
+  for feature_set in alloc "${CONSTRAINED_FEATURE_SETS[@]}"; do
+    if ! run_constrained_check "$target" "$target_dir" "$log_file" "$feature_set"; then
       fail
       show_error "$log_file"
       return 1
@@ -140,70 +80,33 @@ run_constrained_target() {
   done
   ok
 
-  if [[ " ${CONSTRAINED_CRATES[*]} " == *" rscrypto "* ]]; then
-    step "$target check (rscrypto facade matrix)"
-    for feature_set in "alloc" "crc16" "crc24" "crc32" "crc64" "alloc,crc32" "sha2" "sha3" "xxh3" "hmac" "hmac-sha3" "kmac" "hkdf" "poly1305" "rsa" "x25519" "ml-kem" "chacha20poly1305" "ascon-aead" "checksums" "hashes" "macs" "kdfs" "signatures" "key-exchange" "auth" "aead" "full"; do
-      if ! run_constrained_check "rscrypto" "$target" "$target_dir" "$log_file" "$feature_set"; then
-        fail
-        show_error "$log_file"
-        return 1
-      fi
-    done
+  step "$target release build (no features)"
+  if CARGO_TARGET_DIR="$target_dir" cargo_for_target "$target" build --locked \
+    -p rscrypto --no-default-features --target "$target" --lib --release \
+    >>"$log_file" 2>&1; then
     ok
+  else
+    fail
+    show_error "$log_file"
+    return 1
   fi
 
-  local alloc_crates=()
-  for crate in "${CONSTRAINED_CRATES[@]}"; do
-    if crate_supports_alloc "$crate"; then
-      alloc_crates+=("$crate")
-    fi
-  done
-
-  if [[ ${#alloc_crates[@]} -gt 0 ]]; then
-    step "$target check (alloc)"
-    for crate in "${alloc_crates[@]}"; do
-      if ! CARGO_TARGET_DIR="$target_dir" \
-        cargo_for_target "$target" check --locked -p "$crate" --no-default-features --features alloc --target "$target" --lib \
-        >>"$log_file" 2>&1; then
-        fail
-        show_error "$log_file"
-        return 1
-      fi
-    done
+  step "$target release build (alloc)"
+  if CARGO_TARGET_DIR="$target_dir" cargo_for_target "$target" build --locked \
+    -p rscrypto --no-default-features --features alloc --target "$target" --lib \
+    --release >>"$log_file" 2>&1; then
     ok
-  fi
-
-  step "$target build (no features)"
-  for crate in "${CONSTRAINED_CRATES[@]}"; do
-    if ! CARGO_TARGET_DIR="$target_dir" \
-      cargo_for_target "$target" build --locked -p "$crate" --no-default-features --target "$target" --lib --release \
-      >>"$log_file" 2>&1; then
-      fail
-      show_error "$log_file"
-      return 1
-    fi
-  done
-  ok
-
-  if [[ ${#alloc_crates[@]} -gt 0 ]]; then
-    step "$target build (alloc)"
-    for crate in "${alloc_crates[@]}"; do
-      if ! CARGO_TARGET_DIR="$target_dir" \
-      cargo_for_target "$target" build --locked -p "$crate" --no-default-features --features alloc --target "$target" --lib --release \
-        >>"$log_file" 2>&1; then
-        fail
-        show_error "$log_file"
-        return 1
-      fi
-    done
-    ok
+  else
+    fail
+    show_error "$log_file"
+    return 1
   fi
 }
 
 run_constrained_checks() {
   local log_dir
   log_dir=$(mktemp -d)
-  trap 'rm -rf "$log_dir"' RETURN
+  trap 'rm -rf "$log_dir"' EXIT
 
   local constrained_targets=(
     "${NOSTD_TARGETS[@]:+${NOSTD_TARGETS[@]}}"
@@ -211,29 +114,25 @@ run_constrained_checks() {
   )
 
   echo ""
-  echo "Constrained targets ${DIM}($CONSTRAINED_SCOPE)${RESET}"
-
+  echo "Constrained targets ${DIM}(rscrypto, parallel)${RESET}"
   if [[ ${#constrained_targets[@]} -eq 0 ]]; then
     skip "no constrained targets configured" ".config/target-matrix.json"
     return 0
   fi
 
   local pids=()
-  local targets=()
+  local target
   for i in "${!constrained_targets[@]}"; do
-    target="${constrained_targets[$i]}"
-    targets[i]="$target"
-    (
-      run_constrained_target "$target" "$log_dir"
-    ) &
+    target=${constrained_targets[$i]}
+    (run_constrained_target "$target" "$log_dir") &
     pids[i]=$!
   done
 
   local failures=0
-  for i in "${!targets[@]}"; do
-    target="${targets[$i]}"
+  for i in "${!constrained_targets[@]}"; do
+    target=${constrained_targets[$i]}
     step "$target group"
-    if wait "${pids[i]}"; then
+    if wait "${pids[$i]}"; then
       ok
     else
       fail
@@ -241,81 +140,46 @@ run_constrained_checks() {
     fi
   done
 
-  if [[ $failures -ne 0 ]]; then
-    return 1
-  fi
-
+  [[ "$failures" -eq 0 ]] || return 1
   echo "${GREEN}✓${RESET} Constrained targets passed"
 }
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Cross-platform checks"
+echo "Complete rscrypto validation"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-SCOPE_ARGS=()
-HOST_ARGS=("$@")
-FEATURE_MODE_SET=false
-for arg in "$@"; do
-  case "$arg" in
-    --skip-feature-matrix|--feature-matrix) FEATURE_MODE_SET=true ;;
-    *) SCOPE_ARGS+=("$arg") ;;
-  esac
-done
-if [[ "$FEATURE_MODE_SET" == false ]]; then
-  HOST_ARGS+=(--feature-matrix)
-fi
-select_constrained_crates "${SCOPE_ARGS[@]:+${SCOPE_ARGS[@]}}"
-
-# Run host checks first (most likely to fail, fastest feedback)
-"$SCRIPT_DIR/check.sh" "${HOST_ARGS[@]}"
+"$SCRIPT_DIR/check.sh" --all --feature-matrix
 "$SCRIPT_DIR/zeroize-evidence.sh"
-echo ""
 
+echo ""
 echo "Cross targets ${DIM}(parallel)${RESET}"
 log_dir=$(mktemp -d)
 trap 'rm -rf "$log_dir"' EXIT
 
 jobs=(windows linux ibm constrained)
-pids=()
-
-("$SCRIPT_DIR/check-win.sh" "${SCOPE_ARGS[@]:+${SCOPE_ARGS[@]}}") >"$log_dir/windows.log" 2>&1 &
-pids+=( "$!" )
-
-("$SCRIPT_DIR/check-linux.sh" "${SCOPE_ARGS[@]:+${SCOPE_ARGS[@]}}") >"$log_dir/linux.log" 2>&1 &
-pids+=( "$!" )
-
-("$SCRIPT_DIR/check-ibm.sh" "${SCOPE_ARGS[@]:+${SCOPE_ARGS[@]}}") >"$log_dir/ibm.log" 2>&1 &
-pids+=( "$!" )
-
+("$SCRIPT_DIR/check-win.sh") >"$log_dir/windows.log" 2>&1 &
+pids=("$!")
+("$SCRIPT_DIR/check-zig.sh" linux) >"$log_dir/linux.log" 2>&1 &
+pids+=("$!")
+("$SCRIPT_DIR/check-zig.sh" ibm) >"$log_dir/ibm.log" 2>&1 &
+pids+=("$!")
 (run_constrained_checks) >"$log_dir/constrained.log" 2>&1 &
-pids+=( "$!" )
+pids+=("$!")
 
 failures=0
 for i in "${!jobs[@]}"; do
-  job="${jobs[i]}"
-  log_file="$log_dir/$job.log"
-  case "$job" in
-    windows) display="Windows group" ;;
-    linux) display="Linux group" ;;
-    ibm) display="IBM group" ;;
-    constrained) display="Constrained group" ;;
-  esac
-  step "$display"
-  if wait "${pids[i]}"; then
+  job=${jobs[$i]}
+  step "$job group"
+  if wait "${pids[$i]}"; then
     ok
   else
     fail
-    show_error "$log_file"
+    show_error "$log_dir/$job.log"
     failures=1
   fi
 done
 
-if [[ $failures -ne 0 ]]; then
-  exit 1
-fi
-
+[[ "$failures" -eq 0 ]] || exit 1
 echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "${GREEN}✓${RESET} All cross-platform checks passed"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "${GREEN}✓${RESET} Complete rscrypto validation passed"

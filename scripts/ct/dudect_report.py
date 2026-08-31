@@ -12,11 +12,11 @@ import re
 import shlex
 import shutil
 import subprocess
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from toml_compat import tomllib
 from provenance import cfg_target_features, codegen_value, codegen_values, resolved_rustflags
 
 

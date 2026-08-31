@@ -1,168 +1,18 @@
-//! Checksum, hash, and AEAD kernel introspection.
-//!
-//! This example shows how to inspect which kernels are selected for your
-//! platform, useful for verifying hardware acceleration is enabled.
-//!
-//! Run with: `cargo run --example introspect --features checksums,hashes,aead,diag`
-
 use rscrypto::{
-  Blake3, Crc16Ccitt, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme, Sha256, Shake256, Xxh3,
-  aead::introspect::{
-    aegis256_backend, aes256gcm_backend, aes256gcmsiv_backend, ascon_aead128_backend, chacha20poly1305_backend,
-    xchacha20poly1305_backend,
-  },
-  checksum::introspect::{DispatchInfo, KernelIntrospect, kernel_for},
-  hashes::introspect::kernel_for as hash_kernel_for,
+  Crc32C, Sha256, aead::introspect::chacha20poly1305_backend, checksum::introspect::kernel_for as checksum_kernel,
+  hashes::introspect::kernel_for as hash_kernel,
 };
 
 fn main() {
-  println!("Dispatch introspection\n");
+  println!("Platform: {}", rscrypto::platform::describe());
 
-  platform_info();
-  checksum_kernel_probes();
-  checksum_size_based_dispatch();
-  generic_checksum_introspection();
-  hash_kernel_probes();
-  hash_size_based_dispatch();
-  generic_hash_introspection();
-  aead_backend_probes();
-}
-
-/// Display detected platform capabilities.
-fn platform_info() {
-  println!("Platform detection\n");
-
-  let info = DispatchInfo::current();
-
-  // Full platform description with CPU features
-  println!("Platform: {info}");
-  println!();
-
-  // The platform field provides the raw Description
-  let platform = info.platform();
-  println!("Platform Debug: {platform:?}");
-  println!();
-}
-
-/// Show a representative 1KB kernel probe for each checksum algorithm.
-fn checksum_kernel_probes() {
-  println!("Checksum kernels at 1 KiB\n");
-
-  println!("CRC-16 (CCITT):    {}", kernel_for::<Crc16Ccitt>(1024));
-  println!("CRC-24 (OpenPGP):  {}", kernel_for::<Crc24OpenPgp>(1024));
-  println!("CRC-32 (IEEE):     {}", kernel_for::<Crc32>(1024));
-  println!("CRC-32C:           {}", kernel_for::<Crc32C>(1024));
-  println!("CRC-64 (XZ):       {}", kernel_for::<Crc64>(1024));
-  println!("CRC-64 (NVMe):     {}", kernel_for::<Crc64Nvme>(1024));
-  println!();
-}
-
-/// Checksum kernels may vary based on buffer size.
-fn checksum_size_based_dispatch() {
-  println!("Checksum size-based kernel selection\n");
-
-  // Different buffer sizes may use different kernels
-  let sizes = [64, 256, 1024, 4096, 65536, 1_048_576];
-
-  println!("CRC-64 (XZ) kernel by buffer size:");
-  for size in sizes {
-    let kernel = Crc64::kernel_name_for_len(size);
-    println!("  {:>10} bytes: {kernel}", size);
-  }
-  println!();
-
-  println!("CRC-32C kernel by buffer size:");
-  for size in sizes {
-    let kernel = Crc32C::kernel_name_for_len(size);
-    println!("  {:>10} bytes: {kernel}", size);
-  }
-  println!();
-}
-
-/// Generic checksum introspection using the kernel_for function.
-fn generic_checksum_introspection() {
-  println!("Generic checksum introspection\n");
-
-  // The kernel_for::<T>(len) function works with any KernelIntrospect type
-  fn report<T: KernelIntrospect>(name: &str, sizes: &[usize]) {
-    println!("{name}:");
-    for &size in sizes {
-      println!("  {:>8} B: {}", size, kernel_for::<T>(size));
-    }
-    println!();
+  for len in [64, 4096, 1_048_576] {
+    println!(
+      "{len:>7} bytes: CRC-32C={}, SHA-256={}",
+      checksum_kernel::<Crc32C>(len),
+      hash_kernel::<Sha256>(len)
+    );
   }
 
-  let sizes = [128, 4096, 1_000_000];
-
-  report::<Crc32>("CRC-32", &sizes);
-  report::<Crc64>("CRC-64 (XZ)", &sizes);
-  report::<Crc64Nvme>("CRC-64 (NVMe)", &sizes);
-
-  // Useful for runtime decisions or logging
-  let len = 8192;
-  println!("For {len} byte buffers, CRC-64/XZ uses: {}", kernel_for::<Crc64>(len));
-}
-
-/// Show a representative 1KB kernel probe for each hash family.
-fn hash_kernel_probes() {
-  println!("\nHash kernels at 1 KiB\n");
-
-  println!("SHA-256:           {}", hash_kernel_for::<Sha256>(1024));
-  println!("SHAKE-256:         {}", hash_kernel_for::<Shake256>(1024));
-  println!("BLAKE3:            {}", hash_kernel_for::<Blake3>(1024));
-  println!("XXH3:              {}", hash_kernel_for::<Xxh3>(1024));
-  println!();
-}
-
-/// Hash kernels may vary based on input size.
-fn hash_size_based_dispatch() {
-  println!("Hash size-based kernel selection\n");
-
-  let sizes = [64, 256, 1024, 4096, 65536, 1_048_576];
-
-  println!("BLAKE3 kernel by buffer size:");
-  for size in sizes {
-    let kernel = hash_kernel_for::<Blake3>(size);
-    println!("  {:>10} bytes: {kernel}", size);
-  }
-  println!();
-
-  println!("SHA-256 kernel by buffer size:");
-  for size in sizes {
-    let kernel = hash_kernel_for::<Sha256>(size);
-    println!("  {:>10} bytes: {kernel}", size);
-  }
-  println!();
-}
-
-/// Generic hash introspection using the hash kernel_for function.
-fn generic_hash_introspection() {
-  println!("Generic hash introspection\n");
-
-  fn report<T: KernelIntrospect>(name: &str, sizes: &[usize]) {
-    println!("{name}:");
-    for &size in sizes {
-      println!("  {:>8} B: {}", size, hash_kernel_for::<T>(size));
-    }
-    println!();
-  }
-
-  let sizes = [128, 4096, 1_000_000];
-
-  report::<Sha256>("SHA-256", &sizes);
-  report::<Shake256>("SHAKE-256", &sizes);
-  report::<Blake3>("BLAKE3", &sizes);
-  report::<Xxh3>("XXH3", &sizes);
-}
-
-/// AEAD backend labels report the active authenticated-encryption path.
-fn aead_backend_probes() {
-  println!("\nAEAD backends\n");
-
-  println!("AES-256-GCM:          {}", aes256gcm_backend());
-  println!("AES-256-GCM-SIV:      {}", aes256gcmsiv_backend());
-  println!("ChaCha20-Poly1305:    {}", chacha20poly1305_backend());
-  println!("XChaCha20-Poly1305:   {}", xchacha20poly1305_backend());
-  println!("AEGIS-256:            {}", aegis256_backend());
-  println!("Ascon-AEAD128:        {}", ascon_aead128_backend());
+  println!("ChaCha20-Poly1305: {}", chacha20poly1305_backend());
 }

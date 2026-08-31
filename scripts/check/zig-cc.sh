@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # zig-cc.sh - Zig CC wrapper for cross-compilation
-# Used by check-linux.sh (and check-all.sh) for cross-target compilation checks.
+# Used by check-zig.sh for cross-target compilation checks.
 # Translates Rust target triples to Zig target triples.
 #
 # Targets aligned with .cargo/config.toml (Tier A/B/C).
@@ -12,7 +12,7 @@ set -euo pipefail
 #   - Zig uses different triple format (e.g., x86_64-linux-gnu vs x86_64-unknown-linux-gnu)
 #   - This wrapper intercepts the --target flag and translates it for zig
 #
-# Usage (automatic via CC env var in check-linux.sh):
+# Usage (automatic via the CC environment in check-zig.sh):
 #   CC="path/to/zig-cc.sh" cargo check --target x86_64-unknown-linux-gnu
 
 # Extract the target from --target= argument, pass everything else through.

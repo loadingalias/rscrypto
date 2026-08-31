@@ -635,7 +635,7 @@ pub(crate) fn aes128_expand_key(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
 ///
 /// This bypasses runtime hardware selection without creating a second AES implementation. On
 /// RV64 and s390x, the table-free fixslice fallback is the portable authority.
-#[cfg(feature = "diag")]
+#[cfg(all(feature = "diag", feature = "aes-siv"))]
 #[inline]
 pub(crate) fn aes128_expand_key_forced_portable(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
   #[cfg(any(target_arch = "riscv64", target_arch = "s390x"))]
@@ -1773,7 +1773,10 @@ pub(crate) fn aes256_encrypt_block(ek: &Aes256EncKey, block: &mut [u8; BLOCK_SIZ
   }
 }
 
-#[cfg(any(target_arch = "riscv64", all(test, not(target_arch = "s390x"))))]
+#[cfg(all(
+  feature = "aegis256",
+  any(target_arch = "riscv64", all(test, not(target_arch = "s390x")))
+))]
 #[inline]
 pub(super) fn aes_enc_round_4_fixslice(blocks: &mut [[u8; BLOCK_SIZE]; 4], round_keys: &[[u8; BLOCK_SIZE]; 4]) {
   fixslice64::cipher_round_4(blocks, round_keys);

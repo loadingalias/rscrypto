@@ -34,10 +34,10 @@
 //! ```toml
 //! [dependencies]
 //! # ChaCha20-Poly1305 only
-//! rscrypto = { version = "0.8.1", default-features = false, features = ["chacha20poly1305"] }
+//! rscrypto = { version = "0.9", default-features = false, features = ["chacha20poly1305"] }
 //!
 //! # All AEADs
-//! rscrypto = { version = "0.8.1", default-features = false, features = ["aead"] }
+//! rscrypto = { version = "0.9", default-features = false, features = ["aead"] }
 //! ```
 //!
 //! # API Conventions

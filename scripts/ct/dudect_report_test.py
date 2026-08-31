@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 from dudect_report import (
@@ -13,9 +14,6 @@ from dudect_report import (
   owner_symbol_evidence,
 )
 from full import validate_dudect_case_report, validated_dudect_case_report
-from toml_compat import tomllib
-
-
 def expect_failure(action) -> None:
   try:
     action()

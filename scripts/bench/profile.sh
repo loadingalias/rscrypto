@@ -9,12 +9,13 @@ PROFILE_SECONDS=${3:-10}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CATALOG="$SCRIPT_DIR/benchmark_catalog.py"
+PYTHON="$("$SCRIPT_DIR/../lib/python.sh" --print)"
 
-[[ "$PROFILE_SECONDS" =~ ^[0-9]+([.][0-9]+)?$ ]] \
-  && awk -v seconds="$PROFILE_SECONDS" 'BEGIN { exit !(seconds >= 1) }' || {
+if [[ ! "$PROFILE_SECONDS" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+  || ! awk -v seconds="$PROFILE_SECONDS" 'BEGIN { exit !(seconds >= 1) }'; then
   echo "error: profile duration must be numeric and at least one second" >&2
   exit 2
-}
+fi
 
 command -v samply >/dev/null 2>&1 || {
   echo "error: samply is required; install the repository-pinned profile tool set" >&2
@@ -26,9 +27,9 @@ command -v jq >/dev/null 2>&1 || {
 }
 
 cd "$REPO_ROOT"
-scripts/ct/python.sh "$CATALOG" require-kind "$BENCH" criterion
-FEATURES=$(scripts/ct/python.sh "$CATALOG" features "$BENCH")
-BINARY=$(scripts/ct/python.sh "$CATALOG" binary "$BENCH")
+"$PYTHON" "$CATALOG" require-kind "$BENCH" criterion
+FEATURES=$("$PYTHON" "$CATALOG" features "$BENCH")
+BINARY=$("$PYTHON" "$CATALOG" binary "$BENCH")
 
 ARTIFACT=$(
   cargo bench --locked --profile bench --features "$FEATURES" --bench "$BINARY" \

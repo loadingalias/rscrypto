@@ -1,4 +1,4 @@
-name: Weekly
+name: Qualification
 
 on:
   schedule:
@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   mode:
-    name: Resolve Weekly Mode
+    name: Resolve Qualification Mode
     runs-on: ubuntu-latest
     outputs:
       mode: ${{ steps.mode.outputs.mode }}
@@ -49,32 +49,99 @@ jobs:
             workflow_dispatch)
               case "$REQUESTED_MODE" in
                 assurance | release) mode="$REQUESTED_MODE" ;;
-                *) echo "Unknown Weekly mode: $REQUESTED_MODE" >&2; exit 2 ;;
+                *) echo "Unknown Qualification mode: $REQUESTED_MODE" >&2; exit 2 ;;
               esac
               ;;
             *)
-              echo "Unsupported Weekly event: $EVENT_NAME" >&2
+              echo "Unsupported Qualification event: $EVENT_NAME" >&2
               exit 2
               ;;
           esac
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
-          echo "Weekly mode: $mode"
+          echo "Qualification mode: $mode"
 
-  # Both modes run the full platform and feature suite. Release mode adds the
-  # exhaustive Cargo graph and full supply-chain policy.
+  rail-plan:
+    name: Cargo Rail Full Plan
+    needs: mode
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      identity: ${{ steps.rail.outputs.plan-identity }}
+      head-commit: ${{ steps.rail.outputs.head-commit }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Build full exact work plan
+        id: rail
+        uses: loadingalias/cargo-rail-action@78ad385a85627484a5b634cf1bc3caa1de872c6a # v8.2.0
+        with:
+          version: "0.25.0"
+          components: surface
+          all: true
+
+      - name: Materialize full CI matrix
+        id: matrix
+        shell: bash
+        env:
+          PLAN_FILE: ${{ steps.rail.outputs.plan-file }}
+          PLAN_READER: ${{ steps.rail.outputs.plan-reader }}
+        run: scripts/ci/materialize-rail-plan.sh "$PLAN_FILE" "$PLAN_READER" "$GITHUB_OUTPUT"
+
+      - name: Check public source surface
+        if: contains(fromJSON(steps.rail.outputs.required-work), 'surface')
+        shell: bash
+        run: |
+          mkdir -p target/cargo-rail
+          cargo rail surface --check --json > target/cargo-rail/surface-result.json
+
+      - name: Upload exact work plan
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cargo-rail-plan-${{ github.run_id }}
+          path: |
+            ${{ steps.rail.outputs.plan-file }}
+            ${{ steps.rail.outputs.plan-reader }}
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload Surface evidence
+        if: ${{ !cancelled() && contains(fromJSON(steps.rail.outputs.required-work), 'surface') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cargo-rail-surface-${{ github.run_id }}
+          path: target/cargo-rail/surface-result.json
+          retention-days: ${{ needs.mode.outputs.mode == 'release' && 90 || 14 }}
+          if-no-files-found: error
+
+  # Both modes run the full planned platform, graph, and feature suite.
+  # Release mode adds full supply-chain policy and longer evidence retention.
   suite:
     name: CI Suite (${{ needs.mode.outputs.mode }})
-    needs: mode
+    needs: [mode, rail-plan]
+    permissions:
+      contents: read
     uses: ./.github/workflows/_ci-suite.yaml
     with:
+      matrix: ${{ needs.rail-plan.outputs.matrix }}
+      plan_artifact: cargo-rail-plan-${{ github.run_id }}
+      plan_identity: ${{ needs.rail-plan.outputs.identity }}
+      plan_head_commit: ${{ needs.rail-plan.outputs.head-commit }}
       supply_chain_mode: ${{ needs.mode.outputs.mode == 'release' && 'full' || 'light' }}
       test_mode: weekly
-      include_cargo_graph: ${{ needs.mode.outputs.mode == 'release' }}
       artifact_retention_days: ${{ needs.mode.outputs.mode == 'release' && 90 || 14 }}
+    secrets:
+      cache_access_key_id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      cache_secret_access_key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
 
   # ─── Miri memory-safety (stacked borrows). ──
   miri:
     name: Miri (${{ matrix.target.name }})
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -91,10 +158,15 @@ jobs:
       toolchain_contract: nightly
       toolchain_components: "miri, rust-src"
       operation: miri
+    secrets:
+      cache_access_key_id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      cache_secret_access_key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
 
   # ─── Miri memory-safety (tree borrows). ──
   miri-tree-borrows:
     name: Miri (Tree Borrows)
+    permissions:
+      contents: read
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
@@ -104,11 +176,16 @@ jobs:
       toolchain_components: "miri, rust-src"
       operation: miri
       miri_tree_borrows: true
+    secrets:
+      cache_access_key_id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      cache_secret_access_key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
 
   # ─── Fuzzing (libFuzzer full + scoped packages). ──
   fuzzing:
     name: Fuzzing (${{ matrix.target.name }})
     needs: mode
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -131,9 +208,14 @@ jobs:
         fuzz-packages/*/artifacts/
       artifact_always: true
       artifact_retention_days: ${{ needs.mode.outputs.mode == 'release' && 90 || 14 }}
+    secrets:
+      cache_access_key_id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      cache_secret_access_key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
 
   asan-fuzzing:
     name: ASan Fuzz Corpus (${{ matrix.target.name }})
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -150,11 +232,16 @@ jobs:
       toolchain_contract: nightly
       toolchain_components: "rust-src"
       operation: fuzz-asan
+    secrets:
+      cache_access_key_id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      cache_secret_access_key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
 
   # --- Native ML-KEM promotion gate on the physical AWS targets. ---
   mlkem-graviton:
     name: ML-KEM Graviton Gate (${{ matrix.display_name }})
     needs: mode
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -175,11 +262,16 @@ jobs:
       artifact_path: mlkem-aarch64-gate/
       artifact_always: true
       artifact_retention_days: ${{ needs.mode.outputs.mode == 'release' && 90 || 14 }}
+    secrets:
+      cache_access_key_id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      cache_secret_access_key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
 
   # ─── Constant-time evidence on benchmark-published physical lanes. ──
   ct:
     name: Constant-Time Evidence (${{ needs.mode.outputs.mode }})
     needs: mode
+    permissions:
+      contents: read
     uses: ./.github/workflows/ct.yaml
     with:
       platforms: all
@@ -187,18 +279,62 @@ jobs:
       binsec_timeout: 900
       upload_raw_artifacts: ${{ needs.mode.outputs.mode == 'release' }}
       artifact_retention_days: ${{ needs.mode.outputs.mode == 'release' && 90 || 14 }}
+    secrets:
+      CARGO_RAIL_R2_READ_ACCESS_KEY_ID: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
 
   rsa:
     name: RSA Evidence (${{ needs.mode.outputs.mode }})
     needs: mode
+    permissions:
+      contents: read
     uses: ./.github/workflows/rsa.yaml
     with:
       artifact_retention_days: ${{ needs.mode.outputs.mode == 'release' && 90 || 14 }}
+    secrets:
+      CARGO_RAIL_R2_READ_ACCESS_KEY_ID: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
+
+  # RISC-V is a target/evidence variant in the same qualification graph, not
+  # a second release ritual with an independently selected source tree.
+  riscv-native:
+    name: RISC-V Native Evidence
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-24.04-riscv
+      timeout_minutes: 240
+      tools_mode: none
+      toolchain_contract: nightly
+      toolchain_components: "clippy, rustfmt"
+      operation: native-riscv
+    secrets:
+      cache_access_key_id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      cache_secret_access_key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
+
+  riscv-ct:
+    name: RISC-V CT Evidence (${{ needs.mode.outputs.mode }})
+    needs: mode
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ct.yaml
+    with:
+      platforms: rise-riscv
+      dudect_timeout: 1800
+      binsec_timeout: 900
+      upload_raw_artifacts: ${{ needs.mode.outputs.mode == 'release' }}
+      artifact_retention_days: ${{ needs.mode.outputs.mode == 'release' && 90 || 14 }}
+    secrets:
+      CARGO_RAIL_R2_READ_ACCESS_KEY_ID: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
 
   # ─── Coverage (nextest + fuzz corpus → codecov). ──
   coverage:
     name: Coverage
     needs: [mode, suite, fuzzing]
+    permissions:
+      contents: read
     runs-on: runs-on=${{ github.run_id }}/runner=linux-x64-ci
     timeout-minutes: 120
     steps:
@@ -209,12 +345,15 @@ jobs:
           persist-credentials: false
 
       - name: Setup
+        id: setup
         uses: ./.github/actions/setup
         with:
           tools-mode: coverage
           toolchain-components: "rust-src"
-          cache-url: ${{ vars.CARGO_RAIL_CACHE_URL }}
-          cache-mode: read-write
+          cache-url: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY != '' && vars.CARGO_RAIL_CACHE_URL || '' }}
+          cache-mode: read
+          cache-access-key-id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+          cache-secret-access-key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
 
       - name: Download fuzz corpus artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -238,6 +377,24 @@ jobs:
 
       - name: Total Coverage (nextest + fuzz corpus replay)
         run: just test-coverage
+
+      - name: Capture Cargo Rail Cache Status
+        id: cache-status
+        if: ${{ !cancelled() && steps.setup.outputs.cache-enabled == 'true' }}
+        shell: bash
+        env:
+          RSCRYPTO_CI_OPERATION: coverage
+          RSCRYPTO_CI_RUNNER: linux-x64-ci
+        run: scripts/ci/capture-cache-status.sh
+
+      - name: Upload Cargo Rail Cache Status
+        if: ${{ !cancelled() && steps.setup.outputs.cache-enabled == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.cache-status.outputs.artifact_name }}
+          path: target/cargo-rail/cache-status.json
+          retention-days: 14
+          if-no-files-found: error
 
       - name: Install authenticated Codecov CLI
         id: codecov
@@ -277,6 +434,8 @@ jobs:
         mlkem-graviton,
         ct,
         rsa,
+        riscv-native,
+        riscv-ct,
         coverage,
       ]
     if: ${{ !cancelled() }}
@@ -295,6 +454,8 @@ jobs:
             "mlkem-graviton=${{ needs.mlkem-graviton.result }}" \
             "ct=${{ needs.ct.result }}" \
             "rsa=${{ needs.rsa.result }}" \
+            "riscv-native=${{ needs.riscv-native.result }}" \
+            "riscv-ct=${{ needs.riscv-ct.result }}" \
             "coverage=${{ needs.coverage.result }}"
           do
             name="${lane%%=*}"

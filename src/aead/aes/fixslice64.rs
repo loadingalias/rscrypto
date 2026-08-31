@@ -110,7 +110,10 @@ pub(super) fn encrypt_4blocks(rkeys: &FixsliceRoundKeys, blocks: &mut [[u8; BLOC
 }
 
 #[inline]
-#[cfg(any(target_arch = "riscv64", all(test, not(target_arch = "s390x"))))]
+#[cfg(all(
+  feature = "aegis256",
+  any(target_arch = "riscv64", all(test, not(target_arch = "s390x")))
+))]
 pub(super) fn cipher_round_4(blocks: &mut [[u8; BLOCK_SIZE]; 4], round_keys: &[[u8; BLOCK_SIZE]; 4]) {
   let mut state = State::default();
   bitslice(&mut state, &blocks[0], &blocks[1], &blocks[2], &blocks[3]);
@@ -677,7 +680,10 @@ fn add_round_constant_bit(state: &mut [u64], bit: usize) {
 }
 
 #[inline(always)]
-#[cfg(any(target_arch = "riscv64", all(test, not(target_arch = "s390x"))))]
+#[cfg(all(
+  feature = "aegis256",
+  any(target_arch = "riscv64", all(test, not(target_arch = "s390x")))
+))]
 fn xor_block(dst: &mut [u8; BLOCK_SIZE], src: &[u8; BLOCK_SIZE]) {
   let mut i = 0usize;
   while i < BLOCK_SIZE {

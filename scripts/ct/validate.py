@@ -10,9 +10,8 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
-
-from toml_compat import tomllib
 
 
 VALID_CLAIMS = {"ct-claimed", "ct-intended", "best-effort", "unsupported"}

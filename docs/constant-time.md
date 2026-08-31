@@ -1,297 +1,58 @@
-# Constant-Time Policy
+# Constant-time claims
 
-`rscrypto` treats constant-time behavior as an evidence-bound claim. Source code
-style alone is not enough: the claim depends on the crate version, commit,
-compiler, target, CPU features, enabled features, and generated binary.
+Constant time means secret values do not change control flow, memory addresses,
+or variable-latency operands within a defined operation. Public input lengths,
+algorithm parameters, target features, allocation, scheduling, and external
+entropy sources may still affect time.
 
-An unlisted configuration has no constant-time release claim.
+`ct.toml` is the authoritative operation inventory. An operation is claimed
+only for the targets, features, compiler, linked binary, and evidence named
+there. Unlisted code is not claimed constant time.
 
-The machine-readable source of truth is [`ct.toml`](../ct.toml). The sections
-below explain how to read that boundary.
+## Evidence model
 
-## Claim definition
+Release evidence combines:
 
-For the declared secret inputs of a claimed primitive, the generated binary must
-not let those secrets influence:
+- Source review of secret-dependent branches, indexing, comparisons, and
+  variable-latency instructions.
+- Differential tests that bind accelerated paths to portable Rust semantics.
+- Optimized linked-binary inspection for retained entry points.
+- BINSEC proofs for declared fixed-shape kernels.
+- DudeCT timing tests for declared end-to-end cases.
 
-- Branches or conditional jumps.
-- Memory addresses or table indices.
-- Variable-time operations.
-- Loop bounds.
-- Allocation behavior.
-- Panic or early-error paths.
-- Formatting, logging, or debug output.
-- Observable authentication failure shape beyond one opaque success/failure bit.
+Source that looks branchless is not proof. Compiler lowering, inlining, target
+features, and linking can change machine behavior. Evidence for the release
+harness does not automatically cover a downstream binary compiled differently.
 
-Public inputs may still affect control flow, lengths, allocation size, backend
-selection, and public error handling.
+Build and validate the local evidence artifacts with:
 
-## Threat model
-
-The policy targets software-observable timing leakage from secret data through
-control flow, memory access, dispatch, allocation, failure shape, and generated
-machine code.
-
-It does not claim resistance to physical side channels such as power analysis,
-electromagnetic leakage, acoustic leakage, fault injection, rowhammer, or
-platform compromise. Those need separate hardware and operational evidence.
-
-Speculation is handled by avoiding secret-dependent branches and addresses in
-claimed code paths. This is not a blanket Spectre-class guarantee for a whole
-process.
-
-## Candidate surfaces
-
-`ct.toml` places the following highest-sensitivity surfaces inside the release
-evidence gate. This is intent, not a standalone public claim:
-
-- MAC/tag verification and fixed-size equality owned by concrete key, secret,
-  tag, and keyed-output types.
-- AEAD authentication and failed-open cleanup.
-- AES and ChaCha20 header-protection mask generation with the derived key as secret and the fixed-size sample as public.
-- AES-SIV-CMAC-256 S2V/CMAC derivation, CTR transform, tag comparison, and failed-open cleanup.
-- X25519 scalar multiplication.
-- ML-KEM-512/768/1024 key generation secret noise, encapsulation coins,
-  decapsulation secret-key material, implicit-rejection seed, and listed
-  arithmetic diagnostics.
-- Ed25519 signing and secret-key public derivation.
-- ECDSA P-256/P-384 caller-blinded signing.
-- RSA private sign/decrypt leaves.
-- Password-verification comparisons.
-- Secret-dependent field, scalar, limb, padding, select, swap, reduction, and
-  blinding helpers used by those entrypoints.
-
-Symmetric encryption, polynomial authenticators, KDF internals, and
-password-hashing internals are CT-relevant when key or password material is live.
-Validated RSA keys retain each CRT exponent at its corresponding factor width
-before steady-state private arithmetic. DER import and export remain
-variable-shape operations outside that steady-state boundary.
-
-Caller-random RSA signing changes entropy provenance, not the private
-arithmetic. The callback and bounded blinding-factor rejection sampling are
-outside the constant-time claim. After a candidate is accepted, caller-random
-and OS-random methods reach the same claimed private sign leaf and public
-re-encryption fault check. No constant-time claim is made for callback code,
-entropy acquisition, or the number of rejected candidates.
-
-Accepted RSA blinding candidates are inverted directly modulo the public odd
-modulus with a fixed public-width schedule of batched extended-binary-GCD
-steps. Candidate nonzero/range validation scans the complete fixed-width
-input. The final invertible/non-invertible result is declassified only after
-the fixed schedule; no private CRT factor participates in inversion. Required
-timing evidence includes an allocation-free fixed-factor-versus-random-factor
-inverse leaf in addition to the end-to-end private-operation cases.
-
-## Excluded unless listed
-
-The following are not constant-time claims unless a specific manifest entry says
-otherwise:
-
-- Raw hashes over public messages.
-- Checksums and non-cryptographic hashes.
-- Public-key verification math.
-- Public key, signature, ciphertext-container, DER, PHC, and protocol parsing.
-- Unlisted key-generation paths, entropy callbacks, and OS randomness.
-- Serialization and export of secret material.
-- Benchmark-only paths.
-- Unmeasured targets, compilers, linkers, target features, or crate feature sets.
-
-Public length may leak. Public algorithm/profile selection may leak. A single
-opaque authentication success/failure result may leak.
-
-## Source-level decision boundary
-
-Secret-bearing fixed-size keys, shared secrets, authentication tags, keypairs,
-and keyed outputs do not implement `PartialEq` or `Eq`. Their inherent `ct_eq`
-methods return `CtDecision`, an opaque, non-`Copy` value with no public
-constructor, equality, or implicit boolean conversion. Its `Debug` output is
-the fixed redacted string `CtDecision(..)` and does not expose the decision.
-Decisions can be composed with bitwise `&`, `|`, and `!`; the consuming
-`declassify()` method is the only public route to a branchable equality bit.
-
-Verification APIs keep that boundary inside the primitive and return one opaque
-`Result`. Public keys, nonces, signatures, and ciphertext containers are public
-data and retain ordinary equality where useful.
-
-This API removes ordinary equality and implicit Boolean conversion from the
-secret-bearing owner type. Callers can still export bytes or explicitly
-declassify a decision. The API boundary does not prove the generated machine
-code. A constant-time claim still requires the exact compiler, target, CPU
-features, crate features, profile, linker, and binary recorded by the matching
-release evidence.
-
-## Target scope
-
-A target is not claimed because it builds. It is claimed only when the release
-has evidence for the exact compiler, codegen backend, linker, target
-CPU/features, profile, crate features, dependency lockfile, and primitive set.
-
-The release workflow requires native evidence for these LLVM-generated target
-classes. A row is covered only when it appears as a passing lane in the
-matching release bundle:
-
-| Target class                          | Required release evidence                                                                              |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Linux `x86_64-unknown-linux-gnu`      | Artifact review, generated-code heuristics, empirical timing tests, and binary checks where supported. |
-| Linux `aarch64-unknown-linux-gnu`     | Artifact review, generated-code heuristics, empirical timing tests, and binary checks where supported. |
-| Linux `riscv64gc-unknown-linux-gnu`   | Artifact review, generated-code heuristics, and empirical timing tests.                                |
-| Linux `s390x-unknown-linux-gnu`       | Artifact review, generated-code heuristics, and empirical timing tests.                                |
-| Linux `powerpc64le-unknown-linux-gnu` | Artifact review, generated-code heuristics, and empirical timing tests.                                |
-
-Release CI exercises multiple x86_64 and AArch64 microarchitectures. The exact
-CPU, target features, compiler, linker, tools, and artifact hashes are recorded
-per lane rather than generalized to every CPU implementing the same triple.
-
-On AArch64 targets that advertise FEAT_DIT, RSA private exponentiation enters
-data-independent-timing state for the complete fixed-window arithmetic loop and
-restores the caller's prior PSTATE afterward. Generic `no_std` AArch64 builds
-use this hardening only when compiled with `+dit`; physical evidence remains
-bound to the exact release lanes above. The existing generic Montgomery
-assembly kernel is authorized for 16- and 24-limb half-width CRT arithmetic as
-well as the full public-key widths; target-native differential tests compare
-those multiply, square, and in-place paths with portable Rust.
-
-RSA caller-blinding inversion uses a public-width batched extended binary GCD
-schedule rather than secret-dependent Euclidean division or Fermat
-exponentiation. Its RISC-V and s390x co-reduction products use fixed-work
-bit-serial multiplication so secret operands do not reach the targets' scalar
-multiply instructions. The release artifact heuristic rejects scalar multiply
-in those CT evidence closures; native DudeCT remains required because this
-generated-code property is necessary, not sufficient.
-
-ECDSA P-256/P-384 signing uses scalar-multiply-free, fixed-work limb arithmetic
-on s390x and RISC-V to avoid the variable-latency scalar multiply observed in
-earlier native runs. The fallback consumes four multiplier bits per round with
-masked additions, and the release artifact heuristic rejects scalar multiply,
-divide, and indirect jumps in the evidence closure. Those generated-code
-properties are necessary, not sufficient. On s390x, a fixed-work algebraic fold
-reduces the wide nonce; scalar-order inversion uses modulus-specific,
-fixed-iteration Bernstein--Yang divsteps where platform inversion assembly is
-unavailable. Caller-blinded signing splits the supplied CSPRNG buffer into
-independent scalar masks for projective arithmetic and for private-product,
-nonce-inversion, and final-scalar arithmetic. Both targets are promoted only
-after their native required DudeCT cases pass in the matching release evidence.
-
-For ML-KEM, the s390x claim covers the fixed-work z/Vector arithmetic kernels
-present in the release evidence. It does not cover native scalar multiply or
-divide substitutions for secret-fed ML-KEM arithmetic, and it does not cover
-unreviewed hand-written assembly.
-
-Linux MUSL, macOS `x86_64`, Windows MSVC, bare-metal `no_std`, and WASM builds
-may compile and may follow the same coding rules, but physical timing evidence
-is explicitly deferred. Apple Silicon macOS evidence is collected on a physical
-local Mac rather than included in the release bundle; `just test-rsa-macos-asm`
-records the RSA assembly equivalence and binary-presence checks. Artifact and
-heuristic analysis for a deferred target must never be represented as native
-physical timing evidence.
-
-`portable-only` constrains runtime dispatch to portable backends. It is useful
-for audit-constrained builds, but it is not a proof by itself.
-
-## Evidence
-
-Source inspection and `ct.toml` do not establish a release claim. The matching
-signed GitHub release must contain all of:
-
-- The attested release manifest, source archive, crate, and `SHA256SUMS`
-  binding the release tag, commit, toolchain, and artifacts.
-- An attested `rscrypto-X.Y.Z-ct-evidence.tar.gz` built from the same release
-  commit.
-- `CT-EVIDENCE-BUNDLE.json`, naming the version, full commit, release profile,
-  required lane set, toolchain, target CPU/features, and per-lane hashes.
-- Raw generated-code artifacts matching each lane's provenance and artifact
-  hash ledger.
-
-The release packager fails closed on missing or extra lanes, dirty or
-mismatched provenance, incomplete timing cases, required BINSEC kernels that
-are absent or non-secure, and any compact/raw artifact hash mismatch. Releases
-through `v0.6.4` predate this bundle and carry no release-bound constant-time
-claim.
-
-Release evidence is defined per primitive in `ct.toml`. The normal native
-evidence set includes:
-
-- Stable harness entrypoints.
-- Build and host provenance.
-- LLVM IR, assembly, pre-link objects, and symbol artifacts.
-- A fat-LTO final linked equality evidence executable, its exact linker
-  command and linker identity, and post-link disassembly, symbols, and size.
-- Automated checks for suspicious generated-code patterns.
-- Empirical timing tests on native executable targets, bound to the hashed
-  timing executable, disassembly, symbol map, and linker command.
-- ML-KEM DudeCT cases for key generation secret noise, encapsulation coins,
-  decapsulation secret keys, implicit rejection, NTT, inverse NTT,
-  product-domain conversion, basemul/dot products, and compress/decompress
-  arithmetic.
-- Binary-level checks for small high-risk kernels on supported Linux ELF/ISA
-  paths.
-- Miri and unsafe-code validation where the CT path uses unsafe Rust.
-
-The linked equality executable retains production owner comparisons at the
-distinct 16-, 28-, 32-, 48-, 64-, 1632-, 2400-, and 3168-byte owner widths.
-The required owner timing cases remain the manifest-declared 16-, 32-, 48-,
-and 64-byte cases. Public-length internal comparisons are mapped in `ct.toml`
-to retained production entrypoints or to an explicit limitation; an uncovered
-call is not silently treated as binary evidence.
-
-This executable is an unpublished evidence surface. It declassifies the
-production `CtDecision` only at retained evidence ABI entrypoints. It proves
-only its exact source, toolchain, backend, target, target features, feature set,
-profile, and linker configuration. It is not the crate's public API and does
-not generalize to arbitrary downstream binaries.
-
-Assembly triage is grouped by primitive, reachable symbol, finding kind, and
-artifact. Register-indexed memory is presented first, then conditional control
-flow, then indirect calls. `needs-binsec` means operand provenance remains
-unproven; it is not a waiver, a proof, or a pass. An accepted waiver must bind
-the exact primitive, symbol, kind, artifact, stable instruction locator,
-function hash, source, public classification, rationale, reviewer, and review
-date. Source or disassembly movement invalidates it.
-
-BINSEC is required on the GNU Linux targets supported by the workflow. Every
-manifest-required kernel must report `secure`. Other target reports record
-BINSEC as `not_applicable` with the target policy reason; that status is not
-binary proof. Each formal result is bound to the exact BINSEC executable hash,
-hashed proof driver, disassembly, configuration, solver log, candidate
-identity, and toolchain.
-
-Statistical timing checks must be described precisely:
-
-```text
-No leakage detected for this configuration.
+```sh
+just ct-artifacts
+just ct-validate
 ```
 
-They are evidence, not a formal proof.
+`ct-validate` rejects missing or stale generated artifacts. `just ct-full`
+builds them, runs available timing checks, and emits reports. A release claim
+requires the target-specific lanes required by `ct.toml`; a local host cannot
+stand in for another target.
 
-## Verify a release
+## Public decisions and exclusions
 
-For release `vX.Y.Z`, download the crate, CT bundle, and checksums from that
-exact GitHub release. Replace `X.Y.Z` consistently, then verify the release
-attestation, asset attestations, checksums, and internal CT manifest:
+Ordinary equality is permitted for public values such as nonces, encoded public
+keys, ciphertext lengths, and signature inputs. Secret owners expose
+`CtDecision` where comparison must remain opaque until explicit
+declassification.
 
-```bash
-gh release download vX.Y.Z --repo loadingalias/rscrypto \
-  -p 'rscrypto-X.Y.Z.crate' \
-  -p 'rscrypto-X.Y.Z-source.tar.gz' \
-  -p 'rscrypto-X.Y.Z-ct-evidence.tar.gz' \
-  -p 'rscrypto-X.Y.Z-repository-controls.json' \
-  -p 'rscrypto-X.Y.Z-release-manifest.json' \
-  -p SHA256SUMS
-sha256sum --check SHA256SUMS
-gh release verify vX.Y.Z --repo loadingalias/rscrypto
-gh release verify-asset vX.Y.Z rscrypto-X.Y.Z-ct-evidence.tar.gz --repo loadingalias/rscrypto
-gh attestation verify rscrypto-X.Y.Z.crate --repo loadingalias/rscrypto
-gh attestation verify rscrypto-X.Y.Z-source.tar.gz --repo loadingalias/rscrypto
-gh attestation verify rscrypto-X.Y.Z-ct-evidence.tar.gz --repo loadingalias/rscrypto
-gh attestation verify rscrypto-X.Y.Z-repository-controls.json --repo loadingalias/rscrypto
-gh attestation verify rscrypto-X.Y.Z-release-manifest.json --repo loadingalias/rscrypto
-gh attestation verify SHA256SUMS --repo loadingalias/rscrypto
-ct_evidence_dir=$(mktemp -d)
-tar -xzf rscrypto-X.Y.Z-ct-evidence.tar.gz -C "$ct_evidence_dir"
-(cd "$ct_evidence_dir" && sha256sum --check CT-EVIDENCE-MANIFEST.txt)
-```
+These operations are intentionally outside blanket constant-time claims:
 
-Inspect `CT-EVIDENCE-BUNDLE.json` and use only lanes whose exact target,
-compiler, target CPU/features, profile, and primitive evidence match the
-configuration being evaluated. A missing bundle, lane, or required pass means
-there is no release-bound constant-time claim for that configuration.
+- Unkeyed hashes, checksums, and XOFs processing public data.
+- Signature verification and public-key parsing.
+- RSA prime generation.
+- Argon2d, the data-dependent phase of Argon2id, and scrypt memory access.
+- Caller callbacks, OS allocation, thread scheduling, and entropy acquisition.
+- External implementations of public traits.
+- Diagnostic APIs, which deliberately expose evidence values.
+
+Authentication failures remain opaque even when their inputs are public. See
+[`secret-ownership.md`](secret-ownership.md) for comparison capabilities and
+[`secret-lifecycle.md`](secret-lifecycle.md) for cleanup evidence.

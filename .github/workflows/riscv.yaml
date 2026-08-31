@@ -1,8 +1,6 @@
 name: RISC-V
 
 on:
-  schedule:
-    - cron: "0 3 * * 0"
   workflow_dispatch:
     inputs:
       mode:
@@ -41,8 +39,10 @@ permissions:
 
 jobs:
   native:
-    if: ${{ github.event_name == 'schedule' || inputs.mode == 'evidence' || inputs.mode == 'native' || inputs.mode == 'all' }}
+    if: ${{ inputs.mode == 'evidence' || inputs.mode == 'native' || inputs.mode == 'all' }}
     name: Native CI
+    permissions:
+      contents: read
     concurrency:
       group: riscv-native-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || 'assurance' }}
       cancel-in-progress: true
@@ -54,10 +54,15 @@ jobs:
       toolchain_contract: nightly
       toolchain_components: "clippy, rustfmt"
       operation: native-riscv
+    secrets:
+      cache_access_key_id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      cache_secret_access_key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
 
   ct:
-    if: ${{ github.event_name == 'schedule' || inputs.mode == 'evidence' || inputs.mode == 'constant-time' || inputs.mode == 'all' }}
+    if: ${{ inputs.mode == 'evidence' || inputs.mode == 'constant-time' || inputs.mode == 'all' }}
     name: Constant-Time Evidence (RISC-V)
+    permissions:
+      contents: read
     concurrency:
       group: riscv-ct-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || 'assurance' }}
       cancel-in-progress: true
@@ -66,12 +71,17 @@ jobs:
       platforms: rise-riscv
       dudect_timeout: 1800
       binsec_timeout: 900
-      upload_raw_artifacts: ${{ github.event_name == 'workflow_dispatch' }}
-      artifact_retention_days: ${{ github.event_name == 'workflow_dispatch' && 90 || 14 }}
+      upload_raw_artifacts: true
+      artifact_retention_days: 90
+    secrets:
+      CARGO_RAIL_R2_READ_ACCESS_KEY_ID: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
 
   benchmark:
-    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.mode == 'benchmark' || inputs.mode == 'all') }}
+    if: ${{ inputs.mode == 'benchmark' || inputs.mode == 'all' }}
     name: Benchmark
+    permissions:
+      contents: read
     concurrency:
       group: riscv-benchmark-${{ github.ref }}
       cancel-in-progress: false
@@ -88,7 +98,10 @@ jobs:
       bench_filter: ${{ inputs.filter }}
       bench_quick: ${{ inputs.quick }}
       artifact_name: benchmark-rise-riscv
-      artifact_path: benchmark-results/
+      artifact_path: target/benchmark_results/
+    secrets:
+      cache_access_key_id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      cache_secret_access_key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
 
   complete:
     name: Complete (RISC-V)
@@ -99,27 +112,23 @@ jobs:
       - name: Assert selected lanes passed
         shell: bash
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          MODE: ${{ inputs.mode || 'evidence' }}
+          MODE: ${{ inputs.mode }}
           NATIVE_RESULT: ${{ needs.native.result }}
           CT_RESULT: ${{ needs.ct.result }}
           BENCHMARK_RESULT: ${{ needs.benchmark.result }}
         run: |
           set -euo pipefail
-          required=(native ct)
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            case "$MODE" in
-              evidence) required=(native ct) ;;
-              native) required=(native) ;;
-              constant-time) required=(ct) ;;
-              benchmark) required=(benchmark) ;;
-              all) required=(native ct benchmark) ;;
-              *)
-                echo "Unknown RISC-V mode: $MODE" >&2
-                exit 2
-                ;;
-            esac
-          fi
+          case "$MODE" in
+            evidence) required=(native ct) ;;
+            native) required=(native) ;;
+            constant-time) required=(ct) ;;
+            benchmark) required=(benchmark) ;;
+            all) required=(native ct benchmark) ;;
+            *)
+              echo "Unknown RISC-V mode: $MODE" >&2
+              exit 2
+              ;;
+          esac
 
           failed=0
           for lane in "${required[@]}"; do

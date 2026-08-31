@@ -13,6 +13,8 @@ mkdir -p "$fixture/.github/workflows"
 git -C "$TMP_ROOT" init -q -b main repository
 git -C "$fixture" config user.email test@example.com
 git -C "$fixture" config user.name "Release Identity Test"
+git -C "$fixture" config commit.gpgsign false
+git -C "$fixture" config tag.gpgsign false
 
 cat > "$fixture/Cargo.toml" <<'EOF'
 [package]

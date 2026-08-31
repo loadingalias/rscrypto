@@ -57,6 +57,8 @@ jobs:
     name: Benchmark (${{ matrix.display_name }})
     needs: plan
     if: ${{ needs.plan.outputs.has_targets == 'true' }}
+    permissions:
+      contents: read
     concurrency:
       # Multiple bench runs can overlap across lanes; serialize per lane.
       group: bench-${{ github.ref }}-${{ matrix.platform }}
@@ -78,4 +80,7 @@ jobs:
       bench_filter: ${{ inputs.filter }}
       bench_quick: ${{ inputs.quick }}
       artifact_name: benchmark-${{ matrix.artifact_suffix }}
-      artifact_path: benchmark-results/
+      artifact_path: target/benchmark_results/
+    secrets:
+      cache_access_key_id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      cache_secret_access_key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}

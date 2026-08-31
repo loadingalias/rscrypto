@@ -5,189 +5,92 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
 
+usage() {
+  echo "Usage: $0 [--all]" >&2
+  exit 2
+}
+
+force_all=false
+case "$#" in
+  0) ;;
+  1)
+    [[ "$1" == --all ]] || usage
+    force_all=true
+    ;;
+  *) usage ;;
+esac
+
 apply_ci_resource_profile
 
-echo "Running Unit, Integration, and Property Tests via Nextest..."
+echo "Running unit, integration, property, and documentation tests..."
 export RSCRYPTO_TEST_MODE=${RSCRYPTO_TEST_MODE:-${CARGO_RAIL_TEST_MODE:-local}}
 export CARGO_RAIL_TEST_MODE=${CARGO_RAIL_TEST_MODE:-$RSCRYPTO_TEST_MODE}
 echo "Test mode: $RSCRYPTO_TEST_MODE"
 
-HAS_NEXTEST=true
+has_nextest=true
 if ! command -v cargo-nextest >/dev/null 2>&1; then
-  HAS_NEXTEST=false
-  echo "cargo-nextest not found; falling back to cargo test"
+  has_nextest=false
+  echo "cargo-nextest not found; using cargo test"
 fi
 
 case "$RSCRYPTO_TEST_MODE" in
-  commit) PROFILE="commit" ;;
-  weekly) PROFILE="weekly" ;;
-  *)      PROFILE="default" ;;
+  commit) profile=commit ;;
+  weekly) profile=weekly ;;
+  *) profile=default ;;
 esac
-echo "Using nextest profile: $PROFILE"
+echo "Nextest profile: $profile"
 
-NEXTEST_THREAD_ARGS=()
-if [ -n "${RSCRYPTO_TEST_THREADS:-}" ]; then
-  NEXTEST_THREAD_ARGS=(--test-threads "$RSCRYPTO_TEST_THREADS")
-  echo "Using test thread override: $RSCRYPTO_TEST_THREADS"
+nextest_thread_args=()
+if [[ -n "${RSCRYPTO_TEST_THREADS:-}" ]]; then
+  nextest_thread_args=(--test-threads "$RSCRYPTO_TEST_THREADS")
+  echo "Test threads: $RSCRYPTO_TEST_THREADS"
 fi
 
-# macOS /bin/bash 3.2 treats "${empty_array[@]}" as unbound with `set -u`.
-# Guard expansions so an omitted thread override stays a true no-op.
-
-SKIP_DOCTESTS=false
+skip_doctests=false
 case "${RSCRYPTO_SKIP_DOCTESTS:-}" in
   1 | true | TRUE | yes | YES)
-    SKIP_DOCTESTS=true
-    echo "Skipping doctests: RSCRYPTO_SKIP_DOCTESTS=${RSCRYPTO_SKIP_DOCTESTS}"
+    skip_doctests=true
+    echo "Doctests disabled by RSCRYPTO_SKIP_DOCTESTS"
     ;;
 esac
 
-CARGO_TEST_TARGET_ARGS=()
-if [ "$SKIP_DOCTESTS" = true ]; then
-  CARGO_TEST_TARGET_ARGS=(--lib --tests)
+scope_status=0
+select_cargo_scope cargo.test "$force_all" || scope_status=$?
+if [[ "$scope_status" -gt 1 ]]; then
+  exit "$scope_status"
 fi
 
-run_workspace_doctests() {
-  if [ "$SKIP_DOCTESTS" = true ]; then
-    echo "doctests skipped"
-    return 0
-  fi
-
+if [[ "$scope_status" -eq 0 ]]; then
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "Running doctests for entire workspace"
+  echo "Testing $SCOPE_DESC"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  cargo test --locked --workspace --doc --all-features
-}
-
-run_crate_doctests() {
-  if [ "$SKIP_DOCTESTS" = true ]; then
-    echo "doctests skipped"
-    return 0
-  fi
-
-  local crates=("$@")
-  if [ ${#crates[@]} -eq 0 ]; then
-    echo "no doc-test targets"
-    return 0
-  fi
-
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "Running doctests for crate(s): ${crates[*]}"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-  for crate in "${crates[@]}"; do
-    cargo test --locked -p "$crate" --doc --all-features
-  done
-}
-
-run_rail_scoped_doctests() {
-  case "$(rail_scope_mode)" in
-    workspace)
-      run_workspace_doctests
-      ;;
-    crates)
-      local affected
-      affected="$(rail_plan_crates)"
-      if [ -z "$affected" ]; then
-        run_workspace_doctests
-        return
-      fi
-
-      local crates=()
-      for crate in $affected; do
-        crates+=("$crate")
-      done
-      run_crate_doctests "${crates[@]}"
-      ;;
-    *)
-      echo "no doc-test targets"
-      ;;
-  esac
-}
-
-# Dispatch:
-#   --all             → full workspace
-#   <crate> [<crate>] → test the named crate(s) directly
-#   (no args)         → rail-scoped (cargo-rail planner selects affected crates)
-
-ALL_FLAG=false
-CRATES=()
-for arg in "$@"; do
-  case "$arg" in
-    --all) ALL_FLAG=true ;;
-    *)     CRATES+=("$arg") ;;
-  esac
-done
-
-if [ "$ALL_FLAG" = true ] && [ ${#CRATES[@]} -gt 0 ]; then
-  echo "error: --all cannot be combined with crate arguments" >&2
-  exit 2
-fi
-
-if [ ${#CRATES[@]} -gt 0 ]; then
-  CRATE_FLAGS=""
-  for crate in "${CRATES[@]}"; do
-    CRATE_FLAGS="$CRATE_FLAGS -p $crate"
-  done
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "Testing specific crate(s): ${CRATES[*]}"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  if [ "$HAS_NEXTEST" = true ]; then
-    # shellcheck disable=SC2086
-    cargo nextest run --locked $CRATE_FLAGS -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
-    run_crate_doctests "${CRATES[@]}"
+  if [[ "$has_nextest" == true ]]; then
+    cargo nextest run --locked "${CARGO_ARGS[@]}" -P "$profile" --all-features \
+      --config-file .config/nextest.toml \
+      "${nextest_thread_args[@]:+${nextest_thread_args[@]}}"
   else
-    # shellcheck disable=SC2086
-    cargo test --locked $CRATE_FLAGS --all-features "${CARGO_TEST_TARGET_ARGS[@]:+${CARGO_TEST_TARGET_ARGS[@]}}"
-  fi
-elif [ "$ALL_FLAG" = true ]; then
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "Testing entire workspace"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  if [ "$HAS_NEXTEST" = true ]; then
-    cargo nextest run --locked --workspace -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
-    run_workspace_doctests
-  else
-    cargo test --locked --workspace --all-features "${CARGO_TEST_TARGET_ARGS[@]:+${CARGO_TEST_TARGET_ARGS[@]}}"
+    cargo test --locked "${CARGO_ARGS[@]}" --all-features --lib --tests
   fi
 else
-  # Rail-scoped (default): cargo-rail planner selects the affected crates.
-  if [ -n "${RAIL_SINCE:-}" ]; then
-    echo "Using base ref from CI: $RAIL_SINCE"
-  fi
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "Running tests for planner-selected scope"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-  case "$(rail_scope_mode)" in
-    empty)
-      echo "no test targets"
-      exit 0
-      ;;
-    crates)
-      affected="$(rail_plan_crates)"
-      if [ -n "$affected" ]; then
-        if [ "$HAS_NEXTEST" = true ]; then
-          CRATE_FLAGS=()
-          for crate in $affected; do
-            CRATE_FLAGS+=(-p "$crate")
-          done
-          cargo nextest run --locked "${CRATE_FLAGS[@]}" -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
-          run_rail_scoped_doctests
-        else
-          for crate in $affected; do
-            cargo test --locked -p "$crate" --all-features "${CARGO_TEST_TARGET_ARGS[@]:+${CARGO_TEST_TARGET_ARGS[@]}}"
-          done
-        fi
-        exit 0
-      fi
-      ;;
-  esac
-
-  if [ "$HAS_NEXTEST" = true ]; then
-    cargo nextest run --locked --workspace -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
-    run_workspace_doctests
-  else
-    cargo test --locked --workspace --all-features "${CARGO_TEST_TARGET_ARGS[@]:+${CARGO_TEST_TARGET_ARGS[@]}}"
-  fi
+  echo "No unit or integration test targets selected by Cargo Rail"
 fi
+
+if [[ "$skip_doctests" == true ]]; then
+  echo "Doctests skipped"
+  exit 0
+fi
+
+scope_status=0
+select_cargo_scope cargo.doctest "$force_all" || scope_status=$?
+if [[ "$scope_status" -gt 1 ]]; then
+  exit "$scope_status"
+fi
+if [[ "$scope_status" -eq 1 ]]; then
+  echo "No doctest targets selected by Cargo Rail"
+  exit 0
+fi
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "Running doctests for $SCOPE_DESC"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+cargo test --locked "${CARGO_ARGS[@]}" --doc --all-features

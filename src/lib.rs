@@ -14,7 +14,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! rscrypto = { version = "0.8.1", default-features = false, features = ["sha2"] }
+//! rscrypto = { version = "0.9", default-features = false, features = ["sha2"] }
 //! ```
 //!
 //! # Guides

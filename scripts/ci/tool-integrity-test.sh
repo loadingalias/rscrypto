@@ -25,6 +25,7 @@ make_direct_fixture() {
   mkdir -p "$fixture/.config" "$fixture/scripts/ci" "$fixture/scripts/lib"
   cp "$REPO_ROOT/.config/ci-tool-archives.tsv" "$fixture/.config/"
   cp "$REPO_ROOT/scripts/lib/ci-tool-integrity.sh" "$fixture/scripts/lib/"
+  cp "$REPO_ROOT/scripts/lib/feature-profiles.sh" "$fixture/scripts/lib/"
   cp "$REPO_ROOT/scripts/ci/install-codecov.sh" "$REPO_ROOT/scripts/ci/nostd-wasm-suite.sh" \
     "$fixture/scripts/ci/"
 }
@@ -395,6 +396,31 @@ for mode in standard quality release rail ci supply-chain ibm bench structural-b
     "$REPO_ROOT/scripts/ci/install-tools.sh" "$mode" >/dev/null
 done
 
+authenticated_rail_bin="$TMP_ROOT/authenticated-rail-bin"
+authenticated_rail_log="$TMP_ROOT/authenticated-rail.log"
+authenticated_rail_output="$TMP_ROOT/authenticated-rail.out"
+mkdir -p "$authenticated_rail_bin"
+: >"$authenticated_rail_log"
+cat >"$authenticated_rail_bin/cargo-rail" <<'SH'
+#!/usr/bin/env bash
+[[ "$*" == "rail --version" ]]
+printf 'cargo-rail 0.25.0\n'
+SH
+chmod +x "$authenticated_rail_bin/cargo-rail"
+HOME="$package_home" \
+  RUNNER_TEMP="$package_temp" \
+  PATH="$authenticated_rail_bin:$package_bin:$PATH" \
+  MOCK_PACKAGE_LOG="$authenticated_rail_log" \
+  MOCK_CARGO_STATE="$package_state" \
+  RSCRYPTO_AUTHENTICATED_CARGO_RAIL=true \
+  RSCRYPTO_REQUIRE_CARGO_RAIL=true \
+  "$REPO_ROOT/scripts/ci/install-tools.sh" none >"$authenticated_rail_output"
+grep -Fq 'reusing authenticated 0.25.0 from cargo-rail-action' "$authenticated_rail_output" \
+  || fail "the exact cargo-rail-action install was not reused"
+if grep -Fq 'cargo install --registry crates-io cargo-rail' "$authenticated_rail_log"; then
+  fail "the exact cargo-rail-action install was redundantly rebuilt"
+fi
+
 cat >"$package_bin/sudo" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -583,7 +609,7 @@ for contract in \
   'cargo-nextest =0.9.143' \
   'cargo-deny =0.20.2' \
   'cargo-audit =0.22.2' \
-  'cargo-rail =0.22.2' \
+  'cargo-rail =0.25.0' \
   'just =1.58.0' \
   'zizmor =1.29.0' \
   'cargo-criterion =1.1.0' \

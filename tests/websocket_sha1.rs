@@ -1,3 +1,5 @@
+//! WebSocket opening-handshake accept-digest tests.
+
 #![cfg(feature = "websocket-sha1")]
 
 use proptest::prelude::*;

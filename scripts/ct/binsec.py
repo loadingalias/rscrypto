@@ -10,11 +10,9 @@ import os
 import shutil
 import subprocess
 import sys
+import tomllib
 from functools import lru_cache
 from pathlib import Path
-
-from toml_compat import tomllib
-
 
 ROOT = Path(__file__).resolve().parents[2]
 HARNESS_MANIFEST = ROOT / "tools" / "ct-binsec-harness" / "Cargo.toml"

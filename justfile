@@ -2,111 +2,135 @@
 
 dev_machine := env_var_or_default("DEV_MACHINE_BIN", env_var("HOME") + "/dev-machines/dev-machine")
 
+# Run a command on a repository development machine.
 ssh target *args="":
     @"{{ dev_machine }}" ssh rscrypto "{{ target }}" {{ args }}
 
+# Run a command after checking the remote repository state.
 ssh-check target *args="":
     @"{{ dev_machine }}" ssh rscrypto "{{ target }}" --check {{ args }}
 
+# Verify that a development machine is ready for repository work.
 ssh-preflight target:
     @"{{ dev_machine }}" preflight rscrypto "{{ target }}"
 
+# Create a repository development machine.
 ssh-create target *args="":
     @"{{ dev_machine }}" create rscrypto "{{ target }}" {{ args }}
 
+# Start a repository development machine.
 ssh-start target:
     @"{{ dev_machine }}" start rscrypto "{{ target }}"
 
+# Deallocate a repository development machine while preserving it.
 ssh-deallocate target:
     @"{{ dev_machine }}" deallocate rscrypto "{{ target }}"
 
+# Permanently destroy a repository development machine.
 ssh-kill target:
     @"{{ dev_machine }}" kill rscrypto "{{ target }}"
 
+# Show one or all repository development machines.
 ssh-status target="":
     @if [ -n "{{ target }}" ]; then "{{ dev_machine }}" status rscrypto "{{ target }}"; else "{{ dev_machine }}" status rscrypto; fi
 
+# Bootstrap a repository development machine.
 ssh-bootstrap target profile="":
     @if [ -n "{{ profile }}" ]; then "{{ dev_machine }}" bootstrap rscrypto "{{ target }}" "{{ profile }}"; else "{{ dev_machine }}" bootstrap rscrypto "{{ target }}"; fi
 
+# Run a Just recipe on a repository development machine.
 ssh-just target *args="":
     @"{{ dev_machine }}" just rscrypto "{{ target }}" {{ args }}
 
+# Collect a benchmark run from a repository development machine.
 ssh-collect-bench target run_id destination:
     @"{{ dev_machine }}" collect-bench rscrypto "{{ target }}" "{{ run_id }}" "{{ destination }}"
 
+# List repository development machines.
 ssh-list:
-    @"{{ dev_machine }}" list
+    @"{{ dev_machine }}" list rscrypto
+
+# Install and verify the canonical remapped Cargo Rail cache policy.
+rail-cache-setup *args="":
+    @cargo rail cache setup --remote "$CARGO_RAIL_CACHE_REMOTE" --remote-mode "$CARGO_RAIL_CACHE_MODE" --root-portability remap {{ args }}
+    @cargo rail cache setup --check --remote "$CARGO_RAIL_CACHE_REMOTE" --remote-mode "$CARGO_RAIL_CACHE_MODE" --root-portability remap {{ args }}
+    @cargo rail cache probe
+
+# Report the effective Cargo Rail cache policy and usage.
+cache-status:
+    @cargo rail cache status --scope local --format json
 
 # Builds
-build:
-    cargo build --locked --workspace --all-targets --all-features
-
-build-release:
-    cargo build --locked --workspace --all-targets --all-features --release
+# Build every workspace target with every feature; accepts Cargo build arguments.
+build *args="":
+    cargo build --locked --workspace --all-targets --all-features {{ args }}
 
 # Checks
+# Run affected local checks; pass --all for the full workspace.
 check *args="":
     @scripts/check/check.sh {{ args }}
 
-check-all *args="":
-    @scripts/check/check-all.sh {{ args }}
+# Run the broad local check set.
+check-all:
+    @scripts/check/check-all.sh
 
+# Check every supported feature profile.
 check-feature-matrix:
     @scripts/check/check-feature-matrix.sh
 
+# Rebuild and verify optimized zeroization evidence.
 check-zeroize-evidence:
     @scripts/check/zeroize-evidence.sh
 
+# Run the CI quality policy locally.
 ci-check:
     @scripts/ci/ci-check.sh
 
+# Test every supported feature profile.
 test-feature-matrix:
     @scripts/test/test-feature-matrix.sh
 
-test-native-api:
-    cargo test --locked --no-default-features --features 'alloc,aead,ed25519,x25519,ecdsa,ml-kem' --test api_consistency
-    cargo test --locked --features 'aead,signatures,key-exchange,getrandom' --test api_consistency
-    cargo test --locked --features 'signatures,key-exchange,getrandom' --test getrandom_smoke
-
 # Tests
-test *crates="":
-    @scripts/test/test.sh {{ crates }}
+# Test the affected scope or the full workspace with --all.
+test *args="":
+    @scripts/test/test.sh {{ args }}
 
-test-all:
-    @scripts/test/test.sh --all
+# Execute every runnable example with its minimum feature set.
+test-examples:
+    @scripts/test/test-examples.sh
 
-test-miri *crates="":
-    @scripts/test/test-miri.sh {{ crates }}
+# Test portable unsafe paths under Miri.
+test-miri *args="":
+    @scripts/test/test-miri.sh {{ args }}
 
+# Run the RSA leakage evidence harness.
 test-rsa-leakage:
     @scripts/test/test-rsa-leakage.sh
 
+# Test Apple Silicon RSA assembly on a physical supported host.
 test-rsa-macos-asm:
     @scripts/test/test-rsa-macos-asm.sh
 
+# Run fuzz targets or replay the full fuzz set with --all.
 test-fuzz *args="":
     @scripts/test/test-fuzz.sh {{ args }}
 
+# Run fuzz targets with AddressSanitizer.
 test-fuzz-asan *args="":
     @scripts/test/test-fuzz-asan.sh {{ args }}
 
 # Constant-Time (CT) Validation Engine
-ct *args="":
-    @scripts/ct/artifacts.sh {{ args }}
-    @scripts/ct/python.sh scripts/ct/validate.py {{ args }}
-
 # Run DudeCT Timing Checks
 ct-dudect *args="":
     @scripts/ct/dudect.sh {{ args }}
 
 # Build CT Artifacts; Run Timing Evidence; Emit CT Reports
 ct-full *args="":
-    @scripts/ct/python.sh scripts/ct/full.py {{ args }}
+    @scripts/lib/python.sh scripts/ct/full.py {{ args }}
 
 # Run BINSEC; Manifest-Declared Binary CT Kernels
 ct-binsec *args="":
-    @scripts/ct/python.sh scripts/ct/binsec.py {{ args }}
+    @scripts/lib/python.sh scripts/ct/binsec.py {{ args }}
 
 # Build CT Harness Artifacts
 ct-artifacts *args="":
@@ -114,30 +138,20 @@ ct-artifacts *args="":
 
 # Validate CT Manifest & Generated Artifacts
 ct-validate *args="":
-    @scripts/ct/python.sh scripts/ct/validate.py {{ args }}
+    @scripts/lib/python.sh scripts/ct/validate.py {{ args }}
 
 # Coverage
 
-# Total Coverage: nextest + fuzz corpus replay
-test-coverage:
-    @scripts/test/test-coverage.sh
-
-# Nextest LCOV
-test-nextest-coverage:
-    @scripts/test/test-coverage.sh --nextest
-
-# Fuzz-corpus replay LCOV
-test-fuzz-coverage:
-    @scripts/test/test-coverage.sh --fuzz
+# Generate total coverage, or select --nextest or --fuzz.
+test-coverage *args="":
+    @scripts/test/test-coverage.sh {{ args }}
 
 # Benches
 # Results land in benchmark_results/<YYYY-MM-DD>/<os>/<arch>/results.txt
 
+# Run Criterion benchmarks selected by name or key-value arguments.
 bench *args="":
     @scripts/bench/bench.sh {{ args }}
-
-bench-quick *args="":
-    @scripts/bench/bench.sh --quick {{ args }}
 
 # Stable instruction/cache-cost benchmarks. Requires gungraun-runner and Valgrind.
 bench-structural:
@@ -161,14 +175,11 @@ perf-llvm-lines *args="":
 
 # Maintenance
 
-# Release adapters not yet expressible as typed Cargo Rail release policy.
+# Build and apply one Cargo Rail release transaction, including standalone lockfiles.
 release-prepare:
-    cargo rail release check rscrypto --extended
     cargo rail release run rscrypto --bump auto --yes --pr
-    scripts/ci/sync-release-locks.sh
-    git diff --cached --quiet || git commit -m "workspace: sync standalone tool locks for release"
-    git push
 
+# Verify exact-commit release evidence and create the signed release tag.
 release-tag:
     scripts/ci/repository-controls-evidence.sh \
       --commit "$(git rev-parse HEAD)" \
@@ -177,22 +188,24 @@ release-tag:
     cargo rail release finalize rscrypto --yes --skip-publish
 
 # Update coordinated Cargo manifests
-update:
-    @scripts/update/update-all.sh
+# Update coordinated Cargo manifests, or preview with --check.
+update *args="":
+    @scripts/update/update-all.sh {{ args }}
 
-update-check:
-    @scripts/update/update-all.sh --check
-
+# Validate GitHub Actions, local actions, and their repository policy tests.
 check-actions:
     @scripts/ci/check-action-pins.sh
     @scripts/ci/check-action-pins-test.sh
     @scripts/ci/tool-integrity-test.sh
+    @scripts/ci/remote-cache-recipes-test.sh
+    @scripts/ci/capture-cache-status-test.sh
     @scripts/ci/dependabot-smoke-test.sh
     @scripts/ci/check-ci-ownership.sh
     @scripts/ci/check-ci-ownership-test.sh
     @scripts/ci/run-rust-job-test.sh
     @scripts/test/test-fuzz-scheduler-test.sh
     @scripts/ci/emit-manual-matrix-test.sh
+    @scripts/ci/materialize-rail-plan-test.sh
     @scripts/ci/changed-test-planning-test.sh
     @scripts/ci/check-worktree-test.sh
     @scripts/ci/pre-push-test.sh
@@ -205,6 +218,7 @@ check-actions:
     @actionlint
     @zizmor .github/workflows .github/actions
 
+# Run the pre-push policy and push the current branch.
 push:
     @scripts/ci/pre-push.sh
     git push --set-upstream origin HEAD

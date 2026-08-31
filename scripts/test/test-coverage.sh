@@ -26,6 +26,7 @@ source "$SCRIPT_DIR/../lib/common.sh"
 RUN_NEXTEST=true
 RUN_FUZZ=true
 case "${1:-}" in
+  "") ;;
   --nextest)  RUN_FUZZ=false ;;
   --fuzz)     RUN_NEXTEST=false ;;
   -h|--help)
@@ -35,7 +36,18 @@ case "${1:-}" in
     echo "  --fuzz       Fuzz corpus coverage only"
     exit 0
     ;;
+  *)
+    echo "Error: unknown argument: $1" >&2
+    echo "Usage: $0 [--nextest|--fuzz]" >&2
+    exit 2
+    ;;
 esac
+
+if [[ $# -gt 1 ]]; then
+  echo "Error: expected at most one argument" >&2
+  echo "Usage: $0 [--nextest|--fuzz]" >&2
+  exit 2
+fi
 
 apply_ci_resource_profile
 

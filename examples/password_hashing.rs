@@ -1,32 +1,18 @@
-//! Password hashing with Argon2id and scrypt.
-//!
-//! Run with:
-//!
-//! ```text
-//! cargo run --example password_hashing --features password-hashing,getrandom
-//! ```
+//! Hash and verify a password with the bounded Argon2id policy.
 
-use rscrypto::{Argon2idPassword, ScryptPassword};
+use rscrypto::Argon2idPassword;
 
 fn main() -> Result<(), Box<dyn core::error::Error>> {
   let password = b"correct horse battery staple";
 
-  let argon2 = Argon2idPassword::default();
-  let argon2_phc = argon2.hash_password(password)?;
-  argon2.verify_password(password, &argon2_phc)?;
-  if argon2.verify_password(b"wrong password", &argon2_phc).is_ok() {
+  let policy = Argon2idPassword::default();
+  let record = policy.hash_password(password)?;
+
+  policy.verify_password(password, &record)?;
+  if policy.verify_password(b"wrong password", &record).is_ok() {
     return Err(std::io::Error::other("Argon2id accepted the wrong password").into());
   }
 
-  let scrypt = ScryptPassword::default();
-  let scrypt_phc = scrypt.hash_password(password)?;
-  scrypt.verify_password(password, &scrypt_phc)?;
-  if scrypt.verify_password(b"wrong password", &scrypt_phc).is_ok() {
-    return Err(std::io::Error::other("scrypt accepted the wrong password").into());
-  }
-
-  println!("{argon2_phc}");
-  println!("{scrypt_phc}");
-
+  println!("{record}");
   Ok(())
 }
