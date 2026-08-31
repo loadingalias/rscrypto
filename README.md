@@ -29,7 +29,7 @@ and 1.55x for ML-KEM.
 
 <p align="center">
   <img alt="rscrypto benchmark chart: 1.62x Linux and 1.37x Apple Silicon fastest-matched geomeans, checksums at 6.18x against crc-fast, crc, crc32fast, crc32c, and crc64fast, plus primitive geomean bars and M1 MBP Apple Silicon notes."
-       src="assets/readme-perf.svg"
+       src="assets/readme/perf.svg"
        width="640">
 </p>
 

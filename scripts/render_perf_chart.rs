@@ -2,7 +2,7 @@
 //!
 //! Reads the Linux CI headline, README category geomeans, and macOS local
 //! snapshot from `benchmark_results/OVERVIEW.md`, then writes the SVG used by
-//! the README at `assets/readme-perf.svg`.
+//! the README at `assets/readme/perf.svg`.
 //!
 //! Run via `just chart` from the repository root.
 //!
@@ -13,7 +13,7 @@
 use std::{fs, path::PathBuf, process::ExitCode};
 
 const OVERVIEW_PATH: &str = "benchmark_results/OVERVIEW.md";
-const OUT_PATH: &str = "assets/readme-perf.svg";
+const OUT_PATH: &str = "assets/readme/perf.svg";
 const README_PATH: &str = "README.md";
 
 const WIDTH: u32 = 900;
@@ -157,7 +157,7 @@ fn write_file(path: &str, contents: &str) -> Result<(), String> {
 
 fn readme_with_updated_alt(data: &ChartData) -> Result<Option<String>, String> {
   let readme = fs::read_to_string(README_PATH).map_err(|e| format!("read {README_PATH}: {e}"))?;
-  let src_marker = "\n       src=\"assets/readme-perf.svg\"";
+  let src_marker = "\n       src=\"assets/readme/perf.svg\"";
   let src_idx = readme
     .find(src_marker)
     .ok_or_else(|| format!("{README_PATH}: missing benchmark chart image src"))?;

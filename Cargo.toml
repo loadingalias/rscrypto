@@ -21,7 +21,7 @@ include = [
   "/THREAT_MODEL.md",
   "/CONTRIBUTING.md",
   "/.config/target-matrix.json",
-  "/assets/readme-perf.svg",
+  "/assets/readme/perf.svg",
   "/benchmark_results/OVERVIEW.md",
   "/benches/rsa_fixtures/**",
   "/docs/**",
