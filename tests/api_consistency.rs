@@ -1,7 +1,7 @@
 #[cfg(all(feature = "checksums", feature = "std"))]
 use std::io::Write;
 
-#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+#[cfg(feature = "ecdsa-p256")]
 use rscrypto::EcdsaKeyGenerationError;
 use rscrypto::Kem;
 #[cfg(any(feature = "hmac", feature = "hmac-sha3"))]

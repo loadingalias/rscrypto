@@ -522,7 +522,7 @@ fn select_signed_cached(table: &[CachedPoint; 8], digit: i8) -> CachedPoint {
 }
 
 /// Select one signed digit from the first portable basepoint table and return its field limbs.
-#[cfg(feature = "diag")]
+#[cfg(all(feature = "diag", feature = "ed25519"))]
 #[inline(always)]
 pub fn diag_select_basepoint_cached_limb_digest(digit: i8) -> [u64; 15] {
   let selected = select_signed_cached(&BASEPOINT_RADIX16_TABLE[0], digit);

@@ -479,7 +479,7 @@ pub(crate) unsafe fn scalar_mul_basepoint_avx2(scalar_bytes: &[u8; 32]) -> Exten
 /// # Safety
 ///
 /// Caller must ensure AVX2 is available.
-#[cfg(feature = "diag")]
+#[cfg(all(feature = "diag", feature = "ed25519"))]
 #[inline]
 #[target_feature(enable = "avx2")]
 pub unsafe fn diag_select_basepoint_cached_avx2_limb_digest(digit: i8) -> [u64; 20] {
@@ -903,7 +903,7 @@ pub(crate) unsafe fn scalar_mul_basepoint_ifma(scalar_bytes: &[u8; 32]) -> Exten
 /// # Safety
 ///
 /// Caller must ensure AVX2, AVX-512 IFMA, and AVX-512 VL are available.
-#[cfg(feature = "diag")]
+#[cfg(all(feature = "diag", feature = "ed25519"))]
 #[inline]
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
 pub unsafe fn diag_select_basepoint_cached_ifma_limb_digest(digit: i8) -> [u64; 20] {

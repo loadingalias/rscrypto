@@ -311,7 +311,8 @@ name = "introspect"
 required-features = ["crc32", "sha2", "chacha20poly1305", "diag"]
 
 [[example]]
-name = "password_hashing"
+name = "argon2id_password_hashing"
+path = "examples/password_hashing.rs"
 required-features = ["argon2", "phc-strings", "getrandom"]
 
 [[example]]
@@ -333,6 +334,11 @@ required-features = ["ml-kem", "getrandom"]
 [[example]]
 name = "x25519_key_agreement"
 required-features = ["x25519", "getrandom"]
+
+[[test]]
+name = "websocket_accept_digest"
+path = "tests/websocket_sha1.rs"
+required-features = ["websocket-sha1"]
 
 [[bench]]
 name = "aead"
@@ -380,7 +386,7 @@ required-features = ["websocket-sha1"]
 [[bench]]
 name = "ascon"
 harness = false
-required-features = ["ascon-hash"]
+required-features = ["std", "ascon-hash"]
 
 [[bench]]
 name = "auth"

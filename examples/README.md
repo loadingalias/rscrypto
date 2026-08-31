@@ -14,7 +14,7 @@ just test-examples
 | Example | Purpose | Features |
 | --- | --- | --- |
 | `aead_seal_open` | Generate a ChaCha20-Poly1305 key, seal with associated data, and open the ciphertext. | `alloc,chacha20poly1305,getrandom` |
-| `password_hashing` | Create and verify a bounded Argon2id PHC record. | `argon2,phc-strings,getrandom` |
+| `argon2id_password_hashing` | Create and verify a bounded Argon2id PHC record. | `argon2,phc-strings,getrandom` |
 | `ed25519_sign_verify` | Generate an Ed25519 keypair, sign a message, and verify the signature. | `ed25519,getrandom` |
 | `rsa_pss_verify` | Verify a packaged RSA-PSS/SHA-256 fixture. | `rsa` |
 | `mlkem_encapsulation` | Generate ML-KEM-768 keys and confirm encapsulation and decapsulation agree. | `ml-kem,getrandom` |

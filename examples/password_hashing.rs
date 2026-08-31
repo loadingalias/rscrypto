@@ -1,3 +1,5 @@
+//! Hash and verify a password with the bounded Argon2id policy.
+
 use rscrypto::Argon2idPassword;
 
 fn main() -> Result<(), Box<dyn core::error::Error>> {

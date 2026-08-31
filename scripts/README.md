@@ -206,10 +206,9 @@ be validated by one arbitrarily selected row.
 
 Pull requests select affected Cargo work and CI rows. Manual CI and Qualification use
 Cargo Rail's typed all-work override. The planner installs the authenticated
-Surface component and records Surface output separately from the work plan.
-Surface is a fail-closed gate: Cargo Rail v0.25 binds compiler facts to complete
-definition-path identity, including legal same-path items in different Rust
-namespaces.
+Surface component, but `.config/rail.toml` temporarily disables Surface while
+Cargo Rail cannot distinguish expected `compile_fail` doctest invocations from
+compiler failures. Planning and every selected CI row remain fail-closed.
 
 ## Compiler-result reuse
 

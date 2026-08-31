@@ -30,7 +30,8 @@ consumer_scope = "open" # Published library: external consumers may activate dor
 msrv_policy = { mode = "disabled" } # Cargo.toml owns the tested package MSRV.
 
 [surface]
-enabled = true
+# Cargo Rail 0.25 cannot distinguish expected `compile_fail` doctest invocations from compiler failures.
+enabled = false
 consumer_scope = "open" # Published library: external consumers remain part of the visibility boundary.
 
 [release]

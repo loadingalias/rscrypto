@@ -53,7 +53,7 @@
       "binary": "ascon",
       "kind": "criterion",
       "required": true,
-      "features": ["parallel", "ascon-hash"]
+      "features": ["std", "parallel", "ascon-hash"]
     },
     "xxh3": {
       "binary": "xxh3",
