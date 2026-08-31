@@ -271,6 +271,18 @@ done < <(jq -r '.variants[].dimensions.operation' "$RAIL_VARIANTS" | sort -u)
   == '${{ inputs.plan_head_commit || inputs.checkout_ref || github.sha }}' ]] \
   || fail "the reusable Rust job must prefer the plan-bound source ref before execution"
 # shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
+[[ $(yq eval '.jobs.run.steps[] | select(.name == "Download exact work plan") | .with.path' "$RUST_JOB") \
+  == '${{ runner.temp }}/cargo-rail-plan' ]] \
+  || fail "saved plan artifacts must remain outside the captured checkout"
+# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
+rail_plan_file=$(yq eval '.jobs.run.steps[] | select(.name == "Run") | .env.RAIL_PLAN_FILE' "$RUST_JOB")
+rail_plan_reader=$(yq eval '.jobs.run.steps[] | select(.name == "Run") | .env.RAIL_PLAN_READER' "$RUST_JOB")
+[[ "$rail_plan_file" == *"inputs.plan_artifact"* && "$rail_plan_file" == *"runner.temp"* \
+  && "$rail_plan_file" == *"/cargo-rail-plan/plan.json"* \
+  && "$rail_plan_reader" == *"inputs.plan_artifact"* && "$rail_plan_reader" == *"runner.temp"* \
+  && "$rail_plan_reader" == *"/cargo-rail-plan/read.py"* ]] \
+  || fail "saved plan execution must consume the out-of-worktree artifact"
+# shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
 [[ $(yq eval '.jobs.run.steps[] | select(.name == "Run") | .env.CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_RUSTFLAGS' "$RUST_JOB") \
   == '${{ inputs.target == '\''s390x-unknown-linux-gnu'\'' && '\''-C target-feature=+vector'\'' || '\'''\'' }}' ]] \
   || fail "s390x CT jobs must share one explicit vector target environment"
@@ -422,8 +434,14 @@ fi
   == "true" ]] \
   || fail "CI cache setup must authenticate the provider and native-v6 protocol marker before compilation"
 [[ $(yq eval '.runs.steps[] | select(.name == "Setup Cargo Rail Cache") | .if' "$SETUP_ACTION") \
-  == "inputs.cache-url != ''" ]] \
-  || fail "Cargo Rail cache setup must skip cleanly until machine-owned L2 is configured"
+  == "steps.cache-capability.outputs.enabled == 'true'" \
+  && $(yq eval '.runs.steps[] | select(.name == "Authenticate Cargo Rail Cache") | .if' "$SETUP_ACTION") \
+  == "steps.cache-capability.outputs.enabled == 'true'" ]] \
+  || fail "Cargo Rail cache authentication and setup must consume one platform capability decision"
+cache_capability_run=$(yq eval '.runs.steps[] | select(.name == "Select Cargo Rail Cache Capability") | .run' "$SETUP_ACTION")
+grep -Fq '[[ -z "$CACHE_URL" ]]' <<<"$cache_capability_run" \
+  && grep -Fq 's390x | ppc64le)' <<<"$cache_capability_run" \
+  || fail "cache setup must skip absent configuration and hosts without verified native cache archives"
 auth_step_index=$(yq eval '.runs.steps | to_entries | .[] | select(.value.name == "Authenticate Cargo Rail Cache") | .key' "$SETUP_ACTION")
 cache_step_index=$(yq eval '.runs.steps | to_entries | .[] | select(.value.name == "Setup Cargo Rail Cache") | .key' "$SETUP_ACTION")
 tools_step_index=$(yq eval '.runs.steps | to_entries | .[] | select(.value.name == "Install Cargo Tools") | .key' "$SETUP_ACTION")

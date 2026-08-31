@@ -57,8 +57,26 @@ runs:
         contract: ${{ inputs.toolchain-contract }}
         components: ${{ inputs.toolchain-components }}
 
+    - name: Select Cargo Rail Cache Capability
+      id: cache-capability
+      shell: bash
+      env:
+        CACHE_URL: ${{ inputs.cache-url }}
+      run: |
+        if [[ -z "$CACHE_URL" ]]; then
+          echo "enabled=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        case "$(uname -m)" in
+          s390x | ppc64le)
+            echo "::notice::Cargo Rail Action v8.2.0 has no verified native cache archive for $(uname -m); continuing without compiler reuse"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            ;;
+          *) echo "enabled=true" >> "$GITHUB_OUTPUT" ;;
+        esac
+
     - name: Authenticate Cargo Rail Cache
-      if: inputs.cache-url != ''
+      if: steps.cache-capability.outputs.enabled == 'true'
       shell: bash
       env:
         CACHE_ACCESS_KEY_ID: ${{ inputs.cache-access-key-id }}
@@ -91,7 +109,7 @@ runs:
 
     - name: Setup Cargo Rail Cache
       id: cargo-rail-cache
-      if: inputs.cache-url != ''
+      if: steps.cache-capability.outputs.enabled == 'true'
       uses: loadingalias/cargo-rail-action/cache@78ad385a85627484a5b634cf1bc3caa1de872c6a # v8.2.0
       with:
         version: "0.25.0"

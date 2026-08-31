@@ -120,6 +120,21 @@ done
 jq -e '.status.local.cache | has("root") | not' "$output" >/dev/null \
   || fail "cache telemetry retained the local CAS root"
 
+runner_case="$TMP_ROOT/runner-case"
+mkdir -p "$runner_case"
+(
+  cd "$runner_case"
+  PATH="$BIN:$PATH" \
+    GITHUB_OUTPUT="$runner_case/github-output" \
+    RSCRYPTO_CI_OPERATION=msrv \
+    RSCRYPTO_CI_RUNNER='runs-on=123/runner=linux x64 ci' \
+    RSCRYPTO_MOCK_CACHE_STATUS="$TMP_ROOT/healthy.json" \
+    bash "$CAPTURE"
+)
+[[ $(<"$runner_case/github-output") == \
+  "artifact_name=cargo-rail-cache-msrv-runs-on-123-runner-linux-x64-ci" ]] \
+  || fail "cache telemetry did not normalize a runner label portably"
+
 expect_status_failure() {
   local name=$1
   local filter=$2

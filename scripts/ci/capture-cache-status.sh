@@ -36,6 +36,6 @@ rm -f "$raw"
 trap - EXIT
 
 identity=$operation-${target:-${platform:-$runner}}
-artifact_name=$(printf '%s' "$identity" | tr -cs '[:alnum:]._- ' '-' | tr ' ' '-' | sed 's/^-*//; s/-*$//')
+artifact_name=$(printf '%s' "$identity" | tr -cs '[:alnum:]_.-' '-' | sed 's/^-*//; s/-*$//')
 [[ -n "$artifact_name" ]] || { echo "empty cache telemetry artifact name" >&2; exit 2; }
 printf 'artifact_name=cargo-rail-cache-%s\n' "$artifact_name" >>"${GITHUB_OUTPUT:-/dev/null}"

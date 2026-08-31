@@ -210,6 +210,10 @@ Surface component, but `.config/rail.toml` temporarily disables Surface while
 Cargo Rail cannot distinguish expected `compile_fail` doctest invocations from
 compiler failures. Planning and every selected CI row remain fail-closed.
 
+Cargo Rail Action v8.2.0 does not publish verified native cache components for
+the IBM Z and POWER hosts. Those two native rows still install Cargo Rail core,
+verify the saved plan, and run in full; only compiler-result reuse is skipped.
+
 ## Compiler-result reuse
 
 `.github/actions/setup/action.yaml` is the only CI compiler-cache owner. It
