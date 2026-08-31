@@ -9,7 +9,7 @@ MODE=${1:-standard}
 CARGO_NEXTEST_VERSION=0.9.143
 CARGO_DENY_VERSION=0.20.2
 CARGO_AUDIT_VERSION=0.22.2
-CARGO_RAIL_VERSION=0.22.2
+CARGO_RAIL_VERSION=0.25.0
 JUST_VERSION=1.58.0
 ZIZMOR_VERSION=1.29.0
 CARGO_CRITERION_VERSION=1.1.0
@@ -123,6 +123,22 @@ install_cargo_tool() {
   echo "  $package: installing $version from crates.io into a fresh root"
   cargo install --registry crates-io "$package" --locked --version "=$version" --force
   verify_cargo_tool "$package" "$version" "$binary"
+}
+
+ensure_cargo_rail() {
+  local path actual
+  if [[ "${RSCRYPTO_AUTHENTICATED_CARGO_RAIL:-false}" == true ]]; then
+    path=$(command -v cargo-rail 2>/dev/null || true)
+    if [[ -n "$path" ]]; then
+      actual=$(cargo_tool_version cargo-rail "$path" 2>/dev/null || true)
+      if [[ "$actual" == "$CARGO_RAIL_VERSION" ]]; then
+        echo "  cargo-rail: reusing authenticated $actual from cargo-rail-action"
+        return 0
+      fi
+    fi
+    fail "cargo-rail-action reported an authenticated Cargo Rail install, but the exact binary is unavailable"
+  fi
+  install_cargo_tool cargo-rail "$CARGO_RAIL_VERSION"
 }
 
 install_actionlint() {
@@ -295,7 +311,7 @@ case "$MODE" in
     install_cargo_tool cargo-nextest "$CARGO_NEXTEST_VERSION"
     install_cargo_tool cargo-deny "$CARGO_DENY_VERSION"
     install_cargo_tool cargo-audit "$CARGO_AUDIT_VERSION"
-    install_cargo_tool cargo-rail "$CARGO_RAIL_VERSION"
+    ensure_cargo_rail
     install_cargo_tool just "$JUST_VERSION"
     ;;
   quality)
@@ -304,12 +320,12 @@ case "$MODE" in
     install_cargo_tool zizmor "$ZIZMOR_VERSION"
     ;;
   release)
-    install_cargo_tool cargo-rail "$CARGO_RAIL_VERSION"
+    ensure_cargo_rail
     install_cargo_tool cargo-deny "$CARGO_DENY_VERSION"
     install_cargo_tool cargo-audit "$CARGO_AUDIT_VERSION"
     ;;
   rail)
-    install_cargo_tool cargo-rail "$CARGO_RAIL_VERSION"
+    ensure_cargo_rail
     ;;
   ci)
     install_cargo_tool cargo-nextest "$CARGO_NEXTEST_VERSION"
@@ -365,6 +381,13 @@ case "$MODE" in
     exit 2
     ;;
 esac
+
+if [[ "${RSCRYPTO_REQUIRE_CARGO_RAIL:-false}" == true ]]; then
+  case "$MODE" in
+    standard | release | rail) ;;
+    *) ensure_cargo_rail ;;
+  esac
+fi
 
 if [[ -n "${GITHUB_PATH:-}" ]]; then
   echo "$RSCRYPTO_CARGO_BIN" >>"$GITHUB_PATH"

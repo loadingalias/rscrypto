@@ -20,6 +20,7 @@ printf '%s\n' '#![no_std]' >"$fixture/src/lib.rs"
 git -C "$fixture" init --quiet --initial-branch=main
 git -C "$fixture" config user.email "ci@example.invalid"
 git -C "$fixture" config user.name "CI"
+git -C "$fixture" config commit.gpgsign false
 git -C "$fixture" add .
 git -C "$fixture" commit --quiet -m "baseline"
 base_commit="$(git -C "$fixture" rev-parse HEAD)"

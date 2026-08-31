@@ -15,6 +15,7 @@ SHA2_COMMIT = "82c36a428f8d6f05f3bfccdedb243e9d1f85359d"
 SHA3_COMMIT = "1637e892b5658941d04a4d895165b66780c7d7ab"
 BLAKE2_COMMIT = "ed1974ea83433eba7b2d95c5dcd9ac33cb847913"
 BLAKE3_COMMIT = "8aa5145039b972ba30e98e788752d37d14568824"
+ASCON_COMMIT = "446347f21b209f3921c65ece70027c366cbe1693"
 
 SHA2_FILES = {
     "sha224.blb": "59b185972521af418fd49a079de3d5f5bed74cd76d80473da51cab3faee6c7d0",
@@ -41,6 +42,31 @@ BLAKE2_FILES = {
 
 BLAKE3_SOURCE_SHA256 = "dcb91ea8accc77e6d6e632af7cdc1a99a9f3ae78cf648da595c7d064db32f624"
 BLAKE3_OUTPUT_SHA256 = "c56e08d48fc279088f99794e004bc774a76061a8705ed059a09dd9ea535e671d"
+
+ASCON_SOURCES = {
+    "asconaead128.txt": (
+        "crypto_aead/asconaead128/LWC_AEAD_KAT_128_128.txt",
+        "bbbc34692fe05e5fda0a3b025585622ab3e3747495e5e3655b29aae8c2a4bd33",
+    ),
+    "asconcxof128.txt": (
+        "crypto_cxof/asconcxof128/LWC_CXOF_KAT_128_512.txt",
+        "abcbb0cc851a7f9cfc5ea2bcaf3eba5b2056e37fcb8ce541ceda1d1b960fc9dc",
+    ),
+    "asconhash.blb": (
+        "crypto_hash/asconhash256/LWC_HASH_KAT_128_256.txt",
+        "b7d6fbc51362f0d62bc7e57b21f3e83242983434a7c92320a4956d915749df17",
+    ),
+    "asconxof.blb": (
+        "crypto_hash/asconxof128/LWC_XOF_KAT_128_512.txt",
+        "d7f5a23f37fc969896e48246700bc859fa324f2d309164043361376068e30852",
+    ),
+}
+ASCON_FILES = {
+    "asconaead128.txt": "bbbc34692fe05e5fda0a3b025585622ab3e3747495e5e3655b29aae8c2a4bd33",
+    "asconcxof128.txt": "abcbb0cc851a7f9cfc5ea2bcaf3eba5b2056e37fcb8ce541ceda1d1b960fc9dc",
+    "asconhash.blb": "77cabba609e01ff6d8cf6a94d27afc4e31308fa6ffa639926b5f3e321635cb51",
+    "asconxof.blb": "dcb27df85ba5010fe5e36255982ea90979dddde38cfa44dc5ce3bba9dce3b46d",
+}
 
 
 def fail(message: str) -> None:
@@ -82,6 +108,14 @@ def require_exact_artifacts(directory: Path, expected: set[str]) -> None:
         for path in directory.iterdir()
         if path.is_file() and path.suffix in {".blb", ".json"}
     }
+    if actual != expected:
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        fail(f"{directory} corpus coverage drift; missing={missing}, extra={extra}")
+
+
+def require_exact_files(directory: Path, expected: set[str]) -> None:
+    actual = {path.name for path in directory.iterdir() if path.is_file() and path.name != "README.md"}
     if actual != expected:
         missing = sorted(expected - actual)
         extra = sorted(actual - expected)
@@ -174,6 +208,34 @@ def blake3_output(source: bytes) -> bytes:
     return encode_blobs_no_dedup(blobs)
 
 
+def ascon_output(source: bytes, source_output_length: int, retained_output_length: int) -> bytes:
+    try:
+        records = source.decode("ascii").strip().split("\n\n")
+    except UnicodeDecodeError as error:
+        fail(f"invalid Ascon source text: {error}")
+    if len(records) != 1025:
+        fail(f"Ascon source has {len(records)} cases; expected 1025")
+
+    blobs: list[bytes] = []
+    for index, record in enumerate(records, start=1):
+        try:
+            fields = dict(line.split(" = ", 1) for line in record.splitlines())
+            if set(fields) != {"Count", "Msg", "MD"}:
+                fail(f"Ascon case {index} has unexpected fields")
+            if int(fields["Count"]) != index:
+                fail(f"Ascon case {index} has an unexpected count")
+            message = bytes.fromhex(fields["Msg"])
+            output = bytes.fromhex(fields["MD"])
+        except (TypeError, ValueError) as error:
+            fail(f"invalid Ascon case {index}: {error}")
+        if len(message) != index - 1:
+            fail(f"Ascon case {index} has an unexpected message length")
+        if len(output) != source_output_length:
+            fail(f"Ascon case {index} has an unexpected output length")
+        blobs.extend((message, output[:retained_output_length]))
+    return encode_blobs_no_dedup(blobs)
+
+
 def verify_generated(output_dir: Path, generated: dict[str, bytes], expected: dict[str, str]) -> None:
     for name, data in generated.items():
         if digest(data) != expected[name]:
@@ -188,6 +250,7 @@ def main() -> None:
     parser.add_argument("--sha3-root", type=Path)
     parser.add_argument("--blake2-root", type=Path)
     parser.add_argument("--blake3-root", type=Path)
+    parser.add_argument("--ascon-root", type=Path)
     args = parser.parse_args()
 
     require_exact_artifacts(ROOT / "testdata/sha2", set(SHA2_FILES))
@@ -197,6 +260,7 @@ def main() -> None:
         ROOT / "testdata/blake3",
         {"test_vectors.blb", "test_vectors.json"},
     )
+    require_exact_files(ROOT / "testdata/ascon", set(ASCON_FILES))
 
     verify_copied_family(
         ROOT / "testdata/sha2",
@@ -239,6 +303,26 @@ def main() -> None:
         )
         if source != local_blake3:
             fail("committed BLAKE3 JSON differs from pinned upstream bytes")
+
+    for name, expected in ASCON_FILES.items():
+        require_digest(ROOT / "testdata/ascon" / name, expected)
+    if args.ascon_root:
+        require_git_commit(args.ascon_root, ASCON_COMMIT)
+        upstream = {
+            name: require_digest(args.ascon_root / source_path, source_digest)
+            for name, (source_path, source_digest) in ASCON_SOURCES.items()
+        }
+        for name in ("asconaead128.txt", "asconcxof128.txt"):
+            if upstream[name] != require_digest(ROOT / "testdata/ascon" / name, ASCON_FILES[name]):
+                fail(f"testdata/ascon/{name} differs from pinned upstream bytes")
+        verify_generated(
+            ROOT / "testdata/ascon",
+            {
+                "asconhash.blb": ascon_output(upstream["asconhash.blb"], 32, 32),
+                "asconxof.blb": ascon_output(upstream["asconxof.blb"], 64, 32),
+            },
+            ASCON_FILES,
+        )
 
     print("hash-vector-provenance: committed corpora match pinned digests and transforms")
 

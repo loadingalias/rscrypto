@@ -70,6 +70,10 @@ run_quality() {
   just ci-check
 }
 
+run_examples() {
+  just test-examples
+}
+
 run_msrv() {
   cargo check --locked --workspace --lib --no-default-features
   cargo check --locked --workspace --lib --all-features
@@ -275,8 +279,8 @@ run_benchmark() {
   run_time="$(date -u +"%H_%M_%S")"
   run_commit="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 
-  export BENCH_OUTPUT_DIR=benchmark-results
-  export BENCH_RESULTS_DIR=benchmark-results
+  export BENCH_OUTPUT_DIR=target/benchmark_results
+  export BENCH_RESULTS_DIR=target/benchmark_results
   export BENCH_RUN_DATE="$run_date"
   export BENCH_RUN_TIME="$run_time"
   export BENCH_RUN_COMMIT="$run_commit"
@@ -378,7 +382,7 @@ run_constant_time() {
   if [[ "$raw_artifacts" == "true" ]]; then
     package_args+=(--raw)
   fi
-  scripts/ct/python.sh scripts/ct/package_evidence.py "${package_args[@]}"
+  scripts/lib/python.sh scripts/ct/package_evidence.py "${package_args[@]}"
   return "$status"
 }
 
@@ -465,6 +469,7 @@ main() {
   require_nonempty operation "$operation"
   case "$operation" in
     quality) run_quality ;;
+    examples) run_examples ;;
     msrv) run_msrv ;;
     cargo-graph) run_cargo_graph ;;
     feature-contracts) run_feature_contracts ;;

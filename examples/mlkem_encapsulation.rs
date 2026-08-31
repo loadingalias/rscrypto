@@ -1,5 +1,3 @@
-//! Run with: `cargo run --example mlkem_encapsulation --features ml-kem,getrandom`
-
 use rscrypto::{Kem, MlKem768};
 
 fn main() -> Result<(), Box<dyn core::error::Error>> {
@@ -8,7 +6,7 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
   let decapsulated = MlKem768::decapsulate(&decapsulation_key, &ciphertext)?;
 
   if !shared_secret.ct_eq(&decapsulated).declassify() {
-    return Err(std::io::Error::other("ML-KEM encapsulation and decapsulation secrets differ").into());
+    return Err(std::io::Error::other("ML-KEM shared secrets differ").into());
   }
   println!(
     "ML-KEM-768 encapsulated {} shared-secret bytes",

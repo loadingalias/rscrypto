@@ -36,22 +36,6 @@ JSON
 JSON
       fi
       ;;
-    *" --workflow riscv.yaml "*)
-      if [[ ${FAKE_GH_MODE:-success} == missing-riscv ]]; then
-        echo '[]'
-      elif [[ ${FAKE_GH_MODE:-success} == scheduled-riscv ]]; then
-        cat <<JSON
-[{"databaseId":4343,"headSha":"${EXPECTED_SHA}","status":"completed","conclusion":"success","url":"https://example.invalid/runs/4343","createdAt":"2026-07-14T00:00:00Z","event":"schedule"}]
-JSON
-      else
-        cat <<JSON
-[
-  {"databaseId":4343,"headSha":"${EXPECTED_SHA}","status":"completed","conclusion":"success","url":"https://example.invalid/runs/4343","createdAt":"2026-07-14T00:00:00Z","event":"workflow_dispatch"},
-  {"databaseId":4344,"headSha":"${EXPECTED_SHA}","status":"completed","conclusion":"success","url":"https://example.invalid/runs/4344","createdAt":"2026-07-14T01:00:00Z","event":"workflow_dispatch"}
-]
-JSON
-      fi
-      ;;
     *)
       echo "unexpected run list workflow: $*" >&2
       exit 2
@@ -67,6 +51,8 @@ if [[ "$1 $2" == "run view" ]]; then
       rsa_conclusion=success
       graph_conclusion=success
       release_conclusion=success
+      riscv_native_conclusion=success
+      riscv_ct_conclusion=success
       if [[ ${FAKE_GH_MODE:-success} == failed-weekly-ct ]]; then
         ct_conclusion=failure
       fi
@@ -79,12 +65,25 @@ if [[ "$1 $2" == "run view" ]]; then
       if [[ ${FAKE_GH_MODE:-success} == failed-release-gate ]]; then
         release_conclusion=failure
       fi
+      if [[ ${FAKE_GH_MODE:-success} == failed-riscv-native ]]; then
+        riscv_native_conclusion=failure
+      fi
+      if [[ ${FAKE_GH_MODE:-success} == failed-riscv-ct ]]; then
+        riscv_ct_conclusion=failure
+      fi
+      if [[ ${FAKE_GH_MODE:-success} == missing-riscv ]]; then
+        riscv_native_conclusion=missing
+        riscv_ct_conclusion=missing
+      fi
       cat <<JSON
 {"jobs":[
   {"name":"Constant-Time Evidence (release) / CT Full (AMD Zen4) / run","conclusion":"${ct_conclusion}"},
   {"name":"Constant-Time Evidence (release) / CT Full (AWS Graviton4) / run","conclusion":"success"},
   {"name":"Constant-Time Evidence (release) / Complete (CT)","conclusion":"${ct_conclusion}"},
   {"name":"RSA Evidence (release) / Complete (RSA)","conclusion":"${rsa_conclusion}"},
+  {"name":"RISC-V Native Evidence / run","conclusion":"${riscv_native_conclusion}"},
+  {"name":"RISC-V CT Evidence (release) / CT Full (RISE RISC-V riscv64) / run","conclusion":"${riscv_ct_conclusion}"},
+  {"name":"RISC-V CT Evidence (release) / Complete (CT)","conclusion":"${riscv_ct_conclusion}"},
   {"name":"CI Suite (release) / Cargo Graph Assurance / run","conclusion":"${graph_conclusion}"},
   {"name":"Complete (release)","conclusion":"${release_conclusion}"}
 ]}
@@ -108,32 +107,6 @@ JSON
 ]}
 JSON
       ;;
-    4343)
-      native_conclusion=success
-      ct_conclusion=success
-      if [[ ${FAKE_GH_MODE:-success} == failed-riscv-native ]]; then
-        native_conclusion=failure
-      fi
-      if [[ ${FAKE_GH_MODE:-success} == failed-riscv-ct ]]; then
-        ct_conclusion=failure
-      fi
-      cat <<JSON
-{"jobs":[
-  {"name":"Native CI / run","conclusion":"${native_conclusion}"},
-  {"name":"Constant-Time Evidence (RISC-V) / CT Full (RISE RISC-V riscv64) / run","conclusion":"${ct_conclusion}"},
-  {"name":"Constant-Time Evidence (RISC-V) / Complete (CT)","conclusion":"${ct_conclusion}"},
-  {"name":"Complete (RISC-V)","conclusion":"${ct_conclusion}"}
-]}
-JSON
-      ;;
-    4344)
-      cat <<JSON
-{"jobs":[
-  {"name":"Benchmark / run","conclusion":"success"},
-  {"name":"Complete (RISC-V)","conclusion":"success"}
-]}
-JSON
-      ;;
     *)
       echo "unexpected run view id: $3" >&2
       exit 2
@@ -147,18 +120,21 @@ if [[ "$1" == "api" ]]; then
     *" repos/loadingalias/rscrypto/actions/runs/4242/artifacts?per_page=100 "*)
       if [[ ${FAKE_GH_MODE:-success} == missing-weekly-raw ]]; then
         cat <<'JSON'
-{"total_count":1,"artifacts":[
-  {"name":"ct-raw-amd-zen4","expired":false,"size_in_bytes":4096}
+{"total_count":2,"artifacts":[
+  {"name":"ct-raw-amd-zen4","expired":false,"size_in_bytes":4096},
+  {"name":"rsa-miri-linux-x64","expired":false,"size_in_bytes":512}
 ]}
 JSON
       elif [[ ${FAKE_GH_MODE:-success} == expired-weekly-raw ]]; then
         cat <<'JSON'
-{"total_count":2,"artifacts":[
+{"total_count":4,"artifacts":[
   {"name":"ct-raw-amd-zen4","expired":false,"size_in_bytes":4096},
-  {"name":"ct-raw-graviton4","expired":true,"size_in_bytes":4096}
+  {"name":"ct-raw-graviton4","expired":true,"size_in_bytes":4096},
+  {"name":"ct-raw-rise-riscv","expired":false,"size_in_bytes":4096},
+  {"name":"rsa-miri-linux-x64","expired":false,"size_in_bytes":512}
 ]}
 JSON
-      else
+      elif [[ ${FAKE_GH_MODE:-success} == missing-riscv-raw ]]; then
         cat <<'JSON'
 {"total_count":3,"artifacts":[
   {"name":"ct-raw-amd-zen4","expired":false,"size_in_bytes":4096},
@@ -166,15 +142,13 @@ JSON
   {"name":"rsa-miri-linux-x64","expired":false,"size_in_bytes":512}
 ]}
 JSON
-      fi
-      ;;
-    *" repos/loadingalias/rscrypto/actions/runs/4343/artifacts?per_page=100 "*)
-      if [[ ${FAKE_GH_MODE:-success} == missing-riscv-raw ]]; then
-        echo '{"total_count":0,"artifacts":[]}'
       else
         cat <<'JSON'
-{"total_count":1,"artifacts":[
-  {"name":"ct-raw-rise-riscv","expired":false,"size_in_bytes":4096}
+{"total_count":4,"artifacts":[
+  {"name":"ct-raw-amd-zen4","expired":false,"size_in_bytes":4096},
+  {"name":"ct-raw-graviton4","expired":false,"size_in_bytes":4096},
+  {"name":"ct-raw-rise-riscv","expired":false,"size_in_bytes":4096},
+  {"name":"rsa-miri-linux-x64","expired":false,"size_in_bytes":512}
 ]}
 JSON
       fi
@@ -223,6 +197,7 @@ printf '# Changelog\n' >"$fixture/CHANGELOG.md"
 git -C "$fixture" init -q
 git -C "$fixture" config user.email test@example.invalid
 git -C "$fixture" config user.name "Release Evidence Test"
+git -C "$fixture" config commit.gpgsign false
 git -C "$fixture" add .
 git -C "$fixture" commit -qm "evidence"
 evidence_sha=$(git -C "$fixture" rev-parse HEAD)
@@ -230,16 +205,14 @@ evidence_sha=$(git -C "$fixture" rev-parse HEAD)
 export EXPECTED_SHA=$evidence_sha
 output="$TMP_ROOT/github-output"
 GITHUB_OUTPUT="$output" "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null
-grep -Fxq 'weekly_run_id=4242' "$output"
-grep -Fxq 'weekly_run_url=https://example.invalid/runs/4242' "$output"
-grep -Fxq 'riscv_run_id=4343' "$output"
-grep -Fxq 'riscv_run_url=https://example.invalid/runs/4343' "$output"
-grep -Fxq "weekly_commit=$evidence_sha" "$output"
-grep -Fxq 'weekly_version=0.7.3' "$output"
-grep -Fxq 'weekly_evidence_mode=exact_commit' "$output"
+grep -Fxq 'qualification_run_id=4242' "$output"
+grep -Fxq 'qualification_run_url=https://example.invalid/runs/4242' "$output"
+grep -Fxq "qualification_commit=$evidence_sha" "$output"
+grep -Fxq 'qualification_version=0.7.3' "$output"
+grep -Fxq 'qualification_evidence_mode=exact_commit' "$output"
 
 if FAKE_GH_MODE=missing-weekly "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
-  echo "release evidence check accepted a missing exact-commit Weekly run" >&2
+  echo "release evidence check accepted a missing exact-commit Qualification run" >&2
   exit 1
 fi
 
@@ -249,17 +222,12 @@ if FAKE_GH_MODE=missing-riscv "$CHECKER" --root "$fixture" --commit "$evidence_s
 fi
 
 if FAKE_GH_MODE=scheduled-weekly "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
-  echo "release evidence check promoted a scheduled Weekly assurance run" >&2
+  echo "release evidence check promoted a scheduled Qualification assurance run" >&2
   exit 1
 fi
 
 if FAKE_GH_MODE=assurance-dispatch "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
   echo "release evidence check promoted a manually dispatched assurance run" >&2
-  exit 1
-fi
-
-if FAKE_GH_MODE=scheduled-riscv "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
-  echo "release evidence check promoted a scheduled RISC-V run" >&2
   exit 1
 fi
 
@@ -284,12 +252,12 @@ if FAKE_GH_MODE=failed-cargo-graph "$CHECKER" --root "$fixture" --commit "$evide
 fi
 
 if FAKE_GH_MODE=missing-weekly-raw "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
-  echo "release evidence check accepted missing Weekly raw CT artifacts" >&2
+  echo "release evidence check accepted missing Qualification raw CT artifacts" >&2
   exit 1
 fi
 
 if FAKE_GH_MODE=expired-weekly-raw "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
-  echo "release evidence check accepted expired Weekly raw CT artifacts" >&2
+  echo "release evidence check accepted expired Qualification raw CT artifacts" >&2
   exit 1
 fi
 
@@ -322,7 +290,7 @@ if GITHUB_OUTPUT="$output" "$CHECKER" --root "$fixture" --commit "$release_sha" 
   exit 1
 fi
 
-"$REPO_ROOT/scripts/ct/python.sh" - "$REPO_ROOT" "$fixture" "$evidence_sha" <<'PY'
+"$REPO_ROOT/scripts/lib/python.sh" - "$REPO_ROOT" "$fixture" "$evidence_sha" <<'PY'
 import hashlib
 import pathlib
 import subprocess

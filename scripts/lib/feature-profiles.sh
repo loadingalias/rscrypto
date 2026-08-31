@@ -2,9 +2,8 @@
 # shellcheck disable=SC2034
 # Feature profile arrays are caller-visible outputs for sourced matrix scripts.
 
-# This is the union of every profile historically owned by the compile and
-# executable matrices. Execution may be narrowed, but compilation must not lose
-# a declared feature contract.
+# Complete required feature profile set. Execution may be narrower, but
+# compilation must not lose a declared feature contract.
 COMPILE_FEATURE_SETS=(
   ""
   "alloc"
@@ -80,4 +79,40 @@ EXECUTABLE_FEATURE_SETS=(
   "std,full,serde-secrets"
   "std,parallel"
   "std,full,portable-only"
+)
+
+# Portable feature contract for targets without the standard library.
+CONSTRAINED_FEATURE_SETS=(
+  "crc16"
+  "crc24"
+  "crc32"
+  "crc64"
+  "alloc,crc32"
+  "sha2"
+  "sha3"
+  "websocket-sha1"
+  "xxh3"
+  "hmac"
+  "hmac-sha3"
+  "kmac"
+  "hkdf"
+  "poly1305"
+  "rsa"
+  "x25519"
+  "ml-kem"
+  "chacha20poly1305"
+  "aes-siv"
+  "ascon-aead"
+  "checksums"
+  "hashes"
+  "macs"
+  "kdfs"
+  "signatures"
+  "key-exchange"
+  "auth"
+  "aead"
+  "full"
+  "alloc,checksums"
+  "alloc,hashes"
+  "alloc,checksums,hashes,auth,aead"
 )

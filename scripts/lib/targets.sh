@@ -7,6 +7,7 @@
 
 TARGETS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET_MATRIX_SH="$TARGETS_LIB_DIR/target-matrix.sh"
+TARGET_MATRIX_JSON="$TARGETS_LIB_DIR/../../.config/target-matrix.json"
 
 # Always define arrays up front so callers using `set -u` never trip on
 # unbound vars when target matrix loading fails.
@@ -21,9 +22,24 @@ if [[ ! -x "$TARGET_MATRIX_SH" ]]; then
   exit 1
 fi
 
-if ! matrix_shell="$(bash "$TARGET_MATRIX_SH" --format shell 2>&1)"; then
-  echo "ERROR: failed to load target matrix from $TARGET_MATRIX_SH" >&2
-  echo "$matrix_shell" >&2
-  exit 1
-fi
-eval "$matrix_shell"
+"$TARGET_MATRIX_SH" --validate
+
+load_target_group() {
+  local group=$1
+  local target
+  while IFS= read -r target; do
+    case "$group" in
+      win) WIN_TARGETS+=("$target") ;;
+      linux) LINUX_TARGETS+=("$target") ;;
+      ibm) IBM_TARGETS+=("$target") ;;
+      no_std) NOSTD_TARGETS+=("$target") ;;
+      wasm) WASM_TARGETS+=("$target") ;;
+    esac
+  done < <(jq -r --arg group "$group" '.groups[$group][]' "$TARGET_MATRIX_JSON")
+}
+
+load_target_group win
+load_target_group linux
+load_target_group ibm
+load_target_group no_std
+load_target_group wasm

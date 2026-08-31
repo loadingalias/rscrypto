@@ -8,6 +8,13 @@ on:
         required: false
         type: number
         default: 90
+    secrets:
+      CARGO_RAIL_R2_READ_ACCESS_KEY_ID:
+        description: "Bucket-scoped R2 access key forwarded to RSA compiler jobs."
+        required: false
+      CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY:
+        description: "Bucket-scoped R2 secret key forwarded to RSA compiler jobs."
+        required: false
   workflow_dispatch:
     inputs:
       artifact_retention_days:
@@ -32,6 +39,8 @@ permissions:
 jobs:
   rsa-miri:
     name: RSA Miri (Linux x64)
+    permissions:
+      contents: read
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
@@ -44,9 +53,14 @@ jobs:
       artifact_path: ci-evidence/rsa-miri-linux-x64.log
       artifact_always: true
       artifact_retention_days: ${{ inputs.artifact_retention_days }}
+    secrets:
+      cache_access_key_id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      cache_secret_access_key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
 
   rsa-leakage:
     name: RSA Leakage (${{ matrix.target.name }})
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -66,9 +80,14 @@ jobs:
       artifact_path: ci-evidence/rsa-leakage-${{ matrix.target.name }}.log
       artifact_always: true
       artifact_retention_days: ${{ inputs.artifact_retention_days }}
+    secrets:
+      cache_access_key_id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      cache_secret_access_key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
 
   rsa-linux-x86_64-asm:
     name: RSA Assembly (Linux x86-64)
+    permissions:
+      contents: read
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
@@ -80,6 +99,9 @@ jobs:
       artifact_path: ci-evidence/rsa-linux-x86_64-asm.log
       artifact_always: true
       artifact_retention_days: ${{ inputs.artifact_retention_days }}
+    secrets:
+      cache_access_key_id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      cache_secret_access_key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
 
   complete:
     name: Complete (RSA)

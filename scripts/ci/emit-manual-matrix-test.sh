@@ -35,7 +35,7 @@ if GH_RUN_ID=1 BENCH_PLATFORMS=riscv scripts/ci/emit-manual-matrix.sh bench >/de
   exit 1
 fi
 
-scripts/ct/python.sh - "$REPO_ROOT/ct.toml" <<'PY'
+scripts/lib/python.sh - "$REPO_ROOT/ct.toml" <<'PY'
 import pathlib
 import sys
 import tomllib
@@ -56,7 +56,7 @@ PY
 
 github_output="$(mktemp)"
 trap 'rm -f "$github_output"' EXIT
-GITHUB_OUTPUT="$github_output" scripts/ct/python.sh - "$REPO_ROOT" <<'PY'
+GITHUB_OUTPUT="$github_output" scripts/lib/python.sh - "$REPO_ROOT" <<'PY'
 import os
 import pathlib
 import sys

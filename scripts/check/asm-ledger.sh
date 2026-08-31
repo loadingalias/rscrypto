@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 "$SCRIPT_DIR/rsa-asm-provenance.sh"
-"$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/signature-asm-provenance.py"
+"$SCRIPT_DIR/../lib/python.sh" "$SCRIPT_DIR/signature-asm-provenance.py"
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT

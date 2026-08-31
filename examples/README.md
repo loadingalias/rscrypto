@@ -1,115 +1,34 @@
 # Examples
 
-Runnable demonstrations of the public `rscrypto` API. Each example is small enough to read end-to-end and feature-gated to the smallest set that compiles.
+These binaries cover complete workflows. One-call hashing, MAC, and checksum
+operations stay in the API documentation.
 
-## Getting Started
-
-If you've never used `rscrypto`, run `basic` first. It tours the main API patterns across the primitive families. After that, pick the example that matches what you're trying to do.
-
-If you are replacing an existing crate, start with the matching guide in
-[`docs/migration/`](../docs/migration/) and then use these examples to confirm
-the new API shape.
-
-## All examples
-
-### `basic`: API tour across every family
+Run every example with its minimum feature set:
 
 ```bash
-cargo run --example basic --features full,getrandom
+just test-examples
 ```
 
-Walks through checksums (`Crc32C`), digests (`Sha256`, `Blake3`), MACs
-(`HmacSha256`), KDFs (`HkdfSha256`), XOFs (`Shake256`, `Blake3`), fast hashes
-(`Xxh3`, `RapidHash64`), AEAD (`ChaCha20Poly1305` with a fresh random nonce),
-hex formatting, secret-key `Debug` masking, byte-array round trips, and
-`std::io::{Read, Write}` adapters. The checksum and hash sections compare
-one-shot and streaming output.
+## Workflows
 
-### `password_hashing`: generated and bounded password records
+| Example | Purpose | Features |
+| --- | --- | --- |
+| `aead_seal_open` | Generate a ChaCha20-Poly1305 key, seal with associated data, and open the ciphertext. | `alloc,chacha20poly1305,getrandom` |
+| `password_hashing` | Create and verify a bounded Argon2id PHC record. | `argon2,phc-strings,getrandom` |
+| `ed25519_sign_verify` | Generate an Ed25519 keypair, sign a message, and verify the signature. | `ed25519,getrandom` |
+| `rsa_pss_verify` | Verify a packaged RSA-PSS/SHA-256 fixture. | `rsa` |
+| `mlkem_encapsulation` | Generate ML-KEM-768 keys and confirm encapsulation and decapsulation agree. | `ml-kem,getrandom` |
+| `x25519_key_agreement` | Generate two X25519 keypairs and confirm both parties derive the same raw secret. | `x25519,getrandom` |
+| `introspect` | Report platform capabilities and selected CRC, SHA-256, and AEAD backends. | `crc32,sha2,chacha20poly1305,diag` |
+
+Run one example:
 
 ```bash
-cargo run --example password_hashing --features password-hashing,getrandom
+cargo run --example aead_seal_open --features alloc,chacha20poly1305,getrandom
 ```
 
-Generates Argon2id and scrypt password records with fresh OS-random salts, then verifies them through
-the bounded `Argon2idPassword` and `ScryptPassword` APIs. Encoded costs outside each verifier's finite
-resource envelope are rejected before base64 decoding, allocation, or KDF work. The example prints
-both canonical PHC records so you can inspect their format.
+Replace the example name and feature list with the matching row. X25519 returns
+a raw shared secret that a protocol must bind to its transcript with a KDF.
+ML-KEM encapsulation alone does not define a hybrid key-establishment protocol.
 
-### `aead_seal_open`: ChaCha20-Poly1305 seal/open
-
-```bash
-cargo run --example aead_seal_open --features chacha20poly1305,getrandom
-```
-
-Generates a ChaCha20-Poly1305 key, seals a short payload with associated data
-and a fresh random nonce, then opens it back to the original plaintext. This is
-the smallest authenticated-encryption example.
-
-### `signatures`: Ed25519 and ECDSA P-256 signing
-
-```bash
-cargo run --example signatures --features ed25519,ecdsa-p256,getrandom
-```
-
-Generates Ed25519 and ECDSA P-256 keypairs, signs one message with each, and
-verifies both signatures through the public-key API. Both example signing paths
-are deterministic; the key generation draws from the operating system.
-
-### `rsa_pss_verify`: RSA-PSS fixture verification
-
-```bash
-cargo run --example rsa_pss_verify --features rsa
-```
-
-Loads a checked-in RSA-3072 SubjectPublicKeyInfo fixture and verifies a PSS/SHA-256 signature over a fixed message. This keeps the example deterministic and focused on the verification path used by certificate, package, and protocol integrations.
-
-### `mlkem_encapsulation`: ML-KEM-768 key encapsulation
-
-```bash
-cargo run --example mlkem_encapsulation --features ml-kem,getrandom
-```
-
-Generates an ML-KEM-768 keypair, encapsulates a shared secret to the public key,
-decapsulates with the private key, and asserts both sides derived the same
-bytes. The example does not define a hybrid key-establishment protocol.
-
-### `parallel`: CRC chunk combining for large inputs
-
-```bash
-cargo run --example parallel --features checksums
-```
-
-Shows how `rscrypto` combines CRC states: given `crc(A)` and `crc(B)`, you can compute `crc(A || B)` without ever holding both chunks together. The example checks a two-way split, a multi-part loop, and scoped-thread chunk processing against sequential references. Uses `Crc32` and `Crc64` (XZ polynomial). The pattern applies to any `Checksum` type that implements `ChecksumCombine`.
-
-### `introspect`: Runtime dispatch inspection
-
-```bash
-cargo run --example introspect --features checksums,hashes,aead,diag
-```
-
-Prints detected CPU capabilities and the kernel selected for representative
-checksums, hashes, fast hashes, and AEADs at specific buffer sizes. Use it to
-inspect dispatch on a target or investigate a performance result. The diagnostic
-surface requires the opt-in `diag` feature.
-
-## Pattern reference
-
-| To do this                                      | See                                      |
-| ----------------------------------------------- | ---------------------------------------- |
-| Hash data (one-shot or streaming)               | `basic` (digest section)                 |
-| Compute and verify a MAC                        | `basic` (auth section)                   |
-| Encrypt and decrypt with AEAD                   | `aead_seal_open`, `basic` (AEAD section) |
-| Sign and verify messages                        | `signatures`, `rsa_pss_verify`           |
-| Encapsulate and decapsulate a KEM shared secret | `mlkem_encapsulation`                    |
-| Hash a password and verify safely               | `password_hashing`                       |
-| Process a large file in parallel                | `parallel`                               |
-| Inspect runtime backend selection               | `introspect`                             |
-| Stream a digest through `std::io::Read`         | `basic` (I/O adapters section)           |
-
-## Beyond examples
-
-- Full API reference: [`docs.rs/rscrypto`](https://docs.rs/rscrypto)
-- Algorithm inventory and feature flags: [`README.md`](../README.md)
-- Migration guides from RustCrypto, `blake3`, CRC crates, AEADs, signatures, and password hashing: [`docs/migration/`](../docs/migration/)
-- Security posture and constant-time boundaries: [`README.md#security`](../README.md#security), [`docs/constant-time.md`](../docs/constant-time.md)
+See [`docs/migration.md`](../docs/migration.md) when replacing another library.

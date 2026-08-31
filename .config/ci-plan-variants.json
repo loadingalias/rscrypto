@@ -1,0 +1,234 @@
+{
+  "variant_catalog_version": 1,
+  "work": "ci-suite",
+  "variants": [
+    {
+      "id": "quality",
+      "dimensions": {
+        "display_name": "Quality",
+        "operation": "quality",
+        "runner_type": "runson",
+        "runner": "linux-x64-ci",
+        "timeout_minutes": 30,
+        "tools_mode": "quality",
+        "toolchain_contract": "development",
+        "toolchain_components": "clippy, rustfmt, rust-src"
+      },
+      "paths": ["scripts/check/**", "scripts/ci/*-test.sh", "scripts/ci/ci-check.sh", "scripts/ci/check-action-pins.sh", "scripts/ct/**", "testdata/**"],
+      "config": [],
+      "cargo": ["cargo.clippy", "cargo.doc"]
+    },
+    {
+      "id": "examples",
+      "dimensions": {
+        "display_name": "Examples",
+        "operation": "examples",
+        "runner_type": "runson",
+        "runner": "linux-x64-ci",
+        "timeout_minutes": 30,
+        "tools_mode": "minimal",
+        "toolchain_contract": "development",
+        "toolchain_components": ""
+      },
+      "paths": ["examples/**", "scripts/test/test-examples.sh"],
+      "config": [],
+      "cargo": ["cargo.build", "cargo.test"]
+    },
+    {
+      "id": "msrv",
+      "dimensions": {
+        "display_name": "MSRV",
+        "operation": "msrv",
+        "runner_type": "runson",
+        "runner": "linux-x64-ci",
+        "timeout_minutes": 30,
+        "tools_mode": "none",
+        "toolchain_contract": "msrv",
+        "toolchain_components": ""
+      },
+      "paths": ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".config/toolchains.toml"],
+      "config": [],
+      "cargo": ["cargo.build"]
+    },
+    {
+      "id": "cargo-graph",
+      "dimensions": {
+        "display_name": "Cargo Graph Assurance",
+        "operation": "cargo-graph",
+        "runner_type": "runson",
+        "runner": "linux-x64-ci",
+        "timeout_minutes": 90,
+        "tools_mode": "rail",
+        "toolchain_contract": "development",
+        "toolchain_components": "rust-src"
+      },
+      "paths": [".config/rail.toml", "Cargo.toml", "Cargo.lock", "build.rs", "rust-toolchain.toml"],
+      "config": ["targets", "unify.include_renamed", "unify.strict_version_compat", "unify.exact_pin_handling", "unify.major_version_conflict", "unify.skip_undeclared_patterns", "unify.consumer_scope", "unify.msrv_policy.mode"],
+      "cargo": ["cargo.build", "cargo.test"]
+    },
+    {
+      "id": "feature-contracts",
+      "dimensions": {
+        "display_name": "Feature Contracts",
+        "operation": "feature-contracts",
+        "runner_type": "runson",
+        "runner": "linux-x64-ci",
+        "timeout_minutes": 120,
+        "tools_mode": "minimal",
+        "toolchain_contract": "development",
+        "toolchain_components": "rust-src"
+      },
+      "paths": ["scripts/check/check-feature-matrix.sh", "scripts/test/test-feature-matrix.sh", "scripts/lib/feature-profiles.sh"],
+      "config": [],
+      "cargo": ["cargo.build", "cargo.test"]
+    },
+    {
+      "id": "native-linux-aarch64",
+      "dimensions": {
+        "display_name": "CI (aarch64-unknown-linux-gnu)",
+        "operation": "native",
+        "runner_type": "runson",
+        "runner": "linux-arm64-ci",
+        "target": "aarch64-unknown-linux-gnu",
+        "timeout_minutes": 180,
+        "tools_mode": "ci",
+        "toolchain_contract": "development",
+        "toolchain_components": "clippy, rustfmt, rust-src"
+      },
+      "paths": ["scripts/ci/native-check.sh", "scripts/test/**"],
+      "config": ["targets"],
+      "cargo": ["cargo.clippy", "cargo.test"]
+    },
+    {
+      "id": "native-linux-x86-64",
+      "dimensions": {
+        "display_name": "CI (x86_64-unknown-linux-gnu)",
+        "operation": "native",
+        "runner_type": "runson",
+        "runner": "linux-x64-ci",
+        "target": "x86_64-unknown-linux-gnu",
+        "timeout_minutes": 180,
+        "tools_mode": "ci",
+        "toolchain_contract": "development",
+        "toolchain_components": "clippy, rustfmt, rust-src"
+      },
+      "paths": ["scripts/ci/native-check.sh", "scripts/test/**"],
+      "config": ["targets"],
+      "cargo": ["cargo.clippy", "cargo.test"]
+    },
+    {
+      "id": "native-windows-aarch64",
+      "dimensions": {
+        "display_name": "CI (aarch64-pc-windows-msvc)",
+        "operation": "native",
+        "runner_type": "github",
+        "runner": "windows-11-arm",
+        "target": "aarch64-pc-windows-msvc",
+        "timeout_minutes": 180,
+        "tools_mode": "none",
+        "toolchain_contract": "development",
+        "toolchain_components": "clippy"
+      },
+      "paths": ["scripts/ci/native-check.sh", "scripts/test/**"],
+      "config": ["targets"],
+      "cargo": ["cargo.clippy", "cargo.test"]
+    },
+    {
+      "id": "native-windows-x86-64",
+      "dimensions": {
+        "display_name": "CI (x86_64-pc-windows-msvc)",
+        "operation": "native",
+        "runner_type": "github",
+        "runner": "windows-latest",
+        "target": "x86_64-pc-windows-msvc",
+        "timeout_minutes": 180,
+        "tools_mode": "none",
+        "toolchain_contract": "development",
+        "toolchain_components": "clippy"
+      },
+      "paths": ["scripts/ci/native-check.sh", "scripts/test/**"],
+      "config": ["targets"],
+      "cargo": ["cargo.clippy", "cargo.test"]
+    },
+    {
+      "id": "native-ibm-s390x",
+      "dimensions": {
+        "display_name": "CI (IBM Z s390x)",
+        "operation": "native-ibm",
+        "runner_type": "github",
+        "runner": "ubuntu-24.04-s390x",
+        "timeout_minutes": 120,
+        "tools_mode": "none",
+        "toolchain_contract": "nightly",
+        "toolchain_components": "clippy, rustfmt"
+      },
+      "paths": ["scripts/ci/native-check.sh", "scripts/test/**"],
+      "config": ["targets"],
+      "cargo": ["cargo.clippy", "cargo.test"]
+    },
+    {
+      "id": "native-ibm-power10",
+      "dimensions": {
+        "display_name": "CI (IBM POWER10 ppc64le)",
+        "operation": "native-ibm",
+        "runner_type": "github",
+        "runner": "ubuntu-24.04-ppc64le-p10",
+        "timeout_minutes": 120,
+        "tools_mode": "none",
+        "toolchain_contract": "nightly",
+        "toolchain_components": "clippy, rustfmt"
+      },
+      "paths": ["scripts/ci/native-check.sh", "scripts/test/**"],
+      "config": ["targets"],
+      "cargo": ["cargo.clippy", "cargo.test"]
+    },
+    {
+      "id": "platform-amx",
+      "dimensions": {
+        "display_name": "Platform (Linux x64 AMX permission)",
+        "operation": "platform-amx",
+        "runner_type": "runson",
+        "runner": "intel-spr",
+        "timeout_minutes": 30,
+        "tools_mode": "none",
+        "toolchain_contract": "nightly",
+        "toolchain_components": "rustfmt"
+      },
+      "paths": ["src/platform/**", "tests/platform_amx_permission.rs"],
+      "config": [],
+      "cargo": []
+    },
+    {
+      "id": "cross-targets",
+      "dimensions": {
+        "display_name": "Cross Targets",
+        "operation": "cross-targets",
+        "runner_type": "runson",
+        "runner": "linux-x64-ci",
+        "timeout_minutes": 90,
+        "tools_mode": "none",
+        "toolchain_contract": "nightly",
+        "toolchain_components": "clippy, rust-src"
+      },
+      "paths": [".config/target-matrix.json", "scripts/ci/cross-targets.sh", "scripts/ci/nostd-wasm-suite.sh"],
+      "config": ["targets"],
+      "cargo": ["cargo.build"]
+    },
+    {
+      "id": "supply-chain",
+      "dimensions": {
+        "display_name": "Supply Chain",
+        "operation": "supply-chain",
+        "runner_type": "runson",
+        "runner": "linux-x64-ci",
+        "timeout_minutes": 45,
+        "tools_mode": "supply-chain",
+        "toolchain_contract": "development",
+        "toolchain_components": "clippy, rustfmt, rust-src"
+      },
+      "paths": ["Cargo.toml", "Cargo.lock", "deny.toml", "scripts/ci/dependabot-smoke.sh"],
+      "config": [],
+      "cargo": []
+    }
+  ]
+}

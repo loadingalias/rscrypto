@@ -19,6 +19,7 @@ make_fixture() {
   cp "$REPO_ROOT/.github/dependabot.yaml" "$fixture/.github/dependabot.yaml"
   cp "$REPO_ROOT/.github/runs-on.yml" "$fixture/.github/runs-on.yml"
   cp "$REPO_ROOT/.config/target-matrix.json" "$fixture/.config/target-matrix.json"
+  cp "$REPO_ROOT/.config/ci-plan-variants.json" "$fixture/.config/ci-plan-variants.json"
   cp "$REPO_ROOT/.config/rail.toml" "$fixture/.config/rail.toml"
   cp "$REPO_ROOT/.config/ci-tool-archives.tsv" "$fixture/.config/ci-tool-archives.tsv"
   cp -R "$REPO_ROOT/scripts/ci" "$fixture/scripts/ci"
@@ -42,6 +43,12 @@ expect_failure() {
 baseline="$TMP_ROOT/baseline"
 make_fixture "$baseline"
 "$CHECKER" --root "$baseline" >/dev/null
+
+missing_ci_policy="$TMP_ROOT/missing-ci-policy"
+make_fixture "$missing_ci_policy"
+yq -oy -p toml eval 'del(.plan.work."ci-policy")' -i \
+  "$missing_ci_policy/.config/rail.toml"
+expect_failure "$missing_ci_policy" "shared CI infrastructure does not widen the Cargo Rail matrix"
 
 zig_dependent_cross_targets="$TMP_ROOT/zig-dependent-cross-targets"
 make_fixture "$zig_dependent_cross_targets"
@@ -180,6 +187,12 @@ yq eval '.runners.linux-x64-ci.extras = ["s3-cache"]' -i \
   "$magic_cache_extra/.github/runs-on.yml"
 expect_failure "$magic_cache_extra" "RunsOn MagicCache intercepts Cargo Rail compiler results"
 
+missing_coverage_telemetry="$TMP_ROOT/missing-coverage-telemetry"
+make_fixture "$missing_coverage_telemetry"
+yq eval 'del(.jobs.coverage.steps[] | select(.name == "Capture Cargo Rail Cache Status"))' -i \
+  "$missing_coverage_telemetry/.github/workflows/weekly.yaml"
+expect_failure "$missing_coverage_telemetry" "Qualification coverage omits Cargo Rail telemetry"
+
 unauthenticated_rustup="$TMP_ROOT/unauthenticated-rustup"
 make_fixture "$unauthenticated_rustup"
 printf '\n    - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9\n' \
@@ -207,9 +220,45 @@ expect_failure "$floating_rail_cache" "the Cargo Rail cache action is not commit
 
 writable_pr_cache="$TMP_ROOT/writable-pr-cache"
 make_fixture "$writable_pr_cache"
-yq eval '(.jobs.run.steps[] | select(.name == "Setup") | .with."cache-mode") = "read-write"' -i \
-  "$writable_pr_cache/.github/workflows/_rust-job.yaml"
+yq eval '(.on.workflow_call.inputs.cache_mode.default) = "read-write"' -i \
+  "$writable_pr_cache/.github/workflows/_ci-suite.yaml"
 expect_failure "$writable_pr_cache" "untrusted pull requests can write shared compiler results"
+
+untrusted_cache_seeder="$TMP_ROOT/untrusted-cache-seeder"
+make_fixture "$untrusted_cache_seeder"
+yq eval '(.jobs."cache-seed".if) = "github.event_name == '\''pull_request'\''"' -i \
+  "$untrusted_cache_seeder/.github/workflows/ci.yaml"
+expect_failure "$untrusted_cache_seeder" "an untrusted event can assume shared-cache write authority"
+
+missing_cache_identity="$TMP_ROOT/missing-cache-identity"
+make_fixture "$missing_cache_identity"
+yq eval 'del(.runs.steps[] | select(.name == "Authenticate Cargo Rail Cache"))' -i \
+  "$missing_cache_identity/.github/actions/setup/action.yaml"
+expect_failure "$missing_cache_identity" "shared-cache mode is not enforced by provider identity"
+
+ambient_session_token="$TMP_ROOT/ambient-session-token"
+make_fixture "$ambient_session_token"
+sed -i.bak '/AWS_SESSION_TOKEN=/d' "$ambient_session_token/.github/actions/setup/action.yaml"
+rm -f "$ambient_session_token/.github/actions/setup/action.yaml.bak"
+expect_failure "$ambient_session_token" "an ambient AWS session token can corrupt the selected R2 identity"
+
+missing_strict_probe="$TMP_ROOT/missing-strict-probe"
+make_fixture "$missing_strict_probe"
+yq eval 'del(.runs.steps[] | select(.name == "Setup Cargo Rail Cache") | .with."strict-probe")' -i \
+  "$missing_strict_probe/.github/actions/setup/action.yaml"
+expect_failure "$missing_strict_probe" "compiler jobs can start before R2 and native-v6 are authenticated"
+
+physical_ci_cache="$TMP_ROOT/physical-ci-cache"
+make_fixture "$physical_ci_cache"
+yq eval '(.inputs."cache-root-portability".default) = "physical"' -i \
+  "$physical_ci_cache/.github/actions/setup/action.yaml"
+expect_failure "$physical_ci_cache" "ephemeral CI cache cannot share across checkout roots"
+
+untrusted_rail_reuse="$TMP_ROOT/untrusted-rail-reuse"
+make_fixture "$untrusted_rail_reuse"
+yq eval '(.runs.steps[] | select(.name == "Install Cargo Tools") | .env.RSCRYPTO_AUTHENTICATED_CARGO_RAIL) = "true"' -i \
+  "$untrusted_rail_reuse/.github/actions/setup/action.yaml"
+expect_failure "$untrusted_rail_reuse" "a runner-provided Cargo Rail binary is treated as authenticated"
 
 mismatched_rail_version="$TMP_ROOT/mismatched-rail-version"
 make_fixture "$mismatched_rail_version"
@@ -217,11 +266,11 @@ yq eval '(.jobs."rail-plan".steps[] | select(.id == "rail") | .with.version) = "
   "$mismatched_rail_version/.github/workflows/ci.yaml"
 expect_failure "$mismatched_rail_version" "cargo-rail-action bypasses the authenticated Cargo Rail version"
 
-missing_rail_checksum="$TMP_ROOT/missing-rail-checksum"
-make_fixture "$missing_rail_checksum"
-yq eval 'del(.jobs."rail-plan".steps[] | select(.id == "rail") | .with.checksum)' -i \
-  "$missing_rail_checksum/.github/workflows/ci.yaml"
-expect_failure "$missing_rail_checksum" "cargo-rail-action does not require release checksums"
+missing_surface_component="$TMP_ROOT/missing-surface-component"
+make_fixture "$missing_surface_component"
+yq eval 'del(.jobs."rail-plan".steps[] | select(.id == "rail") | .with.components)' -i \
+  "$missing_surface_component/.github/workflows/ci.yaml"
+expect_failure "$missing_surface_component" "cargo-rail-action does not prepare Surface"
 
 mutable_rail_base="$TMP_ROOT/mutable-rail-base"
 make_fixture "$mutable_rail_base"
@@ -266,10 +315,10 @@ yq eval 'del(.updates[] | select(."package-ecosystem" == "github-actions"))' -i 
   "$missing_action_updates/.github/dependabot.yaml"
 expect_failure "$missing_action_updates" "GitHub Actions updates are disabled"
 
-push_ci="$TMP_ROOT/push-ci"
-make_fixture "$push_ci"
-yq eval '.on.push.branches = ["main"]' -i "$push_ci/.github/workflows/ci.yaml"
-expect_failure "$push_ci" "duplicated post-merge CI"
+missing_main_seed="$TMP_ROOT/missing-main-seed"
+make_fixture "$missing_main_seed"
+yq eval 'del(.on.push)' -i "$missing_main_seed/.github/workflows/ci.yaml"
+expect_failure "$missing_main_seed" "main cannot seed affected compiler results"
 
 missing_ready_event="$TMP_ROOT/missing-ready-event"
 make_fixture "$missing_ready_event"
@@ -308,15 +357,14 @@ expect_failure "$shell_fragment_input" "reusable workflow accepts executable she
 
 missing_typed_operation="$TMP_ROOT/missing-typed-operation"
 make_fixture "$missing_typed_operation"
-sed -i.bak '/operation: quality/d' "$missing_typed_operation/.github/workflows/_ci-suite.yaml"
-rm -f "$missing_typed_operation/.github/workflows/_ci-suite.yaml.bak"
+yq eval 'del(.jobs.selected.with.operation)' -i \
+  "$missing_typed_operation/.github/workflows/_ci-suite.yaml"
 expect_failure "$missing_typed_operation" "reusable Rust job caller omits its operation"
 
 unsupported_typed_operation="$TMP_ROOT/unsupported-typed-operation"
 make_fixture "$unsupported_typed_operation"
-sed -i.bak 's/operation: quality/operation: arbitrary-shell/' \
+yq eval '(.jobs.selected.with.operation) = "arbitrary-shell"' -i \
   "$unsupported_typed_operation/.github/workflows/_ci-suite.yaml"
-rm -f "$unsupported_typed_operation/.github/workflows/_ci-suite.yaml.bak"
 expect_failure "$unsupported_typed_operation" "reusable Rust job caller selects an unsupported operation"
 
 evaluated_workflow_input="$TMP_ROOT/evaluated-workflow-input"
@@ -337,21 +385,23 @@ expect_failure "$native_cross_sweep" "comprehensive check in native workflow"
 
 fake_musl="$TMP_ROOT/fake-musl"
 make_fixture "$fake_musl"
-jq '.ci += [{"name":"x86_64-unknown-linux-musl","type":"runson","pool":"linux-x64-ci"}]' \
-  "$fake_musl/.config/target-matrix.json" >"$fake_musl/.config/target-matrix.json.tmp"
-mv "$fake_musl/.config/target-matrix.json.tmp" "$fake_musl/.config/target-matrix.json"
+jq '.variants += [{"id":"native-linux-musl","dimensions":{"display_name":"fake","operation":"native","runner_type":"runson","runner":"linux-x64-ci","target":"x86_64-unknown-linux-musl","timeout_minutes":30,"tools_mode":"none","toolchain_contract":"development","toolchain_components":""},"paths":[],"config":[],"cargo":[]}]' \
+  "$fake_musl/.config/ci-plan-variants.json" >"$fake_musl/.config/ci-plan-variants.json.tmp"
+mv "$fake_musl/.config/ci-plan-variants.json.tmp" "$fake_musl/.config/ci-plan-variants.json"
 expect_failure "$fake_musl" "MUSL label without a MUSL target invocation"
 
 missing_cross_owner="$TMP_ROOT/missing-cross-owner"
 make_fixture "$missing_cross_owner"
-sed -i.bak '/operation: cross-targets/d' "$missing_cross_owner/.github/workflows/_ci-suite.yaml"
-rm -f "$missing_cross_owner/.github/workflows/_ci-suite.yaml.bak"
+jq '.variants |= map(select(.dimensions.operation != "cross-targets"))' \
+  "$missing_cross_owner/.config/ci-plan-variants.json" >"$missing_cross_owner/.config/ci-plan-variants.json.tmp"
+mv "$missing_cross_owner/.config/ci-plan-variants.json.tmp" "$missing_cross_owner/.config/ci-plan-variants.json"
 expect_failure "$missing_cross_owner" "missing cross-target owner"
 
 missing_graph_owner="$TMP_ROOT/missing-graph-owner"
 make_fixture "$missing_graph_owner"
-sed -i.bak '/operation: cargo-graph/d' "$missing_graph_owner/.github/workflows/_ci-suite.yaml"
-rm -f "$missing_graph_owner/.github/workflows/_ci-suite.yaml.bak"
+jq '.variants |= map(select(.dimensions.operation != "cargo-graph"))' \
+  "$missing_graph_owner/.config/ci-plan-variants.json" >"$missing_graph_owner/.config/ci-plan-variants.json.tmp"
+mv "$missing_graph_owner/.config/ci-plan-variants.json.tmp" "$missing_graph_owner/.config/ci-plan-variants.json"
 expect_failure "$missing_graph_owner" "missing Cargo graph assurance owner"
 
 duplicate_release_graph="$TMP_ROOT/duplicate-release-graph"
@@ -371,19 +421,19 @@ scheduled_release_mode="$TMP_ROOT/scheduled-release-mode"
 make_fixture "$scheduled_release_mode"
 yq eval '(.jobs.mode.steps[] | select(.id == "mode") | .run) |= sub("mode=assurance"; "mode=release")' -i \
   "$scheduled_release_mode/.github/workflows/weekly.yaml"
-expect_failure "$scheduled_release_mode" "scheduled Weekly run resolves to release mode"
+expect_failure "$scheduled_release_mode" "scheduled Qualification run resolves to release mode"
 
 release_by_default="$TMP_ROOT/release-by-default"
 make_fixture "$release_by_default"
 yq eval '.on.workflow_dispatch.inputs.mode.default = "release"' -i \
   "$release_by_default/.github/workflows/weekly.yaml"
-expect_failure "$release_by_default" "manual Weekly run defaults to release evidence"
+expect_failure "$release_by_default" "manual Qualification run defaults to release evidence"
 
 generic_weekly_gate="$TMP_ROOT/generic-weekly-gate"
 make_fixture "$generic_weekly_gate"
 yq eval '.jobs.complete.name = "Complete (weekly)"' -i \
   "$generic_weekly_gate/.github/workflows/weekly.yaml"
-expect_failure "$generic_weekly_gate" "Weekly terminal gate omits the resolved mode"
+expect_failure "$generic_weekly_gate" "Qualification terminal gate omits the resolved mode"
 
 fixed_weekly_retention="$TMP_ROOT/fixed-weekly-retention"
 make_fixture "$fixed_weekly_retention"
@@ -443,26 +493,26 @@ expect_failure "$missing_riscv_workflow" "missing independent RISC-V workflow"
 
 missing_riscv_release_artifact="$TMP_ROOT/missing-riscv-release-artifact"
 make_fixture "$missing_riscv_release_artifact"
-sed -i.bak '/needs\.preflight\.outputs\.riscv_run_id/d' \
-  "$missing_riscv_release_artifact/.github/workflows/release.yaml"
-rm -f "$missing_riscv_release_artifact/.github/workflows/release.yaml.bak"
-expect_failure "$missing_riscv_release_artifact" "release without validated RISC-V artifacts"
+sed -i.bak '/RISC-V CT Evidence (release) \/ Complete (CT)/d' \
+  "$missing_riscv_release_artifact/scripts/ci/release-evidence-check.sh"
+rm -f "$missing_riscv_release_artifact/scripts/ci/release-evidence-check.sh.bak"
+expect_failure "$missing_riscv_release_artifact" "release without validated RISC-V evidence"
 
 compact_weekly_ct="$TMP_ROOT/compact-weekly-ct"
 make_fixture "$compact_weekly_ct"
 yq eval '.jobs.ct.with.upload_raw_artifacts = false' -i "$compact_weekly_ct/.github/workflows/weekly.yaml"
-expect_failure "$compact_weekly_ct" "Weekly without raw release CT evidence"
+expect_failure "$compact_weekly_ct" "Qualification without raw release CT evidence"
 
 compact_riscv_ct="$TMP_ROOT/compact-riscv-ct"
 make_fixture "$compact_riscv_ct"
-yq eval '.jobs.ct.with.upload_raw_artifacts = false' -i \
-  "$compact_riscv_ct/.github/workflows/riscv.yaml"
-expect_failure "$compact_riscv_ct" "RISC-V without raw release CT evidence"
+yq eval '.jobs.riscv-ct.with.upload_raw_artifacts = false' -i \
+  "$compact_riscv_ct/.github/workflows/weekly.yaml"
+expect_failure "$compact_riscv_ct" "Qualification without raw RISC-V release CT evidence"
 
-riscv_leaked_into_weekly="$TMP_ROOT/riscv-leaked-into-weekly"
-make_fixture "$riscv_leaked_into_weekly"
-printf '\n# riscv physical lane leaked back into Weekly\n' >>"$riscv_leaked_into_weekly/.github/workflows/weekly.yaml"
-expect_failure "$riscv_leaked_into_weekly" "RISC-V coupling in Weekly"
+missing_qualification_riscv="$TMP_ROOT/missing-qualification-riscv"
+make_fixture "$missing_qualification_riscv"
+yq eval 'del(.jobs.riscv-native)' -i "$missing_qualification_riscv/.github/workflows/weekly.yaml"
+expect_failure "$missing_qualification_riscv" "Qualification without RISC-V native evidence"
 
 broken_dependabot_grouping="$TMP_ROOT/broken-dependabot-grouping"
 make_fixture "$broken_dependabot_grouping"
@@ -494,7 +544,7 @@ shrunk_matrix="$TMP_ROOT/shrunk-matrix"
 make_fixture "$shrunk_matrix"
 sed -i.bak '/  "crc16"/d' "$shrunk_matrix/scripts/lib/feature-profiles.sh"
 rm -f "$shrunk_matrix/scripts/lib/feature-profiles.sh.bak"
-expect_failure "$shrunk_matrix" "removed historical compile feature profile"
+expect_failure "$shrunk_matrix" "removed required compile feature profile"
 
 uncompiled_execution="$TMP_ROOT/uncompiled-execution"
 make_fixture "$uncompiled_execution"

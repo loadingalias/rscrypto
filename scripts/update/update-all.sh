@@ -4,9 +4,34 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+usage() {
+  cat <<'USAGE'
+Usage: scripts/update/update-all.sh [--check]
+
+  (no args)  Update every coordinated Cargo workspace.
+  --check    Preview available updates without changing manifests or locks.
+USAGE
+}
+
 CHECK_ONLY=false
-if [[ "${1:-}" == "--check" ]]; then
-  CHECK_ONLY=true
+case "${1:-}" in
+  "") ;;
+  --check) CHECK_ONLY=true ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  *)
+    echo "Error: unknown argument: $1" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
+
+if [[ $# -gt 1 ]]; then
+  echo "Error: expected at most one argument" >&2
+  usage >&2
+  exit 2
 fi
 
 if ! command -v cargo-upgrade >/dev/null 2>&1; then

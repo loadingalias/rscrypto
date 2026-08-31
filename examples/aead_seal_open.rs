@@ -1,5 +1,3 @@
-//! Run with: `cargo run --example aead_seal_open --features chacha20poly1305,getrandom`
-
 use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key};
 
 fn main() -> Result<(), Box<dyn core::error::Error>> {

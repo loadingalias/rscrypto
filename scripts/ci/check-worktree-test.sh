@@ -19,7 +19,6 @@ preflight_marker="$TMP_ROOT/locked-metadata-preflight"
 mkdir -p \
   "$fixture/.config" \
   "$fixture/scripts/check" \
-  "$fixture/scripts/ct" \
   "$fixture/scripts/lib" \
   "$fixture/scripts/test" \
   "$fixture/src" \
@@ -30,8 +29,7 @@ cp \
   "$REPO_ROOT/scripts/check/asm-ledger.sh" \
   "$REPO_ROOT/scripts/check/check-all.sh" \
   "$REPO_ROOT/scripts/check/check-feature-matrix.sh" \
-  "$REPO_ROOT/scripts/check/check-ibm.sh" \
-  "$REPO_ROOT/scripts/check/check-linux.sh" \
+  "$REPO_ROOT/scripts/check/check-zig.sh" \
   "$REPO_ROOT/scripts/check/lint-independent-workspaces.sh" \
   "$REPO_ROOT/scripts/check/check-win.sh" \
   "$REPO_ROOT/scripts/check/check.sh" \
@@ -51,8 +49,11 @@ NOSTD_TARGETS=(mock-nostd)
 WASM_TARGETS=()
 EOF
 
-cat >"$fixture/scripts/ct/python.sh" <<'EOF'
+cat >"$fixture/scripts/lib/python.sh" <<'EOF'
 #!/usr/bin/env bash
+if [[ "${1:-}" == --print ]]; then
+  printf '%s\n' "$0"
+fi
 exit 0
 EOF
 
@@ -67,7 +68,7 @@ exit 0
 EOF
 
 chmod +x \
-  "$fixture/scripts/ct/python.sh" \
+  "$fixture/scripts/lib/python.sh" \
   "$fixture/scripts/check/rsa-asm-provenance.sh" \
   "$fixture/scripts/check/zeroize-evidence.sh"
 
@@ -112,11 +113,10 @@ case "${1:-}" in
     ;;
   rail)
     if [[ "${2:-}" == "plan" ]]; then
-      if [[ ! -f "$MOCK_PREFLIGHT_MARKER" ]]; then
-        mutate_lockfile
+      if [[ "${3:-}" == "--verify" ]]; then
+        exit 0
       fi
-      rm -f "$MOCK_PREFLIGHT_MARKER"
-      printf '%s\n' '{"plan_contract_version":7,"inputs":{"snapshot_id":"v1-sha256-test"},"resolution_universe":{"mode":"declared_dependencies","identity":"resolution-universe-v1:sha256:0000000000000000000000000000000000000000000000000000000000000000"},"files":[{"path":"src/lib.rs"}],"scope":{"scope_contract_version":4,"resolved_base":"base","resolved_head":"head","mode":"workspace","crates":[],"cargo_args":["--workspace"]},"surfaces":{"bench":{"enabled":false,"reasons":[],"scope":{"mode":"empty","crates":[],"cargo_args":[]}},"build":{"enabled":true,"reasons":[],"scope":{"mode":"workspace","crates":[],"cargo_args":["--workspace"]}},"custom:cargo_graph":{"enabled":true,"reasons":[],"scope":{"mode":"empty","crates":[],"cargo_args":[]}},"docs":{"enabled":false,"reasons":[],"scope":{"mode":"empty","crates":[],"cargo_args":[]}},"infra":{"enabled":false,"reasons":[],"scope":{"mode":"empty","crates":[],"cargo_args":[]}},"test":{"enabled":true,"reasons":[],"scope":{"mode":"workspace","crates":[],"cargo_args":["--workspace"]}}}}'
+      printf '%s\n' '{"plan_contract_version":8,"work":{"cargo.build":{"state":"required","cause":"changed_input","evidence":["evidence:sha256:test"],"scope":{"kind":"cargo","selection":{"kind":"workspace","cargo_args":[],"targets":[]}}},"cargo.test":{"state":"required","cause":"changed_input","evidence":["evidence:sha256:test"],"scope":{"kind":"cargo","selection":{"kind":"workspace","cargo_args":[],"targets":[]}}}}}'
     fi
     ;;
   check | clippy | doc | test | build | rustc)
@@ -175,6 +175,7 @@ EOF
 git -C "$fixture" init --quiet --initial-branch=main
 git -C "$fixture" config user.email "ci@example.invalid"
 git -C "$fixture" config user.name "CI"
+git -C "$fixture" config commit.gpgsign false
 git -C "$fixture" add .
 git -C "$fixture" commit --quiet -m baseline
 

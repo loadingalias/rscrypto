@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OUT_DIR="${BENCH_OUTPUT_DIR:-benchmark-results}"
-mkdir -p "$OUT_DIR"
+OUT_DIR="${BENCH_OUTPUT_DIR:-target/benchmark_results}"
 
 to_bool() {
   local raw="${1:-}"
@@ -109,9 +108,10 @@ ms_to_seconds() {
 }
 
 BENCHMARK_CATALOG="scripts/bench/benchmark_catalog.py"
+PYTHON="$(scripts/lib/python.sh --print)"
 
 catalog() {
-  scripts/ct/python.sh "$BENCHMARK_CATALOG" "$@"
+  "$PYTHON" "$BENCHMARK_CATALOG" "$@"
 }
 
 default_benches_for_crate() {
@@ -251,6 +251,7 @@ if [[ "$QUICK_INPUT" != "true" \
   exit 2
 fi
 
+mkdir -p "$OUT_DIR"
 LOG_PATH="$OUT_DIR/output.txt"
 : > "$LOG_PATH"
 

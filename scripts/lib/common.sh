@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shared utilities for repository scripts.
 # shellcheck disable=SC2034
-# CRATE_FLAGS and SCOPE_DESC are caller-visible outputs.
+# CARGO_ARGS, CARGO_SCOPE_KIND, and SCOPE_DESC are caller-visible outputs.
 
 COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=rail-plan.sh
@@ -57,63 +57,52 @@ show_error() {
   echo ""
 }
 
-# Parse args into CRATE_FLAGS and SCOPE_DESC.
-# Usage: get_crate_flags "$@"
-# Sets: CRATE_FLAGS, SCOPE_DESC
-get_crate_flags() {
-  CRATE_FLAGS=""
+# Select the exact Cargo arguments from one Cargo Rail work decision.
+# Usage: select_cargo_scope WORK_ID [true]
+# Returns 1 only when Cargo Rail selected no work.
+select_cargo_scope() {
+  local work_id=$1
+  local force_all=${2:-false}
+  local arg
+
+  CARGO_ARGS=()
+  CARGO_SCOPE_KIND=""
   SCOPE_DESC=""
 
-  local all_flag=false
-  local crates=()
-
-  for arg in "$@"; do
-    if [[ "$arg" == "--all" ]]; then
-      all_flag=true
-    else
-      crates+=("$arg")
-    fi
-  done
-
-  if [[ ${#crates[@]} -gt 0 ]]; then
-    for crate in "${crates[@]}"; do
-      CRATE_FLAGS="$CRATE_FLAGS -p $crate"
-    done
-    SCOPE_DESC="${crates[*]}"
+  if [[ "$force_all" == true ]]; then
+    CARGO_ARGS=(--workspace)
+    CARGO_SCOPE_KIND=workspace
+    SCOPE_DESC=workspace
     return 0
   fi
 
-  if [[ "$all_flag" == true ]]; then
-    CRATE_FLAGS="--workspace"
-    SCOPE_DESC="workspace"
-    return 0
-  fi
+  # Prime in the caller shell so subsequent command/process substitutions reuse
+  # the same authenticated plan instead of replanning in isolated subshells.
+  rail_prime_plan || true
+  CARGO_SCOPE_KIND="$(rail_scope_mode "$work_id")"
 
-  local scope_mode
-  scope_mode="$(rail_scope_mode)"
-
-  case "$scope_mode" in
-    workspace)
-      CRATE_FLAGS="--workspace"
-      SCOPE_DESC="workspace (planner)"
+  case "$CARGO_SCOPE_KIND" in
+    empty)
+      SCOPE_DESC="no changes"
+      return 1
       ;;
-    crates)
-      local affected
-      affected="$(rail_plan_crates)"
-
-      if [[ -z "$affected" ]]; then
-        CRATE_FLAGS="--workspace"
-        SCOPE_DESC="workspace (planner fallback)"
-      else
-        for crate in $affected; do
-          CRATE_FLAGS="$CRATE_FLAGS -p $crate"
-        done
-        SCOPE_DESC="affected"
+    workspace)
+      CARGO_ARGS=(--workspace)
+      SCOPE_DESC="workspace (Cargo Rail)"
+      ;;
+    packages)
+      while IFS= read -r arg; do
+        [[ -n "$arg" ]] && CARGO_ARGS+=("$arg")
+      done < <(rail_scope_cargo_args "$work_id")
+      if [[ ${#CARGO_ARGS[@]} -eq 0 ]]; then
+        echo "ERROR: Cargo Rail selected packages without Cargo arguments for $work_id" >&2
+        return 2
       fi
+      SCOPE_DESC="affected packages (Cargo Rail)"
       ;;
     *)
-      CRATE_FLAGS="--workspace"
-      SCOPE_DESC="workspace (no changes)"
+      echo "ERROR: unsupported Cargo Rail scope '$CARGO_SCOPE_KIND' for $work_id" >&2
+      return 2
       ;;
   esac
 }

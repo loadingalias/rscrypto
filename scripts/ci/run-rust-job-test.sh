@@ -22,7 +22,8 @@ FIXTURE="$TMP_ROOT/repo"
 CAPTURE="$TMP_ROOT/capture"
 BIN="$TMP_ROOT/bin"
 AMX_BIN="$TMP_ROOT/amx-bin"
-mkdir -p "$FIXTURE/scripts/ci" "$FIXTURE/scripts/ct" "$CAPTURE" "$BIN" "$AMX_BIN"
+mkdir -p "$FIXTURE/scripts/ci" "$FIXTURE/scripts/ct" "$FIXTURE/scripts/lib" \
+  "$CAPTURE" "$BIN" "$AMX_BIN"
 cp "$DISPATCHER" "$FIXTURE/scripts/ci/run-rust-job.sh"
 
 cat >"$BIN/just" <<'EOF'
@@ -48,6 +49,8 @@ set -euo pipefail
 printf '%s' "$BENCH_ONLY" >"$RSCRYPTO_CI_CAPTURE_DIR/bench-targets"
 printf '%s' "$BENCH_FILTER" >"$RSCRYPTO_CI_CAPTURE_DIR/bench-filter"
 printf '%s' "$BENCH_QUICK" >"$RSCRYPTO_CI_CAPTURE_DIR/bench-quick"
+printf '%s' "$BENCH_OUTPUT_DIR" >"$RSCRYPTO_CI_CAPTURE_DIR/bench-output-dir"
+printf '%s' "$BENCH_RESULTS_DIR" >"$RSCRYPTO_CI_CAPTURE_DIR/bench-results-dir"
 EOF
 
 cat >"$FIXTURE/scripts/ct/full.py" <<'EOF'
@@ -56,9 +59,13 @@ set -euo pipefail
 printf '%s\n' "$@" >"$RSCRYPTO_CI_CAPTURE_DIR/ct.args"
 EOF
 
-cat >"$FIXTURE/scripts/ct/python.sh" <<'EOF'
+cat >"$FIXTURE/scripts/lib/python.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == --print ]]; then
+  printf '%s\n' "$0"
+  exit 0
+fi
 printf '%s\n' "$@" >"$RSCRYPTO_CI_CAPTURE_DIR/ct-package.args"
 EOF
 
@@ -71,7 +78,7 @@ chmod +x \
   "$BIN/cargo" \
   "$FIXTURE/scripts/ci/run-bench.sh" \
   "$FIXTURE/scripts/ct/full.py" \
-  "$FIXTURE/scripts/ct/python.sh"
+  "$FIXTURE/scripts/lib/python.sh"
 
 cat >"$AMX_BIN/uname" <<'EOF'
 #!/usr/bin/env bash
@@ -146,6 +153,9 @@ RUNNER=(env PATH="$TEST_PATH" RSCRYPTO_CI_CAPTURE_DIR="$CAPTURE" bash "$FIXTURE/
 RSCRYPTO_CI_OPERATION=quality "${RUNNER[@]}"
 [[ $(<"$CAPTURE/just.args") == "ci-check" ]] || fail "quality selected the wrong command"
 
+RSCRYPTO_CI_OPERATION=examples "${RUNNER[@]}"
+[[ $(<"$CAPTURE/just.args") == "test-examples" ]] || fail "examples selected the wrong command"
+
 mkdir -p \
   "$FIXTURE/fuzz/corpus/hash_cshake256" \
   "$FIXTURE/fuzz/artifacts/hash_cshake256" \
@@ -209,6 +219,10 @@ env \
 [[ $(<"$CAPTURE/bench-targets") == "$multiline_payload" ]] || fail "benchmark targets were not passed literally"
 [[ $(<"$CAPTURE/bench-filter") == "$multiline_payload" ]] || fail "benchmark filter was not passed literally"
 [[ $(<"$CAPTURE/bench-quick") == "true" ]] || fail "benchmark boolean was not preserved"
+[[ $(<"$CAPTURE/bench-output-dir") == "target/benchmark_results" ]] \
+  || fail "benchmark output used the wrong staging directory"
+[[ $(<"$CAPTURE/bench-results-dir") == "target/benchmark_results" ]] \
+  || fail "benchmark results used the wrong staging directory"
 [[ ! -e "$sentinel" ]] || fail "benchmark input was evaluated as shell code"
 
 # shellcheck disable=SC2016 # Command substitution is an intentional literal injection payload.

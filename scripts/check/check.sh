@@ -1,55 +1,53 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Host-only checks: fmt, check, opt-in rscrypto feature matrices, clippy,
-# optional deny/audit, doc
-# Usage: check.sh [--feature-matrix] [--all] [crate1 crate2 ...]
+# Host-only checks: fmt, check, opt-in feature matrices, clippy, optional
+# deny/audit, and docs.
+# Usage: check.sh [--all] [--feature-matrix]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
 
 RUN_FEATURE_MATRIX=false
-CHECK_ARGS=()
+FORCE_ALL=false
 for arg in "$@"; do
   case "$arg" in
-    --skip-feature-matrix)
-      RUN_FEATURE_MATRIX=false
-      ;;
     --feature-matrix)
       RUN_FEATURE_MATRIX=true
       ;;
+    --all)
+      FORCE_ALL=true
+      ;;
     *)
-      CHECK_ARGS+=("$arg")
+      echo "Usage: $0 [--all] [--feature-matrix]" >&2
+      exit 2
       ;;
   esac
 done
 
-# Parse args and set CRATE_FLAGS, SCOPE_DESC
-if [[ ${#CHECK_ARGS[@]} -gt 0 ]]; then
-  get_crate_flags "${CHECK_ARGS[@]}"
-else
-  get_crate_flags
+SCOPE_STATUS=0
+select_cargo_scope cargo.build "$FORCE_ALL" || SCOPE_STATUS=$?
+if [[ "$SCOPE_STATUS" -gt 1 ]]; then
+  exit "$SCOPE_STATUS"
 fi
+CARGO_SELECTED=true
+[[ "$SCOPE_STATUS" -eq 0 ]] || CARGO_SELECTED=false
 
 # Determine if full workspace (for audit/deny)
 FULL_WORKSPACE=false
-if [[ "$CRATE_FLAGS" == "--workspace" ]]; then
+if [[ "$CARGO_SELECTED" == true && "$CARGO_SCOPE_KIND" == workspace ]]; then
   FULL_WORKSPACE=true
 fi
 
-RSCRYPTO_FEATURE_MATRIX_IN_SCOPE=false
-if [[ "$FULL_WORKSPACE" == true || "$CRATE_FLAGS" == *" -p rscrypto"* ]]; then
-  RSCRYPTO_FEATURE_MATRIX_IN_SCOPE=true
-fi
-
 CHECK_RSCRYPTO_FEATURE_MATRIX=false
-if [[ "$RSCRYPTO_FEATURE_MATRIX_IN_SCOPE" == true && "$RUN_FEATURE_MATRIX" == true ]]; then
+if [[ "$CARGO_SELECTED" == true && "$RUN_FEATURE_MATRIX" == true ]]; then
   CHECK_RSCRYPTO_FEATURE_MATRIX=true
 fi
 
 LOG_DIR=$(mktemp -d)
 trap 'rm -rf "$LOG_DIR"' EXIT
+PYTHON="$("$SCRIPT_DIR/../lib/python.sh" --print)"
 
 echo "Host checks ${DIM}($SCOPE_DESC)${RESET}"
 
@@ -71,7 +69,7 @@ fi
 ok
 
 step "Checking hash vector provenance"
-if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/hash-vector-provenance.py" >"$LOG_DIR/hash-vectors.log" 2>&1; then
+if ! "$PYTHON" "$SCRIPT_DIR/hash-vector-provenance.py" >"$LOG_DIR/hash-vectors.log" 2>&1; then
   fail
   show_error "$LOG_DIR/hash-vectors.log"
   exit 1
@@ -79,7 +77,7 @@ fi
 ok
 
 step "Checking authentication vector provenance"
-if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/auth-vector-provenance.py" >"$LOG_DIR/auth-vectors.log" 2>&1; then
+if ! "$PYTHON" "$SCRIPT_DIR/auth-vector-provenance.py" >"$LOG_DIR/auth-vectors.log" 2>&1; then
   fail
   show_error "$LOG_DIR/auth-vectors.log"
   exit 1
@@ -87,7 +85,7 @@ fi
 ok
 
 step "Checking feature boundaries"
-if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/feature-boundaries.py" >"$LOG_DIR/feature-boundaries.log" 2>&1; then
+if ! "$PYTHON" "$SCRIPT_DIR/feature-boundaries.py" >"$LOG_DIR/feature-boundaries.log" 2>&1; then
   fail
   show_error "$LOG_DIR/feature-boundaries.log"
   exit 1
@@ -95,7 +93,7 @@ fi
 ok
 
 step "Checking benchmark catalog"
-if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/../bench/benchmark_catalog_test.py" >"$LOG_DIR/benchmark-catalog.log" 2>&1; then
+if ! "$PYTHON" "$SCRIPT_DIR/../bench/benchmark_catalog_test.py" >"$LOG_DIR/benchmark-catalog.log" 2>&1; then
   fail
   show_error "$LOG_DIR/benchmark-catalog.log"
   exit 1
@@ -103,7 +101,7 @@ fi
 ok
 
 step "Checking CT assembly scanner"
-if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/../ct/asm_heuristics_test.py" >"$LOG_DIR/ct-asm-scanner.log" 2>&1; then
+if ! "$PYTHON" "$SCRIPT_DIR/../ct/asm_heuristics_test.py" >"$LOG_DIR/ct-asm-scanner.log" 2>&1; then
   fail
   show_error "$LOG_DIR/ct-asm-scanner.log"
   exit 1
@@ -111,7 +109,7 @@ fi
 ok
 
 step "Checking DudeCT evidence parsing"
-if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/../ct/dudect_report_test.py" >"$LOG_DIR/ct-dudect-report.log" 2>&1; then
+if ! "$PYTHON" "$SCRIPT_DIR/../ct/dudect_report_test.py" >"$LOG_DIR/ct-dudect-report.log" 2>&1; then
   fail
   show_error "$LOG_DIR/ct-dudect-report.log"
   exit 1
@@ -119,7 +117,7 @@ fi
 ok
 
 step "Checking CT evidence validation"
-if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/../ct/evidence_validation_test.py" >"$LOG_DIR/ct-evidence-validation.log" 2>&1; then
+if ! "$PYTHON" "$SCRIPT_DIR/../ct/evidence_validation_test.py" >"$LOG_DIR/ct-evidence-validation.log" 2>&1; then
   fail
   show_error "$LOG_DIR/ct-evidence-validation.log"
   exit 1
@@ -127,14 +125,17 @@ fi
 ok
 
 # Check
-step "Checking"
-# shellcheck disable=SC2086
-if ! cargo check $CRATE_FLAGS --all-targets --all-features --locked >"$LOG_DIR/check.log" 2>&1; then
-  fail
-  show_error "$LOG_DIR/check.log"
-  exit 1
+if [[ "$CARGO_SELECTED" == false ]]; then
+  skip "Checking" "no affected targets"
+else
+  step "Checking"
+  if ! cargo check "${CARGO_ARGS[@]}" --all-targets --all-features --locked >"$LOG_DIR/check.log" 2>&1; then
+    fail
+    show_error "$LOG_DIR/check.log"
+    exit 1
+  fi
+  ok
 fi
-ok
 
 if [[ "$CHECK_RSCRYPTO_FEATURE_MATRIX" == true ]]; then
   step "Checking rscrypto no_std matrix"
@@ -152,19 +153,22 @@ if [[ "$CHECK_RSCRYPTO_FEATURE_MATRIX" == true ]]; then
     exit 1
   fi
   ok
-elif [[ "$RSCRYPTO_FEATURE_MATRIX_IN_SCOPE" == true ]]; then
+elif [[ "$CARGO_SELECTED" == true ]]; then
   skip "rscrypto feature matrix" "disabled for this check profile"
 fi
 
 # Clippy
-step "Linting"
-# shellcheck disable=SC2086
-if ! cargo clippy $CRATE_FLAGS --all-targets --all-features --locked >"$LOG_DIR/clippy.log" 2>&1; then
-  fail
-  show_error "$LOG_DIR/clippy.log"
-  exit 1
+if [[ "$CARGO_SELECTED" == false ]]; then
+  skip "Linting" "no affected targets"
+else
+  step "Linting"
+  if ! cargo clippy "${CARGO_ARGS[@]}" --all-targets --all-features --locked >"$LOG_DIR/clippy.log" 2>&1; then
+    fail
+    show_error "$LOG_DIR/clippy.log"
+    exit 1
+  fi
+  ok
 fi
-ok
 
 if [[ "$FULL_WORKSPACE" == true ]]; then
   step "Linting independent workspaces"
@@ -196,13 +200,16 @@ if [[ "$FULL_WORKSPACE" == true && "${RSCRYPTO_SKIP_CHECK_SUPPLY_CHAIN:-}" != "1
 fi
 
 # Documentation
-step "Building docs"
-# shellcheck disable=SC2086
-if ! cargo doc $CRATE_FLAGS --no-deps --all-features --locked >"$LOG_DIR/doc.log" 2>&1; then
-  fail
-  show_error "$LOG_DIR/doc.log"
-  exit 1
+if [[ "$CARGO_SELECTED" == false ]]; then
+  skip "Building docs" "no affected targets"
+else
+  step "Building docs"
+  if ! cargo doc "${CARGO_ARGS[@]}" --no-deps --all-features --locked >"$LOG_DIR/doc.log" 2>&1; then
+    fail
+    show_error "$LOG_DIR/doc.log"
+    exit 1
+  fi
+  ok
 fi
-ok
 
 echo "${GREEN}✓${RESET} Host checks passed"

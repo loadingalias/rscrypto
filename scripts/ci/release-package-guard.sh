@@ -51,15 +51,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if command -v python3 >/dev/null 2>&1; then
-  python_bin="python3"
-elif command -v python >/dev/null 2>&1; then
-  python_bin="python"
-else
-  echo "python3 or python is required" >&2
-  exit 1
-fi
-
 if command -v sha256sum >/dev/null 2>&1; then
   sha256_file() {
     sha256sum "$1" | awk '{print $1}'
@@ -72,20 +63,10 @@ fi
 
 metadata="$(cargo metadata --no-deps --format-version 1)"
 crate_version="$(
-  METADATA="$metadata" "$python_bin" - "$crate" <<'PY'
-import json
-import os
-import sys
-
-metadata = json.loads(os.environ["METADATA"])
-crate = sys.argv[1]
-for package in metadata["packages"]:
-    if package["name"] == crate:
-        print(package["version"])
-        break
-else:
-    raise SystemExit(f"crate not found in cargo metadata: {crate}")
-PY
+  jq -er --arg crate "$crate" '
+    [.packages[] | select(.name == $crate) | .version]
+    | if length == 1 then .[0] else error("crate not found exactly once in cargo metadata: \($crate)") end
+  ' <<<"$metadata"
 )"
 
 if [[ -n "$expected_version" && "$crate_version" != "$expected_version" ]]; then
@@ -115,23 +96,17 @@ if [[ -z "$vcs_json" ]]; then
   exit 1
 fi
 
-VCS_JSON="$vcs_json" "$python_bin" - "$expected_git_sha" <<'PY'
-import json
-import os
-import sys
-
-expected_git_sha = sys.argv[1]
-data = json.loads(os.environ["VCS_JSON"])
-git = data.get("git") or {}
-actual = git.get("sha1")
-if actual != expected_git_sha:
-    raise SystemExit(f"package git sha {actual!r} does not match expected {expected_git_sha!r}")
-if git.get("dirty") is True:
-    raise SystemExit("package was built from a dirty working tree")
-path_in_vcs = data.get("path_in_vcs")
-if path_in_vcs not in ("", None):
-    raise SystemExit(f"unexpected package path_in_vcs: {path_in_vcs!r}")
-PY
+jq -e --arg expected "$expected_git_sha" '
+  if (.git.sha1 // null) != $expected then
+    error("package git sha \(.git.sha1 // null) does not match expected \($expected)")
+  elif (.git.dirty // false) == true then
+    error("package was built from a dirty working tree")
+  elif (.path_in_vcs // "") != "" then
+    error("unexpected package path_in_vcs: \(.path_in_vcs)")
+  else
+    true
+  end
+' <<<"$vcs_json" >/dev/null
 
 contents="$(mktemp)"
 trap 'rm -f "$contents"' EXIT

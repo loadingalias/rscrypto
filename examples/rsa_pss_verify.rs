@@ -1,5 +1,3 @@
-//! Run with: `cargo run --example rsa_pss_verify --features rsa`
-
 use rscrypto::{RsaPssProfile, RsaPublicKey, RsaSignatureProfile};
 
 fn main() -> Result<(), Box<dyn core::error::Error>> {

@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       platforms:
-        description: "RUNNERS (Empty/all = non-RISC physical CT lanes; use RISC-V workflow for RISC-V)."
+        description: "RUNNERS (Empty/all = every physical CT lane, including RISC-V)."
         required: false
         type: string
         default: "all"
@@ -43,10 +43,17 @@ on:
         required: false
         type: string
         default: ""
+    secrets:
+      CARGO_RAIL_R2_READ_ACCESS_KEY_ID:
+        description: "Bucket-scoped R2 access key forwarded to CT compiler jobs."
+        required: false
+      CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY:
+        description: "Bucket-scoped R2 secret key forwarded to CT compiler jobs."
+        required: false
   workflow_dispatch:
     inputs:
       platforms:
-        description: "RUNNERS (Empty/all = non-RISC physical CT lanes; use RISC-V workflow for RISC-V)."
+        description: "RUNNERS (Empty/all = every physical CT lane, including RISC-V)."
         required: false
         type: string
         default: "all"
@@ -151,9 +158,6 @@ jobs:
               ;;
             amd-zen4,intel-spr,intel-icl,amd-zen5)
               recovery_rustflags=""
-              if [[ "$RELEASE_TAG" == "v0.9.0" ]]; then
-                recovery_rustflags="-C target-cpu=x86-64 -A unreachable-code"
-              fi
               ;;
             *)
               echo "release CT recovery must run the complete raw ibm-s390x or x86_64 platform group" >&2
@@ -182,6 +186,8 @@ jobs:
     name: CT Full (${{ matrix.display_name }})
     needs: plan
     if: ${{ needs.plan.outputs.has_targets == 'true' }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -207,6 +213,9 @@ jobs:
       artifact_path: target/ct-evidence-package/
       artifact_always: true
       artifact_retention_days: ${{ fromJSON(format('{0}', inputs.artifact_retention_days)) }}
+    secrets:
+      cache_access_key_id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      cache_secret_access_key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
 
   complete:
     name: Complete (CT)

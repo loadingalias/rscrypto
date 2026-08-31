@@ -3,6 +3,8 @@ name: CI
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -19,14 +21,15 @@ permissions:
 
 jobs:
   rail-plan:
-    name: Build Plan
+    name: Cargo Rail Plan
     if: ${{ github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.actor != 'dependabot[bot]') }}
     runs-on: ubuntu-latest
     outputs:
-      build: ${{ steps.rail.outputs.build }}
-      test: ${{ steps.rail.outputs.test }}
-      infra: ${{ steps.rail.outputs.infra }}
-      surfaces_json: ${{ steps.rail.outputs.surfaces-json }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      has-suite: ${{ steps.matrix.outputs.has_suite }}
+      identity: ${{ steps.rail.outputs.plan-identity }}
+      head-commit: ${{ steps.rail.outputs.head-commit }}
+      required-work: ${{ steps.rail.outputs.required-work }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -34,24 +37,60 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Build Plan (PR)
-        if: github.event_name == 'pull_request'
+      - name: Build exact work plan
         id: rail
-        uses: loadingalias/cargo-rail-action@47e86bde928ce420b85efa5f8d3b5feb96fd0ffc # v7.0.0
+        uses: loadingalias/cargo-rail-action@78ad385a85627484a5b634cf1bc3caa1de872c6a # v8.2.0
         with:
-          version: "0.22.2"
-          checksum: required
-          since: ${{ github.event.pull_request.base.sha }}
+          version: "0.25.0"
+          components: surface
+          since: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'push' && github.event.before || '' }}
+          all: ${{ github.event_name == 'workflow_dispatch' }}
+
+      - name: Materialize selected CI matrix
+        id: matrix
+        shell: bash
+        env:
+          PLAN_FILE: ${{ steps.rail.outputs.plan-file }}
+          PLAN_READER: ${{ steps.rail.outputs.plan-reader }}
+        run: scripts/ci/materialize-rail-plan.sh "$PLAN_FILE" "$PLAN_READER" "$GITHUB_OUTPUT"
+
+      - name: Check public source surface
+        if: contains(fromJSON(steps.rail.outputs.required-work), 'surface')
+        shell: bash
+        run: |
+          mkdir -p target/cargo-rail
+          cargo rail surface --check --json > target/cargo-rail/surface-result.json
 
       - name: Check Release Intent Coverage
         if: github.event_name == 'pull_request' && !(startsWith(github.head_ref, 'rail/release-') && github.event.pull_request.head.repo.full_name == github.repository)
         env:
-          RAIL_BASE_REF: ${{ steps.rail.outputs.base-ref }}
+          RAIL_BASE_REF: ${{ steps.rail.outputs.base }}
         run: cargo rail change check --since "$RAIL_BASE_REF" --required
+
+      - name: Upload exact work plan
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cargo-rail-plan-${{ github.run_id }}
+          path: |
+            ${{ steps.rail.outputs.plan-file }}
+            ${{ steps.rail.outputs.plan-reader }}
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload Surface evidence
+        if: ${{ !cancelled() && contains(fromJSON(steps.rail.outputs.required-work), 'surface') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cargo-rail-surface-${{ github.run_id }}
+          path: target/cargo-rail/surface-result.json
+          retention-days: 14
+          if-no-files-found: error
 
   dependency-smoke:
     name: Dependency Smoke
     if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.draft && github.actor == 'dependabot[bot]' }}
+    permissions:
+      contents: read
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ubuntu-latest
@@ -60,49 +99,77 @@ jobs:
       toolchain_components: "clippy, rustfmt"
       operation: dependabot-smoke
       base_sha: ${{ github.event.pull_request.base.sha }}
+    secrets:
+      cache_access_key_id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      cache_secret_access_key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
 
   suite:
     name: CI Suite
     needs: rail-plan
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.actor != 'dependabot[bot]' && (needs.rail-plan.result != 'success' || needs.rail-plan.outputs.build == 'true' || needs.rail-plan.outputs.test == 'true' || needs.rail-plan.outputs.infra == 'true'))) }}
+    if: ${{ !cancelled() && github.event_name != 'push' && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.rail-plan.result == 'success' && needs.rail-plan.outputs.has-suite == 'true' }}
+    permissions:
+      contents: read
     uses: ./.github/workflows/_ci-suite.yaml
     with:
+      matrix: ${{ needs.rail-plan.outputs.matrix }}
+      plan_artifact: cargo-rail-plan-${{ github.run_id }}
+      plan_identity: ${{ needs.rail-plan.outputs.identity }}
+      plan_head_commit: ${{ needs.rail-plan.outputs.head-commit }}
       supply_chain_mode: light
       test_mode: commit
-      include_cargo_graph: ${{ contains(needs.rail-plan.outputs.surfaces_json, '"custom:cargo_graph":true') }}
+    secrets:
+      cache_access_key_id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      cache_secret_access_key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
+
+  cache-seed:
+    name: Affected Main Cache Seeder
+    needs: rail-plan
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.rail-plan.result == 'success' && needs.rail-plan.outputs.has-suite == 'true' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_ci-suite.yaml
+    with:
+      matrix: ${{ needs.rail-plan.outputs.matrix }}
+      plan_artifact: cargo-rail-plan-${{ github.run_id }}
+      plan_identity: ${{ needs.rail-plan.outputs.identity }}
+      plan_head_commit: ${{ needs.rail-plan.outputs.head-commit }}
+      supply_chain_mode: light
+      test_mode: commit
+      cache_mode: read-write
+    secrets:
+      cache_access_key_id: ${{ secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID }}
+      cache_secret_access_key: ${{ secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY }}
 
   complete:
     name: Complete
-    needs: [rail-plan, suite, dependency-smoke]
+    needs: [rail-plan, suite, cache-seed, dependency-smoke]
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     runs-on: ubuntu-latest
     steps:
-      - name: Assert suite passed
+      - name: Assert selected work passed
         env:
           ACTOR: ${{ github.actor }}
           DEPENDENCY_SMOKE_RESULT: ${{ needs.dependency-smoke.result }}
           EVENT_NAME: ${{ github.event_name }}
+          HAS_SUITE: ${{ needs.rail-plan.outputs.has-suite }}
           PLAN_RESULT: ${{ needs.rail-plan.result }}
           SUITE_RESULT: ${{ needs.suite.result }}
+          CACHE_SEED_RESULT: ${{ needs.cache-seed.result }}
         run: |
           if [[ "$EVENT_NAME" == "pull_request" && "$ACTOR" == "dependabot[bot]" ]]; then
-            if [[ "$DEPENDENCY_SMOKE_RESULT" != "success" ]]; then
-              echo "Dependency smoke result: $DEPENDENCY_SMOKE_RESULT"
-              exit 1
-            fi
+            [[ "$DEPENDENCY_SMOKE_RESULT" == "success" ]]
             echo "Dependency smoke: $DEPENDENCY_SMOKE_RESULT"
             exit 0
           fi
 
-          if [[ "$PLAN_RESULT" != "success" ]]; then
-            echo "Build plan result: $PLAN_RESULT"
-            exit 1
+          [[ "$PLAN_RESULT" == "success" ]]
+          if [[ "$HAS_SUITE" == "true" ]]; then
+            if [[ "$EVENT_NAME" == "push" ]]; then
+              [[ "$CACHE_SEED_RESULT" == "success" && "$SUITE_RESULT" == "skipped" ]]
+            else
+              [[ "$SUITE_RESULT" == "success" && "$CACHE_SEED_RESULT" == "skipped" ]]
+            fi
+          else
+            [[ "$SUITE_RESULT" == "skipped" && "$CACHE_SEED_RESULT" == "skipped" ]]
           fi
-
-          if [[ "$SUITE_RESULT" == "skipped" ]]; then
-            echo "CI suite skipped because Cargo Rail selected no suite surfaces"
-          elif [[ "$SUITE_RESULT" != "success" ]]; then
-            echo "CI suite result: $SUITE_RESULT"
-            exit 1
-          fi
-          echo "CI suite: $SUITE_RESULT"
+          echo "Cargo Rail plan: $PLAN_RESULT; selected suite: $SUITE_RESULT; main seeder: $CACHE_SEED_RESULT"

@@ -21,7 +21,7 @@ include = [
   "/THREAT_MODEL.md",
   "/CONTRIBUTING.md",
   "/.config/target-matrix.json",
-  "/assets/readme/perf.svg",
+  "/assets/readme-perf.svg",
   "/benchmark_results/OVERVIEW.md",
   "/benches/rsa_fixtures/**",
   "/docs/**",
@@ -307,28 +307,20 @@ aws-lc-sys = "0.44.0"
 bench = false
 
 [[example]]
-name = "basic"
-required-features = ["full", "getrandom"]
-
-[[example]]
 name = "introspect"
-required-features = ["checksums", "hashes", "aead", "diag"]
-
-[[example]]
-name = "parallel"
-required-features = ["checksums"]
+required-features = ["crc32", "sha2", "chacha20poly1305", "diag"]
 
 [[example]]
 name = "password_hashing"
-required-features = ["password-hashing", "getrandom"]
+required-features = ["argon2", "phc-strings", "getrandom"]
 
 [[example]]
 name = "aead_seal_open"
 required-features = ["alloc", "chacha20poly1305", "getrandom"]
 
 [[example]]
-name = "signatures"
-required-features = ["ed25519", "ecdsa-p256", "getrandom"]
+name = "ed25519_sign_verify"
+required-features = ["ed25519", "getrandom"]
 
 [[example]]
 name = "rsa_pss_verify"
@@ -337,6 +329,10 @@ required-features = ["rsa"]
 [[example]]
 name = "mlkem_encapsulation"
 required-features = ["ml-kem", "getrandom"]
+
+[[example]]
+name = "x25519_key_agreement"
+required-features = ["x25519", "getrandom"]
 
 [[bench]]
 name = "aead"

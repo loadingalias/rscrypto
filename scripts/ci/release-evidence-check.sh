@@ -31,20 +31,14 @@ done
 [[ "$commit" =~ ^[0-9a-fA-F]{40}$ ]] || usage
 [[ "$repo" == */* ]] || usage
 
-weekly_runs=$(gh run list \
+qualification_runs=$(gh run list \
   --repo "$repo" \
   --workflow weekly.yaml \
   --status success \
   --json databaseId,headSha,status,conclusion,url,createdAt,event \
   --limit 100)
-riscv_runs=$(gh run list \
-  --repo "$repo" \
-  --workflow riscv.yaml \
-  --status success \
-  --json databaseId,headSha,status,conclusion,url,createdAt,event \
-  --limit 100)
 
-select_weekly_release_run() {
+select_qualification_run() {
   local candidate=$1
   local selected
   local run_id
@@ -69,77 +63,25 @@ select_weekly_release_run() {
     | sort_by(.createdAt)
     | reverse
     | .[]
-  ' <<<"$weekly_runs")
+  ' <<<"$qualification_runs")
   return 1
-}
-
-select_riscv_evidence_run() {
-  local candidate=$1
-  local selected
-  local run_id
-  local jobs
-  while IFS= read -r selected; do
-    run_id=$(jq -r '.databaseId' <<<"$selected")
-    jobs=$(gh run view "$run_id" --repo "$repo" --json jobs)
-    if jq -e '
-      [
-        "Native CI / run",
-        "Constant-Time Evidence (RISC-V) / CT Full (RISE RISC-V riscv64) / run",
-        "Constant-Time Evidence (RISC-V) / Complete (CT)",
-        "Complete (RISC-V)"
-      ] as $required
-      | .jobs as $jobs
-      | all($required[]; . as $name | [$jobs[] | select(.name == $name and .conclusion == "success")] | length == 1)
-    ' <<<"$jobs" >/dev/null; then
-      echo "$selected"
-      return 0
-    fi
-  done < <(jq -c --arg commit "$candidate" '
-    map(select(
-      .headSha == $commit
-      and .event == "workflow_dispatch"
-      and .status == "completed"
-      and .conclusion == "success"
-    ))
-    | sort_by(.createdAt)
-    | reverse
-    | .[]
-  ' <<<"$riscv_runs")
-  return 1
-}
-
-selected_weekly=""
-selected_riscv=""
-select_pair() {
-  local candidate=$1
-  selected_weekly=$(select_weekly_release_run "$candidate") || selected_weekly=""
-  selected_riscv=$(select_riscv_evidence_run "$candidate") || selected_riscv=""
-  [[ -n "$selected_weekly" && -n "$selected_riscv" ]]
 }
 
 evidence_commit="$commit"
 evidence_mode="exact_commit"
-if ! select_pair "$commit"; then
-  selected_weekly=""
-  selected_riscv=""
-fi
-
-if [[ -z "$selected_weekly" || -z "$selected_riscv" ]]; then
-  echo "No paired release-mode Weekly and RISC-V evidence is valid for release commit $commit." >&2
-  echo "Both workflows must be manually dispatched for the exact commit; scheduled or ancestor evidence cannot be promoted." >&2
+selected_qualification=$(select_qualification_run "$commit") || selected_qualification=""
+if [[ -z "$selected_qualification" ]]; then
+  echo "No release-mode qualification is valid for release commit $commit." >&2
+  echo "The Qualification workflow must be manually dispatched for the exact commit; scheduled or ancestor evidence cannot be promoted." >&2
   exit 1
 fi
 
-weekly_run_id=$(jq -r '.databaseId' <<<"$selected_weekly")
-weekly_run_url=$(jq -r '.url' <<<"$selected_weekly")
-riscv_run_id=$(jq -r '.databaseId' <<<"$selected_riscv")
-riscv_run_url=$(jq -r '.url' <<<"$selected_riscv")
-evidence_version=$(git -C "$root" show "$evidence_commit:Cargo.toml" | "$SCRIPT_DIR/../ct/python.sh" -c \
+qualification_run_id=$(jq -r '.databaseId' <<<"$selected_qualification")
+qualification_run_url=$(jq -r '.url' <<<"$selected_qualification")
+evidence_version=$(git -C "$root" show "$evidence_commit:Cargo.toml" | "$SCRIPT_DIR/../lib/python.sh" -c \
   'import sys, tomllib; print(tomllib.loads(sys.stdin.read())["package"]["version"])')
-weekly_jobs=$(gh run view "$weekly_run_id" --repo "$repo" --json jobs)
-riscv_jobs=$(gh run view "$riscv_run_id" --repo "$repo" --json jobs)
-weekly_artifacts=$(gh api --method GET "repos/$repo/actions/runs/$weekly_run_id/artifacts?per_page=100")
-riscv_artifacts=$(gh api --method GET "repos/$repo/actions/runs/$riscv_run_id/artifacts?per_page=100")
+qualification_jobs=$(gh run view "$qualification_run_id" --repo "$repo" --json jobs)
+qualification_artifacts=$(gh api --method GET "repos/$repo/actions/runs/$qualification_run_id/artifacts?per_page=100")
 
 require_job() {
   local workflow=$1
@@ -158,16 +100,23 @@ require_raw_ct_artifacts() {
   local workflow=$1
   local run_id=$2
   local jobs=$3
-  local job_prefix=$4
-  local artifacts=$5
+  local artifacts=$4
   local expected
   local returned
   local total
   local raw_total
   local valid
   local unique
-  expected=$(jq -r --arg prefix "$job_prefix" \
-    '[.jobs[] | select((.name | startswith($prefix)) and .conclusion == "success")] | length' <<<"$jobs")
+  expected=$(jq -r '
+    [.jobs[] | select(
+      (
+        (.name | startswith("Constant-Time Evidence (release) / CT Full ("))
+        or (.name | startswith("RISC-V CT Evidence (release) / CT Full ("))
+      )
+      and .conclusion == "success"
+    )]
+    | length
+  ' <<<"$jobs")
   returned=$(jq -r '.artifacts | length' <<<"$artifacts")
   total=$(jq -r '.total_count' <<<"$artifacts")
   raw_total=$(jq -r '[.artifacts[] | select(.name | startswith("ct-raw-"))] | length' <<<"$artifacts")
@@ -191,29 +140,22 @@ require_raw_ct_artifacts() {
   fi
 }
 
-require_job Weekly "$weekly_run_id" "$weekly_jobs" "Constant-Time Evidence (release) / Complete (CT)"
-require_job Weekly "$weekly_run_id" "$weekly_jobs" "RSA Evidence (release) / Complete (RSA)"
-require_job Weekly "$weekly_run_id" "$weekly_jobs" "CI Suite (release) / Cargo Graph Assurance / run"
-require_job Weekly "$weekly_run_id" "$weekly_jobs" "Complete (release)"
-require_job RISC-V "$riscv_run_id" "$riscv_jobs" "Native CI / run"
-require_job RISC-V "$riscv_run_id" "$riscv_jobs" "Constant-Time Evidence (RISC-V) / CT Full (RISE RISC-V riscv64) / run"
-require_job RISC-V "$riscv_run_id" "$riscv_jobs" "Constant-Time Evidence (RISC-V) / Complete (CT)"
-require_job RISC-V "$riscv_run_id" "$riscv_jobs" "Complete (RISC-V)"
-require_raw_ct_artifacts Weekly "$weekly_run_id" "$weekly_jobs" \
-  "Constant-Time Evidence (release) / CT Full (" "$weekly_artifacts"
-require_raw_ct_artifacts RISC-V "$riscv_run_id" "$riscv_jobs" \
-  "Constant-Time Evidence (RISC-V) / CT Full (" "$riscv_artifacts"
+require_job Qualification "$qualification_run_id" "$qualification_jobs" "Constant-Time Evidence (release) / Complete (CT)"
+require_job Qualification "$qualification_run_id" "$qualification_jobs" "RSA Evidence (release) / Complete (RSA)"
+require_job Qualification "$qualification_run_id" "$qualification_jobs" "RISC-V Native Evidence / run"
+require_job Qualification "$qualification_run_id" "$qualification_jobs" "RISC-V CT Evidence (release) / Complete (CT)"
+require_job Qualification "$qualification_run_id" "$qualification_jobs" "CI Suite (release) / Cargo Graph Assurance / run"
+require_job Qualification "$qualification_run_id" "$qualification_jobs" "Complete (release)"
+require_raw_ct_artifacts Qualification "$qualification_run_id" "$qualification_jobs" "$qualification_artifacts"
 
 if [[ -n ${GITHUB_OUTPUT:-} ]]; then
   {
-    echo "weekly_run_id=$weekly_run_id"
-    echo "weekly_run_url=$weekly_run_url"
-    echo "riscv_run_id=$riscv_run_id"
-    echo "riscv_run_url=$riscv_run_url"
-    echo "weekly_commit=$evidence_commit"
-    echo "weekly_version=$evidence_version"
-    echo "weekly_evidence_mode=$evidence_mode"
+    echo "qualification_run_id=$qualification_run_id"
+    echo "qualification_run_url=$qualification_run_url"
+    echo "qualification_commit=$evidence_commit"
+    echo "qualification_version=$evidence_version"
+    echo "qualification_evidence_mode=$evidence_mode"
   } >>"$GITHUB_OUTPUT"
 fi
 
-echo "Exact-commit release evidence passed: Weekly $weekly_run_url; RISC-V $riscv_run_url"
+echo "Exact-commit release qualification passed: $qualification_run_url"

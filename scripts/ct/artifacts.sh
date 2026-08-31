@@ -104,12 +104,7 @@ for tool in "$LLVM_OBJDUMP" "$LLVM_NM" "$LLVM_SIZE"; do
   fi
 done
 
-PYTHON="$("$ROOT/scripts/ct/python.sh" --print)"
-
-if [[ -z "$PYTHON" ]]; then
-  echo "python3 or python is required to generate CT provenance" >&2
-  exit 1
-fi
+PYTHON="$("$ROOT/scripts/lib/python.sh" --print)"
 
 OUT_DIR="$ROOT/target/ct/$TARGET/$PROFILE"
 ARTIFACT_DIR="$OUT_DIR/artifacts"

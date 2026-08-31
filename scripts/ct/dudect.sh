@@ -8,7 +8,6 @@ SAMPLES="${RSCRYPTO_CT_DUDECT_SAMPLES:-20000}"
 THRESHOLD="${RSCRYPTO_CT_DUDECT_THRESHOLD:-10.0}"
 FILTER=""
 SMOKE=0
-PYTHON="${PYTHON:-}"
 
 usage() {
   cat <<'USAGE'
@@ -177,12 +176,7 @@ echo "$COMMAND"
   RSCRYPTO_CT_DUDECT_SAMPLES="$SAMPLES" "$BINARY_PATH" "${RUNNER_ARGS[@]}"
 ) | tee "$STDOUT_PATH"
 
-PYTHON="$("$ROOT/scripts/ct/python.sh" --print)"
-
-if [[ -z "$PYTHON" ]]; then
-  echo "python3 or python is required to generate the dudect report" >&2
-  exit 1
-fi
+PYTHON="$("$ROOT/scripts/lib/python.sh" --print)"
 
 "$PYTHON" "$ROOT/scripts/ct/dudect_report.py" \
   --stdout "$STDOUT_PATH" \
