@@ -317,6 +317,9 @@ raise "Coverage is not bound to assurance.fuzz" unless coverage_runs.include?("s
 raise "Qualification lost total coverage" unless coverage_runs.include?("scripts/test/test-coverage.sh")
 coverage_installer = coverage.fetch("steps").find { |step| step["uses"]&.start_with?("taiki-e/install-action@") }
 raise "Coverage tools are not installed from a pinned action" unless coverage_installer
+unless coverage_installer.dig("with", "tool") == "cargo-llvm-cov@0.9.0,cargo-nextest@0.9.143"
+  raise "Coverage installs tool versions that differ from the core test contract"
+end
 raise "Coverage tool fallback must remain disabled" unless coverage_installer.dig("with", "fallback") == "none"
 
 zeroization = qualification.fetch("jobs").fetch("zeroization")

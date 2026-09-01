@@ -108,7 +108,7 @@ jobs:
 
       - name: Install Zizmor
         if: steps.select.outputs.actions == 'true'
-        uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2.85.5
+        uses: taiki-e/install-action@0758d235715de2f3551eacc980d9ae8fce9342c3 # v2.87.3
         with:
           tool: zizmor@1.30.0
           fallback: none
@@ -175,7 +175,7 @@ jobs:
           cache-secret-access-key: ${{ github.event_name == 'push' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY || secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
       - name: Install test runner
         if: needs.plan.outputs.tests == 'true'
-        uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2.85.5
+        uses: taiki-e/install-action@0758d235715de2f3551eacc980d9ae8fce9342c3 # v2.87.3
         with:
           tool: cargo-nextest@0.9.143
           fallback: none
