@@ -3,10 +3,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+export GITHUB_OUTPUT=/dev/null
 
 matrix="$({
   cd "$REPO_ROOT"
-  GH_RUN_ID=1 CT_PLATFORMS=rise-riscv scripts/ci/emit-manual-matrix.sh ct
+  env -u GITHUB_OUTPUT GH_RUN_ID=1 CT_PLATFORMS=rise-riscv scripts/ci/emit-manual-matrix.sh ct
 })"
 
 jq -e '
@@ -20,13 +21,13 @@ jq -e '
 
 ct_default="$({
   cd "$REPO_ROOT"
-  GH_RUN_ID=1 CT_PLATFORMS=all scripts/ci/emit-manual-matrix.sh ct
+  env -u GITHUB_OUTPUT GH_RUN_ID=1 CT_PLATFORMS=all scripts/ci/emit-manual-matrix.sh ct
 })"
 jq -e 'length == 9 and any(.platform == "rise-riscv")' <<<"$ct_default" >/dev/null
 
 bench_default="$({
   cd "$REPO_ROOT"
-  GH_RUN_ID=1 BENCH_PLATFORMS=all scripts/ci/emit-manual-matrix.sh bench
+  env -u GITHUB_OUTPUT GH_RUN_ID=1 BENCH_PLATFORMS=all scripts/ci/emit-manual-matrix.sh bench
 })"
 jq -e 'length == 9 and any(.platform == "rise-riscv")' <<<"$bench_default" >/dev/null
 
