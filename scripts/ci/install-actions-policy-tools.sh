@@ -31,10 +31,11 @@ installed_actionlint_version=${installed_actionlint_version%%$'\n'*}
   exit 1
 }
 
-installed_ripgrep_version=$("$bin_dir/rg" --version)
-installed_ripgrep_version=${installed_ripgrep_version%%$'\n'*}
-[[ "$installed_ripgrep_version" == "ripgrep $ripgrep_version" ]] || {
-  echo "ripgrep version check failed: expected $ripgrep_version, got $installed_ripgrep_version" >&2
+installed_ripgrep_report=$("$bin_dir/rg" --version)
+installed_ripgrep_report=${installed_ripgrep_report%%$'\n'*}
+read -r installed_ripgrep_name installed_ripgrep_version _ <<<"$installed_ripgrep_report"
+[[ "$installed_ripgrep_name" == ripgrep && "$installed_ripgrep_version" == "$ripgrep_version" ]] || {
+  echo "ripgrep version check failed: expected $ripgrep_version, got $installed_ripgrep_report" >&2
   exit 1
 }
 
