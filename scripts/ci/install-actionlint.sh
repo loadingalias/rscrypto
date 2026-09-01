@@ -22,8 +22,10 @@ curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
 printf '%s  %s\n' "$sha256" "$download_dir/$archive" | sha256sum --check --status
 tar -xzf "$download_dir/$archive" -C "$download_dir" actionlint
 install -m 755 "$download_dir/actionlint" "$bin_dir/actionlint"
-[[ "$("$bin_dir/actionlint" -version)" == "$version" ]] || {
-  echo "actionlint version check failed" >&2
+installed_version=$("$bin_dir/actionlint" -version)
+installed_version=${installed_version%%$'\n'*}
+[[ "$installed_version" == "$version" ]] || {
+  echo "actionlint version check failed: expected $version, got $installed_version" >&2
   exit 1
 }
 printf '%s\n' "$bin_dir" >>"${GITHUB_PATH:?GITHUB_PATH is required}"
