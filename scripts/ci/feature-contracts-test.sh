@@ -14,6 +14,8 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 # Make ordinary local runs prove that executor cases cannot consume an ambient plan.
 export RAIL_PLAN_FILE="$TMP_ROOT/ambient-plan-must-not-be-read"
 export RAIL_PLAN_READER="$TMP_ROOT/ambient-reader-must-not-be-read"
+export RAIL_PLAN_IDENTITY=ambient-plan-identity-must-not-be-read
+export RAIL_PLAN_HEAD_COMMIT=ambient-plan-head-must-not-be-read
 
 fail() {
   echo "feature-contract executor regression failure: $*" >&2
@@ -23,7 +25,11 @@ fail() {
 fake_bin="$TMP_ROOT/bin"
 command_log="$TMP_ROOT/commands.log"
 real_cargo=$(command -v cargo)
-clean_plan_env=(env -u BASH_ENV -u RAIL_PLAN_FILE -u RAIL_PLAN_READER)
+clean_plan_env=(
+  env -u BASH_ENV
+  -u RAIL_PLAN_FILE -u RAIL_PLAN_READER
+  -u RAIL_PLAN_IDENTITY -u RAIL_PLAN_HEAD_COMMIT
+)
 mkdir -p "$fake_bin"
 
 for case_entry in "${RUNTIME_TEST_CASES[@]}"; do
