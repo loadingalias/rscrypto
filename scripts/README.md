@@ -123,7 +123,7 @@ claim in [`docs/secret-lifecycle.md`](../docs/secret-lifecycle.md).
 | `lib/targets.sh`           | `scripts/ci/cross-targets.sh`                                                           |
 | `lib/target-matrix.sh`     | `scripts/lib/targets.sh`, `scripts/ci/target-contracts.sh`                              |
 | `lib/toolchain.sh`         | Toolchain setup, Miri/fuzz helpers, and cross-target check scripts                          |
-| `lib/ci-tool-integrity.sh` | `ci/nostd-wasm-suite.sh`, `just check-actions`                                             |
+| `lib/ci-tool-integrity.sh` | `ci/install-actions-policy-tools.sh`, `ci/nostd-wasm-suite.sh`, `just check-actions`       |
 
 ## Python boundary
 
@@ -200,10 +200,10 @@ Miri remains on x86-64 because it forces portable execution; deep Linux and
 macOS AArch64 rows own native runtime and backend-differential proof instead of
 duplicating interpreter and fuzz hosts.
 
-The selected Actions policy lane downloads the exact checksum-verified
-actionlint release and the exact prebuilt Just and Zizmor releases, then runs
-the same `scripts/ci/actions-policy.sh` entry point as `just check-actions`.
-None of these tools is compiled from source.
+The selected Actions policy lane downloads exact checksum-verified actionlint
+and ripgrep releases plus exact prebuilt Just and Zizmor releases, then runs the
+same `scripts/ci/actions-policy.sh` entry point as `just check-actions`. None of
+these tools is compiled from source.
 
 Qualification captures one `--all` plan, restores the complete feature
 contract, and materializes every platform catalog row as an independent retry

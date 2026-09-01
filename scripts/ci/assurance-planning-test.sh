@@ -209,8 +209,8 @@ end
 plan_steps = jobs.fetch("plan").fetch("steps")
 select_run = plan_steps.find { |step| step["id"] == "select" }.fetch("run")
 raise "CI plan does not select Actions policy setup" unless select_run.include?('echo "actions=$(required_any policy.actions)"')
-actionlint_install = plan_steps.find { |step| step["run"] == "scripts/ci/install-actionlint.sh" }
-raise "CI does not install actionlint only for Actions policy" unless actionlint_install&.fetch("if") == "steps.select.outputs.actions == 'true'"
+direct_policy_tools_install = plan_steps.find { |step| step["run"] == "scripts/ci/install-actions-policy-tools.sh" }
+raise "CI does not install direct policy tools only for Actions policy" unless direct_policy_tools_install&.fetch("if") == "steps.select.outputs.actions == 'true'"
 policy_tools_install = plan_steps.find do |step|
   step["uses"]&.start_with?("taiki-e/install-action@") && step.dig("with", "tool") == "just@1.58.0,zizmor@1.30.0"
 end

@@ -102,11 +102,11 @@ jobs:
             echo "tests=$(required_any cargo.test)"
           } >>"$GITHUB_OUTPUT"
 
-      - name: Install actionlint
+      - name: Install actionlint and ripgrep
         if: steps.select.outputs.actions == 'true'
-        run: scripts/ci/install-actionlint.sh
+        run: scripts/ci/install-actions-policy-tools.sh
 
-      - name: Install Actions policy tools
+      - name: Install Just and Zizmor
         if: steps.select.outputs.actions == 'true'
         uses: taiki-e/install-action@0758d235715de2f3551eacc980d9ae8fce9342c3 # v2.87.3
         with:

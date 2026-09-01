@@ -33,7 +33,7 @@ ci_tool_validate_record() {
   local digest=$7
 
   case "$tool" in
-    wasmtime | wasm-tools) ;;
+    actionlint | ripgrep | wasmtime | wasm-tools) ;;
     *) ci_tool_fail "unknown direct CI tool: $tool" || return ;;
   esac
   [[ "$version" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+[-+A-Za-z0-9.]*$ ]] \
@@ -103,8 +103,12 @@ ci_tool_resolve() {
 
 ci_tool_validate_manifest() {
   local tool expected_version version
-  for tool in wasmtime wasm-tools; do
-    local expected_platforms=(linux:x86_64 linux:aarch64 macos:x86_64 macos:aarch64)
+  for tool in actionlint ripgrep wasmtime wasm-tools; do
+    local expected_platforms
+    case "$tool" in
+      actionlint | ripgrep) expected_platforms=(linux:x86_64) ;;
+      wasmtime | wasm-tools) expected_platforms=(linux:x86_64 linux:aarch64 macos:x86_64 macos:aarch64) ;;
+    esac
     expected_version=""
 
     local platform
