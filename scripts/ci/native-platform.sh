@@ -40,7 +40,8 @@ require_host() {
   case "$platform" in
     linux-arm64 | macos-arm64) [[ "$(uname -m)" == aarch64 || "$(uname -m)" == arm64 ]] ;;
     macos-x64 | windows-x64) [[ "$(uname -m)" == x86_64 ]] ;;
-    windows-arm64) [[ "$(uname -m)" == aarch64 || "$(uname -m)" == arm64 ]] ;;
+    # Windows Arm64 runs an x86-64 Git Bash; the exact native Rust host above is authoritative.
+    windows-arm64) ;;
     ibm-s390x) [[ "$(uname -m)" == s390x ]] ;;
     ibm-power10) [[ "$(uname -m)" == ppc64le ]] ;;
     rise-riscv) [[ "$(uname -m)" == riscv64 ]] ;;
