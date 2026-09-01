@@ -70,17 +70,20 @@ validate_manifest() {
 
   local matrix_targets
   matrix_targets="$(jq -r '[.variants[].dimensions.target] | unique[]' "$MANIFEST" | LC_ALL=C sort)"
+  matrix_targets=${matrix_targets//$'\r'/}
 
   local projection
   for projection in "$REPO_ROOT/.config/rail.toml" "$REPO_ROOT/deny.toml"; do
     local projected_targets
     projected_targets="$(awk '
+      { sub(/\r$/, "") }
       /^targets = \[$/ { in_targets = 1; next }
       in_targets && /^\]$/ { exit }
       in_targets && match($0, /"[^"]+"/) {
         print substr($0, RSTART + 1, RLENGTH - 2)
       }
     ' "$projection" | LC_ALL=C sort)"
+    projected_targets=${projected_targets//$'\r'/}
     if [[ "$projected_targets" != "$matrix_targets" ]]; then
       echo "ERROR: target projection does not match .config/target-matrix.json: $projection" >&2
       diff -u <(printf '%s\n' "$matrix_targets") <(printf '%s\n' "$projected_targets") >&2 || true
