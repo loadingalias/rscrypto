@@ -11,6 +11,9 @@ EXECUTOR="$REPO_ROOT/scripts/check/feature-contracts.sh"
 source "$REPO_ROOT/scripts/lib/feature-profiles.sh"
 TMP_ROOT=$(mktemp -d)
 trap 'rm -rf "$TMP_ROOT"' EXIT
+# Make ordinary local runs prove that executor cases cannot consume an ambient plan.
+export RAIL_PLAN_FILE="$TMP_ROOT/ambient-plan-must-not-be-read"
+export RAIL_PLAN_READER="$TMP_ROOT/ambient-reader-must-not-be-read"
 
 fail() {
   echo "feature-contract executor regression failure: $*" >&2
@@ -20,6 +23,7 @@ fail() {
 fake_bin="$TMP_ROOT/bin"
 command_log="$TMP_ROOT/commands.log"
 real_cargo=$(command -v cargo)
+clean_plan_env=(env -u BASH_ENV -u RAIL_PLAN_FILE -u RAIL_PLAN_READER)
 mkdir -p "$fake_bin"
 
 for case_entry in "${RUNTIME_TEST_CASES[@]}"; do
@@ -72,7 +76,7 @@ chmod +x "$fake_bin/cargo"
 run_executor() {
   local output=$1
   shift
-  env -u BASH_ENV PATH="$fake_bin:$PATH" MOCK_LOG="$command_log" REAL_CARGO="$real_cargo" \
+  "${clean_plan_env[@]}" PATH="$fake_bin:$PATH" MOCK_LOG="$command_log" REAL_CARGO="$real_cargo" \
     "$EXECUTOR" "$@" >"$output" 2>&1
 }
 
@@ -128,7 +132,7 @@ raise SystemExit(2)
 EOF
 chmod +x "$fake_reader"
 selected_matrix="$TMP_ROOT/selected-matrix.json"
-env -u BASH_ENV PATH="$fake_bin:$PATH" MOCK_LOG="$command_log" REAL_CARGO="$real_cargo" \
+"${clean_plan_env[@]}" PATH="$fake_bin:$PATH" MOCK_LOG="$command_log" REAL_CARGO="$real_cargo" \
   RAIL_PLAN_FILE="$fake_plan" RAIL_PLAN_READER="$fake_reader" \
   "$EXECUTOR" matrix >"$selected_matrix"
 jq -e '
@@ -203,7 +207,7 @@ if run_executor "$TMP_ROOT/invalid-shard.out" compile 0/2; then
 fi
 
 : >"$command_log"
-if env -u BASH_ENV PATH="$fake_bin:$PATH" MOCK_LOG="$command_log" REAL_CARGO="$real_cargo" MOCK_ALIAS_DIVERGES=1 \
+if "${clean_plan_env[@]}" PATH="$fake_bin:$PATH" MOCK_LOG="$command_log" REAL_CARGO="$real_cargo" MOCK_ALIAS_DIVERGES=1 \
   "$EXECUTOR" compile >"$TMP_ROOT/divergent-alias.out" 2>&1; then
   fail "divergent compile alias was accepted"
 fi
