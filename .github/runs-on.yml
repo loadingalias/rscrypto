@@ -91,11 +91,11 @@ runners:
       - arch:aarch64
       - uarch:neoverse-v2
 
-  # General CI runners (backup/overflow only).
+  # One predictable build host replaces the old many-job CI fan-out.
   linux-x64-ci:
-    cpu: [2, 4]
-    ram: [4, 8]
-    family: ["c7i", "m7i", "c7a", "m7a", "c6i", "m6i"]
+    cpu: 8
+    ram: 16
+    family: ["c7i", "c7a"]
     image: ubuntu24-full-x64
     spot: false
     volume: 100gb:gp3
@@ -105,9 +105,9 @@ runners:
       - arch:x86-64
 
   linux-arm64-ci:
-    cpu: [2, 4]
-    ram: [4, 8]
-    family: ["c7g", "m7g", "c8g", "m8g"]
+    cpu: 8
+    ram: 16
+    family: ["c8g", "c7g"]
     image: ubuntu24-full-arm64
     spot: false
     volume: 100gb:gp3

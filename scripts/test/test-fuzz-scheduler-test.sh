@@ -182,4 +182,41 @@ if env \
   fail "scheduler accepted zero concurrency"
 fi
 
+SELECTED_CAPTURE="$TMP_ROOT/selected-capture"
+mkdir -p "$SELECTED_CAPTURE"
+env \
+  PATH="$BIN:$PATH" \
+  RSCRYPTO_FUZZ_CAPTURE="$SELECTED_CAPTURE" \
+  RSCRYPTO_FUZZ_DURATION_SECS=3 \
+  RSCRYPTO_FUZZ_TARGET_CONCURRENCY=2 \
+  RSCRYPTO_FUZZ_JOBS=1 \
+  bash "$FIXTURE/scripts/test/test-fuzz.sh" --targets alpha,delta \
+  >"$SELECTED_CAPTURE/output" 2>&1 \
+  || fail "exact target selection failed"
+
+for target in alpha delta; do
+  [[ -f "$SELECTED_CAPTURE/$target.args" ]] || fail "exact selection omitted $target"
+  grep -Fxq -- '-max_total_time=3' "$SELECTED_CAPTURE/$target.args" \
+    || fail "$target ignored the exact-selection duration"
+done
+for target in beta crash; do
+  [[ ! -e "$SELECTED_CAPTURE/$target.args" ]] || fail "exact selection ran unselected target $target"
+done
+grep -Fq 'Summary: 2 targets, 0 failed' "$SELECTED_CAPTURE/output" \
+  || fail "exact selection did not aggregate only the requested targets"
+
+if env \
+  PATH="$BIN:$PATH" \
+  RSCRYPTO_FUZZ_CAPTURE="$SELECTED_CAPTURE" \
+  bash "$FIXTURE/scripts/test/test-fuzz.sh" --targets alpha,alpha >/dev/null 2>&1; then
+  fail "exact selection accepted a duplicate target"
+fi
+
+if env \
+  PATH="$BIN:$PATH" \
+  RSCRYPTO_FUZZ_CAPTURE="$SELECTED_CAPTURE" \
+  bash "$FIXTURE/scripts/test/test-fuzz.sh" --targets absent >/dev/null 2>&1; then
+  fail "exact selection accepted an unknown target"
+fi
+
 echo "Fuzz scheduler regression tests passed"

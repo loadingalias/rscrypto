@@ -11,9 +11,7 @@ TARGET_MATRIX_JSON="$TARGETS_LIB_DIR/../../.config/target-matrix.json"
 
 # Always define arrays up front so callers using `set -u` never trip on
 # unbound vars when target matrix loading fails.
-declare -a WIN_TARGETS=()
 declare -a LINUX_TARGETS=()
-declare -a IBM_TARGETS=()
 declare -a NOSTD_TARGETS=()
 declare -a WASM_TARGETS=()
 
@@ -29,17 +27,20 @@ load_target_group() {
   local target
   while IFS= read -r target; do
     case "$group" in
-      win) WIN_TARGETS+=("$target") ;;
       linux) LINUX_TARGETS+=("$target") ;;
-      ibm) IBM_TARGETS+=("$target") ;;
       no_std) NOSTD_TARGETS+=("$target") ;;
       wasm) WASM_TARGETS+=("$target") ;;
     esac
-  done < <(jq -r --arg group "$group" '.groups[$group][]' "$TARGET_MATRIX_JSON")
+  done < <(
+    jq -r --arg group "$group" '
+      [.variants[]
+        | select(.dimensions.group == $group and .dimensions.operation != "amx")
+        | .dimensions.target]
+      | unique[]
+    ' "$TARGET_MATRIX_JSON"
+  )
 }
 
-load_target_group win
 load_target_group linux
-load_target_group ibm
 load_target_group no_std
 load_target_group wasm

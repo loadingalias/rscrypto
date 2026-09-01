@@ -87,11 +87,8 @@ if ! grep -qE "^## \\[$tag_version\\]" CHANGELOG.md; then
   exit 1
 fi
 
-cargo rail config validate --strict
-cargo rail config migrate --check
-# Exact-commit Qualification release mode owns dependency and compiler-backed
-# Cargo graph assurance. The release evidence gate verifies those named jobs
-# before this packaging-only preflight can run.
+# The release workflow runs exact-tag Qualification beside this packaging-only
+# preflight and joins both results before publication.
 
 # `cargo rail release check` is a pre-tag gate. The release run consumes
 # `.changes` files before creating the signed tag, so tag preflight

@@ -48,11 +48,17 @@ chmod +x "$fake_bin/git" "$fake_bin/curl"
 
 make_fixture() {
   local fixture=$1
-  mkdir -p "$fixture/.github/workflows" "$fixture/.github/actions"
+  mkdir -p "$fixture/.github/workflows" "$fixture/.github/actions/local"
+  cat >"$fixture/.github/actions/local/action.yaml" <<'YAML'
+runs:
+  using: composite
+  steps: []
+YAML
   cat >"$fixture/.github/workflows/scorecard.yaml" <<YAML
 jobs:
   scorecard:
     steps:
+      - uses: $/.github/actions/local
       - uses: github/codeql-action/upload-sarif@$expected_sha  # v4.37.1
 YAML
 }
@@ -73,6 +79,13 @@ expect_failure() {
 baseline="$TMP_ROOT/baseline"
 make_fixture "$baseline"
 run_checker "$baseline" >/dev/null
+
+missing_self_reference="$TMP_ROOT/missing-self-reference"
+make_fixture "$missing_self_reference"
+sed -i.bak 's#\$/.github/actions/local#\$/.github/actions/missing#' \
+  "$missing_self_reference/.github/workflows/scorecard.yaml"
+rm -f "$missing_self_reference/.github/workflows/scorecard.yaml.bak"
+expect_failure "$missing_self_reference" "self-repository action does not exist"
 
 unpinned="$TMP_ROOT/unpinned"
 make_fixture "$unpinned"

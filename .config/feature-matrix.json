@@ -1,0 +1,264 @@
+{
+  "variant_catalog_version": 2,
+  "work": "contracts.features",
+  "variants": [
+    {
+      "id": "feature-policy",
+      "dimensions": {
+        "group": "Feature policy",
+        "feature_roots": "",
+        "runtime_profiles": "",
+        "full": true
+      },
+      "external_paths": [
+        ".config/feature-matrix.json",
+        ".config/rail.toml",
+        ".config/toolchains.toml",
+        "Cargo.lock",
+        "Cargo.toml",
+        "build.rs",
+        "rust-toolchain.toml",
+        "scripts/check/feature-contracts.sh",
+        "scripts/ci/feature-contracts-test.sh",
+        "scripts/lib/feature-profiles.sh",
+        "scripts/lib/rail-plan.sh"
+      ]
+    },
+    {
+      "id": "surface",
+      "dimensions": {
+        "group": "Shared surface",
+        "feature_roots": "",
+        "runtime_profiles": "",
+        "full": true
+      },
+      "external_paths": [
+        "src/hex.rs",
+        "src/lib.rs",
+        "src/macros.rs",
+        "src/secret.rs",
+        "src/traits/**",
+        "tests/api_consistency.rs",
+        "tests/common/**",
+        "tests/common_properties.rs",
+        "tests/owned_equality.rs",
+        "tests/root_surface.rs",
+        "tests/secret_redaction.rs"
+      ]
+    },
+    {
+      "id": "platform",
+      "dimensions": {
+        "group": "Platform and dispatch",
+        "feature_roots": "",
+        "runtime_profiles": "",
+        "full": true
+      },
+      "external_paths": [
+        "src/backend/**",
+        "src/platform/**",
+        "tests/platform_*.rs",
+        "tests/portable_fallback.rs",
+        "tests/vectored_dispatch.rs"
+      ]
+    },
+    {
+      "id": "checksums",
+      "dimensions": {
+        "group": "Checksums",
+        "feature_roots": "crc16,crc24,crc32,crc64",
+        "runtime_profiles": "runtime.diagnostics",
+        "full": false
+      },
+      "external_paths": [
+        "src/checksum/**",
+        "tests/crc*.rs"
+      ]
+    },
+    {
+      "id": "crypto-hashes",
+      "dimensions": {
+        "group": "Cryptographic hashes",
+        "feature_roots": "sha2,sha3,blake2b,blake2s,blake3,ascon-hash",
+        "runtime_profiles": "runtime.diagnostics",
+        "full": false
+      },
+      "external_paths": [
+        "src/hashes/common/**",
+        "src/hashes/crypto/**",
+        "testdata/ascon/asconcxof128.txt",
+        "testdata/ascon/asconhash.blb",
+        "testdata/ascon/asconxof.blb",
+        "testdata/blake2/**",
+        "testdata/blake3/**",
+        "testdata/sha2/**",
+        "testdata/sha3/**",
+        "tests/ascon_*.rs",
+        "tests/blake*.rs",
+        "tests/cshake*.rs",
+        "tests/sha*.rs",
+        "tests/shake*.rs"
+      ]
+    },
+    {
+      "id": "fast-hashes",
+      "dimensions": {
+        "group": "Fast hashes",
+        "feature_roots": "xxh3,rapidhash",
+        "runtime_profiles": "",
+        "full": false
+      },
+      "external_paths": [
+        "src/hashes/fast/**",
+        "tests/fast_hash_allocations.rs",
+        "tests/rapidhash_*.rs",
+        "tests/xxh3_*.rs"
+      ]
+    },
+    {
+      "id": "websocket-sha1",
+      "dimensions": {
+        "group": "WebSocket SHA-1",
+        "feature_roots": "websocket-sha1",
+        "runtime_profiles": "runtime.websocket-sha1",
+        "full": false
+      },
+      "external_paths": [
+        "src/hashes/legacy/**",
+        "tests/websocket_*.rs"
+      ]
+    },
+    {
+      "id": "macs-kdfs",
+      "dimensions": {
+        "group": "MACs and KDFs",
+        "feature_roots": "hmac,hmac-sha3,kmac,hkdf,pbkdf2,poly1305",
+        "runtime_profiles": "runtime.diagnostics",
+        "full": false
+      },
+      "external_paths": [
+        "src/auth/hkdf.rs",
+        "src/auth/hmac.rs",
+        "src/auth/hmac_sha3.rs",
+        "src/auth/kmac.rs",
+        "src/auth/pbkdf2.rs",
+        "src/auth/poly1305.rs",
+        "testdata/auth/wycheproof/hkdf_*.json",
+        "testdata/auth/wycheproof/hmac_*.json",
+        "testdata/auth/wycheproof/kmac*.json",
+        "testdata/auth/wycheproof/pbkdf2_*.json",
+        "tests/hkdf_*.rs",
+        "tests/hmac_*.rs",
+        "tests/kmac_*.rs",
+        "tests/pbkdf2_*.rs",
+        "tests/poly1305_*.rs"
+      ]
+    },
+    {
+      "id": "signatures",
+      "dimensions": {
+        "group": "Signatures",
+        "feature_roots": "ecdsa-p256,ecdsa-p384,ed25519,rsa",
+        "runtime_profiles": "runtime.entropy,runtime.diagnostics",
+        "full": false
+      },
+      "external_paths": [
+        "src/auth/curve25519_edwards.rs",
+        "src/auth/ecdsa*.rs",
+        "src/auth/ed25519.rs",
+        "src/auth/ed25519/**",
+        "src/auth/rsa*.rs",
+        "testdata/auth/wycheproof/ecdsa_*.json",
+        "testdata/auth/wycheproof/ed25519_*.json",
+        "testdata/rsa/**",
+        "tests/ecdsa_*.rs",
+        "tests/ed25519_*.rs",
+        "tests/rsa_*.rs"
+      ]
+    },
+    {
+      "id": "key-exchange",
+      "dimensions": {
+        "group": "Key exchange",
+        "feature_roots": "x25519,ml-kem",
+        "runtime_profiles": "runtime.entropy,runtime.diagnostics",
+        "full": false
+      },
+      "external_paths": [
+        "src/auth/curve25519_edwards.rs",
+        "src/auth/mlkem.rs",
+        "src/auth/mlkem/**",
+        "src/auth/x25519.rs",
+        "src/auth/x25519/**",
+        "testdata/auth/wycheproof/x25519_*.json",
+        "tests/mlkem_*.rs",
+        "tests/vectors/mlkem_*.json",
+        "tests/x25519_*.rs"
+      ]
+    },
+    {
+      "id": "password-hashing",
+      "dimensions": {
+        "group": "Password hashing",
+        "feature_roots": "argon2,scrypt,phc-strings",
+        "runtime_profiles": "runtime.entropy,runtime.diagnostics,runtime.parallel",
+        "full": false
+      },
+      "external_paths": [
+        "src/auth/argon2/**",
+        "src/auth/phc.rs",
+        "src/auth/scrypt.rs",
+        "tests/argon2_*.rs",
+        "tests/phc_*.rs",
+        "tests/scrypt_*.rs"
+      ]
+    },
+    {
+      "id": "aead",
+      "dimensions": {
+        "group": "AEAD",
+        "feature_roots": "aes-gcm,aes-gcm-siv,aes-siv,chacha20poly1305,xchacha20poly1305,aegis256,ascon-aead",
+        "runtime_profiles": "runtime.entropy,runtime.diagnostics",
+        "full": false
+      },
+      "external_paths": [
+        "src/aead/**",
+        "testdata/aead/**",
+        "testdata/ascon/asconaead128.txt",
+        "tests/aead_*.rs",
+        "tests/aegis256_*.rs",
+        "tests/aes*.rs",
+        "tests/ascon_aead_*.rs",
+        "tests/ascon_final_kats.rs",
+        "tests/chacha20poly1305.rs",
+        "tests/header_protection.rs",
+        "tests/xchacha20poly1305.rs"
+      ]
+    },
+    {
+      "id": "serde",
+      "dimensions": {
+        "group": "Serialization",
+        "feature_roots": "serde,serde-secrets",
+        "runtime_profiles": "runtime.public-serde,runtime.secret-serde",
+        "full": false
+      },
+      "external_paths": [
+        "tests/serde_roundtrip.rs"
+      ]
+    },
+    {
+      "id": "parallel",
+      "dimensions": {
+        "group": "Parallel execution",
+        "feature_roots": "parallel",
+        "runtime_profiles": "runtime.parallel",
+        "full": false
+      },
+      "external_paths": [
+        "src/hashes/crypto/blake3/parallel.rs",
+        "tests/argon2_parallel.rs"
+      ]
+    }
+  ]
+}

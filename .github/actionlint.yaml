@@ -19,3 +19,13 @@ self-hosted-runner:
     - ubuntu-24.04-s390x
     - ubuntu-24.04-ppc64le
     - ubuntu-24.04-ppc64le-p10
+
+    # Donated RISE RISC-V runner
+    - ubuntu-24.04-riscv
+
+paths:
+  ".github/workflows/*.{yml,yaml}":
+    ignore:
+      # actionlint 1.7.12 predates GitHub's exact-commit self-repository syntax.
+      - 'specifying action "\$/\.github/actions/[A-Za-z0-9._/-]+" in invalid format because ref is missing'
+      - 'reusable workflow call "\$/\.github/workflows/[A-Za-z0-9._/-]+" at "uses" is not following the format'

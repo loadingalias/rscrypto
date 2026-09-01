@@ -36,6 +36,13 @@ builds them, runs available timing checks, and emits reports. A release claim
 requires the target-specific lanes required by `ct.toml`; a local host cannot
 stand in for another target.
 
+Affected pull requests run `just ct-structural` when Cargo Rail selects
+`assurance.ct`. That bounded x86-64 gate builds the optimized release harness,
+inspects its generated code, and validates strict manifest/artifact coverage.
+It is an early compiler-regression gate, not timing or formal evidence.
+Scheduled and release Qualification consume the same immutable plan and retain
+the full `ct.yaml` physical DudeCT and BINSEC matrix.
+
 ## Public decisions and exclusions
 
 Ordinary equality is permitted for public values such as nonces, encoded public

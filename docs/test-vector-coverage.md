@@ -29,7 +29,7 @@ makes no collision-resistance or authentication claim.
 
 ```sh
 just test --all
-just test-feature-matrix
+just feature-contracts runtime
 just test-fuzz
 ```
 

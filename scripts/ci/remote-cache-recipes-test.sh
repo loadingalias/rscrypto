@@ -17,10 +17,10 @@ cat >"$TMP_ROOT/bin/cargo" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$MOCK_CARGO_LOG"
-if [[ ${MOCK_FAIL_SETUP:-0} == 1 && "$*" == "rail cache setup --remote "* ]]; then
+if [[ ${MOCK_FAIL_APPLY:-0} == 1 && "$*" == "rail cache setup --remote "* ]]; then
   exit 40
 fi
-if [[ ${MOCK_FAIL_POSTCHECK:-0} == 1 && "$*" == "rail cache setup --check "* ]]; then
+if [[ ${MOCK_FAIL_PREVIEW:-0} == 1 && "$*" == "rail cache setup --check "* ]]; then
   exit 41
 fi
 SH
@@ -33,12 +33,12 @@ export CARGO_RAIL_CACHE_MODE=read-write
 
 just --justfile "$REPO_ROOT/justfile" rail-cache-setup --max-size 10GiB
 cat >"$TMP_ROOT/expected-setup.log" <<'EOF'
-rail cache setup --remote r2://rscrypto-cache.example/rscrypto/shared --remote-mode read-write --root-portability remap --max-size 10GiB
 rail cache setup --check --remote r2://rscrypto-cache.example/rscrypto/shared --remote-mode read-write --root-portability remap --max-size 10GiB
-rail cache probe
+rail cache setup --remote r2://rscrypto-cache.example/rscrypto/shared --remote-mode read-write --root-portability remap --max-size 10GiB
+rail cache probe --json
 EOF
 cmp "$TMP_ROOT/expected-setup.log" "$MOCK_CARGO_LOG" \
-  || fail "setup recipe did not preserve the canonical apply/check/probe transaction"
+  || fail "setup recipe did not preserve the canonical preview/apply/probe transaction"
 
 : >"$MOCK_CARGO_LOG"
 just --justfile "$REPO_ROOT/justfile" cache-status
@@ -46,17 +46,19 @@ just --justfile "$REPO_ROOT/justfile" cache-status
   || fail "status recipe did not request local JSON telemetry"
 
 : >"$MOCK_CARGO_LOG"
-if MOCK_FAIL_SETUP=1 just --justfile "$REPO_ROOT/justfile" rail-cache-setup --max-size 10GiB; then
-  fail "setup recipe continued after installation failed"
+if MOCK_FAIL_PREVIEW=1 just --justfile "$REPO_ROOT/justfile" rail-cache-setup --max-size 10GiB \
+  >/dev/null 2>&1; then
+  fail "setup recipe continued after preview failed"
 fi
 [[ $(wc -l <"$MOCK_CARGO_LOG" | tr -d ' ') == 1 ]] \
-  || fail "setup recipe continued after installation failed"
+  || fail "setup recipe continued after preview failed"
 
 : >"$MOCK_CARGO_LOG"
-if MOCK_FAIL_POSTCHECK=1 just --justfile "$REPO_ROOT/justfile" rail-cache-setup --max-size 10GiB; then
-  fail "setup recipe accepted a failed postcondition check"
+if MOCK_FAIL_APPLY=1 just --justfile "$REPO_ROOT/justfile" rail-cache-setup --max-size 10GiB \
+  >/dev/null 2>&1; then
+  fail "setup recipe accepted a failed installation"
 fi
 [[ $(wc -l <"$MOCK_CARGO_LOG" | tr -d ' ') == 2 ]] \
-  || fail "setup recipe probed a policy that failed its postcondition check"
+  || fail "setup recipe probed a policy that failed installation"
 
 echo "remote cache recipe tests passed"

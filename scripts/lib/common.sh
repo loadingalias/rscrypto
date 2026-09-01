@@ -63,7 +63,7 @@ show_error() {
 select_cargo_scope() {
   local work_id=$1
   local force_all=${2:-false}
-  local arg
+  local arg args_file
 
   CARGO_ARGS=()
   CARGO_SCOPE_KIND=""
@@ -76,10 +76,10 @@ select_cargo_scope() {
     return 0
   fi
 
-  # Prime in the caller shell so subsequent command/process substitutions reuse
-  # the same authenticated plan instead of replanning in isolated subshells.
-  rail_prime_plan || true
-  CARGO_SCOPE_KIND="$(rail_scope_mode "$work_id")"
+  # Prime in the caller shell so subsequent process substitutions consume the
+  # same verified plan instead of replanning in isolated subshells.
+  rail_prime_plan || return 2
+  CARGO_SCOPE_KIND="$(rail_scope_mode "$work_id")" || return 2
 
   case "$CARGO_SCOPE_KIND" in
     empty)
@@ -87,13 +87,18 @@ select_cargo_scope() {
       return 1
       ;;
     workspace)
-      CARGO_ARGS=(--workspace)
       SCOPE_DESC="workspace (Cargo Rail)"
       ;;
     packages)
-      while IFS= read -r arg; do
-        [[ -n "$arg" ]] && CARGO_ARGS+=("$arg")
-      done < <(rail_scope_cargo_args "$work_id")
+      args_file=$(mktemp "${TMPDIR:-/tmp}/rscrypto-cargo-args.XXXXXX")
+      if ! rail_scope_cargo_args "$work_id" >"$args_file"; then
+        rm -f "$args_file"
+        return 2
+      fi
+      while IFS= read -r -d '' arg; do
+        CARGO_ARGS+=("$arg")
+      done <"$args_file"
+      rm -f "$args_file"
       if [[ ${#CARGO_ARGS[@]} -eq 0 ]]; then
         echo "ERROR: Cargo Rail selected packages without Cargo arguments for $work_id" >&2
         return 2

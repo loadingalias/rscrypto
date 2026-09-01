@@ -13,7 +13,7 @@ jq -e '
   length == 1
   and .[0].platform == "rise-riscv"
   and .[0].target == "riscv64gc-unknown-linux-gnu"
-  and .[0].tools_mode == "none"
+  and .[0].formal == false
   and (.[0] | has("enable_rust_cache") | not)
   and (.[0] | has("enable_magic_cache") | not)
 ' <<<"$matrix" >/dev/null
@@ -22,18 +22,13 @@ ct_default="$({
   cd "$REPO_ROOT"
   GH_RUN_ID=1 CT_PLATFORMS=all scripts/ci/emit-manual-matrix.sh ct
 })"
-jq -e 'length == 8 and all(.platform != "rise-riscv")' <<<"$ct_default" >/dev/null
+jq -e 'length == 9 and any(.platform == "rise-riscv")' <<<"$ct_default" >/dev/null
 
 bench_default="$({
   cd "$REPO_ROOT"
   GH_RUN_ID=1 BENCH_PLATFORMS=all scripts/ci/emit-manual-matrix.sh bench
 })"
-jq -e 'length == 8 and all(.platform != "rise-riscv")' <<<"$bench_default" >/dev/null
-
-if GH_RUN_ID=1 BENCH_PLATFORMS=riscv scripts/ci/emit-manual-matrix.sh bench >/dev/null 2>&1; then
-  echo "generic benchmark matrix accepted the RISC-V lane" >&2
-  exit 1
-fi
+jq -e 'length == 9 and any(.platform == "rise-riscv")' <<<"$bench_default" >/dev/null
 
 scripts/lib/python.sh - "$REPO_ROOT/ct.toml" <<'PY'
 import pathlib

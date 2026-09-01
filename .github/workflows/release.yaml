@@ -4,259 +4,116 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing signed release tag to recover
-        required: true
-        type: string
-      s390x_ct_run:
-        description: Optional reviewed exact-tag s390x CT recovery run ID
-        required: false
-        type: string
-      x86_64_ct_run:
-        description: Optional reviewed exact-tag x86_64 CT recovery run ID
-        required: false
-        type: string
-
-env:
-  RUST_BACKTRACE: 1
-  CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: 0
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  preflight:
-    name: Preflight
+  qualification:
+    name: Qualification
+    permissions:
+      contents: read
+    uses: $/.github/workflows/qualification.yaml
+    with:
+      head_commit: ${{ github.sha }}
+      mode: release
+    secrets:
+      CARGO_RAIL_R2_READ_ACCESS_KEY_ID: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
+
+  package:
+    name: Package
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    permissions:
-      actions: read
-      contents: read
     outputs:
-      release_commit: ${{ steps.identity.outputs.release_commit }}
-      release_tag: ${{ steps.identity.outputs.release_tag }}
       crate_name: ${{ steps.preflight.outputs.crate_name }}
       crate_sha256: ${{ steps.preflight.outputs.crate_sha256 }}
       crate_version: ${{ steps.preflight.outputs.crate_version }}
       source_name: ${{ steps.preflight.outputs.source_name }}
       source_sha256: ${{ steps.preflight.outputs.source_sha256 }}
-      qualification_run_id: ${{ steps.evidence.outputs.qualification_run_id }}
-      qualification_run_url: ${{ steps.evidence.outputs.qualification_run_url }}
-      qualification_commit: ${{ steps.evidence.outputs.qualification_commit }}
-      qualification_version: ${{ steps.evidence.outputs.qualification_version }}
-      qualification_evidence_mode: ${{ steps.evidence.outputs.qualification_evidence_mode }}
-      s390x_ct_run_id: ${{ steps.s390x_ct.outputs.recovery_run_id }}
-      s390x_ct_run_url: ${{ steps.s390x_ct.outputs.recovery_run_url }}
-      x86_64_ct_run_id: ${{ steps.x86_64_ct.outputs.recovery_run_id }}
-      x86_64_ct_run_url: ${{ steps.x86_64_ct.outputs.recovery_run_url }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
-
-      - name: Resolve release identity
-        id: identity
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          REQUESTED_TAG: ${{ inputs.tag }}
-          WORKFLOW_COMMIT: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
-              echo "release recovery must run from main, not $GITHUB_REF" >&2
-              exit 1
-            fi
-            release_tag="$REQUESTED_TAG"
-          else
-            release_tag="$GITHUB_REF_NAME"
-          fi
-          if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
-            echo "release tag must be valid semver prefixed with v: $release_tag" >&2
-            exit 1
-          fi
-          if ! git rev-parse -q --verify "${release_tag}^{tag}" >/dev/null; then
-            echo "release ref must be an annotated tag: $release_tag" >&2
-            exit 1
-          fi
-          release_commit="$(git rev-parse "${release_tag}^{commit}")"
-          checkout_commit="$(git rev-parse HEAD)"
-          if [[ "$checkout_commit" != "$release_commit" ]]; then
-            echo "checked-out commit $checkout_commit does not match $release_tag commit $release_commit" >&2
-            exit 1
-          fi
-          if [[ "$EVENT_NAME" == "push" && "$WORKFLOW_COMMIT" != "$release_commit" ]]; then
-            echo "tag push commit $WORKFLOW_COMMIT does not match $release_tag commit $release_commit" >&2
-            exit 1
-          fi
-          {
-            echo "release_commit=$release_commit"
-            echo "release_tag=$release_tag"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Verify CT and RSA release evidence
-        id: evidence
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_COMMIT: ${{ steps.identity.outputs.release_commit }}
-        run: scripts/ci/release-evidence-check.sh --commit "$RELEASE_COMMIT"
-
-      - name: Checkout reviewed recovery tooling
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          ref: ${{ github.ref }}
+      - uses: $/.github/actions/rust
         with:
-          fetch-depth: 1
-          path: target/release-automation
-          persist-credentials: false
-          ref: ${{ github.sha }}
-
-      - name: Verify s390x CT recovery evidence
-        if: github.event_name == 'workflow_dispatch' && inputs.s390x_ct_run != ''
-        id: s390x_ct
-        env:
-          GH_TOKEN: ${{ github.token }}
-          S390X_CT_RUN: ${{ inputs.s390x_ct_run }}
-          WORKFLOW_COMMIT: ${{ github.sha }}
-        run: |
-          target/release-automation/scripts/ci/release-ct-recovery-check.sh \
-            --run-id "$S390X_CT_RUN" \
-            --platform-group s390x \
-            --workflow-commit "$WORKFLOW_COMMIT"
-
-      - name: Verify x86_64 CT recovery evidence
-        if: github.event_name == 'workflow_dispatch' && inputs.x86_64_ct_run != ''
-        id: x86_64_ct
-        env:
-          GH_TOKEN: ${{ github.token }}
-          WORKFLOW_COMMIT: ${{ github.sha }}
-          X86_64_CT_RUN: ${{ inputs.x86_64_ct_run }}
-        run: |
-          target/release-automation/scripts/ci/release-ct-recovery-check.sh \
-            --run-id "$X86_64_CT_RUN" \
-            --platform-group x86_64 \
-            --workflow-commit "$WORKFLOW_COMMIT"
-
-      - name: Setup
-        uses: ./.github/actions/setup
-        with:
-          tools-mode: rail
-          toolchain-components: ""
-          cache-url: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY != '' && vars.CARGO_RAIL_CACHE_URL || '' }}
-          cache-mode: read
+          cache-url: ${{ vars.CARGO_RAIL_CACHE_URL }}
+          cache-mode: ${{ vars.CARGO_RAIL_CACHE_URL != '' && secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY != '' && 'read' || 'off' }}
           cache-access-key-id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
           cache-secret-access-key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
-
-      - name: Release preflight
-        id: preflight
+      - id: preflight
+        name: Validate release package
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          RELEASE_TAG: ${{ steps.identity.outputs.release_tag }}
-        run: |
-          set -euo pipefail
-          preflight=scripts/ci/release-preflight.sh
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            preflight=target/release-automation/scripts/ci/release-preflight.sh
-          fi
-          "$preflight" --crate rscrypto --tag "$RELEASE_TAG"
-
-      - name: Remove reviewed recovery tooling
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          set -euo pipefail
-          rm -rf target/release-automation
-
-      - name: Preserve validated release inputs
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: scripts/ci/release-preflight.sh --crate rscrypto --tag "$RELEASE_TAG"
+      - name: Preserve validated package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-inputs-${{ steps.identity.outputs.release_commit }}
+          name: release-inputs-${{ github.sha }}
           path: |
             ${{ steps.preflight.outputs.crate_path }}
             ${{ steps.preflight.outputs.source_path }}
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
           compression-level: 0
 
   publish:
     name: Publish
-    needs: preflight
+    needs: [qualification, package]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment: crates-io
     permissions:
       actions: read
-      contents: write
-      id-token: write
       attestations: write
       artifact-metadata: write
+      contents: write
+      id-token: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ needs.preflight.outputs.release_tag }}
-
-      - name: Checkout reviewed recovery tooling
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          ref: ${{ github.ref }}
+      - uses: $/.github/actions/rust
         with:
-          fetch-depth: 1
-          path: target/release-automation
-          persist-credentials: false
-          ref: ${{ github.sha }}
-
-      - name: Setup
-        uses: ./.github/actions/setup
-        with:
-          tools-mode: none
-          toolchain-components: ""
-          cache-url: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY != '' && vars.CARGO_RAIL_CACHE_URL || '' }}
-          cache-mode: read
+          cache-url: ${{ vars.CARGO_RAIL_CACHE_URL }}
+          cache-mode: ${{ vars.CARGO_RAIL_CACHE_URL != '' && secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY != '' && 'read' || 'off' }}
           cache-access-key-id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
           cache-secret-access-key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
-
-      - name: Restore validated release inputs
+      - name: Restore validated package
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: release-inputs-${{ needs.preflight.outputs.release_commit }}
+          name: release-inputs-${{ github.sha }}
           path: target/package
-
-      - name: Verify validated release inputs
-        id: package
+      - id: package
+        name: Verify validated package
         env:
-          CRATE_NAME: ${{ needs.preflight.outputs.crate_name }}
-          CRATE_SHA256: ${{ needs.preflight.outputs.crate_sha256 }}
-          CRATE_VERSION: ${{ needs.preflight.outputs.crate_version }}
-          SOURCE_NAME: ${{ needs.preflight.outputs.source_name }}
-          SOURCE_SHA256: ${{ needs.preflight.outputs.source_sha256 }}
+          CRATE_NAME: ${{ needs.package.outputs.crate_name }}
+          CRATE_SHA256: ${{ needs.package.outputs.crate_sha256 }}
+          CRATE_VERSION: ${{ needs.package.outputs.crate_version }}
+          SOURCE_NAME: ${{ needs.package.outputs.source_name }}
+          SOURCE_SHA256: ${{ needs.package.outputs.source_sha256 }}
         run: |
           set -euo pipefail
           crate_path="target/package/$CRATE_NAME"
           source_path="target/package/$SOURCE_NAME"
           actual_crate_sha256="$(sha256sum "$crate_path" | awk '{print $1}')"
           actual_source_sha256="$(sha256sum "$source_path" | awk '{print $1}')"
-          if [[ "$actual_crate_sha256" != "$CRATE_SHA256" ]]; then
-            echo "validated crate sha256 changed during artifact transfer" >&2
-            echo "expected: $CRATE_SHA256" >&2
-            echo "actual:   $actual_crate_sha256" >&2
+          [[ "$actual_crate_sha256" == "$CRATE_SHA256" ]] || {
+            echo "validated crate changed during artifact transfer" >&2
             exit 1
-          fi
-          if [[ "$actual_source_sha256" != "$SOURCE_SHA256" ]]; then
-            echo "validated source archive sha256 changed during artifact transfer" >&2
-            echo "expected: $SOURCE_SHA256" >&2
-            echo "actual:   $actual_source_sha256" >&2
+          }
+          [[ "$actual_source_sha256" == "$SOURCE_SHA256" ]] || {
+            echo "validated source archive changed during artifact transfer" >&2
             exit 1
-          fi
+          }
           {
             echo "crate_path=$crate_path"
             echo "crate_name=$CRATE_NAME"
@@ -266,133 +123,31 @@ jobs:
             echo "source_name=$SOURCE_NAME"
             echo "source_sha256=$SOURCE_SHA256"
           } >> "$GITHUB_OUTPUT"
-
+      - name: Download constant-time evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: ct-raw-*
+          path: ct-release-artifacts
+      - id: ct_evidence
+        name: Package constant-time evidence
+        env:
+          CRATE_VERSION: ${{ steps.package.outputs.crate_version }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: scripts/ci/package-release-ct-evidence.sh --version "$CRATE_VERSION" --commit "$RELEASE_COMMIT"
       - name: Attest crate provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ steps.package.outputs.crate_path }}
-
       - name: Attest source archive provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ steps.package.outputs.source_path }}
-
-      - name: Capture repository controls
-        id: repository_controls
-        env:
-          CRATE_VERSION: ${{ steps.package.outputs.crate_version }}
-          EVENT_NAME: ${{ github.event_name }}
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_COMMIT: ${{ needs.preflight.outputs.release_commit }}
-        run: |
-          set -euo pipefail
-          controls=scripts/ci/repository-controls-evidence.sh
-          policy_args=()
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            controls=target/release-automation/scripts/ci/repository-controls-evidence.sh
-            policy_args=(--policy-root target/release-automation)
-          fi
-          "$controls" \
-            --commit "$RELEASE_COMMIT" \
-            --output "target/repository-controls/rscrypto-${CRATE_VERSION}-repository-controls.json" \
-            --allow-redacted-bypass \
-            "${policy_args[@]}"
-
-      - name: Attest repository controls
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: ${{ steps.repository_controls.outputs.evidence_path }}
-
-      - name: Download qualification CT evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: ct-raw-*
-          path: ct-release-artifacts
-          github-token: ${{ github.token }}
-          run-id: ${{ needs.preflight.outputs.qualification_run_id }}
-
-      - name: Remove replaced x86_64 CT evidence
-        if: needs.preflight.outputs.x86_64_ct_run_id != ''
-        run: |
-          rm -rf \
-            ct-release-artifacts/ct-raw-amd-zen4 \
-            ct-release-artifacts/ct-raw-amd-zen5 \
-            ct-release-artifacts/ct-raw-intel-icl \
-            ct-release-artifacts/ct-raw-intel-spr
-
-      - name: Download recovered x86_64 CT evidence
-        if: needs.preflight.outputs.x86_64_ct_run_id != ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: ct-raw-*
-          path: ct-release-artifacts
-          github-token: ${{ github.token }}
-          run-id: ${{ needs.preflight.outputs.x86_64_ct_run_id }}
-
-      - name: Remove replaced s390x CT evidence
-        if: needs.preflight.outputs.s390x_ct_run_id != ''
-        run: rm -rf ct-release-artifacts/ct-raw-ibm-s390x
-
-      - name: Download recovered s390x CT evidence
-        if: needs.preflight.outputs.s390x_ct_run_id != ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: ct-raw-ibm-s390x
-          path: ct-release-artifacts/ct-raw-ibm-s390x
-          github-token: ${{ github.token }}
-          run-id: ${{ needs.preflight.outputs.s390x_ct_run_id }}
-
-      - name: Package CT release evidence
-        id: ct_evidence
-        env:
-          CRATE_VERSION: ${{ steps.package.outputs.crate_version }}
-          EVIDENCE_COMMIT: ${{ needs.preflight.outputs.qualification_commit }}
-          EVIDENCE_VERSION: ${{ needs.preflight.outputs.qualification_version }}
-          RELEASE_COMMIT: ${{ needs.preflight.outputs.release_commit }}
-        run: |
-          scripts/ci/package-release-ct-evidence.sh \
-            --version "$CRATE_VERSION" \
-            --commit "$RELEASE_COMMIT" \
-            --evidence-version "$EVIDENCE_VERSION" \
-            --evidence-commit "$EVIDENCE_COMMIT"
-
-      - name: Attest CT evidence provenance
+      - name: Attest constant-time evidence provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ steps.ct_evidence.outputs.bundle_path }}
-
-      - name: Write release identity manifest
-        id: release_manifest
-        env:
-          CRATE_VERSION: ${{ steps.package.outputs.crate_version }}
-          CRATE_PATH: ${{ steps.package.outputs.crate_path }}
-          SOURCE_PATH: ${{ steps.package.outputs.source_path }}
-          CT_EVIDENCE_PATH: ${{ steps.ct_evidence.outputs.bundle_path }}
-          REPOSITORY_CONTROLS_PATH: ${{ steps.repository_controls.outputs.evidence_path }}
-          EVIDENCE_COMMIT: ${{ needs.preflight.outputs.qualification_commit }}
-          EVIDENCE_MODE: ${{ needs.preflight.outputs.qualification_evidence_mode }}
-          RELEASE_COMMIT: ${{ needs.preflight.outputs.release_commit }}
-          RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
-        run: |
-          scripts/ci/write-release-manifest.sh \
-            --version "$CRATE_VERSION" \
-            --tag "$RELEASE_TAG" \
-            --commit "$RELEASE_COMMIT" \
-            --source "$SOURCE_PATH" \
-            --crate "$CRATE_PATH" \
-            --ct-evidence "$CT_EVIDENCE_PATH" \
-            --repository-controls "$REPOSITORY_CONTROLS_PATH" \
-            --evidence-commit "$EVIDENCE_COMMIT" \
-            --evidence-mode "$EVIDENCE_MODE" \
-            --output "release-artifacts/rscrypto-${CRATE_VERSION}-release-manifest.json"
-
-      - name: Attest release identity manifest
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: ${{ steps.release_manifest.outputs.manifest_path }}
-
-      - name: Check existing crates.io package
-        id: existing
+      - id: existing
+        name: Check crates.io
         env:
           CRATE_SHA256: ${{ steps.package.outputs.crate_sha256 }}
           CRATE_VERSION: ${{ steps.package.outputs.crate_version }}
@@ -401,17 +156,53 @@ jobs:
           url="https://crates.io/api/v1/crates/rscrypto/${CRATE_VERSION}/download"
           if curl -fsSL -A "rscrypto-release/${CRATE_VERSION} (https://github.com/loadingalias/rscrypto)" "$url" -o published.crate; then
             published_sha="$(sha256sum published.crate | awk '{print $1}')"
-            if [[ "$published_sha" != "$CRATE_SHA256" ]]; then
-              echo "crates.io already has rscrypto ${CRATE_VERSION}, but sha256 differs" >&2
-              echo "expected: $CRATE_SHA256" >&2
-              echo "actual:   $published_sha" >&2
+            [[ "$published_sha" == "$CRATE_SHA256" ]] || {
+              echo "crates.io already has rscrypto ${CRATE_VERSION} with different bytes" >&2
               exit 1
-            fi
+            }
             echo "published=true" >> "$GITHUB_OUTPUT"
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
-
+      - name: Authenticate with crates.io
+        if: steps.existing.outputs.published != 'true'
+        id: auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+      - name: Publish to crates.io
+        if: steps.existing.outputs.published != 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          CRATE_PATH: ${{ steps.package.outputs.crate_path }}
+          CRATE_SHA256: ${{ steps.package.outputs.crate_sha256 }}
+        run: |
+          set -euo pipefail
+          cargo publish -p rscrypto --locked
+          published_sha="$(sha256sum "$CRATE_PATH" | awk '{print $1}')"
+          [[ "$published_sha" == "$CRATE_SHA256" ]] || {
+            echo "cargo publish produced different package bytes" >&2
+            exit 1
+          }
+      - name: Verify crates.io package
+        env:
+          CRATE_SHA256: ${{ steps.package.outputs.crate_sha256 }}
+          CRATE_VERSION: ${{ steps.package.outputs.crate_version }}
+        run: |
+          set -euo pipefail
+          url="https://crates.io/api/v1/crates/rscrypto/${CRATE_VERSION}/download"
+          for attempt in {1..18}; do
+            if curl -fsSL -A "rscrypto-release/${CRATE_VERSION} (https://github.com/loadingalias/rscrypto)" "$url" -o published.crate; then
+              published_sha="$(sha256sum published.crate | awk '{print $1}')"
+              [[ "$published_sha" == "$CRATE_SHA256" ]] || {
+                echo "crates.io returned different package bytes" >&2
+                exit 1
+              }
+              exit 0
+            fi
+            echo "crates.io package not available yet; retry $attempt/18"
+            sleep 10
+          done
+          echo "timed out waiting for rscrypto ${CRATE_VERSION} on crates.io" >&2
+          exit 1
       - name: Write release checksums
         env:
           CRATE_NAME: ${{ steps.package.outputs.crate_name }}
@@ -420,25 +211,17 @@ jobs:
           SOURCE_SHA256: ${{ steps.package.outputs.source_sha256 }}
           CT_BUNDLE_NAME: ${{ steps.ct_evidence.outputs.bundle_name }}
           CT_BUNDLE_SHA256: ${{ steps.ct_evidence.outputs.bundle_sha256 }}
-          REPOSITORY_CONTROLS_NAME: ${{ steps.repository_controls.outputs.evidence_name }}
-          REPOSITORY_CONTROLS_SHA256: ${{ steps.repository_controls.outputs.evidence_sha256 }}
-          RELEASE_MANIFEST_NAME: ${{ steps.release_manifest.outputs.manifest_name }}
-          RELEASE_MANIFEST_SHA256: ${{ steps.release_manifest.outputs.manifest_sha256 }}
         run: |
           set -euo pipefail
           {
             printf '%s  %s\n' "$CRATE_SHA256" "$CRATE_NAME"
             printf '%s  %s\n' "$SOURCE_SHA256" "$SOURCE_NAME"
             printf '%s  %s\n' "$CT_BUNDLE_SHA256" "$CT_BUNDLE_NAME"
-            printf '%s  %s\n' "$REPOSITORY_CONTROLS_SHA256" "$REPOSITORY_CONTROLS_NAME"
-            printf '%s  %s\n' "$RELEASE_MANIFEST_SHA256" "$RELEASE_MANIFEST_NAME"
           } > SHA256SUMS
-
       - name: Attest release checksums
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: SHA256SUMS
-
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -451,35 +234,15 @@ jobs:
           CT_BUNDLE_NAME: ${{ steps.ct_evidence.outputs.bundle_name }}
           CT_BUNDLE_PATH: ${{ steps.ct_evidence.outputs.bundle_path }}
           CT_BUNDLE_SHA256: ${{ steps.ct_evidence.outputs.bundle_sha256 }}
-          CT_EVIDENCE_COMMIT: ${{ needs.preflight.outputs.qualification_commit }}
-          CT_EVIDENCE_MODE: ${{ needs.preflight.outputs.qualification_evidence_mode }}
-          CT_EVIDENCE_QUALIFICATION_RUN: ${{ needs.preflight.outputs.qualification_run_url }}
-          CT_EVIDENCE_S390X_RUN: ${{ needs.preflight.outputs.s390x_ct_run_url }}
-          CT_EVIDENCE_X86_64_RUN: ${{ needs.preflight.outputs.x86_64_ct_run_url }}
-          REPOSITORY_CONTROLS_NAME: ${{ steps.repository_controls.outputs.evidence_name }}
-          REPOSITORY_CONTROLS_PATH: ${{ steps.repository_controls.outputs.evidence_path }}
-          REPOSITORY_CONTROLS_SHA256: ${{ steps.repository_controls.outputs.evidence_sha256 }}
-          RELEASE_MANIFEST_NAME: ${{ steps.release_manifest.outputs.manifest_name }}
-          RELEASE_MANIFEST_PATH: ${{ steps.release_manifest.outputs.manifest_path }}
-          RELEASE_MANIFEST_SHA256: ${{ steps.release_manifest.outputs.manifest_sha256 }}
-          RELEASE_COMMIT: ${{ needs.preflight.outputs.release_commit }}
-          RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
-          WORKFLOW_COMMIT: ${{ github.sha }}
+          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           notes_file="$(mktemp)"
-          s390x_recovery_note=""
-          x86_64_recovery_note=""
-          if [[ -n "$CT_EVIDENCE_S390X_RUN" ]]; then
-            s390x_recovery_note="s390x recovery evidence run: $CT_EVIDENCE_S390X_RUN"
-          fi
-          if [[ -n "$CT_EVIDENCE_X86_64_RUN" ]]; then
-            x86_64_recovery_note="x86_64 recovery evidence run: $CT_EVIDENCE_X86_64_RUN"
-          fi
           cat > "$notes_file" <<EOF
           Release tag: \`${RELEASE_TAG}\`
           Release commit: \`${RELEASE_COMMIT}\`
-          Workflow commit: \`${WORKFLOW_COMMIT}\`
 
           See [CHANGELOG.md](https://github.com/loadingalias/rscrypto/blob/${RELEASE_COMMIT}/CHANGELOG.md) for changes.
 
@@ -491,27 +254,7 @@ jobs:
 
           Constant-time evidence bundle: \`${CT_BUNDLE_NAME}\`
           SHA-256: \`${CT_BUNDLE_SHA256}\`
-          Evidence commit: \`${CT_EVIDENCE_COMMIT}\` (\`${CT_EVIDENCE_MODE}\`)
-          Qualification run: ${CT_EVIDENCE_QUALIFICATION_RUN}
-          ${s390x_recovery_note}
-          ${x86_64_recovery_note}
-
-          Repository controls: \`${REPOSITORY_CONTROLS_NAME}\`
-          SHA-256: \`${REPOSITORY_CONTROLS_SHA256}\`
-
-          Release identity manifest: \`${RELEASE_MANIFEST_NAME}\`
-          SHA-256: \`${RELEASE_MANIFEST_SHA256}\`
-
-          Verify provenance:
-
-          \`\`\`bash
-          gh attestation verify "${CRATE_NAME}" --repo loadingalias/rscrypto
-          gh attestation verify "${SOURCE_NAME}" --repo loadingalias/rscrypto
-          gh attestation verify "${CT_BUNDLE_NAME}" --repo loadingalias/rscrypto
-          gh attestation verify "${REPOSITORY_CONTROLS_NAME}" --repo loadingalias/rscrypto
-          gh attestation verify "${RELEASE_MANIFEST_NAME}" --repo loadingalias/rscrypto
-          gh attestation verify SHA256SUMS --repo loadingalias/rscrypto
-          \`\`\`
+          Qualification and publication run: ${RELEASE_RUN}
           EOF
 
           scripts/ci/publish-immutable-release.sh \
@@ -521,56 +264,4 @@ jobs:
             --asset "$CRATE_PATH" \
             --asset "$SOURCE_PATH" \
             --asset "$CT_BUNDLE_PATH" \
-            --asset "$REPOSITORY_CONTROLS_PATH" \
-            --asset "$RELEASE_MANIFEST_PATH" \
-            --asset SHA256SUMS \
-            --stable-asset "$CRATE_PATH" \
-            --stable-asset "$SOURCE_PATH"
-
-      - name: Authenticate with crates.io
-        if: steps.existing.outputs.published != 'true'
-        id: auth
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
-
-      - name: Publish to crates.io
-        if: steps.existing.outputs.published != 'true'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-          CRATE_PATH: ${{ steps.package.outputs.crate_path }}
-          CRATE_SHA256: ${{ steps.package.outputs.crate_sha256 }}
-        run: |
-          set -euo pipefail
-          before_sha="$(sha256sum "$CRATE_PATH" | awk '{print $1}')"
-          cargo publish -p rscrypto --locked
-          after_sha="$(sha256sum "$CRATE_PATH" | awk '{print $1}')"
-          if [[ "$before_sha" != "$after_sha" || "$after_sha" != "$CRATE_SHA256" ]]; then
-            echo "cargo publish changed the package artifact" >&2
-            echo "before:   $before_sha" >&2
-            echo "after:    $after_sha" >&2
-            echo "expected: $CRATE_SHA256" >&2
-            exit 1
-          fi
-
-      - name: Verify crates.io package
-        env:
-          CRATE_SHA256: ${{ steps.package.outputs.crate_sha256 }}
-          CRATE_VERSION: ${{ steps.package.outputs.crate_version }}
-        run: |
-          set -euo pipefail
-          url="https://crates.io/api/v1/crates/rscrypto/${CRATE_VERSION}/download"
-          for attempt in {1..18}; do
-            if curl -fsSL -A "rscrypto-release/${CRATE_VERSION} (https://github.com/loadingalias/rscrypto)" "$url" -o published.crate; then
-              published_sha="$(sha256sum published.crate | awk '{print $1}')"
-              if [[ "$published_sha" == "$CRATE_SHA256" ]]; then
-                exit 0
-              fi
-              echo "crates.io sha256 mismatch for rscrypto ${CRATE_VERSION}" >&2
-              echo "expected: $CRATE_SHA256" >&2
-              echo "actual:   $published_sha" >&2
-              exit 1
-            fi
-            echo "crates.io package not available yet; retry $attempt/18"
-            sleep 10
-          done
-          echo "timed out waiting for rscrypto ${CRATE_VERSION} on crates.io" >&2
-          exit 1
+            --asset SHA256SUMS

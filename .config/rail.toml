@@ -35,19 +35,15 @@ enabled = false
 consumer_scope = "open" # Published library: external consumers remain part of the visibility boundary.
 
 [release]
-source = "changes"
 tag_format = "{prefix}{version}"
 sign_tags = true
-require_change_files = true
-require_changelog_entries = true
-require_release_notes = true
 pre_1_breaking_bump = "minor"
 # Before 1.0, reviewed minor releases may deliberately replace unstable API
 # shapes. Re-enable compiler-backed SemVer enforcement when rscrypto adopts a
 # stable compatibility contract.
 semver_check = "off"
-change_dir = ".changes"
-remote_effects = "push" # The repository workflow, not Cargo Rail, owns forge release publication.
+remote_effects = "push" # Push the signed tag; its workflow owns the forge release.
+registry_publication = "none" # crates.io Trusted Publishing is available only inside that workflow.
 auxiliary_cargo_manifests = [
   "fuzz-packages/aead-aegis256/Cargo.toml",
   "fuzz-packages/aead-aes-siv-cmac256/Cargo.toml",
@@ -94,24 +90,201 @@ auxiliary_cargo_manifests = [
 path = "CHANGELOG.md"
 relative_to = "workspace"
 
-[plan.work.ci-policy]
+[plan.work."policy.actions"]
 scope = "repository"
 paths = [
-  ".cargo/**",
   ".config/ci-tool-archives.tsv",
-  ".config/toolchains.toml",
+  ".config/feature-matrix.json",
+  ".config/fuzz-matrix.json",
+  ".config/miri-matrix.json",
+  ".config/rail.toml",
   ".github/**",
   "justfile",
-  "rust-toolchain.toml",
-  "scripts/ci/check-ci-ownership.sh",
-  "scripts/ci/install-tools.sh",
-  "scripts/ci/materialize-rail-plan.sh",
-  "scripts/ci/run-rust-job.sh",
-  "scripts/ci/setup-toolchain.sh",
-  "scripts/lib/**",
+  "scripts/check/feature-contracts.sh",
+  "scripts/ci/**",
+  "scripts/lib/ci-tool-integrity.sh",
+  "scripts/lib/feature-profiles.sh",
+  "scripts/lib/rail-plan.sh",
+  "scripts/test/fuzz-contracts.sh",
+  "scripts/test/miri-contracts.sh",
+  "scripts/test/test-fuzz-asan.sh",
+  "scripts/test/test-fuzz-scheduler-test.sh",
+  "scripts/test/test-fuzz.sh",
+  "scripts/test/test-miri.sh",
 ]
 
-[plan.work.ci-suite]
+[plan.work."policy.repository"]
+scope = "repository"
+paths = [
+  ".config/benchmark-matrix.json",
+  ".config/nextest.toml",
+  ".config/target-matrix.json",
+  "Cargo.lock",
+  "Cargo.toml",
+  "benches/**",
+  "build.rs",
+  "ct.toml",
+  "deny.toml",
+  "examples/**",
+  "scripts/check/**",
+  "scripts/bench/benchmark_catalog.py",
+  "scripts/bench/benchmark_catalog_test.py",
+  "scripts/ct/*.py",
+  "src/**",
+  "testdata/**",
+  "tests/**",
+]
+
+[plan.work."contracts.features"]
 scope = "variants"
-cargo = ["cargo.build", "cargo.clippy", "cargo.doc", "cargo.doctest", "cargo.test"]
-variant_catalog = ".config/ci-plan-variants.json"
+paths = [
+  ".config/feature-matrix.json",
+  ".config/rail.toml",
+  ".config/toolchains.toml",
+  "Cargo.toml",
+  "build.rs",
+  "rust-toolchain.toml",
+  "scripts/check/feature-contracts.sh",
+  "scripts/ci/feature-contracts-test.sh",
+  "scripts/lib/feature-profiles.sh",
+  "scripts/lib/rail-plan.sh",
+  "src/**",
+  "testdata/**",
+  "tests/**",
+]
+variant_catalog = ".config/feature-matrix.json"
+
+[plan.work."contracts.auxiliary"]
+scope = "repository"
+paths = [
+  "Cargo.toml",
+  "fuzz/**",
+  "fuzz-packages/**",
+  "scripts/check/lint-independent-workspaces.sh",
+  "tools/**",
+]
+
+[plan.work."targets.platforms"]
+scope = "variants"
+config = ["targets"]
+paths = [
+  ".cargo/**",
+  ".config/toolchains.toml",
+  "Cargo.toml",
+  "rust-toolchain.toml",
+  "scripts/ci/target-contracts.sh",
+  "scripts/lib/target-matrix.sh",
+  "scripts/lib/targets.sh",
+  "src/backend/**",
+  "src/**/dispatch*.rs",
+  "src/**/kernel_table.rs",
+  "src/**/mod.rs",
+  "src/lib.rs",
+  "src/macros.rs",
+  "src/platform/caps.rs",
+  "src/platform/detect.rs",
+  "src/platform/detect/cache_override.rs",
+  "src/platform/detect/compile_time.rs",
+  "src/platform/detect/tests.rs",
+  "src/platform/mod.rs",
+  "src/platform/target_matrix.rs",
+]
+variant_catalog = ".config/target-matrix.json"
+
+[plan.work."assurance.miri"]
+scope = "variants"
+paths = [
+  ".config/miri-matrix.json",
+  ".config/rail.toml",
+  ".config/toolchains.toml",
+  "Cargo.toml",
+  "build.rs",
+  "rust-toolchain.toml",
+  "scripts/lib/common.sh",
+  "scripts/lib/rail-plan.sh",
+  "scripts/lib/toolchain.sh",
+  "scripts/test/miri-contracts.sh",
+  "scripts/test/test-miri.sh",
+  "src/auth/argon2/**",
+  "src/auth/mlkem.rs",
+  "src/auth/mlkem/**",
+  "src/auth/rsa.rs",
+  "src/auth/x25519.rs",
+  "src/auth/x25519/**",
+  "src/backend/**",
+  "src/checksum/**",
+  "src/lib.rs",
+  "src/miri_shadow_tests.rs",
+  "src/platform/**",
+  "tests/argon2_miri.rs",
+]
+variant_catalog = ".config/miri-matrix.json"
+
+[plan.work."assurance.fuzz"]
+scope = "variants"
+paths = [
+  ".config/fuzz-matrix.json",
+  ".config/rail.toml",
+  ".config/toolchains.toml",
+  "Cargo.toml",
+  "build.rs",
+  "rust-toolchain.toml",
+  "fuzz/**",
+  "fuzz-packages/**",
+  "scripts/lib/common.sh",
+  "scripts/lib/fuzz-packages.sh",
+  "scripts/lib/rail-plan.sh",
+  "scripts/lib/toolchain.sh",
+  "scripts/test/fuzz-contracts.sh",
+  "scripts/test/test-fuzz.sh",
+  "src/**",
+]
+variant_catalog = ".config/fuzz-matrix.json"
+
+[plan.work."assurance.ct"]
+scope = "repository"
+paths = [
+  ".config/target-matrix.json",
+  ".config/toolchains.toml",
+  "Cargo.toml",
+  "build.rs",
+  "ct.toml",
+  "rust-toolchain.toml",
+  "scripts/ct/**",
+  "src/aead/**",
+  "src/auth/**",
+  "src/backend/**",
+  "src/hashes/crypto/**",
+  "src/lib.rs",
+  "src/secret.rs",
+  "src/traits/**",
+  "tools/ct-*/**",
+]
+
+[plan.work."assurance.rsa"]
+scope = "repository"
+paths = [
+  ".config/toolchains.toml",
+  "Cargo.toml",
+  "build.rs",
+  "rust-toolchain.toml",
+  "scripts/check/rsa-asm-provenance.sh",
+  "scripts/test/test-rsa-*.sh",
+  "src/auth/asm/**",
+  "src/auth/rsa*.rs",
+  "src/lib.rs",
+  "testdata/rsa/**",
+  "tests/rsa_*.rs",
+]
+
+[plan.work."dependencies.auxiliary"]
+scope = "repository"
+paths = [
+  "fuzz/Cargo.lock",
+  "fuzz/Cargo.toml",
+  "fuzz-packages/**/Cargo.lock",
+  "fuzz-packages/**/Cargo.toml",
+  "scripts/ci/install-tools.sh",
+  "tools/**/Cargo.lock",
+  "tools/**/Cargo.toml",
+]

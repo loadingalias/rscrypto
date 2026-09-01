@@ -1,0 +1,99 @@
+name: Setup Rust
+description: Install one repository-owned Rust toolchain contract.
+
+inputs:
+  contract:
+    description: Toolchain contract (development, msrv, or nightly).
+    required: false
+    default: development
+  components:
+    description: Comma-separated rustup components required by the job.
+    required: false
+    default: ""
+  cache-url:
+    description: Cargo Rail remote cache authority; required when cache mode is enabled.
+    required: false
+    default: ""
+  cache-mode:
+    description: Cargo Rail remote cache authority (off, read, or read-write).
+    required: false
+    default: "off"
+  cache-access-key-id:
+    description: R2 S3 access key ID.
+    required: false
+    default: ""
+  cache-secret-access-key:
+    description: R2 S3 secret access key.
+    required: false
+    default: ""
+
+outputs:
+  toolchain:
+    description: Exact installed toolchain.
+    value: ${{ steps.resolve.outputs.toolchain }}
+
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      name: Resolve toolchain
+      shell: bash
+      env:
+        CONTRACT: ${{ inputs.contract }}
+      run: |
+        case "$CONTRACT" in
+          development) toolchain=$(scripts/lib/toolchain.sh) ;;
+          msrv) toolchain=$(scripts/lib/toolchain.sh --msrv) ;;
+          nightly) toolchain=$(scripts/lib/toolchain.sh --nightly) ;;
+          *) echo "unsupported Rust toolchain contract: $CONTRACT" >&2; exit 2 ;;
+        esac
+        echo "toolchain=$toolchain" >>"$GITHUB_OUTPUT"
+
+    - name: Install toolchain
+      shell: bash
+      env:
+        COMPONENTS: ${{ inputs.components }}
+        TOOLCHAIN: ${{ steps.resolve.outputs.toolchain }}
+      run: scripts/ci/setup-toolchain.sh "$TOOLCHAIN" "$COMPONENTS" "$GITHUB_ENV"
+
+    - name: Authorize compiler cache
+      if: inputs.cache-mode != 'off'
+      shell: bash
+      env:
+        ACCESS_KEY_ID: ${{ inputs.cache-access-key-id }}
+        CACHE_MODE: ${{ inputs.cache-mode }}
+        CACHE_URL: ${{ inputs.cache-url }}
+        SECRET_ACCESS_KEY: ${{ inputs.cache-secret-access-key }}
+      run: |
+        case "$CACHE_MODE" in read|read-write) ;; *) echo "invalid cache mode: $CACHE_MODE" >&2; exit 2 ;; esac
+        [[ -n "$CACHE_URL" ]] || { echo "cache URL is required" >&2; exit 2; }
+        [[ -n "$ACCESS_KEY_ID" && -n "$SECRET_ACCESS_KEY" ]] || {
+          echo "complete cache credentials are required" >&2
+          exit 2
+        }
+        [[ "$ACCESS_KEY_ID" != *$'\n'* && "$SECRET_ACCESS_KEY" != *$'\n'* ]] || {
+          echo "cache credentials contain an invalid newline" >&2
+          exit 2
+        }
+        echo "::add-mask::$ACCESS_KEY_ID"
+        echo "::add-mask::$SECRET_ACCESS_KEY"
+        {
+          printf 'AWS_ACCESS_KEY_ID=%s\n' "$ACCESS_KEY_ID"
+          printf 'AWS_SECRET_ACCESS_KEY=%s\n' "$SECRET_ACCESS_KEY"
+          printf 'AWS_SESSION_TOKEN=\n'
+          printf 'AWS_PROFILE=\n'
+          printf 'AWS_SHARED_CREDENTIALS_FILE=\n'
+          printf 'AWS_REGION=auto\n'
+          printf 'AWS_DEFAULT_REGION=auto\n'
+          printf 'AWS_EC2_METADATA_DISABLED=true\n'
+        } >>"$GITHUB_ENV"
+
+    - name: Configure compiler cache
+      if: inputs.cache-mode != 'off'
+      uses: loadingalias/cargo-rail-action/cache@78ad385a85627484a5b634cf1bc3caa1de872c6a # v8.2.0
+      with:
+        version: "0.25.0"
+        url: ${{ inputs.cache-url }}
+        mode: ${{ inputs.cache-mode }}
+        root-portability: remap
+        strict-probe: "false"

@@ -2,8 +2,12 @@
 # shellcheck disable=SC2034
 # Feature profile arrays are caller-visible outputs for sourced matrix scripts.
 
-# Complete required feature profile set. Execution may be narrower, but
-# compilation must not lose a declared feature contract.
+FEATURE_COMPILE_SHARDS=2
+FEATURE_RUNTIME_SHARDS=3
+
+# Unique resolved compile graphs. COMPILE_FEATURE_ALIASES retains named roots
+# that Cargo currently resolves identically to one canonical entry. The
+# executor verifies that equivalence before sharing the proof.
 COMPILE_FEATURE_SETS=(
   ""
   "alloc"
@@ -47,7 +51,6 @@ COMPILE_FEATURE_SETS=(
   "signatures"
   "key-exchange"
   "auth"
-  "alloc,auth"
   "std,auth"
   "std,password-hashing,getrandom"
   "aead"
@@ -67,18 +70,76 @@ COMPILE_FEATURE_SETS=(
   "std,full,portable-only"
 )
 
-# Execute the full primitive surface once for each behavior-changing boundary.
-# Leaf and umbrella composition remains compile-checked above.
-EXECUTABLE_FEATURE_SETS=(
+# canonical|alias. Keep one entry per retained named contract.
+COMPILE_FEATURE_ALIASES=(
+  "auth|alloc,auth"
+)
+
+# Runtime contracts are ordered so modulo-three sharding places one broad
+# behavior baseline in each shard. Focused scopes exercise only the capability
+# delta; `all` retains the complete library and integration suite where the
+# feature changes the whole execution surface.
+RUNTIME_PROFILE_IDS=(
+  "no-std-full"
+  "std-full"
+  "portable-fallback"
   "websocket-sha1"
+  "entropy"
+  "diagnostics"
+  "parallel"
+  "public-serde"
+  "secret-serde"
+)
+
+RUNTIME_FEATURE_SETS=(
   "full"
   "std,full"
+  "std,full,portable-only"
+  "websocket-sha1"
   "std,full,getrandom"
   "std,full,diag"
+  "std,parallel"
   "std,full,serde"
   "std,full,serde-secrets"
-  "std,parallel"
-  "std,full,portable-only"
+)
+
+# profile|target|optional libtest substring. `lib` selects unit tests and `all`
+# selects the complete library/integration suite. Focused cases cover every
+# test gated by the named capability without rerunning unrelated vectors.
+RUNTIME_TEST_CASES=(
+  "no-std-full|all|"
+  "std-full|all|"
+  "portable-fallback|all|"
+  "websocket-sha1|lib|"
+  "websocket-sha1|root_surface|websocket"
+  "websocket-sha1|websocket_accept_digest|"
+  "websocket-sha1|websocket_sha1_allocations|"
+  "entropy|lib|"
+  "entropy|aead_foundations|aead_seal_random"
+  "entropy|api_consistency|rsa_signature_signer_shape_is_profile_bound"
+  "entropy|api_consistency|aead_random_to_vec_seals_and_opens"
+  "entropy|getrandom_smoke|"
+  "entropy|phc_roundtrip|"
+  "entropy|root_surface|generated_key_end_to_end"
+  "entropy|rsa_allocations|reused_scratch_rsa_operations_do_not_allocate"
+  "entropy|rsa_nist_cavp|nist_cavp_sha2_siggen_profile_signing_matches_expected_results"
+  "entropy|rsa_public_key|private_key_outputs_verify_and_decrypt"
+  "diagnostics|lib|"
+  "diagnostics|aead_kernel_equivalence|"
+  "diagnostics|argon2_kernels|"
+  "diagnostics|chacha20poly1305|chacha20poly1305_diag"
+  "diagnostics|root_surface|root_surface_aead_exports_compile"
+  "diagnostics|root_surface|advanced_checksum_modules_compile"
+  "diagnostics|root_surface|advanced_hash_modules_compile"
+  "diagnostics|rsa_public_key|diagnostic_private_exponentiation_matches_independent_fixed_width_reference"
+  "diagnostics|rsa_public_key|public_operation_bitserial_baseline_matches_montgomery_path"
+  "diagnostics|rsa_public_key|public_operation_montgomery_candidates_match_current_path"
+  "diagnostics|rsa_public_key|pss_encoded_message_oracle_failures_are_opaque"
+  "diagnostics|rsa_public_key|pkcs1v15_encoded_message_oracle_failures_are_opaque"
+  "public-serde|serde_roundtrip|"
+  "secret-serde|serde_roundtrip|"
+  "parallel|lib|"
+  "parallel|argon2_parallel|"
 )
 
 # Portable feature contract for targets without the standard library.
