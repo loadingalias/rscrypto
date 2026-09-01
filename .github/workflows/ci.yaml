@@ -106,11 +106,11 @@ jobs:
         if: steps.select.outputs.actions == 'true'
         run: scripts/ci/install-actionlint.sh
 
-      - name: Install Zizmor
+      - name: Install Actions policy tools
         if: steps.select.outputs.actions == 'true'
         uses: taiki-e/install-action@0758d235715de2f3551eacc980d9ae8fce9342c3 # v2.87.3
         with:
-          tool: zizmor@1.30.0
+          tool: just@1.58.0,zizmor@1.30.0
           fallback: none
 
       - name: Run affected repository policy

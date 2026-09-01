@@ -211,11 +211,11 @@ select_run = plan_steps.find { |step| step["id"] == "select" }.fetch("run")
 raise "CI plan does not select Actions policy setup" unless select_run.include?('echo "actions=$(required_any policy.actions)"')
 actionlint_install = plan_steps.find { |step| step["run"] == "scripts/ci/install-actionlint.sh" }
 raise "CI does not install actionlint only for Actions policy" unless actionlint_install&.fetch("if") == "steps.select.outputs.actions == 'true'"
-zizmor_install = plan_steps.find do |step|
-  step["uses"]&.start_with?("taiki-e/install-action@") && step.dig("with", "tool") == "zizmor@1.30.0"
+policy_tools_install = plan_steps.find do |step|
+  step["uses"]&.start_with?("taiki-e/install-action@") && step.dig("with", "tool") == "just@1.58.0,zizmor@1.30.0"
 end
-raise "CI does not install pinned Zizmor only for Actions policy" unless zizmor_install&.fetch("if") == "steps.select.outputs.actions == 'true'"
-raise "CI permits Zizmor source fallback" unless zizmor_install.dig("with", "fallback") == "none"
+raise "CI does not install pinned Just and Zizmor only for Actions policy" unless policy_tools_install&.fetch("if") == "steps.select.outputs.actions == 'true'"
+raise "CI permits Actions policy tool source fallback" unless policy_tools_install.dig("with", "fallback") == "none"
 
 actions_policy = File.read(File.join(root, "scripts/ci/actions-policy.sh"))
 raise "Actions policy does not execute actionlint" unless actions_policy.match?(/^actionlint$/)

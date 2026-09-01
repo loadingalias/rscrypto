@@ -201,9 +201,9 @@ macOS AArch64 rows own native runtime and backend-differential proof instead of
 duplicating interpreter and fuzz hosts.
 
 The selected Actions policy lane downloads the exact checksum-verified
-actionlint release and the exact prebuilt Zizmor release, then runs the same
-`scripts/ci/actions-policy.sh` entry point as `just check-actions`. No CI linter
-is compiled from source.
+actionlint release and the exact prebuilt Just and Zizmor releases, then runs
+the same `scripts/ci/actions-policy.sh` entry point as `just check-actions`.
+None of these tools is compiled from source.
 
 Qualification captures one `--all` plan, restores the complete feature
 contract, and materializes every platform catalog row as an independent retry
