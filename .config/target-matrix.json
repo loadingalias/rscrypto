@@ -46,7 +46,7 @@
         "components": "clippy",
         "timeout_minutes": 30,
         "verify_plan": false,
-        "cache": true,
+        "cache": false,
         "compile": "hosted",
         "runtime": "none",
         "performance": false,
