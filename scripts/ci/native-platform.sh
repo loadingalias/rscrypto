@@ -74,6 +74,7 @@ run_native_runtime() {
   export RSCRYPTO_TEST_MODE=commit
   if [[ "$platform" == rise-riscv ]]; then
     export RSCRYPTO_CI_RESOURCE_PROFILE=constrained
+    export CARGO_PROFILE_TEST_DEBUG=0
     apply_ci_resource_profile
   elif [[ "$platform" == ibm-s390x ]]; then
     export CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-feature=+vector"
