@@ -35,6 +35,7 @@ echo ""
 
 activate_nightly_toolchain
 export CARGO_RAIL_CACHE=off
+export CARGO_PROFILE_TEST_OPT_LEVEL=0
 
 # Miri cannot execute SIMD/CLMUL kernels directly. Force CRC families onto their
 # portable tiers so the lane spends time validating real pointer/length logic

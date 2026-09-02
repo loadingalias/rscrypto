@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEPTH=${1:-deep}
+TARGET=${1:-}
+DEPTH=${2:-deep}
+if [[ -z "$TARGET" ]]; then
+  echo "usage: cross-targets.sh <target> [shallow|deep]" >&2
+  exit 2
+fi
 if [[ "$DEPTH" != "shallow" && "$DEPTH" != "deep" ]]; then
-  echo "usage: cross-targets.sh [shallow|deep]" >&2
+  echo "usage: cross-targets.sh <target> [shallow|deep]" >&2
   exit 2
 fi
 
@@ -13,36 +18,35 @@ source "$SCRIPT_DIR/../lib/common.sh"
 # shellcheck source=../lib/targets.sh
 source "$SCRIPT_DIR/../lib/targets.sh"
 
-MUSL_TARGETS=()
-for target in "${LINUX_TARGETS[@]}"; do
-  if [[ "$target" == *-musl ]]; then
-    MUSL_TARGETS+=("$target")
-  fi
-done
+target_is_in() {
+  local candidate=$1
+  shift
+  local item
+  for item in "$@"; do
+    [[ "$candidate" == "$item" ]] && return 0
+  done
+  return 1
+}
 
-if [[ ${#MUSL_TARGETS[@]} -ne 2 ]]; then
-  echo "error: expected two MUSL targets, found ${#MUSL_TARGETS[@]}" >&2
-  exit 1
-fi
-
-for target in "${MUSL_TARGETS[@]}"; do
+if target_is_in "$TARGET" "${LINUX_TARGETS[@]}" && [[ "$TARGET" == *-musl ]]; then
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "MUSL compile evidence: $target"
+  echo "MUSL compile evidence: $TARGET"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  ensure_target "$target"
-  target_dir="target/cross-check/$target"
+  ensure_target "$TARGET"
+  target_dir="target/cross-check/$TARGET"
   mkdir -p "$target_dir"
 
   CARGO_TARGET_DIR="$target_dir" \
-    cargo check --locked --target "$target" --no-default-features --lib
+    cargo check --locked --target "$TARGET" --no-default-features --lib
   CARGO_TARGET_DIR="$target_dir" \
-    cargo clippy --locked --target "$target" --lib --all-features
+    cargo clippy --locked --target "$TARGET" --lib --all-features
   CARGO_TARGET_DIR="$target_dir" \
-    cargo build --locked --target "$target" --no-default-features --features alloc --lib --release
-done
+    cargo build --locked --target "$TARGET" --no-default-features --features alloc --lib --release
+elif target_is_in "$TARGET" "${NOSTD_TARGETS[@]}" "${WASM_TARGETS[@]}"; then
+  "$SCRIPT_DIR/nostd-wasm-suite.sh" "$TARGET" "$DEPTH"
+else
+  echo "target is not a generic cross-contract row: $TARGET" >&2
+  exit 2
+fi
 
-for target in "${NOSTD_TARGETS[@]}" "${WASM_TARGETS[@]}"; do
-  "$SCRIPT_DIR/nostd-wasm-suite.sh" "$target" "$DEPTH"
-done
-
-echo "Cross-target validation passed: ${#MUSL_TARGETS[@]} MUSL + ${#NOSTD_TARGETS[@]} no_std + ${#WASM_TARGETS[@]} WASM targets"
+echo "Cross-target validation passed: $TARGET ($DEPTH)"

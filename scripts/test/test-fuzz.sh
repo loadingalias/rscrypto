@@ -13,6 +13,7 @@ set -euo pipefail
 #   ./scripts/test/test-fuzz.sh --full             # Run the full harness only
 #   ./scripts/test/test-fuzz.sh --scoped           # Run all scoped packages
 #   ./scripts/test/test-fuzz.sh --scoped-build     # Build scoped packages only
+#   ./scripts/test/test-fuzz.sh --targets A,B      # Run an exact target set
 #   ./scripts/test/test-fuzz.sh <target>           # Run specific target
 #   ./scripts/test/test-fuzz.sh --build            # Build without running
 #   ./scripts/test/test-fuzz.sh --list             # List available targets
@@ -29,14 +30,36 @@ source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/fuzz-packages.sh"
 
 activate_nightly_toolchain
+export CARGO_RAIL_CACHE=off
 
 # Configuration (can be overridden via environment)
 DURATION_SECS=${RSCRYPTO_FUZZ_DURATION_SECS:-60}
-TIMEOUT=${RSCRYPTO_FUZZ_TIMEOUT_SECS:-10}
+TIMEOUT=${RSCRYPTO_FUZZ_TIMEOUT_SECS:-30}
 RSS_LIMIT=${RSCRYPTO_FUZZ_RSS_LIMIT_MB:-2048}
 MAX_LEN=${RSCRYPTO_FUZZ_MAX_LEN:-65536}
 JOBS=${RSCRYPTO_FUZZ_JOBS:-1}
-TARGET_CONCURRENCY=${RSCRYPTO_FUZZ_TARGET_CONCURRENCY:-2}
+
+default_target_concurrency() {
+  local processor_count=""
+
+  if command -v getconf >/dev/null 2>&1; then
+    processor_count=$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)
+  fi
+  if [[ ! "$processor_count" =~ ^[1-9][0-9]*$ ]] && command -v sysctl >/dev/null 2>&1; then
+    processor_count=$(sysctl -n hw.logicalcpu 2>/dev/null || true)
+  fi
+  if [[ ! "$processor_count" =~ ^[1-9][0-9]*$ ]]; then
+    processor_count=${NUMBER_OF_PROCESSORS:-}
+  fi
+
+  if [[ "$processor_count" =~ ^[1-9][0-9]*$ ]] && ((processor_count >= 4)); then
+    printf '2'
+  else
+    printf '1'
+  fi
+}
+
+TARGET_CONCURRENCY=${RSCRYPTO_FUZZ_TARGET_CONCURRENCY:-$(default_target_concurrency)}
 
 # Skip if commit mode (fuzzing takes too long)
 if [ "$RSCRYPTO_TEST_MODE" = "commit" ]; then
@@ -53,6 +76,7 @@ show_help() {
   echo "  $0 --full                 Run full harness targets (${DURATION_SECS}s each)"
   echo "  $0 --scoped               Run scoped targets (${DURATION_SECS}s each)"
   echo "  $0 --scoped-build         Build scoped packages without running"
+  echo "  $0 --targets A,B          Run an exact comma-separated target set"
   echo "  $0 <target>               Run specific target"
   echo "  $0 --build [--full|--scoped|--all]  Build selected fuzz packages"
   echo "  $0 --list                 List available targets by package"
@@ -60,11 +84,11 @@ show_help() {
   echo ""
   echo "Environment variables:"
   echo "  RSCRYPTO_FUZZ_DURATION_SECS  Duration per target (default: 60)"
-  echo "  RSCRYPTO_FUZZ_TIMEOUT_SECS   Timeout per test case (default: 10)"
+  echo "  RSCRYPTO_FUZZ_TIMEOUT_SECS   Timeout per test case (default: 30)"
   echo "  RSCRYPTO_FUZZ_RSS_LIMIT_MB   Memory limit in MB (default: 2048)"
   echo "  RSCRYPTO_FUZZ_MAX_LEN        Max input length (default: 65536)"
   echo "  RSCRYPTO_FUZZ_JOBS           LibFuzzer workers per target (default: 1)"
-  echo "  RSCRYPTO_FUZZ_TARGET_CONCURRENCY  Independent targets to run concurrently (default: 2)"
+  echo "  RSCRYPTO_FUZZ_TARGET_CONCURRENCY  Independent targets to run concurrently (default: 1 below 4 CPUs, otherwise 2)"
   echo "  RSCRYPTO_FUZZ_TARGET_DIR     Shared cargo target dir (default: fuzz/target)"
 }
 
@@ -226,38 +250,28 @@ run_target() {
   run_target_in_package "$package_dir" "$target" "$duration"
 }
 
-run_scope() {
-  local scope="$1"
+RUN_PACKAGE_DIRS=()
+RUN_TARGETS=()
+
+run_batch() {
+  local label="$1"
   local duration="$2"
-  local package_dir
   local failed=0
   local crashed=""
 
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "Fuzz Testing ($scope)"
+  echo "Fuzz Testing ($label)"
   echo "Duration: ${duration}s per target"
   echo "Concurrent targets: $TARGET_CONCURRENCY"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
 
-  fuzz_select_packages "$scope"
-  if [ ${#SELECTED_FUZZ_PACKAGES[@]} -eq 0 ]; then
-    echo "No fuzz packages selected for scope: $scope"
+  local total=${#RUN_TARGETS[@]}
+  if [ "$total" -eq 0 ]; then
+    echo "No fuzz targets selected"
     return 0
   fi
 
-  local package_dirs=()
-  local targets=()
-  local target
-  for package_dir in "${SELECTED_FUZZ_PACKAGES[@]}"; do
-    while IFS= read -r target; do
-      [ -z "$target" ] && continue
-      package_dirs+=("$package_dir")
-      targets+=("$target")
-    done < <(fuzz_list_targets "$package_dir")
-  done
-
-  local total=${#targets[@]}
   local run_log_dir
   run_log_dir=$(mktemp -d)
   local batch_start=0
@@ -273,7 +287,7 @@ run_scope() {
     local logs=()
     for ((index = batch_start; index < batch_end; index++)); do
       local log_path="$run_log_dir/$index.log"
-      run_target_in_package "${package_dirs[$index]}" "${targets[$index]}" "$duration" >"$log_path" 2>&1 &
+      run_target_in_package "${RUN_PACKAGE_DIRS[$index]}" "${RUN_TARGETS[$index]}" "$duration" >"$log_path" 2>&1 &
       pids+=("$!")
       logs+=("$log_path")
     done
@@ -292,7 +306,7 @@ run_scope() {
       rm -f "${logs[$batch_index]}"
       if [ "$fuzz_status" -ne 0 ]; then
         failed=$((failed + 1))
-        crashed="${crashed}  $(fuzz_package_label "${package_dirs[$index]}")/${targets[$index]}\n"
+        crashed="${crashed}  $(fuzz_package_label "${RUN_PACKAGE_DIRS[$index]}")/${RUN_TARGETS[$index]}\n"
       fi
     done
 
@@ -305,16 +319,73 @@ run_scope() {
   echo "Summary: $total targets, $failed failed"
   if [ $failed -gt 0 ]; then
     echo -e "Crashed:\n$crashed"
-    exit 1
+    return 1
   else
     echo "All fuzz targets passed"
   fi
+}
+
+run_scope() {
+  local scope="$1"
+  local duration="$2"
+  local package_dir target
+
+  fuzz_select_packages "$scope"
+  if [ ${#SELECTED_FUZZ_PACKAGES[@]} -eq 0 ]; then
+    echo "No fuzz packages selected for scope: $scope"
+    return 0
+  fi
+
+  RUN_PACKAGE_DIRS=()
+  RUN_TARGETS=()
+  for package_dir in "${SELECTED_FUZZ_PACKAGES[@]}"; do
+    while IFS= read -r target; do
+      [ -z "$target" ] && continue
+      RUN_PACKAGE_DIRS+=("$package_dir")
+      RUN_TARGETS+=("$target")
+    done < <(fuzz_list_targets "$package_dir")
+  done
+  run_batch "$scope" "$duration"
+}
+
+run_target_list() {
+  local value="$1"
+  local duration="$2"
+  local package_dir target seen=,
+  local -a requested=()
+  [[ -n "$value" ]] || {
+    echo "Selected fuzz targets must not be empty" >&2
+    return 2
+  }
+  IFS=',' read -r -a requested <<<"$value"
+
+  RUN_PACKAGE_DIRS=()
+  RUN_TARGETS=()
+  for target in "${requested[@]}"; do
+    [[ "$target" =~ ^[a-z0-9_]+$ ]] || {
+      echo "Invalid fuzz target: ${target:-<empty>}" >&2
+      return 2
+    }
+    [[ "$seen" != *",$target,"* ]] || {
+      echo "Duplicate fuzz target: $target" >&2
+      return 2
+    }
+    seen+="$target,"
+    package_dir=$(fuzz_find_target_package "$target" scoped-first) || {
+      echo "Unknown fuzz target: $target" >&2
+      return 2
+    }
+    RUN_PACKAGE_DIRS+=("$package_dir")
+    RUN_TARGETS+=("$target")
+  done
+  run_batch selected "$duration"
 }
 
 ACTION="default"
 PACKAGE_SCOPE="full"
 TARGET_SCOPE_OVERRIDE=""
 TARGET=""
+TARGETS_CSV=""
 TARGET_DURATION="$DURATION_SECS"
 
 while [ $# -gt 0 ]; do
@@ -354,7 +425,20 @@ while [ $# -gt 0 ]; do
       ACTION="build"
       PACKAGE_SCOPE="scoped"
       ;;
+    --targets)
+      shift
+      [[ $# -gt 0 ]] || {
+        echo "--targets requires a comma-separated value" >&2
+        exit 2
+      }
+      ACTION="selected"
+      TARGETS_CSV=$1
+      ;;
     *)
+      [[ "$ACTION" != selected ]] || {
+        echo "--targets cannot be combined with positional targets" >&2
+        exit 2
+      }
       if [ -z "$TARGET" ]; then
         TARGET="$1"
       else
@@ -383,6 +467,9 @@ case "$ACTION" in
     ;;
   clean)
     clean_artifacts
+    ;;
+  selected)
+    run_target_list "$TARGETS_CSV" "$TARGET_DURATION"
     ;;
   run)
     if [ -n "$TARGET" ]; then

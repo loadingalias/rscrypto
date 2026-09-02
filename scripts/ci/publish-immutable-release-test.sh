@@ -82,9 +82,7 @@ publish() {
     --notes "$TMP_ROOT/notes.md" \
     --asset "$TMP_ROOT/artifacts/rscrypto-1.2.3.crate" \
     --asset "$TMP_ROOT/artifacts/rscrypto-1.2.3-source.tar.gz" \
-    --asset "$TMP_ROOT/artifacts/SHA256SUMS" \
-    --stable-asset "$TMP_ROOT/artifacts/rscrypto-1.2.3.crate" \
-    --stable-asset "$TMP_ROOT/artifacts/rscrypto-1.2.3-source.tar.gz"
+    --asset "$TMP_ROOT/artifacts/SHA256SUMS"
 }
 
 if /bin/bash "$PUBLISHER" \
@@ -92,8 +90,7 @@ if /bin/bash "$PUBLISHER" \
   --title "rscrypto v1.2.3" \
   --notes "$TMP_ROOT/notes.md" \
   --asset "$TMP_ROOT/artifacts/rscrypto-1.2.3.crate" \
-  --asset "$TMP_ROOT/artifacts/rscrypto-1.2.3.crate" \
-  --stable-asset "$TMP_ROOT/artifacts/rscrypto-1.2.3.crate" >/dev/null 2>&1; then
+  --asset "$TMP_ROOT/artifacts/rscrypto-1.2.3.crate" >/dev/null 2>&1; then
   echo "immutable release publisher accepted duplicate asset names" >&2
   exit 1
 fi
@@ -131,7 +128,7 @@ if grep -Eq 'release (create|upload|edit)' "$FAKE_GH_LOG"; then
   echo "immutable release publisher modified an existing published release" >&2
   exit 1
 fi
-[[ $(grep -c 'release verify-asset' "$FAKE_GH_LOG") -eq 2 ]]
+[[ $(grep -c 'release verify-asset' "$FAKE_GH_LOG") -eq 3 ]]
 
 : > "$FAKE_GH_LOG"
 printf '%s\n' rscrypto-1.2.3-source.tar.gz rscrypto-1.2.3.crate > "$FAKE_GH_ASSETS"
@@ -144,8 +141,8 @@ fi
 : > "$FAKE_GH_LOG"
 printf '%s\n' SHA256SUMS rscrypto-1.2.3-source.tar.gz rscrypto-1.2.3.crate > "$FAKE_GH_ASSETS"
 echo published > "$FAKE_GH_STATE"
-if FAKE_GH_BAD_ASSET=rscrypto-1.2.3.crate publish >/dev/null 2>&1; then
-  echo "immutable release publisher accepted a mismatched stable asset" >&2
+if FAKE_GH_BAD_ASSET=SHA256SUMS publish >/dev/null 2>&1; then
+  echo "immutable release publisher accepted a mismatched asset" >&2
   exit 1
 fi
 

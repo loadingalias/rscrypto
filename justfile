@@ -50,11 +50,11 @@ ssh-collect-bench target run_id destination:
 ssh-list:
     @"{{ dev_machine }}" list rscrypto
 
-# Install and verify the canonical remapped Cargo Rail cache policy.
+# Preview, install, and verify the canonical remapped Cargo Rail cache policy.
 rail-cache-setup *args="":
-    @cargo rail cache setup --remote "$CARGO_RAIL_CACHE_REMOTE" --remote-mode "$CARGO_RAIL_CACHE_MODE" --root-portability remap {{ args }}
     @cargo rail cache setup --check --remote "$CARGO_RAIL_CACHE_REMOTE" --remote-mode "$CARGO_RAIL_CACHE_MODE" --root-portability remap {{ args }}
-    @cargo rail cache probe
+    @cargo rail cache setup --remote "$CARGO_RAIL_CACHE_REMOTE" --remote-mode "$CARGO_RAIL_CACHE_MODE" --root-portability remap {{ args }}
+    @cargo rail cache probe --json
 
 # Report the effective Cargo Rail cache policy and usage.
 cache-status:
@@ -66,29 +66,37 @@ build *args="":
     cargo build --locked --workspace --all-targets --all-features {{ args }}
 
 # Checks
-# Run affected local checks; pass --all for the full workspace.
+# Explain the affected Cargo Rail work; accepts planner arguments.
+plan *args="":
+    @cargo rail plan --explain {{ args }}
+
+# Run affected policy and Cargo checks from one plan; pass --all to widen.
 check *args="":
-    @scripts/check/check.sh {{ args }}
+    @scripts/check/affected.sh {{ args }}
+
+# Run affected policy, checks, and tests from one immutable plan.
+validate *args="":
+    @scripts/check/affected.sh --with-tests {{ args }}
 
 # Run the broad local check set.
 check-all:
     @scripts/check/check-all.sh
 
-# Check every supported feature profile.
-check-feature-matrix:
-    @scripts/check/check-feature-matrix.sh
+# Check the public library contract with the Cargo.toml minimum Rust version.
+msrv:
+    @scripts/check/msrv.sh
+
+# Compile and test feature contracts; optionally select a domain and shard.
+feature-contracts *args="":
+    @scripts/check/feature-contracts.sh {{ args }}
+
+# Reproduce one catalogued CI platform proof locally or through ssh-just.
+target-contract row depth="deep":
+    @scripts/ci/target-contracts.sh run "{{ row }}" "{{ depth }}"
 
 # Rebuild and verify optimized zeroization evidence.
 check-zeroize-evidence:
     @scripts/check/zeroize-evidence.sh
-
-# Run the CI quality policy locally.
-ci-check:
-    @scripts/ci/ci-check.sh
-
-# Test every supported feature profile.
-test-feature-matrix:
-    @scripts/test/test-feature-matrix.sh
 
 # Tests
 # Test the affected scope or the full workspace with --all.
@@ -103,6 +111,10 @@ test-examples:
 test-miri *args="":
     @scripts/test/test-miri.sh {{ args }}
 
+# Reproduce one Cargo Rail Miri proof row.
+miri-contract row:
+    @scripts/test/miri-contracts.sh run "{{ row }}"
+
 # Run the RSA leakage evidence harness.
 test-rsa-leakage:
     @scripts/test/test-rsa-leakage.sh
@@ -111,15 +123,27 @@ test-rsa-leakage:
 test-rsa-macos-asm:
     @scripts/test/test-rsa-macos-asm.sh
 
+# Test x86-64 RSA assembly on a physical Linux host.
+test-rsa-linux-asm:
+    @scripts/test/test-rsa-linux-asm.sh
+
 # Run fuzz targets or replay the full fuzz set with --all.
 test-fuzz *args="":
     @scripts/test/test-fuzz.sh {{ args }}
+
+# Reproduce one Cargo Rail fuzz target group.
+fuzz-contract row:
+    @scripts/test/fuzz-contracts.sh run "{{ row }}"
 
 # Run fuzz targets with AddressSanitizer.
 test-fuzz-asan *args="":
     @scripts/test/test-fuzz-asan.sh {{ args }}
 
 # Constant-Time (CT) Validation Engine
+# Build and validate the bounded x86-64 CT structure gate used by affected CI.
+ct-structural:
+    @scripts/ct/structural.sh
+
 # Run DudeCT Timing Checks
 ct-dudect *args="":
     @scripts/ct/dudect.sh {{ args }}
@@ -173,50 +197,14 @@ perf-llvm-lines *args="":
     @command -v cargo-llvm-lines >/dev/null || { echo "error: cargo-llvm-lines is required" >&2; exit 1; }
     cargo llvm-lines --locked --release --lib --features full {{ args }}
 
-# Maintenance
-
-# Build and apply one Cargo Rail release transaction, including standalone lockfiles.
-release-prepare:
-    cargo rail release run rscrypto --bump auto --yes --pr
-
-# Verify exact-commit release evidence and create the signed release tag.
-release-tag:
-    scripts/ci/repository-controls-evidence.sh \
-      --commit "$(git rev-parse HEAD)" \
-      --output target/repository-controls.json
-    scripts/ci/release-evidence-check.sh --commit "$(git rev-parse HEAD)"
-    cargo rail release finalize rscrypto --yes --skip-publish
-
 # Update coordinated Cargo manifests
 # Update coordinated Cargo manifests, or preview with --check.
 update *args="":
     @scripts/update/update-all.sh {{ args }}
 
-# Validate GitHub Actions, local actions, and their repository policy tests.
+# Validate the CI/CD configuration and its focused adapters.
 check-actions:
-    @scripts/ci/check-action-pins.sh
-    @scripts/ci/check-action-pins-test.sh
-    @scripts/ci/tool-integrity-test.sh
-    @scripts/ci/remote-cache-recipes-test.sh
-    @scripts/ci/capture-cache-status-test.sh
-    @scripts/ci/dependabot-smoke-test.sh
-    @scripts/ci/check-ci-ownership.sh
-    @scripts/ci/check-ci-ownership-test.sh
-    @scripts/ci/run-rust-job-test.sh
-    @scripts/test/test-fuzz-scheduler-test.sh
-    @scripts/ci/emit-manual-matrix-test.sh
-    @scripts/ci/materialize-rail-plan-test.sh
-    @scripts/ci/changed-test-planning-test.sh
-    @scripts/ci/check-worktree-test.sh
-    @scripts/ci/pre-push-test.sh
-    @scripts/ci/release-evidence-check-test.sh
-    @scripts/ci/release-ct-recovery-check-test.sh
-    @scripts/ci/repository-controls-evidence-test.sh
-    @scripts/ci/release-identity-test.sh
-    @scripts/ci/publish-immutable-release-test.sh
-    @scripts/ci/release-recipes-test.sh
-    @actionlint
-    @zizmor .github/workflows .github/actions
+    @scripts/ci/actions-policy.sh
 
 # Run the pre-push policy and push the current branch.
 push:

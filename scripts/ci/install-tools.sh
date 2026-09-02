@@ -1,31 +1,19 @@
 #!/usr/bin/env bash
-# Install CI tools through authenticated package-manager boundaries.
-# Usage: install-tools.sh [standard|quality|release|rail|ci|supply-chain|bench|structural-bench|profile|ibm|fuzz|coverage|ct-linux|minimal|none]
+# Install the few specialized tools not provided by runner images or rustup.
+# Usage: install-tools.sh [supply-chain|fuzz|ct-linux|none]
 
 set -euo pipefail
 
-MODE=${1:-standard}
+MODE=${1:-}
 
-CARGO_NEXTEST_VERSION=0.9.143
 CARGO_DENY_VERSION=0.20.2
 CARGO_AUDIT_VERSION=0.22.2
-CARGO_RAIL_VERSION=0.25.0
-JUST_VERSION=1.58.0
-ZIZMOR_VERSION=1.29.0
-CARGO_CRITERION_VERSION=1.1.0
-CRITCMP_VERSION=0.1.8
-GUNGRAUN_RUNNER_VERSION=0.19.4
-CARGO_SHOW_ASM_VERSION=0.2.62
-SAMPLY_VERSION=0.13.1
-CARGO_LLVM_LINES_VERSION=0.4.48
 CARGO_FUZZ_VERSION=0.13.2
-CARGO_LLVM_COV_VERSION=0.9.0
-ACTIONLINT_VERSION=1.7.12
 
-OPAM_REPOSITORY_COMMIT=49f6d620cf20ae0168cfcbeb2c33932e06cb4b74
+OPAM_REPOSITORY_COMMIT=607f49d990590190e047dba24bd53b28e8195c7b
 OPAM_REPOSITORY_REMOTE=https://github.com/ocaml/opam-repository.git
 OCAML_COMPILER_PACKAGE=ocaml-base-compiler.5.2.1
-BINSEC_PACKAGE=binsec.0.11.1
+BINSEC_PACKAGE=binsec.0.11.3
 BINSEC_DECODER_PACKAGE=unisim_archisec.0.0.14
 BINSEC_SOLVER_PACKAGES=(bitwuzla.1.0.6 bitwuzla-cxx.0.9.0)
 
@@ -83,11 +71,7 @@ cargo_tool_version() {
   local binary=$1
   local path=$2
   local output
-  case "$binary" in
-    cargo-rail) output=$("$path" rail --version 2>&1) ;;
-    cargo-llvm-cov) output=$("$path" llvm-cov --version 2>&1) ;;
-    *) output=$("$path" --version 2>&1) ;;
-  esac
+  output=$("$path" --version 2>&1)
   extract_version "$output"
 }
 
@@ -123,47 +107,6 @@ install_cargo_tool() {
   echo "  $package: installing $version from crates.io into a fresh root"
   cargo install --registry crates-io "$package" --locked --version "=$version" --force
   verify_cargo_tool "$package" "$version" "$binary"
-}
-
-ensure_cargo_rail() {
-  local path actual
-  if [[ "${RSCRYPTO_AUTHENTICATED_CARGO_RAIL:-false}" == true ]]; then
-    path=$(command -v cargo-rail 2>/dev/null || true)
-    if [[ -n "$path" ]]; then
-      actual=$(cargo_tool_version cargo-rail "$path" 2>/dev/null || true)
-      if [[ "$actual" == "$CARGO_RAIL_VERSION" ]]; then
-        echo "  cargo-rail: reusing authenticated $actual from cargo-rail-action"
-        return 0
-      fi
-    fi
-    fail "cargo-rail-action reported an authenticated Cargo Rail install, but the exact binary is unavailable"
-  fi
-  install_cargo_tool cargo-rail "$CARGO_RAIL_VERSION"
-}
-
-install_actionlint() {
-  local binary="$RSCRYPTO_CARGO_BIN/actionlint"
-  [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* || "$(uname -s)" == CYGWIN* ]] \
-    && binary+=.exe
-
-  echo "  actionlint: installing $ACTIONLINT_VERSION through the Go checksum database"
-  GOBIN="$RSCRYPTO_CARGO_BIN" \
-    GOPATH="$RSCRYPTO_TOOL_ROOT/go" \
-    GOMODCACHE="$RSCRYPTO_TOOL_ROOT/go/pkg/mod" \
-    GOCACHE="$RSCRYPTO_TOOL_ROOT/go-build" \
-    GOPROXY=https://proxy.golang.org \
-    GOSUMDB=sum.golang.org \
-    GOPRIVATE='' \
-    GONOSUMDB='' \
-    GOINSECURE='' \
-    go install "github.com/rhysd/actionlint/cmd/actionlint@v$ACTIONLINT_VERSION"
-
-  [[ -x "$binary" ]] || fail "actionlint install did not produce an executable"
-  local actual
-  actual=$(extract_version "$("$binary" -version 2>&1)") \
-    || fail "unable to read actionlint version"
-  [[ "$actual" == "$ACTIONLINT_VERSION" ]] \
-    || fail "actionlint reports $actual, expected $ACTIONLINT_VERSION"
 }
 
 require_ubuntu_24_04() {
@@ -278,7 +221,6 @@ install_binsec() {
     "$BINSEC_PACKAGE"
   )
   opam install --switch="$OPAMSWITCH" "${required_packages[@]}" -y
-  opam reinstall --switch="$OPAMSWITCH" "$BINSEC_PACKAGE" -y
   verify_opam_repository "$repository"
   verify_opam_packages
 
@@ -307,87 +249,25 @@ install_ct_linux_packages() {
 echo "Installing CI tools (mode: $MODE)"
 
 case "$MODE" in
-  standard)
-    install_cargo_tool cargo-nextest "$CARGO_NEXTEST_VERSION"
-    install_cargo_tool cargo-deny "$CARGO_DENY_VERSION"
-    install_cargo_tool cargo-audit "$CARGO_AUDIT_VERSION"
-    ensure_cargo_rail
-    install_cargo_tool just "$JUST_VERSION"
-    ;;
-  quality)
-    install_cargo_tool just "$JUST_VERSION"
-    install_actionlint
-    install_cargo_tool zizmor "$ZIZMOR_VERSION"
-    ;;
-  release)
-    ensure_cargo_rail
-    install_cargo_tool cargo-deny "$CARGO_DENY_VERSION"
-    install_cargo_tool cargo-audit "$CARGO_AUDIT_VERSION"
-    ;;
-  rail)
-    ensure_cargo_rail
-    ;;
-  ci)
-    install_cargo_tool cargo-nextest "$CARGO_NEXTEST_VERSION"
-    install_cargo_tool just "$JUST_VERSION"
-    ;;
   supply-chain)
     install_cargo_tool cargo-deny "$CARGO_DENY_VERSION"
     install_cargo_tool cargo-audit "$CARGO_AUDIT_VERSION"
-    install_actionlint
-    install_cargo_tool zizmor "$ZIZMOR_VERSION"
-    ;;
-  ibm)
-    install_cargo_tool just "$JUST_VERSION"
-    ;;
-  bench)
-    install_cargo_tool cargo-criterion "$CARGO_CRITERION_VERSION"
-    install_cargo_tool critcmp "$CRITCMP_VERSION"
-    install_cargo_tool just "$JUST_VERSION"
-    ;;
-  structural-bench)
-    install_cargo_tool gungraun-runner "$GUNGRAUN_RUNNER_VERSION"
-    install_cargo_tool just "$JUST_VERSION"
-    ;;
-  profile)
-    install_cargo_tool cargo-show-asm "$CARGO_SHOW_ASM_VERSION" cargo-asm
-    install_cargo_tool samply "$SAMPLY_VERSION"
-    install_cargo_tool cargo-llvm-lines "$CARGO_LLVM_LINES_VERSION"
-    install_cargo_tool just "$JUST_VERSION"
     ;;
   fuzz)
     install_cargo_tool cargo-fuzz "$CARGO_FUZZ_VERSION"
-    install_cargo_tool just "$JUST_VERSION"
-    ;;
-  coverage)
-    install_cargo_tool cargo-llvm-cov "$CARGO_LLVM_COV_VERSION"
-    install_cargo_tool cargo-nextest "$CARGO_NEXTEST_VERSION"
-    install_cargo_tool just "$JUST_VERSION"
-    rustup component add llvm-tools-preview
     ;;
   ct-linux)
-    install_cargo_tool just "$JUST_VERSION"
     install_ct_linux_packages
     install_binsec
-    ;;
-  minimal)
-    install_cargo_tool just "$JUST_VERSION"
     ;;
   none)
     ;;
   *)
     echo "Unknown mode: $MODE" >&2
-    echo "Usage: install-tools.sh [standard|quality|release|rail|ci|supply-chain|bench|structural-bench|profile|ibm|fuzz|coverage|ct-linux|minimal|none]" >&2
+    echo "Usage: install-tools.sh [supply-chain|fuzz|ct-linux|none]" >&2
     exit 2
     ;;
 esac
-
-if [[ "${RSCRYPTO_REQUIRE_CARGO_RAIL:-false}" == true ]]; then
-  case "$MODE" in
-    standard | release | rail) ;;
-    *) ensure_cargo_rail ;;
-  esac
-fi
 
 if [[ -n "${GITHUB_PATH:-}" ]]; then
   echo "$RSCRYPTO_CARGO_BIN" >>"$GITHUB_PATH"

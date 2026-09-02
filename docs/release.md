@@ -1,61 +1,31 @@
 # Release process
 
-Releases are prepared by Cargo Rail, approved by the maintainer, and published
-by GitHub Actions. Do not run `cargo publish` locally.
+Cargo Rail owns release planning, mutation, exact-SHA readiness, and the signed
+tag. GitHub Actions qualifies that tag and publishes it with short-lived
+credentials. Do not run `cargo publish` locally.
 
 ## Release
 
-1. Start from clean, current `main` after all intended changes have merged.
-   Every user-visible change needs a reviewed `.changes/*.md` entry.
+After every intended change and its reviewed `.changes/*.md` entry has merged,
+start from clean, current, green `main` and run:
 
-   ```sh
-   git switch main
-   git pull --ff-only
-   git status --short
-   cargo rail change status
-   ```
+```sh
+cargo rail release run rscrypto --wait
+```
 
-2. Open the generated release pull request:
+Cargo Rail owns the complete local transaction. It infers the bump, consumes
+release intent, updates the version, changelog, root lockfile, and every
+standalone lockfile declared by `release.auxiliary_cargo_manifests`, commits the
+exact mutation, and pushes it. It then waits for the normal `Complete` check on
+that commit—and every other exact-SHA check—to succeed before creating and
+pushing the signed tag. A dirty, stale, non-default, or rejected checkout fails
+without creating the tag.
 
-   ```sh
-   just release-prepare
-   ```
-
-   Cargo Rail builds and atomically applies the release plan, consumes the
-   required change files, updates the version and changelog, and opens the
-   release pull request. The same transaction computes and binds every
-   standalone Cargo lockfile declared by
-   `release.auxiliary_cargo_manifests`. Wait for `Complete`, review the diff,
-   and merge in GitHub.
-
-3. Record the merged candidate and dispatch exact-commit evidence before
-   another change reaches `main`:
-
-   ```sh
-   git switch main
-   git pull --ff-only
-   candidate=$(git rev-parse HEAD)
-   gh workflow run weekly.yaml --ref main -f mode=release
-   ```
-
-   Confirm the Qualification run uses `$candidate`. Its single immutable Cargo
-   Rail plan starts the platform, graph, feature, CT, RSA, coverage, and RISC-V
-   evidence lanes concurrently. Scheduled or assurance-mode runs do not
-   satisfy the release gate. Any change to source, dependencies, features,
-   build inputs, or test policy creates a new candidate and requires a new
-   release-mode Qualification run.
-
-4. After Qualification passes, create the signed tag:
-
-   ```sh
-   test "$(git rev-parse HEAD)" = "$candidate"
-   just release-tag
-   ```
-
-   The tag starts the `Release` workflow. Approve its `crates-io` environment
-   only after prerequisite jobs pass. CI publishes an immutable, attested
-   GitHub Release, then publishes the same crate through crates.io Trusted
-   Publishing.
+The tag starts the `Release` workflow. That run captures one all-work Cargo
+Rail plan and runs every qualification domain concurrently while the release
+package is validated in parallel. Publication waits for both results. Approve
+the `crates-io` environment only then; CI publishes the exact validated crate
+through Trusted Publishing and cuts the immutable, attested GitHub Release.
 
 ## Release intent
 
@@ -74,8 +44,10 @@ guidance, and release notes must still be updated.
 
 - Configure crates.io Trusted Publishing for owner `loadingalias`, repository
   `rscrypto`, workflow `release.yaml`, and environment `crates-io`.
-- Enable the committed `protect-main` and `protect-release-tags` rulesets with
-  no bypass actors.
+- Restrict the `main` bypass to the maintainer identity used by Cargo Rail;
+  direct release commits require that authority. Keep force pushes, deletion,
+  and release-tag updates blocked. Cargo Rail does not push the tag until the
+  exact release commit's checks, including `Complete`, succeed.
 - Enable immutable GitHub Releases.
 - Require maintainer approval for the `crates-io` environment and disable
   administrator bypass.
@@ -85,73 +57,27 @@ The environment name must match crates.io and
 `.github/workflows/release.yaml`. After the first successful trusted release,
 enable crates.io Trusted Publishing Only Mode.
 
-## Recovery
+## Retry
 
-Rerun a transient failure on the same tag and commit:
+Rerun a transient failure on the same tag and commit. Successful qualification
+and package jobs remain authoritative; rerun only the failed jobs:
 
 ```sh
 gh run rerun RUN_ID --failed
 ```
 
-If the committed workflow needs repair, merge the smallest fix through
-`Complete`, then dispatch recovery from protected `main`:
-
-```sh
-gh workflow run release.yaml --ref main -f tag=vX.Y.Z
-```
-
-Recovery checks out and verifies the existing signed tag. It may repair a draft
-release, but it cannot replace a published immutable release or publish bytes
-that differ from an existing crates.io version.
-
-If only the s390x constant-time artifact must be regenerated, run the complete
-native lane against the existing tag, then pass that run to recovery:
-
-```sh
-gh workflow run ct.yaml --ref main \
-  -f platforms=ibm-s390x \
-  -f dudect_gate=required \
-  -f upload_raw_artifacts=true \
-  -f artifact_retention_days=90 \
-  -f release_tag=vX.Y.Z
-
-gh workflow run release.yaml --ref main \
-  -f tag=vX.Y.Z \
-  -f s390x_ct_run=RUN_ID
-```
-
-For x86_64, the recovery group is all four physical timing lanes and runs them
-in parallel:
-
-```sh
-gh workflow run ct.yaml --ref main \
-  -f platforms=amd-zen4,intel-spr,intel-icl,amd-zen5 \
-  -f dudect_gate=required \
-  -f upload_raw_artifacts=true \
-  -f artifact_retention_days=90 \
-  -f release_tag=vX.Y.Z
-
-gh workflow run release.yaml --ref main \
-  -f tag=vX.Y.Z \
-  -f x86_64_ct_run=RUN_ID
-```
-
-Run both dispatches from the same reviewed `main` commit. The CT recovery is
-limited to a complete supported platform group and checks out the immutable
-tag; the release preflight rejects any replacement run from another workflow,
-branch, repository, or commit. The normal release evidence packager then
-validates every replacement artifact's tag commit, crate version, cases,
-hashes, and target provenance before publication.
+There is no second recovery protocol. A workflow defect requires a new reviewed
+candidate, a new release-mode Qualification run, and a new signed tag. Published
+immutable release assets are never replaced.
 
 ## Verify a release
 
 ```sh
 gh release download vX.Y.Z --repo loadingalias/rscrypto \
-  -p 'rscrypto-X.Y.Z.crate' \
-  -p 'rscrypto-X.Y.Z-source.tar.gz' \
-  -p 'rscrypto-X.Y.Z-ct-evidence.tar.gz' \
-  -p 'rscrypto-X.Y.Z-release-manifest.json' \
-  -p SHA256SUMS
+   -p 'rscrypto-X.Y.Z.crate' \
+   -p 'rscrypto-X.Y.Z-source.tar.gz' \
+   -p 'rscrypto-X.Y.Z-ct-evidence.tar.gz' \
+   -p SHA256SUMS
 sha256sum --check SHA256SUMS
 gh release verify vX.Y.Z --repo loadingalias/rscrypto
 gh attestation verify rscrypto-X.Y.Z.crate --repo loadingalias/rscrypto

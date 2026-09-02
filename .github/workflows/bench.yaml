@@ -1,86 +1,88 @@
-name: Bench
+name: Benchmarks
 
 on:
   workflow_dispatch:
     inputs:
       targets:
-        description: "PRIMITIVES/SELECTORS (Empty or all = all public primitive benches; aead_diag = diagnostic AEAD rows)"
+        description: Primitive or benchmark selectors (comma separated, or all).
         required: false
         type: string
-        default: "all"
+        default: all
       platforms:
-        description: "RUNNERS (Empty = All). Options: zen4, spr, icl, zen5, g3, g4, s390x, power10."
+        description: Platform aliases (comma separated, or all).
         required: false
         type: string
-        default: "all"
+        default: all
       filter:
-        description: "FILTERS (Optional)"
+        description: Optional benchmark filter.
         required: false
         type: string
       quick:
-        description: "QUICK (Optional)"
+        description: Use the short measurement profile.
         required: false
         type: boolean
         default: true
 
-env:
-  RUST_BACKTRACE: 1
-  CARGO_TERM_COLOR: always
-  RSCRYPTO_BENCH_MODE: ci
-  CARGO_INCREMENTAL: 0
-
 permissions:
   contents: read
 
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
 jobs:
   plan:
+    name: Plan
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
-      has_targets: ${{ steps.plan.outputs.has_targets }}
-      matrix: ${{ steps.plan.outputs.matrix }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 1
           persist-credentials: false
-
-      - name: Build Lane Matrix
-        id: plan
-        shell: bash
+      - id: matrix
+        name: Select platforms
         env:
-          GH_RUN_ID: ${{ github.run_id }}
           BENCH_PLATFORMS: ${{ inputs.platforms }}
+          GH_RUN_ID: ${{ github.run_id }}
         run: scripts/ci/emit-manual-matrix.sh bench
 
-  bench:
-    name: Benchmark (${{ matrix.display_name }})
+  benchmark:
+    name: ${{ matrix.display_name }}
     needs: plan
-    if: ${{ needs.plan.outputs.has_targets == 'true' }}
-    permissions:
-      contents: read
-    concurrency:
-      # Multiple bench runs can overlap across lanes; serialize per lane.
-      group: bench-${{ github.ref }}-${{ matrix.platform }}
-      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.matrix) }}
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: ${{ matrix.runner }}
-      timeout_minutes: ${{ matrix.timeout_minutes }}
-      tools_mode: ${{ matrix.tools_mode }}
-      toolchain_contract: ${{ (matrix.platform == 'ibm-s390x' || matrix.platform == 'ibm-power10') && 'nightly' || 'development' }}
-      toolchain_components: ${{ matrix.toolchain_components }}
-      operation: benchmark
-      platform: ${{ matrix.platform }}
-      bench_targets: ${{ inputs.targets || 'all' }}
-      bench_filter: ${{ inputs.filter }}
-      bench_quick: ${{ inputs.quick }}
-      artifact_name: benchmark-${{ matrix.artifact_suffix }}
-      artifact_path: target/benchmark_results/
-    secrets:
-      cache_access_key_id: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
-      cache_secret_access_key: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout_minutes }}
+    concurrency:
+      group: benchmark-${{ github.ref }}-${{ matrix.platform }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/rust
+        with:
+          contract: ${{ (matrix.platform == 'ibm-s390x' || matrix.platform == 'ibm-power10' || matrix.platform == 'rise-riscv') && 'nightly' || 'development' }}
+      - name: Measure
+        env:
+          BENCH_FILTER: ${{ inputs.filter }}
+          BENCH_ONLY: ${{ inputs.targets }}
+          BENCH_OUTPUT_DIR: target/benchmark_results
+          BENCH_PLATFORM: ${{ matrix.platform }}
+          BENCH_QUICK: ${{ inputs.quick }}
+          BENCH_RESULTS_DIR: target/benchmark_results
+          RSCRYPTO_BENCH_MODE: ci
+        run: scripts/ci/run-bench.sh
+      - name: Upload results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: benchmark-${{ matrix.artifact_suffix }}
+          path: target/benchmark_results/
+          retention-days: 30
+          if-no-files-found: error

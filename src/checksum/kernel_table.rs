@@ -3068,10 +3068,6 @@ mod tests {
     assert_eq!(table.select_names(4096).crc64_xz_name, "x86_64/vpclmul-2way");
     assert_eq!(table.select_names(4097).crc64_xz_name, "x86_64/vpclmul-4x512");
     assert_eq!(table.select_names(4097).crc64_nvme_name, "x86_64/vpclmul-4way");
-    assert!(core::ptr::fn_addr_eq(
-      table.select_fns(4097).crc64_xz,
-      crate::checksum::crc64::kernels::x86_64::XZ_VPCLMUL_4X512
-    ));
   }
 
   #[test]

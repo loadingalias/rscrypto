@@ -8,67 +8,60 @@ the recipes reported by `just --list`.
 
 | Script                                    | Callers                                                                                                                           |
 | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `check/check.sh`                          | `just check`                                                                                                                      |
+| `check/affected.sh`                       | `just check`, `just validate`; creates one saved plan for the selected local composition                                         |
+| `check/policy.sh`                         | `check/affected.sh`, `ci.yaml`, `qualification.yaml`                                                                              |
+| `check/check.sh`                          | `check/affected.sh`, `check/check-all.sh`, `ci.yaml`, `qualification.yaml`                                                        |
 | `check/check-all.sh`                      | `just check-all`                                                                                                                  |
-| `check/check-feature-matrix.sh`           | `just check-feature-matrix`, `scripts/check/check.sh`, `ci/run-rust-job.sh`                                                       |
-| `check/asm-ledger.sh`                     | `scripts/check/check.sh`                                                                                                          |
+| `check/msrv.sh`                           | `just msrv`, `scripts/check/check-all.sh`, `ci.yaml`, `qualification.yaml`                                                        |
+| `check/feature-contracts.sh`              | `just feature-contracts`, `scripts/check/affected.sh`, `scripts/check/check-all.sh`, `ci.yaml`, `qualification.yaml`                |
+| `check/asm-ledger.sh`                     | `scripts/check/policy.sh`                                                                                                         |
 | `check/rsa-asm-provenance.sh`             | `check/asm-ledger.sh`; direct `--archive PATH` reconstructs the three pinned RSA snapshots offline                                |
 | `check/signature-asm-provenance.py`       | `check/asm-ledger.sh`; direct `--upstream-repo PATH [--clang PATH]` reproduces the 36 pinned ECDSA, Ed25519, and X25519 snapshots |
-| `check/hash-vector-provenance.py`         | `scripts/check/check.sh`; optional exact upstream checkouts reproduce hash-vector corpora                                         |
-| `check/auth-vector-provenance.py`         | `scripts/check/check.sh`; optional `--upstream-root PATH` reproduces the pinned C2SP/Wycheproof corpus                            |
-| `check/feature-boundaries.py`             | `scripts/check/check.sh`                                                                                                          |
-| `check/zeroize-evidence.sh`               | `just check-zeroize-evidence`, `scripts/check/check-all.sh`                                                                       |
-| `ci/ci-check.sh`                          | `just ci-check`, `ci/run-rust-job.sh`                                                                                             |
-| `ci/check-locked-cargo.sh`                | `ci/ci-check.sh`                                                                                                                  |
-| `ci/check-locked-cargo-test.sh`           | `ci/ci-check.sh`                                                                                                                  |
-| `ci/capture-cache-status.sh`              | `_rust-job.yaml` cache telemetry                                                                                                  |
-| `ci/capture-cache-status-test.sh`         | `just check-actions`                                                                                                              |
-| `ci/native-check.sh`                      | `ci/run-rust-job.sh`                                                                                                              |
-| `test/test.sh`                            | `just test` (`--all` for the full workspace), `ci/run-rust-job.sh`                                                                |
-| `test/test-examples.sh`                   | `just test-examples`; executed in CI through `ci/run-rust-job.sh`                                                                 |
-| `test/test-feature-matrix.sh`             | `just test-feature-matrix`, `scripts/check/check.sh`, `ci/run-rust-job.sh`                                                        |
-| `test/test-miri.sh`                       | `just test-miri`, `ci/run-rust-job.sh`                                                                                            |
-| `test/test-fuzz.sh`                       | `just test-fuzz`, `ci/run-rust-job.sh`                                                                                            |
-| `test/test-fuzz-scheduler-test.sh`        | `just check-actions`                                                                                                              |
-| `test/test-fuzz-asan.sh`                  | `just test-fuzz-asan`, `ci/run-rust-job.sh`                                                                                       |
-| `test/test-rsa-leakage.sh`                | `just test-rsa-leakage`, `ci/run-rust-job.sh`                                                                                     |
+| `check/hash-vector-provenance.py`         | `scripts/check/policy.sh`; optional exact upstream checkouts reproduce hash-vector corpora                                        |
+| `check/auth-vector-provenance.py`         | `scripts/check/policy.sh`; optional `--upstream-root PATH` reproduces the pinned C2SP/Wycheproof corpus                           |
+| `check/feature-boundaries.py`             | `scripts/check/policy.sh`                                                                                                         |
+| `check/zeroize-evidence.sh`               | `just check-zeroize-evidence`, `scripts/check/check-all.sh`, `qualification.yaml`                                                 |
+| `ci/check-locked-cargo.sh`                | `scripts/ci/actions-policy.sh`                                                                                                    |
+| `ci/check-locked-cargo-test.sh`           | `scripts/ci/actions-policy.sh`                                                                                                    |
+| `ci/target-contracts.sh`                  | `just target-contract`, `scripts/check/check-all.sh`, `ci.yaml`, `qualification.yaml`                                             |
+| `test/test.sh`                            | `just test` (`--all` for the full workspace), `ci.yaml`, `qualification.yaml`                                                     |
+| `test/test-examples.sh`                   | `just test-examples`, `scripts/check/affected.sh`, `scripts/check/check-all.sh`, `ci.yaml`, `qualification.yaml`                   |
+| `test/miri-contracts.sh`                  | `just miri-contract`, `scripts/check/affected.sh`, `ci.yaml`, `qualification.yaml`                                                |
+| `test/test-miri.sh`                       | `just test-miri`, `test/miri-contracts.sh`                                                                                        |
+| `test/fuzz-contracts.sh`                  | `just fuzz-contract`, `scripts/check/affected.sh`, `ci.yaml`                                                                      |
+| `test/test-fuzz.sh`                       | `just test-fuzz`, `test/fuzz-contracts.sh`, `qualification.yaml`                                                                  |
+| `test/test-fuzz-scheduler-test.sh`        | `just check-actions`; proves bounded concurrency, exact selection, corpus retention, and aggregated failure                       |
+| `test/test-fuzz-asan.sh`                  | `just test-fuzz-asan`, `qualification.yaml`                                                                                       |
+| `test/test-rsa-leakage.sh`                | `just test-rsa-leakage`, `qualification.yaml`                                                                                     |
 | `test/test-rsa-macos-asm.sh`              | `just test-rsa-macos-asm` on a physical local Apple Silicon Mac                                                                   |
-| `test/test-coverage.sh`                   | `just test-coverage` (`--nextest` or `--fuzz` for one source), `weekly.yaml`                                                       |
+| `test/test-rsa-linux-asm.sh`              | `just test-rsa-linux-asm`, `qualification.yaml` on physical Linux x86-64                                                          |
+| `test/test-coverage.sh`                   | `just test-coverage` (`--nextest` or `--fuzz` for one source), `qualification.yaml`                                               |
 | `bench/bench.sh`                          | `just bench` (`--quick` for reduced measurement time)                                                                             |
 | `bench/profile.sh`                        | `just profile`                                                                                                                    |
-| `ci/check-action-pins.sh`                 | `just check-actions`, `ci/ci-check.sh`, `ci/dependabot-smoke.sh`                                                                  |
-| `ci/check-action-pins-test.sh`            | `just check-actions`, `ci/dependabot-smoke.sh`                                                                                    |
-| `ci/tool-integrity-test.sh`               | `just check-actions`                                                                                                              |
+| `ci/check-action-pins.sh`                 | `just check-actions`, `ci.yaml`                                                                                                   |
+| `ci/actions-policy.sh`                    | `scripts/check/policy.sh`                                                                                                         |
+| `ci/check-action-pins-test.sh`            | `just check-actions`                                                                                                              |
 | `ci/remote-cache-recipes-test.sh`         | `just check-actions`                                                                                                              |
-| `ci/dependabot-smoke-test.sh`             | `just check-actions`                                                                                                              |
-| `ci/check-ci-ownership.sh`                | `just check-actions`, `ci/check-ci-ownership-test.sh`                                                                             |
-| `ci/check-ci-ownership-test.sh`           | `just check-actions`                                                                                                              |
-| `ci/run-rust-job-test.sh`                 | `just check-actions`                                                                                                              |
+| `ci/report-cache.sh`                      | Cache-enabled jobs in `ci.yaml` and `qualification.yaml`                                                                          |
+| `ci/feature-contracts-test.sh`            | `just check-actions`; proves unique compile graphs, focused runtime scopes, and disjoint deterministic shards                      |
+| `ci/feature-planning-test.sh`             | `just check-actions`; proves exact algorithm groups, full feature-policy selection, and fail-closed unattributed inputs            |
+| `ci/activate-plan.sh`                     | `.github/actions/plan/action.yaml`; validates and exports one transported plan                                                    |
+| `ci/require-work.sh`                      | Direct CI/Qualification executors with repository-scoped work                                                                    |
 | `ci/emit-manual-matrix-test.sh`           | `just check-actions`                                                                                                              |
-| `ci/materialize-rail-plan.sh`             | `ci.yaml`, `weekly.yaml`, and its regression test                                                                                 |
-| `ci/materialize-rail-plan-test.sh`        | `just check-actions`                                                                                                              |
 | `ci/changed-test-planning-test.sh`        | `just check-actions`                                                                                                              |
 | `ci/check-worktree-test.sh`               | `just check-actions`                                                                                                              |
 | `ci/pre-push-test.sh`                     | `just check-actions`                                                                                                              |
-| `ci/release-evidence-check.sh`            | `just release-tag`, `release.yaml`, `ci/release-evidence-check-test.sh`                                                           |
-| `ci/release-evidence-check-test.sh`       | `just check-actions`                                                                                                              |
-| `ci/release-ct-recovery-check.sh`         | `release.yaml`, `ci/release-ct-recovery-check-test.sh`                                                                            |
-| `ci/release-ct-recovery-check-test.sh`    | `just check-actions`                                                                                                              |
-| `ci/repository-controls-evidence.sh`      | `just release-tag`, `release.yaml`, `ci/repository-controls-evidence-test.sh`                                                     |
-| `ci/repository-controls-evidence-test.sh` | `just check-actions`                                                                                                              |
 | `ci/package-release-source.sh`            | `release.yaml`, `ci/release-identity-test.sh`                                                                                     |
 | `ci/package-release-ct-evidence.sh`       | `release.yaml`                                                                                                                    |
 | `ci/release-package-guard.sh`             | `ci/release-preflight.sh`                                                                                                         |
 | `ci/release-preflight.sh`                 | `release.yaml`                                                                                                                    |
-| `ci/write-release-manifest.sh`            | `release.yaml`, `ci/release-identity-test.sh`                                                                                     |
-| `ci/release-identity-test.sh`             | `just check-actions`                                                                                                              |
+| `ci/release-identity-test.sh`             | `just check-actions`; verifies deterministic source packaging and immutable tag identity                                          |
 | `ci/publish-immutable-release.sh`         | `release.yaml`, `ci/publish-immutable-release-test.sh`                                                                            |
 | `ci/publish-immutable-release-test.sh`    | `just check-actions`                                                                                                              |
-| `ci/release-recipes-test.sh`              | `just check-actions`                                                                                                              |
 | `ci/pre-push.sh`                          | `just push`                                                                                                                       |
 | `ct/artifacts.sh`                         | `just ct-artifacts`, `scripts/ct/full.py`                                                                                         |
 | `ct/dudect.sh`                            | `just ct-dudect`, `scripts/ct/full.py`                                                                                            |
-| `ct/dudect_report_test.py`                | `scripts/check/check.sh`                                                                                                          |
+| `ct/dudect_report_test.py`                | `scripts/check/policy.sh`                                                                                                         |
 | `lib/python.sh`                           | Resolves Python 3.11+ for Cargo Rail readers and Python-backed CT, check, benchmark, and release tooling                          |
 | `update/update-all.sh`                    | `just update` (`--check` for a non-mutating preview)                                                                              |
 | `render_perf_chart.rs`                    | `just chart` compiles and executes this source directly                                                                           |
@@ -81,49 +74,45 @@ claim in [`docs/secret-lifecycle.md`](../docs/secret-lifecycle.md).
 
 | Script                                 | Callers                                                      |
 | -------------------------------------- | ------------------------------------------------------------ |
-| `check/check-win.sh`                   | `scripts/check/check-all.sh`             |
-| `check/check-zig.sh`                  | `scripts/check/check-all.sh`             |
 | `check/lint-independent-workspaces.sh` | `scripts/check/check.sh --all`           |
-| `check/zig-cc.sh`                      | `scripts/check/check-zig.sh`             |
+| `check/zig-cc.sh`                      | `scripts/ct/artifacts.sh`, `scripts/ct/binsec.py` |
 
 ## Bench Internals
 
 | Script                            | Callers                                                                    |
 | --------------------------------- | -------------------------------------------------------------------------- |
-| `ci/run-bench.sh`                 | `scripts/bench/bench.sh`, `ci/mlkem-aarch64-gate.sh`, `ci/run-rust-job.sh` |
+| `ci/run-bench.sh`                 | `scripts/bench/bench.sh`, `ci/mlkem-aarch64-gate.sh`, `bench.yaml` |
 | `bench/blake3-gap-gate.sh`        | `scripts/ci/run-bench.sh`                                                  |
 | `bench/benchmark_catalog.py`      | `ci/run-bench.sh`, `bench/profile.sh`, `benchmark_catalog_test.py`         |
-| `bench/benchmark_catalog_test.py` | `scripts/check/check.sh`                                                   |
+| `bench/benchmark_catalog_test.py` | `scripts/check/policy.sh`                                                  |
 
 ## Constant-Time Internals
 
 | Script                              | Callers and validation                                                                                                  |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `ct/full.py`                        | `just ct-full`, `ci/run-rust-job.sh`; its dispatch contract is covered by `ci/run-rust-job-test.sh`                    |
+| `ct/full.py`                        | `just ct-full`, `ct/ci.sh`                                                                                             |
 | `ct/binsec.py`                      | `just ct-binsec`, `ct/full.py`                                                                                           |
 | `ct/validate.py`                    | `just ct-validate`, `ct/full.py`                                                                                         |
 | `ct/asm_heuristics.py`              | `ct/artifacts.sh`; parsed hazards are covered by `ct/asm_heuristics_test.py`                                             |
-| `ct/asm_heuristics_test.py`         | `scripts/check/check.sh`                                                                                                 |
+| `ct/asm_heuristics_test.py`         | `scripts/check/policy.sh`                                                                                                |
 | `ct/dudect_report.py`               | `ct/dudect.sh`; parsing and gate behavior are covered by `ct/dudect_report_test.py`                                      |
-| `ct/evidence_validation_test.py`    | `scripts/check/check.sh`; covers symbol reconstruction, artifact packaging, heuristics, and release-evidence validation |
-| `ct/package_evidence.py`            | `ci/run-rust-job.sh`; compact-package behavior is covered by `ct/evidence_validation_test.py`                           |
+| `ct/evidence_validation_test.py`    | `scripts/check/policy.sh`; covers symbol reconstruction, artifact packaging, heuristics, and release-evidence validation |
+| `ct/package_evidence.py`            | `ct/ci.sh`; compact-package behavior is covered by `ct/evidence_validation_test.py`                                     |
 | `ct/provenance.py`                  | `ct/artifacts.sh`; emitted provenance is consumed and checked by `ct/validate.py` and the full pipeline                 |
 | `ct/symbolize_linked_binary.py`     | `ct/artifacts.sh`; parsers and reconstruction are covered by `ct/evidence_validation_test.py`                           |
-| `ct/validate_release_evidence.py`   | `ci/package-release-ct-evidence.sh`; covered by CT evidence validation and release-evidence regression tests            |
+| `ct/validate_release_evidence.py`   | `ci/package-release-ct-evidence.sh`; covered by CT evidence validation tests                                             |
 
 ## CI-only (not surfaced via `just`)
 
 | Script                     | Callers                                       |
 | -------------------------- | --------------------------------------------- |
-| `ci/install-tools.sh`      | `.github/actions/setup/action.yaml`           |
-| `ci/install-codecov.sh`    | `weekly.yaml`                                 |
-| `ci/setup-toolchain.sh`    | `.github/actions/setup-toolchain/action.yaml` |
-| `ci/run-rust-job.sh`       | `.github/workflows/_rust-job.yaml`            |
-| `ci/dependabot-smoke.sh`   | `ci/run-rust-job.sh`                          |
+| `ci/install-tools.sh`      | `qualification.yaml` supply-chain/fuzz lanes and `ct.yaml` formal-analysis lanes |
+| `ci/setup-toolchain.sh`    | `.github/actions/rust/action.yaml`            |
+| `ci/native-platform.sh`    | `ci/target-contracts.sh`                      |
 | `ci/emit-manual-matrix.sh` | `bench.yaml`, `ct.yaml`                       |
-| `ci/mlkem-aarch64-gate.sh` | `ci/run-rust-job.sh`                          |
+| `ci/mlkem-aarch64-gate.sh` | `qualification.yaml`                          |
 | `ci/nostd-wasm-suite.sh`   | `ci/cross-targets.sh`                         |
-| `ci/cross-targets.sh`      | `ci/run-rust-job.sh`                          |
+| `ci/cross-targets.sh`      | `ci/target-contracts.sh`                      |
 
 ## Shared Libraries (sourced, not invoked)
 
@@ -132,11 +121,11 @@ claim in [`docs/secret-lifecycle.md`](../docs/secret-lifecycle.md).
 | `lib/common.sh`            | Check/test entry points plus native, cross-target, benchmark-gate, and pre-push CI scripts |
 | `lib/rail-plan.sh`         | `scripts/lib/common.sh`                                                                    |
 | `lib/fuzz-packages.sh`     | `scripts/test/test-fuzz.sh`, `scripts/test/test-coverage.sh`                               |
-| `lib/feature-profiles.sh`  | Feature-matrix scripts, `scripts/check/check-all.sh`, `scripts/ci/nostd-wasm-suite.sh`      |
-| `lib/targets.sh`           | `scripts/check/check-all.sh`, `scripts/check/check-zig.sh`, `scripts/ci/cross-targets.sh` |
-| `lib/target-matrix.sh`     | `scripts/lib/targets.sh`, `scripts/ci/ci-check.sh`                                         |
+| `lib/feature-profiles.sh`  | `check/feature-contracts.sh`, `scripts/ci/nostd-wasm-suite.sh`                         |
+| `lib/targets.sh`           | `scripts/ci/cross-targets.sh`                                                           |
+| `lib/target-matrix.sh`     | `scripts/lib/targets.sh`, `scripts/ci/target-contracts.sh`                              |
 | `lib/toolchain.sh`         | Toolchain setup, Miri/fuzz helpers, and cross-target check scripts                          |
-| `lib/ci-tool-integrity.sh` | `ci/install-codecov.sh`, `ci/nostd-wasm-suite.sh`                                          |
+| `lib/ci-tool-integrity.sh` | `ci/install-actions-policy-tools.sh`, `ci/nostd-wasm-suite.sh`, `just check-actions`       |
 
 ## Python boundary
 
@@ -148,24 +137,6 @@ runs through the same resolver. Simple JSON selection and redaction stays in
 `jq`; no Python compatibility package, virtual environment, or package-manager
 bootstrap remains.
 
-## Script contracts
-
-This table is the ownership audit for inputs, side effects, failure policy, and
-tests. A script belongs to exactly one row; its concrete caller remains in the
-maps above.
-
-| Owner | Inputs | Side effects | Failure policy and evidence |
-| --- | --- | --- | --- |
-| Shared libraries | Sourcing script arguments, repository paths, typed target and feature catalogs | Define functions and readonly data in the caller; no independent entry-point effects | Reject malformed catalogs, unknown selectors, and missing tools; exercised through every caller and the CI planning regression suite |
-| Local checks and tests | Recipe arguments, Cargo metadata, manifests, target/feature catalogs, vectors, and explicit environment selectors | Cargo build output plus bounded logs or evidence under `target/` | Fail on the first violated contract or aggregate named failures without weakening assertions; focused Python tests, shell regression tests, and `just check` own coverage |
-| CI planning and execution | GitHub event fields, immutable plan artifacts, typed matrix rows, operation selectors, and repository variables | Materialize plan-bound matrices, run repository commands, and write bounded artifacts under `target/` or `ci-evidence/` | Reject missing or mismatched plan identity, commit, operation, target, tool mode, and trust mode before execution; `just check-actions` runs every shell regression fixture plus `actionlint` and `zizmor` |
-| Tool installation | Exact tool mode, toolchain contract, integrity catalog, runner OS, and architecture | Install exact tools into runner-temporary roots and emit environment paths | Reject absent checksums, version drift, unsupported hosts, mutable downloads, or unauthenticated Cargo Rail; integrity and installer fixtures run under `just check-actions` |
-| Constant-time evidence | `ct.toml`, target/profile/gate selectors, exact toolchain and linker state, harness output, and release-bound artifacts | Write target-scoped assembly, disassembly, timing, formal-analysis, provenance, report, and package files under `target/` | Distinguish pass, diagnostic, unsupported, timeout, and blocking failure exactly as `ct.toml` declares; parser/unit fixtures run in `just check`, while target execution uses the focused CT recipes |
-| Benchmarks and profiling | Catalog selectors, platform facts, filters, sample mode, and profiler arguments | Write Criterion, structural, profile, code-generation, or chart artifacts in their documented result roots | Reject unknown catalog rows and unsupported platform/tool combinations; catalog tests run in `just check`, while measurements remain non-correctness evidence |
-| Release and update | Exact commit/tag, downloaded qualification artifacts, Cargo Rail release state, lockfiles, and `--check` preview mode | Prepare locks and release manifests, verify or publish immutable artifacts, or update coordinated manifests | Fail closed on identity, evidence, worktree, package, signature, or publication mismatch; release and update adapters are covered by `just check-actions` and the release recipes |
-| Remote support | Target plus arguments passed by the `ssh-*` recipes | No repository script owns provider state; the external `dev-machine` front door owns creation, sync, bootstrap, and teardown | Provider and lease validation live in `dev-machine`; repository recipes preserve the `rscrypto` project scope and propagate failure |
-| Performance chart | `benchmark_results/OVERVIEW.md` | Rewrites `assets/readme/perf.svg` through `just chart` | Rejects missing or malformed benchmark rows during compilation or execution; the generated SVG is reviewed with its source data |
-
 ## CI tool integrity
 
 Direct executable downloads are declared in
@@ -174,120 +145,113 @@ filename, HTTPS URL, and repository-owned SHA-256; the shared verifier checks
 the digest before extraction, installation, or execution. OCI tools use an
 image digest in their local action definition.
 
-Package-manager tools install into a fresh runner-temporary root; CI never
-restores Cargo binaries, Cargo install metadata, Go module state, or OPAM
-switches from a cache. Cargo installs exact crates from crates.io and
-authenticates crate contents against registry checksums. Go installs an exact
-module through the public checksum database. Ubuntu 24.04 APT dependencies
-resolve from signed repository metadata; installation pins each signed
-candidate selected after the metadata refresh, verifies the installed version,
-and refuses downgrades. OPAM uses exact packages from a repository pinned to a
-full Git commit and verifies package source hashes from that immutable metadata.
-CT formal reports bind the resulting BINSEC executable by SHA-256. Rustup
-receives only the exact stable or nightly contract declared in
-`rust-toolchain.toml` and `.config/toolchains.toml`; runner images must provide
-rustup, which verifies component downloads against the exact distribution
-manifest, because network bootstrap installers are rejected.
+Package-manager tools install into a fresh runner-temporary root. The installer
+has only three modes: `supply-chain`, `fuzz`, and `ct-linux`. Cargo installs are
+exact-versioned. Ubuntu packages come from signed metadata, and the OPAM
+repository is pinned to one commit before BINSEC is built. Rustup installs only
+the exact repository toolchain contracts. Actions policy does not require
+`yq`; it uses the already-required Ruby and Python standard libraries.
+Qualification installs its two exact coverage tools from supported prebuilt
+releases with fallback disabled.
 
-## Planned CI
+## CI architecture
 
-Cargo Rail creates one validated named-work plan per CI or Qualification run.
-`.config/ci-plan-variants.json` owns the selectable suite rows and their typed
-execution dimensions; repository scripts own command implementations, while
-workflows enforce trust. The planner uploads the exact plan and bundled strict
-reader together. Every selected job checks out the plan-bound commit, verifies
-the plan identity and complete checkout, and then executes its catalog
-operation. No consumer replans or infers work from changed paths.
+The workflow split follows proof domain and frequency, not algorithms or CPU
+architectures:
 
-The repository-scoped `ci-policy` work item widens the matrix to the complete
-catalog when shared workflows or dispatch infrastructure change. This keeps
-source-only changes narrow without pretending that a shared executor edit can
-be validated by one arbitrarily selected row.
+| Workflow | Responsibility |
+| --- | --- |
+| `ci.yaml` | Fast affected pull-request and main-branch gate |
+| `qualification.yaml` | Weekly and release-grade cross-platform assurance |
+| `ct.yaml` | Reusable/manual constant-time evidence matrix |
+| `bench.yaml` | Manual performance measurements on named hardware |
+| `release.yaml` | Exact-commit package and publication transaction |
+| `scorecard.yaml` | GitHub supply-chain scorecard |
 
-Pull requests select affected Cargo work and CI rows. Manual CI and Qualification use
-Cargo Rail's typed all-work override. The planner installs the authenticated
-Surface component, but `.config/rail.toml` temporarily disables Surface while
-Cargo Rail cannot distinguish expected `compile_fail` doctest invocations from
-compiler failures. Planning and every selected CI row remain fail-closed.
+`release.yaml` calls `qualification.yaml`, which calls `ct.yaml`; both calls
+stay on the exact release commit. IBM, RISC-V, Windows, macOS, x86-64, and
+AArch64 are matrix rows. RSA and ML-KEM are assurance lanes inside
+Qualification; they are not workflow boundaries.
 
-Cargo Rail Action v8.2.0 does not publish verified native cache components for
-the IBM Z and POWER hosts. Those two native rows still install Cargo Rail core,
-verify the saved plan, and run in full; only compiler-result reuse is skipped.
+Cargo Rail plans exactly once in `ci.yaml`. The planner also runs selected cheap
+repository policy, so a workflow-only change does not start a second runner.
+Built-in Cargo work starts the single warm host-Rust job; `contracts.features`
+uses `.config/feature-matrix.json` to select algorithm or capability groups,
+resolves every affected compile profile from Cargo's feature graph, and packs
+only those profiles into at most two compile shards and one job per selected runtime profile.
+Manifest, catalog, shared-surface, or unattributed inputs widen to the complete
+59-compile/9-runtime contract. `targets.platforms` independently materializes
+only affected platform proof rows; built-in `dependency-policy` starts the
+dependency audit. The core job already owns ordinary Linux x86-64 and is not
+duplicated. Affected `assurance.ct` work runs one cold x86-64 structural gate:
+release harness construction, generated-code inspection, and strict manifest
+and artifact validation. Affected `assurance.rsa` work runs the x86-64 assembly
+differential and symbol contract, with eligible compiler work using the same R2
+policy as the other trusted native lanes. Neither decision starts physical
+timing, formal analysis, or a cross-platform assurance sweep in pull requests.
 
-## Compiler-result reuse
+Affected `assurance.miri` work selects only the portable unsafe-boundary row,
+the focused RSA row, or both. Affected `assurance.fuzz` work selects algorithm-
+sized rows and unions their exact target names into one executor, so tool setup
+and compatible builds are shared without converting each target into a job.
+Both lanes are deliberately cache-cold. Manifest, catalog, shared harness, and
+unattributed inputs widen fail-closed; the root lockfile alone selects neither
+nightly lane. Qualification still runs both Miri rows, the portable row again
+under Tree Borrows, every fuzz target, and every committed corpus under ASan.
+Miri remains on x86-64 because it forces portable execution; deep Linux and
+macOS AArch64 rows own native runtime and backend-differential proof instead of
+duplicating interpreter and fuzz hosts.
 
-`.github/actions/setup/action.yaml` is the only CI compiler-cache owner. It
-uses the same immutable Cargo Rail action revision and authenticated Cargo Rail
-version as pull-request planning, installs the cache before repository Cargo
-tools, and leaves tool executables and package-manager state uncached.
+The selected Actions policy lane downloads exact checksum-verified actionlint
+and ripgrep releases plus exact prebuilt Just and Zizmor releases, then runs the
+same `scripts/ci/actions-policy.sh` entry point as `just check-actions`. None of
+these tools is compiled from source.
 
-The repository variable `CARGO_RAIL_CACHE_URL` selects rscrypto's canonical
-Cloudflare R2 L2 authority. The bucket-scoped
-`CARGO_RAIL_R2_READ_ACCESS_KEY_ID` / `CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY`
-secret pair can only read it; the corresponding `WRITE` pair can read and
-write it. The URL contains no credentials and does not belong in
-`.config/rail.toml`. A missing secret pair skips L2 cleanly, which keeps fork
-and Dependabot jobs correct without disclosing repository credentials.
+Qualification captures one `--all` plan, restores the complete feature
+contract, and materializes every platform catalog row as an independent retry
+unit. Its reusable CT workflow verifies that same plan once, checks out the
+planned commit on every evidence host, and retains the complete physical/formal
+matrix. Core test jobs and coverage install the exact prebuilt Nextest release
+with source fallback disabled. Coverage runs deterministic nextest and
+committed-corpus replay in its own lane. Optimized zeroization runs cold and
+retains no compiler cache. RSA
+leakage and cross-architecture evidence likewise remain qualification work.
+Generic cross compilation stays on Linux x86-64;
+hosted and donated machines run only irreducibly native evidence. Linux x86-64
+rows restore and verify the plan. Other rows check out the exact planned commit;
+the local Cargo Rail issue records the missing lean verifier path for donated
+architectures and macOS x86-64.
 
-CI applies qualified root remapping and requires Cargo Rail's authenticated
-provider/protocol probe whenever the URL is configured. Configure
-the `just ssh-*` machines with the same normalized URL and remap policy when
-their provider identities may share compiler results. Repository code selects
-trust (`read` for pull requests, `read-write` for trusted jobs);
-`~/dev-machines` owns the corresponding remote machine setup and credentials.
-Different URLs or physical-root mode produce isolated caches by design.
+The Cargo Rail compiler cache is acceleration, never selection or correctness
+authority. `just rail-cache-setup` previews, installs, and probes the same
+remapped policy used by development machines. CI reads R2 for trusted PRs and
+writes only from protected `main`; missing fork secrets disable the cache.
+Qualification enables reuse for host, feature-contract, and supported native
+platform rows; release preflight is read-only. Cross targets, Clippy, rustdoc,
+doctests, Miri, fuzzing, CT, benchmarks, macOS x86-64, and donated hosts stay
+cold because the released cache deliberately bypasses or cannot install on
+those classes. Every cache-enabled CI and Qualification job emits Cargo Rail's
+bounded post-run hit, miss, bypass, failure, and local/remote-origin counters;
+telemetry failure warns without making acceleration a correctness gate.
 
-Ordinary, pull-request, qualification, and release jobs select `read`; their
-provider credential is also read-only. The affected main-branch seeder alone
-selects `read-write` and receives the distinct writer credential. Setup fails
-if R2 authentication or the `native-v6` protocol marker is unavailable; later
-per-compilation transport failures take Cargo Rail's verified fallback path.
-Representative compiler jobs preserve a redacted cache-status artifact so
-local and remote origins, misses, bypasses, conflicts, failures, capacity,
-mode, provider, and setup health remain visible.
-
-Local development uses the same machine-owned setup documented in
-[`CONTRIBUTING.md`](../CONTRIBUTING.md). Miri and optimized zeroization evidence
-set `CARGO_RAIL_CACHE=off` because those checks require a deliberately cold
-compiler path. Cross-target and otherwise unsupported compiler operations rely
-on Cargo Rail's typed bypass instead of clearing a global wrapper.
-
-## Runner and container audit
-
-The 2026-08-28 audit used CI run `33140323747` and Qualification run
-`33094159266`. GitHub step timestamps produced this cold-run breakdown:
-
-| Representative job | Checkout | Setup | Repository operation | Artifact/upload |
-| --- | ---: | ---: | ---: | ---: |
-| Linux x86-64 native | 4 s | 545 s | 1,608 s | none |
-| Linux AArch64 native | 4 s | 443 s | 1,444 s | none |
-| Windows x86-64 native | 9 s | 13 s | 281 s | none |
-| Linux feature contracts | 5 s | 104 s | 3,544 s | none |
-| Linux coverage | 13 s | 565 s | 2,100 s | 7 s |
-
-The x86-64 native log further split setup into approximately 11 seconds for
-the exact Rust toolchain, 426 seconds to compile `cargo-nextest`, and 108
-seconds to compile `just`. RunsOn reported 22.33 seconds from job creation to a
-ready runner. The repository-operation column contains compilation and command
-execution because each repository script deliberately remains one policy
-boundary; Cargo and Nextest logs retain the finer per-command timing.
-
-`.github/runs-on.yml` uses the maintained Ubuntu 24 full x86-64 and AArch64
-images, provider labels for physical evidence, non-spot runners, bounded gp3
-volumes, and no RunsOn extras or MagicCache. The ordinary CI lanes allow the
-documented family fallback; benchmark and evidence lanes retain explicit
-families. The existing Linux setup cost is material, but this change installs
-Cargo Rail before Cargo tools so the authenticated L2 can reuse those exact
-compilations. Keep the maintained images until cache-status artifacts from
-seeded runs show the residual setup cost. Introduce versioned custom Linux
-images only if that evidence still shows repeated tool compilation; the
-13-second Windows setup does not justify a custom image.
-
-The only repository Dockerfile is `oss-fuzz/Dockerfile`. It pins the OSS-Fuzz
-Rust builder by digest, accepts an explicit source ref, crosses no provider
-credential boundary, and contains no compiler cache or `cargo-chef` layer.
-Cargo Rail is therefore the sole compiler-result cache, and `cargo-chef` has no
-retained role.
+Local and remote development use the same affected commands: `just plan`,
+`just check`, `just test`, and `just validate`. `just check` runs selected
+compile feature contracts; `just validate` adds selected runtime contracts and
+minimum-feature examples, then shares one saved plan across policy, checks,
+feature contracts, and tests. `just msrv` reproduces the compiler-floor job;
+`just check-all` includes MSRV and minimum-feature example execution.
+`just feature-contracts [compile|runtime] [N/M]` reproduces any CI shard.
+`just target-contract ROW [shallow|deep]` reproduces any independently
+executable platform row, locally or through `ssh-just`.
+`just miri-contract ROW` and `just fuzz-contract ROW` reproduce the same
+algorithm-sized proof rows used by affected CI. `just validate` consumes the
+saved local plan and adds only its selected Miri and fuzz rows after ordinary
+tests.
+`just ct-structural` reproduces the affected CI constant-time structure gate;
+`just ct-full` and `just test-rsa-leakage` remain deliberate assurance commands.
+`ssh-just TARGET validate` creates the plan after the development machine's
+exact repository sync; provider lifecycle and short-lived R2 credentials remain
+outside this repository.
 
 ## Results layout
 

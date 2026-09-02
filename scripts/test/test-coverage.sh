@@ -50,6 +50,7 @@ if [[ $# -gt 1 ]]; then
 fi
 
 apply_ci_resource_profile
+export CARGO_PROFILE_TEST_OPT_LEVEL=0
 
 export RSCRYPTO_TEST_MODE=${RSCRYPTO_TEST_MODE:-${CARGO_RAIL_TEST_MODE:-local}}
 export CARGO_RAIL_TEST_MODE=${CARGO_RAIL_TEST_MODE:-$RSCRYPTO_TEST_MODE}

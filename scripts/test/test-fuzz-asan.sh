@@ -11,6 +11,7 @@ source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/fuzz-packages.sh"
 
 activate_nightly_toolchain
+export CARGO_RAIL_CACHE=off
 
 PACKAGE_SCOPE="full"
 

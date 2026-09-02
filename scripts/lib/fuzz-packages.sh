@@ -99,7 +99,7 @@ fuzz_find_target_package() {
   case "$search_order" in
     full)
       for package_dir in "${FUZZ_FULL_PACKAGES[@]}"; do
-        if fuzz_list_targets "$package_dir" | grep -Fxq "$target"; then
+        if fuzz_list_targets "$package_dir" | grep -Fx "$target" >/dev/null; then
           echo "$package_dir"
           return 0
         fi
@@ -107,7 +107,7 @@ fuzz_find_target_package() {
       ;;
     scoped)
       for package_dir in "${FUZZ_SCOPED_PACKAGES[@]}"; do
-        if fuzz_list_targets "$package_dir" | grep -Fxq "$target"; then
+        if fuzz_list_targets "$package_dir" | grep -Fx "$target" >/dev/null; then
           echo "$package_dir"
           return 0
         fi

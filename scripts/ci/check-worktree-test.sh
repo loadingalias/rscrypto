@@ -19,6 +19,7 @@ preflight_marker="$TMP_ROOT/locked-metadata-preflight"
 mkdir -p \
   "$fixture/.config" \
   "$fixture/scripts/check" \
+  "$fixture/scripts/ci" \
   "$fixture/scripts/lib" \
   "$fixture/scripts/test" \
   "$fixture/src" \
@@ -28,25 +29,25 @@ mkdir -p \
 cp \
   "$REPO_ROOT/scripts/check/asm-ledger.sh" \
   "$REPO_ROOT/scripts/check/check-all.sh" \
-  "$REPO_ROOT/scripts/check/check-feature-matrix.sh" \
-  "$REPO_ROOT/scripts/check/check-zig.sh" \
+  "$REPO_ROOT/scripts/check/feature-contracts.sh" \
   "$REPO_ROOT/scripts/check/lint-independent-workspaces.sh" \
-  "$REPO_ROOT/scripts/check/check-win.sh" \
   "$REPO_ROOT/scripts/check/check.sh" \
-  "$REPO_ROOT/scripts/check/zig-cc.sh" \
   "$fixture/scripts/check/"
 cp "$REPO_ROOT/scripts/lib/common.sh" "$REPO_ROOT/scripts/lib/rail-plan.sh" \
   "$REPO_ROOT/scripts/lib/feature-profiles.sh" "$REPO_ROOT/scripts/lib/toolchain.sh" \
   "$fixture/scripts/lib/"
 cp "$REPO_ROOT/.config/toolchains.toml" "$fixture/.config/toolchains.toml"
-cp "$REPO_ROOT/scripts/test/test-feature-matrix.sh" "$fixture/scripts/test/test-feature-matrix.sh"
+cp "$REPO_ROOT/.config/feature-matrix.json" "$fixture/.config/feature-matrix.json"
 
-cat >"$fixture/scripts/lib/targets.sh" <<'EOF'
-WIN_TARGETS=(mock-win)
-LINUX_TARGETS=(mock-linux)
-IBM_TARGETS=(mock-ibm)
-NOSTD_TARGETS=(mock-nostd)
-WASM_TARGETS=()
+cat >"$fixture/.config/target-matrix.json" <<'EOF'
+{"variants":[{"id":"mock-cross","dimensions":{"operation":"cross"}}]}
+EOF
+
+cat >"$fixture/scripts/ci/target-contracts.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == run && "$2" == mock-cross && "$3" == deep ]]
+cargo check --locked --lib
 EOF
 
 cat >"$fixture/scripts/lib/python.sh" <<'EOF'
@@ -62,15 +63,41 @@ cat >"$fixture/scripts/check/zeroize-evidence.sh" <<'EOF'
 exit 0
 EOF
 
+cat >"$fixture/scripts/check/msrv.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+cat >"$fixture/scripts/test/test-examples.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+cat >"$fixture/scripts/check/affected.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$(dirname "$0")/check.sh" --all
+EOF
+
+cat >"$fixture/scripts/check/policy.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
 cat >"$fixture/scripts/check/rsa-asm-provenance.sh" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
 
 chmod +x \
+  "$fixture/scripts/ci/target-contracts.sh" \
   "$fixture/scripts/lib/python.sh" \
+  "$fixture/scripts/check/affected.sh" \
+  "$fixture/scripts/check/msrv.sh" \
+  "$fixture/scripts/check/policy.sh" \
   "$fixture/scripts/check/rsa-asm-provenance.sh" \
-  "$fixture/scripts/check/zeroize-evidence.sh"
+  "$fixture/scripts/check/zeroize-evidence.sh" \
+  "$fixture/scripts/test/test-examples.sh"
 
 cat >"$fake_bin/cargo" <<'EOF'
 #!/usr/bin/env bash
@@ -109,7 +136,11 @@ case "${1:-}" in
   metadata)
     require_locked "$@"
     : >"$MOCK_PREFLIGHT_MARKER"
-    printf '{"workspace_root":"%s"}\n' "$MOCK_REPO_ROOT"
+    if [[ " $* " == *" --no-deps "* ]]; then
+      printf '{"workspace_root":"%s","packages":[{"name":"rscrypto","features":{"aead":[],"aegis256":[],"aes-gcm":[],"aes-gcm-siv":[],"aes-siv":[],"argon2":[],"ascon-aead":[],"ascon-hash":[],"blake2b":[],"blake2s":[],"blake3":[],"chacha20poly1305":[],"crc16":[],"crc24":[],"crc32":[],"crc64":[],"ecdsa-p256":[],"ecdsa-p384":[],"ed25519":[],"hkdf":[],"hmac":[],"hmac-sha3":[],"kmac":[],"ml-kem":[],"parallel":[],"pbkdf2":[],"phc-strings":[],"poly1305":[],"rapidhash":[],"rsa":[],"scrypt":[],"serde":[],"serde-secrets":[],"sha2":[],"sha3":[],"websocket-sha1":[],"x25519":[],"xchacha20poly1305":[],"xxh3":[]}}]}\n' "$MOCK_REPO_ROOT"
+    else
+      printf '{"workspace_root":"%s","resolve":{"nodes":[{"id":"rscrypto","features":["alloc","auth"]}]}}\n' "$MOCK_REPO_ROOT"
+    fi
     ;;
   rail)
     if [[ "${2:-}" == "plan" ]]; then
@@ -143,12 +174,7 @@ if [[ "$*" == "target list --installed" ]]; then
 fi
 EOF
 
-cat >"$fake_bin/zig" <<'EOF'
-#!/usr/bin/env bash
-exit 0
-EOF
-
-chmod +x "$fake_bin/cargo" "$fake_bin/rustup" "$fake_bin/zig"
+chmod +x "$fake_bin/cargo" "$fake_bin/rustup"
 ln -s /bin/bash "$fake_bin/bash"
 cp "$fake_bin/cargo" "$fake_home/.cargo/bin/cargo"
 

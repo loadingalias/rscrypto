@@ -1,0 +1,528 @@
+name: Qualification
+
+on:
+  schedule:
+    - cron: "0 3 * * 0"
+  workflow_call:
+    inputs:
+      head_commit:
+        description: Exact commit to qualify.
+        required: true
+        type: string
+      mode:
+        description: Qualification evidence mode.
+        required: true
+        type: string
+    secrets:
+      CARGO_RAIL_R2_READ_ACCESS_KEY_ID:
+        required: false
+      CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY:
+        required: false
+      CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID:
+        required: false
+      CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY:
+        required: false
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Release mode retains exact-commit publication evidence.
+        required: true
+        type: choice
+        options: [assurance, release]
+        default: assurance
+
+concurrency:
+  group: qualification-${{ inputs.head_commit || github.sha }}-${{ inputs.mode || 'assurance' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  RSCRYPTO_TEST_MODE: weekly
+  RUST_BACKTRACE: 1
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      artifact: ${{ steps.stage.outputs.artifact }}
+      feature-matrix: ${{ steps.features.outputs.matrix }}
+      head-commit: ${{ steps.rail.outputs.head-commit }}
+      identity: ${{ steps.rail.outputs.plan-identity }}
+      mode: ${{ steps.mode.outputs.value }}
+      platform-matrix: ${{ steps.platforms.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.head_commit || github.sha }}
+      - id: mode
+        env:
+          REQUESTED: ${{ inputs.mode }}
+        run: |
+          mode="${REQUESTED:-assurance}"
+          [[ "$mode" == assurance || "$mode" == release ]] || {
+            echo "unknown qualification mode: $mode" >&2
+            exit 2
+          }
+          echo "value=$mode" >> "$GITHUB_OUTPUT"
+      - id: rail
+        name: Capture all-work plan
+        uses: loadingalias/cargo-rail-action@78ad385a85627484a5b634cf1bc3caa1de872c6a # v8.2.0
+        with:
+          version: "0.25.0"
+          all: true
+
+      - id: features
+        env:
+          PLAN: ${{ steps.rail.outputs.plan-file }}
+          READER: ${{ steps.rail.outputs.plan-reader }}
+        run: |
+          matrix=$(
+            RAIL_PLAN_FILE="$PLAN" RAIL_PLAN_READER="$READER" \
+              scripts/check/feature-contracts.sh matrix
+          )
+          echo "matrix=$matrix" >>"$GITHUB_OUTPUT"
+
+      - id: platforms
+        env:
+          PLAN: ${{ steps.rail.outputs.plan-file }}
+          READER: ${{ steps.rail.outputs.plan-reader }}
+        run: |
+          matrix=$(scripts/ci/target-contracts.sh matrix "$PLAN" "$READER")
+          echo "matrix=$matrix" >>"$GITHUB_OUTPUT"
+
+      - name: Run repository policy
+        env:
+          RAIL_PLAN_FILE: ${{ steps.rail.outputs.plan-file }}
+          RAIL_PLAN_READER: ${{ steps.rail.outputs.plan-reader }}
+          RAIL_PLAN_IDENTITY: ${{ steps.rail.outputs.plan-identity }}
+          RAIL_PLAN_HEAD_COMMIT: ${{ steps.rail.outputs.head-commit }}
+        run: scripts/check/policy.sh
+
+      - id: stage
+        name: Stage immutable plan
+        shell: bash
+        env:
+          PLAN: ${{ steps.rail.outputs.plan-file }}
+          READER: ${{ steps.rail.outputs.plan-reader }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/rscrypto-cargo-rail-plan"
+          artifact="qualification-plan-$GITHUB_RUN_ID"
+          mkdir -p "$root"
+          install -m 600 "$PLAN" "$root/plan.json"
+          install -m 700 "$READER" "$root/read.py"
+          install -m 700 "$(command -v cargo-rail)" "$root/cargo-rail"
+          echo "artifact=$artifact" >>"$GITHUB_OUTPUT"
+
+      - name: Preserve exact plan
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.stage.outputs.artifact }}
+          path: ${{ runner.temp }}/rscrypto-cargo-rail-plan/
+          retention-days: ${{ steps.mode.outputs.value == 'release' && 90 || 14 }}
+          if-no-files-found: error
+
+  core:
+    name: Core
+    needs: plan
+    runs-on: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/plan
+        with:
+          artifact: ${{ needs.plan.outputs.artifact }}
+          identity: ${{ needs.plan.outputs.identity }}
+          head-commit: ${{ needs.plan.outputs.head-commit }}
+      - id: rust
+        uses: $/.github/actions/rust
+        with:
+          components: clippy,rustfmt
+          cache-url: ${{ vars.CARGO_RAIL_CACHE_URL }}
+          cache-mode: ${{ vars.CARGO_RAIL_CACHE_URL != '' && github.ref == 'refs/heads/main' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && 'read-write' || vars.CARGO_RAIL_CACHE_URL != '' && secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY != '' && 'read' || 'off' }}
+          cache-access-key-id: ${{ github.ref == 'refs/heads/main' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID || secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+          cache-secret-access-key: ${{ github.ref == 'refs/heads/main' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY || secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
+      - name: Install test runner
+        uses: taiki-e/install-action@0758d235715de2f3551eacc980d9ae8fce9342c3 # v2.87.3
+        with:
+          tool: cargo-nextest@0.9.143
+          fallback: none
+      - name: Check, lint, and document
+        env:
+          RSCRYPTO_SKIP_CHECK_SUPPLY_CHAIN: 1
+        run: scripts/check/check.sh
+      - name: Test
+        run: scripts/test/test.sh
+      - name: Run minimum-feature examples
+        run: scripts/test/test-examples.sh
+      - name: Report compiler cache
+        if: ${{ !cancelled() && steps.rust.outputs.cache-enabled == 'true' }}
+        run: scripts/ci/report-cache.sh
+
+  msrv:
+    name: MSRV
+    needs: plan
+    runs-on: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/plan
+        with:
+          artifact: ${{ needs.plan.outputs.artifact }}
+          identity: ${{ needs.plan.outputs.identity }}
+          head-commit: ${{ needs.plan.outputs.head-commit }}
+      - run: scripts/ci/require-work.sh cargo.build
+      - id: rust
+        uses: $/.github/actions/rust
+        with:
+          contract: msrv
+          cache-url: ${{ vars.CARGO_RAIL_CACHE_URL }}
+          cache-mode: ${{ vars.CARGO_RAIL_CACHE_URL != '' && github.ref == 'refs/heads/main' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && 'read-write' || vars.CARGO_RAIL_CACHE_URL != '' && secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY != '' && 'read' || 'off' }}
+          cache-access-key-id: ${{ github.ref == 'refs/heads/main' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID || secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+          cache-secret-access-key: ${{ github.ref == 'refs/heads/main' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY || secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
+      - run: scripts/check/msrv.sh
+      - name: Report compiler cache
+        if: ${{ !cancelled() && steps.rust.outputs.cache-enabled == 'true' }}
+        run: scripts/ci/report-cache.sh
+
+  features:
+    name: Feature Contracts (${{ matrix.label }})
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.feature-matrix) }}
+    runs-on: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.head-commit }}
+          persist-credentials: false
+      - uses: $/.github/actions/plan
+        with:
+          artifact: ${{ needs.plan.outputs.artifact }}
+          identity: ${{ needs.plan.outputs.identity }}
+          head-commit: ${{ needs.plan.outputs.head-commit }}
+      - run: scripts/ci/require-work.sh contracts.features
+      - id: rust
+        uses: $/.github/actions/rust
+        with:
+          cache-url: ${{ vars.CARGO_RAIL_CACHE_URL }}
+          cache-mode: ${{ vars.CARGO_RAIL_CACHE_URL != '' && github.ref == 'refs/heads/main' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && 'read-write' || vars.CARGO_RAIL_CACHE_URL != '' && secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY != '' && 'read' || 'off' }}
+          cache-access-key-id: ${{ github.ref == 'refs/heads/main' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID || secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+          cache-secret-access-key: ${{ github.ref == 'refs/heads/main' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY || secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
+      - name: Install test runner
+        if: matrix.test_runner == 'nextest'
+        uses: taiki-e/install-action@0758d235715de2f3551eacc980d9ae8fce9342c3 # v2.87.3
+        with:
+          tool: cargo-nextest@0.9.143
+          fallback: none
+      - env:
+          FEATURE_DOMAIN: ${{ matrix.domain }}
+          FEATURE_PROFILES: ${{ matrix.profiles }}
+          FEATURE_SHARD: ${{ matrix.shard }}
+        run: scripts/check/feature-contracts.sh selected "$FEATURE_DOMAIN" "$FEATURE_SHARD" "$FEATURE_PROFILES"
+      - name: Report compiler cache
+        if: ${{ !cancelled() && steps.rust.outputs.cache-enabled == 'true' }}
+        run: scripts/ci/report-cache.sh
+
+  platforms:
+    name: ${{ matrix.name }}
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.platform-matrix) }}
+    runs-on: ${{ matrix.runner_type == 'runson' && format('runs-on={0}/runner={1}', github.run_id, matrix.runner) || matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout_minutes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.head-commit }}
+          persist-credentials: false
+      - uses: $/.github/actions/plan
+        if: matrix.verify_plan
+        with:
+          artifact: ${{ needs.plan.outputs.artifact }}
+          identity: ${{ needs.plan.outputs.identity }}
+          head-commit: ${{ needs.plan.outputs.head-commit }}
+      - id: rust
+        uses: $/.github/actions/rust
+        with:
+          contract: ${{ matrix.contract }}
+          components: ${{ matrix.components }}
+          cache-url: ${{ vars.CARGO_RAIL_CACHE_URL }}
+          cache-mode: ${{ matrix.cache && vars.CARGO_RAIL_CACHE_URL != '' && github.ref == 'refs/heads/main' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && 'read-write' || matrix.cache && vars.CARGO_RAIL_CACHE_URL != '' && secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY != '' && 'read' || 'off' }}
+          cache-access-key-id: ${{ github.ref == 'refs/heads/main' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID || secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+          cache-secret-access-key: ${{ github.ref == 'refs/heads/main' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY || secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
+      - shell: bash
+        env:
+          TARGET_ROW: ${{ matrix.id }}
+        run: scripts/ci/target-contracts.sh run "$TARGET_ROW" deep
+      - name: Report compiler cache
+        if: ${{ !cancelled() && steps.rust.outputs.cache-enabled == 'true' }}
+        run: scripts/ci/report-cache.sh
+
+  miri:
+    name: Miri
+    needs: plan
+    runs-on: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/plan
+        with:
+          artifact: ${{ needs.plan.outputs.artifact }}
+          identity: ${{ needs.plan.outputs.identity }}
+          head-commit: ${{ needs.plan.outputs.head-commit }}
+      - run: scripts/ci/require-work.sh assurance.miri
+      - uses: $/.github/actions/rust
+        with:
+          contract: nightly
+          components: miri,rust-src
+      - run: scripts/test/miri-contracts.sh run portable
+      - run: scripts/test/miri-contracts.sh run rsa
+      - name: Tree Borrows
+        env:
+          MIRIFLAGS: -Zmiri-tree-borrows
+        run: scripts/test/miri-contracts.sh run portable
+
+  fuzz:
+    name: Fuzz and ASan
+    needs: plan
+    runs-on: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/plan
+        with:
+          artifact: ${{ needs.plan.outputs.artifact }}
+          identity: ${{ needs.plan.outputs.identity }}
+          head-commit: ${{ needs.plan.outputs.head-commit }}
+      - run: scripts/ci/require-work.sh assurance.fuzz
+      - uses: $/.github/actions/rust
+        with:
+          contract: nightly
+          components: rust-src
+      - run: scripts/ci/install-tools.sh fuzz
+      - name: Fuzz
+        env:
+          RSCRYPTO_FUZZ_DURATION_SECS: 60
+          RSCRYPTO_FUZZ_JOBS: 1
+        run: scripts/test/test-fuzz.sh --all
+      - name: Replay corpora under ASan
+        run: scripts/test/test-fuzz-asan.sh --all
+
+  mlkem:
+    name: ML-KEM (${{ matrix.platform }})
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [graviton3, graviton4]
+    runs-on: runs-on=${{ github.run_id }}/runner=${{ matrix.platform }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.head-commit }}
+          persist-credentials: false
+      - uses: $/.github/actions/rust
+        with:
+          components: clippy,rustfmt,rust-src
+      - name: Run native gate
+        env:
+          MLKEM_AARCH64_GATE_PLATFORM: ${{ matrix.platform }}
+        run: scripts/ci/mlkem-aarch64-gate.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: mlkem-${{ matrix.platform }}
+          path: mlkem-aarch64-gate/
+          retention-days: ${{ needs.plan.outputs.mode == 'release' && 90 || 14 }}
+          if-no-files-found: error
+
+  rsa-leakage:
+    name: RSA leakage (${{ matrix.arch }})
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: x64, runner: "runs-on=${{ github.run_id }}/runner=linux-x64-ci"}
+          - {arch: arm64, runner: "runs-on=${{ github.run_id }}/runner=linux-arm64-ci"}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.head-commit }}
+          persist-credentials: false
+      - uses: $/.github/actions/plan
+        if: matrix.arch == 'x64'
+        with:
+          artifact: ${{ needs.plan.outputs.artifact }}
+          identity: ${{ needs.plan.outputs.identity }}
+          head-commit: ${{ needs.plan.outputs.head-commit }}
+      - if: matrix.arch == 'x64'
+        run: scripts/ci/require-work.sh assurance.rsa
+      - uses: $/.github/actions/rust
+      - name: Measure
+        run: |
+          mkdir -p ci-evidence
+          scripts/test/test-rsa-leakage.sh 2>&1 | tee "ci-evidence/rsa-leakage-${{ matrix.arch }}.log"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: rsa-leakage-${{ matrix.arch }}
+          path: ci-evidence/
+          retention-days: ${{ needs.plan.outputs.mode == 'release' && 90 || 14 }}
+          if-no-files-found: error
+
+  rsa-asm:
+    name: RSA Gate
+    needs: plan
+    runs-on: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/plan
+        with:
+          artifact: ${{ needs.plan.outputs.artifact }}
+          identity: ${{ needs.plan.outputs.identity }}
+          head-commit: ${{ needs.plan.outputs.head-commit }}
+      - run: scripts/ci/require-work.sh assurance.rsa
+      - uses: $/.github/actions/rust
+      - run: scripts/test/test-rsa-linux-asm.sh
+
+  supply-chain:
+    name: Supply Chain
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/plan
+        with:
+          artifact: ${{ needs.plan.outputs.artifact }}
+          identity: ${{ needs.plan.outputs.identity }}
+          head-commit: ${{ needs.plan.outputs.head-commit }}
+      - run: scripts/ci/require-work.sh --any dependency-policy dependencies.auxiliary
+      - uses: $/.github/actions/rust
+      - run: scripts/ci/install-tools.sh supply-chain
+      - run: cargo deny --locked check all
+      - run: cargo audit --ignore RUSTSEC-2023-0071
+
+  coverage:
+    name: Coverage
+    needs: plan
+    runs-on: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/plan
+        with:
+          artifact: ${{ needs.plan.outputs.artifact }}
+          identity: ${{ needs.plan.outputs.identity }}
+          head-commit: ${{ needs.plan.outputs.head-commit }}
+      - run: scripts/ci/require-work.sh cargo.test
+      - run: scripts/ci/require-work.sh assurance.fuzz
+      - uses: $/.github/actions/rust
+        with:
+          components: llvm-tools-preview
+      - name: Install coverage tools
+        uses: taiki-e/install-action@0758d235715de2f3551eacc980d9ae8fce9342c3 # v2.87.3
+        with:
+          tool: cargo-llvm-cov@0.9.0,cargo-nextest@0.9.143
+          fallback: none
+      - run: scripts/test/test-coverage.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-reports
+          path: |
+            coverage/total.lcov
+            coverage/SUMMARY.md
+          retention-days: ${{ needs.plan.outputs.mode == 'release' && 90 || 14 }}
+          if-no-files-found: error
+
+  zeroization:
+    name: Optimized zeroization
+    needs: plan
+    runs-on: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/plan
+        with:
+          artifact: ${{ needs.plan.outputs.artifact }}
+          identity: ${{ needs.plan.outputs.identity }}
+          head-commit: ${{ needs.plan.outputs.head-commit }}
+      - run: scripts/ci/require-work.sh assurance.ct
+      - uses: $/.github/actions/rust
+      - run: scripts/check/zeroize-evidence.sh
+
+  ct:
+    name: Constant time
+    needs: plan
+    uses: $/.github/workflows/ct.yaml
+    with:
+      head_commit: ${{ needs.plan.outputs.head-commit }}
+      plan_artifact: ${{ needs.plan.outputs.artifact }}
+      plan_identity: ${{ needs.plan.outputs.identity }}
+      platforms: all
+      raw: ${{ needs.plan.outputs.mode == 'release' }}
+      retention_days: ${{ needs.plan.outputs.mode == 'release' && 90 || 14 }}
+
+  complete:
+    name: Complete (${{ needs.plan.outputs.mode }})
+    needs: [plan, core, msrv, features, platforms, miri, fuzz, mlkem, rsa-leakage, rsa-asm, supply-chain, coverage, zeroization, ct]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every assurance domain
+        shell: bash
+        run: |
+          failed=0
+          for lane in \
+            "plan=${{ needs.plan.result }}" \
+            "core=${{ needs.core.result }}" \
+            "msrv=${{ needs.msrv.result }}" \
+            "features=${{ needs.features.result }}" \
+            "platforms=${{ needs.platforms.result }}" \
+            "miri=${{ needs.miri.result }}" \
+            "fuzz=${{ needs.fuzz.result }}" \
+            "mlkem=${{ needs.mlkem.result }}" \
+            "rsa-leakage=${{ needs.rsa-leakage.result }}" \
+            "rsa-asm=${{ needs.rsa-asm.result }}" \
+            "supply-chain=${{ needs.supply-chain.result }}" \
+            "coverage=${{ needs.coverage.result }}" \
+            "zeroization=${{ needs.zeroization.result }}" \
+            "ct=${{ needs.ct.result }}"
+          do
+            [[ "${lane#*=}" == success ]] || { echo "$lane" >&2; failed=1; }
+          done
+          exit "$failed"

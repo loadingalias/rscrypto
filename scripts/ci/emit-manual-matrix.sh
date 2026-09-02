@@ -54,36 +54,37 @@ normalize_platform() {
   esac
 }
 
-# Bench matrix rows. Shape matches the inputs to _rust-job.yaml:
-#   runner, timeout_minutes, tools_mode, toolchain_components
-# Plus bench-specific plumbing (platform, display_name, artifact_suffix).
+# Manual benchmark and CT rows share runner and artifact identity fields.
 append_row_for_platform() {
   local platform="${1:-}"
   local runner_uarch="runs-on=${GH_RUN_ID_VAL}/runner="
   case "$platform" in
     amd-zen4)
-      ROWS+=("{\"platform\":\"amd-zen4\",\"display_name\":\"AMD Zen4\",\"artifact_suffix\":\"amd-zen4\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}amd-zen4\",\"tools_mode\":\"minimal\",\"toolchain_components\":\"${COMPONENTS_STD}\"}")
+      ROWS+=("{\"platform\":\"amd-zen4\",\"display_name\":\"AMD Zen4\",\"artifact_suffix\":\"amd-zen4\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}amd-zen4\"}")
       ;;
     intel-spr)
-      ROWS+=("{\"platform\":\"intel-spr\",\"display_name\":\"Intel Sapphire Rapids\",\"artifact_suffix\":\"intel-spr\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}intel-spr\",\"tools_mode\":\"minimal\",\"toolchain_components\":\"${COMPONENTS_STD}\"}")
+      ROWS+=("{\"platform\":\"intel-spr\",\"display_name\":\"Intel Sapphire Rapids\",\"artifact_suffix\":\"intel-spr\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}intel-spr\"}")
       ;;
     intel-icl)
-      ROWS+=("{\"platform\":\"intel-icl\",\"display_name\":\"Intel Ice Lake\",\"artifact_suffix\":\"intel-icl\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}intel-icl\",\"tools_mode\":\"minimal\",\"toolchain_components\":\"${COMPONENTS_STD}\"}")
+      ROWS+=("{\"platform\":\"intel-icl\",\"display_name\":\"Intel Ice Lake\",\"artifact_suffix\":\"intel-icl\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}intel-icl\"}")
       ;;
     amd-zen5)
-      ROWS+=("{\"platform\":\"amd-zen5\",\"display_name\":\"AMD Zen5\",\"artifact_suffix\":\"amd-zen5\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}amd-zen5\",\"tools_mode\":\"minimal\",\"toolchain_components\":\"${COMPONENTS_STD}\"}")
+      ROWS+=("{\"platform\":\"amd-zen5\",\"display_name\":\"AMD Zen5\",\"artifact_suffix\":\"amd-zen5\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}amd-zen5\"}")
       ;;
     graviton3)
-      ROWS+=("{\"platform\":\"graviton3\",\"display_name\":\"AWS Graviton3\",\"artifact_suffix\":\"graviton3\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}graviton3\",\"tools_mode\":\"minimal\",\"toolchain_components\":\"${COMPONENTS_STD}\"}")
+      ROWS+=("{\"platform\":\"graviton3\",\"display_name\":\"AWS Graviton3\",\"artifact_suffix\":\"graviton3\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}graviton3\"}")
       ;;
     graviton4)
-      ROWS+=("{\"platform\":\"graviton4\",\"display_name\":\"AWS Graviton4\",\"artifact_suffix\":\"graviton4\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}graviton4\",\"tools_mode\":\"minimal\",\"toolchain_components\":\"${COMPONENTS_STD}\"}")
+      ROWS+=("{\"platform\":\"graviton4\",\"display_name\":\"AWS Graviton4\",\"artifact_suffix\":\"graviton4\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}graviton4\"}")
       ;;
     ibm-s390x)
-      ROWS+=("{\"platform\":\"ibm-s390x\",\"display_name\":\"IBM Z s390x\",\"artifact_suffix\":\"ibm-s390x\",\"timeout_minutes\":${IBM_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-s390x\",\"tools_mode\":\"ibm\",\"toolchain_components\":\"clippy, rustfmt\"}")
+      ROWS+=("{\"platform\":\"ibm-s390x\",\"display_name\":\"IBM Z s390x\",\"artifact_suffix\":\"ibm-s390x\",\"timeout_minutes\":${IBM_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-s390x\"}")
       ;;
     ibm-power10)
-      ROWS+=("{\"platform\":\"ibm-power10\",\"display_name\":\"IBM POWER10 ppc64le\",\"artifact_suffix\":\"ibm-power10\",\"timeout_minutes\":${IBM_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-ppc64le-p10\",\"tools_mode\":\"ibm\",\"toolchain_components\":\"clippy, rustfmt\"}")
+      ROWS+=("{\"platform\":\"ibm-power10\",\"display_name\":\"IBM POWER10 ppc64le\",\"artifact_suffix\":\"ibm-power10\",\"timeout_minutes\":${IBM_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-ppc64le-p10\"}")
+      ;;
+    rise-riscv)
+      ROWS+=("{\"platform\":\"rise-riscv\",\"display_name\":\"RISE RISC-V riscv64\",\"artifact_suffix\":\"rise-riscv\",\"timeout_minutes\":${IBM_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-riscv\"}")
       ;;
     *)
       echo "error: unsupported bench platform '$platform'" >&2
@@ -97,31 +98,31 @@ append_ct_row_for_platform() {
   local runner_uarch="runs-on=${GH_RUN_ID_VAL}/runner="
   case "$platform" in
     amd-zen4)
-      ROWS+=("{\"platform\":\"amd-zen4\",\"target\":\"x86_64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"AMD Zen4\",\"artifact_suffix\":\"amd-zen4\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}amd-zen4\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\"}")
+      ROWS+=("{\"platform\":\"amd-zen4\",\"target\":\"x86_64-unknown-linux-gnu\",\"display_name\":\"AMD Zen4\",\"artifact_suffix\":\"amd-zen4\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}amd-zen4\",\"formal\":true,\"toolchain_components\":\"${COMPONENTS_CT}\"}")
       ;;
     intel-spr)
-      ROWS+=("{\"platform\":\"intel-spr\",\"target\":\"x86_64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"Intel Sapphire Rapids\",\"artifact_suffix\":\"intel-spr\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}intel-spr\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\"}")
+      ROWS+=("{\"platform\":\"intel-spr\",\"target\":\"x86_64-unknown-linux-gnu\",\"display_name\":\"Intel Sapphire Rapids\",\"artifact_suffix\":\"intel-spr\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}intel-spr\",\"formal\":true,\"toolchain_components\":\"${COMPONENTS_CT}\"}")
       ;;
     intel-icl)
-      ROWS+=("{\"platform\":\"intel-icl\",\"target\":\"x86_64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"Intel Ice Lake\",\"artifact_suffix\":\"intel-icl\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}intel-icl\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\"}")
+      ROWS+=("{\"platform\":\"intel-icl\",\"target\":\"x86_64-unknown-linux-gnu\",\"display_name\":\"Intel Ice Lake\",\"artifact_suffix\":\"intel-icl\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}intel-icl\",\"formal\":true,\"toolchain_components\":\"${COMPONENTS_CT}\"}")
       ;;
     amd-zen5)
-      ROWS+=("{\"platform\":\"amd-zen5\",\"target\":\"x86_64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"AMD Zen5\",\"artifact_suffix\":\"amd-zen5\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}amd-zen5\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\"}")
+      ROWS+=("{\"platform\":\"amd-zen5\",\"target\":\"x86_64-unknown-linux-gnu\",\"display_name\":\"AMD Zen5\",\"artifact_suffix\":\"amd-zen5\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}amd-zen5\",\"formal\":true,\"toolchain_components\":\"${COMPONENTS_CT}\"}")
       ;;
     graviton3)
-      ROWS+=("{\"platform\":\"graviton3\",\"target\":\"aarch64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"AWS Graviton3\",\"artifact_suffix\":\"graviton3\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}graviton3\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\"}")
+      ROWS+=("{\"platform\":\"graviton3\",\"target\":\"aarch64-unknown-linux-gnu\",\"display_name\":\"AWS Graviton3\",\"artifact_suffix\":\"graviton3\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}graviton3\",\"formal\":true,\"toolchain_components\":\"${COMPONENTS_CT}\"}")
       ;;
     graviton4)
-      ROWS+=("{\"platform\":\"graviton4\",\"target\":\"aarch64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"AWS Graviton4\",\"artifact_suffix\":\"graviton4\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}graviton4\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\"}")
+      ROWS+=("{\"platform\":\"graviton4\",\"target\":\"aarch64-unknown-linux-gnu\",\"display_name\":\"AWS Graviton4\",\"artifact_suffix\":\"graviton4\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}graviton4\",\"formal\":true,\"toolchain_components\":\"${COMPONENTS_CT}\"}")
       ;;
     ibm-s390x)
-      ROWS+=("{\"platform\":\"ibm-s390x\",\"target\":\"s390x-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"IBM Z s390x\",\"artifact_suffix\":\"ibm-s390x\",\"timeout_minutes\":${CT_IBM_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-s390x\",\"tools_mode\":\"ibm\",\"toolchain_components\":\"${COMPONENTS_CT}\"}")
+      ROWS+=("{\"platform\":\"ibm-s390x\",\"target\":\"s390x-unknown-linux-gnu\",\"display_name\":\"IBM Z s390x\",\"artifact_suffix\":\"ibm-s390x\",\"timeout_minutes\":${CT_IBM_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-s390x\",\"formal\":false,\"toolchain_components\":\"${COMPONENTS_CT}\"}")
       ;;
     ibm-power10)
-      ROWS+=("{\"platform\":\"ibm-power10\",\"target\":\"powerpc64le-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"IBM POWER10 ppc64le\",\"artifact_suffix\":\"ibm-power10\",\"timeout_minutes\":${CT_IBM_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-ppc64le-p10\",\"tools_mode\":\"ibm\",\"toolchain_components\":\"${COMPONENTS_CT}\"}")
+      ROWS+=("{\"platform\":\"ibm-power10\",\"target\":\"powerpc64le-unknown-linux-gnu\",\"display_name\":\"IBM POWER10 ppc64le\",\"artifact_suffix\":\"ibm-power10\",\"timeout_minutes\":${CT_IBM_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-ppc64le-p10\",\"formal\":false,\"toolchain_components\":\"${COMPONENTS_CT}\"}")
       ;;
     rise-riscv)
-      ROWS+=("{\"platform\":\"rise-riscv\",\"target\":\"riscv64gc-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"RISE RISC-V riscv64\",\"artifact_suffix\":\"rise-riscv\",\"timeout_minutes\":${CT_RISCV_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-riscv\",\"tools_mode\":\"none\",\"toolchain_components\":\"${COMPONENTS_CT}\"}")
+      ROWS+=("{\"platform\":\"rise-riscv\",\"target\":\"riscv64gc-unknown-linux-gnu\",\"display_name\":\"RISE RISC-V riscv64\",\"artifact_suffix\":\"rise-riscv\",\"timeout_minutes\":${CT_RISCV_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-riscv\",\"formal\":false,\"toolchain_components\":\"${COMPONENTS_CT}\"}")
       ;;
     *)
       echo "error: unsupported CT platform '$platform'" >&2
@@ -137,7 +138,6 @@ if [[ -z "$GH_RUN_ID_VAL" ]]; then
 fi
 
 ROWS=()
-COMPONENTS_STD="clippy, rustfmt, rust-src"
 COMPONENTS_CT="clippy, rustfmt, rust-src, llvm-tools-preview"
 RUNSON_TIMEOUT_MINUTES=180
 IBM_TIMEOUT_MINUTES=240
@@ -150,6 +150,7 @@ BENCH_PLATFORMS_ALL=(
   "graviton4"
   "ibm-s390x"
   "ibm-power10"
+  "rise-riscv"
 )
 CT_PLATFORMS_ALL=(
   "amd-zen4"
@@ -162,16 +163,6 @@ CT_PLATFORMS_ALL=(
   "ibm-power10"
   "rise-riscv"
 )
-CT_PLATFORMS_DEFAULT=(
-  "amd-zen4"
-  "intel-spr"
-  "intel-icl"
-  "amd-zen5"
-  "graviton3"
-  "graviton4"
-  "ibm-s390x"
-  "ibm-power10"
-)
 CT_RUNSON_TIMEOUT_MINUTES=360
 CT_IBM_TIMEOUT_MINUTES=420
 CT_RISCV_TIMEOUT_MINUTES=480
@@ -179,13 +170,13 @@ CT_RISCV_TIMEOUT_MINUTES=480
 if [[ "$MODE" == "ct" ]]; then
   PLATFORMS_INPUT="${CT_PLATFORMS:-}"
   ALL_PLATFORMS=("${CT_PLATFORMS_ALL[@]}")
-  DEFAULT_PLATFORMS=("${CT_PLATFORMS_DEFAULT[@]}")
+  DEFAULT_PLATFORMS=("${CT_PLATFORMS_ALL[@]}")
   PLATFORM_ALIASES="zen4 spr icl zen5 g3 g4 s390x power10 riscv"
 else
   PLATFORMS_INPUT="${BENCH_PLATFORMS:-}"
   ALL_PLATFORMS=("${BENCH_PLATFORMS_ALL[@]}")
   DEFAULT_PLATFORMS=("${BENCH_PLATFORMS_ALL[@]}")
-  PLATFORM_ALIASES="zen4 spr icl zen5 g3 g4 s390x power10"
+  PLATFORM_ALIASES="zen4 spr icl zen5 g3 g4 s390x power10 riscv"
 fi
 PLATFORMS_INPUT="$(echo "$PLATFORMS_INPUT" | xargs)"
 

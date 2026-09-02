@@ -95,7 +95,33 @@ cp -R "$input_dir"/. "$staging/ct-evidence/"
   find CT-EVIDENCE-BUNDLE.json ct-evidence -type f -print0 | sort -z | xargs -0 sha256sum
 ) > "$manifest"
 
-tar -czf "$bundle_path" -C "$staging" CT-EVIDENCE-BUNDLE.json CT-EVIDENCE-MANIFEST.txt ct-evidence
+scripts/lib/python.sh - "$staging" "$bundle_path" <<'PY'
+import gzip
+from pathlib import Path
+import sys
+import tarfile
+
+root = Path(sys.argv[1])
+bundle = Path(sys.argv[2])
+members = [root / "CT-EVIDENCE-BUNDLE.json", root / "CT-EVIDENCE-MANIFEST.txt"]
+members.extend((root / "ct-evidence").rglob("*"))
+members.append(root / "ct-evidence")
+members.sort(key=lambda path: path.relative_to(root).as_posix())
+
+with bundle.open("wb") as raw:
+  with gzip.GzipFile(filename="", mode="wb", fileobj=raw, compresslevel=9, mtime=0) as compressed:
+    with tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive:
+      for path in members:
+        info = archive.gettarinfo(path, arcname=path.relative_to(root).as_posix())
+        info.uid = info.gid = 0
+        info.uname = info.gname = ""
+        info.mtime = 0
+        if path.is_file():
+          with path.open("rb") as source:
+            archive.addfile(info, source)
+        else:
+          archive.addfile(info)
+PY
 bundle_sha256="$(sha256sum "$bundle_path" | awk '{print $1}')"
 
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then

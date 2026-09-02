@@ -113,8 +113,11 @@ def sha256_file(path: Path) -> str:
 
 
 def matrix_targets(matrix: dict) -> set[str]:
-  groups = matrix.get("groups", {})
-  return {target for values in groups.values() for target in values}
+  return {
+    str(row.get("dimensions", {}).get("target", ""))
+    for row in matrix.get("variants", [])
+    if row.get("dimensions", {}).get("target")
+  }
 
 
 def primitive_requires_evidence(ct: dict, primitive: dict, evidence: str) -> bool:

@@ -33,7 +33,7 @@ ci_tool_validate_record() {
   local digest=$7
 
   case "$tool" in
-    wasmtime | wasm-tools | codecov) ;;
+    actionlint | ripgrep | wasmtime | wasm-tools) ;;
     *) ci_tool_fail "unknown direct CI tool: $tool" || return ;;
   esac
   [[ "$version" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+[-+A-Za-z0-9.]*$ ]] \
@@ -102,16 +102,14 @@ ci_tool_resolve() {
 }
 
 ci_tool_validate_manifest() {
-  local tool
-  for tool in wasmtime wasm-tools codecov; do
+  local tool expected_version version
+  for tool in actionlint ripgrep wasmtime wasm-tools; do
+    local expected_platforms
     case "$tool" in
-      wasmtime | wasm-tools)
-        local expected_platforms=(linux:x86_64 linux:aarch64 macos:x86_64 macos:aarch64)
-        ;;
-      codecov)
-        local expected_platforms=(linux:x86_64)
-        ;;
+      actionlint | ripgrep) expected_platforms=(linux:x86_64) ;;
+      wasmtime | wasm-tools) expected_platforms=(linux:x86_64 linux:aarch64 macos:x86_64 macos:aarch64) ;;
     esac
+    expected_version=""
 
     local platform
     for platform in "${expected_platforms[@]}"; do
@@ -124,6 +122,15 @@ ci_tool_validate_manifest() {
         "$CI_TOOL_ARCHIVES")
       [[ "$count" -eq 1 ]] \
         || ci_tool_fail "expected one $tool archive for $expected_os/$expected_arch" || return
+      version=$(awk -F '\t' \
+        -v tool="$tool" -v os="$expected_os" -v arch="$expected_arch" \
+        '$1 == tool && $3 == os && $4 == arch { print $2 }' \
+        "$CI_TOOL_ARCHIVES")
+      if [[ -z "$expected_version" ]]; then
+        expected_version=$version
+      elif [[ "$version" != "$expected_version" ]]; then
+        ci_tool_fail "$tool versions differ across supported hosts" || return
+      fi
     done
   done
 

@@ -10,11 +10,10 @@ Required:
   --title TITLE        GitHub Release title
   --notes PATH         Release notes file
   --asset PATH         Asset to publish; repeat for every asset
-  --stable-asset PATH  Asset that must match on a published-release rerun; repeat as needed
 
 An absent release is assembled as a draft and then published. An existing
 draft is repaired only when its final asset set is exact. An existing published
-release is never modified and must have a valid immutable-release attestation.
+release is never modified; every asset and the immutable release must verify.
 EOF
 }
 
@@ -22,7 +21,6 @@ tag=""
 title=""
 notes=""
 assets=()
-stable_assets=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -30,7 +28,6 @@ while [[ $# -gt 0 ]]; do
     --title) title=${2:?missing value for --title}; shift 2 ;;
     --notes) notes=${2:?missing value for --notes}; shift 2 ;;
     --asset) assets+=("${2:?missing value for --asset}"); shift 2 ;;
-    --stable-asset) stable_assets+=("${2:?missing value for --stable-asset}"); shift 2 ;;
     -h | --help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
   esac
@@ -44,11 +41,6 @@ done
   echo "immutable release error: at least one --asset is required" >&2
   exit 2
 }
-(( ${#stable_assets[@]} > 0 )) || {
-  echo "immutable release error: at least one --stable-asset is required" >&2
-  exit 2
-}
-
 asset_names=()
 for asset in "${assets[@]}"; do
   [[ -f "$asset" ]] || {
@@ -62,24 +54,6 @@ duplicate_name=$(printf '%s\n' "${asset_names[@]}" | LC_ALL=C sort | uniq -d | h
   echo "immutable release error: duplicate asset name: $duplicate_name" >&2
   exit 1
 }
-
-for asset in "${stable_assets[@]}"; do
-  [[ -f "$asset" ]] || {
-    echo "immutable release error: stable asset is missing: $asset" >&2
-    exit 1
-  }
-  stable_present=false
-  for published_asset in "${assets[@]}"; do
-    if [[ "$published_asset" == "$asset" ]]; then
-      stable_present=true
-      break
-    fi
-  done
-  [[ "$stable_present" == true ]] || {
-    echo "immutable release error: stable asset must also be a published asset: $asset" >&2
-    exit 1
-  }
-done
 
 verify_attempts=${RSCRYPTO_RELEASE_VERIFY_ATTEMPTS:-18}
 verify_delay=${RSCRYPTO_RELEASE_VERIFY_DELAY:-10}
@@ -123,10 +97,10 @@ fi
 if [[ "$release_state" == "false" ]]; then
   verify_immutable_release
   verify_asset_set
-  for asset in "${stable_assets[@]}"; do
+  for asset in "${assets[@]}"; do
     gh release verify-asset "$tag" "$asset" >/dev/null
   done
-  echo "Published immutable release already matches the stable assets"
+  echo "Published immutable release already matches every asset"
   exit 0
 fi
 

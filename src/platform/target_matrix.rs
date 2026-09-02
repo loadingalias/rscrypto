@@ -24,10 +24,9 @@ fn matches_target_arch(target: &str, arch: Arch) -> bool {
   target.starts_with(prefix)
 }
 
-/// Scan all quoted strings in the JSON manifest for a target triple matching
-/// `arch`. The only quoted strings in the file are JSON keys (`"groups"`,
-/// `"win"`, `"ci"`, etc.) and target triple values — keys never start with
-/// an arch prefix like `x86_64-`, so false positives are impossible.
+/// Scan quoted catalog strings for a target triple matching `arch`.
+/// Repository validation owns the exact row schema; this embedded check keeps
+/// runtime detection tied to a catalog that names the host architecture.
 #[inline]
 #[must_use]
 pub(super) fn manifest_has_arch(arch: Arch) -> bool {

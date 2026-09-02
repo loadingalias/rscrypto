@@ -45,6 +45,9 @@ stores and host-architecture zero-store instructions across these shapes:
 - AEAD authentication, header protection, and AES-SIV state.
 - RSA success, entropy failure, and staged private-key validation.
 
+Scheduled and release Qualification run the same check cache-cold on Linux
+x86-64.
+
 This evidence binds the generated host binary. Each target needs its own run;
 source review remains the only evidence for an untested target.
 

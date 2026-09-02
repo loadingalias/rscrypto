@@ -55,7 +55,14 @@ compile-time `target_feature` settings. See [`platforms.md`](platforms.md).
 
 ```sh
 cargo check --no-default-features --features sha2
-just check-feature-matrix
+just plan
+just check
+just feature-contracts compile
 ```
+
+`just check` asks Cargo Rail for the affected feature groups and runs only the
+compile profiles whose resolved Cargo feature graph includes those groups.
+`just validate` also runs selected runtime capability profiles. The explicit
+`just feature-contracts compile` command remains the full compile contract.
 
 Use [docs.rs](https://docs.rs/rscrypto) to see which items each feature exposes.

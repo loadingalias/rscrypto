@@ -1,0 +1,35 @@
+{
+  "variant_catalog_version": 2,
+  "work": "assurance.miri",
+  "variants": [
+    {
+      "id": "portable",
+      "dimensions": {
+        "name": "Portable unsafe boundaries",
+        "mode": "focused"
+      },
+      "external_paths": [
+        "src/auth/argon2/**",
+        "src/auth/mlkem.rs",
+        "src/auth/mlkem/**",
+        "src/auth/x25519.rs",
+        "src/auth/x25519/**",
+        "src/backend/**",
+        "src/checksum/**",
+        "src/miri_shadow_tests.rs",
+        "src/platform/**",
+        "tests/argon2_miri.rs"
+      ]
+    },
+    {
+      "id": "rsa",
+      "dimensions": {
+        "name": "RSA unsafe boundaries",
+        "mode": "rsa"
+      },
+      "external_paths": [
+        "src/auth/rsa.rs"
+      ]
+    }
+  ]
+}

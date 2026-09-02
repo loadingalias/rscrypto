@@ -993,8 +993,10 @@ pub(crate) fn authenticate_aead(
 
 #[cfg(any(
   test,
-  target_arch = "x86_64",
-  all(target_arch = "powerpc64", target_endian = "little")
+  all(
+    feature = "chacha20poly1305",
+    any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little"))
+  )
 ))]
 fn authenticate_aead_portable_blocks(
   aad: &[u8],
@@ -1016,14 +1018,16 @@ fn authenticate_aead_portable_blocks(
 
 #[cfg(any(
   test,
-  target_arch = "x86_64",
-  all(target_arch = "powerpc64", target_endian = "little")
+  all(
+    feature = "chacha20poly1305",
+    any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little"))
+  )
 ))]
 pub(crate) fn authenticate_aead_empty_text_portable(aad: &[u8], key: &[u8; 32]) -> [u8; 16] {
   authenticate_aead_portable_blocks(aad, &[], key, super::AeadByteLengths::from_usize(aad.len(), 0))
 }
 
-#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+#[cfg(all(feature = "chacha20poly1305", target_arch = "powerpc64", target_endian = "little"))]
 pub(crate) fn authenticate_aead_short_text_portable(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
   authenticate_aead_portable_blocks(
     aad,

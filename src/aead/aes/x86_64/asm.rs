@@ -5,6 +5,7 @@ use core::arch::global_asm;
 global_asm!(include_str!("asm/rscrypto_aes_gcm_x86_64_linux.s"));
 
 #[repr(C)]
+#[cfg(feature = "aes-gcm")]
 pub(super) struct AesGcmX86State {
   acc_lo: u64,
   acc_hi: u64,
@@ -13,6 +14,7 @@ pub(super) struct AesGcmX86State {
   pub(super) processed: usize,
 }
 
+#[cfg(feature = "aes-gcm")]
 impl AesGcmX86State {
   #[inline]
   pub(super) fn new(acc: u128, ctr: u32) -> Self {
@@ -31,6 +33,7 @@ impl AesGcmX86State {
   }
 }
 
+#[cfg(feature = "aes-gcm")]
 unsafe extern "C" {
   pub(super) fn rscrypto_aes128_gcm_seal_16x_vaes512_x86_64_linux(
     round_keys: *const u8,
@@ -139,8 +142,10 @@ unsafe extern "C" {
     h_powers_rev_128: *const u128,
     state: *mut AesGcmX86State,
   );
+}
 
-  #[cfg(feature = "aes-gcm-siv")]
+#[cfg(feature = "aes-gcm-siv")]
+unsafe extern "C" {
   pub(super) fn rscrypto_aes128_gcmsiv_ctr_16x_vaes512_x86_64_linux(
     round_keys: *const u8,
     initial_counter: *const u8,
@@ -148,7 +153,6 @@ unsafe extern "C" {
     len: usize,
   ) -> usize;
 
-  #[cfg(feature = "aes-gcm-siv")]
   pub(super) fn rscrypto_aes256_gcmsiv_ctr_16x_vaes512_x86_64_linux(
     round_keys: *const u8,
     initial_counter: *const u8,

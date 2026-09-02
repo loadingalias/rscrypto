@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 unset BASH_ENV
+unset RAIL_ALL RAIL_PLAN_FILE RAIL_PLAN_HEAD_COMMIT RAIL_PLAN_IDENTITY RAIL_PLAN_JSON_CACHE \
+  RAIL_PLAN_JSON_CACHE_VALIDATED RAIL_PLAN_LOAD_ATTEMPTED RAIL_PLAN_LOADED RAIL_PLAN_LOCAL \
+  RAIL_PLAN_READER RAIL_PLAN_USE_READER RAIL_SINCE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+PYTHON="$("$REPO_ROOT/scripts/lib/python.sh" --print)"
+export PYTHON
 
 fail() {
   echo "changed-test planning regression failure: $*" >&2
@@ -43,11 +48,20 @@ make_plan() {
       end;
     {
       plan_contract_version: 8,
+      identity: "plan-v8:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      inputs: {head_commit: "0000000000000000000000000000000000000000"},
       work: {
         "cargo.build": decision("cargo.build"),
         "cargo.doctest": decision("cargo.doctest"),
         "cargo.test": decision("cargo.test")
-      }
+      },
+      required: (
+        if $state == "required" then
+          ["cargo.build", "cargo.doctest", "cargo.test"]
+        else
+          []
+        end
+      )
     }
   '
 }
@@ -89,11 +103,18 @@ scope_mode() (
 [[ $(scope_mode "$WORKSPACE_PLAN") == workspace ]] || fail "workspace selection was not preserved"
 [[ $(scope_mode "$PACKAGE_PLAN") == packages ]] || fail "package selection was not preserved"
 [[ $(scope_mode "$EMPTY_PLAN") == empty ]] || fail "skipped work was not preserved"
-[[ $(scope_mode '' 9) == workspace ]] || fail "planner failure did not fail closed"
-[[ $(scope_mode "$PACKAGE_PLAN" 0 9) == workspace ]] || fail "saved-plan verification failure did not fail closed"
-[[ $(scope_mode '{"plan_contract_version":7}' 0 0) == workspace ]] || fail "v7 plan was accepted"
+if scope_mode '' 9 >/dev/null 2>&1; then
+  fail "planner failure did not fail closed"
+fi
+if scope_mode "$PACKAGE_PLAN" 0 9 >/dev/null 2>&1; then
+  fail "saved-plan verification failure did not fail closed"
+fi
+if scope_mode '{"plan_contract_version":7}' 0 0 >/dev/null 2>&1; then
+  fail "v7 plan was accepted"
+fi
 
-package_args=$(
+package_args_file="$TMP_ROOT/package-args"
+(
   export PATH="$BIN:$PATH"
   export MOCK_LOG="$LOG"
   export MOCK_PLAN_OUTPUT="$PACKAGE_PLAN"
@@ -101,8 +122,9 @@ package_args=$(
   # shellcheck source=../lib/rail-plan.sh
   source "$REPO_ROOT/scripts/lib/rail-plan.sh"
   rail_scope_cargo_args cargo.test
-)
-[[ "$package_args" == $'-p\nrscrypto' ]] || fail "exact typed Cargo arguments were not exposed"
+) >"$package_args_file"
+[[ $(od -An -tx1 -v "$package_args_file" | tr -d ' \n') == 2d7000727363727970746f00 ]] \
+  || fail "exact NUL-delimited Cargo arguments were not exposed"
 
 run_test_consumer() {
   local plan=$1
@@ -122,7 +144,7 @@ run_test_consumer() {
 }
 
 run_test_consumer "$PACKAGE_PLAN" 'cargo test --locked -p rscrypto --all-features --lib --tests'
-run_test_consumer "$WORKSPACE_PLAN" 'cargo test --locked --workspace --all-features --lib --tests'
+run_test_consumer "$WORKSPACE_PLAN" 'cargo test --locked --all-features --lib --tests'
 
 : >"$LOG"
 env \

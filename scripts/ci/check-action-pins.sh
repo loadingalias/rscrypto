@@ -22,7 +22,7 @@ if [[ -z "$root" ]]; then
 fi
 root=$(cd "$root" && pwd)
 
-for dependency in curl git sed sort yq; do
+for dependency in curl git ruby sed sort; do
   command -v "$dependency" >/dev/null 2>&1 || {
     echo "action pin error: missing dependency: $dependency" >&2
     exit 1
@@ -40,6 +40,34 @@ fail() {
   status=1
 }
 
+check_self_reference() {
+  local use=$1
+  local location=$2
+  local relative=${use#'$/'}
+
+  if [[ ! "$relative" =~ ^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$ ]]; then
+    fail "invalid self-repository reference '$use': $location"
+    return
+  fi
+  case "/$relative/" in
+    *"/../"* | *"/./"* | *"//"*)
+      fail "invalid self-repository reference '$use': $location"
+      return
+      ;;
+  esac
+
+  case "$relative" in
+    .github/workflows/*.yml | .github/workflows/*.yaml)
+      [[ -f "$root/$relative" ]] || fail "self-repository workflow '$use' does not exist: $location"
+      ;;
+    *)
+      if [[ ! -f "$root/$relative/action.yml" && ! -f "$root/$relative/action.yaml" ]]; then
+        fail "self-repository action '$use' has no action definition: $location"
+      fi
+      ;;
+  esac
+}
+
 workflow_files() {
   local roots=()
   [[ -d "$root/.github/workflows" ]] && roots+=("$root/.github/workflows")
@@ -55,15 +83,20 @@ while IFS= read -r file; do
     use=$(sed -nE 's/^[[:space:]-]*uses:[[:space:]]*([^[:space:]#]+).*/\1/p' <<<"$line")
     [[ -n "$use" ]] || continue
 
+    location="${file#"$root"/}:$line_number"
     case "$use" in
       ./* | docker://*) continue ;;
+      '$/'*)
+        check_self_reference "$use" "$location"
+        continue
+        ;;
     esac
 
     parsed=$(sed -nE \
       's/^[[:space:]-]*uses:[[:space:]]*([^@[:space:]#]+)@([0-9a-f]{40})[[:space:]]*#[[:space:]]*(v?[0-9]+(\.[0-9]+){0,2})[[:space:]]*$/\1\	\2\	\3/p' \
       <<<"$line")
     if [[ -z "$parsed" ]]; then
-      fail "external action must use a lowercase 40-character SHA and same-line semantic ref: ${file#"$root"/}:$line_number"
+      fail "external action must use a lowercase 40-character SHA and same-line semantic ref: $location"
       continue
     fi
 
@@ -72,7 +105,7 @@ while IFS= read -r file; do
     sha=${remainder%%$'\t'*}
     ref=${remainder#*$'\t'}
     if [[ ! "$action" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$ ]]; then
-      fail "invalid external action name '$action': ${file#"$root"/}:$line_number"
+      fail "invalid external action name '$action': $location"
       continue
     fi
 
@@ -164,7 +197,11 @@ while IFS=$'\t' read -r action sha ref; do
       runtime=""
       for filename in action.yml action.yaml; do
         if fetch_definition "$repository" "$sha" "${path_prefix}${filename}" "$tmp/definition" 2>/dev/null; then
-          runtime=$(yq eval -r '.runs.using // ""' "$tmp/definition" 2>/dev/null || true)
+          runtime=$(ruby -e '
+            require "yaml"
+            definition = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)
+            puts definition.dig("runs", "using").to_s
+          ' "$tmp/definition" 2>/dev/null || true)
           [[ -n "$runtime" ]] && break
         fi
       done

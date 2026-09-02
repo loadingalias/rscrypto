@@ -65,11 +65,11 @@ if [[ "$scope_status" -eq 0 ]]; then
   echo "Testing $SCOPE_DESC"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   if [[ "$has_nextest" == true ]]; then
-    cargo nextest run --locked "${CARGO_ARGS[@]}" -P "$profile" --all-features \
+    cargo nextest run --locked "${CARGO_ARGS[@]:+${CARGO_ARGS[@]}}" -P "$profile" --all-features \
       --config-file .config/nextest.toml \
       "${nextest_thread_args[@]:+${nextest_thread_args[@]}}"
   else
-    cargo test --locked "${CARGO_ARGS[@]}" --all-features --lib --tests
+    cargo test --locked "${CARGO_ARGS[@]:+${CARGO_ARGS[@]}}" --all-features --lib --tests
   fi
 else
   echo "No unit or integration test targets selected by Cargo Rail"
@@ -93,4 +93,4 @@ fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Running doctests for $SCOPE_DESC"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-cargo test --locked "${CARGO_ARGS[@]}" --doc --all-features
+cargo test --locked "${CARGO_ARGS[@]:+${CARGO_ARGS[@]}}" --doc --all-features

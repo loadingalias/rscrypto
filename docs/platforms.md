@@ -25,13 +25,48 @@ target builds; runtime behavior requires target execution.
 
 ## Supported targets
 
-[`.config/target-matrix.json`](../.config/target-matrix.json) owns the target
-groups and CI execution lanes. Targets outside that matrix may compile, but are
-not part of the tested support contract.
+[`.config/target-matrix.json`](../.config/target-matrix.json) is both the target
+support catalog and the Cargo Rail variant catalog. Targets outside it may
+compile, but are not part of the tested support contract. `ci.yaml` executes
+only affected rows; `qualification.yaml` executes every row. The ordinary
+Linux x86-64 row is already owned by the core Rust job and is not duplicated in
+the platform matrix.
 
-The matrix includes native Windows, macOS, Linux, IBM, bare-metal `no_std`, and
-WASM targets. Only the listed GitHub Actions and native runner lanes provide
-runtime evidence.
+| Target | Compile proof | Runtime proof | Perf | CT | Release |
+| --- | --- | --- | --- | --- | --- |
+| `aarch64-apple-darwin` | Native | Virtual native | No | No | Yes |
+| `aarch64-pc-windows-msvc` | Hosted | None | No | No | Yes |
+| `aarch64-unknown-linux-gnu` | Native | Virtual native | Yes | Yes | Yes |
+| `aarch64-unknown-linux-musl` | Generic cross | None | No | No | Yes |
+| `aarch64-unknown-none` | Generic cross | None | No | No | Yes |
+| `powerpc64le-unknown-linux-gnu` | Native | Physical native | Yes | Yes | Yes |
+| `riscv32imac-unknown-none-elf` | Generic cross | None | No | No | Yes |
+| `riscv64gc-unknown-linux-gnu` | Native | Physical native | Yes | Yes | Yes |
+| `s390x-unknown-linux-gnu` | Native | Physical native | Yes | Yes | Yes |
+| `thumbv6m-none-eabi` | Generic cross | None | No | No | Yes |
+| `wasm32-unknown-unknown` | Generic cross | None | No | No | Yes |
+| `wasm32-wasip1` | Generic cross | Wasmtime emulation | No | No | Yes |
+| `x86_64-apple-darwin` | Native | Virtual native | No | No | Yes |
+| `x86_64-pc-windows-msvc` | Native | Virtual native | No | No | Yes |
+| `x86_64-unknown-linux-gnu` | Core job | Virtual native | Yes | Yes | Yes |
+| `x86_64-unknown-linux-musl` | Generic cross | None | No | No | Yes |
+| `x86_64-unknown-none` | Generic cross | None | No | No | Yes |
+
+Performance and CT entries refer to their separate hardware workflows; a
+compile row never supplies those claims. The catalog also contains a separate
+physical Intel Sapphire Rapids proof for Linux AMX process authorization.
+
+Native platform rows fail before Cargo work if the Rust host triple or machine
+architecture does not match the catalog. Donated POWER, IBM Z, and RISC-V
+machines run only native unit/backend evidence and focused portable-versus-
+accelerated tests. Windows AArch64 compiles but does not claim runtime evidence;
+Windows x86-64 does. Both declared Apple targets have routine native ownership.
+
+Local and remote machines reproduce a row with
+`just target-contract ROW [shallow|deep]` or
+`just ssh-just MACHINE target-contract ROW deep`. `ssh-list` remains the
+authority for development-machine names; rscrypto does not duplicate that
+provider catalog.
 
 Backend availability varies by primitive, target, compiler, and CPU. Use
 `rscrypto::platform` and the `introspect` example to inspect one build:

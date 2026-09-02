@@ -1,0 +1,592 @@
+{
+  "variant_catalog_version": 2,
+  "work": "assurance.fuzz",
+  "variants": [
+    {
+      "id": "surface",
+      "dimensions": {
+        "name": "Public parsing and I/O",
+        "targets": "hex_parse,traits_io",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/hex_parse/**",
+        "fuzz/corpus/traits_io/**",
+        "fuzz/fuzz_targets/hex_parse.rs",
+        "fuzz/fuzz_targets/traits_io.rs",
+        "fuzz/dictionaries/hex_parse.dict",
+        "fuzz-packages/surface-hex-parse/**",
+        "fuzz-packages/traits-io/**",
+        "src/hex.rs",
+        "src/traits/**"
+      ]
+    },
+    {
+      "id": "crc16",
+      "dimensions": {
+        "name": "CRC-16",
+        "targets": "checksum_crc16",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz-packages/checksums-crc16/**",
+        "src/checksum/common/**",
+        "src/checksum/diag.rs",
+        "src/checksum/dispatchers.rs",
+        "src/checksum/generated/**",
+        "src/checksum/introspect.rs",
+        "src/checksum/io.rs",
+        "src/checksum/kernel_table.rs",
+        "src/checksum/macros.rs",
+        "src/checksum/mod.rs",
+        "src/checksum/crc16/**"
+      ]
+    },
+    {
+      "id": "crc24",
+      "dimensions": {
+        "name": "CRC-24",
+        "targets": "checksum_crc24",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz-packages/checksums-crc24/**",
+        "src/checksum/common/**",
+        "src/checksum/diag.rs",
+        "src/checksum/dispatchers.rs",
+        "src/checksum/generated/**",
+        "src/checksum/introspect.rs",
+        "src/checksum/io.rs",
+        "src/checksum/kernel_table.rs",
+        "src/checksum/macros.rs",
+        "src/checksum/mod.rs",
+        "src/checksum/crc24/**"
+      ]
+    },
+    {
+      "id": "crc32",
+      "dimensions": {
+        "name": "CRC-32",
+        "targets": "checksum_crc32",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz-packages/checksums-crc32/**",
+        "src/checksum/common/**",
+        "src/checksum/diag.rs",
+        "src/checksum/dispatchers.rs",
+        "src/checksum/generated/**",
+        "src/checksum/introspect.rs",
+        "src/checksum/io.rs",
+        "src/checksum/kernel_table.rs",
+        "src/checksum/macros.rs",
+        "src/checksum/mod.rs",
+        "src/checksum/crc32/**"
+      ]
+    },
+    {
+      "id": "crc64",
+      "dimensions": {
+        "name": "CRC-64",
+        "targets": "checksum_crc64",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz-packages/checksums-crc64/**",
+        "src/checksum/common/**",
+        "src/checksum/diag.rs",
+        "src/checksum/dispatchers.rs",
+        "src/checksum/generated/**",
+        "src/checksum/introspect.rs",
+        "src/checksum/io.rs",
+        "src/checksum/kernel_table.rs",
+        "src/checksum/macros.rs",
+        "src/checksum/mod.rs",
+        "src/checksum/crc64/**"
+      ]
+    },
+    {
+      "id": "checksums-full",
+      "dimensions": {
+        "name": "Combined checksum harness",
+        "targets": "checksum_crc",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/checksum_crc/**",
+        "fuzz/fuzz_targets/checksum_crc.rs"
+      ]
+    },
+    {
+      "id": "rapidhash",
+      "dimensions": {
+        "name": "RapidHash",
+        "targets": "fast_rapidhash",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/fast_rapidhash/**",
+        "fuzz/fuzz_targets/fast_rapidhash.rs",
+        "fuzz-packages/fast-rapidhash/**",
+        "src/hashes/fast/rapidhash.rs",
+        "src/hashes/fast/rapidhash/**"
+      ]
+    },
+    {
+      "id": "xxh3",
+      "dimensions": {
+        "name": "XXH3",
+        "targets": "fast_xxh3",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/fast_xxh3/**",
+        "fuzz/fuzz_targets/fast_xxh3.rs",
+        "fuzz-packages/fast-xxh3/**",
+        "src/hashes/fast/xxh3.rs",
+        "src/hashes/fast/xxh3/**"
+      ]
+    },
+    {
+      "id": "ascon-hash",
+      "dimensions": {
+        "name": "Ascon hash",
+        "targets": "hash_ascon,hash_ascon_cxof",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/hash_ascon/**",
+        "fuzz/corpus/hash_ascon_cxof/**",
+        "fuzz/fuzz_targets/hash_ascon*.rs",
+        "fuzz-packages/hash-ascon/**",
+        "src/backend/ascon.rs",
+        "src/hashes/crypto/ascon.rs",
+        "src/hashes/crypto/ascon/**"
+      ]
+    },
+    {
+      "id": "blake2",
+      "dimensions": {
+        "name": "BLAKE2",
+        "targets": "hash_blake2b,hash_blake2s",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/hash_blake2b/**",
+        "fuzz/corpus/hash_blake2s/**",
+        "fuzz/fuzz_targets/hash_blake2*.rs",
+        "fuzz-packages/hash-blake2/**",
+        "src/hashes/crypto/blake2b/**",
+        "src/hashes/crypto/blake2s/**"
+      ]
+    },
+    {
+      "id": "blake3",
+      "dimensions": {
+        "name": "BLAKE3",
+        "targets": "hash_blake3,hash_blake3_keyed,hash_blake3_derive",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/hash_blake3/**",
+        "fuzz/corpus/hash_blake3_derive/**",
+        "fuzz/corpus/hash_blake3_keyed/**",
+        "fuzz/fuzz_targets/hash_blake3*.rs",
+        "fuzz-packages/hash-blake3/**",
+        "src/hashes/crypto/blake3/**"
+      ]
+    },
+    {
+      "id": "sha2",
+      "dimensions": {
+        "name": "SHA-2",
+        "targets": "hash_sha2",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/hash_sha2/**",
+        "fuzz/fuzz_targets/hash_sha2.rs",
+        "fuzz-packages/hash-sha2/**",
+        "src/hashes/crypto/sha*.rs",
+        "src/hashes/crypto/sha224/**",
+        "src/hashes/crypto/sha256/**",
+        "src/hashes/crypto/sha384/**",
+        "src/hashes/crypto/sha512/**",
+        "src/hashes/crypto/sha512_256/**"
+      ]
+    },
+    {
+      "id": "sha3",
+      "dimensions": {
+        "name": "SHA-3 and cSHAKE",
+        "targets": "hash_sha3,hash_cshake256",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/hash_cshake256/**",
+        "fuzz/corpus/hash_sha3/**",
+        "fuzz/fuzz_targets/hash_sha3.rs",
+        "fuzz/fuzz_targets/hash_cshake256.rs",
+        "fuzz-packages/hash-sha3/**",
+        "src/hashes/crypto/cshake.rs",
+        "src/hashes/crypto/keccak.rs",
+        "src/hashes/crypto/keccak/**",
+        "src/hashes/crypto/sha3.rs",
+        "src/hashes/crypto/sp800185.rs"
+      ]
+    },
+    {
+      "id": "websocket-sha1",
+      "dimensions": {
+        "name": "WebSocket SHA-1",
+        "targets": "hash_websocket_sha1",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/hash_websocket_sha1/**",
+        "fuzz/fuzz_targets/hash_websocket_sha1.rs",
+        "fuzz-packages/hash-websocket-sha1/**",
+        "src/hashes/legacy/**"
+      ]
+    },
+    {
+      "id": "aes-gcm",
+      "dimensions": {
+        "name": "AES-GCM",
+        "targets": "aead_aes128gcm,aead_aes256gcm",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/aead_aes128gcm/**",
+        "fuzz/corpus/aead_aes256gcm/**",
+        "fuzz/fuzz_targets/aead_aes128gcm.rs",
+        "fuzz/fuzz_targets/aead_aes256gcm.rs",
+        "fuzz/dictionaries/aead_boundary.dict",
+        "fuzz-packages/aead-aes128gcm/**",
+        "fuzz-packages/aead-aes256gcm/**",
+        "src/aead/aes.rs",
+        "src/aead/aes/**",
+        "src/aead/aes_round.rs",
+        "src/aead/aes128gcm.rs",
+        "src/aead/aes256gcm.rs",
+        "src/aead/ghash.rs"
+      ]
+    },
+    {
+      "id": "aes-gcm-siv",
+      "dimensions": {
+        "name": "AES-GCM-SIV",
+        "targets": "aead_aes128gcmsiv,aead_aes256gcmsiv",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/aead_aes128gcmsiv/**",
+        "fuzz/corpus/aead_aes256gcmsiv/**",
+        "fuzz/fuzz_targets/aead_aes128gcmsiv.rs",
+        "fuzz/fuzz_targets/aead_aes256gcmsiv.rs",
+        "fuzz/dictionaries/aead_boundary.dict",
+        "fuzz-packages/aead-aes128gcmsiv/**",
+        "fuzz-packages/aead-aes256gcmsiv/**",
+        "src/aead/aes.rs",
+        "src/aead/aes/**",
+        "src/aead/aes_round.rs",
+        "src/aead/aes128gcmsiv.rs",
+        "src/aead/aes256gcmsiv.rs",
+        "src/aead/polyval.rs"
+      ]
+    },
+    {
+      "id": "aes-siv",
+      "dimensions": {
+        "name": "AES-SIV",
+        "targets": "aead_aes_siv_cmac256",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/aead_aes_siv_cmac256/**",
+        "fuzz/fuzz_targets/aead_aes_siv_cmac256.rs",
+        "fuzz/dictionaries/aead_boundary.dict",
+        "fuzz-packages/aead-aes-siv-cmac256/**",
+        "src/aead/aes.rs",
+        "src/aead/aes/**",
+        "src/aead/aes_round.rs",
+        "src/aead/aes_siv_cmac256.rs"
+      ]
+    },
+    {
+      "id": "chacha-poly1305",
+      "dimensions": {
+        "name": "ChaCha20-Poly1305",
+        "targets": "aead_chacha20poly1305,aead_xchacha20poly1305",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/aead_chacha20poly1305/**",
+        "fuzz/corpus/aead_xchacha20poly1305/**",
+        "fuzz/fuzz_targets/aead_chacha20poly1305.rs",
+        "fuzz/fuzz_targets/aead_xchacha20poly1305.rs",
+        "fuzz/dictionaries/aead_boundary.dict",
+        "fuzz-packages/aead-chacha20poly1305/**",
+        "fuzz-packages/aead-xchacha20poly1305/**",
+        "src/aead/chacha20.rs",
+        "src/aead/chacha20/**",
+        "src/aead/chacha20poly1305.rs",
+        "src/aead/chacha20poly1305/**",
+        "src/aead/poly1305.rs",
+        "src/aead/poly1305/**",
+        "src/aead/xchacha20poly1305.rs"
+      ]
+    },
+    {
+      "id": "aegis256",
+      "dimensions": {
+        "name": "AEGIS-256",
+        "targets": "aead_aegis256",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/aead_aegis256/**",
+        "fuzz/fuzz_targets/aead_aegis256.rs",
+        "fuzz/dictionaries/aead_boundary.dict",
+        "fuzz-packages/aead-aegis256/**",
+        "src/aead/aegis256.rs",
+        "src/aead/aegis256/**"
+      ]
+    },
+    {
+      "id": "ascon-aead",
+      "dimensions": {
+        "name": "Ascon-AEAD",
+        "targets": "aead_ascon128",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/aead_ascon128/**",
+        "fuzz/fuzz_targets/aead_ascon128.rs",
+        "fuzz/dictionaries/aead_boundary.dict",
+        "fuzz-packages/aead-ascon128/**",
+        "src/aead/ascon128.rs",
+        "src/backend/ascon.rs"
+      ]
+    },
+    {
+      "id": "header-protection",
+      "dimensions": {
+        "name": "Header protection",
+        "targets": "aead_header_protection",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/aead_header_protection/**",
+        "fuzz/fuzz_targets/aead_header_protection.rs",
+        "fuzz-packages/aead-header-protection/**",
+        "src/aead/aes.rs",
+        "src/aead/aes/**",
+        "src/aead/aes_round.rs",
+        "src/aead/chacha20.rs",
+        "src/aead/chacha20/**",
+        "src/aead/header_protection.rs"
+      ]
+    },
+    {
+      "id": "nonce-counter",
+      "dimensions": {
+        "name": "AEAD nonce counter",
+        "targets": "aead_nonce_counter",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/aead_nonce_counter/**",
+        "fuzz/fuzz_targets/aead_nonce_counter.rs",
+        "fuzz-packages/aead-nonce-counter/**",
+        "src/aead/nonce_counter.rs"
+      ]
+    },
+    {
+      "id": "argon2",
+      "dimensions": {
+        "name": "Argon2",
+        "targets": "auth_argon2id,auth_argon2d,auth_argon2i",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/auth_argon2d/**",
+        "fuzz/corpus/auth_argon2i/**",
+        "fuzz/corpus/auth_argon2id/**",
+        "fuzz/fuzz_targets/auth_argon2*.rs",
+        "fuzz-packages/auth-argon2/**",
+        "src/auth/argon2/**"
+      ]
+    },
+    {
+      "id": "ed25519",
+      "dimensions": {
+        "name": "Ed25519",
+        "targets": "auth_ed25519,auth_ed25519_verify",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/auth_ed25519/**",
+        "fuzz/corpus/auth_ed25519_verify/**",
+        "fuzz/fuzz_targets/auth_ed25519*.rs",
+        "fuzz-packages/auth-ed25519/**",
+        "src/auth/curve25519_edwards.rs",
+        "src/auth/ed25519.rs",
+        "src/auth/ed25519/**",
+        "src/backend/curve25519.rs"
+      ]
+    },
+    {
+      "id": "ecdsa",
+      "dimensions": {
+        "name": "ECDSA",
+        "targets": "auth_ecdsa_verify,auth_ecdsa_sign",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/auth_ecdsa_sign/**",
+        "fuzz/corpus/auth_ecdsa_verify/**",
+        "fuzz/fuzz_targets/auth_ecdsa*.rs",
+        "src/auth/ecdsa*.rs"
+      ]
+    },
+    {
+      "id": "hmac",
+      "dimensions": {
+        "name": "HMAC",
+        "targets": "auth_hmac_sha256,auth_hmac_sha384,auth_hmac_sha512",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/auth_hmac_sha256/**",
+        "fuzz/corpus/auth_hmac_sha384/**",
+        "fuzz/corpus/auth_hmac_sha512/**",
+        "fuzz/fuzz_targets/auth_hmac*.rs",
+        "fuzz-packages/auth-hmac/**",
+        "src/auth/hmac.rs",
+        "src/auth/hmac_sha3.rs"
+      ]
+    },
+    {
+      "id": "hkdf",
+      "dimensions": {
+        "name": "HKDF",
+        "targets": "auth_hkdf_sha256,auth_hkdf_sha384",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/auth_hkdf_sha256/**",
+        "fuzz/corpus/auth_hkdf_sha384/**",
+        "fuzz/fuzz_targets/auth_hkdf*.rs",
+        "fuzz-packages/auth-hkdf/**",
+        "src/auth/hkdf.rs"
+      ]
+    },
+    {
+      "id": "kmac",
+      "dimensions": {
+        "name": "KMAC",
+        "targets": "auth_kmac256",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/auth_kmac256/**",
+        "fuzz/fuzz_targets/auth_kmac256.rs",
+        "fuzz-packages/auth-kmac256/**",
+        "src/auth/kmac.rs"
+      ]
+    },
+    {
+      "id": "pbkdf2",
+      "dimensions": {
+        "name": "PBKDF2",
+        "targets": "auth_pbkdf2",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/auth_pbkdf2/**",
+        "fuzz/fuzz_targets/auth_pbkdf2.rs",
+        "fuzz-packages/auth-pbkdf2/**",
+        "src/auth/pbkdf2.rs"
+      ]
+    },
+    {
+      "id": "phc",
+      "dimensions": {
+        "name": "PHC strings",
+        "targets": "auth_phc",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/auth_phc/**",
+        "fuzz/fuzz_targets/auth_phc.rs",
+        "fuzz/dictionaries/phc.dict",
+        "fuzz-packages/auth-phc/**",
+        "src/auth/phc.rs"
+      ]
+    },
+    {
+      "id": "scrypt",
+      "dimensions": {
+        "name": "scrypt",
+        "targets": "auth_scrypt",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/auth_scrypt/**",
+        "fuzz/fuzz_targets/auth_scrypt.rs",
+        "fuzz-packages/auth-scrypt/**",
+        "src/auth/scrypt.rs"
+      ]
+    },
+    {
+      "id": "x25519",
+      "dimensions": {
+        "name": "X25519",
+        "targets": "auth_x25519",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/auth_x25519/**",
+        "fuzz/fuzz_targets/auth_x25519.rs",
+        "fuzz-packages/auth-x25519/**",
+        "src/auth/x25519.rs",
+        "src/auth/x25519/**",
+        "src/backend/curve25519.rs"
+      ]
+    },
+    {
+      "id": "mlkem",
+      "dimensions": {
+        "name": "ML-KEM",
+        "targets": "auth_mlkem512,auth_mlkem768,auth_mlkem1024",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/auth_mlkem1024/**",
+        "fuzz/corpus/auth_mlkem512/**",
+        "fuzz/corpus/auth_mlkem768/**",
+        "fuzz/fuzz_targets/auth_mlkem*.rs",
+        "src/auth/mlkem.rs",
+        "src/auth/mlkem/**"
+      ]
+    },
+    {
+      "id": "rsa",
+      "dimensions": {
+        "name": "RSA",
+        "targets": "auth_rsa_public_key,auth_rsa_import,auth_rsa_verify,auth_rsa_private_ops,auth_rsa_protocol",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/auth_rsa_import/**",
+        "fuzz/corpus/auth_rsa_private_ops/**",
+        "fuzz/corpus/auth_rsa_protocol/**",
+        "fuzz/corpus/auth_rsa_public_key/**",
+        "fuzz/corpus/auth_rsa_verify/**",
+        "fuzz/fuzz_targets/auth_rsa*.rs",
+        "src/auth/rsa*.rs"
+      ]
+    }
+  ]
+}
