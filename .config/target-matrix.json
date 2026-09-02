@@ -210,7 +210,7 @@
         "runner": "ubuntu-24.04-riscv",
         "contract": "nightly",
         "components": "",
-        "timeout_minutes": 60,
+        "timeout_minutes": 120,
         "verify_plan": false,
         "cache": false,
         "compile": "native",
