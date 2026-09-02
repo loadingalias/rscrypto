@@ -52,7 +52,7 @@ require_host() {
 
 run_amx() {
   local flags test_name
-  flags=$(sed -n 's/^flags[[:space:]]*: //p' /proc/cpuinfo | head -n 1)
+  flags=$(awk '/^flags[[:space:]]*:/ { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' /proc/cpuinfo)
   [[ " $flags " == *" amx_tile "* ]] || fail "intel-spr runner does not expose AMX-TILE"
   export CARGO_PROFILE_TEST_DEBUG=0
 

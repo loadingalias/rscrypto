@@ -2,7 +2,7 @@
 
 use core::{
   alloc::{GlobalAlloc, Layout},
-  sync::atomic::{AtomicUsize, Ordering},
+  cell::Cell,
 };
 use std::alloc::System;
 
@@ -12,18 +12,30 @@ use rscrypto::{
   RsaPssProfile, RsaPublicKey, RsaPublicKeyPolicy, RsaSignatureProfile, RsaX509PublicKey,
 };
 
-static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+std::thread_local! {
+  static ALLOCATIONS: Cell<Option<usize>> = const { Cell::new(None) };
+}
 const ID_RSASSA_PSS_OID: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a];
 
 struct CountingAlloc;
 
+fn record_allocation() {
+  match ALLOCATIONS.try_with(|allocations| {
+    if let Some(count) = allocations.get() {
+      allocations.set(Some(count.strict_add(1)));
+    }
+  }) {
+    Ok(()) | Err(_) => {}
+  }
+}
+
 // SAFETY: CountingAlloc preserves the global allocator contract because:
 // 1. Every allocation operation delegates to `System` with the original `Layout`.
 // 2. Returned pointers and deallocations are exactly those produced/accepted by `System`.
-// 3. The only added behavior is an atomic counter update independent of allocation memory.
+// 3. The only added behavior is a thread-local counter update independent of allocation memory.
 unsafe impl GlobalAlloc for CountingAlloc {
   unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-    ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+    record_allocation();
     // SAFETY: Delegating allocation to `System` because:
     // 1. `layout` is forwarded unchanged from the caller.
     // 2. `System` is the platform allocator and defines the allocation contract.
@@ -38,7 +50,7 @@ unsafe impl GlobalAlloc for CountingAlloc {
   }
 
   unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-    ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+    record_allocation();
     // SAFETY: Delegating reallocation to `System` because:
     // 1. `ptr` and `layout` identify an allocation owned by this allocator.
     // 2. `new_size` is forwarded unchanged from the caller.
@@ -378,11 +390,13 @@ fn public_operation_input() -> Vec<u8> {
 }
 
 fn reset_allocations() {
-  ALLOCATIONS.store(0, Ordering::SeqCst);
+  ALLOCATIONS.set(Some(0));
 }
 
 fn allocation_count() -> usize {
-  ALLOCATIONS.load(Ordering::SeqCst)
+  ALLOCATIONS
+    .replace(None)
+    .expect("allocation counting must be enabled before reading it")
 }
 
 #[test]

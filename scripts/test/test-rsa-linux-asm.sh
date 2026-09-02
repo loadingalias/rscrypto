@@ -8,7 +8,7 @@ fail() {
 
 [[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] \
   || fail "requires a Linux x86-64 host"
-flags=$(sed -n 's/^flags[[:space:]]*: //p' /proc/cpuinfo | head -n 1)
+flags=$(awk '/^flags[[:space:]]*:/ { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' /proc/cpuinfo)
 [[ " $flags " == *" bmi2 "* && " $flags " == *" adx "* ]] \
   || fail "requires BMI2 and ADX"
 
