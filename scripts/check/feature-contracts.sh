@@ -370,6 +370,12 @@ runtime_args() {
   local target=$2
   local filter=$3
 
+  if [[ "$target" == all ]] && command -v cargo-nextest >/dev/null 2>&1; then
+    RUNTIME_ARGS=(cargo nextest run --locked --workspace --no-default-features
+      --features "$feature_set" --config-file .config/nextest.toml -P commit)
+    return 0
+  fi
+
   RUNTIME_ARGS=(cargo test --locked --workspace --no-default-features --features "$feature_set")
   case "$target" in
     all) RUNTIME_ARGS+=(--lib --tests) ;;
@@ -378,6 +384,19 @@ runtime_args() {
   esac
   [[ -n "$filter" ]] && RUNTIME_ARGS+=(-- "$filter")
   return 0
+}
+
+runtime_test_runner() {
+  local profile_id=$1
+  local case_entry case_profile case_target case_filter
+  for case_entry in "${RUNTIME_TEST_CASES[@]}"; do
+    IFS='|' read -r case_profile case_target case_filter <<<"$case_entry"
+    if [[ "$case_profile" == "$profile_id" && "$case_target" == all ]]; then
+      printf 'nextest\n'
+      return
+    fi
+  done
+  printf 'cargo\n'
 }
 
 run_runtime_contracts() {
@@ -462,7 +481,7 @@ print_matrix() {
     return 2
   }
 
-  local id domain count shard index planned_id profiles separator=""
+  local id domain count shard index label planned_id profiles separator="" test_runner
   local -a planned=()
   if jq -e 'any(.include[]; .full == true)' <<<"$selected_rows" >/dev/null; then
     for id in "${COMPILE_PROFILE_IDS[@]}" "${RUNTIME_PROFILE_IDS_CANONICAL[@]}"; do
@@ -552,8 +571,15 @@ print_matrix() {
         done
       fi
       [[ -n "$profiles" ]] || continue
-      printf '%s{"domain":"%s","shard":"%s/%s","profiles":"%s"}' \
-        "$separator" "$domain" "$shard" "$count" "$profiles"
+      if [[ "$domain" == compile ]]; then
+        label="Compile $shard/$count"
+        test_runner=cargo
+      else
+        label="Runtime ${profiles#runtime.}"
+        test_runner=$(runtime_test_runner "${profiles#runtime.}")
+      fi
+      printf '%s{"domain":"%s","shard":"%s/%s","profiles":"%s","label":"%s","test_runner":"%s"}' \
+        "$separator" "$domain" "$shard" "$count" "$profiles" "$label" "$test_runner"
       separator=,
     done
   done

@@ -3,7 +3,6 @@
 # Feature profile arrays are caller-visible outputs for sourced matrix scripts.
 
 FEATURE_COMPILE_SHARDS=2
-FEATURE_RUNTIME_SHARDS=3
 
 # Unique resolved compile graphs. COMPILE_FEATURE_ALIASES retains named roots
 # that Cargo currently resolves identically to one canonical entry. The
@@ -75,10 +74,9 @@ COMPILE_FEATURE_ALIASES=(
   "auth|alloc,auth"
 )
 
-# Runtime contracts are ordered so modulo-three sharding places one broad
-# behavior baseline in each shard. Focused scopes exercise only the capability
-# delta; `all` retains the complete library and integration suite where the
-# feature changes the whole execution surface.
+# Runtime contracts run one profile per CI job. Focused scopes exercise only
+# the capability delta; `all` retains the complete library and integration
+# suite where the feature changes the whole execution surface.
 RUNTIME_PROFILE_IDS=(
   "no-std-full"
   "std-full"
@@ -102,6 +100,9 @@ RUNTIME_FEATURE_SETS=(
   "std,full,serde"
   "std,full,serde-secrets"
 )
+
+# One independently named CI job per runtime profile.
+FEATURE_RUNTIME_SHARDS=${#RUNTIME_PROFILE_IDS[@]}
 
 # profile|target|optional libtest substring. `lib` selects unit tests and `all`
 # selects the complete library/integration suite. Focused cases cover every

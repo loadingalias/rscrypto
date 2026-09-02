@@ -5,7 +5,7 @@
     {
       "id": "aarch64-apple-darwin",
       "dimensions": {
-        "name": "macOS AArch64 runtime",
+        "name": "macOS AArch64 Runtime",
         "target": "aarch64-apple-darwin",
         "group": "macos",
         "operation": "native",
@@ -35,7 +35,7 @@
     {
       "id": "aarch64-pc-windows-msvc",
       "dimensions": {
-        "name": "Windows AArch64 compile",
+        "name": "Windows AArch64 Compile",
         "target": "aarch64-pc-windows-msvc",
         "group": "win",
         "operation": "native",
@@ -59,7 +59,7 @@
     {
       "id": "aarch64-unknown-linux-gnu",
       "dimensions": {
-        "name": "Linux AArch64 runtime",
+        "name": "Linux AArch64 Runtime",
         "target": "aarch64-unknown-linux-gnu",
         "group": "linux",
         "operation": "native",
@@ -89,7 +89,7 @@
     {
       "id": "aarch64-unknown-linux-musl",
       "dimensions": {
-        "name": "Linux AArch64 musl compile",
+        "name": "Linux AArch64 musl Compile",
         "target": "aarch64-unknown-linux-musl",
         "group": "linux",
         "operation": "cross",
@@ -113,7 +113,7 @@
     {
       "id": "aarch64-unknown-none",
       "dimensions": {
-        "name": "Bare-metal AArch64 compile",
+        "name": "Bare-metal AArch64 Compile",
         "target": "aarch64-unknown-none",
         "group": "no_std",
         "operation": "cross",
@@ -142,7 +142,7 @@
     {
       "id": "powerpc64le-unknown-linux-gnu",
       "dimensions": {
-        "name": "IBM POWER10 runtime",
+        "name": "IBM POWER10 Runtime",
         "target": "powerpc64le-unknown-linux-gnu",
         "group": "ibm",
         "operation": "native",
@@ -172,7 +172,7 @@
     {
       "id": "riscv32imac-unknown-none-elf",
       "dimensions": {
-        "name": "Bare-metal RISC-V 32 compile",
+        "name": "Bare-metal RISC-V 32 Compile",
         "target": "riscv32imac-unknown-none-elf",
         "group": "no_std",
         "operation": "cross",
@@ -201,7 +201,7 @@
     {
       "id": "riscv64gc-unknown-linux-gnu",
       "dimensions": {
-        "name": "RISE RISC-V runtime",
+        "name": "RISC-V Runtime",
         "target": "riscv64gc-unknown-linux-gnu",
         "group": "linux",
         "operation": "native",
@@ -231,7 +231,7 @@
     {
       "id": "s390x-unknown-linux-gnu",
       "dimensions": {
-        "name": "IBM Z runtime",
+        "name": "IBM Z Runtime",
         "target": "s390x-unknown-linux-gnu",
         "group": "ibm",
         "operation": "native",
@@ -261,7 +261,7 @@
     {
       "id": "thumbv6m-none-eabi",
       "dimensions": {
-        "name": "Bare-metal Armv6-M compile",
+        "name": "Bare-metal Armv6-M Compile",
         "target": "thumbv6m-none-eabi",
         "group": "no_std",
         "operation": "cross",
@@ -289,7 +289,7 @@
     {
       "id": "wasm32-unknown-unknown",
       "dimensions": {
-        "name": "WebAssembly compile",
+        "name": "WebAssembly Compile",
         "target": "wasm32-unknown-unknown",
         "group": "wasm",
         "operation": "cross",
@@ -319,7 +319,7 @@
     {
       "id": "wasm32-wasip1",
       "dimensions": {
-        "name": "WASI compile and emulated runtime",
+        "name": "WASI Compile and Emulated Runtime",
         "target": "wasm32-wasip1",
         "group": "wasm",
         "operation": "cross",
@@ -373,7 +373,7 @@
     {
       "id": "x86-64-apple-darwin",
       "dimensions": {
-        "name": "macOS x86-64 runtime",
+        "name": "macOS x86-64 Runtime",
         "target": "x86_64-apple-darwin",
         "group": "macos",
         "operation": "native",
@@ -403,7 +403,7 @@
     {
       "id": "x86-64-pc-windows-msvc",
       "dimensions": {
-        "name": "Windows x86-64 runtime",
+        "name": "Windows x86-64 Runtime",
         "target": "x86_64-pc-windows-msvc",
         "group": "win",
         "operation": "native",
@@ -432,7 +432,7 @@
     {
       "id": "x86-64-unknown-linux-gnu",
       "dimensions": {
-        "name": "Linux x86-64 runtime (core owner)",
+        "name": "Linux x86-64 Runtime (Core Owner)",
         "target": "x86_64-unknown-linux-gnu",
         "group": "linux",
         "operation": "core",
@@ -456,7 +456,7 @@
     {
       "id": "x86-64-unknown-linux-musl",
       "dimensions": {
-        "name": "Linux x86-64 musl compile",
+        "name": "Linux x86-64 musl Compile",
         "target": "x86_64-unknown-linux-musl",
         "group": "linux",
         "operation": "cross",
@@ -480,7 +480,7 @@
     {
       "id": "x86-64-unknown-none",
       "dimensions": {
-        "name": "Bare-metal x86-64 compile",
+        "name": "Bare-metal x86-64 Compile",
         "target": "x86_64-unknown-none",
         "group": "no_std",
         "operation": "cross",

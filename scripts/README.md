@@ -178,7 +178,7 @@ repository policy, so a workflow-only change does not start a second runner.
 Built-in Cargo work starts the single warm host-Rust job; `contracts.features`
 uses `.config/feature-matrix.json` to select algorithm or capability groups,
 resolves every affected compile profile from Cargo's feature graph, and packs
-only those profiles into at most two compile and three runtime shards.
+only those profiles into at most two compile shards and one job per selected runtime profile.
 Manifest, catalog, shared-surface, or unattributed inputs widen to the complete
 59-compile/9-runtime contract. `targets.platforms` independently materializes
 only affected platform proof rows; built-in `dependency-policy` starts the

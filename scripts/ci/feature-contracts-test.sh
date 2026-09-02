@@ -78,6 +78,8 @@ if [[ "${1:-}" == metadata ]]; then
 fi
 EOF
 chmod +x "$fake_bin/cargo"
+touch "$fake_bin/cargo-nextest"
+chmod +x "$fake_bin/cargo-nextest"
 
 run_executor() {
   local output=$1
@@ -96,11 +98,14 @@ grep -Fq 'runtime (9 profiles)' "$list_output" || fail "runtime catalog count ch
 matrix_output="$TMP_ROOT/matrix.json"
 run_executor "$matrix_output" matrix
 jq -e '
-  (.include | length) == 5
+  (.include | length) == 11
   and ([.include[].domain] | map(select(. == "compile")) | length) == 2
-  and ([.include[].domain] | map(select(. == "runtime")) | length) == 3
+  and ([.include[].domain] | map(select(. == "runtime")) | length) == 9
   and all(.include[]; (.profiles | type == "string" and length > 0))
-' "$matrix_output" >/dev/null || fail "executor matrix is not the five bounded shards"
+  and all(.include[]; (.label | type == "string" and length > 0))
+  and ([.include[] | select(.test_runner == "nextest")] | length) == 3
+  and all(.include[]; .test_runner == "cargo" or .test_runner == "nextest")
+' "$matrix_output" >/dev/null || fail "executor matrix does not name every bounded shard"
 compile_matrix_count=$(jq -r '
   [.include[] | select(.domain == "compile") | .profiles | split(",")[]]
   | unique | length
@@ -174,21 +179,21 @@ if grep -Fq 'cargo clean' "$command_log"; then
 fi
 
 : >"$command_log"
-run_executor "$TMP_ROOT/runtime-1.out" runtime 1/3
-run_executor "$TMP_ROOT/runtime-2.out" runtime 2/3
-run_executor "$TMP_ROOT/runtime-3.out" runtime 3/3
-runtime_count=$(grep -c '^cargo test ' "$command_log")
+for ((shard = 1; shard <= FEATURE_RUNTIME_SHARDS; shard++)); do
+  run_executor "$TMP_ROOT/runtime-$shard.out" runtime "$shard/$FEATURE_RUNTIME_SHARDS"
+done
+runtime_count=$(grep -Ec '^cargo (test|nextest run) ' "$command_log")
 expected_runtime_count=${#RUNTIME_TEST_CASES[@]}
 [[ "$runtime_count" -eq "$expected_runtime_count" ]] \
   || fail "expected $expected_runtime_count focused runtime commands, found $runtime_count"
-runtime_unique=$(grep '^cargo test ' "$command_log" | LC_ALL=C sort -u | wc -l | tr -d ' ')
+runtime_unique=$(grep -E '^cargo (test|nextest run) ' "$command_log" | LC_ALL=C sort -u | wc -l | tr -d ' ')
 [[ "$runtime_unique" -eq "$expected_runtime_count" ]] \
   || fail "runtime shards overlap or omit a test case"
 profile_count=$(cat "$TMP_ROOT"/runtime-*.out | grep -c '^  profile ')
 [[ "$profile_count" -eq 9 ]] || fail "runtime shards did not execute nine profiles exactly once"
 
-full_count=$(grep '^cargo test ' "$command_log" | grep -c -- '--lib --tests')
-[[ "$full_count" -eq 3 ]] || fail "expected three complete behavior baselines, found $full_count"
+nextest_count=$(grep -c '^cargo nextest run ' "$command_log")
+[[ "$nextest_count" -eq 3 ]] || fail "expected three parallel behavior baselines, found $nextest_count"
 grep '^cargo test ' "$command_log" \
   | grep -F -- '--features std,full,serde --test serde_roundtrip' >/dev/null \
   || fail "public Serde delta is not focused"

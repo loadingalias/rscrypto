@@ -131,7 +131,7 @@ jobs:
           if-no-files-found: error
 
   core:
-    name: Rust
+    name: Core
     needs: plan
     runs-on: runs-on=${{ github.run_id }}/runner=linux-x64-ci
     timeout-minutes: 45
@@ -198,7 +198,7 @@ jobs:
         run: scripts/ci/report-cache.sh
 
   features:
-    name: Features (${{ matrix.domain }} ${{ matrix.shard }})
+    name: Feature Contracts (${{ matrix.label }})
     needs: plan
     strategy:
       fail-fast: false
@@ -223,6 +223,12 @@ jobs:
           cache-mode: ${{ vars.CARGO_RAIL_CACHE_URL != '' && github.ref == 'refs/heads/main' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && 'read-write' || vars.CARGO_RAIL_CACHE_URL != '' && secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY != '' && 'read' || 'off' }}
           cache-access-key-id: ${{ github.ref == 'refs/heads/main' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID || secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
           cache-secret-access-key: ${{ github.ref == 'refs/heads/main' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY || secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
+      - name: Install test runner
+        if: matrix.test_runner == 'nextest'
+        uses: taiki-e/install-action@0758d235715de2f3551eacc980d9ae8fce9342c3 # v2.87.3
+        with:
+          tool: cargo-nextest@0.9.143
+          fallback: none
       - env:
           FEATURE_DOMAIN: ${{ matrix.domain }}
           FEATURE_PROFILES: ${{ matrix.profiles }}
@@ -390,7 +396,7 @@ jobs:
           if-no-files-found: error
 
   rsa-asm:
-    name: RSA assembly
+    name: RSA Gate
     needs: plan
     runs-on: runs-on=${{ github.run_id }}/runner=linux-x64-ci
     timeout-minutes: 45
@@ -408,7 +414,7 @@ jobs:
       - run: scripts/test/test-rsa-linux-asm.sh
 
   supply-chain:
-    name: Supply chain
+    name: Supply Chain
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 45
