@@ -12,6 +12,7 @@ the recipes reported by `just --list`.
 | `check/policy.sh`                         | `check/affected.sh`, `ci.yaml`, `qualification.yaml`                                                                              |
 | `check/check.sh`                          | `check/affected.sh`, `check/check-all.sh`, `ci.yaml`, `qualification.yaml`                                                        |
 | `check/check-all.sh`                      | `just check-all`                                                                                                                  |
+| `check/msrv.sh`                           | `just msrv`, `scripts/check/check-all.sh`, `ci.yaml`, `qualification.yaml`                                                        |
 | `check/feature-contracts.sh`              | `just feature-contracts`, `scripts/check/affected.sh`, `scripts/check/check-all.sh`, `ci.yaml`, `qualification.yaml`                |
 | `check/asm-ledger.sh`                     | `scripts/check/policy.sh`                                                                                                         |
 | `check/rsa-asm-provenance.sh`             | `check/asm-ledger.sh`; direct `--archive PATH` reconstructs the three pinned RSA snapshots offline                                |
@@ -24,7 +25,7 @@ the recipes reported by `just --list`.
 | `ci/check-locked-cargo-test.sh`           | `scripts/ci/actions-policy.sh`                                                                                                    |
 | `ci/target-contracts.sh`                  | `just target-contract`, `scripts/check/check-all.sh`, `ci.yaml`, `qualification.yaml`                                             |
 | `test/test.sh`                            | `just test` (`--all` for the full workspace), `ci.yaml`, `qualification.yaml`                                                     |
-| `test/test-examples.sh`                   | `just test-examples`                                                                                                              |
+| `test/test-examples.sh`                   | `just test-examples`, `scripts/check/affected.sh`, `scripts/check/check-all.sh`, `ci.yaml`, `qualification.yaml`                   |
 | `test/miri-contracts.sh`                  | `just miri-contract`, `scripts/check/affected.sh`, `ci.yaml`, `qualification.yaml`                                                |
 | `test/test-miri.sh`                       | `just test-miri`, `test/miri-contracts.sh`                                                                                        |
 | `test/fuzz-contracts.sh`                  | `just fuzz-contract`, `scripts/check/affected.sh`, `ci.yaml`                                                                      |
@@ -41,6 +42,7 @@ the recipes reported by `just --list`.
 | `ci/actions-policy.sh`                    | `scripts/check/policy.sh`                                                                                                         |
 | `ci/check-action-pins-test.sh`            | `just check-actions`                                                                                                              |
 | `ci/remote-cache-recipes-test.sh`         | `just check-actions`                                                                                                              |
+| `ci/report-cache.sh`                      | Cache-enabled jobs in `ci.yaml` and `qualification.yaml`                                                                          |
 | `ci/feature-contracts-test.sh`            | `just check-actions`; proves unique compile graphs, focused runtime scopes, and disjoint deterministic shards                      |
 | `ci/feature-planning-test.sh`             | `just check-actions`; proves exact algorithm groups, full feature-policy selection, and fail-closed unattributed inputs            |
 | `ci/activate-plan.sh`                     | `.github/actions/plan/action.yaml`; validates and exports one transported plan                                                    |
@@ -228,12 +230,16 @@ Qualification enables reuse for host, feature-contract, and supported native
 platform rows; release preflight is read-only. Cross targets, Clippy, rustdoc,
 doctests, Miri, fuzzing, CT, benchmarks, macOS x86-64, and donated hosts stay
 cold because the released cache deliberately bypasses or cannot install on
-those classes.
+those classes. Every cache-enabled CI and Qualification job emits Cargo Rail's
+bounded post-run hit, miss, bypass, failure, and local/remote-origin counters;
+telemetry failure warns without making acceleration a correctness gate.
 
 Local and remote development use the same affected commands: `just plan`,
 `just check`, `just test`, and `just validate`. `just check` runs selected
 compile feature contracts; `just validate` adds selected runtime contracts and
-shares one saved plan across policy, checks, feature contracts, and tests.
+minimum-feature examples, then shares one saved plan across policy, checks,
+feature contracts, and tests. `just msrv` reproduces the compiler-floor job;
+`just check-all` includes MSRV and minimum-feature example execution.
 `just feature-contracts [compile|runtime] [N/M]` reproduces any CI shard.
 `just target-contract ROW [shallow|deep]` reproduces any independently
 executable platform row, locally or through `ssh-just`.

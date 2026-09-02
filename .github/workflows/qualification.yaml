@@ -144,7 +144,8 @@ jobs:
           artifact: ${{ needs.plan.outputs.artifact }}
           identity: ${{ needs.plan.outputs.identity }}
           head-commit: ${{ needs.plan.outputs.head-commit }}
-      - uses: $/.github/actions/rust
+      - id: rust
+        uses: $/.github/actions/rust
         with:
           components: clippy,rustfmt
           cache-url: ${{ vars.CARGO_RAIL_CACHE_URL }}
@@ -162,6 +163,39 @@ jobs:
         run: scripts/check/check.sh
       - name: Test
         run: scripts/test/test.sh
+      - name: Run minimum-feature examples
+        run: scripts/test/test-examples.sh
+      - name: Report compiler cache
+        if: ${{ !cancelled() && steps.rust.outputs.cache-enabled == 'true' }}
+        run: scripts/ci/report-cache.sh
+
+  msrv:
+    name: MSRV
+    needs: plan
+    runs-on: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/plan
+        with:
+          artifact: ${{ needs.plan.outputs.artifact }}
+          identity: ${{ needs.plan.outputs.identity }}
+          head-commit: ${{ needs.plan.outputs.head-commit }}
+      - run: scripts/ci/require-work.sh cargo.build
+      - id: rust
+        uses: $/.github/actions/rust
+        with:
+          contract: msrv
+          cache-url: ${{ vars.CARGO_RAIL_CACHE_URL }}
+          cache-mode: ${{ vars.CARGO_RAIL_CACHE_URL != '' && github.ref == 'refs/heads/main' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && 'read-write' || vars.CARGO_RAIL_CACHE_URL != '' && secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY != '' && 'read' || 'off' }}
+          cache-access-key-id: ${{ github.ref == 'refs/heads/main' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID || secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+          cache-secret-access-key: ${{ github.ref == 'refs/heads/main' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY || secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
+      - run: scripts/check/msrv.sh
+      - name: Report compiler cache
+        if: ${{ !cancelled() && steps.rust.outputs.cache-enabled == 'true' }}
+        run: scripts/ci/report-cache.sh
 
   features:
     name: Features (${{ matrix.domain }} ${{ matrix.shard }})
@@ -182,7 +216,8 @@ jobs:
           identity: ${{ needs.plan.outputs.identity }}
           head-commit: ${{ needs.plan.outputs.head-commit }}
       - run: scripts/ci/require-work.sh contracts.features
-      - uses: $/.github/actions/rust
+      - id: rust
+        uses: $/.github/actions/rust
         with:
           cache-url: ${{ vars.CARGO_RAIL_CACHE_URL }}
           cache-mode: ${{ vars.CARGO_RAIL_CACHE_URL != '' && github.ref == 'refs/heads/main' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && 'read-write' || vars.CARGO_RAIL_CACHE_URL != '' && secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY != '' && 'read' || 'off' }}
@@ -193,6 +228,9 @@ jobs:
           FEATURE_PROFILES: ${{ matrix.profiles }}
           FEATURE_SHARD: ${{ matrix.shard }}
         run: scripts/check/feature-contracts.sh selected "$FEATURE_DOMAIN" "$FEATURE_SHARD" "$FEATURE_PROFILES"
+      - name: Report compiler cache
+        if: ${{ !cancelled() && steps.rust.outputs.cache-enabled == 'true' }}
+        run: scripts/ci/report-cache.sh
 
   platforms:
     name: ${{ matrix.name }}
@@ -213,7 +251,8 @@ jobs:
           artifact: ${{ needs.plan.outputs.artifact }}
           identity: ${{ needs.plan.outputs.identity }}
           head-commit: ${{ needs.plan.outputs.head-commit }}
-      - uses: $/.github/actions/rust
+      - id: rust
+        uses: $/.github/actions/rust
         with:
           contract: ${{ matrix.contract }}
           components: ${{ matrix.components }}
@@ -225,6 +264,9 @@ jobs:
         env:
           TARGET_ROW: ${{ matrix.id }}
         run: scripts/ci/target-contracts.sh run "$TARGET_ROW" deep
+      - name: Report compiler cache
+        if: ${{ !cancelled() && steps.rust.outputs.cache-enabled == 'true' }}
+        run: scripts/ci/report-cache.sh
 
   miri:
     name: Miri
@@ -451,7 +493,7 @@ jobs:
 
   complete:
     name: Complete (${{ needs.plan.outputs.mode }})
-    needs: [plan, core, features, platforms, miri, fuzz, mlkem, rsa-leakage, rsa-asm, supply-chain, coverage, zeroization, ct]
+    needs: [plan, core, msrv, features, platforms, miri, fuzz, mlkem, rsa-leakage, rsa-asm, supply-chain, coverage, zeroization, ct]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -463,6 +505,7 @@ jobs:
           for lane in \
             "plan=${{ needs.plan.result }}" \
             "core=${{ needs.core.result }}" \
+            "msrv=${{ needs.msrv.result }}" \
             "features=${{ needs.features.result }}" \
             "platforms=${{ needs.platforms.result }}" \
             "miri=${{ needs.miri.result }}" \

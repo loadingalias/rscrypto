@@ -94,6 +94,11 @@ done
 case "$subcommand" in
   list)
     printf '%s\n' alpha beta crash delta
+    if [[ "${RSCRYPTO_FUZZ_LONG_LIST:-0}" == "1" ]]; then
+      for index in {1..10000}; do
+        printf 'filler_%s\n' "$index"
+      done
+    fi
     ;;
   run)
     printf '%s\n' "${args[@]}" >"$RSCRYPTO_FUZZ_CAPTURE/$target.args"
@@ -204,6 +209,18 @@ for target in beta crash; do
 done
 grep -Fq 'Summary: 2 targets, 0 failed' "$SELECTED_CAPTURE/output" \
   || fail "exact selection did not aggregate only the requested targets"
+
+LONG_LIST_CAPTURE="$TMP_ROOT/long-list-capture"
+mkdir -p "$LONG_LIST_CAPTURE"
+env \
+  PATH="$BIN:$PATH" \
+  RSCRYPTO_FUZZ_CAPTURE="$LONG_LIST_CAPTURE" \
+  RSCRYPTO_FUZZ_DURATION_SECS=1 \
+  RSCRYPTO_FUZZ_LONG_LIST=1 \
+  RSCRYPTO_FUZZ_TARGET_CONCURRENCY=1 \
+  bash "$FIXTURE/scripts/test/test-fuzz.sh" --targets alpha \
+  >"$LONG_LIST_CAPTURE/output" 2>&1 \
+  || fail "target discovery failed when cargo-fuzz produced more than one pipe buffer"
 
 if env \
   PATH="$BIN:$PATH" \

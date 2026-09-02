@@ -63,6 +63,16 @@ cat >"$fixture/scripts/check/zeroize-evidence.sh" <<'EOF'
 exit 0
 EOF
 
+cat >"$fixture/scripts/check/msrv.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+cat >"$fixture/scripts/test/test-examples.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
 cat >"$fixture/scripts/check/affected.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -83,9 +93,11 @@ chmod +x \
   "$fixture/scripts/ci/target-contracts.sh" \
   "$fixture/scripts/lib/python.sh" \
   "$fixture/scripts/check/affected.sh" \
+  "$fixture/scripts/check/msrv.sh" \
   "$fixture/scripts/check/policy.sh" \
   "$fixture/scripts/check/rsa-asm-provenance.sh" \
-  "$fixture/scripts/check/zeroize-evidence.sh"
+  "$fixture/scripts/check/zeroize-evidence.sh" \
+  "$fixture/scripts/test/test-examples.sh"
 
 cat >"$fake_bin/cargo" <<'EOF'
 #!/usr/bin/env bash

@@ -82,6 +82,10 @@ validate *args="":
 check-all:
     @scripts/check/check-all.sh
 
+# Check the public library contract with the Cargo.toml minimum Rust version.
+msrv:
+    @scripts/check/msrv.sh
+
 # Compile and test feature contracts; optionally select a domain and shard.
 feature-contracts *args="":
     @scripts/check/feature-contracts.sh {{ args }}

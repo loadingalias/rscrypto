@@ -47,6 +47,16 @@ fi
 if [[ "$with_tests" == true ]]; then
   "$SCRIPT_DIR/../test/test.sh"
 
+  examples_required=false
+  if rail_work_required cargo.build || rail_work_required contracts.examples; then
+    examples_required=true
+  fi
+  if [[ "$examples_required" == true ]]; then
+    "$SCRIPT_DIR/../test/test-examples.sh"
+  else
+    echo "Examples: not required by Cargo Rail"
+  fi
+
   miri_rows=$("$SCRIPT_DIR/../test/miri-contracts.sh" rows)
   if [[ -n "$miri_rows" ]]; then
     "$SCRIPT_DIR/../test/miri-contracts.sh" selected "$miri_rows"

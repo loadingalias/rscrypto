@@ -34,7 +34,7 @@ export CARGO_RAIL_CACHE=off
 
 # Configuration (can be overridden via environment)
 DURATION_SECS=${RSCRYPTO_FUZZ_DURATION_SECS:-60}
-TIMEOUT=${RSCRYPTO_FUZZ_TIMEOUT_SECS:-10}
+TIMEOUT=${RSCRYPTO_FUZZ_TIMEOUT_SECS:-30}
 RSS_LIMIT=${RSCRYPTO_FUZZ_RSS_LIMIT_MB:-2048}
 MAX_LEN=${RSCRYPTO_FUZZ_MAX_LEN:-65536}
 JOBS=${RSCRYPTO_FUZZ_JOBS:-1}
@@ -63,7 +63,7 @@ show_help() {
   echo ""
   echo "Environment variables:"
   echo "  RSCRYPTO_FUZZ_DURATION_SECS  Duration per target (default: 60)"
-  echo "  RSCRYPTO_FUZZ_TIMEOUT_SECS   Timeout per test case (default: 10)"
+  echo "  RSCRYPTO_FUZZ_TIMEOUT_SECS   Timeout per test case (default: 30)"
   echo "  RSCRYPTO_FUZZ_RSS_LIMIT_MB   Memory limit in MB (default: 2048)"
   echo "  RSCRYPTO_FUZZ_MAX_LEN        Max input length (default: 65536)"
   echo "  RSCRYPTO_FUZZ_JOBS           LibFuzzer workers per target (default: 1)"

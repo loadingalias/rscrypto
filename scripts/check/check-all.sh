@@ -17,7 +17,9 @@ echo ""
 
 "$SCRIPT_DIR/policy.sh" --all
 "$SCRIPT_DIR/check.sh" --all
+"$SCRIPT_DIR/msrv.sh"
 "$SCRIPT_DIR/feature-contracts.sh" all
+"$SCRIPT_DIR/../test/test-examples.sh"
 "$SCRIPT_DIR/zeroize-evidence.sh"
 
 rows=()

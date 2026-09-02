@@ -47,6 +47,18 @@ else
   skip "Actions policy" "not required by Cargo Rail"
 fi
 
+if work_required contracts.cargo-graph; then
+  step "Checking Cargo graph consistency"
+  if ! cargo rail unify --check >"$LOG_DIR/cargo-graph.log" 2>&1; then
+    fail
+    show_error "$LOG_DIR/cargo-graph.log"
+    exit 1
+  fi
+  ok
+else
+  skip "Cargo graph consistency" "not required by Cargo Rail"
+fi
+
 if work_required policy.repository; then
   step "Checking assembly ledger"
   if ! "$SCRIPT_DIR/asm-ledger.sh" >"$LOG_DIR/asm-ledger.log" 2>&1; then

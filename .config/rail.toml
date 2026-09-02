@@ -164,6 +164,35 @@ paths = [
   "tools/**",
 ]
 
+[plan.work."contracts.cargo-graph"]
+scope = "repository"
+paths = [
+  ".cargo/**",
+  ".config/rail.toml",
+  ".config/toolchains.toml",
+  "Cargo.lock",
+  "Cargo.toml",
+  "build.rs",
+  "fuzz/Cargo.lock",
+  "fuzz/Cargo.toml",
+  "fuzz/**/Cargo.lock",
+  "fuzz/**/Cargo.toml",
+  "fuzz-packages/**/Cargo.lock",
+  "fuzz-packages/**/Cargo.toml",
+  "rust-toolchain.toml",
+  "tools/**/Cargo.lock",
+  "tools/**/Cargo.toml",
+]
+
+[plan.work."contracts.examples"]
+scope = "repository"
+paths = [
+  "Cargo.lock",
+  "Cargo.toml",
+  "examples/**",
+  "scripts/test/test-examples.sh",
+]
+
 [plan.work."targets.platforms"]
 scope = "variants"
 config = ["targets"]

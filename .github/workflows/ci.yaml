@@ -29,6 +29,7 @@ jobs:
       artifact: ${{ steps.stage.outputs.artifact }}
       core: ${{ steps.select.outputs.core }}
       ct: ${{ steps.select.outputs.ct }}
+      examples: ${{ steps.select.outputs.examples }}
       features: ${{ steps.select.outputs.features }}
       feature-matrix: ${{ steps.select.outputs.feature-matrix }}
       fuzz: ${{ steps.select.outputs.fuzz }}
@@ -37,6 +38,7 @@ jobs:
       identity: ${{ steps.rail.outputs.plan-identity }}
       miri: ${{ steps.select.outputs.miri }}
       miri-rows: ${{ steps.select.outputs.miri-rows }}
+      msrv: ${{ steps.select.outputs.msrv }}
       platform-matrix: ${{ steps.select.outputs.platform-matrix }}
       platforms: ${{ steps.select.outputs.platforms }}
       rsa: ${{ steps.select.outputs.rsa }}
@@ -87,14 +89,16 @@ jobs:
           fuzz_rows=$(scripts/test/fuzz-contracts.sh rows "$PLAN" "$READER")
           {
             echo "actions=$(required_any policy.actions)"
-            echo "core=$(required_any cargo.fmt cargo.build cargo.clippy cargo.doc cargo.doctest cargo.test contracts.auxiliary)"
+            echo "core=$(required_any cargo.fmt cargo.build cargo.clippy cargo.doc cargo.doctest cargo.test contracts.auxiliary contracts.examples)"
             echo "ct=$(required_any assurance.ct)"
+            echo "examples=$(required_any cargo.build contracts.examples)"
             [[ "$feature_count" -gt 0 ]] && echo "features=true" || echo "features=false"
             echo "feature-matrix=$feature_matrix"
             [[ -n "$fuzz_rows" ]] && echo "fuzz=true" || echo "fuzz=false"
             echo "fuzz-rows=$fuzz_rows"
             [[ -n "$miri_rows" ]] && echo "miri=true" || echo "miri=false"
             echo "miri-rows=$miri_rows"
+            echo "msrv=$(required_any cargo.build)"
             echo "platform-matrix=$platform_matrix"
             [[ "$platform_count" -gt 0 ]] && echo "platforms=true" || echo "platforms=false"
             echo "rsa=$(required_any assurance.rsa)"
@@ -166,7 +170,8 @@ jobs:
           artifact: ${{ needs.plan.outputs.artifact }}
           identity: ${{ needs.plan.outputs.identity }}
           head-commit: ${{ needs.plan.outputs.head-commit }}
-      - uses: $/.github/actions/rust
+      - id: rust
+        uses: $/.github/actions/rust
         with:
           components: clippy,rustfmt
           cache-url: ${{ vars.CARGO_RAIL_CACHE_URL }}
@@ -187,6 +192,41 @@ jobs:
         env:
           RSCRYPTO_TEST_MODE: commit
         run: scripts/test/test.sh
+      - name: Run minimum-feature examples
+        if: needs.plan.outputs.examples == 'true'
+        run: scripts/test/test-examples.sh
+      - name: Report compiler cache
+        if: ${{ !cancelled() && steps.rust.outputs.cache-enabled == 'true' }}
+        run: scripts/ci/report-cache.sh
+
+  msrv:
+    name: MSRV
+    needs: plan
+    if: needs.plan.outputs.msrv == 'true'
+    runs-on: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/plan
+        with:
+          artifact: ${{ needs.plan.outputs.artifact }}
+          identity: ${{ needs.plan.outputs.identity }}
+          head-commit: ${{ needs.plan.outputs.head-commit }}
+      - run: scripts/ci/require-work.sh cargo.build
+      - id: rust
+        uses: $/.github/actions/rust
+        with:
+          contract: msrv
+          cache-url: ${{ vars.CARGO_RAIL_CACHE_URL }}
+          cache-mode: ${{ vars.CARGO_RAIL_CACHE_URL != '' && github.event_name == 'push' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && 'read-write' || vars.CARGO_RAIL_CACHE_URL != '' && secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY != '' && 'read' || 'off' }}
+          cache-access-key-id: ${{ github.event_name == 'push' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID || secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+          cache-secret-access-key: ${{ github.event_name == 'push' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY || secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
+      - run: scripts/check/msrv.sh
+      - name: Report compiler cache
+        if: ${{ !cancelled() && steps.rust.outputs.cache-enabled == 'true' }}
+        run: scripts/ci/report-cache.sh
 
   features:
     name: Features (${{ matrix.domain }} ${{ matrix.shard }})
@@ -207,7 +247,8 @@ jobs:
           identity: ${{ needs.plan.outputs.identity }}
           head-commit: ${{ needs.plan.outputs.head-commit }}
       - run: scripts/ci/require-work.sh contracts.features
-      - uses: $/.github/actions/rust
+      - id: rust
+        uses: $/.github/actions/rust
         with:
           cache-url: ${{ vars.CARGO_RAIL_CACHE_URL }}
           cache-mode: ${{ vars.CARGO_RAIL_CACHE_URL != '' && github.event_name == 'push' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && 'read-write' || vars.CARGO_RAIL_CACHE_URL != '' && secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY != '' && 'read' || 'off' }}
@@ -218,6 +259,9 @@ jobs:
           FEATURE_PROFILES: ${{ matrix.profiles }}
           FEATURE_SHARD: ${{ matrix.shard }}
         run: scripts/check/feature-contracts.sh selected "$FEATURE_DOMAIN" "$FEATURE_SHARD" "$FEATURE_PROFILES"
+      - name: Report compiler cache
+        if: ${{ !cancelled() && steps.rust.outputs.cache-enabled == 'true' }}
+        run: scripts/ci/report-cache.sh
 
   platforms:
     name: ${{ matrix.name }}
@@ -239,7 +283,8 @@ jobs:
           artifact: ${{ needs.plan.outputs.artifact }}
           identity: ${{ needs.plan.outputs.identity }}
           head-commit: ${{ needs.plan.outputs.head-commit }}
-      - uses: $/.github/actions/rust
+      - id: rust
+        uses: $/.github/actions/rust
         with:
           contract: ${{ matrix.contract }}
           components: ${{ matrix.components }}
@@ -251,6 +296,9 @@ jobs:
         env:
           TARGET_ROW: ${{ matrix.id }}
         run: scripts/ci/target-contracts.sh run "$TARGET_ROW" shallow
+      - name: Report compiler cache
+        if: ${{ !cancelled() && steps.rust.outputs.cache-enabled == 'true' }}
+        run: scripts/ci/report-cache.sh
 
   miri:
     name: Miri
@@ -361,17 +409,21 @@ jobs:
           identity: ${{ needs.plan.outputs.identity }}
           head-commit: ${{ needs.plan.outputs.head-commit }}
       - run: scripts/ci/require-work.sh assurance.rsa
-      - uses: $/.github/actions/rust
+      - id: rust
+        uses: $/.github/actions/rust
         with:
           cache-url: ${{ vars.CARGO_RAIL_CACHE_URL }}
           cache-mode: ${{ vars.CARGO_RAIL_CACHE_URL != '' && github.event_name == 'push' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && 'read-write' || vars.CARGO_RAIL_CACHE_URL != '' && secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY != '' && 'read' || 'off' }}
           cache-access-key-id: ${{ github.event_name == 'push' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID || secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
           cache-secret-access-key: ${{ github.event_name == 'push' && secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY != '' && secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY || secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
       - run: scripts/test/test-rsa-linux-asm.sh
+      - name: Report compiler cache
+        if: ${{ !cancelled() && steps.rust.outputs.cache-enabled == 'true' }}
+        run: scripts/ci/report-cache.sh
 
   complete:
     name: Complete
-    needs: [plan, core, features, platforms, miri, fuzz, supply-chain, ct, rsa]
+    needs: [plan, core, msrv, features, platforms, miri, fuzz, supply-chain, ct, rsa]
     if: ${{ !cancelled() && needs.plan.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -389,6 +441,8 @@ jobs:
           FUZZ_RESULT: ${{ needs.fuzz.result }}
           MIRI_REQUIRED: ${{ needs.plan.outputs.miri }}
           MIRI_RESULT: ${{ needs.miri.result }}
+          MSRV_REQUIRED: ${{ needs.plan.outputs.msrv }}
+          MSRV_RESULT: ${{ needs.msrv.result }}
           PLATFORM_REQUIRED: ${{ needs.plan.outputs.platforms }}
           PLATFORM_RESULT: ${{ needs.platforms.result }}
           PLAN_RESULT: ${{ needs.plan.result }}
@@ -404,6 +458,7 @@ jobs:
             "$FEATURES_REQUIRED:$FEATURES_RESULT:features" \
             "$FUZZ_REQUIRED:$FUZZ_RESULT:fuzz" \
             "$MIRI_REQUIRED:$MIRI_RESULT:miri" \
+            "$MSRV_REQUIRED:$MSRV_RESULT:msrv" \
             "$PLATFORM_REQUIRED:$PLATFORM_RESULT:platforms" \
             "$RSA_REQUIRED:$RSA_RESULT:rsa" \
             "$SUPPLY_REQUIRED:$SUPPLY_RESULT:supply-chain"

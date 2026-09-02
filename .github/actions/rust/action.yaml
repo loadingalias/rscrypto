@@ -28,6 +28,9 @@ inputs:
     default: ""
 
 outputs:
+  cache-enabled:
+    description: Whether Cargo Rail compiler reuse was enabled.
+    value: ${{ steps.cache-policy.outputs.enabled }}
   toolchain:
     description: Exact installed toolchain.
     value: ${{ steps.resolve.outputs.toolchain }}
@@ -56,6 +59,19 @@ runs:
         TOOLCHAIN: ${{ steps.resolve.outputs.toolchain }}
       run: scripts/ci/setup-toolchain.sh "$TOOLCHAIN" "$COMPONENTS" "$GITHUB_ENV"
 
+    - id: cache-policy
+      name: Resolve compiler cache policy
+      shell: bash
+      env:
+        CACHE_MODE: ${{ inputs.cache-mode }}
+      run: |
+        case "$CACHE_MODE" in
+          off) enabled=false ;;
+          read | read-write) enabled=true ;;
+          *) echo "invalid cache mode: $CACHE_MODE" >&2; exit 2 ;;
+        esac
+        echo "enabled=$enabled" >>"$GITHUB_OUTPUT"
+
     - name: Authorize compiler cache
       if: inputs.cache-mode != 'off'
       shell: bash
@@ -65,7 +81,6 @@ runs:
         CACHE_URL: ${{ inputs.cache-url }}
         SECRET_ACCESS_KEY: ${{ inputs.cache-secret-access-key }}
       run: |
-        case "$CACHE_MODE" in read|read-write) ;; *) echo "invalid cache mode: $CACHE_MODE" >&2; exit 2 ;; esac
         [[ -n "$CACHE_URL" ]] || { echo "cache URL is required" >&2; exit 2; }
         [[ -n "$ACCESS_KEY_ID" && -n "$SECRET_ACCESS_KEY" ]] || {
           echo "complete cache credentials are required" >&2

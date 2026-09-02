@@ -65,6 +65,14 @@ assert_decisions() {
     "$plan" >/dev/null || fail "unexpected CT/RSA decisions in $plan"
 }
 
+assert_state() {
+  local plan=$1
+  local work=$2
+  local expected=$3
+  jq -e --arg work "$work" --arg expected "$expected" '.work[$work].state == $expected' "$plan" >/dev/null \
+    || fail "$work should be $expected in $plan"
+}
+
 assert_variants() {
   local plan=$1
   local work=$2
@@ -149,8 +157,15 @@ assert_variants "$unattributed_plan" assurance.fuzz all
 manifest_plan="$TMP_ROOT/manifest.json"
 plan_path Cargo.toml manifest "$manifest_plan"
 assert_decisions "$manifest_plan" required required
+assert_state "$manifest_plan" contracts.cargo-graph required
+assert_state "$manifest_plan" contracts.examples required
 assert_variants "$manifest_plan" assurance.miri all
 assert_variants "$manifest_plan" assurance.fuzz all
+
+example_plan="$TMP_ROOT/example.json"
+plan_path examples/aead_seal_open.rs example "$example_plan"
+assert_state "$example_plan" contracts.cargo-graph skipped
+assert_state "$example_plan" contracts.examples required
 
 all_plan="$TMP_ROOT/all.json"
 cargo rail plan --quiet --from "$base_commit" --to "$base_commit" --all --json >"$all_plan"
@@ -168,6 +183,8 @@ expected_all_work=$(
     cargo.package \
     cargo.test \
     contracts.auxiliary \
+    contracts.cargo-graph \
+    contracts.examples \
     contracts.features \
     dependencies.auxiliary \
     dependency-policy \
@@ -184,12 +201,16 @@ actual_all_work=$(jq -r '.required[]' "$all_plan" | sort)
 lock_plan="$TMP_ROOT/lock.json"
 plan_path Cargo.lock lock "$lock_plan"
 assert_decisions "$lock_plan" skipped skipped
+assert_state "$lock_plan" contracts.cargo-graph required
+assert_state "$lock_plan" contracts.examples required
 assert_variants "$lock_plan" assurance.miri skipped
 assert_variants "$lock_plan" assurance.fuzz skipped
 
 docs_plan="$TMP_ROOT/docs.json"
 plan_path docs/features.md docs "$docs_plan"
 assert_decisions "$docs_plan" skipped skipped
+assert_state "$docs_plan" contracts.cargo-graph skipped
+assert_state "$docs_plan" contracts.examples skipped
 
 ruby - "$REPO_ROOT" <<'RUBY'
 require "json"
@@ -202,6 +223,8 @@ plan_outputs = jobs.fetch("plan").fetch("outputs")
 raise "missing CT plan output" unless plan_outputs.key?("ct")
 raise "missing RSA plan output" unless plan_outputs.key?("rsa")
 raise "missing test plan output" unless plan_outputs.key?("tests")
+raise "missing examples plan output" unless plan_outputs.key?("examples")
+raise "missing MSRV plan output" unless plan_outputs.key?("msrv")
 %w[fuzz fuzz-rows miri miri-rows].each do |output|
   raise "missing #{output} plan output" unless plan_outputs.key?(output)
 end
@@ -209,6 +232,8 @@ end
 plan_steps = jobs.fetch("plan").fetch("steps")
 select_run = plan_steps.find { |step| step["id"] == "select" }.fetch("run")
 raise "CI plan does not select Actions policy setup" unless select_run.include?('echo "actions=$(required_any policy.actions)"')
+raise "CI plan does not select minimum-feature examples" unless select_run.include?('echo "examples=$(required_any cargo.build contracts.examples)"')
+raise "CI plan does not select MSRV from Cargo build impact" unless select_run.include?('echo "msrv=$(required_any cargo.build)"')
 direct_policy_tools_install = plan_steps.find { |step| step["run"] == "scripts/ci/install-actions-policy-tools.sh" }
 raise "CI does not install direct policy tools only for Actions policy" unless direct_policy_tools_install&.fetch("if") == "steps.select.outputs.actions == 'true'"
 policy_tools_install = plan_steps.find do |step|
@@ -235,11 +260,35 @@ raise "Miri job bypasses selected rows" unless miri_runs.include?('scripts/test/
 raise "Fuzz job bypasses its plan decision" unless fuzz_runs.include?("scripts/ci/require-work.sh assurance.fuzz")
 raise "Fuzz job bypasses selected rows" unless fuzz_runs.include?('scripts/test/fuzz-contracts.sh selected "$FUZZ_ROWS"')
 
+core_runs = jobs.fetch("core").fetch("steps").map { |step| step["run"] }.compact
+raise "CI core lost minimum-feature examples" unless core_runs.include?("scripts/test/test-examples.sh")
+msrv = jobs.fetch("msrv")
+msrv_runs = msrv.fetch("steps").map { |step| step["run"] }.compact
+raise "CI MSRV bypasses Cargo build selection" unless msrv_runs.include?("scripts/ci/require-work.sh cargo.build")
+raise "CI MSRV bypasses its repository command" unless msrv_runs.include?("scripts/check/msrv.sh")
+msrv_rust = msrv.fetch("steps").find { |step| step["uses"] == "$/.github/actions/rust" }
+raise "CI MSRV does not install the declared contract" unless msrv_rust&.dig("with", "contract") == "msrv"
+
+policy = File.read(File.join(root, "scripts/check/policy.sh"))
+raise "repository policy does not own Cargo graph consistency" unless policy.include?("work_required contracts.cargo-graph") && policy.include?("cargo rail unify --check")
+
+rust_action = YAML.safe_load(File.read(File.join(root, ".github/actions/rust/action.yaml")), aliases: true)
+raise "Rust action does not expose cache activation" unless rust_action.fetch("outputs").key?("cache-enabled")
+
+%w[core msrv features platforms rsa].each do |job_name|
+  steps = jobs.fetch(job_name).fetch("steps")
+  rust = steps.find { |step| step["id"] == "rust" && step["uses"] == "$/.github/actions/rust" }
+  report = steps.find { |step| step["run"] == "scripts/ci/report-cache.sh" }
+  raise "CI #{job_name} cache setup has no stable output identity" unless rust
+  raise "CI #{job_name} lost post-run cache telemetry" unless report
+end
+
 needs = jobs.fetch("complete").fetch("needs")
 raise "Complete omits CT" unless needs.include?("ct")
 raise "Complete omits RSA" unless needs.include?("rsa")
 raise "Complete omits Miri" unless needs.include?("miri")
 raise "Complete omits fuzz" unless needs.include?("fuzz")
+raise "Complete omits MSRV" unless needs.include?("msrv")
 
 qualification = YAML.safe_load(File.read(File.join(root, ".github/workflows/qualification.yaml")), aliases: true)
 ct_call = qualification.fetch("jobs").fetch("ct").fetch("with")
@@ -283,6 +332,12 @@ raise "Qualification bypasses RSA Miri row" unless qualification_miri.include?("
 qualification_fuzz = qualification.fetch("jobs").fetch("fuzz").fetch("steps").map { |step| step["run"] }.compact
 raise "Qualification lost exhaustive fuzzing" unless qualification_fuzz.include?("scripts/test/test-fuzz.sh --all")
 raise "Qualification lost exhaustive ASan replay" unless qualification_fuzz.include?("scripts/test/test-fuzz-asan.sh --all")
+
+qualification_core_runs = qualification.fetch("jobs").fetch("core").fetch("steps").map { |step| step["run"] }.compact
+raise "Qualification lost minimum-feature examples" unless qualification_core_runs.include?("scripts/test/test-examples.sh")
+qualification_msrv = qualification.fetch("jobs").fetch("msrv")
+qualification_msrv_runs = qualification_msrv.fetch("steps").map { |step| step["run"] }.compact
+raise "Qualification lost MSRV execution" unless qualification_msrv_runs.include?("scripts/check/msrv.sh")
 
 qualification_platforms = qualification.fetch("jobs").fetch("platforms").fetch("steps").map { |step| step["run"] }.compact
 raise "Qualification lost deep native platform proof" unless qualification_platforms.include?('scripts/ci/target-contracts.sh run "$TARGET_ROW" deep')
@@ -330,7 +385,7 @@ zeroization_rust = zeroization.fetch("steps").find { |step| step["uses"] == "$/.
 raise "Zeroization must not enable compiler reuse" unless zeroization_rust && !zeroization_rust.key?("with")
 
 qualification_needs = qualification.fetch("jobs").fetch("complete").fetch("needs")
-%w[coverage zeroization].each do |job|
+%w[coverage msrv zeroization].each do |job|
   raise "Qualification Complete omits #{job}" unless qualification_needs.include?(job)
 end
 
