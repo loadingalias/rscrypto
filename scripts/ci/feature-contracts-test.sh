@@ -90,7 +90,7 @@ run_executor() {
 
 list_output="$TMP_ROOT/list.out"
 run_executor "$list_output" list
-grep -Fq 'compile (59 unique graphs, 60 named contracts)' "$list_output" \
+grep -Fq 'compile (82 unique graphs, 84 named contracts)' "$list_output" \
   || fail "compile catalog counts changed"
 grep -Fq 'alias: alloc,auth' "$list_output" || fail "compile alias disappeared"
 grep -Fq 'runtime (9 profiles)' "$list_output" || fail "runtime catalog count changed"
@@ -110,7 +110,7 @@ compile_matrix_count=$(jq -r '
   [.include[] | select(.domain == "compile") | .profiles | split(",")[]]
   | unique | length
 ' "$matrix_output")
-[[ "$compile_matrix_count" -eq 59 ]] || fail "full matrix omitted compile profiles"
+[[ "$compile_matrix_count" -eq 82 ]] || fail "full matrix omitted compile profiles"
 runtime_matrix_count=$(jq -r '
   [.include[] | select(.domain == "runtime") | .profiles | split(",")[]]
   | unique | length
@@ -169,11 +169,15 @@ fi
 run_executor "$TMP_ROOT/compile-1.out" compile 1/2
 run_executor "$TMP_ROOT/compile-2.out" compile 2/2
 compile_count=$(grep -c '^cargo check ' "$command_log")
-[[ "$compile_count" -eq 59 ]] || fail "expected 59 compile commands, found $compile_count"
+[[ "$compile_count" -eq 82 ]] || fail "expected 82 compile commands, found $compile_count"
 compile_unique=$(grep '^cargo check ' "$command_log" | LC_ALL=C sort -u | wc -l | tr -d ' ')
-[[ "$compile_unique" -eq 59 ]] || fail "compile shards overlap or omit a unique graph"
+[[ "$compile_unique" -eq 82 ]] || fail "compile shards overlap or omit a unique graph"
 metadata_count=$(grep -c '^cargo metadata ' "$command_log")
-[[ "$metadata_count" -eq 2 ]] || fail "the one compile alias was not verified exactly once"
+[[ "$metadata_count" -eq 4 ]] || fail "the two compile aliases were not verified exactly once"
+grep -F -- '--features aes-gcm-siv' "$command_log" >/dev/null \
+  || fail "AES-GCM-SIV lost its independent compile contract"
+grep -F -- '--features xchacha20poly1305' "$command_log" >/dev/null \
+  || fail "XChaCha20-Poly1305 lost its independent compile contract"
 if grep -Fq 'cargo clean' "$command_log"; then
   fail "feature execution still deletes Cargo artifacts"
 fi

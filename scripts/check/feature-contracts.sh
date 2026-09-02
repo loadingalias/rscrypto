@@ -30,6 +30,18 @@ compile_profile_id() {
   fi
 }
 
+has_independent_compile_contract() {
+  local feature=$1
+  local feature_set alias
+  for feature_set in "${COMPILE_FEATURE_SETS[@]}"; do
+    [[ "$feature_set" == "$feature" ]] && return 0
+  done
+  for alias in "${COMPILE_FEATURE_ALIASES[@]}"; do
+    [[ "${alias#*|}" == "$feature" ]] && return 0
+  done
+  return 1
+}
+
 profile_is_known() {
   local needle=$1
   local item
@@ -58,11 +70,38 @@ validate_profiles() {
     return 2
   }
 
-  local i j
+  local i j feature_set alias_entry canonical alias canonical_known
   for i in "${!COMPILE_FEATURE_SETS[@]}"; do
     for ((j = i + 1; j < ${#COMPILE_FEATURE_SETS[@]}; j++)); do
       [[ "${COMPILE_FEATURE_SETS[$i]}" != "${COMPILE_FEATURE_SETS[$j]}" ]] || {
         echo "duplicate compile feature root: ${COMPILE_FEATURE_SETS[$i]:-<none>}" >&2
+        return 2
+      }
+    done
+  done
+  for i in "${!COMPILE_FEATURE_ALIASES[@]}"; do
+    alias_entry=${COMPILE_FEATURE_ALIASES[$i]}
+    canonical=${alias_entry%%|*}
+    alias=${alias_entry#*|}
+    [[ -n "$canonical" && -n "$alias" && "$canonical" != "$alias_entry" ]] || {
+      echo "malformed compile alias: $alias_entry" >&2
+      return 2
+    }
+    canonical_known=false
+    for feature_set in "${COMPILE_FEATURE_SETS[@]}"; do
+      [[ "$feature_set" == "$canonical" ]] && canonical_known=true
+      [[ "$feature_set" != "$alias" ]] || {
+        echo "compile alias is also a unique graph: $alias" >&2
+        return 2
+      }
+    done
+    [[ "$canonical_known" == true ]] || {
+      echo "compile alias names unknown canonical graph: $canonical" >&2
+      return 2
+    }
+    for ((j = i + 1; j < ${#COMPILE_FEATURE_ALIASES[@]}; j++)); do
+      [[ "$alias" != "${COMPILE_FEATURE_ALIASES[$j]#*|}" ]] || {
+        echo "duplicate compile alias: $alias" >&2
         return 2
       }
     done
@@ -188,11 +227,22 @@ validate_variant_catalog() {
       echo "feature variant catalog names unknown Cargo feature $feature_root" >&2
       return 2
     }
+    has_independent_compile_contract "$feature_root" || {
+      echo "feature variant catalog root lacks an independent compile contract: $feature_root" >&2
+      return 2
+    }
   done < <(jq -r '
     .variants[].dimensions.feature_roots
     | select(length > 0)
     | split(",")[]
   ' "$FEATURE_CATALOG")
+
+  while IFS= read -r feature_root; do
+    has_independent_compile_contract "$feature_root" || {
+      echo "Cargo feature lacks an independent compile contract: $feature_root" >&2
+      return 2
+    }
+  done < <(jq -r 'keys[]' <<<"$FEATURE_GRAPH")
 }
 
 parse_shard() {
@@ -611,12 +661,12 @@ case "$domain" in
 esac
 
 validate_profiles
+validate_variant_catalog
 if [[ "$domain" == list ]]; then
   list_contracts
   exit 0
 fi
 if [[ "$domain" == matrix ]]; then
-  validate_variant_catalog
   print_matrix
   exit 0
 fi
