@@ -354,7 +354,6 @@ jobs:
       - env:
           FUZZ_ROWS: ${{ needs.plan.outputs.fuzz-rows }}
           RSCRYPTO_FUZZ_JOBS: 1
-          RSCRYPTO_FUZZ_TARGET_CONCURRENCY: 2
         run: scripts/test/fuzz-contracts.sh selected "$FUZZ_ROWS"
 
   supply-chain:

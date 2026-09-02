@@ -38,7 +38,28 @@ TIMEOUT=${RSCRYPTO_FUZZ_TIMEOUT_SECS:-30}
 RSS_LIMIT=${RSCRYPTO_FUZZ_RSS_LIMIT_MB:-2048}
 MAX_LEN=${RSCRYPTO_FUZZ_MAX_LEN:-65536}
 JOBS=${RSCRYPTO_FUZZ_JOBS:-1}
-TARGET_CONCURRENCY=${RSCRYPTO_FUZZ_TARGET_CONCURRENCY:-2}
+
+default_target_concurrency() {
+  local processor_count=""
+
+  if command -v getconf >/dev/null 2>&1; then
+    processor_count=$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)
+  fi
+  if [[ ! "$processor_count" =~ ^[1-9][0-9]*$ ]] && command -v sysctl >/dev/null 2>&1; then
+    processor_count=$(sysctl -n hw.logicalcpu 2>/dev/null || true)
+  fi
+  if [[ ! "$processor_count" =~ ^[1-9][0-9]*$ ]]; then
+    processor_count=${NUMBER_OF_PROCESSORS:-}
+  fi
+
+  if [[ "$processor_count" =~ ^[1-9][0-9]*$ ]] && ((processor_count >= 4)); then
+    printf '2'
+  else
+    printf '1'
+  fi
+}
+
+TARGET_CONCURRENCY=${RSCRYPTO_FUZZ_TARGET_CONCURRENCY:-$(default_target_concurrency)}
 
 # Skip if commit mode (fuzzing takes too long)
 if [ "$RSCRYPTO_TEST_MODE" = "commit" ]; then
@@ -67,7 +88,7 @@ show_help() {
   echo "  RSCRYPTO_FUZZ_RSS_LIMIT_MB   Memory limit in MB (default: 2048)"
   echo "  RSCRYPTO_FUZZ_MAX_LEN        Max input length (default: 65536)"
   echo "  RSCRYPTO_FUZZ_JOBS           LibFuzzer workers per target (default: 1)"
-  echo "  RSCRYPTO_FUZZ_TARGET_CONCURRENCY  Independent targets to run concurrently (default: 2)"
+  echo "  RSCRYPTO_FUZZ_TARGET_CONCURRENCY  Independent targets to run concurrently (default: 1 below 4 CPUs, otherwise 2)"
   echo "  RSCRYPTO_FUZZ_TARGET_DIR     Shared cargo target dir (default: fuzz/target)"
 }
 

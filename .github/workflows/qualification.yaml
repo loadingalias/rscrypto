@@ -324,7 +324,6 @@ jobs:
         env:
           RSCRYPTO_FUZZ_DURATION_SECS: 60
           RSCRYPTO_FUZZ_JOBS: 1
-          RSCRYPTO_FUZZ_TARGET_CONCURRENCY: 2
         run: scripts/test/test-fuzz.sh --all
       - name: Replay corpora under ASan
         run: scripts/test/test-fuzz-asan.sh --all

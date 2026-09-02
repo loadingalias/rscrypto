@@ -38,6 +38,13 @@ set -euo pipefail
 echo "host: x86_64-unknown-linux-gnu"
 EOF
 
+cat >"$BIN/getconf" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${1:-}" == "_NPROCESSORS_ONLN" ]] || exit 1
+printf '%s\n' "${RSCRYPTO_TEST_PROCESSORS:-8}"
+EOF
+
 cat >"$BIN/cargo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -145,7 +152,7 @@ case "$subcommand" in
 esac
 EOF
 
-chmod +x "$BIN/cargo" "$BIN/rustc"
+chmod +x "$BIN/cargo" "$BIN/getconf" "$BIN/rustc"
 
 status=0
 env \
@@ -209,6 +216,19 @@ for target in beta crash; do
 done
 grep -Fq 'Summary: 2 targets, 0 failed' "$SELECTED_CAPTURE/output" \
   || fail "exact selection did not aggregate only the requested targets"
+
+CONSTRAINED_CAPTURE="$TMP_ROOT/constrained-capture"
+mkdir -p "$CONSTRAINED_CAPTURE"
+env \
+  PATH="$BIN:$PATH" \
+  RSCRYPTO_FUZZ_CAPTURE="$CONSTRAINED_CAPTURE" \
+  RSCRYPTO_FUZZ_DURATION_SECS=1 \
+  RSCRYPTO_TEST_PROCESSORS=2 \
+  bash "$FIXTURE/scripts/test/test-fuzz.sh" --targets alpha,delta \
+  >"$CONSTRAINED_CAPTURE/output" 2>&1 \
+  || fail "automatic constrained-runner scheduling failed"
+[[ $(<"$CONSTRAINED_CAPTURE/maximum") == "1" ]] \
+  || fail "automatic scheduling oversubscribed a two-processor runner"
 
 LONG_LIST_CAPTURE="$TMP_ROOT/long-list-capture"
 mkdir -p "$LONG_LIST_CAPTURE"
