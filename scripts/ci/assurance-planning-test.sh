@@ -260,6 +260,19 @@ raise "Miri job bypasses selected rows" unless miri_runs.include?('scripts/test/
 raise "Fuzz job bypasses its plan decision" unless fuzz_runs.include?("scripts/ci/require-work.sh assurance.fuzz")
 raise "Fuzz job bypasses selected rows" unless fuzz_runs.include?('scripts/test/fuzz-contracts.sh selected "$FUZZ_ROWS"')
 
+manifest = File.read(File.join(root, "Cargo.toml"))
+unless manifest.match?(/^\[profile\.test\]\nopt-level = 1$/)
+  raise "ordinary test execution lost its optimized Cargo profile"
+end
+miri_script = File.read(File.join(root, "scripts/test/test-miri.sh"))
+unless miri_script.include?("export CARGO_PROFILE_TEST_OPT_LEVEL=0")
+  raise "Miri no longer forces unoptimized test MIR"
+end
+coverage_script = File.read(File.join(root, "scripts/test/test-coverage.sh"))
+unless coverage_script.include?("export CARGO_PROFILE_TEST_OPT_LEVEL=0")
+  raise "coverage no longer forces unoptimized test code"
+end
+
 core_runs = jobs.fetch("core").fetch("steps").map { |step| step["run"] }.compact
 raise "CI core lost minimum-feature examples" unless core_runs.include?("scripts/test/test-examples.sh")
 msrv = jobs.fetch("msrv")

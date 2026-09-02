@@ -439,6 +439,9 @@ lto = false
 incremental = false # Preserve reproducible full codegen and Cargo Rail compiler-result reuse.
 codegen-units = 256
 
+[profile.test]
+opt-level = 1
+
 [profile.release]
 opt-level = 3
 debug = false
