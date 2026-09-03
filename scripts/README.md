@@ -220,7 +220,7 @@ Generic cross compilation stays on Linux x86-64;
 hosted and donated machines run only irreducibly native evidence. Linux x86-64
 rows restore and verify the plan. Other rows check out the exact planned commit;
 the local Cargo Rail issue records the missing lean verifier path for donated
-architectures and macOS x86-64.
+architectures.
 
 The Cargo Rail compiler cache is acceleration, never selection or correctness
 authority. `just rail-cache-setup` previews, installs, and probes the same
@@ -228,7 +228,7 @@ remapped policy used by development machines. CI reads R2 for trusted PRs and
 writes only from protected `main`; missing fork secrets disable the cache.
 Qualification enables reuse for host, feature-contract, and supported native
 platform rows; release preflight is read-only. Cross targets, Clippy, rustdoc,
-doctests, Miri, fuzzing, CT, benchmarks, macOS x86-64, and donated hosts stay
+doctests, Miri, fuzzing, CT, benchmarks, and donated hosts stay
 cold because the released cache deliberately bypasses or cannot install on
 those classes. Every cache-enabled CI and Qualification job emits Cargo Rail's
 bounded post-run hit, miss, bypass, failure, and local/remote-origin counters;

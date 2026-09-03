@@ -3080,18 +3080,6 @@ binsec_reason = "BINSEC does not provide native Mach-O loading for this CT workf
 ci = "local-macos"
 
 [[target]]
-name = "x86_64-apple-darwin"
-group = "macos"
-backend = "llvm"
-linker = "apple-ld-unpinned"
-claim = "ct-intended"
-physical_timing = "unsupported"
-physical_timing_reason = "macOS Intel is not part of the current published CT/bench evidence lanes; macOS evidence is produced locally on Apple Silicon."
-binsec = "unsupported"
-binsec_reason = "BINSEC does not provide native Mach-O loading for this CT workflow; macOS evidence is artifact/heuristic plus DudeCT."
-ci = "deferred-macos"
-
-[[target]]
 name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"

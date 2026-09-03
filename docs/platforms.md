@@ -71,7 +71,6 @@ the platform matrix.
 | `thumbv6m-none-eabi` | Generic cross | None | No | No | Yes |
 | `wasm32-unknown-unknown` | Generic cross | None | No | No | Yes |
 | `wasm32-wasip1` | Generic cross | Wasmtime emulation | No | No | Yes |
-| `x86_64-apple-darwin` | Native | Virtual native | No | No | Yes |
 | `x86_64-pc-windows-msvc` | Native | Virtual native | No | No | Yes |
 | `x86_64-unknown-linux-gnu` | Core job | Virtual native | Yes | Yes | Yes |
 | `x86_64-unknown-linux-musl` | Generic cross | None | No | No | Yes |
@@ -85,7 +84,9 @@ Native platform rows fail before Cargo work if the Rust host triple or machine
 architecture does not match the catalog. Donated POWER, IBM Z, and RISC-V
 machines run only native unit/backend evidence and focused portable-versus-
 accelerated tests. Windows AArch64 compiles but does not claim runtime evidence;
-Windows x86-64 does. Both declared Apple targets have routine native ownership.
+Windows x86-64 does. Apple Silicon is the only supported macOS architecture.
+`x86_64-apple-darwin` is not catalogued, tested, or maintained; it may compile
+incidentally, but that does not make it a supported target.
 
 Local and remote machines reproduce a row with
 `just target-contract ROW [shallow|deep]` or

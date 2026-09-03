@@ -183,12 +183,6 @@ just_release_asset() {
         1cbca0ce9880d5d1050115a6e2ced510927f85d1797a204ef6bccb319d923d8d \
         just
       ;;
-    Darwin:x86_64)
-      printf '%s\t%s\t%s\n' \
-        "just-$JUST_VERSION-x86_64-apple-darwin.tar.gz" \
-        9a09cfef66aaa79da58203970103a0684307716caaabd3e9844cacc4dc0f4023 \
-        just
-      ;;
     Darwin:arm64 | Darwin:aarch64)
       printf '%s\t%s\t%s\n' \
         "just-$JUST_VERSION-aarch64-apple-darwin.tar.gz" \

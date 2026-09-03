@@ -401,38 +401,6 @@
       "external_paths": ["scripts/ci/native-platform.sh", "src/platform/**", "tests/platform_amx_permission.rs"]
     },
     {
-      "id": "x86-64-apple-darwin",
-      "dimensions": {
-        "name": "macOS x86-64 Runtime",
-        "target": "x86_64-apple-darwin",
-        "group": "macos",
-        "operation": "native",
-        "platform": "macos-x64",
-        "runner_type": "github",
-        "runner": "macos-15-intel",
-        "contract": "development",
-        "components": "",
-        "timeout_minutes": 45,
-        "verify_plan": false,
-        "cache": false,
-        "compile": "native",
-        "runtime": "virtual-native",
-        "performance": false,
-        "constant_time": false,
-        "release": true
-      },
-      "config": ["targets"],
-      "external_paths": [
-        "scripts/ci/native-platform.sh",
-        "src/**/*x86*",
-        "src/auth/p256_*.rs",
-        "tests/aead_kernel_equivalence.rs",
-        "tests/p256_ecdh_*.rs",
-        "tests/portable_fallback.rs",
-        "tests/vectored_dispatch.rs"
-      ]
-    },
-    {
       "id": "x86-64-pc-windows-msvc",
       "dimensions": {
         "name": "Windows x86-64 Runtime",

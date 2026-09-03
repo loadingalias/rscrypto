@@ -107,7 +107,7 @@ ci_tool_validate_manifest() {
     local expected_platforms
     case "$tool" in
       actionlint | ripgrep) expected_platforms=(linux:x86_64) ;;
-      wasmtime | wasm-tools) expected_platforms=(linux:x86_64 linux:aarch64 macos:x86_64 macos:aarch64) ;;
+      wasmtime | wasm-tools) expected_platforms=(linux:x86_64 linux:aarch64 macos:aarch64) ;;
     esac
     expected_version=""
 
