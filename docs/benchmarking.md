@@ -12,6 +12,18 @@ published summary. Raw Criterion output lives under:
 benchmark_results/<date>/<os>/<arch>/
 ```
 
+Development-machine runs use an immutable, collision-free run directory under
+`benchmark_results/criterion/<run-id>/` on the remote. The benchmark command
+prints that run ID; collect it before destroying the machine with
+`just ssh-collect-bench <target> <run-id> <new-local-directory>`. The collected
+artifact includes CPU, OS, compiler, worktree, and source-file identity
+evidence. A collection destination must not already exist.
+
+Target-native CT, cleanup, or profiling outputs can be sealed separately with
+`just seal-remote-evidence KIND RUN_ID PATH...` and collected before teardown
+with `just ssh-collect-results TARGET KIND RUN_ID DESTINATION`. The collector
+applies the same exact-run archive and digest checks as benchmark collection.
+
 Each result records its commit and platform. Compare individual rows when a
 message size or operation matters. Do not transfer a result between CPU
 families.
@@ -36,6 +48,7 @@ Discover selectors with `just --list`, then run the narrowest useful case:
 ```sh
 just bench bench=sha2
 just bench crate=rscrypto bench=auth filter='^ecdsa-p256/'
+just bench p256-ecdh
 just bench mlkem
 ```
 
@@ -53,3 +66,7 @@ just perf-llvm-lines --filter <pattern>
 
 Keep raw results and run metadata for any published claim. Local measurements
 without that evidence are useful only for the machine that produced them.
+P-256 ECDH uses the `p256-ecdh` benchmark alias. Its operation rows compare
+caller-filled generation, public derivation, canonical SEC1 parsing, agreement,
+and a TLS-shaped two-party roundtrip; raw target results and the overview remain
+the only performance record.

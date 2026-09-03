@@ -137,7 +137,7 @@ case "${1:-}" in
     require_locked "$@"
     : >"$MOCK_PREFLIGHT_MARKER"
     if [[ " $* " == *" --no-deps "* ]]; then
-      printf '{"workspace_root":"%s","packages":[{"name":"rscrypto","features":{"aead":[],"aegis256":[],"aes-gcm":[],"aes-gcm-siv":[],"aes-siv":[],"argon2":[],"ascon-aead":[],"ascon-hash":[],"blake2b":[],"blake2s":[],"blake3":[],"chacha20poly1305":[],"crc16":[],"crc24":[],"crc32":[],"crc64":[],"ecdsa-p256":[],"ecdsa-p384":[],"ed25519":[],"hkdf":[],"hmac":[],"hmac-sha3":[],"kmac":[],"ml-kem":[],"parallel":[],"pbkdf2":[],"phc-strings":[],"poly1305":[],"rapidhash":[],"rsa":[],"scrypt":[],"serde":[],"serde-secrets":[],"sha2":[],"sha3":[],"websocket-sha1":[],"x25519":[],"xchacha20poly1305":[],"xxh3":[]}}]}\n' "$MOCK_REPO_ROOT"
+      printf '{"workspace_root":"%s","packages":[{"name":"rscrypto","features":{"aead":[],"aegis256":[],"aes-gcm":[],"aes-gcm-siv":[],"aes-siv":[],"argon2":[],"ascon-aead":[],"ascon-hash":[],"blake2b":[],"blake2s":[],"blake3":[],"chacha20poly1305":[],"crc16":[],"crc24":[],"crc32":[],"crc64":[],"ecdsa-p256":[],"ecdsa-p384":[],"ed25519":[],"hkdf":[],"hmac":[],"hmac-sha3":[],"kmac":[],"ml-kem":[],"p256-ecdh":[],"parallel":[],"pbkdf2":[],"phc-strings":[],"poly1305":[],"rapidhash":[],"rsa":[],"scrypt":[],"serde":[],"serde-secrets":[],"sha2":[],"sha3":[],"websocket-sha1":[],"x25519":[],"xchacha20poly1305":[],"xxh3":[]}}]}\n' "$MOCK_REPO_ROOT"
     else
       printf '{"workspace_root":"%s","resolve":{"nodes":[{"id":"rscrypto","features":["alloc","auth"]}]}}\n' "$MOCK_REPO_ROOT"
     fi

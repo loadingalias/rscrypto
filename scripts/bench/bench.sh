@@ -167,7 +167,13 @@ detect_bench_arch() {
 RUN_OS="$(detect_bench_os)"
 RUN_ARCH="$(detect_bench_arch)"
 RUN_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
-RUN_MODE="${RSCRYPTO_BENCH_MODE:-local}"
+if [[ -n "${RSCRYPTO_BENCH_MODE:-}" ]]; then
+  RUN_MODE="$RSCRYPTO_BENCH_MODE"
+elif [[ -n "${DEV_MACHINE_TARGET:-}" ]]; then
+  RUN_MODE="remote"
+else
+  RUN_MODE="local"
+fi
 
 if [[ "$RUN_MODE" == "local" && "$RUN_OS" == "macos" \
   && -z "${RUSTFLAGS+x}" && -z "${CARGO_ENCODED_RUSTFLAGS+x}" ]]; then
@@ -187,8 +193,75 @@ if [[ -z "$OUTPUT_DIR" ]]; then
   trap 'rm -rf "$OUTPUT_DIR"' EXIT
 fi
 
-RESULTS_DIR="$REPO_ROOT/benchmark_results/$RUN_DATE/$RUN_OS/$RUN_ARCH"
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    echo "error: sha256sum or shasum is required for benchmark provenance" >&2
+    return 1
+  fi
+}
 
+write_source_manifest() {
+  local destination="$1" source_file digest
+  : > "$destination"
+  while IFS= read -r -d '' source_file; do
+    if [[ -f "$REPO_ROOT/$source_file" ]]; then
+      digest="$(sha256_file "$REPO_ROOT/$source_file")"
+      printf '%s  %q\n' "$digest" "$source_file" >> "$destination"
+    else
+      printf 'MISSING  %q\n' "$source_file" >> "$destination"
+    fi
+  done < <(
+    git -C "$REPO_ROOT" ls-files --cached --others --exclude-standard -z -- \
+      Cargo.toml Cargo.lock build.rs rust-toolchain.toml .cargo \
+      .config/benchmark-matrix.json src benches scripts/bench scripts/ci/run-bench.sh \
+      | sort -z
+  )
+}
+
+REMOTE_ARTIFACT_DIR=""
+REMOTE_RUN_ID=""
+if [[ -n "${DEV_MACHINE_TARGET:-}" ]]; then
+  REMOTE_RUN_ID="${RSCRYPTO_BENCH_RUN_ID:-${DEV_MACHINE_TARGET}-${RUN_DATE//-/}T${RUN_TIME//_/}Z-$$}"
+  if [[ ! "$REMOTE_RUN_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ || "$REMOTE_RUN_ID" == *..* ]]; then
+    echo "error: invalid RSCRYPTO_BENCH_RUN_ID '$REMOTE_RUN_ID'" >&2
+    exit 2
+  fi
+  REMOTE_ARTIFACT_DIR="$REPO_ROOT/benchmark_results/criterion/$REMOTE_RUN_ID"
+  [[ ! -e "$REMOTE_ARTIFACT_DIR" ]] || {
+    echo "error: remote benchmark run already exists: $REMOTE_RUN_ID" >&2
+    exit 2
+  }
+  mkdir -p "$REMOTE_ARTIFACT_DIR"
+  RESULTS_DIR="$REMOTE_ARTIFACT_DIR"
+  write_source_manifest "$REMOTE_ARTIFACT_DIR/source-files.sha256"
+  SOURCE_ID="$(sha256_file "$REMOTE_ARTIFACT_DIR/source-files.sha256")"
+  {
+    echo "run_id=$REMOTE_RUN_ID"
+    echo "target=$DEV_MACHINE_TARGET"
+    echo "instance_type=${DEV_MACHINE_INSTANCE_TYPE:-unknown}"
+    echo "date=$RUN_DATE"
+    echo "time=$RUN_TIME"
+    echo "mode=$RUN_MODE"
+    echo "platform=$RUN_OS-$RUN_ARCH"
+    echo "commit=$RUN_COMMIT"
+    echo "source_identity=sha256:$SOURCE_ID"
+  } > "$REMOTE_ARTIFACT_DIR/remote-run.txt"
+  uname -a > "$REMOTE_ARTIFACT_DIR/uname.txt"
+  if command -v lscpu >/dev/null 2>&1; then
+    lscpu > "$REMOTE_ARTIFACT_DIR/lscpu.txt"
+  fi
+  rustc -Vv > "$REMOTE_ARTIFACT_DIR/rustc.txt"
+  cargo -V > "$REMOTE_ARTIFACT_DIR/cargo.txt"
+  git -C "$REPO_ROOT" status --short > "$REMOTE_ARTIFACT_DIR/git-status.txt"
+else
+  RESULTS_DIR="$REPO_ROOT/benchmark_results/$RUN_DATE/$RUN_OS/$RUN_ARCH"
+fi
+
+bench_status=0
 BENCH_CRATES="$CRATES" \
   BENCH_BENCHES="$BENCHES" \
   BENCH_ONLY="$ONLY" \
@@ -207,4 +280,17 @@ BENCH_CRATES="$CRATES" \
   BENCH_RUN_ARCH="$RUN_ARCH" \
   BENCH_RUN_COMMIT="$RUN_COMMIT" \
   BENCH_RUN_MODE="$RUN_MODE" \
-  scripts/ci/run-bench.sh
+  scripts/ci/run-bench.sh || bench_status=$?
+
+if [[ -n "$REMOTE_ARTIFACT_DIR" ]]; then
+  TRANSFER_DIR="$REPO_ROOT/benchmark_results/.transfers"
+  mkdir -p "$TRANSFER_DIR"
+  tar -cf "$TRANSFER_DIR/$REMOTE_RUN_ID.tar" \
+    -C "$REPO_ROOT/benchmark_results" "criterion/$REMOTE_RUN_ID"
+  TRANSFER_DIGEST="$(sha256_file "$TRANSFER_DIR/$REMOTE_RUN_ID.tar")"
+  printf '%s  %s.tar\n' "$TRANSFER_DIGEST" "$REMOTE_RUN_ID" \
+    > "$TRANSFER_DIR/$REMOTE_RUN_ID.tar.sha256"
+  echo "Remote run ID: $REMOTE_RUN_ID"
+fi
+
+exit "$bench_status"

@@ -60,6 +60,29 @@ These operations are intentionally outside blanket constant-time claims:
 - External implementations of public traits.
 - Diagnostic APIs, which deliberately expose evidence values.
 
+P-256 ECDH scalar sampling and canonical SEC1 validation are public prelude
+operations outside the private-arithmetic claim. Once a valid scalar and peer
+point exist, public derivation and agreement use fixed loop bounds, full-table
+secret-digit scans, masked exceptional-point selection, and no
+secret-dependent addresses. `ct.toml` scopes the required linked-binary and
+target evidence; a source-level fixed-work design is not itself a release
+claim. Its operation entry distinguishes the portable implementation from the
+selected Apple/Linux AArch64, Linux x86-64, and Windows x86-64 assembly.
+Physical Graviton3, Graviton4, and Intel Granite Rapids development runs cover
+both Linux operation-level DudeCT cases and preserve the measured binary,
+disassembly, symbols, linker command, and raw samples. Those bundles measure
+intermediate Phase 4 candidates and do not replace exact-candidate release
+qualification. The retained G3 maxima are 1.12000 for public
+derivation and 2.59291 for agreement; the Intel Granite Rapids maxima are
+1.76752 and 1.33030, respectively, against the threshold of 10. Windows
+x86-64 has direct native differential and performance evidence, but the final
+batch-parser source identity does not yet have a complete retained timing
+bundle. The Windows x86-64 qualification row now gates and retains both P-256
+operation-level timing cases plus optimized cleanup for the exact source; its
+first successful artifact and dedicated physical timing remain pending. Other
+native rows likewise await their own CI/CD or physical-runner evidence. Neither
+cross-compilation nor a different microarchitecture is treated as timing proof.
+
 Authentication failures remain opaque even when their inputs are public. See
 [`secret-ownership.md`](secret-ownership.md) for comparison capabilities and
 [`secret-lifecycle.md`](secret-lifecycle.md) for cleanup evidence.

@@ -53,8 +53,9 @@ A remote peer may supply malformed or adversarial encoded keys, password
 records, public keys, signatures, ciphertexts, tags, or protocol selectors.
 Relevant failures include incorrect acceptance, memory unsafety, reachable
 panics, resource use beyond documented bounds, and authentication
-oracles. Rejected AEAD plaintext and RSA private-operation output are cleared
-by the APIs that receive those buffers.
+oracles. P-256 ECDH rejects malformed or non-canonical peer points before
+private scalar arithmetic. Rejected AEAD plaintext and RSA private-operation
+output are cleared by the APIs that receive those buffers.
 
 ### Timing observation
 

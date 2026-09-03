@@ -100,7 +100,7 @@ assert!(
 //! - `checksums`: CRC families.
 //! - `hashes`: SHA-2, SHA-3, BLAKE2, BLAKE3, Ascon, XXH3, RapidHash.
 //! - `auth`: MACs, KDFs, password hashing, ECDSA signing/verification, Ed25519, RSA
-//!   signing/verification/OAEP, X25519.
+//!   signing/verification/OAEP, P-256 ECDH, X25519.
 //! - `aead`: AES-GCM, AES-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128.
 //! - `full`: all public primitive families.
 //!
@@ -295,6 +295,7 @@ mod macros;
   feature = "ecdsa-p256",
   feature = "ecdsa-p384",
   feature = "ed25519",
+  feature = "p256-ecdh",
   feature = "x25519",
   feature = "ml-kem",
   feature = "blake3"
@@ -322,6 +323,7 @@ pub mod aead;
   feature = "ecdsa-p384",
   feature = "ed25519",
   feature = "ml-kem",
+  feature = "p256-ecdh",
   feature = "rsa",
   feature = "x25519",
   feature = "phc-strings",
@@ -405,7 +407,7 @@ pub use auth::{Argon2Context, Argon2Error, Argon2Params, Argon2d, Argon2i, Argon
 #[cfg(all(feature = "argon2", feature = "phc-strings"))]
 pub use auth::{Argon2VerificationLimits, Argon2idPassword};
 #[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
-pub use auth::{EcdsaError, EcdsaKeyGenerationError};
+pub use auth::{EcdsaBlindedSigningError, EcdsaError, EcdsaKeyGenerationError};
 #[cfg(feature = "ecdsa-p256")]
 pub use auth::{EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature};
 #[cfg(feature = "ecdsa-p384")]
@@ -431,6 +433,8 @@ pub use auth::{
   MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey,
   MlKem1024PreparedDecapsulationKey, MlKem1024PreparedEncapsulationKey, MlKem1024SharedSecret, MlKemError,
 };
+#[cfg(feature = "p256-ecdh")]
+pub use auth::{P256EphemeralSecret, P256KeyGenerationError, P256PublicKey, P256PublicKeyError, P256SharedSecret};
 #[cfg(all(feature = "phc-strings", any(feature = "argon2", feature = "scrypt")))]
 pub use auth::{PasswordHashError, PasswordStatus};
 #[cfg(feature = "pbkdf2")]
@@ -501,7 +505,7 @@ pub use hashes::fast::{Xxh3_128Hasher, Xxh3BuildHasher, Xxh3Hasher};
 pub use hex::InvalidHexError;
 pub use secret::SecretBytes;
 #[cfg(feature = "alloc")]
-pub use secret::SecretVec;
+pub use secret::{SecretString, SecretVec, SecretVecConstructionError};
 // Trait re-exports.
 #[cfg(any(
   feature = "aes-gcm",
@@ -891,6 +895,28 @@ fn compare(left: &SecretVec, right: &SecretVec) -> bool {
 ```
 
 ```compile_fail
+use rscrypto::SecretVec;
+
+let secret = SecretVec::from_vec(vec![1, 2, 3]);
+let _copy = secret.clone();
+```
+
+```compile_fail
+use rscrypto::SecretString;
+
+let secret = SecretString::from_string(String::from("credential"));
+let _copy = secret.clone();
+```
+
+```compile_fail
+use rscrypto::SecretString;
+
+let left = SecretString::from_string(String::from("left"));
+let right = SecretString::from_string(String::from("right"));
+let _ = left == right;
+```
+
+```compile_fail
 use rscrypto::HmacSha256Tag;
 
 let tag = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
@@ -1157,6 +1183,20 @@ use rscrypto::X25519SecretKey;
 
 fn require_clone<T: Clone>() {}
 require_clone::<X25519SecretKey>();
+```
+
+```compile_fail,E0277
+use rscrypto::P256EphemeralSecret;
+
+fn require_clone<T: Clone>() {}
+require_clone::<P256EphemeralSecret>();
+```
+
+```compile_fail,E0277
+use rscrypto::P256SharedSecret;
+
+fn require_clone<T: Clone>() {}
+require_clone::<P256SharedSecret>();
 ```
 
 ```compile_fail,E0277

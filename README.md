@@ -58,8 +58,8 @@ than weakening the gate.
 - The constant-time harness inventories exact operations in [`ct.toml`](ct.toml)
   and combines optimized linked-binary inspection, BINSEC proofs for declared
   fixed-shape kernels, and DudeCT timing tests for declared end-to-end cases.
-- Fixed-size secret owners mask `Debug`, omit ordinary equality, and overwrite
-  owned bytes on drop. Verification failures are opaque; failed AEAD opens
+- Secret owners mask `Debug`, omit ordinary equality and implicit duplication,
+  and overwrite their initialized bytes on drop. Verification failures are opaque; failed AEAD opens
   clear caller output buffers.
 
 A constant-time claim exists only when the matching signed release includes an
@@ -118,7 +118,7 @@ assert_eq!(hasher.finalize(), one_shot);
 ```
 
 Hash APIs support one-shot and streaming use. Runnable workflows for AEAD,
-signatures, RSA, X25519, ML-KEM, password hashing, and backend introspection are
+signatures, RSA, P-256 ECDH, X25519, ML-KEM, password hashing, and backend introspection are
 in [`examples/README.md`](examples/README.md).
 
 ## Primitive and feature map
@@ -131,7 +131,7 @@ in [`examples/README.md`](examples/README.md).
 | MACs and KDFs | HMAC-SHA-2/SHA-3, KMAC128/256, Poly1305, HKDF-SHA-2, PBKDF2-HMAC-SHA-2 | `macs`, `kdfs`, or leaf features |
 | Password hashing | Argon2d/i/id, scrypt, bounded PHC password records | `password-hashing` or leaf features |
 | Signatures and RSA | ECDSA P-256/P-384, Ed25519, RSA signing, verification, encryption, and key generation | `signatures` or leaf features |
-| Key exchange and KEMs | X25519, ML-KEM-512/768/1024 | `key-exchange` or leaf features |
+| Key exchange and KEMs | P-256 ECDH, X25519, ML-KEM-512/768/1024 | `key-exchange` or leaf features |
 | AEADs | AES-GCM, AES-GCM-SIV, AES-SIV-CMAC, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128 | `aead` or leaf features |
 
 Use [docs.rs](https://docs.rs/rscrypto) for exact types and methods. Use the

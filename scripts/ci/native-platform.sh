@@ -70,6 +70,25 @@ run_amx() {
     "$test_name" -- --exact --nocapture
 }
 
+run_p256_ecdh_runtime() {
+  cargo test --locked --all-features \
+    --test p256_ecdh_allocations \
+    --test p256_ecdh_oracle \
+    --test p256_ecdh_properties
+}
+
+run_windows_p256_ecdh_evidence() {
+  [[ "$platform" == windows-x64 && "$depth" == deep && "${RSCRYPTO_TEST_MODE:-}" == weekly ]] || return 0
+
+  "$SCRIPT_DIR/../ct/dudect.sh" \
+    --target "$target" \
+    --filter p256_ecdh_public_key_fixed_vs_random_scalar
+  "$SCRIPT_DIR/../ct/dudect.sh" \
+    --target "$target" \
+    --filter p256_ecdh_agree_fixed_vs_random_scalar
+  "$SCRIPT_DIR/../check/zeroize-evidence.sh" --primitive p256-ecdh
+}
+
 run_native_runtime() {
   export RSCRYPTO_TEST_MODE=commit
   if [[ "$platform" == rise-riscv ]]; then
@@ -88,6 +107,7 @@ run_native_runtime() {
       --test aead_kernel_equivalence \
       --test portable_fallback \
       --test vectored_dispatch
+    run_p256_ecdh_runtime
   fi
 }
 
@@ -107,6 +127,10 @@ case "$platform" in
     cargo test --locked --lib --all-features
     cargo test --locked --features blake3 \
       --test blake3_official_vectors --test blake3_differential
+    if [[ "$depth" == deep ]]; then
+      run_p256_ecdh_runtime
+    fi
+    run_windows_p256_ecdh_evidence
     ;;
   linux-arm64 | macos-x64 | macos-arm64 | ibm-s390x | ibm-power10 | rise-riscv)
     run_native_runtime

@@ -1690,7 +1690,7 @@ impl RsaPrivateKey {
     der.push(TAG_OCTET_STRING);
     der_push_len(pkcs1.len(), &mut der);
     der.extend_from_slice(pkcs1.as_bytes());
-    SecretVec::new(der)
+    SecretVec::from_vec(der)
   }
 
   /// Return the fixed signature length for this key.
@@ -3064,7 +3064,7 @@ impl RsaPrivateKeyComponents {
     for value in values {
       der_push_integer_unsigned(value, &mut der);
     }
-    SecretVec::new(der)
+    SecretVec::from_vec(der)
   }
 
   #[cfg(feature = "getrandom")]

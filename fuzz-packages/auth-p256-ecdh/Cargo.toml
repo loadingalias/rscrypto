@@ -1,0 +1,24 @@
+[package]
+name = "rscrypto-fuzz-auth-p256-ecdh"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+p256 = { version = "0.14.0", default-features = false, features = ["ecdh", "std"] }
+rscrypto = { path = "../..", default-features = false, features = ["std", "p256-ecdh"] }
+
+[dev-dependencies]
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "auth_p256_ecdh"
+path = "fuzz_targets/auth_p256_ecdh.rs"
+doc = false

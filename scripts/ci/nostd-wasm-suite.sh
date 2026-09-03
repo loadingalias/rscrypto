@@ -18,7 +18,10 @@ source "$SCRIPT_DIR/../lib/ci-tool-integrity.sh"
 # shellcheck source=../lib/feature-profiles.sh
 source "$SCRIPT_DIR/../lib/feature-profiles.sh"
 
-rustup target add "$TARGET"
+target_libdir=$(rustc --target "$TARGET" --print target-libdir)
+if ! compgen -G "$target_libdir/libcore-*.rlib" >/dev/null; then
+  rustup target add "$TARGET"
+fi
 
 install_wasmtime() {
   local platform tmpdir install_dir installed_version expected_version

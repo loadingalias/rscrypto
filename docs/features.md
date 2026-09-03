@@ -28,14 +28,14 @@ Umbrella features trade build size for convenience:
 | `aead` | Every AEAD implementation |
 | `full` | Checksums, hashes, authentication, and AEADs |
 
-Prefer leaf features such as `sha2`, `blake3`, `aes-gcm`, `ed25519`, or
+Prefer leaf features such as `sha2`, `blake3`, `aes-gcm`, `ed25519`, `p256-ecdh`, or
 `ml-kem` in libraries and constrained builds.
 
 ## Capability features
 
 | Feature | Effect |
 | --- | --- |
-| `alloc` | Enables APIs that own dynamic memory. |
+| `alloc` | Enables APIs that own dynamic memory, including `SecretVec` and `SecretString`. |
 | `std` | Enables runtime CPU detection and standard-library integrations; implies `alloc`. |
 | `getrandom` | Enables fallible helpers that obtain keys, nonces, salts, or seeds from the OS. |
 | `parallel` | Enables Rayon-backed BLAKE3 and Argon2 work; implies `std`, `blake3`, and `argon2`. |
@@ -46,6 +46,14 @@ Prefer leaf features such as `sha2`, `blake3`, `aes-gcm`, `ed25519`, or
 
 `getrandom` changes entropy acquisition, not algorithm availability. APIs that
 accept caller-provided entropy remain available without it.
+
+`p256-ecdh` is a standalone leaf: it does not enable ECDSA, HMAC, `alloc`, or
+`std`. It retains the portable authority on every supported target and selects
+the embedded Apple or Linux AArch64 backend only when `portable-only` and Miri
+are not active. Platform qualification, timing claims, and independent vector
+coverage remain owned by [`platforms.md`](platforms.md),
+[`constant-time.md`](constant-time.md), and
+[`test-vector-coverage.md`](test-vector-coverage.md).
 
 `portable-only` affects dispatchers that consult `platform::caps()`. It does
 not remove accelerated code from the binary or override backends selected by

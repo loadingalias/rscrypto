@@ -111,6 +111,7 @@
 //! - `rsa` - RSA key import/export/generation, signing, verification, OAEP, and legacy
 //!   RSAES-PKCS1-v1_5.
 //! - `scrypt` - scrypt password hashing (RFC 7914).
+//! - `p256_ecdh` - ephemeral P-256 Diffie-Hellman key agreement.
 //! - `x25519` - X25519 Diffie-Hellman key agreement.
 
 #[cfg(feature = "argon2")]
@@ -148,6 +149,52 @@ pub mod hmac_sha3;
 pub mod kmac;
 #[cfg(feature = "ml-kem")]
 pub mod mlkem;
+#[cfg(any(
+  feature = "p256-ecdh",
+  all(
+    feature = "ecdsa-p256",
+    any(
+      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+      all(target_arch = "x86_64", target_os = "linux")
+    )
+  )
+))]
+mod p256_core;
+#[cfg(feature = "p256-ecdh")]
+pub mod p256_ecdh;
+#[cfg(all(
+  not(feature = "portable-only"),
+  not(miri),
+  any(
+    all(
+      feature = "ecdsa-p256",
+      any(
+        all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+        all(target_arch = "x86_64", target_os = "linux")
+      )
+    ),
+    all(
+      feature = "p256-ecdh",
+      any(
+        all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+        all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+      )
+    )
+  )
+))]
+mod p256_platform;
+#[cfg(any(
+  feature = "p256-ecdh",
+  all(
+    feature = "ecdsa-p256",
+    any(feature = "portable-only", miri),
+    any(
+      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+      all(target_arch = "x86_64", target_os = "linux")
+    )
+  )
+))]
+mod p256_portable;
 #[cfg(feature = "pbkdf2")]
 pub mod pbkdf2;
 #[cfg(all(feature = "phc-strings", any(feature = "argon2", feature = "scrypt")))]
@@ -233,7 +280,7 @@ pub use curve25519_edwards::{
   diag_ed25519_select_basepoint_cached_avx2_limb_digest, diag_ed25519_select_basepoint_cached_ifma_limb_digest,
 };
 #[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
-pub use ecdsa::{EcdsaError, EcdsaKeyGenerationError};
+pub use ecdsa::{EcdsaBlindedSigningError, EcdsaError, EcdsaKeyGenerationError};
 #[cfg(feature = "ecdsa-p256")]
 pub use ecdsa::{EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature};
 #[cfg(feature = "ecdsa-p384")]
@@ -306,6 +353,21 @@ pub use mlkem::{
   diag_mlkem768_multiply_ntts_accumulate_input_digest, diag_mlkem1024_keygen_secret_noise_digest,
   diag_mlkem1024_multiply_ntts_accumulate_input_digest,
 };
+#[cfg(all(
+  feature = "diag",
+  feature = "p256-ecdh",
+  any(
+    feature = "portable-only",
+    miri,
+    not(any(
+      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+      all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+    ))
+  )
+))]
+pub use p256_ecdh::diag_p256_ecdh_select_window_limb_digest;
+#[cfg(feature = "p256-ecdh")]
+pub use p256_ecdh::{P256EphemeralSecret, P256KeyGenerationError, P256PublicKey, P256PublicKeyError, P256SharedSecret};
 #[cfg(feature = "pbkdf2")]
 pub use pbkdf2::{Pbkdf2Error, Pbkdf2Params, Pbkdf2Sha256, Pbkdf2Sha512, Pbkdf2VerifyPolicy};
 #[cfg(all(feature = "diag", feature = "pbkdf2"))]

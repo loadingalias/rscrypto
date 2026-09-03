@@ -32,6 +32,16 @@ def query(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
 
 def main() -> None:
   query("validate")
+  raw_plan = subprocess.run(
+    [sys.executable, str(TOOL), "plan-algorithm", "p256-ecdh"],
+    cwd=ROOT,
+    check=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+  ).stdout
+  if b"\r" in raw_plan or not raw_plan.endswith(b"\n"):
+    fail(f"benchmark catalog records must use LF line endings: {raw_plan!r}")
+
   with CATALOG.open(encoding="utf-8") as source:
     catalog = json.load(source)
   with (ROOT / "Cargo.toml").open("rb") as source:

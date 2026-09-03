@@ -124,6 +124,21 @@ plan_path src/auth/x25519.rs x25519 "$x25519_plan"
 assert_variants "$x25519_plan" assurance.miri portable
 assert_variants "$x25519_plan" assurance.fuzz x25519
 
+p256_ecdh_plan="$TMP_ROOT/p256-ecdh.json"
+plan_path src/auth/p256_ecdh.rs p256-ecdh "$p256_ecdh_plan"
+assert_variants "$p256_ecdh_plan" assurance.miri portable
+assert_variants "$p256_ecdh_plan" assurance.fuzz p256-ecdh
+
+p256_core_plan="$TMP_ROOT/p256-core.json"
+plan_path src/auth/p256_core.rs p256-core "$p256_core_plan"
+assert_variants "$p256_core_plan" assurance.miri portable
+assert_variants "$p256_core_plan" assurance.fuzz p256-ecdh
+
+p256_portable_plan="$TMP_ROOT/p256-portable.json"
+plan_path src/auth/p256_portable.rs p256-portable "$p256_portable_plan"
+assert_variants "$p256_portable_plan" assurance.miri portable
+assert_variants "$p256_portable_plan" assurance.fuzz p256-ecdh
+
 sha2_plan="$TMP_ROOT/sha2.json"
 plan_path src/hashes/crypto/sha256/mod.rs sha2 "$sha2_plan"
 assert_variants "$sha2_plan" assurance.miri skipped
@@ -143,6 +158,16 @@ corpus_plan="$TMP_ROOT/corpus.json"
 plan_path fuzz/corpus/auth_x25519/seed-basic corpus "$corpus_plan"
 assert_variants "$corpus_plan" assurance.miri skipped
 assert_variants "$corpus_plan" assurance.fuzz x25519
+
+p256_scoped_fuzz_plan="$TMP_ROOT/p256-scoped-fuzz.json"
+plan_path fuzz-packages/auth-p256-ecdh/Cargo.toml p256-scoped-fuzz "$p256_scoped_fuzz_plan"
+assert_variants "$p256_scoped_fuzz_plan" assurance.miri skipped
+assert_variants "$p256_scoped_fuzz_plan" assurance.fuzz p256-ecdh
+
+p256_corpus_plan="$TMP_ROOT/p256-corpus.json"
+plan_path fuzz/corpus/auth_p256_ecdh/seed-basic p256-corpus "$p256_corpus_plan"
+assert_variants "$p256_corpus_plan" assurance.miri skipped
+assert_variants "$p256_corpus_plan" assurance.fuzz p256-ecdh
 
 combined_checksum_plan="$TMP_ROOT/checksum-corpus.json"
 plan_path fuzz/corpus/checksum_crc/seed-basic checksum-corpus "$combined_checksum_plan"
@@ -355,6 +380,27 @@ raise "Qualification lost MSRV execution" unless qualification_msrv_runs.include
 qualification_platforms = qualification.fetch("jobs").fetch("platforms").fetch("steps").map { |step| step["run"] }.compact
 raise "Qualification lost deep native platform proof" unless qualification_platforms.include?('scripts/ci/target-contracts.sh run "$TARGET_ROW" deep')
 
+native_platform = File.read(File.join(root, "scripts/ci/native-platform.sh"))
+%w[p256_ecdh_allocations p256_ecdh_oracle p256_ecdh_properties].each do |test|
+  raise "Native platform proof lost #{test}" unless native_platform.include?("--test #{test}")
+end
+raise "Windows P-256 timing evidence is not qualification-gated" unless native_platform.include?('"${RSCRYPTO_TEST_MODE:-}" == weekly')
+%w[p256_ecdh_public_key_fixed_vs_random_scalar p256_ecdh_agree_fixed_vs_random_scalar].each do |timing_case|
+  raise "Windows P-256 proof lost #{timing_case}" unless native_platform.include?("--filter #{timing_case}")
+end
+raise "Windows P-256 proof lost optimized cleanup evidence" unless native_platform.include?(
+  'zeroize-evidence.sh" --primitive p256-ecdh'
+)
+
+windows_p256_upload = qualification.fetch("jobs").fetch("platforms").fetch("steps").find do |step|
+  step["name"] == "Preserve Windows P-256 evidence"
+end
+raise "Qualification does not retain Windows P-256 evidence" unless windows_p256_upload
+unless windows_p256_upload.fetch("if").include?("matrix.id == 'x86-64-pc-windows-msvc'")
+  raise "Windows P-256 evidence upload is not target-scoped"
+end
+raise "Windows P-256 evidence upload permits missing artifacts" unless windows_p256_upload.dig("with", "if-no-files-found") == "error"
+
 target_catalog = JSON.parse(File.read(File.join(root, ".config/target-matrix.json")))
 %w[aarch64-unknown-linux-gnu aarch64-apple-darwin].each do |id|
   row = target_catalog.fetch("variants").find { |candidate| candidate.fetch("id") == id }
@@ -365,6 +411,14 @@ target_catalog = JSON.parse(File.read(File.join(root, ".config/target-matrix.jso
   missing_paths = expected_paths - row.fetch("external_paths")
   raise "#{id} lost differential proof paths: #{missing_paths.join(', ')}" unless missing_paths.empty?
 end
+
+windows_x64 = target_catalog.fetch("variants").find { |candidate| candidate.fetch("id") == "x86-64-pc-windows-msvc" }
+raise "missing Windows x86-64 proof row" unless windows_x64
+windows_dimensions = windows_x64.fetch("dimensions")
+unless windows_dimensions.fetch("components").split(",").include?("llvm-tools-preview")
+  raise "Windows x86-64 proof cannot retain LLVM evidence"
+end
+raise "Windows x86-64 proof has no bounded evidence budget" unless windows_dimensions.fetch("timeout_minutes") == 75
 
 {"CI" => ci, "Qualification" => qualification}.each do |name, workflow|
   installer = workflow.fetch("jobs").fetch("core").fetch("steps").find do |step|

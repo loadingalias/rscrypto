@@ -23,6 +23,31 @@ Every accelerated path must match portable Rust for representative lengths,
 alignments, tails, and state transitions. Cross-compilation proves only that a
 target builds; runtime behavior requires target execution.
 
+P-256 ECDH remains a standalone leaf with a safe Rust authority on every
+supported target. Apple and Linux AArch64 builds select embedded s2n-bignum
+fixed-base and arbitrary-point assembly at compile time unless `portable-only`
+or Miri is active. Linux x86-64 selects the corresponding baseline or ADX/BMI2
+ELF kernels after cached runtime capability detection. Windows x86-64 uses the
+same baseline or ADX/BMI2 arithmetic behind Microsoft x64 wrappers; public SEC1
+validation crosses one target-shaped batch boundary instead of five field-call
+wrappers. The deterministic provenance transform keeps those backends
+independent of the ECDSA feature and clears their secret-derived frames,
+saved-register spill slots, and volatile integer registers. Physical
+Graviton3, Graviton4, Intel Granite Rapids Linux, and Intel Granite Rapids
+Windows development evidence covers the applicable native ABI, direct portable
+differentials, independent vectors and implementations, and equivalent-work
+performance for the measured Phase 4 candidates. The sealed Linux bundles
+retain complete operation-level timing artifacts and optimized cleanup
+evidence, but later shared-source edits mean they are not exact-final-source
+release evidence. Exact-final-source Windows timing and cleanup
+artifacts remain awaiting the first successful wired qualification run, and
+dedicated physical timing is unavailable; the native runtime and benchmark do
+not stand in for those gates.
+Other targets and microarchitectures retain their portable fallback or remain
+awaiting their own native qualification row. Evidence from one CPU is never
+substituted for another. The target catalog and qualification workflows own
+those per-row obligations.
+
 ## Supported targets
 
 [`.config/target-matrix.json`](../.config/target-matrix.json) is both the target

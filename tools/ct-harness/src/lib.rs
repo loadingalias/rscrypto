@@ -13,15 +13,15 @@ use std::format;
 use rscrypto::{
   Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey, Aes256GcmSiv,
   Aes256GcmSivKey, AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, Argon2Params, Argon2d, Argon2i, Argon2id,
-  AsconAead128, AsconAead128Key, Blake2b256, Blake2b512,
-  Blake2bKey, Blake2s128, Blake2s256, Blake2sKey, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key,
-  Crc32, EcdsaP256SecretKey, EcdsaP384SecretKey, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256,
-  HkdfSha384, HmacSha3_224Tag, HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag,
-  Kmac256, MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem768,
-  MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem768EncapsulationKey, MlKem1024, MlKem1024Ciphertext,
-  MlKem1024DecapsulationKey, MlKem1024EncapsulationKey, MlKemError, Pbkdf2Sha256, Pbkdf2Sha512, RsaBlindingPair,
-  RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy, Scrypt, ScryptParams,
-  SecretBytes, Sha256, X25519PublicKey, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  AsconAead128, AsconAead128Key, Blake2b256, Blake2b512, Blake2bKey, Blake2s128, Blake2s256, Blake2sKey, Blake3,
+  Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, Crc32, EcdsaP256SecretKey, EcdsaP384SecretKey,
+  Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HkdfSha384, HmacSha3_224Tag, HmacSha256,
+  HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Kmac256, MlKem512, MlKem512Ciphertext,
+  MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey,
+  MlKem768EncapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey,
+  MlKemError, P256EphemeralSecret, P256PublicKey, Pbkdf2Sha256, Pbkdf2Sha512, RsaBlindingPair, RsaOaepProfile,
+  RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy, Scrypt, ScryptParams, SecretBytes, Sha256,
+  X25519PublicKey, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
   aead::{Nonce96, Nonce128, Nonce192, Nonce256, diag_aes_siv_cmac256_open_portable},
   checksum::Checksum,
   traits::Kem as _,
@@ -375,6 +375,81 @@ pub unsafe extern "C" fn ct_entry_x25519(out: *mut u8, scalar: *const u8, point:
   };
   // SAFETY: The function contract requires a non-null `out` to reference exactly 32 writable bytes
   // that remain valid and unaccessed while `write_array` copies the initialized shared secret.
+  if unsafe { write_array(out, shared.as_bytes()) } {
+    STATUS_OK
+  } else {
+    STATUS_ERR
+  }
+}
+
+/// P-256 fixed-base public derivation harness.
+///
+/// Scalar sampling is part of this retained linked-binary root so reachability
+/// analysis sees the production constructor, but its validity branch is
+/// explicitly outside the public-derivation constant-time claim.
+///
+/// # Safety
+///
+/// - `scalar` must be valid for reads of 32 initialized bytes and must remain
+///   immutable while copied.
+/// - `out` must be valid for writes of 65 bytes and must not be accessed while
+///   written.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_p256_ecdh_public_key(out: *mut u8, scalar: *const u8) -> u8 {
+  // SAFETY: The function contract requires `scalar` to identify 32 readable,
+  // initialized bytes that remain valid while copied into owned storage.
+  let Some(scalar) = (unsafe { read_array::<32>(scalar) }) else {
+    return STATUS_ERR;
+  };
+  let Ok(secret) = P256EphemeralSecret::try_generate_with(|candidate| {
+    candidate.copy_from_slice(&scalar);
+    Ok::<(), core::convert::Infallible>(())
+  }) else {
+    return STATUS_ERR;
+  };
+  let public = secret.public_key().to_sec1_bytes();
+  // SAFETY: The function contract requires `out` to identify exactly 65
+  // writable bytes which remain exclusively accessible for this copy.
+  if unsafe { write_array(out, &public) } {
+    STATUS_OK
+  } else {
+    STATUS_ERR
+  }
+}
+
+/// P-256 arbitrary-point ECDH agreement harness.
+///
+/// Public SEC1 parsing and scalar sampling remain in this retained root but
+/// are explicitly outside the private agreement constant-time claim.
+///
+/// # Safety
+///
+/// - `scalar` and `point` must be valid for reads of 32 and 65 initialized
+///   bytes respectively and must remain immutable while copied.
+/// - `out` must be valid for writes of 32 bytes and must not be accessed while
+///   written.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_p256_ecdh_agree(out: *mut u8, scalar: *const u8, point: *const u8) -> u8 {
+  // SAFETY: The function contract establishes a readable 32-byte input.
+  let Some(scalar) = (unsafe { read_array::<32>(scalar) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: The function contract establishes a readable 65-byte input.
+  let Some(point) = (unsafe { read_array::<65>(point) }) else {
+    return STATUS_ERR;
+  };
+  let Ok(public) = P256PublicKey::from_sec1_bytes(&point) else {
+    return STATUS_ERR;
+  };
+  let Ok(secret) = P256EphemeralSecret::try_generate_with(|candidate| {
+    candidate.copy_from_slice(&scalar);
+    Ok::<(), core::convert::Infallible>(())
+  }) else {
+    return STATUS_ERR;
+  };
+  let shared = secret.diffie_hellman(&public);
+  // SAFETY: The function contract establishes an exclusively writable
+  // 32-byte output for this copy.
   if unsafe { write_array(out, shared.as_bytes()) } {
     STATUS_OK
   } else {
@@ -882,6 +957,51 @@ pub unsafe extern "C" fn ct_entry_ed25519_sign(
   }
 }
 
+/// Derive an ECDSA/P-256 public key with caller-supplied blinding.
+///
+/// # Safety
+///
+/// - When non-null, `secret_key` and `blind` must be valid for reads of 32 and 64 initialized
+///   bytes, respectively, and immutable while copied. Null pointers are rejected.
+/// - When non-null, `out` must be valid for writes of 65 bytes and must not be accessed
+///   concurrently while written. A null pointer is rejected.
+/// - The read-only inputs may overlap. The output may overlap either input because both reads
+///   finish before the output write.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_ecdsa_p256_public_key(out: *mut u8, secret_key: *const u8, blind: *const u8) -> u8 {
+  // SAFETY: The function contract requires a non-null secret_key to expose 32 initialized,
+  // readable bytes that remain immutable while read_array copies them into owned storage.
+  let Some(secret_key) = (unsafe { read_array::<32>(secret_key) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: The function contract requires a non-null blind to expose 64 initialized, readable
+  // bytes that remain immutable while read_array copies them into owned storage.
+  let Some(blind) = (unsafe { read_array::<64>(blind) }) else {
+    return STATUS_ERR;
+  };
+
+  let Ok(secret_key) = EcdsaP256SecretKey::from_bytes(secret_key) else {
+    return STATUS_ERR;
+  };
+  let public_key = match secret_key.try_public_key_blinded_with(|out| {
+    out.copy_from_slice(&blind);
+    Ok::<(), core::convert::Infallible>(())
+  }) {
+    Ok(public_key) => public_key,
+    Err(never) => match never {},
+  };
+  let public_key = public_key.to_sec1_bytes();
+
+  // SAFETY: The function contract requires a non-null out to expose 65 writable bytes without
+  // concurrent access. Both caller-memory reads have finished, so out may overlap either input;
+  // write_array rejects null before writing from the independently owned public key.
+  if unsafe { write_array(out, &public_key) } {
+    STATUS_OK
+  } else {
+    STATUS_ERR
+  }
+}
+
 /// Sign a message with ECDSA/P-256 and caller-supplied projective blinding.
 ///
 /// # Safety
@@ -923,7 +1043,10 @@ pub unsafe extern "C" fn ct_entry_ecdsa_p256_sign(
   let Ok(secret_key) = EcdsaP256SecretKey::from_bytes(secret_key) else {
     return STATUS_ERR;
   };
-  let Ok(signature) = secret_key.try_sign_blinded(message, |out| out.copy_from_slice(&blind)) else {
+  let Ok(signature) = secret_key.try_sign_blinded_with(message, |out| {
+    out.copy_from_slice(&blind);
+    Ok::<(), core::convert::Infallible>(())
+  }) else {
     return STATUS_ERR;
   };
   let signature = signature.to_bytes();
@@ -932,6 +1055,51 @@ pub unsafe extern "C" fn ct_entry_ecdsa_p256_sign(
   // concurrent access. All caller-memory reads have finished, so out may overlap any input;
   // write_array rejects null before writing from the independently owned signature.
   if unsafe { write_array(out, &signature) } {
+    STATUS_OK
+  } else {
+    STATUS_ERR
+  }
+}
+
+/// Derive an ECDSA/P-384 public key with caller-supplied blinding.
+///
+/// # Safety
+///
+/// - When non-null, `secret_key` and `blind` must be valid for reads of 48 and 96 initialized
+///   bytes, respectively, and immutable while copied. Null pointers are rejected.
+/// - When non-null, `out` must be valid for writes of 97 bytes and must not be accessed
+///   concurrently while written. A null pointer is rejected.
+/// - The read-only inputs may overlap. The output may overlap either input because both reads
+///   finish before the output write.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_ecdsa_p384_public_key(out: *mut u8, secret_key: *const u8, blind: *const u8) -> u8 {
+  // SAFETY: The function contract requires a non-null secret_key to expose 48 initialized,
+  // readable bytes that remain immutable while read_array copies them into owned storage.
+  let Some(secret_key) = (unsafe { read_array::<48>(secret_key) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: The function contract requires a non-null blind to expose 96 initialized, readable
+  // bytes that remain immutable while read_array copies them into owned storage.
+  let Some(blind) = (unsafe { read_array::<96>(blind) }) else {
+    return STATUS_ERR;
+  };
+
+  let Ok(secret_key) = EcdsaP384SecretKey::from_bytes(secret_key) else {
+    return STATUS_ERR;
+  };
+  let public_key = match secret_key.try_public_key_blinded_with(|out| {
+    out.copy_from_slice(&blind);
+    Ok::<(), core::convert::Infallible>(())
+  }) {
+    Ok(public_key) => public_key,
+    Err(never) => match never {},
+  };
+  let public_key = public_key.to_sec1_bytes();
+
+  // SAFETY: The function contract requires a non-null out to expose 97 writable bytes without
+  // concurrent access. Both caller-memory reads have finished, so out may overlap either input;
+  // write_array rejects null before writing from the independently owned public key.
+  if unsafe { write_array(out, &public_key) } {
     STATUS_OK
   } else {
     STATUS_ERR
@@ -979,7 +1147,10 @@ pub unsafe extern "C" fn ct_entry_ecdsa_p384_sign(
   let Ok(secret_key) = EcdsaP384SecretKey::from_bytes(secret_key) else {
     return STATUS_ERR;
   };
-  let Ok(signature) = secret_key.try_sign_blinded(message, |out| out.copy_from_slice(&blind)) else {
+  let Ok(signature) = secret_key.try_sign_blinded_with(message, |out| {
+    out.copy_from_slice(&blind);
+    Ok::<(), core::convert::Infallible>(())
+  }) else {
     return STATUS_ERR;
   };
   let signature = signature.to_bytes();

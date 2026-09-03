@@ -16,9 +16,9 @@ the recipes reported by `just --list`.
 | `check/feature-contracts.sh`              | `just feature-contracts`, `scripts/check/affected.sh`, `scripts/check/check-all.sh`, `ci.yaml`, `qualification.yaml`                |
 | `check/asm-ledger.sh`                     | `scripts/check/policy.sh`                                                                                                         |
 | `check/rsa-asm-provenance.sh`             | `check/asm-ledger.sh`; direct `--archive PATH` reconstructs the three pinned RSA snapshots offline                                |
-| `check/signature-asm-provenance.py`       | `check/asm-ledger.sh`; direct `--upstream-repo PATH [--clang PATH]` reproduces the 36 pinned ECDSA, Ed25519, and X25519 snapshots |
+| `check/signature-asm-provenance.py`       | `check/asm-ledger.sh`; direct `--upstream-repo PATH [--clang PATH]` reproduces the 58 pinned ECDSA, P-256 ECDH, Ed25519, and X25519 snapshots |
 | `check/hash-vector-provenance.py`         | `scripts/check/policy.sh`; optional exact upstream checkouts reproduce hash-vector corpora                                        |
-| `check/auth-vector-provenance.py`         | `scripts/check/policy.sh`; optional `--upstream-root PATH` reproduces the pinned C2SP/Wycheproof corpus                           |
+| `check/auth-vector-provenance.py`         | `scripts/check/policy.sh`; optional upstream checkout and NIST archive arguments reproduce the pinned authentication corpora     |
 | `check/feature-boundaries.py`             | `scripts/check/policy.sh`                                                                                                         |
 | `check/zeroize-evidence.sh`               | `just check-zeroize-evidence`, `scripts/check/check-all.sh`, `qualification.yaml`                                                 |
 | `ci/check-locked-cargo.sh`                | `scripts/ci/actions-policy.sh`                                                                                                    |
@@ -62,7 +62,7 @@ the recipes reported by `just --list`.
 | `ct/artifacts.sh`                         | `just ct-artifacts`, `scripts/ct/full.py`                                                                                         |
 | `ct/dudect.sh`                            | `just ct-dudect`, `scripts/ct/full.py`                                                                                            |
 | `ct/dudect_report_test.py`                | `scripts/check/policy.sh`                                                                                                         |
-| `lib/python.sh`                           | Resolves Python 3.11+ for Cargo Rail readers and Python-backed CT, check, benchmark, and release tooling                          |
+| `lib/python.sh`                           | Resolves Python 3.11+ across Unix and Windows executable names for Cargo Rail readers and Python-backed tooling                    |
 | `update/update-all.sh`                    | `just update` (`--check` for a non-mutating preview)                                                                              |
 | `render_perf_chart.rs`                    | `just chart` compiles and executes this source directly                                                                           |
 
@@ -102,11 +102,11 @@ claim in [`docs/secret-lifecycle.md`](../docs/secret-lifecycle.md).
 | `ct/symbolize_linked_binary.py`     | `ct/artifacts.sh`; parsers and reconstruction are covered by `ct/evidence_validation_test.py`                           |
 | `ct/validate_release_evidence.py`   | `ci/package-release-ct-evidence.sh`; covered by CT evidence validation tests                                             |
 
-## CI-only (not surfaced via `just`)
+## CI and development-machine support
 
 | Script                     | Callers                                       |
 | -------------------------- | --------------------------------------------- |
-| `ci/install-tools.sh`      | `qualification.yaml` supply-chain/fuzz lanes and `ct.yaml` formal-analysis lanes |
+| `ci/install-tools.sh`      | `qualification.yaml` supply-chain/fuzz lanes, `ct.yaml` formal-analysis lanes, and authenticated development-machine bootstrap profiles; installs exact checksum-pinned Just release binaries with format-correct tar/Windows zip extraction where upstream publishes the host target |
 | `ci/setup-toolchain.sh`    | `.github/actions/rust/action.yaml`            |
 | `ci/native-platform.sh`    | `ci/target-contracts.sh`                      |
 | `ci/emit-manual-matrix.sh` | `bench.yaml`, `ct.yaml`                       |
@@ -249,6 +249,12 @@ saved local plan and adds only its selected Miri and fuzz rows after ordinary
 tests.
 `just ct-structural` reproduces the affected CI constant-time structure gate;
 `just ct-full` and `just test-rsa-leakage` remain deliberate assurance commands.
+Filtered `just ct-dudect --filter CASE` runs retain each case's report, raw
+samples, stdout, linked binary, preserved Windows LTO object when applicable,
+disassembly, symbols, and linker command under the case-specific
+`target/ct/.../dudect/cases/CASE/` directory. `just check-zeroize-evidence --primitive p256-ecdh` builds the same
+optimized MIR, LLVM IR, and assembly proof for only that primitive; omitting
+the selector preserves the whole-crate gate.
 `ssh-just TARGET validate` creates the plan after the development machine's
 exact repository sync; provider lifecycle and short-lived R2 credentials remain
 outside this repository.
@@ -263,5 +269,19 @@ benchmark_results/<YYYY-MM-DD>/<os>/<arch>/results.txt
 ```
 
 Local runs use the host calendar date and `linux|macos|windows` +
-`x86-64|aarch64`. Same layout in CI; the extractor writes into the same tree
-so local and CI runs interleave by date without collision.
+`x86-64|aarch64`. CI extraction uses the same layout; do not publish two runs
+to the same date/OS/architecture destination.
+
+Remote development-machine runs are first written to
+`benchmark_results/criterion/<run-id>/` with source and machine provenance,
+then sealed under `benchmark_results/.transfers/` for authenticated collection.
+Use the exact ID printed by `just bench` with `just ssh-collect-bench`; the
+collector refuses to replace an existing local destination.
+
+Generated CT, cleanup, or profiling material can be sealed before a temporary
+runner is destroyed with `just seal-remote-evidence KIND RUN_ID PATH...` and
+collected through `just ssh-collect-results TARGET KIND RUN_ID DESTINATION`.
+The bundle records the target, instance shape, toolchain, dirty worktree, and a
+source-file hash manifest, and the collector verifies its archive digest before
+publishing it locally. Use `just ssh-cargo` for targeted Cargo commands after
+the same authenticated synchronization and lease checks as `ssh-just`.

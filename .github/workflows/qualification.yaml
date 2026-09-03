@@ -270,6 +270,17 @@ jobs:
         env:
           TARGET_ROW: ${{ matrix.id }}
         run: scripts/ci/target-contracts.sh run "$TARGET_ROW" deep
+      - name: Preserve Windows P-256 evidence
+        if: ${{ !cancelled() && matrix.id == 'x86-64-pc-windows-msvc' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: p256-evidence-${{ matrix.id }}
+          path: |
+            target/ct/x86_64-pc-windows-msvc/release/dudect/cases/p256_ecdh_public_key_fixed_vs_random_scalar/
+            target/ct/x86_64-pc-windows-msvc/release/dudect/cases/p256_ecdh_agree_fixed_vs_random_scalar/
+            target/zeroize-evidence/p256-ecdh/
+          retention-days: ${{ needs.plan.outputs.mode == 'release' && 90 || 14 }}
+          if-no-files-found: error
       - name: Report compiler cache
         if: ${{ !cancelled() && steps.rust.outputs.cache-enabled == 'true' }}
         run: scripts/ci/report-cache.sh

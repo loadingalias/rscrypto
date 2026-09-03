@@ -16,6 +16,9 @@ usage: scripts/ct/dudect.sh [--target TRIPLE] [--profile release] [--samples N] 
 Runs rscrypto's empirical dudect timing lane and writes:
   target/ct/<target>/<profile>/dudect/dudect-report.json
 
+Filtered runs also preserve their report, raw samples, and stdout under:
+  target/ct/<target>/<profile>/dudect/cases/<filter>/
+
 Notes:
   --target records the host target for evidence placement. Cross-target dudect
   requires a physical runner for that target and is intentionally not emulated.
@@ -59,6 +62,12 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -n "$FILTER" ]] && \
+  [[ ! "$FILTER" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ || "$FILTER" == *..* ]]; then
+  echo "invalid DudeCT case filter for evidence path: $FILTER" >&2
+  exit 2
+fi
 
 if [[ -z "$TARGET" ]]; then
   TARGET="$(rustc -vV | awk -F': ' '/^host:/ {print $2}')"
@@ -123,8 +132,8 @@ elif [[ "$PROFILE" != "debug" ]]; then
 fi
 
 linker_log_candidate="$(mktemp "$OUT_DIR/.dudect-linker-command.XXXXXXXX")"
-cargo rustc --locked "${CARGO_ARGS[@]}" --bin rscrypto-ct-dudect -- --print link-args 2>&1 | tee "$linker_log_candidate"
-link_command_count=$(grep -c '"-o"' "$linker_log_candidate" || true)
+cargo rustc --locked "${CARGO_ARGS[@]}" --bin rscrypto-ct-dudect -- --emit=obj,link --print link-args 2>&1 | tee "$linker_log_candidate"
+link_command_count=$(grep -Ec '"-o"|"/OUT:' "$linker_log_candidate" || true)
 if [[ "$link_command_count" -gt 1 ]]; then
   echo "expected at most one DudeCT linker command; found $link_command_count" >&2
   rm -f "$linker_log_candidate"
@@ -152,17 +161,47 @@ fi
 cp "$BUILT_BINARY" "$BINARY_PATH"
 
 SYSROOT="$(rustc --print sysroot)"
+if command -v cygpath >/dev/null 2>&1; then
+  SYSROOT="$(cygpath -u "$SYSROOT")"
+fi
 LLVM_BIN="$SYSROOT/lib/rustlib/$HOST_TARGET/bin"
-LLVM_OBJDUMP="${LLVM_OBJDUMP:-$LLVM_BIN/llvm-objdump}"
-LLVM_NM="${LLVM_NM:-$LLVM_BIN/llvm-nm}"
+resolve_tool() {
+  local tool="$1"
+  if [[ -x "$tool" ]]; then
+    printf '%s\n' "$tool"
+  elif [[ -x "$tool.exe" ]]; then
+    printf '%s\n' "$tool.exe"
+  else
+    printf '%s\n' "$tool"
+  fi
+}
+
+LLVM_OBJDUMP="$(resolve_tool "${LLVM_OBJDUMP:-$LLVM_BIN/llvm-objdump}")"
+LLVM_NM="$(resolve_tool "${LLVM_NM:-$LLVM_BIN/llvm-nm}")"
 for tool in "$LLVM_OBJDUMP" "$LLVM_NM"; do
   if [[ ! -x "$tool" ]]; then
     echo "missing LLVM tool: $tool" >&2
     exit 1
   fi
 done
-"$LLVM_OBJDUMP" --disassemble --reloc --dynamic-reloc --demangle "$BINARY_PATH" > "$BINARY_DISASM_PATH"
-"$LLVM_NM" --defined-only --demangle "$BINARY_PATH" > "$BINARY_SYMBOLS_PATH"
+BINARY_OBJECT_PATH=""
+BINARY_OBJECT_ARGS=()
+if [[ "$TARGET" == *-windows-* ]]; then
+  shopt -s nullglob
+  binary_objects=("$BUILD_TARGET_DIR/$TARGET/$PROFILE/deps"/rscrypto_ct_dudect*.o)
+  if [[ ${#binary_objects[@]} -ne 1 ]]; then
+    echo "expected one preserved Windows DudeCT LTO object; found ${#binary_objects[@]}" >&2
+    exit 1
+  fi
+  BINARY_OBJECT_PATH="$OUT_DIR/$(basename "${binary_objects[0]}")"
+  cp "${binary_objects[0]}" "$BINARY_OBJECT_PATH"
+  "$LLVM_OBJDUMP" --disassemble --reloc --demangle "$BINARY_OBJECT_PATH" > "$BINARY_DISASM_PATH"
+  "$LLVM_NM" --defined-only --demangle "$BINARY_OBJECT_PATH" > "$BINARY_SYMBOLS_PATH"
+  BINARY_OBJECT_ARGS=(--binary-object "$BINARY_OBJECT_PATH")
+else
+  "$LLVM_OBJDUMP" --disassemble --reloc --dynamic-reloc --demangle "$BINARY_PATH" > "$BINARY_DISASM_PATH"
+  "$LLVM_NM" --defined-only --demangle "$BINARY_PATH" > "$BINARY_SYMBOLS_PATH"
+fi
 
 RUNNER_ARGS=(--out "$CSV_PATH")
 if [[ -n "$FILTER" ]]; then
@@ -188,6 +227,26 @@ PYTHON="$("$ROOT/scripts/lib/python.sh" --print)"
   --samples "$SAMPLES" \
   --command "$COMMAND" \
   --binary "$BINARY_PATH" \
+  "${BINARY_OBJECT_ARGS[@]}" \
   --binary-disassembly "$BINARY_DISASM_PATH" \
   --binary-symbols "$BINARY_SYMBOLS_PATH" \
   --linker-command-log "$LINKER_COMMAND_PATH"
+
+if [[ -n "$FILTER" ]]; then
+  CASE_OUT_DIR="$OUT_DIR/cases/$FILTER"
+  mkdir -p "$CASE_OUT_DIR"
+  CASE_EVIDENCE_PATHS=(
+    "$REPORT_PATH"
+    "$CSV_PATH"
+    "$STDOUT_PATH"
+    "$BINARY_PATH"
+    "$BINARY_DISASM_PATH"
+    "$BINARY_SYMBOLS_PATH"
+    "$LINKER_COMMAND_PATH"
+  )
+  if [[ -n "$BINARY_OBJECT_PATH" ]]; then
+    CASE_EVIDENCE_PATHS+=("$BINARY_OBJECT_PATH")
+  fi
+  cp -- "${CASE_EVIDENCE_PATHS[@]}" "$CASE_OUT_DIR/"
+  echo "dudect case evidence: $CASE_OUT_DIR"
+fi

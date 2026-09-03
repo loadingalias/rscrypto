@@ -97,6 +97,7 @@
         "ecdsa",
         "ed25519",
         "x25519",
+        "p256-ecdh",
         "ml-kem",
         "diag"
       ]
@@ -199,6 +200,7 @@
     "ecdsa-p384": { "crate": "auth", "bench": "auth", "filter": "^ecdsa-p384/" },
     "ed25519": { "crate": "auth", "bench": "auth", "filter": "ed25519" },
     "x25519": { "crate": "auth", "bench": "auth", "filter": "x25519" },
+    "p256-ecdh": { "crate": "auth", "bench": "auth", "filter": "^p256-ecdh/" },
     "mlkem512": { "crate": "auth", "bench": "auth", "filter": "^mlkem512/" },
     "mlkem768": { "crate": "auth", "bench": "auth", "filter": "^mlkem768/" },
     "mlkem1024": { "crate": "auth", "bench": "auth", "filter": "^mlkem1024/" },
@@ -260,6 +262,7 @@
       "ecdsa-p384",
       "ed25519",
       "x25519",
+      "p256-ecdh",
       "mlkem512",
       "mlkem768",
       "mlkem1024",
@@ -292,6 +295,7 @@
       "ecdsa-p384",
       "ed25519",
       "x25519",
+      "p256-ecdh",
       "mlkem512",
       "mlkem768",
       "mlkem1024",

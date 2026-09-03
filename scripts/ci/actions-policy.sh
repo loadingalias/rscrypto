@@ -24,8 +24,12 @@ ruby -e '
 scripts/ci/check-action-pins-test.sh
 scripts/ci/check-locked-cargo.sh
 scripts/ci/check-locked-cargo-test.sh
+scripts/ci/install-tools-mode-test.sh
+scripts/lib/python-resolver-test.sh
 bash -c 'source scripts/lib/ci-tool-integrity.sh; ci_tool_validate_manifest'
 scripts/ci/remote-cache-recipes-test.sh
+scripts/bench/bench-wrapper-test.sh
+scripts/ci/seal-remote-evidence-test.sh
 scripts/ci/feature-contracts-test.sh
 scripts/ci/feature-planning-test.sh
 scripts/ci/assurance-planning-test.sh

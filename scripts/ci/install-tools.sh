@@ -1,14 +1,49 @@
 #!/usr/bin/env bash
 # Install the few specialized tools not provided by runner images or rustup.
-# Usage: install-tools.sh [supply-chain|fuzz|ct-linux|none]
+# Usage: install-tools.sh [ci|supply-chain|bench|structural-bench|profile|fuzz|coverage|ct-linux|minimal|none]
+#        install-tools.sh --check-mode MODE
 
 set -euo pipefail
 
 MODE=${1:-}
 
+mode_is_supported() {
+  case "$1" in
+    ci | supply-chain | bench | structural-bench | profile | fuzz | coverage | ct-linux | minimal | none) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if [[ "$MODE" == --check-mode ]]; then
+  [[ $# -eq 2 ]] || {
+    echo "Usage: install-tools.sh --check-mode MODE" >&2
+    exit 2
+  }
+  mode_is_supported "$2" || {
+    echo "Unsupported install-tools mode: $2" >&2
+    exit 2
+  }
+  exit 0
+fi
+
+mode_is_supported "$MODE" || {
+  echo "Unknown mode: $MODE" >&2
+  echo "Usage: install-tools.sh [ci|supply-chain|bench|structural-bench|profile|fuzz|coverage|ct-linux|minimal|none]" >&2
+  exit 2
+}
+
+CARGO_NEXTEST_VERSION=0.9.143
 CARGO_DENY_VERSION=0.20.2
 CARGO_AUDIT_VERSION=0.22.2
+CARGO_RAIL_VERSION=0.25.0
+JUST_VERSION=1.58.0
+JUST_RELEASE_BASE=https://github.com/casey/just/releases/download
+GUNGRAUN_RUNNER_VERSION=0.19.4
+CARGO_SHOW_ASM_VERSION=0.2.62
+SAMPLY_VERSION=0.13.1
+CARGO_LLVM_LINES_VERSION=0.4.48
 CARGO_FUZZ_VERSION=0.13.2
+CARGO_LLVM_COV_VERSION=0.9.0
 
 OPAM_REPOSITORY_COMMIT=607f49d990590190e047dba24bd53b28e8195c7b
 OPAM_REPOSITORY_REMOTE=https://github.com/ocaml/opam-repository.git
@@ -71,7 +106,11 @@ cargo_tool_version() {
   local binary=$1
   local path=$2
   local output
-  output=$("$path" --version 2>&1)
+  case "$binary" in
+    cargo-rail) output=$("$path" rail --version 2>&1) ;;
+    cargo-llvm-cov) output=$("$path" llvm-cov --version 2>&1) ;;
+    *) output=$("$path" --version 2>&1) ;;
+  esac
   extract_version "$output"
 }
 
@@ -107,6 +146,133 @@ install_cargo_tool() {
   echo "  $package: installing $version from crates.io into a fresh root"
   cargo install --registry crates-io "$package" --locked --version "=$version" --force
   verify_cargo_tool "$package" "$version" "$binary"
+}
+
+sha256_file() {
+  local path=$1
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$path" | awk '{print $1}'
+  else
+    fail "neither sha256sum nor shasum is available"
+  fi
+}
+
+just_release_asset() {
+  local os arch
+  os=$(uname -s)
+  arch=$(uname -m)
+
+  case "$os:$arch" in
+    Linux:x86_64)
+      printf '%s\t%s\t%s\n' \
+        "just-$JUST_VERSION-x86_64-unknown-linux-musl.tar.gz" \
+        4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d \
+        just
+      ;;
+    Linux:aarch64 | Linux:arm64)
+      printf '%s\t%s\t%s\n' \
+        "just-$JUST_VERSION-aarch64-unknown-linux-musl.tar.gz" \
+        748237128c4c40cbdabc65e841d05ceba13cc23a91eaba395495894c1d9764df \
+        just
+      ;;
+    Linux:riscv64 | Linux:riscv64gc)
+      printf '%s\t%s\t%s\n' \
+        "just-$JUST_VERSION-riscv64gc-unknown-linux-musl.tar.gz" \
+        1cbca0ce9880d5d1050115a6e2ced510927f85d1797a204ef6bccb319d923d8d \
+        just
+      ;;
+    Darwin:x86_64)
+      printf '%s\t%s\t%s\n' \
+        "just-$JUST_VERSION-x86_64-apple-darwin.tar.gz" \
+        9a09cfef66aaa79da58203970103a0684307716caaabd3e9844cacc4dc0f4023 \
+        just
+      ;;
+    Darwin:arm64 | Darwin:aarch64)
+      printf '%s\t%s\t%s\n' \
+        "just-$JUST_VERSION-aarch64-apple-darwin.tar.gz" \
+        50ae3e996c974a0bf32ea7d10f495070df33f1b43e0616b2769e3d4821ed8f48 \
+        just
+      ;;
+    MINGW*:x86_64 | MSYS*:x86_64 | CYGWIN*:x86_64)
+      printf '%s\t%s\t%s\n' \
+        "just-$JUST_VERSION-x86_64-pc-windows-msvc.zip" \
+        759f16fb7aa17c5c8b9594b6d4a8c1a6630dfd042cf2b3ff84841454d3d188dc \
+        just.exe
+      ;;
+    MINGW*:aarch64 | MSYS*:aarch64 | CYGWIN*:aarch64 | \
+      MINGW*:arm64 | MSYS*:arm64 | CYGWIN*:arm64)
+      printf '%s\t%s\t%s\n' \
+        "just-$JUST_VERSION-aarch64-pc-windows-msvc.zip" \
+        3a39ed629eb67678976c811a4da46f7985a2c22f4dbabe017b8b2eb5ceb5d01c \
+        just.exe
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+install_just_release() {
+  local release asset expected binary archive actual reported
+  release=$(just_release_asset) || {
+    echo "  just: no upstream binary for $(uname -s)/$(uname -m); compiling the exact release"
+    install_cargo_tool just "$JUST_VERSION"
+    return
+  }
+  IFS=$'\t' read -r asset expected binary <<<"$release"
+  archive="$RSCRYPTO_TOOL_ROOT/$asset"
+
+  echo "  just: installing checksummed $JUST_VERSION release asset $asset"
+  curl --proto '=https' --tlsv1.2 -fsSL \
+    "$JUST_RELEASE_BASE/$JUST_VERSION/$asset" -o "$archive"
+  actual=$(sha256_file "$archive")
+  [[ "$actual" == "$expected" ]] \
+    || fail "just release digest is $actual, expected $expected"
+  case "$asset" in
+    *.zip)
+      command -v unzip >/dev/null 2>&1 \
+        || fail "unzip is required for the Windows just release"
+      unzip -q "$archive" "$binary" -d "$RSCRYPTO_CARGO_BIN"
+      ;;
+    *) tar -xf "$archive" -C "$RSCRYPTO_CARGO_BIN" "$binary" ;;
+  esac
+  chmod 755 "$RSCRYPTO_CARGO_BIN/$binary"
+  reported=$(cargo_tool_version just "$RSCRYPTO_CARGO_BIN/$binary") \
+    || fail "unable to read just version after release extraction"
+  [[ "$reported" == "$JUST_VERSION" ]] \
+    || fail "just reports $reported, expected $JUST_VERSION"
+}
+
+ensure_cargo_rail() {
+  local path actual
+  if [[ "${RSCRYPTO_AUTHENTICATED_CARGO_RAIL:-false}" == true ]]; then
+    path=$(command -v cargo-rail 2>/dev/null || true)
+    if [[ -n "$path" ]]; then
+      actual=$(cargo_tool_version cargo-rail "$path" 2>/dev/null || true)
+      if [[ "$actual" == "$CARGO_RAIL_VERSION" ]]; then
+        echo "  cargo-rail: reusing authenticated $actual from cargo-rail-action"
+        return 0
+      fi
+    fi
+    fail "cargo-rail-action reported an authenticated Cargo Rail install, but the exact binary is unavailable"
+  fi
+  install_cargo_tool cargo-rail "$CARGO_RAIL_VERSION"
+}
+
+JUST_INSTALLED=false
+ensure_just() {
+  if [[ "$JUST_INSTALLED" != true ]]; then
+    install_just_release
+    JUST_INSTALLED=true
+  fi
+}
+
+ensure_llvm_tools() {
+  if command -v rustup.exe >/dev/null 2>&1; then
+    rustup.exe component add llvm-tools-preview
+  else
+    rustup component add llvm-tools-preview
+  fi
 }
 
 require_ubuntu_24_04() {
@@ -249,25 +415,55 @@ install_ct_linux_packages() {
 echo "Installing CI tools (mode: $MODE)"
 
 case "$MODE" in
+  ci)
+    install_cargo_tool cargo-nextest "$CARGO_NEXTEST_VERSION"
+    ensure_just
+    ;;
   supply-chain)
     install_cargo_tool cargo-deny "$CARGO_DENY_VERSION"
     install_cargo_tool cargo-audit "$CARGO_AUDIT_VERSION"
     ;;
+  bench)
+    # Criterion is a pinned dev-dependency. Native crypto qualification also
+    # disassembles the measured binary, so bench runners need LLVM tools.
+    ensure_just
+    ensure_llvm_tools
+    ;;
+  structural-bench)
+    install_cargo_tool gungraun-runner "$GUNGRAUN_RUNNER_VERSION"
+    ensure_just
+    ;;
+  profile)
+    install_cargo_tool cargo-show-asm "$CARGO_SHOW_ASM_VERSION" cargo-asm
+    install_cargo_tool samply "$SAMPLY_VERSION"
+    install_cargo_tool cargo-llvm-lines "$CARGO_LLVM_LINES_VERSION"
+    ensure_just
+    ensure_llvm_tools
+    ;;
   fuzz)
     install_cargo_tool cargo-fuzz "$CARGO_FUZZ_VERSION"
+    ;;
+  coverage)
+    install_cargo_tool cargo-llvm-cov "$CARGO_LLVM_COV_VERSION"
+    install_cargo_tool cargo-nextest "$CARGO_NEXTEST_VERSION"
+    ensure_just
+    ensure_llvm_tools
     ;;
   ct-linux)
     install_ct_linux_packages
     install_binsec
     ;;
+  minimal)
+    ensure_just
+    ;;
   none)
     ;;
-  *)
-    echo "Unknown mode: $MODE" >&2
-    echo "Usage: install-tools.sh [supply-chain|fuzz|ct-linux|none]" >&2
-    exit 2
-    ;;
 esac
+
+if [[ "${RSCRYPTO_REQUIRE_CARGO_RAIL:-false}" == true ]]; then
+  ensure_cargo_rail
+  ensure_just
+fi
 
 if [[ -n "${GITHUB_PATH:-}" ]]; then
   echo "$RSCRYPTO_CARGO_BIN" >>"$GITHUB_PATH"

@@ -124,6 +124,13 @@ def merged_features(catalog: dict, benches: list[str]) -> list[str]:
 
 
 def main() -> int:
+  # Git Bash consumes catalog output as protocol records. Keep that protocol
+  # LF-delimited on Windows so a translated CR does not become part of a
+  # Criterion filter or benchmark identity.
+  reconfigure = getattr(sys.stdout, "reconfigure", None)
+  if reconfigure is not None:
+    reconfigure(newline="\n")
+
   parser = argparse.ArgumentParser(description=__doc__)
   subparsers = parser.add_subparsers(dest="command", required=True)
   subparsers.add_parser("validate")

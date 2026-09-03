@@ -6,9 +6,21 @@ dev_machine := env_var_or_default("DEV_MACHINE_BIN", env_var("HOME") + "/dev-mac
 ssh target *args="":
     @"{{ dev_machine }}" ssh rscrypto "{{ target }}" {{ args }}
 
-# Run a command after checking the remote repository state.
-ssh-check target *args="":
-    @"{{ dev_machine }}" ssh rscrypto "{{ target }}" --check {{ args }}
+# Verify the synchronized remote repository state without opening a shell.
+ssh-check target:
+    @"{{ dev_machine }}" ssh rscrypto "{{ target }}" --check
+
+# Run a targeted Cargo command on a repository development machine.
+ssh-cargo target *args="":
+    @"{{ dev_machine }}" just rscrypto "{{ target }}" _remote-cargo {{ args }}
+
+[private]
+_remote-cargo *args="":
+    cargo {{ args }}
+
+[private]
+_remote-install-llvm-tools:
+    rustup component add llvm-tools-preview
 
 # Verify that a development machine is ready for repository work.
 ssh-preflight target:
@@ -44,7 +56,11 @@ ssh-just target *args="":
 
 # Collect a benchmark run from a repository development machine.
 ssh-collect-bench target run_id destination:
-    @"{{ dev_machine }}" collect-bench rscrypto "{{ target }}" "{{ run_id }}" "{{ destination }}"
+    @"{{ dev_machine }}" collect-results rscrypto "{{ target }}" criterion "{{ run_id }}" "{{ destination }}"
+
+# Collect one sealed evidence run from a repository development machine.
+ssh-collect-results target kind run_id destination:
+    @"{{ dev_machine }}" collect-results rscrypto "{{ target }}" "{{ kind }}" "{{ run_id }}" "{{ destination }}"
 
 # List repository development machines.
 ssh-list:
@@ -52,7 +68,7 @@ ssh-list:
 
 # Preview, install, and verify the canonical remapped Cargo Rail cache policy.
 rail-cache-setup *args="":
-    @cargo rail cache setup --check --remote "$CARGO_RAIL_CACHE_REMOTE" --remote-mode "$CARGO_RAIL_CACHE_MODE" --root-portability remap {{ args }}
+    @status=0; cargo rail cache setup --check --remote "$CARGO_RAIL_CACHE_REMOTE" --remote-mode "$CARGO_RAIL_CACHE_MODE" --root-portability remap {{ args }} || status=$?; [ "$status" -le 1 ] || exit "$status"
     @cargo rail cache setup --remote "$CARGO_RAIL_CACHE_REMOTE" --remote-mode "$CARGO_RAIL_CACHE_MODE" --root-portability remap {{ args }}
     @cargo rail cache probe --json
 
@@ -94,9 +110,13 @@ feature-contracts *args="":
 target-contract row depth="deep":
     @scripts/ci/target-contracts.sh run "{{ row }}" "{{ depth }}"
 
-# Rebuild and verify optimized zeroization evidence.
-check-zeroize-evidence:
-    @scripts/check/zeroize-evidence.sh
+# Rebuild and verify optimized zeroization evidence, optionally for one primitive.
+check-zeroize-evidence *args="":
+    @scripts/check/zeroize-evidence.sh {{ args }}
+
+# Seal generated native evidence for authenticated collection before teardown.
+seal-remote-evidence kind run_id *paths:
+    @scripts/ci/seal-remote-evidence.sh "{{ kind }}" "{{ run_id }}" {{ paths }}
 
 # Tests
 # Test the affected scope or the full workspace with --all.

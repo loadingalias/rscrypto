@@ -26,6 +26,9 @@ fi
 if [[ ${MOCK_FAIL_PREVIEW:-0} == 1 && "$*" == "rail cache setup --check "* ]]; then
   exit 41
 fi
+if [[ "$*" == "rail cache setup --check "* ]]; then
+  exit 1
+fi
 SH
 chmod +x "$TMP_ROOT/bin/cargo"
 
@@ -41,7 +44,7 @@ rail cache setup --remote r2://rscrypto-cache.example/rscrypto/shared --remote-m
 rail cache probe --json
 EOF
 cmp "$TMP_ROOT/expected-setup.log" "$MOCK_CARGO_LOG" \
-  || fail "setup recipe did not preserve the canonical preview/apply/probe transaction"
+  || fail "setup recipe did not accept pending preview state before the canonical apply/probe transaction"
 
 : >"$MOCK_CARGO_LOG"
 just --justfile "$REPO_ROOT/justfile" cache-status
