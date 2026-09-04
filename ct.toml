@@ -3004,7 +3004,6 @@ compiler_api_sha256 = "39d02c3eed97a71d3eb9e4cc50fdd1335cdb925ac0e6463582dce2946
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
-ci = "ci-linux-x64"
 
 [[target]]
 name = "aarch64-unknown-linux-gnu"
@@ -3016,7 +3015,6 @@ compiler_api_sha256 = "3c750de8b6cd2b5848396cfd25c1fa53d1b8977339f926aabb19601bb
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
-ci = "ci-linux-arm64"
 
 [[target]]
 name = "x86_64-unknown-linux-musl"
@@ -3028,7 +3026,6 @@ physical_timing = "unsupported"
 physical_timing_reason = "MUSL targets are not part of the current published physical CT evidence lanes; GNU Linux native lanes carry release timing evidence until MUSL physical lanes are added."
 binsec = "unsupported"
 binsec_reason = "MUSL BINSEC evidence is deferred; current published BINSEC evidence runs on native GNU Linux targets."
-ci = "deferred-musl"
 
 [[target]]
 name = "aarch64-unknown-linux-musl"
@@ -3040,7 +3037,6 @@ physical_timing = "unsupported"
 physical_timing_reason = "MUSL targets are not part of the current published physical CT evidence lanes; GNU Linux native lanes carry release timing evidence until MUSL physical lanes are added."
 binsec = "unsupported"
 binsec_reason = "MUSL BINSEC evidence is deferred; current published BINSEC evidence runs on native GNU Linux targets."
-ci = "deferred-musl"
 
 [[target]]
 name = "x86_64-pc-windows-msvc"
@@ -3049,10 +3045,9 @@ backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "The final Windows x86-64 backend has native differential and performance evidence. Qualification retains exact-source virtual-native P-256 timing and cleanup artifacts, but no dedicated physical timing runner is available."
+physical_timing_reason = "The final Windows x86-64 backend has native differential and performance evidence, but exact-source P-256 timing and cleanup artifacts and dedicated physical timing are unavailable."
 binsec = "unsupported"
-binsec_reason = "BINSEC PE/Windows CT workflow is not part of the current release evidence gate."
-ci = "qualification-windows-x64-p256"
+binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
 
 [[target]]
 name = "aarch64-pc-windows-msvc"
@@ -3063,8 +3058,7 @@ claim = "ct-intended"
 physical_timing = "unsupported"
 physical_timing_reason = "Windows physical CT evidence is deferred; Windows is not part of the current published CT/bench evidence lanes."
 binsec = "unsupported"
-binsec_reason = "BINSEC PE/Windows CT workflow is not part of the current release evidence gate."
-ci = "deferred-windows"
+binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
 
 [[target]]
 name = "aarch64-apple-darwin"
@@ -3076,8 +3070,7 @@ compiler_api_sha256 = "3c750de8b6cd2b5848396cfd25c1fa53d1b8977339f926aabb19601bb
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
-binsec_reason = "BINSEC does not provide native Mach-O loading for this CT workflow; macOS evidence is artifact/heuristic plus DudeCT."
-ci = "local-macos"
+binsec_reason = "BINSEC does not provide native Mach-O loading; macOS evidence is artifact/heuristic plus DudeCT."
 
 [[target]]
 name = "s390x-unknown-linux-gnu"
@@ -3089,8 +3082,7 @@ compiler_api_sha256 = "fa877ed86fd0e69103cae38c62b56623dd568a24a2e10d595510335e5
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
-binsec_reason = "BINSEC/Rel does not list s390x as a supported ISA for this workflow; s390x evidence is artifact/heuristic plus DudeCT on the native Linux runner."
-ci = "ubuntu-24.04-s390x"
+binsec_reason = "BINSEC/Rel does not list s390x as a supported ISA; s390x evidence is artifact/heuristic plus DudeCT on native Linux."
 
 [[target]]
 name = "powerpc64le-unknown-linux-gnu"
@@ -3102,8 +3094,7 @@ compiler_api_sha256 = "0bc167ff8ba62d64268ba208db2d430055b52aaec7559e0b1c1f1ff7f
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
-binsec_reason = "BINSEC/Rel 0.11.1 loads powerpc64le ELF objects as little-endian PPC64, but its shipped PPC64 decoder registers only big-endian PPC64 in this workflow; POWER10 evidence is artifact/heuristic plus DudeCT until BINSEC supports little-endian PPC64 decoding."
-ci = "ubuntu-24.04-ppc64le-p10"
+binsec_reason = "BINSEC/Rel 0.11.1 loads powerpc64le ELF objects as little-endian PPC64, but its shipped PPC64 decoder registers only big-endian PPC64; POWER10 evidence is artifact/heuristic plus DudeCT until BINSEC supports little-endian PPC64 decoding."
 
 [[target]]
 name = "riscv64gc-unknown-linux-gnu"
@@ -3115,8 +3106,7 @@ compiler_api_sha256 = "ab570a0df15e466383aa090a1cee061533721f0a32e6360fdebdbc03c
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
-binsec_reason = "BINSEC/Rel 0.11.1 can load RISC-V ELF binaries, but the current workflow does not complete the release-sized RISC-V HMAC/HKDF/KMAC/PBKDF2/RSA leaf proofs within the CI proof budget. RISC-V evidence is artifact/heuristic plus native DudeCT until the proof kernels are reduced or BINSEC RISC-V solver support improves."
-ci = "ubuntu-24.04-riscv"
+binsec_reason = "BINSEC/Rel 0.11.1 can load RISC-V ELF binaries, but the release-sized RISC-V HMAC/HKDF/KMAC/PBKDF2/RSA leaf proofs do not complete within the current proof budget. RISC-V evidence is artifact/heuristic plus native DudeCT until the proof kernels are reduced or BINSEC RISC-V solver support improves."
 
 [[target]]
 name = "thumbv6m-none-eabi"
@@ -3125,10 +3115,9 @@ backend = "llvm"
 linker = "none-or-platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "Bare-metal targets are artifact/heuristic CT lanes in this workflow; no native physical DudeCT runner exists for this target."
+physical_timing_reason = "Bare-metal targets use artifact/heuristic CT evidence; no native physical DudeCT environment exists for this target."
 binsec = "unsupported"
-binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness in this workflow."
-ci = "artifact-only"
+binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness."
 
 [[target]]
 name = "riscv32imac-unknown-none-elf"
@@ -3137,10 +3126,9 @@ backend = "llvm"
 linker = "none-or-platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "Bare-metal targets are artifact/heuristic CT lanes in this workflow; no native physical DudeCT runner exists for this target."
+physical_timing_reason = "Bare-metal targets use artifact/heuristic CT evidence; no native physical DudeCT environment exists for this target."
 binsec = "unsupported"
-binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness in this workflow."
-ci = "artifact-only"
+binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness."
 
 [[target]]
 name = "aarch64-unknown-none"
@@ -3149,10 +3137,9 @@ backend = "llvm"
 linker = "none-or-platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "Bare-metal targets are artifact/heuristic CT lanes in this workflow; no native physical DudeCT runner exists for this target."
+physical_timing_reason = "Bare-metal targets use artifact/heuristic CT evidence; no native physical DudeCT environment exists for this target."
 binsec = "unsupported"
-binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness in this workflow."
-ci = "artifact-only"
+binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness."
 
 [[target]]
 name = "x86_64-unknown-none"
@@ -3161,10 +3148,9 @@ backend = "llvm"
 linker = "none-or-platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "Bare-metal targets are artifact/heuristic CT lanes in this workflow; no native physical DudeCT runner exists for this target."
+physical_timing_reason = "Bare-metal targets use artifact/heuristic CT evidence; no native physical DudeCT environment exists for this target."
 binsec = "unsupported"
-binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness in this workflow."
-ci = "artifact-only"
+binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness."
 
 [[target]]
 name = "wasm32-unknown-unknown"
@@ -3173,10 +3159,9 @@ backend = "llvm"
 linker = "rust-lld-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "WASM targets are artifact/heuristic CT lanes in this workflow; native physical DudeCT timing requires a separate WASM host/runtime policy."
+physical_timing_reason = "WASM targets use artifact/heuristic CT evidence; native physical DudeCT timing requires a separate WASM host/runtime policy."
 binsec = "unsupported"
-binsec_reason = "WASM targets do not run the native Linux BINSEC executable harness in this workflow."
-ci = "artifact-only"
+binsec_reason = "WASM targets do not run the native Linux BINSEC executable harness."
 
 [[target]]
 name = "wasm32-wasip1"
@@ -3185,10 +3170,9 @@ backend = "llvm"
 linker = "rust-lld-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "WASM targets are artifact/heuristic CT lanes in this workflow; native physical DudeCT timing requires a separate WASM host/runtime policy."
+physical_timing_reason = "WASM targets use artifact/heuristic CT evidence; native physical DudeCT timing requires a separate WASM host/runtime policy."
 binsec = "unsupported"
-binsec_reason = "WASM targets do not run the native Linux BINSEC executable harness in this workflow."
-ci = "artifact-only"
+binsec_reason = "WASM targets do not run the native Linux BINSEC executable harness."
 
 [[operation]]
 id = "secrets.fixed_owner_equality"
@@ -3756,7 +3740,7 @@ evidence = [
   "dudect:p256_ecdh_public_key_fixed_vs_random_scalar",
   "dudect:p256_ecdh_agree_fixed_vs_random_scalar",
 ]
-limitation = "The claim begins only after a valid scalar has been sampled and, for agreement, after the peer SEC1 point has passed public validation. Exact portable and assembly lowering are target-specific evidence. Physical Graviton3, Graviton4, and Intel Granite Rapids evidence covers the applicable Linux ELF backend on those CPUs. Windows x86-64 has native differential and performance evidence, while its exact-final-source timing artifact and other unavailable native rows remain awaiting CI/CD."
+limitation = "The claim begins only after a valid scalar has been sampled and, for agreement, after the peer SEC1 point has passed public validation. Exact portable and assembly lowering are target-specific evidence. Physical Graviton3, Graviton4, and Intel Granite Rapids evidence covers the applicable Linux ELF backend on those CPUs. Windows x86-64 has native differential and performance evidence, while its exact-final-source timing artifact and other unavailable native rows remain pending."
 
 [[operation]]
 id = "kem.mlkem512"

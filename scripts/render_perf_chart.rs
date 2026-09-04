@@ -1,6 +1,6 @@
 //! Render the README performance scorecard from `benchmark_results/OVERVIEW.md`.
 //!
-//! Reads the Linux CI headline, README category geomeans, and macOS local
+//! Reads the Linux headline, README category geomeans, and macOS local
 //! snapshot from `benchmark_results/OVERVIEW.md`, then writes the SVG used by
 //! the README at `assets/readme/perf.svg`.
 //!
@@ -128,8 +128,8 @@ fn run() -> Result<(), String> {
 }
 
 fn parse_chart_data(content: &str) -> Result<ChartData, String> {
-  let linux_fastest = extract_table_metric(content, "Linux CI: fastest external per case")?;
-  let macos_fastest = extract_table_metric(content, "macOS local: fastest external per case")?;
+  let linux_fastest = extract_table_metric(content, "Linux ", ": fastest external per case")?;
+  let macos_fastest = extract_table_metric(content, "macOS local", ": fastest external per case")?;
   let checksum_geomean = extract_readme_geomean(content, "- **Checksums:**")?;
 
   let rows = GROUP_ROWS
@@ -195,31 +195,36 @@ fn extract_readme_geomean(content: &str, line_starts_with: &str) -> Result<f64, 
   first_speedup(line).ok_or_else(|| format!("OVERVIEW.md: no speedup token in `{line_starts_with}`"))
 }
 
-fn extract_table_metric(content: &str, label: &str) -> Result<ScopeMetric, String> {
+fn extract_table_metric(content: &str, label_prefix: &str, label_suffix: &str) -> Result<ScopeMetric, String> {
+  let expected = format!("{label_prefix}*{label_suffix}");
   let cells = content
     .lines()
     .map(markdown_cells)
-    .find(|cells| cells.first().copied() == Some(label))
-    .ok_or_else(|| format!("OVERVIEW.md: missing table row `{label}`"))?;
+    .find(|cells| {
+      cells
+        .first()
+        .is_some_and(|label| label.starts_with(label_prefix) && label.ends_with(label_suffix))
+    })
+    .ok_or_else(|| format!("OVERVIEW.md: missing table row `{expected}`"))?;
   if cells.len() < 6 {
     return Err(format!(
-      "OVERVIEW.md: table row `{label}` has {} cells, expected at least 6",
+      "OVERVIEW.md: table row `{expected}` has {} cells, expected at least 6",
       cells.len()
     ));
   }
 
-  let pairs = first_integer(cells[1]).ok_or_else(|| format!("OVERVIEW.md: `{label}` missing pair count"))?;
-  let (wins, ties, losses) = parse_wtl(cells[2]).ok_or_else(|| format!("OVERVIEW.md: `{label}` missing W/T/L"))?;
+  let pairs = first_integer(cells[1]).ok_or_else(|| format!("OVERVIEW.md: `{expected}` missing pair count"))?;
+  let (wins, ties, losses) = parse_wtl(cells[2]).ok_or_else(|| format!("OVERVIEW.md: `{expected}` missing W/T/L"))?;
   let wtl_total = wins
     .checked_add(ties)
     .and_then(|n| n.checked_add(losses))
-    .ok_or_else(|| format!("OVERVIEW.md: `{label}` W/T/L count overflow"))?;
+    .ok_or_else(|| format!("OVERVIEW.md: `{expected}` W/T/L count overflow"))?;
   if wtl_total != pairs {
     return Err(format!(
-      "OVERVIEW.md: `{label}` has {pairs} pairs but W/T/L totals {wtl_total}"
+      "OVERVIEW.md: `{expected}` has {pairs} pairs but W/T/L totals {wtl_total}"
     ));
   }
-  let geomean = first_speedup(cells[4]).ok_or_else(|| format!("OVERVIEW.md: `{label}` missing geomean"))?;
+  let geomean = first_speedup(cells[4]).ok_or_else(|| format!("OVERVIEW.md: `{expected}` missing geomean"))?;
 
   Ok(ScopeMetric {
     pairs,

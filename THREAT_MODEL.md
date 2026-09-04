@@ -87,11 +87,10 @@ ignoring a result, or violating a protocol rule.
 
 ### Release substitution
 
-An attacker may target source, CI, dependencies, or published artifacts.
-Release identity is bound through signed tags, exact-commit evidence,
-attestations, checksums, immutable GitHub releases, and crates.io Trusted
-Publishing. See [`docs/release.md`](docs/release.md) for the release contract
-and consumer verification steps.
+An attacker may target source, dependencies, build hosts, or published
+artifacts. The repository currently provides no automated release-integrity
+binding between reviewed source and a published artifact. Treat artifact origin
+and integrity as unverified unless they are established independently.
 
 ## Outside this model
 
@@ -113,7 +112,6 @@ and consumer verification steps.
 | Primitive correctness and hostile-input handling | Official vectors, independent implementations, negative tests, fuzzing, Miri, and backend differential tests; see [`docs/test-vector-coverage.md`](docs/test-vector-coverage.md). |
 | Constant-time behavior | The operation inventory, target policy, generated-code review, binary checks, and native timing evidence defined by [`ct.toml`](ct.toml) and [`docs/constant-time.md`](docs/constant-time.md). |
 | Secret ownership and cleanup | The type inventory, source audit, optimized cleanup checks, and redaction tests in [`docs/secret-ownership.md`](docs/secret-ownership.md) and [`docs/secret-lifecycle.md`](docs/secret-lifecycle.md). |
-| Release integrity | The protected release workflow, artifact identity, attestations, and verification process in [`docs/release.md`](docs/release.md). |
 
 Published assurance is scoped evidence, not a blanket whole-crate proof.
 Source-level cleanup does not cover compiler-created register or spill copies,
@@ -131,4 +129,4 @@ claimed.
    equivalence.
 4. Secret construction, duplication, export, serialization, cleanup, and
    error paths.
-5. Dependencies, CI permissions, release identity, and published artifacts.
+5. Dependencies, build authority, release identity, and published artifacts.

@@ -116,7 +116,7 @@ assert!(
 //! claims remain compiler-, target-, feature-, and release-evidence-bound.
 //! Zeroize on drop for every secret-bearing type. `strict_*` arithmetic on
 //! counters and lengths; release builds keep `overflow-checks = true`.
-//! Continuous libFuzzer with corpus replay in CI; Miri on the portable backends.
+//! Fuzz targets exercise production paths; Miri covers the portable backends.
 //!
 //! `rscrypto` is a primitives crate, not a FIPS 140-3 validated module. It
 //! exposes FIPS-aligned primitives (AES-256-GCM, SHA-2, SHA-3 / SHAKE, HMAC,

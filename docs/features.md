@@ -50,8 +50,8 @@ accept caller-provided entropy remain available without it.
 `p256-ecdh` is a standalone leaf: it does not enable ECDSA, HMAC, `alloc`, or
 `std`. It retains the portable authority on every supported target and selects
 the embedded Apple or Linux AArch64 backend only when `portable-only` and Miri
-are not active. Platform qualification, timing claims, and independent vector
-coverage remain owned by [`platforms.md`](platforms.md),
+are not active. Platform support, timing claims, and independent vector coverage
+remain owned by [`platforms.md`](platforms.md),
 [`constant-time.md`](constant-time.md), and
 [`test-vector-coverage.md`](test-vector-coverage.md).
 

@@ -148,7 +148,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 detect_bench_os() {
-  case "${RUNNER_OS:-$(uname -s)}" in
+  case "$(uname -s)" in
     Linux) echo "linux" ;;
     Darwin) echo "macos" ;;
     Windows | MINGW* | MSYS* | CYGWIN*) echo "windows" ;;
@@ -217,7 +217,7 @@ write_source_manifest() {
   done < <(
     git -C "$REPO_ROOT" ls-files --cached --others --exclude-standard -z -- \
       Cargo.toml Cargo.lock build.rs rust-toolchain.toml .cargo \
-      .config/benchmark-matrix.json src benches scripts/bench scripts/ci/run-bench.sh \
+      .config/benchmark-matrix.json src benches scripts/bench \
       | sort -z
   )
 }
@@ -280,7 +280,7 @@ BENCH_CRATES="$CRATES" \
   BENCH_RUN_ARCH="$RUN_ARCH" \
   BENCH_RUN_COMMIT="$RUN_COMMIT" \
   BENCH_RUN_MODE="$RUN_MODE" \
-  scripts/ci/run-bench.sh || bench_status=$?
+  scripts/bench/run.sh || bench_status=$?
 
 if [[ -n "$REMOTE_ARTIFACT_DIR" ]]; then
   TRANSFER_DIR="$REPO_ROOT/benchmark_results/.transfers"

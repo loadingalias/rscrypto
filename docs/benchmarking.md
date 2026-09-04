@@ -19,11 +19,6 @@ prints that run ID; collect it before destroying the machine with
 artifact includes CPU, OS, compiler, worktree, and source-file identity
 evidence. A collection destination must not already exist.
 
-Target-native CT, cleanup, or profiling outputs can be sealed separately with
-`just seal-remote-evidence KIND RUN_ID PATH...` and collected before teardown
-with `just ssh-collect-results TARGET KIND RUN_ID DESTINATION`. The collector
-applies the same exact-run archive and digest checks as benchmark collection.
-
 Each result records its commit and platform. Compare individual rows when a
 message size or operation matters. Do not transfer a result between CPU
 families.

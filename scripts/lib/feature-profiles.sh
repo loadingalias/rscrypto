@@ -99,8 +99,8 @@ COMPILE_FEATURE_ALIASES=(
   "std,parallel|parallel"
 )
 
-# Runtime contracts run one profile per CI job. Focused scopes exercise only
-# the capability delta; `all` retains the complete library and integration
+# Runtime contracts keep one profile per capability. Focused scopes exercise
+# only the capability delta; `all` retains the complete library and integration
 # suite where the feature changes the whole execution surface.
 RUNTIME_PROFILE_IDS=(
   "no-std-full"
@@ -126,7 +126,7 @@ RUNTIME_FEATURE_SETS=(
   "std,full,serde-secrets"
 )
 
-# One independently named CI job per runtime profile.
+# One independently named runtime profile.
 FEATURE_RUNTIME_SHARDS=${#RUNTIME_PROFILE_IDS[@]}
 
 # profile|target|optional libtest substring. `lib` selects unit tests and `all`

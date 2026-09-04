@@ -19,7 +19,6 @@
         "build.rs",
         "rust-toolchain.toml",
         "scripts/check/feature-contracts.sh",
-        "scripts/ci/feature-contracts-test.sh",
         "scripts/lib/feature-profiles.sh",
         "scripts/lib/rail-plan.sh"
       ]

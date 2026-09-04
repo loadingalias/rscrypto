@@ -2,4 +2,4 @@
 "rscrypto" = "minor"
 ---
 
-Remove Intel macOS from the supported target and qualification matrix; Apple Silicon is now the only supported macOS architecture.
+Remove Intel macOS from the supported target catalog; Apple Silicon is now the only supported macOS architecture.

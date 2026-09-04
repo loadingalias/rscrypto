@@ -11,9 +11,9 @@ use rscrypto::{Argon2Params, Argon2d, Argon2i, Argon2id};
 
 /// Number of proptest cases. Argon2 hashing is expensive (one case ≈ 1-100ms
 /// at the cost knobs we sweep), so we cap fast iterative dev runs at 16 and
-/// open up to 256 in CI release builds for broader parameter coverage. The
-/// gate is `cfg!(debug_assertions)`: cargo nextest defaults to debug, while
-/// the bench/CI lane runs `--release`. Override with the `PROPTEST_CASES`
+/// open up to 256 in release builds for broader parameter coverage. The gate
+/// is `cfg!(debug_assertions)`: cargo nextest defaults to debug, while explicit
+/// release runs use the larger set. Override with the `PROPTEST_CASES`
 /// env var when needed.
 const CASES_DEBUG: u32 = 16;
 const CASES_RELEASE: u32 = 256;

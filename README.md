@@ -2,7 +2,6 @@
 
 [![Crates.io](https://img.shields.io/crates/v/rscrypto.svg)](https://crates.io/crates/rscrypto)
 [![Docs.rs](https://docs.rs/rscrypto/badge.svg)](https://docs.rs/rscrypto)
-[![CI](https://github.com/loadingalias/rscrypto/actions/workflows/ci.yaml/badge.svg)](https://github.com/loadingalias/rscrypto/actions/workflows/ci.yaml)
 [![MSRV 1.91.0](https://img.shields.io/badge/MSRV-1.91.0-blue)](Cargo.toml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/crates/l/rscrypto)](#license)
 
@@ -18,7 +17,7 @@ protocol implementation.
 
 The 2026-08-18 snapshot compares commit `7eb44e9` with the fastest matched
 external implementation for each platform, primitive, operation, and input
-shape across eight Linux CI runners. The external baseline is selected case by
+shape across eight Linux hosts. The external baseline is selected case by
 case, not averaged across competitors. Ratios are `external / rscrypto`; higher
 is better.
 
@@ -62,16 +61,15 @@ than weakening the gate.
   and overwrite their initialized bytes on drop. Verification failures are opaque; failed AEAD opens
   clear caller output buffers.
 
-A constant-time claim exists only when the matching signed release includes an
-attested evidence bundle whose required target, feature, compiler, profile, and
-operation gates pass. Source that looks branchless is not treated as proof.
-Release artifacts are signed-tag gated, published through crates.io Trusted
-Publishing, and covered by GitHub build-provenance attestations.
+A constant-time claim exists only when evidence for the required target,
+feature, compiler, profile, and operation passes. Source that looks branchless
+is not treated as proof. The repository currently provides no automated release
+qualification, publication, or build-provenance attestation.
 
 Inspect the [`test evidence`](docs/test-vector-coverage.md),
 [`constant-time model`](docs/constant-time.md),
-[`secret lifecycle`](docs/secret-lifecycle.md),
-[`threat model`](THREAT_MODEL.md), and [`release contract`](docs/release.md).
+[`secret lifecycle`](docs/secret-lifecycle.md), and
+[`threat model`](THREAT_MODEL.md).
 
 The remaining independent-review gap is a third-party security audit. The
 project cannot currently fund one. Automated evidence does not replace that

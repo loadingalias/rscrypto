@@ -3,7 +3,7 @@
 //! The RFC publishes four vectors. Vectors 1–3 are included here. Vector 4
 //! (P="pleaseletmein", S="SodiumChloride", N=1048576, r=8, p=1) requires
 //! 1 GiB of working memory and multi-minute wall time, which is too
-//! expensive for a CI test; the differential proptests in
+//! expensive for the normal test suite; the differential proptests in
 //! `scrypt_differential.rs` cover the same code paths at smaller scales.
 
 #![cfg(feature = "scrypt")]

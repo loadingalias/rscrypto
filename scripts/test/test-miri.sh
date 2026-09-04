@@ -12,7 +12,7 @@ source "$SCRIPT_DIR/../lib/common.sh"
 # surface only: deterministic shadow invariants plus Miri-only tests for paths
 # with real UB risk. Correctness/vector/property coverage belongs to nextest and
 # fuzz replay; re-running hundreds of safe correctness tests under an interpreter
-# is wasted CI money.
+# wastes interpreter time.
 #
 # How it works:
 #   - Code uses #[cfg(miri)] guards to fall back to portable implementations

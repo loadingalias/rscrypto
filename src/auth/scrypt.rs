@@ -919,7 +919,7 @@ fn scrypt_hash(params: &ScryptParams, password: &[u8], salt: &[u8], out: &mut [u
 /// ```rust
 /// use rscrypto::{Scrypt, ScryptParams};
 ///
-/// // Small CI-friendly parameters.
+/// // Small doctest parameters.
 /// let params = ScryptParams::new(10, 8, 1)?;
 ///
 /// let mut hash = [0u8; 32];

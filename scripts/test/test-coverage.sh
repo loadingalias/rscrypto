@@ -49,18 +49,9 @@ if [[ $# -gt 1 ]]; then
   exit 2
 fi
 
-apply_ci_resource_profile
 export CARGO_PROFILE_TEST_OPT_LEVEL=0
 
-export RSCRYPTO_TEST_MODE=${RSCRYPTO_TEST_MODE:-${CARGO_RAIL_TEST_MODE:-local}}
-export CARGO_RAIL_TEST_MODE=${CARGO_RAIL_TEST_MODE:-$RSCRYPTO_TEST_MODE}
-echo "Coverage test mode: $RSCRYPTO_TEST_MODE"
-
-case "$RSCRYPTO_TEST_MODE" in
-  commit) NEXTEST_PROFILE="commit" ;;
-  weekly) NEXTEST_PROFILE="weekly" ;;
-  *)      NEXTEST_PROFILE="default" ;;
-esac
+NEXTEST_PROFILE="default"
 echo "Using nextest profile: $NEXTEST_PROFILE"
 
 NEXTEST_ARGS=(-P "$NEXTEST_PROFILE" --config-file "$REPO_ROOT/.config/nextest.toml")

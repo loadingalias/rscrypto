@@ -35,18 +35,6 @@ PYTHON="$("$SCRIPT_DIR/../lib/python.sh" --print)"
 
 echo "Repository policy"
 
-if work_required policy.actions; then
-  step "Checking Actions policy"
-  if ! "$SCRIPT_DIR/../ci/actions-policy.sh" >"$LOG_DIR/actions.log" 2>&1; then
-    fail
-    show_error "$LOG_DIR/actions.log"
-    exit 1
-  fi
-  ok
-else
-  skip "Actions policy" "not required by Cargo Rail"
-fi
-
 if work_required contracts.cargo-graph; then
   step "Checking Cargo graph consistency"
   if ! cargo rail unify --check >"$LOG_DIR/cargo-graph.log" 2>&1; then

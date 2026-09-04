@@ -20,12 +20,7 @@ case "$#" in
   *) usage ;;
 esac
 
-apply_ci_resource_profile
-
 echo "Running unit, integration, property, and documentation tests..."
-export RSCRYPTO_TEST_MODE=${RSCRYPTO_TEST_MODE:-${CARGO_RAIL_TEST_MODE:-local}}
-export CARGO_RAIL_TEST_MODE=${CARGO_RAIL_TEST_MODE:-$RSCRYPTO_TEST_MODE}
-echo "Test mode: $RSCRYPTO_TEST_MODE"
 
 has_nextest=true
 if ! command -v cargo-nextest >/dev/null 2>&1; then
@@ -33,11 +28,7 @@ if ! command -v cargo-nextest >/dev/null 2>&1; then
   echo "cargo-nextest not found; using cargo test"
 fi
 
-case "$RSCRYPTO_TEST_MODE" in
-  commit) profile=commit ;;
-  weekly) profile=weekly ;;
-  *) profile=default ;;
-esac
+profile=default
 echo "Nextest profile: $profile"
 
 nextest_thread_args=()

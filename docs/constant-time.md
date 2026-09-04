@@ -32,16 +32,14 @@ just ct-validate
 ```
 
 `ct-validate` rejects missing or stale generated artifacts. `just ct-full`
-builds them, runs available timing checks, and emits reports. A release claim
-requires the target-specific lanes required by `ct.toml`; a local host cannot
+builds them, runs available timing checks, and emits reports. A target-specific
+claim requires the evidence required by `ct.toml`; a local host cannot
 stand in for another target.
 
-Affected pull requests run `just ct-structural` when Cargo Rail selects
-`assurance.ct`. That bounded x86-64 gate builds the optimized release harness,
-inspects its generated code, and validates strict manifest/artifact coverage.
-It is an early compiler-regression gate, not timing or formal evidence.
-Scheduled and release Qualification consume the same immutable plan and retain
-the full `ct.yaml` physical DudeCT and BINSEC matrix.
+`just ct-structural` builds the bounded x86-64 release harness, inspects its
+generated code, and validates strict manifest and artifact coverage. It is a
+compiler-regression check, not timing or formal evidence. Required target runs
+must be performed and retained independently.
 
 ## Public decisions and exclusions
 
@@ -71,16 +69,15 @@ selected Apple/Linux AArch64, Linux x86-64, and Windows x86-64 assembly.
 Physical Graviton3, Graviton4, and Intel Granite Rapids development runs cover
 both Linux operation-level DudeCT cases and preserve the measured binary,
 disassembly, symbols, linker command, and raw samples. Those bundles measure
-intermediate Phase 4 candidates and do not replace exact-candidate release
-qualification. The retained G3 maxima are 1.12000 for public
+intermediate Phase 4 candidates and do not replace exact-candidate evidence.
+The retained G3 maxima are 1.12000 for public
 derivation and 2.59291 for agreement; the Intel Granite Rapids maxima are
 1.76752 and 1.33030, respectively, against the threshold of 10. Windows
 x86-64 has direct native differential and performance evidence, but the final
 batch-parser source identity does not yet have a complete retained timing
-bundle. The Windows x86-64 qualification row now gates and retains both P-256
-operation-level timing cases plus optimized cleanup for the exact source; its
-first successful artifact and dedicated physical timing remain pending. Other
-native rows likewise await their own CI/CD or physical-runner evidence. Neither
+bundle. Exact-source Windows P-256 operation-level timing and optimized cleanup
+artifacts remain unavailable, and dedicated physical timing is pending. Other
+native rows likewise await their own target-specific evidence. Neither
 cross-compilation nor a different microarchitecture is treated as timing proof.
 
 Authentication failures remain opaque even when their inputs are public. See

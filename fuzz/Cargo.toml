@@ -20,7 +20,7 @@ rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "support", features 
 # Crate under test. The full-surface fuzz package activates every feature
 # that any individual scoped package under `fuzz-packages/` activates — the
 # union must stay in sync. When adding a feature to a scoped package, mirror
-# it here; CI's full-build smoke test surfaces drift as a build error rather
+# it here; the full-build smoke test surfaces drift as a build error rather
 # than as silent coverage loss.
 rscrypto = { path = "..", features = [
   "std",

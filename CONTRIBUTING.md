@@ -28,8 +28,8 @@ cargo rail change add rscrypto --bump patch --message "Describe the user-visible
 ```
 
 Use `minor` or `major` when compatibility requires it. Internal tooling and
-maintainer-only documentation normally need no change file. The pre-push check
-enforces this contract.
+maintainer-only documentation normally need no change file. Review release
+intent manually before committing.
 
 ## Configure compiler reuse
 
@@ -60,7 +60,7 @@ just check
 just test
 ```
 
-For broad or release-facing changes, run:
+For broad or compatibility-sensitive changes, run:
 
 ```bash
 just check-all
@@ -77,7 +77,7 @@ Add the risk-specific evidence reached by the change:
 | Constant-time claim boundary | `just ct-full --target <triple>`; update `ct.toml` only with matching evidence |
 | Apple Silicon RSA assembly | `just test-rsa-macos-asm` on physical Apple Silicon |
 | Public API, examples, or compatibility | Run `just test-examples`; review callers, tests, docs, migration guidance, and release intent |
-| Dependency or release | `just check`; inspect the selected graph and the release contract |
+| Dependency | `just check`; inspect the selected graph |
 
 Cross-compilation proves compilation, not runtime behavior, constant-time
 execution, or performance. Record target lanes that cannot run.
@@ -97,12 +97,8 @@ git commit -m "module: imperative outcome"
 Push the current branch:
 
 ```bash
-just push
+git push --set-upstream origin HEAD
 ```
-
-`just push` checks the outgoing diff, changed shell and Just syntax, affected
-Cargo graph inputs, and release-intent coverage. It does not replace explicit
-builds, tests, or risk-specific evidence.
 
 Open a draft pull request:
 
@@ -110,9 +106,8 @@ Open a draft pull request:
 gh pr create --base main --fill --draft
 ```
 
-Mark it ready only when the head is ready for CI. Before merging, resolve every
-review thread, inspect the final diff, and require the protected `Complete`
-check to pass.
+Before merging, resolve every review thread, inspect the final diff, and confirm
+the required local and target-specific evidence.
 
 ## Security and test evidence
 
@@ -130,6 +125,5 @@ exercise production paths.
 
 ## Releases
 
-Daily development does not create release tags or publish crates. Follow the
-canonical [release runbook](docs/release.md), which owns exact-commit evidence,
-publication, and post-release verification.
+The repository currently has no release procedure or publication automation.
+Define and review both before publishing a new version.

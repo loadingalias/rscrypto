@@ -58,10 +58,6 @@ ssh-just target *args="":
 ssh-collect-bench target run_id destination:
     @"{{ dev_machine }}" collect-results rscrypto "{{ target }}" criterion "{{ run_id }}" "{{ destination }}"
 
-# Collect one sealed evidence run from a repository development machine.
-ssh-collect-results target kind run_id destination:
-    @"{{ dev_machine }}" collect-results rscrypto "{{ target }}" "{{ kind }}" "{{ run_id }}" "{{ destination }}"
-
 # List repository development machines.
 ssh-list:
     @"{{ dev_machine }}" list rscrypto
@@ -106,17 +102,9 @@ msrv:
 feature-contracts *args="":
     @scripts/check/feature-contracts.sh {{ args }}
 
-# Reproduce one catalogued CI platform proof locally or through ssh-just.
-target-contract row depth="deep":
-    @scripts/ci/target-contracts.sh run "{{ row }}" "{{ depth }}"
-
 # Rebuild and verify optimized zeroization evidence, optionally for one primitive.
 check-zeroize-evidence *args="":
     @scripts/check/zeroize-evidence.sh {{ args }}
-
-# Seal generated native evidence for authenticated collection before teardown.
-seal-remote-evidence kind run_id *paths:
-    @scripts/ci/seal-remote-evidence.sh "{{ kind }}" "{{ run_id }}" {{ paths }}
 
 # Tests
 # Test the affected scope or the full workspace with --all.
@@ -160,7 +148,7 @@ test-fuzz-asan *args="":
     @scripts/test/test-fuzz-asan.sh {{ args }}
 
 # Constant-Time (CT) Validation Engine
-# Build and validate the bounded x86-64 CT structure gate used by affected CI.
+# Build and validate the bounded x86-64 CT structure gate.
 ct-structural:
     @scripts/ct/structural.sh
 
@@ -221,15 +209,6 @@ perf-llvm-lines *args="":
 # Update coordinated Cargo manifests, or preview with --check.
 update *args="":
     @scripts/update/update-all.sh {{ args }}
-
-# Validate the CI/CD configuration and its focused adapters.
-check-actions:
-    @scripts/ci/actions-policy.sh
-
-# Run the pre-push policy and push the current branch.
-push:
-    @scripts/ci/pre-push.sh
-    git push --set-upstream origin HEAD
 
 # Assets
 

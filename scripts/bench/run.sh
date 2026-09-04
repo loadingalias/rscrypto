@@ -245,7 +245,7 @@ if [[ "$QUICK_INPUT" != "true" \
   && "$targets_comp" == "true" \
   && -z "$ONLY_INPUT" \
   && -z "$FILTER_INPUT" ]]; then
-  echo "error: refusing unscoped hashes/comp run (expensive and often timeout-prone on CI lanes)." >&2
+  echo "error: refusing unscoped hashes/comp run (expensive and often timeout-prone)." >&2
   echo "hint: set BENCH_ONLY and/or BENCH_FILTER to scope the run, use --quick, or explicitly allow full coverage." >&2
   echo "hint: if you intentionally want full hashes/comp coverage, set BENCH_ALLOW_FULL_HASHES_COMP=true." >&2
   exit 2
@@ -255,7 +255,7 @@ mkdir -p "$OUT_DIR"
 LOG_PATH="$OUT_DIR/output.txt"
 : > "$LOG_PATH"
 
-# Structured results (set by bench.sh for local runs; unset in direct CI calls)
+# Structured results are set by bench.sh.
 RESULTS_DIR="${BENCH_RESULTS_DIR:-}"
 RESULTS_PATH=""
 if [[ -n "$RESULTS_DIR" ]]; then
