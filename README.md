@@ -2,7 +2,6 @@
 
 [![Crates.io](https://img.shields.io/crates/v/rscrypto.svg)](https://crates.io/crates/rscrypto)
 [![Docs.rs](https://docs.rs/rscrypto/badge.svg)](https://docs.rs/rscrypto)
-[![CI](https://github.com/loadingalias/rscrypto/actions/workflows/ci.yaml/badge.svg)](https://github.com/loadingalias/rscrypto/actions/workflows/ci.yaml)
 [![MSRV 1.91.0](https://img.shields.io/badge/MSRV-1.91.0-blue)](Cargo.toml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/crates/l/rscrypto)](#license)
 
@@ -18,7 +17,7 @@ protocol implementation.
 
 The 2026-08-18 snapshot compares commit `7eb44e9` with the fastest matched
 external implementation for each platform, primitive, operation, and input
-shape across eight Linux CI runners. The external baseline is selected case by
+shape across eight Linux hosts. The external baseline is selected case by
 case, not averaged across competitors. Ratios are `external / rscrypto`; higher
 is better.
 
@@ -58,20 +57,19 @@ than weakening the gate.
 - The constant-time harness inventories exact operations in [`ct.toml`](ct.toml)
   and combines optimized linked-binary inspection, BINSEC proofs for declared
   fixed-shape kernels, and DudeCT timing tests for declared end-to-end cases.
-- Fixed-size secret owners mask `Debug`, omit ordinary equality, and overwrite
-  owned bytes on drop. Verification failures are opaque; failed AEAD opens
+- Secret owners mask `Debug`, omit ordinary equality and implicit duplication,
+  and overwrite their initialized bytes on drop. Verification failures are opaque; failed AEAD opens
   clear caller output buffers.
 
-A constant-time claim exists only when the matching signed release includes an
-attested evidence bundle whose required target, feature, compiler, profile, and
-operation gates pass. Source that looks branchless is not treated as proof.
-Release artifacts are signed-tag gated, published through crates.io Trusted
-Publishing, and covered by GitHub build-provenance attestations.
+A constant-time claim exists only when evidence for the required target,
+feature, compiler, profile, and operation passes. Source that looks branchless
+is not treated as proof. The repository currently provides no automated release
+qualification, publication, or build-provenance attestation.
 
 Inspect the [`test evidence`](docs/test-vector-coverage.md),
 [`constant-time model`](docs/constant-time.md),
-[`secret lifecycle`](docs/secret-lifecycle.md),
-[`threat model`](THREAT_MODEL.md), and [`release contract`](docs/release.md).
+[`secret lifecycle`](docs/secret-lifecycle.md), and
+[`threat model`](THREAT_MODEL.md).
 
 The remaining independent-review gap is a third-party security audit. The
 project cannot currently fund one. Automated evidence does not replace that
@@ -118,7 +116,7 @@ assert_eq!(hasher.finalize(), one_shot);
 ```
 
 Hash APIs support one-shot and streaming use. Runnable workflows for AEAD,
-signatures, RSA, X25519, ML-KEM, password hashing, and backend introspection are
+signatures, RSA, P-256 ECDH, X25519, ML-KEM, password hashing, and backend introspection are
 in [`examples/README.md`](examples/README.md).
 
 ## Primitive and feature map
@@ -131,7 +129,7 @@ in [`examples/README.md`](examples/README.md).
 | MACs and KDFs | HMAC-SHA-2/SHA-3, KMAC128/256, Poly1305, HKDF-SHA-2, PBKDF2-HMAC-SHA-2 | `macs`, `kdfs`, or leaf features |
 | Password hashing | Argon2d/i/id, scrypt, bounded PHC password records | `password-hashing` or leaf features |
 | Signatures and RSA | ECDSA P-256/P-384, Ed25519, RSA signing, verification, encryption, and key generation | `signatures` or leaf features |
-| Key exchange and KEMs | X25519, ML-KEM-512/768/1024 | `key-exchange` or leaf features |
+| Key exchange and KEMs | P-256 ECDH, X25519, ML-KEM-512/768/1024 | `key-exchange` or leaf features |
 | AEADs | AES-GCM, AES-GCM-SIV, AES-SIV-CMAC, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128 | `aead` or leaf features |
 
 Use [docs.rs](https://docs.rs/rscrypto) for exact types and methods. Use the

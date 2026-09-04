@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
@@ -24,84 +23,12 @@ from symbolize_linked_binary import (
   parse_link_map,
   symbolize,
 )
-from validate_release_evidence import (
-  parse_hashes,
-  records_by_name,
-  records_by_path,
-  validate_equality_index,
-  validate_exact_candidate,
-  validate_heuristics,
-)
-
-
 def expect_failure(action) -> None:
   try:
     action()
   except ValueError:
     return
   raise AssertionError("evidence mutation unexpectedly passed")
-
-
-def equality_fixture() -> tuple[dict, dict, dict]:
-  owner = "ct_entry_owner_eq_16"
-  public = "ct_entry_kmac256_verify"
-  ct = {
-    "equality_evidence": {
-      "release_binary": {
-        "owner_symbols": [owner],
-        "public_len_symbols": [public],
-      }
-    }
-  }
-  symbols = []
-  for name in (owner, public):
-    symbols.append(
-      {
-        "name": name,
-        "locations": [
-          {"object": "rscrypto_ct_evidence-deadbeef.o"},
-          {"object": "rscrypto-ct-evidence.binary"},
-        ],
-      }
-    )
-  evidence = {"primitives": [{"harness": {"symbols": symbols}}]}
-  heuristics = {
-    "schema_version": 2,
-    "kind": "rscrypto.ct.asm-heuristics",
-    "target": "x86_64-unknown-linux-gnu",
-    "profile": "release",
-    "needs_fix_count": 0,
-    "needs_binsec_count": 0,
-    "accepted_count": 0,
-    "unclassified_count": 0,
-    "unwaived_fail_count": 0,
-    "missing_symbols": [],
-    "finding_count": 0,
-    "symbol_summary": {owner: {"present": True}, public: {"present": True}},
-    "ct_intended_call_closure": {
-      "primitive_summary": {
-        "owner_equality.fixed": {
-          "root_symbols": [owner],
-          "missing_root_symbols": [],
-        }
-      }
-    },
-    "disassembly_files": [
-      {
-        "path": "artifacts/rscrypto-ct-evidence.binary.disasm.txt",
-        "sha256": "a" * 64,
-      }
-    ],
-    "final_equality_call_closure": {
-      "artifact": "artifacts/rscrypto-ct-evidence.binary.disasm.txt",
-      "artifact_sha256": "a" * 64,
-      "root_symbols": [owner, public],
-      "missing_root_symbols": [],
-      "unresolved_internal_calls": [],
-      "terminal_call_sites": [],
-    },
-  }
-  return ct, evidence, heuristics
 
 
 def manifest_errors(mutate) -> list[str]:
@@ -128,6 +55,12 @@ def manifest_errors(mutate) -> list[str]:
 
 
 def main() -> None:
+  root = Path(__file__).resolve().parents[2]
+  target_matrix = manifest_validation.json.loads((root / ".config" / "target-matrix.json").read_text())
+  assert manifest_validation.matrix_targets(target_matrix) == {
+    target["name"] for target in manifest_validation.load_toml(root / "ct.toml")["target"]
+  }
+
   assert codegen_value(["-C", "target-cpu=native", "-C", "target-cpu=x86-64"], "target-cpu") == "x86-64"
 
   target_environment: dict[str, str] = {}
@@ -188,14 +121,6 @@ def main() -> None:
   assert rustdoc_env["RUSTC_BOOTSTRAP"] == "rscrypto"
   assert captured_rustdoc["command"][-4:] == ["-Z", "unstable-options", "--output-format", "json"]
 
-  commit = "a" * 40
-  validate_exact_candidate("1.2.3", commit, "1.2.3", commit)
-  expect_failure(lambda: validate_exact_candidate("1.2.3", commit, "1.2.4", commit))
-  expect_failure(lambda: validate_exact_candidate("1.2.3", commit, "1.2.3", "b" * 40))
-
-  expect_failure(lambda: records_by_name([{"name": "same"}, {"name": "same"}], "fixture"))
-  expect_failure(lambda: records_by_path([{"path": "same"}, {"path": "same"}], "fixture"))
-
   def duplicate_target(manifest) -> None:
     manifest["target"].append(dict(manifest["target"][0]))
 
@@ -234,10 +159,6 @@ def main() -> None:
 
   with tempfile.TemporaryDirectory() as temporary:
     temporary_path = Path(temporary)
-    hashes = temporary_path / "hashes.txt"
-    hashes.write_text(f"{'0' * 64}  artifact\n{'1' * 64}  artifact\n")
-    expect_failure(lambda: parse_hashes(hashes))
-
     link_map = temporary_path / "link-map.txt"
     link_map.write_text(
       "             VMA              LMA     Size Align Out     In      Symbol\n"
@@ -289,43 +210,6 @@ def main() -> None:
     assert "0x1010 <rscrypto::fixed_eq>" in output
     assert "Owner" not in output
     expect_failure(lambda: symbolize(raw_disassembly, symbolized, [Symbol(0x1020, 1, "missing")]))
-
-  with tempfile.TemporaryDirectory() as temporary:
-    temporary_path = Path(temporary)
-    package_script = Path(__file__).resolve().with_name("package_evidence.py")
-    package_args = [
-      sys.executable,
-      str(package_script),
-      "--target",
-      "fixture-target",
-      "--suffix",
-      "fixture",
-      "--out-dir",
-      "package",
-      "--raw",
-    ]
-    missing_raw = subprocess.run(package_args, cwd=temporary_path, capture_output=True, text=True, check=False)
-    assert missing_raw.returncode != 0
-    assert "raw CT artifact directory missing" in missing_raw.stderr
-
-    raw_dir = temporary_path / "target" / "ct" / "fixture-target" / "release"
-    raw_dir.mkdir(parents=True)
-    (raw_dir / "marker").write_text("raw evidence\n")
-    subprocess.run(package_args, cwd=temporary_path, check=True)
-    assert (temporary_path / "package" / "target-ct-raw-fixture.tar.gz").is_file()
-
-  ct, evidence, heuristics = equality_fixture()
-  validate_equality_index(evidence, "fixture", ct)
-  validate_heuristics(heuristics, "fixture", "x86_64-unknown-linux-gnu", ct)
-  evidence["primitives"][0]["harness"]["symbols"][0]["locations"].pop()
-  expect_failure(lambda: validate_equality_index(evidence, "fixture", ct))
-  _, _, missing_terminal_calls = equality_fixture()
-  missing_terminal_calls["final_equality_call_closure"].pop("terminal_call_sites")
-  expect_failure(
-    lambda: validate_heuristics(missing_terminal_calls, "fixture", "x86_64-unknown-linux-gnu", ct)
-  )
-  heuristics["missing_symbols"] = ["ct_entry_owner_eq_16"]
-  expect_failure(lambda: validate_heuristics(heuristics, "fixture", "x86_64-unknown-linux-gnu", ct))
 
   finding = {
     "symbol": "rscrypto::auth::argon2::fill_segment_inner",

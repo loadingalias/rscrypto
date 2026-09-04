@@ -80,7 +80,7 @@ fuzz_in_package() {
   (
     cd "$REPO_ROOT" || exit
     if [[ "$subcommand" == build || "$subcommand" == run ]]; then
-      cargo metadata --locked --no-deps --manifest-path "$package_dir/Cargo.toml" >/dev/null
+      cargo metadata --locked --no-deps --format-version 1 --manifest-path "$package_dir/Cargo.toml" >/dev/null
     fi
     CARGO_TARGET_DIR="$FUZZ_SHARED_TARGET_DIR" cargo fuzz "$subcommand" --fuzz-dir "$package_dir" "$@"
   )

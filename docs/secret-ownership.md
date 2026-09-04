@@ -8,11 +8,12 @@ that every compiler-created copy is erased.
 
 | Owner | Duplication | Exposure |
 | --- | --- | --- |
-| `SecretBytes<N>`, `SecretVec` | Not `Clone` or `Copy` | Consuming export transfers bytes and cleanup responsibility to the caller. |
+| `SecretBytes<N>`, `SecretVec`, `SecretString` | Not `Clone` or `Copy` | Consuming export transfers bytes or UTF-8 text and cleanup responsibility to the caller. |
 | AEAD keys and contexts | Keys use explicit `duplicate_secret`; contexts do not duplicate | Key export is explicit; `Debug` is redacted. |
 | Header-protection keys and contexts | No generic duplication | No public export; `Debug` is redacted. |
 | ECDSA and Ed25519 secret keys and keypairs | Explicit `duplicate_secret` | Secret-key export is explicit; keypair `Debug` shows only public data. |
 | X25519 secrets and ML-KEM decapsulation/shared secrets | Explicit `duplicate_secret` | Secret export is explicit; `Debug` is redacted. |
+| `P256EphemeralSecret`, `P256SharedSecret` | Not `Clone` or `Copy` | The ephemeral scalar has no export or import API. `P256SharedSecret::expose_secret` creates an explicit `SecretBytes<32>` copy; borrowed access is available through `as_bytes`. Both owners have redacted `Debug`. |
 | `RsaPrivateKey`, `RsaPrivateScratch` | Not `Clone` or `Copy` | Private DER export returns `SecretVec`; `Debug` shows public metadata only. |
 | HMAC, HKDF, KMAC, PBKDF2, and Poly1305 state | No generic duplication | `Debug` is redacted; keyed state is not serialized. |
 | Keyed BLAKE2 state | `Clone` where required by the shared `Digest` contract | `Debug` is redacted; cloning duplicates keyed state. |
@@ -40,12 +41,22 @@ their buffers; the crate cannot manage caller-owned memory.
 - `SecretBytes::expose()` returns ordinary bytes after clearing its source.
 - `SecretVec::into_unprotected_vec()` transfers an allocation without clearing
   it; the caller becomes responsible for that memory.
+- `SecretString::into_unprotected_string()` transfers its UTF-8 allocation
+  without clearing it; the caller becomes responsible for that memory.
 - `serde-secrets` authorizes secret serialization.
 - `expert::DisplaySecret` deliberately prints borrowed secret bytes.
 - `as_bytes` and similar borrows expose bytes for the borrow's lifetime.
+- `P256SharedSecret::expose_secret()` creates a second zeroizing owner; the
+  original shared secret remains live until it is dropped.
 
 Do not log, format, or serialize secrets unless the integration requires that
 exact transfer.
+
+`SecretBytes::try_fill_with` and `SecretVec::try_fill_with` give fillers direct
+access to zero-initialized owner storage. `SecretVec::from_vec` and
+`SecretString::from_string` transfer an existing allocation without copying or
+reallocating it. These constructors create no second rscrypto-owned plaintext
+buffer.
 
 Changes to secret owners require review of `Clone`, `Copy`, `Debug`, Serde,
 export, allocation, comparison, and cleanup behavior. See

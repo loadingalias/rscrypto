@@ -1,12 +1,13 @@
-use rscrypto::{
-  AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, Blake2b512, Blake3, Digest, EcdsaP256SecretKey,
-  EcdsaP384SecretKey, RsaPrivateKey, RsaPrivateOpError, RsaPssProfile, RsaPublicKeyPolicy, Sha256, Sha512,
-};
 use rscrypto::aead::expert::header_protection::{
   Aes128HeaderProtection, Aes128HeaderProtectionKey, Aes256HeaderProtection, Aes256HeaderProtectionKey,
   ChaCha20HeaderProtection, ChaCha20HeaderProtectionKey,
 };
 use rscrypto::hashes::legacy::WebSocketAcceptDigest;
+use rscrypto::{
+  AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, Blake2b512, Blake3, Digest, EcdsaP256SecretKey,
+  EcdsaP384SecretKey, P256EphemeralSecret, P256PublicKey, RsaPrivateKey, RsaPrivateOpError, RsaPssProfile,
+  RsaPublicKeyPolicy, Sha256, Sha512,
+};
 
 const RSA_PRIVATE_KEY_PEM: &str = include_str!("../fixtures/rsa2048_private_pkcs1.txt");
 
@@ -27,6 +28,17 @@ fn assert_hex(actual: &[u8], expected: &str) {
     let byte = high.strict_shl(4) | low;
     assert_eq!(actual[i], byte, "hex mismatch at byte {i}");
   }
+}
+
+fn hex_array<const N: usize>(input: &str) -> [u8; N] {
+  assert_eq!(input.len(), N.strict_mul(2), "fixed-width hex input");
+  let mut out = [0u8; N];
+  for (index, chunk) in input.as_bytes().as_chunks::<2>().0.iter().enumerate() {
+    let high = hex_value(chunk[0]).expect("known vector must contain hexadecimal digits");
+    let low = hex_value(chunk[1]).expect("known vector must contain hexadecimal digits");
+    out[index] = high.strict_shl(4) | low;
+  }
+  out
 }
 
 fn base64_value(byte: u8) -> Option<u8> {
@@ -192,8 +204,8 @@ fn assert_websocket_accept_digest_matches_rfc_6455() {
   assert_eq!(
     digest.as_ref(),
     [
-      0xb3, 0x7a, 0x4f, 0x2c, 0xc0, 0x62, 0x4f, 0x16, 0x90, 0xf6, 0x46, 0x06, 0xcf, 0x38, 0x59, 0x45, 0xb2,
-      0xbe, 0xc4, 0xea,
+      0xb3, 0x7a, 0x4f, 0x2c, 0xc0, 0x62, 0x4f, 0x16, 0x90, 0xf6, 0x46, 0x06, 0xcf, 0x38, 0x59, 0x45, 0xb2, 0xbe, 0xc4,
+      0xea,
     ]
   );
 }
@@ -263,11 +275,13 @@ fn assert_aes_siv_runtime_vector_and_failed_open_cleanup() {
 fn assert_ecdsa_portable_signing_roundtrips() {
   let message = b"rscrypto portable ECDSA signing on wasm32-wasip1";
 
-  let p256 = EcdsaP256SecretKey::from_bytes([0x42; EcdsaP256SecretKey::LENGTH])
-    .expect("fixed P-256 scalar is valid");
+  let p256 = EcdsaP256SecretKey::from_bytes([0x42; EcdsaP256SecretKey::LENGTH]).expect("fixed P-256 scalar is valid");
   let p256_signature = p256.try_sign(message).expect("portable P-256 signing must succeed");
   let p256_blinded = p256
-    .try_sign_blinded(message, |blind| blind.fill(0xa6))
+    .try_sign_blinded_with(message, |blind| {
+      blind.fill(0xa6);
+      Ok::<(), core::convert::Infallible>(())
+    })
     .expect("portable blinded P-256 signing must succeed");
   assert_eq!(p256_signature, p256_blinded);
   p256
@@ -275,17 +289,41 @@ fn assert_ecdsa_portable_signing_roundtrips() {
     .verify(message, &p256_signature)
     .expect("portable P-256 signature must verify");
 
-  let p384 = EcdsaP384SecretKey::from_bytes([0x24; EcdsaP384SecretKey::LENGTH])
-    .expect("fixed P-384 scalar is valid");
+  let p384 = EcdsaP384SecretKey::from_bytes([0x24; EcdsaP384SecretKey::LENGTH]).expect("fixed P-384 scalar is valid");
   let p384_signature = p384.try_sign(message).expect("portable P-384 signing must succeed");
   let p384_blinded = p384
-    .try_sign_blinded(message, |blind| blind.fill(0x5c))
+    .try_sign_blinded_with(message, |blind| {
+      blind.fill(0x5c);
+      Ok::<(), core::convert::Infallible>(())
+    })
     .expect("portable blinded P-384 signing must succeed");
   assert_eq!(p384_signature, p384_blinded);
   p384
     .public_key()
     .verify(message, &p384_signature)
     .expect("portable P-384 signature must verify");
+}
+
+fn assert_p256_ecdh_portable_vector() {
+  let private = hex_array::<32>("7d7dc5f71eb29ddaf80d6214632eeae03d9058af1fb6d22ed80badb62bc1a534");
+  let peer = hex_array::<65>(
+    "04700c48f77f56584c5cc632ca65640db91b6bacce3a4df6b42ce7cc838833d287db71e509e3fd9b060ddb20ba5c51dcc5948d46fbf640dfe0441782cab85fa4ac",
+  );
+  let secret = P256EphemeralSecret::try_generate_with(|candidate| {
+    candidate.copy_from_slice(&private);
+    Ok::<(), core::convert::Infallible>(())
+  })
+  .expect("fixed P-256 ECDH scalar is valid");
+  assert_hex(
+    secret.public_key().as_sec1_bytes(),
+    "04ead218590119e8876b29146ff89ca61770c4edbbf97d38ce385ed281d8a6b23028af61281fd35e2fa7002523acc85a429cb06ee6648325389f59edfce1405141",
+  );
+  let peer = P256PublicKey::from_sec1_bytes(&peer).expect("NIST P-256 peer point must parse");
+  let shared = secret.diffie_hellman(&peer);
+  assert_hex(
+    shared.as_bytes(),
+    "46fc62106420ff012e54a434fbdd2d25ccc5852060561e68040dd7778997bd7b",
+  );
 }
 
 #[cfg(target_feature = "simd128")]
@@ -304,5 +342,6 @@ fn main() {
   assert_header_protection_vectors_match_known_outputs();
   assert_aes_siv_runtime_vector_and_failed_open_cleanup();
   assert_ecdsa_portable_signing_roundtrips();
+  assert_p256_ecdh_portable_vector();
   assert_simd128_runtime_caps_are_detected();
 }

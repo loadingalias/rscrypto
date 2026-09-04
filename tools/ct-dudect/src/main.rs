@@ -13,15 +13,15 @@ use rscrypto::{
   Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, EcdsaP256SecretKey, EcdsaP384SecretKey, Ed25519Keypair,
   Ed25519SecretKey, HkdfSha256, HkdfSha384, HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512,
   HmacSha512Tag, Kmac256, MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem768, MlKem768Ciphertext,
-  MlKem768DecapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKemError, Pbkdf2Sha256,
-  Pbkdf2Sha512, RsaBlindingPair, RsaEncryptionError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile,
-  RsaPublicKeyPolicy, SecretBytes, Sha512, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  MlKem768DecapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKemError, P256EphemeralSecret,
+  Pbkdf2Sha256, Pbkdf2Sha512, RsaBlindingPair, RsaEncryptionError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey,
+  RsaPssProfile, RsaPublicKeyPolicy, SecretBytes, Sha512, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
   aead::{
-    Nonce96, Nonce128, Nonce192, Nonce256, diag_aes128gcm_ctr32_be, diag_aes128gcm_ghash, diag_aes128gcm_tag_aes,
-    diag_aes128gcmsiv_ctr32, diag_aes128gcmsiv_derive_keys, diag_aes128gcmsiv_polyval_digest,
-    diag_aes128gcmsiv_raw_tag_aes, diag_aes256gcm_ctr32_be, diag_aes256gcm_ghash, diag_aes256gcm_tag_aes,
-    diag_aes256gcmsiv_ctr32, diag_aes256gcmsiv_derive_keys, diag_aes256gcmsiv_raw_tag_aes,
-    diag_aes_siv_cmac256_open_portable, diag_aes_siv_cmac256_s2v_portable,
+    Nonce96, Nonce128, Nonce192, Nonce256, diag_aes_siv_cmac256_open_portable, diag_aes_siv_cmac256_s2v_portable,
+    diag_aes128gcm_ctr32_be, diag_aes128gcm_ghash, diag_aes128gcm_tag_aes, diag_aes128gcmsiv_ctr32,
+    diag_aes128gcmsiv_derive_keys, diag_aes128gcmsiv_polyval_digest, diag_aes128gcmsiv_raw_tag_aes,
+    diag_aes256gcm_ctr32_be, diag_aes256gcm_ghash, diag_aes256gcm_tag_aes, diag_aes256gcmsiv_ctr32,
+    diag_aes256gcmsiv_derive_keys, diag_aes256gcmsiv_raw_tag_aes,
   },
   auth::{
     diag_ecdsa_p256_basepoint_blinded_limb_digest, diag_ecdsa_p256_final_multiply_limb_digest,
@@ -964,6 +964,56 @@ fn x25519_fixed_vs_random_scalar(runner: &mut CtRunner, rng: &mut BenchRng) {
   }
 }
 
+fn valid_p256_ecdh_scalar(rng: &mut BenchRng) -> [u8; P256EphemeralSecret::LENGTH] {
+  let mut scalar = rand_array::<{ P256EphemeralSecret::LENGTH }>(rng);
+  scalar[0] &= 0x7f;
+  scalar[P256EphemeralSecret::LENGTH - 1] |= 1;
+  scalar
+}
+
+fn p256_ecdh_secret(scalar: [u8; P256EphemeralSecret::LENGTH]) -> P256EphemeralSecret {
+  P256EphemeralSecret::try_generate_with(|candidate| {
+    candidate.copy_from_slice(&scalar);
+    Ok::<(), core::convert::Infallible>(())
+  })
+  .expect("DudeCT P-256 scalar construction must succeed")
+}
+
+fn p256_ecdh_public_key_fixed_vs_random_scalar(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let scalar = if matches!(class, Class::Left) {
+      [0x42; P256EphemeralSecret::LENGTH]
+    } else {
+      valid_p256_ecdh_scalar(rng)
+    };
+    inputs.push((class, scalar));
+  }
+
+  for (class, scalar) in inputs {
+    runner.run_one(class, || p256_ecdh_secret(scalar).public_key().as_sec1_bytes()[1]);
+  }
+}
+
+fn p256_ecdh_agree_fixed_vs_random_scalar(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let peer = p256_ecdh_secret([0x24; P256EphemeralSecret::LENGTH]).public_key();
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let scalar = if matches!(class, Class::Left) {
+      [0x42; P256EphemeralSecret::LENGTH]
+    } else {
+      valid_p256_ecdh_scalar(rng)
+    };
+    inputs.push((class, scalar));
+  }
+
+  for (class, scalar) in inputs {
+    runner.run_one(class, || p256_ecdh_secret(scalar).diffie_hellman(&peer).as_bytes()[0]);
+  }
+}
+
 macro_rules! mlkem_dudect_profile {
   (
     $keygen_secret_noise:ident,
@@ -1347,6 +1397,60 @@ fn valid_p384_secret(rng: &mut BenchRng) -> [u8; EcdsaP384SecretKey::LENGTH] {
   secret
 }
 
+fn ecdsa_p256_public_key_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let secret = if matches!(class, Class::Left) {
+      [0x42; EcdsaP256SecretKey::LENGTH]
+    } else {
+      valid_p256_secret(rng)
+    };
+    inputs.push((class, secret, rand_array::<64>(rng)));
+  }
+
+  for (class, secret, blind) in inputs {
+    let key = EcdsaP256SecretKey::from_bytes(secret).expect("generated P-256 secret scalar is valid");
+    runner.run_one(class, || {
+      core::hint::black_box(
+        key
+          .try_public_key_blinded_with(|out| {
+            out.copy_from_slice(&blind);
+            Ok::<(), core::convert::Infallible>(())
+          })
+          .expect("valid P-256 key and blinding input must derive a public key")
+          .to_sec1_bytes(),
+      );
+    });
+  }
+}
+
+fn ecdsa_p384_public_key_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let secret = if matches!(class, Class::Left) {
+      [0x42; EcdsaP384SecretKey::LENGTH]
+    } else {
+      valid_p384_secret(rng)
+    };
+    inputs.push((class, secret, rand_array::<96>(rng)));
+  }
+
+  for (class, secret, blind) in inputs {
+    let key = EcdsaP384SecretKey::from_bytes(secret).expect("generated P-384 secret scalar is valid");
+    runner.run_one(class, || {
+      core::hint::black_box(
+        key
+          .try_public_key_blinded_with(|out| {
+            out.copy_from_slice(&blind);
+            Ok::<(), core::convert::Infallible>(())
+          })
+          .expect("valid P-384 key and blinding input must derive a public key")
+          .to_sec1_bytes(),
+      );
+    });
+  }
+}
+
 fn ecdsa_p256_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
   for class in balanced_classes(rng, samples()) {
@@ -1363,7 +1467,10 @@ fn ecdsa_p256_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut Bench
     runner.run_one(class, || {
       core::hint::black_box(
         key
-          .try_sign_blinded(MESSAGE, |out| out.copy_from_slice(&blind))
+          .try_sign_blinded_with(MESSAGE, |out| {
+            out.copy_from_slice(&blind);
+            Ok::<(), core::convert::Infallible>(())
+          })
           .expect("valid P-256 key and blinding input must sign")
           .to_bytes(),
       );
@@ -1387,7 +1494,10 @@ fn ecdsa_p384_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut Bench
     runner.run_one(class, || {
       core::hint::black_box(
         key
-          .try_sign_blinded(MESSAGE, |out| out.copy_from_slice(&blind))
+          .try_sign_blinded_with(MESSAGE, |out| {
+            out.copy_from_slice(&blind);
+            Ok::<(), core::convert::Infallible>(())
+          })
           .expect("valid P-384 key and blinding input must sign")
           .to_bytes(),
       );
@@ -2444,18 +2554,9 @@ ctbench_main_with_seeds!(
   (xchacha20poly1305_fixed_vs_random_key_open, Some(0x7863686163686132)),
   (aegis256_fixed_vs_random_key_open, Some(0x61656769736f706e)),
   (ascon_aead128_fixed_vs_random_key_open, Some(0x6173636f6e6f706e)),
-  (
-    aes128_header_protection_fixed_vs_random_key,
-    Some(0x6870616573313238)
-  ),
-  (
-    aes256_header_protection_fixed_vs_random_key,
-    Some(0x6870616573323536)
-  ),
-  (
-    chacha20_header_protection_fixed_vs_random_key,
-    Some(0x687063686132305f)
-  ),
+  (aes128_header_protection_fixed_vs_random_key, Some(0x6870616573313238)),
+  (aes256_header_protection_fixed_vs_random_key, Some(0x6870616573323536)),
+  (chacha20_header_protection_fixed_vs_random_key, Some(0x687063686132305f)),
   (aes_siv_cmac256_fixed_vs_random_key_open, Some(0x7369765f6f70656e)),
   (aes_siv_cmac256_first_vs_last_tag_mismatch, Some(0x7369765f7461676d)),
   (
@@ -2471,6 +2572,8 @@ ctbench_main_with_seeds!(
     Some(0x7369765f706f746d)
   ),
   (x25519_fixed_vs_random_scalar, Some(0x7832353531395f63)),
+  (p256_ecdh_public_key_fixed_vs_random_scalar, Some(0x7032353665637075)),
+  (p256_ecdh_agree_fixed_vs_random_scalar, Some(0x7032353665636167)),
   (mlkem512_keygen_secret_noise_fixed_vs_random, Some(0x6d6b3531326b676e)),
   (mlkem512_encapsulate_fixed_vs_random_coins, Some(0x6d6b353132656e63)),
   (
@@ -2529,6 +2632,8 @@ ctbench_main_with_seeds!(
     Some(0x6564323535314853)
   ),
   (ed25519_keypair_sign_fixed_vs_random_secret, Some(0x656432353531394b)),
+  (ecdsa_p256_public_key_fixed_vs_random_secret, Some(0x703235365f707562)),
+  (ecdsa_p384_public_key_fixed_vs_random_secret, Some(0x703338345f707562)),
   (ecdsa_p256_sign_fixed_vs_random_secret, Some(0x703235365f736967)),
   (ecdsa_p384_sign_fixed_vs_random_secret, Some(0x703338345f736967)),
   (

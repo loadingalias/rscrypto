@@ -154,7 +154,10 @@ fn p256_blinded_sign_matches_deterministic_signature_and_rustcrypto_oracle() {
     .try_sign(message)
     .expect("P-256 deterministic signing must succeed");
   let blinded = rs_secret
-    .try_sign_blinded(message, |blind| blind.fill(0xa6))
+    .try_sign_blinded_with(message, |blind| {
+      blind.fill(0xa6);
+      Ok::<(), core::convert::Infallible>(())
+    })
     .expect("P-256 blinded signing must succeed");
   let oracle_signature =
     P256OracleSignature::from_slice(blinded.as_bytes()).expect("P-256 oracle signature must parse");
@@ -259,7 +262,10 @@ fn p384_blinded_sign_matches_deterministic_signature_and_rustcrypto_oracle() {
     .try_sign(message)
     .expect("P-384 deterministic signing must succeed");
   let blinded = rs_secret
-    .try_sign_blinded(message, |blind| blind.fill(0xc3))
+    .try_sign_blinded_with(message, |blind| {
+      blind.fill(0xc3);
+      Ok::<(), core::convert::Infallible>(())
+    })
     .expect("P-384 blinded signing must succeed");
   let oracle_signature =
     P384OracleSignature::from_slice(blinded.as_bytes()).expect("P-384 oracle signature must parse");

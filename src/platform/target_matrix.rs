@@ -1,7 +1,7 @@
 //! Target-matrix contract helpers.
 //!
 //! This module ties platform detection to `.config/target-matrix.json` so
-//! architecture policy stays aligned with CI manifests.
+//! architecture policy stays aligned with the support catalog.
 
 use crate::platform::caps::Arch;
 

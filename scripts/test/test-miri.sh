@@ -12,7 +12,7 @@ source "$SCRIPT_DIR/../lib/common.sh"
 # surface only: deterministic shadow invariants plus Miri-only tests for paths
 # with real UB risk. Correctness/vector/property coverage belongs to nextest and
 # fuzz replay; re-running hundreds of safe correctness tests under an interpreter
-# is wasted CI money.
+# wastes interpreter time.
 #
 # How it works:
 #   - Code uses #[cfg(miri)] guards to fall back to portable implementations
@@ -135,6 +135,8 @@ case "$MIRI_SCOPE" in
     run_miri_lib_filter "portable dispatch and checksum shadow invariants" "miri_shadow_tests"
     run_miri_lib_filter "platform detection under Miri" "platform::detect::tests::test_miri_returns_portable"
     run_miri_lib_filter "X25519 portable path under Miri" "auth::x25519::tests::miri_uses_portable_x25519_path"
+    run_miri_lib_filter "P-256 ECDH portable path under Miri" \
+      "auth::p256_ecdh::tests::miri_uses_portable_p256_ecdh_path"
     run_miri_lib_filter_features "ML-KEM portable round trip and rejection under Miri" \
       "auth::mlkem::portable::tests::miri_mlkem512_portable_round_trip_and_rejection" \
       "ml-kem,diag" \

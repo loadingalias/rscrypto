@@ -323,6 +323,8 @@ symbols = [
   "ct_entry_aegis256_open",
   "ct_entry_ascon_aead128_open",
   "ct_entry_x25519",
+  "ct_entry_p256_ecdh_public_key",
+  "ct_entry_p256_ecdh_agree",
   "ct_entry_mlkem512_keygen",
   "ct_entry_mlkem512_encapsulate",
   "ct_entry_mlkem512_decapsulate",
@@ -341,7 +343,9 @@ symbols = [
   "ct_entry_mlkem_diag_multiply_ntts_accumulate_k4",
   "ct_entry_mlkem_diag_compress_decompress",
   "ct_entry_ed25519_sign",
+  "ct_entry_ecdsa_p256_public_key",
   "ct_entry_ecdsa_p256_sign",
+  "ct_entry_ecdsa_p384_public_key",
   "ct_entry_ecdsa_p384_sign",
   "ct_entry_ed25519_verify",
   "ct_entry_rsa_pkcs1v15_sign_fixed_blinding",
@@ -381,11 +385,14 @@ covers = [
   "keyed_hash.blake3_verify",
   "aead.open_authentication",
   "kx.x25519",
+  "kx.p256_ecdh",
   "kem.mlkem512",
   "kem.mlkem768",
   "kem.mlkem1024",
   "signature.ed25519_sign",
+  "signature.ecdsa_p256_public_derivation",
   "signature.ecdsa_p256_sign",
+  "signature.ecdsa_p384_public_derivation",
   "signature.ecdsa_p384_sign",
   "signature.ed25519_verify_failure_shape",
   "rsa.private_ops",
@@ -729,6 +736,24 @@ samples = 20000
 smoke_samples = 2000
 
 [[dudect_case]]
+name = "p256_ecdh_public_key_fixed_vs_random_scalar"
+primitive = "kx.p256_ecdh"
+filter = "p256_ecdh_public_key_fixed_vs_random_scalar"
+left_class = "complete public derivation with fixed valid scalar"
+right_class = "complete public derivation with random valid scalar"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "p256_ecdh_agree_fixed_vs_random_scalar"
+primitive = "kx.p256_ecdh"
+filter = "p256_ecdh_agree_fixed_vs_random_scalar"
+left_class = "complete agreement with fixed valid scalar"
+right_class = "complete agreement with random valid scalar"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
 name = "aes128_header_protection_fixed_vs_random_key"
 primitive = "aead.symmetric_transform"
 filter = "aes128_header_protection_fixed_vs_random_key"
@@ -952,6 +977,26 @@ left_class = "fixed signing secret SHA-512 expansion"
 right_class = "random signing secret SHA-512 expansion"
 samples = 20000
 smoke_samples = 2000
+
+[[dudect_case]]
+name = "ecdsa_p256_public_key_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p256_public_derivation"
+filter = "ecdsa_p256_public_key_fixed_vs_random_secret"
+left_class = "fixed P-256 secret-scalar public derivation with blinding"
+right_class = "random P-256 secret-scalar public derivation with blinding"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "ecdsa_p384_public_key_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p384_public_derivation"
+filter = "ecdsa_p384_public_key_fixed_vs_random_secret"
+left_class = "fixed P-384 secret-scalar public derivation with blinding"
+right_class = "random P-384 secret-scalar public derivation with blinding"
+samples = 20000
+smoke_samples = 2000
+timeout_seconds = 7200
+timeout_reason = "Physical RISC-V needs a two-hour evidence budget for the full 20,000-sample P-384 gate."
 
 [[dudect_case]]
 name = "ecdsa_p256_sign_fixed_vs_random_secret"
@@ -2058,6 +2103,22 @@ dudect = ["pbkdf2_sha2_fixed_vs_random_password"]
 binsec = ["kdf.pbkdf2.sha512_verify.portable.all"]
 notes = "The DudeCT case executes Pbkdf2Sha256 and Pbkdf2Sha512 with the same class input."
 
+[[evidence_unit]]
+id = "kx.p256_ecdh.public_derivation"
+primitive = "kx.p256_ecdh"
+variant = "PublicDerivation"
+dudect = ["p256_ecdh_public_key_fixed_vs_random_scalar"]
+binsec = ["kx.p256_ecdh.window_select.portable.all"]
+notes = "DudeCT covers the complete production operation; BINSEC bounds the production full-table selector that receives secret scalar digits."
+
+[[evidence_unit]]
+id = "kx.p256_ecdh.agreement"
+primitive = "kx.p256_ecdh"
+variant = "Agreement"
+dudect = ["p256_ecdh_agree_fixed_vs_random_scalar"]
+binsec = ["kx.p256_ecdh.window_select.portable.all"]
+notes = "DudeCT covers the complete production operation; BINSEC bounds the same production full-table selector over a peer-derived public table."
+
 [[binsec_kernel]]
 id = "owner_equality.fixed.64.x86_64_linux"
 primitive = "owner_equality.fixed"
@@ -2600,6 +2661,21 @@ notes = "All-target bounded proof for the ECDSA/P-256 fixed-window signing gener
 claim = "ct-intended"
 
 [[binsec_kernel]]
+id = "kx.p256_ecdh.window_select.portable.all"
+primitive = "kx.p256_ecdh"
+symbol = "ct_binsec_p256_ecdh_select_window"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 20000
+secrets = [{ name = "CT_BINSEC_P256_ECDH_DIGIT", kind = "global", bytes = 1 }]
+public = []
+assumptions = []
+notes = "All-target bounded proof for the production 16-entry affine selector used by fixed-base public derivation and arbitrary-point agreement. Complete operations remain covered by linked artifacts, disassembly heuristics, and DudeCT because whole scalar multiplication exceeds BINSEC's practical scope."
+claim = "ct-intended"
+
+[[binsec_kernel]]
 id = "signature.ecdsa_p384_sign.signing_generator_select.portable.all"
 primitive = "signature.ecdsa_p384_sign"
 symbol = "ct_binsec_ecdsa_p384_select_signing_generator_affine"
@@ -2923,24 +2999,22 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2319
-compiler_api_sha256 = "8193076ea61bc84482b3993e2e02e77da9b372629bccb356994bf245158a36b4"
+compiler_api_item_count = 2378
+compiler_api_sha256 = "39d02c3eed97a71d3eb9e4cc50fdd1335cdb925ac0e6463582dce2946f8b70e2"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
-ci = "ci-linux-x64"
 
 [[target]]
 name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2313
-compiler_api_sha256 = "e40ba4d720685019669fdad3c452842fb50eaaba00d1159fa0ab1e4e7b4d6a0a"
+compiler_api_item_count = 2372
+compiler_api_sha256 = "3c750de8b6cd2b5848396cfd25c1fa53d1b8977339f926aabb19601bbd93f654"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
-ci = "ci-linux-arm64"
 
 [[target]]
 name = "x86_64-unknown-linux-musl"
@@ -2952,7 +3026,6 @@ physical_timing = "unsupported"
 physical_timing_reason = "MUSL targets are not part of the current published physical CT evidence lanes; GNU Linux native lanes carry release timing evidence until MUSL physical lanes are added."
 binsec = "unsupported"
 binsec_reason = "MUSL BINSEC evidence is deferred; current published BINSEC evidence runs on native GNU Linux targets."
-ci = "deferred-musl"
 
 [[target]]
 name = "aarch64-unknown-linux-musl"
@@ -2964,7 +3037,6 @@ physical_timing = "unsupported"
 physical_timing_reason = "MUSL targets are not part of the current published physical CT evidence lanes; GNU Linux native lanes carry release timing evidence until MUSL physical lanes are added."
 binsec = "unsupported"
 binsec_reason = "MUSL BINSEC evidence is deferred; current published BINSEC evidence runs on native GNU Linux targets."
-ci = "deferred-musl"
 
 [[target]]
 name = "x86_64-pc-windows-msvc"
@@ -2973,10 +3045,9 @@ backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "Windows physical CT evidence is deferred; Windows is not part of the current published CT/bench evidence lanes."
+physical_timing_reason = "The final Windows x86-64 backend has native differential and performance evidence, but exact-source P-256 timing and cleanup artifacts and dedicated physical timing are unavailable."
 binsec = "unsupported"
-binsec_reason = "BINSEC PE/Windows CT workflow is not part of the current release evidence gate."
-ci = "deferred-windows"
+binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
 
 [[target]]
 name = "aarch64-pc-windows-msvc"
@@ -2987,72 +3058,55 @@ claim = "ct-intended"
 physical_timing = "unsupported"
 physical_timing_reason = "Windows physical CT evidence is deferred; Windows is not part of the current published CT/bench evidence lanes."
 binsec = "unsupported"
-binsec_reason = "BINSEC PE/Windows CT workflow is not part of the current release evidence gate."
-ci = "deferred-windows"
+binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
 
 [[target]]
 name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 2313
-compiler_api_sha256 = "e40ba4d720685019669fdad3c452842fb50eaaba00d1159fa0ab1e4e7b4d6a0a"
+compiler_api_item_count = 2372
+compiler_api_sha256 = "3c750de8b6cd2b5848396cfd25c1fa53d1b8977339f926aabb19601bbd93f654"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
-binsec_reason = "BINSEC does not provide native Mach-O loading for this CT workflow; macOS evidence is artifact/heuristic plus DudeCT."
-ci = "local-macos"
-
-[[target]]
-name = "x86_64-apple-darwin"
-group = "macos"
-backend = "llvm"
-linker = "apple-ld-unpinned"
-claim = "ct-intended"
-physical_timing = "unsupported"
-physical_timing_reason = "macOS Intel is not part of the current published CT/bench evidence lanes; macOS evidence is produced locally on Apple Silicon."
-binsec = "unsupported"
-binsec_reason = "BINSEC does not provide native Mach-O loading for this CT workflow; macOS evidence is artifact/heuristic plus DudeCT."
-ci = "deferred-macos"
+binsec_reason = "BINSEC does not provide native Mach-O loading; macOS evidence is artifact/heuristic plus DudeCT."
 
 [[target]]
 name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2312
-compiler_api_sha256 = "3c444abfafa99a01c573fc1a32c965317659e15610798b6388c068de10005313"
+compiler_api_item_count = 2371
+compiler_api_sha256 = "fa877ed86fd0e69103cae38c62b56623dd568a24a2e10d595510335e553f909c"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
-binsec_reason = "BINSEC/Rel does not list s390x as a supported ISA for this workflow; s390x evidence is artifact/heuristic plus DudeCT on the native Linux runner."
-ci = "ubuntu-24.04-s390x"
+binsec_reason = "BINSEC/Rel does not list s390x as a supported ISA; s390x evidence is artifact/heuristic plus DudeCT on native Linux."
 
 [[target]]
 name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2312
-compiler_api_sha256 = "6578bc51a11fe4b1f11b4634f1bcb87dcdc455243c8314d6c050433ee54b6ce1"
+compiler_api_item_count = 2371
+compiler_api_sha256 = "0bc167ff8ba62d64268ba208db2d430055b52aaec7559e0b1c1f1ff7fff9a3f3"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
-binsec_reason = "BINSEC/Rel 0.11.1 loads powerpc64le ELF objects as little-endian PPC64, but its shipped PPC64 decoder registers only big-endian PPC64 in this workflow; POWER10 evidence is artifact/heuristic plus DudeCT until BINSEC supports little-endian PPC64 decoding."
-ci = "ubuntu-24.04-ppc64le-p10"
+binsec_reason = "BINSEC/Rel 0.11.1 loads powerpc64le ELF objects as little-endian PPC64, but its shipped PPC64 decoder registers only big-endian PPC64; POWER10 evidence is artifact/heuristic plus DudeCT until BINSEC supports little-endian PPC64 decoding."
 
 [[target]]
 name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2312
-compiler_api_sha256 = "46a3f1c7f46e5cb4e6dde1ccd51864bcfba16ef5659ac2765434d7b260a0e194"
+compiler_api_item_count = 2371
+compiler_api_sha256 = "ab570a0df15e466383aa090a1cee061533721f0a32e6360fdebdbc03c760ca52"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
-binsec_reason = "BINSEC/Rel 0.11.1 can load RISC-V ELF binaries, but the current workflow does not complete the release-sized RISC-V HMAC/HKDF/KMAC/PBKDF2/RSA leaf proofs within the CI proof budget. RISC-V evidence is artifact/heuristic plus native DudeCT until the proof kernels are reduced or BINSEC RISC-V solver support improves."
-ci = "ubuntu-24.04-riscv"
+binsec_reason = "BINSEC/Rel 0.11.1 can load RISC-V ELF binaries, but the release-sized RISC-V HMAC/HKDF/KMAC/PBKDF2/RSA leaf proofs do not complete within the current proof budget. RISC-V evidence is artifact/heuristic plus native DudeCT until the proof kernels are reduced or BINSEC RISC-V solver support improves."
 
 [[target]]
 name = "thumbv6m-none-eabi"
@@ -3061,10 +3115,9 @@ backend = "llvm"
 linker = "none-or-platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "Bare-metal targets are artifact/heuristic CT lanes in this workflow; no native physical DudeCT runner exists for this target."
+physical_timing_reason = "Bare-metal targets use artifact/heuristic CT evidence; no native physical DudeCT environment exists for this target."
 binsec = "unsupported"
-binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness in this workflow."
-ci = "artifact-only"
+binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness."
 
 [[target]]
 name = "riscv32imac-unknown-none-elf"
@@ -3073,10 +3126,9 @@ backend = "llvm"
 linker = "none-or-platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "Bare-metal targets are artifact/heuristic CT lanes in this workflow; no native physical DudeCT runner exists for this target."
+physical_timing_reason = "Bare-metal targets use artifact/heuristic CT evidence; no native physical DudeCT environment exists for this target."
 binsec = "unsupported"
-binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness in this workflow."
-ci = "artifact-only"
+binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness."
 
 [[target]]
 name = "aarch64-unknown-none"
@@ -3085,10 +3137,9 @@ backend = "llvm"
 linker = "none-or-platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "Bare-metal targets are artifact/heuristic CT lanes in this workflow; no native physical DudeCT runner exists for this target."
+physical_timing_reason = "Bare-metal targets use artifact/heuristic CT evidence; no native physical DudeCT environment exists for this target."
 binsec = "unsupported"
-binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness in this workflow."
-ci = "artifact-only"
+binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness."
 
 [[target]]
 name = "x86_64-unknown-none"
@@ -3097,10 +3148,9 @@ backend = "llvm"
 linker = "none-or-platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "Bare-metal targets are artifact/heuristic CT lanes in this workflow; no native physical DudeCT runner exists for this target."
+physical_timing_reason = "Bare-metal targets use artifact/heuristic CT evidence; no native physical DudeCT environment exists for this target."
 binsec = "unsupported"
-binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness in this workflow."
-ci = "artifact-only"
+binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness."
 
 [[target]]
 name = "wasm32-unknown-unknown"
@@ -3109,10 +3159,9 @@ backend = "llvm"
 linker = "rust-lld-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "WASM targets are artifact/heuristic CT lanes in this workflow; native physical DudeCT timing requires a separate WASM host/runtime policy."
+physical_timing_reason = "WASM targets use artifact/heuristic CT evidence; native physical DudeCT timing requires a separate WASM host/runtime policy."
 binsec = "unsupported"
-binsec_reason = "WASM targets do not run the native Linux BINSEC executable harness in this workflow."
-ci = "artifact-only"
+binsec_reason = "WASM targets do not run the native Linux BINSEC executable harness."
 
 [[target]]
 name = "wasm32-wasip1"
@@ -3121,10 +3170,9 @@ backend = "llvm"
 linker = "rust-lld-unpinned"
 claim = "ct-intended"
 physical_timing = "unsupported"
-physical_timing_reason = "WASM targets are artifact/heuristic CT lanes in this workflow; native physical DudeCT timing requires a separate WASM host/runtime policy."
+physical_timing_reason = "WASM targets use artifact/heuristic CT evidence; native physical DudeCT timing requires a separate WASM host/runtime policy."
 binsec = "unsupported"
-binsec_reason = "WASM targets do not run the native Linux BINSEC executable harness in this workflow."
-ci = "artifact-only"
+binsec_reason = "WASM targets do not run the native Linux BINSEC executable harness."
 
 [[operation]]
 id = "secrets.fixed_owner_equality"
@@ -3655,6 +3703,46 @@ evidence = [
 limitation = "Exact assembly and portable lowering are target-specific evidence. Shared-secret comparison returns CtDecision; downstream declassification and codegen remain outside this operation's release evidence."
 
 [[operation]]
+id = "kx.p256_ecdh_key_agreement"
+api = [
+  "rscrypto::P256EphemeralSecret::{try_generate_with,try_generate,public_key,diffie_hellman}",
+  "rscrypto::P256PublicKey::{from_sec1_bytes,to_sec1_bytes,as_sec1_bytes}",
+  "rscrypto::P256SharedSecret::{as_bytes,ct_eq,expose_secret}",
+]
+features = ["p256-ecdh", "getrandom"]
+targets = [
+  "all-supported",
+  "portable implementation",
+  "Apple AArch64 assembly where selected",
+  "Linux AArch64 assembly where selected",
+  "Linux x86-64 assembly where selected",
+  "Windows x86-64 assembly where selected",
+]
+secret_inputs = ["ephemeral scalar", "projective scalar-multiplication state", "shared secret"]
+public_inputs = ["canonical uncompressed peer SEC1 point", "entropy source outcome", "sampling attempt count"]
+variable_time_components = [
+  "caller entropy acquisition",
+  "bounded scalar rejection before public derivation or agreement",
+  "public SEC1 shape and curve validation before private agreement",
+]
+permitted_leakage = [
+  "public key",
+  "peer-key validity",
+  "entropy failure",
+  "scalar-sampling exhaustion",
+  "caller-authorized shared-secret exposure",
+]
+claim = "ct-intended"
+evidence = [
+  "primitive:kx.p256_ecdh",
+  "harness:ct_entry_p256_ecdh_public_key",
+  "harness:ct_entry_p256_ecdh_agree",
+  "dudect:p256_ecdh_public_key_fixed_vs_random_scalar",
+  "dudect:p256_ecdh_agree_fixed_vs_random_scalar",
+]
+limitation = "The claim begins only after a valid scalar has been sampled and, for agreement, after the peer SEC1 point has passed public validation. Exact portable and assembly lowering are target-specific evidence. Physical Graviton3, Graviton4, and Intel Granite Rapids evidence covers the applicable Linux ELF backend on those CPUs. Windows x86-64 has native differential and performance evidence, while its exact-final-source timing artifact and other unavailable native rows remain pending."
+
+[[operation]]
 id = "kem.mlkem512"
 api = [
   "rscrypto::MlKem512::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}",
@@ -3794,10 +3882,34 @@ evidence = ["primitive:signature.ed25519_sign", "harness:ct_entry_ed25519_sign"]
 limitation = "Target-specific fixed-base kernels require their own release artifacts; source structure is not proof."
 
 [[operation]]
+id = "signature.ecdsa_public_derivation"
+api = [
+  "rscrypto::EcdsaP{256,384}SecretKey::try_public_key_blinded_with",
+  "rscrypto::EcdsaP{256,384}Keypair::try_from_secret_key_blinded_with",
+]
+features = ["ecdsa-p256", "ecdsa-p384"]
+targets = ["all-supported", "target-selected fixed-base backend"]
+secret_inputs = ["private scalar", "blinding input", "derivation intermediates"]
+public_inputs = ["backend capabilities"]
+variable_time_components = [
+  "public backend dispatch",
+  "external blinding callback and random-source failure",
+]
+permitted_leakage = ["public key", "backend", "random-source failure"]
+claim = "ct-intended"
+evidence = [
+  "primitive:signature.ecdsa_p256_public_derivation",
+  "primitive:signature.ecdsa_p384_public_derivation",
+  "harness:ct_entry_ecdsa_p256_public_key",
+  "harness:ct_entry_ecdsa_p384_public_key",
+]
+limitation = "Blinding callbacks and entropy-source behavior are external and complete before private scalar arithmetic. Exact arithmetic kernels require target-specific release evidence."
+
+[[operation]]
 id = "signature.ecdsa_signing"
 api = [
-  "rscrypto::EcdsaP{256,384}SecretKey::{try_sign,try_sign_blinded}",
-  "rscrypto::EcdsaP{256,384}Keypair::{try_sign,try_sign_blinded}",
+  "rscrypto::EcdsaP{256,384}SecretKey::{try_sign,try_sign_blinded_with}",
+  "rscrypto::EcdsaP{256,384}Keypair::{try_sign,try_sign_blinded_with}",
 ]
 features = ["ecdsa-p256", "ecdsa-p384", "getrandom", "serde-secrets"]
 targets = ["all-supported", "target-selected arithmetic backend"]
@@ -3806,9 +3918,17 @@ public_inputs = ["message", "public key", "backend capabilities"]
 variable_time_components = [
   "public message-length hashing",
   "public backend dispatch",
+  "external blinding callback and random-source failure",
   "opaque invalid-scalar/signing failure",
 ]
-permitted_leakage = ["message length", "public key", "signature", "backend", "opaque failure"]
+permitted_leakage = [
+  "message length",
+  "public key",
+  "signature",
+  "backend",
+  "random-source failure",
+  "opaque signing failure",
+]
 claim = "ct-intended"
 evidence = [
   "primitive:signature.ecdsa_p256_sign",
@@ -3816,7 +3936,7 @@ evidence = [
   "harness:ct_entry_ecdsa_p256_sign",
   "harness:ct_entry_ecdsa_p384_sign",
 ]
-limitation = "Blinding closures and entropy-source behavior are external. Exact arithmetic kernels require target-specific release evidence."
+limitation = "Blinding callbacks and entropy-source behavior are external and complete before message hashing or private scalar arithmetic. Exact arithmetic kernels require target-specific release evidence."
 
 [[operation]]
 id = "signature.public_parse_serialize_and_verify"
@@ -4191,6 +4311,36 @@ status = "covered"
 symbols = ["ct_entry_x25519"]
 
 [[primitive]]
+id = "kx.p256_ecdh"
+tier = "A"
+claim = "ct-intended"
+features = ["p256-ecdh"]
+variants = ["PublicDerivation", "Agreement"]
+entrypoints = [
+  "P256EphemeralSecret::public_key",
+  "P256EphemeralSecret::diffie_hellman",
+]
+secrets = ["ephemeral_scalar", "projective_state", "shared_secret"]
+public = [
+  "validated_peer_public_key",
+  "public_key",
+  "entropy_failure",
+  "scalar_sampling_exhaustion",
+]
+may_leak = [
+  "public_key",
+  "peer_key_validity_before_private_work",
+  "entropy_failure_before_private_work",
+  "sampling_exhaustion_before_private_work",
+]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+notes = "Scalar sampling and peer parsing are retained in linked harness roots for reachability but are explicitly outside the fixed-work public-derivation and agreement claim."
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_p256_ecdh_public_key", "ct_entry_p256_ecdh_agree"]
+
+[[primitive]]
 id = "kem.mlkem512"
 tier = "A"
 claim = "ct-intended"
@@ -4337,11 +4487,30 @@ status = "covered"
 symbols = ["ct_entry_ed25519_sign"]
 
 [[primitive]]
+id = "signature.ecdsa_p256_public_derivation"
+tier = "A"
+claim = "ct-intended"
+features = ["ecdsa-p256"]
+entrypoints = [
+  "EcdsaP256SecretKey::try_public_key_blinded_with",
+  "EcdsaP256Keypair::try_from_secret_key_blinded_with",
+]
+secrets = ["secret_key", "coordinate_blinding", "projective_intermediates"]
+public = ["public_key"]
+may_leak = ["public_key", "external_random_source_failure"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+notes = "The external blinding callback completes before private scalar arithmetic and is outside the CT claim. Portable and target-selected fixed-base derivation share the same public result. Secret-derived public keys use constant-work verification-table precomputation; parsing an already-public SEC1 key retains its variable-time public precomputation path."
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_ecdsa_p256_public_key"]
+
+[[primitive]]
 id = "signature.ecdsa_p256_sign"
 tier = "A"
 claim = "ct-intended"
 features = ["ecdsa-p256"]
-entrypoints = ["EcdsaP256SecretKey::try_sign_blinded", "EcdsaP256Keypair::try_sign_blinded"]
+entrypoints = ["EcdsaP256SecretKey::try_sign_blinded_with", "EcdsaP256Keypair::try_sign_blinded_with"]
 secrets = ["secret_key", "nonce_material", "nonce_scalar", "private_scalar", "coordinate_blinding"]
 public = ["message", "message_length", "signature"]
 may_leak = ["message_length", "signature"]
@@ -4353,11 +4522,30 @@ status = "covered"
 symbols = ["ct_entry_ecdsa_p256_sign"]
 
 [[primitive]]
+id = "signature.ecdsa_p384_public_derivation"
+tier = "A"
+claim = "ct-intended"
+features = ["ecdsa-p384"]
+entrypoints = [
+  "EcdsaP384SecretKey::try_public_key_blinded_with",
+  "EcdsaP384Keypair::try_from_secret_key_blinded_with",
+]
+secrets = ["secret_key", "coordinate_blinding", "projective_intermediates"]
+public = ["public_key"]
+may_leak = ["public_key", "external_random_source_failure"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+notes = "The external blinding callback completes before private scalar arithmetic and is outside the CT claim. Portable and target-selected fixed-base derivation share the same public result. Secret-derived public keys use constant-work verification-table precomputation; parsing an already-public SEC1 key retains its variable-time public precomputation path."
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_ecdsa_p384_public_key"]
+
+[[primitive]]
 id = "signature.ecdsa_p384_sign"
 tier = "A"
 claim = "ct-intended"
 features = ["ecdsa-p384"]
-entrypoints = ["EcdsaP384SecretKey::try_sign_blinded", "EcdsaP384Keypair::try_sign_blinded"]
+entrypoints = ["EcdsaP384SecretKey::try_sign_blinded_with", "EcdsaP384Keypair::try_sign_blinded_with"]
 secrets = ["secret_key", "nonce_material", "nonce_scalar", "private_scalar", "coordinate_blinding"]
 public = ["message", "message_length", "signature"]
 may_leak = ["message_length", "signature"]

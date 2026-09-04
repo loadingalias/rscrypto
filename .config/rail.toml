@@ -13,7 +13,6 @@ targets = [
   "thumbv6m-none-eabi",
   "wasm32-unknown-unknown",
   "wasm32-wasip1",
-  "x86_64-apple-darwin",
   "x86_64-pc-windows-msvc",
   "x86_64-unknown-linux-gnu",
   "x86_64-unknown-linux-musl",
@@ -33,85 +32,6 @@ msrv_policy = { mode = "disabled" } # Cargo.toml owns the tested package MSRV.
 # Cargo Rail 0.25 cannot distinguish expected `compile_fail` doctest invocations from compiler failures.
 enabled = false
 consumer_scope = "open" # Published library: external consumers remain part of the visibility boundary.
-
-[release]
-tag_format = "{prefix}{version}"
-sign_tags = true
-pre_1_breaking_bump = "minor"
-# Before 1.0, reviewed minor releases may deliberately replace unstable API
-# shapes. Re-enable compiler-backed SemVer enforcement when rscrypto adopts a
-# stable compatibility contract.
-semver_check = "off"
-remote_effects = "push" # Push the signed tag; its workflow owns the forge release.
-registry_publication = "none" # crates.io Trusted Publishing is available only inside that workflow.
-auxiliary_cargo_manifests = [
-  "fuzz-packages/aead-aegis256/Cargo.toml",
-  "fuzz-packages/aead-aes-siv-cmac256/Cargo.toml",
-  "fuzz-packages/aead-aes128gcm/Cargo.toml",
-  "fuzz-packages/aead-aes128gcmsiv/Cargo.toml",
-  "fuzz-packages/aead-aes256gcm/Cargo.toml",
-  "fuzz-packages/aead-aes256gcmsiv/Cargo.toml",
-  "fuzz-packages/aead-ascon128/Cargo.toml",
-  "fuzz-packages/aead-chacha20poly1305/Cargo.toml",
-  "fuzz-packages/aead-header-protection/Cargo.toml",
-  "fuzz-packages/aead-nonce-counter/Cargo.toml",
-  "fuzz-packages/aead-xchacha20poly1305/Cargo.toml",
-  "fuzz-packages/auth-argon2/Cargo.toml",
-  "fuzz-packages/auth-ed25519/Cargo.toml",
-  "fuzz-packages/auth-hkdf/Cargo.toml",
-  "fuzz-packages/auth-hmac/Cargo.toml",
-  "fuzz-packages/auth-kmac256/Cargo.toml",
-  "fuzz-packages/auth-pbkdf2/Cargo.toml",
-  "fuzz-packages/auth-phc/Cargo.toml",
-  "fuzz-packages/auth-scrypt/Cargo.toml",
-  "fuzz-packages/auth-x25519/Cargo.toml",
-  "fuzz-packages/checksums-crc16/Cargo.toml",
-  "fuzz-packages/checksums-crc24/Cargo.toml",
-  "fuzz-packages/checksums-crc32/Cargo.toml",
-  "fuzz-packages/checksums-crc64/Cargo.toml",
-  "fuzz-packages/fast-rapidhash/Cargo.toml",
-  "fuzz-packages/fast-xxh3/Cargo.toml",
-  "fuzz-packages/hash-ascon/Cargo.toml",
-  "fuzz-packages/hash-blake2/Cargo.toml",
-  "fuzz-packages/hash-blake3/Cargo.toml",
-  "fuzz-packages/hash-sha2/Cargo.toml",
-  "fuzz-packages/hash-sha3/Cargo.toml",
-  "fuzz-packages/hash-websocket-sha1/Cargo.toml",
-  "fuzz-packages/surface-hex-parse/Cargo.toml",
-  "fuzz-packages/traits-io/Cargo.toml",
-  "fuzz/Cargo.toml",
-  "tools/ct-binsec-harness/Cargo.toml",
-  "tools/ct-dudect/Cargo.toml",
-  "tools/ct-harness/Cargo.toml",
-  "tools/wasm-runtime-vectors/Cargo.toml",
-]
-
-[release.changelog]
-path = "CHANGELOG.md"
-relative_to = "workspace"
-
-[plan.work."policy.actions"]
-scope = "repository"
-paths = [
-  ".config/ci-tool-archives.tsv",
-  ".config/feature-matrix.json",
-  ".config/fuzz-matrix.json",
-  ".config/miri-matrix.json",
-  ".config/rail.toml",
-  ".github/**",
-  "justfile",
-  "scripts/check/feature-contracts.sh",
-  "scripts/ci/**",
-  "scripts/lib/ci-tool-integrity.sh",
-  "scripts/lib/feature-profiles.sh",
-  "scripts/lib/rail-plan.sh",
-  "scripts/test/fuzz-contracts.sh",
-  "scripts/test/miri-contracts.sh",
-  "scripts/test/test-fuzz-asan.sh",
-  "scripts/test/test-fuzz-scheduler-test.sh",
-  "scripts/test/test-fuzz.sh",
-  "scripts/test/test-miri.sh",
-]
 
 [plan.work."policy.repository"]
 scope = "repository"
@@ -145,7 +65,6 @@ paths = [
   "build.rs",
   "rust-toolchain.toml",
   "scripts/check/feature-contracts.sh",
-  "scripts/ci/feature-contracts-test.sh",
   "scripts/lib/feature-profiles.sh",
   "scripts/lib/rail-plan.sh",
   "src/**",
@@ -192,33 +111,6 @@ paths = [
   "examples/**",
   "scripts/test/test-examples.sh",
 ]
-
-[plan.work."targets.platforms"]
-scope = "variants"
-config = ["targets"]
-paths = [
-  ".cargo/**",
-  ".config/toolchains.toml",
-  "Cargo.toml",
-  "rust-toolchain.toml",
-  "scripts/ci/target-contracts.sh",
-  "scripts/lib/target-matrix.sh",
-  "scripts/lib/targets.sh",
-  "src/backend/**",
-  "src/**/dispatch*.rs",
-  "src/**/kernel_table.rs",
-  "src/**/mod.rs",
-  "src/lib.rs",
-  "src/macros.rs",
-  "src/platform/caps.rs",
-  "src/platform/detect.rs",
-  "src/platform/detect/cache_override.rs",
-  "src/platform/detect/compile_time.rs",
-  "src/platform/detect/tests.rs",
-  "src/platform/mod.rs",
-  "src/platform/target_matrix.rs",
-]
-variant_catalog = ".config/target-matrix.json"
 
 [plan.work."assurance.miri"]
 scope = "variants"
@@ -313,7 +205,6 @@ paths = [
   "fuzz/Cargo.toml",
   "fuzz-packages/**/Cargo.lock",
   "fuzz-packages/**/Cargo.toml",
-  "scripts/ci/install-tools.sh",
   "tools/**/Cargo.lock",
   "tools/**/Cargo.toml",
 ]

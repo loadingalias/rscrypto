@@ -2,8 +2,89 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-TARGET_DIR="$ROOT/target/zeroize-evidence"
 MANIFEST="$ROOT/Cargo.toml"
+SCOPE="all"
+
+if [[ $# -gt 0 ]]; then
+  if [[ $# -ne 2 || "$1" != "--primitive" || "$2" != "p256-ecdh" ]]; then
+    echo "usage: scripts/check/zeroize-evidence.sh [--primitive p256-ecdh]" >&2
+    exit 2
+  fi
+  SCOPE="$2"
+fi
+
+TARGET_DIR="$ROOT/target/zeroize-evidence"
+FEATURES="alloc,aegis256,aes-gcm,aes-siv,ascon-aead,blake3,chacha20poly1305,ecdsa-p256,ecdsa-p384,hkdf,hmac,hmac-sha3,ml-kem,p256-ecdh,parallel,rsa,diag"
+SYMBOLS=(
+  diag_zeroize_fixed_stack
+  diag_zeroize_fixed_move
+  diag_zeroize_fixed_fill_error
+  diag_zeroize_early_return
+  diag_zeroize_variable_heap
+  diag_zeroize_variable_fill_error
+  diag_zeroize_secret_string
+  diag_zeroize_hex_success
+  diag_zeroize_hex_error
+  diag_zeroize_blake3_drop
+  diag_zeroize_blake3_reuse
+  diag_zeroize_blake3_xof_move
+  diag_zeroize_blake3_xof_consume
+  diag_zeroize_blake3_thread_scratch
+  diag_zeroize_blake3_parallel_scratch
+  diag_zeroize_hmac_sha256_finalize
+  diag_zeroize_hmac_sha3_finalize
+  diag_rsa_caller_random_signing_success
+  diag_rsa_caller_random_signing_error
+  diag_hkdf_sha256_derive_portable
+  diag_hkdf_sha384_derive_portable
+  diag_hkdf_sha512_derive_portable
+  diag_poly1305_block_portable_digest
+  diag_ascon_aead128_tag_portable
+  diag_aegis256_update_portable
+  diag_aes128gcm_ghash
+  diag_aes256gcm_ghash
+  diag_zeroize_aes128_header_protection
+  diag_zeroize_aes256_header_protection
+  diag_zeroize_chacha20_header_protection
+  diag_zeroize_aes_siv_cmac256
+  diag_zeroize_ecdsa_p256_public_blinding
+  diag_zeroize_ecdsa_p256_signing_blinding
+  diag_zeroize_ecdsa_p256_safegcd_scratch
+  diag_zeroize_p256_ecdh_generation
+  diag_zeroize_p256_ecdh_agreement
+  diag_zeroize_ecdsa_p384_public_blinding
+  diag_zeroize_ecdsa_p384_signing_blinding
+  diag_zeroize_ecdsa_p384_safegcd_scratch
+  diag_zeroize_mlkem_sha3_512
+  diag_zeroize_mlkem_shake256_scalar
+  diag_zeroize_mlkem_shake256_pair
+  diag_zeroize_mlkem_shake256_quad
+)
+if [[ "$SCOPE" == "p256-ecdh" ]]; then
+  TARGET_DIR="$TARGET_DIR/p256-ecdh"
+  FEATURES="p256-ecdh,diag"
+  SYMBOLS=(diag_zeroize_p256_ecdh_generation diag_zeroize_p256_ecdh_agreement)
+fi
+
+function_assembly() {
+  local symbol="$1"
+  awk -v plain="$symbol:" -v apple="_$symbol:" '
+    $0 == plain || $0 == apple { found = 1 }
+    found && emitted && $0 ~ /^[^[:space:].Ll][^:]*:$/ { exit }
+    found { print }
+    found { emitted = 1 }
+  '
+}
+
+function_assembly_containing() {
+  local fragment="$1"
+  awk -v fragment="$fragment" '
+    $0 ~ /^[^[:space:].Ll][^:]*:$/ && index($0, fragment) { found = 1 }
+    found && emitted && $0 ~ /^[^[:space:].Ll][^:]*:$/ { exit }
+    found { print }
+    found { emitted = 1 }
+  '
+}
 
 # Assembly evidence is a deliberate cold baseline; the custom target directory
 # would bypass reuse, and the explicit switch keeps that boundary auditable.
@@ -13,7 +94,7 @@ CARGO_RAIL_CACHE=off CARGO_TARGET_DIR="$TARGET_DIR" cargo rustc \
   --release \
   --lib \
   --no-default-features \
-  --features alloc,aegis256,aes-gcm,aes-siv,ascon-aead,blake3,chacha20poly1305,ecdsa-p256,ecdsa-p384,hkdf,hmac,hmac-sha3,ml-kem,parallel,rsa,diag \
+  --features "$FEATURES" \
   -- \
   -Ccodegen-units=1 \
   --emit=mir,llvm-ir,asm
@@ -41,41 +122,7 @@ if [[ -z "$LLVM_IR" || -z "$MIR" || -z "$ASSEMBLY" ]]; then
   exit 1
 fi
 
-for symbol in \
-  diag_zeroize_fixed_stack \
-  diag_zeroize_fixed_move \
-  diag_zeroize_early_return \
-  diag_zeroize_variable_heap \
-  diag_zeroize_hex_success \
-  diag_zeroize_hex_error \
-  diag_zeroize_blake3_drop \
-  diag_zeroize_blake3_reuse \
-  diag_zeroize_blake3_xof_move \
-  diag_zeroize_blake3_xof_consume \
-  diag_zeroize_blake3_thread_scratch \
-  diag_zeroize_blake3_parallel_scratch \
-  diag_zeroize_hmac_sha256_finalize \
-  diag_zeroize_hmac_sha3_finalize \
-  diag_rsa_caller_random_signing_success \
-  diag_rsa_caller_random_signing_error \
-  diag_hkdf_sha256_derive_portable \
-  diag_hkdf_sha384_derive_portable \
-  diag_hkdf_sha512_derive_portable \
-  diag_poly1305_block_portable_digest \
-  diag_ascon_aead128_tag_portable \
-  diag_aegis256_update_portable \
-  diag_aes128gcm_ghash \
-  diag_aes256gcm_ghash \
-  diag_zeroize_aes128_header_protection \
-  diag_zeroize_aes256_header_protection \
-  diag_zeroize_chacha20_header_protection \
-  diag_zeroize_aes_siv_cmac256 \
-  diag_zeroize_ecdsa_p256_safegcd_scratch \
-  diag_zeroize_ecdsa_p384_safegcd_scratch \
-  diag_zeroize_mlkem_sha3_512 \
-  diag_zeroize_mlkem_shake256_scalar \
-  diag_zeroize_mlkem_shake256_pair \
-  diag_zeroize_mlkem_shake256_quad; do
+for symbol in "${SYMBOLS[@]}"; do
   if ! grep -q "@$symbol" "$LLVM_IR"; then
     echo "zeroize LLVM evidence missing symbol: $symbol" >&2
     exit 1
@@ -90,41 +137,62 @@ for symbol in \
   fi
 done
 
-for symbol in \
-  diag_zeroize_fixed_stack \
-  diag_zeroize_fixed_move \
-  diag_zeroize_early_return \
-  diag_zeroize_variable_heap \
-  diag_zeroize_hex_success \
-  diag_zeroize_hex_error \
-  diag_zeroize_blake3_drop \
-  diag_zeroize_blake3_reuse \
-  diag_zeroize_blake3_xof_move \
-  diag_zeroize_blake3_xof_consume \
-  diag_zeroize_blake3_thread_scratch \
-  diag_zeroize_blake3_parallel_scratch \
-  diag_zeroize_hmac_sha256_finalize \
-  diag_zeroize_hmac_sha3_finalize \
-  diag_rsa_caller_random_signing_success \
-  diag_rsa_caller_random_signing_error \
-  diag_hkdf_sha256_derive_portable \
-  diag_hkdf_sha384_derive_portable \
-  diag_hkdf_sha512_derive_portable \
-  diag_poly1305_block_portable_digest \
-  diag_ascon_aead128_tag_portable \
-  diag_aegis256_update_portable \
-  diag_aes128gcm_ghash \
-  diag_aes256gcm_ghash \
-  diag_zeroize_aes128_header_protection \
-  diag_zeroize_aes256_header_protection \
-  diag_zeroize_chacha20_header_protection \
-  diag_zeroize_aes_siv_cmac256 \
-  diag_zeroize_ecdsa_p256_safegcd_scratch \
-  diag_zeroize_ecdsa_p384_safegcd_scratch \
-  diag_zeroize_mlkem_sha3_512 \
-  diag_zeroize_mlkem_shake256_scalar \
-  diag_zeroize_mlkem_shake256_pair \
-  diag_zeroize_mlkem_shake256_quad; do
+# The public P-256 ECDH wrappers remain out of line in release evidence, so
+# checking only the diagnostic caller would miss their production owners. Pin
+# the target-selected LLVM cleanup shape here. Portable public derivation clears
+# two replaced projective states, the final projective state, and the scalar;
+# portable agreement clears four doubled states, the added state, the final
+# state, the scalar, and the consumed ephemeral secret. Native wrappers instead
+# clear their scalar and output owners in Rust. Cleanup inside the embedded
+# routines remains owned by the deterministic ASM provenance gate.
+P256_ECDH_PUBLIC_IR="$(sed -n '/define .*p256_ecdh.*10public_key(/,/^}/p' "$LLVM_IR")"
+P256_ECDH_AGREEMENT_IR="$(sed -n '/define .*p256_ecdh.*14diffie_hellman(/,/^}/p' "$LLVM_IR")"
+HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+P256_ECDH_PUBLIC_NATIVE=false
+P256_ECDH_AGREEMENT_NATIVE=false
+case "$HOST_TRIPLE" in
+  aarch64-apple-darwin | aarch64-*-linux-*)
+    P256_ECDH_PUBLIC_NATIVE=true
+    P256_ECDH_AGREEMENT_NATIVE=true
+    ;;
+  x86_64-*-linux-* | x86_64-pc-windows-msvc)
+    P256_ECDH_PUBLIC_NATIVE=true
+    P256_ECDH_AGREEMENT_NATIVE=true
+    ;;
+esac
+
+if [[ "$P256_ECDH_PUBLIC_NATIVE" == true ]]; then
+  if [[ -z "$P256_ECDH_PUBLIC_IR" ]] || \
+    [[ "$P256_ECDH_PUBLIC_IR" != *"rscrypto_p256_scalarmulbase"* ]] || \
+    [[ "$(grep -c 'store volatile i64 0' <<<"$P256_ECDH_PUBLIC_IR" || true)" -lt 4 ]] || \
+    [[ "$(grep -c 'fence syncscope("singlethread") seq_cst' <<<"$P256_ECDH_PUBLIC_IR" || true)" -lt 1 ]]; then
+    echo "zeroize release evidence does not clear the native P-256 ECDH public-derivation scalar" >&2
+    exit 1
+  fi
+elif [[ -z "$P256_ECDH_PUBLIC_IR" ]] || \
+  [[ "$(grep -c 'store volatile i64 0' <<<"$P256_ECDH_PUBLIC_IR" || true)" -lt 40 ]] || \
+  [[ "$(grep -c 'fence syncscope("singlethread") seq_cst' <<<"$P256_ECDH_PUBLIC_IR" || true)" -lt 4 ]]; then
+  echo "zeroize release evidence does not clear every portable P-256 ECDH public-derivation projective owner and scalar" >&2
+  exit 1
+fi
+
+if [[ "$P256_ECDH_AGREEMENT_NATIVE" == true ]]; then
+  if [[ -z "$P256_ECDH_AGREEMENT_IR" ]] || \
+    [[ "$P256_ECDH_AGREEMENT_IR" != *"rscrypto_p256_scalarmul_alt"* ]] || \
+    [[ "$(grep -c 'store volatile i64 0' <<<"$P256_ECDH_AGREEMENT_IR" || true)" -lt 13 ]] || \
+    [[ "$(grep -c 'store volatile i8 0' <<<"$P256_ECDH_AGREEMENT_IR" || true)" -lt 2 ]] || \
+    [[ "$(grep -c 'fence syncscope("singlethread") seq_cst' <<<"$P256_ECDH_AGREEMENT_IR" || true)" -lt 3 ]]; then
+    echo "zeroize release evidence does not clear the native P-256 ECDH scalar, output, and consumed secret" >&2
+    exit 1
+  fi
+elif [[ -z "$P256_ECDH_AGREEMENT_IR" ]] || \
+  [[ "$(grep -c 'store volatile i64 0' <<<"$P256_ECDH_AGREEMENT_IR" || true)" -lt 77 ]] || \
+  [[ "$(grep -c 'fence syncscope("singlethread") seq_cst' <<<"$P256_ECDH_AGREEMENT_IR" || true)" -lt 8 ]]; then
+  echo "zeroize release evidence does not clear every portable P-256 ECDH agreement projective owner, scalar, and consumed secret" >&2
+  exit 1
+fi
+
+for symbol in "${SYMBOLS[@]}"; do
   FUNCTION_IR="$(sed -n "/define .*@$symbol(/,/^}/p" "$LLVM_IR")"
   VOLATILE_STORES="$(grep -c 'store volatile .* 0' <<<"$FUNCTION_IR" || true)"
   if [[ "$VOLATILE_STORES" -lt 1 ]]; then
@@ -132,6 +200,37 @@ for symbol in \
     exit 1
   fi
 done
+
+P256_ECDH_PUBLIC_ASSEMBLY="$(function_assembly_containing 'P256EphemeralSecret10public_key' <"$ASSEMBLY")"
+P256_ECDH_AGREEMENT_ASSEMBLY="$(function_assembly_containing 'P256EphemeralSecret14diffie_hellman' <"$ASSEMBLY")"
+if [[ -z "$P256_ECDH_PUBLIC_ASSEMBLY" || -z "$P256_ECDH_AGREEMENT_ASSEMBLY" ]]; then
+  echo "zeroize assembly evidence is missing the P-256 ECDH production operations" >&2
+  exit 1
+fi
+
+AARCH64_ZERO_MEMORY_PATTERN='^[[:space:]]*st(p|u?r)(b|h)?[[:space:]]+(wzr|xzr)(,[[:space:]]*(wzr|xzr))?,[[:space:]]*\[[^]]+\]'
+X86_ZERO_MEMORY_PATTERN='^[[:space:]]*mov[bql]?[[:space:]]+\$0,[[:space:]]*[[:alnum:]_+.-]*\([^)]*%[^)]*\)'
+case "${HOST_TRIPLE%%-*}" in
+  aarch64)
+    if ! grep -Eq "$AARCH64_ZERO_MEMORY_PATTERN" <<<"$P256_ECDH_PUBLIC_ASSEMBLY" || \
+      ! grep -Eq "$AARCH64_ZERO_MEMORY_PATTERN" <<<"$P256_ECDH_AGREEMENT_ASSEMBLY"; then
+      echo "zeroize assembly evidence has no P-256 ECDH production-state wipe" >&2
+      exit 1
+    fi
+    ;;
+  x86_64)
+    if ! grep -Eq "$X86_ZERO_MEMORY_PATTERN" <<<"$P256_ECDH_PUBLIC_ASSEMBLY" || \
+      ! grep -Eq "$X86_ZERO_MEMORY_PATTERN" <<<"$P256_ECDH_AGREEMENT_ASSEMBLY"; then
+      echo "zeroize assembly evidence has no P-256 ECDH production-state wipe" >&2
+      exit 1
+    fi
+    ;;
+esac
+
+if [[ "$SCOPE" == "p256-ecdh" ]]; then
+  echo "zeroize compiler evidence ok: p256-ecdh"
+  exit 0
+fi
 
 for symbol in \
   diag_zeroize_aes128_header_protection \
@@ -527,19 +626,6 @@ if [[ "$(grep -c '^[[:space:]]*store volatile .* 0' <<<"$RSA_SECRET_DROP_IR" || 
   exit 1
 fi
 
-function_assembly() {
-  local symbol="$1"
-  awk -v plain="$symbol:" -v apple="_$symbol:" '
-    $0 == plain || $0 == apple { found = 1 }
-    found && emitted && $0 ~ /^[^[:space:].Ll][^:]*:$/ { exit }
-    found { print }
-    found { emitted = 1 }
-  '
-}
-
-AARCH64_ZERO_MEMORY_PATTERN='^[[:space:]]*st(p|u?r)(b|h)?[[:space:]]+(wzr|xzr)(,[[:space:]]*(wzr|xzr))?,[[:space:]]*\[[^]]+\]'
-X86_ZERO_MEMORY_PATTERN='^[[:space:]]*mov[bql]?[[:space:]]+\$0,[[:space:]]*[[:alnum:]_+.-]*\([^)]*%[^)]*\)'
-
 ordered_assembly_cleanup() {
   local body="$1"
   local zero_pattern="$2"
@@ -547,12 +633,16 @@ ordered_assembly_cleanup() {
   local barrier_line
   local dealloc_line
 
-  zero_line="$(grep -nE "$zero_pattern" <<<"$body" | tail -n 1 | cut -d: -f1)"
   barrier_line="$(grep -n 'MEMBARRIER' <<<"$body" | head -n 1 | cut -d: -f1)"
+  zero_line="$(
+    grep -nE "$zero_pattern" <<<"$body" |
+      cut -d: -f1 |
+      awk -v barrier="$barrier_line" '$1 < barrier { line = $1 } END { print line }'
+  )"
   dealloc_line="$(
     grep -nE '^[[:space:]]*(b|bl|call|callq|jmp|jmpq)[[:space:]].*__rust_dealloc' <<<"$body" |
-      head -n 1 |
-      cut -d: -f1
+      cut -d: -f1 |
+      awk -v barrier="$barrier_line" '$1 > barrier { print; exit }'
   )"
 
   [[ -n "$zero_line" && -n "$barrier_line" && -n "$dealloc_line" &&
@@ -603,7 +693,8 @@ fi
 for fixture in \
   $'; strb wzr, [x0]\n;MEMBARRIER\nb __rust_dealloc' \
   $'# movq $0, (%rax)\n#MEMBARRIER\njmp __rust_dealloc' \
-  $'movl $0, %eax\n#MEMBARRIER\njmp __rust_dealloc'; do
+  $'movl $0, %eax\n#MEMBARRIER\njmp __rust_dealloc' \
+  $'b __rust_dealloc\nstrb wzr, [x0]\n;MEMBARRIER'; do
   if ordered_assembly_cleanup "$fixture" "$AARCH64_ZERO_MEMORY_PATTERN" || \
     ordered_assembly_cleanup "$fixture" "$X86_ZERO_MEMORY_PATTERN"; then
     echo "zeroize assembly parser accepts a comment or register-only zero" >&2
@@ -612,6 +703,8 @@ for fixture in \
 done
 if ! ordered_assembly_cleanup \
   $'strb wzr, [x0]\n;MEMBARRIER\nb __rust_dealloc' "$AARCH64_ZERO_MEMORY_PATTERN" || \
+  ! ordered_assembly_cleanup \
+    $'strb wzr, [x0]\n;MEMBARRIER\nb __rust_dealloc\nstrb wzr, [x1]' "$AARCH64_ZERO_MEMORY_PATTERN" || \
   ! grep -Eq "$AARCH64_ZERO_MEMORY_PATTERN" <<< $'stur xzr, [x0, #-8]' || \
   ! ordered_assembly_cleanup \
     $'movq $0, 8(%rax)\n#MEMBARRIER\njmp __rust_dealloc' "$X86_ZERO_MEMORY_PATTERN"; then
@@ -619,9 +712,14 @@ if ! ordered_assembly_cleanup \
   exit 1
 fi
 
-HOST_ARCH="$(rustc -vV | sed -n 's/^host: \([^-]*\).*/\1/p')"
+HOST_ARCH="${HOST_TRIPLE%%-*}"
 case "$HOST_ARCH" in
   aarch64)
+    if ! grep -Eq "$AARCH64_ZERO_MEMORY_PATTERN" <<<"$P256_ECDH_PUBLIC_ASSEMBLY" || \
+      ! grep -Eq "$AARCH64_ZERO_MEMORY_PATTERN" <<<"$P256_ECDH_AGREEMENT_ASSEMBLY"; then
+      echo "zeroize assembly evidence has no P-256 ECDH production-state wipe" >&2
+      exit 1
+    fi
     if ! ordered_assembly_cleanup \
       "$RSA_SECRET_DROP_ASSEMBLY" "$AARCH64_ZERO_MEMORY_PATTERN"; then
       echo "zeroize RSA private-key validation assembly does not wipe before deallocation" >&2
@@ -633,9 +731,22 @@ case "$HOST_ARCH" in
       exit 1
     fi
     for symbol in \
+      diag_zeroize_variable_heap \
+      diag_zeroize_variable_fill_error \
+      diag_zeroize_secret_string; do
+      FUNCTION_ASSEMBLY="$(function_assembly "$symbol" <"$ASSEMBLY")"
+      if ! ordered_assembly_cleanup "$FUNCTION_ASSEMBLY" "$AARCH64_ZERO_MEMORY_PATTERN"; then
+        echo "zeroize assembly evidence does not wipe before deallocation in $symbol" >&2
+        exit 1
+      fi
+    done
+    for symbol in \
       diag_zeroize_fixed_move \
+      diag_zeroize_fixed_fill_error \
       diag_zeroize_early_return \
       diag_zeroize_variable_heap \
+      diag_zeroize_variable_fill_error \
+      diag_zeroize_secret_string \
       diag_zeroize_hex_success \
       diag_zeroize_hex_error \
       diag_zeroize_blake3_xof_consume \
@@ -658,7 +769,13 @@ case "$HOST_ARCH" in
       diag_zeroize_aes256_header_protection \
       diag_zeroize_chacha20_header_protection \
       diag_zeroize_aes_siv_cmac256 \
+      diag_zeroize_ecdsa_p256_public_blinding \
+      diag_zeroize_ecdsa_p256_signing_blinding \
       diag_zeroize_ecdsa_p256_safegcd_scratch \
+      diag_zeroize_p256_ecdh_generation \
+      diag_zeroize_p256_ecdh_agreement \
+      diag_zeroize_ecdsa_p384_public_blinding \
+      diag_zeroize_ecdsa_p384_signing_blinding \
       diag_zeroize_ecdsa_p384_safegcd_scratch \
       diag_zeroize_mlkem_sha3_512 \
       diag_zeroize_mlkem_shake256_scalar \
@@ -674,6 +791,11 @@ case "$HOST_ARCH" in
     done
     ;;
   x86_64)
+    if ! grep -Eq "$X86_ZERO_MEMORY_PATTERN" <<<"$P256_ECDH_PUBLIC_ASSEMBLY" || \
+      ! grep -Eq "$X86_ZERO_MEMORY_PATTERN" <<<"$P256_ECDH_AGREEMENT_ASSEMBLY"; then
+      echo "zeroize assembly evidence has no P-256 ECDH production-state wipe" >&2
+      exit 1
+    fi
     if ! ordered_assembly_cleanup \
       "$RSA_SECRET_DROP_ASSEMBLY" "$X86_ZERO_MEMORY_PATTERN"; then
       echo "zeroize RSA private-key validation assembly does not wipe before deallocation" >&2
@@ -685,9 +807,22 @@ case "$HOST_ARCH" in
       exit 1
     fi
     for symbol in \
+      diag_zeroize_variable_heap \
+      diag_zeroize_variable_fill_error \
+      diag_zeroize_secret_string; do
+      FUNCTION_ASSEMBLY="$(function_assembly "$symbol" <"$ASSEMBLY")"
+      if ! ordered_assembly_cleanup "$FUNCTION_ASSEMBLY" "$X86_ZERO_MEMORY_PATTERN"; then
+        echo "zeroize assembly evidence does not wipe before deallocation in $symbol" >&2
+        exit 1
+      fi
+    done
+    for symbol in \
       diag_zeroize_fixed_move \
+      diag_zeroize_fixed_fill_error \
       diag_zeroize_early_return \
       diag_zeroize_variable_heap \
+      diag_zeroize_variable_fill_error \
+      diag_zeroize_secret_string \
       diag_zeroize_hex_success \
       diag_zeroize_hex_error \
       diag_zeroize_blake3_xof_consume \
@@ -710,7 +845,13 @@ case "$HOST_ARCH" in
       diag_zeroize_aes256_header_protection \
       diag_zeroize_chacha20_header_protection \
       diag_zeroize_aes_siv_cmac256 \
+      diag_zeroize_ecdsa_p256_public_blinding \
+      diag_zeroize_ecdsa_p256_signing_blinding \
       diag_zeroize_ecdsa_p256_safegcd_scratch \
+      diag_zeroize_p256_ecdh_generation \
+      diag_zeroize_p256_ecdh_agreement \
+      diag_zeroize_ecdsa_p384_public_blinding \
+      diag_zeroize_ecdsa_p384_signing_blinding \
       diag_zeroize_ecdsa_p384_safegcd_scratch \
       diag_zeroize_mlkem_sha3_512 \
       diag_zeroize_mlkem_shake256_scalar \

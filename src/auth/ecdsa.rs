@@ -805,6 +805,51 @@ impl<E> fmt::Display for EcdsaKeyGenerationError<E> {
 
 impl<E> core::error::Error for EcdsaKeyGenerationError<E> where E: core::error::Error + 'static {}
 
+/// Errors returned by fallible blinded ECDSA signing.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum EcdsaBlindedSigningError<E> {
+  /// The caller-provided random source failed.
+  Random(E),
+  /// The opaque ECDSA signing operation failed.
+  Signing(EcdsaError),
+}
+
+impl<E> EcdsaBlindedSigningError<E> {
+  /// Construct a random-source error.
+  #[inline]
+  #[must_use]
+  pub const fn random(err: E) -> Self {
+    Self::Random(err)
+  }
+
+  /// Construct an ECDSA signing error.
+  #[inline]
+  #[must_use]
+  pub const fn signing(err: EcdsaError) -> Self {
+    Self::Signing(err)
+  }
+}
+
+impl<E> fmt::Debug for EcdsaBlindedSigningError<E> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::Random(_) => f.write_str("Random(..)"),
+      Self::Signing(err) => f.debug_tuple("Signing").field(err).finish(),
+    }
+  }
+}
+
+impl<E> fmt::Display for EcdsaBlindedSigningError<E> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::Random(_) => f.write_str("ECDSA blinding random source failed"),
+      Self::Signing(_) => f.write_str("ECDSA blinded signing failed"),
+    }
+  }
+}
+
+impl<E> core::error::Error for EcdsaBlindedSigningError<E> where E: core::error::Error + 'static {}
+
 /// P-256 ECDSA secret scalar.
 pub struct EcdsaP256SecretKey([u8; Self::LENGTH]);
 
@@ -900,7 +945,7 @@ impl EcdsaP256SecretKey {
   /// Derive the matching P-256 public key.
   #[must_use]
   pub fn public_key(&self) -> EcdsaP256PublicKey {
-    EcdsaP256PublicKey::from_affine(public_key_from_secret_p256(&self.0))
+    EcdsaP256PublicKey::from_secret_affine_ct(public_key_from_secret_p256(&self.0))
   }
 
   /// Derive the matching P-256 public key with caller-supplied blinding.
@@ -908,11 +953,38 @@ impl EcdsaP256SecretKey {
   /// The closure should fill the buffer from a CSPRNG. Blinding does not
   /// change the public key; it randomizes the portable fixed-base scalar and
   /// the internal projective representation used during derivation.
+  #[deprecated(note = "use try_public_key_blinded_with; this compatibility wrapper will be removed after one release")]
   #[must_use]
   pub fn public_key_blinded(&self, fill: impl FnOnce(&mut [u8; 64])) -> EcdsaP256PublicKey {
+    match self.try_public_key_blinded_with(|blind| {
+      fill(blind);
+      Ok::<(), core::convert::Infallible>(())
+    }) {
+      Ok(public) => public,
+      Err(never) => match never {},
+    }
+  }
+
+  /// Try to derive the matching P-256 public key with caller-supplied blinding.
+  ///
+  /// The filler runs against zero-initialized rscrypto-owned storage. If it
+  /// fails after a partial write, the complete blinding buffer is cleared and
+  /// this method returns before private scalar arithmetic begins. Callback
+  /// execution and random-source timing are outside the private arithmetic
+  /// constant-time claim.
+  ///
+  /// # Errors
+  ///
+  /// Returns the caller's error unchanged if the blinding source fails.
+  pub fn try_public_key_blinded_with<E>(
+    &self,
+    fill: impl FnOnce(&mut [u8; 64]) -> Result<(), E>,
+  ) -> Result<EcdsaP256PublicKey, E> {
     let mut blind = ZeroizingBytes::zeroed();
-    fill(blind.as_mut_array());
-    EcdsaP256PublicKey::from_affine(public_key_from_secret_p256_blinded(&self.0, blind.as_array()))
+    fill(blind.as_mut_array())?;
+    Ok(EcdsaP256PublicKey::from_secret_affine_ct(
+      public_key_from_secret_p256_blinded(&self.0, blind.as_array()),
+    ))
   }
 
   /// Sign a message with P-256/SHA-256.
@@ -940,15 +1012,44 @@ impl EcdsaP256SecretKey {
   ///
   /// Returns [`EcdsaError::SigningFailure`] if deterministic nonce derivation
   /// reaches an invalid ECDSA scalar.
+  #[deprecated(note = "use try_sign_blinded_with; this compatibility wrapper will be removed after one release")]
   pub fn try_sign_blinded(
     &self,
     message: &[u8],
     fill: impl FnOnce(&mut [u8; 64]),
   ) -> Result<EcdsaP256Signature, EcdsaError> {
-    let digest = Sha256::digest(message);
+    match self.try_sign_blinded_with(message, |blind| {
+      fill(blind);
+      Ok::<(), core::convert::Infallible>(())
+    }) {
+      Ok(signature) => Ok(signature),
+      Err(EcdsaBlindedSigningError::Random(never)) => match never {},
+      Err(EcdsaBlindedSigningError::Signing(err)) => Err(err),
+    }
+  }
+
+  /// Try to sign a message with P-256/SHA-256 and caller-supplied blinding.
+  ///
+  /// The filler runs against zero-initialized rscrypto-owned storage. If it
+  /// fails after a partial write, the complete blinding buffer is cleared and
+  /// this method returns before hashing or private scalar arithmetic begins.
+  /// Callback execution and random-source timing are outside the private
+  /// arithmetic constant-time claim.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`EcdsaBlindedSigningError::Random`] if the blinding source fails,
+  /// or [`EcdsaBlindedSigningError::Signing`] for the existing opaque ECDSA
+  /// signing failure.
+  pub fn try_sign_blinded_with<E>(
+    &self,
+    message: &[u8],
+    fill: impl FnOnce(&mut [u8; 64]) -> Result<(), E>,
+  ) -> Result<EcdsaP256Signature, EcdsaBlindedSigningError<E>> {
     let mut blind = ZeroizingBytes::zeroed();
-    fill(blind.as_mut_array());
-    sign_digest_p256_blinded(&self.0, &digest, blind.as_array())
+    fill(blind.as_mut_array()).map_err(EcdsaBlindedSigningError::Random)?;
+    let digest = Sha256::digest(message);
+    sign_digest_p256_blinded(&self.0, &digest, blind.as_array()).map_err(EcdsaBlindedSigningError::Signing)
   }
 
   /// Returns a wrapper that displays the secret key bytes as lowercase hex.
@@ -1065,7 +1166,7 @@ impl EcdsaP384SecretKey {
   /// Derive the matching P-384 public key.
   #[must_use]
   pub fn public_key(&self) -> EcdsaP384PublicKey {
-    EcdsaP384PublicKey::from_affine(public_key_from_secret_p384(&self.0))
+    EcdsaP384PublicKey::from_secret_affine_ct(public_key_from_secret_p384(&self.0))
   }
 
   /// Derive the matching P-384 public key with caller-supplied blinding.
@@ -1073,11 +1174,38 @@ impl EcdsaP384SecretKey {
   /// The closure should fill the buffer from a CSPRNG. Blinding does not
   /// change the public key; it randomizes the internal projective
   /// representation used during derivation.
+  #[deprecated(note = "use try_public_key_blinded_with; this compatibility wrapper will be removed after one release")]
   #[must_use]
   pub fn public_key_blinded(&self, fill: impl FnOnce(&mut [u8; 96])) -> EcdsaP384PublicKey {
+    match self.try_public_key_blinded_with(|blind| {
+      fill(blind);
+      Ok::<(), core::convert::Infallible>(())
+    }) {
+      Ok(public) => public,
+      Err(never) => match never {},
+    }
+  }
+
+  /// Try to derive the matching P-384 public key with caller-supplied blinding.
+  ///
+  /// The filler runs against zero-initialized rscrypto-owned storage. If it
+  /// fails after a partial write, the complete blinding buffer is cleared and
+  /// this method returns before private scalar arithmetic begins. Callback
+  /// execution and random-source timing are outside the private arithmetic
+  /// constant-time claim.
+  ///
+  /// # Errors
+  ///
+  /// Returns the caller's error unchanged if the blinding source fails.
+  pub fn try_public_key_blinded_with<E>(
+    &self,
+    fill: impl FnOnce(&mut [u8; 96]) -> Result<(), E>,
+  ) -> Result<EcdsaP384PublicKey, E> {
     let mut blind = ZeroizingBytes::zeroed();
-    fill(blind.as_mut_array());
-    EcdsaP384PublicKey::from_affine(public_key_from_secret_p384_blinded(&self.0, blind.as_array()))
+    fill(blind.as_mut_array())?;
+    Ok(EcdsaP384PublicKey::from_secret_affine_ct(
+      public_key_from_secret_p384_blinded(&self.0, blind.as_array()),
+    ))
   }
 
   /// Sign a message with P-384/SHA-384.
@@ -1104,15 +1232,44 @@ impl EcdsaP384SecretKey {
   ///
   /// Returns [`EcdsaError::SigningFailure`] if deterministic nonce derivation
   /// reaches an invalid ECDSA scalar.
+  #[deprecated(note = "use try_sign_blinded_with; this compatibility wrapper will be removed after one release")]
   pub fn try_sign_blinded(
     &self,
     message: &[u8],
     fill: impl FnOnce(&mut [u8; 96]),
   ) -> Result<EcdsaP384Signature, EcdsaError> {
-    let digest = Sha384::digest(message);
+    match self.try_sign_blinded_with(message, |blind| {
+      fill(blind);
+      Ok::<(), core::convert::Infallible>(())
+    }) {
+      Ok(signature) => Ok(signature),
+      Err(EcdsaBlindedSigningError::Random(never)) => match never {},
+      Err(EcdsaBlindedSigningError::Signing(err)) => Err(err),
+    }
+  }
+
+  /// Try to sign a message with P-384/SHA-384 and caller-supplied blinding.
+  ///
+  /// The filler runs against zero-initialized rscrypto-owned storage. If it
+  /// fails after a partial write, the complete blinding buffer is cleared and
+  /// this method returns before hashing or private scalar arithmetic begins.
+  /// Callback execution and random-source timing are outside the private
+  /// arithmetic constant-time claim.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`EcdsaBlindedSigningError::Random`] if the blinding source fails,
+  /// or [`EcdsaBlindedSigningError::Signing`] for the existing opaque ECDSA
+  /// signing failure.
+  pub fn try_sign_blinded_with<E>(
+    &self,
+    message: &[u8],
+    fill: impl FnOnce(&mut [u8; 96]) -> Result<(), E>,
+  ) -> Result<EcdsaP384Signature, EcdsaBlindedSigningError<E>> {
     let mut blind = ZeroizingBytes::zeroed();
-    fill(blind.as_mut_array());
-    sign_digest_p384_blinded(&self.0, &digest, blind.as_array())
+    fill(blind.as_mut_array()).map_err(EcdsaBlindedSigningError::Random)?;
+    let digest = Sha384::digest(message);
+    sign_digest_p384_blinded(&self.0, &digest, blind.as_array()).map_err(EcdsaBlindedSigningError::Signing)
   }
 
   /// Returns a wrapper that displays the secret key bytes as lowercase hex.
@@ -1199,6 +1356,18 @@ impl EcdsaP256Keypair {
     Self { secret, public }
   }
 
+  /// Try to derive a P-256 keypair from a secret key with caller-supplied blinding.
+  ///
+  /// On filler failure, the consumed secret key and partially filled blinding
+  /// buffer are cleared before this method returns.
+  pub fn try_from_secret_key_blinded_with<E>(
+    secret: EcdsaP256SecretKey,
+    fill: impl FnOnce(&mut [u8; 64]) -> Result<(), E>,
+  ) -> Result<Self, E> {
+    let public = secret.try_public_key_blinded_with(fill)?;
+    Ok(Self { secret, public })
+  }
+
   /// Borrow the secret key.
   #[must_use]
   pub const fn secret_key(&self) -> &EcdsaP256SecretKey {
@@ -1222,12 +1391,30 @@ impl EcdsaP256Keypair {
   ///
   /// Returns [`EcdsaError::SigningFailure`] if deterministic nonce derivation
   /// reaches an invalid ECDSA scalar.
+  #[deprecated(note = "use try_sign_blinded_with; this compatibility wrapper will be removed after one release")]
   pub fn try_sign_blinded(
     &self,
     message: &[u8],
     fill: impl FnOnce(&mut [u8; 64]),
   ) -> Result<EcdsaP256Signature, EcdsaError> {
-    self.secret.try_sign_blinded(message, fill)
+    match self.try_sign_blinded_with(message, |blind| {
+      fill(blind);
+      Ok::<(), core::convert::Infallible>(())
+    }) {
+      Ok(signature) => Ok(signature),
+      Err(EcdsaBlindedSigningError::Random(never)) => match never {},
+      Err(EcdsaBlindedSigningError::Signing(err)) => Err(err),
+    }
+  }
+
+  /// Try to sign with P-256/SHA-256 and fallible caller-supplied blinding.
+  #[inline]
+  pub fn try_sign_blinded_with<E>(
+    &self,
+    message: &[u8],
+    fill: impl FnOnce(&mut [u8; 64]) -> Result<(), E>,
+  ) -> Result<EcdsaP256Signature, EcdsaBlindedSigningError<E>> {
+    self.secret.try_sign_blinded_with(message, fill)
   }
 }
 
@@ -1294,6 +1481,18 @@ impl EcdsaP384Keypair {
     Self { secret, public }
   }
 
+  /// Try to derive a P-384 keypair from a secret key with caller-supplied blinding.
+  ///
+  /// On filler failure, the consumed secret key and partially filled blinding
+  /// buffer are cleared before this method returns.
+  pub fn try_from_secret_key_blinded_with<E>(
+    secret: EcdsaP384SecretKey,
+    fill: impl FnOnce(&mut [u8; 96]) -> Result<(), E>,
+  ) -> Result<Self, E> {
+    let public = secret.try_public_key_blinded_with(fill)?;
+    Ok(Self { secret, public })
+  }
+
   /// Borrow the secret key.
   #[must_use]
   pub const fn secret_key(&self) -> &EcdsaP384SecretKey {
@@ -1317,12 +1516,30 @@ impl EcdsaP384Keypair {
   ///
   /// Returns [`EcdsaError::SigningFailure`] if deterministic nonce derivation
   /// reaches an invalid ECDSA scalar.
+  #[deprecated(note = "use try_sign_blinded_with; this compatibility wrapper will be removed after one release")]
   pub fn try_sign_blinded(
     &self,
     message: &[u8],
     fill: impl FnOnce(&mut [u8; 96]),
   ) -> Result<EcdsaP384Signature, EcdsaError> {
-    self.secret.try_sign_blinded(message, fill)
+    match self.try_sign_blinded_with(message, |blind| {
+      fill(blind);
+      Ok::<(), core::convert::Infallible>(())
+    }) {
+      Ok(signature) => Ok(signature),
+      Err(EcdsaBlindedSigningError::Random(never)) => match never {},
+      Err(EcdsaBlindedSigningError::Signing(err)) => Err(err),
+    }
+  }
+
+  /// Try to sign with P-384/SHA-384 and fallible caller-supplied blinding.
+  #[inline]
+  pub fn try_sign_blinded_with<E>(
+    &self,
+    message: &[u8],
+    fill: impl FnOnce(&mut [u8; 96]) -> Result<(), E>,
+  ) -> Result<EcdsaP384Signature, EcdsaBlindedSigningError<E>> {
+    self.secret.try_sign_blinded_with(message, fill)
   }
 }
 
@@ -1359,6 +1576,13 @@ impl EcdsaP256PublicKey {
     Self {
       point,
       table: precompute_comb_table(point),
+    }
+  }
+
+  fn from_secret_affine_ct(point: Affine<4>) -> Self {
+    Self {
+      point,
+      table: precompute_comb_table_ct(point, P256_FIELD_MINUS_TWO),
     }
   }
 
@@ -1424,6 +1648,13 @@ impl EcdsaP384PublicKey {
     Self {
       point,
       table: precompute_comb_table(point),
+    }
+  }
+
+  fn from_secret_affine_ct(point: Affine<6>) -> Self {
+    Self {
+      point,
+      table: precompute_comb_table_ct(point, P384_FIELD_MINUS_TWO),
     }
   }
 
@@ -2642,10 +2873,11 @@ fn sign_digest_with_nonce_backend<const L: usize>(
   nonce: &SecretScalar<L>,
   digest: &[u8],
 ) -> Option<Result<(Uint<L>, Uint<L>), EcdsaError>> {
+  #[cfg(feature = "ecdsa-p256")]
   if is_p256_curve(curve) {
     let mut scalar_words = ZeroizingWords::zeroed();
     scalar_words.as_mut_array().copy_from_slice(&nonce.words()[..4]);
-    let out = ecdsa_platform_asm::p256_scalarmulbase_generator(scalar_words.as_array());
+    let out = super::p256_core::scalar_mul_generator_words(scalar_words.as_array());
     let mut r_words = [0u64; L];
     r_words.copy_from_slice(&out[..4]);
     let r = Uint(r_words).reduce_once_ct(curve.scalar_modulus.value);
@@ -3090,7 +3322,14 @@ fn scalar_mul_basepoint_backend<const L: usize>(curve: &Curve<L>, scalar: &Secre
     return Some(p384_scalar_mul_basepoint_platform(curve, scalar));
   }
 
-  scalar_mul_basepoint_affine_backend(curve, scalar).map(Jacobian::from_affine)
+  #[cfg(feature = "ecdsa-p256")]
+  {
+    scalar_mul_basepoint_affine_backend(curve, scalar).map(Jacobian::from_affine)
+  }
+  #[cfg(not(feature = "ecdsa-p256"))]
+  {
+    None
+  }
 }
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
@@ -3130,9 +3369,12 @@ fn scalar_mul_basepoint_backend<const L: usize>(_curve: &Curve<L>, _scalar: &Sec
   None
 }
 
-#[cfg(any(
-  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-  all(target_arch = "x86_64", target_os = "linux")
+#[cfg(all(
+  feature = "ecdsa-p256",
+  any(
+    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+    all(target_arch = "x86_64", target_os = "linux")
+  )
 ))]
 fn scalar_mul_basepoint_affine_backend<const L: usize>(
   curve: &Curve<L>,
@@ -3141,10 +3383,24 @@ fn scalar_mul_basepoint_affine_backend<const L: usize>(
   if is_p256_curve(curve) {
     let mut scalar_words = ZeroizingWords::zeroed();
     scalar_words.as_mut_array().copy_from_slice(&scalar.words()[..4]);
-    let out = ecdsa_platform_asm::p256_scalarmulbase_generator(scalar_words.as_array());
+    let out = super::p256_core::scalar_mul_generator_words(scalar_words.as_array());
     return Some(affine_from_words(curve.field_modulus, &out));
   }
 
+  None
+}
+
+#[cfg(all(
+  not(feature = "ecdsa-p256"),
+  any(
+    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+    all(target_arch = "x86_64", target_os = "linux")
+  )
+))]
+fn scalar_mul_basepoint_affine_backend<const L: usize>(
+  _curve: &Curve<L>,
+  _scalar: &SecretScalar<L>,
+) -> Option<Affine<L>> {
   None
 }
 
@@ -3173,9 +3429,12 @@ fn is_p384_curve<const L: usize>(curve: &Curve<L>) -> bool {
     && core::ptr::from_ref(curve.field_modulus).cast::<()>() == core::ptr::from_ref(&P384_FIELD_MODULUS).cast::<()>()
 }
 
-#[cfg(any(
-  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-  all(target_arch = "x86_64", target_os = "linux")
+#[cfg(all(
+  feature = "ecdsa-p256",
+  any(
+    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+    all(target_arch = "x86_64", target_os = "linux")
+  )
 ))]
 fn affine_from_words<const L: usize>(modulus: &'static Modulus<L>, words: &[u64]) -> Affine<L> {
   let mut x = [0u64; L];
@@ -3665,6 +3924,46 @@ pub(crate) fn diag_zeroize_ecdsa_p256_safegcd_scratch(secret: [u8; 32]) -> u64 {
   core::hint::black_box(inverse.value().0[0])
 }
 
+/// Exercise P-256 public-derivation blinding cleanup on success and partial-fill failure.
+#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub(crate) fn diag_zeroize_ecdsa_p256_public_blinding(value: u8, fail: bool) -> u8 {
+  let Ok(secret) = EcdsaP256SecretKey::from_bytes([0x42; 32]) else {
+    return 0;
+  };
+  let result = secret.try_public_key_blinded_with(|blind| {
+    blind[..32].fill(core::hint::black_box(value));
+    if core::hint::black_box(fail) {
+      return Err(());
+    }
+    blind[32..].fill(core::hint::black_box(value));
+    Ok(())
+  });
+  result.map_or(0, |public| core::hint::black_box(public.to_sec1_bytes()[1]))
+}
+
+/// Exercise P-256 signing blinding cleanup on success and partial-fill failure.
+#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub(crate) fn diag_zeroize_ecdsa_p256_signing_blinding(value: u8, fail: bool) -> u8 {
+  let Ok(secret) = EcdsaP256SecretKey::from_bytes([0x42; 32]) else {
+    return 0;
+  };
+  let result = secret.try_sign_blinded_with(b"zeroize evidence", |blind| {
+    blind[..32].fill(core::hint::black_box(value));
+    if core::hint::black_box(fail) {
+      return Err(());
+    }
+    blind[32..].fill(core::hint::black_box(value));
+    Ok(())
+  });
+  result.map_or(0, |signature| core::hint::black_box(signature.to_bytes()[0]))
+}
+
 /// Derive the deterministic P-256 nonce for `message` and return its scalar limbs.
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_nonce_reduce_limb_digest(secret: [u8; 32], message: &[u8]) -> [u64; 4] {
@@ -3844,6 +4143,46 @@ pub(crate) fn diag_zeroize_ecdsa_p384_safegcd_scratch(secret: [u8; 48]) -> u64 {
     ecdsa_safegcd::invert_order_montgomery(scalar.value(), &P384_ORDER_MODULUS).unwrap_or(Uint::ZERO),
   );
   core::hint::black_box(inverse.value().0[0])
+}
+
+/// Exercise P-384 public-derivation blinding cleanup on success and partial-fill failure.
+#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub(crate) fn diag_zeroize_ecdsa_p384_public_blinding(value: u8, fail: bool) -> u8 {
+  let Ok(secret) = EcdsaP384SecretKey::from_bytes([0x24; 48]) else {
+    return 0;
+  };
+  let result = secret.try_public_key_blinded_with(|blind| {
+    blind[..48].fill(core::hint::black_box(value));
+    if core::hint::black_box(fail) {
+      return Err(());
+    }
+    blind[48..].fill(core::hint::black_box(value));
+    Ok(())
+  });
+  result.map_or(0, |public| core::hint::black_box(public.to_sec1_bytes()[1]))
+}
+
+/// Exercise P-384 signing blinding cleanup on success and partial-fill failure.
+#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub(crate) fn diag_zeroize_ecdsa_p384_signing_blinding(value: u8, fail: bool) -> u8 {
+  let Ok(secret) = EcdsaP384SecretKey::from_bytes([0x24; 48]) else {
+    return 0;
+  };
+  let result = secret.try_sign_blinded_with(b"zeroize evidence", |blind| {
+    blind[..48].fill(core::hint::black_box(value));
+    if core::hint::black_box(fail) {
+      return Err(());
+    }
+    blind[48..].fill(core::hint::black_box(value));
+    Ok(())
+  });
+  result.map_or(0, |signature| core::hint::black_box(signature.to_bytes()[0]))
 }
 
 /// Derive the deterministic P-384 nonce for `message` and return its scalar limbs.
@@ -4067,6 +4406,34 @@ fn precompute_comb_table<const L: usize>(point: Affine<L>) -> [Affine<L>; COMB_T
   normalize_jacobian_table(table)
 }
 
+fn precompute_comb_table_ct<const L: usize>(
+  point: Affine<L>,
+  field_inverse_exponent: Uint<L>,
+) -> [Affine<L>; COMB_TABLE_SIZE] {
+  let rows = comb_rows::<L>();
+  let mut column_points = [Jacobian::from_affine(point); COMB_WIDTH];
+  let mut current = Jacobian::from_affine(point);
+  for column in column_points.iter_mut().skip(1) {
+    for _ in 0..rows {
+      current = current.double_ct();
+    }
+    *column = current;
+  }
+  let columns = normalize_jacobian_table_ct(column_points, field_inverse_exponent);
+
+  let mut table = [Jacobian::from_affine(point); COMB_TABLE_SIZE];
+  for (mask, entry) in table.iter_mut().enumerate().skip(1) {
+    let mut acc = Jacobian::infinity(point.x.modulus);
+    for (column, &column_point) in columns.iter().enumerate() {
+      if mask & (1usize << column) != 0 {
+        acc = acc.add_mixed_ct(column_point, 0);
+      }
+    }
+    *entry = acc;
+  }
+  normalize_jacobian_table_ct(table, field_inverse_exponent)
+}
+
 fn normalize_jacobian_table<const L: usize, const N: usize>(table: [Jacobian<L>; N]) -> [Affine<L>; N] {
   let modulus = table
     .first()
@@ -4080,6 +4447,39 @@ fn normalize_jacobian_table<const L: usize, const N: usize>(table: [Jacobian<L>;
   }
 
   let mut acc_inv = acc.inv();
+  let mut out = [Affine {
+    x: FieldElement::zero(modulus),
+    y: FieldElement::zero(modulus),
+  }; N];
+  for ((point, prefix), output) in table.iter().zip(prefixes).zip(out.iter_mut()).rev() {
+    let z_inv = acc_inv.mul(prefix);
+    acc_inv = acc_inv.mul(point.z);
+    let z2 = z_inv.square();
+    let z3 = z2.mul(z_inv);
+    *output = Affine {
+      x: point.x.mul(z2),
+      y: point.y.mul(z3),
+    };
+  }
+  out
+}
+
+fn normalize_jacobian_table_ct<const L: usize, const N: usize>(
+  table: [Jacobian<L>; N],
+  field_inverse_exponent: Uint<L>,
+) -> [Affine<L>; N] {
+  let modulus = table
+    .first()
+    .map(|point| point.x.modulus)
+    .expect("ECDSA comb tables are nonempty");
+  let mut prefixes = [FieldElement::one(modulus); N];
+  let mut acc = FieldElement::one(modulus);
+  for (prefix, point) in prefixes.iter_mut().zip(table.iter()) {
+    *prefix = acc;
+    acc = acc.mul(point.z);
+  }
+
+  let mut acc_inv = acc.inv_ct(field_inverse_exponent);
   let mut out = [Affine {
     x: FieldElement::zero(modulus),
     y: FieldElement::zero(modulus),
@@ -5101,7 +5501,15 @@ mod tests {
     let secret = EcdsaP256SecretKey::from_bytes(one).expect("one is a valid P-256 secret scalar");
 
     assert_eq!(secret.public_key(), p256_public_key());
-    assert_eq!(secret.public_key_blinded(|blind| blind.fill(0xa5)), p256_public_key());
+    assert_eq!(
+      secret
+        .try_public_key_blinded_with(|blind| {
+          blind.fill(0xa5);
+          Ok::<(), core::convert::Infallible>(())
+        })
+        .expect("infallible P-256 blinding must derive a public key"),
+      p256_public_key()
+    );
   }
 
   #[test]
@@ -5111,7 +5519,48 @@ mod tests {
     let secret = EcdsaP384SecretKey::from_bytes(one).expect("one is a valid P-384 secret scalar");
 
     assert_eq!(secret.public_key(), p384_public_key());
-    assert_eq!(secret.public_key_blinded(|blind| blind.fill(0x5a)), p384_public_key());
+    assert_eq!(
+      secret
+        .try_public_key_blinded_with(|blind| {
+          blind.fill(0x5a);
+          Ok::<(), core::convert::Infallible>(())
+        })
+        .expect("infallible P-384 blinding must derive a public key"),
+      p384_public_key()
+    );
+  }
+
+  #[test]
+  fn secret_derived_constant_work_tables_match_public_precomputation() {
+    for bytes in [[0x01; 32], [0x42; 32], [0x7f; 32]] {
+      let secret = EcdsaP256SecretKey::from_bytes(bytes).expect("fixture is a valid P-256 secret scalar");
+      let derived = secret.public_key();
+      let parsed =
+        EcdsaP256PublicKey::from_sec1_bytes(&derived.to_sec1_bytes()).expect("derived P-256 public key must parse");
+      assert!(derived.point == parsed.point);
+      assert!(
+        derived
+          .table
+          .iter()
+          .zip(parsed.table.iter())
+          .all(|(left, right)| left == right)
+      );
+    }
+
+    for bytes in [[0x01; 48], [0x24; 48], [0x7f; 48]] {
+      let secret = EcdsaP384SecretKey::from_bytes(bytes).expect("fixture is a valid P-384 secret scalar");
+      let derived = secret.public_key();
+      let parsed =
+        EcdsaP384PublicKey::from_sec1_bytes(&derived.to_sec1_bytes()).expect("derived P-384 public key must parse");
+      assert!(derived.point == parsed.point);
+      assert!(
+        derived
+          .table
+          .iter()
+          .zip(parsed.table.iter())
+          .all(|(left, right)| left == right)
+      );
+    }
   }
 
   #[test]
@@ -5124,7 +5573,10 @@ mod tests {
     let first = secret.try_sign(message).expect("valid P-256 signing fixture must sign");
     let second = secret.try_sign(message).expect("valid P-256 signing fixture must sign");
     let blinded = secret
-      .try_sign_blinded(message, |blind| blind.fill(0x7b))
+      .try_sign_blinded_with(message, |blind| {
+        blind.fill(0x7b);
+        Ok::<(), core::convert::Infallible>(())
+      })
       .expect("valid P-256 blinded signing fixture must sign");
 
     assert_eq!(first, second);
@@ -5153,7 +5605,10 @@ mod tests {
     let first = secret.try_sign(message).expect("valid P-384 signing fixture must sign");
     let second = secret.try_sign(message).expect("valid P-384 signing fixture must sign");
     let blinded = secret
-      .try_sign_blinded(message, |blind| blind.fill(0xb7))
+      .try_sign_blinded_with(message, |blind| {
+        blind.fill(0xb7);
+        Ok::<(), core::convert::Infallible>(())
+      })
       .expect("valid P-384 blinded signing fixture must sign");
 
     assert_eq!(first, second);
@@ -5170,6 +5625,154 @@ mod tests {
         .cmp(&P384_ORDER_HALF)
         .is_le()
     );
+  }
+
+  #[test]
+  fn p256_fallible_blinding_propagates_exact_errors() {
+    let secret = EcdsaP256SecretKey::from_bytes([0x42; EcdsaP256SecretKey::LENGTH])
+      .expect("fixture is a valid P-256 secret scalar");
+
+    let immediate = secret
+      .try_public_key_blinded_with(|_| Err(11u8))
+      .expect_err("immediate P-256 filler failure must be returned");
+    assert_eq!(immediate, 11);
+
+    let partial = secret
+      .try_public_key_blinded_with(|blind| {
+        blind[..17].fill(0xa5);
+        Err(12u8)
+      })
+      .expect_err("partial P-256 public-key filler failure must be returned");
+    assert_eq!(partial, 12);
+
+    let signing = secret
+      .try_sign_blinded_with(b"not hashed after filler failure", |blind| {
+        blind[..19].fill(0x5a);
+        Err(13u8)
+      })
+      .expect_err("partial P-256 signing filler failure must be returned");
+    assert_eq!(signing, EcdsaBlindedSigningError::Random(13));
+    assert_eq!(alloc::format!("{signing:?}"), "Random(..)");
+  }
+
+  #[test]
+  fn p384_fallible_blinding_propagates_exact_errors() {
+    let secret = EcdsaP384SecretKey::from_bytes([0x24; EcdsaP384SecretKey::LENGTH])
+      .expect("fixture is a valid P-384 secret scalar");
+
+    let immediate = secret
+      .try_public_key_blinded_with(|_| Err(21u8))
+      .expect_err("immediate P-384 filler failure must be returned");
+    assert_eq!(immediate, 21);
+
+    let partial = secret
+      .try_public_key_blinded_with(|blind| {
+        blind[..37].fill(0xa5);
+        Err(22u8)
+      })
+      .expect_err("partial P-384 public-key filler failure must be returned");
+    assert_eq!(partial, 22);
+
+    let signing = secret
+      .try_sign_blinded_with(b"not hashed after filler failure", |blind| {
+        blind[..41].fill(0x5a);
+        Err(23u8)
+      })
+      .expect_err("partial P-384 signing filler failure must be returned");
+    assert_eq!(signing, EcdsaBlindedSigningError::Random(23));
+    assert_eq!(alloc::format!("{signing:?}"), "Random(..)");
+  }
+
+  #[test]
+  fn fallible_blinded_keypair_construction_and_signing_cover_both_curves() {
+    let p256_secret = EcdsaP256SecretKey::from_bytes([0x42; EcdsaP256SecretKey::LENGTH])
+      .expect("fixture is a valid P-256 secret scalar");
+    let p256_expected = p256_secret.public_key();
+    let p256 = EcdsaP256Keypair::try_from_secret_key_blinded_with(p256_secret, |blind| {
+      blind.fill(0x36);
+      Ok::<(), u8>(())
+    })
+    .expect("valid P-256 key and blinding input must construct a keypair");
+    assert_eq!(p256.public_key(), p256_expected);
+    assert_eq!(
+      p256
+        .try_sign_blinded_with(b"p256 keypair", |blind| {
+          blind.fill(0x63);
+          Ok::<(), u8>(())
+        })
+        .expect("valid P-256 keypair and blinding input must sign"),
+      p256.try_sign(b"p256 keypair").expect("valid P-256 keypair must sign")
+    );
+
+    let p384_secret = EcdsaP384SecretKey::from_bytes([0x24; EcdsaP384SecretKey::LENGTH])
+      .expect("fixture is a valid P-384 secret scalar");
+    let p384_expected = p384_secret.public_key();
+    let p384 = EcdsaP384Keypair::try_from_secret_key_blinded_with(p384_secret, |blind| {
+      blind.fill(0x47);
+      Ok::<(), u8>(())
+    })
+    .expect("valid P-384 key and blinding input must construct a keypair");
+    assert_eq!(p384.public_key(), p384_expected);
+    assert_eq!(
+      p384
+        .try_sign_blinded_with(b"p384 keypair", |blind| {
+          blind.fill(0x74);
+          Ok::<(), u8>(())
+        })
+        .expect("valid P-384 keypair and blinding input must sign"),
+      p384.try_sign(b"p384 keypair").expect("valid P-384 keypair must sign")
+    );
+
+    let p256_secret = EcdsaP256SecretKey::from_bytes([0x42; EcdsaP256SecretKey::LENGTH])
+      .expect("fixture is a valid P-256 secret scalar");
+    assert_eq!(
+      EcdsaP256Keypair::try_from_secret_key_blinded_with(p256_secret, |blind| {
+        blind[..31].fill(0x81);
+        Err(31u8)
+      })
+      .expect_err("partial P-256 keypair filler failure must be returned"),
+      31
+    );
+
+    let p384_secret = EcdsaP384SecretKey::from_bytes([0x24; EcdsaP384SecretKey::LENGTH])
+      .expect("fixture is a valid P-384 secret scalar");
+    assert_eq!(
+      EcdsaP384Keypair::try_from_secret_key_blinded_with(p384_secret, |blind| {
+        blind[..47].fill(0x18);
+        Err(32u8)
+      })
+      .expect_err("partial P-384 keypair filler failure must be returned"),
+      32
+    );
+  }
+
+  #[test]
+  fn blinded_signing_error_keeps_operation_failure_opaque_and_distinct() {
+    let error = EcdsaBlindedSigningError::<u8>::Signing(EcdsaError::SigningFailure);
+    assert_eq!(alloc::format!("{error:?}"), "Signing(SigningFailure)");
+    assert_eq!(alloc::format!("{error}"), "ECDSA blinded signing failed");
+    assert_ne!(error, EcdsaBlindedSigningError::Random(0));
+  }
+
+  #[test]
+  fn signing_finalization_rejects_invalid_r_for_both_curves() {
+    let p256 = sign_digest_with_r_product(
+      &P256,
+      &SecretScalar::new(Uint::ONE),
+      &[0u8; 32],
+      Uint::ZERO,
+      SecretScalar::new(Uint::ZERO),
+    );
+    assert!(matches!(p256, Err(EcdsaError::SigningFailure)));
+
+    let p384 = sign_digest_with_r_product(
+      &P384,
+      &SecretScalar::new(Uint::ONE),
+      &[0u8; 48],
+      Uint::ZERO,
+      SecretScalar::new(Uint::ZERO),
+    );
+    assert!(matches!(p384, Err(EcdsaError::SigningFailure)));
   }
 
   #[test]
@@ -5352,9 +5955,12 @@ mod tests {
     assert!(actual == expected, "projective blinding must preserve kG");
   }
 
-  #[cfg(any(
-    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", target_os = "linux")
+  #[cfg(all(
+    feature = "ecdsa-p256",
+    any(
+      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+      all(target_arch = "x86_64", target_os = "linux")
+    )
   ))]
   #[test]
   fn p256_platform_basepoint_matches_portable_comb_for_sample_scalars() {

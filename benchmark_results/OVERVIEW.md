@@ -7,12 +7,106 @@ Sources:
 - Linux artifacts: eight successful `benchmark-*` artifacts extracted into `benchmark_results/2026-08-18/linux/*/results.txt`.
 - Local macOS run: `benchmark_results/2026-07-04/macos/aarch64/results.txt` at commit `596498f0e07e869eac71fd31c157aa1b22186239`, carried forward unchanged.
 - Local Ed25519 direct-secret before/after diagnostic, recorded below.
+- Local P-256 ECDH development run on Apple M1, 2026-09-03, based on
+  `fdd4eec6` with uncommitted Phase 4 changes; curated below and not treated as
+  release or cross-target evidence.
+- Physical AWS Graviton4 P-256 ECDH development run, 2026-09-03, from an
+  intermediate Phase 4 worktree. The sealed Criterion and native-evidence bundles are
+  under `benchmark_results/2026-09-03/linux/aarch64/graviton4/`.
+- Physical AWS Graviton3 P-256 ECDH development run, 2026-09-03, from an
+  intermediate Phase 4 worktree. The sealed Criterion and native-evidence bundles are
+  under `benchmark_results/2026-09-03/linux/aarch64/graviton3/`.
+- Physical AWS Intel Granite Rapids P-256 ECDH development run, 2026-09-03,
+  from an intermediate Phase 4 worktree. The sealed Criterion and native-evidence
+  bundles are under `benchmark_results/2026-09-03/linux/x86_64/intel-gnr/`.
+- Physical AWS Windows x86-64 Intel Granite Rapids P-256 ECDH development
+  runs, 2026-09-03. The full native-backend run used an intermediate Phase 4
+  worktree; the final batch-parser comparison matches the current P-256 source.
+  Both are under
+  `benchmark_results/2026-09-03/windows/x86_64/intel-gnr/`.
 
 Scope: the 2026-08-18 eight-runner Linux CI benchmark matrix for commit `7eb44e9`. Ratios are `external_crate_time / rscrypto_time`; higher is better. Wins are `>1.05x`, ties are `0.95x..1.05x`, and losses are `<0.95x`. Fastest-external comparisons keep only the fastest external implementation for each platform, primitive, operation, and input shape. Internal kernel, scratch-buffer, padding-only, cold-path, PHC roundtrip, parallel-scaling, threshold-selection, public-overhead, and phase-attribution microbenches are parsed as raw rows but excluded from external win/loss claims. The macOS local run is listed separately and is not mixed into Linux CI claims.
 
 This is a historical snapshot of commit `7eb44e9`, not an inventory of the
 current public API. Primitive rows remain as measured even when a later commit
 changes or removes that surface.
+
+## P-256 ECDH development snapshot
+
+The Apple M1 run measured complete API operations with Criterion. Rscrypto
+medians were 3.5779 ns for caller-filled ephemeral generation, 7.8186 us for
+public derivation, 111.74 ns for canonical SEC1 parsing, 34.297 us for
+agreement, and 85.106 us for a two-party TLS-shaped roundtrip. The fastest
+equivalent competitors were RustCrypto at 4.9748 ns for generation, `ring` at
+10.579 us for public derivation, CRRL at 121.05 ns for parsing, and AWS-LC at
+34.990 us for agreement. Under the repository's +/-5% classification these are
+three wins and one agreement tie. AWS-LC's 1.2915 us cached-public row excludes
+key import/precomputation and is retained only as a non-equivalent diagnostic;
+its equivalent import-plus-public row measured 15.769 us.
+
+The physical Graviton4 run measured 7.0706 ns for caller-filled generation,
+10.187 us for public derivation, 149.09 ns for canonical parsing, 48.241 us for
+agreement, and 117.23 us for the TLS-shaped roundtrip. Public derivation beat
+`ring` at 12.373 us and the equivalent AWS-LC import-plus-public row at
+18.187 us. Agreement tied the fastest native competitors while narrowly
+leading AWS-LC at 48.715 us and `ring` at 49.509 us. Parsing was within the
+repository's 5% tie band of CRRL at 141.76 ns and ahead of RustCrypto at
+206.73 ns. AWS-LC's 1.4721 us cached-public row remains a non-equivalent
+diagnostic because it excludes import and precomputation.
+
+The physical Graviton3 run measured 8.7453 ns for caller-filled generation,
+11.939 us for public derivation, 182.76 ns for canonical parsing, 56.296 us for
+agreement, and 136.89 us for the TLS-shaped roundtrip. Public derivation beat
+`ring` at 14.100 us and the equivalent AWS-LC import-plus-public row at
+21.537 us. Agreement tied AWS-LC at 56.262 us and was faster than `ring` at
+58.263 us. Generation tied RustCrypto at 9.0616 ns. Parsing is a measured loss:
+CRRL completed the same operation in 166.98 ns, about 8.6% less time. Under the
+repository's 5% classification, the G3 result is one win, two ties, and one
+loss. AWS-LC's 1.7023 us cached-public row remains a non-equivalent diagnostic.
+This is an intermediate-candidate result: later shared parser and dispatch
+changes have not been rerun on Graviton3, so the retained parsing loss is not a
+measurement of the exact final source.
+
+The retained physical Linux Intel Granite Rapids run measured 3.9060 ns for
+caller-filled generation, 8.5669 us for public derivation, 83.420 ns for
+canonical parsing, 36.130 us for agreement, and 90.004 us for the TLS-shaped
+roundtrip. Generation beat RustCrypto at 10.297 ns, and public derivation beat
+`ring` at 10.712 us and the equivalent AWS-LC import-plus-public row at
+16.109 us. Agreement tied AWS-LC at 37.255 us while beating `ring` at
+45.600 us. Parsing narrowly led CRRL at 83.878 ns; the repository's 5%
+classification treats that difference as a tie. The result is two wins and two
+ties. AWS-LC's 1.4492 us cached-public row remains a non-equivalent diagnostic.
+
+The physical Windows x86-64 Intel Granite Rapids full run measured 4.2754 ns
+for caller-filled generation, 8.6592 us for public derivation, 36.188 us for
+agreement, and 90.309 us for the TLS-shaped roundtrip. Generation beat
+RustCrypto at 18.837 ns; public derivation beat `ring` at 9.9571 us and the
+equivalent AWS-LC import-plus-public row at 18.001 us; agreement beat AWS-LC at
+43.019 us and `ring` at 42.176 us. After batching the five native public-field
+operations behind one Microsoft x64 ABI boundary, the exact final parser-only
+run measured 82.507 ns against CRRL at 83.339 ns, with non-overlapping
+Criterion intervals. That is faster in the same run and a tie under the
+repository's conservative 5% classification. The exact-final-source
+whole-operation hardware benchmark remains awaiting a future physical run. The
+Windows qualification row is wired to retain exact-source P-256 timing and
+cleanup evidence, but its first successful artifact is still pending.
+
+This snapshot evaluates the independently proven safe Rust authority everywhere
+and embedded s2n-bignum assembly for Apple/Linux AArch64 and Linux/Windows
+x86-64 public derivation and agreement. The candidate Linux and Apple assembly
+passed portable differential, NIST, Wycheproof, native timing, cleanup, and
+deterministic provenance gates on M1 and physical G3/G4/Intel as scoped above.
+Those development bundles predate later shared-source edits and are not
+exact-final release evidence;
+the final Windows backend has native differential, independent-oracle, and
+performance evidence, with exact-final-source qualification timing and cleanup
+still open until the wired job succeeds. The
+retained G4 DudeCT maxima were 1.8903 for public derivation and 1.55471 for
+agreement; the G3 maxima were 1.12000 and 2.59291 respectively, all against
+threshold 10. Target
+qualification remains owned by [`docs/platforms.md`](../docs/platforms.md),
+[`docs/constant-time.md`](../docs/constant-time.md), and `ct.toml`. These results
+must be rerun from the exact candidate commit before publication.
 
 Runner coverage change: this run has eight Linux runners. The RISE RISC-V
 runner did not execute in run #32185659553, so every aggregate below is over

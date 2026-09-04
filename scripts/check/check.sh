@@ -98,7 +98,6 @@ if work_required contracts.auxiliary; then
   ok
 fi
 
-# CI owns affected dependency checks in its dedicated supply-chain lane.
 if [[ "${RSCRYPTO_SKIP_CHECK_SUPPLY_CHAIN:-}" != "1" ]] \
   && { work_required dependency-policy || work_required dependencies.auxiliary; }; then
   step "Auditing deps"

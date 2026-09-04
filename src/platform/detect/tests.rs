@@ -56,7 +56,10 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(
+    target_arch = "x86_64",
+    any(feature = "std", target_os = "linux", target_os = "android")
+  ))]
   fn x86_64_amx_caps_require_process_permission() {
     use crate::platform::caps::x86;
 

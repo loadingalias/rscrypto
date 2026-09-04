@@ -19,8 +19,6 @@ set -euo pipefail
 #   ./scripts/test/test-fuzz.sh --list             # List available targets
 #   ./scripts/test/test-fuzz.sh --clean            # Clean fuzz artifacts
 
-export RSCRYPTO_TEST_MODE=${RSCRYPTO_TEST_MODE:-local}
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
@@ -60,12 +58,6 @@ default_target_concurrency() {
 }
 
 TARGET_CONCURRENCY=${RSCRYPTO_FUZZ_TARGET_CONCURRENCY:-$(default_target_concurrency)}
-
-# Skip if commit mode (fuzzing takes too long)
-if [ "$RSCRYPTO_TEST_MODE" = "commit" ]; then
-  echo "Fuzzing skipped in commit mode"
-  exit 0
-fi
 
 show_help() {
   echo "Fuzz testing for rscrypto"

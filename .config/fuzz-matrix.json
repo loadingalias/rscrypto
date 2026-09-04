@@ -556,6 +556,24 @@
       ]
     },
     {
+      "id": "p256-ecdh",
+      "dimensions": {
+        "name": "P-256 ECDH",
+        "targets": "auth_p256_ecdh",
+        "duration_seconds": 15
+      },
+      "external_paths": [
+        "fuzz/corpus/auth_p256_ecdh/**",
+        "fuzz/fuzz_targets/auth_p256_ecdh.rs",
+        "fuzz/target_impls/auth_p256_ecdh.rs",
+        "fuzz-packages/auth-p256-ecdh/**",
+        "src/auth/p256_*.rs",
+        "testdata/auth/nist/**",
+        "testdata/auth/wycheproof/ecdh_secp256r1_ecpoint_test.json",
+        "tests/p256_ecdh_*.rs"
+      ]
+    },
+    {
       "id": "mlkem",
       "dimensions": {
         "name": "ML-KEM",

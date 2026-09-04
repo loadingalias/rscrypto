@@ -7,6 +7,22 @@ fn assert_debug_snapshot(value: &impl Debug, expected: &str) {
 #[test]
 fn generic_secret_owner_debug_is_redacted() {
   assert_debug_snapshot(&rscrypto::SecretBytes::new([0x53; 16]), "SecretBytes(****)");
+
+  #[cfg(feature = "alloc")]
+  {
+    assert_debug_snapshot(&rscrypto::SecretVec::from_vec(vec![0x53; 16]), "SecretVec(****)");
+    assert_debug_snapshot(
+      &rscrypto::SecretString::from_string(String::from("credential")),
+      "SecretString(****)",
+    );
+
+    let error = rscrypto::SecretVec::try_fill_with(16, |bytes| {
+      bytes[..8].fill(0x53);
+      Err("sensitive filler diagnostic")
+    })
+    .expect_err("filler failure must be returned");
+    assert_debug_snapshot(&error, "Fill(..)");
+  }
 }
 
 #[test]
@@ -220,6 +236,10 @@ fn private_key_and_shared_secret_debug_snapshots_are_redacted() {
       &keypair,
       &format!("EcdsaP256Keypair {{ public: {:?}, .. }}", keypair.public_key()),
     );
+    let error = keypair
+      .try_sign_blinded_with(b"message", |_| Err("sensitive entropy diagnostic"))
+      .expect_err("blinding entropy failure must be returned");
+    assert_debug_snapshot(&error, "Random(..)");
   }
 
   #[cfg(feature = "ecdsa-p384")]
@@ -252,6 +272,24 @@ fn private_key_and_shared_secret_debug_snapshots_are_redacted() {
       .diffie_hellman(&rscrypto::X25519PublicKey::basepoint())
       .expect("basepoint exchange must produce a nonzero shared secret");
     assert_debug_snapshot(&shared, "X25519SharedSecret(****)");
+  }
+
+  #[cfg(feature = "p256-ecdh")]
+  {
+    let secret = rscrypto::P256EphemeralSecret::try_generate_with(|candidate| {
+      candidate.fill(0x53);
+      Ok::<(), core::convert::Infallible>(())
+    })
+    .expect("fixed P-256 scalar must be valid");
+    assert_debug_snapshot(&secret, "P256EphemeralSecret(****)");
+    let peer = rscrypto::P256EphemeralSecret::try_generate_with(|candidate| {
+      candidate.fill(0x24);
+      Ok::<(), core::convert::Infallible>(())
+    })
+    .expect("fixed P-256 peer scalar must be valid")
+    .public_key();
+    let shared = secret.diffie_hellman(&peer);
+    assert_debug_snapshot(&shared, "P256SharedSecret(****)");
   }
 
   #[cfg(feature = "ml-kem")]
@@ -383,6 +421,34 @@ fn secret_input_error_snapshots_do_not_echo_input_bytes() {
       "ECDSA key-generation random source failed"
     );
     assert!(core::error::Error::source(&generation_error).is_none());
+  }
+
+  #[cfg(feature = "p256-ecdh")]
+  {
+    struct ScalarBearingError;
+
+    impl Debug for ScalarBearingError {
+      fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("ScalarBearingError(53535353)")
+      }
+    }
+
+    impl core::fmt::Display for ScalarBearingError {
+      fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("scalar-bearing error: 53535353")
+      }
+    }
+
+    impl core::error::Error for ScalarBearingError {}
+
+    let error = rscrypto::P256EphemeralSecret::try_generate_with(|candidate| {
+      candidate[..8].fill(0x53);
+      Err(ScalarBearingError)
+    })
+    .expect_err("P-256 entropy failure must be returned");
+    assert_debug_snapshot(&error, "Random(..)");
+    assert_eq!(error.to_string(), "P-256 key-generation random source failed");
+    assert!(core::error::Error::source(&error).is_none());
   }
 
   #[cfg(feature = "ml-kem")]

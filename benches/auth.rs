@@ -4,7 +4,7 @@ mod common;
 
 use core::hint::black_box;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use ed25519_dalek::{Signer as _, SigningKey};
 use fips203::{
   ml_kem_512 as FipsMlKem512, ml_kem_768 as FipsMlKem768, ml_kem_1024 as FipsMlKem1024,
@@ -13,13 +13,16 @@ use fips203::{
 use hkdf::Hkdf as RustCryptoHkdf;
 use hmac::{Hmac, KeyInit};
 use libcrux_ml_kem::{mlkem512 as LibcruxMlKem512, mlkem768 as LibcruxMlKem768, mlkem1024 as LibcruxMlKem1024};
+use p256::SecretKey as P256OracleSecretKey;
 use p256::ecdsa::{Signature as P256OracleSignature, SigningKey as P256OracleSigningKey};
+use p256::elliptic_curve::sec1::ToSec1Point as _;
+use p384::SecretKey as P384OracleSecretKey;
 use p384::ecdsa::{Signature as P384OracleSignature, SigningKey as P384OracleSigningKey};
 use rscrypto::{
   EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature, EcdsaP384Keypair, EcdsaP384PublicKey,
   EcdsaP384SecretKey, EcdsaP384Signature, Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, HkdfSha256, HkdfSha384,
-  HmacSha256, HmacSha384, HmacSha512, Kem as _, Mac as _, MlKem512, MlKem768, MlKem1024, MlKemError, Pbkdf2Sha256,
-  Pbkdf2Sha512, X25519SecretKey,
+  HmacSha256, HmacSha384, HmacSha512, Kem as _, Mac as _, MlKem512, MlKem768, MlKem1024, MlKemError,
+  P256EphemeralSecret, P256PublicKey, Pbkdf2Sha256, Pbkdf2Sha512, X25519SecretKey,
 };
 use rustcrypto_ml_kem::{
   B32 as RustCryptoMlKemB32, DecapsulationKey as RustCryptoMlKemDecapsulationKey, KeyExport as _,
@@ -66,6 +69,18 @@ macro_rules! aws_lc_bench {
   not(any(target_arch = "s390x", target_arch = "powerpc64"))
 )))]
 macro_rules! aws_lc_bench {
+  ($($tokens:tt)*) => {};
+}
+
+#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+macro_rules! ring_p256_bench {
+  ($($tokens:tt)*) => {
+    $($tokens)*
+  };
+}
+
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+macro_rules! ring_p256_bench {
   ($($tokens:tt)*) => {};
 }
 
@@ -883,7 +898,10 @@ fn ecdsa_p256_sign(c: &mut Criterion) {
       b.iter(|| {
         black_box(
           black_box(&keypair)
-            .try_sign_blinded(black_box(d), |out| out.copy_from_slice(black_box(&blind)))
+            .try_sign_blinded_with(black_box(d), |out| {
+              out.copy_from_slice(black_box(&blind));
+              Ok::<(), core::convert::Infallible>(())
+            })
             .expect("valid authentication benchmark operation must succeed"),
         )
       })
@@ -914,6 +932,35 @@ fn ecdsa_p256_sign(c: &mut Criterion) {
     }
   }
 
+  g.finish();
+}
+
+fn ecdsa_p256_public_key(c: &mut Criterion) {
+  let secret_bytes = [0x11u8; 32];
+  let secret =
+    EcdsaP256SecretKey::from_bytes(secret_bytes).expect("valid authentication benchmark operation must succeed");
+  let blind = [0x5cu8; 64];
+  let oracle =
+    P256OracleSecretKey::from_slice(&secret_bytes).expect("valid authentication benchmark operation must succeed");
+  let expected = secret.public_key().to_sec1_bytes();
+  assert_eq!(oracle.public_key().to_sec1_bytes().as_ref(), expected);
+
+  let mut g = c.benchmark_group("ecdsa-p256/public-key");
+  g.bench_function("rscrypto-blinded", |b| {
+    b.iter(|| {
+      black_box(
+        black_box(&secret)
+          .try_public_key_blinded_with(|out| {
+            out.copy_from_slice(black_box(&blind));
+            Ok::<(), core::convert::Infallible>(())
+          })
+          .expect("valid authentication benchmark operation must succeed"),
+      )
+    })
+  });
+  g.bench_function("rustcrypto-p256", |b| {
+    b.iter(|| black_box(black_box(&oracle).public_key()))
+  });
   g.finish();
 }
 
@@ -1035,7 +1082,10 @@ fn ecdsa_p384_sign(c: &mut Criterion) {
       b.iter(|| {
         black_box(
           black_box(&keypair)
-            .try_sign_blinded(black_box(d), |out| out.copy_from_slice(black_box(&blind)))
+            .try_sign_blinded_with(black_box(d), |out| {
+              out.copy_from_slice(black_box(&blind));
+              Ok::<(), core::convert::Infallible>(())
+            })
             .expect("valid authentication benchmark operation must succeed"),
         )
       })
@@ -1066,6 +1116,35 @@ fn ecdsa_p384_sign(c: &mut Criterion) {
     }
   }
 
+  g.finish();
+}
+
+fn ecdsa_p384_public_key(c: &mut Criterion) {
+  let secret_bytes = [0x31u8; 48];
+  let secret =
+    EcdsaP384SecretKey::from_bytes(secret_bytes).expect("valid authentication benchmark operation must succeed");
+  let blind = [0xa3u8; 96];
+  let oracle =
+    P384OracleSecretKey::from_slice(&secret_bytes).expect("valid authentication benchmark operation must succeed");
+  let expected = secret.public_key().to_sec1_bytes();
+  assert_eq!(oracle.public_key().to_sec1_bytes().as_ref(), expected);
+
+  let mut g = c.benchmark_group("ecdsa-p384/public-key");
+  g.bench_function("rscrypto-blinded", |b| {
+    b.iter(|| {
+      black_box(
+        black_box(&secret)
+          .try_public_key_blinded_with(|out| {
+            out.copy_from_slice(black_box(&blind));
+            Ok::<(), core::convert::Infallible>(())
+          })
+          .expect("valid authentication benchmark operation must succeed"),
+      )
+    })
+  });
+  g.bench_function("rustcrypto-p384", |b| {
+    b.iter(|| black_box(black_box(&oracle).public_key()))
+  });
   g.finish();
 }
 
@@ -1623,6 +1702,349 @@ fn x25519_diffie_hellman(c: &mut Criterion) {
   g.finish();
 }
 
+fn p256_ephemeral(bytes: [u8; 32]) -> P256EphemeralSecret {
+  P256EphemeralSecret::try_generate_with(|candidate| {
+    candidate.copy_from_slice(&bytes);
+    Ok::<(), core::convert::Infallible>(())
+  })
+  .expect("valid authentication benchmark scalar must be accepted")
+}
+
+const P256_NIST_PRIVATE: [u8; 32] = [
+  0x7d, 0x7d, 0xc5, 0xf7, 0x1e, 0xb2, 0x9d, 0xda, 0xf8, 0x0d, 0x62, 0x14, 0x63, 0x2e, 0xea, 0xe0, 0x3d, 0x90, 0x58,
+  0xaf, 0x1f, 0xb6, 0xd2, 0x2e, 0xd8, 0x0b, 0xad, 0xb6, 0x2b, 0xc1, 0xa5, 0x34,
+];
+const P256_NIST_PUBLIC: [u8; 65] = [
+  0x04, 0xea, 0xd2, 0x18, 0x59, 0x01, 0x19, 0xe8, 0x87, 0x6b, 0x29, 0x14, 0x6f, 0xf8, 0x9c, 0xa6, 0x17, 0x70, 0xc4,
+  0xed, 0xbb, 0xf9, 0x7d, 0x38, 0xce, 0x38, 0x5e, 0xd2, 0x81, 0xd8, 0xa6, 0xb2, 0x30, 0x28, 0xaf, 0x61, 0x28, 0x1f,
+  0xd3, 0x5e, 0x2f, 0xa7, 0x00, 0x25, 0x23, 0xac, 0xc8, 0x5a, 0x42, 0x9c, 0xb0, 0x6e, 0xe6, 0x64, 0x83, 0x25, 0x38,
+  0x9f, 0x59, 0xed, 0xfc, 0xe1, 0x40, 0x51, 0x41,
+];
+const P256_NIST_PEER: [u8; 65] = [
+  0x04, 0x70, 0x0c, 0x48, 0xf7, 0x7f, 0x56, 0x58, 0x4c, 0x5c, 0xc6, 0x32, 0xca, 0x65, 0x64, 0x0d, 0xb9, 0x1b, 0x6b,
+  0xac, 0xce, 0x3a, 0x4d, 0xf6, 0xb4, 0x2c, 0xe7, 0xcc, 0x83, 0x88, 0x33, 0xd2, 0x87, 0xdb, 0x71, 0xe5, 0x09, 0xe3,
+  0xfd, 0x9b, 0x06, 0x0d, 0xdb, 0x20, 0xba, 0x5c, 0x51, 0xdc, 0xc5, 0x94, 0x8d, 0x46, 0xfb, 0xf6, 0x40, 0xdf, 0xe0,
+  0x44, 0x17, 0x82, 0xca, 0xb8, 0x5f, 0xa4, 0xac,
+];
+const P256_NIST_SHARED: [u8; 32] = [
+  0x46, 0xfc, 0x62, 0x10, 0x64, 0x20, 0xff, 0x01, 0x2e, 0x54, 0xa4, 0x34, 0xfb, 0xdd, 0x2d, 0x25, 0xcc, 0xc5, 0x85,
+  0x20, 0x60, 0x56, 0x1e, 0x68, 0x04, 0x0d, 0xd7, 0x77, 0x89, 0x97, 0xbd, 0x7b,
+];
+
+fn crrl_p256_scalar(bytes: [u8; 32]) -> crrl::p256::Scalar {
+  let mut little_endian = bytes;
+  little_endian.reverse();
+  crrl::p256::Scalar::decode(&little_endian).expect("valid CRRL benchmark scalar")
+}
+
+fn p256_benchmark_preflight() {
+  use std::sync::Once;
+
+  static PREFLIGHT: Once = Once::new();
+  PREFLIGHT.call_once(|| {
+    let ours = p256_ephemeral(P256_NIST_PRIVATE);
+    assert_eq!(ours.public_key().to_sec1_bytes(), P256_NIST_PUBLIC);
+    let peer = P256PublicKey::from_sec1_bytes(&P256_NIST_PEER).expect("valid NIST benchmark peer");
+    assert_eq!(ours.diffie_hellman(&peer).as_bytes(), &P256_NIST_SHARED);
+
+    let rustcrypto = P256OracleSecretKey::from_slice(&P256_NIST_PRIVATE).expect("valid RustCrypto benchmark scalar");
+    assert_eq!(
+      rustcrypto.public_key().to_sec1_point(false).as_bytes(),
+      P256_NIST_PUBLIC
+    );
+    let rustcrypto_peer = p256::PublicKey::from_sec1_bytes(&P256_NIST_PEER).expect("valid RustCrypto benchmark peer");
+    assert_eq!(
+      p256::ecdh::diffie_hellman(rustcrypto.to_nonzero_scalar(), rustcrypto_peer.as_affine())
+        .raw_secret_bytes()
+        .as_slice(),
+      P256_NIST_SHARED
+    );
+
+    let crrl_scalar = crrl_p256_scalar(P256_NIST_PRIVATE);
+    assert_eq!(
+      crrl::p256::Point::mulgen(&crrl_scalar).encode_uncompressed(),
+      P256_NIST_PUBLIC
+    );
+    let crrl_peer = crrl::p256::Point::decode(&P256_NIST_PEER).expect("valid CRRL benchmark peer");
+    assert_eq!(
+      &core::ops::Mul::mul(crrl_peer, crrl_scalar).encode_uncompressed()[1..33],
+      &P256_NIST_SHARED
+    );
+
+    let mut libcrux_public = [0u8; 64];
+    assert!(libcrux_p256::dh_initiator(&mut libcrux_public, &P256_NIST_PRIVATE));
+    assert_eq!(libcrux_public, P256_NIST_PUBLIC[1..]);
+    let mut libcrux_shared = [0u8; 64];
+    assert!(libcrux_p256::dh_responder(
+      &mut libcrux_shared,
+      &P256_NIST_PEER[1..],
+      &P256_NIST_PRIVATE,
+    ));
+    assert_eq!(libcrux_shared[..32], P256_NIST_SHARED);
+
+    aws_lc_bench! {
+      let aws_secret = aws_lc_rs::agreement::PrivateKey::from_private_key(
+        &aws_lc_rs::agreement::ECDH_P256,
+        &P256_NIST_PRIVATE,
+      )
+      .expect("valid AWS-LC benchmark scalar");
+      assert_eq!(
+        aws_secret.compute_public_key().expect("AWS-LC public derivation").as_ref(),
+        P256_NIST_PUBLIC,
+      );
+      let aws_peer = aws_lc_rs::agreement::UnparsedPublicKey::new(
+        &aws_lc_rs::agreement::ECDH_P256,
+        P256_NIST_PEER,
+      );
+      let aws_shared = aws_lc_rs::agreement::agree(&aws_secret, aws_peer, (), |bytes| {
+        Ok::<[u8; 32], ()>(array_from_slice(bytes))
+      })
+      .expect("AWS-LC benchmark agreement");
+      assert_eq!(aws_shared, P256_NIST_SHARED);
+    }
+
+    ring_p256_bench! {
+      let rng = ring::rand::SystemRandom::new();
+      let ring_secret = ring::agreement::EphemeralPrivateKey::generate(&ring::agreement::ECDH_P256, &rng)
+        .expect("ring benchmark scalar generation");
+      let ring_public = ring_secret.compute_public_key().expect("ring benchmark public derivation");
+      let ours_peer = P256PublicKey::from_sec1_bytes(ring_public.as_ref()).expect("valid ring benchmark public key");
+      let ours_shared = p256_ephemeral(P256_NIST_PRIVATE).diffie_hellman(&ours_peer);
+      let ring_peer = ring::agreement::UnparsedPublicKey::new(&ring::agreement::ECDH_P256, P256_NIST_PUBLIC);
+      let ring_shared = ring::agreement::agree_ephemeral(ring_secret, &ring_peer, array_from_slice::<32>)
+        .expect("ring benchmark agreement");
+      assert_eq!(ours_shared.as_bytes(), &ring_shared);
+    }
+  });
+}
+
+fn p256_ecdh_key_generation(c: &mut Criterion) {
+  p256_benchmark_preflight();
+  let scalar = P256_NIST_PRIVATE;
+  let mut g = c.benchmark_group("p256-ecdh/key-generation");
+  g.bench_function("rscrypto-caller-fill", |b| {
+    b.iter(|| black_box(p256_ephemeral(*black_box(&scalar))))
+  });
+  g.bench_function("rustcrypto-p256-import", |b| {
+    b.iter(|| black_box(P256OracleSecretKey::from_slice(black_box(&scalar)).expect("valid oracle scalar")))
+  });
+  g.bench_function("crrl-import", |b| {
+    b.iter(|| black_box(crrl::p256::PrivateKey::decode(black_box(&scalar)).expect("valid CRRL scalar")))
+  });
+  aws_lc_bench! {
+    g.bench_function("aws-lc-rs-native-import-and-precompute", |b| {
+      b.iter(|| {
+        black_box(
+          aws_lc_rs::agreement::PrivateKey::from_private_key(
+            &aws_lc_rs::agreement::ECDH_P256,
+            black_box(&scalar),
+          )
+          .expect("valid AWS-LC scalar"),
+        )
+      })
+    });
+  }
+  g.finish();
+}
+
+fn p256_ecdh_public_key(c: &mut Criterion) {
+  p256_benchmark_preflight();
+  let scalar = P256_NIST_PRIVATE;
+  let ours = p256_ephemeral(scalar);
+  let rustcrypto = P256OracleSecretKey::from_slice(&scalar).expect("valid RustCrypto scalar");
+  let crrl_scalar = crrl_p256_scalar(scalar);
+  aws_lc_bench! {
+    let aws_secret = aws_lc_rs::agreement::PrivateKey::from_private_key(
+      &aws_lc_rs::agreement::ECDH_P256,
+      &scalar,
+    )
+    .expect("valid AWS-LC scalar");
+  }
+  let mut g = c.benchmark_group("p256-ecdh/public-key");
+  g.bench_function("rscrypto-selected", |b| b.iter(|| black_box(ours.public_key())));
+  g.bench_function("rscrypto-ecdsa-public-api", |b| {
+    b.iter(|| {
+      let secret = EcdsaP256SecretKey::from_bytes(*black_box(&scalar)).expect("valid ECDSA benchmark scalar");
+      black_box(secret.public_key())
+    })
+  });
+  g.bench_function("rustcrypto-p256-pure-rust", |b| {
+    b.iter(|| black_box(rustcrypto.public_key().to_sec1_point(false)))
+  });
+  g.bench_function("crrl-pure-rust", |b| {
+    b.iter(|| black_box(crrl::p256::Point::mulgen(black_box(&crrl_scalar)).encode_uncompressed()))
+  });
+  g.bench_function("libcrux-hacl-pure-rust", |b| {
+    b.iter(|| {
+      let mut public = [0u8; 64];
+      assert!(libcrux_p256::dh_initiator(black_box(&mut public), black_box(&scalar)));
+      black_box(public)
+    })
+  });
+  aws_lc_bench! {
+    g.bench_function("aws-lc-rs-native-cached", |b| {
+      b.iter(|| black_box(aws_secret.compute_public_key().expect("AWS-LC public derivation")))
+    });
+    g.bench_function("aws-lc-rs-native-import-and-public", |b| {
+      b.iter(|| {
+        let secret = aws_lc_rs::agreement::PrivateKey::from_private_key(
+          &aws_lc_rs::agreement::ECDH_P256,
+          black_box(&scalar),
+        )
+        .expect("valid AWS-LC scalar");
+        black_box(secret.compute_public_key().expect("AWS-LC public derivation"))
+      })
+    });
+  }
+  ring_p256_bench! {
+    let rng = ring::rand::SystemRandom::new();
+    g.bench_function("ring-native", |b| {
+      b.iter_batched(
+        || {
+          ring::agreement::EphemeralPrivateKey::generate(&ring::agreement::ECDH_P256, &rng)
+            .expect("ring scalar generation")
+        },
+        |secret| black_box(secret.compute_public_key().expect("ring public derivation")),
+        BatchSize::SmallInput,
+      )
+    });
+  }
+  g.finish();
+}
+
+fn p256_ecdh_parse(c: &mut Criterion) {
+  p256_benchmark_preflight();
+  let encoded = p256_ephemeral([0x24; 32]).public_key().to_sec1_bytes();
+  let mut g = c.benchmark_group("p256-ecdh/parse");
+  g.bench_function("rscrypto", |b| {
+    b.iter(|| black_box(P256PublicKey::from_sec1_bytes(black_box(&encoded)).expect("valid benchmark point")))
+  });
+  g.bench_function("rustcrypto-p256-pure-rust", |b| {
+    b.iter(|| black_box(p256::PublicKey::from_sec1_bytes(black_box(&encoded)).expect("valid oracle point")))
+  });
+  g.bench_function("crrl-pure-rust", |b| {
+    b.iter(|| black_box(crrl::p256::Point::decode(black_box(&encoded)).expect("valid CRRL point")))
+  });
+  aws_lc_bench! {
+    g.bench_function("aws-lc-rs-native", |b| {
+      b.iter(|| {
+        let unparsed = aws_lc_rs::agreement::UnparsedPublicKey::new(
+          &aws_lc_rs::agreement::ECDH_P256,
+          black_box(encoded),
+        );
+        black_box(
+          aws_lc_rs::agreement::ParsedPublicKey::try_from(unparsed).expect("valid AWS-LC point"),
+        )
+      })
+    });
+  }
+  g.finish();
+}
+
+fn p256_ecdh_agreement(c: &mut Criterion) {
+  p256_benchmark_preflight();
+  let scalar = P256_NIST_PRIVATE;
+  let peer = P256PublicKey::from_sec1_bytes(&P256_NIST_PEER).expect("valid benchmark peer point");
+  let rustcrypto_secret = P256OracleSecretKey::from_slice(&scalar).expect("valid RustCrypto scalar");
+  let rustcrypto_peer = p256::PublicKey::from_sec1_bytes(&P256_NIST_PEER).expect("valid RustCrypto peer point");
+  let crrl_scalar = crrl_p256_scalar(scalar);
+  let crrl_peer = crrl::p256::Point::decode(&P256_NIST_PEER).expect("valid CRRL peer point");
+  let libcrux_peer = array_from_slice::<64>(&P256_NIST_PEER[1..]);
+  aws_lc_bench! {
+    let aws_secret = aws_lc_rs::agreement::PrivateKey::from_private_key(
+      &aws_lc_rs::agreement::ECDH_P256,
+      &scalar,
+    )
+    .expect("valid AWS-LC scalar");
+    let aws_peer = aws_lc_rs::agreement::ParsedPublicKey::try_from(
+      aws_lc_rs::agreement::UnparsedPublicKey::new(&aws_lc_rs::agreement::ECDH_P256, P256_NIST_PEER),
+    )
+    .expect("valid AWS-LC peer point");
+  }
+  let mut g = c.benchmark_group("p256-ecdh/agreement");
+  g.bench_function("rscrypto-selected", |b| {
+    b.iter_batched(
+      || p256_ephemeral(scalar),
+      |secret| black_box(secret.diffie_hellman(black_box(&peer))),
+      BatchSize::SmallInput,
+    )
+  });
+  g.bench_function("rustcrypto-p256-pure-rust", |b| {
+    b.iter(|| {
+      black_box(p256::ecdh::diffie_hellman(
+        rustcrypto_secret.to_nonzero_scalar(),
+        black_box(rustcrypto_peer.as_affine()),
+      ))
+    })
+  });
+  g.bench_function("crrl-pure-rust", |b| {
+    b.iter(|| black_box(core::ops::Mul::mul(black_box(crrl_peer), black_box(crrl_scalar)).encode_uncompressed()))
+  });
+  g.bench_function("libcrux-hacl-pure-rust", |b| {
+    b.iter(|| {
+      let mut shared = [0u8; 64];
+      assert!(libcrux_p256::dh_responder(
+        black_box(&mut shared),
+        black_box(&libcrux_peer),
+        black_box(&scalar),
+      ));
+      black_box(shared)
+    })
+  });
+  aws_lc_bench! {
+    g.bench_function("aws-lc-rs-native", |b| {
+      b.iter(|| {
+        black_box(
+          aws_lc_rs::agreement::agree(&aws_secret, aws_peer.clone(), (), |bytes| {
+            Ok::<[u8; 32], ()>(array_from_slice(bytes))
+          })
+          .expect("AWS-LC benchmark agreement"),
+        )
+      })
+    });
+  }
+  ring_p256_bench! {
+    let rng = ring::rand::SystemRandom::new();
+    let ring_peer = ring::agreement::UnparsedPublicKey::new(&ring::agreement::ECDH_P256, P256_NIST_PEER);
+    g.bench_function("ring-native", |b| {
+      b.iter_batched(
+        || {
+          ring::agreement::EphemeralPrivateKey::generate(&ring::agreement::ECDH_P256, &rng)
+            .expect("ring scalar generation")
+        },
+        |secret| {
+          black_box(
+            ring::agreement::agree_ephemeral(secret, black_box(&ring_peer), array_from_slice::<32>)
+              .expect("ring benchmark agreement"),
+          )
+        },
+        BatchSize::SmallInput,
+      )
+    });
+  }
+  g.finish();
+}
+
+fn p256_ecdh_tls_roundtrip(c: &mut Criterion) {
+  let alice = [0x42; 32];
+  let bob = [0x24; 32];
+  let mut g = c.benchmark_group("p256-ecdh/tls-shaped-roundtrip");
+  g.bench_function("rscrypto", |b| {
+    b.iter(|| {
+      let alice_secret = p256_ephemeral(*black_box(&alice));
+      let bob_secret = p256_ephemeral(*black_box(&bob));
+      let alice_public = alice_secret.public_key().to_sec1_bytes();
+      let bob_public = bob_secret.public_key().to_sec1_bytes();
+      let alice_peer = P256PublicKey::from_sec1_bytes(black_box(&bob_public)).expect("valid benchmark peer");
+      let bob_peer = P256PublicKey::from_sec1_bytes(black_box(&alice_public)).expect("valid benchmark peer");
+      let alice_shared = alice_secret.diffie_hellman(&alice_peer);
+      let bob_shared = bob_secret.diffie_hellman(&bob_peer);
+      black_box((alice_shared, bob_shared))
+    })
+  });
+  g.finish();
+}
+
 macro_rules! mlkem_profile_benches {
   (
     $keygen_fn:ident,
@@ -1855,9 +2277,11 @@ criterion_group!(
   pbkdf2_sha256_derive,
   pbkdf2_sha256_internal,
   pbkdf2_sha512_derive,
+  ecdsa_p256_public_key,
   ecdsa_p256_sign,
   ecdsa_p256_verify,
   ecdsa_p256_internal,
+  ecdsa_p384_public_key,
   ecdsa_p384_sign,
   ecdsa_p384_verify,
   ecdsa_p384_internal,
@@ -1868,6 +2292,11 @@ criterion_group!(
   ed25519_verify_phase,
   x25519_public_key,
   x25519_diffie_hellman,
+  p256_ecdh_key_generation,
+  p256_ecdh_public_key,
+  p256_ecdh_parse,
+  p256_ecdh_agreement,
+  p256_ecdh_tls_roundtrip,
   mlkem512_keygen,
   mlkem512_encapsulate,
   mlkem512_decapsulate,
