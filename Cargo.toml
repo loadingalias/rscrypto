@@ -218,15 +218,15 @@ portable-only = []
 [dependencies]
 getrandom = { version = "0.4.3", optional = true }
 rayon = { version = "1.12.0", optional = true }
-serde = { version = "1", optional = true, default-features = false }
+serde = { version = "1.0.229", optional = true, default-features = false }
 
 [dev-dependencies]
-criterion = { version = "^0.8.2", default-features = false, features = [
+criterion = { version = "0.8.2", default-features = false, features = [
   "html_reports",
   "plotters",
 ] }
 gungraun = "=0.19.4"
-proptest = "^1.11.0"
+proptest = "1.11.0"
 
 # Oracles
 aes = "0.9.3"
@@ -238,9 +238,9 @@ crc32c = "0.6.8"
 crc32fast = "1.5.1"
 crc64fast = "1.1.0"
 ascon-hash = "0.4.0"
-argon2 = { version = "0.5.3", default-features = false, features = ["alloc"] }
+argon2 = { version = "0.6.0", default-features = false, features = ["alloc"] }
 blake3 = { version = "1.8.7", default-features = false, features = ["std", "rayon"] }
-blake2 = "0.10.6"
+blake2 = "0.11.0"
 pbkdf2 = "0.13.0"
 scrypt = { version = "0.12.0", default-features = false }
 sha2 = "0.11.0"
@@ -271,10 +271,10 @@ chacha20 = "0.10.2"
 aes-gcm = "0.11.1"
 aes-gcm-siv = "0.12.1"
 aegis = "0.9.15"
-ascon-aead = { version = "0.6", default-features = false, features = ["alloc"] }
+ascon-aead = { version = "0.6.0", default-features = false, features = ["alloc"] }
 crrl = { version = "0.9.0", default-features = false, features = ["p256"] }
 libcrux-p256 = { version = "0.0.8", default-features = false, features = ["expose-hacl"] }
-serde_json = "1"
+serde_json = "1.0.151"
 ring = "0.17.14"
 rsa = { version = "0.9.10", default-features = false, features = ["std", "u64_digit", "sha2"] }
 dryoc = "1.0.0"
@@ -304,7 +304,7 @@ libcrux-ml-kem = { version = "0.0.10", default-features = false, features = [
 
 [target.'cfg(all(any(unix, windows), not(target_arch = "wasm32"), not(any(target_arch = "s390x", target_arch = "powerpc64"))))'.dev-dependencies]
 aws-lc-rs = "1.18.1"
-aws-lc-sys = "0.44.0"
+aws-lc-sys = "0.45.0"
 
 [lib]
 bench = false

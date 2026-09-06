@@ -4,9 +4,9 @@ use blake2::{
   Blake2b as OracleBlake2b, Blake2b512 as OracleBlake2b512, Blake2bMac, Blake2bVarCore, Blake2s as OracleBlake2s,
   Blake2s256 as OracleBlake2s256, Blake2sMac, Blake2sVarCore,
   digest::{
-    Digest as _, Mac as _, Output,
+    Digest as _, KeyInit as _, Mac as _, Output,
+    block_api::{Buffer, UpdateCore, VariableOutputCore},
     consts::{U16, U32, U64},
-    core_api::{Buffer, UpdateCore, VariableOutputCore},
   },
 };
 use proptest::{prelude::*, test_runner::Config as ProptestConfig};
@@ -202,7 +202,7 @@ proptest! {
     let expected_256: [u8; 32] = if key.is_empty() {
       oracle_blake2b_unkeyed(&data, &salt, &personal)
     } else {
-      let mut oracle = OracleBlake2bMac256::new_with_salt_and_personal(&key, &salt, &personal)
+      let mut oracle = OracleBlake2bMac256::new_with_salt_and_personal(Some(&key), &salt, &personal)
         .expect("RustCrypto must accept generated BLAKE2b-256 parameters");
       oracle.update(&data);
       oracle.finalize().into_bytes().into()
@@ -223,7 +223,7 @@ proptest! {
     let expected_512: [u8; 64] = if key.is_empty() {
       oracle_blake2b_unkeyed(&data, &salt, &personal)
     } else {
-      let mut oracle = OracleBlake2bMac512::new_with_salt_and_personal(&key, &salt, &personal)
+      let mut oracle = OracleBlake2bMac512::new_with_salt_and_personal(Some(&key), &salt, &personal)
         .expect("RustCrypto must accept generated BLAKE2b-512 parameters");
       oracle.update(&data);
       oracle.finalize().into_bytes().into()
@@ -251,7 +251,7 @@ proptest! {
     let expected_256: [u8; 32] = if key.is_empty() {
       oracle_blake2s_unkeyed(&data, &salt, &personal)
     } else {
-      let mut oracle = OracleBlake2sMac256::new_with_salt_and_personal(&key, &salt, &personal)
+      let mut oracle = OracleBlake2sMac256::new_with_salt_and_personal(Some(&key), &salt, &personal)
         .expect("RustCrypto must accept generated BLAKE2s-256 parameters");
       oracle.update(&data);
       oracle.finalize().into_bytes().into()
@@ -271,7 +271,7 @@ proptest! {
     let expected_128: [u8; 16] = if key.is_empty() {
       oracle_blake2s_unkeyed(&data, &salt, &personal)
     } else {
-      let mut oracle = OracleBlake2sMac128::new_with_salt_and_personal(&key, &salt, &personal)
+      let mut oracle = OracleBlake2sMac128::new_with_salt_and_personal(Some(&key), &salt, &personal)
         .expect("RustCrypto must accept generated BLAKE2s-128 parameters");
       oracle.update(&data);
       oracle.finalize().into_bytes().into()

@@ -8,7 +8,7 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
-libfuzzer-sys = "0.4"
+libfuzzer-sys = "0.4.13"
 p256 = { version = "0.14.0", default-features = false, features = ["ecdh", "std"] }
 rscrypto = { path = "../..", default-features = false, features = ["std", "p256-ecdh"] }
 

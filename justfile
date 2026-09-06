@@ -205,10 +205,9 @@ perf-llvm-lines *args="":
     @command -v cargo-llvm-lines >/dev/null || { echo "error: cargo-llvm-lines is required" >&2; exit 1; }
     cargo llvm-lines --locked --release --lib --features full {{ args }}
 
-# Update coordinated Cargo manifests
-# Update coordinated Cargo manifests, or preview with --check.
+# Update tool pins, stable Rust, and every Cargo manifest.
 update *args="":
-    @scripts/update/update-all.sh {{ args }}
+    @scripts/update-all.sh {{ args }}
 
 # Assets
 
@@ -217,3 +216,7 @@ chart:
     @mkdir -p target
     @rustc --edition 2024 -O scripts/render_perf_chart.rs -o target/render_perf_chart
     @target/render_perf_chart
+
+# Validate native tooling catalogs, installers, and updater behavior.
+check-tooling:
+    @scripts/tooling/check.sh

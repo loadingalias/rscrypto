@@ -909,7 +909,7 @@ mod tests {
   use blake2::{
     Blake2s as OracleBlake2s, Blake2s256 as OracleBlake2s256, Blake2sMac,
     digest::{
-      Digest as _, Mac as _,
+      Digest as _, KeyInit as _, Mac as _,
       consts::{U16, U32},
     },
   };

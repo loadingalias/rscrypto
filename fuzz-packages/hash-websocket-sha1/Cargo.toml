@@ -8,7 +8,7 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
-libfuzzer-sys = "0.4"
+libfuzzer-sys = "0.4.13"
 rscrypto = { path = "../..", default-features = false, features = ["websocket-sha1"] }
 rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
 sha1 = { version = "0.11.0", default-features = false }

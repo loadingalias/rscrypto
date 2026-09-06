@@ -8,10 +8,10 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
-libfuzzer-sys = "0.4"
+libfuzzer-sys = "0.4.13"
 rscrypto = { path = "../..", features = ["std", "kmac"] }
 rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
-tiny-keccak = { version = "2.0", features = ["kmac"] }
+tiny-keccak = { version = "2.0.2", features = ["kmac"] }
 
 [workspace]
 members = ["."]
