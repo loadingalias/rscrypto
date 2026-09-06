@@ -13,7 +13,7 @@ candidates=()
 if [[ -n "${PYTHON:-}" ]]; then
   candidates+=("$PYTHON")
 fi
-candidates+=(python3.14 python3.13 python3.12 python3.11 python3)
+candidates+=(python3.14 python3.13 python3.12 python3.11 python3 python.exe)
 
 seen=":"
 for candidate in "${candidates[@]}"; do

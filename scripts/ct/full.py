@@ -1409,7 +1409,7 @@ def main() -> int:
       "DudeCT passes mean no leakage was detected for the sampled classes and host configuration.",
       "Native BINSEC evidence is required only for targets whose ct.toml binsec policy is required.",
       (
-        "Filtered DudeCT runs are diagnostic CI evidence; skipped manifest cases are not release coverage."
+        "Filtered DudeCT runs are diagnostic evidence; skipped manifest cases are not release coverage."
         if filtered_dudect
         else "Uncovered CT-intended primitives remain blockers for ct-claimed release status."
       ),

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and validate the bounded constant-time structure gate used by affected CI.
+# Build and validate the bounded constant-time structure gate.
 
 set -euo pipefail
 

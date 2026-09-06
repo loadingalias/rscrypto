@@ -161,6 +161,7 @@ def owner_call_site_counts(
 ) -> dict[str, int]:
   counts = {symbol: 0 for symbol in sorted(expected_symbols)}
   relative_relocations: dict[int, int] = {}
+  coff_call_relocations: set[int] = set()
   relative_relocation = re.compile(
     r"^\s*([0-9a-fA-F]+)\s+R_[A-Z0-9_]+_RELATIVE\s+\*ABS\*\+0x([0-9a-fA-F]+)\s*$"
   )
@@ -171,13 +172,30 @@ def owner_call_site_counts(
   current_symbol = ""
   function_label = re.compile(r"^[0-9a-fA-F]+ <(.+)>:$")
   instruction_pattern = re.compile(r"\b(?:bl|brasl|call|callq|jal|jalr)\b")
+  instruction_address = re.compile(r"^\s*([0-9a-fA-F]+):")
+  coff_owner_relocation = re.compile(
+    r"^\s*([0-9a-fA-F]+):\s+IMAGE_REL_AMD64_REL32\s+_?(ct_entry_owner_eq_[0-9]+)\s*$"
+  )
   for line in disassembly_text.splitlines():
     if match := function_label.match(line.strip()):
       current_symbol = match.group(1).removeprefix("_")
       continue
+    if match := coff_owner_relocation.match(line):
+      symbol = match.group(2)
+      if (
+        symbol in expected_symbols
+        and int(match.group(1), 16) in coff_call_relocations
+        and current_symbol != symbol
+      ):
+        counts[symbol] += 1
+      continue
     instruction = instruction_pattern.search(line)
     if instruction is None:
       continue
+
+    if instruction.group(0) in ("call", "callq") and (address := instruction_address.match(line)):
+      # AMD64 REL32 call relocations begin one byte after the E8 opcode.
+      coff_call_relocations.add(int(address.group(1), 16) + 1)
 
     called: set[str] = set()
     for symbol in expected_symbols:
@@ -233,6 +251,22 @@ def linker_driver(command: str) -> str:
   raise ValueError("DudeCT linker command does not identify the linker driver")
 
 
+def linker_version(linker: Path) -> str:
+  version_argument = "/?" if linker.name.lower() == "link.exe" else "--version"
+  result = subprocess.run(
+    [str(linker), version_argument],
+    cwd=linker.parent,
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    check=False,
+  )
+  version = result.stdout.strip()
+  if not version:
+    raise ValueError(f"DudeCT linker version output is empty: {linker}")
+  return version
+
+
 def main() -> int:
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--stdout", required=True, type=Path)
@@ -244,6 +278,7 @@ def main() -> int:
   parser.add_argument("--samples", type=int, required=True)
   parser.add_argument("--command", default="")
   parser.add_argument("--binary", required=True, type=Path)
+  parser.add_argument("--binary-object", type=Path)
   parser.add_argument("--binary-disassembly", required=True, type=Path)
   parser.add_argument("--binary-symbols", required=True, type=Path)
   parser.add_argument("--linker-command-log", required=True, type=Path)
@@ -271,7 +306,10 @@ def main() -> int:
     text=True,
   )
   expected_owner_symbols = {f"ct_entry_owner_eq_{width}" for width in release_binary["formal_owner_widths"]}
-  for path in (args.binary, args.binary_disassembly, args.binary_symbols, args.linker_command_log):
+  evidence_paths = [args.binary, args.binary_disassembly, args.binary_symbols, args.linker_command_log]
+  if args.binary_object is not None:
+    evidence_paths.append(args.binary_object)
+  for path in evidence_paths:
     if not path.is_file():
       raise ValueError(f"DudeCT evidence artifact missing: {path}")
 
@@ -292,7 +330,11 @@ def main() -> int:
     raise ValueError(f"DudeCT binary does not call every owner equality symbol: {missing_call_sites}")
 
   linker_command = next(
-    (line for line in args.linker_command_log.read_text().splitlines() if '"-o"' in line),
+    (
+      line
+      for line in args.linker_command_log.read_text().splitlines()
+      if '"-o"' in line or '"/OUT:' in line
+    ),
     "",
   )
   linker = linker_driver(linker_command)
@@ -300,7 +342,7 @@ def main() -> int:
   if linker_path_text is None:
     raise ValueError(f"DudeCT linker driver is not resolvable: {linker}")
   linker_path = Path(linker_path_text).resolve()
-  linker_version = subprocess.check_output([str(linker_path), "--version"], cwd=root, text=True, stderr=subprocess.STDOUT).strip()
+  linker_version_text = linker_version(linker_path)
   git_status = subprocess.check_output(["git", "status", "--short", "--untracked-files=all"], cwd=root, text=True).splitlines()
 
   seeds, results = parse_stdout(args.stdout)
@@ -345,7 +387,7 @@ def main() -> int:
     "linker": linker,
     "linker_path": str(linker_path),
     "linker_sha256": sha256_file(linker_path),
-    "linker_version": linker_version,
+    "linker_version": linker_version_text,
     "binary": {
       "path": str(args.binary),
       "sha256": sha256_file(args.binary),
@@ -353,6 +395,16 @@ def main() -> int:
       "owner_symbols": sorted(expected_owner_symbols),
       "owner_call_sites": owner_call_sites,
     },
+    "binary_object": (
+      {
+        "path": str(args.binary_object),
+        "sha256": sha256_file(args.binary_object),
+        "bytes": args.binary_object.stat().st_size,
+        "purpose": "COFF symbol, relocation, and call-site evidence for the exact LTO object linked into the timed PE",
+      }
+      if args.binary_object is not None
+      else None
+    ),
     "binary_disassembly": {
       "path": str(args.binary_disassembly),
       "sha256": sha256_file(args.binary_disassembly),

@@ -19,7 +19,6 @@
         "build.rs",
         "rust-toolchain.toml",
         "scripts/check/feature-contracts.sh",
-        "scripts/ci/feature-contracts-test.sh",
         "scripts/lib/feature-profiles.sh",
         "scripts/lib/rail-plan.sh"
       ]
@@ -180,7 +179,7 @@
       "id": "key-exchange",
       "dimensions": {
         "group": "Key exchange",
-        "feature_roots": "x25519,ml-kem",
+        "feature_roots": "x25519,p256-ecdh,ml-kem",
         "runtime_profiles": "runtime.entropy,runtime.diagnostics",
         "full": false
       },
@@ -188,10 +187,14 @@
         "src/auth/curve25519_edwards.rs",
         "src/auth/mlkem.rs",
         "src/auth/mlkem/**",
+        "src/auth/p256_*.rs",
         "src/auth/x25519.rs",
         "src/auth/x25519/**",
+        "testdata/auth/nist/**",
+        "testdata/auth/wycheproof/ecdh_secp256r1_ecpoint_test.json",
         "testdata/auth/wycheproof/x25519_*.json",
         "tests/mlkem_*.rs",
+        "tests/p256_ecdh_*.rs",
         "tests/vectors/mlkem_*.json",
         "tests/x25519_*.rs"
       ]

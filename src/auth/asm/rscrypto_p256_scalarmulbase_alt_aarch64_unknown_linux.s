@@ -3,6 +3,7 @@
 //
 // Adapted for rscrypto from s2n-bignum:
 // - p256/p256_scalarmulbase_alt.S
+// - deterministic secret-frame and volatile-register cleanup
 //
 // The public symbol is renamed to the rscrypto namespace and embedded with Rust global_asm!.
 
@@ -287,21 +288,53 @@ Lp256_scalarmulbase_alt_tabloop:
 
 
 
+        mov x16, sp
+        mov x17, #18
+.Lrscrypto_p256_scalarmulbase_alt_clear_frame:
+        stp xzr, xzr, [x16], #16
+        subs x17, x17, #1
+        b.ne .Lrscrypto_p256_scalarmulbase_alt_clear_frame
+        mov x0, xzr
+        mov x1, xzr
+        mov x2, xzr
+        mov x3, xzr
+        mov x4, xzr
+        mov x5, xzr
+        mov x6, xzr
+        mov x7, xzr
+        mov x8, xzr
+        mov x9, xzr
+        mov x10, xzr
+        mov x11, xzr
+        mov x12, xzr
+        mov x13, xzr
+        mov x14, xzr
+        mov x15, xzr
+        mov x16, xzr
+        mov x17, xzr
         add sp, sp, #(9*32 +0)
         .cfi_adjust_cfa_offset -9*32
-        ldp x25, x30, [sp], #16
+        ldp x25, x30, [sp]
+        stp xzr, xzr, [sp]
+        add sp, sp, #16
         .cfi_adjust_cfa_offset -16
         .cfi_restore x25
         .cfi_restore x30
-        ldp x23, x24, [sp], #16
+        ldp x23, x24, [sp]
+        stp xzr, xzr, [sp]
+        add sp, sp, #16
         .cfi_adjust_cfa_offset -16
         .cfi_restore x23
         .cfi_restore x24
-        ldp x21, x22, [sp], #16
+        ldp x21, x22, [sp]
+        stp xzr, xzr, [sp]
+        add sp, sp, #16
         .cfi_adjust_cfa_offset -16
         .cfi_restore x21
         .cfi_restore x22
-        ldp x19, x20, [sp], #16
+        ldp x19, x20, [sp]
+        stp xzr, xzr, [sp]
+        add sp, sp, #16
         .cfi_adjust_cfa_offset -16
         .cfi_restore x19
         .cfi_restore x20
@@ -1441,17 +1474,29 @@ Lp256_scalarmulbase_alt_inv_midloop:
         csel x13, x3, x13, cc
         stp x10, x11, [x20]
         stp x12, x13, [x20, #16]
+        mov x16, sp
+        mov x17, #10
+.Lrscrypto_p256_scalarmulbase_alt_clear_inverse_frame:
+        stp xzr, xzr, [x16], #16
+        subs x17, x17, #1
+        b.ne .Lrscrypto_p256_scalarmulbase_alt_clear_inverse_frame
         add sp, sp, #(160 +0)
         .cfi_adjust_cfa_offset -160
-        ldp x23, x24, [sp], #16
+        ldp x23, x24, [sp]
+        stp xzr, xzr, [sp]
+        add sp, sp, #16
         .cfi_adjust_cfa_offset -16
         .cfi_restore x23
         .cfi_restore x24
-        ldp x21, x22, [sp], #16
+        ldp x21, x22, [sp]
+        stp xzr, xzr, [sp]
+        add sp, sp, #16
         .cfi_adjust_cfa_offset -16
         .cfi_restore x21
         .cfi_restore x22
-        ldp x19, x20, [sp], #16
+        ldp x19, x20, [sp]
+        stp xzr, xzr, [sp]
+        add sp, sp, #16
         .cfi_adjust_cfa_offset -16
         .cfi_restore x19
         .cfi_restore x20
@@ -3047,6 +3092,12 @@ Lp256_scalarmulbase_alt_local_p256_montjmixadd:
         stp x6, x7, [x15, #48]
         stp x8, x9, [x15, #64]
         stp x10, x11, [x15, #80]
+        mov x16, sp
+        mov x17, #12
+.Lrscrypto_p256_scalarmulbase_alt_clear_mixadd_frame:
+        stp xzr, xzr, [x16], #16
+        subs x17, x17, #1
+        b.ne .Lrscrypto_p256_scalarmulbase_alt_clear_mixadd_frame
         add sp, sp, #(192 +0)
         .cfi_adjust_cfa_offset -192
         ret

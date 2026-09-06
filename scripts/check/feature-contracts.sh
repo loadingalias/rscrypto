@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Execute the repository-owned feature contracts without embedding product
-# feature knowledge in Just or GitHub Actions.
+# feature knowledge in Just.
 
 set -euo pipefail
 
@@ -422,7 +422,7 @@ runtime_args() {
 
   if [[ "$target" == all ]] && command -v cargo-nextest >/dev/null 2>&1; then
     RUNTIME_ARGS=(cargo nextest run --locked --workspace --no-default-features
-      --features "$feature_set" --config-file .config/nextest.toml -P commit)
+      --features "$feature_set" --config-file .config/nextest.toml -P default)
     return 0
   fi
 

@@ -30,7 +30,7 @@ Report issues that can affect users or published artifacts, including:
 - Authentication, decryption, decapsulation, signature, or key-agreement
   failures that accept invalid input or expose an unintended oracle.
 - Memory unsafety, hostile-input panics, or unbounded resource use.
-- Security-relevant API misuse, dependency, build, CI, or release-integrity
+- Security-relevant API misuse, dependency, build, or release-integrity
   defects.
 
 The exact security boundary and constant-time claim model are defined by

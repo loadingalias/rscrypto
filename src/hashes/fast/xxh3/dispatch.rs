@@ -47,7 +47,7 @@ struct ActiveDispatch {
 static ACTIVE: OnceCache<ActiveDispatch> = OnceCache::new();
 
 #[cfg(target_arch = "x86_64")]
-// Zen5 CI shows AVX-512 startup cost losing badly for XXH3-64 at 256B/1KiB,
+// Zen5 measurements show AVX-512 startup cost losing badly for XXH3-64 at 256B/1KiB,
 // while larger buffers amortize it. Keep this limited to 64-bit long paths.
 const ZEN5_XXH3_64_AVX2_LONG_MAX: usize = 1024;
 

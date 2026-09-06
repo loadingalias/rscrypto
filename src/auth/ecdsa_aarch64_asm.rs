@@ -9,13 +9,6 @@ use core::arch::global_asm;
 
 use super::ZeroizingWords;
 
-#[path = "ecdsa_aarch64_tables.rs"]
-mod ecdsa_aarch64_tables;
-
-#[cfg(target_os = "macos")]
-global_asm!(include_str!(
-  "asm/rscrypto_p256_scalarmulbase_alt_aarch64_apple_darwin.s"
-));
 #[cfg(target_os = "macos")]
 global_asm!(include_str!("asm/rscrypto_bignum_mod_n256_aarch64_apple_darwin.s"));
 #[cfg(target_os = "macos")]
@@ -32,10 +25,6 @@ global_asm!(include_str!("asm/rscrypto_bignum_modinv_aarch64_apple_darwin.s"));
 global_asm!(include_str!("asm/rscrypto_p384_montjdouble_alt_aarch64_apple_darwin.s"));
 #[cfg(target_os = "macos")]
 global_asm!(include_str!("asm/rscrypto_p384_montjmixadd_alt_aarch64_apple_darwin.s"));
-#[cfg(target_os = "linux")]
-global_asm!(include_str!(
-  "asm/rscrypto_p256_scalarmulbase_alt_aarch64_unknown_linux.s"
-));
 #[cfg(target_os = "linux")]
 global_asm!(include_str!("asm/rscrypto_bignum_mod_n256_aarch64_unknown_linux.s"));
 #[cfg(target_os = "linux")]
@@ -58,7 +47,6 @@ global_asm!(include_str!(
 ));
 
 unsafe extern "C" {
-  fn rscrypto_p256_scalarmulbase_alt(out: *mut u64, scalar: *const u64, blocksize: u64, table: *const u64);
   fn rscrypto_bignum_mod_n256(out: *mut u64, len: u64, input: *const u64);
   fn rscrypto_bignum_mod_n384(out: *mut u64, len: u64, input: *const u64);
   fn rscrypto_bignum_montmul_p384(out: *mut u64, lhs: *const u64, rhs: *const u64);
@@ -67,27 +55,6 @@ unsafe extern "C" {
   fn rscrypto_bignum_modinv(k: u64, out: *mut u64, value: *const u64, modulus: *const u64, tmp: *mut u64);
   fn rscrypto_p384_montjdouble_alt(out: *mut u64, point: *const u64);
   fn rscrypto_p384_montjmixadd_alt(out: *mut u64, lhs: *const u64, rhs: *const u64);
-}
-
-#[inline]
-pub(super) fn p256_scalarmulbase_generator(scalar: &[u64; 4]) -> [u64; 8] {
-  let mut out = [0u64; 8];
-  // SAFETY: P-256 fixed-base scalar multiplication call because:
-  // 1. This module is compiled only for supported AArch64, matching the embedded assembly ABI.
-  // 2. `out` and `scalar` are fixed-size arrays with the exact limb counts required by s2n-bignum.
-  // 3. The scalar may contain secret nonce material. Generated-code timing assurance is
-  //    configuration- and release-evidence-bound; see `ct.toml`.
-  // 4. The table is generated for `P256_AARCH64_BASEPOINT_BLOCKSIZE` and contains every entry the
-  //    s2n-bignum fixed-base routine reads for that block size.
-  unsafe {
-    rscrypto_p256_scalarmulbase_alt(
-      out.as_mut_ptr(),
-      scalar.as_ptr(),
-      ecdsa_aarch64_tables::P256_AARCH64_BASEPOINT_BLOCKSIZE,
-      ecdsa_aarch64_tables::P256_AARCH64_BASEPOINT_TABLE.as_ptr(),
-    )
-  };
-  out
 }
 
 #[inline]

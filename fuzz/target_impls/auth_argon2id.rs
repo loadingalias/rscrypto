@@ -9,7 +9,7 @@ pub(super) fn run(data: &[u8]) {
   let t_byte: u8 = some_or_return!(input.byte());
   let rest = input.rest();
 
-  // Scale fuzzer bytes into Miri/CI-friendly cost parameters.
+  // Scale fuzzer bytes into bounded Miri and fuzzing cost parameters.
   // p = 1 keeps single-lane path; m_kib ∈ [8, 23] and t ∈ [1, 4] stay small
   // enough that thousands of iterations complete in seconds per fuzz job.
   let m_kib = 8u32.strict_add(u32::from(m_byte) % 16);

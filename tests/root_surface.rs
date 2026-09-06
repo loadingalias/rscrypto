@@ -72,6 +72,8 @@ use rscrypto::{
   MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey,
   MlKem1024PreparedDecapsulationKey, MlKem1024PreparedEncapsulationKey, MlKem1024SharedSecret,
 };
+#[cfg(feature = "p256-ecdh")]
+use rscrypto::{P256EphemeralSecret, P256KeyGenerationError, P256PublicKey, P256PublicKeyError, P256SharedSecret};
 #[cfg(feature = "poly1305")]
 use rscrypto::{Poly1305, Poly1305OneTimeKey, Poly1305Tag};
 #[cfg(feature = "rsa")]
@@ -872,6 +874,31 @@ fn root_surface_key_exchange_exports_compile() {
   assert_eq!(alice_shared.as_bytes().len(), 32);
   assert!(alice_shared.ct_eq(&bob_shared).declassify());
   let _error = X25519Error::new();
+}
+
+#[test]
+#[cfg(feature = "p256-ecdh")]
+fn root_surface_p256_ecdh_exports_compile() {
+  fn secret(byte: u8) -> P256EphemeralSecret {
+    P256EphemeralSecret::try_generate_with(|candidate| {
+      candidate.fill(byte);
+      Ok::<(), core::convert::Infallible>(())
+    })
+    .expect("fixed P-256 scalar must be valid")
+  }
+
+  let alice = secret(0x42);
+  let bob = secret(0x24);
+  let alice_public = P256PublicKey::from_sec1_bytes(alice.public_key().as_sec1_bytes())
+    .expect("generated P-256 public key must round-trip");
+  let bob_public = bob.public_key();
+  let alice_shared: P256SharedSecret = alice.diffie_hellman(&bob_public);
+  let bob_shared = bob.diffie_hellman(&alice_public);
+  assert!(alice_shared.ct_eq(&bob_shared).declassify());
+  assert_eq!(alice_shared.as_bytes().len(), P256SharedSecret::LENGTH);
+  assert_eq!(alice_shared.expose_secret().as_bytes(), alice_shared.as_bytes());
+  let _public_error = P256PublicKeyError;
+  let _generation_error = P256KeyGenerationError::<()>::ScalarSamplingExhausted;
 }
 
 #[test]

@@ -10,17 +10,6 @@ use core::arch::global_asm;
 use super::ZeroizingWords;
 use crate::platform::{self, caps::x86};
 
-#[path = "ecdsa_aarch64_tables.rs"]
-mod ecdsa_x86_64_tables;
-
-global_asm!(
-  include_str!("asm/rscrypto_p256_scalarmulbase_x86_64_unknown_linux.S"),
-  options(att_syntax)
-);
-global_asm!(
-  include_str!("asm/rscrypto_p256_scalarmulbase_alt_x86_64_unknown_linux.S"),
-  options(att_syntax)
-);
 global_asm!(
   include_str!("asm/rscrypto_bignum_mod_n256_x86_64_unknown_linux.S"),
   options(att_syntax)
@@ -50,8 +39,6 @@ global_asm!(
   options(att_syntax)
 );
 unsafe extern "C" {
-  fn rscrypto_p256_scalarmulbase(out: *mut u64, scalar: *const u64, blocksize: u64, table: *const u64);
-  fn rscrypto_p256_scalarmulbase_alt(out: *mut u64, scalar: *const u64, blocksize: u64, table: *const u64);
   fn rscrypto_bignum_mod_n256(out: *mut u64, len: u64, input: *const u64);
   fn rscrypto_bignum_modinv(k: u64, out: *mut u64, value: *const u64, modulus: *const u64, tmp: *mut u64);
   fn rscrypto_bignum_montmul_p384(out: *mut u64, lhs: *const u64, rhs: *const u64);
@@ -64,49 +51,6 @@ unsafe extern "C" {
 #[inline]
 fn has_bmi2_adx() -> bool {
   platform::caps().has(x86::BMI2.union(x86::ADX))
-}
-
-#[inline]
-pub(super) fn p256_scalarmulbase_generator(scalar: &[u64; 4]) -> [u64; 8] {
-  let mut out = [0u64; 8];
-
-  if has_bmi2_adx() {
-    // SAFETY: BMI2/ADX P-256 fixed-base scalar multiplication call because:
-    // 1. This module is compiled only for Linux x86-64 System V, matching the embedded assembly ABI.
-    // 2. `out` and `scalar` are fixed-size arrays with the exact limb counts required by s2n-bignum.
-    // 3. Runtime capabilities prove BMI2 and ADX before selecting this backend.
-    // 4. The scalar may contain secret nonce material. Generated-code timing assurance is
-    //    configuration- and release-evidence-bound; see `ct.toml`.
-    // 5. The table is generated for `P256_AARCH64_BASEPOINT_BLOCKSIZE` and contains every entry the
-    //    s2n-bignum fixed-base routine reads for that block size.
-    unsafe {
-      rscrypto_p256_scalarmulbase(
-        out.as_mut_ptr(),
-        scalar.as_ptr(),
-        ecdsa_x86_64_tables::P256_AARCH64_BASEPOINT_BLOCKSIZE,
-        ecdsa_x86_64_tables::P256_AARCH64_BASEPOINT_TABLE.as_ptr(),
-      )
-    };
-  } else {
-    // SAFETY: baseline P-256 fixed-base scalar multiplication call because:
-    // 1. This module is compiled only for Linux x86-64 System V, matching the embedded assembly ABI.
-    // 2. `out` and `scalar` are fixed-size arrays with the exact limb counts required by s2n-bignum.
-    // 3. The `_alt` routine is the baseline x86-64 backend and does not require BMI2 or ADX.
-    // 4. The scalar may contain secret nonce material. Generated-code timing assurance is
-    //    configuration- and release-evidence-bound; see `ct.toml`.
-    // 5. The table is generated for `P256_AARCH64_BASEPOINT_BLOCKSIZE` and contains every entry the
-    //    s2n-bignum fixed-base routine reads for that block size.
-    unsafe {
-      rscrypto_p256_scalarmulbase_alt(
-        out.as_mut_ptr(),
-        scalar.as_ptr(),
-        ecdsa_x86_64_tables::P256_AARCH64_BASEPOINT_BLOCKSIZE,
-        ecdsa_x86_64_tables::P256_AARCH64_BASEPOINT_TABLE.as_ptr(),
-      )
-    };
-  }
-
-  out
 }
 
 #[inline]

@@ -3,8 +3,9 @@
 //
 // Adapted for rscrypto from s2n-bignum:
 // - x86_att/p256/p256_scalarmulbase_alt.S
+// - deterministic secret-frame, saved-register-spill, and volatile-register cleanup
 //
-// Public symbol is renamed and embedded with Rust global_asm!.
+// The public symbol is renamed to the rscrypto namespace and embedded with Rust global_asm!.
 
  .globl rscrypto_p256_scalarmulbase_alt
         .type rscrypto_p256_scalarmulbase_alt, %function
@@ -208,13 +209,78 @@ Lrscrypto_p256_scalarmulbase_alt_tabloop:
         leaq (1*32)+32(%rsp), %rsi
         leaq (5*32)(%rsp), %rdx
         callq Lrscrypto_p256_scalarmulbase_alt_local_montmul_p256
+        movq $0, 0(%rsp)
+        movq $0, 8(%rsp)
+        movq $0, 16(%rsp)
+        movq $0, 24(%rsp)
+        movq $0, 32(%rsp)
+        movq $0, 40(%rsp)
+        movq $0, 48(%rsp)
+        movq $0, 56(%rsp)
+        movq $0, 64(%rsp)
+        movq $0, 72(%rsp)
+        movq $0, 80(%rsp)
+        movq $0, 88(%rsp)
+        movq $0, 96(%rsp)
+        movq $0, 104(%rsp)
+        movq $0, 112(%rsp)
+        movq $0, 120(%rsp)
+        movq $0, 128(%rsp)
+        movq $0, 136(%rsp)
+        movq $0, 144(%rsp)
+        movq $0, 152(%rsp)
+        movq $0, 160(%rsp)
+        movq $0, 168(%rsp)
+        movq $0, 176(%rsp)
+        movq $0, 184(%rsp)
+        movq $0, 192(%rsp)
+        movq $0, 200(%rsp)
+        movq $0, 208(%rsp)
+        movq $0, 216(%rsp)
+        movq $0, 224(%rsp)
+        movq $0, 232(%rsp)
+        movq $0, 240(%rsp)
+        movq $0, 248(%rsp)
+        movq $0, 256(%rsp)
+        movq $0, 264(%rsp)
+        movq $0, 272(%rsp)
+        movq $0, 280(%rsp)
+        movq $0, 288(%rsp)
+        movq $0, 296(%rsp)
+        movq $0, 304(%rsp)
+        movq $0, 312(%rsp)
+        movq $0, 320(%rsp)
+        movq $0, 328(%rsp)
+        movq $0, 336(%rsp)
+        movq $0, 344(%rsp)
         addq $11*32, %rsp ; .cfi_adjust_cfa_offset -11*32
-        popq %rbx ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
-        popq %rbp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbp
-        popq %r12 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r12
-        popq %r13 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r13
-        popq %r14 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r14
-        popq %r15 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r15
+        movq (%rsp), %rbx
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
+        movq (%rsp), %rbp
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbp
+        movq (%rsp), %r12
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r12
+        movq (%rsp), %r13
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r13
+        movq (%rsp), %r14
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r14
+        movq (%rsp), %r15
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r15
+        movl $0, %eax
+        movl $0, %ecx
+        movl $0, %edx
+        movl $0, %esi
+        movl $0, %edi
+        movl $0, %r8d
+        movl $0, %r9d
+        movl $0, %r10d
+        movl $0, %r11d
         retq ; .cfi_endproc
 .size rscrypto_p256_scalarmulbase_alt, .-rscrypto_p256_scalarmulbase_alt
 .type Lrscrypto_p256_scalarmulbase_alt_local_demont_p256, %function
@@ -1702,13 +1768,55 @@ Lrscrypto_p256_scalarmulbase_alt_inv_midloop:
         movq %rbx, 0x8(%rdi)
         movq %rcx, 0x10(%rdi)
         movq %rdx, 0x18(%rdi)
+        movq $0, 0(%rsp)
+        movq $0, 8(%rsp)
+        movq $0, 16(%rsp)
+        movq $0, 24(%rsp)
+        movq $0, 32(%rsp)
+        movq $0, 40(%rsp)
+        movq $0, 48(%rsp)
+        movq $0, 56(%rsp)
+        movq $0, 64(%rsp)
+        movq $0, 72(%rsp)
+        movq $0, 80(%rsp)
+        movq $0, 88(%rsp)
+        movq $0, 96(%rsp)
+        movq $0, 104(%rsp)
+        movq $0, 112(%rsp)
+        movq $0, 120(%rsp)
+        movq $0, 128(%rsp)
+        movq $0, 136(%rsp)
+        movq $0, 144(%rsp)
+        movq $0, 152(%rsp)
+        movq $0, 160(%rsp)
+        movq $0, 168(%rsp)
+        movq $0, 176(%rsp)
+        movq $0, 184(%rsp)
+        movq $0, 192(%rsp)
+        movq $0, 200(%rsp)
+        movq $0, 208(%rsp)
+        movq $0, 216(%rsp)
+        movq $0, 224(%rsp)
+        movq $0, 232(%rsp)
         addq $240, %rsp ; .cfi_adjust_cfa_offset -240
-        popq %r15 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r15
-        popq %r14 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r14
-        popq %r13 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r13
-        popq %r12 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r12
-        popq %rbp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbp
-        popq %rbx ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
+        movq (%rsp), %r15
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r15
+        movq (%rsp), %r14
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r14
+        movq (%rsp), %r13
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r13
+        movq (%rsp), %r12
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r12
+        movq (%rsp), %rbp
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbp
+        movq (%rsp), %rbx
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
         retq ; .cfi_endproc
 .size Lrscrypto_p256_scalarmulbase_alt_local_inv_p256, .-Lrscrypto_p256_scalarmulbase_alt_local_inv_p256
 .type Lrscrypto_p256_scalarmulbase_alt_local_montmul_p256, %function
@@ -1886,11 +1994,21 @@ Lrscrypto_p256_scalarmulbase_alt_local_montmul_p256:
         movq %r13, 0x8(%rdi)
         movq %r14, 0x10(%rdi)
         movq %r15, 0x18(%rdi)
-        popq %r15 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r15
-        popq %r14 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r14
-        popq %r13 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r13
-        popq %r12 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r12
-        popq %rbx ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
+        movq (%rsp), %r15
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r15
+        movq (%rsp), %r14
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r14
+        movq (%rsp), %r13
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r13
+        movq (%rsp), %r12
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r12
+        movq (%rsp), %rbx
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
         retq ; .cfi_endproc
 .size Lrscrypto_p256_scalarmulbase_alt_local_montmul_p256, .-Lrscrypto_p256_scalarmulbase_alt_local_montmul_p256
 .type Lrscrypto_p256_scalarmulbase_alt_local_montsqr_p256, %function
@@ -2038,11 +2156,21 @@ Lrscrypto_p256_scalarmulbase_alt_local_montsqr_p256:
         movq %r13, 0x8(%rdi)
         movq %r14, 0x10(%rdi)
         movq %r15, 0x18(%rdi)
-        popq %r15 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r15
-        popq %r14 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r14
-        popq %r13 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r13
-        popq %r12 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r12
-        popq %rbx ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
+        movq (%rsp), %r15
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r15
+        movq (%rsp), %r14
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r14
+        movq (%rsp), %r13
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r13
+        movq (%rsp), %r12
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r12
+        movq (%rsp), %rbx
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
         retq ; .cfi_endproc
 .size Lrscrypto_p256_scalarmulbase_alt_local_montsqr_p256, .-Lrscrypto_p256_scalarmulbase_alt_local_montsqr_p256
 .type Lrscrypto_p256_scalarmulbase_alt_local_p256_montjmixadd, %function
@@ -3995,12 +4123,48 @@ Lrscrypto_p256_scalarmulbase_alt_local_p256_montjmixadd:
         movq %r9, 0x48(%rdi)
         movq %r10, 0x50(%rdi)
         movq %r11, 0x58(%rdi)
+        movq $0, 0(%rsp)
+        movq $0, 8(%rsp)
+        movq $0, 16(%rsp)
+        movq $0, 24(%rsp)
+        movq $0, 32(%rsp)
+        movq $0, 40(%rsp)
+        movq $0, 48(%rsp)
+        movq $0, 56(%rsp)
+        movq $0, 64(%rsp)
+        movq $0, 72(%rsp)
+        movq $0, 80(%rsp)
+        movq $0, 88(%rsp)
+        movq $0, 96(%rsp)
+        movq $0, 104(%rsp)
+        movq $0, 112(%rsp)
+        movq $0, 120(%rsp)
+        movq $0, 128(%rsp)
+        movq $0, 136(%rsp)
+        movq $0, 144(%rsp)
+        movq $0, 152(%rsp)
+        movq $0, 160(%rsp)
+        movq $0, 168(%rsp)
+        movq $0, 176(%rsp)
+        movq $0, 184(%rsp)
         addq $192, %rsp ; .cfi_adjust_cfa_offset -192
-        popq %r15 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r15
-        popq %r14 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r14
-        popq %r13 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r13
-        popq %r12 ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r12
-        popq %rbp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbp
-        popq %rbx ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
+        movq (%rsp), %r15
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r15
+        movq (%rsp), %r14
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r14
+        movq (%rsp), %r13
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r13
+        movq (%rsp), %r12
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %r12
+        movq (%rsp), %rbp
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbp
+        movq (%rsp), %rbx
+        movq $0, (%rsp)
+        leaq 8(%rsp), %rsp ; .cfi_adjust_cfa_offset -8 ; .cfi_restore %rbx
         retq ; .cfi_endproc
 .size Lrscrypto_p256_scalarmulbase_alt_local_p256_montjmixadd, .-Lrscrypto_p256_scalarmulbase_alt_local_p256_montjmixadd

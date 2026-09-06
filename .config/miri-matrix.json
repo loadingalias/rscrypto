@@ -12,6 +12,7 @@
         "src/auth/argon2/**",
         "src/auth/mlkem.rs",
         "src/auth/mlkem/**",
+        "src/auth/p256_*.rs",
         "src/auth/x25519.rs",
         "src/auth/x25519/**",
         "src/backend/**",

@@ -113,11 +113,7 @@ def sha256_file(path: Path) -> str:
 
 
 def matrix_targets(matrix: dict) -> set[str]:
-  return {
-    str(row.get("dimensions", {}).get("target", ""))
-    for row in matrix.get("variants", [])
-    if row.get("dimensions", {}).get("target")
-  }
+  return {str(target) for target in matrix.get("targets", []) if target}
 
 
 def primitive_requires_evidence(ct: dict, primitive: dict, evidence: str) -> bool:
@@ -355,7 +351,7 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
       fail(errors, f"target {name} is ct-claimed before release evidence gates exist")
     if target.get("backend") != "llvm":
       fail(errors, f"target {name} backend must be llvm during phase 1")
-    for required in ("group", "linker", "physical_timing", "ci"):
+    for required in ("group", "linker", "physical_timing"):
       if not target.get(required):
         fail(errors, f"target {name} missing {required}")
     if target.get("physical_timing") not in VALID_PHYSICAL_TIMING_POLICIES:

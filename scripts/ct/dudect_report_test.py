@@ -96,6 +96,11 @@ def main() -> None:
   )
   assert linker_driver(power_linker_command) == "cc"
   assert linker_driver('LC_ALL="C" "/usr/bin/clang" "input.o" "-o" "output"') == "/usr/bin/clang"
+  msvc_linker_command = (
+    '"C:\\BuildTools\\VC\\Tools\\MSVC\\14.44\\bin\\link.exe" "/NOLOGO" '
+    '"input.o" "/OUT:C:/tmp/rscrypto-ct-dudect.exe"'
+  )
+  assert linker_driver(msvc_linker_command) == "C:\\BuildTools\\VC\\Tools\\MSVC\\14.44\\bin\\link.exe"
   darwin_linker_command = (
     'LC_ALL="C" "/usr/bin/env" "-u" "IPHONEOS_DEPLOYMENT_TARGET" '
     '"-u" "TVOS_DEPLOYMENT_TARGET" ZERO_AR_DATE="1" "/usr/bin/cc" '
@@ -149,6 +154,16 @@ def main() -> None:
 """
   symbolic_counts = owner_call_site_counts(symbolic_disassembly, expected, {})
   assert symbolic_counts["ct_entry_owner_eq_16"] == 1
+
+  coff_disassembly = """\
+0000000000000000 <rscrypto_ct_dudect::owner_eq_16_equal_vs_first_diff>:
+     b41: e8 00 00 00 00                callq 0xb46 <rscrypto_ct_dudect::owner_eq_16_equal_vs_first_diff+0xb46>
+          0000000000000b42:  IMAGE_REL_AMD64_REL32 ct_entry_owner_eq_16
+"""
+  coff_counts = owner_call_site_counts(coff_disassembly, expected, {})
+  assert coff_counts["ct_entry_owner_eq_16"] == 1
+  non_call_coff_relocation = coff_disassembly.replace("callq", "leaq ")
+  assert owner_call_site_counts(non_call_coff_relocation, expected, {})["ct_entry_owner_eq_16"] == 0
 
   riscv_disassembly = """\
 0000000000029000 <rscrypto_ct_dudect::main>:

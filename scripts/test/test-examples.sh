@@ -11,6 +11,7 @@ examples=(
   "ed25519_sign_verify ed25519,getrandom"
   "introspect crc32,sha2,chacha20poly1305,diag"
   "mlkem_encapsulation ml-kem,getrandom"
+  "p256_ecdh p256-ecdh,getrandom"
   "rsa_pss_verify rsa"
   "x25519_key_agreement x25519,getrandom"
 )

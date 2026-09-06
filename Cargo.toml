@@ -174,6 +174,7 @@ poly1305 = []
 ecdsa-p256 = ["hmac"]
 ecdsa-p384 = ["hmac"]
 ecdsa = ["ecdsa-p256", "ecdsa-p384"]
+p256-ecdh = []
 ed25519 = ["sha2"]
 rsa = ["alloc", "sha2"]
 x25519 = []
@@ -199,7 +200,7 @@ macs = ["hmac", "hmac-sha3", "kmac", "poly1305"]
 kdfs = ["hkdf", "pbkdf2"]
 password-hashing = ["argon2", "scrypt", "phc-strings"]
 signatures = ["ecdsa", "ed25519", "rsa"]
-key-exchange = ["x25519", "ml-kem"]
+key-exchange = ["x25519", "p256-ecdh", "ml-kem"]
 auth = ["macs", "kdfs", "password-hashing", "signatures", "key-exchange"]
 aead = ["aes-gcm", "aes-gcm-siv", "aes-siv", "chacha20poly1305", "xchacha20poly1305", "aegis256", "ascon-aead"]
 full = ["checksums", "hashes", "auth", "aead"]
@@ -251,7 +252,7 @@ xxhash-rust = { version = "0.8.18", features = ["xxh3"] }
 rapidhash = "=4.5.1"
 tiny-keccak = { version = "2.0.2", features = ["kmac", "shake"] }
 digest = { version = "0.11.3", features = ["dev"] }
-p256 = { version = "0.14.0", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
+p256 = { version = "0.14.0", default-features = false, features = ["ecdh", "ecdsa", "pkcs8", "std"] }
 p384 = { version = "0.14.0", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
 ed25519-dalek = "3.0.0"
 x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
@@ -271,6 +272,8 @@ aes-gcm = "0.11.0"
 aes-gcm-siv = "0.12.0"
 aegis = "0.9.15"
 ascon-aead = { version = "0.6", default-features = false, features = ["alloc"] }
+crrl = { version = "0.9.0", default-features = false, features = ["p256"] }
+libcrux-p256 = { version = "0.0.8", default-features = false, features = ["expose-hacl"] }
 serde_json = "1"
 ring = "0.17.14"
 rsa = { version = "0.9.10", default-features = false, features = ["std", "u64_digit", "sha2"] }
@@ -335,6 +338,10 @@ required-features = ["ml-kem", "getrandom"]
 name = "x25519_key_agreement"
 required-features = ["x25519", "getrandom"]
 
+[[example]]
+name = "p256_ecdh"
+required-features = ["p256-ecdh", "getrandom"]
+
 [[test]]
 name = "websocket_accept_digest"
 path = "tests/websocket_sha1.rs"
@@ -391,7 +398,7 @@ required-features = ["std", "ascon-hash"]
 [[bench]]
 name = "auth"
 harness = false
-required-features = ["hkdf", "pbkdf2", "ecdsa", "ed25519", "x25519", "ml-kem"]
+required-features = ["hkdf", "pbkdf2", "ecdsa", "ed25519", "x25519", "p256-ecdh", "ml-kem"]
 
 [[bench]]
 name = "rsa"

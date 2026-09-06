@@ -1139,7 +1139,7 @@ mod tests {
     }
   }
 
-  /// Smoke test used by CI: validates forced tier selection + correctness.
+  /// Smoke test for forced tier selection and correctness.
   ///
   /// Run it in isolation with env set, e.g.:
   /// `RSCRYPTO_CRC32_FORCE=pclmul cargo test -p checksum test_crc32_forced_kernel_smoke_from_env
@@ -1204,7 +1204,7 @@ mod tests {
     }
   }
 
-  /// Smoke test used by CI: validates forced tier selection + correctness.
+  /// Smoke test for forced tier selection and correctness.
   #[test]
   fn test_crc32c_forced_kernel_smoke_from_env() {
     let force = std::env::var("RSCRYPTO_CRC32_FORCE").unwrap_or_else(|_| String::from("auto"));

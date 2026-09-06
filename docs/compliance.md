@@ -16,11 +16,11 @@ module or product:
 - Standards-based primitive implementations and public test vectors.
 - Differential, property, fuzz, Miri, and backend-equivalence tests.
 - Scoped constant-time and secret-lifecycle evidence.
-- Explicit feature, platform, and release contracts.
+- Explicit feature and platform contracts.
 
 Start with [`test-vector-coverage.md`](test-vector-coverage.md),
-[`constant-time.md`](constant-time.md), [`secret-lifecycle.md`](secret-lifecycle.md),
-and [`release.md`](release.md).
+[`constant-time.md`](constant-time.md), and
+[`secret-lifecycle.md`](secret-lifecycle.md).
 
 ## What an integrator owns
 

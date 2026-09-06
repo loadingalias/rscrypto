@@ -1,8 +1,8 @@
 //! Argon2 / scrypt password-hashing benchmarks.
 //!
 //! Differential against the `argon2` and `scrypt` (RustCrypto) crates.
-//! Organised by cost-parameter classes so CI can run the fast groups on
-//! every push and reserve the OWASP-scale group for dedicated perf runs.
+//! Organised by cost-parameter classes so fast groups can run during normal
+//! development while the OWASP-scale group remains an explicit perf run.
 
 use core::{hint::black_box, time::Duration};
 
@@ -34,7 +34,7 @@ fn oracle_ctx(algo: argon2::Algorithm, m_kib: u32, t: u32, p: u32, out_len: usiz
 }
 
 /// Tiny / fast parameter matrix used for all three variants. Every tuple
-/// completes in a few milliseconds so the bench run stays CI-friendly.
+/// completes in a few milliseconds so the bench run stays bounded.
 const SMALL_MATRIX: &[(u32, u32, u32)] = &[
   // (m KiB, t, p)
   (8, 1, 1),
@@ -213,7 +213,7 @@ fn oracle_scrypt_params(log_n: u8, r: u32, p: u32, _out_len: usize) -> scrypt::P
   scrypt::Params::new(log_n, r, p).expect("supported password-hashing benchmark parameters must succeed")
 }
 
-/// Small / CI-friendly scrypt matrix: (log_n, r, p).
+/// Small scrypt matrix: (log_n, r, p).
 const SCRYPT_SMALL_MATRIX: &[(u8, u32, u32)] = &[(10, 8, 1), (12, 8, 1), (14, 8, 1), (10, 8, 4)];
 
 fn scrypt_small(c: &mut Criterion) {
@@ -363,7 +363,7 @@ fn argon2id_phc_roundtrip(_c: &mut Criterion) {
   // Stub when the PHC feature is disabled.
 }
 
-/// CI-friendly lane-parallel scaling curve. With `parallel` enabled,
+/// Bounded lane-parallel scaling curve. With `parallel` enabled,
 /// `p > 1` uses the `rayon::scope` slice driver; `p == 1` skips Rayon.
 /// Every row holds total memory and time cost constant while varying the
 /// lane count.
@@ -373,7 +373,7 @@ fn argon2id_parallel_scaling(c: &mut Criterion) {
   g.sample_size(15);
   g.measurement_time(Duration::from_secs(15));
 
-  let m_kib = 4 * 1024; // 4 MiB — CI-friendly; per-iteration time stays in the low-ms range at every `p`.
+  let m_kib = 4 * 1024; // 4 MiB; per-iteration time stays in the low-ms range at every `p`.
   let t = 2u32;
   let out_len = 32usize;
 
