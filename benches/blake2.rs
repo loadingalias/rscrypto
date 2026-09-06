@@ -8,7 +8,7 @@ use blake2::{
   Blake2b as RustCryptoBlake2b, Blake2b512 as RustCryptoBlake2b512, Blake2bMac, Blake2s as RustCryptoBlake2s,
   Blake2s256 as RustCryptoBlake2s256, Blake2sMac,
   digest::{
-    Digest as _, Mac as _,
+    Digest as _, KeyInit as _, Mac as _,
     consts::{U16, U32, U64},
   },
 };

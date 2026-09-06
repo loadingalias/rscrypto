@@ -1256,7 +1256,7 @@ mod tests {
   use blake2::{
     Blake2b as OracleBlake2b, Blake2bMac,
     digest::{
-      Digest as _, Mac as _,
+      Digest as _, KeyInit as _,
       consts::{U32, U64},
     },
   };

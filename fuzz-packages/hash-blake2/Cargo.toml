@@ -8,12 +8,12 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
-libfuzzer-sys = "0.4"
+libfuzzer-sys = "0.4.13"
 rscrypto = { path = "../..", features = ["std", "blake2b", "blake2s"] }
 rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
-blake2 = "0.10.6"
-digest = "0.11"
-hmac = "0.13"
+blake2 = "0.11.0"
+digest = "0.11.3"
+hmac = "0.13.0"
 
 [workspace]
 members = ["."]

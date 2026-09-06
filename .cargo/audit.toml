@@ -1,0 +1,11 @@
+[advisories]
+ignore = [
+  # RustCrypto RSA is a dev-only test/benchmark oracle. Production RSA uses
+  # src/auth/rsa.rs. Remove when the oracle is removed or Marvin is fixed.
+  "RUSTSEC-2023-0071",
+  # proc-macro-error2 is unmaintained. It enters the lockfile through the
+  # cfg(hax) dependencies of hax-lib-macros, via the dev-only Libcrux ML-KEM
+  # and P-256 oracles. It is absent from rscrypto's normal/build dependency
+  # graph across all targets/features. Remove when upstream replaces it.
+  "RUSTSEC-2026-0173",
+]

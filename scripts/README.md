@@ -61,7 +61,7 @@ parsing, and their focused regression tests.
 | `bench/run.sh` | `bench/bench.sh` |
 | `bench/blake3-gap-gate.sh` | `bench/run.sh` when explicitly enabled |
 | `bench/profile.sh` | `just profile` |
-| `update/update-all.sh` | `just update` |
+| `update-all.sh` | `just update` |
 
 `bench/benchmark_catalog.py` owns benchmark selection.
 `bench/benchmark_catalog_test.py` runs from `check/policy.sh`.
@@ -89,5 +89,34 @@ machine.
 | `lib/python.sh` | Python-backed check, CT, and benchmark scripts |
 | `lib/toolchain.sh` | `lib/common.sh`, MSRV, Miri, and fuzz scripts |
 
-Python tooling requires Python 3.11 or newer and uses only the standard
-library.
+Python tooling requires Python 3.11 or newer. The updater installs its catalog-pinned
+Python libraries into a temporary virtual environment; checks and benchmarks use
+the standard library.
+
+## Native tooling
+
+`just update` refreshes the tooling catalog, stable Rust, every Cargo manifest
+(including standalone and fuzz support workspaces), lockfiles, and existing
+GitHub Action pins. It runs on local macOS and has no dependency publish-age
+filter. Inspect its changes before committing. `just check-tooling` validates
+the catalog, installer syntax, and updater regression tests without provisioning.
+
+Run `scripts/tooling/<platform>.sh` on the native Ubuntu version pinned in
+[the catalog](../.config/tooling.toml). Platforms are `aarch64-linux`,
+`x86_64-linux`, `riscv64-linux`, `s390x-linux`, and `powerpc64le-linux`.
+The installers use sudo when needed. Windows uses the corresponding
+`aarch64-win.ps1` or `x86_64-win.ps1` in an elevated PowerShell session.
+macOS tools remain locally managed.
+
+All profiles install the prerequisites for `just check`, `just test`, and
+Criterion `just bench`. RISC-V, Z, and POWER install pinned Cargo tools from
+source and use snapshot-pinned native CMake/Clang. They do not install cross
+targets, Miri, browsers, or profiling tools. Specialized nightly checks remain
+owned by their existing opt-in recipes.
+
+Only x86-64 and ARM64 Linux install perf, Valgrind, Gungraun, and samply.
+Their installer enables perf events and requires perf for the running kernel.
+Use `just bench-structural` for Gungraun and `just profile` for samply;
+Criterion benchmarks remain available on every native platform. Provisioning
+checks tools, but native test, benchmark, and profiling execution must still
+be verified on each machine.
