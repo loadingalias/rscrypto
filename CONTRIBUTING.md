@@ -122,8 +122,3 @@ cryptographic correctness. Keep vector provenance, licensing, transforms, and
 coverage reviewable. Fuzz targets live in [`fuzz/`](fuzz/) and
 [`fuzz-packages/`](fuzz-packages/); commit only small, minimized seeds that
 exercise production paths.
-
-## Releases
-
-The repository currently has no release procedure or publication automation.
-Define and review both before publishing a new version.

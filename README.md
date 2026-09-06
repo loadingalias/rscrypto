@@ -63,8 +63,7 @@ than weakening the gate.
 
 A constant-time claim exists only when evidence for the required target,
 feature, compiler, profile, and operation passes. Source that looks branchless
-is not treated as proof. The repository currently provides no automated release
-qualification, publication, or build-provenance attestation.
+is not treated as proof.
 
 Inspect the [`test evidence`](docs/test-vector-coverage.md),
 [`constant-time model`](docs/constant-time.md),

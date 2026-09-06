@@ -25,7 +25,7 @@ fn key_random<const N: usize>(d: &[u8; 32], z: &[u8; 32]) -> [u8; N] {
 }
 
 #[test]
-fn mlkem512_matches_fips203_for_reduced_feature_ci_seed() {
+fn mlkem512_matches_fips203_for_reduced_feature_seed() {
   let d = [
     249, 206, 215, 37, 228, 105, 120, 238, 82, 21, 50, 99, 184, 68, 205, 166, 255, 59, 174, 206, 253, 125, 87, 13, 254,
     16, 123, 248, 146, 130, 47, 191,

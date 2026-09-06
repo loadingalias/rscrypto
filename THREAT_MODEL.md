@@ -88,9 +88,8 @@ ignoring a result, or violating a protocol rule.
 ### Release substitution
 
 An attacker may target source, dependencies, build hosts, or published
-artifacts. The repository currently provides no automated release-integrity
-binding between reviewed source and a published artifact. Treat artifact origin
-and integrity as unverified unless they are established independently.
+artifacts. Treat artifact origin and integrity as unverified unless they are
+established independently.
 
 ## Outside this model
 
