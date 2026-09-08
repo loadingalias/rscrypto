@@ -51,7 +51,14 @@ chmod 755 "$temporary" "$temporary/lists" "$temporary/lists/partial"
 for suite in "$codename" "$codename-updates" "$codename-security"; do
   printf 'deb [check-valid-until=no signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://snapshot.ubuntu.com/ubuntu/%s %s main universe\n' "$snapshot" "$suite"
 done > "$temporary/sources.list"
+# Dependencies must follow the snapshot even when a runner preinstalls newer packages.
+cat > "$temporary/preferences" <<'PREFERENCES'
+Package: *
+Pin: origin snapshot.ubuntu.com
+Pin-Priority: 1001
+PREFERENCES
 apt_options=(-o "Dir::Etc::sourcelist=$temporary/sources.list" -o Dir::Etc::sourceparts=-
+  -o "Dir::Etc::preferences=$temporary/preferences" -o Dir::Etc::preferencesparts=-
   -o "Dir::State::lists=$temporary/lists" -o APT::Update::Error-Mode=any)
 apt=("${sudo_cmd[@]}" env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}")
 "${apt[@]}" update

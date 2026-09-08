@@ -28,6 +28,21 @@ elif name == 'apt-cache':
 elif name == 'apt-get':
     if os.environ.get('INSTALL_FAIL_APT'):
         sys.exit(42)
+    if os.environ.get('INSTALL_REAL_APT'):
+        options = dict(arg.split('=', 1) for arg in args if arg.startswith('Dir::'))
+        fixture = pathlib.Path(os.environ['INSTALL_APT_FIXTURE'])
+        if args[-1] == 'update':
+            source = pathlib.Path(options['Dir::Etc::sourcelist']).read_text().splitlines()[0].split()
+            url, suite = next((source[i], source[i + 1]) for i in range(len(source)) if source[i].startswith('https://'))
+            name = url.removeprefix('https://').replace('/', '_') + '_dists_' + suite
+            name += '_main_binary-' + os.environ['INSTALL_APT_ARCH'] + '_Packages'
+            pathlib.Path(options['Dir::State::lists'], name).write_text((fixture / 'Packages').read_text())
+        else:
+            if os.environ.get('INSTALL_WITHOUT_PREFERENCE'):
+                pathlib.Path(options['Dir::Etc::preferences']).write_text('')
+            sys.exit(subprocess.run([os.environ['INSTALL_REAL_APT'], *args, '--simulate', '--no-remove',
+                '-o', 'Dir::State::status=' + str(fixture / 'status'),
+                '-o', 'Dir::Cache::pkgcache=', '-o', 'Dir::Cache::srcpkgcache=']).returncode)
 elif name == 'python3':
     script = pathlib.Path(args[0]).name
     if script == 'catalog.py' and args[1] == 'download':
@@ -47,7 +62,7 @@ elif name == 'python3':
 
 
 class LinuxInstall(unittest.TestCase):
-    def provision(self, platform, fail=False):
+    def provision(self, platform, fail=False, real_apt=False, without_preference=False):
         temporary = tempfile.TemporaryDirectory(prefix='rscrypto installer ')
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
@@ -75,6 +90,23 @@ class LinuxInstall(unittest.TestCase):
                'INSTALL_LOG': str(root / 'commands.jsonl')}
         if fail:
             env['INSTALL_FAIL_APT'] = '1'
+        if real_apt:
+            def package(name, version, installed=False, depends=''):
+                return (f'Package: {name}\nVersion: {version}\nArchitecture: all\n'
+                        + ('Status: install ok installed\n' if installed else
+                           f'Filename: pool/{name}_{version}_all.deb\nSize: 1\nSHA256: {"0" * 64}\n')
+                        + (f'Depends: {depends}\n' if depends else '')
+                        + 'Maintainer: Fixture <fixture@example.invalid>\nDescription: APT resolver fixture\n\n')
+            (root / 'Packages').write_text(''.join(
+                package(name, '1.0', depends='git-man (= 1.0)' if name == 'git' else '')
+                for name in [*CATALOG['linux-ci']['packages'], 'git-man', 'fixture-unrelated']))
+            (root / 'status').write_text(''.join(
+                package(name, '2.0', installed=True, depends='git-man (= 2.0)' if name == 'git' else '')
+                for name in ('git', 'git-man', 'fixture-unrelated')))
+            env.update(INSTALL_REAL_APT=shutil.which('apt-get'), INSTALL_APT_FIXTURE=str(root),
+                       INSTALL_APT_ARCH=subprocess.check_output(['dpkg', '--print-architecture'], text=True).strip())
+            if without_preference:
+                env['INSTALL_WITHOUT_PREFERENCE'] = '1'
         result = subprocess.run([BASH, str(ROOT / 'scripts/tooling/linux.sh'), platform, '--ci'],
                                 env=env, capture_output=True, text=True)
         calls = [json.loads(line) for line in (root / 'commands.jsonl').read_text().splitlines()]
@@ -105,6 +137,18 @@ class LinuxInstall(unittest.TestCase):
         result, calls, _ = self.provision('x86_64-linux', fail=True)
         self.assertEqual(result.returncode, 42)
         self.assertFalse(any(c[0] == 'cargo' or 'download' in c for c in calls))
+
+    @unittest.skipUnless(shutil.which('apt-get') and shutil.which('dpkg'), 'requires the real APT resolver')
+    def test_snapshot_resolves_newer_installed_dependencies(self):
+        result, _, _ = self.provision('x86_64-linux', real_apt=True, without_preference=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('unmet dependencies', result.stdout + result.stderr)
+        result, _, _ = self.provision('x86_64-linux', real_apt=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Inst git [2.0] (1.0 ', result.stdout)
+        self.assertIn('Inst git-man [2.0] (1.0 ', result.stdout)
+        self.assertNotIn('Inst fixture-unrelated', result.stdout)
+        self.assertNotIn('Remv ', result.stdout)
 
 
 if __name__ == '__main__':
