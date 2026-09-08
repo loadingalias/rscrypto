@@ -18,10 +18,10 @@ defaults:
     shell: bash
 
 jobs:
-  linux:
-    name: Linux / ${{ matrix.platform }}
+  native:
+    name: ${{ matrix.platform }}
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include:
           - platform: x86_64-linux
@@ -39,6 +39,9 @@ jobs:
           - platform: riscv64-linux
             runner: ubuntu-24.04-riscv
             timeout: 120
+          - platform: x86_64-win
+            runner: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=16+32/ram=32+128/image=windows25-full-x64/spot=price-capacity-optimized/volume=200gb:gp3/env=production
+            timeout: 60
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.timeout }}
     steps:
@@ -46,6 +49,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install tooling
+        if: runner.os == 'Linux'
         env:
           PLATFORM: ${{ matrix.platform }}
         run: scripts/tooling/"$PLATFORM.sh" --ci
@@ -55,6 +59,7 @@ jobs:
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           just test-scripts
       - name: Check and test
+        if: runner.os == 'Linux'
         run: |
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           just ci-check
@@ -62,15 +67,8 @@ jobs:
           just test --all --portable
           git diff --exit-code HEAD
 
-  windows-aws:
-    name: Windows / x86_64
-    runs-on: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=16+32/ram=32+128/image=windows25-full-x64/spot=price-capacity-optimized/volume=200gb:gp3/env=production
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
       - name: Install tooling, check, and test
+        if: runner.os == 'Windows'
         shell: powershell
         run: |
           ./scripts/tooling/x86_64-win.ps1 -Ci
