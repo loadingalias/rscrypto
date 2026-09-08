@@ -11,8 +11,62 @@ import tempfile
 import tomllib
 
 
+def check_vendored_packages(source):
+  with tempfile.TemporaryDirectory() as temporary:
+    root = Path(temporary)
+    script = root / 'scripts/check/lint-independent-workspaces.sh'
+    script.parent.mkdir(parents=True)
+    shutil.copy2(source / 'scripts/check/lint-independent-workspaces.sh', script)
+    shutil.copy2(source / 'Cargo.toml', root / 'Cargo.toml')
+    workspace = root / 'tools/harness'
+    workspace.mkdir(parents=True)
+    (workspace / 'Cargo.toml').write_text('[workspace]\n')
+    binary = root / 'bin'
+    binary.mkdir()
+    cargo = binary / 'cargo'
+    cargo.write_text('#!' + sys.executable + '''
+import json, os, subprocess, sys
+from pathlib import Path
+args = sys.argv[1:]
+if Path(sys.argv[0]).name == 'jq':
+    result = subprocess.run([os.environ['REAL_JQ'], *args], capture_output=True)
+    sys.stdout.buffer.write(result.stdout.replace(b'\\n', b'\\r\\n'))
+    sys.stderr.buffer.write(result.stderr)
+    sys.exit(result.returncode)
+manifest = Path(args[args.index('--manifest-path') + 1])
+if args[0] == 'metadata':
+    prefix = os.environ['METADATA_PREFIX']
+    separator = os.environ['METADATA_SEPARATOR']
+    print(json.dumps({'workspace_root': str(manifest.parent), 'packages': [
+        {'name': name, 'manifest_path': prefix + separator.join(path.split('/'))}
+        for name, path in [('upstream', 'vendor/upstream/Cargo.toml'),
+                           ('harness', 'Cargo.toml'),
+                           ('vendor-tools', 'vendor-tools/Cargo.toml')]
+    ]}))
+else:
+    Path(os.environ['CHECK_LOG']).write_text(json.dumps(args))
+''')
+    cargo.chmod(0o755)
+    (binary / 'jq').symlink_to(cargo)
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in ('BASH_ENV', 'ENV') and not key.startswith('BASH_FUNC_')}
+    log = root / 'commands.json'
+    for prefix, separator in [('/repo/tools/harness/', '/'), ('C:\\repo\\tools\\harness\\', '\\')]:
+      result = subprocess.run(['bash', str(script)], cwd=root, capture_output=True, text=True, timeout=30,
+                              env={**environment, 'PATH': f'{binary}:{os.environ["PATH"]}',
+                                   'CHECK_LOG': str(log), 'METADATA_PREFIX': prefix,
+                                   'REAL_JQ': shutil.which('jq'),
+                                   'METADATA_SEPARATOR': separator})
+      assert result.returncode == 0, result.stderr
+      command = json.loads(log.read_text())
+      excluded = [command[i + 1] for i, arg in enumerate(command) if arg == '--exclude']
+      assert excluded == ['upstream'], (prefix, command)
+      assert '--workspace' in command and '--all-targets' in command and '--no-deps' in command
+
+
 def main():
   source = Path(__file__).resolve().parents[2]
+  check_vendored_packages(source)
   with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
     for name in ('scripts/check/check.sh', 'scripts/lib/toolchain.sh', 'scripts/lib/toolchain.py', 'scripts/lib/python.sh', 'Cargo.toml',

@@ -32,7 +32,7 @@ while IFS= read -r package_manifest; do
     echo "Failed to resolve Cargo workspace for $package_manifest" >&2
     exit 1
   fi
-  workspace_root=$(printf '%s\n' "$metadata" | jq -er '.workspace_root')
+  workspace_root=$(printf '%s\n' "$metadata" | jq -erj '.workspace_root')
   workspace_root=$(cd "$workspace_root" && pwd -P)
   if [[ "$workspace_root" == "$REPO_ROOT" ]]; then
     continue
@@ -112,10 +112,10 @@ for manifest in "${manifests[@]}"; do
     --all-features
     --no-deps
   )
-  while IFS= read -r vendored_package; do
+  while IFS= read -r -d '' vendored_package; do
     cargo_args+=(--exclude "$vendored_package")
   done < <(cargo metadata --locked --no-deps --format-version 1 --manifest-path "$manifest" |
-    jq -r '.packages[] | select(.manifest_path | contains("/vendor/")) | .name')
+    jq --raw-output0 '.packages[] | select(.manifest_path | split("\\") | join("/") | contains("/vendor/")) | .name')
   if [[ "$MESSAGE_FORMAT" == json ]]; then
     cargo_args+=(--message-format=json)
   fi
