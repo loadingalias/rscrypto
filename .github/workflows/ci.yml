@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_RAIL_CACHE: "off"
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -25,10 +28,10 @@ jobs:
       matrix:
         include:
           - platform: x86_64-linux
-            runner: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=16+32/ram=32+128/image=ubuntu24-full-x64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
+            runner: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=16+32/ram=32+128/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
             timeout: 60
           - platform: aarch64-linux
-            runner: runs-on=${{ github.run_id }}/family=c7g+c8g+m7g+m8g/cpu=16+32/ram=32+128/image=ubuntu24-full-arm64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
+            runner: runs-on=${{ github.run_id }}/family=c7g+c8g+m7g+m8g/cpu=16+32/ram=32+128/image=ubuntu24-minimal-arm64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
             timeout: 60
           - platform: s390x-linux
             runner: ubuntu-24.04-s390x
@@ -48,26 +51,20 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - name: Install tooling
+      - name: Install tooling, check, and test (Linux)
         if: runner.os == 'Linux'
         env:
           PLATFORM: ${{ matrix.platform }}
-        run: scripts/tooling/"$PLATFORM.sh" --ci
-      - name: Test script orchestration
-        if: matrix.platform == 'x86_64-linux'
         run: |
+          scripts/tooling/"$PLATFORM.sh" --ci
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          just test-scripts
-      - name: Check and test
-        if: runner.os == 'Linux'
-        run: |
-          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          if [[ "$PLATFORM" == x86_64-linux ]]; then just test-scripts; fi
           just ci-check
           just test --all
           just test --all --portable
           git diff --exit-code HEAD
 
-      - name: Install tooling, check, and test
+      - name: Install tooling, check, and test (Windows)
         if: runner.os == 'Windows'
         shell: powershell
         run: |
