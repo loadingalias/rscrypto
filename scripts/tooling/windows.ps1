@@ -96,6 +96,7 @@ try {
     Import-Module (Join-Path $vsPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
     $vsArch = if ($Platform -eq 'aarch64-win') { 'arm64' } else { 'amd64' }
     Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments "-arch=$vsArch -host_arch=$vsArch"
+    $msvcBin = Split-Path (Get-Command cl.exe -CommandType Application).Source -Parent
 
     $gitInstaller = Join-Path $temporary 'git.exe'
     Get-PinnedDownload $native.assets.git.url $native.assets.git.sha256 $gitInstaller
@@ -104,7 +105,8 @@ try {
     $binDirectory = Join-Path $prefix 'bin'
     New-Item -ItemType Directory -Force $binDirectory | Out-Null
     Get-PinnedDownload $native.assets.jq.url $native.assets.jq.sha256 (Join-Path $binDirectory 'jq.exe')
-    $paths = @($pythonDirectory, $binDirectory, (Join-Path $gitDirectory 'cmd'),
+    # Keep Microsoft's link.exe ahead of Git's Unix link utility.
+    $paths = @($msvcBin, $pythonDirectory, $binDirectory, (Join-Path $gitDirectory 'cmd'),
         (Join-Path $gitDirectory 'bin'), (Join-Path $gitDirectory 'usr\bin'))
     foreach ($name in @('llvm', 'cmake', 'cargo-binstall', 'cargo-rail', 'powershell')) {
         $directory = & $python $catalogHelper install-archive $Platform $name $prefix
@@ -127,6 +129,11 @@ try {
     foreach ($tool in $native.cargo) {
         Invoke-Native 'cargo' @("+$channel", 'binstall', '--locked', '--no-confirm', '--targets', $native.'rust-host', "$tool@$($catalog.cargo.$tool)")
     }
+    $probeSource = Join-Path $temporary 'tooling_probe.rs'
+    $probeExecutable = Join-Path $temporary 'tooling_probe.exe'
+    Set-Content -Path $probeSource -Value 'fn main() {}' -Encoding ASCII
+    Invoke-Native 'rustc' @("+$channel", $probeSource, '-o', $probeExecutable)
+    Invoke-Native $probeExecutable @()
     Invoke-Native 'clang' @('--version')
     Invoke-Native 'cmake' @('--version')
     Invoke-Native 'cargo' @("+$channel", 'rail', '--version')
