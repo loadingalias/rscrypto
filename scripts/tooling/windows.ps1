@@ -118,6 +118,8 @@ try {
     $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
     $paths += $cargoBin
     $env:PATH = (@($paths + ($env:PATH -split ';')) | Select-Object -Unique) -join ';'
+    $linkerVariable = 'CARGO_TARGET_' + $native.'rust-host'.ToUpperInvariant().Replace('-', '_') + '_LINKER'
+    [Environment]::SetEnvironmentVariable($linkerVariable, (Join-Path $msvcBin 'link.exe'), 'Process')
     $rustupInstaller = Join-Path $temporary 'rustup-init.exe'
     Get-PinnedDownload $native.assets.rustup.url $native.assets.rustup.sha256 $rustupInstaller
     Invoke-Native $rustupInstaller @('-y', '--no-modify-path', '--default-host', $native.'rust-host', '--default-toolchain', 'none')
@@ -129,18 +131,22 @@ try {
     foreach ($tool in $native.cargo) {
         Invoke-Native 'cargo' @("+$channel", 'binstall', '--locked', '--no-confirm', '--targets', $native.'rust-host', "$tool@$($catalog.cargo.$tool)")
     }
-    $probeSource = Join-Path $temporary 'tooling_probe.rs'
-    $probeExecutable = Join-Path $temporary 'tooling_probe.exe'
-    Set-Content -Path $probeSource -Value 'fn main() {}' -Encoding ASCII
-    Invoke-Native 'rustc' @("+$channel", $probeSource, '-o', $probeExecutable)
-    Invoke-Native $probeExecutable @()
+    $probeDirectory = Join-Path $temporary 'compiler-probe'
+    New-Item -ItemType Directory -Force (Join-Path $probeDirectory 'src') | Out-Null
+    Set-Content -Path (Join-Path $probeDirectory 'Cargo.toml') -Encoding ASCII -Value @(
+        '[package]', 'name = "tooling_probe"', 'version = "0.0.0"', 'edition = "2024"')
+    Set-Content -Path (Join-Path $probeDirectory 'src/main.rs') -Value 'fn main() {}' -Encoding ASCII
+    Set-Content -Path (Join-Path $probeDirectory 'build.rs') -Value 'fn main() {}' -Encoding ASCII
+    Set-Content -Path (Join-Path $probeDirectory 'justfile') -Encoding ASCII -Value @(
+        'check:', "    cargo +$channel run --target $($native.'rust-host')")
+    Invoke-Native 'just' @('--justfile', (Join-Path $probeDirectory 'justfile'), 'check')
     Invoke-Native 'clang' @('--version')
     Invoke-Native 'cmake' @('--version')
     Invoke-Native 'cargo' @("+$channel", 'rail', '--version')
     Invoke-Native 'cargo' @("+$channel", 'nextest', '--version')
 
     # Persist the complete MSVC/SDK environment, not only the paths to installed executables.
-    foreach ($name in @('PATH', 'INCLUDE', 'LIB', 'LIBPATH', 'LIBCLANG_PATH', 'VSINSTALLDIR', 'VCINSTALLDIR', 'VCToolsInstallDir', 'WindowsSdkDir', 'WindowsSDKVersion')) {
+    foreach ($name in @('PATH', 'INCLUDE', 'LIB', 'LIBPATH', 'LIBCLANG_PATH', 'VSINSTALLDIR', 'VCINSTALLDIR', 'VCToolsInstallDir', 'WindowsSdkDir', 'WindowsSDKVersion', $linkerVariable)) {
         $value = [Environment]::GetEnvironmentVariable($name, 'Process')
         if ($value) { [Environment]::SetEnvironmentVariable($name, $value, 'User') }
     }
