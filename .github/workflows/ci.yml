@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  linux:
+    name: Linux / ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: x86_64-linux
+            runner: runs-on=${{ github.run_id }}/runner=x86_64-linux/env=production
+            timeout: 60
+          - platform: aarch64-linux
+            runner: runs-on=${{ github.run_id }}/runner=aarch64-linux/env=production
+            timeout: 60
+          - platform: s390x-linux
+            runner: ubuntu-24.04-s390x
+            timeout: 90
+          - platform: powerpc64le-linux
+            runner: ubuntu-24.04-ppc64le-p10
+            timeout: 90
+          - platform: riscv64-linux
+            runner: ubuntu-24.04-riscv
+            timeout: 120
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install tooling
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ca-certificates python3 cmake clang libclang-dev libssl-dev pkg-config jq
+          installer="$(mktemp)"
+          python3 scripts/tooling/catalog.py download "$PLATFORM" rustup "$installer"
+          chmod +x "$installer"
+          "$installer" -y --no-modify-path --default-toolchain none
+          rm "$installer"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          host="$(python3 scripts/tooling/catalog.py get "$PLATFORM" rust-host)"
+          python3 scripts/lib/toolchain.py --install "$host"
+          export RUSTUP_TOOLCHAIN
+          RUSTUP_TOOLCHAIN="$(python3 scripts/lib/toolchain.py --target "$host")"
+          for tool in just cargo-nextest cargo-deny cargo-audit; do
+            cargo install "$tool" --version "$(python3 scripts/tooling/catalog.py get cargo "$tool")" --locked
+          done
+      - name: Check and test
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          just ci-check
+          just test --all
+          just test --all --portable
+          git diff --exit-code HEAD
+
+  windows-aws:
+    name: Windows / x86_64
+    runs-on: runs-on=${{ github.run_id }}/runner=x86_64-win/env=production
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install tooling, check, and test
+        shell: powershell
+        run: |
+          ./scripts/tooling/x86_64-win.ps1
+          just ci-check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          just test --all
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          just test --all --portable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --exit-code HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
