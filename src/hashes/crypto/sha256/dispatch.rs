@@ -9,7 +9,7 @@ define_sha_family_dispatch! {
   portable_kernel: Sha256KernelId::Portable,
   compress_fn: compress_blocks_fn,
   required_caps: required_caps,
-  runtime_table: super::dispatch_tables::select_runtime_table,
+  runtime_kernel: super::dispatch_policy::select_runtime_kernel,
   output_len: 32,
   word_bytes: 4,
   total_bits_ty: u64,

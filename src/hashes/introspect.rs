@@ -50,8 +50,7 @@ pub fn kernel_for<T: KernelIntrospect>(len: usize) -> &'static str {
 #[doc(hidden)]
 #[inline]
 pub fn sha256_compress_blocks_for_bench(state: &mut [u32; 8], blocks: &[u8]) {
-  let dispatch = crate::hashes::crypto::sha256::dispatch::compress_dispatch();
-  let compress = dispatch.select(blocks.len());
+  let compress = crate::hashes::crypto::sha256::dispatch::compress_dispatch();
   compress(state, blocks);
 }
 

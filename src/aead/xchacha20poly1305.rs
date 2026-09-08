@@ -167,10 +167,12 @@ impl Aead for XChaCha20Poly1305 {
       .map_err(|_| SealError::too_large())?;
 
     let mut poly_key = chacha20::poly1305_key_gen(&subkey, &ietf_nonce);
-    let tag = XChaCha20Poly1305Tag::from_bytes(
-      poly1305::authenticate_aead(AeadPrimitive::XChaCha20Poly1305, aad, buffer, &poly_key)
-        .map_err(|_| SealError::too_large())?,
-    );
+    let tag = XChaCha20Poly1305Tag::from_bytes(poly1305::authenticate_aead(
+      AeadPrimitive::XChaCha20Poly1305,
+      aad,
+      buffer,
+      &poly_key,
+    ));
 
     ct::zeroize(&mut poly_key);
     ct::zeroize(&mut subkey);
@@ -189,8 +191,7 @@ impl Aead for XChaCha20Poly1305 {
     // Derive subkey once and reuse for both tag verification and decryption.
     let (mut subkey, ietf_nonce) = self.derive_subkey_and_nonce(nonce);
     let mut poly_key = chacha20::poly1305_key_gen(&subkey, &ietf_nonce);
-    let expected = poly1305::authenticate_aead(AeadPrimitive::XChaCha20Poly1305, aad, buffer, &poly_key)
-      .map_err(|_| OpenError::too_large())?;
+    let expected = poly1305::authenticate_aead(AeadPrimitive::XChaCha20Poly1305, aad, buffer, &poly_key);
     ct::zeroize(&mut poly_key);
 
     if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {

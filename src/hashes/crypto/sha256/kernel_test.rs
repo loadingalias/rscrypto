@@ -4,27 +4,16 @@ use super::{
   Sha256,
   kernels::{ALL, Sha256KernelId, compress_blocks_fn, required_caps},
 };
-use crate::hashes::crypto::dispatch_util::SizeClassDispatch;
 
-fn hasher_for_kernel(id: Sha256KernelId) -> Sha256 {
+fn digest_with_kernel<'a>(id: Sha256KernelId, chunks: impl IntoIterator<Item = &'a [u8]>) -> [u8; 32] {
   let compress = compress_blocks_fn(id);
-  Sha256 {
-    compress_blocks: compress,
-    dispatch: Some(SizeClassDispatch {
-      boundaries: [usize::MAX; 3],
-      xs: compress,
-      s: compress,
-      m: compress,
-      l: compress,
-    }),
-    ..Default::default()
+  let mut h = Sha256::default();
+  for chunk in chunks {
+    if !chunk.is_empty() {
+      h.update_with(chunk, compress);
+    }
   }
-}
-
-fn digest_with_kernel(id: Sha256KernelId, data: &[u8]) -> [u8; 32] {
-  let mut h = hasher_for_kernel(id);
-  h.update(data);
-  h.finalize()
+  h.finalize_inner_with::<false>(compress)
 }
 
 #[cfg(test)]
@@ -71,22 +60,18 @@ mod tests {
 
       for &len in &lens {
         let msg = pattern(len);
-        let ours = digest_with_kernel(id, &msg);
+        let ours = digest_with_kernel(id, [msg.as_slice()]);
 
         use sha2::Digest as _;
         let expected = sha2::Sha256::digest(&msg);
         let mut exp = [0u8; 32];
         exp.copy_from_slice(&expected);
-        assert_eq!(ours, exp, "sha256 oracle mismatch for kernel={}", id.as_str());
+        assert_eq!(ours, exp, "sha256 oracle mismatch for kernel={} len={len}", id.as_str());
 
         // Streaming chunking patterns.
         for &chunk in all_chunk_sizes() {
-          let mut h = hasher_for_kernel(id);
-          for part in msg.chunks(chunk) {
-            h.update(part);
-          }
           assert_eq!(
-            h.finalize(),
+            digest_with_kernel(id, msg.chunks(chunk)),
             ours,
             "sha256 streaming mismatch kernel={} len={} chunk={}",
             id.as_str(),
@@ -103,11 +88,8 @@ mod tests {
         if len <= split_limit {
           for split in 0..=len {
             let (a, b) = msg.split_at(split);
-            let mut h = hasher_for_kernel(id);
-            h.update(a);
-            h.update(b);
             assert_eq!(
-              h.finalize(),
+              digest_with_kernel(id, [a, b]),
               ours,
               "sha256 split mismatch kernel={} len={} split={}",
               id.as_str(),
@@ -128,5 +110,28 @@ mod tests {
     assert!(required.has(crate::platform::caps::x86::SHA));
     assert!(required.has(crate::platform::caps::x86::SSE41));
     assert!(!crate::platform::caps::x86::SHA.has(required));
+  }
+}
+
+#[test]
+fn forced_backend_survives_initialization_and_clone_until_reset() {
+  fn observed(state: &mut [u32; 8], _blocks: &[u8]) {
+    state[0] = 42;
+  }
+
+  let mut hasher = Sha256 {
+    compress_blocks: observed,
+    dispatch_initialized: true,
+    ..Default::default()
+  };
+  let mut cloned = hasher.clone();
+  for h in [&mut hasher, &mut cloned] {
+    let mut state = [0; 8];
+    h.select_compress()(&mut state, &[]);
+    assert_eq!(state[0], 42, "forced callback was replaced during selection");
+    h.reset();
+    assert!(!h.dispatch_initialized);
+    h.update(b"abc");
+    assert_eq!(h.finalize(), Sha256::digest(b"abc"));
   }
 }

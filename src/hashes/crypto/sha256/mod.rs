@@ -2,10 +2,7 @@
 
 use self::kernels::CompressBlocksFn;
 use crate::{
-  hashes::{
-    crypto::dispatch_util::{SizeClassDispatch, len_hint_from_u64},
-    util::{Aligned64, rotr32},
-  },
+  hashes::util::{Aligned64, rotr32},
   traits::Digest,
 };
 
@@ -14,7 +11,7 @@ pub(crate) mod aarch64;
 #[doc(hidden)]
 pub(crate) mod dispatch;
 #[doc(hidden)]
-pub(crate) mod dispatch_tables;
+pub(crate) mod dispatch_policy;
 #[cfg(test)]
 mod kernel_test;
 pub(crate) mod kernels;
@@ -347,7 +344,8 @@ pub struct Sha256 {
   block_len: usize,
   bytes_hashed: u64,
   compress_blocks: CompressBlocksFn,
-  dispatch: Option<SizeClassDispatch<CompressBlocksFn>>,
+  // True also preserves an explicitly supplied compression backend.
+  dispatch_initialized: bool,
   #[cfg(target_arch = "x86_64")]
   update_mode: Sha256UpdateMode,
 }
@@ -365,7 +363,8 @@ pub(crate) struct Sha256Prefix {
   state: [u32; 8],
   bytes_hashed: u64,
   compress_blocks: CompressBlocksFn,
-  dispatch: Option<SizeClassDispatch<CompressBlocksFn>>,
+  // True also preserves an explicitly supplied compression backend.
+  dispatch_initialized: bool,
   #[cfg(target_arch = "x86_64")]
   update_mode: Sha256UpdateMode,
 }
@@ -405,7 +404,7 @@ impl Default for Sha256 {
       block_len: 0,
       bytes_hashed: 0,
       compress_blocks: kernels::compile_time_best(),
-      dispatch: None,
+      dispatch_initialized: false,
       #[cfg(target_arch = "x86_64")]
       update_mode: Sha256UpdateMode::RuntimeDispatch,
     }
@@ -422,8 +421,7 @@ impl Sha256 {
 
   /// Compute the digest of `data` in one shot.
   ///
-  /// This selects the best available kernel for the current platform and input
-  /// length (cached after first use).
+  /// This selects the best available kernel for the current platform (cached after first use).
   #[inline]
   #[must_use]
   pub fn digest(data: &[u8]) -> [u8; 32] {
@@ -459,23 +457,12 @@ impl Sha256 {
   }
 
   #[inline]
-  fn select_compress(&mut self, incoming_len: usize) -> CompressBlocksFn {
-    let dispatch = match self.dispatch {
-      Some(d) => d,
-      None => {
-        let d = dispatch::compress_dispatch();
-        self.dispatch = Some(d);
-        d
-      }
-    };
-
-    let total = self
-      .bytes_hashed
-      .strict_add(self.block_len as u64)
-      .strict_add(incoming_len as u64);
-    let compress = dispatch.select(len_hint_from_u64(total));
-    self.compress_blocks = compress;
-    compress
+  fn select_compress(&mut self) -> CompressBlocksFn {
+    if !self.dispatch_initialized {
+      self.compress_blocks = dispatch::compress_dispatch();
+      self.dispatch_initialized = true;
+    }
+    self.compress_blocks
   }
 
   #[inline]
@@ -496,7 +483,11 @@ impl Sha256 {
       self.update_with(data, kernels::compile_time_best());
       return;
     }
-    let compress = self.select_compress(data.len());
+    let _total_len = self
+      .bytes_hashed
+      .strict_add(self.block_len as u64)
+      .strict_add(data.len() as u64);
+    let compress = self.select_compress();
     self.update_with(data, compress);
   }
 
@@ -508,7 +499,7 @@ impl Sha256 {
   #[cfg(target_arch = "x86_64")]
   #[inline]
   fn try_enable_x86_sha_direct_update(&mut self) -> bool {
-    if self.dispatch.is_some() || !sha256_streaming_prefers_direct_x86_sha(crate::platform::caps()) {
+    if self.dispatch_initialized || !sha256_streaming_prefers_direct_x86_sha(crate::platform::caps()) {
       return false;
     }
 
@@ -637,7 +628,7 @@ impl Sha256 {
       state: self.state,
       bytes_hashed: self.bytes_hashed,
       compress_blocks: self.compress_blocks,
-      dispatch: self.dispatch,
+      dispatch_initialized: self.dispatch_initialized,
       #[cfg(target_arch = "x86_64")]
       update_mode: self.update_mode,
     }
@@ -653,7 +644,7 @@ impl Sha256 {
       block_len: 0,
       bytes_hashed: prefix.bytes_hashed,
       compress_blocks: prefix.compress_blocks,
-      dispatch: prefix.dispatch,
+      dispatch_initialized: prefix.dispatch_initialized,
       #[cfg(target_arch = "x86_64")]
       update_mode: prefix.update_mode,
     }
@@ -666,7 +657,7 @@ impl Sha256 {
     self.block_len = 0;
     self.bytes_hashed = prefix.bytes_hashed;
     self.compress_blocks = prefix.compress_blocks;
-    self.dispatch = prefix.dispatch;
+    self.dispatch_initialized = prefix.dispatch_initialized;
     self.reset_update_mode_to_aligned_prefix(prefix);
   }
 
@@ -707,13 +698,7 @@ impl Sha256 {
       block_len: 0,
       bytes_hashed: 0,
       compress_blocks,
-      dispatch: Some(SizeClassDispatch {
-        boundaries: [usize::MAX; 3],
-        xs: compress_blocks,
-        s: compress_blocks,
-        m: compress_blocks,
-        l: compress_blocks,
-      }),
+      dispatch_initialized: true,
       #[cfg(target_arch = "x86_64")]
       update_mode: Sha256UpdateMode::RuntimeDispatch,
     }

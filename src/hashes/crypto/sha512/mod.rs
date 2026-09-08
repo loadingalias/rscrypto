@@ -2,17 +2,14 @@
 
 use self::kernels::CompressBlocksFn;
 use crate::{
-  hashes::{
-    crypto::dispatch_util::{SizeClassDispatch, len_hint_from_u128},
-    util::{Aligned64, rotr64},
-  },
+  hashes::util::{Aligned64, rotr64},
   traits::Digest,
 };
 
 #[doc(hidden)]
 pub(crate) mod dispatch;
 #[doc(hidden)]
-pub(crate) mod dispatch_tables;
+pub(crate) mod dispatch_policy;
 #[cfg(test)]
 mod kernel_test;
 pub(crate) mod kernels;
@@ -193,7 +190,8 @@ pub struct Sha512 {
   block_len: usize,
   bytes_hashed: u128,
   compress_blocks: CompressBlocksFn,
-  dispatch: Option<SizeClassDispatch<CompressBlocksFn>>,
+  // True also preserves an explicitly supplied compression backend.
+  dispatch_initialized: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -202,7 +200,8 @@ pub(crate) struct Sha512Prefix {
   state: [u64; 8],
   bytes_hashed: u128,
   compress_blocks: CompressBlocksFn,
-  dispatch: Option<SizeClassDispatch<CompressBlocksFn>>,
+  // True also preserves an explicitly supplied compression backend.
+  dispatch_initialized: bool,
 }
 
 #[cfg(feature = "hmac")]
@@ -234,7 +233,7 @@ impl Default for Sha512 {
       block_len: 0,
       bytes_hashed: 0,
       compress_blocks: Sha512::compress_blocks_portable,
-      dispatch: None,
+      dispatch_initialized: false,
     }
   }
 }
@@ -254,8 +253,7 @@ impl Sha512 {
 
   /// Compute the digest of `data` in one shot.
   ///
-  /// This selects the best available kernel for the current platform and input
-  /// length (cached after first use).
+  /// This selects the best available kernel for the current platform (cached after first use).
   #[inline]
   #[must_use]
   pub fn digest(data: &[u8]) -> [u8; 64] {
@@ -271,8 +269,7 @@ impl Sha512 {
   #[must_use]
   #[cfg(feature = "ed25519")]
   pub(crate) fn digest_64_byte_prefix(prefix: &[u8; 64], data: &[u8]) -> [u8; 64] {
-    let total_len = 64u128.strict_add(data.len() as u128);
-    let compress = dispatch::compress_dispatch().select(len_hint_from_u128(total_len));
+    let compress = dispatch::compress_dispatch();
     Self::digest_64_byte_prefix_with(prefix, data, compress)
   }
 
@@ -286,20 +283,12 @@ impl Sha512 {
   }
 
   #[inline]
-  fn select_compress(&mut self, incoming_len: usize) -> CompressBlocksFn {
-    let dispatch = match self.dispatch {
-      Some(d) => d,
-      None => {
-        let d = dispatch::compress_dispatch();
-        self.dispatch = Some(d);
-        d
-      }
-    };
-
-    let total = Self::checked_total_len(self.bytes_hashed, self.block_len, incoming_len);
-    let compress = dispatch.select(len_hint_from_u128(total));
-    self.compress_blocks = compress;
-    compress
+  fn select_compress(&mut self) -> CompressBlocksFn {
+    if !self.dispatch_initialized {
+      self.compress_blocks = dispatch::compress_dispatch();
+      self.dispatch_initialized = true;
+    }
+    self.compress_blocks
   }
 
   #[inline]
@@ -475,7 +464,7 @@ impl Sha512 {
       state: self.state,
       bytes_hashed: self.bytes_hashed,
       compress_blocks: self.compress_blocks,
-      dispatch: self.dispatch,
+      dispatch_initialized: self.dispatch_initialized,
     }
   }
 
@@ -489,7 +478,7 @@ impl Sha512 {
       block_len: 0,
       bytes_hashed: prefix.bytes_hashed,
       compress_blocks: prefix.compress_blocks,
-      dispatch: prefix.dispatch,
+      dispatch_initialized: prefix.dispatch_initialized,
     }
   }
 
@@ -500,7 +489,7 @@ impl Sha512 {
     self.block_len = 0;
     self.bytes_hashed = prefix.bytes_hashed;
     self.compress_blocks = prefix.compress_blocks;
-    self.dispatch = prefix.dispatch;
+    self.dispatch_initialized = prefix.dispatch_initialized;
   }
 
   #[inline]
@@ -530,13 +519,7 @@ impl Sha512 {
       block_len: 0,
       bytes_hashed: 0,
       compress_blocks,
-      dispatch: Some(SizeClassDispatch {
-        boundaries: [usize::MAX; 3],
-        xs: compress_blocks,
-        s: compress_blocks,
-        m: compress_blocks,
-        l: compress_blocks,
-      }),
+      dispatch_initialized: true,
     }
   }
 }
@@ -833,7 +816,8 @@ impl Digest for Sha512 {
     if data.is_empty() {
       return;
     }
-    let compress = self.select_compress(data.len());
+    let _ = Self::checked_total_len(self.bytes_hashed, self.block_len, data.len());
+    let compress = self.select_compress();
     self.update_with(data, compress);
   }
 

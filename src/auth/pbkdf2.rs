@@ -342,7 +342,7 @@ macro_rules! define_pbkdf2_sha2 {
           return state;
         }
 
-        let compress = $dispatch::compress_dispatch().select(0);
+        let compress = $dispatch::compress_dispatch();
 
         let mut key_block = [0u8; $block_size_const];
         if password.len() > $block_size_const {

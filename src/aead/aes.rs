@@ -5194,15 +5194,11 @@ mod tests {
     assert_eq!(&buf[..], &plaintext[..]);
   }
 
-  /// AES-256 CTR: known-answer test using the GCM-SIV test vector.
-  /// Validates actual keystream output, not just round-trip.
+  /// Compare CTR keystream blocks with individual AES block encryption,
+  /// including the little-endian counter increment.
   #[cfg(feature = "aes-gcm-siv")]
   #[test]
-  fn aes256_ctr32_known_answer() {
-    // From RFC 8452 Appendix C.2 test case 2 (AES-256):
-    // enc_key derived from key=01..00, nonce=03..00
-    // The ciphertext "1de22967237a8132" is AES-CTR(enc_key, counter_block, plaintext=0200000000000000)
-    // We verify the encrypt output is deterministic and matches the expected ciphertext bytes.
+  fn aes256_ctr32_matches_block_encryption() {
     let key = [0x42u8; 32];
     let ek = aes256_expand_key(&key);
     let iv = [0u8; 16];

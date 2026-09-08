@@ -23,11 +23,6 @@
 //! # Error Types
 //!
 //! - [`VerificationError`] - Opaque error for MAC/AEAD/signature verification
-//!
-//! # Fallibility Discipline
-//!
-//! This module denies `unwrap`, `expect`, and indexing in non-test code to ensure
-//! all error paths are handled explicitly.
 #[cfg(any(
   feature = "aes-gcm",
   feature = "aes-gcm-siv",

@@ -3,10 +3,7 @@
 #[cfg(feature = "std")]
 use crate::backend::cache::OnceCache;
 use crate::{
-  aead::{
-    LengthOverflow,
-    targets::{AeadPrimitive, select_backend},
-  },
+  aead::targets::{AeadPrimitive, select_backend},
   platform::{Arch, Caps},
   traits::ct,
 };
@@ -958,34 +955,29 @@ pub(crate) fn authenticate(message: &[u8], key: &[u8; 32]) -> [u8; 16] {
   state.finalize()
 }
 
-pub(crate) fn authenticate_aead(
-  primitive: AeadPrimitive,
-  aad: &[u8],
-  ciphertext: &[u8],
-  key: &[u8; 32],
-) -> Result<[u8; 16], LengthOverflow> {
-  let lengths = super::AeadByteLengths::try_new(aad.len(), ciphertext.len())?;
+pub(crate) fn authenticate_aead(primitive: AeadPrimitive, aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
+  let lengths = super::AeadByteLengths::from_usize(aad.len(), ciphertext.len());
 
   #[cfg(target_arch = "x86_64")]
   {
     use crate::platform::caps::x86;
     if lengths.total_at_least(64) && current_caps().has(x86::AVX2) {
       // SAFETY: this branch verifies AVX2 before selecting the x86-64 parallel kernel.
-      return Ok(unsafe { avx2_par4::authenticate_aead_par4(aad, ciphertext, key, lengths) });
+      return unsafe { avx2_par4::authenticate_aead_par4(aad, ciphertext, key, lengths) };
     }
   }
   #[cfg(target_arch = "aarch64")]
   {
     use crate::platform::caps::aarch64;
     if lengths.total_at_least(64) && current_caps().has(aarch64::NEON) {
-      return Ok(aarch64_neon::authenticate_aead_par4(aad, ciphertext, key, lengths));
+      return aarch64_neon::authenticate_aead_par4(aad, ciphertext, key, lengths);
     }
   }
   #[cfg(target_arch = "riscv64")]
   {
     use crate::platform::caps::riscv;
     if lengths.total_at_least(RISCV64_PAR4_MIN) && current_caps().has(riscv::V) {
-      return Ok(riscv64_vector::authenticate_aead_par4(aad, ciphertext, key, lengths));
+      return riscv64_vector::authenticate_aead_par4(aad, ciphertext, key, lengths);
     }
   }
   authenticate_aead_with(aad, ciphertext, key, compute_block_resolved(primitive), lengths)
@@ -1040,13 +1032,14 @@ pub(crate) fn authenticate_aead_short_text_portable(aad: &[u8], ciphertext: &[u8
 #[cfg(feature = "diag")]
 /// Computes a ChaCha20-Poly1305 authenticator through the selected Poly1305 backend.
 ///
-/// Returns `None` when the associated-data or ciphertext length cannot be encoded by the AEAD construction.
+/// Always returns `Some(tag)` on supported targets, where slice lengths fit the AEAD length fields.
+/// The `Option` return type is retained for diagnostic API compatibility.
 pub fn diag_chacha20poly1305_authenticate_aead(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> Option<[u8; 16]> {
   #[cfg(feature = "chacha20poly1305")]
   let primitive = AeadPrimitive::ChaCha20Poly1305;
   #[cfg(all(not(feature = "chacha20poly1305"), feature = "xchacha20poly1305"))]
   let primitive = AeadPrimitive::XChaCha20Poly1305;
-  authenticate_aead(primitive, aad, ciphertext, key).ok()
+  Some(authenticate_aead(primitive, aad, ciphertext, key))
 }
 
 #[cfg(feature = "diag")]
@@ -1068,13 +1061,14 @@ pub fn diag_poly1305_block_portable_digest(key: &[u8; 32], block: &[u8; 16], par
 ))]
 /// Computes a ChaCha20-Poly1305 authenticator with the four-lane AArch64 NEON backend.
 ///
-/// Returns `None` when the associated-data or ciphertext length cannot be encoded by the AEAD construction.
+/// Always returns `Some(tag)` on supported targets, where slice lengths fit the AEAD length fields.
+/// The `Option` return type is retained for diagnostic API compatibility.
 pub fn diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4(
   aad: &[u8],
   ciphertext: &[u8],
   key: &[u8; 32],
 ) -> Option<[u8; 16]> {
-  let lengths = super::AeadByteLengths::try_new(aad.len(), ciphertext.len()).ok()?;
+  let lengths = super::AeadByteLengths::from_usize(aad.len(), ciphertext.len());
   Some(aarch64_neon::authenticate_aead_par4(aad, ciphertext, key, lengths))
 }
 
@@ -1084,7 +1078,7 @@ fn authenticate_aead_with(
   key: &[u8; 32],
   compute_block: ComputeBlockFn,
   lengths: super::AeadByteLengths,
-) -> Result<[u8; 16], LengthOverflow> {
+) -> [u8; 16] {
   let mut state = State::new(key);
   state.update_padded_segment(aad, compute_block);
   state.update_padded_segment(ciphertext, compute_block);
@@ -1094,7 +1088,7 @@ fn authenticate_aead_with(
 
   let tag = state.finalize();
   ct::zeroize(&mut length_block);
-  Ok(tag)
+  tag
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -1192,7 +1186,21 @@ mod tests {
     ];
 
     let actual = super::authenticate_aead(primitive(), &aad, &ciphertext, &poly_key);
-    assert_eq!(actual, Ok(expected));
+    assert_eq!(actual, expected);
+    #[cfg(feature = "diag")]
+    assert_eq!(
+      super::diag_chacha20poly1305_authenticate_aead(&aad, &ciphertext, &poly_key),
+      Some(expected)
+    );
+    #[cfg(all(
+      feature = "diag",
+      target_arch = "aarch64",
+      any(target_os = "linux", target_os = "macos")
+    ))]
+    assert_eq!(
+      super::diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4(&aad, &ciphertext, &poly_key),
+      Some(expected)
+    );
   }
 
   #[test]
@@ -1204,8 +1212,7 @@ mod tests {
       let expected = super::authenticate_aead(primitive(), &aad, &[], &key);
       let actual = super::authenticate_aead_empty_text_portable(&aad, &key);
       assert_eq!(
-        expected,
-        Ok(actual),
+        expected, actual,
         "empty-text authentication mismatch at aad_len={aad_len}"
       );
     }
@@ -1227,7 +1234,7 @@ mod tests {
         let portable = authenticate_aead_portable(&aad, &ciphertext, &key);
         let lengths = AeadByteLengths::from_usize(aad.len(), ciphertext.len());
         let accelerated = authenticate_aead_with(&aad, &ciphertext, &key, backend, lengths);
-        assert_eq!(accelerated, Ok(portable));
+        assert_eq!(accelerated, portable);
       }
     }
   }

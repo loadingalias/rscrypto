@@ -2,9 +2,7 @@
 
 use core::fmt;
 
-use super::{
-  AeadBufferError, LengthOverflow, Nonce96, OpenError, SealError, chacha20, poly1305, targets::AeadPrimitive,
-};
+use super::{AeadBufferError, Nonce96, OpenError, SealError, chacha20, poly1305, targets::AeadPrimitive};
 use crate::traits::{Aead, ct};
 
 const KEY_SIZE: usize = chacha20::KEY_SIZE;
@@ -163,7 +161,7 @@ impl ChaCha20Poly1305 {
     <Self as Aead>::decrypt(self, nonce, aad, ciphertext_and_tag, out)
   }
 
-  fn compute_tag(&self, nonce: &Nonce96, aad: &[u8], ciphertext: &[u8]) -> Result<[u8; TAG_SIZE], LengthOverflow> {
+  fn compute_tag(&self, nonce: &Nonce96, aad: &[u8], ciphertext: &[u8]) -> [u8; TAG_SIZE] {
     let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
     let tag = poly1305::authenticate_aead(AeadPrimitive::ChaCha20Poly1305, aad, ciphertext, &poly_key);
     ct::zeroize(&mut poly_key);
@@ -470,7 +468,7 @@ impl ChaCha20Poly1305 {
     nonce: &Nonce96,
     aad: &[u8],
     buffer: &mut [u8],
-  ) -> Option<Result<ChaCha20Poly1305Tag, SealError>> {
+  ) -> Option<ChaCha20Poly1305Tag> {
     use crate::platform::caps::aarch64;
 
     if buffer.len() < AARCH64_INTERLEAVED_MIN {
@@ -486,10 +484,7 @@ impl ChaCha20Poly1305 {
       return None;
     }
 
-    let lengths = match super::AeadByteLengths::try_new(aad.len(), buffer.len()) {
-      Ok(lengths) => lengths,
-      Err(_) => return Some(Err(SealError::too_large())),
-    };
+    let lengths = super::AeadByteLengths::from_usize(aad.len(), buffer.len());
 
     let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
     let mut authenticator = poly1305::aarch64_neon::AeadPar4::new(&poly_key);
@@ -516,7 +511,7 @@ impl ChaCha20Poly1305 {
 
     let tag = ChaCha20Poly1305Tag::from_bytes(authenticator.finalize(lengths));
     ct::zeroize(&mut poly_key);
-    Some(Ok(tag))
+    Some(tag)
   }
 
   #[cfg(target_arch = "aarch64")]
@@ -542,10 +537,7 @@ impl ChaCha20Poly1305 {
       return None;
     }
 
-    let lengths = match super::AeadByteLengths::try_new(aad.len(), buffer.len()) {
-      Ok(lengths) => lengths,
-      Err(_) => return Some(Err(OpenError::too_large())),
-    };
+    let lengths = super::AeadByteLengths::from_usize(aad.len(), buffer.len());
 
     let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
     let mut authenticator = poly1305::aarch64_neon::AeadPar4::new(&poly_key);
@@ -586,8 +578,8 @@ impl ChaCha20Poly1305 {
     buffer: &mut [u8],
   ) -> Result<ChaCha20Poly1305Tag, SealError> {
     #[cfg(target_arch = "aarch64")]
-    if let Some(result) = self.encrypt_in_place_interleaved_aarch64(nonce, aad, buffer) {
-      return result;
+    if let Some(tag) = self.encrypt_in_place_interleaved_aarch64(nonce, aad, buffer) {
+      return Ok(tag);
     }
 
     chacha20::xor_keystream(
@@ -600,10 +592,12 @@ impl ChaCha20Poly1305 {
     .map_err(|_| SealError::too_large())?;
 
     let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
-    let tag = ChaCha20Poly1305Tag::from_bytes(
-      poly1305::authenticate_aead(AeadPrimitive::ChaCha20Poly1305, aad, buffer, &poly_key)
-        .map_err(|_| SealError::too_large())?,
-    );
+    let tag = ChaCha20Poly1305Tag::from_bytes(poly1305::authenticate_aead(
+      AeadPrimitive::ChaCha20Poly1305,
+      aad,
+      buffer,
+      &poly_key,
+    ));
     ct::zeroize(&mut poly_key);
     Ok(tag)
   }
@@ -620,9 +614,7 @@ impl ChaCha20Poly1305 {
       return result;
     }
 
-    let expected = self
-      .compute_tag(nonce, aad, buffer)
-      .map_err(|_| OpenError::too_large())?;
+    let expected = self.compute_tag(nonce, aad, buffer);
     if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       return Err(OpenError::verification());

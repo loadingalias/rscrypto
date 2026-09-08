@@ -141,7 +141,7 @@ impl HkdfSha256 {
     let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
     let prk = HmacSha256::mac(salt, input_key_material).to_bytes();
 
-    let compress = sha256_dispatch::compress_dispatch().select(0);
+    let compress = sha256_dispatch::compress_dispatch();
 
     let mut key_block = [0u8; SHA256_BLOCK_SIZE];
     key_block[..SHA256_OUTPUT_SIZE].copy_from_slice(&prk);
@@ -396,7 +396,7 @@ impl HkdfSha384 {
     let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
     let prk = HmacSha384::mac(salt, input_key_material).to_bytes();
 
-    let compress = sha384_dispatch::compress_dispatch().select(0);
+    let compress = sha384_dispatch::compress_dispatch();
 
     let mut key_block = [0u8; SHA384_BLOCK_SIZE];
     key_block[..SHA384_OUTPUT_SIZE].copy_from_slice(&prk);
@@ -620,7 +620,7 @@ impl HkdfSha512 {
     let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
     let prk = HmacSha512::mac(salt, input_key_material).to_bytes();
 
-    let compress = sha512_dispatch::compress_dispatch().select(0);
+    let compress = sha512_dispatch::compress_dispatch();
 
     let mut key_block = [0u8; SHA512_BLOCK_SIZE];
     key_block[..SHA512_OUTPUT_SIZE].copy_from_slice(&prk);

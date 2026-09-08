@@ -1,9 +1,6 @@
 //! Internal helpers for tuned size-class dispatch.
 //!
-//! Many algorithms in this crate use the same 4-way size-class model:
-//! `{xs, s, m, l}` with three boundaries. This module centralizes the
-//! selection logic so hashers can cache dispatch tables locally without
-//! duplicating the boundary checks.
+//! BLAKE3 caches four size classes `{xs, s, m, l}` with three boundaries.
 
 #[derive(Clone, Copy)]
 pub(crate) struct SizeClassDispatch<T: Copy> {
@@ -29,18 +26,4 @@ impl<T: Copy> SizeClassDispatch<T> {
       self.l
     }
   }
-}
-
-#[inline]
-#[must_use]
-#[cfg(feature = "sha2")]
-pub(crate) fn len_hint_from_u64(v: u64) -> usize {
-  usize::try_from(v).unwrap_or(usize::MAX)
-}
-
-#[inline]
-#[must_use]
-#[cfg(feature = "sha2")]
-pub(crate) fn len_hint_from_u128(v: u128) -> usize {
-  usize::try_from(v).unwrap_or(usize::MAX)
 }
