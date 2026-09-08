@@ -207,6 +207,11 @@ pub(super) unsafe fn sample_ntt_rej_uniform_triple_block_bounded_asm(
 
 #[cfg(all(test, target_os = "linux"))]
 #[inline]
+/// # Safety
+///
+/// Requires AArch64 Linux with Advanced SIMD. `input` must reference 504 readable
+/// bytes and `out` must reference 256 writable, aligned `u16` coefficients.
+/// The input and output regions must not overlap and must remain valid for the call.
 pub(super) unsafe fn sample_ntt_rej_uniform_3blocks_asm(out: *mut u16, input: *const u8) -> usize {
   // SAFETY: Linux aarch64 three-block SampleNTT rejection parser call because:
   // 1. `input` points to three contiguous readable SHAKE128 rate blocks.
@@ -257,6 +262,11 @@ pub(super) unsafe fn basemul_accumulate_asm(acc: &mut Poly, a: &Poly, b: &Poly) 
 }
 
 #[cfg(all(test, target_os = "linux"))]
+/// # Safety
+///
+/// Requires the AArch64 Linux ML-KEM assembly backend with Advanced SIMD.
+/// The input references must remain readable and must not overlap the
+/// uniquely borrowed accumulator for the duration of the call.
 pub(super) unsafe fn test_basemul_accumulate_asm(acc: &mut Poly, a: &Poly, b: &Poly) {
   // SAFETY: test-only direct access to the full base-multiply assembly entry point because:
   // 1. `acc`, `a`, and `b` are fixed 256-coefficient ML-KEM polynomials.
@@ -381,6 +391,11 @@ pub(super) unsafe fn basemul_accumulate_k4_asm_ptr(acc: &mut Poly, a: *const u16
 
 #[inline]
 #[cfg(all(test, target_os = "linux"))]
+/// # Safety
+///
+/// Requires the AArch64 Linux ML-KEM assembly backend with Advanced SIMD.
+/// The input references must remain readable and must not overlap the
+/// uniquely borrowed accumulator for the duration of the call.
 unsafe fn basemul_accumulate_k2_asm(acc: &mut Poly, a: &PolyVec<2>, b: &PolyVec<2>) {
   // SAFETY: ML-KEM aarch64 K=2 dot-product assembly call because:
   // 1. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
@@ -394,6 +409,11 @@ unsafe fn basemul_accumulate_k2_asm(acc: &mut Poly, a: &PolyVec<2>, b: &PolyVec<
 
 #[inline]
 #[cfg(all(test, target_os = "linux"))]
+/// # Safety
+///
+/// Requires the AArch64 Linux ML-KEM assembly backend with Advanced SIMD.
+/// The input references must remain readable and must not overlap the
+/// uniquely borrowed accumulator for the duration of the call.
 unsafe fn basemul_accumulate_k3_asm(acc: &mut Poly, a: &PolyVec<3>, b: &PolyVec<3>) {
   // SAFETY: forwards contiguous `PolyVec<3>` storage to the target K=3 pointer ABI.
   unsafe {
@@ -403,6 +423,11 @@ unsafe fn basemul_accumulate_k3_asm(acc: &mut Poly, a: &PolyVec<3>, b: &PolyVec<
 
 #[inline]
 #[cfg(all(test, target_os = "linux"))]
+/// # Safety
+///
+/// Requires the AArch64 Linux ML-KEM assembly backend with Advanced SIMD.
+/// The input references must remain readable and must not overlap the
+/// uniquely borrowed accumulator for the duration of the call.
 unsafe fn basemul_accumulate_k4_asm(acc: &mut Poly, a: &PolyVec<4>, b: &PolyVec<4>) {
   // SAFETY: forwards contiguous `PolyVec<4>` storage to the target K=4 pointer ABI.
   unsafe {
@@ -411,6 +436,11 @@ unsafe fn basemul_accumulate_k4_asm(acc: &mut Poly, a: &PolyVec<4>, b: &PolyVec<
 }
 
 #[cfg(all(test, target_os = "linux"))]
+/// # Safety
+///
+/// Requires the AArch64 Linux ML-KEM assembly backend with Advanced SIMD.
+/// The input references must remain readable and must not overlap the
+/// uniquely borrowed accumulator for the duration of the call.
 pub(super) unsafe fn test_basemul_accumulate_k2_asm(acc: &mut Poly, a: &PolyVec<2>, b: &PolyVec<2>) {
   // SAFETY: test-only direct access to the K=2 dot-product assembly entry point because:
   // 1. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays.
@@ -422,6 +452,11 @@ pub(super) unsafe fn test_basemul_accumulate_k2_asm(acc: &mut Poly, a: &PolyVec<
 }
 
 #[cfg(all(test, target_os = "linux"))]
+/// # Safety
+///
+/// Requires the AArch64 Linux ML-KEM assembly backend with Advanced SIMD.
+/// The input references must remain readable and must not overlap the
+/// uniquely borrowed accumulator for the duration of the call.
 pub(super) unsafe fn test_basemul_accumulate_k3_asm(acc: &mut Poly, a: &PolyVec<3>, b: &PolyVec<3>) {
   // SAFETY: test-only direct access to the K=3 dot-product assembly entry point because:
   // 1. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays.
@@ -433,6 +468,11 @@ pub(super) unsafe fn test_basemul_accumulate_k3_asm(acc: &mut Poly, a: &PolyVec<
 }
 
 #[cfg(all(test, target_os = "linux"))]
+/// # Safety
+///
+/// Requires the AArch64 Linux ML-KEM assembly backend with Advanced SIMD.
+/// The input references must remain readable and must not overlap the
+/// uniquely borrowed accumulator for the duration of the call.
 pub(super) unsafe fn test_basemul_accumulate_k4_asm(acc: &mut Poly, a: &PolyVec<4>, b: &PolyVec<4>) {
   // SAFETY: test-only direct access to the K=4 dot-product assembly entry point because:
   // 1. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays.
@@ -444,6 +484,11 @@ pub(super) unsafe fn test_basemul_accumulate_k4_asm(acc: &mut Poly, a: &PolyVec<
 }
 
 #[cfg(all(test, target_os = "linux"))]
+/// # Safety
+///
+/// Requires the AArch64 Linux ML-KEM assembly backend. `coeff_offset` must be
+/// a multiple of `SAMPLE_NTT_ACC_CHUNK_COEFFS` and at most
+/// `N - SAMPLE_NTT_ACC_CHUNK_COEFFS`. The input references must not overlap `acc`.
 pub(super) unsafe fn test_basemul_accumulate_chunk_asm(
   acc: &mut Poly,
   a: &[u16; SAMPLE_NTT_ACC_CHUNK_COEFFS],
