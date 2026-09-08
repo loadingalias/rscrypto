@@ -44,7 +44,8 @@ class Tooling(unittest.TestCase):
             with self.assertRaises(ValueError):
                 catalog.validate(broken)
         for platform in catalog.NATIVE_SOURCE_PLATFORMS:
-            self.assertEqual(set(data[platform]['assets']), {'rustup'})
+            self.assertEqual(set(data[platform]['assets']),
+                             {'rustup', 'cargo-binstall'} if platform == 'riscv64-linux' else {'rustup'})
             self.assertEqual(data[platform]['components'], [])
 
     def test_stable_release_selection_respects_msrv_and_yanks(self):

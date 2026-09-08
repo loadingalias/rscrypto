@@ -93,10 +93,12 @@ component_args=()
 for component in "${components[@]}"; do component_args+=(--component "$component"); done
 python3 "$SCRIPT_DIR/../lib/toolchain.py" --install "$host" "${component_args[@]}"
 export RUSTUP_TOOLCHAIN="$channel"
+binstall=false
+if catalog_get "$platform" assets cargo-binstall >/dev/null 2>&1; then binstall=true; fi
 # Archive tools retain their complete directory layouts, including LLVM and Zig libraries.
 if [[ "$ci" == true ]]; then
   : > "$temporary/archives"
-  if [[ "$platform" == aarch64-linux || "$platform" == x86_64-linux ]]; then
+  if [[ "$binstall" == true ]]; then
     directory="$(python3 "$SCRIPT_DIR/catalog.py" install-archive "$platform" cargo-binstall "$prefix")"
     printf 'cargo-binstall\t%s\n' "$directory" > "$temporary/archives"
   fi
@@ -117,9 +119,9 @@ mapfile -t cargo_tools < <(catalog_get "$tool_section" cargo)
 for tool in "${cargo_tools[@]}"; do
   version="$(catalog_get cargo "$tool")"
   # Cargo's install registry verifies exact installed package versions on reruns.
-  if command -v cargo-binstall >/dev/null 2>&1 && [[ "$platform" == aarch64-linux || "$platform" == x86_64-linux ]]; then
+  if [[ "$binstall" == true ]]; then
     env -u RUSTC_WRAPPER -u CARGO_ENCODED_RUSTFLAGS \
-      cargo +"$channel" binstall --locked --no-confirm --targets "$(catalog_get "$platform" rust-host)" "$tool@$version"
+      cargo +"$channel" binstall --locked --no-confirm --targets "$host" --targets "${host%-gnu}-musl" "$tool@$version"
   else
     env -u RUSTC_WRAPPER -u CARGO_ENCODED_RUSTFLAGS \
       cargo +"$channel" install --locked --target "$(catalog_get "$platform" rust-host)" --version "$version" "$tool"

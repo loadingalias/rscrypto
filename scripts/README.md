@@ -144,8 +144,9 @@ The catalog's `ci` section selects the Cargo tools needed by `just ci-check`,
 doctests. This mode omits Cargo Rail because `--all` bypasses affected-work
 planning; use the full installer for ordinary `just test` and benchmark work.
 Linux CI uses the catalog's `linux-ci` Ubuntu release and packages from the
-same archive snapshot as development provisioning. It installs prebuilt Cargo
-tools on x86-64 and ARM64, and builds them from source on the other architectures.
+same archive snapshot as development provisioning. It uses Cargo Binstall on
+x86-64, ARM64, and RISC-V to select compatible binaries, falling back to source
+when unavailable. IBM Z and POWER build Cargo tools from source.
 CI does not install optional profiling, mutation, or live-fuzzing tools or alter
 shell startup files. These jobs validate CI provisioning, not the full optional
 development toolset.
@@ -157,9 +158,9 @@ the MSVC/SDK environment. Windows x86-64 installs catalog-pinned NASM for native
 dependency assembly in both modes.
 
 All full profiles install the prerequisites for `just ci-check`, `just test`, and
-Criterion `just bench`. RISC-V, Z, and POWER install pinned Cargo tools from
-source and use snapshot-pinned native CMake/Clang. They do not install cross
-targets, Miri, browsers, or profiling tools. The shared selector in
+Criterion `just bench`. RISC-V, Z, and POWER use snapshot-pinned native
+CMake/Clang. They do not install cross targets, Miri, browsers, or profiling
+tools. The shared selector in
 `lib/toolchain.py` uses `.config/toolchains.toml` to choose the pinned nightly
 for POWER, IBM Z, and RISC-V; other hosts use `rust-toolchain.toml`.
 Installers provision stable tooling plus the selected native toolchain.

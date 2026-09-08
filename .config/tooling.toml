@@ -222,6 +222,10 @@ os = "Ubuntu 26.04 LTS"
 url = "https://static.rust-lang.org/rustup/archive/1.29.1/riscv64gc-unknown-linux-gnu/rustup-init"
 sha256 = "e94134ed99fed1a3a1f13a3bf0a05d616fc1c2496ec0b557aaee4856cd34b2f2"
 
+[riscv64-linux.assets.cargo-binstall]
+url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.23.0/cargo-binstall-riscv64gc-unknown-linux-musl.tgz"
+sha256 = "ffea93b43f45e5967aadeb8943d75b54267cd8d6191a0f9f764b64d8327fd4f2"
+
 [s390x-linux]
 rust-host = "s390x-unknown-linux-gnu"
 components = []

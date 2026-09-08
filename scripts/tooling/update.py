@@ -195,8 +195,10 @@ def resolve_catalog():
         rustup_url = f'https://static.rust-lang.org/rustup/archive/{versions["rustup"]}/{host}/rustup-init' + ('.exe' if windows else '')
         checksum = fetch(rustup_url + '.sha256')[0].decode().split()[0]
         assets['rustup'] = {'url': rustup_url, 'sha256': checksum}
+        if platform == 'riscv64-linux':
+            assets['cargo-binstall'] = github_asset(REPOS['cargo-binstall'], f'cargo-binstall-{host.removesuffix("gnu")}musl.tgz')
         if platform in NATIVE_SOURCE_PLATFORMS:
-            continue  # Native Cargo installs; distro CMake/Clang are snapshot-pinned.
+            continue  # Distro CMake/Clang are snapshot-pinned; missing binaries build natively.
         assets['cargo-binstall'] = github_asset(REPOS['cargo-binstall'], f'cargo-binstall-{host}.' + ('zip' if windows else 'tgz'))
         assets['cargo-rail'] = github_asset(REPOS['cargo-rail'], f'cargo-rail-{host}.' + ('zip' if windows else 'tar.gz'))
         cmake_arch = ('arm64' if arch == 'aarch64' else 'x86_64') if windows else arch
