@@ -195,6 +195,11 @@ assert!(
   ),
   feature(portable_simd)
 )]
+// NIGHTLY: ML-KEM uses s390x vector intrinsics for explicit modular arithmetic.
+#![cfg_attr(
+  all(target_arch = "s390x", feature = "ml-kem", not(feature = "portable-only"), not(miri)),
+  feature(stdarch_s390x)
+)]
 // RISC-V CRC/vector/AES-style backends still need nightly target-feature names.
 // SHA-2's Zknh intrinsics are gated separately by `riscv_ext_intrinsics`.
 #![cfg_attr(

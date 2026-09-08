@@ -108,7 +108,7 @@ fn low_u16(value: u32) -> u16 {
   u16::from_le_bytes([b0, b1])
 }
 
-#[cfg(any(test, not(target_arch = "s390x")))]
+#[cfg(any(test, not(target_arch = "s390x"), all(not(feature = "portable-only"), not(miri))))]
 #[inline(always)]
 fn low_u32(value: u64) -> u32 {
   let [b0, b1, b2, b3, _, _, _, _] = value.to_le_bytes();
@@ -2958,6 +2958,8 @@ unsafe fn sample_ntt_block_asm_bounded(rate_ptr: *const u8, out: &mut Poly, fill
   not(feature = "portable-only")
 ))]
 #[target_feature(enable = "neon")]
+/// # Safety
+/// NEON must be available on the executing CPU.
 fn sample_ntt_pair_block_neon(
   buf0: &[u8; SHAKE128_RATE_BYTES],
   out0: &mut Poly,
@@ -3383,7 +3385,7 @@ unsafe fn sample_ntt_product_absorb_rate_ptr_neon(
 
     let take = accepted_len.min(N.strict_sub(product.filled));
     let total_len = prefix_len.strict_add(take);
-    let full_len = total_len - (total_len % SAMPLE_NTT_ACC_CHUNK_COEFFS);
+    let full_len = total_len.strict_sub(total_len % SAMPLE_NTT_ACC_CHUNK_COEFFS);
 
     let mut chunk_start = 0usize;
     while chunk_start < full_len {
