@@ -255,7 +255,7 @@ fn xor_keystream_portable(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u
   }
 }
 
-#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+#[cfg(all(feature = "chacha20poly1305", target_arch = "powerpc64", target_endian = "little"))]
 pub(crate) fn xor_keystream_first_block_portable(
   key: &[u8; KEY_SIZE],
   counter: u32,
