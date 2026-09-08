@@ -8,13 +8,14 @@ pub(super) fn run(data: &[u8]) {
   let key_bytes: [u8; 32] = some_or_return!(input.bytes());
   let nonce_bytes: [u8; 12] = some_or_return!(input.bytes());
   let control: u8 = some_or_return!(input.byte());
+  let mutation = some_or_return!(input.bit_mutation());
   let (aad, plaintext) = some_or_return!(input.split_rest());
 
   let cipher = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes(key_bytes));
   let nonce = Nonce96::from_bytes(nonce_bytes);
 
   assert_aead_roundtrip(&cipher, &nonce, aad, plaintext);
-  assert_aead_forgery(&cipher, &nonce, aad, plaintext, control);
+  assert_aead_forgery(&cipher, &nonce, aad, plaintext, control, mutation);
 
   // Differential: rscrypto ↔ chacha20poly1305 crate.
   use chacha20poly1305::aead::{Aead as _, KeyInit, Payload};

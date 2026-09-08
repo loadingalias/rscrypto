@@ -1,3 +1,6 @@
+use core::arch::s390x::{
+  vec_add, vec_mul, vec_sl, vec_sr, vec_sra, vec_sub, vector_signed_int, vector_unsigned_int, vector_unsigned_long_long,
+};
 use core::simd::{
   i32x4, i64x2,
   num::{SimdInt, SimdUint},
@@ -6,28 +9,39 @@ use core::simd::{
 
 use super::{
   GAMMAS_MONT, MONT_R_SQUARED_MOD_Q, N, Poly, Q_HALF, Q_I32, Q_MONT_INV_U16, Q_U32, SAMPLE_NTT_ACC_CHUNK_COEFFS,
-  ZETAS_MONT,
+  ZETAS_MONT, low_u16, low_u32,
 };
 
-const Q_MONT_INV_I32: i32 = Q_MONT_INV_U16 as i16 as i32;
+const Q_MONT_INV_I32: i32 = Q_MONT_INV_U16.cast_signed() as i32;
 const Q_COMPRESS_DIV_SHIFT: u32 = 33;
 
+/// # Safety
+/// The executing CPU must support z/Vector.
 #[target_feature(enable = "vector")]
 pub(super) unsafe fn compress_values_4<const D: usize>(values: [u16; 4]) -> [u16; 4] {
   let value = u32x4_from_u16(values);
-  let numerator = (value << (D as u32)) + u32x4::splat(Q_HALF);
+  let shift = u32::try_from(D).expect("ML-KEM compression width fits u32");
+  let numerator = wrapping_add_u32x4(wrapping_shl_u32x4(value, shift), u32x4::splat(Q_HALF));
   // SAFETY: this function is already gated by z/Vector and the helper has no additional contract.
   let quotient = unsafe { div_q_compress_u32x4_ct(numerator) };
-  u32x4_to_u16(quotient & u32x4::splat((1u32 << D) - 1))
+  u32x4_to_u16(quotient & u32x4::splat((1u32 << D).strict_sub(1)))
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector.
 #[target_feature(enable = "vector")]
 pub(super) unsafe fn decompress_values_4<const D: usize>(values: [u16; 4]) -> [u16; 4] {
   let value = u32x4_from_u16(values);
-  let scaled = mul_u32x4_16_ct(u32x4::splat(Q_U32), value) + u32x4::splat(1u32 << (D - 1));
-  u32x4_to_u16(scaled >> (D as u32))
+  let shift = u32::try_from(D).expect("ML-KEM compression width fits u32");
+  let scaled = wrapping_add_u32x4(
+    mul_u32x4_16_ct(u32x4::splat(Q_U32), value),
+    u32x4::splat(1u32 << D.strict_sub(1)),
+  );
+  u32x4_to_u16(wrapping_shr_u32x4(scaled, shift))
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector.
 #[target_feature(enable = "vector")]
 pub(super) unsafe fn to_montgomery_product_domain_vector(poly: &mut Poly) {
   let poly_ptr = poly.as_mut_ptr();
@@ -44,6 +58,8 @@ pub(super) unsafe fn to_montgomery_product_domain_vector(poly: &mut Poly) {
   }
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector.
 #[target_feature(enable = "vector")]
 pub(super) unsafe fn from_montgomery_product_domain_vector(poly: &mut Poly) {
   let poly_ptr = poly.as_mut_ptr();
@@ -60,6 +76,8 @@ pub(super) unsafe fn from_montgomery_product_domain_vector(poly: &mut Poly) {
   }
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector.
 #[target_feature(enable = "vector")]
 pub(super) unsafe fn ntt_vector(poly: &mut Poly) {
   let poly_ptr = poly.as_mut_ptr();
@@ -98,6 +116,8 @@ pub(super) unsafe fn ntt_vector(poly: &mut Poly) {
   }
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector.
 #[target_feature(enable = "vector")]
 pub(super) unsafe fn inverse_ntt_vector(poly: &mut Poly, final_scale_mont: i16) {
   let poly_ptr = poly.as_mut_ptr();
@@ -148,6 +168,8 @@ pub(super) unsafe fn inverse_ntt_vector(poly: &mut Poly, final_scale_mont: i16) 
   }
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector.
 #[target_feature(enable = "vector")]
 pub(super) unsafe fn multiply_ntts_add_assign_vector(acc: &mut Poly, a: &Poly, b: &Poly) {
   let acc_ptr = acc.as_mut_ptr();
@@ -164,6 +186,9 @@ pub(super) unsafe fn multiply_ntts_add_assign_vector(acc: &mut Poly, a: &Poly, b
   }
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector. `coeff_offset` must be a multiple of
+/// 16 and `coeff_offset + 16` must not exceed `N`.
 #[target_feature(enable = "vector")]
 pub(super) unsafe fn multiply_ntts_add_assign_chunk_vector(
   acc: &mut Poly,
@@ -189,6 +214,8 @@ pub(super) unsafe fn multiply_ntts_add_assign_chunk_vector(
   }
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector.
 #[target_feature(enable = "vector")]
 pub(super) unsafe fn multiply_ntts_accumulate_k3_vector(acc: &mut Poly, a: [&Poly; 3], b: [&Poly; 3]) {
   let acc_ptr = acc.as_mut_ptr();
@@ -211,6 +238,8 @@ pub(super) unsafe fn multiply_ntts_accumulate_k3_vector(acc: &mut Poly, a: [&Pol
   }
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector.
 #[target_feature(enable = "vector")]
 pub(super) unsafe fn multiply_ntts_accumulate_k4_vector(acc: &mut Poly, a: [&Poly; 4], b: [&Poly; 4]) {
   let acc_ptr = acc.as_mut_ptr();
@@ -241,6 +270,11 @@ pub(super) unsafe fn multiply_ntts_accumulate_k4_vector(acc: &mut Poly, a: [&Pol
   }
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector. `a` and `b` must be aligned and readable
+/// for eight initialized coefficients at `a_offset` and `b_offset`. `acc` must be
+/// aligned, readable, and writable for eight initialized coefficients at `b_offset`,
+/// without overlapping either input. `gamma_offset + 4` must not exceed `GAMMAS_MONT.len()`.
 #[inline(always)]
 unsafe fn multiply_ntts_add_assign_4(
   acc: *mut u16,
@@ -260,6 +294,11 @@ unsafe fn multiply_ntts_add_assign_4(
   }
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector. Every input pointer must be aligned and
+/// readable for eight initialized coefficients starting at `coeff_offset`. `acc`
+/// must be aligned, readable, and writable for the same initialized range, without
+/// overlapping any input. `gamma_offset + 4` must not exceed `GAMMAS_MONT.len()`.
 #[inline(always)]
 unsafe fn multiply_ntts_accumulate_k3_4(
   acc: *mut u16,
@@ -286,6 +325,11 @@ unsafe fn multiply_ntts_accumulate_k3_4(
   }
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector. Every input pointer must be aligned and
+/// readable for eight initialized coefficients starting at `coeff_offset`. `acc`
+/// must be aligned, readable, and writable for the same initialized range, without
+/// overlapping any input. `gamma_offset + 4` must not exceed `GAMMAS_MONT.len()`.
 #[inline(always)]
 unsafe fn multiply_ntts_accumulate_k4_4(
   acc: *mut u16,
@@ -313,6 +357,10 @@ unsafe fn multiply_ntts_accumulate_k4_4(
   }
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector. `a` and `b` must be aligned and readable
+/// for eight initialized coefficients at `a_offset` and `b_offset`.
+/// `gamma_offset + 4` must not exceed `GAMMAS_MONT.len()`.
 #[inline(always)]
 unsafe fn base_multiply_4(
   a: *const u16,
@@ -336,15 +384,19 @@ unsafe fn base_multiply_4(
   let a1b1 = montgomery_reduce_i32x4(mul_i32x4_16_ct(a1, b1));
   let a0b0 = mul_i32x4_16_ct(a0, b0);
   let a1b1_gamma = mul_i32x4_16_ct(a1b1, gamma);
-  let c0 = signed_to_mod_q_i32x4(montgomery_reduce_i32x4(a0b0 + a1b1_gamma));
+  let c0 = signed_to_mod_q_i32x4(montgomery_reduce_i32x4(wrapping_add_i32x4(a0b0, a1b1_gamma)));
 
   let a0b1 = mul_i32x4_16_ct(a0, b1);
   let a1b0 = mul_i32x4_16_ct(a1, b0);
-  let c1 = signed_to_mod_q_i32x4(montgomery_reduce_i32x4(a0b1 + a1b0));
+  let c1 = signed_to_mod_q_i32x4(montgomery_reduce_i32x4(wrapping_add_i32x4(a0b1, a1b0)));
 
   (c0, c1)
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector. `poly` must be aligned, initialized,
+/// and exclusively readable and writable for `N` coefficients. `zeta_index` must
+/// start at 64, leaving 64 entries in `ZETAS_MONT` for this stage.
 #[inline(always)]
 unsafe fn ntt_len2_vector(poly: *mut u16, zeta_index: &mut usize) {
   let mut start = 0usize;
@@ -371,6 +423,10 @@ unsafe fn ntt_len2_vector(poly: *mut u16, zeta_index: &mut usize) {
   }
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector. `poly` must be aligned, initialized,
+/// and exclusively readable and writable for `N` coefficients. `zeta_index` must
+/// start at 127 for the descending 64-entry twiddle schedule.
 #[inline(always)]
 unsafe fn inverse_ntt_len2_vector(poly: *mut u16, zeta_index: &mut usize) {
   let mut start = 0usize;
@@ -401,6 +457,9 @@ unsafe fn inverse_ntt_len2_vector(poly: *mut u16, zeta_index: &mut usize) {
   }
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector. `acc` must be aligned and exclusively
+/// readable and writable for eight initialized coefficients starting at `offset`.
 #[inline(always)]
 unsafe fn add_interleaved_4(acc: *mut u16, offset: usize, c0: u32x4, c1: u32x4) {
   // SAFETY: caller guarantees `offset..offset + 8` is inside `acc`.
@@ -414,51 +473,196 @@ unsafe fn add_interleaved_4(acc: *mut u16, offset: usize, c0: u32x4, c1: u32x4) 
   // SAFETY: caller guarantees `offset..offset + 8` is inside `acc`.
   unsafe {
     let acc = acc.add(offset);
-    *acc = out0[0] as u16;
-    *acc.add(1) = out1[0] as u16;
-    *acc.add(2) = out0[1] as u16;
-    *acc.add(3) = out1[1] as u16;
-    *acc.add(4) = out0[2] as u16;
-    *acc.add(5) = out1[2] as u16;
-    *acc.add(6) = out0[3] as u16;
-    *acc.add(7) = out1[3] as u16;
+    *acc = low_u16(out0[0]);
+    *acc.add(1) = low_u16(out1[0]);
+    *acc.add(2) = low_u16(out0[1]);
+    *acc.add(3) = low_u16(out1[1]);
+    *acc.add(4) = low_u16(out0[2]);
+    *acc.add(5) = low_u16(out1[2]);
+    *acc.add(6) = low_u16(out0[3]);
+    *acc.add(7) = low_u16(out1[3]);
+  }
+}
+
+// Keep modular arithmetic in vector registers; scalar lane arithmetic can lower to
+// operand-dependent scalar multiply on IBM Z.
+#[inline(always)]
+fn wrapping_add_u32x4(a: u32x4, b: u32x4) -> u32x4 {
+  // SAFETY: all callers are inside z/Vector-gated entry points. The portable and
+  // architectural vector types have the same integer lane widths and order,
+  // and every bit pattern is valid. The intrinsic performs wrapping lane arithmetic.
+  unsafe {
+    core::mem::transmute(vec_add(
+      core::mem::transmute::<u32x4, vector_unsigned_int>(a),
+      core::mem::transmute::<u32x4, vector_unsigned_int>(b),
+    ))
+  }
+}
+
+#[inline(always)]
+fn wrapping_sub_u32x4(a: u32x4, b: u32x4) -> u32x4 {
+  // SAFETY: all callers are inside z/Vector-gated entry points. The portable and
+  // architectural vector types have the same integer lane widths and order,
+  // and every bit pattern is valid. The intrinsic performs wrapping lane arithmetic.
+  unsafe {
+    core::mem::transmute(vec_sub(
+      core::mem::transmute::<u32x4, vector_unsigned_int>(a),
+      core::mem::transmute::<u32x4, vector_unsigned_int>(b),
+    ))
+  }
+}
+
+#[inline(always)]
+fn wrapping_add_i32x4(a: i32x4, b: i32x4) -> i32x4 {
+  // SAFETY: all callers are inside z/Vector-gated entry points. The portable and
+  // architectural vector types have the same integer lane widths and order,
+  // and every bit pattern is valid. The intrinsic performs wrapping lane arithmetic.
+  unsafe {
+    core::mem::transmute(vec_add(
+      core::mem::transmute::<i32x4, vector_signed_int>(a),
+      core::mem::transmute::<i32x4, vector_signed_int>(b),
+    ))
+  }
+}
+
+#[inline(always)]
+fn wrapping_sub_i32x4(a: i32x4, b: i32x4) -> i32x4 {
+  // SAFETY: all callers are inside z/Vector-gated entry points. The portable and
+  // architectural vector types have the same integer lane widths and order,
+  // and every bit pattern is valid. The intrinsic performs wrapping lane arithmetic.
+  unsafe {
+    core::mem::transmute(vec_sub(
+      core::mem::transmute::<i32x4, vector_signed_int>(a),
+      core::mem::transmute::<i32x4, vector_signed_int>(b),
+    ))
+  }
+}
+
+#[inline(always)]
+fn wrapping_add_u64x2(a: u64x2, b: u64x2) -> u64x2 {
+  // SAFETY: all callers are inside z/Vector-gated entry points. The portable and
+  // architectural vector types have the same integer lane widths and order,
+  // and every bit pattern is valid. The intrinsic performs wrapping lane arithmetic.
+  unsafe {
+    core::mem::transmute(vec_add(
+      core::mem::transmute::<u64x2, vector_unsigned_long_long>(a),
+      core::mem::transmute::<u64x2, vector_unsigned_long_long>(b),
+    ))
+  }
+}
+
+#[inline(always)]
+fn wrapping_shl_u32x4(value: u32x4, shift: u32) -> u32x4 {
+  // SAFETY: all callers are inside z/Vector-gated entry points. These vector types
+  // have identical lane layouts and all bit patterns are valid. The intrinsic
+  // masks each shift count to the lane width, matching wrapping shift semantics.
+  unsafe {
+    core::mem::transmute(vec_sl(
+      core::mem::transmute::<u32x4, vector_unsigned_int>(value),
+      core::mem::transmute::<u32x4, vector_unsigned_int>(u32x4::splat(shift)),
+    ))
+  }
+}
+
+#[inline(always)]
+fn wrapping_shr_u32x4(value: u32x4, shift: u32) -> u32x4 {
+  // SAFETY: all callers are inside z/Vector-gated entry points. These vector types
+  // have identical lane layouts and all bit patterns are valid. The intrinsic
+  // masks each shift count to the lane width, matching wrapping shift semantics.
+  unsafe {
+    core::mem::transmute(vec_sr(
+      core::mem::transmute::<u32x4, vector_unsigned_int>(value),
+      core::mem::transmute::<u32x4, vector_unsigned_int>(u32x4::splat(shift)),
+    ))
+  }
+}
+
+#[inline(always)]
+fn wrapping_shl_i32x4(value: i32x4, shift: u32) -> i32x4 {
+  // SAFETY: all callers are inside z/Vector-gated entry points. These vector types
+  // have identical lane layouts and all bit patterns are valid. The intrinsic
+  // masks each shift count to the lane width, matching wrapping shift semantics.
+  unsafe {
+    core::mem::transmute(vec_sl(
+      core::mem::transmute::<i32x4, vector_signed_int>(value),
+      core::mem::transmute::<u32x4, vector_unsigned_int>(u32x4::splat(shift)),
+    ))
+  }
+}
+
+#[inline(always)]
+fn wrapping_shr_i32x4(value: i32x4, shift: u32) -> i32x4 {
+  // SAFETY: all callers are inside z/Vector-gated entry points. These vector types
+  // have identical lane layouts and all bit patterns are valid. The intrinsic
+  // masks each shift count to the lane width, matching wrapping shift semantics.
+  unsafe {
+    core::mem::transmute(vec_sra(
+      core::mem::transmute::<i32x4, vector_signed_int>(value),
+      core::mem::transmute::<u32x4, vector_unsigned_int>(u32x4::splat(shift)),
+    ))
+  }
+}
+
+#[inline(always)]
+fn wrapping_shl_u64x2(value: u64x2, shift: u32) -> u64x2 {
+  // SAFETY: all callers are inside z/Vector-gated entry points. These vector types
+  // have identical lane layouts and all bit patterns are valid. The intrinsic
+  // masks each shift count to the lane width, matching wrapping shift semantics.
+  unsafe {
+    core::mem::transmute(vec_sl(
+      core::mem::transmute::<u64x2, vector_unsigned_long_long>(value),
+      core::mem::transmute::<u64x2, vector_unsigned_long_long>(u64x2::splat(u64::from(shift))),
+    ))
+  }
+}
+
+#[inline(always)]
+fn wrapping_shr_u64x2(value: u64x2, shift: u32) -> u64x2 {
+  // SAFETY: all callers are inside z/Vector-gated entry points. These vector types
+  // have identical lane layouts and all bit patterns are valid. The intrinsic
+  // masks each shift count to the lane width, matching wrapping shift semantics.
+  unsafe {
+    core::mem::transmute(vec_sr(
+      core::mem::transmute::<u64x2, vector_unsigned_long_long>(value),
+      core::mem::transmute::<u64x2, vector_unsigned_long_long>(u64x2::splat(u64::from(shift))),
+    ))
   }
 }
 
 #[inline(always)]
 fn montgomery_reduce_i32x4(value: i32x4) -> i32x4 {
   let k = mul_i32x4_16_ct(sign_extend_i16_i32x4(value), i32x4::splat(Q_MONT_INV_I32));
-  let c = mul_i32x4_16_ct(sign_extend_i16_i32x4(k), i32x4::splat(Q_I32)) >> 16;
-  sign_extend_i16_i32x4((value >> 16) - c)
+  let c = wrapping_shr_i32x4(mul_i32x4_16_ct(sign_extend_i16_i32x4(k), i32x4::splat(Q_I32)), 16);
+  sign_extend_i16_i32x4(wrapping_sub_i32x4(wrapping_shr_i32x4(value, 16), c))
 }
 
 #[inline(always)]
 fn signed_to_mod_q_i32x4(value: i32x4) -> u32x4 {
-  (value + ((value >> 31) & i32x4::splat(Q_I32))).cast::<u32>()
+  wrapping_add_i32x4(value, (wrapping_shr_i32x4(value, 31)) & i32x4::splat(Q_I32)).cast::<u32>()
 }
 
 #[inline(always)]
 fn add_mod_u32x4(a: u32x4, b: u32x4) -> u32x4 {
-  add_q_if_borrowed_u32x4((a + b) - u32x4::splat(Q_U32))
+  add_q_if_borrowed_u32x4(wrapping_sub_u32x4(wrapping_add_u32x4(a, b), u32x4::splat(Q_U32)))
 }
 
 #[inline(always)]
 fn sub_mod_u32x4(a: u32x4, b: u32x4) -> u32x4 {
-  add_q_if_borrowed_u32x4(a - b)
+  add_q_if_borrowed_u32x4(wrapping_sub_u32x4(a, b))
 }
 
 #[inline(always)]
 fn add_q_if_borrowed_u32x4(value: u32x4) -> u32x4 {
-  let borrow = value >> 31;
+  let borrow = wrapping_shr_u32x4(value, 31);
   // SAFETY: every caller of this helper is reached only from z/Vector-gated ML-KEM entry points in
   // this module. `borrow` is a 0/1 lane value derived from fixed-width modular arithmetic.
   let mask = unsafe { bitmask_u32x4(borrow) };
-  value + (mask & u32x4::splat(Q_U32))
+  wrapping_add_u32x4(value, mask & u32x4::splat(Q_U32))
 }
 
 #[inline(always)]
 fn sign_extend_i16_i32x4(value: i32x4) -> i32x4 {
-  (value << 16) >> 16
+  wrapping_shr_i32x4(wrapping_shl_i32x4(value, 16), 16)
 }
 
 #[inline(always)]
@@ -473,22 +677,30 @@ fn mul_mont_mod_u32x4(a: u32x4, b_mont: i32x4) -> u32x4 {
 
 #[inline(always)]
 fn mul_i32x4_16_ct(a: i32x4, b: i32x4) -> i32x4 {
-  let a_sign = a >> 31;
-  let b_sign = b >> 31;
-  let abs_a = ((a ^ a_sign) - a_sign).cast::<u32>();
-  let abs_b = ((b ^ b_sign) - b_sign).cast::<u32>();
+  let a_sign = wrapping_shr_i32x4(a, 31);
+  let b_sign = wrapping_shr_i32x4(b, 31);
+  let abs_a = wrapping_sub_i32x4(a ^ a_sign, a_sign).cast::<u32>();
+  let abs_b = wrapping_sub_i32x4(b ^ b_sign, b_sign).cast::<u32>();
   let magnitude = mul_u32x4_16_ct(abs_a, abs_b);
   let sign = (a_sign ^ b_sign).cast::<u32>();
-  ((magnitude ^ sign) - sign).cast::<i32>()
+  wrapping_sub_u32x4(magnitude ^ sign, sign).cast::<i32>()
 }
 
 #[inline(always)]
 fn mul_u32x4_16_ct(a: u32x4, b: u32x4) -> u32x4 {
-  // z/Vector `vmlf` stays in vector registers and avoids the operand-dependent scalar multiply
-  // hardening issue that motivates the fixed-work scalar fallback on IBM Z.
-  a * b
+  // SAFETY: all callers are inside z/Vector-gated entry points. The portable and
+  // architectural vector types have the same integer lane widths and order,
+  // and every bit pattern is valid. The intrinsic performs wrapping lane arithmetic.
+  unsafe {
+    core::mem::transmute(vec_mul(
+      core::mem::transmute::<u32x4, vector_unsigned_int>(a),
+      core::mem::transmute::<u32x4, vector_unsigned_int>(b),
+    ))
+  }
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector.
 #[target_feature(enable = "vector")]
 #[inline]
 unsafe fn div_q_compress_u32x4_ct(value: u32x4) -> u32x4 {
@@ -497,9 +709,11 @@ unsafe fn div_q_compress_u32x4_ct(value: u32x4) -> u32x4 {
   let lo = unsafe { div_q_compress_u64x2_ct(u64x2::from_array([u64::from(x0), u64::from(x1)])) }.to_array();
   // SAFETY: same z/Vector contract and fixed lane widening as above.
   let hi = unsafe { div_q_compress_u64x2_ct(u64x2::from_array([u64::from(x2), u64::from(x3)])) }.to_array();
-  u32x4::from_array([lo[0] as u32, lo[1] as u32, hi[0] as u32, hi[1] as u32])
+  u32x4::from_array([low_u32(lo[0]), low_u32(lo[1]), low_u32(hi[0]), low_u32(hi[1])])
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector.
 #[target_feature(enable = "vector")]
 #[inline]
 unsafe fn div_q_compress_u64x2_ct(value: u64x2) -> u64x2 {
@@ -509,26 +723,28 @@ unsafe fn div_q_compress_u64x2_ct(value: u64x2) -> u64x2 {
   // not reintroduce secret-fed multiply on IBM Z.
   // SAFETY: callers reach this helper only from z/Vector-gated ML-KEM compression entry points.
   let acc = unsafe {
-    opaque_u64x2(value)
-      + opaque_u64x2(value << 1u64)
-      + opaque_u64x2(value << 2u64)
-      + opaque_u64x2(value << 3u64)
-      + opaque_u64x2(value << 5u64)
-      + opaque_u64x2(value << 6u64)
-      + opaque_u64x2(value << 8u64)
-      + opaque_u64x2(value << 9u64)
-      + opaque_u64x2(value << 10u64)
-      + opaque_u64x2(value << 11u64)
-      + opaque_u64x2(value << 12u64)
-      + opaque_u64x2(value << 14u64)
-      + opaque_u64x2(value << 16u64)
-      + opaque_u64x2(value << 17u64)
-      + opaque_u64x2(value << 18u64)
-      + opaque_u64x2(value << 21u64)
+    let acc = opaque_u64x2(value);
+    let acc = wrapping_add_u64x2(acc, opaque_u64x2(wrapping_shl_u64x2(value, 1)));
+    let acc = wrapping_add_u64x2(acc, opaque_u64x2(wrapping_shl_u64x2(value, 2)));
+    let acc = wrapping_add_u64x2(acc, opaque_u64x2(wrapping_shl_u64x2(value, 3)));
+    let acc = wrapping_add_u64x2(acc, opaque_u64x2(wrapping_shl_u64x2(value, 5)));
+    let acc = wrapping_add_u64x2(acc, opaque_u64x2(wrapping_shl_u64x2(value, 6)));
+    let acc = wrapping_add_u64x2(acc, opaque_u64x2(wrapping_shl_u64x2(value, 8)));
+    let acc = wrapping_add_u64x2(acc, opaque_u64x2(wrapping_shl_u64x2(value, 9)));
+    let acc = wrapping_add_u64x2(acc, opaque_u64x2(wrapping_shl_u64x2(value, 10)));
+    let acc = wrapping_add_u64x2(acc, opaque_u64x2(wrapping_shl_u64x2(value, 11)));
+    let acc = wrapping_add_u64x2(acc, opaque_u64x2(wrapping_shl_u64x2(value, 12)));
+    let acc = wrapping_add_u64x2(acc, opaque_u64x2(wrapping_shl_u64x2(value, 14)));
+    let acc = wrapping_add_u64x2(acc, opaque_u64x2(wrapping_shl_u64x2(value, 16)));
+    let acc = wrapping_add_u64x2(acc, opaque_u64x2(wrapping_shl_u64x2(value, 17)));
+    let acc = wrapping_add_u64x2(acc, opaque_u64x2(wrapping_shl_u64x2(value, 18)));
+    wrapping_add_u64x2(acc, opaque_u64x2(wrapping_shl_u64x2(value, 21)))
   };
-  acc >> u64::from(Q_COMPRESS_DIV_SHIFT)
+  wrapping_shr_u64x2(acc, Q_COMPRESS_DIV_SHIFT)
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector.
 #[target_feature(enable = "vector")]
 #[inline]
 unsafe fn opaque_u64x2(value: u64x2) -> u64x2 {
@@ -541,6 +757,8 @@ unsafe fn opaque_u64x2(value: u64x2) -> u64x2 {
   out
 }
 
+/// # Safety
+/// The executing CPU must support z/Vector.
 #[target_feature(enable = "vector")]
 #[inline]
 unsafe fn bitmask_u32x4(value: u32x4) -> u32x4 {
@@ -564,12 +782,16 @@ unsafe fn bitmask_u32x4(value: u32x4) -> u32x4 {
   unsafe { core::mem::transmute(out) }
 }
 
+/// # Safety
+/// `offset` must be less than `ZETAS_MONT.len()`.
 #[inline(always)]
 unsafe fn load_zeta(offset: usize) -> i16 {
   // SAFETY: caller guarantees `offset` is inside the fixed public ML-KEM zeta table.
   unsafe { *ZETAS_MONT.as_ptr().add(offset) }
 }
 
+/// # Safety
+/// `offset + 2` must not exceed `ZETAS_MONT.len()`.
 #[inline(always)]
 unsafe fn load_zeta_pair(offset: usize) -> (i32, i32) {
   // SAFETY: caller guarantees `offset..offset + 2` is inside the fixed public ML-KEM zeta table.
@@ -579,6 +801,8 @@ unsafe fn load_zeta_pair(offset: usize) -> (i32, i32) {
   }
 }
 
+/// # Safety
+/// `offset + 4` must not exceed `GAMMAS_MONT.len()`.
 #[inline(always)]
 unsafe fn load_gamma_i32x4(offset: usize) -> i32x4 {
   let gamma = GAMMAS_MONT.as_ptr();
@@ -594,6 +818,9 @@ unsafe fn load_gamma_i32x4(offset: usize) -> i32x4 {
   }
 }
 
+/// # Safety
+/// `values` must be aligned and readable for 4 initialized `u16` values
+/// starting at `offset`, all within the same allocation.
 #[inline(always)]
 unsafe fn load_u32x4(values: *const u16, offset: usize) -> u32x4 {
   // SAFETY: caller guarantees `offset..offset + 4` is inside `values`.
@@ -608,6 +835,9 @@ unsafe fn load_u32x4(values: *const u16, offset: usize) -> u32x4 {
   }
 }
 
+/// # Safety
+/// `values` must be aligned and readable for 8 initialized `u16` values
+/// starting at `offset`, all within the same allocation.
 #[inline(always)]
 unsafe fn load_even_u32x4(values: *const u16, offset: usize) -> u32x4 {
   // SAFETY: caller guarantees `offset..offset + 8` is inside `values`.
@@ -622,6 +852,9 @@ unsafe fn load_even_u32x4(values: *const u16, offset: usize) -> u32x4 {
   }
 }
 
+/// # Safety
+/// `values` must be aligned and readable for 8 initialized `u16` values
+/// starting at `offset`, all within the same allocation.
 #[inline(always)]
 unsafe fn load_odd_u32x4(values: *const u16, offset: usize) -> u32x4 {
   // SAFETY: caller guarantees `offset..offset + 8` is inside `values`.
@@ -636,6 +869,9 @@ unsafe fn load_odd_u32x4(values: *const u16, offset: usize) -> u32x4 {
   }
 }
 
+/// # Safety
+/// `values` must be aligned and readable for 8 initialized `u16` values
+/// starting at `offset`, all within the same allocation.
 #[inline(always)]
 unsafe fn load_len2_lower_u32x4(values: *const u16, offset: usize) -> u32x4 {
   // SAFETY: caller guarantees `offset..offset + 8` is inside `values`.
@@ -650,6 +886,9 @@ unsafe fn load_len2_lower_u32x4(values: *const u16, offset: usize) -> u32x4 {
   }
 }
 
+/// # Safety
+/// `values` must be aligned and readable for 8 initialized `u16` values
+/// starting at `offset`, all within the same allocation.
 #[inline(always)]
 unsafe fn load_len2_upper_u32x4(values: *const u16, offset: usize) -> u32x4 {
   // SAFETY: caller guarantees `offset..offset + 8` is inside `values`.
@@ -664,19 +903,25 @@ unsafe fn load_len2_upper_u32x4(values: *const u16, offset: usize) -> u32x4 {
   }
 }
 
+/// # Safety
+/// `values` must be aligned and exclusively writable for 4 `u16` values
+/// starting at `offset`, all within the same allocation.
 #[inline(always)]
 unsafe fn store_u32x4(values: *mut u16, offset: usize, lanes: u32x4) {
   let lanes = lanes.to_array();
   // SAFETY: caller guarantees `offset..offset + 4` is inside `values`.
   unsafe {
     let values = values.add(offset);
-    *values = lanes[0] as u16;
-    *values.add(1) = lanes[1] as u16;
-    *values.add(2) = lanes[2] as u16;
-    *values.add(3) = lanes[3] as u16;
+    *values = low_u16(lanes[0]);
+    *values.add(1) = low_u16(lanes[1]);
+    *values.add(2) = low_u16(lanes[2]);
+    *values.add(3) = low_u16(lanes[3]);
   }
 }
 
+/// # Safety
+/// `values` must be aligned and exclusively writable for 8 `u16` values
+/// starting at `offset`, all within the same allocation.
 #[inline(always)]
 unsafe fn store_len2_interleaved_4(values: *mut u16, offset: usize, lower: u32x4, upper: u32x4) {
   let lower = lower.to_array();
@@ -684,14 +929,14 @@ unsafe fn store_len2_interleaved_4(values: *mut u16, offset: usize, lower: u32x4
   // SAFETY: caller guarantees `offset..offset + 8` is inside `values`.
   unsafe {
     let values = values.add(offset);
-    *values = lower[0] as u16;
-    *values.add(1) = lower[1] as u16;
-    *values.add(2) = upper[0] as u16;
-    *values.add(3) = upper[1] as u16;
-    *values.add(4) = lower[2] as u16;
-    *values.add(5) = lower[3] as u16;
-    *values.add(6) = upper[2] as u16;
-    *values.add(7) = upper[3] as u16;
+    *values = low_u16(lower[0]);
+    *values.add(1) = low_u16(lower[1]);
+    *values.add(2) = low_u16(upper[0]);
+    *values.add(3) = low_u16(upper[1]);
+    *values.add(4) = low_u16(lower[2]);
+    *values.add(5) = low_u16(lower[3]);
+    *values.add(6) = low_u16(upper[2]);
+    *values.add(7) = low_u16(upper[3]);
   }
 }
 
@@ -712,8 +957,7 @@ fn u32x4_from_u16(values: [u16; 4]) -> u32x4 {
 
 #[inline(always)]
 fn u32x4_to_u16(values: u32x4) -> [u16; 4] {
-  let values = values.to_array();
-  [values[0] as u16, values[1] as u16, values[2] as u16, values[3] as u16]
+  values.to_array().map(low_u16)
 }
 
 #[cfg(test)]
@@ -726,39 +970,96 @@ mod tests {
       return;
     }
 
-    for seed in 0u16..128 {
-      let values = [
-        seed % super::super::Q,
-        seed.wrapping_mul(17).wrapping_add(3) % super::super::Q,
-        seed.wrapping_mul(29).wrapping_add(11) % super::super::Q,
-        seed.wrapping_mul(43).wrapping_add(19) % super::super::Q,
-      ];
+    fn check_width<const D: usize>() {
+      for base in (0u16..super::super::Q).step_by(4) {
+        let values = [0u16, 1, 2, 3].map(|offset| base.wrapping_add(offset) % super::super::Q);
+        // SAFETY: the enclosing test checked z/Vector availability.
+        let compressed = unsafe { compress_values_4::<D>(values) };
+        assert_eq!(
+          compressed,
+          values.map(super::super::compress_value::<D>),
+          "width {D}, base {base}"
+        );
+      }
+      let limit = 1u16.strict_shl(u32::try_from(D).expect("ML-KEM compression width fits u32"));
+      for base in (0u16..limit).step_by(4) {
+        let values = [0u16, 1, 2, 3].map(|offset| base.wrapping_add(offset) % limit);
+        // SAFETY: the enclosing test checked z/Vector availability.
+        let decompressed = unsafe { decompress_values_4::<D>(values) };
+        assert_eq!(
+          decompressed,
+          values.map(super::super::decompress_value::<D>),
+          "width {D}, base {base}"
+        );
+      }
+    }
+    check_width::<1>();
+    check_width::<4>();
+    check_width::<5>();
+    check_width::<10>();
+    check_width::<11>();
+  }
 
-      // SAFETY: test is runtime-gated on z/Vector availability.
-      let compressed = unsafe { compress_values_4::<10>(values) };
-      let expected_compressed = [
-        super::super::compress_value::<10>(values[0]),
-        super::super::compress_value::<10>(values[1]),
-        super::super::compress_value::<10>(values[2]),
-        super::super::compress_value::<10>(values[3]),
-      ];
-      assert_eq!(compressed, expected_compressed, "compress seed {seed}");
-
-      let decoded = [
-        seed & 0x03ff,
-        seed.wrapping_mul(5).wrapping_add(7) & 0x03ff,
-        seed.wrapping_mul(9).wrapping_add(13) & 0x03ff,
-        seed.wrapping_mul(13).wrapping_add(17) & 0x03ff,
-      ];
-      // SAFETY: test is runtime-gated on z/Vector availability.
-      let decompressed = unsafe { decompress_values_4::<10>(decoded) };
-      let expected_decompressed = [
-        super::super::decompress_value::<10>(decoded[0]),
-        super::super::decompress_value::<10>(decoded[1]),
-        super::super::decompress_value::<10>(decoded[2]),
-        super::super::decompress_value::<10>(decoded[3]),
-      ];
-      assert_eq!(decompressed, expected_decompressed, "decompress seed {seed}");
+  #[test]
+  fn vector_wrapping_arithmetic_matches_scalar_lanes() {
+    if !std::arch::is_s390x_feature_detected!("vector") {
+      return;
+    }
+    let a = u32x4::from_array([0, u32::MAX, 0x8000_0000, 17]);
+    let b = u32x4::from_array([u32::MAX, 1, 0x8000_0000, 0x1234_5678]);
+    assert_eq!(
+      wrapping_add_u32x4(a, b).to_array(),
+      core::array::from_fn(|i| a[i].wrapping_add(b[i]))
+    );
+    assert_eq!(
+      wrapping_sub_u32x4(a, b).to_array(),
+      core::array::from_fn(|i| a[i].wrapping_sub(b[i]))
+    );
+    assert_eq!(
+      mul_u32x4_16_ct(a, b).to_array(),
+      core::array::from_fn(|i| a[i].wrapping_mul(b[i]))
+    );
+    let signed_a = a.cast::<i32>();
+    let signed_b = b.cast::<i32>();
+    assert_eq!(
+      wrapping_add_i32x4(signed_a, signed_b).to_array(),
+      core::array::from_fn(|i| signed_a[i].wrapping_add(signed_b[i]))
+    );
+    assert_eq!(
+      wrapping_sub_i32x4(signed_a, signed_b).to_array(),
+      core::array::from_fn(|i| signed_a[i].wrapping_sub(signed_b[i]))
+    );
+    let wide_a = u64x2::from_array([u64::MAX, 0x8000_0000_0000_0000]);
+    let wide_b = u64x2::from_array([1, 0x8000_0000_0000_0000]);
+    assert_eq!(
+      wrapping_add_u64x2(wide_a, wide_b).to_array(),
+      core::array::from_fn(|i| wide_a[i].wrapping_add(wide_b[i]))
+    );
+    for shift in [0, 1, 15, 16, 31, 32, 33, 63, 64, 65] {
+      assert_eq!(
+        wrapping_shl_u32x4(a, shift).to_array(),
+        a.to_array().map(|lane| lane.wrapping_shl(shift))
+      );
+      assert_eq!(
+        wrapping_shr_u32x4(a, shift).to_array(),
+        a.to_array().map(|lane| lane.wrapping_shr(shift))
+      );
+      assert_eq!(
+        wrapping_shl_i32x4(signed_a, shift).to_array(),
+        signed_a.to_array().map(|lane| lane.wrapping_shl(shift))
+      );
+      assert_eq!(
+        wrapping_shr_i32x4(signed_a, shift).to_array(),
+        signed_a.to_array().map(|lane| lane.wrapping_shr(shift))
+      );
+      assert_eq!(
+        wrapping_shl_u64x2(wide_a, shift).to_array(),
+        wide_a.to_array().map(|lane| lane.wrapping_shl(shift))
+      );
+      assert_eq!(
+        wrapping_shr_u64x2(wide_a, shift).to_array(),
+        wide_a.to_array().map(|lane| lane.wrapping_shr(shift))
+      );
     }
   }
 
@@ -866,8 +1167,12 @@ mod tests {
   fn test_poly(seed: usize) -> Poly {
     let mut poly = [0u16; N];
     for (i, coeff) in poly.iter_mut().enumerate() {
-      *coeff =
-        ((seed.strict_mul(37).strict_add(i.strict_mul(19)).strict_add(11)) % usize::from(super::super::Q)) as u16;
+      let value = seed
+        .strict_mul(37)
+        .strict_add(i.strict_mul(19))
+        .strict_add(11)
+        .strict_rem(usize::from(super::super::Q));
+      *coeff = u16::try_from(value).expect("coefficient reduced modulo Q fits u16");
     }
     poly
   }

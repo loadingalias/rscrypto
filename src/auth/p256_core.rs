@@ -41,7 +41,7 @@ pub(super) fn public_point_from_sec1(bytes: &[u8]) -> Option<PublicPoint> {
 /// implementation.
 #[cfg(all(
   any(
-    feature = "ecdsa-p256",
+    all(feature = "ecdsa-p256", not(target_os = "windows")),
     all(feature = "p256-ecdh", not(feature = "portable-only"), not(miri))
   ),
   any(

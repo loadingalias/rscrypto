@@ -5,6 +5,10 @@
 *.bat text eol=crlf
 *.cmd text eol=crlf
 
+# Fuzz inputs must retain their exact bytes on every host.
+fuzz/corpus/** binary
+fuzz-packages/*/corpus/** binary
+
 
 testdata/ascon/asconaead128.txt -diff
 testdata/ascon/asconcxof128.txt -diff

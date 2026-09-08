@@ -5,12 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
-# shellcheck source=../lib/common.sh
-source "$SCRIPT_DIR/../lib/common.sh"
 # shellcheck source=../lib/fuzz-packages.sh
 source "$SCRIPT_DIR/../lib/fuzz-packages.sh"
 
-activate_nightly_toolchain
+RUSTUP_TOOLCHAIN=$("$SCRIPT_DIR/../lib/toolchain.sh" --nightly)
+export RUSTUP_TOOLCHAIN
 export CARGO_RAIL_CACHE=off
 
 PACKAGE_SCOPE="full"
@@ -22,6 +21,7 @@ Usage: scripts/test/test-fuzz-asan.sh [--full|--scoped|--all]
 Replays committed fuzz corpora under AddressSanitizer.
 
 Environment:
+  RSCRYPTO_FUZZ_CORPUS        committed (default) or local (include discoveries)
   RSCRYPTO_ASAN_TARGET_DIR     Cargo target dir for ASan builds
 EOF
 }
@@ -67,6 +67,7 @@ failed=0
 total=0
 for package_dir in "${SELECTED_FUZZ_PACKAGES[@]:+${SELECTED_FUZZ_PACKAGES[@]}}"; do
   package_failed=0
+  targets=$(fuzz_list_targets "$package_dir") || exit 2
   while IFS= read -r target; do
     [[ -z "$target" ]] && continue
     corpus_dir="$package_dir/corpus/$target"
@@ -76,34 +77,47 @@ for package_dir in "${SELECTED_FUZZ_PACKAGES[@]:+${SELECTED_FUZZ_PACKAGES[@]}}";
       package_failed=1
       continue
     fi
-
-    total=$((total + 1))
-  done < <(fuzz_list_targets "$package_dir")
+  done <<<"$targets"
 
   if [[ "$package_failed" -ne 0 ]]; then
     continue
   fi
 
   echo "ASan corpus replay package: $(fuzz_package_label "$package_dir")"
-  if ! cargo test \
-    --locked \
-    -Zbuild-std \
-    --target "$(fuzz_host_target)" \
-    --manifest-path "$package_dir/Cargo.toml" \
-    --all-features \
-    --test corpus_replay \
-    -- --nocapture; then
+  cargo_test=(cargo test
+    --locked
+    -Zbuild-std
+    --target "$(fuzz_host_target)"
+    --manifest-path "$package_dir/Cargo.toml"
+    --all-features
+    --test corpus_replay)
+  if ! replay_list=$("${cargo_test[@]}" -- --list --format terse); then
+    failed=1
+    continue
+  fi
+  expected=$(printf '%s\n' "$targets" | sed '/^$/d; s/^/replay_/; s/$/_corpus: test/' | LC_ALL=C sort)
+  actual=$(printf '%s\n' "$replay_list" | sed -n '/: test$/p' | LC_ALL=C sort)
+  if [[ "$expected" != "$actual" ]]; then
+    echo "ASan replay inventory mismatch: $(fuzz_package_label "$package_dir")" >&2
+    diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") >&2 || true
+    failed=1
+    continue
+  fi
+  if "${cargo_test[@]}" -- --include-ignored --nocapture; then
+    package_total=$(printf '%s\n' "$actual" | wc -l)
+    total=$((total + package_total))
+  else
     failed=1
   fi
 done
 
-if [[ "$total" -eq 0 ]]; then
-  echo "no fuzz targets selected for ASan replay" >&2
+if [[ "$failed" -ne 0 ]]; then
+  echo "ASan fuzz corpus replay failed" >&2
   exit 1
 fi
 
-if [[ "$failed" -ne 0 ]]; then
-  echo "ASan fuzz corpus replay failed" >&2
+if [[ "$total" -eq 0 ]]; then
+  echo "no fuzz targets selected for ASan replay" >&2
   exit 1
 fi
 

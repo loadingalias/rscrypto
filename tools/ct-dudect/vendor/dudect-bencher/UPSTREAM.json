@@ -1,0 +1,14 @@
+{
+  "crate": "dudect-bencher",
+  "version": "0.7.0",
+  "files": {
+    "src/lib.rs": "e199e874e25508dccae2c88c202c73b99e2d246b37871eb6839cae96471f9332",
+    "src/macros.rs": "1b2bb21a1006f742144d8916c35fb35430300362dae19af1acf9a0c26f1929d1",
+    "src/ctbench.rs": "9226bc5291690acaf53756be74f04d09d9134aa4c36065550aa6b1519f896d06",
+    "src/stats.rs": "2d80fbf6a25b6b36036007d61bd332a21d65e2c46400946bdff597d224913e5d",
+    "LICENSE-MIT": "2d01e9525786a437c5cd2eb04ea760bb10a7debabbf331659a2c922367e6ee8b",
+    "LICENSE-APACHE": "969be21df4b2e3a3e40fde42ff68789bd1adafb4ec992a96bc746e893ec791e8",
+    "README.md": "001429f8a389029dfc23a4a950fabb99d0b6388759745f13f702bef618bc6c62"
+  },
+  "crate_sha256": "6a6174adfb35811a6845001876823965032406784c36e795edb84a74353455e1"
+}

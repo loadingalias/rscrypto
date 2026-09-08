@@ -65,7 +65,7 @@
 //! rscrypto = { version = "0.9", default-features = false, features = ["signatures"] }
 //!
 //! # X25519 only
-//! rscrypto = { version = "0.9", default-features = false, features = ["key-exchange"] }
+//! rscrypto = { version = "0.9", default-features = false, features = ["x25519"] }
 //!
 //! # Everything in auth/key-derivation
 //! rscrypto = { version = "0.9", default-features = false, features = ["auth"] }
@@ -145,6 +145,8 @@ pub mod hkdf;
 pub mod hmac;
 #[cfg(feature = "hmac-sha3")]
 pub mod hmac_sha3;
+#[cfg(any(feature = "hmac", feature = "hmac-sha3"))]
+mod hmac_tag;
 #[cfg(feature = "kmac")]
 pub mod kmac;
 #[cfg(feature = "ml-kem")]

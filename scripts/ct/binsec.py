@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import shutil
@@ -14,17 +13,12 @@ import tomllib
 from functools import lru_cache
 from pathlib import Path
 
+from provenance import sha256_file
+from manifest import binsec_kernel_targets, target_record
+
 ROOT = Path(__file__).resolve().parents[2]
 HARNESS_MANIFEST = ROOT / "tools" / "ct-binsec-harness" / "Cargo.toml"
 HARNESS_BIN = "rscrypto-ct-binsec-harness"
-
-
-def sha256_file(path: Path) -> str:
-  h = hashlib.sha256()
-  with path.open("rb") as fh:
-    for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-      h.update(chunk)
-  return h.hexdigest()
 
 
 @lru_cache(maxsize=1)
@@ -106,20 +100,6 @@ def find_binsec() -> str | None:
   return None
 
 
-def kernel_targets(kernel: dict, ct: dict) -> set[str]:
-  targets = kernel.get("targets", [])
-  if "*" in targets:
-    return binsec_required_targets(ct)
-  return set(targets)
-
-
-def target_record(ct: dict, target: str) -> dict | None:
-  for row in ct.get("target", []):
-    if row.get("name") == target:
-      return row
-  return None
-
-
 def target_binsec_policy(ct: dict, target: str) -> str:
   row = target_record(ct, target)
   if row is None:
@@ -127,17 +107,9 @@ def target_binsec_policy(ct: dict, target: str) -> str:
   return str(row.get("binsec", "unsupported"))
 
 
-def binsec_required_targets(ct: dict) -> set[str]:
-  return {
-    target.get("name", "")
-    for target in ct.get("target", [])
-    if target.get("claim") in {"ct-intended", "ct-claimed"} and target.get("binsec") == "required"
-  }
-
-
 def kernels(ct: dict, kernel_filter: str | None, target: str) -> list[dict]:
   rows = ct.get("binsec_kernel", [])
-  rows = [row for row in rows if not row.get("targets") or target in kernel_targets(row, ct)]
+  rows = [row for row in rows if not row.get("targets") or target in binsec_kernel_targets(ct, row)]
   if kernel_filter is not None:
     rows = [row for row in rows if row.get("id") == kernel_filter or row.get("symbol") == kernel_filter]
   return rows
@@ -187,7 +159,7 @@ def configure_cross_linker(env: dict[str, str], target: str) -> None:
     return
 
   zig = shutil.which("zig")
-  wrapper = ROOT / "scripts" / "check" / "zig-cc.sh"
+  wrapper = ROOT / "scripts" / "ct" / "zig-cc.sh"
   if zig is None or not wrapper.exists():
     return
 
@@ -437,15 +409,15 @@ def main() -> int:
   target = args.target or rustc_host()
   profile = args.profile
   ct = load_manifest()
+  selected = kernels(ct, args.kernel, target)
+  if args.kernel is not None and not selected:
+    parser.error(f"no BINSEC kernel matches {args.kernel!r} for target {target}")
   if target_binsec_policy(ct, target) != "required":
     print(f"BINSEC is not required for {target} by ct.toml policy")
     return 0
 
   out_root = ROOT / "target" / "ct" / target / profile / "binsec"
-  selected = kernels(ct, args.kernel, target)
   if not selected:
-    if out_root.exists():
-      shutil.rmtree(out_root)
     if args.kernel is None and target_is_claimed(ct, target):
       print(f"no BINSEC kernels selected for claimed target {target}", file=sys.stderr)
       return 1

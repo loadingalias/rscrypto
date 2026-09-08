@@ -69,13 +69,15 @@ prefix="$HOME/.local/share/rscrypto-tooling"
 mkdir -p "$prefix/bin"
 python3 "$SCRIPT_DIR/catalog.py" download "$platform" rustup "$temporary/rustup-init"
 chmod +x "$temporary/rustup-init"
-channel="$(python3 "$SCRIPT_DIR/catalog.py" rust-channel)"
-"$temporary/rustup-init" -y --no-modify-path --default-host "$(catalog_get "$platform" rust-host)" --default-toolchain none
+host="$(catalog_get "$platform" rust-host)"
+channel="$(python3 "$SCRIPT_DIR/../lib/toolchain.py")"
+"$temporary/rustup-init" -y --no-modify-path --default-host "$host" --default-toolchain none
 export PATH="$HOME/.cargo/bin:$PATH"
 mapfile -t components < <(catalog_get "$platform" components)
 component_args=()
 for component in "${components[@]}"; do component_args+=(--component "$component"); done
-rustup toolchain install "$channel" --profile minimal --component clippy --component rustfmt "${component_args[@]}"
+python3 "$SCRIPT_DIR/../lib/toolchain.py" --install "$host" "${component_args[@]}"
+export RUSTUP_TOOLCHAIN="$channel"
 # Archive tools retain their complete directory layouts, including LLVM and Zig libraries.
 python3 "$SCRIPT_DIR/catalog.py" install-archives "$platform" "$prefix" > "$temporary/archives"
 tool_paths=()

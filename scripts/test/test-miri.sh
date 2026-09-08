@@ -2,8 +2,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=../lib/common.sh
-source "$SCRIPT_DIR/../lib/common.sh"
 
 # Miri Memory Safety Tests for rscrypto
 #
@@ -33,7 +31,8 @@ echo "Running Memory Safety Tests via Miri..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-activate_nightly_toolchain
+RUSTUP_TOOLCHAIN=$("$SCRIPT_DIR/../lib/toolchain.sh" --nightly)
+export RUSTUP_TOOLCHAIN
 export CARGO_RAIL_CACHE=off
 export CARGO_PROFILE_TEST_OPT_LEVEL=0
 

@@ -13,7 +13,7 @@ pub mod blake2s;
 pub mod blake3;
 #[cfg(feature = "sha3")]
 mod cshake;
-#[cfg(any(feature = "sha2", feature = "blake3",))]
+#[cfg(feature = "blake3")]
 pub(crate) mod dispatch_util;
 #[cfg(feature = "sha3")]
 pub(crate) mod keccak;

@@ -153,72 +153,57 @@ macro_rules! mlkem_profile_properties {
       }
 
       #[test]
-      fn $slice_parsers(bytes in prop::collection::vec(any::<u8>(), 0..=3400)) {
-        if bytes.len() != <$profile>::ENCAPSULATION_KEY_SIZE {
+      fn $slice_parsers(
+        d in arbitrary_bytes_32(),
+        z in arbitrary_bytes_32(),
+        bytes in prop::collection::vec(any::<u8>(), <$profile>::CIPHERTEXT_SIZE),
+      ) {
+        for len in [0, <$profile>::ENCAPSULATION_KEY_SIZE - 1, <$profile>::ENCAPSULATION_KEY_SIZE + 1] {
           prop_assert_eq!(
-            <$encapsulation_key>::try_from_slice(&bytes)
-              .expect_err("wrong-length ML-KEM encapsulation key must be rejected"),
+            <$encapsulation_key>::try_from_slice(&vec![0; len]).expect_err("wrong-length encapsulation key"),
             MlKemError::InvalidEncapsulationKey
           );
-        } else {
-          let mut raw = [0u8; <$profile>::ENCAPSULATION_KEY_SIZE];
-          raw.copy_from_slice(&bytes);
-          let direct = <$encapsulation_key>::from_bytes(raw);
-          match direct.validate() {
-            Ok(()) => {
-              let parsed = <$encapsulation_key>::try_from_slice(&bytes)
-                .expect("canonical ML-KEM encapsulation key must parse");
-              prop_assert_eq!(parsed.as_ref(), bytes.as_slice());
-            }
-            Err(expected) => {
-              prop_assert_eq!(
-                <$encapsulation_key>::try_from_slice(&bytes)
-                  .expect_err("noncanonical ML-KEM encapsulation key must be rejected"),
-                expected
-              );
-            }
-          }
         }
-
-        if bytes.len() != <$profile>::DECAPSULATION_KEY_SIZE {
+        for len in [0, <$profile>::DECAPSULATION_KEY_SIZE - 1, <$profile>::DECAPSULATION_KEY_SIZE + 1] {
           prop_assert_eq!(
-            <$decapsulation_key>::try_from_slice(&bytes)
-              .expect_err("wrong-length ML-KEM decapsulation key must be rejected"),
+            <$decapsulation_key>::try_from_slice(&vec![0; len]).expect_err("wrong-length decapsulation key"),
             MlKemError::InvalidDecapsulationKey
           );
-        } else {
-          let mut raw = [0u8; <$profile>::DECAPSULATION_KEY_SIZE];
-          raw.copy_from_slice(&bytes);
-          let direct = <$decapsulation_key>::from_bytes(raw);
-          match direct.validate() {
-            Ok(()) => {
-              let parsed = <$decapsulation_key>::try_from_slice(&bytes)
-                .expect("valid ML-KEM decapsulation key must parse");
-              prop_assert_eq!(parsed.as_ref(), bytes.as_slice());
-            }
-            Err(expected) => {
-              prop_assert_eq!(
-                <$decapsulation_key>::try_from_slice(&bytes)
-                  .expect_err("invalid ML-KEM decapsulation key must be rejected"),
-                expected
-              );
-            }
-          }
         }
-
-        if bytes.len() != <$profile>::CIPHERTEXT_SIZE {
+        for len in [0, <$profile>::CIPHERTEXT_SIZE - 1, <$profile>::CIPHERTEXT_SIZE + 1] {
           prop_assert_eq!(
-            <$ciphertext>::try_from_slice(&bytes)
-              .expect_err("wrong-length ML-KEM ciphertext must be rejected"),
+            <$ciphertext>::try_from_slice(&vec![0; len]).expect_err("wrong-length ciphertext"),
             MlKemError::InvalidCiphertext
           );
-        } else {
-          let ciphertext = <$ciphertext>::try_from_slice(&bytes)
-            .expect("correct-length ML-KEM ciphertext must parse");
-          ciphertext
-            .validate()
-            .expect("all correctly sized ML-KEM ciphertexts are canonical");
         }
+
+        let (ek, dk) = $fips::KG::keygen_from_seed(d, z);
+        let mut ek_bytes = ek.into_bytes();
+        let mut dk_bytes = dk.into_bytes();
+        let parsed_ek = <$encapsulation_key>::try_from_slice(&ek_bytes)
+          .expect("independently generated encapsulation key must parse");
+        prop_assert_eq!(parsed_ek.as_ref(), ek_bytes.as_slice());
+        let parsed_dk = <$decapsulation_key>::try_from_slice(&dk_bytes)
+          .expect("independently generated decapsulation key must parse");
+        prop_assert_eq!(parsed_dk.as_ref(), dk_bytes.as_slice());
+
+        // Encode the first 12-bit coefficient as 4095, outside the canonical range 0..3329.
+        ek_bytes[0] = 0xff;
+        ek_bytes[1] |= 0x0f;
+        prop_assert_eq!(
+          <$encapsulation_key>::try_from_slice(&ek_bytes).expect_err("noncanonical coefficient"),
+          MlKemError::InvalidEncapsulationKey
+        );
+        // The final 64 bytes are H(ek) followed by z; corrupt only the stored hash.
+        dk_bytes[<$profile>::DECAPSULATION_KEY_SIZE - 64] ^= 1;
+        prop_assert_eq!(
+          <$decapsulation_key>::try_from_slice(&dk_bytes).expect_err("corrupted encapsulation-key hash"),
+          MlKemError::InvalidDecapsulationKey
+        );
+
+        let ciphertext = <$ciphertext>::try_from_slice(&bytes)
+          .expect("every exact-size ciphertext encoding must parse");
+        prop_assert_eq!(ciphertext.as_ref(), bytes.as_slice());
       }
     }
   };
@@ -227,7 +212,7 @@ macro_rules! mlkem_profile_properties {
 mlkem_profile_properties!(
   mlkem512_matches_fips203_for_arbitrary_seeds,
   mlkem512_modified_ciphertexts_use_implicit_rejection,
-  mlkem512_slice_parsers_handle_arbitrary_lengths,
+  mlkem512_slice_parsers_check_boundaries_and_exact_size,
   MlKem512,
   MlKem512Ciphertext,
   MlKem512DecapsulationKey,
@@ -239,7 +224,7 @@ mlkem_profile_properties!(
 mlkem_profile_properties!(
   mlkem768_matches_fips203_for_arbitrary_seeds,
   mlkem768_modified_ciphertexts_use_implicit_rejection,
-  mlkem768_slice_parsers_handle_arbitrary_lengths,
+  mlkem768_slice_parsers_check_boundaries_and_exact_size,
   MlKem768,
   MlKem768Ciphertext,
   MlKem768DecapsulationKey,
@@ -251,7 +236,7 @@ mlkem_profile_properties!(
 mlkem_profile_properties!(
   mlkem1024_matches_fips203_for_arbitrary_seeds,
   mlkem1024_modified_ciphertexts_use_implicit_rejection,
-  mlkem1024_slice_parsers_handle_arbitrary_lengths,
+  mlkem1024_slice_parsers_check_boundaries_and_exact_size,
   MlKem1024,
   MlKem1024Ciphertext,
   MlKem1024DecapsulationKey,

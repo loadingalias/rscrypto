@@ -1,8 +1,12 @@
-#![cfg(feature = "hashes")]
+#![cfg(any(feature = "blake2b", feature = "blake2s"))]
 
 mod support;
 
-use rscrypto::{Blake2b512, Blake2bKey, Blake2s256, Blake2sKey, Digest};
+use rscrypto::Digest;
+#[cfg(feature = "blake2b")]
+use rscrypto::{Blake2b512, Blake2bKey};
+#[cfg(feature = "blake2s")]
+use rscrypto::{Blake2s256, Blake2sKey};
 use support::blobby_compat::BlobIterator;
 
 fn run_blake2_vectors<const OUT: usize>(
@@ -37,6 +41,7 @@ fn run_blake2_vectors<const OUT: usize>(
   }
 }
 
+#[cfg(feature = "blake2s")]
 #[test]
 fn blake2s_official_vectors() {
   let data = include_bytes!("../testdata/blake2/blake2s.blb");
@@ -66,6 +71,7 @@ fn blake2s_official_vectors() {
   );
 }
 
+#[cfg(feature = "blake2b")]
 #[test]
 fn blake2b_official_vectors() {
   let data = include_bytes!("../testdata/blake2/blake2b.blb");

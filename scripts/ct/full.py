@@ -4,19 +4,24 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import platform
 import re
-import shutil
 import subprocess
 import sys
-import tomllib
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from provenance import load_toml, sha256_file
+from manifest import (
+  dudect_sample_count,
+  is_diagnostic_dudect_case, primitive_supports_physical_timing, target_record,
+  required_dudect_cases as select_required_dudect_cases,
+)
 
 @dataclass
 class CommandResult:
@@ -29,19 +34,6 @@ class CommandResult:
   started_at_utc: str
   finished_at_utc: str
   duration_seconds: float
-
-
-def load_toml(path: Path) -> dict[str, Any]:
-  with path.open("rb") as fh:
-    return tomllib.load(fh)
-
-
-def sha256_file(path: Path) -> str:
-  h = hashlib.sha256()
-  with path.open("rb") as fh:
-    for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-      h.update(chunk)
-  return h.hexdigest()
 
 
 def host_target(root: Path) -> str:
@@ -176,17 +168,8 @@ def primitives_by_id(ct: dict[str, Any]) -> dict[str, dict[str, Any]]:
   return {primitive.get("id", ""): primitive for primitive in ct.get("primitive", []) if primitive.get("id")}
 
 
-def primitive_supports_physical_timing(ct: dict[str, Any], primitive_id: str, target: str | None) -> bool:
-  if target is None:
-    return True
-  primitive = primitives_by_id(ct).get(primitive_id)
-  if primitive is None:
-    return True
-  return target not in set(primitive.get("physical_timing_unsupported_targets", []))
-
-
 def dudect_case_supported_on_target(ct: dict[str, Any], case: dict[str, Any], target: str | None) -> bool:
-  return primitive_supports_physical_timing(ct, str(case.get("primitive", "")), target)
+  return primitive_supports_physical_timing(primitives_by_id(ct).get(str(case.get("primitive", "")), {}), target)
 
 
 def filter_dudect_cases_by_target(
@@ -203,7 +186,7 @@ def primitive_ids_requiring_dudect(ct: dict[str, Any], target: str | None = None
     if primitive.get("claim") != "ct-intended":
       continue
     primitive_id = primitive.get("id", "")
-    if not primitive_id or not primitive_supports_physical_timing(ct, primitive_id, target):
+    if not primitive_id or not primitive_supports_physical_timing(primitives_by_id(ct).get(primitive_id, {}), target):
       continue
     required = set()
     for profile_name in primitive.get("required", []):
@@ -214,28 +197,13 @@ def primitive_ids_requiring_dudect(ct: dict[str, Any], target: str | None = None
   return ids
 
 
-def is_diagnostic_dudect_case(case: dict[str, Any]) -> bool:
-  return case.get("gate") == "diagnostic"
-
-
 def required_dudect_cases(ct: dict[str, Any], target: str | None = None) -> list[dict[str, Any]]:
-  return [
-    case
-    for case in manifest_dudect_cases(ct)
-    if not is_diagnostic_dudect_case(case) and dudect_case_supported_on_target(ct, case, target)
-  ]
+  return select_required_dudect_cases(ct, target, cases=manifest_dudect_cases(ct))
 
 
 def required_dudect_primitives(ct: dict[str, Any], target: str | None = None) -> set[str]:
   required_primitives = primitive_ids_requiring_dudect(ct, target)
   return {case["primitive"] for case in required_dudect_cases(ct, target) if case["primitive"] in required_primitives}
-
-
-def target_record(ct: dict[str, Any], target: str) -> dict[str, Any] | None:
-  for row in ct.get("target", []):
-    if row.get("name") == target:
-      return row
-  return None
 
 
 def binsec_policy(ct: dict[str, Any], target: str) -> tuple[str, str]:
@@ -299,11 +267,8 @@ def filter_dudect_cases_by_gate(cases: list[dict[str, Any]], gate: str) -> list[
   raise ValueError(f"unsupported DudeCT gate {gate!r}")
 
 
-def case_sample_count(case: dict[str, Any], *, smoke: bool, override: int | None, fallback: int) -> int:
-  _ = smoke
-  _ = override
-  value = case.get("samples", fallback)
-  return int(value)
+def case_sample_count(case: dict[str, Any], *, fallback: int) -> int:
+  return dudect_sample_count(case, fallback=fallback)
 
 
 def case_timeout_seconds(case: dict[str, Any], fallback: int) -> int:
@@ -320,24 +285,6 @@ def file_record(path: Path, base: Path, kind: str) -> dict[str, Any]:
     "sha256": sha256_file(path),
     "bytes": path.stat().st_size,
   }
-
-
-def copy_latest_dudect_outputs(out_dir: Path, case_name: str) -> list[dict[str, str]]:
-  dudect_dir = out_dir / "dudect"
-  cases_dir = dudect_dir / "cases" / case_name
-  cases_dir.mkdir(parents=True, exist_ok=True)
-  copied = []
-  for source_name, target_name in (
-    ("dudect-report.json", "dudect-report.json"),
-    ("dudect-raw.csv", "dudect-raw.csv"),
-    ("dudect.stdout.txt", "dudect.stdout.txt"),
-  ):
-    source = dudect_dir / source_name
-    if source.exists():
-      target = cases_dir / target_name
-      shutil.copy2(source, target)
-      copied.append({"name": target_name, "path": str(target)})
-  return copied
 
 
 def load_json_if_exists(path: Path) -> dict[str, Any] | None:
@@ -367,9 +314,15 @@ def validate_dudect_case_report(manifest_case: dict[str, Any], reported_case: di
 
 def validated_dudect_case_report(manifest_case: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
   name = str(manifest_case["name"])
-  matches = [row for row in report.get("cases", []) if row.get("name") == name]
-  if len(matches) != 1:
+  if not isinstance(report, dict) or not isinstance(report.get("cases"), list):
+    raise ValueError("DudeCT child report must contain a cases array")
+  if any(not isinstance(row, dict) for row in report["cases"]):
+    raise ValueError("DudeCT child report cases must be objects")
+  matches = [row for row in report["cases"] if row.get("name") == name]
+  if len(report["cases"]) != 1 or len(matches) != 1:
     raise ValueError(f"DudeCT child report must contain exactly one result for requested case {name!r}")
+  if matches[0].get("status") not in ("pass", "fail", "diagnostic-fail"):
+    raise ValueError(f"DudeCT case {name!r} has an invalid or missing status")
   validate_dudect_case_report(manifest_case, matches[0])
   return matches[0]
 
@@ -394,7 +347,7 @@ def candidate_identity(out_dir: Path) -> dict[str, Any]:
   }
 
 
-def collect_artifact_records(out_dir: Path) -> list[dict[str, Any]]:
+def collect_artifact_records(out_dir: Path, dudect_run: Path | None = None) -> list[dict[str, Any]]:
   records = []
   for relative, kind in (
     ("provenance.json", "provenance"),
@@ -406,26 +359,21 @@ def collect_artifact_records(out_dir: Path) -> list[dict[str, Any]]:
     if path.exists():
       records.append(file_record(path, out_dir, kind))
 
-  for path in sorted((out_dir / "dudect" / "cases").glob("*/*")):
+  for path in sorted(dudect_run.rglob("*")) if dudect_run is not None else []:
     if not path.is_file():
       continue
     kind = {
       "dudect-report.json": "dudect_report",
       "dudect-raw.csv": "dudect_raw_samples",
       "dudect.stdout.txt": "dudect_stdout",
+      "rscrypto-ct-dudect": "dudect_binary",
+      "rscrypto-ct-dudect.exe": "dudect_binary",
+      "rscrypto-ct-dudect.binary.disasm.txt": "dudect_binary_disassembly",
+      "rscrypto-ct-dudect.binary.symbols.txt": "dudect_binary_symbol_map",
+      "dudect-linker-command.txt": "dudect_linker_command",
+      "prepared.json": "dudect_preparation",
     }.get(path.name, "dudect_component")
     records.append(file_record(path, out_dir, kind))
-
-  for relative, kind in (
-    ("dudect/rscrypto-ct-dudect", "dudect_binary"),
-    ("dudect/rscrypto-ct-dudect.exe", "dudect_binary"),
-    ("dudect/rscrypto-ct-dudect.binary.disasm.txt", "dudect_binary_disassembly"),
-    ("dudect/rscrypto-ct-dudect.binary.symbols.txt", "dudect_binary_symbol_map"),
-    ("dudect/dudect-linker-command.txt", "dudect_linker_command"),
-  ):
-    path = out_dir / relative
-    if path.exists():
-      records.append(file_record(path, out_dir, kind))
 
   for path in sorted((out_dir / "binsec").glob("*/*")):
     if not path.is_file():
@@ -445,42 +393,50 @@ def collect_artifact_records(out_dir: Path) -> list[dict[str, Any]]:
 
 def dudect_case_result(
   root: Path,
-  out_dir: Path,
   logs_dir: Path,
-  target: str,
-  profile: str,
   samples: int,
   threshold: float,
-  smoke: bool,
   case: dict[str, Any],
   timeout: int | None,
+  prepared: Path,
 ) -> dict[str, Any]:
+  cases_dir = prepared.parent.parent / "cases"
+  cases_dir.mkdir(parents=True, exist_ok=True)
+  evidence_dir = Path(tempfile.mkdtemp(prefix=f"{case['name']}-", dir=cases_dir)).resolve()
   command = [
-    *shell_script(root, "scripts/ct/dudect.sh"),
-    "--target",
-    target,
-    "--profile",
-    profile,
-    "--samples",
-    str(samples),
-    "--threshold",
-    str(threshold),
-    "--filter",
-    case["filter"],
+    *python_script(root, "scripts/ct/dudect_execute.py"),
+    "--prepared", str(prepared), "--evidence-dir", str(evidence_dir),
+    "--samples", str(samples), "--threshold", str(threshold), "--filter", case["filter"],
   ]
-  if smoke:
-    command.append("--smoke")
-  result = run_command(root, logs_dir, f"dudect-{case['name']}", command, timeout=timeout)
-  copied = copy_latest_dudect_outputs(out_dir, case["name"])
-  report_path = out_dir / "dudect" / "cases" / case["name"] / "dudect-report.json"
-  report = load_json_if_exists(report_path)
+  if timeout is not None:
+    command += ["--timeout", str(timeout)]
+  result = run_command(
+    root, logs_dir, f"dudect-{evidence_dir.name}", command,
+  )
+  if result.returncode == 124:
+    result.status = "timeout"
+  artifacts = [{"name": path.name, "path": str(path)} for path in sorted(evidence_dir.iterdir()) if path.is_file()]
+  report_path = evidence_dir / "dudect-report.json"
+  report = None
   case_report = None
-  status = result.status
-  failure_count = None
-  if report is not None:
+  report_error = None
+  try:
+    report = json.loads(report_path.read_text())
     case_report = validated_dudect_case_report(case, report)
-    status = str(case_report.get("status", status))
-    failure_count = 1 if status == "fail" else 0
+  except (OSError, UnicodeError, ValueError) as exc:
+    report_error = f"Missing or invalid current DudeCT report: {exc}"
+    report = None
+
+  statistical_status = case_report["status"] if case_report is not None else None
+  expected_exit = 1 if statistical_status == "fail" else 0
+  command_matches_report = result.returncode == expected_exit and result.status != "timeout"
+  if result.status == "timeout":
+    status = "timeout"
+  elif case_report is None or not command_matches_report:
+    status = "tooling-fail"
+  else:
+    status = statistical_status
+  failure_count = int(statistical_status == "fail") if case_report is not None else None
 
   row = {
     "name": case["name"],
@@ -491,12 +447,14 @@ def dudect_case_result(
     "left_class": case.get("left_class"),
     "right_class": case.get("right_class"),
     "status": status,
+    "statistical_status": statistical_status,
+    "report_error": report_error,
     "requested_samples": samples,
     "timeout_seconds": timeout,
     "timeout_reason": case.get("timeout_reason"),
     "failure_count": failure_count,
     "command_result": result_record(result),
-    "artifacts": copied,
+    "artifacts": artifacts,
     "report": str(report_path) if report_path.exists() else None,
   }
   if case_report is not None:
@@ -529,6 +487,7 @@ def dudect_case_result(
       "dudect_manifest_sha256",
       "harness_manifest_sha256",
       "dudect_lockfile_sha256",
+      "dudect_runner_sources",
       "rustc_verbose",
       "cargo",
       "configured_rustflags",
@@ -559,8 +518,34 @@ def dudect_case_result(
   return row
 
 
-def known_findings(target: str) -> list[dict[str, str]]:
-  return []
+def run_dudect_cases(root, out_dir, logs_dir, target, profile, manifest_cases, threshold, dudect_timeout):
+  dudect_cases = []
+  dudect_runs = out_dir / "dudect" / "runs"
+  dudect_runs.mkdir(parents=True, exist_ok=True)
+  dudect_run = Path(tempfile.mkdtemp(prefix="run-", dir=dudect_runs)).resolve()
+  prepared = dudect_run / "shared" / "prepared.json"
+  preparation = run_command(root, logs_dir, f"dudect-prepare-{dudect_run.name}", [
+    *shell_script(root, "scripts/ct/dudect.sh"), "--prepare-only",
+    "--shared-dir", str(prepared.parent), "--target", target, "--profile", profile,
+  ])
+  fallback_samples = int(os.environ.get("RSCRYPTO_CT_DUDECT_SAMPLES", "20000"))
+  for case in manifest_cases if preparation.status == "pass" else []:
+    samples = case_sample_count(case, fallback=fallback_samples)
+    timeout_seconds = case_timeout_seconds(case, dudect_timeout)
+    print(f"ct-full: dudect {case['name']}", flush=True)
+    dudect_cases.append(
+      dudect_case_result(
+        root,
+        logs_dir,
+        samples,
+        threshold,
+        case,
+        timeout_seconds,
+        prepared,
+      )
+    )
+
+  return dudect_run, preparation, dudect_cases
 
 
 def binsec_result_category(kernel: dict[str, Any]) -> str:
@@ -647,7 +632,7 @@ def build_primitive_evidence(
       continue
 
     claim = primitive.get("claim", "not-claimed")
-    physical_supported = primitive_supports_physical_timing(ct, primitive_id, target)
+    physical_supported = primitive_supports_physical_timing(primitives_by_id(ct).get(primitive_id, {}), target)
     manifest_cases = primitive_manifest_dudect_cases(ct, primitive_id, target)
     required_cases = [case for case in manifest_cases if not is_diagnostic_dudect_case(case)]
     executed_cases = executed_dudect_by_primitive.get(primitive_id, [])
@@ -938,7 +923,7 @@ def build_findings(
   for case in dudect_cases:
     if case["status"] == "pass":
       continue
-    if case.get("gate") == "diagnostic":
+    if case.get("gate") == "diagnostic" and case["status"] in {"fail", "diagnostic-fail"}:
       diagnostics.append(
         {
           "kind": "dudect_diagnostic",
@@ -950,7 +935,7 @@ def build_findings(
       )
       continue
     command_status = case.get("command_result", {}).get("status")
-    if case.get("report") is None and command_status in {"fail", "timeout"}:
+    if case["status"] in {"tooling-fail", "timeout"} or (case.get("report") is None and command_status in {"fail", "timeout"}):
       timed_out = command_status == "timeout"
       findings.append(
         {
@@ -960,7 +945,7 @@ def build_findings(
           "summary": (
             f"{case['name']} exceeded its {case.get('timeout_seconds')}-second DudeCT evidence budget"
             if timed_out
-            else f"{case['name']} failed before DudeCT evidence was produced"
+            else f"{case['name']} did not complete with valid current DudeCT evidence"
           ),
           "primitive": case["primitive"],
           "timeout_seconds": case.get("timeout_seconds"),
@@ -1195,7 +1180,7 @@ def main() -> int:
         binsec_enabled=binsec_enabled,
         coverage_limited=False,
       ),
-      "known_findings": known_findings(target),
+      "known_findings": [],
       "artifacts": collect_artifact_records(out_dir),
       "notes": [
         "Gate one failed before timing and proof evidence could be completed.",
@@ -1281,26 +1266,10 @@ def main() -> int:
   else:
     steps.append(skipped_step("ct-binsec", binsec_reason))
 
-  dudect_cases = []
-  fallback_samples = int(os.environ.get("RSCRYPTO_CT_DUDECT_SAMPLES", "20000"))
-  for case in manifest_cases:
-    samples = case_sample_count(case, smoke=False, override=None, fallback=fallback_samples)
-    timeout_seconds = case_timeout_seconds(case, args.dudect_timeout)
-    print(f"ct-full: dudect {case['name']}", flush=True)
-    dudect_cases.append(
-      dudect_case_result(
-        root,
-        out_dir,
-        logs_dir,
-        target,
-        profile,
-        samples,
-        args.threshold,
-        False,
-        case,
-        timeout_seconds,
-      )
-    )
+  dudect_run, preparation, dudect_cases = run_dudect_cases(
+    root, out_dir, logs_dir, target, profile, manifest_cases, args.threshold, args.dudect_timeout,
+  )
+  steps.append(result_record(preparation))
 
   executed_dudect = {case["primitive"] for case in dudect_cases}
   executed_required_dudect = {case["primitive"] for case in dudect_cases if case.get("gate") != "diagnostic"}
@@ -1320,11 +1289,10 @@ def main() -> int:
   )
   missing_dudect = sorted(set(missing_dudect) | set(missing_manifest_required_dudect))
 
-  artifact_records = collect_artifact_records(out_dir)
+  artifact_records = collect_artifact_records(out_dir, dudect_run)
   findings, diagnostics = build_findings(steps, dudect_cases, binsec_kernels, missing_dudect)
   asm_report = load_json_if_exists(out_dir / "asm-heuristics.json")
 
-  known = known_findings(target)
   failure_count = len(findings)
   status = "pass" if failure_count == 0 else "fail"
   report = {
@@ -1402,7 +1370,7 @@ def main() -> int:
       binsec_enabled=binsec_enabled,
       coverage_limited=filtered_dudect or args.dudect_gate != "required",
     ),
-    "known_findings": known,
+    "known_findings": [],
     "artifacts": artifact_records,
     "notes": [
       "This report is an evidence index, not a constant-time proof.",

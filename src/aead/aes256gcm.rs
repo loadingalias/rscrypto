@@ -2,6 +2,14 @@
 
 use core::fmt;
 
+#[cfg(target_arch = "aarch64")]
+use super::ghash::ghash_update_padded_wide_aarch64;
+#[cfg(target_arch = "powerpc64")]
+use super::ghash::ghash_update_padded_wide_ppc;
+use super::ghash::{GhashAccumulator, ghash_update_padded, ghash_update_padded_wide};
+#[cfg(target_arch = "x86_64")]
+use super::ghash::{ghash_collect_padded, ghash_collect_padded_block, ghash_update_padded_wide_x86};
+
 use super::{
   AeadBufferError, LengthOverflow, Nonce96, OpenError, SealError, aes, ghash, polyval,
   targets::{AeadBackend, AeadPrimitive, select_backend},
@@ -206,14 +214,6 @@ impl Aes256Gcm {
 
 // GCM construction internals (NIST SP 800-38D)
 
-struct GhashAccumulator(u128);
-
-impl Drop for GhashAccumulator {
-  fn drop(&mut self) {
-    ct::zeroize_words(core::slice::from_mut(&mut self.0));
-  }
-}
-
 /// Build the initial counter block J0 and first CTR block for a 96-bit IV.
 ///
 /// J0 = IV || 0x00000001 (NIST SP 800-38D § 7.1, when len(IV) = 96).
@@ -250,84 +250,6 @@ fn compute_tag(
   acc.0 = polyval::clmul128_reduce(acc.0, h_polyval);
 
   Ok(encrypt_j0_tag(ek, j0, acc.0))
-}
-
-#[inline]
-fn ghash_update_padded(mut acc: u128, h_polyval: u128, data: &[u8]) -> u128 {
-  let (blocks, remainder) = data.as_chunks::<16>();
-  for block in blocks {
-    acc ^= u128::from_be_bytes(*block);
-    acc = polyval::clmul128_reduce(acc, h_polyval);
-  }
-
-  if !remainder.is_empty() {
-    let mut block = [0u8; 16];
-    block[..remainder.len()].copy_from_slice(remainder);
-    acc ^= u128::from_be_bytes(block);
-    acc = polyval::clmul128_reduce(acc, h_polyval);
-  }
-
-  acc
-}
-
-#[inline]
-fn ghash_update_padded_wide(mut acc: u128, h_polyval: u128, h_powers_rev: &[u128; 4], data: &[u8]) -> u128 {
-  let (full_blocks, remainder) = data.as_chunks::<16>();
-  let (chunks, trailing_blocks) = full_blocks.as_chunks::<4>();
-
-  for chunk in chunks {
-    let blocks = [
-      u128::from_be_bytes(chunk[0]),
-      u128::from_be_bytes(chunk[1]),
-      u128::from_be_bytes(chunk[2]),
-      u128::from_be_bytes(chunk[3]),
-    ];
-    acc = polyval::accumulate_4blocks(acc, h_polyval, h_powers_rev, &blocks);
-  }
-
-  for block in trailing_blocks {
-    acc ^= u128::from_be_bytes(*block);
-    acc = polyval::clmul128_reduce(acc, h_polyval);
-  }
-
-  if !remainder.is_empty() {
-    let mut block = [0u8; 16];
-    block[..remainder.len()].copy_from_slice(remainder);
-    acc ^= u128::from_be_bytes(block);
-    acc = polyval::clmul128_reduce(acc, h_polyval);
-  }
-
-  acc
-}
-
-#[cfg(target_arch = "x86_64")]
-#[inline]
-fn ghash_collect_padded_block(blocks: &mut [u128; 4], block_count: &mut usize, block: u128) -> bool {
-  if *block_count == 4 {
-    return false;
-  }
-  blocks[*block_count] = block;
-  *block_count = (*block_count).strict_add(1);
-  true
-}
-
-#[cfg(target_arch = "x86_64")]
-#[inline]
-fn ghash_collect_padded(blocks: &mut [u128; 4], block_count: &mut usize, data: &[u8]) -> bool {
-  let (full_blocks, remainder) = data.as_chunks::<16>();
-  for block in full_blocks {
-    if !ghash_collect_padded_block(blocks, block_count, u128::from_be_bytes(*block)) {
-      return false;
-    }
-  }
-
-  if !remainder.is_empty() {
-    let mut block = [0u8; 16];
-    block[..remainder.len()].copy_from_slice(remainder);
-    return ghash_collect_padded_block(blocks, block_count, u128::from_be_bytes(block));
-  }
-
-  true
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -455,136 +377,6 @@ fn compute_tag_wide(
   acc.0 = polyval::clmul128_reduce(acc.0, h_polyval);
 
   Ok(encrypt_j0_tag(ek, j0, acc.0))
-}
-
-/// Update GHASH using VPCLMUL without scalar block packing.
-///
-/// # Safety
-/// Caller must ensure VPCLMULQDQ, PCLMULQDQ, AVX-512F/VL/BW/DQ, and SSE2 are available.
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
-unsafe fn ghash_update_padded_wide_x86(mut acc: u128, h_polyval: u128, h_powers_rev: &[u128; 4], data: &[u8]) -> u128 {
-  let (chunks, tail) = data.as_chunks::<64>();
-  for chunk in chunks {
-    // SAFETY: direct-byte VPCLMUL GHASH aggregation because:
-    // 1. This function's caller guarantees all required x86 target features.
-    // 2. `chunk` is exactly four initialized 16-byte GHASH blocks.
-    acc = unsafe { polyval::x86_aggregate_4blocks_be_bytes_inline(acc, h_powers_rev, chunk) };
-  }
-
-  let (full_blocks, remainder) = tail.as_chunks::<16>();
-  for block in full_blocks {
-    acc ^= u128::from_be_bytes(*block);
-    // SAFETY: x86 carryless multiply because:
-    // 1. This function's caller guarantees PCLMULQDQ and SSE2 availability.
-    // 2. `acc` and `h_polyval` are initialized GHASH field elements.
-    acc = unsafe { polyval::x86_clmul128_reduce_inline(acc, h_polyval) };
-  }
-
-  if !remainder.is_empty() {
-    let mut block = [0u8; 16];
-    block[..remainder.len()].copy_from_slice(remainder);
-    acc ^= u128::from_be_bytes(block);
-    // SAFETY: x86 carryless multiply because:
-    // 1. This function's caller guarantees PCLMULQDQ and SSE2 availability.
-    // 2. `acc` and `h_polyval` are initialized GHASH field elements.
-    acc = unsafe { polyval::x86_clmul128_reduce_inline(acc, h_polyval) };
-  }
-
-  acc
-}
-
-/// Update GHASH using PMULL without leaving the aarch64 target-feature scope.
-///
-/// # Safety
-/// Caller must ensure AES-CE and PMULL are available.
-#[cfg(target_arch = "aarch64")]
-#[target_feature(enable = "aes,neon")]
-unsafe fn ghash_update_padded_wide_aarch64(
-  mut acc: u128,
-  h_polyval: u128,
-  h_powers_rev: &[u128; 4],
-  data: &[u8],
-) -> u128 {
-  let (full_blocks, remainder) = data.as_chunks::<16>();
-  let (chunks, trailing_blocks) = full_blocks.as_chunks::<4>();
-
-  for chunk in chunks {
-    let blocks = [
-      u128::from_be_bytes(chunk[0]),
-      u128::from_be_bytes(chunk[1]),
-      u128::from_be_bytes(chunk[2]),
-      u128::from_be_bytes(chunk[3]),
-    ];
-    // SAFETY: PMULL 4-block GHASH aggregation because:
-    // 1. This function's caller must guarantee AES-CE/PMULL availability.
-    // 2. `h_powers_rev` and `blocks` are fixed 4-lane arrays with valid initialized values.
-    acc = unsafe { polyval::aarch64_aggregate_4blocks_inline(acc, h_powers_rev, &blocks) };
-  }
-
-  for block in trailing_blocks {
-    acc ^= u128::from_be_bytes(*block);
-    // SAFETY: PMULL carryless multiply because:
-    // 1. This function's caller must guarantee AES-CE/PMULL availability.
-    // 2. `acc` and `h_polyval` are initialized GHASH field elements.
-    acc = unsafe { polyval::aarch64_clmul128_reduce_inline(acc, h_polyval) };
-  }
-
-  if !remainder.is_empty() {
-    let mut block = [0u8; 16];
-    block[..remainder.len()].copy_from_slice(remainder);
-    acc ^= u128::from_be_bytes(block);
-    // SAFETY: PMULL carryless multiply because:
-    // 1. This function's caller must guarantee AES-CE/PMULL availability.
-    // 2. `acc` and `h_polyval` are initialized GHASH field elements.
-    acc = unsafe { polyval::aarch64_clmul128_reduce_inline(acc, h_polyval) };
-  }
-
-  acc
-}
-
-/// Update GHASH using POWER8 crypto without leaving the target-feature scope.
-///
-/// # Safety
-/// Caller must ensure POWER8 crypto is available.
-#[cfg(target_arch = "powerpc64")]
-#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-unsafe fn ghash_update_padded_wide_ppc(mut acc: u128, h_polyval: u128, h_powers_rev: &[u128; 4], data: &[u8]) -> u128 {
-  let (full_blocks, remainder) = data.as_chunks::<16>();
-  let (chunks, trailing_blocks) = full_blocks.as_chunks::<4>();
-
-  for chunk in chunks {
-    let blocks = [
-      u128::from_be_bytes(chunk[0]),
-      u128::from_be_bytes(chunk[1]),
-      u128::from_be_bytes(chunk[2]),
-      u128::from_be_bytes(chunk[3]),
-    ];
-    // SAFETY: POWER8 4-block GHASH aggregation because:
-    // 1. This function's caller must guarantee POWER8 crypto availability.
-    // 2. `h_powers_rev` and `blocks` are fixed 4-lane arrays with valid initialized values.
-    acc = unsafe { polyval::ppc_aggregate_4blocks_inline(acc, h_powers_rev, &blocks) };
-  }
-
-  for block in trailing_blocks {
-    acc ^= u128::from_be_bytes(*block);
-    // SAFETY: POWER8 carryless multiply because:
-    // 1. This function's caller must guarantee POWER8 crypto availability.
-    // 2. `acc` and `h_polyval` are initialized GHASH field elements.
-    acc = unsafe { polyval::ppc_clmul128_reduce_inline(acc, h_polyval) };
-  }
-
-  if !remainder.is_empty() {
-    let mut block = [0u8; 16];
-    block[..remainder.len()].copy_from_slice(remainder);
-    acc ^= u128::from_be_bytes(block);
-    // SAFETY: POWER8 carryless multiply because:
-    // 1. This function's caller must guarantee POWER8 crypto availability.
-    // 2. `acc` and `h_polyval` are initialized GHASH field elements.
-    acc = unsafe { polyval::ppc_clmul128_reduce_inline(acc, h_polyval) };
-  }
-
-  acc
 }
 
 #[inline]

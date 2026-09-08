@@ -256,7 +256,7 @@ fn p256_curve_terms_bmi2_adx(words: &[u64; 8]) -> P256CurveTerms {
       rscrypto_bignum_montmul_p256(terms.x_cubed.as_mut_ptr(), x_squared.as_ptr(), terms.x.as_ptr());
     }
     #[cfg(target_os = "windows")]
-    rscrypto_p256_curve_terms(&mut terms, words.as_ptr());
+    rscrypto_p256_curve_terms(&raw mut terms, words.as_ptr());
   }
   terms
 }
@@ -296,7 +296,7 @@ fn p256_curve_terms_baseline(words: &[u64; 8]) -> P256CurveTerms {
       rscrypto_bignum_montmul_p256_alt(terms.x_cubed.as_mut_ptr(), x_squared.as_ptr(), terms.x.as_ptr());
     }
     #[cfg(target_os = "windows")]
-    rscrypto_p256_curve_terms_alt(&mut terms, words.as_ptr());
+    rscrypto_p256_curve_terms_alt(&raw mut terms, words.as_ptr());
   }
   terms
 }

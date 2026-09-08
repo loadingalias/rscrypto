@@ -1,10 +1,13 @@
 //! Blake3 comparison benchmarks: rscrypto vs official blake3 crate.
 
+#[path = "common/criterion.rs"]
+mod bench_config;
+
 mod common;
 
 use core::hint::black_box;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion};
 #[cfg(feature = "diag")]
 use rscrypto::hashes::crypto::blake3::{
   Blake3DiagKernel, diag_blake3_chunk_cvs_with_kernel, diag_blake3_digest_with_kernel, diag_blake3_kernel_available,
@@ -112,6 +115,9 @@ fn print_blake3_diag_once() {
 fn print_blake3_diag_once() {}
 
 fn oneshot(c: &mut Criterion) {
+  if !bench_config::selected("blake3") {
+    return;
+  }
   print_blake3_diag_once();
 
   let inputs = common::comp_sizes();
@@ -152,6 +158,9 @@ fn oneshot(c: &mut Criterion) {
 }
 
 fn keyed(c: &mut Criterion) {
+  if !bench_config::selected("blake3/keyed") {
+    return;
+  }
   print_blake3_diag_once();
 
   let inputs = common::comp_sizes();
@@ -193,6 +202,9 @@ fn keyed(c: &mut Criterion) {
 }
 
 fn derive_key(c: &mut Criterion) {
+  if !bench_config::selected("blake3/derive-key") {
+    return;
+  }
   print_blake3_diag_once();
 
   const CONTEXT: &str = "rscrypto benchmark derive-key context";
@@ -216,6 +228,9 @@ fn derive_key(c: &mut Criterion) {
 }
 
 fn streaming(c: &mut Criterion) {
+  if !bench_config::selected("blake3/streaming") {
+    return;
+  }
   print_blake3_diag_once();
 
   let data = common::random_bytes(1048576);
@@ -264,6 +279,9 @@ fn streaming(c: &mut Criterion) {
 }
 
 fn xof(c: &mut Criterion) {
+  if !bench_config::selected("blake3/xof") {
+    return;
+  }
   print_blake3_diag_once();
 
   const OUT_LEN: usize = 64;
@@ -321,6 +339,9 @@ fn xof(c: &mut Criterion) {
 
 #[cfg(feature = "diag")]
 fn xof_output(c: &mut Criterion) {
+  if !bench_config::selected("blake3/xof-output") {
+    return;
+  }
   use rscrypto::Xof;
 
   print_blake3_diag_once();
@@ -376,11 +397,11 @@ fn xof_output(c: &mut Criterion) {
   g.finish();
 }
 
-#[cfg(not(feature = "diag"))]
-fn xof_output(_c: &mut Criterion) {}
-
 #[cfg(feature = "diag")]
 fn tail_diagnostics(c: &mut Criterion) {
+  if !bench_config::selected("blake3/") {
+    return;
+  }
   print_blake3_diag_once();
 
   let tail_counts = [1usize, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
@@ -469,17 +490,16 @@ fn tail_diagnostics(c: &mut Criterion) {
   parent_group.finish();
 }
 
-#[cfg(not(feature = "diag"))]
-fn tail_diagnostics(_c: &mut Criterion) {}
-
-criterion_group!(
-  benches,
-  oneshot,
-  keyed,
-  derive_key,
-  streaming,
-  xof,
-  xof_output,
-  tail_diagnostics
-);
-criterion_main!(benches);
+fn main() {
+  bench_config::run(&[
+    oneshot,
+    keyed,
+    derive_key,
+    streaming,
+    xof,
+    #[cfg(feature = "diag")]
+    xof_output,
+    #[cfg(feature = "diag")]
+    tail_diagnostics,
+  ]);
+}

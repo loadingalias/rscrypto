@@ -110,6 +110,10 @@ fn unpack_triple_counts(packed: u64) -> [usize; 3] {
 
 #[cfg(target_os = "linux")]
 #[inline]
+/// # Safety
+/// `input` must name 168 initialized readable bytes of public matrix-A XOF material.
+/// `out` must be aligned and writable for 112 `u16` values, without overlapping the input.
+/// Advanced SIMD must be available. The parser may write slack lanes beyond the returned count.
 pub(super) unsafe fn sample_ntt_rej_uniform_block_asm(out: *mut u16, input: *const u8) -> usize {
   // SAFETY: Linux aarch64 SampleNTT rejection parser call because:
   // 1. `input` points to one readable 168-byte SHAKE128 rate block.
@@ -121,6 +125,10 @@ pub(super) unsafe fn sample_ntt_rej_uniform_block_asm(out: *mut u16, input: *con
 
 #[cfg(target_os = "linux")]
 #[inline]
+/// # Safety
+/// `input` must name 168 initialized readable bytes of public matrix-A XOF material.
+/// `out` must be aligned and writable for `cap` `u16` values, without overlapping the input.
+/// Advanced SIMD must be available.
 pub(super) unsafe fn sample_ntt_rej_uniform_block_bounded_asm(out: *mut u16, input: *const u8, cap: usize) -> usize {
   // SAFETY: Linux aarch64 bounded SampleNTT rejection parser call because:
   // 1. `input` points to one readable 168-byte SHAKE128 rate block.
@@ -133,6 +141,11 @@ pub(super) unsafe fn sample_ntt_rej_uniform_block_bounded_asm(out: *mut u16, inp
 
 #[cfg(target_os = "linux")]
 #[inline]
+/// # Safety
+/// Each input must name 168 initialized readable bytes of public matrix-A XOF material.
+/// Each output must be aligned and writable for 112 `u16` values. Output regions must be
+/// pairwise disjoint and must not overlap any input. Advanced SIMD must be available.
+/// The parser may write slack lanes beyond each returned count.
 pub(super) unsafe fn sample_ntt_rej_uniform_triple_block_asm(
   out0: *mut u16,
   input0: *const u8,
@@ -155,6 +168,11 @@ pub(super) unsafe fn sample_ntt_rej_uniform_triple_block_asm(
 
 #[cfg(target_os = "linux")]
 #[inline]
+/// # Safety
+/// Each input must name 168 initialized readable bytes of public matrix-A XOF material.
+/// Each output must be aligned and writable for the corresponding `caps` element's number of
+/// `u16` values. Output regions must be pairwise disjoint and must not overlap any input.
+/// Advanced SIMD must be available.
 pub(super) unsafe fn sample_ntt_rej_uniform_triple_block_bounded_asm(
   out0: *mut u16,
   input0: *const u8,

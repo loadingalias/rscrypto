@@ -1,0 +1,10 @@
+{
+  "sample_size": 20,
+  "warmup_ms": 100,
+  "measure_ms": 400,
+  "nresamples": 10000,
+  "confidence_level": 0.95,
+  "significance_level": 0.05,
+  "noise_threshold": 0.01,
+  "max_run_seconds": 3600
+}

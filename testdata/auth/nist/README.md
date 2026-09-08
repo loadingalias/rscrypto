@@ -18,13 +18,4 @@ The reproducible transform is deliberately narrow:
 
 The resulting file has SHA-256
 `5a7006d1ae4f7001ba7d6d45c2c2f1f8bc5e5d48e2021eb55c5995cd055eea32`
-and contains all 25 P-256 component-test records. Run:
-
-```bash
-scripts/lib/python.sh scripts/check/auth-vector-provenance.py \
-  --nist-archive PATH/TO/ecccdhtestvectors.zip
-```
-
-The default invocation verifies the committed digest without requiring a
-network download. The optional archive argument also reproduces and compares
-the exact transform.
+and contains all 25 P-256 component-test records.

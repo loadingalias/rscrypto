@@ -63,8 +63,8 @@ if [[ "$TARGET" != "$HOST" && "$TARGET" == *linux* ]]; then
   if [[ -z "${!linker_env:-}" && "$TARGET" == *-linux-musl && "$(uname -m)" == "${TARGET%%-*}" ]] \
     && command -v musl-gcc >/dev/null 2>&1; then
     export "$linker_env=musl-gcc"
-  elif [[ -z "${!linker_env:-}" && -x "$ROOT/scripts/check/zig-cc.sh" ]] && command -v zig >/dev/null 2>&1; then
-    export "$linker_env=$ROOT/scripts/check/zig-cc.sh"
+  elif [[ -z "${!linker_env:-}" && -x "$ROOT/scripts/ct/zig-cc.sh" ]] && command -v zig >/dev/null 2>&1; then
+    export "$linker_env=$ROOT/scripts/ct/zig-cc.sh"
     export ZIG_CC_TARGET="${ZIG_CC_TARGET:-$TARGET}"
   fi
 
@@ -110,7 +110,10 @@ OUT_DIR="$ROOT/target/ct/$TARGET/$PROFILE"
 ARTIFACT_DIR="$OUT_DIR/artifacts"
 BUILD_TARGET_DIR="$ROOT/target/ct-build/$TARGET/$PROFILE"
 EMIT_ROOT="$BUILD_TARGET_DIR/$TARGET/$PROFILE"
-rm -rf "$OUT_DIR"
+# Invalidate current artifact metadata before building; measurement history is retained.
+rm -f "$OUT_DIR/provenance.json" "$OUT_DIR/artifact-hashes.txt" "$OUT_DIR/evidence-index.json" \
+  "$OUT_DIR/asm-heuristics.json" "$OUT_DIR/asm-heuristics.md"
+rm -rf "$ARTIFACT_DIR"
 rm -rf "$BUILD_TARGET_DIR"
 mkdir -p "$ARTIFACT_DIR"
 
@@ -160,7 +163,7 @@ LINK_MAP="$ARTIFACT_DIR/rscrypto-ct-evidence.link-map.txt"
 FINAL_LINK_ARGS=()
 if [[ "$TARGET" == *linux* ]]; then
   linker_env="$(target_env_name LINKER)"
-  if [[ "${!linker_env:-}" == "$ROOT/scripts/check/zig-cc.sh" ]]; then
+  if [[ "${!linker_env:-}" == "$ROOT/scripts/ct/zig-cc.sh" ]]; then
     export RSCRYPTO_CT_LINK_MAP="$LINK_MAP"
     FINAL_LINK_ARGS+=("-C" "link-arg=-Wl,--print-map")
   else
@@ -293,6 +296,9 @@ fi
   --build-target-dir "$BUILD_TARGET_DIR" \
   --backend llvm \
   --features std,full,parallel,diag \
+  --llvm-objdump "$LLVM_OBJDUMP" \
+  --llvm-nm "$LLVM_NM" \
+  --llvm-size "$LLVM_SIZE" \
   --linker-command-log "$LINK_LOG"
 
 echo "CT artifacts written to $OUT_DIR"

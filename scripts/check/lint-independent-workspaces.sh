@@ -112,6 +112,10 @@ for manifest in "${manifests[@]}"; do
     --all-features
     --no-deps
   )
+  while IFS= read -r vendored_package; do
+    cargo_args+=(--exclude "$vendored_package")
+  done < <(cargo metadata --locked --no-deps --format-version 1 --manifest-path "$manifest" |
+    jq -r '.packages[] | select(.manifest_path | contains("/vendor/")) | .name')
   if [[ "$MESSAGE_FORMAT" == json ]]; then
     cargo_args+=(--message-format=json)
   fi

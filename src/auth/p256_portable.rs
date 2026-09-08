@@ -801,7 +801,7 @@ fn scalar_mul_generator_affine(scalar: &Scalar) -> Affine {
   any(feature = "portable-only", miri),
   any(
     all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+    all(target_arch = "x86_64", target_os = "linux")
   )
 ))]
 pub(super) fn scalar_mul_generator_words(scalar: &[u64; 4]) -> [u64; 8] {

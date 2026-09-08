@@ -1,4 +1,4 @@
-#![cfg(feature = "hashes")]
+#![cfg(feature = "sha2")]
 
 use proptest::prelude::*;
 use rscrypto::{

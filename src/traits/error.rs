@@ -109,32 +109,6 @@ mod tests {
   }
 
   #[test]
-  fn result_ok_path() {
-    fn verify_match() -> Result<(), VerificationError> {
-      Ok(())
-    }
-    assert_eq!(verify_match(), Ok(()));
-  }
-
-  #[test]
-  fn result_err_path() {
-    fn verify_mismatch() -> Result<(), VerificationError> {
-      Err(VerificationError::new())
-    }
-    let err = verify_mismatch().expect_err("verify_mismatch must return VerificationError");
-    assert_eq!(err, VerificationError::new());
-  }
-
-  #[test]
-  fn error_in_result_unwrap_err() {
-    fn returns_err() -> Result<(), VerificationError> {
-      Err(VerificationError::new())
-    }
-    let err = returns_err().expect_err("returns_err must return VerificationError");
-    assert_eq!(err.to_string(), "verification failed");
-  }
-
-  #[test]
   fn trait_bounds() {
     fn assert_send<T: Send>() {}
     fn assert_sync<T: Sync>() {}

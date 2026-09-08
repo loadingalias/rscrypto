@@ -1,136 +1,117 @@
 #!/usr/bin/env bash
 set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
-# Host-only Cargo checks: fmt, check, clippy, optional deny/audit, and docs.
-# Repository policy and feature contracts have separate executors.
-# Usage: check.sh [--all]
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=../lib/common.sh
-source "$SCRIPT_DIR/../lib/common.sh"
-
-FORCE_ALL=false
-case "$#" in
-  0) ;;
-  1)
-    [[ "$1" == --all ]] || { echo "Usage: $0 [--all]" >&2; exit 2; }
-    FORCE_ALL=true
-    ;;
-  *) echo "Usage: $0 [--all]" >&2; exit 2 ;;
+[[ $# -eq 1 ]] || { echo 'usage: scripts/check/check.sh {check|fix|local|native}' >&2; exit 2; }
+mode=$1
+case "$mode" in
+  check|fix|local|native) ;;
+  *) echo 'usage: scripts/check/check.sh {check|fix|local|native}' >&2; exit 2 ;;
 esac
 
-if [[ "$FORCE_ALL" == false ]]; then
-  rail_prime_plan
+host=$(scripts/lib/toolchain.sh --print-host)
+[[ -n "$host" ]] || { echo 'cannot determine Rust host' >&2; exit 1; }
+stable=$(scripts/lib/toolchain.sh)
+export RUSTUP_TOOLCHAIN
+RUSTUP_TOOLCHAIN=$(scripts/lib/toolchain.sh --target "$host")
+python=$(scripts/lib/python.sh --print)
+# Resolve feature roots from Cargo, rejecting aliases that enable portable-only.
+native_features=$("$python" - <<'PY'
+import tomllib
+with open('Cargo.toml', 'rb') as source:
+    features = tomllib.load(source)['features']
+selected = set(features) - {'portable-only'}
+if any('portable-only' in features[name] for name in selected):
+    raise SystemExit('native check features indirectly enable portable-only')
+print(','.join(sorted(selected)))
+PY
+)
+targets=("$host")
+if [[ "$mode" != native ]]; then
+  catalog=$(jq -er '.targets | if length > 0 and length == (unique | length) then .[] else error("invalid target catalog") end' .config/target-matrix.json)
+  while IFS= read -r target; do
+    [[ "$target" == "$host" ]] || targets+=("$target")
+  done <<<"$catalog"
 fi
 
-work_required() {
-  local work_id=$1
-  if [[ "$FORCE_ALL" == true ]]; then
-    return 0
+# No implicit installation or skipped lanes: report prerequisites before editing.
+missing=false
+inventory_toolchains=()
+inventory_targets=()
+inventory_components=()
+for target in "${targets[@]}"; do
+  toolchain=$(scripts/lib/toolchain.sh --target "$target")
+  index=0
+  while [[ "$index" -lt "${#inventory_toolchains[@]}" && "${inventory_toolchains[$index]}" != "$toolchain" ]]; do
+    index=$((index + 1))
+  done
+  if [[ "$index" -eq "${#inventory_toolchains[@]}" ]]; then
+    installed=$(rustup target list --toolchain "$toolchain" --installed)
+    components=$(rustup component list --toolchain "$toolchain" --installed)
+    inventory_toolchains+=("$toolchain")
+    inventory_targets+=("$installed")
+    inventory_components+=("$components")
   fi
-  local status=0
-  rail_work_required "$work_id" || status=$?
-  [[ "$status" -le 1 ]] || exit "$status"
-  return "$status"
+  installed=${inventory_targets[$index]}
+  if ! grep -qx "$target" <<<"$installed"; then
+    echo "missing check prerequisite: rustup target add --toolchain $toolchain $target" >&2
+    missing=true
+  fi
+  components=${inventory_components[$index]}
+  if ! grep -q '^clippy-' <<<"$components"; then
+    echo "missing check prerequisite: rustup component add --toolchain $toolchain clippy" >&2
+    missing=true
+  fi
+done
+[[ "$missing" == false ]] || exit 1
+
+run_checks() {
+  local mode=$1
+  repair=()
+  if [[ "$mode" == fix ]]; then
+    cargo "+$stable" fmt --all
+    repair=(--fix --allow-dirty --allow-staged)
+  else
+    cargo "+$stable" fmt --all -- --check
+  fi
+
+  for target in "${targets[@]}"; do
+    toolchain=$(scripts/lib/toolchain.sh --target "$target")
+    scope=(--lib)
+    [[ "$target" != "$host" ]] || scope=(--all-targets)
+    features=$native_features
+    case "$target" in
+      *-none*|wasm32-unknown-unknown)
+        # No OS entropy, threads, or std; full retains alloc-backed primitives.
+        features=full,serde,serde-secrets,websocket-sha1
+        ;;
+      wasm32-wasip1)
+        features=std,full,diag,serde,serde-secrets,websocket-sha1,getrandom
+        ;;
+    esac
+    args=(--workspace --locked --target "$target" "${scope[@]}" --no-default-features)
+    echo "Clippy ($mode): $target / $toolchain / release native"
+    cargo "+$toolchain" clippy "${args[@]}" --release --features "$features" "${repair[@]:+${repair[@]}}"
+    echo "Clippy ($mode): $target / $toolchain / debug portable"
+    cargo "+$toolchain" clippy "${args[@]}" --features "$features,portable-only" "${repair[@]:+${repair[@]}}"
+  done
+
+  if [[ "$mode" == fix ]]; then
+    cargo "+$stable" fmt --all
+  fi
 }
-
-LOG_DIR=$(mktemp -d)
-trap 'rm -rf "$LOG_DIR"' EXIT
-
-echo "Host checks"
-
-# Format
-if work_required cargo.fmt; then
-  step "Formatting"
-  if ! cargo fmt --all -- --check >"$LOG_DIR/fmt.log" 2>&1; then
-    fail
-    show_error "$LOG_DIR/fmt.log"
-    exit 1
-  fi
-  ok
+if [[ "$mode" == check ]]; then
+  run_checks fix
+  run_checks local
 else
-  skip "Formatting" "not required by Cargo Rail"
+  run_checks "$mode"
 fi
+[[ "$mode" != fix ]] || exit 0
 
-# Check
-SCOPE_STATUS=0
-select_cargo_scope cargo.build "$FORCE_ALL" || SCOPE_STATUS=$?
-if [[ "$SCOPE_STATUS" -gt 1 ]]; then
-  exit "$SCOPE_STATUS"
-fi
-if [[ "$SCOPE_STATUS" -ne 0 ]]; then
-  skip "Checking" "no affected targets"
-else
-  step "Checking"
-  if ! cargo check "${CARGO_ARGS[@]:+${CARGO_ARGS[@]}}" --all-targets --all-features --locked >"$LOG_DIR/check.log" 2>&1; then
-    fail
-    show_error "$LOG_DIR/check.log"
-    exit 1
-  fi
-  ok
-fi
-
-# Clippy
-SCOPE_STATUS=0
-select_cargo_scope cargo.clippy "$FORCE_ALL" || SCOPE_STATUS=$?
-if [[ "$SCOPE_STATUS" -gt 1 ]]; then
-  exit "$SCOPE_STATUS"
-fi
-if [[ "$SCOPE_STATUS" -ne 0 ]]; then
-  skip "Linting" "no affected targets"
-else
-  step "Linting"
-  if ! cargo clippy "${CARGO_ARGS[@]:+${CARGO_ARGS[@]}}" --all-targets --all-features --locked >"$LOG_DIR/clippy.log" 2>&1; then
-    fail
-    show_error "$LOG_DIR/clippy.log"
-    exit 1
-  fi
-  ok
-fi
-
-if work_required contracts.auxiliary; then
-  step "Linting independent workspaces"
-  if ! "$SCRIPT_DIR/lint-independent-workspaces.sh" >"$LOG_DIR/independent-lints.log" 2>&1; then
-    fail
-    show_error "$LOG_DIR/independent-lints.log"
-    exit 1
-  fi
-  ok
-fi
-
-if [[ "${RSCRYPTO_SKIP_CHECK_SUPPLY_CHAIN:-}" != "1" ]] \
-  && { work_required dependency-policy || work_required dependencies.auxiliary; }; then
-  step "Auditing deps"
-  if ! cargo deny --locked check all >"$LOG_DIR/deny.log" 2>&1; then
-    fail
-    show_error "$LOG_DIR/deny.log"
-    exit 1
-  fi
-  # Advisory exceptions and rationale live in .cargo/audit.toml.
-  if ! cargo audit >>"$LOG_DIR/deny.log" 2>&1; then
-    fail
-    show_error "$LOG_DIR/deny.log"
-    exit 1
-  fi
-  ok
-fi
-
-# Documentation
-SCOPE_STATUS=0
-select_cargo_scope cargo.doc "$FORCE_ALL" || SCOPE_STATUS=$?
-if [[ "$SCOPE_STATUS" -gt 1 ]]; then
-  exit "$SCOPE_STATUS"
-fi
-if [[ "$SCOPE_STATUS" -ne 0 ]]; then
-  skip "Building docs" "no affected targets"
-else
-  step "Building docs"
-  if ! cargo doc "${CARGO_ARGS[@]:+${CARGO_ARGS[@]}}" --no-deps --all-features --locked >"$LOG_DIR/doc.log" 2>&1; then
-    fail
-    show_error "$LOG_DIR/doc.log"
-    exit 1
-  fi
-  ok
-fi
-
-echo "${GREEN}✓${RESET} Host checks passed"
+# Use the host toolchain for independent workspaces, dependencies, and docs.
+scripts/check/lint-independent-workspaces.sh
+deny_args=(--locked --workspace --all-features)
+[[ "$mode" != native ]] || deny_args+=(--target "$host")
+cargo deny "${deny_args[@]}" check -D warnings all
+cargo audit
+RUSTDOCFLAGS="${RUSTDOCFLAGS:+$RUSTDOCFLAGS }-D warnings" cargo doc --workspace --no-deps --all-features --locked

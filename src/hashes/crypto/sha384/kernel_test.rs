@@ -4,19 +4,13 @@ use super::{
   Sha384,
   kernels::{ALL, Sha384KernelId, compress_blocks_fn, required_caps},
 };
-use crate::{hashes::crypto::dispatch_util::SizeClassDispatch, traits::Digest as _};
+use crate::traits::Digest as _;
 
 fn hasher_for_kernel(id: Sha384KernelId) -> Sha384 {
   let compress = compress_blocks_fn(id);
   Sha384 {
     compress_blocks: compress,
-    dispatch: Some(SizeClassDispatch {
-      boundaries: [usize::MAX; 3],
-      xs: compress,
-      s: compress,
-      m: compress,
-      l: compress,
-    }),
+    dispatch_initialized: true,
     ..Default::default()
   }
 }
@@ -25,35 +19,6 @@ fn digest_with_kernel(id: Sha384KernelId, data: &[u8]) -> [u8; 48] {
   let mut h = hasher_for_kernel(id);
   h.update(data);
   h.finalize()
-}
-
-fn digest_oneshot_with_kernel(id: Sha384KernelId, data: &[u8]) -> [u8; 48] {
-  let compress = compress_blocks_fn(id);
-  let mut state = super::H0;
-
-  let (blocks, rest) = data.as_chunks::<{ super::BLOCK_LEN }>();
-  if !blocks.is_empty() {
-    compress(&mut state, &data[..blocks.len().strict_mul(super::BLOCK_LEN)]);
-  }
-
-  let total_bits = (data.len() as u128) << 3;
-  let mut block = [0u8; super::BLOCK_LEN];
-  block[..rest.len()].copy_from_slice(rest);
-  block[rest.len()] = 0x80;
-
-  if rest.len() >= 112 {
-    compress(&mut state, &block);
-    block = [0u8; super::BLOCK_LEN];
-  }
-
-  block[112..128].copy_from_slice(&total_bits.to_be_bytes());
-  compress(&mut state, &block);
-
-  let mut out = [0u8; 48];
-  for (chunk, &word) in out.as_chunks_mut::<8>().0.iter_mut().zip(state.iter()) {
-    chunk.copy_from_slice(&word.to_be_bytes());
-  }
-  out
 }
 
 #[cfg(test)]
@@ -90,7 +55,7 @@ mod tests {
 
       for &len in &lens {
         let msg = pattern(len);
-        let oneshot = digest_oneshot_with_kernel(id, &msg);
+        let oneshot = super::super::dispatch::digest_oneshot(&msg, compress_blocks_fn(id));
         let ours = digest_with_kernel(id, &msg);
 
         use sha2::Digest as _;
@@ -143,5 +108,28 @@ mod tests {
         }
       }
     }
+  }
+}
+
+#[test]
+fn forced_backend_survives_initialization_and_clone_until_reset() {
+  fn observed(state: &mut [u64; 8], _blocks: &[u8]) {
+    state[0] = 42;
+  }
+
+  let mut hasher = Sha384 {
+    compress_blocks: observed,
+    dispatch_initialized: true,
+    ..Default::default()
+  };
+  let mut cloned = hasher.clone();
+  for h in [&mut hasher, &mut cloned] {
+    let mut state = [0; 8];
+    h.select_compress()(&mut state, &[]);
+    assert_eq!(state[0], 42, "forced callback was replaced during selection");
+    h.reset();
+    assert!(!h.dispatch_initialized);
+    h.update(b"abc");
+    assert_eq!(h.finalize(), Sha384::digest(b"abc"));
   }
 }

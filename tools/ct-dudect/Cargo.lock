@@ -141,8 +141,6 @@ dependencies = [
 [[package]]
 name = "dudect-bencher"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a6174adfb35811a6845001876823965032406784c36e795edb84a74353455e1"
 dependencies = [
  "clap",
  "ctrlc",

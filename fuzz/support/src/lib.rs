@@ -3,7 +3,9 @@
 //! Provides deterministic input parsing and generic property-test harnesses
 //! for AEAD, digest, MAC, and checksum primitives.
 
-use std::{fs, path::Path};
+mod corpus;
+
+pub use corpus::replay_corpus_dir;
 
 #[cfg(feature = "aead")]
 use rscrypto::aead::expert::AeadWithNonce;
@@ -32,55 +34,6 @@ pub struct FuzzInput<'a> {
   pos: usize,
 }
 
-/// Replay every file in a committed fuzz corpus against the same runner used
-/// by libFuzzer.
-///
-/// Coverage uses this instead of `cargo fuzz coverage` so fuzz corpora are
-/// counted as ordinary Rust source coverage. Empty corpora are a hard failure:
-/// a missing replay set is not coverage.
-pub fn replay_corpus_dir<F, P>(target: &str, corpus_dir: P, run: F) -> usize
-where
-  F: Fn(&[u8]),
-  P: AsRef<Path>,
-{
-  let corpus_dir = corpus_dir.as_ref();
-  assert!(
-    corpus_dir.is_dir(),
-    "corpus replay: target `{target}` has no corpus directory at {}",
-    corpus_dir.display()
-  );
-
-  let mut files = fs::read_dir(corpus_dir)
-    .expect("corpus replay directory must be readable")
-    .map(|entry| entry.expect("corpus replay directory entries must be readable"))
-    .filter_map(|entry| {
-      let file_type = entry
-        .file_type()
-        .expect("corpus replay directory entry metadata must be readable");
-      if file_type.is_file() || file_type.is_symlink() {
-        Some(entry.path())
-      } else {
-        None
-      }
-    })
-    .collect::<Vec<_>>();
-  files.sort();
-
-  assert!(
-    !files.is_empty(),
-    "corpus replay: target `{target}` has an empty corpus at {}",
-    corpus_dir.display()
-  );
-
-  let mut count = 0usize;
-  for path in files {
-    let data = fs::read(&path).expect("corpus replay input must be readable");
-    run(&data);
-    count = count.checked_add(1).expect("corpus replay file count overflow");
-  }
-  count
-}
-
 impl<'a> FuzzInput<'a> {
   #[inline]
   pub fn new(data: &'a [u8]) -> Self {
@@ -105,6 +58,15 @@ impl<'a> FuzzInput<'a> {
     Some(b)
   }
 
+  /// Read a little-endian 64-bit byte position and an independent bit selector.
+  #[inline]
+  pub fn bit_mutation(&mut self) -> Option<BitMutation> {
+    Some(BitMutation {
+      position: u64::from_le_bytes(self.bytes()?),
+      bit: self.byte()?,
+    })
+  }
+
   /// All remaining bytes.
   #[inline]
   pub fn rest(&self) -> &'a [u8] {
@@ -118,6 +80,22 @@ impl<'a> FuzzInput<'a> {
     let ratio = self.byte()?;
     let rest = self.rest();
     Some(rest.split_at(split_point(rest.len(), ratio)))
+  }
+}
+
+/// A single-bit mutation with independent byte-position and bit controls.
+/// The fixed-width wire format is identical on 32-bit and 64-bit fuzz hosts.
+pub struct BitMutation {
+  position: u64,
+  bit: u8,
+}
+
+impl BitMutation {
+  /// Flip one bit in a nonempty buffer. Every byte and bit is reachable.
+  pub fn apply(&self, bytes: &mut [u8]) {
+    let len = u64::try_from(bytes.len()).expect("fuzz buffer length fits in u64");
+    let index = usize::try_from(self.position.rem_euclid(len)).expect("index is below buffer length");
+    bytes[index] ^= 1u8.strict_shl(u32::from(self.bit & 7));
   }
 }
 
@@ -246,20 +224,25 @@ pub fn assert_aead_against_oracle<A, EncFn, DecFn>(
 #[cfg(feature = "aead")]
 /// Assert that flipping a single bit in ciphertext, tag, or AAD causes
 /// `decrypt_in_place` to reject.
-pub fn assert_aead_forgery<A: Aead>(cipher: &A, nonce: &A::Nonce, aad: &[u8], plaintext: &[u8], control: u8) {
+pub fn assert_aead_forgery<A: Aead>(
+  cipher: &A,
+  nonce: &A::Nonce,
+  aad: &[u8],
+  plaintext: &[u8],
+  control: u8,
+  mutation: BitMutation,
+) {
   let mut ct = plaintext.to_vec();
   let tag = cipher
     .encrypt_in_place(nonce, aad, &mut ct)
     .expect("forgery: encrypt must succeed");
 
   let target = control % 3;
-  let seed = control / 3;
 
   match target {
     0 if !ct.is_empty() => {
       let mut forged = ct.clone();
-      let idx = usize::from(seed).rem_euclid(forged.len());
-      forged[idx] ^= 1u8 << (seed as u32 & 7);
+      mutation.apply(&mut forged);
       assert!(
         cipher.decrypt_in_place(nonce, aad, &mut forged, &tag).is_err(),
         "forgery: accepted tampered ciphertext"
@@ -267,8 +250,7 @@ pub fn assert_aead_forgery<A: Aead>(cipher: &A, nonce: &A::Nonce, aad: &[u8], pl
     }
     2 if !aad.is_empty() => {
       let mut forged_aad = aad.to_vec();
-      let idx = usize::from(seed).rem_euclid(forged_aad.len());
-      forged_aad[idx] ^= 1u8 << (seed as u32 & 7);
+      mutation.apply(&mut forged_aad);
       let mut ct_copy = ct.clone();
       assert!(
         cipher.decrypt_in_place(nonce, &forged_aad, &mut ct_copy, &tag).is_err(),
@@ -278,8 +260,7 @@ pub fn assert_aead_forgery<A: Aead>(cipher: &A, nonce: &A::Nonce, aad: &[u8], pl
     _ => {
       let tag_ref = tag.as_ref();
       let mut tag_bytes = tag_ref.to_vec();
-      let idx = usize::from(seed).rem_euclid(tag_bytes.len());
-      tag_bytes[idx] ^= 1u8 << (seed as u32 & 7);
+      mutation.apply(&mut tag_bytes);
       let forged_tag = A::tag_from_slice(&tag_bytes).expect("forged tag preserves the algorithm tag length");
       let mut ct_copy = ct.clone();
       assert!(

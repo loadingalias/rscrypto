@@ -69,7 +69,8 @@ try {
     $catalog = $catalogJson | ConvertFrom-Json
     Invoke-Native $python @($catalogHelper, 'validate')
     $native = $catalog.$Platform
-    $channel = & $python $catalogHelper rust-channel
+    $toolchainHelper = Join-Path $PSScriptRoot '../lib/toolchain.py'
+    $channel = & $python $toolchainHelper --target $native.'rust-host'
     if ($LASTEXITCODE -ne 0) { throw 'Unable to read rust-toolchain.toml.' }
 
     $channelFile = Join-Path $prefix ('vs-channel-' + $catalog.windows.'channel-sha256' + '.json')
@@ -118,9 +119,9 @@ try {
     $rustupInstaller = Join-Path $temporary 'rustup-init.exe'
     Get-PinnedDownload $native.assets.rustup.url $native.assets.rustup.sha256 $rustupInstaller
     Invoke-Native $rustupInstaller @('-y', '--no-modify-path', '--default-host', $native.'rust-host', '--default-toolchain', 'none')
-    $rustArguments = @('toolchain', 'install', $channel, '--profile', 'minimal', '--component', 'clippy', '--component', 'rustfmt')
+    $rustArguments = @($toolchainHelper, '--install', $native.'rust-host')
     foreach ($component in $native.components) { $rustArguments += @('--component', $component) }
-    Invoke-Native 'rustup' $rustArguments
+    Invoke-Native $python $rustArguments
     Remove-Item Env:RUSTC_WRAPPER -ErrorAction SilentlyContinue
     Remove-Item Env:CARGO_ENCODED_RUSTFLAGS -ErrorAction SilentlyContinue
     foreach ($tool in $native.cargo) {

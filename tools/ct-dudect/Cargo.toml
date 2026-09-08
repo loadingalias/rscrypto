@@ -17,7 +17,7 @@ panic = "abort"
 codegen-units = 1
 
 [dependencies]
-dudect-bencher = "0.7.0"
+dudect-bencher = { version = "=0.7.0", path = "vendor/dudect-bencher" }
 rscrypto = { path = "../..", default-features = false, features = [
   "std",
   "full",

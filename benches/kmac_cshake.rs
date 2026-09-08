@@ -4,11 +4,14 @@
 //! derived functions (cSHAKE, KMAC). We compare one-shot throughput across
 //! the standard size matrix with a 32-byte output.
 
+#[path = "common/criterion.rs"]
+mod bench_config;
+
 mod common;
 
 use core::hint::black_box;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion};
 
 const KMAC_KEY: &[u8] = b"rscrypto-kmac-bench-key-32bytes";
 const CUSTOMIZATION: &[u8] = b"rscrypto-bench";
@@ -16,6 +19,9 @@ const FUNCTION_NAME: &[u8] = b"";
 const OUTPUT_LEN: usize = 32;
 
 fn kmac256(c: &mut Criterion) {
+  if !bench_config::selected("kmac256") {
+    return;
+  }
   let inputs = common::comp_sizes();
   let mut g = c.benchmark_group("kmac256");
 
@@ -47,6 +53,9 @@ fn kmac256(c: &mut Criterion) {
 }
 
 fn cshake256(c: &mut Criterion) {
+  if !bench_config::selected("cshake256") {
+    return;
+  }
   let inputs = common::comp_sizes();
   let mut g = c.benchmark_group("cshake256");
 
@@ -82,5 +91,6 @@ fn cshake256(c: &mut Criterion) {
   g.finish();
 }
 
-criterion_group!(benches, kmac256, cshake256);
-criterion_main!(benches);
+fn main() {
+  bench_config::run(&[kmac256, cshake256]);
+}

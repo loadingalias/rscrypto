@@ -108,6 +108,8 @@ fn deterministic_buffer(seed: u8, len: usize) -> Vec<u8> {
 /// at counter=0 (the most common entry point).
 #[test]
 fn all_chacha20_backends_match_portable_at_counter_zero() {
+  let backends: Vec<_> = runnable_backends().collect();
+  let mut kernel_calls = 0usize;
   let key = [0xA5u8; 32];
   let nonce = [0x5Au8; 12];
 
@@ -117,10 +119,11 @@ fn all_chacha20_backends_match_portable_at_counter_zero() {
     let mut expected = plain.clone();
     diag_chacha20_xor_keystream_portable(&key, 0, &nonce, &mut expected);
 
-    for backend in runnable_backends() {
+    for backend in &backends {
       let mut actual = plain.clone();
       // SAFETY: `runnable_backends` proves the exact capability set; `TEST_SIZES` uses at most 65 blocks from zero.
       unsafe { (backend.xor_keystream)(&key, 0, &nonce, &mut actual) };
+      kernel_calls = kernel_calls.strict_add(1);
       assert_eq!(
         actual, expected,
         "ChaCha20 backend {} diverged from portable at len={len}, counter=0",
@@ -128,6 +131,7 @@ fn all_chacha20_backends_match_portable_at_counter_zero() {
       );
     }
   }
+  report_backend_execution(&backends, kernel_calls);
 }
 
 /// Backends must produce byte-identical output across mid-stream counter
@@ -137,6 +141,8 @@ fn all_chacha20_backends_match_portable_at_counter_zero() {
 /// through `counter=0` testing alone.
 #[test]
 fn all_chacha20_backends_match_portable_at_arbitrary_counters() {
+  let backends: Vec<_> = runnable_backends().collect();
+  let mut kernel_calls = 0usize;
   let key = [0x33u8; 32];
   let nonce = [0xCCu8; 12];
   // Counter values to exercise: 0 (already covered above), 1, 7 (small
@@ -151,11 +157,12 @@ fn all_chacha20_backends_match_portable_at_arbitrary_counters() {
       let mut expected = plain.clone();
       diag_chacha20_xor_keystream_portable(&key, counter, &nonce, &mut expected);
 
-      for backend in runnable_backends() {
+      for backend in &backends {
         let mut actual = plain.clone();
         // SAFETY: `runnable_backends` proves the exact capability set; at most 16 blocks from the largest tested
         // counter, 0x1000_0000, stays within the `u32` counter range.
         unsafe { (backend.xor_keystream)(&key, counter, &nonce, &mut actual) };
+        kernel_calls = kernel_calls.strict_add(1);
         assert_eq!(
           actual, expected,
           "ChaCha20 backend {} diverged from portable at len={len}, counter={counter}",
@@ -164,6 +171,7 @@ fn all_chacha20_backends_match_portable_at_arbitrary_counters() {
       }
     }
   }
+  report_backend_execution(&backends, kernel_calls);
 }
 
 /// XOR keystream is its own inverse: applying it twice must restore the
@@ -171,19 +179,22 @@ fn all_chacha20_backends_match_portable_at_arbitrary_counters() {
 /// stable but wrong output (consistent across runs but not actually XOR).
 #[test]
 fn all_chacha20_backends_self_inverse() {
+  let backends: Vec<_> = runnable_backends().collect();
+  let mut kernel_calls = 0usize;
   let key = [0x77u8; 32];
   let nonce = [0x88u8; 12];
 
   for &len in TEST_SIZES {
     let original = deterministic_buffer(0xDE, len);
 
-    for backend in runnable_backends() {
+    for backend in &backends {
       let mut buffer = original.clone();
       // SAFETY: `runnable_backends` proves the exact capability set; `TEST_SIZES` uses at most 65 blocks from zero.
       unsafe {
         (backend.xor_keystream)(&key, 0, &nonce, &mut buffer);
         (backend.xor_keystream)(&key, 0, &nonce, &mut buffer);
       }
+      kernel_calls = kernel_calls.strict_add(2);
       assert_eq!(
         buffer, original,
         "ChaCha20 backend {} not self-inverse at len={len}",
@@ -191,6 +202,7 @@ fn all_chacha20_backends_self_inverse() {
       );
     }
   }
+  report_backend_execution(&backends, kernel_calls);
 }
 
 fn runnable_backends() -> impl Iterator<Item = &'static Backend> {
@@ -198,4 +210,26 @@ fn runnable_backends() -> impl Iterator<Item = &'static Backend> {
   BACKENDS
     .iter()
     .filter(move |backend| backend.required == Caps::NONE || caps.has(backend.required))
+}
+
+fn report_backend_execution(backends: &[&Backend], kernel_calls: usize) {
+  let dispatch = if cfg!(feature = "portable-only") {
+    "portable"
+  } else {
+    "native"
+  };
+  let names: Vec<_> = backends.iter().map(|backend| backend.name).collect();
+  eprintln!(
+    "ChaCha20 backend coverage: dispatch={dispatch}, accelerated_executed={}, compiled={}, kernel_calls={kernel_calls}, backends={names:?}",
+    backends.len(),
+    BACKENDS.len(),
+  );
+  if backends.is_empty() {
+    let reason = if cfg!(feature = "portable-only") {
+      "portable-only disables runtime capabilities"
+    } else {
+      "no compiled accelerated backend is supported by this host"
+    };
+    eprintln!("ZERO accelerated backends exercised: {reason}");
+  }
 }

@@ -1,5 +1,8 @@
 //! Blake2 comparison benchmarks: rscrypto vs RustCrypto blake2 crate.
 
+#[path = "common/criterion.rs"]
+mod bench_config;
+
 mod common;
 
 use core::hint::black_box;
@@ -12,7 +15,7 @@ use blake2::{
     consts::{U16, U32, U64},
   },
 };
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion};
 use rscrypto::{
   Blake2b256, Blake2b512, Blake2bKey, Blake2bParams, Blake2s128, Blake2s256, Blake2sKey, Blake2sParams, Digest,
 };
@@ -25,9 +28,14 @@ type RustCryptoBlake2b256 = RustCryptoBlake2b<U32>;
 type RustCryptoBlake2s128 = RustCryptoBlake2s<U16>;
 
 fn oneshot(c: &mut Criterion) {
+  if !bench_config::selected("blake2") {
+    return;
+  }
   use dryoc::classic::crypto_generichash::crypto_generichash;
 
   let inputs = common::comp_sizes();
+  // Timed: complete one-shot hashing and output destruction.
+  // Untimed: input/key fixtures and any typed-key validation.
   let mut g = c.benchmark_group("blake2");
 
   for (len, data) in &inputs {
@@ -81,21 +89,19 @@ fn oneshot(c: &mut Criterion) {
   g.finish();
 }
 
-fn tiny_inputs() -> Vec<(usize, Vec<u8>)> {
-  [0, 1, 16, 32, 64, 128]
-    .into_iter()
-    .map(|len| (len, common::random_bytes(len)))
-    .collect()
-}
-
-fn host_overhead(c: &mut Criterion) {
-  let inputs = tiny_inputs();
+fn short_messages(c: &mut Criterion) {
+  if !bench_config::selected("blake2/short-") && !bench_config::selected("blake2/single-update/") {
+    return;
+  }
+  // The main groups already cover 0, 1, 32, and 64 bytes. Keep only the missing sizes.
+  let inputs = [16, 128].map(|len| (len, common::random_bytes(len)));
   let key_b = [0x42u8; 64];
   let key_s = [0x24u8; 32];
   let key_b_typed = Blake2bKey::new(black_box(&key_b[..32])).expect("valid BLAKE2 benchmark operation must succeed");
   let key_s_typed = Blake2sKey::new(black_box(&key_s)).expect("valid BLAKE2 benchmark operation must succeed");
 
-  let mut oneshot = c.benchmark_group("blake2/host-overhead");
+  // Timed: the complete one-shot hash and output destruction; input generation is untimed.
+  let mut oneshot = c.benchmark_group("blake2/short-oneshot");
   for (len, data) in &inputs {
     common::set_throughput(&mut oneshot, *len);
 
@@ -115,7 +121,9 @@ fn host_overhead(c: &mut Criterion) {
   }
   oneshot.finish();
 
-  let mut keyed = c.benchmark_group("blake2/host-keyed-overhead");
+  // Timed: keyed initialization, hashing, finalization, and per-call destruction.
+  // Untimed: input/key fixtures and rscrypto typed-key validation.
+  let mut keyed = c.benchmark_group("blake2/short-keyed");
   for (len, data) in &inputs {
     common::set_throughput(&mut keyed, *len);
 
@@ -145,7 +153,10 @@ fn host_overhead(c: &mut Criterion) {
   }
   keyed.finish();
 
-  let mut stream = c.benchmark_group("blake2/host-stream-overhead");
+  // Timed: construct, update once (including an empty update), finalize, and drop outputs.
+  // Untimed: immutable input fixtures. Multi-chunk streaming is a separate workload.
+  let inputs = [0, 1, 16, 32, 64, 128].map(|len| (len, common::random_bytes(len)));
+  let mut stream = c.benchmark_group("blake2/single-update");
   for (len, data) in &inputs {
     common::set_throughput(&mut stream, *len);
 
@@ -183,6 +194,9 @@ fn host_overhead(c: &mut Criterion) {
 }
 
 fn keyed(c: &mut Criterion) {
+  if !bench_config::selected("blake2/keyed") {
+    return;
+  }
   use dryoc::classic::crypto_generichash::crypto_generichash;
 
   let inputs = common::comp_sizes();
@@ -192,6 +206,8 @@ fn keyed(c: &mut Criterion) {
   let key_b_512 = Blake2bKey::new(black_box(&key_b)).expect("valid BLAKE2 benchmark operation must succeed");
   let key_s_128 = Blake2sKey::new(black_box(&key_s[..16])).expect("valid BLAKE2 benchmark operation must succeed");
   let key_s_256 = Blake2sKey::new(black_box(&key_s)).expect("valid BLAKE2 benchmark operation must succeed");
+  // Timed: keyed initialization, hashing, finalization, and per-call destruction.
+  // Untimed: input/key fixtures and any typed-key validation.
   let mut g = c.benchmark_group("blake2/keyed");
 
   for (len, data) in &inputs {
@@ -266,11 +282,16 @@ fn keyed(c: &mut Criterion) {
 }
 
 fn streaming(c: &mut Criterion) {
+  if !bench_config::selected("blake2/streaming") {
+    return;
+  }
   use dryoc::classic::crypto_generichash::{
     crypto_generichash_final, crypto_generichash_init, crypto_generichash_update,
   };
 
   let data = common::random_bytes(1048576);
+  // Timed: hasher construction, all chunk updates, finalization, and per-call destruction.
+  // Untimed: input/key fixtures and any typed-key validation.
   let mut g = c.benchmark_group("blake2/streaming");
   g.throughput(criterion::Throughput::Bytes(data.len() as u64));
 
@@ -328,11 +349,14 @@ fn streaming(c: &mut Criterion) {
   g.finish();
 }
 
-/// Parameter-block path (salt + personalization): verifies that the init-only
-/// cost of XORing salt/personal into IV[4..8] does not perturb the hot path
-/// relative to the unsalted `digest()` one-shot.
+/// Complete salt/personalization hashing; the main one-shot groups own the plain baselines.
 fn params(c: &mut Criterion) {
+  if !bench_config::selected("blake2/params") {
+    return;
+  }
   let sizes = [64usize, 4096, 65_536];
+  // Timed: parameter construction, salt/personalization hashing, and per-call destruction.
+  // Untimed: input/key fixtures and any typed-key validation.
   let mut g = c.benchmark_group("blake2/params");
 
   let salt_b = [0x11u8; 16];
@@ -344,9 +368,6 @@ fn params(c: &mut Criterion) {
     let data = common::random_bytes(len);
     g.throughput(criterion::Throughput::Bytes(len as u64));
 
-    g.bench_with_input(BenchmarkId::new("rscrypto/blake2b256/plain", len), &data, |b, d| {
-      b.iter(|| black_box(Blake2b256::digest(black_box(d))))
-    });
     g.bench_with_input(
       BenchmarkId::new("rscrypto/blake2b256/salt+personal", len),
       &data,
@@ -362,9 +383,6 @@ fn params(c: &mut Criterion) {
       },
     );
 
-    g.bench_with_input(BenchmarkId::new("rscrypto/blake2s256/plain", len), &data, |b, d| {
-      b.iter(|| black_box(Blake2s256::digest(black_box(d))))
-    });
     g.bench_with_input(
       BenchmarkId::new("rscrypto/blake2s256/salt+personal", len),
       &data,
@@ -384,5 +402,6 @@ fn params(c: &mut Criterion) {
   g.finish();
 }
 
-criterion_group!(benches, oneshot, host_overhead, keyed, streaming, params);
-criterion_main!(benches);
+fn main() {
+  bench_config::run(&[oneshot, short_messages, keyed, streaming, params]);
+}

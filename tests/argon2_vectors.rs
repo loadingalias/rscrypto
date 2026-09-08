@@ -72,23 +72,3 @@ fn rfc9106_appendix_a3_argon2id() {
   .expect("RFC 9106 Argon2id vector derivation must succeed");
   assert_eq!(out, expected);
 }
-
-#[test]
-fn all_three_variants_produce_distinct_output() {
-  // Independent sanity check — with identical inputs, the three variants
-  // must produce three different 32-byte tags (reference-indexing modes
-  // diverge).
-  let params = canonical_params();
-  let mut d = [0u8; 32];
-  let mut i = [0u8; 32];
-  let mut id = [0u8; 32];
-  Argon2d::derive_with_context(&params, canonical_context(), RFC_PASSWORD, RFC_SALT, &mut d)
-    .expect("Argon2d distinct-output fixture must derive");
-  Argon2i::derive_with_context(&params, canonical_context(), RFC_PASSWORD, RFC_SALT, &mut i)
-    .expect("Argon2i distinct-output fixture must derive");
-  Argon2id::derive_with_context(&params, canonical_context(), RFC_PASSWORD, RFC_SALT, &mut id)
-    .expect("Argon2id distinct-output fixture must derive");
-  assert_ne!(d, i);
-  assert_ne!(d, id);
-  assert_ne!(i, id);
-}

@@ -1,24 +1,36 @@
-#![cfg(feature = "hashes")]
+#![cfg(any(feature = "blake2b", feature = "blake2s"))]
 
+use blake2::digest::{
+  Digest as _, KeyInit as _, Mac as _, Output,
+  block_api::{Buffer, UpdateCore, VariableOutputCore},
+  consts::U32,
+};
+#[cfg(feature = "blake2b")]
 use blake2::{
-  Blake2b as OracleBlake2b, Blake2b512 as OracleBlake2b512, Blake2bMac, Blake2bVarCore, Blake2s as OracleBlake2s,
-  Blake2s256 as OracleBlake2s256, Blake2sMac, Blake2sVarCore,
-  digest::{
-    Digest as _, KeyInit as _, Mac as _, Output,
-    block_api::{Buffer, UpdateCore, VariableOutputCore},
-    consts::{U16, U32, U64},
-  },
+  Blake2b as OracleBlake2b, Blake2b512 as OracleBlake2b512, Blake2bMac, Blake2bVarCore, digest::consts::U64,
+};
+#[cfg(feature = "blake2s")]
+use blake2::{
+  Blake2s as OracleBlake2s, Blake2s256 as OracleBlake2s256, Blake2sMac, Blake2sVarCore, digest::consts::U16,
 };
 use proptest::{prelude::*, test_runner::Config as ProptestConfig};
-use rscrypto::{
-  Blake2b256, Blake2b512, Blake2bKey, Blake2bParams, Blake2s128, Blake2s256, Blake2sKey, Blake2sParams, Digest,
-};
+use rscrypto::Digest;
+#[cfg(feature = "blake2b")]
+use rscrypto::{Blake2b256, Blake2b512, Blake2bKey, Blake2bParams};
+#[cfg(feature = "blake2s")]
+use rscrypto::{Blake2s128, Blake2s256, Blake2sKey, Blake2sParams};
 
+#[cfg(feature = "blake2b")]
 type OracleBlake2bMac256 = Blake2bMac<U32>;
+#[cfg(feature = "blake2b")]
 type OracleBlake2bMac512 = Blake2bMac<U64>;
+#[cfg(feature = "blake2s")]
 type OracleBlake2sMac128 = Blake2sMac<U16>;
+#[cfg(feature = "blake2s")]
 type OracleBlake2sMac256 = Blake2sMac<U32>;
+#[cfg(feature = "blake2b")]
 type OracleBlake2b256 = OracleBlake2b<U32>;
+#[cfg(feature = "blake2s")]
 type OracleBlake2s128 = OracleBlake2s<U16>;
 
 fn split_at_ratio(data: &[u8], ratio: u8) -> (&[u8], &[u8]) {
@@ -39,6 +51,7 @@ fn patterned_input(seed: u8, len: usize) -> Vec<u8> {
     .collect()
 }
 
+#[cfg(feature = "blake2b")]
 fn oracle_blake2b_unkeyed<const N: usize>(data: &[u8], salt: &[u8], personal: &[u8]) -> [u8; N] {
   let mut core = Blake2bVarCore::new_with_params(salt, personal, 0, N);
   let mut buffer = Buffer::<Blake2bVarCore>::default();
@@ -50,6 +63,7 @@ fn oracle_blake2b_unkeyed<const N: usize>(data: &[u8], salt: &[u8], personal: &[
   out
 }
 
+#[cfg(feature = "blake2s")]
 fn oracle_blake2s_unkeyed<const N: usize>(data: &[u8], salt: &[u8], personal: &[u8]) -> [u8; N] {
   let mut core = Blake2sVarCore::new_with_params(salt, personal, 0, N);
   let mut buffer = Buffer::<Blake2sVarCore>::default();
@@ -64,6 +78,7 @@ fn oracle_blake2s_unkeyed<const N: usize>(data: &[u8], salt: &[u8], personal: &[
 proptest! {
   #![proptest_config(ProptestConfig::with_cases(64))]
 
+  #[cfg(feature = "blake2b")]
   #[test]
   fn blake2b_fixed_outputs_match_rustcrypto(
     data in proptest::collection::vec(any::<u8>(), 0..4096),
@@ -124,6 +139,7 @@ proptest! {
     prop_assert_eq!(reset_512.finalize(), Blake2b512::digest(&tail));
   }
 
+  #[cfg(feature = "blake2s")]
   #[test]
   fn blake2s_fixed_outputs_match_rustcrypto(
     data in proptest::collection::vec(any::<u8>(), 0..4096),
@@ -184,6 +200,7 @@ proptest! {
     prop_assert_eq!(reset_256.finalize(), Blake2s256::digest(&tail));
   }
 
+  #[cfg(feature = "blake2b")]
   #[test]
   fn blake2b_params_matches_rustcrypto(
     data in proptest::collection::vec(any::<u8>(), 0..2048),
@@ -233,6 +250,7 @@ proptest! {
     prop_assert_eq!(&ours_oneshot_512[..], &expected_512[..]);
   }
 
+  #[cfg(feature = "blake2s")]
   #[test]
   fn blake2s_params_matches_rustcrypto(
     data in proptest::collection::vec(any::<u8>(), 0..2048),

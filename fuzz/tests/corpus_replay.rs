@@ -9,6 +9,12 @@ fn corpus_dir(target: &str) -> PathBuf {
 #[path = "../target_impls/aead_aegis256.rs"]
 mod aead_aegis256;
 
+#[path = "../target_impls/aead_aes128gcm.rs"]
+mod aead_aes128gcm;
+
+#[path = "../target_impls/aead_aes128gcmsiv.rs"]
+mod aead_aes128gcmsiv;
+
 #[path = "../target_impls/aead_aes256gcm.rs"]
 mod aead_aes256gcm;
 
@@ -163,6 +169,22 @@ mod traits_io;
 fn replay_aead_aegis256_corpus() {
   let replayed = replay_corpus_dir("aead_aegis256", corpus_dir("aead_aegis256"), aead_aegis256::run);
   assert_ne!(replayed, 0, "aead_aegis256 corpus should not be empty");
+}
+
+#[test]
+fn replay_aead_aes128gcm_corpus() {
+  let replayed = replay_corpus_dir("aead_aes128gcm", corpus_dir("aead_aes128gcm"), aead_aes128gcm::run);
+  assert_ne!(replayed, 0, "aead_aes128gcm corpus should not be empty");
+}
+
+#[test]
+fn replay_aead_aes128gcmsiv_corpus() {
+  let replayed = replay_corpus_dir(
+    "aead_aes128gcmsiv",
+    corpus_dir("aead_aes128gcmsiv"),
+    aead_aes128gcmsiv::run,
+  );
+  assert_ne!(replayed, 0, "aead_aes128gcmsiv corpus should not be empty");
 }
 
 #[test]

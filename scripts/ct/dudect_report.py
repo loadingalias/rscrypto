@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import json
 import platform
 import re
@@ -17,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from provenance import cfg_target_features, codegen_value, codegen_values, resolved_rustflags
+from provenance import cfg_target_features, codegen_value, codegen_values, dudect_runner_sources, resolved_rustflags, sha256_file
 
 
 SEED_RE = re.compile(r"^bench\s+(?P<name>\S+)\s+seeded with (?P<seed>0x[0-9a-fA-F]+)$")
@@ -54,12 +53,25 @@ def dudect_case_rows(
   *,
   threshold: float,
   requested_samples: int,
+  filter_value: str = "",
 ) -> list[dict[str, Any]]:
+  requested = {name for name in manifest_cases if filter_value in name}
+  if not requested:
+    raise ValueError(f"DudeCT filter {filter_value!r} selects no manifest cases")
+  completed = set(results)
+  if completed != requested:
+    raise ValueError(
+      f"DudeCT completed case set does not match selection: "
+      f"missing={sorted(requested - completed)}, unexpected={sorted(completed - requested)}"
+    )
+  if set(raw_rows) != requested:
+    raise ValueError("DudeCT raw CSV case set does not match selection")
   cases = []
   for name in sorted(results):
-    metadata = manifest_cases.get(name)
-    if metadata is None:
-      raise ValueError(f"DudeCT emitted case {name!r}, which is not declared in ct.toml")
+    raw = raw_rows[name]
+    if raw["row_count"] != requested_samples or any(raw["labels"].get(label, 0) == 0 for label in ("0", "1")):
+      raise ValueError(f"DudeCT case {name!r} raw CSV must contain all {requested_samples} samples and both classes")
+    metadata = manifest_cases[name]
     result = results[name]
     gate = str(metadata["gate"])
     passed = result["abs_max_t"] <= threshold
@@ -74,21 +86,13 @@ def dudect_case_rows(
         "diagnostic_reason": metadata.get("reason") or metadata.get("notes"),
         "seed": seeds.get(name),
         "requested_samples": requested_samples,
-        "raw_csv": raw_rows.get(name, {"row_count": 0, "labels": {}}),
+        "raw_csv": raw,
         **result,
         "threshold_abs_max_t": threshold,
         "status": "pass" if passed else ("diagnostic-fail" if diagnostic else "fail"),
       }
     )
   return cases
-
-
-def sha256_file(path: Path) -> str:
-  h = hashlib.sha256()
-  with path.open("rb") as fh:
-    for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-      h.update(chunk)
-  return h.hexdigest()
 
 
 def rustc_verbose() -> str:
@@ -107,6 +111,8 @@ def parse_stdout(path: Path) -> tuple[dict[str, str], dict[str, dict]]:
       continue
     if result_match := RESULT_RE.match(line):
       name = result_match.group("name")
+      if name in results:
+        raise ValueError(f"DudeCT emitted duplicate result for case {name!r}")
       max_t = float(result_match.group("t"))
       max_tau = float(result_match.group("tau"))
       results[name] = {
@@ -121,20 +127,22 @@ def parse_stdout(path: Path) -> tuple[dict[str, str], dict[str, dict]]:
 
 def raw_csv_rows(path: Path) -> dict[str, dict]:
   rows: dict[str, dict] = {}
-  if not path.exists():
-    return rows
-
   with path.open(newline="") as fh:
     reader = csv.DictReader(fh)
+    if reader.fieldnames != ["benchname", "sequence", "class", "runtime_ns"]:
+      raise ValueError("DudeCT raw CSV requires benchname,sequence,class,runtime_ns columns")
     for row in reader:
-      name = row.get("benchname", "")
-      class_name = row.get("class", "")
-      if not name or not class_name:
-        continue
-      entry = rows.setdefault(name, {"row_count": 0, "labels": {}})
+      name = row.get("benchname")
+      label = row.get("class")
+      if not name or label not in ("0", "1") or None in row:
+        raise ValueError(f"invalid DudeCT raw CSV row at line {reader.line_num}")
+      if any(re.fullmatch(r"[0-9]+", row.get(key) or "") is None for key in ("sequence", "runtime_ns")):
+        raise ValueError(f"invalid DudeCT raw CSV sequence or runtime at line {reader.line_num}")
+      entry = rows.setdefault(name, {"row_count": 0, "labels": {"0": 0, "1": 0}})
+      if int(row["sequence"]) != entry["row_count"]:
+        raise ValueError(f"DudeCT raw CSV sequence for {name!r} is not contiguous at line {reader.line_num}")
       entry["row_count"] += 1
-      entry["labels"].setdefault(class_name, 0)
-      entry["labels"][class_name] += 1
+      entry["labels"][label] += 1
   return rows
 
 
@@ -267,23 +275,30 @@ def linker_version(linker: Path) -> str:
   return version
 
 
-def main() -> int:
+def arguments():
   parser = argparse.ArgumentParser(description=__doc__)
-  parser.add_argument("--stdout", required=True, type=Path)
-  parser.add_argument("--csv", required=True, type=Path)
+  parser.add_argument("--prepare", action="store_true")
+  parser.add_argument("--stdout", type=Path)
+  parser.add_argument("--csv", type=Path)
   parser.add_argument("--out", required=True, type=Path)
   parser.add_argument("--target", required=True)
   parser.add_argument("--profile", default="release")
   parser.add_argument("--threshold", type=float, default=10.0)
-  parser.add_argument("--samples", type=int, required=True)
+  parser.add_argument("--samples", type=int)
   parser.add_argument("--command", default="")
+  parser.add_argument("--filter", default="")
   parser.add_argument("--binary", required=True, type=Path)
   parser.add_argument("--binary-object", type=Path)
   parser.add_argument("--binary-disassembly", required=True, type=Path)
   parser.add_argument("--binary-symbols", required=True, type=Path)
   parser.add_argument("--linker-command-log", required=True, type=Path)
   args = parser.parse_args()
+  if not args.prepare and (args.stdout is None or args.csv is None or args.samples is None):
+    parser.error("measurement reporting requires --stdout, --csv and --samples")
+  return args
 
+
+def prepare_report(args):
   root = Path(__file__).resolve().parents[2]
   with (root / "Cargo.toml").open("rb") as source:
     crate_version = tomllib.load(source)["package"]["version"]
@@ -345,19 +360,8 @@ def main() -> int:
   linker_version_text = linker_version(linker_path)
   git_status = subprocess.check_output(["git", "status", "--short", "--untracked-files=all"], cwd=root, text=True).splitlines()
 
-  seeds, results = parse_stdout(args.stdout)
-  raw_rows = raw_csv_rows(args.csv)
-  cases = dudect_case_rows(
-    results,
-    seeds,
-    raw_rows,
-    manifest_cases,
-    threshold=args.threshold,
-    requested_samples=args.samples,
-  )
-
   report = {
-    "schema_version": 2,
+    "schema_version": 3,
     "kind": "rscrypto.ct.dudect",
     "crate": "rscrypto",
     "crate_version": crate_version,
@@ -376,6 +380,7 @@ def main() -> int:
     "dudect_manifest_sha256": sha256_file(dudect_manifest_path),
     "harness_manifest_sha256": sha256_file(harness_manifest_path),
     "dudect_lockfile_sha256": sha256_file(dudect_lockfile_path),
+    "dudect_runner_sources": dudect_runner_sources(root),
     "cargo": subprocess.check_output(["cargo", "-V"], cwd=root, text=True).strip(),
     "configured_rustflags": configured_rustflags,
     "environment_rustflags": environment_rustflags,
@@ -420,9 +425,6 @@ def main() -> int:
       "sha256": sha256_file(args.linker_command_log),
       "bytes": args.linker_command_log.stat().st_size,
     },
-    "threshold_abs_max_t": args.threshold,
-    "requested_samples": args.samples,
-    "command": args.command,
     "rustc_verbose": rustc_verbose(),
     "host": {
       "system": platform.system(),
@@ -431,6 +433,37 @@ def main() -> int:
       "processor": platform.processor(),
       "python": platform.python_version(),
     },
+    "notes": [
+      "DudeCT is empirical timing evidence, not a proof.",
+      "A pass means no leakage was detected for this configuration, host, and input classification.",
+      "Raw CSV retains every duration in nanoseconds, with class 0=left, 1=right and a zero-based execution sequence per case.",
+    ],
+  }
+
+  return {"metadata": report, "manifest_cases": manifest_cases}
+
+
+def case_report(prepared, args):
+  manifest_cases = prepared["manifest_cases"]
+  seeds, results = parse_stdout(args.stdout)
+  raw_rows = raw_csv_rows(args.csv)
+  cases = dudect_case_rows(
+    results,
+    seeds,
+    raw_rows,
+    manifest_cases,
+    threshold=args.threshold,
+    requested_samples=args.samples,
+    filter_value=args.filter,
+  )
+
+  return {
+    **prepared["metadata"],
+    "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+    "threshold_abs_max_t": args.threshold,
+    "requested_samples": args.samples,
+    "filter": args.filter,
+    "command": args.command,
     "raw_stdout": str(args.stdout),
     "raw_stdout_sha256": sha256_file(args.stdout) if args.stdout.exists() else None,
     "raw_csv": str(args.csv),
@@ -439,15 +472,27 @@ def main() -> int:
     "case_count": len(cases),
     "failure_count": sum(1 for case in cases if case["status"] == "fail"),
     "diagnostic_failure_count": sum(1 for case in cases if case["status"] == "diagnostic-fail"),
-    "notes": [
-      "DudeCT is empirical timing evidence, not a proof.",
-      "A pass means no leakage was detected for this configuration, host, and input classification.",
-      "dudect-bencher 0.7.0 writes both raw CSV classes with label 0; raw CSV labels are recorded for traceability, not class-balance proof.",
-    ],
   }
 
-  args.out.parent.mkdir(parents=True, exist_ok=True)
-  args.out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+
+def write_report(path, report):
+  path.parent.mkdir(parents=True, exist_ok=True)
+  temporary = path.with_suffix(".json.tmp")
+  temporary.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+  temporary.replace(path)
+
+
+def main() -> int:
+  args = arguments()
+  if args.prepare:
+    write_report(args.out, prepare_report(args))
+    return 0
+  # Validate measurements before collecting the (more expensive) binary provenance.
+  with (Path(__file__).resolve().parents[2] / "ct.toml").open("rb") as source:
+    manifest_cases = manifest_dudect_cases(tomllib.load(source))
+  measurement = case_report({"metadata": {}, "manifest_cases": manifest_cases}, args)
+  report = {**prepare_report(args)["metadata"], **measurement}
+  write_report(args.out, report)
   print(f"dudect report: {args.out}")
   return 1 if report["failure_count"] else 0
 

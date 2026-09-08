@@ -139,7 +139,7 @@ macro_rules! define_sha_family_dispatch {
     portable_kernel: $portable_kernel:path,
     compress_fn: $compress_fn:path,
     required_caps: $required_caps:path,
-    runtime_table: $runtime_table:path,
+    runtime_kernel: $runtime_kernel:path,
     output_len: $output_len:expr,
     word_bytes: $word_bytes:expr,
     total_bits_ty: $total_bits_ty:ty,
@@ -158,16 +158,7 @@ macro_rules! define_sha_family_dispatch {
       name: &'static str,
     }
 
-    #[derive(Clone, Copy)]
-    struct ActiveDispatch {
-      boundaries: [usize; 3],
-      xs: Entry,
-      s: Entry,
-      m: Entry,
-      l: Entry,
-    }
-
-    static ACTIVE: crate::backend::cache::OnceCache<ActiveDispatch> = crate::backend::cache::OnceCache::new();
+    static ACTIVE: crate::backend::cache::OnceCache<Entry> = crate::backend::cache::OnceCache::new();
 
     #[inline]
     #[must_use]
@@ -181,66 +172,26 @@ macro_rules! define_sha_family_dispatch {
 
     #[inline]
     #[must_use]
-    fn active() -> ActiveDispatch {
+    fn active() -> Entry {
       ACTIVE.get_or_init(|| {
         let caps = crate::platform::caps();
-        let table = $runtime_table(caps);
-
-        let xs_id = resolve(table.xs, caps);
-        let s_id = resolve(table.s, caps);
-        let m_id = resolve(table.m, caps);
-        let l_id = resolve(table.l, caps);
-
-        ActiveDispatch {
-          boundaries: table.boundaries,
-          xs: Entry {
-            compress_blocks: $compress_fn(xs_id),
-            #[cfg(feature = "diag")]
-            name: xs_id.as_str(),
-          },
-          s: Entry {
-            compress_blocks: $compress_fn(s_id),
-            #[cfg(feature = "diag")]
-            name: s_id.as_str(),
-          },
-          m: Entry {
-            compress_blocks: $compress_fn(m_id),
-            #[cfg(feature = "diag")]
-            name: m_id.as_str(),
-          },
-          l: Entry {
-            compress_blocks: $compress_fn(l_id),
-            #[cfg(feature = "diag")]
-            name: l_id.as_str(),
-          },
+        let id = resolve($runtime_kernel(caps), caps);
+        Entry {
+          compress_blocks: $compress_fn(id),
+          #[cfg(feature = "diag")]
+          name: id.as_str(),
         }
       })
-    }
-
-    #[inline]
-    #[must_use]
-    fn select(d: &ActiveDispatch, len: usize) -> Entry {
-      let [xs_max, s_max, m_max] = d.boundaries;
-      if len <= xs_max {
-        d.xs
-      } else if len <= s_max {
-        d.s
-      } else if len <= m_max {
-        d.m
-      } else {
-        d.l
-      }
     }
 
     #[cfg(feature = "diag")]
     #[inline]
     #[must_use]
-    pub(crate) fn kernel_name_for_len(len: usize) -> &'static str {
+    pub(crate) fn kernel_name_for_len(_len: usize) -> &'static str {
       if $compile_time_hw {
         return $compile_time_name;
       }
-      let d = active();
-      select(&d, len).name
+      active().name
     }
 
     #[inline]
@@ -249,13 +200,11 @@ macro_rules! define_sha_family_dispatch {
       if $compile_time_hw {
         return digest_oneshot(data, $compile_time_best);
       }
-      let d = active();
-      let compress = select(&d, data.len()).compress_blocks;
-      digest_oneshot(data, compress)
+      digest_oneshot(data, active().compress_blocks)
     }
 
     #[inline]
-    fn digest_oneshot(data: &[u8], compress_blocks: $compress_fn_ty) -> [u8; $output_len] {
+    pub(super) fn digest_oneshot(data: &[u8], compress_blocks: $compress_fn_ty) -> [u8; $output_len] {
       let mut state = $h0;
 
       let (blocks, rest) = data.as_chunks::<BLOCK_LEN>();
@@ -286,25 +235,11 @@ macro_rules! define_sha_family_dispatch {
 
     #[inline]
     #[must_use]
-    pub(crate) fn compress_dispatch() -> crate::hashes::crypto::dispatch_util::SizeClassDispatch<$compress_fn_ty> {
+    pub(crate) fn compress_dispatch() -> $compress_fn_ty {
       if $compile_time_hw {
-        let f = $compile_time_best;
-        return crate::hashes::crypto::dispatch_util::SizeClassDispatch {
-          boundaries: [usize::MAX; 3],
-          xs: f,
-          s: f,
-          m: f,
-          l: f,
-        };
+        return $compile_time_best;
       }
-      let d = active();
-      crate::hashes::crypto::dispatch_util::SizeClassDispatch {
-        boundaries: d.boundaries,
-        xs: d.xs.compress_blocks,
-        s: d.s.compress_blocks,
-        m: d.m.compress_blocks,
-        l: d.l.compress_blocks,
-      }
+      active().compress_blocks
     }
   };
 }

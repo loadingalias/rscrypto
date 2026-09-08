@@ -1,4 +1,4 @@
-#![cfg(feature = "hashes")]
+#![cfg(feature = "blake3")]
 
 use proptest::prelude::*;
 use rscrypto::{

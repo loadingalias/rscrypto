@@ -4,15 +4,12 @@
 //! output truncation (28 bytes / 7 words). The compression function is shared.
 
 use self::kernels::CompressBlocksFn;
-use crate::{
-  hashes::crypto::dispatch_util::{SizeClassDispatch, len_hint_from_u64},
-  traits::Digest,
-};
+use crate::traits::Digest;
 
 #[doc(hidden)]
 pub(crate) mod dispatch;
 #[doc(hidden)]
-pub(crate) mod dispatch_tables;
+pub(crate) mod dispatch_policy;
 #[cfg(test)]
 mod kernel_test;
 pub(crate) mod kernels;
@@ -58,7 +55,8 @@ pub struct Sha224 {
   block_len: usize,
   bytes_hashed: u64,
   compress_blocks: CompressBlocksFn,
-  dispatch: Option<SizeClassDispatch<CompressBlocksFn>>,
+  // True also preserves an explicitly supplied compression backend.
+  dispatch_initialized: bool,
 }
 
 impl core::fmt::Debug for Sha224 {
@@ -77,7 +75,7 @@ impl Default for Sha224 {
       block_len: 0,
       bytes_hashed: 0,
       compress_blocks: sha256k::compile_time_best(),
-      dispatch: None,
+      dispatch_initialized: false,
     }
   }
 }
@@ -85,8 +83,7 @@ impl Default for Sha224 {
 impl Sha224 {
   /// Compute the digest of `data` in one shot.
   ///
-  /// Selects the best available kernel for the current platform and input
-  /// length (cached after first use).
+  /// Selects the best available kernel for the current platform (cached after first use).
   #[inline]
   #[must_use]
   pub fn digest(data: &[u8]) -> [u8; 28] {
@@ -94,23 +91,12 @@ impl Sha224 {
   }
 
   #[inline]
-  fn select_compress(&mut self, incoming_len: usize) -> CompressBlocksFn {
-    let dispatch = match self.dispatch {
-      Some(d) => d,
-      None => {
-        let d = dispatch::compress_dispatch();
-        self.dispatch = Some(d);
-        d
-      }
-    };
-
-    let total = self
-      .bytes_hashed
-      .strict_add(self.block_len as u64)
-      .strict_add(incoming_len as u64);
-    let compress = dispatch.select(len_hint_from_u64(total));
-    self.compress_blocks = compress;
-    compress
+  fn select_compress(&mut self) -> CompressBlocksFn {
+    if !self.dispatch_initialized {
+      self.compress_blocks = dispatch::compress_dispatch();
+      self.dispatch_initialized = true;
+    }
+    self.compress_blocks
   }
 
   #[inline]
@@ -220,7 +206,11 @@ impl Digest for Sha224 {
       self.update_with(data, sha256k::compile_time_best());
       return;
     }
-    let compress = self.select_compress(data.len());
+    let _total_len = self
+      .bytes_hashed
+      .strict_add(self.block_len as u64)
+      .strict_add(data.len() as u64);
+    let compress = self.select_compress();
     self.update_with(data, compress);
   }
 

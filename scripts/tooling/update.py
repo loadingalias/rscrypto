@@ -219,7 +219,7 @@ def manifest_paths():
     # Includes untracked manifests and standalone consumers, excludes generated/cache trees.
     return [ROOT / path for path in subprocess.check_output(
         ['rg', '--files', '--hidden', '-g', 'Cargo.toml', '-g', '!.git', '-g', '!.agents',
-         '-g', '!target', '-g', '!node_modules'], cwd=ROOT, text=True).splitlines()]
+         '-g', '!target', '-g', '!node_modules', '-g', '!vendor'], cwd=ROOT, text=True).splitlines()]
 
 
 def dependency_tables(document):

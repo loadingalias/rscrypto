@@ -1,5 +1,8 @@
 //! RapidHash V3 comparison benchmarks.
 
+#[path = "common/criterion.rs"]
+mod bench_config;
+
 mod common;
 
 use core::{
@@ -8,7 +11,7 @@ use core::{
 };
 use std::collections::HashMap;
 
-use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput};
 
 const COLLECTION_KEYS: usize = 4096;
 
@@ -38,6 +41,9 @@ fn populated_map<S: BuildHasher>(keys: &[[u8; 32]], state: S) -> HashMap<[u8; 32
 }
 
 fn rapidhash_v3_64(c: &mut Criterion) {
+  if !bench_config::selected("rapidhash-v3-64") {
+    return;
+  }
   let inputs = common::comp_sizes();
   let mut group = c.benchmark_group("rapidhash-v3-64");
 
@@ -58,6 +64,9 @@ fn rapidhash_v3_64(c: &mut Criterion) {
 }
 
 fn rapidhash_seeded_state(c: &mut Criterion) {
+  if !bench_config::selected("rapidhash-buildhasher") {
+    return;
+  }
   let inputs = common::comp_sizes();
   let mut group = c.benchmark_group("rapidhash-buildhasher");
   let ours = rscrypto::RapidSeededState::new(0);
@@ -76,6 +85,9 @@ fn rapidhash_seeded_state(c: &mut Criterion) {
 }
 
 fn rapidhash_key_types(c: &mut Criterion) {
+  if !bench_config::selected("rapidhash-hash-one/") {
+    return;
+  }
   let ours = rscrypto::RapidSeededState::new(0);
   let upstream = rapidhash::quality::SeedableState::fixed();
   let integer = 0xa5c3_17e9_6b4d_2f01u64;
@@ -105,6 +117,9 @@ fn rapidhash_key_types(c: &mut Criterion) {
 }
 
 fn rapidhash_hashmap_operations(c: &mut Criterion) {
+  if !bench_config::selected("rapidhash-hashmap/") {
+    return;
+  }
   let present = collection_keys(0);
   let absent = collection_keys(COLLECTION_KEYS as u64);
   let ours = populated_map(&present, rscrypto::RapidSeededState::new(0));
@@ -182,6 +197,9 @@ fn rapidhash_hashmap_operations(c: &mut Criterion) {
 }
 
 fn rapidhash_streaming(c: &mut Criterion) {
+  if !bench_config::selected("rapidhash-stream/") {
+    return;
+  }
   let inputs = common::comp_sizes();
   let secrets = rapidhash::v3::RapidSecrets::seed_cpp(0);
 
@@ -225,12 +243,12 @@ fn rapidhash_streaming(c: &mut Criterion) {
   }
 }
 
-criterion_group!(
-  benches,
-  rapidhash_v3_64,
-  rapidhash_seeded_state,
-  rapidhash_key_types,
-  rapidhash_hashmap_operations,
-  rapidhash_streaming
-);
-criterion_main!(benches);
+fn main() {
+  bench_config::run(&[
+    rapidhash_v3_64,
+    rapidhash_seeded_state,
+    rapidhash_key_types,
+    rapidhash_hashmap_operations,
+    rapidhash_streaming,
+  ]);
+}

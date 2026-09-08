@@ -743,12 +743,6 @@ impl AeadByteLengths {
     }
   }
 
-  #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
-  #[inline]
-  pub(crate) fn try_new(aad_len: usize, text_len: usize) -> Result<Self, LengthOverflow> {
-    Ok(Self::from_usize(aad_len, text_len))
-  }
-
   #[cfg(any(feature = "aegis256", feature = "aes-gcm", feature = "aes-gcm-siv"))]
   #[inline]
   pub(crate) fn try_new_bit_lengths(aad_len: usize, text_len: usize) -> Result<Self, LengthOverflow> {
@@ -921,6 +915,16 @@ mod tests {
     assert!(!AeadByteLengths::from_usize(31, 32).total_at_least(64));
     assert!(AeadByteLengths::from_usize(32, 32).total_at_least(64));
     assert!(AeadByteLengths { aad: u64::MAX, text: 1 }.total_at_least(u64::MAX));
+  }
+
+  #[test]
+  #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+  fn byte_length_fields_encode_full_usize_range() {
+    for (aad, text) in [(0, usize::MAX), (usize::MAX, 0), (usize::MAX, usize::MAX)] {
+      let encoded = AeadByteLengths::from_usize(aad, text).to_le_bytes_block();
+      assert_eq!(&encoded[..8], &(aad as u64).to_le_bytes());
+      assert_eq!(&encoded[8..], &(text as u64).to_le_bytes());
+    }
   }
 
   #[test]

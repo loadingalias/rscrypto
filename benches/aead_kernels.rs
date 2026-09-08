@@ -3,11 +3,14 @@
 //! These benches are intentionally outside the production comparison bench so
 //! global result tables do not treat kernel-only timings as user-facing AEADs.
 
+#[path = "common/criterion.rs"]
+mod bench_config;
+
 mod common;
 
 use core::hint::black_box;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion};
 
 #[cfg(target_arch = "aarch64")]
 const KEY_32: [u8; 32] = [0x42u8; 32];
@@ -21,8 +24,13 @@ const AAD: &[u8] = b"rscrypto-bench";
 
 #[cfg(target_arch = "aarch64")]
 fn chacha20_xor_kernel(c: &mut Criterion) {
+  if !bench_config::selected("aead-kernel/chacha20-copy-and-xor") {
+    return;
+  }
   let inputs = common::comp_sizes();
-  let mut g = c.benchmark_group("aead-kernel/chacha20-xor");
+  // Timed: restore the input and XOR the keystream into the reused buffer.
+  // Untimed: fixture generation and buffer allocation/destruction.
+  let mut g = c.benchmark_group("aead-kernel/chacha20-copy-and-xor");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
@@ -49,11 +57,13 @@ fn chacha20_xor_kernel(c: &mut Criterion) {
   g.finish();
 }
 
-#[cfg(not(target_arch = "aarch64"))]
-fn chacha20_xor_kernel(_: &mut Criterion) {}
-
 fn poly1305_auth_kernel(c: &mut Criterion) {
+  if !bench_config::selected("aead-kernel/poly1305-auth") {
+    return;
+  }
   let inputs = common::comp_sizes();
+  // Timed: authenticate immutable AAD/message bytes and return/drop the tag.
+  // Untimed: fixtures; there is no per-iteration message restoration.
   let mut g = c.benchmark_group("aead-kernel/poly1305-auth");
 
   for (len, data) in &inputs {
@@ -86,5 +96,10 @@ fn poly1305_auth_kernel(c: &mut Criterion) {
   g.finish();
 }
 
-criterion_group!(aead_kernels, chacha20_xor_kernel, poly1305_auth_kernel);
-criterion_main!(aead_kernels);
+fn main() {
+  bench_config::run(&[
+    #[cfg(target_arch = "aarch64")]
+    chacha20_xor_kernel,
+    poly1305_auth_kernel,
+  ]);
+}

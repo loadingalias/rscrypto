@@ -1,51 +1,34 @@
 #!/usr/bin/env python3
-"""Contract tests for the benchmark catalog and Cargo benchmark targets."""
+"""Check the benchmark catalog, then exercise benchmark and profiling front doors."""
 
 from __future__ import annotations
 
 import json
+import copy
+import re
 import subprocess
 import sys
 import tomllib
 from pathlib import Path
 
+from benchmark_catalog import CatalogError, case_class, resolve_selector, validate_catalog
+
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = ROOT / ".config" / "benchmark-matrix.json"
-TOOL = ROOT / "scripts" / "bench" / "benchmark_catalog.py"
 
 
 def fail(message: str) -> None:
   raise AssertionError(message)
 
 
-def query(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-  return subprocess.run(
-    [sys.executable, str(TOOL), *args],
-    cwd=ROOT,
-    check=check,
-    text=True,
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-  )
-
-
 def main() -> None:
-  query("validate")
-  raw_plan = subprocess.run(
-    [sys.executable, str(TOOL), "plan-algorithm", "p256-ecdh"],
-    cwd=ROOT,
-    check=True,
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-  ).stdout
-  if b"\r" in raw_plan or not raw_plan.endswith(b"\n"):
-    fail(f"benchmark catalog records must use LF line endings: {raw_plan!r}")
-
   with CATALOG.open(encoding="utf-8") as source:
     catalog = json.load(source)
   with (ROOT / "Cargo.toml").open("rb") as source:
     cargo = tomllib.load(source)
+
+  validate_catalog(catalog)
 
   cargo_benches = {bench["name"]: bench for bench in cargo["bench"]}
   catalog_binaries = {bench["binary"] for bench in catalog["benches"].values()}
@@ -68,39 +51,65 @@ def main() -> None:
     "sha512-256": "sha512-256",
   }
   for selector, algorithms in expected.items():
-    actual = query("resolve-selector", selector).stdout.strip()
+    actual = ",".join(resolve_selector(catalog, selector))
     if actual != algorithms:
       fail(f"selector {selector} resolved to {actual}, expected {algorithms}")
 
-  unknown = query("resolve-selector", "raw-criterion-filter", check=False)
-  if unknown.returncode != 3 or unknown.stdout:
-    fail("unknown selectors must remain available as raw Criterion filters")
+  if resolve_selector(catalog, "unknown-selector") is not None:
+    fail("unknown selector accepted")
 
-  if query("plan-algorithm", "sha512").stdout.strip() != "hashes|sha2|^sha512/":
-    fail("SHA-512 benchmark identity changed")
-  if query("plan-algorithm", "aead-diag").stdout.strip() != "aead|aead_diag|chacha20-poly1305/encrypt":
-    fail("AEAD diagnostic benchmark identity changed")
-  if query("binary", "aead_diag").stdout.strip() != "aead":
-    fail("AEAD diagnostic selector must use the aead benchmark binary")
+  for name in catalog["algorithms"]:
+    if resolve_selector(catalog, name) != [name]:
+      fail(f"exact algorithm {name} selects other algorithms")
+  shadowed = copy.deepcopy(catalog)
+  shadowed["selectors"]["crc64nvme"] = ["crc64-xz", "crc64-nvme"]
+  try:
+    validate_catalog(shadowed)
+  except CatalogError:
+    pass
+  else:
+    fail("catalog accepted a family selector shadowing an exact algorithm")
+  for case in ("blake2/rscrypto/blake2b256/64", "blake2/dryoc/blake2b256/64",
+               "blake2/keyed/dryoc/blake2b256/64", "blake2/streaming/dryoc/blake2b256/64B",
+               "blake2/params/rscrypto/blake2b256/salt+personal/64"):
+    if not re.search(catalog["algorithms"]["blake2"]["filter"], case):
+      fail(f"BLAKE2 selector excludes {case}")
+  for binary, case, expected_class in (
+    ("sha2", "sha256/rscrypto/64", "ordinary"),
+    ("sha2", "sha256/internal/compress/rscrypto/64", "diagnostic"),
+    ("blake3", "blake3/rscrypto-scalar/64", "diagnostic"),
+    ("blake3", "blake3/keyed/rscrypto/64", "ordinary"),
+    ("auth", "pbkdf2-sha256/iters=1000/rscrypto/32", "expensive"),
+    ("auth", "pbkdf2-sha256/internal/iters=1000/rscrypto-oneshot/32", "diagnostic"),
+    ("password_hashing", "argon2id-owasp/rscrypto/m=19MiB_t=2_p=1", "expensive"),
+    ("rsa", "rsa-2048-private-signing/blinding-inverse-scratch-rscrypto", "diagnostic"),
+    ("rsa", "rsa-2048-private-signing/sign-pss-sha256-caller-entropy-scratch-rscrypto", "expensive"),
+    ("aead_kernels", "aead-kernel/poly1305-auth/dispatched/64", "diagnostic"),
+    ("aead", "chacha20-poly1305/copy-and-encrypt/rscrypto/64", "ordinary"),
+    ("aead", "chacha20-poly1305/copy-and-encrypt/rscrypto-owned/64", "diagnostic"),
+    ("aead", "chacha20-poly1305/copy-and-decrypt/rscrypto-x86-asm/64", "diagnostic"),
+    ("blake2", "blake2/short-oneshot/rscrypto/blake2b256/16", "ordinary"),
+    ("blake2", "blake2/single-update/rscrypto/blake2b256/16", "ordinary"),
+  ):
+    if case_class(catalog, binary, case) != expected_class:
+      fail(f"incorrect work class for {binary}: {case}")
 
-  expanded = query("expand-benches", "checksum_comp,auth_comp").stdout.strip()
-  if expanded != "crc,auth":
-    fail(f"bench aliases expanded to {expanded}")
+  for name, bench in catalog["benches"].items():
+    features = set(bench["features"])
+    if "std" not in features or ("parallel" in features) != (name in {"blake3", "password_hashing"}):
+      fail(f"incorrect runtime feature scope for {name}")
 
-  features = query("features", "sha2,aead").stdout.strip().split(",")
-  if len(features) != len(set(features)) or not {"parallel", "sha2", "aes-gcm"} <= set(features):
-    fail("bench feature union is incomplete or duplicated")
+  for binary in catalog_binaries - {"structural"}:
+    source = (ROOT / "benches" / f"{binary}.rs").read_text()
+    if 'bench_config::run(&[' not in source:
+      fail(f"{binary} does not use the shared Criterion configuration")
+    if re.search(r"\.(sample_size|measurement_time|warm_up_time|nresamples|confidence_level|significance_level|noise_threshold)\s*\(", source):
+      fail(f"{binary} overrides the shared Criterion configuration")
 
-  required = set(query("required-benches").stdout.strip().split(","))
-  expected_required = {name for name, bench in catalog["benches"].items() if bench["required"]}
-  if required != expected_required:
-    fail("required benchmark targets are not derived from the catalog")
-
-  criterion = set(query("criterion-binaries").stdout.strip().split(","))
-  if "structural" in criterion or "aead" not in criterion:
-    fail("generic Criterion runs must exclude Gungraun and include the AEAD binary")
-
-  print("benchmark catalog tests passed")
+  subprocess.run([sys.executable, str(ROOT / "scripts/bench/bounded_test.py")], check=True)
+  subprocess.run([sys.executable, str(ROOT / "scripts/bench/run_test.py")], check=True)
+  subprocess.run([sys.executable, str(ROOT / "scripts/bench/profile_test.py")], check=True)
+  print("benchmark catalog and orchestration tests passed")
 
 
 if __name__ == "__main__":

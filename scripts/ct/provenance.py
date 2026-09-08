@@ -29,15 +29,6 @@ def optional_version(args: list[str], *, cwd: Path) -> str | None:
     return None
 
 
-def llvm_tool(root: Path, name: str) -> str:
-  sysroot = Path(run(["rustc", "--print", "sysroot"], cwd=root).strip())
-  host = parse_rustc_verbose(run(["rustc", "-vV"], cwd=root)).get("host", "")
-  candidate = sysroot / "lib" / "rustlib" / host / "bin" / name
-  if candidate.exists():
-    return str(candidate)
-  return shutil.which(name) or name
-
-
 def load_toml(path: Path) -> dict[str, Any]:
   with path.open("rb") as fh:
     return tomllib.load(fh)
@@ -238,6 +229,12 @@ def write_artifact_hashes(out_dir: Path, artifacts: list[dict[str, Any]]) -> Non
   (out_dir / "artifact-hashes.txt").write_text("\n".join(lines) + "\n")
 
 
+def dudect_runner_sources(root: Path) -> dict[str, str]:
+  runner = root / "tools/ct-dudect/vendor/dudect-bencher"
+  paths = [runner / "Cargo.toml", *sorted((runner / "src").glob("*.rs"))]
+  return {str(path.relative_to(root)): sha256_file(path) for path in paths}
+
+
 def component_lockfiles(root: Path) -> list[dict[str, str]]:
   paths = (
     "Cargo.lock",
@@ -334,6 +331,9 @@ def main() -> int:
   parser.add_argument("--build-target-dir", required=True, type=Path)
   parser.add_argument("--backend", default="llvm")
   parser.add_argument("--features", default="std,full")
+  parser.add_argument("--llvm-objdump", required=True)
+  parser.add_argument("--llvm-nm", required=True)
+  parser.add_argument("--llvm-size", required=True)
   parser.add_argument("--linker-command-log", required=True, type=Path)
   args = parser.parse_args()
 
@@ -390,9 +390,9 @@ def main() -> int:
       "python": sys.version,
       "cargo": run(["cargo", "-V"], cwd=root).strip(),
       "rustc": rustc_verbose_text.strip(),
-      "llvm_objdump": optional_version([llvm_tool(root, "llvm-objdump"), "--version"], cwd=root),
-      "llvm_nm": optional_version([llvm_tool(root, "llvm-nm"), "--version"], cwd=root),
-      "llvm_size": optional_version([llvm_tool(root, "llvm-size"), "--version"], cwd=root),
+      "llvm_objdump": optional_version([args.llvm_objdump, "--version"], cwd=root),
+      "llvm_nm": optional_version([args.llvm_nm, "--version"], cwd=root),
+      "llvm_size": optional_version([args.llvm_size, "--version"], cwd=root),
       "rustfilt": optional_version([shutil.which("rustfilt") or "rustfilt", "--version"], cwd=root),
     },
     "backend": args.backend,

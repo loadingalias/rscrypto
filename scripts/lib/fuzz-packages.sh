@@ -70,6 +70,10 @@ fuzz_select_packages() {
       return 1
       ;;
   esac
+  [[ ${#SELECTED_FUZZ_PACKAGES[@]} -gt 0 ]] || {
+    echo "No fuzz packages selected for scope: $scope" >&2
+    return 2
+  }
 }
 
 fuzz_in_package() {
@@ -88,56 +92,11 @@ fuzz_in_package() {
 
 fuzz_list_targets() {
   local package_dir=$1
-  fuzz_in_package "$package_dir" list 2>/dev/null
-}
-
-fuzz_find_target_package() {
-  local target=$1
-  local search_order=${2:-scoped-first}
-  local package_dir
-
-  case "$search_order" in
-    full)
-      for package_dir in "${FUZZ_FULL_PACKAGES[@]}"; do
-        if fuzz_list_targets "$package_dir" | grep -Fx "$target" >/dev/null; then
-          echo "$package_dir"
-          return 0
-        fi
-      done
-      ;;
-    scoped)
-      for package_dir in "${FUZZ_SCOPED_PACKAGES[@]}"; do
-        if fuzz_list_targets "$package_dir" | grep -Fx "$target" >/dev/null; then
-          echo "$package_dir"
-          return 0
-        fi
-      done
-      ;;
-    scoped-first)
-      package_dir="$(fuzz_find_target_package "$target" scoped)" && {
-        echo "$package_dir"
-        return 0
-      }
-      package_dir="$(fuzz_find_target_package "$target" full)" && {
-        echo "$package_dir"
-        return 0
-      }
-      ;;
-    full-first)
-      package_dir="$(fuzz_find_target_package "$target" full)" && {
-        echo "$package_dir"
-        return 0
-      }
-      package_dir="$(fuzz_find_target_package "$target" scoped)" && {
-        echo "$package_dir"
-        return 0
-      }
-      ;;
-    *)
-      echo "Unknown fuzz target search order: $search_order" >&2
-      return 1
-      ;;
-  esac
-
-  return 1
+  local targets
+  targets=$(fuzz_in_package "$package_dir" list) || return 2
+  [[ -n "${targets//[[:space:]]/}" ]] || {
+    echo "No fuzz targets discovered in $package_dir" >&2
+    return 2
+  }
+  printf '%s\n' "$targets"
 }
