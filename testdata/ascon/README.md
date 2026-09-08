@@ -16,9 +16,3 @@ The upstream commit identifies these as known-answer tests for NIST SP 800-232.
 `asconxof.blb` contains the first 32 output bytes for all 1,025 cases in
 `crypto_hash/asconxof128/LWC_XOF_KAT_128_512.txt`; independent oracle tests
 cover longer and segmented output.
-
-After checking out the exact upstream commit, reproduce and verify every file:
-
-```bash
-scripts/check/hash-vector-provenance.py --ascon-root /path/to/ascon-c
-```

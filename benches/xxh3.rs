@@ -1,14 +1,20 @@
 //! XXHash3 comparison benchmarks: rscrypto vs xxhash-rust crate.
 
+#[path = "common/criterion.rs"]
+mod bench_config;
+
 mod common;
 
 use core::{hash::BuildHasher, hint::black_box};
 use std::collections::HashMap;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion};
 use rscrypto::FastHash;
 
 fn xxh3_64(c: &mut Criterion) {
+  if !bench_config::selected("xxh3-64") {
+    return;
+  }
   let inputs = common::comp_sizes();
   let mut g = c.benchmark_group("xxh3-64");
 
@@ -28,6 +34,9 @@ fn xxh3_64(c: &mut Criterion) {
 }
 
 fn xxh3_128(c: &mut Criterion) {
+  if !bench_config::selected("xxh3-128") {
+    return;
+  }
   let inputs = common::comp_sizes();
   let mut g = c.benchmark_group("xxh3-128");
 
@@ -47,6 +56,9 @@ fn xxh3_128(c: &mut Criterion) {
 }
 
 fn xxh3_build_hasher(c: &mut Criterion) {
+  if !bench_config::selected("xxh3-buildhasher") {
+    return;
+  }
   let inputs = common::comp_sizes();
   let mut g = c.benchmark_group("xxh3-buildhasher");
   let ours = rscrypto::Xxh3BuildHasher::new();
@@ -65,6 +77,9 @@ fn xxh3_build_hasher(c: &mut Criterion) {
 }
 
 fn xxh3_hashmap_lookup(c: &mut Criterion) {
+  if !bench_config::selected("xxh3-hashmap/lookup-32") {
+    return;
+  }
   let key = common::random_bytes(32);
   let mut ours = HashMap::with_capacity_and_hasher(1, rscrypto::Xxh3BuildHasher::new());
   let mut upstream = HashMap::with_capacity_and_hasher(1, xxhash_rust::xxh3::Xxh3DefaultBuilder::new());
@@ -81,5 +96,6 @@ fn xxh3_hashmap_lookup(c: &mut Criterion) {
   g.finish();
 }
 
-criterion_group!(benches, xxh3_64, xxh3_128, xxh3_build_hasher, xxh3_hashmap_lookup);
-criterion_main!(benches);
+fn main() {
+  bench_config::run(&[xxh3_64, xxh3_128, xxh3_build_hasher, xxh3_hashmap_lookup]);
+}

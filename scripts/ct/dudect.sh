@@ -4,10 +4,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TARGET=""
 PROFILE="release"
-SAMPLES="${RSCRYPTO_CT_DUDECT_SAMPLES:-20000}"
+SAMPLES="${RSCRYPTO_CT_DUDECT_SAMPLES:-}"
 THRESHOLD="${RSCRYPTO_CT_DUDECT_THRESHOLD:-10.0}"
 FILTER=""
 SMOKE=0
+PREPARE_ONLY=0
+SHARED_DIR=""
 
 usage() {
   cat <<'USAGE'
@@ -16,8 +18,8 @@ usage: scripts/ct/dudect.sh [--target TRIPLE] [--profile release] [--samples N] 
 Runs rscrypto's empirical dudect timing lane and writes:
   target/ct/<target>/<profile>/dudect/dudect-report.json
 
-Filtered runs also preserve their report, raw samples, and stdout under:
-  target/ct/<target>/<profile>/dudect/cases/<filter>/
+Every run retains one shared binary bundle and isolated measurements under:
+  target/ct/<target>/<profile>/dudect/runs/<run>/
 
 Notes:
   --target records the host target for evidence placement. Cross-target dudect
@@ -27,6 +29,14 @@ USAGE
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --prepare-only)
+      PREPARE_ONLY=1
+      shift
+      ;;
+    --shared-dir)
+      SHARED_DIR="$2"
+      shift 2
+      ;;
     --target)
       TARGET="$2"
       shift 2
@@ -90,10 +100,6 @@ if ! target_runs_on_host "$TARGET" "$HOST_TARGET"; then
   exit 2
 fi
 
-if [[ "$SMOKE" == "1" && "$SAMPLES" == "${RSCRYPTO_CT_DUDECT_SAMPLES:-20000}" ]]; then
-  SAMPLES=2000
-fi
-
 target_env_name() {
   local suffix="$1"
   local upper_target="${TARGET^^}"
@@ -108,21 +114,31 @@ if [[ "$TARGET" != "$HOST_TARGET" && "$TARGET" == *-linux-musl && "$(uname -m)" 
   fi
 fi
 
-OUT_DIR="$ROOT/target/ct/$TARGET/$PROFILE/dudect"
-STDOUT_PATH="$OUT_DIR/dudect.stdout.txt"
-CSV_PATH="$OUT_DIR/dudect-raw.csv"
-REPORT_PATH="$OUT_DIR/dudect-report.json"
+DUDECT_DIR="$ROOT/target/ct/$TARGET/$PROFILE/dudect"
+mkdir -p "$DUDECT_DIR/runs"
+# Invalidate the latest summary before preparation, which can also fail.
+if [[ "$PREPARE_ONLY" == 0 ]]; then
+  rm -f "$DUDECT_DIR/dudect-report.json"
+fi
+if [[ -z "$SHARED_DIR" ]]; then
+  RUN_DIR="$(mktemp -d "$DUDECT_DIR/runs/run.XXXXXXXX")"
+  SHARED_DIR="$RUN_DIR/shared"
+else
+  RUN_DIR="$(dirname "$SHARED_DIR")"
+fi
+OUT_DIR="$SHARED_DIR"
+# A shared bundle belongs to exactly one invocation; never overwrite old evidence.
+mkdir "$OUT_DIR"
 BINARY_PATH="$OUT_DIR/rscrypto-ct-dudect"
 LINKER_COMMAND_PATH="$OUT_DIR/dudect-linker-command.txt"
 BINARY_DISASM_PATH="$OUT_DIR/rscrypto-ct-dudect.binary.disasm.txt"
 BINARY_SYMBOLS_PATH="$OUT_DIR/rscrypto-ct-dudect.binary.symbols.txt"
-mkdir -p "$OUT_DIR"
-rm -f "$STDOUT_PATH" "$CSV_PATH" "$REPORT_PATH"
-
 BUILD_TARGET_DIR="$ROOT/target/ct-dudect-build/$TARGET/$PROFILE"
-if [[ ! -s "$LINKER_COMMAND_PATH" ]]; then
+CACHED_LINKER_COMMAND="$BUILD_TARGET_DIR/linker-command.txt"
+if [[ ! -s "$CACHED_LINKER_COMMAND" ]]; then
   rm -rf "$BUILD_TARGET_DIR"
 fi
+mkdir -p "$BUILD_TARGET_DIR"
 CARGO_ARGS=(--manifest-path "$ROOT/tools/ct-dudect/Cargo.toml" --target-dir "$BUILD_TARGET_DIR" --target "$TARGET")
 if [[ "$PROFILE" == "release" ]]; then
   CARGO_ARGS+=(--release)
@@ -140,14 +156,16 @@ if [[ "$link_command_count" -gt 1 ]]; then
   exit 1
 fi
 if [[ "$link_command_count" -eq 1 ]]; then
-  mv "$linker_log_candidate" "$LINKER_COMMAND_PATH"
+  mv "$linker_log_candidate" "$CACHED_LINKER_COMMAND"
 else
   rm -f "$linker_log_candidate"
 fi
-if [[ ! -s "$LINKER_COMMAND_PATH" ]]; then
+if [[ ! -s "$CACHED_LINKER_COMMAND" ]]; then
   echo "DudeCT linker command was not captured" >&2
   exit 1
 fi
+
+cp "$CACHED_LINKER_COMMAND" "$LINKER_COMMAND_PATH"
 
 BUILT_BINARY="$BUILD_TARGET_DIR/$TARGET/$PROFILE/rscrypto-ct-dudect"
 if [[ -f "$BUILT_BINARY.exe" ]]; then
@@ -203,50 +221,21 @@ else
   "$LLVM_NM" --defined-only --demangle "$BINARY_PATH" > "$BINARY_SYMBOLS_PATH"
 fi
 
-RUNNER_ARGS=(--out "$CSV_PATH")
-if [[ -n "$FILTER" ]]; then
-  RUNNER_ARGS+=(--filter "$FILTER")
-fi
-
-COMMAND="RSCRYPTO_CT_DUDECT_SAMPLES=$SAMPLES $BINARY_PATH ${RUNNER_ARGS[*]}"
-echo "$COMMAND"
-(
-  cd "$ROOT"
-  RSCRYPTO_CT_DUDECT_SAMPLES="$SAMPLES" "$BINARY_PATH" "${RUNNER_ARGS[@]}"
-) | tee "$STDOUT_PATH"
-
 PYTHON="$("$ROOT/scripts/lib/python.sh" --print)"
-
-"$PYTHON" "$ROOT/scripts/ct/dudect_report.py" \
-  --stdout "$STDOUT_PATH" \
-  --csv "$CSV_PATH" \
-  --out "$REPORT_PATH" \
-  --target "$TARGET" \
-  --profile "$PROFILE" \
-  --threshold "$THRESHOLD" \
-  --samples "$SAMPLES" \
-  --command "$COMMAND" \
-  --binary "$BINARY_PATH" \
-  "${BINARY_OBJECT_ARGS[@]}" \
-  --binary-disassembly "$BINARY_DISASM_PATH" \
-  --binary-symbols "$BINARY_SYMBOLS_PATH" \
+"$PYTHON" "$ROOT/scripts/ct/dudect_report.py" --prepare \
+  --out "$OUT_DIR/prepared.json" --target "$TARGET" --profile "$PROFILE" \
+  --binary "$BINARY_PATH" "${BINARY_OBJECT_ARGS[@]}" \
+  --binary-disassembly "$BINARY_DISASM_PATH" --binary-symbols "$BINARY_SYMBOLS_PATH" \
   --linker-command-log "$LINKER_COMMAND_PATH"
-
-if [[ -n "$FILTER" ]]; then
-  CASE_OUT_DIR="$OUT_DIR/cases/$FILTER"
-  mkdir -p "$CASE_OUT_DIR"
-  CASE_EVIDENCE_PATHS=(
-    "$REPORT_PATH"
-    "$CSV_PATH"
-    "$STDOUT_PATH"
-    "$BINARY_PATH"
-    "$BINARY_DISASM_PATH"
-    "$BINARY_SYMBOLS_PATH"
-    "$LINKER_COMMAND_PATH"
-  )
-  if [[ -n "$BINARY_OBJECT_PATH" ]]; then
-    CASE_EVIDENCE_PATHS+=("$BINARY_OBJECT_PATH")
-  fi
-  cp -- "${CASE_EVIDENCE_PATHS[@]}" "$CASE_OUT_DIR/"
-  echo "dudect case evidence: $CASE_OUT_DIR"
+chmod a-w "$OUT_DIR"/*
+echo "dudect prepared artifacts: $OUT_DIR"
+if [[ "$PREPARE_ONLY" == 1 ]]; then
+  exit 0
 fi
+sample_args=()
+if [[ -n "$SAMPLES" ]]; then sample_args+=(--samples "$SAMPLES"); fi
+if [[ "$SMOKE" == 1 ]]; then sample_args+=(--smoke); fi
+"$PYTHON" "$ROOT/scripts/ct/dudect_execute.py" \
+  --prepared "$OUT_DIR/prepared.json" --evidence-dir "$RUN_DIR/selection" \
+  "${sample_args[@]:+${sample_args[@]}}" --threshold "$THRESHOLD" --filter "$FILTER" \
+  --latest "$DUDECT_DIR/dudect-report.json"

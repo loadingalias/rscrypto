@@ -1,14 +1,20 @@
 //! SHA-3 family comparison benchmarks: rscrypto vs sha3 crate.
 
+#[path = "common/criterion.rs"]
+mod bench_config;
+
 mod common;
 
 use core::hint::black_box;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion};
 
 macro_rules! sha3_oneshot {
   ($fn_name:ident, $group:literal, $ours:ty, $theirs:ty) => {
     fn $fn_name(c: &mut Criterion) {
+      if !bench_config::selected($group) {
+        return;
+      }
       let inputs = common::comp_sizes();
       let mut g = c.benchmark_group($group);
 
@@ -39,6 +45,9 @@ sha3_oneshot!(sha3_384, "sha3-384", rscrypto::Sha3_384, sha3::Sha3_384);
 sha3_oneshot!(sha3_512, "sha3-512", rscrypto::Sha3_512, sha3::Sha3_512);
 
 fn sha3_256_streaming(c: &mut Criterion) {
+  if !bench_config::selected("sha3-256/streaming") {
+    return;
+  }
   let data = common::random_bytes(1048576);
   let mut g = c.benchmark_group("sha3-256/streaming");
   g.throughput(criterion::Throughput::Bytes(data.len() as u64));
@@ -71,6 +80,9 @@ fn sha3_256_streaming(c: &mut Criterion) {
 }
 
 fn shake128(c: &mut Criterion) {
+  if !bench_config::selected("shake128") {
+    return;
+  }
   let inputs = common::comp_sizes();
   let mut g = c.benchmark_group("shake128");
 
@@ -105,6 +117,9 @@ fn shake128(c: &mut Criterion) {
 }
 
 fn shake256(c: &mut Criterion) {
+  if !bench_config::selected("shake256") {
+    return;
+  }
   let inputs = common::comp_sizes();
   let mut g = c.benchmark_group("shake256");
 
@@ -139,6 +154,9 @@ fn shake256(c: &mut Criterion) {
 }
 
 fn sha3_256_digest_pair(c: &mut Criterion) {
+  if !bench_config::selected("sha3-256/digest_pair") {
+    return;
+  }
   let inputs = common::comp_sizes();
   let mut g = c.benchmark_group("sha3-256/digest_pair");
 
@@ -163,15 +181,15 @@ fn sha3_256_digest_pair(c: &mut Criterion) {
   g.finish();
 }
 
-criterion_group!(
-  benches,
-  sha3_224,
-  sha3_256,
-  sha3_384,
-  sha3_512,
-  sha3_256_streaming,
-  shake128,
-  shake256,
-  sha3_256_digest_pair
-);
-criterion_main!(benches);
+fn main() {
+  bench_config::run(&[
+    sha3_224,
+    sha3_256,
+    sha3_384,
+    sha3_512,
+    sha3_256_streaming,
+    shake128,
+    shake256,
+    sha3_256_digest_pair,
+  ]);
+}

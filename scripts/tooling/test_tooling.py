@@ -122,6 +122,8 @@ dep="1"
                 manifests.append(path)
             (root / 'target').mkdir()
             (root / 'target/Cargo.toml').write_text('generated')
+            (root / 'tools/lockless/vendor/dependency').mkdir(parents=True)
+            (root / 'tools/lockless/vendor/dependency/Cargo.toml').write_text('upstream')
             with patch.object(update, 'ROOT', root):
                 self.assertEqual(set(update.manifest_paths()), set(manifests))
                 self.assertEqual(set(update.cargo_roots(manifests)), set(manifests))

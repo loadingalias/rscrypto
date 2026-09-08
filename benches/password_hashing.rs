@@ -1,12 +1,15 @@
 //! Argon2 / scrypt password-hashing benchmarks.
 //!
 //! Differential against the `argon2` and `scrypt` (RustCrypto) crates.
-//! Organised by cost-parameter classes so fast groups can run during normal
-//! development while the OWASP-scale group remains an explicit perf run.
+//! All parameter classes use the shared Criterion configuration and remain
+//! included in their algorithm selectors.
 
-use core::{hint::black_box, time::Duration};
+#[path = "common/criterion.rs"]
+mod bench_config;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use core::hint::black_box;
+
+use criterion::{BenchmarkId, Criterion};
 use dryoc::{
   classic::crypto_pwhash::{PasswordHashAlgorithm, crypto_pwhash},
   constants::{CRYPTO_PWHASH_ARGON2I_OPSLIMIT_MIN, CRYPTO_PWHASH_ARGON2ID_OPSLIMIT_MIN},
@@ -20,6 +23,7 @@ type ArgonHashFn = fn(&Argon2Params, &[u8], &[u8], &mut [u8]) -> Result<(), Argo
 
 const PASSWORD: &[u8] = b"correct horse battery staple";
 const SALT: &[u8] = b"rscrypto-bench-salt-16bytes!";
+const ARGON2_SALT: &[u8; 16] = b"rscrypto-bench-s";
 
 /// Build rscrypto params.
 fn rs_params(m_kib: u32, t: u32, p: u32, _out_len: u32) -> Argon2Params {
@@ -58,8 +62,10 @@ fn bench_small_variant(
   oracle_algo: argon2::Algorithm,
   dryoc_algo: Option<PasswordHashAlgorithm>,
 ) {
-  let mut g = c.benchmark_group(group_name);
-  g.sample_size(30);
+  if !bench_config::selected(group_name) {
+    return;
+  }
+  let mut g = c.benchmark_group(format!("{group_name}/salt16-raw32"));
 
   for &(m, t, p) in SMALL_MATRIX {
     let out_len = 32usize;
@@ -71,6 +77,13 @@ fn bench_small_variant(
       u32::try_from(out_len).expect("benchmark output length must fit u32"),
     );
     let oracle = oracle_ctx(oracle_algo, m, t, p, out_len);
+    let mut expected = [0u8; 32];
+    rs_hash(&rs_params, PASSWORD, ARGON2_SALT, &mut expected).expect("Argon2 fixture");
+    let mut actual = [0u8; 32];
+    oracle
+      .hash_password_into(PASSWORD, ARGON2_SALT, &mut actual)
+      .expect("RustCrypto Argon2 fixture");
+    assert_eq!(actual, expected, "RustCrypto Argon2 comparison: {param_id}");
 
     g.bench_with_input(BenchmarkId::new("rscrypto", &param_id), &rs_params, |b, params| {
       let mut out = [0u8; 32];
@@ -78,7 +91,7 @@ fn bench_small_variant(
         rs_hash(
           black_box(params),
           black_box(PASSWORD),
-          black_box(SALT),
+          black_box(ARGON2_SALT),
           black_box(&mut out),
         )
         .expect("supported password-hashing benchmark parameters must succeed")
@@ -89,7 +102,7 @@ fn bench_small_variant(
       let mut out = [0u8; 32];
       b.iter(|| {
         ctx
-          .hash_password_into(black_box(PASSWORD), black_box(SALT), black_box(&mut out))
+          .hash_password_into(black_box(PASSWORD), black_box(ARGON2_SALT), black_box(&mut out))
           .expect("supported password-hashing benchmark parameters must succeed");
       });
     });
@@ -98,13 +111,23 @@ fn bench_small_variant(
       let memlimit_bytes = usize::try_from(m)
         .expect("benchmark memory cost must fit usize")
         .strict_mul(1024);
+      crypto_pwhash(
+        &mut actual,
+        PASSWORD,
+        ARGON2_SALT,
+        u64::from(t),
+        memlimit_bytes,
+        algorithm,
+      )
+      .expect("dryoc Argon2 fixture");
+      assert_eq!(actual, expected, "dryoc Argon2 comparison: {param_id}");
       g.bench_with_input(BenchmarkId::new("dryoc", &param_id), &algorithm, |b, algorithm| {
         let mut out = [0u8; 32];
         b.iter(|| {
           crypto_pwhash(
             black_box(&mut out),
             black_box(PASSWORD),
-            black_box(&SALT[..16]),
+            black_box(ARGON2_SALT),
             u64::from(t),
             memlimit_bytes,
             *algorithm,
@@ -143,12 +166,12 @@ fn argon2id_small(c: &mut Criterion) {
 }
 
 /// OWASP 2024 recommended password-hashing parameters (m=19 MiB, t=2, p=1).
-/// These are slow — Criterion runs a reduced sample size so the group
-/// completes in reasonable time for real perf measurement.
+/// Uses the same Criterion settings as every other workload.
 fn argon2id_owasp(c: &mut Criterion) {
-  let mut g = c.benchmark_group("argon2id-owasp");
-  g.sample_size(10);
-  g.measurement_time(Duration::from_secs(30));
+  if !bench_config::selected("argon2id-owasp/salt16-raw32") {
+    return;
+  }
+  let mut g = c.benchmark_group("argon2id-owasp/salt16-raw32");
 
   let out_len = 32usize;
 
@@ -160,6 +183,13 @@ fn argon2id_owasp(c: &mut Criterion) {
     u32::try_from(out_len).expect("benchmark output length must fit u32"),
   );
   let oracle = oracle_ctx(argon2::Algorithm::Argon2id, 19 * 1024, 2, 1, out_len);
+  let mut expected = [0u8; 32];
+  Argon2id::derive(&rs_params, PASSWORD, ARGON2_SALT, &mut expected).expect("Argon2 OWASP fixture");
+  let mut actual = [0u8; 32];
+  oracle
+    .hash_password_into(PASSWORD, ARGON2_SALT, &mut actual)
+    .expect("RustCrypto Argon2 OWASP fixture");
+  assert_eq!(actual, expected, "RustCrypto Argon2 OWASP comparison");
 
   g.bench_function(BenchmarkId::new("rscrypto", "m=19MiB_t=2_p=1"), |b| {
     let mut out = [0u8; 32];
@@ -167,7 +197,7 @@ fn argon2id_owasp(c: &mut Criterion) {
       Argon2id::derive(
         black_box(&rs_params),
         black_box(PASSWORD),
-        black_box(SALT),
+        black_box(ARGON2_SALT),
         black_box(&mut out),
       )
       .expect("supported password-hashing benchmark parameters must succeed")
@@ -178,20 +208,30 @@ fn argon2id_owasp(c: &mut Criterion) {
     let mut out = [0u8; 32];
     b.iter(|| {
       oracle
-        .hash_password_into(black_box(PASSWORD), black_box(SALT), black_box(&mut out))
+        .hash_password_into(black_box(PASSWORD), black_box(ARGON2_SALT), black_box(&mut out))
         .expect("supported password-hashing benchmark parameters must succeed");
     });
   });
 
   // dryoc / libsodium-classic Argon2id at OWASP parameters (memlimit in bytes).
   let dryoc_memlimit = 19usize.strict_mul(1024).strict_mul(1024);
+  crypto_pwhash(
+    &mut actual,
+    PASSWORD,
+    ARGON2_SALT,
+    2,
+    dryoc_memlimit,
+    PasswordHashAlgorithm::Argon2id13,
+  )
+  .expect("dryoc Argon2 OWASP fixture");
+  assert_eq!(actual, expected, "dryoc Argon2 OWASP comparison");
   g.bench_function(BenchmarkId::new("dryoc", "m=19MiB_t=2_p=1"), |b| {
     let mut out = [0u8; 32];
     b.iter(|| {
       crypto_pwhash(
         black_box(&mut out),
         black_box(PASSWORD),
-        black_box(&SALT[..16]),
+        black_box(ARGON2_SALT),
         2u64,
         dryoc_memlimit,
         PasswordHashAlgorithm::Argon2id13,
@@ -217,8 +257,10 @@ fn oracle_scrypt_params(log_n: u8, r: u32, p: u32, _out_len: usize) -> scrypt::P
 const SCRYPT_SMALL_MATRIX: &[(u8, u32, u32)] = &[(10, 8, 1), (12, 8, 1), (14, 8, 1), (10, 8, 4)];
 
 fn scrypt_small(c: &mut Criterion) {
+  if !bench_config::selected("scrypt-small") {
+    return;
+  }
   let mut g = c.benchmark_group("scrypt-small");
-  g.sample_size(15);
 
   for &(log_n, r, p) in SCRYPT_SMALL_MATRIX {
     let out_len = 32usize;
@@ -255,12 +297,12 @@ fn scrypt_small(c: &mut Criterion) {
   g.finish();
 }
 
-/// OWASP 2024 scrypt shape (log_n = 17 → N = 131072). Long-running — uses
-/// the same reduced sample size as `argon2id-owasp`.
+/// OWASP 2024 scrypt shape (log_n = 17 → N = 131072), using the shared settings.
 fn scrypt_owasp(c: &mut Criterion) {
+  if !bench_config::selected("scrypt-owasp") {
+    return;
+  }
   let mut g = c.benchmark_group("scrypt-owasp");
-  g.sample_size(10);
-  g.measurement_time(Duration::from_secs(30));
 
   let out_len = 32usize;
   let rs = rs_scrypt_params(
@@ -295,10 +337,11 @@ fn scrypt_owasp(c: &mut Criterion) {
   g.finish();
 }
 
-#[cfg(feature = "phc-strings")]
 fn scrypt_phc_roundtrip(c: &mut Criterion) {
+  if !bench_config::selected("scrypt-phc-roundtrip") {
+    return;
+  }
   let mut g = c.benchmark_group("scrypt-phc-roundtrip");
-  g.sample_size(20);
 
   let params = rs_scrypt_params(10, 8, 1, 32);
   let password = ScryptPassword::new(params).expect("supported password-hashing benchmark parameters must succeed");
@@ -324,15 +367,11 @@ fn scrypt_phc_roundtrip(c: &mut Criterion) {
   g.finish();
 }
 
-#[cfg(not(feature = "phc-strings"))]
-fn scrypt_phc_roundtrip(_c: &mut Criterion) {
-  // Stub when the PHC feature is disabled.
-}
-
-#[cfg(feature = "phc-strings")]
 fn argon2id_phc_roundtrip(c: &mut Criterion) {
+  if !bench_config::selected("argon2id-phc-roundtrip") {
+    return;
+  }
   let mut g = c.benchmark_group("argon2id-phc-roundtrip");
-  g.sample_size(30);
 
   let params = rs_params(32, 2, 1, 32);
   let password = Argon2idPassword::new(params).expect("supported password-hashing benchmark parameters must succeed");
@@ -358,20 +397,16 @@ fn argon2id_phc_roundtrip(c: &mut Criterion) {
   g.finish();
 }
 
-#[cfg(not(feature = "phc-strings"))]
-fn argon2id_phc_roundtrip(_c: &mut Criterion) {
-  // Stub when the PHC feature is disabled.
-}
-
 /// Bounded lane-parallel scaling curve. With `parallel` enabled,
 /// `p > 1` uses the `rayon::scope` slice driver; `p == 1` skips Rayon.
 /// Every row holds total memory and time cost constant while varying the
 /// lane count.
 #[cfg(feature = "parallel")]
 fn argon2id_parallel_scaling(c: &mut Criterion) {
-  let mut g = c.benchmark_group("argon2id-parallel");
-  g.sample_size(15);
-  g.measurement_time(Duration::from_secs(15));
+  if !bench_config::selected("argon2id-parallel/salt16-raw32") {
+    return;
+  }
+  let mut g = c.benchmark_group("argon2id-parallel/salt16-raw32");
 
   let m_kib = 4 * 1024; // 4 MiB; per-iteration time stays in the low-ms range at every `p`.
   let t = 2u32;
@@ -392,7 +427,7 @@ fn argon2id_parallel_scaling(c: &mut Criterion) {
         Argon2id::derive(
           black_box(params),
           black_box(PASSWORD),
-          black_box(SALT),
+          black_box(ARGON2_SALT),
           black_box(&mut out),
         )
         .expect("supported password-hashing benchmark parameters must succeed");
@@ -407,9 +442,10 @@ fn argon2id_parallel_scaling(c: &mut Criterion) {
 /// window match [`argon2id_owasp`] so the raw rows are comparable.
 #[cfg(feature = "parallel")]
 fn argon2id_parallel_owasp(c: &mut Criterion) {
-  let mut g = c.benchmark_group("argon2id-parallel-owasp");
-  g.sample_size(10);
-  g.measurement_time(Duration::from_secs(30));
+  if !bench_config::selected("argon2id-parallel-owasp/salt16-raw32") {
+    return;
+  }
+  let mut g = c.benchmark_group("argon2id-parallel-owasp/salt16-raw32");
 
   let m_kib = 19 * 1024; // OWASP 2024 recommended memory cost.
   let t = 2u32;
@@ -430,7 +466,7 @@ fn argon2id_parallel_owasp(c: &mut Criterion) {
         Argon2id::derive(
           black_box(params),
           black_box(PASSWORD),
-          black_box(SALT),
+          black_box(ARGON2_SALT),
           black_box(&mut out),
         )
         .expect("supported password-hashing benchmark parameters must succeed");
@@ -441,27 +477,19 @@ fn argon2id_parallel_owasp(c: &mut Criterion) {
   g.finish();
 }
 
-#[cfg(not(feature = "parallel"))]
-fn argon2id_parallel_scaling(_c: &mut Criterion) {
-  // Stub when the parallel feature is disabled.
+fn main() {
+  bench_config::run(&[
+    argon2d_small,
+    argon2i_small,
+    argon2id_small,
+    argon2id_phc_roundtrip,
+    #[cfg(feature = "parallel")]
+    argon2id_parallel_scaling,
+    scrypt_small,
+    scrypt_phc_roundtrip,
+    argon2id_owasp,
+    #[cfg(feature = "parallel")]
+    argon2id_parallel_owasp,
+    scrypt_owasp,
+  ]);
 }
-
-#[cfg(not(feature = "parallel"))]
-fn argon2id_parallel_owasp(_c: &mut Criterion) {
-  // Stub when the parallel feature is disabled.
-}
-
-criterion_group!(
-  benches,
-  argon2d_small,
-  argon2i_small,
-  argon2id_small,
-  argon2id_phc_roundtrip,
-  argon2id_parallel_scaling,
-  scrypt_small,
-  scrypt_phc_roundtrip,
-  argon2id_owasp,
-  argon2id_parallel_owasp,
-  scrypt_owasp,
-);
-criterion_main!(benches);

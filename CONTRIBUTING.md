@@ -60,11 +60,95 @@ just check
 just test
 ```
 
+`just check` repairs sources before validation. It covers the host and every
+entry in `.config/target-matrix.json`; missing target libraries or Clippy
+components fail before repairs start. The repair pass applies rustfmt and Clippy
+suggestions, including in a dirty or staged worktree. Review the resulting diff.
+`just ci-check` validates only the native host without source fixes, using
+host-filtered dependency policy. Neither command uses affected-work selection.
+
+Every target receives release/native and debug/portable Clippy passes. The host
+checks all Cargo targets; cross checks compile the library without foreign test
+or benchmark C dependencies. Bare-metal and browser WASM use `full` plus
+applicable serialization features without std, threads, or OS
+entropy. WASI adds std and entropy, without threads. POWER, IBM Z, and RISC-V
+use the repository-pinned nightly; other targets use the development toolchain.
+Validation also checks independent workspaces, dependencies, and docs.
+
+`just test` enables every crate feature except `portable-only`, so runtime
+capability detection selects native backends where supported. Use
+`just test --portable` to test forced portable dispatch. Both modes print their
+dispatch profile; `--all` widens test scope independently of that choice.
+ChaCha20 differential tests report accelerated backend and kernel execution
+counts, including an explicit message when no accelerated backend ran.
+
+Use the same command for a focused loop:
+
+```bash
+just test --test aead_kernel_equivalence
+just test --test aead_kernel_equivalence chacha20
+just test -- --lib -- --exact checksum::crc16::tests::test_vectors_crc16_ccitt_x25 --nocapture
+```
+
+`just test` uses the pinned Nextest runner; it requires `cargo-nextest` and has
+no Cargo-test fallback. Put repository options (`--all`, `--native`, `--portable`)
+first. The first runner argument, or an explicit `--`, starts verbatim forwarding
+to `cargo nextest run`. For example:
+
+```bash
+just test --portable -- --release --lib
+just test -- --no-run
+just test -- --lib -- --skip slow_test
+```
+
+The wrapper consumes the first `--`; a second one reaches Nextest for its
+libtest-compatible arguments such as `--skip` and `--exact`. `--test` selects an
+integration binary, `--lib` selects library tests, and a name filters tests.
+Runner arguments select explicit work regardless of affected scope and skip
+doctests. Runs without runner arguments retain the separate Cargo doctest step.
+`RSCRYPTO_TEST_THREADS` sets `NEXTEST_TEST_THREADS`; Nextest's explicit
+`--test-threads` option takes precedence.
+
+Run `just test-coverage` when you need source coverage. It runs the complete
+native and portable test suites plus committed corpus replay in the full and
+scoped fuzz workspaces, then writes `coverage/total.lcov`, `coverage/SUMMARY.txt`,
+and browsable `coverage/html/index.html`. Use it instead of a separate `just test`
+step in a coverage job; reporting does not rerun tests. Ordinary uninstrumented
+test results cannot retroactively produce coverage. The merged profile and
+executable list remain in `coverage/` for report diagnosis.
+
+Corpus replay defaults to the paths in `fuzz/committed-seeds.txt`, using their
+working-tree contents. Unlisted files, including local fuzz discoveries, are
+excluded. To include all local corpus files, run
+`RSCRYPTO_FUZZ_CORPUS=local just test-coverage` or
+`RSCRYPTO_FUZZ_CORPUS=local just test-fuzz-asan --all`. The same variable applies
+to direct Cargo replay tests; `committed` explicitly selects the default.
+Replay never deletes discoveries. Promote a minimized regression by adding its
+seed file and repository-relative path to `fuzz/committed-seeds.txt` (sorted,
+one path per line). `just test-scripts` checks that this inventory matches the
+tracked corpus files; stage new seed files before running that check.
+
+Coverage uses the development toolchain, cargo-nextest, cargo-llvm-cov, and the
+`llvm-tools-preview` rustup component. It measures Rust source under `src/` on
+the host, including inline tests, with the existing test profile. Doctest
+coverage is deferred until supported without nightly. Live fuzzing, sanitizers,
+Miri, timing checks, release-only paths, and other target architectures remain
+separate evidence; corpus replay reuses the fuzz implementations without
+launching nightly libFuzzer. Reporting validates LLVM function mappings before
+publishing; a failed run does not publish a report.
+
+Run `just test-scripts` after changing command selection or script orchestration.
+It uses substitute executors without running cryptographic workloads.
+
+Run `just test-harnesses` for DudeCT balancing and raw-exporter self-tests without
+timing cases. `just ct-test` includes those tests plus CT tooling regressions.
+
 For broad or compatibility-sensitive changes, run:
 
 ```bash
-just check-all
+just check
 just test --all
+just test --all --portable
 ```
 
 Add the risk-specific evidence reached by the change:

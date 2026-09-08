@@ -1,222 +1,246 @@
+set positional-arguments
+
+[default]
+[private]
+_default:
+    @just --list
+
 # Remote dev. Provider mechanics live in ~/dev-machines.
 
-dev_machine := env_var_or_default("DEV_MACHINE_BIN", env_var("HOME") + "/dev-machines/dev-machine")
+export DEV_MACHINE_EXECUTOR := env_var_or_default("DEV_MACHINE_BIN", env_var("HOME") + "/dev-machines/dev-machine")
 
 # Run a command on a repository development machine.
-ssh target *args="":
-    @"{{ dev_machine }}" ssh rscrypto "{{ target }}" {{ args }}
+[group('remote')]
+ssh target *args:
+    @"$DEV_MACHINE_EXECUTOR" ssh rscrypto "$@"
 
 # Verify the synchronized remote repository state without opening a shell.
+[group('remote')]
 ssh-check target:
-    @"{{ dev_machine }}" ssh rscrypto "{{ target }}" --check
+    @"$DEV_MACHINE_EXECUTOR" ssh rscrypto "$1" --check
 
 # Run a targeted Cargo command on a repository development machine.
-ssh-cargo target *args="":
-    @"{{ dev_machine }}" just rscrypto "{{ target }}" _remote-cargo {{ args }}
+[group('remote')]
+ssh-cargo target *args:
+    @target="$1"; shift; "$DEV_MACHINE_EXECUTOR" just rscrypto "$target" _remote-cargo "$@"
 
 [private]
-_remote-cargo *args="":
-    cargo {{ args }}
+_remote-cargo *args:
+    scripts/lib/toolchain.sh --exec cargo "$@"
 
 [private]
 _remote-install-llvm-tools:
     rustup component add llvm-tools-preview
 
 # Verify that a development machine is ready for repository work.
+[group('remote')]
 ssh-preflight target:
-    @"{{ dev_machine }}" preflight rscrypto "{{ target }}"
+    @"$DEV_MACHINE_EXECUTOR" preflight rscrypto "$1"
 
 # Create a repository development machine.
-ssh-create target *args="":
-    @"{{ dev_machine }}" create rscrypto "{{ target }}" {{ args }}
+[group('remote')]
+ssh-create target *args:
+    @"$DEV_MACHINE_EXECUTOR" create rscrypto "$@"
 
 # Start a repository development machine.
+[group('remote')]
 ssh-start target:
-    @"{{ dev_machine }}" start rscrypto "{{ target }}"
+    @"$DEV_MACHINE_EXECUTOR" start rscrypto "$1"
 
 # Deallocate a repository development machine while preserving it.
+[group('remote')]
 ssh-deallocate target:
-    @"{{ dev_machine }}" deallocate rscrypto "{{ target }}"
+    @"$DEV_MACHINE_EXECUTOR" deallocate rscrypto "$1"
 
 # Permanently destroy a repository development machine.
+[group('remote')]
 ssh-kill target:
-    @"{{ dev_machine }}" kill rscrypto "{{ target }}"
+    @"$DEV_MACHINE_EXECUTOR" kill rscrypto "$1"
 
 # Show one or all repository development machines.
+[group('remote')]
 ssh-status target="":
-    @if [ -n "{{ target }}" ]; then "{{ dev_machine }}" status rscrypto "{{ target }}"; else "{{ dev_machine }}" status rscrypto; fi
+    @if [ -n "$1" ]; then "$DEV_MACHINE_EXECUTOR" status rscrypto "$1"; else "$DEV_MACHINE_EXECUTOR" status rscrypto; fi
 
 # Bootstrap a repository development machine.
+[group('remote')]
 ssh-bootstrap target profile="":
-    @if [ -n "{{ profile }}" ]; then "{{ dev_machine }}" bootstrap rscrypto "{{ target }}" "{{ profile }}"; else "{{ dev_machine }}" bootstrap rscrypto "{{ target }}"; fi
+    @if [ -n "$2" ]; then "$DEV_MACHINE_EXECUTOR" bootstrap rscrypto "$1" "$2"; else "$DEV_MACHINE_EXECUTOR" bootstrap rscrypto "$1"; fi
 
 # Run a Just recipe on a repository development machine.
-ssh-just target *args="":
-    @"{{ dev_machine }}" just rscrypto "{{ target }}" {{ args }}
+[group('remote')]
+ssh-just target *args:
+    @"$DEV_MACHINE_EXECUTOR" just rscrypto "$@"
 
 # Collect a benchmark run from a repository development machine.
+[group('remote')]
 ssh-collect-bench target run_id destination:
-    @"{{ dev_machine }}" collect-results rscrypto "{{ target }}" criterion "{{ run_id }}" "{{ destination }}"
+    @"$DEV_MACHINE_EXECUTOR" just rscrypto "$1" bench-export "benchmark_results/criterion/$2"
+    @"$DEV_MACHINE_EXECUTOR" collect-results rscrypto "$1" criterion "$2" "$3"
 
 # List repository development machines.
+[group('remote')]
 ssh-list:
-    @"{{ dev_machine }}" list rscrypto
+    @"$DEV_MACHINE_EXECUTOR" list rscrypto
 
 # Preview, install, and verify the canonical remapped Cargo Rail cache policy.
-rail-cache-setup *args="":
-    @status=0; cargo rail cache setup --check --remote "$CARGO_RAIL_CACHE_REMOTE" --remote-mode "$CARGO_RAIL_CACHE_MODE" --root-portability remap {{ args }} || status=$?; [ "$status" -le 1 ] || exit "$status"
-    @cargo rail cache setup --remote "$CARGO_RAIL_CACHE_REMOTE" --remote-mode "$CARGO_RAIL_CACHE_MODE" --root-portability remap {{ args }}
+[group('tooling')]
+rail-cache-setup *args:
+    @status=0; cargo rail cache setup --check --remote "$CARGO_RAIL_CACHE_REMOTE" --remote-mode "$CARGO_RAIL_CACHE_MODE" --root-portability remap "$@" || status=$?; [ "$status" -le 1 ] || exit "$status"
+    @cargo rail cache setup --remote "$CARGO_RAIL_CACHE_REMOTE" --remote-mode "$CARGO_RAIL_CACHE_MODE" --root-portability remap "$@"
     @cargo rail cache probe --json
 
 # Report the effective Cargo Rail cache policy and usage.
+[group('tooling')]
 cache-status:
     @cargo rail cache status --scope local --format json
 
 # Builds
 # Build every workspace target with every feature; accepts Cargo build arguments.
-build *args="":
-    cargo build --locked --workspace --all-targets --all-features {{ args }}
+build *args:
+    scripts/lib/toolchain.sh --exec cargo build --locked --workspace --all-targets --all-features "$@"
 
 # Checks
 # Explain the affected Cargo Rail work; accepts planner arguments.
-plan *args="":
-    @cargo rail plan --explain {{ args }}
+plan *args:
+    @cargo rail plan --explain "$@"
 
-# Run affected policy and Cargo checks from one plan; pass --all to widen.
-check *args="":
-    @scripts/check/affected.sh {{ args }}
+# Repair, then validate the host and the explicit supported target catalog.
+check:
+    @scripts/check/check.sh check
 
-# Run affected policy, checks, and tests from one immutable plan.
-validate *args="":
-    @scripts/check/affected.sh --with-tests {{ args }}
-
-# Run the broad local check set.
-check-all:
-    @scripts/check/check-all.sh
-
-# Check the public library contract with the Cargo.toml minimum Rust version.
-msrv:
-    @scripts/check/msrv.sh
-
-# Compile and test feature contracts; optionally select a domain and shard.
-feature-contracts *args="":
-    @scripts/check/feature-contracts.sh {{ args }}
-
-# Rebuild and verify optimized zeroization evidence, optionally for one primitive.
-check-zeroize-evidence *args="":
-    @scripts/check/zeroize-evidence.sh {{ args }}
+# Validate the native host without source fixes or cross-target prerequisites.
+ci-check:
+    @scripts/check/check.sh native
 
 # Tests
-# Test the affected scope or the full workspace with --all.
-test *args="":
-    @scripts/test/test.sh {{ args }}
+# Run Nextest with repository scope/dispatch options, then -- NEXTEST_ARGS.
+test *args:
+    @scripts/test/test.sh "$@"
+
+# Test script selection and failure handling without running cryptographic workloads.
+[group('tooling')]
+test-scripts:
+    @scripts/lib/python.sh scripts/test/test_runner_test.py
+    @scripts/lib/python.sh scripts/test/just_arguments_test.py
+    @scripts/lib/python.sh scripts/tooling/toolchain_test.py
+    @scripts/lib/python.sh scripts/test/fuzz_features_test.py
+    @scripts/lib/python.sh scripts/check/check_runner_test.py
+    @scripts/lib/python.sh scripts/test/fuzz_runner_test.py
+
+# Run CT harness and exporter self-tests without timing cases.
+[group('constant-time')]
+test-harnesses:
+    scripts/lib/toolchain.sh --exec cargo test --locked --manifest-path tools/ct-dudect/Cargo.toml -p rscrypto-ct-dudect -p dudect-bencher --lib --bins
 
 # Execute every runnable example with its minimum feature set.
+[group('tests')]
 test-examples:
     @scripts/test/test-examples.sh
 
 # Test portable unsafe paths under Miri.
-test-miri *args="":
-    @scripts/test/test-miri.sh {{ args }}
-
-# Reproduce one Cargo Rail Miri proof row.
-miri-contract row:
-    @scripts/test/miri-contracts.sh run "{{ row }}"
+[group('tests')]
+test-miri *args:
+    @scripts/test/test-miri.sh "$@"
 
 # Run the RSA leakage evidence harness.
+[group('tests')]
 test-rsa-leakage:
     @scripts/test/test-rsa-leakage.sh
 
 # Test Apple Silicon RSA assembly on a physical supported host.
+[group('tests')]
 test-rsa-macos-asm:
-    @scripts/test/test-rsa-macos-asm.sh
+    @scripts/test/test-rsa-asm.sh macos
 
 # Test x86-64 RSA assembly on a physical Linux host.
+[group('tests')]
 test-rsa-linux-asm:
-    @scripts/test/test-rsa-linux-asm.sh
+    @scripts/test/test-rsa-asm.sh linux
 
-# Run fuzz targets or replay the full fuzz set with --all.
-test-fuzz *args="":
-    @scripts/test/test-fuzz.sh {{ args }}
-
-# Reproduce one Cargo Rail fuzz target group.
-fuzz-contract row:
-    @scripts/test/fuzz-contracts.sh run "{{ row }}"
+# Run live fuzzing; --all includes the full and scoped fuzz packages.
+[group('tests')]
+test-fuzz *args:
+    @scripts/test/test-fuzz.sh "$@"
 
 # Run fuzz targets with AddressSanitizer.
-test-fuzz-asan *args="":
-    @scripts/test/test-fuzz-asan.sh {{ args }}
+[group('tests')]
+test-fuzz-asan *args:
+    @scripts/test/test-fuzz-asan.sh "$@"
 
 # Constant-Time (CT) Validation Engine
-# Build and validate the bounded x86-64 CT structure gate.
-ct-structural:
-    @scripts/ct/structural.sh
+# Test CT report validation, orchestration, harness, and raw timing exporter.
+[group('constant-time')]
+ct-test:
+    @scripts/ct/test.sh
 
 # Run DudeCT Timing Checks
-ct-dudect *args="":
-    @scripts/ct/dudect.sh {{ args }}
+[group('constant-time')]
+ct-dudect *args:
+    @scripts/ct/dudect.sh "$@"
 
 # Build CT Artifacts; Run Timing Evidence; Emit CT Reports
-ct-full *args="":
-    @scripts/lib/python.sh scripts/ct/full.py {{ args }}
+[group('constant-time')]
+ct-full *args:
+    @scripts/lib/python.sh scripts/ct/full.py "$@"
 
 # Run BINSEC; Manifest-Declared Binary CT Kernels
-ct-binsec *args="":
-    @scripts/lib/python.sh scripts/ct/binsec.py {{ args }}
+[group('constant-time')]
+ct-binsec *args:
+    @scripts/lib/python.sh scripts/ct/binsec.py "$@"
 
 # Build CT Harness Artifacts
-ct-artifacts *args="":
-    @scripts/ct/artifacts.sh {{ args }}
+[group('constant-time')]
+ct-artifacts *args:
+    @scripts/ct/artifacts.sh "$@"
 
 # Validate CT Manifest & Generated Artifacts
-ct-validate *args="":
-    @scripts/lib/python.sh scripts/ct/validate.py {{ args }}
+[group('constant-time')]
+ct-validate *args:
+    @scripts/lib/python.sh scripts/ct/validate.py "$@"
 
 # Coverage
 
-# Generate total coverage, or select --nextest or --fuzz.
-test-coverage *args="":
-    @scripts/test/test-coverage.sh {{ args }}
+# Run native/portable tests and corpus replay, then report combined source coverage.
+[group('tests')]
+test-coverage:
+    @scripts/lib/python.sh scripts/test/test-coverage.py
 
 # Benches
-# Results land in benchmark_results/<YYYY-MM-DD>/<os>/<arch>/results.txt
 
-# Run Criterion benchmarks selected by name or key-value arguments.
-bench *args="":
-    @scripts/bench/bench.sh {{ args }}
+# Measure Criterion cases, or discover them with --list; --diag enables diagnostics.
+[group('benchmarks')]
+bench *args:
+    @scripts/lib/python.sh scripts/bench/bounded.py scripts/lib/python.sh scripts/bench/runner.py bench "$@"
 
 # Stable instruction/cache-cost benchmarks. Requires gungraun-runner and Valgrind.
+[group('benchmarks')]
 bench-structural:
     @command -v gungraun-runner >/dev/null || { echo "error: gungraun-runner is required" >&2; exit 1; }
     @command -v valgrind >/dev/null || { echo "error: Valgrind is required" >&2; exit 1; }
-    cargo bench --locked --profile bench --features 'checksums,sha2,blake3' --bench structural
+    scripts/lib/toolchain.sh --exec cargo bench --locked --profile bench --features 'checksums,sha2,blake3' --bench structural
 
-# Record one Criterion profiling window with samply.
-profile bench filter="" seconds="10":
-    @scripts/bench/profile.sh "{{ bench }}" "{{ filter }}" "{{ seconds }}"
+# Record one exact case, or discover cases with --list; --diag enables diagnostics.
+[group('benchmarks')]
+profile *args:
+    @scripts/lib/python.sh scripts/bench/bounded.py scripts/lib/python.sh scripts/bench/runner.py profile "$@"
 
-# Inspect optimized MIR, LLVM IR, assembly, WASM, or llvm-mca output.
-perf-codegen *args="":
-    @command -v cargo-asm >/dev/null || { echo "error: cargo-show-asm is required" >&2; exit 1; }
-    cargo asm --locked --lib --features full {{ args }}
+# Inspect optimized code for an explicit benchmark target configuration.
+[group('benchmarks')]
+perf-codegen target *args:
+    @scripts/lib/python.sh scripts/bench/runner.py codegen "$@"
 
-# Attribute generic instantiation and LLVM IR volume.
-perf-llvm-lines *args="":
-    @command -v cargo-llvm-lines >/dev/null || { echo "error: cargo-llvm-lines is required" >&2; exit 1; }
-    cargo llvm-lines --locked --release --lib --features full {{ args }}
+# Attribute LLVM IR for an explicit benchmark target configuration.
+[group('benchmarks')]
+perf-llvm-lines target *args:
+    @scripts/lib/python.sh scripts/bench/runner.py llvm-lines "$@"
+
+# Export a completed or failed benchmark run for collection.
+[group('benchmarks')]
+bench-export run:
+    @scripts/lib/python.sh scripts/bench/runner.py export "$@"
 
 # Update tool pins, stable Rust, and every Cargo manifest.
-update *args="":
-    @scripts/update-all.sh {{ args }}
-
-# Assets
-
-# Regenerate README Perf SVG from benchmark_results/OVERVIEW.md.
-chart:
-    @mkdir -p target
-    @rustc --edition 2024 -O scripts/render_perf_chart.rs -o target/render_perf_chart
-    @target/render_perf_chart
-
-# Validate native tooling catalogs, installers, and updater behavior.
-check-tooling:
-    @scripts/tooling/check.sh
+[group('tooling')]
+update *args:
+    @scripts/update-all.sh "$@"

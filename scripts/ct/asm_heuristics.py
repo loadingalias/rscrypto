@@ -7,11 +7,12 @@ import argparse
 import hashlib
 import json
 import re
-import tomllib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from provenance import load_toml, sha256_file
 
 BRANCH_CONDS_AARCH64 = {
   "b.eq",
@@ -239,19 +240,6 @@ class FunctionBody:
   path: Path
   address: int
   lines: list[tuple[int, str]]
-
-
-def load_toml(path: Path) -> dict[str, Any]:
-  with path.open("rb") as fh:
-    return tomllib.load(fh)
-
-
-def sha256_file(path: Path) -> str:
-  h = hashlib.sha256()
-  with path.open("rb") as fh:
-    for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-      h.update(chunk)
-  return h.hexdigest()
 
 
 def normalize_symbol(symbol: str) -> str:

@@ -1,0 +1,23 @@
+[package]
+authors = ["Michael Rosenberg <michael@mrosenberg.pub>"]
+name = "dudect-bencher"
+version = "0.7.0"
+edition = "2021"
+publish = false
+rust-version = "1.85"
+
+license = "MIT OR Apache-2.0"
+
+repository = "https://github.com/rozbb/dudect-bencher/"
+documentation = "https://docs.rs/dudect-bencher/"
+readme = "README.md"
+
+description = "An implementation of the DudeCT constant-time function tester"
+
+keywords = ["constant", "constant-time", "crypto", "benchmark"]
+
+[dependencies]
+clap = "2"
+ctrlc = "3"
+rand = "0.10"
+rand_chacha = "0.10"

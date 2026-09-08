@@ -39,6 +39,7 @@ docs/llvm-ppc64le-readvolatile-issue.md
 /fuzz/artifacts/
 /fuzz/coverage/
 /fuzz/target/
+/fuzz/target-asan/
 /fuzz/support/target/
 /fuzz/corpus/**
 !/fuzz/corpus/

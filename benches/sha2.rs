@@ -1,10 +1,13 @@
 //! SHA-2 family comparison benchmarks: rscrypto vs sha2 crate.
 
+#[path = "common/criterion.rs"]
+mod bench_config;
+
 mod common;
 
 use core::hint::black_box;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion};
 
 #[cfg(all(
   any(unix, windows),
@@ -59,6 +62,9 @@ fn print_sha2_diag_once() {}
 macro_rules! sha2_oneshot {
   ($fn_name:ident, $group:literal, $ours:ty, $theirs:ty) => {
     fn $fn_name(c: &mut Criterion) {
+      if !bench_config::selected($group) {
+        return;
+      }
       print_sha2_diag_once();
 
       let inputs = common::comp_sizes();
@@ -89,6 +95,9 @@ macro_rules! sha2_oneshot {
 macro_rules! sha2_oneshot_ietf {
   ($fn_name:ident, $group:literal, $ours:ty, $theirs:ty, $aws_alg:expr, $ring_alg:expr) => {
     fn $fn_name(c: &mut Criterion) {
+      if !bench_config::selected($group) {
+        return;
+      }
       print_sha2_diag_once();
 
       let inputs = common::comp_sizes();
@@ -154,6 +163,9 @@ sha2_oneshot!(sha512_256, "sha512-256", rscrypto::Sha512_256, sha2::Sha512_256);
 macro_rules! sha2_streaming {
   ($fn_name:ident, $group:literal, $ours:ty, $theirs:ty) => {
     fn $fn_name(c: &mut Criterion) {
+      if !bench_config::selected($group) {
+        return;
+      }
       print_sha2_diag_once();
 
       let data = common::random_bytes(1048576);
@@ -191,13 +203,16 @@ macro_rules! sha2_streaming {
 sha2_streaming!(sha256_streaming, "sha256/streaming", rscrypto::Sha256, sha2::Sha256);
 sha2_streaming!(sha512_streaming, "sha512/streaming", rscrypto::Sha512, sha2::Sha512);
 
-fn sha256_internal(c: &mut Criterion) {
+fn sha256_internal(_c: &mut Criterion) {
+  if !bench_config::selected("sha256/internal/") {
+    return;
+  }
   print_sha2_diag_once();
 
   #[cfg(feature = "diag")]
   {
     let blocks = common::random_bytes(64 * 16);
-    let mut g = c.benchmark_group("sha256/internal/compress");
+    let mut g = _c.benchmark_group("sha256/internal/compress");
 
     for block_count in [1usize, 2, 16] {
       let len = block_count.strict_mul(64);
@@ -223,63 +238,17 @@ fn sha256_internal(c: &mut Criterion) {
 
     g.finish();
   }
-
-  let data = common::random_bytes(1_048_576);
-  let mut g = c.benchmark_group("sha256/internal/public-overhead");
-
-  for chunk_size in [64usize, 4096] {
-    g.throughput(criterion::Throughput::Bytes(data.len() as u64));
-
-    g.bench_function(format!("rscrypto-stream-{chunk_size}B"), |b| {
-      b.iter(|| {
-        let mut h = rscrypto::Sha256::new();
-        for chunk in data.chunks(chunk_size) {
-          h.update(black_box(chunk));
-        }
-        black_box(h.finalize())
-      })
-    });
-
-    g.bench_function(format!("sha2-stream-{chunk_size}B"), |b| {
-      b.iter(|| {
-        use sha2::Digest;
-        let mut h = sha2::Sha256::new();
-        for chunk in data.chunks(chunk_size) {
-          h.update(black_box(chunk));
-        }
-        black_box(h.finalize())
-      })
-    });
-  }
-
-  for len in [64usize, 4096, 1_048_576] {
-    let input = &data[..len];
-    common::set_throughput(&mut g, len);
-
-    g.bench_with_input(BenchmarkId::new("rscrypto-digest", len), input, |b, d| {
-      b.iter(|| black_box(rscrypto::Sha256::digest(black_box(d))))
-    });
-
-    g.bench_with_input(BenchmarkId::new("sha2-digest", len), input, |b, d| {
-      b.iter(|| {
-        use sha2::Digest as _;
-        black_box(sha2::Sha256::digest(black_box(d)))
-      })
-    });
-  }
-
-  g.finish();
 }
 
-criterion_group!(
-  benches,
-  sha224,
-  sha256,
-  sha384,
-  sha512,
-  sha512_256,
-  sha256_streaming,
-  sha512_streaming,
-  sha256_internal
-);
-criterion_main!(benches);
+fn main() {
+  bench_config::run(&[
+    sha224,
+    sha256,
+    sha384,
+    sha512,
+    sha512_256,
+    sha256_streaming,
+    sha512_streaming,
+    sha256_internal,
+  ]);
+}

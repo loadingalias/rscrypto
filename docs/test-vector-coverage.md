@@ -30,13 +30,11 @@ makes no collision-resistance or authentication claim.
 
 ```sh
 just test --all
-just feature-contracts runtime
 just test-fuzz
 ```
 
 Specialized Miri, target, constant-time, and leakage recipes are listed by
-`just --list`. `just check` validates test-vector provenance and the feature,
-target, benchmark, and constant-time manifests.
+`just --list`.
 
 A passing vector proves behavior for that vector. Stronger assurance comes from
 combining published vectors, a separate implementation, properties, hostile

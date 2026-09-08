@@ -1,13 +1,19 @@
 //! Ascon benchmarks for rscrypto public APIs.
 
+#[path = "common/criterion.rs"]
+mod bench_config;
+
 mod common;
 
 use core::hint::black_box;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion};
 use rscrypto::Xof as _;
 
 fn ascon_hash256(c: &mut Criterion) {
+  if !bench_config::selected("ascon-hash256") {
+    return;
+  }
   let inputs = common::comp_sizes();
   let mut g = c.benchmark_group("ascon-hash256");
 
@@ -29,6 +35,9 @@ fn ascon_hash256(c: &mut Criterion) {
 }
 
 fn ascon_hash256_streaming(c: &mut Criterion) {
+  if !bench_config::selected("ascon-hash256/streaming") {
+    return;
+  }
   let data = common::random_bytes(1048576);
   let mut g = c.benchmark_group("ascon-hash256/streaming");
   g.throughput(criterion::Throughput::Bytes(data.len() as u64));
@@ -50,6 +59,9 @@ fn ascon_hash256_streaming(c: &mut Criterion) {
 }
 
 fn ascon_hash256_many(c: &mut Criterion) {
+  if !bench_config::selected("ascon-hash256/many") {
+    return;
+  }
   const MSG_LEN: usize = 4096;
   const COUNT: usize = 128;
 
@@ -58,6 +70,8 @@ fn ascon_hash256_many(c: &mut Criterion) {
   let mut g = c.benchmark_group("ascon-hash256/many");
   g.throughput(criterion::Throughput::Bytes((MSG_LEN * COUNT) as u64));
 
+  // Timed: hash the fixed message batch into reused output storage.
+  // Untimed: message/reference fixtures and output allocation/destruction.
   g.bench_function("rscrypto/batch-auto", |b| {
     let mut out = vec![[0u8; 32]; COUNT];
     b.iter(|| {
@@ -66,7 +80,8 @@ fn ascon_hash256_many(c: &mut Criterion) {
     })
   });
 
-  g.bench_function("ascon-hash256/scalar-loop", |b| {
+  // Same message/output boundary as batch-auto, using repeated rscrypto scalar calls.
+  g.bench_function("rscrypto/scalar-loop", |b| {
     let mut out = vec![[0u8; 32]; COUNT];
     b.iter(|| {
       for (input, slot) in inputs.iter().zip(out.iter_mut()) {
@@ -81,6 +96,9 @@ fn ascon_hash256_many(c: &mut Criterion) {
 }
 
 fn ascon_xof128(c: &mut Criterion) {
+  if !bench_config::selected("ascon-xof128") {
+    return;
+  }
   let inputs = common::comp_sizes();
   let mut g = c.benchmark_group("ascon-xof128");
 
@@ -116,6 +134,9 @@ fn ascon_xof128(c: &mut Criterion) {
 }
 
 fn ascon_xof128_many(c: &mut Criterion) {
+  if !bench_config::selected("ascon-xof128/many") {
+    return;
+  }
   const MSG_LEN: usize = 4096;
   const OUT_LEN: usize = 64;
   const COUNT: usize = 128;
@@ -125,6 +146,8 @@ fn ascon_xof128_many(c: &mut Criterion) {
   let mut g = c.benchmark_group("ascon-xof128/many");
   g.throughput(criterion::Throughput::Bytes((MSG_LEN * COUNT) as u64));
 
+  // Timed: hash the fixed message batch into reused output storage.
+  // Untimed: message/reference fixtures and output allocation/destruction.
   g.bench_function("rscrypto/batch-auto", |b| {
     let mut out = vec![0u8; COUNT * OUT_LEN];
     b.iter(|| {
@@ -133,7 +156,8 @@ fn ascon_xof128_many(c: &mut Criterion) {
     })
   });
 
-  g.bench_function("ascon-xof128/scalar-loop", |b| {
+  // Same message/output boundary as batch-auto, using repeated rscrypto scalar calls.
+  g.bench_function("rscrypto/scalar-loop", |b| {
     let mut out = vec![0u8; COUNT * OUT_LEN];
     b.iter(|| {
       for (index, input) in inputs.iter().enumerate() {
@@ -151,6 +175,9 @@ fn ascon_xof128_many(c: &mut Criterion) {
 }
 
 fn ascon_cxof128(c: &mut Criterion) {
+  if !bench_config::selected("ascon-cxof128") {
+    return;
+  }
   const CUSTOMIZATION: &[u8] = b"rscrypto-bench";
   const OUT_LEN: usize = 32;
 
@@ -173,13 +200,13 @@ fn ascon_cxof128(c: &mut Criterion) {
   g.finish();
 }
 
-criterion_group!(
-  benches,
-  ascon_hash256,
-  ascon_hash256_streaming,
-  ascon_hash256_many,
-  ascon_xof128,
-  ascon_xof128_many,
-  ascon_cxof128
-);
-criterion_main!(benches);
+fn main() {
+  bench_config::run(&[
+    ascon_hash256,
+    ascon_hash256_streaming,
+    ascon_hash256_many,
+    ascon_xof128,
+    ascon_xof128_many,
+    ascon_cxof128,
+  ]);
+}

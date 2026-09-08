@@ -1,33 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Fuzz Testing for rscrypto
-#
-# Fuzzing now has two layers:
-#   1. full-surface regression harness in fuzz/
-#   2. scoped feature-accurate harnesses in fuzz-packages/*
-#
-# Usage:
-#   ./scripts/test/test-fuzz.sh                    # Build scoped packages, run full harness
-#   ./scripts/test/test-fuzz.sh --all              # Build + run full and scoped packages
-#   ./scripts/test/test-fuzz.sh --full             # Run the full harness only
-#   ./scripts/test/test-fuzz.sh --scoped           # Run all scoped packages
-#   ./scripts/test/test-fuzz.sh --scoped-build     # Build scoped packages only
-#   ./scripts/test/test-fuzz.sh --targets A,B      # Run an exact target set
-#   ./scripts/test/test-fuzz.sh <target>           # Run specific target
-#   ./scripts/test/test-fuzz.sh --build            # Build without running
-#   ./scripts/test/test-fuzz.sh --list             # List available targets
-#   ./scripts/test/test-fuzz.sh --clean            # Clean fuzz artifacts
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# shellcheck source=../lib/common.sh
-source "$SCRIPT_DIR/../lib/common.sh"
 # shellcheck source=../lib/fuzz-packages.sh
 source "$SCRIPT_DIR/../lib/fuzz-packages.sh"
 
-activate_nightly_toolchain
+RUSTUP_TOOLCHAIN=$("$SCRIPT_DIR/../lib/toolchain.sh" --nightly)
+export RUSTUP_TOOLCHAIN
 export CARGO_RAIL_CACHE=off
 
 # Configuration (can be overridden via environment)
@@ -67,12 +48,11 @@ show_help() {
   echo "  $0 --all                  Build and run full + scoped packages"
   echo "  $0 --full                 Run full harness targets (${DURATION_SECS}s each)"
   echo "  $0 --scoped               Run scoped targets (${DURATION_SECS}s each)"
-  echo "  $0 --scoped-build         Build scoped packages without running"
-  echo "  $0 --targets A,B          Run an exact comma-separated target set"
+  echo "  $0 --targets A,B          Filter the chosen package scope (default: full) by exact target names"
   echo "  $0 <target>               Run specific target"
   echo "  $0 --build [--full|--scoped|--all]  Build selected fuzz packages"
   echo "  $0 --list                 List available targets by package"
-  echo "  $0 --clean                Clean fuzz artifacts"
+  echo "  $0 --clean                Clean build artifacts; preserve corpora"
   echo ""
   echo "Environment variables:"
   echo "  RSCRYPTO_FUZZ_DURATION_SECS  Duration per target (default: 60)"
@@ -95,28 +75,29 @@ check_requirements() {
     exit 1
   fi
   if [ ! -d "$FUZZ_ROOT" ]; then
-    echo "No fuzz/ directory found at repo root"
-    exit 0
+    echo "No fuzz/ directory found at repo root" >&2
+    exit 1
   fi
 
   discover_fuzz_packages
   if [ ${#FUZZ_ALL_PACKAGES[@]} -eq 0 ]; then
-    echo "No cargo-fuzz packages found under fuzz/"
-    exit 0
+    echo "No cargo-fuzz packages found" >&2
+    exit 1
   fi
 }
 
 list_targets() {
-  local package_dir
+  local package_dir targets
 
   echo "Available fuzz targets:"
   echo ""
   for package_dir in "${FUZZ_ALL_PACKAGES[@]}"; do
     echo "$(fuzz_package_label "$package_dir"):"
+    targets=$(fuzz_list_targets "$package_dir") || return 2
     while IFS= read -r target; do
       [ -z "$target" ] && continue
       echo "  $target"
-    done < <(fuzz_list_targets "$package_dir")
+    done <<<"$targets"
     echo ""
   done
 }
@@ -126,11 +107,6 @@ build_packages() {
   local package_dir
 
   fuzz_select_packages "$scope"
-  if [ ${#SELECTED_FUZZ_PACKAGES[@]} -eq 0 ]; then
-    echo "No fuzz packages selected for scope: $scope"
-    return 0
-  fi
-
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "Building fuzz targets ($scope)..."
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -149,7 +125,7 @@ clean_artifacts() {
   local package_dir
   for package_dir in "${FUZZ_ALL_PACKAGES[@]}"; do
     fuzz_in_package "$package_dir" clean 2>/dev/null || true
-    rm -rf "$package_dir/artifacts" "$package_dir/corpus" "$package_dir/coverage"
+    rm -rf "$package_dir/artifacts" "$package_dir/coverage"
   done
   rm -rf "$FUZZ_SHARED_TARGET_DIR"
 
@@ -223,25 +199,6 @@ run_target_in_package() {
   return 1
 }
 
-run_target() {
-  local target="$1"
-  local duration="$2"
-  local search_order="scoped-first"
-
-  case "${TARGET_SCOPE_OVERRIDE:-}" in
-    full) search_order="full" ;;
-    scoped) search_order="scoped" ;;
-  esac
-
-  local package_dir
-  package_dir="$(fuzz_find_target_package "$target" "$search_order")" || {
-    echo "Unknown fuzz target: $target"
-    return 1
-  }
-
-  run_target_in_package "$package_dir" "$target" "$duration"
-}
-
 RUN_PACKAGE_DIRS=()
 RUN_TARGETS=()
 
@@ -260,8 +217,8 @@ run_batch() {
 
   local total=${#RUN_TARGETS[@]}
   if [ "$total" -eq 0 ]; then
-    echo "No fuzz targets selected"
-    return 0
+    echo "No fuzz targets selected" >&2
+    return 1
   fi
 
   local run_log_dir
@@ -320,126 +277,107 @@ run_batch() {
 run_scope() {
   local scope="$1"
   local duration="$2"
-  local package_dir target
-
-  fuzz_select_packages "$scope"
-  if [ ${#SELECTED_FUZZ_PACKAGES[@]} -eq 0 ]; then
-    echo "No fuzz packages selected for scope: $scope"
-    return 0
+  local filter="${3:-}"
+  local package_dir target targets seen=, matched=,
+  local -a requested=()
+  if [[ -n "$filter" ]]; then
+    [[ "$filter" != *, ]] || { echo "Invalid empty fuzz target" >&2; return 2; }
+    IFS=',' read -r -a requested <<<"$filter"
+    for target in "${requested[@]}"; do
+      [[ "$target" =~ ^[a-z0-9_]+$ && "$seen" != *",$target,"* ]] || {
+        echo "Invalid or duplicate fuzz target: ${target:-<empty>}" >&2
+        return 2
+      }
+      seen+="$target,"
+    done
   fi
 
+  fuzz_select_packages "$scope"
   RUN_PACKAGE_DIRS=()
   RUN_TARGETS=()
   for package_dir in "${SELECTED_FUZZ_PACKAGES[@]}"; do
+    targets=$(fuzz_list_targets "$package_dir") || return 2
     while IFS= read -r target; do
-      [ -z "$target" ] && continue
+      [[ -n "$target" ]] || continue
+      [[ -z "$filter" || "$seen" == *",$target,"* ]] || continue
       RUN_PACKAGE_DIRS+=("$package_dir")
       RUN_TARGETS+=("$target")
-    done < <(fuzz_list_targets "$package_dir")
+      matched+="$target,"
+    done <<<"$targets"
+  done
+  for target in "${requested[@]:+${requested[@]}}"; do
+    [[ "$matched" == *",$target,"* ]] || {
+      echo "Unknown fuzz target in $scope scope: $target" >&2
+      return 1
+    }
   done
   run_batch "$scope" "$duration"
 }
 
-run_target_list() {
-  local value="$1"
-  local duration="$2"
-  local package_dir target seen=,
-  local -a requested=()
-  [[ -n "$value" ]] || {
-    echo "Selected fuzz targets must not be empty" >&2
-    return 2
-  }
-  IFS=',' read -r -a requested <<<"$value"
-
-  RUN_PACKAGE_DIRS=()
-  RUN_TARGETS=()
-  for target in "${requested[@]}"; do
-    [[ "$target" =~ ^[a-z0-9_]+$ ]] || {
-      echo "Invalid fuzz target: ${target:-<empty>}" >&2
-      return 2
-    }
-    [[ "$seen" != *",$target,"* ]] || {
-      echo "Duplicate fuzz target: $target" >&2
-      return 2
-    }
-    seen+="$target,"
-    package_dir=$(fuzz_find_target_package "$target" scoped-first) || {
-      echo "Unknown fuzz target: $target" >&2
-      return 2
-    }
-    RUN_PACKAGE_DIRS+=("$package_dir")
-    RUN_TARGETS+=("$target")
-  done
-  run_batch selected "$duration"
-}
-
 ACTION="default"
 PACKAGE_SCOPE="full"
-TARGET_SCOPE_OVERRIDE=""
 TARGET=""
 TARGETS_CSV=""
 TARGET_DURATION="$DURATION_SECS"
+scope_selected=false
+duration_selected=false
 
-while [ $# -gt 0 ]; do
+select_action() {
+  [[ "$ACTION" == default || "$ACTION" == "$1" ]] || {
+    echo "Conflicting fuzz actions: $ACTION and $1" >&2
+    exit 2
+  }
+  ACTION=$1
+}
+
+while [[ $# -gt 0 ]]; do
   case "$1" in
-    -h|--help)
-      show_help
-      exit 0
-      ;;
-    --list)
-      ACTION="list"
-      ;;
-    --build)
-      ACTION="build"
-      ;;
-    --clean)
-      ACTION="clean"
-      ;;
-    --all)
-      ACTION="run"
-      PACKAGE_SCOPE="all"
-      ;;
-    --full)
-      if [ "$ACTION" = "default" ]; then
-        ACTION="run"
-      fi
-      PACKAGE_SCOPE="full"
-      TARGET_SCOPE_OVERRIDE="full"
-      ;;
-    --scoped)
-      if [ "$ACTION" = "default" ]; then
-        ACTION="run"
-      fi
-      PACKAGE_SCOPE="scoped"
-      TARGET_SCOPE_OVERRIDE="scoped"
-      ;;
-    --scoped-build)
-      ACTION="build"
-      PACKAGE_SCOPE="scoped"
+    -h|--help) show_help; exit 0 ;;
+    --list|--build|--clean) select_action "${1#--}" ;;
+    --all|--full|--scoped)
+      [[ "$scope_selected" == false || "$PACKAGE_SCOPE" == "${1#--}" ]] || {
+        echo "Conflicting fuzz package scopes" >&2
+        exit 2
+      }
+      PACKAGE_SCOPE=${1#--}
+      scope_selected=true
       ;;
     --targets)
+      select_action selected
       shift
-      [[ $# -gt 0 ]] || {
-        echo "--targets requires a comma-separated value" >&2
+      [[ $# -gt 0 && -n "$1" && "$1" != -* && -z "$TARGETS_CSV" ]] || {
+        echo "--targets requires one comma-separated target set" >&2
         exit 2
       }
-      ACTION="selected"
       TARGETS_CSV=$1
       ;;
+    -*) echo "Unknown fuzz option: $1" >&2; exit 2 ;;
     *)
-      [[ "$ACTION" != selected ]] || {
-        echo "--targets cannot be combined with positional targets" >&2
-        exit 2
-      }
-      if [ -z "$TARGET" ]; then
-        TARGET="$1"
+      if [[ -z "$TARGET" ]]; then
+        TARGET=$1
+      elif [[ "$duration_selected" == false ]]; then
+        TARGET_DURATION=$1
+        duration_selected=true
       else
-        TARGET_DURATION="$1"
+        echo "Unexpected fuzz argument: $1" >&2
+        exit 2
       fi
       ;;
   esac
   shift
 done
+
+if [[ -n "$TARGET" && "$ACTION" != default ]]; then
+  echo "Positional targets cannot be combined with --$ACTION" >&2
+  exit 2
+fi
+if [[ "$ACTION" == default && "$scope_selected" == true ]]; then
+  ACTION=run
+fi
+[[ "$TARGET_DURATION" =~ ^[1-9][0-9]*$ ]] || {
+  echo "Fuzz duration must be a positive integer" >&2
+  exit 2
+}
 
 case "$TARGET_CONCURRENCY" in
   ''|*[!0-9]*|0)
@@ -461,21 +399,15 @@ case "$ACTION" in
     clean_artifacts
     ;;
   selected)
-    run_target_list "$TARGETS_CSV" "$TARGET_DURATION"
+    run_scope "$PACKAGE_SCOPE" "$TARGET_DURATION" "$TARGETS_CSV"
     ;;
   run)
-    if [ -n "$TARGET" ]; then
-      run_target "$TARGET" "$TARGET_DURATION"
-    else
-      run_scope "$PACKAGE_SCOPE" "$TARGET_DURATION"
-    fi
+    run_scope "$PACKAGE_SCOPE" "$TARGET_DURATION" "$TARGET"
     ;;
   default)
-    if [ -n "$TARGET" ]; then
-      run_target "$TARGET" "$TARGET_DURATION"
-    else
+    if [[ -z "$TARGET" ]]; then
       build_packages scoped
-      run_scope full "$TARGET_DURATION"
     fi
+    run_scope "$PACKAGE_SCOPE" "$TARGET_DURATION" "$TARGET"
     ;;
 esac

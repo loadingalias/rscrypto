@@ -1,14 +1,17 @@
 //! Auth benchmarks for rscrypto public APIs.
 
+#[path = "common/criterion.rs"]
+mod bench_config;
+
 mod common;
 
 use core::hint::black_box;
 
-use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion};
 use ed25519_dalek::{Signer as _, SigningKey};
 use fips203::{
   ml_kem_512 as FipsMlKem512, ml_kem_768 as FipsMlKem768, ml_kem_1024 as FipsMlKem1024,
-  traits::{Decaps as _, Encaps as _, KeyGen as _},
+  traits::{Decaps as _, Encaps as _, KeyGen as _, SerDes as _},
 };
 use hkdf::Hkdf as RustCryptoHkdf;
 use hmac::{Hmac, KeyInit};
@@ -25,9 +28,8 @@ use rscrypto::{
   P256EphemeralSecret, P256PublicKey, Pbkdf2Sha256, Pbkdf2Sha512, X25519SecretKey,
 };
 use rustcrypto_ml_kem::{
-  B32 as RustCryptoMlKemB32, DecapsulationKey as RustCryptoMlKemDecapsulationKey, KeyExport as _,
-  MlKem512 as RustCryptoMlKem512, MlKem768 as RustCryptoMlKem768, MlKem1024 as RustCryptoMlKem1024,
-  Seed as RustCryptoMlKemSeed, kem::Decapsulate as _,
+  DecapsulationKey as RustCryptoMlKemDecapsulationKey, KeyExport as _, MlKem512 as RustCryptoMlKem512,
+  MlKem768 as RustCryptoMlKem768, MlKem1024 as RustCryptoMlKem1024, Seed as RustCryptoMlKemSeed, kem::Decapsulate as _,
 };
 use x25519_dalek::{PublicKey as DalekX25519PublicKey, StaticSecret as DalekX25519Secret};
 
@@ -139,6 +141,9 @@ fn print_auth_diag_once() {
 fn print_auth_diag_once() {}
 
 fn hmac_sha256(c: &mut Criterion) {
+  if !bench_config::selected("hmac-sha256") {
+    return;
+  }
   print_auth_diag_once();
 
   let inputs = common::comp_sizes();
@@ -189,6 +194,9 @@ fn hmac_sha256(c: &mut Criterion) {
 }
 
 fn hmac_sha384(c: &mut Criterion) {
+  if !bench_config::selected("hmac-sha384") {
+    return;
+  }
   print_auth_diag_once();
 
   let inputs = common::comp_sizes();
@@ -239,6 +247,9 @@ fn hmac_sha384(c: &mut Criterion) {
 }
 
 fn hmac_sha512(c: &mut Criterion) {
+  if !bench_config::selected("hmac-sha512") {
+    return;
+  }
   print_auth_diag_once();
 
   let inputs = common::comp_sizes();
@@ -289,6 +300,9 @@ fn hmac_sha512(c: &mut Criterion) {
 }
 
 fn hmac_sha256_streaming(c: &mut Criterion) {
+  if !bench_config::selected("hmac-sha256/streaming") {
+    return;
+  }
   print_auth_diag_once();
 
   let data = common::random_bytes(1048576);
@@ -325,6 +339,9 @@ fn hmac_sha256_streaming(c: &mut Criterion) {
 }
 
 fn hmac_sha256_internal(c: &mut Criterion) {
+  if !bench_config::selected("hmac-sha256/internal/fixed-message") {
+    return;
+  }
   print_auth_diag_once();
 
   let data = common::random_bytes(4096);
@@ -387,6 +404,9 @@ fn hmac_sha256_internal(c: &mut Criterion) {
 }
 
 fn hkdf_sha256_expand(c: &mut Criterion) {
+  if !bench_config::selected("hkdf-sha256/expand") {
+    return;
+  }
   print_auth_diag_once();
 
   let salt = [0x11u8; 32];
@@ -453,6 +473,9 @@ fn hkdf_sha256_expand(c: &mut Criterion) {
 }
 
 fn hkdf_sha384_expand(c: &mut Criterion) {
+  if !bench_config::selected("hkdf-sha384/expand") {
+    return;
+  }
   print_auth_diag_once();
 
   let salt = [0x11u8; 48];
@@ -519,6 +542,9 @@ fn hkdf_sha384_expand(c: &mut Criterion) {
 }
 
 fn pbkdf2_sha256_derive(c: &mut Criterion) {
+  if !bench_config::selected("pbkdf2-sha256") {
+    return;
+  }
   print_auth_diag_once();
 
   let password = [0x55u8; 32];
@@ -601,6 +627,9 @@ fn pbkdf2_sha256_derive(c: &mut Criterion) {
 }
 
 fn pbkdf2_sha256_internal(c: &mut Criterion) {
+  if !bench_config::selected("pbkdf2-sha256/internal/") {
+    return;
+  }
   print_auth_diag_once();
 
   let password = [0x55u8; 32];
@@ -678,6 +707,9 @@ fn pbkdf2_sha256_internal(c: &mut Criterion) {
 }
 
 fn pbkdf2_sha512_derive(c: &mut Criterion) {
+  if !bench_config::selected("pbkdf2-sha512") {
+    return;
+  }
   print_auth_diag_once();
 
   let password = [0x66u8; 48];
@@ -760,6 +792,9 @@ fn pbkdf2_sha512_derive(c: &mut Criterion) {
 }
 
 fn ed25519_public_key(c: &mut Criterion) {
+  if !bench_config::selected("ed25519/public-key-from-secret") {
+    return;
+  }
   let secret_bytes = [7u8; 32];
   let mut g = c.benchmark_group("ed25519/public-key-from-secret");
 
@@ -781,6 +816,9 @@ fn ed25519_public_key(c: &mut Criterion) {
 }
 
 fn ecdsa_p256_verify(c: &mut Criterion) {
+  if !bench_config::selected("ecdsa-p256/verify") {
+    return;
+  }
   let secret_bytes = [0x11u8; 32];
   let signing_key =
     P256OracleSigningKey::from_slice(&secret_bytes).expect("valid authentication benchmark operation must succeed");
@@ -849,6 +887,9 @@ fn ecdsa_p256_verify(c: &mut Criterion) {
 }
 
 fn ecdsa_p256_sign(c: &mut Criterion) {
+  if !bench_config::selected("ecdsa-p256/sign") {
+    return;
+  }
   let secret_bytes = [0x11u8; 32];
   let secret =
     EcdsaP256SecretKey::from_bytes(secret_bytes).expect("valid authentication benchmark operation must succeed");
@@ -936,6 +977,9 @@ fn ecdsa_p256_sign(c: &mut Criterion) {
 }
 
 fn ecdsa_p256_public_key(c: &mut Criterion) {
+  if !bench_config::selected("ecdsa-p256/public-key") {
+    return;
+  }
   let secret_bytes = [0x11u8; 32];
   let secret =
     EcdsaP256SecretKey::from_bytes(secret_bytes).expect("valid authentication benchmark operation must succeed");
@@ -965,6 +1009,9 @@ fn ecdsa_p256_public_key(c: &mut Criterion) {
 }
 
 fn ecdsa_p384_verify(c: &mut Criterion) {
+  if !bench_config::selected("ecdsa-p384/verify") {
+    return;
+  }
   let secret_bytes = [0x31u8; 48];
   let signing_key =
     P384OracleSigningKey::from_slice(&secret_bytes).expect("valid authentication benchmark operation must succeed");
@@ -1033,6 +1080,9 @@ fn ecdsa_p384_verify(c: &mut Criterion) {
 }
 
 fn ecdsa_p384_sign(c: &mut Criterion) {
+  if !bench_config::selected("ecdsa-p384/sign") {
+    return;
+  }
   let secret_bytes = [0x31u8; 48];
   let secret =
     EcdsaP384SecretKey::from_bytes(secret_bytes).expect("valid authentication benchmark operation must succeed");
@@ -1120,6 +1170,9 @@ fn ecdsa_p384_sign(c: &mut Criterion) {
 }
 
 fn ecdsa_p384_public_key(c: &mut Criterion) {
+  if !bench_config::selected("ecdsa-p384/public-key") {
+    return;
+  }
   let secret_bytes = [0x31u8; 48];
   let secret =
     EcdsaP384SecretKey::from_bytes(secret_bytes).expect("valid authentication benchmark operation must succeed");
@@ -1150,6 +1203,9 @@ fn ecdsa_p384_public_key(c: &mut Criterion) {
 
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 fn ecdsa_p256_internal(c: &mut Criterion) {
+  if !bench_config::selected("ecdsa-p256/internal") {
+    return;
+  }
   use rscrypto::auth::{
     diag_ecdsa_p256_basepoint_blinded_limb_digest, diag_ecdsa_p256_final_multiply_limb_digest,
     diag_ecdsa_p256_nonce_inverse_blinded_limb_digest, diag_ecdsa_p256_nonce_inverse_limb_digest,
@@ -1247,11 +1303,11 @@ fn ecdsa_p256_internal(c: &mut Criterion) {
   g.finish();
 }
 
-#[cfg(not(all(feature = "diag", feature = "ecdsa-p256")))]
-fn ecdsa_p256_internal(_: &mut Criterion) {}
-
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 fn ecdsa_p384_internal(c: &mut Criterion) {
+  if !bench_config::selected("ecdsa-p384/internal") {
+    return;
+  }
   use rscrypto::auth::{
     diag_ecdsa_p384_basepoint_blinded_limb_digest, diag_ecdsa_p384_basepoint_r_limb_digest,
     diag_ecdsa_p384_final_multiply_limb_digest, diag_ecdsa_p384_nonce_inverse_blinded_limb_digest,
@@ -1344,10 +1400,10 @@ fn ecdsa_p384_internal(c: &mut Criterion) {
   g.finish();
 }
 
-#[cfg(not(all(feature = "diag", feature = "ecdsa-p384")))]
-fn ecdsa_p384_internal(_: &mut Criterion) {}
-
 fn ed25519_keypair_from_secret(c: &mut Criterion) {
+  if !bench_config::selected("ed25519/keypair-from-secret") {
+    return;
+  }
   let secret_bytes = [8u8; 32];
   let mut g = c.benchmark_group("ed25519/keypair-from-secret");
 
@@ -1366,6 +1422,9 @@ fn ed25519_keypair_from_secret(c: &mut Criterion) {
 }
 
 fn ed25519_sign(c: &mut Criterion) {
+  if !bench_config::selected("ed25519/sign") {
+    return;
+  }
   use dryoc::classic::crypto_sign::{crypto_sign_detached, crypto_sign_seed_keypair};
 
   let secret_bytes = [9u8; 32];
@@ -1423,6 +1482,9 @@ fn ed25519_sign(c: &mut Criterion) {
 }
 
 fn ed25519_verify(c: &mut Criterion) {
+  if !bench_config::selected("ed25519/verify") {
+    return;
+  }
   aws_lc_bench! {
     use aws_lc_rs::signature::KeyPair as _;
   }
@@ -1513,6 +1575,9 @@ fn ed25519_verify(c: &mut Criterion) {
 
 #[cfg(feature = "diag")]
 fn ed25519_verify_phase(c: &mut Criterion) {
+  if !bench_config::selected("ed25519/verify-phase") {
+    return;
+  }
   use rscrypto::auth::{
     diag_ed25519_verify_challenge_reduce_digest, diag_ed25519_verify_portable_double_scalar_digest,
     diag_ed25519_verify_public_decode_digest, diag_ed25519_verify_r_decode_digest, diag_ed25519_verify_scalars,
@@ -1584,15 +1649,15 @@ fn ed25519_verify_phase(c: &mut Criterion) {
   g.finish();
 }
 
-#[cfg(not(feature = "diag"))]
-fn ed25519_verify_phase(_: &mut Criterion) {}
-
 // `ring` is omitted from x25519 benches: ring 0.17 only exposes
 // `EphemeralPrivateKey` (consumed by `agree_ephemeral`) and provides no
 // reusable static-key API. Including it would force a full keygen-and-discard
 // per iteration, which is not apples-to-apples against the static-key DH
 // path that rscrypto / dalek / aws-lc-rs / dryoc all share.
 fn x25519_public_key(c: &mut Criterion) {
+  if !bench_config::selected("x25519/public-key-from-secret") {
+    return;
+  }
   use dryoc::classic::crypto_core::crypto_scalarmult_base;
 
   let secret_bytes = [0x2au8; 32];
@@ -1635,6 +1700,9 @@ fn x25519_public_key(c: &mut Criterion) {
 }
 
 fn x25519_diffie_hellman(c: &mut Criterion) {
+  if !bench_config::selected("x25519/diffie-hellman") {
+    return;
+  }
   use dryoc::classic::crypto_core::{crypto_scalarmult, crypto_scalarmult_base};
 
   let alice_bytes = [0x18u8; 32];
@@ -1819,6 +1887,9 @@ fn p256_benchmark_preflight() {
 }
 
 fn p256_ecdh_key_generation(c: &mut Criterion) {
+  if !bench_config::selected("p256-ecdh/key-generation") {
+    return;
+  }
   p256_benchmark_preflight();
   let scalar = P256_NIST_PRIVATE;
   let mut g = c.benchmark_group("p256-ecdh/key-generation");
@@ -1848,6 +1919,9 @@ fn p256_ecdh_key_generation(c: &mut Criterion) {
 }
 
 fn p256_ecdh_public_key(c: &mut Criterion) {
+  if !bench_config::selected("p256-ecdh/public-key") {
+    return;
+  }
   p256_benchmark_preflight();
   let scalar = P256_NIST_PRIVATE;
   let ours = p256_ephemeral(scalar);
@@ -1913,6 +1987,9 @@ fn p256_ecdh_public_key(c: &mut Criterion) {
 }
 
 fn p256_ecdh_parse(c: &mut Criterion) {
+  if !bench_config::selected("p256-ecdh/parse") {
+    return;
+  }
   p256_benchmark_preflight();
   let encoded = p256_ephemeral([0x24; 32]).public_key().to_sec1_bytes();
   let mut g = c.benchmark_group("p256-ecdh/parse");
@@ -1942,6 +2019,9 @@ fn p256_ecdh_parse(c: &mut Criterion) {
 }
 
 fn p256_ecdh_agreement(c: &mut Criterion) {
+  if !bench_config::selected("p256-ecdh/agreement") {
+    return;
+  }
   p256_benchmark_preflight();
   let scalar = P256_NIST_PRIVATE;
   let peer = P256PublicKey::from_sec1_bytes(&P256_NIST_PEER).expect("valid benchmark peer point");
@@ -2026,6 +2106,9 @@ fn p256_ecdh_agreement(c: &mut Criterion) {
 }
 
 fn p256_ecdh_tls_roundtrip(c: &mut Criterion) {
+  if !bench_config::selected("p256-ecdh/tls-shaped-roundtrip") {
+    return;
+  }
   let alice = [0x42; 32];
   let bob = [0x24; 32];
   let mut g = c.benchmark_group("p256-ecdh/tls-shaped-roundtrip");
@@ -2045,6 +2128,21 @@ fn p256_ecdh_tls_roundtrip(c: &mut Criterion) {
   g.finish();
 }
 
+// Each selected row checks its actual timed closure before measurement.
+// Fixtures are public deterministic benchmark data; output conversion and drop
+// remain timed. See docs/benchmarking.md for the comparison boundaries.
+fn checked_mlkem_bench<T: Eq + core::fmt::Debug>(
+  g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+  name: &str,
+  expected: &T,
+  mut operation: impl FnMut() -> T,
+) {
+  g.bench_function(name, |b| {
+    assert_eq!(&operation(), expected, "ML-KEM comparison mismatch: {name}");
+    b.iter(&mut operation);
+  });
+}
+
 macro_rules! mlkem_profile_benches {
   (
     $keygen_fn:ident,
@@ -2057,175 +2155,238 @@ macro_rules! mlkem_profile_benches {
     $rustcrypto:ty,
     $aws_algorithm:ident
   ) => {
+    // Expanded encoding is intentional: all rows must return the same key bytes,
+    // rather than comparing RustCrypto's preferred seed export with expanded keys.
+    #[expect(deprecated, reason = "expanded key encoding must match the other benchmark implementations")]
     fn $keygen_fn(c: &mut Criterion) {
-      let key_random = deterministic_bytes::<{ <$profile>::KEY_GENERATION_RANDOM_SIZE }>(0x10);
-      let d = array_from_slice::<32>(&key_random[..32]);
-      let z = array_from_slice::<32>(&key_random[32..]);
-      let mut g = c.benchmark_group(concat!($group, "/keygen"));
-
-      g.bench_function("rscrypto", |b| {
-        b.iter(|| {
-          <$profile>::generate_keypair(|out| {
-            out.copy_from_slice(black_box(&key_random));
-            Ok::<(), MlKemError>(())
-          })
-          .expect("valid authentication benchmark operation must succeed")
-        })
+      if !bench_config::selected(concat!($group, "/keygen/")) { return; }
+      use rustcrypto_ml_kem::ExpandedKeyEncoding as _;
+      let key_random = deterministic_bytes::<64>(0x10);
+      let rs_keygen = || {
+        let (ek, dk) = <$profile>::generate_keypair(|out| {
+          out.copy_from_slice(black_box(&key_random));
+          Ok::<(), MlKemError>(())
+        }).expect("ML-KEM key generation");
+        (ek.to_bytes(), *dk.as_bytes())
+      };
+      let expected = rs_keygen();
+      let mut g = c.benchmark_group(concat!($group, "/keygen/derand-encoded"));
+      checked_mlkem_bench(&mut g, "rscrypto", &expected, rs_keygen);
+      checked_mlkem_bench(&mut g, "libcrux", &expected, || {
+        let keys = $libcrux::generate_key_pair(black_box(key_random));
+        (*keys.public_key().as_slice(), *keys.private_key().as_slice())
       });
-
-      g.bench_function("libcrux", |b| {
-        b.iter(|| $libcrux::generate_key_pair(black_box(key_random)))
+      checked_mlkem_bench(&mut g, "fips203", &expected, || {
+        let seed = black_box(&key_random);
+        let (ek, dk) = $fips::KG::keygen_from_seed(array_from_slice(&seed[..32]), array_from_slice(&seed[32..]));
+        (ek.into_bytes(), dk.into_bytes())
       });
+      checked_mlkem_bench(&mut g, "rustcrypto", &expected, || {
+        let dk = RustCryptoMlKemDecapsulationKey::<$rustcrypto>::from_seed(RustCryptoMlKemSeed::from(*black_box(&key_random)));
+        (array_from_slice(dk.encapsulation_key().to_bytes().as_slice()), array_from_slice(dk.to_expanded_bytes().as_slice()))
+      });
+      g.finish();
 
       aws_lc_bench! {
-        g.bench_function("aws-lc-rs", |b| {
-          b.iter(|| black_box(AwsMlKemDecapsulationKey::generate(&$aws_algorithm).expect("valid authentication benchmark operation must succeed")))
-        });
+        let operation = || {
+          let dk = AwsMlKemDecapsulationKey::generate(&$aws_algorithm).expect("AWS-LC key generation");
+          let ek = dk.encapsulation_key().expect("AWS-LC public key");
+          (array_from_slice::<{ <$profile>::ENCAPSULATION_KEY_SIZE }>(ek.key_bytes().expect("AWS-LC key export").as_ref()),
+           array_from_slice::<{ <$profile>::DECAPSULATION_KEY_SIZE }>(dk.key_bytes().expect("AWS-LC key export").as_ref()))
+        };
+        let (ek_bytes, dk_bytes) = operation();
+        let ek = <<$profile as rscrypto::Kem>::EncapsulationKey>::try_from_slice(&ek_bytes).expect("AWS-LC public key import");
+        let dk = <<$profile as rscrypto::Kem>::DecapsulationKey>::try_from_slice(&dk_bytes).expect("AWS-LC secret key import");
+        let (ct, ss) = <$profile>::encapsulate(&ek, |out| { out.fill(0x42); Ok::<(), MlKemError>(()) }).expect("AWS-LC key interoperability");
+        assert_eq!(<$profile>::decapsulate(&dk, &ct).expect("AWS-LC key interoperability").as_bytes(), ss.as_bytes());
+        let aws_dk = AwsMlKemDecapsulationKey::new(&$aws_algorithm, &dk_bytes).expect("AWS-LC key import");
+        assert_eq!(aws_dk.decapsulate(AwsMlKemCiphertext::from(ct.as_ref())).expect("AWS-LC key interoperability").as_ref(), ss.as_ref());
+        let mut g = c.benchmark_group(concat!($group, "/keygen/internal-entropy-encoded"));
+        g.bench_function("aws-lc-rs", |b| b.iter(operation));
+        g.finish();
       }
-
-      g.bench_function("fips203", |b| {
-        b.iter(|| $fips::KG::keygen_from_seed(black_box(d), black_box(z)))
-      });
-
-      g.bench_function("rustcrypto", |b| {
-        b.iter(|| {
-          let dk = RustCryptoMlKemDecapsulationKey::<$rustcrypto>::from_seed(RustCryptoMlKemSeed::from(key_random));
-          black_box(dk.encapsulation_key().to_bytes());
-          black_box(dk)
-        })
-      });
-
-      g.finish();
     }
 
     fn $encapsulate_fn(c: &mut Criterion) {
-      let key_random = deterministic_bytes::<{ <$profile>::KEY_GENERATION_RANDOM_SIZE }>(0x20);
-      let encaps_random = deterministic_bytes::<{ <$profile>::ENCAPSULATION_RANDOM_SIZE }>(0x80);
-      let (ek, _) = <$profile>::generate_keypair(|out| {
+      if !bench_config::selected(concat!($group, "/encapsulate/")) { return; }
+      let key_random = deterministic_bytes::<64>(0x20);
+      let encaps_random = deterministic_bytes::<32>(0x80);
+      let (ek, _dk) = <$profile>::generate_keypair(|out| {
         out.copy_from_slice(&key_random);
         Ok::<(), MlKemError>(())
-      })
-      .expect("valid authentication benchmark operation must succeed");
-      let prepared_ek = ek.prepare().expect("valid authentication benchmark operation must succeed");
-      let (fips_ek, _) = $fips::KG::keygen_from_seed(
-        array_from_slice::<32>(&key_random[..32]),
-        array_from_slice::<32>(&key_random[32..]),
-      );
-      let rustcrypto_dk =
-        RustCryptoMlKemDecapsulationKey::<$rustcrypto>::from_seed(RustCryptoMlKemSeed::from(key_random));
-      let rustcrypto_ek = rustcrypto_dk.encapsulation_key().clone();
-      let libcrux_keypair = $libcrux::generate_key_pair(key_random);
-      let libcrux_ek = libcrux_keypair.public_key().clone();
-      aws_lc_bench! {
-        let aws_dk = AwsMlKemDecapsulationKey::generate(&$aws_algorithm).expect("valid authentication benchmark operation must succeed");
-        let aws_ek = aws_dk.encapsulation_key().expect("valid authentication benchmark operation must succeed");
-      }
-      let mut g = c.benchmark_group(concat!($group, "/encapsulate"));
-
-      g.bench_function("rscrypto", |b| {
-        b.iter(|| {
-          black_box(&prepared_ek)
-            .encapsulate(|out| {
-              out.copy_from_slice(black_box(&encaps_random));
-              Ok::<(), MlKemError>(())
-            })
-            .expect("valid authentication benchmark operation must succeed")
-        })
+      }).expect("ML-KEM fixture key generation");
+      let ek_bytes = ek.to_bytes();
+      let prepared_ek = ek.prepare().expect("ML-KEM key preparation");
+      let rustcrypto_ek = rustcrypto_ml_kem::EncapsulationKey::<$rustcrypto>::new(&ek_bytes.into()).expect("RustCrypto key import");
+      let fips_ek = $fips::EncapsKey::try_from_bytes(ek_bytes).expect("fips203 key import");
+      let libcrux_ek = libcrux_ml_kem::MlKemPublicKey::from(ek_bytes);
+      let rs_encapsulate = || {
+        let (ct, ss) = prepared_ek.encapsulate(|out| {
+          out.copy_from_slice(black_box(&encaps_random));
+          Ok::<(), MlKemError>(())
+        }).expect("ML-KEM encapsulation");
+        (ct.to_bytes(), *ss.as_bytes())
+      };
+      let expected = rs_encapsulate();
+      let mut g = c.benchmark_group(concat!($group, "/encapsulate/derand-reuse-matrix-prepared"));
+      checked_mlkem_bench(&mut g, "rscrypto", &expected, || {
+        let (ct, ss) = black_box(&prepared_ek).encapsulate(|out| {
+          out.copy_from_slice(black_box(&encaps_random)); Ok::<(), MlKemError>(())
+        }).expect("ML-KEM encapsulation");
+        (ct.to_bytes(), *ss.as_bytes())
       });
-
-      g.bench_function("libcrux", |b| {
-        b.iter(|| black_box($libcrux::encapsulate(black_box(&libcrux_ek), black_box(encaps_random))))
-      });
-
-      aws_lc_bench! {
-        g.bench_function("aws-lc-rs", |b| {
-          b.iter(|| black_box(aws_ek.encapsulate().expect("valid authentication benchmark operation must succeed")))
-        });
-      }
-
-      g.bench_function("fips203", |b| {
-        b.iter(|| black_box(fips_ek.encaps_from_seed(black_box(&encaps_random))))
-      });
-
-      g.bench_function("rustcrypto", |b| {
-        b.iter(|| {
-          black_box(rustcrypto_ek.encapsulate_deterministic(black_box(&RustCryptoMlKemB32::from(encaps_random))))
-        })
-      });
-
       g.finish();
+      let mut g = c.benchmark_group(concat!($group, "/encapsulate/derand-reuse-decoded"));
+      checked_mlkem_bench(&mut g, "rustcrypto", &expected, || {
+        let (ct, ss) = black_box(&rustcrypto_ek).encapsulate_deterministic(&(*black_box(&encaps_random)).into());
+        (array_from_slice(ct.as_slice()), array_from_slice(ss.as_slice()))
+      });
+      g.finish();
+      let mut g = c.benchmark_group(concat!($group, "/encapsulate/derand-reuse-encoded"));
+      checked_mlkem_bench(&mut g, "rscrypto", &expected, || {
+        let (ct, ss) = <$profile>::encapsulate(black_box(&ek), |out| {
+          out.copy_from_slice(black_box(&encaps_random)); Ok::<(), MlKemError>(())
+        }).expect("ML-KEM encapsulation");
+        (ct.to_bytes(), *ss.as_bytes())
+      });
+      checked_mlkem_bench(&mut g, "libcrux", &expected, || {
+        let (ct, ss) = $libcrux::encapsulate(black_box(&libcrux_ek), *black_box(&encaps_random));
+        (*ct.as_slice(), ss)
+      });
+      checked_mlkem_bench(&mut g, "fips203", &expected, || {
+        let (ss, ct) = black_box(&fips_ek).encaps_from_seed(black_box(&encaps_random));
+        (ct.into_bytes(), ss.into_bytes())
+      });
+      g.finish();
+
+      let mut g = c.benchmark_group(concat!($group, "/encapsulate/derand-import-encoded"));
+      checked_mlkem_bench(&mut g, "rscrypto", &expected, || {
+        let ek = <<$profile as rscrypto::Kem>::EncapsulationKey>::try_from_slice(black_box(&ek_bytes)).expect("ML-KEM key import");
+        let (ct, ss) = <$profile>::encapsulate(&ek, |out| {
+          out.copy_from_slice(black_box(&encaps_random)); Ok::<(), MlKemError>(())
+        }).expect("ML-KEM encapsulation");
+        (ct.to_bytes(), *ss.as_bytes())
+      });
+      checked_mlkem_bench(&mut g, "rustcrypto", &expected, || {
+        let ek = rustcrypto_ml_kem::EncapsulationKey::<$rustcrypto>::new(&(*black_box(&ek_bytes)).into()).expect("RustCrypto key import");
+        let (ct, ss) = ek.encapsulate_deterministic(&(*black_box(&encaps_random)).into());
+        (array_from_slice(ct.as_slice()), array_from_slice(ss.as_slice()))
+      });
+      checked_mlkem_bench(&mut g, "libcrux", &expected, || {
+        let ek = libcrux_ml_kem::MlKemPublicKey::from(*black_box(&ek_bytes));
+        let (ct, ss) = $libcrux::encapsulate(&ek, *black_box(&encaps_random));
+        (*ct.as_slice(), ss)
+      });
+      checked_mlkem_bench(&mut g, "fips203", &expected, || {
+        let ek = $fips::EncapsKey::try_from_bytes(*black_box(&ek_bytes)).expect("fips203 key import");
+        let (ss, ct) = ek.encaps_from_seed(black_box(&encaps_random));
+        (ct.into_bytes(), ss.into_bytes())
+      });
+      g.finish();
+
+      aws_lc_bench! {
+        let aws_ek = aws_lc_rs::kem::EncapsulationKey::new(&$aws_algorithm, &ek_bytes).expect("AWS-LC key import");
+        // Randomized rows cannot match a fixed ciphertext. Check their actual
+        // closures by cross-decapsulating each result before timing.
+        for import in [false, true] {
+          let operation = || {
+            let imported;
+            let key = if import {
+              imported = aws_lc_rs::kem::EncapsulationKey::new(&$aws_algorithm, black_box(&ek_bytes)).expect("AWS-LC key import");
+              &imported
+            } else { black_box(&aws_ek) };
+            let (ct, ss) = key.encapsulate().expect("AWS-LC encapsulation");
+            (array_from_slice::<{ <$profile>::CIPHERTEXT_SIZE }>(ct.as_ref()), array_from_slice::<32>(ss.as_ref()))
+          };
+          let (ct_bytes, ss) = operation();
+          let ct = <<$profile as rscrypto::Kem>::Ciphertext>::try_from_slice(&ct_bytes).expect("AWS-LC ciphertext import");
+          assert_eq!(<$profile>::decapsulate(&_dk, &ct).expect("AWS-LC encapsulation interoperability").as_bytes(), &ss);
+          let group = if import { concat!($group, "/encapsulate/internal-entropy-import-encoded") }
+            else { concat!($group, "/encapsulate/internal-entropy-reuse-native") };
+          let mut g = c.benchmark_group(group);
+          g.bench_function("aws-lc-rs", |b| b.iter(operation));
+          g.finish();
+        }
+      }
     }
 
+    // The expanded-key import is required to hold the serialized input fixed.
+    #[expect(deprecated, reason = "expanded key encoding must match the other benchmark implementations")]
     fn $decapsulate_fn(c: &mut Criterion) {
-      let key_random = deterministic_bytes::<{ <$profile>::KEY_GENERATION_RANDOM_SIZE }>(0x30);
-      let encaps_random = deterministic_bytes::<{ <$profile>::ENCAPSULATION_RANDOM_SIZE }>(0x90);
+      if !bench_config::selected(concat!($group, "/decapsulate/")) { return; }
+      let key_random = deterministic_bytes::<64>(0x30);
+      let encaps_random = deterministic_bytes::<32>(0x90);
       let (ek, dk) = <$profile>::generate_keypair(|out| {
-        out.copy_from_slice(&key_random);
-        Ok::<(), MlKemError>(())
-      })
-      .expect("valid authentication benchmark operation must succeed");
-      let prepared_ek = ek.prepare().expect("valid authentication benchmark operation must succeed");
-      let prepared_dk = dk.prepare().expect("valid authentication benchmark operation must succeed");
-      let (ciphertext, _) = prepared_ek
-        .encapsulate(|out| {
-          out.copy_from_slice(&encaps_random);
-          Ok::<(), MlKemError>(())
-        })
-        .expect("valid authentication benchmark operation must succeed");
-      let (fips_ek, fips_dk) = $fips::KG::keygen_from_seed(
-        array_from_slice::<32>(&key_random[..32]),
-        array_from_slice::<32>(&key_random[32..]),
-      );
-      let (_, fips_ciphertext) = fips_ek.encaps_from_seed(&encaps_random);
-      let rustcrypto_dk =
-        RustCryptoMlKemDecapsulationKey::<$rustcrypto>::from_seed(RustCryptoMlKemSeed::from(key_random));
-      let (rustcrypto_ciphertext, _) = rustcrypto_dk
-        .encapsulation_key()
-        .encapsulate_deterministic(&RustCryptoMlKemB32::from(encaps_random));
-      let libcrux_keypair = $libcrux::generate_key_pair(key_random);
-      let libcrux_ek = libcrux_keypair.public_key().clone();
-      let libcrux_dk = libcrux_keypair.private_key().clone();
-      let (libcrux_ciphertext, _) = $libcrux::encapsulate(&libcrux_ek, encaps_random);
+        out.copy_from_slice(&key_random); Ok::<(), MlKemError>(())
+      }).expect("ML-KEM fixture key generation");
+      let (ct, ss) = <$profile>::encapsulate(&ek, |out| {
+        out.copy_from_slice(&encaps_random); Ok::<(), MlKemError>(())
+      }).expect("ML-KEM fixture encapsulation");
+      let expected = *ss.as_bytes();
+      let dk_bytes = *dk.as_bytes();
+      let ct_bytes = ct.to_bytes();
+      let prepared_dk = dk.prepare().expect("ML-KEM key preparation");
+      let rustcrypto_dk = RustCryptoMlKemDecapsulationKey::<$rustcrypto>::from_expanded(&dk_bytes.into()).expect("RustCrypto key import");
+      let rustcrypto_ct = ct_bytes.into();
+      let fips_dk = $fips::DecapsKey::try_from_bytes(dk_bytes).expect("fips203 key import");
+      let fips_ct = $fips::CipherText::try_from_bytes(ct_bytes).expect("fips203 ciphertext import");
+      let libcrux_dk = libcrux_ml_kem::MlKemPrivateKey::from(dk_bytes);
+      let libcrux_ct = libcrux_ml_kem::MlKemCiphertext::from(ct_bytes);
+      let mut g = c.benchmark_group(concat!($group, "/decapsulate/reuse-matrix-prepared"));
+      checked_mlkem_bench(&mut g, "rscrypto", &expected, || {
+        *black_box(&prepared_dk).decapsulate(black_box(&ct)).expect("ML-KEM decapsulation").as_bytes()
+      });
+      g.finish();
+      let mut g = c.benchmark_group(concat!($group, "/decapsulate/reuse-decoded"));
+      checked_mlkem_bench(&mut g, "rustcrypto", &expected, || {
+        array_from_slice(black_box(&rustcrypto_dk).decapsulate(black_box(&rustcrypto_ct)).as_slice())
+      });
+      g.finish();
+      let mut g = c.benchmark_group(concat!($group, "/decapsulate/reuse-encoded"));
+      checked_mlkem_bench(&mut g, "rscrypto", &expected, || {
+        *<$profile>::decapsulate(black_box(&dk), black_box(&ct)).expect("ML-KEM decapsulation").as_bytes()
+      });
+      checked_mlkem_bench(&mut g, "libcrux", &expected, || {
+        $libcrux::decapsulate(black_box(&libcrux_dk), black_box(&libcrux_ct))
+      });
+      checked_mlkem_bench(&mut g, "fips203", &expected, || {
+        black_box(&fips_dk).try_decaps(black_box(&fips_ct)).expect("fips203 decapsulation").into_bytes()
+      });
+      g.finish();
       aws_lc_bench! {
-        let aws_dk = AwsMlKemDecapsulationKey::generate(&$aws_algorithm).expect("valid authentication benchmark operation must succeed");
-        let aws_ek = aws_dk.encapsulation_key().expect("valid authentication benchmark operation must succeed");
-        let (aws_ciphertext, _) = aws_ek.encapsulate().expect("valid authentication benchmark operation must succeed");
+        let aws_dk = AwsMlKemDecapsulationKey::new(&$aws_algorithm, &dk_bytes).expect("AWS-LC key import");
+        let mut g = c.benchmark_group(concat!($group, "/decapsulate/reuse-native"));
+        checked_mlkem_bench(&mut g, "aws-lc-rs", &expected, || {
+          array_from_slice(black_box(&aws_dk).decapsulate(AwsMlKemCiphertext::from(black_box(ct_bytes.as_slice()))).expect("AWS-LC decapsulation").as_ref())
+        });
+        g.finish();
       }
-      let mut g = c.benchmark_group(concat!($group, "/decapsulate"));
-
-      g.bench_function("rscrypto", |b| {
-        b.iter(|| black_box(&prepared_dk).decapsulate(black_box(&ciphertext)).expect("valid authentication benchmark operation must succeed"))
+      let mut g = c.benchmark_group(concat!($group, "/decapsulate/import-encoded"));
+      checked_mlkem_bench(&mut g, "rscrypto", &expected, || {
+        let dk = <<$profile as rscrypto::Kem>::DecapsulationKey>::try_from_slice(black_box(&dk_bytes)).expect("ML-KEM key import");
+        let ct = <<$profile as rscrypto::Kem>::Ciphertext>::try_from_slice(black_box(&ct_bytes)).expect("ML-KEM ciphertext import");
+        *<$profile>::decapsulate(&dk, &ct).expect("ML-KEM decapsulation").as_bytes()
       });
-
-      g.bench_function("libcrux", |b| {
-        b.iter(|| {
-          black_box($libcrux::decapsulate(
-            black_box(&libcrux_dk),
-            black_box(&libcrux_ciphertext),
-          ))
-        })
+      checked_mlkem_bench(&mut g, "rustcrypto", &expected, || {
+        let dk = RustCryptoMlKemDecapsulationKey::<$rustcrypto>::from_expanded(&(*black_box(&dk_bytes)).into()).expect("RustCrypto key import");
+        array_from_slice(dk.decapsulate(&(*black_box(&ct_bytes)).into()).as_slice())
       });
-
+      checked_mlkem_bench(&mut g, "libcrux", &expected, || {
+        let dk = libcrux_ml_kem::MlKemPrivateKey::from(*black_box(&dk_bytes));
+        let ct = libcrux_ml_kem::MlKemCiphertext::from(*black_box(&ct_bytes));
+        $libcrux::decapsulate(&dk, &ct)
+      });
+      checked_mlkem_bench(&mut g, "fips203", &expected, || {
+        let dk = $fips::DecapsKey::try_from_bytes(*black_box(&dk_bytes)).expect("fips203 key import");
+        let ct = $fips::CipherText::try_from_bytes(*black_box(&ct_bytes)).expect("fips203 ciphertext import");
+        dk.try_decaps(&ct).expect("fips203 decapsulation").into_bytes()
+      });
       aws_lc_bench! {
-        g.bench_function("aws-lc-rs", |b| {
-          b.iter(|| {
-            black_box(
-              aws_dk
-                .decapsulate(AwsMlKemCiphertext::from(black_box(aws_ciphertext.as_ref())))
-                .expect("valid authentication benchmark operation must succeed"),
-            )
-          })
+        checked_mlkem_bench(&mut g, "aws-lc-rs", &expected, || {
+          let dk = AwsMlKemDecapsulationKey::new(&$aws_algorithm, black_box(&dk_bytes)).expect("AWS-LC key import");
+          array_from_slice(dk.decapsulate(AwsMlKemCiphertext::from(black_box(ct_bytes.as_slice()))).expect("AWS-LC decapsulation").as_ref())
         });
       }
-
-      g.bench_function("fips203", |b| {
-        b.iter(|| black_box(fips_dk.try_decaps(black_box(&fips_ciphertext)).expect("valid authentication benchmark operation must succeed")))
-      });
-
-      g.bench_function("rustcrypto", |b| {
-        b.iter(|| black_box(rustcrypto_dk.decapsulate(black_box(&rustcrypto_ciphertext))))
-      });
-
       g.finish();
     }
   };
@@ -2265,46 +2426,49 @@ mlkem_profile_benches!(
   AWS_ML_KEM_1024
 );
 
-criterion_group!(
-  benches,
-  hmac_sha256,
-  hmac_sha384,
-  hmac_sha512,
-  hmac_sha256_streaming,
-  hmac_sha256_internal,
-  hkdf_sha256_expand,
-  hkdf_sha384_expand,
-  pbkdf2_sha256_derive,
-  pbkdf2_sha256_internal,
-  pbkdf2_sha512_derive,
-  ecdsa_p256_public_key,
-  ecdsa_p256_sign,
-  ecdsa_p256_verify,
-  ecdsa_p256_internal,
-  ecdsa_p384_public_key,
-  ecdsa_p384_sign,
-  ecdsa_p384_verify,
-  ecdsa_p384_internal,
-  ed25519_public_key,
-  ed25519_keypair_from_secret,
-  ed25519_sign,
-  ed25519_verify,
-  ed25519_verify_phase,
-  x25519_public_key,
-  x25519_diffie_hellman,
-  p256_ecdh_key_generation,
-  p256_ecdh_public_key,
-  p256_ecdh_parse,
-  p256_ecdh_agreement,
-  p256_ecdh_tls_roundtrip,
-  mlkem512_keygen,
-  mlkem512_encapsulate,
-  mlkem512_decapsulate,
-  mlkem768_keygen,
-  mlkem768_encapsulate,
-  mlkem768_decapsulate,
-  mlkem1024_keygen,
-  mlkem1024_encapsulate,
-  mlkem1024_decapsulate
-);
-criterion_main!(benches);
+fn main() {
+  bench_config::run(&[
+    hmac_sha256,
+    hmac_sha384,
+    hmac_sha512,
+    hmac_sha256_streaming,
+    hmac_sha256_internal,
+    hkdf_sha256_expand,
+    hkdf_sha384_expand,
+    pbkdf2_sha256_derive,
+    pbkdf2_sha256_internal,
+    pbkdf2_sha512_derive,
+    ecdsa_p256_public_key,
+    ecdsa_p256_sign,
+    ecdsa_p256_verify,
+    #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+    ecdsa_p256_internal,
+    ecdsa_p384_public_key,
+    ecdsa_p384_sign,
+    ecdsa_p384_verify,
+    #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+    ecdsa_p384_internal,
+    ed25519_public_key,
+    ed25519_keypair_from_secret,
+    ed25519_sign,
+    ed25519_verify,
+    #[cfg(feature = "diag")]
+    ed25519_verify_phase,
+    x25519_public_key,
+    x25519_diffie_hellman,
+    p256_ecdh_key_generation,
+    p256_ecdh_public_key,
+    p256_ecdh_parse,
+    p256_ecdh_agreement,
+    p256_ecdh_tls_roundtrip,
+    mlkem512_keygen,
+    mlkem512_encapsulate,
+    mlkem512_decapsulate,
+    mlkem768_keygen,
+    mlkem768_encapsulate,
+    mlkem768_decapsulate,
+    mlkem1024_keygen,
+    mlkem1024_encapsulate,
+    mlkem1024_decapsulate,
+  ]);
+}

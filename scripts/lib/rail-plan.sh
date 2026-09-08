@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One fail-closed Cargo Rail v8 plan consumer for repository scripts.
-
-RAIL_PLAN_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034
+# CARGO_ARGS, CARGO_SCOPE_KIND, and SCOPE_DESC are outputs for test.sh.
 
 _rail_load_plan() {
   if [[ "${RAIL_PLAN_LOADED:-false}" == true ]]; then
@@ -13,50 +13,23 @@ _rail_load_plan() {
   fi
   RAIL_PLAN_LOAD_ATTEMPTED=true
 
-  local python
-  python="$("$RAIL_PLAN_LIB_DIR/python.sh" --print)" || return 2
-
-  if [[ -n "${RAIL_PLAN_FILE:-}" || -n "${RAIL_PLAN_READER:-}" ]]; then
-    [[ -n "${RAIL_PLAN_FILE:-}" && -f "$RAIL_PLAN_FILE" ]] || {
-      echo "RAIL_PLAN_FILE must name a saved plan" >&2
-      return 2
-    }
-    if [[ -n "${RAIL_PLAN_READER:-}" ]]; then
-      [[ -f "$RAIL_PLAN_READER" ]] || {
-        echo "RAIL_PLAN_READER must name the matching strict reader" >&2
-        return 2
-      }
-      "$python" "$RAIL_PLAN_READER" validate "$RAIL_PLAN_FILE" || return 2
-      "$python" "$RAIL_PLAN_READER" verify-checkout "$RAIL_PLAN_FILE" || return 2
-      RAIL_PLAN_USE_READER=true
-    elif [[ "${RAIL_PLAN_LOCAL:-false}" == true ]]; then
-      cargo rail plan --verify "$RAIL_PLAN_FILE" || return 2
-      RAIL_PLAN_USE_READER=false
-    else
-      echo "A transported plan requires its matching RAIL_PLAN_READER" >&2
-      return 2
-    fi
-    RAIL_PLAN_JSON_CACHE=$(<"$RAIL_PLAN_FILE")
-  else
-    local plan_args=(rail plan --quiet --json)
-    if [[ -n "${RAIL_SINCE:-}" ]]; then
-      plan_args+=(--since "$RAIL_SINCE")
-    fi
-    if [[ "${RAIL_ALL:-false}" == true ]]; then
-      plan_args+=(--all)
-    fi
-    RAIL_PLAN_JSON_CACHE=$(cargo "${plan_args[@]}") || return 2
-
-    local plan_file
-    plan_file=$(mktemp "${TMPDIR:-/tmp}/rscrypto-plan-v8.XXXXXX")
-    printf '%s\n' "$RAIL_PLAN_JSON_CACHE" >"$plan_file"
-    if ! cargo rail plan --verify "$plan_file"; then
-      rm -f "$plan_file"
-      return 2
-    fi
-    rm -f "$plan_file"
-    RAIL_PLAN_USE_READER=false
+  local plan_args=(rail plan --quiet --json)
+  if [[ -n "${RAIL_SINCE:-}" ]]; then
+    plan_args+=(--since "$RAIL_SINCE")
   fi
+  if [[ "${RAIL_ALL:-false}" == true ]]; then
+    plan_args+=(--all)
+  fi
+  RAIL_PLAN_JSON_CACHE=$(cargo "${plan_args[@]}") || return 2
+
+  local plan_file
+  plan_file=$(mktemp "${TMPDIR:-/tmp}/rscrypto-plan-v8.XXXXXX")
+  printf '%s\n' "$RAIL_PLAN_JSON_CACHE" >"$plan_file"
+  if ! cargo rail plan --verify "$plan_file"; then
+    rm -f "$plan_file"
+    return 2
+  fi
+  rm -f "$plan_file"
 
   jq -e '
     .plan_contract_version == 8
@@ -68,59 +41,11 @@ _rail_load_plan() {
     return 2
   }
 
-  if [[ -n "${RAIL_PLAN_IDENTITY:-}" ]]; then
-    local actual_identity
-    actual_identity=$(jq -r '.identity' <<<"$RAIL_PLAN_JSON_CACHE")
-    [[ "$actual_identity" == "$RAIL_PLAN_IDENTITY" ]] || {
-      echo "Cargo Rail plan identity mismatch" >&2
-      return 2
-    }
-  fi
-  if [[ -n "${RAIL_PLAN_HEAD_COMMIT:-}" ]]; then
-    local actual_head
-    actual_head=$(jq -r '.inputs.head_commit' <<<"$RAIL_PLAN_JSON_CACHE")
-    [[ "$actual_head" == "$RAIL_PLAN_HEAD_COMMIT" ]] || {
-      echo "Cargo Rail plan checkout mismatch" >&2
-      return 2
-    }
-  fi
-
   RAIL_PLAN_LOADED=true
 }
 
 rail_prime_plan() {
   _rail_load_plan
-}
-
-rail_work_required() {
-  local work_id=$1
-  _rail_load_plan || return 2
-
-  if [[ "$RAIL_PLAN_USE_READER" == true ]]; then
-    local python required status=0
-    python="$("$RAIL_PLAN_LIB_DIR/python.sh" --print)" || return 2
-    required=$("$python" "$RAIL_PLAN_READER" is-required "$RAIL_PLAN_FILE" "$work_id") || status=$?
-    [[ "$status" -eq 0 ]] || return 2
-    case "$required" in
-      true) return 0 ;;
-      false) return 1 ;;
-      *)
-        echo "Cargo Rail reader emitted an invalid required-work decision" >&2
-        return 2
-        ;;
-    esac
-  fi
-
-  local status=0
-  jq -e --arg work_id "$work_id" '
-    .work[$work_id] as $decision
-    | if $decision == null then error("unknown work ID") else $decision.state == "required" end
-  ' <<<"$RAIL_PLAN_JSON_CACHE" >/dev/null || status=$?
-  case "$status" in
-    0) return 0 ;;
-    1) return 1 ;;
-    *) return 2 ;;
-  esac
 }
 
 rail_scope_json() {
@@ -153,22 +78,6 @@ rail_scope_json() {
 
 rail_scope_mode() {
   _rail_load_plan || return 2
-  if [[ "$RAIL_PLAN_USE_READER" == true ]]; then
-    local python mode status=0
-    python="$("$RAIL_PLAN_LIB_DIR/python.sh" --print)" || return 2
-    mode=$("$python" "$RAIL_PLAN_READER" cargo-scope "$RAIL_PLAN_FILE" "$1") || status=$?
-    [[ "$status" -eq 0 ]] || return 2
-    case "$mode" in
-      skipped) printf 'empty\n' ;;
-      workspace | packages) printf '%s\n' "$mode" ;;
-      *)
-        echo "Cargo Rail reader emitted an invalid Cargo scope" >&2
-        return 2
-        ;;
-    esac
-    return
-  fi
-
   local scope_output
   scope_output=$(rail_scope_json "$1") || return 2
   jq -r '.mode' <<<"$scope_output"
@@ -178,50 +87,60 @@ rail_scope_cargo_args() {
   local work_id=$1
   _rail_load_plan || return 2
 
-  if [[ "$RAIL_PLAN_USE_READER" == true ]]; then
-    local python
-    python="$("$RAIL_PLAN_LIB_DIR/python.sh" --print)" || return 2
-    "$python" "$RAIL_PLAN_READER" cargo-args "$RAIL_PLAN_FILE" "$work_id"
-    return
-  fi
-
   rail_scope_json "$work_id" | jq -j '.cargo_args[] | ., "\u0000"'
 }
 
-rail_variant_matrix() {
-  local work_id=${1:-}
-  [[ -n "$work_id" ]] || {
-    echo "Cargo Rail work ID is required" >&2
-    return 2
-  }
-  _rail_load_plan || return 2
+# Select the exact Cargo arguments from one Cargo Rail work decision.
+# Usage: select_cargo_scope WORK_ID [true]
+# Returns 1 only when Cargo Rail selected no work.
+select_cargo_scope() {
+  local work_id=$1
+  local force_all=${2:-false}
+  local arg args_file
 
-  if [[ "$RAIL_PLAN_USE_READER" == true ]]; then
-    local python
-    python="$("$RAIL_PLAN_LIB_DIR/python.sh" --print)" || return 2
-    "$python" "$RAIL_PLAN_READER" matrix "$RAIL_PLAN_FILE" "$work_id"
-    return
+  CARGO_ARGS=()
+  CARGO_SCOPE_KIND=""
+  SCOPE_DESC=""
+
+  if [[ "$force_all" == true ]]; then
+    CARGO_ARGS=(--workspace)
+    CARGO_SCOPE_KIND=workspace
+    SCOPE_DESC=workspace
+    return 0
   fi
 
-  jq -cer --arg work_id "$work_id" '
-    .work[$work_id] as $decision
-    | if $decision == null then
-        error("unknown work ID")
-      elif $decision.state == "skipped" then
-        {include: []}
-      elif $decision.state != "required" or $decision.scope.kind != "variants" then
-        error("work item does not carry variant scope")
-      elif $decision.scope.selection.kind == "all" then
-        "all"
-      elif $decision.scope.selection.kind == "selected"
-        and ($decision.scope.selection.variants | type == "array")
-        and ($decision.scope.selection.variants | length) > 0 then
-        {include: [
-          $decision.scope.selection.variants[]
-          | {id: .id} + .dimensions
-        ]}
-      else
-        error("work item carries an invalid variant selection")
-      end
-  ' <<<"$RAIL_PLAN_JSON_CACHE"
+  # Prime in the caller shell so subsequent process substitutions consume the
+  # same verified plan instead of replanning in isolated subshells.
+  rail_prime_plan || return 2
+  CARGO_SCOPE_KIND="$(rail_scope_mode "$work_id")" || return 2
+
+  case "$CARGO_SCOPE_KIND" in
+    empty)
+      SCOPE_DESC="no changes"
+      return 1
+      ;;
+    workspace)
+      SCOPE_DESC="workspace (Cargo Rail)"
+      ;;
+    packages)
+      args_file=$(mktemp "${TMPDIR:-/tmp}/rscrypto-cargo-args.XXXXXX")
+      if ! rail_scope_cargo_args "$work_id" >"$args_file"; then
+        rm -f "$args_file"
+        return 2
+      fi
+      while IFS= read -r -d '' arg; do
+        CARGO_ARGS+=("$arg")
+      done <"$args_file"
+      rm -f "$args_file"
+      if [[ ${#CARGO_ARGS[@]} -eq 0 ]]; then
+        echo "ERROR: Cargo Rail selected packages without Cargo arguments for $work_id" >&2
+        return 2
+      fi
+      SCOPE_DESC="affected packages (Cargo Rail)"
+      ;;
+    *)
+      echo "ERROR: unsupported Cargo Rail scope '$CARGO_SCOPE_KIND' for $work_id" >&2
+      return 2
+      ;;
+  esac
 }

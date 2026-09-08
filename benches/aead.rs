@@ -1,15 +1,19 @@
 //! AEAD comparison benchmarks: rscrypto vs RustCrypto ecosystem.
 //!
-//! Measures `encrypt_in_place` (detached tag) for all shipped AEAD primitives
-//! across the standard size matrix. Decrypt benchmarks included for the
-//! primary primitives to catch asymmetry.
+//! Copy-plus-operation workloads over preallocated buffers and reusable keys.
+//! Input restoration is timed; initial allocation and fixture generation are not.
+//! `appended-tag` rows handle ciphertext || tag; other rows use detached tags.
+//! See docs/benchmarking.md for the suite timing policy.
+
+#[path = "common/criterion.rs"]
+mod bench_config;
 
 mod common;
 
 use core::hint::black_box;
 
 use aes_gcm::aead::{AeadInOut as _, KeyInit as _};
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion};
 use rscrypto::aead::expert::AeadWithNonce;
 
 #[cfg(all(
@@ -49,12 +53,17 @@ const AAD: &[u8] = b"rscrypto-bench";
 // IETF one-shot XChaCha20-Poly1305. dryoc rows for XChaCha20 are therefore omitted here;
 // dryoc participates in BLAKE2b, Ed25519, X25519, and Argon2id benches instead.
 fn xchacha20_poly1305_encrypt(c: &mut Criterion) {
+  if !bench_config::selected("xchacha20-poly1305/copy-and-encrypt") {
+    return;
+  }
   let inputs = common::comp_sizes();
   let nonce_rs = rscrypto::aead::Nonce192::from_bytes(NONCE_24);
   let cipher_rs = rscrypto::XChaCha20Poly1305::new(&rscrypto::XChaCha20Poly1305Key::from_bytes(KEY_32));
   let cipher_rc = chacha20poly1305::XChaCha20Poly1305::new(&KEY_32.into());
   let nonce_rc = chacha20poly1305::XNonce::from(NONCE_24);
-  let mut g = c.benchmark_group("xchacha20-poly1305/encrypt");
+  // Timed: restore input into a preallocated buffer, encrypt, and handle/drop per-call outputs.
+  // Untimed: fixtures, buffer allocation, and reusable cipher construction/destruction.
+  let mut g = c.benchmark_group("xchacha20-poly1305/copy-and-encrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
@@ -87,12 +96,17 @@ fn xchacha20_poly1305_encrypt(c: &mut Criterion) {
 }
 
 fn xchacha20_poly1305_decrypt(c: &mut Criterion) {
+  if !bench_config::selected("xchacha20-poly1305/copy-and-decrypt") {
+    return;
+  }
   let inputs = common::comp_sizes();
   let nonce_rs = rscrypto::aead::Nonce192::from_bytes(NONCE_24);
   let cipher_rs = rscrypto::XChaCha20Poly1305::new(&rscrypto::XChaCha20Poly1305Key::from_bytes(KEY_32));
   let cipher_rc = chacha20poly1305::XChaCha20Poly1305::new(&KEY_32.into());
   let nonce_rc = chacha20poly1305::XNonce::from(NONCE_24);
-  let mut g = c.benchmark_group("xchacha20-poly1305/decrypt");
+  // Timed: restore input into a preallocated buffer, decrypt, and handle/drop per-call outputs.
+  // Untimed: fixtures, buffer allocation, and reusable cipher construction/destruction.
+  let mut g = c.benchmark_group("xchacha20-poly1305/copy-and-decrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
@@ -150,6 +164,9 @@ fn xchacha20_poly1305_decrypt(c: &mut Criterion) {
 // ChaCha20-Poly1305
 
 fn chacha20_poly1305_encrypt(c: &mut Criterion) {
+  if !bench_config::selected("chacha20-poly1305/copy-and-encrypt") {
+    return;
+  }
   aws_lc_bench! {
     use aws_lc_rs::aead as aws_aead;
   }
@@ -168,7 +185,9 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
     ring_aead::UnboundKey::new(&ring_aead::CHACHA20_POLY1305, &KEY_32)
       .expect("valid AEAD benchmark operation must succeed"),
   );
-  let mut g = c.benchmark_group("chacha20-poly1305/encrypt");
+  // Timed: restore input into a preallocated buffer, encrypt, and handle/drop per-call outputs.
+  // Untimed: fixtures, buffer allocation, and reusable cipher construction/destruction.
+  let mut g = c.benchmark_group("chacha20-poly1305/copy-and-encrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
@@ -233,7 +252,7 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
     });
 
     aws_lc_bench! {
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs-appended-tag", len), data, |b, d| {
         b.iter(|| {
           buf_combined.clear();
           buf_combined.extend_from_slice(black_box(d));
@@ -249,7 +268,7 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
       });
     }
 
-    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
+    g.bench_with_input(BenchmarkId::new("ring-appended-tag", len), data, |b, d| {
       b.iter(|| {
         buf_combined.clear();
         buf_combined.extend_from_slice(black_box(d));
@@ -269,6 +288,9 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
 }
 
 fn chacha20_poly1305_decrypt(c: &mut Criterion) {
+  if !bench_config::selected("chacha20-poly1305/copy-and-decrypt") {
+    return;
+  }
   aws_lc_bench! {
     use aws_lc_rs::aead as aws_aead;
   }
@@ -287,7 +309,9 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
     ring_aead::UnboundKey::new(&ring_aead::CHACHA20_POLY1305, &KEY_32)
       .expect("valid AEAD benchmark operation must succeed"),
   );
-  let mut g = c.benchmark_group("chacha20-poly1305/decrypt");
+  // Timed: restore input into a preallocated buffer, decrypt, and handle/drop per-call outputs.
+  // Untimed: fixtures, buffer allocation, and reusable cipher construction/destruction.
+  let mut g = c.benchmark_group("chacha20-poly1305/copy-and-decrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
@@ -398,7 +422,7 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
     aws_lc_bench! {
       let mut buf_aws = ct_aws.clone();
 
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), &ct_aws, |b, ct| {
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs-appended-tag", len), &ct_aws, |b, ct| {
         b.iter(|| {
           buf_aws.copy_from_slice(ct);
           aws_key
@@ -415,7 +439,7 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
 
     let mut buf_ring = ct_ring.clone();
 
-    g.bench_with_input(BenchmarkId::new("ring", len), &ct_ring, |b, ct| {
+    g.bench_with_input(BenchmarkId::new("ring-appended-tag", len), &ct_ring, |b, ct| {
       b.iter(|| {
         buf_ring.copy_from_slice(ct);
         ring_key
@@ -436,6 +460,9 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
 // AES-256-GCM-SIV
 
 fn aes256_gcm_siv_encrypt(c: &mut Criterion) {
+  if !bench_config::selected("aes-256-gcm-siv/copy-and-encrypt") {
+    return;
+  }
   aws_lc_bench! {
     use aws_lc_rs::aead as aws_aead;
   }
@@ -449,7 +476,9 @@ fn aes256_gcm_siv_encrypt(c: &mut Criterion) {
     let aws_key =
       aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_256_GCM_SIV, &KEY_32).expect("valid AEAD benchmark operation must succeed"));
   }
-  let mut g = c.benchmark_group("aes-256-gcm-siv/encrypt");
+  // Timed: restore input into a preallocated buffer, encrypt, and handle/drop per-call outputs.
+  // Untimed: fixtures, buffer allocation, and reusable cipher construction/destruction.
+  let mut g = c.benchmark_group("aes-256-gcm-siv/copy-and-encrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
@@ -500,6 +529,9 @@ fn aes256_gcm_siv_encrypt(c: &mut Criterion) {
 }
 
 fn aes256_gcm_siv_decrypt(c: &mut Criterion) {
+  if !bench_config::selected("aes-256-gcm-siv/copy-and-decrypt") {
+    return;
+  }
   aws_lc_bench! {
     use aws_lc_rs::aead as aws_aead;
   }
@@ -513,7 +545,9 @@ fn aes256_gcm_siv_decrypt(c: &mut Criterion) {
     let aws_key =
       aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_256_GCM_SIV, &KEY_32).expect("valid AEAD benchmark operation must succeed"));
   }
-  let mut g = c.benchmark_group("aes-256-gcm-siv/decrypt");
+  // Timed: restore input into a preallocated buffer, decrypt, and handle/drop per-call outputs.
+  // Untimed: fixtures, buffer allocation, and reusable cipher construction/destruction.
+  let mut g = c.benchmark_group("aes-256-gcm-siv/copy-and-decrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
@@ -578,7 +612,7 @@ fn aes256_gcm_siv_decrypt(c: &mut Criterion) {
     aws_lc_bench! {
       let mut buf_aws = ct_aws.clone();
 
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), &ct_aws, |b, ct| {
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs-appended-tag", len), &ct_aws, |b, ct| {
         b.iter(|| {
           buf_aws.copy_from_slice(ct);
           aws_key
@@ -600,6 +634,9 @@ fn aes256_gcm_siv_decrypt(c: &mut Criterion) {
 // AES-128-GCM-SIV
 
 fn aes128_gcm_siv_encrypt(c: &mut Criterion) {
+  if !bench_config::selected("aes-128-gcm-siv/copy-and-encrypt") {
+    return;
+  }
   aws_lc_bench! {
     use aws_lc_rs::aead as aws_aead;
   }
@@ -613,7 +650,9 @@ fn aes128_gcm_siv_encrypt(c: &mut Criterion) {
     let aws_key =
       aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_128_GCM_SIV, &KEY_16).expect("valid AEAD benchmark operation must succeed"));
   }
-  let mut g = c.benchmark_group("aes-128-gcm-siv/encrypt");
+  // Timed: restore input into a preallocated buffer, encrypt, and handle/drop per-call outputs.
+  // Untimed: fixtures, buffer allocation, and reusable cipher construction/destruction.
+  let mut g = c.benchmark_group("aes-128-gcm-siv/copy-and-encrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
@@ -664,6 +703,9 @@ fn aes128_gcm_siv_encrypt(c: &mut Criterion) {
 }
 
 fn aes128_gcm_siv_decrypt(c: &mut Criterion) {
+  if !bench_config::selected("aes-128-gcm-siv/copy-and-decrypt") {
+    return;
+  }
   aws_lc_bench! {
     use aws_lc_rs::aead as aws_aead;
   }
@@ -677,7 +719,9 @@ fn aes128_gcm_siv_decrypt(c: &mut Criterion) {
     let aws_key =
       aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_128_GCM_SIV, &KEY_16).expect("valid AEAD benchmark operation must succeed"));
   }
-  let mut g = c.benchmark_group("aes-128-gcm-siv/decrypt");
+  // Timed: restore input into a preallocated buffer, decrypt, and handle/drop per-call outputs.
+  // Untimed: fixtures, buffer allocation, and reusable cipher construction/destruction.
+  let mut g = c.benchmark_group("aes-128-gcm-siv/copy-and-decrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
@@ -742,7 +786,7 @@ fn aes128_gcm_siv_decrypt(c: &mut Criterion) {
     aws_lc_bench! {
       let mut buf_aws = ct_aws.clone();
 
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), &ct_aws, |b, ct| {
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs-appended-tag", len), &ct_aws, |b, ct| {
         b.iter(|| {
           buf_aws.copy_from_slice(ct);
           aws_key
@@ -764,6 +808,9 @@ fn aes128_gcm_siv_decrypt(c: &mut Criterion) {
 // AES-256-GCM
 
 fn aes256_gcm_encrypt(c: &mut Criterion) {
+  if !bench_config::selected("aes-256-gcm/copy-and-encrypt") {
+    return;
+  }
   aws_lc_bench! {
     use aws_lc_rs::aead as aws_aead;
   }
@@ -780,7 +827,9 @@ fn aes256_gcm_encrypt(c: &mut Criterion) {
   let ring_key = ring_aead::LessSafeKey::new(
     ring_aead::UnboundKey::new(&ring_aead::AES_256_GCM, &KEY_32).expect("valid AEAD benchmark operation must succeed"),
   );
-  let mut g = c.benchmark_group("aes-256-gcm/encrypt");
+  // Timed: restore input into a preallocated buffer, encrypt, and handle/drop per-call outputs.
+  // Untimed: fixtures, buffer allocation, and reusable cipher construction/destruction.
+  let mut g = c.benchmark_group("aes-256-gcm/copy-and-encrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
@@ -847,6 +896,9 @@ fn aes256_gcm_encrypt(c: &mut Criterion) {
 }
 
 fn aes256_gcm_decrypt(c: &mut Criterion) {
+  if !bench_config::selected("aes-256-gcm/copy-and-decrypt") {
+    return;
+  }
   aws_lc_bench! {
     use aws_lc_rs::aead as aws_aead;
   }
@@ -863,7 +915,9 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
   let ring_key = ring_aead::LessSafeKey::new(
     ring_aead::UnboundKey::new(&ring_aead::AES_256_GCM, &KEY_32).expect("valid AEAD benchmark operation must succeed"),
   );
-  let mut g = c.benchmark_group("aes-256-gcm/decrypt");
+  // Timed: restore input into a preallocated buffer, decrypt, and handle/drop per-call outputs.
+  // Untimed: fixtures, buffer allocation, and reusable cipher construction/destruction.
+  let mut g = c.benchmark_group("aes-256-gcm/copy-and-decrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
@@ -937,7 +991,7 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
     aws_lc_bench! {
       let mut buf_aws = ct_aws.clone();
 
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), &ct_aws, |b, ct| {
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs-appended-tag", len), &ct_aws, |b, ct| {
         b.iter(|| {
           buf_aws.copy_from_slice(ct);
           aws_key
@@ -977,6 +1031,9 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
 // AES-128-GCM
 
 fn aes128_gcm_encrypt(c: &mut Criterion) {
+  if !bench_config::selected("aes-128-gcm/copy-and-encrypt") {
+    return;
+  }
   aws_lc_bench! {
     use aws_lc_rs::aead as aws_aead;
   }
@@ -993,7 +1050,9 @@ fn aes128_gcm_encrypt(c: &mut Criterion) {
   let ring_key = ring_aead::LessSafeKey::new(
     ring_aead::UnboundKey::new(&ring_aead::AES_128_GCM, &KEY_16).expect("valid AEAD benchmark operation must succeed"),
   );
-  let mut g = c.benchmark_group("aes-128-gcm/encrypt");
+  // Timed: restore input into a preallocated buffer, encrypt, and handle/drop per-call outputs.
+  // Untimed: fixtures, buffer allocation, and reusable cipher construction/destruction.
+  let mut g = c.benchmark_group("aes-128-gcm/copy-and-encrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
@@ -1060,6 +1119,9 @@ fn aes128_gcm_encrypt(c: &mut Criterion) {
 }
 
 fn aes128_gcm_decrypt(c: &mut Criterion) {
+  if !bench_config::selected("aes-128-gcm/copy-and-decrypt") {
+    return;
+  }
   aws_lc_bench! {
     use aws_lc_rs::aead as aws_aead;
   }
@@ -1076,7 +1138,9 @@ fn aes128_gcm_decrypt(c: &mut Criterion) {
   let ring_key = ring_aead::LessSafeKey::new(
     ring_aead::UnboundKey::new(&ring_aead::AES_128_GCM, &KEY_16).expect("valid AEAD benchmark operation must succeed"),
   );
-  let mut g = c.benchmark_group("aes-128-gcm/decrypt");
+  // Timed: restore input into a preallocated buffer, decrypt, and handle/drop per-call outputs.
+  // Untimed: fixtures, buffer allocation, and reusable cipher construction/destruction.
+  let mut g = c.benchmark_group("aes-128-gcm/copy-and-decrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
@@ -1150,7 +1214,7 @@ fn aes128_gcm_decrypt(c: &mut Criterion) {
     aws_lc_bench! {
       let mut buf_aws = ct_aws.clone();
 
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), &ct_aws, |b, ct| {
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs-appended-tag", len), &ct_aws, |b, ct| {
         b.iter(|| {
           buf_aws.copy_from_slice(ct);
           aws_key
@@ -1190,10 +1254,15 @@ fn aes128_gcm_decrypt(c: &mut Criterion) {
 // AEGIS-256
 
 fn aegis256_encrypt(c: &mut Criterion) {
+  if !bench_config::selected("aegis-256/copy-and-encrypt") {
+    return;
+  }
   let inputs = common::comp_sizes();
   let nonce_rs = rscrypto::aead::Nonce256::from_bytes(NONCE_32);
   let cipher_rs = rscrypto::Aegis256::new(&rscrypto::Aegis256Key::from_bytes(KEY_32));
-  let mut g = c.benchmark_group("aegis-256/encrypt");
+  // Timed: restore input into a preallocated buffer, encrypt, and handle/drop per-call outputs.
+  // Untimed: fixtures, buffer allocation, and reusable cipher construction/destruction.
+  let mut g = c.benchmark_group("aegis-256/copy-and-encrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
@@ -1219,10 +1288,15 @@ fn aegis256_encrypt(c: &mut Criterion) {
 }
 
 fn aegis256_decrypt(c: &mut Criterion) {
+  if !bench_config::selected("aegis-256/copy-and-decrypt") {
+    return;
+  }
   let inputs = common::comp_sizes();
   let nonce_rs = rscrypto::aead::Nonce256::from_bytes(NONCE_32);
   let cipher_rs = rscrypto::Aegis256::new(&rscrypto::Aegis256Key::from_bytes(KEY_32));
-  let mut g = c.benchmark_group("aegis-256/decrypt");
+  // Timed: restore input into a preallocated buffer, decrypt, and handle/drop per-call outputs.
+  // Untimed: fixtures, buffer allocation, and reusable cipher construction/destruction.
+  let mut g = c.benchmark_group("aegis-256/copy-and-decrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
@@ -1274,6 +1348,9 @@ fn aegis256_decrypt(c: &mut Criterion) {
 // Ascon-AEAD128
 
 fn ascon_aead128_encrypt(c: &mut Criterion) {
+  if !bench_config::selected("ascon-aead128/copy-and-encrypt") {
+    return;
+  }
   use ascon_aead::aead::{AeadInOut as _, KeyInit as _, array::Array};
 
   let inputs = common::comp_sizes();
@@ -1281,7 +1358,9 @@ fn ascon_aead128_encrypt(c: &mut Criterion) {
   let cipher_rs = rscrypto::AsconAead128::new(&rscrypto::AsconAead128Key::from_bytes(KEY_16));
   let cipher_ac = ascon_aead::AsconAead128::new(&Array(KEY_16));
   let nonce_ac = Array(NONCE_16);
-  let mut g = c.benchmark_group("ascon-aead128/encrypt");
+  // Timed: restore input into a preallocated buffer, encrypt, and handle/drop per-call outputs.
+  // Untimed: fixtures, buffer allocation, and reusable cipher construction/destruction.
+  let mut g = c.benchmark_group("ascon-aead128/copy-and-encrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
@@ -1314,6 +1393,9 @@ fn ascon_aead128_encrypt(c: &mut Criterion) {
 }
 
 fn ascon_aead128_decrypt(c: &mut Criterion) {
+  if !bench_config::selected("ascon-aead128/copy-and-decrypt") {
+    return;
+  }
   use ascon_aead::aead::{AeadInOut as _, KeyInit as _, array::Array};
 
   let inputs = common::comp_sizes();
@@ -1321,7 +1403,9 @@ fn ascon_aead128_decrypt(c: &mut Criterion) {
   let cipher_rs = rscrypto::AsconAead128::new(&rscrypto::AsconAead128Key::from_bytes(KEY_16));
   let cipher_ac = ascon_aead::AsconAead128::new(&Array(KEY_16));
   let nonce_ac = Array(NONCE_16);
-  let mut g = c.benchmark_group("ascon-aead128/decrypt");
+  // Timed: restore input into a preallocated buffer, decrypt, and handle/drop per-call outputs.
+  // Untimed: fixtures, buffer allocation, and reusable cipher construction/destruction.
+  let mut g = c.benchmark_group("ascon-aead128/copy-and-decrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
@@ -1377,6 +1461,9 @@ fn ascon_aead128_decrypt(c: &mut Criterion) {
 // Fixed-size header protection
 
 fn header_protection(c: &mut Criterion) {
+  if !bench_config::selected("header-protection/") {
+    return;
+  }
   use aes::cipher::{Array, BlockCipherEncrypt as _, KeyInit as _};
   use chacha20::cipher::{KeyIvInit as _, StreamCipherCore as _};
   use rscrypto::aead::expert::header_protection::{
@@ -1384,6 +1471,7 @@ fn header_protection(c: &mut Criterion) {
     ChaCha20HeaderProtection, ChaCha20HeaderProtectionKey,
   };
 
+  // Timed: construct and destroy each returned context; key fixtures are untimed.
   let mut construction = c.benchmark_group("header-protection/construct");
   construction.bench_function("rscrypto/aes128", |b| {
     b.iter(|| {
@@ -1426,6 +1514,8 @@ fn header_protection(c: &mut Criterion) {
   let aes128_rc = aes::Aes128::new(&Array::from(KEY_16));
   let aes256_rc = aes::Aes256::new(&Array::from(KEY_32));
 
+  // Timed: sample processing and mask generation, including local block/core setup.
+  // Untimed: reusable key contexts and the sample fixture.
   let mut mask = c.benchmark_group("header-protection/mask");
   mask.bench_function("rscrypto/aes128", |b| {
     b.iter(|| black_box(aes128_rs.mask(black_box(&sample))))
@@ -1470,6 +1560,9 @@ fn header_protection(c: &mut Criterion) {
 // AES-SIV-CMAC-256 (RFC 5297 nonce-based profile)
 
 fn aes_siv_cmac256(c: &mut Criterion) {
+  if !bench_config::selected("aes-siv-cmac-256/") {
+    return;
+  }
   use aes_siv::{KeyInit as _, siv::Aes128Siv};
   use rscrypto::{AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce};
 
@@ -1477,6 +1570,7 @@ fn aes_siv_cmac256(c: &mut Criterion) {
   let key_rs = AesSivCmac256Key::from_bytes(KEY_32);
   let key_rc: aes_siv::Key<Aes128Siv> = KEY_32.into();
 
+  // Timed: construct and destroy a cipher; typed key preparation is untimed.
   let mut construction = c.benchmark_group("aes-siv-cmac-256/construct");
   construction.bench_function("rscrypto", |b| {
     b.iter(|| black_box(AesSivCmac256::new(black_box(&key_rs))))
@@ -1496,9 +1590,9 @@ fn aes_siv_cmac256(c: &mut Criterion) {
   let mut cipher_rc = Aes128Siv::new(&key_rc);
   let headers: [&[u8]; 2] = [AAD, &NONCE_16];
 
-  // Construction prepares different amounts of reusable work in the two libraries. Measure the
-  // complete one-context/one-seal lifecycle separately so setup deferral cannot skew the result.
-  let mut construct_and_seal = c.benchmark_group("aes-siv-cmac-256/construct-and-seal");
+  // Timed: restore plaintext, construct a cipher, seal, and destroy per-call objects.
+  // Untimed: key/nonce fixtures and buffer allocation. This is one cipher lifecycle, not packet I/O.
+  let mut construct_and_seal = c.benchmark_group("aes-siv-cmac-256/copy-and-construct-and-seal");
   for (len, data) in &inputs {
     common::set_throughput(&mut construct_and_seal, *len);
     let mut buffer_rs = data.clone();
@@ -1525,7 +1619,8 @@ fn aes_siv_cmac256(c: &mut Criterion) {
   }
   construct_and_seal.finish();
 
-  let mut seal = c.benchmark_group("aes-siv-cmac-256/seal");
+  // Timed: restore plaintext and seal; buffer allocation and reusable ciphers are untimed.
+  let mut seal = c.benchmark_group("aes-siv-cmac-256/copy-and-seal");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut seal, *len);
@@ -1551,7 +1646,8 @@ fn aes_siv_cmac256(c: &mut Criterion) {
   }
   seal.finish();
 
-  let mut open = c.benchmark_group("aes-siv-cmac-256/open");
+  // Timed: restore ciphertext and open; fixture generation, buffers, and reusable ciphers are untimed.
+  let mut open = c.benchmark_group("aes-siv-cmac-256/copy-and-open");
   for (len, data) in &inputs {
     common::set_throughput(&mut open, *len);
 
@@ -1597,25 +1693,25 @@ fn aes_siv_cmac256(c: &mut Criterion) {
 
 // Criterion harness
 
-criterion_group!(
-  benches,
-  xchacha20_poly1305_encrypt,
-  xchacha20_poly1305_decrypt,
-  chacha20_poly1305_encrypt,
-  chacha20_poly1305_decrypt,
-  aes256_gcm_siv_encrypt,
-  aes256_gcm_siv_decrypt,
-  aes128_gcm_siv_encrypt,
-  aes128_gcm_siv_decrypt,
-  aes256_gcm_encrypt,
-  aes256_gcm_decrypt,
-  aes128_gcm_encrypt,
-  aes128_gcm_decrypt,
-  aegis256_encrypt,
-  aegis256_decrypt,
-  ascon_aead128_encrypt,
-  ascon_aead128_decrypt,
-  header_protection,
-  aes_siv_cmac256,
-);
-criterion_main!(benches);
+fn main() {
+  bench_config::run(&[
+    xchacha20_poly1305_encrypt,
+    xchacha20_poly1305_decrypt,
+    chacha20_poly1305_encrypt,
+    chacha20_poly1305_decrypt,
+    aes256_gcm_siv_encrypt,
+    aes256_gcm_siv_decrypt,
+    aes128_gcm_siv_encrypt,
+    aes128_gcm_siv_decrypt,
+    aes256_gcm_encrypt,
+    aes256_gcm_decrypt,
+    aes128_gcm_encrypt,
+    aes128_gcm_decrypt,
+    aegis256_encrypt,
+    aegis256_decrypt,
+    ascon_aead128_encrypt,
+    ascon_aead128_decrypt,
+    header_protection,
+    aes_siv_cmac256,
+  ]);
+}

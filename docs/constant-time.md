@@ -36,10 +36,9 @@ builds them, runs available timing checks, and emits reports. A target-specific
 claim requires the evidence required by `ct.toml`; a local host cannot
 stand in for another target.
 
-`just ct-structural` builds the bounded x86-64 release harness, inspects its
-generated code, and validates strict manifest and artifact coverage. It is a
-compiler-regression check, not timing or formal evidence. Required target runs
-must be performed and retained independently.
+For strict manifest and artifact coverage, run `just ct-validate --strict-coverage`
+after building the artifacts. This checks compiler output and coverage; timing
+and formal evidence require their respective target runs.
 
 ## Public decisions and exclusions
 

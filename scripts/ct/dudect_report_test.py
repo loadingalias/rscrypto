@@ -3,6 +3,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import subprocess
+import sys
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -12,6 +17,8 @@ from dudect_report import (
   manifest_dudect_cases,
   owner_call_site_counts,
   owner_symbol_evidence,
+  parse_stdout,
+  raw_csv_rows,
 )
 from full import validate_dudect_case_report, validated_dudect_case_report
 def expect_failure(action) -> None:
@@ -22,7 +29,106 @@ def expect_failure(action) -> None:
   raise AssertionError("malformed DudeCT evidence unexpectedly passed")
 
 
+def test_case_selection() -> None:
+  manifest = {
+    name: {"primitive": "fixture", "gate": "required", "left_class": "left", "right_class": "right"}
+    for name in ("alpha_one", "alpha_two", "beta")
+  }
+
+  def rows(names, filter_value="", selected_manifest=manifest):
+    return dudect_case_rows(
+      {name: {"abs_max_t": 1.0} for name in names}, {},
+      {name: {"row_count": 100, "labels": {"0": 40, "1": 60}} for name in names}, selected_manifest,
+      threshold=10.0, requested_samples=100, filter_value=filter_value,
+    )
+
+  assert [row["name"] for row in rows(manifest)] == sorted(manifest)
+  assert [row["name"] for row in rows(["alpha_one"], "alpha_one")] == ["alpha_one"]
+  assert [row["name"] for row in rows(["alpha_two", "alpha_one"], "alpha_")] == ["alpha_one", "alpha_two"]
+  for names, filter_value in (
+    ([], ""),
+    ([], "typo"),
+    ([], "ALPHA"),
+    ([], "alpha_one"),
+    (["alpha_one"], ""),
+    (["alpha_one"], "alpha_"),
+    (["alpha_one", "beta"], "alpha_one"),
+    (["beta"], "alpha_one"),
+  ):
+    expect_failure(lambda: rows(names, filter_value))
+  expect_failure(lambda: rows([], selected_manifest={}))
+
+  with tempfile.TemporaryDirectory() as temporary:
+    stdout = Path(temporary) / "stdout.txt"
+    result_line = "bench alpha_one ... : n == +0.01M, max t = +1.00, max tau = +0.01, (5/tau)^2 = 250000\n"
+    stdout.write_text(result_line)
+    assert list(parse_stdout(stdout)[1]) == ["alpha_one"]
+    stdout.write_text(result_line * 2)
+    expect_failure(lambda: parse_stdout(stdout))
+
+    root = Path(__file__).resolve().parents[2]
+    out = Path(temporary) / "report.json"
+    csv = Path(temporary) / "raw.csv"
+    csv.write_text("benchname,sequence,class,runtime_ns\n")
+    command = [
+      sys.executable, str(root / "scripts/ct/dudect_report.py"),
+      "--stdout", str(stdout), "--csv", str(csv), "--out", str(out),
+      "--target", "fixture", "--samples", "100",
+      "--binary", "unused", "--binary-disassembly", "unused",
+      "--binary-symbols", "unused", "--linker-command-log", "unused",
+    ]
+    for filter_value, output, error in (
+      ("typo_no_such_case", "", "selects no manifest cases"),
+      ("", "", "completed case set does not match selection"),
+      ("owner_eq_", "", "completed case set does not match selection"),
+    ):
+      stdout.write_text(output)
+      result = subprocess.run([*command, "--filter", filter_value], capture_output=True, text=True, check=False)
+      assert result.returncode != 0 and error in result.stderr, result
+      assert not out.exists()
+
+
+def test_raw_csv() -> None:
+  with tempfile.TemporaryDirectory() as temporary:
+    path = Path(temporary) / "raw.csv"
+    header = "benchname,sequence,class,runtime_ns\n"
+    valid = "fixture,0,1,31\nfixture,1,0,11\nfixture,2,1,32\nfixture,3,1,33\nfixture,4,0,12\n"
+    path.write_text(header + valid)
+    raw = raw_csv_rows(path)
+    assert raw == {"fixture": {"row_count": 5, "labels": {"0": 2, "1": 3}}}
+    metadata = {"fixture": {"primitive": "fixture", "gate": "required", "left_class": "left", "right_class": "right"}}
+    def rows(raw_rows):
+      return dudect_case_rows({"fixture": {"abs_max_t": 1.0}}, {}, raw_rows, metadata, threshold=10, requested_samples=5)
+    assert rows(raw)[0]["raw_csv"] == raw["fixture"]
+    path.write_text(header + valid.rsplit("fixture,4", 1)[0])
+    expect_failure(lambda: rows(raw_csv_rows(path)))
+    # A legacy label-only export can have contiguous positions but only one class.
+    expect_failure(lambda: rows({"fixture": {"row_count": 5, "labels": {"0": 5, "1": 0}}}))
+    for malformed in (
+      "benchname,class,runtime\nfixture,0,10\n",
+      header + valid.replace("fixture,2,", "fixture,3,"),
+      header + valid + "fixture,4,0,12\n",
+      header + "fixture,0,2,31\n",
+      header + "fixture,0,1,-1\n",
+      header + "fixture,0,1,\n",
+      header + "fixture,0,1,31,extra\n",
+    ):
+      path.write_text(malformed)
+      expect_failure(lambda: raw_csv_rows(path))
+
+
+def test_runner_upstream_identity() -> None:
+  runner = Path(__file__).resolve().parents[2] / "tools/ct-dudect/vendor/dudect-bencher"
+  upstream = json.loads((runner / "UPSTREAM.json").read_text())
+  for name, expected in upstream["files"].items():
+    if name != "src/ctbench.rs":
+      assert hashlib.sha256((runner / name).read_bytes()).hexdigest() == expected, name
+
+
 def main() -> None:
+  test_runner_upstream_identity()
+  test_raw_csv()
+  test_case_selection()
   root = Path(__file__).resolve().parents[2]
   with (root / "ct.toml").open("rb") as source:
     manifest_cases = manifest_dudect_cases(tomllib.load(source))
@@ -48,8 +154,8 @@ def main() -> None:
       for name, max_t in baseline_t_values.items()
     },
     {},
-    {},
-    manifest_cases,
+    {name: {"row_count": 20_000, "labels": {"0": 9_999, "1": 10_001}} for name in baseline_t_values},
+    {name: manifest_cases[name] for name in baseline_t_values},
     threshold=10.0,
     requested_samples=20_000,
   )
@@ -79,6 +185,9 @@ def main() -> None:
   assert validated_dudect_case_report(required_case, {"cases": [valid_required_row]}) == valid_required_row
   expect_failure(lambda: validated_dudect_case_report(required_case, {"cases": []}))
   expect_failure(lambda: validated_dudect_case_report(required_case, {"cases": [valid_required_row] * 2}))
+  expect_failure(lambda: validated_dudect_case_report(
+    required_case, {"cases": [valid_required_row, {"name": "unexpected", "status": "pass"}]}
+  ))
   expect_failure(
     lambda: dudect_case_rows(
       {"undeclared_case": {"abs_max_t": 11.0}},

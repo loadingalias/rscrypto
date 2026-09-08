@@ -1,5 +1,8 @@
 //! RSA verification benchmarks for rscrypto public APIs.
 
+#[path = "common/criterion.rs"]
+mod bench_config;
+
 use core::hint::black_box;
 
 #[cfg(all(
@@ -8,7 +11,7 @@ use core::hint::black_box;
   not(any(target_arch = "s390x", target_arch = "powerpc64"))
 ))]
 use aws_lc_rs::signature as aws_signature;
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::Criterion;
 use ring::signature as ring_signature;
 #[cfg(feature = "getrandom")]
 use rsa::{
@@ -342,6 +345,9 @@ fn factor_two_and_inverse(modulus: &[u8]) -> (Vec<u8>, Vec<u8>) {
 }
 
 fn rsa_private_signing(c: &mut Criterion) {
+  if !bench_config::selected("rsa-2048-private-signing") {
+    return;
+  }
   let key = rsa2048_private_key();
   let mut scratch = key.private_scratch();
   let mut signature = vec![0u8; key.signature_len()];
@@ -503,6 +509,9 @@ fn rsa_components_for_size(
   pkcs1_sig: &[u8],
   import_policy: &RsaPublicKeyPolicy,
 ) {
+  if !bench_config::selected(&format!("{name}/")) {
+    return;
+  }
   let pss_key =
     RsaPublicKey::from_spki_der_with_policy(pss_spki, import_policy).expect("valid RSA benchmark fixture must succeed");
   let mut pss_scratch = pss_key.public_scratch();
@@ -757,6 +766,9 @@ fn rsa_components_for_size(
 }
 
 fn rsa_public_exponents(c: &mut Criterion) {
+  if !bench_config::selected("rsa-2048-public-exponents") {
+    return;
+  }
   let modulus = legacy_exponent_modulus();
   let input = legacy_exponent_input();
   let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_small_exponents();
@@ -995,6 +1007,9 @@ fn rsa_public_exponents(c: &mut Criterion) {
 }
 
 fn rsa_hash_components(c: &mut Criterion) {
+  if !bench_config::selected("rsa-hash-components") {
+    return;
+  }
   let mut group = c.benchmark_group("rsa-hash-components");
 
   group.bench_function("sha256-message-pss", |b| {
@@ -1021,6 +1036,9 @@ fn rsa_hash_components(c: &mut Criterion) {
 
 #[cfg(feature = "diag")]
 fn rsa_montgomery_thresholds(c: &mut Criterion) {
+  if !bench_config::selected("rsa-montgomery-thresholds") {
+    return;
+  }
   let mut group = c.benchmark_group("rsa-montgomery-thresholds");
 
   for (name, modulus_len) in [
@@ -1142,21 +1160,13 @@ fn rsa_components(c: &mut Criterion) {
   );
 }
 
-#[cfg(not(feature = "diag"))]
-criterion_group!(
-  benches,
-  rsa_components,
-  rsa_private_signing,
-  rsa_public_exponents,
-  rsa_hash_components
-);
-#[cfg(feature = "diag")]
-criterion_group!(
-  benches,
-  rsa_components,
-  rsa_private_signing,
-  rsa_public_exponents,
-  rsa_hash_components,
-  rsa_montgomery_thresholds
-);
-criterion_main!(benches);
+fn main() {
+  bench_config::run(&[
+    rsa_components,
+    rsa_private_signing,
+    rsa_public_exponents,
+    rsa_hash_components,
+    #[cfg(feature = "diag")]
+    rsa_montgomery_thresholds,
+  ]);
+}

@@ -1,96 +1,78 @@
 {
   "schema": 1,
-  "default_features": ["parallel", "full"],
-  "crates": {
-    "checksum": ["crc"],
-    "hashes": [
-      "sha2",
-      "sha3",
-      "websocket_sha1",
-      "kmac_cshake",
-      "ascon",
-      "xxh3",
-      "rapidhash",
-      "blake2",
-      "blake3"
-    ],
-    "auth": ["auth", "kmac_cshake", "password_hashing", "rsa"],
-    "rsa": ["rsa"],
-    "aead": ["aead"]
-  },
   "benches": {
     "crc": {
       "binary": "crc",
       "kind": "criterion",
       "required": true,
-      "features": ["parallel", "checksums"]
+      "features": ["std", "checksums"]
     },
     "sha2": {
       "binary": "sha2",
       "kind": "criterion",
       "required": true,
-      "features": ["parallel", "sha2", "diag"]
+      "features": ["std", "sha2", "diag"]
     },
     "sha3": {
       "binary": "sha3",
       "kind": "criterion",
       "required": true,
-      "features": ["parallel", "sha3"]
+      "features": ["std", "sha3"]
     },
     "websocket_sha1": {
       "binary": "websocket_sha1",
       "kind": "criterion",
       "required": true,
-      "features": ["websocket-sha1"]
+      "features": ["std", "websocket-sha1"]
     },
     "kmac_cshake": {
       "binary": "kmac_cshake",
       "kind": "criterion",
       "required": true,
-      "features": ["parallel", "sha3", "kmac"]
+      "features": ["std", "sha3", "kmac"]
     },
     "ascon": {
       "binary": "ascon",
       "kind": "criterion",
       "required": true,
-      "features": ["std", "parallel", "ascon-hash"]
+      "features": ["std", "ascon-hash"]
     },
     "xxh3": {
       "binary": "xxh3",
       "kind": "criterion",
       "required": true,
-      "features": ["parallel", "xxh3"]
+      "features": ["std", "xxh3"]
     },
     "rapidhash": {
       "binary": "rapidhash",
       "kind": "criterion",
       "required": true,
-      "features": ["parallel", "rapidhash"]
+      "features": ["std", "rapidhash"]
     },
     "aead_kernels": {
       "binary": "aead_kernels",
       "kind": "criterion",
       "required": false,
-      "features": ["parallel", "sha2", "chacha20poly1305", "diag"]
+      "features": ["std", "sha2", "chacha20poly1305", "diag"]
     },
     "blake2": {
       "binary": "blake2",
       "kind": "criterion",
       "required": true,
-      "features": ["parallel", "blake2b", "blake2s"]
+      "features": ["std", "blake2b", "blake2s"]
     },
     "blake3": {
       "binary": "blake3",
       "kind": "criterion",
       "required": true,
-      "features": ["parallel", "blake3"]
+      "features": ["std", "blake3", "parallel"]
     },
     "auth": {
       "binary": "auth",
       "kind": "criterion",
       "required": true,
       "features": [
-        "parallel",
+        "std",
         "hmac",
         "hkdf",
         "pbkdf2",
@@ -106,20 +88,20 @@
       "binary": "password_hashing",
       "kind": "criterion",
       "required": true,
-      "features": ["parallel", "argon2", "scrypt", "phc-strings", "getrandom"]
+      "features": ["std", "argon2", "scrypt", "phc-strings", "getrandom", "parallel"]
     },
     "rsa": {
       "binary": "rsa",
       "kind": "criterion",
       "required": true,
-      "features": ["parallel", "rsa", "diag", "getrandom"]
+      "features": ["std", "rsa", "diag", "getrandom"]
     },
     "aead_diag": {
       "binary": "aead",
       "kind": "criterion",
       "required": false,
       "features": [
-        "parallel",
+        "std",
         "sha2",
         "aes-gcm",
         "aes-gcm-siv",
@@ -136,7 +118,7 @@
       "kind": "criterion",
       "required": true,
       "features": [
-        "parallel",
+        "std",
         "aes-gcm",
         "aes-gcm-siv",
         "aes-siv",
@@ -150,77 +132,75 @@
       "binary": "structural",
       "kind": "gungraun",
       "required": false,
-      "features": ["checksums", "sha2", "blake3"]
+      "features": ["std", "checksums", "sha2", "blake3"]
     }
   },
   "algorithms": {
-    "crc16-ccitt": { "crate": "checksum", "bench": "crc", "filter": "crc16-ccitt" },
-    "crc16-ibm": { "crate": "checksum", "bench": "crc", "filter": "crc16-ibm" },
-    "crc24-openpgp": { "crate": "checksum", "bench": "crc", "filter": "crc24-openpgp" },
-    "crc32-ieee": { "crate": "checksum", "bench": "crc", "filter": "^crc32/" },
-    "crc32c": { "crate": "checksum", "bench": "crc", "filter": "crc32c" },
-    "crc64-xz": { "crate": "checksum", "bench": "crc", "filter": "crc64-xz" },
-    "crc64-nvme": { "crate": "checksum", "bench": "crc", "filter": "crc64-nvme" },
-    "sha224": { "crate": "hashes", "bench": "sha2", "filter": "sha224" },
-    "sha256": { "crate": "hashes", "bench": "sha2", "filter": "sha256" },
-    "sha384": { "crate": "hashes", "bench": "sha2", "filter": "sha384" },
-    "sha512": { "crate": "hashes", "bench": "sha2", "filter": "^sha512/" },
-    "sha512-256": { "crate": "hashes", "bench": "sha2", "filter": "sha512-256" },
-    "sha3-224": { "crate": "hashes", "bench": "sha3", "filter": "sha3-224" },
-    "sha3-256": { "crate": "hashes", "bench": "sha3", "filter": "sha3-256" },
-    "sha3-384": { "crate": "hashes", "bench": "sha3", "filter": "sha3-384" },
-    "sha3-512": { "crate": "hashes", "bench": "sha3", "filter": "sha3-512" },
+    "crc16-ccitt": { "bench": "crc", "filter": "crc16-ccitt" },
+    "crc16-ibm": { "bench": "crc", "filter": "crc16-ibm" },
+    "crc24-openpgp": { "bench": "crc", "filter": "crc24-openpgp" },
+    "crc32-ieee": { "bench": "crc", "filter": "^crc32/" },
+    "crc32c": { "bench": "crc", "filter": "crc32c" },
+    "crc64-xz": { "bench": "crc", "filter": "crc64-xz" },
+    "crc64-nvme": { "bench": "crc", "filter": "crc64-nvme" },
+    "sha224": { "bench": "sha2", "filter": "sha224" },
+    "sha256": { "bench": "sha2", "filter": "sha256" },
+    "sha384": { "bench": "sha2", "filter": "sha384" },
+    "sha512": { "bench": "sha2", "filter": "^sha512/" },
+    "sha512-256": { "bench": "sha2", "filter": "sha512-256" },
+    "sha3-224": { "bench": "sha3", "filter": "sha3-224" },
+    "sha3-256": { "bench": "sha3", "filter": "sha3-256" },
+    "sha3-384": { "bench": "sha3", "filter": "sha3-384" },
+    "sha3-512": { "bench": "sha3", "filter": "sha3-512" },
     "websocket-accept-digest": {
-      "crate": "hashes",
       "bench": "websocket_sha1",
       "filter": "websocket-accept-digest"
     },
-    "shake128": { "crate": "hashes", "bench": "sha3", "filter": "shake128" },
-    "shake256": { "crate": "hashes", "bench": "sha3", "filter": "shake256" },
-    "cshake256": { "crate": "auth", "bench": "kmac_cshake", "filter": "cshake256" },
+    "shake128": { "bench": "sha3", "filter": "shake128" },
+    "shake256": { "bench": "sha3", "filter": "shake256" },
+    "cshake256": { "bench": "kmac_cshake", "filter": "cshake256" },
     "blake2": {
-      "crate": "hashes",
       "bench": "blake2",
-      "filter": "^blake2/(rscrypto|rustcrypto|keyed|streaming)/"
+      "filter": "^blake2/"
     },
-    "blake3": { "crate": "hashes", "bench": "blake3", "filter": "blake3" },
-    "xxh3": { "crate": "hashes", "bench": "xxh3", "filter": "xxh3" },
-    "rapidhash": { "crate": "hashes", "bench": "rapidhash", "filter": "rapidhash" },
-    "ascon-hash256": { "crate": "hashes", "bench": "ascon", "filter": "ascon-hash256" },
-    "ascon-xof128": { "crate": "hashes", "bench": "ascon", "filter": "ascon-xof128" },
-    "ascon-cxof128": { "crate": "hashes", "bench": "ascon", "filter": "ascon-cxof128" },
-    "hmac-sha256": { "crate": "auth", "bench": "auth", "filter": "^hmac-sha256" },
-    "hmac-sha384": { "crate": "auth", "bench": "auth", "filter": "hmac-sha384" },
-    "hmac-sha512": { "crate": "auth", "bench": "auth", "filter": "hmac-sha512" },
-    "hkdf-sha256": { "crate": "auth", "bench": "auth", "filter": "^hkdf-sha256" },
-    "hkdf-sha384": { "crate": "auth", "bench": "auth", "filter": "hkdf-sha384" },
-    "pbkdf2-sha256": { "crate": "auth", "bench": "auth", "filter": "^pbkdf2-sha256/" },
-    "pbkdf2-sha512": { "crate": "auth", "bench": "auth", "filter": "^pbkdf2-sha512/" },
-    "ecdsa-p256": { "crate": "auth", "bench": "auth", "filter": "^ecdsa-p256/" },
-    "ecdsa-p384": { "crate": "auth", "bench": "auth", "filter": "^ecdsa-p384/" },
-    "ed25519": { "crate": "auth", "bench": "auth", "filter": "ed25519" },
-    "x25519": { "crate": "auth", "bench": "auth", "filter": "x25519" },
-    "p256-ecdh": { "crate": "auth", "bench": "auth", "filter": "^p256-ecdh/" },
-    "mlkem512": { "crate": "auth", "bench": "auth", "filter": "^mlkem512/" },
-    "mlkem768": { "crate": "auth", "bench": "auth", "filter": "^mlkem768/" },
-    "mlkem1024": { "crate": "auth", "bench": "auth", "filter": "^mlkem1024/" },
-    "kmac256": { "crate": "auth", "bench": "kmac_cshake", "filter": "kmac256" },
-    "argon2d": { "crate": "auth", "bench": "password_hashing", "filter": "^argon2d-" },
-    "argon2i": { "crate": "auth", "bench": "password_hashing", "filter": "^argon2i-" },
-    "argon2id": { "crate": "auth", "bench": "password_hashing", "filter": "^argon2id-" },
-    "scrypt": { "crate": "auth", "bench": "password_hashing", "filter": "^scrypt-" },
-    "rsa": { "crate": "auth", "bench": "rsa", "filter": "rsa" },
-    "xchacha20-poly1305": { "crate": "aead", "bench": "aead", "filter": "xchacha20-poly1305" },
-    "chacha20-poly1305": { "crate": "aead", "bench": "aead", "filter": "^chacha20-poly1305/" },
-    "aes-256-gcm-siv": { "crate": "aead", "bench": "aead", "filter": "aes-256-gcm-siv" },
-    "aes-128-gcm-siv": { "crate": "aead", "bench": "aead", "filter": "aes-128-gcm-siv" },
-    "aes-256-gcm": { "crate": "aead", "bench": "aead", "filter": "^aes-256-gcm/" },
-    "aes-128-gcm": { "crate": "aead", "bench": "aead", "filter": "^aes-128-gcm/" },
-    "aes-siv-cmac-256": { "crate": "aead", "bench": "aead", "filter": "aes-siv-cmac-256" },
-    "aegis-256": { "crate": "aead", "bench": "aead", "filter": "aegis-256" },
-    "ascon-aead128": { "crate": "aead", "bench": "aead", "filter": "ascon-aead128" },
-    "header-protection": { "crate": "aead", "bench": "aead", "filter": "header-protection" },
-    "aead-diag": { "crate": "aead", "bench": "aead_diag", "filter": "chacha20-poly1305/encrypt" }
+    "blake3": { "bench": "blake3", "filter": "blake3" },
+    "xxh3": { "bench": "xxh3", "filter": "xxh3" },
+    "rapidhash": { "bench": "rapidhash", "filter": "rapidhash" },
+    "ascon-hash256": { "bench": "ascon", "filter": "ascon-hash256" },
+    "ascon-xof128": { "bench": "ascon", "filter": "ascon-xof128" },
+    "ascon-cxof128": { "bench": "ascon", "filter": "ascon-cxof128" },
+    "hmac-sha256": { "bench": "auth", "filter": "^hmac-sha256" },
+    "hmac-sha384": { "bench": "auth", "filter": "hmac-sha384" },
+    "hmac-sha512": { "bench": "auth", "filter": "hmac-sha512" },
+    "hkdf-sha256": { "bench": "auth", "filter": "^hkdf-sha256" },
+    "hkdf-sha384": { "bench": "auth", "filter": "hkdf-sha384" },
+    "pbkdf2-sha256": { "bench": "auth", "filter": "^pbkdf2-sha256(/|-state/)" },
+    "pbkdf2-sha512": { "bench": "auth", "filter": "^pbkdf2-sha512(/|-state/)" },
+    "ecdsa-p256": { "bench": "auth", "filter": "^ecdsa-p256/" },
+    "ecdsa-p384": { "bench": "auth", "filter": "^ecdsa-p384/" },
+    "ed25519": { "bench": "auth", "filter": "ed25519" },
+    "x25519": { "bench": "auth", "filter": "x25519" },
+    "p256-ecdh": { "bench": "auth", "filter": "^p256-ecdh/" },
+    "mlkem512": { "bench": "auth", "filter": "^mlkem512/(keygen|encapsulate|decapsulate)/" },
+    "mlkem768": { "bench": "auth", "filter": "^mlkem768/(keygen|encapsulate|decapsulate)/" },
+    "mlkem1024": { "bench": "auth", "filter": "^mlkem1024/(keygen|encapsulate|decapsulate)/" },
+    "kmac256": { "bench": "kmac_cshake", "filter": "kmac256" },
+    "argon2d": { "bench": "password_hashing", "filter": "^argon2d-" },
+    "argon2i": { "bench": "password_hashing", "filter": "^argon2i-" },
+    "argon2id": { "bench": "password_hashing", "filter": "^argon2id-" },
+    "scrypt": { "bench": "password_hashing", "filter": "^scrypt-" },
+    "rsa": { "bench": "rsa", "filter": "rsa" },
+    "xchacha20-poly1305": { "bench": "aead", "filter": "xchacha20-poly1305" },
+    "chacha20-poly1305": { "bench": "aead", "filter": "^chacha20-poly1305/" },
+    "aes-256-gcm-siv": { "bench": "aead", "filter": "aes-256-gcm-siv" },
+    "aes-128-gcm-siv": { "bench": "aead", "filter": "aes-128-gcm-siv" },
+    "aes-256-gcm": { "bench": "aead", "filter": "^aes-256-gcm/" },
+    "aes-128-gcm": { "bench": "aead", "filter": "^aes-128-gcm/" },
+    "aes-siv-cmac-256": { "bench": "aead", "filter": "aes-siv-cmac-256" },
+    "aegis-256": { "bench": "aead", "filter": "aegis-256" },
+    "ascon-aead128": { "bench": "aead", "filter": "ascon-aead128" },
+    "header-protection": { "bench": "aead", "filter": "header-protection" },
+    "aead-diag": { "bench": "aead_diag", "filter": "chacha20-poly1305/copy-and-encrypt" }
   },
   "selectors": {
     "all": [
@@ -306,7 +286,6 @@
       "scrypt",
       "rsa"
     ],
-    "rsa": ["rsa"],
     "aead": [
       "xchacha20-poly1305",
       "chacha20-poly1305",
@@ -319,9 +298,7 @@
       "ascon-aead128",
       "header-protection"
     ],
-    "aeaddiag": ["aead-diag"],
     "chacha20poly1305diag": ["aead-diag"],
-    "chacha20poly1305par4": ["aead-diag"],
     "checksum": [
       "crc16-ccitt",
       "crc16-ibm",
@@ -386,40 +363,55 @@
     ],
     "mlkem": ["mlkem512", "mlkem768", "mlkem1024"],
     "crc64": ["crc64-xz", "crc64-nvme"],
-    "crc64nvme": ["crc64-xz", "crc64-nvme"],
-    "crc64xz": ["crc64-xz", "crc64-nvme"],
     "crc32": ["crc32-ieee", "crc32c"],
     "crc16": ["crc16-ccitt", "crc16-ibm"]
   },
-  "bench_aliases": {
-    "comp": [
-      "crc",
-      "sha2",
-      "sha3",
-      "websocket_sha1",
-      "kmac_cshake",
-      "ascon",
-      "auth",
-      "aead",
-      "xxh3",
-      "rapidhash",
-      "blake3"
-    ],
-    "kernels": ["blake3"],
-    "checksum_comp": ["crc"],
-    "checksum_kernels": ["crc"],
-    "hashes_comp": [
-      "sha2",
-      "sha3",
-      "websocket_sha1",
-      "kmac_cshake",
-      "ascon",
-      "xxh3",
-      "rapidhash",
-      "blake3"
-    ],
-    "auth_comp": ["auth"],
-    "aead_comp": ["aead"],
-    "hashes_kernels": ["blake3"]
+  "case_classes": {
+    "sha2": {
+      "diagnostic": [
+        "/internal/"
+      ]
+    },
+    "auth": {
+      "diagnostic": [
+        "/internal/",
+        "^ed25519/verify-phase/"
+      ],
+      "expensive": [
+        "^pbkdf2-"
+      ]
+    },
+    "password_hashing": {
+      "expensive": [
+        "^"
+      ]
+    },
+    "rsa": {
+      "diagnostic": [
+        "^rsa-(hash-components|montgomery-thresholds)/",
+        "/(blinding-inverse|padding-)",
+        "-(bitserial-baseline|product-montgomery|generic-exponent|cios-candidate|cios-portable)$"
+      ],
+      "expensive": [
+        "^rsa-[0-9]+-private-signing/"
+      ]
+    },
+    "aead": {
+      "diagnostic": [
+        "^chacha20-poly1305/copy-and-(encrypt|decrypt)/rscrypto-(owned|x86-asm)/"
+      ]
+    },
+    "aead_kernels": {
+      "diagnostic": [
+        "^"
+      ]
+    },
+    "blake3": {
+      "diagnostic": [
+        "/rscrypto-[^/]+/",
+        "^blake3/(xof-output|chunk-tail-digest|chunk-tail-cvs|parent-tail-cvs)/"
+      ]
+
+    }
   }
 }

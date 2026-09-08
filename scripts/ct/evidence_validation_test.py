@@ -3,10 +3,14 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
+import sys
+from unittest.mock import patch
 import tempfile
 from pathlib import Path
 
+import full
 import validate as manifest_validation
 from asm_heuristics import (
   FunctionBody,
@@ -54,7 +58,121 @@ def manifest_errors(mutate) -> list[str]:
     manifest_validation.compiler_public_api_snapshot = original_snapshot
 
 
+def test_dudect_invocation_evidence() -> None:
+  with tempfile.TemporaryDirectory() as temporary:
+    root = Path(temporary)
+    child = root / "child.py"
+    child.write_text("""
+import json, os, sys
+from pathlib import Path
+mode = json.loads(Path('mode.json').read_text())
+evidence = Path(sys.argv[sys.argv.index('--evidence-dir') + 1])
+if mode['report'] is not None:
+  (evidence / 'dudect-report.json').write_text(mode['report'])
+  (evidence / 'dudect-raw.csv').write_text('current samples')
+sys.exit(124 if '--timeout' in sys.argv else mode['exit'])
+""")
+    case = {"name": "fixture", "filter": "fixture", "primitive": "fixture"}
+
+    def invoke(report, exit_code=0, *, timeout=None, gate="required"):
+      (root / "mode.json").write_text(json.dumps({"report": report, "exit": exit_code}))
+      with patch.object(full, "python_script", return_value=[sys.executable, str(child)]):
+        return full.dudect_case_result(
+          root, root / "logs",
+          100, 10.0, {**case, "gate": gate}, timeout, root / "out/dudect/run/shared/prepared.json",
+        )
+
+    def report(status="pass", gate="required"):
+      return json.dumps({"cases": [{"name": "fixture", "gate": gate, "status": status}]})
+
+    # Seed both legacy locations as well as a successful current invocation.
+    legacy = root / "out/dudect"
+    (legacy / "cases/fixture").mkdir(parents=True)
+    for directory in (legacy, legacy / "cases/fixture"):
+      (directory / "dudect-report.json").write_text(report())
+      (directory / "dudect-raw.csv").write_text("stale samples")
+
+    for payload, exit_code, timeout, expected_command in (
+      (None, 2, None, "fail"),
+      (None, 0, 0, "timeout"),
+      (None, 0, None, "pass"),
+      ('{"cases": [', 1, None, "fail"),
+      ('{"cases": [', 0, None, "pass"),
+      ('[]', 0, None, "pass"),
+      ('{"cases": [null]}', 0, None, "pass"),
+      ('{"cases": [{"name": "fixture"}]}', 0, None, "pass"),
+      (report().replace('fixture', 'other'), 0, None, "pass"),
+    ):
+      with_success = invoke(report())
+      assert with_success["status"] == "pass"
+      assert build_findings([], [with_success], [], []) == ([], [])
+      row = invoke(payload, exit_code, timeout=timeout)
+      assert row["status"] == ("timeout" if timeout == 0 else "tooling-fail"), row
+      assert row["command_result"]["status"] == expected_command
+      assert row["statistical_status"] is None
+      assert row["report_error"]
+      assert row["report"] != with_success["report"]
+      assert row["command_result"]["stdout"] != with_success["command_result"]["stdout"]
+      if payload is None:
+        assert row["report"] is None and row["artifacts"] == []
+      findings, diagnostics = build_findings([], [row], [], [])
+      assert len(findings) == 1 and not diagnostics
+      assert findings[0]["category"] == ("evidence_inconclusive" if timeout == 0 else "tooling_failure")
+
+    for gate in ("required", "diagnostic"):
+      row = invoke(report(gate=gate), 2, gate=gate)
+      assert row["status"] == "tooling-fail" and row["statistical_status"] == "pass"
+      assert row["command_result"]["returncode"] == 2
+      findings, diagnostics = build_findings([], [row], [], [])
+      assert findings[0]["category"] == "tooling_failure" and not diagnostics
+      row = invoke(None, 2, gate=gate)
+      assert build_findings([], [row], [], [])[0][0]["category"] == "tooling_failure"
+
+    def timeout_after_report(command, **kwargs):
+      evidence = Path(command[command.index("--evidence-dir") + 1])
+      (evidence / "dudect-report.json").write_text(report())
+      raise subprocess.TimeoutExpired(command, 1)
+
+    with patch.object(full.subprocess, "run", side_effect=timeout_after_report):
+      row = invoke(report(), timeout=1)
+    assert row["status"] == "timeout" and row["statistical_status"] == "pass"
+    assert row["command_result"]["status"] == "timeout"
+    assert build_findings([], [row], [], [])[0][0]["category"] == "evidence_inconclusive"
+
+    row = invoke(report("fail"), 1)
+    assert row["status"] == "fail" and row["failure_count"] == 1
+    assert row["command_result"]["status"] == "fail"
+    assert build_findings([], [row], [], [])[0][0]["category"] == "timing_failure"
+    row = invoke(report("diagnostic-fail", "diagnostic"), gate="diagnostic")
+    assert row["status"] == "diagnostic-fail"
+    findings, diagnostics = build_findings([], [row], [], [])
+    assert not findings and len(diagnostics) == 1
+
+
+def test_dudect_smoke_summary_is_insufficient() -> None:
+  with tempfile.TemporaryDirectory() as temporary:
+    root = Path(temporary)
+    report = root / "target/ct/fixture/release/dudect/dudect-report.json"
+    report.parent.mkdir(parents=True)
+    report.write_text(json.dumps({
+      "schema_version": 3, "kind": "rscrypto.ct.dudect", "smoke": True,
+      "requested_samples_by_case": {"fixture": 16},
+      "measurements": ["runs/fixture/selection/0/dudect-report.json"],
+      "cases": [{"name": "fixture", "status": "pass"}],
+      "case_count": 1, "failure_count": 0,
+    }))
+    errors: list[str] = []
+    with patch.object(
+      manifest_validation.subprocess, "check_output", side_effect=AssertionError("smoke reached release evidence checks"),
+    ) as probe:
+      manifest_validation.validate_dudect(root, "fixture", "release", {}, errors, [])
+    assert errors == ["dudect smoke evidence is insufficient for --require-dudect; run without --smoke"]
+    probe.assert_not_called()
+
+
 def main() -> None:
+  test_dudect_invocation_evidence()
+  test_dudect_smoke_summary_is_insufficient()
   root = Path(__file__).resolve().parents[2]
   target_matrix = manifest_validation.json.loads((root / ".config" / "target-matrix.json").read_text())
   assert manifest_validation.matrix_targets(target_matrix) == {

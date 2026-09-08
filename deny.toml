@@ -33,6 +33,12 @@ allow = ["MIT", "Apache-2.0"]
 
 confidence-threshold = 0.93
 
+# unicode-ident embeds Unicode tables under this additional license. Its Rust
+# implementation remains covered by the MIT/Apache-2.0 policy above.
+[[licenses.exceptions]]
+name = "unicode-ident"
+allow = ["Unicode-3.0"]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"

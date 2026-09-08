@@ -40,25 +40,10 @@ do not run destructors and carry no cleanup claim.
 
 ## Optimized evidence
 
-Run:
-
-```sh
-just check-zeroize-evidence
-```
-
-The check builds optimized diagnostic entry points and verifies their presence
-in release MIR, LLVM IR, and assembly. It then checks for volatile LLVM zero
-stores and host-architecture zero-store instructions across these shapes:
-
-- Fixed stack and variable heap owners.
-- Move, early-return, fallible-fill, parse-success, and parse-error paths.
-- UTF-8 owner destruction and ECDSA blinding success/partial-fill failure.
-- HMAC, HKDF, ECDSA, P-256 ECDH, keyed BLAKE3, and ML-KEM state.
-- AEAD authentication, header protection, and AES-SIV state.
-- RSA success, entropy failure, and staged private-key validation.
-
-This evidence binds the generated host binary. Each target needs its own run;
-source review remains the only evidence for an untested target.
+`just check` and `just ci-check` do not verify optimized zeroization. Source
+cleanup and passing tests alone do not establish that secret stores survive
+optimization; machine-code evidence must be scoped to the compiler, target,
+features, and operation inspected.
 
 `tests/secret_redaction.rs` pins public `Debug` and error behavior. Errors expose
 only public sizes or opaque verification failures unless a documented variant

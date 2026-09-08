@@ -17,7 +17,7 @@ pub(crate) fn random_bytes(len: usize) -> Vec<u8> {
 /// Focused size matrix for comparison benchmarks.
 ///
 /// Covers: overhead (0B, 1B), small (32B), block boundary (64B),
-/// medium (256B, 1 KiB), page-aligned (4 KiB, 16 KiB), in-cache
+/// medium (256B, 1 KiB), page-sized (4 KiB, 16 KiB), in-cache
 /// (64 KiB, 256 KiB), throughput (1 MiB).
 pub(crate) fn comp_sizes() -> Vec<(usize, Vec<u8>)> {
   [0, 1, 32, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576]

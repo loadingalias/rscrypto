@@ -1,1 +1,2 @@
 nightly = "nightly-2026-08-12"
+nightly_targets = ["powerpc64le-*", "s390x-*", "riscv32*", "riscv64gc-*"]

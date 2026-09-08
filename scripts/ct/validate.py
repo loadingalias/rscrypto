@@ -13,6 +13,12 @@ import sys
 import tomllib
 from pathlib import Path
 
+from dudect_report import raw_csv_rows
+from provenance import dudect_runner_sources, load_toml, sha256_file
+from manifest import (
+  binsec_kernel_targets, binsec_required_targets, primitive_supports_physical_timing, required_dudect_cases,
+)
+
 
 VALID_CLAIMS = {"ct-claimed", "ct-intended", "best-effort", "unsupported"}
 VALID_HARNESS_STATUSES = {"covered", "partial", "missing", "not-applicable"}
@@ -91,25 +97,12 @@ PROVENANCE_REQUIRED_KEYS = {
 }
 
 
-def load_toml(path: Path) -> dict:
-  with path.open("rb") as fh:
-    return tomllib.load(fh)
-
-
 def fail(errors: list[str], message: str) -> None:
   errors.append(message)
 
 
 def warn(warnings: list[str], message: str) -> None:
   warnings.append(message)
-
-
-def sha256_file(path: Path) -> str:
-  h = hashlib.sha256()
-  with path.open("rb") as fh:
-    for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-      h.update(chunk)
-  return h.hexdigest()
 
 
 def matrix_targets(matrix: dict) -> set[str]:
@@ -126,25 +119,6 @@ def primitive_requires_evidence(ct: dict, primitive: dict, evidence: str) -> boo
   return False
 
 
-def claimed_targets(ct: dict) -> set[str]:
-  return {target.get("name", "") for target in ct.get("target", []) if target.get("claim") in {"ct-intended", "ct-claimed"}}
-
-
-def binsec_required_targets(ct: dict) -> set[str]:
-  return {
-    target.get("name", "")
-    for target in ct.get("target", [])
-    if target.get("claim") in {"ct-intended", "ct-claimed"} and target.get("binsec") == "required"
-  }
-
-
-def binsec_kernel_targets(ct: dict, kernel: dict) -> set[str]:
-  targets = kernel.get("targets", [])
-  if "*" in targets:
-    return binsec_required_targets(ct)
-  return set(targets)
-
-
 def ct_required_primitives(ct: dict) -> list[dict]:
   rows = []
   for primitive in ct.get("primitive", []):
@@ -154,26 +128,6 @@ def ct_required_primitives(ct: dict) -> list[dict]:
       continue
     rows.append(primitive)
   return rows
-
-
-def primitive_supports_physical_timing(primitive: dict, target: str | None) -> bool:
-  if target is None:
-    return True
-  return target not in set(primitive.get("physical_timing_unsupported_targets", []))
-
-
-def is_diagnostic_dudect_case(case: dict) -> bool:
-  return case.get("gate") == "diagnostic"
-
-
-def required_dudect_cases(ct: dict, target: str | None = None) -> list[dict]:
-  primitives = {primitive.get("id", ""): primitive for primitive in ct.get("primitive", [])}
-  return [
-    case
-    for case in ct.get("dudect_case", [])
-    if not is_diagnostic_dudect_case(case)
-    and primitive_supports_physical_timing(primitives.get(case.get("primitive"), {}), target)
-  ]
 
 
 def generated_symbols(artifact_dir: Path) -> set[str]:
@@ -1348,8 +1302,12 @@ def validate_dudect(root: Path, target: str, profile: str, ct: dict, errors: lis
     fail(errors, f"invalid dudect report JSON: {exc}")
     return
 
+  if report.get("smoke") is True:
+    fail(errors, "dudect smoke evidence is insufficient for --require-dudect; run without --smoke")
+    return
+
   expected = {
-    "schema_version": 2,
+    "schema_version": 3,
     "kind": "rscrypto.ct.dudect",
     "crate": "rscrypto",
     "target": target,
@@ -1409,13 +1367,27 @@ def validate_dudect(root: Path, target: str, profile: str, ct: dict, errors: lis
   if report.get("profile_settings") != expected_profile_settings:
     fail(errors, "dudect profile settings do not match its manifest")
 
+  if report.get("dudect_runner_sources") != dudect_runner_sources(root):
+    fail(errors, "dudect runner source identity mismatch")
   dudect_dir = report_path.parent
+  csv_path = Path(report.get("raw_csv", ""))
+  if not csv_path.resolve().is_relative_to(dudect_dir.resolve()):
+    fail(errors, "dudect raw CSV is outside its evidence directory")
+    return
+  raw_rows = {}
+  try:
+    raw_rows = raw_csv_rows(csv_path)
+    if report.get("raw_csv_sha256") != sha256_file(csv_path):
+      fail(errors, "dudect raw CSV identity mismatch")
+  except (OSError, ValueError) as exc:
+    fail(errors, f"invalid dudect raw CSV: {exc}")
   timing_artifacts = {
-    "binary": dudect_dir / ("rscrypto-ct-dudect.exe" if (dudect_dir / "rscrypto-ct-dudect.exe").exists() else "rscrypto-ct-dudect"),
-    "binary_disassembly": dudect_dir / "rscrypto-ct-dudect.binary.disasm.txt",
-    "binary_symbols": dudect_dir / "rscrypto-ct-dudect.binary.symbols.txt",
-    "linker_command_log": dudect_dir / "dudect-linker-command.txt",
+    field: Path(report.get(field, {}).get("path", ""))
+    for field in ("binary", "binary_disassembly", "binary_symbols", "linker_command_log")
   }
+  if any(not path.resolve().is_relative_to(dudect_dir.resolve()) for path in timing_artifacts.values()):
+    fail(errors, "dudect shared artifact is outside its evidence directory")
+    return
   for field, path in timing_artifacts.items():
     record = report.get(field, {})
     if not path.is_file():
@@ -1444,6 +1416,8 @@ def validate_dudect(root: Path, target: str, profile: str, ct: dict, errors: lis
     fail(errors, "dudect report cases must be a non-empty list")
     return
 
+  if set(raw_rows) != {case.get("name") for case in cases}:
+    fail(errors, "dudect raw CSV cases do not match report")
   failure_count = report.get("failure_count")
   actual_failures = sum(1 for case in cases if case.get("status") != "pass")
   if failure_count != actual_failures:
@@ -1464,8 +1438,12 @@ def validate_dudect(root: Path, target: str, profile: str, ct: dict, errors: lis
     if case.get("abs_max_t", 0) > threshold:
       fail(errors, f"dudect case {name} abs_max_t exceeds threshold {threshold}")
     raw_csv = case.get("raw_csv", {})
-    if not isinstance(raw_csv, dict) or raw_csv.get("row_count", 0) <= 0:
-      warn(warnings, f"dudect case {name} has no raw CSV rows")
+    if raw_csv != raw_rows.get(name):
+      fail(errors, f"dudect case {name} raw CSV counts do not match artifact")
+    if not isinstance(raw_csv, dict) or raw_csv.get("row_count", 0) != case.get("requested_samples"):
+      fail(errors, f"dudect case {name} raw CSV must contain every requested sample")
+    elif any(raw_csv.get("labels", {}).get(label, 0) <= 0 for label in ("0", "1")):
+      fail(errors, f"dudect case {name} raw CSV must contain both classes")
 
 
 def main() -> int:

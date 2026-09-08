@@ -15,32 +15,15 @@ protocol implementation.
 
 ## Measured performance
 
-The 2026-08-18 snapshot compares commit `7eb44e9` with the fastest matched
-external implementation for each platform, primitive, operation, and input
-shape across eight Linux hosts. The external baseline is selected case by
-case, not averaged across competitors. Ratios are `external / rscrypto`; higher
-is better.
+The historical benchmark snapshots contain comparisons that measured different
+work: ML-KEM rows mixed entropy sources and key preparation, and Argon2 rows
+passed different salt lengths to dryoc. The affected ratios and aggregates that
+include them are withdrawn as performance claims pending corrected measurements.
+Their numerical impact has not been measured.
 
-Across 6,144 exact-case comparisons, `rscrypto` was more than 5% faster in
-3,780, within 5% in 1,695, and slower in 669. The geometric-mean speedup was
-1.62x overall, including 6.18x for checksums, 1.65x for RSA, 1.61x for AEAD,
-and 1.55x for ML-KEM.
-
-<p align="center">
-  <img alt="rscrypto benchmark chart: 1.62x Linux and 1.37x Apple Silicon fastest-matched geomeans, checksums at 6.18x against crc-fast, crc, crc32fast, crc32c, and crc64fast, plus primitive geomean bars and M1 MBP Apple Silicon notes."
-       src="assets/readme/perf.svg"
-       width="640">
-</p>
-
-The Apple Silicon result in the chart is a separate 2026-07-04 local snapshot;
-it is not included in the Linux aggregate.
-
-This is an overall suite lead, not a claim that every operation wins. The same
-snapshot publishes the s390x ECDSA regression and the slower
-`rapidhash-stream/one-write` path alongside every raw row. Read the
-[`benchmark overview`](benchmark_results/OVERVIEW.md) for the complete scorecard
-and [`benchmarking guide`](docs/benchmarking.md) before applying a result to a
-deployment workload.
+The [`benchmark overview`](benchmark_results/OVERVIEW.md) retains the historical
+record. See the [`comparison contracts`](docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts)
+for the corrected workloads and validation requirements.
 
 ## Assurance
 

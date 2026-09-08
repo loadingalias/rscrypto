@@ -1,5 +1,24 @@
 # Benchmark Overview
 
+> **Comparison validity correction:** The historical ML-KEM comparisons below
+> mixed caller-supplied and internal entropy, key preparation, and output
+> representations. Argon2 comparisons supplied a longer salt to rscrypto and
+> RustCrypto than to dryoc. Affected ratios, rankings, and aggregates containing
+> those rows are withdrawn as performance claims pending corrected measurements.
+> The numerical impact remains unmeasured. Tables and raw artifacts are retained
+> as historical records, not corrected results. See the
+> [current comparison contracts](../docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts).
+
+> **Workload identity correction:** Historical AEAD encrypt/decrypt and ChaCha
+> XOR rows include timed buffer restoration. BLAKE2's former host-overhead rows
+> measure complete hashes and include duplicates of the main groups; its plain
+> parameter rows also duplicate main one-shot cases. Ascon's former
+> `ascon-hash256/scalar-loop` and `ascon-xof128/scalar-loop` labels both invoke
+> rscrypto. Treat those as internal comparisons, not external competitors.
+> Current [timed-boundary policy](../docs/benchmarking.md#timed-workload-boundaries)
+> names the actual work and removes duplicate cases. No historical ratios have
+> been recomputed from these changes.
+
 Sources:
 
 - Linux benchmark snapshot created 2026-08-18 21:03:07 UTC.
