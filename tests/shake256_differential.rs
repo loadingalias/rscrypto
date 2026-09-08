@@ -1,4 +1,4 @@
-#![cfg(feature = "hashes")]
+#![cfg(feature = "sha3")]
 
 use proptest::prelude::*;
 use rscrypto::{hashes::crypto::Shake256, traits::Xof as _};

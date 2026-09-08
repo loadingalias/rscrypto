@@ -9,13 +9,14 @@ pub(super) fn run(data: &[u8]) {
   let key_bytes: [u8; 32] = some_or_return!(input.bytes());
   let nonce_bytes: [u8; 32] = some_or_return!(input.bytes());
   let control: u8 = some_or_return!(input.byte());
+  let mutation = some_or_return!(input.bit_mutation());
   let (aad, plaintext) = some_or_return!(input.split_rest());
 
   let cipher = Aegis256::new(&Aegis256Key::from_bytes(key_bytes));
   let nonce = Nonce256::from_bytes(nonce_bytes);
 
   assert_aead_roundtrip(&cipher, &nonce, aad, plaintext);
-  assert_aead_forgery(&cipher, &nonce, aad, plaintext, control);
+  assert_aead_forgery(&cipher, &nonce, aad, plaintext, control, mutation);
 
   // Differential: rscrypto ↔ aegis crate (16-byte tag variant)
   {

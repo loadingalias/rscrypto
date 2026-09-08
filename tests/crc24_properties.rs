@@ -5,7 +5,7 @@
 
 // Proptest uses getcwd() which fails under Miri isolation.
 #![cfg(not(miri))]
-#![cfg(feature = "checksums")]
+#![cfg(feature = "crc24")]
 
 use crc::Crc as RefCrc;
 use proptest::prelude::*;

@@ -62,12 +62,10 @@ proptest! {
 
     let mut expected = vec![0u8; out_len];
     {
-      let mut h = AsconXof::new();
-      h.update(&data[..split_data]);
-      h.update(&data[split_data..]);
-      let mut xof = h.finalize_xof();
-      xof.squeeze(&mut expected[..split_out]);
-      xof.squeeze(&mut expected[split_out..]);
+      let mut oracle = ascon_hash::AsconXof128::default();
+      ascon_hash::Update::update(&mut oracle, &data);
+      let mut reader = ascon_hash::ExtendableOutput::finalize_xof(oracle);
+      ascon_hash::XofReader::read(&mut reader, &mut expected);
     }
 
     let mut actual = vec![0u8; out_len];

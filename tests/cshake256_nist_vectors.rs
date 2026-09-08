@@ -1,4 +1,4 @@
-#![cfg(feature = "hashes")]
+#![cfg(feature = "sha3")]
 
 use rscrypto::{Cshake256, traits::Xof as _};
 

@@ -3,8 +3,8 @@
 //! Validates rscrypto's Ascon-Hash256 and Ascon-XOF128 against the `ascon-hash`
 //! crate (RustCrypto `digest`-based API) across multiple input sizes.
 //!
-//! The existing `ascon_differential.rs` tests only verify self-consistency
-//! (streaming == oneshot). This file adds cross-implementation validation.
+//! Complements the randomized properties in `ascon_differential.rs` with
+//! deterministic cross-implementation cases at input and output boundaries.
 //!
 //! # Coverage
 //!

@@ -31,15 +31,9 @@ pub(super) fn run(data: &[u8]) {
   let _decapsulation_key_result = MlKem768DecapsulationKey::try_from_slice(parse_material);
   let _ciphertext_result = MlKem768Ciphertext::try_from_slice(parse_material);
 
-  let Some(byte_idx) = input.byte() else {
-    return;
-  };
-  let Some(bit_idx) = input.byte() else {
-    return;
-  };
-
+  let mutation = some_or_return!(input.bit_mutation());
   let mut modified = ciphertext.to_bytes();
-  modified[usize::from(byte_idx).rem_euclid(MlKem768::CIPHERTEXT_SIZE)] ^= 1u8.strict_shl(u32::from(bit_idx & 7));
+  mutation.apply(&mut modified);
   let rejected = MlKem768::decapsulate(&dk, &MlKem768Ciphertext::from_bytes(modified))
     .expect("ML-KEM implicit rejection returns a shared secret");
   assert!(

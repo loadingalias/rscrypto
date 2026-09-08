@@ -38,15 +38,8 @@ pub(super) fn run(data: &[u8]) {
   }
 
   // Differential: rscrypto ↔ RustCrypto scrypt oracle.
-  //
-  // The oracle rejects `len ∉ [10, 64]` per its `Params::new` contract,
-  // while rscrypto accepts any `output_len ≥ MIN_OUTPUT_LEN = 1`. Skip
-  // the differential below the oracle's window — coverage of the small
-  // output range is provided by the rscrypto-only properties above.
-  if (10..=64).contains(&out_len) {
-    let oracle_params = scrypt::Params::new(log_n, r, 1).expect("oracle params");
-    let mut expected = vec![0u8; out_len as usize];
-    scrypt::scrypt(password, salt, &oracle_params, &mut expected).expect("oracle scrypt");
-    assert_eq!(actual, expected, "scrypt oracle mismatch");
-  }
+  let oracle_params = scrypt::Params::new(log_n, r, 1).expect("oracle params");
+  let mut expected = vec![0u8; out_len as usize];
+  scrypt::scrypt(password, salt, &oracle_params, &mut expected).expect("oracle scrypt");
+  assert_eq!(actual, expected, "scrypt oracle mismatch");
 }

@@ -1,4 +1,4 @@
-#![cfg(feature = "hashes")]
+#![cfg(feature = "sha3")]
 
 use cshake::{
   CShake128 as OracleCshake128, CShake256 as OracleCshake256,

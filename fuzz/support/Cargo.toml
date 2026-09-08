@@ -6,8 +6,9 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [features]
-aead = ["rscrypto/aead"]
+# Helpers only; the consuming fuzz package selects an rscrypto AEAD primitive.
+aead = []
 traits_io = []
 
 [dependencies]
-rscrypto = { path = "../..", features = ["std"] }
+rscrypto = { path = "../..", default-features = false, features = ["std"] }
