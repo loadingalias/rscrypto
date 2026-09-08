@@ -950,7 +950,7 @@ mod tests {
       let mut accelerated = vec![0u8; len];
       let mut index = 0usize;
       while index < len {
-        let value = index.strict_mul(23).strict_add(11) as u8;
+        let [value, ..] = index.strict_mul(23).strict_add(11).to_le_bytes();
         portable[index] = value;
         accelerated[index] = value;
         index = index.strict_add(1);
@@ -977,7 +977,7 @@ mod tests {
       let mut accelerated = vec![0u8; len];
       let mut index = 0usize;
       while index < len {
-        let value = index.strict_mul(31).strict_add(7) as u8;
+        let [value, ..] = index.strict_mul(31).strict_add(7).to_le_bytes();
         portable[index] = value;
         accelerated[index] = value;
         index = index.strict_add(1);

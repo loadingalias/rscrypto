@@ -864,7 +864,10 @@ mod tests {
 
   fn make_data(len: usize) -> Vec<u8> {
     (0..len)
-      .map(|i| (i as u8).wrapping_mul(17).wrapping_add((i >> 8) as u8))
+      .map(|i| {
+        let [low, high, ..] = i.to_le_bytes();
+        low.wrapping_mul(17).wrapping_add(high)
+      })
       .collect()
   }
 

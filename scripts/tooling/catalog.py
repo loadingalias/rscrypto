@@ -89,6 +89,11 @@ def install_archive(name, asset, prefix):
 
 
 def validate(data):
+    required_ci = {'just', 'cargo-nextest', 'cargo-deny', 'cargo-audit'}
+    if not required_ci <= set(data['ci']['cargo']):
+        raise ValueError('CI: missing check/test tools')
+    if any(tool not in data['cargo'] for tool in data['ci']['cargo']):
+        raise ValueError('CI: missing Cargo tool version')
     for platform in PLATFORMS:
         config = data[platform]
         if 'miri' in config['components']:
@@ -102,6 +107,8 @@ def validate(data):
         assets = config['assets']
         if 'rustup' not in assets:
             raise ValueError(f'{platform}: missing native rustup archive')
+        if platform == 'x86_64-win' and 'nasm' not in assets:
+            raise ValueError(f'{platform}: missing NASM for native dependency assembly')
         if platform not in NATIVE_SOURCE_PLATFORMS and not {'cargo-rail', 'cargo-binstall', 'cmake', 'llvm'} <= assets.keys():
             raise ValueError(f'{platform}: missing native tool archives')
         for name, asset in assets.items():

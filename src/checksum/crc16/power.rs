@@ -944,13 +944,16 @@ mod tests {
   const STATES: &[u16] = &[0, 0x1d0f, 0xa5a5, u16::MAX];
 
   fn assert_kernel(name: &str, kernel: fn(u16, &[u8]) -> u16, portable: fn(u16, &[u8]) -> u16) {
-    let input: Vec<u8> = (0..4111)
-      .map(|i| (i as u8).wrapping_mul(17).wrapping_add((i >> 8) as u8))
+    let input: Vec<u8> = (0usize..4111)
+      .map(|i| {
+        let [low, high, ..] = i.to_le_bytes();
+        low.wrapping_mul(17).wrapping_add(high)
+      })
       .collect();
     for &state in STATES {
       for &offset in OFFSETS {
         for &len in LENS {
-          let slice = &input[offset..offset + len];
+          let slice = &input[offset..offset.strict_add(len)];
           assert_eq!(
             kernel(state, slice),
             portable(state, slice),

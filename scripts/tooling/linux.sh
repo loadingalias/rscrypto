@@ -5,7 +5,9 @@ export PYTHONDONTWRITEBYTECODE=1
 
 platform="${1:?native platform is required}"
 shift
-[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh" >&2; exit 64; }
+ci=false
+if [[ "${1:-}" == --ci ]]; then ci=true; shift; fi
+[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh [--ci]" >&2; exit 64; }
 machine="${platform%-linux}"
 [[ "$machine" != powerpc64le ]] || machine=ppc64le
 case "$platform" in
@@ -21,9 +23,11 @@ cd "$REPO_ROOT"
 # Ubuntu Server supplies Python; install it from the selected archive if absent.
 # Read only the two bootstrap strings before the full TOML reader is available.
 catalog="$REPO_ROOT/.config/tooling.toml"
-bootstrap_value() { sed -n '/^\[linux\]$/,/^\[/s/^'"$1"' = "\([^"]*\)"$/\1/p' "$catalog"; }
+linux_section=linux
+[[ "$ci" == false ]] || linux_section=linux-ci
+bootstrap_value() { sed -n '/^\['"${2:-$linux_section}"'\]$/,/^\[/s/^'"$1"' = "\([^"]*\)"$/\1/p' "$catalog"; }
 ubuntu="$(bootstrap_value ubuntu)"
-snapshot="$(bootstrap_value snapshot)"
+snapshot="$(bootstrap_value snapshot linux)"
 # shellcheck source=/dev/null
 source /etc/os-release
 [[ "$ID" == ubuntu && "$VERSION_ID" == "$ubuntu" ]] || {
@@ -53,9 +57,11 @@ apt=("${sudo_cmd[@]}" env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[
 "${apt[@]}" update
 catalog_get() { python3 "$SCRIPT_DIR/catalog.py" get "$@"; }
 python3 "$SCRIPT_DIR/catalog.py" validate
-mapfile -t packages < <(catalog_get linux packages)
-mapfile -t native_packages < <(catalog_get "$platform" packages)
-packages+=("${native_packages[@]}")
+mapfile -t packages < <(catalog_get "$linux_section" packages)
+if [[ "$ci" == false ]]; then
+  mapfile -t native_packages < <(catalog_get "$platform" packages)
+  packages+=("${native_packages[@]}")
+fi
 # Exact candidates come from the selected snapshot, including repeat installations.
 pinned_packages=()
 for package in "${packages[@]}"; do
@@ -66,28 +72,41 @@ done
 "${apt[@]}" install -y --allow-downgrades "${pinned_packages[@]}"
 
 prefix="$HOME/.local/share/rscrypto-tooling"
-mkdir -p "$prefix/bin"
+mkdir -p "$prefix"
 python3 "$SCRIPT_DIR/catalog.py" download "$platform" rustup "$temporary/rustup-init"
 chmod +x "$temporary/rustup-init"
 host="$(catalog_get "$platform" rust-host)"
 channel="$(python3 "$SCRIPT_DIR/../lib/toolchain.py")"
 "$temporary/rustup-init" -y --no-modify-path --default-host "$host" --default-toolchain none
-export PATH="$HOME/.cargo/bin:$PATH"
-mapfile -t components < <(catalog_get "$platform" components)
+cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+export PATH="$cargo_bin:$PATH"
+components=()
+if [[ "$ci" == false ]]; then mapfile -t components < <(catalog_get "$platform" components); fi
 component_args=()
 for component in "${components[@]}"; do component_args+=(--component "$component"); done
 python3 "$SCRIPT_DIR/../lib/toolchain.py" --install "$host" "${component_args[@]}"
 export RUSTUP_TOOLCHAIN="$channel"
 # Archive tools retain their complete directory layouts, including LLVM and Zig libraries.
-python3 "$SCRIPT_DIR/catalog.py" install-archives "$platform" "$prefix" > "$temporary/archives"
+if [[ "$ci" == true ]]; then
+  : > "$temporary/archives"
+  if [[ "$platform" == aarch64-linux || "$platform" == x86_64-linux ]]; then
+    directory="$(python3 "$SCRIPT_DIR/catalog.py" install-archive "$platform" cargo-binstall "$prefix")"
+    printf 'cargo-binstall\t%s\n' "$directory" > "$temporary/archives"
+  fi
+else
+  python3 "$SCRIPT_DIR/catalog.py" install-archives "$platform" "$prefix" > "$temporary/archives"
+fi
 tool_paths=()
 while IFS=$'\t' read -r name directory; do
   if [[ -d "$directory/bin" ]]; then tool_paths+=("$directory/bin"); else tool_paths+=("$directory"); fi
   if [[ "$name" == llvm ]]; then export LIBCLANG_PATH="$directory/lib"; fi
 done < "$temporary/archives"
-PATH="$(IFS=:; echo "${tool_paths[*]}"):$prefix/bin:$HOME/.cargo/bin:$PATH"
-export PATH
-mapfile -t cargo_tools < <(catalog_get "$platform" cargo)
+tool_paths+=("$cargo_bin")
+path_prefix="$(IFS=:; echo "${tool_paths[*]}")"
+export PATH="$path_prefix:$PATH"
+tool_section="$platform"
+[[ "$ci" == false ]] || tool_section=ci
+mapfile -t cargo_tools < <(catalog_get "$tool_section" cargo)
 for tool in "${cargo_tools[@]}"; do
   version="$(catalog_get cargo "$tool")"
   # Cargo's install registry verifies exact installed package versions on reruns.
@@ -99,7 +118,7 @@ for tool in "${cargo_tools[@]}"; do
       cargo +"$channel" install --locked --target "$(catalog_get "$platform" rust-host)" --version "$version" "$tool"
   fi
 done
-if [[ "$platform" != aarch64-linux && "$platform" != x86_64-linux ]]; then
+if [[ "$ci" == false && "$platform" != aarch64-linux && "$platform" != x86_64-linux ]]; then
   env -u RUSTC_WRAPPER -u CARGO_ENCODED_RUSTFLAGS \
     cargo +"$channel" install --locked --target "$(catalog_get "$platform" rust-host)" --version "$(catalog_get versions cargo-rail)" cargo-rail
 fi
@@ -107,15 +126,17 @@ fi
 # Persistent paths are shared by interactive shells and non-interactive Bash recipes.
 environment="$prefix/environment.sh"
 {
-  printf "export PATH=%q:\"\$PATH\"\n" "$(IFS=:; echo "${tool_paths[*]}"):$prefix/bin:$HOME/.cargo/bin"
+  printf "export PATH=%q:\"\$PATH\"\n" "$path_prefix"
   if [[ -n "${LIBCLANG_PATH:-}" ]]; then printf 'export LIBCLANG_PATH=%q\n' "$LIBCLANG_PATH"; fi
 } > "$environment"
-for startup in "$HOME/.profile" "$HOME/.bashrc"; do
-  line="source \"$environment\""
-  touch "$startup"
-  grep -Fxq "$line" "$startup" || printf '\n%s\n' "$line" >> "$startup"
-done
-if [[ "$platform" == aarch64-linux || "$platform" == x86_64-linux ]]; then
+if [[ "$ci" == false ]]; then
+  for startup in "$HOME/.profile" "$HOME/.bashrc"; do
+    line="source \"$environment\""
+    touch "$startup"
+    grep -Fxq "$line" "$startup" || printf '\n%s\n' "$line" >> "$startup"
+  done
+fi
+if [[ "$ci" == false && ( "$platform" == aarch64-linux || "$platform" == x86_64-linux ) ]]; then
 # Linux profiling is available to the runner account, including non-root perf/samply.
 "${sudo_cmd[@]}" tee /etc/sysctl.d/99-rscrypto-profiling.conf >/dev/null <<'CONF'
 kernel.perf_event_paranoid = -1
@@ -132,6 +153,6 @@ samply --version
 fi
 clang --version
 cmake --version
-cargo rail --version
+if [[ "$ci" == false ]]; then cargo rail --version; fi
 cargo nextest --version
-printf 'Installed %s tooling. New shells load %s.\n' "$platform" "$environment"
+printf 'Installed %s tooling. Load with: source "%s"\n' "$platform" "$environment"

@@ -17,6 +17,20 @@ import update
 
 
 class Tooling(unittest.TestCase):
+    def test_windows_x64_requires_nasm(self):
+        data = catalog.read()
+        del data['x86_64-win']['assets']['nasm']
+        with self.assertRaisesRegex(ValueError, 'missing NASM'):
+            catalog.validate(data)
+
+    def test_nasm_release_excludes_prereleases_and_sorts_numerically(self):
+        index = b'<a href="3.02/">3.02</a><a href="3.10/">3.10</a><a href="4.00rc1/">rc</a>'
+        with patch.object(update, 'fetch', return_value=(index, '')):
+            self.assertEqual(update.nasm_release(), '3.10')
+        with patch.object(update, 'fetch', return_value=(b'<a href="4.00rc1/">rc</a>', '')):
+            with self.assertRaisesRegex(ValueError, 'no stable NASM'):
+                update.nasm_release()
+
     def test_catalog_roundtrip_and_profile_boundaries(self):
         data = catalog.read()
         catalog.validate(data)

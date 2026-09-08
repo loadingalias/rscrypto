@@ -1150,13 +1150,16 @@ mod tests {
   const STATES: &[u64] = &[0, 0x0123_4567_89ab_cdef, 0xa5a5_5a5a_dead_beef, u64::MAX];
 
   fn assert_kernel(name: &str, kernel: fn(u64, &[u8]) -> u64, portable: fn(u64, &[u8]) -> u64) {
-    let input: Vec<u8> = (0..4111)
-      .map(|i| (i as u8).wrapping_mul(23).wrapping_add((i >> 8) as u8))
+    let input: Vec<u8> = (0usize..4111)
+      .map(|i| {
+        let [low, high, ..] = i.to_le_bytes();
+        low.wrapping_mul(23).wrapping_add(high)
+      })
       .collect();
     for &state in STATES {
       for &offset in OFFSETS {
         for &len in LENS {
-          let slice = &input[offset..offset + len];
+          let slice = &input[offset..offset.strict_add(len)];
           assert_eq!(
             kernel(state, slice),
             portable(state, slice),

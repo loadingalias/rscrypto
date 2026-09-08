@@ -32,12 +32,21 @@ powershell = "7.6.5"
 rustup = "1.29.1"
 python = "3.14.7"
 zig = "0.16.0"
+nasm = "3.02"
 
 [linux]
 ubuntu = "26.04"
 codename = "resolute"
 snapshot = "20260906T054640Z"
 packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "pkgconf", "python3", "python3-venv", "unzip", "xz-utils", "zstd", "ninja-build", "libssl-dev", "perl", "m4", "shellcheck"]
+
+[ci]
+cargo = ["just", "cargo-nextest", "cargo-deny", "cargo-audit"]
+
+[linux-ci]
+ubuntu = "24.04"
+codename = "noble"
+packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "pkgconf", "python3", "cmake", "clang", "libclang-dev", "libssl-dev", "perl"]
 
 [windows]
 visual-studio = "18.9.2"
@@ -165,6 +174,10 @@ cargo = ["cargo-audit", "cargo-deny", "cargo-nextest", "cargo-mutants", "just", 
 [x86_64-win.assets.rustup]
 url = "https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-pc-windows-msvc/rustup-init.exe"
 sha256 = "6f4bef66261261fcb43131be8720bab817d403a09edec7455c371974b90bdb7e"
+
+[x86_64-win.assets.nasm]
+url = "https://www.nasm.us/pub/nasm/releasebuilds/3.02/win64/nasm-3.02-win64.zip"
+sha256 = "161d0bfaff53c2f9e9f3e69fd0672323ebabafd1268976a5cec11be92a19aee7"
 
 [x86_64-win.assets.cargo-binstall]
 url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.23.0/cargo-binstall-x86_64-pc-windows-msvc.zip"

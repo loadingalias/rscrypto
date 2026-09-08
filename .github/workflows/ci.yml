@@ -48,27 +48,15 @@ jobs:
       - name: Install tooling
         env:
           PLATFORM: ${{ matrix.platform }}
+        run: scripts/tooling/"$PLATFORM.sh" --ci
+      - name: Test script orchestration
+        if: matrix.platform == 'x86_64-linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential ca-certificates python3 cmake clang libclang-dev libssl-dev pkg-config jq
-          installer_dir="$(mktemp -d)"
-          installer="$installer_dir/rustup-init"
-          python3 scripts/tooling/catalog.py download "$PLATFORM" rustup "$installer"
-          chmod +x "$installer"
-          "$installer" -y --no-modify-path --default-toolchain none
-          rm "$installer"
-          rmdir "$installer_dir"
-          export PATH="$HOME/.cargo/bin:$PATH"
-          host="$(python3 scripts/tooling/catalog.py get "$PLATFORM" rust-host)"
-          python3 scripts/lib/toolchain.py --install "$host"
-          export RUSTUP_TOOLCHAIN
-          RUSTUP_TOOLCHAIN="$(python3 scripts/lib/toolchain.py --target "$host")"
-          for tool in just cargo-nextest cargo-deny cargo-audit; do
-            cargo install "$tool" --version "$(python3 scripts/tooling/catalog.py get cargo "$tool")" --locked
-          done
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          just test-scripts
       - name: Check and test
         run: |
-          export PATH="$HOME/.cargo/bin:$PATH"
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           just ci-check
           just test --all
           just test --all --portable
@@ -85,7 +73,7 @@ jobs:
       - name: Install tooling, check, and test
         shell: powershell
         run: |
-          ./scripts/tooling/x86_64-win.ps1
+          ./scripts/tooling/x86_64-win.ps1 -Ci
           just ci-check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           just test --all

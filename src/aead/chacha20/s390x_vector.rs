@@ -275,6 +275,9 @@ mod tests {
 
   const ROT_SEEDS: [u32; 4] = [0x0123_4567, 0x89AB_CDEF, 0xDEAD_BEEF, 0x0000_00FF];
 
+  /// # Safety
+  ///
+  /// The caller must verify that the CPU supports the z/Vector facility.
   #[target_feature(enable = "vector")]
   unsafe fn assert_rotr_matches_portable() {
     let input = from_u32x4(ROT_SEEDS);

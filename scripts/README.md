@@ -138,7 +138,25 @@ The installers use sudo when needed. Windows uses the corresponding
 `aarch64-win.ps1` or `x86_64-win.ps1` in an elevated PowerShell session.
 macOS tools remain locally managed.
 
-All profiles install the prerequisites for `just ci-check`, `just test`, and
+CI calls these same installers with `--ci` on Linux or `-Ci` on Windows.
+The catalog's `ci` section selects the Cargo tools needed by `just ci-check`,
+`just test --all`, and `just test --all --portable`. Both test commands include
+doctests. This mode omits Cargo Rail because `--all` bypasses affected-work
+planning; use the full installer for ordinary `just test` and benchmark work.
+Linux CI uses the catalog's `linux-ci` Ubuntu release and packages from the
+same archive snapshot as development provisioning. It installs prebuilt Cargo
+tools on x86-64 and ARM64, and builds them from source on the other architectures.
+CI does not install optional profiling, mutation, or live-fuzzing tools or alter
+shell startup files. These jobs validate CI provisioning, not the full optional
+development toolset.
+
+After Linux installation, source
+`$HOME/.local/share/rscrypto-tooling/environment.sh` in each new CI step.
+Windows CI runs installation and validation in one PowerShell step to retain
+the MSVC/SDK environment. Windows x86-64 installs catalog-pinned NASM for native
+dependency assembly in both modes.
+
+All full profiles install the prerequisites for `just ci-check`, `just test`, and
 Criterion `just bench`. RISC-V, Z, and POWER install pinned Cargo tools from
 source and use snapshot-pinned native CMake/Clang. They do not install cross
 targets, Miri, browsers, or profiling tools. The shared selector in
