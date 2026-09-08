@@ -81,6 +81,8 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
     cache = ['--remote', 'remote value', '--remote-mode', 'read-write', '--root-portability', 'remap']
     run('rail-cache-setup', words, [['rail', 'cache', 'setup', '--check', *cache, *words],
                                   ['rail', 'cache', 'setup', *cache, *words], ['rail', 'cache', 'probe', '--json']])
+    env.pop('HOME', None)
+    run('ci-check', [], [['native']])
     covered = set(prefixes) | {'ssh', 'ssh-create', 'ssh-just', 'ssh-cargo', 'rail-cache-setup'}
     assert set(re.findall(r'^([\w-]+).*\*args:', source, re.M)) == covered
   print('Just argument forwarding regressions passed')

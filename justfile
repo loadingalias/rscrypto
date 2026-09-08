@@ -7,7 +7,7 @@ _default:
 
 # Remote dev. Provider mechanics live in ~/dev-machines.
 
-export DEV_MACHINE_EXECUTOR := env_var_or_default("DEV_MACHINE_BIN", env_var("HOME") + "/dev-machines/dev-machine")
+export DEV_MACHINE_EXECUTOR := env_var_or_default("DEV_MACHINE_BIN", home_directory() / "dev-machines/dev-machine")
 
 # Run a command on a repository development machine.
 [group('remote')]
