@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export RUSTUP_TOOLCHAIN
+RUSTUP_TOOLCHAIN="$("$(dirname "${BASH_SOURCE[0]}")/../lib/toolchain.sh" --host)"
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TARGET=""
 PROFILE="release"

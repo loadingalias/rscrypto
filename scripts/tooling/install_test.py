@@ -54,7 +54,7 @@ elif name == 'python3':
         executable.write_text('#!/bin/sh\nexit 0\n')
         executable.chmod(0o755)
         print(directory)
-    elif script in ('toolchain.py', 'compat.py') and '--install' in args:
+    elif script in ('toolchain.py', 'compat.py', 'package.py') and '--install' in args:
         pass
     else:
         sys.exit(subprocess.run([sys.executable, *args]).returncode)
@@ -68,7 +68,7 @@ class LinuxInstall(unittest.TestCase):
         root = Path(temporary.name)
         binaries = root / 'bin'
         binaries.mkdir()
-        for name in ('uname', 'id', 'apt-get', 'apt-cache', 'cargo', 'clang', 'cmake', 'python3', 'rustup', 'wasmtime'):
+        for name in ('uname', 'id', 'apt-get', 'apt-cache', 'cargo', 'clang', 'cmake', 'python3', 'rustup', 'wasmtime', 'opam'):
             script = binaries / name
             script.write_text('#!' + sys.executable + '\n' + STUB)
             script.chmod(0o755)
@@ -152,7 +152,13 @@ class LinuxInstall(unittest.TestCase):
     def test_focused_profiles_install_only_their_execution_dependencies(self):
         for platform, profile, components in (
                 ('x86_64-linux', 'ci-fuzz', ['rust-src']),
+                ('aarch64-linux', 'ci-fuzz', ['rust-src']),
+                ('x86_64-linux', 'ci-miri', ['miri', 'rust-src']),
                 ('x86_64-linux', 'ci-ct', ['llvm-tools']),
+                ('aarch64-linux', 'ci-ct', ['llvm-tools']),
+                ('s390x-linux', 'ci-ct', ['llvm-tools']),
+                ('powerpc64le-linux', 'ci-ct', ['llvm-tools']),
+                ('riscv64-linux', 'ci-ct', ['llvm-tools']),
                 ('x86_64-linux', 'ci-bench', []),
                 ('aarch64-linux', 'ci-bench', []),
                 ('s390x-linux', 'ci-bench', []),
@@ -170,15 +176,38 @@ class LinuxInstall(unittest.TestCase):
                 self.assertEqual([a for a in apt if a.endswith('=1.0')],
                                  [p + '=1.0' for p in CATALOG['linux-ci' if profile == 'ci-bench' else profile]['packages']])
                 rustup = [c for c in calls if c[:3] == ['rustup', 'toolchain', 'install']]
-                self.assertEqual(len(rustup), 2 if profile == 'ci-fuzz' else 1)
+                self.assertEqual(len(rustup), 2 if profile in ('ci-fuzz', 'ci-miri') or platform in ('s390x-linux', 'powerpc64le-linux', 'riscv64-linux') else 1)
                 self.assertEqual([c[i + 1] for c in rustup for i, arg in enumerate(c) if arg == '--component'],
                                  components)
-                if profile == 'ci-fuzz':
+                if profile in ('ci-fuzz', 'ci-miri'):
                     policy = tomllib.loads((ROOT / '.config/toolchains.toml').read_text())
                     self.assertEqual(rustup[1][3], policy['nightly'])
                 self.assertFalse(any('musl-tools=1.0' in c or 'target' in c and c[0] == 'rustup' for c in calls))
                 archives = [c[-2] for c in calls if c[0] == 'python3' and 'install-archive' in c]
                 self.assertEqual(archives, ['cargo-binstall'] if 'cargo-binstall' in CATALOG[platform]['assets'] else [])
+
+    def test_package_profile_installs_consumer_prerequisites_once(self):
+        result, calls, _ = self.provision('x86_64-linux', profile='ci-package')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        installs = [c for c in calls if c[0] == 'cargo' and 'binstall' in c]
+        self.assertEqual([c[-1] for c in installs], [f"just@{CATALOG['cargo']['just']}"])
+        compiler_installs = [c for c in calls if '--install' in c]
+        self.assertEqual(len(compiler_installs), 1)
+        self.assertTrue(compiler_installs[0][1].endswith('scripts/check/package.py'))
+        self.assertFalse(any('musl-tools=1.0' in c for c in calls))
+
+    def test_proof_tools_only_on_supported_full_ct_hosts(self):
+        for platform in ('x86_64-linux', 'aarch64-linux', 's390x-linux', 'powerpc64le-linux', 'riscv64-linux'):
+            with self.subTest(platform=platform):
+                result, calls, _ = self.provision(platform, profile='ci-ct-full')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                opam = [c for c in calls if c[0] == 'opam']
+                if platform in ('x86_64-linux', 'aarch64-linux'):
+                    self.assertIn(CATALOG['ci-ct-proof']['opam-repository'], opam[0])
+                    install = next(c for c in opam if c[1] == 'install')
+                    self.assertEqual(install[-3:], CATALOG['ci-ct-proof']['opam'])
+                else:
+                    self.assertEqual(opam, [])
 
     def test_package_failure_stops_before_rust_installation(self):
         result, calls, _ = self.provision('x86_64-linux', fail=True)

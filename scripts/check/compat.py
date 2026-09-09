@@ -39,13 +39,8 @@ def install():
                         '--target', ','.join(sorted(selected))], check=True)
 
 
-def cases():
-    manifest = read('Cargo.toml')
-    graph = manifest['features']
-    stable = toolchain.stable()
-    msrv = manifest['package']['rust-version']
-    host = toolchain.host()
-
+def boundary_features(graph, boundary):
+    """Maximal feature set that respects the core-only or alloc boundary."""
     def closure(feature):
         result, pending = set(), [feature]
         while pending:
@@ -54,6 +49,16 @@ def cases():
                 result.add(name)
                 pending.extend(graph.get(name, []))
         return result
+    forbidden = {'std', 'getrandom'} | ({'alloc'} if boundary == 'core' else set())
+    return [feature for feature in graph if not closure(feature) & forbidden]
+
+
+def cases():
+    manifest = read('Cargo.toml')
+    graph = manifest['features']
+    stable = toolchain.stable()
+    msrv = manifest['package']['rust-version']
+    host = toolchain.host()
 
     def check(channel, target, features, operation='check'):
         command = ['cargo', '+' + channel, operation, '--locked', '--lib', '--target', target,
@@ -69,8 +74,7 @@ def cases():
         for feature in ['', *sorted(graph)]:
             yield f'{channel}-{feature or "empty"}', [check(channel, host, [feature] if feature else [])], {}
         for boundary in ('core', 'alloc'):
-            selected = [f for f in graph if not closure(f) & ({'std', 'alloc', 'getrandom'} if boundary == 'core'
-                                                          else {'std', 'getrandom'})]
+            selected = boundary_features(graph, boundary)
             yield f'{channel}-thumb-{boundary}', [check(channel, 'thumbv6m-none-eabi', selected)], {}
         native = sorted(set(graph) - {'portable-only'})
         yield f'{channel}-broad', [check(channel, host, native), check(channel, host, [*native, 'portable-only'])], {}

@@ -1,8 +1,8 @@
 # Shared native Windows provisioning. Run in an elevated PowerShell session.
-param([Parameter(Mandatory)][ValidateSet('aarch64-win', 'x86_64-win')][string]$Platform, [switch]$Ci, [switch]$CiBench)
+param([Parameter(Mandatory)][ValidateSet('aarch64-win', 'x86_64-win')][string]$Platform, [switch]$Ci, [switch]$CiBench, [switch]$CiCt)
 $ErrorActionPreference = 'Stop'
-if ($Ci -and $CiBench) { throw 'Select either -Ci or -CiBench.' }
-$Ci = $Ci -or $CiBench
+if (([int]$Ci.IsPresent + [int]$CiBench.IsPresent + [int]$CiCt.IsPresent) -gt 1) { throw 'Select one CI profile.' }
+$Ci = $Ci -or $CiBench -or $CiCt
 $env:PYTHONDONTWRITEBYTECODE = '1'
 Set-StrictMode -Version Latest
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'This installer requires Windows.' }
@@ -110,9 +110,9 @@ try {
     # Keep Microsoft's link.exe ahead of Git's Unix link utility.
     $paths = @($msvcBin, $pythonDirectory, $binDirectory, (Join-Path $gitDirectory 'cmd'),
         (Join-Path $gitDirectory 'bin'), (Join-Path $gitDirectory 'usr\bin'))
-    $archives = @('llvm', 'cmake', 'cargo-binstall')
+    $archives = if ($CiCt) { @('cargo-binstall') } else { @('llvm', 'cmake', 'cargo-binstall') }
     if (-not $Ci) { $archives += @('cargo-rail', 'powershell') }
-    if ($Platform -eq 'x86_64-win') { $archives += 'nasm' }
+    if ($Platform -eq 'x86_64-win' -and -not $CiCt) { $archives += 'nasm' }
     foreach ($name in $archives) {
         $directory = & $python $catalogHelper install-archive $Platform $name $prefix
         if ($LASTEXITCODE -ne 0) { throw "Unable to install $name" }
@@ -133,14 +133,17 @@ try {
     if (-not $Ci) {
         foreach ($component in $native.components) { $rustArguments += @('--component', $component) }
     }
-    if ($CiBench) {
-        Invoke-Native 'rustup' @('toolchain', 'install', $channel, '--profile', 'minimal')
+    if ($CiBench -or $CiCt) {
+        $components = if ($CiCt) { $catalog.'ci-ct'.components } else { $catalog.'ci-bench'.components }
+        $minimalArguments = @('toolchain', 'install', $channel, '--profile', 'minimal')
+        foreach ($component in $components) { $minimalArguments += @('--component', $component) }
+        Invoke-Native 'rustup' $minimalArguments
     } else {
         Invoke-Native $python $rustArguments
     }
     Remove-Item Env:RUSTC_WRAPPER -ErrorAction SilentlyContinue
     Remove-Item Env:CARGO_ENCODED_RUSTFLAGS -ErrorAction SilentlyContinue
-    $cargoTools = if ($CiBench) { $catalog.'ci-bench'.cargo } elseif ($Ci) { $catalog.ci.cargo } else { $native.cargo }
+    $cargoTools = if ($CiCt) { $catalog.'ci-ct'.cargo } elseif ($CiBench) { $catalog.'ci-bench'.cargo } elseif ($Ci) { $catalog.ci.cargo } else { $native.cargo }
     foreach ($tool in $cargoTools) {
         Invoke-Native 'cargo' @("+$channel", 'binstall', '--locked', '--no-confirm', '--targets', $native.'rust-host', "$tool@$($catalog.cargo.$tool)")
     }
@@ -152,18 +155,20 @@ try {
     Set-Content -Path (Join-Path $probeDirectory 'build.rs') -Value 'fn main() {}' -Encoding ASCII
     $probeCommands = @(
         'check:', "    cargo +$channel run --target $($native.'rust-host')")
-    if ($Platform -eq 'x86_64-win') {
+    if ($Platform -eq 'x86_64-win' -and -not $CiCt) {
         Set-Content -Path (Join-Path $probeDirectory 'probe.asm') -Encoding ASCII -Value @(
             'section .text', 'global tooling_probe', 'tooling_probe:', '    ret')
         $probeCommands += '    nasm -f win64 probe.asm -o probe.obj'
     }
     Set-Content -Path (Join-Path $probeDirectory 'justfile') -Encoding ASCII -Value $probeCommands
     Invoke-Native 'just' @('--justfile', (Join-Path $probeDirectory 'justfile'), 'check')
-    Invoke-Native 'clang' @('--version')
-    Invoke-Native 'cmake' @('--version')
-    if ($Platform -eq 'x86_64-win') { Invoke-Native 'nasm' @('-v') }
+    if (-not $CiCt) {
+        Invoke-Native 'clang' @('--version')
+        Invoke-Native 'cmake' @('--version')
+        if ($Platform -eq 'x86_64-win') { Invoke-Native 'nasm' @('-v') }
+    }
     if (-not $Ci) { Invoke-Native 'cargo' @("+$channel", 'rail', '--version') }
-    if (-not $CiBench) { Invoke-Native 'cargo' @("+$channel", 'nextest', '--version') }
+    if (-not $CiBench -and -not $CiCt) { Invoke-Native 'cargo' @("+$channel", 'nextest', '--version') }
 
     # Persist the complete MSVC/SDK environment, not only the paths to installed executables.
     if (-not $Ci) {

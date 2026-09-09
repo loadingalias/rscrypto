@@ -143,8 +143,8 @@ macOS tools remain locally managed.
 
 CI calls these same installers with `--ci` on Linux or `-Ci` on Windows.
 The catalog's `ci` section selects the Cargo tools needed by `just ci-check`,
-`just test --all`, and `just test --all --portable`. Both test commands include
-doctests. Only Linux x86-64 adds the `ci-policy` tools and runs `just ci-policy`:
+`just test --all --release`, and `just test --all --release --portable`. Both
+test commands include doctests. Only Linux x86-64 adds the `ci-policy` tools and runs `just ci-policy`:
 Cargo Deny checks the full target graph in `deny.toml`, and Cargo Audit checks
 the lockfile. Every host retains native and portable Clippy, independent-workspace
 linting, documentation, and runtime tests. Linux CI omits OpenSSL development
@@ -177,23 +177,36 @@ Build, native check, test, and benchmark entry points use that selection rather
 than an ambient `RUSTUP_TOOLCHAIN`; formatting uses the stable development pin.
 Specialized Miri and fuzz checks retain their opt-in nightly recipes.
 
-The `fuzz.yml` and `ct.yml` workflows use the same x86-64 Linux
-installer with `--ci-fuzz` and `--ci-ct`. Their package, Cargo tool, and Rust
-component sets live in `.config/tooling.toml`. Neither profile installs native
-CI policy tools, Nextest, musl targets, or development profiling tools.
+`ci.yml` also runs `--ci-package` provisioning and `just ci-package` on an
+independent runner. This executes examples, verifies the publishable Cargo
+archive, and runs external std/core/alloc consumers against the unpacked crate
+on stable and MSRV. Core and alloc also compile on the existing Thumb sentinel.
+No package is published.
 
-Fuzz replays committed corpora under ASan before bounded live fuzzing across
-all full and scoped packages. CT runs harness self-tests, release artifact
-validation, sequential DudeCT smoke cases, and strict manifest coverage.
-Both run on pull requests, retain evidence for seven days, and run without
-caches. Manual dispatch becomes available once they reach the default branch.
+`fuzz.yml` uses `--ci-fuzz` for committed ASan corpus replay and bounded live
+fuzzing. Manual runs select x86-64, ARM64, or both, exact target names, and a
+per-target duration. Selected targets must fit the 30-minute live campaign
+budget before replay starts; the job timeout also bounds installation/builds.
+`--ci-miri` installs the pinned interpreter for an independent focused Miri row,
+including RSA's unsafe-boundary tests. All rows share fail-fast cancellation.
 
-CT smoke is pipeline regression evidence, not release timing qualification.
-P-256 and P-384 public derivation reuse the production portable comb-selector
-harnesses shared with signing. Their manifest entries require bounded BINSEC
-proofs of those selectors; whole-operation timing and accelerated assembly
-remain separate evidence. Full timing runs and pinned BINSEC provisioning in
-CI remain follow-up work.
+`ct.yml` runs x86-64 and ARM64 smoke checks on pull requests. Manual runs select
+smoke/full and one, many, or all six native platforms. `--ci-ct` / `-CiCt` install
+only CT dependencies; `--ci-ct-full` additionally installs the pinned BINSEC,
+Bitwuzla and decoder on GNU Linux x86-64/ARM64. Proof dependencies use a fixed
+opam repository revision from `.config/tooling.toml`. Unsupported proof targets
+retain their explicit `ct.toml` policies. No solver is installed there.
+
+CT architectures run concurrently on fixed AWS instances or donated native
+runners. Each host completes builds and proofs before serial timing cases.
+`just ct-full` uses manifest-required cases and budgets without filtering.
+Smoke is regression evidence, not release qualification. Full CT evidence also
+does not establish the complete secret-lifecycle claim by itself.
+
+Both workflows retain evidence for seven days and run without caches. Manual
+dispatch becomes available once they reach the default branch. CT and benchmark
+selection jobs validate requests and emit only the requested runner rows; they
+do not install Rust, build code, or invoke Cargo Rail.
 
 `bench.yml` is manual-only. It selects one, many, or all six native CI platforms
 and catalog algorithms, groups, or benchmark targets, with optional case filters.

@@ -11,5 +11,5 @@ export CARGO_BUILD_TARGET="${host%-gnu}-musl"
 target_key=${CARGO_BUILD_TARGET//-/_}
 export "CARGO_TARGET_${target_key^^}_LINKER"=musl-gcc
 export "CC_$target_key"=musl-gcc
-scripts/test/test.sh --all
-scripts/test/test.sh --all --portable
+scripts/test/test.sh --all --release
+scripts/test/test.sh --all --release --portable

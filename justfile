@@ -121,6 +121,10 @@ ci-policy:
 ci-compat:
     @scripts/lib/python.sh scripts/check/compat.py
 
+# Verify the publishable archive and external std/core/alloc consumers.
+ci-package:
+    @scripts/lib/python.sh scripts/check/package.py
+
 # Execute the full native and portable suites against the host's musl target.
 test-musl:
     @scripts/test/test-musl.sh

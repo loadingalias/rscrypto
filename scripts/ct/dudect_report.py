@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import csv
 import json
 import platform
@@ -15,6 +16,9 @@ import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+# Embedded Windows Python omits the script directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from provenance import cfg_target_features, codegen_value, codegen_values, dudect_runner_sources, resolved_rustflags, sha256_file
 

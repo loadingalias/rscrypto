@@ -25,6 +25,7 @@ def main():
     def tool(path, body):
       path.write_text(f'#!{sys.executable}\nimport json, os, sys\nfrom pathlib import Path\n' + body)
       path.chmod(0o755)
+    tool(root / 'scripts/lib/toolchain.sh', "print('fixture-toolchain')")
     tool(binary / 'rustc', "print('host: fixture-host')")
     tool(binary / 'llvm', "print('fixture symbols')")
     tool(binary / 'cargo', '''

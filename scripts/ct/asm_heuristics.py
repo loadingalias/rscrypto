@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import hashlib
 import json
 import re
@@ -11,6 +12,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+# Embedded Windows Python omits the script directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from provenance import load_toml, sha256_file
 

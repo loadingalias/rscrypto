@@ -44,7 +44,7 @@ sys.exit(int(os.environ['FAIL']))
                                                  'LOG': str(log), 'FAIL': str(fail)}, capture_output=True, text=True)
                     self.assertEqual(result.returncode, fail, result.stderr)
                     rows = [json.loads(line) for line in log.read_text().splitlines()]
-                    profiles = [['--all']] if fail else [['--all'], ['--all', '--portable']]
+                    profiles = [['--all', '--release']] if fail else [['--all', '--release'], ['--all', '--release', '--portable']]
                     self.assertEqual(rows, [[profile, arch + '-unknown-linux-musl', 'musl-gcc', 'musl-gcc']
                                             for profile in profiles])
 

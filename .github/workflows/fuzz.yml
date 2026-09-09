@@ -3,13 +3,28 @@ name: Fuzz
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      architectures:
+        description: Native fuzz runners
+        type: choice
+        options: [x86_64-linux, aarch64-linux, all]
+        default: all
+      targets:
+        description: Exact comma-separated fuzz target names (blank runs all)
+        type: string
+      duration:
+        description: Seconds per target; total runtime must fit the 30-minute campaign budget
+        type: string
+        default: '60'
 
 permissions:
   contents: read
 
 env:
   CARGO_RAIL_CACHE: "off"
-  RSCRYPTO_FUZZ_DURATION_SECS: "60"
+  RSCRYPTO_FUZZ_DURATION_SECS: ${{ inputs.duration || '60' }}
+  RSCRYPTO_FUZZ_BUDGET_SECS: "1800"
+  RSCRYPTO_FUZZ_LOG_DIR: ${{ github.workspace }}/target/fuzz-logs
   RSCRYPTO_FUZZ_TARGET_CONCURRENCY: "8"
   RSCRYPTO_FUZZ_JOBS: "1"
 
@@ -23,24 +38,49 @@ defaults:
 
 jobs:
   fuzz:
-    runs-on: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=16/ram=32+64/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
+    name: ${{ matrix.task }} (${{ matrix.platform }})
+    strategy:
+      fail-fast: true
+      matrix:
+        platform: ${{ fromJSON(inputs.architectures == 'all' && '["x86_64-linux","aarch64-linux"]' || inputs.architectures == 'aarch64-linux' && '["aarch64-linux"]' || '["x86_64-linux"]') }}
+        task: [fuzz]
+        include:
+          - platform: x86_64-linux
+            task: miri
+    runs-on: runs-on=${{ github.run_id }}/cpu=${{ matrix.task == 'miri' && '4' || '16' }}/image=${{ matrix.platform == 'aarch64-linux' && 'ubuntu24-minimal-arm64' || 'ubuntu24-minimal-x64' }}/spot=price-capacity-optimized/volume=150gb:gp3/env=production
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - name: Install tooling and replay/fuzz all packages
+      - name: Install tooling and run the selected memory-safety lane
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          TASK: ${{ matrix.task }}
+          TARGETS: ${{ inputs.targets }}
         run: |
-          scripts/tooling/x86_64-linux.sh --ci-fuzz
+          scripts/tooling/"$PLATFORM.sh" "--ci-$TASK"
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          just test-fuzz-asan --all
-          just test-fuzz --all
+          if [[ "$TASK" == miri ]]; then
+            just test-miri
+            just test-miri --rsa
+          else
+            args=(--all)
+            if [[ -n "$TARGETS" ]]; then args+=(--targets "$TARGETS"); fi
+            RSCRYPTO_FUZZ_VALIDATE_ONLY=1 just test-fuzz "${args[@]}"
+            mkdir -p "$RSCRYPTO_FUZZ_LOG_DIR"
+            git rev-parse HEAD > "$RSCRYPTO_FUZZ_LOG_DIR/source.txt"
+            rustc +"$(scripts/lib/toolchain.sh --nightly)" -vV > "$RSCRYPTO_FUZZ_LOG_DIR/compiler.txt"
+            just test-fuzz-asan --all
+            just test-fuzz "${args[@]}"
+          fi
       - name: Retain corpora and crash inputs
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.task == 'fuzz' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: fuzz-x86_64-linux
+          name: fuzz-${{ matrix.platform }}
           path: |
+            target/fuzz-logs/
             fuzz/artifacts/
             fuzz/corpus/
             fuzz-packages/*/artifacts/

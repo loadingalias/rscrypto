@@ -2,11 +2,15 @@
 """Execute a prepared DudeCT binary without rebuilding or copying its artifacts."""
 
 import argparse
+import sys
 import copy
 import json
 import os
 import subprocess
 from pathlib import Path
+
+# Embedded Windows Python omits the script directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dudect_report import case_report, write_report
 from manifest import dudect_sample_count

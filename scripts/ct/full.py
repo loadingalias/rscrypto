@@ -16,6 +16,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+# Embedded Windows Python omits the script directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from provenance import load_toml, sha256_file
 from manifest import (
   dudect_sample_count,
@@ -1042,6 +1045,9 @@ def main() -> int:
   args = parser.parse_args()
 
   root = Path(__file__).resolve().parents[2]
+  os.environ["RUSTUP_TOOLCHAIN"] = subprocess.check_output(
+    ["bash", str(root / "scripts/lib/toolchain.sh"), "--host"], text=True, cwd=root,
+  ).strip()
   target = args.target or host_target(root)
   host = host_target(root)
   if not is_host_executable_target(target, host):
@@ -1098,8 +1104,15 @@ def main() -> int:
     timeout=None,
   )
   steps.append(result_record(validate_result))
+  if artifacts_result.status == "pass" and validate_result.status == "pass":
+    cleanup_result = run_command(
+      root, logs_dir, "ct-zeroization-sentinel",
+      python_script(root, "scripts/ct/zeroization.py", "--artifact-dir", str(out_dir / "artifacts"),
+                    "--out", str(out_dir / "zeroization.json")),
+    )
+    steps.append(result_record(cleanup_result))
   identity = candidate_identity(out_dir)
-  if artifacts_result.status != "pass" or validate_result.status != "pass":
+  if any(step["status"] != "pass" for step in steps):
     for step in steps:
       if step["status"] != "pass":
         print(f"ct-full: stopping after failed gate-one step {step['name']}", file=sys.stderr)

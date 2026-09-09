@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import os
 from pathlib import Path
 import shutil
@@ -98,11 +99,21 @@ def validate(data):
                               ('ci-compat', {'just'}),
                               ('ci-fuzz', {'just', 'cargo-fuzz'}),
                               ('ci-ct', {'just'}),
+                              ('ci-miri', {'just'}),
+                              ('ci-package', {'just'}),
                               ('ci-bench', {'just'})):
         if set(data[profile]['cargo']) != required:
             raise ValueError(f'{profile}: incorrect CI tool set')
         if any(tool not in data['cargo'] for tool in data[profile]['cargo']):
             raise ValueError(f'{profile}: missing Cargo tool version')
+    proof = data['ci-ct-proof']
+    if not re.fullmatch(r'git\+https://github\.com/ocaml/opam-repository\.git#[0-9a-f]{40}', proof['opam-repository']):
+        raise ValueError('ci-ct-proof: opam repository requires an exact commit')
+    if not re.fullmatch(r'ocaml-base-compiler\.\d+\.\d+\.\d+', proof['compiler']):
+        raise ValueError('ci-ct-proof: compiler requires an exact version')
+    if len(proof['opam']) != 3 or any(not re.fullmatch(name + r'\.\d+\.\d+\.\d+', value)
+            for name, value in zip(('binsec', 'bitwuzla', 'unisim_archisec'), proof['opam'])):
+        raise ValueError('ci-ct-proof: engine, solver and decoder require exact versions')
     for platform in PLATFORMS:
         config = data[platform]
         if 'miri' in config['components']:

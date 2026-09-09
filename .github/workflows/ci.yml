@@ -30,6 +30,9 @@ jobs:
           - platform: compatibility
             runner: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=32/ram=64+128/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
             timeout: 60
+          - platform: package
+            runner: runs-on=${{ github.run_id }}/cpu=8/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=100gb:gp3/env=production
+            timeout: 60
           - platform: x86_64-linux
             runner: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=16+32/ram=32+128/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
             timeout: 60
@@ -56,7 +59,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install tooling, check, and test (Linux)
-        if: runner.os == 'Linux' && matrix.platform != 'compatibility'
+        if: runner.os == 'Linux' && matrix.platform != 'compatibility' && matrix.platform != 'package'
         env:
           PLATFORM: ${{ matrix.platform }}
         run: |
@@ -65,11 +68,20 @@ jobs:
           if [[ "$PLATFORM" == x86_64-linux ]]; then
             just test-scripts
             just ci-policy
+            just test --all -- --lib -E 'test(bytes_to_bits) | test(nonce_counter) | test(xor_keystream_boundary_respects_u32_counter)'
           fi
           just ci-check
-          just test --all
-          just test --all --portable
+          just test --all --release
+          just test --all --release --portable
           if [[ "$PLATFORM" == x86_64-linux || "$PLATFORM" == aarch64-linux ]]; then just test-musl; fi
+          git diff --exit-code HEAD
+
+      - name: Verify package and consumers
+        if: matrix.platform == 'package'
+        run: |
+          scripts/tooling/x86_64-linux.sh --ci-package
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          just ci-package
           git diff --exit-code HEAD
 
       - name: Compile compatibility and execute WebAssembly
@@ -87,9 +99,9 @@ jobs:
           ./scripts/tooling/x86_64-win.ps1 -Ci
           just ci-check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          just test --all
+          just test --all --release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          just test --all --portable
+          just test --all --release --portable
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git diff --exit-code HEAD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

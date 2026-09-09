@@ -7,12 +7,17 @@ platform="${1:?native platform is required}"
 shift
 ci=false
 profile=ci
+proof=false
 case "${1:-}" in
+  --ci-ct-full) ci=true; profile=ci-ct; proof=true; shift ;;
   --ci) ci=true; shift ;;
-  --ci-compat|--ci-fuzz|--ci-ct|--ci-bench) ci=true; profile="${1#--}"; shift ;;
+  --ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-bench) ci=true; profile="${1#--}"; shift ;;
 esac
-[[ "$profile" == ci || "$profile" == ci-bench || "$platform" == x86_64-linux ]] || { echo "$profile tooling requires x86_64-linux" >&2; exit 64; }
-[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh [--ci|--ci-compat|--ci-fuzz|--ci-ct|--ci-bench]" >&2; exit 64; }
+case "$profile:$platform" in
+  ci:*|ci-bench:*|ci-ct:*|*:x86_64-linux|ci-fuzz:aarch64-linux) ;;
+  *) echo "$profile tooling is unsupported on $platform" >&2; exit 64 ;;
+esac
+[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh [--ci|--ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-ct-full|--ci-bench]" >&2; exit 64; }
 machine="${platform%-linux}"
 [[ "$machine" != powerpc64le ]] || machine=ppc64le
 case "$platform" in
@@ -70,7 +75,7 @@ apt=("${sudo_cmd[@]}" env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[
 catalog_get() { python3 "$SCRIPT_DIR/catalog.py" get "$@"; }
 python3 "$SCRIPT_DIR/catalog.py" validate
 package_section="$linux_section"
-[[ "$profile" == ci || "$profile" == ci-bench ]] || package_section="$profile"
+[[ "$profile" == ci || "$profile" == ci-bench || "$profile" == ci-package ]] || package_section="$profile"
 mapfile -t packages < <(catalog_get "$package_section" packages)
 if [[ "$ci" == false ]]; then
   mapfile -t native_packages < <(catalog_get "$platform" packages)
@@ -79,6 +84,10 @@ fi
 if [[ "$ci" == true && "$profile" == ci && ( "$platform" == x86_64-linux || "$platform" == aarch64-linux ) ]]; then
   mapfile -t musl_packages < <(catalog_get ci-musl packages)
   packages+=("${musl_packages[@]}")
+fi
+if [[ "$proof" == true && ( "$platform" == x86_64-linux || "$platform" == aarch64-linux ) ]]; then
+  mapfile -t proof_packages < <(catalog_get ci-ct-proof packages)
+  packages+=("${proof_packages[@]}")
 fi
 # Exact candidates come from the selected snapshot, including repeat installations.
 pinned_packages=()
@@ -96,7 +105,7 @@ mkdir -p "$prefix"
 python3 "$SCRIPT_DIR/catalog.py" download "$platform" rustup "$temporary/rustup-init"
 chmod +x "$temporary/rustup-init"
 host="$(catalog_get "$platform" rust-host)"
-channel="$(python3 "$SCRIPT_DIR/../lib/toolchain.py")"
+channel="$(python3 "$SCRIPT_DIR/../lib/toolchain.py" --target "$host")"
 "$temporary/rustup-init" -y --no-modify-path --default-host "$host" --default-toolchain none
 cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
 export PATH="$cargo_bin:$PATH"
@@ -106,12 +115,16 @@ component_args=()
 for component in "${components[@]}"; do component_args+=(--component "$component"); done
 if [[ "$profile" == ci-compat ]]; then
   python3 "$REPO_ROOT/scripts/check/compat.py" --install
-elif [[ "$profile" == ci-fuzz || "$profile" == ci-ct || "$profile" == ci-bench ]]; then
+elif [[ "$profile" == ci-package ]]; then
+  python3 "$REPO_ROOT/scripts/check/package.py" --install
+elif [[ "$profile" == ci-fuzz || "$profile" == ci-miri || "$profile" == ci-ct || "$profile" == ci-bench ]]; then
   mapfile -t components < <(catalog_get "$profile" components)
   component_args=()
   for component in "${components[@]}"; do component_args+=(--component "$component"); done
+  stable="$(python3 "$SCRIPT_DIR/../lib/toolchain.py")"
+  if [[ "$channel" != "$stable" ]]; then rustup toolchain install "$stable" --profile minimal; fi
   rustup toolchain install "$channel" --profile minimal "${component_args[@]}"
-  if [[ "$profile" == ci-fuzz ]]; then
+  if [[ "$profile" == ci-fuzz || "$profile" == ci-miri ]]; then
     nightly="$(python3 "$SCRIPT_DIR/../lib/toolchain.py" --nightly)"
     mapfile -t components < <(catalog_get "$profile" nightly-components)
     component_args=()
@@ -149,6 +162,16 @@ while IFS=$'\t' read -r name directory; do
   if [[ -d "$directory/bin" ]]; then tool_paths+=("$directory/bin"); else tool_paths+=("$directory"); fi
   if [[ "$name" == llvm ]]; then export LIBCLANG_PATH="$directory/lib"; fi
 done < "$temporary/archives"
+if [[ "$proof" == true && ( "$platform" == x86_64-linux || "$platform" == aarch64-linux ) ]]; then
+  export OPAMROOT="$prefix/opam"
+  opam init --bare --no-setup --no-opamrc --yes default "$(catalog_get ci-ct-proof opam-repository)"
+  if ! opam switch list --short | grep -Fxq ct; then
+    opam switch create ct "$(catalog_get ci-ct-proof compiler)" --yes --no-depexts
+  fi
+  mapfile -t proof_tools < <(catalog_get ci-ct-proof opam)
+  opam install --switch ct --yes --no-depexts "${proof_tools[@]}"
+  tool_paths+=("$OPAMROOT/ct/bin")
+fi
 tool_paths+=("$cargo_bin")
 path_prefix="$(IFS=:; echo "${tool_paths[*]}")"
 export PATH="$path_prefix:$PATH"
@@ -178,6 +201,9 @@ fi
 # Persistent paths are shared by interactive shells and non-interactive Bash recipes.
 environment="$prefix/environment.sh"
 {
+  if [[ "$proof" == true && ( "$platform" == x86_64-linux || "$platform" == aarch64-linux ) ]]; then
+    printf 'eval "$(opam env --root=%q --switch=ct --shell=bash)"\n' "$OPAMROOT"
+  fi
   printf "export PATH=%q:\"\$PATH\"\n" "$path_prefix"
   if [[ -n "${LIBCLANG_PATH:-}" ]]; then printf 'export LIBCLANG_PATH=%q\n' "$LIBCLANG_PATH"; fi
 } > "$environment"
@@ -211,7 +237,7 @@ if [[ "$ci" == false ]]; then cargo rail --version; fi
 case "$profile" in
   ci-compat) wasmtime --version ;;
   ci-fuzz) cargo fuzz --version ;;
-  ci-ct|ci-bench) just --version ;;
+  ci-ct|ci-miri|ci-package|ci-bench) just --version ;;
   ci) cargo nextest --version ;;
 esac
 printf 'Installed %s tooling. Load with: source "%s"\n' "$platform" "$environment"

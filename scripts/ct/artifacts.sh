@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export RUSTUP_TOOLCHAIN
+RUSTUP_TOOLCHAIN="$("$(dirname "${BASH_SOURCE[0]}")/../lib/toolchain.sh" --host)"
+
 usage() {
   cat <<'EOF'
 Usage: scripts/ct/artifacts.sh [--target <triple>] [--profile release]

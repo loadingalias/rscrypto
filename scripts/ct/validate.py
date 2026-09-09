@@ -13,6 +13,9 @@ import sys
 import tomllib
 from pathlib import Path
 
+# Embedded Windows Python omits the script directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from dudect_report import raw_csv_rows
 from provenance import dudect_runner_sources, load_toml, sha256_file
 from manifest import (

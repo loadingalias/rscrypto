@@ -49,16 +49,32 @@ assets = ["wasmtime"]
 packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "python3"]
 workers = 8
 
+[ci-package]
+cargo = ["just"]
+
 [ci-fuzz]
 cargo = ["just", "cargo-fuzz"]
 components = []
 nightly-components = ["rust-src"]
 packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "python3", "clang"]
 
+[ci-miri]
+cargo = ["just"]
+components = []
+nightly-components = ["miri", "rust-src"]
+packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "python3"]
+
 [ci-ct]
 cargo = ["just"]
 components = ["llvm-tools"]
 packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "python3"]
+
+[ci-ct-proof]
+opam-repository = "git+https://github.com/ocaml/opam-repository.git#40d8ad2a8bbef64bd1b88f2d61427310538bfcec"
+compiler = "ocaml-base-compiler.5.4.1"
+# Match the engine, solver, and decoder used by the existing selector proofs.
+opam = ["binsec.0.11.1", "bitwuzla.1.0.6", "unisim_archisec.0.0.14"]
+packages = ["opam", "pkg-config", "libgmp-dev", "autoconf", "bison", "flex", "m4", "unzip", "bubblewrap"]
 
 [ci-bench]
 cargo = ["just"]

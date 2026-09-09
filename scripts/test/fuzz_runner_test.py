@@ -76,10 +76,10 @@ elif sys.argv[1] == 'test':
     environment.update(PATH=f'{binary}:{os.environ["PATH"]}', FUZZ_LOG=str(log),
                        RSCRYPTO_FUZZ_TARGET_CONCURRENCY='1')
 
-    def run(args, discovery='ok', script='test-fuzz.sh', replay='ok'):
+    def run(args, discovery='ok', script='test-fuzz.sh', replay='ok', **extra):
       log.write_text('')
       result = subprocess.run(['bash', str(root / 'scripts/test' / script), *args],
-                              cwd=root, env={**environment, 'DISCOVERY': discovery, 'REPLAY': replay},
+                              cwd=root, env={**environment, 'DISCOVERY': discovery, 'REPLAY': replay, **extra},
                               capture_output=True, text=True, timeout=30)
       commands = [json.loads(line) for line in log.read_text().splitlines()]
       return result, commands
@@ -122,6 +122,12 @@ elif sys.argv[1] == 'test':
     result, commands = run(['--all'])
     assert result.returncode == 0, result.stderr
     assert len([c for c in commands if c[:2] == ['fuzz', 'run']]) == 2, commands
+    result, commands = run(['--all'], RSCRYPTO_FUZZ_BUDGET_SECS='60')
+    assert result.returncode == 2 and 'exceed' in result.stderr
+    assert not any(c[:2] == ['fuzz', 'run'] for c in commands)
+    result, commands = run(['--all'], RSCRYPTO_FUZZ_BUDGET_SECS='120', RSCRYPTO_FUZZ_VALIDATE_ONLY='1')
+    assert result.returncode == 0, result.stderr
+    assert not any(c[:2] == ['fuzz', 'run'] for c in commands)
     result, commands = run(['--targets', 'fixture'])
     assert result.returncode == 0, result.stderr
     runs = [c for c in commands if c[:2] == ['fuzz', 'run']]

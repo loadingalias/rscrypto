@@ -1,14 +1,27 @@
-name: CT smoke
+name: CT
 
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Smoke regression check or full manifest-required CT evidence
+        type: choice
+        options: [smoke, full]
+        default: full
+      architectures:
+        description: all, or comma-separated x86_64-linux,aarch64-linux,x86_64-win,s390x-linux,powerpc64le-linux,riscv64-linux
+        type: string
+        required: true
+        default: all
 
 permissions:
   contents: read
 
 env:
   CARGO_RAIL_CACHE: "off"
+  INPUT_MODE: ${{ inputs.mode || 'smoke' }}
+  INPUT_ARCHITECTURES: ${{ inputs.architectures || 'x86_64-linux,aarch64-linux' }}
 
 concurrency:
   group: ct-${{ github.ref }}
@@ -19,27 +32,54 @@ defaults:
     shell: bash
 
 jobs:
-  ct:
-    runs-on: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=8/ram=16+32/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
-    timeout-minutes: 60
+  select:
+    runs-on: runs-on=${{ github.run_id }}/cpu=2/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/env=production
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - name: Install tooling and check CT artifacts and timing smoke
+      - id: select
+        run: python3 scripts/ct/ci.py plan
+
+  ct:
+    needs: select
+    name: ${{ matrix.platform }} (${{ inputs.mode || 'smoke' }})
+    strategy:
+      fail-fast: true
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
+    env:
+      PLATFORM: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install tooling and run CT (Linux)
+        if: runner.os == 'Linux'
         run: |
-          scripts/tooling/x86_64-linux.sh --ci-ct
+          profile=--ci-ct
+          if [[ "$INPUT_MODE" == full ]]; then profile=--ci-ct-full; fi
+          scripts/tooling/"$PLATFORM.sh" "$profile"
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          just ct-test
-          just ct-artifacts
-          just ct-validate
-          just ct-dudect --smoke
-          just ct-validate --manifest-only --strict-coverage
+          export RUSTUP_TOOLCHAIN
+          RUSTUP_TOOLCHAIN=$(scripts/lib/toolchain.sh --host)
+          python3 scripts/ct/ci.py run
+      - name: Install tooling and run CT (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          ./scripts/tooling/x86_64-win.ps1 -CiCt
+          python3 scripts/ct/ci.py run
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Retain CT evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: ct-x86_64-linux
+          name: ct-${{ matrix.platform }}-${{ inputs.mode || 'smoke' }}
           path: |
             target/ct/
           if-no-files-found: warn
