@@ -35,7 +35,7 @@ pub(crate) mod kernels;
 mod dispatch;
 #[cfg(target_arch = "riscv64")]
 mod riscv64;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 mod wasm;
 #[cfg(target_arch = "x86_64")]
 mod x86_64;

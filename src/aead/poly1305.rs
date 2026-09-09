@@ -33,7 +33,7 @@ fn load_u32_le(input: &[u8]) -> u32 {
   all(target_arch = "powerpc64", target_endian = "little"),
   target_arch = "riscv64",
   target_arch = "s390x",
-  target_arch = "wasm32",
+  all(target_arch = "wasm32", target_feature = "simd128"),
 ))]
 #[inline(always)]
 fn low_u32(value: u64) -> u32 {
@@ -45,7 +45,7 @@ fn low_u32(value: u64) -> u32 {
   all(target_arch = "powerpc64", target_endian = "little"),
   target_arch = "riscv64",
   target_arch = "s390x",
-  target_arch = "wasm32",
+  all(target_arch = "wasm32", target_feature = "simd128"),
 ))]
 #[inline(always)]
 fn add_limb_product(accumulator: u64, left: u32, right: u32) -> u64 {
@@ -162,7 +162,7 @@ fn compute_block_resolved(primitive: AeadPrimitive) -> ComputeBlockFn {
 #[inline]
 fn resolve_compute_block(primitive: AeadPrimitive) -> ComputeBlockFn {
   match select_backend(primitive, Arch::current(), current_caps()) {
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     crate::aead::targets::AeadBackend::WasmSimd128 => wasm_simd128::compute_block,
     #[cfg(target_arch = "x86_64")]
     crate::aead::targets::AeadBackend::X86Avx512 => x86_avx512::compute_block,
@@ -602,7 +602,7 @@ unsafe fn compute_block_aarch64_neon(state: &mut State, block: &[u8; 16], partia
   state.h = [h0, h1, h2, h3, h4];
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 #[target_feature(enable = "simd128")]
 /// Absorbs one Poly1305 block with the WASM SIMD128 multiplier.
 ///
@@ -1106,7 +1106,7 @@ mod riscv64_vector;
 #[cfg(target_arch = "s390x")]
 #[path = "poly1305/s390x_vector.rs"]
 mod s390x_vector;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 #[path = "poly1305/wasm32_simd128.rs"]
 mod wasm_simd128;
 #[cfg(target_arch = "x86_64")]

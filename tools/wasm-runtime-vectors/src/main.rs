@@ -334,7 +334,32 @@ fn assert_simd128_runtime_caps_are_detected() {
 #[cfg(not(target_feature = "simd128"))]
 fn assert_simd128_runtime_caps_are_detected() {}
 
+fn assert_argon2id_rfc9106() {
+  let params = rscrypto::Argon2Params::new(32, 3, 4).expect("RFC 9106 parameters");
+  let context = rscrypto::Argon2Context::new(&[0x03; 8], &[0x04; 12]);
+  let mut output = [0; 32];
+  rscrypto::Argon2id::derive_with_context(&params, context, &[0x01; 32], &[0x02; 16], &mut output)
+    .expect("RFC 9106 Appendix A.3 derivation");
+  assert_hex(
+    &output,
+    "0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659",
+  );
+}
+
 fn main() {
+  run_vectors();
+}
+
+#[cfg(target_os = "unknown")]
+// SAFETY: This executable defines the sole `run_vectors` export. Its C ABI has
+// no arguments or borrowed state; assertion failures trap in the WASM runtime.
+#[unsafe(export_name = "run_vectors")]
+extern "C" fn wasm_run_vectors() {
+  run_vectors();
+}
+
+fn run_vectors() {
+  assert_argon2id_rfc9106();
   assert_core_hash_vectors_match_known_outputs();
   assert_streaming_hashes_match_oneshot_across_block_boundaries();
   assert_rsa_caller_random_signing_roundtrips();

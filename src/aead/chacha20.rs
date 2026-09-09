@@ -213,7 +213,7 @@ fn xor_keystream_resolved(primitive: AeadPrimitive) -> XorKeystreamFn {
 #[inline]
 fn resolve_xor_keystream(primitive: AeadPrimitive) -> XorKeystreamFn {
   match select_backend(primitive, Arch::current(), current_caps()) {
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     crate::aead::targets::AeadBackend::WasmSimd128 => wasm_simd128::xor_keystream,
     #[cfg(target_arch = "x86_64")]
     crate::aead::targets::AeadBackend::X86Avx512 => x86_avx512::xor_keystream,
@@ -475,7 +475,7 @@ mod riscv64_vector;
 #[cfg(target_arch = "s390x")]
 #[path = "chacha20/s390x_vector.rs"]
 mod s390x_vector;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 #[path = "chacha20/wasm32_simd128.rs"]
 mod wasm_simd128;
 #[cfg(target_arch = "x86_64")]
@@ -635,8 +635,17 @@ pub unsafe fn diag_chacha20_xor_keystream_wasm_simd128(
   nonce: &[u8; NONCE_SIZE],
   buffer: &mut [u8],
 ) {
+  assert!(
+    crate::platform::caps().has(crate::platform::caps::wasm::SIMD128),
+    "WASM SIMD128 is unavailable"
+  );
+  #[cfg(target_feature = "simd128")]
   // SAFETY: the caller contract is exactly the private backend entry's contract.
-  unsafe { wasm_simd128::xor_keystream(key, initial_counter, nonce, buffer) };
+  unsafe {
+    wasm_simd128::xor_keystream(key, initial_counter, nonce, buffer)
+  };
+  #[cfg(not(target_feature = "simd128"))]
+  let _ = (key, initial_counter, nonce, buffer);
 }
 #[cfg(test)]
 mod tests {

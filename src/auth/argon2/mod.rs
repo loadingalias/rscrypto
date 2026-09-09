@@ -76,7 +76,7 @@ mod power;
 mod riscv64;
 #[cfg(target_arch = "s390x")]
 mod s390x;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 mod wasm;
 #[cfg(target_arch = "x86_64")]
 mod x86_64;
@@ -499,7 +499,7 @@ pub fn diag_hash_portable(
     target_arch = "powerpc64",
     target_arch = "s390x",
     target_arch = "riscv64",
-    target_arch = "wasm32",
+    all(target_arch = "wasm32", target_feature = "simd128"),
   )
 ))]
 fn diag_compress_for(kernel: KernelId) -> Result<CompressFn, Argon2Error> {
@@ -661,14 +661,22 @@ pub fn diag_hash_wasm_simd128(
   variant: Argon2Variant,
   out: &mut [u8],
 ) -> Result<(), Argon2Error> {
-  argon2_hash_with_kernel(
-    params,
-    password,
-    salt,
-    variant,
-    out,
-    diag_compress_for(KernelId::WasmSimd128)?,
-  )
+  #[cfg(target_feature = "simd128")]
+  {
+    argon2_hash_with_kernel(
+      params,
+      password,
+      salt,
+      variant,
+      out,
+      diag_compress_for(KernelId::WasmSimd128)?,
+    )
+  }
+  #[cfg(not(target_feature = "simd128"))]
+  {
+    let _ = (params, password, salt, variant, out);
+    Err(Argon2Error::BackendUnavailable)
+  }
 }
 
 /// Single-block compress via the portable kernel (diagnostic).
@@ -814,11 +822,16 @@ pub fn diag_compress_wasm_simd128(
   xor_into: bool,
 ) {
   assert!(
-    crate::platform::caps().has(dispatch::required_caps(KernelId::WasmSimd128)),
+    crate::platform::caps().has(crate::platform::caps::wasm::SIMD128),
     "wasm simd128 not available on host"
   );
+  #[cfg(target_feature = "simd128")]
   // SAFETY: assertion witnesses simd128 availability on the host.
-  unsafe { wasm::compress_simd128(dst, x, y, xor_into) }
+  unsafe {
+    wasm::compress_simd128(dst, x, y, xor_into)
+  }
+  #[cfg(not(target_feature = "simd128"))]
+  let _ = (dst, x, y, xor_into);
 }
 
 /// Block-word count (128) — exposed for diagnostic kernel tests.
@@ -1662,7 +1675,7 @@ fn argon2_hash_with_context(
   )
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(feature = "diag", not(all(target_arch = "wasm32", not(target_feature = "simd128")))))]
 fn argon2_hash_with_kernel(
   params: &Argon2Params,
   password: &[u8],
