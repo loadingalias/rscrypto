@@ -189,10 +189,11 @@ Both run on pull requests, retain evidence for seven days, and run without
 caches. Manual dispatch becomes available once they reach the default branch.
 
 CT smoke is pipeline regression evidence, not release timing qualification.
-The strict coverage gate currently reports missing required BINSEC kernels
-for P-256 and P-384 public derivation on Linux x86-64 and ARM64. The scaffold
-keeps this failure visible; full timing runs and pinned BINSEC provisioning
-remain follow-up work.
+P-256 and P-384 public derivation reuse the production portable comb-selector
+harnesses shared with signing. Their manifest entries require bounded BINSEC
+proofs of those selectors; whole-operation timing and accelerated assembly
+remain separate evidence. Full timing runs and pinned BINSEC provisioning in
+CI remain follow-up work.
 
 Only x86-64 and ARM64 Linux install perf, Valgrind, Gungraun, and samply.
 Their installer enables perf events and requires perf for the running kernel.

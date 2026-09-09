@@ -2661,6 +2661,21 @@ notes = "All-target bounded proof for the ECDSA/P-256 fixed-window signing gener
 claim = "ct-intended"
 
 [[binsec_kernel]]
+id = "signature.ecdsa_p256_public_derivation.signing_generator_select.portable.all"
+primitive = "signature.ecdsa_p256_public_derivation"
+symbol = "ct_binsec_ecdsa_p256_select_signing_generator_affine"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 20000
+secrets = [{ name = "CT_BINSEC_ECDSA_DIGIT", kind = "global", bytes = 1 }]
+public = []
+assumptions = []
+notes = "Bounded proof of the production portable comb selector shared by blinded public derivation and signing. The public derivation path reaches scalar_mul_basepoint_comb_ct_secret_blinded and selects on secret scalar digits. This reuses the signing selector harness; whole derivation, public-key precomputation, and accelerated assembly require separate operation-level artifacts and DudeCT."
+claim = "ct-intended"
+
+[[binsec_kernel]]
 id = "kx.p256_ecdh.window_select.portable.all"
 primitive = "kx.p256_ecdh"
 symbol = "ct_binsec_p256_ecdh_select_window"
@@ -2688,6 +2703,21 @@ secrets = [{ name = "CT_BINSEC_ECDSA_DIGIT", kind = "global", bytes = 1 }]
 public = []
 assumptions = []
 notes = "All-target bounded proof for the ECDSA/P-384 fixed-window signing generator selector. The optimized P-384 paths still use this selector before architecture-specific field arithmetic."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "signature.ecdsa_p384_public_derivation.signing_generator_select.portable.all"
+primitive = "signature.ecdsa_p384_public_derivation"
+symbol = "ct_binsec_ecdsa_p384_select_signing_generator_affine"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 20000
+secrets = [{ name = "CT_BINSEC_ECDSA_DIGIT", kind = "global", bytes = 1 }]
+public = []
+assumptions = []
+notes = "Bounded proof of the production portable comb selector shared by blinded public derivation and signing. The public derivation path reaches scalar_mul_basepoint_comb_ct_secret_blinded and selects on secret scalar digits. This reuses the signing selector harness; whole derivation, public-key precomputation, and accelerated assembly require separate operation-level artifacts and DudeCT."
 claim = "ct-intended"
 
 [[binsec_kernel]]
