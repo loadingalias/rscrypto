@@ -94,7 +94,6 @@ check_cfg_flags=(
   '--check-cfg=cfg(target_feature,values("movdiri","movdir64b","serialize"))'
 )
 
-failed=0
 for manifest in "${manifests[@]}"; do
   relative_manifest=${manifest#"$REPO_ROOT/"}
   if [[ "$MESSAGE_FORMAT" == json ]]; then
@@ -125,9 +124,5 @@ for manifest in "${manifests[@]}"; do
     compiler_flags+=(--cap-lints "$LINT_CAP")
   fi
 
-  if ! CARGO_TARGET_DIR="$TARGET_DIR" cargo "${cargo_args[@]}" -- "${compiler_flags[@]}"; then
-    failed=1
-  fi
+  CARGO_TARGET_DIR="$TARGET_DIR" cargo "${cargo_args[@]}" -- "${compiler_flags[@]}"
 done
-
-exit "$failed"

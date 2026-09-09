@@ -45,6 +45,8 @@ if args[0] == 'metadata':
     ]}))
 else:
     Path(os.environ['CHECK_LOG']).write_text(json.dumps(args))
+    if manifest.parent.name == os.environ.get('CHECK_FAIL_WORKSPACE'):
+        sys.exit(7)
 ''')
     cargo.chmod(0o755)
     (binary / 'jq').symlink_to(cargo)
@@ -62,6 +64,19 @@ else:
       excluded = [command[i + 1] for i, arg in enumerate(command) if arg == '--exclude']
       assert excluded == ['upstream'], (prefix, command)
       assert '--workspace' in command and '--all-targets' in command and '--no-deps' in command
+
+    later = root / 'tools/later'
+    later.mkdir()
+    (later / 'Cargo.toml').write_text('[workspace]\n')
+    result = subprocess.run(['bash', str(script)], cwd=root, capture_output=True, text=True, timeout=30,
+                            env={**environment, 'PATH': f'{binary}:{os.environ["PATH"]}',
+                                 'CHECK_LOG': str(log), 'METADATA_PREFIX': '/repo/tools/harness/',
+                                 'REAL_JQ': shutil.which('jq'), 'METADATA_SEPARATOR': '/',
+                                 'CHECK_FAIL_WORKSPACE': 'harness'})
+    assert result.returncode == 7, (result.returncode, result.stderr)
+    command = json.loads(log.read_text())
+    assert Path(command[command.index('--manifest-path') + 1]).resolve() == (workspace / 'Cargo.toml').resolve(), command
+    assert 'Linting independent workspace: tools/later/' not in result.stdout
 
 
 def main():
