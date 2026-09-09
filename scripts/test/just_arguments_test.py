@@ -20,6 +20,9 @@ def main():
     recorder = root / 'executor "quoted"'
     recorder.write_text(f"#!{sys.executable}\n" + '''
 import json, os, sys
+if sys.argv[1:] == ['--print']:
+  print(os.environ['PYTHON_RECORDER'])
+  sys.exit(0)
 with open(os.environ['ARGUMENT_LOG'], 'a') as log:
   log.write(json.dumps(sys.argv[1:]) + '\\n')
 ''')
@@ -32,7 +35,7 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
     log = root / 'arguments.jsonl'
     env = {key: value for key, value in os.environ.items()
            if key not in ('BASH_ENV', 'ENV') and not key.startswith('BASH_FUNC_')}
-    env.update(DEV_MACHINE_BIN=str(recorder), ARGUMENT_LOG=str(log),
+    env.update(DEV_MACHINE_BIN=str(recorder), PYTHON_RECORDER=str(recorder), ARGUMENT_LOG=str(log),
                PATH=str(root / 'bin') + os.pathsep + os.environ['PATH'],
                CARGO_RAIL_CACHE_REMOTE='remote value', CARGO_RAIL_CACHE_MODE='read-write')
     words = ['two words', "single'quote", 'double"quote', r'^(foo|bar)\s+[0-9].*$',
@@ -55,8 +58,8 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
       'ct-dudect': [], 'ct-artifacts': [], 'update': [],
       'ct-full': ['scripts/ct/full.py'], 'ct-binsec': ['scripts/ct/binsec.py'],
       'ct-validate': ['scripts/ct/validate.py'],
-      'bench': ['scripts/bench/bounded.py', 'scripts/lib/python.sh', 'scripts/bench/runner.py', 'bench'],
-      'profile': ['scripts/bench/bounded.py', 'scripts/lib/python.sh', 'scripts/bench/runner.py', 'profile'],
+      'bench': ['scripts/bench/bounded.py', str(recorder), 'scripts/bench/runner.py', 'bench'],
+      'profile': ['scripts/bench/bounded.py', str(recorder), 'scripts/bench/runner.py', 'profile'],
       'perf-codegen': ['scripts/bench/runner.py', 'codegen'],
       'perf-llvm-lines': ['scripts/bench/runner.py', 'llvm-lines'],
     }

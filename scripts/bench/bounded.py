@@ -4,9 +4,13 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import signal
 import subprocess
 import sys
+
+# Embedded Windows Python omits the script directory from its import path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from settings import load
 

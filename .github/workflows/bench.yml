@@ -3,16 +3,16 @@ name: Bench
 on:
   workflow_dispatch:
     inputs:
-      architecture:
-        description: Native Linux architecture
-        type: choice
-        options: [x86_64, aarch64, both]
-        default: x86_64
-      benches:
-        description: Comma-separated benchmark targets from .config/benchmark-matrix.json
+      architectures:
+        description: all, or comma-separated x86_64-linux,aarch64-linux,x86_64-win,s390x-linux,powerpc64le-linux,riscv64-linux
         type: string
         required: true
-        default: sha2
+        default: x86_64-linux
+      selection:
+        description: Algorithms/groups (sha256,blake3 or hashes), all, or bench=sha2,auth
+        type: string
+        required: true
+        default: sha256
       filter:
         description: Optional Criterion case regex
         type: string
@@ -35,50 +35,66 @@ permissions:
 
 env:
   CARGO_RAIL_CACHE: "off"
+  INPUT_ARCHITECTURES: ${{ inputs.architectures }}
+  INPUT_SELECTION: ${{ inputs.selection }}
+  INPUT_FILTER: ${{ inputs.filter }}
+  INPUT_SAMPLE_SIZE: ${{ inputs.sample_size }}
+  INPUT_WARMUP_MS: ${{ inputs.warmup_ms }}
+  INPUT_MEASURE_MS: ${{ inputs.measure_ms }}
+  INPUT_DIAGNOSTIC: ${{ inputs.diagnostic }}
 
 defaults:
   run:
     shell: bash
 
 jobs:
-  bench:
-    name: ${{ matrix.architecture }} Linux
-    strategy:
-      fail-fast: true
-      matrix:
-        architecture: ${{ fromJSON(inputs.architecture == 'both' && '["x86_64","aarch64"]' || format('["{0}"]', inputs.architecture)) }}
-    runs-on: runs-on=${{ github.run_id }}/family=${{ matrix.architecture == 'x86_64' && 'c8i.2xlarge' || 'c8g.2xlarge' }}/cpu=8/image=${{ matrix.architecture == 'x86_64' && 'ubuntu24-minimal-x64' || 'ubuntu24-minimal-arm64' }}/spot=false/volume=100gb:gp3/env=production
-    timeout-minutes: 75
+  plan:
+    runs-on: runs-on=${{ github.run_id }}/cpu=2/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/env=production
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - name: Install benchmark tooling
+      - id: plan
+        run: python3 scripts/bench/ci.py plan
+
+  bench:
+    needs: plan
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: true
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install tooling and measure (Linux)
+        if: runner.os == 'Linux'
         env:
-          PLATFORM: ${{ matrix.architecture }}-linux
-        run: scripts/tooling/"$PLATFORM.sh" --ci-bench
-      - name: Measure selected cases
-        env:
-          TARGETS: ${{ inputs.benches }}
-          FILTER: ${{ inputs.filter }}
-          SAMPLES: ${{ inputs.sample_size }}
-          WARMUP: ${{ inputs.warmup_ms }}
-          MEASURE: ${{ inputs.measure_ms }}
-          DIAGNOSTIC: ${{ inputs.diagnostic }}
+          PLATFORM: ${{ matrix.platform }}
         run: |
+          scripts/tooling/"$PLATFORM.sh" --ci-bench
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          args=("bench=$TARGETS" "output_dir=target/bench" "diag=$DIAGNOSTIC")
-          if [[ -n "$FILTER" ]]; then args+=("filter=$FILTER"); fi
-          if [[ -n "$SAMPLES" ]]; then args+=("sample_size=$SAMPLES"); fi
-          if [[ -n "$WARMUP" ]]; then args+=("warmup_ms=$WARMUP"); fi
-          if [[ -n "$MEASURE" ]]; then args+=("measure_ms=$MEASURE"); fi
-          just bench "${args[@]}"
+          python3 scripts/bench/ci.py run
           git diff --exit-code HEAD
+      - name: Install tooling and measure (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          ./scripts/tooling/x86_64-win.ps1 -CiBench
+          python3 scripts/bench/ci.py run
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --exit-code HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Retain benchmark evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: bench-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: bench-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: target/bench/
           if-no-files-found: warn
           retention-days: 30

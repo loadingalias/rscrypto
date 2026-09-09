@@ -14,6 +14,9 @@ import sys
 import tarfile
 import tempfile
 
+# Embedded Windows Python omits the script directory from its import path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from benchmark_catalog import case_class, load_catalog, resolve_selector
 from execution import build, build_command, build_environment, build_identity, digest, discover, match_cases, exit_code, identity, write_json, source_evidence
 from measure import measure, verify

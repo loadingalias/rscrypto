@@ -137,6 +137,7 @@ test-scripts:
     @scripts/lib/python.sh scripts/test/just_arguments_test.py
     @scripts/lib/python.sh scripts/tooling/toolchain_test.py
     @scripts/lib/python.sh scripts/tooling/install_test.py
+    @scripts/lib/python.sh scripts/bench/ci_test.py
     @scripts/lib/python.sh scripts/test/fuzz_features_test.py
     @scripts/lib/python.sh scripts/check/check_runner_test.py
     @scripts/lib/python.sh scripts/check/compat_test.py
@@ -225,7 +226,7 @@ test-coverage:
 # Measure Criterion cases, or discover them with --list; --diag enables diagnostics.
 [group('benchmarks')]
 bench *args:
-    @scripts/lib/python.sh scripts/bench/bounded.py scripts/lib/python.sh scripts/bench/runner.py bench "$@"
+    @python="$(scripts/lib/python.sh --print)"; "$python" scripts/bench/bounded.py "$python" scripts/bench/runner.py bench "$@"
 
 # Stable instruction/cache-cost benchmarks. Requires gungraun-runner and Valgrind.
 [group('benchmarks')]
@@ -237,7 +238,7 @@ bench-structural:
 # Record one exact case, or discover cases with --list; --diag enables diagnostics.
 [group('benchmarks')]
 profile *args:
-    @scripts/lib/python.sh scripts/bench/bounded.py scripts/lib/python.sh scripts/bench/runner.py profile "$@"
+    @python="$(scripts/lib/python.sh --print)"; "$python" scripts/bench/bounded.py "$python" scripts/bench/runner.py profile "$@"
 
 # Inspect optimized code for an explicit benchmark target configuration.
 [group('benchmarks')]

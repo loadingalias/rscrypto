@@ -154,11 +154,17 @@ class LinuxInstall(unittest.TestCase):
                 ('x86_64-linux', 'ci-fuzz', ['rust-src']),
                 ('x86_64-linux', 'ci-ct', ['llvm-tools']),
                 ('x86_64-linux', 'ci-bench', []),
-                ('aarch64-linux', 'ci-bench', [])):
+                ('aarch64-linux', 'ci-bench', []),
+                ('s390x-linux', 'ci-bench', []),
+                ('powerpc64le-linux', 'ci-bench', []),
+                ('riscv64-linux', 'ci-bench', [])):
             with self.subTest(platform=platform, profile=profile):
                 result, calls, _ = self.provision(platform, profile=profile)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 installs = [c[-1] for c in calls if c[0] == 'cargo' and 'binstall' in c]
+                if 'cargo-binstall' not in CATALOG[platform]['assets']:
+                    installs = [f"{c[-1]}@{c[c.index('--version') + 1]}" for c in calls
+                                if c[0] == 'cargo' and 'install' in c]
                 self.assertEqual(installs, [f"{t}@{CATALOG['cargo'][t]}" for t in CATALOG[profile]['cargo']])
                 apt = next(c for c in calls if c[0] == 'apt-get' and '--allow-downgrades' in c)
                 self.assertEqual([a for a in apt if a.endswith('=1.0')],
@@ -172,7 +178,7 @@ class LinuxInstall(unittest.TestCase):
                     self.assertEqual(rustup[1][3], policy['nightly'])
                 self.assertFalse(any('musl-tools=1.0' in c or 'target' in c and c[0] == 'rustup' for c in calls))
                 archives = [c[-2] for c in calls if c[0] == 'python3' and 'install-archive' in c]
-                self.assertEqual(archives, ['cargo-binstall'])
+                self.assertEqual(archives, ['cargo-binstall'] if 'cargo-binstall' in CATALOG[platform]['assets'] else [])
 
     def test_package_failure_stops_before_rust_installation(self):
         result, calls, _ = self.provision('x86_64-linux', fail=True)

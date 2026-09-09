@@ -1,6 +1,8 @@
 # Shared native Windows provisioning. Run in an elevated PowerShell session.
-param([Parameter(Mandatory)][ValidateSet('aarch64-win', 'x86_64-win')][string]$Platform, [switch]$Ci)
+param([Parameter(Mandatory)][ValidateSet('aarch64-win', 'x86_64-win')][string]$Platform, [switch]$Ci, [switch]$CiBench)
 $ErrorActionPreference = 'Stop'
+if ($Ci -and $CiBench) { throw 'Select either -Ci or -CiBench.' }
+$Ci = $Ci -or $CiBench
 $env:PYTHONDONTWRITEBYTECODE = '1'
 Set-StrictMode -Version Latest
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'This installer requires Windows.' }
@@ -131,10 +133,14 @@ try {
     if (-not $Ci) {
         foreach ($component in $native.components) { $rustArguments += @('--component', $component) }
     }
-    Invoke-Native $python $rustArguments
+    if ($CiBench) {
+        Invoke-Native 'rustup' @('toolchain', 'install', $channel, '--profile', 'minimal')
+    } else {
+        Invoke-Native $python $rustArguments
+    }
     Remove-Item Env:RUSTC_WRAPPER -ErrorAction SilentlyContinue
     Remove-Item Env:CARGO_ENCODED_RUSTFLAGS -ErrorAction SilentlyContinue
-    $cargoTools = if ($Ci) { $catalog.ci.cargo } else { $native.cargo }
+    $cargoTools = if ($CiBench) { $catalog.'ci-bench'.cargo } elseif ($Ci) { $catalog.ci.cargo } else { $native.cargo }
     foreach ($tool in $cargoTools) {
         Invoke-Native 'cargo' @("+$channel", 'binstall', '--locked', '--no-confirm', '--targets', $native.'rust-host', "$tool@$($catalog.cargo.$tool)")
     }
@@ -157,7 +163,7 @@ try {
     Invoke-Native 'cmake' @('--version')
     if ($Platform -eq 'x86_64-win') { Invoke-Native 'nasm' @('-v') }
     if (-not $Ci) { Invoke-Native 'cargo' @("+$channel", 'rail', '--version') }
-    Invoke-Native 'cargo' @("+$channel", 'nextest', '--version')
+    if (-not $CiBench) { Invoke-Native 'cargo' @("+$channel", 'nextest', '--version') }
 
     # Persist the complete MSVC/SDK environment, not only the paths to installed executables.
     if (-not $Ci) {

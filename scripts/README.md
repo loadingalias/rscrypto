@@ -195,11 +195,12 @@ proofs of those selectors; whole-operation timing and accelerated assembly
 remain separate evidence. Full timing runs and pinned BINSEC provisioning in
 CI remain follow-up work.
 
-`bench.yml` is manual-only. It selects catalog benchmark targets and case
-filters, runs Linux x86-64 and/or ARM64 on fixed AWS instance types, and retains
-the existing benchmark runner's evidence. `--ci-bench` installs the native
-benchmark build prerequisites and Just without test, profiling, or cross-target
-tools. See [Benchmarking](../docs/benchmarking.md#run-a-manual-workflow).
+`bench.yml` is manual-only. It selects one, many, or all six native CI platforms
+and catalog algorithms, groups, or benchmark targets, with optional case filters.
+A small planner starts only the selected runners. The existing benchmark runner
+owns measurement and evidence. `--ci-bench` (Linux) and `-CiBench` (Windows)
+install native benchmark build prerequisites and Just without test, profiling,
+or cross-target tools. See [Benchmarking](../docs/benchmarking.md#run-a-manual-workflow).
 
 Only x86-64 and ARM64 Linux install perf, Valgrind, Gungraun, and samply.
 Their installer enables perf events and requires perf for the running kernel.
