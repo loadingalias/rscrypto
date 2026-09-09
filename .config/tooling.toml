@@ -49,6 +49,17 @@ assets = ["wasmtime"]
 packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "python3"]
 workers = 8
 
+[ci-fuzz]
+cargo = ["just", "cargo-fuzz"]
+components = []
+nightly-components = ["rust-src"]
+packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "python3", "clang"]
+
+[ci-ct]
+cargo = ["just"]
+components = ["llvm-tools"]
+packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "python3"]
+
 [ci-musl]
 packages = ["musl-tools"]
 

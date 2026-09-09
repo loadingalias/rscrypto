@@ -62,7 +62,7 @@ elif name == 'python3':
 
 
 class LinuxInstall(unittest.TestCase):
-    def provision(self, platform, fail=False, real_apt=False, without_preference=False, compat=False):
+    def provision(self, platform, fail=False, real_apt=False, without_preference=False, profile='ci'):
         temporary = tempfile.TemporaryDirectory(prefix='rscrypto installer ')
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
@@ -107,7 +107,7 @@ class LinuxInstall(unittest.TestCase):
                        INSTALL_APT_ARCH=subprocess.check_output(['dpkg', '--print-architecture'], text=True).strip())
             if without_preference:
                 env['INSTALL_WITHOUT_PREFERENCE'] = '1'
-        result = subprocess.run([BASH, str(ROOT / 'scripts/tooling/linux.sh'), platform, '--ci-compat' if compat else '--ci'],
+        result = subprocess.run([BASH, str(ROOT / 'scripts/tooling/linux.sh'), platform, '--' + profile],
                                 env=env, capture_output=True, text=True)
         calls = [json.loads(line) for line in (root / 'commands.jsonl').read_text().splitlines()]
         return result, calls, root
@@ -140,7 +140,7 @@ class LinuxInstall(unittest.TestCase):
                 self.assertFalse((root / '.profile').exists())
 
     def test_compat_profile_omits_native_test_and_policy_tools(self):
-        result, calls, _ = self.provision('x86_64-linux', compat=True)
+        result, calls, _ = self.provision('x86_64-linux', profile='ci-compat')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         installs = [c for c in calls if c[0] == 'cargo' and 'binstall' in c]
         self.assertEqual([c[-1] for c in installs], [f"just@{CATALOG['cargo']['just']}"])
@@ -148,6 +148,27 @@ class LinuxInstall(unittest.TestCase):
         self.assertEqual(archives, ['cargo-binstall', 'wasmtime'])
         self.assertFalse(any('musl-tools=1.0' in c for c in calls))
         self.assertFalse(any('--install' in c and any(arg.endswith('toolchain.py') for arg in c) for c in calls))
+
+    def test_security_profiles_install_only_their_execution_dependencies(self):
+        for profile, components in (('ci-fuzz', ['rust-src']), ('ci-ct', ['llvm-tools'])):
+            with self.subTest(profile=profile):
+                result, calls, _ = self.provision('x86_64-linux', profile=profile)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                installs = [c[-1] for c in calls if c[0] == 'cargo' and 'binstall' in c]
+                self.assertEqual(installs, [f"{t}@{CATALOG['cargo'][t]}" for t in CATALOG[profile]['cargo']])
+                apt = next(c for c in calls if c[0] == 'apt-get' and '--allow-downgrades' in c)
+                self.assertEqual([a for a in apt if a.endswith('=1.0')],
+                                 [p + '=1.0' for p in CATALOG[profile]['packages']])
+                rustup = [c for c in calls if c[:3] == ['rustup', 'toolchain', 'install']]
+                self.assertEqual(len(rustup), 2 if profile == 'ci-fuzz' else 1)
+                self.assertEqual([c[i + 1] for c in rustup for i, arg in enumerate(c) if arg == '--component'],
+                                 components)
+                if profile == 'ci-fuzz':
+                    policy = tomllib.loads((ROOT / '.config/toolchains.toml').read_text())
+                    self.assertEqual(rustup[1][3], policy['nightly'])
+                self.assertFalse(any('musl-tools=1.0' in c or 'target' in c and c[0] == 'rustup' for c in calls))
+                archives = [c[-2] for c in calls if c[0] == 'python3' and 'install-archive' in c]
+                self.assertEqual(archives, ['cargo-binstall'])
 
     def test_package_failure_stops_before_rust_installation(self):
         result, calls, _ = self.provision('x86_64-linux', fail=True)

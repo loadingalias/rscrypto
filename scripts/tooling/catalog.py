@@ -95,7 +95,9 @@ def validate(data):
         raise ValueError('ci-compat: missing pinned archive')
     for profile, required in (('ci', {'just', 'cargo-nextest'}),
                               ('ci-policy', {'cargo-deny', 'cargo-audit'}),
-                              ('ci-compat', {'just'})):
+                              ('ci-compat', {'just'}),
+                              ('ci-fuzz', {'just', 'cargo-fuzz'}),
+                              ('ci-ct', {'just'})):
         if set(data[profile]['cargo']) != required:
             raise ValueError(f'{profile}: incorrect CI tool set')
         if any(tool not in data['cargo'] for tool in data[profile]['cargo']):
@@ -139,7 +141,8 @@ def main():
         for key in args:
             value = value[key]
         if isinstance(value, list):
-            print('\n'.join(value))
+            for item in value:
+                print(item)
         elif isinstance(value, dict):
             print(json.dumps(value))
         else:

@@ -1,0 +1,49 @@
+name: Fuzz
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_RAIL_CACHE: "off"
+  RSCRYPTO_FUZZ_DURATION_SECS: "60"
+  RSCRYPTO_FUZZ_TARGET_CONCURRENCY: "8"
+  RSCRYPTO_FUZZ_JOBS: "1"
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  fuzz:
+    runs-on: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=16/ram=32+64/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install tooling and replay/fuzz all packages
+        run: |
+          scripts/tooling/x86_64-linux.sh --ci-fuzz
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          just test-fuzz-asan --all
+          just test-fuzz --all
+      - name: Retain corpora and crash inputs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fuzz-x86_64-linux
+          path: |
+            fuzz/artifacts/
+            fuzz/corpus/
+            fuzz-packages/*/artifacts/
+            fuzz-packages/*/corpus/
+          if-no-files-found: ignore
+          retention-days: 7

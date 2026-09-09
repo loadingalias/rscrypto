@@ -177,6 +177,24 @@ Build, native check, test, and benchmark entry points use that selection rather
 than an ambient `RUSTUP_TOOLCHAIN`; formatting uses the stable development pin.
 Specialized Miri and fuzz checks retain their opt-in nightly recipes.
 
+The `fuzz.yml` and `ct.yml` workflows use the same x86-64 Linux
+installer with `--ci-fuzz` and `--ci-ct`. Their package, Cargo tool, and Rust
+component sets live in `.config/tooling.toml`. Neither profile installs native
+CI policy tools, Nextest, musl targets, or development profiling tools.
+
+Fuzz replays committed corpora under ASan before bounded live fuzzing across
+all full and scoped packages. CT runs harness self-tests, release artifact
+validation, sequential DudeCT smoke cases, and strict manifest coverage.
+Both run on pull requests, retain evidence for seven days, and run without
+caches. Manual dispatch becomes available once they reach the default branch.
+
+CT smoke is pipeline regression evidence, not release timing qualification.
+The existing self-test currently rejects the vendored DudeCT `src/macros.rs`
+hash against `UPSTREAM.json`. The strict coverage gate also reports missing
+required BINSEC kernels for P-256 and P-384 public derivation on Linux x86-64
+and ARM64. The scaffold keeps these failures visible; full timing runs and pinned BINSEC provisioning remain
+follow-up work.
+
 Only x86-64 and ARM64 Linux install perf, Valgrind, Gungraun, and samply.
 Their installer enables perf events and requires perf for the running kernel.
 Use `just bench-structural` for Gungraun and `just profile` for samply;

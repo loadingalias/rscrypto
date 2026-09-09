@@ -6,13 +6,13 @@ export PYTHONDONTWRITEBYTECODE=1
 platform="${1:?native platform is required}"
 shift
 ci=false
-compat=false
+profile=ci
 case "${1:-}" in
   --ci) ci=true; shift ;;
-  --ci-compat) ci=true; compat=true; shift ;;
+  --ci-compat|--ci-fuzz|--ci-ct) ci=true; profile="${1#--}"; shift ;;
 esac
-[[ "$compat" == false || "$platform" == x86_64-linux ]] || { echo "compatibility tooling requires x86_64-linux" >&2; exit 64; }
-[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh [--ci|--ci-compat]" >&2; exit 64; }
+[[ "$profile" == ci || "$platform" == x86_64-linux ]] || { echo "$profile tooling requires x86_64-linux" >&2; exit 64; }
+[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh [--ci|--ci-compat|--ci-fuzz|--ci-ct]" >&2; exit 64; }
 machine="${platform%-linux}"
 [[ "$machine" != powerpc64le ]] || machine=ppc64le
 case "$platform" in
@@ -70,13 +70,13 @@ apt=("${sudo_cmd[@]}" env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[
 catalog_get() { python3 "$SCRIPT_DIR/catalog.py" get "$@"; }
 python3 "$SCRIPT_DIR/catalog.py" validate
 package_section="$linux_section"
-[[ "$compat" == false ]] || package_section="ci-compat"
+[[ "$profile" == ci ]] || package_section="$profile"
 mapfile -t packages < <(catalog_get "$package_section" packages)
 if [[ "$ci" == false ]]; then
   mapfile -t native_packages < <(catalog_get "$platform" packages)
   packages+=("${native_packages[@]}")
 fi
-if [[ "$ci" == true && "$compat" == false && ( "$platform" == x86_64-linux || "$platform" == aarch64-linux ) ]]; then
+if [[ "$ci" == true && "$profile" == ci && ( "$platform" == x86_64-linux || "$platform" == aarch64-linux ) ]]; then
   mapfile -t musl_packages < <(catalog_get ci-musl packages)
   packages+=("${musl_packages[@]}")
 fi
@@ -104,8 +104,20 @@ components=()
 if [[ "$ci" == false ]]; then mapfile -t components < <(catalog_get "$platform" components); fi
 component_args=()
 for component in "${components[@]}"; do component_args+=(--component "$component"); done
-if [[ "$compat" == true ]]; then
+if [[ "$profile" == ci-compat ]]; then
   python3 "$REPO_ROOT/scripts/check/compat.py" --install
+elif [[ "$profile" == ci-fuzz || "$profile" == ci-ct ]]; then
+  mapfile -t components < <(catalog_get "$profile" components)
+  component_args=()
+  for component in "${components[@]}"; do component_args+=(--component "$component"); done
+  rustup toolchain install "$channel" --profile minimal "${component_args[@]}"
+  if [[ "$profile" == ci-fuzz ]]; then
+    nightly="$(python3 "$SCRIPT_DIR/../lib/toolchain.py" --nightly)"
+    mapfile -t components < <(catalog_get "$profile" nightly-components)
+    component_args=()
+    for component in "${components[@]}"; do component_args+=(--component "$component"); done
+    rustup toolchain install "$nightly" --profile minimal "${component_args[@]}"
+  fi
 else
   python3 "$SCRIPT_DIR/../lib/toolchain.py" --install "$host" "${component_args[@]}"
   if [[ "$ci" == true && ( "$platform" == x86_64-linux || "$platform" == aarch64-linux ) ]]; then
@@ -122,7 +134,7 @@ if [[ "$ci" == true ]]; then
     directory="$(python3 "$SCRIPT_DIR/catalog.py" install-archive "$platform" cargo-binstall "$prefix")"
     printf 'cargo-binstall\t%s\n' "$directory" > "$temporary/archives"
   fi
-  if [[ "$compat" == true ]]; then
+  if [[ "$profile" == ci-compat ]]; then
     mapfile -t compat_assets < <(catalog_get ci-compat assets)
     for asset in "${compat_assets[@]}"; do
       directory="$(python3 "$SCRIPT_DIR/catalog.py" install-archive "$platform" "$asset" "$prefix")"
@@ -141,10 +153,9 @@ tool_paths+=("$cargo_bin")
 path_prefix="$(IFS=:; echo "${tool_paths[*]}")"
 export PATH="$path_prefix:$PATH"
 tool_section="$platform"
-[[ "$ci" == false ]] || tool_section=ci
-[[ "$compat" == false ]] || tool_section="ci-compat"
+[[ "$ci" == false ]] || tool_section="$profile"
 mapfile -t cargo_tools < <(catalog_get "$tool_section" cargo)
-if [[ "$ci" == true && "$compat" == false && "$platform" == x86_64-linux ]]; then
+if [[ "$ci" == true && "$profile" == ci && "$platform" == x86_64-linux ]]; then
   mapfile -t policy_tools < <(catalog_get ci-policy cargo)
   cargo_tools+=("${policy_tools[@]}")
 fi
@@ -192,10 +203,15 @@ valgrind --version
 gungraun-runner --version
 samply --version
 fi
-if [[ "$compat" == false ]]; then
+if [[ "$profile" == ci ]]; then
   clang --version
   cmake --version
 fi
 if [[ "$ci" == false ]]; then cargo rail --version; fi
-if [[ "$compat" == true ]]; then wasmtime --version; else cargo nextest --version; fi
+case "$profile" in
+  ci-compat) wasmtime --version ;;
+  ci-fuzz) cargo fuzz --version ;;
+  ci-ct) just --version ;;
+  ci) cargo nextest --version ;;
+esac
 printf 'Installed %s tooling. Load with: source "%s"\n' "$platform" "$environment"
