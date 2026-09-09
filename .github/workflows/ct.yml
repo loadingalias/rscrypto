@@ -1,4 +1,4 @@
-name: CT
+name: Constant-Time
 
 on:
   workflow_call:
