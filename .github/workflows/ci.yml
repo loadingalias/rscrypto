@@ -44,7 +44,8 @@ jobs:
             timeout: 90
           - platform: riscv64-linux
             runner: ubuntu-24.04-riscv
-            timeout: 120
+            # Cold native checks and test compilation consume nearly two hours before portable tests.
+            timeout: 240
           - platform: x86_64-win
             runner: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=16+32/ram=32+128/image=windows25-full-x64/spot=price-capacity-optimized/volume=200gb:gp3/env=production
             timeout: 60
