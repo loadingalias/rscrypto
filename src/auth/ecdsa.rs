@@ -2515,6 +2515,10 @@ impl<const L: usize> Jacobian<L> {
   }
 
   fn select(lhs: Self, rhs: Self, mask: u64) -> Self {
+    #[cfg(target_arch = "aarch64")]
+    // SECURITY: Keep LLVM from replacing masked point selection with branches
+    // on secret comb digits or the accumulator's infinity state.
+    let mask = core::hint::black_box(mask);
     let lhs_infinity = 0u64.wrapping_sub(u64::from(lhs.infinity));
     let rhs_infinity = 0u64.wrapping_sub(u64::from(rhs.infinity));
     let selected_infinity = lhs_infinity ^ (mask & (lhs_infinity ^ rhs_infinity));
