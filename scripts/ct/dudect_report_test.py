@@ -120,7 +120,8 @@ def test_raw_csv() -> None:
 def test_runner_upstream_identity() -> None:
   runner = Path(__file__).resolve().parents[2] / "tools/ct-dudect/vendor/dudect-bencher"
   upstream = json.loads((runner / "UPSTREAM.json").read_text())
-  for name, expected in upstream["files"].items():
+  expected_files = {**upstream["files"], **upstream["local_files"]}
+  for name, expected in expected_files.items():
     if name != "src/ctbench.rs":
       assert hashlib.sha256((runner / name).read_bytes()).hexdigest() == expected, name
 

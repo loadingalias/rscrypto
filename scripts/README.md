@@ -189,11 +189,10 @@ Both run on pull requests, retain evidence for seven days, and run without
 caches. Manual dispatch becomes available once they reach the default branch.
 
 CT smoke is pipeline regression evidence, not release timing qualification.
-The existing self-test currently rejects the vendored DudeCT `src/macros.rs`
-hash against `UPSTREAM.json`. The strict coverage gate also reports missing
-required BINSEC kernels for P-256 and P-384 public derivation on Linux x86-64
-and ARM64. The scaffold keeps these failures visible; full timing runs and pinned BINSEC provisioning remain
-follow-up work.
+The strict coverage gate currently reports missing required BINSEC kernels
+for P-256 and P-384 public derivation on Linux x86-64 and ARM64. The scaffold
+keeps this failure visible; full timing runs and pinned BINSEC provisioning
+remain follow-up work.
 
 Only x86-64 and ARM64 Linux install perf, Valgrind, Gungraun, and samply.
 Their installer enables perf events and requires perf for the running kernel.
