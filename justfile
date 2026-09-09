@@ -117,6 +117,14 @@ ci-check:
 ci-policy:
     @scripts/check/dependencies.sh
 
+# Compile feature/MSRV/bare-metal compatibility and execute WASM/WASI vectors.
+ci-compat:
+    @scripts/lib/python.sh scripts/check/compat.py
+
+# Execute the full native and portable suites against the host's musl target.
+test-musl:
+    @scripts/test/test-musl.sh
+
 # Tests
 # Run Nextest with repository scope/dispatch options, then -- NEXTEST_ARGS.
 test *args:
@@ -131,6 +139,7 @@ test-scripts:
     @scripts/lib/python.sh scripts/tooling/install_test.py
     @scripts/lib/python.sh scripts/test/fuzz_features_test.py
     @scripts/lib/python.sh scripts/check/check_runner_test.py
+    @scripts/lib/python.sh scripts/check/compat_test.py
     @scripts/lib/python.sh scripts/test/fuzz_runner_test.py
 
 # Run CT harness and exporter self-tests without timing cases.

@@ -9,6 +9,8 @@ benchmark commands. User-facing entry points are the recipes reported by
 | Script | Caller |
 | --- | --- |
 | `check/check.sh` | `just check`, `just ci-check` |
+| `check/compat.py` | `just ci-compat` |
+| `test/test-musl.sh` | `just test-musl` |
 | `check/dependencies.sh` | `just ci-policy`, dependency checks within `just check` |
 | `check/lint-independent-workspaces.sh` | `check/check.sh` |
 
@@ -181,3 +183,29 @@ Use `just bench-structural` for Gungraun and `just profile` for samply;
 Criterion benchmarks remain available on every native platform. Provisioning
 checks tools, but native test, benchmark, and profiling execution must still
 be verified on each machine.
+
+### CI compatibility
+
+The compatibility matrix row starts alongside every native row and participates
+in the same fail-fast policy. `x86_64-linux.sh --ci-compat` installs only the
+catalog-selected compatibility tools, Rust versions, and cross-target libraries.
+`just ci-compat` uses bounded workers with separate build directories and a
+shared CPU budget. A failed command terminates running siblings and prevents
+queued work from starting. Logs remain under `target/compat/`.
+
+Compatibility checks cover each standalone Cargo feature on the development
+compiler and the declared minimum Rust version, broad native/portable feature
+sets, and allocation-free and allocation-enabled Thumb sentinels. Every supported
+bare-metal target also receives a release library build. Bare-metal evidence is
+compile-only; it is not device execution.
+
+Bare WASM and WASI both compile and execute the existing runtime vector harness
+in Wasmtime, with scalar and SIMD artifacts tested separately. The scalar module
+must load with SIMD disabled. Bare WASM calls an explicit argument-free export;
+WASI uses its command entry point. These are Wasmtime results, not browser-engine
+results. The library also receives broad feature builds for both WASM targets.
+
+The x86-64 and ARM64 Linux rows install native musl build prerequisites and run
+`just test-musl`: the complete native and portable test suites plus doctests,
+compiled and executed for the matching musl target. Apple ARM64 and Windows
+ARM64 execution remain deferred. No compatibility lane enables persistent caches.

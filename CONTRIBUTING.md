@@ -64,8 +64,9 @@ just test
 entry in `.config/target-matrix.json`; missing target libraries or Clippy
 components fail before repairs start. The repair pass applies rustfmt and Clippy
 suggestions, including in a dirty or staged worktree. Review the resulting diff.
-`just ci-check` validates only the native host without source fixes, using
-host-filtered dependency policy. Neither command uses affected-work selection.
+`just ci-check` validates only the native host without source fixes.
+`just ci-policy` checks dependencies across the full supported target graph.
+Neither command uses affected-work selection.
 
 Every target receives release/native and debug/portable Clippy passes. The host
 checks all Cargo targets; cross checks compile the library without foreign test

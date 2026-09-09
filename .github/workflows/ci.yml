@@ -27,6 +27,9 @@ jobs:
       fail-fast: true
       matrix:
         include:
+          - platform: compatibility
+            runner: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=32/ram=64+128/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
+            timeout: 60
           - platform: x86_64-linux
             runner: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=16+32/ram=32+128/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
             timeout: 60
@@ -52,7 +55,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install tooling, check, and test (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.platform != 'compatibility'
         env:
           PLATFORM: ${{ matrix.platform }}
         run: |
@@ -65,6 +68,15 @@ jobs:
           just ci-check
           just test --all
           just test --all --portable
+          if [[ "$PLATFORM" == x86_64-linux || "$PLATFORM" == aarch64-linux ]]; then just test-musl; fi
+          git diff --exit-code HEAD
+
+      - name: Compile compatibility and execute WebAssembly
+        if: matrix.platform == 'compatibility'
+        run: |
+          scripts/tooling/x86_64-linux.sh --ci-compat
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          just ci-compat
           git diff --exit-code HEAD
 
       - name: Install tooling, check, and test (Windows)

@@ -43,6 +43,15 @@ packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "pkgconf"
 [ci]
 cargo = ["just", "cargo-nextest"]
 
+[ci-compat]
+cargo = ["just"]
+assets = ["wasmtime"]
+packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "python3"]
+workers = 8
+
+[ci-musl]
+packages = ["musl-tools"]
+
 [ci-policy]
 cargo = ["cargo-deny", "cargo-audit"]
 

@@ -89,8 +89,13 @@ def install_archive(name, asset, prefix):
 
 
 def validate(data):
+    if not isinstance(data['ci-compat']['workers'], int) or data['ci-compat']['workers'] < 1:
+        raise ValueError('ci-compat: workers must be a positive integer')
+    if any(asset not in data['x86_64-linux']['assets'] for asset in data['ci-compat']['assets']):
+        raise ValueError('ci-compat: missing pinned archive')
     for profile, required in (('ci', {'just', 'cargo-nextest'}),
-                              ('ci-policy', {'cargo-deny', 'cargo-audit'})):
+                              ('ci-policy', {'cargo-deny', 'cargo-audit'}),
+                              ('ci-compat', {'just'})):
         if set(data[profile]['cargo']) != required:
             raise ValueError(f'{profile}: incorrect CI tool set')
         if any(tool not in data['cargo'] for tool in data[profile]['cargo']):

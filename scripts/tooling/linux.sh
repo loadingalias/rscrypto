@@ -6,8 +6,13 @@ export PYTHONDONTWRITEBYTECODE=1
 platform="${1:?native platform is required}"
 shift
 ci=false
-if [[ "${1:-}" == --ci ]]; then ci=true; shift; fi
-[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh [--ci]" >&2; exit 64; }
+compat=false
+case "${1:-}" in
+  --ci) ci=true; shift ;;
+  --ci-compat) ci=true; compat=true; shift ;;
+esac
+[[ "$compat" == false || "$platform" == x86_64-linux ]] || { echo "compatibility tooling requires x86_64-linux" >&2; exit 64; }
+[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh [--ci|--ci-compat]" >&2; exit 64; }
 machine="${platform%-linux}"
 [[ "$machine" != powerpc64le ]] || machine=ppc64le
 case "$platform" in
@@ -64,10 +69,16 @@ apt=("${sudo_cmd[@]}" env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[
 "${apt[@]}" update
 catalog_get() { python3 "$SCRIPT_DIR/catalog.py" get "$@"; }
 python3 "$SCRIPT_DIR/catalog.py" validate
-mapfile -t packages < <(catalog_get "$linux_section" packages)
+package_section="$linux_section"
+[[ "$compat" == false ]] || package_section="ci-compat"
+mapfile -t packages < <(catalog_get "$package_section" packages)
 if [[ "$ci" == false ]]; then
   mapfile -t native_packages < <(catalog_get "$platform" packages)
   packages+=("${native_packages[@]}")
+fi
+if [[ "$ci" == true && "$compat" == false && ( "$platform" == x86_64-linux || "$platform" == aarch64-linux ) ]]; then
+  mapfile -t musl_packages < <(catalog_get ci-musl packages)
+  packages+=("${musl_packages[@]}")
 fi
 # Exact candidates come from the selected snapshot, including repeat installations.
 pinned_packages=()
@@ -93,7 +104,14 @@ components=()
 if [[ "$ci" == false ]]; then mapfile -t components < <(catalog_get "$platform" components); fi
 component_args=()
 for component in "${components[@]}"; do component_args+=(--component "$component"); done
-python3 "$SCRIPT_DIR/../lib/toolchain.py" --install "$host" "${component_args[@]}"
+if [[ "$compat" == true ]]; then
+  python3 "$REPO_ROOT/scripts/check/compat.py" --install
+else
+  python3 "$SCRIPT_DIR/../lib/toolchain.py" --install "$host" "${component_args[@]}"
+  if [[ "$ci" == true && ( "$platform" == x86_64-linux || "$platform" == aarch64-linux ) ]]; then
+    rustup target add --toolchain "$channel" "${host%-gnu}-musl"
+  fi
+fi
 export RUSTUP_TOOLCHAIN="$channel"
 binstall=false
 if catalog_get "$platform" assets cargo-binstall >/dev/null 2>&1; then binstall=true; fi
@@ -103,6 +121,13 @@ if [[ "$ci" == true ]]; then
   if [[ "$binstall" == true ]]; then
     directory="$(python3 "$SCRIPT_DIR/catalog.py" install-archive "$platform" cargo-binstall "$prefix")"
     printf 'cargo-binstall\t%s\n' "$directory" > "$temporary/archives"
+  fi
+  if [[ "$compat" == true ]]; then
+    mapfile -t compat_assets < <(catalog_get ci-compat assets)
+    for asset in "${compat_assets[@]}"; do
+      directory="$(python3 "$SCRIPT_DIR/catalog.py" install-archive "$platform" "$asset" "$prefix")"
+      printf '%s\t%s\n' "$asset" "$directory" >> "$temporary/archives"
+    done
   fi
 else
   python3 "$SCRIPT_DIR/catalog.py" install-archives "$platform" "$prefix" > "$temporary/archives"
@@ -117,8 +142,9 @@ path_prefix="$(IFS=:; echo "${tool_paths[*]}")"
 export PATH="$path_prefix:$PATH"
 tool_section="$platform"
 [[ "$ci" == false ]] || tool_section=ci
+[[ "$compat" == false ]] || tool_section="ci-compat"
 mapfile -t cargo_tools < <(catalog_get "$tool_section" cargo)
-if [[ "$ci" == true && "$platform" == x86_64-linux ]]; then
+if [[ "$ci" == true && "$compat" == false && "$platform" == x86_64-linux ]]; then
   mapfile -t policy_tools < <(catalog_get ci-policy cargo)
   cargo_tools+=("${policy_tools[@]}")
 fi
@@ -166,8 +192,10 @@ valgrind --version
 gungraun-runner --version
 samply --version
 fi
-clang --version
-cmake --version
+if [[ "$compat" == false ]]; then
+  clang --version
+  cmake --version
+fi
 if [[ "$ci" == false ]]; then cargo rail --version; fi
-cargo nextest --version
+if [[ "$compat" == true ]]; then wasmtime --version; else cargo nextest --version; fi
 printf 'Installed %s tooling. Load with: source "%s"\n' "$platform" "$environment"

@@ -54,7 +54,7 @@ elif name == 'python3':
         executable.write_text('#!/bin/sh\nexit 0\n')
         executable.chmod(0o755)
         print(directory)
-    elif script == 'toolchain.py' and '--install' in args:
+    elif script in ('toolchain.py', 'compat.py') and '--install' in args:
         pass
     else:
         sys.exit(subprocess.run([sys.executable, *args]).returncode)
@@ -62,13 +62,13 @@ elif name == 'python3':
 
 
 class LinuxInstall(unittest.TestCase):
-    def provision(self, platform, fail=False, real_apt=False, without_preference=False):
+    def provision(self, platform, fail=False, real_apt=False, without_preference=False, compat=False):
         temporary = tempfile.TemporaryDirectory(prefix='rscrypto installer ')
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
         binaries = root / 'bin'
         binaries.mkdir()
-        for name in ('uname', 'id', 'apt-get', 'apt-cache', 'cargo', 'clang', 'cmake', 'python3'):
+        for name in ('uname', 'id', 'apt-get', 'apt-cache', 'cargo', 'clang', 'cmake', 'python3', 'rustup', 'wasmtime'):
             script = binaries / name
             script.write_text('#!' + sys.executable + '\n' + STUB)
             script.chmod(0o755)
@@ -99,7 +99,7 @@ class LinuxInstall(unittest.TestCase):
                         + 'Maintainer: Fixture <fixture@example.invalid>\nDescription: APT resolver fixture\n\n')
             (root / 'Packages').write_text(''.join(
                 package(name, '1.0', depends='git-man (= 1.0)' if name == 'git' else '')
-                for name in [*CATALOG['linux-ci']['packages'], 'git-man', 'fixture-unrelated']))
+                for name in [*CATALOG['linux-ci']['packages'], *CATALOG['ci-musl']['packages'], 'git-man', 'fixture-unrelated']))
             (root / 'status').write_text(''.join(
                 package(name, '2.0', installed=True, depends='git-man (= 2.0)' if name == 'git' else '')
                 for name in ('git', 'git-man', 'fixture-unrelated')))
@@ -107,7 +107,7 @@ class LinuxInstall(unittest.TestCase):
                        INSTALL_APT_ARCH=subprocess.check_output(['dpkg', '--print-architecture'], text=True).strip())
             if without_preference:
                 env['INSTALL_WITHOUT_PREFERENCE'] = '1'
-        result = subprocess.run([BASH, str(ROOT / 'scripts/tooling/linux.sh'), platform, '--ci'],
+        result = subprocess.run([BASH, str(ROOT / 'scripts/tooling/linux.sh'), platform, '--ci-compat' if compat else '--ci'],
                                 env=env, capture_output=True, text=True)
         calls = [json.loads(line) for line in (root / 'commands.jsonl').read_text().splitlines()]
         return result, calls, root
@@ -132,11 +132,22 @@ class LinuxInstall(unittest.TestCase):
                 apt = next(c for c in calls if c[0] == 'apt-get' and '--allow-downgrades' in c)
                 self.assertIn('--no-install-recommends', apt)
                 self.assertEqual([a for a in apt if a.endswith('=1.0')],
-                                 [p + '=1.0' for p in CATALOG['linux-ci']['packages']])
+                                 [p + '=1.0' for p in CATALOG['linux-ci']['packages'] +
+                                  (CATALOG['ci-musl']['packages'] if platform in ('x86_64-linux', 'aarch64-linux') else [])])
                 environment = (root / '.local/share/rscrypto-tooling/environment.sh').read_text()
                 self.assertIn('custom\\ cargo/bin', environment)
                 self.assertFalse((root / '.bashrc').exists())
                 self.assertFalse((root / '.profile').exists())
+
+    def test_compat_profile_omits_native_test_and_policy_tools(self):
+        result, calls, _ = self.provision('x86_64-linux', compat=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        installs = [c for c in calls if c[0] == 'cargo' and 'binstall' in c]
+        self.assertEqual([c[-1] for c in installs], [f"just@{CATALOG['cargo']['just']}"])
+        archives = [c[-2] for c in calls if c[0] == 'python3' and 'install-archive' in c]
+        self.assertEqual(archives, ['cargo-binstall', 'wasmtime'])
+        self.assertFalse(any('musl-tools=1.0' in c for c in calls))
+        self.assertFalse(any('--install' in c and any(arg.endswith('toolchain.py') for arg in c) for c in calls))
 
     def test_package_failure_stops_before_rust_installation(self):
         result, calls, _ = self.provision('x86_64-linux', fail=True)
