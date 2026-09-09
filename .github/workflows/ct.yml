@@ -1,14 +1,14 @@
 name: CT
 
 on:
-  pull_request:
+  workflow_call:
+    inputs:
+      architectures:
+        description: Native architectures to qualify; release callers should use all
+        type: string
+        default: all
   workflow_dispatch:
     inputs:
-      mode:
-        description: Smoke regression check or full manifest-required CT evidence
-        type: choice
-        options: [smoke, full]
-        default: full
       architectures:
         description: all, or comma-separated x86_64-linux,aarch64-linux,x86_64-win,s390x-linux,powerpc64le-linux,riscv64-linux
         type: string
@@ -20,8 +20,7 @@ permissions:
 
 env:
   CARGO_RAIL_CACHE: "off"
-  INPUT_MODE: ${{ inputs.mode || 'smoke' }}
-  INPUT_ARCHITECTURES: ${{ inputs.architectures || 'x86_64-linux,aarch64-linux' }}
+  INPUT_ARCHITECTURES: ${{ inputs.architectures || 'all' }}
 
 concurrency:
   group: ct-${{ github.ref }}
@@ -46,7 +45,7 @@ jobs:
 
   ct:
     needs: select
-    name: ${{ matrix.platform }} (${{ inputs.mode || 'smoke' }})
+    name: ${{ matrix.platform }} (full)
     strategy:
       fail-fast: true
       matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
@@ -61,9 +60,7 @@ jobs:
       - name: Install tooling and run CT (Linux)
         if: runner.os == 'Linux'
         run: |
-          profile=--ci-ct
-          if [[ "$INPUT_MODE" == full ]]; then profile=--ci-ct-full; fi
-          scripts/tooling/"$PLATFORM.sh" "$profile"
+          scripts/tooling/"$PLATFORM.sh" --ci-ct-full
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           export RUSTUP_TOOLCHAIN
           RUSTUP_TOOLCHAIN=$(scripts/lib/toolchain.sh --host)
@@ -79,7 +76,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: ct-${{ matrix.platform }}-${{ inputs.mode || 'smoke' }}
+          name: ct-${{ matrix.platform }}-full
           path: |
             target/ct/
           if-no-files-found: warn

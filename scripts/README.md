@@ -190,9 +190,12 @@ budget before replay starts; the job timeout also bounds installation/builds.
 `--ci-miri` installs the pinned interpreter for an independent focused Miri row,
 including RSA's unsafe-boundary tests. All rows share fail-fast cancellation.
 
-`ct.yml` runs x86-64 and ARM64 smoke checks on pull requests. Manual runs select
-smoke/full and one, many, or all six native platforms. `--ci-ct` / `-CiCt` install
-only CT dependencies; `--ci-ct-full` additionally installs the pinned BINSEC,
+`ct.yml` always runs full CT evidence, only through manual dispatch or a reusable
+workflow call. It does not run on pull requests or pushes. Manual runs select
+one, many, or all six native platforms, defaulting to all. A future release
+workflow must call it for all platforms and require success on the same candidate
+before publishing; no release workflow exists yet. Linux uses `--ci-ct-full` and
+Windows uses `-CiCt`. The Linux installer additionally installs the pinned BINSEC,
 Bitwuzla and decoder on GNU Linux x86-64/ARM64. Proof dependencies use a fixed
 opam repository revision from `.config/tooling.toml`. Unsupported proof targets
 retain their explicit `ct.toml` policies. No solver is installed there.
@@ -200,8 +203,8 @@ retain their explicit `ct.toml` policies. No solver is installed there.
 CT architectures run concurrently on fixed AWS instances or donated native
 runners. Each host completes builds and proofs before serial timing cases.
 `just ct-full` uses manifest-required cases and budgets without filtering.
-Smoke is regression evidence, not release qualification. Full CT evidence also
-does not establish the complete secret-lifecycle claim by itself.
+Local `just ct-dudect --smoke` remains a diagnostic shortcut outside this workflow.
+Full CT evidence does not establish the complete secret-lifecycle claim by itself.
 
 Both workflows retain evidence for seven days and run without caches. Manual
 dispatch becomes available once they reach the default branch. CT and benchmark
