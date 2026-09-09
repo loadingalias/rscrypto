@@ -108,10 +108,7 @@ else
 fi
 [[ "$mode" != fix ]] || exit 0
 
-# Use the host toolchain for independent workspaces, dependencies, and docs.
+# Native CI keeps architecture-sensitive compilation and documentation here.
 scripts/check/lint-independent-workspaces.sh
-deny_args=(--locked --workspace --all-features)
-[[ "$mode" != native ]] || deny_args+=(--target "$host")
-cargo deny "${deny_args[@]}" check -D warnings all
-cargo audit
+if [[ "$mode" != native ]]; then scripts/check/dependencies.sh; fi
 RUSTDOCFLAGS="${RUSTDOCFLAGS:+$RUSTDOCFLAGS }-D warnings" cargo doc --workspace --no-deps --all-features --locked

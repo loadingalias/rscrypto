@@ -84,7 +84,8 @@ def main():
   check_vendored_packages(source)
   with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
-    for name in ('scripts/check/check.sh', 'scripts/lib/toolchain.sh', 'scripts/lib/toolchain.py', 'scripts/lib/python.sh', 'Cargo.toml',
+    for name in ('scripts/check/check.sh', 'scripts/check/dependencies.sh', 'scripts/lib/toolchain.sh',
+                 'scripts/lib/toolchain.py', 'scripts/lib/python.sh', 'Cargo.toml',
                  'rust-toolchain.toml', '.config/toolchains.toml', '.config/target-matrix.json'):
       destination = root / name
       destination.parent.mkdir(parents=True, exist_ok=True)
@@ -128,6 +129,7 @@ if name == 'cargo' and 'clippy' in args:
       return result, [json.loads(line) for line in log.read_text().splitlines()]
 
     targets = json.loads((root / '.config/target-matrix.json').read_text())['targets']
+    assert set(tomllib.loads((source / 'deny.toml').read_text())['graph']['targets']) == set(targets)
     feature_graph = tomllib.loads((root / 'Cargo.toml').read_text())['features']
     features = set(feature_graph)
 
@@ -176,9 +178,10 @@ if name == 'cargo' and 'clippy' in args:
                      [['cargo', '+' + stable, 'fmt', '--all', '--', '--check']])
       assert not any('plan' in c for c in commands)
       deny = [c for c in commands if c[:2] == ['cargo', 'deny']]
-      assert len(deny) == (0 if mode == 'fix' else 1)
+      assert len(deny) == (0 if mode in ('fix', 'native') else 1)
+      assert (['cargo', 'audit'] in commands) == (mode not in ('fix', 'native'))
       if deny:
-        assert ('--target' in deny[0]) == (mode == 'native')
+        assert '--target' not in deny[0]
       assert (['lint-independent-workspaces.sh'] in commands) == (mode != 'fix')
     result, commands = run('check')
     assert result.returncode == 0, result.stderr

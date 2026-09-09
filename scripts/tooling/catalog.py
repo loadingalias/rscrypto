@@ -89,11 +89,12 @@ def install_archive(name, asset, prefix):
 
 
 def validate(data):
-    required_ci = {'just', 'cargo-nextest', 'cargo-deny', 'cargo-audit'}
-    if not required_ci <= set(data['ci']['cargo']):
-        raise ValueError('CI: missing check/test tools')
-    if any(tool not in data['cargo'] for tool in data['ci']['cargo']):
-        raise ValueError('CI: missing Cargo tool version')
+    for profile, required in (('ci', {'just', 'cargo-nextest'}),
+                              ('ci-policy', {'cargo-deny', 'cargo-audit'})):
+        if set(data[profile]['cargo']) != required:
+            raise ValueError(f'{profile}: incorrect CI tool set')
+        if any(tool not in data['cargo'] for tool in data[profile]['cargo']):
+            raise ValueError(f'{profile}: missing Cargo tool version')
     for platform in PLATFORMS:
         config = data[platform]
         if 'miri' in config['components']:

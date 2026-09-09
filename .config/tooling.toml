@@ -41,12 +41,15 @@ snapshot = "20260906T054640Z"
 packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "pkgconf", "python3", "python3-venv", "unzip", "xz-utils", "zstd", "ninja-build", "libssl-dev", "perl", "m4", "shellcheck"]
 
 [ci]
-cargo = ["just", "cargo-nextest", "cargo-deny", "cargo-audit"]
+cargo = ["just", "cargo-nextest"]
+
+[ci-policy]
+cargo = ["cargo-deny", "cargo-audit"]
 
 [linux-ci]
 ubuntu = "24.04"
 codename = "noble"
-packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "pkgconf", "python3", "cmake", "clang", "libclang-dev", "libssl-dev", "perl"]
+packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "python3", "cmake", "clang", "libclang-dev", "perl"]
 
 [windows]
 visual-studio = "18.9.2"

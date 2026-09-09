@@ -58,7 +58,10 @@ jobs:
         run: |
           scripts/tooling/"$PLATFORM.sh" --ci
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          if [[ "$PLATFORM" == x86_64-linux ]]; then just test-scripts; fi
+          if [[ "$PLATFORM" == x86_64-linux ]]; then
+            just test-scripts
+            just ci-policy
+          fi
           just ci-check
           just test --all
           just test --all --portable

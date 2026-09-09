@@ -118,9 +118,10 @@ class LinuxInstall(unittest.TestCase):
                 result, calls, root = self.provision(platform)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 installs = [c for c in calls if c[0] == 'cargo' and ('install' in c or 'binstall' in c)]
-                self.assertEqual(len(installs), len(CATALOG['ci']['cargo']))
+                expected_tools = CATALOG['ci']['cargo'] + (CATALOG['ci-policy']['cargo'] if platform == 'x86_64-linux' else [])
+                self.assertEqual(len(installs), len(expected_tools))
                 binary = platform in ('x86_64-linux', 'aarch64-linux', 'riscv64-linux')
-                for command, tool in zip(installs, CATALOG['ci']['cargo']):
+                for command, tool in zip(installs, expected_tools):
                     self.assertIn('binstall' if binary else 'install', command)
                     self.assertEqual(command[-1], f"{tool}@{CATALOG['cargo'][tool]}" if binary else tool)
                     self.assertIn('--locked', command)
@@ -129,6 +130,7 @@ class LinuxInstall(unittest.TestCase):
                     targets = [command[i + 1] for i, arg in enumerate(command) if arg == '--targets']
                     self.assertEqual(targets, [host, host.removesuffix('gnu') + 'musl'] if binary else [])
                 apt = next(c for c in calls if c[0] == 'apt-get' and '--allow-downgrades' in c)
+                self.assertIn('--no-install-recommends', apt)
                 self.assertEqual([a for a in apt if a.endswith('=1.0')],
                                  [p + '=1.0' for p in CATALOG['linux-ci']['packages']])
                 environment = (root / '.local/share/rscrypto-tooling/environment.sh').read_text()

@@ -9,6 +9,7 @@ benchmark commands. User-facing entry points are the recipes reported by
 | Script | Caller |
 | --- | --- |
 | `check/check.sh` | `just check`, `just ci-check` |
+| `check/dependencies.sh` | `just ci-policy`, dependency checks within `just check` |
 | `check/lint-independent-workspaces.sh` | `check/check.sh` |
 
 `check/check_runner_test.py` tests command selection, repair behavior, and
@@ -141,7 +142,13 @@ macOS tools remain locally managed.
 CI calls these same installers with `--ci` on Linux or `-Ci` on Windows.
 The catalog's `ci` section selects the Cargo tools needed by `just ci-check`,
 `just test --all`, and `just test --all --portable`. Both test commands include
-doctests. This mode omits Cargo Rail because `--all` bypasses affected-work
+doctests. Only Linux x86-64 adds the `ci-policy` tools and runs `just ci-policy`:
+Cargo Deny checks the full target graph in `deny.toml`, and Cargo Audit checks
+the lockfile. Every host retains native and portable Clippy, independent-workspace
+linting, documentation, and runtime tests. Linux CI omits OpenSSL development
+packages, pkgconf, and recommended APT packages; CMake, Clang/libclang, Perl,
+and the C/C++ build tools remain prerequisites for native test dependencies.
+This mode omits Cargo Rail because `--all` bypasses affected-work
 planning; use the full installer for ordinary `just test` and benchmark work.
 Linux CI uses the catalog's `linux-ci` Ubuntu release and packages from the
 same archive snapshot as development provisioning. It uses Cargo Binstall on

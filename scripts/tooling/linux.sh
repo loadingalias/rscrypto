@@ -76,7 +76,9 @@ for package in "${packages[@]}"; do
   [[ -n "$version" && "$version" != '(none)' ]] || { echo "missing Ubuntu package: $package" >&2; exit 1; }
   pinned_packages+=("$package=$version")
 done
-"${apt[@]}" install -y --allow-downgrades "${pinned_packages[@]}"
+install_options=(--allow-downgrades)
+[[ "$ci" == false ]] || install_options+=(--no-install-recommends)
+"${apt[@]}" install -y "${install_options[@]}" "${pinned_packages[@]}"
 
 prefix="$HOME/.local/share/rscrypto-tooling"
 mkdir -p "$prefix"
@@ -116,6 +118,10 @@ export PATH="$path_prefix:$PATH"
 tool_section="$platform"
 [[ "$ci" == false ]] || tool_section=ci
 mapfile -t cargo_tools < <(catalog_get "$tool_section" cargo)
+if [[ "$ci" == true && "$platform" == x86_64-linux ]]; then
+  mapfile -t policy_tools < <(catalog_get ci-policy cargo)
+  cargo_tools+=("${policy_tools[@]}")
+fi
 for tool in "${cargo_tools[@]}"; do
   version="$(catalog_get cargo "$tool")"
   # Cargo's install registry verifies exact installed package versions on reruns.

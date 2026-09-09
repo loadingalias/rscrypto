@@ -113,6 +113,10 @@ check:
 ci-check:
     @scripts/check/check.sh native
 
+# Check dependency policy for every supported target, once per CI workflow.
+ci-policy:
+    @scripts/check/dependencies.sh
+
 # Tests
 # Run Nextest with repository scope/dispatch options, then -- NEXTEST_ARGS.
 test *args:
