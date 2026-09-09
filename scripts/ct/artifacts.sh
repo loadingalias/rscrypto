@@ -298,7 +298,7 @@ fi
   --out-dir "$OUT_DIR" \
   --build-target-dir "$BUILD_TARGET_DIR" \
   --backend llvm \
-  --features std,full,parallel,diag \
+  --features std,full,parallel,diag,getrandom \
   --llvm-objdump "$LLVM_OBJDUMP" \
   --llvm-nm "$LLVM_NM" \
   --llvm-size "$LLVM_SIZE" \

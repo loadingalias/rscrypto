@@ -85,11 +85,12 @@ manifest = {'manifest_' + name: {'primitive': 'fixture', 'gate': 'required', 'le
     for mode in ("failure", "missing", "partial"):
       new_run, _, failed = invoke(mode)
       assert new_run != run
+      assert len(failed) == 1, "stop before later cases after a failed measurement"
       assert all(row["status"] == "tooling-fail" for row in failed), failed
       assert all(row["report"] is None for row in failed)
     _, failed_preparation, failed = invoke("prepare-fail")
     assert failed_preparation.status == "fail" and not failed
-    assert len((root / "executions").read_text().splitlines()) == 8
+    assert len((root / "executions").read_text().splitlines()) == 5
     (root / "mode").write_text("success")
     with patch.object(full, "python_script", return_value=[sys.executable, str(repository / "scripts/ct/dudect_execute.py")]):
       timed_out = full.dudect_case_result(root, root / "logs", 4, 10.0, cases[0], 0, run / "shared/prepared.json")
@@ -109,5 +110,29 @@ manifest = {'manifest_' + name: {'primitive': 'fixture', 'gate': 'required', 'le
     assert all(str(run.relative_to((root / 'out').resolve())) in record['path'] for record in records)
 
 
+def test_proof_failure_stops_timing():
+  with tempfile.TemporaryDirectory() as temporary:
+    root = Path(temporary)
+    def command(_root, _logs, name, args, **kwargs):
+      failed = name == "ct-binsec"
+      return full.CommandResult(name, args, "fail" if failed else "pass", int(failed),
+                                "", "", "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00", 0)
+    manifest = {"target": [{"name": "x86_64-unknown-linux-gnu", "binsec": "required"}]}
+    with patch.object(full, "__file__", str(root / "scripts/ct/full.py")), \
+         patch.object(full, "load_toml", return_value=manifest), \
+         patch.object(full, "host_target", return_value="x86_64-unknown-linux-gnu"), \
+         patch.object(full.subprocess, "check_output", return_value="fixture"), \
+         patch.object(full, "run_command", side_effect=command), \
+         patch.object(full, "run_dudect_cases") as timing, \
+         patch.dict(os.environ), patch.object(sys, "argv", ["full.py"]):
+      assert full.main() == 1
+      timing.assert_not_called()
+    report = json.loads((root / "target/ct/x86_64-unknown-linux-gnu/release/ct-report.json").read_text())
+    assert report["status"] == "fail"
+    assert report["steps"][-1]["name"] == "ct-dudect"
+    assert report["steps"][-1]["reason"] == "proof gate failed; timing was not started"
+
+
 if __name__ == "__main__":
+  test_proof_failure_stops_timing()
   main()

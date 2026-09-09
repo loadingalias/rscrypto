@@ -126,7 +126,24 @@ def test_runner_upstream_identity() -> None:
       assert hashlib.sha256((runner / name).read_bytes()).hexdigest() == expected, name
 
 
+def test_manifest_threshold() -> None:
+  def result(limit, measured=9.0):
+    return dudect_case_rows(
+      {"rsa": {"abs_max_t": measured}}, {},
+      {"rsa": {"row_count": 4000, "labels": {"0": 2000, "1": 2000}}},
+      {"rsa": {"primitive": "rsa.private_ops", "gate": "required", "left_class": "fixed", "right_class": "random", "threshold_abs_max_t": limit}},
+      threshold=10.0, requested_samples=4000,
+    )[0]
+  assert result(8.0)["status"] == "fail"
+  assert result(8.0, 8.0)["status"] == "fail"
+  assert result(8.0, 7.9)["status"] == "pass"
+  assert result(20.0, 11.0)["status"] == "fail"
+  for limit in (True, 0, -1, float("nan"), float("inf")):
+    expect_failure(lambda: result(limit))
+
+
 def main() -> None:
+  test_manifest_threshold()
   test_runner_upstream_identity()
   test_raw_csv()
   test_case_selection()

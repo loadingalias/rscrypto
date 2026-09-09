@@ -13,7 +13,7 @@ name = "rscrypto-ct-evidence"
 kind = "executable"
 profile = "release"
 backend = "llvm"
-features = ["std", "full", "parallel", "diag"]
+features = ["std", "full", "parallel", "diag", "getrandom"]
 default_features = false
 owner_widths = [16, 28, 32, 48, 64, 1632, 2400, 3168]
 owner_symbols = [
@@ -1207,8 +1207,24 @@ primitive = "rsa.private_ops"
 filter = "rsa_pkcs1v15_fixed_vs_random_message"
 left_class = "fixed message"
 right_class = "random same-length message"
-samples = 128
+samples = 4000
+threshold_abs_max_t = 8.0
+timeout_seconds = 3600
+timeout_reason = "Full RSA campaign retains 2000 observations per class from the consolidated standalone gate."
 smoke_samples = 128
+
+[[dudect_case]]
+name = "rsa_pkcs1v15_os_blinding_fixed_vs_random_message"
+primitive = "rsa.private_ops"
+filter = "rsa_pkcs1v15_os_blinding_fixed_vs_random_message"
+left_class = "fixed message with OS-generated blinding"
+right_class = "random same-length message with OS-generated blinding"
+samples = 4000
+smoke_samples = 128
+threshold_abs_max_t = 8.0
+timeout_seconds = 3600
+timeout_reason = "Full RSA campaign retains 2000 observations per class from the consolidated standalone gate."
+notes = "Exercises the production entropy-backed signing path; OS entropy acquisition is outside the CT claim."
 
 [[dudect_case]]
 name = "rsa_pss_fixed_vs_random_message"
@@ -1216,7 +1232,10 @@ primitive = "rsa.private_ops"
 filter = "rsa_pss_fixed_vs_random_message"
 left_class = "fixed message"
 right_class = "random same-length message"
-samples = 128
+samples = 4000
+threshold_abs_max_t = 8.0
+timeout_seconds = 3600
+timeout_reason = "Full RSA campaign retains 2000 observations per class from the consolidated standalone gate."
 smoke_samples = 128
 
 [[dudect_case]]
@@ -1248,8 +1267,22 @@ filter = "rsa_blinding_inverse_fixed_vs_random_factor"
 left_class = "fixed valid blinding factor"
 right_class = "random valid same-width blinding factor"
 samples = 20000
+threshold_abs_max_t = 8.0
 smoke_samples = 2000
 notes = "Required allocation-free leaf evidence for the fixed-schedule batched modular inverse. Both classes use nonzero 64-bit factors, which cannot share either 1024-bit prime factor of the fixed RSA-2048 modulus. RISC-V and s390x artifact heuristics must also reject scalar multiply in the retained evidence closure."
+
+[[dudect_case]]
+name = "rsa_blinding_inverse_full_width_fixed_vs_random_factor"
+primitive = "rsa.private_ops"
+filter = "rsa_blinding_inverse_full_width_fixed_vs_random_factor"
+left_class = "fixed valid full-width blinding factor"
+right_class = "random valid full-width blinding factor"
+samples = 4000
+smoke_samples = 128
+threshold_abs_max_t = 8.0
+timeout_seconds = 3600
+timeout_reason = "Full-width factor validation and measurement preserve the standalone RSA campaign."
+notes = "Retains full-width factor coverage separately from the allocation-free 64-bit-factor leaf. Factor validation happens before measurement."
 
 [[dudect_case]]
 name = "rsa_oaep_decrypt_fixed_vs_random_plaintext"
@@ -1257,7 +1290,10 @@ primitive = "rsa.private_ops"
 filter = "rsa_oaep_decrypt_fixed_vs_random_plaintext"
 left_class = "valid OAEP ciphertext for fixed plaintext"
 right_class = "valid OAEP ciphertext for random same-length plaintext"
-samples = 128
+samples = 4000
+threshold_abs_max_t = 8.0
+timeout_seconds = 3600
+timeout_reason = "Full RSA campaign retains 2000 observations per class from the consolidated standalone gate."
 smoke_samples = 128
 
 [[dudect_case]]
@@ -1266,7 +1302,10 @@ primitive = "rsa.private_ops"
 filter = "rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext"
 left_class = "valid PKCS#1 v1.5 ciphertext for fixed plaintext"
 right_class = "valid PKCS#1 v1.5 ciphertext for random same-length plaintext"
-samples = 128
+samples = 4000
+threshold_abs_max_t = 8.0
+timeout_seconds = 3600
+timeout_reason = "Full RSA campaign retains 2000 observations per class from the consolidated standalone gate."
 smoke_samples = 128
 
 [[dudect_case]]
@@ -3074,8 +3113,9 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-physical_timing = "unsupported"
-physical_timing_reason = "The final Windows x86-64 backend has native differential and performance evidence, but exact-source P-256 timing and cleanup artifacts and dedicated physical timing are unavailable."
+compiler_api_item_count = 2376
+compiler_api_sha256 = "de2f6c1b82316e086b9f0504515ebde73e0f5b712cdc012c6af47a1dcfccf066"
+physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
 

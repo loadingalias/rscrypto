@@ -28,7 +28,6 @@ failure propagation with substitute executors. Run it with
 | `test/test-fuzz.sh` | `just test-fuzz` |
 | `test/test-fuzz-asan.sh` | `just test-fuzz-asan` |
 | `test/test-coverage.py` | `just test-coverage` |
-| `test/test-rsa-leakage.sh` | `just test-rsa-leakage` |
 | `test/test-rsa-asm.sh` | `just test-rsa-linux-asm`, `just test-rsa-macos-asm` |
 
 `just test-scripts` runs argument forwarding, toolchain, test, check, and fuzz regressions with
@@ -185,8 +184,11 @@ No package is published.
 
 `fuzz.yml` uses `--ci-fuzz` for committed ASan corpus replay and bounded live
 fuzzing. Manual runs select x86-64, ARM64, or both, exact target names, and a
-per-target duration. Selected targets must fit the 30-minute live campaign
-budget before replay starts; the job timeout also bounds installation/builds.
+per-target duration. PR campaigns use 60 seconds per target with a 30-minute
+live budget. Manual
+qualification defaults to 1200 seconds per target with a five-hour live budget
+and a six-hour job limit including installation/builds. Selection must fit its
+budget before replay starts.
 `--ci-miri` installs the pinned interpreter for an independent focused Miri row,
 including RSA's unsafe-boundary tests. All rows share fail-fast cancellation.
 
@@ -202,7 +204,10 @@ retain their explicit `ct.toml` policies. No solver is installed there.
 
 CT architectures run concurrently on fixed AWS instances or donated native
 runners. Each host completes builds and proofs before serial timing cases.
-`just ct-full` uses manifest-required cases and budgets without filtering.
+`just ct-full` uses manifest-required cases and budgets without filtering. RSA
+timing lives in this single harness, including entropy-backed signing; its
+consolidated operation cases retain 2000 observations per class and a threshold
+of 8. Proof failures stop timing; required timing failures stop later cases.
 Local `just ct-dudect --smoke` remains a diagnostic shortcut outside this workflow.
 Full CT evidence does not establish the complete secret-lifecycle claim by itself.
 

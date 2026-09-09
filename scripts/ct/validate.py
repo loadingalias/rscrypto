@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -347,7 +348,7 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
     "kind": "executable",
     "profile": "release",
     "backend": "llvm",
-    "features": ["std", "full", "parallel", "diag"],
+    "features": ["std", "full", "parallel", "diag", "getrandom"],
     "default_features": False,
   }
   for field, expected in expected_release_binary.items():
@@ -557,6 +558,11 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
       fail(errors, f"DudeCT case {name} missing filter")
     if case.get("gate") == "diagnostic" and not (case.get("reason") or case.get("notes")):
       fail(errors, f"diagnostic DudeCT case {name} requires reason or notes")
+    limit = case.get("threshold_abs_max_t")
+    if limit is not None and (
+      isinstance(limit, bool) or not isinstance(limit, (int, float)) or not math.isfinite(limit) or limit <= 0
+    ):
+      fail(errors, f"DudeCT case {name} threshold_abs_max_t must be finite and positive")
     timeout_seconds = case.get("timeout_seconds")
     if timeout_seconds is not None:
       if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int) or timeout_seconds <= 0:

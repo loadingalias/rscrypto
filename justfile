@@ -162,11 +162,6 @@ test-examples:
 test-miri *args:
     @scripts/test/test-miri.sh "$@"
 
-# Run the RSA leakage evidence harness.
-[group('tests')]
-test-rsa-leakage:
-    @scripts/test/test-rsa-leakage.sh
-
 # Test Apple Silicon RSA assembly on a physical supported host.
 [group('tests')]
 test-rsa-macos-asm:

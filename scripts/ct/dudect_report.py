@@ -7,6 +7,7 @@ import argparse
 import sys
 import csv
 import json
+import math
 import platform
 import re
 import shlex
@@ -78,7 +79,11 @@ def dudect_case_rows(
     metadata = manifest_cases[name]
     result = results[name]
     gate = str(metadata["gate"])
-    passed = result["abs_max_t"] <= threshold
+    limit = metadata.get("threshold_abs_max_t", threshold)
+    if isinstance(limit, bool) or not isinstance(limit, (int, float)) or not math.isfinite(limit) or limit <= 0:
+      raise ValueError(f"DudeCT case {name!r} threshold must be finite and positive")
+    limit = min(threshold, limit)
+    passed = result["abs_max_t"] < limit if "threshold_abs_max_t" in metadata else result["abs_max_t"] <= limit
     diagnostic = gate == "diagnostic"
     cases.append(
       {
@@ -92,7 +97,7 @@ def dudect_case_rows(
         "requested_samples": requested_samples,
         "raw_csv": raw,
         **result,
-        "threshold_abs_max_t": threshold,
+        "threshold_abs_max_t": limit,
         "status": "pass" if passed else ("diagnostic-fail" if diagnostic else "fail"),
       }
     )

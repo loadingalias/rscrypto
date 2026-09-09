@@ -23,6 +23,7 @@ rscrypto = { path = "../..", default-features = false, features = [
   "full",
   "parallel",
   "diag",
+  "getrandom",
 ] }
 rscrypto-ct-harness = { path = "../ct-harness" }
 

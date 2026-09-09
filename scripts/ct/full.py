@@ -547,6 +547,8 @@ def run_dudect_cases(root, out_dir, logs_dir, target, profile, manifest_cases, t
         prepared,
       )
     )
+    if dudect_cases[-1]["status"] not in ("pass", "diagnostic-fail"):
+      break
 
   return dudect_run, preparation, dudect_cases
 
@@ -1279,10 +1281,15 @@ def main() -> int:
   else:
     steps.append(skipped_step("ct-binsec", binsec_reason))
 
-  dudect_run, preparation, dudect_cases = run_dudect_cases(
-    root, out_dir, logs_dir, target, profile, manifest_cases, args.threshold, args.dudect_timeout,
-  )
-  steps.append(result_record(preparation))
+  dudect_run = None
+  dudect_cases = []
+  if all(step["status"] in ("pass", "not_applicable") for step in steps):
+    dudect_run, preparation, dudect_cases = run_dudect_cases(
+      root, out_dir, logs_dir, target, profile, manifest_cases, args.threshold, args.dudect_timeout,
+    )
+    steps.append(result_record(preparation))
+  else:
+    steps.append(skipped_step("ct-dudect", "proof gate failed; timing was not started"))
 
   executed_dudect = {case["primitive"] for case in dudect_cases}
   executed_required_dudect = {case["primitive"] for case in dudect_cases if case.get("gate") != "diagnostic"}
