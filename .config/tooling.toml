@@ -60,6 +60,10 @@ cargo = ["just"]
 components = ["llvm-tools"]
 packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "python3"]
 
+[ci-bench]
+cargo = ["just"]
+components = []
+
 [ci-musl]
 packages = ["musl-tools"]
 

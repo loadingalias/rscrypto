@@ -97,7 +97,8 @@ def validate(data):
                               ('ci-policy', {'cargo-deny', 'cargo-audit'}),
                               ('ci-compat', {'just'}),
                               ('ci-fuzz', {'just', 'cargo-fuzz'}),
-                              ('ci-ct', {'just'})):
+                              ('ci-ct', {'just'}),
+                              ('ci-bench', {'just'})):
         if set(data[profile]['cargo']) != required:
             raise ValueError(f'{profile}: incorrect CI tool set')
         if any(tool not in data['cargo'] for tool in data[profile]['cargo']):

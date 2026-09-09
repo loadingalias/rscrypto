@@ -9,10 +9,10 @@ ci=false
 profile=ci
 case "${1:-}" in
   --ci) ci=true; shift ;;
-  --ci-compat|--ci-fuzz|--ci-ct) ci=true; profile="${1#--}"; shift ;;
+  --ci-compat|--ci-fuzz|--ci-ct|--ci-bench) ci=true; profile="${1#--}"; shift ;;
 esac
-[[ "$profile" == ci || "$platform" == x86_64-linux ]] || { echo "$profile tooling requires x86_64-linux" >&2; exit 64; }
-[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh [--ci|--ci-compat|--ci-fuzz|--ci-ct]" >&2; exit 64; }
+[[ "$profile" == ci || "$profile" == ci-bench || "$platform" == x86_64-linux ]] || { echo "$profile tooling requires x86_64-linux" >&2; exit 64; }
+[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh [--ci|--ci-compat|--ci-fuzz|--ci-ct|--ci-bench]" >&2; exit 64; }
 machine="${platform%-linux}"
 [[ "$machine" != powerpc64le ]] || machine=ppc64le
 case "$platform" in
@@ -70,7 +70,7 @@ apt=("${sudo_cmd[@]}" env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[
 catalog_get() { python3 "$SCRIPT_DIR/catalog.py" get "$@"; }
 python3 "$SCRIPT_DIR/catalog.py" validate
 package_section="$linux_section"
-[[ "$profile" == ci ]] || package_section="$profile"
+[[ "$profile" == ci || "$profile" == ci-bench ]] || package_section="$profile"
 mapfile -t packages < <(catalog_get "$package_section" packages)
 if [[ "$ci" == false ]]; then
   mapfile -t native_packages < <(catalog_get "$platform" packages)
@@ -106,7 +106,7 @@ component_args=()
 for component in "${components[@]}"; do component_args+=(--component "$component"); done
 if [[ "$profile" == ci-compat ]]; then
   python3 "$REPO_ROOT/scripts/check/compat.py" --install
-elif [[ "$profile" == ci-fuzz || "$profile" == ci-ct ]]; then
+elif [[ "$profile" == ci-fuzz || "$profile" == ci-ct || "$profile" == ci-bench ]]; then
   mapfile -t components < <(catalog_get "$profile" components)
   component_args=()
   for component in "${components[@]}"; do component_args+=(--component "$component"); done
@@ -203,7 +203,7 @@ valgrind --version
 gungraun-runner --version
 samply --version
 fi
-if [[ "$profile" == ci ]]; then
+if [[ "$profile" == ci || "$profile" == ci-bench ]]; then
   clang --version
   cmake --version
 fi
@@ -211,7 +211,7 @@ if [[ "$ci" == false ]]; then cargo rail --version; fi
 case "$profile" in
   ci-compat) wasmtime --version ;;
   ci-fuzz) cargo fuzz --version ;;
-  ci-ct) just --version ;;
+  ci-ct|ci-bench) just --version ;;
   ci) cargo nextest --version ;;
 esac
 printf 'Installed %s tooling. Load with: source "%s"\n' "$platform" "$environment"

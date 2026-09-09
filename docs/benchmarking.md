@@ -72,6 +72,34 @@ tables treat `0.95x` through `1.05x` as a tie.
 benchmark binaries, required features, aliases, and filters. The benchmark
 source owns each timed operation. Inspect both before claiming equivalent work.
 
+## Run a manual workflow
+
+The [Bench workflow](../.github/workflows/bench.yml) measures selected Criterion
+targets on Linux x86-64, ARM64, or both. Select the branch in GitHub's **Run
+workflow** form, then enter comma-separated catalog target names such as
+`sha2,auth` and an optional case regex. Optional sampling fields override the
+shared Criterion settings; blank fields preserve the repository defaults.
+The diagnostic checkbox enables the selected targets' diagnostic features.
+
+The workflow uses fixed on-demand AWS instance types, runs the selected
+architectures concurrently, and measures benchmark configurations sequentially
+on each machine. It installs only benchmark build dependencies through
+`scripts/tooling/<platform>.sh --ci-bench`. No caches or speed-regression gates
+are enabled. Fixed instance types do not eliminate host noise; inspect the
+retained estimates and repeat measurements before making performance claims.
+
+Each job retains `target/bench/` as a GitHub artifact, including failed-run
+evidence, source and machine identity, the resolved case plan, logs, and raw
+Criterion results. The repository runner enforces its normal one-hour budget.
+The workflow allows additional time for provisioning and artifact upload.
+Manual dispatch becomes available after the workflow reaches the default branch.
+
+For example, targets `sha2` and filter `^sha256/rscrypto/64$` correspond to:
+
+```sh
+just bench bench=sha2 'filter=^sha256/rscrypto/64$'
+```
+
 ## Timed workload boundaries
 
 Choose the timed boundary from the question the workload answers. State it next

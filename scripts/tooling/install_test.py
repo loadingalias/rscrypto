@@ -149,16 +149,20 @@ class LinuxInstall(unittest.TestCase):
         self.assertFalse(any('musl-tools=1.0' in c for c in calls))
         self.assertFalse(any('--install' in c and any(arg.endswith('toolchain.py') for arg in c) for c in calls))
 
-    def test_security_profiles_install_only_their_execution_dependencies(self):
-        for profile, components in (('ci-fuzz', ['rust-src']), ('ci-ct', ['llvm-tools'])):
-            with self.subTest(profile=profile):
-                result, calls, _ = self.provision('x86_64-linux', profile=profile)
+    def test_focused_profiles_install_only_their_execution_dependencies(self):
+        for platform, profile, components in (
+                ('x86_64-linux', 'ci-fuzz', ['rust-src']),
+                ('x86_64-linux', 'ci-ct', ['llvm-tools']),
+                ('x86_64-linux', 'ci-bench', []),
+                ('aarch64-linux', 'ci-bench', [])):
+            with self.subTest(platform=platform, profile=profile):
+                result, calls, _ = self.provision(platform, profile=profile)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 installs = [c[-1] for c in calls if c[0] == 'cargo' and 'binstall' in c]
                 self.assertEqual(installs, [f"{t}@{CATALOG['cargo'][t]}" for t in CATALOG[profile]['cargo']])
                 apt = next(c for c in calls if c[0] == 'apt-get' and '--allow-downgrades' in c)
                 self.assertEqual([a for a in apt if a.endswith('=1.0')],
-                                 [p + '=1.0' for p in CATALOG[profile]['packages']])
+                                 [p + '=1.0' for p in CATALOG['linux-ci' if profile == 'ci-bench' else profile]['packages']])
                 rustup = [c for c in calls if c[:3] == ['rustup', 'toolchain', 'install']]
                 self.assertEqual(len(rustup), 2 if profile == 'ci-fuzz' else 1)
                 self.assertEqual([c[i + 1] for c in rustup for i, arg in enumerate(c) if arg == '--component'],
