@@ -27,11 +27,19 @@ def features(mode):
     return ['--all-features'] if mode == 'portable' else ['--no-default-features', '--features', ','.join(selected)]
 
 
+def nextest_identity(report):
+    lines = report.splitlines()
+    pin = tomllib.loads((ROOT / '.config/tooling.toml').read_text())['cargo']['cargo-nextest']
+    if not lines or lines[0].split()[:2] != ['cargo-nextest', pin]:
+        raise ValueError(f'Nextest version mismatch: {report}; expected {pin}')
+    # Cross-architecture binaries intentionally report different hosts. Keep
+    # every other field, including the full source commit, in the comparison.
+    return [line for line in lines if not line.startswith('host: ')]
+
+
 def nextest_version():
     actual = subprocess.check_output(['cargo', 'nextest', '--version'], text=True).strip()
-    pin = tomllib.loads((ROOT / '.config/tooling.toml').read_text())['cargo']['cargo-nextest']
-    if actual.split()[1] != pin:
-        raise ValueError(f'Nextest version mismatch: {actual}; expected {pin}')
+    nextest_identity(actual)
     return actual
 
 
@@ -80,7 +88,7 @@ def execute(archive):
     incoming = out / 'input'
     bundle.unpack(archive, incoming)
     manifest = bundle.verify(ROOT, incoming, 'rscrypto.riscv.tests', TARGET)
-    if manifest['metadata']['nextest'] != version:
+    if nextest_identity(manifest['metadata']['nextest']) != nextest_identity(version):
         raise ValueError('producer and consumer Nextest versions differ')
     if set(manifest['metadata']['modes']) != {'native', 'portable'}:
         raise ValueError('both dispatch modes are required')
@@ -94,7 +102,8 @@ def execute(archive):
     # Detect accidental changes to inputs throughout execution as well as before it.
     bundle.verify(ROOT, incoming, 'rscrypto.riscv.tests', TARGET)
     (out / 'summary.json').write_text(json.dumps({'status': 'pass', 'source': manifest['source'],
-        'archive_sha256': bundle.digest(archive), 'host': platform.uname()._asdict(), 'modes': results}, indent=2) + '\n')
+        'archive_sha256': bundle.digest(archive), 'host': platform.uname()._asdict(),
+        'nextest': version, 'modes': results}, indent=2) + '\n')
     print(f'RISC-V native/portable suites and doctests passed: {out}', flush=True)
 
 

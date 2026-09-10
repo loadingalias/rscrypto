@@ -23,6 +23,25 @@ import riscv
 from riscv_build import environment
 
 
+class NextestIdentity(unittest.TestCase):
+    def test_cross_architecture_reports_match_without_weakening_revision_check(self):
+        # Exact reports from the builder and RISC-V consumer in run 34527080605.
+        report = ('cargo-nextest 0.9.143 (60fa45f63 2026-08-04)\n'
+                  'release: 0.9.143\n'
+                  'commit-hash: 60fa45f638ffc3f35e74afa65737f45fcd32db2a\n'
+                  'commit-date: 2026-08-04\n'
+                  'host: x86_64-unknown-linux-gnu')
+        consumer = report.replace('x86_64-unknown-linux-gnu', 'riscv64gc-unknown-linux-gnu')
+        self.assertEqual(riscv.nextest_identity(report), riscv.nextest_identity(consumer))
+        changed = consumer.replace('60fa45f638ffc3f35e74afa65737f45fcd32db2a', '0' * 40)
+        self.assertNotEqual(riscv.nextest_identity(report), riscv.nextest_identity(changed))
+        incomplete = '\n'.join(line for line in consumer.splitlines() if not line.startswith('commit-hash:'))
+        self.assertNotEqual(riscv.nextest_identity(report), riscv.nextest_identity(incomplete))
+        for invalid in ('', 'not-nextest 0.9.143', consumer.replace('0.9.143', '0.9.144')):
+            with self.subTest(report=invalid), self.assertRaises(ValueError):
+                riscv.nextest_identity(invalid)
+
+
 class Bundles(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -236,7 +255,15 @@ class NativeArchive(unittest.TestCase):
             subprocess.run(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
                             'commit', '-qm', 'fixture'], cwd=root, check=True)
             directory = root / 'target/transfer'; directory.mkdir(parents=True)
-            metadata = {'nextest': riscv.nextest_version(), 'modes': {}}
+            consumer_version = riscv.nextest_version()
+            metadata = {'nextest': consumer_version, 'modes': {}}
+            # Real cross-architecture reports have the same release/commit but
+            # different host lines, as in CI run 34527080605. Preserve that
+            # difference while executing actual host-native fixture archives.
+            metadata['nextest'] = '\n'.join(
+                ('host: riscv64gc-unknown-linux-gnu' if line == 'host: x86_64-unknown-linux-gnu'
+                 else 'host: x86_64-unknown-linux-gnu') if line.startswith('host: ') else line
+                for line in metadata['nextest'].splitlines())
             for mode in ('native', 'portable'):
                 built = subprocess.run(['cargo', 'nextest', 'archive', '--locked', '--workspace', '--release',
                                 '--archive-file', str(directory / (mode + '.tar.zst'))], cwd=root, env=env,
@@ -253,7 +280,10 @@ class NativeArchive(unittest.TestCase):
                 riscv.execute(archive)
             summaries = list((root / 'target/riscv-results').glob('*/summary.json'))
             self.assertEqual(len(summaries), 1)
-            self.assertEqual(json.loads(summaries[0].read_text())['status'], 'pass')
+            summary = json.loads(summaries[0].read_text())
+            self.assertEqual(summary['status'], 'pass')
+            self.assertEqual(summary['nextest'], consumer_version)
+            self.assertNotEqual(summary['nextest'], metadata['nextest'])
 
 
 if __name__ == '__main__':
