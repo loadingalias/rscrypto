@@ -87,11 +87,13 @@ def main() -> int:
         if len(ir_files) != 1 or len(binaries) != 1:
             raise ValueError("expected one final linked binary and its emitted LLVM IR")
         binary = binaries[0]
-        symbols = directory / (binary.name + ".binary.nm-symbols.txt")
-        assembly = directory / (binary.name + ".binary.raw-disasm.txt")
-        if not re.search(r"\b_?" + SYMBOL + r"\b", symbols.read_text()):
+        # Use the checked final symbol map and named disassembly. PE binaries
+        # need linker-map names because their native nm symbol table is empty.
+        symbols = directory / (binary.name + ".binary.symbols.txt")
+        assembly = directory / (binary.name + ".binary.disasm.txt")
+        if not re.search(r"^[0-9a-fA-F]+ [0-9a-fA-F]+ [tTwW] _?" + SYMBOL + r"$", symbols.read_text(), re.M):
             raise ValueError("cleanup sentinel missing from linked binary symbol table")
-        if not re.search(r"\b_?" + SYMBOL + r"\b", assembly.read_text()):
+        if not re.search(r"^[0-9a-fA-F]+ <_?" + SYMBOL + r">:$", assembly.read_text(), re.M):
             raise ValueError("cleanup sentinel missing from final disassembly")
         report.update(inspect_ir(ir_files[0].read_text()))
         report["artifacts"] = {path.name: digest(path) for path in (binary, ir_files[0], symbols, assembly)}

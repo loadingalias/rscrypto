@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export RUSTUP_TOOLCHAIN
-RUSTUP_TOOLCHAIN="$("$(dirname "${BASH_SOURCE[0]}")/../lib/toolchain.sh" --host)"
+TOOLCHAIN="$(dirname "${BASH_SOURCE[0]}")/../lib/toolchain.sh"
 
 usage() {
   cat <<'EOF'
@@ -15,7 +14,7 @@ EOF
 }
 
 PROFILE="release"
-TARGET="$(rustc -vV | awk '/^host:/ { print $2 }')"
+TARGET="$("$TOOLCHAIN" --print-host)"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -43,6 +42,9 @@ if [[ "$PROFILE" != "release" ]]; then
   echo "only --profile release is supported for CT artifacts today" >&2
   exit 2
 fi
+
+export RUSTUP_TOOLCHAIN
+RUSTUP_TOOLCHAIN="$("$TOOLCHAIN" --target "$TARGET")"
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
@@ -172,6 +174,8 @@ if [[ "$TARGET" == *linux* ]]; then
   else
     FINAL_LINK_ARGS+=("-C" "link-arg=-Wl,--Map=$LINK_MAP")
   fi
+elif [[ "$TARGET" == *windows-msvc ]]; then
+  FINAL_LINK_ARGS+=("-C" "link-arg=/MAP:$LINK_MAP")
 fi
 echo "building final linked equality evidence binary for $TARGET ($PROFILE)"
 cargo rustc \
@@ -188,12 +192,12 @@ cargo rustc \
   "${FINAL_LINK_ARGS[@]}" \
   2>&1 | tee "$LINK_LOG"
 
-link_command_count=$(grep -c '"-o"' "$LINK_LOG" || true)
+link_command_count=$(grep -Ec '"-o"|"/OUT:' "$LINK_LOG" || true)
 if [[ "$link_command_count" -ne 1 ]]; then
   echo "expected exactly one final equality linker command; found $link_command_count" >&2
   exit 1
 fi
-if [[ "$TARGET" == *linux* && ! -s "$LINK_MAP" ]]; then
+if [[ ( "$TARGET" == *linux* || "$TARGET" == *windows-msvc ) && ! -s "$LINK_MAP" ]]; then
   echo "final equality linker map is missing or empty: $LINK_MAP" >&2
   exit 1
 fi

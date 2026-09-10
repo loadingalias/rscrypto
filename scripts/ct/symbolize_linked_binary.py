@@ -58,7 +58,50 @@ def section_symbol(section: str, known_names: dict[str, str]) -> str | None:
   return None
 
 
+def parse_msvc_link_map(text: str, known_names: dict[str, str]) -> list[Symbol]:
+  groups: list[tuple[int, int, int]] = []
+  functions: list[tuple[int, int, int, str]] = []
+  section_bases: dict[int, int] = {}
+  group_row = re.compile(r"^\s*([0-9a-fA-F]+):([0-9a-fA-F]+)\s+([0-9a-fA-F]+)H\s+\S+\s+CODE\s*$")
+  function_row = re.compile(
+    r"^\s*([0-9a-fA-F]+):([0-9a-fA-F]+)\s+(\S+)\s+([0-9a-fA-F]+)\s+f(?:\s|$)"
+  )
+  for line in text.splitlines():
+    if match := group_row.match(line):
+      section, start, size = (int(value, 16) for value in match.groups())
+      groups.append((section, start, start + size))
+    elif match := function_row.match(line):
+      section, offset = (int(match.group(index), 16) for index in (1, 2))
+      address = int(match.group(4), 16)
+      base = address - offset
+      if base < 0 or section_bases.setdefault(section, base) != base:
+        raise ValueError("inconsistent MSVC linker-map section address")
+      functions.append((section, offset, address, match.group(3)))
+
+  # Maps give starts, not function lengths. Bound each function by the next
+  # distinct start in its CODE group, or by that group's end. Keep ICF aliases.
+  offsets = {
+    group: sorted({offset for section, offset, _, _ in functions
+                   if section == group[0] and group[1] <= offset < group[2]})
+    for group in groups
+  }
+  symbols: list[Symbol] = []
+  for section, offset, address, name in functions:
+    containing = [group for group in groups if group[0] == section and group[1] <= offset < group[2]]
+    if len(containing) != 1:
+      raise ValueError(f"MSVC function {name} is not in exactly one CODE group")
+    group = containing[0]
+    starts = offsets[group]
+    next_index = bisect.bisect_right(starts, offset)
+    end = starts[next_index] if next_index < len(starts) else group[2]
+    symbols.append(Symbol(address, end - offset, known_names.get(name, name)))
+  return symbols
+
+
 def parse_link_map(path: Path, known_names: dict[str, str]) -> list[Symbol]:
+  text = path.read_text(errors="replace")
+  if "Publics by Value" in text:
+    return parse_msvc_link_map(text, known_names)
   symbols: list[Symbol] = []
   table_row = re.compile(r"^\s*([0-9a-fA-F]+)\s+([0-9a-fA-F]+)\s+([0-9a-fA-F]+)\s+\d+\s+(.+)$")
   gnu_section = re.compile(r"^\s*(\.text(?:\.[^ ]+)?)\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)(?:\s+.*)?$")
@@ -66,7 +109,7 @@ def parse_link_map(path: Path, known_names: dict[str, str]) -> list[Symbol]:
   gnu_wrapped_address = re.compile(r"^\s*0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)(?:\s+.*)?$")
   pending_gnu_section: str | None = None
   in_discarded_sections = False
-  for line in path.read_text(errors="replace").splitlines():
+  for line in text.splitlines():
     marker = line.strip()
     if marker == "Discarded input sections":
       in_discarded_sections = True

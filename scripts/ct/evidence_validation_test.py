@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 from unittest.mock import patch
@@ -20,7 +21,7 @@ from asm_heuristics import (
   summarize_closure,
 )
 from full import build_findings, configure_target_environment
-from provenance import codegen_value
+from provenance import codegen_value, resolve_executable, resolved_linker_version, symbol_objects
 from symbolize_linked_binary import (
   Symbol,
   parse_indirect_symbols,
@@ -234,6 +235,54 @@ def main() -> None:
   finally:
     manifest_validation.subprocess.run = original_run
 
+  with tempfile.TemporaryDirectory() as temporary:
+    root = Path(temporary)
+    target = "x86_64-pc-windows-msvc"
+    rustdoc_path = root / "target/ct-api-inventory" / target / "doc/rscrypto.json"
+    rustdoc_path.parent.mkdir(parents=True)
+    for filename, expected in (("src/auth/key.rs", "rscrypto::auth::Key::verify\n"),
+                               ("src\\auth\\key.rs", "rscrypto::auth::Key::verify\n"),
+                               ("library/core/src/key.rs", "\n")):
+      rustdoc_path.write_text(json.dumps({
+        "paths": {"1": {"crate_id": 0, "path": ["rscrypto", "auth", "Key"], "kind": "struct"}},
+        "index": {
+          "1": {"visibility": "public", "inner": {"struct": {"impls": [2]}}},
+          "2": {"inner": {"impl": {"items": [3]}}},
+          "3": {"visibility": "public", "name": "verify", "inner": {"function": {}},
+                "span": {"filename": filename}},
+        },
+      }))
+      with patch.object(manifest_validation.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)):
+        errors = []
+        assert manifest_validation.compiler_public_api_snapshot(root, target, ("rscrypto::auth",), errors) == (
+          int(expected != "\n"), hashlib.sha256(expected.encode()).hexdigest())
+        assert not errors
+
+    linker = root / "Build Tools/link.exe"
+    linker.parent.mkdir()
+    linker.touch()
+    assert resolve_executable(str(linker)) == linker.resolve()
+    banner = "Microsoft (R) Incremental Linker Version 14.51.36256.0"
+    for status, output, expected in ((0, banner, banner), (1100, banner, banner),
+                                     (1104, banner, None), (1100, "usage without version", None)):
+      with patch("provenance.subprocess.run", return_value=subprocess.CompletedProcess([], status, output)) as version:
+        assert resolved_linker_version(linker, str(linker), root) == expected
+        version.assert_called_once_with([str(linker), "/?"], cwd=root, text=True, stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT, check=False)
+
+    symbols = root / "rscrypto_ct_evidence.obj.symbols.txt"
+    symbols.write_text(
+      "00000000 R .refptr.ct_entry_argon2i_verify\n"
+      "00000000 T ct_entry_argon2i_verify\n"
+      "00000000 R ct_entry_data_only\n"
+    )
+    binary_symbols = root / "rscrypto-ct-evidence.exe.binary.symbols.txt"
+    binary_symbols.write_text("0000000140001020 0000000000000010 T ct_entry_argon2i_verify\n")
+    assert manifest_validation.symbol_counts(symbols) == {"ct_entry_argon2i_verify": 1}
+    assert manifest_validation.generated_symbols(root) == {"ct_entry_argon2i_verify"}
+    assert [row["object"] for row in symbol_objects(root)["ct_entry_argon2i_verify"]] == [
+      "rscrypto_ct_evidence.obj", "rscrypto-ct-evidence.exe.binary"]
+
   rustdoc_env = captured_rustdoc["env"]
   assert isinstance(rustdoc_env, dict)
   assert rustdoc_env["RUSTC_BOOTSTRAP"] == "rscrypto"
@@ -305,6 +354,31 @@ def main() -> None:
       Symbol(0x2000, 0x10, "ct_entry_owner_eq_16"),
       Symbol(0x2010, 0x10, "rscrypto::fixed_eq"),
     ]
+
+    msvc_link_map = temporary_path / "msvc-link-map.txt"
+    msvc_link_map.write_text(
+      " Start         Length     Name                   Class\n"
+      " 0001:00000020 00000030H .text$mn                CODE\n"
+      " 0001:00000080 00000010H .text$x                 CODE\n"
+      " 0002:00000000 00000020H .data                   DATA\n"
+      " Address         Publics by Value              Rva+Base       Lib:Object\n"
+      " 0001:00000020 ct_entry_owner_eq_16             0000000140001020 f input.obj\n"
+      " 0001:00000024 code_label                       0000000140001024   input.obj\n"
+      " 0001:00000030 _RNv_test                        0000000140001030 f input.obj\n"
+      " 0001:00000030 folded_alias                     0000000140001030 f input.obj\n"
+      " 0001:00000040 memcpy                           0000000140001040 f libcmt:memcpy.obj\n"
+      " 0001:00000080 last_function                    0000000140001080 f input.obj\n"
+      " 0002:00000000 data_value                       0000000140002000   input.obj\n"
+    )
+    assert parse_link_map(msvc_link_map, {"_RNv_test": "rscrypto::fixed_eq"}) == [
+      Symbol(0x140001020, 0x10, "ct_entry_owner_eq_16"),
+      Symbol(0x140001030, 0x10, "rscrypto::fixed_eq"),
+      Symbol(0x140001030, 0x10, "folded_alias"),
+      Symbol(0x140001040, 0x10, "memcpy"),
+      Symbol(0x140001080, 0x10, "last_function"),
+    ]
+    msvc_link_map.write_text(msvc_link_map.read_text().replace("0000000140001030", "0000000140002030"))
+    expect_failure(lambda: parse_link_map(msvc_link_map, {}))
 
     indirect_symbols = temporary_path / "indirect-symbols.txt"
     indirect_symbols.write_text(

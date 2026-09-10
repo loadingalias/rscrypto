@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dudect_report import raw_csv_rows
-from provenance import dudect_runner_sources, load_toml, sha256_file
+from provenance import ct_function_symbols, dudect_runner_sources, load_toml, sha256_file
 from manifest import (
   binsec_kernel_targets, binsec_required_targets, primitive_supports_physical_timing, required_dudect_cases,
 )
@@ -137,18 +137,14 @@ def ct_required_primitives(ct: dict) -> list[dict]:
 def generated_symbols(artifact_dir: Path) -> set[str]:
   symbols: set[str] = set()
   for path in artifact_dir.glob("*.symbols.txt"):
-    for line in path.read_text().splitlines():
-      if match := re.search(r"\b_?(ct_entry_[A-Za-z0-9_]+)\b", line):
-        symbols.add(match.group(1))
+    symbols.update(ct_function_symbols(path))
   return symbols
 
 
 def symbol_counts(path: Path) -> dict[str, int]:
   counts: dict[str, int] = {}
-  for line in path.read_text().splitlines():
-    if match := re.search(r"\b_?(ct_entry_[A-Za-z0-9_]+)\b", line):
-      symbol = match.group(1)
-      counts[symbol] = counts.get(symbol, 0) + 1
+  for symbol in ct_function_symbols(path):
+    counts[symbol] = counts.get(symbol, 0) + 1
   return counts
 
 
@@ -257,7 +253,7 @@ def compiler_public_api_snapshot(
         if "function" not in child.get("inner", {}):
           continue
         span = child.get("span") or {}
-        if not str(span.get("filename", "")).startswith("src/"):
+        if not str(span.get("filename", "")).replace("\\", "/").startswith("src/"):
           continue
         name = child.get("name")
         if trait_name:
@@ -1130,7 +1126,7 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
   ):
     if len(paths) != 1:
       fail(errors, f"expected exactly one {role}; found {len(paths)}")
-  if "linux" in target and len(binary_link_maps) != 1:
+  if ("linux" in target or "windows-msvc" in target) and len(binary_link_maps) != 1:
     fail(errors, f"expected exactly one final linked equality binary linker map; found {len(binary_link_maps)}")
   if "apple-darwin" in target and len(binary_indirect_maps) != 1:
     fail(errors, f"expected exactly one final linked equality binary indirect symbol map; found {len(binary_indirect_maps)}")
@@ -1261,7 +1257,8 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
         object_names = [str(row.get("object", "")) for row in equality_locations.get(symbol, [])]
         if sum(name.startswith("rscrypto_ct_evidence") and name.endswith((".o", ".obj")) for name in object_names) != 1:
           fail(errors, f"evidence-index lacks one equality pre-link location for {symbol}")
-        if sum(name == "rscrypto-ct-evidence.binary" for name in object_names) != 1:
+        final_object = "rscrypto-ct-evidence.exe.binary" if "windows" in target else "rscrypto-ct-evidence.binary"
+        if sum(name == final_object for name in object_names) != 1:
           fail(errors, f"evidence-index lacks one final linked location for {symbol}")
 
       final_closure = heuristics.get("final_equality_call_closure", {})

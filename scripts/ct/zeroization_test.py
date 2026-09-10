@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Negative controls for the bounded optimized-cleanup gate."""
 import sys
+import json
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -18,6 +21,36 @@ def fixture():
 
 
 class ZeroizationTest(unittest.TestCase):
+    def test_linked_evidence_with_pe_symbol_map(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            binary = directory / 'rscrypto-ct-evidence.exe'
+            binary.write_bytes(b'linked PE fixture')
+            (directory / 'rscrypto_ct_evidence.ll').write_text(fixture())
+            # PE has no native nm names; the checked linker map names its code.
+            binary.with_name(binary.name + '.binary.nm-symbols.txt').write_text('')
+            binary.with_name(binary.name + '.binary.raw-disasm.txt').write_text('140001000: retq\n')
+            symbols = binary.with_name(binary.name + '.binary.symbols.txt')
+            assembly = binary.with_name(binary.name + '.binary.disasm.txt')
+            symbols.write_text('0000000140001000 0000000000000010 T zeroize_entry_secret_bytes_32\n')
+            assembly.write_text('0000000140001000 <zeroize_entry_secret_bytes_32>:\n140001000: retq\n')
+            report = directory / 'report.json'
+
+            def run():
+                result = subprocess.run([sys.executable, str(Path(__file__).with_name('zeroization.py')),
+                    '--artifact-dir', str(directory), '--out', str(report)], capture_output=True, text=True)
+                return result.returncode, json.loads(report.read_text())
+
+            code, evidence = run()
+            self.assertEqual(code, 0, evidence)
+            self.assertIn(symbols.name, evidence['artifacts'])
+            self.assertIn(assembly.name, evidence['artifacts'])
+            for path in (symbols, assembly):
+                original = path.read_text()
+                path.write_text('')
+                self.assertEqual(run()[0], 1)
+                path.write_text(original)
+
     def test_complete(self):
         self.assertEqual(inspect_ir(fixture())['cleared_bytes'], list(range(32)))
 

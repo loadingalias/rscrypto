@@ -31,15 +31,18 @@ def snapshot(root):
 
 class PreparationTests(unittest.TestCase):
   def test_artifacts_preserve_evidence_on_success_and_failure(self):
-    for failure in ("", "--lib", "--bin"):
-      with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+    for target, failure in ((target, failure)
+                            for target in (TARGET, "x86_64-pc-windows-msvc", "riscv64gc-unknown-linux-gnu")
+                            for failure in ("", "--lib", "--bin")):
+      with self.subTest(target=target, failure=failure), tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary).resolve()
         commands = root / "commands"
         executable(commands / "git", f"#!/bin/sh\nprintf '%s\\n' '{root}'\n")
         sysroot = root / "sysroot"
+        host = TARGET if target.startswith("riscv64") else target
         executable(commands / "rustc", f"#!/bin/sh\n" +
-                   f"if [ \"$*\" = '--print sysroot' ]; then echo '{sysroot}'; else echo 'host: {TARGET}'; fi\n")
-        llvm_bin = sysroot / "lib/rustlib" / TARGET / "bin"
+                   f"if [ \"$*\" = '--print sysroot' ]; then echo '{sysroot}'; else echo 'host: {host}'; fi\n")
+        llvm_bin = sysroot / "lib/rustlib" / host / "bin"
         for tool in ("llvm-objdump", "llvm-nm", "llvm-size"):
           executable(llvm_bin / tool, f"#!/bin/sh\necho 'sysroot {tool}'\n")
         objdump = commands / "custom tools/objdump"
@@ -69,6 +72,7 @@ if sys.argv[1] == 'scripts/ct/provenance.py':
 import os, sys
 from pathlib import Path
 args = sys.argv[1:]
+assert os.environ['RUSTUP_TOOLCHAIN'] == os.environ['EXPECTED_TOOLCHAIN']
 if args == ['-V']:
   print('cargo fixture')
   sys.exit(0)
@@ -82,12 +86,18 @@ name = 'rscrypto_ct_harness' if '--lib' in args else 'rscrypto_ct_evidence'
 for extension in ('ll', 's', 'o'):
   (emit / (name + '.' + extension)).write_text('fresh')
 if '--bin' in args:
-  (emit / 'rscrypto-ct-evidence').write_text('binary')
-  flag = next(arg for arg in args if arg.startswith('link-arg=-Wl,--Map='))
-  Path(flag.split('=', 2)[2]).write_text('map')
-  print('linker "-o" binary')
+  windows = 'windows-msvc' in args[args.index('--target') + 1]
+  (emit / ('rscrypto-ct-evidence.exe' if windows else 'rscrypto-ct-evidence')).write_text('binary')
+  if windows:
+    flag = next(arg for arg in args if arg.startswith('link-arg=/MAP:'))
+    Path(flag.removeprefix('link-arg=/MAP:')).write_text('map')
+    print('"C:/Build Tools/link.exe" "input.o" "/OUT:C:/build/rscrypto-ct-evidence.exe"')
+  else:
+    flag = next(arg for arg in args if arg.startswith('link-arg=-Wl,--Map='))
+    Path(flag.split('=', 2)[2]).write_text('map')
+    print('linker "-o" binary')
 ''')
-        output = root / "target/ct" / TARGET / "release"
+        output = root / "target/ct" / target / "release"
         retained = output / "dudect/runs/historical"
         retained.mkdir(parents=True)
         (retained / "dudect-raw.csv").write_bytes(b"original measurement\n")
@@ -101,16 +111,18 @@ if '--bin' in args:
         artifacts = output / "artifacts"
         artifacts.mkdir()
         (artifacts / "stale-artifact").write_text("stale")
-        build = root / "target/ct-build" / TARGET / "release"
+        build = root / "target/ct-build" / target / "release"
         build.mkdir(parents=True)
         (build / "stale-build").write_text("stale")
         env = {key: value for key, value in os.environ.items()
                if key not in {"BASH_ENV", "ENV"} and not key.startswith("BASH_FUNC_")}
         env.update(PATH=str(commands) + os.pathsep + os.environ["PATH"], FAIL_BUILD=failure)
         env.update(LLVM_OBJDUMP=str(objdump), LLVM_NM=str(nm.with_suffix("")))
+        env['EXPECTED_TOOLCHAIN'] = subprocess.check_output(
+          [str(ROOT / 'scripts/lib/toolchain.sh'), '--target', target], text=True).strip()
         env.pop("LLVM_SIZE", None)
         result = subprocess.run(
-          [shutil.which("bash"), str(ROOT / "scripts/ct/artifacts.sh"), "--target", TARGET],
+          [shutil.which("bash"), str(ROOT / "scripts/ct/artifacts.sh"), "--target", target],
           cwd=root, env=env, capture_output=True, text=True,
         )
         self.assertEqual(result.returncode, 17 if failure else 0, result.stdout + result.stderr)
@@ -125,7 +137,8 @@ if '--bin' in args:
           elif path.exists():
             self.assertNotEqual(path.read_text(), "stale report", name)
         if not failure:
-          self.assertEqual((artifacts / "rscrypto-ct-evidence").read_text(), "binary")
+          binary = "rscrypto-ct-evidence.exe" if "windows" in target else "rscrypto-ct-evidence"
+          self.assertEqual((artifacts / binary).read_text(), "binary")
           tools = json.loads((output / "provenance.json").read_text())["tools"]
           for tool, suffix, expected in (
             ("llvm_objdump", "disasm", "override objdump"),
