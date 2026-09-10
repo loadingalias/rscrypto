@@ -159,7 +159,7 @@ def skipped_step(name: str, reason: str) -> dict[str, Any]:
 def shell_script(root: Path, relative: str, *args: str) -> list[str]:
   script = str(root / relative)
   if os.name == "nt":
-    return ["bash", script, *args]
+    return ["bash", relative, *args]
   return [script, *args]
 
 
@@ -1048,7 +1048,7 @@ def main() -> int:
 
   root = Path(__file__).resolve().parents[2]
   os.environ["RUSTUP_TOOLCHAIN"] = subprocess.check_output(
-    ["bash", str(root / "scripts/lib/toolchain.sh"), "--host"], text=True, cwd=root,
+    python_script(root, "scripts/lib/toolchain.py", "--host"), text=True, cwd=root,
   ).strip()
   target = args.target or host_target(root)
   host = host_target(root)

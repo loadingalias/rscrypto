@@ -110,6 +110,17 @@ manifest = {'manifest_' + name: {'primitive': 'fixture', 'gate': 'required', 'le
     assert all(str(run.relative_to((root / 'out').resolve())) in record['path'] for record in records)
 
 
+def test_windows_shell_entry_paths():
+  root = Path("C:/actions-runner/_work/rscrypto/rscrypto")
+  with patch.object(full.os, "name", "nt"):
+    assert full.shell_script(root, "scripts/ct/artifacts.sh", "--profile", "release") == [
+      "bash", "scripts/ct/artifacts.sh", "--profile", "release",
+    ]
+    assert full.shell_script(root, "scripts/ct/dudect.sh", "--prepare-only") == [
+      "bash", "scripts/ct/dudect.sh", "--prepare-only",
+    ]
+
+
 def test_proof_failure_stops_timing():
   with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
@@ -121,12 +132,13 @@ def test_proof_failure_stops_timing():
     with patch.object(full, "__file__", str(root / "scripts/ct/full.py")), \
          patch.object(full, "load_toml", return_value=manifest), \
          patch.object(full, "host_target", return_value="x86_64-unknown-linux-gnu"), \
-         patch.object(full.subprocess, "check_output", return_value="fixture"), \
+         patch.object(full.subprocess, "check_output", return_value="fixture") as selector, \
          patch.object(full, "run_command", side_effect=command), \
          patch.object(full, "run_dudect_cases") as timing, \
          patch.dict(os.environ), patch.object(sys, "argv", ["full.py"]):
       assert full.main() == 1
       timing.assert_not_called()
+      assert selector.call_args_list[0].args[0] == [sys.executable, str(root.resolve() / "scripts/lib/toolchain.py"), "--host"]
     report = json.loads((root / "target/ct/x86_64-unknown-linux-gnu/release/ct-report.json").read_text())
     assert report["status"] == "fail"
     assert report["steps"][-1]["name"] == "ct-dudect"
@@ -134,5 +146,6 @@ def test_proof_failure_stops_timing():
 
 
 if __name__ == "__main__":
+  test_windows_shell_entry_paths()
   test_proof_failure_stops_timing()
   main()

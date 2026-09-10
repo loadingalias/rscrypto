@@ -1,4 +1,5 @@
 name: Constant-Time
+run-name: Constant-Time
 
 on:
   workflow_call:
