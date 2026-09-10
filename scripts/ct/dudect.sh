@@ -225,7 +225,7 @@ else
 fi
 
 PYTHON="$("$ROOT/scripts/lib/python.sh" --print)"
-"$PYTHON" "$ROOT/scripts/ct/dudect_report.py" --prepare \
+"$PYTHON" -X utf8 "$ROOT/scripts/ct/dudect_report.py" --prepare \
   --out "$OUT_DIR/prepared.json" --target "$TARGET" --profile "$PROFILE" \
   --binary "$BINARY_PATH" "${BINARY_OBJECT_ARGS[@]}" \
   --binary-disassembly "$BINARY_DISASM_PATH" --binary-symbols "$BINARY_SYMBOLS_PATH" \
@@ -238,7 +238,7 @@ fi
 sample_args=()
 if [[ -n "$SAMPLES" ]]; then sample_args+=(--samples "$SAMPLES"); fi
 if [[ "$SMOKE" == 1 ]]; then sample_args+=(--smoke); fi
-"$PYTHON" "$ROOT/scripts/ct/dudect_execute.py" \
+"$PYTHON" -X utf8 "$ROOT/scripts/ct/dudect_execute.py" \
   --prepared "$OUT_DIR/prepared.json" --evidence-dir "$RUN_DIR/selection" \
   "${sample_args[@]:+${sample_args[@]}}" --threshold "$THRESHOLD" --filter "$FILTER" \
   --latest "$DUDECT_DIR/dudect-report.json"

@@ -277,7 +277,7 @@ fi
 if [[ -n "$indirect_symbols" ]]; then
   symbolizer_args+=(--indirect-symbols "$indirect_symbols")
 fi
-"$PYTHON" scripts/ct/symbolize_linked_binary.py "${symbolizer_args[@]}"
+"$PYTHON" -X utf8 scripts/ct/symbolize_linked_binary.py "${symbolizer_args[@]}"
 
 if command -v rustfilt >/dev/null 2>&1; then
   for symbols in "$ARTIFACT_DIR"/*.symbols.txt; do
@@ -285,13 +285,13 @@ if command -v rustfilt >/dev/null 2>&1; then
   done
 fi
 
-"$PYTHON" scripts/ct/asm_heuristics.py \
+"$PYTHON" -X utf8 scripts/ct/asm_heuristics.py \
   --target "$TARGET" \
   --profile "$PROFILE" \
   --artifact-dir "$ARTIFACT_DIR" \
   --out-dir "$OUT_DIR"
 
-"$PYTHON" scripts/ct/provenance.py \
+"$PYTHON" -X utf8 scripts/ct/provenance.py \
   --target "$TARGET" \
   --profile "$PROFILE" \
   --artifact-dir "$ARTIFACT_DIR" \

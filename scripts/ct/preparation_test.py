@@ -50,6 +50,7 @@ class PreparationTests(unittest.TestCase):
         executable(root / "scripts/lib/python.sh", f"#!/bin/sh\necho '{commands / 'reporter'}'\n")
         executable(commands / "reporter", f"#!{sys.executable}\n" + '''
 import os, sys
+if sys.argv[1:3] == ['-X', 'utf8']: del sys.argv[1:3]
 if sys.argv[1] == 'scripts/ct/provenance.py':
   os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
 ''')

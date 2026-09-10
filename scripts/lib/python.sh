@@ -36,7 +36,7 @@ for candidate in "${candidates[@]}"; do
       printf '%s\n' "$resolved"
     else
       export PYTHON="$resolved"
-      exec "$resolved" "$@"
+      exec "$resolved" -X utf8 "$@"
     fi
     exit 0
   fi

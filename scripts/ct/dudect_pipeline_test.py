@@ -3,6 +3,7 @@
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -110,14 +111,29 @@ manifest = {'manifest_' + name: {'primitive': 'fixture', 'gate': 'required', 'le
     assert all(str(run.relative_to((root / 'out').resolve())) in record['path'] for record in records)
 
 
+def test_utf8_child_process():
+  with tempfile.TemporaryDirectory() as temporary:
+    root = Path(temporary)
+    (root / "source.rs").write_text("// Unicode arrow: \u2190\n", encoding="utf-8")
+    (root / "probe.py").write_text(
+      "import sys\nfrom pathlib import Path\nassert sys.flags.utf8_mode == 1\n"
+      "assert '\\u2190' in Path('source.rs').read_text()\n", encoding="utf-8",
+    )
+    subprocess.run(full.python_script(root, "probe.py"), cwd=root, check=True,
+                   env={**os.environ, "PYTHONUTF8": "0"})
+    launcher = Path(__file__).resolve().parents[2] / "scripts/lib/python.sh"
+    subprocess.run(["bash", str(launcher), str(root / "probe.py")], cwd=root, check=True,
+                   env={**os.environ, "PYTHONUTF8": "0", "PYTHON": sys.executable})
+
+
 def test_windows_shell_entry_paths():
   root = Path("C:/actions-runner/_work/rscrypto/rscrypto")
-  with patch.object(full.os, "name", "nt"):
+  with patch.object(full.os, "name", "nt"), patch.object(full.shutil, "which", return_value="C:/tools/git/bin/bash.exe"):
     assert full.shell_script(root, "scripts/ct/artifacts.sh", "--profile", "release") == [
-      "bash", "scripts/ct/artifacts.sh", "--profile", "release",
+      "C:/tools/git/bin/bash.exe", "scripts/ct/artifacts.sh", "--profile", "release",
     ]
     assert full.shell_script(root, "scripts/ct/dudect.sh", "--prepare-only") == [
-      "bash", "scripts/ct/dudect.sh", "--prepare-only",
+      "C:/tools/git/bin/bash.exe", "scripts/ct/dudect.sh", "--prepare-only",
     ]
 
 
@@ -138,7 +154,7 @@ def test_proof_failure_stops_timing():
          patch.dict(os.environ), patch.object(sys, "argv", ["full.py"]):
       assert full.main() == 1
       timing.assert_not_called()
-      assert selector.call_args_list[0].args[0] == [sys.executable, str(root.resolve() / "scripts/lib/toolchain.py"), "--host"]
+      assert selector.call_args_list[0].args[0] == [sys.executable, "-X", "utf8", str(root.resolve() / "scripts/lib/toolchain.py"), "--host"]
     report = json.loads((root / "target/ct/x86_64-unknown-linux-gnu/release/ct-report.json").read_text())
     assert report["status"] == "fail"
     assert report["steps"][-1]["name"] == "ct-dudect"
@@ -146,6 +162,7 @@ def test_proof_failure_stops_timing():
 
 
 if __name__ == "__main__":
+  test_utf8_child_process()
   test_windows_shell_entry_paths()
   test_proof_failure_stops_timing()
   main()

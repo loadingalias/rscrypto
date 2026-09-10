@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -159,12 +160,15 @@ def skipped_step(name: str, reason: str) -> dict[str, Any]:
 def shell_script(root: Path, relative: str, *args: str) -> list[str]:
   script = str(root / relative)
   if os.name == "nt":
-    return ["bash", relative, *args]
+    bash = shutil.which("bash")
+    if bash is None:
+      raise FileNotFoundError("Git Bash is missing from PATH; run scripts/tooling/x86_64-win.ps1 -CiCt")
+    return [bash, relative, *args]
   return [script, *args]
 
 
 def python_script(root: Path, relative: str, *args: str) -> list[str]:
-  return [sys.executable, str(root / relative), *args]
+  return [sys.executable, "-X", "utf8", str(root / relative), *args]
 
 
 def primitives_by_id(ct: dict[str, Any]) -> dict[str, dict[str, Any]]:
