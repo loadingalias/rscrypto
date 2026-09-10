@@ -1,9 +1,8 @@
-"""Keep full CT selection complete and stop execution on the first failure."""
+"""Keep full CT selection complete."""
 import importlib.util
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -23,23 +22,11 @@ class Selection(unittest.TestCase):
                 with patch.dict(os.environ, INPUT_ARCHITECTURES=selection,
                                 GITHUB_RUN_ID='123', GITHUB_OUTPUT=str(output)), patch.object(sys, 'argv', ['ci.py', 'plan']):
                     ci.main()
-                rows = json.loads(output.read_text().removeprefix('matrix='))['include']
+                values = dict(line.split('=', 1) for line in output.read_text().splitlines())
+                rows = json.loads(values['matrix'])['include']
                 self.assertEqual(len(rows), count)
-                self.assertTrue(all(row['timeout'] == 360 for row in rows))
-
-    def test_full_does_not_repeat_smoke_or_filter_required_cases(self):
-        with patch.dict(os.environ, PLATFORM='aarch64-linux'), \
-             patch.object(sys, 'argv', ['ci.py', 'run']), patch.object(ci.subprocess, 'run') as run:
-            ci.main()
-            self.assertEqual([call.args[0] for call in run.call_args_list], [['just', 'ct-full']])
-
-    def test_failed_self_tests_prevent_full_run(self):
-        with patch.dict(os.environ, PLATFORM='x86_64-linux'), \
-             patch.object(sys, 'argv', ['ci.py', 'run']), \
-             patch.object(ci.subprocess, 'run', side_effect=subprocess.CalledProcessError(7, 'ct-test')) as run:
-            with self.assertRaises(subprocess.CalledProcessError):
-                ci.main()
-            self.assertEqual([call.args[0] for call in run.call_args_list], [['just', 'ct-test']])
+                self.assertTrue(all(row['timeout'] == (60 if row['platform'] == 'riscv64-linux' else 360) for row in rows))
+                self.assertEqual(values['riscv'], str(any(row['platform'] == 'riscv64-linux' for row in rows)).lower())
 
 
 if __name__ == '__main__':

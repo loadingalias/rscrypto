@@ -39,10 +39,14 @@ def select_host():
 
 
 def install_commands(target, components):
+  development = stable()
+  native = for_target(target)
   return [["rustup", "toolchain", "install", channel, "--profile", "minimal",
-           *[arg for component in dict.fromkeys(["clippy", "rustfmt", *components])
+           *[arg for component in dict.fromkeys([
+             *(["clippy"] if channel == native else []),
+             *(["rustfmt"] if channel == development else []), *components])
              for arg in ("--component", component)]]
-          for channel in dict.fromkeys([stable(), for_target(target)])]
+          for channel in dict.fromkeys([development, native])]
 
 
 def main():

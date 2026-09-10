@@ -95,6 +95,8 @@ def validate(data):
     if any(asset not in data['x86_64-linux']['assets'] for asset in data['ci-compat']['assets']):
         raise ValueError('ci-compat: missing pinned archive')
     for profile, required in (('ci', {'just', 'cargo-nextest'}),
+                              ('ci-riscv-build', {'just', 'cargo-nextest'}),
+                              ('ci-riscv-run', {'just', 'cargo-nextest'}),
                               ('ci-policy', {'cargo-deny', 'cargo-audit'}),
                               ('ci-compat', {'just'}),
                               ('ci-fuzz', {'just', 'cargo-fuzz'}),

@@ -63,12 +63,15 @@ else:
 
     for host in sorted(hosts):
       channel = nightly if host in nightly_hosts else stable
-      components = [arg for component in dict.fromkeys(['clippy', 'rustfmt', *hosts[host]])
-                    for arg in ('--component', component)]
-      commands = run([sys.executable, 'scripts/lib/toolchain.py', '--install', host, *components], host)
-      expected = [stable, nightly] if host in nightly_hosts else [stable]
-      assert [row['command'] for row in commands] == [
-        ['rustup', 'toolchain', 'install', value, '--profile', 'minimal', *components] for value in expected]
+      for requested in ([], hosts[host]):
+        components = [arg for component in requested for arg in ('--component', component)]
+        commands = run([sys.executable, 'scripts/lib/toolchain.py', '--install', host, *components], host)
+        expected = [(stable, ['rustfmt']), (nightly, ['clippy'])] if host in nightly_hosts else [
+          (stable, ['clippy', 'rustfmt'])]
+        assert [row['command'] for row in commands] == [
+          ['rustup', 'toolchain', 'install', value, '--profile', 'minimal',
+           *[arg for component in dict.fromkeys([*defaults, *requested]) for arg in ('--component', component)]]
+          for value, defaults in expected], (host, requested, commands)
       commands = run(['bash', 'scripts/test/test.sh', '--all', '--portable', '--lib', 'two words'], host)
       assert commands and all(row['channel'] == channel for row in commands), (host, commands)
       assert commands[-1]['command'][-1] == 'two words'

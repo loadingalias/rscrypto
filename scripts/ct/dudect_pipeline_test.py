@@ -109,6 +109,17 @@ manifest = {'manifest_' + name: {'primitive': 'fixture', 'gate': 'required', 'le
     records = full.collect_artifact_records((root / "out").resolve(), run)
     assert len([record for record in records if Path(record["path"]).name == executable.name]) == 1
     assert all(str(run.relative_to((root / 'out').resolve())) in record['path'] for record in records)
+    preparations_before = (root / 'preparations').read_bytes()
+    with patch.object(full, 'shell_script', side_effect=AssertionError('transferred binary must not rebuild')), \
+         patch.object(full, 'python_script', return_value=[sys.executable, str(repository / 'scripts/ct/dudect_execute.py')]):
+      transferred_run, transferred_preparation, transferred_rows = full.run_dudect_cases(
+        root, root / 'out', root / 'logs', 'fixture', 'release', cases, 10.0, 10,
+        transferred=run / 'shared/prepared.json')
+    assert transferred_run == run
+    assert transferred_preparation.status == 'pass'
+    assert [row['status'] for row in transferred_rows] == ['pass', 'pass']
+    assert transferred_rows[0]['binary'] == rows[0]['binary']
+    assert (root / 'preparations').read_bytes() == preparations_before
 
 
 def test_utf8_child_process():

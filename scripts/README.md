@@ -8,7 +8,7 @@ benchmark commands. User-facing entry points are the recipes reported by
 
 | Script | Caller |
 | --- | --- |
-| `check/check.sh` | `just check`, `just ci-check` |
+| `check/check.sh` | `just check`, `just ci-check`, `just ci-check-target` |
 | `check/compat.py` | `just ci-compat` |
 | `test/test-musl.sh` | `just test-musl` |
 | `check/dependencies.sh` | `just ci-policy`, dependency checks within `just check` |
@@ -23,6 +23,8 @@ failure propagation with substitute executors. Run it with
 | Script | Caller |
 | --- | --- |
 | `test/test.sh` | `just test` |
+| `test/riscv.py` | `just test-riscv prepare ARCHIVE`, `just test-riscv run ARCHIVE` |
+| `test/doctest_bundle.py` | RISC-V doctest compilation and target execution |
 | `test/test-examples.sh` | `just test-examples` |
 | `test/test-miri.sh` | `just test-miri` |
 | `test/test-fuzz.sh` | `just test-fuzz` |
@@ -33,6 +35,32 @@ failure propagation with substitute executors. Run it with
 `just test-scripts` runs argument forwarding, toolchain, test, check, and fuzz regressions with
 substitute executors. `just test-harnesses` directly runs the CT harness and
 exporter self-tests; `just ct-test` includes them.
+
+`just test-transfer` checks source binding, artifact integrity, safe extraction,
+and the pinned rustdoc compile/run contract, including deliberate failures.
+It requires the repository-pinned nightly and runs a small Rust fixture.
+
+RISC-V CI builds on Ubuntu x86-64 using `--ci-riscv-build` tooling. It runs the
+same target-specific checks and builds all release tests in both dispatch modes,
+including all doctest compilation checks. Nextest archives and persisted doctest programs
+are transferred to the physical RISC-V runner, whose `--ci-riscv-run` tooling
+only executes them. Preparation is not a runtime pass. The Rust release profile,
+target compiler, feature sets, and test assertions remain unchanged.
+
+The archive records the Git revision, effective source digest, compiler, Nextest,
+release settings, and every file's digest and executable bit. Execution rejects
+different sources, missing or changed files, inherited selection overrides, and
+the wrong host architecture. The source checkout supplies fixtures and must
+match the build checkout, including untracked source files. CI downloads only
+the named artifact from the current workflow run; artifacts are not shared caches.
+The build runner and artifact service remain trusted. Digests detect corruption
+and mismatches, not a compromised producer that forges its own metadata.
+
+Doctests use rustdoc's extraction inventory and compilation checks, preserving
+`compile_fail`, error-code checks, `no_run`, and `should_panic`. Transfer preparation
+disables merging because the pinned rustdoc's merged runner executes despite
+global `--no-run`. Each runnable standalone program must subsequently execute on
+RISC-V. Ordinary `just test` doctests retain rustdoc's default merging behavior.
 
 Example names and feature requirements come from Cargo metadata. Use
 `just test-miri --rsa` for the focused RSA scope and `just test-fuzz --targets A,B`
@@ -58,6 +86,17 @@ latest report summarizes the selected cases and their requested budgets.
 
 `ct/manifest.py` owns shared target and measurement selection.
 `ct/provenance.py` owns shared file hashing and build identity.
+
+RISC-V CT uses `just ct-full --target riscv64gc-unknown-linux-gnu --prepare-archive ARCHIVE`
+on the x86-64 build host and the corresponding `--run-archive ARCHIVE` on physical
+RISC-V. Preparation retains strict API/artifact validation, generated-code checks,
+and the cleanup sentinel. It also compiles and disassembles the exact DudeCT
+executable that will be timed. The consumer verifies the source and artifacts,
+then runs the existing full manifest campaign with unchanged sampling, threshold,
+and per-case timeouts. No target code is rebuilt during measurement. Reports
+distinguish build and measurement hosts and retain the original preparation bundle.
+This transfer mode is restricted to RISC-V; it cannot bypass native BINSEC on
+targets that require it.
 
 `ct/full.py`, `ct/binsec.py`, and `ct/validate.py` back `just ct-full`,
 `just ct-binsec`, and `just ct-validate`. The remaining Python files under
@@ -121,6 +160,8 @@ fuzz commands run independently of that plan.
 | `lib/fuzz-packages.sh` | Fuzz scripts |
 | `lib/python.sh` | Python-backed check, test, CT, and benchmark scripts |
 | `lib/toolchain.py`, `lib/toolchain.sh` | Shared toolchain selection for installers, builds, checks, tests, and benchmarks |
+| `lib/evidence_bundle.py` | Source binding, sealing, and transfer integrity for RISC-V tests and CT |
+| `lib/riscv_build.py` | Pinned RISC-V cross-compiler environment for test and CT preparation |
 
 Python tooling requires Python 3.11 or newer. The updater installs its catalog-pinned
 Python libraries into a temporary virtual environment; checks and benchmarks use
@@ -146,7 +187,8 @@ The catalog's `ci` section selects the Cargo tools needed by `just ci-check`,
 test commands include doctests. Only Linux x86-64 adds the `ci-policy` tools and runs `just ci-policy`:
 Cargo Deny checks the full target graph in `deny.toml`, and Cargo Audit checks
 the lockfile. Every host retains native and portable Clippy, independent-workspace
-linting, documentation, and runtime tests. Linux CI omits OpenSSL development
+linting, documentation, and runtime tests; RISC-V performs its compilation checks
+on the cross-build host and executes the resulting tests on native hardware. Linux CI omits OpenSSL development
 packages, pkgconf, and recommended APT packages; CMake, Clang/libclang, Perl,
 and the C/C++ build tools remain prerequisites for native test dependencies.
 This mode omits Cargo Rail because `--all` bypasses affected-work

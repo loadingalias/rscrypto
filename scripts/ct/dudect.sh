@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export RUSTUP_TOOLCHAIN
-RUSTUP_TOOLCHAIN="$("$(dirname "${BASH_SOURCE[0]}")/../lib/toolchain.sh" --host)"
+TOOLCHAIN="$(dirname "${BASH_SOURCE[0]}")/../lib/toolchain.sh"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TARGET=""
@@ -25,8 +24,8 @@ Every run retains one shared binary bundle and isolated measurements under:
   target/ct/<target>/<profile>/dudect/runs/<run>/
 
 Notes:
-  --target records the host target for evidence placement. Cross-target dudect
-  requires a physical runner for that target and is intentionally not emulated.
+  --prepare-only permits cross-compilation with an explicit target linker.
+  Measurement requires a physical runner for that target and is not emulated.
 USAGE
 }
 
@@ -83,8 +82,11 @@ if [[ -n "$FILTER" ]] && \
 fi
 
 if [[ -z "$TARGET" ]]; then
-  TARGET="$(rustc -vV | awk -F': ' '/^host:/ {print $2}')"
+  TARGET="$("$TOOLCHAIN" --print-host)"
 fi
+
+export RUSTUP_TOOLCHAIN
+RUSTUP_TOOLCHAIN="$("$TOOLCHAIN" --target "$TARGET")"
 
 HOST_TARGET="$(rustc -vV | awk -F': ' '/^host:/ {print $2}')"
 target_runs_on_host() {
@@ -98,7 +100,7 @@ target_runs_on_host() {
   esac
 }
 
-if ! target_runs_on_host "$TARGET" "$HOST_TARGET"; then
+if ! target_runs_on_host "$TARGET" "$HOST_TARGET" && [[ "$PREPARE_ONLY" != 1 ]]; then
   echo "dudect target must match physical host target: requested $TARGET, host is $HOST_TARGET" >&2
   exit 2
 fi

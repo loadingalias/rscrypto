@@ -11,13 +11,15 @@ proof=false
 case "${1:-}" in
   --ci-ct-full) ci=true; profile=ci-ct; proof=true; shift ;;
   --ci) ci=true; shift ;;
-  --ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-bench) ci=true; profile="${1#--}"; shift ;;
+  --ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-bench|--ci-riscv-build|--ci-riscv-run) ci=true; profile="${1#--}"; shift ;;
 esac
 case "$profile:$platform" in
+  ci-riscv-run:riscv64-linux) ;;
+  ci-riscv-run:*|ci-riscv-build:riscv64-linux) echo "invalid RISC-V tooling host" >&2; exit 64 ;;
   ci:*|ci-bench:*|ci-ct:*|*:x86_64-linux|ci-fuzz:aarch64-linux) ;;
   *) echo "$profile tooling is unsupported on $platform" >&2; exit 64 ;;
 esac
-[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh [--ci|--ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-ct-full|--ci-bench]" >&2; exit 64; }
+[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh [--ci|--ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-ct-full|--ci-bench|--ci-riscv-build|--ci-riscv-run]" >&2; exit 64; }
 machine="${platform%-linux}"
 [[ "$machine" != powerpc64le ]] || machine=ppc64le
 case "$platform" in
@@ -113,7 +115,18 @@ components=()
 if [[ "$ci" == false ]]; then mapfile -t components < <(catalog_get "$platform" components); fi
 component_args=()
 for component in "${components[@]}"; do component_args+=(--component "$component"); done
-if [[ "$profile" == ci-compat ]]; then
+if [[ "$profile" == ci-riscv-build ]]; then
+  nightly="$(python3 "$SCRIPT_DIR/../lib/toolchain.py" --target riscv64gc-unknown-linux-gnu)"
+  rustup toolchain install "$channel" --profile minimal --component rustfmt
+  rustup toolchain install "$nightly" --profile minimal --component clippy --component llvm-tools
+  rustup target add --toolchain "$nightly" riscv64gc-unknown-linux-gnu
+elif [[ "$profile" == ci-riscv-run ]]; then
+  # No compiler workloads run here; Rust supplies the pinned Nextest launcher
+  # and host identity used by the existing CT orchestrator.
+  stable="$(python3 "$SCRIPT_DIR/../lib/toolchain.py")"
+  rustup toolchain install "$stable" --profile minimal
+  rustup toolchain install "$channel" --profile minimal
+elif [[ "$profile" == ci-compat ]]; then
   python3 "$REPO_ROOT/scripts/check/compat.py" --install
 elif [[ "$profile" == ci-package ]]; then
   python3 "$REPO_ROOT/scripts/check/package.py" --install
@@ -238,6 +251,6 @@ case "$profile" in
   ci-compat) wasmtime --version ;;
   ci-fuzz) cargo fuzz --version ;;
   ci-ct|ci-miri|ci-package|ci-bench) just --version ;;
-  ci) cargo nextest --version ;;
+  ci|ci-riscv-build|ci-riscv-run) cargo nextest --version ;;
 esac
 printf 'Installed %s tooling. Load with: source "%s"\n' "$platform" "$environment"

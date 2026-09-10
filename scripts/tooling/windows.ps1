@@ -106,7 +106,9 @@ try {
     Install-Exe $gitInstaller @('/VERYSILENT', '/NORESTART', '/NOCANCEL', '/SP-', ('/DIR="' + $gitDirectory + '"'))
     $binDirectory = Join-Path $prefix 'bin'
     New-Item -ItemType Directory -Force $binDirectory | Out-Null
-    Get-PinnedDownload $native.assets.jq.url $native.assets.jq.sha256 (Join-Path $binDirectory 'jq.exe')
+    if (-not $CiCt) {
+        Get-PinnedDownload $native.assets.jq.url $native.assets.jq.sha256 (Join-Path $binDirectory 'jq.exe')
+    }
     # Keep Microsoft's link.exe ahead of Git's Unix link utility.
     $paths = @($msvcBin, $pythonDirectory, $binDirectory, (Join-Path $gitDirectory 'cmd'),
         (Join-Path $gitDirectory 'bin'), (Join-Path $gitDirectory 'usr\bin'))

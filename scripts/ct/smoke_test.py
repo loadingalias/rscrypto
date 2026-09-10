@@ -16,7 +16,8 @@ ROOT = Path(__file__).resolve().parents[2]
 def main():
   with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
-    for name in ('scripts/ct/dudect.sh', 'scripts/ct/dudect_execute.py', 'scripts/ct/manifest.py', 'scripts/lib/python.sh'):
+    for name in ('scripts/ct/dudect.sh', 'scripts/ct/dudect_execute.py', 'scripts/ct/manifest.py',
+                 'scripts/ct/provenance.py', 'scripts/lib/python.sh'):
       path = root / name
       path.parent.mkdir(parents=True, exist_ok=True)
       shutil.copy2(ROOT / name, path)
@@ -30,7 +31,7 @@ def main():
     tool(binary / 'llvm', "print('fixture symbols')")
     tool(binary / 'cargo', '''
 args = sys.argv
-build = Path(args[args.index('--target-dir') + 1]) / 'fixture-host/release'
+build = Path(args[args.index('--target-dir') + 1]) / args[args.index('--target') + 1] / 'release'
 build.mkdir(parents=True, exist_ok=True)
 path = build / 'rscrypto-ct-dudect'
 path.write_text('unused fixture')
@@ -78,6 +79,14 @@ if __name__ == '__main__':
       if '--smoke' in args:
         report = json.loads((root / 'target/ct/fixture-host/release/dudect/dudect-report.json').read_text())
         assert report['requested_samples_by_case'] == dict(expected)
+    # Foreign code may be prepared but must never be timed by this host.
+    (root / 'budgets.jsonl').write_text('')
+    cross = ['bash', 'scripts/ct/dudect.sh', '--target', 'riscv64gc-unknown-linux-gnu']
+    result = subprocess.run(cross, cwd=root, env=env, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 2 and 'physical host' in result.stderr, result.stderr
+    result = subprocess.run([*cross, '--prepare-only'], cwd=root, env=env, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (root / 'budgets.jsonl').read_text()
   manifest = tomllib.loads((ROOT / 'ct.toml').read_text())
   assert all(isinstance(case['smoke_samples'], int) and case['smoke_samples'] >= 2 for case in manifest['dudect_case'])
   print('DudeCT smoke policy regressions passed')

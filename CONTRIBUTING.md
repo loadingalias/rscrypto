@@ -168,6 +168,13 @@ Add the risk-specific evidence reached by the change:
 Cross-compilation proves compilation, not runtime behavior, constant-time
 execution, or performance. Record target lanes that cannot run.
 
+RISC-V CI separates cross-compilation from native execution to avoid long builds
+on the physical runner. Both native-dispatch and portable release suites,
+doctests, and the full CT campaign remain required. The transfer commands and
+integrity requirements are documented in [scripts/README.md](scripts/README.md).
+A successful preparation job does not qualify the target; its execution job
+must also pass for the same source and artifacts.
+
 ## Review and submit
 
 Inspect and commit only the intended files:

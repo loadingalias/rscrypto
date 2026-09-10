@@ -80,6 +80,13 @@ evidence must be collected, not that a candidate has passed: each release still
 needs successful exact-source native results across all selected architectures.
 Neither cross-compilation nor a different microarchitecture is timing proof.
 
+RISC-V CI prepares CT artifacts on x86-64 and measures the transferred executable
+on physical RISC-V. The preparation bundle binds the exact source, compiler,
+binary, disassembly, and validation evidence. The timing reports retain both
+host identities. Preparation alone supplies no timing result, and transferred
+execution retains the same required cases and acceptance thresholds. See
+[the transfer workflow](../scripts/README.md#constant-time-evidence).
+
 Authentication failures remain opaque even when their inputs are public. See
 [`secret-ownership.md`](secret-ownership.md) for comparison capabilities and
 [`secret-lifecycle.md`](secret-lifecycle.md) for cleanup evidence.

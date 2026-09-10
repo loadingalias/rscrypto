@@ -54,7 +54,7 @@ elif name == 'python3':
         executable.write_text('#!/bin/sh\nexit 0\n')
         executable.chmod(0o755)
         print(directory)
-    elif script in ('toolchain.py', 'compat.py', 'package.py') and '--install' in args:
+    elif script in ('compat.py', 'package.py') and '--install' in args:
         pass
     else:
         sys.exit(subprocess.run([sys.executable, *args]).returncode)
@@ -131,6 +131,7 @@ class LinuxInstall(unittest.TestCase):
                     self.assertEqual(targets, [host, host.removesuffix('gnu') + 'musl'] if binary else [])
                 apt = next(c for c in calls if c[0] == 'apt-get' and '--allow-downgrades' in c)
                 self.assertIn('--no-install-recommends', apt)
+                self.assertIn('jq=1.0', apt)
                 self.assertEqual([a for a in apt if a.endswith('=1.0')],
                                  [p + '=1.0' for p in CATALOG['linux-ci']['packages'] +
                                   (CATALOG['ci-musl']['packages'] if platform in ('x86_64-linux', 'aarch64-linux') else [])])
@@ -146,6 +147,7 @@ class LinuxInstall(unittest.TestCase):
         self.assertEqual([c[-1] for c in installs], [f"just@{CATALOG['cargo']['just']}"])
         archives = [c[-2] for c in calls if c[0] == 'python3' and 'install-archive' in c]
         self.assertEqual(archives, ['cargo-binstall', 'wasmtime'])
+        self.assertFalse(any('jq=1.0' in c for c in calls))
         self.assertFalse(any('musl-tools=1.0' in c for c in calls))
         self.assertFalse(any('--install' in c and any(arg.endswith('toolchain.py') for arg in c) for c in calls))
 
@@ -175,6 +177,8 @@ class LinuxInstall(unittest.TestCase):
                 apt = next(c for c in calls if c[0] == 'apt-get' and '--allow-downgrades' in c)
                 self.assertEqual([a for a in apt if a.endswith('=1.0')],
                                  [p + '=1.0' for p in CATALOG['linux-ci' if profile == 'ci-bench' else profile]['packages']])
+                if profile != 'ci-bench':
+                    self.assertNotIn('jq=1.0', apt)
                 rustup = [c for c in calls if c[:3] == ['rustup', 'toolchain', 'install']]
                 self.assertEqual(len(rustup), 2 if profile in ('ci-fuzz', 'ci-miri') or platform in ('s390x-linux', 'powerpc64le-linux', 'riscv64-linux') else 1)
                 self.assertEqual([c[i + 1] for c in rustup for i, arg in enumerate(c) if arg == '--component'],
@@ -191,16 +195,37 @@ class LinuxInstall(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         installs = [c for c in calls if c[0] == 'cargo' and 'binstall' in c]
         self.assertEqual([c[-1] for c in installs], [f"just@{CATALOG['cargo']['just']}"])
+        apt = next(c for c in calls if c[0] == 'apt-get' and '--allow-downgrades' in c)
+        self.assertIn('jq=1.0', apt)
         compiler_installs = [c for c in calls if '--install' in c]
         self.assertEqual(len(compiler_installs), 1)
         self.assertTrue(compiler_installs[0][1].endswith('scripts/check/package.py'))
         self.assertFalse(any('musl-tools=1.0' in c for c in calls))
+
+    def test_riscv_build_and_execution_tooling_are_separate(self):
+        nightly = tomllib.loads((ROOT / '.config/toolchains.toml').read_text())['nightly']
+        for platform, profile in (('x86_64-linux', 'ci-riscv-build'), ('riscv64-linux', 'ci-riscv-run')):
+            with self.subTest(profile=profile):
+                result, calls, _ = self.provision(platform, profile=profile)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                apt = next(c for c in calls if c[0] == 'apt-get' and '--allow-downgrades' in c)
+                self.assertEqual([a for a in apt if a.endswith('=1.0')],
+                                 [p + '=1.0' for p in CATALOG[profile]['packages']])
+                installs = [c for c in calls if c[:3] == ['rustup', 'toolchain', 'install']]
+                self.assertIn(nightly, [c[3] for c in installs])
+                components = [c[i + 1] for c in installs for i, arg in enumerate(c) if arg == '--component']
+                self.assertEqual(components, ['rustfmt', 'clippy', 'llvm-tools'] if profile.endswith('build') else [])
+                if profile.endswith('build'):
+                    self.assertIn(['rustup', 'target', 'add', '--toolchain', nightly, 'riscv64gc-unknown-linux-gnu'], calls)
+                else:
+                    self.assertFalse(any(c[0] == 'cargo' and ('build' in c or 'install' in c) for c in calls))
 
     def test_proof_tools_only_on_supported_full_ct_hosts(self):
         for platform in ('x86_64-linux', 'aarch64-linux', 's390x-linux', 'powerpc64le-linux', 'riscv64-linux'):
             with self.subTest(platform=platform):
                 result, calls, _ = self.provision(platform, profile='ci-ct-full')
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertFalse(any('jq=1.0' in c for c in calls))
                 opam = [c for c in calls if c[0] == 'opam']
                 if platform in ('x86_64-linux', 'aarch64-linux'):
                     self.assertIn(CATALOG['ci-ct-proof']['opam-repository'], opam[0])

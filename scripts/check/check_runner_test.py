@@ -121,9 +121,9 @@ if name == 'cargo' and 'clippy' in args:
     environment.update(PATH=f'{binary}:{os.environ["PATH"]}', CHECK_PYTHON=sys.executable,
                        CHECK_LOG=str(log), CHECK_HOST='aarch64-apple-darwin')
 
-    def run(mode, **extra):
+    def run(mode, *args, **extra):
       log.write_text('')
-      result = subprocess.run(['bash', str(root / 'scripts/check/check.sh'), mode],
+      result = subprocess.run(['bash', str(root / 'scripts/check/check.sh'), mode, *args],
                               cwd=root, env={**environment, **extra}, capture_output=True,
                               text=True, timeout=30)
       return result, [json.loads(line) for line in log.read_text().splitlines()]
@@ -183,6 +183,15 @@ if name == 'cargo' and 'clippy' in args:
       if deny:
         assert '--target' not in deny[0]
       assert (['lint-independent-workspaces.sh'] in commands) == (mode != 'fix')
+    result, commands = run('target', 'riscv64gc-unknown-linux-gnu')
+    assert result.returncode == 0, result.stderr
+    cross = [c for c in commands if c[0] == 'cargo' and 'clippy' in c]
+    assert len(cross) == 2
+    assert all('--all-targets' in c and c[c.index('--target') + 1] == 'riscv64gc-unknown-linux-gnu' for c in cross)
+    assert all(c[1] == '+' + nightly for c in cross)
+    assert sum('--release' in c for c in cross) == 1
+    assert ['lint-independent-workspaces.sh'] in commands
+    assert not any('--fix' in c for c in commands)
     result, commands = run('check')
     assert result.returncode == 0, result.stderr
     inventories = [c for c in commands if c[0] == 'rustup']
