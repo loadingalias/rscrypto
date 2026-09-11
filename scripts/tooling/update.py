@@ -89,6 +89,14 @@ def pinned_url(url):
     return {'url': resolved, 'sha256': hashlib.sha256(data).hexdigest()}
 
 
+def nasm_release():
+    index = fetch('https://www.nasm.us/pub/nasm/releasebuilds/')[0].decode()
+    versions = re.findall(r'href="(\d+\.\d+(?:\.\d+)?)/"', index)
+    if not versions:
+        raise ValueError('no stable NASM release')
+    return max(versions, key=lambda version: tuple(map(int, version.split('.'))))
+
+
 def github_asset(repo, name):
     matches = [asset for asset in release(repo)['assets'] if asset['name'] == name]
     if len(matches) != 1:
@@ -144,6 +152,7 @@ def resolve_catalog():
                              and semver(item['name'].removeprefix('Python ')))[1]
     zig = api('https://ziglang.org/download/index.json')
     versions['zig'] = max((semver(v), v) for v in zig if semver(v))[1]
+    versions['nasm'] = nasm_release()
     data['versions'] = versions
     # The release archive is authoritative even before the upgrade notifier enables an LTS.
     meta = fetch('https://changelogs.ubuntu.com/meta-release-lts')[0].decode()
@@ -158,6 +167,9 @@ def resolve_catalog():
     release_text = fetch(archive)[0].decode()
     if f'Version: {ubuntu}\n' not in release_text:
         raise ValueError('Ubuntu snapshot does not match the selected LTS')
+    ci_release = fetch(f'https://snapshot.ubuntu.com/ubuntu/{snapshot}/dists/{data["linux-ci"]["codename"]}/Release')[0].decode()
+    if f'Version: {data["linux-ci"]["ubuntu"]}\n' not in ci_release:
+        raise ValueError('Ubuntu snapshot does not match the CI runner release')
     data['linux'].update(ubuntu=ubuntu, codename=record['Dist'], snapshot=snapshot)
     channel_bytes, channel_url = fetch('https://aka.ms/vs/stable/channel')
     channel = json.loads(channel_bytes)
@@ -183,8 +195,10 @@ def resolve_catalog():
         rustup_url = f'https://static.rust-lang.org/rustup/archive/{versions["rustup"]}/{host}/rustup-init' + ('.exe' if windows else '')
         checksum = fetch(rustup_url + '.sha256')[0].decode().split()[0]
         assets['rustup'] = {'url': rustup_url, 'sha256': checksum}
+        if platform == 'riscv64-linux':
+            assets['cargo-binstall'] = github_asset(REPOS['cargo-binstall'], f'cargo-binstall-{host.removesuffix("gnu")}musl.tgz')
         if platform in NATIVE_SOURCE_PLATFORMS:
-            continue  # Native Cargo installs; distro CMake/Clang are snapshot-pinned.
+            continue  # Distro CMake/Clang are snapshot-pinned; missing binaries build natively.
         assets['cargo-binstall'] = github_asset(REPOS['cargo-binstall'], f'cargo-binstall-{host}.' + ('zip' if windows else 'tgz'))
         assets['cargo-rail'] = github_asset(REPOS['cargo-rail'], f'cargo-rail-{host}.' + ('zip' if windows else 'tar.gz'))
         cmake_arch = ('arm64' if arch == 'aarch64' else 'x86_64') if windows else arch
@@ -199,6 +213,8 @@ def resolve_catalog():
             assets['git'] = github_asset(REPOS['git'], f'Git-{git_name}-' + ('arm64' if arch == 'aarch64' else '64-bit') + '.exe')
             assets['jq'] = github_asset(REPOS['jq'], f'jq-windows-{pyarch}.exe')
             assets['powershell'] = github_asset(REPOS['powershell'], f'PowerShell-{versions["powershell"]}-win-' + ('arm64' if arch == 'aarch64' else 'x64') + '.zip')
+            if platform == 'x86_64-win':
+                assets['nasm'] = pinned_url(f'https://www.nasm.us/pub/nasm/releasebuilds/{versions["nasm"]}/win64/nasm-{versions["nasm"]}-win64.zip')
         else:
             entry = zig[versions['zig']][f'{arch}-linux']
             assets['zig'] = {'url': entry['tarball'], 'sha256': entry['shasum']}

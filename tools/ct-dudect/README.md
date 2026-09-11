@@ -19,6 +19,8 @@ legacy exports rather than treating them as complete measurements.
 
 `vendor/dudect-bencher` retains the selected upstream 0.7.0 source and licenses.
 `UPSTREAM.json` records the crate archive identity and original file hashes.
+Its `local_files` records the exact hash of the documented macro whitespace
+normalization; the identity test checks that hash while retaining the original.
 The local patch records class order after the timed closure and exports every
 sample using that order. Buffered output is flushed before reporting a result.
 Macro documentation whitespace is normalized. The statistical implementation

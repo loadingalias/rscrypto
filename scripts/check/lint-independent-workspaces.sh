@@ -32,7 +32,7 @@ while IFS= read -r package_manifest; do
     echo "Failed to resolve Cargo workspace for $package_manifest" >&2
     exit 1
   fi
-  workspace_root=$(printf '%s\n' "$metadata" | jq -er '.workspace_root')
+  workspace_root=$(printf '%s\n' "$metadata" | jq -erj '.workspace_root')
   workspace_root=$(cd "$workspace_root" && pwd -P)
   if [[ "$workspace_root" == "$REPO_ROOT" ]]; then
     continue
@@ -94,7 +94,6 @@ check_cfg_flags=(
   '--check-cfg=cfg(target_feature,values("movdiri","movdir64b","serialize"))'
 )
 
-failed=0
 for manifest in "${manifests[@]}"; do
   relative_manifest=${manifest#"$REPO_ROOT/"}
   if [[ "$MESSAGE_FORMAT" == json ]]; then
@@ -112,10 +111,10 @@ for manifest in "${manifests[@]}"; do
     --all-features
     --no-deps
   )
-  while IFS= read -r vendored_package; do
+  while IFS= read -r -d '' vendored_package; do
     cargo_args+=(--exclude "$vendored_package")
   done < <(cargo metadata --locked --no-deps --format-version 1 --manifest-path "$manifest" |
-    jq -r '.packages[] | select(.manifest_path | contains("/vendor/")) | .name')
+    jq --raw-output0 '.packages[] | select(.manifest_path | split("\\") | join("/") | contains("/vendor/")) | .name')
   if [[ "$MESSAGE_FORMAT" == json ]]; then
     cargo_args+=(--message-format=json)
   fi
@@ -125,9 +124,5 @@ for manifest in "${manifests[@]}"; do
     compiler_flags+=(--cap-lints "$LINT_CAP")
   fi
 
-  if ! CARGO_TARGET_DIR="$TARGET_DIR" cargo "${cargo_args[@]}" -- "${compiler_flags[@]}"; then
-    failed=1
-  fi
+  CARGO_TARGET_DIR="$TARGET_DIR" cargo "${cargo_args[@]}" -- "${compiler_flags[@]}"
 done
-
-exit "$failed"

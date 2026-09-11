@@ -26,7 +26,8 @@ def main():
       expected.add(feature)
       pending.extend(features[feature])
     metadata = json.loads(subprocess.check_output([
-      'cargo', 'metadata', '--offline', '--locked', '--format-version', '1',
+      str(ROOT / 'scripts/lib/toolchain.sh'), '--exec',
+      'cargo', 'metadata', '--locked', '--format-version', '1',
       '--manifest-path', str(manifest)], cwd=ROOT))
     package_id = next(p['id'] for p in metadata['packages']
                       if Path(p['manifest_path']) == ROOT / 'Cargo.toml')

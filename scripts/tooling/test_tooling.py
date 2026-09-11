@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -16,6 +17,20 @@ import update
 
 
 class Tooling(unittest.TestCase):
+    def test_windows_x64_requires_nasm(self):
+        data = catalog.read()
+        del data['x86_64-win']['assets']['nasm']
+        with self.assertRaisesRegex(ValueError, 'missing NASM'):
+            catalog.validate(data)
+
+    def test_nasm_release_excludes_prereleases_and_sorts_numerically(self):
+        index = b'<a href="3.02/">3.02</a><a href="3.10/">3.10</a><a href="4.00rc1/">rc</a>'
+        with patch.object(update, 'fetch', return_value=(index, '')):
+            self.assertEqual(update.nasm_release(), '3.10')
+        with patch.object(update, 'fetch', return_value=(b'<a href="4.00rc1/">rc</a>', '')):
+            with self.assertRaisesRegex(ValueError, 'no stable NASM'):
+                update.nasm_release()
+
     def test_catalog_roundtrip_and_profile_boundaries(self):
         data = catalog.read()
         catalog.validate(data)
@@ -29,7 +44,8 @@ class Tooling(unittest.TestCase):
             with self.assertRaises(ValueError):
                 catalog.validate(broken)
         for platform in catalog.NATIVE_SOURCE_PLATFORMS:
-            self.assertEqual(set(data[platform]['assets']), {'rustup'})
+            self.assertEqual(set(data[platform]['assets']),
+                             {'rustup', 'cargo-binstall'} if platform == 'riscv64-linux' else {'rustup'})
             self.assertEqual(data[platform]['components'], [])
 
     def test_stable_release_selection_respects_msrv_and_yanks(self):
@@ -209,6 +225,19 @@ class ActionPins(unittest.TestCase):
 
 
 class Archives(unittest.TestCase):
+    def test_single_archive_cli_preserves_paths_with_spaces(self):
+        with tempfile.TemporaryDirectory(prefix='rscrypto tooling ') as temporary:
+            prefix = Path(temporary)
+            asset = catalog.read()['x86_64-win']['assets']['llvm']
+            destination = prefix / 'llvm' / asset['sha256'][:16]
+            destination.mkdir(parents=True)
+            (destination / '.rscrypto-installed').write_text(asset['sha256'] + '\n')
+            result = subprocess.run(
+                [sys.executable, str(Path(catalog.__file__)), 'install-archive',
+                 'x86_64-win', 'llvm', str(prefix)],
+                capture_output=True, text=True, check=True)
+            self.assertEqual(result.stdout.strip(), str(destination))
+
     def test_extraction_rejects_traversal(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary); archive=root/'archive.tar'

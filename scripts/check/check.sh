@@ -2,14 +2,21 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
-[[ $# -eq 1 ]] || { echo 'usage: scripts/check/check.sh {check|fix|local|native}' >&2; exit 2; }
+[[ $# -ge 1 && $# -le 2 ]] || { echo 'usage: scripts/check/check.sh {check|fix|local|native|target TRIPLE}' >&2; exit 2; }
 mode=$1
 case "$mode" in
-  check|fix|local|native) ;;
+  check|fix|local|native) [[ $# -eq 1 ]] || exit 2 ;;
+  target) [[ $# -eq 2 && "$2" == riscv64gc-unknown-linux-gnu ]] || exit 2 ;;
   *) echo 'usage: scripts/check/check.sh {check|fix|local|native}' >&2; exit 2 ;;
 esac
 
 host=$(scripts/lib/toolchain.sh --print-host)
+if [[ "$mode" == target ]]; then
+  host=$2
+  # Cargo keeps build scripts/proc macros on the build host; all checked product
+  # targets and independent workspaces use the same RISC-V cfg as native CI.
+  export CARGO_BUILD_TARGET="$host"
+fi
 [[ -n "$host" ]] || { echo 'cannot determine Rust host' >&2; exit 1; }
 stable=$(scripts/lib/toolchain.sh)
 export RUSTUP_TOOLCHAIN
@@ -27,7 +34,7 @@ print(','.join(sorted(selected)))
 PY
 )
 targets=("$host")
-if [[ "$mode" != native ]]; then
+if [[ "$mode" != native && "$mode" != target ]]; then
   catalog=$(jq -er '.targets | if length > 0 and length == (unique | length) then .[] else error("invalid target catalog") end' .config/target-matrix.json)
   while IFS= read -r target; do
     [[ "$target" == "$host" ]] || targets+=("$target")
@@ -108,10 +115,7 @@ else
 fi
 [[ "$mode" != fix ]] || exit 0
 
-# Use the host toolchain for independent workspaces, dependencies, and docs.
+# Native CI keeps architecture-sensitive compilation and documentation here.
 scripts/check/lint-independent-workspaces.sh
-deny_args=(--locked --workspace --all-features)
-[[ "$mode" != native ]] || deny_args+=(--target "$host")
-cargo deny "${deny_args[@]}" check -D warnings all
-cargo audit
+if [[ "$mode" != native && "$mode" != target ]]; then scripts/check/dependencies.sh; fi
 RUSTDOCFLAGS="${RUSTDOCFLAGS:+$RUSTDOCFLAGS }-D warnings" cargo doc --workspace --no-deps --all-features --locked

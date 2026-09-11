@@ -11,11 +11,81 @@ import tempfile
 import tomllib
 
 
-def main():
-  source = Path(__file__).resolve().parents[2]
+def check_vendored_packages(source):
   with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
-    for name in ('scripts/check/check.sh', 'scripts/lib/toolchain.sh', 'scripts/lib/toolchain.py', 'scripts/lib/python.sh', 'Cargo.toml',
+    script = root / 'scripts/check/lint-independent-workspaces.sh'
+    script.parent.mkdir(parents=True)
+    shutil.copy2(source / 'scripts/check/lint-independent-workspaces.sh', script)
+    shutil.copy2(source / 'Cargo.toml', root / 'Cargo.toml')
+    workspace = root / 'tools/harness'
+    workspace.mkdir(parents=True)
+    (workspace / 'Cargo.toml').write_text('[workspace]\n')
+    binary = root / 'bin'
+    binary.mkdir()
+    cargo = binary / 'cargo'
+    cargo.write_text('#!' + sys.executable + '''
+import json, os, subprocess, sys
+from pathlib import Path
+args = sys.argv[1:]
+if Path(sys.argv[0]).name == 'jq':
+    result = subprocess.run([os.environ['REAL_JQ'], *args], capture_output=True)
+    sys.stdout.buffer.write(result.stdout.replace(b'\\n', b'\\r\\n'))
+    sys.stderr.buffer.write(result.stderr)
+    sys.exit(result.returncode)
+manifest = Path(args[args.index('--manifest-path') + 1])
+if args[0] == 'metadata':
+    prefix = os.environ['METADATA_PREFIX']
+    separator = os.environ['METADATA_SEPARATOR']
+    print(json.dumps({'workspace_root': str(manifest.parent), 'packages': [
+        {'name': name, 'manifest_path': prefix + separator.join(path.split('/'))}
+        for name, path in [('upstream', 'vendor/upstream/Cargo.toml'),
+                           ('harness', 'Cargo.toml'),
+                           ('vendor-tools', 'vendor-tools/Cargo.toml')]
+    ]}))
+else:
+    Path(os.environ['CHECK_LOG']).write_text(json.dumps(args))
+    if manifest.parent.name == os.environ.get('CHECK_FAIL_WORKSPACE'):
+        sys.exit(7)
+''')
+    cargo.chmod(0o755)
+    (binary / 'jq').symlink_to(cargo)
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in ('BASH_ENV', 'ENV') and not key.startswith('BASH_FUNC_')}
+    log = root / 'commands.json'
+    for prefix, separator in [('/repo/tools/harness/', '/'), ('C:\\repo\\tools\\harness\\', '\\')]:
+      result = subprocess.run(['bash', str(script)], cwd=root, capture_output=True, text=True, timeout=30,
+                              env={**environment, 'PATH': f'{binary}:{os.environ["PATH"]}',
+                                   'CHECK_LOG': str(log), 'METADATA_PREFIX': prefix,
+                                   'REAL_JQ': shutil.which('jq'),
+                                   'METADATA_SEPARATOR': separator})
+      assert result.returncode == 0, result.stderr
+      command = json.loads(log.read_text())
+      excluded = [command[i + 1] for i, arg in enumerate(command) if arg == '--exclude']
+      assert excluded == ['upstream'], (prefix, command)
+      assert '--workspace' in command and '--all-targets' in command and '--no-deps' in command
+
+    later = root / 'tools/later'
+    later.mkdir()
+    (later / 'Cargo.toml').write_text('[workspace]\n')
+    result = subprocess.run(['bash', str(script)], cwd=root, capture_output=True, text=True, timeout=30,
+                            env={**environment, 'PATH': f'{binary}:{os.environ["PATH"]}',
+                                 'CHECK_LOG': str(log), 'METADATA_PREFIX': '/repo/tools/harness/',
+                                 'REAL_JQ': shutil.which('jq'), 'METADATA_SEPARATOR': '/',
+                                 'CHECK_FAIL_WORKSPACE': 'harness'})
+    assert result.returncode == 7, (result.returncode, result.stderr)
+    command = json.loads(log.read_text())
+    assert Path(command[command.index('--manifest-path') + 1]).resolve() == (workspace / 'Cargo.toml').resolve(), command
+    assert 'Linting independent workspace: tools/later/' not in result.stdout
+
+
+def main():
+  source = Path(__file__).resolve().parents[2]
+  check_vendored_packages(source)
+  with tempfile.TemporaryDirectory() as temporary:
+    root = Path(temporary)
+    for name in ('scripts/check/check.sh', 'scripts/check/dependencies.sh', 'scripts/lib/toolchain.sh',
+                 'scripts/lib/toolchain.py', 'scripts/lib/python.sh', 'Cargo.toml',
                  'rust-toolchain.toml', '.config/toolchains.toml', '.config/target-matrix.json'):
       destination = root / name
       destination.parent.mkdir(parents=True, exist_ok=True)
@@ -51,14 +121,15 @@ if name == 'cargo' and 'clippy' in args:
     environment.update(PATH=f'{binary}:{os.environ["PATH"]}', CHECK_PYTHON=sys.executable,
                        CHECK_LOG=str(log), CHECK_HOST='aarch64-apple-darwin')
 
-    def run(mode, **extra):
+    def run(mode, *args, **extra):
       log.write_text('')
-      result = subprocess.run(['bash', str(root / 'scripts/check/check.sh'), mode],
+      result = subprocess.run(['bash', str(root / 'scripts/check/check.sh'), mode, *args],
                               cwd=root, env={**environment, **extra}, capture_output=True,
                               text=True, timeout=30)
       return result, [json.loads(line) for line in log.read_text().splitlines()]
 
     targets = json.loads((root / '.config/target-matrix.json').read_text())['targets']
+    assert set(tomllib.loads((source / 'deny.toml').read_text())['graph']['targets']) == set(targets)
     feature_graph = tomllib.loads((root / 'Cargo.toml').read_text())['features']
     features = set(feature_graph)
 
@@ -107,10 +178,20 @@ if name == 'cargo' and 'clippy' in args:
                      [['cargo', '+' + stable, 'fmt', '--all', '--', '--check']])
       assert not any('plan' in c for c in commands)
       deny = [c for c in commands if c[:2] == ['cargo', 'deny']]
-      assert len(deny) == (0 if mode == 'fix' else 1)
+      assert len(deny) == (0 if mode in ('fix', 'native') else 1)
+      assert (['cargo', 'audit'] in commands) == (mode not in ('fix', 'native'))
       if deny:
-        assert ('--target' in deny[0]) == (mode == 'native')
+        assert '--target' not in deny[0]
       assert (['lint-independent-workspaces.sh'] in commands) == (mode != 'fix')
+    result, commands = run('target', 'riscv64gc-unknown-linux-gnu')
+    assert result.returncode == 0, result.stderr
+    cross = [c for c in commands if c[0] == 'cargo' and 'clippy' in c]
+    assert len(cross) == 2
+    assert all('--all-targets' in c and c[c.index('--target') + 1] == 'riscv64gc-unknown-linux-gnu' for c in cross)
+    assert all(c[1] == '+' + nightly for c in cross)
+    assert sum('--release' in c for c in cross) == 1
+    assert ['lint-independent-workspaces.sh'] in commands
+    assert not any('--fix' in c for c in commands)
     result, commands = run('check')
     assert result.returncode == 0, result.stderr
     inventories = [c for c in commands if c[0] == 'rustup']

@@ -833,8 +833,11 @@ mod tests {
       return;
     }
 
-    let input: Vec<u8> = (0..4111)
-      .map(|i| (i as u8).wrapping_mul(19).wrapping_add((i >> 8) as u8))
+    let input: Vec<u8> = (0usize..4111)
+      .map(|i| {
+        let [low, high, ..] = i.to_le_bytes();
+        low.wrapping_mul(19).wrapping_add(high)
+      })
       .collect();
     for (name, kernel) in [
       ("openpgp/vpmsum", crc24_openpgp_vpmsum_safe as fn(u32, &[u8]) -> u32),
@@ -845,7 +848,7 @@ mod tests {
       for &state in STATES {
         for &offset in OFFSETS {
           for &len in LENS {
-            let slice = &input[offset..offset + len];
+            let slice = &input[offset..offset.strict_add(len)];
             assert_eq!(
               kernel(state, slice),
               super::super::portable::crc24_openpgp_slice8(state, slice),

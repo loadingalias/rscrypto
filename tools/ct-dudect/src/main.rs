@@ -44,6 +44,8 @@ use rscrypto::{
   traits::Kem as _,
 };
 
+use rscrypto::auth::rsa::diag_rsa_blinding_factor_inverse;
+
 const DEFAULT_SAMPLES: usize = 20_000;
 const MESSAGE: &[u8] = b"rscrypto constant-time dudect timing lane input";
 const BLAKE3_PARALLEL_MESSAGE_LEN: usize = 1024 * 1024;
@@ -1821,12 +1823,11 @@ fn rsa_pkcs1v15_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRn
   let (blinding_factor, blinding_inverse) = rsa_blinding_pair(&key);
 
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let message = if matches!(class, Class::Left) {
-      [0x42; 32]
+      [0x42; 64]
     } else {
-      rand_array::<32>(rng)
+      rand_array::<64>(rng)
     };
     inputs.push((class, message));
   }
@@ -1834,14 +1835,43 @@ fn rsa_pkcs1v15_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRn
   for (class, message) in inputs {
     runner.run_one(class, || {
       let mut out = vec![0u8; sig_len];
+      let mut scratch = key.private_scratch();
       key
-        .sign_pkcs1v15_with_blinding_factor(
+        .sign_pkcs1v15_with_blinding_factor_and_scratch(
           RsaPkcs1v15Profile::Sha256,
           &message,
           RsaBlindingPair::new(&blinding_factor, &blinding_inverse),
           &mut out,
+          &mut scratch,
         )
-        .is_ok()
+        .expect("RSA signing fixture must succeed");
+      core::hint::black_box(out[0])
+    });
+  }
+}
+
+fn rsa_pkcs1v15_os_blinding_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
+  let sig_len = key.signature_len();
+
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let message = if matches!(class, Class::Left) {
+      [0x42; 64]
+    } else {
+      rand_array::<64>(rng)
+    };
+    inputs.push((class, message));
+  }
+
+  for (class, message) in inputs {
+    runner.run_one(class, || {
+      let mut out = vec![0u8; sig_len];
+      let mut scratch = key.private_scratch();
+      key
+        .sign_pkcs1v15_with_scratch(RsaPkcs1v15Profile::Sha256, &message, &mut out, &mut scratch)
+        .expect("RSA signing fixture must succeed");
+      core::hint::black_box(out[0])
     });
   }
 }
@@ -1853,12 +1883,11 @@ fn rsa_pss_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRng) {
   let salt = [0x7a; 32];
 
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let message = if matches!(class, Class::Left) {
-      [0x42; 32]
+      [0x42; 64]
     } else {
-      rand_array::<32>(rng)
+      rand_array::<64>(rng)
     };
     inputs.push((class, message));
   }
@@ -1866,15 +1895,18 @@ fn rsa_pss_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRng) {
   for (class, message) in inputs {
     runner.run_one(class, || {
       let mut out = vec![0u8; sig_len];
+      let mut scratch = key.private_scratch();
       key
-        .sign_pss_with_salt_and_blinding_factor(
+        .sign_pss_with_salt_and_blinding_factor_and_scratch(
           RsaPssProfile::Sha256,
           &message,
           &salt,
           RsaBlindingPair::new(&blinding_factor, &blinding_inverse),
           &mut out,
+          &mut scratch,
         )
-        .is_ok()
+        .expect("RSA signing fixture must succeed");
+      core::hint::black_box(out[0])
     });
   }
 }
@@ -1955,6 +1987,34 @@ fn rsa_blinding_inverse_fixed_vs_random_factor(runner: &mut CtRunner, rng: &mut 
   }
 }
 
+fn rsa_blinding_inverse_full_width_fixed_vs_random_factor(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
+  let len = key.signature_len();
+  let mut factors = Vec::with_capacity(samples());
+  while factors.len() < samples() {
+    let mut factor = vec![0u8; len];
+    rng.fill(factor.as_mut_slice());
+    factor[0] &= 0x7f;
+    *factor.last_mut().expect("RSA blinding factors must be nonempty") |= 1;
+    let mut inverse = vec![0u8; len];
+    if diag_rsa_blinding_factor_inverse(&key, &factor, &mut inverse).is_ok() {
+      factors.push(factor);
+    }
+  }
+  for (index, class) in balanced_classes(rng, samples()).into_iter().enumerate() {
+    let factor = if matches!(class, Class::Left) {
+      &factors[0]
+    } else {
+      &factors[index]
+    };
+    runner.run_one(class, || {
+      let mut inverse = vec![0u8; len];
+      diag_rsa_blinding_factor_inverse(&key, factor, &mut inverse).expect("validated blinding factor must invert");
+      core::hint::black_box(inverse[0])
+    });
+  }
+}
+
 fn rsa_oaep_decrypt_fixed_vs_random_plaintext(runner: &mut CtRunner, rng: &mut BenchRng) {
   let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
   let sig_len = key.signature_len();
@@ -1963,8 +2023,7 @@ fn rsa_oaep_decrypt_fixed_vs_random_plaintext(runner: &mut CtRunner, rng: &mut B
   let seed = [0x52; 32];
 
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let plaintext = if matches!(class, Class::Left) {
       [0x42; 32]
     } else {
@@ -1987,15 +2046,17 @@ fn rsa_oaep_decrypt_fixed_vs_random_plaintext(runner: &mut CtRunner, rng: &mut B
   for (class, ciphertext) in inputs {
     runner.run_one(class, || {
       let mut out = vec![0u8; sig_len];
+      let mut scratch = key.private_scratch();
       key
-        .decrypt_oaep_with_blinding_factor(
+        .decrypt_oaep_with_blinding_factor_and_scratch(
           RsaOaepProfile::Sha256,
           label,
           &ciphertext,
           RsaBlindingPair::new(&blinding_factor, &blinding_inverse),
           &mut out,
+          &mut scratch,
         )
-        .is_ok()
+        .expect("RSA decryption fixture must succeed")
     });
   }
 }
@@ -2006,8 +2067,7 @@ fn rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext(runner: &mut CtRunner, rng: &m
   let (blinding_factor, blinding_inverse) = rsa_blinding_pair(&key);
 
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let plaintext = if matches!(class, Class::Left) {
       [0x42; 32]
     } else {
@@ -2027,13 +2087,15 @@ fn rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext(runner: &mut CtRunner, rng: &m
   for (class, ciphertext) in inputs {
     runner.run_one(class, || {
       let mut out = vec![0u8; sig_len];
+      let mut scratch = key.private_scratch();
       key
-        .decrypt_pkcs1v15_with_blinding_factor(
+        .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
           &ciphertext,
           RsaBlindingPair::new(&blinding_factor, &blinding_inverse),
           &mut out,
+          &mut scratch,
         )
-        .is_ok()
+        .expect("RSA decryption fixture must succeed")
     });
   }
 }
@@ -2705,6 +2767,10 @@ ctbench_main_with_seeds!(
     Some(0x703338346d756c73)
   ),
   (rsa_pkcs1v15_fixed_vs_random_message, Some(0x7273615f7369676e)),
+  (
+    rsa_pkcs1v15_os_blinding_fixed_vs_random_message,
+    Some(0x7273615f6f73626c)
+  ),
   (rsa_pss_fixed_vs_random_message, Some(0x7273615f70737373)),
   (
     rsa_pkcs1v15_full_width_vs_short_canonical_crt_exponent,
@@ -2712,6 +2778,10 @@ ctbench_main_with_seeds!(
   ),
   (rsa_private_exponent_fixed_width_high_byte, Some(0x7273615f65787068)),
   (rsa_blinding_inverse_fixed_vs_random_factor, Some(0x7273615f696e7662)),
+  (
+    rsa_blinding_inverse_full_width_fixed_vs_random_factor,
+    Some(0x7273615f6677696e)
+  ),
   (rsa_oaep_decrypt_fixed_vs_random_plaintext, Some(0x7273615f6f616570)),
   (rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext, Some(0x7273615f64656331)),
   (

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import os
 from pathlib import Path
 import shutil
@@ -89,6 +90,32 @@ def install_archive(name, asset, prefix):
 
 
 def validate(data):
+    if not isinstance(data['ci-compat']['workers'], int) or data['ci-compat']['workers'] < 1:
+        raise ValueError('ci-compat: workers must be a positive integer')
+    if any(asset not in data['x86_64-linux']['assets'] for asset in data['ci-compat']['assets']):
+        raise ValueError('ci-compat: missing pinned archive')
+    for profile, required in (('ci', {'just', 'cargo-nextest'}),
+                              ('ci-riscv-build', {'just', 'cargo-nextest'}),
+                              ('ci-riscv-run', {'just', 'cargo-nextest'}),
+                              ('ci-policy', {'cargo-deny', 'cargo-audit'}),
+                              ('ci-compat', {'just'}),
+                              ('ci-fuzz', {'just', 'cargo-fuzz'}),
+                              ('ci-ct', {'just'}),
+                              ('ci-miri', {'just'}),
+                              ('ci-package', {'just'}),
+                              ('ci-bench', {'just'})):
+        if set(data[profile]['cargo']) != required:
+            raise ValueError(f'{profile}: incorrect CI tool set')
+        if any(tool not in data['cargo'] for tool in data[profile]['cargo']):
+            raise ValueError(f'{profile}: missing Cargo tool version')
+    proof = data['ci-ct-proof']
+    if not re.fullmatch(r'git\+https://github\.com/ocaml/opam-repository\.git#[0-9a-f]{40}', proof['opam-repository']):
+        raise ValueError('ci-ct-proof: opam repository requires an exact commit')
+    if not re.fullmatch(r'ocaml-base-compiler\.\d+\.\d+\.\d+', proof['compiler']):
+        raise ValueError('ci-ct-proof: compiler requires an exact version')
+    if len(proof['opam']) != 3 or any(not re.fullmatch(name + r'\.\d+\.\d+\.\d+', value)
+            for name, value in zip(('binsec', 'bitwuzla', 'unisim_archisec'), proof['opam'])):
+        raise ValueError('ci-ct-proof: engine, solver and decoder require exact versions')
     for platform in PLATFORMS:
         config = data[platform]
         if 'miri' in config['components']:
@@ -102,6 +129,8 @@ def validate(data):
         assets = config['assets']
         if 'rustup' not in assets:
             raise ValueError(f'{platform}: missing native rustup archive')
+        if platform == 'x86_64-win' and 'nasm' not in assets:
+            raise ValueError(f'{platform}: missing NASM for native dependency assembly')
         if platform not in NATIVE_SOURCE_PLATFORMS and not {'cargo-rail', 'cargo-binstall', 'cmake', 'llvm'} <= assets.keys():
             raise ValueError(f'{platform}: missing native tool archives')
         for name, asset in assets.items():
@@ -126,7 +155,8 @@ def main():
         for key in args:
             value = value[key]
         if isinstance(value, list):
-            print('\n'.join(value))
+            for item in value:
+                print(item)
         elif isinstance(value, dict):
             print(json.dumps(value))
         else:
@@ -138,6 +168,9 @@ def main():
     elif command == 'validate':
         validate(data)
         print('Tooling catalog passed')
+    elif command == 'install-archive':
+        platform, name, prefix = args
+        print(install_archive(name, data[platform]['assets'][name], prefix))
     elif command == 'install-archives':
         platform, prefix = args
         for name, asset in data[platform]['assets'].items():

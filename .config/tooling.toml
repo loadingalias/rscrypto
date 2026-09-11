@@ -32,12 +32,72 @@ powershell = "7.6.5"
 rustup = "1.29.1"
 python = "3.14.7"
 zig = "0.16.0"
+nasm = "3.02"
 
 [linux]
 ubuntu = "26.04"
 codename = "resolute"
 snapshot = "20260906T054640Z"
 packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "pkgconf", "python3", "python3-venv", "unzip", "xz-utils", "zstd", "ninja-build", "libssl-dev", "perl", "m4", "shellcheck"]
+
+[ci]
+cargo = ["just", "cargo-nextest"]
+
+[ci-riscv-build]
+cargo = ["just", "cargo-nextest"]
+packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "python3", "cmake", "clang", "libclang-dev", "perl", "gcc-riscv64-linux-gnu", "g++-riscv64-linux-gnu", "libc6-dev-riscv64-cross"]
+
+[ci-riscv-run]
+cargo = ["just", "cargo-nextest"]
+packages = ["ca-certificates", "curl", "git", "python3"]
+
+[ci-compat]
+cargo = ["just"]
+assets = ["wasmtime"]
+packages = ["build-essential", "ca-certificates", "curl", "git", "python3"]
+workers = 8
+
+[ci-package]
+cargo = ["just"]
+
+[ci-fuzz]
+cargo = ["just", "cargo-fuzz"]
+components = []
+nightly-components = ["rust-src"]
+packages = ["build-essential", "ca-certificates", "curl", "git", "python3", "clang"]
+
+[ci-miri]
+cargo = ["just"]
+components = []
+nightly-components = ["miri", "rust-src"]
+packages = ["build-essential", "ca-certificates", "curl", "git", "python3"]
+
+[ci-ct]
+cargo = ["just"]
+components = ["llvm-tools"]
+packages = ["build-essential", "ca-certificates", "curl", "git", "python3"]
+
+[ci-ct-proof]
+opam-repository = "git+https://github.com/ocaml/opam-repository.git#40d8ad2a8bbef64bd1b88f2d61427310538bfcec"
+compiler = "ocaml-base-compiler.5.4.1"
+# Match the engine, solver, and decoder used by the existing selector proofs.
+opam = ["binsec.0.11.1", "bitwuzla.1.0.6", "unisim_archisec.0.0.14"]
+packages = ["opam", "pkg-config", "libgmp-dev", "autoconf", "bison", "flex", "m4", "unzip", "bubblewrap"]
+
+[ci-bench]
+cargo = ["just"]
+components = []
+
+[ci-musl]
+packages = ["musl-tools"]
+
+[ci-policy]
+cargo = ["cargo-deny", "cargo-audit"]
+
+[linux-ci]
+ubuntu = "24.04"
+codename = "noble"
+packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "python3", "cmake", "clang", "libclang-dev", "perl"]
 
 [windows]
 visual-studio = "18.9.2"
@@ -166,6 +226,10 @@ cargo = ["cargo-audit", "cargo-deny", "cargo-nextest", "cargo-mutants", "just", 
 url = "https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-pc-windows-msvc/rustup-init.exe"
 sha256 = "6f4bef66261261fcb43131be8720bab817d403a09edec7455c371974b90bdb7e"
 
+[x86_64-win.assets.nasm]
+url = "https://www.nasm.us/pub/nasm/releasebuilds/3.02/win64/nasm-3.02-win64.zip"
+sha256 = "161d0bfaff53c2f9e9f3e69fd0672323ebabafd1268976a5cec11be92a19aee7"
+
 [x86_64-win.assets.cargo-binstall]
 url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.23.0/cargo-binstall-x86_64-pc-windows-msvc.zip"
 sha256 = "f4641479477aca40387e88297e3813fab8e44a8d21f25faa44e0ff33e2bc1726"
@@ -208,6 +272,10 @@ os = "Ubuntu 26.04 LTS"
 [riscv64-linux.assets.rustup]
 url = "https://static.rust-lang.org/rustup/archive/1.29.1/riscv64gc-unknown-linux-gnu/rustup-init"
 sha256 = "e94134ed99fed1a3a1f13a3bf0a05d616fc1c2496ec0b557aaee4856cd34b2f2"
+
+[riscv64-linux.assets.cargo-binstall]
+url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.23.0/cargo-binstall-riscv64gc-unknown-linux-musl.tgz"
+sha256 = "ffea93b43f45e5967aadeb8943d75b54267cd8d6191a0f9f764b64d8327fd4f2"
 
 [s390x-linux]
 rust-host = "s390x-unknown-linux-gnu"

@@ -1773,15 +1773,6 @@ pub(crate) fn aes256_encrypt_block(ek: &Aes256EncKey, block: &mut [u8; BLOCK_SIZ
   }
 }
 
-#[cfg(all(
-  feature = "aegis256",
-  any(target_arch = "riscv64", all(test, not(target_arch = "s390x")))
-))]
-#[inline]
-pub(super) fn aes_enc_round_4_fixslice(blocks: &mut [[u8; BLOCK_SIZE]; 4], round_keys: &[[u8; BLOCK_SIZE]; 4]) {
-  fixslice64::cipher_round_4(blocks, round_keys);
-}
-
 /// Encrypt a single 16-byte block with AES-128.
 ///
 /// Mirrors [`aes256_encrypt_block`]: dispatches to AES-NI (x86_64), AES-CE
@@ -6023,8 +6014,8 @@ mod tests {
     assert_eq!(core::mem::size_of::<km::Km128Key>(), KEY_SIZE_128);
 
     for key_seed in [0u8, 0x5a, 0xff] {
-      let key_128 = core::array::from_fn(|i| key_seed.wrapping_add((i as u8).wrapping_mul(0x3d)));
-      let key_256 = core::array::from_fn(|i| key_seed.wrapping_add((i as u8).wrapping_mul(0x67)));
+      let key_128 = core::array::from_fn(|i| key_seed.wrapping_add(i.to_le_bytes()[0].wrapping_mul(0x3d)));
+      let key_256 = core::array::from_fn(|i| key_seed.wrapping_add(i.to_le_bytes()[0].wrapping_mul(0x67)));
       let mut km_128 = km::Km128Key::new(&key_128);
       let mut km_256 = km::KmKey::new(&key_256);
       let mut fix_128 = fixslice64::Fixslice128RoundKeys::new(&key_128);
@@ -6035,12 +6026,11 @@ mod tests {
           let len = count.strict_mul(BLOCK_SIZE);
           let mut input = std::vec![0u8; offset.strict_add(len)];
           for (i, byte) in input[offset..].iter_mut().enumerate() {
-            *byte = key_seed ^ (i as u8).wrapping_mul(0x91) ^ (count as u8).wrapping_mul(0x2b);
+            *byte = key_seed ^ i.to_le_bytes()[0].wrapping_mul(0x91) ^ count.to_le_bytes()[0].wrapping_mul(0x2b);
           }
 
           let mut expected_128 = input[offset..].to_vec();
-          for chunk in expected_128.chunks_exact_mut(BLOCK_SIZE) {
-            let block: &mut [u8; BLOCK_SIZE] = chunk.try_into().expect("full AES block");
+          for block in expected_128.as_chunks_mut::<BLOCK_SIZE>().0 {
             fixslice64::encrypt_block_128(&fix_128, block);
           }
           let mut actual_128 = input.clone();
@@ -6054,8 +6044,7 @@ mod tests {
           );
 
           let mut expected_256 = input[offset..].to_vec();
-          for chunk in expected_256.chunks_exact_mut(BLOCK_SIZE) {
-            let block: &mut [u8; BLOCK_SIZE] = chunk.try_into().expect("full AES block");
+          for block in expected_256.as_chunks_mut::<BLOCK_SIZE>().0 {
             fixslice64::encrypt_block(&fix_256, block);
           }
           let mut actual_256 = input;
@@ -6084,8 +6073,8 @@ mod tests {
       return;
     }
 
-    let key_128 = core::array::from_fn(|i| (i as u8).wrapping_mul(0x35).wrapping_add(0x17));
-    let key_256 = core::array::from_fn(|i| (i as u8).wrapping_mul(0x53).wrapping_add(0xa1));
+    let key_128 = core::array::from_fn(|i| i.to_le_bytes()[0].wrapping_mul(0x35).wrapping_add(0x17));
+    let key_256 = core::array::from_fn(|i| i.to_le_bytes()[0].wrapping_mul(0x53).wrapping_add(0xa1));
     let counter = [
       0xfe, 0xff, 0xff, 0xff, 0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe, 0x01, 0x23, 0x45, 0x80,
     ];

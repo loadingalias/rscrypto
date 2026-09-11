@@ -221,8 +221,18 @@ run_batch() {
     return 1
   fi
 
+  if [[ -n "${RSCRYPTO_FUZZ_BUDGET_SECS:-}" ]]; then
+    [[ "$RSCRYPTO_FUZZ_BUDGET_SECS" =~ ^[1-9][0-9]*$ && ${#RSCRYPTO_FUZZ_BUDGET_SECS} -le 6 && ${#duration} -le 5 ]] || {
+      echo "Invalid fuzz campaign budget" >&2; return 2;
+    }
+    if (( ((total + TARGET_CONCURRENCY - 1) / TARGET_CONCURRENCY) * duration > RSCRYPTO_FUZZ_BUDGET_SECS )); then
+      echo "Selected fuzz targets exceed the campaign runtime budget" >&2; return 2
+    fi
+  fi
+  if [[ "${RSCRYPTO_FUZZ_VALIDATE_ONLY:-}" == 1 ]]; then return 0; fi
   local run_log_dir
-  run_log_dir=$(mktemp -d)
+  run_log_dir=${RSCRYPTO_FUZZ_LOG_DIR:-$(mktemp -d)}
+  mkdir -p "$run_log_dir"
   local batch_start=0
   local batch_end
   local index
@@ -252,16 +262,17 @@ run_batch() {
         fuzz_status=$?
       fi
       cat "${logs[$batch_index]}"
-      rm -f "${logs[$batch_index]}"
+      if [[ -z "${RSCRYPTO_FUZZ_LOG_DIR:-}" ]]; then rm -f "${logs[$batch_index]}"; fi
       if [ "$fuzz_status" -ne 0 ]; then
         failed=$((failed + 1))
         crashed="${crashed}  $(fuzz_package_label "${RUN_PACKAGE_DIRS[$index]}")/${RUN_TARGETS[$index]}\n"
       fi
     done
 
+    if ((failed > 0)); then break; fi
     batch_start=$batch_end
   done
-  rm -rf "$run_log_dir"
+  if [[ -z "${RSCRYPTO_FUZZ_LOG_DIR:-}" ]]; then rm -rf "$run_log_dir"; fi
 
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

@@ -13,6 +13,9 @@ import tomllib
 from functools import lru_cache
 from pathlib import Path
 
+# Embedded Windows Python omits the script directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from provenance import sha256_file
 from manifest import binsec_kernel_targets, target_record
 

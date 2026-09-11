@@ -292,6 +292,7 @@ dependencies = [
 name = "rscrypto"
 version = "0.9.0"
 dependencies = [
+ "getrandom",
  "rayon",
 ]
 

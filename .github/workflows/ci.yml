@@ -1,0 +1,152 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_RAIL_CACHE: "off"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  riscv-build:
+    name: Prepare RISC-V tests
+    runs-on: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=32/ram=64+128/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Cross-check and prepare complete RISC-V suites
+        run: |
+          scripts/tooling/x86_64-linux.sh --ci-riscv-build
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          just test-transfer
+          just test-riscv prepare target/riscv-tests.tar.gz
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: riscv-tests
+          path: target/riscv-tests.tar.gz
+          if-no-files-found: error
+          retention-days: 2
+
+  native:
+    needs: riscv-build
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: compatibility
+            runner: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=32/ram=64+128/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
+            timeout: 60
+          - platform: package
+            runner: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=8/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=100gb:gp3/env=production
+            timeout: 60
+          - platform: x86_64-linux
+            runner: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=16+32/ram=32+128/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
+            timeout: 60
+          - platform: aarch64-linux
+            runner: runs-on=${{ github.run_id }}/family=c7g+c8g+m7g+m8g/cpu=16+32/ram=32+128/image=ubuntu24-minimal-arm64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
+            timeout: 60
+          - platform: s390x-linux
+            runner: ubuntu-24.04-s390x
+            timeout: 90
+          - platform: powerpc64le-linux
+            runner: ubuntu-24.04-ppc64le-p10
+            timeout: 90
+          - platform: riscv64-linux
+            runner: ubuntu-24.04-riscv
+            # Compilation runs on x86-64; this budget covers native execution and bootstrap.
+            timeout: 30
+          - platform: x86_64-win
+            runner: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=16+32/ram=32+128/image=windows25-full-x64/spot=price-capacity-optimized/volume=200gb:gp3/env=production
+            timeout: 60
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install tooling, check, and test (Linux)
+        if: runner.os == 'Linux' && matrix.platform != 'compatibility' && matrix.platform != 'package' && matrix.platform != 'riscv64-linux'
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          scripts/tooling/"$PLATFORM.sh" --ci
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          if [[ "$PLATFORM" == x86_64-linux ]]; then
+            just test-scripts
+            just ct-test
+            just ci-policy
+            just test --all -- --lib -E 'test(bytes_to_bits) | test(nonce_counter) | test(xor_keystream_boundary_respects_u32_counter)'
+          fi
+          just ci-check
+          just test --all --release
+          just test --all --release --portable
+          if [[ "$PLATFORM" == x86_64-linux || "$PLATFORM" == aarch64-linux ]]; then just test-musl; fi
+          git diff --exit-code HEAD
+
+      - name: Download RISC-V suites from this workflow run
+        if: matrix.platform == 'riscv64-linux'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: riscv-tests
+          path: target/riscv-download
+      - name: Execute complete RISC-V suites
+        if: matrix.platform == 'riscv64-linux'
+        run: |
+          scripts/tooling/riscv64-linux.sh --ci-riscv-run
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          just test-riscv run target/riscv-download/riscv-tests.tar.gz
+          git diff --exit-code HEAD
+      - name: Retain RISC-V execution evidence
+        if: ${{ !cancelled() && matrix.platform == 'riscv64-linux' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: riscv-results
+          path: target/riscv-results/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Verify package and consumers
+        if: matrix.platform == 'package'
+        run: |
+          scripts/tooling/x86_64-linux.sh --ci-package
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          just ci-package
+          git diff --exit-code HEAD
+
+      - name: Compile compatibility and execute WebAssembly
+        if: matrix.platform == 'compatibility'
+        run: |
+          scripts/tooling/x86_64-linux.sh --ci-compat
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          just ci-compat
+          git diff --exit-code HEAD
+
+      - name: Install tooling, check, and test (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          ./scripts/tooling/x86_64-win.ps1 -Ci
+          just ci-check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          just test --all --release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          just test --all --release --portable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --exit-code HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

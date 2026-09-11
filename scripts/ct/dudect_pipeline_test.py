@@ -3,6 +3,7 @@
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -85,11 +86,12 @@ manifest = {'manifest_' + name: {'primitive': 'fixture', 'gate': 'required', 'le
     for mode in ("failure", "missing", "partial"):
       new_run, _, failed = invoke(mode)
       assert new_run != run
+      assert len(failed) == 1, "stop before later cases after a failed measurement"
       assert all(row["status"] == "tooling-fail" for row in failed), failed
       assert all(row["report"] is None for row in failed)
     _, failed_preparation, failed = invoke("prepare-fail")
     assert failed_preparation.status == "fail" and not failed
-    assert len((root / "executions").read_text().splitlines()) == 8
+    assert len((root / "executions").read_text().splitlines()) == 5
     (root / "mode").write_text("success")
     with patch.object(full, "python_script", return_value=[sys.executable, str(repository / "scripts/ct/dudect_execute.py")]):
       timed_out = full.dudect_case_result(root, root / "logs", 4, 10.0, cases[0], 0, run / "shared/prepared.json")
@@ -107,7 +109,71 @@ manifest = {'manifest_' + name: {'primitive': 'fixture', 'gate': 'required', 'le
     records = full.collect_artifact_records((root / "out").resolve(), run)
     assert len([record for record in records if Path(record["path"]).name == executable.name]) == 1
     assert all(str(run.relative_to((root / 'out').resolve())) in record['path'] for record in records)
+    preparations_before = (root / 'preparations').read_bytes()
+    with patch.object(full, 'shell_script', side_effect=AssertionError('transferred binary must not rebuild')), \
+         patch.object(full, 'python_script', return_value=[sys.executable, str(repository / 'scripts/ct/dudect_execute.py')]):
+      transferred_run, transferred_preparation, transferred_rows = full.run_dudect_cases(
+        root, root / 'out', root / 'logs', 'fixture', 'release', cases, 10.0, 10,
+        transferred=run / 'shared/prepared.json')
+    assert transferred_run == run
+    assert transferred_preparation.status == 'pass'
+    assert [row['status'] for row in transferred_rows] == ['pass', 'pass']
+    assert transferred_rows[0]['binary'] == rows[0]['binary']
+    assert (root / 'preparations').read_bytes() == preparations_before
+
+
+def test_utf8_child_process():
+  with tempfile.TemporaryDirectory() as temporary:
+    root = Path(temporary)
+    (root / "source.rs").write_text("// Unicode arrow: \u2190\n", encoding="utf-8")
+    (root / "probe.py").write_text(
+      "import sys\nfrom pathlib import Path\nassert sys.flags.utf8_mode == 1\n"
+      "assert '\\u2190' in Path('source.rs').read_text()\n", encoding="utf-8",
+    )
+    subprocess.run(full.python_script(root, "probe.py"), cwd=root, check=True,
+                   env={**os.environ, "PYTHONUTF8": "0"})
+    launcher = Path(__file__).resolve().parents[2] / "scripts/lib/python.sh"
+    subprocess.run(["bash", str(launcher), str(root / "probe.py")], cwd=root, check=True,
+                   env={**os.environ, "PYTHONUTF8": "0", "PYTHON": sys.executable})
+
+
+def test_windows_shell_entry_paths():
+  root = Path("C:/actions-runner/_work/rscrypto/rscrypto")
+  with patch.object(full.os, "name", "nt"), patch.object(full.shutil, "which", return_value="C:/tools/git/bin/bash.exe"):
+    assert full.shell_script(root, "scripts/ct/artifacts.sh", "--profile", "release") == [
+      "C:/tools/git/bin/bash.exe", "scripts/ct/artifacts.sh", "--profile", "release",
+    ]
+    assert full.shell_script(root, "scripts/ct/dudect.sh", "--prepare-only") == [
+      "C:/tools/git/bin/bash.exe", "scripts/ct/dudect.sh", "--prepare-only",
+    ]
+
+
+def test_proof_failure_stops_timing():
+  with tempfile.TemporaryDirectory() as temporary:
+    root = Path(temporary)
+    def command(_root, _logs, name, args, **kwargs):
+      failed = name == "ct-binsec"
+      return full.CommandResult(name, args, "fail" if failed else "pass", int(failed),
+                                "", "", "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00", 0)
+    manifest = {"target": [{"name": "x86_64-unknown-linux-gnu", "binsec": "required"}]}
+    with patch.object(full, "__file__", str(root / "scripts/ct/full.py")), \
+         patch.object(full, "load_toml", return_value=manifest), \
+         patch.object(full, "host_target", return_value="x86_64-unknown-linux-gnu"), \
+         patch.object(full.subprocess, "check_output", return_value="fixture") as selector, \
+         patch.object(full, "run_command", side_effect=command), \
+         patch.object(full, "run_dudect_cases") as timing, \
+         patch.dict(os.environ), patch.object(sys, "argv", ["full.py"]):
+      assert full.main() == 1
+      timing.assert_not_called()
+      assert selector.call_args_list[0].args[0] == [sys.executable, "-X", "utf8", str(root.resolve() / "scripts/lib/toolchain.py"), "--host"]
+    report = json.loads((root / "target/ct/x86_64-unknown-linux-gnu/release/ct-report.json").read_text())
+    assert report["status"] == "fail"
+    assert report["steps"][-1]["name"] == "ct-dudect"
+    assert report["steps"][-1]["reason"] == "proof gate failed; timing was not started"
 
 
 if __name__ == "__main__":
+  test_utf8_child_process()
+  test_windows_shell_entry_paths()
+  test_proof_failure_stops_timing()
   main()

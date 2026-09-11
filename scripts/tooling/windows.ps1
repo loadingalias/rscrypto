@@ -1,6 +1,8 @@
 # Shared native Windows provisioning. Run in an elevated PowerShell session.
-param([Parameter(Mandatory)][ValidateSet('aarch64-win', 'x86_64-win')][string]$Platform)
+param([Parameter(Mandatory)][ValidateSet('aarch64-win', 'x86_64-win')][string]$Platform, [switch]$Ci, [switch]$CiBench, [switch]$CiCt)
 $ErrorActionPreference = 'Stop'
+if (([int]$Ci.IsPresent + [int]$CiBench.IsPresent + [int]$CiCt.IsPresent) -gt 1) { throw 'Select one CI profile.' }
+$Ci = $Ci -or $CiBench -or $CiCt
 $env:PYTHONDONTWRITEBYTECODE = '1'
 Set-StrictMode -Version Latest
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'This installer requires Windows.' }
@@ -83,7 +85,7 @@ try {
         '--installPath', ('"' + $vsPath + '"'), '--installChannelUri', ('"' + $channelFile + '"'),
         '--channelUri', ('"' + $channelFile + '"'), '--add', $vsToolset,
         '--add', $catalog.windows.'sdk-component')
-    if ($Platform -eq 'x86_64-win') { $vsArguments += @('--add', 'Microsoft.VisualStudio.Component.VC.ASAN') }
+    if (-not $Ci -and $Platform -eq 'x86_64-win') { $vsArguments += @('--add', 'Microsoft.VisualStudio.Component.VC.ASAN') }
     if (Test-Path (Join-Path $vsPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')) {
         $vsArguments = @('modify') + $vsArguments
     }
@@ -96,6 +98,7 @@ try {
     Import-Module (Join-Path $vsPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
     $vsArch = if ($Platform -eq 'aarch64-win') { 'arm64' } else { 'amd64' }
     Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments "-arch=$vsArch -host_arch=$vsArch"
+    $msvcBin = Split-Path (Get-Command cl.exe -CommandType Application).Source -Parent
 
     $gitInstaller = Join-Path $temporary 'git.exe'
     Get-PinnedDownload $native.assets.git.url $native.assets.git.sha256 $gitInstaller
@@ -103,41 +106,80 @@ try {
     Install-Exe $gitInstaller @('/VERYSILENT', '/NORESTART', '/NOCANCEL', '/SP-', ('/DIR="' + $gitDirectory + '"'))
     $binDirectory = Join-Path $prefix 'bin'
     New-Item -ItemType Directory -Force $binDirectory | Out-Null
-    Get-PinnedDownload $native.assets.jq.url $native.assets.jq.sha256 (Join-Path $binDirectory 'jq.exe')
-    $paths = @($pythonDirectory, $binDirectory, (Join-Path $gitDirectory 'cmd'),
+    if (-not $CiCt) {
+        Get-PinnedDownload $native.assets.jq.url $native.assets.jq.sha256 (Join-Path $binDirectory 'jq.exe')
+    }
+    # Keep Microsoft's link.exe ahead of Git's Unix link utility.
+    $paths = @($msvcBin, $pythonDirectory, $binDirectory, (Join-Path $gitDirectory 'cmd'),
         (Join-Path $gitDirectory 'bin'), (Join-Path $gitDirectory 'usr\bin'))
-    foreach ($name in @('llvm', 'cmake', 'cargo-binstall', 'cargo-rail', 'powershell')) {
-        $directory = & $python -c 'import sys; sys.path.insert(0, sys.argv[1]); import catalog; d=catalog.read(); print(catalog.install_archive(sys.argv[2], d[sys.argv[3]]["assets"][sys.argv[2]], sys.argv[4]))' $PSScriptRoot $name $Platform $prefix
+    $archives = if ($CiCt) { @('cargo-binstall') } else { @('llvm', 'cmake', 'cargo-binstall') }
+    if (-not $Ci) { $archives += @('cargo-rail', 'powershell') }
+    if ($Platform -eq 'x86_64-win' -and -not $CiCt) { $archives += 'nasm' }
+    foreach ($name in $archives) {
+        $directory = & $python $catalogHelper install-archive $Platform $name $prefix
         if ($LASTEXITCODE -ne 0) { throw "Unable to install $name" }
         $toolBin = if (Test-Path (Join-Path $directory 'bin')) { Join-Path $directory 'bin' } else { $directory }
         $paths += $toolBin
         if ($name -eq 'llvm') { $env:LIBCLANG_PATH = $toolBin }
     }
-    $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+    $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE '.cargo' }
+    $cargoBin = Join-Path $cargoHome 'bin'
     $paths += $cargoBin
     $env:PATH = (@($paths + ($env:PATH -split ';')) | Select-Object -Unique) -join ';'
+    $linkerVariable = 'CARGO_TARGET_' + $native.'rust-host'.ToUpperInvariant().Replace('-', '_') + '_LINKER'
+    [Environment]::SetEnvironmentVariable($linkerVariable, (Join-Path $msvcBin 'link.exe'), 'Process')
     $rustupInstaller = Join-Path $temporary 'rustup-init.exe'
     Get-PinnedDownload $native.assets.rustup.url $native.assets.rustup.sha256 $rustupInstaller
     Invoke-Native $rustupInstaller @('-y', '--no-modify-path', '--default-host', $native.'rust-host', '--default-toolchain', 'none')
     $rustArguments = @($toolchainHelper, '--install', $native.'rust-host')
-    foreach ($component in $native.components) { $rustArguments += @('--component', $component) }
-    Invoke-Native $python $rustArguments
+    if (-not $Ci) {
+        foreach ($component in $native.components) { $rustArguments += @('--component', $component) }
+    }
+    if ($CiBench -or $CiCt) {
+        $components = if ($CiCt) { $catalog.'ci-ct'.components } else { $catalog.'ci-bench'.components }
+        $minimalArguments = @('toolchain', 'install', $channel, '--profile', 'minimal')
+        foreach ($component in $components) { $minimalArguments += @('--component', $component) }
+        Invoke-Native 'rustup' $minimalArguments
+    } else {
+        Invoke-Native $python $rustArguments
+    }
     Remove-Item Env:RUSTC_WRAPPER -ErrorAction SilentlyContinue
     Remove-Item Env:CARGO_ENCODED_RUSTFLAGS -ErrorAction SilentlyContinue
-    foreach ($tool in $native.cargo) {
+    $cargoTools = if ($CiCt) { $catalog.'ci-ct'.cargo } elseif ($CiBench) { $catalog.'ci-bench'.cargo } elseif ($Ci) { $catalog.ci.cargo } else { $native.cargo }
+    foreach ($tool in $cargoTools) {
         Invoke-Native 'cargo' @("+$channel", 'binstall', '--locked', '--no-confirm', '--targets', $native.'rust-host', "$tool@$($catalog.cargo.$tool)")
     }
-    Invoke-Native 'clang' @('--version')
-    Invoke-Native 'cmake' @('--version')
-    Invoke-Native 'cargo' @("+$channel", 'rail', '--version')
-    Invoke-Native 'cargo' @("+$channel", 'nextest', '--version')
+    $probeDirectory = Join-Path $temporary 'compiler-probe'
+    New-Item -ItemType Directory -Force (Join-Path $probeDirectory 'src') | Out-Null
+    Set-Content -Path (Join-Path $probeDirectory 'Cargo.toml') -Encoding ASCII -Value @(
+        '[package]', 'name = "tooling_probe"', 'version = "0.0.0"', 'edition = "2024"')
+    Set-Content -Path (Join-Path $probeDirectory 'src/main.rs') -Value 'fn main() {}' -Encoding ASCII
+    Set-Content -Path (Join-Path $probeDirectory 'build.rs') -Value 'fn main() {}' -Encoding ASCII
+    $probeCommands = @(
+        'check:', "    cargo +$channel run --target $($native.'rust-host')")
+    if ($Platform -eq 'x86_64-win' -and -not $CiCt) {
+        Set-Content -Path (Join-Path $probeDirectory 'probe.asm') -Encoding ASCII -Value @(
+            'section .text', 'global tooling_probe', 'tooling_probe:', '    ret')
+        $probeCommands += '    nasm -f win64 probe.asm -o probe.obj'
+    }
+    Set-Content -Path (Join-Path $probeDirectory 'justfile') -Encoding ASCII -Value $probeCommands
+    Invoke-Native 'just' @('--justfile', (Join-Path $probeDirectory 'justfile'), 'check')
+    if (-not $CiCt) {
+        Invoke-Native 'clang' @('--version')
+        Invoke-Native 'cmake' @('--version')
+        if ($Platform -eq 'x86_64-win') { Invoke-Native 'nasm' @('-v') }
+    }
+    if (-not $Ci) { Invoke-Native 'cargo' @("+$channel", 'rail', '--version') }
+    if (-not $CiBench -and -not $CiCt) { Invoke-Native 'cargo' @("+$channel", 'nextest', '--version') }
 
     # Persist the complete MSVC/SDK environment, not only the paths to installed executables.
-    foreach ($name in @('PATH', 'INCLUDE', 'LIB', 'LIBPATH', 'LIBCLANG_PATH', 'VSINSTALLDIR', 'VCINSTALLDIR', 'VCToolsInstallDir', 'WindowsSdkDir', 'WindowsSDKVersion')) {
-        $value = [Environment]::GetEnvironmentVariable($name, 'Process')
-        if ($value) { [Environment]::SetEnvironmentVariable($name, $value, 'User') }
+    if (-not $Ci) {
+        foreach ($name in @('PATH', 'INCLUDE', 'LIB', 'LIBPATH', 'LIBCLANG_PATH', 'VSINSTALLDIR', 'VCINSTALLDIR', 'VCToolsInstallDir', 'WindowsSdkDir', 'WindowsSDKVersion', $linkerVariable)) {
+            $value = [Environment]::GetEnvironmentVariable($name, 'Process')
+            if ($value) { [Environment]::SetEnvironmentVariable($name, $value, 'User') }
+        }
     }
-    Write-Host "Installed $Platform tooling. New shells inherit the configured compiler environment."
+    Write-Host "Installed $Platform tooling. The current process has the configured compiler environment."
 } finally {
     Remove-Item -Recurse -Force $temporary -ErrorAction SilentlyContinue
 }

@@ -4,7 +4,7 @@
 use crate::platform::Caps;
 #[cfg(target_arch = "riscv64")]
 use crate::platform::caps::riscv;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 use crate::platform::caps::wasm;
 #[cfg(target_arch = "x86_64")]
 use crate::platform::caps::x86;
@@ -27,7 +27,7 @@ pub(crate) enum Blake2sKernelId {
   X86Avx512vl = 2,
   #[cfg(target_arch = "riscv64")]
   Riscv64V = 6,
-  #[cfg(target_arch = "wasm32")]
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
   WasmSimd128 = 7,
 }
 
@@ -44,7 +44,7 @@ impl Blake2sKernelId {
       Self::X86Avx512vl => "x86/avx512vl",
       #[cfg(target_arch = "riscv64")]
       Self::Riscv64V => "riscv64/v",
-      #[cfg(target_arch = "wasm32")]
+      #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
       Self::WasmSimd128 => "wasm/simd128",
     }
   }
@@ -56,7 +56,7 @@ fn compress_riscv64_v(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool) {
   unsafe { super::riscv64::compress_rvv(h, block, t, last) }
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 fn compress_wasm_simd128(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool) {
   // SAFETY: runtime dispatch selects this only when SIMD128 is available.
   unsafe { super::wasm::compress_simd128(h, block, t, last) }
@@ -94,7 +94,7 @@ fn compress_blocks_riscv64_v(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
   compress_blocks_with(h, blocks, t, compress_riscv64_v);
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 fn compress_blocks_wasm_simd128(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
   compress_blocks_with(h, blocks, t, compress_wasm_simd128);
 }
@@ -120,7 +120,7 @@ pub(crate) fn compress_fn(id: Blake2sKernelId) -> CompressFn {
     Blake2sKernelId::X86Avx512vl => compress_x86_avx512vl,
     #[cfg(target_arch = "riscv64")]
     Blake2sKernelId::Riscv64V => compress_riscv64_v,
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     Blake2sKernelId::WasmSimd128 => compress_wasm_simd128,
   }
 }
@@ -135,7 +135,7 @@ pub(crate) fn compress_blocks_fn(id: Blake2sKernelId) -> CompressBlocksFn {
     Blake2sKernelId::X86Avx512vl => compress_blocks_x86_avx512vl,
     #[cfg(target_arch = "riscv64")]
     Blake2sKernelId::Riscv64V => compress_blocks_riscv64_v,
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     Blake2sKernelId::WasmSimd128 => compress_blocks_wasm_simd128,
   }
 }
@@ -153,7 +153,7 @@ pub(crate) const fn required_caps(id: Blake2sKernelId) -> Caps {
     Blake2sKernelId::X86Avx512vl => x86::AVX512F.union(x86::AVX512VL),
     #[cfg(target_arch = "riscv64")]
     Blake2sKernelId::Riscv64V => riscv::V,
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     Blake2sKernelId::WasmSimd128 => wasm::SIMD128,
   }
 }
@@ -168,7 +168,7 @@ pub(crate) const ALL: &[Blake2sKernelId] = &[
   Blake2sKernelId::X86Avx512vl,
   #[cfg(target_arch = "riscv64")]
   Blake2sKernelId::Riscv64V,
-  #[cfg(target_arch = "wasm32")]
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
   Blake2sKernelId::WasmSimd128,
 ];
 
@@ -414,7 +414,11 @@ fn split_counter(counter: u64) -> (u32, u32) {
 }
 
 /// Initialize the 16-word working vector.
-#[cfg(any(target_arch = "x86_64", target_arch = "wasm32", target_arch = "riscv64"))]
+#[cfg(any(
+  target_arch = "x86_64",
+  all(target_arch = "wasm32", target_feature = "simd128"),
+  target_arch = "riscv64"
+))]
 #[inline(always)]
 pub(crate) fn init_v(h: &[u32; 8], t: u64, last: bool) -> [u32; 16] {
   let (t0, t1) = split_counter(t);

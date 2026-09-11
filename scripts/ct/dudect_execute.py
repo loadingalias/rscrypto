@@ -2,14 +2,38 @@
 """Execute a prepared DudeCT binary without rebuilding or copying its artifacts."""
 
 import argparse
+import sys
 import copy
 import json
 import os
 import subprocess
+import platform
 from pathlib import Path
+
+# Embedded Windows Python omits the script directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dudect_report import case_report, write_report
 from manifest import dudect_sample_count
+from provenance import sha256_file
+
+
+def verify_transferred(prepared):
+  metadata = prepared['metadata']
+  if 'transfer' not in metadata:
+    return
+  if (platform.system(), platform.machine(), metadata['target']) != (
+      'Linux', 'riscv64', 'riscv64gc-unknown-linux-gnu'):
+    raise ValueError('transferred timing requires physical RISC-V Linux')
+  for key in ('binary', 'binary_disassembly', 'binary_symbols', 'linker_command_log'):
+    row = metadata[key]
+    path = Path(row['path'])
+    if sha256_file(path) != row['sha256'] or path.stat().st_size != row['bytes']:
+      raise ValueError(f'transferred timing evidence changed: {key}')
+  with Path(metadata['binary']['path']).open('rb') as source:
+    header = source.read(20)
+  if header[:6] != b'\x7fELF\x02\x01' or header[18:20] != b'\xf3\x00':
+    raise ValueError('timed executable is not a little-endian RISC-V ELF64 binary')
 
 
 def main() -> int:
@@ -58,6 +82,7 @@ def main() -> int:
 
 
 def measure(prepared, args):
+  verify_transferred(prepared)
   args.evidence_dir.mkdir(parents=True, exist_ok=True)
   args.stdout = args.evidence_dir / "dudect.stdout.txt"
   args.csv = args.evidence_dir / "dudect-raw.csv"
@@ -84,6 +109,7 @@ def measure(prepared, args):
   if result.returncode != 0:
     print(f"DudeCT measurement command failed: exit {result.returncode}", flush=True)
     return 2
+  verify_transferred(prepared)
   report = case_report(prepared, args)
   report["prepared"] = str(args.prepared)
   report["smoke"] = args.smoke

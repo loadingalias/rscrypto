@@ -7,7 +7,7 @@ _default:
 
 # Remote dev. Provider mechanics live in ~/dev-machines.
 
-export DEV_MACHINE_EXECUTOR := env_var_or_default("DEV_MACHINE_BIN", env_var("HOME") + "/dev-machines/dev-machine")
+export DEV_MACHINE_EXECUTOR := env_var_or_default("DEV_MACHINE_BIN", home_directory() / "dev-machines/dev-machine")
 
 # Run a command on a repository development machine.
 [group('remote')]
@@ -113,6 +113,30 @@ check:
 ci-check:
     @scripts/check/check.sh native
 
+# Cross-check the complete RISC-V native CI compilation surface.
+ci-check-target target:
+    @scripts/check/check.sh target {{quote(target)}}
+
+# Prepare or execute complete, source-bound RISC-V test artifacts.
+test-riscv operation archive:
+    @scripts/lib/python.sh scripts/test/riscv.py {{quote(operation)}} {{quote(archive)}}
+
+# Check dependency policy for every supported target, once per CI workflow.
+ci-policy:
+    @scripts/check/dependencies.sh
+
+# Compile feature/MSRV/bare-metal compatibility and execute WASM/WASI vectors.
+ci-compat:
+    @scripts/lib/python.sh scripts/check/compat.py
+
+# Verify the publishable archive and external std/core/alloc consumers.
+ci-package:
+    @scripts/lib/python.sh scripts/check/package.py
+
+# Execute the full native and portable suites against the host's musl target.
+test-musl:
+    @scripts/test/test-musl.sh
+
 # Tests
 # Run Nextest with repository scope/dispatch options, then -- NEXTEST_ARGS.
 test *args:
@@ -124,9 +148,17 @@ test-scripts:
     @scripts/lib/python.sh scripts/test/test_runner_test.py
     @scripts/lib/python.sh scripts/test/just_arguments_test.py
     @scripts/lib/python.sh scripts/tooling/toolchain_test.py
+    @scripts/lib/python.sh scripts/tooling/install_test.py
+    @scripts/lib/python.sh scripts/bench/ci_test.py
     @scripts/lib/python.sh scripts/test/fuzz_features_test.py
     @scripts/lib/python.sh scripts/check/check_runner_test.py
+    @scripts/lib/python.sh scripts/check/compat_test.py
     @scripts/lib/python.sh scripts/test/fuzz_runner_test.py
+
+# Exercise artifact transfer and the pinned rustdoc build/run contract.
+[group('tests')]
+test-transfer:
+    @scripts/lib/python.sh scripts/test/transfer_test.py
 
 # Run CT harness and exporter self-tests without timing cases.
 [group('constant-time')]
@@ -142,11 +174,6 @@ test-examples:
 [group('tests')]
 test-miri *args:
     @scripts/test/test-miri.sh "$@"
-
-# Run the RSA leakage evidence harness.
-[group('tests')]
-test-rsa-leakage:
-    @scripts/test/test-rsa-leakage.sh
 
 # Test Apple Silicon RSA assembly on a physical supported host.
 [group('tests')]
@@ -211,7 +238,7 @@ test-coverage:
 # Measure Criterion cases, or discover them with --list; --diag enables diagnostics.
 [group('benchmarks')]
 bench *args:
-    @scripts/lib/python.sh scripts/bench/bounded.py scripts/lib/python.sh scripts/bench/runner.py bench "$@"
+    @python="$(scripts/lib/python.sh --print)"; "$python" scripts/bench/bounded.py "$python" scripts/bench/runner.py bench "$@"
 
 # Stable instruction/cache-cost benchmarks. Requires gungraun-runner and Valgrind.
 [group('benchmarks')]
@@ -223,7 +250,7 @@ bench-structural:
 # Record one exact case, or discover cases with --list; --diag enables diagnostics.
 [group('benchmarks')]
 profile *args:
-    @scripts/lib/python.sh scripts/bench/bounded.py scripts/lib/python.sh scripts/bench/runner.py profile "$@"
+    @python="$(scripts/lib/python.sh --print)"; "$python" scripts/bench/bounded.py "$python" scripts/bench/runner.py profile "$@"
 
 # Inspect optimized code for an explicit benchmark target configuration.
 [group('benchmarks')]

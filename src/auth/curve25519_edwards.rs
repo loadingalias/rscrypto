@@ -24,6 +24,12 @@ pub(crate) mod point_avx2;
 #[path = "ed25519/scalar.rs"]
 pub(crate) mod scalar;
 
+// Keep the retained Rust fixed-base authorities checked when assembly owns dispatch.
+#[cfg(target_arch = "x86_64")]
+const _: unsafe fn(&[u8; 32]) -> point::ExtendedPoint = point_avx2::scalar_mul_basepoint_avx2;
+#[cfg(target_arch = "x86_64")]
+const _: unsafe fn(&[u8; 32]) -> point::ExtendedPoint = point_avx2::scalar_mul_basepoint_ifma;
+
 #[cfg(all(feature = "diag", feature = "ed25519"))]
 pub use point::diag_select_basepoint_cached_limb_digest as diag_ed25519_select_basepoint_cached_limb_digest;
 #[cfg(all(feature = "diag", feature = "ed25519", target_arch = "x86_64"))]

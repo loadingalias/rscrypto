@@ -7,6 +7,8 @@
 // C ABI harness functions must remain plain `extern "C"` symbols. Pointer validity is documented
 // on the shared helpers and each entrypoint rejects null shapes before copying fixed-size inputs.
 
+pub mod zeroization;
+
 use core::{ptr, slice};
 use std::format;
 

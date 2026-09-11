@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -15,6 +16,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+# Embedded Windows Python omits the script directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from provenance import load_toml, sha256_file
 from manifest import (
@@ -156,12 +160,15 @@ def skipped_step(name: str, reason: str) -> dict[str, Any]:
 def shell_script(root: Path, relative: str, *args: str) -> list[str]:
   script = str(root / relative)
   if os.name == "nt":
-    return ["bash", script, *args]
+    bash = shutil.which("bash")
+    if bash is None:
+      raise FileNotFoundError("Git Bash is missing from PATH; run scripts/tooling/x86_64-win.ps1 -CiCt")
+    return [bash, relative, *args]
   return [script, *args]
 
 
 def python_script(root: Path, relative: str, *args: str) -> list[str]:
-  return [sys.executable, str(root / relative), *args]
+  return [sys.executable, "-X", "utf8", str(root / relative), *args]
 
 
 def primitives_by_id(ct: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -505,6 +512,9 @@ def dudect_case_result(
       "binary_disassembly",
       "binary_symbols",
       "linker_command_log",
+      "build_host",
+      "host",
+      "transfer",
     ):
       if key in report:
         row[key] = report[key]
@@ -518,16 +528,22 @@ def dudect_case_result(
   return row
 
 
-def run_dudect_cases(root, out_dir, logs_dir, target, profile, manifest_cases, threshold, dudect_timeout):
+def run_dudect_cases(root, out_dir, logs_dir, target, profile, manifest_cases, threshold, dudect_timeout, transferred=None):
   dudect_cases = []
-  dudect_runs = out_dir / "dudect" / "runs"
-  dudect_runs.mkdir(parents=True, exist_ok=True)
-  dudect_run = Path(tempfile.mkdtemp(prefix="run-", dir=dudect_runs)).resolve()
-  prepared = dudect_run / "shared" / "prepared.json"
-  preparation = run_command(root, logs_dir, f"dudect-prepare-{dudect_run.name}", [
-    *shell_script(root, "scripts/ct/dudect.sh"), "--prepare-only",
-    "--shared-dir", str(prepared.parent), "--target", target, "--profile", profile,
-  ])
+  if transferred is None:
+    dudect_runs = out_dir / "dudect" / "runs"
+    dudect_runs.mkdir(parents=True, exist_ok=True)
+    dudect_run = Path(tempfile.mkdtemp(prefix="run-", dir=dudect_runs)).resolve()
+    prepared = dudect_run / "shared" / "prepared.json"
+    preparation = run_command(root, logs_dir, f"dudect-prepare-{dudect_run.name}", [
+      *shell_script(root, "scripts/ct/dudect.sh"), "--prepare-only",
+      "--shared-dir", str(prepared.parent), "--target", target, "--profile", profile,
+    ])
+  else:
+    prepared = transferred
+    dudect_run = prepared.parent.parent
+    timestamp = now_utc()
+    preparation = CommandResult("ct-dudect-import", [], "pass", 0, "", "", timestamp, timestamp, 0.0)
   fallback_samples = int(os.environ.get("RSCRYPTO_CT_DUDECT_SAMPLES", "20000"))
   for case in manifest_cases if preparation.status == "pass" else []:
     samples = case_sample_count(case, fallback=fallback_samples)
@@ -544,6 +560,8 @@ def run_dudect_cases(root, out_dir, logs_dir, target, profile, manifest_cases, t
         prepared,
       )
     )
+    if dudect_cases[-1]["status"] not in ("pass", "diagnostic-fail"):
+      break
 
   return dudect_run, preparation, dudect_cases
 
@@ -1018,6 +1036,9 @@ def write_full_report(out_dir: Path, report: dict[str, Any]) -> tuple[Path, Path
 
 def main() -> int:
   parser = argparse.ArgumentParser(description=__doc__)
+  transfer_args = parser.add_mutually_exclusive_group()
+  transfer_args.add_argument("--prepare-archive", type=Path, help="prepare sealed RISC-V CT evidence without timing")
+  transfer_args.add_argument("--run-archive", type=Path, help="measure sealed RISC-V CT evidence without rebuilding")
   parser.add_argument("--target", default=None)
   parser.add_argument("--profile", default="release")
   parser.add_argument("--threshold", type=float, default=float(os.environ.get("RSCRYPTO_CT_DUDECT_THRESHOLD", "10.0")))
@@ -1040,11 +1061,28 @@ def main() -> int:
     help="DudeCT gate class to execute; required is the release evidence gate, diagnostic is non-blocking trace evidence",
   )
   args = parser.parse_args()
+  if args.prepare_archive and args.prepare_archive.exists():
+    parser.error(f"refusing to overwrite existing evidence: {args.prepare_archive}")
 
   root = Path(__file__).resolve().parents[2]
+  os.environ["RUSTUP_TOOLCHAIN"] = subprocess.check_output(
+    python_script(root, "scripts/lib/toolchain.py", "--host"), text=True, cwd=root,
+  ).strip()
   target = args.target or host_target(root)
+  transferred = None
+  transfer_identity = None
+  if args.prepare_archive or args.run_archive:
+    from transfer import TARGET, bundle
+    if target != TARGET or args.profile != "release" or args.dudect_filter or args.dudect_gate != "required":
+      parser.error("CT transfer requires the complete RISC-V release lane")
+    if args.threshold != 10.0 or "RSCRYPTO_CT_DUDECT_SAMPLES" in os.environ:
+      parser.error("CT transfer requires unchanged manifest sampling and threshold")
+    if args.prepare_archive:
+      from riscv_build import environment
+      os.environ.update(environment())
+      transfer_identity = bundle.source_identity(root)
   host = host_target(root)
-  if not is_host_executable_target(target, host):
+  if not args.prepare_archive and not is_host_executable_target(target, host):
     print(
       f"ct-full target must match the physical runner target: requested {target}, host is {host}",
       file=sys.stderr,
@@ -1057,6 +1095,9 @@ def main() -> int:
   full_dir = out_dir / "full"
   logs_dir = full_dir / "logs"
   logs_dir.mkdir(parents=True, exist_ok=True)
+  if args.prepare_archive or args.run_archive:
+    for name in ("ct-report.json", "ct-report.md"):
+      (out_dir / name).unlink(missing_ok=True)
 
   ct = load_toml(root / "ct.toml")
   all_manifest_cases = manifest_dudect_cases(ct)
@@ -1081,25 +1122,36 @@ def main() -> int:
   binsec_enabled = binsec_mode == "required"
   steps = []
 
-  artifacts_result = run_command(
-    root,
-    logs_dir,
-    "ct-artifacts",
-    shell_script(root, "scripts/ct/artifacts.sh", "--target", target, "--profile", profile),
-    timeout=None,
-  )
-  steps.append(result_record(artifacts_result))
+  if args.run_archive:
+    from transfer import consume
+    steps, transferred = consume(root, out_dir, args.run_archive.resolve())
+  else:
+    artifacts_result = run_command(
+      root,
+      logs_dir,
+      "ct-artifacts",
+      shell_script(root, "scripts/ct/artifacts.sh", "--target", target, "--profile", profile),
+      timeout=None,
+    )
+    steps.append(result_record(artifacts_result))
 
-  validate_result = run_command(
-    root,
-    logs_dir,
-    "ct-validate-artifacts",
-    python_script(root, "scripts/ct/validate.py", "--target", target, "--profile", profile, "--strict-coverage"),
-    timeout=None,
-  )
-  steps.append(result_record(validate_result))
+    validate_result = run_command(
+      root,
+      logs_dir,
+      "ct-validate-artifacts",
+      python_script(root, "scripts/ct/validate.py", "--target", target, "--profile", profile, "--strict-coverage"),
+      timeout=None,
+    )
+    steps.append(result_record(validate_result))
+    if artifacts_result.status == "pass" and validate_result.status == "pass":
+      cleanup_result = run_command(
+        root, logs_dir, "ct-zeroization-sentinel",
+        python_script(root, "scripts/ct/zeroization.py", "--artifact-dir", str(out_dir / "artifacts"),
+                      "--out", str(out_dir / "zeroization.json")),
+      )
+      steps.append(result_record(cleanup_result))
   identity = candidate_identity(out_dir)
-  if artifacts_result.status != "pass" or validate_result.status != "pass":
+  if any(step["status"] != "pass" for step in steps):
     for step in steps:
       if step["status"] != "pass":
         print(f"ct-full: stopping after failed gate-one step {step['name']}", file=sys.stderr)
@@ -1192,6 +1244,22 @@ def main() -> int:
     print(f"ct-full summary: {md_path}")
     return 1
 
+  if args.prepare_archive:
+    from transfer import export
+    if binsec_enabled:
+      parser.error("CT transfer does not replace a required native BINSEC lane")
+    shared = Path(tempfile.mkdtemp(prefix="prepare-", dir=out_dir)) / "shared"
+    preparation = run_command(root, logs_dir, "ct-dudect-prepare-transfer", [
+      *shell_script(root, "scripts/ct/dudect.sh"), "--prepare-only", "--target", target,
+      "--shared-dir", str(shared),
+    ])
+    if preparation.status != "pass":
+      print(f"DudeCT preparation failed: {preparation.stderr_path}", file=sys.stderr)
+      return 1
+    export(root, out_dir, shared, steps, transfer_identity, args.prepare_archive.resolve())
+    print(f"CT preparation complete; native timing remains required: {args.prepare_archive}")
+    return 0
+
   binsec_kernels = []
   if binsec_enabled:
     print("ct-full: binsec", flush=True)
@@ -1266,10 +1334,15 @@ def main() -> int:
   else:
     steps.append(skipped_step("ct-binsec", binsec_reason))
 
-  dudect_run, preparation, dudect_cases = run_dudect_cases(
-    root, out_dir, logs_dir, target, profile, manifest_cases, args.threshold, args.dudect_timeout,
-  )
-  steps.append(result_record(preparation))
+  dudect_run = None
+  dudect_cases = []
+  if all(step["status"] in ("pass", "not_applicable") for step in steps):
+    dudect_run, preparation, dudect_cases = run_dudect_cases(
+      root, out_dir, logs_dir, target, profile, manifest_cases, args.threshold, args.dudect_timeout, transferred,
+    )
+    steps.append(result_record(preparation))
+  else:
+    steps.append(skipped_step("ct-dudect", "proof gate failed; timing was not started"))
 
   executed_dudect = {case["primitive"] for case in dudect_cases}
   executed_required_dudect = {case["primitive"] for case in dudect_cases if case.get("gate") != "diagnostic"}
@@ -1290,6 +1363,10 @@ def main() -> int:
   missing_dudect = sorted(set(missing_dudect) | set(missing_manifest_required_dudect))
 
   artifact_records = collect_artifact_records(out_dir, dudect_run)
+  if transferred is not None:
+    from transfer import KIND, bundle
+    original = Path(json.loads(transferred.read_text())["metadata"]["transfer"]["original"])
+    bundle.verify(root, original, KIND, target)
   findings, diagnostics = build_findings(steps, dudect_cases, binsec_kernels, missing_dudect)
   asm_report = load_json_if_exists(out_dir / "asm-heuristics.json")
 

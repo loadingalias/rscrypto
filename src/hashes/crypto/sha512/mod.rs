@@ -20,7 +20,7 @@ pub(crate) mod aarch64;
 pub(crate) mod riscv64;
 #[cfg(target_arch = "s390x")]
 pub(crate) mod s390x;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 pub(crate) mod wasm;
 #[cfg(target_arch = "x86_64")]
 pub(crate) mod x86_64;

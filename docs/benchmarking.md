@@ -72,6 +72,59 @@ tables treat `0.95x` through `1.05x` as a tie.
 benchmark binaries, required features, aliases, and filters. The benchmark
 source owns each timed operation. Inspect both before claiming equivalent work.
 
+## Run a manual workflow
+
+The [Bench workflow](../.github/workflows/bench.yml) runs only on manual
+request. Select the revision with GitHub's branch selector, then choose:
+
+| Input | Examples | Meaning |
+| --- | --- | --- |
+| `architectures` | `x86_64-linux` | One native platform. |
+| `architectures` | `s390x-linux,powerpc64le-linux,riscv64-linux` | Any subset, separated by commas or spaces. |
+| `architectures` | `all` | Linux x86-64, Linux ARM64, Windows x86-64, IBM Z, IBM POWER, and RISC-V. |
+| `selection` | `sha256` | One catalog algorithm. |
+| `selection` | `sha256,blake3` | Multiple algorithms. |
+| `selection` | `hashes`, `checksums`, `auth`, `aead` | A catalog group. Groups can also be combined. |
+| `selection` | `all` | All algorithms in the catalog's `all` selector. |
+| `selection` | `bench=sha2,auth` | Entire benchmark targets, including cases beyond an individual algorithm. |
+| `filter` | `^sha256/rscrypto/64$` | Narrow the selected scope to matching Criterion cases. |
+
+The remaining platform names are `aarch64-linux` and `x86_64-win`.
+Algorithm/group selectors and explicit `bench=` targets are alternative forms
+of `selection`; the workflow rejects invalid architecture and catalog selections
+before starting measurement runners. A case filter that matches nothing fails during
+discovery. The catalog remains the authority for available selectors and targets.
+
+Optional sampling fields override the shared Criterion settings; blank fields
+preserve the repository defaults. The diagnostic checkbox enables diagnostic
+features for the selected targets; it does not select separate targets.
+
+A small planning job validates the request and creates the exact runner matrix.
+AWS provides fixed on-demand instance types for Linux x86-64/ARM64 and Windows
+x86-64. IBM and RISE provide their existing native runners. The selected
+architectures run concurrently; benchmark configurations run sequentially on
+each machine. Installers use `--ci-bench` on Linux and `-CiBench` on Windows.
+No caches or speed-regression gates are enabled. Donated hosts may be shared,
+and fixed AWS instance types do not eliminate host noise. Inspect uncertainty
+and repeat matched measurements before making performance claims.
+
+Each job retains `target/bench/` as a GitHub artifact, including failed-run
+evidence, source and machine identity, the resolved case plan, logs, and raw
+Criterion results. The benchmark runner keeps its one-hour pipeline budget;
+`all` is a selection, not a guarantee that every case will fit that budget.
+Narrow large runs by algorithm, group, target, or case filter. The workflow
+allows additional provisioning time, especially on RISC-V.
+Manual dispatch becomes available after the workflow reaches the default branch.
+
+The same granular selections work locally:
+
+```sh
+just bench sha256 blake3
+just bench hashes
+just bench all
+just bench bench=sha2 'filter=^sha256/rscrypto/64$'
+```
+
 ## Timed workload boundaries
 
 Choose the timed boundary from the question the workload answers. State it next

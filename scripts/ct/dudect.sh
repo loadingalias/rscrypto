@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+TOOLCHAIN="$(dirname "${BASH_SOURCE[0]}")/../lib/toolchain.sh"
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TARGET=""
 PROFILE="release"
@@ -22,8 +24,8 @@ Every run retains one shared binary bundle and isolated measurements under:
   target/ct/<target>/<profile>/dudect/runs/<run>/
 
 Notes:
-  --target records the host target for evidence placement. Cross-target dudect
-  requires a physical runner for that target and is intentionally not emulated.
+  --prepare-only permits cross-compilation with an explicit target linker.
+  Measurement requires a physical runner for that target and is not emulated.
 USAGE
 }
 
@@ -80,8 +82,11 @@ if [[ -n "$FILTER" ]] && \
 fi
 
 if [[ -z "$TARGET" ]]; then
-  TARGET="$(rustc -vV | awk -F': ' '/^host:/ {print $2}')"
+  TARGET="$("$TOOLCHAIN" --print-host)"
 fi
+
+export RUSTUP_TOOLCHAIN
+RUSTUP_TOOLCHAIN="$("$TOOLCHAIN" --target "$TARGET")"
 
 HOST_TARGET="$(rustc -vV | awk -F': ' '/^host:/ {print $2}')"
 target_runs_on_host() {
@@ -95,7 +100,7 @@ target_runs_on_host() {
   esac
 }
 
-if ! target_runs_on_host "$TARGET" "$HOST_TARGET"; then
+if ! target_runs_on_host "$TARGET" "$HOST_TARGET" && [[ "$PREPARE_ONLY" != 1 ]]; then
   echo "dudect target must match physical host target: requested $TARGET, host is $HOST_TARGET" >&2
   exit 2
 fi
@@ -222,7 +227,7 @@ else
 fi
 
 PYTHON="$("$ROOT/scripts/lib/python.sh" --print)"
-"$PYTHON" "$ROOT/scripts/ct/dudect_report.py" --prepare \
+"$PYTHON" -X utf8 "$ROOT/scripts/ct/dudect_report.py" --prepare \
   --out "$OUT_DIR/prepared.json" --target "$TARGET" --profile "$PROFILE" \
   --binary "$BINARY_PATH" "${BINARY_OBJECT_ARGS[@]}" \
   --binary-disassembly "$BINARY_DISASM_PATH" --binary-symbols "$BINARY_SYMBOLS_PATH" \
@@ -235,7 +240,7 @@ fi
 sample_args=()
 if [[ -n "$SAMPLES" ]]; then sample_args+=(--samples "$SAMPLES"); fi
 if [[ "$SMOKE" == 1 ]]; then sample_args+=(--smoke); fi
-"$PYTHON" "$ROOT/scripts/ct/dudect_execute.py" \
+"$PYTHON" -X utf8 "$ROOT/scripts/ct/dudect_execute.py" \
   --prepared "$OUT_DIR/prepared.json" --evidence-dir "$RUN_DIR/selection" \
   "${sample_args[@]:+${sample_args[@]}}" --threshold "$THRESHOLD" --filter "$FILTER" \
   --latest "$DUDECT_DIR/dudect-report.json"

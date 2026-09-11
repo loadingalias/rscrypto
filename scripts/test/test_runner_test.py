@@ -66,7 +66,7 @@ else:
     assert rows[0]['args'][-len(forwarded):] == forwarded, rows
     assert '--all-features' in rows[0]['args'] and rows[0]['threads'] == '1'
     assert not any(row['args'][0] == 'test' for row in rows)
-    for args in (['--release'], ['--no-run'], ['--lib', 'name'], ['--', '--', '--skip', 'slow'], ['--', '']):
+    for args in (['--no-run'], ['--lib', 'name'], ['--', '--', '--skip', 'slow'], ['--', '']):
       result, rows = run(args)
       assert result.returncode == 0 and len(rows) == 1, (args, result.stderr, rows)
       expected = args[1:] if args[0] == '--' else args
@@ -83,6 +83,11 @@ else:
     assert result.returncode == 0 and len(rows) == 2
     assert all('--workspace' in row['args'] for row in rows)
     assert rows[0]['threads'] == '1'
+    for dispatch in ('--native', '--portable'):
+      result, rows = run(['--all', '--release', dispatch], PLAN_FAIL='1')
+      assert result.returncode == 0 and len(rows) == 2, (result.stderr, rows)
+      assert all('--release' in row['args'] for row in rows)
+      assert '--doc' in rows[1]['args']
     result, rows = run([], PLAN_STATE='skipped')
     assert result.returncode == 0 and all(row['args'][0] == 'rail' for row in rows)
     result, rows = run([], PLAN_FAIL='1')

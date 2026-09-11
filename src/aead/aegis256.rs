@@ -89,11 +89,11 @@ fn update_riscv_fixslice(s: &mut State, m: &Block) {
 
   let mut first = [s[4], s[3], s[2], s[1]];
   let first_keys = [s[5], s[4], s[3], s[2]];
-  super::aes::aes_enc_round_4_fixslice(&mut first, &first_keys);
+  super::aes_fixslice_round::cipher_round_4(&mut first, &first_keys);
 
   let mut second = [s[0], tmp, zero_block(), zero_block()];
   let second_keys = [s[1], s[0], zero_block(), zero_block()];
-  super::aes::aes_enc_round_4_fixslice(&mut second, &second_keys);
+  super::aes_fixslice_round::cipher_round_4(&mut second, &second_keys);
 
   s[5] = first[0];
   s[4] = first[1];

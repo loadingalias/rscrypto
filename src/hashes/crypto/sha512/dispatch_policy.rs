@@ -59,7 +59,7 @@ pub(crate) fn select_runtime_kernel(caps: Caps) -> KernelId {
       return KernelId::Riscv64Zknh;
     }
   }
-  #[cfg(target_arch = "wasm32")]
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
   {
     use crate::platform::caps::wasm;
     if caps.has(wasm::SIMD128) {

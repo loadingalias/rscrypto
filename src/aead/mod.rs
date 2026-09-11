@@ -88,16 +88,12 @@ mod aegis256;
   feature = "aes-gcm",
   feature = "aes-gcm-siv",
   feature = "aes-siv",
-  all(feature = "aegis256", target_arch = "riscv64"),
   all(feature = "aegis256", test),
 ))]
 // AES-SIV-CMAC-256 uses only the AES-128 half of the shared AES authority. Keep the unused
 // AES-256 sibling compiled but lint-silent for this isolated leaf instead of duplicating backends.
 #[cfg_attr(
-  all(
-    feature = "aes-siv",
-    not(any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256"))
-  ),
+  all(feature = "aes-siv", not(any(feature = "aes-gcm", feature = "aes-gcm-siv"))),
   expect(dead_code, reason = "isolated AES-SIV leaf reuses the shared AES-128 authority")
 )]
 mod aes;
@@ -109,6 +105,15 @@ mod aes128gcmsiv;
 mod aes256gcm;
 #[cfg(feature = "aes-gcm-siv")]
 mod aes256gcmsiv;
+#[cfg(any(
+  all(
+    any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aes-siv"),
+    any(test, target_arch = "riscv64", target_arch = "s390x")
+  ),
+  all(feature = "aegis256", any(test, target_arch = "riscv64"))
+))]
+#[path = "aes/fixslice64/round.rs"]
+mod aes_fixslice_round;
 #[cfg(any(
   feature = "aegis256",
   all(target_arch = "riscv64", any(feature = "aes-gcm", feature = "aes-gcm-siv"))

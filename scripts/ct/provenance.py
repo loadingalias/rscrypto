@@ -146,6 +146,9 @@ def resolve_linker(root: Path, target: str) -> tuple[str, str]:
 
 
 def resolve_executable(command: str) -> Path | None:
+  direct = Path(command)
+  if direct.is_file() and direct.name != "zig-cc.sh":
+    return direct.resolve()
   parts = shlex.split(command)
   if not parts:
     return None
@@ -158,6 +161,19 @@ def resolve_executable(command: str) -> Path | None:
 
 def resolved_linker_version(path: Path | None, configured_linker: str, root: Path) -> str | None:
   if path is None:
+    return None
+  if path.name.lower() == "link.exe":
+    # MSVC prints its version with help but returns the usage status 1100.
+    try:
+      result = subprocess.run([str(path), "/?"], cwd=root, text=True, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, check=False)
+    except OSError:
+      return None
+    if result.returncode not in (0, 1100):
+      return None
+    for line in result.stdout.splitlines():
+      if re.fullmatch(r"Microsoft \(R\) Incremental Linker Version [0-9]+(?:\.[0-9]+)+", line.strip()):
+        return line.strip()
     return None
   parts = shlex.split(configured_linker)
   if parts and Path(parts[0]).name == "zig-cc.sh":
@@ -265,20 +281,30 @@ def report_records(out_dir: Path) -> list[dict[str, Any]]:
   return reports
 
 
+def ct_function_symbols(path: Path) -> list[str]:
+  symbols = []
+  for line in path.read_text().splitlines():
+    match = re.fullmatch(
+      r"\s*[0-9a-fA-F]+(?:\s+[0-9a-fA-F]+)?\s+[tTwW]\s+_?(ct_entry_[A-Za-z0-9_]+)\s*", line
+    )
+    if match:
+      symbols.append(match.group(1))
+  return symbols
+
+
 def symbol_objects(artifact_dir: Path) -> dict[str, list[dict[str, str]]]:
   symbols: dict[str, list[dict[str, str]]] = {}
   symbol_maps = sorted([*artifact_dir.glob("*.o.symbols.txt"), *artifact_dir.glob("*.obj.symbols.txt")])
   symbol_maps.extend(sorted(artifact_dir.glob("*.binary.symbols.txt")))
   for path in symbol_maps:
     object_name = path.name.removesuffix(".symbols.txt")
-    for line in path.read_text().splitlines():
-      if match := re.search(r"\b_?(ct_entry_[A-Za-z0-9_]+)\b", line):
-        symbols.setdefault(match.group(1), []).append(
-          {
-            "object": object_name,
-            "symbol_map": f"artifacts/{path.name}",
-          }
-        )
+    for symbol in ct_function_symbols(path):
+      symbols.setdefault(symbol, []).append(
+        {
+          "object": object_name,
+          "symbol_map": f"artifacts/{path.name}",
+        }
+      )
   return symbols
 
 

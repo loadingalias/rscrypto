@@ -64,8 +64,9 @@ just test
 entry in `.config/target-matrix.json`; missing target libraries or Clippy
 components fail before repairs start. The repair pass applies rustfmt and Clippy
 suggestions, including in a dirty or staged worktree. Review the resulting diff.
-`just ci-check` validates only the native host without source fixes, using
-host-filtered dependency policy. Neither command uses affected-work selection.
+`just ci-check` validates only the native host without source fixes.
+`just ci-policy` checks dependencies across the full supported target graph.
+Neither command uses affected-work selection.
 
 Every target receives release/native and debug/portable Clippy passes. The host
 checks all Cargo targets; cross checks compile the library without foreign test
@@ -91,8 +92,9 @@ just test -- --lib -- --exact checksum::crc16::tests::test_vectors_crc16_ccitt_x
 ```
 
 `just test` uses the pinned Nextest runner; it requires `cargo-nextest` and has
-no Cargo-test fallback. Put repository options (`--all`, `--native`, `--portable`)
-first. The first runner argument, or an explicit `--`, starts verbatim forwarding
+no Cargo-test fallback. Put repository options (`--all`, `--release`, `--native`,
+`--portable`) first. `--release` selects optimized builds for both Nextest and doctests.
+The first runner argument, or an explicit `--`, starts verbatim forwarding
 to `cargo nextest run`. For example:
 
 ```bash
@@ -165,6 +167,13 @@ Add the risk-specific evidence reached by the change:
 
 Cross-compilation proves compilation, not runtime behavior, constant-time
 execution, or performance. Record target lanes that cannot run.
+
+RISC-V CI separates cross-compilation from native execution to avoid long builds
+on the physical runner. Both native-dispatch and portable release suites,
+doctests, and the full CT campaign remain required. The transfer commands and
+integrity requirements are documented in [scripts/README.md](scripts/README.md).
+A successful preparation job does not qualify the target; its execution job
+must also pass for the same source and artifacts.
 
 ## Review and submit
 

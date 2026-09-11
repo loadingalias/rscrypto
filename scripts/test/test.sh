@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/../lib/rail-plan.sh"
 
 usage() {
   cat <<USAGE
-Usage: $0 [--all] [--native | --portable] [--] [NEXTEST_ARGS...]
+Usage: $0 [--all] [--release] [--native | --portable] [--] [NEXTEST_ARGS...]
 
 Repository options precede runner arguments. After --, arguments go unchanged
 into cargo nextest run. Any runner arguments select explicit work and skip
@@ -16,12 +16,14 @@ Example: $0 --portable -- --release --lib -- --skip slow_test
 USAGE
 }
 
+profile_args=()
 force_all=false
 dispatch_profile=native
 selected_dispatch=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --all) force_all=true ;;
+    --release) profile_args=(--release) ;;
     --native | --portable)
       [[ -z "$selected_dispatch" ]] || { usage >&2; exit 2; }
       selected_dispatch=${1#--}
@@ -95,7 +97,7 @@ if [[ "$scope_status" -eq 0 ]]; then
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "Testing $SCOPE_DESC"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  cargo nextest run --locked "${CARGO_ARGS[@]:+${CARGO_ARGS[@]}}" "${feature_args[@]}" \
+  cargo nextest run --locked "${CARGO_ARGS[@]:+${CARGO_ARGS[@]}}" "${feature_args[@]}" "${profile_args[@]:+${profile_args[@]}}" \
     --config-file .config/nextest.toml "$@"
 else
   echo "No unit or integration test targets selected by Cargo Rail"
@@ -119,4 +121,4 @@ fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Running doctests for $SCOPE_DESC"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-cargo test --locked "${CARGO_ARGS[@]:+${CARGO_ARGS[@]}}" --doc "${feature_args[@]}"
+cargo test --locked "${CARGO_ARGS[@]:+${CARGO_ARGS[@]}}" --doc "${feature_args[@]}" "${profile_args[@]:+${profile_args[@]}}"

@@ -71,13 +71,21 @@ disassembly, symbols, linker command, and raw samples. Those bundles measure
 intermediate Phase 4 candidates and do not replace exact-candidate evidence.
 The retained G3 maxima are 1.12000 for public
 derivation and 2.59291 for agreement; the Intel Granite Rapids maxima are
-1.76752 and 1.33030, respectively, against the threshold of 10. Windows
-x86-64 has direct native differential and performance evidence, but the final
-batch-parser source identity does not yet have a complete retained timing
-bundle. Exact-source Windows P-256 operation-level timing and optimized cleanup
-artifacts remain unavailable, and dedicated physical timing is pending. Other
-native rows likewise await their own target-specific evidence. Neither
-cross-compilation nor a different microarchitecture is treated as timing proof.
+1.76752 and 1.33030, respectively, against the threshold of 10.
+
+Windows x86-64 now requires the same native timing campaign, compiler API
+inventory, artifact validation, and cleanup sentinel as the other selected
+native lanes. Its BINSEC proof policy remains unsupported. Required means the
+evidence must be collected, not that a candidate has passed: each release still
+needs successful exact-source native results across all selected architectures.
+Neither cross-compilation nor a different microarchitecture is timing proof.
+
+RISC-V CI prepares CT artifacts on x86-64 and measures the transferred executable
+on physical RISC-V. The preparation bundle binds the exact source, compiler,
+binary, disassembly, and validation evidence. The timing reports retain both
+host identities. Preparation alone supplies no timing result, and transferred
+execution retains the same required cases and acceptance thresholds. See
+[the transfer workflow](../scripts/README.md#constant-time-evidence).
 
 Authentication failures remain opaque even when their inputs are public. See
 [`secret-ownership.md`](secret-ownership.md) for comparison capabilities and

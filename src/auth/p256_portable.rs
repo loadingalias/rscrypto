@@ -261,7 +261,10 @@ impl Uint {
   }
 
   fn select(left: Self, right: Self, mask: u64) -> Self {
-    #[cfg(target_arch = "s390x")]
+    #[cfg(any(target_arch = "s390x", target_arch = "x86_64"))]
+    // SECURITY: Keep the mask opaque so the tested LLVM builds retain bitwise
+    // selection instead of branching on a secret digit. Binary CT evidence is
+    // still required; black_box is not a language-level constant-time guarantee.
     let mask = core::hint::black_box(mask);
     let mut out = [0u64; 4];
     for ((dst, left), right) in out.iter_mut().zip(left.0).zip(right.0) {

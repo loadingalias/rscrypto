@@ -13,8 +13,8 @@
 //! ```rust
 //! use rscrypto::{RsaPssProfile, RsaPublicKey, RsaSignatureProfile};
 //!
-//! let public_key = include_bytes!("../../benches/rsa_fixtures/rsa3072_spki.der");
-//! let signature = include_bytes!("../../benches/rsa_fixtures/rsa3072_pss_sha256.sig");
+//! let public_key = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/benches/rsa_fixtures/rsa3072_spki.der"));
+//! let signature = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/benches/rsa_fixtures/rsa3072_pss_sha256.sig"));
 //! let message = b"rscrypto RSA-PSS verification fixture";
 //!
 //! let key = RsaPublicKey::from_spki_der(public_key).map_err(|_| "RSA public key parses")?;

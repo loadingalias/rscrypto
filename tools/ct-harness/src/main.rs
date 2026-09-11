@@ -8,6 +8,7 @@ fn main() {
   }
 
   retain!(
+    rscrypto_ct_harness::zeroization::zeroize_entry_secret_bytes_32,
     rscrypto_ct_harness::ct_entry_owner_eq_16,
     rscrypto_ct_harness::ct_entry_owner_eq_28,
     rscrypto_ct_harness::ct_entry_owner_eq_32,

@@ -45,6 +45,14 @@ cleanup and passing tests alone do not establish that secret stores survive
 optimization; machine-code evidence must be scoped to the compiler, target,
 features, and operation inspected.
 
+`just ct-full` additionally checks an 8-byte-aligned `SecretBytes<32>` destructor
+sentinel in the existing linked release harness. It requires complete volatile
+clearing and a compiler fence in the emitted release-LTO IR, and retains the
+linked symbol, disassembly, and artifact hashes. Missing or partial cleanup
+fails this gate. The sentinel does not qualify other alignments, owners, heap
+storage, error paths, or compiler-created copies; the retained machine code
+still needs target-specific review.
+
 `tests/secret_redaction.rs` pins public `Debug` and error behavior. Errors expose
 only public sizes or opaque verification failures unless a documented variant
 explicitly returns caller data. `expert::DisplaySecret` and diagnostic APIs are

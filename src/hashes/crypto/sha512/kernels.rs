@@ -6,7 +6,7 @@ use crate::platform::caps::aarch64;
 use crate::platform::caps::riscv;
 #[cfg(target_arch = "s390x")]
 use crate::platform::caps::s390x;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 use crate::platform::caps::wasm;
 #[cfg(target_arch = "x86_64")]
 use crate::platform::caps::x86;
@@ -26,7 +26,7 @@ pub(crate) enum Sha512KernelId {
   X86Avx512vl = 5,
   #[cfg(target_arch = "riscv64")]
   Riscv64Zknh = 3,
-  #[cfg(target_arch = "wasm32")]
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
   WasmSimd128 = 4,
   #[cfg(target_arch = "s390x")]
   S390xKimd = 7,
@@ -51,7 +51,7 @@ impl Sha512KernelId {
       Self::X86Avx512vl => "x86-avx512vl",
       #[cfg(target_arch = "riscv64")]
       Self::Riscv64Zknh => "riscv/zknh",
-      #[cfg(target_arch = "wasm32")]
+      #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
       Self::WasmSimd128 => "wasm/simd128",
       #[cfg(target_arch = "s390x")]
       Self::S390xKimd => "s390x/kimd",
@@ -92,7 +92,7 @@ fn compress_blocks_riscv_zknh(state: &mut [u64; 8], blocks: &[u8]) {
   unsafe { super::riscv64::compress_blocks_zknh(state, blocks) }
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 fn compress_blocks_wasm_simd128(state: &mut [u64; 8], blocks: &[u8]) {
   // SAFETY: Only called when dispatch has verified `wasm::SIMD128` is available.
   unsafe { super::wasm::compress_blocks_wasm_simd(state, blocks) }
@@ -128,7 +128,7 @@ pub(crate) fn compress_blocks_fn(id: Sha512KernelId) -> CompressBlocksFn {
     Sha512KernelId::X86Avx512vl => compress_blocks_x86_avx512vl,
     #[cfg(target_arch = "riscv64")]
     Sha512KernelId::Riscv64Zknh => compress_blocks_riscv_zknh,
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     Sha512KernelId::WasmSimd128 => compress_blocks_wasm_simd128,
     #[cfg(target_arch = "s390x")]
     Sha512KernelId::S390xKimd => compress_blocks_s390x_kimd,
@@ -152,7 +152,7 @@ pub(crate) const fn required_caps(id: Sha512KernelId) -> Caps {
     Sha512KernelId::X86Avx512vl => x86::AVX512F.union(x86::AVX512VL).union(x86::BMI2),
     #[cfg(target_arch = "riscv64")]
     Sha512KernelId::Riscv64Zknh => riscv::ZKNH,
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     Sha512KernelId::WasmSimd128 => wasm::SIMD128,
     #[cfg(target_arch = "s390x")]
     Sha512KernelId::S390xKimd => s390x::MSA,
@@ -173,7 +173,7 @@ pub(crate) const ALL: &[Sha512KernelId] = &[
   Sha512KernelId::X86Sha512,
   #[cfg(target_arch = "riscv64")]
   Sha512KernelId::Riscv64Zknh,
-  #[cfg(target_arch = "wasm32")]
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
   Sha512KernelId::WasmSimd128,
   #[cfg(target_arch = "s390x")]
   Sha512KernelId::S390xKimd,

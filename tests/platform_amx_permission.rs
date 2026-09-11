@@ -42,7 +42,7 @@ fn xcomp_permissions() -> Option<u64> {
       "syscall",
       inlateout("rax") result,
       in("rdi") ARCH_GET_XCOMP_PERM,
-      in("rsi") &mut permissions,
+      in("rsi") &raw mut permissions,
       lateout("rcx") _,
       lateout("r11") _,
       options(nostack),
@@ -82,9 +82,7 @@ fn require_amx() -> bool {
 }
 
 fn skip_or_fail(reason: &str) {
-  if require_amx() {
-    panic!("{reason}");
-  }
+  assert!(!require_amx(), "{reason}");
   eprintln!("skipping AMX permission transition: {reason}");
 }
 
@@ -152,22 +150,22 @@ fn request_before_cache_child() {
 }
 
 #[test]
-fn linux_x86_64_amx_permission_and_cache_are_process_scoped() {
+fn linux_x86_64_amx_permission_and_cache_are_process_scoped() -> Result<(), String> {
   match std::env::var(CHILD_MODE).as_deref() {
     Ok(CACHE_TRANSITION) => {
       cache_transition_child();
-      return;
+      return Ok(());
     }
     Ok(REQUEST_BEFORE_CACHE) => {
       request_before_cache_child();
-      return;
+      return Ok(());
     }
-    Ok(other) => panic!("unknown AMX child mode: {other}"),
+    Ok(other) => return Err(format!("unknown AMX child mode: {other}")),
     Err(std::env::VarError::NotPresent) => {}
-    Err(error) => panic!("invalid AMX child mode: {error}"),
+    Err(error) => return Err(format!("invalid AMX child mode: {error}")),
   }
 
-  let executable = std::env::current_exe().expect("current test executable");
+  let executable = std::env::current_exe().map_err(|error| format!("current test executable: {error}"))?;
   for mode in [CACHE_TRANSITION, REQUEST_BEFORE_CACHE] {
     let status = std::process::Command::new(&executable)
       .arg("--exact")
@@ -175,7 +173,10 @@ fn linux_x86_64_amx_permission_and_cache_are_process_scoped() {
       .arg("--nocapture")
       .env(CHILD_MODE, mode)
       .status()
-      .expect("spawn isolated AMX detector process");
-    assert!(status.success(), "AMX detector child failed in mode {mode}");
+      .map_err(|error| format!("spawn isolated AMX detector process: {error}"))?;
+    if !status.success() {
+      return Err(format!("AMX detector child failed in mode {mode}"));
+    }
   }
+  Ok(())
 }

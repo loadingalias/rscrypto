@@ -1,0 +1,100 @@
+name: Bench
+
+on:
+  workflow_dispatch:
+    inputs:
+      architectures:
+        description: all, or comma-separated x86_64-linux,aarch64-linux,x86_64-win,s390x-linux,powerpc64le-linux,riscv64-linux
+        type: string
+        required: true
+        default: x86_64-linux
+      selection:
+        description: Algorithms/groups (sha256,blake3 or hashes), all, or bench=sha2,auth
+        type: string
+        required: true
+        default: sha256
+      filter:
+        description: Optional Criterion case regex
+        type: string
+      sample_size:
+        description: Samples per case (blank uses .config/criterion.json)
+        type: string
+      warmup_ms:
+        description: Warmup milliseconds per case (blank uses catalog default)
+        type: string
+      measure_ms:
+        description: Measurement milliseconds per case (blank uses catalog default)
+        type: string
+      diagnostic:
+        description: Enable diagnostic benchmark features
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_RAIL_CACHE: "off"
+  INPUT_ARCHITECTURES: ${{ inputs.architectures }}
+  INPUT_SELECTION: ${{ inputs.selection }}
+  INPUT_FILTER: ${{ inputs.filter }}
+  INPUT_SAMPLE_SIZE: ${{ inputs.sample_size }}
+  INPUT_WARMUP_MS: ${{ inputs.warmup_ms }}
+  INPUT_MEASURE_MS: ${{ inputs.measure_ms }}
+  INPUT_DIAGNOSTIC: ${{ inputs.diagnostic }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    runs-on: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=2/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/env=production
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - id: plan
+        run: python3 scripts/bench/ci.py plan
+
+  bench:
+    needs: plan
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: true
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install tooling and measure (Linux)
+        if: runner.os == 'Linux'
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          scripts/tooling/"$PLATFORM.sh" --ci-bench
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          python3 scripts/bench/ci.py run
+          git diff --exit-code HEAD
+      - name: Install tooling and measure (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          ./scripts/tooling/x86_64-win.ps1 -CiBench
+          python3 scripts/bench/ci.py run
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --exit-code HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain benchmark evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: bench-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/bench/
+          if-no-files-found: warn
+          retention-days: 30

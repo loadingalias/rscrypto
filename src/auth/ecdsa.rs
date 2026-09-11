@@ -2183,9 +2183,10 @@ impl<const L: usize> Uint<L> {
   }
 
   fn select(lhs: Self, rhs: Self, mask: u64) -> Self {
-    #[cfg(target_arch = "s390x")]
-    // SECURITY: LLVM 23 otherwise recognizes the all-zero/all-one mask and
-    // lowers this bitwise select back to secret-dependent conditional jumps.
+    #[cfg(any(target_arch = "s390x", all(target_arch = "x86_64", target_os = "windows")))]
+    // SECURITY: Keep the mask opaque on the tested IBM Z and Windows compilers,
+    // which otherwise lower masked selection to secret-dependent branches.
+    // This barrier still requires target-specific binary and timing evidence.
     let mask = core::hint::black_box(mask);
     let mut out = [0u64; L];
     for ((dst, &left), &right) in out.iter_mut().zip(lhs.0.iter()).zip(rhs.0.iter()) {
@@ -2515,6 +2516,10 @@ impl<const L: usize> Jacobian<L> {
   }
 
   fn select(lhs: Self, rhs: Self, mask: u64) -> Self {
+    #[cfg(target_arch = "aarch64")]
+    // SECURITY: Keep LLVM from replacing masked point selection with branches
+    // on secret comb digits or the accumulator's infinity state.
+    let mask = core::hint::black_box(mask);
     let lhs_infinity = 0u64.wrapping_sub(u64::from(lhs.infinity));
     let rhs_infinity = 0u64.wrapping_sub(u64::from(rhs.infinity));
     let selected_infinity = lhs_infinity ^ (mask & (lhs_infinity ^ rhs_infinity));
@@ -4413,23 +4418,31 @@ fn precompute_comb_table_ct<const L: usize>(
   let rows = comb_rows::<L>();
   let mut column_points = [Jacobian::from_affine(point); COMB_WIDTH];
   let mut current = Jacobian::from_affine(point);
-  for column in column_points.iter_mut().skip(1) {
+  // Fixed integer bounds avoid pointer-distance divisions lowered to scalar
+  // multiplies by LLVM on RISC-V, where the CT instruction gate rejects them.
+  let mut column = 1;
+  while column < COMB_WIDTH {
     for _ in 0..rows {
       current = current.double_ct();
     }
-    *column = current;
+    column_points[column] = current;
+    column = column.strict_add(1);
   }
   let columns = normalize_jacobian_table_ct(column_points, field_inverse_exponent);
 
   let mut table = [Jacobian::from_affine(point); COMB_TABLE_SIZE];
-  for (mask, entry) in table.iter_mut().enumerate().skip(1) {
+  let mut mask = 1;
+  while mask < COMB_TABLE_SIZE {
     let mut acc = Jacobian::infinity(point.x.modulus);
-    for (column, &column_point) in columns.iter().enumerate() {
+    let mut column = 0;
+    while column < COMB_WIDTH {
       if mask & (1usize << column) != 0 {
-        acc = acc.add_mixed_ct(column_point, 0);
+        acc = acc.add_mixed_ct(columns[column], 0);
       }
+      column = column.strict_add(1);
     }
-    *entry = acc;
+    table[mask] = acc;
+    mask = mask.strict_add(1);
   }
   normalize_jacobian_table_ct(table, field_inverse_exponent)
 }
@@ -4474,9 +4487,11 @@ fn normalize_jacobian_table_ct<const L: usize, const N: usize>(
     .expect("ECDSA comb tables are nonempty");
   let mut prefixes = [FieldElement::one(modulus); N];
   let mut acc = FieldElement::one(modulus);
-  for (prefix, point) in prefixes.iter_mut().zip(table.iter()) {
-    *prefix = acc;
-    acc = acc.mul(point.z);
+  let mut index = 0;
+  while index < N {
+    prefixes[index] = acc;
+    acc = acc.mul(table[index].z);
+    index = index.strict_add(1);
   }
 
   let mut acc_inv = acc.inv_ct(field_inverse_exponent);
@@ -4484,12 +4499,15 @@ fn normalize_jacobian_table_ct<const L: usize, const N: usize>(
     x: FieldElement::zero(modulus),
     y: FieldElement::zero(modulus),
   }; N];
-  for ((point, prefix), output) in table.iter().zip(prefixes).zip(out.iter_mut()).rev() {
-    let z_inv = acc_inv.mul(prefix);
+  let mut index = N;
+  while index != 0 {
+    index = index.strict_sub(1);
+    let point = &table[index];
+    let z_inv = acc_inv.mul(prefixes[index]);
     acc_inv = acc_inv.mul(point.z);
     let z2 = z_inv.square();
     let z3 = z2.mul(z_inv);
-    *output = Affine {
+    out[index] = Affine {
       x: point.x.mul(z2),
       y: point.y.mul(z3),
     };

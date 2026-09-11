@@ -16,7 +16,7 @@ pub(crate) enum Sha384KernelId {
   X86Avx512vl = 5,
   #[cfg(target_arch = "riscv64")]
   Riscv64Zknh = 3,
-  #[cfg(target_arch = "wasm32")]
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
   WasmSimd128 = 4,
   #[cfg(target_arch = "s390x")]
   S390xKimd = 7,
@@ -41,7 +41,7 @@ impl Sha384KernelId {
       Self::X86Avx512vl => "x86-avx512vl",
       #[cfg(target_arch = "riscv64")]
       Self::Riscv64Zknh => "riscv/zknh",
-      #[cfg(target_arch = "wasm32")]
+      #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
       Self::WasmSimd128 => "wasm/simd128",
       #[cfg(target_arch = "s390x")]
       Self::S390xKimd => "s390x/kimd",
@@ -67,7 +67,7 @@ const fn to_sha512_kernel_id(id: Sha384KernelId) -> crate::hashes::crypto::sha51
     Sha384KernelId::X86Avx512vl => Sha512KernelId::X86Avx512vl,
     #[cfg(target_arch = "riscv64")]
     Sha384KernelId::Riscv64Zknh => Sha512KernelId::Riscv64Zknh,
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     Sha384KernelId::WasmSimd128 => Sha512KernelId::WasmSimd128,
     #[cfg(target_arch = "s390x")]
     Sha384KernelId::S390xKimd => Sha512KernelId::S390xKimd,
@@ -93,7 +93,7 @@ pub(crate) fn compress_blocks_fn(id: Sha384KernelId) -> CompressBlocksFn {
     Sha384KernelId::X86Avx512vl => crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id)),
     #[cfg(target_arch = "riscv64")]
     Sha384KernelId::Riscv64Zknh => crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id)),
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     Sha384KernelId::WasmSimd128 => crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id)),
     #[cfg(target_arch = "s390x")]
     Sha384KernelId::S390xKimd => crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id)),
@@ -124,7 +124,7 @@ pub(crate) const ALL: &[Sha384KernelId] = &[
   Sha384KernelId::X86Sha512,
   #[cfg(target_arch = "riscv64")]
   Sha384KernelId::Riscv64Zknh,
-  #[cfg(target_arch = "wasm32")]
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
   Sha384KernelId::WasmSimd128,
   #[cfg(target_arch = "s390x")]
   Sha384KernelId::S390xKimd,

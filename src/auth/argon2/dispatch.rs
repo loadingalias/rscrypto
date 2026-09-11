@@ -53,7 +53,7 @@ pub enum KernelId {
   Riscv64V,
 
   /// wasm32 simd128 (4-way parallel BlaMka over `v128`).
-  #[cfg(target_arch = "wasm32")]
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
   WasmSimd128,
 }
 
@@ -75,7 +75,7 @@ impl KernelId {
       Self::S390xVector => "s390x-vector",
       #[cfg(target_arch = "riscv64")]
       Self::Riscv64V => "riscv64-v",
-      #[cfg(target_arch = "wasm32")]
+      #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
       Self::WasmSimd128 => "wasm-simd128",
     }
   }
@@ -100,7 +100,7 @@ pub const ALL_KERNELS: &[KernelId] = &[
   KernelId::S390xVector,
   #[cfg(target_arch = "riscv64")]
   KernelId::Riscv64V,
-  #[cfg(target_arch = "wasm32")]
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
   KernelId::WasmSimd128,
   KernelId::Portable,
 ];
@@ -126,7 +126,7 @@ pub const fn required_caps(kernel: KernelId) -> Caps {
     KernelId::S390xVector => crate::platform::caps::s390x::VECTOR,
     #[cfg(target_arch = "riscv64")]
     KernelId::Riscv64V => crate::platform::caps::riscv::V,
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     KernelId::WasmSimd128 => crate::platform::caps::wasm::SIMD128,
   }
 }
@@ -153,7 +153,7 @@ pub(super) fn compress_fn_for(kernel: KernelId) -> CompressFn {
     KernelId::S390xVector => super::s390x::compress_vector,
     #[cfg(target_arch = "riscv64")]
     KernelId::Riscv64V => super::riscv64::compress_rvv,
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     KernelId::WasmSimd128 => super::wasm::compress_simd128,
   }
 }
@@ -321,7 +321,7 @@ mod tests {
     assert_eq!(required_caps(KernelId::Riscv64V), crate::platform::caps::riscv::V);
   }
 
-  #[cfg(target_arch = "wasm32")]
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
   #[test]
   fn wasm_simd128_kernel_name_and_caps() {
     assert_eq!(KernelId::WasmSimd128.as_str(), "wasm-simd128");
