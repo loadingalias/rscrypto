@@ -112,12 +112,18 @@ jobs:
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           just test-riscv run target/riscv-download/riscv-tests.tar.gz
           git diff --exit-code HEAD
+      - name: Package RISC-V execution evidence
+        if: ${{ !cancelled() && matrix.platform == 'riscv64-linux' }}
+        run: |
+          if [[ -d target/riscv-results ]]; then
+            tar -czf target/riscv-results.tar.gz -C target riscv-results
+          fi
       - name: Retain RISC-V execution evidence
         if: ${{ !cancelled() && matrix.platform == 'riscv64-linux' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: riscv-results
-          path: target/riscv-results/
+          path: target/riscv-results.tar.gz
+          archive: false
           if-no-files-found: warn
           retention-days: 7
 
