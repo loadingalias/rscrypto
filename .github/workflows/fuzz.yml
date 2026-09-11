@@ -2,6 +2,17 @@ name: Fuzz
 
 on:
   pull_request:
+  workflow_call:
+    inputs:
+      architectures:
+        type: string
+        default: all
+      duration:
+        type: string
+        default: '120'
+      targets:
+        type: string
+        default: ''
   workflow_dispatch:
     inputs:
       architectures:
@@ -29,7 +40,7 @@ env:
   RSCRYPTO_FUZZ_JOBS: "1"
 
 concurrency:
-  group: fuzz-${{ github.ref }}
+  group: fuzz-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 defaults:

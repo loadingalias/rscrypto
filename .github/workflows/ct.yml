@@ -24,7 +24,7 @@ env:
   INPUT_ARCHITECTURES: ${{ inputs.architectures || 'all' }}
 
 concurrency:
-  group: ct-${{ github.ref }}
+  group: ct-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 defaults:

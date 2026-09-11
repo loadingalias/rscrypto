@@ -202,6 +202,43 @@ gh pr create --base main --fill --draft
 Before merging, resolve every review thread, inspect the final diff, and confirm
 the required local and target-specific evidence.
 
+## Release
+
+Prepare the version and changelog on a clean release branch, using the reviewed
+change files:
+
+```bash
+cargo rail release run rscrypto --bump auto --skip-tag --allow-non-default-branch
+```
+
+Review the generated diff, including manifests and lockfiles in independent
+workspaces, validate it, and merge through a PR. Complete physical Apple Silicon
+RSA assembly and timing qualification locally before submission; hosted macOS
+CI does not replace that evidence.
+
+For the one-time publishing setup, create a GitHub environment named `release`
+restricted to `main`. Configure rscrypto's crates.io Trusted Publisher for
+`loadingalias/rscrypto`, workflow `release.yml`, and environment `release`.
+The workflow obtains a short-lived token; no crates.io secret is required.
+See the [crates.io setup instructions](https://crates.io/docs/trusted-publishing).
+
+To deploy, select **Actions → Release → Run workflow → main**. No version input
+is needed. The workflow rejects unconsumed change files, a version/changelog
+mismatch, or a tag pointing elsewhere. CI (including hosted macOS ARM64), full
+CT on all configured CI architectures, and both fuzz architectures plus Miri
+run concurrently against the triggering commit. Publication requires all three
+workflows to succeed. Benchmarks are separate.
+
+The final job packages the same commit, publishes to crates.io, then creates
+`v<version>` and a GitHub Release using the reviewed changelog entry. Only this
+job receives registry authentication and repository write permission.
+
+After a transient failure, use **Re-run failed jobs** on the same run. A retry
+accepts an existing crates.io version only when its checksum matches the local
+package and it is not yanked. It never moves an existing tag or overwrites a
+GitHub Release. If qualification artifacts have expired, rerun all jobs. Resolve
+checksum, tag, or release-note conflicts before retrying; do not bypass them.
+
 ## Security and test evidence
 
 Do not broaden constant-time, audit, FIPS, compliance, secret-lifecycle, or
