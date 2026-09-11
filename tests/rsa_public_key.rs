@@ -1125,7 +1125,9 @@ fn openssl_verify(
   let stdout = String::from_utf8_lossy(&output.stdout);
   let stderr = String::from_utf8_lossy(&output.stderr);
   assert!(
-    stdout.contains("Verification failure") || stderr.contains("bad signature"),
+    stdout.contains("Verification failure")
+      || stdout.contains("Verification Failure")
+      || stderr.contains("bad signature"),
     "openssl RSA verify failed unexpectedly: status={:?} stdout={stdout:?} stderr={stderr:?}",
     output.status.code()
   );
@@ -1148,14 +1150,14 @@ fn openssl_oaep_crypt(
   fs::write(&input_path, input).expect("the OpenSSL OAEP input fixture must be written");
 
   let mut command = Command::new("openssl");
-  command
-    .args(["pkeyutl", operation, "-keyform", "DER", "-inkey"])
-    .arg(&key_path);
+  command.args(["pkeyutl", operation, "-keyform", "DER"]);
   if public_key {
     command.arg("-pubin");
   }
   let output = openssl_output(
     command
+      .arg("-inkey")
+      .arg(&key_path)
       .arg("-in")
       .arg(&input_path)
       .args(["-pkeyopt", "rsa_padding_mode:oaep", "-pkeyopt"])
@@ -1199,14 +1201,14 @@ fn openssl_pkcs1v15_crypt(operation: &'static str, key_der: &[u8], input: &[u8],
   fs::write(&input_path, input).expect("the OpenSSL PKCS#1 v1.5 input fixture must be written");
 
   let mut command = Command::new("openssl");
-  command
-    .args(["pkeyutl", operation, "-keyform", "DER", "-inkey"])
-    .arg(&key_path);
+  command.args(["pkeyutl", operation, "-keyform", "DER"]);
   if public_key {
     command.arg("-pubin");
   }
   let output = openssl_output(
     command
+      .arg("-inkey")
+      .arg(&key_path)
       .arg("-in")
       .arg(&input_path)
       .args(["-pkeyopt", "rsa_padding_mode:pkcs1"]),
