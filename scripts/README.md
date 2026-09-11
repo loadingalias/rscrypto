@@ -226,11 +226,12 @@ No package is published.
 
 `fuzz.yml` uses `--ci-fuzz` for committed ASan corpus replay and bounded live
 fuzzing. Manual runs select x86-64, ARM64, or both, exact target names, and a
-per-target duration. PR campaigns use 60 seconds per target with a 30-minute
-live budget. Manual
-qualification defaults to 1200 seconds per target with a five-hour live budget
-and a six-hour job limit including installation/builds. Selection must fit its
-budget before replay starts.
+per-target duration. PR campaigns use 60 seconds per target; manual campaigns
+default to 120 seconds. Both have a 30-minute planned live-fuzzing budget per
+architecture, accounting for eight concurrent targets. Selection must fit its
+budget before replay starts. Manual fuzz jobs have a 90-minute limit including
+installation, builds, corpus replay, and live fuzzing; PR and Miri jobs retain
+their 60-minute limit.
 `--ci-miri` installs the pinned interpreter for an independent focused Miri row,
 including RSA's unsafe-boundary tests. All rows share fail-fast cancellation.
 

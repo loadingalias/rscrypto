@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -25,9 +26,10 @@ from riscv_build import environment
 
 class NextestIdentity(unittest.TestCase):
     def test_cross_architecture_reports_match_without_weakening_revision_check(self):
-        # Exact reports from the builder and RISC-V consumer in run 34527080605.
-        report = ('cargo-nextest 0.9.143 (60fa45f63 2026-08-04)\n'
-                  'release: 0.9.143\n'
+        # Model the cross-host reports from run 34527080605 with the current pin.
+        pin = tomllib.loads((ROOT / '.config/tooling.toml').read_text())['cargo']['cargo-nextest']
+        report = (f'cargo-nextest {pin} (60fa45f63 2026-08-04)\n'
+                  f'release: {pin}\n'
                   'commit-hash: 60fa45f638ffc3f35e74afa65737f45fcd32db2a\n'
                   'commit-date: 2026-08-04\n'
                   'host: x86_64-unknown-linux-gnu')
@@ -37,7 +39,7 @@ class NextestIdentity(unittest.TestCase):
         self.assertNotEqual(riscv.nextest_identity(report), riscv.nextest_identity(changed))
         incomplete = '\n'.join(line for line in consumer.splitlines() if not line.startswith('commit-hash:'))
         self.assertNotEqual(riscv.nextest_identity(report), riscv.nextest_identity(incomplete))
-        for invalid in ('', 'not-nextest 0.9.143', consumer.replace('0.9.143', '0.9.144')):
+        for invalid in ('', f'not-nextest {pin}', consumer.replace(pin, f'{pin}-mismatch')):
             with self.subTest(report=invalid), self.assertRaises(ValueError):
                 riscv.nextest_identity(invalid)
 

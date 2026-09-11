@@ -170,6 +170,19 @@ dep="1"
             fetch.assert_called_once_with('https://static.rust-lang.org/dist/channel-rust-stable.toml')
             self.assertEqual(catalog.read(path)['toolchain']['channel'], '1.98.1')
 
+    def test_nextest_recommendation_preserves_minimum_and_configuration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / '.config').mkdir()
+            path = root / '.config/nextest.toml'
+            source = ('# keep\nnextest-version = { required = "0.9.100", recommended = "0.9.143" }\n'
+                      '[profile.default]\nretries = 0\n')
+            path.write_text(source)
+            with patch.object(update, 'ROOT', root), patch.object(update, 'read', return_value={
+                    'cargo': {'cargo-nextest': '0.9.144'}}):
+                update.sync_nextest_recommendation()
+                self.assertEqual(path.read_text(), source.replace('recommended = "0.9.143"', 'recommended = "0.9.144"'))
+
     def test_update_stops_on_resolution_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -197,11 +210,21 @@ dep="1"
 
 
 class ActionPins(unittest.TestCase):
+    def test_version_annotations_follow_resolved_release(self):
+        for annotation in ('# v1.0.0', '# v1.0.0  pinned for CI'):
+            with self.subTest(annotation=annotation):
+                source = f'steps:\n  - uses: "owner/action@{"b" * 40}" {annotation}\n'
+                with patch.object(update, 'release', return_value={'tag_name': 'v2.0.0'}), patch.object(update, 'api', return_value={'sha': 'a' * 40}):
+                    result = update.action_edits(source)
+                    self.assertEqual(result, f'steps:\n  - uses: "owner/action@{"a" * 40}" {annotation.replace("v1.0.0", "v2.0.0")}\n')
+                    self.assertEqual(update.action_edits(result), result)
+
     def test_only_yaml_action_values_change(self):
         source = '''jobs:
   test:
     steps:
       - uses: owner/action/subpath@v1 # keep this comment
+      - uses: owner/action@v1 # 2 workers
       - uses: ./local
       - uses: docker://ubuntu:26.04
       - run: |
@@ -211,6 +234,7 @@ class ActionPins(unittest.TestCase):
             result = update.action_edits(source)
         self.assertIn('owner/action/subpath@'+'a'*40, result)
         self.assertIn('# keep this comment', result)
+        self.assertIn('# 2 workers', result)
         self.assertIn('uses: ./local', result)
         self.assertIn('uses: docker://ubuntu:26.04', result)
         self.assertIn('uses: this/is-shell@v1', result)

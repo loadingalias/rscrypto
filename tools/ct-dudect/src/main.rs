@@ -2001,12 +2001,16 @@ fn rsa_blinding_inverse_full_width_fixed_vs_random_factor(runner: &mut CtRunner,
       factors.push(factor);
     }
   }
+  let mut measured_factor = vec![0u8; len];
   for (index, class) in balanced_classes(rng, samples()).into_iter().enumerate() {
     let factor = if matches!(class, Class::Left) {
       &factors[0]
     } else {
       &factors[index]
     };
+    // Both classes enter measurement with the same input address and cache preparation.
+    measured_factor.copy_from_slice(factor);
+    let factor = core::hint::black_box(measured_factor.as_slice());
     runner.run_one(class, || {
       let mut inverse = vec![0u8; len];
       diag_rsa_blinding_factor_inverse(&key, factor, &mut inverse).expect("validated blinding factor must invert");
