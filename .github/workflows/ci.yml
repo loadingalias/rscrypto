@@ -66,7 +66,8 @@ jobs:
             timeout: 90
           - platform: powerpc64le-linux
             runner: ubuntu-24.04-ppc64le-p10
-            timeout: 90
+            # Cold native release compilation took 41 minutes before the portable build.
+            timeout: 180
           - platform: riscv64-linux
             runner: ubuntu-24.04-riscv
             # Compilation runs on x86-64; this budget covers native execution and bootstrap.

@@ -5,8 +5,11 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
+
+from manifest import required_dudect_cases
 
 spec = importlib.util.spec_from_file_location('ct_ci', Path(__file__).with_name('ci.py'))
 ci = importlib.util.module_from_spec(spec)
@@ -14,6 +17,19 @@ spec.loader.exec_module(ci)
 
 
 class Selection(unittest.TestCase):
+    def test_riscv_job_outlasts_required_case_budget(self):
+        manifest = tomllib.loads((Path(__file__).resolve().parents[2] / 'ct.toml').read_text())
+        cases = required_dudect_cases(manifest, 'riscv64gc-unknown-linux-gnu')
+        longest_case = max(case.get('timeout_seconds', 300) for case in cases)
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / 'output'
+            with patch.dict(os.environ, INPUT_ARCHITECTURES='riscv64-linux',
+                            GITHUB_RUN_ID='123', GITHUB_OUTPUT=str(output)), patch.object(sys, 'argv', ['ci.py', 'plan']):
+                ci.main()
+            values = dict(line.split('=', 1) for line in output.read_text().splitlines())
+            row = json.loads(values['matrix'])['include'][0]
+            self.assertGreater(row['timeout'] * 60, longest_case)
+
     def test_one_many_all_selection(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / 'output'
@@ -25,7 +41,7 @@ class Selection(unittest.TestCase):
                 values = dict(line.split('=', 1) for line in output.read_text().splitlines())
                 rows = json.loads(values['matrix'])['include']
                 self.assertEqual(len(rows), count)
-                self.assertTrue(all(row['timeout'] == (60 if row['platform'] == 'riscv64-linux' else 360) for row in rows))
+                self.assertTrue(all(row['timeout'] == 360 for row in rows))
                 self.assertEqual(values['riscv'], str(any(row['platform'] == 'riscv64-linux' for row in rows)).lower())
 
 

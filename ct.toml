@@ -743,6 +743,8 @@ left_class = "complete public derivation with fixed valid scalar"
 right_class = "complete public derivation with random valid scalar"
 samples = 20000
 smoke_samples = 2000
+timeout_seconds = 1800
+timeout_reason = "Physical RISC-V public derivation took 240 seconds; retain the full 20,000-sample gate with room for runner variation."
 
 [[dudect_case]]
 name = "p256_ecdh_agree_fixed_vs_random_scalar"
@@ -752,6 +754,8 @@ left_class = "complete agreement with fixed valid scalar"
 right_class = "complete agreement with random valid scalar"
 samples = 20000
 smoke_samples = 2000
+timeout_seconds = 1800
+timeout_reason = "Physical RISC-V agreement exceeded the default 300-second budget; retain the full 20,000-sample gate."
 
 [[dudect_case]]
 name = "aes128_header_protection_fixed_vs_random_key"
@@ -986,6 +990,8 @@ left_class = "fixed P-256 secret-scalar public derivation with blinding"
 right_class = "random P-256 secret-scalar public derivation with blinding"
 samples = 20000
 smoke_samples = 2000
+timeout_seconds = 1800
+timeout_reason = "Reserve time for full blinded P-256 arithmetic on physical RISC-V without reducing the 20,000-sample gate."
 
 [[dudect_case]]
 name = "ecdsa_p384_public_key_fixed_vs_random_secret"
@@ -1006,6 +1012,8 @@ left_class = "fixed P-256 signing secret with projective and scalar blinding"
 right_class = "random P-256 signing secret with projective and scalar blinding"
 samples = 20000
 smoke_samples = 2000
+timeout_seconds = 1800
+timeout_reason = "Reserve time for full blinded P-256 signing on physical RISC-V without reducing the 20,000-sample gate."
 
 [[dudect_case]]
 name = "ecdsa_p384_sign_fixed_vs_random_secret"
