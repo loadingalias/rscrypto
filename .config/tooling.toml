@@ -6,11 +6,11 @@
 [cargo]
 cargo-audit = "0.22.2"
 cargo-deny = "0.20.2"
-cargo-nextest = "0.9.143"
+cargo-nextest = "0.9.144"
 cargo-mutants = "27.1.0"
 just = "1.58.0"
 ripgrep = "15.2.0"
-rumdl = "0.2.66"
+rumdl = "0.2.71"
 lychee = "0.24.2"
 samply = "0.13.1"
 gungraun-runner = "0.19.4"
@@ -23,12 +23,12 @@ PyYAML = "6.0.3"
 [versions]
 cargo-rail = "0.25.0"
 cargo-binstall = "1.23.0"
-llvm = "23.1.0"
+llvm = "23.1.1"
 cmake = "4.4.3"
-wasmtime = "48.0.1"
+wasmtime = "48.0.2"
 git = "2.55.0.windows.5"
 jq = "1.8.2"
-powershell = "7.6.5"
+powershell = "7.6.6"
 rustup = "1.29.1"
 python = "3.14.7"
 zig = "0.16.0"
@@ -37,7 +37,7 @@ nasm = "3.02"
 [linux]
 ubuntu = "26.04"
 codename = "resolute"
-snapshot = "20260906T054640Z"
+snapshot = "20260911T040925Z"
 packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "pkgconf", "python3", "python3-venv", "unzip", "xz-utils", "zstd", "ninja-build", "libssl-dev", "perl", "m4", "shellcheck"]
 
 [ci]
@@ -100,12 +100,12 @@ codename = "noble"
 packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "python3", "cmake", "clang", "libclang-dev", "perl"]
 
 [windows]
-visual-studio = "18.9.2"
-build-version = "18.9.12120.119"
-channel-url = "https://download.visualstudio.microsoft.com/download/pr/fe4fb3e6-ea32-4ae3-b154-72821a274f0d/8ae0a45312cd28cec640174c5df11085f4efcb3bf210bd94cea932fb42c36778/VisualStudio.18.Release.chman"
-channel-sha256 = "d3aa7336680097d007876ffb85c9d2b5c32c21796e0125407c4e3b88ebe4fc31"
-bootstrap-url = "https://download.visualstudio.microsoft.com/download/pr/fe4fb3e6-ea32-4ae3-b154-72821a274f0d/352ac5776d592a4870c15756f9e140507b9ee64de62b401152e5929f7c0c52a6/vs_BuildTools.exe"
-bootstrap-sha256 = "352ac5776d592a4870c15756f9e140507b9ee64de62b401152e5929f7c0c52a6"
+visual-studio = "18.10.0"
+build-version = "18.10.12201.205"
+channel-url = "https://download.visualstudio.microsoft.com/download/pr/af2bf19c-59e9-48c4-bac6-019f173389ac/4e1d3943dc0afbe06dd51818b82aebfe7723ac51b8f7eeefe0dfae6b292c58c4/VisualStudio.18.Release.chman"
+channel-sha256 = "36141ed4b8df0f2a4d384244db0a61b692d8ac1087cf8ec09033913aa04e17c6"
+bootstrap-url = "https://download.visualstudio.microsoft.com/download/pr/af2bf19c-59e9-48c4-bac6-019f173389ac/05b10ae13c3e291818cf49df2f9705b4ef44a181f07b635262d91682bcdfe302/vs_BuildTools.exe"
+bootstrap-sha256 = "05b10ae13c3e291818cf49df2f9705b4ef44a181f07b635262d91682bcdfe302"
 sdk-component = "Microsoft.VisualStudio.Component.Windows11SDK.28000"
 
 [aarch64-linux]
@@ -132,8 +132,8 @@ url = "https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-lin
 sha256 = "2efc974dbd63b4444c0e8494b92f2e80c2d7e635b4b80eac2916985ddd8f72a6"
 
 [aarch64-linux.assets.llvm]
-url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.0/LLVM-23.1.0-Linux-ARM64.tar.xz"
-sha256 = "cfb31bfc713ef453248bf5bd026312f838ad6c52c25623e987cb6a340f3050d4"
+url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.1/LLVM-23.1.1-Linux-ARM64.tar.xz"
+sha256 = "3fbaaa6a1f147557a4095b9911f8dc2d4c745a11863982f76ee20e248c190a80"
 
 [aarch64-linux.assets.zig]
 url = "https://ziglang.org/download/0.16.0/zig-aarch64-linux-0.16.0.tar.xz"
@@ -163,16 +163,16 @@ url = "https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-lin
 sha256 = "d6c83076c575bc00b823522ac974bda66d0af05d6ddc30e739c12385cf32c6cc"
 
 [x86_64-linux.assets.llvm]
-url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.0/LLVM-23.1.0-Linux-X64.tar.xz"
-sha256 = "18da30f77f475688a18f7704d23f9f155ae007ed9922dbed6850a9419d9fec8c"
+url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.1/LLVM-23.1.1-Linux-X64.tar.xz"
+sha256 = "832aeb58d105de1cabc7b982dd2c65de0610f7377df48ae8fc2dd8e97420a15c"
 
 [x86_64-linux.assets.zig]
 url = "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
 sha256 = "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
 
 [x86_64-linux.assets.wasmtime]
-url = "https://github.com/bytecodealliance/wasmtime/releases/download/v48.0.1/wasmtime-v48.0.1-x86_64-linux.tar.xz"
-sha256 = "4c2e31b68ad99e0a519f225a261fda099eb15f056d4a24fdb3c2a46517bde1df"
+url = "https://github.com/bytecodealliance/wasmtime/releases/download/v48.0.2/wasmtime-v48.0.2-x86_64-linux.tar.xz"
+sha256 = "f2b0ad1ce9253f2f9a38793c2c42cd1cba4e90b27dc40d685eaf723dc8438d94"
 
 [aarch64-win]
 os = "Windows 11 Enterprise ARM64"
@@ -197,8 +197,8 @@ url = "https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-win
 sha256 = "7b410ddd00e24c7250eec7452da2348a4a70437aa87e9cda0a20d6a85662fcff"
 
 [aarch64-win.assets.llvm]
-url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.0/clang%2Bllvm-23.1.0-aarch64-pc-windows-msvc.tar.xz"
-sha256 = "caec9387c7925f61de5f53ced0ccf3a9ab9effbe200ea67787f52aa188471cf8"
+url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.1/clang%2Bllvm-23.1.1-aarch64-pc-windows-msvc.tar.xz"
+sha256 = "c8cd61f6624accf0d0f9f4519ddcc97745c6a865205bb43f364b6aaf9c50a31e"
 
 [aarch64-win.assets.python]
 url = "https://www.python.org/ftp/python/3.14.7/python-3.14.7-embed-arm64.zip"
@@ -213,8 +213,8 @@ url = "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-windows-arm64.
 sha256 = "083b5377392bc57cf27052b6d20a2d927770683bca844632901ff38b4b7b0ac7"
 
 [aarch64-win.assets.powershell]
-url = "https://github.com/PowerShell/PowerShell/releases/download/v7.6.5/PowerShell-7.6.5-win-arm64.zip"
-sha256 = "20514a755d16428dc4355c85e0883c859531e71cc3e122670aa1fccdbf96ba7e"
+url = "https://github.com/PowerShell/PowerShell/releases/download/v7.6.6/PowerShell-7.6.6-win-arm64.zip"
+sha256 = "bbde9dda31d148415eccb5fbe1638e6400a144187b006e5b3fd8ec2f39d781be"
 
 [x86_64-win]
 os = "Windows Server 2025"
@@ -225,10 +225,6 @@ cargo = ["cargo-audit", "cargo-deny", "cargo-nextest", "cargo-mutants", "just", 
 [x86_64-win.assets.rustup]
 url = "https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-pc-windows-msvc/rustup-init.exe"
 sha256 = "6f4bef66261261fcb43131be8720bab817d403a09edec7455c371974b90bdb7e"
-
-[x86_64-win.assets.nasm]
-url = "https://www.nasm.us/pub/nasm/releasebuilds/3.02/win64/nasm-3.02-win64.zip"
-sha256 = "161d0bfaff53c2f9e9f3e69fd0672323ebabafd1268976a5cec11be92a19aee7"
 
 [x86_64-win.assets.cargo-binstall]
 url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.23.0/cargo-binstall-x86_64-pc-windows-msvc.zip"
@@ -243,8 +239,8 @@ url = "https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-win
 sha256 = "4d52ebab7193a698651639ed80d8d04fd903358843572cf44c7fd234cb7c26ab"
 
 [x86_64-win.assets.llvm]
-url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.0/clang%2Bllvm-23.1.0-x86_64-pc-windows-msvc.tar.xz"
-sha256 = "5799ebeca6870e9e61d5b4c8bc869ca8490e8db55f22d1388c4545404864d9e3"
+url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.1/clang%2Bllvm-23.1.1-x86_64-pc-windows-msvc.tar.xz"
+sha256 = "c54ac8146b420fe72e11e6fdd56498d6818011ad23267196b6ab37b5ac9264c3"
 
 [x86_64-win.assets.python]
 url = "https://www.python.org/ftp/python/3.14.7/python-3.14.7-embed-amd64.zip"
@@ -259,8 +255,12 @@ url = "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-windows-amd64.
 sha256 = "a6fc67fedaf9128a3309a1e2ebb8b986aeccf70122ee46d2cb4849e423f0c627"
 
 [x86_64-win.assets.powershell]
-url = "https://github.com/PowerShell/PowerShell/releases/download/v7.6.5/PowerShell-7.6.5-win-x64.zip"
-sha256 = "32eb8f6cdce08f86e987d625a2733e54ac3e289ae7e1621b14c0b5bcec2434ea"
+url = "https://github.com/PowerShell/PowerShell/releases/download/v7.6.6/PowerShell-7.6.6-win-x64.zip"
+sha256 = "02fe458be20493fbdf43f61ea20610b811ee6c738ab1676c61b9cfcd1a33c860"
+
+[x86_64-win.assets.nasm]
+url = "https://www.nasm.us/pub/nasm/releasebuilds/3.02/win64/nasm-3.02-win64.zip"
+sha256 = "161d0bfaff53c2f9e9f3e69fd0672323ebabafd1268976a5cec11be92a19aee7"
 
 [riscv64-linux]
 rust-host = "riscv64gc-unknown-linux-gnu"

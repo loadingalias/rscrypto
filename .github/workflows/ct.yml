@@ -39,7 +39,7 @@ jobs:
       matrix: ${{ steps.select.outputs.matrix }}
       riscv: ${{ steps.select.outputs.riscv }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
           persist-credentials: false
       - id: select
@@ -51,7 +51,7 @@ jobs:
     runs-on: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=32/ram=64+128/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
           persist-credentials: false
       - name: Prepare and validate exact RISC-V CT binaries
@@ -60,7 +60,7 @@ jobs:
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           just test-transfer
           just ct-full --target riscv64gc-unknown-linux-gnu --prepare-archive target/riscv-ct.tar.gz
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
         with:
           name: riscv-ct-prepared
           path: target/riscv-ct.tar.gz
@@ -79,7 +79,7 @@ jobs:
     env:
       PLATFORM: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
           persist-credentials: false
       - name: Install tooling and run CT (Linux)
@@ -91,7 +91,7 @@ jobs:
           just ct-full
       - name: Download prepared RISC-V CT evidence from this workflow run
         if: matrix.platform == 'riscv64-linux'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" # v8.0.1
         with:
           name: riscv-ct-prepared
           path: target/riscv-download
@@ -110,7 +110,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Retain CT evidence
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
         with:
           name: ct-${{ matrix.platform }}-full
           path: |
