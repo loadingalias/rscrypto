@@ -2,7 +2,7 @@
 
 Repository scripts implement local development, testing, evidence, and
 benchmark commands. User-facing entry points are the recipes reported by
-`just --list`. Every script in this directory is locally executable.
+`just --list`. Supporting modules are invoked by those entry points.
 
 ## Check entry points
 
@@ -131,7 +131,6 @@ disk until explicitly removed; full reports inventory only their current run.
 budget. `benches/common/criterion.rs` applies them to every Criterion harness;
 `bench/settings.py` resolves invocation-wide overrides. `bench/bounded.py` stops
 the whole benchmark or profile process tree within the budget.
-`bench/evidence.py` owns the shared build/runtime environment collector.
 `bench/runner.py` resolves filters to unique cases. `bench/measure.py` executes
 one process per configuration and verifies statistical artifacts before the
 runner marks a run complete. Export is a separate runner command.
@@ -179,7 +178,8 @@ Run `scripts/tooling/<platform>.sh` on the native Ubuntu version pinned in
 `x86_64-linux`, `riscv64-linux`, `s390x-linux`, and `powerpc64le-linux`.
 The installers use sudo when needed. Windows uses the corresponding
 `aarch64-win.ps1` or `x86_64-win.ps1` in an elevated PowerShell session.
-macOS tools remain locally managed.
+Local macOS tools remain locally managed; hosted macOS CI uses
+`scripts/tooling/aarch64-macos.sh`.
 
 CI calls these same installers with `--ci` on Linux or `-Ci` on Windows.
 The catalog's `ci` section selects the Cargo tools needed by `just ci-check`,
@@ -237,9 +237,9 @@ including RSA's unsafe-boundary tests. All rows share fail-fast cancellation.
 
 `ct.yml` always runs full CT evidence, only through manual dispatch or a reusable
 workflow call. It does not run on pull requests or pushes. Manual runs select
-one, many, or all six native platforms, defaulting to all. A future release
-workflow must call it for all platforms and require success on the same candidate
-before publishing; no release workflow exists yet. Linux uses `--ci-ct-full` and
+one, many, or all six native platforms, defaulting to all. The release
+workflow calls it for all platforms and requires success on the same candidate
+before publishing. Linux uses `--ci-ct-full` and
 Windows uses `-CiCt`. The Linux installer additionally installs the pinned BINSEC,
 Bitwuzla and decoder on GNU Linux x86-64/ARM64. Proof dependencies use a fixed
 opam repository revision from `.config/tooling.toml`. Unsupported proof targets
@@ -254,8 +254,8 @@ of 8. Proof failures stop timing; required timing failures stop later cases.
 Local `just ct-dudect --smoke` remains a diagnostic shortcut outside this workflow.
 Full CT evidence does not establish the complete secret-lifecycle claim by itself.
 
-Both workflows retain evidence for seven days and run without caches. Manual
-dispatch becomes available once they reach the default branch. CT and benchmark
+The fuzz and CT workflows retain final evidence for seven days and run without
+caches. CT preparation archives are retained for two days. CT and benchmark
 selection jobs validate requests and emit only the requested runner rows; they
 do not install Rust, build code, or invoke Cargo Rail.
 
@@ -296,5 +296,20 @@ results. The library also receives broad feature builds for both WASM targets.
 
 The x86-64 and ARM64 Linux rows install native musl build prerequisites and run
 `just test-musl`: the complete native and portable test suites plus doctests,
-compiled and executed for the matching musl target. Apple ARM64 and Windows
-ARM64 execution remain deferred. No compatibility lane enables persistent caches.
+compiled and executed for the matching musl target. Apple ARM64 executes in
+the hosted macOS CI row; Windows ARM64 execution remains deferred. No
+compatibility lane enables persistent caches.
+
+## Release orchestration
+
+`.github/workflows/release.yml` calls CI, CT, and fuzz qualification before its
+publication job. `scripts/release/release.py` validates the candidate, reconciles
+registry checksums on retries, and creates the source tag and GitHub Release.
+Its failure/recovery tests run through `just test-scripts`. Maintainer setup,
+preparation, deployment, and retry instructions live in
+[CONTRIBUTING.md](../CONTRIBUTING.md#release).
+
+`scripts/tooling/aarch64-macos.sh` provisions the hosted ARM64 CI lane from the
+repository's Rust and Cargo tool pins. That lane shares CI's native fail-fast
+matrix and runs native/portable tests and checks. Physical Apple Silicon RSA
+assembly and timing evidence remain local pre-submit requirements.

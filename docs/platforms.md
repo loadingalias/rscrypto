@@ -32,13 +32,15 @@ same baseline or ADX/BMI2 arithmetic behind Microsoft x64 wrappers; public SEC1
 validation crosses one target-shaped batch boundary instead of five field-call
 wrappers. The deterministic provenance transform keeps those backends
 independent of the ECDSA feature and clears their secret-derived frames,
-saved-register spill slots, and volatile integer registers. Physical
-Graviton3, Graviton4, Intel Granite Rapids Linux, and Intel Granite Rapids
+saved-register spill slots, and volatile integer registers.
+
+Physical Graviton3, Graviton4, Intel Granite Rapids Linux, and Intel Granite Rapids
 Windows development evidence covers the applicable native ABI, direct portable
 differentials, independent vectors and implementations, and equivalent-work
-performance for the measured Phase 4 candidates. The sealed Linux bundles
-retain complete operation-level timing artifacts and optimized cleanup
-evidence, but later shared-source edits mean they are not exact-final-source
+performance for the measured Phase 4 candidates.
+
+The sealed Linux bundles retain complete operation-level timing artifacts and
+optimized cleanup evidence, but later shared-source edits mean they are not exact-final-source
 release evidence. Exact-final-source Windows timing and cleanup artifacts are
 not available, and dedicated physical timing is unavailable; the native runtime
 and benchmark do not stand in for those gates. Other targets and
@@ -51,28 +53,27 @@ evidence. Evidence from one CPU is never substituted for another.
 support catalog. Targets outside it may compile, but are not part of the tested
 support contract. Target-specific evidence must be collected independently.
 
-| Target | Compile proof | Runtime proof | Perf | CT |
-| --- | --- | --- | --- | --- |
-| `aarch64-apple-darwin` | Native | Virtual native | No | No |
-| `aarch64-pc-windows-msvc` | Hosted | None | No | No |
-| `aarch64-unknown-linux-gnu` | Native | Virtual native | Yes | Yes |
-| `aarch64-unknown-linux-musl` | Generic cross | None | No | No |
-| `aarch64-unknown-none` | Generic cross | None | No | No |
-| `powerpc64le-unknown-linux-gnu` | Native | Physical native | Yes | Yes |
-| `riscv32imac-unknown-none-elf` | Generic cross | None | No | No |
-| `riscv64gc-unknown-linux-gnu` | Native | Physical native | Yes | Yes |
-| `s390x-unknown-linux-gnu` | Native | Physical native | Yes | Yes |
-| `thumbv6m-none-eabi` | Generic cross | None | No | No |
-| `wasm32-unknown-unknown` | Generic cross | None | No | No |
-| `wasm32-wasip1` | Generic cross | Wasmtime emulation | No | No |
-| `x86_64-pc-windows-msvc` | Native | Virtual native | No | No |
-| `x86_64-unknown-linux-gnu` | Native | Virtual native | Yes | Yes |
-| `x86_64-unknown-linux-musl` | Generic cross | None | No | No |
-| `x86_64-unknown-none` | Generic cross | None | No | No |
+Current validation is defined by the [CI workflow](../.github/workflows/ci.yml)
+and [repository recipes](../scripts/README.md):
 
-Performance and CT entries refer to retained target-specific evidence; a
-compile proof never supplies those claims. A separate physical Intel Sapphire
-Rapids run covers Linux AMX process authorization.
+| Check | Scope |
+| --- | --- |
+| `just check` | Host and catalogued cross-target compilation and lint checks. |
+| Native CI | Native and portable suites plus doctests on Linux x86-64, AArch64, POWER, IBM Z, and RISC-V, macOS AArch64, and Windows x86-64. RISC-V builds on x86-64 and executes transferred artifacts on native hardware. |
+| `just test-musl` | Native and portable suites plus doctests on matching x86-64 or AArch64 Linux hosts. |
+| `just ci-compat` | Feature/MSRV and bare-metal compilation; scalar and SIMD vector execution for `wasm32-unknown-unknown` and `wasm32-wasip1` in Wasmtime. |
+
+A configured check is not a passing result for the current revision. Inspect
+matching run artifacts before qualifying a release. Bare-metal checks do not
+execute on devices, and Wasmtime results do not establish browser-engine
+behavior. Windows AArch64 runtime CI remains deferred. Hosted macOS CI does
+not replace physical Apple Silicon RSA assembly and timing qualification.
+
+Performance and constant-time claims require retained evidence for the exact
+operation and configuration. Neither a target's presence in the catalog nor a
+passing compile check supplies that evidence. See the
+[benchmark record](../benchmark_results/OVERVIEW.md) and
+[constant-time evidence model](constant-time.md).
 
 Retained POWER, IBM Z, and RISC-V evidence covers native unit/backend behavior
 and focused portable-versus-accelerated tests. Windows AArch64 has compile-only

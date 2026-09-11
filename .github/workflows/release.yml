@@ -1,0 +1,79 @@
+name: Release
+run-name: Release ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_RAIL_CACHE: "off"
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validate the release candidate
+        run: python3 scripts/release/release.py preflight
+
+  ci:
+    needs: preflight
+    uses: ./.github/workflows/ci.yml
+
+  ct:
+    needs: preflight
+    uses: ./.github/workflows/ct.yml
+    with:
+      architectures: all
+
+  fuzz:
+    needs: preflight
+    uses: ./.github/workflows/fuzz.yml
+    with:
+      architectures: all
+      duration: '120'
+
+  publish:
+    needs: [ci, ct, fuzz]
+    runs-on: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=8/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=100gb:gp3/env=production
+    timeout-minutes: 60
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Prepare the checked candidate for publication
+        id: package
+        run: |
+          scripts/tooling/x86_64-linux.sh --ci-package
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          python3 scripts/release/release.py package
+      - name: Authenticate to crates.io
+        if: steps.package.outputs.published == 'false'
+        id: auth
+        uses: "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18" # v1.0.5
+      - name: Publish the crate and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          python3 scripts/release/release.py publish

@@ -40,9 +40,10 @@ than weakening the gate.
 - The constant-time harness inventories exact operations in [`ct.toml`](ct.toml)
   and combines optimized linked-binary inspection, BINSEC proofs for declared
   fixed-shape kernels, and DudeCT timing tests for declared end-to-end cases.
-- Secret owners mask `Debug`, omit ordinary equality and implicit duplication,
-  and overwrite their initialized bytes on drop. Verification failures are opaque; failed AEAD opens
-  clear caller output buffers.
+- Secret owners redact `Debug` and clear initialized storage on drop. Duplication
+  rules vary by type: keyed BLAKE2/BLAKE3 state supports `Clone`. The
+  [ownership inventory](docs/secret-ownership.md) lists these boundaries.
+  Verification failures are opaque; failed AEAD opens clear unauthenticated plaintext.
 
 A constant-time claim exists only when evidence for the required target,
 feature, compiler, profile, and operation passes. Source that looks branchless
@@ -81,7 +82,7 @@ rscrypto = { version = "0.9", features = ["full", "getrandom"] }
 The default feature is `std`; `default-features = false` removes it. Enable
 `getrandom` only for APIs that obtain salts, keys, nonces, or RSA key-generation
 entropy from the operating system. The [`feature guide`](docs/features.md)
-owns exact dependencies and deployment controls.
+explains build selection; [`Cargo.toml`](Cargo.toml) owns the exact feature graph.
 
 ## Quick start
 
@@ -114,6 +115,9 @@ in [`examples/README.md`](examples/README.md).
 | Key exchange and KEMs | P-256 ECDH, X25519, ML-KEM-512/768/1024 | `key-exchange` or leaf features |
 | AEADs | AES-GCM, AES-GCM-SIV, AES-SIV-CMAC, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128 | `aead` or leaf features |
 
+The compatibility-only WebSocket accept digest requires `websocket-sha1`,
+which is excluded from `full` and every other umbrella feature.
+
 Use [docs.rs](https://docs.rs/rscrypto) for exact types and methods. Use the
 [`migration guide`](docs/migration.md) when replacing another library.
 
@@ -124,8 +128,8 @@ target support and, with `std`, detected runtime CPU capabilities select
 eligible SIMD or assembly kernels. Unsupported acceleration falls back to
 portable Rust.
 
-The [`platform guide`](docs/platforms.md) owns the target matrix, dispatch
-model, `no_std` coverage, and the limits of `portable-only`.
+The [`platform guide`](docs/platforms.md) explains the supported target catalog,
+dispatch, `no_std` coverage, and the limits of `portable-only`.
 
 ## Project
 
