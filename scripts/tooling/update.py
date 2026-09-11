@@ -340,9 +340,14 @@ def action_edits(content):
                             end = len(content)
                         suffix = content[value.end_mark.index:end]
                         replacement = json.dumps(text)
+                        annotation = re.match(r'([ \t]*#[ \t]*)(?:v\d[\w.+-]*|\d+(?:\.\d+)+[\w.+-]*)(?=[ \t\r]|$)', suffix)
+                        edit_end = value.end_mark.index
                         if not suffix.strip():
                             replacement += f' # {ref}'
-                        edits.append((value.start_mark.index, value.end_mark.index, replacement))
+                        elif annotation:
+                            replacement += f'{annotation[1]}{ref}'
+                            edit_end += annotation.end()
+                        edits.append((value.start_mark.index, edit_end, replacement))
                 walk(value)
         elif isinstance(node, yaml.SequenceNode):
             for child in node.value:
@@ -396,6 +401,14 @@ def sync_gungraun_runner():
     write_catalog(data)
 
 
+def sync_nextest_recommendation():
+    import tomlkit
+    path = ROOT / '.config/nextest.toml'
+    document = tomlkit.parse(path.read_text())
+    document['nextest-version']['recommended'] = read()['cargo']['cargo-nextest']
+    path.write_text(tomlkit.dumps(document))
+
+
 def cargo_roots(paths):
     roots = set()
     for path in paths:
@@ -432,6 +445,7 @@ def main():
             subprocess.run(['cargo', '--config', str(patches), 'update',
                             '--manifest-path', str(manifest)], cwd=ROOT, check=True)
     sync_gungraun_runner()
+    sync_nextest_recommendation()
     update_actions()
 
     subprocess.run(['cargo', 'deny', '--locked', 'check', 'all'], cwd=ROOT, check=True)
