@@ -252,5 +252,15 @@ class LinuxInstall(unittest.TestCase):
         self.assertNotIn('Remv ', result.stdout)
 
 
+class WindowsDownload(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('powershell') or shutil.which('pwsh'), 'requires PowerShell')
+    def test_download_recovery_exhaustion_and_checksum(self):
+        shell = shutil.which('powershell') or shutil.which('pwsh')
+        result = subprocess.run([shell, '-NoProfile', '-NonInteractive', '-File',
+                                 str(ROOT / 'scripts/tooling/windows_download_test.ps1')],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
 if __name__ == '__main__':
     unittest.main()

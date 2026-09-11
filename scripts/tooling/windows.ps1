@@ -33,7 +33,18 @@ function Invoke-Native {
 function Get-PinnedDownload {
     param([string]$Url, [string]$Sha256, [string]$Destination)
     if ($Url -notmatch '^https://' -or $Sha256 -notmatch '^[0-9a-f]{64}$') { throw 'Invalid download pin.' }
-    Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $Destination
+    for ($attempt = 1; $attempt -le 4; $attempt++) {
+        Write-Host "Downloading $Url (attempt $attempt/4)"
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $Destination -TimeoutSec 300 -ErrorAction Stop
+            break
+        } catch {
+            Remove-Item $Destination -Force -ErrorAction SilentlyContinue
+            if ($attempt -eq 4) { throw }
+            Write-Warning "Download failed for ${Url}: $($_.Exception.Message)"
+            Start-Sleep -Seconds (2 * $attempt)
+        }
+    }
     if ((Get-FileHash -Algorithm SHA256 $Destination).Hash -ne $Sha256) {
         Remove-Item $Destination -Force
         throw "Checksum mismatch for $Url"

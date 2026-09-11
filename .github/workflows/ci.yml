@@ -148,6 +148,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
+          ./scripts/tooling/windows_download_test.ps1
           ./scripts/tooling/x86_64-win.ps1 -Ci
           just ci-check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
