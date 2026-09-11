@@ -1,7 +1,7 @@
 # Features
 
 Select the smallest feature set that exposes the primitives you use.
-`Cargo.toml` is the complete, authoritative feature graph.
+[`Cargo.toml`](../Cargo.toml) is the complete, authoritative feature graph.
 
 ## Start here
 
@@ -31,6 +31,9 @@ Umbrella features trade build size for convenience:
 Prefer leaf features such as `sha2`, `blake3`, `aes-gcm`, `ed25519`, `p256-ecdh`, or
 `ml-kem` in libraries and constrained builds.
 
+`websocket-sha1` exposes only the compatibility digest for WebSocket handshakes.
+It is excluded from every umbrella feature, including `full`; enable it explicitly.
+
 ## Capability features
 
 | Feature | Effect |
@@ -42,18 +45,15 @@ Prefer leaf features such as `sha2`, `blake3`, `aes-gcm`, `ed25519`, `p256-ecdh`
 | `serde` | Serializes public types. |
 | `serde-secrets` | Also serializes secret keys and shared secrets; use only at an explicit key-storage boundary. |
 | `portable-only` | Makes runtime capability detection report no SIMD or ASM capabilities. |
-| `diag` | Exposes unstable diagnostic and evidence hooks; do not use it as application API. |
+| `diag` | Exposes unstable diagnostic and evidence hooks; implies `std`. Do not use it as application API. |
 
 `getrandom` changes entropy acquisition, not algorithm availability. APIs that
 accept caller-provided entropy remain available without it.
 
 `p256-ecdh` is a standalone leaf: it does not enable ECDSA, HMAC, `alloc`, or
-`std`. It retains the portable authority on every supported target and selects
-the embedded Apple or Linux AArch64 backend only when `portable-only` and Miri
-are not active. Platform support, timing claims, and independent vector coverage
-remain owned by [`platforms.md`](platforms.md),
-[`constant-time.md`](constant-time.md), and
-[`test-vector-coverage.md`](test-vector-coverage.md).
+`std`. See [`platforms.md`](platforms.md) for backend selection,
+[`constant-time.md`](constant-time.md) for timing claims, and
+[`test-vector-coverage.md`](test-vector-coverage.md) for independent vectors.
 
 `portable-only` affects dispatchers that consult `platform::caps()`. It does
 not remove accelerated code from the binary or override backends selected by

@@ -54,7 +54,12 @@ Rust APIs, not AWS-LC symbols.
 ## Move secret ownership into rscrypto
 
 Use fixed-size owners when size is part of the protocol contract. Fallible
-fillers write directly into zero-initialized owner storage:
+fillers write directly into zero-initialized owner storage. The examples below
+call `getrandom::fill` directly, so add `getrandom = "0.4"` as an application
+dependency; enabling rscrypto's `getrandom` feature does not expose that crate
+to your code.
+
+Construct a fixed-size owner:
 
 ```rust
 use rscrypto::SecretBytes;
@@ -77,13 +82,14 @@ assert_eq!(text.as_str(), "credential");
 ```
 
 The old infallible ECDSA blinding callbacks are deprecated. Use the fallible
-entry points so entropy failure returns before private arithmetic:
+entry points so entropy failure returns before private arithmetic. This example
+requires rscrypto's `ecdsa-p256` feature:
 
 ```rust
 use rscrypto::{EcdsaBlindedSigningError, EcdsaP256SecretKey};
 
 let secret = EcdsaP256SecretKey::from_bytes([0x42; 32])?;
-let signature = secret.try_sign_blinded_with(b"message", getrandom::fill);
+let signature = secret.try_sign_blinded_with(b"message", |bytes| getrandom::fill(bytes));
 match signature {
   Ok(signature) => assert_eq!(signature.as_bytes().len(), 64),
   Err(EcdsaBlindedSigningError::Random(error)) => return Err(error.into()),
