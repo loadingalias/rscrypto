@@ -59,10 +59,12 @@ jobs:
           run-id: 34672864167
           github-token: ${{ github.token }}
           path: target/ct-replay-download
+      - name: Install tools bound to the original source
+        working-directory: target/ct-replay-source
+        run: scripts/tooling/riscv64-linux.sh --ci-cross-run "$GITHUB_WORKSPACE/target/ct-replay-download/riscv64gc-unknown-linux-gnu-tools.tar.gz"
       - name: Verify original archive and repeat the full sample case
         run: |
           echo 'c551b7e2b4928e4153fd864bed860d4d414a88bdccedf8be8110d4da07377b24  target/ct-replay-download/riscv64gc-unknown-linux-gnu-ct.tar.gz' | sha256sum --check
-          scripts/tooling/riscv64-linux.sh --ci-cross-run target/ct-replay-download/riscv64gc-unknown-linux-gnu-tools.tar.gz
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           just ct-replay --source-root target/ct-replay-source --archive target/ct-replay-download/riscv64gc-unknown-linux-gnu-ct.tar.gz --out target/ct-replay-results --case ecdsa_p384_public_key_fixed_vs_random_secret
       - name: Retain every repetition and original preparation evidence
