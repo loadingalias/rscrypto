@@ -89,7 +89,7 @@ def hardware() -> dict:
   if platform.system() == "Darwin":
     host["model"] = subprocess.check_output(["sysctl", "-n", "hw.model", "machdep.cpu.brand_string"], text=True).strip()
   elif Path("/proc/cpuinfo").is_file():
-    fields = {"vendor_id", "model name", "cpu family", "model", "stepping", "Features", "flags", "CPU architecture", "CPU implementer", "CPU part", "machine", "processor"}
+    fields = {"vendor_id", "model name", "cpu family", "model", "stepping", "siblings", "cpu cores", "Features", "flags", "CPU architecture", "CPU implementer", "CPU part", "machine", "processor"}
     host["cpu"] = sorted(set(line.strip() for line in Path("/proc/cpuinfo").read_text().splitlines()
                              if ":" in line and line.split(":", 1)[0].strip() in fields))
   else:

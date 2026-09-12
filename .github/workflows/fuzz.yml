@@ -58,7 +58,7 @@ jobs:
         include:
           - platform: x86_64-linux
             task: miri
-    runs-on: runs-on=${{ github.run_id }}/family=${{ matrix.platform == 'aarch64-linux' && 'c7g+c8g+m7g+m8g' || 'c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i' }}/cpu=${{ matrix.task == 'miri' && '4' || '16' }}/image=${{ matrix.platform == 'aarch64-linux' && 'ubuntu24-minimal-arm64' || 'ubuntu24-minimal-x64' }}/spot=price-capacity-optimized/volume=150gb:gp3/env=production
+    runs-on: runs-on=${{ github.run_id }}/runner=${{ matrix.task == 'miri' && 'miri' || matrix.platform }}/env=production
     timeout-minutes: ${{ (matrix.task == 'miri' || github.event_name == 'pull_request') && 60 || 90 }}
     steps:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1

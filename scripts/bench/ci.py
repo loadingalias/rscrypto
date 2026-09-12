@@ -17,7 +17,27 @@ import runner
 import settings
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
-from ci_platforms import PLATFORMS, platforms
+from ci_platforms import platforms as native_platforms
+from cross_build import TARGETS
+
+
+def platforms(value: str, run_id: str) -> dict:
+    rows = []
+    for row in native_platforms(value, run_id)['include']:
+        if row['platform'].startswith('x86_64-'):
+            for vendor in ('intel', 'amd'):
+                rows.append({**row, 'name': row['platform'] + '-' + vendor,
+                             'runner': row['runner'].replace('-intel/', '-' + vendor + '/')})
+        else:
+            rows.append({**row, 'name': row['platform']})
+    for row in rows:
+        row['timeout'] = max(row['timeout'], 120)
+        target = row['platform'].removesuffix('-linux') + '-unknown-linux-gnu'
+        if row['platform'] == 'riscv64-linux':
+            target = 'riscv64gc-unknown-linux-gnu'
+        if target in TARGETS:
+            row['target'] = target
+    return {'include': rows}
 
 
 def arguments(env: dict) -> list[str]:
@@ -49,12 +69,21 @@ def main() -> int:
         matrix = platforms(os.environ.get('INPUT_ARCHITECTURES', ''), os.environ['GITHUB_RUN_ID'])
         with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
             output.write('matrix=' + json.dumps(matrix, separators=(',', ':')) + '\n')
-        print('Platforms: ' + ', '.join(row['platform'] for row in matrix['include']))
+            builds = [{'target': row['target']} for row in matrix['include'] if 'target' in row]
+            output.write('cross=' + str(bool(builds)).lower() + '\n')
+            output.write('builds=' + json.dumps({'include': builds}, separators=(',', ':')) + '\n')
+        print('Platforms: ' + ', '.join(row['name'] for row in matrix['include']))
         print('Benchmark arguments: ' + json.dumps(args))
         return 0
+    if len(sys.argv) == 4 and sys.argv[1] in ('prepare', 'measure'):
+        operation, target, archive = sys.argv[1:]
+        if target not in TARGETS:
+            raise ValueError('unsupported cross-build target')
+        args += ['target=' + target, ('prepare_archive=' if operation == 'prepare' else 'run_archive=') + archive]
+        return subprocess.run(['just', 'bench', *args], check=False).returncode
     if sys.argv[1:] == ['run']:
         return subprocess.run(['just', 'bench', *args], check=False).returncode
-    raise ValueError('usage: scripts/bench/ci.py plan|run')
+    raise ValueError('usage: scripts/bench/ci.py plan|run|{prepare|measure} TARGET ARCHIVE')
 
 
 if __name__ == '__main__':

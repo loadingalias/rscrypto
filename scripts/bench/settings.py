@@ -16,8 +16,8 @@ def load(overrides=None) -> dict:
   for key, minimum in integers.items():
     if type(settings[key]) is not int or settings[key] < minimum:
       raise ValueError(f"{CONFIG}: {key} must be an integer >= {minimum}")
-  if settings["max_run_seconds"] > 3600:
-    raise ValueError("benchmark run budget cannot exceed one hour")
+  if settings["max_run_seconds"] > 5400:
+    raise ValueError("benchmark run budget cannot exceed 90 minutes")
   for key in ("confidence_level", "significance_level", "noise_threshold"):
     if type(settings[key]) not in (int, float) or not 0 < settings[key] < 1:
       raise ValueError(f"{CONFIG}: {key} must be between zero and one")

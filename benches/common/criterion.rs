@@ -10,8 +10,8 @@ fn criterion() -> criterion::Criterion {
   let count = |name: &str| usize::try_from(integer(name)).expect("Criterion count fits usize");
   let budget = integer("max_run_seconds");
   assert!(
-    (1..=3600).contains(&budget),
-    "benchmark budget must be at most one hour"
+    (1..=5400).contains(&budget),
+    "benchmark budget must be at most 90 minutes"
   );
   // The orchestration watchdog bounds the entire multi-binary run. This also
   // bounds an individual harness invoked directly through Cargo.

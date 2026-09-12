@@ -35,8 +35,8 @@ def stop(process: subprocess.Popen, sig: int) -> None:
 
 
 def run(command: list[str], seconds: float) -> int:
-  if not 0 < seconds <= 3600:
-    raise ValueError("run budget must be positive and at most one hour")
+  if not 0 < seconds <= 5400:
+    raise ValueError("run budget must be positive and at most 90 minutes")
   grace = min(5.0, seconds / 10)
   with subprocess.Popen(command, start_new_session=os.name == "posix") as process:
     try:

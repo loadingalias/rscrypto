@@ -113,6 +113,15 @@ check:
 ci-check:
     @scripts/check/check.sh native
 
+# Validate Apple Silicon checks, native/portable release tests, and RSA assembly locally.
+check-macos:
+    @scripts/check/macos.sh
+
+# Enable mandatory local macOS validation for commits and merge commits in this checkout.
+[group('tooling')]
+install-hooks:
+    @git config --local core.hooksPath .githooks
+
 # Cross-check the complete target native CI compilation surface.
 ci-check-target target:
     @scripts/check/check.sh target {{quote(target)}}
@@ -152,6 +161,7 @@ test-scripts:
     @scripts/lib/python.sh scripts/tooling/install_test.py
     @scripts/lib/python.sh scripts/bench/ci_test.py
     @scripts/lib/python.sh scripts/test/fuzz_features_test.py
+    @scripts/lib/python.sh scripts/check/macos_test.py
     @scripts/lib/python.sh scripts/check/check_runner_test.py
     @scripts/lib/python.sh scripts/check/compat_test.py
     @scripts/lib/python.sh scripts/test/fuzz_runner_test.py

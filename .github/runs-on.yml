@@ -1,23 +1,75 @@
-# AWS runners. Other providers are selected directly in workflows.
+# AWS runner shapes. Workflows reference these names; other providers keep their own labels.
 runners:
+  plan:
+    family: [c7a.large, c7i.large, c8a.large, c8i.large]
+    cpu: 2
+    image: ubuntu24-minimal-x64
+    spot: price-capacity-optimized
+    volume: 40gb:gp3
+  miri:
+    family: [c7a.xlarge, c7i.xlarge, c8a.xlarge, c8i.xlarge]
+    cpu: 4
+    image: ubuntu24-minimal-x64
+    spot: price-capacity-optimized
+    volume: 150gb:gp3
+  package:
+    family: [c7a.2xlarge, c7i.2xlarge, c8a.2xlarge, c8i.2xlarge]
+    cpu: 8
+    image: ubuntu24-minimal-x64
+    spot: price-capacity-optimized
+    volume: 100gb:gp3
+  cross-build:
+    family: [c7a.8xlarge, c7i.8xlarge, c8a.8xlarge, c8i.8xlarge]
+    cpu: 32
+    image: ubuntu24-minimal-x64
+    spot: price-capacity-optimized
+    volume: 150gb:gp3
   x86_64-linux:
-    family: [c7a, c7i, c8a, c8i, m7a, m7i, m8a, m8i]
-    cpu: [16, 32]
-    ram: [32, 128]
-    image: ubuntu24-full-x64
+    family: [c7a.4xlarge, c7i.4xlarge, c8a.4xlarge, c8i.4xlarge]
+    cpu: 16
+    image: ubuntu24-minimal-x64
     spot: price-capacity-optimized
     volume: 150gb:gp3
   aarch64-linux:
-    family: [c7g, c8g, m7g, m8g]
-    cpu: [16, 32]
-    ram: [32, 128]
-    image: ubuntu24-full-arm64
+    family: [c7g.4xlarge, c8g.4xlarge, c9g.4xlarge]
+    cpu: 16
+    image: ubuntu24-minimal-arm64
     spot: price-capacity-optimized
     volume: 150gb:gp3
   x86_64-win:
-    family: [c7a, c7i, c8a, c8i, m7a, m7i, m8a, m8i]
-    cpu: [16, 32]
-    ram: [32, 128]
+    family: [c7a.4xlarge, c7i.4xlarge, c8a.4xlarge, c8i.4xlarge]
+    cpu: 16
     image: windows25-full-x64
     spot: price-capacity-optimized
     volume: 200gb:gp3
+  # Fixed, non-Flex, On-Demand hardware for timing and benchmark evidence.
+  measure-x86_64-linux-intel:
+    family: [c8i.2xlarge]
+    cpu: 8
+    image: ubuntu24-minimal-x64
+    spot: false
+    volume: 100gb:gp3
+  measure-x86_64-linux-amd:
+    family: [c8a.2xlarge]
+    cpu: 8
+    image: ubuntu24-minimal-x64
+    spot: false
+    volume: 100gb:gp3
+  measure-x86_64-win-intel:
+    family: [c8i.2xlarge]
+    cpu: 8
+    image: windows25-full-x64
+    spot: false
+    volume: 100gb:gp3
+  measure-x86_64-win-amd:
+    family: [c8a.2xlarge]
+    cpu: 8
+    image: windows25-full-x64
+    spot: false
+    volume: 100gb:gp3
+  measure-aarch64-linux:
+    family: [c9g.2xlarge]
+    cpu: 8
+    image: ubuntu24-minimal-arm64
+    spot: false
+    volume: 100gb:gp3

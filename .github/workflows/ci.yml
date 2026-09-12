@@ -24,7 +24,7 @@ defaults:
 jobs:
   cross-build:
     name: Prepare ${{ matrix.target }} tests
-    runs-on: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=32/ram=64+128/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
+    runs-on: runs-on=${{ github.run_id }}/runner=cross-build/env=production
     timeout-minutes: 45
     strategy:
       fail-fast: true
@@ -59,16 +59,16 @@ jobs:
       matrix:
         include:
           - platform: compatibility
-            runner: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=32/ram=64+128/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
+            runner: runs-on=${{ github.run_id }}/runner=cross-build/env=production
             timeout: 60
           - platform: package
-            runner: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=8/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=100gb:gp3/env=production
+            runner: runs-on=${{ github.run_id }}/runner=package/env=production
             timeout: 60
           - platform: x86_64-linux
-            runner: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=16+32/ram=32+128/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
+            runner: runs-on=${{ github.run_id }}/runner=x86_64-linux/env=production
             timeout: 60
           - platform: aarch64-linux
-            runner: runs-on=${{ github.run_id }}/family=c7g+c8g+m7g+m8g/cpu=16+32/ram=32+128/image=ubuntu24-minimal-arm64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
+            runner: runs-on=${{ github.run_id }}/runner=aarch64-linux/env=production
             timeout: 60
           - platform: s390x-linux
             target: s390x-unknown-linux-gnu
@@ -83,11 +83,8 @@ jobs:
             runner: ubuntu-24.04-riscv
             # Compilation runs on x86-64; this budget covers native execution and bootstrap.
             timeout: 30
-          - platform: aarch64-macos
-            runner: macos-15
-            timeout: 90
           - platform: x86_64-win
-            runner: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=16+32/ram=32+128/image=windows25-full-x64/spot=price-capacity-optimized/volume=200gb:gp3/env=production
+            runner: runs-on=${{ github.run_id }}/runner=x86_64-win/env=production
             timeout: 60
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.timeout }}
@@ -158,15 +155,6 @@ jobs:
           scripts/tooling/x86_64-linux.sh --ci-compat
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           just ci-compat
-          git diff --exit-code HEAD
-
-      - name: Install tooling, check, and test (macOS ARM64)
-        if: runner.os == 'macOS'
-        run: |
-          scripts/tooling/aarch64-macos.sh
-          just ci-check
-          just test --all --release
-          just test --all --release --portable
           git diff --exit-code HEAD
 
       - name: Install tooling, check, and test (Windows)

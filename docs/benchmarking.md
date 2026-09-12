@@ -79,7 +79,7 @@ request. Select the revision with GitHub's branch selector, then choose:
 
 | Input | Examples | Meaning |
 | --- | --- | --- |
-| `architectures` | `x86_64-linux` | One native platform. |
+| `architectures` | `x86_64-linux` | One native platform; x86-64 runs both Intel and AMD. |
 | `architectures` | `s390x-linux,powerpc64le-linux,riscv64-linux` | Any subset, separated by commas or spaces. |
 | `architectures` | `all` | Linux x86-64, Linux ARM64, Windows x86-64, IBM Z, IBM POWER, and RISC-V. |
 | `selection` | `sha256` | One catalog algorithm. |
@@ -101,20 +101,41 @@ features for the selected targets; it does not select separate targets.
 
 A small planning job validates the request and creates the exact runner matrix.
 AWS provides fixed on-demand instance types for Linux x86-64/ARM64 and Windows
-x86-64. IBM and RISE provide their existing native runners. The selected
+x86-64. Both x86-64 operating systems run separate Intel and AMD jobs with
+distinct artifact names. Machine shapes live in [runs-on.yml](../.github/runs-on.yml);
+these use current-generation processors without an AVX2-only baseline. macOS
+benchmarks run locally on the Apple Silicon Mac.
+IBM and RISE provide their existing native runners. The selected
 architectures run concurrently; benchmark configurations run sequentially on
-each machine. Installers use `--ci-bench` on Linux and `-CiBench` on Windows.
+each machine. RISC-V, POWER, and IBM Z compile the selected configurations on
+x86-64 using `--ci-cross-build TARGET`. Their native jobs use `--ci-cross-run`
+with the verified tools archive, then discover and measure the transferred binaries.
+Other Linux jobs use `--ci-bench`; Windows uses `-CiBench`.
 No caches or speed-regression gates are enabled. Donated hosts may be shared,
-and fixed AWS instance types do not eliminate host noise. Inspect uncertainty
+and fixed AWS instance types do not eliminate host noise. Equal vCPU counts
+do not imply equal physical core counts; interpret parallel results with the
+recorded CPU topology. Inspect uncertainty
 and repeat matched measurements before making performance claims.
 
 Each job retains `target/bench/` as a GitHub artifact, including failed-run
 evidence, source and machine identity, the resolved case plan, logs, and raw
-Criterion results. The benchmark runner keeps its one-hour pipeline budget;
+Criterion results. Preparation and native measurement each have a separate
+90-minute invocation budget;
 `all` is a selection, not a guarantee that every case will fit that budget.
 Narrow large runs by algorithm, group, target, or case filter. The workflow
 allows additional provisioning time, especially on RISC-V.
 Manual dispatch becomes available after the workflow reaches the default branch.
+
+Cross-build preparation never executes target code. It seals each unique catalog
+build configuration, source identity, compiler/linker evidence, exact binary hash,
+and requested sampling settings. Native consumption rejects changed sources,
+settings, configurations, or ELF architectures before discovery. It uses the same
+case filtering, measurement, and result verification as an ordinary run, without
+compiling again. The retained input manifest identifies the build host; result
+compatibility records the measurement host and its runtime settings. Cross-built
+and native-built results have distinct build identities for baseline comparisons.
+The two invocations use `just bench ... target=TARGET prepare_archive=ARCHIVE` and
+`just bench ... target=TARGET run_archive=ARCHIVE` with matching selections and settings.
 
 The same granular selections work locally:
 
@@ -255,9 +276,9 @@ window to collect the requested samples for slow operations. `argon2id` includes
 small, OWASP, and parallel workloads; no expensive-workload opt-in is required.
 
 `just bench` bounds the whole pipeline—build, discovery, measurement, analysis,
-and result verification—to at most one hour. `just profile` uses the same limit for build,
+and result verification—to at most 90 minutes. `just profile` uses the same limit for build,
 discovery, and capture. The configured limit may be lowered but cannot exceed
-3,600 seconds. Shutdown starts before the deadline, reserving up to five seconds
+5,400 seconds. Shutdown starts before the deadline, reserving up to five seconds
 to retain failed-run evidence before stopping surviving child processes. A timed
 out run exits with status 124; partial results do not constitute a complete run.
 Plans whose requested sampling windows alone exhaust the budget are rejected

@@ -53,6 +53,17 @@ including Miri and machine-code zeroization evidence.
 
 ## Validate
 
+macOS ARM64 qualification runs on the maintainer's physical Apple Silicon Mac,
+before every commit, including documentation and tooling changes. Run
+`just install-hooks` once per checkout. The pre-commit and pre-merge-commit hooks
+run `just check-macos`: native checks, complete release tests with native and
+portable dispatch (including doctests), and the Apple Silicon RSA assembly gate.
+Install prerequisites with `scripts/tooling/aarch64-macos.sh` when needed.
+The hooks reject unstaged tracked changes and untracked files so the tested
+source matches the staged commit. Do not bypass the hooks. Git hooks are local;
+GitHub does not enforce this qualification and remote-created commits must not
+replace the locally validated submission path.
+
 Run `just --list` to discover the current recipes. Start with:
 
 ```bash
@@ -213,8 +224,8 @@ cargo rail release run rscrypto --bump auto --skip-tag --allow-non-default-branc
 
 Review the generated diff, including manifests and lockfiles in independent
 workspaces, validate it, and merge through a PR. Complete physical Apple Silicon
-RSA assembly and timing qualification locally before submission; hosted macOS
-CI does not replace that evidence.
+RSA assembly and timing qualification locally before submission. macOS does
+not run in hosted CI.
 
 For the one-time publishing setup, create a GitHub environment named `release`
 restricted to `main`. Configure rscrypto's crates.io Trusted Publisher for
@@ -224,7 +235,7 @@ See the [crates.io setup instructions](https://crates.io/docs/trusted-publishing
 
 To deploy, select **Actions → Release → Run workflow → main**. No version input
 is needed. The workflow rejects unconsumed change files, a version/changelog
-mismatch, or a tag pointing elsewhere. CI (including hosted macOS ARM64), full
+mismatch, or a tag pointing elsewhere. CI (with macOS ARM64 qualified locally before committing), full
 CT on all configured CI architectures, and both fuzz architectures plus Miri
 run concurrently against the triggering commit. Publication requires all three
 workflows to succeed. Benchmarks are separate.

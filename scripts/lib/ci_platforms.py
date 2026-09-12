@@ -2,12 +2,12 @@
 # Measurement hardware is fixed where the provider allows it. Donated runners
 # retain their provider labels; their actual machine identity is retained with the measurement evidence.
 PLATFORMS = {
-    'x86_64-linux': ('c8i.2xlarge', 'ubuntu24-minimal-x64', 90),
-    'aarch64-linux': ('c8g.2xlarge', 'ubuntu24-minimal-arm64', 90),
-    'x86_64-win': ('c8i.2xlarge', 'windows25-full-x64', 90),
-    's390x-linux': ('', 'ubuntu-24.04-s390x', 90),
-    'powerpc64le-linux': ('', 'ubuntu-24.04-ppc64le-p10', 90),
-    'riscv64-linux': ('', 'ubuntu-24.04-riscv', 180),
+    'x86_64-linux': ('measure-x86_64-linux-intel', 90),
+    'aarch64-linux': ('measure-aarch64-linux', 90),
+    'x86_64-win': ('measure-x86_64-win-intel', 90),
+    's390x-linux': ('ubuntu-24.04-s390x', 90),
+    'powerpc64le-linux': ('ubuntu-24.04-ppc64le-p10', 90),
+    'riscv64-linux': ('ubuntu-24.04-riscv', 180),
 }
 
 
@@ -19,8 +19,8 @@ def platforms(value: str, run_id: str) -> dict:
         raise ValueError('GITHUB_RUN_ID must be numeric')
     rows = []
     for name in names:
-        family, image, timeout = PLATFORMS[name]
-        label = (f'runs-on={run_id}/family={family}/cpu=8/image={image}/spot=false/volume=100gb:gp3/env=production'
-                 if family else image)
+        runner, timeout = PLATFORMS[name]
+        label = (f'runs-on={run_id}/runner={runner}/env=production'
+                 if runner.startswith('measure-') else runner)
         rows.append({'platform': name, 'runner': label, 'timeout': timeout})
     return {'include': rows}

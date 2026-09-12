@@ -33,7 +33,7 @@ defaults:
 
 jobs:
   select:
-    runs-on: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=2/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/env=production
+    runs-on: runs-on=${{ github.run_id }}/runner=plan/env=production
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.select.outputs.matrix }}
@@ -49,7 +49,7 @@ jobs:
   cross-build:
     needs: select
     if: needs.select.outputs.cross == 'true'
-    runs-on: runs-on=${{ github.run_id }}/family=c7a+c7i+c8a+c8i+m7a+m7i+m8a+m8i/cpu=32/ram=64+128/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
+    runs-on: runs-on=${{ github.run_id }}/runner=cross-build/env=production
     timeout-minutes: 45
     name: Prepare ${{ matrix.target }} CT
     strategy:

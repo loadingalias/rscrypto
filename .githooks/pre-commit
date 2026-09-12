@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+# Test the staged source, not a different working-tree version.
+git diff --quiet || { echo 'Stage or set aside unstaged tracked changes before committing.' >&2; exit 1; }
+if [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+  echo 'Stage intended new files or move unrelated untracked files outside the checkout before committing.' >&2
+  exit 1
+fi
+before=$(git write-tree)
+just check-macos
+git diff --quiet && [[ "$(git write-tree)" == "$before" && -z "$(git ls-files --others --exclude-standard)" ]] || {
+  echo 'Source changed during macOS validation; review and retry the commit.' >&2
+  exit 1
+}

@@ -17,9 +17,11 @@ class ManualBench(unittest.TestCase):
     def test_one_many_all_platforms(self):
         self.assertEqual([r['platform'] for r in ci.platforms('riscv64-linux', '42')['include']], ['riscv64-linux'])
         rows = ci.platforms('s390x-linux, x86_64-win s390x-linux', '42')['include']
-        self.assertEqual([r['platform'] for r in rows], ['s390x-linux', 'x86_64-win'])
-        self.assertIn('windows25-full-x64', rows[1]['runner'])
-        self.assertEqual(len(ci.platforms('all', '42')['include']), 6)
+        self.assertEqual([r['platform'] for r in rows], ['s390x-linux', 'x86_64-win', 'x86_64-win'])
+        self.assertIn('measure-x86_64-win-intel', rows[1]['runner'])
+        self.assertIn('measure-x86_64-win-amd', rows[2]['runner'])
+        self.assertNotEqual(rows[1]['name'], rows[2]['name'])
+        self.assertEqual(len(ci.platforms('all', '42')['include']), 8)
         for bad in ('', 'all,x86_64-linux', 'apple-arm64', 'x86_64-linux,typo'):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 ci.platforms(bad, '42')
@@ -51,6 +53,24 @@ class ManualBench(unittest.TestCase):
             self.assertIn('filter=' + env['INPUT_FILTER'], command)
             self.assertNotIn('shell', execute.call_args.kwargs)
 
+    def test_transfer_dispatch_keeps_selection_and_separate_invocations(self):
+        env = {'INPUT_SELECTION': 'sha256,sha512', 'INPUT_FILTER': '^sha256/rscrypto/64$', 'INPUT_SAMPLE_SIZE': '24'}
+        for operation, flag in (('prepare', 'prepare_archive'), ('measure', 'run_archive')):
+            with self.subTest(operation=operation), patch.dict(os.environ, env, clear=True), \
+                 patch.object(sys, 'argv', ['ci.py', operation, 's390x-unknown-linux-gnu', 'archive with spaces.tar.gz']), \
+                 patch.object(ci.subprocess, 'run', return_value=subprocess.CompletedProcess([], 9)) as execute:
+                self.assertEqual(ci.main(), 9)
+                command = execute.call_args.args[0]
+                self.assertEqual(command[:4], ['just', 'bench', 'sha256', 'sha512'])
+                self.assertIn(flag + '=archive with spaces.tar.gz', command)
+                self.assertIn('sample_size=24', command)
+                self.assertIn('target=s390x-unknown-linux-gnu', command)
+        for name in ('riscv64-linux', 's390x-linux', 'powerpc64le-linux'):
+            row, = ci.platforms(name, '42')['include']
+            self.assertIn('target', row)
+            self.assertGreaterEqual(row['timeout'], 120)
+        self.assertTrue(all('target' not in row for row in ci.platforms('x86_64-linux', '42')['include']))
+
     def test_isolated_python_entry_points(self):
         root = Path(__file__).resolve().parents[2]
         for command in ([sys.executable, '-I', str(root / 'scripts/bench/runner.py'), '--help'],
@@ -64,7 +84,11 @@ class ManualBench(unittest.TestCase):
             result = subprocess.run([sys.executable, '-I', str(root / 'scripts/bench/ci.py'), 'plan'],
                                     env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(len(json.loads(output.read_text().removeprefix('matrix='))['include']), 6)
+            values = dict(line.split('=', 1) for line in output.read_text().splitlines())
+            self.assertEqual(len(json.loads(values['matrix'])['include']), 8)
+            self.assertEqual(values['cross'], 'true')
+            self.assertEqual({row['target'] for row in json.loads(values['builds'])['include']},
+                             {'riscv64gc-unknown-linux-gnu', 'powerpc64le-unknown-linux-gnu', 's390x-unknown-linux-gnu'})
 
 
 if __name__ == '__main__':

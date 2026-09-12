@@ -59,15 +59,17 @@ and [repository recipes](../scripts/README.md):
 | Check | Scope |
 | --- | --- |
 | `just check` | Host and catalogued cross-target compilation and lint checks. |
-| Native CI | Native and portable suites plus doctests on Linux x86-64, AArch64, POWER, IBM Z, and RISC-V, macOS AArch64, and Windows x86-64. RISC-V builds on x86-64 and executes transferred artifacts on native hardware. |
+| Native CI | Native and portable suites plus doctests on Linux x86-64, AArch64, POWER, IBM Z, and RISC-V, and Windows x86-64. RISC-V, POWER, and IBM Z build on x86-64 and execute transferred artifacts on native hardware. |
+| `just check-macos` | Local Apple Silicon checks, native and portable release suites plus doctests, and physical RSA assembly qualification before every commit. |
 | `just test-musl` | Native and portable suites plus doctests on matching x86-64 or AArch64 Linux hosts. |
 | `just ci-compat` | Feature/MSRV and bare-metal compilation; scalar and SIMD vector execution for `wasm32-unknown-unknown` and `wasm32-wasip1` in Wasmtime. |
 
 A configured check is not a passing result for the current revision. Inspect
 matching run artifacts before qualifying a release. Bare-metal checks do not
 execute on devices, and Wasmtime results do not establish browser-engine
-behavior. Windows AArch64 runtime CI remains deferred. Hosted macOS CI does
-not replace physical Apple Silicon RSA assembly and timing qualification.
+behavior. Windows AArch64 runtime CI remains deferred. macOS checks and tests run
+locally before commits; physical Apple Silicon timing qualification remains
+a separate local requirement.
 
 Performance and constant-time claims require retained evidence for the exact
 operation and configuration. Neither a target's presence in the catalog nor a

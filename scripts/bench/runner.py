@@ -44,6 +44,10 @@ def parse(arguments: list[str]):
   bench.add_argument("--diag", nargs="?", const=True, type=boolean, default=False)
   bench.add_argument("--output-dir", default="benchmark_results")
   bench.add_argument("--baseline", type=Path)
+  transfer = bench.add_mutually_exclusive_group()
+  transfer.add_argument("--prepare-archive", type=Path)
+  transfer.add_argument("--run-archive", type=Path)
+  bench.add_argument("--target")
   for name in ("warmup-ms", "measure-ms", "sample-size"):
     bench.add_argument("--" + name, type=int)
   profile = commands.add_parser("profile")
@@ -69,7 +73,7 @@ def parse(arguments: list[str]):
       normalized.append("--" + key.replace("_", "-") + "=" + value)
     else:
       normalized.append(token)
-    value_follows = token in {"--bench", "--filter", "--output-dir", "--baseline", "--warmup-ms", "--measure-ms", "--sample-size"}
+    value_follows = token in {"--bench", "--filter", "--output-dir", "--baseline", "--prepare-archive", "--run-archive", "--target", "--warmup-ms", "--measure-ms", "--sample-size"}
   if arguments[:1] in (["codegen"], ["llvm-lines"]):
     boundary = normalized.index("--") if "--" in normalized else len(normalized)
     args = parser.parse_args(normalized[:boundary])
@@ -133,8 +137,8 @@ def requests(args, catalog) -> list[dict]:
           for name, scope, pattern in dict.fromkeys(rows)]
 
 
-def resolve(rows, effective, log, env) -> list[dict]:
-  execution = build_identity()
+def resolve(rows, effective, log, env, prepared=None) -> list[dict]:
+  execution = prepared[1] if prepared is not None else build_identity()
   builds = {}
   matches = {}
   matched = dict.fromkeys((row["pattern"] for row in rows), False)
@@ -142,7 +146,7 @@ def resolve(rows, effective, log, env) -> list[dict]:
     command = build_command(row["binary"], row["features"])
     key = tuple(command)
     if key not in builds:
-      artifact = build(command, log, env)
+      artifact = prepared[0][key] if prepared is not None else build(command, log, env)
       cases = discover(artifact, "", log, env)
       patterns = [pattern for request in rows if build_command(request["binary"], request["features"]) == command
                   for pattern in (request["scope"], request["pattern"])]
@@ -188,6 +192,16 @@ def bench(args, catalog) -> None:
   effective = settings.load({name: value for name in ("warmup_ms", "measure_ms", "sample_size")
                              if (value := getattr(args, name)) is not None})
   effective.pop("max_run_seconds")
+  if args.prepare_archive or args.run_archive or args.target:
+    from cross_build import TARGETS
+    if args.target not in TARGETS or not (args.prepare_archive or args.run_archive) or args.list:
+      raise ValueError('benchmark transfer requires a supported target and prepare/run archive, without --list')
+  if args.prepare_archive:
+    if args.baseline:
+      raise ValueError('baselines apply to native measurement, not preparation')
+    from transfer import prepare
+    prepare(ROOT, args.target, args.prepare_archive.resolve(), Path(args.output_dir).resolve(), rows, effective)
+    return
   if args.list:
     with tempfile.TemporaryDirectory(prefix="rscrypto-list-") as directory:
       root = Path(directory)
@@ -218,11 +232,20 @@ def bench(args, catalog) -> None:
     write_json(root / "requests.json", {"configurations": rows, "budget_seconds": settings.load()["max_run_seconds"]})
     source_evidence(root)
     env = dict(os.environ) | {"CRITERION_HOME": str(root / "discovery")}
-    plan = resolve(rows, effective, root / "output.txt", env)
+    prepared = None
+    if args.run_archive:
+      from transfer import consume
+      prepared = consume(ROOT, args.target, args.run_archive.resolve(), root / 'input', rows, effective)
+      write_json(root / 'transfer.json', {'archive_sha256': digest(args.run_archive), 'target': args.target,
+                                        'manifest': 'input/bundle.json'})
+    plan = resolve(rows, effective, root / "output.txt", env, prepared)
     shutil.rmtree(root / "discovery", ignore_errors=True)
     write_json(root / "plan.json", plan)
     measure(root, plan, baseline)
     verify(root)
+    if args.run_archive:
+      from transfer import bundle, KIND
+      bundle.verify(ROOT, root / 'input', KIND, args.target)
     status = 0
   except BaseException as error:
     status = exit_code(error)

@@ -11,6 +11,7 @@ benchmark commands. User-facing entry points are the recipes reported by
 | `check/check.sh` | `just check`, `just ci-check`, `just ci-check-target` |
 | `check/compat.py` | `just ci-compat` |
 | `test/test-musl.sh` | `just test-musl` |
+| `check/macos.sh` | `just check-macos`, local commit hooks |
 | `check/dependencies.sh` | `just ci-policy`, dependency checks within `just check` |
 | `check/lint-independent-workspaces.sh` | `check/check.sh` |
 
@@ -135,6 +136,7 @@ disk until explicitly removed; full reports inventory only their current run.
 | `bench/profile.py` | runner: exact-case Samply capture |
 | `bench/evidence.py` | shared build/runtime environment collector |
 | `bench/settings.py` | measurement, profiling, and watchdog |
+| `bench/transfer.py` | Compile-only preparation and verified native consumption for RISC-V, POWER, and IBM Z |
 | `bench/bounded.py` | `just bench`, `just profile`: process-tree deadline |
 | `update-all.sh` | `just update` |
 
@@ -191,8 +193,8 @@ Run `scripts/tooling/<platform>.sh` on the native Ubuntu version pinned in
 `x86_64-linux`, `riscv64-linux`, `s390x-linux`, and `powerpc64le-linux`.
 The installers use sudo when needed. Windows uses the corresponding
 `aarch64-win.ps1` or `x86_64-win.ps1` in an elevated PowerShell session.
-Local macOS tools remain locally managed; hosted macOS CI uses
-`scripts/tooling/aarch64-macos.sh`.
+Local macOS tools remain locally managed; `scripts/tooling/aarch64-macos.sh`
+can provision the pinned prerequisites for `just check-macos`.
 
 CI calls these same installers with `--ci` on Linux or `-Ci` on Windows.
 The catalog's `ci` section selects the Cargo tools needed by `just ci-check`,
@@ -309,8 +311,8 @@ results. The library also receives broad feature builds for both WASM targets.
 
 The x86-64 and ARM64 Linux rows install native musl build prerequisites and run
 `just test-musl`: the complete native and portable test suites plus doctests,
-compiled and executed for the matching musl target. Apple ARM64 executes in
-the hosted macOS CI row; Windows ARM64 execution remains deferred. No
+compiled and executed for the matching musl target. Apple ARM64 checks and tests execute locally through
+`just check-macos` before commits; Windows ARM64 execution remains deferred. No
 compatibility lane enables persistent caches.
 
 ## Release orchestration
@@ -322,7 +324,8 @@ Its failure/recovery tests run through `just test-scripts`. Maintainer setup,
 preparation, deployment, and retry instructions live in
 [CONTRIBUTING.md](../CONTRIBUTING.md#release).
 
-`scripts/tooling/aarch64-macos.sh` provisions the hosted ARM64 CI lane from the
-repository's Rust and Cargo tool pins. That lane shares CI's native fail-fast
-matrix and runs native/portable tests and checks. Physical Apple Silicon RSA
-assembly and timing evidence remain local pre-submit requirements.
+`scripts/check/macos.sh` owns `just check-macos`, which replaces hosted macOS
+checks and tests with local Apple Silicon validation. Install `.githooks` with
+`just install-hooks` in each maintainer checkout. macOS remains a supported
+release target; physical Apple Silicon timing qualification remains a separate
+local pre-submit requirement.
