@@ -2,6 +2,8 @@
 """Exercise shared preparation and isolated measurements through CT orchestration."""
 
 import json
+import io
+from contextlib import redirect_stdout, redirect_stderr
 import os
 import subprocess
 import sys
@@ -36,7 +38,8 @@ name = 'manifest_' + name
 count = int(os.environ['RSCRYPTO_CT_DUDECT_SAMPLES'])
 Path(sys.argv[2]).write_text('benchname,sequence,class,runtime_ns\\n' + ''.join(
   f'{name},{i},{i % 2},100\\n' for i in range(count)))
-print(f'bench {name} ... : n == +0.01M, max t = +1.00, max tau = +0.01, (5/tau)^2 = 250000')
+t = '+20.00' if mode == 'timing' else '+1.00'
+print(f'bench {name} ... : n == +0.01M, max t = {t}, max tau = +0.01, (5/tau)^2 = 250000')
 ''')
     runner.chmod(0o755)
     executable = runner
@@ -84,11 +87,17 @@ manifest = {'manifest_' + name: {'primitive': 'fixture', 'gate': 'required', 'le
       assert {item["name"] for item in row["artifacts"]} == {"dudect-report.json", "dudect-raw.csv", "dudect.stdout.txt"}
     snapshot = {str(path): path.read_bytes() for path in run.rglob('*') if path.is_file()}
     for mode in ("failure", "missing", "partial"):
-      new_run, _, failed = invoke(mode)
+      console = io.StringIO()
+      with redirect_stdout(console), redirect_stderr(console):
+        new_run, _, failed = invoke(mode)
       assert new_run != run
       assert len(failed) == 1, "stop before later cases after a failed measurement"
       assert all(row["status"] == "tooling-fail" for row in failed), failed
       assert all(row["report"] is None for row in failed)
+      assert "manifest_alpha: tooling-fail" in console.getvalue()
+      assert "Missing or invalid current DudeCT report" in console.getvalue()
+      if mode == "failure":
+        assert "DudeCT measurement command failed: exit 1" in console.getvalue()
     _, failed_preparation, failed = invoke("prepare-fail")
     assert failed_preparation.status == "fail" and not failed
     assert len((root / "executions").read_text().splitlines()) == 5
@@ -120,6 +129,13 @@ manifest = {'manifest_' + name: {'primitive': 'fixture', 'gate': 'required', 'le
     assert [row['status'] for row in transferred_rows] == ['pass', 'pass']
     assert transferred_rows[0]['binary'] == rows[0]['binary']
     assert (root / 'preparations').read_bytes() == preparations_before
+    console = io.StringIO()
+    with redirect_stdout(console), redirect_stderr(console):
+      _, _, failed = invoke("timing")
+    assert len(failed) == 1 and failed[0]["status"] == "fail"
+    assert "manifest_alpha: fail" in console.getvalue()
+    assert "abs_max_t=20.0, threshold=10.0" in console.getvalue()
+    assert "tooling-fail" not in console.getvalue()
 
 
 def test_utf8_child_process():
@@ -156,13 +172,15 @@ def test_proof_failure_stops_timing():
       return full.CommandResult(name, args, "fail" if failed else "pass", int(failed),
                                 "", "", "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00", 0)
     manifest = {"target": [{"name": "x86_64-unknown-linux-gnu", "binsec": "required"}]}
-    with patch.object(full, "__file__", str(root / "scripts/ct/full.py")), \
+    console = io.StringIO()
+    summary = root / "step-summary.md"
+    with redirect_stdout(console), patch.object(full, "__file__", str(root / "scripts/ct/full.py")), \
          patch.object(full, "load_toml", return_value=manifest), \
          patch.object(full, "host_target", return_value="x86_64-unknown-linux-gnu"), \
          patch.object(full.subprocess, "check_output", return_value="fixture") as selector, \
          patch.object(full, "run_command", side_effect=command), \
          patch.object(full, "run_dudect_cases") as timing, \
-         patch.dict(os.environ), patch.object(sys, "argv", ["full.py"]):
+         patch.dict(os.environ, GITHUB_STEP_SUMMARY=str(summary)), patch.object(sys, "argv", ["full.py"]):
       assert full.main() == 1
       timing.assert_not_called()
       assert selector.call_args_list[0].args[0] == [sys.executable, "-X", "utf8", str(root.resolve() / "scripts/lib/toolchain.py"), "--host"]
@@ -170,6 +188,8 @@ def test_proof_failure_stops_timing():
     assert report["status"] == "fail"
     assert report["steps"][-1]["name"] == "ct-dudect"
     assert report["steps"][-1]["reason"] == "proof gate failed; timing was not started"
+    assert "ct-binsec failed before complete evidence" in console.getvalue()
+    assert summary.read_text() == (root / "target/ct/x86_64-unknown-linux-gnu/release/ct-report.md").read_text()
 
 
 if __name__ == "__main__":

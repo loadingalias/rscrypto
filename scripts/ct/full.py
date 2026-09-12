@@ -560,7 +560,23 @@ def run_dudect_cases(root, out_dir, logs_dir, target, profile, manifest_cases, t
         prepared,
       )
     )
-    if dudect_cases[-1]["status"] not in ("pass", "diagnostic-fail"):
+    row = dudect_cases[-1]
+    result = row["command_result"]
+    print(
+      f"ct-full: dudect {row['name']}: {row['status']} "
+      f"({result['duration_seconds']:.1f}s, exit={result['returncode']}, "
+      f"timeout={row['timeout_seconds']}s, abs_max_t={row.get('abs_max_t')}, "
+      f"threshold={row.get('threshold_abs_max_t', threshold)})",
+      flush=True,
+    )
+    if row["status"] not in ("pass", "diagnostic-fail"):
+      if row.get("report_error"):
+        print(row["report_error"], file=sys.stderr, flush=True)
+      for key in ("stdout", "stderr"):
+        path = Path(result[key])
+        if path.is_file():
+          print(f"ct-full: {key}: {path}\n{path.read_text(errors='replace')[-16384:]}",
+                file=sys.stderr, flush=True)
       break
 
   return dudect_run, preparation, dudect_cases
@@ -1031,6 +1047,12 @@ def write_full_report(out_dir: Path, report: dict[str, Any]) -> tuple[Path, Path
   md_path = out_dir / "ct-report.md"
   json_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
   md_path.write_text(markdown_report(report))
+  print(f"ct-full: {report['status']}; {report['failure_count']} blocking findings", flush=True)
+  for finding in report["findings"]:
+    print(f"ct-full: {finding['category']}: {finding['summary']}", flush=True)
+  if summary_path := os.environ.get("GITHUB_STEP_SUMMARY"):
+    with Path(summary_path).open("a", encoding="utf-8") as summary:
+      summary.write(md_path.read_text())
   return json_path, md_path
 
 

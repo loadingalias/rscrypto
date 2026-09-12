@@ -1277,6 +1277,8 @@ right_class = "random valid same-width blinding factor"
 samples = 20000
 threshold_abs_max_t = 8.0
 smoke_samples = 2000
+timeout_seconds = 3600
+timeout_reason = "Retain all 20,000 fixed-schedule inverse samples on physical RISC-V; the default five-minute limit does not provide the adjacent RSA gates' execution headroom."
 notes = "Required allocation-free leaf evidence for the fixed-schedule batched modular inverse. Both classes use nonzero 64-bit factors, which cannot share either 1024-bit prime factor of the fixed RSA-2048 modulus. RISC-V and s390x artifact heuristics must also reject scalar multiply in the retained evidence closure."
 
 [[dudect_case]]
