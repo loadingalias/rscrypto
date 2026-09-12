@@ -35,7 +35,7 @@ def repeat(prepared, args, cpu):
     case = prepared['manifest_cases'][args.case]
     samples = dudect_sample_count(case)
     results = []
-    for index in range(3):
+    for index in range(args.repetitions):
         directory = args.out / f'repetition-{index + 1}'
         directory.mkdir()
         write_report(directory / 'before.json', snapshot(cpu))
@@ -43,15 +43,16 @@ def repeat(prepared, args, cpu):
             prepared=args.prepared, evidence_dir=directory, samples=samples,
             smoke=False, threshold=10.0, filter=args.case,
             timeout=case.get('timeout_seconds', 300), latest=None)
-        print(f'Repetition {index + 1}/3: {args.case}, {samples} samples, CPU {cpu}', flush=True)
+        print(f'Repetition {index + 1}/{args.repetitions}: {args.case}, {samples} samples, CPU {cpu}', flush=True)
         status = measure(prepared, invocation)
         write_report(directory / 'after.json', snapshot(cpu))
         results.append({'repetition': index + 1, 'exit_code': status})
         write_report(args.out / 'replay.json', {
             'diagnostic_only': True, 'case': args.case, 'repetitions': results,
+            'planned_repetitions': args.repetitions,
             'source': prepared['metadata']['transfer']['source'],
             'binary': prepared['metadata']['binary'],
-            'note': 'All three planned repetitions run even after timing failures; no result is discarded.'})
+            'note': 'All planned repetitions run even after timing failures; no result is discarded.'})
         if status not in (0, 1):
             return status
     return int(any(row['exit_code'] for row in results))
@@ -63,6 +64,8 @@ def main():
     parser.add_argument('--archive', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--case', required=True)
+    parser.add_argument('--repetitions', type=int, choices=(1, 3), default=3,
+                        help='one candidate measurement or three baseline repetitions')
     args = parser.parse_args()
     args.out = args.out.resolve()
     args.out.mkdir(parents=True, exist_ok=False)

@@ -10,6 +10,10 @@ on:
         default: all
   workflow_dispatch:
     inputs:
+      diagnose_p384:
+        description: Diagnostic only; measure the current P-384 binary once on RISC-V (overrides architectures)
+        type: boolean
+        default: false
       replay_p384:
         description: Diagnostic only; replay the P-384 binary from run 34672864167 three times on RISC-V
         type: boolean
@@ -25,7 +29,7 @@ permissions:
 
 env:
   CARGO_RAIL_CACHE: "off"
-  INPUT_ARCHITECTURES: ${{ inputs.architectures || 'all' }}
+  INPUT_ARCHITECTURES: ${{ inputs.diagnose_p384 && 'riscv64-linux' || inputs.architectures || 'all' }}
 
 concurrency:
   group: ct-${{ github.workflow }}-${{ github.ref }}
@@ -126,7 +130,7 @@ jobs:
   ct:
     needs: [select, cross-build]
     if: ${{ !cancelled() && needs.select.result == 'success' && (needs.cross-build.result == 'success' || needs.cross-build.result == 'skipped') }}
-    name: ${{ matrix.platform }} (full)
+    name: ${{ matrix.platform }} (${{ inputs.diagnose_p384 && 'P-384 diagnostic' || 'full' }})
     strategy:
       fail-fast: true
       matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
@@ -134,6 +138,7 @@ jobs:
     timeout-minutes: ${{ matrix.timeout }}
     env:
       PLATFORM: ${{ matrix.platform }}
+      DIAGNOSE_P384: ${{ inputs.diagnose_p384 && 'true' || 'false' }}
     steps:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
@@ -156,7 +161,11 @@ jobs:
         run: |
           scripts/tooling/"$PLATFORM.sh" --ci-cross-run "target/cross-download/${{ matrix.target }}-tools.tar.gz"
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          just ct-full --target "${{ matrix.target }}" --run-archive "target/cross-download/${{ matrix.target }}-ct.tar.gz"
+          if [[ "$DIAGNOSE_P384" == true ]]; then
+            just ct-replay --source-root . --archive "target/cross-download/${{ matrix.target }}-ct.tar.gz" --out target/ct/p384-candidate --case ecdsa_p384_public_key_fixed_vs_random_secret --repetitions 1
+          else
+            just ct-full --target "${{ matrix.target }}" --run-archive "target/cross-download/${{ matrix.target }}-ct.tar.gz"
+          fi
       - name: Install tooling and run CT (Windows)
         if: runner.os == 'Windows'
         shell: powershell

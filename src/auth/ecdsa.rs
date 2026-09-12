@@ -3874,6 +3874,11 @@ fn select_signing_generator_affine_ct<const L: usize>(curve: &Curve<L>, digit: u
     .enumerate()
   {
     let mask = mask_eq_usize(digit, index);
+    #[cfg(target_arch = "riscv64")]
+    // SECURITY: LLVM 23 otherwise branches on the secret digit and loads only
+    // the matching table entry. Keep the mask opaque so every entry is read.
+    // Target-specific generated-code and native timing evidence remain required.
+    let mask = core::hint::black_box(mask);
     x = Uint::select(x, candidate_x, mask);
     y = Uint::select(y, candidate_y, mask);
   }

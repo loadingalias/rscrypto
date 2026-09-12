@@ -222,7 +222,7 @@ ct-dudect *args:
 ct-full *args:
     @scripts/lib/python.sh scripts/ct/full.py "$@"
 
-# Repeat one original RISC-V CT case three times on a pinned CPU; diagnostic evidence only.
+# Measure one prepared RISC-V CT case on a pinned CPU; diagnostic evidence only.
 [group('constant-time')]
 ct-replay *args:
     @scripts/lib/python.sh scripts/ct/replay.py "$@"

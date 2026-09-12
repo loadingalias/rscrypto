@@ -133,8 +133,12 @@ timeout, and retains all results at threshold 10. Timing failures do not shorten
 the planned campaign; execution failures do. Host snapshots record affinity,
 frequency settings where exposed, load, and processes. They do not guarantee an
 otherwise idle machine. Replay is diagnostic evidence, not full qualification.
+Use `--repetitions 1` for one candidate measurement at the same sample count.
 The CT workflow's `replay_p384` input selects the original run 34672864167 and
 commit 32734d2d. It requires that run's prepared artifact to remain available.
+With `replay_p384` disabled, `diagnose_p384` instead prepares the current commit
+and measures its P-384 public-key derivation case once on RISC-V. It overrides
+the architecture selection. Neither diagnostic mode qualifies a release.
 
 ## Benchmarks and updates
 

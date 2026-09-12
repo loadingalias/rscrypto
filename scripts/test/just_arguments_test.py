@@ -57,6 +57,7 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
       'test': [], 'test-miri': [], 'test-fuzz': [], 'test-fuzz-asan': [],
       'ct-dudect': [], 'ct-artifacts': [], 'update': [],
       'ct-full': ['scripts/ct/full.py'], 'ct-binsec': ['scripts/ct/binsec.py'],
+      'ct-replay': ['scripts/ct/replay.py'],
       'ct-validate': ['scripts/ct/validate.py'],
       'bench': ['scripts/bench/bounded.py', str(recorder), 'scripts/bench/runner.py', 'bench'],
       'profile': ['scripts/bench/bounded.py', str(recorder), 'scripts/bench/runner.py', 'profile'],
