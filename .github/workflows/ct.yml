@@ -10,6 +10,10 @@ on:
         default: all
   workflow_dispatch:
     inputs:
+      replay_p384:
+        description: Diagnostic only; replay the P-384 binary from run 34672864167 three times on RISC-V
+        type: boolean
+        default: false
       architectures:
         description: all, or comma-separated x86_64-linux,aarch64-linux,x86_64-win,s390x-linux,powerpc64le-linux,riscv64-linux
         type: string
@@ -32,7 +36,48 @@ defaults:
     shell: bash
 
 jobs:
+  replay:
+    if: github.event_name == 'workflow_dispatch' && inputs.replay_p384
+    name: Replay P-384 baseline (diagnostic)
+    runs-on: ubuntu-24.04-riscv
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        with:
+          ref: 32734d2dfac7a8015e3410c32b4db5e07484e496
+          path: target/ct-replay-source
+          persist-credentials: false
+      - uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" # v8.0.1
+        with:
+          name: riscv64gc-unknown-linux-gnu-ct-prepared
+          run-id: 34672864167
+          github-token: ${{ github.token }}
+          path: target/ct-replay-download
+      - name: Verify original archive and repeat the full sample case
+        run: |
+          echo 'c551b7e2b4928e4153fd864bed860d4d414a88bdccedf8be8110d4da07377b24  target/ct-replay-download/riscv64gc-unknown-linux-gnu-ct.tar.gz' | sha256sum --check
+          scripts/tooling/riscv64-linux.sh --ci-cross-run target/ct-replay-download/riscv64gc-unknown-linux-gnu-tools.tar.gz
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          just ct-replay --source-root target/ct-replay-source --archive target/ct-replay-download/riscv64gc-unknown-linux-gnu-ct.tar.gz --out target/ct-replay-results --case ecdsa_p384_public_key_fixed_vs_random_secret
+      - name: Retain every repetition and original preparation evidence
+        if: ${{ !cancelled() }}
+        uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+        with:
+          name: ct-p384-replay-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            target/ct-replay-results/
+            target/ct-replay-download/
+          if-no-files-found: error
+          retention-days: 30
+
   select:
+    if: ${{ !inputs.replay_p384 }}
     runs-on: runs-on=${{ github.run_id }}/runner=plan/env=production
     timeout-minutes: 5
     outputs:

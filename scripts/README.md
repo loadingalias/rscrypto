@@ -126,6 +126,16 @@ with a small latest report at `dudect/dudect-report.json`. Failed preparation or
 execution cannot reuse a previous run's measurements. Historical runs remain on
 disk until explicitly removed; full reports inventory only their current run.
 
+`just ct-replay --source-root SOURCE --archive ARCHIVE --out OUTPUT --case CASE`
+repeats one prepared RISC-V case three times on one allowed CPU. It validates the
+original source and transferred binary, preserves the manifest sample count and
+timeout, and retains all results at threshold 10. Timing failures do not shorten
+the planned campaign; execution failures do. Host snapshots record affinity,
+frequency settings where exposed, load, and processes. They do not guarantee an
+otherwise idle machine. Replay is diagnostic evidence, not full qualification.
+The CT workflow's `replay_p384` input selects the original run 34672864167 and
+commit 32734d2d. It requires that run's prepared artifact to remain available.
+
 ## Benchmarks and updates
 
 | Script | Caller |

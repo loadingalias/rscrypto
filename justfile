@@ -222,6 +222,11 @@ ct-dudect *args:
 ct-full *args:
     @scripts/lib/python.sh scripts/ct/full.py "$@"
 
+# Repeat one original RISC-V CT case three times on a pinned CPU; diagnostic evidence only.
+[group('constant-time')]
+ct-replay *args:
+    @scripts/lib/python.sh scripts/ct/replay.py "$@"
+
 # Run BINSEC; Manifest-Declared Binary CT Kernels
 [group('constant-time')]
 ct-binsec *args:
