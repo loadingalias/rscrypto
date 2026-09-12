@@ -113,13 +113,13 @@ check:
 ci-check:
     @scripts/check/check.sh native
 
-# Cross-check the complete RISC-V native CI compilation surface.
+# Cross-check the complete target native CI compilation surface.
 ci-check-target target:
     @scripts/check/check.sh target {{quote(target)}}
 
-# Prepare or execute complete, source-bound RISC-V test artifacts.
-test-riscv operation archive:
-    @scripts/lib/python.sh scripts/test/riscv.py {{quote(operation)}} {{quote(archive)}}
+# Prepare or execute complete, source-bound cross-compiled test artifacts.
+test-cross operation target archive:
+    @scripts/lib/python.sh scripts/test/cross.py {{quote(operation)}} {{quote(target)}} {{quote(archive)}}
 
 # Check dependency policy for every supported target, once per CI workflow.
 ci-policy:

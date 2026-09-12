@@ -85,7 +85,7 @@ def main():
   with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
     for name in ('scripts/check/check.sh', 'scripts/check/dependencies.sh', 'scripts/lib/toolchain.sh',
-                 'scripts/lib/toolchain.py', 'scripts/lib/python.sh', 'Cargo.toml',
+                 'scripts/lib/toolchain.py', 'scripts/lib/cross_build.py', 'scripts/lib/python.sh', 'Cargo.toml',
                  'rust-toolchain.toml', '.config/toolchains.toml', '.config/target-matrix.json'):
       destination = root / name
       destination.parent.mkdir(parents=True, exist_ok=True)
@@ -183,15 +183,16 @@ if name == 'cargo' and 'clippy' in args:
       if deny:
         assert '--target' not in deny[0]
       assert (['lint-independent-workspaces.sh'] in commands) == (mode != 'fix')
-    result, commands = run('target', 'riscv64gc-unknown-linux-gnu')
-    assert result.returncode == 0, result.stderr
-    cross = [c for c in commands if c[0] == 'cargo' and 'clippy' in c]
-    assert len(cross) == 2
-    assert all('--all-targets' in c and c[c.index('--target') + 1] == 'riscv64gc-unknown-linux-gnu' for c in cross)
-    assert all(c[1] == '+' + nightly for c in cross)
-    assert sum('--release' in c for c in cross) == 1
-    assert ['lint-independent-workspaces.sh'] in commands
-    assert not any('--fix' in c for c in commands)
+    for target in ('riscv64gc-unknown-linux-gnu', 'powerpc64le-unknown-linux-gnu', 's390x-unknown-linux-gnu'):
+      result, commands = run('target', target)
+      assert result.returncode == 0, result.stderr
+      cross = [c for c in commands if c[0] == 'cargo' and 'clippy' in c]
+      assert len(cross) == 2
+      assert all('--all-targets' in c and c[c.index('--target') + 1] == target for c in cross)
+      assert all(c[1] == '+' + nightly for c in cross)
+      assert sum('--release' in c for c in cross) == 1
+      assert ['lint-independent-workspaces.sh'] in commands
+      assert not any('--fix' in c for c in commands)
     result, commands = run('check')
     assert result.returncode == 0, result.stderr
     inventories = [c for c in commands if c[0] == 'rustup']

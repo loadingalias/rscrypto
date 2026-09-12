@@ -7,7 +7,6 @@ import copy
 import json
 import os
 import subprocess
-import platform
 from pathlib import Path
 
 # Embedded Windows Python omits the script directory.
@@ -22,18 +21,15 @@ def verify_transferred(prepared):
   metadata = prepared['metadata']
   if 'transfer' not in metadata:
     return
-  if (platform.system(), platform.machine(), metadata['target']) != (
-      'Linux', 'riscv64', 'riscv64gc-unknown-linux-gnu'):
-    raise ValueError('transferred timing requires physical RISC-V Linux')
+  sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
+  from cross_build import require_host, verify_elf
+  require_host(metadata['target'])
   for key in ('binary', 'binary_disassembly', 'binary_symbols', 'linker_command_log'):
     row = metadata[key]
     path = Path(row['path'])
     if sha256_file(path) != row['sha256'] or path.stat().st_size != row['bytes']:
       raise ValueError(f'transferred timing evidence changed: {key}')
-  with Path(metadata['binary']['path']).open('rb') as source:
-    header = source.read(20)
-  if header[:6] != b'\x7fELF\x02\x01' or header[18:20] != b'\xf3\x00':
-    raise ValueError('timed executable is not a little-endian RISC-V ELF64 binary')
+  verify_elf(Path(metadata['binary']['path']), metadata['target'])
 
 
 def main() -> int:

@@ -11,15 +11,24 @@ proof=false
 case "${1:-}" in
   --ci-ct-full) ci=true; profile=ci-ct; proof=true; shift ;;
   --ci) ci=true; shift ;;
-  --ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-bench|--ci-riscv-build|--ci-riscv-run) ci=true; profile="${1#--}"; shift ;;
+  --ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-bench|--ci-cross-build|--ci-cross-run) ci=true; profile="${1#--}"; shift ;;
 esac
 case "$profile:$platform" in
-  ci-riscv-run:riscv64-linux) ;;
-  ci-riscv-run:*|ci-riscv-build:riscv64-linux) echo "invalid RISC-V tooling host" >&2; exit 64 ;;
+  ci-cross-run:riscv64-linux|ci-cross-run:powerpc64le-linux|ci-cross-run:s390x-linux|ci-cross-build:x86_64-linux) ;;
+  ci-cross-run:*|ci-cross-build:*) echo "invalid cross-build tooling host" >&2; exit 64 ;;
   ci:*|ci-bench:*|ci-ct:*|*:x86_64-linux|ci-fuzz:aarch64-linux) ;;
   *) echo "$profile tooling is unsupported on $platform" >&2; exit 64 ;;
 esac
-[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh [--ci|--ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-ct-full|--ci-bench|--ci-riscv-build|--ci-riscv-run]" >&2; exit 64; }
+cross_target=""
+tools_archive=""
+if [[ "$profile" == ci-cross-build ]]; then
+  cross_target="${1:?cross-build target is required}"
+  shift
+elif [[ "$profile" == ci-cross-run ]]; then
+  tools_archive="${1:?runner tools archive is required}"
+  shift
+fi
+[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh [--ci|--ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-ct-full|--ci-bench|--ci-cross-build TARGET|--ci-cross-run TOOLS_ARCHIVE]" >&2; exit 64; }
 machine="${platform%-linux}"
 [[ "$machine" != powerpc64le ]] || machine=ppc64le
 case "$platform" in
@@ -79,6 +88,12 @@ python3 "$SCRIPT_DIR/catalog.py" validate
 package_section="$linux_section"
 [[ "$profile" == ci || "$profile" == ci-bench || "$profile" == ci-package ]] || package_section="$profile"
 mapfile -t packages < <(catalog_get "$package_section" packages)
+if [[ "$profile" == ci-cross-build ]]; then
+  cross_prefix="$(python3 scripts/lib/cross_build.py "$cross_target")"
+  cross_arch="${cross_prefix%-linux-gnu}"
+  [[ "$cross_arch" != powerpc64le ]] || cross_arch=ppc64el
+  packages+=("gcc-$cross_prefix" "g++-$cross_prefix" "libc6-dev-$cross_arch-cross")
+fi
 if [[ "$ci" == false ]]; then
   mapfile -t native_packages < <(catalog_get "$platform" packages)
   packages+=("${native_packages[@]}")
@@ -115,12 +130,12 @@ components=()
 if [[ "$ci" == false ]]; then mapfile -t components < <(catalog_get "$platform" components); fi
 component_args=()
 for component in "${components[@]}"; do component_args+=(--component "$component"); done
-if [[ "$profile" == ci-riscv-build ]]; then
-  nightly="$(python3 "$SCRIPT_DIR/../lib/toolchain.py" --target riscv64gc-unknown-linux-gnu)"
+if [[ "$profile" == ci-cross-build ]]; then
+  nightly="$(python3 "$SCRIPT_DIR/../lib/toolchain.py" --target "$cross_target")"
   rustup toolchain install "$channel" --profile minimal --component rustfmt
   rustup toolchain install "$nightly" --profile minimal --component clippy --component llvm-tools
-  rustup target add --toolchain "$nightly" riscv64gc-unknown-linux-gnu
-elif [[ "$profile" == ci-riscv-run ]]; then
+  rustup target add --toolchain "$nightly" "$cross_target"
+elif [[ "$profile" == ci-cross-run ]]; then
   # No compiler workloads run here; Rust supplies the pinned Nextest launcher
   # and host identity used by the existing CT orchestrator.
   stable="$(python3 "$SCRIPT_DIR/../lib/toolchain.py")"
@@ -156,7 +171,7 @@ if catalog_get "$platform" assets cargo-binstall >/dev/null 2>&1; then binstall=
 # Archive tools retain their complete directory layouts, including LLVM and Zig libraries.
 if [[ "$ci" == true ]]; then
   : > "$temporary/archives"
-  if [[ "$binstall" == true ]]; then
+  if [[ "$binstall" == true && "$profile" != ci-cross-run ]]; then
     directory="$(python3 "$SCRIPT_DIR/catalog.py" install-archive "$platform" cargo-binstall "$prefix")"
     printf 'cargo-binstall\t%s\n' "$directory" > "$temporary/archives"
   fi
@@ -198,7 +213,7 @@ fi
 for tool in "${cargo_tools[@]}"; do
   version="$(catalog_get cargo "$tool")"
   # Cargo's install registry verifies exact installed package versions on reruns.
-  if [[ "$binstall" == true ]]; then
+  if [[ "$binstall" == true && ( "$profile" != ci-cross-build || "$tool" != cargo-nextest ) ]]; then
     env -u RUSTC_WRAPPER -u CARGO_ENCODED_RUSTFLAGS \
       cargo +"$channel" binstall --locked --no-confirm --targets "$host" --targets "${host%-gnu}-musl" "$tool@$version"
   else
@@ -209,6 +224,15 @@ done
 if [[ "$ci" == false && "$platform" != aarch64-linux && "$platform" != x86_64-linux ]]; then
   env -u RUSTC_WRAPPER -u CARGO_ENCODED_RUSTFLAGS \
     cargo +"$channel" install --locked --target "$(catalog_get "$platform" rust-host)" --version "$(catalog_get versions cargo-rail)" cargo-rail
+fi
+
+if [[ "$profile" == ci-cross-build ]]; then
+  python3 "$SCRIPT_DIR/transfer.py" prepare "$cross_target" "target/$cross_target-tools.tar.gz"
+elif [[ "$profile" == ci-cross-run ]]; then
+  tools_parent="$(mktemp -d "$prefix/runner-tools.XXXXXX")"
+  tools_bin="$(python3 "$SCRIPT_DIR/transfer.py" install "$host" "$tools_archive" "$tools_parent/verified")"
+  path_prefix="$tools_bin:$path_prefix"
+  export PATH="$path_prefix:$PATH"
 fi
 
 # Persistent paths are shared by interactive shells and non-interactive Bash recipes.
@@ -251,6 +275,6 @@ case "$profile" in
   ci-compat) wasmtime --version ;;
   ci-fuzz) cargo fuzz --version ;;
   ci-ct|ci-miri|ci-package|ci-bench) just --version ;;
-  ci|ci-riscv-build|ci-riscv-run) cargo nextest --version ;;
+  ci|ci-cross-build|ci-cross-run) cargo nextest --version ;;
 esac
 printf 'Installed %s tooling. Load with: source "%s"\n' "$platform" "$environment"

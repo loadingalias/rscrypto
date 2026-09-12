@@ -23,7 +23,7 @@ failure propagation with substitute executors. Run it with
 | Script | Caller |
 | --- | --- |
 | `test/test.sh` | `just test` |
-| `test/riscv.py` | `just test-riscv prepare ARCHIVE`, `just test-riscv run ARCHIVE` |
+| `test/cross.py` | `just test-cross prepare TARGET ARCHIVE`, `just test-cross run TARGET ARCHIVE` |
 | `test/doctest_bundle.py` | RISC-V doctest compilation and target execution |
 | `test/test-examples.sh` | `just test-examples` |
 | `test/test-miri.sh` | `just test-miri` |
@@ -40,12 +40,24 @@ exporter self-tests; `just ct-test` includes them.
 and the pinned rustdoc compile/run contract, including deliberate failures.
 It requires the repository-pinned nightly and runs a small Rust fixture.
 
-RISC-V CI builds on Ubuntu x86-64 using `--ci-riscv-build` tooling. It runs the
+RISC-V, POWER, and IBM Z CI build on Ubuntu x86-64 using `--ci-cross-build TARGET` tooling. It runs the
 same target-specific checks and builds all release tests in both dispatch modes,
 including all doctest compilation checks. Nextest archives and persisted doctest programs
-are transferred to the physical RISC-V runner, whose `--ci-riscv-run` tooling
+are transferred to the matching native runner, whose `--ci-cross-run TOOLS_ARCHIVE` tooling
 only executes them. Preparation is not a runtime pass. The Rust release profile,
 target compiler, feature sets, and test assertions remain unchanged.
+
+Each preparation job also cross-builds the pinned `just` and Nextest tools into a
+separate source-bound archive. The native bootstrap verifies that archive and each
+tool's ELF architecture before adding its directory to PATH. No Cargo tools compile
+on the execution runner. Both Nextest builds use the same locked crate release;
+producer and consumer identities must match except for their host architecture.
+GNU cross-compilers and target libc development packages use the same Ubuntu CI
+snapshot as native provisioning. No compiler cache is used.
+
+Cross-builds exercise dependency build scripts and procedural macros on x86-64.
+They preserve target runtime evidence but do not qualify those tools running as
+native POWER, IBM Z, or RISC-V host programs.
 
 The archive records the Git revision, effective source digest, compiler, Nextest,
 release settings, and every file's digest and executable bit. Execution rejects
@@ -60,7 +72,7 @@ Doctests use rustdoc's extraction inventory and compilation checks, preserving
 `compile_fail`, error-code checks, `no_run`, and `should_panic`. Transfer preparation
 disables merging because the pinned rustdoc's merged runner executes despite
 global `--no-run`. Each runnable standalone program must subsequently execute on
-RISC-V. Ordinary `just test` doctests retain rustdoc's default merging behavior.
+the target hardware. Ordinary `just test` doctests retain rustdoc's default merging behavior.
 
 Example names and feature requirements come from Cargo metadata. Use
 `just test-miri --rsa` for the focused RSA scope and `just test-fuzz --targets A,B`
@@ -87,15 +99,15 @@ latest report summarizes the selected cases and their requested budgets.
 `ct/manifest.py` owns shared target and measurement selection.
 `ct/provenance.py` owns shared file hashing and build identity.
 
-RISC-V CT uses `just ct-full --target riscv64gc-unknown-linux-gnu --prepare-archive ARCHIVE`
-on the x86-64 build host and the corresponding `--run-archive ARCHIVE` on physical
-RISC-V. Preparation retains strict API/artifact validation, generated-code checks,
+These targets use `just ct-full --target TARGET --prepare-archive ARCHIVE`
+on the x86-64 build host and the corresponding `--run-archive ARCHIVE` on the matching
+native hardware. Preparation retains strict API/artifact validation, generated-code checks,
 and the cleanup sentinel. It also compiles and disassembles the exact DudeCT
 executable that will be timed. The consumer verifies the source and artifacts,
 then runs the existing full manifest campaign with unchanged sampling, threshold,
 and per-case timeouts. No target code is rebuilt during measurement. Reports
 distinguish build and measurement hosts and retain the original preparation bundle.
-This transfer mode is restricted to RISC-V; it cannot bypass native BINSEC on
+This transfer mode is restricted to the three targets in `lib/cross_build.py`; it cannot bypass native BINSEC on
 targets that require it.
 
 `ct/full.py`, `ct/binsec.py`, and `ct/validate.py` back `just ct-full`,
@@ -159,8 +171,9 @@ fuzz commands run independently of that plan.
 | `lib/fuzz-packages.sh` | Fuzz scripts |
 | `lib/python.sh` | Python-backed check, test, CT, and benchmark scripts |
 | `lib/toolchain.py`, `lib/toolchain.sh` | Shared toolchain selection for installers, builds, checks, tests, and benchmarks |
-| `lib/evidence_bundle.py` | Source binding, sealing, and transfer integrity for RISC-V tests and CT |
-| `lib/riscv_build.py` | Pinned RISC-V cross-compiler environment for test and CT preparation |
+| `tooling/transfer.py` | Cross-build and verify the pinned native runner tools |
+| `lib/evidence_bundle.py` | Source binding, sealing, and transfer integrity for cross-compiled tests, tools, and CT |
+| `lib/cross_build.py` | Explicit target identities and cross-compiler environment for test, tool, and CT preparation |
 
 Python tooling requires Python 3.11 or newer. The updater installs its catalog-pinned
 Python libraries into a temporary virtual environment; checks and benchmarks use

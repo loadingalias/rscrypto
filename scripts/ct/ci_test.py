@@ -33,7 +33,7 @@ class Selection(unittest.TestCase):
     def test_one_many_all_selection(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / 'output'
-            for selection, count in (('x86_64-linux', 1), ('x86_64-win,riscv64-linux', 2), ('all', 6)):
+            for selection, count in (('x86_64-linux', 1), ('powerpc64le-linux', 1), ('s390x-linux', 1), ('x86_64-win,riscv64-linux', 2), ('all', 6)):
                 output.write_text('')
                 with patch.dict(os.environ, INPUT_ARCHITECTURES=selection,
                                 GITHUB_RUN_ID='123', GITHUB_OUTPUT=str(output)), patch.object(sys, 'argv', ['ci.py', 'plan']):
@@ -42,7 +42,15 @@ class Selection(unittest.TestCase):
                 rows = json.loads(values['matrix'])['include']
                 self.assertEqual(len(rows), count)
                 self.assertTrue(all(row['timeout'] == 360 for row in rows))
-                self.assertEqual(values['riscv'], str(any(row['platform'] == 'riscv64-linux' for row in rows)).lower())
+                expected = {
+                    'riscv64-linux': 'riscv64gc-unknown-linux-gnu',
+                    'powerpc64le-linux': 'powerpc64le-unknown-linux-gnu',
+                    's390x-linux': 's390x-unknown-linux-gnu',
+                }
+                builds = [{'target': expected[row['platform']]} for row in rows if row['platform'] in expected]
+                self.assertEqual(json.loads(values['builds']), {'include': builds})
+                self.assertEqual(values['cross'], str(bool(builds)).lower())
+                self.assertEqual([row['target'] for row in rows if 'target' in row], [row['target'] for row in builds])
 
 
 if __name__ == '__main__':

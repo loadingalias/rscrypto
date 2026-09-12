@@ -1059,8 +1059,8 @@ def write_full_report(out_dir: Path, report: dict[str, Any]) -> tuple[Path, Path
 def main() -> int:
   parser = argparse.ArgumentParser(description=__doc__)
   transfer_args = parser.add_mutually_exclusive_group()
-  transfer_args.add_argument("--prepare-archive", type=Path, help="prepare sealed RISC-V CT evidence without timing")
-  transfer_args.add_argument("--run-archive", type=Path, help="measure sealed RISC-V CT evidence without rebuilding")
+  transfer_args.add_argument("--prepare-archive", type=Path, help="prepare sealed cross-compiled CT evidence without timing")
+  transfer_args.add_argument("--run-archive", type=Path, help="measure sealed cross-compiled CT evidence without rebuilding")
   parser.add_argument("--target", default=None)
   parser.add_argument("--profile", default="release")
   parser.add_argument("--threshold", type=float, default=float(os.environ.get("RSCRYPTO_CT_DUDECT_THRESHOLD", "10.0")))
@@ -1094,14 +1094,15 @@ def main() -> int:
   transferred = None
   transfer_identity = None
   if args.prepare_archive or args.run_archive:
-    from transfer import TARGET, bundle
-    if target != TARGET or args.profile != "release" or args.dudect_filter or args.dudect_gate != "required":
-      parser.error("CT transfer requires the complete RISC-V release lane")
+    from transfer import bundle
+    from cross_build import TARGETS
+    if target not in TARGETS or args.profile != "release" or args.dudect_filter or args.dudect_gate != "required":
+      parser.error("CT transfer requires the complete supported cross-compiled release lane")
     if args.threshold != 10.0 or "RSCRYPTO_CT_DUDECT_SAMPLES" in os.environ:
       parser.error("CT transfer requires unchanged manifest sampling and threshold")
     if args.prepare_archive:
-      from riscv_build import environment
-      os.environ.update(environment())
+      from cross_build import environment
+      os.environ.update(environment(target))
       transfer_identity = bundle.source_identity(root)
   host = host_target(root)
   if not args.prepare_archive and not is_host_executable_target(target, host):
@@ -1146,7 +1147,7 @@ def main() -> int:
 
   if args.run_archive:
     from transfer import consume
-    steps, transferred = consume(root, out_dir, args.run_archive.resolve())
+    steps, transferred = consume(root, out_dir, args.run_archive.resolve(), target)
   else:
     artifacts_result = run_command(
       root,
@@ -1278,7 +1279,7 @@ def main() -> int:
     if preparation.status != "pass":
       print(f"DudeCT preparation failed: {preparation.stderr_path}", file=sys.stderr)
       return 1
-    export(root, out_dir, shared, steps, transfer_identity, args.prepare_archive.resolve())
+    export(root, out_dir, shared, steps, transfer_identity, args.prepare_archive.resolve(), target)
     print(f"CT preparation complete; native timing remains required: {args.prepare_archive}")
     return 0
 

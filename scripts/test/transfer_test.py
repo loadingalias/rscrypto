@@ -2,6 +2,7 @@
 """Reject mixed-source, corrupt, incomplete, and unsafe transferred evidence."""
 
 import io
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -20,8 +21,48 @@ import evidence_bundle as bundle
 import doctest_bundle
 import dudect_execute
 import transfer
-import riscv
-from riscv_build import environment
+import cross
+from cross_build import TARGETS, environment, require_host, verify_elf
+
+TARGET = "riscv64gc-unknown-linux-gnu"
+spec = importlib.util.spec_from_file_location('runner_tools', ROOT / 'scripts/tooling/transfer.py')
+runner_tools = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runner_tools)
+
+
+# Independent ELF identities from the ABI: EM_RISCV=243, EM_PPC64=21, EM_S390=22.
+def elf_header(target):
+    return {
+        'riscv64gc-unknown-linux-gnu': b'\x7fELF\x02\x01' + bytes(12) + b'\xf3\x00',
+        'powerpc64le-unknown-linux-gnu': b'\x7fELF\x02\x01' + bytes(12) + b'\x15\x00',
+        's390x-unknown-linux-gnu': b'\x7fELF\x02\x02' + bytes(12) + b'\x00\x16',
+    }[target]
+
+
+class TargetIdentity(unittest.TestCase):
+    def test_wrong_machine_endian_and_host_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary) / 'binary'
+            for target, machine in (('riscv64gc-unknown-linux-gnu', 'riscv64'),
+                                    ('powerpc64le-unknown-linux-gnu', 'ppc64le'),
+                                    ('s390x-unknown-linux-gnu', 's390x')):
+                with self.subTest(target=target):
+                    binary.write_bytes(elf_header(target))
+                    verify_elf(binary, target)
+                    for other in set(TARGETS) - {target}:
+                        with self.assertRaises(ValueError): verify_elf(binary, other)
+                    header = bytearray(elf_header(target))
+                    header[5] = 3 - header[5]
+                    binary.write_bytes(header)
+                    with self.assertRaises(ValueError): verify_elf(binary, target)
+                    binary.write_bytes(elf_header(target)[:19])
+                    with self.assertRaises(ValueError): verify_elf(binary, target)
+                    with patch('platform.system', return_value='Linux'), patch('platform.machine', return_value=machine):
+                        require_host(target)
+                        for other in set(TARGETS) - {target}:
+                            with self.assertRaises(ValueError): require_host(other)
+                    with patch('platform.system', return_value='Linux'), patch('platform.machine', return_value='x86_64'):
+                        with self.assertRaises(ValueError): require_host(target)
 
 
 class NextestIdentity(unittest.TestCase):
@@ -34,14 +75,14 @@ class NextestIdentity(unittest.TestCase):
                   'commit-date: 2026-08-04\n'
                   'host: x86_64-unknown-linux-gnu')
         consumer = report.replace('x86_64-unknown-linux-gnu', 'riscv64gc-unknown-linux-gnu')
-        self.assertEqual(riscv.nextest_identity(report), riscv.nextest_identity(consumer))
+        self.assertEqual(cross.nextest_identity(report), cross.nextest_identity(consumer))
         changed = consumer.replace('60fa45f638ffc3f35e74afa65737f45fcd32db2a', '0' * 40)
-        self.assertNotEqual(riscv.nextest_identity(report), riscv.nextest_identity(changed))
+        self.assertNotEqual(cross.nextest_identity(report), cross.nextest_identity(changed))
         incomplete = '\n'.join(line for line in consumer.splitlines() if not line.startswith('commit-hash:'))
-        self.assertNotEqual(riscv.nextest_identity(report), riscv.nextest_identity(incomplete))
+        self.assertNotEqual(cross.nextest_identity(report), cross.nextest_identity(incomplete))
         for invalid in ('', f'not-nextest {pin}', consumer.replace(pin, f'{pin}-mismatch')):
             with self.subTest(report=invalid), self.assertRaises(ValueError):
-                riscv.nextest_identity(invalid)
+                cross.nextest_identity(invalid)
 
 
 class Bundles(unittest.TestCase):
@@ -101,7 +142,17 @@ class Bundles(unittest.TestCase):
             with self.assertRaises(ValueError): bundle.unpack(archive, self.root / f'target/unpack-{index}')
 
     def test_ct_transfer_relocates_but_preserves_producer_identity(self):
-        ct = self.root / 'target/ct/riscv64gc-unknown-linux-gnu/release'
+        for target, (machine, _, _, _) in TARGETS.items():
+            with self.subTest(target=target):
+                case = Bundles()
+                case.setUp()
+                try:
+                    case.check_test_ct_transfer_relocates_but_preserves_producer_identity(target, machine)
+                finally:
+                    case.doCleanups()
+
+    def check_test_ct_transfer_relocates_but_preserves_producer_identity(self, target, machine):
+        ct = self.root / 'target/ct' / target / 'release'
         (ct / 'artifacts').mkdir(parents=True)
         (ct / 'artifacts/evidence').write_bytes(b'exact code')
         logs = ct / 'full/logs'; logs.mkdir(parents=True)
@@ -112,36 +163,83 @@ class Bundles(unittest.TestCase):
         for name in ('evidence-index.json', 'artifact-hashes.txt', 'asm-heuristics.json',
                      'asm-heuristics.md', 'zeroization.json'):
             (ct / name).write_text('{}')
-        (ct / 'provenance.json').write_text(json.dumps({'target': transfer.TARGET, 'profile': 'release'}))
+        (ct / 'provenance.json').write_text(json.dumps({'target': target, 'profile': 'release'}))
         shared = ct / 'build/shared'; shared.mkdir(parents=True)
-        metadata = {'target': transfer.TARGET, 'profile': 'release', 'host': {'machine': 'x86_64'}}
+        metadata = {'target': target, 'profile': 'release', 'host': {'machine': 'x86_64'}}
         for key in ('binary', 'binary_disassembly', 'binary_symbols', 'linker_command_log'):
             path = shared / key
-            path.write_bytes(b'\x7fELF\x02\x01' + bytes(12) + b'\xf3\x00' if key == 'binary' else b'evidence')
+            path.write_bytes(elf_header(target) if key == 'binary' else b'evidence')
             metadata[key] = {'path': str(path), 'bytes': path.stat().st_size, 'sha256': bundle.digest(path)}
         (shared / 'prepared.json').write_text(json.dumps({'metadata': metadata, 'manifest_cases': {}}))
         archive = self.root / 'target/ct.tar.gz'
-        transfer.export(self.root, ct, shared, steps, self.identity, archive)
-        with patch('platform.system', return_value='Linux'), patch('platform.machine', return_value='riscv64'):
-            imported_steps, path = transfer.consume(self.root, ct, archive)
+        transfer.export(self.root, ct, shared, steps, self.identity, archive, target)
+        with patch('platform.system', return_value='Linux'), patch('platform.machine', return_value=machine):
+            imported_steps, path = transfer.consume(self.root, ct, archive, target)
             prepared = json.loads(path.read_text())
             self.assertEqual(prepared['metadata']['build_host']['machine'], 'x86_64')
-            self.assertEqual(prepared['metadata']['host']['machine'], 'riscv64')
+            self.assertEqual(prepared['metadata']['host']['machine'], machine)
             self.assertTrue(all(Path(s['stdout']).is_file() for s in imported_steps))
             dudect_execute.verify_transferred(prepared)
             binary = Path(prepared['metadata']['binary']['path'])
             binary.write_bytes(b'changed executable')
             with self.assertRaises(ValueError): dudect_execute.verify_transferred(prepared)
         with patch('platform.machine', return_value='x86_64'):
-            with self.assertRaises(ValueError): transfer.consume(self.root, ct, archive)
-        with self.assertRaises(ValueError): transfer.export(self.root, ct, shared, steps[:-1], self.identity, archive)
+            with self.assertRaises(ValueError): transfer.consume(self.root, ct, archive, target)
+        with self.assertRaises(ValueError): transfer.export(self.root, ct, shared, steps[:-1], self.identity, archive, target)
+
+    def test_runner_tools_are_source_bound_and_verified_before_installation(self):
+        pins = tomllib.loads((ROOT / '.config/tooling.toml').read_text())['cargo']
+        path = self.root / '.config/tooling.toml'
+        path.parent.mkdir()
+        shutil.copy2(ROOT / '.config/tooling.toml', path)
+        identity = bundle.source_identity(self.root)
+        for index, target in enumerate(TARGETS):
+            directory = self.root / 'target' / str(index)
+            (directory / 'bin').mkdir(parents=True)
+            for name in ('just', 'cargo-nextest'):
+                tool = directory / 'bin' / name
+                tool.write_bytes(elf_header(target))
+                tool.chmod(0o755)
+            metadata = {name: pins[name] for name in ('just', 'cargo-nextest')}
+            for failure in ('none', 'version', 'elf', 'source'):
+                with self.subTest(target=target, failure=failure):
+                    if failure == 'version': metadata['just'] = 'wrong'
+                    else: metadata['just'] = pins['just']
+                    (directory / 'bin/just').write_bytes(b'not target code' if failure == 'elf' else elf_header(target))
+                    bundle.seal(self.root, directory, runner_tools.KIND, target, identity, metadata)
+                    archive = self.root / 'target' / f'{index}-{failure}.tar.gz'
+                    bundle.pack(directory, archive)
+                    if failure == 'source': (self.root / 'source.rs').write_text('changed')
+                    destination = self.root / 'target' / f'{index}-{failure}-installed'
+                    with patch.object(runner_tools, 'ROOT', self.root), patch('platform.system', return_value='Linux'), \
+                         patch('platform.machine', return_value=TARGETS[target][0]), patch('sys.stdout', new=io.StringIO()) as output:
+                        if failure == 'none':
+                            runner_tools.install(target, archive, destination)
+                            self.assertEqual(output.getvalue().strip(), str(destination / 'bin'))
+                        else:
+                            with self.assertRaises(ValueError): runner_tools.install(target, archive, destination)
+                            self.assertEqual(output.getvalue(), '')
+                    (self.root / 'source.rs').write_text('original\n')
 
     def test_overrides_are_rejected(self):
-        for key in ('RUSTFLAGS', 'CARGO_PROFILE_RELEASE_LTO', 'NEXTEST_FILTERSET'):
-            with patch.dict(os.environ, {key: 'override'}):
-                with self.assertRaises(ValueError): environment()
+        for target in TARGETS:
+            for key in ('RUSTFLAGS', 'CARGO_PROFILE_RELEASE_LTO', 'NEXTEST_FILTERSET',
+                        'CARGO_TARGET_' + target.replace('-', '_').upper() + '_RUSTFLAGS',
+                        'CARGO_TARGET_' + target.replace('-', '_').upper() + '_RUNNER'):
+                with self.subTest(target=target, key=key), patch.dict(os.environ, {key: 'override'}):
+                    with self.assertRaises(ValueError): environment(target)
 
     def test_prepare_keeps_both_full_release_modes_and_fails_closed(self):
+        for target, (machine, _, _, _) in TARGETS.items():
+            with self.subTest(target=target):
+                case = Bundles()
+                case.setUp()
+                try:
+                    case.check_test_prepare_keeps_both_full_release_modes_and_fails_closed(target, machine)
+                finally:
+                    case.doCleanups()
+
+    def check_test_prepare_keeps_both_full_release_modes_and_fails_closed(self, target, machine):
         for name in ('Cargo.toml', '.config/tooling.toml'):
             destination = self.root / name
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -165,7 +263,7 @@ elif name=='rustc': print('rustc pinned fixture')
 elif name.endswith('gcc'): print('gcc pinned fixture')
 ''')
         tool.chmod(0o755)
-        for name in ('just', 'cargo', 'rustc', 'riscv64-linux-gnu-gcc'):
+        for name in ('just', 'cargo', 'rustc', TARGETS[target][1] + '-gcc'):
             (commands / name).symlink_to(tool)
         # Do not include fixture executable symlinks in the effective source digest.
         with (self.root / '.gitignore').open('a') as output: output.write('commands/\n')
@@ -174,24 +272,24 @@ elif name.endswith('gcc'): print('gcc pinned fixture')
             directory.mkdir()
             (directory / 'fixture').write_text('prepared')
             return {'total': 232}
-        with patch.object(riscv, 'ROOT', self.root), patch('platform.system', return_value='Linux'), \
+        with patch.object(cross, 'ROOT', self.root), patch('platform.system', return_value='Linux'), \
              patch('platform.machine', return_value='x86_64'), patch.object(doctest_bundle, 'prepare', side_effect=docs) as prepare_docs, \
              patch.dict(os.environ, PATH=str(commands) + os.pathsep + os.environ['PATH'],
                         TRANSFER_TEST_LOG=str(log), TRANSFER_NEXTEST=pin):
             archive = self.root / 'target/test-suites.tar.gz'
-            riscv.prepare(archive)
+            cross.prepare(target, archive)
             calls = [json.loads(row) for row in log.read_text().splitlines()]
-            self.assertIn(['just', 'ci-check-target', riscv.TARGET], calls)
+            self.assertIn(['just', 'ci-check-target', target], calls)
             builds = [row for row in calls if row[:3] == ['cargo', 'nextest', 'archive']]
             self.assertEqual(len(builds), 2)
             self.assertTrue(all('--workspace' in row and '--locked' in row and '--release' in row for row in builds))
-            self.assertTrue(all(row[row.index('--target') + 1] == riscv.TARGET for row in builds))
+            self.assertTrue(all(row[row.index('--target') + 1] == target for row in builds))
             self.assertNotIn('portable-only', builds[0][builds[0].index('--features') + 1].split(','))
             self.assertIn('--all-features', builds[1])
             self.assertEqual(prepare_docs.call_count, 2)
             with patch.dict(os.environ, TRANSFER_FAIL='1'):
                 failed = self.root / 'target/failed.tar.gz'
-                with self.assertRaises(subprocess.CalledProcessError): riscv.prepare(failed)
+                with self.assertRaises(subprocess.CalledProcessError): cross.prepare(target, failed)
                 self.assertFalse(failed.exists())
 
 
@@ -257,7 +355,7 @@ class NativeArchive(unittest.TestCase):
             subprocess.run(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
                             'commit', '-qm', 'fixture'], cwd=root, check=True)
             directory = root / 'target/transfer'; directory.mkdir(parents=True)
-            consumer_version = riscv.nextest_version()
+            consumer_version = cross.nextest_version()
             metadata = {'nextest': consumer_version, 'modes': {}}
             # Real cross-architecture reports have the same release/commit but
             # different host lines, as in CI run 34527080605. Preserve that
@@ -273,14 +371,14 @@ class NativeArchive(unittest.TestCase):
                 self.assertEqual(built.returncode, 0, built.stderr)
                 plan = doctest_bundle.prepare(root, directory / (mode + '-docs'), [], env)
                 metadata['modes'][mode] = {'doctests': plan['total']}
-            bundle.seal(root, directory, 'rscrypto.riscv.tests', riscv.TARGET, bundle.source_identity(root), metadata)
+            bundle.seal(root, directory, 'rscrypto.cross.tests', TARGET, bundle.source_identity(root), metadata)
             archive = root / 'target/transfer.tar.gz'; bundle.pack(directory, archive)
             # Removing the original build tree catches hidden dependencies on it.
             shutil.rmtree(root / 'target/release')
-            with patch.object(riscv, 'ROOT', root), patch('platform.system', return_value='Linux'), \
+            with patch.object(cross, 'ROOT', root), patch('platform.system', return_value='Linux'), \
                  patch('platform.machine', return_value='riscv64'), patch('sys.stdout', new=io.StringIO()):
-                riscv.execute(archive)
-            summaries = list((root / 'target/riscv-results').glob('*/summary.json'))
+                cross.execute(TARGET, archive)
+            summaries = list((root / 'target/cross-results' / TARGET).glob('*/summary.json'))
             self.assertEqual(len(summaries), 1)
             summary = json.loads(summaries[0].read_text())
             self.assertEqual(summary['status'], 'pass')

@@ -54,6 +54,8 @@ elif name == 'python3':
         executable.write_text('#!/bin/sh\nexit 0\n')
         executable.chmod(0o755)
         print(directory)
+    elif script == 'transfer.py':
+        if args[1] == 'install': print(str(pathlib.Path(args[-1]) / 'bin'))
     elif script in ('compat.py', 'package.py') and '--install' in args:
         pass
     else:
@@ -62,7 +64,7 @@ elif name == 'python3':
 
 
 class LinuxInstall(unittest.TestCase):
-    def provision(self, platform, fail=False, real_apt=False, without_preference=False, profile='ci'):
+    def provision(self, platform, fail=False, real_apt=False, without_preference=False, profile='ci', target=None):
         temporary = tempfile.TemporaryDirectory(prefix='rscrypto installer ')
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
@@ -107,7 +109,8 @@ class LinuxInstall(unittest.TestCase):
                        INSTALL_APT_ARCH=subprocess.check_output(['dpkg', '--print-architecture'], text=True).strip())
             if without_preference:
                 env['INSTALL_WITHOUT_PREFERENCE'] = '1'
-        result = subprocess.run([BASH, str(ROOT / 'scripts/tooling/linux.sh'), platform, '--' + profile],
+        extra = [target] if profile == 'ci-cross-build' else ['tools.tar.gz'] if profile == 'ci-cross-run' else []
+        result = subprocess.run([BASH, str(ROOT / 'scripts/tooling/linux.sh'), platform, '--' + profile, *extra],
                                 env=env, capture_output=True, text=True)
         calls = [json.loads(line) for line in (root / 'commands.jsonl').read_text().splitlines()]
         return result, calls, root
@@ -202,23 +205,37 @@ class LinuxInstall(unittest.TestCase):
         self.assertTrue(compiler_installs[0][1].endswith('scripts/check/package.py'))
         self.assertFalse(any('musl-tools=1.0' in c for c in calls))
 
-    def test_riscv_build_and_execution_tooling_are_separate(self):
+    def test_cross_build_and_execution_tooling_are_separate(self):
         nightly = tomllib.loads((ROOT / '.config/toolchains.toml').read_text())['nightly']
-        for platform, profile in (('x86_64-linux', 'ci-riscv-build'), ('riscv64-linux', 'ci-riscv-run')):
-            with self.subTest(profile=profile):
-                result, calls, _ = self.provision(platform, profile=profile)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                apt = next(c for c in calls if c[0] == 'apt-get' and '--allow-downgrades' in c)
-                self.assertEqual([a for a in apt if a.endswith('=1.0')],
-                                 [p + '=1.0' for p in CATALOG[profile]['packages']])
-                installs = [c for c in calls if c[:3] == ['rustup', 'toolchain', 'install']]
-                self.assertIn(nightly, [c[3] for c in installs])
-                components = [c[i + 1] for c in installs for i, arg in enumerate(c) if arg == '--component']
-                self.assertEqual(components, ['rustfmt', 'clippy', 'llvm-tools'] if profile.endswith('build') else [])
-                if profile.endswith('build'):
-                    self.assertIn(['rustup', 'target', 'add', '--toolchain', nightly, 'riscv64gc-unknown-linux-gnu'], calls)
-                else:
-                    self.assertFalse(any(c[0] == 'cargo' and ('build' in c or 'install' in c) for c in calls))
+        for platform, target, prefix, libc in (
+            ('riscv64-linux', 'riscv64gc-unknown-linux-gnu', 'riscv64-linux-gnu', 'riscv64'),
+            ('powerpc64le-linux', 'powerpc64le-unknown-linux-gnu', 'powerpc64le-linux-gnu', 'ppc64el'),
+            ('s390x-linux', 's390x-unknown-linux-gnu', 's390x-linux-gnu', 's390x'),
+        ):
+            for profile in ('ci-cross-build', 'ci-cross-run'):
+                with self.subTest(target=target, profile=profile):
+                    result, calls, _ = self.provision('x86_64-linux' if profile.endswith('build') else platform,
+                                                       profile=profile, target=target)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    apt = next(c for c in calls if c[0] == 'apt-get' and '--allow-downgrades' in c)
+                    packages = list(CATALOG[profile]['packages'])
+                    if profile.endswith('build'):
+                        packages += ['gcc-' + prefix, 'g++-' + prefix, 'libc6-dev-' + libc + '-cross']
+                    self.assertEqual([a for a in apt if a.endswith('=1.0')], [p + '=1.0' for p in packages])
+                    installs = [c for c in calls if c[:3] == ['rustup', 'toolchain', 'install']]
+                    self.assertIn(nightly, [c[3] for c in installs])
+                    components = [c[i + 1] for c in installs for i, arg in enumerate(c) if arg == '--component']
+                    self.assertEqual(components, ['rustfmt', 'clippy', 'llvm-tools'] if profile.endswith('build') else [])
+                    if profile.endswith('build'):
+                        self.assertIn(['rustup', 'target', 'add', '--toolchain', nightly, target], calls)
+                        nextest = [c for c in calls if c[0] == 'cargo' and c[-1] == 'cargo-nextest']
+                        self.assertEqual(len(nextest), 1)
+                        self.assertIn('install', nextest[0])
+                    else:
+                        self.assertFalse(any(c[0] == 'cargo' and ('build' in c or 'install' in c or 'binstall' in c) for c in calls))
+                    transfers = [c for c in calls if c[0] == 'python3' and c[1].endswith('/tooling/transfer.py')]
+                    self.assertEqual(len(transfers), 1)
+                    self.assertEqual(transfers[0][2:4], ['prepare' if profile.endswith('build') else 'install', target])
 
     def test_proof_tools_only_on_supported_full_ct_hosts(self):
         for platform in ('x86_64-linux', 'aarch64-linux', 's390x-linux', 'powerpc64le-linux', 'riscv64-linux'):

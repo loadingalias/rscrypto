@@ -43,12 +43,12 @@ packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "pkgconf"
 [ci]
 cargo = ["just", "cargo-nextest"]
 
-[ci-riscv-build]
+[ci-cross-build]
 cargo = ["just", "cargo-nextest"]
-packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "python3", "cmake", "clang", "libclang-dev", "perl", "gcc-riscv64-linux-gnu", "g++-riscv64-linux-gnu", "libc6-dev-riscv64-cross"]
+packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "python3", "cmake", "clang", "libclang-dev", "perl"]
 
-[ci-riscv-run]
-cargo = ["just", "cargo-nextest"]
+[ci-cross-run]
+cargo = []
 packages = ["ca-certificates", "curl", "git", "python3"]
 
 [ci-compat]

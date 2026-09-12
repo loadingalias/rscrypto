@@ -168,7 +168,7 @@ Add the risk-specific evidence reached by the change:
 Cross-compilation proves compilation, not runtime behavior, constant-time
 execution, or performance. Record target lanes that cannot run.
 
-RISC-V CI separates cross-compilation from native execution to avoid long builds
+RISC-V, POWER, and IBM Z CI separate cross-compilation from native execution to avoid long builds
 on the physical runner. Both native-dispatch and portable release suites,
 doctests, and the full CT campaign remain required. The transfer commands and
 integrity requirements are documented in [scripts/README.md](scripts/README.md).

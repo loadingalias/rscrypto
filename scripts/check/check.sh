@@ -6,7 +6,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 mode=$1
 case "$mode" in
   check|fix|local|native) [[ $# -eq 1 ]] || exit 2 ;;
-  target) [[ $# -eq 2 && "$2" == riscv64gc-unknown-linux-gnu ]] || exit 2 ;;
+  target) [[ $# -eq 2 ]] || exit 2; python3 scripts/lib/cross_build.py "$2" >/dev/null ;;
   *) echo 'usage: scripts/check/check.sh {check|fix|local|native}' >&2; exit 2 ;;
 esac
 
@@ -14,7 +14,7 @@ host=$(scripts/lib/toolchain.sh --print-host)
 if [[ "$mode" == target ]]; then
   host=$2
   # Cargo keeps build scripts/proc macros on the build host; all checked product
-  # targets and independent workspaces use the same RISC-V cfg as native CI.
+  # targets and independent workspaces use the same target cfg as native CI.
   export CARGO_BUILD_TARGET="$host"
 fi
 [[ -n "$host" ]] || { echo 'cannot determine Rust host' >&2; exit 1; }
