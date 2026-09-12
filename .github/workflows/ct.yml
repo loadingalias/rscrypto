@@ -84,7 +84,8 @@ jobs:
 
   select:
     if: ${{ !inputs.replay_p384 }}
-    runs-on: runs-on=${{ github.run_id }}/runner=plan/env=production
+    # Public-repository named runners resolve from main, not this workflow's ref.
+    runs-on: runs-on=${{ github.run_id }}/cpu=2/family=c7a.large+c7i.large+c8a.large+c8i.large/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=40gb:gp3/env=production
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.select.outputs.matrix }}
@@ -100,7 +101,7 @@ jobs:
   cross-build:
     needs: select
     if: needs.select.outputs.cross == 'true'
-    runs-on: runs-on=${{ github.run_id }}/runner=cross-build/env=production
+    runs-on: runs-on=${{ github.run_id }}-${{ matrix.target }}/cpu=32/family=c7a.8xlarge+c7i.8xlarge+c8a.8xlarge+c8i.8xlarge/image=ubuntu24-minimal-x64/spot=price-capacity-optimized/volume=150gb:gp3/env=production
     timeout-minutes: 45
     name: Prepare ${{ matrix.target }} CT
     strategy:
