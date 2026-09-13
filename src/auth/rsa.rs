@@ -809,7 +809,7 @@ impl RsaSignatureProfile {
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 impl RsaPkcs1v15Profile {
   fn digest_info_prefix(self) -> &'static [u8] {
     match self {
@@ -820,7 +820,7 @@ impl RsaPkcs1v15Profile {
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn diag_verify_pss_encoded(
   profile: RsaPssProfile,
   message: &[u8],
@@ -850,7 +850,7 @@ fn diag_verify_pss_encoded(
 /// # Errors
 ///
 /// Returns an opaque [`VerificationError`] if the encoded message is invalid.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
 pub fn diag_rsa_verify_pss_encoded(
@@ -871,7 +871,7 @@ pub fn diag_rsa_verify_pss_encoded(
 /// # Errors
 ///
 /// Returns an opaque [`VerificationError`] if the encoded message is invalid.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
 pub fn diag_rsa_verify_pss_encoded_with_scratch(
@@ -893,7 +893,7 @@ pub fn diag_rsa_verify_pss_encoded_with_scratch(
 /// # Errors
 ///
 /// Returns an opaque [`VerificationError`] if the encoded message is invalid.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
 pub fn diag_rsa_verify_pkcs1v15_encoded(
@@ -918,7 +918,7 @@ pub fn diag_rsa_verify_pkcs1v15_encoded(
 ///
 /// Returns [`RsaPublicOpError`] if `input` or `out` is not exactly the modulus
 /// length, or if `input >= n`.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 pub fn diag_rsa_public_operation_bitserial(
   key: &RsaPublicKey,
@@ -940,7 +940,7 @@ pub fn diag_rsa_public_operation_bitserial(
 ///
 /// Returns [`RsaPrivateOpError`] if the modulus is empty or even, if `exponent`,
 /// `input`, or `out` is not exactly the modulus length, or if `input >= n`.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 pub fn diag_rsa_private_exponentiate_fixed_width(
   modulus: &[u8],
@@ -969,7 +969,7 @@ pub fn diag_rsa_private_exponentiate_fixed_width(
 /// Returns [`RsaPrivateOpError`] if `scratch` has another public modulus width,
 /// if `exponent`, `input`, or `out` is not exactly the first CRT component
 /// width, or if `input` is outside that component modulus.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 pub fn diag_rsa_private_exponentiate_fixed_width_with_scratch(
   key: &RsaPrivateKey,
@@ -1000,7 +1000,7 @@ pub fn diag_rsa_private_exponentiate_fixed_width_with_scratch(
 ///
 /// Returns [`RsaPublicOpError`] if `input` or `out` is not exactly the modulus
 /// length, if `input >= n`, or if `scratch` was allocated for another key size.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 pub fn diag_rsa_public_operation_product(
   key: &RsaPublicKey,
@@ -1021,7 +1021,7 @@ pub fn diag_rsa_public_operation_product(
 ///
 /// Returns [`RsaPublicOpError`] if `input` or `out` is not exactly the modulus
 /// length, if `input >= n`, or if `scratch` was allocated for another key size.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 pub fn diag_rsa_public_operation_comba_product(
   key: &RsaPublicKey,
@@ -1045,7 +1045,7 @@ pub fn diag_rsa_public_operation_comba_product(
 ///
 /// Returns [`RsaPublicOpError`] if `input` or `out` is not exactly the modulus
 /// length, if `input >= n`, or if `scratch` was allocated for another key size.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 pub fn diag_rsa_public_operation_cios(
   key: &RsaPublicKey,
@@ -1067,7 +1067,7 @@ pub fn diag_rsa_public_operation_cios(
 ///
 /// Returns [`RsaPublicOpError`] if `input` or `out` is not exactly the modulus
 /// length, if `input >= n`, or if `scratch` was allocated for another key size.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 pub fn diag_rsa_public_operation_cios_portable(
   key: &RsaPublicKey,
@@ -1086,7 +1086,7 @@ pub fn diag_rsa_public_operation_cios_portable(
 /// Diagnostic-only benchmark baseline for exponentiation strategy. This forces
 /// the generic public-exponent loop even when production uses a specialized
 /// path for common Fermat exponents.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[inline]
 pub fn diag_rsa_public_operation_generic_exponent(
@@ -1106,7 +1106,7 @@ pub fn diag_rsa_public_operation_generic_exponent(
 /// This diagnostic helper exists only to measure whether public-exponent
 /// windowing can beat the simpler square-and-multiply path. Normal callers
 /// should use [`RsaPublicKey::public_operation`].
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 pub fn diag_rsa_public_operation_window2_exponent(
   key: &RsaPublicKey,
@@ -1129,7 +1129,7 @@ pub fn diag_rsa_public_operation_window2_exponent(
 /// # Errors
 ///
 /// Returns [`RsaKeyError`] if parsing or validation fails.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 pub fn diag_rsa_validate_spki_public_key_der(
   der: &[u8],
@@ -1150,7 +1150,7 @@ pub fn diag_rsa_validate_spki_public_key_der(
 /// # Errors
 ///
 /// Returns [`RsaKeyError`] if the modulus violates the default public-key policy.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 pub fn diag_rsa_precompute_public_montgomery_r2(modulus: &[u8]) -> Result<u64, RsaKeyError> {
   let policy = RsaPublicKeyPolicy::default();
@@ -1165,8 +1165,8 @@ pub fn diag_rsa_precompute_public_montgomery_r2(modulus: &[u8]) -> Result<u64, R
 /// This helper is intentionally available only with `diag,getrandom`; normal
 /// callers should use the signing and decryption APIs, which generate and clear
 /// blinding material internally.
-#[cfg(all(feature = "diag", feature = "getrandom"))]
-#[cfg_attr(docsrs, doc(cfg(all(feature = "diag", feature = "getrandom"))))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "getrandom"))]
+#[cfg_attr(docsrs, doc(cfg(all(rscrypto_internal, feature = "diag", feature = "getrandom"))))]
 #[doc(hidden)]
 pub fn diag_rsa_blinding_factor_inverse(
   key: &RsaPrivateKey,
@@ -1181,8 +1181,8 @@ pub fn diag_rsa_blinding_factor_inverse(
 /// This diagnostic-only leaf exercises the production modular inverse without
 /// per-call allocation. Normal callers should use the signing and decryption
 /// APIs, which generate and clear blinding material internally.
-#[cfg(feature = "diag")]
-#[cfg_attr(docsrs, doc(cfg(feature = "diag")))]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+#[cfg_attr(docsrs, doc(cfg(all(rscrypto_internal, feature = "diag"))))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -1207,7 +1207,7 @@ pub fn diag_rsa_blinding_factor_inverse_with_scratch(
 }
 
 /// Exercise caller-random RSA-PSS success cleanup for optimized-code evidence.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -1238,7 +1238,7 @@ pub fn diag_rsa_caller_random_signing_success(
 }
 
 /// Exercise caller-random RSA-PSS error cleanup for optimized-code evidence.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -5382,7 +5382,7 @@ impl RsaPublicKey {
   ///
   /// Returns [`RsaEncryptionError`] if lengths are invalid, the message is too
   /// long, any seed byte is zero, or the RSA public operation fails.
-  #[cfg(any(test, feature = "diag"))]
+  #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
   #[doc(hidden)]
   #[must_use = "RSA encryption failure must be checked; a dropped Result silently discards ciphertext"]
   pub fn diag_encrypt_pkcs1v15_with_seed(
@@ -5405,7 +5405,7 @@ impl RsaPublicKey {
   ///
   /// Returns [`RsaEncryptionError`] if lengths are invalid, the message is too
   /// long, any seed byte is zero, or the RSA public operation fails.
-  #[cfg(any(test, feature = "diag"))]
+  #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
   #[doc(hidden)]
   #[must_use = "RSA encryption failure must be checked; a dropped Result silently discards ciphertext"]
   pub fn diag_encrypt_pkcs1v15_with_seed_and_scratch(
@@ -5580,7 +5580,7 @@ impl RsaPublicKey {
   ///
   /// Returns [`RsaEncryptionError`] if lengths are invalid, the message is too
   /// long for this key/profile, or the RSA public operation fails.
-  #[cfg(any(test, feature = "diag"))]
+  #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
   #[doc(hidden)]
   #[must_use = "RSA encryption failure must be checked; a dropped Result silently discards ciphertext"]
   pub fn diag_encrypt_oaep_with_seed(
@@ -5605,7 +5605,7 @@ impl RsaPublicKey {
   /// Returns [`RsaEncryptionError`] if lengths are invalid, the message is too
   /// long for this key/profile, `scratch` was allocated for a different modulus
   /// width, or the RSA public operation fails.
-  #[cfg(any(test, feature = "diag"))]
+  #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
   #[doc(hidden)]
   #[must_use = "RSA encryption failure must be checked; a dropped Result silently discards ciphertext"]
   pub fn diag_encrypt_oaep_with_seed_and_scratch(
@@ -6299,7 +6299,7 @@ impl RsaPublicModulus {
     Ok(())
   }
 
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   fn public_operation_bitserial(
     &self,
     exponent: RsaPublicExponent,
@@ -6334,7 +6334,7 @@ impl RsaPublicModulus {
     Ok(())
   }
 
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   fn public_operation_generic_exponent(
     &self,
     exponent: RsaPublicExponent,
@@ -6388,7 +6388,7 @@ impl RsaPublicModulus {
     Ok(())
   }
 
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   fn public_operation_window2_exponent(
     &self,
     exponent: RsaPublicExponent,
@@ -6455,7 +6455,7 @@ impl RsaPublicModulus {
     Ok(())
   }
 
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   fn public_operation_product(
     &self,
     exponent: RsaPublicExponent,
@@ -6528,7 +6528,7 @@ impl RsaPublicModulus {
     Ok(())
   }
 
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   fn public_operation_comba_product(
     &self,
     exponent: RsaPublicExponent,
@@ -6601,7 +6601,7 @@ impl RsaPublicModulus {
     Ok(())
   }
 
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   fn public_operation_cios(
     &self,
     exponent: RsaPublicExponent,
@@ -6674,7 +6674,7 @@ impl RsaPublicModulus {
     Ok(())
   }
 
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   fn public_operation_cios_portable(
     &self,
     exponent: RsaPublicExponent,
@@ -6917,7 +6917,7 @@ fn parse_pkcs1_private_key_der_parts_with_policy<'a>(
   Ok(components)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 pub fn diag_rsa_validate_pkcs8_private_key_der(der: &[u8], policy: &RsaPublicKeyPolicy) -> Result<usize, RsaKeyError> {
   let components = parse_pkcs8_private_key_der_parts_with_policy(der, policy)?;
@@ -6925,7 +6925,7 @@ pub fn diag_rsa_validate_pkcs8_private_key_der(der: &[u8], policy: &RsaPublicKey
   Ok(components.modulus.len())
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 pub fn diag_rsa_validate_pkcs8_private_key_der_stage(
   der: &[u8],
@@ -6938,7 +6938,7 @@ pub fn diag_rsa_validate_pkcs8_private_key_der_stage(
   Ok(components.modulus.len())
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 pub fn diag_rsa_import_pkcs8_private_key_der_stage(
   der: &[u8],
@@ -9868,7 +9868,7 @@ fn private_select_window_power(out: &mut [u64], table: &[u64], window: u8) {
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[inline(always)]
 /// Run the four-limb RSA private fixed-window selector for diagnostic harnesses.
 pub fn diag_rsa_private_select_window_power_4(table: &[u64; 64], window: u8) -> [u64; 4] {
@@ -9877,7 +9877,7 @@ pub fn diag_rsa_private_select_window_power_4(table: &[u64; 64], window: u8) -> 
   out
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[inline(always)]
 /// Evaluate the fixed-width RSA private-component checks used by diagnostic harnesses.
 pub fn diag_rsa_private_component_validation_32(component: &[u8; 32], upper_bound: &[u8; 32], other: &[u8; 32]) -> u8 {
@@ -10414,7 +10414,7 @@ fn private_montgomery_r2(modulus: &[u8]) -> Result<Box<[u64]>, RsaKeyError> {
   Ok(limbs)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn limb_checksum(limbs: &[u64]) -> u64 {
   limbs.iter().copied().fold(0u64, |acc, limb| acc.rotate_left(13) ^ limb)
 }
@@ -10455,7 +10455,7 @@ fn subtract_modulus_if_needed(value: &mut [u64], modulus: &[u64], extra: u64) {
   add_modulus_masked(value, modulus, restore);
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn add_mod_in_place(value: &mut [u64], addend: &[u64], modulus: &[u64]) {
   debug_assert_eq!(value.len(), addend.len());
   debug_assert_eq!(value.len(), modulus.len());
@@ -10482,7 +10482,7 @@ fn double_mod_in_place(value: &mut [u64], modulus: &[u64]) {
   subtract_modulus_if_needed(value, modulus, carry);
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn mul_mod_bitserial(out: &mut [u64], a: &[u64], b: &[u64], modulus: &[u64], addend: &mut [u64]) {
   debug_assert_eq!(out.len(), a.len());
   debug_assert_eq!(out.len(), b.len());
@@ -10532,13 +10532,13 @@ fn mont_mul_in_place_left(left: &mut [u64], right: &[u64], tmp: &mut [u64], modu
   mont_mul(left, tmp, right, modulus, t);
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn mont_square_comba_in_place(value: &mut [u64], tmp: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   copy_limbs(tmp, value);
   mont_mul_comba(value, tmp, tmp, modulus, t);
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn mont_mul_comba_in_place_left(
   left: &mut [u64],
   right: &[u64],
@@ -10660,13 +10660,13 @@ fn mont_mul_cios_in_place_left(
   mont_mul_cios(left, tmp, right, modulus, t);
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn mont_square_cios_portable_in_place(value: &mut [u64], tmp: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   copy_limbs(tmp, value);
   mont_mul_cios_portable(value, tmp, tmp, modulus, t);
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn mont_mul_cios_portable_in_place_left(
   left: &mut [u64],
   right: &[u64],
@@ -10691,7 +10691,7 @@ fn use_public_cios_montgomery(modulus: &RsaPublicModulus) -> bool {
   modulus.limbs.len() <= 128
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn mont_square_auto_in_place(value: &mut [u64], tmp: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   if use_public_cios_montgomery(modulus) {
     mont_square_cios_in_place(value, tmp, modulus, t);
@@ -10700,7 +10700,7 @@ fn mont_square_auto_in_place(value: &mut [u64], tmp: &mut [u64], modulus: &RsaPu
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn mont_mul_auto_in_place_left(
   left: &mut [u64],
   right: &[u64],
@@ -10715,7 +10715,7 @@ fn mont_mul_auto_in_place_left(
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn mont_mul_auto(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   if use_public_cios_montgomery(modulus) {
     mont_mul_cios(out, a, b, modulus, t);
@@ -10724,7 +10724,7 @@ fn mont_mul_auto(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModul
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn mont_reduce_auto(out: &mut [u64], value: &[u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   if use_public_cios_montgomery(modulus) {
     mont_reduce_cios(out, value, modulus, t);
@@ -10918,7 +10918,7 @@ fn mont_reduce_cios_portable(out: &mut [u64], value: &[u64], modulus: &RsaPublic
   subtract_modulus_if_needed(out, &modulus.limbs, t[n]);
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn mont_mul_comba(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   let n = modulus.limbs.len();
   debug_assert_eq!(out.len(), n);
@@ -10952,7 +10952,7 @@ fn mont_mul_comba(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModu
   subtract_modulus_if_needed(out, &modulus.limbs, extra);
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn comba_mul_into(out: &mut [u64], a: &[u64], b: &[u64]) {
   debug_assert_eq!(a.len(), b.len());
   let n = a.len();
@@ -14816,7 +14816,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     );
   }
 
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   #[test]
   fn pkcs8_private_key_validation_stages_preserve_valid_result() {
     let pkcs1 = test_pkcs1_private_key();
@@ -15688,7 +15688,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     }
   }
 
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   #[test]
   fn diag_spki_public_key_validation_matches_import_metadata() {
     let spki = include_bytes!("../../benches/rsa_fixtures/rsa3072_spki.der");
@@ -15702,7 +15702,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     assert_eq!(exponent, key.public_exponent());
   }
 
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   #[test]
   fn diag_montgomery_r2_precompute_matches_imported_key() {
     let spki = include_bytes!("../../benches/rsa_fixtures/rsa3072_spki.der");
@@ -15716,7 +15716,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     );
   }
 
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   #[test]
   fn public_operation_generic_exponent_matches_specialized_fermat_paths() {
     let modulus = [0xff; 256];
@@ -15745,7 +15745,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     }
   }
 
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   #[test]
   fn diag_public_operation_backends_clear_output_on_error() {
     let modulus = [0xff; 256];

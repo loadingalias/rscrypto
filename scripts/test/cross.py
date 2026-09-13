@@ -16,6 +16,9 @@ sys.path.insert(0, str(ROOT / 'scripts/lib'))
 import evidence_bundle as bundle
 from cross_build import TARGETS, environment, require_host
 import doctest_bundle
+from evidence_suite import TARGET_ARGS
+
+MODES = ("native", "portable", "internal-native", "internal-portable")
 
 
 def features(mode):
@@ -23,7 +26,7 @@ def features(mode):
     selected = sorted(set(graph) - {'portable-only'})
     if any('portable-only' in graph[name] for name in selected):
         raise ValueError('native features indirectly enable portable-only')
-    return ['--all-features'] if mode == 'portable' else ['--no-default-features', '--features', ','.join(selected)]
+    return ['--all-features'] if mode.endswith('portable') else ['--no-default-features', '--features', ','.join(selected)]
 
 
 def nextest_identity(report):
@@ -65,13 +68,22 @@ def prepare(target, archive):
                     'checks': 'ci-check-target', 'modes': {}}
         metadata['linker'] = {'path': str(compiler), 'sha256': bundle.digest(compiler),
                              'version': subprocess.check_output([str(compiler), '--version'], text=True)}
-        for mode in ('native', 'portable'):
+        for mode in MODES:
+            internal = mode.startswith('internal-')
+            mode_env = env.copy()
+            if internal:
+                flags = subprocess.check_output([sys.executable, '-B', str(ROOT / 'scripts/ct/internal.py'),
+                    '--target', target, '--print-encoded-rustflags'], cwd=ROOT, env=env, text=True)
+                mode_env['CARGO_ENCODED_RUSTFLAGS'] = flags
             args = ['--target', target, *features(mode)]
             command = ['cargo', 'nextest', 'archive', '--locked', '--workspace', '--release', *args,
                        '--archive-file', str(out / f'{mode}.tar.zst')]
-            subprocess.run(command, cwd=ROOT, env=env, check=True)
-            plan = doctest_bundle.prepare(ROOT, out / f'{mode}-docs', args, env)
-            metadata['modes'][mode] = {'command': command, 'doctests': plan['total']}
+            if internal:
+                command += TARGET_ARGS
+            subprocess.run(command, cwd=ROOT, env=mode_env, check=True)
+            plan = {'total': 0} if internal else doctest_bundle.prepare(ROOT, out / f'{mode}-docs', args, env)
+            metadata['modes'][mode] = {'command': command, 'doctests': plan['total'],
+                'internal': internal, 'encoded_rustflags': mode_env.get('CARGO_ENCODED_RUSTFLAGS')}
         bundle.seal(ROOT, out, 'rscrypto.cross.tests', target, identity, metadata)
         bundle.pack(out, archive)
 
@@ -88,21 +100,27 @@ def execute(target, archive):
     manifest = bundle.verify(ROOT, incoming, 'rscrypto.cross.tests', target)
     if nextest_identity(manifest['metadata']['nextest']) != nextest_identity(version):
         raise ValueError('producer and consumer Nextest versions differ')
-    if set(manifest['metadata']['modes']) != {'native', 'portable'}:
-        raise ValueError('both dispatch modes are required')
+    if set(manifest['metadata']['modes']) != set(MODES):
+        raise ValueError('ordinary and internal suites require both dispatch modes')
+    for mode, record in manifest['metadata']['modes'].items():
+        internal = mode.startswith('internal-')
+        flags = (record.get('encoded_rustflags') or '').split('\x1f')
+        if record.get('internal') != internal or ('rscrypto_internal' in flags) != internal:
+            raise ValueError('test archive internal-build provenance differs from its suite')
     results = {}
-    for mode in ('native', 'portable'):
+    for mode in MODES:
         with (out / f'{mode}-nextest.log').open('w') as log:
             subprocess.run(['cargo', 'nextest', 'run', '--archive-file', str(incoming / f'{mode}.tar.zst'),
                             '--workspace-remap', str(ROOT), '--config-file', str(ROOT / '.config/nextest.toml'),
                             '--no-tests', 'fail'], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=True)
-        results[mode] = doctest_bundle.execute(ROOT, incoming / f'{mode}-docs', out / f'{mode}-docs')
+        results[mode] = ({'status': 'pass'} if mode.startswith('internal-') else
+            doctest_bundle.execute(ROOT, incoming / f'{mode}-docs', out / f'{mode}-docs'))
     # Detect accidental changes to inputs throughout execution as well as before it.
     bundle.verify(ROOT, incoming, 'rscrypto.cross.tests', target)
     (out / 'summary.json').write_text(json.dumps({'status': 'pass', 'source': manifest['source'],
         'archive_sha256': bundle.digest(archive), 'host': platform.uname()._asdict(),
         'nextest': version, 'modes': results}, indent=2) + '\n')
-    print(f'{target} native/portable suites and doctests passed: {out}', flush=True)
+    print(f'{target} ordinary/internal suites and doctests passed: {out}', flush=True)
 
 
 def main():

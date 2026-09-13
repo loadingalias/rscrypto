@@ -58,7 +58,7 @@ fn crc24_openpgp_reference(crc: u32, data: &[u8]) -> u32 {
   crc24_bitwise(CRC24_OPENPGP_POLY, crc, data)
 }
 
-// Auto Dispatch Function (using new dispatch module)
+// Auto Dispatch Function
 
 #[cfg(feature = "std")]
 type Crc24DispatchFn = crate::checksum::dispatchers::Crc24Fn;

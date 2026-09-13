@@ -57,6 +57,7 @@ unexpected_cfgs = { level = "deny", check-cfg = [
   'cfg(miri)',
   'cfg(fuzzing)',
   'cfg(rscrypto_internal_fuzzing)',
+  'cfg(rscrypto_internal)',
   'cfg(target_feature, values("movdiri", "movdir64b", "serialize"))',
 ] }
 

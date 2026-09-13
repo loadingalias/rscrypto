@@ -556,7 +556,7 @@ macro_rules! impl_getrandom {
   };
 }
 
-#[cfg(all(feature = "diag", feature = "aes-gcm"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -566,7 +566,7 @@ pub(crate) fn diag_zeroize_hex_success() -> bool {
   core::hint::black_box(parsed.is_ok())
 }
 
-#[cfg(all(feature = "diag", feature = "aes-gcm"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]

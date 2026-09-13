@@ -90,7 +90,7 @@ impl MlKemShake256XofReader {
   }
 }
 
-#[cfg(all(feature = "diag", feature = "ml-kem"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ml-kem"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -102,7 +102,7 @@ pub fn diag_zeroize_mlkem_sha3_512(mut seed: [u8; 32]) -> u8 {
   core::hint::black_box(observed)
 }
 
-#[cfg(all(feature = "diag", feature = "ml-kem"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ml-kem"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -116,7 +116,7 @@ pub fn diag_zeroize_mlkem_shake256_scalar(mut seed: [u8; 32]) -> u8 {
   core::hint::black_box(observed)
 }
 
-#[cfg(all(feature = "diag", feature = "ml-kem"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ml-kem"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -132,7 +132,7 @@ pub fn diag_zeroize_mlkem_shake256_pair(mut seed: [u8; 32]) -> u8 {
   core::hint::black_box(observed)
 }
 
-#[cfg(all(feature = "diag", feature = "ml-kem"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ml-kem"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]

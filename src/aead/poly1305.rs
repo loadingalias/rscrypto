@@ -1029,20 +1029,17 @@ pub(crate) fn authenticate_aead_short_text_portable(aad: &[u8], ciphertext: &[u8
   )
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Computes a ChaCha20-Poly1305 authenticator through the selected Poly1305 backend.
-///
-/// Always returns `Some(tag)` on supported targets, where slice lengths fit the AEAD length fields.
-/// The `Option` return type is retained for diagnostic API compatibility.
-pub fn diag_chacha20poly1305_authenticate_aead(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> Option<[u8; 16]> {
+pub fn diag_chacha20poly1305_authenticate_aead(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
   #[cfg(feature = "chacha20poly1305")]
   let primitive = AeadPrimitive::ChaCha20Poly1305;
   #[cfg(all(not(feature = "chacha20poly1305"), feature = "xchacha20poly1305"))]
   let primitive = AeadPrimitive::XChaCha20Poly1305;
-  Some(authenticate_aead(primitive, aad, ciphertext, key))
+  authenticate_aead(primitive, aad, ciphertext, key)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[unsafe(no_mangle)]
 #[inline(never)]
 /// Computes a diagnostic Poly1305 tag after one block using the portable backend.
@@ -1055,21 +1052,19 @@ pub fn diag_poly1305_block_portable_digest(key: &[u8; 32], block: &[u8; 16], par
 }
 
 #[cfg(all(
+  rscrypto_internal,
   feature = "diag",
   target_arch = "aarch64",
   any(target_os = "linux", target_os = "macos")
 ))]
 /// Computes a ChaCha20-Poly1305 authenticator with the four-lane AArch64 NEON backend.
-///
-/// Always returns `Some(tag)` on supported targets, where slice lengths fit the AEAD length fields.
-/// The `Option` return type is retained for diagnostic API compatibility.
 pub fn diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4(
   aad: &[u8],
   ciphertext: &[u8],
   key: &[u8; 32],
-) -> Option<[u8; 16]> {
+) -> [u8; 16] {
   let lengths = super::AeadByteLengths::from_usize(aad.len(), ciphertext.len());
-  Some(aarch64_neon::authenticate_aead_par4(aad, ciphertext, key, lengths))
+  aarch64_neon::authenticate_aead_par4(aad, ciphertext, key, lengths)
 }
 
 fn authenticate_aead_with(
@@ -1187,19 +1182,20 @@ mod tests {
 
     let actual = super::authenticate_aead(primitive(), &aad, &ciphertext, &poly_key);
     assert_eq!(actual, expected);
-    #[cfg(feature = "diag")]
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     assert_eq!(
       super::diag_chacha20poly1305_authenticate_aead(&aad, &ciphertext, &poly_key),
-      Some(expected)
+      expected
     );
     #[cfg(all(
+      rscrypto_internal,
       feature = "diag",
       target_arch = "aarch64",
       any(target_os = "linux", target_os = "macos")
     ))]
     assert_eq!(
       super::diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4(&aad, &ciphertext, &poly_key),
-      Some(expected)
+      expected
     );
   }
 

@@ -234,34 +234,13 @@ pub(crate) fn diag_crc32_ieee(len: usize) -> Crc32SelectionDiag {
     crate::checksum::diag::SelectionReason::Auto
   };
 
-  let table = crate::checksum::kernel_table::active_table();
-  let boundary = if !table.boundaries.is_empty() {
-    table.boundaries[0]
-  } else {
-    64
-  };
-
   Crc32SelectionDiag {
     polynomial: Crc32Polynomial::Ieee,
     len,
     arch: crate::platform::arch(),
     reason,
     effective_force: cfg.effective_force,
-    policy_family: "dispatch",
     selected_kernel,
-    selected_streams: 1,
-    portable_to_hwcrc: boundary,
-    hwcrc_to_fusion: boundary,
-    fusion_to_avx512: usize::MAX,
-    fusion_to_vpclmul: usize::MAX,
-    min_bytes_per_lane: usize::MAX,
-    memory_bound: false,
-    has_hwcrc: false,
-    has_fusion: false,
-    has_vpclmul: false,
-    has_avx512: false,
-    has_eor3: false,
-    has_sve2: false,
   }
 }
 
@@ -278,38 +257,17 @@ pub(crate) fn diag_crc32c(len: usize) -> Crc32SelectionDiag {
     crate::checksum::diag::SelectionReason::Auto
   };
 
-  let table = crate::checksum::kernel_table::active_table();
-  let boundary = if !table.boundaries.is_empty() {
-    table.boundaries[0]
-  } else {
-    64
-  };
-
   Crc32SelectionDiag {
     polynomial: Crc32Polynomial::Castagnoli,
     len,
     arch: crate::platform::arch(),
     reason,
     effective_force: cfg.effective_force,
-    policy_family: "dispatch",
     selected_kernel,
-    selected_streams: 1,
-    portable_to_hwcrc: boundary,
-    hwcrc_to_fusion: boundary,
-    fusion_to_avx512: usize::MAX,
-    fusion_to_vpclmul: usize::MAX,
-    min_bytes_per_lane: usize::MAX,
-    memory_bound: false,
-    has_hwcrc: false,
-    has_fusion: false,
-    has_vpclmul: false,
-    has_avx512: false,
-    has_eor3: false,
-    has_sve2: false,
   }
 }
 
-// Auto Kernels (using new dispatch module)
+// Auto Kernels
 
 type Crc32DispatchFn = crate::checksum::dispatchers::Crc32Fn;
 #[cfg(feature = "std")]

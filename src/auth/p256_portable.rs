@@ -1088,7 +1088,7 @@ pub(super) fn agree(bytes: &[u8; FIELD_BYTES], public: PublicPoint) -> [u8; FIEL
 /// Return the production P-256 window-table selection as Montgomery limbs.
 #[cfg(all(
   feature = "p256-ecdh",
-  feature = "diag",
+  all(rscrypto_internal, feature = "diag"),
   any(
     feature = "portable-only",
     miri,

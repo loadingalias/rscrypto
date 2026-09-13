@@ -61,7 +61,7 @@ fn crc16_ibm_reference(crc: u16, data: &[u8]) -> u16 {
   crc16_bitwise(CRC16_IBM_POLY, crc, data)
 }
 
-// Dispatch Functions (using new dispatch module)
+// Dispatch Functions
 
 type Crc16DispatchFn = crate::checksum::dispatchers::Crc16Fn;
 #[cfg(feature = "std")]

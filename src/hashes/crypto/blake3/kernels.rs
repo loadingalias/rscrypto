@@ -3,7 +3,7 @@ use super::{
 };
 #[cfg(any(
   test,
-  feature = "diag",
+  all(rscrypto_internal, feature = "diag"),
   target_arch = "x86_64",
   target_arch = "aarch64",
   target_arch = "s390x",
@@ -88,13 +88,13 @@ pub(crate) struct Kernel {
   #[cfg(target_arch = "x86_64")]
   pub(crate) x86_compress_cv_bytes: X86CompressCvBytesFn,
   /// Diagnostic-only marker for x86 kernels that intentionally bypass asm CV compression.
-  #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+  #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
   pub(crate) owned_x86_compress: bool,
   /// Diagnostic-only marker for x86 kernels that intentionally bypass asm hash_many.
-  #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+  #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
   pub(crate) owned_x86_hash_many: bool,
   /// Diagnostic-only marker for measuring AVX-512 exact-block asm without AVX2 retargeting.
-  #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+  #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
   pub(crate) force_x86_avx512_exact_block_asm: bool,
   /// Kernel name for debugging/tuning.
   #[cfg(feature = "diag")]
@@ -182,11 +182,11 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       hash_many_contiguous: hash_many_contiguous_portable,
       #[cfg(target_arch = "x86_64")]
       x86_compress_cv_bytes: x86_compress_cv_portable_wrapper,
-      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
       owned_x86_compress: false,
-      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
       owned_x86_hash_many: false,
-      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
       force_x86_avx512_exact_block_asm: false,
       #[cfg(feature = "diag")]
       name: id.as_str(),
@@ -201,11 +201,11 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       chunk_compress_blocks: chunk_compress_blocks_sse41_wrapper,
       hash_many_contiguous: hash_many_contiguous_sse41_wrapper,
       x86_compress_cv_bytes: x86_compress_cv_sse41_wrapper,
-      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
       owned_x86_compress: false,
-      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
       owned_x86_hash_many: false,
-      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
       force_x86_avx512_exact_block_asm: false,
       #[cfg(feature = "diag")]
       name: id.as_str(),
@@ -220,11 +220,11 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       chunk_compress_blocks: chunk_compress_blocks_avx2_wrapper,
       hash_many_contiguous: hash_many_contiguous_avx2_wrapper,
       x86_compress_cv_bytes: x86_compress_cv_avx2_wrapper,
-      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
       owned_x86_compress: false,
-      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
       owned_x86_hash_many: false,
-      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
       force_x86_avx512_exact_block_asm: false,
       #[cfg(feature = "diag")]
       name: id.as_str(),
@@ -239,11 +239,11 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       chunk_compress_blocks: chunk_compress_blocks_avx512_wrapper,
       hash_many_contiguous: hash_many_contiguous_avx512_wrapper,
       x86_compress_cv_bytes: x86_compress_cv_avx512_wrapper,
-      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
       owned_x86_compress: false,
-      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
       owned_x86_hash_many: false,
-      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
       force_x86_avx512_exact_block_asm: false,
       #[cfg(feature = "diag")]
       name: id.as_str(),
@@ -291,7 +291,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
   }
 }
 
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
 #[must_use]
 pub(crate) fn diag_kernel_owned_hash_many(id: Blake3KernelId) -> Option<Kernel> {
   match id {
@@ -311,7 +311,7 @@ pub(crate) fn diag_kernel_owned_hash_many(id: Blake3KernelId) -> Option<Kernel> 
   }
 }
 
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
 #[must_use]
 pub(crate) fn diag_kernel_owned_compress(id: Blake3KernelId) -> Option<Kernel> {
   match id {
@@ -1118,7 +1118,7 @@ fn reduce_parent_blocks_lanes<const DEGREE: usize, PtrAt, HashMany, Sink>(
   }
 }
 
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
 pub(crate) fn diag_chunk_cvs_many_avx2_pair_from_bytes(
   input: &[u8],
   key_words: [u32; 8],
@@ -1166,7 +1166,7 @@ pub(crate) fn diag_chunk_cvs_many_avx2_pair_from_bytes(
   }
 }
 
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
 pub(crate) fn diag_parent_cvs_many_avx2_owned_from_bytes(
   children: &[[u8; OUT_LEN]],
   key_words: [u32; 8],
@@ -1205,7 +1205,7 @@ pub(crate) fn diag_parent_cvs_many_avx2_owned_from_bytes(
   );
 }
 
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
 pub(crate) fn diag_parent_cvs_many_avx2_pair_from_bytes(
   children: &[[u8; OUT_LEN]],
   key_words: [u32; 8],
@@ -1247,7 +1247,12 @@ pub(crate) fn diag_parent_cvs_many_avx2_pair_from_bytes(
 
 #[cfg(all(
   target_arch = "x86_64",
-  any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows")
+  any(
+    all(rscrypto_internal, feature = "diag"),
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "windows"
+  )
 ))]
 /// Hash one packed parent block through the serial AVX2 path.
 ///
@@ -1292,7 +1297,7 @@ fn parent_block_ptr_from_children(children: &[[u8; OUT_LEN]], parent_idx: usize)
   children.as_ptr().wrapping_add(child_idx).cast::<u8>()
 }
 
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
 pub(crate) fn diag_parent_cvs_many_avx512_owned_from_bytes(
   children: &[[u8; OUT_LEN]],
   key_words: [u32; 8],
@@ -1724,7 +1729,7 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
 #[must_use]
 #[cfg(any(
   test,
-  feature = "diag",
+  all(rscrypto_internal, feature = "diag"),
   target_arch = "x86_64",
   target_arch = "aarch64",
   target_arch = "s390x",
@@ -1774,7 +1779,7 @@ pub(crate) const fn required_caps(id: Blake3KernelId) -> Caps {
   }
 }
 
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
 #[inline]
 #[must_use]
 pub(crate) const fn required_caps_owned_hash_many(id: Blake3KernelId) -> Caps {
@@ -1790,7 +1795,7 @@ pub(crate) const fn required_caps_owned_hash_many(id: Blake3KernelId) -> Caps {
   }
 }
 
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
 #[inline]
 #[must_use]
 pub(crate) const fn required_caps_owned_compress(id: Blake3KernelId) -> Caps {
@@ -3270,7 +3275,7 @@ unsafe fn x86_compress_cv_avx512_wrapper(
   }
 }
 
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
 /// Compress one block with the owned AVX-512 kernel.
 ///
 /// # Safety
@@ -3354,7 +3359,7 @@ fn chunk_compress_blocks_avx512_wrapper(
   }
 }
 
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
 fn chunk_compress_blocks_avx512_owned_wrapper(
   chaining_value: &mut [u32; 8],
   chunk_counter: u64,
@@ -3518,7 +3523,12 @@ unsafe fn hash_many_contiguous_sse41_wrapper(
 
 #[cfg(all(
   target_arch = "x86_64",
-  any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows")
+  any(
+    all(rscrypto_internal, feature = "diag"),
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "windows"
+  )
 ))]
 /// Hash a sub-degree contiguous AVX2 chunk tail by duplicating the final lane.
 ///
@@ -3584,7 +3594,12 @@ unsafe fn hash_many_avx2_owned_duplicate_tail(
 
 #[cfg(all(
   target_arch = "x86_64",
-  any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows")
+  any(
+    all(rscrypto_internal, feature = "diag"),
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "windows"
+  )
 ))]
 #[inline(always)]
 /// Hash one full chunk through the serial AVX2 compressor.
@@ -3837,7 +3852,12 @@ unsafe fn hash_many_contiguous_avx2_wrapper(
 
 #[cfg(all(
   target_arch = "x86_64",
-  any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows")
+  any(
+    all(rscrypto_internal, feature = "diag"),
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "windows"
+  )
 ))]
 #[inline]
 fn avx512_owned_hash_many_available() -> bool {
@@ -3853,7 +3873,12 @@ fn avx512_owned_hash_many_available() -> bool {
 
 #[cfg(all(
   target_arch = "x86_64",
-  any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows")
+  any(
+    all(rscrypto_internal, feature = "diag"),
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "windows"
+  )
 ))]
 /// Hash a sub-degree contiguous AVX-512 chunk tail with duplicate lanes.
 ///
@@ -4073,7 +4098,7 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
   }
 }
 
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
 /// Hash contiguous chunks with the owned AVX2 diagnostic kernel.
 ///
 /// # Safety
@@ -4140,7 +4165,7 @@ unsafe fn hash_many_contiguous_avx2_owned_wrapper(
   }
 }
 
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
 /// Hash contiguous chunks with the owned AVX-512 diagnostic kernel.
 ///
 /// # Safety

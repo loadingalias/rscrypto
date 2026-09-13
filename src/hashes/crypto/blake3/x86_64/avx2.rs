@@ -6,7 +6,12 @@
 
 use core::arch::x86_64::*;
 
-#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+  all(rscrypto_internal, feature = "diag"),
+  target_os = "linux",
+  target_os = "macos",
+  target_os = "windows"
+))]
 use super::super::{CHUNK_END, CHUNK_LEN, CHUNK_START, OUT_LEN, PARENT};
 use super::{
   super::{BLOCK_LEN, BLOCK_LEN_U32, IV, MSG_SCHEDULE},
@@ -393,14 +398,24 @@ unsafe fn load_counters(counter: u64, increment_counter: bool) -> (__m256i, __m2
   }
 }
 
-#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+  all(rscrypto_internal, feature = "diag"),
+  target_os = "linux",
+  target_os = "macos",
+  target_os = "windows"
+))]
 macro_rules! avx2_shuffle {
   ($z:expr, $y:expr, $x:expr, $w:expr) => {
     ($z << 6) | ($y << 4) | ($x << 2) | $w
   };
 }
 
-#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+  all(rscrypto_internal, feature = "diag"),
+  target_os = "linux",
+  target_os = "macos",
+  target_os = "windows"
+))]
 macro_rules! shuffle2 {
   ($a:expr, $b:expr, $c:expr) => {
     _mm256_castps_si256(_mm256_shuffle_ps(_mm256_castsi256_ps($a), _mm256_castsi256_ps($b), $c))
@@ -411,7 +426,12 @@ macro_rules! shuffle2 {
 ///
 /// AVX2 must be available, and both pointers must be readable for 16 bytes
 /// starting at `offset`.
-#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+  all(rscrypto_internal, feature = "diag"),
+  target_os = "linux",
+  target_os = "macos",
+  target_os = "windows"
+))]
 #[inline(always)]
 unsafe fn load2x128(lo: *const u8, hi: *const u8, offset: usize) -> __m256i {
   // SAFETY: Loading two 128-bit halves into one YMM register because:
@@ -428,7 +448,12 @@ unsafe fn load2x128(lo: *const u8, hi: *const u8, offset: usize) -> __m256i {
 /// # Safety
 ///
 /// AVX2 must be available.
-#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+  all(rscrypto_internal, feature = "diag"),
+  target_os = "linux",
+  target_os = "macos",
+  target_os = "windows"
+))]
 #[inline(always)]
 unsafe fn set2x128(row: __m128i) -> __m256i {
   // SAFETY: Duplicating one 128-bit row into both halves because:
@@ -440,7 +465,12 @@ unsafe fn set2x128(row: __m128i) -> __m256i {
 /// # Safety
 ///
 /// AVX2 must be available.
-#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+  all(rscrypto_internal, feature = "diag"),
+  target_os = "linux",
+  target_os = "macos",
+  target_os = "windows"
+))]
 #[inline(always)]
 unsafe fn g1_2(
   row0: &mut __m256i,
@@ -467,7 +497,12 @@ unsafe fn g1_2(
 /// # Safety
 ///
 /// AVX2 must be available.
-#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+  all(rscrypto_internal, feature = "diag"),
+  target_os = "linux",
+  target_os = "macos",
+  target_os = "windows"
+))]
 #[inline(always)]
 unsafe fn g2_2(
   row0: &mut __m256i,
@@ -494,7 +529,12 @@ unsafe fn g2_2(
 /// # Safety
 ///
 /// AVX2 must be available.
-#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+  all(rscrypto_internal, feature = "diag"),
+  target_os = "linux",
+  target_os = "macos",
+  target_os = "windows"
+))]
 #[inline(always)]
 unsafe fn diagonalize_2(row0: &mut __m256i, row2: &mut __m256i, row3: &mut __m256i) {
   // SAFETY: Two-lane AVX2 diagonalization because:
@@ -510,7 +550,12 @@ unsafe fn diagonalize_2(row0: &mut __m256i, row2: &mut __m256i, row3: &mut __m25
 /// # Safety
 ///
 /// AVX2 must be available.
-#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+  all(rscrypto_internal, feature = "diag"),
+  target_os = "linux",
+  target_os = "macos",
+  target_os = "windows"
+))]
 #[inline(always)]
 unsafe fn undiagonalize_2(row0: &mut __m256i, row2: &mut __m256i, row3: &mut __m256i) {
   // SAFETY: Two-lane AVX2 undiagonalization because:
@@ -526,7 +571,12 @@ unsafe fn undiagonalize_2(row0: &mut __m256i, row2: &mut __m256i, row3: &mut __m
 /// # Safety
 ///
 /// AVX2 must be available.
-#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+  all(rscrypto_internal, feature = "diag"),
+  target_os = "linux",
+  target_os = "macos",
+  target_os = "windows"
+))]
 #[inline(always)]
 unsafe fn compress2_pre(
   [mut row0, mut row1, mut row2, mut row3]: [__m256i; 4],
@@ -630,7 +680,12 @@ unsafe fn compress2_pre(
 /// # Safety
 ///
 /// AVX2 must be available.
-#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+  all(rscrypto_internal, feature = "diag"),
+  target_os = "linux",
+  target_os = "macos",
+  target_os = "windows"
+))]
 #[inline(always)]
 unsafe fn iv_row2x128() -> __m256i {
   // SAFETY: Duplicating the fixed BLAKE3 IV row because:
@@ -649,7 +704,12 @@ unsafe fn iv_row2x128() -> __m256i {
 /// # Safety
 ///
 /// AVX2 must be available and `out` must be writable for two chaining values.
-#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+  all(rscrypto_internal, feature = "diag"),
+  target_os = "linux",
+  target_os = "macos",
+  target_os = "windows"
+))]
 #[inline(always)]
 unsafe fn store2_cvs(row0: __m256i, row1: __m256i, out: *mut u8) {
   // SAFETY: Storing two 32-byte CVs from two independent 128-bit lanes because:
@@ -670,7 +730,12 @@ unsafe fn store2_cvs(row0: __m256i, row1: __m256i, out: *mut u8) {
 /// # Safety
 ///
 /// AVX2 must be available.
-#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+  all(rscrypto_internal, feature = "diag"),
+  target_os = "linux",
+  target_os = "macos",
+  target_os = "windows"
+))]
 #[inline(always)]
 unsafe fn compress2_parent_pre(
   key: &[u32; 8],
@@ -710,7 +775,12 @@ unsafe fn compress2_parent_pre(
 /// 1. AVX2 is available on the current CPU.
 /// 2. `parents[0]` and `parents[1]` are each readable for one 64-byte parent block.
 /// 3. `out` is writable for two 32-byte CV outputs.
-#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+  all(rscrypto_internal, feature = "diag"),
+  target_os = "linux",
+  target_os = "macos",
+  target_os = "windows"
+))]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn parent_cv2_owned(parents: &[*const u8; 2], key: &[u32; 8], flags: u32, out: *mut u8) {
   // SAFETY: Two-parent AVX2 CV reduction because:
@@ -740,7 +810,12 @@ pub(crate) unsafe fn parent_cv2_owned(parents: &[*const u8; 2], key: &[u32; 8], 
 /// 1. AVX2 is available on the current CPU.
 /// 2. `input` is readable for two full BLAKE3 chunks.
 /// 3. `out` is writable for two 32-byte CV outputs.
-#[cfg(any(feature = "diag", target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+  all(rscrypto_internal, feature = "diag"),
+  target_os = "linux",
+  target_os = "macos",
+  target_os = "windows"
+))]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn hash2_chunks_owned(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
   // SAFETY: Two-chunk AVX2 CV reduction because:

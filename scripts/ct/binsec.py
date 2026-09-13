@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from provenance import sha256_file
+from internal import build_environment
 from manifest import binsec_kernel_targets, target_record
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -225,15 +226,10 @@ def build_harness(target: str, profile: str, rustflags: list[str]) -> tuple[Path
     target,
     "--release",
   ]
-  env = os.environ.copy()
+  proof_flags = list(rustflags) if rustflags else default_target_rustflags(target)
+  proof_flags.extend(binsec_proof_rustflags(target))
+  env, effective_rustflags = build_environment(target, proof_flags)
   configure_cross_linker(env, target)
-  effective_rustflags = list(rustflags)
-  if not rustflags:
-    effective_rustflags.extend(default_target_rustflags(target))
-  effective_rustflags.extend(binsec_proof_rustflags(target))
-  if effective_rustflags:
-    existing = env.get("RUSTFLAGS", "")
-    env["RUSTFLAGS"] = " ".join([existing, *effective_rustflags]).strip()
   result = subprocess.run(cmd, cwd=ROOT, env=env, text=True, check=False)
   if result.returncode != 0:
     raise SystemExit(result.returncode)

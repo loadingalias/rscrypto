@@ -241,7 +241,7 @@ impl Sha384 {
     digest
   }
 
-  #[cfg(all(feature = "hmac", any(test, feature = "diag")))]
+  #[cfg(all(feature = "hmac", any(test, all(rscrypto_internal, feature = "diag"))))]
   #[inline]
   pub(crate) fn new_with_compress_for_test(compress_blocks: CompressBlocksFn) -> Self {
     Self {

@@ -45,6 +45,9 @@ if args[0] == 'metadata':
     ]}))
 else:
     Path(os.environ['CHECK_LOG']).write_text(json.dumps(args))
+    if os.environ.get('CHECK_FLAG_LOG'):
+        with Path(os.environ['CHECK_FLAG_LOG']).open('a') as log:
+            log.write(json.dumps([manifest.parent.name, os.environ.get('CARGO_ENCODED_RUSTFLAGS')]) + '\\n')
     if manifest.parent.name == os.environ.get('CHECK_FAIL_WORKSPACE'):
         sys.exit(7)
 ''')
@@ -77,6 +80,38 @@ else:
     command = json.loads(log.read_text())
     assert Path(command[command.index('--manifest-path') + 1]).resolve() == (workspace / 'Cargo.toml').resolve(), command
     assert 'Linting independent workspace: tools/later/' not in result.stdout
+
+    # Only the CT workspaces expose internal hooks. Ambient flags
+    # must survive that opt-in without leaking it to the next workspace.
+    workspace.rename(root / 'tools/ct-binsec-harness')
+    (root / 'tools/ct-dudect').mkdir()
+    (root / 'tools/ct-dudect/Cargo.toml').write_text('[workspace]\n')
+    (root / 'tools/ct-harness').mkdir()
+    (root / 'tools/ct-harness/Cargo.toml').write_text('[workspace]\n')
+    for name in ('scripts/ct/internal.py', 'scripts/ct/provenance.py', 'scripts/lib/python.sh'):
+      path = root / name
+      path.parent.mkdir(parents=True, exist_ok=True)
+      shutil.copy2(source / name, path)
+    flag_log = root / 'flags.jsonl'
+    for failure, expected_status in (('', 0), ('ct-binsec-harness', 7), ('ct-dudect', 7), ('ct-harness', 7)):
+      flag_log.write_text('')
+      result = subprocess.run(['bash', str(script)], cwd=root, capture_output=True, text=True, timeout=30,
+                              env={**environment, 'PATH': f'{binary}:{os.environ["PATH"]}',
+                                   'CHECK_LOG': str(log), 'METADATA_PREFIX': '/repo/tools/harness/',
+                                   'REAL_JQ': shutil.which('jq'), 'METADATA_SEPARATOR': '/',
+                                   'CARGO_BUILD_TARGET': 'x86_64-unknown-linux-gnu',
+                                   'CARGO_ENCODED_RUSTFLAGS': '-C\x1ftarget-cpu=generic',
+                                   'CHECK_FLAG_LOG': str(flag_log), 'CHECK_FAIL_WORKSPACE': failure})
+      assert result.returncode == expected_status, result.stderr
+      flags = [json.loads(line) for line in flag_log.read_text().splitlines()]
+      expected = [['ct-binsec-harness', '-C\x1ftarget-cpu=generic\x1f--cfg\x1frscrypto_internal']]
+      if failure != 'ct-binsec-harness':
+        expected.append(['ct-dudect', '-C\x1ftarget-cpu=generic\x1f--cfg\x1frscrypto_internal'])
+      if failure not in ('ct-binsec-harness', 'ct-dudect'):
+        expected.append(['ct-harness', '-C\x1ftarget-cpu=generic\x1f--cfg\x1frscrypto_internal'])
+      if not failure:
+        expected.append(['later', '-C\x1ftarget-cpu=generic'])
+      assert flags == expected, flags
 
 
 def main():

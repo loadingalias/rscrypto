@@ -306,7 +306,7 @@ impl Core {
     ct::zeroize_words_no_fence(&mut h);
   }
 
-  #[cfg(any(test, all(feature = "diag", feature = "argon2")))]
+  #[cfg(any(test, all(rscrypto_internal, feature = "diag", feature = "argon2")))]
   fn new_with_compress_for_test(
     nn: u8,
     key: &[u8],
@@ -882,7 +882,7 @@ impl Blake2b256 {
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[must_use]
 /// Derive a keyed Blake2b-256 diagnostic digest with the portable backend.
 pub fn diag_blake2b256_keyed_digest_portable(key: &[u8; 32]) -> [u8; 32] {
@@ -898,7 +898,7 @@ pub fn diag_blake2b256_keyed_digest_portable(key: &[u8; 32]) -> [u8; 32] {
   out
 }
 
-#[cfg(all(feature = "diag", feature = "argon2"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "argon2"))]
 pub(crate) fn diag_hash_parts_portable(output_len: u8, parts: &[&[u8]], out: &mut [u8]) {
   assert_eq!(
     out.len(),
@@ -1332,7 +1332,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(all(feature = "diag", feature = "argon2"))]
+  #[cfg(all(rscrypto_internal, feature = "diag", feature = "argon2"))]
   fn diag_hash_parts_portable_handles_multiblock_parts() {
     let first = [0x11u8; 4];
     let second = [0x22u8; 1024];

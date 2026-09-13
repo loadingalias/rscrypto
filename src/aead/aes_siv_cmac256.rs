@@ -148,7 +148,7 @@ impl AesSivCmac256 {
     }
   }
 
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   fn new_forced_portable(key: &AesSivCmac256Key) -> Self {
     let (cmac_key_bytes, ctr_key_bytes) = key
       .as_bytes()
@@ -422,7 +422,7 @@ impl AesSivCmac256 {
 ///
 /// This diagnostic exists only for constant-time and backend-equivalence evidence. It is not a
 /// supported CMAC, S2V, or deterministic-SIV product API.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[inline(never)]
 #[must_use]
@@ -441,7 +441,7 @@ pub fn diag_aes_siv_cmac256_s2v_portable(
 ///
 /// This diagnostic exists only for generated-code and timing evidence. The returned byte is an
 /// opaque success indicator; authentication failure still clears the complete plaintext buffer.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[inline(never)]
 #[must_use]
@@ -462,7 +462,7 @@ pub fn diag_aes_siv_cmac256_open_portable(
   digest ^ u8::from(accepted)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 /// Exercise AES-SIV construction, seal, open, local cleanup, and retained-owner drop.
 #[unsafe(no_mangle)]
@@ -572,7 +572,7 @@ mod tests {
     assert_eq!(actual, expected);
   }
 
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   #[test]
   fn forced_portable_cmac_s2v_and_ctr_match_selected_backend() {
     const LENGTHS: &[usize] = &[0, 1, 15, 16, 17, 31, 32, 33, 47, 48, 49, 63, 64, 65, 127, 128, 129];

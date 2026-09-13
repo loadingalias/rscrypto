@@ -236,7 +236,7 @@ impl HmacSha256 {
     }
   }
 
-  #[cfg(any(feature = "diag", all(test, feature = "hkdf")))]
+  #[cfg(any(all(rscrypto_internal, feature = "diag"), all(test, feature = "hkdf")))]
   pub(crate) fn new_with_compress_for_test(
     key: &[u8],
     compress: crate::hashes::crypto::sha256::kernels::CompressBlocksFn,
@@ -270,7 +270,7 @@ impl HmacSha256 {
     }
   }
 
-  #[cfg(any(feature = "diag", all(test, feature = "hkdf")))]
+  #[cfg(any(all(rscrypto_internal, feature = "diag"), all(test, feature = "hkdf")))]
   pub(crate) fn mac_with_compress_for_test(
     key: &[u8],
     data: &[u8],
@@ -282,7 +282,7 @@ impl HmacSha256 {
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Compare the portable HMAC-SHA256 tag for the diagnostic message `b"binsec"` with `expected`.
 pub fn diag_hmac_sha256_verify_portable(
   key: &[u8; SHA256_TAG_SIZE],
@@ -295,7 +295,7 @@ pub fn diag_hmac_sha256_verify_portable(
   ct::fixed_eq(&tag, expected)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Compare the leading 64 bits of the portable HMAC-SHA256 diagnostic tag with `expected`.
 pub fn diag_hmac_sha256_verify_truncated_64_portable(
   key: &[u8; SHA256_TAG_SIZE],
@@ -309,7 +309,7 @@ pub fn diag_hmac_sha256_verify_truncated_64_portable(
   ct::fixed_eq(&tag, expected)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -569,7 +569,7 @@ impl HmacSha384 {
     <Self as Mac>::verify_tag(key, data, expected)
   }
 
-  #[cfg(any(test, feature = "diag"))]
+  #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
   pub(crate) fn new_with_compress_for_test(
     key: &[u8],
     compress: crate::hashes::crypto::sha384::kernels::CompressBlocksFn,
@@ -603,7 +603,7 @@ impl HmacSha384 {
     }
   }
 
-  #[cfg(any(test, feature = "diag"))]
+  #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
   pub(crate) fn mac_with_compress_for_test(
     key: &[u8],
     data: &[u8],
@@ -615,7 +615,7 @@ impl HmacSha384 {
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Compare the portable HMAC-SHA384 tag for the diagnostic message `b"binsec"` with `expected`.
 pub fn diag_hmac_sha384_verify_portable(
   key: &[u8; SHA384_TAG_SIZE],
@@ -860,7 +860,7 @@ impl HmacSha512 {
     <Self as Mac>::verify_tag(key, data, expected)
   }
 
-  #[cfg(any(test, feature = "diag"))]
+  #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
   pub(crate) fn new_with_compress_for_test(
     key: &[u8],
     compress: crate::hashes::crypto::sha512::kernels::CompressBlocksFn,
@@ -894,7 +894,7 @@ impl HmacSha512 {
     }
   }
 
-  #[cfg(any(test, feature = "diag"))]
+  #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
   pub(crate) fn mac_with_compress_for_test(
     key: &[u8],
     data: &[u8],
@@ -906,7 +906,7 @@ impl HmacSha512 {
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Compare the portable HMAC-SHA512 tag for the diagnostic message `b"binsec"` with `expected`.
 pub fn diag_hmac_sha512_verify_portable(
   key: &[u8; SHA512_TAG_SIZE],

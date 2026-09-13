@@ -235,14 +235,14 @@ fn compute_tag(
   s
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Derive the per-nonce authentication and encryption keys for diagnostic comparison.
 #[must_use]
 pub fn diag_aes256gcmsiv_derive_keys(cipher: &Aes256GcmSiv, nonce: &Nonce96) -> ([u8; 16], [u8; 32]) {
   derive_keys(&cipher.master_ek, nonce)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Encrypt one diagnostic tag block with a raw AES-256 key.
 #[must_use]
 pub fn diag_aes256gcmsiv_raw_tag_aes(enc_key: &[u8; 32], block: &[u8; 16]) -> [u8; 16] {
@@ -260,7 +260,7 @@ pub fn diag_aes256gcmsiv_raw_tag_aes(enc_key: &[u8; 32], block: &[u8; 16]) -> [u
   out
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Exercise AES-256 counter-mode encryption and fold the fixed diagnostic output to one block.
 #[must_use]
 pub fn diag_aes256gcmsiv_ctr32(enc_key: &[u8; 32], tag: &[u8; 16], plaintext: &[u8; 44]) -> [u8; 16] {
@@ -303,7 +303,7 @@ pub fn diag_aes256gcmsiv_ctr32(enc_key: &[u8; 32], tag: &[u8; 16], plaintext: &[
   diag_fold16(&buffer)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn diag_fold16(data: &[u8]) -> [u8; 16] {
   let (blocks, tail) = data.as_chunks::<16>();
   let mut acc = 0u128;

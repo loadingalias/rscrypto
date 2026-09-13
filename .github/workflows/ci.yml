@@ -24,7 +24,7 @@ defaults:
 jobs:
   cross-build:
     name: Prepare ${{ matrix.target }} tests
-    runs-on: runs-on=${{ github.run_id }}/runner=cross-build/env=production
+    runs-on: runs-on=${{ github.run_id }}-${{ matrix.target }}/runner=ci-cross-build/env=production
     timeout-minutes: 45
     strategy:
       fail-fast: true
@@ -59,7 +59,7 @@ jobs:
       matrix:
         include:
           - platform: compatibility
-            runner: runs-on=${{ github.run_id }}/runner=cross-build/env=production
+            runner: runs-on=${{ github.run_id }}/runner=compatibility/env=production
             timeout: 60
           - platform: package
             runner: runs-on=${{ github.run_id }}/runner=package/env=production
@@ -109,6 +109,7 @@ jobs:
           just ci-check
           just test --all --release
           just test --all --release --portable
+          if [[ "$PLATFORM" != x86_64-linux ]]; then just test-evidence; fi
           if [[ "$PLATFORM" == x86_64-linux || "$PLATFORM" == aarch64-linux ]]; then just test-musl; fi
           git diff --exit-code HEAD
 
@@ -168,6 +169,8 @@ jobs:
           just test --all --release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           just test --all --release --portable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          just test-evidence
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git diff --exit-code HEAD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

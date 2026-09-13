@@ -8,19 +8,19 @@ mod common;
 use core::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion};
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 use rscrypto::hashes::crypto::blake3::{
   Blake3DiagKernel, diag_blake3_chunk_cvs_with_kernel, diag_blake3_digest_with_kernel, diag_blake3_kernel_available,
   diag_blake3_keyed_digest_with_kernel, diag_blake3_parent_cvs_with_kernel, diag_blake3_streaming_digest_with_kernel,
   diag_blake3_xof_with_kernel,
 };
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 const BLAKE3_CHUNK_LEN: usize = 1024;
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 const BLAKE3_OUT_LEN: usize = 32;
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn diag_kernels() -> &'static [Blake3DiagKernel] {
   &[
     Blake3DiagKernel::Portable,
@@ -43,7 +43,7 @@ fn diag_kernels() -> &'static [Blake3DiagKernel] {
   ]
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn chunk_tail_diag_kernels() -> &'static [Blake3DiagKernel] {
   &[
     #[cfg(target_arch = "x86_64")]
@@ -63,7 +63,7 @@ fn chunk_tail_diag_kernels() -> &'static [Blake3DiagKernel] {
   ]
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn parent_tail_diag_kernels() -> &'static [Blake3DiagKernel] {
   &[
     #[cfg(target_arch = "x86_64")]
@@ -83,7 +83,7 @@ fn parent_tail_diag_kernels() -> &'static [Blake3DiagKernel] {
   ]
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn print_blake3_diag_once() {
   use std::sync::Once;
 
@@ -110,7 +110,7 @@ fn print_blake3_diag_once() {
   });
 }
 
-#[cfg(not(feature = "diag"))]
+#[cfg(not(all(rscrypto_internal, feature = "diag")))]
 #[inline]
 fn print_blake3_diag_once() {}
 
@@ -130,7 +130,7 @@ fn oneshot(c: &mut Criterion) {
       b.iter(|| black_box(rscrypto::Blake3::digest(black_box(d))))
     });
 
-    #[cfg(feature = "diag")]
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     for &kernel in diag_kernels() {
       if !diag_blake3_kernel_available(kernel) {
         continue;
@@ -174,7 +174,7 @@ fn keyed(c: &mut Criterion) {
       b.iter(|| black_box(rscrypto::Blake3::keyed_digest(black_box(&key), black_box(d))))
     });
 
-    #[cfg(feature = "diag")]
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     for &kernel in diag_kernels() {
       if !diag_blake3_kernel_available(kernel) {
         continue;
@@ -249,7 +249,7 @@ fn streaming(c: &mut Criterion) {
       })
     });
 
-    #[cfg(feature = "diag")]
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     for &kernel in diag_kernels() {
       if !diag_blake3_kernel_available(kernel) || !kernel.supports_streaming() {
         continue;
@@ -303,7 +303,7 @@ fn xof(c: &mut Criterion) {
       })
     });
 
-    #[cfg(feature = "diag")]
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     for &kernel in diag_kernels() {
       if !diag_blake3_kernel_available(kernel) {
         continue;
@@ -337,7 +337,7 @@ fn xof(c: &mut Criterion) {
   g.finish();
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn xof_output(c: &mut Criterion) {
   if !bench_config::selected("blake3/xof-output") {
     return;
@@ -397,7 +397,7 @@ fn xof_output(c: &mut Criterion) {
   g.finish();
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn tail_diagnostics(c: &mut Criterion) {
   if !bench_config::selected("blake3/") {
     return;
@@ -497,9 +497,9 @@ fn main() {
     derive_key,
     streaming,
     xof,
-    #[cfg(feature = "diag")]
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     xof_output,
-    #[cfg(feature = "diag")]
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     tail_diagnostics,
   ]);
 }

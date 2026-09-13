@@ -208,7 +208,7 @@ impl Drop for ChaCha20HeaderProtection {
   }
 }
 
-#[cfg(all(feature = "diag", feature = "aes-gcm"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm"))]
 /// Exercise AES-128 header protection while retaining key, schedule, and temporary-block cleanup.
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -218,7 +218,7 @@ pub fn diag_zeroize_aes128_header_protection(key: [u8; 16], sample: [u8; SAMPLE_
   Aes128HeaderProtection::new(&key).mask(&sample)
 }
 
-#[cfg(all(feature = "diag", feature = "aes-gcm"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "aes-gcm"))]
 /// Exercise AES-256 header protection while retaining key, schedule, and temporary-block cleanup.
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -228,7 +228,7 @@ pub fn diag_zeroize_aes256_header_protection(key: [u8; 32], sample: [u8; SAMPLE_
   Aes256HeaderProtection::new(&key).mask(&sample)
 }
 
-#[cfg(all(feature = "diag", feature = "chacha20poly1305"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "chacha20poly1305"))]
 /// Exercise ChaCha20 header protection while retaining key, context, and temporary-block cleanup.
 #[unsafe(no_mangle)]
 #[inline(never)]

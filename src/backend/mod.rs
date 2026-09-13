@@ -35,7 +35,6 @@ pub(crate) mod cache;
     any(
       test,
       miri,
-      feature = "diag",
       not(any(
         all(
           target_arch = "aarch64",
@@ -47,20 +46,23 @@ pub(crate) mod cache;
     )
   )
 ))]
-// Optimized X25519 targets compile the portable field backend in diagnostic builds only so the
-// constant-time conditional-swap probe remains available. The rest of that backend is intentionally
-// unreachable unless Ed25519 or a portable X25519 path also selects it.
-#[cfg_attr(
-  all(
-    feature = "diag",
-    feature = "x25519",
-    not(feature = "ed25519"),
-    not(any(test, miri, feature = "portable-only")),
-    any(
-      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-      all(target_arch = "x86_64", target_os = "linux")
-    )
-  ),
-  expect(dead_code, reason = "diagnostic builds retain the portable X25519 swap probe")
-)]
 pub(crate) mod curve25519;
+
+#[cfg(all(
+  feature = "x25519",
+  any(
+    test,
+    miri,
+    all(rscrypto_internal, feature = "diag"),
+    not(any(
+      all(
+        target_arch = "aarch64",
+        any(target_os = "macos", target_os = "linux"),
+        not(feature = "portable-only")
+      ),
+      all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+    ))
+  )
+))]
+#[path = "curve25519/swap.rs"]
+pub(crate) mod curve25519_swap;

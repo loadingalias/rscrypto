@@ -240,7 +240,7 @@ class Bundles(unittest.TestCase):
                     case.doCleanups()
 
     def check_test_prepare_keeps_both_full_release_modes_and_fails_closed(self, target, machine):
-        for name in ('Cargo.toml', '.config/tooling.toml'):
+        for name in ('Cargo.toml', '.config/tooling.toml', 'scripts/ct/internal.py', 'scripts/ct/provenance.py'):
             destination = self.root / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, destination)
@@ -257,7 +257,10 @@ with Path(os.environ['TRANSFER_TEST_LOG']).open('a') as log:
 if name=='cargo' and args==['nextest','--version']:
     print('cargo-nextest '+os.environ['TRANSFER_NEXTEST'])
 elif name=='cargo':
-    if os.environ.get('TRANSFER_FAIL'): sys.exit(23)
+    internal = 'internal-' in args[args.index('--archive-file')+1]
+    flags = os.environ.get('CARGO_ENCODED_RUSTFLAGS', '').split('\\x1f')
+    assert ('rscrypto_internal' in flags) == internal
+    if os.environ.get('TRANSFER_FAIL') in ('1', 'internal' if internal else 'public'): sys.exit(23)
     Path(args[args.index('--archive-file')+1]).write_bytes(b'archive fixture')
 elif name=='rustc': print('rustc pinned fixture')
 elif name.endswith('gcc'): print('gcc pinned fixture')
@@ -281,12 +284,23 @@ elif name.endswith('gcc'): print('gcc pinned fixture')
             calls = [json.loads(row) for row in log.read_text().splitlines()]
             self.assertIn(['just', 'ci-check-target', target], calls)
             builds = [row for row in calls if row[:3] == ['cargo', 'nextest', 'archive']]
-            self.assertEqual(len(builds), 2)
+            self.assertEqual(len(builds), 4)
             self.assertTrue(all('--workspace' in row and '--locked' in row and '--release' in row for row in builds))
             self.assertTrue(all(row[row.index('--target') + 1] == target for row in builds))
             self.assertNotIn('portable-only', builds[0][builds[0].index('--features') + 1].split(','))
             self.assertIn('--all-features', builds[1])
             self.assertEqual(prepare_docs.call_count, 2)
+            for row in builds[:2]:
+                self.assertNotIn('--lib', row)
+            for row in builds[2:]:
+                self.assertIn('--lib', row)
+                self.assertEqual([row[i + 1] for i, value in enumerate(row) if value == '--test'],
+                    ['aead_kernel_equivalence', 'argon2_kernels', 'chacha20poly1305', 'rsa_public_key', 'pbkdf2_evidence'])
+            self.assertIn('--all-features', builds[3])
+            with patch.dict(os.environ, TRANSFER_FAIL='internal'):
+                failed = self.root / 'target/failed-internal.tar.gz'
+                with self.assertRaises(subprocess.CalledProcessError): cross.prepare(target, failed)
+                self.assertFalse(failed.exists())
             with patch.dict(os.environ, TRANSFER_FAIL='1'):
                 failed = self.root / 'target/failed.tar.gz'
                 with self.assertRaises(subprocess.CalledProcessError): cross.prepare(target, failed)
@@ -364,13 +378,16 @@ class NativeArchive(unittest.TestCase):
                 ('host: riscv64gc-unknown-linux-gnu' if line == 'host: x86_64-unknown-linux-gnu'
                  else 'host: x86_64-unknown-linux-gnu') if line.startswith('host: ') else line
                 for line in metadata['nextest'].splitlines())
-            for mode in ('native', 'portable'):
+            for mode in cross.MODES:
+                internal = mode.startswith('internal-')
+                mode_env = {**env, **({'CARGO_ENCODED_RUSTFLAGS': '--cfg\x1frscrypto_internal'} if internal else {})}
                 built = subprocess.run(['cargo', 'nextest', 'archive', '--locked', '--workspace', '--release',
-                                '--archive-file', str(directory / (mode + '.tar.zst'))], cwd=root, env=env,
+                                '--archive-file', str(directory / (mode + '.tar.zst'))], cwd=root, env=mode_env,
                                capture_output=True, text=True)
                 self.assertEqual(built.returncode, 0, built.stderr)
-                plan = doctest_bundle.prepare(root, directory / (mode + '-docs'), [], env)
-                metadata['modes'][mode] = {'doctests': plan['total']}
+                plan = {'total': 0} if internal else doctest_bundle.prepare(root, directory / (mode + '-docs'), [], env)
+                metadata['modes'][mode] = {'doctests': plan['total'], 'internal': internal,
+                    'encoded_rustflags': mode_env.get('CARGO_ENCODED_RUSTFLAGS')}
             bundle.seal(root, directory, 'rscrypto.cross.tests', TARGET, bundle.source_identity(root), metadata)
             archive = root / 'target/transfer.tar.gz'; bundle.pack(directory, archive)
             # Removing the original build tree catches hidden dependencies on it.
@@ -382,8 +399,25 @@ class NativeArchive(unittest.TestCase):
             self.assertEqual(len(summaries), 1)
             summary = json.loads(summaries[0].read_text())
             self.assertEqual(summary['status'], 'pass')
+            self.assertEqual(set(summary['modes']), {'native', 'portable', 'internal-native', 'internal-portable'})
             self.assertEqual(summary['nextest'], consumer_version)
             self.assertNotEqual(summary['nextest'], metadata['nextest'])
+
+            for mutation in ('missing-suite', 'missing-flag', 'wrong-boundary'):
+                broken = json.loads(json.dumps(metadata))
+                if mutation == 'missing-suite':
+                    del broken['modes']['internal-portable']
+                elif mutation == 'missing-flag':
+                    broken['modes']['internal-native']['encoded_rustflags'] = ''
+                else:
+                    broken['modes']['native']['internal'] = True
+                bundle.seal(root, directory, 'rscrypto.cross.tests', TARGET, bundle.source_identity(root), broken)
+                archive.unlink()
+                bundle.pack(directory, archive)
+                with self.subTest(mutation=mutation), patch.object(cross, 'ROOT', root), \
+                     patch('platform.system', return_value='Linux'), patch('platform.machine', return_value='riscv64'):
+                    with self.assertRaisesRegex(ValueError, 'suites|suite'):
+                        cross.execute(TARGET, archive)
 
 
 if __name__ == '__main__':

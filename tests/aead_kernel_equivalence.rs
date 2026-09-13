@@ -1,7 +1,7 @@
 //! Forces every compiled ChaCha20 backend and compares it with the portable
 //! oracle.
 
-#![cfg(all(feature = "diag", feature = "chacha20poly1305"))]
+#![cfg(all(rscrypto_internal, feature = "diag", feature = "chacha20poly1305"))]
 
 #[cfg(target_arch = "aarch64")]
 use rscrypto::platform::caps::aarch64;

@@ -88,6 +88,11 @@ fi
 export RUSTUP_TOOLCHAIN
 RUSTUP_TOOLCHAIN="$("$TOOLCHAIN" --target "$TARGET")"
 
+# Build and provenance reporting must observe the same internal compiler flags.
+PYTHON="$("$ROOT/scripts/lib/python.sh" --print)"
+export CARGO_ENCODED_RUSTFLAGS
+CARGO_ENCODED_RUSTFLAGS="$("$PYTHON" "$ROOT/scripts/ct/internal.py" --target "$TARGET" --print-encoded-rustflags)"
+
 HOST_TARGET="$(rustc -vV | awk -F': ' '/^host:/ {print $2}')"
 target_runs_on_host() {
   local target="$1"
@@ -226,7 +231,6 @@ else
   "$LLVM_NM" --defined-only --demangle "$BINARY_PATH" > "$BINARY_SYMBOLS_PATH"
 fi
 
-PYTHON="$("$ROOT/scripts/lib/python.sh" --print)"
 "$PYTHON" -X utf8 "$ROOT/scripts/ct/dudect_report.py" --prepare \
   --out "$OUT_DIR/prepared.json" --target "$TARGET" --profile "$PROFILE" \
   --binary "$BINARY_PATH" "${BINARY_OBJECT_ARGS[@]}" \

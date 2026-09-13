@@ -3,26 +3,36 @@
 //! These benches are intentionally outside the production comparison bench so
 //! global result tables do not treat kernel-only timings as user-facing AEADs.
 
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[path = "common/criterion.rs"]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 mod bench_config;
 
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 mod common;
 
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 use core::hint::black_box;
 
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 use criterion::{BenchmarkId, Criterion};
 
 #[cfg(target_arch = "aarch64")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 const KEY_32: [u8; 32] = [0x42u8; 32];
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 const POLY_KEY: [u8; 32] = [
   0x7b, 0xac, 0x2b, 0x25, 0x2d, 0xb4, 0x47, 0xaf, 0x09, 0xb6, 0x7a, 0x55, 0xa4, 0xe9, 0x55, 0x84, 0x0a, 0xe1, 0xd6,
   0x73, 0x10, 0x75, 0xd9, 0xeb, 0x2a, 0x93, 0x75, 0x78, 0x3e, 0xd5, 0x53, 0xff,
 ];
 #[cfg(target_arch = "aarch64")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 const NONCE_12: [u8; 12] = [0x07u8; 12];
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 const AAD: &[u8] = b"rscrypto-bench";
 
 #[cfg(target_arch = "aarch64")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn chacha20_xor_kernel(c: &mut Criterion) {
   if !bench_config::selected("aead-kernel/chacha20-copy-and-xor") {
     return;
@@ -57,6 +67,7 @@ fn chacha20_xor_kernel(c: &mut Criterion) {
   g.finish();
 }
 
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn poly1305_auth_kernel(c: &mut Criterion) {
   if !bench_config::selected("aead-kernel/poly1305-auth") {
     return;
@@ -71,10 +82,11 @@ fn poly1305_auth_kernel(c: &mut Criterion) {
 
     g.bench_with_input(BenchmarkId::new("dispatched", len), data, |b, d| {
       b.iter(|| {
-        black_box(
-          rscrypto::aead::diag_chacha20poly1305_authenticate_aead(black_box(AAD), black_box(d), black_box(&POLY_KEY))
-            .expect("selected AEAD benchmark kernel must be available"),
-        )
+        black_box(rscrypto::aead::diag_chacha20poly1305_authenticate_aead(
+          black_box(AAD),
+          black_box(d),
+          black_box(&POLY_KEY),
+        ))
       })
     });
 
@@ -86,8 +98,7 @@ fn poly1305_auth_kernel(c: &mut Criterion) {
             black_box(AAD),
             black_box(d),
             black_box(&POLY_KEY),
-          )
-          .expect("selected AEAD benchmark kernel must be available"),
+          ),
         )
       })
     });
@@ -96,10 +107,16 @@ fn poly1305_auth_kernel(c: &mut Criterion) {
   g.finish();
 }
 
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn main() {
   bench_config::run(&[
     #[cfg(target_arch = "aarch64")]
     chacha20_xor_kernel,
     poly1305_auth_kernel,
   ]);
+}
+
+#[cfg(not(all(rscrypto_internal, feature = "diag")))]
+fn main() -> Result<(), &'static str> {
+  Err("use just bench --bench aead_kernels to enable internal kernel benchmarks")
 }

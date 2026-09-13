@@ -749,7 +749,7 @@ impl Blake2s256 {
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Derive a keyed Blake2s-256 diagnostic digest with the portable backend.
 #[must_use]
 pub fn diag_blake2s256_keyed_digest_portable(key: &[u8; 32]) -> [u8; 32] {

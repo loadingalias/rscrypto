@@ -2,7 +2,7 @@
 //!
 //! This module provides generic slice-by-N implementations for all CRC widths:
 //! - CRC-16: slice-by-4, slice-by-8
-//! - CRC-32: slice-by-8, slice-by-16
+//! - CRC-32: slice-by-16
 //! - CRC-64: slice-by-8, slice-by-16
 //!
 //! # Algorithm Overview
@@ -28,7 +28,7 @@ macro_rules! tail_step {
   };
 }
 
-#[cfg(any(feature = "crc16", feature = "crc64", all(test, feature = "crc32")))]
+#[cfg(any(feature = "crc16", feature = "crc64"))]
 macro_rules! tail8_body {
   ($crc:ident, $data:ident, $table:ident, $crc_ty:ty) => {{
     // Unrolled processing for 0-7 bytes. Each arm is branchless after the match.
@@ -128,13 +128,6 @@ fn tail8_64(mut crc: u64, data: &[u8], table: &[u64; 256]) -> u64 {
   tail8_body!(crc, data, table, u64)
 }
 
-/// Process a small tail (0-7 bytes) for 32-bit CRC with unrolled lookups.
-#[cfg(all(test, feature = "crc32"))]
-#[inline(always)]
-fn tail8_32(mut crc: u32, data: &[u8], table: &[u32; 256]) -> u32 {
-  tail8_body!(crc, data, table, u32)
-}
-
 /// Process a small tail (0-3 bytes) for 32-bit CRC with unrolled lookups.
 /// Used by slice16_32 which processes 4-byte chunks.
 #[cfg(feature = "crc32")]
@@ -227,38 +220,6 @@ pub(crate) fn slice8_24(crc: u32, data: &[u8], tables: &[[u32; 256]; 8]) -> u32 
 }
 
 // CRC-32 Portable Implementations
-
-/// Update CRC-32 state using slice-by-8 algorithm.
-///
-/// Processes 8 bytes per iteration (2× the CRC width in bytes).
-///
-/// # Arguments
-///
-/// * `crc` - Current CRC state (pre-inverted)
-/// * `data` - Input data
-/// * `tables` - 8 lookup tables (256 entries each)
-#[cfg(all(test, feature = "crc32"))]
-#[inline]
-fn slice8_32(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 8]) -> u32 {
-  let (chunks, remainder) = data.as_chunks::<8>();
-
-  for chunk in chunks {
-    let a = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) ^ crc;
-    let b = u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
-
-    crc = tables[7][(a & 0xFF) as usize]
-      ^ tables[6][((a >> 8) & 0xFF) as usize]
-      ^ tables[5][((a >> 16) & 0xFF) as usize]
-      ^ tables[4][(a >> 24) as usize]
-      ^ tables[3][(b & 0xFF) as usize]
-      ^ tables[2][((b >> 8) & 0xFF) as usize]
-      ^ tables[1][((b >> 16) & 0xFF) as usize]
-      ^ tables[0][(b >> 24) as usize];
-  }
-
-  // Process remaining bytes (0-7) with unrolled lookups
-  tail8_32(crc, remainder, &tables[0])
-}
 
 /// Update CRC-32 state using slice-by-16 algorithm.
 ///
@@ -539,30 +500,11 @@ mod tests {
 
   #[test]
   #[cfg(feature = "crc32")]
-  fn test_slice8_32_empty() {
-    let tables =
-      crate::checksum::common::tables::generate_crc32_tables_8(crate::checksum::common::tables::CRC32_IEEE_POLY);
-    let crc = slice8_32(!0, &[], &tables);
-    assert_eq!(crc, !0);
-  }
-
-  #[test]
-  #[cfg(feature = "crc32")]
   fn test_slice16_32_empty() {
     let tables =
       crate::checksum::common::tables::generate_crc32_tables_16(crate::checksum::common::tables::CRC32_IEEE_POLY);
     let crc = slice16_32(!0, &[], &tables);
     assert_eq!(crc, !0);
-  }
-
-  #[test]
-  #[cfg(feature = "crc32")]
-  fn test_slice16_32_matches_slice8_32() {
-    let poly = crate::checksum::common::tables::CRC32_IEEE_POLY;
-    let tables8 = crate::checksum::common::tables::generate_crc32_tables_8(poly);
-    let tables16 = crate::checksum::common::tables::generate_crc32_tables_16(poly);
-    let data = b"The quick brown fox jumps over the lazy dog";
-    assert_eq!(slice8_32(!0, data, &tables8), slice16_32(!0, data, &tables16));
   }
 
   #[test]

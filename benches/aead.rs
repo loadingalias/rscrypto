@@ -192,9 +192,9 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
     let mut buf = data.clone();
-    #[cfg(feature = "diag")]
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     let mut buf_owned = data.clone();
-    #[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+    #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
     let mut buf_x86_asm = data.clone();
     let mut buf_combined: Vec<u8> = Vec::with_capacity(data.len().strict_add(16));
 
@@ -205,7 +205,7 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
       })
     });
 
-    #[cfg(feature = "diag")]
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     g.bench_with_input(BenchmarkId::new("rscrypto-owned", len), data, |b, d| {
       b.iter(|| {
         buf_owned.copy_from_slice(d);
@@ -218,7 +218,7 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
       })
     });
 
-    #[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+    #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
     if *len != 0 {
       g.bench_with_input(BenchmarkId::new("rscrypto-x86-asm", len), data, |b, d| {
         b.iter(|| {
@@ -347,9 +347,9 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
       .expect("valid AEAD benchmark operation must succeed");
 
     let mut buf = ciphertext.clone();
-    #[cfg(feature = "diag")]
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     let mut buf_owned = ciphertext.clone();
-    #[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+    #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
     let mut buf_x86_asm = ciphertext.clone();
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), &ciphertext, |b, ct| {
@@ -367,7 +367,7 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
       })
     });
 
-    #[cfg(feature = "diag")]
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     g.bench_with_input(BenchmarkId::new("rscrypto-owned", len), &ciphertext, |b, ct| {
       b.iter(|| {
         buf_owned.copy_from_slice(ct);
@@ -383,7 +383,7 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
       })
     });
 
-    #[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+    #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
     if *len != 0 {
       g.bench_with_input(BenchmarkId::new("rscrypto-x86-asm", len), &ciphertext, |b, ct| {
         b.iter(|| {

@@ -30,26 +30,20 @@ const _: unsafe fn(&[u8; 32]) -> point::ExtendedPoint = point_avx2::scalar_mul_b
 #[cfg(target_arch = "x86_64")]
 const _: unsafe fn(&[u8; 32]) -> point::ExtendedPoint = point_avx2::scalar_mul_basepoint_ifma;
 
-#[cfg(all(feature = "diag", feature = "ed25519"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ed25519"))]
 pub use point::diag_select_basepoint_cached_limb_digest as diag_ed25519_select_basepoint_cached_limb_digest;
-#[cfg(all(feature = "diag", feature = "ed25519", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ed25519", target_arch = "x86_64"))]
 pub use point_avx2::{
   diag_select_basepoint_cached_avx2_limb_digest as diag_ed25519_select_basepoint_cached_avx2_limb_digest,
   diag_select_basepoint_cached_ifma_limb_digest as diag_ed25519_select_basepoint_cached_ifma_limb_digest,
 };
 
 /// Dispatch `[s]B` (fixed-base scalar mul) to the fastest validated CT path.
-#[cfg_attr(
-  all(
-    target_arch = "x86_64",
-    target_os = "linux",
-    not(any(test, miri, feature = "portable-only"))
-  ),
-  expect(
-    dead_code,
-    reason = "x86_64 Linux library builds use the assembly fixed-base entry points"
-  )
-)]
+#[cfg(not(all(
+  target_arch = "x86_64",
+  target_os = "linux",
+  not(any(test, miri, feature = "portable-only"))
+)))]
 #[must_use]
 pub(crate) fn basepoint_mul_dispatch(scalar_bytes: &[u8; 32]) -> point::ExtendedPoint {
   #[cfg(target_arch = "x86_64")]

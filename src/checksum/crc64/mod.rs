@@ -134,23 +134,13 @@ pub(crate) fn diag_crc64_xz(len: usize) -> Crc64SelectionDiag {
     crate::checksum::diag::SelectionReason::Auto
   };
 
-  // Thresholds are now baked into dispatch tables; report dispatch boundaries
-  let table = crate::checksum::kernel_table::active_crc64_table();
-
   Crc64SelectionDiag {
     polynomial: Crc64Polynomial::Xz,
     len,
     arch: crate::platform::arch(),
     reason,
     effective_force: cfg.effective_force,
-    policy_family: "dispatch",
     selected_kernel,
-    selected_streams: 1,
-    portable_to_clmul: table.boundaries[0],      // xs_max boundary
-    pclmul_to_vpclmul: table.boundaries[2],      // m_max boundary
-    small_kernel_max_bytes: table.boundaries[1], // s_max boundary
-    use_4x512: false,
-    min_bytes_per_lane: usize::MAX,
   }
 }
 
@@ -168,23 +158,13 @@ pub(crate) fn diag_crc64_nvme(len: usize) -> Crc64SelectionDiag {
     crate::checksum::diag::SelectionReason::Auto
   };
 
-  // Thresholds are now baked into dispatch tables; report dispatch boundaries
-  let table = crate::checksum::kernel_table::active_crc64_table();
-
   Crc64SelectionDiag {
     polynomial: Crc64Polynomial::Nvme,
     len,
     arch: crate::platform::arch(),
     reason,
     effective_force: cfg.effective_force,
-    policy_family: "dispatch",
     selected_kernel,
-    selected_streams: 1,
-    portable_to_clmul: table.boundaries[0],      // xs_max boundary
-    pclmul_to_vpclmul: table.boundaries[2],      // m_max boundary
-    small_kernel_max_bytes: table.boundaries[1], // s_max boundary
-    use_4x512: false,
-    min_bytes_per_lane: usize::MAX,
   }
 }
 
@@ -244,7 +224,7 @@ fn crc64_nvme_reference(crc: u64, data: &[u8]) -> u64 {
 #[cfg(feature = "alloc")]
 const CRC64_BUFFERED_THRESHOLD: usize = 64;
 
-// Auto Kernels (using new dispatch module)
+// Auto Kernels
 
 type Crc64DispatchFn = crate::checksum::dispatchers::Crc64Fn;
 #[cfg(feature = "std")]

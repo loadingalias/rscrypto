@@ -12,4 +12,5 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 just ci-check
 just test --all --release
 just test --all --release --portable
+just test-evidence
 just test-rsa-macos-asm

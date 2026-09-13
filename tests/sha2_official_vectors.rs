@@ -3,7 +3,7 @@
 mod support;
 
 use rscrypto::hashes::crypto::{Sha224, Sha384, Sha512, Sha512_256};
-use support::blobby_compat::BlobIterator;
+use support::vector_blob::BlobIterator;
 
 fn run_fixed_vectors<const OUT: usize>(data: &'static [u8], name: &str, mut digest: impl FnMut(&[u8]) -> [u8; OUT]) {
   for (i, row) in BlobIterator::<2>::new(data)

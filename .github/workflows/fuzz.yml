@@ -58,7 +58,7 @@ jobs:
         include:
           - platform: x86_64-linux
             task: miri
-    runs-on: runs-on=${{ github.run_id }}/runner=${{ matrix.task == 'miri' && 'miri' || matrix.platform }}/env=production
+    runs-on: runs-on=${{ github.run_id }}/runner=${{ matrix.task == 'miri' && 'miri' || format('fuzz-{0}', matrix.platform) }}/env=production
     timeout-minutes: ${{ (matrix.task == 'miri' || github.event_name == 'pull_request') && 60 || 90 }}
     steps:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1

@@ -111,6 +111,9 @@ done
 
 PYTHON="$("$ROOT/scripts/lib/python.sh" --print)"
 
+CARGO_ENCODED_RUSTFLAGS="$("$PYTHON" "$ROOT/scripts/ct/internal.py" --target "$TARGET" --print-encoded-rustflags)"
+export CARGO_ENCODED_RUSTFLAGS
+
 OUT_DIR="$ROOT/target/ct/$TARGET/$PROFILE"
 ARTIFACT_DIR="$OUT_DIR/artifacts"
 BUILD_TARGET_DIR="$ROOT/target/ct-build/$TARGET/$PROFILE"

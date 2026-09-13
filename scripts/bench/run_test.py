@@ -33,6 +33,9 @@ if os.environ.get('FAIL_BUILD'):
 if os.environ.get('STALL_BUILD'):
   import time; time.sleep(30)
 features = sys.argv[sys.argv.index('--features') + 1]
+flags = os.environ.get('CARGO_ENCODED_RUSTFLAGS', '').split('\x1f')
+if 'diag' in features.split(','): assert 'rscrypto_internal' in flags
+with open('build-flags.jsonl', 'a') as log: log.write(json.dumps(flags) + '\n')
 for index, value in enumerate(sys.argv):
   if value != '--bench': continue
   binary = sys.argv[index + 1]
@@ -115,6 +118,9 @@ class RunnerTests(unittest.TestCase):
     self.addCleanup(temporary.cleanup)
     self.root = Path(temporary.name)
     shutil.copytree(ROOT / "scripts/bench", self.root / "scripts/bench", ignore=shutil.ignore_patterns("__pycache__"))
+    (self.root / "scripts/ct").mkdir()
+    for name in ("internal.py", "provenance.py"):
+      shutil.copy2(ROOT / "scripts/ct" / name, self.root / "scripts/ct" / name)
     (self.root / "scripts/lib").mkdir()
     for name in ("python.sh", "toolchain.py"):
       shutil.copy2(ROOT / "scripts/lib" / name, self.root / "scripts/lib" / name)

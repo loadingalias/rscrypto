@@ -50,7 +50,9 @@ run_gate() {
     run_named_test "$test_name" cargo "${args[@]}" --
   done
 
-  build_output=$(cargo test --locked --release --features rsa,diag --test rsa_public_key --no-run --message-format=json)
+  build_output=$(scripts/lib/python.sh scripts/ct/internal.py \
+    --target "$(scripts/lib/toolchain.sh --print-host)" -- \
+    cargo test --locked --release --features rsa,diag --test rsa_public_key --no-run --message-format=json)
   binary=$(jq -ers '[.[] | select(.reason == "compiler-artifact" and .target.name == "rsa_public_key" and .executable != null) | .executable]
     | if length == 1 then .[0] else error("expected one RSA test executable") end' <<<"$build_output")
   [[ -n "$binary" && -x "$binary" ]] || fail "could not resolve optimized RSA test binary"

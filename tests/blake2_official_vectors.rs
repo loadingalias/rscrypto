@@ -7,7 +7,7 @@ use rscrypto::Digest;
 use rscrypto::{Blake2b512, Blake2bKey};
 #[cfg(feature = "blake2s")]
 use rscrypto::{Blake2s256, Blake2sKey};
-use support::blobby_compat::BlobIterator;
+use support::vector_blob::BlobIterator;
 
 fn run_blake2_vectors<const OUT: usize>(
   data: &'static [u8],

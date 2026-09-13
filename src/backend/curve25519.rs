@@ -4,8 +4,8 @@
 //!
 //! # Arithmetic convention
 //!
-//! Field arithmetic is modular math (mod 2²⁵⁵ − 19). Per CLAUDE.md rules,
-//! `wrapping_*` is the correct choice for intentional modular arithmetic.
+//! Field arithmetic is modular math (mod 2²⁵⁵ − 19). `wrapping_*` expresses
+//! intentional modular arithmetic.
 //! Intermediate u128 accumulators are sized so that overflow is provably
 //! impossible — wrapping semantics are used for consistency, not because
 //! wrap-around actually occurs.
@@ -288,7 +288,6 @@ impl FieldElement {
   #[cfg(all(
     feature = "x25519",
     any(
-      feature = "diag",
       test,
       miri,
       not(any(
@@ -302,12 +301,7 @@ impl FieldElement {
     )
   ))]
   pub(crate) fn conditional_swap(lhs: &mut Self, rhs: &mut Self, swap: u8) {
-    let mask = 0u64.wrapping_sub(u64::from(swap & 1));
-    for (lhs_limb, rhs_limb) in lhs.0.iter_mut().zip(rhs.0.iter_mut()) {
-      let diff = mask & (*lhs_limb ^ *rhs_limb);
-      *lhs_limb ^= diff;
-      *rhs_limb ^= diff;
-    }
+    crate::backend::curve25519_swap::conditional_swap(&mut lhs.0, &mut rhs.0, swap);
   }
 
   /// Return the low-bit sign of the canonical encoding.
@@ -395,16 +389,6 @@ impl FieldElement {
       None
     }
   }
-}
-
-#[cfg(all(feature = "diag", feature = "x25519"))]
-#[inline(always)]
-pub fn diag_curve25519_conditional_swap(lhs: &mut [u64; FIELD_LIMBS], rhs: &mut [u64; FIELD_LIMBS], swap: u8) {
-  let mut lhs_element = FieldElement::from_limbs(*lhs);
-  let mut rhs_element = FieldElement::from_limbs(*rhs);
-  FieldElement::conditional_swap(&mut lhs_element, &mut rhs_element, swap);
-  *lhs = *lhs_element.limbs();
-  *rhs = *rhs_element.limbs();
 }
 
 impl Default for FieldElement {

@@ -43,7 +43,7 @@ impl Drop for ParallelBatchScratch {
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]

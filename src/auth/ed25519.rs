@@ -427,7 +427,7 @@ pub struct Ed25519Keypair {
   expanded: hash::ExpandedSecret,
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug)]
 pub struct DiagEd25519VerifyScalars {
@@ -686,7 +686,7 @@ fn hash_challenge(r_bytes: &[u8; PUBLIC_KEY_LENGTH], public_key: &[u8; PUBLIC_KE
   Sha512::digest_64_byte_prefix(&prefix, message)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[must_use]
 pub fn diag_ed25519_verify_scalars(
@@ -708,7 +708,7 @@ pub fn diag_ed25519_verify_scalars(
   })
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[must_use]
 pub fn diag_ed25519_verify_challenge_reduce_digest(
@@ -722,7 +722,7 @@ pub fn diag_ed25519_verify_challenge_reduce_digest(
   scalar::to_bytes(&challenge)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[must_use]
 pub fn diag_ed25519_verify_public_decode_digest(public_key: &[u8; PUBLIC_KEY_LENGTH]) -> [u8; PUBLIC_KEY_LENGTH] {
@@ -731,7 +731,7 @@ pub fn diag_ed25519_verify_public_decode_digest(public_key: &[u8; PUBLIC_KEY_LEN
     .unwrap_or_default()
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[must_use]
 pub fn diag_ed25519_verify_r_decode_digest(r_bytes: &[u8; PUBLIC_KEY_LENGTH]) -> [u8; PUBLIC_KEY_LENGTH] {
@@ -741,7 +741,7 @@ pub fn diag_ed25519_verify_r_decode_digest(r_bytes: &[u8; PUBLIC_KEY_LENGTH]) ->
     .unwrap_or_default()
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[must_use]
 pub fn diag_ed25519_verify_portable_double_scalar_digest(
@@ -756,6 +756,7 @@ pub fn diag_ed25519_verify_portable_double_scalar_digest(
 }
 
 #[cfg(all(
+  rscrypto_internal,
   feature = "diag",
   target_arch = "aarch64",
   any(target_os = "macos", target_os = "linux"),

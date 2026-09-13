@@ -17,7 +17,7 @@ def main():
   with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
     for name in ('scripts/ct/dudect.sh', 'scripts/ct/dudect_execute.py', 'scripts/ct/manifest.py',
-                 'scripts/ct/provenance.py', 'scripts/lib/python.sh'):
+                 'scripts/ct/provenance.py', 'scripts/ct/internal.py', 'scripts/lib/python.sh'):
       path = root / name
       path.parent.mkdir(parents=True, exist_ok=True)
       shutil.copy2(ROOT / name, path)
@@ -31,6 +31,7 @@ def main():
     tool(binary / 'llvm', "print('fixture symbols')")
     tool(binary / 'cargo', '''
 args = sys.argv
+Path('build-flags.json').write_text(json.dumps(os.environ['CARGO_ENCODED_RUSTFLAGS'].split('\\x1f')))
 build = Path(args[args.index('--target-dir') + 1]) / args[args.index('--target') + 1] / 'release'
 build.mkdir(parents=True, exist_ok=True)
 path = build / 'rscrypto-ct-dudect'
@@ -40,7 +41,7 @@ print('linker "-o" fixture')
     # Reporting and the timing binary are substitutes; selection, budgets, shell
     # precedence, isolation, and summary publication execute production code.
     (root / 'scripts/ct/dudect_report.py').write_text('''
-import json, sys
+import json, os, sys
 from pathlib import Path
 
 def write_report(path, report):
@@ -53,6 +54,7 @@ def case_report(prepared, args):
           'case_count': 1, 'failure_count': 0, 'diagnostic_failure_count': 0}
 
 if __name__ == '__main__':
+  Path('report-flags.json').write_text(json.dumps(os.environ['CARGO_ENCODED_RUSTFLAGS'].split('\\x1f')))
   path = Path(sys.argv[sys.argv.index('--out') + 1])
   path.write_text(json.dumps({'metadata': {'binary': {'path': sys.executable}}, 'manifest_cases': {
     'cheap': {'smoke_samples': 2000}, 'expensive': {'smoke_samples': 16}}}))
@@ -61,7 +63,9 @@ if __name__ == '__main__':
     env = {key: value for key, value in os.environ.items()
            if key not in ('BASH_ENV', 'ENV') and not key.startswith('RSCRYPTO_CT_DUDECT_')}
     env.update(PATH=str(binary) + os.pathsep + os.environ['PATH'], PYTHON=sys.executable,
-               LLVM_OBJDUMP=str(binary / 'llvm'), LLVM_NM=str(binary / 'llvm'))
+               LLVM_OBJDUMP=str(binary / 'llvm'), LLVM_NM=str(binary / 'llvm'),
+               CARGO_ENCODED_RUSTFLAGS='-C\x1flink-arg=path with spaces')
+    expected_flags = ['-C', 'link-arg=path with spaces', '--cfg', 'rscrypto_internal']
     for args, override, expected in (
       (['--smoke'], {}, [['cheap', 2000], ['expensive', 16]]),
       (['--smoke', '--filter', 'expensive'], {}, [['expensive', 16]]),
@@ -74,6 +78,8 @@ if __name__ == '__main__':
       result = subprocess.run(['bash', 'scripts/ct/dudect.sh', '--target', 'fixture-host', *args],
                               cwd=root, env={**env, **override}, capture_output=True, text=True, timeout=20)
       assert result.returncode == 0, result.stdout + result.stderr
+      assert json.loads((root / 'build-flags.json').read_text()) == expected_flags
+      assert json.loads((root / 'report-flags.json').read_text()) == expected_flags
       actual = [json.loads(line) for line in (root / 'budgets.jsonl').read_text().splitlines()]
       assert actual == expected, (args, actual)
       if '--smoke' in args:
@@ -86,6 +92,8 @@ if __name__ == '__main__':
     assert result.returncode == 2 and 'physical host' in result.stderr, result.stderr
     result = subprocess.run([*cross, '--prepare-only'], cwd=root, env=env, capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads((root / 'build-flags.json').read_text()) == expected_flags
+    assert json.loads((root / 'report-flags.json').read_text()) == expected_flags
     assert not (root / 'budgets.jsonl').read_text()
   manifest = tomllib.loads((ROOT / 'ct.toml').read_text())
   assert all(isinstance(case['smoke_samples'], int) and case['smoke_samples'] >= 2 for case in manifest['dudect_case'])

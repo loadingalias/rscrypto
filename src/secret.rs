@@ -389,7 +389,7 @@ impl<const N: usize> Drop for ZeroizingBytes<N> {
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -398,7 +398,7 @@ pub(crate) fn diag_zeroize_fixed_stack(input: [u8; 32]) -> u8 {
   core::hint::black_box(secret.as_bytes()[0])
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -410,7 +410,7 @@ pub(crate) fn diag_zeroize_fixed_move(input: [u8; 32]) -> u8 {
   output
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -422,7 +422,7 @@ pub(crate) fn diag_zeroize_early_return(input: [u8; 32], stop: bool) -> u8 {
   core::hint::black_box(secret.as_bytes()[0])
 }
 
-#[cfg(all(feature = "diag", feature = "alloc"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "alloc"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -431,7 +431,7 @@ pub(crate) fn diag_zeroize_variable_heap(input: Vec<u8>) -> usize {
   core::hint::black_box(secret.len())
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -443,7 +443,7 @@ pub(crate) fn diag_zeroize_fixed_fill_error(value: u8) -> bool {
   .is_err()
 }
 
-#[cfg(all(feature = "diag", feature = "alloc"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "alloc"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -456,7 +456,7 @@ pub(crate) fn diag_zeroize_variable_fill_error(len: usize, value: u8) -> bool {
   .is_err()
 }
 
-#[cfg(all(feature = "diag", feature = "alloc"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "alloc"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]

@@ -3,7 +3,7 @@
 mod support;
 
 use rscrypto::hashes::crypto::Sha256;
-use support::blobby_compat::BlobIterator;
+use support::vector_blob::BlobIterator;
 
 #[test]
 fn sha256_official_vectors() {

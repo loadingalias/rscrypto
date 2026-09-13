@@ -509,7 +509,7 @@ pub(super) unsafe fn xor_keystream_aarch64_neon(
 // Forced entry points let backend-equivalence tests bypass runtime dispatch.
 
 /// Run the **portable** ChaCha20 XOR-keystream regardless of host caps.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 pub fn diag_chacha20_xor_keystream_portable(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
@@ -525,7 +525,7 @@ pub fn diag_chacha20_xor_keystream_portable(
 ///
 /// Caller must verify the host has `aarch64::NEON` and that `buffer`'s 64-byte block count fits the counter range
 /// starting at `initial_counter`. Compile-time gated to `target_arch = "aarch64"`.
-#[cfg(all(feature = "diag", target_arch = "aarch64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "aarch64"))]
 pub unsafe fn diag_chacha20_xor_keystream_aarch64_neon(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
@@ -542,7 +542,7 @@ pub unsafe fn diag_chacha20_xor_keystream_aarch64_neon(
 ///
 /// Caller must verify the host has `x86::AVX2` and that `buffer`'s 64-byte block count fits the counter range starting
 /// at `initial_counter`.
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
 pub unsafe fn diag_chacha20_xor_keystream_x86_avx2(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
@@ -559,7 +559,7 @@ pub unsafe fn diag_chacha20_xor_keystream_x86_avx2(
 ///
 /// Caller must verify the host has `x86::AVX512F + AVX512VL + AVX512BW + AVX512DQ` and that `buffer`'s 64-byte block
 /// count fits the counter range starting at `initial_counter`.
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
 pub unsafe fn diag_chacha20_xor_keystream_x86_avx512(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
@@ -577,7 +577,12 @@ pub unsafe fn diag_chacha20_xor_keystream_x86_avx512(
 /// Caller must verify the host has `power::POWER8_VECTOR` and that `buffer`'s 64-byte block count fits the counter
 /// range starting at `initial_counter`. The portable kernel — which has been the correctness oracle since commit
 /// `2631aefa` fixed the rotation-amount bug here — must produce identical bytes.
-#[cfg(all(feature = "diag", target_arch = "powerpc64", target_endian = "little"))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "powerpc64",
+  target_endian = "little"
+))]
 pub unsafe fn diag_chacha20_xor_keystream_power_vsx(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
@@ -594,7 +599,7 @@ pub unsafe fn diag_chacha20_xor_keystream_power_vsx(
 ///
 /// Caller must verify the host has `s390x::VECTOR` and that `buffer`'s 64-byte block count fits the counter range
 /// starting at `initial_counter`. Same correctness-oracle invariant as POWER VSX above.
-#[cfg(all(feature = "diag", target_arch = "s390x"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "s390x"))]
 pub unsafe fn diag_chacha20_xor_keystream_s390x_vector(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
@@ -611,7 +616,7 @@ pub unsafe fn diag_chacha20_xor_keystream_s390x_vector(
 ///
 /// Caller must verify the host has `riscv::V` and that `buffer`'s 64-byte block count fits the counter range starting
 /// at `initial_counter`.
-#[cfg(all(feature = "diag", target_arch = "riscv64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "riscv64"))]
 pub unsafe fn diag_chacha20_xor_keystream_riscv64_vector(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
@@ -628,7 +633,7 @@ pub unsafe fn diag_chacha20_xor_keystream_riscv64_vector(
 ///
 /// Caller must verify the host has `wasm::SIMD128` and that `buffer`'s 64-byte block count fits the counter range
 /// starting at `initial_counter`.
-#[cfg(all(feature = "diag", target_arch = "wasm32"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "wasm32"))]
 pub unsafe fn diag_chacha20_xor_keystream_wasm_simd128(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,

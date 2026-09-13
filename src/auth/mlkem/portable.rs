@@ -828,7 +828,7 @@ pub(super) fn keygen_1024(random: &[u8; 64]) -> ([u8; 1568], [u8; 3168]) {
   keygen::<4, 4, 128, 1536, 1568, 3168>(random)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 pub(super) fn diag_keygen_secret_noise_digest<
   const K: usize,
   const ETA1_RANDOM_BYTES: usize,
@@ -850,7 +850,7 @@ pub(super) fn diag_keygen_secret_noise_digest<
   digest
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 pub(super) fn diag_ntt_input_digest(mut poly: Poly) -> u16 {
   ntt(&mut poly);
   let digest = diag_fold_poly(&poly);
@@ -864,7 +864,13 @@ pub(super) fn diag_ntt_input_digest(mut poly: Poly) -> u16 {
 ///
 /// The caller must ensure the CPU supports the s390x z/Vector facility before
 /// executing this function.
-#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "s390x",
+  not(miri),
+  not(feature = "portable-only")
+))]
 pub(super) unsafe fn diag_s390x_ntt_input_digest(mut poly: Poly) -> u16 {
   // SAFETY: Direct z/Vector diagnostic call because:
   // 1. The caller guarantees the s390x z/Vector facility is available.
@@ -879,7 +885,7 @@ pub(super) unsafe fn diag_s390x_ntt_input_digest(mut poly: Poly) -> u16 {
   digest
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 pub(super) fn diag_inverse_ntt_montgomery_product_input_digest(mut poly: Poly) -> u16 {
   inverse_ntt_montgomery_product(&mut poly);
   let digest = diag_fold_poly(&poly);
@@ -893,7 +899,13 @@ pub(super) fn diag_inverse_ntt_montgomery_product_input_digest(mut poly: Poly) -
 ///
 /// The caller must ensure the CPU supports the s390x z/Vector facility before
 /// executing this function.
-#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "s390x",
+  not(miri),
+  not(feature = "portable-only")
+))]
 pub(super) unsafe fn diag_s390x_inverse_ntt_montgomery_product_input_digest(mut poly: Poly) -> u16 {
   // SAFETY: Direct z/Vector diagnostic call because:
   // 1. The caller guarantees the s390x z/Vector facility is available.
@@ -909,7 +921,7 @@ pub(super) unsafe fn diag_s390x_inverse_ntt_montgomery_product_input_digest(mut 
   digest
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 pub(super) fn diag_multiply_ntts_add_assign_input_digest(a: Poly, b: Poly, mut acc: Poly) -> u16 {
   multiply_ntts_add_assign(&mut acc, &a, &b);
   let digest = diag_fold_poly(&acc);
@@ -917,7 +929,7 @@ pub(super) fn diag_multiply_ntts_add_assign_input_digest(a: Poly, b: Poly, mut a
   digest
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 pub(super) fn diag_multiply_ntts_accumulate_k3_input_digest(
   mut a: PolyVec<3>,
   mut b: PolyVec<3>,
@@ -931,7 +943,7 @@ pub(super) fn diag_multiply_ntts_accumulate_k3_input_digest(
   digest
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 pub(super) fn diag_multiply_ntts_accumulate_k4_input_digest(
   mut a: PolyVec<4>,
   mut b: PolyVec<4>,
@@ -945,7 +957,7 @@ pub(super) fn diag_multiply_ntts_accumulate_k4_input_digest(
   digest
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 pub(super) fn diag_to_montgomery_product_domain_input_digest(mut poly: Poly) -> u16 {
   poly_to_montgomery_product_domain(&mut poly);
   let digest = diag_fold_poly(&poly);
@@ -953,7 +965,7 @@ pub(super) fn diag_to_montgomery_product_domain_input_digest(mut poly: Poly) -> 
   digest
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 pub(super) fn diag_from_montgomery_product_domain_input_digest(mut poly: Poly) -> u16 {
   poly_from_montgomery_product_domain(&mut poly);
   let digest = diag_fold_poly(&poly);
@@ -967,7 +979,13 @@ pub(super) fn diag_from_montgomery_product_domain_input_digest(mut poly: Poly) -
 ///
 /// The caller must ensure the CPU supports the s390x z/Vector facility before
 /// executing this function.
-#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "s390x",
+  not(miri),
+  not(feature = "portable-only")
+))]
 pub(super) unsafe fn diag_s390x_to_montgomery_product_domain_input_digest(mut poly: Poly) -> u16 {
   // SAFETY: Direct z/Vector diagnostic call because:
   // 1. The caller guarantees the s390x z/Vector facility is available.
@@ -988,7 +1006,13 @@ pub(super) unsafe fn diag_s390x_to_montgomery_product_domain_input_digest(mut po
 ///
 /// The caller must ensure the CPU supports the s390x z/Vector facility before
 /// executing this function.
-#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "s390x",
+  not(miri),
+  not(feature = "portable-only")
+))]
 pub(super) unsafe fn diag_s390x_from_montgomery_product_domain_input_digest(mut poly: Poly) -> u16 {
   // SAFETY: Direct z/Vector diagnostic call because:
   // 1. The caller guarantees the s390x z/Vector facility is available.
@@ -1010,7 +1034,13 @@ pub(super) unsafe fn diag_s390x_from_montgomery_product_domain_input_digest(mut 
 ///
 /// The caller must ensure the CPU supports the s390x z/Vector facility before
 /// executing this function.
-#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "s390x",
+  not(miri),
+  not(feature = "portable-only")
+))]
 pub(super) unsafe fn diag_s390x_multiply_ntts_add_assign_input_digest(a: Poly, b: Poly, mut acc: Poly) -> u16 {
   // SAFETY: Direct z/Vector diagnostic call because:
   // 1. The caller guarantees the s390x z/Vector facility is available.
@@ -1032,7 +1062,13 @@ pub(super) unsafe fn diag_s390x_multiply_ntts_add_assign_input_digest(a: Poly, b
 ///
 /// The caller must ensure the CPU supports the s390x z/Vector facility before
 /// executing this function.
-#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "s390x",
+  not(miri),
+  not(feature = "portable-only")
+))]
 pub(super) unsafe fn diag_s390x_multiply_ntts_accumulate_k3_input_digest(
   mut a: PolyVec<3>,
   mut b: PolyVec<3>,
@@ -1060,7 +1096,13 @@ pub(super) unsafe fn diag_s390x_multiply_ntts_accumulate_k3_input_digest(
 ///
 /// The caller must ensure the CPU supports the s390x z/Vector facility before
 /// executing this function.
-#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "s390x",
+  not(miri),
+  not(feature = "portable-only")
+))]
 pub(super) unsafe fn diag_s390x_multiply_ntts_accumulate_k4_input_digest(
   mut a: PolyVec<4>,
   mut b: PolyVec<4>,
@@ -1082,7 +1124,7 @@ pub(super) unsafe fn diag_s390x_multiply_ntts_accumulate_k4_input_digest(
   digest
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 pub(super) fn diag_compress_decompress_values_digest(values: [u16; 4]) -> u16 {
   let compressed = compress_values_4::<10>(values);
   let decompressed = decompress_values_4::<10>(compressed);
@@ -1119,7 +1161,13 @@ pub(super) fn diag_compress_decompress_values_digest(values: [u16; 4]) -> u16 {
 ///
 /// The caller must ensure the CPU supports the s390x z/Vector facility before
 /// executing this function.
-#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "s390x",
+  not(miri),
+  not(feature = "portable-only")
+))]
 pub(super) unsafe fn diag_s390x_compress_decompress_values_digest(values: [u16; 4]) -> u16 {
   // SAFETY: Direct z/Vector diagnostic calls because:
   // 1. The caller guarantees the s390x z/Vector facility is available.
@@ -1168,7 +1216,7 @@ fn fill_diag_seed(out: &mut [u8; SEED_BYTES], seed: u8) {
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[inline(never)]
 fn diag_fold_poly(poly: &Poly) -> u16 {
   let mut acc = 0u16;
@@ -5816,7 +5864,7 @@ fn signed_to_mod_q_s16x4(value: int16x4_t) -> uint16x4_t {
 
 #[cfg(all(
   target_arch = "aarch64",
-  any(test, feature = "diag"),
+  any(test, all(rscrypto_internal, feature = "diag")),
   not(miri),
   not(feature = "portable-only")
 ))]
@@ -6373,7 +6421,7 @@ fn base_case_multiply_normal_reference(a0: u16, a1: u16, b0: u16, b1: u16, gamma
 
 #[cfg(any(
   test,
-  feature = "diag",
+  all(rscrypto_internal, feature = "diag"),
   not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))
 ))]
 fn poly_to_montgomery_product_domain(poly: &mut Poly) {

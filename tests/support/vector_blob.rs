@@ -1,3 +1,5 @@
+//! Decode the vendored Blobby vector corpora used by the official-vector tests.
+
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub(crate) enum Error {
   InvalidVlq,

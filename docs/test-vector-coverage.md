@@ -1,9 +1,9 @@
 # Test evidence
 
-This map identifies the independent evidence behind each primitive family and
-the important boundaries that remain outside it. Test filenames are the stable
-entry points; individual corpus files remain owned by `testdata/` and the test
-readers.
+This map identifies the independent evidence behind each primitive family
+and the important boundaries that remain outside it.
+Test filenames are the stable entry points;
+individual corpus files remain owned by `testdata/` and the test readers.
 
 ## Coverage map
 
@@ -19,23 +19,28 @@ readers.
 | ECDSA, Ed25519, X25519 | RFC or official vectors, Wycheproof, RustCrypto/dalek oracles, properties, and fuzzing | ASN.1, JWK, or variable-length profiles are excluded where the public API accepts fixed arrays only. |
 | P-256 ECDH | All 25 NIST CAVP P-256 ECC CDH component records, all 355 pinned Wycheproof `ecpoint` cases, RustCrypto differentials, a ring cross-agreement, Miri, and fuzzing | The first public surface accepts canonical uncompressed SEC1 points only. Wycheproof supplies the full-width leading-zero and all-zero x-coordinate cases; the NIST slice does not contain a full leading-zero byte. |
 | ML-KEM-512/768/1024 | NIST ACVP key-generation, encapsulation, decapsulation, and key-check vectors plus `fips203` differentials | No vendored Wycheproof ML-KEM suite is mapped. |
-| RSA signatures, encryption, and parsing | NIST CAVP, Wycheproof, RustCrypto oracles, profile-confusion, allocation, and leakage tests | Public APIs expose fixed SHA-2 profiles rather than every Wycheproof parameter combination. |
+| RSA signatures, encryption, and parsing | NIST CAVP, Wycheproof, RustCrypto and system OpenSSL/LibreSSL oracles, profile-confusion, allocation, and leakage tests | Public APIs expose fixed SHA-2 profiles rather than every Wycheproof parameter combination; system-library oracle availability depends on the test host. |
 | Dispatch and fallback | Portable-versus-accelerated differential tests across lengths, tails, and vectored input | Cross-compilation alone is not runtime evidence. |
 
-The WebSocket accept digest has the RFC 6455 example, private SHA-1 known-answer
-tests, RustCrypto differential tests, and fuzzing. It is compatibility-only and
-makes no collision-resistance or authentication claim.
+The WebSocket accept digest has the RFC 6455 example, private SHA-1 known-answer tests,
+RustCrypto differential tests, and fuzzing.
+It is compatibility-only and makes no collision-resistance or authentication claim.
 
 ## Run the evidence
 
-```sh
+```bash
 just test --all
-just test-fuzz
+just test-fuzz --all
 ```
 
-Specialized Miri, target, constant-time, and leakage recipes are listed by
-`just --list`.
+Specialized Miri, target, constant-time, and leakage recipes are listed by `just --list`.
 
-A passing vector proves behavior for that vector. Stronger assurance comes from
-combining published vectors, a separate implementation, properties, hostile
-inputs, fuzzing, portable-versus-accelerated equivalence, and target execution.
+The [Fuzz workflow](../.github/workflows/fuzz.yml) runs x86-64 fuzzing and focused Miri checks for pull requests.
+Release qualification selects both x86-64 and ARM64 fuzzing.
+Each fuzz job replays the committed corpus under AddressSanitizer before its bounded live campaign.
+Runner profiles can change independently of the target selection, concurrency, and sampling budgets;
+elapsed time alone does not establish equal fuzzing throughput.
+
+A passing vector proves behavior for that vector.
+Stronger assurance comes from combining published vectors, a separate implementation, properties,
+hostile inputs, fuzzing, portable-versus-accelerated equivalence, and target execution.

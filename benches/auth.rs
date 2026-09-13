@@ -28,8 +28,8 @@ use rscrypto::{
   P256EphemeralSecret, P256PublicKey, Pbkdf2Sha256, Pbkdf2Sha512, X25519SecretKey,
 };
 use rustcrypto_ml_kem::{
-  DecapsulationKey as RustCryptoMlKemDecapsulationKey, KeyExport as _, MlKem512 as RustCryptoMlKem512,
-  MlKem768 as RustCryptoMlKem768, MlKem1024 as RustCryptoMlKem1024, Seed as RustCryptoMlKemSeed, kem::Decapsulate as _,
+  DecapsulationKey as RustCryptoMlKemDecapsulationKey, MlKem512 as RustCryptoMlKem512, MlKem768 as RustCryptoMlKem768,
+  MlKem1024 as RustCryptoMlKem1024, Seed as RustCryptoMlKemSeed, kem::Decapsulate as _,
 };
 use x25519_dalek::{PublicKey as DalekX25519PublicKey, StaticSecret as DalekX25519Secret};
 
@@ -110,7 +110,7 @@ impl ring::hkdf::KeyType for RingHkdfLen {
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn print_auth_diag_once() {
   use std::sync::Once;
 
@@ -136,7 +136,7 @@ fn print_auth_diag_once() {
   });
 }
 
-#[cfg(not(feature = "diag"))]
+#[cfg(not(all(rscrypto_internal, feature = "diag")))]
 #[inline]
 fn print_auth_diag_once() {}
 
@@ -1201,7 +1201,7 @@ fn ecdsa_p384_public_key(c: &mut Criterion) {
   g.finish();
 }
 
-#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
 fn ecdsa_p256_internal(c: &mut Criterion) {
   if !bench_config::selected("ecdsa-p256/internal") {
     return;
@@ -1303,7 +1303,7 @@ fn ecdsa_p256_internal(c: &mut Criterion) {
   g.finish();
 }
 
-#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
 fn ecdsa_p384_internal(c: &mut Criterion) {
   if !bench_config::selected("ecdsa-p384/internal") {
     return;
@@ -1573,7 +1573,7 @@ fn ed25519_verify(c: &mut Criterion) {
   g.finish();
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn ed25519_verify_phase(c: &mut Criterion) {
   if !bench_config::selected("ed25519/verify-phase") {
     return;
@@ -2155,12 +2155,8 @@ macro_rules! mlkem_profile_benches {
     $rustcrypto:ty,
     $aws_algorithm:ident
   ) => {
-    // Expanded encoding is intentional: all rows must return the same key bytes,
-    // rather than comparing RustCrypto's preferred seed export with expanded keys.
-    #[expect(deprecated, reason = "expanded key encoding must match the other benchmark implementations")]
     fn $keygen_fn(c: &mut Criterion) {
       if !bench_config::selected(concat!($group, "/keygen/")) { return; }
-      use rustcrypto_ml_kem::ExpandedKeyEncoding as _;
       let key_random = deterministic_bytes::<64>(0x10);
       let rs_keygen = || {
         let (ek, dk) = <$profile>::generate_keypair(|out| {
@@ -2180,10 +2176,6 @@ macro_rules! mlkem_profile_benches {
         let seed = black_box(&key_random);
         let (ek, dk) = $fips::KG::keygen_from_seed(array_from_slice(&seed[..32]), array_from_slice(&seed[32..]));
         (ek.into_bytes(), dk.into_bytes())
-      });
-      checked_mlkem_bench(&mut g, "rustcrypto", &expected, || {
-        let dk = RustCryptoMlKemDecapsulationKey::<$rustcrypto>::from_seed(RustCryptoMlKemSeed::from(*black_box(&key_random)));
-        (array_from_slice(dk.encapsulation_key().to_bytes().as_slice()), array_from_slice(dk.to_expanded_bytes().as_slice()))
       });
       g.finish();
 
@@ -2310,8 +2302,6 @@ macro_rules! mlkem_profile_benches {
       }
     }
 
-    // The expanded-key import is required to hold the serialized input fixed.
-    #[expect(deprecated, reason = "expanded key encoding must match the other benchmark implementations")]
     fn $decapsulate_fn(c: &mut Criterion) {
       if !bench_config::selected(concat!($group, "/decapsulate/")) { return; }
       let key_random = deterministic_bytes::<64>(0x30);
@@ -2326,7 +2316,7 @@ macro_rules! mlkem_profile_benches {
       let dk_bytes = *dk.as_bytes();
       let ct_bytes = ct.to_bytes();
       let prepared_dk = dk.prepare().expect("ML-KEM key preparation");
-      let rustcrypto_dk = RustCryptoMlKemDecapsulationKey::<$rustcrypto>::from_expanded(&dk_bytes.into()).expect("RustCrypto key import");
+      let rustcrypto_dk = RustCryptoMlKemDecapsulationKey::<$rustcrypto>::from_seed(RustCryptoMlKemSeed::from(key_random));
       let rustcrypto_ct = ct_bytes.into();
       let fips_dk = $fips::DecapsKey::try_from_bytes(dk_bytes).expect("fips203 key import");
       let fips_ct = $fips::CipherText::try_from_bytes(ct_bytes).expect("fips203 ciphertext import");
@@ -2366,10 +2356,6 @@ macro_rules! mlkem_profile_benches {
         let dk = <<$profile as rscrypto::Kem>::DecapsulationKey>::try_from_slice(black_box(&dk_bytes)).expect("ML-KEM key import");
         let ct = <<$profile as rscrypto::Kem>::Ciphertext>::try_from_slice(black_box(&ct_bytes)).expect("ML-KEM ciphertext import");
         *<$profile>::decapsulate(&dk, &ct).expect("ML-KEM decapsulation").as_bytes()
-      });
-      checked_mlkem_bench(&mut g, "rustcrypto", &expected, || {
-        let dk = RustCryptoMlKemDecapsulationKey::<$rustcrypto>::from_expanded(&(*black_box(&dk_bytes)).into()).expect("RustCrypto key import");
-        array_from_slice(dk.decapsulate(&(*black_box(&ct_bytes)).into()).as_slice())
       });
       checked_mlkem_bench(&mut g, "libcrux", &expected, || {
         let dk = libcrux_ml_kem::MlKemPrivateKey::from(*black_box(&dk_bytes));
@@ -2441,18 +2427,18 @@ fn main() {
     ecdsa_p256_public_key,
     ecdsa_p256_sign,
     ecdsa_p256_verify,
-    #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+    #[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
     ecdsa_p256_internal,
     ecdsa_p384_public_key,
     ecdsa_p384_sign,
     ecdsa_p384_verify,
-    #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+    #[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
     ecdsa_p384_internal,
     ed25519_public_key,
     ed25519_keypair_from_secret,
     ed25519_sign,
     ed25519_verify,
-    #[cfg(feature = "diag")]
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     ed25519_verify_phase,
     x25519_public_key,
     x25519_diffie_hellman,

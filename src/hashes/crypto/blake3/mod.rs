@@ -245,7 +245,7 @@ fn with_subtree_scratch<R>(
   })
 }
 
-#[cfg(all(feature = "parallel", feature = "diag"))]
+#[cfg(all(feature = "parallel", all(rscrypto_internal, feature = "diag")))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -2505,7 +2505,7 @@ fn digest_public_oneshot(mut key_words: [u32; 8], flags: u32, input: &[u8]) -> [
   digest
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Computes the constant-time evidence digest with the portable kernel.
 #[must_use]
 pub fn diag_blake3_keyed_digest_portable(key: &[u8; KEY_LEN]) -> Blake3KeyedHash {
@@ -2516,7 +2516,7 @@ pub fn diag_blake3_keyed_digest_portable(key: &[u8; KEY_LEN]) -> Blake3KeyedHash
   digest
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -2527,7 +2527,7 @@ pub fn diag_zeroize_blake3_drop(mut key: [u8; KEY_LEN]) -> u8 {
   core::hint::black_box(state.finalize()[0])
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -2540,7 +2540,7 @@ pub fn diag_zeroize_blake3_reuse(mut key: [u8; KEY_LEN]) -> u8 {
   core::hint::black_box(state.finalize()[0])
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -2550,7 +2550,7 @@ pub fn diag_zeroize_blake3_xof_move(mut key: [u8; KEY_LEN]) -> u8 {
   diag_zeroize_blake3_xof_consume(reader)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -2560,7 +2560,7 @@ pub fn diag_zeroize_blake3_xof_consume(mut reader: Blake3XofReader) -> u8 {
   core::hint::black_box(output[0])
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// BLAKE3 kernels exposed for diagnostic comparison.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Blake3DiagKernel {
@@ -2598,7 +2598,7 @@ pub enum Blake3DiagKernel {
   Aarch64Neon,
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 impl Blake3DiagKernel {
   #[inline]
   /// Returns the stable diagnostic label for this kernel.
@@ -2716,7 +2716,7 @@ impl Blake3DiagKernel {
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[inline]
 /// Returns whether the current CPU supports the diagnostic kernel.
 #[must_use]
@@ -2734,7 +2734,7 @@ pub fn diag_blake3_kernel_available(kernel: Blake3DiagKernel) -> bool {
   crate::platform::caps().has(kernels::required_caps(kernel.kernel_id()))
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[inline]
 #[must_use]
 fn diag_blake3_kernel(kernel: Blake3DiagKernel) -> Option<Kernel> {
@@ -2763,7 +2763,7 @@ fn diag_blake3_kernel(kernel: Blake3DiagKernel) -> Option<Kernel> {
   Some(kernels::kernel(kernel.kernel_id()))
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Computes a digest with a selected diagnostic kernel.
 #[must_use]
 pub fn diag_blake3_digest_with_kernel(kernel: Blake3DiagKernel, data: &[u8]) -> Option<[u8; OUT_LEN]> {
@@ -2771,7 +2771,7 @@ pub fn diag_blake3_digest_with_kernel(kernel: Blake3DiagKernel, data: &[u8]) -> 
   Some(digest_oneshot(kernel, IV, 0, data))
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Computes a keyed digest with a selected diagnostic kernel.
 #[must_use]
 pub fn diag_blake3_keyed_digest_with_kernel(
@@ -2786,7 +2786,7 @@ pub fn diag_blake3_keyed_digest_with_kernel(
   Some(digest)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Fills XOF output with a selected diagnostic kernel.
 pub fn diag_blake3_xof_with_kernel(kernel: Blake3DiagKernel, data: &[u8], out: &mut [u8]) -> Option<()> {
   let kernel = diag_blake3_kernel(kernel)?;
@@ -2805,7 +2805,7 @@ pub fn diag_blake3_xof_with_kernel(kernel: Blake3DiagKernel, data: &[u8], out: &
   Some(())
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Computes a streaming digest with a selected diagnostic kernel and update size.
 #[must_use]
 pub fn diag_blake3_streaming_digest_with_kernel(
@@ -2828,7 +2828,7 @@ pub fn diag_blake3_streaming_digest_with_kernel(
   Some(hasher.finalize())
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Writes full-chunk chaining values with a selected diagnostic kernel.
 pub fn diag_blake3_chunk_cvs_with_kernel(kernel: Blake3DiagKernel, data: &[u8], out: &mut [u8]) -> Option<()> {
   #[cfg(target_arch = "x86_64")]
@@ -2857,7 +2857,7 @@ pub fn diag_blake3_chunk_cvs_with_kernel(kernel: Blake3DiagKernel, data: &[u8], 
   Some(())
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Writes parent chaining values with a selected diagnostic kernel.
 pub fn diag_blake3_parent_cvs_with_kernel(kernel: Blake3DiagKernel, children: &[u8], out: &mut [u8]) -> Option<()> {
   #[cfg(target_arch = "x86_64")]
@@ -4282,7 +4282,7 @@ fn use_x86_hash_many_exact_block_one_chunk_fast_path(kernel: Kernel, input_len: 
     return false;
   }
 
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   if kernel.owned_x86_compress {
     return false;
   }
@@ -4351,7 +4351,7 @@ unsafe fn avx2_owned_exact_block_chain(
   output
 }
 
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
 #[inline]
 /// Hashes one exact-block input through every AVX-512 lane.
 ///
@@ -4453,7 +4453,7 @@ unsafe fn xof_oneshot_single_chunk_x86_exact_blocks(
       }
     }
     kernels::Blake3KernelId::X86Avx512 => {
-      #[cfg(feature = "diag")]
+      #[cfg(all(rscrypto_internal, feature = "diag"))]
       if kernel.owned_x86_hash_many {
         let prefix_len = prefix_blocks.strict_mul(BLOCK_LEN);
         // SAFETY: Diagnostic availability checked the owned AVX-512 hash-many feature set, and the prefix
@@ -4491,7 +4491,7 @@ unsafe fn xof_oneshot_single_chunk_x86_exact_blocks(
           return None;
         }
       }
-      #[cfg(not(feature = "diag"))]
+      #[cfg(not(all(rscrypto_internal, feature = "diag")))]
       {
         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         let input_ptrs = [input.as_ptr()];
@@ -4596,7 +4596,7 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
     let flags_u8 = u8::try_from(flags).expect("BLAKE3 flags fit in u8");
     let flags_start_u8 = u8::try_from(flags_start).expect("BLAKE3 start flags fit in u8");
     let flags_end_u8 = u8::try_from(flags_end).expect("BLAKE3 root flags fit in u8");
-    #[cfg(feature = "diag")]
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     if kernel.owned_x86_hash_many {
       // SAFETY: Diagnostic availability checked the owned AVX-512 hash-many feature set, and `input` is
       // one exact-block chunk prefix no longer than CHUNK_LEN.
@@ -4606,9 +4606,9 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
       }
       return output;
     }
-    #[cfg(feature = "diag")]
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     let force_avx512_exact_block_asm = kernel.force_x86_avx512_exact_block_asm;
-    #[cfg(not(feature = "diag"))]
+    #[cfg(not(all(rscrypto_internal, feature = "diag")))]
     let force_avx512_exact_block_asm = false;
     if blocks == 4 && !force_avx512_exact_block_asm && use_avx512_four_block_avx2_fast_path() {
       // For the exact 4-block one-chunk case (256B input), the AVX2 path is a
@@ -4899,7 +4899,7 @@ unsafe fn digest_one_chunk_root_hash_words_aarch64(
 
 #[cfg(test)]
 mod tests {
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   use super::CHUNK_LEN;
   use super::{Blake3, Blake3KeyedHash, OUT_LEN};
   use crate::traits::{Digest, VerificationError, Xof};
@@ -4932,7 +4932,7 @@ mod tests {
     }
   }
 
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   #[test]
   fn diag_forced_kernels_match_normal_paths() {
     use super::{
@@ -4993,7 +4993,7 @@ mod tests {
     }
   }
 
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   #[test]
   fn diag_raw_cv_helpers_match_portable() {
     use super::{

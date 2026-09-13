@@ -1,7 +1,6 @@
 //! Internal CRC kernel tables and one-shot helpers.
 //!
-//! The public `checksum::dispatch` API was removed. What remains here is the
-//! internal table-driven selector and its manually maintained kernel choices.
+//! Table-driven selection with manually maintained kernel choices.
 
 #[cfg(feature = "crc16")]
 use crate::checksum::dispatchers::Crc16Fn;
@@ -17,8 +16,7 @@ use crate::platform::Caps;
 
 /// Global cached kernel table, resolved once on first use.
 ///
-/// This is the heart of the new dispatch system. Platform detection happens
-/// exactly once, and all subsequent CRC calls use this pre-resolved table.
+/// Platform detection runs once; subsequent CRC calls reuse the selected table.
 #[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", any(test, feature = "diag")))]
 static ACTIVE_TABLE: crate::backend::cache::OnceCache<&'static KernelTable> = crate::backend::cache::OnceCache::new();
 #[cfg(feature = "crc64")]

@@ -34,7 +34,7 @@ use rsa::{
 };
 #[cfg(feature = "getrandom")]
 use rscrypto::RsaEncryptionError;
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 use rscrypto::auth::rsa::{
   diag_rsa_private_exponentiate_fixed_width, diag_rsa_private_exponentiate_fixed_width_with_scratch,
   diag_rsa_public_operation_bitserial, diag_rsa_public_operation_cios, diag_rsa_public_operation_cios_portable,
@@ -3587,7 +3587,7 @@ fn public_operation_boundary_representatives_match_independent_reference_across_
 }
 
 #[test]
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn diagnostic_private_exponentiation_matches_independent_fixed_width_reference() {
   let len = 128;
   let modulus = vec![0xa5; len];
@@ -3790,7 +3790,7 @@ fn public_scratch_reuses_after_modulus_minus_one_operation() {
     .expect("PSS verification must succeed after repeated scratch reuse");
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[test]
 fn public_operation_bitserial_baseline_matches_montgomery_path() {
   let modulus = hex_to_vec(
@@ -3866,7 +3866,7 @@ d5add90a8a212c10dd997b0a4efcb3df990808509dcb28c504e0649827a83ffd864395d1f62f2\
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[test]
 fn public_operation_montgomery_candidates_match_current_path() {
   for (name, spki, signature) in [
@@ -4622,7 +4622,7 @@ dd4fcc492a891d8536ef91cc228a3dbf66f0c70596f9cd101fe95d127550e7a4a9864430bd3\
   assert!(key.verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, message, &sig).is_err());
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[test]
 fn pss_encoded_message_oracle_failures_are_opaque() {
   let key = legacy_public_key_from_spki(&pss_fixture_public_key());
@@ -4702,7 +4702,7 @@ fn pss_encoded_message_oracle_failures_are_opaque() {
   ));
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[test]
 fn pkcs1v15_encoded_message_oracle_failures_are_opaque() {
   let key = legacy_public_key_from_spki(&pkcs1v15_fixture_public_key());

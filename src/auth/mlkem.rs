@@ -901,7 +901,7 @@ macro_rules! mlkem_diag_keygen_secret_noise {
     #[doc = concat!("Diagnostic digest for ", $doc_name, " PKE key generation with fixed public matrix seed.")]
     /// This is only available under `diag`; production key generation continues to derive
     /// both seeds through the FIPS 203 `G(d || k)` expansion.
-    #[cfg(feature = "diag")]
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     #[inline]
     #[must_use]
     pub fn $name(rho: [u8; ML_KEM_SEED_SIZE], sigma: [u8; ML_KEM_SEED_SIZE]) -> [u8; ML_KEM_SHARED_SECRET_SIZE] {
@@ -928,7 +928,7 @@ mlkem_diag_keygen_secret_noise!(
   "ML-KEM-1024"
 );
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[inline]
 #[must_use]
@@ -942,7 +942,13 @@ pub fn diag_mlkem_ntt_input_digest(poly: [u16; 256]) -> u16 {
 ///
 /// The caller must ensure the CPU supports the s390x z/Vector facility before
 /// executing this function.
-#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "s390x",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[doc(hidden)]
 #[inline]
 #[must_use]
@@ -951,7 +957,7 @@ pub unsafe fn diag_mlkem_s390x_ntt_input_digest(poly: [u16; 256]) -> u16 {
   unsafe { portable::diag_s390x_ntt_input_digest(poly) }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[inline]
 #[must_use]
@@ -965,7 +971,13 @@ pub fn diag_mlkem_inverse_ntt_montgomery_product_input_digest(poly: [u16; 256]) 
 ///
 /// The caller must ensure the CPU supports the s390x z/Vector facility before
 /// executing this function.
-#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "s390x",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[doc(hidden)]
 #[inline]
 #[must_use]
@@ -974,7 +986,7 @@ pub unsafe fn diag_mlkem_s390x_inverse_ntt_montgomery_product_input_digest(poly:
   unsafe { portable::diag_s390x_inverse_ntt_montgomery_product_input_digest(poly) }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[inline]
 #[must_use]
@@ -982,7 +994,7 @@ pub fn diag_mlkem_multiply_ntts_add_assign_input_digest(a: [u16; 256], b: [u16; 
   portable::diag_multiply_ntts_add_assign_input_digest(a, b, acc)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[inline]
 #[must_use]
@@ -994,7 +1006,7 @@ pub fn diag_mlkem768_multiply_ntts_accumulate_input_digest(
   portable::diag_multiply_ntts_accumulate_k3_input_digest(a, b, acc)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[inline]
 #[must_use]
@@ -1006,7 +1018,7 @@ pub fn diag_mlkem1024_multiply_ntts_accumulate_input_digest(
   portable::diag_multiply_ntts_accumulate_k4_input_digest(a, b, acc)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[inline]
 #[must_use]
@@ -1014,7 +1026,7 @@ pub fn diag_mlkem_to_montgomery_product_domain_input_digest(poly: [u16; 256]) ->
   portable::diag_to_montgomery_product_domain_input_digest(poly)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[inline]
 #[must_use]
@@ -1028,7 +1040,13 @@ pub fn diag_mlkem_from_montgomery_product_domain_input_digest(poly: [u16; 256]) 
 ///
 /// The caller must ensure the CPU supports the s390x z/Vector facility before
 /// executing this function.
-#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "s390x",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[doc(hidden)]
 #[inline]
 #[must_use]
@@ -1043,7 +1061,13 @@ pub unsafe fn diag_mlkem_s390x_to_montgomery_product_domain_input_digest(poly: [
 ///
 /// The caller must ensure the CPU supports the s390x z/Vector facility before
 /// executing this function.
-#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "s390x",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[doc(hidden)]
 #[inline]
 #[must_use]
@@ -1058,7 +1082,13 @@ pub unsafe fn diag_mlkem_s390x_from_montgomery_product_domain_input_digest(poly:
 ///
 /// The caller must ensure the CPU supports the s390x z/Vector facility before
 /// executing this function.
-#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "s390x",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[doc(hidden)]
 #[inline]
 #[must_use]
@@ -1077,7 +1107,13 @@ pub unsafe fn diag_mlkem_s390x_multiply_ntts_add_assign_input_digest(
 ///
 /// The caller must ensure the CPU supports the s390x z/Vector facility before
 /// executing this function.
-#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "s390x",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[doc(hidden)]
 #[inline]
 #[must_use]
@@ -1096,7 +1132,13 @@ pub unsafe fn diag_mlkem_s390x_multiply_ntts_accumulate_k3_input_digest(
 ///
 /// The caller must ensure the CPU supports the s390x z/Vector facility before
 /// executing this function.
-#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "s390x",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[doc(hidden)]
 #[inline]
 #[must_use]
@@ -1109,7 +1151,7 @@ pub unsafe fn diag_mlkem_s390x_multiply_ntts_accumulate_k4_input_digest(
   unsafe { portable::diag_s390x_multiply_ntts_accumulate_k4_input_digest(a, b, acc) }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[inline]
 #[must_use]
@@ -1123,7 +1165,13 @@ pub fn diag_mlkem_compress_decompress_values_digest(values: [u16; 4]) -> u16 {
 ///
 /// The caller must ensure the CPU supports the s390x z/Vector facility before
 /// executing this function.
-#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "s390x",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[doc(hidden)]
 #[inline]
 #[must_use]

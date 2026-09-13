@@ -42,6 +42,16 @@ class Selection(unittest.TestCase):
                 rows = json.loads(values['matrix'])['include']
                 self.assertEqual(len(rows), count)
                 self.assertTrue(all(row['timeout'] == 360 for row in rows))
+                expected_runners = {
+                    'x86_64-linux': 'runs-on=123/runner=ct-x86_64-linux-intel/env=production',
+                    'aarch64-linux': 'runs-on=123/runner=ct-aarch64-linux/env=production',
+                    'x86_64-win': 'runs-on=123/runner=ct-x86_64-win-intel/env=production',
+                    'riscv64-linux': 'ubuntu-24.04-riscv',
+                    'powerpc64le-linux': 'ubuntu-24.04-ppc64le-p10',
+                    's390x-linux': 'ubuntu-24.04-s390x',
+                }
+                self.assertEqual([row['runner'] for row in rows],
+                                 [expected_runners[row['platform']] for row in rows])
                 expected = {
                     'riscv64-linux': 'riscv64gc-unknown-linux-gnu',
                     'powerpc64le-linux': 'powerpc64le-unknown-linux-gnu',

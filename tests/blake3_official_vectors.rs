@@ -3,7 +3,7 @@
 mod support;
 
 use rscrypto::{Digest, hashes::crypto::Blake3, traits::Xof as _};
-use support::blobby_compat::BlobIterator;
+use support::vector_blob::BlobIterator;
 
 fn update_input_pattern(hasher: &mut Blake3, len: usize) {
   let mut remaining = len;

@@ -18,7 +18,7 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from benchmark_catalog import case_class, load_catalog, resolve_selector
-from execution import build, build_command, build_environment, build_identity, digest, discover, match_cases, exit_code, identity, write_json, source_evidence
+from execution import enable_internal, build, build_command, build_environment, build_identity, digest, discover, match_cases, exit_code, identity, write_json, source_evidence
 from measure import measure, verify
 import settings
 
@@ -202,6 +202,8 @@ def bench(args, catalog) -> None:
     from transfer import prepare
     prepare(ROOT, args.target, args.prepare_archive.resolve(), Path(args.output_dir).resolve(), rows, effective)
     return
+  if not args.run_archive:
+    enable_internal(rows)
   if args.list:
     with tempfile.TemporaryDirectory(prefix="rscrypto-list-") as directory:
       root = Path(directory)
@@ -268,9 +270,12 @@ def main() -> int:
     bench(args, catalog)
   elif args.mode == "profile":
     from profile import profile
-    profile(args, target(catalog, args.target, args.diag))
+    entry = target(catalog, args.target, args.diag)
+    enable_internal([entry])
+    profile(args, entry)
   else:
     entry = target(catalog, args.target, args.diag)
+    enable_internal([entry])
     command = ["cargo", "asm" if args.mode == "codegen" else "llvm-lines", "--locked", "--lib", "--profile", "bench",
                "--no-default-features", "--features", ",".join(entry["features"])]
     extra = args.args[1:] if args.args[:1] == ["--"] else args.args

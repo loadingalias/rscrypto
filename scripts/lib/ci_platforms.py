@@ -11,7 +11,7 @@ PLATFORMS = {
 }
 
 
-def platforms(value: str, run_id: str) -> dict:
+def platforms(value: str, run_id: str, *, runner_prefix: str = 'measure') -> dict:
     names = list(PLATFORMS) if value.strip() == 'all' else list(dict.fromkeys(value.replace(',', ' ').split()))
     if not names or any(name not in PLATFORMS for name in names):
         raise ValueError('architectures must be all or a list of: ' + ', '.join(PLATFORMS))
@@ -20,7 +20,7 @@ def platforms(value: str, run_id: str) -> dict:
     rows = []
     for name in names:
         runner, timeout = PLATFORMS[name]
-        label = (f'runs-on={run_id}/runner={runner}/env=production'
+        label = (f'runs-on={run_id}/runner={runner_prefix}-{runner.removeprefix("measure-")}/env=production'
                  if runner.startswith('measure-') else runner)
         rows.append({'platform': name, 'runner': label, 'timeout': timeout})
     return {'include': rows}

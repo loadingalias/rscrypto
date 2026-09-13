@@ -28,23 +28,31 @@ class Compatibility(unittest.TestCase):
             selector.chmod(0o755)
             runner = root / 'scripts/test/test.sh'
             runner.write_text('#!' + sys.executable + '\n' + """import json,os,sys
+from pathlib import Path
 with open(os.environ['LOG'], 'a') as log:
     log.write(json.dumps([sys.argv[1:], os.environ['CARGO_BUILD_TARGET'],
                          os.environ['CC_' + os.environ['CARGO_BUILD_TARGET'].replace('-', '_')],
                          os.environ['CARGO_TARGET_' + os.environ['CARGO_BUILD_TARGET'].replace('-', '_').upper() + '_LINKER']]) + '\\n')
-sys.exit(int(os.environ['FAIL']))
+count = len(Path(os.environ['LOG']).read_text().splitlines())
+sys.exit(7 if count == int(os.environ['FAIL_AT']) else 0)
 """)
             runner.chmod(0o755)
+            binary = root / 'bin'
+            binary.mkdir()
+            (binary / 'just').symlink_to(runner)
+            environment = {key: value for key, value in os.environ.items() if key not in ('BASH_ENV', 'ENV')}
+            environment['PATH'] = str(binary) + os.pathsep + os.environ['PATH']
             for arch in ('x86_64', 'aarch64'):
-                for fail in (0, 7):
+                for fail_at in (0, 1, 2, 3):
                     log = root / 'log'
                     log.write_text('')
                     result = subprocess.run([shutil.which('bash'), 'scripts/test/test-musl.sh'], cwd=root,
-                                            env={**os.environ, 'FIXTURE_HOST': arch + '-unknown-linux-gnu',
-                                                 'LOG': str(log), 'FAIL': str(fail)}, capture_output=True, text=True)
-                    self.assertEqual(result.returncode, fail, result.stderr)
+                                            env={**environment, 'FIXTURE_HOST': arch + '-unknown-linux-gnu',
+                                                 'LOG': str(log), 'FAIL_AT': str(fail_at)}, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 7 if fail_at else 0, result.stderr)
                     rows = [json.loads(line) for line in log.read_text().splitlines()]
-                    profiles = [['--all', '--release']] if fail else [['--all', '--release'], ['--all', '--release', '--portable']]
+                    profiles = [['--all', '--release'], ['--all', '--release', '--portable'], ['test-evidence']]
+                    profiles = profiles[:fail_at or len(profiles)]
                     self.assertEqual(rows, [[profile, arch + '-unknown-linux-musl', 'musl-gcc', 'musl-gcc']
                                             for profile in profiles])
 

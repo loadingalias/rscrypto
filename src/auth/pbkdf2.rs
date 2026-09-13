@@ -467,27 +467,6 @@ macro_rules! define_pbkdf2_sha2 {
         )
       }
 
-      /// Verify `expected` after a full public-length comparison using an
-      /// explicit lower-bound password policy.
-      ///
-      /// This compatibility method does not impose an upper work limit. Use
-      /// [`verify_with_policy_bounded`](Self::verify_with_policy_bounded) when
-      /// the iteration count comes from an untrusted password record.
-      ///
-      /// Generated-code timing claims are configuration- and release-evidence-bound;
-      /// see `ct.toml`.
-      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
-      pub fn verify_with_policy(
-        &self,
-        salt: &[u8],
-        iterations: u32,
-        expected: &[u8],
-        policy: &Pbkdf2VerifyPolicy,
-      ) -> Result<(), VerificationError> {
-        let params = Self::params_with_policy(salt, iterations, policy).map_err(|_| VerificationError::new())?;
-        self.verify_primitive(params.salt(), params.iterations(), expected)
-      }
-
       /// Verify `expected` under an explicit lower-bound policy and
       /// caller-selected verification work limit.
       #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
@@ -517,7 +496,7 @@ macro_rules! define_pbkdf2_sha2 {
       ///
       /// This is the primitive/test-vector verification path. Stored password
       /// verification should use [`verify`](Self::verify),
-      /// [`verify_with_policy`](Self::verify_with_policy), or
+      /// [`verify_with_policy_bounded`](Self::verify_with_policy_bounded), or
       /// [`verify_password`](Self::verify_password).
       #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify_primitive(&self, salt: &[u8], iterations: u32, expected: &[u8]) -> Result<(), VerificationError> {
@@ -642,25 +621,6 @@ macro_rules! define_pbkdf2_sha2 {
         )
       }
 
-      /// Verify a password in one shot using an explicit lower-bound password
-      /// policy.
-      ///
-      /// This compatibility method does not impose an upper work limit. Use
-      /// [`verify_password_with_policy_bounded`](Self::verify_password_with_policy_bounded)
-      /// when the iteration count comes from an untrusted password record.
-      #[inline]
-      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
-      pub fn verify_password_with_policy(
-        password: &[u8],
-        salt: &[u8],
-        iterations: u32,
-        expected: &[u8],
-        policy: &Pbkdf2VerifyPolicy,
-      ) -> Result<(), VerificationError> {
-        let params = Self::params_with_policy(salt, iterations, policy).map_err(|_| VerificationError::new())?;
-        Self::new(password).verify_primitive(params.salt(), params.iterations(), expected)
-      }
-
       /// Verify a password in one shot under an explicit lower-bound policy
       /// and caller-selected verification work limit.
       #[inline]
@@ -681,7 +641,7 @@ macro_rules! define_pbkdf2_sha2 {
       ///
       /// This is the primitive/test-vector verification path. Stored password
       /// verification should use [`verify_password`](Self::verify_password) or
-      /// [`verify_password_with_policy`](Self::verify_password_with_policy).
+      /// [`verify_password_with_policy_bounded`](Self::verify_password_with_policy_bounded).
       #[inline]
       #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify_password_primitive(
@@ -693,8 +653,8 @@ macro_rules! define_pbkdf2_sha2 {
         Self::new(password).verify_primitive(salt, iterations, expected)
       }
 
-      /// Test-only: build with a specific digest compress function.
-      #[cfg(any(test, feature = "diag"))]
+      /// Build with a specific digest compress function for tests and internal proofs.
+      #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
       pub(crate) fn new_with_compress_for_test(password: &[u8], compress: $compress_ty) -> Self {
         let mut key_block = [0u8; $block_size_const];
         if password.len() > $block_size_const {
@@ -779,8 +739,8 @@ define_pbkdf2_sha2! {
   }
 }
 
-/// Test-only: one-shot SHA-256 digest using a specific compress function.
-#[cfg(any(test, feature = "diag"))]
+/// One-shot SHA-256 digest with a specific compress function for tests and internal proofs.
+#[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
 fn sha256_oneshot_with_compress(data: &[u8], compress: Sha256CompressBlocksFn) -> [u8; SHA256_OUTPUT_SIZE] {
   let mut state = SHA256_H0;
   let mut pos = 0usize;
@@ -809,10 +769,10 @@ fn sha256_oneshot_with_compress(data: &[u8], compress: Sha256CompressBlocksFn) -
   out
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[must_use]
 /// Return whether portable PBKDF2-HMAC-SHA256 derives `expected` from `password`
-/// using the salt `salt` and one iteration.
+/// using the salt `salt` and one iteration, without application password-policy checks.
 pub fn diag_pbkdf2_sha256_verify_portable(
   password: &[u8; SHA256_OUTPUT_SIZE],
   expected: &[u8; SHA256_OUTPUT_SIZE],
@@ -821,14 +781,14 @@ pub fn diag_pbkdf2_sha256_verify_portable(
     crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable,
   );
   Pbkdf2Sha256::new_with_compress_for_test(password, compress)
-    .verify(b"salt", 1, expected)
+    .verify_primitive(b"salt", 1, expected)
     .is_ok()
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[must_use]
 /// Return whether portable PBKDF2-HMAC-SHA512 derives `expected` from `password`
-/// using the salt `salt` and one iteration.
+/// using the salt `salt` and one iteration, without application password-policy checks.
 pub fn diag_pbkdf2_sha512_verify_portable(
   password: &[u8; SHA512_OUTPUT_SIZE],
   expected: &[u8; SHA512_OUTPUT_SIZE],
@@ -837,7 +797,7 @@ pub fn diag_pbkdf2_sha512_verify_portable(
     crate::hashes::crypto::sha512::kernels::Sha512KernelId::Portable,
   );
   Pbkdf2Sha512::new_with_compress_for_test(password, compress)
-    .verify(b"salt", 1, expected)
+    .verify_primitive(b"salt", 1, expected)
     .is_ok()
 }
 
@@ -1206,8 +1166,8 @@ fn pbkdf2_sha512_derive_key_fast_path(
   Ok(false)
 }
 
-/// Test-only: one-shot SHA-512 digest using a specific compress function.
-#[cfg(any(test, feature = "diag"))]
+/// One-shot SHA-512 digest with a specific compress function for tests and internal proofs.
+#[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
 fn sha512_oneshot_with_compress(data: &[u8], compress: Sha512CompressBlocksFn) -> [u8; SHA512_OUTPUT_SIZE] {
   let mut state = SHA512_H0;
   let mut pos = 0usize;

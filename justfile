@@ -174,7 +174,7 @@ test-transfer:
 # Run CT harness and exporter self-tests without timing cases.
 [group('constant-time')]
 test-harnesses:
-    scripts/lib/toolchain.sh --exec cargo test --locked --manifest-path tools/ct-dudect/Cargo.toml -p rscrypto-ct-dudect -p dudect-bencher --lib --bins
+    scripts/lib/python.sh scripts/ct/internal.py --target "$(scripts/lib/toolchain.sh --print-host)" -- scripts/lib/toolchain.sh --exec cargo test --locked --manifest-path tools/ct-dudect/Cargo.toml -p rscrypto-ct-dudect -p dudect-bencher --lib --bins
 
 # Execute every runnable example with its minimum feature set.
 [group('tests')]
@@ -287,3 +287,8 @@ bench-export run:
 [group('tooling')]
 update *args:
     @scripts/update-all.sh "$@"
+
+# Run internal-hook regressions with native and portable dispatch.
+[group('tests')]
+test-evidence:
+    @scripts/lib/python.sh scripts/ct/internal.py --target "${CARGO_BUILD_TARGET:-$(scripts/lib/toolchain.sh --print-host)}" -- scripts/lib/python.sh scripts/test/evidence_suite.py

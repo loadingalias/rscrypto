@@ -3,4 +3,4 @@
 //! This stays intentionally small. Right now it only exposes vector-corpus
 //! parsing helpers used by the official test suites.
 
-pub(crate) mod blobby_compat;
+pub(crate) mod vector_blob;

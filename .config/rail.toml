@@ -32,3 +32,48 @@ msrv_policy = { mode = "disabled" } # Cargo.toml owns the declared package MSRV.
 # Cargo Rail 0.25 cannot distinguish expected `compile_fail` doctest invocations from compiler failures.
 enabled = false
 consumer_scope = "open" # Published library: external consumers remain part of the visibility boundary.
+
+[release]
+# Keep standalone fuzz and evidence-tool lockfiles on the released package version.
+auxiliary_cargo_manifests = [
+  "fuzz-packages/aead-aegis256/Cargo.toml",
+  "fuzz-packages/aead-aes-siv-cmac256/Cargo.toml",
+  "fuzz-packages/aead-aes128gcm/Cargo.toml",
+  "fuzz-packages/aead-aes128gcmsiv/Cargo.toml",
+  "fuzz-packages/aead-aes256gcm/Cargo.toml",
+  "fuzz-packages/aead-aes256gcmsiv/Cargo.toml",
+  "fuzz-packages/aead-ascon128/Cargo.toml",
+  "fuzz-packages/aead-chacha20poly1305/Cargo.toml",
+  "fuzz-packages/aead-header-protection/Cargo.toml",
+  "fuzz-packages/aead-nonce-counter/Cargo.toml",
+  "fuzz-packages/aead-xchacha20poly1305/Cargo.toml",
+  "fuzz-packages/auth-argon2/Cargo.toml",
+  "fuzz-packages/auth-ed25519/Cargo.toml",
+  "fuzz-packages/auth-hkdf/Cargo.toml",
+  "fuzz-packages/auth-hmac/Cargo.toml",
+  "fuzz-packages/auth-kmac256/Cargo.toml",
+  "fuzz-packages/auth-p256-ecdh/Cargo.toml",
+  "fuzz-packages/auth-pbkdf2/Cargo.toml",
+  "fuzz-packages/auth-phc/Cargo.toml",
+  "fuzz-packages/auth-scrypt/Cargo.toml",
+  "fuzz-packages/auth-x25519/Cargo.toml",
+  "fuzz-packages/checksums-crc16/Cargo.toml",
+  "fuzz-packages/checksums-crc24/Cargo.toml",
+  "fuzz-packages/checksums-crc32/Cargo.toml",
+  "fuzz-packages/checksums-crc64/Cargo.toml",
+  "fuzz-packages/fast-rapidhash/Cargo.toml",
+  "fuzz-packages/fast-xxh3/Cargo.toml",
+  "fuzz-packages/hash-ascon/Cargo.toml",
+  "fuzz-packages/hash-blake2/Cargo.toml",
+  "fuzz-packages/hash-blake3/Cargo.toml",
+  "fuzz-packages/hash-sha2/Cargo.toml",
+  "fuzz-packages/hash-sha3/Cargo.toml",
+  "fuzz-packages/hash-websocket-sha1/Cargo.toml",
+  "fuzz-packages/surface-hex-parse/Cargo.toml",
+  "fuzz-packages/traits-io/Cargo.toml",
+  "fuzz/Cargo.toml",
+  "tools/ct-binsec-harness/Cargo.toml",
+  "tools/ct-dudect/Cargo.toml",
+  "tools/ct-harness/Cargo.toml",
+  "tools/wasm-runtime-vectors/Cargo.toml",
+]

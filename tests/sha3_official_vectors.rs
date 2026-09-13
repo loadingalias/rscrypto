@@ -7,7 +7,7 @@ use rscrypto::{
   hashes::crypto::{Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256},
   traits::Xof as _,
 };
-use support::blobby_compat::BlobIterator;
+use support::vector_blob::BlobIterator;
 
 fn run_fixed_vectors<const OUT: usize>(data: &'static [u8], name: &str, mut digest: impl FnMut(&[u8]) -> [u8; OUT]) {
   for (i, row) in BlobIterator::<2>::new(data)

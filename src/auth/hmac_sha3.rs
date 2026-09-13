@@ -185,7 +185,7 @@ define_hmac_sha3!(
   "SHA3-512"
 );
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]

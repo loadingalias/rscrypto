@@ -1,4 +1,5 @@
-# AWS runner shapes. Workflows reference these names; other providers keep their own labels.
+# AWS runner profiles. Keep sizing here; workflows select names without shape overrides.
+# Public repositories resolve this catalog from the default branch.
 runners:
   plan:
     family: [c7a.large, c7i.large, c8a.large, c8i.large]
@@ -7,18 +8,36 @@ runners:
     spot: price-capacity-optimized
     volume: 40gb:gp3
   miri:
-    family: [c7a.xlarge, c7i.xlarge, c8a.xlarge, c8i.xlarge]
-    cpu: 4
+    family: [c7a.large, c8a.large]
+    cpu: 2
     image: ubuntu24-minimal-x64
     spot: price-capacity-optimized
     volume: 150gb:gp3
   package:
+    family: [c7a.xlarge, c7i.xlarge, c8a.xlarge, c8i.xlarge]
+    cpu: 4
+    image: ubuntu24-minimal-x64
+    spot: price-capacity-optimized
+    volume: 100gb:gp3
+  compatibility:
     family: [c7a.2xlarge, c7i.2xlarge, c8a.2xlarge, c8i.2xlarge]
     cpu: 8
     image: ubuntu24-minimal-x64
     spot: price-capacity-optimized
-    volume: 100gb:gp3
-  cross-build:
+    volume: 150gb:gp3
+  ci-cross-build:
+    family: [c7a.4xlarge, c7i.4xlarge, c8a.4xlarge, c8i.4xlarge]
+    cpu: 16
+    image: ubuntu24-minimal-x64
+    spot: price-capacity-optimized
+    volume: 150gb:gp3
+  ct-cross-build:
+    family: [c7a.2xlarge, c7i.2xlarge, c8a.2xlarge, c8i.2xlarge]
+    cpu: 8
+    image: ubuntu24-minimal-x64
+    spot: price-capacity-optimized
+    volume: 150gb:gp3
+  bench-cross-build:
     family: [c7a.8xlarge, c7i.8xlarge, c8a.8xlarge, c8i.8xlarge]
     cpu: 32
     image: ubuntu24-minimal-x64
@@ -37,12 +56,44 @@ runners:
     spot: price-capacity-optimized
     volume: 150gb:gp3
   x86_64-win:
-    family: [c7a.4xlarge, c7i.4xlarge, c8a.4xlarge, c8i.4xlarge]
-    cpu: 16
+    family: [c7a.2xlarge, c8a.2xlarge]
+    cpu: 8
     image: windows25-full-x64
     spot: price-capacity-optimized
     volume: 200gb:gp3
-  # Fixed, non-Flex, On-Demand hardware for timing and benchmark evidence.
+  # Eight concurrent fuzz targets need eight physical cores, including on x86.
+  fuzz-x86_64-linux:
+    family: [c7a.2xlarge, c8a.2xlarge]
+    cpu: 8
+    image: ubuntu24-minimal-x64
+    spot: price-capacity-optimized
+    volume: 150gb:gp3
+  fuzz-aarch64-linux:
+    family: [c7g.2xlarge, c8g.2xlarge, c9g.2xlarge]
+    cpu: 8
+    image: ubuntu24-minimal-arm64
+    spot: price-capacity-optimized
+    volume: 150gb:gp3
+  # Fixed, non-Flex, On-Demand CT hardware; sized independently of benchmarks.
+  ct-x86_64-linux-intel:
+    family: [c8i.2xlarge]
+    cpu: 8
+    image: ubuntu24-minimal-x64
+    spot: false
+    volume: 100gb:gp3
+  ct-x86_64-win-intel:
+    family: [c8i.xlarge]
+    cpu: 4
+    image: windows25-full-x64
+    spot: false
+    volume: 100gb:gp3
+  ct-aarch64-linux:
+    family: [c9g.2xlarge]
+    cpu: 8
+    image: ubuntu24-minimal-arm64
+    spot: false
+    volume: 100gb:gp3
+  # Fixed benchmark hardware preserves the existing measurement baseline.
   measure-x86_64-linux-intel:
     family: [c8i.2xlarge]
     cpu: 8

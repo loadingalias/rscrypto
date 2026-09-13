@@ -7,8 +7,10 @@ PYTHON="$("$ROOT/scripts/lib/python.sh" --print)"
 "$PYTHON" "$ROOT/scripts/ct/evidence_validation_test.py"
 "$PYTHON" "$ROOT/scripts/ct/dudect_pipeline_test.py"
 "$PYTHON" "$ROOT/scripts/ct/preparation_test.py"
+"$PYTHON" "$ROOT/scripts/ct/internal_test.py"
 "$PYTHON" "$ROOT/scripts/ct/smoke_test.py"
 "$PYTHON" "$ROOT/scripts/ct/zeroization_test.py"
 "$PYTHON" "$ROOT/scripts/ct/ci_test.py"
 "$PYTHON" "$ROOT/scripts/ct/replay_test.py"
 just --justfile "$ROOT/justfile" test-harnesses
+just --justfile "$ROOT/justfile" test-evidence

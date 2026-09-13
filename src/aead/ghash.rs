@@ -45,7 +45,7 @@ pub(crate) fn h_to_polyval(h_bytes: &[u8; KEY_SIZE]) -> u128 {
 }
 
 /// Computes one GHASH block with the portable POLYVAL-domain reduction.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[must_use]
 pub fn diag_ghash_block_portable(h_bytes: &[u8; KEY_SIZE], block: &[u8; KEY_SIZE]) -> [u8; KEY_SIZE] {
   let h = h_to_polyval(h_bytes);

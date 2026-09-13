@@ -377,6 +377,7 @@ impl Drop for P256SharedSecret {
 
 /// Return the production P-256 secret-window selection as Montgomery limbs.
 #[cfg(all(
+  rscrypto_internal,
   feature = "diag",
   any(
     feature = "portable-only",
@@ -393,7 +394,7 @@ pub fn diag_p256_ecdh_select_window_limb_digest(digit: u8) -> [u64; 8] {
 }
 
 /// Exercise P-256 ECDH candidate cleanup on success and partial-fill failure.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -410,7 +411,7 @@ pub(crate) fn diag_zeroize_p256_ecdh_generation(value: u8, fail: bool) -> u8 {
 }
 
 /// Exercise P-256 ECDH scalar, projective-state, and shared-secret cleanup.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]

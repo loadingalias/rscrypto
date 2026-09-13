@@ -287,7 +287,7 @@ impl HkdfSha256 {
     &self.prk
   }
 
-  #[cfg(any(test, feature = "diag"))]
+  #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
   pub(crate) fn extract_with_compress_for_test(
     salt: &[u8],
     input_key_material: &[u8],
@@ -319,7 +319,7 @@ impl HkdfSha256 {
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[unsafe(no_mangle)]
 #[inline(never)]
 /// Derive a portable HKDF-SHA256 diagnostic output using fixed `b"salt"` and `b"info"` inputs.
@@ -526,7 +526,7 @@ impl HkdfSha384 {
     &self.prk
   }
 
-  #[cfg(any(test, feature = "diag"))]
+  #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
   pub(crate) fn extract_with_compress_for_test(
     salt: &[u8],
     input_key_material: &[u8],
@@ -558,7 +558,7 @@ impl HkdfSha384 {
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[unsafe(no_mangle)]
 #[inline(never)]
 /// Derive a portable HKDF-SHA384 diagnostic output using fixed `b"salt"` and `b"info"` inputs.
@@ -746,7 +746,7 @@ impl HkdfSha512 {
     &self.prk
   }
 
-  #[cfg(any(test, feature = "diag"))]
+  #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
   pub(crate) fn extract_with_compress_for_test(
     salt: &[u8],
     input_key_material: &[u8],
@@ -778,7 +778,7 @@ impl HkdfSha512 {
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[unsafe(no_mangle)]
 #[inline(never)]
 /// Derive a portable HKDF-SHA512 diagnostic output using fixed `b"salt"` and `b"info"` inputs.

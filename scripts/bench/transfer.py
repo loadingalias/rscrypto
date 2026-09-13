@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import tempfile
 
-from execution import build, build_command, build_identity, digest, exit_code, hardware
+from execution import enable_internal, build, build_command, build_identity, digest, exit_code, hardware
 from evidence import collect
 from cross_build import TARGETS, environment, require_host, verify_elf
 import evidence_bundle as bundle
@@ -22,6 +22,7 @@ def prepare(root, target, archive, output, rows, settings):
     if archive.exists():
         raise ValueError(f'refusing to overwrite benchmark evidence: {archive}')
     os.environ.update(environment(target))
+    enable_internal(rows, target)
     source = bundle.source_identity(root)
     parent = output / 'preparation' / target
     parent.mkdir(parents=True, exist_ok=True)

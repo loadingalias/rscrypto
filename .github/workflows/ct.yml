@@ -100,7 +100,7 @@ jobs:
   cross-build:
     needs: select
     if: needs.select.outputs.cross == 'true'
-    runs-on: runs-on=${{ github.run_id }}-${{ matrix.target }}/runner=cross-build/env=production
+    runs-on: runs-on=${{ github.run_id }}-${{ matrix.target }}/runner=ct-cross-build/env=production
     timeout-minutes: 45
     name: Prepare ${{ matrix.target }} CT
     strategy:

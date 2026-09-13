@@ -49,7 +49,10 @@ mod aarch64_asm;
 #[cfg(all(
   target_arch = "x86_64",
   target_os = "linux",
-  any(feature = "diag", all(not(debug_assertions), not(feature = "portable-only")))
+  any(
+    all(rscrypto_internal, feature = "diag"),
+    all(not(debug_assertions), not(feature = "portable-only"))
+  )
 ))]
 #[path = "chacha20poly1305/x86_64_asm.rs"]
 mod x86_64_asm;
@@ -245,7 +248,11 @@ impl ChaCha20Poly1305 {
   #[cfg(all(
     target_arch = "x86_64",
     target_os = "linux",
-    any(test, feature = "diag", all(not(debug_assertions), not(feature = "portable-only")))
+    any(
+      test,
+      all(rscrypto_internal, feature = "diag"),
+      all(not(debug_assertions), not(feature = "portable-only"))
+    )
   ))]
   #[inline]
   fn x86_64_asm_caps_available(caps: crate::platform::Caps) -> bool {
@@ -301,7 +308,7 @@ impl ChaCha20Poly1305 {
     }
   }
 
-  #[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+  #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
   fn encrypt_in_place_asm_x86_64_forced(
     &self,
     nonce: &Nonce96,
@@ -327,7 +334,7 @@ impl ChaCha20Poly1305 {
     Some(Ok(ChaCha20Poly1305Tag::from_bytes(tag)))
   }
 
-  #[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+  #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
   fn decrypt_in_place_asm_x86_64_forced(
     &self,
     nonce: &Nonce96,
@@ -636,7 +643,7 @@ impl ChaCha20Poly1305 {
 ///
 /// Lower-level ChaCha20 and Poly1305 dispatch remains enabled. Returns an error when the input lengths exceed the
 /// supported limits.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 pub fn diag_chacha20poly1305_encrypt_in_place_owned(
   cipher: &ChaCha20Poly1305,
   nonce: &Nonce96,
@@ -647,7 +654,7 @@ pub fn diag_chacha20poly1305_encrypt_in_place_owned(
   cipher.encrypt_in_place_owned_unchecked(nonce, aad, buffer)
 }
 
-#[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
 /// Encrypts in place through the Linux x86-64 assembly entrypoint when that entrypoint is available.
 ///
 /// Returns `None` when the current CPU cannot execute the assembly backend.
@@ -664,7 +671,7 @@ pub fn diag_chacha20poly1305_encrypt_in_place_x86_64_asm(
   cipher.encrypt_in_place_asm_x86_64_forced(nonce, aad, buffer)
 }
 
-#[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
 /// Authenticates and decrypts in place through the Linux x86-64 assembly entrypoint when it is available.
 ///
 /// Returns `None` when the current CPU cannot execute the assembly backend.
@@ -687,7 +694,7 @@ pub fn diag_chacha20poly1305_decrypt_in_place_x86_64_asm(
 ///
 /// Lower-level ChaCha20 and Poly1305 dispatch remains enabled. Authentication failure zeroes `buffer` and returns an
 /// opaque verification error; unsupported input lengths also return an error.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 pub fn diag_chacha20poly1305_decrypt_in_place_owned(
   cipher: &ChaCha20Poly1305,
   nonce: &Nonce96,
@@ -968,7 +975,7 @@ mod tests {
     }
   }
 
-  #[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+  #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
   #[test]
   fn x86_64_open_asm_matches_owned_path() {
     if !ChaCha20Poly1305::x86_64_asm_caps_available(crate::platform::caps()) {

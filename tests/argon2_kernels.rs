@@ -12,7 +12,7 @@
 //! specific input distribution (e.g. carries in the BlaMka multiply), a
 //! full hash with a non-trivial cost matrix surfaces it.
 
-#![cfg(all(feature = "argon2", feature = "diag"))]
+#![cfg(all(feature = "argon2", all(rscrypto_internal, feature = "diag")))]
 
 use rscrypto::{
   Argon2Params,

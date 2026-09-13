@@ -27,10 +27,10 @@ use rscrypto::{
   aead::{Nonce96, expert::AeadWithNonce},
 };
 
-const DATA: &[u8] = b"migration equivalence data";
+const DATA: &[u8] = b"interoperability equivalence data";
 const KEY_32: [u8; 32] = [0x42; 32];
 const NONCE_12: [u8; 12] = [0x24; 12];
-const AAD: &[u8] = b"migration aad";
+const AAD: &[u8] = b"interoperability aad";
 
 const RSA3072_SPKI: &[u8] = include_bytes!("../benches/rsa_fixtures/rsa3072_spki.der");
 const RSA3072_PSS_SHA256: &[u8] = include_bytes!("../benches/rsa_fixtures/rsa3072_pss_sha256.sig");
@@ -47,7 +47,7 @@ impl aws_hkdf::KeyType for AwsHkdfLen {
 }
 
 #[test]
-fn test_aws_lc_rs_digest_hmac_hkdf_and_pbkdf2_migration_examples_are_byte_equivalent() {
+fn test_aws_lc_rs_digest_hmac_hkdf_and_pbkdf2_are_byte_equivalent() {
   let aws_digest = aws_digest::digest(&aws_digest::SHA256, DATA);
   assert_eq!(Sha256::digest(DATA).as_slice(), aws_digest.as_ref());
 
@@ -55,9 +55,9 @@ fn test_aws_lc_rs_digest_hmac_hkdf_and_pbkdf2_migration_examples_are_byte_equiva
   let aws_hmac = aws_hmac::sign(&aws_hmac_key, DATA);
   assert_eq!(HmacSha256::mac(&KEY_32, DATA).as_slice(), aws_hmac.as_ref());
 
-  let salt = b"migration salt!!";
-  let ikm = b"migration input key material";
-  let info = b"migration context";
+  let salt = b"interoperability salt!!";
+  let ikm = b"interoperability input key material";
+  let info = b"interoperability context";
   let mut aws_okm = [0u8; 42];
   aws_hkdf::Salt::new(aws_hkdf::HKDF_SHA256, salt)
     .extract(ikm)
@@ -78,18 +78,18 @@ fn test_aws_lc_rs_digest_hmac_hkdf_and_pbkdf2_migration_examples_are_byte_equiva
     aws_pbkdf2::PBKDF2_HMAC_SHA256,
     iterations,
     salt,
-    b"migration password",
+    b"interoperability password",
     &mut aws_pbkdf2,
   );
 
   let mut ours_pbkdf2 = [0u8; 32];
-  Pbkdf2Sha256::derive_key(b"migration password", salt, iterations.get(), &mut ours_pbkdf2)
+  Pbkdf2Sha256::derive_key(b"interoperability password", salt, iterations.get(), &mut ours_pbkdf2)
     .expect("rscrypto PBKDF2 parameters must be valid");
   assert_eq!(ours_pbkdf2, aws_pbkdf2);
 }
 
 #[test]
-fn test_aws_lc_rs_aead_migration_examples_are_byte_equivalent() {
+fn test_aws_lc_rs_aead_are_byte_equivalent() {
   let aws_aes = aws_aead_seal(&aws_aead::AES_256_GCM, &KEY_32, DATA);
   let aes = Aes256Gcm::new(&Aes256GcmKey::from_bytes(KEY_32));
   let nonce = Nonce96::from_bytes(NONCE_12);
@@ -121,7 +121,7 @@ fn test_aws_lc_rs_aead_migration_examples_are_byte_equivalent() {
 }
 
 #[test]
-fn test_aws_lc_rs_ed25519_and_x25519_migration_examples_are_byte_equivalent() {
+fn test_aws_lc_rs_ed25519_and_x25519_are_byte_equivalent() {
   use aws_lc_rs::signature::KeyPair as _;
 
   let seed = [0x13; 32];
@@ -180,7 +180,7 @@ fn test_aws_lc_rs_ed25519_and_x25519_migration_examples_are_byte_equivalent() {
 }
 
 #[test]
-fn test_aws_lc_rs_rsa_verify_migration_examples_accept_the_same_fixtures() {
+fn test_aws_lc_rs_rsa_verify_accept_the_same_fixtures() {
   let ours = RsaPublicKey::from_spki_der(RSA3072_SPKI).expect("embedded RSA-3072 SPKI fixture must parse");
   ours
     .verify_pss(RsaPssProfile::Sha256, MESSAGE_PSS, RSA3072_PSS_SHA256)

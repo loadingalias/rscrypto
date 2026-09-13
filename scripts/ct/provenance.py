@@ -80,20 +80,22 @@ def target_rustflags(root: Path, target: str) -> list[str]:
 
 def resolved_rustflags(root: Path, target: str) -> tuple[list[str], list[str], list[str], str]:
   configured = target_rustflags(root, target)
-  if value := os.environ.get("CARGO_ENCODED_RUSTFLAGS"):
-    environment = [part for part in value.split("\x1f") if part]
+  if "CARGO_ENCODED_RUSTFLAGS" in os.environ:
+    value = os.environ["CARGO_ENCODED_RUSTFLAGS"]
+    environment = value.split("\x1f") if value else []
     return configured, environment, environment, "CARGO_ENCODED_RUSTFLAGS"
-  if value := os.environ.get("RUSTFLAGS"):
-    environment = shlex.split(value)
+  if "RUSTFLAGS" in os.environ:
+    # Cargo splits on spaces and trims each word; shell quotes remain literal.
+    environment = [part.strip() for part in os.environ["RUSTFLAGS"].split(" ") if part.strip()]
     return configured, environment, environment, "RUSTFLAGS"
   target_key = target_env_key(target, "RUSTFLAGS")
   if value := os.environ.get(target_key):
-    environment = shlex.split(value)
+    environment = value.split()
     return configured, environment, configured + environment, target_key
   if configured:
     return configured, [], configured, ".cargo/config.toml"
   if value := os.environ.get("CARGO_BUILD_RUSTFLAGS"):
-    environment = shlex.split(value)
+    environment = value.split()
     return configured, environment, environment, "CARGO_BUILD_RUSTFLAGS"
   return configured, [], [], "none"
 

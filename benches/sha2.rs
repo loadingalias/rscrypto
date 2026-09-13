@@ -29,7 +29,7 @@ macro_rules! aws_lc_bench {
   ($($tokens:tt)*) => {};
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn print_sha2_diag_once() {
   use std::sync::Once;
 
@@ -55,7 +55,7 @@ fn print_sha2_diag_once() {
   });
 }
 
-#[cfg(not(feature = "diag"))]
+#[cfg(not(all(rscrypto_internal, feature = "diag")))]
 #[inline]
 fn print_sha2_diag_once() {}
 
@@ -209,7 +209,7 @@ fn sha256_internal(_c: &mut Criterion) {
   }
   print_sha2_diag_once();
 
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   {
     let blocks = common::random_bytes(64 * 16);
     let mut g = _c.benchmark_group("sha256/internal/compress");

@@ -948,23 +948,6 @@ impl EcdsaP256SecretKey {
     EcdsaP256PublicKey::from_secret_affine_ct(public_key_from_secret_p256(&self.0))
   }
 
-  /// Derive the matching P-256 public key with caller-supplied blinding.
-  ///
-  /// The closure should fill the buffer from a CSPRNG. Blinding does not
-  /// change the public key; it randomizes the portable fixed-base scalar and
-  /// the internal projective representation used during derivation.
-  #[deprecated(note = "use try_public_key_blinded_with; this compatibility wrapper will be removed after one release")]
-  #[must_use]
-  pub fn public_key_blinded(&self, fill: impl FnOnce(&mut [u8; 64])) -> EcdsaP256PublicKey {
-    match self.try_public_key_blinded_with(|blind| {
-      fill(blind);
-      Ok::<(), core::convert::Infallible>(())
-    }) {
-      Ok(public) => public,
-      Err(never) => match never {},
-    }
-  }
-
   /// Try to derive the matching P-256 public key with caller-supplied blinding.
   ///
   /// The filler runs against zero-initialized rscrypto-owned storage. If it
@@ -997,35 +980,6 @@ impl EcdsaP256SecretKey {
   pub fn try_sign(&self, message: &[u8]) -> Result<EcdsaP256Signature, EcdsaError> {
     let digest = Sha256::digest(message);
     sign_digest_p256(&self.0, &digest)
-  }
-
-  /// Sign a message with P-256/SHA-256 and caller-supplied blinding.
-  ///
-  /// The closure should fill the buffer from a CSPRNG. The ECDSA nonce remains
-  /// deterministic; the random bytes blind the internal projective `kG` point
-  /// and the private-scalar product. The portable backend also adds a random
-  /// multiple of the group order before fixed-base multiplication. On s390x,
-  /// independent scalar masks protect the projective and order arithmetic,
-  /// while a fixed-work algebraic fold reduces the wide nonce.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`EcdsaError::SigningFailure`] if deterministic nonce derivation
-  /// reaches an invalid ECDSA scalar.
-  #[deprecated(note = "use try_sign_blinded_with; this compatibility wrapper will be removed after one release")]
-  pub fn try_sign_blinded(
-    &self,
-    message: &[u8],
-    fill: impl FnOnce(&mut [u8; 64]),
-  ) -> Result<EcdsaP256Signature, EcdsaError> {
-    match self.try_sign_blinded_with(message, |blind| {
-      fill(blind);
-      Ok::<(), core::convert::Infallible>(())
-    }) {
-      Ok(signature) => Ok(signature),
-      Err(EcdsaBlindedSigningError::Random(never)) => match never {},
-      Err(EcdsaBlindedSigningError::Signing(err)) => Err(err),
-    }
   }
 
   /// Try to sign a message with P-256/SHA-256 and caller-supplied blinding.
@@ -1169,23 +1123,6 @@ impl EcdsaP384SecretKey {
     EcdsaP384PublicKey::from_secret_affine_ct(public_key_from_secret_p384(&self.0))
   }
 
-  /// Derive the matching P-384 public key with caller-supplied blinding.
-  ///
-  /// The closure should fill the buffer from a CSPRNG. Blinding does not
-  /// change the public key; it randomizes the internal projective
-  /// representation used during derivation.
-  #[deprecated(note = "use try_public_key_blinded_with; this compatibility wrapper will be removed after one release")]
-  #[must_use]
-  pub fn public_key_blinded(&self, fill: impl FnOnce(&mut [u8; 96])) -> EcdsaP384PublicKey {
-    match self.try_public_key_blinded_with(|blind| {
-      fill(blind);
-      Ok::<(), core::convert::Infallible>(())
-    }) {
-      Ok(public) => public,
-      Err(never) => match never {},
-    }
-  }
-
   /// Try to derive the matching P-384 public key with caller-supplied blinding.
   ///
   /// The filler runs against zero-initialized rscrypto-owned storage. If it
@@ -1218,34 +1155,6 @@ impl EcdsaP384SecretKey {
   pub fn try_sign(&self, message: &[u8]) -> Result<EcdsaP384Signature, EcdsaError> {
     let digest = Sha384::digest(message);
     sign_digest_p384(&self.0, &digest)
-  }
-
-  /// Sign a message with P-384/SHA-384 and caller-supplied blinding.
-  ///
-  /// The closure should fill the buffer from a CSPRNG. The ECDSA nonce remains
-  /// deterministic; the random bytes blind the internal projective `kG` point
-  /// and mask the private-scalar product. On s390x, independent scalar masks
-  /// protect the projective and order arithmetic, while a fixed-work algebraic
-  /// fold reduces the wide nonce.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`EcdsaError::SigningFailure`] if deterministic nonce derivation
-  /// reaches an invalid ECDSA scalar.
-  #[deprecated(note = "use try_sign_blinded_with; this compatibility wrapper will be removed after one release")]
-  pub fn try_sign_blinded(
-    &self,
-    message: &[u8],
-    fill: impl FnOnce(&mut [u8; 96]),
-  ) -> Result<EcdsaP384Signature, EcdsaError> {
-    match self.try_sign_blinded_with(message, |blind| {
-      fill(blind);
-      Ok::<(), core::convert::Infallible>(())
-    }) {
-      Ok(signature) => Ok(signature),
-      Err(EcdsaBlindedSigningError::Random(never)) => match never {},
-      Err(EcdsaBlindedSigningError::Signing(err)) => Err(err),
-    }
   }
 
   /// Try to sign a message with P-384/SHA-384 and caller-supplied blinding.
@@ -1385,28 +1294,6 @@ impl EcdsaP256Keypair {
     self.secret.try_sign(message)
   }
 
-  /// Sign a message with P-256/SHA-256 and caller-supplied blinding.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`EcdsaError::SigningFailure`] if deterministic nonce derivation
-  /// reaches an invalid ECDSA scalar.
-  #[deprecated(note = "use try_sign_blinded_with; this compatibility wrapper will be removed after one release")]
-  pub fn try_sign_blinded(
-    &self,
-    message: &[u8],
-    fill: impl FnOnce(&mut [u8; 64]),
-  ) -> Result<EcdsaP256Signature, EcdsaError> {
-    match self.try_sign_blinded_with(message, |blind| {
-      fill(blind);
-      Ok::<(), core::convert::Infallible>(())
-    }) {
-      Ok(signature) => Ok(signature),
-      Err(EcdsaBlindedSigningError::Random(never)) => match never {},
-      Err(EcdsaBlindedSigningError::Signing(err)) => Err(err),
-    }
-  }
-
   /// Try to sign with P-256/SHA-256 and fallible caller-supplied blinding.
   #[inline]
   pub fn try_sign_blinded_with<E>(
@@ -1508,28 +1395,6 @@ impl EcdsaP384Keypair {
   /// Sign a message with P-384/SHA-384.
   pub fn try_sign(&self, message: &[u8]) -> Result<EcdsaP384Signature, EcdsaError> {
     self.secret.try_sign(message)
-  }
-
-  /// Sign a message with P-384/SHA-384 and caller-supplied blinding.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`EcdsaError::SigningFailure`] if deterministic nonce derivation
-  /// reaches an invalid ECDSA scalar.
-  #[deprecated(note = "use try_sign_blinded_with; this compatibility wrapper will be removed after one release")]
-  pub fn try_sign_blinded(
-    &self,
-    message: &[u8],
-    fill: impl FnOnce(&mut [u8; 96]),
-  ) -> Result<EcdsaP384Signature, EcdsaError> {
-    match self.try_sign_blinded_with(message, |blind| {
-      fill(blind);
-      Ok::<(), core::convert::Infallible>(())
-    }) {
-      Ok(signature) => Ok(signature),
-      Err(EcdsaBlindedSigningError::Random(never)) => match never {},
-      Err(EcdsaBlindedSigningError::Signing(err)) => Err(err),
-    }
   }
 
   /// Try to sign with P-384/SHA-384 and fallible caller-supplied blinding.
@@ -2673,7 +2538,7 @@ impl<const L: usize> Jacobian<L> {
   }
 
   #[cfg(any(
-    feature = "diag",
+    all(rscrypto_internal, feature = "diag"),
     all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
     all(target_arch = "x86_64", target_os = "linux")
   ))]
@@ -3041,7 +2906,7 @@ fn sign_digest_with_r_product_blinded<const L: usize>(
   ))
 }
 
-#[cfg(any(test, feature = "diag", target_arch = "s390x"))]
+#[cfg(any(test, all(rscrypto_internal, feature = "diag"), target_arch = "s390x"))]
 fn blinded_nonce_inverse_montgomery<const L: usize>(
   curve: &Curve<L>,
   nonce: &SecretScalar<L>,
@@ -3889,7 +3754,7 @@ fn select_signing_generator_affine_ct<const L: usize>(curve: &Curve<L>, digit: u
 }
 
 /// Return the P-256 signing-comb coordinates selected by `digit` as Montgomery limbs.
-#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_select_signing_generator_affine_limb_digest(digit: u8) -> [u64; 8] {
   let selected = select_signing_generator_affine_ct(&P256, usize::from(digit));
   let mut out = [0u64; 8];
@@ -3899,6 +3764,7 @@ pub fn diag_ecdsa_p256_select_signing_generator_affine_limb_digest(digit: u8) ->
 }
 
 #[cfg(all(
+  rscrypto_internal,
   feature = "diag",
   feature = "ecdsa-p256",
   any(
@@ -3921,7 +3787,7 @@ pub(crate) fn diag_zeroize_ecdsa_p256_platform_scratch(wide: [u8; 64]) -> u64 {
 }
 
 /// Exercise P-256 safegcd inversion so release tooling can inspect its scratch cleanup.
-#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -3935,7 +3801,7 @@ pub(crate) fn diag_zeroize_ecdsa_p256_safegcd_scratch(secret: [u8; 32]) -> u64 {
 }
 
 /// Exercise P-256 public-derivation blinding cleanup on success and partial-fill failure.
-#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -3955,7 +3821,7 @@ pub(crate) fn diag_zeroize_ecdsa_p256_public_blinding(value: u8, fail: bool) -> 
 }
 
 /// Exercise P-256 signing blinding cleanup on success and partial-fill failure.
-#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -3975,7 +3841,7 @@ pub(crate) fn diag_zeroize_ecdsa_p256_signing_blinding(value: u8, fail: bool) ->
 }
 
 /// Derive the deterministic P-256 nonce for `message` and return its scalar limbs.
-#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_nonce_reduce_limb_digest(secret: [u8; 32], message: &[u8]) -> [u64; 4] {
   let secret = ZeroizingBytes::new(secret);
   let digest = Sha256::digest(message);
@@ -3986,7 +3852,7 @@ pub fn diag_ecdsa_p256_nonce_reduce_limb_digest(secret: [u8; 32], message: &[u8]
 }
 
 /// Reduce a wide P-256 nonce candidate to a nonzero scalar and return its limbs.
-#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_reduce_wide_order_limb_digest(wide: [u8; 64]) -> [u64; 4] {
   let wide = ZeroizingBytes::new(wide);
   let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P256_ORDER_MODULUS));
@@ -3994,7 +3860,7 @@ pub fn diag_ecdsa_p256_reduce_wide_order_limb_digest(wide: [u8; 64]) -> [u64; 4]
 }
 
 /// Return the affine limbs produced by blinded P-256 basepoint multiplication.
-#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_basepoint_blinded_limb_digest(secret: [u8; 32], blind: [u8; 64], message: &[u8]) -> [u64; 8] {
   let secret = ZeroizingBytes::new(secret);
   let blind = ZeroizingBytes::new(blind);
@@ -4011,7 +3877,7 @@ pub fn diag_ecdsa_p256_basepoint_blinded_limb_digest(secret: [u8; 32], blind: [u
 }
 
 /// Run P-256 scalar signing finalization with supplied nonce material and return `r || s` limbs.
-#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_scalar_finish_limb_digest(secret: [u8; 32], nonce_wide: [u8; 64], message: &[u8]) -> [u64; 8] {
   let secret = ZeroizingBytes::new(secret);
   let nonce_wide = ZeroizingBytes::new(nonce_wide);
@@ -4027,7 +3893,7 @@ pub fn diag_ecdsa_p256_scalar_finish_limb_digest(secret: [u8; 32], nonce_wide: [
 }
 
 /// Multiply the P-256 secret scalar by a fixed public `r` and return the order-field limbs.
-#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_order_mul_fixed_r_limb_digest(secret: [u8; 32]) -> [u64; 4] {
   let secret = ZeroizingBytes::new(secret);
   let secret_scalar = SecretScalar::from_be_bytes(secret.as_array());
@@ -4037,7 +3903,7 @@ pub fn diag_ecdsa_p256_order_mul_fixed_r_limb_digest(secret: [u8; 32]) -> [u64; 
 }
 
 /// Run the blinded P-256 order multiplication stage for a fixed public `r` and return its limbs.
-#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest(secret: [u8; 32], blind: [u8; 64]) -> [u64; 4] {
   let secret = ZeroizingBytes::new(secret);
   let blind = ZeroizingBytes::new(blind);
@@ -4054,7 +3920,7 @@ pub fn diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest(secret: [u8; 32], b
 }
 
 /// Derive and invert the deterministic P-256 nonce and return its Montgomery limbs.
-#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_nonce_inverse_limb_digest(secret: [u8; 32], message: &[u8]) -> [u64; 4] {
   let secret = ZeroizingBytes::new(secret);
   let digest = Sha256::digest(message);
@@ -4070,7 +3936,7 @@ pub fn diag_ecdsa_p256_nonce_inverse_limb_digest(secret: [u8; 32], message: &[u8
 }
 
 /// Derive and invert the deterministic P-256 nonce through the caller-blinded s390x path.
-#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_nonce_inverse_blinded_limb_digest(
   secret: [u8; 32],
   blind: [u8; 64],
@@ -4087,7 +3953,7 @@ pub fn diag_ecdsa_p256_nonce_inverse_blinded_limb_digest(
 }
 
 /// Run the final P-256 signing multiplication with supplied nonce material and return its limbs.
-#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_final_multiply_limb_digest(secret: [u8; 32], nonce_wide: [u8; 64], message: &[u8]) -> [u64; 4] {
   let secret = ZeroizingBytes::new(secret);
   let nonce_wide = ZeroizingBytes::new(nonce_wide);
@@ -4112,7 +3978,7 @@ pub fn diag_ecdsa_p256_final_multiply_limb_digest(secret: [u8; 32], nonce_wide: 
 }
 
 /// Return the P-384 signing-comb coordinates selected by `digit` as Montgomery limbs.
-#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_select_signing_generator_affine_limb_digest(digit: u8) -> [u64; 12] {
   let selected = select_signing_generator_affine_ct(&P384, usize::from(digit));
   let mut out = [0u64; 12];
@@ -4122,6 +3988,7 @@ pub fn diag_ecdsa_p384_select_signing_generator_affine_limb_digest(digit: u8) ->
 }
 
 #[cfg(all(
+  rscrypto_internal,
   feature = "diag",
   feature = "ecdsa-p384",
   target_arch = "aarch64",
@@ -4142,7 +4009,7 @@ pub(crate) fn diag_zeroize_ecdsa_p384_platform_scratch(wide: [u8; 96]) -> u64 {
 }
 
 /// Exercise P-384 safegcd inversion so release tooling can inspect its scratch cleanup.
-#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -4156,7 +4023,7 @@ pub(crate) fn diag_zeroize_ecdsa_p384_safegcd_scratch(secret: [u8; 48]) -> u64 {
 }
 
 /// Exercise P-384 public-derivation blinding cleanup on success and partial-fill failure.
-#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -4176,7 +4043,7 @@ pub(crate) fn diag_zeroize_ecdsa_p384_public_blinding(value: u8, fail: bool) -> 
 }
 
 /// Exercise P-384 signing blinding cleanup on success and partial-fill failure.
-#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -4196,7 +4063,7 @@ pub(crate) fn diag_zeroize_ecdsa_p384_signing_blinding(value: u8, fail: bool) ->
 }
 
 /// Derive the deterministic P-384 nonce for `message` and return its scalar limbs.
-#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_nonce_reduce_limb_digest(secret: [u8; 48], message: &[u8]) -> [u64; 6] {
   let secret = ZeroizingBytes::new(secret);
   let digest = Sha384::digest(message);
@@ -4207,7 +4074,7 @@ pub fn diag_ecdsa_p384_nonce_reduce_limb_digest(secret: [u8; 48], message: &[u8]
 }
 
 /// Reduce a wide P-384 nonce candidate to a nonzero scalar and return its limbs.
-#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_reduce_wide_order_limb_digest(wide: [u8; 96]) -> [u64; 6] {
   let wide = ZeroizingBytes::new(wide);
   let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
@@ -4215,7 +4082,7 @@ pub fn diag_ecdsa_p384_reduce_wide_order_limb_digest(wide: [u8; 96]) -> [u64; 6]
 }
 
 /// Return the affine limbs produced by blinded P-384 basepoint multiplication.
-#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_basepoint_blinded_limb_digest(secret: [u8; 48], blind: [u8; 96], message: &[u8]) -> [u64; 12] {
   let secret = ZeroizingBytes::new(secret);
   let blind = ZeroizingBytes::new(blind);
@@ -4232,7 +4099,7 @@ pub fn diag_ecdsa_p384_basepoint_blinded_limb_digest(secret: [u8; 48], blind: [u
 }
 
 /// Derive the P-384 nonce point and return its reduced affine x-coordinate limbs.
-#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_basepoint_r_limb_digest(secret: [u8; 48], message: &[u8]) -> [u64; 6] {
   let secret = ZeroizingBytes::new(secret);
   let digest = Sha384::digest(message);
@@ -4249,7 +4116,7 @@ pub fn diag_ecdsa_p384_basepoint_r_limb_digest(secret: [u8; 48], message: &[u8])
 }
 
 /// Run P-384 scalar signing finalization with supplied nonce material and return `r || s` limbs.
-#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_scalar_finish_limb_digest(secret: [u8; 48], nonce_wide: [u8; 96], message: &[u8]) -> [u64; 12] {
   let secret = ZeroizingBytes::new(secret);
   let nonce_wide = ZeroizingBytes::new(nonce_wide);
@@ -4265,7 +4132,7 @@ pub fn diag_ecdsa_p384_scalar_finish_limb_digest(secret: [u8; 48], nonce_wide: [
 }
 
 /// Multiply the P-384 secret scalar by a fixed public `r` and return the order-field limbs.
-#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_order_mul_fixed_r_limb_digest(secret: [u8; 48]) -> [u64; 6] {
   let secret = ZeroizingBytes::new(secret);
   let secret_scalar = SecretScalar::from_be_bytes(secret.as_array());
@@ -4275,7 +4142,7 @@ pub fn diag_ecdsa_p384_order_mul_fixed_r_limb_digest(secret: [u8; 48]) -> [u64; 
 }
 
 /// Derive and invert the deterministic P-384 nonce and return its Montgomery limbs.
-#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_nonce_inverse_limb_digest(secret: [u8; 48], message: &[u8]) -> [u64; 6] {
   let secret = ZeroizingBytes::new(secret);
   let digest = Sha384::digest(message);
@@ -4291,7 +4158,7 @@ pub fn diag_ecdsa_p384_nonce_inverse_limb_digest(secret: [u8; 48], message: &[u8
 }
 
 /// Derive and invert the deterministic P-384 nonce through the caller-blinded s390x path.
-#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_nonce_inverse_blinded_limb_digest(
   secret: [u8; 48],
   blind: [u8; 96],
@@ -4308,7 +4175,7 @@ pub fn diag_ecdsa_p384_nonce_inverse_blinded_limb_digest(
 }
 
 /// Run the final P-384 signing multiplication with supplied nonce material and return its limbs.
-#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_final_multiply_limb_digest(secret: [u8; 48], nonce_wide: [u8; 96], message: &[u8]) -> [u64; 6] {
   let secret = ZeroizingBytes::new(secret);
   let nonce_wide = ZeroizingBytes::new(nonce_wide);

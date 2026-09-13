@@ -299,7 +299,7 @@ fn encrypt_j0_tag(ek: &aes::Aes128EncKey, j0: &[u8; 16], acc: u128) -> [u8; TAG_
   tag
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Exercise AES-128 counter-mode encryption and fold the fixed diagnostic output to one block.
 #[must_use]
 pub fn diag_aes128gcm_ctr32_be(cipher: &Aes128Gcm, nonce: &Nonce96, plaintext: &[u8; 44]) -> [u8; 16] {
@@ -309,7 +309,7 @@ pub fn diag_aes128gcm_ctr32_be(cipher: &Aes128Gcm, nonce: &Nonce96, plaintext: &
   diag_fold16(&buffer)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Return the AES-128-GCM GHASH accumulator for diagnostic backend comparison.
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -333,7 +333,7 @@ pub fn diag_aes128gcm_ghash(cipher: &Aes128Gcm, aad: &[u8], ciphertext: &[u8]) -
   acc.0.to_be_bytes()
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Encrypt a diagnostic GHASH accumulator into the final AES-128-GCM tag.
 #[must_use]
 pub fn diag_aes128gcm_tag_aes(cipher: &Aes128Gcm, nonce: &Nonce96, acc: &[u8; 16]) -> [u8; 16] {
@@ -341,7 +341,7 @@ pub fn diag_aes128gcm_tag_aes(cipher: &Aes128Gcm, nonce: &Nonce96, acc: &[u8; 16
   encrypt_j0_tag(&cipher.ek, &j0, u128::from_be_bytes(*acc))
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn diag_fold16(data: &[u8]) -> [u8; 16] {
   let (blocks, tail) = data.as_chunks::<16>();
   let mut acc = 0u128;

@@ -12,7 +12,7 @@ from cross_build import TARGETS
 
 def main():
     if sys.argv[1:] == ['plan']:
-        matrix = platforms(os.environ['INPUT_ARCHITECTURES'], os.environ['GITHUB_RUN_ID'])
+        matrix = platforms(os.environ['INPUT_ARCHITECTURES'], os.environ['GITHUB_RUN_ID'], runner_prefix='ct')
         for row in matrix['include']:
             row['timeout'] = 360
         builds = []

@@ -28,7 +28,7 @@ use rsa::{
   pss::{Signature as RustCryptoPssSignature, VerifyingKey as RustCryptoPssVerifyingKey},
   signature::Verifier as _,
 };
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 use rscrypto::auth::rsa::{
   diag_rsa_blinding_factor_inverse_with_scratch, diag_rsa_public_operation_bitserial, diag_rsa_public_operation_cios,
   diag_rsa_public_operation_cios_portable, diag_rsa_public_operation_generic_exponent,
@@ -185,7 +185,7 @@ fn pkcs1_der_from_modulus_exponent(modulus: &[u8], exponent: &[u8]) -> Vec<u8> {
   sequence(&body)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn synthetic_pkcs1_der(modulus_len: usize) -> Vec<u8> {
   let mut modulus = vec![0xff; modulus_len];
   modulus[0] = 0x80;
@@ -365,7 +365,7 @@ fn rsa_private_signing(c: &mut Criterion) {
   };
 
   let mut group = c.benchmark_group("rsa-2048-private-signing");
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   {
     let mut inverse_scratch = key.private_scratch();
     let mut computed_inverse = vec![0u8; key.signature_len()];
@@ -523,7 +523,7 @@ fn rsa_components_for_size(
   let representative = modulus_minus_one(&pss_key);
   let mut out = vec![0u8; pss_key.modulus().len()];
 
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   let (pss_encoded, pss_em_bits, mut pss_db, mut pss_db_mask, pkcs1_encoded) = {
     let mut pss_encoded = vec![0u8; pss_key.modulus().len()];
     pss_key
@@ -601,7 +601,7 @@ fn rsa_components_for_size(
         .expect("valid RSA benchmark fixture must succeed")
     })
   });
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   {
     let mut cios_scratch = pss_key.public_scratch();
     let mut product_scratch = pss_key.public_scratch();
@@ -628,7 +628,7 @@ fn rsa_components_for_size(
       })
     });
   }
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   group.bench_function("padding-pss-sha256-rscrypto", |b| {
     b.iter(|| {
       diag_rsa_verify_pss_encoded_with_scratch(
@@ -642,7 +642,7 @@ fn rsa_components_for_size(
       .expect("valid RSA benchmark fixture must succeed")
     })
   });
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   group.bench_function("padding-pkcs1v15-sha256-rscrypto", |b| {
     b.iter(|| {
       diag_rsa_verify_pkcs1v15_encoded(
@@ -790,27 +790,27 @@ fn rsa_public_exponents(c: &mut Criterion) {
   let mut scratch_e17 = key_e17.public_scratch();
   let mut scratch_e65537 = key_e65537.public_scratch();
   let mut scratch_generic = key_generic.public_scratch();
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   let mut cios_scratch_e3 = key_e3.public_scratch();
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   let mut product_scratch_e3 = key_e3.public_scratch();
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   let mut generic_scratch_e3 = key_e3.public_scratch();
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   let mut cios_scratch_e17 = key_e17.public_scratch();
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   let mut product_scratch_e17 = key_e17.public_scratch();
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   let mut generic_scratch_e17 = key_e17.public_scratch();
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   let mut cios_scratch_e65537 = key_e65537.public_scratch();
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   let mut product_scratch_e65537 = key_e65537.public_scratch();
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   let mut generic_scratch_e65537 = key_e65537.public_scratch();
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   let mut cios_scratch_generic = key_generic.public_scratch();
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   let mut product_scratch_generic = key_generic.public_scratch();
   let mut out = vec![0u8; modulus.len()];
 
@@ -822,14 +822,14 @@ fn rsa_public_exponents(c: &mut Criterion) {
         .expect("valid RSA benchmark fixture must succeed")
     })
   });
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   group.bench_function("public-op-e3-bitserial-baseline", |b| {
     b.iter(|| {
       diag_rsa_public_operation_bitserial(black_box(&key_e3), black_box(&input), black_box(&mut out))
         .expect("valid RSA benchmark fixture must succeed")
     })
   });
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   group.bench_function("public-op-e3-product-montgomery", |b| {
     b.iter(|| {
       diag_rsa_public_operation_product(
@@ -841,7 +841,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
       .expect("valid RSA benchmark fixture must succeed")
     })
   });
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   group.bench_function("public-op-e3-generic-exponent", |b| {
     b.iter(|| {
       diag_rsa_public_operation_generic_exponent(
@@ -853,7 +853,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
       .expect("valid RSA benchmark fixture must succeed")
     })
   });
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   group.bench_function("public-op-e3-cios-candidate", |b| {
     b.iter(|| {
       diag_rsa_public_operation_cios(
@@ -872,14 +872,14 @@ fn rsa_public_exponents(c: &mut Criterion) {
         .expect("valid RSA benchmark fixture must succeed")
     })
   });
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   group.bench_function("public-op-e17-bitserial-baseline", |b| {
     b.iter(|| {
       diag_rsa_public_operation_bitserial(black_box(&key_e17), black_box(&input), black_box(&mut out))
         .expect("valid RSA benchmark fixture must succeed")
     })
   });
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   group.bench_function("public-op-e17-product-montgomery", |b| {
     b.iter(|| {
       diag_rsa_public_operation_product(
@@ -891,7 +891,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
       .expect("valid RSA benchmark fixture must succeed")
     })
   });
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   group.bench_function("public-op-e17-generic-exponent", |b| {
     b.iter(|| {
       diag_rsa_public_operation_generic_exponent(
@@ -903,7 +903,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
       .expect("valid RSA benchmark fixture must succeed")
     })
   });
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   group.bench_function("public-op-e17-cios-candidate", |b| {
     b.iter(|| {
       diag_rsa_public_operation_cios(
@@ -922,14 +922,14 @@ fn rsa_public_exponents(c: &mut Criterion) {
         .expect("valid RSA benchmark fixture must succeed")
     })
   });
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   group.bench_function("public-op-e65537-bitserial-baseline", |b| {
     b.iter(|| {
       diag_rsa_public_operation_bitserial(black_box(&key_e65537), black_box(&input), black_box(&mut out))
         .expect("valid RSA benchmark fixture must succeed")
     })
   });
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   group.bench_function("public-op-e65537-product-montgomery", |b| {
     b.iter(|| {
       diag_rsa_public_operation_product(
@@ -941,7 +941,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
       .expect("valid RSA benchmark fixture must succeed")
     })
   });
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   group.bench_function("public-op-e65537-generic-exponent", |b| {
     b.iter(|| {
       diag_rsa_public_operation_generic_exponent(
@@ -953,7 +953,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
       .expect("valid RSA benchmark fixture must succeed")
     })
   });
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   group.bench_function("public-op-e65537-cios-candidate", |b| {
     b.iter(|| {
       diag_rsa_public_operation_cios(
@@ -972,14 +972,14 @@ fn rsa_public_exponents(c: &mut Criterion) {
         .expect("valid RSA benchmark fixture must succeed")
     })
   });
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   group.bench_function("public-op-e0x49d2a1-bitserial-baseline", |b| {
     b.iter(|| {
       diag_rsa_public_operation_bitserial(black_box(&key_generic), black_box(&input), black_box(&mut out))
         .expect("valid RSA benchmark fixture must succeed")
     })
   });
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   group.bench_function("public-op-e0x49d2a1-product-montgomery", |b| {
     b.iter(|| {
       diag_rsa_public_operation_product(
@@ -991,7 +991,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
       .expect("valid RSA benchmark fixture must succeed")
     })
   });
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   group.bench_function("public-op-e0x49d2a1-cios-candidate", |b| {
     b.iter(|| {
       diag_rsa_public_operation_cios(
@@ -1034,7 +1034,7 @@ fn rsa_hash_components(c: &mut Criterion) {
   group.finish();
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn rsa_montgomery_thresholds(c: &mut Criterion) {
   if !bench_config::selected("rsa-montgomery-thresholds") {
     return;
@@ -1166,7 +1166,7 @@ fn main() {
     rsa_private_signing,
     rsa_public_exponents,
     rsa_hash_components,
-    #[cfg(feature = "diag")]
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     rsa_montgomery_thresholds,
   ]);
 }

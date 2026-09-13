@@ -6,7 +6,7 @@ use rscrypto::{
   hashes::crypto::{AsconHash256, AsconXof},
   traits::{Digest as _, Xof as _},
 };
-use support::blobby_compat::BlobIterator;
+use support::vector_blob::BlobIterator;
 
 #[test]
 fn ascon_hash256_official_vectors() {

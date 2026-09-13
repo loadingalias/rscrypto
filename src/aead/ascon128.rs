@@ -365,7 +365,7 @@ impl Aead for AsconAead128 {
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Compare a portable Ascon-AEAD128 tag computation with an expected diagnostic tag.
 #[unsafe(no_mangle)]
 #[inline(never)]

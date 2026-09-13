@@ -19,8 +19,8 @@
 //!
 //! # Arithmetic convention
 //!
-//! Field arithmetic is modular math (mod 2²⁵⁵ − 19). Per CLAUDE.md rules,
-//! `wrapping_*` is the correct choice for intentional modular arithmetic.
+//! Field arithmetic is modular math (mod 2²⁵⁵ − 19). `wrapping_*` expresses
+//! intentional modular arithmetic.
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;

@@ -219,7 +219,7 @@ pub enum Argon2Error {
   /// The allocator refused to provide the memory matrix.
   AllocationFailed,
   /// A forced diagnostic backend is unavailable on the current host.
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   BackendUnavailable,
   /// Password generation parameters exceed the verifier's resource limits.
   #[cfg(feature = "phc-strings")]
@@ -240,7 +240,7 @@ impl fmt::Display for Argon2Error {
       Self::AssociatedDataTooLong => "Argon2 associated data exceeds 2^32-1 bytes",
       Self::ResourceOverflow => "Argon2 memory matrix exceeds the target's address space",
       Self::AllocationFailed => "Argon2 memory-matrix allocation failed",
-      #[cfg(feature = "diag")]
+      #[cfg(all(rscrypto_internal, feature = "diag"))]
       Self::BackendUnavailable => "requested Argon2 diagnostic backend is unavailable",
       #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
       Self::EntropyUnavailable => "Argon2 entropy source unavailable",
@@ -458,7 +458,7 @@ pub fn diag_active_kernel() -> KernelId {
 /// # Errors
 ///
 /// Returns [`Argon2Error`] for invalid operation inputs or output length.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 pub fn diag_hash_active(
   params: &Argon2Params,
   password: &[u8],
@@ -474,7 +474,7 @@ pub fn diag_hash_active(
 /// # Errors
 ///
 /// Returns [`Argon2Error`] for invalid operation inputs or output length.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 pub fn diag_hash_portable(
   params: &Argon2Params,
   password: &[u8],
@@ -493,6 +493,7 @@ pub fn diag_hash_portable(
 }
 
 #[cfg(all(
+  rscrypto_internal,
   feature = "diag",
   any(
     target_arch = "x86_64",
@@ -515,7 +516,7 @@ fn diag_compress_for(kernel: KernelId) -> Result<CompressFn, Argon2Error> {
 /// # Errors
 ///
 /// Returns [`Argon2Error`] for invalid parameters.
-#[cfg(all(feature = "diag", target_arch = "aarch64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "aarch64"))]
 pub fn diag_hash_aarch64_neon(
   params: &Argon2Params,
   password: &[u8],
@@ -538,7 +539,7 @@ pub fn diag_hash_aarch64_neon(
 /// # Errors
 ///
 /// Returns [`Argon2Error`] for invalid parameters or when AVX2 is unavailable.
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
 pub fn diag_hash_x86_avx2(
   params: &Argon2Params,
   password: &[u8],
@@ -561,7 +562,7 @@ pub fn diag_hash_x86_avx2(
 /// # Errors
 ///
 /// Returns [`Argon2Error`] for invalid parameters or when AVX-512F plus AVX-512VL is unavailable.
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
 pub fn diag_hash_x86_avx512(
   params: &Argon2Params,
   password: &[u8],
@@ -584,7 +585,7 @@ pub fn diag_hash_x86_avx512(
 /// # Errors
 ///
 /// Returns [`Argon2Error`] for invalid parameters or when VSX is unavailable.
-#[cfg(all(feature = "diag", target_arch = "powerpc64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "powerpc64"))]
 pub fn diag_hash_power_vsx(
   params: &Argon2Params,
   password: &[u8],
@@ -607,7 +608,7 @@ pub fn diag_hash_power_vsx(
 /// # Errors
 ///
 /// Returns [`Argon2Error`] for invalid parameters or when the z13+ vector facility is unavailable.
-#[cfg(all(feature = "diag", target_arch = "s390x"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "s390x"))]
 pub fn diag_hash_s390x_vector(
   params: &Argon2Params,
   password: &[u8],
@@ -630,7 +631,7 @@ pub fn diag_hash_s390x_vector(
 /// # Errors
 ///
 /// Returns [`Argon2Error`] for invalid parameters or when the RISC-V V extension is unavailable.
-#[cfg(all(feature = "diag", target_arch = "riscv64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "riscv64"))]
 pub fn diag_hash_riscv64_v(
   params: &Argon2Params,
   password: &[u8],
@@ -653,7 +654,7 @@ pub fn diag_hash_riscv64_v(
 /// # Errors
 ///
 /// Returns [`Argon2Error`] for invalid parameters or when WASM SIMD128 is unavailable.
-#[cfg(all(feature = "diag", target_arch = "wasm32"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "wasm32"))]
 pub fn diag_hash_wasm_simd128(
   params: &Argon2Params,
   password: &[u8],
@@ -683,7 +684,7 @@ pub fn diag_hash_wasm_simd128(
 ///
 /// Runs one 1 KiB BlaMka compression, bypassing the full hash pipeline.
 /// Used by kernel microbenches and cross-kernel differential tests.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 pub fn diag_compress_portable(
   dst: &mut [u64; BLOCK_WORDS],
   x: &[u64; BLOCK_WORDS],
@@ -695,7 +696,7 @@ pub fn diag_compress_portable(
 }
 
 /// Single-block compress via the aarch64 NEON kernel (diagnostic).
-#[cfg(all(feature = "diag", target_arch = "aarch64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "aarch64"))]
 pub fn diag_compress_aarch64_neon(
   dst: &mut [u64; BLOCK_WORDS],
   x: &[u64; BLOCK_WORDS],
@@ -712,7 +713,7 @@ pub fn diag_compress_aarch64_neon(
 /// # Panics
 ///
 /// Panics if the host does not support AVX2.
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
 pub fn diag_compress_x86_avx2(
   dst: &mut [u64; BLOCK_WORDS],
   x: &[u64; BLOCK_WORDS],
@@ -733,7 +734,7 @@ pub fn diag_compress_x86_avx2(
 /// # Panics
 ///
 /// Panics if the host does not support AVX-512F + AVX-512VL.
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
 pub fn diag_compress_x86_avx512(
   dst: &mut [u64; BLOCK_WORDS],
   x: &[u64; BLOCK_WORDS],
@@ -754,7 +755,7 @@ pub fn diag_compress_x86_avx512(
 /// # Panics
 ///
 /// Panics if the host does not support VSX.
-#[cfg(all(feature = "diag", target_arch = "powerpc64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "powerpc64"))]
 pub fn diag_compress_power_vsx(
   dst: &mut [u64; BLOCK_WORDS],
   x: &[u64; BLOCK_WORDS],
@@ -774,7 +775,7 @@ pub fn diag_compress_power_vsx(
 /// # Panics
 ///
 /// Panics if the host does not support the z13+ vector facility.
-#[cfg(all(feature = "diag", target_arch = "s390x"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "s390x"))]
 pub fn diag_compress_s390x_vector(
   dst: &mut [u64; BLOCK_WORDS],
   x: &[u64; BLOCK_WORDS],
@@ -794,7 +795,7 @@ pub fn diag_compress_s390x_vector(
 /// # Panics
 ///
 /// Panics if the host does not support the RISC-V V extension.
-#[cfg(all(feature = "diag", target_arch = "riscv64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "riscv64"))]
 pub fn diag_compress_riscv64_v(
   dst: &mut [u64; BLOCK_WORDS],
   x: &[u64; BLOCK_WORDS],
@@ -814,7 +815,7 @@ pub fn diag_compress_riscv64_v(
 /// # Panics
 ///
 /// Panics if the host does not support wasm SIMD128.
-#[cfg(all(feature = "diag", target_arch = "wasm32"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "wasm32"))]
 pub fn diag_compress_wasm_simd128(
   dst: &mut [u64; BLOCK_WORDS],
   x: &[u64; BLOCK_WORDS],
@@ -835,7 +836,7 @@ pub fn diag_compress_wasm_simd128(
 }
 
 /// Block-word count (128) — exposed for diagnostic kernel tests.
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 pub const DIAG_BLOCK_WORDS: usize = BLOCK_WORDS;
 
 // ─── H' variable-length Blake2b helper (RFC 9106 §3.3) ──────────────────────
@@ -896,7 +897,7 @@ fn h_prime(input_parts: &[&[u8]], out: &mut [u8]) {
   ct::zeroize(&mut v_prev);
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn h_prime_diag_blake2b_portable(input_parts: &[&[u8]], out: &mut [u8]) {
   let out_len = out.len();
   assert!(out_len > 0, "H' output length must be positive");
@@ -1000,7 +1001,7 @@ fn compute_h0(
   hasher.finalize()
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn compute_h0_diag_blake2b_portable(
   params: &Argon2Params,
   context: Argon2Context<'_>,
@@ -1400,10 +1401,8 @@ fn fill_segment(
 
 /// Fill a single segment via a [`MatrixView`].
 ///
-/// Common kernel for the sequential and parallel fill paths. The body is
-/// identical to the legacy `fill_segment(&mut Matrix, ...)`; the only
-/// change is that block reads/writes go through [`MatrixView::block`] /
-/// [`MatrixView::block_mut`] rather than through `&mut Matrix`.
+/// Common kernel for the sequential and parallel fill paths. Block reads and
+/// writes use [`MatrixView::block`] and [`MatrixView::block_mut`].
 ///
 /// # Safety
 ///
@@ -1638,7 +1637,7 @@ fn fill_slice(
 #[derive(Clone, Copy)]
 struct HashBackend {
   compress: CompressFn,
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   diag_blake2b: bool,
 }
 
@@ -1669,13 +1668,17 @@ fn argon2_hash_with_context(
     out,
     HashBackend {
       compress: active_compress(),
-      #[cfg(feature = "diag")]
+      #[cfg(all(rscrypto_internal, feature = "diag"))]
       diag_blake2b: false,
     },
   )
 }
 
-#[cfg(all(feature = "diag", not(all(target_arch = "wasm32", not(target_feature = "simd128")))))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  not(all(target_arch = "wasm32", not(target_feature = "simd128")))
+))]
 fn argon2_hash_with_kernel(
   params: &Argon2Params,
   password: &[u8],
@@ -1698,7 +1701,7 @@ fn argon2_hash_with_kernel(
   )
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn argon2_hash_with_kernel_diag_blake2b(
   params: &Argon2Params,
   password: &[u8],
@@ -1743,7 +1746,7 @@ fn argon2_hash_with_kernel_inner(
 
   // Compute H0 only after all fallible resource acquisition is complete.
   let mut h0 = {
-    #[cfg(feature = "diag")]
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     {
       if backend.diag_blake2b {
         compute_h0_diag_blake2b_portable(params, context, password, salt, variant, out.len())
@@ -1751,7 +1754,7 @@ fn argon2_hash_with_kernel_inner(
         compute_h0(params, context, password, salt, variant, out.len())
       }
     }
-    #[cfg(not(feature = "diag"))]
+    #[cfg(not(all(rscrypto_internal, feature = "diag")))]
     {
       compute_h0(params, context, password, salt, variant, out.len())
     }
@@ -1762,24 +1765,24 @@ fn argon2_hash_with_kernel_inner(
     let mut buf = [0u8; BLOCK_SIZE];
     // B[lane][0] = H'(H0 || LE32(0) || LE32(lane), BLOCK_SIZE)
     let lane_le = lane.to_le_bytes();
-    #[cfg(feature = "diag")]
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     if backend.diag_blake2b {
       h_prime_diag_blake2b_portable(&[&h0, &0u32.to_le_bytes(), &lane_le], &mut buf);
     } else {
       h_prime(&[&h0, &0u32.to_le_bytes(), &lane_le], &mut buf);
     }
-    #[cfg(not(feature = "diag"))]
+    #[cfg(not(all(rscrypto_internal, feature = "diag")))]
     h_prime(&[&h0, &0u32.to_le_bytes(), &lane_le], &mut buf);
     matrix.set(lane, 0, block_from_bytes(&buf));
 
     // B[lane][1] = H'(H0 || LE32(1) || LE32(lane), BLOCK_SIZE)
-    #[cfg(feature = "diag")]
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     if backend.diag_blake2b {
       h_prime_diag_blake2b_portable(&[&h0, &1u32.to_le_bytes(), &lane_le], &mut buf);
     } else {
       h_prime(&[&h0, &1u32.to_le_bytes(), &lane_le], &mut buf);
     }
-    #[cfg(not(feature = "diag"))]
+    #[cfg(not(all(rscrypto_internal, feature = "diag")))]
     h_prime(&[&h0, &1u32.to_le_bytes(), &lane_le], &mut buf);
     matrix.set(lane, 1, block_from_bytes(&buf));
     ct::zeroize(&mut buf);
@@ -1804,13 +1807,13 @@ fn argon2_hash_with_kernel_inner(
     }
   }
   let mut acc_bytes = block_to_bytes(&acc);
-  #[cfg(feature = "diag")]
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
   if backend.diag_blake2b {
     h_prime_diag_blake2b_portable(&[&acc_bytes], out);
   } else {
     h_prime(&[&acc_bytes], out);
   }
-  #[cfg(not(feature = "diag"))]
+  #[cfg(not(all(rscrypto_internal, feature = "diag")))]
   h_prime(&[&acc_bytes], out);
 
   // Wipe scratch

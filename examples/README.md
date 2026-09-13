@@ -1,7 +1,9 @@
 # Examples
 
-These binaries cover complete workflows. One-call hashing, MAC, and checksum
-operations stay in the API documentation.
+These binaries cover complete workflows.
+One-call hashing, MAC, and checksum operations stay in the API documentation.
+
+Run them with the accompanying source revision.
 
 Run every example with its minimum feature set:
 
@@ -28,9 +30,7 @@ Run one example:
 cargo run --example aead_seal_open --features alloc,chacha20poly1305,getrandom
 ```
 
-Replace the example name and feature list with the matching row. P-256 ECDH and
-X25519 return raw shared secrets that a protocol must bind to its transcript
-with a KDF; neither operation authenticates the peer. ML-KEM encapsulation
-alone does not define a hybrid key-establishment protocol.
-
-See [`docs/migration.md`](../docs/migration.md) when replacing another library.
+Replace the example name and feature list with the matching row.
+P-256 ECDH and X25519 return raw shared secrets
+that a protocol must bind to its transcript with a KDF; neither operation authenticates the peer.
+ML-KEM encapsulation alone does not define a hybrid key-establishment protocol.

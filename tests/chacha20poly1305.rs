@@ -107,7 +107,7 @@ fn chacha20poly1305_rejects_modified_tag() {
     .expect_err("modified ChaCha20-Poly1305 tag must fail authentication");
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[test]
 fn chacha20poly1305_diag_owned_decrypt_large_inputs_match_normal_path() {
   const PLAINTEXT_LENS: &[usize] = &[1024, 1025, 4095, 4096, 4097, 16_384];
@@ -134,7 +134,7 @@ fn chacha20poly1305_diag_owned_decrypt_large_inputs_match_normal_path() {
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 #[test]
 fn chacha20poly1305_diag_owned_decrypt_zeroes_large_buffer_on_bad_tag() {
   let key = ChaCha20Poly1305Key::from_bytes([0x11; ChaCha20Poly1305::KEY_SIZE]);
@@ -165,7 +165,7 @@ fn chacha20poly1305_diag_owned_decrypt_zeroes_large_buffer_on_bad_tag() {
   );
 }
 
-#[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
 #[test]
 fn chacha20poly1305_diag_x86_asm_encrypt_matches_owned_path() {
   const PLAINTEXT_LENS: &[usize] = &[

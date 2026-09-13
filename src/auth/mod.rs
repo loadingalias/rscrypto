@@ -275,9 +275,9 @@ where
 pub use argon2::{Argon2Context, Argon2Error, Argon2Params, Argon2d, Argon2i, Argon2id};
 #[cfg(all(feature = "argon2", feature = "phc-strings"))]
 pub use argon2::{Argon2VerificationLimits, Argon2idPassword};
-#[cfg(all(feature = "diag", feature = "ed25519"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ed25519"))]
 pub use curve25519_edwards::diag_ed25519_select_basepoint_cached_limb_digest;
-#[cfg(all(feature = "diag", feature = "ed25519", target_arch = "x86_64"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ed25519", target_arch = "x86_64"))]
 pub use curve25519_edwards::{
   diag_ed25519_select_basepoint_cached_avx2_limb_digest, diag_ed25519_select_basepoint_cached_ifma_limb_digest,
 };
@@ -287,7 +287,7 @@ pub use ecdsa::{EcdsaBlindedSigningError, EcdsaError, EcdsaKeyGenerationError};
 pub use ecdsa::{EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature};
 #[cfg(feature = "ecdsa-p384")]
 pub use ecdsa::{EcdsaP384Keypair, EcdsaP384PublicKey, EcdsaP384SecretKey, EcdsaP384Signature};
-#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
 pub use ecdsa::{
   diag_ecdsa_p256_basepoint_blinded_limb_digest, diag_ecdsa_p256_final_multiply_limb_digest,
   diag_ecdsa_p256_nonce_inverse_blinded_limb_digest, diag_ecdsa_p256_nonce_inverse_limb_digest,
@@ -295,7 +295,7 @@ pub use ecdsa::{
   diag_ecdsa_p256_order_mul_fixed_r_limb_digest, diag_ecdsa_p256_reduce_wide_order_limb_digest,
   diag_ecdsa_p256_scalar_finish_limb_digest, diag_ecdsa_p256_select_signing_generator_affine_limb_digest,
 };
-#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
 pub use ecdsa::{
   diag_ecdsa_p384_basepoint_blinded_limb_digest, diag_ecdsa_p384_basepoint_r_limb_digest,
   diag_ecdsa_p384_final_multiply_limb_digest, diag_ecdsa_p384_nonce_inverse_blinded_limb_digest,
@@ -304,6 +304,7 @@ pub use ecdsa::{
   diag_ecdsa_p384_scalar_finish_limb_digest, diag_ecdsa_p384_select_signing_generator_affine_limb_digest,
 };
 #[cfg(all(
+  rscrypto_internal,
   feature = "diag",
   feature = "ed25519",
   target_arch = "aarch64",
@@ -312,7 +313,7 @@ pub use ecdsa::{
   not(miri)
 ))]
 pub use ed25519::diag_ed25519_verify_aarch64_asm_double_scalar_digest;
-#[cfg(all(feature = "diag", feature = "ed25519"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ed25519"))]
 pub use ed25519::{
   DiagEd25519VerifyScalars, diag_ed25519_verify_challenge_reduce_digest,
   diag_ed25519_verify_portable_double_scalar_digest, diag_ed25519_verify_public_decode_digest,
@@ -322,11 +323,11 @@ pub use ed25519::{
 pub use ed25519::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 #[cfg(feature = "hkdf")]
 pub use hkdf::{HkdfOutputLengthError, HkdfSha256, HkdfSha384, HkdfSha512};
-#[cfg(all(feature = "diag", feature = "hkdf"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "hkdf"))]
 pub use hkdf::{diag_hkdf_sha256_derive_portable, diag_hkdf_sha384_derive_portable, diag_hkdf_sha512_derive_portable};
 #[cfg(feature = "hmac")]
 pub use hmac::{HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag};
-#[cfg(all(feature = "diag", feature = "hmac"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "hmac"))]
 pub use hmac::{
   diag_hmac_sha256_verify_portable, diag_hmac_sha256_verify_truncated_64_portable, diag_hmac_sha384_verify_portable,
   diag_hmac_sha512_verify_portable,
@@ -346,7 +347,7 @@ pub use mlkem::{
   MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey,
   MlKem1024PreparedDecapsulationKey, MlKem1024PreparedEncapsulationKey, MlKem1024SharedSecret, MlKemError,
 };
-#[cfg(all(feature = "diag", feature = "ml-kem"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ml-kem"))]
 pub use mlkem::{
   diag_mlkem_compress_decompress_values_digest, diag_mlkem_from_montgomery_product_domain_input_digest,
   diag_mlkem_inverse_ntt_montgomery_product_input_digest, diag_mlkem_multiply_ntts_add_assign_input_digest,
@@ -356,6 +357,7 @@ pub use mlkem::{
   diag_mlkem1024_multiply_ntts_accumulate_input_digest,
 };
 #[cfg(all(
+  rscrypto_internal,
   feature = "diag",
   feature = "p256-ecdh",
   any(
@@ -372,7 +374,7 @@ pub use p256_ecdh::diag_p256_ecdh_select_window_limb_digest;
 pub use p256_ecdh::{P256EphemeralSecret, P256KeyGenerationError, P256PublicKey, P256PublicKeyError, P256SharedSecret};
 #[cfg(feature = "pbkdf2")]
 pub use pbkdf2::{Pbkdf2Error, Pbkdf2Params, Pbkdf2Sha256, Pbkdf2Sha512, Pbkdf2VerifyPolicy};
-#[cfg(all(feature = "diag", feature = "pbkdf2"))]
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "pbkdf2"))]
 pub use pbkdf2::{diag_pbkdf2_sha256_verify_portable, diag_pbkdf2_sha512_verify_portable};
 #[cfg(feature = "poly1305")]
 pub use poly1305::{Poly1305, Poly1305OneTimeKey, Poly1305Tag};
@@ -384,7 +386,7 @@ pub use rsa::{
   RsaPublicKey, RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch, RsaSignatureProfile, RsaSignatureSigner,
   RsaSignatureVerifier, RsaTlsSignatureSchemes, RsaX509PublicKey, RsaX509PublicKeyAlgorithm,
 };
-#[cfg(all(feature = "rsa", feature = "diag"))]
+#[cfg(all(feature = "rsa", all(rscrypto_internal, feature = "diag")))]
 pub use rsa::{
   diag_rsa_blinding_factor_inverse_with_scratch, diag_rsa_import_pkcs8_private_key_der_stage,
   diag_rsa_private_component_validation_32, diag_rsa_private_exponentiate_fixed_width,
@@ -398,6 +400,6 @@ pub use scrypt::{ScryptPassword, ScryptVerificationLimits};
 #[cfg(feature = "x25519")]
 pub use x25519::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 
-#[cfg(all(feature = "diag", feature = "x25519"))]
-pub use crate::backend::curve25519::diag_curve25519_conditional_swap;
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "x25519"))]
+pub use crate::backend::curve25519_swap::diag_curve25519_conditional_swap;
 pub use crate::traits::Mac;

@@ -410,7 +410,7 @@ fn encrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], 
   tag
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Run one portable AEGIS-256 state update and return its diagnostic final tag.
 #[unsafe(no_mangle)]
 #[inline(never)]
