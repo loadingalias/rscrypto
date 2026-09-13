@@ -1,4 +1,5 @@
-# AWS runner shapes. Workflows reference these names; other providers keep their own labels.
+# AWS runner profiles. Public repositories resolve this catalog from the default branch.
+# Workflows reference these names; other providers keep their own labels.
 runners:
   plan:
     family: [c7a.large, c7i.large, c8a.large, c8i.large]
@@ -18,7 +19,31 @@ runners:
     image: ubuntu24-minimal-x64
     spot: price-capacity-optimized
     volume: 100gb:gp3
+  compatibility:
+    family: [c7a.2xlarge, c7i.2xlarge, c8a.2xlarge, c8i.2xlarge]
+    cpu: 8
+    image: ubuntu24-minimal-x64
+    spot: price-capacity-optimized
+    volume: 150gb:gp3
   cross-build:
+    family: [c7a.8xlarge, c7i.8xlarge, c8a.8xlarge, c8i.8xlarge]
+    cpu: 32
+    image: ubuntu24-minimal-x64
+    spot: price-capacity-optimized
+    volume: 150gb:gp3
+  ci-cross-build:
+    family: [c7a.4xlarge, c7i.4xlarge, c8a.4xlarge, c8i.4xlarge]
+    cpu: 16
+    image: ubuntu24-minimal-x64
+    spot: price-capacity-optimized
+    volume: 150gb:gp3
+  ct-cross-build:
+    family: [c7a.2xlarge, c7i.2xlarge, c8a.2xlarge, c8i.2xlarge]
+    cpu: 8
+    image: ubuntu24-minimal-x64
+    spot: price-capacity-optimized
+    volume: 150gb:gp3
+  bench-cross-build:
     family: [c7a.8xlarge, c7i.8xlarge, c8a.8xlarge, c8i.8xlarge]
     cpu: 32
     image: ubuntu24-minimal-x64
@@ -42,6 +67,36 @@ runners:
     image: windows25-full-x64
     spot: price-capacity-optimized
     volume: 200gb:gp3
+  fuzz-x86_64-linux:
+    family: [c7a.2xlarge, c8a.2xlarge]
+    cpu: 8
+    image: ubuntu24-minimal-x64
+    spot: price-capacity-optimized
+    volume: 150gb:gp3
+  fuzz-aarch64-linux:
+    family: [c7g.2xlarge, c8g.2xlarge, c9g.2xlarge]
+    cpu: 8
+    image: ubuntu24-minimal-arm64
+    spot: price-capacity-optimized
+    volume: 150gb:gp3
+  ct-x86_64-linux-intel:
+    family: [c8i.2xlarge]
+    cpu: 8
+    image: ubuntu24-minimal-x64
+    spot: false
+    volume: 100gb:gp3
+  ct-x86_64-win-intel:
+    family: [c8i.xlarge]
+    cpu: 4
+    image: windows25-full-x64
+    spot: false
+    volume: 100gb:gp3
+  ct-aarch64-linux:
+    family: [c9g.2xlarge]
+    cpu: 8
+    image: ubuntu24-minimal-arm64
+    spot: false
+    volume: 100gb:gp3
   # Fixed, non-Flex, On-Demand hardware for timing and benchmark evidence.
   measure-x86_64-linux-intel:
     family: [c8i.2xlarge]
