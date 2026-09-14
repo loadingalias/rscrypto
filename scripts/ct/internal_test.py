@@ -17,6 +17,16 @@ TARGET = 'x86_64-unknown-linux-gnu'
 
 
 class InternalBuildTests(unittest.TestCase):
+  def test_windows_shell_wrappers_run_through_bash(self):
+    command = ['scripts/lib/python.sh', 'scripts/test/evidence_suite.py', '--case', 'argument with spaces']
+    self.assertEqual(internal.host_command(command, 'nt'), ['bash', *command])
+
+  def test_native_commands_and_posix_shell_wrappers_are_unchanged(self):
+    native = ['cargo', 'test', '--locked']
+    shell_wrapper = ['scripts/lib/toolchain.sh', '--exec', *native]
+    self.assertIs(internal.host_command(native, 'nt'), native)
+    self.assertIs(internal.host_command(shell_wrapper, 'posix'), shell_wrapper)
+
   def test_shell_export_preserves_encoded_arguments(self):
     original = '-C\x1flink-arg=path with spaces\x1f--cfg\x1fevidence="gcm"'
     output = io.StringIO()

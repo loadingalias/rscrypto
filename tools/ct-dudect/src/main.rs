@@ -679,8 +679,7 @@ aead_fixed_vs_random_key_open!(
 fn aes128_gcm_siv_diag_derive_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
   let nonce = Nonce96::from_bytes([0x51; Nonce96::LENGTH]);
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let key = if matches!(class, Class::Left) {
       [0x51; Aes128GcmSiv::KEY_SIZE]
     } else {
@@ -697,8 +696,7 @@ fn aes128_gcm_siv_diag_derive_fixed_vs_random_key(runner: &mut CtRunner, rng: &m
 fn aes256_gcm_siv_diag_derive_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
   let nonce = Nonce96::from_bytes([0x52; Nonce96::LENGTH]);
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let key = if matches!(class, Class::Left) {
       [0x52; Aes256GcmSiv::KEY_SIZE]
     } else {

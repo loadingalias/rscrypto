@@ -18,6 +18,13 @@ ROOT = Path(__file__).resolve().parents[2]
 INTERNAL_CFG = ["--cfg", "rscrypto_internal"]
 
 
+def host_command(command: list[str], platform: str = os.name) -> list[str]:
+  """Make repository shell wrappers executable by Windows subprocesses."""
+  if platform == "nt" and Path(command[0]).suffix == ".sh":
+    return ["bash", *command]
+  return command
+
+
 def build_environment(target: str, extra_flags: list[str] | None = None) -> tuple[dict[str, str], list[str]]:
   """Preserve resolved target flags and make the actual evidence flags recordable."""
   flags = [*resolved_rustflags(ROOT, target)[2], *(extra_flags or []), *INTERNAL_CFG]
@@ -43,7 +50,7 @@ def main() -> int:
   if not command:
     parser.error("a Cargo command is required after --")
   environment, _ = build_environment(args.target)
-  return subprocess.run(command, cwd=ROOT, env=environment, check=False).returncode
+  return subprocess.run(host_command(command), cwd=ROOT, env=environment, check=False).returncode
 
 
 if __name__ == "__main__":

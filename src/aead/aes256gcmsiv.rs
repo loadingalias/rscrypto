@@ -239,6 +239,17 @@ fn compute_tag(
 /// Derive the per-nonce authentication and encryption keys for diagnostic comparison.
 #[must_use]
 pub fn diag_aes256gcmsiv_derive_keys(cipher: &Aes256GcmSiv, nonce: &Nonce96) -> ([u8; 16], [u8; 32]) {
+  #[cfg(target_arch = "aarch64")]
+  if matches!(
+    cipher.backend,
+    AeadBackend::Aarch64AesPmull | AeadBackend::Aarch64Sve2AesPmull
+  ) {
+    // SAFETY: mirror the production AArch64 GCM-SIV key-derivation dispatch because:
+    // 1. Backend resolution selected an AArch64 AES+PMULL backend.
+    // 2. The selected backend constructs `cipher.master_ek` with AES-CE round keys.
+    // 3. `nonce.as_bytes()` is exactly the 96-bit GCM-SIV nonce.
+    return unsafe { aes::aarch64_gcmsiv_derive_keys_inline(&cipher.master_ek, nonce.as_bytes()) };
+  }
   derive_keys(&cipher.master_ek, nonce)
 }
 

@@ -555,8 +555,8 @@ reason = "High-level AEAD open varies the public ciphertext/tag transcript with 
 name = "aes128_gcm_siv_diag_derive_fixed_vs_random_key"
 primitive = "aead.open_authentication"
 filter = "aes128_gcm_siv_diag_derive_fixed_vs_random_key"
-left_class = "s390x_gcmsiv_key_diag: derive message keys from fixed AES-128-GCM-SIV master key"
-right_class = "s390x_gcmsiv_key_diag: derive message keys from random AES-128-GCM-SIV master key"
+left_class = "gcmsiv_key_diag: derive message keys from fixed AES-128-GCM-SIV master key"
+right_class = "gcmsiv_key_diag: derive message keys from random AES-128-GCM-SIV master key"
 samples = 20000
 smoke_samples = 2000
 
@@ -564,8 +564,8 @@ smoke_samples = 2000
 name = "aes256_gcm_siv_diag_derive_fixed_vs_random_key"
 primitive = "aead.open_authentication"
 filter = "aes256_gcm_siv_diag_derive_fixed_vs_random_key"
-left_class = "s390x_gcmsiv_key_diag: derive message keys from fixed AES-256-GCM-SIV master key"
-right_class = "s390x_gcmsiv_key_diag: derive message keys from random AES-256-GCM-SIV master key"
+left_class = "gcmsiv_key_diag: derive message keys from fixed AES-256-GCM-SIV master key"
+right_class = "gcmsiv_key_diag: derive message keys from random AES-256-GCM-SIV master key"
 samples = 20000
 smoke_samples = 2000
 
