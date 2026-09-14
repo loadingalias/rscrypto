@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 import os
 from pathlib import Path
 import subprocess
@@ -18,10 +19,15 @@ ROOT = Path(__file__).resolve().parents[2]
 INTERNAL_CFG = ["--cfg", "rscrypto_internal"]
 
 
-def host_command(command: list[str], platform: str = os.name) -> list[str]:
+def host_command(
+    command: list[str], platform: str = os.name, environment: Mapping[str, str] = os.environ,
+) -> list[str]:
   """Make repository shell wrappers executable by Windows subprocesses."""
   if platform == "nt" and Path(command[0]).suffix == ".sh":
-    return ["bash", *command]
+    bash = environment.get("RSCRYPTO_BASH")
+    if not bash:
+      raise RuntimeError("RSCRYPTO_BASH is unset; run the Windows tooling installer first")
+    return [bash, *command]
   return command
 
 

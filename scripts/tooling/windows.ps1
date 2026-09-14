@@ -115,6 +115,9 @@ try {
     Get-PinnedDownload $native.assets.git.url $native.assets.git.sha256 $gitInstaller
     $gitDirectory = Join-Path $prefix ('git-' + $catalog.versions.git)
     Install-Exe $gitInstaller @('/VERYSILENT', '/NORESTART', '/NOCANCEL', '/SP-', ('/DIR="' + $gitDirectory + '"'))
+    $bash = Join-Path $gitDirectory 'bin\bash.exe'
+    if (-not (Test-Path $bash)) { throw 'Git for Windows did not install bash.exe.' }
+    $env:RSCRYPTO_BASH = $bash
     $binDirectory = Join-Path $prefix 'bin'
     New-Item -ItemType Directory -Force $binDirectory | Out-Null
     if (-not $CiCt) {
@@ -185,6 +188,7 @@ try {
     Set-Content -Path (Join-Path $probeDirectory 'justfile') -Encoding ASCII -Value $probeCommands
     Invoke-Native 'just' @('--justfile', (Join-Path $probeDirectory 'justfile'), 'check')
     if (-not $CiCt) {
+        Invoke-Native $bash @('--version')
         Invoke-Native 'clang' @('--version')
         Invoke-Native 'cmake' @('--version')
         if ($Platform -eq 'x86_64-win') { Invoke-Native 'nasm' @('-v') }
@@ -193,7 +197,7 @@ try {
 
     # Persist the complete MSVC/SDK environment, not only the paths to installed executables.
     if (-not $Ci) {
-        foreach ($name in @('PATH', 'INCLUDE', 'LIB', 'LIBPATH', 'LIBCLANG_PATH', 'VSINSTALLDIR', 'VCINSTALLDIR', 'VCToolsInstallDir', 'WindowsSdkDir', 'WindowsSDKVersion', $linkerVariable)) {
+        foreach ($name in @('PATH', 'INCLUDE', 'LIB', 'LIBPATH', 'LIBCLANG_PATH', 'RSCRYPTO_BASH', 'VSINSTALLDIR', 'VCINSTALLDIR', 'VCToolsInstallDir', 'WindowsSdkDir', 'WindowsSDKVersion', $linkerVariable)) {
             $value = [Environment]::GetEnvironmentVariable($name, 'Process')
             if ($value) { [Environment]::SetEnvironmentVariable($name, $value, 'User') }
         }
