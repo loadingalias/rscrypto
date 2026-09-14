@@ -100,7 +100,7 @@ def validate(data):
                               ('ci-policy', {'cargo-deny', 'cargo-audit'}),
                               ('ci-compat', {'just'}),
                               ('ci-fuzz', {'just', 'cargo-fuzz'}),
-                              ('ci-ct', {'just'}),
+                              ('ci-ct', {'just', 'cargo-nextest'}),
                               ('ci-miri', {'just'}),
                               ('ci-package', {'just'}),
                               ('ci-bench', {'just'})):

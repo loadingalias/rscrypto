@@ -73,7 +73,7 @@ nightly-components = ["miri", "rust-src"]
 packages = ["build-essential", "ca-certificates", "curl", "git", "python3"]
 
 [ci-ct]
-cargo = ["just"]
+cargo = ["just", "cargo-nextest"]
 components = ["llvm-tools"]
 packages = ["build-essential", "ca-certificates", "curl", "git", "python3"]
 
