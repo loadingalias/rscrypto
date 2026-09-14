@@ -1,3 +1,6 @@
+# cargo-rail configuration
+# Documentation: https://github.com/loadingalias/cargo-rail
+
 # Additional target-resolution and compiler-evidence views owned by
 # .config/target-matrix.json and docs/platforms.md.
 targets = [
@@ -21,17 +24,12 @@ targets = [
 
 [unify]
 include_renamed = true
-strict_version_compat = true
-exact_pin_handling = "warn"
-major_version_conflict = "warn"
 skip_undeclared_patterns = [] # Every feature spelling is actionable in this crate.
-consumer_scope = "open" # Published library: external consumers may activate dormant public features.
 msrv_policy = { mode = "disabled" } # Cargo.toml owns the declared package MSRV.
 
 [surface]
-# Cargo Rail 0.25 cannot distinguish expected `compile_fail` doctest invocations from compiler failures.
-enabled = false
-consumer_scope = "open" # Published library: external consumers remain part of the visibility boundary.
+enabled = true
+targets = "workspace"
 
 [release]
 # Keep standalone fuzz and evidence-tool lockfiles on the released package version.
