@@ -221,6 +221,15 @@ for tool in "${cargo_tools[@]}"; do
       cargo +"$channel" install --locked --target "$(catalog_get "$platform" rust-host)" --version "$version" "$tool"
   fi
 done
+
+verify_cargo_tool() {
+  case "$1" in
+    cargo-*) cargo +"$channel" "${1#cargo-}" --version ;;
+    ripgrep) rg --version ;;
+    *) "$1" --version ;;
+  esac
+}
+for tool in "${cargo_tools[@]}"; do verify_cargo_tool "$tool"; done
 if [[ "$ci" == false && "$platform" != aarch64-linux && "$platform" != x86_64-linux ]]; then
   env -u RUSTC_WRAPPER -u CARGO_ENCODED_RUSTFLAGS \
     cargo +"$channel" install --locked --target "$(catalog_get "$platform" rust-host)" --version "$(catalog_get versions cargo-rail)" cargo-rail
@@ -273,8 +282,6 @@ fi
 if [[ "$ci" == false ]]; then cargo rail --version; fi
 case "$profile" in
   ci-compat) wasmtime --version ;;
-  ci-fuzz) cargo fuzz --version ;;
-  ci-ct|ci-miri|ci-package|ci-bench) just --version ;;
-  ci|ci-cross-build|ci-cross-run) cargo nextest --version ;;
+  ci-cross-run) just --version; cargo nextest --version ;;
 esac
 printf 'Installed %s tooling. Load with: source "%s"\n' "$platform" "$environment"

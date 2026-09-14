@@ -1184,8 +1184,7 @@ mlkem_dudect_profile!(
 
 fn mlkem_arithmetic_ntt_fixed_vs_random_poly(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let poly = if matches!(class, Class::Left) {
       mlkem_poly_from_seed(0x301)
     } else {
@@ -1201,8 +1200,7 @@ fn mlkem_arithmetic_ntt_fixed_vs_random_poly(runner: &mut CtRunner, rng: &mut Be
 
 fn mlkem_arithmetic_inverse_ntt_fixed_vs_random_poly(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let poly = if matches!(class, Class::Left) {
       mlkem_poly_from_seed(0x401)
     } else {
@@ -1220,8 +1218,7 @@ fn mlkem_arithmetic_inverse_ntt_fixed_vs_random_poly(runner: &mut CtRunner, rng:
 
 fn mlkem_arithmetic_to_product_domain_fixed_vs_random_poly(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let poly = if matches!(class, Class::Left) {
       mlkem_poly_from_seed(0x451)
     } else {
@@ -1239,8 +1236,7 @@ fn mlkem_arithmetic_to_product_domain_fixed_vs_random_poly(runner: &mut CtRunner
 
 fn mlkem_arithmetic_from_product_domain_fixed_vs_random_poly(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let poly = if matches!(class, Class::Left) {
       mlkem_poly_from_seed(0x471)
     } else {
@@ -1258,8 +1254,7 @@ fn mlkem_arithmetic_from_product_domain_fixed_vs_random_poly(runner: &mut CtRunn
 
 fn mlkem_arithmetic_basemul_fixed_vs_random_operands(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let (a, b, acc) = if matches!(class, Class::Left) {
       (
         mlkem_poly_from_seed(0x501),
@@ -1281,8 +1276,7 @@ fn mlkem_arithmetic_basemul_fixed_vs_random_operands(runner: &mut CtRunner, rng:
 
 fn mlkem1024_arithmetic_dot_fixed_vs_random_operands(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let (a, b, acc) = if matches!(class, Class::Left) {
       (
         mlkem_polyvec4_from_seed(0x801),

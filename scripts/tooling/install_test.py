@@ -70,7 +70,8 @@ class LinuxInstall(unittest.TestCase):
         root = Path(temporary.name)
         binaries = root / 'bin'
         binaries.mkdir()
-        for name in ('uname', 'id', 'apt-get', 'apt-cache', 'cargo', 'clang', 'cmake', 'python3', 'rustup', 'wasmtime', 'opam'):
+        for name in ('uname', 'id', 'apt-get', 'apt-cache', 'cargo', 'clang', 'cmake', 'python3', 'rustup',
+                     'wasmtime', 'opam', 'just', 'rg', 'lychee', 'rumdl', 'samply', 'gungraun-runner'):
             script = binaries / name
             script.write_text('#!' + sys.executable + '\n' + STUB)
             script.chmod(0o755)
@@ -192,6 +193,13 @@ class LinuxInstall(unittest.TestCase):
                 self.assertFalse(any('musl-tools=1.0' in c or 'target' in c and c[0] == 'rustup' for c in calls))
                 archives = [c[-2] for c in calls if c[0] == 'python3' and 'install-archive' in c]
                 self.assertEqual(archives, ['cargo-binstall'] if 'cargo-binstall' in CATALOG[platform]['assets'] else [])
+                for tool in CATALOG[profile]['cargo']:
+                    if tool.startswith('cargo-'):
+                        self.assertTrue(any(c[0] == 'cargo' and c[-2:] == [tool.removeprefix('cargo-'), '--version']
+                                            for c in calls))
+                    else:
+                        probe = ['rg' if tool == 'ripgrep' else tool, '--version']
+                        self.assertIn(probe, calls)
 
     def test_package_profile_installs_consumer_prerequisites_once(self):
         result, calls, _ = self.provision('x86_64-linux', profile='ci-package')

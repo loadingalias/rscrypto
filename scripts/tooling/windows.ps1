@@ -160,6 +160,15 @@ try {
     foreach ($tool in $cargoTools) {
         Invoke-Native 'cargo' @("+$channel", 'binstall', '--locked', '--no-confirm', '--targets', $native.'rust-host', "$tool@$($catalog.cargo.$tool)")
     }
+    foreach ($tool in $cargoTools) {
+        if ($tool.StartsWith('cargo-')) {
+            Invoke-Native 'cargo' @("+$channel", $tool.Substring(6), '--version')
+        } elseif ($tool -eq 'ripgrep') {
+            Invoke-Native 'rg' @('--version')
+        } else {
+            Invoke-Native $tool @('--version')
+        }
+    }
     $probeDirectory = Join-Path $temporary 'compiler-probe'
     New-Item -ItemType Directory -Force (Join-Path $probeDirectory 'src') | Out-Null
     Set-Content -Path (Join-Path $probeDirectory 'Cargo.toml') -Encoding ASCII -Value @(
@@ -181,7 +190,6 @@ try {
         if ($Platform -eq 'x86_64-win') { Invoke-Native 'nasm' @('-v') }
     }
     if (-not $Ci) { Invoke-Native 'cargo' @("+$channel", 'rail', '--version') }
-    if (-not $CiBench -and -not $CiCt) { Invoke-Native 'cargo' @("+$channel", 'nextest', '--version') }
 
     # Persist the complete MSVC/SDK environment, not only the paths to installed executables.
     if (-not $Ci) {

@@ -1220,9 +1220,8 @@ fn fill_diag_seed(out: &mut [u8; SEED_BYTES], seed: u8) {
 #[inline(never)]
 fn diag_fold_poly(poly: &Poly) -> u16 {
   let mut acc = 0u16;
-  for (i, &coeff) in poly.iter().enumerate() {
-    let i = u16::try_from(i).expect("ML-KEM polynomial index fits in u16");
-    acc ^= coeff.wrapping_mul(i.wrapping_add(1));
+  for &coeff in poly {
+    acc ^= coeff;
   }
   acc
 }
