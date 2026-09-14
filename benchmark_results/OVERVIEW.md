@@ -4,10 +4,11 @@
 > mixed caller-supplied and internal entropy, key preparation, and output
 > representations. Argon2 comparisons supplied a longer salt to rscrypto and
 > RustCrypto than to dryoc. Affected ratios, rankings, and aggregates containing
-> those rows are withdrawn as performance claims pending corrected measurements.
-> The numerical impact remains unmeasured. Tables and raw artifacts are retained
-> as historical records, not corrected results. See the
-> [current comparison contracts](../docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts).
+> those rows are withdrawn as performance claims. The corrected 2026-09-14
+> campaign is recorded below, but replacement aggregates have not been curated.
+> The numerical impact on the historical scorecard remains unmeasured. Tables
+> and raw artifacts are retained as historical records, not corrected results.
+> See the [current comparison contracts](../docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts).
 
 > **Workload identity correction:** Historical AEAD encrypt/decrypt and ChaCha
 > XOR rows include timed buffer restoration. BLAKE2's former host-overhead rows
@@ -17,10 +18,15 @@
 > rscrypto. Treat those as internal comparisons, not external competitors.
 > Current [timed-boundary policy](../docs/benchmarking.md#timed-workload-boundaries)
 > names the actual work and removes duplicate cases. No historical ratios have
-> been recomputed from these changes.
+> been recomputed from these changes. The 2026-09-14 campaign uses the corrected
+> workload identities.
 
 Sources:
 
+- Full benchmark workflow run
+  [#34874736834](https://github.com/loadingalias/rscrypto/actions/runs/34874736834),
+  created 2026-09-14 17:26:15 UTC and completed 2026-09-14 18:33:05 UTC.
+- Full-run commit: `ae6f54afedaa652858fd2bcbd8f56f339e663a4f` on `main`.
 - Linux benchmark snapshot created 2026-08-18 21:03:07 UTC.
 - Linux commit: `7eb44e9a38ef7a031d9181dc8c4c0fad38f46504`.
 - Linux artifacts: eight successful `benchmark-*` artifacts extracted into `benchmark_results/2026-08-18/linux/*/results.txt`.
@@ -49,6 +55,44 @@ Scope: the 2026-08-18 eight-host Linux benchmark matrix for commit `7eb44e9`. Ra
 This is a historical snapshot of commit `7eb44e9`, not an inventory of the
 current public API. Primitive rows remain as measured even when a later commit
 changes or removes that surface.
+
+## 2026-09-14 full benchmark run
+
+Run [#34874736834](https://github.com/loadingalias/rscrypto/actions/runs/34874736834)
+completed successfully on its first attempt. It selected `all` architectures
+and `all` benchmark groups with diagnostic features disabled. The plan, three
+cross-build preparation jobs, and all eight measurement jobs passed. The run
+measured commit `ae6f54af` from `main`. Native jobs used Rust 1.98.1; the
+cross-built POWER, s390x, and RISC-V binaries used Rust 1.99.0-nightly
+(`3d6c19bb9`, 2026-08-11).
+
+The campaign used the catalog defaults: 20 samples, 100 ms warm-up, 400 ms
+measurement time, 10,000 resamples, 95% confidence, and a 1% noise threshold.
+It executed 14 benchmark binaries per platform. In total, the retained
+measurement artifacts contain 19,614 completed Criterion cases.
+
+| Measurement job   | System  | Runner shape | Rust toolchain | Completed cases | Artifact                                 |
+| ----------------- | ------- | ------------ | -------------- | --------------: | ---------------------------------------- |
+| x86_64-linux-amd  | Linux   | c8a.2xlarge  | 1.98.1         |           2,517 | `bench-x86_64-linux-amd-34874736834-1`   |
+| x86_64-linux-intel | Linux  | c8i.2xlarge  | 1.98.1         |           2,517 | `bench-x86_64-linux-intel-34874736834-1` |
+| aarch64-linux     | Linux   | c9g.2xlarge  | 1.98.1         |           2,521 | `bench-aarch64-linux-34874736834-1`      |
+| powerpc64le-linux | Linux   | native       | 1.99.0-nightly |           2,255 | `bench-powerpc64le-linux-34874736834-1`  |
+| s390x-linux       | Linux   | native       | 1.99.0-nightly |           2,255 | `bench-s390x-linux-34874736834-1`        |
+| riscv64-linux     | Linux   | native       | 1.99.0-nightly |           2,515 | `bench-riscv64-linux-34874736834-1`      |
+| x86_64-win-amd    | Windows | c8a.2xlarge  | 1.98.1         |           2,517 | `bench-x86_64-win-amd-34874736834-1`     |
+| x86_64-win-intel  | Windows | c8i.2xlarge  | 1.98.1         |           2,517 | `bench-x86_64-win-intel-34874736834-1`   |
+
+Case counts differ where the target-specific catalog omits unavailable
+implementations or adds target-specific coverage. Each artifact retains the
+exact source state, build environment, host identity, plan, case inventory,
+Criterion estimates, and samples. The short per-case measurement window and
+non-uniform hosts make this a broad cross-platform snapshot, not a regression
+gate or a license to compare absolute times between machines.
+
+No ratios from this campaign are folded into the historical scorecard below.
+That scorecard uses a different eight-host Linux matrix and predates the current
+ML-KEM, Argon2, and timed-workload comparison contracts. Replacing it requires a
+fresh fastest-equivalent-case curation rather than combining the two campaigns.
 
 ## P-256 ECDH development snapshot
 
