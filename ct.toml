@@ -555,8 +555,8 @@ reason = "High-level AEAD open varies the public ciphertext/tag transcript with 
 name = "aes128_gcm_siv_diag_derive_fixed_vs_random_key"
 primitive = "aead.open_authentication"
 filter = "aes128_gcm_siv_diag_derive_fixed_vs_random_key"
-left_class = "gcmsiv_key_diag: derive message keys from fixed AES-128-GCM-SIV master key"
-right_class = "gcmsiv_key_diag: derive message keys from random AES-128-GCM-SIV master key"
+left_class = "gcmsiv_key_diag: repeat 64 message-key derivations from fixed AES-128-GCM-SIV master key"
+right_class = "gcmsiv_key_diag: repeat 64 message-key derivations from random AES-128-GCM-SIV master key"
 samples = 20000
 smoke_samples = 2000
 
@@ -564,8 +564,8 @@ smoke_samples = 2000
 name = "aes256_gcm_siv_diag_derive_fixed_vs_random_key"
 primitive = "aead.open_authentication"
 filter = "aes256_gcm_siv_diag_derive_fixed_vs_random_key"
-left_class = "gcmsiv_key_diag: derive message keys from fixed AES-256-GCM-SIV master key"
-right_class = "gcmsiv_key_diag: derive message keys from random AES-256-GCM-SIV master key"
+left_class = "gcmsiv_key_diag: repeat 64 message-key derivations from fixed AES-256-GCM-SIV master key"
+right_class = "gcmsiv_key_diag: repeat 64 message-key derivations from random AES-256-GCM-SIV master key"
 samples = 20000
 smoke_samples = 2000
 
@@ -896,8 +896,8 @@ smoke_samples = 512
 name = "mlkem_arithmetic_ntt_fixed_vs_random_poly"
 primitive = "kem.mlkem1024"
 filter = "mlkem_arithmetic_ntt_fixed_vs_random_poly"
-left_class = "ML-KEM NTT with fixed secret polynomial"
-right_class = "ML-KEM NTT with random secret polynomial"
+left_class = "64 ML-KEM NTT executions with fixed secret polynomial"
+right_class = "64 ML-KEM NTT executions with random secret polynomial"
 samples = 20000
 smoke_samples = 512
 
@@ -905,8 +905,8 @@ smoke_samples = 512
 name = "mlkem_arithmetic_inverse_ntt_fixed_vs_random_poly"
 primitive = "kem.mlkem1024"
 filter = "mlkem_arithmetic_inverse_ntt_fixed_vs_random_poly"
-left_class = "ML-KEM inverse NTT with fixed secret polynomial"
-right_class = "ML-KEM inverse NTT with random secret polynomial"
+left_class = "64 ML-KEM inverse NTT executions with fixed secret polynomial"
+right_class = "64 ML-KEM inverse NTT executions with random secret polynomial"
 samples = 20000
 smoke_samples = 512
 
@@ -914,8 +914,8 @@ smoke_samples = 512
 name = "mlkem_arithmetic_to_product_domain_fixed_vs_random_poly"
 primitive = "kem.mlkem1024"
 filter = "mlkem_arithmetic_to_product_domain_fixed_vs_random_poly"
-left_class = "ML-KEM product-domain conversion with fixed secret polynomial"
-right_class = "ML-KEM product-domain conversion with random secret polynomial"
+left_class = "64 ML-KEM product-domain conversions with fixed secret polynomial"
+right_class = "64 ML-KEM product-domain conversions with random secret polynomial"
 samples = 20000
 smoke_samples = 512
 
@@ -923,8 +923,8 @@ smoke_samples = 512
 name = "mlkem_arithmetic_from_product_domain_fixed_vs_random_poly"
 primitive = "kem.mlkem1024"
 filter = "mlkem_arithmetic_from_product_domain_fixed_vs_random_poly"
-left_class = "ML-KEM product-domain exit with fixed secret polynomial"
-right_class = "ML-KEM product-domain exit with random secret polynomial"
+left_class = "64 ML-KEM product-domain exits with fixed secret polynomial"
+right_class = "64 ML-KEM product-domain exits with random secret polynomial"
 samples = 20000
 smoke_samples = 512
 
@@ -932,8 +932,8 @@ smoke_samples = 512
 name = "mlkem_arithmetic_basemul_fixed_vs_random_operands"
 primitive = "kem.mlkem1024"
 filter = "mlkem_arithmetic_basemul_fixed_vs_random_operands"
-left_class = "ML-KEM basemul-add with fixed secret operands"
-right_class = "ML-KEM basemul-add with random secret operands"
+left_class = "64 ML-KEM basemul-add executions with fixed secret operands"
+right_class = "64 ML-KEM basemul-add executions with random secret operands"
 samples = 20000
 smoke_samples = 512
 
@@ -941,8 +941,8 @@ smoke_samples = 512
 name = "mlkem1024_arithmetic_dot_fixed_vs_random_operands"
 primitive = "kem.mlkem1024"
 filter = "mlkem1024_arithmetic_dot_fixed_vs_random_operands"
-left_class = "ML-KEM-1024 NTT dot product with fixed secret operands"
-right_class = "ML-KEM-1024 NTT dot product with random secret operands"
+left_class = "64 ML-KEM-1024 NTT dot products with fixed secret operands"
+right_class = "64 ML-KEM-1024 NTT dot products with random secret operands"
 samples = 20000
 smoke_samples = 512
 

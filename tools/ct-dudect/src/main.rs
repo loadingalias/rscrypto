@@ -98,6 +98,18 @@ fn balanced_classes(rng: &mut BenchRng, count: usize) -> Vec<Class> {
   classes
 }
 
+const SHORT_KERNEL_REPETITIONS: usize = 64;
+
+#[inline(never)]
+fn repeat_short_kernel<T>(f: impl Fn() -> T) {
+  // A single accelerated kernel call can be shorter than the timer calls around it.
+  // Repetition keeps the production operation intact while making each statistical
+  // sample large enough that clock quantization does not dominate the distribution.
+  for _ in 0..SHORT_KERNEL_REPETITIONS {
+    core::hint::black_box(f());
+  }
+}
+
 fn mlkem_poly_from_seed(seed: u16) -> [u16; 256] {
   let mut out = [0u16; 256];
   for (i, coeff) in out.iter_mut().enumerate() {
@@ -689,7 +701,9 @@ fn aes128_gcm_siv_diag_derive_fixed_vs_random_key(runner: &mut CtRunner, rng: &m
   }
 
   for (class, cipher, nonce) in inputs {
-    runner.run_one(class, || diag_aes128gcmsiv_derive_keys(&cipher, &nonce));
+    runner.run_one(class, || {
+      repeat_short_kernel(|| diag_aes128gcmsiv_derive_keys(&cipher, &nonce));
+    });
   }
 }
 
@@ -706,7 +720,9 @@ fn aes256_gcm_siv_diag_derive_fixed_vs_random_key(runner: &mut CtRunner, rng: &m
   }
 
   for (class, cipher, nonce) in inputs {
-    runner.run_one(class, || diag_aes256gcmsiv_derive_keys(&cipher, &nonce));
+    runner.run_one(class, || {
+      repeat_short_kernel(|| diag_aes256gcmsiv_derive_keys(&cipher, &nonce));
+    });
   }
 }
 
@@ -1194,7 +1210,9 @@ fn mlkem_arithmetic_ntt_fixed_vs_random_poly(runner: &mut CtRunner, rng: &mut Be
   }
 
   for (class, poly) in inputs {
-    runner.run_one(class, || core::hint::black_box(diag_mlkem_ntt_input_digest(poly)));
+    runner.run_one(class, || {
+      repeat_short_kernel(|| diag_mlkem_ntt_input_digest(poly));
+    });
   }
 }
 
@@ -1211,7 +1229,7 @@ fn mlkem_arithmetic_inverse_ntt_fixed_vs_random_poly(runner: &mut CtRunner, rng:
 
   for (class, poly) in inputs {
     runner.run_one(class, || {
-      core::hint::black_box(diag_mlkem_inverse_ntt_montgomery_product_input_digest(poly))
+      repeat_short_kernel(|| diag_mlkem_inverse_ntt_montgomery_product_input_digest(poly));
     });
   }
 }
@@ -1229,7 +1247,7 @@ fn mlkem_arithmetic_to_product_domain_fixed_vs_random_poly(runner: &mut CtRunner
 
   for (class, poly) in inputs {
     runner.run_one(class, || {
-      core::hint::black_box(diag_mlkem_to_montgomery_product_domain_input_digest(poly))
+      repeat_short_kernel(|| diag_mlkem_to_montgomery_product_domain_input_digest(poly));
     });
   }
 }
@@ -1247,7 +1265,7 @@ fn mlkem_arithmetic_from_product_domain_fixed_vs_random_poly(runner: &mut CtRunn
 
   for (class, poly) in inputs {
     runner.run_one(class, || {
-      core::hint::black_box(diag_mlkem_from_montgomery_product_domain_input_digest(poly))
+      repeat_short_kernel(|| diag_mlkem_from_montgomery_product_domain_input_digest(poly));
     });
   }
 }
@@ -1269,7 +1287,7 @@ fn mlkem_arithmetic_basemul_fixed_vs_random_operands(runner: &mut CtRunner, rng:
 
   for (class, a, b, acc) in inputs {
     runner.run_one(class, || {
-      core::hint::black_box(diag_mlkem_multiply_ntts_add_assign_input_digest(a, b, acc))
+      repeat_short_kernel(|| diag_mlkem_multiply_ntts_add_assign_input_digest(a, b, acc));
     });
   }
 }
@@ -1295,7 +1313,7 @@ fn mlkem1024_arithmetic_dot_fixed_vs_random_operands(runner: &mut CtRunner, rng:
 
   for (class, a, b, acc) in inputs {
     runner.run_one(class, || {
-      core::hint::black_box(diag_mlkem1024_multiply_ntts_accumulate_input_digest(a, b, acc))
+      repeat_short_kernel(|| diag_mlkem1024_multiply_ntts_accumulate_input_digest(a, b, acc));
     });
   }
 }
