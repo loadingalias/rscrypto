@@ -6,6 +6,10 @@ import json
 from pathlib import Path
 
 CONFIG = Path(__file__).resolve().parents[2] / ".config/criterion.json"
+PROFILE_CAPTURE_DEFAULT_SECONDS = 5
+PROFILE_CAPTURE_MAX_SECONDS = 15
+PROFILE_PREPARE_TIMEOUT_MINUTES = 30
+PROFILE_CAPTURE_TIMEOUT_MINUTES = 20
 
 
 def load(overrides=None) -> dict:

@@ -51,11 +51,15 @@ def parse(arguments: list[str]):
   for name in ("warmup-ms", "measure-ms", "sample-size"):
     bench.add_argument("--" + name, type=int)
   profile = commands.add_parser("profile")
-  profile.add_argument("target")
+  profile.add_argument("benchmark")
   profile.add_argument("case", nargs="?")
-  profile.add_argument("seconds", nargs="?", type=float, default=10)
+  profile.add_argument("seconds", nargs="?", type=float, default=settings.PROFILE_CAPTURE_DEFAULT_SECONDS)
   profile.add_argument("--list", action="store_true")
   profile.add_argument("--diag", action="store_true")
+  profile_transfer = profile.add_mutually_exclusive_group()
+  profile_transfer.add_argument("--prepare-archive", type=Path)
+  profile_transfer.add_argument("--run-archive", type=Path)
+  profile.add_argument("--target")
   for name in ("codegen", "llvm-lines"):
     command = commands.add_parser(name)
     command.add_argument("target")
@@ -257,6 +261,14 @@ def bench(args, catalog) -> None:
     print(f"Results: {root}", flush=True)
 
 
+def run_profile(args, catalog) -> None:
+  from profile import profile
+  entry = target(catalog, args.benchmark, args.diag)
+  if not (args.prepare_archive or args.run_archive):
+    enable_internal([entry])
+  profile(args, entry)
+
+
 def main() -> int:
   os.chdir(ROOT)
   args = parse(sys.argv[1:])
@@ -269,10 +281,7 @@ def main() -> int:
   if args.mode == "bench":
     bench(args, catalog)
   elif args.mode == "profile":
-    from profile import profile
-    entry = target(catalog, args.target, args.diag)
-    enable_internal([entry])
-    profile(args, entry)
+    run_profile(args, catalog)
   else:
     entry = target(catalog, args.target, args.diag)
     enable_internal([entry])

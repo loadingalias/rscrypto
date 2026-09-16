@@ -123,6 +123,22 @@ No caches or speed-regression gates are enabled.
 Donated hosts may be shared, and fixed AWS instance types do not eliminate host noise.
 Equal vCPU counts do not imply equal physical core counts;
 interpret parallel results with the recorded CPU topology.
+
+The separate [Profile workflow](../.github/workflows/profile.yml) accepts one RISC-V, POWER, or IBM Z architecture,
+one curated workload preset, and 3, 5, 10, or 15 seconds per collector pass.
+The benchmark catalog maps a preset such as `aead/aes` to one benchmark target, one exact production case,
+and its diagnostic-feature policy.
+The default `aead/aes` preset profiles `aes-128-gcm/copy-and-encrypt/rscrypto/4096` for five seconds in each of the counter and sampling passes.
+Its planning job validates the static request before reserving native hardware.
+The x86-64 preparation job cross-builds and seals the production benchmark executable.
+The native job verifies that archive, discovers the case exactly once,
+and then runs one `perf stat` pass and one `perf record` pass without rebuilding.
+The runner supplies `perf`; the workflow records missing tools, denied permissions, unsupported events,
+and partial captures without changing host security settings.
+Native reports and raw evidence remain downloadable for 30 days even when capture fails.
+Preparation has a 30-minute cap and native capture has a 20-minute cap;
+with the five-minute planning cap, execution after runner assignment cannot exceed 55 minutes.
+A newer request for the same architecture cancels an older in-progress request.
 Inspect uncertainty and repeat matched measurements before making performance claims.
 
 Each job retains `target/bench/` as a GitHub artifact, including failed-run evidence, source and machine identity,
@@ -411,16 +427,22 @@ Only BLAKE3 and password-hashing targets enable `parallel`, where their workload
 Cargo ignores the panic setting for benchmarks, so release's `panic = "abort"` remains a difference
 ([Cargo profiles](https://doc.rust-lang.org/cargo/reference/profiles.html)).
 
-Each capture gets a unique directory under `target/profiles/` containing `profile.json.gz`, `cases.json`, `metadata.json`, a log, and source evidence.
+Each local Samply capture gets a unique directory under `target/profiles/` containing `profile.json.gz`, `cases.json`, `metadata.json`, a log,
+and source evidence.
 Metadata records the exact case, executable path and SHA-256, Cargo artifact description,
 build and capture commands, compiler and tool versions, build/runtime environment,
 and capture outcome.
 Source evidence records input hashes, revision, and worktree status.
 Keep the matching executable and its symbols available when investigating a saved profile.
 
+Transferred CI captures instead retain the verified input bundle, `perf-stat.txt`, raw `perf.data`, native `perf-report.txt`,
+host and capability facts, metadata, status, and an outer sealed manifest.
+Only a complete sampled capture exits successfully.
+A partial, unavailable, or failed capture remains downloadable and keeps the workflow non-green.
+
 Keep raw results and run metadata for any published claim.
 Local measurements without that evidence are useful only for the machine that produced them.
-P-256 ECDH uses the `p256-ecdh` benchmark alias.
+P-256 ECDH uses the `p256-ecdh` benchmark selector; exact profiling uses the owning `auth` catalog target.
 Its operation rows compare caller-filled generation, public derivation, canonical SEC1 parsing,
 agreement, and a TLS-shaped two-party roundtrip;
 raw target results and the overview remain the only performance record.

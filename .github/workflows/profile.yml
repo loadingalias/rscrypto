@@ -1,0 +1,141 @@
+name: Profile
+run-name: Profile ${{ inputs.architecture }} / ${{ inputs.workload }} / ${{ inputs.seconds }}s
+
+on:
+  workflow_dispatch:
+    inputs:
+      architecture:
+        description: Native Linux architecture
+        type: choice
+        required: true
+        default: s390x-linux
+        options:
+          - s390x-linux
+          - riscv64-linux
+          - powerpc64le-linux
+      workload:
+        description: Curated family/algorithm profile preset
+        type: choice
+        required: true
+        default: aead/aes
+        options:
+          - aead/aes
+          - aead/chacha20
+          - aead/aegis256
+          - aead/ascon
+          - auth/p256-ecdh
+          - hashes/sha256
+          - hashes/blake3
+          - checksums/crc32c
+      seconds:
+        description: Seconds per perf pass
+        type: choice
+        required: true
+        default: "5"
+        options:
+          - "3"
+          - "5"
+          - "10"
+          - "15"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_RAIL_CACHE: "off"
+  INPUT_ARCHITECTURE: ${{ inputs.architecture }}
+  INPUT_WORKLOAD: ${{ inputs.workload }}
+  INPUT_SECONDS: ${{ inputs.seconds }}
+
+concurrency:
+  group: profile-${{ inputs.architecture }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    runs-on: runs-on=${{ github.run_id }}/runner=plan/env=production
+    timeout-minutes: 5
+    outputs:
+      architecture: ${{ steps.plan.outputs.architecture }}
+      runner: ${{ steps.plan.outputs.runner }}
+      target: ${{ steps.plan.outputs.target }}
+      workload: ${{ steps.plan.outputs.workload }}
+      prepare_timeout: ${{ steps.plan.outputs.prepare_timeout }}
+      capture_timeout: ${{ steps.plan.outputs.capture_timeout }}
+    steps:
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        with:
+          persist-credentials: false
+      - id: plan
+        run: python3 scripts/bench/profile_ci.py plan
+
+  prepare:
+    needs: plan
+    name: Prepare ${{ needs.plan.outputs.architecture }} / ${{ needs.plan.outputs.workload }}
+    runs-on: runs-on=${{ github.run_id }}-${{ needs.plan.outputs.target }}/runner=bench-cross-build/env=production
+    timeout-minutes: ${{ fromJSON(needs.plan.outputs.prepare_timeout) }}
+    env:
+      TARGET: ${{ needs.plan.outputs.target }}
+    steps:
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Cross-build and seal the selected benchmark
+        run: |
+          scripts/tooling/x86_64-linux.sh --ci-cross-build "$TARGET"
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          python3 scripts/bench/profile_ci.py prepare "$TARGET" "target/$TARGET-profile.tar.gz"
+          git diff --exit-code HEAD
+      - name: Transfer the exact benchmark binary and runner tools
+        uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+        with:
+          name: ${{ needs.plan.outputs.target }}-profile-prepared
+          path: |
+            target/${{ needs.plan.outputs.target }}-profile.tar.gz
+            target/${{ needs.plan.outputs.target }}-tools.tar.gz
+          if-no-files-found: error
+          retention-days: 2
+      - name: Retain profile preparation evidence
+        if: ${{ !cancelled() }}
+        uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+        with:
+          name: profile-prepare-${{ needs.plan.outputs.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/profiles/preparation/
+          if-no-files-found: warn
+          retention-days: 30
+
+  capture:
+    needs: [plan, prepare]
+    name: Profile ${{ needs.plan.outputs.architecture }} / ${{ needs.plan.outputs.workload }}
+    runs-on: ${{ needs.plan.outputs.runner }}
+    timeout-minutes: ${{ fromJSON(needs.plan.outputs.capture_timeout) }}
+    env:
+      ARCHITECTURE: ${{ needs.plan.outputs.architecture }}
+      TARGET: ${{ needs.plan.outputs.target }}
+    steps:
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download the prepared benchmark and runner tools
+        uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" # v8.0.1
+        with:
+          name: ${{ needs.plan.outputs.target }}-profile-prepared
+          path: target/profile-download
+      - name: Verify and profile on native hardware
+        run: |
+          scripts/tooling/"$ARCHITECTURE.sh" --ci-cross-run "target/profile-download/$TARGET-tools.tar.gz"
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          python3 scripts/bench/profile_ci.py capture "$TARGET" "target/profile-download/$TARGET-profile.tar.gz"
+          git diff --exit-code HEAD
+      - name: Retain native profile evidence
+        if: ${{ always() }}
+        uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+        with:
+          name: profile-${{ needs.plan.outputs.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/profiles/
+          if-no-files-found: warn
+          retention-days: 30

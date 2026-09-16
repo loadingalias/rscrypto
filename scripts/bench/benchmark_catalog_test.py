@@ -69,6 +69,22 @@ def main() -> None:
     pass
   else:
     fail("catalog accepted a family selector shadowing an exact algorithm")
+  aes_profile = catalog["profile_presets"].get("aead/aes")
+  if aes_profile != {
+    "bench": "aead",
+    "case": "aes-128-gcm/copy-and-encrypt/rscrypto/4096",
+    "diagnostic": False,
+  }:
+    fail("aead/aes profile preset no longer names the representative production case")
+  for field, value in (("bench", "structural"), ("case", ""), ("diagnostic", "false")):
+    broken = copy.deepcopy(catalog)
+    broken["profile_presets"]["aead/aes"][field] = value
+    try:
+      validate_catalog(broken)
+    except CatalogError:
+      pass
+    else:
+      fail(f"catalog accepted invalid profile preset {field}")
   for case in ("blake2/rscrypto/blake2b256/64", "blake2/dryoc/blake2b256/64",
                "blake2/keyed/dryoc/blake2b256/64", "blake2/streaming/dryoc/blake2b256/64B",
                "blake2/params/rscrypto/blake2b256/salt+personal/64"):
@@ -109,6 +125,7 @@ def main() -> None:
   subprocess.run([sys.executable, str(ROOT / "scripts/bench/bounded_test.py")], check=True)
   subprocess.run([sys.executable, str(ROOT / "scripts/bench/run_test.py")], check=True)
   subprocess.run([sys.executable, str(ROOT / "scripts/bench/profile_test.py")], check=True)
+  subprocess.run([sys.executable, str(ROOT / "scripts/bench/profile_ci_test.py")], check=True)
   subprocess.run([sys.executable, str(ROOT / "scripts/bench/transfer_test.py")], check=True)
   print("benchmark catalog and orchestration tests passed")
 

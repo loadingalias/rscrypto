@@ -160,6 +160,7 @@ test-scripts:
     @scripts/lib/python.sh scripts/tooling/toolchain_test.py
     @scripts/lib/python.sh scripts/tooling/install_test.py
     @scripts/lib/python.sh scripts/bench/ci_test.py
+    @scripts/lib/python.sh scripts/bench/profile_ci_test.py
     @scripts/lib/python.sh scripts/test/fuzz_features_test.py
     @scripts/lib/python.sh scripts/check/macos_test.py
     @scripts/lib/python.sh scripts/check/check_runner_test.py

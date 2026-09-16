@@ -6,15 +6,16 @@ import copy
 import io
 import json
 import os
-from pathlib import Path
+import profile as profile_runner
 import shutil
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
+import run_test
 import runner
 import settings
 import transfer
-import run_test
 
 
 class TransferTests(unittest.TestCase):
@@ -48,6 +49,16 @@ class TransferTests(unittest.TestCase):
              patch.object(transfer, 'verify_elf'), contextlib.redirect_stdout(io.StringIO()):
             runner.bench(args, runner.load_catalog())
 
+    def invoke_profile(self, operation, case='sha256/rscrypto/64', **extra_env):
+        archive = self.root / 'target/profile.tar.gz'
+        args = runner.parse(['profile', 'sha2', case, '1', '--target', self.target,
+                             '--' + ('prepare' if operation == 'prepare' else 'run') + '-archive', str(archive)])
+        machine = 'x86_64' if operation == 'prepare' else 's390x'
+        with patch.dict(os.environ, self.fixture.env | extra_env, clear=True), \
+             patch('platform.system', return_value='Linux'), patch('platform.machine', return_value=machine), \
+             patch.object(transfer, 'verify_elf'), contextlib.redirect_stdout(io.StringIO()):
+            runner.run_profile(args, runner.load_catalog())
+
     def test_preparation_never_discovers_and_consumer_never_builds(self):
         with patch.object(runner, 'discover', side_effect=AssertionError('foreign discovery')):
             self.invoke('prepare')
@@ -74,6 +85,42 @@ class TransferTests(unittest.TestCase):
         self.assertEqual((run / 'status.txt').read_text(), 'state=complete\nexit_code=0\n')
         self.assertEqual(len(runner.verify(run)), 2)
         self.assertEqual((self.root / 'builds.jsonl').read_text().splitlines(), builds)
+
+    def test_profile_reuses_verified_artifact_without_native_build(self):
+        with patch.object(profile_runner, 'discover', side_effect=AssertionError('foreign discovery')):
+            self.invoke_profile('prepare')
+        builds = (self.root / 'builds.jsonl').read_text().splitlines()
+        self.assertEqual(len(builds), 1)
+        self.assertFalse(self.fixture.calls(listing=True))
+        self.assertFalse(self.fixture.calls())
+        for binary in (self.root / 'bin').glob('*--*'):
+            binary.unlink()
+        self.invoke_profile('run')
+        self.assertEqual(len(self.fixture.calls(listing=True)), 1)
+        self.assertEqual(len(self.fixture.calls()), 2)  # One perf stat pass and one sampled pass.
+        self.assertEqual((self.root / 'builds.jsonl').read_text().splitlines(), builds)
+        results = [path for path in (self.root / 'target/profiles').glob('sha2-*') if path.is_dir()]
+        self.assertEqual(len(results), 1)
+        result, = results
+        metadata = json.loads((result / 'metadata.json').read_text())
+        self.assertEqual(metadata['status'], 'complete')
+        self.assertEqual(metadata['target'], self.target)
+        self.assertEqual(json.loads((result / 'bundle.json').read_text())['kind'], profile_runner.PROFILE_KIND)
+        for name in ('perf-stat.txt', 'perf.data', 'perf-report.txt', 'input/bundle.json'):
+            self.assertTrue((result / name).is_file(), name)
+
+    def test_profile_retains_partial_capture_status(self):
+        self.invoke_profile('prepare')
+        with self.assertRaises(profile_runner.ProfileIncomplete):
+            self.invoke_profile('run', FAIL_PERF_CAPTURE='1')
+        results = [path for path in (self.root / 'target/profiles').glob('sha2-*') if path.is_dir()]
+        self.assertEqual(len(results), 1)
+        result, = results
+        metadata = json.loads((result / 'metadata.json').read_text())
+        self.assertEqual(metadata['status'], 'partial')
+        self.assertEqual(metadata['exit_code'], 1)
+        self.assertTrue((result / 'bundle.json').is_file())
+        self.assertTrue((result / 'perf-stat.txt').is_file())
 
     def test_changed_request_sampling_source_or_binary_never_measures(self):
         self.invoke('prepare')

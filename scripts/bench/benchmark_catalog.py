@@ -7,7 +7,6 @@ import json
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG_PATH = ROOT / ".config" / "benchmark-matrix.json"
 
@@ -76,6 +75,20 @@ def validate_catalog(catalog: dict) -> None:
   expected_algorithms = set(algorithms) - {"aead-diag"}
   if all_algorithms != expected_algorithms:
     raise CatalogError("the all selector must contain every non-diagnostic algorithm exactly once")
+
+  presets = catalog.get("profile_presets")
+  if not isinstance(presets, dict) or not presets:
+    raise CatalogError("profile_presets must be a non-empty object")
+  for name, preset in presets.items():
+    if not re.fullmatch(r"[a-z0-9-]+/[a-z0-9-]+", name):
+      raise CatalogError(f"invalid profile preset name: {name}")
+    bench = benches.get(preset.get("bench")) if isinstance(preset, dict) else None
+    if bench is None or bench["kind"] != "criterion":
+      raise CatalogError(f"profile preset {name} references an unknown Criterion bench")
+    if not isinstance(preset.get("case"), str) or not preset["case"]:
+      raise CatalogError(f"profile preset {name} needs one exact case")
+    if not isinstance(preset.get("diagnostic"), bool):
+      raise CatalogError(f"profile preset {name} needs a Boolean diagnostic field")
 
   binaries = {bench["binary"] for bench in benches.values()}
   classes = catalog.get("case_classes")

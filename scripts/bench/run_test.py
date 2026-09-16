@@ -146,6 +146,31 @@ output = pathlib.Path(sys.argv[sys.argv.index('--output') + 1])
 subprocess.run(sys.argv[sys.argv.index('--output') + 2:], check=True)
 output.write_text('profile fixture')
 """)
+    self.tool("perf", """
+if sys.argv[1:] == ['--version']: print('perf fixture'); sys.exit(0)
+mode = sys.argv[1]
+args = sys.argv[2:]
+command = args[args.index('--') + 1:] if '--' in args else []
+probe = command[:3] == [sys.executable, '-c', 'pass']
+if mode == 'stat':
+  if os.environ.get('FAIL_PERF_STAT') and '--output' in args: sys.exit(4)
+  status = subprocess.run(command).returncode
+  if '--output' in args: pathlib.Path(args[args.index('--output') + 1]).write_text('1,000 cycles\\n')
+  sys.exit(status)
+if mode == 'record':
+  if probe and os.environ.get('FAIL_PERF_PROBE'): sys.exit(5)
+  if probe and '--call-graph' in args and os.environ.get('FAIL_PERF_DWARF'): sys.exit(5)
+  if not probe and os.environ.get('FAIL_PERF_CAPTURE'): sys.exit(7)
+  status = subprocess.run(command).returncode
+  if status == 0: pathlib.Path(args[args.index('--output') + 1]).write_text('perf data fixture')
+  sys.exit(status)
+if mode == 'report':
+  if os.environ.get('FAIL_PERF_REPORT'): sys.exit(6)
+  if os.environ.get('ZERO_PERF_SAMPLES'): print('# Samples: 0 of event cycles:u'); sys.exit(0)
+  print('99.00% criterion-fixture rscrypto::production_frame')
+  sys.exit(0)
+sys.exit(64)
+""")
     for command in (["git", "init", "-q"], ["git", "add", "scripts", ".config", "Cargo.toml"],
                     ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"]):
       subprocess.run(command, cwd=self.root, env=self.env, check=True)

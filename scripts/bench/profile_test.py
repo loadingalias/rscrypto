@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Exercise profiling scope and shared builds without sampling the host."""
 
+import contextlib
 import hashlib
+import io
 import json
-from pathlib import Path
+import profile as profile_runner
 import unittest
+from pathlib import Path
 
 import run_test
+import runner
 
 
 class ProfileTests(unittest.TestCase):
@@ -18,6 +22,10 @@ class ProfileTests(unittest.TestCase):
 
   def profile(self, *args, **env):
     return self.fixture.invoke('profile', *args, **env)
+
+  def test_default_capture_interval_is_five_seconds(self):
+    args = runner.parse(['profile', 'sha2', 'sha256/rscrypto/4096'])
+    self.assertEqual(args.seconds, 5)
 
   def metadata(self):
     return json.loads(next((self.root / 'target/profiles').glob('*/metadata.json')).read_text())
@@ -74,6 +82,49 @@ class ProfileTests(unittest.TestCase):
     self.assertEqual(result.returncode, 7, result.stdout + result.stderr)
     self.assertEqual(self.metadata()['status'], 'failed')
     self.assertEqual(self.metadata()['exit_code'], 7)
+
+  def perf(self, **environment):
+    root = self.root / 'target/perf-unit'
+    root.mkdir(parents=True, exist_ok=True)
+    case = 'criterion-fixture/rscrypto/64'
+    cases = root / 'cases.json'
+    cases.write_text(json.dumps([case]))
+    env = self.fixture.env | environment | {
+      'CRITERION_HOME': str(root / 'criterion'),
+      'RSCRYPTO_BENCH_CASES': str(cases),
+    }
+    command = [str(self.root / 'bin/criterion-fixture'), '--bench', '--profile-time', '1', '--noplot']
+    with contextlib.chdir(self.root), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+      return root, profile_runner.perf_capture(root, command, env)
+
+  def test_perf_capture_retains_native_report_and_raw_evidence(self):
+    root, (status, cause, collector) = self.perf()
+    self.assertEqual((status, cause), ('complete', None))
+    self.assertEqual(collector['event'], 'cycles:u')
+    self.assertEqual(collector['callchain'], 'dwarf')
+    for name in ('host.json', 'capabilities.json', 'perf-stat.txt', 'perf.data', 'perf-report.txt', 'output.txt'):
+      self.assertTrue((root / name).is_file(), name)
+
+  def test_perf_capture_falls_back_and_keeps_partial_failures(self):
+    _, (status, _, collector) = self.perf(FAIL_PERF_DWARF='1')
+    self.assertEqual(status, 'complete')
+    self.assertEqual(collector['callchain'], 'flat')
+    for environment in ({'FAIL_PERF_STAT': '1'}, {'FAIL_PERF_CAPTURE': '1'}, {'FAIL_PERF_REPORT': '1'},
+                        {'ZERO_PERF_SAMPLES': '1'}):
+      with self.subTest(environment=environment):
+        root = self.root / 'target/perf-unit'
+        for path in root.iterdir():
+          if path.is_file():
+            path.unlink()
+        _, (status, cause, _) = self.perf(**environment)
+        self.assertEqual(status, 'partial')
+        self.assertTrue(cause)
+
+  def test_missing_or_blocked_perf_is_unavailable(self):
+    with self.assertRaises(profile_runner.ProfileUnavailable):
+      self.perf(PATH='')
+    with self.assertRaises(profile_runner.ProfileUnavailable):
+      self.perf(FAIL_PERF_PROBE='1')
 
 
 if __name__ == '__main__':

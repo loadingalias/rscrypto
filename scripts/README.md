@@ -146,19 +146,20 @@ Neither diagnostic mode qualifies a release.
 
 ## Benchmarks and updates
 
-| Script               | Caller |
-| -------------------- | ------ |
-| `bench/runner.py`    | `just bench`, `just profile`, `just bench-export`, code inspection recipes |
-| `bench/execution.py` | shared Cargo build, discovery, and provenance for measurement/profiling |
-| `bench/measure.py`   | runner: measurement and completion verification |
-| `bench/profile.py`   | runner: exact-case Samply capture |
-| `bench/evidence.py`  | shared build/runtime environment collector |
-| `bench/settings.py`  | measurement, profiling, and watchdog |
-| `bench/transfer.py`  | Compile-only preparation and verified native consumption for RISC-V, POWER, and IBM Z |
-| `bench/bounded.py`   | `just bench`, `just profile`: process-tree deadline |
-| `update-all.sh`      | `just update` |
+| Script                | Caller |
+| --------------------- | ------ |
+| `bench/runner.py`     | `just bench`, `just profile`, `just bench-export`, code inspection recipes |
+| `bench/execution.py`  | shared Cargo build, discovery, and provenance for measurement/profiling |
+| `bench/measure.py`    | runner: measurement and completion verification |
+| `bench/profile.py`    | runner: exact-case local Samply or transferred native `perf` capture |
+| `bench/profile_ci.py` | manual CI profile request validation and dispatch |
+| `bench/evidence.py`   | shared build/runtime environment collector |
+| `bench/settings.py`   | measurement, profiling, and watchdog |
+| `bench/transfer.py`   | Compile-only preparation and verified native consumption for RISC-V, POWER, and IBM Z |
+| `bench/bounded.py`    | `just bench`, `just profile`: process-tree deadline |
+| `update-all.sh`       | `just update` |
 
-`bench/benchmark_catalog.py` owns algorithm and target selection.
+`bench/benchmark_catalog.py` owns algorithm, target, and curated profile-preset selection.
 `.config/criterion.json` owns shared Criterion defaults and the maximum run budget.
 `benches/common/criterion.rs` applies them to every Criterion harness; `bench/settings.py` resolves invocation-wide overrides.
 `bench/bounded.py` stops the whole benchmark or profile process tree within the budget.
@@ -299,7 +300,7 @@ Full CT evidence does not establish the complete secret-lifecycle claim by itsel
 
 The fuzz and CT workflows retain final evidence for seven days and run without caches.
 CT preparation archives are retained for two days.
-CT and benchmark selection jobs validate requests and emit only the requested runner rows;
+CT, benchmark, and profile selection jobs validate requests and emit only the requested runner rows;
 they do not install Rust, build code, or invoke Cargo Rail.
 
 `bench.yml` is manual-only.
@@ -311,7 +312,21 @@ The existing benchmark runner owns measurement and evidence.
 profiling, or cross-target tools.
 See [Benchmarking](../docs/benchmarking.md#run-a-manual-workflow).
 
-Only x86-64 and ARM64 Linux install perf, Valgrind, Gungraun, and samply.
+`profile.yml` is manual-only and accepts one RISC-V, POWER, or IBM Z architecture, one curated workload preset,
+and 3, 5, 10, or 15 seconds per collector pass.
+`.config/benchmark-matrix.json` maps each preset, such as `aead/aes`, to one benchmark target, one exact production case,
+and its diagnostic-feature policy.
+The five-second default yields about ten seconds of selected-case execution across `perf stat` and `perf record`.
+Preparation and native capture are independently capped at 30 and 20 minutes,
+and a newer request for the same architecture cancels the older request.
+It reuses the benchmark cross-build and sealed transfer path.
+The native runner verifies and discovers the transferred executable before running `perf stat`, `perf record`, and `perf report --stdio`;
+it never rebuilds production code.
+The runner supplies `perf` and the capture records missing tools
+or permissions without changing host security policy.
+Preparation and native result artifacts are retained even when collection fails.
+
+Only x86-64 and ARM64 Linux development setup installs perf, Valgrind, Gungraun, and samply.
 Their installer enables perf events and requires perf for the running kernel.
 Use `just bench-structural` for Gungraun and `just profile` for samply; Criterion benchmarks remain available on every native platform.
 Provisioning checks tools, but native test, benchmark,

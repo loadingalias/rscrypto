@@ -366,6 +366,48 @@
     "crc32": ["crc32-ieee", "crc32c"],
     "crc16": ["crc16-ccitt", "crc16-ibm"]
   },
+  "profile_presets": {
+    "aead/aes": {
+      "bench": "aead",
+      "case": "aes-128-gcm/copy-and-encrypt/rscrypto/4096",
+      "diagnostic": false
+    },
+    "aead/chacha20": {
+      "bench": "aead",
+      "case": "chacha20-poly1305/copy-and-encrypt/rscrypto/4096",
+      "diagnostic": false
+    },
+    "aead/aegis256": {
+      "bench": "aead",
+      "case": "aegis-256/copy-and-encrypt/rscrypto/4096",
+      "diagnostic": false
+    },
+    "aead/ascon": {
+      "bench": "aead",
+      "case": "ascon-aead128/copy-and-encrypt/rscrypto/4096",
+      "diagnostic": false
+    },
+    "auth/p256-ecdh": {
+      "bench": "auth",
+      "case": "p256-ecdh/public-key/rscrypto-selected",
+      "diagnostic": false
+    },
+    "hashes/sha256": {
+      "bench": "sha2",
+      "case": "sha256/rscrypto/4096",
+      "diagnostic": false
+    },
+    "hashes/blake3": {
+      "bench": "blake3",
+      "case": "blake3/rscrypto/4096",
+      "diagnostic": true
+    },
+    "checksums/crc32c": {
+      "bench": "crc",
+      "case": "crc32c/rscrypto/4096",
+      "diagnostic": false
+    }
+  },
   "case_classes": {
     "sha2": {
       "diagnostic": [
