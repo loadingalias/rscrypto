@@ -117,6 +117,23 @@ install_options=(--allow-downgrades)
 [[ "$ci" == false ]] || install_options+=(--no-install-recommends)
 "${apt[@]}" install -y "${install_options[@]}" "${pinned_packages[@]}"
 
+ensure_kernel_perf() {
+  if ! perf --version >/dev/null 2>&1; then
+    local package
+    local version
+    package="linux-tools-$(uname -r)"
+    version="$(apt-cache "${apt_options[@]}" madison "$package" | awk 'NR == 1 {print $3}')"
+    [[ -n "$version" && "$version" != '(none)' ]] || {
+      echo "the selected Ubuntu snapshot has no perf package for the running kernel: $package" >&2
+      exit 1
+    }
+    "${apt[@]}" install -y "${install_options[@]}" "$package=$version"
+  fi
+  perf --version
+}
+
+if [[ "$profile" == ci-cross-run && "${RSCRYPTO_REQUIRE_PERF:-0}" == 1 ]]; then ensure_kernel_perf; fi
+
 prefix="$HOME/.local/share/rscrypto-tooling"
 mkdir -p "$prefix"
 python3 "$SCRIPT_DIR/catalog.py" download "$platform" rustup "$temporary/rustup-init"
@@ -267,10 +284,7 @@ kernel.perf_event_paranoid = -1
 CONF
 "${sudo_cmd[@]}" sysctl -p /etc/sysctl.d/99-rscrypto-profiling.conf
 # perf must match the running kernel; cloud kernels may differ from linux-generic.
-if ! perf --version; then
-  "${apt[@]}" install -y "linux-tools-$(uname -r)"
-fi
-perf --version
+ensure_kernel_perf
 valgrind --version
 gungraun-runner --version
 samply --version

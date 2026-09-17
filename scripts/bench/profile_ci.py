@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and dispatch one exact cross-target CI profile request."""
+"""Validate and dispatch one curated cross-target CI profile request."""
 
 from __future__ import annotations
 
@@ -31,7 +31,13 @@ def request(env: dict, run_id: str) -> dict:
   if preset is None:
     raise ValueError('workload must be one of: ' + ', '.join(catalog['profile_presets']))
   benchmark = preset['bench']
-  case = preset['case']
+  if 'case' in preset:
+    cases = [preset['case']]
+  else:
+    cases_by_architecture = preset['cases_by_architecture']
+    if set(cases_by_architecture) != ARCHITECTURES:
+      raise ValueError('architecture profile cases must cover exactly: ' + ', '.join(sorted(ARCHITECTURES)))
+    cases = cases_by_architecture[architecture]
   enabled = preset['diagnostic']
   entry = runner.target(catalog, benchmark, enabled)
   raw_seconds = env.get('INPUT_SECONDS', '')
@@ -47,7 +53,7 @@ def request(env: dict, run_id: str) -> dict:
     'target': row['target'],
     'workload': workload,
     'benchmark': benchmark,
-    'case': case,
+    'cases': cases,
     'seconds': seconds,
     'diagnostic': enabled,
     'binary': entry['binary'],
@@ -57,12 +63,14 @@ def request(env: dict, run_id: str) -> dict:
   }
 
 
-def command(selection: dict, operation: str, target: str, archive: str) -> list[str]:
+def command(selection: dict, operation: str, target: str, archive: str, case: str) -> list[str]:
   if target != selection['target']:
     raise ValueError('requested target differs from the validated architecture target')
   if operation not in {'prepare', 'capture'}:
     raise ValueError('profile operation must be prepare or capture')
-  result = ['just', 'profile', selection['benchmark'], selection['case'], str(selection['seconds'])]
+  if case not in selection['cases']:
+    raise ValueError('profile case is not part of the validated workload')
+  result = ['just', 'profile', selection['benchmark'], case, str(selection['seconds'])]
   if selection['diagnostic']:
     result.append('--diag')
   result += ['--target', target,
@@ -82,7 +90,13 @@ def main() -> int:
     return 0
   if len(sys.argv) == 4 and sys.argv[1] in {'prepare', 'capture'}:
     operation, target, archive = sys.argv[1:]
-    return subprocess.run(command(selection, operation, target, archive), check=False).returncode
+    cases = selection['cases'][:1] if operation == 'prepare' else selection['cases']
+    status = 0
+    for case in cases:
+      result = subprocess.run(command(selection, operation, target, archive, case), check=False)
+      if result.returncode and status == 0:
+        status = result.returncode
+    return status
   raise ValueError('usage: scripts/bench/profile_ci.py plan|{prepare|capture} TARGET ARCHIVE')
 
 

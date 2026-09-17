@@ -95,7 +95,7 @@ class TransferTests(unittest.TestCase):
         self.assertFalse(self.fixture.calls())
         for binary in (self.root / 'bin').glob('*--*'):
             binary.unlink()
-        self.invoke_profile('run')
+        self.invoke_profile('run', case='sha256/other/64')
         self.assertEqual(len(self.fixture.calls(listing=True)), 1)
         self.assertEqual(len(self.fixture.calls()), 2)  # One perf stat pass and one sampled pass.
         self.assertEqual((self.root / 'builds.jsonl').read_text().splitlines(), builds)
@@ -105,6 +105,8 @@ class TransferTests(unittest.TestCase):
         metadata = json.loads((result / 'metadata.json').read_text())
         self.assertEqual(metadata['status'], 'complete')
         self.assertEqual(metadata['target'], self.target)
+        self.assertEqual(metadata['request']['case'], 'sha256/other/64')
+        self.assertEqual(json.loads((result / 'cases.json').read_text()), ['sha256/other/64'])
         self.assertEqual(json.loads((result / 'bundle.json').read_text())['kind'], profile_runner.PROFILE_KIND)
         for name in ('perf-stat.txt', 'perf.data', 'perf-report.txt', 'input/bundle.json'):
             self.assertTrue((result / name).is_file(), name)

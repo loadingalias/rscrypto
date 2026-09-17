@@ -126,14 +126,16 @@ interpret parallel results with the recorded CPU topology.
 
 The separate [Profile workflow](../.github/workflows/profile.yml) accepts one RISC-V, POWER, or IBM Z architecture,
 one curated workload preset, and 3, 5, 10, or 15 seconds per collector pass.
-The benchmark catalog maps a preset such as `aead/aes` to one benchmark target, one exact production case,
-and its diagnostic-feature policy.
+The benchmark catalog maps a preset to one benchmark target, its diagnostic-feature policy,
+and either one exact production case or a curated architecture-specific case set.
 The default `aead/aes` preset profiles `aes-128-gcm/copy-and-encrypt/rscrypto/4096` for five seconds in each of the counter and sampling passes.
 Its planning job validates the static request before reserving native hardware.
 The x86-64 preparation job cross-builds and seals the production benchmark executable.
-The native job verifies that archive, discovers the case exactly once,
-and then runs one `perf stat` pass and one `perf record` pass without rebuilding.
-The runner supplies `perf`; the workflow records missing tools, denied permissions, unsupported events,
+The native job verifies that archive and discovers every selected case exactly once.
+It builds once, then records and seals separate `perf stat` and `perf record` evidence for each case without rebuilding.
+Native setup installs the running kernel's exact Ubuntu `perf` package from the pinned snapshot
+when needed.
+The workflow records missing packages, denied permissions, unsupported events,
 and partial captures without changing host security settings.
 Native reports and raw evidence remain downloadable for 30 days even when capture fails.
 Preparation has a 30-minute cap and native capture has a 20-minute cap;

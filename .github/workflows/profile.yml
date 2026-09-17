@@ -24,6 +24,7 @@ on:
           - aead/aegis256
           - aead/ascon
           - auth/p256-ecdh
+          - auth/cross-target-losses
           - hashes/sha256
           - hashes/blake3
           - checksums/crc32c
@@ -116,6 +117,7 @@ jobs:
     env:
       ARCHITECTURE: ${{ needs.plan.outputs.architecture }}
       TARGET: ${{ needs.plan.outputs.target }}
+      RSCRYPTO_REQUIRE_PERF: "1"
     steps:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:

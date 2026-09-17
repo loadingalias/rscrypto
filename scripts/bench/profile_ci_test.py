@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep manual profile requests exact, bounded, and confined to one native runner."""
+"""Keep manual profile requests curated, bounded, and confined to one native runner."""
 
 import contextlib
 import io
@@ -47,11 +47,22 @@ class ManualProfile(unittest.TestCase):
     self.assertEqual(selection['runner'], 'ubuntu-24.04-s390x')
     self.assertEqual(selection['workload'], 'aead/aes')
     self.assertEqual(selection['benchmark'], 'aead')
-    self.assertEqual(selection['case'], 'aes-128-gcm/copy-and-encrypt/rscrypto/4096')
+    self.assertEqual(selection['cases'], ['aes-128-gcm/copy-and-encrypt/rscrypto/4096'])
     self.assertEqual(selection['binary'], 'aead')
     self.assertNotIn('diag', selection['features'])
     self.assertEqual(selection['prepare_timeout'], 30)
     self.assertEqual(selection['capture_timeout'], 20)
+
+  def test_request_resolves_the_architecture_specific_loss_bundle(self):
+    selection = profile_ci.request(
+      self.environment(INPUT_WORKLOAD='auth/cross-target-losses'), '42')
+    self.assertEqual(selection['benchmark'], 'auth')
+    self.assertEqual(selection['cases'], [
+      'p256-ecdh/public-key/rscrypto-selected',
+      'p256-ecdh/agreement/rscrypto-selected',
+      'p256-ecdh/parse/rscrypto',
+      'ecdsa-p384/public-key/rscrypto-blinded',
+    ])
 
   def test_request_rejects_broad_or_unbounded_input(self):
     invalid = (
@@ -72,14 +83,30 @@ class ManualProfile(unittest.TestCase):
     selection = profile_ci.request(self.environment(INPUT_WORKLOAD='hashes/blake3'), '42')
     for operation, flag in (('prepare', '--prepare-archive'), ('capture', '--run-archive')):
       with self.subTest(operation=operation):
-        command = profile_ci.command(selection, operation, selection['target'], 'archive with spaces.tar.gz')
+        command = profile_ci.command(
+          selection, operation, selection['target'], 'archive with spaces.tar.gz', selection['cases'][0])
         self.assertEqual(command[:3], ['just', 'profile', 'blake3'])
         self.assertIn('blake3/rscrypto/4096', command)
         self.assertIn('--diag', command)
         self.assertIn(flag, command)
         self.assertEqual(command[-1], 'archive with spaces.tar.gz')
 
+  def test_capture_runs_every_curated_case_after_one_preparation(self):
+    selection = profile_ci.request(
+      self.environment(INPUT_WORKLOAD='auth/cross-target-losses'), '42')
+    env = self.environment(INPUT_WORKLOAD='auth/cross-target-losses') | {'GITHUB_RUN_ID': '42'}
+    completed = [subprocess.CompletedProcess([], code) for code in (0, 7, 0, 0)]
+    with patch.dict(os.environ, env, clear=True), \
+         patch.object(sys, 'argv', ['profile_ci.py', 'capture', selection['target'], 'archive.tar.gz']), \
+         patch.object(profile_ci.subprocess, 'run', side_effect=completed) as run:
+      self.assertEqual(profile_ci.main(), 7)
+    self.assertEqual(run.call_count, len(selection['cases']))
+    commands = [call.args[0] for call in run.call_args_list]
+    self.assertEqual([command[3] for command in commands], selection['cases'])
+    self.assertTrue(all('--run-archive' in command for command in commands))
+
   def test_workflow_choices_match_the_validated_policy(self):
+    workflow = (ROOT / '.github/workflows/profile.yml').read_text()
     architecture_default, architectures = workflow_input('architecture')
     workload_default, workloads = workflow_input('workload')
     seconds_default, seconds = workflow_input('seconds')
@@ -90,6 +117,7 @@ class ManualProfile(unittest.TestCase):
     self.assertEqual(seconds_default, str(profile_ci.settings.PROFILE_CAPTURE_DEFAULT_SECONDS))
     self.assertEqual(seconds, ['3', '5', '10', '15'])
     self.assertEqual(int(seconds[-1]), profile_ci.settings.PROFILE_CAPTURE_MAX_SECONDS)
+    self.assertIn('RSCRYPTO_REQUIRE_PERF: "1"', workflow)
 
   def test_plan_emits_only_the_selected_runner(self):
     with tempfile.TemporaryDirectory() as directory:

@@ -61,11 +61,16 @@ def probe(command: list[str], env: dict | None = None) -> dict:
     return {'command': command, 'exit_code': 127, 'stdout': '', 'stderr': str(error)}
 
 
-def host_facts(perf: str, env: dict) -> dict:
+def host_facts(perf: str | None, env: dict) -> dict:
   facts = {
     'uname': probe(['uname', '-a'], env),
     'lscpu': probe(['lscpu'], env),
-    'perf': probe([perf, '--version'], env),
+    'perf': probe([perf, '--version'], env) if perf is not None else {
+      'command': ['perf', '--version'],
+      'exit_code': 127,
+      'stdout': '',
+      'stderr': 'perf was not found in PATH',
+    },
     'affinity': sorted(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else None,
     'limits': {},
     'files': {},
@@ -112,9 +117,9 @@ def capabilities(perf: str, root: Path, env: dict) -> tuple[list[str], str | Non
 
 def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | None, dict]:
   perf = shutil.which('perf', path=env.get('PATH'))
+  write_json(root / 'host.json', host_facts(perf, env))
   if perf is None:
     raise ProfileUnavailable('native runner does not provide perf')
-  write_json(root / 'host.json', host_facts(perf, env))
   events, sample_event, callchain, probes = capabilities(perf, root, env)
   write_json(root / 'capabilities.json', {'stat_events': events, 'sample_event': sample_event,
                                          'callchain': 'dwarf' if callchain else 'flat', 'probes': probes})
@@ -169,8 +174,8 @@ def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | 
 
 
 def request(args, entry) -> tuple[list[dict], dict]:
-  rows = [{**entry, 'case': args.case}]
-  settings = {'case': args.case, 'seconds': args.seconds, 'collector': 'perf'}
+  rows = [entry]
+  settings = {'seconds': args.seconds, 'collector': 'perf'}
   return rows, settings
 
 
@@ -187,14 +192,15 @@ def prepared_profile(args, entry) -> None:
   parent.mkdir(parents=True, exist_ok=True)
   root = Path(tempfile.mkdtemp(prefix=entry['binary'] + '-', dir=parent))
   source = bundle.source_identity(repository)
+  capture_request = {'case': args.case, **settings}
   metadata = {
     'created': datetime.now(timezone.utc).isoformat(),
-    'request': settings,
+    'request': capture_request,
     'target': args.target,
     'features': entry['features'],
     'status': 'recording',
   }
-  write_json(root / 'request.json', settings)
+  write_json(root / 'request.json', capture_request)
   failure = None
   try:
     artifacts, compatibility = consume(repository, args.target, args.run_archive.resolve(), root / 'input', rows, settings)

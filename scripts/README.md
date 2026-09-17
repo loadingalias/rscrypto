@@ -314,16 +314,18 @@ See [Benchmarking](../docs/benchmarking.md#run-a-manual-workflow).
 
 `profile.yml` is manual-only and accepts one RISC-V, POWER, or IBM Z architecture, one curated workload preset,
 and 3, 5, 10, or 15 seconds per collector pass.
-`.config/benchmark-matrix.json` maps each preset, such as `aead/aes`, to one benchmark target, one exact production case,
-and its diagnostic-feature policy.
-The five-second default yields about ten seconds of selected-case execution across `perf stat` and `perf record`.
-Preparation and native capture are independently capped at 30 and 20 minutes,
-and a newer request for the same architecture cancels the older request.
+`.config/benchmark-matrix.json` maps each preset to one benchmark target, its diagnostic-feature policy,
+and either one exact production case or a curated architecture-specific case set.
+The five-second default yields about ten seconds of execution per case across `perf stat` and `perf record`.
+Bundled presets build once, then capture and seal every exact case separately.
+Preparation and native capture are independently capped at 30 and 20 minutes;
+a newer request for the same architecture cancels the older request.
 It reuses the benchmark cross-build and sealed transfer path.
 The native runner verifies and discovers the transferred executable before running `perf stat`, `perf record`, and `perf report --stdio`;
 it never rebuilds production code.
-The runner supplies `perf` and the capture records missing tools
-or permissions without changing host security policy.
+Native setup verifies `perf` and installs the running kernel's exact Ubuntu tools package from the pinned
+snapshot when needed.
+The capture records missing packages or permissions without changing host security policy.
 Preparation and native result artifacts are retained even when collection fails.
 
 Only x86-64 and ARM64 Linux development setup installs perf, Valgrind, Gungraun, and samply.

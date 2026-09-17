@@ -392,6 +392,30 @@
       "case": "p256-ecdh/public-key/rscrypto-selected",
       "diagnostic": false
     },
+    "auth/cross-target-losses": {
+      "bench": "auth",
+      "cases_by_architecture": {
+        "s390x-linux": [
+          "p256-ecdh/public-key/rscrypto-selected",
+          "p256-ecdh/agreement/rscrypto-selected",
+          "p256-ecdh/parse/rscrypto",
+          "ecdsa-p384/public-key/rscrypto-blinded"
+        ],
+        "riscv64-linux": [
+          "p256-ecdh/public-key/rscrypto-selected",
+          "p256-ecdh/agreement/rscrypto-selected",
+          "ecdsa-p256/public-key/rscrypto-blinded",
+          "ecdsa-p384/public-key/rscrypto-blinded",
+          "ecdsa-p384/sign/rscrypto-deterministic/0",
+          "ecdsa-p384/sign/rscrypto-deterministic/32"
+        ],
+        "powerpc64le-linux": [
+          "p256-ecdh/public-key/rscrypto-selected",
+          "p256-ecdh/agreement/rscrypto-selected"
+        ]
+      },
+      "diagnostic": false
+    },
     "hashes/sha256": {
       "bench": "sha2",
       "case": "sha256/rscrypto/4096",

@@ -8,6 +8,7 @@ import json
 import profile as profile_runner
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import run_test
 import runner
@@ -121,8 +122,12 @@ class ProfileTests(unittest.TestCase):
         self.assertTrue(cause)
 
   def test_missing_or_blocked_perf_is_unavailable(self):
-    with self.assertRaises(profile_runner.ProfileUnavailable):
-      self.perf(PATH='')
+    with patch.object(profile_runner.shutil, 'which', return_value=None), \
+         self.assertRaises(profile_runner.ProfileUnavailable):
+      self.perf()
+    host = json.loads((self.root / 'target/perf-unit/host.json').read_text())
+    self.assertEqual(host['perf']['exit_code'], 127)
+    self.assertEqual(host['uname']['exit_code'], 0)
     with self.assertRaises(profile_runner.ProfileUnavailable):
       self.perf(FAIL_PERF_PROBE='1')
 
