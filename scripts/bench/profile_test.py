@@ -103,28 +103,18 @@ class ProfileTests(unittest.TestCase):
     self.assertEqual((status, cause), ('complete', None))
     self.assertEqual(collector['event'], 'cycles:u')
     self.assertEqual(collector['callchain'], 'dwarf')
-    for name in ('host.json', 'capabilities.json', 'perf-stat.txt', 'perf.data', 'perf-report.txt', 'output.txt'):
+    self.assertEqual(collector['access'], 'runner')
+    self.assertEqual(collector['version'], 'perf fixture')
+    for name in ('host.json', 'capabilities.json', 'perf-stat.txt', 'perf.data', 'perf-report.txt',
+                 'perf-script.txt', 'perf-buildids.txt', 'output.txt'):
       self.assertTrue((root / name).is_file(), name)
-
-  def test_privileged_perf_drops_the_benchmark_to_the_runner_identity(self):
-    root, (status, cause, collector) = self.perf(
-      RSCRYPTO_PERF_SUDO='1', REQUIRE_PRIVILEGED_PERF='1')
-    self.assertEqual((status, cause), ('complete', None))
-    self.assertEqual(collector['privilege'], 'sudo-perf/unprivileged-workload')
-    probes = json.loads((root / 'capabilities.json').read_text())['probes']
-    command = next(probe['command'] for probe in probes if '--non-interactive' in probe['command'])
-    self.assertEqual(command[:3], [str(self.root / 'bin/sudo'), '--non-interactive',
-                                   str(self.root / 'bin/perf')])
-    self.assertIn(f'--reuid={profile_runner.os.getuid()}', command)
-    self.assertIn('--clear-groups', command)
-    self.assertIn('--no-new-privs', command)
 
   def test_perf_capture_falls_back_and_keeps_partial_failures(self):
     _, (status, _, collector) = self.perf(FAIL_PERF_DWARF='1')
     self.assertEqual(status, 'complete')
     self.assertEqual(collector['callchain'], 'flat')
     for environment in ({'FAIL_PERF_STAT': '1'}, {'FAIL_PERF_CAPTURE': '1'}, {'FAIL_PERF_REPORT': '1'},
-                        {'ZERO_PERF_SAMPLES': '1'}):
+                        {'FAIL_PERF_SCRIPT': '1'}, {'ZERO_PERF_SAMPLES': '1'}):
       with self.subTest(environment=environment):
         root = self.root / 'target/perf-unit'
         for path in root.iterdir():
@@ -141,7 +131,8 @@ class ProfileTests(unittest.TestCase):
     host = json.loads((self.root / 'target/perf-unit/host.json').read_text())
     self.assertEqual(host['perf']['exit_code'], 127)
     self.assertEqual(host['uname']['exit_code'], 0)
-    with self.assertRaises(profile_runner.ProfileUnavailable):
+    with self.assertRaisesRegex(profile_runner.ProfileUnavailable,
+                                'perf_event_paranoid=4.*CAP_PERFMON'):
       self.perf(FAIL_PERF_PROBE='1')
 
 

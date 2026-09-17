@@ -24,7 +24,9 @@ if name == 'uname':
 elif name == 'id':
     print('0')
 elif name == 'apt-cache':
-    print(args[-1] + ' | 1.0 | snapshot')
+    if not (os.environ.get('INSTALL_NO_EXACT_PERF') and args[-1].startswith('linux-tools-')
+            and args[-1] != 'linux-tools-generic'):
+        print(args[-1] + ' | 1.0 | snapshot')
 elif name == 'apt-get':
     if os.environ.get('INSTALL_FAIL_APT'):
         sys.exit(42)
@@ -43,6 +45,12 @@ elif name == 'apt-get':
             sys.exit(subprocess.run([os.environ['INSTALL_REAL_APT'], *args, '--simulate', '--no-remove',
                 '-o', 'Dir::State::status=' + str(fixture / 'status'),
                 '-o', 'Dir::Cache::pkgcache=', '-o', 'Dir::Cache::srcpkgcache=']).returncode)
+elif name == 'perf':
+    installed = any('linux-tools-generic=1.0' in line
+                    for line in pathlib.Path(os.environ['INSTALL_LOG']).read_text().splitlines())
+    if os.environ.get('INSTALL_PERF_AFTER_PACKAGE') and not installed:
+        sys.exit(1)
+    print('perf version fixture')
 elif name == 'python3':
     script = pathlib.Path(args[0]).name
     if script == 'catalog.py' and args[1] == 'download':
@@ -64,13 +72,14 @@ elif name == 'python3':
 
 
 class LinuxInstall(unittest.TestCase):
-    def provision(self, platform, fail=False, real_apt=False, without_preference=False, profile='ci', target=None):
+    def provision(self, platform, fail=False, real_apt=False, without_preference=False, profile='ci', target=None,
+                  extra_env=None):
         temporary = tempfile.TemporaryDirectory(prefix='rscrypto installer ')
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
         binaries = root / 'bin'
         binaries.mkdir()
-        for name in ('uname', 'id', 'apt-get', 'apt-cache', 'cargo', 'clang', 'cmake', 'python3', 'rustup',
+        for name in ('uname', 'id', 'apt-get', 'apt-cache', 'cargo', 'clang', 'cmake', 'perf', 'python3', 'rustup',
                      'wasmtime', 'opam', 'just', 'rg', 'lychee', 'rumdl', 'samply', 'gungraun-runner'):
             script = binaries / name
             script.write_text('#!' + sys.executable + '\n' + STUB)
@@ -91,6 +100,7 @@ class LinuxInstall(unittest.TestCase):
                'PATH': str(binaries) + os.pathsep + os.environ['PATH'],
                'BASH_ENV': str(bash_env), 'INSTALL_ARCH': arch,
                'INSTALL_LOG': str(root / 'commands.jsonl')}
+        env.update(extra_env or {})
         if fail:
             env['INSTALL_FAIL_APT'] = '1'
         if real_apt:
@@ -244,6 +254,18 @@ class LinuxInstall(unittest.TestCase):
                     transfers = [c for c in calls if c[0] == 'python3' and c[1].endswith('/tooling/transfer.py')]
                     self.assertEqual(len(transfers), 1)
                     self.assertEqual(transfers[0][2:4], ['prepare' if profile.endswith('build') else 'install', target])
+
+    def test_cross_run_uses_generic_perf_when_the_kernel_package_is_absent(self):
+        result, calls, _ = self.provision(
+            'powerpc64le-linux', profile='ci-cross-run',
+            extra_env={'RSCRYPTO_REQUIRE_PERF': '1', 'INSTALL_NO_EXACT_PERF': '1',
+                       'INSTALL_PERF_AFTER_PACKAGE': '1'})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        installs = [call for call in calls if call[0] == 'apt-get' and '--allow-downgrades' in call]
+        self.assertEqual(len(installs), 2)
+        self.assertIn('linux-tools-generic=1.0', installs[-1])
+        self.assertFalse(any(arg.startswith('linux-tools-ppc64le=') for arg in installs[-1]))
+        self.assertIn('perf version fixture', result.stdout)
 
     def test_proof_tools_only_on_supported_full_ct_hosts(self):
         for platform in ('x86_64-linux', 'aarch64-linux', 's390x-linux', 'powerpc64le-linux', 'riscv64-linux'):

@@ -118,24 +118,35 @@ install_options=(--allow-downgrades)
 "${apt[@]}" install -y "${install_options[@]}" "${pinned_packages[@]}"
 
 ensure_kernel_perf() {
-  if ! perf --version >/dev/null 2>&1; then
-    local package
-    local version
-    package="linux-tools-$(uname -r)"
+  if perf --version >/dev/null 2>&1; then perf --version; return; fi
+  local package
+  package="linux-tools-$(uname -r)"
+  local version
+  version="$(apt-cache "${apt_options[@]}" madison "$package" | awk 'NR == 1 {print $3}')"
+  if [[ -z "$version" || "$version" == '(none)' ]]; then
+    package="$(catalog_get ci-cross-run perf-package)"
     version="$(apt-cache "${apt_options[@]}" madison "$package" | awk 'NR == 1 {print $3}')"
-    [[ -n "$version" && "$version" != '(none)' ]] || {
-      echo "the selected Ubuntu snapshot has no perf package for the running kernel: $package" >&2
-      exit 1
-    }
-    "${apt[@]}" install -y "${install_options[@]}" "$package=$version"
   fi
-  perf --version
+  [[ -n "$version" && "$version" != '(none)' ]] || {
+    echo "the selected Ubuntu snapshot provides no usable perf package" >&2
+    exit 1
+  }
+  "${apt[@]}" install -y "${install_options[@]}" "$package=$version"
+  if perf --version >/dev/null 2>&1; then perf --version; return; fi
+  local candidates=(/usr/lib/linux-tools/*/perf)
+  [[ -x "${candidates[0]}" ]] || { echo "the installed $package package provides no perf binary" >&2; exit 1; }
+  local selected
+  selected="$(printf '%s\n' "${candidates[@]}" | sort -V | tail -n 1)"
+  kernel_tools_dir="$prefix/kernel-tools"
+  mkdir -p "$kernel_tools_dir"
+  ln -sfn "$selected" "$kernel_tools_dir/perf"
+  "$kernel_tools_dir/perf" --version
 }
-
-if [[ "$profile" == ci-cross-run && "${RSCRYPTO_REQUIRE_PERF:-0}" == 1 ]]; then ensure_kernel_perf; fi
 
 prefix="$HOME/.local/share/rscrypto-tooling"
 mkdir -p "$prefix"
+kernel_tools_dir=""
+if [[ "$profile" == ci-cross-run && "${RSCRYPTO_REQUIRE_PERF:-0}" == 1 ]]; then ensure_kernel_perf; fi
 python3 "$SCRIPT_DIR/catalog.py" download "$platform" rustup "$temporary/rustup-init"
 chmod +x "$temporary/rustup-init"
 host="$(catalog_get "$platform" rust-host)"
@@ -203,6 +214,7 @@ else
   python3 "$SCRIPT_DIR/catalog.py" install-archives "$platform" "$prefix" > "$temporary/archives"
 fi
 tool_paths=()
+if [[ -n "$kernel_tools_dir" ]]; then tool_paths+=("$kernel_tools_dir"); fi
 while IFS=$'\t' read -r name directory; do
   if [[ -d "$directory/bin" ]]; then tool_paths+=("$directory/bin"); else tool_paths+=("$directory"); fi
   if [[ "$name" == llvm ]]; then export LIBCLANG_PATH="$directory/lib"; fi

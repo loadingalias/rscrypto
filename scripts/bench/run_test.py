@@ -160,7 +160,9 @@ if mode == 'stat':
   if '--output' in args: pathlib.Path(args[args.index('--output') + 1]).write_text('1,000 cycles\\n')
   sys.exit(status)
 if mode == 'record':
-  if probe and os.environ.get('FAIL_PERF_PROBE'): sys.exit(5)
+  if probe and os.environ.get('FAIL_PERF_PROBE'):
+    print('Access to performance monitoring is limited. perf_event_paranoid setting is 4', file=sys.stderr)
+    sys.exit(5)
   if probe and '--call-graph' in args and os.environ.get('FAIL_PERF_DWARF'): sys.exit(5)
   if not probe and os.environ.get('FAIL_PERF_CAPTURE'): sys.exit(7)
   status = subprocess.run(command).returncode
@@ -171,15 +173,14 @@ if mode == 'report':
   if os.environ.get('ZERO_PERF_SAMPLES'): print('# Samples: 0 of event cycles:u'); sys.exit(0)
   print('99.00% criterion-fixture rscrypto::production_frame')
   sys.exit(0)
+if mode == 'script':
+  if os.environ.get('FAIL_PERF_SCRIPT'): sys.exit(6)
+  print('criterion-fixture rscrypto::production_frame')
+  sys.exit(0)
+if mode == 'buildid-list':
+  print('0123456789abcdef criterion-fixture')
+  sys.exit(0)
 sys.exit(64)
-""")
-    self.tool("sudo", """
-args = sys.argv[1:]
-if args[:1] == ['--non-interactive']: args = args[1:]
-sys.exit(subprocess.run(args, env=dict(os.environ) | {'PERF_VIA_SUDO': '1'}).returncode)
-""")
-    self.tool("setpriv", """
-sys.exit(subprocess.run(sys.argv[sys.argv.index('--') + 1:]).returncode)
 """)
     for command in (["git", "init", "-q"], ["git", "add", "scripts", ".config", "Cargo.toml"],
                     ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"]):

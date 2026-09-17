@@ -133,16 +133,19 @@ Its planning job validates the static request before reserving native hardware.
 The x86-64 preparation job cross-builds and seals the production benchmark executable.
 The native job verifies that archive and discovers every selected case exactly once.
 It builds once, then records and seals separate `perf stat` and `perf record` evidence for each case without rebuilding.
-Native setup installs the running kernel's exact Ubuntu `perf` package from the pinned snapshot
-when needed.
-When the native host blocks unprivileged counters, only `perf` runs through passwordless `sudo`.
-It launches the benchmark under the runner's original user
-and group with cleared supplementary groups and `no_new_privs`.
+Native setup prefers the runner's `perf`.
+When a donated runner uses a non-Ubuntu kernel without a matching Ubuntu tools package,
+setup installs the pinned Ubuntu generic userspace tool
+and records its version beside the kernel identity.
+The [Linux perf-event API](https://man7.org/linux/man-pages/man2/perf_event_open.2.html) carries an explicit compatibility size,
+but the live capability probe—not the package name—decides whether the tool
+and host can collect evidence.
+The workflow never elevates `perf` or the benchmark.
 The workflow records missing packages, denied permissions, unsupported events,
 and partial captures without changing host security settings.
 Native reports and raw evidence remain downloadable for 30 days even when capture fails.
-Preparation has a 30-minute cap and native capture has a 20-minute cap;
-with the five-minute planning cap, execution after runner assignment cannot exceed 55 minutes.
+Preparation has a 20-minute cap and native capture has a 10-minute cap;
+with the five-minute planning cap, execution after runner assignment cannot exceed 35 minutes.
 A newer request for the same architecture cancels an older in-progress request.
 Inspect uncertainty and repeat matched measurements before making performance claims.
 

@@ -322,16 +322,16 @@ and 3, 5, 10, or 15 seconds per collector pass.
 and either one exact production case or a curated architecture-specific case set.
 The five-second default yields about ten seconds of execution per case across `perf stat` and `perf record`.
 Bundled presets build once, then capture and seal every exact case separately.
-Preparation and native capture are independently capped at 30 and 20 minutes;
+Preparation and native capture are independently capped at 20 and 10 minutes;
 a newer request for the same architecture cancels the older request.
 It reuses the benchmark cross-build and sealed transfer path.
-The native runner verifies and discovers the transferred executable before running `perf stat`, `perf record`, and `perf report --stdio`;
+The native runner verifies and discovers the transferred executable before running `perf stat`, `perf record`, `perf report --stdio`, `perf script`, and `perf buildid-list`;
 it never rebuilds production code.
-Native setup verifies `perf` and installs the running kernel's exact Ubuntu tools package from the pinned
-snapshot when needed.
-If host policy blocks unprivileged counters, only `perf` uses passwordless `sudo`;
-the benchmark is dropped back to the runner identity with cleared groups and `no_new_privs`.
-The capture records missing packages or permissions without changing host security policy.
+Native setup prefers the runner's `perf`, then a matching Ubuntu package,
+then the pinned Ubuntu generic userspace tool when the donated runner uses a non-Ubuntu kernel.
+The live probes decide whether the result is usable.
+The workflow never elevates `perf` or changes host security policy.
+Setup, missing-package, denied-permission, and collector failures remain retained evidence.
 Preparation and native result artifacts are retained even when collection fails.
 
 Only x86-64 and ARM64 Linux development setup installs perf, Valgrind, Gungraun, and samply.

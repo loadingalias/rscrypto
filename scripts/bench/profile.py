@@ -91,81 +91,79 @@ def host_facts(perf: str | None, env: dict) -> dict:
   return facts
 
 
-def perf_access(perf: str, env: dict, privileged: bool) -> tuple[list[str], list[str], str]:
-  if not privileged:
-    return [perf], [], 'unprivileged'
-  sudo = shutil.which('sudo', path=env.get('PATH'))
-  setpriv = shutil.which('setpriv', path=env.get('PATH'))
-  if sudo is None or setpriv is None:
-    raise ProfileUnavailable('privileged perf requires sudo and setpriv')
-  if not hasattr(os, 'getuid') or os.getuid() == 0:
-    raise ProfileUnavailable('privileged perf requires a non-root runner identity')
-  workload = [setpriv, f'--reuid={os.getuid()}', f'--regid={os.getgid()}',
-              '--clear-groups', '--no-new-privs', '--']
-  return [sudo, '--non-interactive', perf], workload, 'sudo-perf/unprivileged-workload'
-
-
-def profiled_command(command: list[str], env: dict, workload: list[str]) -> list[str]:
-  if not workload:
-    return command
-  exported = ('CRITERION_HOME', 'RSCRYPTO_BENCH_CASES', 'RAYON_NUM_THREADS')
-  assignments = [f'{name}={env[name]}' for name in exported if name in env]
-  assignments += [f'{name}={env[name]}' for name in sorted(env)
-                  if name.startswith('RSCRYPTO_FORCE_')]
-  return [*workload, '/usr/bin/env', *assignments, *command]
-
-
-def capabilities(perf: list[str], workload: list[str], root: Path,
-                 env: dict) -> tuple[list[str], str | None, bool, list[dict]]:
+def capabilities(perf: str, root: Path, env: dict) -> tuple[list[str], str | None, bool, list[dict]]:
   commands = []
-  noop = profiled_command([sys.executable, '-c', 'pass'], env, workload)
-  supported = []
-  for event in STAT_EVENTS:
-    result = probe([*perf, 'stat', '--event', event, '--', *noop], env)
-    commands.append(result)
-    if result['exit_code'] == 0:
-      supported.append(event)
+  noop = [sys.executable, '-c', 'pass']
+  sample_event = None
+  callchain = False
   with tempfile.TemporaryDirectory(prefix='perf-probe-', dir=root) as directory:
     output_path = Path(directory) / 'perf.data'
     output = str(output_path)
     for event in ('cycles:u', 'cpu-clock:u'):
       output_path.touch()
-      callchain = probe([*perf, 'record', '--quiet', '--output', output, '--event', event,
+      result = probe([perf, 'record', '--quiet', '--output', output, '--event', event,
                          '--call-graph', 'dwarf', '--', *noop], env)
-      commands.append(callchain)
-      if callchain['exit_code'] == 0:
-        return supported, event, True, commands
+      commands.append(result)
+      if result['exit_code'] == 0:
+        sample_event, callchain = event, True
+        break
       output_path.touch()
-      flat = probe([*perf, 'record', '--quiet', '--output', output, '--event', event, '--', *noop], env)
-      commands.append(flat)
-      if flat['exit_code'] == 0:
-        return supported, event, False, commands
-  return supported, None, False, commands
+      result = probe([perf, 'record', '--quiet', '--output', output, '--event', event, '--', *noop], env)
+      commands.append(result)
+      if result['exit_code'] == 0:
+        sample_event = event
+        break
+  if sample_event is None:
+    return [], None, False, commands
+  supported = []
+  for event in STAT_EVENTS:
+    result = probe([perf, 'stat', '--event', event, '--', *noop], env)
+    commands.append(result)
+    if result['exit_code'] == 0:
+      supported.append(event)
+  return supported, sample_event, callchain, commands
+
+
+def unavailable_cause(probes: list[dict]) -> str:
+  diagnostic = '\n'.join(probe['stderr'] for probe in probes)
+  paranoid = re.search(r'perf_event_paranoid(?: setting)? is\s+(-?\d+)', diagnostic)
+  if 'Access to performance monitoring' in diagnostic or 'Permission denied' in diagnostic:
+    setting = f'perf_event_paranoid={paranoid.group(1)}; ' if paranoid else ''
+    return f'native perf access is denied ({setting}runner needs CAP_PERFMON or owner configuration)'
+  if re.search(r'not supported|No such device', diagnostic, re.IGNORECASE):
+    return 'native perf exposes neither hardware cycles nor software CPU clock sampling'
+  return 'native perf cannot record hardware cycles or software CPU clock'
+
+
+def collector(perf: str, event: str, callchain: bool, host: dict) -> dict:
+  return {
+    'path': perf,
+    'version': host['perf']['stdout'].strip(),
+    'event': event,
+    'callchain': 'dwarf' if callchain else 'flat',
+    'access': 'runner',
+  }
 
 
 def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | None, dict]:
   perf = shutil.which('perf', path=env.get('PATH'))
-  write_json(root / 'host.json', host_facts(perf, env))
+  host = host_facts(perf, env)
+  write_json(root / 'host.json', host)
   if perf is None:
     raise ProfileUnavailable('native runner does not provide perf')
-  capture, workload, privilege = perf_access(perf, env, False)
-  events, sample_event, callchain, probes = capabilities(capture, workload, root, env)
-  if sample_event is None and env.get('RSCRYPTO_PERF_SUDO') == '1':
-    capture, workload, privilege = perf_access(perf, env, True)
-    events, sample_event, callchain, privileged_probes = capabilities(capture, workload, root, env)
-    probes += privileged_probes
+  events, sample_event, callchain, probes = capabilities(perf, root, env)
   write_json(root / 'capabilities.json', {'stat_events': events, 'sample_event': sample_event,
                                          'callchain': 'dwarf' if callchain else 'flat',
-                                         'privilege': privilege, 'probes': probes})
+                                         'access': 'runner', 'probes': probes})
   if sample_event is None:
-    raise ProfileUnavailable('native perf cannot record hardware cycles or software CPU clock')
+    raise ProfileUnavailable(unavailable_cause(probes))
 
-  command = profiled_command(command, env, workload)
+  collector_info = collector(perf, sample_event, callchain, host)
   stat_error = None
   if events:
     stat_output = root / 'perf-stat.txt'
     stat_output.touch()
-    stat = [*capture, 'stat', '--output', str(stat_output)]
+    stat = [perf, 'stat', '--output', str(stat_output)]
     for event in events:
       stat += ['--event', event]
     try:
@@ -179,7 +177,7 @@ def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | 
 
   record_output = root / 'perf.data'
   record_output.touch()
-  record = [*capture, 'record', '--output', str(record_output), '--event', sample_event]
+  record = [perf, 'record', '--output', str(record_output), '--event', sample_event]
   if callchain:
     record += ['--call-graph', 'dwarf']
   try:
@@ -188,10 +186,7 @@ def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | 
       raise ProfileIncomplete('perf record produced no raw profile')
   except CAPTURE_ERRORS as error:
     cause = f'perf record failed with exit code {exit_code(error)}'
-    return ('partial' if stat_error is None else 'failed'), cause, {
-      'path': perf, 'event': sample_event, 'callchain': 'dwarf' if callchain else 'flat',
-      'privilege': privilege,
-    }
+    return ('partial' if stat_error is None else 'failed'), cause, collector_info
 
   try:
     report = execute([perf, 'report', '--stdio', '--header', '--input', str(root / 'perf.data')],
@@ -200,20 +195,24 @@ def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | 
       raise ProfileIncomplete('perf report produced no sampled text output')
     (root / 'perf-report.txt').write_text(report)
   except CAPTURE_ERRORS as error:
-    return 'partial', f'perf report failed with exit code {exit_code(error)}', {
-      'path': perf, 'event': sample_event, 'callchain': 'dwarf' if callchain else 'flat',
-      'privilege': privilege,
-    }
+    return 'partial', f'perf report failed with exit code {exit_code(error)}', collector_info
+
+  for name, arguments in (
+    ('perf-script.txt', ['script', '--header']),
+    ('perf-buildids.txt', ['buildid-list', '--with-hits']),
+  ):
+    try:
+      text = execute([perf, *arguments, '--input', str(root / 'perf.data')],
+                     root / 'output.txt', env=env, capture=True)
+      if not text.strip():
+        raise ProfileIncomplete(f'{arguments[0]} produced no text output')
+      (root / name).write_text(text)
+    except CAPTURE_ERRORS as error:
+      return 'partial', f'perf {arguments[0]} failed with exit code {exit_code(error)}', collector_info
 
   if stat_error is not None:
-    return 'partial', f'perf stat failed with exit code {exit_code(stat_error)}', {
-      'path': perf, 'event': sample_event, 'callchain': 'dwarf' if callchain else 'flat',
-      'privilege': privilege,
-    }
-  return 'complete', None, {
-    'path': perf, 'event': sample_event, 'callchain': 'dwarf' if callchain else 'flat',
-    'privilege': privilege,
-  }
+    return 'partial', f'perf stat failed with exit code {exit_code(stat_error)}', collector_info
+  return 'complete', None, collector_info
 
 
 def request(args, entry) -> tuple[list[dict], dict]:

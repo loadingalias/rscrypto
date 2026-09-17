@@ -50,8 +50,8 @@ class ManualProfile(unittest.TestCase):
     self.assertEqual(selection['cases'], ['aes-128-gcm/copy-and-encrypt/rscrypto/4096'])
     self.assertEqual(selection['binary'], 'aead')
     self.assertNotIn('diag', selection['features'])
-    self.assertEqual(selection['prepare_timeout'], 30)
-    self.assertEqual(selection['capture_timeout'], 20)
+    self.assertEqual(selection['prepare_timeout'], 20)
+    self.assertEqual(selection['capture_timeout'], 10)
 
   def test_request_resolves_the_architecture_specific_loss_bundle(self):
     selection = profile_ci.request(
@@ -118,7 +118,7 @@ class ManualProfile(unittest.TestCase):
     self.assertEqual(seconds, ['3', '5', '10', '15'])
     self.assertEqual(int(seconds[-1]), profile_ci.settings.PROFILE_CAPTURE_MAX_SECONDS)
     self.assertIn('RSCRYPTO_REQUIRE_PERF: "1"', workflow)
-    self.assertIn('RSCRYPTO_PERF_SUDO: "1"', workflow)
+    self.assertNotIn('RSCRYPTO_PERF_SUDO', workflow)
 
   def test_plan_emits_only_the_selected_runner(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -132,8 +132,8 @@ class ManualProfile(unittest.TestCase):
       self.assertEqual(values['target'], 's390x-unknown-linux-gnu')
       self.assertEqual(values['runner'], 'ubuntu-24.04-s390x')
       self.assertEqual(values['workload'], 'aead/aes')
-      self.assertEqual(values['prepare_timeout'], '30')
-      self.assertEqual(values['capture_timeout'], '20')
+      self.assertEqual(values['prepare_timeout'], '20')
+      self.assertEqual(values['capture_timeout'], '10')
 
   def test_isolated_entry_point(self):
     with tempfile.TemporaryDirectory() as directory:

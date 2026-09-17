@@ -118,7 +118,6 @@ jobs:
       ARCHITECTURE: ${{ needs.plan.outputs.architecture }}
       TARGET: ${{ needs.plan.outputs.target }}
       RSCRYPTO_REQUIRE_PERF: "1"
-      RSCRYPTO_PERF_SUDO: "1"
     steps:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
@@ -130,7 +129,20 @@ jobs:
           path: target/profile-download
       - name: Verify and profile on native hardware
         run: |
-          scripts/tooling/"$ARCHITECTURE.sh" --ci-cross-run "target/profile-download/$TARGET-tools.tar.gz"
+          evidence=target/profiles/setup
+          mkdir -p "$evidence"
+          uname -a > "$evidence/uname.txt"
+          cp /proc/cpuinfo "$evidence/cpuinfo.txt"
+          set +e
+          scripts/tooling/"$ARCHITECTURE.sh" --ci-cross-run "target/profile-download/$TARGET-tools.tar.gz" \
+            2>&1 | tee "$evidence/tooling.txt"
+          tooling_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$tooling_status" -ne 0 ]]; then
+            printf 'state=failed\nexit_code=%s\ncause=native tooling setup failed\n' "$tooling_status" \
+              > "$evidence/status.txt"
+            exit "$tooling_status"
+          fi
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           python3 scripts/bench/profile_ci.py capture "$TARGET" "target/profile-download/$TARGET-profile.tar.gz"
           git diff --exit-code HEAD

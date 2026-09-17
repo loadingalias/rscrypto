@@ -108,6 +108,8 @@ def validate(data):
             raise ValueError(f'{profile}: incorrect CI tool set')
         if any(tool not in data['cargo'] for tool in data[profile]['cargo']):
             raise ValueError(f'{profile}: missing Cargo tool version')
+    if not re.fullmatch(r'[a-z0-9][a-z0-9+.-]*', data['ci-cross-run'].get('perf-package', '')):
+        raise ValueError('ci-cross-run: invalid perf package')
     proof = data['ci-ct-proof']
     if not re.fullmatch(r'git\+https://github\.com/ocaml/opam-repository\.git#[0-9a-f]{40}', proof['opam-repository']):
         raise ValueError('ci-ct-proof: opam repository requires an exact commit')
