@@ -135,6 +135,9 @@ The native job verifies that archive and discovers every selected case exactly o
 It builds once, then records and seals separate `perf stat` and `perf record` evidence for each case without rebuilding.
 Native setup installs the running kernel's exact Ubuntu `perf` package from the pinned snapshot
 when needed.
+When the native host blocks unprivileged counters, only `perf` runs through passwordless `sudo`.
+It launches the benchmark under the runner's original user
+and group with cleared supplementary groups and `no_new_privs`.
 The workflow records missing packages, denied permissions, unsupported events,
 and partial captures without changing host security settings.
 Native reports and raw evidence remain downloadable for 30 days even when capture fails.

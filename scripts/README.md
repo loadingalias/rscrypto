@@ -325,6 +325,8 @@ The native runner verifies and discovers the transferred executable before runni
 it never rebuilds production code.
 Native setup verifies `perf` and installs the running kernel's exact Ubuntu tools package from the pinned
 snapshot when needed.
+If host policy blocks unprivileged counters, only `perf` uses passwordless `sudo`;
+the benchmark is dropped back to the runner identity with cleared groups and `no_new_privs`.
 The capture records missing packages or permissions without changing host security policy.
 Preparation and native result artifacts are retained even when collection fails.
 

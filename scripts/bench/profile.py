@@ -91,24 +91,52 @@ def host_facts(perf: str | None, env: dict) -> dict:
   return facts
 
 
-def capabilities(perf: str, root: Path, env: dict) -> tuple[list[str], str | None, bool, list[dict]]:
+def perf_access(perf: str, env: dict, privileged: bool) -> tuple[list[str], list[str], str]:
+  if not privileged:
+    return [perf], [], 'unprivileged'
+  sudo = shutil.which('sudo', path=env.get('PATH'))
+  setpriv = shutil.which('setpriv', path=env.get('PATH'))
+  if sudo is None or setpriv is None:
+    raise ProfileUnavailable('privileged perf requires sudo and setpriv')
+  if not hasattr(os, 'getuid') or os.getuid() == 0:
+    raise ProfileUnavailable('privileged perf requires a non-root runner identity')
+  workload = [setpriv, f'--reuid={os.getuid()}', f'--regid={os.getgid()}',
+              '--clear-groups', '--no-new-privs', '--']
+  return [sudo, '--non-interactive', perf], workload, 'sudo-perf/unprivileged-workload'
+
+
+def profiled_command(command: list[str], env: dict, workload: list[str]) -> list[str]:
+  if not workload:
+    return command
+  exported = ('CRITERION_HOME', 'RSCRYPTO_BENCH_CASES', 'RAYON_NUM_THREADS')
+  assignments = [f'{name}={env[name]}' for name in exported if name in env]
+  assignments += [f'{name}={env[name]}' for name in sorted(env)
+                  if name.startswith('RSCRYPTO_FORCE_')]
+  return [*workload, '/usr/bin/env', *assignments, *command]
+
+
+def capabilities(perf: list[str], workload: list[str], root: Path,
+                 env: dict) -> tuple[list[str], str | None, bool, list[dict]]:
   commands = []
-  noop = [sys.executable, '-c', 'pass']
+  noop = profiled_command([sys.executable, '-c', 'pass'], env, workload)
   supported = []
   for event in STAT_EVENTS:
-    result = probe([perf, 'stat', '--event', event, '--', *noop], env)
+    result = probe([*perf, 'stat', '--event', event, '--', *noop], env)
     commands.append(result)
     if result['exit_code'] == 0:
       supported.append(event)
   with tempfile.TemporaryDirectory(prefix='perf-probe-', dir=root) as directory:
-    output = str(Path(directory) / 'perf.data')
+    output_path = Path(directory) / 'perf.data'
+    output = str(output_path)
     for event in ('cycles:u', 'cpu-clock:u'):
-      callchain = probe([perf, 'record', '--quiet', '--output', output, '--event', event,
+      output_path.touch()
+      callchain = probe([*perf, 'record', '--quiet', '--output', output, '--event', event,
                          '--call-graph', 'dwarf', '--', *noop], env)
       commands.append(callchain)
       if callchain['exit_code'] == 0:
         return supported, event, True, commands
-      flat = probe([perf, 'record', '--quiet', '--output', output, '--event', event, '--', *noop], env)
+      output_path.touch()
+      flat = probe([*perf, 'record', '--quiet', '--output', output, '--event', event, '--', *noop], env)
       commands.append(flat)
       if flat['exit_code'] == 0:
         return supported, event, False, commands
@@ -120,15 +148,24 @@ def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | 
   write_json(root / 'host.json', host_facts(perf, env))
   if perf is None:
     raise ProfileUnavailable('native runner does not provide perf')
-  events, sample_event, callchain, probes = capabilities(perf, root, env)
+  capture, workload, privilege = perf_access(perf, env, False)
+  events, sample_event, callchain, probes = capabilities(capture, workload, root, env)
+  if sample_event is None and env.get('RSCRYPTO_PERF_SUDO') == '1':
+    capture, workload, privilege = perf_access(perf, env, True)
+    events, sample_event, callchain, privileged_probes = capabilities(capture, workload, root, env)
+    probes += privileged_probes
   write_json(root / 'capabilities.json', {'stat_events': events, 'sample_event': sample_event,
-                                         'callchain': 'dwarf' if callchain else 'flat', 'probes': probes})
+                                         'callchain': 'dwarf' if callchain else 'flat',
+                                         'privilege': privilege, 'probes': probes})
   if sample_event is None:
     raise ProfileUnavailable('native perf cannot record hardware cycles or software CPU clock')
 
+  command = profiled_command(command, env, workload)
   stat_error = None
   if events:
-    stat = [perf, 'stat', '--output', str(root / 'perf-stat.txt')]
+    stat_output = root / 'perf-stat.txt'
+    stat_output.touch()
+    stat = [*capture, 'stat', '--output', str(stat_output)]
     for event in events:
       stat += ['--event', event]
     try:
@@ -140,7 +177,9 @@ def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | 
   else:
     stat_error = ProfileIncomplete('native perf exposes no supported stat events')
 
-  record = [perf, 'record', '--output', str(root / 'perf.data'), '--event', sample_event]
+  record_output = root / 'perf.data'
+  record_output.touch()
+  record = [*capture, 'record', '--output', str(record_output), '--event', sample_event]
   if callchain:
     record += ['--call-graph', 'dwarf']
   try:
@@ -151,6 +190,7 @@ def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | 
     cause = f'perf record failed with exit code {exit_code(error)}'
     return ('partial' if stat_error is None else 'failed'), cause, {
       'path': perf, 'event': sample_event, 'callchain': 'dwarf' if callchain else 'flat',
+      'privilege': privilege,
     }
 
   try:
@@ -162,14 +202,17 @@ def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | 
   except CAPTURE_ERRORS as error:
     return 'partial', f'perf report failed with exit code {exit_code(error)}', {
       'path': perf, 'event': sample_event, 'callchain': 'dwarf' if callchain else 'flat',
+      'privilege': privilege,
     }
 
   if stat_error is not None:
     return 'partial', f'perf stat failed with exit code {exit_code(stat_error)}', {
       'path': perf, 'event': sample_event, 'callchain': 'dwarf' if callchain else 'flat',
+      'privilege': privilege,
     }
   return 'complete', None, {
     'path': perf, 'event': sample_event, 'callchain': 'dwarf' if callchain else 'flat',
+    'privilege': privilege,
   }
 
 

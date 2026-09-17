@@ -118,6 +118,7 @@ class ManualProfile(unittest.TestCase):
     self.assertEqual(seconds, ['3', '5', '10', '15'])
     self.assertEqual(int(seconds[-1]), profile_ci.settings.PROFILE_CAPTURE_MAX_SECONDS)
     self.assertIn('RSCRYPTO_REQUIRE_PERF: "1"', workflow)
+    self.assertIn('RSCRYPTO_PERF_SUDO: "1"', workflow)
 
   def test_plan_emits_only_the_selected_runner(self):
     with tempfile.TemporaryDirectory() as directory:

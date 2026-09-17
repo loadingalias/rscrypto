@@ -106,6 +106,19 @@ class ProfileTests(unittest.TestCase):
     for name in ('host.json', 'capabilities.json', 'perf-stat.txt', 'perf.data', 'perf-report.txt', 'output.txt'):
       self.assertTrue((root / name).is_file(), name)
 
+  def test_privileged_perf_drops_the_benchmark_to_the_runner_identity(self):
+    root, (status, cause, collector) = self.perf(
+      RSCRYPTO_PERF_SUDO='1', REQUIRE_PRIVILEGED_PERF='1')
+    self.assertEqual((status, cause), ('complete', None))
+    self.assertEqual(collector['privilege'], 'sudo-perf/unprivileged-workload')
+    probes = json.loads((root / 'capabilities.json').read_text())['probes']
+    command = next(probe['command'] for probe in probes if '--non-interactive' in probe['command'])
+    self.assertEqual(command[:3], [str(self.root / 'bin/sudo'), '--non-interactive',
+                                   str(self.root / 'bin/perf')])
+    self.assertIn(f'--reuid={profile_runner.os.getuid()}', command)
+    self.assertIn('--clear-groups', command)
+    self.assertIn('--no-new-privs', command)
+
   def test_perf_capture_falls_back_and_keeps_partial_failures(self):
     _, (status, _, collector) = self.perf(FAIL_PERF_DWARF='1')
     self.assertEqual(status, 'complete')

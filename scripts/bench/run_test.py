@@ -152,6 +152,8 @@ mode = sys.argv[1]
 args = sys.argv[2:]
 command = args[args.index('--') + 1:] if '--' in args else []
 probe = command[:3] == [sys.executable, '-c', 'pass']
+if mode in {'stat', 'record'} and os.environ.get('REQUIRE_PRIVILEGED_PERF') and not os.environ.get('PERF_VIA_SUDO'):
+  sys.exit(5)
 if mode == 'stat':
   if os.environ.get('FAIL_PERF_STAT') and '--output' in args: sys.exit(4)
   status = subprocess.run(command).returncode
@@ -170,6 +172,14 @@ if mode == 'report':
   print('99.00% criterion-fixture rscrypto::production_frame')
   sys.exit(0)
 sys.exit(64)
+""")
+    self.tool("sudo", """
+args = sys.argv[1:]
+if args[:1] == ['--non-interactive']: args = args[1:]
+sys.exit(subprocess.run(args, env=dict(os.environ) | {'PERF_VIA_SUDO': '1'}).returncode)
+""")
+    self.tool("setpriv", """
+sys.exit(subprocess.run(sys.argv[sys.argv.index('--') + 1:]).returncode)
 """)
     for command in (["git", "init", "-q"], ["git", "add", "scripts", ".config", "Cargo.toml"],
                     ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"]):
