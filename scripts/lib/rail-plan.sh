@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One fail-closed Cargo Rail v8 plan consumer for repository scripts.
+# One fail-closed Cargo Rail v9 plan consumer for repository scripts.
 # shellcheck disable=SC2034
 # CARGO_ARGS, CARGO_SCOPE_KIND, and SCOPE_DESC are outputs for test.sh.
 
@@ -22,18 +22,13 @@ _rail_load_plan() {
   fi
   RAIL_PLAN_JSON_CACHE=$(cargo "${plan_args[@]}") || return 2
 
-  local plan_file
-  plan_file=$(mktemp "${TMPDIR:-/tmp}/rscrypto-plan-v8.XXXXXX")
-  printf '%s\n' "$RAIL_PLAN_JSON_CACHE" >"$plan_file"
-  if ! cargo rail plan --verify "$plan_file"; then
-    rm -f "$plan_file"
+  if ! cargo rail plan --verify - <<<"$RAIL_PLAN_JSON_CACHE"; then
     return 2
   fi
-  rm -f "$plan_file"
 
   jq -e '
-    .plan_contract_version == 8
-    and (.identity | type == "string" and startswith("plan-v8:sha256:"))
+    .plan_contract_version == 9
+    and (.identity | type == "string" and startswith("plan-v9:sha256:"))
     and (.required | type == "array")
     and (.work | type == "object")
   ' <<<"$RAIL_PLAN_JSON_CACHE" >/dev/null || {

@@ -83,12 +83,10 @@ ssh-collect-bench target run_id destination:
 ssh-list:
     @"$DEV_MACHINE_EXECUTOR" list rscrypto
 
-# Preview, install, and verify the canonical remapped Cargo Rail cache policy.
+# Install and prove local reuse plus any machine-authorized remote cache.
 [group('tooling')]
 rail-cache-setup *args:
-    @status=0; cargo rail cache setup --check --remote "$CARGO_RAIL_CACHE_REMOTE" --remote-mode "$CARGO_RAIL_CACHE_MODE" --root-portability remap "$@" || status=$?; [ "$status" -le 1 ] || exit "$status"
-    @cargo rail cache setup --remote "$CARGO_RAIL_CACHE_REMOTE" --remote-mode "$CARGO_RAIL_CACHE_MODE" --root-portability remap "$@"
-    @cargo rail cache probe --json
+    @scripts/tooling/cache.sh "$@"
 
 # Report the effective Cargo Rail cache policy and usage.
 [group('tooling')]
@@ -104,6 +102,18 @@ build *args:
 # Explain the affected Cargo Rail work; accepts planner arguments.
 plan *args:
     @cargo rail plan --explain "$@"
+
+# Check the complete supported declaration surface before preparing a release.
+release-surface:
+    @cargo rail surface --check --explain
+
+# Preview the local release preparation without changing the repository.
+release-check bump="auto":
+    @status=0; cargo rail release check rscrypto --bump "$1" --skip-tag || status=$?; [ "$status" -le 1 ] || exit "$status"
+
+# Run Surface, validate the release, and prepare its local commit without remote effects.
+release-prepare bump="auto": release-surface (release-check bump)
+    @cargo rail release run rscrypto --bump "$1" --skip-tag --allow-non-default-branch
 
 # Repair, then validate the host and the explicit supported target catalog.
 check:
@@ -157,6 +167,8 @@ test-scripts:
     @scripts/lib/python.sh scripts/release/release_test.py
     @scripts/lib/python.sh scripts/test/test_runner_test.py
     @scripts/lib/python.sh scripts/test/just_arguments_test.py
+    @scripts/lib/python.sh scripts/test/ci_cache_test.py
+    @scripts/lib/python.sh scripts/tooling/cache_test.py
     @scripts/lib/python.sh scripts/tooling/toolchain_test.py
     @scripts/lib/python.sh scripts/tooling/install_test.py
     @scripts/lib/python.sh scripts/bench/ci_test.py

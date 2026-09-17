@@ -33,6 +33,9 @@ jobs:
   ci:
     needs: preflight
     uses: ./.github/workflows/ci.yml
+    secrets:
+      CARGO_RAIL_R2_READ_ACCESS_KEY_ID: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
+      CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
 
   ct:
     needs: preflight

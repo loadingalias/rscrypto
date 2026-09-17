@@ -229,6 +229,13 @@ class Bundles(unittest.TestCase):
                 with self.subTest(target=target, key=key), patch.dict(os.environ, {key: 'override'}):
                     with self.assertRaises(ValueError): environment(target)
 
+    def test_cross_build_preserves_the_callers_cache_policy(self):
+        for target in TARGETS:
+            for policy in ('', 'off'):
+                with self.subTest(target=target, policy=policy), \
+                     patch.dict(os.environ, {'CARGO_RAIL_CACHE': policy}):
+                    self.assertEqual(environment(target)['CARGO_RAIL_CACHE'], policy)
+
     def test_prepare_keeps_both_full_release_modes_and_fails_closed(self):
         for target, (machine, _, _, _) in TARGETS.items():
             with self.subTest(target=target):

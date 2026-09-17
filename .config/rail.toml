@@ -1,37 +1,46 @@
 # cargo-rail configuration
 # Documentation: https://github.com/loadingalias/cargo-rail
 
-# Additional target-resolution and compiler-evidence views owned by
-# .config/target-matrix.json and docs/platforms.md.
+# Additional supported Cargo target-resolution views; not a compiler/linker execution matrix.
 targets = [
+  # Tier 1 (Guaranteed)
   "aarch64-apple-darwin",
-  "aarch64-pc-windows-msvc",
   "aarch64-unknown-linux-gnu",
+  "x86_64-pc-windows-msvc",
+  "x86_64-unknown-linux-gnu",
+  # Tier 2 (Common)
+  "aarch64-pc-windows-msvc",
   "aarch64-unknown-linux-musl",
+  "wasm32-unknown-unknown",
+  "wasm32-wasip1",
+  "x86_64-unknown-linux-musl",
+  # Other
   "aarch64-unknown-none",
   "powerpc64le-unknown-linux-gnu",
   "riscv32imac-unknown-none-elf",
   "riscv64gc-unknown-linux-gnu",
   "s390x-unknown-linux-gnu",
   "thumbv6m-none-eabi",
-  "wasm32-unknown-unknown",
-  "wasm32-wasip1",
-  "x86_64-pc-windows-msvc",
-  "x86_64-unknown-linux-gnu",
-  "x86_64-unknown-linux-musl",
   "x86_64-unknown-none",
 ]
 
 [unify]
+# Renamed declarations are part of this crate's intentional multi-version oracle graph.
 include_renamed = true
-skip_undeclared_patterns = [] # Every feature spelling is actionable in this crate.
-msrv_policy = { mode = "disabled" } # Cargo.toml owns the declared package MSRV.
+# Every feature spelling is actionable; unexpected cfg names must not be silently borrowed.
+skip_undeclared_patterns = []
+# Cargo.toml owns the single workspace member's public MSRV.
+msrv_policy = { mode = "disabled" }
+
+# Plan uses Cargo-Rail's built-in Cargo work. Add no repository work without a matching executor.
 
 [surface]
-enabled = true
+# Manual pre-release gate. Keep planner selection disabled by omitting `enabled = true`.
 targets = "workspace"
 
 [release]
+# Release preparation must have conclusive compatibility evidence. Remote effects remain unconfigured.
+semver_check = "deny"
 # Keep standalone fuzz and evidence-tool lockfiles on the released package version.
 auxiliary_cargo_manifests = [
   "fuzz-packages/aead-aegis256/Cargo.toml",

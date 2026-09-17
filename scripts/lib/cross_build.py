@@ -38,7 +38,7 @@ def environment(target):
     if conflicting:
         raise ValueError(f'unreviewed build/test overrides: {sorted(conflicting)}')
     normalized = target.replace('-', '_')
-    return {**os.environ, 'RUSTUP_TOOLCHAIN': toolchain.for_target(target), 'CARGO_RAIL_CACHE': 'off',
+    return {**os.environ, 'RUSTUP_TOOLCHAIN': toolchain.for_target(target),
             f'CARGO_TARGET_{normalized.upper()}_LINKER': compiler + '-gcc',
             f'CC_{normalized}': compiler + '-gcc',
             f'CXX_{normalized}': compiler + '-g++',

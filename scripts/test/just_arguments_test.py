@@ -36,8 +36,7 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
     env = {key: value for key, value in os.environ.items()
            if key not in ('BASH_ENV', 'ENV') and not key.startswith('BASH_FUNC_')}
     env.update(DEV_MACHINE_BIN=str(recorder), PYTHON_RECORDER=str(recorder), ARGUMENT_LOG=str(log),
-               PATH=str(root / 'bin') + os.pathsep + os.environ['PATH'],
-               CARGO_RAIL_CACHE_REMOTE='remote value', CARGO_RAIL_CACHE_MODE='read-write')
+               PATH=str(root / 'bin') + os.pathsep + os.environ['PATH'])
     words = ['two words', "single'quote", 'double"quote', r'^(foo|bar)\s+[0-9].*$',
              '$(touch SHOULD_NOT_EXIST)', '`touch ALSO_NOT`', '*', '']
 
@@ -82,9 +81,12 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
     run('ssh-collect-bench', words[:3], [['just', 'rscrypto', words[0], 'bench-export', 'benchmark_results/criterion/' + words[1]],
                                       ['collect-results', 'rscrypto', words[0], 'criterion', *words[1:3]]])
     run('bench-export', [words[2]], [['scripts/bench/runner.py', 'export', words[2]]])
-    cache = ['--remote', 'remote value', '--remote-mode', 'read-write', '--root-portability', 'remap']
-    run('rail-cache-setup', words, [['rail', 'cache', 'setup', '--check', *cache, *words],
-                                  ['rail', 'cache', 'setup', *cache, *words], ['rail', 'cache', 'probe', '--json']])
+    run('rail-cache-setup', words, [words])
+    release_check = ['rail', 'release', 'check', 'rscrypto', '--bump', words[0], '--skip-tag']
+    run('release-check', [words[0]], [release_check])
+    run('release-prepare', [words[0]], [['rail', 'surface', '--check', '--explain'], release_check,
+                                      ['rail', 'release', 'run', 'rscrypto', '--bump', words[0], '--skip-tag',
+                                       '--allow-non-default-branch']])
     env.pop('HOME', None)
     run('ci-check', [], [['native']])
     covered = set(prefixes) | {'ssh', 'ssh-create', 'ssh-just', 'ssh-cargo', 'rail-cache-setup'}

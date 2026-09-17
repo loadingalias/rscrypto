@@ -6,6 +6,15 @@ on:
   pull_request:
   workflow_dispatch:
   workflow_call:
+    secrets:
+      CARGO_RAIL_R2_READ_ACCESS_KEY_ID:
+        required: true
+      CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY:
+        required: true
+      CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID:
+        required: false
+      CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY:
+        required: false
 
 permissions:
   contents: read
@@ -36,6 +45,58 @@ jobs:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
           persist-credentials: false
+      # Only trusted main pushes populate L2. Other credentialed jobs are readers; fork PRs stay cold.
+      - name: Select shared compiler-cache authority
+        id: cache-authority
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        env:
+          CACHE_ACCESS_KEY_ID: >-
+            ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+                 secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID) ||
+                (!(github.event_name == 'push' && github.ref == 'refs/heads/main') &&
+                 secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID) }}
+          CACHE_SECRET_ACCESS_KEY: >-
+            ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+                 secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY) ||
+                (!(github.event_name == 'push' && github.ref == 'refs/heads/main') &&
+                 secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY) }}
+          CACHE_REGION: ${{ vars.CARGO_RAIL_CACHE_REGION }}
+          CACHE_REMOTE: ${{ vars.CARGO_RAIL_CACHE_URL }}
+        run: |
+          if [[ -z "$CACHE_ACCESS_KEY_ID" || -z "$CACHE_SECRET_ACCESS_KEY" ||
+                -z "$CACHE_REGION" || -z "$CACHE_REMOTE" ]]; then
+            echo "enabled=false" >>"$GITHUB_OUTPUT"
+            echo "Cargo-Rail cache authority is unavailable; continuing with caching disabled"
+            exit 0
+          fi
+          {
+            printf 'CARGO_RAIL_CACHE=\n'
+            printf 'AWS_ACCESS_KEY_ID=%s\n' "$CACHE_ACCESS_KEY_ID"
+            printf 'AWS_SECRET_ACCESS_KEY=%s\n' "$CACHE_SECRET_ACCESS_KEY"
+            printf 'AWS_SESSION_TOKEN=\n'
+            printf 'AWS_SECURITY_TOKEN=\n'
+            printf 'AWS_PROFILE=\n'
+            printf 'AWS_DEFAULT_PROFILE=\n'
+            printf 'AWS_ROLE_ARN=\n'
+            printf 'AWS_WEB_IDENTITY_TOKEN_FILE=\n'
+            printf 'AWS_EC2_METADATA_DISABLED=true\n'
+            printf 'AWS_REGION=%s\n' "$CACHE_REGION"
+            printf 'AWS_DEFAULT_REGION=%s\n' "$CACHE_REGION"
+          } >>"$GITHUB_ENV"
+          echo "enabled=true" >>"$GITHUB_OUTPUT"
+      - name: Configure shared compiler cache
+        id: cache
+        if: steps.cache-authority.outputs.enabled == 'true'
+        uses: "loadingalias/cargo-rail-action/cache@e706767c343acb6a2ab1917f243b1616ae9eb05b" # v10.0.0
+        with:
+          remote: ${{ vars.CARGO_RAIL_CACHE_URL }}
+          mode: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'read-write' || 'read' }}
+          max-size: 10GiB
+          root-portability: remap
+          verify-remote: true
       - name: Cross-check and prepare complete target suites
         run: |
           scripts/tooling/x86_64-linux.sh --ci-cross-build "$TARGET"
@@ -50,6 +111,21 @@ jobs:
             target/${{ matrix.target }}-tools.tar.gz
           if-no-files-found: error
           retention-days: 2
+      - name: Collect compiler-cache measurements
+        id: cache-record
+        if: always() && steps.cache.outcome == 'success'
+        uses: "loadingalias/cargo-rail-action/cache/collect@e706767c343acb6a2ab1917f243b1616ae9eb05b" # v10.0.0
+        with:
+          job: cross-${{ matrix.target }}
+          output-directory: ${{ runner.temp }}/cache-records
+      - name: Retain compiler-cache measurements
+        if: always() && steps.cache-record.outcome == 'success'
+        uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+        with:
+          name: cache-record-cross-${{ matrix.target }}
+          path: ${{ steps.cache-record.outputs.record-file }}
+          if-no-files-found: error
+          retention-days: 7
 
   native:
     needs: cross-build
@@ -65,9 +141,11 @@ jobs:
             runner: runs-on=${{ github.run_id }}/runner=package/env=production
             timeout: 60
           - platform: x86_64-linux
+            cache: true
             runner: runs-on=${{ github.run_id }}/runner=x86_64-linux/env=production
             timeout: 60
           - platform: aarch64-linux
+            cache: true
             runner: runs-on=${{ github.run_id }}/runner=aarch64-linux/env=production
             timeout: 60
           - platform: s390x-linux
@@ -84,6 +162,7 @@ jobs:
             # Compilation runs on x86-64; this budget covers native execution and bootstrap.
             timeout: 30
           - platform: x86_64-win
+            cache: true
             runner: runs-on=${{ github.run_id }}/runner=x86_64-win/env=production
             timeout: 60
     runs-on: ${{ matrix.runner }}
@@ -92,6 +171,59 @@ jobs:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
           persist-credentials: false
+      # Only trusted main pushes populate L2. Other credentialed jobs are readers; fork PRs stay cold.
+      - name: Select shared compiler-cache authority
+        id: cache-authority
+        if: >-
+          matrix.cache == true &&
+          (github.event_name != 'pull_request' ||
+           github.event.pull_request.head.repo.full_name == github.repository)
+        shell: bash
+        env:
+          CACHE_ACCESS_KEY_ID: >-
+            ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+                 secrets.CARGO_RAIL_R2_WRITE_ACCESS_KEY_ID) ||
+                (!(github.event_name == 'push' && github.ref == 'refs/heads/main') &&
+                 secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID) }}
+          CACHE_SECRET_ACCESS_KEY: >-
+            ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+                 secrets.CARGO_RAIL_R2_WRITE_SECRET_ACCESS_KEY) ||
+                (!(github.event_name == 'push' && github.ref == 'refs/heads/main') &&
+                 secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY) }}
+          CACHE_REGION: ${{ vars.CARGO_RAIL_CACHE_REGION }}
+          CACHE_REMOTE: ${{ vars.CARGO_RAIL_CACHE_URL }}
+        run: |
+          if [[ -z "$CACHE_ACCESS_KEY_ID" || -z "$CACHE_SECRET_ACCESS_KEY" ||
+                -z "$CACHE_REGION" || -z "$CACHE_REMOTE" ]]; then
+            echo "enabled=false" >>"$GITHUB_OUTPUT"
+            echo "Cargo-Rail cache authority is unavailable; continuing with caching disabled"
+            exit 0
+          fi
+          {
+            printf 'CARGO_RAIL_CACHE=\n'
+            printf 'AWS_ACCESS_KEY_ID=%s\n' "$CACHE_ACCESS_KEY_ID"
+            printf 'AWS_SECRET_ACCESS_KEY=%s\n' "$CACHE_SECRET_ACCESS_KEY"
+            printf 'AWS_SESSION_TOKEN=\n'
+            printf 'AWS_SECURITY_TOKEN=\n'
+            printf 'AWS_PROFILE=\n'
+            printf 'AWS_DEFAULT_PROFILE=\n'
+            printf 'AWS_ROLE_ARN=\n'
+            printf 'AWS_WEB_IDENTITY_TOKEN_FILE=\n'
+            printf 'AWS_EC2_METADATA_DISABLED=true\n'
+            printf 'AWS_REGION=%s\n' "$CACHE_REGION"
+            printf 'AWS_DEFAULT_REGION=%s\n' "$CACHE_REGION"
+          } >>"$GITHUB_ENV"
+          echo "enabled=true" >>"$GITHUB_OUTPUT"
+      - name: Configure shared compiler cache
+        id: cache
+        if: steps.cache-authority.outputs.enabled == 'true'
+        uses: "loadingalias/cargo-rail-action/cache@e706767c343acb6a2ab1917f243b1616ae9eb05b" # v10.0.0
+        with:
+          remote: ${{ vars.CARGO_RAIL_CACHE_URL }}
+          mode: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'read-write' || 'read' }}
+          max-size: 10GiB
+          root-portability: remap
+          verify-remote: true
       - name: Install tooling, check, and test (Linux)
         if: runner.os == 'Linux' && matrix.platform != 'compatibility' && matrix.platform != 'package' && !matrix.target
         env:
@@ -174,3 +306,42 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git diff --exit-code HEAD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Collect compiler-cache measurements
+        id: cache-record
+        if: always() && steps.cache.outcome == 'success'
+        uses: "loadingalias/cargo-rail-action/cache/collect@e706767c343acb6a2ab1917f243b1616ae9eb05b" # v10.0.0
+        with:
+          job: ${{ matrix.platform }}
+          output-directory: ${{ runner.temp }}/cache-records
+      - name: Retain compiler-cache measurements
+        if: always() && steps.cache-record.outcome == 'success'
+        uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+        with:
+          name: cache-record-${{ matrix.platform }}
+          path: ${{ steps.cache-record.outputs.record-file }}
+          if-no-files-found: error
+          retention-days: 7
+
+  cache-report:
+    name: Compiler cache report
+    needs: [cross-build, native]
+    if: >-
+      always() &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download compiler-cache measurements
+        uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" # v8.0.1
+        continue-on-error: true
+        with:
+          pattern: cache-record-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/cache-records
+      - name: Report compiler-cache results
+        if: always()
+        uses: "loadingalias/cargo-rail-action/cache/report@e706767c343acb6a2ab1917f243b1616ae9eb05b" # v10.0.0
+        with:
+          records-directory: ${{ runner.temp }}/cache-records
+          expected-jobs: '["cross-riscv64gc-unknown-linux-gnu","cross-powerpc64le-unknown-linux-gnu","cross-s390x-unknown-linux-gnu","x86_64-linux","aarch64-linux","x86_64-win"]'

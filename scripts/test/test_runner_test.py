@@ -74,7 +74,7 @@ if args[:2] == ['rail', 'plan']:
   if '--json' in args:
     state = os.environ.get('PLAN_STATE', 'required')
     row = {'state': state, 'scope': {'kind': 'cargo', 'selection': {'kind': 'packages', 'cargo_args': ['-p', 'rscrypto']}}}
-    print(json.dumps({'plan_contract_version': 8, 'identity': 'plan-v8:sha256:fixture', 'required': [],
+    print(json.dumps({'plan_contract_version': 9, 'identity': 'plan-v9:sha256:fixture', 'required': [],
                       'work': {'cargo.test': row, 'cargo.doctest': row}}))
 else:
   sys.exit(int(os.environ.get('RUN_EXIT', '0')))
@@ -112,7 +112,8 @@ else:
       assert 'portable-only' not in features
     result, rows = run([])
     assert result.returncode == 0, result.stderr
-    assert len([row for row in rows if row['args'][:2] == ['rail', 'plan']]) == 2
+    plan_rows = [row for row in rows if row['args'][:2] == ['rail', 'plan']]
+    assert len(plan_rows) == 2 and plan_rows[1]['args'][-2:] == ['--verify', '-'], plan_rows
     runners = [row['args'] for row in rows if row['args'][0] != 'rail']
     assert len(runners) == 2 and runners[0][:2] == ['nextest', 'run'] and '--doc' in runners[1]
     assert all('-p' in args and 'rscrypto' in args for args in runners)

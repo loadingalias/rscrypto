@@ -56,7 +56,9 @@ Both Nextest builds use the same locked crate release;
 producer and consumer identities must match except for their host architecture.
 GNU cross-compilers and target libc development packages use the same Ubuntu CI snapshot
 as native provisioning.
-No compiler cache is used.
+The x86-64 preparation jobs use Cargo-Rail's shared compiler cache. Trusted `main` pushes may populate it;
+other credentialed runs are read-only, and fork pull requests build cold. The native execution jobs do not
+enable a compiler cache because they consume the sealed programs without compiling the crate.
 
 Cross-builds exercise dependency build scripts and procedural macros on x86-64.
 They preserve target runtime evidence but do not qualify those tools running as native POWER, IBM Z,
@@ -208,7 +210,9 @@ CI, CT, and benchmark cross-builds have separate profiles, as do native CI, fuzz
 and CT measurement.
 Ordinary jobs use price-capacity-optimized Spot;
 CT and benchmark measurement use separate fixed On-Demand profiles.
-Compiler caching remains disabled in CI.
+Cargo-Rail cache setup and reporting are enabled only for ordinary native compilation and the three x86-64
+cross-build producers.
+Execution-only target jobs and the specialized CT, fuzz, benchmark, and profile workflows remain cold.
 For this public repository, RunsOn reads the catalog from the default branch:
 new profiles must land there before workflow jobs can resolve their names.
 

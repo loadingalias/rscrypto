@@ -39,10 +39,9 @@ do not add unreleased work to a published version's changelog section.
 
 ## Configure compiler reuse
 
-Cargo Rail can reuse compiler results across Cargo, Nextest, Just, and IDE invocations.
-For the first-party development fleet, choose a configured rscrypto target from `~/dev-machines/dev-machine list rscrypto`,
-acquire a short-lived credential,
-and install the canonical remapped policy into the active Cargo home:
+Cargo Rail can reuse compiler results across Cargo, Nextest, Just, and IDE invocations. Choose a configured rscrypto
+target from `~/dev-machines/dev-machine list rscrypto`, mint a short-lived credential, then enroll this checkout in
+the same remote cache used by trusted development machines and CI:
 
 ```bash
 eval "$("$HOME/dev-machines/dev-machine" cache-env rscrypto <target>)"
@@ -50,9 +49,11 @@ just rail-cache-setup --max-size 10GiB
 just cache-status
 ```
 
-Run `cache-env` again when its short-lived R2 lease expires.
-`dev-machine ssh` and `dev-machine just` refresh the corresponding remote-machine lease before execution.
-Keep cache credentials outside repository configuration.
+Run `cache-env` again when the lease expires. It owns the remote URL, credentials, and read/write authority; none of
+them belong in repository configuration. Without that environment, `rail-cache-setup` installs and proves private
+local reuse only. `dev-machine ssh` and `dev-machine just` refresh the corresponding remote-machine lease before
+execution. CI uses the same remote with read-write authority only on trusted `main` pushes; other credentialed jobs
+are read-only, and fork pull requests remain cold.
 Use `CARGO_RAIL_CACHE=off` only when a check requires a cold compiler process,
 including Miri and machine-code zeroization evidence.
 
@@ -191,6 +192,8 @@ Record target lanes that cannot run.
 
 RISC-V, POWER, and IBM Z CI separate cross-compilation from native execution to avoid long builds on
 the physical runner.
+The x86-64 producers use the shared Cargo-Rail cache under the same CI read/write policy described above;
+the native runners consume source-bound archives and do not compile the crate.
 Both native-dispatch and portable release suites, doctests,
 and the full CT campaign remain required.
 The transfer commands and integrity requirements are documented in [scripts/README.md](scripts/README.md).
@@ -226,14 +229,28 @@ and confirm the required local and target-specific evidence.
 
 ## Release
 
-Prepare the version and changelog on a clean release branch, using the reviewed change files:
+Preview the exact local release plan at any time. On the clean release branch, prepare the release from the reviewed
+change files:
 
 ```bash
-cargo rail release run rscrypto --bump auto --skip-tag --allow-non-default-branch
+just release-check
+just release-prepare
 ```
 
-Review the generated diff, including manifests and lockfiles in independent workspaces, validate it,
-and merge through a PR.
+`release-prepare` runs the complete host-and-target Surface gate, repeats the local release check, then creates the
+local version, changelog, auxiliary-lockfile, and release commit. It does not tag, push, publish, or create a forge
+release. Pass an exact bump or version only when reviewed intent requires it, for example `just release-check minor`.
+Surface is deliberately absent from routine planning and validation because this full release boundary is heavy.
+
+If preparation is interrupted, inspect and resume the retained transaction:
+
+```bash
+cargo rail release status
+cargo rail release resume
+```
+
+Review the prepared commit and its complete diff, including manifests and lockfiles in independent workspaces,
+validate it, and merge through a PR.
 The `release.auxiliary_cargo_manifests` list in [`.config/rail.toml`](.config/rail.toml) owns the
 standalone workspaces whose lockfiles must follow the package version.
 Complete physical Apple Silicon RSA assembly and timing qualification locally
