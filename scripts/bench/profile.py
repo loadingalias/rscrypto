@@ -31,6 +31,7 @@ from execution import (
 from settings import PROFILE_CAPTURE_MAX_SECONDS, load
 
 PROFILE_KIND = 'rscrypto.cross.profile'
+SAMPLE_FREQUENCY = 99
 STAT_EVENTS = (
   'task-clock',
   'cycles:u',
@@ -93,25 +94,30 @@ def host_facts(perf: str | None, env: dict) -> dict:
 
 def capabilities(perf: str, root: Path, env: dict) -> tuple[list[str], str | None, bool, list[dict]]:
   commands = []
-  noop = [sys.executable, '-c', 'pass']
+  noop = [sys.executable, '-c',
+          'import time\nend = time.monotonic() + 0.1\nwhile time.monotonic() < end: pass']
   sample_event = None
   callchain = False
   with tempfile.TemporaryDirectory(prefix='perf-probe-', dir=root) as directory:
     output_path = Path(directory) / 'perf.data'
     output = str(output_path)
     for event in ('cycles:u', 'cpu-clock:u'):
-      output_path.touch()
-      result = probe([perf, 'record', '--quiet', '--output', output, '--event', event,
-                         '--call-graph', 'dwarf', '--', *noop], env)
-      commands.append(result)
-      if result['exit_code'] == 0:
-        sample_event, callchain = event, True
-        break
-      output_path.touch()
-      result = probe([perf, 'record', '--quiet', '--output', output, '--event', event, '--', *noop], env)
-      commands.append(result)
-      if result['exit_code'] == 0:
-        sample_event = event
+      for with_callchain in (True, False):
+        output_path.unlink(missing_ok=True)
+        command = [perf, 'record', '--quiet', '--output', output, '--event', event,
+                   '--freq', str(SAMPLE_FREQUENCY)]
+        if with_callchain:
+          command += ['--call-graph', 'dwarf']
+        result = probe([*command, '--', *noop], env)
+        commands.append(result)
+        if result['exit_code'] != 0:
+          continue
+        samples = probe([perf, 'script', '--input', output], env)
+        commands.append(samples)
+        if samples['exit_code'] == 0 and samples['stdout'].strip():
+          sample_event, callchain = event, with_callchain
+          break
+      if sample_event is not None:
         break
   if sample_event is None:
     return [], None, False, commands
@@ -130,6 +136,8 @@ def unavailable_cause(probes: list[dict]) -> str:
   if 'Access to performance monitoring' in diagnostic or 'Permission denied' in diagnostic:
     setting = f'perf_event_paranoid={paranoid.group(1)}; ' if paranoid else ''
     return f'native perf access is denied ({setting}runner needs CAP_PERFMON or owner configuration)'
+  if 'Segmentation fault' in diagnostic:
+    return 'native perf crashed during sampling (runner needs a kernel-compatible perf build)'
   if re.search(r'not supported|No such device', diagnostic, re.IGNORECASE):
     return 'native perf exposes neither hardware cycles nor software CPU clock sampling'
   return 'native perf cannot record hardware cycles or software CPU clock'
@@ -140,6 +148,7 @@ def collector(perf: str, event: str, callchain: bool, host: dict) -> dict:
     'path': perf,
     'version': host['perf']['stdout'].strip(),
     'event': event,
+    'frequency': SAMPLE_FREQUENCY,
     'callchain': 'dwarf' if callchain else 'flat',
     'access': 'runner',
   }
@@ -177,7 +186,8 @@ def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | 
 
   record_output = root / 'perf.data'
   record_output.touch()
-  record = [perf, 'record', '--output', str(record_output), '--event', sample_event]
+  record = [perf, 'record', '--output', str(record_output), '--event', sample_event,
+            '--freq', str(SAMPLE_FREQUENCY)]
   if callchain:
     record += ['--call-graph', 'dwarf']
   try:
@@ -197,18 +207,16 @@ def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | 
   except CAPTURE_ERRORS as error:
     return 'partial', f'perf report failed with exit code {exit_code(error)}', collector_info
 
-  for name, arguments in (
-    ('perf-script.txt', ['script', '--header']),
-    ('perf-buildids.txt', ['buildid-list', '--with-hits']),
-  ):
-    try:
-      text = execute([perf, *arguments, '--input', str(root / 'perf.data')],
-                     root / 'output.txt', env=env, capture=True)
-      if not text.strip():
-        raise ProfileIncomplete(f'{arguments[0]} produced no text output')
-      (root / name).write_text(text)
-    except CAPTURE_ERRORS as error:
-      return 'partial', f'perf {arguments[0]} failed with exit code {exit_code(error)}', collector_info
+  try:
+    samples = execute([perf, 'script', '--input', str(root / 'perf.data')],
+                      root / 'output.txt', env=env, capture=True)
+    if not samples.strip():
+      raise ProfileIncomplete('perf record produced no retained samples')
+    (root / 'perf-script.txt').write_text(samples)
+  except ProfileIncomplete as error:
+    return 'partial', str(error), collector_info
+  except (OSError, subprocess.CalledProcessError) as error:
+    return 'partial', f'perf script failed with exit code {exit_code(error)}', collector_info
 
   if stat_error is not None:
     return 'partial', f'perf stat failed with exit code {exit_code(stat_error)}', collector_info

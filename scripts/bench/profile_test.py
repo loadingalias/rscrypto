@@ -103,11 +103,14 @@ class ProfileTests(unittest.TestCase):
     self.assertEqual((status, cause), ('complete', None))
     self.assertEqual(collector['event'], 'cycles:u')
     self.assertEqual(collector['callchain'], 'dwarf')
+    self.assertEqual(collector['frequency'], profile_runner.SAMPLE_FREQUENCY)
     self.assertEqual(collector['access'], 'runner')
     self.assertEqual(collector['version'], 'perf fixture')
     for name in ('host.json', 'capabilities.json', 'perf-stat.txt', 'perf.data', 'perf-report.txt',
-                 'perf-script.txt', 'perf-buildids.txt', 'output.txt'):
+                 'perf-script.txt', 'output.txt'):
       self.assertTrue((root / name).is_file(), name)
+    output = (root / 'output.txt').read_text()
+    self.assertIn(f'--freq {profile_runner.SAMPLE_FREQUENCY}', output)
 
   def test_perf_capture_falls_back_and_keeps_partial_failures(self):
     _, (status, _, collector) = self.perf(FAIL_PERF_DWARF='1')
@@ -134,6 +137,11 @@ class ProfileTests(unittest.TestCase):
     with self.assertRaisesRegex(profile_runner.ProfileUnavailable,
                                 'perf_event_paranoid=4.*CAP_PERFMON'):
       self.perf(FAIL_PERF_PROBE='1')
+    with self.assertRaisesRegex(profile_runner.ProfileUnavailable, 'cannot record'):
+      self.perf(ZERO_PERF_PROBE_SAMPLES='1')
+    self.assertIn('kernel-compatible perf', profile_runner.unavailable_cause([
+      {'stderr': 'perf: Segmentation fault'},
+    ]))
 
 
 if __name__ == '__main__':

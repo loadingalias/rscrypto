@@ -108,8 +108,7 @@ class TransferTests(unittest.TestCase):
         self.assertEqual(metadata['request']['case'], 'sha256/other/64')
         self.assertEqual(json.loads((result / 'cases.json').read_text()), ['sha256/other/64'])
         self.assertEqual(json.loads((result / 'bundle.json').read_text())['kind'], profile_runner.PROFILE_KIND)
-        for name in ('perf-stat.txt', 'perf.data', 'perf-report.txt', 'perf-script.txt',
-                     'perf-buildids.txt', 'input/bundle.json'):
+        for name in ('perf-stat.txt', 'perf.data', 'perf-report.txt', 'perf-script.txt', 'input/bundle.json'):
             self.assertTrue((result / name).is_file(), name)
 
     def test_profile_retains_partial_capture_status(self):
