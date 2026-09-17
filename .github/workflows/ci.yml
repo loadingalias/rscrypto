@@ -45,6 +45,10 @@ jobs:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
           persist-credentials: false
+      - name: Install cross-build tooling
+        run: |
+          scripts/tooling/x86_64-linux.sh --ci-cross-build "$TARGET"
+          printf '%s\n' "$HOME/.cargo/bin" >>"$GITHUB_PATH"
       # Only trusted main pushes populate L2. Other credentialed jobs are readers; fork PRs stay cold.
       - name: Select shared compiler-cache authority
         id: cache-authority
@@ -99,7 +103,6 @@ jobs:
           verify-remote: true
       - name: Cross-check and prepare complete target suites
         run: |
-          scripts/tooling/x86_64-linux.sh --ci-cross-build "$TARGET"
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           just test-transfer
           just test-cross prepare "$TARGET" "target/$TARGET-tests.tar.gz"
@@ -162,7 +165,6 @@ jobs:
             # Compilation runs on x86-64; this budget covers native execution and bootstrap.
             timeout: 30
           - platform: x86_64-win
-            cache: true
             runner: runs-on=${{ github.run_id }}/runner=x86_64-win/env=production
             timeout: 60
     runs-on: ${{ matrix.runner }}
@@ -171,6 +173,13 @@ jobs:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
           persist-credentials: false
+      - name: Install cache-enabled Linux tooling
+        if: runner.os == 'Linux' && matrix.cache == true
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          scripts/tooling/"$PLATFORM.sh" --ci
+          printf '%s\n' "$HOME/.cargo/bin" >>"$GITHUB_PATH"
       # Only trusted main pushes populate L2. Other credentialed jobs are readers; fork PRs stay cold.
       - name: Select shared compiler-cache authority
         id: cache-authority
@@ -229,7 +238,6 @@ jobs:
         env:
           PLATFORM: ${{ matrix.platform }}
         run: |
-          scripts/tooling/"$PLATFORM.sh" --ci
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           if [[ "$PLATFORM" == x86_64-linux ]]; then
             just test-scripts
@@ -344,4 +352,4 @@ jobs:
         uses: "loadingalias/cargo-rail-action/cache/report@e706767c343acb6a2ab1917f243b1616ae9eb05b" # v10.0.0
         with:
           records-directory: ${{ runner.temp }}/cache-records
-          expected-jobs: '["cross-riscv64gc-unknown-linux-gnu","cross-powerpc64le-unknown-linux-gnu","cross-s390x-unknown-linux-gnu","x86_64-linux","aarch64-linux","x86_64-win"]'
+          expected-jobs: '["cross-riscv64gc-unknown-linux-gnu","cross-powerpc64le-unknown-linux-gnu","cross-s390x-unknown-linux-gnu","x86_64-linux","aarch64-linux"]'

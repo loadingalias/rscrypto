@@ -33,7 +33,6 @@ rows = native["strategy"]["matrix"]["include"]
 assert {row["platform"] for row in rows if row.get("cache") == "true"} == {
   "x86_64-linux",
   "aarch64-linux",
-  "x86_64-win",
 }
 cross = jobs["cross-build"]
 assert set(cross["strategy"]["matrix"]["target"]) == {
@@ -75,6 +74,15 @@ for name, steps, label in (
   assert collect["if"] == "always() && steps.cache.outcome == 'success'", name
   assert collect["with"]["job"] == label, name
 
+cross_steps = cross["steps"]
+assert cross_steps.index(step(cross_steps, "Install cross-build tooling")) < \
+       cross_steps.index(step(cross_steps, "Configure shared compiler cache")) < \
+       cross_steps.index(step(cross_steps, "Cross-check and prepare complete target suites"))
+native_steps = native["steps"]
+assert native_steps.index(step(native_steps, "Install cache-enabled Linux tooling")) < \
+       native_steps.index(step(native_steps, "Configure shared compiler cache")) < \
+       native_steps.index(step(native_steps, "Install tooling, check, and test (Linux)"))
+
 report = jobs["cache-report"]
 assert set(report["needs"]) == {"cross-build", "native"}
 report_step = step(report["steps"], "Report compiler-cache results")
@@ -85,7 +93,6 @@ assert set(json.loads(report_step["with"]["expected-jobs"])) == {
   "cross-s390x-unknown-linux-gnu",
   "x86_64-linux",
   "aarch64-linux",
-  "x86_64-win",
 }
 
 release = yaml.load((ROOT / ".github/workflows/release.yml").read_text(), Loader=yaml.BaseLoader)

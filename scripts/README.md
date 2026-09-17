@@ -210,8 +210,8 @@ CI, CT, and benchmark cross-builds have separate profiles, as do native CI, fuzz
 and CT measurement.
 Ordinary jobs use price-capacity-optimized Spot;
 CT and benchmark measurement use separate fixed On-Demand profiles.
-Cargo-Rail cache setup and reporting are enabled only for ordinary native compilation and the three x86-64
-cross-build producers.
+Cargo-Rail cache setup and reporting are enabled only for native x86-64/Arm64 Linux compilation and the three
+x86-64 cross-build producers.
 Execution-only target jobs and the specialized CT, fuzz, benchmark, and profile workflows remain cold.
 For this public repository, RunsOn reads the catalog from the default branch:
 new profiles must land there before workflow jobs can resolve their names.
