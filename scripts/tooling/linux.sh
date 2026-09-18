@@ -92,6 +92,7 @@ if [[ "$profile" == ci-cross-build ]]; then
   cross_prefix="$(python3 scripts/lib/cross_build.py "$cross_target")"
   if [[ "$cross_target" != x86_64-unknown-linux-gnu ]]; then
     cross_arch="${cross_prefix%-linux-gnu}"
+    [[ "$cross_arch" != aarch64 ]] || cross_arch=arm64
     [[ "$cross_arch" != powerpc64le ]] || cross_arch=ppc64el
     packages+=("gcc-$cross_prefix" "g++-$cross_prefix" "libc6-dev-$cross_arch-cross")
   fi

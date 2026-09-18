@@ -248,7 +248,7 @@ class LinuxInstall(unittest.TestCase):
         nightly = tomllib.loads((ROOT / '.config/toolchains.toml').read_text())['nightly']
         stable = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel']
         for platform, target, prefix, libc in (
-            ('aarch64-linux', 'aarch64-unknown-linux-gnu', 'aarch64-linux-gnu', 'aarch64'),
+            ('aarch64-linux', 'aarch64-unknown-linux-gnu', 'aarch64-linux-gnu', 'arm64'),
             ('riscv64-linux', 'riscv64gc-unknown-linux-gnu', 'riscv64-linux-gnu', 'riscv64'),
             ('powerpc64le-linux', 'powerpc64le-unknown-linux-gnu', 'powerpc64le-linux-gnu', 'ppc64el'),
             ('s390x-linux', 's390x-unknown-linux-gnu', 's390x-linux-gnu', 's390x'),
