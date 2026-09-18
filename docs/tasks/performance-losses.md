@@ -1,126 +1,184 @@
-# Worst benchmark losses
+# Cross-target performance losses
 
 ## Outcome
 
-Close the ten largest fastest-external performance gaps from benchmark run
-[#34874736834](https://github.com/loadingalias/rscrypto/actions/runs/34874736834).
-Do not treat these as ten independent optimizations. Establish the shared causes
-in the s390x and RISC-V P-256/ECDSA production paths, then fix the smallest
-number of production boundaries that closes the measured gaps.
+Explain and close the catastrophic P-256 and ECDSA losses measured on RISC-V
+and IBM Z in benchmark run [#34874736834](https://github.com/loadingalias/rscrypto/actions/runs/34874736834).
+Build a reusable CI-only profiling path first
+because these machines are not available through an interactive shell.
 
-The task is complete when every row either reaches the repository's 0.95x tie
-boundary against the fastest equivalent external implementation or is removed
-from fastest-equivalent claims with a documented, reviewed reason that the
-security or lifecycle contracts differ materially.
+Do not treat the ten rows as ten optimizations.
+They strongly suggest shared field, scalar, inversion, table-selection, or generated-code costs.
+One demonstrated cause should drive one bounded production change.
 
-## Baseline
+This task is complete when:
+
+- the exact workloads have native CI profiles with attributable symbols and retained raw evidence;
+- each shared cause is demonstrated rather than inferred from portable source;
+- corrected cases reach the repository's `0.95x` tie boundary,
+  or a reviewed equivalent-work analysis records why a remaining comparison is not a valid target;
+  and
+- the complete benchmark matrix and applicable correctness, CT, cleanup, dispatch,
+  and target evidence pass on the final revision.
+
+## Retained baseline
 
 - Source: `ae6f54afedaa652858fd2bcbd8f56f339e663a4f` on `main`.
 - Measurement date: 2026-09-14.
-- Target toolchain: `rustc 1.99.0-nightly (3d6c19bb9 2026-08-11)`.
+- Toolchain: `rustc 1.99.0-nightly (3d6c19bb9 2026-08-11)`.
 - Profile: repository `bench` profile.
-- Criterion settings: 20 samples, 100 ms warm-up, 400 ms measurement time,
-  10,000 resamples, 95% confidence, and 1% noise threshold.
-- Artifacts: `bench-s390x-linux-34874736834-1` and
-  `bench-riscv64-linux-34874736834-1` from the linked workflow run.
-- Ratio: `fastest_external_time / rscrypto_time`; lower is worse.
-- Estimates: Criterion slope where available, otherwise the mean. Parentheses
-  show the retained 95% confidence interval.
+- Criterion: 20 samples, 100 ms warm-up, 400 ms measurement, 10,000 resamples, 95% confidence.
+- Artifacts: `bench-s390x-linux-34874736834-1` and `bench-riscv64-linux-34874736834-1`.
+- Ratio: fastest equivalent external time divided by rscrypto time; lower is worse.
 
-The s390x artifact identifies a four-CPU IBM/S390 machine type 8562. The
-RISC-V artifact records four CPUs and the target architecture but no CPU model.
-Preserve a complete native machine identity when reproducing these results.
+| Rank | Target | Exact rscrypto case | Rscrypto | Fastest external | Ratio |
+| ---: | --- | --- | ---: | --- | ---: |
+| 1 | IBM Z | `p256-ecdh/public-key/rscrypto-selected` | 9.627 ms | `crrl-pure-rust` | 0.00750x |
+| 2 | IBM Z | `p256-ecdh/agreement/rscrypto-selected` | 19.075 ms | `crrl-pure-rust` | 0.00924x |
+| 3 | RISC-V | `p256-ecdh/public-key/rscrypto-selected` | 13.584 ms | `crrl-pure-rust` | 0.00992x |
+| 4 | RISC-V | `p256-ecdh/agreement/rscrypto-selected` | 30.860 ms | `crrl-pure-rust` | 0.01076x |
+| 5 | RISC-V | `ecdsa-p384/public-key/rscrypto-blinded` | 159.707 ms | `rustcrypto-p384` | 0.01540x |
+| 6 | IBM Z | `ecdsa-p384/public-key/rscrypto-blinded` | 96.934 ms | `rustcrypto-p384` | 0.01560x |
+| 7 | IBM Z | `p256-ecdh/parse/rscrypto` | 22.726 us | `crrl-pure-rust` | 0.01577x |
+| 8 | RISC-V | `ecdsa-p256/public-key/rscrypto-blinded` | 36.110 ms | `rustcrypto-p256` | 0.01638x |
+| 9 | RISC-V | `ecdsa-p384/sign/rscrypto-deterministic/0` | 50.215 ms | `aws-lc-rs` | 0.01702x |
+| 10 | RISC-V | `ecdsa-p384/sign/rscrypto-deterministic/32` | 50.220 ms | `aws-lc-rs` | 0.01710x |
 
-## Ten worst exact cases
+The retained confidence intervals are narrow compared with these 58x-133x gaps.
+The measurements establish a severe cost, not its cause.
 
-| Rank | Target | Exact rscrypto case | Rscrypto | Fastest external | External | Ratio |
-| ---: | --- | --- | ---: | --- | ---: | ---: |
-| 1 | s390x Linux | `p256-ecdh/public-key/rscrypto-selected` | 9.627 ms (9.139–10.131 ms) | `crrl-pure-rust` | 72.213 us (71.869–72.614 us) | 0.00750x |
-| 2 | s390x Linux | `p256-ecdh/agreement/rscrypto-selected` | 19.075 ms (18.896–19.267 ms) | `crrl-pure-rust` | 176.205 us (173.562–180.180 us) | 0.00924x |
-| 3 | RISC-V Linux | `p256-ecdh/public-key/rscrypto-selected` | 13.584 ms (13.568–13.602 ms) | `crrl-pure-rust` | 134.771 us (134.378–135.165 us) | 0.00992x |
-| 4 | RISC-V Linux | `p256-ecdh/agreement/rscrypto-selected` | 30.860 ms (30.836–30.886 ms) | `crrl-pure-rust` | 332.052 us (331.697–332.584 us) | 0.01076x |
-| 5 | RISC-V Linux | `ecdsa-p384/public-key/rscrypto-blinded` | 159.707 ms (159.108–160.723 ms) | `rustcrypto-p384` | 2.460 ms (2.452–2.470 ms) | 0.01540x |
-| 6 | s390x Linux | `ecdsa-p384/public-key/rscrypto-blinded` | 96.934 ms (96.107–97.847 ms) | `rustcrypto-p384` | 1.512 ms (1.498–1.527 ms) | 0.01560x |
-| 7 | s390x Linux | `p256-ecdh/parse/rscrypto` | 22.726 us (22.614–22.840 us) | `crrl-pure-rust` | 358.331 ns (339.375–380.387 ns) | 0.01577x |
-| 8 | RISC-V Linux | `ecdsa-p256/public-key/rscrypto-blinded` | 36.110 ms (35.958–36.285 ms) | `rustcrypto-p256` | 591.334 us (590.168–592.512 us) | 0.01638x |
-| 9 | RISC-V Linux | `ecdsa-p384/sign/rscrypto-deterministic/0` | 50.215 ms (50.161–50.275 ms) | `aws-lc-rs` | 854.838 us (853.000–856.784 us) | 0.01702x |
-| 10 | RISC-V Linux | `ecdsa-p384/sign/rscrypto-deterministic/32` | 50.220 ms (50.188–50.258 ms) | `aws-lc-rs` | 858.742 us (854.988–862.990 us) | 0.01710x |
+## Phase 1 — Add a CI-only profile workflow
 
-These are 58x–133x gaps. Their confidence intervals are narrow relative to the
-observed differences, so the short Criterion window does not plausibly explain
-the ranking. It does not identify the cause.
+Add a separate manual workflow rather than overloading benchmark collection.
+Profiling has different privileges, artifacts, failure modes,
+and acceptance rules from elapsed-time measurement.
 
-## Work
+### Request and build contract
 
-### 1. Reproduce before changing code
+- [ ] Accept exactly one architecture, catalog benchmark target, exact case,
+      and bounded capture duration.
+      Initially support `riscv64-linux`, `s390x-linux`, and `powerpc64le-linux`.
+- [ ] Validate requests against `.config/benchmark-matrix.json`; discovery must prove the case matches exactly once.
+- [ ] Reuse the existing cross-build and sealed artifact-transfer machinery.
+      Build the real benchmark with the same features, target, optimized `bench` profile,
+      debug information, and CPU flags used by measurement.
+- [ ] Transfer the executable, debug information, build ID, source identity, toolchain identity,
+      and hashes.
+      Do not rebuild production code on the native runner before capture.
+- [ ] Bound preparation and native capture separately, use fail-fast cancellation, disable caches,
+      and upload evidence even when collection fails.
 
-- [ ] Reproduce the exact cases on the same physical CPU families, toolchain,
-  features, profile, and production dispatch paths.
-- [ ] Retain complete host identity, source state, benchmark plan, estimates,
-  samples, and selected backend diagnostics.
-- [ ] Confirm the fastest-external match performs equivalent work. Pay special
-  attention to ECDSA blinding, key preparation, validation, and destruction.
-- [ ] Run the focused baseline through the repository front door:
+### Native capability probe
 
-  ```text
-  just bench p256-ecdh 'filter=^p256-ecdh/(public-key|agreement|parse)/'
-  just bench ecdsa-p256 ecdsa-p384 'filter=^ecdsa-p(256|384)/(public-key|sign)/'
-  ```
+- [ ] Record `uname`, `/proc/cpuinfo`, `lscpu`, kernel version, perf version, available PMUs/events,
+      CPU governor and frequency data when exposed, `perf_event_paranoid`, `kptr_restrict`, relevant capabilities, and resource limits.
+- [ ] Probe `perf stat` and `perf record` with a trivial command before executing the benchmark.
+      Report permission, event, unwind, and symbol failures as distinct machine-readable outcomes.
+- [ ] Do not silently weaken host security settings on donated runners.
+      If `perf_event_open` is blocked, follow the [kernel perf security model](https://docs.kernel.org/admin-guide/perf-security.html):
+      ask the runner owner for `CAP_PERFMON` or an agreed `perf_event_paranoid` setting and retain the failed probe as evidence.
 
-### 2. Locate shared causes
+### Capture ladder
 
-- [ ] Profile `p256-ecdh/public-key/rscrypto-selected` and
-  `p256-ecdh/agreement/rscrypto-selected` independently on both targets.
-- [ ] Profile P-256 parsing separately. Determine whether inversion, field
-  representation, validation, or target code generation owns the s390x and
-  RISC-V gap.
-- [ ] Profile P-256/P-384 public derivation and P-384 signing. Attribute time to
-  field arithmetic, scalar multiplication, blinding, entropy, encoding, and
-  cleanup without moving caller-paid work outside timing.
-- [ ] Inspect generated code and structural counters after profiling identifies
-  the hot production symbols. Do not infer the cause from portable source alone.
-- [ ] Record whether one arithmetic or code-generation defect explains multiple
-  rows before proposing target-specific backends.
+- [ ] Start with `perf stat` for elapsed time, task clock, cycles, instructions, branches, branch misses,
+      cache references, and cache misses.
+      Record each unsupported event instead of failing the whole capture.
+- [ ] Record a bounded on-CPU sample of the exact Criterion profile case.
+      Prefer DWARF call chains from the unchanged optimized artifact;
+      record a flat profile if the target's unwinder cannot produce trustworthy stacks.
+- [ ] Produce `perf report --stdio`, `perf script`, build-ID output, symbol tables, function sizes,
+      and annotated disassembly on the native runner.
+      Retain raw `perf.data` and the exact binary/debug files as well.
+- [ ] Generate static code evidence on the cross-build host for the same artifact:
+      LLVM IR attribution, target assembly, calls to compiler runtime helpers, branches, spills,
+      symbol sizes, and relevant loop bodies.
+- [ ] Seal all output with a manifest containing source, target, CPU, toolchain, features,
+      backend diagnostics, command, collector settings, hashes, status, and limitations.
+      Upload one artifact with at least 30-day retention.
 
-Initial profiling front doors:
+Samply is not the first collector for these targets.
+Its pinned Linux release uses perf events and its [published Linux binaries](https://github.com/mstange/samply/releases/tag/samply-v0.13.1) cover only x86-64
+and AArch64.
+Its [stack unwinder](https://github.com/mstange/framehop) also currently covers only those architectures.
+Native `perf` gives the smallest credible path.
+The workflow must capability-test each donated runner rather than assume its kernel exposes a usable
+PMU.
 
-```text
-just profile p256-ecdh 'p256-ecdh/public-key/rscrypto-selected' 10
-just profile p256-ecdh 'p256-ecdh/agreement/rscrypto-selected' 10
-just profile ecdsa-p384 'ecdsa-p384/sign/rscrypto-deterministic/0' 10
-```
+If sampling is unavailable, static codegen plus exact elapsed measurements remain useful
+but cannot establish the hot path.
+That is an explicit blocker, not permission to guess.
+A profiling-only frame-pointer build may be used as a secondary experiment,
+but it must be labeled as a different artifact and confirmed against the unchanged production build
+before driving an optimization.
 
-### 3. Fix production paths
+### Workflow acceptance
 
-- [ ] Prefer target-shaped safe Rust and better data layout before intrinsics or
-  assembly. Keep portable Rust as the semantic authority.
-- [ ] Change only production-reachable code. Do not add copied algorithms,
-  benchmark-only implementations, hidden dispatch state, or weaker workloads.
-- [ ] Preserve deterministic outputs, blinded-operation semantics, failure
-  opacity, secret cleanup, constant-time boundaries, target fallback, and public
-  API behavior.
-- [ ] Route any unsafe, intrinsic, SIMD, assembly, or target-feature work through
-  the `unsafe` skill and renew the required differential, ABI, code-generation,
-  constant-time, and zeroization evidence.
+- [ ] Unit tests cover request validation, exact-case selection, budgets, partial event support,
+      collector failure, evidence sealing, and failed-run artifact retention.
+- [ ] One successful capture from each architecture has attributable rscrypto and dependency frames,
+      complete machine identity, and locally readable text reports.
+- [ ] Re-running the same request does not depend on an interactive shell
+      or unretained runner state.
 
-### 4. Prove closure
+## Phase 2 — Profile the shared cause
 
-- [ ] Rerun the exact baseline cases with longer measurement windows on the same
-  machines. Report absolute estimates, confidence intervals, ratios, and
-  selected backends.
-- [ ] Run portable-versus-optimized differentials and independent vectors over
-  representative lengths, encodings, state transitions, and failure cases.
-- [ ] Run the target-native correctness, constant-time, cleanup, and generated-
-  code checks required by the changed boundary.
-- [ ] Rerun the full benchmark matrix and update
-  `benchmark_results/OVERVIEW.md`; do not transfer results between CPU families.
-- [ ] Delete a row from this task only after its evidence reaches at least 0.95x
-  or a reviewed non-equivalence decision removes it from performance claims.
+Use this order because it maximizes information per CI run:
+
+1. IBM Z `p256-ecdh/public-key/rscrypto-selected`.
+1. RISC-V `p256-ecdh/public-key/rscrypto-selected`.
+1. IBM Z and RISC-V `p256-ecdh/agreement/rscrypto-selected`.
+1. IBM Z `p256-ecdh/parse/rscrypto`.
+1. RISC-V P-256/P-384 public derivation and P-384 signing.
+1. POWER control captures for any hot symbol changed by the proposed fix.
+
+- [ ] Attribute fixed-base multiplication, arbitrary-point multiplication,
+      field multiplication/reduction, scalar reduction, inversion, coordinate conversion,
+      masked table selection, encoding, entropy, and cleanup.
+- [ ] Compare native instruction and branch counts with the exact external winner
+      when equivalent symbols and work can be identified.
+      Do not compare totals across different operation contracts.
+- [ ] Determine whether compiler runtime division/multiplication helpers, missed inlining,
+      limb width, excessive masked table scans, spills,
+      or an algorithmic representation explains the gap.
+- [ ] Confirm the leading cause with a repeat capture
+      or one controlled perturbation of the real production path.
+- [ ] Record a cause once, then link every affected row.
+      Do not open separate implementations until the shared-cause hypothesis is falsified.
+
+## Phase 3 — Fix and prove
+
+- [ ] Prefer target-shaped safe Rust, arithmetic representation,
+      and data layout before intrinsics or assembly.
+- [ ] Change only production-reachable code.
+      Preserve portable authority, deterministic output, blinding, failure opacity, secret cleanup,
+      constant-time selection, feature independence, and fallback behavior.
+- [ ] Route any unsafe, intrinsic, SIMD, assembly, ABI,
+      or target-feature change through the required specialist proof.
+- [ ] Rerun the exact profile and a longer Criterion baseline/candidate comparison on the same
+      machine identity.
+- [ ] Run independent vectors and portable-versus-optimized differentials, target-native tests,
+      CT evidence, optimized cleanup checks, dispatch evidence,
+      and codegen review for the changed boundary.
+- [ ] Run the full benchmark matrix and update `benchmark_results/OVERVIEW.md` only from complete retained artifacts.
+- [ ] Verify POWER and other targets sharing the changed code do not regress materially.
+
+## Deferred performance queue
+
+After the catastrophic cross-target rows close:
+
+1. Linux x86-64 P-384 signing.
+1. `RapidStreamHasher` large one-write throughput on x86-64.
+1. ML-KEM decapsulation, especially where the current aggregate loses.
+1. Short-message AES-GCM/AES-GCM-SIV fixed cost and RISC-V XXH3 only
+   if a fresh focused run confirms material impact.
+
+Do not restore the stale ML-KEM key-generation priority:
+the September campaign measured key generation as a win.
 
 ## Non-goals
 
-- Hiding losses by averaging them with faster platforms or larger inputs.
-- Weakening blinding, validation, cleanup, error opacity, or constant-time work.
-- Selecting an external implementation as rscrypto's production algorithm.
-- Claiming a target win from cross-compilation, source inspection, or structural
-  counters without native wall-clock evidence.
+- Hiding target losses in cross-platform averages.
+- Weakening blinding, validation, cleanup, failure opacity, or constant-time work.
+- Treating cross-compilation, source inspection, static counters,
+  or a changed profiling build as native wall-clock proof.
+- Adding a copied algorithm or an external implementation as rscrypto's benchmark/profile path.

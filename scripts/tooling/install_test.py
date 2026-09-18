@@ -9,6 +9,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
+from unittest.mock import ANY
 
 ROOT = Path(__file__).resolve().parents[2]
 BASH = shutil.which('bash')
@@ -20,7 +21,12 @@ args = sys.argv[1:]
 with open(os.environ['INSTALL_LOG'], 'a') as log:
     log.write(json.dumps([name, *args]) + '\n')
 if name == 'uname':
-    print('Linux' if args == ['-s'] else os.environ['INSTALL_ARCH'])
+    if args == ['-s']:
+        print('Linux')
+    elif args == ['-r']:
+        print(os.environ.get('INSTALL_KERNEL_RELEASE', 'fixture-kernel'))
+    else:
+        print(os.environ['INSTALL_ARCH'])
 elif name == 'id':
     print('0')
 elif name == 'apt-cache':
@@ -51,10 +57,24 @@ elif name == 'perf':
     if os.environ.get('INSTALL_PERF_AFTER_PACKAGE') and not installed:
         sys.exit(1)
     print('perf version fixture')
+elif name == 'tar':
+    destination = pathlib.Path(args[args.index('-C') + 1])
+    source = destination / ('linux-' + os.environ['INSTALL_PERF_SOURCE_VERSION']) / 'tools' / 'perf'
+    source.mkdir(parents=True)
+elif name == 'make':
+    build = pathlib.Path(next(arg.removeprefix('O=') for arg in args if arg.startswith('O=')))
+    build.mkdir(parents=True, exist_ok=True)
+    executable = build / 'perf'
+    executable.write_text('#!/bin/sh\nprintf "perf version source fixture\\n"\n')
+    executable.chmod(0o755)
+elif name == 'nproc':
+    print('4')
 elif name == 'python3':
     script = pathlib.Path(args[0]).name
     if script == 'catalog.py' and args[1] == 'download':
         pathlib.Path(args[-1]).write_text('#!/bin/sh\nexit 0\n')
+    elif script == 'catalog.py' and args[1] == 'download-entry':
+        pathlib.Path(args[-1]).write_text('pinned source fixture')
     elif script == 'catalog.py' and args[1] == 'install-archive':
         directory = pathlib.Path(args[-1]) / args[-2]
         directory.mkdir(parents=True, exist_ok=True)
@@ -79,7 +99,8 @@ class LinuxInstall(unittest.TestCase):
         root = Path(temporary.name)
         binaries = root / 'bin'
         binaries.mkdir()
-        for name in ('uname', 'id', 'apt-get', 'apt-cache', 'cargo', 'clang', 'cmake', 'perf', 'python3', 'rustup',
+        for name in ('uname', 'id', 'apt-get', 'apt-cache', 'cargo', 'clang', 'cmake', 'make', 'nproc', 'perf',
+                     'python3', 'rustup', 'tar',
                      'wasmtime', 'opam', 'just', 'rg', 'lychee', 'rumdl', 'samply', 'gungraun-runner'):
             script = binaries / name
             script.write_text('#!' + sys.executable + '\n' + STUB)
@@ -266,6 +287,36 @@ class LinuxInstall(unittest.TestCase):
         self.assertIn('linux-tools-generic=1.0', installs[-1])
         self.assertFalse(any(arg.startswith('linux-tools-ppc64le=') for arg in installs[-1]))
         self.assertIn('perf version fixture', result.stdout)
+
+    def test_riscv_cross_run_builds_perf_from_matching_pinned_kernel_source(self):
+        source = CATALOG['ci-cross-run']['perf-source']
+        result, calls, _ = self.provision(
+            'riscv64-linux', profile='ci-cross-run',
+            extra_env={'RSCRYPTO_REQUIRE_PERF': '1', 'INSTALL_NO_EXACT_PERF': '1',
+                       'INSTALL_PERF_AFTER_PACKAGE': '1',
+                       'INSTALL_KERNEL_RELEASE': source['version'] + '-scw1',
+                       'INSTALL_PERF_SOURCE_VERSION': source['version']})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        installs = [call for call in calls if call[0] == 'apt-get' and '--allow-downgrades' in call]
+        self.assertEqual(len(installs), 2)
+        for package in source['packages']:
+            self.assertIn(package + '=1.0', installs[-1])
+        self.assertNotIn('linux-tools-generic=1.0', installs[-1])
+        self.assertIn(['python3', str(ROOT / 'scripts/tooling/catalog.py'), 'download-entry',
+                       'ci-cross-run', 'perf-source', ANY], calls)
+        make = next(call for call in calls if call[0] == 'make')
+        self.assertIn('ARCH=riscv', make)
+        self.assertIn('NO_LIBUNWIND=1', make)
+        self.assertIn('perf version source fixture', result.stdout)
+
+    def test_riscv_cross_run_rejects_an_unpinned_custom_kernel(self):
+        result, calls, _ = self.provision(
+            'riscv64-linux', profile='ci-cross-run',
+            extra_env={'RSCRYPTO_REQUIRE_PERF': '1', 'INSTALL_NO_EXACT_PERF': '1',
+                       'INSTALL_PERF_AFTER_PACKAGE': '1', 'INSTALL_KERNEL_RELEASE': '6.6.1-custom'})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('does not match pinned perf source', result.stderr)
+        self.assertFalse(any(call[0] == 'make' for call in calls))
 
     def test_proof_tools_only_on_supported_full_ct_hosts(self):
         for platform in ('x86_64-linux', 'aarch64-linux', 's390x-linux', 'powerpc64le-linux', 'riscv64-linux'):

@@ -124,6 +124,10 @@ ensure_kernel_perf() {
   local version
   version="$(apt-cache "${apt_options[@]}" madison "$package" | awk 'NR == 1 {print $3}')"
   if [[ -z "$version" || "$version" == '(none)' ]]; then
+    if [[ "$platform" == riscv64-linux ]]; then
+      install_riscv_perf
+      return
+    fi
     package="$(catalog_get ci-cross-run perf-package)"
     version="$(apt-cache "${apt_options[@]}" madison "$package" | awk 'NR == 1 {print $3}')"
   fi
@@ -140,6 +144,42 @@ ensure_kernel_perf() {
   kernel_tools_dir="$prefix/kernel-tools"
   mkdir -p "$kernel_tools_dir"
   ln -sfn "$selected" "$kernel_tools_dir/perf"
+  "$kernel_tools_dir/perf" --version
+}
+
+install_riscv_perf() {
+  local version
+  version="$(catalog_get ci-cross-run perf-source version)"
+  local release
+  release="$(uname -r)"
+  [[ "$release" == "$version" || "$release" == "$version"-* ]] || {
+    echo "RISC-V kernel $release has no Ubuntu tools package and does not match pinned perf source $version" >&2
+    exit 1
+  }
+  local source_packages=()
+  mapfile -t source_packages < <(catalog_get ci-cross-run perf-source packages)
+  local pinned_source_packages=()
+  local package package_version
+  for package in "${source_packages[@]}"; do
+    package_version="$(apt-cache "${apt_options[@]}" madison "$package" | awk 'NR == 1 {print $3}')"
+    [[ -n "$package_version" && "$package_version" != '(none)' ]] || {
+      echo "missing Ubuntu package required to build perf: $package" >&2
+      exit 1
+    }
+    pinned_source_packages+=("$package=$package_version")
+  done
+  "${apt[@]}" install -y "${install_options[@]}" "${pinned_source_packages[@]}"
+
+  local archive="$temporary/linux-$version.tar.xz"
+  python3 "$SCRIPT_DIR/catalog.py" download-entry ci-cross-run perf-source "$archive"
+  tar -xf "$archive" -C "$temporary"
+  local build="$temporary/perf-build"
+  mkdir -p "$build"
+  make -C "$temporary/linux-$version/tools/perf" -j "$(nproc)" O="$build" ARCH=riscv WERROR=0 \
+    NO_GTK2=1 NO_SLANG=1 NO_LIBAUDIT=1 NO_LIBBPF=1 NO_JVMTI=1 NO_LIBPERL=1 NO_LIBPYTHON=1 NO_LIBUNWIND=1
+  kernel_tools_dir="$prefix/kernel-tools"
+  mkdir -p "$kernel_tools_dir"
+  install -m 0755 "$build/perf" "$kernel_tools_dir/perf"
   "$kernel_tools_dir/perf" --version
 }
 

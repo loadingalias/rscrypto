@@ -108,8 +108,17 @@ def validate(data):
             raise ValueError(f'{profile}: incorrect CI tool set')
         if any(tool not in data['cargo'] for tool in data[profile]['cargo']):
             raise ValueError(f'{profile}: missing Cargo tool version')
-    if not re.fullmatch(r'[a-z0-9][a-z0-9+.-]*', data['ci-cross-run'].get('perf-package', '')):
+    cross_run = data['ci-cross-run']
+    if not re.fullmatch(r'[a-z0-9][a-z0-9+.-]*', cross_run.get('perf-package', '')):
         raise ValueError('ci-cross-run: invalid perf package')
+    perf_source = cross_run.get('perf-source', {})
+    if set(perf_source) != {'version', 'url', 'sha256', 'packages'} \
+            or not re.fullmatch(r'\d+\.\d+\.\d+', perf_source.get('version', '')) \
+            or not perf_source.get('url', '').startswith('https://cdn.kernel.org/') \
+            or not re.fullmatch(r'[0-9a-f]{64}', perf_source.get('sha256', '')) \
+            or not perf_source.get('packages') \
+            or any(not re.fullmatch(r'[a-z0-9][a-z0-9+.-]*', package) for package in perf_source.get('packages', [])):
+        raise ValueError('ci-cross-run: invalid pinned perf source')
     proof = data['ci-ct-proof']
     if not re.fullmatch(r'git\+https://github\.com/ocaml/opam-repository\.git#[0-9a-f]{40}', proof['opam-repository']):
         raise ValueError('ci-ct-proof: opam repository requires an exact commit')
@@ -183,6 +192,10 @@ def main():
     elif command == 'download':
         platform, name, destination = args
         asset = data[platform]['assets'][name]
+        download(asset['url'], destination, asset['sha256'])
+    elif command == 'download-entry':
+        section, name, destination = args
+        asset = data[section][name]
         download(asset['url'], destination, asset['sha256'])
     else:
         raise ValueError(f'unknown catalog operation: {command}')

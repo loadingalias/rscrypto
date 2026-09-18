@@ -327,8 +327,9 @@ a newer request for the same architecture cancels the older request.
 It reuses the benchmark cross-build and sealed transfer path.
 The native runner verifies and discovers the transferred executable before running `perf stat`, `perf record`, `perf report --stdio`, and `perf script`;
 it never rebuilds production code.
-Native setup prefers the runner's `perf`, then a matching Ubuntu package,
-then the pinned Ubuntu generic userspace tool when the donated runner uses a non-Ubuntu kernel.
+Native setup prefers the runner's `perf`, then a matching Ubuntu package.
+For the pinned RISC-V custom kernel, it builds `perf` from the matching pinned upstream stable source;
+other donated runners fall back to the pinned Ubuntu generic userspace tool when no matching package exists.
 The live probes decide whether the result is usable.
 The workflow never elevates `perf` or changes host security policy.
 Setup, missing-package, denied-permission, and collector failures remain retained evidence.

@@ -134,9 +134,10 @@ The x86-64 preparation job cross-builds and seals the production benchmark execu
 The native job verifies that archive and discovers every selected case exactly once.
 It builds once, then records and seals separate `perf stat` and `perf record` evidence for each case without rebuilding.
 Native setup prefers the runner's `perf`.
-When a donated runner uses a non-Ubuntu kernel without a matching Ubuntu tools package,
-setup installs the pinned Ubuntu generic userspace tool
-and records its version beside the kernel identity.
+When the RISC-V runner uses its pinned custom kernel without a matching Ubuntu tools package,
+setup builds `perf` from the matching pinned upstream stable source.
+Other donated runners fall back to the pinned Ubuntu generic userspace tool.
+The selected collector version is recorded beside the kernel identity.
 The [Linux perf-event API](https://man7.org/linux/man-pages/man2/perf_event_open.2.html) carries an explicit compatibility size,
 but the live capability probe—not the package name—decides whether the tool
 and host can collect evidence.
