@@ -92,7 +92,8 @@ def host_facts(perf: str | None, env: dict) -> dict:
   return facts
 
 
-def capabilities(perf: str, root: Path, env: dict) -> tuple[list[str], str | None, bool, list[dict]]:
+def capabilities(perf: str, root: Path, env: dict,
+                 allow_callchain: bool) -> tuple[list[str], str | None, bool, list[dict]]:
   commands = []
   noop = [sys.executable, '-c',
           'import time\nend = time.monotonic() + 0.1\nwhile time.monotonic() < end: pass']
@@ -102,7 +103,7 @@ def capabilities(perf: str, root: Path, env: dict) -> tuple[list[str], str | Non
     output_path = Path(directory) / 'perf.data'
     output = str(output_path)
     for event in ('cycles:u', 'cpu-clock:u'):
-      for with_callchain in (True, False):
+      for with_callchain in ((True, False) if allow_callchain else (False,)):
         output_path.unlink(missing_ok=True)
         command = [perf, 'record', '--quiet', '--output', output, '--event', event,
                    '--freq', str(SAMPLE_FREQUENCY)]
@@ -160,7 +161,8 @@ def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | 
   write_json(root / 'host.json', host)
   if perf is None:
     raise ProfileUnavailable('native runner does not provide perf')
-  events, sample_event, callchain, probes = capabilities(perf, root, env)
+  allow_callchain = not os.uname().machine.startswith('riscv')
+  events, sample_event, callchain, probes = capabilities(perf, root, env, allow_callchain)
   write_json(root / 'capabilities.json', {'stat_events': events, 'sample_event': sample_event,
                                          'callchain': 'dwarf' if callchain else 'flat',
                                          'access': 'runner', 'probes': probes})

@@ -127,6 +127,14 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(status, 'partial')
         self.assertTrue(cause)
 
+  def test_perf_capture_uses_flat_sampling_on_riscv(self):
+    riscv = type('Uname', (), {'machine': 'riscv64'})()
+    with patch.object(profile_runner.os, 'uname', return_value=riscv):
+      root, (status, cause, collector) = self.perf()
+    self.assertEqual((status, cause), ('complete', None))
+    self.assertEqual(collector['callchain'], 'flat')
+    self.assertNotIn('--call-graph dwarf', (root / 'output.txt').read_text())
+
   def test_missing_or_blocked_perf_is_unavailable(self):
     with patch.object(profile_runner.shutil, 'which', return_value=None), \
          self.assertRaises(profile_runner.ProfileUnavailable):
