@@ -150,6 +150,14 @@ ensure_kernel_perf() {
   "$kernel_tools_dir/perf" --version
 }
 
+enable_ci_perf_access() {
+  local paranoid
+  paranoid="$(sysctl -n kernel.perf_event_paranoid)"
+  if [[ "$paranoid" =~ ^-?[0-9]+$ ]] && (( paranoid > 2 )); then
+    "${sudo_cmd[@]}" sysctl -w kernel.perf_event_paranoid=-1
+  fi
+}
+
 install_riscv_perf() {
   local version
   version="$(catalog_get ci-cross-run perf-source version)"
@@ -192,7 +200,10 @@ install_riscv_perf() {
 prefix="$HOME/.local/share/rscrypto-tooling"
 mkdir -p "$prefix"
 kernel_tools_dir=""
-if [[ "$profile" == ci-cross-run && "${RSCRYPTO_REQUIRE_PERF:-0}" == 1 ]]; then ensure_kernel_perf; fi
+if [[ "$profile" == ci-cross-run && "${RSCRYPTO_REQUIRE_PERF:-0}" == 1 ]]; then
+  ensure_kernel_perf
+  enable_ci_perf_access
+fi
 python3 "$SCRIPT_DIR/catalog.py" download "$platform" rustup "$temporary/rustup-init"
 chmod +x "$temporary/rustup-init"
 host="$(catalog_get "$platform" rust-host)"

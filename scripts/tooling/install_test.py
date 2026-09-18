@@ -69,6 +69,13 @@ elif name == 'make':
     executable.chmod(0o755)
 elif name == 'nproc':
     print('4')
+elif name == 'sysctl':
+    if args == ['-n', 'kernel.perf_event_paranoid']:
+        print(os.environ.get('INSTALL_PERF_PARANOID', '2'))
+    elif args == ['-w', 'kernel.perf_event_paranoid=-1']:
+        print('kernel.perf_event_paranoid = -1')
+    else:
+        sys.exit(1)
 elif name == 'python3':
     script = pathlib.Path(args[0]).name
     if script == 'catalog.py' and args[1] == 'download':
@@ -101,7 +108,7 @@ class LinuxInstall(unittest.TestCase):
         binaries.mkdir()
         for name in ('uname', 'id', 'apt-get', 'apt-cache', 'cargo', 'clang', 'cmake', 'make', 'nproc', 'patch',
                      'perf', 'python3', 'rustup', 'tar',
-                     'wasmtime', 'opam', 'just', 'rg', 'lychee', 'rumdl', 'samply', 'gungraun-runner'):
+                     'wasmtime', 'opam', 'just', 'rg', 'lychee', 'rumdl', 'samply', 'gungraun-runner', 'sysctl'):
             script = binaries / name
             script.write_text('#!' + sys.executable + '\n' + STUB)
             script.chmod(0o755)
@@ -291,6 +298,17 @@ class LinuxInstall(unittest.TestCase):
         self.assertIn('linux-tools-generic=1.0', installs[-1])
         self.assertFalse(any(arg.startswith('linux-tools-ppc64le=') for arg in installs[-1]))
         self.assertIn('perf version fixture', result.stdout)
+
+    def test_cross_run_enables_perf_when_runner_policy_denies_it(self):
+        result, calls, _ = self.provision(
+            'x86_64-linux', profile='ci-cross-run',
+            extra_env={'RSCRYPTO_REQUIRE_PERF': '1', 'INSTALL_PERF_PARANOID': '4'})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        sysctl = [call for call in calls if call[0] == 'sysctl']
+        self.assertEqual(sysctl, [
+            ['sysctl', '-n', 'kernel.perf_event_paranoid'],
+            ['sysctl', '-w', 'kernel.perf_event_paranoid=-1'],
+        ])
 
     def test_riscv_cross_run_builds_perf_from_matching_pinned_kernel_source(self):
         source = CATALOG['ci-cross-run']['perf-source']

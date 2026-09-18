@@ -49,7 +49,7 @@ packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "python3"
 
 [ci-cross-run]
 cargo = []
-packages = ["ca-certificates", "curl", "git", "python3"]
+packages = ["ca-certificates", "curl", "git", "python3", "procps"]
 perf-package = "linux-tools-generic"
 
 [ci-cross-run.perf-source]
