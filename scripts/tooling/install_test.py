@@ -99,8 +99,8 @@ class LinuxInstall(unittest.TestCase):
         root = Path(temporary.name)
         binaries = root / 'bin'
         binaries.mkdir()
-        for name in ('uname', 'id', 'apt-get', 'apt-cache', 'cargo', 'clang', 'cmake', 'make', 'nproc', 'perf',
-                     'python3', 'rustup', 'tar',
+        for name in ('uname', 'id', 'apt-get', 'apt-cache', 'cargo', 'clang', 'cmake', 'make', 'nproc', 'patch',
+                     'perf', 'python3', 'rustup', 'tar',
                      'wasmtime', 'opam', 'just', 'rg', 'lychee', 'rumdl', 'samply', 'gungraun-runner'):
             script = binaries / name
             script.write_text('#!' + sys.executable + '\n' + STUB)
@@ -304,7 +304,10 @@ class LinuxInstall(unittest.TestCase):
         self.assertNotIn('linux-tools-generic=1.0', installs[-1])
         self.assertIn(['python3', str(ROOT / 'scripts/tooling/catalog.py'), 'download-entry',
                        'ci-cross-run', 'perf-source', ANY], calls)
+        patch = next(call for call in calls if call[0] == 'patch')
+        self.assertIn(str(ROOT / 'scripts/tooling/perf-riscv-mapping-symbols.patch'), patch)
         make = next(call for call in calls if call[0] == 'make')
+        self.assertLess(calls.index(patch), calls.index(make))
         self.assertIn('ARCH=riscv', make)
         self.assertIn('NO_LIBUNWIND=1', make)
         self.assertIn('perf version source fixture', result.stdout)

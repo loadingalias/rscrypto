@@ -161,7 +161,8 @@ def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | 
   write_json(root / 'host.json', host)
   if perf is None:
     raise ProfileUnavailable('native runner does not provide perf')
-  allow_callchain = not os.uname().machine.startswith('riscv')
+  riscv_host = os.uname().machine.startswith('riscv')
+  allow_callchain = not riscv_host
   events, sample_event, callchain, probes = capabilities(perf, root, env, allow_callchain)
   write_json(root / 'capabilities.json', {'stat_events': events, 'sample_event': sample_event,
                                          'callchain': 'dwarf' if callchain else 'flat',
@@ -205,8 +206,12 @@ def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | 
                      root / 'output.txt', env=env, capture=True)
     if not report.strip() or re.search(r'# Samples:\s+0\b', report):
       raise ProfileIncomplete('perf report produced no sampled text output')
+    if riscv_host and re.search(r'^\s+\d+(?:\.\d+)?%.*\[\.\]\s+\$[dx]\S*', report, re.MULTILINE):
+      raise ProfileIncomplete('perf report exposed RISC-V mapping symbols instead of functions')
     (root / 'perf-report.txt').write_text(report)
-  except CAPTURE_ERRORS as error:
+  except ProfileIncomplete as error:
+    return 'partial', str(error), collector_info
+  except (OSError, subprocess.CalledProcessError) as error:
     return 'partial', f'perf report failed with exit code {exit_code(error)}', collector_info
 
   try:

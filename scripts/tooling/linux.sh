@@ -173,6 +173,9 @@ install_riscv_perf() {
   local archive="$temporary/linux-$version.tar.xz"
   python3 "$SCRIPT_DIR/catalog.py" download-entry ci-cross-run perf-source "$archive"
   tar -xf "$archive" -C "$temporary"
+  # Backport Linux 4d631928 so perf reports functions instead of RISC-V mapping symbols.
+  patch --batch --forward -d "$temporary/linux-$version" -p1 \
+    -i "$SCRIPT_DIR/perf-riscv-mapping-symbols.patch"
   local build="$temporary/perf-build"
   mkdir -p "$build"
   make -C "$temporary/linux-$version/tools/perf" -j "$(nproc)" O="$build" ARCH=riscv WERROR=0 \

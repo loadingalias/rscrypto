@@ -135,6 +135,14 @@ class ProfileTests(unittest.TestCase):
     self.assertEqual(collector['callchain'], 'flat')
     self.assertNotIn('--call-graph dwarf', (root / 'output.txt').read_text())
 
+  def test_perf_capture_rejects_riscv_mapping_symbols(self):
+    riscv = type('Uname', (), {'machine': 'riscv64'})()
+    with patch.object(profile_runner.os, 'uname', return_value=riscv):
+      _, (status, cause, collector) = self.perf(RISCV_MAPPING_SYMBOLS='1')
+    self.assertEqual(status, 'partial')
+    self.assertEqual(cause, 'perf report exposed RISC-V mapping symbols instead of functions')
+    self.assertEqual(collector['callchain'], 'flat')
+
   def test_missing_or_blocked_perf_is_unavailable(self):
     with patch.object(profile_runner.shutil, 'which', return_value=None), \
          self.assertRaises(profile_runner.ProfileUnavailable):

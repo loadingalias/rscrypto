@@ -1,0 +1,11 @@
+# Backport of Linux 4d6319289e8661a1845dde5d05859afc21ec3ed9 to 5.10.113.
+# RISC-V ELF mapping symbols identify code/data regions, not functions.
+--- a/tools/perf/util/symbol-elf.c
++++ b/tools/perf/util/symbol-elf.c
+@@ -1174,0 +1175,6 @@
++		/* Reject RISCV ELF "mapping symbols" */
++		if (ehdr.e_machine == EM_RISCV) {
++			if (elf_name[0] == '$' && strchr("dx", elf_name[1]))
++				continue;
++		}
++

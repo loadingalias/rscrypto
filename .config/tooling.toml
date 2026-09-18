@@ -56,7 +56,7 @@ perf-package = "linux-tools-generic"
 version = "5.10.113"
 url = "https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-5.10.113.tar.xz"
 sha256 = "82516a02bb52456f6e8057217dde6e02b78003b1e058117557c2ae9661696dfc"
-packages = ["bison", "build-essential", "flex", "libdw-dev", "libelf-dev", "pkgconf", "xz-utils", "zlib1g-dev"]
+packages = ["bison", "build-essential", "flex", "libdw-dev", "libelf-dev", "patch", "pkgconf", "xz-utils", "zlib1g-dev"]
 
 [ci-compat]
 cargo = ["just"]
