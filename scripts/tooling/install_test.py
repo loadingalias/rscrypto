@@ -246,10 +246,13 @@ class LinuxInstall(unittest.TestCase):
 
     def test_cross_build_and_execution_tooling_are_separate(self):
         nightly = tomllib.loads((ROOT / '.config/toolchains.toml').read_text())['nightly']
+        stable = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel']
         for platform, target, prefix, libc in (
+            ('aarch64-linux', 'aarch64-unknown-linux-gnu', 'aarch64-linux-gnu', 'aarch64'),
             ('riscv64-linux', 'riscv64gc-unknown-linux-gnu', 'riscv64-linux-gnu', 'riscv64'),
             ('powerpc64le-linux', 'powerpc64le-unknown-linux-gnu', 'powerpc64le-linux-gnu', 'ppc64el'),
             ('s390x-linux', 's390x-unknown-linux-gnu', 's390x-linux-gnu', 's390x'),
+            ('x86_64-linux', 'x86_64-unknown-linux-gnu', None, None),
         ):
             for profile in ('ci-cross-build', 'ci-cross-run'):
                 with self.subTest(target=target, profile=profile):
@@ -258,15 +261,16 @@ class LinuxInstall(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     apt = next(c for c in calls if c[0] == 'apt-get' and '--allow-downgrades' in c)
                     packages = list(CATALOG[profile]['packages'])
-                    if profile.endswith('build'):
+                    if profile.endswith('build') and prefix is not None:
                         packages += ['gcc-' + prefix, 'g++-' + prefix, 'libc6-dev-' + libc + '-cross']
                     self.assertEqual([a for a in apt if a.endswith('=1.0')], [p + '=1.0' for p in packages])
                     installs = [c for c in calls if c[:3] == ['rustup', 'toolchain', 'install']]
-                    self.assertIn(nightly, [c[3] for c in installs])
+                    target_toolchain = stable if platform in ('aarch64-linux', 'x86_64-linux') else nightly
+                    self.assertIn(target_toolchain, [c[3] for c in installs])
                     components = [c[i + 1] for c in installs for i, arg in enumerate(c) if arg == '--component']
                     self.assertEqual(components, ['rustfmt', 'clippy', 'llvm-tools'] if profile.endswith('build') else [])
                     if profile.endswith('build'):
-                        self.assertIn(['rustup', 'target', 'add', '--toolchain', nightly, target], calls)
+                        self.assertIn(['rustup', 'target', 'add', '--toolchain', target_toolchain, target], calls)
                         nextest = [c for c in calls if c[0] == 'cargo' and c[-1] == 'cargo-nextest']
                         self.assertEqual(len(nextest), 1)
                         self.assertIn('install', nextest[0])

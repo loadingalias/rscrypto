@@ -95,7 +95,7 @@ def validate_catalog(catalog: dict) -> None:
       if not isinstance(cases_by_architecture, dict) or not cases_by_architecture:
         raise CatalogError(f"profile preset {name} needs a non-empty architecture case map")
       for architecture, cases in cases_by_architecture.items():
-        if not re.fullmatch(r"[a-z0-9-]+", architecture):
+        if not re.fullmatch(r"[a-z0-9_-]+", architecture):
           raise CatalogError(f"profile preset {name} has an invalid architecture: {architecture}")
         if (not isinstance(cases, list) or not cases
             or any(not isinstance(item, str) or not item for item in cases)

@@ -64,10 +64,36 @@ class ManualProfile(unittest.TestCase):
       'ecdsa-p384/public-key/rscrypto-blinded',
     ])
 
+  def test_request_resolves_standard_linux_architectures(self):
+    expected = {
+      'aarch64-linux': (
+        'aarch64-unknown-linux-gnu',
+        'runs-on=42/runner=measure-aarch64-linux/env=production',
+        'aarch64-linux',
+      ),
+      'x86_64-linux-amd': (
+        'x86_64-unknown-linux-gnu',
+        'runs-on=42/runner=measure-x86_64-linux-amd/env=production',
+        'x86_64-linux',
+      ),
+      'x86_64-linux-intel': (
+        'x86_64-unknown-linux-gnu',
+        'runs-on=42/runner=measure-x86_64-linux-intel/env=production',
+        'x86_64-linux',
+      ),
+    }
+    for architecture, (target, runner, tooling_platform) in expected.items():
+      with self.subTest(architecture=architecture):
+        selection = profile_ci.request(self.environment(INPUT_ARCHITECTURE=architecture), '42')
+        self.assertEqual(selection['target'], target)
+        self.assertEqual(selection['runner'], runner)
+        self.assertEqual(selection['tooling_platform'], tooling_platform)
+
   def test_request_rejects_broad_or_unbounded_input(self):
     invalid = (
       {'INPUT_ARCHITECTURE': 'all'},
       {'INPUT_ARCHITECTURE': 'x86_64-linux'},
+      {'INPUT_ARCHITECTURE': 'aarch64-win'},
       {'INPUT_WORKLOAD': ''},
       {'INPUT_WORKLOAD': 'aead'},
       {'INPUT_WORKLOAD': 'aead/$(touch never)'},

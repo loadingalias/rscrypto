@@ -10,7 +10,7 @@ import tempfile
 
 from execution import enable_internal, build, build_command, build_identity, digest, exit_code, hardware
 from evidence import collect
-from cross_build import TARGETS, environment, require_host, verify_elf
+from cross_build import LINUX_TARGETS, environment, require_host, verify_elf
 import evidence_bundle as bundle
 
 KIND = 'rscrypto.cross.bench'
@@ -29,7 +29,7 @@ def prepare(root, target, archive, output, rows, settings):
     directory = Path(tempfile.mkdtemp(prefix='build-', dir=parent))
     print(f'Preparation directory: {directory}', flush=True)
     try:
-        compiler_path = shutil.which(TARGETS[target][1] + '-gcc')
+        compiler_path = shutil.which(LINUX_TARGETS[target][1] + '-gcc')
         if compiler_path is None:
             raise FileNotFoundError('install ci-cross-build tooling before preparing benchmarks')
         compiler = Path(compiler_path).resolve(strict=True)

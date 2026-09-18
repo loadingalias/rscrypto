@@ -392,9 +392,22 @@
       "case": "p256-ecdh/public-key/rscrypto-selected",
       "diagnostic": false
     },
+    "auth/p384-sign": {
+      "bench": "auth",
+      "case": "ecdsa-p384/sign/rscrypto-deterministic/32",
+      "diagnostic": false
+    },
     "auth/cross-target-losses": {
       "bench": "auth",
       "cases_by_architecture": {
+        "aarch64-linux": [
+          "p256-ecdh/public-key/rscrypto-selected",
+          "p256-ecdh/agreement/rscrypto-selected",
+          "ecdsa-p256/public-key/rscrypto-blinded",
+          "ecdsa-p384/public-key/rscrypto-blinded",
+          "ecdsa-p384/sign/rscrypto-deterministic/0",
+          "ecdsa-p384/sign/rscrypto-deterministic/32"
+        ],
         "s390x-linux": [
           "p256-ecdh/public-key/rscrypto-selected",
           "p256-ecdh/agreement/rscrypto-selected",
@@ -412,6 +425,22 @@
         "powerpc64le-linux": [
           "p256-ecdh/public-key/rscrypto-selected",
           "p256-ecdh/agreement/rscrypto-selected"
+        ],
+        "x86_64-linux-amd": [
+          "p256-ecdh/public-key/rscrypto-selected",
+          "p256-ecdh/agreement/rscrypto-selected",
+          "ecdsa-p256/public-key/rscrypto-blinded",
+          "ecdsa-p384/public-key/rscrypto-blinded",
+          "ecdsa-p384/sign/rscrypto-deterministic/0",
+          "ecdsa-p384/sign/rscrypto-deterministic/32"
+        ],
+        "x86_64-linux-intel": [
+          "p256-ecdh/public-key/rscrypto-selected",
+          "p256-ecdh/agreement/rscrypto-selected",
+          "ecdsa-p256/public-key/rscrypto-blinded",
+          "ecdsa-p384/public-key/rscrypto-blinded",
+          "ecdsa-p384/sign/rscrypto-deterministic/0",
+          "ecdsa-p384/sign/rscrypto-deterministic/32"
         ]
       },
       "diagnostic": false

@@ -14,7 +14,7 @@ case "${1:-}" in
   --ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-bench|--ci-cross-build|--ci-cross-run) ci=true; profile="${1#--}"; shift ;;
 esac
 case "$profile:$platform" in
-  ci-cross-run:riscv64-linux|ci-cross-run:powerpc64le-linux|ci-cross-run:s390x-linux|ci-cross-build:x86_64-linux) ;;
+  ci-cross-run:aarch64-linux|ci-cross-run:powerpc64le-linux|ci-cross-run:riscv64-linux|ci-cross-run:s390x-linux|ci-cross-run:x86_64-linux|ci-cross-build:x86_64-linux) ;;
   ci-cross-run:*|ci-cross-build:*) echo "invalid cross-build tooling host" >&2; exit 64 ;;
   ci:*|ci-bench:*|ci-ct:*|*:x86_64-linux|ci-fuzz:aarch64-linux) ;;
   *) echo "$profile tooling is unsupported on $platform" >&2; exit 64 ;;
@@ -90,9 +90,11 @@ package_section="$linux_section"
 mapfile -t packages < <(catalog_get "$package_section" packages)
 if [[ "$profile" == ci-cross-build ]]; then
   cross_prefix="$(python3 scripts/lib/cross_build.py "$cross_target")"
-  cross_arch="${cross_prefix%-linux-gnu}"
-  [[ "$cross_arch" != powerpc64le ]] || cross_arch=ppc64el
-  packages+=("gcc-$cross_prefix" "g++-$cross_prefix" "libc6-dev-$cross_arch-cross")
+  if [[ "$cross_target" != x86_64-unknown-linux-gnu ]]; then
+    cross_arch="${cross_prefix%-linux-gnu}"
+    [[ "$cross_arch" != powerpc64le ]] || cross_arch=ppc64el
+    packages+=("gcc-$cross_prefix" "g++-$cross_prefix" "libc6-dev-$cross_arch-cross")
+  fi
 fi
 if [[ "$ci" == false ]]; then
   mapfile -t native_packages < <(catalog_get "$platform" packages)

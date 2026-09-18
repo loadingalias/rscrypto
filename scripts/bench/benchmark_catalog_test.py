@@ -97,7 +97,8 @@ def main() -> None:
       pass
     else:
       fail(f"catalog accepted invalid profile preset {field}")
-  for value in ({}, {"s390x-linux": []}, {"s390x-linux": ["case", "case"]}):
+  for value in ({}, {"s390x-linux": []}, {"s390x-linux": ["case", "case"]},
+                {"x86/64-linux": ["case"]}):
     broken = copy.deepcopy(catalog)
     broken["profile_presets"]["auth/cross-target-losses"]["cases_by_architecture"] = value
     try:

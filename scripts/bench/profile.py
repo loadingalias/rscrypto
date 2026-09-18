@@ -355,8 +355,8 @@ def profile(args, entry) -> None:
     raise ValueError('profile duration must be within the configured run budget')
   transferred = args.prepare_archive or args.run_archive or args.target
   if transferred:
-    from cross_build import TARGETS
-    if args.target not in TARGETS or not (args.prepare_archive or args.run_archive) or args.list or not args.case:
+    from cross_build import LINUX_TARGETS
+    if args.target not in LINUX_TARGETS or not (args.prepare_archive or args.run_archive) or args.list or not args.case:
       raise ValueError('profile transfer requires an exact case, supported target, and prepare/run archive')
     if args.seconds > PROFILE_CAPTURE_MAX_SECONDS:
       raise ValueError(f'transferred profile duration must be at most {PROFILE_CAPTURE_MAX_SECONDS} seconds')

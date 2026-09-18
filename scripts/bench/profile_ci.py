@@ -18,7 +18,23 @@ import runner
 import settings
 from benchmark_catalog import load_catalog
 
-ARCHITECTURES = {'riscv64-linux', 's390x-linux', 'powerpc64le-linux'}
+TARGETS = {
+  'aarch64-linux': ('aarch64-linux', 'aarch64-unknown-linux-gnu'),
+  'powerpc64le-linux': ('powerpc64le-linux', 'powerpc64le-unknown-linux-gnu'),
+  'riscv64-linux': ('riscv64-linux', 'riscv64gc-unknown-linux-gnu'),
+  's390x-linux': ('s390x-linux', 's390x-unknown-linux-gnu'),
+  'x86_64-linux-amd': ('x86_64-linux', 'x86_64-unknown-linux-gnu'),
+  'x86_64-linux-intel': ('x86_64-linux', 'x86_64-unknown-linux-gnu'),
+}
+ARCHITECTURES = set(TARGETS)
+
+
+def profile_platform(architecture: str, run_id: str) -> dict:
+  platform, target = TARGETS[architecture]
+  rows = [row for row in bench_ci.platforms(platform, run_id)['include'] if row['name'] == architecture]
+  if len(rows) != 1:
+    raise ValueError(f'architecture must resolve to one native profile runner: {architecture}')
+  return rows[0] | {'target': target}
 
 
 def request(env: dict, run_id: str) -> dict:
@@ -46,9 +62,10 @@ def request(env: dict, run_id: str) -> dict:
   seconds = int(raw_seconds)
   if seconds > settings.PROFILE_CAPTURE_MAX_SECONDS:
     raise ValueError(f'seconds must be at most {settings.PROFILE_CAPTURE_MAX_SECONDS}')
-  row, = bench_ci.platforms(architecture, run_id)['include']
+  row = profile_platform(architecture, run_id)
   return {
     'architecture': architecture,
+    'tooling_platform': row['platform'],
     'runner': row['runner'],
     'target': row['target'],
     'workload': workload,
@@ -84,7 +101,8 @@ def main() -> int:
     with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
       output.writelines(
         f'{name}={selection[name]}\n'
-        for name in ('architecture', 'runner', 'target', 'workload', 'prepare_timeout', 'capture_timeout')
+        for name in ('architecture', 'tooling_platform', 'runner', 'target', 'workload',
+                     'prepare_timeout', 'capture_timeout')
       )
     print('Profile request: ' + json.dumps(selection, sort_keys=True))
     return 0

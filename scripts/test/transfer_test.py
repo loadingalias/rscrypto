@@ -22,7 +22,7 @@ import doctest_bundle
 import dudect_execute
 import transfer
 import cross
-from cross_build import TARGETS, environment, require_host, verify_elf
+from cross_build import LINUX_TARGETS, TARGETS, environment, require_host, verify_elf
 
 TARGET = "riscv64gc-unknown-linux-gnu"
 spec = importlib.util.spec_from_file_location('runner_tools', ROOT / 'scripts/tooling/transfer.py')
@@ -30,12 +30,14 @@ runner_tools = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner_tools)
 
 
-# Independent ELF identities from the ABI: EM_RISCV=243, EM_PPC64=21, EM_S390=22.
+# Independent ELF identities from the ABI machine assignments.
 def elf_header(target):
     return {
+        'aarch64-unknown-linux-gnu': b'\x7fELF\x02\x01' + bytes(12) + b'\xb7\x00',
         'riscv64gc-unknown-linux-gnu': b'\x7fELF\x02\x01' + bytes(12) + b'\xf3\x00',
         'powerpc64le-unknown-linux-gnu': b'\x7fELF\x02\x01' + bytes(12) + b'\x15\x00',
         's390x-unknown-linux-gnu': b'\x7fELF\x02\x02' + bytes(12) + b'\x00\x16',
+        'x86_64-unknown-linux-gnu': b'\x7fELF\x02\x01' + bytes(12) + b'\x3e\x00',
     }[target]
 
 
@@ -43,13 +45,11 @@ class TargetIdentity(unittest.TestCase):
     def test_wrong_machine_endian_and_host_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             binary = Path(temporary) / 'binary'
-            for target, machine in (('riscv64gc-unknown-linux-gnu', 'riscv64'),
-                                    ('powerpc64le-unknown-linux-gnu', 'ppc64le'),
-                                    ('s390x-unknown-linux-gnu', 's390x')):
+            for target, (machine, _, _, _) in LINUX_TARGETS.items():
                 with self.subTest(target=target):
                     binary.write_bytes(elf_header(target))
                     verify_elf(binary, target)
-                    for other in set(TARGETS) - {target}:
+                    for other in set(LINUX_TARGETS) - {target}:
                         with self.assertRaises(ValueError): verify_elf(binary, other)
                     header = bytearray(elf_header(target))
                     header[5] = 3 - header[5]
@@ -59,9 +59,9 @@ class TargetIdentity(unittest.TestCase):
                     with self.assertRaises(ValueError): verify_elf(binary, target)
                     with patch('platform.system', return_value='Linux'), patch('platform.machine', return_value=machine):
                         require_host(target)
-                        for other in set(TARGETS) - {target}:
+                        for other in set(LINUX_TARGETS) - {target}:
                             with self.assertRaises(ValueError): require_host(other)
-                    with patch('platform.system', return_value='Linux'), patch('platform.machine', return_value='x86_64'):
+                    with patch('platform.system', return_value='Linux'), patch('platform.machine', return_value='mips64'):
                         with self.assertRaises(ValueError): require_host(target)
 
 
@@ -193,7 +193,7 @@ class Bundles(unittest.TestCase):
         path.parent.mkdir()
         shutil.copy2(ROOT / '.config/tooling.toml', path)
         identity = bundle.source_identity(self.root)
-        for index, target in enumerate(TARGETS):
+        for index, target in enumerate(LINUX_TARGETS):
             directory = self.root / 'target' / str(index)
             (directory / 'bin').mkdir(parents=True)
             for name in ('just', 'cargo-nextest'):
@@ -212,7 +212,7 @@ class Bundles(unittest.TestCase):
                     if failure == 'source': (self.root / 'source.rs').write_text('changed')
                     destination = self.root / 'target' / f'{index}-{failure}-installed'
                     with patch.object(runner_tools, 'ROOT', self.root), patch('platform.system', return_value='Linux'), \
-                         patch('platform.machine', return_value=TARGETS[target][0]), patch('sys.stdout', new=io.StringIO()) as output:
+                         patch('platform.machine', return_value=LINUX_TARGETS[target][0]), patch('sys.stdout', new=io.StringIO()) as output:
                         if failure == 'none':
                             runner_tools.install(target, archive, destination)
                             self.assertEqual(output.getvalue().strip(), str(destination / 'bin'))
@@ -222,7 +222,7 @@ class Bundles(unittest.TestCase):
                     (self.root / 'source.rs').write_text('original\n')
 
     def test_overrides_are_rejected(self):
-        for target in TARGETS:
+        for target in LINUX_TARGETS:
             for key in ('RUSTFLAGS', 'CARGO_PROFILE_RELEASE_LTO', 'NEXTEST_FILTERSET',
                         'CARGO_TARGET_' + target.replace('-', '_').upper() + '_RUSTFLAGS',
                         'CARGO_TARGET_' + target.replace('-', '_').upper() + '_RUNNER'):
@@ -230,7 +230,7 @@ class Bundles(unittest.TestCase):
                     with self.assertRaises(ValueError): environment(target)
 
     def test_cross_build_preserves_the_callers_cache_policy(self):
-        for target in TARGETS:
+        for target in LINUX_TARGETS:
             for policy in ('', 'off'):
                 with self.subTest(target=target, policy=policy), \
                      patch.dict(os.environ, {'CARGO_RAIL_CACHE': policy}):

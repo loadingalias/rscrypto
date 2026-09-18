@@ -10,6 +10,9 @@ on:
         required: true
         default: s390x-linux
         options:
+          - x86_64-linux-intel
+          - x86_64-linux-amd
+          - aarch64-linux
           - s390x-linux
           - riscv64-linux
           - powerpc64le-linux
@@ -24,6 +27,7 @@ on:
           - aead/aegis256
           - aead/ascon
           - auth/p256-ecdh
+          - auth/p384-sign
           - auth/cross-target-losses
           - hashes/sha256
           - hashes/blake3
@@ -62,6 +66,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       architecture: ${{ steps.plan.outputs.architecture }}
+      tooling_platform: ${{ steps.plan.outputs.tooling_platform }}
       runner: ${{ steps.plan.outputs.runner }}
       target: ${{ steps.plan.outputs.target }}
       workload: ${{ steps.plan.outputs.workload }}
@@ -116,6 +121,7 @@ jobs:
     timeout-minutes: ${{ fromJSON(needs.plan.outputs.capture_timeout) }}
     env:
       ARCHITECTURE: ${{ needs.plan.outputs.architecture }}
+      TOOLING_PLATFORM: ${{ needs.plan.outputs.tooling_platform }}
       TARGET: ${{ needs.plan.outputs.target }}
       RSCRYPTO_REQUIRE_PERF: "1"
     steps:
@@ -134,7 +140,7 @@ jobs:
           uname -a > "$evidence/uname.txt"
           cp /proc/cpuinfo "$evidence/cpuinfo.txt"
           set +e
-          scripts/tooling/"$ARCHITECTURE.sh" --ci-cross-run "target/profile-download/$TARGET-tools.tar.gz" \
+          scripts/tooling/"$TOOLING_PLATFORM.sh" --ci-cross-run "target/profile-download/$TARGET-tools.tar.gz" \
             2>&1 | tee "$evidence/tooling.txt"
           tooling_status=${PIPESTATUS[0]}
           set -e

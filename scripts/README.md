@@ -46,6 +46,7 @@ Nextest archives and persisted doctest programs are transferred to the matching 
 whose `--ci-cross-run TOOLS_ARCHIVE` tooling only executes them.
 Preparation is not a runtime pass.
 The Rust release profile, target compiler, feature sets, and test assertions remain unchanged.
+Profile CI reuses this exact-artifact transfer boundary for x86-64, AArch64, RISC-V, POWER, and IBM Z.
 
 Each preparation job also cross-builds the pinned `just`
 and Nextest tools into a separate source-bound archive.

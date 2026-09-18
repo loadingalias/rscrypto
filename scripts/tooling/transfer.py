@@ -12,7 +12,7 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts/lib'))
 import evidence_bundle as bundle
-from cross_build import TARGETS, environment, require_host, verify_elf
+from cross_build import LINUX_TARGETS, environment, require_host, verify_elf
 
 KIND = 'rscrypto.cross.tools'
 
@@ -51,7 +51,7 @@ def install(target, archive, destination):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('operation', choices=('prepare', 'install'))
-    parser.add_argument('target', choices=TARGETS)
+    parser.add_argument('target', choices=LINUX_TARGETS)
     parser.add_argument('archive', type=Path)
     parser.add_argument('destination', nargs='?', type=Path)
     args = parser.parse_args()

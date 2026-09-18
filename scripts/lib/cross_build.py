@@ -1,4 +1,4 @@
-"""Cross-build configuration for the three Linux execution-only CI runners."""
+"""Cross-build configuration for native Linux transfer runners."""
 
 import os
 import platform
@@ -11,16 +11,21 @@ TARGETS = {
     'powerpc64le-unknown-linux-gnu': ('ppc64le', 'powerpc64le-linux-gnu', 'little', 21),
     's390x-unknown-linux-gnu': ('s390x', 's390x-linux-gnu', 'big', 22),
 }
+LINUX_TARGETS = {
+    'aarch64-unknown-linux-gnu': ('aarch64', 'aarch64-linux-gnu', 'little', 183),
+    **TARGETS,
+    'x86_64-unknown-linux-gnu': ('x86_64', 'x86_64-linux-gnu', 'little', 62),
+}
 
 
 def require_host(target):
-    machine, _, _, _ = TARGETS[target]
+    machine, _, _, _ = LINUX_TARGETS[target]
     if (platform.system(), platform.machine()) != ('Linux', machine):
         raise ValueError(f'transferred evidence requires native Linux {machine}')
 
 
 def verify_elf(path, target):
-    _, _, endian, machine = TARGETS[target]
+    _, _, endian, machine = LINUX_TARGETS[target]
     with path.open('rb') as source:
         header = source.read(20)
     if (len(header) != 20 or header[:5] != b'\x7fELF\x02'
@@ -30,7 +35,7 @@ def verify_elf(path, target):
 
 
 def environment(target):
-    _, compiler, _, _ = TARGETS[target]
+    _, compiler, _, _ = LINUX_TARGETS[target]
     conflicting = [key for key in os.environ if key in {
         'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'RUSTDOCFLAGS', 'CARGO_ENCODED_RUSTDOCFLAGS', 'RUSTC', 'RUSTDOC',
         'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER', 'CARGO_BUILD_RUSTFLAGS', 'CARGO_BUILD_TARGET',
@@ -48,4 +53,4 @@ def environment(target):
 if __name__ == '__main__':
     # The shell installer uses the same closed target set as the transfer code.
     target, = sys.argv[1:]
-    print(TARGETS[target][1])
+    print(LINUX_TARGETS[target][1])
