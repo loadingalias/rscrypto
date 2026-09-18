@@ -51,7 +51,7 @@ class ManualProfile(unittest.TestCase):
     self.assertEqual(selection['binary'], 'aead')
     self.assertNotIn('diag', selection['features'])
     self.assertEqual(selection['prepare_timeout'], 20)
-    self.assertEqual(selection['capture_timeout'], 10)
+    self.assertEqual(selection['capture_timeout'], 20)
 
   def test_request_resolves_the_architecture_specific_loss_bundle(self):
     selection = profile_ci.request(
@@ -133,7 +133,7 @@ class ManualProfile(unittest.TestCase):
       self.assertEqual(values['runner'], 'ubuntu-24.04-s390x')
       self.assertEqual(values['workload'], 'aead/aes')
       self.assertEqual(values['prepare_timeout'], '20')
-      self.assertEqual(values['capture_timeout'], '10')
+      self.assertEqual(values['capture_timeout'], '20')
 
   def test_isolated_entry_point(self):
     with tempfile.TemporaryDirectory() as directory:
