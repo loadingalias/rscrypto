@@ -112,6 +112,13 @@ class ProfileTests(unittest.TestCase):
     output = (root / 'output.txt').read_text()
     self.assertIn(f'--freq {profile_runner.SAMPLE_FREQUENCY}', output)
 
+  def test_perf_capture_replaces_non_utf8_report_bytes(self):
+    root, (status, cause, _) = self.perf(NON_UTF8_PERF_REPORT='1')
+    self.assertEqual((status, cause), ('complete', None))
+    report = (root / 'perf-report.txt').read_text()
+    self.assertIn('rscrypto::production_frame', report)
+    self.assertIn('\ufffd', report)
+
   def test_perf_capture_falls_back_and_keeps_partial_failures(self):
     _, (status, _, collector) = self.perf(FAIL_PERF_DWARF='1')
     self.assertEqual(status, 'complete')

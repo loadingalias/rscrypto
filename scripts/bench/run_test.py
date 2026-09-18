@@ -172,6 +172,9 @@ if mode == 'report':
   if os.environ.get('FAIL_PERF_REPORT'): sys.exit(6)
   if os.environ.get('ZERO_PERF_SAMPLES'): print('# Samples: 0 of event cycles:u'); sys.exit(0)
   if os.environ.get('RISCV_MAPPING_SYMBOLS'): print(' 99.00% auth auth [.] $xrv64i2p1_m2p0'); sys.exit(0)
+  if os.environ.get('NON_UTF8_PERF_REPORT'):
+    sys.stdout.buffer.write(b'99.00% criterion-fixture rscrypto::production_frame \\xff\\n')
+    sys.exit(0)
   print('99.00% criterion-fixture rscrypto::production_frame')
   sys.exit(0)
 if mode == 'script':
