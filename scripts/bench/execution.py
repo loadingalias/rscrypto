@@ -53,9 +53,9 @@ def execute(command: list[str], output: Path, *, env=None, capture=False) -> str
     log.write(f"\nRunning: {shlex.join(command)}\n")
     log.flush()
     with subprocess.Popen(command, env=env, stdout=subprocess.PIPE,
-                          stderr=log if capture else subprocess.STDOUT, text=True,
-                          errors="replace") as process:
-      for line in process.stdout:
+                          stderr=log if capture else subprocess.STDOUT) as process:
+      for raw_line in process.stdout:
+        line = raw_line.decode("utf-8", errors="replace")
         log.write(line)
         if capture:
           captured.append(line)
