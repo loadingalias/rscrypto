@@ -162,16 +162,29 @@ if mode == 'record':
   if not probe and os.environ.get('FAIL_PERF_CAPTURE'): sys.exit(7)
   status = subprocess.run(command).returncode
   if status == 0 and not (probe and os.environ.get('ZERO_PERF_PROBE_SAMPLES')):
-    pathlib.Path(args[args.index('--output') + 1]).write_text('perf data fixture')
+    pathlib.Path(args[args.index('--output') + 1]).write_text(
+      'dwarf' if '--call-graph' in args else 'flat')
   sys.exit(status)
+if mode == 'script':
+  data = pathlib.Path(args[args.index('--input') + 1]).read_text()
+  if data == 'dwarf' and os.environ.get('POWER_DWARF_LOST'):
+    print('Processed 5 samples and lost 100.00%!', file=sys.stderr)
+    sys.exit(0)
+  print('criterion-fixture 1234 cycles:u: rscrypto::production_frame')
+  sys.exit(0)
 if mode == 'report':
   if os.environ.get('FAIL_PERF_REPORT'): sys.exit(6)
   if '--no-inline' not in args:
     sys.stderr.buffer.write(b'addr2line configuration failed: \\xff\\n')
     sys.exit(255)
+  if os.environ.get('HEADER_ONLY_PERF_REPORT'):
+    print('# To display the perf.data header info, please use --header/--header-only options.')
+    print('The perf.data data has no samples!', file=sys.stderr)
+    sys.exit(0)
   if os.environ.get('ZERO_PERF_SAMPLES'): print('# Samples: 0 of event cycles:u'); sys.exit(0)
+  print('# Samples: 5 of event cycles:u')
   if os.environ.get('RISCV_MAPPING_SYMBOLS'): print(' 99.00% auth auth [.] $xrv64i2p1_m2p0'); sys.exit(0)
-  print('99.00% criterion-fixture rscrypto::production_frame')
+  print(' 99.00% criterion-fixture criterion-fixture [.] rscrypto::production_frame')
   sys.exit(0)
 sys.exit(64)
 """)

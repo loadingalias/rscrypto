@@ -120,6 +120,7 @@ class ProfileTests(unittest.TestCase):
     self.assertEqual(collector['callchain'], 'flat')
     for environment, expected in (({'FAIL_PERF_CAPTURE': '1'}, 'failed'),
                                   ({'FAIL_PERF_REPORT': '1'}, 'partial'),
+                                  ({'HEADER_ONLY_PERF_REPORT': '1'}, 'partial'),
                                   ({'ZERO_PERF_SAMPLES': '1'}, 'partial')):
       with self.subTest(environment=environment):
         root = self.root / 'target/perf-unit'
@@ -129,6 +130,15 @@ class ProfileTests(unittest.TestCase):
         _, (status, cause, _) = self.perf(**environment)
         self.assertEqual(status, expected)
         self.assertTrue(cause)
+
+  def test_perf_capture_uses_flat_samples_when_dwarf_loses_every_sample(self):
+    root, (status, cause, collector) = self.perf(POWER_DWARF_LOST='1')
+    self.assertEqual((status, cause), ('complete', None))
+    self.assertEqual(collector['callchain'], 'flat')
+    probes = json.loads((root / 'capabilities.json').read_text())['probes']
+    self.assertIn('lost 100.00%', probes[1]['stderr'])
+    self.assertEqual(probes[1]['stdout'], '')
+    self.assertIn('production_frame', (root / 'perf-report.txt').read_text())
 
   def test_perf_capture_uses_flat_sampling_on_riscv(self):
     riscv = type('Uname', (), {'machine': 'riscv64'})()

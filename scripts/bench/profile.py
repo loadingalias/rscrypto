@@ -102,7 +102,11 @@ def capabilities(perf: str, root: Path, env: dict,
           command += ['--call-graph', 'dwarf']
         result = probe([*command, '--', *noop], env)
         commands.append(result)
-        if result['exit_code'] == 0 and output_path.is_file() and output_path.stat().st_size > 0:
+        if result['exit_code'] != 0 or not output_path.is_file() or output_path.stat().st_size == 0:
+          continue
+        samples = probe([perf, 'script', '--input', output], env)
+        commands.append(samples)
+        if samples['exit_code'] == 0 and samples['stdout'].strip():
           sample_event, callchain = event, with_callchain
           break
       if sample_event is not None:
@@ -168,7 +172,10 @@ def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | 
     report = execute([perf, 'report', '--stdio', '--no-inline', '--percent-limit', '0.5',
                       '--input', str(root / 'perf.data')],
                      root / 'output.txt', env=env, capture=True)
-    if not report.strip() or re.search(r'# Samples:\s+0\b', report):
+    samples = re.search(r'^# Samples:\s+(\d+)\b', report, re.MULTILINE)
+    if samples is None or int(samples.group(1)) == 0 or not re.search(
+      r'^\s+\d+(?:\.\d+)?%\s+.*\[\.\]\s+\S+', report, re.MULTILINE
+    ):
       raise ProfileIncomplete('perf report produced no sampled text output')
     if riscv_host and re.search(r'^\s+\d+(?:\.\d+)?%.*\[\.\]\s+\$[dx]\S*', report, re.MULTILINE):
       raise ProfileIncomplete('perf report exposed RISC-V mapping symbols instead of functions')

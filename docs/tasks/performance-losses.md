@@ -47,89 +47,133 @@ This task is complete when:
 The retained confidence intervals are narrow compared with these 58x-133x gaps.
 The measurements establish a severe cost, not its cause.
 
-## Phase 1 — Add a CI-only profile workflow
+## Phase 1 — Native profile evidence (2026-09-19)
 
-Add a separate manual workflow rather than overloading benchmark collection.
-Profiling has different privileges, artifacts, failure modes,
-and acceptance rules from elapsed-time measurement.
+The manual `profile.yml` accepts one architecture and one curated primitive.
+The catalog maps that pair to one exact Criterion case; capture lasts five seconds.
+Preparation cross-builds and seals the optimized benchmark with debug information.
+The native runner verifies and executes that binary without rebuilding it.
+Each run retained the binary, source-bound manifest, host/capability facts,
+raw `perf.data` when capture started, text output, and final status.
+The downloaded binary hashes match the manifests.
+All six runs used `a314ea81dd615e40d925efd5c05a5be5e719cb4f`.
 
-### Request and build contract
+| Architecture | Exact case | Workflow | Native evidence |
+| --- | --- | --- | --- |
+| Intel x86-64 | `aes-128-gcm-siv/copy-and-encrypt/rscrypto/32` | [success](https://github.com/loadingalias/rscrypto/actions/runs/35411075950) | [499 samples, 0 lost; DWARF](https://github.com/loadingalias/rscrypto/actions/runs/35411075950/artifacts/10574468080) |
+| AMD x86-64 | `aes-siv-cmac-256/construct/rscrypto` | [success](https://github.com/loadingalias/rscrypto/actions/runs/35411075977) | [533 samples, 0 lost; DWARF](https://github.com/loadingalias/rscrypto/actions/runs/35411075977/artifacts/10573767508) |
+| AArch64 | `argon2id-owasp/salt16-raw32/rscrypto/m=19MiB_t=2_p=1` | [success](https://github.com/loadingalias/rscrypto/actions/runs/35411075935) | [513 samples, 0 lost; DWARF](https://github.com/loadingalias/rscrypto/actions/runs/35411075935/artifacts/10574627850) |
+| POWER | `blake3/keyed/rscrypto/64` | [misleading success](https://github.com/loadingalias/rscrypto/actions/runs/35411075973) | [347 samples lost (100%); empty report](https://github.com/loadingalias/rscrypto/actions/runs/35411075973/artifacts/10574368228) |
+| IBM Z | `p256-ecdh/public-key/rscrypto-selected` | [failed](https://github.com/loadingalias/rscrypto/actions/runs/35411075962) | [perf access denied; no report](https://github.com/loadingalias/rscrypto/actions/runs/35411075962/artifacts/10574103643) |
+| RISC-V | `p256-ecdh/public-key/rscrypto-selected` | [success](https://github.com/loadingalias/rscrypto/actions/runs/35411076148) | [497 samples, 0 lost; flat symbols](https://github.com/loadingalias/rscrypto/actions/runs/35411076148/artifacts/10574449230) |
 
-- [ ] Accept exactly one architecture, catalog benchmark target, exact case,
-      and bounded capture duration.
-      Initially support `riscv64-linux`, `s390x-linux`, and `powerpc64le-linux`.
-- [ ] Validate requests against `.config/benchmark-matrix.json`; discovery must prove the case matches exactly once.
-- [ ] Reuse the existing cross-build and sealed artifact-transfer machinery.
-      Build the real benchmark with the same features, target, optimized `bench` profile,
-      debug information, and CPU flags used by measurement.
-- [ ] Transfer the executable, debug information, build ID, source identity, toolchain identity,
-      and hashes.
-      Do not rebuild production code on the native runner before capture.
-- [ ] Bound preparation and native capture separately, use fail-fast cancellation, disable caches,
-      and upload evidence even when collection fails.
+The POWER workload completed, but its DWARF capture lost 100% of 347 samples
+and `perf-report.txt` contained only a header.
+An [earlier POWER10 run](https://github.com/loadingalias/rscrypto/actions/runs/35381074902/artifacts/10563176126) on the same kernel (`6.12.0-264.el10.ppc64le`)
+and `perf 6.8.12` lost every DWARF probe sample, fell back to flat sampling,
+and retained 355 P-256 samples with no loss.
+The later probe regression accepted a nonempty `perf.data` file without checking for a decodable sample;
+the final report check also accepted a header without a positive sample count.
+Both checks are repaired locally so a failed DWARF probe can select flat sampling
+and an empty final report cannot pass.
+The exact BLAKE3 case still needs a native rerun before POWER is marked usable.
 
-### Native capability probe
+IBM Z's verified binary and exact-case discovery succeeded,
+but all native `perf` probes were denied with `perf_event_paranoid=4` and no effective capabilities.
+The runner owner must grant `CAP_PERFMON` or agree to a host configuration that permits user-space sampling.
+Do not change donated-runner security settings in the workflow.
+Rerun the same case after the owner makes sampling available.
 
-- [ ] Record `uname`, `/proc/cpuinfo`, `lscpu`, kernel version, perf version, available PMUs/events,
-      CPU governor and frequency data when exposed, `perf_event_paranoid`, `kptr_restrict`, relevant capabilities, and resource limits.
-- [ ] Probe `perf stat` and `perf record` with a trivial command before executing the benchmark.
-      Report permission, event, unwind, and symbol failures as distinct machine-readable outcomes.
-- [ ] Do not silently weaken host security settings on donated runners.
-      If `perf_event_open` is blocked, follow the [kernel perf security model](https://docs.kernel.org/admin-guide/perf-security.html):
-      ask the runner owner for `CAP_PERFMON` or an agreed `perf_event_paranoid` setting and retain the failed probe as evidence.
+`perf` cycles samples locate CPU time;
+they do not measure elapsed speedups or prove why an external implementation is faster.
+DWARF report percentages are inclusive unless marked self and must not be added.
+The RISC-V collector has only flat symbols, so it cannot attribute callers.
+These five-second reports include Criterion warm-up as well as the timed profile loop.
+Use the exact benchmark and target-native correctness/constant-time evidence for changes.
 
-### Capture ladder
+## Per-architecture optimization targets
 
-- [ ] Start with `perf stat` for elapsed time, task clock, cycles, instructions, branches, branch misses,
-      cache references, and cache misses.
-      Record each unsupported event instead of failing the whole capture.
-- [ ] Record a bounded on-CPU sample of the exact Criterion profile case.
-      Prefer DWARF call chains from the unchanged optimized artifact;
-      record a flat profile if the target's unwinder cannot produce trustworthy stacks.
-- [ ] Produce `perf report --stdio`, `perf script`, build-ID output, symbol tables, function sizes,
-      and annotated disassembly on the native runner.
-      Retain raw `perf.data` and the exact binary/debug files as well.
-- [ ] Generate static code evidence on the cross-build host for the same artifact:
-      LLVM IR attribution, target assembly, calls to compiler runtime helpers, branches, spills,
-      symbol sizes, and relevant loop bodies.
-- [ ] Seal all output with a manifest containing source, target, CPU, toolchain, features,
-      backend diagnostics, command, collector settings, hashes, status, and limitations.
-      Upload one artifact with at least 30-day retention.
+The four additional selections below are the largest equivalent-work losses
+for their Linux architectures in the [September benchmark campaign](https://github.com/loadingalias/rscrypto/actions/runs/34874736834).
+These are historical baselines at `ae6f54af`; the profiles used the later revision above.
+A sampled hotspot narrows an investigation but does not close a benchmark loss.
 
-Samply is not the first collector for these targets.
-Its pinned Linux release uses perf events and its [published Linux binaries](https://github.com/mstange/samply/releases/tag/samply-v0.13.1) cover only x86-64
-and AArch64.
-Its [stack unwinder](https://github.com/mstange/framehop) also currently covers only those architectures.
-Native `perf` gives the smallest credible path.
-The workflow must capability-test each donated runner rather than assume its kernel exposes a usable
-PMU.
+| Architecture | Historical rscrypto / external median | Ratio | First production target |
+| --- | --- | ---: | --- |
+| Intel | AES-128-GCM-SIV 32 B: 203.16 / 91.1 ns (AWS-LC) | 0.449x | Short-message tag, key schedule, and CTR path |
+| AMD | AES-SIV-CMAC-256 construction: 77.8 / 30.6 ns (RustCrypto) | 0.393x | AES-128 key expansion in context construction |
+| AArch64 | Argon2id OWASP: 21.965 / 11.392 ms (RustCrypto) | 0.519x | NEON block compression |
+| POWER | keyed BLAKE3 64 B: 229.4 / 115.8 ns (official BLAKE3) | 0.505x | Unlocalized until a valid capture |
 
-If sampling is unavailable, static codegen plus exact elapsed measurements remain useful
-but cannot establish the hot path.
-That is an explicit blocker, not permission to guess.
-A profiling-only frame-pointer build may be used as a secondary experiment,
-but it must be labeled as a different artifact and confirmed against the unchanged production build
-before driving an optimization.
+### RISC-V — P-256 public derivation
 
-### Workflow acceptance
+The flat `cycles:u` report attributes 97.14% self to `p256_portable::ct_mul_u64_wide` and 1.62% to `montgomery_mul`.
+The selected P-256 field path calls this deliberately fixed-work 64-by-64-bit multiply through
+Montgomery arithmetic.
+Its 64 conditional-add rounds per product explain
+where this production operation spends its sampled cycles;
+the profile does not establish the fraction of the gap against CRRL caused by that choice.
+Inspect target assembly and CT evidence for a faster fixed-work field representation/multiply,
+then compare exact public derivation and agreement on native RISC-V.
+Do not replace it with target multiplication without proving secret-independent latency
+and preserving the CT contract.
 
-- [ ] Unit tests cover request validation, exact-case selection, budgets, partial event support,
-      collector failure, evidence sealing, and failed-run artifact retention.
-- [ ] One successful capture from each architecture has attributable rscrypto and dependency frames,
-      complete machine identity, and locally readable text reports.
-- [ ] Re-running the same request does not depend on an interactive shell
-      or unretained runner state.
+### IBM Z — P-256 public derivation
+
+No sampled hot path exists yet.
+The same fixed-work multiply is selected by `cfg(target_arch = "s390x")`, making it the first hypothesis,
+not a measured IBM Z finding.
+Resolve native perf access, capture the exact public-key case,
+and check whether field multiplication dominates before sharing a RISC-V fix.
+The existing public-key/agreement/parse rows remain open.
+
+### Intel x86-64 — AES-128-GCM-SIV, 32-byte seal
+
+The profile attributes 35.65% inclusive to `compute_tag_wide`
+(including 15.41% self in `polyval::pclmul::clmul128_reduce`),
+23.67% inclusive to `aes128_expand_key`, 20.63% self to wide CTR encryption, and 12.10% inclusive to `derive_keys`.
+Per-nonce subkeys must still be derived by the algorithm.
+Inspect generated code and isolate tag/POLYVAL
+and per-message key expansion on the real 32-byte seal path;
+compare the same complete encryption contract against AWS-LC
+before choosing a bounded production change.
+
+### AMD x86-64 — AES-SIV-CMAC-256 construction
+
+`AesSivCmac256::new` accounts for 81.27% inclusive and `aes128_expand_key` for 72.00% inclusive.
+Construction expands both 16-byte key halves and derives CMAC subkeys.
+Several large libc addresses lack function names;
+do not label them cleanup or copying without symbol evidence.
+Inspect both AES expansions, CMAC setup, and destruction on the exact construct/destroy workload;
+compare equivalent RustCrypto construction on the same AMD host.
+
+### AArch64 — Argon2id OWASP profile
+
+`argon2::aarch64::compress_neon` accounts for 95.23% inclusive (94.02% self) inside `fill_segment_inner`; matrix cleanup is 2.22% self.
+The workload uses 19 MiB, two passes, one lane, a 16-byte salt, and 32-byte raw output.
+Inspect the production NEON compression's generated rounds, spills, and memory traffic,
+then compare equivalent full hashes against RustCrypto on the same host.
+Do not reduce Argon2 work factors to improve this ratio.
+
+### POWER — keyed BLAKE3, 64 bytes
+
+The benchmark loss is real, and diagnostics report the portable streaming kernel,
+but this capture yields no attributable samples.
+Rerun the exact case with the sample-validating flat fallback,
+then inspect the 64-byte keyed digest's compression and setup costs.
+Do not optimize from the empty report.
 
 ## Phase 2 — Profile the shared cause
 
-Use this order because it maximizes information per CI run:
+Use the RISC-V wide-multiply finding first; IBM Z is gated on native sampling:
 
-1. IBM Z `p256-ecdh/public-key/rscrypto-selected`.
-1. RISC-V `p256-ecdh/public-key/rscrypto-selected`.
-1. IBM Z and RISC-V `p256-ecdh/agreement/rscrypto-selected`.
-1. IBM Z `p256-ecdh/parse/rscrypto`.
-1. RISC-V P-256/P-384 public derivation and P-384 signing.
-1. POWER control captures for any hot symbol changed by the proposed fix.
+1. Inspect and confirm the RISC-V `ct_mul_u64_wide` cost with target codegen
+   and a repeat or controlled production-path experiment.
+1. After the runner owner enables perf, profile IBM Z
+   `p256-ecdh/public-key/rscrypto-selected` and test whether it shares that cost.
+1. Revisit IBM Z and RISC-V `p256-ecdh/agreement/rscrypto-selected`,
+   IBM Z P-256 parsing, then RISC-V P-256/P-384 public derivation and P-384 signing.
+1. Use a valid POWER control capture if a proposed change touches shared code.
 
 - [ ] Attribute fixed-base multiplication, arbitrary-point multiplication,
       field multiplication/reduction, scalar reduction, inversion, coordinate conversion,
@@ -169,8 +213,11 @@ After the catastrophic cross-target rows close:
 1. Linux x86-64 P-384 signing.
 1. `RapidStreamHasher` large one-write throughput on x86-64.
 1. ML-KEM decapsulation, especially where the current aggregate loses.
-1. Short-message AES-GCM/AES-GCM-SIV fixed cost and RISC-V XXH3 only
-   if a fresh focused run confirms material impact.
+1. The Intel AES-128-GCM-SIV, AMD AES-SIV construction, AArch64 Argon2id,
+   and POWER keyed BLAKE3 cases localized or blocked above; confirm candidates
+   with focused same-host elapsed measurements before a production change.
+1. Other short-message AES-GCM fixed cost and RISC-V XXH3 only if a fresh
+   focused run confirms material impact.
 
 Do not restore the stale ML-KEM key-generation priority:
 the September campaign measured key generation as a win.
