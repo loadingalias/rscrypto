@@ -32,15 +32,6 @@ from settings import PROFILE_CAPTURE_MAX_SECONDS, load
 
 PROFILE_KIND = 'rscrypto.cross.profile'
 SAMPLE_FREQUENCY = 99
-STAT_EVENTS = (
-  'task-clock',
-  'cycles:u',
-  'instructions:u',
-  'branches:u',
-  'branch-misses:u',
-  'cache-references:u',
-  'cache-misses:u',
-)
 
 
 class ProfileUnavailable(RuntimeError):
@@ -93,7 +84,7 @@ def host_facts(perf: str | None, env: dict) -> dict:
 
 
 def capabilities(perf: str, root: Path, env: dict,
-                 allow_callchain: bool) -> tuple[list[str], str | None, bool, list[dict]]:
+                 allow_callchain: bool) -> tuple[str | None, bool, list[dict]]:
   commands = []
   noop = [sys.executable, '-c',
           'import time\nend = time.monotonic() + 0.1\nwhile time.monotonic() < end: pass']
@@ -111,24 +102,12 @@ def capabilities(perf: str, root: Path, env: dict,
           command += ['--call-graph', 'dwarf']
         result = probe([*command, '--', *noop], env)
         commands.append(result)
-        if result['exit_code'] != 0:
-          continue
-        samples = probe([perf, 'script', '--input', output], env)
-        commands.append(samples)
-        if samples['exit_code'] == 0 and samples['stdout'].strip():
+        if result['exit_code'] == 0 and output_path.is_file() and output_path.stat().st_size > 0:
           sample_event, callchain = event, with_callchain
           break
       if sample_event is not None:
         break
-  if sample_event is None:
-    return [], None, False, commands
-  supported = []
-  for event in STAT_EVENTS:
-    result = probe([perf, 'stat', '--event', event, '--', *noop], env)
-    commands.append(result)
-    if result['exit_code'] == 0:
-      supported.append(event)
-  return supported, sample_event, callchain, commands
+  return sample_event, callchain, commands
 
 
 def unavailable_cause(probes: list[dict]) -> str:
@@ -163,30 +142,14 @@ def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | 
     raise ProfileUnavailable('native runner does not provide perf')
   riscv_host = os.uname().machine.startswith('riscv')
   allow_callchain = not riscv_host
-  events, sample_event, callchain, probes = capabilities(perf, root, env, allow_callchain)
-  write_json(root / 'capabilities.json', {'stat_events': events, 'sample_event': sample_event,
+  sample_event, callchain, probes = capabilities(perf, root, env, allow_callchain)
+  write_json(root / 'capabilities.json', {'sample_event': sample_event,
                                          'callchain': 'dwarf' if callchain else 'flat',
                                          'access': 'runner', 'probes': probes})
   if sample_event is None:
     raise ProfileUnavailable(unavailable_cause(probes))
 
   collector_info = collector(perf, sample_event, callchain, host)
-  stat_error = None
-  if events:
-    stat_output = root / 'perf-stat.txt'
-    stat_output.touch()
-    stat = [perf, 'stat', '--output', str(stat_output)]
-    for event in events:
-      stat += ['--event', event]
-    try:
-      execute([*stat, '--', *command], root / 'output.txt', env=env)
-      if not (root / 'perf-stat.txt').is_file() or (root / 'perf-stat.txt').stat().st_size == 0:
-        raise ProfileIncomplete('perf stat produced no counter output')
-    except CAPTURE_ERRORS as error:
-      stat_error = error
-  else:
-    stat_error = ProfileIncomplete('native perf exposes no supported stat events')
-
   record_output = root / 'perf.data'
   record_output.touch()
   record = [perf, 'record', '--output', str(record_output), '--event', sample_event,
@@ -199,10 +162,11 @@ def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | 
       raise ProfileIncomplete('perf record produced no raw profile')
   except CAPTURE_ERRORS as error:
     cause = f'perf record failed with exit code {exit_code(error)}'
-    return ('partial' if stat_error is None else 'failed'), cause, collector_info
+    return 'failed', cause, collector_info
 
   try:
-    report = execute([perf, 'report', '--stdio', '--header', '--input', str(root / 'perf.data')],
+    report = execute([perf, 'report', '--stdio', '--no-inline', '--percent-limit', '0.5',
+                      '--input', str(root / 'perf.data')],
                      root / 'output.txt', env=env, capture=True)
     if not report.strip() or re.search(r'# Samples:\s+0\b', report):
       raise ProfileIncomplete('perf report produced no sampled text output')
@@ -213,20 +177,6 @@ def perf_capture(root: Path, command: list[str], env: dict) -> tuple[str, str | 
     return 'partial', str(error), collector_info
   except (OSError, subprocess.CalledProcessError) as error:
     return 'partial', f'perf report failed with exit code {exit_code(error)}', collector_info
-
-  try:
-    samples = execute([perf, 'script', '--input', str(root / 'perf.data')],
-                      root / 'output.txt', env=env, capture=True)
-    if not samples.strip():
-      raise ProfileIncomplete('perf record produced no retained samples')
-    (root / 'perf-script.txt').write_text(samples)
-  except ProfileIncomplete as error:
-    return 'partial', str(error), collector_info
-  except (OSError, subprocess.CalledProcessError) as error:
-    return 'partial', f'perf script failed with exit code {exit_code(error)}', collector_info
-
-  if stat_error is not None:
-    return 'partial', f'perf stat failed with exit code {exit_code(stat_error)}', collector_info
   return 'complete', None, collector_info
 
 

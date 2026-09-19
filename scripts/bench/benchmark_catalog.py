@@ -82,25 +82,14 @@ def validate_catalog(catalog: dict) -> None:
   for name, preset in presets.items():
     if not re.fullmatch(r"[a-z0-9-]+/[a-z0-9-]+", name):
       raise CatalogError(f"invalid profile preset name: {name}")
-    bench = benches.get(preset.get("bench")) if isinstance(preset, dict) else None
+    if not isinstance(preset, dict) or set(preset) != {"bench", "case", "diagnostic"}:
+      raise CatalogError(f"profile preset {name} must contain bench, case, and diagnostic")
+    bench = benches.get(preset.get("bench"))
     if bench is None or bench["kind"] != "criterion":
       raise CatalogError(f"profile preset {name} references an unknown Criterion bench")
     case = preset.get("case")
-    cases_by_architecture = preset.get("cases_by_architecture")
-    if (case is None) == (cases_by_architecture is None):
-      raise CatalogError(f"profile preset {name} needs one exact case or one architecture case map")
-    if case is not None and (not isinstance(case, str) or not case):
+    if not isinstance(case, str) or not case:
       raise CatalogError(f"profile preset {name} needs one exact case")
-    if cases_by_architecture is not None:
-      if not isinstance(cases_by_architecture, dict) or not cases_by_architecture:
-        raise CatalogError(f"profile preset {name} needs a non-empty architecture case map")
-      for architecture, cases in cases_by_architecture.items():
-        if not re.fullmatch(r"[a-z0-9_-]+", architecture):
-          raise CatalogError(f"profile preset {name} has an invalid architecture: {architecture}")
-        if (not isinstance(cases, list) or not cases
-            or any(not isinstance(item, str) or not item for item in cases)
-            or len(cases) != len(set(cases))):
-          raise CatalogError(f"profile preset {name} needs unique exact cases for {architecture}")
     if not isinstance(preset.get("diagnostic"), bool):
       raise CatalogError(f"profile preset {name} needs a Boolean diagnostic field")
 

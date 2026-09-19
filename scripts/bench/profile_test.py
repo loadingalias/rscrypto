@@ -106,32 +106,28 @@ class ProfileTests(unittest.TestCase):
     self.assertEqual(collector['frequency'], profile_runner.SAMPLE_FREQUENCY)
     self.assertEqual(collector['access'], 'runner')
     self.assertEqual(collector['version'], 'perf fixture')
-    for name in ('host.json', 'capabilities.json', 'perf-stat.txt', 'perf.data', 'perf-report.txt',
-                 'perf-script.txt', 'output.txt'):
+    for name in ('host.json', 'capabilities.json', 'perf.data', 'perf-report.txt', 'output.txt'):
       self.assertTrue((root / name).is_file(), name)
     output = (root / 'output.txt').read_text()
     self.assertIn(f'--freq {profile_runner.SAMPLE_FREQUENCY}', output)
-
-  def test_perf_capture_replaces_non_utf8_report_bytes(self):
-    root, (status, cause, _) = self.perf(NON_UTF8_PERF_REPORT='1')
-    self.assertEqual((status, cause), ('complete', None))
-    report = (root / 'perf-report.txt').read_text()
-    self.assertIn('rscrypto::production_frame', report)
-    self.assertIn('\ufffd', report)
+    self.assertIn('report --stdio --no-inline --percent-limit 0.5', output)
+    self.assertNotIn('perf stat', output)
+    self.assertNotIn('perf script', output)
 
   def test_perf_capture_falls_back_and_keeps_partial_failures(self):
     _, (status, _, collector) = self.perf(FAIL_PERF_DWARF='1')
     self.assertEqual(status, 'complete')
     self.assertEqual(collector['callchain'], 'flat')
-    for environment in ({'FAIL_PERF_STAT': '1'}, {'FAIL_PERF_CAPTURE': '1'}, {'FAIL_PERF_REPORT': '1'},
-                        {'FAIL_PERF_SCRIPT': '1'}, {'ZERO_PERF_SAMPLES': '1'}):
+    for environment, expected in (({'FAIL_PERF_CAPTURE': '1'}, 'failed'),
+                                  ({'FAIL_PERF_REPORT': '1'}, 'partial'),
+                                  ({'ZERO_PERF_SAMPLES': '1'}, 'partial')):
       with self.subTest(environment=environment):
         root = self.root / 'target/perf-unit'
         for path in root.iterdir():
           if path.is_file():
             path.unlink()
         _, (status, cause, _) = self.perf(**environment)
-        self.assertEqual(status, 'partial')
+        self.assertEqual(status, expected)
         self.assertTrue(cause)
 
   def test_perf_capture_uses_flat_sampling_on_riscv(self):

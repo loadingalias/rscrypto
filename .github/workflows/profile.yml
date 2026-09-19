@@ -1,5 +1,5 @@
 name: Profile
-run-name: Profile ${{ inputs.architecture }} / ${{ inputs.workload }} / ${{ inputs.seconds }}s
+run-name: Profile ${{ inputs.architecture }} / ${{ inputs.primitive }}
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
         description: Native Linux architecture
         type: choice
         required: true
-        default: s390x-linux
+        default: x86_64-linux-intel
         options:
           - x86_64-linux-intel
           - x86_64-linux-amd
@@ -16,8 +16,8 @@ on:
           - s390x-linux
           - riscv64-linux
           - powerpc64le-linux
-      workload:
-        description: Curated family/algorithm profile preset
+      primitive:
+        description: Exact production primitive profile
         type: choice
         required: true
         default: aead/aes
@@ -28,20 +28,9 @@ on:
           - aead/ascon
           - auth/p256-ecdh
           - auth/p384-sign
-          - auth/cross-target-losses
           - hashes/sha256
           - hashes/blake3
           - checksums/crc32c
-      seconds:
-        description: Seconds per perf pass
-        type: choice
-        required: true
-        default: "5"
-        options:
-          - "3"
-          - "5"
-          - "10"
-          - "15"
 
 permissions:
   contents: read
@@ -49,8 +38,7 @@ permissions:
 env:
   CARGO_RAIL_CACHE: "off"
   INPUT_ARCHITECTURE: ${{ inputs.architecture }}
-  INPUT_WORKLOAD: ${{ inputs.workload }}
-  INPUT_SECONDS: ${{ inputs.seconds }}
+  INPUT_PRIMITIVE: ${{ inputs.primitive }}
 
 concurrency:
   group: profile-${{ inputs.architecture }}
@@ -69,7 +57,7 @@ jobs:
       tooling_platform: ${{ steps.plan.outputs.tooling_platform }}
       runner: ${{ steps.plan.outputs.runner }}
       target: ${{ steps.plan.outputs.target }}
-      workload: ${{ steps.plan.outputs.workload }}
+      primitive: ${{ steps.plan.outputs.primitive }}
       prepare_timeout: ${{ steps.plan.outputs.prepare_timeout }}
       capture_timeout: ${{ steps.plan.outputs.capture_timeout }}
     steps:
@@ -81,7 +69,7 @@ jobs:
 
   prepare:
     needs: plan
-    name: Prepare ${{ needs.plan.outputs.architecture }} / ${{ needs.plan.outputs.workload }}
+    name: Prepare ${{ needs.plan.outputs.architecture }} / ${{ needs.plan.outputs.primitive }}
     runs-on: runs-on=${{ github.run_id }}-${{ needs.plan.outputs.target }}/runner=bench-cross-build/env=production
     timeout-minutes: ${{ fromJSON(needs.plan.outputs.prepare_timeout) }}
     env:
@@ -116,7 +104,7 @@ jobs:
 
   capture:
     needs: [plan, prepare]
-    name: Profile ${{ needs.plan.outputs.architecture }} / ${{ needs.plan.outputs.workload }}
+    name: Profile ${{ needs.plan.outputs.architecture }} / ${{ needs.plan.outputs.primitive }}
     runs-on: ${{ needs.plan.outputs.runner }}
     timeout-minutes: ${{ fromJSON(needs.plan.outputs.capture_timeout) }}
     env:

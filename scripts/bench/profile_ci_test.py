@@ -35,34 +35,23 @@ def workflow_input(name: str) -> tuple[str, list[str]]:
 class ManualProfile(unittest.TestCase):
   def environment(self, **overrides):
     return {
-      'INPUT_ARCHITECTURE': 's390x-linux',
-      'INPUT_WORKLOAD': 'aead/aes',
-      'INPUT_SECONDS': '5',
+      'INPUT_ARCHITECTURE': 'x86_64-linux-intel',
+      'INPUT_PRIMITIVE': 'aead/aes',
     } | overrides
 
   def test_request_resolves_one_exact_catalog_preset_and_runner(self):
     selection = profile_ci.request(self.environment(), '42')
-    self.assertEqual(selection['architecture'], 's390x-linux')
-    self.assertEqual(selection['target'], 's390x-unknown-linux-gnu')
-    self.assertEqual(selection['runner'], 'ubuntu-24.04-s390x')
-    self.assertEqual(selection['workload'], 'aead/aes')
+    self.assertEqual(selection['architecture'], 'x86_64-linux-intel')
+    self.assertEqual(selection['target'], 'x86_64-unknown-linux-gnu')
+    self.assertEqual(selection['runner'], 'runs-on=42/runner=measure-x86_64-linux-intel/env=production')
+    self.assertEqual(selection['primitive'], 'aead/aes')
     self.assertEqual(selection['benchmark'], 'aead')
-    self.assertEqual(selection['cases'], ['aes-128-gcm/copy-and-encrypt/rscrypto/4096'])
+    self.assertEqual(selection['case'], 'aes-128-gcm/copy-and-encrypt/rscrypto/4096')
+    self.assertEqual(selection['seconds'], 5)
     self.assertEqual(selection['binary'], 'aead')
     self.assertNotIn('diag', selection['features'])
     self.assertEqual(selection['prepare_timeout'], 20)
     self.assertEqual(selection['capture_timeout'], 20)
-
-  def test_request_resolves_the_architecture_specific_loss_bundle(self):
-    selection = profile_ci.request(
-      self.environment(INPUT_WORKLOAD='auth/cross-target-losses'), '42')
-    self.assertEqual(selection['benchmark'], 'auth')
-    self.assertEqual(selection['cases'], [
-      'p256-ecdh/public-key/rscrypto-selected',
-      'p256-ecdh/agreement/rscrypto-selected',
-      'p256-ecdh/parse/rscrypto',
-      'ecdsa-p384/public-key/rscrypto-blinded',
-    ])
 
   def test_request_resolves_standard_linux_architectures(self):
     expected = {
@@ -94,55 +83,58 @@ class ManualProfile(unittest.TestCase):
       {'INPUT_ARCHITECTURE': 'all'},
       {'INPUT_ARCHITECTURE': 'x86_64-linux'},
       {'INPUT_ARCHITECTURE': 'aarch64-win'},
-      {'INPUT_WORKLOAD': ''},
-      {'INPUT_WORKLOAD': 'aead'},
-      {'INPUT_WORKLOAD': 'aead/$(touch never)'},
-      {'INPUT_SECONDS': '0'},
-      {'INPUT_SECONDS': '16'},
-      {'INPUT_SECONDS': '1.5'},
+      {'INPUT_PRIMITIVE': ''},
+      {'INPUT_PRIMITIVE': 'aead'},
+      {'INPUT_PRIMITIVE': 'aead/$(touch never)'},
     )
     for override in invalid:
       with self.subTest(override=override), self.assertRaises(ValueError):
         profile_ci.request(self.environment(**override), '42')
 
   def test_dispatch_uses_the_preset_case_as_one_literal_argument(self):
-    selection = profile_ci.request(self.environment(INPUT_WORKLOAD='hashes/blake3'), '42')
+    selection = profile_ci.request(self.environment(INPUT_PRIMITIVE='hashes/blake3'), '42')
     for operation, flag in (('prepare', '--prepare-archive'), ('capture', '--run-archive')):
       with self.subTest(operation=operation):
-        command = profile_ci.command(
-          selection, operation, selection['target'], 'archive with spaces.tar.gz', selection['cases'][0])
+        command = profile_ci.command(selection, operation, selection['target'], 'archive with spaces.tar.gz')
         self.assertEqual(command[:3], ['just', 'profile', 'blake3'])
         self.assertIn('blake3/rscrypto/4096', command)
         self.assertIn('--diag', command)
         self.assertIn(flag, command)
         self.assertEqual(command[-1], 'archive with spaces.tar.gz')
 
-  def test_capture_runs_every_curated_case_after_one_preparation(self):
-    selection = profile_ci.request(
-      self.environment(INPUT_WORKLOAD='auth/cross-target-losses'), '42')
-    env = self.environment(INPUT_WORKLOAD='auth/cross-target-losses') | {'GITHUB_RUN_ID': '42'}
-    completed = [subprocess.CompletedProcess([], code) for code in (0, 7, 0, 0)]
-    with patch.dict(os.environ, env, clear=True), \
-         patch.object(sys, 'argv', ['profile_ci.py', 'capture', selection['target'], 'archive.tar.gz']), \
-         patch.object(profile_ci.subprocess, 'run', side_effect=completed) as run:
-      self.assertEqual(profile_ci.main(), 7)
-    self.assertEqual(run.call_count, len(selection['cases']))
-    commands = [call.args[0] for call in run.call_args_list]
-    self.assertEqual([command[3] for command in commands], selection['cases'])
-    self.assertTrue(all('--run-archive' in command for command in commands))
+  def test_capture_runs_one_case_and_publishes_its_report(self):
+    selection = profile_ci.request(self.environment(INPUT_PRIMITIVE='hashes/sha256'), '42')
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      report = root / 'target/profiles/sha2/perf-report.txt'
+      report.parent.mkdir(parents=True)
+      report.write_text('99.00% sha2 rscrypto::sha256\n')
+      summary = root / 'summary.md'
+      env = self.environment(INPUT_PRIMITIVE='hashes/sha256') | {
+        'GITHUB_RUN_ID': '42',
+        'GITHUB_STEP_SUMMARY': str(summary),
+      }
+      with contextlib.chdir(root), patch.dict(os.environ, env, clear=True), \
+           patch.object(sys, 'argv', ['profile_ci.py', 'capture', selection['target'], 'archive.tar.gz']), \
+           patch.object(profile_ci.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run, \
+           contextlib.redirect_stdout(io.StringIO()):
+        self.assertEqual(profile_ci.main(), 0)
+      run.assert_called_once_with(
+        profile_ci.command(selection, 'capture', selection['target'], 'archive.tar.gz'), check=False)
+      text = summary.read_text()
+      self.assertIn('x86_64-linux-intel` / `hashes/sha256', text)
+      self.assertIn('sha256/rscrypto/4096', text)
+      self.assertIn('rscrypto::sha256', text)
 
   def test_workflow_choices_match_the_validated_policy(self):
     workflow = (ROOT / '.github/workflows/profile.yml').read_text()
     architecture_default, architectures = workflow_input('architecture')
-    workload_default, workloads = workflow_input('workload')
-    seconds_default, seconds = workflow_input('seconds')
-    self.assertEqual(architecture_default, 's390x-linux')
+    primitive_default, primitives = workflow_input('primitive')
+    self.assertEqual(architecture_default, 'x86_64-linux-intel')
     self.assertEqual(set(architectures), profile_ci.ARCHITECTURES)
-    self.assertEqual(workload_default, 'aead/aes')
-    self.assertEqual(workloads, list(profile_ci.load_catalog()['profile_presets']))
-    self.assertEqual(seconds_default, str(profile_ci.settings.PROFILE_CAPTURE_DEFAULT_SECONDS))
-    self.assertEqual(seconds, ['3', '5', '10', '15'])
-    self.assertEqual(int(seconds[-1]), profile_ci.settings.PROFILE_CAPTURE_MAX_SECONDS)
+    self.assertEqual(primitive_default, 'aead/aes')
+    self.assertEqual(primitives, list(profile_ci.load_catalog()['profile_presets']))
+    self.assertNotIn('      seconds:', workflow)
     self.assertIn('RSCRYPTO_REQUIRE_PERF: "1"', workflow)
     self.assertNotIn('RSCRYPTO_PERF_SUDO', workflow)
 
@@ -154,10 +146,10 @@ class ManualProfile(unittest.TestCase):
            contextlib.redirect_stdout(io.StringIO()):
         self.assertEqual(profile_ci.main(), 0)
       values = dict(line.split('=', 1) for line in output.read_text().splitlines())
-      self.assertEqual(values['architecture'], 's390x-linux')
-      self.assertEqual(values['target'], 's390x-unknown-linux-gnu')
-      self.assertEqual(values['runner'], 'ubuntu-24.04-s390x')
-      self.assertEqual(values['workload'], 'aead/aes')
+      self.assertEqual(values['architecture'], 'x86_64-linux-intel')
+      self.assertEqual(values['target'], 'x86_64-unknown-linux-gnu')
+      self.assertEqual(values['runner'], 'runs-on=42/runner=measure-x86_64-linux-intel/env=production')
+      self.assertEqual(values['primitive'], 'aead/aes')
       self.assertEqual(values['prepare_timeout'], '20')
       self.assertEqual(values['capture_timeout'], '20')
 
@@ -168,7 +160,7 @@ class ManualProfile(unittest.TestCase):
       result = subprocess.run([sys.executable, '-I', str(ROOT / 'scripts/bench/profile_ci.py'), 'plan'],
                               env=env, text=True, capture_output=True, check=False)
       self.assertEqual(result.returncode, 0, result.stderr)
-      self.assertEqual(json.loads(result.stdout.removeprefix('Profile request: '))['workload'], 'aead/aes')
+      self.assertEqual(json.loads(result.stdout.removeprefix('Profile request: '))['primitive'], 'aead/aes')
 
 
 if __name__ == '__main__':

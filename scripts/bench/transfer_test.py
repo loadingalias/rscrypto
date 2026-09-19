@@ -97,7 +97,7 @@ class TransferTests(unittest.TestCase):
             binary.unlink()
         self.invoke_profile('run', case='sha256/other/64')
         self.assertEqual(len(self.fixture.calls(listing=True)), 1)
-        self.assertEqual(len(self.fixture.calls()), 2)  # One perf stat pass and one sampled pass.
+        self.assertEqual(len(self.fixture.calls()), 1)
         self.assertEqual((self.root / 'builds.jsonl').read_text().splitlines(), builds)
         results = [path for path in (self.root / 'target/profiles').glob('sha2-*') if path.is_dir()]
         self.assertEqual(len(results), 1)
@@ -108,13 +108,13 @@ class TransferTests(unittest.TestCase):
         self.assertEqual(metadata['request']['case'], 'sha256/other/64')
         self.assertEqual(json.loads((result / 'cases.json').read_text()), ['sha256/other/64'])
         self.assertEqual(json.loads((result / 'bundle.json').read_text())['kind'], profile_runner.PROFILE_KIND)
-        for name in ('perf-stat.txt', 'perf.data', 'perf-report.txt', 'perf-script.txt', 'input/bundle.json'):
+        for name in ('perf.data', 'perf-report.txt', 'input/bundle.json'):
             self.assertTrue((result / name).is_file(), name)
 
     def test_profile_retains_partial_capture_status(self):
         self.invoke_profile('prepare')
         with self.assertRaises(profile_runner.ProfileIncomplete):
-            self.invoke_profile('run', FAIL_PERF_CAPTURE='1')
+            self.invoke_profile('run', FAIL_PERF_REPORT='1')
         results = [path for path in (self.root / 'target/profiles').glob('sha2-*') if path.is_dir()]
         self.assertEqual(len(results), 1)
         result, = results
@@ -122,7 +122,7 @@ class TransferTests(unittest.TestCase):
         self.assertEqual(metadata['status'], 'partial')
         self.assertEqual(metadata['exit_code'], 1)
         self.assertTrue((result / 'bundle.json').is_file())
-        self.assertTrue((result / 'perf-stat.txt').is_file())
+        self.assertTrue((result / 'perf.data').is_file())
 
     def test_changed_request_sampling_source_or_binary_never_measures(self):
         self.invoke('prepare')

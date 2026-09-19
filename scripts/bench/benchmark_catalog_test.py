@@ -80,14 +80,6 @@ def main() -> None:
     "diagnostic": False,
   }:
     fail("aead/aes profile preset no longer names the representative production case")
-  cross_target_profile = catalog["profile_presets"].get("auth/cross-target-losses")
-  if cross_target_profile is None or cross_target_profile["cases_by_architecture"]["s390x-linux"] != [
-    "p256-ecdh/public-key/rscrypto-selected",
-    "p256-ecdh/agreement/rscrypto-selected",
-    "p256-ecdh/parse/rscrypto",
-    "ecdsa-p384/public-key/rscrypto-blinded",
-  ]:
-    fail("cross-target profile preset no longer owns the IBM Z loss cases")
   for field, value in (("bench", "structural"), ("case", ""), ("diagnostic", "false")):
     broken = copy.deepcopy(catalog)
     broken["profile_presets"]["aead/aes"][field] = value
@@ -97,16 +89,14 @@ def main() -> None:
       pass
     else:
       fail(f"catalog accepted invalid profile preset {field}")
-  for value in ({}, {"s390x-linux": []}, {"s390x-linux": ["case", "case"]},
-                {"x86/64-linux": ["case"]}):
-    broken = copy.deepcopy(catalog)
-    broken["profile_presets"]["auth/cross-target-losses"]["cases_by_architecture"] = value
-    try:
-      validate_catalog(broken)
-    except CatalogError:
-      pass
-    else:
-      fail("catalog accepted invalid architecture profile cases")
+  broken = copy.deepcopy(catalog)
+  broken["profile_presets"]["aead/aes"]["cases_by_architecture"] = {"s390x-linux": ["case"]}
+  try:
+    validate_catalog(broken)
+  except CatalogError:
+    pass
+  else:
+    fail("catalog accepted an architecture-specific profile bundle")
   for case in ("blake2/rscrypto/blake2b256/64", "blake2/dryoc/blake2b256/64",
                "blake2/keyed/dryoc/blake2b256/64", "blake2/streaming/dryoc/blake2b256/64B",
                "blake2/params/rscrypto/blake2b256/salt+personal/64"):

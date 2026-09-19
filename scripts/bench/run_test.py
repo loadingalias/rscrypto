@@ -152,13 +152,8 @@ mode = sys.argv[1]
 args = sys.argv[2:]
 command = args[args.index('--') + 1:] if '--' in args else []
 probe = any('perf-probe-' in arg for arg in args)
-if mode in {'stat', 'record'} and os.environ.get('REQUIRE_PRIVILEGED_PERF') and not os.environ.get('PERF_VIA_SUDO'):
+if mode == 'record' and os.environ.get('REQUIRE_PRIVILEGED_PERF') and not os.environ.get('PERF_VIA_SUDO'):
   sys.exit(5)
-if mode == 'stat':
-  if os.environ.get('FAIL_PERF_STAT') and '--output' in args: sys.exit(4)
-  status = subprocess.run(command).returncode
-  if '--output' in args: pathlib.Path(args[args.index('--output') + 1]).write_text('1,000 cycles\\n')
-  sys.exit(status)
 if mode == 'record':
   if probe and os.environ.get('FAIL_PERF_PROBE'):
     print('Access to performance monitoring is limited. perf_event_paranoid setting is 4', file=sys.stderr)
@@ -166,21 +161,17 @@ if mode == 'record':
   if probe and '--call-graph' in args and os.environ.get('FAIL_PERF_DWARF'): sys.exit(5)
   if not probe and os.environ.get('FAIL_PERF_CAPTURE'): sys.exit(7)
   status = subprocess.run(command).returncode
-  if status == 0: pathlib.Path(args[args.index('--output') + 1]).write_text('perf data fixture')
+  if status == 0 and not (probe and os.environ.get('ZERO_PERF_PROBE_SAMPLES')):
+    pathlib.Path(args[args.index('--output') + 1]).write_text('perf data fixture')
   sys.exit(status)
 if mode == 'report':
   if os.environ.get('FAIL_PERF_REPORT'): sys.exit(6)
+  if '--no-inline' not in args:
+    sys.stderr.buffer.write(b'addr2line configuration failed: \\xff\\n')
+    sys.exit(255)
   if os.environ.get('ZERO_PERF_SAMPLES'): print('# Samples: 0 of event cycles:u'); sys.exit(0)
   if os.environ.get('RISCV_MAPPING_SYMBOLS'): print(' 99.00% auth auth [.] $xrv64i2p1_m2p0'); sys.exit(0)
-  if os.environ.get('NON_UTF8_PERF_REPORT'):
-    sys.stdout.buffer.write(b'99.00% criterion-fixture rscrypto::production_frame \\xff\\n')
-    sys.exit(0)
   print('99.00% criterion-fixture rscrypto::production_frame')
-  sys.exit(0)
-if mode == 'script':
-  if not probe and os.environ.get('FAIL_PERF_SCRIPT'): sys.exit(6)
-  if probe and os.environ.get('ZERO_PERF_PROBE_SAMPLES'): sys.exit(0)
-  print('criterion-fixture rscrypto::production_frame')
   sys.exit(0)
 sys.exit(64)
 """)
@@ -302,13 +293,15 @@ sys.exit(64)
                        'earlier successful output\n')
       with self.assertRaises(subprocess.CalledProcessError) as failure:
         execute([sys.executable, '-c',
-                 "import sys; print('failed stdout'); print('failed stderr', file=sys.stderr); sys.exit(9)"],
+                 "import sys; print('failed stdout'); "
+                 "sys.stderr.buffer.write(b'failed stderr: \\xff\\n'); sys.exit(9)"],
                 log, capture=True)
     self.assertEqual(failure.exception.returncode, 9)
     self.assertNotIn('earlier successful output', diagnostic.getvalue())
     self.assertIn('failed stdout\n', diagnostic.getvalue())
-    self.assertIn('failed stderr\n', diagnostic.getvalue())
+    self.assertIn('failed stderr: \ufffd\n', diagnostic.getvalue())
     self.assertIn('earlier successful output', log.read_text())
+    self.assertIn('failed stderr: \ufffd', log.read_text())
 
   def test_discovery_surfaces_failed_command_diagnostics(self):
     for env, code, diagnostic in (

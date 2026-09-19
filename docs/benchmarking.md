@@ -124,29 +124,40 @@ Donated hosts may be shared, and fixed AWS instance types do not eliminate host 
 Equal vCPU counts do not imply equal physical core counts;
 interpret parallel results with the recorded CPU topology.
 
-The separate [Profile workflow](../.github/workflows/profile.yml) accepts one RISC-V, POWER, or IBM Z architecture,
-one curated workload preset, and 3, 5, 10, or 15 seconds per collector pass.
-The benchmark catalog maps a preset to one benchmark target, its diagnostic-feature policy,
-and either one exact production case or a curated architecture-specific case set.
-The default `aead/aes` preset profiles `aes-128-gcm/copy-and-encrypt/rscrypto/4096` for five seconds in each of the counter and sampling passes.
-Its planning job validates the static request before reserving native hardware.
-The x86-64 preparation job cross-builds and seals the production benchmark executable.
-The native job verifies that archive and discovers every selected case exactly once.
-It builds once, then records and seals separate `perf stat` and `perf record` evidence for each case without rebuilding.
+The separate [Profile workflow](../.github/workflows/profile.yml) is manual-only.
+It accepts one native Linux architecture and one curated primitive.
+The benchmark catalog maps each primitive to one benchmark target and one exact production case.
+It also owns the diagnostic-feature policy.
+The default selection is `aead/aes`.
+It profiles `aes-128-gcm/copy-and-encrypt/rscrypto/4096` for five seconds.
+The GitHub UI exposes the same two inputs as the CLI:
+
+```bash
+gh workflow run profile.yml --ref BRANCH \
+  -f architecture=riscv64-linux -f primitive=hashes/sha256
+```
+
+The planning job validates the request before reserving native hardware.
+An x86-64 job cross-builds and seals the production benchmark.
+The native job verifies the archive and discovers the case exactly once.
+It records with `perf record`.
+It renders a symbol hotspot report with `perf report --stdio --no-inline`.
+The report includes call paths when the runner supports them.
+The GitHub job summary shows the report.
+The artifact retains the exact binary, raw `perf.data`, report, and machine identity.
 Native setup prefers the runner's `perf`.
-When the RISC-V runner uses its pinned custom kernel without a matching Ubuntu tools package,
-setup builds `perf` from the matching pinned upstream stable source.
+The pinned RISC-V kernel has no matching Ubuntu tools package.
+Setup therefore builds `perf` from the matching pinned upstream stable source.
 Other donated runners fall back to the pinned Ubuntu generic userspace tool.
 The selected collector version is recorded beside the kernel identity.
-The [Linux perf-event API](https://man7.org/linux/man-pages/man2/perf_event_open.2.html) carries an explicit compatibility size,
-but the live capability probe—not the package name—decides whether the tool
-and host can collect evidence.
-The workflow never elevates `perf` or the benchmark.
-The workflow records missing packages, denied permissions, unsupported events,
-and partial captures without changing host security settings.
+The live capability probe decides whether the tool and host can collect evidence.
+Native setup enables perf events when runner policy denies access.
+The benchmark remains unprivileged.
+The workflow retains evidence for missing packages, denied permissions, and unsupported events.
+It also retains partial captures.
 Native reports and raw evidence remain downloadable for 30 days even when capture fails.
-Preparation has a 20-minute cap and native capture has a 10-minute cap;
-with the five-minute planning cap, execution after runner assignment cannot exceed 35 minutes.
+Preparation and native capture each have a 20-minute cap.
+Planning has a five-minute cap.
 A newer request for the same architecture cancels an older in-progress request.
 Inspect uncertainty and repeat matched measurements before making performance claims.
 
@@ -444,7 +455,7 @@ and capture outcome.
 Source evidence records input hashes, revision, and worktree status.
 Keep the matching executable and its symbols available when investigating a saved profile.
 
-Transferred CI captures instead retain the verified input bundle, `perf-stat.txt`, raw `perf.data`, native `perf-report.txt`,
+Transferred CI captures instead retain the verified input bundle, raw `perf.data`, native `perf-report.txt`,
 host and capability facts, metadata, status, and an outer sealed manifest.
 Only a complete sampled capture exits successfully.
 A partial, unavailable, or failed capture remains downloadable and keeps the workflow non-green.

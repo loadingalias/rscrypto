@@ -47,29 +47,31 @@ def exit_code(error) -> int:
 
 def execute(command: list[str], output: Path, *, env=None, capture=False) -> str:
   print(f"Running: {shlex.join(command)}", flush=True)
-  captured = []
   with output.open("a+") as log:
-    start = log.tell()
     log.write(f"\nRunning: {shlex.join(command)}\n")
     log.flush()
+    if capture:
+      result = subprocess.run(command, env=env, capture_output=True, check=False)
+      stdout = result.stdout.decode("utf-8", errors="replace")
+      stderr = result.stderr.decode("utf-8", errors="replace")
+      log.write(stdout)
+      log.write(stderr)
+      if result.returncode:
+        sys.stderr.write(stdout)
+        sys.stderr.write(stderr)
+        sys.stderr.flush()
+        raise subprocess.CalledProcessError(result.returncode, command)
+      return stdout
     with subprocess.Popen(command, env=env, stdout=subprocess.PIPE,
-                          stderr=log if capture else subprocess.STDOUT) as process:
+                          stderr=subprocess.STDOUT) as process:
       for raw_line in process.stdout:
         line = raw_line.decode("utf-8", errors="replace")
         log.write(line)
-        if capture:
-          captured.append(line)
-        else:
-          print(line, end="", flush=True)
+        print(line, end="", flush=True)
       status = process.wait()
     if status:
-      if capture:
-        log.flush()
-        log.seek(start)
-        shutil.copyfileobj(log, sys.stderr)
-        sys.stderr.flush()
       raise subprocess.CalledProcessError(status, command)
-  return "".join(captured)
+  return ""
 
 
 def build_environment() -> None:

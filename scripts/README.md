@@ -317,22 +317,24 @@ The existing benchmark runner owns measurement and evidence.
 profiling, or cross-target tools.
 See [Benchmarking](../docs/benchmarking.md#run-a-manual-workflow).
 
-`profile.yml` is manual-only and accepts one RISC-V, POWER, or IBM Z architecture, one curated workload preset,
-and 3, 5, 10, or 15 seconds per collector pass.
-`.config/benchmark-matrix.json` maps each preset to one benchmark target, its diagnostic-feature policy,
-and either one exact production case or a curated architecture-specific case set.
-The five-second default yields about ten seconds of execution per case across `perf stat` and `perf record`.
-Bundled presets build once, then capture and seal every exact case separately.
-Preparation and native capture are independently capped at 20 and 10 minutes;
-a newer request for the same architecture cancels the older request.
+`profile.yml` is manual-only and accepts one native Linux architecture and one curated primitive.
+`.config/benchmark-matrix.json` maps each primitive to one benchmark target.
+Each entry names one exact production case.
+It also owns the diagnostic-feature policy.
+The workflow records that case for five seconds.
+Preparation and native capture are independently capped at 20 minutes.
+A newer request for the same architecture cancels the older request.
 It reuses the benchmark cross-build and sealed transfer path.
-The native runner verifies and discovers the transferred executable before running `perf stat`, `perf record`, `perf report --stdio`, and `perf script`;
-it never rebuilds production code.
+The native runner verifies and discovers the transferred executable.
+It then runs `perf record` and `perf report --stdio --no-inline`.
+The job summary shows the report.
+The artifact retains the raw capture, and the native runner never rebuilds production code.
 Native setup prefers the runner's `perf`, then a matching Ubuntu package.
-For the pinned RISC-V custom kernel, it builds `perf` from the matching pinned upstream stable source;
-other donated runners fall back to the pinned Ubuntu generic userspace tool when no matching package exists.
+The pinned RISC-V kernel has no matching Ubuntu tools package.
+Setup builds `perf` from the matching pinned upstream stable source.
+Other donated runners fall back to the pinned Ubuntu generic userspace tool.
 The live probes decide whether the result is usable.
-The workflow never elevates `perf` or changes host security policy.
+Native setup enables perf events when runner policy denies the unprivileged capture.
 Setup, missing-package, denied-permission, and collector failures remain retained evidence.
 Preparation and native result artifacts are retained even when collection fails.
 
