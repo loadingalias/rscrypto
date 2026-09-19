@@ -372,6 +372,16 @@
       "case": "aes-128-gcm/copy-and-encrypt/rscrypto/4096",
       "diagnostic": false
     },
+    "aead/aes128-gcm-siv": {
+      "bench": "aead",
+      "case": "aes-128-gcm-siv/copy-and-encrypt/rscrypto/32",
+      "diagnostic": false
+    },
+    "aead/aes-siv-cmac256": {
+      "bench": "aead",
+      "case": "aes-siv-cmac-256/construct/rscrypto",
+      "diagnostic": false
+    },
     "aead/chacha20": {
       "bench": "aead",
       "case": "chacha20-poly1305/copy-and-encrypt/rscrypto/4096",
@@ -397,6 +407,11 @@
       "case": "ecdsa-p384/sign/rscrypto-deterministic/32",
       "diagnostic": false
     },
+    "auth/argon2id": {
+      "bench": "password_hashing",
+      "case": "argon2id-owasp/salt16-raw32/rscrypto/m=19MiB_t=2_p=1",
+      "diagnostic": false
+    },
     "hashes/sha256": {
       "bench": "sha2",
       "case": "sha256/rscrypto/4096",
@@ -405,6 +420,11 @@
     "hashes/blake3": {
       "bench": "blake3",
       "case": "blake3/rscrypto/4096",
+      "diagnostic": true
+    },
+    "hashes/blake3-keyed": {
+      "bench": "blake3",
+      "case": "blake3/keyed/rscrypto/64",
       "diagnostic": true
     },
     "checksums/crc32c": {
