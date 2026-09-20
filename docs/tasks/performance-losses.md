@@ -15,8 +15,10 @@ This task is complete when:
 
 - the exact workloads have native CI profiles with attributable symbols and retained raw evidence;
 - each shared cause is demonstrated rather than inferred from portable source;
-- corrected cases reach the repository's `0.95x` tie boundary,
-  or a reviewed equivalent-work analysis records why a remaining comparison is not a valid target;
+- corrected cases aim for at least 10% lower median elapsed time than the fastest current
+  equivalent implementation; a reviewed target-native analysis may instead close a case
+  when both implementations have reached the same physical or platform lower bound,
+  or when the remaining comparison is not equivalent work;
   and
 - the complete benchmark matrix and applicable correctness, CT, cleanup, dispatch,
   and target evidence pass on the final revision.
@@ -113,6 +115,44 @@ Inspect target assembly and CT evidence for a faster fixed-work field representa
 then compare exact public derivation and agreement on native RISC-V.
 Do not replace it with target multiplication without proving secret-independent latency
 and preserving the CT contract.
+
+#### Current RISC-V candidate (2026-09-20; not closed)
+
+The production candidate replaces the 64-round software product on RV64 with safe Rust that lowers to
+`mul` and `mulhu`. It normalizes both multiplier operands to set the high bit, then applies a branchless
+correction, so operand magnitude does not vary with the secret. The same bounded change adds a sparse
+P-256 Montgomery reduction, a 10-product square, a fixed inversion chain, direct Jacobian conversion,
+and a three-way width-seven fixed-base comb. The comb performs 12 doublings, 36 mixed additions,
+and 37 fixed-count full-table scans. Its three 8 KiB tables are shared with ECDSA instead of retaining
+a second P-256 table implementation. The candidate adds no dependency, vendored implementation,
+unsafe code, intrinsic, or assembly.
+
+The local AArch64 portable-path benchmark exercises the production
+`P256EphemeralSecret::public_key` API. Two usable rscrypto intervals were
+`[24.225, 24.397] us` and `[24.676, 25.983] us`; the uncontended CRRL interval from the same
+benchmark binary was `[28.926, 29.075] us`. Even the conservative rscrypto upper bound against
+the CRRL lower bound is 10.17% lower elapsed time. This clears the performance goal on the host proxy,
+but it is not RISC-V performance evidence and does not close the historical row.
+
+Current correctness evidence passes:
+
+- four focused arithmetic, inversion, fixed-base, and table tests;
+- exhaustive independent RustCrypto checks for all 381 nonzero entries across the three comb tables;
+- six production-API P-256 ECDH oracles covering NIST CAVP, RustCrypto, ring, an independent
+  pure-Rust implementation, encoding boundaries, and the full Wycheproof point corpus; and
+- eight P-256/P-384 ECDSA production-API oracle tests because ECDSA now shares the P-256 table owner.
+
+The final RV64 release codegen has an 832-byte public-key stack frame and five conditional branches:
+four fixed-count 128-entry scans and the fixed 12-round loop. The selector assertion constant-folds away.
+Fresh `just ct-artifacts --target riscv64gc-unknown-linux-gnu --profile release` evidence reports
+no `needs-fix` finding. It classifies the five public-key branches and the 32 multiply plus 20 square
+hardware-multiply instructions as `needs-binsec`; manual review confirms the branches are fixed-count,
+but static inspection cannot prove the latency of a secret-fed RISC-V multiplier.
+
+The remaining sign-off gates are target-native execution of the exact public-key and agreement benchmarks,
+the correctness suite, and the Dudect harness on the physical RISC-V runner. This workspace has no configured
+RISC-V SSH target, so cross-compilation and static CT evidence are the strongest available local checks.
+Do not mark this row closed or update the retained benchmark matrix until those native checks pass.
 
 ### IBM Z — P-256 public derivation
 

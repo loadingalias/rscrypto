@@ -19,8 +19,6 @@ use crate::{
 #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
 #[path = "ecdsa_aarch64_asm.rs"]
 mod ecdsa_aarch64_asm;
-#[path = "ecdsa_generator_tables.rs"]
-mod ecdsa_generator_tables;
 #[cfg(any(
   test,
   not(any(
@@ -36,9 +34,9 @@ mod ecdsa_safegcd;
 #[path = "ecdsa_x86_64_asm.rs"]
 mod ecdsa_x86_64_asm;
 
-use ecdsa_generator_tables::{
+use super::ecdsa_generator_tables::{
   P256_SIGNING_COMB_WIDTH, P256_SIGNING_GENERATOR_COMB_X, P256_SIGNING_GENERATOR_COMB_Y, P384_SIGNING_COMB_WIDTH,
-  P384_SIGNING_GENERATOR_COMB_X, P384_SIGNING_GENERATOR_COMB_Y,
+  P384_SIGNING_GENERATOR_COMB_X, P384_SIGNING_GENERATOR_COMB_Y, Uint as GeneratorTableUint,
 };
 
 #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
@@ -2563,8 +2561,8 @@ struct Curve<const L: usize> {
   generator_comb_y: [Uint<L>; COMB_TABLE_SIZE],
   signing_comb_width: usize,
   signing_comb_rows: usize,
-  signing_generator_comb_x: &'static [Uint<L>],
-  signing_generator_comb_y: &'static [Uint<L>],
+  signing_generator_comb_x: &'static [GeneratorTableUint<L>],
+  signing_generator_comb_y: &'static [GeneratorTableUint<L>],
 }
 
 impl<const L: usize> Curve<L> {
@@ -3528,8 +3526,8 @@ fn p384_field_square_words(value: [u64; 6]) -> [u64; 6] {
 
 #[cfg(test)]
 fn select_p384_signing_generator_affine_ct(digit: usize) -> P384Affine {
-  let mut x = P384_SIGNING_GENERATOR_COMB_X[0];
-  let mut y = P384_SIGNING_GENERATOR_COMB_Y[0];
+  let mut x = Uint(P384_SIGNING_GENERATOR_COMB_X[0].0);
+  let mut y = Uint(P384_SIGNING_GENERATOR_COMB_Y[0].0);
 
   for (index, (&candidate_x, &candidate_y)) in P384_SIGNING_GENERATOR_COMB_X
     .iter()
@@ -3538,8 +3536,8 @@ fn select_p384_signing_generator_affine_ct(digit: usize) -> P384Affine {
     .skip(1)
   {
     let mask = mask_eq_usize(digit, index);
-    x = Uint::select(x, candidate_x, mask);
-    y = Uint::select(y, candidate_y, mask);
+    x = Uint::select(x, Uint(candidate_x.0), mask);
+    y = Uint::select(y, Uint(candidate_y.0), mask);
   }
 
   P384Affine {
@@ -3730,8 +3728,8 @@ fn signing_comb_digit_ct<const L: usize>(scalar: Uint<L>, row: usize, rows: usiz
 }
 
 fn select_signing_generator_affine_ct<const L: usize>(curve: &Curve<L>, digit: usize) -> Affine<L> {
-  let mut x = curve.signing_generator_comb_x[0];
-  let mut y = curve.signing_generator_comb_y[0];
+  let mut x = Uint(curve.signing_generator_comb_x[0].0);
+  let mut y = Uint(curve.signing_generator_comb_y[0].0);
   for (index, (&candidate_x, &candidate_y)) in curve
     .signing_generator_comb_x
     .iter()
@@ -3744,8 +3742,8 @@ fn select_signing_generator_affine_ct<const L: usize>(curve: &Curve<L>, digit: u
     // the matching table entry. Keep the mask opaque so every entry is read.
     // Target-specific generated-code and native timing evidence remain required.
     let mask = core::hint::black_box(mask);
-    x = Uint::select(x, candidate_x, mask);
-    y = Uint::select(y, candidate_y, mask);
+    x = Uint::select(x, Uint(candidate_x.0), mask);
+    y = Uint::select(y, Uint(candidate_y.0), mask);
   }
   Affine {
     x: FieldElement::from_montgomery(x, curve.field_modulus),

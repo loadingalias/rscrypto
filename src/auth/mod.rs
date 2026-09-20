@@ -137,6 +137,23 @@ pub mod argon2;
 pub(crate) mod curve25519_edwards;
 #[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
 pub mod ecdsa;
+#[cfg(any(
+  test,
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
+  all(
+    feature = "p256-ecdh",
+    any(
+      feature = "portable-only",
+      miri,
+      not(any(
+        all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+        all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+      ))
+    )
+  )
+))]
+mod ecdsa_generator_tables;
 #[cfg(feature = "ed25519")]
 pub mod ed25519;
 #[cfg(feature = "hkdf")]
