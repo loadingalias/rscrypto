@@ -56,27 +56,23 @@ The native runner verifies and executes that binary without rebuilding it.
 Each run retained the binary, source-bound manifest, host/capability facts,
 raw `perf.data` when capture started, text output, and final status.
 The downloaded binary hashes match the manifests.
-All six runs used `a314ea81dd615e40d925efd5c05a5be5e719cb4f`.
+The initial six runs used `a314ea81dd615e40d925efd5c05a5be5e719cb4f`; the successful POWER rerun used `23dc2f703680257de0f5fc9fd766dc320b96da63`.
 
 | Architecture | Exact case | Workflow | Native evidence |
 | --- | --- | --- | --- |
 | Intel x86-64 | `aes-128-gcm-siv/copy-and-encrypt/rscrypto/32` | [success](https://github.com/loadingalias/rscrypto/actions/runs/35411075950) | [499 samples, 0 lost; DWARF](https://github.com/loadingalias/rscrypto/actions/runs/35411075950/artifacts/10574468080) |
 | AMD x86-64 | `aes-siv-cmac-256/construct/rscrypto` | [success](https://github.com/loadingalias/rscrypto/actions/runs/35411075977) | [533 samples, 0 lost; DWARF](https://github.com/loadingalias/rscrypto/actions/runs/35411075977/artifacts/10573767508) |
 | AArch64 | `argon2id-owasp/salt16-raw32/rscrypto/m=19MiB_t=2_p=1` | [success](https://github.com/loadingalias/rscrypto/actions/runs/35411075935) | [513 samples, 0 lost; DWARF](https://github.com/loadingalias/rscrypto/actions/runs/35411075935/artifacts/10574627850) |
-| POWER | `blake3/keyed/rscrypto/64` | [misleading success](https://github.com/loadingalias/rscrypto/actions/runs/35411075973) | [347 samples lost (100%); empty report](https://github.com/loadingalias/rscrypto/actions/runs/35411075973/artifacts/10574368228) |
+| POWER | `blake3/keyed/rscrypto/64` | [success](https://github.com/loadingalias/rscrypto/actions/runs/35415762447) | [414 samples, 0 lost; flat symbols](https://github.com/loadingalias/rscrypto/actions/runs/35415762447/artifacts/10575707870) |
 | IBM Z | `p256-ecdh/public-key/rscrypto-selected` | [failed](https://github.com/loadingalias/rscrypto/actions/runs/35411075962) | [perf access denied; no report](https://github.com/loadingalias/rscrypto/actions/runs/35411075962/artifacts/10574103643) |
 | RISC-V | `p256-ecdh/public-key/rscrypto-selected` | [success](https://github.com/loadingalias/rscrypto/actions/runs/35411076148) | [497 samples, 0 lost; flat symbols](https://github.com/loadingalias/rscrypto/actions/runs/35411076148/artifacts/10574449230) |
 
-The POWER workload completed, but its DWARF capture lost 100% of 347 samples
-and `perf-report.txt` contained only a header.
-An [earlier POWER10 run](https://github.com/loadingalias/rscrypto/actions/runs/35381074902/artifacts/10563176126) on the same kernel (`6.12.0-264.el10.ppc64le`)
-and `perf 6.8.12` lost every DWARF probe sample, fell back to flat sampling,
-and retained 355 P-256 samples with no loss.
-The later probe regression accepted a nonempty `perf.data` file without checking for a decodable sample;
-the final report check also accepted a header without a positive sample count.
-Both checks are repaired locally so a failed DWARF probe can select flat sampling
-and an empty final report cannot pass.
-The exact BLAKE3 case still needs a native rerun before POWER is marked usable.
+The [initial POWER run](https://github.com/loadingalias/rscrypto/actions/runs/35411075973) lost all 347 DWARF samples yet incorrectly passed with a header-only report.
+The probe had accepted a nonempty `perf.data` file without checking for a decodable sample;
+the final report check had not required a positive sample count and symbol row.
+The repaired probe rejected the DWARF capture after it lost all eight probe samples,
+selected flat sampling, and retained 414 attributable `cycles:u` samples with none lost on POWER10 (`6.12.0-264.el10.ppc64le`, `perf 6.8.12`).
+The downloaded benchmark binary's SHA-256 matches the sealed manifest.
 
 IBM Z's verified binary and exact-case discovery succeeded,
 but all native `perf` probes were denied with `perf_event_paranoid=4` and no effective capabilities.
@@ -87,7 +83,7 @@ Rerun the same case after the owner makes sampling available.
 `perf` cycles samples locate CPU time;
 they do not measure elapsed speedups or prove why an external implementation is faster.
 DWARF report percentages are inclusive unless marked self and must not be added.
-The RISC-V collector has only flat symbols, so it cannot attribute callers.
+The RISC-V and POWER collectors have only flat symbols, so they cannot attribute callers.
 These five-second reports include Criterion warm-up as well as the timed profile loop.
 Use the exact benchmark and target-native correctness/constant-time evidence for changes.
 
@@ -103,7 +99,7 @@ A sampled hotspot narrows an investigation but does not close a benchmark loss.
 | Intel | AES-128-GCM-SIV 32 B: 203.16 / 91.1 ns (AWS-LC) | 0.449x | Short-message tag, key schedule, and CTR path |
 | AMD | AES-SIV-CMAC-256 construction: 77.8 / 30.6 ns (RustCrypto) | 0.393x | AES-128 key expansion in context construction |
 | AArch64 | Argon2id OWASP: 21.965 / 11.392 ms (RustCrypto) | 0.519x | NEON block compression |
-| POWER | keyed BLAKE3 64 B: 229.4 / 115.8 ns (official BLAKE3) | 0.505x | Unlocalized until a valid capture |
+| POWER | keyed BLAKE3 64 B: 229.4 / 115.8 ns (official BLAKE3) | 0.505x | Portable one-shot digest and compression codegen |
 
 ### RISC-V — P-256 public derivation
 
@@ -157,11 +153,20 @@ Do not reduce Argon2 work factors to improve this ratio.
 
 ### POWER — keyed BLAKE3, 64 bytes
 
-The benchmark loss is real, and diagnostics report the portable streaming kernel,
-but this capture yields no attributable samples.
-Rerun the exact case with the sample-validating flat fallback,
-then inspect the 64-byte keyed digest's compression and setup costs.
-Do not optimize from the empty report.
+The exact-case [native report](https://github.com/loadingalias/rscrypto/actions/runs/35415762447/artifacts/10575707870) retained 414 flat `cycles:u` samples with no loss.
+It assigns 50.49% to `digest_public_oneshot`, 25.45% to `compress`, 11.86% to `digest_oneshot_words`, and 11.56% to Criterion's `Bencher::iter`.
+These are symbol-level samples, not call-chain percentages: inlined work may be charged to `digest_public_oneshot` or `digest_oneshot_words`.
+Do not interpret 50.49% as dispatch overhead; inlined compression may be charged to that symbol.
+
+The selected benchmark calls the production `Blake3::keyed_digest` on 64 bytes.
+Diagnostics select the portable kernel on POWER;
+this input takes the tiny one-block path through `hash_tiny_to_root_words` and `compress_chunk_tail_to_root_words`.
+First inspect the exact POWER binary's code in the two one-shot symbols and `compress`:
+separate compression rounds from dispatch, block preparation, word conversion, and key cleanup,
+then compare equivalent official BLAKE3 keyed hashing on the same host.
+Confirm any proposed change with a repeat native capture and same-workload elapsed benchmark.
+Preserve keyed-hash output, constant-time behavior, and secret cleanup;
+the profile alone does not establish which operation explains the 0.505x gap.
 
 ## Phase 2 — Profile the shared cause
 
