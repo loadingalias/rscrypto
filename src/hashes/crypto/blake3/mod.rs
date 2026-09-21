@@ -2506,7 +2506,7 @@ fn digest_oneshot(kernel: Kernel, key_words: &mut [u32; 8], flags: u32, input: &
   if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
     ct::zeroize_words_no_fence(&mut words);
     ct::zeroize_words_no_fence(key_words);
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    ct::zeroize_fence();
   }
   digest
 }

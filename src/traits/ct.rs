@@ -342,6 +342,22 @@ pub(crate) fn zeroize_words_no_fence<T: WordZero>(words: &mut [T]) {
   }
 }
 
+/// Prevent the compiler from moving memory operations across a cleanup boundary.
+#[cfg(feature = "blake3")]
+#[inline(always)]
+pub(crate) fn zeroize_fence() {
+  #[cfg(target_arch = "powerpc64")]
+  // SAFETY: the empty template has no operands, instructions, registers, stack
+  // use, or unwind path. Omitting `nomem` gives it the compiler memory clobber
+  // required here; the empty template deliberately emits no hardware fence.
+  unsafe {
+    core::arch::asm!("", options(nostack, preserves_flags));
+  }
+
+  #[cfg(not(target_arch = "powerpc64"))]
+  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+}
+
 /// Volatile-zero a slice of `WordZero` integers and emit a compiler fence.
 #[cfg(any(
   feature = "aes-gcm",
