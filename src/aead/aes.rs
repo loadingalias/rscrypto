@@ -714,6 +714,73 @@ pub(crate) fn aes128_expand_key_riscv_ttable(key: &[u8; KEY_SIZE_128]) -> Aes128
   }
 }
 
+// x86_64: direct AES-128 helpers for the fused short GCM-SIV path.
+
+/// Derive AES-128-GCM-SIV per-message keys directly with four-lane VAES.
+///
+/// Returns `None` if `master_ek` does not contain the AES-NI schedule required by the
+/// `X86VaesVpclmul` backend.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+#[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
+#[inline]
+pub(super) unsafe fn x86_gcmsiv_derive_keys_128_inline(
+  master_ek: &Aes128EncKey,
+  nonce: &[u8; 12],
+) -> Option<([u8; 16], [u8; 16])> {
+  let Key128Inner::X86AesNi(ni_rk) = &master_ek.inner else {
+    return None;
+  };
+  // SAFETY: direct x86 AES-128-GCM-SIV KDF because:
+  // 1. This function's caller guarantees every required x86 feature.
+  // 2. The matched key variant proves the master schedule uses AES-NI round-key layout.
+  // 3. `nonce` is exactly the 96-bit GCM-SIV nonce.
+  Some(unsafe { ni::gcmsiv_derive_keys_128(ni_rk, nonce) })
+}
+
+/// Expand one AES-128 key directly into the AES-NI round-key representation.
+///
+/// # Safety
+/// Caller must ensure AES-NI and SSE2 are available.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+#[target_feature(enable = "aes,sse2")]
+#[inline]
+pub(super) unsafe fn x86_expand_key_128_inline(key: &[u8; KEY_SIZE_128]) -> ni::Ni128RoundKeys {
+  // SAFETY: the function's target features and caller contract establish AES-NI + SSE2.
+  unsafe { ni::expand_key_128(key) }
+}
+
+/// Encrypt one AES-128 block directly with an AES-NI round-key schedule.
+///
+/// # Safety
+/// Caller must ensure AES-NI and SSE2 are available.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+#[target_feature(enable = "aes,sse2")]
+#[inline]
+pub(super) unsafe fn x86_encrypt_block_128_inline(keys: &ni::Ni128RoundKeys, block: &mut [u8; BLOCK_SIZE]) {
+  // SAFETY: the function's target features and fixed-size block satisfy the AES-NI helper.
+  unsafe { ni::encrypt_block_128(keys, block) }
+}
+
+/// XOR at most four AES-128-GCM-SIV CTR blocks with four-lane VAES.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2 and `data.len() <= 64`.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+#[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
+#[inline]
+pub(super) unsafe fn x86_ctr32_le_xor_short_128_inline(
+  keys: &ni::Ni128RoundKeys,
+  initial_counter: &[u8; BLOCK_SIZE],
+  data: &mut [u8],
+) {
+  // SAFETY: the caller establishes the target features and short-buffer bound required by the
+  // direct VAES helper.
+  unsafe { ni::ctr32_le_xor_short_128(keys, initial_counter, data) }
+}
+
 // aarch64: inline helpers for fused paths (#[target_feature] + #[inline(always)])
 //
 // aarch64 intrinsics are `#[inline(always)]` with `#[target_feature]`, so
@@ -2985,18 +3052,14 @@ unsafe fn x86_gcm_ctr_block_be(iv_words: [u32; 3], ctr: u32) -> core::arch::x86_
 unsafe fn x86_gcmsiv_ctr_blocks_le_4(suffix_words: [u32; 3], ctr: u32) -> core::arch::x86_64::__m512i {
   use core::arch::x86_64::*;
 
-  let s0 = suffix_words[0].cast_signed();
-  let s1 = suffix_words[1].cast_signed();
-  let s2 = suffix_words[2].cast_signed();
-  let b0 = _mm_set_epi32(s2, s1, s0, ctr.cast_signed());
-  let b1 = _mm_set_epi32(s2, s1, s0, ctr.wrapping_add(1).cast_signed());
-  let b2 = _mm_set_epi32(s2, s1, s0, ctr.wrapping_add(2).cast_signed());
-  let b3 = _mm_set_epi32(s2, s1, s0, ctr.wrapping_add(3).cast_signed());
-
-  let z = _mm512_zextsi128_si512(b0);
-  let z = _mm512_inserti32x4(z, b1, 1);
-  let z = _mm512_inserti32x4(z, b2, 2);
-  _mm512_inserti32x4(z, b3, 3)
+  let base = _mm_set_epi32(
+    suffix_words[2].cast_signed(),
+    suffix_words[1].cast_signed(),
+    suffix_words[0].cast_signed(),
+    ctr.cast_signed(),
+  );
+  let increments = _mm512_set_epi32(0, 0, 0, 3, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 0);
+  _mm512_add_epi32(_mm512_broadcast_i32x4(base), increments)
 }
 
 #[cfg(all(

@@ -270,11 +270,7 @@ fn active_kernel_is_reported_correctly() {
   let active = argon2::diag_active_kernel();
 
   #[cfg(target_arch = "aarch64")]
-  assert_eq!(
-    active,
-    argon2::KernelId::Aarch64Neon,
-    "expected aarch64-neon to win dispatch"
-  );
+  assert_eq!(active, argon2::KernelId::Portable, "expected portable AArch64 dispatch");
 
   #[cfg(target_arch = "x86_64")]
   {

@@ -1570,16 +1570,6 @@ fn aes_siv_cmac256(c: &mut Criterion) {
   let key_rs = AesSivCmac256Key::from_bytes(KEY_32);
   let key_rc: aes_siv::Key<Aes128Siv> = KEY_32.into();
 
-  // Timed: construct and destroy a cipher; typed key preparation is untimed.
-  let mut construction = c.benchmark_group("aes-siv-cmac-256/construct");
-  construction.bench_function("rscrypto", |b| {
-    b.iter(|| black_box(AesSivCmac256::new(black_box(&key_rs))))
-  });
-  construction.bench_function("rustcrypto", |b| {
-    b.iter(|| black_box(Aes128Siv::new(black_box(&key_rc))))
-  });
-  construction.finish();
-
   // NTS packet shapes: empty authenticator payload, short field, extension-field,
   // cookie-shaped, and near-MTU protected bodies.
   let inputs = [0usize, 16, 64, 256, 1232]

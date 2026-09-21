@@ -1350,7 +1350,7 @@ mod vpclmul {
 ///
 /// # Safety
 /// Caller must ensure PCLMULQDQ and SSE2 are available.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "x86_64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
 #[target_feature(enable = "pclmulqdq,sse2")]
 #[inline]
 pub(super) unsafe fn x86_clmul128_reduce_inline(a: u128, b: u128) -> u128 {

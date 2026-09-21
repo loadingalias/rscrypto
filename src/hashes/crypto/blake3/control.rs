@@ -20,16 +20,16 @@ thread_local! {
 #[inline]
 fn compute_derive_context_key_words(context: &str) -> [u32; 8] {
   let context_bytes = context.as_bytes();
-  let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
-  digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes)
+  let kernel_ctx = dispatch::size_class_kernel(context_bytes.len());
+  digest_oneshot_words(kernel_ctx, &IV, DERIVE_KEY_CONTEXT, context_bytes)
 }
 
 #[inline]
 #[cfg(not(feature = "std"))]
 pub(super) fn derive_context_key_words(context: &str) -> [u32; 8] {
   let context_bytes = context.as_bytes();
-  let kernel_ctx = dispatch::hasher_dispatch().size_class_kernel(context_bytes.len());
-  digest_oneshot_words(kernel_ctx, IV, DERIVE_KEY_CONTEXT, context_bytes)
+  let kernel_ctx = dispatch::size_class_kernel(context_bytes.len());
+  digest_oneshot_words(kernel_ctx, &IV, DERIVE_KEY_CONTEXT, context_bytes)
 }
 
 #[cfg(feature = "std")]

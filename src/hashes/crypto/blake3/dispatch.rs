@@ -39,37 +39,26 @@ fn is_wide_pipeline_for_hash_many(caps: Caps) -> bool {
 }
 
 #[derive(Clone, Copy)]
-struct Entry {
-  kernel: Kernel,
-}
-
-#[derive(Clone, Copy)]
 struct ActiveDispatch {
-  boundaries: [usize; 3],
-  xs: Entry,
-  s: Entry,
-  m: Entry,
-  l: Entry,
+  size_classes: SizeClassDispatch<Blake3KernelId>,
 }
 
+static ACTIVE: OnceCache<ActiveDispatch> = OnceCache::new();
+static HASHER: OnceCache<HasherDispatch> = OnceCache::new();
+
+#[cfg(feature = "parallel")]
+static PARALLEL: OnceCache<ParallelDispatch> = OnceCache::new();
+
+#[cfg(target_arch = "x86_64")]
 #[derive(Clone, Copy)]
-struct ResolvedDispatch {
-  active: ActiveDispatch,
-  #[cfg(feature = "parallel")]
-  parallel: ParallelDispatch,
-  hasher: HasherDispatch,
-  #[cfg(target_arch = "x86_64")]
+struct X86Policy {
   avx2_hash_many_one_chunk_fast_path: bool,
-  #[cfg(target_arch = "x86_64")]
   hash_many_wide_pipeline: bool,
-  #[cfg(all(
-    target_arch = "x86_64",
-    any(target_os = "linux", target_os = "macos", target_os = "windows")
-  ))]
   avx2_available: bool,
 }
 
-static RESOLVED: OnceCache<ResolvedDispatch> = OnceCache::new();
+#[cfg(target_arch = "x86_64")]
+static X86_POLICY: OnceCache<X86Policy> = OnceCache::new();
 
 #[derive(Clone, Copy)]
 #[cfg(feature = "parallel")]
@@ -206,74 +195,53 @@ fn resolve(id: Blake3KernelId, caps: Caps) -> Blake3KernelId {
 
 #[inline]
 #[must_use]
-fn resolved() -> ResolvedDispatch {
-  RESOLVED.get_or_init(|| {
+fn active() -> ActiveDispatch {
+  ACTIVE.get_or_init(|| {
     let caps = crate::platform::caps();
-
     let table: &'static DispatchTable = super::dispatch_tables::select_table_for_caps(caps);
-    let stream_table: &'static StreamingTable = super::dispatch_tables::select_streaming_table_for_caps(caps);
-    #[cfg(feature = "parallel")]
-    let oneshot_parallel_table: &'static ParallelTable = super::dispatch_tables::select_parallel_table_for_caps(caps);
-    #[cfg(feature = "parallel")]
-    let streaming_parallel_table: &'static ParallelTable =
-      super::dispatch_tables::select_streaming_parallel_table_for_caps(caps);
-
-    let xs_id = resolve(table.xs, caps);
-    let s_id = resolve(table.s, caps);
-    let m_id = resolve(table.m, caps);
-    let l_id = resolve(table.l, caps);
-
-    let stream_id = resolve(stream_table.stream, caps);
-    let bulk_id = resolve(stream_table.bulk, caps);
-
-    let active = ActiveDispatch {
-      boundaries: table.boundaries,
-      xs: Entry { kernel: kernel(xs_id) },
-      s: Entry { kernel: kernel(s_id) },
-      m: Entry { kernel: kernel(m_id) },
-      l: Entry { kernel: kernel(l_id) },
-    };
-    #[cfg(feature = "parallel")]
-    let oneshot_base = *oneshot_parallel_table;
-    #[cfg(feature = "parallel")]
-    let streaming_base = *streaming_parallel_table;
-    let size_classes = SizeClassDispatch {
-      boundaries: active.boundaries,
-      xs: active.xs.kernel,
-      s: active.s.kernel,
-      m: active.m.kernel,
-      l: active.l.kernel,
-    };
-    let hasher = HasherDispatch {
-      size_classes,
-      stream_kernel: kernel(stream_id),
-      table_bulk_kernel: kernel(bulk_id),
-      bulk_sizeclass_threshold: stream_table.bulk_sizeclass_threshold,
-    };
-
-    ResolvedDispatch {
-      active,
-      #[cfg(feature = "parallel")]
-      parallel: ParallelDispatch {
-        oneshot: oneshot_base,
-        keyed_oneshot: oneshot_base,
-        derive_oneshot: oneshot_base,
-        xof: oneshot_base,
-        keyed_xof: oneshot_base,
-        derive_xof: oneshot_base,
-        streaming: streaming_base,
-        keyed_streaming: streaming_base,
-        derive_streaming: streaming_base,
+    ActiveDispatch {
+      size_classes: SizeClassDispatch {
+        boundaries: table.boundaries,
+        xs: resolve(table.xs, caps),
+        s: resolve(table.s, caps),
+        m: resolve(table.m, caps),
+        l: resolve(table.l, caps),
       },
-      hasher,
-      #[cfg(target_arch = "x86_64")]
+    }
+  })
+}
+
+#[cfg(feature = "parallel")]
+#[inline]
+#[must_use]
+fn active_parallel() -> ParallelDispatch {
+  PARALLEL.get_or_init(|| {
+    let caps = crate::platform::caps();
+    let oneshot = *super::dispatch_tables::select_parallel_table_for_caps(caps);
+    let streaming = *super::dispatch_tables::select_streaming_parallel_table_for_caps(caps);
+    ParallelDispatch {
+      oneshot,
+      keyed_oneshot: oneshot,
+      derive_oneshot: oneshot,
+      xof: oneshot,
+      keyed_xof: oneshot,
+      derive_xof: oneshot,
+      streaming,
+      keyed_streaming: streaming,
+      derive_streaming: streaming,
+    }
+  })
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[must_use]
+fn x86_policy() -> X86Policy {
+  X86_POLICY.get_or_init(|| {
+    let caps = crate::platform::caps();
+    X86Policy {
       avx2_hash_many_one_chunk_fast_path: allow_avx2_hash_many_one_chunk_fast_path(caps),
-      #[cfg(target_arch = "x86_64")]
       hash_many_wide_pipeline: is_wide_pipeline_for_hash_many(caps),
-      #[cfg(all(
-        target_arch = "x86_64",
-        any(target_os = "linux", target_os = "macos", target_os = "windows")
-      ))]
       avx2_available: caps.has(required_caps(Blake3KernelId::X86Avx2)),
     }
   })
@@ -281,45 +249,21 @@ fn resolved() -> ResolvedDispatch {
 
 #[inline]
 #[must_use]
-fn active() -> ActiveDispatch {
-  resolved().active
-}
-
-#[cfg(feature = "parallel")]
-#[inline]
-#[must_use]
-fn active_parallel() -> ParallelDispatch {
-  resolved().parallel
-}
-
-#[inline]
-#[must_use]
-fn select(d: &ActiveDispatch, len: usize) -> Entry {
-  let [xs_max, s_max, m_max] = d.boundaries;
-  if len <= xs_max {
-    d.xs
-  } else if len <= s_max {
-    d.s
-  } else if len <= m_max {
-    d.m
-  } else {
-    d.l
-  }
+pub(crate) fn size_class_kernel(len: usize) -> Kernel {
+  kernel(active().size_classes.select(len))
 }
 
 #[cfg(feature = "diag")]
 #[inline]
 #[must_use]
 pub(crate) fn kernel_name_for_len(len: usize) -> &'static str {
-  let d = active();
-  select(&d, len).kernel.name
+  size_class_kernel(len).name
 }
 
 #[inline]
 #[must_use]
 pub(crate) fn xof(data: &[u8]) -> super::Blake3XofReader {
-  let d = active();
-  let kernel = select(&d, data.len()).kernel;
+  let kernel = size_class_kernel(data.len());
 
   // Lean path for single-chunk inputs: directly construct Blake3XofReader without
   // going through root_output_oneshot / single_chunk_output / OutputState.
@@ -340,7 +284,24 @@ pub(crate) fn xof(data: &[u8]) -> super::Blake3XofReader {
 #[inline]
 #[must_use]
 pub(crate) fn hasher_dispatch() -> HasherDispatch {
-  resolved().hasher
+  HASHER.get_or_init(|| {
+    let caps = crate::platform::caps();
+    let active = active();
+    let stream_table: &'static StreamingTable = super::dispatch_tables::select_streaming_table_for_caps(caps);
+    let ids = active.size_classes;
+    HasherDispatch {
+      size_classes: SizeClassDispatch {
+        boundaries: ids.boundaries,
+        xs: kernel(ids.xs),
+        s: kernel(ids.s),
+        m: kernel(ids.m),
+        l: kernel(ids.l),
+      },
+      stream_kernel: kernel(resolve(stream_table.stream, caps)),
+      table_bulk_kernel: kernel(resolve(stream_table.bulk, caps)),
+      bulk_sizeclass_threshold: stream_table.bulk_sizeclass_threshold,
+    }
+  })
 }
 
 #[cfg(feature = "parallel")]
@@ -354,14 +315,14 @@ pub(crate) fn parallel_dispatch() -> ParallelDispatch {
 #[inline]
 #[must_use]
 pub(crate) fn avx2_hash_many_one_chunk_fast_path() -> bool {
-  resolved().avx2_hash_many_one_chunk_fast_path
+  x86_policy().avx2_hash_many_one_chunk_fast_path
 }
 
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[must_use]
 pub(crate) fn hash_many_wide_pipeline() -> bool {
-  resolved().hash_many_wide_pipeline
+  x86_policy().hash_many_wide_pipeline
 }
 
 #[cfg(all(
@@ -371,19 +332,29 @@ pub(crate) fn hash_many_wide_pipeline() -> bool {
 #[inline]
 #[must_use]
 pub(crate) fn avx2_available() -> bool {
-  resolved().avx2_available
+  x86_policy().avx2_available
 }
 
-#[cfg(all(test, target_arch = "x86_64"))]
+#[cfg(test)]
 mod tests {
   use super::*;
 
+  #[test]
+  fn one_shot_and_hasher_size_classes_match() {
+    let hasher = hasher_dispatch();
+    for len in [0, 1, 63, 64, 65, 256, 257, 4096, 4097, usize::MAX] {
+      assert_eq!(size_class_kernel(len).id, hasher.size_class_kernel(len).id);
+    }
+  }
+
+  #[cfg(target_arch = "x86_64")]
   const ALL_AMX: Caps = x86::AMX_TILE
     .union(x86::AMX_BF16)
     .union(x86::AMX_INT8)
     .union(x86::AMX_FP16)
     .union(x86::AMX_COMPLEX);
 
+  #[cfg(target_arch = "x86_64")]
   #[test]
   fn sapphire_rapids_shortcut_policy_does_not_depend_on_amx_permission() {
     let sapphire_rapids = x86::AVX512_READY | x86::INTEL_SAPPHIRE_RAPIDS;

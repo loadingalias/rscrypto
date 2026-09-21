@@ -24,7 +24,6 @@ on:
         options:
           - aead/aes
           - aead/aes128-gcm-siv
-          - aead/aes-siv-cmac256
           - aead/chacha20
           - aead/aegis256
           - aead/ascon

@@ -25,7 +25,10 @@ pub enum KernelId {
   /// Pure-Rust portable implementation. Always available.
   Portable,
 
-  /// aarch64 NEON (4-way parallel BlaMka).
+  /// aarch64 NEON (4-way parallel BlaMka) diagnostic kernel.
+  ///
+  /// Production dispatch uses [`Self::Portable`] on AArch64. The NEON
+  /// implementation remains available for differential evidence.
   #[cfg(target_arch = "aarch64")]
   Aarch64Neon,
 
@@ -105,6 +108,19 @@ pub const ALL_KERNELS: &[KernelId] = &[
   KernelId::Portable,
 ];
 
+/// Whether production dispatch may select `kernel`.
+///
+/// Keep diagnostic kernels in [`ALL_KERNELS`] so its public compiled-kernel
+/// inventory remains stable. Selection policy belongs here instead.
+#[inline]
+const fn production_dispatch_enabled(kernel: KernelId) -> bool {
+  match kernel {
+    #[cfg(target_arch = "aarch64")]
+    KernelId::Aarch64Neon => false,
+    _ => true,
+  }
+}
+
 /// Capabilities required for `kernel` to be callable on the current host.
 #[must_use]
 pub const fn required_caps(kernel: KernelId) -> Caps {
@@ -170,16 +186,13 @@ static ACTIVE_KERNEL: OnceCache<KernelId> = OnceCache::new();
 /// without re-walking `ALL_KERNELS`. The cache value is `KernelId` (Copy),
 /// so the cached read is a single atomic-acquire load.
 ///
-/// # Gate: macOS aarch64
+/// # Gate: aarch64
 ///
-/// Single-block Blake2b NEON loses to portable scalar on Apple Silicon
-/// because the 2-u64 NEON width cannot match the wide OoO scalar core
-/// on one 128-byte block. Argon2 BlaMka is a *different* shape — each
-/// compression is 1024 bytes with 16 P-rounds of 4 independent GBs, so
-/// a 4-way SIMD kernel has real parallelism to extract even on M-series.
-/// Current policy selects the NEON kernel on all AArch64 targets. Changing that
-/// policy requires representative target-native evidence for this Argon2
-/// workload rather than inference from a different primitive.
+/// Production dispatch selects the portable authority. On the exact 19 MiB,
+/// two-pass Argon2id workload, it was faster than the NEON kernel on Neoverse
+/// V1, Neoverse V3, and Apple M1. The NEON implementation remains a diagnostic
+/// differential target, but it must not re-enter production dispatch without
+/// representative target-native evidence.
 ///
 /// # Gate: x86_64
 ///
@@ -193,7 +206,7 @@ pub(super) fn active_kernel() -> KernelId {
   ACTIVE_KERNEL.get_or_init(|| {
     let host = caps();
     for &id in ALL_KERNELS {
-      if host.has(required_caps(id)) {
+      if production_dispatch_enabled(id) && host.has(required_caps(id)) {
         return id;
       }
     }
@@ -247,6 +260,13 @@ mod tests {
       required_caps(KernelId::Aarch64Neon),
       crate::platform::caps::aarch64::NEON
     );
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  #[test]
+  fn aarch64_production_dispatch_excludes_neon() {
+    assert!(ALL_KERNELS.contains(&KernelId::Aarch64Neon));
+    assert!(!production_dispatch_enabled(KernelId::Aarch64Neon));
   }
 
   #[cfg(target_arch = "x86_64")]

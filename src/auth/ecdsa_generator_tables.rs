@@ -1,4 +1,5 @@
 // Generated fixed-base ECDSA signing comb tables.
+#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "p256-ecdh"))]
 #[derive(Clone, Copy)]
 pub(super) struct Uint<const L: usize>(pub(super) [u64; L]);
 

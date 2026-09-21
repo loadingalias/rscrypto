@@ -23,6 +23,13 @@ This task is complete when:
 - the complete benchmark matrix and applicable correctness, CT, cleanup, dispatch,
   and target evidence pass on the final revision.
 
+## Current work order
+
+1. POWER keyed BLAKE3 at 64 bytes.
+
+RISC-V P-256 follow-up is deferred after the major correction failed to close the CRRL gap.
+IBM Z P-256 and ECDSA work is deferred until the native runner permits attributable `perf` sampling.
+
 ## Retained baseline
 
 - Source: `ae6f54afedaa652858fd2bcbd8f56f339e663a4f` on `main`.
@@ -116,7 +123,11 @@ then compare exact public derivation and agreement on native RISC-V.
 Do not replace it with target multiplication without proving secret-independent latency
 and preserving the CT contract.
 
-#### RISC-V result (2026-09-20; performance row remains open)
+#### RISC-V result (2026-09-20; major defect fixed, CRRL gap remains, follow-up deferred)
+
+Status: the catastrophic loss is fixed, but rscrypto did not win. Public derivation takes 1.538x
+CRRL's time, and agreement takes 2.478x CRRL's time. Both performance rows remain open. Defer
+further RISC-V work to a later pass rather than treating this slice as closed.
 
 Revision `11fee328f57297f69303371bf7593e4e33aa7a75` replaces the 64-round software product on RV64
 with safe Rust that lowers to `mul` and `mulhu`. It normalizes both multiplier operands to set the high bit,
@@ -153,7 +164,9 @@ a measured speedup does not meet the acceptance rule. A canonical-field Solinas-
 the focused differential tests but required roughly 1,100 instructions per multiply and 860 per square,
 versus 458 and 325 for the accepted Montgomery kernels, so it was rejected before spending another CI run.
 
-### IBM Z — P-256 public derivation
+Further RISC-V work is deferred. The next active target is POWER keyed BLAKE3 at 64 bytes.
+
+### Deferred — IBM Z P-256 public derivation
 
 No sampled hot path exists yet.
 The same fixed-work multiply is selected by `cfg(target_arch = "s390x")`, making it the first hypothesis,
@@ -161,6 +174,7 @@ not a measured IBM Z finding.
 Resolve native perf access, capture the exact public-key case,
 and check whether field multiplication dominates before sharing a RISC-V fix.
 The existing public-key/agreement/parse rows remain open.
+Do not resume IBM Z optimization work until the runner can produce attributable native samples.
 
 ### Intel x86-64 — AES-128-GCM-SIV, 32-byte seal
 
@@ -173,6 +187,36 @@ and per-message key expansion on the real 32-byte seal path;
 compare the same complete encryption contract against AWS-LC
 before choosing a bounded production change.
 
+#### Intel result (2026-09-20; performance row closed)
+
+The exact `aes-128-gcm-siv/copy-and-encrypt/rscrypto/32` case was rerun on an Intel Xeon 6975P
+Granite Rapids `c8i.4xlarge`. Baseline run `20260921T030958Z-z9tlcty5` measured rscrypto at
+202.69 ns [202.23 ns, 203.03 ns] and AWS-LC at 92.501 ns [92.039 ns, 93.135 ns]. Final run
+`20260921T031552Z-j9iwvp8i` measured rscrypto at 75.371 ns [74.899 ns, 75.878 ns] and AWS-LC
+at 91.620 ns [91.156 ns, 92.255 ns]. Criterion reports a 62.893% median decrease from the
+rscrypto baseline, with a 95% confidence interval of [62.769%, 62.997%] and `p = 0.000`.
+The final rscrypto median is 17.73% below AWS-LC and clears the 10% acceptance target.
+
+The profile was causal: the 32-byte seal paid separately for per-nonce key derivation, derived
+AES-128 key expansion, generic POLYVAL batching, tag encryption, and CTR setup. The bounded x86-64
+path now handles transcripts of at most four padded blocks with four-lane VAES key derivation,
+native derived-key expansion, one VPCLMUL aggregate, direct tag encryption, and four-lane CTR.
+Longer messages and non-VAES backends retain the existing portable-authority path. The shared CTR
+counter builder was simplified instead of leaving a second legacy construction, the AES-GCM-SIV
+leaf-feature gate for the shared reduction was repaired, and a stale generated ECDSA table type is
+now gated with its constants.
+
+Security evidence includes the independent AES-128-GCM-SIV oracle on the native Granite Rapids
+path, full ASan fuzz-target coverage, native Linux and macOS RSA assembly gates, and focused native
+DudeCT runs. The largest focused absolute t-statistic was 3.06490, below the repository threshold
+of 10. Generated-code review confirmed fixed secret-processing instruction flow and explicit wipes
+for the authentication key, derived encryption key, round schedule, POLYVAL state and powers, and
+partial-block keystream. The repository CT artifact checks, strict validation, and zeroization
+sentinel passed. Full `ct-full` proof did not complete because the ephemeral Ubuntu 26.04 image lacks
+BINSEC and the installer intentionally supports Ubuntu 24.04; do not convert that environment gap
+into a full-CT claim.
+The final revision passed `just check`, `just test --all`, and `just test --all --portable`.
+
 ### AMD x86-64 — AES-SIV-CMAC-256 construction
 
 `AesSivCmac256::new` accounts for 81.27% inclusive and `aes128_expand_key` for 72.00% inclusive.
@@ -182,6 +226,41 @@ do not label them cleanup or copying without symbol evidence.
 Inspect both AES expansions, CMAC setup, and destruction on the exact construct/destroy workload;
 compare equivalent RustCrypto construction on the same AMD host.
 
+#### AMD result (2026-09-21; construction row removed)
+
+Status: closed as a non-equivalent comparison. No production change was justified.
+
+Native run `20260921T040845Z-_mvsaf0q` used an AMD EPYC 9R45 `c8a.4xlarge`,
+Rust 1.98.1, the repository `bench` profile, and the retained Criterion settings.
+It reproduced the construction-only gap at 83.025 ns for rscrypto versus 30.575 ns
+for RustCrypto. Generated-code inspection of the exact rscrypto artifact confirmed
+that the AES-NI branch expands both 16-byte halves and moves each 176-byte schedule
+into the backend-dispatched key owner. The AES-NI expansion kernel itself accounted
+for only 18.68% self time in the retained profile.
+
+The two constructors do different work. rscrypto expands both the CMAC and CTR keys,
+derives the CMAC subkeys, and later wipes both schedules and subkeys. RustCrypto
+`aes-siv` 0.8.0 expands the CMAC key but retains the raw CTR key and constructs that
+AES cipher inside every `apply_keystream`; the benchmark dependency also omits its
+optional `zeroize` feature. The standalone constructor row therefore rewards deferred
+work and weaker cleanup rather than equivalent useful work.
+
+The same native run measured the complete copy, construction, seal, and destruction
+lifecycle:
+
+| Plaintext | rscrypto | RustCrypto | rscrypto relative to RustCrypto |
+| ---: | ---: | ---: | ---: |
+| 0 bytes | 138.51 ns | 161.85 ns | 14.4% lower |
+| 16 bytes | 165.68 ns | 181.89 ns | 8.9% lower |
+| 64 bytes | 170.52 ns | 185.88 ns | 8.3% lower |
+| 256 bytes | 303.01 ns | 300.59 ns | 0.8% higher |
+| 1232 bytes | 1.0126 us | 973.64 ns | 4.0% higher |
+
+With reusable contexts, rscrypto seal was faster at every measured size, from 51.1%
+lower at zero bytes to 2.4% lower at 1232 bytes; open showed the same result. The large
+construction-only ratio does not survive either equivalent lifecycle. Remove its benchmark,
+CI profile preset, and workflow choice instead of retaining a misleading legacy target.
+
 ### AArch64 — Argon2id OWASP profile
 
 `argon2::aarch64::compress_neon` accounts for 95.23% inclusive (94.02% self) inside `fill_segment_inner`; matrix cleanup is 2.22% self.
@@ -189,6 +268,51 @@ The workload uses 19 MiB, two passes, one lane, a 16-byte salt, and 32-byte raw 
 Inspect the production NEON compression's generated rounds, spills, and memory traffic,
 then compare equivalent full hashes against RustCrypto on the same host.
 Do not reduce Argon2 work factors to improve this ratio.
+
+#### AArch64 result (2026-09-21; performance row closed)
+
+The loss came from dispatching to the AArch64 NEON compressor. On the exact
+19 MiB, two-pass, one-lane Argon2id workload, Graviton4 baseline run
+`20260921T042307Z-hzs70uav` measured rscrypto at 30.686 ms and RustCrypto at
+18.199 ms. Final run `20260921T042730Z-a9wfxhfr` selected the portable authority
+and measured rscrypto at 18.187 ms and RustCrypto at 18.327 ms. That is a 40.7%
+rscrypto reduction, and the final median is 0.76% below RustCrypto.
+
+The result generalizes across the representative AArch64 machines available to
+the repository. On Graviton3, the portable run `20260921T043343Z-jh_lh12t`
+measured 18.768 ms versus 33.719 ms for the NEON run
+`20260921T043531Z-cusd6jg4`, a 44.3% reduction. On Apple M1 Pro, the portable
+path measured 15.898 ms versus 17.229 ms for NEON, a 7.7% reduction.
+
+Generated-code inspection explains the direction. The NEON kernel reserves a
+2 KiB stack frame, zeroes both 1 KiB temporaries before overwriting them, and
+lowers each BlaMka multiply through lane narrowing plus `umull`. The portable
+authority lets the scalar AArch64 core schedule independent 64-bit multiplies
+directly and wins despite doing the same Argon2 work.
+
+Production AArch64 dispatch now selects the portable authority. The NEON kernel
+and its identifier remain available only for existing diagnostic differential
+evidence; removing that public identifier would be an unrelated compatibility
+break. No cryptographic algorithm, work factor, memory access rule, output,
+failure behavior, or cleanup path changed. The selected compressor is already
+the portable correctness authority and the leaf covered by the Argon2i BINSEC
+contract.
+
+The portable-dispatch candidate passed the native Graviton3 evidence suite in
+normal and portable modes, plus `just test --all` and
+`just test --all --portable` on the same machine. The final
+compatibility-preserving selector then passed local `just test-evidence`: 1,212
+native-dispatch tests and 1,190 portable-only tests. The focused Apple M1 Pro
+Argon2i Dudect run used 20,000 samples and reported a maximum absolute
+t-statistic of 1.39840, below the repository threshold of 10. The CT artifacts
+and manifest passed `just ct-validate`, and the dedicated macOS AArch64 RSA
+assembly gate passed in debug, release, and public-operation comparison modes.
+A fresh AArch64 Linux BINSEC run did not start: the repository Zig cross-linker
+rejected Rust's
+`--fix-cortex-a53-843419` linker argument while building the evidence binary.
+The portable compressor itself is unchanged; retain the existing manifest
+proof boundary and treat this as an environment limitation, not fresh formal
+evidence.
 
 ### POWER — keyed BLAKE3, 64 bytes
 
@@ -200,47 +324,55 @@ Do not interpret 50.49% as dispatch overhead; inlined compression may be charged
 The selected benchmark calls the production `Blake3::keyed_digest` on 64 bytes.
 Diagnostics select the portable kernel on POWER;
 this input takes the tiny one-block path through `hash_tiny_to_root_words` and `compress_chunk_tail_to_root_words`.
-First inspect the exact POWER binary's code in the two one-shot symbols and `compress`:
-separate compression rounds from dispatch, block preparation, word conversion, and key cleanup,
-then compare equivalent official BLAKE3 keyed hashing on the same host.
-Confirm any proposed change with a repeat native capture and same-workload elapsed benchmark.
-Preserve keyed-hash output, constant-time behavior, and secret cleanup;
-the profile alone does not establish which operation explains the 0.505x gap.
+Inspection of the retained POWER10 binary established the leading structural cost.
+The exact 64-byte path copied the input into a zero-filled 64-byte block,
+copied the complete resolved dispatch aggregate before selecting one kernel,
+and passed key words through nested by-value owners.
+Each secret owner was correctly cleared, but the nesting produced repeated volatile stores and POWER `sync` barriers.
+This explains the sampled time outside `compress` without treating the 50.49% symbol attribution as dispatch alone.
 
-## Phase 2 — Profile the shared cause
+The first candidate removes the monolithic resolved-dispatch aggregate,
+caches compact size-class kernel identifiers separately from streaming and parallel state,
+borrows one key-word owner through the tiny portable path,
+and reads an exact 64-byte input directly instead of materializing a padded copy.
+It retains volatile cleanup for the message words, full compression result, digest words, and sole key owner.
+Cross-generated POWER10 release-LTO code for an exact production-API wrapper contains no input `memcpy`
+and two cleanup barriers: one after clearing the secret-derived message words and one after clearing the digest words and key owner.
+The temporary inspection wrapper was removed after review.
 
-Use the RISC-V wide-multiply finding first; IBM Z is gated on native sampling:
+As supporting evidence on Apple Silicon, the exact production benchmark moved from a 98.901 ns baseline median
+to 84.700 ns after the final cleanup-complete change, a reduction of 14.4%.
+The immediately preceding comparison measured official BLAKE3 at 76.286 ns,
+placing rscrypto at 0.901x by the table's external-time / rscrypto-time ratio and within the 10% target.
+This is not POWER acceptance evidence.
+Keep the task open until the exact native POWER benchmark and profile confirm the improvement on the same runner identity.
 
-1. Inspect and confirm the RISC-V `ct_mul_u64_wide` cost with target codegen
-   and a repeat or controlled production-path experiment.
-1. After the runner owner enables perf, profile IBM Z
-   `p256-ecdh/public-key/rscrypto-selected` and test whether it shares that cost.
-1. Revisit IBM Z and RISC-V `p256-ecdh/agreement/rscrypto-selected`,
-   IBM Z P-256 parsing, then RISC-V P-256/P-384 public derivation and P-384 signing.
-1. Use a valid POWER control capture if a proposed change touches shared code.
+## Phase 2 — Localize the active cause
 
-- [ ] Attribute fixed-base multiplication, arbitrary-point multiplication,
-      field multiplication/reduction, scalar reduction, inversion, coordinate conversion,
-      masked table selection, encoding, entropy, and cleanup.
-- [ ] Compare native instruction and branch counts with the exact external winner
-      when equivalent symbols and work can be identified.
-      Do not compare totals across different operation contracts.
-- [ ] Determine whether compiler runtime division/multiplication helpers, missed inlining,
-      limb width, excessive masked table scans, spills,
-      or an algorithmic representation explains the gap.
-- [ ] Confirm the leading cause with a repeat capture
-      or one controlled perturbation of the real production path.
-- [ ] Record a cause once, then link every affected row.
-      Do not open separate implementations until the shared-cause hypothesis is falsified.
+Work the retained native profiles in the current order:
+
+1. POWER keyed BLAKE3 one-shot digest and compression codegen.
+
+Resume IBM Z only after native sampling access exists. Circle back to RISC-V P-256 field arithmetic,
+reduction, and constant-time table selection in a later pass.
+
+- [x] Separate portable compression from dispatch selection, block preparation,
+      byte-to-word conversion, and keyed cleanup in the retained POWER binary.
+- [x] Identify the redundant input copy, aggregate dispatch copy,
+      nested key owners, and repeated cleanup barriers in the exact production path.
+- [x] Confirm the structural hypothesis with one safe-Rust production candidate,
+      cross-generated POWER10 code, and a same-workload local elapsed comparison.
+- [ ] Repeat the exact profile and rscrypto-versus-official elapsed benchmark on the POWER runner.
+- [ ] Accept, revise, or reject the candidate from native POWER evidence.
 
 ## Phase 3 — Fix and prove
 
-- [ ] Prefer target-shaped safe Rust, arithmetic representation,
+- [x] Prefer target-shaped safe Rust, arithmetic representation,
       and data layout before intrinsics or assembly.
-- [ ] Change only production-reachable code.
+- [x] Change only production-reachable code.
       Preserve portable authority, deterministic output, blinding, failure opacity, secret cleanup,
       constant-time selection, feature independence, and fallback behavior.
-- [ ] Route any unsafe, intrinsic, SIMD, assembly, ABI,
+- [x] Route any unsafe, intrinsic, SIMD, assembly, ABI,
       or target-feature change through the required specialist proof.
 - [ ] Rerun the exact profile and a longer Criterion baseline/candidate comparison on the same
       machine identity.
@@ -252,14 +384,13 @@ Use the RISC-V wide-multiply finding first; IBM Z is gated on native sampling:
 
 ## Deferred performance queue
 
-After the catastrophic cross-target rows close:
+After the active per-architecture targets above:
 
+1. RISC-V P-256 field arithmetic, reduction, and constant-time table selection.
+1. IBM Z P-256 and ECDSA, only after native `perf` access is available.
 1. Linux x86-64 P-384 signing.
 1. `RapidStreamHasher` large one-write throughput on x86-64.
 1. ML-KEM decapsulation, especially where the current aggregate loses.
-1. The Intel AES-128-GCM-SIV, AMD AES-SIV construction, AArch64 Argon2id,
-   and POWER keyed BLAKE3 cases localized or blocked above; confirm candidates
-   with focused same-host elapsed measurements before a production change.
 1. Other short-message AES-GCM fixed cost and RISC-V XXH3 only if a fresh
    focused run confirms material impact.
 

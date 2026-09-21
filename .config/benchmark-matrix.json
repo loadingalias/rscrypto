@@ -377,11 +377,6 @@
       "case": "aes-128-gcm-siv/copy-and-encrypt/rscrypto/32",
       "diagnostic": false
     },
-    "aead/aes-siv-cmac256": {
-      "bench": "aead",
-      "case": "aes-siv-cmac-256/construct/rscrypto",
-      "diagnostic": false
-    },
     "aead/chacha20": {
       "bench": "aead",
       "case": "chacha20-poly1305/copy-and-encrypt/rscrypto/4096",

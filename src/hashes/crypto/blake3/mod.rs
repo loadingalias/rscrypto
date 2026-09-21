@@ -2401,7 +2401,7 @@ fn hash_full_chunks_cvs_scoped(
 }
 
 #[inline]
-fn digest_oneshot_words(kernel: Kernel, mut key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
+fn digest_oneshot_words(kernel: Kernel, key_words: &[u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
   // Fast path for single-chunk inputs (≤1024B): use platform-specific helpers.
   // On x86, this also handles tiny inputs (≤64B) so they benefit from assembly
   // compress instead of the generic intrinsics/function-pointer path.
@@ -2411,11 +2411,7 @@ fn digest_oneshot_words(kernel: Kernel, mut key_words: [u32; 8], flags: u32, inp
       match kernel.id {
         kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 | kernels::Blake3KernelId::X86Avx512 => {
           // SAFETY: x86 SIMD availability is validated by dispatch before selecting these kernels.
-          let output = unsafe { digest_one_chunk_root_hash_words_x86(kernel, key_words, flags, input) };
-          if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
-            ct::zeroize_words(&mut key_words);
-          }
-          return output;
+          return unsafe { digest_one_chunk_root_hash_words_x86(kernel, *key_words, flags, input) };
         }
         _ => {}
       }
@@ -2424,40 +2420,24 @@ fn digest_oneshot_words(kernel: Kernel, mut key_words: [u32; 8], flags: u32, inp
 
   // Tiny inputs (≤64B) on non-x86 or portable kernel: unified helper.
   if input.len() <= BLOCK_LEN {
-    let output = hash_tiny_to_root_words(kernel, key_words, flags, input);
-    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
-      ct::zeroize_words(&mut key_words);
-    }
-    return output;
+    return hash_tiny_to_root_words(kernel, key_words, flags, input);
   }
 
   #[cfg(target_arch = "aarch64")]
   {
     if input.len() <= CHUNK_LEN && kernel.id == kernels::Blake3KernelId::Aarch64Neon {
       // SAFETY: aarch64 NEON availability is validated by dispatch before selecting this kernel.
-      let output = unsafe { digest_one_chunk_root_hash_words_aarch64(kernel, key_words, flags, input) };
-      if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
-        ct::zeroize_words(&mut key_words);
-      }
-      return output;
+      return unsafe { digest_one_chunk_root_hash_words_aarch64(kernel, *key_words, flags, input) };
     }
   }
 
   if input.len() <= CHUNK_LEN {
-    let output = digest_one_chunk_root_hash_words_generic(kernel, key_words, flags, input);
-    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
-      ct::zeroize_words(&mut key_words);
-    }
-    return output;
+    return digest_one_chunk_root_hash_words_generic(kernel, *key_words, flags, input);
   }
 
   // Fallback: keep the large-input path in a cold function to avoid
   // inflating short-input codegen in this hot entry point.
-  let output = digest_oneshot_words_fallback(kernel, key_words, flags, input);
-  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
-    ct::zeroize_words(&mut key_words);
-  }
-  output
+  digest_oneshot_words_fallback(kernel, *key_words, flags, input)
 }
 
 #[cold]
@@ -2473,7 +2453,7 @@ fn digest_oneshot_words_fallback(kernel: Kernel, mut key_words: [u32; 8], flags:
 }
 
 #[inline]
-fn digest_oneshot(kernel: Kernel, mut key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
+fn digest_oneshot(kernel: Kernel, key_words: &mut [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
   #[cfg(target_arch = "aarch64")]
   {
     if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) == 0
@@ -2481,7 +2461,7 @@ fn digest_oneshot(kernel: Kernel, mut key_words: [u32; 8], flags: u32, input: &[
       && input.len() == CHUNK_LEN
     {
       // SAFETY: aarch64 NEON is validated by dispatch before selecting this kernel.
-      return unsafe { aarch64::root_hash_one_chunk_root_aarch64(input.as_ptr(), &key_words, flags) };
+      return unsafe { aarch64::root_hash_one_chunk_root_aarch64(input.as_ptr(), key_words, flags) };
     }
   }
 
@@ -2489,20 +2469,16 @@ fn digest_oneshot(kernel: Kernel, mut key_words: [u32; 8], flags: u32, input: &[
   let digest = words8_to_le_bytes(&words);
   if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
     ct::zeroize_words_no_fence(&mut words);
-    ct::zeroize_words_no_fence(&mut key_words);
+    ct::zeroize_words_no_fence(key_words);
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
   digest
 }
 
 #[inline]
-fn digest_public_oneshot(mut key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
-  let kernel = dispatch::hasher_dispatch().size_class_kernel(input.len());
-  let digest = digest_oneshot(kernel, key_words, flags, input);
-  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
-    ct::zeroize_words(&mut key_words);
-  }
-  digest
+fn digest_public_oneshot(key_words: &mut [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
+  let kernel = dispatch::size_class_kernel(input.len());
+  digest_oneshot(kernel, key_words, flags, input)
 }
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
@@ -2511,8 +2487,7 @@ fn digest_public_oneshot(mut key_words: [u32; 8], flags: u32, input: &[u8]) -> [
 pub fn diag_blake3_keyed_digest_portable(key: &[u8; KEY_LEN]) -> Blake3KeyedHash {
   let mut key_words = words8_from_le_bytes_32(key);
   let kernel = kernels::kernel(kernels::Blake3KernelId::Portable);
-  let digest = Blake3KeyedHash::from_bytes(digest_oneshot(kernel, key_words, KEYED_HASH, b"binsec"));
-  ct::zeroize_words(&mut key_words);
+  let digest = Blake3KeyedHash::from_bytes(digest_oneshot(kernel, &mut key_words, KEYED_HASH, b"binsec"));
   digest
 }
 
@@ -2768,7 +2743,8 @@ fn diag_blake3_kernel(kernel: Blake3DiagKernel) -> Option<Kernel> {
 #[must_use]
 pub fn diag_blake3_digest_with_kernel(kernel: Blake3DiagKernel, data: &[u8]) -> Option<[u8; OUT_LEN]> {
   let kernel = diag_blake3_kernel(kernel)?;
-  Some(digest_oneshot(kernel, IV, 0, data))
+  let mut iv = IV;
+  Some(digest_oneshot(kernel, &mut iv, 0, data))
 }
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
@@ -2781,8 +2757,7 @@ pub fn diag_blake3_keyed_digest_with_kernel(
 ) -> Option<Blake3KeyedHash> {
   let kernel = diag_blake3_kernel(kernel)?;
   let mut key_words = words8_from_le_bytes_32(key);
-  let digest = Blake3KeyedHash::from_bytes(digest_oneshot(kernel, key_words, KEYED_HASH, data));
-  ct::zeroize_words(&mut key_words);
+  let digest = Blake3KeyedHash::from_bytes(digest_oneshot(kernel, &mut key_words, KEYED_HASH, data));
   Some(digest)
 }
 
@@ -2947,7 +2922,8 @@ impl Blake3 {
   #[inline]
   #[must_use]
   pub fn digest(data: &[u8]) -> [u8; OUT_LEN] {
-    digest_public_oneshot(IV, 0, data)
+    let mut iv = IV;
+    digest_public_oneshot(&mut iv, 0, data)
   }
 
   /// Compute the XOF output state of `data` in one shot.
@@ -2968,9 +2944,7 @@ impl Blake3 {
   #[must_use]
   pub fn keyed_digest(key: &[u8; KEY_LEN], data: &[u8]) -> Blake3KeyedHash {
     let mut key_words = words8_from_le_bytes_32(key);
-    let digest = Blake3KeyedHash::from_bytes(digest_public_oneshot(key_words, KEYED_HASH, data));
-    ct::zeroize_words(&mut key_words);
-    digest
+    Blake3KeyedHash::from_bytes(digest_public_oneshot(&mut key_words, KEYED_HASH, data))
   }
 
   /// Compute and verify the keyed hash through its sealed comparison decision.
@@ -3030,9 +3004,7 @@ impl Blake3 {
     };
 
     let mut context_key_words = context_key_words;
-    let derived = digest_public_oneshot(context_key_words, DERIVE_KEY_MATERIAL, key_material);
-    ct::zeroize_words(&mut context_key_words);
-    derived
+    digest_public_oneshot(&mut context_key_words, DERIVE_KEY_MATERIAL, key_material)
   }
 
   #[inline]
@@ -3741,7 +3713,7 @@ impl Digest for Blake3 {
       if block_len == BLOCK_LEN {
         let mut out_words = compress_chunk_tail_to_root_words(
           kernel,
-          cv,
+          &cv,
           &self.chunk_state.block,
           block_len,
           self.chunk_state.flags,
@@ -3759,7 +3731,7 @@ impl Digest for Blake3 {
       let mut block = self.chunk_state.block;
       block[block_len..].fill(0);
       let mut out_words =
-        compress_chunk_tail_to_root_words(kernel, cv, &block, block_len, self.chunk_state.flags, add_chunk_start);
+        compress_chunk_tail_to_root_words(kernel, &cv, &block, block_len, self.chunk_state.flags, add_chunk_start);
       let digest = words8_to_le_bytes(&out_words);
       if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
         ct::zeroize_no_fence(&mut block);
@@ -4070,7 +4042,7 @@ impl_xof_read!(Blake3XofReader);
 #[must_use]
 fn compress_chunk_tail_to_root_words(
   kernel: Kernel,
-  mut cv: [u32; 8],
+  cv: &[u32; 8],
   block: &[u8; BLOCK_LEN],
   block_len: usize,
   flags: u32,
@@ -4089,16 +4061,13 @@ fn compress_chunk_tail_to_root_words(
         // each x86 kernel; `block` is a readable 64-byte buffer.
         let output = unsafe {
           (kernel.x86_compress_cv_bytes)(
-            &cv,
+            cv,
             block.as_ptr(),
             0,
             u32::try_from(block_len).expect("BLAKE3 block length fits in u32"),
             final_flags,
           )
         };
-        if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
-          ct::zeroize_words(&mut cv);
-        }
         return output;
       }
       _ => {}
@@ -4111,32 +4080,30 @@ fn compress_chunk_tail_to_root_words(
       // SAFETY: NEON availability validated by dispatch
       let output = unsafe {
         aarch64::compress_cv_neon_bytes(
-          &cv,
+          cv,
           block.as_ptr(),
           0,
           u32::try_from(block_len).expect("BLAKE3 block length fits in u32"),
           final_flags,
         )
       };
-      if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
-        ct::zeroize_words(&mut cv);
-      }
       return output;
     }
   }
 
   // Portable fallback
   let mut block_words = words16_from_le_bytes_64(block);
-  let output = first_8_words((kernel.compress)(
-    &cv,
+  let mut compress_words = (kernel.compress)(
+    cv,
     &block_words,
     0,
     u32::try_from(block_len).expect("BLAKE3 block length fits in u32"),
     final_flags,
-  ));
+  );
+  let output = first_8_words(compress_words);
   if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
-    ct::zeroize_words_no_fence(&mut cv);
     ct::zeroize_words_no_fence(&mut block_words);
+    ct::zeroize_words_no_fence(&mut compress_words);
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
   output
@@ -4148,17 +4115,19 @@ fn compress_chunk_tail_to_root_words(
 /// It handles input padding and dispatches to the appropriate kernel.
 #[inline]
 #[must_use]
-fn hash_tiny_to_root_words(kernel: Kernel, mut key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
+fn hash_tiny_to_root_words(kernel: Kernel, key_words: &[u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
   debug_assert!(input.len() <= BLOCK_LEN);
+
+  if let Ok(block) = <&[u8; BLOCK_LEN]>::try_from(input) {
+    return compress_chunk_tail_to_root_words(kernel, key_words, block, BLOCK_LEN, flags, true);
+  }
 
   let mut block = [0u8; BLOCK_LEN];
   block[..input.len()].copy_from_slice(input);
 
   let output = compress_chunk_tail_to_root_words(kernel, key_words, &block, input.len(), flags, true);
   if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
-    ct::zeroize_no_fence(&mut block);
-    ct::zeroize_words_no_fence(&mut key_words);
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    ct::zeroize(&mut block);
   }
   output
 }
@@ -4901,8 +4870,16 @@ unsafe fn digest_one_chunk_root_hash_words_aarch64(
 mod tests {
   #[cfg(all(rscrypto_internal, feature = "diag"))]
   use super::CHUNK_LEN;
-  use super::{Blake3, Blake3KeyedHash, OUT_LEN};
+  use super::{Blake3, Blake3KeyedHash, KEYED_HASH, OUT_LEN, digest_oneshot, kernels, words8_from_le_bytes_32};
   use crate::traits::{Digest, VerificationError, Xof};
+
+  #[test]
+  fn keyed_oneshot_clears_borrowed_key_words() {
+    let mut key_words = words8_from_le_bytes_32(b"whats the Elvish word for friend");
+    let kernel = kernels::kernel(kernels::Blake3KernelId::Portable);
+    let _digest = digest_oneshot(kernel, &mut key_words, KEYED_HASH, &[0x5a; 64]);
+    assert_eq!(key_words, [0; 8]);
+  }
 
   #[test]
   fn xof_repeated_small_squeezes_match_single_read() {
