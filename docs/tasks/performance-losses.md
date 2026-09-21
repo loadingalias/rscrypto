@@ -345,7 +345,27 @@ to 84.700 ns after the final cleanup-complete change, a reduction of 14.4%.
 The immediately preceding comparison measured official BLAKE3 at 76.286 ns,
 placing rscrypto at 0.901x by the table's external-time / rscrypto-time ratio and within the 10% target.
 This is not POWER acceptance evidence.
-Keep the task open until the exact native POWER benchmark and profile confirm the improvement on the same runner identity.
+
+The exact paired [POWER10 benchmark](https://github.com/loadingalias/rscrypto/actions/runs/35568638076)
+measured rscrypto at 147.01 ns `[146.64, 147.46]` and official BLAKE3 at
+118.46 ns `[118.31, 118.68]` across 200 samples after a three-second warm-up and ten-second measurement.
+The safe-Rust cleanup reduced the historical rscrypto median by 35.9%, from 229.4 ns,
+but rscrypto remains 24.1% slower than the same-run external implementation.
+The matching [native profile](https://github.com/loadingalias/rscrypto/actions/runs/35567963259/artifacts/10624811596)
+retained 310 flat `cycles:u` samples with none lost.
+It assigns 90.23% to portable `compress`, 5.20% to Criterion's `Bencher::iter`,
+and 4.57% to `digest_oneshot_words`.
+The removed dispatch aggregate, input copy, and nested key-owner costs no longer appear as sampled hotspots.
+
+A measured POWER10 dispatch experiment selected the existing VSX compression kernel for the 64-byte class.
+Its exact paired [benchmark](https://github.com/loadingalias/rscrypto/actions/runs/35570144259)
+measured 145.51 ns `[143.26, 148.43]` against official BLAKE3 at
+118.07 ns `[117.99, 118.15]`: 23.2% slower, and only 1.0% below the portable candidate with overlapping intervals.
+The [matching profile](https://github.com/loadingalias/rscrypto/actions/runs/35570180583/artifacts/10626320578)
+retained 316 flat `cycles:u` samples with none lost and assigned 79.98% to
+`compress_power_vsx`, proving that the production VSX kernel executed.
+The dispatch experiment was rejected and the portable short-message policy restored.
+Keep the task open with portable scalar compression as the next measured target.
 
 ## Phase 2 — Localize the active cause
 
@@ -362,8 +382,8 @@ reduction, and constant-time table selection in a later pass.
       nested key owners, and repeated cleanup barriers in the exact production path.
 - [x] Confirm the structural hypothesis with one safe-Rust production candidate,
       cross-generated POWER10 code, and a same-workload local elapsed comparison.
-- [ ] Repeat the exact profile and rscrypto-versus-official elapsed benchmark on the POWER runner.
-- [ ] Accept, revise, or reject the candidate from native POWER evidence.
+- [x] Repeat the exact profile and rscrypto-versus-official elapsed benchmark on the POWER runner.
+- [x] Accept, revise, or reject the candidate from native POWER evidence.
 
 ## Phase 3 — Fix and prove
 
@@ -374,7 +394,7 @@ reduction, and constant-time table selection in a later pass.
       constant-time selection, feature independence, and fallback behavior.
 - [x] Route any unsafe, intrinsic, SIMD, assembly, ABI,
       or target-feature change through the required specialist proof.
-- [ ] Rerun the exact profile and a longer Criterion baseline/candidate comparison on the same
+- [x] Rerun the exact profile and a longer Criterion baseline/candidate comparison on the same
       machine identity.
 - [ ] Run independent vectors and portable-versus-optimized differentials, target-native tests,
       CT evidence, optimized cleanup checks, dispatch evidence,

@@ -754,7 +754,7 @@ pub(crate) static PROFILE_POWER9: FamilyProfile = FamilyProfile {
 pub(crate) static PROFILE_POWER10: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 256, 4096],
-    xs: POWER_VSX_KERNEL,
+    xs: KernelId::Portable,
     s: POWER_VSX_KERNEL,
     m: POWER_VSX_KERNEL,
     l: POWER_VSX_KERNEL,
