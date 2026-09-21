@@ -116,43 +116,42 @@ then compare exact public derivation and agreement on native RISC-V.
 Do not replace it with target multiplication without proving secret-independent latency
 and preserving the CT contract.
 
-#### Current RISC-V candidate (2026-09-20; not closed)
+#### RISC-V result (2026-09-20; performance row remains open)
 
-The production candidate replaces the 64-round software product on RV64 with safe Rust that lowers to
-`mul` and `mulhu`. It normalizes both multiplier operands to set the high bit, then applies a branchless
-correction, so operand magnitude does not vary with the secret. The same bounded change adds a sparse
-P-256 Montgomery reduction, a 10-product square, a fixed inversion chain, direct Jacobian conversion,
-and a three-way width-seven fixed-base comb. The comb performs 12 doublings, 36 mixed additions,
-and 37 fixed-count full-table scans. Its three 8 KiB tables are shared with ECDSA instead of retaining
-a second P-256 table implementation. The candidate adds no dependency, vendored implementation,
-unsafe code, intrinsic, or assembly.
+Revision `11fee328f57297f69303371bf7593e4e33aa7a75` replaces the 64-round software product on RV64
+with safe Rust that lowers to `mul` and `mulhu`. It normalizes both multiplier operands to set the high bit,
+then applies a branchless correction so operand magnitude does not vary with the secret. The same bounded
+change adds a sparse P-256 Montgomery reduction, a 10-product square, a fixed inversion chain, direct
+Jacobian conversion, and a three-way width-seven fixed-base comb. The comb performs 12 doublings,
+36 mixed additions, and 37 fixed-count full-table scans. Its three 8 KiB tables are shared with ECDSA;
+the change adds no dependency, vendored implementation, unsafe code, intrinsic, or assembly.
 
-The local AArch64 portable-path benchmark exercises the production
-`P256EphemeralSecret::public_key` API. Two usable rscrypto intervals were
-`[24.225, 24.397] us` and `[24.676, 25.983] us`; the uncontended CRRL interval from the same
-benchmark binary was `[28.926, 29.075] us`. Even the conservative rscrypto upper bound against
-the CRRL lower bound is 10.17% lower elapsed time. This clears the performance goal on the host proxy,
-but it is not RISC-V performance evidence and does not close the historical row.
+The exact native [RV64 benchmark](https://github.com/loadingalias/rscrypto/actions/runs/35542196605) reduced
+public derivation from the retained 13.584 ms to 208.04 us, a 65.3x speedup. CRRL measured 135.28 us in the
+same binary, so rscrypto remains 53.8% slower. Agreement fell from 30.860 ms to 832.31 us, a 37.1x speedup;
+CRRL measured 335.92 us, leaving rscrypto 147.8% slower. These are major corrections, but neither case clears
+the 10% goal and no physical lower bound has been demonstrated. Do not mark either row closed.
 
-Current correctness evidence passes:
+The follow-up [native profile](https://github.com/loadingalias/rscrypto/actions/runs/35543835843) retained
+493 cycle samples with none lost. It attributed 26.02% self to RV64 field squaring, 19.54% to field
+multiplication, and 18.89% to Montgomery reduction; the remaining 28.00% inlined into public derivation.
+The field kernels therefore account for at least 64.45% of sampled cycles. Static review also found that the
+fixed-base comb scans about 296 KiB of table coordinates per public key. Field arithmetic and constant-time
+table selection remain the demonstrated optimization targets.
 
-- four focused arithmetic, inversion, fixed-base, and table tests;
-- exhaustive independent RustCrypto checks for all 381 nonzero entries across the three comb tables;
-- six production-API P-256 ECDH oracles covering NIST CAVP, RustCrypto, ring, an independent
-  pure-Rust implementation, encoding boundaries, and the full Wycheproof point corpus; and
-- eight P-256/P-384 ECDSA production-API oracle tests because ECDSA now shares the P-256 table owner.
+The full [RV64 constant-time run](https://github.com/loadingalias/rscrypto/actions/runs/35542201632) failed
+globally on an unrelated Ed25519 timing case and pre-existing manifest coverage gaps. Both applicable P-256
+DudeCT cases passed on native hardware: public derivation reported `|t| = 2.3471`, and agreement reported
+`|t| = 6.90385`, below the configured threshold of 10. Generated-code heuristics reported no `needs-fix`
+finding; manual review confirmed only fixed-count branches. This supports this revision's P-256 timing claim,
+but does not clear the unrelated repository-wide CT failures.
 
-The final RV64 release codegen has an 832-byte public-key stack frame and five conditional branches:
-four fixed-count 128-entry scans and the fixed 12-round loop. The selector assertion constant-folds away.
-Fresh `just ct-artifacts --target riscv64gc-unknown-linux-gnu --profile release` evidence reports
-no `needs-fix` finding. It classifies the five public-key branches and the 32 multiply plus 20 square
-hardware-multiply instructions as `needs-binsec`; manual review confirms the branches are fixed-count,
-but static inspection cannot prove the latency of a secret-fed RISC-V multiplier.
-
-The remaining sign-off gates are target-native execution of the exact public-key and agreement benchmarks,
-the correctness suite, and the Dudect harness on the physical RISC-V runner. This workspace has no configured
-RISC-V SSH target, so cross-compilation and static CT evidence are the strongest available local checks.
-Do not mark this row closed or update the retained benchmark matrix until those native checks pass.
+A correction-aggregation experiment at `c99a45d1536048e8d1f8a48100a73fb23a1c2b8e` reduced RV64 multiply
+memory operations from 114 to 66, but the exact native public-key benchmark was statistically flat at
+208.23 us versus the 208.04 us accepted baseline. It was reverted because generated-code cleanliness without
+a measured speedup does not meet the acceptance rule. A canonical-field Solinas-reduction prototype passed
+the focused differential tests but required roughly 1,100 instructions per multiply and 860 per square,
+versus 458 and 325 for the accepted Montgomery kernels, so it was rejected before spending another CI run.
 
 ### IBM Z — P-256 public derivation
 
