@@ -1388,21 +1388,18 @@ impl Riscv64MulLimb {
 #[cfg(any(test, target_arch = "riscv64"))]
 #[inline(always)]
 fn ct_mul_riscv64_limbs(left: Riscv64MulLimb, right: Riscv64MulLimb) -> (u64, u64) {
-  const HIGH_BIT: u64 = 1 << 63;
-
   let product = u128::from(left.normalized).strict_mul(u128::from(right.normalized));
   let (product_low, product_high) = split_u128(product);
 
-  // Subtract the two conditional 2^63 cross terms and their 2^126
-  // intersection to recover the original product.
+  // Given x' = x + mx * 2^63 and y' = y + my * 2^63, recover
+  // xy = x'y' - mx * y' * 2^63 - my * x * 2^63. Using y' in the
+  // first correction cancels the 2^126 intersection without another
+  // subtraction.
   let (product_low, borrow) = sbb_limb(product_low, right.shift_low & left.padding_mask, 0);
-  let (product_high, borrow) = sbb_limb(product_high, right.shift_high & left.padding_mask, borrow);
+  let (product_high, borrow) = sbb_limb(product_high, (right.normalized >> 1) & left.padding_mask, borrow);
   debug_assert_eq!(borrow, 0);
   let (product_low, borrow) = sbb_limb(product_low, left.shift_low & right.padding_mask, 0);
   let (product_high, borrow) = sbb_limb(product_high, left.shift_high & right.padding_mask, borrow);
-  debug_assert_eq!(borrow, 0);
-  let intersection = (HIGH_BIT >> 1) & left.padding_mask & right.padding_mask;
-  let (product_high, borrow) = sbb_limb(product_high, intersection, 0);
   debug_assert_eq!(borrow, 0);
 
   (product_low, product_high)
@@ -1453,24 +1450,17 @@ fn mac_wide(acc: u64, product_low: u64, product_high: u64, carry: u64) -> (u64, 
   (result, high)
 }
 
+#[cfg(any(test, target_arch = "riscv64"))]
+#[inline(always)]
+fn mul_riscv64_limb(left: Riscv64MulLimb, right: Riscv64MulLimb) -> (u64, u64) {
+  ct_mul_riscv64_limbs(left, right)
+}
+
 #[inline(always)]
 #[cfg(any(test, not(target_arch = "riscv64")))]
 fn mac_limb(acc: u64, left: u64, right: u64, carry: u64) -> (u64, u64) {
   let (product_low, product_high) = mul_u64_wide(left, right);
   mac_wide(acc, product_low, product_high, carry)
-}
-
-#[cfg(any(test, target_arch = "riscv64"))]
-#[inline(always)]
-fn mac_riscv64_limb(acc: u64, left: Riscv64MulLimb, right: Riscv64MulLimb, carry: u64) -> (u64, u64) {
-  let (product_low, product_high) = ct_mul_riscv64_limbs(left, right);
-  mac_wide(acc, product_low, product_high, carry)
-}
-
-#[cfg(any(test, target_arch = "riscv64"))]
-#[inline(always)]
-fn mul_riscv64_limb(left: Riscv64MulLimb, right: Riscv64MulLimb) -> (u64, u64) {
-  ct_mul_riscv64_limbs(left, right)
 }
 
 #[inline(always)]
@@ -1573,13 +1563,106 @@ fn riscv64_mul_limbs(value: Uint) -> [Riscv64MulLimb; 4] {
 }
 
 #[cfg(any(test, target_arch = "riscv64"))]
+#[inline(always)]
+fn mul_riscv64_normalized(left: u64, right: u64) -> (u64, u64) {
+  split_u128(u128::from(left).strict_mul(u128::from(right)))
+}
+
+#[cfg(any(test, target_arch = "riscv64"))]
+#[inline(always)]
+fn mac_riscv64_normalized(acc: u64, left: u64, right: u64, carry: u64) -> (u64, u64) {
+  let (product_low, product_high) = mul_riscv64_normalized(left, right);
+  mac_wide(acc, product_low, product_high, carry)
+}
+
+#[cfg(any(test, target_arch = "riscv64"))]
+#[inline(always)]
+fn shift_left_63(value: [u64; 4]) -> [u64; 5] {
+  [
+    value[0] << 63,
+    (value[0] >> 1) | (value[1] << 63),
+    (value[1] >> 1) | (value[2] << 63),
+    (value[2] >> 1) | (value[3] << 63),
+    value[3] >> 1,
+  ]
+}
+
+#[cfg(any(test, target_arch = "riscv64"))]
+#[inline(always)]
+fn subtract_shifted_padding<const OFFSET: usize>(product: &mut [u64; 8], shifted: [u64; 5], mask: u64) {
+  let (w0, borrow) = sbb_limb(product[OFFSET], shifted[0] & mask, 0);
+  let offset1 = OFFSET.strict_add(1);
+  let offset2 = OFFSET.strict_add(2);
+  let offset3 = OFFSET.strict_add(3);
+  let offset4 = OFFSET.strict_add(4);
+  let (w1, borrow) = sbb_limb(product[offset1], shifted[1] & mask, borrow);
+  let (w2, borrow) = sbb_limb(product[offset2], shifted[2] & mask, borrow);
+  let (w3, borrow) = sbb_limb(product[offset3], shifted[3] & mask, borrow);
+  let (w4, mut borrow) = sbb_limb(product[offset4], shifted[4] & mask, borrow);
+  product[OFFSET] = w0;
+  product[offset1] = w1;
+  product[offset2] = w2;
+  product[offset3] = w3;
+  product[offset4] = w4;
+  let mut index = OFFSET.strict_add(5);
+  while index < product.len() {
+    (product[index], borrow) = sbb_limb(product[index], 0, borrow);
+    index = index.strict_add(1);
+  }
+  debug_assert_eq!(borrow, 0);
+}
+
+#[cfg(any(test, target_arch = "riscv64"))]
+#[inline(always)]
+fn subtract_padding_product(product: &mut [u64; 8], shifted: [u64; 5], padding_masks: [u64; 4]) {
+  subtract_shifted_padding::<0>(product, shifted, padding_masks[0]);
+  subtract_shifted_padding::<1>(product, shifted, padding_masks[1]);
+  subtract_shifted_padding::<2>(product, shifted, padding_masks[2]);
+  subtract_shifted_padding::<3>(product, shifted, padding_masks[3]);
+}
+
+#[cfg(any(test, target_arch = "riscv64"))]
+#[inline(always)]
+fn riscv64_normalized_limbs(value: [Riscv64MulLimb; 4]) -> [u64; 4] {
+  [
+    value[0].normalized,
+    value[1].normalized,
+    value[2].normalized,
+    value[3].normalized,
+  ]
+}
+
+#[cfg(any(test, target_arch = "riscv64"))]
+#[inline(always)]
+fn riscv64_padding_masks(value: [Riscv64MulLimb; 4]) -> [u64; 4] {
+  [
+    value[0].padding_mask,
+    value[1].padding_mask,
+    value[2].padding_mask,
+    value[3].padding_mask,
+  ]
+}
+
+#[cfg(any(test, target_arch = "riscv64"))]
 #[inline(never)]
 fn montgomery_mul_riscv64(left: Uint, right: Uint) -> Uint {
-  montgomery_reduce(multiply_256_wide(
-    riscv64_mul_limbs(left),
-    riscv64_mul_limbs(right),
-    mac_riscv64_limb,
-  ))
+  let left_limbs = riscv64_mul_limbs(left);
+  let right_limbs = riscv64_mul_limbs(right);
+  let left_normalized = riscv64_normalized_limbs(left_limbs);
+  let right_normalized = riscv64_normalized_limbs(right_limbs);
+  let mut product = multiply_256_wide(left_normalized, right_normalized, mac_riscv64_normalized);
+
+  // With A' = A + delta-A and B' = B + delta-B, recover
+  // A*B = A'*B' - delta-A*B' - delta-B*A. Each delta is a fixed
+  // sum of the per-limb padding bits shifted by 63, so the correction
+  // needs only masked subtractions and does not invoke the multiplier.
+  subtract_padding_product(
+    &mut product,
+    shift_left_63(right_normalized),
+    riscv64_padding_masks(left_limbs),
+  );
+  subtract_padding_product(&mut product, shift_left_63(left.0), riscv64_padding_masks(right_limbs));
+  montgomery_reduce(product)
 }
 
 #[cfg(any(test, target_arch = "riscv64"))]
@@ -1964,6 +2047,22 @@ mod tests {
     for left in field_edges {
       assert!(super::montgomery_square_riscv64(left) == super::montgomery_square(left));
       for right in field_edges {
+        assert!(super::montgomery_mul_riscv64(left, right) == super::montgomery_mul(left, right));
+      }
+    }
+
+    let padding_patterns = core::array::from_fn::<_, 16, _>(|pattern| {
+      let high_bit = |limb: usize| u64::from(((pattern >> limb) & 1) != 0) << 63;
+      super::Uint([
+        0x0123_4567_89ab_cdef | high_bit(0),
+        0x0234_5678_9abc_def0 | high_bit(1),
+        0x0345_6789_abcd_ef01 | high_bit(2),
+        0x0456_789a_bcde_f012 | high_bit(3),
+      ])
+    });
+    for left in padding_patterns {
+      assert!(super::montgomery_square_riscv64(left) == super::montgomery_square(left));
+      for right in padding_patterns {
         assert!(super::montgomery_mul_riscv64(left, right) == super::montgomery_mul(left, right));
       }
     }
