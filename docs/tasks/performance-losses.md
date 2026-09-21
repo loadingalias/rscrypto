@@ -378,6 +378,34 @@ AES-SIV-CMAC-256, and 3.08138 for RSA, below their configured thresholds of 8 or
 not applicable on this target because its shipped PPC64 decoder does not support little-endian PPC64;
 the retained POWER evidence is generated-code heuristics plus native DudeCT.
 
+Disassembly of the retained `f9902f96` profile binary narrows the remaining loss to
+unneeded full-output work in portable compression. The rscrypto `compress` body has
+965 instructions, 86 loads, and 59 stores, while the same binary's official
+`blake3::portable::compress_in_place` body has 941 instructions, 81 loads, and 44 stores.
+Both perform the same seven rounds. rscrypto then materializes all 16 output words even though
+the tiny one-block path retains only the first eight chaining-value words; the official path
+finalizes only those eight words. A source-layout experiment that replaced compression locals
+with an indexed state array increased the rscrypto body to 967 instructions, 86 loads, and
+60 stores under the same generic POWER build inputs, so it was rejected.
+
+The current safe-Rust candidate shares the seven rounds between two finalizers and sends only
+the tiny portable path through an 8-word chaining-value finalizer. Cross-generated generic
+POWER bench-profile assembly reduces that finalizer to 939 instructions, 83 loads, and 44 stores,
+while the full 16-word compression path remains at 964 instructions, 86 loads, and 59 stores.
+The candidate finalizer has no calls, divisions, floating-point instructions, conditional branches,
+or secret-dependent addresses. Keyed message words retain volatile cleanup, and the full-output
+path retains its existing cleanup.
+
+Two detached-baseline runs at revision `ce05765b` on Apple Silicon measured rscrypto at
+81.287 ns and 81.274 ns. The current candidate measured 73.819 ns `[73.746, 73.893]`,
+a 9.22% reduction from the selected baseline. The same-run official implementation measured
+75.681 ns, but its row moved by 3.66% from the selected baseline, so this is supporting evidence,
+not a cross-implementation acceptance claim. The release binary's Mach-O text segment remained
+2,572,288 bytes. Native and forced-portable evidence suites pass, with 1,214 and 1,192 tests,
+respectively, and `ct-validate` passes. `just check` also passes the full release-native and
+debug-portable Clippy matrix, independent workspaces, dependency policy, and Rustdoc. Native POWER
+profiling and elapsed measurement remain the acceptance gate for this candidate.
+
 ## Phase 2 — Localize the active cause
 
 Work the retained native profiles in the current order:
@@ -395,6 +423,12 @@ reduction, and constant-time table selection in a later pass.
       cross-generated POWER10 code, and a same-workload local elapsed comparison.
 - [x] Repeat the exact profile and rscrypto-versus-official elapsed benchmark on the POWER runner.
 - [x] Accept, revise, or reject the candidate from native POWER evidence.
+- [x] Compare the retained portable compression body with the official implementation and
+      isolate full-output finalization as the next structural difference.
+- [x] Reject the indexed-state source experiment and produce a CV-only safe-Rust candidate with
+      local codegen, elapsed, correctness, cleanup, and constant-time evidence.
+- [ ] Repeat the exact profile and elapsed benchmark for the CV-only candidate on the POWER runner,
+      then accept, revise, or reject it from native evidence.
 
 ## Phase 3 — Fix and prove
 

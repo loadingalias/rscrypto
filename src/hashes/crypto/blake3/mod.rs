@@ -1027,8 +1027,17 @@ fn add_chunk_cvs_batched_bytes(
   }
 }
 
-#[inline]
-fn compress(chaining_value: &[u32; 8], block_words: &[u32; 16], counter: u64, block_len: u32, flags: u32) -> [u32; 16] {
+// Share the rounds while keeping 8-word chaining-value finalization separate
+// from the 16-word XOF finalization. Inlining the round state lets LLVM omit
+// the unused second output half from the CV caller without changing XOF output.
+#[inline(always)]
+fn compress_pre(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> [u32; 16] {
   let m0 = block_words[0];
   let m1 = block_words[1];
   let m2 = block_words[2];
@@ -1108,31 +1117,58 @@ fn compress(chaining_value: &[u32; 8], block_words: &[u32; 16], counter: u64, bl
   round!(m9, m14, m11, m5, m8, m12, m15, m1, m13, m3, m0, m10, m2, m6, m4, m7);
   round!(m11, m15, m5, m0, m1, m9, m8, m6, m14, m10, m2, m12, m3, m4, m7, m13);
 
-  v0 ^= v8;
-  v1 ^= v9;
-  v2 ^= v10;
-  v3 ^= v11;
-  v4 ^= v12;
-  v5 ^= v13;
-  v6 ^= v14;
-  v7 ^= v15;
-
-  v8 ^= chaining_value[0];
-  v9 ^= chaining_value[1];
-  v10 ^= chaining_value[2];
-  v11 ^= chaining_value[3];
-  v12 ^= chaining_value[4];
-  v13 ^= chaining_value[5];
-  v14 ^= chaining_value[6];
-  v15 ^= chaining_value[7];
-
   [v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15]
+}
+
+#[inline]
+fn compress(chaining_value: &[u32; 8], block_words: &[u32; 16], counter: u64, block_len: u32, flags: u32) -> [u32; 16] {
+  let mut state = compress_pre(chaining_value, block_words, counter, block_len, flags);
+  state[0] ^= state[8];
+  state[1] ^= state[9];
+  state[2] ^= state[10];
+  state[3] ^= state[11];
+  state[4] ^= state[12];
+  state[5] ^= state[13];
+  state[6] ^= state[14];
+  state[7] ^= state[15];
+
+  state[8] ^= chaining_value[0];
+  state[9] ^= chaining_value[1];
+  state[10] ^= chaining_value[2];
+  state[11] ^= chaining_value[3];
+  state[12] ^= chaining_value[4];
+  state[13] ^= chaining_value[5];
+  state[14] ^= chaining_value[6];
+  state[15] ^= chaining_value[7];
+  state
 }
 
 #[inline(always)]
 fn first_8_words(words: [u32; 16]) -> [u32; 8] {
   [
     words[0], words[1], words[2], words[3], words[4], words[5], words[6], words[7],
+  ]
+}
+
+// Keep the unrolled rounds out of tiny one-shot callers.
+#[inline(never)]
+fn compress_cv_portable(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> [u32; 8] {
+  let state = compress_pre(chaining_value, block_words, counter, block_len, flags);
+  [
+    state[0] ^ state[8],
+    state[1] ^ state[9],
+    state[2] ^ state[10],
+    state[3] ^ state[11],
+    state[4] ^ state[12],
+    state[5] ^ state[13],
+    state[6] ^ state[14],
+    state[7] ^ state[15],
   ]
 }
 
@@ -4093,13 +4129,16 @@ fn compress_chunk_tail_to_root_words(
 
   // Portable fallback
   let mut block_words = words16_from_le_bytes_64(block);
-  let mut compress_words = (kernel.compress)(
-    cv,
-    &block_words,
-    0,
-    u32::try_from(block_len).expect("BLAKE3 block length fits in u32"),
-    final_flags,
-  );
+  let block_len_u32 = u32::try_from(block_len).expect("BLAKE3 block length fits in u32");
+  if kernel.id == kernels::Blake3KernelId::Portable {
+    let output = compress_cv_portable(cv, &block_words, 0, block_len_u32, final_flags);
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(&mut block_words);
+    }
+    return output;
+  }
+
+  let mut compress_words = (kernel.compress)(cv, &block_words, 0, block_len_u32, final_flags);
   let output = first_8_words(compress_words);
   if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
     ct::zeroize_words_no_fence(&mut block_words);
