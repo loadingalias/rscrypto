@@ -4074,6 +4074,10 @@ impl_xof_read!(Blake3XofReader);
 ///
 /// # Returns
 /// The root hash as 8 u32 words (little-endian).
+///
+/// In keyed modes, this helper volatile-clears scratch without fencing. Both
+/// call paths clear their remaining key-derived state and emit one final
+/// compiler fence after the returned words have been consumed.
 #[inline]
 #[must_use]
 fn compress_chunk_tail_to_root_words(
@@ -4133,7 +4137,7 @@ fn compress_chunk_tail_to_root_words(
   if kernel.id == kernels::Blake3KernelId::Portable {
     let output = compress_cv_portable(cv, &block_words, 0, block_len_u32, final_flags);
     if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
-      ct::zeroize_words(&mut block_words);
+      ct::zeroize_words_no_fence(&mut block_words);
     }
     return output;
   }
@@ -4143,7 +4147,6 @@ fn compress_chunk_tail_to_root_words(
   if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
     ct::zeroize_words_no_fence(&mut block_words);
     ct::zeroize_words_no_fence(&mut compress_words);
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
   output
 }
@@ -4166,7 +4169,7 @@ fn hash_tiny_to_root_words(kernel: Kernel, key_words: &[u32; 8], flags: u32, inp
 
   let output = compress_chunk_tail_to_root_words(kernel, key_words, &block, input.len(), flags, true);
   if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
-    ct::zeroize(&mut block);
+    ct::zeroize_no_fence(&mut block);
   }
   output
 }
