@@ -367,6 +367,17 @@ retained 316 flat `cycles:u` samples with none lost and assigned 79.98% to
 The dispatch experiment was rejected and the portable short-message policy restored.
 Keep the task open with portable scalar compression as the next measured target.
 
+The final code revision `c95819f10f922dbbf18f383dce543b29efa85891` passed the complete
+[CI workflow](https://github.com/loadingalias/rscrypto/actions/runs/35576174499), including native
+POWER, RISC-V, s390x, AArch64, Linux x86-64, and Windows x86-64 execution plus compatibility and
+package lanes. Its matching [native POWER CT workflow](https://github.com/loadingalias/rscrypto/actions/runs/35576174521)
+retained a clean-commit artifact with 94 of 94 gated DudeCT cases passing, zero blockers, and zero
+diagnostics. Artifact generation, strict validation, the zeroization sentinel, and DudeCT import
+passed. The largest relevant absolute t-statistics were 2.03190 for BLAKE3, 3.22876 for
+AES-SIV-CMAC-256, and 3.08138 for RSA, below their configured thresholds of 8 or 10. BINSEC remains
+not applicable on this target because its shipped PPC64 decoder does not support little-endian PPC64;
+the retained POWER evidence is generated-code heuristics plus native DudeCT.
+
 ## Phase 2 — Localize the active cause
 
 Work the retained native profiles in the current order:
@@ -396,7 +407,7 @@ reduction, and constant-time table selection in a later pass.
       or target-feature change through the required specialist proof.
 - [x] Rerun the exact profile and a longer Criterion baseline/candidate comparison on the same
       machine identity.
-- [ ] Run independent vectors and portable-versus-optimized differentials, target-native tests,
+- [x] Run independent vectors and portable-versus-optimized differentials, target-native tests,
       CT evidence, optimized cleanup checks, dispatch evidence,
       and codegen review for the changed boundary.
 - [ ] Run the full benchmark matrix and update `benchmark_results/OVERVIEW.md` only from complete retained artifacts.
