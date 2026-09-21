@@ -25,7 +25,8 @@ This task is complete when:
 
 ## Current work order
 
-1. POWER keyed BLAKE3 at 64 bytes.
+No architecture target is active. POWER keyed BLAKE3 at 64 bytes closed on
+2026-09-21 at `ca2eb6619ae6eb80b08ba8dc647dce6e9bdae5bb`.
 
 RISC-V P-256 follow-up is deferred after the major correction failed to close the CRRL gap.
 IBM Z P-256 and ECDSA work is deferred until the native runner permits attributable `perf` sampling.
@@ -164,7 +165,7 @@ a measured speedup does not meet the acceptance rule. A canonical-field Solinas-
 the focused differential tests but required roughly 1,100 instructions per multiply and 860 per square,
 versus 458 and 325 for the accepted Montgomery kernels, so it was rejected before spending another CI run.
 
-Further RISC-V work is deferred. The next active target is POWER keyed BLAKE3 at 64 bytes.
+Further RISC-V work is deferred. The POWER target below is closed; no deferred target has resumed.
 
 ### Deferred — IBM Z P-256 public derivation
 
@@ -404,13 +405,43 @@ not a cross-implementation acceptance claim. The release binary's Mach-O text se
 2,572,288 bytes. Native and forced-portable evidence suites pass, with 1,214 and 1,192 tests,
 respectively, and `ct-validate` passes. `just check` also passes the full release-native and
 debug-portable Clippy matrix, independent workspaces, dependency policy, and Rustdoc. Native POWER
-profiling and elapsed measurement remain the acceptance gate for this candidate.
+profiling and elapsed measurement remained the acceptance gate for this candidate.
+
+The first native CV-only run at `6372baf3` measured rscrypto at 147.18 ns
+`[145.62, 148.82]` and official BLAKE3 at 116.91 ns `[116.31, 117.66]`.
+Coalescing the final keyed cleanup fences at `01c4d512` reduced rscrypto to
+139.75 ns `[138.80, 140.89]` against 115.85 ns `[115.59, 116.16]`, but left a
+20.6% median gap. Its [matching native profile](https://github.com/loadingalias/rscrypto/actions/runs/35644193388)
+retained 427 flat `cycles:u` samples with none lost and assigned 80.46% to
+`compress_cv_portable`. Exact production-binary disassembly counted 939 instructions in
+that body versus 941 in official BLAKE3's `portable::compress_in_place`; compression was no
+longer a material structural difference. The remaining generated-code difference was the
+POWER `sync` instruction emitted for rscrypto's final cleanup fence.
+
+The accepted revision keeps all 16 volatile cleanup stores for the output and borrowed
+key words, but uses an empty inline-assembly compiler memory clobber on POWER instead of
+that hardware fence. Other targets retain `compiler_fence`. Cross-generated bench-profile
+assembly contains the 16 `stw` stores followed by the compiler barrier and no `sync`.
+The exact paired [native POWER10 benchmark](https://github.com/loadingalias/rscrypto/actions/runs/35652383021)
+([artifact](https://github.com/loadingalias/rscrypto/actions/runs/35652383021/artifacts/10663311269))
+measured rscrypto at 124.59 ns `[124.09, 125.16]` and official BLAKE3 at
+115.71 ns `[115.35, 116.17]` across 200 samples after a three-second warm-up and
+ten-second measurement. The median gap is 7.7%; even the candidate-high versus
+external-low endpoints differ by 8.5%. This satisfies the 10% acceptance target and
+reduces the historical 229.4 ns median by 45.7%.
+
+The final [native profile](https://github.com/loadingalias/rscrypto/actions/runs/35652479949)
+([artifact](https://github.com/loadingalias/rscrypto/actions/runs/35652479949/artifacts/10662882536))
+retained 434 flat `cycles:u` samples with none lost. It assigns 83.50% to
+`compress_cv_portable`, 12.55% to Criterion's closure, 3.27% to
+`digest_oneshot_words`, and 0.68% to `compress_chunk_tail_to_root_words`.
+The final revision also passes the full local native and portable test suites,
+the target compile matrix, cleanup artifact generation, and strict CT artifact validation.
+The POWER loss is closed; the deferred RISC-V and IBM Z targets remain deferred.
 
 ## Phase 2 — Localize the active cause
 
-Work the retained native profiles in the current order:
-
-1. POWER keyed BLAKE3 one-shot digest and compression codegen.
+The POWER keyed BLAKE3 investigation is complete.
 
 Resume IBM Z only after native sampling access exists. Circle back to RISC-V P-256 field arithmetic,
 reduction, and constant-time table selection in a later pass.
@@ -427,7 +458,7 @@ reduction, and constant-time table selection in a later pass.
       isolate full-output finalization as the next structural difference.
 - [x] Reject the indexed-state source experiment and produce a CV-only safe-Rust candidate with
       local codegen, elapsed, correctness, cleanup, and constant-time evidence.
-- [ ] Repeat the exact profile and elapsed benchmark for the CV-only candidate on the POWER runner,
+- [x] Repeat the exact profile and elapsed benchmark for the CV-only candidate on the POWER runner,
       then accept, revise, or reject it from native evidence.
 
 ## Phase 3 — Fix and prove
