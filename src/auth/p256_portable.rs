@@ -1415,19 +1415,14 @@ fn ct_mul_u64_wide_riscv64(left: u64, right: u64) -> (u64, u64) {
 }
 
 #[inline(always)]
-#[cfg(any(test, not(target_arch = "riscv64")))]
+#[cfg(not(target_arch = "riscv64"))]
 fn mul_u64_wide(left: u64, right: u64) -> (u64, u64) {
-  #[cfg(target_arch = "riscv64")]
-  {
-    ct_mul_u64_wide_riscv64(left, right)
-  }
-
   #[cfg(any(target_arch = "riscv32", target_arch = "s390x"))]
   {
     ct_mul_u64_wide(left, right)
   }
 
-  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+  #[cfg(not(any(target_arch = "riscv32", target_arch = "s390x")))]
   {
     split_u128(u128::from(left).strict_mul(u128::from(right)))
   }
@@ -1454,7 +1449,7 @@ fn mac_wide(acc: u64, product_low: u64, product_high: u64, carry: u64) -> (u64, 
 }
 
 #[inline(always)]
-#[cfg(any(test, not(target_arch = "riscv64")))]
+#[cfg(not(target_arch = "riscv64"))]
 fn mac_limb(acc: u64, left: u64, right: u64, carry: u64) -> (u64, u64) {
   let (product_low, product_high) = mul_u64_wide(left, right);
   mac_wide(acc, product_low, product_high, carry)
