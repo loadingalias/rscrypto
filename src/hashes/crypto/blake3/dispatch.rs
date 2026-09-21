@@ -54,6 +54,7 @@ static PARALLEL: OnceCache<ParallelDispatch> = OnceCache::new();
 struct X86Policy {
   avx2_hash_many_one_chunk_fast_path: bool,
   hash_many_wide_pipeline: bool,
+  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   avx2_available: bool,
 }
 
@@ -242,6 +243,7 @@ fn x86_policy() -> X86Policy {
     X86Policy {
       avx2_hash_many_one_chunk_fast_path: allow_avx2_hash_many_one_chunk_fast_path(caps),
       hash_many_wide_pipeline: is_wide_pipeline_for_hash_many(caps),
+      #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
       avx2_available: caps.has(required_caps(Blake3KernelId::X86Avx2)),
     }
   })
