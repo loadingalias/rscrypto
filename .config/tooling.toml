@@ -6,11 +6,11 @@
 [cargo]
 cargo-audit = "0.22.2"
 cargo-deny = "0.20.2"
-cargo-nextest = "0.9.144"
+cargo-nextest = "0.9.146"
 cargo-mutants = "27.1.0"
 just = "1.58.0"
 ripgrep = "15.2.0"
-rumdl = "0.2.71"
+rumdl = "0.2.75"
 lychee = "0.24.2"
 samply = "0.13.1"
 gungraun-runner = "0.19.4"
@@ -21,11 +21,11 @@ tomlkit = "0.15.1"
 PyYAML = "6.0.3"
 
 [versions]
-cargo-rail = "0.25.0"
+cargo-rail = "0.29.0"
 cargo-binstall = "1.23.0"
 llvm = "23.1.1"
 cmake = "4.4.3"
-wasmtime = "48.0.2"
+wasmtime = "49.0.0"
 git = "2.55.0.windows.5"
 jq = "1.8.2"
 powershell = "7.6.6"
@@ -37,7 +37,7 @@ nasm = "3.02"
 [linux]
 ubuntu = "26.04"
 codename = "resolute"
-snapshot = "20260911T040925Z"
+snapshot = "20260921T220043Z"
 packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "pkgconf", "python3", "python3-venv", "unzip", "xz-utils", "zstd", "ninja-build", "libssl-dev", "perl", "m4", "shellcheck"]
 
 [ci]
@@ -45,18 +45,14 @@ cargo = ["just", "cargo-nextest"]
 
 [ci-cross-build]
 cargo = ["just", "cargo-nextest"]
+assets = ["just", "cargo-nextest"]
 packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "python3", "cmake", "clang", "libclang-dev", "perl"]
 
 [ci-cross-run]
 cargo = []
 packages = ["ca-certificates", "curl", "git", "python3", "procps"]
 perf-package = "linux-tools-generic"
-
-[ci-cross-run.perf-source]
-version = "5.10.113"
-url = "https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-5.10.113.tar.xz"
-sha256 = "82516a02bb52456f6e8057217dde6e02b78003b1e058117557c2ae9661696dfc"
-packages = ["bison", "build-essential", "flex", "libdw-dev", "libelf-dev", "patch", "pkgconf", "xz-utils", "zlib1g-dev"]
+perf-source = { "version" = "5.10.113", "url" = "https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-5.10.113.tar.xz", "sha256" = "82516a02bb52456f6e8057217dde6e02b78003b1e058117557c2ae9661696dfc", "packages" = ["bison", "build-essential", "flex", "libdw-dev", "libelf-dev", "patch", "pkgconf", "xz-utils", "zlib1g-dev"] }
 
 [ci-compat]
 cargo = ["just"]
@@ -87,7 +83,6 @@ packages = ["build-essential", "ca-certificates", "curl", "git", "python3"]
 [ci-ct-proof]
 opam-repository = "git+https://github.com/ocaml/opam-repository.git#40d8ad2a8bbef64bd1b88f2d61427310538bfcec"
 compiler = "ocaml-base-compiler.5.4.1"
-# Match the engine, solver, and decoder used by the existing selector proofs.
 opam = ["binsec.0.11.1", "bitwuzla.1.0.6", "unisim_archisec.0.0.14"]
 packages = ["opam", "pkg-config", "libgmp-dev", "autoconf", "bison", "flex", "m4", "unzip", "bubblewrap"]
 
@@ -107,12 +102,12 @@ codename = "noble"
 packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "python3", "cmake", "clang", "libclang-dev", "perl"]
 
 [windows]
-visual-studio = "18.10.0"
-build-version = "18.10.12201.205"
-channel-url = "https://download.visualstudio.microsoft.com/download/pr/af2bf19c-59e9-48c4-bac6-019f173389ac/4e1d3943dc0afbe06dd51818b82aebfe7723ac51b8f7eeefe0dfae6b292c58c4/VisualStudio.18.Release.chman"
-channel-sha256 = "36141ed4b8df0f2a4d384244db0a61b692d8ac1087cf8ec09033913aa04e17c6"
-bootstrap-url = "https://download.visualstudio.microsoft.com/download/pr/af2bf19c-59e9-48c4-bac6-019f173389ac/05b10ae13c3e291818cf49df2f9705b4ef44a181f07b635262d91682bcdfe302/vs_BuildTools.exe"
-bootstrap-sha256 = "05b10ae13c3e291818cf49df2f9705b4ef44a181f07b635262d91682bcdfe302"
+visual-studio = "18.10.1"
+build-version = "18.10.12210.168"
+channel-url = "https://download.visualstudio.microsoft.com/download/pr/7437128c-6580-48ab-9c69-f7452be2ee7f/786b2b2f4fd0ff1816e6f71e7989d90b794c9349850d289be07564e8eaff40cf/VisualStudio.18.Release.chman"
+channel-sha256 = "8420bf592e38cb522d433dcc19eaeecfc9b35b2a0b0508adbeab37cc9c410654"
+bootstrap-url = "https://download.visualstudio.microsoft.com/download/pr/7437128c-6580-48ab-9c69-f7452be2ee7f/c71a953a56448193b971b21a5a79ed8c32b4376b9e88fb0365e5c46a6013a804/vs_BuildTools.exe"
+bootstrap-sha256 = "c71a953a56448193b971b21a5a79ed8c32b4376b9e88fb0365e5c46a6013a804"
 sdk-component = "Microsoft.VisualStudio.Component.Windows11SDK.28000"
 
 [aarch64-linux]
@@ -131,8 +126,8 @@ url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.23.0/ca
 sha256 = "c458cfe9534d1958f159fc17b5f50e839297b4ee752b23ffdd80c5e15a734c42"
 
 [aarch64-linux.assets.cargo-rail]
-url = "https://github.com/loadingalias/cargo-rail/releases/download/v0.25.0/cargo-rail-aarch64-unknown-linux-gnu.tar.gz"
-sha256 = "d5dde62f4c1cf1394f3a873d37544aeffcfd482e6ba57ab41382194bc7b2919e"
+url = "https://github.com/loadingalias/cargo-rail/releases/download/v0.29.0/cargo-rail-aarch64-unknown-linux-gnu.zip"
+sha256 = "e0b1680120bc81abf4a3c878eab40c034e5508097f34cf099ddcd06a912c9371"
 
 [aarch64-linux.assets.cmake]
 url = "https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-linux-aarch64.tar.gz"
@@ -162,8 +157,8 @@ url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.23.0/ca
 sha256 = "cdada45ad6bb501185ab309f5eef3f628b6bc44460746565cb3e0c7538815bf3"
 
 [x86_64-linux.assets.cargo-rail]
-url = "https://github.com/loadingalias/cargo-rail/releases/download/v0.25.0/cargo-rail-x86_64-unknown-linux-gnu.tar.gz"
-sha256 = "8199c6736031c0f2d8807f7af50b3a8108b5bd7e5ce08b129b80865477ddbf69"
+url = "https://github.com/loadingalias/cargo-rail/releases/download/v0.29.0/cargo-rail-x86_64-unknown-linux-gnu.zip"
+sha256 = "8fd5ecac4e8ea7352338b30c4b6202cc5bd7af645c809f8ab552d91497616d83"
 
 [x86_64-linux.assets.cmake]
 url = "https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-linux-x86_64.tar.gz"
@@ -177,9 +172,17 @@ sha256 = "832aeb58d105de1cabc7b982dd2c65de0610f7377df48ae8fc2dd8e97420a15c"
 url = "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
 sha256 = "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
 
+[x86_64-linux.assets.just]
+url = "https://github.com/casey/just/releases/download/1.58.0/just-1.58.0-x86_64-unknown-linux-musl.tar.gz"
+sha256 = "4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d"
+
+[x86_64-linux.assets.cargo-nextest]
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.146/cargo-nextest-0.9.146-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "682c21b777c333e96fd532e114d3a5a894e0729ab88d94c0a9f20f8419695428"
+
 [x86_64-linux.assets.wasmtime]
-url = "https://github.com/bytecodealliance/wasmtime/releases/download/v48.0.2/wasmtime-v48.0.2-x86_64-linux.tar.xz"
-sha256 = "f2b0ad1ce9253f2f9a38793c2c42cd1cba4e90b27dc40d685eaf723dc8438d94"
+url = "https://github.com/bytecodealliance/wasmtime/releases/download/v49.0.0/wasmtime-v49.0.0-x86_64-linux.tar.xz"
+sha256 = "a956c279ac6e80109369a285db30fc46f68239fa1bbeb03ccfa8e913bbca85fc"
 
 [aarch64-win]
 os = "Windows 11 Enterprise ARM64"
@@ -194,10 +197,6 @@ sha256 = "01aa49cf9574a8bd0ae52005d7de2590e8f27181ded6748236e702c92aef826d"
 [aarch64-win.assets.cargo-binstall]
 url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.23.0/cargo-binstall-aarch64-pc-windows-msvc.zip"
 sha256 = "a3996cbd0c7fa2be599bd52eaf70ccd8c0dce4cce8d01345d486f47b0e0ee0f9"
-
-[aarch64-win.assets.cargo-rail]
-url = "https://github.com/loadingalias/cargo-rail/releases/download/v0.25.0/cargo-rail-aarch64-pc-windows-msvc.zip"
-sha256 = "7e1b154d2d88a35314cebf243b43d7ce966f95b4c2936b8eba1e78ac25331060"
 
 [aarch64-win.assets.cmake]
 url = "https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-windows-arm64.zip"
@@ -238,8 +237,8 @@ url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.23.0/ca
 sha256 = "f4641479477aca40387e88297e3813fab8e44a8d21f25faa44e0ff33e2bc1726"
 
 [x86_64-win.assets.cargo-rail]
-url = "https://github.com/loadingalias/cargo-rail/releases/download/v0.25.0/cargo-rail-x86_64-pc-windows-msvc.zip"
-sha256 = "9e798ae2a625cc97cf64aecdb15ccc7a30e8d943315ffe15fc453d0a89077e8c"
+url = "https://github.com/loadingalias/cargo-rail/releases/download/v0.29.0/cargo-rail-x86_64-pc-windows-msvc.zip"
+sha256 = "26c1a5f92906ce7c8c96acb8c3d7094e5fbfd7ab9bf2c9c5dcce95c44d289533"
 
 [x86_64-win.assets.cmake]
 url = "https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-windows-x86_64.zip"

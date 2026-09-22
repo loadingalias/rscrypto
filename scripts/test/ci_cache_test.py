@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 import json
 from pathlib import Path
+import re
 
 import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
 ACTION = "loadingalias/cargo-rail-action"
-REVISION = "e706767c343acb6a2ab1917f243b1616ae9eb05b"
 
 
 def step(steps, name):
@@ -40,6 +40,10 @@ assert set(cross["strategy"]["matrix"]["target"]) == {
   "powerpc64le-unknown-linux-gnu",
   "s390x-unknown-linux-gnu",
 }
+cache_uses = step(cross["steps"], "Configure shared compiler cache")["uses"]
+revision = re.fullmatch(re.escape(ACTION) + r"/cache@([0-9a-f]{40})", cache_uses)
+assert revision, cache_uses
+REVISION = revision[1]
 
 for name, steps, label in (
   ("cross-build", cross["steps"], "cross-${{ matrix.target }}"),

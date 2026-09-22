@@ -35,6 +35,10 @@ class Tooling(unittest.TestCase):
         data = catalog.read()
         catalog.validate(data)
         self.assertEqual(tomlkit.parse(update.catalog_text(data)), data)
+        self.assertEqual(set(data['ci-cross-build']['assets']), set(data['ci-cross-build']['cargo']))
+        self.assertNotIn('cargo-rail', data['aarch64-win']['assets'])
+        for platform in ('aarch64-linux', 'x86_64-linux', 'x86_64-win'):
+            self.assertIn('cargo-rail', data[platform]['assets'])
         for platform in catalog.PLATFORMS:
             broken = copy.deepcopy(data)
             if platform in catalog.PROFILING_PLATFORMS:

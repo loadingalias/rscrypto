@@ -127,7 +127,10 @@ try {
     $paths = @($msvcBin, $pythonDirectory, $binDirectory, (Join-Path $gitDirectory 'cmd'),
         (Join-Path $gitDirectory 'bin'), (Join-Path $gitDirectory 'usr\bin'))
     $archives = if ($CiCt) { @('cargo-binstall') } else { @('llvm', 'cmake', 'cargo-binstall') }
-    if (-not $Ci) { $archives += @('cargo-rail', 'powershell') }
+    if (-not $Ci) {
+        $archives += 'powershell'
+        if ($native.assets.PSObject.Properties.Name -contains 'cargo-rail') { $archives += 'cargo-rail' }
+    }
     if ($Platform -eq 'x86_64-win' -and -not $CiCt) { $archives += 'nasm' }
     foreach ($name in $archives) {
         $directory = & $python $catalogHelper install-archive $Platform $name $prefix
@@ -162,6 +165,9 @@ try {
     $cargoTools = if ($CiCt) { $catalog.'ci-ct'.cargo } elseif ($CiBench) { $catalog.'ci-bench'.cargo } elseif ($Ci) { $catalog.ci.cargo } else { $native.cargo }
     foreach ($tool in $cargoTools) {
         Invoke-Native 'cargo' @("+$channel", 'binstall', '--locked', '--no-confirm', '--targets', $native.'rust-host', "$tool@$($catalog.cargo.$tool)")
+    }
+    if (-not $Ci -and $native.assets.PSObject.Properties.Name -notcontains 'cargo-rail') {
+        Invoke-Native 'cargo' @("+$channel", 'install', '--locked', '--version', $catalog.versions.'cargo-rail', 'cargo-rail')
     }
     foreach ($tool in $cargoTools) {
         if ($tool.StartsWith('cargo-')) {

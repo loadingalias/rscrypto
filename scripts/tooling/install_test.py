@@ -85,8 +85,13 @@ elif name == 'python3':
     elif script == 'catalog.py' and args[1] == 'install-archive':
         directory = pathlib.Path(args[-1]) / args[-2]
         directory.mkdir(parents=True, exist_ok=True)
-        executable = directory / 'cargo-binstall'
-        executable.write_text('#!/bin/sh\nexit 0\n')
+        executable = directory / args[-2]
+        executable.write_text(
+            '#!' + sys.executable + '\n'
+            'import json, os, pathlib, sys\n'
+            'with open(os.environ["INSTALL_LOG"], "a") as log:\n'
+            '    log.write(json.dumps([pathlib.Path(sys.argv[0]).name, *sys.argv[1:]]) + "\\n")\n'
+        )
         executable.chmod(0o755)
         print(directory)
     elif script == 'transfer.py':
@@ -278,9 +283,11 @@ class LinuxInstall(unittest.TestCase):
                     self.assertEqual(components, ['rustfmt', 'clippy', 'llvm-tools'] if profile.endswith('build') else [])
                     if profile.endswith('build'):
                         self.assertIn(['rustup', 'target', 'add', '--toolchain', target_toolchain, target], calls)
-                        nextest = [c for c in calls if c[0] == 'cargo' and c[-1] == 'cargo-nextest']
-                        self.assertEqual(len(nextest), 1)
-                        self.assertIn('install', nextest[0])
+                        archives = [c[-2] for c in calls if c[0] == 'python3' and 'install-archive' in c]
+                        self.assertEqual(archives, CATALOG['ci-cross-build']['assets'])
+                        self.assertFalse(any(c[0] == 'cargo' and ('install' in c or 'binstall' in c) for c in calls))
+                        self.assertIn(['just', '--version'], calls)
+                        self.assertIn(['cargo', f'+{stable}', 'nextest', '--version'], calls)
                     else:
                         self.assertFalse(any(c[0] == 'cargo' and ('build' in c or 'install' in c or 'binstall' in c) for c in calls))
                     transfers = [c for c in calls if c[0] == 'python3' and c[1].endswith('/tooling/transfer.py')]

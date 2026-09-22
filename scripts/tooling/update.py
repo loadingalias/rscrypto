@@ -24,6 +24,8 @@ REPOS = {'cargo-rail': 'loadingalias/cargo-rail', 'cargo-binstall': 'cargo-bins/
          'llvm': 'llvm/llvm-project', 'cmake': 'Kitware/CMake', 'zig': None,
          'wasmtime': 'bytecodealliance/wasmtime',
          'git': 'git-for-windows/git', 'jq': 'jqlang/jq', 'powershell': 'PowerShell/PowerShell'}
+JUST_REPO = 'casey/just'
+NEXTEST_REPO = 'nextest-rs/nextest'
 
 
 def fetch(url):
@@ -200,7 +202,8 @@ def resolve_catalog():
         if platform in NATIVE_SOURCE_PLATFORMS:
             continue  # Distro CMake/Clang are snapshot-pinned; missing binaries build natively.
         assets['cargo-binstall'] = github_asset(REPOS['cargo-binstall'], f'cargo-binstall-{host}.' + ('zip' if windows else 'tgz'))
-        assets['cargo-rail'] = github_asset(REPOS['cargo-rail'], f'cargo-rail-{host}.' + ('zip' if windows else 'tar.gz'))
+        if platform != 'aarch64-win':
+            assets['cargo-rail'] = github_asset(REPOS['cargo-rail'], f'cargo-rail-{host}.zip')
         cmake_arch = ('arm64' if arch == 'aarch64' else 'x86_64') if windows else arch
         assets['cmake'] = github_asset(REPOS['cmake'], f'cmake-{versions["cmake"]}-' + (f'windows-{cmake_arch}.zip' if windows else f'linux-{cmake_arch}.tar.gz'))
         llvm_name = f'clang+llvm-{versions["llvm"]}-{host}.tar.xz' if windows else f'LLVM-{versions["llvm"]}-Linux-' + ('ARM64' if arch == 'aarch64' else 'X64') + '.tar.xz'
@@ -219,6 +222,10 @@ def resolve_catalog():
             entry = zig[versions['zig']][f'{arch}-linux']
             assets['zig'] = {'url': entry['tarball'], 'sha256': entry['shasum']}
         if platform == 'x86_64-linux':
+            assets['just'] = github_asset(
+                JUST_REPO, f'just-{data["cargo"]["just"]}-x86_64-unknown-linux-musl.tar.gz')
+            assets['cargo-nextest'] = github_asset(
+                NEXTEST_REPO, f'cargo-nextest-{data["cargo"]["cargo-nextest"]}-{host}.tar.gz')
             assets['wasmtime'] = github_asset(REPOS['wasmtime'], f'wasmtime-v{versions["wasmtime"]}-x86_64-linux.tar.xz')
         data[platform] = native
     validate(data)

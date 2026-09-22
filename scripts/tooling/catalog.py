@@ -94,6 +94,9 @@ def validate(data):
         raise ValueError('ci-compat: workers must be a positive integer')
     if any(asset not in data['x86_64-linux']['assets'] for asset in data['ci-compat']['assets']):
         raise ValueError('ci-compat: missing pinned archive')
+    if set(data['ci-cross-build'].get('assets', [])) != set(data['ci-cross-build']['cargo']) \
+            or any(asset not in data['x86_64-linux']['assets'] for asset in data['ci-cross-build']['assets']):
+        raise ValueError('ci-cross-build: every Cargo tool requires a pinned archive')
     for profile, required in (('ci', {'just', 'cargo-nextest'}),
                               ('ci-cross-build', {'just', 'cargo-nextest'}),
                               ('ci-cross-run', set()),
@@ -142,8 +145,12 @@ def validate(data):
             raise ValueError(f'{platform}: missing native rustup archive')
         if platform == 'x86_64-win' and 'nasm' not in assets:
             raise ValueError(f'{platform}: missing NASM for native dependency assembly')
-        if platform not in NATIVE_SOURCE_PLATFORMS and not {'cargo-rail', 'cargo-binstall', 'cmake', 'llvm'} <= assets.keys():
-            raise ValueError(f'{platform}: missing native tool archives')
+        if platform not in NATIVE_SOURCE_PLATFORMS:
+            required_archives = {'cargo-binstall', 'cmake', 'llvm'}
+            if platform != 'aarch64-win':
+                required_archives.add('cargo-rail')
+            if not required_archives <= assets.keys():
+                raise ValueError(f'{platform}: missing native tool archives')
         for name, asset in assets.items():
             if not asset['url'].startswith('https://') or not __import__('re').fullmatch('[0-9a-f]{64}', asset['sha256']):
                 raise ValueError(f'{platform}: invalid {name} asset')

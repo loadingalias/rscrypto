@@ -13,7 +13,7 @@ rscrypto = { path = "../..", features = ["std", "aegis256"] }
 rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support", features = [
   "aead",
 ] }
-aegis = "0.9.15"
+aegis = "0.9.19"
 
 [workspace]
 members = ["."]

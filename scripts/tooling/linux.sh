@@ -256,13 +256,13 @@ if catalog_get "$platform" assets cargo-binstall >/dev/null 2>&1; then binstall=
 # Archive tools retain their complete directory layouts, including LLVM and Zig libraries.
 if [[ "$ci" == true ]]; then
   : > "$temporary/archives"
-  if [[ "$binstall" == true && "$profile" != ci-cross-run ]]; then
+  if [[ "$binstall" == true && "$profile" != ci-cross-build && "$profile" != ci-cross-run ]]; then
     directory="$(python3 "$SCRIPT_DIR/catalog.py" install-archive "$platform" cargo-binstall "$prefix")"
     printf 'cargo-binstall\t%s\n' "$directory" > "$temporary/archives"
   fi
-  if [[ "$profile" == ci-compat ]]; then
-    mapfile -t compat_assets < <(catalog_get ci-compat assets)
-    for asset in "${compat_assets[@]}"; do
+  if [[ "$profile" == ci-compat || "$profile" == ci-cross-build ]]; then
+    mapfile -t profile_assets < <(catalog_get "$profile" assets)
+    for asset in "${profile_assets[@]}"; do
       directory="$(python3 "$SCRIPT_DIR/catalog.py" install-archive "$platform" "$asset" "$prefix")"
       printf '%s\t%s\n' "$asset" "$directory" >> "$temporary/archives"
     done
@@ -298,8 +298,10 @@ if [[ "$ci" == true && "$profile" == ci && "$platform" == x86_64-linux ]]; then
 fi
 for tool in "${cargo_tools[@]}"; do
   version="$(catalog_get cargo "$tool")"
+  # The cross-build profile installs every Cargo tool from its pinned archive.
+  if [[ "$profile" == ci-cross-build ]]; then continue; fi
   # Cargo's install registry verifies exact installed package versions on reruns.
-  if [[ "$binstall" == true && ( "$profile" != ci-cross-build || "$tool" != cargo-nextest ) ]]; then
+  if [[ "$binstall" == true ]]; then
     env -u RUSTC_WRAPPER -u CARGO_ENCODED_RUSTFLAGS \
       cargo +"$channel" binstall --locked --no-confirm --targets "$host" --targets "${host%-gnu}-musl" "$tool@$version"
   else
