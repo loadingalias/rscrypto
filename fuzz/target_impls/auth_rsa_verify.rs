@@ -1,9 +1,9 @@
 use rscrypto::{RsaPkcs1v15Profile, RsaPssProfile, RsaPublicKey};
 use rscrypto_fuzz::{FuzzInput, some_or_return, split_at_ratio};
 
-const RSA3072_SPKI: &[u8] = include_bytes!("../../benches/rsa_fixtures/rsa3072_spki.der");
-const RSA3072_PSS_SHA256: &[u8] = include_bytes!("../../benches/rsa_fixtures/rsa3072_pss_sha256.sig");
-const RSA3072_PKCS1V15_SHA256: &[u8] = include_bytes!("../../benches/rsa_fixtures/rsa3072_pkcs1v15_sha256.sig");
+const RSA3072_SPKI: &[u8] = include_bytes!("../../testdata/rsa/fixtures/rsa3072_spki.der");
+const RSA3072_PSS_SHA256: &[u8] = include_bytes!("../../testdata/rsa/fixtures/rsa3072_pss_sha256.sig");
+const RSA3072_PKCS1V15_SHA256: &[u8] = include_bytes!("../../testdata/rsa/fixtures/rsa3072_pkcs1v15_sha256.sig");
 const MESSAGE_PSS: &[u8] = b"rscrypto RSA-PSS verification fixture";
 const MESSAGE_PKCS1V15: &[u8] = b"rscrypto RSA-PKCS1-v1_5 verification fixture";
 

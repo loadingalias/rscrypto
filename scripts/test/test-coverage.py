@@ -2,8 +2,10 @@
 """Run host tests and corpus replay once, then report their combined Rust coverage."""
 
 import argparse
+from datetime import datetime, timezone
 import json
 import os
+import platform
 import re
 from pathlib import Path
 import shlex
@@ -12,6 +14,11 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(ROOT / 'scripts/bench'), str(ROOT / 'scripts/lib')]
+import evidence as execution_evidence
+import evidence_bundle as bundle
 
 
 def run(args, root, env, *, output=None, capture_errors=False):
@@ -26,6 +33,22 @@ def run(args, root, env, *, output=None, capture_errors=False):
 
 def capture(args, root, env):
     return run(args, root, env, output=subprocess.PIPE).stdout
+
+
+def host_identity():
+    if sys.platform == 'darwin':
+        model = subprocess.check_output(['sysctl', '-n', 'machdep.cpu.brand_string'], text=True).strip()
+    elif sys.platform.startswith('linux'):
+        rows = (Path('/proc/cpuinfo').read_text(errors='replace').splitlines()
+                if Path('/proc/cpuinfo').is_file() else [])
+        model = next((value.strip() for key, _, value in (row.partition(':') for row in rows)
+                      if key.strip() in {'model name', 'Hardware', 'Processor'}), platform.processor())
+    else:
+        model = platform.processor()
+    return {
+        'platform': platform.platform(),
+        'cpu': {'architecture': platform.machine(), 'model': model},
+    }
 
 
 def instrument(root, env, manifest):
@@ -58,6 +81,7 @@ def collect(root, work, env):
     manifests = [root / 'fuzz/Cargo.toml', *sorted(root.glob('fuzz-packages/*/Cargo.toml'))]
     suites.extend((str(p.parent.relative_to(root)), p, ['--all-features', '--test', 'corpus_replay']) for p in manifests)
     objects = set()
+    collected = []
     threads = ['--test-threads', env['RSCRYPTO_TEST_THREADS']] if env.get('RSCRYPTO_TEST_THREADS') else []
     for index, (name, manifest, flags) in enumerate(suites):
         print(f'\nCoverage: {name}', flush=True)
@@ -76,7 +100,13 @@ def collect(root, work, env):
         run(['cargo', 'nextest', 'run', '--manifest-path', str(manifest),
              '--binaries-metadata', str(metadata), *config, *threads], root, suite_env)
         objects.update(paths)
-    return sorted(objects)
+        collected.append({
+            'name': name,
+            'manifest': manifest.relative_to(root).as_posix(),
+            'cargo_arguments': flags,
+            'test_binary_count': len(paths),
+        })
+    return sorted(objects), collected
 
 
 def verify_mappings(cov, args, root, work, env):
@@ -109,7 +139,7 @@ def verify_mappings(cov, args, root, work, env):
     return expected
 
 
-def report(root, work, output, objects, llvm_bin, env):
+def report(root, work, output, objects, llvm_bin, env, provenance):
     profiles = sorted(work.glob('*.profraw'))
     if not profiles:
         raise RuntimeError('tests produced no coverage profiles')
@@ -141,28 +171,42 @@ def report(root, work, output, objects, llvm_bin, env):
         export(['report'], stream)
     export(['show', '-format=html', f'-output-dir={work / "html"}'], subprocess.DEVNULL)
     # Publish only after every test and export succeeds; failed runs leave no success report.
+    if bundle.source_identity(root) != provenance['source']:
+        raise RuntimeError('source changed during coverage collection')
     for name in ('total.lcov', 'SUMMARY.txt', 'html'):
         (work / name).rename(output / name)
-    print(next(line for line in (output / 'SUMMARY.txt').read_text().splitlines() if line.startswith('TOTAL')))
+    total = next(line for line in (output / 'SUMMARY.txt').read_text().splitlines() if line.startswith('TOTAL'))
+    provenance.update({
+        'generated_at_utc': datetime.now(timezone.utc).isoformat(),
+        'raw_profile_count': len(profiles),
+        'object_count': len(objects),
+        'summary_total': total,
+        'artifacts': {
+            name: {'bytes': (output / name).stat().st_size, 'sha256': bundle.digest(output / name)}
+            for name in ('total.lcov', 'SUMMARY.txt', 'merged.profdata', 'objects.json', 'html/index.html')
+        },
+    })
+    (output / 'provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')
+    print(total)
     print(f'Coverage: {output / "html/index.html"}\nLCOV: {output / "total.lcov"}')
 
 
 def main():
     argparse.ArgumentParser(description=__doc__).parse_args()
-    root = Path(__file__).resolve().parents[2]
+    root = ROOT
     env = os.environ.copy()
     env['RUSTUP_TOOLCHAIN'] = tomllib.loads((root / 'rust-toolchain.toml').read_text())['toolchain']['channel']
-    version = capture(['rustc', '--version', '--verbose'], root, env)
-    if 'nightly' in version or 'dev' in version.splitlines()[0]:
+    rustc_version = capture(['rustc', '--version', '--verbose'], root, env)
+    if 'nightly' in rustc_version or 'dev' in rustc_version.splitlines()[0]:
         raise RuntimeError('coverage requires a stable development toolchain')
-    host = next(line.removeprefix('host: ') for line in version.splitlines() if line.startswith('host: '))
+    host = next(line.removeprefix('host: ') for line in rustc_version.splitlines() if line.startswith('host: '))
     sysroot = Path(capture(['rustc', '--print', 'sysroot'], root, env).strip())
     llvm_bin = sysroot / 'lib/rustlib' / host / 'bin'
     for tool in ('llvm-cov', 'llvm-profdata'):
         if not (llvm_bin / (tool + ('.exe' if os.name == 'nt' else ''))).is_file():
             raise RuntimeError('install llvm-tools-preview for the development toolchain: rustup component add llvm-tools-preview')
-    run(['cargo', 'llvm-cov', '--version'], root, env)
-    run(['cargo', 'nextest', '--version'], root, env)
+    llvm_cov_version = capture(['cargo', 'llvm-cov', '--version'], root, env).strip()
+    nextest_version = capture(['cargo', 'nextest', '--version'], root, env).strip()
     output = root / 'coverage'
     output.mkdir(exist_ok=True)
     # Serialize this command so another run cannot overwrite its binaries or reports.
@@ -174,7 +218,8 @@ def main():
         else:
             import fcntl
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        for name in ('total.lcov', 'nextest.lcov', 'fuzz.lcov', 'SUMMARY.md', 'SUMMARY.txt', 'html', 'merged.profdata', 'objects.json'):
+        for name in ('total.lcov', 'nextest.lcov', 'fuzz.lcov', 'SUMMARY.md', 'SUMMARY.txt', 'html',
+                     'merged.profdata', 'objects.json', 'provenance.json'):
             path = output / name
             if path.is_dir():
                 shutil.rmtree(path)
@@ -186,8 +231,25 @@ def main():
             env.update(CARGO_TARGET_DIR=str(build), CARGO_BUILD_BUILD_DIR=str(build), CARGO_BUILD_TARGET=host,
                        CARGO_LLVM_COV_TARGET_DIR=str(build), CARGO_LLVM_COV_BUILD_DIR=str(build))
             env['LLVM_PROFILE_FILE'] = str(work / '%p-%m.profraw')
-            objects = collect(root, work, env)
-            report(root, work, output, objects, llvm_bin, env)
+            source = bundle.source_identity(root)
+            objects, suites = collect(root, work, env)
+            provenance = {
+                'schema': 1,
+                'kind': 'rscrypto.coverage',
+                'command': ['just', 'test-coverage'],
+                'source': source,
+                'target': host,
+                'host': host_identity(),
+                'tools': {
+                    'rustc': rustc_version.strip(),
+                    'cargo-llvm-cov': llvm_cov_version,
+                    'cargo-nextest': nextest_version,
+                },
+                'execution_environment': execution_evidence.collect(env),
+                'llvm_profile_pattern': env['LLVM_PROFILE_FILE'],
+                'suites': suites,
+            }
+            report(root, work, output, objects, llvm_bin, env, provenance)
 
 
 if __name__ == '__main__':

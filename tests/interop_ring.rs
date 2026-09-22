@@ -23,9 +23,9 @@ const KEY_32: [u8; 32] = [0x42; 32];
 const NONCE_12: [u8; 12] = [0x31; 12];
 const AAD: &[u8] = b"ring interoperability aad";
 
-const RSA3072_SPKI: &[u8] = include_bytes!("../benches/rsa_fixtures/rsa3072_spki.der");
-const RSA3072_PSS_SHA256: &[u8] = include_bytes!("../benches/rsa_fixtures/rsa3072_pss_sha256.sig");
-const RSA3072_PKCS1V15_SHA256: &[u8] = include_bytes!("../benches/rsa_fixtures/rsa3072_pkcs1v15_sha256.sig");
+const RSA3072_SPKI: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa3072_spki.der");
+const RSA3072_PSS_SHA256: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa3072_pss_sha256.sig");
+const RSA3072_PKCS1V15_SHA256: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa3072_pkcs1v15_sha256.sig");
 const MESSAGE_PSS: &[u8] = b"rscrypto RSA-PSS verification fixture";
 const MESSAGE_PKCS1V15: &[u8] = b"rscrypto RSA-PKCS1-v1_5 verification fixture";
 

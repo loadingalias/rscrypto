@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT / 'scripts/lib'))
 import evidence_bundle as bundle
 from cross_build import TARGETS, environment, require_host
 import doctest_bundle
-from evidence_suite import TARGET_ARGS
+from evidence_suite import TARGET_ARGS, validate_backend_evidence
 
 MODES = ("native", "portable", "internal-native", "internal-portable")
 
@@ -113,8 +113,12 @@ def execute(target, archive):
             subprocess.run(['cargo', 'nextest', 'run', '--archive-file', str(incoming / f'{mode}.tar.zst'),
                             '--workspace-remap', str(ROOT), '--config-file', str(ROOT / '.config/nextest.toml'),
                             '--no-tests', 'fail'], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=True)
-        results[mode] = ({'status': 'pass'} if mode.startswith('internal-') else
-            doctest_bundle.execute(ROOT, incoming / f'{mode}-docs', out / f'{mode}-docs'))
+        if mode.startswith('internal-'):
+            records = validate_backend_evidence((out / f'{mode}-nextest.log').read_text(),
+                'portable-only' if mode.endswith('portable') else 'production-auto')
+            results[mode] = {'status': 'pass', 'backend_evidence': records}
+        else:
+            results[mode] = doctest_bundle.execute(ROOT, incoming / f'{mode}-docs', out / f'{mode}-docs')
     # Detect accidental changes to inputs throughout execution as well as before it.
     bundle.verify(ROOT, incoming, 'rscrypto.cross.tests', target)
     (out / 'summary.json').write_text(json.dumps({'status': 'pass', 'source': manifest['source'],

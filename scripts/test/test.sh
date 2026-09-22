@@ -41,13 +41,33 @@ if [[ $# -gt 0 ]]; then
   force_all=true
 fi
 
+# Cargo feature selection belongs to this wrapper. Allowing forwarded feature
+# flags would let a command labelled native enable `portable-only` after the
+# dispatch profile was resolved.
+before_libtest=true
+for arg in "$@"; do
+  if [[ "$arg" == -- ]]; then
+    before_libtest=false
+    continue
+  fi
+  if [[ "$before_libtest" == true ]]; then
+    case "$arg" in
+      --all-features | --features | --features=* | -F | -F?*)
+        echo "Cargo feature selection must use the repository dispatch profile, not Nextest arguments: $arg" >&2
+        exit 2
+        ;;
+    esac
+  fi
+done
+
 if [[ "$dispatch_profile" == portable ]]; then
   feature_args=(--all-features)
-  echo "Dispatch profile: portable (portable-only enabled; accelerated dispatch disabled)"
+  echo "Dispatch profile: portable-only (all Cargo features; accelerated dispatch disabled)"
 else
   PYTHON="$("$SCRIPT_DIR/../lib/python.sh" --print)"
   native_features=$("$PYTHON" - "$SCRIPT_DIR/../../Cargo.toml" <<'PYTHON'
 import sys, tomllib
+
 with open(sys.argv[1], 'rb') as source:
     features = tomllib.load(source)['features']
 selected = set(features) - {'portable-only'}
@@ -57,7 +77,7 @@ print(','.join(sorted(selected)))
 PYTHON
   )
   feature_args=(--no-default-features --features "$native_features")
-  echo "Dispatch profile: native (all crate features except portable-only; runtime capability detection enabled)"
+  echo "Dispatch profile: production-auto (all feature roots except portable-only; production dispatch enabled)"
 fi
 
 export RUSTUP_TOOLCHAIN

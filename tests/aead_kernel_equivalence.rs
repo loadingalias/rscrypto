@@ -16,16 +16,16 @@ use rscrypto::platform::caps::wasm;
 #[cfg(target_arch = "x86_64")]
 use rscrypto::platform::caps::x86;
 use rscrypto::{
-  aead::diag_chacha20_xor_keystream_portable,
+  aead::{diag_chacha20_backend_id, diag_chacha20_xor_keystream_portable},
   platform::{self, Caps},
 };
+use serde_json::json;
 
 /// Function pointer type for ChaCha20 XOR-keystream kernels.
 type XorKeystreamFn = unsafe fn(&[u8; 32], u32, &[u8; 12], &mut [u8]);
 
 #[derive(Clone, Copy)]
 struct Backend {
-  name: &'static str,
   required: Caps,
   xor_keystream: XorKeystreamFn,
 }
@@ -36,43 +36,36 @@ struct Backend {
 const BACKENDS: &[Backend] = &[
   #[cfg(target_arch = "aarch64")]
   Backend {
-    name: "aarch64-neon",
     required: aarch64::NEON,
     xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_aarch64_neon,
   },
   #[cfg(target_arch = "x86_64")]
   Backend {
-    name: "x86-avx2",
     required: x86::AVX2,
     xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_x86_avx2,
   },
   #[cfg(target_arch = "x86_64")]
   Backend {
-    name: "x86-avx512",
     required: x86::AVX512_READY,
     xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_x86_avx512,
   },
   #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
   Backend {
-    name: "power-vsx",
     required: power::POWER8_VECTOR,
     xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_power_vsx,
   },
   #[cfg(target_arch = "s390x")]
   Backend {
-    name: "s390x-vector",
     required: s390x::VECTOR,
     xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_s390x_vector,
   },
   #[cfg(target_arch = "riscv64")]
   Backend {
-    name: "riscv64-vector",
     required: riscv::V,
     xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_riscv64_vector,
   },
   #[cfg(target_arch = "wasm32")]
   Backend {
-    name: "wasm-simd128",
     required: wasm::SIMD128,
     xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_wasm_simd128,
   },
@@ -109,6 +102,7 @@ fn deterministic_buffer(seed: u8, len: usize) -> Vec<u8> {
 #[test]
 fn all_chacha20_backends_match_portable_at_counter_zero() {
   let backends: Vec<_> = runnable_backends().collect();
+  let mut cases = 0usize;
   let mut kernel_calls = 0usize;
   let key = [0xA5u8; 32];
   let nonce = [0x5Au8; 12];
@@ -123,15 +117,17 @@ fn all_chacha20_backends_match_portable_at_counter_zero() {
       let mut actual = plain.clone();
       // SAFETY: `runnable_backends` proves the exact capability set; `TEST_SIZES` uses at most 65 blocks from zero.
       unsafe { (backend.xor_keystream)(&key, 0, &nonce, &mut actual) };
+      cases = cases.strict_add(1);
       kernel_calls = kernel_calls.strict_add(1);
       assert_eq!(
-        actual, expected,
+        actual,
+        expected,
         "ChaCha20 backend {} diverged from portable at len={len}, counter=0",
-        backend.name
+        backend_id(backend)
       );
     }
   }
-  report_backend_execution(&backends, kernel_calls);
+  report_backend_execution("counter-zero", &backends, cases, kernel_calls);
 }
 
 /// Backends must produce byte-identical output across mid-stream counter
@@ -142,6 +138,7 @@ fn all_chacha20_backends_match_portable_at_counter_zero() {
 #[test]
 fn all_chacha20_backends_match_portable_at_arbitrary_counters() {
   let backends: Vec<_> = runnable_backends().collect();
+  let mut cases = 0usize;
   let mut kernel_calls = 0usize;
   let key = [0x33u8; 32];
   let nonce = [0xCCu8; 12];
@@ -162,16 +159,18 @@ fn all_chacha20_backends_match_portable_at_arbitrary_counters() {
         // SAFETY: `runnable_backends` proves the exact capability set; at most 16 blocks from the largest tested
         // counter, 0x1000_0000, stays within the `u32` counter range.
         unsafe { (backend.xor_keystream)(&key, counter, &nonce, &mut actual) };
+        cases = cases.strict_add(1);
         kernel_calls = kernel_calls.strict_add(1);
         assert_eq!(
-          actual, expected,
+          actual,
+          expected,
           "ChaCha20 backend {} diverged from portable at len={len}, counter={counter}",
-          backend.name
+          backend_id(backend)
         );
       }
     }
   }
-  report_backend_execution(&backends, kernel_calls);
+  report_backend_execution("arbitrary-counters", &backends, cases, kernel_calls);
 }
 
 /// XOR keystream is its own inverse: applying it twice must restore the
@@ -180,6 +179,7 @@ fn all_chacha20_backends_match_portable_at_arbitrary_counters() {
 #[test]
 fn all_chacha20_backends_self_inverse() {
   let backends: Vec<_> = runnable_backends().collect();
+  let mut cases = 0usize;
   let mut kernel_calls = 0usize;
   let key = [0x77u8; 32];
   let nonce = [0x88u8; 12];
@@ -194,15 +194,17 @@ fn all_chacha20_backends_self_inverse() {
         (backend.xor_keystream)(&key, 0, &nonce, &mut buffer);
         (backend.xor_keystream)(&key, 0, &nonce, &mut buffer);
       }
+      cases = cases.strict_add(1);
       kernel_calls = kernel_calls.strict_add(2);
       assert_eq!(
-        buffer, original,
+        buffer,
+        original,
         "ChaCha20 backend {} not self-inverse at len={len}",
-        backend.name
+        backend_id(backend)
       );
     }
   }
-  report_backend_execution(&backends, kernel_calls);
+  report_backend_execution("self-inverse", &backends, cases, kernel_calls);
 }
 
 fn runnable_backends() -> impl Iterator<Item = &'static Backend> {
@@ -212,24 +214,55 @@ fn runnable_backends() -> impl Iterator<Item = &'static Backend> {
     .filter(move |backend| backend.required == Caps::NONE || caps.has(backend.required))
 }
 
-fn report_backend_execution(backends: &[&Backend], kernel_calls: usize) {
-  let dispatch = if cfg!(feature = "portable-only") {
-    "portable"
-  } else {
-    "native"
-  };
-  let names: Vec<_> = backends.iter().map(|backend| backend.name).collect();
-  eprintln!(
-    "ChaCha20 backend coverage: dispatch={dispatch}, accelerated_executed={}, compiled={}, kernel_calls={kernel_calls}, backends={names:?}",
-    backends.len(),
-    BACKENDS.len(),
+fn backend_id(backend: &Backend) -> &'static str {
+  let id = diag_chacha20_backend_id(backend.required);
+  assert_ne!(
+    id, "portable",
+    "forced backend requirements must select a production backend ID"
   );
-  if backends.is_empty() {
-    let reason = if cfg!(feature = "portable-only") {
-      "portable-only disables runtime capabilities"
-    } else {
-      "no compiled accelerated backend is supported by this host"
-    };
-    eprintln!("ZERO accelerated backends exercised: {reason}");
-  }
+  id
+}
+
+fn report_backend_execution(test: &str, backends: &[&Backend], cases: usize, kernel_calls: usize) {
+  let caps = platform::caps();
+  let dispatch = if cfg!(feature = "portable-only") {
+    "portable-only"
+  } else {
+    "production-auto"
+  };
+  let status = if cfg!(feature = "portable-only") {
+    "not-selected"
+  } else if BACKENDS.is_empty() {
+    "not-compiled"
+  } else if backends.is_empty() {
+    "unavailable"
+  } else {
+    "pass"
+  };
+  let compiled: Vec<_> = BACKENDS
+    .iter()
+    .map(|backend| {
+      json!({
+        "id": backend_id(backend),
+        "required_features": backend.required.feature_names().collect::<Vec<_>>(),
+        "runtime_available": (!cfg!(feature = "portable-only"))
+          .then(|| backend.required == Caps::NONE || caps.has(backend.required)),
+      })
+    })
+    .collect();
+  let executed: Vec<_> = backends.iter().map(|backend| backend_id(backend)).collect();
+  let record = json!({
+    "schema": 1,
+    "kind": "rscrypto.backend-execution",
+    "primitive": "chacha20",
+    "test": test,
+    "dispatch": dispatch,
+    "target_arch": std::env::consts::ARCH,
+    "compiled": compiled,
+    "executed_backend_ids": executed,
+    "executed_case_count": cases,
+    "kernel_call_count": kernel_calls,
+    "result": status,
+  });
+  eprintln!("RSCRYPTO_BACKEND_EVIDENCE={record}");
 }

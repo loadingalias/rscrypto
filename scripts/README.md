@@ -33,7 +33,9 @@ Run it with `scripts/lib/python.sh scripts/check/check_runner_test.py`.
 | `test/test-rsa-asm.sh`   | `just test-rsa-linux-asm`, `just test-rsa-macos-asm` |
 
 `just test-scripts` runs argument forwarding, toolchain, test, check, and fuzz regressions with substitute executors.
-`just test-harnesses` directly runs the CT harness and exporter self-tests; `just ct-test` includes them.
+`just ct-test` runs the CT tooling regressions, harness self-tests, and raw timing exporter tests without timing cases.
+Coverage publishes raw LCOV, its merged profile, the exact executable inventory, and `provenance.json`; the latter binds
+the report to the effective source, tool versions, suite arguments, execution-affecting environment, and core artifact hashes.
 
 `just test-transfer` checks source binding, artifact integrity, safe extraction,
 and the pinned rustdoc compile/run contract, including deliberate failures.
@@ -382,11 +384,12 @@ The RSA assembly gates use it for their public-operation candidate tests.
 The resolver preserves target compiler flags and passes encoded arguments to Cargo. Build provenance
 records the effective flags; normal builds, docs, tests, and published Cargo feature combinations do not opt in.
 
-`just test-evidence` runs the production library and evidence integration tests with native and portable
-dispatch. It retains forced-kernel, component, and PBKDF2 verification regressions after their hooks leave
-the public API. `just ct-test` and native qualification include this recipe. Cross-test archives carry separate
-native and portable internal suites and require all four suites at execution. Run it alongside ordinary tests
-when changing evidence hooks; ordinary tests continue to check the application build without internal access.
+`just test-evidence` runs the production library and evidence integration tests with production-auto and
+portable-only dispatch. It retains forced-kernel, component, and PBKDF2 verification regressions after
+their hooks leave the public API. `just ct-test` and native qualification include this recipe.
+Cross-test archives carry separate production-auto and portable-only internal suites and require all four
+suites at execution. Run it alongside ordinary tests when changing evidence hooks; ordinary tests continue
+to check the application build without internal access.
 
 Use `just bench <selector> --diag` or `just profile <target> --diag` for diagnostic workloads.
 The `aead-diag` selector and `--bench aead_kernels` enable their required internal hooks automatically.

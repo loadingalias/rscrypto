@@ -1,7 +1,7 @@
 # Contributing
 
-Develop every change on a short-lived branch and merge it through a pull request.
-The protected `main` branch is releasable history, not a working branch.
+Develop and commit directly on `main`. Keep `main` as the only development branch.
+Validate every commit locally before pushing it.
 
 ## Start a change
 
@@ -11,11 +11,10 @@ Start from a clean, current `main`:
 git status --short
 git switch main
 git pull --ff-only
-git switch -c <short-feature-name>
 ```
 
 Do not discard unrelated work to make the worktree clean.
-Preserve it or move it to its own branch first.
+Preserve it before switching or updating the checkout.
 
 ## Record release intent
 
@@ -99,14 +98,17 @@ POWER, IBM Z, and RISC-V use the repository-pinned nightly;
 other targets use the development toolchain.
 Validation also checks independent workspaces, dependencies, and docs.
 
-`just test` enables every crate feature except `portable-only`,
-so runtime capability detection selects native backends where supported.
-Use `just test --portable` to test forced portable dispatch.
+`just test` selects the production-auto feature set: every crate feature except `portable-only`,
+with production dispatch enabled.
+Use `just test --portable` for the portable-only lane.
+That lane uses Cargo's all-feature set, which necessarily includes `portable-only`;
+an all-feature host run is therefore portable-only evidence, never native backend evidence.
 Both modes print their dispatch profile; `--all` widens test scope independently of that choice.
 Run `just test-evidence` for changes to internal evidence hooks or forced-kernel tests. It executes their
-native and portable regressions through the internal build boundary; ordinary test builds keep that boundary closed.
+production-auto and portable-only regressions through the internal build boundary;
+ordinary test builds keep that boundary closed.
 ChaCha20 differential tests report accelerated backend and kernel execution counts,
-including an explicit message when no accelerated backend ran.
+including an explicit result when no accelerated backend ran.
 
 Use the same command for a focused loop:
 
@@ -131,13 +133,15 @@ just test -- --lib -- --skip slow_test
 The wrapper consumes the first `--`;
 a second one reaches Nextest for its libtest-compatible arguments such as `--skip` and `--exact`.
 `--test` selects an integration binary, `--lib` selects library tests, and a name filters tests.
+Forwarded Cargo feature flags are rejected because the dispatch profile owns feature selection.
 Runner arguments select explicit work regardless of affected scope and skip doctests.
 Runs without runner arguments retain the separate Cargo doctest step.
 `RSCRYPTO_TEST_THREADS` sets `NEXTEST_TEST_THREADS`; Nextest's explicit `--test-threads` option takes precedence.
 
 Run `just test-coverage` when you need source coverage.
 It runs the complete native and portable test suites plus committed corpus replay in the full
-and scoped fuzz workspaces, then writes `coverage/total.lcov`, `coverage/SUMMARY.txt`, and browsable `coverage/html/index.html`.
+and scoped fuzz workspaces, then writes `coverage/total.lcov`, `coverage/SUMMARY.txt`, browsable
+`coverage/html/index.html`, and `coverage/provenance.json` with source, tool, suite, environment, and artifact evidence.
 Use it instead of a separate `just test` step in a coverage job; reporting does not rerun tests.
 Ordinary uninstrumented test results cannot retroactively produce coverage.
 The merged profile and executable list remain in `coverage/` for report diagnosis.
@@ -164,8 +168,8 @@ a failed run does not publish a report.
 Run `just test-scripts` after changing command selection or script orchestration.
 It uses substitute executors without running cryptographic workloads.
 
-Run `just test-harnesses` for DudeCT balancing and raw-exporter self-tests without timing cases.
-`just ct-test` includes those tests plus CT tooling regressions.
+Run `just ct-test` for CT tooling regressions, including DudeCT balancing and raw-exporter self-tests without
+timing cases.
 
 For broad or compatibility-sensitive changes, run:
 
@@ -212,24 +216,18 @@ git diff --cached
 git commit -m "module: imperative outcome"
 ```
 
-Push the current branch:
+Push the validated commits:
 
 ```bash
-git push --set-upstream origin HEAD
+git push origin main
 ```
 
-Open a draft pull request:
-
-```bash
-gh pr create --base main --fill --draft
-```
-
-Before merging, resolve every review thread, inspect the final diff,
+Before pushing, resolve review findings, inspect the final diff,
 and confirm the required local and target-specific evidence.
 
 ## Release
 
-Preview the exact local release plan at any time. On the clean release branch, prepare the release from the reviewed
+Preview the exact local release plan at any time. On a clean `main` checkout, prepare the release from the reviewed
 change files:
 
 ```bash
@@ -250,7 +248,7 @@ cargo rail release resume
 ```
 
 Review the prepared commit and its complete diff, including manifests and lockfiles in independent workspaces,
-validate it, and merge through a PR.
+validate it, and push it to `main`.
 The `release.auxiliary_cargo_manifests` list in [`.config/rail.toml`](.config/rail.toml) owns the
 standalone workspaces whose lockfiles must follow the package version.
 Complete physical Apple Silicon RSA assembly and timing qualification locally

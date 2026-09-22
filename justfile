@@ -184,11 +184,6 @@ test-scripts:
 test-transfer:
     @scripts/lib/python.sh scripts/test/transfer_test.py
 
-# Run CT harness and exporter self-tests without timing cases.
-[group('constant-time')]
-test-harnesses:
-    scripts/lib/python.sh scripts/ct/internal.py --target "$(scripts/lib/toolchain.sh --print-host)" -- scripts/lib/toolchain.sh --exec cargo test --locked --manifest-path tools/ct-dudect/Cargo.toml -p rscrypto-ct-dudect -p dudect-bencher --lib --bins
-
 # Execute every runnable example with its minimum feature set.
 [group('tests')]
 test-examples:

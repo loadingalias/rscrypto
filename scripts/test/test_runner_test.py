@@ -27,6 +27,25 @@ def check_evidence_recipe():
 import json, os, sys
 with open(os.environ['TEST_LOG'], 'a') as log:
   print(json.dumps({'args': sys.argv[1:], 'flags': os.environ['CARGO_ENCODED_RUSTFLAGS']}), file=log)
+if not os.environ.get('NO_BACKEND_EVIDENCE'):
+  portable = '--portable' in sys.argv
+  unavailable = bool(os.environ.get('BACKEND_UNAVAILABLE')) and not portable
+  zero_execution = bool(os.environ.get('BACKEND_ZERO_EXECUTION')) and not portable
+  for test in ('counter-zero', 'arbitrary-counters', 'self-inverse'):
+    print('RSCRYPTO_BACKEND_EVIDENCE=' + json.dumps({
+      'schema': 1,
+      'kind': 'rscrypto.backend-execution',
+      'primitive': 'chacha20',
+      'test': test,
+      'dispatch': 'portable-only' if portable else 'production-auto',
+      'target_arch': 'fixture',
+      'compiled': [{'id': 'fixture/backend', 'required_features': ['fixture'],
+                    'runtime_available': None if portable else not unavailable}],
+      'executed_backend_ids': [] if portable or unavailable or zero_execution else ['fixture/backend'],
+      'executed_case_count': 0 if portable or unavailable or zero_execution else 1,
+      'kernel_call_count': 0 if portable or unavailable or zero_execution else 1,
+      'result': 'not-selected' if portable else ('unavailable' if unavailable or zero_execution else 'pass'),
+    }))
 sys.exit(int(os.environ.get('RUN_EXIT', '0')))
 ''')
     fake.chmod(0o755)
@@ -47,6 +66,17 @@ sys.exit(int(os.environ.get('RUN_EXIT', '0')))
       if status == 0:
         assert '--portable' in rows[1]['args']
       assert all(row['flags'] == flags + '\x1f--cfg\x1frscrypto_internal' for row in rows), rows
+    log.write_text('')
+    result = subprocess.run([shutil.which('just'), '--justfile', str(root / 'justfile'), 'test-evidence'],
+                            cwd=root, env={**env, 'BACKEND_UNAVAILABLE': '1'}, capture_output=True, text=True)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert len(log.read_text().splitlines()) == 2
+    for extra in ({'NO_BACKEND_EVIDENCE': '1'}, {'BACKEND_ZERO_EXECUTION': '1'}):
+      log.write_text('')
+      result = subprocess.run([shutil.which('just'), '--justfile', str(root / 'justfile'), 'test-evidence'],
+                              cwd=root, env={**env, **extra}, capture_output=True, text=True)
+      assert result.returncode != 0, (extra, result.stdout, result.stderr)
+      assert len(log.read_text().splitlines()) == 1
 
 
 def main():
@@ -121,6 +151,13 @@ else:
     assert result.returncode == 0 and len(rows) == 2
     assert all('--workspace' in row['args'] for row in rows)
     assert rows[0]['threads'] == '1'
+    assert 'Dispatch profile: production-auto' in result.stdout
+    for feature_args in (['--all-features'],
+                         ['--features', 'portable-only'], ['--features=portable-only'],
+                         ['-F', 'portable-only'], ['-Fportable-only']):
+      result, rows = run(['--native', '--', *feature_args])
+      assert result.returncode == 2 and not rows, (feature_args, result.stderr, rows)
+      assert 'Cargo feature selection must use the repository dispatch profile' in result.stderr
     for dispatch in ('--native', '--portable'):
       result, rows = run(['--all', '--release', dispatch], PLAN_FAIL='1')
       assert result.returncode == 0 and len(rows) == 2, (result.stderr, rows)

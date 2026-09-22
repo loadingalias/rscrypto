@@ -60,15 +60,15 @@ const ID_SHA256_OID: &[u8] = &[0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0
 const ID_SHA384_OID: &[u8] = &[0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02];
 const ID_SHA512_OID: &[u8] = &[0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03];
 const CAVP_SIGVER_186_3: &str = include_str!("../testdata/rsa/nist_cavp/rsa_sigver_186_3_subset.json");
-const RSA3072_SPKI: &[u8] = include_bytes!("../benches/rsa_fixtures/rsa3072_spki.der");
-const RSA3072_PSS_SHA256: &[u8] = include_bytes!("../benches/rsa_fixtures/rsa3072_pss_sha256.sig");
-const RSA3072_PKCS1V15_SHA256: &[u8] = include_bytes!("../benches/rsa_fixtures/rsa3072_pkcs1v15_sha256.sig");
-const RSA4096_SPKI: &[u8] = include_bytes!("../benches/rsa_fixtures/rsa4096_spki.der");
-const RSA4096_PSS_SHA256: &[u8] = include_bytes!("../benches/rsa_fixtures/rsa4096_pss_sha256.sig");
-const RSA4096_PKCS1V15_SHA256: &[u8] = include_bytes!("../benches/rsa_fixtures/rsa4096_pkcs1v15_sha256.sig");
-const RSA8192_SPKI: &[u8] = include_bytes!("../benches/rsa_fixtures/rsa8192_spki.der");
-const RSA8192_PSS_SHA256: &[u8] = include_bytes!("../benches/rsa_fixtures/rsa8192_pss_sha256.sig");
-const RSA8192_PKCS1V15_SHA256: &[u8] = include_bytes!("../benches/rsa_fixtures/rsa8192_pkcs1v15_sha256.sig");
+const RSA3072_SPKI: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa3072_spki.der");
+const RSA3072_PSS_SHA256: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa3072_pss_sha256.sig");
+const RSA3072_PKCS1V15_SHA256: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa3072_pkcs1v15_sha256.sig");
+const RSA4096_SPKI: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa4096_spki.der");
+const RSA4096_PSS_SHA256: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa4096_pss_sha256.sig");
+const RSA4096_PKCS1V15_SHA256: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa4096_pkcs1v15_sha256.sig");
+const RSA8192_SPKI: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa8192_spki.der");
+const RSA8192_PSS_SHA256: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa8192_pss_sha256.sig");
+const RSA8192_PKCS1V15_SHA256: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa8192_pkcs1v15_sha256.sig");
 
 fn der_len(len: usize) -> Vec<u8> {
   if len < 128 {

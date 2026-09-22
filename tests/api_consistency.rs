@@ -508,10 +508,10 @@ fn ecdsa_p384_keygen_and_native_signature_traits_are_consistent() {
 #[test]
 #[cfg(feature = "rsa")]
 fn rsa_signature_verifier_requires_a_bound_profile() {
-  let key = RsaPublicKey::from_spki_der(include_bytes!("../benches/rsa_fixtures/rsa3072_spki.der"))
+  let key = RsaPublicKey::from_spki_der(include_bytes!("../testdata/rsa/fixtures/rsa3072_spki.der"))
     .expect("embedded RSA-3072 SPKI fixture must parse");
   let message = b"rscrypto RSA-PSS verification fixture";
-  let pss_signature = include_bytes!("../benches/rsa_fixtures/rsa3072_pss_sha256.sig");
+  let pss_signature = include_bytes!("../testdata/rsa/fixtures/rsa3072_pss_sha256.sig");
   let pss_verifier = key.verifier(RsaSignatureProfile::pss(RsaPssProfile::Sha256));
 
   pss_verifier

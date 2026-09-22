@@ -3,7 +3,9 @@
 `KAS_ECC_CDH_PrimitiveTest_P-256.rsp` is the complete `[P-256]` section from
 NIST CAVP's `KAS_ECC_CDH_PrimitiveTest.txt`. The source is the official
 [`ecccdhtestvectors.zip`](https://csrc.nist.gov/CSRC/media/Projects/Cryptographic-Algorithm-Validation-Program/documents/components/ecccdhtestvectors.zip)
-archive published by NIST.
+archive published by NIST. The vector was imported into rscrypto on 2026-09-03
+in commit `3bde831e`. The archive contains U.S. government test material and no
+separate third-party license file.
 
 The reproducible transform is deliberately narrow:
 
@@ -19,3 +21,7 @@ The reproducible transform is deliberately narrow:
 The resulting file has SHA-256
 `5a7006d1ae4f7001ba7d6d45c2c2f1f8bc5e5d48e2021eb55c5995cd055eea32`
 and contains all 25 P-256 component-test records.
+
+`SHA256SUMS` is the complete one-file payload inventory. Verify it from this
+directory with `shasum -a 256 -c SHA256SUMS`.
+`tests/p256_ecdh_oracle.rs` consumes the extracted section.

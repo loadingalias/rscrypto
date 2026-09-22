@@ -258,6 +258,8 @@ pub use ascon128::{AsconAead128, AsconAead128Key, AsconAead128Tag};
 ))]
 pub use chacha20::diag_chacha20_xor_keystream_aarch64_neon;
 // Backend-equivalence tests use these entry points to bypass runtime dispatch.
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "chacha20poly1305"))]
+pub use chacha20::diag_chacha20_backend_id;
 #[cfg(all(
   rscrypto_internal,
   feature = "diag",

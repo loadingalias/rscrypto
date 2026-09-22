@@ -356,9 +356,19 @@ class NativeArchive(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / 'Cargo.toml').write_text('[package]\nname="archive-fixture"\nversion="0.0.0"\nedition="2024"\n'
-                '[lib]\npath="lib.rs"\n[workspace]\n')
+                '[lib]\npath="lib.rs"\n[features]\nportable-only=[]\n[workspace]\n')
             (root / 'lib.rs').write_text('//! ```\n//! assert_eq!(2 + 2, 4);\n//! ```\n'
-                '#[test] fn reads_fixture() { assert_eq!(std::fs::read_to_string("fixture.txt").unwrap(), "oracle"); }\n')
+                '#[test] fn reads_fixture() { assert_eq!(std::fs::read_to_string("fixture.txt").unwrap(), "oracle"); }\n'
+                '#[test] fn emits_backend_evidence_fixture() {\n'
+                '  let portable = cfg!(feature = "portable-only");\n'
+                '  for test in ["counter-zero", "arbitrary-counters", "self-inverse"] {\n'
+                '    if !portable {\n'
+                '      eprintln!("RSCRYPTO_BACKEND_EVIDENCE={{\\"schema\\":1,\\"kind\\":\\"rscrypto.backend-execution\\",\\"primitive\\":\\"chacha20\\",\\"test\\":\\"{test}\\",\\"dispatch\\":\\"production-auto\\",\\"target_arch\\":\\"fixture\\",\\"compiled\\":[{{\\"id\\":\\"fixture-accelerated\\",\\"required_features\\":[\\"fixture\\"],\\"runtime_available\\":true}}],\\"executed_backend_ids\\":[\\"fixture-accelerated\\"],\\"executed_case_count\\":1,\\"kernel_call_count\\":1,\\"result\\":\\"pass\\"}}");\n'
+                '    } else {\n'
+                '      eprintln!("RSCRYPTO_BACKEND_EVIDENCE={{\\"schema\\":1,\\"kind\\":\\"rscrypto.backend-execution\\",\\"primitive\\":\\"chacha20\\",\\"test\\":\\"{test}\\",\\"dispatch\\":\\"portable-only\\",\\"target_arch\\":\\"fixture\\",\\"compiled\\":[],\\"executed_backend_ids\\":[],\\"executed_case_count\\":0,\\"kernel_call_count\\":0,\\"result\\":\\"not-selected\\"}}");\n'
+                '    }\n'
+                '  }\n'
+                '}\n')
             (root / 'fixture.txt').write_text('oracle')
             (root / '.gitignore').write_text('target/\n')
             for name in ('.config/nextest.toml', '.config/tooling.toml'):
@@ -368,7 +378,8 @@ class NativeArchive(unittest.TestCase):
             # product's timeout overrides apply. Retain its exact runner pin.
             config = __import__('tomllib').loads((ROOT / '.config/nextest.toml').read_text())
             (root / '.config/nextest.toml').write_text('nextest-version = ' +
-                '{ required = "' + config['nextest-version']['required'] + '" }\n')
+                '{ required = "' + config['nextest-version']['required'] + '" }\n'
+                '[profile.default]\nsuccess-output = "immediate"\n')
             env = {**os.environ, 'RUSTUP_TOOLCHAIN': channel, 'CARGO_RAIL_CACHE': 'off'}
             subprocess.run(['cargo', 'generate-lockfile', '--offline'], cwd=root, env=env, check=True, capture_output=True)
             subprocess.run(['git', 'init', '-q', str(root)], check=True)
@@ -388,9 +399,10 @@ class NativeArchive(unittest.TestCase):
             for mode in cross.MODES:
                 internal = mode.startswith('internal-')
                 mode_env = {**env, **({'CARGO_ENCODED_RUSTFLAGS': '--cfg\x1frscrypto_internal'} if internal else {})}
+                feature_args = ['--features', 'portable-only'] if mode.endswith('portable') else []
                 built = subprocess.run(['cargo', 'nextest', 'archive', '--locked', '--workspace', '--release',
-                                '--archive-file', str(directory / (mode + '.tar.zst'))], cwd=root, env=mode_env,
-                               capture_output=True, text=True)
+                                *feature_args, '--archive-file', str(directory / (mode + '.tar.zst'))], cwd=root,
+                               env=mode_env, capture_output=True, text=True)
                 self.assertEqual(built.returncode, 0, built.stderr)
                 plan = {'total': 0} if internal else doctest_bundle.prepare(root, directory / (mode + '-docs'), [], env)
                 metadata['modes'][mode] = {'doctests': plan['total'], 'internal': internal,
@@ -409,6 +421,8 @@ class NativeArchive(unittest.TestCase):
             self.assertEqual(set(summary['modes']), {'native', 'portable', 'internal-native', 'internal-portable'})
             self.assertEqual(summary['nextest'], consumer_version)
             self.assertNotEqual(summary['nextest'], metadata['nextest'])
+            self.assertEqual(len(summary['modes']['internal-native']['backend_evidence']), 3)
+            self.assertEqual(len(summary['modes']['internal-portable']['backend_evidence']), 3)
 
             for mutation in ('missing-suite', 'missing-flag', 'wrong-boundary'):
                 broken = json.loads(json.dumps(metadata))

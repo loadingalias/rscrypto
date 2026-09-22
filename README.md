@@ -14,15 +14,15 @@ OpenSSL, or system-library dependency.
 
 ## Measured performance
 
-The historical benchmark snapshots contain comparisons that measured different work:
-ML-KEM rows mixed entropy sources and key preparation,
-and Argon2 rows passed different salt lengths to dryoc.
-The affected ratios and aggregates that include them are withdrawn
-as performance claims pending corrected measurements.
-Their numerical impact has not been measured.
+Performance claims are limited to exact retained campaigns and equivalent workloads.
+The corrected September 2026 campaign contains 19,614 completed cases,
+including corrected ML-KEM and Argon2 comparisons,
+but no replacement aggregate scorecard has been curated.
+Older aggregates that mixed entropy, key preparation, output representation,
+or salt lengths remain historical records and are not current performance claims.
 
-The [`benchmark overview`](benchmark_results/OVERVIEW.md) retains the historical record.
-See the [`comparison contracts`](docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts) for the corrected workloads and validation requirements.
+The [`benchmark overview`](benchmark_results/OVERVIEW.md) records the campaigns, target-specific results, and remaining limits.
+The [`comparison contracts`](docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts) define equivalent ML-KEM and Argon2 workloads.
 
 ## Assurance
 

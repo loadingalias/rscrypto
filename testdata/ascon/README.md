@@ -2,7 +2,8 @@
 
 These vectors come from `ascon/ascon-c` commit
 `446347f21b209f3921c65ece70027c366cbe1693`. The upstream repository publishes
-them under CC0-1.0.
+them under CC0-1.0. They were imported into rscrypto on 2026-03-14 in commit
+`e94d8ce7`.
 
 | Local file         | Upstream file                                       | SHA-256                                                            |
 | ------------------ | --------------------------------------------------- | ------------------------------------------------------------------ |
@@ -16,3 +17,7 @@ The upstream commit identifies these as known-answer tests for NIST SP 800-232.
 `asconxof.blb` contains the first 32 output bytes for all 1,025 cases in
 `crypto_hash/asconxof128/LWC_XOF_KAT_128_512.txt`; independent oracle tests
 cover longer and segmented output.
+
+`SHA256SUMS` is the complete four-file payload inventory. Verify it from this
+directory with `shasum -a 256 -c SHA256SUMS`. `tests/ascon_final_kats.rs` and
+`tests/ascon_official_vectors.rs` consume these files.

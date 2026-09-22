@@ -244,6 +244,13 @@ fn current_caps() -> Caps {
   }
 }
 
+/// Resolve the stable production backend ID for one forced ChaCha20 capability set.
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "chacha20poly1305"))]
+#[must_use]
+pub fn diag_chacha20_backend_id(required: Caps) -> &'static str {
+  select_backend(AeadPrimitive::ChaCha20Poly1305, Arch::current(), required).name()
+}
+
 fn xor_keystream_portable(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {
   let mut counter = initial_counter;
   for chunk in buffer.chunks_mut(BLOCK_SIZE) {

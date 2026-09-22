@@ -62,15 +62,15 @@ macro_rules! aws_lc_bench {
 const MESSAGE_PSS: &[u8] = b"rscrypto RSA-PSS verification fixture";
 const MESSAGE_PKCS1V15: &[u8] = b"rscrypto RSA-PKCS1-v1_5 verification fixture";
 
-const RSA3072_SPKI: &[u8] = include_bytes!("rsa_fixtures/rsa3072_spki.der");
-const RSA3072_PSS_SHA256: &[u8] = include_bytes!("rsa_fixtures/rsa3072_pss_sha256.sig");
-const RSA3072_PKCS1V15_SHA256: &[u8] = include_bytes!("rsa_fixtures/rsa3072_pkcs1v15_sha256.sig");
-const RSA4096_SPKI: &[u8] = include_bytes!("rsa_fixtures/rsa4096_spki.der");
-const RSA4096_PSS_SHA256: &[u8] = include_bytes!("rsa_fixtures/rsa4096_pss_sha256.sig");
-const RSA4096_PKCS1V15_SHA256: &[u8] = include_bytes!("rsa_fixtures/rsa4096_pkcs1v15_sha256.sig");
-const RSA8192_SPKI: &[u8] = include_bytes!("rsa_fixtures/rsa8192_spki.der");
-const RSA8192_PSS_SHA256: &[u8] = include_bytes!("rsa_fixtures/rsa8192_pss_sha256.sig");
-const RSA8192_PKCS1V15_SHA256: &[u8] = include_bytes!("rsa_fixtures/rsa8192_pkcs1v15_sha256.sig");
+const RSA3072_SPKI: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa3072_spki.der");
+const RSA3072_PSS_SHA256: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa3072_pss_sha256.sig");
+const RSA3072_PKCS1V15_SHA256: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa3072_pkcs1v15_sha256.sig");
+const RSA4096_SPKI: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa4096_spki.der");
+const RSA4096_PSS_SHA256: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa4096_pss_sha256.sig");
+const RSA4096_PKCS1V15_SHA256: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa4096_pkcs1v15_sha256.sig");
+const RSA8192_SPKI: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa8192_spki.der");
+const RSA8192_PSS_SHA256: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa8192_pss_sha256.sig");
+const RSA8192_PKCS1V15_SHA256: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa8192_pkcs1v15_sha256.sig");
 
 const PRIVATE_SIGNING_MESSAGE: &[u8] = b"rscrypto TLS-shaped RSA private signing benchmark";
 

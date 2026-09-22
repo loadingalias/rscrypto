@@ -13,8 +13,8 @@
 //! ```rust
 //! use rscrypto::{RsaPssProfile, RsaPublicKey, RsaSignatureProfile};
 //!
-//! let public_key = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/benches/rsa_fixtures/rsa3072_spki.der"));
-//! let signature = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/benches/rsa_fixtures/rsa3072_pss_sha256.sig"));
+//! let public_key = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/rsa/fixtures/rsa3072_spki.der"));
+//! let signature = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/rsa/fixtures/rsa3072_pss_sha256.sig"));
 //! let message = b"rscrypto RSA-PSS verification fixture";
 //!
 //! let key = RsaPublicKey::from_spki_der(public_key).map_err(|_| "RSA public key parses")?;
@@ -15691,7 +15691,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[cfg(all(rscrypto_internal, feature = "diag"))]
   #[test]
   fn diag_spki_public_key_validation_matches_import_metadata() {
-    let spki = include_bytes!("../../benches/rsa_fixtures/rsa3072_spki.der");
+    let spki = include_bytes!("../../testdata/rsa/fixtures/rsa3072_spki.der");
     let key = RsaPublicKey::from_spki_der(spki).expect("RSA-3072 SPKI fixture must import");
     let (modulus_len, modulus_bits, exponent) =
       diag_rsa_validate_spki_public_key_der(spki, &RsaPublicKeyPolicy::default())
@@ -15705,7 +15705,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[cfg(all(rscrypto_internal, feature = "diag"))]
   #[test]
   fn diag_montgomery_r2_precompute_matches_imported_key() {
-    let spki = include_bytes!("../../benches/rsa_fixtures/rsa3072_spki.der");
+    let spki = include_bytes!("../../testdata/rsa/fixtures/rsa3072_spki.der");
     let key = RsaPublicKey::from_spki_der(spki).expect("RSA-3072 SPKI fixture must import");
     let scratch = key.public_scratch();
     let (_, scratch_r2) = scratch.montgomery.split_at(scratch.limb_count);

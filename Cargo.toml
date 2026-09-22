@@ -22,7 +22,7 @@ include = [
   "/CONTRIBUTING.md",
   "/.config/target-matrix.json",
   "/benchmark_results/OVERVIEW.md",
-  "/benches/rsa_fixtures/**",
+  "/testdata/rsa/fixtures/**",
   "/docs/**",
   "/examples/**",
   "/src/**",
