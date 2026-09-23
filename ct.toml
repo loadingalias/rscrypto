@@ -3078,8 +3078,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2279
-compiler_api_sha256 = "622f2db6dc8ee2cb61e3edb7a853c7574d4015cda366079125a2ca6cd6398cce"
+compiler_api_item_count = 2452
+compiler_api_sha256 = "719d9b5720301b0ef4685b446755b2816d794a8ac9f048b59b3bb812f32e3050"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3089,8 +3089,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2279
-compiler_api_sha256 = "622f2db6dc8ee2cb61e3edb7a853c7574d4015cda366079125a2ca6cd6398cce"
+compiler_api_item_count = 2452
+compiler_api_sha256 = "719d9b5720301b0ef4685b446755b2816d794a8ac9f048b59b3bb812f32e3050"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3123,8 +3123,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 2279
-compiler_api_sha256 = "622f2db6dc8ee2cb61e3edb7a853c7574d4015cda366079125a2ca6cd6398cce"
+compiler_api_item_count = 2452
+compiler_api_sha256 = "719d9b5720301b0ef4685b446755b2816d794a8ac9f048b59b3bb812f32e3050"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3145,8 +3145,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 2279
-compiler_api_sha256 = "622f2db6dc8ee2cb61e3edb7a853c7574d4015cda366079125a2ca6cd6398cce"
+compiler_api_item_count = 2452
+compiler_api_sha256 = "719d9b5720301b0ef4685b446755b2816d794a8ac9f048b59b3bb812f32e3050"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3157,8 +3157,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2279
-compiler_api_sha256 = "622f2db6dc8ee2cb61e3edb7a853c7574d4015cda366079125a2ca6cd6398cce"
+compiler_api_item_count = 2452
+compiler_api_sha256 = "719d9b5720301b0ef4685b446755b2816d794a8ac9f048b59b3bb812f32e3050"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3169,8 +3169,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2279
-compiler_api_sha256 = "622f2db6dc8ee2cb61e3edb7a853c7574d4015cda366079125a2ca6cd6398cce"
+compiler_api_item_count = 2452
+compiler_api_sha256 = "719d9b5720301b0ef4685b446755b2816d794a8ac9f048b59b3bb812f32e3050"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3181,8 +3181,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2279
-compiler_api_sha256 = "622f2db6dc8ee2cb61e3edb7a853c7574d4015cda366079125a2ca6cd6398cce"
+compiler_api_item_count = 2452
+compiler_api_sha256 = "719d9b5720301b0ef4685b446755b2816d794a8ac9f048b59b3bb812f32e3050"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -4959,3 +4959,113 @@ symbols = [
   "ct_entry_classification_public_only",
 ]
 coverage = "classification-only public-data surface with representative digest/checksum artifact hooks"
+
+# Whole signing uses standard variable retries. These diagnostic cases qualify
+# selected secret-sensitive kernels, not a whole-operation timing claim.
+[[primitive]]
+id = "signature.mldsa"
+tier = "A"
+claim = "best-effort"
+features = ["ml-dsa"]
+variants = ["ML-DSA-44", "ML-DSA-65", "ML-DSA-87"]
+entrypoints = ["MlDsa44::keypair_from_seed", "MlDsa65::keypair_from_seed", "MlDsa87::keypair_from_seed"]
+secrets = ["expanded_secret_key", "noise_seed", "unpublished_challenge", "mask_polynomials"]
+public = ["parameter_set", "public_key", "accepted_signature", "message_length", "context_length"]
+may_leak = ["signing_retry_count", "opaque_success_or_failure"]
+must_not_leak_ref = "common_secret_data"
+required = []
+notes = "Standard first-accepted signing has variable retries. Diagnostic timing covers production inverse NTT, secret-noise sampling, and unpublished-challenge sampling; it is not whole-signing constant-time evidence."
+[primitive.harness]
+status = "partial"
+symbols = []
+gap = "Internal Rust diagnostics call production kernels through DudeCT. Whole-operation C ABI and formal harness roots are not provided."
+
+[[dudect_case]]
+name = "mldsa_inverse_ntt_fixed_vs_random"
+primitive = "signature.mldsa"
+filter = "mldsa_inverse_ntt_fixed_vs_random"
+left_class = "64 inverse NTT executions on a zero canonical polynomial"
+right_class = "64 inverse NTT executions on a random canonical polynomial"
+samples = 20000
+smoke_samples = 512
+gate = "diagnostic"
+notes = "Production-kernel timing investigation; no whole-operation CT claim or release-gate substitution."
+
+[[dudect_case]]
+name = "mldsa_noise_eta2_fixed_vs_random"
+primitive = "signature.mldsa"
+filter = "mldsa_noise_eta2_fixed_vs_random"
+left_class = "fixed 64-byte noise seed"
+right_class = "random 64-byte noise seed"
+samples = 20000
+smoke_samples = 512
+gate = "diagnostic"
+notes = "Production-kernel timing investigation; no whole-operation CT claim or release-gate substitution."
+
+[[dudect_case]]
+name = "mldsa_noise_eta4_fixed_vs_random"
+primitive = "signature.mldsa"
+filter = "mldsa_noise_eta4_fixed_vs_random"
+left_class = "fixed 64-byte noise seed"
+right_class = "random 64-byte noise seed"
+samples = 20000
+smoke_samples = 512
+gate = "diagnostic"
+notes = "Production-kernel timing investigation; no whole-operation CT claim or release-gate substitution."
+
+[[dudect_case]]
+name = "mldsa_challenge44_fixed_vs_random"
+primitive = "signature.mldsa"
+filter = "mldsa_challenge44_fixed_vs_random"
+left_class = "fixed 64-byte seed (standard challenge prefix length)"
+right_class = "random 64-byte seed (standard challenge prefix length)"
+samples = 20000
+smoke_samples = 512
+gate = "diagnostic"
+notes = "Production-kernel timing investigation; no whole-operation CT claim or release-gate substitution."
+
+[[dudect_case]]
+name = "mldsa_challenge65_fixed_vs_random"
+primitive = "signature.mldsa"
+filter = "mldsa_challenge65_fixed_vs_random"
+left_class = "fixed 64-byte seed (standard challenge prefix length)"
+right_class = "random 64-byte seed (standard challenge prefix length)"
+samples = 20000
+smoke_samples = 512
+gate = "diagnostic"
+notes = "Production-kernel timing investigation; no whole-operation CT claim or release-gate substitution."
+
+[[dudect_case]]
+name = "mldsa_challenge87_fixed_vs_random"
+primitive = "signature.mldsa"
+filter = "mldsa_challenge87_fixed_vs_random"
+left_class = "fixed 64-byte seed (standard challenge prefix length)"
+right_class = "random 64-byte seed (standard challenge prefix length)"
+samples = 20000
+smoke_samples = 512
+gate = "diagnostic"
+notes = "Production-kernel timing investigation; no whole-operation CT claim or release-gate substitution."
+
+[[operation]]
+id = "signature.mldsa"
+api = [
+  "rscrypto::MlDsa{44,65,87}::{keypair_from_seed,generate_keypair,try_generate_keypair}",
+  "rscrypto::MlDsa{44,65,87}SecretKey::{sign_deterministic,sign_with,try_sign,sign_prehash_deterministic,sign_prehash_with,prepare,public_key,expose_secret,try_from_slice}",
+  "rscrypto::MlDsa{44,65,87}PreparedSecretKey::{sign_deterministic,sign_with,try_sign,sign_prehash_deterministic,sign_prehash_with}",
+  "rscrypto::MlDsa{44,65,87}PublicKey::{verify,verify_with_context,verify_prehash,prepare,as_bytes,to_bytes,from_bytes,try_from_slice}",
+  "rscrypto::MlDsa{44,65,87}PreparedPublicKey::{verify,verify_with_context,verify_prehash}",
+  "rscrypto::MlDsa{44,65,87}Signature::{as_bytes,to_bytes,try_from_slice}",
+  "rscrypto::MlDsaPrehash::new",
+  "rscrypto::MlDsaPrehashAlgorithm::digest_len",
+  "rscrypto::MlDsa*::{Serialize,Deserialize,Debug,Clone,PartialEq,AsRef,Verifier}",
+  "rscrypto::MlDsa{Error,PrehashAlgorithm}",
+]
+features = ["ml-dsa", "getrandom", "serde", "serde-secrets"]
+targets = ["all-supported", "portable implementation"]
+secret_inputs = ["seed", "expanded secret key", "signing randomness", "unpublished candidates"]
+public_inputs = ["parameter set", "message and context lengths", "public key", "signature"]
+variable_time_components = ["standard first-accepted signing retries", "public matrix rejection sampling", "public parsing and verification", "accepted signature hint packing"]
+permitted_leakage = ["public shapes", "opaque success or failure", "standard signing retry count", "caller-authorized secret exposure"]
+claim = "best-effort"
+evidence = ["primitive:signature.mldsa", "dudect:mldsa_inverse_ntt_fixed_vs_random", "dudect:mldsa_noise_eta2_fixed_vs_random", "dudect:mldsa_noise_eta4_fixed_vs_random", "dudect:mldsa_challenge44_fixed_vs_random", "dudect:mldsa_challenge65_fixed_vs_random", "dudect:mldsa_challenge87_fixed_vs_random"]
+limitation = "Fixed-work arithmetic and secret samplers have scoped diagnostic evidence. Whole signing is variable-time and is not claimed strict CT. Deterministic signing can reveal message information through timing; callers needing randomized signing must use sign_with or try_sign."

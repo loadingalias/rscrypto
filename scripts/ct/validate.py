@@ -16,7 +16,9 @@ from pathlib import Path
 
 # Embedded Windows Python omits the script directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
+import evidence_bundle as bundle
 from dudect_report import raw_csv_rows
 from provenance import ct_function_symbols, dudect_runner_sources, load_toml, sha256_file
 from manifest import (
@@ -1296,6 +1298,11 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
         warn(warnings, f"evidence-index includes unmanifested ct_entry symbol(s): {', '.join(unmanifested)}")
 
 
+def validate_dudect_source(root: Path, report: dict, errors: list[str]) -> None:
+  if report.get("source") != bundle.source_identity(root):
+    fail(errors, "dudect source identity mismatch; rebuild and rerun timing evidence")
+
+
 def validate_dudect(root: Path, target: str, profile: str, ct: dict, errors: list[str], warnings: list[str]) -> None:
   report_path = root / "target" / "ct" / target / profile / "dudect" / "dudect-report.json"
   if not report_path.exists():
@@ -1313,7 +1320,7 @@ def validate_dudect(root: Path, target: str, profile: str, ct: dict, errors: lis
     return
 
   expected = {
-    "schema_version": 3,
+    "schema_version": 4,
     "kind": "rscrypto.ct.dudect",
     "crate": "rscrypto",
     "target": target,
@@ -1323,6 +1330,7 @@ def validate_dudect(root: Path, target: str, profile: str, ct: dict, errors: lis
   for key, value in expected.items():
     if report.get(key) != value:
       fail(errors, f"dudect {key} expected {value!r}, got {report.get(key)!r}")
+  validate_dudect_source(root, report, errors)
 
   release_binary = ct.get("equality_evidence", {}).get("release_binary", {})
   for key, value in {

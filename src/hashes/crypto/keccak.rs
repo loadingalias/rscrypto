@@ -1049,8 +1049,10 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakCoreImpl<RATE, P
       *chunk = word.to_le_bytes();
     }
     if !rem.is_empty() {
-      let bytes = state[chunks.len()].to_le_bytes();
-      rem.copy_from_slice(&bytes[..rem.len()]);
+      let word = state[chunks.len()];
+      for (i, byte) in rem.iter_mut().enumerate() {
+        *byte = u8::try_from((word >> i.strict_mul(8)) & 0xff).expect("masked Keccak byte");
+      }
     }
     if ZEROIZE {
       crate::traits::ct::zeroize_words(&mut state);
@@ -1280,7 +1282,7 @@ pub(crate) fn oneshot_pair<const RATE: usize, const OUT: usize>(
   (out_a, out_b)
 }
 
-#[cfg(feature = "ml-kem")]
+#[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
 #[inline(always)]
 fn xof_seeded_32_2_base_state<const RATE: usize>(ds: u8, seed: &[u8; 32]) -> [u64; 25] {
   debug_assert!(RATE > 34);
@@ -1299,7 +1301,7 @@ fn xof_seeded_32_2_base_state<const RATE: usize>(ds: u8, seed: &[u8; 32]) -> [u6
   state
 }
 
-#[cfg(feature = "ml-kem")]
+#[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
 #[inline(always)]
 fn xof_seeded_32_2_state_from_base(mut state: [u64; 25], x: u8, y: u8) -> [u64; 25] {
   state[4] |= u64::from(x) | (u64::from(y) << 8);
@@ -1433,7 +1435,7 @@ pub(crate) fn xof_seeded_32_2<const RATE: usize>(ds: u8, seed: &[u8; 32], x: u8,
   }
 }
 
-#[cfg(feature = "ml-kem")]
+#[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
 pub(crate) fn xof_seeded_32_2_pair<const RATE: usize>(
   ds: u8,
   seed: &[u8; 32],
@@ -1656,8 +1658,10 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakXofImpl<RATE, P,
       *chunk = word.to_le_bytes();
     }
     if !rem.is_empty() {
-      let bytes = state[chunks.len()].to_le_bytes();
-      rem.copy_from_slice(&bytes[..rem.len()]);
+      let word = state[chunks.len()];
+      for (i, byte) in rem.iter_mut().enumerate() {
+        *byte = u8::try_from((word >> i.strict_mul(8)) & 0xff).expect("masked Keccak byte");
+      }
     }
   }
 
@@ -1667,11 +1671,26 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakXofImpl<RATE, P,
     debug_assert!(out.len() <= RATE.strict_sub(pos));
 
     while !out.is_empty() {
+      if pos.is_multiple_of(8) && out.len() >= 8 {
+        // Assign complete lanes directly into the caller's owner, as in
+        // copy_state_prefix. Only partial lanes need byte-wise extraction.
+        let (chunks, tail) = out.as_chunks_mut::<8>();
+        for (chunk, &word) in chunks.iter_mut().zip(&state[pos / 8..]) {
+          *chunk = word.to_le_bytes();
+        }
+        pos = pos.strict_add(chunks.len().strict_mul(8));
+        out = tail;
+        continue;
+      }
       let lane = pos / 8;
       let byte = pos % 8;
-      let bytes = state[lane].to_le_bytes();
       let take = core::cmp::min(8usize.strict_sub(byte), out.len());
-      out[..take].copy_from_slice(&bytes[byte..byte.strict_add(take)]);
+      // Extract directly into the caller's owner. A temporary byte array here
+      // would retain an unguarded copy of a secret sponge lane on the stack.
+      let word = state[lane];
+      for (i, output) in out[..take].iter_mut().enumerate() {
+        *output = u8::try_from((word >> byte.strict_add(i).strict_mul(8)) & 0xff).expect("masked Keccak byte");
+      }
       pos = pos.strict_add(take);
       out = &mut out[take..];
     }
@@ -1704,7 +1723,7 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakXofImpl<RATE, P,
     }
   }
 
-  #[cfg(feature = "ml-kem")]
+  #[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
   pub(crate) fn squeeze_pair_into(a: &mut Self, b: &mut Self, mut out_a: &mut [u8], mut out_b: &mut [u8]) {
     debug_assert_eq!(out_a.len(), out_b.len());
     debug_assert_eq!(a.pos, b.pos);

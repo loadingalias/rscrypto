@@ -1030,6 +1030,62 @@ fn p256_ecdh_agree_fixed_vs_random_scalar(runner: &mut CtRunner, rng: &mut Bench
   }
 }
 
+// These cases call production kernels. RNG and class selection are outside timing.
+fn mldsa_inverse_ntt_fixed_vs_random(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let input = if matches!(class, Class::Left) {
+      [0; 256]
+    } else {
+      core::array::from_fn(|_| rng.random_range(0..8_380_417u32))
+    };
+    inputs.push((class, input));
+  }
+  for (class, input) in inputs {
+    runner.run_one(class, || {
+      for _ in 0..64 {
+        core::hint::black_box(rscrypto::auth::diag_mldsa_inverse_ntt(core::hint::black_box(&input)));
+      }
+    });
+  }
+}
+
+macro_rules! mldsa_sampler_case {
+  ($name:ident, $operation:expr) => {
+    fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let mut inputs = Vec::with_capacity(samples());
+      for _ in 0..samples() {
+        let class = random_class(rng);
+        let seed = if matches!(class, Class::Left) {
+          [0x42; 64]
+        } else {
+          rand_array::<64>(rng)
+        };
+        inputs.push((class, seed));
+      }
+      for (class, seed) in inputs {
+        runner.run_one(class, || ($operation)(&seed));
+      }
+    }
+  };
+}
+mldsa_sampler_case!(mldsa_noise_eta2_fixed_vs_random, |seed| {
+  rscrypto::auth::diag_mldsa_noise(seed, 2)
+});
+mldsa_sampler_case!(mldsa_noise_eta4_fixed_vs_random, |seed| {
+  rscrypto::auth::diag_mldsa_noise(seed, 4)
+});
+mldsa_sampler_case!(mldsa_challenge44_fixed_vs_random, |seed: &[u8; 64]| {
+  rscrypto::auth::diag_mldsa_challenge(&seed[..32], 39)
+});
+mldsa_sampler_case!(mldsa_challenge65_fixed_vs_random, |seed: &[u8; 64]| {
+  rscrypto::auth::diag_mldsa_challenge(&seed[..48], 49)
+});
+mldsa_sampler_case!(mldsa_challenge87_fixed_vs_random, |seed: &[u8; 64]| {
+  rscrypto::auth::diag_mldsa_challenge(seed, 60)
+});
+
 macro_rules! mlkem_dudect_profile {
   (
     $keygen_secret_noise:ident,
@@ -2650,6 +2706,12 @@ ctbench_main_with_seeds!(
   (x25519_fixed_vs_random_scalar, Some(0x7832353531395f63)),
   (p256_ecdh_public_key_fixed_vs_random_scalar, Some(0x7032353665637075)),
   (p256_ecdh_agree_fixed_vs_random_scalar, Some(0x7032353665636167)),
+  (mldsa_inverse_ntt_fixed_vs_random, Some(0x6d6c647361000000)),
+  (mldsa_noise_eta2_fixed_vs_random, Some(0x6d6c647361000001)),
+  (mldsa_noise_eta4_fixed_vs_random, Some(0x6d6c647361000002)),
+  (mldsa_challenge44_fixed_vs_random, Some(0x6d6c647361000003)),
+  (mldsa_challenge65_fixed_vs_random, Some(0x6d6c647361000004)),
+  (mldsa_challenge87_fixed_vs_random, Some(0x6d6c647361000005)),
   (mlkem512_keygen_secret_noise_fixed_vs_random, Some(0x6d6b3531326b676e)),
   (mlkem512_encapsulate_fixed_vs_random_coins, Some(0x6d6b353132656e63)),
   (

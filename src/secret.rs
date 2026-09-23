@@ -323,6 +323,7 @@ impl Drop for SecretString {
   feature = "ecdsa-p384",
   feature = "ed25519",
   feature = "ml-kem",
+  feature = "ml-dsa",
   feature = "poly1305",
   feature = "x25519"
 ))]
@@ -341,12 +342,18 @@ pub(crate) struct ZeroizingBytes<const N: usize>([u8; N]);
   feature = "ecdsa-p384",
   feature = "ed25519",
   feature = "ml-kem",
+  feature = "ml-dsa",
   feature = "poly1305",
   feature = "x25519"
 ))]
 impl<const N: usize> ZeroizingBytes<N> {
   #[inline]
-  #[cfg(any(feature = "serde-secrets", feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+  #[cfg(any(
+    feature = "serde-secrets",
+    feature = "ecdsa-p256",
+    feature = "ecdsa-p384",
+    feature = "ml-dsa"
+  ))]
   pub(crate) const fn new(bytes: [u8; N]) -> Self {
     Self(bytes)
   }
@@ -380,6 +387,7 @@ impl<const N: usize> ZeroizingBytes<N> {
   feature = "ecdsa-p384",
   feature = "ed25519",
   feature = "ml-kem",
+  feature = "ml-dsa",
   feature = "poly1305",
   feature = "x25519"
 ))]

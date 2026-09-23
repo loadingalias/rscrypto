@@ -78,6 +78,9 @@ mod auth_hmac_sha512;
 #[path = "../target_impls/auth_kmac256.rs"]
 mod auth_kmac256;
 
+#[path = "../target_impls/auth_mldsa.rs"]
+mod auth_mldsa;
+
 #[path = "../target_impls/auth_mlkem512.rs"]
 mod auth_mlkem512;
 
@@ -561,4 +564,10 @@ fn replay_hex_parse_corpus() {
 fn replay_traits_io_corpus() {
   let replayed = replay_corpus_dir("traits_io", corpus_dir("traits_io"), traits_io::run);
   assert_ne!(replayed, 0, "traits_io corpus should not be empty");
+}
+
+#[test]
+fn replay_auth_mldsa_corpus() {
+  let replayed = replay_corpus_dir("auth_mldsa", corpus_dir("auth_mldsa"), auth_mldsa::run);
+  assert_ne!(replayed, 0, "auth_mldsa corpus should not be empty");
 }

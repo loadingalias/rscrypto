@@ -347,3 +347,8 @@ doc = false
 name = "fast_rapidhash"
 path = "fuzz_targets/fast_rapidhash.rs"
 doc = false
+
+[[bin]]
+name = "auth_mldsa"
+path = "fuzz_targets/auth_mldsa.rs"
+doc = false

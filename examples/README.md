@@ -19,6 +19,7 @@ just test-examples
 | `argon2id_password_hashing` | Create and verify a bounded Argon2id PHC record. | `argon2,phc-strings,getrandom` |
 | `ed25519_sign_verify` | Generate an Ed25519 keypair, sign a message, and verify the signature. | `ed25519,getrandom` |
 | `rsa_pss_verify` | Verify a packaged RSA-PSS/SHA-256 fixture. | `rsa` |
+| `mldsa_sign_verify` | Generate ML-DSA-65 keys, sign with OS-provided randomness and an explicit context, and verify. | `ml-dsa,getrandom` |
 | `mlkem_encapsulation` | Generate ML-KEM-768 keys and confirm encapsulation and decapsulation agree. | `ml-kem,getrandom` |
 | `p256_ecdh` | Generate two ephemeral P-256 keys and confirm both parties derive the same fixed-width ECC CDH output. | `p256-ecdh,getrandom` |
 | `x25519_key_agreement` | Generate two X25519 keypairs and confirm both parties derive the same raw secret. | `x25519,getrandom` |
@@ -34,3 +35,5 @@ Replace the example name and feature list with the matching row.
 P-256 ECDH and X25519 return raw shared secrets
 that a protocol must bind to its transcript with a KDF; neither operation authenticates the peer.
 ML-KEM encapsulation alone does not define a hybrid key-establishment protocol.
+
+ML-DSA portable qualification is in progress; see its [status and resource contract](../docs/mldsa.md).

@@ -12,6 +12,7 @@ that every compiler-created copy is erased.
 | AEAD keys and contexts | Keys use explicit `duplicate_secret`; contexts do not duplicate | Key export is explicit; `Debug` is redacted. |
 | Header-protection keys and contexts | No generic duplication | No public export; `Debug` is redacted. |
 | ECDSA and Ed25519 secret keys and keypairs | Explicit `duplicate_secret` | Secret-key export is explicit; keypair `Debug` shows only public data. |
+| ML-DSA expanded and prepared secret keys | Not `Clone` or `Copy`; preparation creates an explicit transformed owner borrowing the original key | Expanded export returns `SecretBytes`; `Debug` is redacted; serialization requires `serde-secrets`. |
 | X25519 secrets and ML-KEM decapsulation/shared secrets | Explicit `duplicate_secret` | Secret export is explicit; `Debug` is redacted. |
 | `P256EphemeralSecret`, `P256SharedSecret` | Not `Clone` or `Copy` | The ephemeral scalar has no export or import API. `P256SharedSecret::expose_secret` creates an explicit `SecretBytes<32>` copy; borrowed access is available through `as_bytes`. Both owners have redacted `Debug`. |
 | `RsaPrivateKey`, `RsaPrivateScratch` | Not `Clone` or `Copy` | Private DER export returns `SecretVec`; `Debug` shows public metadata only. |

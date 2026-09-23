@@ -486,6 +486,7 @@ def dudect_case_result(
       "crate_version",
       "git_commit",
       "git_dirty",
+      "source",
       "features",
       "default_features",
       "backend",

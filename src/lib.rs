@@ -328,6 +328,7 @@ pub mod aead;
   feature = "ecdsa-p384",
   feature = "ed25519",
   feature = "ml-kem",
+  feature = "ml-dsa",
   feature = "p256-ecdh",
   feature = "rsa",
   feature = "x25519",
@@ -430,6 +431,13 @@ pub use auth::{
 pub use auth::{HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag};
 #[cfg(feature = "kmac")]
 pub use auth::{Kmac128, Kmac256};
+#[cfg(feature = "ml-dsa")]
+pub use auth::{
+  MlDsa44, MlDsa44PreparedPublicKey, MlDsa44PreparedSecretKey, MlDsa44PublicKey, MlDsa44SecretKey, MlDsa44Signature,
+  MlDsa65, MlDsa65PreparedPublicKey, MlDsa65PreparedSecretKey, MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature,
+  MlDsa87, MlDsa87PreparedPublicKey, MlDsa87PreparedSecretKey, MlDsa87PublicKey, MlDsa87SecretKey, MlDsa87Signature,
+  MlDsaError, MlDsaPrehash, MlDsaPrehashAlgorithm,
+};
 #[cfg(feature = "ml-kem")]
 pub use auth::{
   MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem512PreparedDecapsulationKey,

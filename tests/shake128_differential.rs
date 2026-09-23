@@ -78,3 +78,21 @@ proptest! {
     prop_assert_eq!(actual, expected);
   }
 }
+
+#[test]
+fn shake128_squeeze_lane_and_rate_boundaries() {
+  // Every lane offset and rate boundary exercises partial/full/partial copies.
+  const RATE: usize = 168;
+  let data = [0xa5; 193];
+  let mut expected = vec![0u8; RATE.strict_mul(2).strict_add(1)];
+  shake128_ref(&data, &mut expected);
+  for prefix in 0..=RATE {
+    for length in [0, 1, 7, 8, 9, 15, 16, RATE.strict_sub(1), RATE, RATE.strict_add(1)] {
+      let mut reader = Shake128::xof(&data);
+      let mut actual = vec![0u8; prefix.strict_add(length)];
+      reader.squeeze(&mut actual[..prefix]);
+      reader.squeeze(&mut actual[prefix..]);
+      assert_eq!(actual, expected[..actual.len()], "prefix={prefix}, length={length}");
+    }
+  }
+}

@@ -67,6 +67,18 @@
       "required": true,
       "features": ["std", "blake3", "parallel"]
     },
+    "mldsa_portable": {
+      "binary": "mldsa",
+      "kind": "criterion",
+      "required": false,
+      "features": ["std", "ml-dsa", "portable-only"]
+    },
+    "mldsa": {
+      "binary": "mldsa",
+      "kind": "criterion",
+      "required": true,
+      "features": ["std", "ml-dsa"]
+    },
     "auth": {
       "binary": "auth",
       "kind": "criterion",
@@ -181,6 +193,9 @@
     "ed25519": { "bench": "auth", "filter": "ed25519" },
     "x25519": { "bench": "auth", "filter": "x25519" },
     "p256-ecdh": { "bench": "auth", "filter": "^p256-ecdh/" },
+    "mldsa44": { "bench": "mldsa", "filter": "^mldsa44/" },
+    "mldsa65": { "bench": "mldsa", "filter": "^mldsa65/" },
+    "mldsa87": { "bench": "mldsa", "filter": "^mldsa87/" },
     "mlkem512": { "bench": "auth", "filter": "^mlkem512/(keygen|encapsulate|decapsulate)/" },
     "mlkem768": { "bench": "auth", "filter": "^mlkem768/(keygen|encapsulate|decapsulate)/" },
     "mlkem1024": { "bench": "auth", "filter": "^mlkem1024/(keygen|encapsulate|decapsulate)/" },
@@ -243,6 +258,9 @@
       "ed25519",
       "x25519",
       "p256-ecdh",
+      "mldsa44",
+      "mldsa65",
+      "mldsa87",
       "mlkem512",
       "mlkem768",
       "mlkem1024",
@@ -276,6 +294,9 @@
       "ed25519",
       "x25519",
       "p256-ecdh",
+      "mldsa44",
+      "mldsa65",
+      "mldsa87",
       "mlkem512",
       "mlkem768",
       "mlkem1024",

@@ -179,6 +179,7 @@ ed25519 = ["sha2"]
 rsa = ["alloc", "sha2"]
 x25519 = []
 ml-kem = ["sha3"]
+ml-dsa = ["sha3"]
 
 phc-strings = ["alloc"]
 argon2 = ["blake2b", "alloc"]
@@ -199,7 +200,7 @@ hashes = ["crypto-hashes", "fast-hashes"]
 macs = ["hmac", "hmac-sha3", "kmac", "poly1305"]
 kdfs = ["hkdf", "pbkdf2"]
 password-hashing = ["argon2", "scrypt", "phc-strings"]
-signatures = ["ecdsa", "ed25519", "rsa"]
+signatures = ["ecdsa", "ed25519", "rsa", "ml-dsa"]
 key-exchange = ["x25519", "p256-ecdh", "ml-kem"]
 auth = ["macs", "kdfs", "password-hashing", "signatures", "key-exchange"]
 aead = ["aes-gcm", "aes-gcm-siv", "aes-siv", "chacha20poly1305", "xchacha20poly1305", "aegis256", "ascon-aead"]
@@ -278,6 +279,7 @@ serde_json = "1.0.151"
 ring = "0.17.14"
 rsa = { version = "0.9.10", default-features = false, features = ["std", "u64_digit", "sha2"] }
 dryoc = "1.0.0"
+rustcrypto-ml-dsa = { version = "=0.1.1", package = "ml-dsa", default-features = false, features = ["zeroize"] }
 
 [target.'cfg(any(target_arch = "x86", target_arch = "x86_64"))'.dev-dependencies]
 libcrux-ml-kem = { version = "0.0.10", default-features = false, features = [
@@ -329,6 +331,10 @@ required-features = ["ed25519", "getrandom"]
 [[example]]
 name = "rsa_pss_verify"
 required-features = ["rsa"]
+
+[[example]]
+name = "mldsa_sign_verify"
+required-features = ["ml-dsa", "getrandom"]
 
 [[example]]
 name = "mlkem_encapsulation"
@@ -394,6 +400,11 @@ required-features = ["websocket-sha1"]
 name = "ascon"
 harness = false
 required-features = ["std", "ascon-hash"]
+
+[[bench]]
+name = "mldsa"
+harness = false
+required-features = ["ml-dsa"]
 
 [[bench]]
 name = "auth"

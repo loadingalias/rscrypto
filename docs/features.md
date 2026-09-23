@@ -28,7 +28,7 @@ Umbrella features trade build size for convenience:
 | `aead`          | Every AEAD implementation |
 | `full`          | Checksums, hashes, authentication, and AEADs |
 
-Prefer leaf features such as `sha2`, `blake3`, `aes-gcm`, `ed25519`, `p256-ecdh`, or `ml-kem` in libraries and constrained builds.
+Prefer leaf features such as `sha2`, `blake3`, `aes-gcm`, `ed25519`, `p256-ecdh`, `ml-dsa`, or `ml-kem` in libraries and constrained builds.
 
 `websocket-sha1` exposes only the compatibility digest for WebSocket handshakes.
 It is excluded from every umbrella feature, including `full`; enable it explicitly.
@@ -53,6 +53,9 @@ and carries no compatibility guarantee.
 
 `getrandom` changes entropy acquisition, not algorithm availability.
 APIs that accept caller-provided entropy remain available without it.
+
+`ml-dsa` supports all three ML-DSA parameter sets without allocation or OS entropy.
+See [ML-DSA](mldsa.md) for the API, memory costs, and open qualification gates.
 
 `p256-ecdh` is a standalone leaf: it does not enable ECDSA, HMAC, `alloc`, or `std`.
 See [`platforms.md`](platforms.md) for backend selection, [`constant-time.md`](constant-time.md) for timing claims,

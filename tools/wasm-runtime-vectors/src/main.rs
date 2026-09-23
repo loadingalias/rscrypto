@@ -346,6 +346,63 @@ fn assert_argon2id_rfc9106() {
   );
 }
 
+fn assert_mldsa_fips204_vectors() {
+  macro_rules! kat {
+    ($set:literal, $profile:ident, $secret:ident, $signature:ident) => {{
+      macro_rules! fixture {
+        ($field:literal) => {
+          include_bytes!(concat!(
+            "../../../testdata/mldsa/acvp/runtime/",
+            $set,
+            "-",
+            $field,
+            ".bin"
+          ))
+        };
+      }
+      let (public, secret) =
+        rscrypto::$profile::keypair_from_seed(fixture!("keyGen-seed")).expect("FIPS 204 key generation");
+      assert_eq!(public.as_bytes(), fixture!("keyGen-pk"));
+      assert_eq!(secret.expose_secret().as_bytes(), fixture!("keyGen-sk"));
+
+      let secret = rscrypto::$secret::try_from_slice(fixture!("sigGen-sk")).expect("FIPS 204 expanded key");
+      let message = fixture!("sigGen-message");
+      let context = fixture!("sigGen-context");
+      let signature = secret.sign_deterministic(message, context).expect("FIPS 204 signature");
+      assert_eq!(signature.as_bytes(), fixture!("sigGen-signature"));
+      let prepared = secret.prepare().expect("prepare FIPS 204 secret key");
+      assert_eq!(
+        prepared
+          .sign_deterministic(message, context)
+          .expect("prepared signature")
+          .as_bytes(),
+        signature.as_bytes()
+      );
+      let public = secret.public_key();
+      let signature =
+        rscrypto::$signature::try_from_slice(fixture!("sigGen-signature")).expect("canonical FIPS 204 signature");
+      public
+        .verify_with_context(message, context, &signature)
+        .expect("FIPS 204 verification");
+      let prepared = public.prepare().expect("prepare FIPS 204 public key");
+      prepared
+        .verify_with_context(message, context, &signature)
+        .expect("prepared verification");
+      let mut changed = *message;
+      changed[0] ^= 1;
+      public
+        .verify_with_context(&changed, context, &signature)
+        .expect_err("changed message");
+      prepared
+        .verify_with_context(&changed, context, &signature)
+        .expect_err("changed prepared message");
+    }};
+  }
+  kat!("44", MlDsa44, MlDsa44SecretKey, MlDsa44Signature);
+  kat!("65", MlDsa65, MlDsa65SecretKey, MlDsa65Signature);
+  kat!("87", MlDsa87, MlDsa87SecretKey, MlDsa87Signature);
+}
+
 fn main() {
   run_vectors();
 }
@@ -368,5 +425,6 @@ fn run_vectors() {
   assert_aes_siv_runtime_vector_and_failed_open_cleanup();
   assert_ecdsa_portable_signing_roundtrips();
   assert_p256_ecdh_portable_vector();
+  assert_mldsa_fips204_vectors();
   assert_simd128_runtime_caps_are_detected();
 }

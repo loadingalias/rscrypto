@@ -20,7 +20,9 @@ from typing import Any
 
 # Embedded Windows Python omits the script directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
+import evidence_bundle as bundle
 from provenance import cfg_target_features, codegen_value, codegen_values, dudect_runner_sources, resolved_rustflags, sha256_file
 
 
@@ -370,13 +372,14 @@ def prepare_report(args):
   git_status = subprocess.check_output(["git", "status", "--short", "--untracked-files=all"], cwd=root, text=True).splitlines()
 
   report = {
-    "schema_version": 3,
+    "schema_version": 4,
     "kind": "rscrypto.ct.dudect",
     "crate": "rscrypto",
     "crate_version": crate_version,
     "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
     "git_dirty": bool(git_status),
     "git_status": git_status,
+    "source": bundle.source_identity(root),
     "generated_at_utc": datetime.now(timezone.utc).isoformat(),
     "target": args.target,
     "target_triple": args.target,

@@ -171,9 +171,23 @@ def test_dudect_smoke_summary_is_insufficient() -> None:
     probe.assert_not_called()
 
 
+def test_dudect_source_identity_rejects_stale_worktree() -> None:
+  expected = {"commit": "fixture", "sha256": "current"}
+  with patch.object(manifest_validation.bundle, "source_identity", return_value=expected):
+    errors: list[str] = []
+    manifest_validation.validate_dudect_source(Path("."), {"source": expected}, errors)
+    assert errors == []
+
+    for source in (None, {"commit": "fixture", "sha256": "stale"}):
+      errors = []
+      manifest_validation.validate_dudect_source(Path("."), {"source": source}, errors)
+      assert errors == ["dudect source identity mismatch; rebuild and rerun timing evidence"]
+
+
 def main() -> None:
   test_dudect_invocation_evidence()
   test_dudect_smoke_summary_is_insufficient()
+  test_dudect_source_identity_rejects_stale_worktree()
   root = Path(__file__).resolve().parents[2]
   target_matrix = manifest_validation.json.loads((root / ".config" / "target-matrix.json").read_text())
   assert manifest_validation.matrix_targets(target_matrix) == {

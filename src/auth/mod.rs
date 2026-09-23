@@ -81,6 +81,8 @@
 //! - HKDF uses `new(salt, ikm)` for extract state, then `expand` / `expand_array`; one-shot helpers
 //!   are `derive` / `derive_array`.
 //! - ML-KEM uses FIPS 203 names: encapsulation keys are public, decapsulation keys are secret.
+//! - ML-DSA keeps context and deterministic or randomized signing explicit; its `Verifier`
+//!   implementation selects pure ML-DSA with an empty context.
 //! - Key generation uses `try_generate_with(fill)` for caller-owned entropy and `try_generate()` /
 //!   `try_generate_keypair()` when `getrandom` is enabled.
 //! - Native generic signing uses `TrySigner`, `TrySignerInto`, and `Verifier`; RSA generic
@@ -106,6 +108,7 @@
 //! - `hmac_sha3` - HMAC-SHA3 authentication.
 //! - `hkdf` - HKDF extract-then-expand key derivation.
 //! - `kmac` - KMAC128/KMAC256 variable-output MACs.
+//! - `mldsa` - ML-DSA-44/65/87 signatures and HashML-DSA prehash profiles (FIPS 204).
 //! - `mlkem` - ML-KEM typed key, ciphertext, and shared-secret foundations.
 //! - `poly1305` - Standalone Poly1305 one-time authenticator.
 //! - `rsa` - RSA key import/export/generation, signing, verification, OAEP, and legacy
@@ -166,6 +169,8 @@ pub mod hmac_sha3;
 mod hmac_tag;
 #[cfg(feature = "kmac")]
 pub mod kmac;
+#[cfg(feature = "ml-dsa")]
+pub mod mldsa;
 #[cfg(feature = "ml-kem")]
 pub mod mlkem;
 #[cfg(any(
@@ -356,6 +361,13 @@ pub use hmac_sha3::{
 };
 #[cfg(feature = "kmac")]
 pub use kmac::{Kmac128, Kmac256};
+#[cfg(feature = "ml-dsa")]
+pub use mldsa::{
+  MlDsa44, MlDsa44PreparedPublicKey, MlDsa44PreparedSecretKey, MlDsa44PublicKey, MlDsa44SecretKey, MlDsa44Signature,
+  MlDsa65, MlDsa65PreparedPublicKey, MlDsa65PreparedSecretKey, MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature,
+  MlDsa87, MlDsa87PreparedPublicKey, MlDsa87PreparedSecretKey, MlDsa87PublicKey, MlDsa87SecretKey, MlDsa87Signature,
+  MlDsaError, MlDsaPrehash, MlDsaPrehashAlgorithm,
+};
 #[cfg(feature = "ml-kem")]
 pub use mlkem::{
   MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem512PreparedDecapsulationKey,
@@ -420,3 +432,6 @@ pub use x25519::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecr
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "x25519"))]
 pub use crate::backend::curve25519_swap::diag_curve25519_conditional_swap;
 pub use crate::traits::Mac;
+
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ml-dsa"))]
+pub use mldsa::{diag_mldsa_challenge, diag_mldsa_inverse_ntt, diag_mldsa_noise};
