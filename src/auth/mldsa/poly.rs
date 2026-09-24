@@ -165,8 +165,24 @@ impl Poly {
     ))
   ))]
   fn inverse_ntt_portable(&mut self) {
-    let mut root = N;
-    let mut width = 1usize;
+    // Fuse widths one and two within each four-coefficient block. Root order
+    // and canonical reductions match the separate stages, while intermediate
+    // coefficients need not make another round trip through the polynomial.
+    for (index, [a, b, c, d]) in self.0.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+      let root1 = (N - 1).strict_sub(index.strict_mul(2));
+      let root2 = (N / 2 - 1).strict_sub(index);
+      let x = add(*a, *b);
+      let y = montgomery(Q.strict_sub(ROOTS[root1]), a.strict_add(Q).strict_sub(*b));
+      let z = add(*c, *d);
+      let w = montgomery(Q.strict_sub(ROOTS[root1.strict_sub(1)]), c.strict_add(Q).strict_sub(*d));
+      let zeta = Q.strict_sub(ROOTS[root2]);
+      *a = add(x, z);
+      *b = add(y, w);
+      *c = montgomery(zeta, x.strict_add(Q).strict_sub(z));
+      *d = montgomery(zeta, y.strict_add(Q).strict_sub(w));
+    }
+    let mut root = N / 4;
+    let mut width = 4usize;
     while width < N / 2 {
       for block in self.0.chunks_exact_mut(width.strict_mul(2)) {
         root = root.strict_sub(1);
