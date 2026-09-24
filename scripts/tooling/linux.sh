@@ -61,7 +61,8 @@ if [[ "$(id -u)" != 0 ]]; then sudo_cmd=(sudo); fi
 mirror_list="$(mktemp /tmp/rscrypto-apt-mirrors.XXXXXX)"
 trap 'rm -f "$mirror_list"' EXIT
 temporary="$(mktemp -d)"
-trap 'rm -rf "$temporary" "$mirror_list"' EXIT
+# APT creates root-owned mirror cache entries inside this temporary directory.
+trap '"${sudo_cmd[@]}" rm -rf -- "$temporary" "$mirror_list"' EXIT
 # Minimal Ubuntu images may omit the HTTPS trust store and Python. Bootstrap
 # those through Ubuntu's signed archive, then converge them to the snapshot too.
 if ! command -v python3 >/dev/null || [[ ! -f /etc/ssl/certs/ca-certificates.crt ]]; then
