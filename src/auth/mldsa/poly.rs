@@ -8,11 +8,19 @@ use crate::traits::ct;
 
 #[cfg(all(
   target_arch = "aarch64",
-  target_os = "macos",
+  any(target_os = "macos", target_os = "linux"),
   target_feature = "neon",
   not(feature = "portable-only")
 ))]
 mod aarch64;
+
+#[cfg(all(
+  target_arch = "x86_64",
+  target_os = "linux",
+  not(miri),
+  not(feature = "portable-only")
+))]
+mod x86_64;
 
 pub(super) const N: usize = 256;
 pub(super) const Q: u32 = 8_380_417;
@@ -34,20 +42,34 @@ impl Poly {
   /// FIPS 204 Algorithm 41, with Montgomery-domain butterfly operands.
   pub(super) fn ntt(&mut self) {
     #[cfg(all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    if crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
+      // SAFETY: Cached capability detection establishes CPU and OS AVX2 support.
+      // Fixed-size references provide initialized arrays and disjoint output.
+      unsafe {
+        x86_64::ntt(self);
+      }
+      return;
+    }
+    #[cfg(all(
       target_arch = "aarch64",
-      target_os = "macos",
+      any(target_os = "macos", target_os = "linux"),
       target_feature = "neon",
       not(feature = "portable-only")
     ))]
     {
-      // SAFETY: This branch requires compile-time NEON on macOS AArch64.
+      // SAFETY: This branch requires compile-time NEON on macOS/Linux AArch64.
       unsafe {
         aarch64::ntt(self);
       }
     }
     #[cfg(not(all(
       target_arch = "aarch64",
-      target_os = "macos",
+      any(target_os = "macos", target_os = "linux"),
       target_feature = "neon",
       not(feature = "portable-only")
     )))]
@@ -60,7 +82,7 @@ impl Poly {
     test,
     not(all(
       target_arch = "aarch64",
-      target_os = "macos",
+      any(target_os = "macos", target_os = "linux"),
       target_feature = "neon",
       not(feature = "portable-only")
     ))
@@ -97,20 +119,34 @@ impl Poly {
   /// FIPS 204 Algorithm 42, including conversion out of Montgomery form.
   pub(super) fn inverse_ntt(&mut self) {
     #[cfg(all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    if crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
+      // SAFETY: Cached capability detection establishes CPU and OS AVX2 support.
+      // Fixed-size references provide initialized arrays and disjoint output.
+      unsafe {
+        x86_64::inverse_ntt(self);
+      }
+      return;
+    }
+    #[cfg(all(
       target_arch = "aarch64",
-      target_os = "macos",
+      any(target_os = "macos", target_os = "linux"),
       target_feature = "neon",
       not(feature = "portable-only")
     ))]
     {
-      // SAFETY: This branch requires compile-time NEON on macOS AArch64.
+      // SAFETY: This branch requires compile-time NEON on macOS/Linux AArch64.
       unsafe {
         aarch64::inverse_ntt(self);
       }
     }
     #[cfg(not(all(
       target_arch = "aarch64",
-      target_os = "macos",
+      any(target_os = "macos", target_os = "linux"),
       target_feature = "neon",
       not(feature = "portable-only")
     )))]
@@ -123,7 +159,7 @@ impl Poly {
     test,
     not(all(
       target_arch = "aarch64",
-      target_os = "macos",
+      any(target_os = "macos", target_os = "linux"),
       target_feature = "neon",
       not(feature = "portable-only")
     ))
@@ -165,13 +201,27 @@ impl Poly {
 
   pub(super) fn accumulate_product(&mut self, a: &[u32; N], b: &Self) {
     #[cfg(all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    if crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
+      // SAFETY: Cached capability detection establishes CPU and OS AVX2 support.
+      // Fixed-size references provide initialized arrays and disjoint output.
+      unsafe {
+        x86_64::accumulate_product(&mut self.0, a, &b.0);
+      }
+      return;
+    }
+    #[cfg(all(
       target_arch = "aarch64",
-      target_os = "macos",
+      any(target_os = "macos", target_os = "linux"),
       target_feature = "neon",
       not(feature = "portable-only")
     ))]
     {
-      // SAFETY: Compile-time NEON is required on this macOS AArch64 path.
+      // SAFETY: Compile-time NEON is required on this macOS/Linux AArch64 path.
       // Fixed-size references provide initialized, disjoint output and inputs.
       unsafe {
         aarch64::accumulate_product(&mut self.0, a, &b.0);
@@ -179,7 +229,7 @@ impl Poly {
     }
     #[cfg(not(all(
       target_arch = "aarch64",
-      target_os = "macos",
+      any(target_os = "macos", target_os = "linux"),
       target_feature = "neon",
       not(feature = "portable-only")
     )))]
@@ -332,14 +382,48 @@ pub(super) fn use_hint(x: u32, hint: bool, gamma2: u32) -> u32 {
 mod tests {
   use super::{N, Poly, Q, montgomery};
 
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_os = "macos",
-    target_feature = "neon",
-    not(feature = "portable-only")
+  // Force a valid u32-aligned address that is not SIMD-aligned. The portable
+  // differential must catch a backend that accidentally requires aligned loads.
+  #[cfg(any(
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      target_feature = "neon",
+      not(feature = "portable-only")
+    ),
+    all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    )
+  ))]
+  #[repr(C, align(32))]
+  struct Unaligned {
+    padding: u32,
+    poly: Poly,
+  }
+
+  #[cfg(any(
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      target_feature = "neon",
+      not(feature = "portable-only")
+    ),
+    all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    )
   ))]
   #[test]
-  fn ntt_neon_matches_portable() {
+  fn ntt_accelerated_matches_portable() {
+    #[cfg(target_arch = "x86_64")]
+    if !crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
+      return;
+    }
     // Canonical extremes, lane-alternating extremes, sparse basis vectors,
     // and dense deterministic inputs expose root order and lane mixups.
     let mut state = 0x6d6c_6473u32;
@@ -376,9 +460,17 @@ mod tests {
           _ => state % Q,
         };
       }
-      let mut actual = Poly::zero();
+      let mut storage = Unaligned {
+        padding: 0,
+        poly: Poly::zero(),
+      };
+      let actual = &mut storage.poly;
       actual.copy_from(&expected);
-      let mut forward = Poly::zero();
+      let mut forward_storage = Unaligned {
+        padding: 0,
+        poly: Poly::zero(),
+      };
+      let forward = &mut forward_storage.poly;
       forward.copy_from(&expected);
       let mut forward_expected = Poly::zero();
       forward_expected.copy_from(&expected);
@@ -391,19 +483,35 @@ mod tests {
     }
   }
 
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_os = "macos",
-    target_feature = "neon",
-    not(feature = "portable-only")
+  #[cfg(any(
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      target_feature = "neon",
+      not(feature = "portable-only")
+    ),
+    all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    )
   ))]
   #[test]
-  fn accumulation_neon_matches_portable() {
+  fn accumulation_accelerated_matches_portable() {
+    #[cfg(target_arch = "x86_64")]
+    if !crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
+      return;
+    }
     let mut state = 0x91e1_0da5u32;
     for case in 0..68 {
       let mut a = Poly::zero();
       let mut b = Poly::zero();
-      let mut actual = Poly::zero();
+      let mut storage = Unaligned {
+        padding: 0,
+        poly: Poly::zero(),
+      };
+      let actual = &mut storage.poly;
       let mut expected = Poly::zero();
       for i in 0..N {
         state ^= state << 13;

@@ -30,6 +30,9 @@ on:
           - auth/p256-ecdh
           - auth/p384-sign
           - auth/argon2id
+          - auth/mldsa65-keygen
+          - auth/mldsa65-prepared-sign
+          - auth/mldsa65-prepared-verify
           - hashes/sha256
           - hashes/blake3
           - hashes/blake3-keyed

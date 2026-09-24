@@ -130,6 +130,9 @@ The benchmark catalog maps each primitive to one benchmark target and one exact 
 It also owns the diagnostic-feature policy.
 The default selection is `aead/aes`.
 It profiles `aes-128-gcm/copy-and-encrypt/rscrypto/4096` for five seconds.
+The ML-DSA presets use ML-DSA-65: `auth/mldsa65-keygen`,
+`auth/mldsa65-prepared-sign`, and `auth/mldsa65-prepared-verify`.
+Signing is deterministic; signing and verification exclude key preparation.
 The GitHub UI exposes the same two inputs as the CLI:
 
 ```bash

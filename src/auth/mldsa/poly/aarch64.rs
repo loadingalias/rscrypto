@@ -1,4 +1,4 @@
-//! Four-lane NTT transforms for the macOS AArch64 NEON baseline.
+//! Four-lane NTT transforms for the macOS and Linux AArch64 NEON baseline.
 //!
 //! Keep the portable canonical representation and Montgomery arithmetic. Every
 //! stage returns coefficients below q; no lane layout or secret owner changes.
@@ -139,23 +139,9 @@ pub(super) unsafe fn inverse_ntt(poly: &mut Poly) {
   let mut root = N / 4;
   let mut width = 4usize;
   while width < N / 2 {
-    for block in poly.0.chunks_exact_mut(width.strict_mul(2)) {
-      root = root.strict_sub(1);
-      let zeta = vdupq_n_u32(Q.strict_sub(ROOTS[root]));
-      let (left, right) = block.split_at_mut(width);
-      for (a, b) in left.as_chunks_mut::<4>().0.iter_mut().zip(right.as_chunks_mut::<4>().0) {
-        // SAFETY: Each disjoint array contains four initialized u32 lanes.
-        // NEON loads/stores require only u32 alignment. Pointers do not escape;
-        // this module requires macOS AArch64 and compile-time NEON support.
-        unsafe {
-          let x = vld1q_u32(a.as_ptr());
-          let y = vld1q_u32(b.as_ptr());
-          let difference = vsubq_u32(vaddq_u32(x, vdupq_n_u32(Q)), y);
-          vst1q_u32(a.as_mut_ptr(), reduce(vaddq_u32(x, y)));
-          vst1q_u32(b.as_mut_ptr(), multiply(zeta, difference));
-        }
-      }
-    }
+    // SAFETY: This function's caller establishes NEON; the stage borrows the
+    // same initialized canonical polynomial. Width and root are public bounds.
+    root = unsafe { inverse_stage(poly, width, root) };
     width = width.strict_mul(2);
   }
   const LAST_FACTOR: u32 = montgomery(Q.strict_sub(ROOTS[1]), INV_N);
@@ -171,6 +157,36 @@ pub(super) unsafe fn inverse_ntt(poly: &mut Poly) {
       vst1q_u32(b.as_mut_ptr(), multiply(difference, vdupq_n_u32(LAST_FACTOR)));
     }
   }
+}
+
+// Keep Linux's generic CPU optimizer from unrolling a complete middle stage
+// into enough live coefficient vectors to spill outside the polynomial owner.
+// macOS retains its existing inline schedule.
+/// # Safety
+/// NEON must be available; width is 4, 8, 16, 32, or 64 and root starts at
+/// N / width. Coefficients are canonical and all access stays in poly.
+#[cfg_attr(target_os = "linux", inline(never))]
+#[cfg_attr(not(target_os = "linux"), inline)]
+#[target_feature(enable = "neon")]
+unsafe fn inverse_stage(poly: &mut Poly, width: usize, mut root: usize) -> usize {
+  for block in poly.0.chunks_exact_mut(width.strict_mul(2)) {
+    root = root.strict_sub(1);
+    let zeta = vdupq_n_u32(Q.strict_sub(ROOTS[root]));
+    let (left, right) = block.split_at_mut(width);
+    for (a, b) in left.as_chunks_mut::<4>().0.iter_mut().zip(right.as_chunks_mut::<4>().0) {
+      // SAFETY: Each disjoint array contains four initialized u32 lanes.
+      // NEON loads/stores require only u32 alignment. Pointers do not escape;
+      // this module requires macOS/Linux AArch64 and compile-time NEON support.
+      unsafe {
+        let x = vld1q_u32(a.as_ptr());
+        let y = vld1q_u32(b.as_ptr());
+        let difference = vsubq_u32(vaddq_u32(x, vdupq_n_u32(Q)), y);
+        vst1q_u32(a.as_mut_ptr(), reduce(vaddq_u32(x, y)));
+        vst1q_u32(b.as_mut_ptr(), multiply(zeta, difference));
+      }
+    }
+  }
+  root
 }
 
 /// Add a product of canonical Montgomery residues to canonical output.

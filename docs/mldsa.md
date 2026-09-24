@@ -1,4 +1,4 @@
-# ML-DSA portable implementation
+# ML-DSA implementation
 
 The `ml-dsa` feature provides original Rust implementations of ML-DSA-44,
 ML-DSA-65, and ML-DSA-87. It enables `sha3` and does not require `alloc`, `std`,
@@ -6,8 +6,9 @@ OS entropy, or an external implementation. `signatures`, `auth`, and `full`
 include it. RustCrypto ML-DSA 0.1.1 is pinned only as a development oracle.
 
 **The portable implementation and local baseline are complete.** Target qualification
-continues with macOS AArch64 acceleration. The evidence and limits below do not
-assert universal performance leadership or whole-operation constant time.
+continues with macOS AArch64 and Linux x86-64/AArch64 acceleration. The evidence
+and limits below do not assert universal performance leadership or whole-operation
+constant time.
 
 ## Standard and provenance
 
@@ -154,11 +155,16 @@ Target qualification must preserve these boundaries:
    exact source, compiler, CPU, statistics, and profile artifacts. One repeated
    deterministic signature does not characterize signing latency distributions.
 
-The sequence after portable qualification is macOS ARM64, Linux x86-64, and
-the remaining catalog targets. The macOS AArch64 build uses original NEON
-forward and inverse NTTs and matrix-product accumulation when compile-time NEON
-is enabled and `portable-only` is absent.
-The portable implementation defines its semantics and remains the fallback.
+The macOS and Linux AArch64 builds use original NEON forward and inverse NTTs
+and matrix-product accumulation when compile-time NEON is enabled and
+`portable-only` is absent. Linux x86-64 builds without `portable-only` select
+original AVX2 arithmetic after cached CPU and OS capability detection.
+Other configurations retain portable arithmetic. All paths use the same canonical
+coefficients and generated roots.
+The Linux NEON inverse stage stays out of line to avoid coefficient spills found
+in the initial optimized artifact. This is a compiler-specific mitigation, not
+a general register or stack-cleanup guarantee.
+The portable implementation defines the semantics and remains the fallback.
 Architecture qualification and comparative performance work remain open.
 On macOS AArch64 without `portable-only`, public matrix expansion batches
 adjacent columns through the existing paired SHAKE backend. Other targets and

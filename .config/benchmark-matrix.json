@@ -428,6 +428,21 @@
       "case": "argon2id-owasp/salt16-raw32/rscrypto/m=19MiB_t=2_p=1",
       "diagnostic": false
     },
+    "auth/mldsa65-keygen": {
+      "bench": "mldsa",
+      "case": "mldsa65/keygen/seed-encoded/rscrypto",
+      "diagnostic": false
+    },
+    "auth/mldsa65-prepared-sign": {
+      "bench": "mldsa",
+      "case": "mldsa65/sign/prepared-key-deterministic/rscrypto",
+      "diagnostic": false
+    },
+    "auth/mldsa65-prepared-verify": {
+      "bench": "mldsa",
+      "case": "mldsa65/verify/prepared-key/rscrypto",
+      "diagnostic": false
+    },
     "hashes/sha256": {
       "bench": "sha2",
       "case": "sha256/rscrypto/4096",

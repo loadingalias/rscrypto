@@ -1,8 +1,13 @@
 [global]
 line-length = 100
-cache-dir = ".cache/rumdl"
+cache-dir = "target/rumdl-cache"
 extend-enable = ["MD060", "MD070", "MD073", "MD080", "MD082", "MD084"]
-exclude = []
+# .ignore re-admits graft for search; generated cards are not authored documentation.
+exclude = ["graft/**", "tools/ct-dudect/vendor/**"]
+
+[per-file-ignores]
+# Cargo Rail change fragments contain release prose after TOML frontmatter, without a heading.
+".changes/*.md" = ["MD041"]
 
 [MD003]
 style = "atx"

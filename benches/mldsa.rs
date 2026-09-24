@@ -369,7 +369,7 @@ mod aws {
 }
 
 fn main() {
-  let targets: &[fn(&mut Criterion)] = &[
+  bench_config::run(&[
     mldsa44,
     mldsa65,
     mldsa87,
@@ -382,6 +382,5 @@ fn main() {
       not(any(target_arch = "s390x", target_arch = "powerpc64"))
     ))]
     aws::run,
-  ];
-  bench_config::run(targets);
+  ]);
 }
