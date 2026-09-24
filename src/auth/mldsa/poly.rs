@@ -1,9 +1,8 @@
 //! Arithmetic in FIPS 204's ring `Z_q[X]/(X^256 + 1)`.
 //!
-//! Coefficients are canonical residues at operation boundaries. Forward NTT
-//! additionally converts to Montgomery representation; inverse NTT returns
-//! ordinary residues. Products in the NTT domain therefore need exactly one
-//! Montgomery multiplication.
+//! Coefficients are canonical residues. Forward NTT additionally converts to
+//! Montgomery representation; inverse NTT returns ordinary residues. Products
+//! in the NTT domain therefore need exactly one Montgomery multiplication.
 
 use crate::traits::ct;
 
@@ -168,23 +167,18 @@ impl Poly {
   fn inverse_ntt_portable(&mut self) {
     let mut root = N;
     let mut width = 1usize;
-    let mut bound = Q;
     while width < N / 2 {
       for block in self.0.chunks_exact_mut(width.strict_mul(2)) {
         root = root.strict_sub(1);
         let zeta = Q.strict_sub(ROOTS[root]);
         let (left, right) = block.split_at_mut(width);
         for (a, b) in left.iter_mut().zip(right) {
-          // At entry, a,b < bound = width*q. The sum and biased difference
-          // are below 2*bound; the Montgomery output is below 2q. Deferring
-          // canonical reduction therefore preserves the next stage's bound.
-          let difference = a.strict_add(bound).strict_sub(*b);
-          *a = a.strict_add(*b);
-          *b = montgomery_unreduced(zeta, difference);
+          let difference = a.strict_add(Q).strict_sub(*b);
+          *a = add(*a, *b);
+          *b = montgomery(zeta, difference);
         }
       }
       width = width.strict_mul(2);
-      bound = bound.strict_mul(2);
     }
     // Fuse the last butterfly with normalization. Its right operand otherwise
     // undergoes two Montgomery multiplications: M(M(zeta, a-b), INV_N).
@@ -193,9 +187,7 @@ impl Poly {
     const LAST_FACTOR: u32 = montgomery(Q.strict_sub(ROOTS[1]), INV_N);
     let (left, right) = self.0.split_at_mut(N / 2);
     for (a, b) in left.iter_mut().zip(right) {
-      // Here a,b < 128q. Both operands stay below 256q < 2^31, and the
-      // final Montgomery products restore canonical ordinary residues.
-      let difference = a.strict_add(bound).strict_sub(*b);
+      let difference = a.strict_add(Q).strict_sub(*b);
       *a = montgomery(a.strict_add(*b), INV_N);
       *b = montgomery(difference, LAST_FACTOR);
     }
@@ -301,24 +293,18 @@ pub(super) const fn sub(a: u32, b: u32) -> u32 {
   reduce(a.strict_add(Q).strict_sub(b))
 }
 
-/// Return a canonical Montgomery product for a*b < 256q^2.
-#[inline]
-pub(super) const fn montgomery(a: u32, b: u32) -> u32 {
-  reduce(montgomery_unreduced(a, b))
-}
-
-/// Return a Montgomery product below 2q for a*b < 256q^2.
-/// Since 256q < 2^31 and m < 2^32, t + mq < 2^56 cannot overflow.
-/// Its quotient is below q + 256q^2/2^32 < 2q, so one subtraction canonicalizes it.
+/// Accept operands below 2q and return a canonical residue below q.
+/// With t < 4q^2 and m < 2^32, t + mq < 2^56 cannot overflow.
+/// Its quotient is below q + 4q^2/2^32 < 2q, so one subtraction suffices.
 #[inline]
 #[expect(
   clippy::cast_possible_truncation,
   reason = "low word is arithmetic modulo 2^32; the shifted quotient is below 2q"
 )]
-const fn montgomery_unreduced(a: u32, b: u32) -> u32 {
+pub(super) const fn montgomery(a: u32, b: u32) -> u32 {
   let t = (a as u64).strict_mul(b as u64);
   let m = (t as u32).wrapping_mul(NEG_Q_INVERSE);
-  (t.strict_add((m as u64).strict_mul(Q as u64)) >> 32) as u32
+  reduce((t.strict_add((m as u64).strict_mul(Q as u64)) >> 32) as u32)
 }
 
 #[inline]
@@ -554,35 +540,14 @@ mod tests {
     const R_INVERSE: u64 = 8_265_825;
     let modulus = u64::from(Q);
     assert_eq!((1u64 << 32).strict_mul(R_INVERSE) % modulus, 1);
-    let check = |a, b| {
-      let product = u64::from(a).strict_mul(u64::from(b)) % modulus;
-      let expected = product.strict_mul(R_INVERSE) % modulus;
-      let actual = montgomery(a, b);
-      assert!(actual < Q);
-      assert_eq!(u64::from(actual), expected, "operands {a}, {b}");
-      let unreduced = super::montgomery_unreduced(a, b);
-      assert!(unreduced < Q.strict_mul(2));
-      assert_eq!(u64::from(unreduced) % modulus, expected, "unreduced operands {a}, {b}");
-    };
     let boundaries = [0, 1, Q.strict_sub(1), Q, Q.strict_add(1), Q.strict_mul(2).strict_sub(1)];
     for a in boundaries {
       for b in boundaries {
-        check(a, b);
-      }
-    }
-    // Deferred inverse reductions allow one operand near each growing stage
-    // bound. The other operand is a canonical root or normalization factor.
-    for multiple in [4, 8, 16, 32, 64, 128, 256] {
-      let limit = Q.strict_mul(multiple);
-      for wide in [
-        limit.strict_sub(1),
-        limit.strict_sub(Q),
-        limit.strict_sub(Q).strict_add(1),
-      ] {
-        for canonical in [0, 1, Q / 2, Q.strict_sub(1)] {
-          check(canonical, wide);
-          check(wide, canonical);
-        }
+        let product = u64::from(a).strict_mul(u64::from(b)) % modulus;
+        let expected = product.strict_mul(R_INVERSE) % modulus;
+        let actual = montgomery(a, b);
+        assert!(actual < Q);
+        assert_eq!(u64::from(actual), expected, "operands {a}, {b}");
       }
     }
   }

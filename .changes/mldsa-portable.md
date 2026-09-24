@@ -12,6 +12,6 @@ by secret SHAKE operations.
 Decode prepared ML-DSA signing state directly into its retained owner, avoiding
 an extra secret-bearing construction temporary.
 
-Reduce arithmetic work in the portable inverse NTT while preserving canonical outputs.
+Remove redundant inverse-NTT reductions while preserving canonical outputs.
 
 Avoid computing unused low remainders when ML-DSA signing needs only high bits.
