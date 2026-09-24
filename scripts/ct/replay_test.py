@@ -5,12 +5,41 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import replay
 
 
 class Replay(unittest.TestCase):
+    def test_native_target_reaches_archive_verification_and_affinity_is_restored(self):
+        for target in ('powerpc64le-unknown-linux-gnu', 's390x-unknown-linux-gnu', None):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                prepared_path = root / 'prepared.json'
+                prepared_path.write_text(json.dumps({
+                    'manifest_cases': {'mldsa': {'samples': 20000}},
+                    'metadata': {'transfer': {'source': {'commit': 'source'}}, 'binary': {}},
+                }))
+                args = ['replay.py', '--source-root', str(root), '--archive', str(root / 'sealed.tar.gz'),
+                        '--out', str(root / 'result'), '--case', 'mldsa', '--repetitions', '1']
+                if target:
+                    args += ['--target', target]
+                # Substitute archive IO, OS affinity, and the external measurement process.
+                # The production controller still selects the target and retains the failed result.
+                with patch('sys.argv', args), \
+                     patch.object(replay, 'consume', return_value=([], prepared_path)) as consume, \
+                     patch.object(replay.os, 'sched_getaffinity', return_value={2, 4}, create=True), \
+                     patch.object(replay.os, 'sched_setaffinity', create=True) as affinity, \
+                     patch.object(replay, 'snapshot', return_value={}), \
+                     patch.object(replay, 'measure', return_value=1) as measure:
+                    self.assertEqual(replay.main(), 1)
+                consume.assert_called_once_with(root, root / 'result', root / 'sealed.tar.gz',
+                                                target or 'riscv64gc-unknown-linux-gnu')
+                self.assertEqual(affinity.call_args_list, [call(0, {2}), call(0, {2, 4})])
+                self.assertEqual(measure.call_count, 1)
+                report = json.loads((root / 'result/replay.json').read_text())
+                self.assertEqual(report['repetitions'], [{'repetition': 1, 'exit_code': 1}])
+
     def test_fixed_campaign_retains_failure_and_original_budget(self):
         with tempfile.TemporaryDirectory() as temporary:
             out = Path(temporary)

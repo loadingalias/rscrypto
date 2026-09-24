@@ -13,6 +13,7 @@ from transfer import consume
 from dudect_execute import measure
 from dudect_report import write_report
 from manifest import dudect_sample_count
+from cross_build import TARGETS
 
 
 def snapshot(cpu):
@@ -64,13 +65,15 @@ def main():
     parser.add_argument('--archive', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--case', required=True)
+    parser.add_argument('--target', choices=sorted(TARGETS), default='riscv64gc-unknown-linux-gnu',
+                        help='native target of the sealed archive; defaults to RISC-V for existing replays')
     parser.add_argument('--repetitions', type=int, choices=(1, 3), default=3,
                         help='one candidate measurement or three baseline repetitions')
     args = parser.parse_args()
     args.out = args.out.resolve()
     args.out.mkdir(parents=True, exist_ok=False)
     _, args.prepared = consume(args.source_root.resolve(), args.out,
-                               args.archive.resolve(), 'riscv64gc-unknown-linux-gnu')
+                               args.archive.resolve(), args.target)
     prepared = json.loads(args.prepared.read_text())
     if args.case not in prepared['manifest_cases']:
         raise ValueError('case is absent from the prepared manifest')

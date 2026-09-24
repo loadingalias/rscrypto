@@ -134,7 +134,9 @@ Failed preparation or execution cannot reuse a previous run's measurements.
 Historical runs remain on disk until explicitly removed;
 full reports inventory only their current run.
 
-`just ct-replay --source-root SOURCE --archive ARCHIVE --out OUTPUT --case CASE` repeats one prepared RISC-V case three times on one allowed CPU.
+`just ct-replay --target TARGET --source-root SOURCE --archive ARCHIVE --out OUTPUT --case CASE` repeats one prepared POWER, IBM Z, or RISC-V case three times on one allowed CPU.
+The target defaults to RISC-V for existing callers and must match both the archive
+and physical runner.
 It validates the original source and transferred binary,
 preserves the manifest sample count and timeout, and retains all results at threshold 10.
 Timing failures do not shorten the planned campaign; execution failures do.
@@ -142,12 +144,18 @@ Host snapshots record affinity, frequency settings where exposed, load, and proc
 They do not guarantee an otherwise idle machine.
 Replay is diagnostic evidence, not full qualification.
 Use `--repetitions 1` for one candidate measurement at the same sample count.
+
 The CT workflow's `replay_p384` input selects the original run 34672864167 and commit 32734d2d.
 It requires that run's prepared artifact to remain available.
 With `replay_p384` disabled, `diagnose_p384` instead prepares the current commit
 and measures its P-384 public-key derivation case once on RISC-V.
-It overrides the architecture selection.
-Neither diagnostic mode qualifies a release.
+It overrides the architecture and `diagnostic_case` selections.
+With both P-384 modes disabled, `diagnostic_case` selects one exact CT manifest case on the requested POWER, IBM Z,
+or RISC-V Linux architectures.
+The planner rejects unknown cases and unsupported targets before scheduling builds.
+Each native runner verifies the complete prepared archive and measures the selected case once.
+Release callers and manual runs with no diagnostic selection retain the full required lane.
+Diagnostic modes do not qualify a release.
 
 ## Benchmarks and updates
 

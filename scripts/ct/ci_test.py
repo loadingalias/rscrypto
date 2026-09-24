@@ -17,6 +17,36 @@ spec.loader.exec_module(ci)
 
 
 class Selection(unittest.TestCase):
+    def test_power_diagnostic_preserves_target_bound_preparation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / 'output'
+            with patch.dict(os.environ, INPUT_ARCHITECTURES='powerpc64le-linux',
+                            DIAGNOSTIC_CASE='mldsa_inverse_ntt_fixed_vs_random',
+                            GITHUB_RUN_ID='123', GITHUB_OUTPUT=str(output)), patch.object(sys, 'argv', ['ci.py', 'plan']):
+                ci.main()
+            values = dict(line.split('=', 1) for line in output.read_text().splitlines())
+            self.assertEqual(values['cross'], 'true')
+            self.assertEqual(json.loads(values['builds']),
+                             {'include': [{'target': 'powerpc64le-unknown-linux-gnu'}]})
+            rows = json.loads(values['matrix'])['include']
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]['target'], 'powerpc64le-unknown-linux-gnu')
+
+    def test_invalid_diagnostic_emits_no_runnable_matrix(self):
+        for architectures, case, error in (
+            ('powerpc64le-linux', 'mldsa_*', 'unknown CT diagnostic case'),
+            ('x86_64-linux', 'mldsa_inverse_ntt_fixed_vs_random', 'requires POWER, IBM Z, or RISC-V'),
+            ('all', 'mldsa_inverse_ntt_fixed_vs_random', 'requires POWER, IBM Z, or RISC-V'),
+        ):
+            with self.subTest(architectures=architectures, case=case), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary) / 'output'
+                output.write_text('')
+                with patch.dict(os.environ, INPUT_ARCHITECTURES=architectures, DIAGNOSTIC_CASE=case,
+                                GITHUB_RUN_ID='123', GITHUB_OUTPUT=str(output)), patch.object(sys, 'argv', ['ci.py', 'plan']):
+                    with self.assertRaisesRegex(ValueError, error):
+                        ci.main()
+                self.assertEqual(output.read_text(), '')
+
     def test_riscv_job_outlasts_required_case_budget(self):
         manifest = tomllib.loads((Path(__file__).resolve().parents[2] / 'ct.toml').read_text())
         cases = required_dudect_cases(manifest, 'riscv64gc-unknown-linux-gnu')
@@ -24,7 +54,7 @@ class Selection(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / 'output'
             with patch.dict(os.environ, INPUT_ARCHITECTURES='riscv64-linux',
-                            GITHUB_RUN_ID='123', GITHUB_OUTPUT=str(output)), patch.object(sys, 'argv', ['ci.py', 'plan']):
+                            DIAGNOSTIC_CASE='', GITHUB_RUN_ID='123', GITHUB_OUTPUT=str(output)), patch.object(sys, 'argv', ['ci.py', 'plan']):
                 ci.main()
             values = dict(line.split('=', 1) for line in output.read_text().splitlines())
             row = json.loads(values['matrix'])['include'][0]
@@ -36,7 +66,7 @@ class Selection(unittest.TestCase):
             for selection, count in (('x86_64-linux', 1), ('powerpc64le-linux', 1), ('s390x-linux', 1), ('x86_64-win,riscv64-linux', 2), ('all', 6)):
                 output.write_text('')
                 with patch.dict(os.environ, INPUT_ARCHITECTURES=selection,
-                                GITHUB_RUN_ID='123', GITHUB_OUTPUT=str(output)), patch.object(sys, 'argv', ['ci.py', 'plan']):
+                                DIAGNOSTIC_CASE='', GITHUB_RUN_ID='123', GITHUB_OUTPUT=str(output)), patch.object(sys, 'argv', ['ci.py', 'plan']):
                     ci.main()
                 values = dict(line.split('=', 1) for line in output.read_text().splitlines())
                 rows = json.loads(values['matrix'])['include']

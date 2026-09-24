@@ -11,13 +11,17 @@ on:
   workflow_dispatch:
     inputs:
       diagnose_p384:
-        description: Diagnostic only; measure the current P-384 binary once on RISC-V (overrides architectures)
+        description: Diagnostic only; measure P-384 once on RISC-V (overrides architectures and diagnostic_case)
         type: boolean
         default: false
       replay_p384:
         description: Diagnostic only; replay the P-384 binary from run 34672864167 three times on RISC-V
         type: boolean
         default: false
+      diagnostic_case:
+        description: Exact CT manifest case to measure once on selected POWER, IBM Z, or RISC-V runners; diagnostic only
+        type: string
+        default: ""
       architectures:
         description: all, or comma-separated x86_64-linux,aarch64-linux,x86_64-win,s390x-linux,powerpc64le-linux,riscv64-linux
         type: string
@@ -30,6 +34,7 @@ permissions:
 env:
   CARGO_RAIL_CACHE: "off"
   INPUT_ARCHITECTURES: ${{ inputs.diagnose_p384 && 'riscv64-linux' || inputs.architectures || 'all' }}
+  DIAGNOSTIC_CASE: ${{ inputs.diagnose_p384 && 'ecdsa_p384_public_key_fixed_vs_random_secret' || inputs.diagnostic_case || '' }}
 
 concurrency:
   group: ct-${{ github.workflow }}-${{ github.ref }}
@@ -130,7 +135,7 @@ jobs:
   ct:
     needs: [select, cross-build]
     if: ${{ !cancelled() && needs.select.result == 'success' && (needs.cross-build.result == 'success' || needs.cross-build.result == 'skipped') }}
-    name: ${{ matrix.platform }} (${{ inputs.diagnose_p384 && 'P-384 diagnostic' || 'full' }})
+    name: ${{ matrix.platform }} (${{ (inputs.diagnose_p384 || inputs.diagnostic_case) && 'diagnostic' || 'full' }})
     strategy:
       fail-fast: true
       matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
@@ -138,7 +143,6 @@ jobs:
     timeout-minutes: ${{ matrix.timeout }}
     env:
       PLATFORM: ${{ matrix.platform }}
-      DIAGNOSE_P384: ${{ inputs.diagnose_p384 && 'true' || 'false' }}
     steps:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
@@ -161,8 +165,8 @@ jobs:
         run: |
           scripts/tooling/"$PLATFORM.sh" --ci-cross-run "target/cross-download/${{ matrix.target }}-tools.tar.gz"
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          if [[ "$DIAGNOSE_P384" == true ]]; then
-            just ct-replay --source-root . --archive "target/cross-download/${{ matrix.target }}-ct.tar.gz" --out target/ct/p384-candidate --case ecdsa_p384_public_key_fixed_vs_random_secret --repetitions 1
+          if [[ -n "$DIAGNOSTIC_CASE" ]]; then
+            just ct-replay --target "${{ matrix.target }}" --source-root . --archive "target/cross-download/${{ matrix.target }}-ct.tar.gz" --out target/ct/diagnostic --case="$DIAGNOSTIC_CASE" --repetitions 1
           else
             just ct-full --target "${{ matrix.target }}" --run-archive "target/cross-download/${{ matrix.target }}-ct.tar.gz"
           fi
