@@ -56,8 +56,12 @@ source /etc/os-release
 }
 sudo_cmd=()
 if [[ "$(id -u)" != 0 ]]; then sudo_cmd=(sudo); fi
+# APT 2.8.3's mirror method stalls on escaped spaces in the mirror-list URI.
+# Keep this small file under /tmp; larger build files still follow TMPDIR.
+mirror_list="$(mktemp /tmp/rscrypto-apt-mirrors.XXXXXX)"
+trap 'rm -f "$mirror_list"' EXIT
 temporary="$(mktemp -d)"
-trap 'rm -rf "$temporary"' EXIT
+trap 'rm -rf "$temporary" "$mirror_list"' EXIT
 # Minimal Ubuntu images may omit the HTTPS trust store and Python. Bootstrap
 # those through Ubuntu's signed archive, then converge them to the snapshot too.
 if ! command -v python3 >/dev/null || [[ ! -f /etc/ssl/certs/ca-certificates.crt ]]; then
@@ -67,15 +71,22 @@ fi
 codename="$(bootstrap_value codename)"
 mkdir -p "$temporary/lists/partial"
 chmod 755 "$temporary" "$temporary/lists" "$temporary/lists/partial"
-# Explicit snapshot URLs work on an empty package cache.
+# Only the snapshot may supply indexes. The live archive is a package-only
+# fallback; APT still checks each package against the signed snapshot index.
+package_mirror=https://ports.ubuntu.com/ubuntu-ports
+[[ "$platform" != x86_64-linux ]] || package_mirror=https://archive.ubuntu.com/ubuntu
+printf 'https://snapshot.ubuntu.com/ubuntu/%s\tpriority:1\n%s\tpriority:2 type:deb\n' \
+  "$snapshot" "$package_mirror" > "$mirror_list"
+chmod 644 "$mirror_list"
 # The archive remains signed; historical snapshots intentionally outlive Valid-Until.
 for suite in "$codename" "$codename-updates" "$codename-security"; do
-  printf 'deb [check-valid-until=no signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://snapshot.ubuntu.com/ubuntu/%s %s main universe\n' "$snapshot" "$suite"
+  printf 'deb [check-valid-until=no signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] mirror+file:%s %s main universe\n' "$mirror_list" "$suite"
 done > "$temporary/sources.list"
 # Dependencies must follow the snapshot even when a runner preinstalls newer packages.
+# Match signed release metadata: the mirror transport has no fixed network origin.
 cat > "$temporary/preferences" <<'PREFERENCES'
 Package: *
-Pin: origin snapshot.ubuntu.com
+Pin: release o=Ubuntu
 Pin-Priority: 1001
 PREFERENCES
 apt_options=(-o "Dir::Etc::sourcelist=$temporary/sources.list" -o Dir::Etc::sourceparts=-

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Exercise Linux provisioning with substitute host and installation commands."""
+import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
@@ -7,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import tomllib
 import unittest
 from unittest.mock import ANY
@@ -15,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BASH = shutil.which('bash')
 CATALOG = tomllib.loads((ROOT / '.config/tooling.toml').read_text())
 
-STUB = r'''import json, os, pathlib, subprocess, sys
+STUB = r'''import json, os, pathlib, shlex, subprocess, sys, urllib.parse
 name = pathlib.Path(sys.argv[0]).name
 args = sys.argv[1:]
 with open(os.environ['INSTALL_LOG'], 'a') as log:
@@ -36,15 +39,26 @@ elif name == 'apt-cache':
 elif name == 'apt-get':
     if os.environ.get('INSTALL_FAIL_APT'):
         sys.exit(42)
+    options = dict(arg.split('=', 1) for arg in args if arg.startswith('Dir::'))
+    if args[-1] == 'update' and 'Dir::Etc::sourcelist' in options:
+        fixture = pathlib.Path(os.environ['INSTALL_LOG']).parent
+        source = pathlib.Path(options['Dir::Etc::sourcelist']).read_text()
+        (fixture / 'apt-sources.list').write_text(source)
+        (fixture / 'apt-preferences').write_text(pathlib.Path(options['Dir::Etc::preferences']).read_text())
+        for word in source.split():
+            if word.startswith('mirror+file:'):
+                path = urllib.parse.unquote(urllib.parse.urlsplit(word.removeprefix('mirror+')).path)
+                (fixture / 'apt-mirrors.list').write_text(pathlib.Path(path).read_text())
     if os.environ.get('INSTALL_REAL_APT'):
-        options = dict(arg.split('=', 1) for arg in args if arg.startswith('Dir::'))
         fixture = pathlib.Path(os.environ['INSTALL_APT_FIXTURE'])
         if args[-1] == 'update':
-            source = pathlib.Path(options['Dir::Etc::sourcelist']).read_text().splitlines()[0].split()
-            url, suite = next((source[i], source[i + 1]) for i in range(len(source)) if source[i].startswith('https://'))
-            name = url.removeprefix('https://').replace('/', '_') + '_dists_' + suite
-            name += '_main_binary-' + os.environ['INSTALL_APT_ARCH'] + '_Packages'
-            pathlib.Path(options['Dir::State::lists'], name).write_text((fixture / 'Packages').read_text())
+            uris = subprocess.check_output([os.environ['INSTALL_REAL_APT'], *args, '--print-uris'], text=True)
+            for line in uris.splitlines():
+                name = shlex.split(line)[1]
+                if name.endswith('_InRelease'):
+                    pathlib.Path(options['Dir::State::lists'], name.removesuffix('InRelease') + 'Release').write_text('Origin: Ubuntu\n')
+                elif name.endswith('_Packages'):
+                    pathlib.Path(options['Dir::State::lists'], name).write_text((fixture / 'Packages').read_text())
         else:
             if os.environ.get('INSTALL_WITHOUT_PREFERENCE'):
                 pathlib.Path(options['Dir::Etc::preferences']).write_text('')
@@ -129,7 +143,10 @@ class LinuxInstall(unittest.TestCase):
 }
 ''')
         arch = platform.removesuffix('-linux').replace('powerpc64le', 'ppc64le')
+        temporary_path = root / 'temporary files'
+        temporary_path.mkdir()
         env = {**os.environ, 'HOME': str(root), 'CARGO_HOME': str(root / 'custom cargo'),
+               'TMPDIR': str(temporary_path),
                'PATH': str(binaries) + os.pathsep + os.environ['PATH'],
                'BASH_ENV': str(bash_env), 'INSTALL_ARCH': arch,
                'INSTALL_LOG': str(root / 'commands.jsonl')}
@@ -149,8 +166,7 @@ class LinuxInstall(unittest.TestCase):
             (root / 'status').write_text(''.join(
                 package(name, '2.0', installed=True, depends='git-man (= 2.0)' if name == 'git' else '')
                 for name in ('git', 'git-man', 'fixture-unrelated')))
-            env.update(INSTALL_REAL_APT=shutil.which('apt-get'), INSTALL_APT_FIXTURE=str(root),
-                       INSTALL_APT_ARCH=subprocess.check_output(['dpkg', '--print-architecture'], text=True).strip())
+            env.update(INSTALL_REAL_APT=shutil.which('apt-get'), INSTALL_APT_FIXTURE=str(root))
             if without_preference:
                 env['INSTALL_WITHOUT_PREFERENCE'] = '1'
         extra = [target] if profile == 'ci-cross-build' else ['tools.tar.gz'] if profile == 'ci-cross-run' else []
@@ -164,6 +180,12 @@ class LinuxInstall(unittest.TestCase):
             with self.subTest(platform=platform):
                 result, calls, root = self.provision(platform)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn('%20', (root / 'apt-sources.list').read_text())
+                mirror = 'https://archive.ubuntu.com/ubuntu' if platform == 'x86_64-linux' else 'https://ports.ubuntu.com/ubuntu-ports'
+                self.assertEqual((root / 'apt-mirrors.list').read_text().splitlines(), [
+                    f'https://snapshot.ubuntu.com/ubuntu/{CATALOG["linux"]["snapshot"]}\tpriority:1',
+                    f'{mirror}\tpriority:2 type:deb',
+                ])
                 installs = [c for c in calls if c[0] == 'cargo' and ('install' in c or 'binstall' in c)]
                 expected_tools = CATALOG['ci']['cargo'] + (CATALOG['ci-policy']['cargo'] if platform == 'x86_64-linux' else [])
                 self.assertEqual(len(installs), len(expected_tools))
@@ -380,6 +402,116 @@ class LinuxInstall(unittest.TestCase):
         self.assertIn('Inst git-man [2.0] (1.0 ', result.stdout)
         self.assertNotIn('Inst fixture-unrelated', result.stdout)
         self.assertNotIn('Remv ', result.stdout)
+
+    @unittest.skipUnless(all(shutil.which(tool) for tool in ('apt-get', 'gpg', 'gpgconf')), 'requires real APT and GnuPG')
+    def test_snapshot_package_fallback_preserves_index_and_package_authentication(self):
+        result, _, provisioned = self.provision('x86_64-linux')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        temporary = tempfile.TemporaryDirectory(prefix='rscrypto-apt-transport-')
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        for path in provisioned.glob('apt-*'):
+            shutil.copy(path, root / path.name)
+        payload = b'pinned package transport fixture\n'
+        package_path = '/pool/fixture_1.0_all.deb'
+        packages = ('Package: fixture\nVersion: 1.0\nArchitecture: all\n'
+                    f'Filename: {package_path[1:]}\nSize: {len(payload)}\n'
+                    f'SHA256: {hashlib.sha256(payload).hexdigest()}\n'
+                    'Description: authenticated transport fixture\n\n').encode()
+        key_home = root / 'keys'
+        key_home.mkdir(mode=0o700)
+        self.addCleanup(subprocess.run, ['gpgconf', '--homedir', str(key_home), '--kill', 'gpg-agent'],
+                        check=True, capture_output=True)
+        gpg = ['gpg', '--homedir', str(key_home), '--batch', '--pinentry-mode', 'loopback', '--passphrase', '']
+        subprocess.run([*gpg, '--quick-generate-key', 'APT fixture <apt@example.invalid>', 'ed25519', 'sign', '0'],
+                       check=True, capture_output=True)
+        key = root / 'archive-key.gpg'
+        key.write_bytes(subprocess.check_output([*gpg, '--export']))
+        architecture = subprocess.check_output(['dpkg', '--print-architecture'], text=True).strip()
+        contents = {}
+        for suite in ('noble', 'noble-updates', 'noble-security'):
+            index_path = f'main/binary-{architecture}/Packages'
+            release = (f'Origin: Ubuntu\nSuite: {suite}\nCodename: {suite}\nArchitectures: {architecture}\n'
+                       f'Components: main\nSHA256:\n {hashlib.sha256(packages).hexdigest()} {len(packages)} {index_path}\n')
+            contents[f'/snapshot/dists/{suite}/InRelease'] = subprocess.check_output(
+                [*gpg, '--clearsign'], input=release.encode())
+            contents[f'/snapshot/dists/{suite}/{index_path}'] = packages
+        contents['/archive' + package_path] = payload
+        requests = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                requests.append(self.path)
+                if self.path not in contents:
+                    self.send_error(503)
+                    return
+                self.send_response(200)
+                self.send_header('Content-Length', str(len(contents[self.path])))
+                self.end_headers()
+                self.wfile.write(contents[self.path])
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(worker.join)
+        self.addCleanup(server.shutdown)
+        address = f'http://127.0.0.1:{server.server_port}'
+        source = (root / 'apt-sources.list').read_text()
+        mirror = root / 'apt-mirrors.list'
+        for word in source.split():
+            if word.startswith('mirror+file:'):
+                source = source.replace(word, mirror.as_uri().replace('file://', 'mirror+file:', 1))
+        source = source.replace('/usr/share/keyrings/ubuntu-archive-keyring.gpg', str(key))
+        snapshot = f'https://snapshot.ubuntu.com/ubuntu/{CATALOG["linux"]["snapshot"]}'
+        files = {root / 'apt-sources.list': source}
+        if mirror.exists():
+            files[mirror] = mirror.read_text()
+        for path, text in files.items():
+            path.write_text(text.replace(snapshot, address + '/snapshot')
+                            .replace('https://archive.ubuntu.com/ubuntu', address + '/archive')
+                            .replace('https://ports.ubuntu.com/ubuntu-ports', address + '/ports'))
+        lists = root / 'lists'
+        lists.mkdir()
+        options = ['-o', f'Dir::Etc::sourcelist={root / "apt-sources.list"}', '-o', 'Dir::Etc::sourceparts=-',
+                   '-o', f'Dir::Etc::preferences={root / "apt-preferences"}', '-o', 'Dir::Etc::preferencesparts=-',
+                   '-o', f'Dir::State::lists={lists}', '-o', 'Dir::State::status=/dev/null',
+                   '-o', 'APT::Get::List-Cleanup=0', '-o', 'APT::Update::Error-Mode=any',
+                   '-o', 'Acquire::Retries=0', '-o', 'Acquire::http::Timeout=5',
+                   '-o', 'Acquire::Languages=none', '-o', 'APT::Sandbox::User=' + os.environ.get('USER', 'root')]
+
+        def apt(*args):
+            try:
+                return subprocess.run(['apt-get', *options, *args], cwd=root, capture_output=True, text=True, timeout=30)
+            except subprocess.TimeoutExpired as error:
+                self.fail(f'APT timed out: {error.stdout!r}\n{error.stderr!r}')
+
+        result = apt('update')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = apt('download', 'fixture=1.0')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        downloaded = root / 'fixture_1.0_all.deb'
+        self.assertEqual(downloaded.read_bytes(), payload)
+        self.assertIn('/snapshot' + package_path, requests)
+        self.assertIn('/archive' + package_path, requests)
+        downloaded.unlink()
+        contents['/archive' + package_path] = b'x' * len(payload)
+        result = apt('download', 'fixture=1.0')
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Hash Sum mismatch', result.stderr)
+        self.assertFalse(downloaded.exists())
+        shutil.rmtree(lists)
+        lists.mkdir()
+        for path in list(contents):
+            if path.endswith('/InRelease'):
+                contents[path] = contents[path].replace(b'Origin: Ubuntu', b'Origin: Forged')
+        result = apt('update')
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('signature', result.stderr.lower())
+        self.assertFalse(any(path.startswith(('/archive/dists/', '/ports/dists/')) for path in requests), requests)
 
 
 class WindowsDownload(unittest.TestCase):

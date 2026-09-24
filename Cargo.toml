@@ -308,6 +308,9 @@ libcrux-ml-kem = { version = "0.0.10", default-features = false, features = [
 aws-lc-rs = "1.18.1"
 aws-lc-sys = "0.45.0"
 
+[target.powerpc64le-unknown-linux-gnu.dev-dependencies]
+aws-lc-rs = "1.18.1"
+
 [lib]
 bench = false
 

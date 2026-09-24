@@ -15,8 +15,9 @@ import sys
 import tempfile
 import tomllib
 import unittest
+from unittest.mock import patch
 
-from execution import execute
+from execution import execute, hardware
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -110,6 +111,32 @@ for case in selected:
 
 sys.exit(int(os.environ.get('MEASURE_STATUS', '0')))
 '''
+
+
+class HardwareTests(unittest.TestCase):
+  def test_power_identity_keeps_model_and_revision_without_clock_noise(self):
+    cpuinfo = (
+      "processor\t: 0\ncpu\t\t: POWER10, altivec supported\n"
+      "revision\t: 2.0 (pvr 0080 0200)\nclock\t\t: 3500.000000MHz\n"
+      "platform\t: PowerNV\nmodel\t\t: IBM,9009-42G\n"
+    )
+    with patch('platform.system', return_value='Linux'), patch('platform.machine', return_value='ppc64le'), \
+         patch('os.cpu_count', return_value=4), patch.object(Path, 'is_file', return_value=True), \
+         patch.object(Path, 'read_text', return_value=cpuinfo) as read:
+      identity = hardware()
+      self.assertEqual(identity['cpu'], [
+        'cpu\t\t: POWER10, altivec supported',
+        'model\t\t: IBM,9009-42G',
+        'platform\t: PowerNV',
+        'processor\t: 0',
+        'revision\t: 2.0 (pvr 0080 0200)',
+      ])
+      read.return_value = cpuinfo.replace('3500.000000', '3000.000000')
+      self.assertEqual(hardware(), identity)
+      for before, after in [('POWER10', 'POWER9'), ('2.0 (pvr 0080 0200)', '2.1 (pvr 0080 0201)')]:
+        with self.subTest(change=after):
+          read.return_value = cpuinfo.replace(before, after)
+          self.assertNotEqual(hardware(), identity)
 
 
 class RunnerTests(unittest.TestCase):

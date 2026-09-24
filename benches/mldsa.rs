@@ -212,10 +212,18 @@ profile!(mldsa44, corpus44, "mldsa44", MlDsa44, MlDsa44SecretKey, MlDsa44);
 profile!(mldsa65, corpus65, "mldsa65", MlDsa65, MlDsa65SecretKey, MlDsa65);
 profile!(mldsa87, corpus87, "mldsa87", MlDsa87, MlDsa87SecretKey, MlDsa87);
 
-#[cfg(all(
-  any(unix, windows),
-  not(target_arch = "wasm32"),
-  not(any(target_arch = "s390x", target_arch = "powerpc64"))
+#[cfg(any(
+  all(
+    any(unix, windows),
+    not(target_arch = "wasm32"),
+    not(any(target_arch = "s390x", target_arch = "powerpc64"))
+  ),
+  all(
+    target_arch = "powerpc64",
+    target_endian = "little",
+    target_os = "linux",
+    target_env = "gnu"
+  )
 ))]
 mod aws {
   use super::{Criterion, MlDsa44, MlDsa65, MlDsa87, bench_config, black_box};
@@ -376,10 +384,18 @@ fn main() {
     corpus44,
     corpus65,
     corpus87,
-    #[cfg(all(
-      any(unix, windows),
-      not(target_arch = "wasm32"),
-      not(any(target_arch = "s390x", target_arch = "powerpc64"))
+    #[cfg(any(
+      all(
+        any(unix, windows),
+        not(target_arch = "wasm32"),
+        not(any(target_arch = "s390x", target_arch = "powerpc64"))
+      ),
+      all(
+        target_arch = "powerpc64",
+        target_endian = "little",
+        target_os = "linux",
+        target_env = "gnu"
+      )
     ))]
     aws::run,
   ]);

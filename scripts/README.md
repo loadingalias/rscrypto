@@ -244,6 +244,10 @@ This mode omits Cargo Rail because `--all` bypasses affected-work planning;
 use the full installer for ordinary `just test` and benchmark work.
 Linux CI uses the catalog's `linux-ci` Ubuntu release and packages from the same archive snapshot
 as development provisioning.
+Only that signed snapshot supplies package indexes and version choices.
+If its package endpoint fails, APT can fetch the exact package from Ubuntu's live archive;
+the snapshot's authenticated package checksum still applies.
+The live archive cannot supply indexes or change the selected versions.
 It uses Cargo Binstall on x86-64, ARM64, and RISC-V to select compatible binaries,
 falling back to source when unavailable.
 IBM Z and POWER build Cargo tools from source.
