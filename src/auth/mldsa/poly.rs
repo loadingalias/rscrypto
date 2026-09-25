@@ -23,12 +23,27 @@ mod aarch64;
 mod x86_64;
 
 #[cfg(all(
-  target_arch = "s390x",
+  any(target_arch = "s390x", all(target_arch = "powerpc64", target_endian = "little")),
   target_os = "linux",
   not(miri),
   not(feature = "portable-only")
 ))]
-mod s390x;
+mod vector4;
+
+#[cfg(all(
+  any(target_arch = "riscv32", target_arch = "riscv64"),
+  target_feature = "m",
+  not(miri),
+  not(feature = "portable-only")
+))]
+mod riscv;
+
+const RISCV_NATIVE: bool = cfg!(all(
+  any(target_arch = "riscv32", target_arch = "riscv64"),
+  target_feature = "m",
+  not(miri),
+  not(feature = "portable-only")
+));
 
 pub(super) const N: usize = 256;
 pub(super) const Q: u32 = 8_380_417;
@@ -52,16 +67,16 @@ impl Poly {
   /// FIPS 204 Algorithm 41, with Montgomery-domain butterfly operands.
   pub(super) fn ntt(&mut self) {
     #[cfg(all(
-      target_arch = "s390x",
+      any(target_arch = "s390x", all(target_arch = "powerpc64", target_endian = "little")),
       target_os = "linux",
       not(miri),
       not(feature = "portable-only")
     ))]
-    if crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
-      // SAFETY: Cached capability detection establishes CPU and OS z/Vector
-      // support. Fixed-size references provide initialized, disjoint output.
+    if vector4::available() {
+      // SAFETY: The availability check establishes the selected vector ISA
+      // and OS support. Fixed-size references provide initialized, disjoint output.
       unsafe {
-        s390x::ntt(self);
+        vector4::ntt(self);
       }
       return;
     }
@@ -98,7 +113,7 @@ impl Poly {
       not(feature = "portable-only")
     )))]
     {
-      self.ntt_portable();
+      self.ntt_scalar::<RISCV_NATIVE>();
     }
   }
 
@@ -111,14 +126,14 @@ impl Poly {
       not(feature = "portable-only")
     ))
   ))]
-  fn ntt_portable(&mut self) {
+  fn ntt_scalar<const NATIVE: bool>(&mut self) {
     // Fuse conversion with the first butterfly: M(M(b, R2), zeta)
     // equals M(b, M(R2, zeta)). Both outputs remain in Montgomery form.
     // This removes 128 Montgomery multiplications and a full-array pass.
     let (left, right) = self.0.split_at_mut(N / 2);
     for (a, b) in left.iter_mut().zip(right) {
-      let x = to_montgomery(*a);
-      let y = montgomery(*b, FIRST_FACTOR);
+      let x = scalar_multiply::<NATIVE>(*a, R2);
+      let y = scalar_multiply::<NATIVE>(*b, FIRST_FACTOR);
       *a = add(x, y);
       *b = sub(x, y);
     }
@@ -130,7 +145,7 @@ impl Poly {
         root = root.strict_add(1);
         let (left, right) = block.split_at_mut(width);
         for (a, b) in left.iter_mut().zip(right) {
-          let t = montgomery(zeta, *b);
+          let t = scalar_multiply::<NATIVE>(zeta, *b);
           *b = sub(*a, t);
           *a = add(*a, t);
         }
@@ -142,16 +157,16 @@ impl Poly {
   /// FIPS 204 Algorithm 42, including conversion out of Montgomery form.
   pub(super) fn inverse_ntt(&mut self) {
     #[cfg(all(
-      target_arch = "s390x",
+      any(target_arch = "s390x", all(target_arch = "powerpc64", target_endian = "little")),
       target_os = "linux",
       not(miri),
       not(feature = "portable-only")
     ))]
-    if crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
-      // SAFETY: Cached capability detection establishes CPU and OS z/Vector
-      // support. Fixed-size references provide initialized, disjoint output.
+    if vector4::available() {
+      // SAFETY: The availability check establishes the selected vector ISA
+      // and OS support. Fixed-size references provide initialized, disjoint output.
       unsafe {
-        s390x::inverse_ntt(self);
+        vector4::inverse_ntt(self);
       }
       return;
     }
@@ -188,7 +203,7 @@ impl Poly {
       not(feature = "portable-only")
     )))]
     {
-      self.inverse_ntt_portable();
+      self.inverse_ntt_scalar::<RISCV_NATIVE>();
     }
   }
 
@@ -202,7 +217,7 @@ impl Poly {
       not(feature = "portable-only")
     ))
   ))]
-  pub(super) fn inverse_ntt_portable(&mut self) {
+  pub(super) fn inverse_ntt_scalar<const NATIVE: bool>(&mut self) {
     let mut root = N;
     let mut width = 1usize;
     while width < N / 2 {
@@ -213,7 +228,7 @@ impl Poly {
         for (a, b) in left.iter_mut().zip(right) {
           let difference = a.strict_add(Q).strict_sub(*b);
           *a = add(*a, *b);
-          *b = montgomery(zeta, difference);
+          *b = scalar_multiply::<NATIVE>(zeta, difference);
         }
       }
       width = width.strict_mul(2);
@@ -225,43 +240,43 @@ impl Poly {
     let (left, right) = self.0.split_at_mut(N / 2);
     for (a, b) in left.iter_mut().zip(right) {
       let difference = a.strict_add(Q).strict_sub(*b);
-      *a = montgomery(a.strict_add(*b), INV_N);
-      *b = montgomery(difference, LAST_FACTOR);
+      *a = scalar_multiply::<NATIVE>(a.strict_add(*b), INV_N);
+      *b = scalar_multiply::<NATIVE>(difference, LAST_FACTOR);
     }
   }
 
   pub(super) fn product(&mut self, a: &Self, b: &[u32; N]) {
     #[cfg(all(
-      target_arch = "s390x",
+      any(target_arch = "s390x", all(target_arch = "powerpc64", target_endian = "little")),
       target_os = "linux",
       not(miri),
       not(feature = "portable-only")
     ))]
-    if crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
-      // SAFETY: Cached capability detection establishes CPU and OS z/Vector
-      // support. Fixed-size references provide initialized, disjoint output.
+    if vector4::available() {
+      // SAFETY: The availability check establishes the selected vector ISA
+      // and OS support. Fixed-size references provide initialized, disjoint output.
       unsafe {
-        s390x::product(&mut self.0, &a.0, b);
+        vector4::product(&mut self.0, &a.0, b);
       }
       return;
     }
     for ((out, &a), &b) in self.0.iter_mut().zip(&a.0).zip(b) {
-      *out = montgomery(a, b);
+      *out = scalar_multiply::<RISCV_NATIVE>(a, b);
     }
   }
 
   pub(super) fn accumulate_product(&mut self, a: &[u32; N], b: &Self) {
     #[cfg(all(
-      target_arch = "s390x",
+      any(target_arch = "s390x", all(target_arch = "powerpc64", target_endian = "little")),
       target_os = "linux",
       not(miri),
       not(feature = "portable-only")
     ))]
-    if crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
-      // SAFETY: Cached capability detection establishes CPU and OS z/Vector
-      // support. Fixed-size references provide initialized, disjoint output.
+    if vector4::available() {
+      // SAFETY: The availability check establishes the selected vector ISA
+      // and OS support. Fixed-size references provide initialized, disjoint output.
       unsafe {
-        s390x::accumulate_product(&mut self.0, a, &b.0);
+        vector4::accumulate_product(&mut self.0, a, &b.0);
       }
       return;
     }
@@ -300,7 +315,7 @@ impl Poly {
     )))]
     {
       for ((out, &a), &b) in self.0.iter_mut().zip(a).zip(&b.0) {
-        *out = add(*out, montgomery(a, b));
+        *out = add(*out, scalar_multiply::<RISCV_NATIVE>(a, b));
       }
     }
   }
@@ -400,6 +415,22 @@ pub(super) fn montgomery(a: u32, b: u32) -> u32 {
   reduce((t.strict_add((m as u64).strict_mul(Q as u64)) >> 32) as u32)
 }
 
+/// Select arithmetic at monomorphization, keeping one scalar transform schedule.
+/// The forced-portable timing and differential paths always instantiate `false`.
+#[inline]
+fn scalar_multiply<const NATIVE: bool>(a: u32, b: u32) -> u32 {
+  #[cfg(all(
+    any(target_arch = "riscv32", target_arch = "riscv64"),
+    target_feature = "m",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  if NATIVE {
+    return riscv::multiply(a, b);
+  }
+  montgomery(a, b)
+}
+
 #[inline]
 pub(super) fn to_montgomery(x: u32) -> u32 {
   montgomery(x, R2)
@@ -492,7 +523,13 @@ mod tests {
   // differential must catch a backend that accidentally requires aligned loads.
   #[cfg(any(
     all(
-      target_arch = "s390x",
+      any(target_arch = "riscv32", target_arch = "riscv64"),
+      target_feature = "m",
+      not(miri),
+      not(feature = "portable-only")
+    ),
+    all(
+      any(target_arch = "s390x", all(target_arch = "powerpc64", target_endian = "little")),
       target_os = "linux",
       not(miri),
       not(feature = "portable-only")
@@ -518,7 +555,13 @@ mod tests {
 
   #[cfg(any(
     all(
-      target_arch = "s390x",
+      any(target_arch = "riscv32", target_arch = "riscv64"),
+      target_feature = "m",
+      not(miri),
+      not(feature = "portable-only")
+    ),
+    all(
+      any(target_arch = "s390x", all(target_arch = "powerpc64", target_endian = "little")),
       target_os = "linux",
       not(miri),
       not(feature = "portable-only")
@@ -538,8 +581,8 @@ mod tests {
   ))]
   #[test]
   fn ntt_accelerated_matches_portable() {
-    #[cfg(target_arch = "s390x")]
-    if !crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
+    #[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
+    if !super::vector4::available() {
       return;
     }
     #[cfg(target_arch = "x86_64")]
@@ -596,10 +639,10 @@ mod tests {
       forward.copy_from(&expected);
       let mut forward_expected = Poly::zero();
       forward_expected.copy_from(&expected);
-      forward_expected.ntt_portable();
+      forward_expected.ntt_scalar::<false>();
       forward.ntt();
       assert_eq!(forward.0, forward_expected.0, "forward NTT case {case}");
-      expected.inverse_ntt_portable();
+      expected.inverse_ntt_scalar::<false>();
       actual.inverse_ntt();
       assert_eq!(actual.0, expected.0, "inverse NTT case {case}");
     }
@@ -607,7 +650,13 @@ mod tests {
 
   #[cfg(any(
     all(
-      target_arch = "s390x",
+      any(target_arch = "riscv32", target_arch = "riscv64"),
+      target_feature = "m",
+      not(miri),
+      not(feature = "portable-only")
+    ),
+    all(
+      any(target_arch = "s390x", all(target_arch = "powerpc64", target_endian = "little")),
       target_os = "linux",
       not(miri),
       not(feature = "portable-only")
@@ -627,8 +676,8 @@ mod tests {
   ))]
   #[test]
   fn accumulation_accelerated_matches_portable() {
-    #[cfg(target_arch = "s390x")]
-    if !crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
+    #[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
+    if !super::vector4::available() {
       return;
     }
     #[cfg(target_arch = "x86_64")]
@@ -689,6 +738,17 @@ mod tests {
         let actual = montgomery(a, b);
         assert!(actual < Q);
         assert_eq!(u64::from(actual), expected, "operands {a}, {b}");
+        #[cfg(all(
+          any(target_arch = "riscv32", target_arch = "riscv64"),
+          target_feature = "m",
+          not(miri),
+          not(feature = "portable-only")
+        ))]
+        assert_eq!(
+          u64::from(super::riscv::multiply(a, b)),
+          expected,
+          "RISC-V operands {a}, {b}"
+        );
       }
     }
   }

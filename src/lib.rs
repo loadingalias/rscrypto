@@ -146,7 +146,13 @@ assert!(
       feature = "xxh3",
       feature = "chacha20poly1305",
       feature = "xchacha20poly1305",
-      feature = "argon2"
+      feature = "argon2",
+      all(
+        feature = "ml-dsa",
+        target_endian = "little",
+        not(feature = "portable-only"),
+        not(miri)
+      )
     )
   ),
   feature(portable_simd, powerpc_target_feature)

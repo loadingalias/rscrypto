@@ -350,7 +350,17 @@ fn first_challenge_candidate(bytes: &[u8; CHALLENGE_BYTES], offset: u32, limit: 
     let after_offset = less_than_bit(position, offset) ^ 1;
     let in_range = less_than_bit(limit, candidate) ^ 1;
     let packed = (position << 8) | candidate;
-    first = first.min(select(u32::MAX, packed, after_offset & in_range));
+    let candidate = select(u32::MAX, packed, after_offset & in_range);
+    #[cfg(any(target_arch = "s390x", target_arch = "riscv64", target_arch = "riscv32"))]
+    {
+      // Keep the minimum behind the same register barrier as selection. On
+      // these targets an unprotected integer minimum can become a secret branch.
+      first = select(first, candidate, u32::from(candidate < first));
+    }
+    #[cfg(not(any(target_arch = "s390x", target_arch = "riscv64", target_arch = "riscv32")))]
+    {
+      first = first.min(candidate);
+    }
   }
   first
 }
