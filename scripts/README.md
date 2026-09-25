@@ -134,7 +134,11 @@ Failed preparation or execution cannot reuse a previous run's measurements.
 Historical runs remain on disk until explicitly removed;
 full reports inventory only their current run.
 
-`just ct-replay --target TARGET --source-root SOURCE --archive ARCHIVE --out OUTPUT --case CASE` repeats one prepared POWER, IBM Z, or RISC-V case three times on one allowed CPU.
+`just ct-replay --target TARGET --source-root SOURCE --archive ARCHIVE --out OUTPUT --case CASE` repeats prepared POWER, IBM Z, or RISC-V cases three times on one allowed CPU.
+Use an exact manifest case or `--case mldsa` for every required ML-DSA kernel case.
+The suite inventories all planned cases, retains each case's original budget and
+every result, and returns failure if any required case fails. Tooling failure
+leaves the inventory explicitly incomplete. `--repetitions 1` measures each case once.
 The target defaults to RISC-V for existing callers and must match both the archive
 and physical runner.
 It validates the original source and transferred binary,

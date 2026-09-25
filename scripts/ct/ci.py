@@ -8,20 +8,20 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
 from ci_platforms import platforms
 from cross_build import TARGETS
-from manifest import primitive_supports_physical_timing
+from manifest import primitive_supports_physical_timing, replay_cases
 from provenance import load_toml
 
 
 def main():
     if sys.argv[1:] == ['plan']:
         case_name = os.environ.get('DIAGNOSTIC_CASE', '')
-        primitive = None
+        selected_primitives = []
         if case_name:
             ct = load_toml(Path(__file__).resolve().parents[2] / 'ct.toml')
-            case = next((row for row in ct['dudect_case'] if row['name'] == case_name), None)
-            if case is None:
-                raise ValueError(f'unknown CT diagnostic case: {case_name}')
-            primitive = next(row for row in ct['primitive'] if row['id'] == case['primitive'])
+            cases = {row['name']: row for row in ct['dudect_case']}
+            primitives = {row['id']: row for row in ct['primitive']}
+            selected_primitives = [primitives[cases[name]['primitive']]
+                                   for name in replay_cases(cases, case_name)]
         matrix = platforms(os.environ['INPUT_ARCHITECTURES'], os.environ['GITHUB_RUN_ID'], runner_prefix='ct')
         for row in matrix['include']:
             row['timeout'] = 360
@@ -33,7 +33,8 @@ def main():
             if case_name:
                 if target not in TARGETS:
                     raise ValueError('CT diagnostic replay requires POWER, IBM Z, or RISC-V Linux')
-                if not primitive_supports_physical_timing(primitive, target):
+                if any(not primitive_supports_physical_timing(primitive, target)
+                       for primitive in selected_primitives):
                     raise ValueError(f'CT diagnostic case {case_name} does not support {target}')
             if target in TARGETS:
                 row['target'] = target

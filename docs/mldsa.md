@@ -139,10 +139,15 @@ Target qualification must preserve these boundaries:
    strict constant-time under the CT policy. Matching an external library does
    not prove side-channel resistance. Machine-code review and native timing
    evidence must identify the operations, compiler, and target they cover.
-   `ct.toml` inventories ML-DSA as best-effort and registers diagnostic
-   timing cases for production inverse NTT and secret samplers. A separate
-   inverse-NTT case forces the scalar fallback even on vector-capable hosts. These do not
-   substitute for a whole-operation claim.
+   `ct.toml` keeps whole ML-DSA signing best-effort and separately requires
+   evidence for its secret-sensitive kernels. Nineteen timing cases cover
+   forward/inverse transforms, products, accumulation, norm checks, rounding,
+   secret samplers, and valid-key preparation across all parameter sets.
+   Separate inverse-NTT and Montgomery cases execute portable arithmetic.
+   Retained C ABI roots support linked-code and call-closure review. The bounded
+   BINSEC root covers only the portable Montgomery leaf, not complete transforms,
+   accelerated kernels, samplers, or signing. Registration defines required
+   evidence; each target still needs passing results for the exact candidate.
 2. Establish full stack bounds and caller-owned scratch for constrained targets.
    Qualify prepared-owner construction and cleanup, including success, rejection,
    import failure, entropy failure, and exhaustion. Compiler-created move, register,

@@ -17,6 +17,25 @@ spec.loader.exec_module(ci)
 
 
 class Selection(unittest.TestCase):
+    def test_mldsa_suite_uses_the_required_inventory_on_all_three_native_targets(self):
+        manifest = tomllib.loads((Path(__file__).resolve().parents[2] / 'ct.toml').read_text())
+        cases = {case['name']: case for case in manifest['dudect_case']}
+        selected = set(ci.replay_cases(cases, 'mldsa'))
+        self.assertEqual(len(selected), 19)
+        for target in ('s390x-unknown-linux-gnu', 'powerpc64le-unknown-linux-gnu', 'riscv64gc-unknown-linux-gnu'):
+            required = {case['name'] for case in required_dudect_cases(manifest, target)}
+            self.assertTrue(selected <= required)
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / 'output'
+            with patch.dict(os.environ, INPUT_ARCHITECTURES='s390x-linux,powerpc64le-linux,riscv64-linux',
+                            DIAGNOSTIC_CASE='mldsa', GITHUB_RUN_ID='123', GITHUB_OUTPUT=str(output)), \
+                 patch.object(sys, 'argv', ['ci.py', 'plan']):
+                ci.main()
+            values = dict(line.split('=', 1) for line in output.read_text().splitlines())
+            targets = {row['target'] for row in json.loads(values['matrix'])['include']}
+            self.assertEqual(targets, {'s390x-unknown-linux-gnu', 'powerpc64le-unknown-linux-gnu',
+                                       'riscv64gc-unknown-linux-gnu'})
+
     def test_power_diagnostic_preserves_target_bound_preparation(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / 'output'

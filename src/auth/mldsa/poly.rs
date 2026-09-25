@@ -356,11 +356,22 @@ pub(super) fn select(a: u32, b: u32, bit: u32) -> u32 {
   a ^ ((a ^ b) & mask)
 }
 
-/// Keep the mask opaque where LLVM otherwise introduces coefficient-dependent
+/// Keep selection values opaque where LLVM otherwise introduces secret-dependent
 /// branches. The register barrier adds no addressable secret owner. It remains
-/// enabled in portable-only builds: it protects scalar arithmetic, not dispatch.
+/// enabled in portable-only builds: it protects arithmetic and sampling, not dispatch.
 #[inline]
-fn opaque_mask(value: u32) -> u32 {
+pub(super) fn opaque_mask(value: u32) -> u32 {
+  #[cfg(all(target_arch = "x86_64", not(miri)))]
+  {
+    let mut value = value;
+    // SAFETY: The empty assembly preserves this general-purpose register and
+    // flags, accesses no memory, and does not touch the stack or require an ISA
+    // extension. The explicit 32-bit operand matches the value's width.
+    unsafe {
+      core::arch::asm!("/* {0:e} */", inout(reg) value, options(nomem, nostack, preserves_flags));
+    }
+    value
+  }
   #[cfg(all(
     any(target_arch = "s390x", target_arch = "riscv64", target_arch = "riscv32"),
     not(miri)
@@ -376,7 +387,12 @@ fn opaque_mask(value: u32) -> u32 {
     value
   }
   #[cfg(not(all(
-    any(target_arch = "s390x", target_arch = "riscv64", target_arch = "riscv32"),
+    any(
+      target_arch = "x86_64",
+      target_arch = "s390x",
+      target_arch = "riscv64",
+      target_arch = "riscv32"
+    ),
     not(miri)
   )))]
   {

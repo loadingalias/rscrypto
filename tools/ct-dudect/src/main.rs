@@ -1054,8 +1054,14 @@ macro_rules! mldsa_polynomial_case {
     }
   };
 }
-mldsa_polynomial_case!(mldsa_inverse_ntt_fixed_vs_random, rscrypto::auth::diag_mldsa_inverse_ntt);
-mldsa_polynomial_case!(mldsa_inverse_ntt_portable_fixed_vs_random, rscrypto::auth::diag_mldsa_inverse_ntt_portable);
+mldsa_polynomial_case!(
+  mldsa_inverse_ntt_fixed_vs_random,
+  rscrypto::auth::diag_mldsa_inverse_ntt
+);
+mldsa_polynomial_case!(
+  mldsa_inverse_ntt_portable_fixed_vs_random,
+  rscrypto::auth::diag_mldsa_inverse_ntt_portable
+);
 
 macro_rules! mldsa_sampler_case {
   ($name:ident, $operation:expr) => {
@@ -1091,6 +1097,120 @@ mldsa_sampler_case!(mldsa_challenge65_fixed_vs_random, |seed: &[u8; 64]| {
 mldsa_sampler_case!(mldsa_challenge87_fixed_vs_random, |seed: &[u8; 64]| {
   rscrypto::auth::diag_mldsa_challenge(seed, 60)
 });
+
+mldsa_polynomial_case!(mldsa_ntt_fixed_vs_random, rscrypto::auth::diag_mldsa_ntt);
+mldsa_polynomial_case!(
+  mldsa_montgomery_fixed_vs_random,
+  rscrypto::auth::diag_mldsa_montgomery_batch
+);
+mldsa_polynomial_case!(mldsa_rounding44_fixed_vs_random, |input| {
+  rscrypto::auth::diag_mldsa_rounding(input, 95_232)
+});
+mldsa_polynomial_case!(mldsa_rounding65_fixed_vs_random, |input| {
+  rscrypto::auth::diag_mldsa_rounding(input, 261_888)
+});
+mldsa_sampler_case!(mldsa_mask17_fixed_vs_random, |seed| {
+  rscrypto::auth::diag_mldsa_mask(seed, false)
+});
+mldsa_sampler_case!(mldsa_mask19_fixed_vs_random, |seed| {
+  rscrypto::auth::diag_mldsa_mask(seed, true)
+});
+
+macro_rules! mldsa_products_case {
+  ($name:ident, $width:literal, $operation:expr) => {
+    fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let mut inputs = Vec::with_capacity(samples());
+      for _ in 0..samples() {
+        let class = random_class(rng);
+        let input: [[u32; 256]; $width] = if matches!(class, Class::Left) {
+          [[0; 256]; $width]
+        } else {
+          core::array::from_fn(|_| core::array::from_fn(|_| rng.random_range(0..8_380_417u32)))
+        };
+        inputs.push((class, input));
+      }
+      for (class, input) in inputs {
+        runner.run_one(class, || {
+          for _ in 0..64 {
+            core::hint::black_box(($operation)(core::hint::black_box(&input)));
+          }
+        });
+      }
+    }
+  };
+}
+mldsa_products_case!(mldsa_product_fixed_vs_random, 2, |input: &[[u32; 256]; 2]| {
+  rscrypto::auth::diag_mldsa_product(&input[0], &input[1])
+});
+mldsa_products_case!(mldsa_accumulate_fixed_vs_random, 3, |input: &[[u32; 256]; 3]| {
+  rscrypto::auth::diag_mldsa_accumulate(&input[0], &input[1], &input[2])
+});
+
+fn mldsa_norm_first_vs_last(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let mut input = [0; 256];
+    input[if matches!(class, Class::Left) { 0 } else { 255 }] = 95_232;
+    inputs.push((class, input));
+  }
+  for (class, input) in inputs {
+    runner.run_one(class, || {
+      for _ in 0..64 {
+        core::hint::black_box(rscrypto::auth::diag_mldsa_norm(core::hint::black_box(&input), 95_232));
+      }
+    });
+  }
+}
+
+// Generate a fixed pool of independently seeded, valid keys before timing.
+// The timed operation only decodes and transforms secret components. Public
+// matrix expansion is outside this boundary, so varying rho cannot create a
+// legitimate public rejection-sampling timing difference in this case.
+macro_rules! mldsa_preparation_case {
+  ($name:ident, $profile:ty, $operation:path) => {
+    fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let (_, fixed) =
+        <$profile>::keypair_from_seed(&[0x42; 32]).expect("fixed ML-DSA evidence seed must generate a key");
+      let fixed = fixed.expose_secret();
+      let pool: Vec<_> = (0..32)
+        .map(|_| {
+          let (_, secret) =
+            <$profile>::keypair_from_seed(&rand_array::<32>(rng)).expect("ML-DSA evidence seed must generate a key");
+          secret.expose_secret()
+        })
+        .collect();
+      let mut inputs = Vec::with_capacity(samples());
+      for _ in 0..samples() {
+        let class = random_class(rng);
+        let encoded = if matches!(class, Class::Left) {
+          *fixed.as_bytes()
+        } else {
+          *pool[rng.random_range(0..pool.len())].as_bytes()
+        };
+        inputs.push((class, encoded));
+      }
+      for (class, encoded) in inputs {
+        runner.run_one(class, || $operation(core::hint::black_box(&encoded)));
+      }
+    }
+  };
+}
+mldsa_preparation_case!(
+  mldsa_prepare44_fixed_vs_random,
+  rscrypto::MlDsa44,
+  rscrypto::auth::diag_mldsa_prepare44
+);
+mldsa_preparation_case!(
+  mldsa_prepare65_fixed_vs_random,
+  rscrypto::MlDsa65,
+  rscrypto::auth::diag_mldsa_prepare65
+);
+mldsa_preparation_case!(
+  mldsa_prepare87_fixed_vs_random,
+  rscrypto::MlDsa87,
+  rscrypto::auth::diag_mldsa_prepare87
+);
 
 macro_rules! mlkem_dudect_profile {
   (
@@ -2719,6 +2839,18 @@ ctbench_main_with_seeds!(
   (mldsa_challenge44_fixed_vs_random, Some(0x6d6c647361000003)),
   (mldsa_challenge65_fixed_vs_random, Some(0x6d6c647361000004)),
   (mldsa_challenge87_fixed_vs_random, Some(0x6d6c647361000005)),
+  (mldsa_ntt_fixed_vs_random, Some(0x6d6c647361000007)),
+  (mldsa_montgomery_fixed_vs_random, Some(0x6d6c647361000008)),
+  (mldsa_rounding44_fixed_vs_random, Some(0x6d6c647361000009)),
+  (mldsa_rounding65_fixed_vs_random, Some(0x6d6c64736100000a)),
+  (mldsa_mask17_fixed_vs_random, Some(0x6d6c64736100000b)),
+  (mldsa_mask19_fixed_vs_random, Some(0x6d6c64736100000c)),
+  (mldsa_product_fixed_vs_random, Some(0x6d6c64736100000d)),
+  (mldsa_accumulate_fixed_vs_random, Some(0x6d6c64736100000e)),
+  (mldsa_norm_first_vs_last, Some(0x6d6c64736100000f)),
+  (mldsa_prepare44_fixed_vs_random, Some(0x6d6c647361000010)),
+  (mldsa_prepare65_fixed_vs_random, Some(0x6d6c647361000011)),
+  (mldsa_prepare87_fixed_vs_random, Some(0x6d6c647361000012)),
   (mlkem512_keygen_secret_noise_fixed_vs_random, Some(0x6d6b3531326b676e)),
   (mlkem512_encapsulate_fixed_vs_random_coins, Some(0x6d6b353132656e63)),
   (

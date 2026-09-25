@@ -230,7 +230,7 @@ ct-dudect *args:
 ct-full *args:
     @scripts/lib/python.sh scripts/ct/full.py "$@"
 
-# Measure one prepared cross-target CT case on a pinned CPU; diagnostic evidence only.
+# Measure prepared cross-target CT cases on a pinned CPU; diagnostic evidence only.
 [group('constant-time')]
 ct-replay *args:
     @scripts/lib/python.sh scripts/ct/replay.py "$@"

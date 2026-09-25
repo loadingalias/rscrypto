@@ -1,4 +1,4 @@
-"""Repeat one prepared CT case on a pinned native CPU, retaining every result."""
+"""Measure prepared CT cases on a pinned native CPU, retaining every result."""
 
 import argparse
 import json
@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from transfer import consume
 from dudect_execute import measure
 from dudect_report import write_report
-from manifest import dudect_sample_count
+from manifest import dudect_sample_count, replay_cases
 from cross_build import TARGETS
 
 
@@ -59,12 +59,42 @@ def repeat(prepared, args, cpu):
     return int(any(row['exit_code'] for row in results))
 
 
+def campaign(prepared, args, cpu):
+    cases = replay_cases(prepared['manifest_cases'], args.case)
+    if args.case != 'mldsa':
+        return repeat(prepared, args, cpu)
+    report = {
+        'diagnostic_only': True, 'selection': args.case,
+        'planned_cases': cases, 'planned_repetitions': args.repetitions,
+        'source': prepared['metadata']['transfer']['source'],
+        'binary': prepared['metadata']['binary'], 'cases': [], 'complete': False,
+        'note': 'Scoped required-kernel campaign; not a full release qualification. '
+                'Timing failures do not discard or shorten the remaining cases.',
+    }
+    report_path = args.out / 'campaign.json'
+    write_report(report_path, report)
+    for name in cases:
+        case_args = argparse.Namespace(**vars(args))
+        case_args.case = name
+        case_args.out = args.out / name
+        case_args.out.mkdir()
+        status = repeat(prepared, case_args, cpu)
+        report['cases'].append({'name': name, 'exit_code': status})
+        write_report(report_path, report)
+        if status not in (0, 1):
+            return status
+    report['complete'] = True
+    write_report(report_path, report)
+    return int(any(row['exit_code'] for row in report['cases']))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source-root', type=Path, required=True)
     parser.add_argument('--archive', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
-    parser.add_argument('--case', required=True)
+    parser.add_argument('--case', required=True,
+                        help='exact manifest case, or mldsa for every required ML-DSA kernel case')
     parser.add_argument('--target', choices=sorted(TARGETS), default='riscv64gc-unknown-linux-gnu',
                         help='native target of the sealed archive; defaults to RISC-V for existing replays')
     parser.add_argument('--repetitions', type=int, choices=(1, 3), default=3,
@@ -75,14 +105,13 @@ def main():
     _, args.prepared = consume(args.source_root.resolve(), args.out,
                                args.archive.resolve(), args.target)
     prepared = json.loads(args.prepared.read_text())
-    if args.case not in prepared['manifest_cases']:
-        raise ValueError('case is absent from the prepared manifest')
+    replay_cases(prepared['manifest_cases'], args.case)
     # Pin the controller and its measurement child; leave system policy unchanged.
     allowed = os.sched_getaffinity(0)
     cpu = min(allowed)
     os.sched_setaffinity(0, {cpu})
     try:
-        return repeat(prepared, args, cpu)
+        return campaign(prepared, args, cpu)
     finally:
         os.sched_setaffinity(0, allowed)
 

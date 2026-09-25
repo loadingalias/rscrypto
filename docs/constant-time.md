@@ -107,6 +107,21 @@ and are sized separately from benchmark profiles in [`.github/runs-on.yml`](../.
 Preparation uses Spot instances; its completion supplies no timing evidence.
 Diagnostic replay remains separate from the full release campaign.
 
+ML-DSA has a separate required `signature.mldsa.secret_kernels` boundary.
+Its 19 timing cases cover transforms, products, accumulation, norm rejection
+position, rounding, secret samplers, and valid-key preparation for ML-DSA-44/65/87.
+Polynomial classes use canonical coefficients; preparation uses one fixed key
+against a pool of 32 independently seeded valid keys. Key generation and input
+selection happen outside timing. Public matrix expansion and redundant-field
+validation are outside the preparation boundary.
+Retained roots support linked-binary closure review, including direct tail transfers.
+The bounded BINSEC root analyzes the production portable Montgomery leaf over
+all operand pairs below 2q; it does not prove full transforms, accelerated
+arithmetic, samplers, preparation, or hardware instruction latency.
+These are requirements for candidate qualification, not a statement that all
+targets have passed. Standard first-accepted signing retries remain variable-time;
+whole ML-DSA signing is best-effort and is not claimed strict constant time.
+
 Authentication failures remain opaque even when their inputs are public.
 See [`secret-ownership.md`](secret-ownership.md) for comparison capabilities and [`secret-lifecycle.md`](secret-lifecycle.md)
 for cleanup evidence.

@@ -25,6 +25,20 @@ def is_diagnostic_dudect_case(case: dict) -> bool:
   return case.get("gate") == "diagnostic"
 
 
+def replay_cases(cases: dict[str, dict], selection: str) -> list[str]:
+  """Resolve an exact case or the complete required ML-DSA kernel suite."""
+  if selection == "mldsa":
+    selected = sorted(name for name, case in cases.items()
+                      if case.get("primitive") == "signature.mldsa.secret_kernels"
+                      and not is_diagnostic_dudect_case(case))
+    if not selected:
+      raise ValueError("ML-DSA replay requires the manifest's required kernel cases")
+    return selected
+  if selection not in cases:
+    raise ValueError(f"unknown CT diagnostic case: {selection}")
+  return [selection]
+
+
 def required_dudect_cases(ct: dict, target: str | None = None, *, cases: list[dict] | None = None) -> list[dict]:
   primitives = {primitive.get("id", ""): primitive for primitive in ct.get("primitive", [])}
   return [

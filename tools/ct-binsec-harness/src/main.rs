@@ -952,7 +952,33 @@ pub unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_ifma() -> ! {
 
 #[unsafe(no_mangle)]
 #[used]
-pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 46] = [
+pub static mut CT_BINSEC_MLDSA_OPERANDS: [u32; 2] = [0; 2];
+
+#[unsafe(no_mangle)]
+#[used]
+pub static mut CT_BINSEC_MLDSA_PRODUCT: u32 = 0;
+
+/// Analyze the production portable Montgomery leaf over its complete input domain.
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn ct_binsec_mldsa_montgomery() -> ! {
+  let operands = ptr::addr_of!(CT_BINSEC_MLDSA_OPERANDS).cast::<u32>();
+  // SAFETY: Both addresses refer to initialized, harness-owned static storage.
+  // The harness is single-threaded and no reference to either operand is created.
+  let (a, b) = unsafe { (ptr::read_volatile(operands), ptr::read_volatile(operands.add(1))) };
+  // Every pair below 2q has a preimage. Normalization is harness input preparation;
+  // the multiplication and reduction execute the actual production function.
+  let product = rscrypto::auth::diag_mldsa_montgomery(a % 16_760_834, b % 16_760_834);
+  // SAFETY: This harness-owned static has no concurrent reader or writer. Keep
+  // every result bit observable so the compiler cannot prune the arithmetic.
+  unsafe { ptr::write_volatile(ptr::addr_of_mut!(CT_BINSEC_MLDSA_PRODUCT), product) };
+  ct_binsec_done(0)
+}
+
+#[unsafe(no_mangle)]
+#[used]
+pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 47] = [
+  ct_binsec_mldsa_montgomery,
   ct_binsec_owner_eq_16,
   ct_binsec_owner_eq_32,
   ct_binsec_owner_eq_48,

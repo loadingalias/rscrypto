@@ -31,4 +31,26 @@ fn main() {
     rscrypto_ct_harness::ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding,
     rscrypto_ct_harness::ct_entry_rsa_private_key_pkcs8_roundtrip,
   );
+
+  retain!(
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_ntt,
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_montgomery,
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_inverse_ntt,
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_inverse_ntt_portable,
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_norm,
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_rounding44,
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_rounding65,
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_product,
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_accumulate,
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_noise_eta2,
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_noise_eta4,
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_challenge44,
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_challenge65,
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_challenge87,
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_mask17,
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_mask19,
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_prepare44,
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_prepare65,
+    rscrypto_ct_harness::mldsa::ct_entry_mldsa_prepare87,
+  );
 }

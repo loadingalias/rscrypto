@@ -33,8 +33,15 @@ const fn equal_bit(left: u32, right: u32) -> u32 {
 }
 
 #[inline]
+fn mask_u64(choice: u32) -> u64 {
+  // Each caller supplies one bit. Hide that range before widening so LLVM
+  // cannot replace word selections with branches on secret sampler state.
+  0u64.wrapping_sub(u64::from(super::poly::opaque_mask(choice)))
+}
+
+#[inline]
 fn select_u64(left: u64, right: u64, choice: u32) -> u64 {
-  let mask = 0u64.wrapping_sub(u64::from(choice));
+  let mask = mask_u64(choice);
   (left & !mask) | (right & mask)
 }
 
@@ -115,11 +122,11 @@ fn append_noise_plane(planes: &mut [u8; NOISE_PLANE_BYTES], plane: usize, packed
   let bit_index = accepted & 63;
   let low = fixed_shl(packed, bit_index);
   let high_shift = bit_index.wrapping_neg() & 63;
-  let high = fixed_shr(packed, high_shift) & 0u64.wrapping_sub(u64::from(nonzero_bit(bit_index)));
+  let high = fixed_shr(packed, high_shift) & mask_u64(nonzero_bit(bit_index));
   for word in 0..4 {
     let word = u32::try_from(word).expect("noise output word index fits u32");
-    let low_mask = 0u64.wrapping_sub(u64::from(equal_bit(word_index, word)));
-    let high_mask = 0u64.wrapping_sub(u64::from(equal_bit(word_index.strict_add(1), word)));
+    let low_mask = mask_u64(equal_bit(word_index, word));
+    let high_mask = mask_u64(equal_bit(word_index.strict_add(1), word));
     let output_word = plane
       .strict_mul(4)
       .strict_add(usize::try_from(word).expect("word index fits usize"));

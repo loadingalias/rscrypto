@@ -19,7 +19,7 @@ on:
         type: boolean
         default: false
       diagnostic_case:
-        description: Exact CT manifest case to measure once on selected POWER, IBM Z, or RISC-V runners; diagnostic only
+        description: Exact CT case, or mldsa for all required ML-DSA kernel cases, on POWER, IBM Z, or RISC-V; scoped evidence only
         type: string
         default: ""
       architectures:

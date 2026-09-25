@@ -706,6 +706,15 @@ parameter_set!(
   4627
 );
 
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+mod diagnostics;
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+pub use diagnostics::{
+  diag_mldsa_accumulate, diag_mldsa_mask, diag_mldsa_montgomery, diag_mldsa_montgomery_batch, diag_mldsa_norm,
+  diag_mldsa_ntt, diag_mldsa_prepare44, diag_mldsa_prepare65, diag_mldsa_prepare87, diag_mldsa_product,
+  diag_mldsa_rounding,
+};
+
 /// Diagnostic execution of the production inverse NTT on canonical coefficients.
 ///
 /// Available only to internal evidence builds. Inputs must be below 8,380,417.

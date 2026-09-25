@@ -191,6 +191,9 @@ BRANCH_CONDS_S390X = {
   "jp",
 }
 DIRECT_CALL_MNEMONICS = {"bl", "brasl", "call", "callq", "jal"}
+# Optimized wrappers often tail-call production code without a link instruction.
+# Intra-function branches are removed by symbol identity when constructing edges.
+DIRECT_TAIL_MNEMONICS = {"b", "ba", "j", "jg", "jmp", "jmpq", "c.j"}
 INDIRECT_JUMP_MNEMONICS = {"br"}
 INDIRECT_CALL_MNEMONICS = {"blr", "jalr"}
 SUSPICIOUS_CALL_TARGETS = (
@@ -560,12 +563,15 @@ def all_direct_callees(body: FunctionBody) -> set[str]:
   callees: set[str] = set()
   for index, (_, line) in enumerate(body.lines):
     inst = mnemonic(line)
-    if inst not in DIRECT_CALL_MNEMONICS and not is_call_relocation(line):
+    if inst not in DIRECT_CALL_MNEMONICS | DIRECT_TAIL_MNEMONICS and not is_call_relocation(line):
       continue
     targets = direct_call_targets(line)
-    if inst in DIRECT_CALL_MNEMONICS and index + 1 < len(body.lines):
+    if inst in DIRECT_CALL_MNEMONICS | DIRECT_TAIL_MNEMONICS and index + 1 < len(body.lines):
       next_line = body.lines[index + 1][1]
-      if is_call_relocation(next_line):
+      # A relocation immediately following this instruction supplies its target.
+      # Tail transfers use architecture-specific jump/relative relocations, not
+      # necessarily the CALL relocations recognized on standalone lines.
+      if is_call_relocation(next_line) or re.search(r"\bR_[A-Z0-9_]+\b", next_line):
         targets.update(direct_call_targets(next_line))
     callees.update(targets)
   callees.discard(body.symbol)
@@ -982,8 +988,10 @@ def scan_symbol(
           roots=roots,
         )
       )
-    elif inst in DIRECT_CALL_MNEMONICS:
+    elif inst in DIRECT_CALL_MNEMONICS | DIRECT_TAIL_MNEMONICS:
       callees = direct_call_targets(line)
+      if inst in DIRECT_TAIL_MNEMONICS and callees == {symbol}:
+        continue
       if callees and callees <= local_symbols and all(is_ct_internal_symbol(callee) for callee in callees):
         continue
       findings.append(
@@ -994,7 +1002,7 @@ def scan_symbol(
           line,
           "call",
           "warn",
-          "Unresolved direct call found inside CT evidence scope. Callee review may be needed.",
+          "Unresolved direct call or tail transfer found inside CT evidence scope. Callee review may be needed.",
           scope=scope,
           primitive_ids=primitive_ids,
           roots=roots,
