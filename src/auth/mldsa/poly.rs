@@ -373,7 +373,12 @@ pub(super) fn opaque_mask(value: u32) -> u32 {
     value
   }
   #[cfg(all(
-    any(target_arch = "s390x", target_arch = "riscv64", target_arch = "riscv32"),
+    any(
+      target_arch = "powerpc64",
+      target_arch = "s390x",
+      target_arch = "riscv64",
+      target_arch = "riscv32"
+    ),
     not(miri)
   ))]
   {
@@ -389,6 +394,7 @@ pub(super) fn opaque_mask(value: u32) -> u32 {
   #[cfg(not(all(
     any(
       target_arch = "x86_64",
+      target_arch = "powerpc64",
       target_arch = "s390x",
       target_arch = "riscv64",
       target_arch = "riscv32"
