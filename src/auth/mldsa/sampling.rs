@@ -284,20 +284,19 @@ fn noise_from_bytes(bytes: &[u8; NOISE_BYTES], eta: u32, out: &mut Poly) -> Resu
       n |= u32::try_from((read_u64_word(output_planes.as_array(), output_word) >> bit) & 1).expect("one bit fits u32")
         << plane;
     }
-    // For eta=2, reduce the accepted range 0..15 modulo five with masked
-    // subtraction. eta is a public parameter-set constant.
+    // For eta=2, reduce the accepted range 0..15 modulo five. For every n
+    // below 16, floor(n / 5) == (13 * n) >> 6. The multiply-shift contains no
+    // comparison that LLVM could lower to a branch on this secret value.
+    // eta is a public parameter-set constant.
     let value = if eta == 2 {
-      n.wrapping_sub(5u32.strict_mul(less_than_bit(n, 5) ^ 1))
-        .wrapping_sub(5u32.strict_mul(less_than_bit(n, 10) ^ 1))
+      n.wrapping_sub(5u32.wrapping_mul(n.wrapping_mul(13) >> 6))
     } else {
       n
     };
-    // `value` is in 0..=2*eta. Reduce eta-value modulo q using explicitly
-    // modular arithmetic so debug overflow checks cannot introduce a branch
-    // on this secret coefficient.
-    let difference = eta.wrapping_add(Q).wrapping_sub(value);
-    let reduced = difference.wrapping_sub(Q);
-    *output = reduced.wrapping_add(0u32.wrapping_sub(reduced >> 31) & Q);
+    // `value` is in 0..=2*eta, so eta+q-value is in [q-eta, q+eta] within
+    // [0, 2q). The shared reduction keeps its correction behind the register
+    // barrier; wrapping arithmetic keeps overflow checks off this value.
+    *output = super::poly::reduce(eta.wrapping_add(Q).wrapping_sub(value));
   }
 
   let accepted = u32::from_le_bytes(
@@ -482,13 +481,19 @@ mod tests {
 
   #[test]
   fn bounded_noise_compaction_preserves_order_across_blocks() {
-    for (eta, modulus) in [(2, 5u8), (4, 9u8)] {
+    // Cycle through every admissible nibble. FIPS 204 CoeffFromHalfByte maps
+    // eta=2 nibbles 0..=14 to 2 - (b mod 5), and eta=4 nibbles 0..=8 to 4 - b.
+    for (eta, admissible) in [(2, 15u8), (4, 9u8)] {
       let mut bytes = [0xff; NOISE_BYTES];
       let mut expected = [0u32; N];
       for (coefficient, output) in expected.iter_mut().enumerate() {
-        let nibble = u8::try_from(coefficient % usize::from(modulus)).expect("test nibble fits u8");
+        let nibble = u8::try_from(coefficient % usize::from(admissible)).expect("test nibble fits u8");
         set_nibble(&mut bytes, coefficient.strict_mul(3), nibble);
-        let value = u32::from(nibble);
+        let value = if eta == 2 {
+          u32::from(nibble % 5)
+        } else {
+          u32::from(nibble)
+        };
         *output = if eta >= value { eta - value } else { Q - (value - eta) };
       }
 

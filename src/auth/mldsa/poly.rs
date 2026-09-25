@@ -408,7 +408,7 @@ pub(super) fn opaque_mask(value: u32) -> u32 {
 
 /// Reduce an input in [0, 2q) with one masked subtraction.
 #[inline]
-fn reduce(x: u32) -> u32 {
+pub(super) fn reduce(x: u32) -> u32 {
   let difference = x.wrapping_sub(Q);
   difference.wrapping_add(opaque_mask(0u32.wrapping_sub(difference >> 31)) & Q)
 }
