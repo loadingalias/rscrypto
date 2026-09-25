@@ -1031,25 +1031,31 @@ fn p256_ecdh_agree_fixed_vs_random_scalar(runner: &mut CtRunner, rng: &mut Bench
 }
 
 // These cases call production kernels. RNG and class selection are outside timing.
-fn mldsa_inverse_ntt_fixed_vs_random(runner: &mut CtRunner, rng: &mut BenchRng) {
-  let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
-    let input = if matches!(class, Class::Left) {
-      [0; 256]
-    } else {
-      core::array::from_fn(|_| rng.random_range(0..8_380_417u32))
-    };
-    inputs.push((class, input));
-  }
-  for (class, input) in inputs {
-    runner.run_one(class, || {
-      for _ in 0..64 {
-        core::hint::black_box(rscrypto::auth::diag_mldsa_inverse_ntt(core::hint::black_box(&input)));
+macro_rules! mldsa_polynomial_case {
+  ($name:ident, $operation:expr) => {
+    fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let mut inputs = Vec::with_capacity(samples());
+      for _ in 0..samples() {
+        let class = random_class(rng);
+        let input = if matches!(class, Class::Left) {
+          [0; 256]
+        } else {
+          core::array::from_fn(|_| rng.random_range(0..8_380_417u32))
+        };
+        inputs.push((class, input));
       }
-    });
-  }
+      for (class, input) in inputs {
+        runner.run_one(class, || {
+          for _ in 0..64 {
+            core::hint::black_box(($operation)(core::hint::black_box(&input)));
+          }
+        });
+      }
+    }
+  };
 }
+mldsa_polynomial_case!(mldsa_inverse_ntt_fixed_vs_random, rscrypto::auth::diag_mldsa_inverse_ntt);
+mldsa_polynomial_case!(mldsa_inverse_ntt_portable_fixed_vs_random, rscrypto::auth::diag_mldsa_inverse_ntt_portable);
 
 macro_rules! mldsa_sampler_case {
   ($name:ident, $operation:expr) => {
@@ -2707,6 +2713,7 @@ ctbench_main_with_seeds!(
   (p256_ecdh_public_key_fixed_vs_random_scalar, Some(0x7032353665637075)),
   (p256_ecdh_agree_fixed_vs_random_scalar, Some(0x7032353665636167)),
   (mldsa_inverse_ntt_fixed_vs_random, Some(0x6d6c647361000000)),
+  (mldsa_inverse_ntt_portable_fixed_vs_random, Some(0x6d6c647361000006)),
   (mldsa_noise_eta2_fixed_vs_random, Some(0x6d6c647361000001)),
   (mldsa_noise_eta4_fixed_vs_random, Some(0x6d6c647361000002)),
   (mldsa_challenge44_fixed_vs_random, Some(0x6d6c647361000003)),

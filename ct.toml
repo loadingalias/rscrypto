@@ -4992,6 +4992,17 @@ gate = "diagnostic"
 notes = "Production-kernel timing investigation; no whole-operation CT claim or release-gate substitution."
 
 [[dudect_case]]
+name = "mldsa_inverse_ntt_portable_fixed_vs_random"
+primitive = "signature.mldsa"
+filter = "mldsa_inverse_ntt_portable_fixed_vs_random"
+left_class = "64 scalar inverse NTT executions on a zero canonical polynomial"
+right_class = "64 scalar inverse NTT executions on a random canonical polynomial"
+samples = 20000
+smoke_samples = 512
+gate = "diagnostic"
+notes = "Calls the production scalar fallback even when an accelerated backend is eligible. No whole-operation CT claim."
+
+[[dudect_case]]
 name = "mldsa_noise_eta2_fixed_vs_random"
 primitive = "signature.mldsa"
 filter = "mldsa_noise_eta2_fixed_vs_random"
@@ -5067,5 +5078,5 @@ public_inputs = ["parameter set", "message and context lengths", "public key", "
 variable_time_components = ["standard first-accepted signing retries", "public matrix rejection sampling", "public parsing and verification", "accepted signature hint packing"]
 permitted_leakage = ["public shapes", "opaque success or failure", "standard signing retry count", "caller-authorized secret exposure"]
 claim = "best-effort"
-evidence = ["primitive:signature.mldsa", "dudect:mldsa_inverse_ntt_fixed_vs_random", "dudect:mldsa_noise_eta2_fixed_vs_random", "dudect:mldsa_noise_eta4_fixed_vs_random", "dudect:mldsa_challenge44_fixed_vs_random", "dudect:mldsa_challenge65_fixed_vs_random", "dudect:mldsa_challenge87_fixed_vs_random"]
+evidence = ["primitive:signature.mldsa", "dudect:mldsa_inverse_ntt_fixed_vs_random", "dudect:mldsa_inverse_ntt_portable_fixed_vs_random", "dudect:mldsa_noise_eta2_fixed_vs_random", "dudect:mldsa_noise_eta4_fixed_vs_random", "dudect:mldsa_challenge44_fixed_vs_random", "dudect:mldsa_challenge65_fixed_vs_random", "dudect:mldsa_challenge87_fixed_vs_random"]
 limitation = "Fixed-work arithmetic and secret samplers have scoped diagnostic evidence. Whole signing is variable-time and is not claimed strict CT. Deterministic signing can reveal message information through timing; callers needing randomized signing must use sign_with or try_sign."

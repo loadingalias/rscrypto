@@ -22,11 +22,21 @@ mod aarch64;
 ))]
 mod x86_64;
 
+#[cfg(all(
+  target_arch = "s390x",
+  target_os = "linux",
+  not(miri),
+  not(feature = "portable-only")
+))]
+mod s390x;
+
 pub(super) const N: usize = 256;
 pub(super) const Q: u32 = 8_380_417;
 const R2: u32 = 2_365_951; // 2^64 mod q.
 const NEG_Q_INVERSE: u32 = 4_236_238_847; // -q^-1 mod 2^32.
 const INV_N: u32 = 8_347_681; // 256^-1 mod q.
+const FIRST_FACTOR: u32 = public_montgomery(R2, ROOTS[1]);
+const LAST_FACTOR: u32 = public_montgomery(Q.strict_sub(ROOTS[1]), INV_N);
 
 pub(super) struct Poly(pub(super) [u32; N]);
 
@@ -41,6 +51,20 @@ impl Poly {
 
   /// FIPS 204 Algorithm 41, with Montgomery-domain butterfly operands.
   pub(super) fn ntt(&mut self) {
+    #[cfg(all(
+      target_arch = "s390x",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    if crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
+      // SAFETY: Cached capability detection establishes CPU and OS z/Vector
+      // support. Fixed-size references provide initialized, disjoint output.
+      unsafe {
+        s390x::ntt(self);
+      }
+      return;
+    }
     #[cfg(all(
       target_arch = "x86_64",
       target_os = "linux",
@@ -91,7 +115,6 @@ impl Poly {
     // Fuse conversion with the first butterfly: M(M(b, R2), zeta)
     // equals M(b, M(R2, zeta)). Both outputs remain in Montgomery form.
     // This removes 128 Montgomery multiplications and a full-array pass.
-    const FIRST_FACTOR: u32 = montgomery(R2, ROOTS[1]);
     let (left, right) = self.0.split_at_mut(N / 2);
     for (a, b) in left.iter_mut().zip(right) {
       let x = to_montgomery(*a);
@@ -118,6 +141,20 @@ impl Poly {
 
   /// FIPS 204 Algorithm 42, including conversion out of Montgomery form.
   pub(super) fn inverse_ntt(&mut self) {
+    #[cfg(all(
+      target_arch = "s390x",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    if crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
+      // SAFETY: Cached capability detection establishes CPU and OS z/Vector
+      // support. Fixed-size references provide initialized, disjoint output.
+      unsafe {
+        s390x::inverse_ntt(self);
+      }
+      return;
+    }
     #[cfg(all(
       target_arch = "x86_64",
       target_os = "linux",
@@ -157,6 +194,7 @@ impl Poly {
 
   #[cfg(any(
     test,
+    all(rscrypto_internal, feature = "diag"),
     not(all(
       target_arch = "aarch64",
       any(target_os = "macos", target_os = "linux"),
@@ -164,7 +202,7 @@ impl Poly {
       not(feature = "portable-only")
     ))
   ))]
-  fn inverse_ntt_portable(&mut self) {
+  pub(super) fn inverse_ntt_portable(&mut self) {
     let mut root = N;
     let mut width = 1usize;
     while width < N / 2 {
@@ -184,7 +222,6 @@ impl Poly {
     // undergoes two Montgomery multiplications: M(M(zeta, a-b), INV_N).
     // M(a-b, M(zeta, INV_N)) is identical modulo q. The precomputed right
     // factor is an ordinary residue, so both outputs leave Montgomery form.
-    const LAST_FACTOR: u32 = montgomery(Q.strict_sub(ROOTS[1]), INV_N);
     let (left, right) = self.0.split_at_mut(N / 2);
     for (a, b) in left.iter_mut().zip(right) {
       let difference = a.strict_add(Q).strict_sub(*b);
@@ -194,12 +231,40 @@ impl Poly {
   }
 
   pub(super) fn product(&mut self, a: &Self, b: &[u32; N]) {
+    #[cfg(all(
+      target_arch = "s390x",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    if crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
+      // SAFETY: Cached capability detection establishes CPU and OS z/Vector
+      // support. Fixed-size references provide initialized, disjoint output.
+      unsafe {
+        s390x::product(&mut self.0, &a.0, b);
+      }
+      return;
+    }
     for ((out, &a), &b) in self.0.iter_mut().zip(&a.0).zip(b) {
       *out = montgomery(a, b);
     }
   }
 
   pub(super) fn accumulate_product(&mut self, a: &[u32; N], b: &Self) {
+    #[cfg(all(
+      target_arch = "s390x",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    if crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
+      // SAFETY: Cached capability detection establishes CPU and OS z/Vector
+      // support. Fixed-size references provide initialized, disjoint output.
+      unsafe {
+        s390x::accumulate_product(&mut self.0, a, &b.0);
+      }
+      return;
+    }
     #[cfg(all(
       target_arch = "x86_64",
       target_os = "linux",
@@ -271,25 +336,53 @@ impl Drop for Poly {
 }
 
 #[inline]
-pub(super) const fn select(a: u32, b: u32, bit: u32) -> u32 {
-  let mask = 0u32.wrapping_sub(bit);
+pub(super) fn select(a: u32, b: u32, bit: u32) -> u32 {
+  let mask = opaque_mask(0u32.wrapping_sub(bit));
   a ^ ((a ^ b) & mask)
+}
+
+/// Keep the mask opaque where LLVM otherwise introduces coefficient-dependent
+/// branches. The register barrier adds no addressable secret owner. It remains
+/// enabled in portable-only builds: it protects scalar arithmetic, not dispatch.
+#[inline]
+fn opaque_mask(value: u32) -> u32 {
+  #[cfg(all(
+    any(target_arch = "s390x", target_arch = "riscv64", target_arch = "riscv32"),
+    not(miri)
+  ))]
+  {
+    let mut value = value;
+    // SAFETY: This empty assembly uses one general-purpose register. It leaves
+    // its value and flags unchanged, accesses no memory, and does not touch the
+    // stack. No CPU extension, alignment, or pointer precondition is needed.
+    unsafe {
+      core::arch::asm!("/* {0} */", inout(reg) value, options(nomem, nostack, preserves_flags));
+    }
+    value
+  }
+  #[cfg(not(all(
+    any(target_arch = "s390x", target_arch = "riscv64", target_arch = "riscv32"),
+    not(miri)
+  )))]
+  {
+    value
+  }
 }
 
 /// Reduce an input in [0, 2q) with one masked subtraction.
 #[inline]
-const fn reduce(x: u32) -> u32 {
+fn reduce(x: u32) -> u32 {
   let difference = x.wrapping_sub(Q);
-  difference.wrapping_add(0u32.wrapping_sub(difference >> 31) & Q)
+  difference.wrapping_add(opaque_mask(0u32.wrapping_sub(difference >> 31)) & Q)
 }
 
 #[inline]
-pub(super) const fn add(a: u32, b: u32) -> u32 {
+pub(super) fn add(a: u32, b: u32) -> u32 {
   reduce(a.strict_add(b))
 }
 
 #[inline]
-pub(super) const fn sub(a: u32, b: u32) -> u32 {
+pub(super) fn sub(a: u32, b: u32) -> u32 {
   reduce(a.strict_add(Q).strict_sub(b))
 }
 
@@ -301,15 +394,28 @@ pub(super) const fn sub(a: u32, b: u32) -> u32 {
   clippy::cast_possible_truncation,
   reason = "low word is arithmetic modulo 2^32; the shifted quotient is below 2q"
 )]
-pub(super) const fn montgomery(a: u32, b: u32) -> u32 {
+pub(super) fn montgomery(a: u32, b: u32) -> u32 {
   let t = (a as u64).strict_mul(b as u64);
   let m = (t as u32).wrapping_mul(NEG_Q_INVERSE);
   reduce((t.strict_add((m as u64).strict_mul(Q as u64)) >> 32) as u32)
 }
 
 #[inline]
-pub(super) const fn to_montgomery(x: u32) -> u32 {
+pub(super) fn to_montgomery(x: u32) -> u32 {
   montgomery(x, R2)
+}
+
+/// Compile-time arithmetic for public roots and transform factors only. Keeping
+/// it separate lets runtime secret arithmetic use register barriers. Both
+/// products are below 2^48; each remainder is a canonical residue.
+#[expect(clippy::cast_possible_truncation, reason = "the remainder is below q")]
+const fn public_montgomery(a: u32, b: u32) -> u32 {
+  const R_INVERSE: u64 = 8_265_825;
+  (a as u64)
+    .strict_mul(b as u64)
+    .strict_rem(Q as u64)
+    .strict_mul(R_INVERSE)
+    .strict_rem(Q as u64) as u32
 }
 
 /// Generate FIPS 204 roots from zeta=1753 and BitRev8, not an imported table.
@@ -318,13 +424,13 @@ const ROOTS: [u32; N] = {
   let mut i = 0usize;
   while i < N {
     let mut exponent = i.reverse_bits() >> usize::BITS.strict_sub(8);
-    let mut power = to_montgomery(1753);
-    let mut value = to_montgomery(1);
+    let mut power = public_montgomery(1753, R2);
+    let mut value = public_montgomery(1, R2);
     while exponent != 0 {
       if exponent & 1 != 0 {
-        value = montgomery(value, power);
+        value = public_montgomery(value, power);
       }
-      power = montgomery(power, power);
+      power = public_montgomery(power, power);
       exponent >>= 1;
     }
     roots[i] = value;
@@ -386,6 +492,12 @@ mod tests {
   // differential must catch a backend that accidentally requires aligned loads.
   #[cfg(any(
     all(
+      target_arch = "s390x",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ),
+    all(
       target_arch = "aarch64",
       any(target_os = "macos", target_os = "linux"),
       target_feature = "neon",
@@ -406,6 +518,12 @@ mod tests {
 
   #[cfg(any(
     all(
+      target_arch = "s390x",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ),
+    all(
       target_arch = "aarch64",
       any(target_os = "macos", target_os = "linux"),
       target_feature = "neon",
@@ -420,6 +538,10 @@ mod tests {
   ))]
   #[test]
   fn ntt_accelerated_matches_portable() {
+    #[cfg(target_arch = "s390x")]
+    if !crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
+      return;
+    }
     #[cfg(target_arch = "x86_64")]
     if !crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
       return;
@@ -485,6 +607,12 @@ mod tests {
 
   #[cfg(any(
     all(
+      target_arch = "s390x",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ),
+    all(
       target_arch = "aarch64",
       any(target_os = "macos", target_os = "linux"),
       target_feature = "neon",
@@ -499,6 +627,10 @@ mod tests {
   ))]
   #[test]
   fn accumulation_accelerated_matches_portable() {
+    #[cfg(target_arch = "s390x")]
+    if !crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
+      return;
+    }
     #[cfg(target_arch = "x86_64")]
     if !crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
       return;
@@ -528,6 +660,15 @@ mod tests {
         b.0[i] = if case < 2 { Q - 1 } else { state % Q };
         actual.0[i] = if i % 2 == 0 { Q - 1 } else { 0 };
         expected.0[i] = super::add(actual.0[i], montgomery(a.0[i], b.0[i]));
+      }
+      let mut product = Poly::zero();
+      product.product(&a, &b.0);
+      for i in 0..N {
+        assert_eq!(
+          product.0[i],
+          montgomery(a.0[i], b.0[i]),
+          "product case {case}, lane {i}"
+        );
       }
       actual.accumulate_product(&a.0, &b);
       assert_eq!(actual.0, expected.0, "accumulation case {case}");

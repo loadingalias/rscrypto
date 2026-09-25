@@ -434,4 +434,4 @@ pub use crate::backend::curve25519_swap::diag_curve25519_conditional_swap;
 pub use crate::traits::Mac;
 
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "ml-dsa"))]
-pub use mldsa::{diag_mldsa_challenge, diag_mldsa_inverse_ntt, diag_mldsa_noise};
+pub use mldsa::{diag_mldsa_challenge, diag_mldsa_inverse_ntt, diag_mldsa_inverse_ntt_portable, diag_mldsa_noise};

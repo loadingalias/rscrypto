@@ -6,7 +6,7 @@
 
 use core::arch::x86_64::*;
 
-use super::{INV_N, N, NEG_Q_INVERSE, Poly, Q, R2, ROOTS, montgomery};
+use super::{FIRST_FACTOR, INV_N, LAST_FACTOR, N, NEG_Q_INVERSE, Poly, Q, R2, ROOTS};
 
 /// # Safety
 /// Calling outside an AVX2-enabled function requires AVX2 support.
@@ -47,7 +47,6 @@ fn difference(a: __m256i, b: __m256i) -> __m256i {
 /// The caller must establish AVX2. All coefficients must be below q.
 #[target_feature(enable = "avx2")]
 pub(super) unsafe fn ntt(poly: &mut Poly) {
-  const FIRST_FACTOR: u32 = montgomery(R2, ROOTS[1]);
   let (left, right) = poly.0.split_at_mut(N / 2);
   for (a, b) in left.as_chunks_mut::<8>().0.iter_mut().zip(right.as_chunks_mut::<8>().0) {
     // SAFETY: Disjoint initialized eight-u32 arrays. Unaligned loads/stores
@@ -199,7 +198,6 @@ pub(super) unsafe fn inverse_ntt(poly: &mut Poly) {
     }
     width = width.strict_mul(2);
   }
-  const LAST_FACTOR: u32 = montgomery(Q.strict_sub(ROOTS[1]), INV_N);
   let (left, right) = poly.0.split_at_mut(N / 2);
   for (a, b) in left.as_chunks_mut::<8>().0.iter_mut().zip(right.as_chunks_mut::<8>().0) {
     // SAFETY: Fixed-size disjoint arrays cover each load/store, with no pointer

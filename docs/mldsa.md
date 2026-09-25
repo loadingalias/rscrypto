@@ -6,7 +6,7 @@ OS entropy, or an external implementation. `signatures`, `auth`, and `full`
 include it. RustCrypto ML-DSA 0.1.1 is pinned only as a development oracle.
 
 **The portable implementation and local baseline are complete.** Target qualification
-continues with macOS AArch64 and Linux x86-64/AArch64 acceleration. The evidence
+continues with macOS AArch64 and Linux x86-64/AArch64/IBM Z kernels. The evidence
 and limits below do not assert universal performance leadership or whole-operation
 constant time.
 
@@ -139,8 +139,9 @@ Target qualification must preserve these boundaries:
    strict constant-time under the CT policy. Matching an external library does
    not prove side-channel resistance. Machine-code review and native timing
    evidence must identify the operations, compiler, and target they cover.
-   `ct.toml` inventories ML-DSA as best-effort and registers six diagnostic
-   timing cases for production inverse NTT and secret samplers. These do not
+   `ct.toml` inventories ML-DSA as best-effort and registers diagnostic
+   timing cases for production inverse NTT and secret samplers. A separate
+   inverse-NTT case forces the scalar fallback even on vector-capable hosts. These do not
    substitute for a whole-operation claim.
 2. Establish full stack bounds and caller-owned scratch for constrained targets.
    Qualify prepared-owner construction and cleanup, including success, rejection,
@@ -159,6 +160,10 @@ The macOS and Linux AArch64 builds use original NEON forward and inverse NTTs
 and matrix-product accumulation when compile-time NEON is enabled and
 `portable-only` is absent. Linux x86-64 builds without `portable-only` select
 original AVX2 arithmetic after cached CPU and OS capability detection.
+Linux IBM Z builds without `portable-only` select original z/Vector transforms,
+products, and accumulation after cached CPU and OS vector capability detection.
+The widening products and masked reductions use original register-only assembly
+to prevent compiler scalarization and coefficient-dependent reduction branches.
 Other configurations retain portable arithmetic. All paths use the same canonical
 coefficients and generated roots.
 The Linux NEON inverse stage stays out of line to avoid coefficient spills found

@@ -169,6 +169,7 @@ assert!(
       feature = "chacha20poly1305",
       feature = "xchacha20poly1305",
       feature = "ml-kem",
+      all(feature = "ml-dsa", not(feature = "portable-only"), not(miri)),
       feature = "argon2"
     )
   ),
@@ -190,14 +191,20 @@ assert!(
       feature = "chacha20poly1305",
       feature = "xchacha20poly1305",
       feature = "ml-kem",
+      all(feature = "ml-dsa", not(feature = "portable-only"), not(miri)),
       feature = "argon2"
     )
   ),
   feature(portable_simd)
 )]
-// NIGHTLY: ML-KEM uses s390x vector intrinsics for explicit modular arithmetic.
+// NIGHTLY: ML-KEM and ML-DSA use s390x vector intrinsics for explicit modular arithmetic.
 #![cfg_attr(
-  all(target_arch = "s390x", feature = "ml-kem", not(feature = "portable-only"), not(miri)),
+  all(
+    target_arch = "s390x",
+    any(feature = "ml-kem", feature = "ml-dsa"),
+    not(feature = "portable-only"),
+    not(miri)
+  ),
   feature(stdarch_s390x)
 )]
 // RISC-V CRC/vector/AES-style backends still need nightly target-feature names.

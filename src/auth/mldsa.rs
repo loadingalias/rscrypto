@@ -718,6 +718,18 @@ pub fn diag_mldsa_inverse_ntt(input: &[u32; 256]) -> u32 {
   core::hint::black_box(&value.0).iter().fold(0, |digest, x| digest ^ x)
 }
 
+/// Diagnostic execution of the production scalar inverse NTT, bypassing dispatch.
+///
+/// Available only to internal evidence builds. Inputs must be below 8,380,417.
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+#[must_use]
+pub fn diag_mldsa_inverse_ntt_portable(input: &[u32; 256]) -> u32 {
+  let mut value = poly::Poly::zero();
+  value.0.copy_from_slice(input);
+  value.inverse_ntt_portable();
+  core::hint::black_box(&value.0).iter().fold(0, |digest, x| digest ^ x)
+}
+
 /// Diagnostic execution of the production secret-noise sampler.
 ///
 /// Available only to internal evidence builds. `eta` must be two or four.

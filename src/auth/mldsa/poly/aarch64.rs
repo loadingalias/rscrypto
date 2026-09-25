@@ -5,7 +5,7 @@
 
 use core::arch::aarch64::*;
 
-use super::{INV_N, N, NEG_Q_INVERSE, Poly, Q, R2, ROOTS, montgomery};
+use super::{FIRST_FACTOR, INV_N, LAST_FACTOR, N, NEG_Q_INVERSE, Poly, Q, R2, ROOTS};
 
 /// One masked subtraction for lanes in [0, 2q).
 ///
@@ -39,7 +39,6 @@ fn multiply(a: uint32x4_t, b: uint32x4_t) -> uint32x4_t {
 /// The caller must establish NEON support.
 #[target_feature(enable = "neon")]
 pub(super) unsafe fn ntt(poly: &mut Poly) {
-  const FIRST_FACTOR: u32 = montgomery(R2, ROOTS[1]);
   let q = vdupq_n_u32(Q);
   let (left, right) = poly.0.split_at_mut(N / 2);
   for (a, b) in left.as_chunks_mut::<4>().0.iter_mut().zip(right.as_chunks_mut::<4>().0) {
@@ -144,7 +143,6 @@ pub(super) unsafe fn inverse_ntt(poly: &mut Poly) {
     root = unsafe { inverse_stage(poly, width, root) };
     width = width.strict_mul(2);
   }
-  const LAST_FACTOR: u32 = montgomery(Q.strict_sub(ROOTS[1]), INV_N);
   let (left, right) = poly.0.split_at_mut(N / 2);
   for (a, b) in left.as_chunks_mut::<4>().0.iter_mut().zip(right.as_chunks_mut::<4>().0) {
     // SAFETY: Disjoint four-u32 arrays, initialized and aligned for u32, with
