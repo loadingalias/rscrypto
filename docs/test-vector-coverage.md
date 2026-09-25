@@ -27,6 +27,11 @@ The WebSocket accept digest has the RFC 6455 example, private SHA-1 known-answer
 RustCrypto differential tests, and fuzzing.
 It is compatibility-only and makes no collision-resistance or authentication claim.
 
+ECDSA P-256/SHA-384 and P-384/SHA-256 verification use RFC 6979 Appendix A.2.5/A.2.6 vectors
+and RustCrypto differentials in `tests/ecdsa_oracle.rs`. They cover digest truncation, hash selection,
+message boundaries, and rejection of changed messages, keys, and signatures.
+The vendored ECDSA Wycheproof suites cover P-256/SHA-256 and P-384/SHA-384.
+
 ## Run the evidence
 
 ```bash

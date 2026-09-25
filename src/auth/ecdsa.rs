@@ -1,7 +1,7 @@
 //! ECDSA signing and verification for NIST P-256 and P-384.
 //!
-//! This module exposes strict, typed APIs for the ECDSA profiles most
-//! protocols use today: P-256/SHA-256 and P-384/SHA-384.
+//! Signing uses P-256/SHA-256 or P-384/SHA-384. Verification also supports
+//! P-256/SHA-384 and P-384/SHA-256 through explicit hash-specific methods.
 
 use core::{
   fmt,
@@ -1467,10 +1467,25 @@ impl EcdsaP256PublicKey {
   }
 
   /// Verify a message against a P-256/SHA-256 ECDSA signature.
+  ///
+  /// Use [`Self::verify_sha384`] when the protocol specifies P-256/SHA-384.
   #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
   pub fn verify(&self, message: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
     let digest = Sha256::digest(message);
     verify_digest(&P256, &self.table, signature.r, signature.s, &digest)
+  }
+
+  /// Verify a message against a P-256/SHA-384 ECDSA signature.
+  ///
+  /// Hashes `message` with SHA-384 and uses the leftmost 256 digest bits, as
+  /// required by ECDSA for P-256. Pass the original message, not a precomputed
+  /// digest. The caller must select the hash required by its protocol.
+  ///
+  /// Returns [`VerificationError`] if the signature does not verify.
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify_sha384(&self, message: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
+    let digest = Sha384::digest(message);
+    verify_digest(&P256, &self.table, signature.r, signature.s, &digest[..32])
   }
 }
 
@@ -1539,9 +1554,24 @@ impl EcdsaP384PublicKey {
   }
 
   /// Verify a message against a P-384/SHA-384 ECDSA signature.
+  ///
+  /// Use [`Self::verify_sha256`] when the protocol specifies P-384/SHA-256.
   #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
   pub fn verify(&self, message: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
     let digest = Sha384::digest(message);
+    verify_digest(&P384, &self.table, signature.r, signature.s, &digest)
+  }
+
+  /// Verify a message against a P-384/SHA-256 ECDSA signature.
+  ///
+  /// Hashes `message` with SHA-256 and uses the complete digest as the ECDSA
+  /// message representative. Pass the original message, not a precomputed
+  /// digest. The caller must select the hash required by its protocol.
+  ///
+  /// Returns [`VerificationError`] if the signature does not verify.
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify_sha256(&self, message: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
+    let digest = Sha256::digest(message);
     verify_digest(&P384, &self.table, signature.r, signature.s, &digest)
   }
 }

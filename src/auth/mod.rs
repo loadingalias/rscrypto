@@ -102,7 +102,7 @@
 //! # Modules
 //!
 //! - `argon2` - Argon2d/Argon2i/Argon2id password hashing (RFC 9106).
-//! - `ecdsa` - ECDSA P-256/SHA-256 and P-384/SHA-384 signing and verification.
+//! - `ecdsa` - ECDSA P-256/SHA-256 and P-384/SHA-384 signing; SHA-256/SHA-384 verification on either curve.
 //! - `ed25519` - Ed25519 key and signature types.
 //! - `hmac` - HMAC-based authentication.
 //! - `hmac_sha3` - HMAC-SHA3 authentication.
