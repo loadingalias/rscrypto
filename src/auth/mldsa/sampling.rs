@@ -164,6 +164,7 @@ pub(super) fn xof<const RATE: usize>(parts: &[&[u8]]) -> KeccakXof<RATE> {
 // linked frame of `absorb_and_squeeze`, including every Keccak callee frame
 // and leaf red zone, must fit within this bound on each reviewed target.
 const HASH_STACK_SCRUB_WORDS: usize = 256;
+const _: () = assert!(HASH_STACK_SCRUB_WORDS.is_multiple_of(4));
 
 pub(super) fn hash(parts: &[&[u8]], out: &mut [u8]) {
   absorb_and_squeeze(parts, out);
@@ -185,8 +186,25 @@ fn absorb_and_squeeze(parts: &[&[u8]], out: &mut [u8]) {
 
 #[inline(never)]
 fn scrub_dead_stack() {
-  let mut scratch = [0u64; HASH_STACK_SCRUB_WORDS];
-  crate::traits::ct::zeroize_words(&mut scratch);
+  // Leave the buffer uninitialized so only the volatile stores write it.
+  // Volatile stores cannot be elided, and no later access depends on their
+  // order, so no fence is needed.
+  let mut scratch = core::mem::MaybeUninit::<[u64; HASH_STACK_SCRUB_WORDS]>::uninit();
+  let words = scratch.as_mut_ptr().cast::<u64>();
+  // Four stores per iteration let cores with two store ports retire the
+  // scrub faster than a one-store loop.
+  for index in (0..HASH_STACK_SCRUB_WORDS).step_by(4) {
+    // SAFETY: the word count is a multiple of four, so `index + 3` is below
+    // the array length and every pointer stays inside this local, properly
+    // aligned `[u64; N]` allocation. Writing a `u64` needs no prior
+    // initialization, and the buffer is never read.
+    unsafe {
+      words.add(index).write_volatile(0);
+      words.add(index.strict_add(1)).write_volatile(0);
+      words.add(index.strict_add(2)).write_volatile(0);
+      words.add(index.strict_add(3)).write_volatile(0);
+    }
+  }
 }
 
 pub(super) fn matrix(rho: &[u8], row: u8, column: u8, out: &mut [u32; N]) -> Result<(), MlDsaError> {
