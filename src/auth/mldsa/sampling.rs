@@ -160,12 +160,33 @@ pub(super) fn xof<const RATE: usize>(parts: &[&[u8]]) -> KeccakXof<RATE> {
   state.finalize_xof(0x1f)
 }
 
+// Dead stack cleared below `hash` after each secret SHAKE-256 call. The
+// linked frame of `absorb_and_squeeze`, including every Keccak callee frame
+// and leaf red zone, must fit within this bound on each reviewed target.
+const HASH_STACK_SCRUB_WORDS: usize = 256;
+
 pub(super) fn hash(parts: &[&[u8]], out: &mut [u8]) {
+  absorb_and_squeeze(parts, out);
+  // Both calls start from this frame, so the scrubber's buffer overlays the
+  // worker's dead frame. That covers compiler-created Keccak lane spills that
+  // no named state owner can clear. Changes to this boundary require linked
+  // frame review on every reviewed target.
+  scrub_dead_stack();
+}
+
+#[inline(never)]
+fn absorb_and_squeeze(parts: &[&[u8]], out: &mut [u8]) {
   let mut state = KeccakCore::<136>::default();
   for part in parts {
     state.update(part);
   }
   state.finalize_xof_into(0x1f, out);
+}
+
+#[inline(never)]
+fn scrub_dead_stack() {
+  let mut scratch = [0u64; HASH_STACK_SCRUB_WORDS];
+  crate::traits::ct::zeroize_words(&mut scratch);
 }
 
 pub(super) fn matrix(rho: &[u8], row: u8, column: u8, out: &mut [u32; N]) -> Result<(), MlDsaError> {

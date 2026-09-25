@@ -129,7 +129,10 @@ does not make a new whole-operation constant-time claim. Polynomial arithmetic
 uses fixed coefficient traversals. Signing rejects aggregate norms; candidate
 hints are packed only after every rejection check succeeds. Secret polynomial,
 SHAKE, byte-buffer, and rejected-output owners use existing volatile cleanup.
-These source properties require target-specific compiler and timing evidence.
+After each private SHAKE256 call, a fixed 2 KiB volatile scrub clears the dead
+stack below the hashing helper. It reaches compiler-created Keccak spill slots
+only when the linked frames fit within that bound, so each target needs frame
+review. These source properties require target-specific compiler and timing evidence.
 
 Target qualification must preserve these boundaries:
 
