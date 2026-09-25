@@ -30,6 +30,11 @@ state into an already initialized zeroizing reader, then finalizes and squeezes
 inside that owner. Both the absorbing core and reader are dropped locally;
 the helper returns no secret-valued state or reader.
 
+ML-DSA's secret-noise sampler keeps its acceptance mask with the input bit
+planes and its accepted count with the output bit planes. The input owner is
+cleared after each fixed block; the output owner is cleared on success and
+exhaustion. Compiler-created copies remain subject to target-specific review.
+
 ## Public authentication values
 
 AEAD tags, HMAC tags, `Poly1305Tag`, and `Blake3KeyedHash` are

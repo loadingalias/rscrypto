@@ -13,6 +13,10 @@ const NOISE_BYTES: usize = 481;
 const NOISE_CANDIDATES: usize = NOISE_BYTES * 2;
 const NOISE_INPUT_PLANE_BYTES: usize = 4 * 8;
 const NOISE_PLANE_BYTES: usize = 4 * 4 * 8;
+// Keep the acceptance mask and running count in the same cleanup owners as
+// their input/output planes. Helpers borrow these owners across calls.
+const NOISE_INPUT_BYTES: usize = NOISE_INPUT_PLANE_BYTES + 8;
+const NOISE_STATE_BYTES: usize = NOISE_PLANE_BYTES + 4;
 const CHALLENGE_BYTES: usize = 221;
 
 /// Return one when `value` is non-zero and zero otherwise.
@@ -117,7 +121,14 @@ fn write_u64_word<const BYTES: usize>(bytes: &mut [u8; BYTES], word: usize, valu
   bytes[offset..offset.strict_add(8)].copy_from_slice(&value.to_le_bytes());
 }
 
-fn append_noise_plane(planes: &mut [u8; NOISE_PLANE_BYTES], plane: usize, packed: u64, accepted: u32) {
+// Keep compression and positioning in one call so the caller passes owners
+// and a public plane index, rather than retaining scalar bookkeeping across
+// calls. Changes to this boundary require linked spill and cleanup review.
+#[inline(never)]
+fn append_noise_plane(planes: &mut [u8; NOISE_STATE_BYTES], plane: usize, input: &[u8; NOISE_INPUT_BYTES]) {
+  let acceptance = read_u64_word(input, 4);
+  let packed = compress_bits(read_u64_word(input, plane), acceptance);
+  let accepted = u32::from_le_bytes(planes[NOISE_PLANE_BYTES..].try_into().expect("four count bytes"));
   let word_index = accepted >> 6;
   let bit_index = accepted & 63;
   let low = fixed_shl(packed, bit_index);
@@ -132,6 +143,12 @@ fn append_noise_plane(planes: &mut [u8; NOISE_PLANE_BYTES], plane: usize, packed
       .strict_add(usize::try_from(word).expect("word index fits usize"));
     let output = read_u64_word(planes, output_word);
     write_u64_word(planes, output_word, output | (low & low_mask) | (high & high_mask));
+  }
+  // Every plane uses the same starting count; advance only after the last.
+  // There are only 962 candidates. Modular addition avoids an overflow-check
+  // branch on the secret-derived count, even in debug builds.
+  if plane == 3 {
+    planes[NOISE_PLANE_BYTES..].copy_from_slice(&accepted.wrapping_add(popcount_u64(acceptance)).to_le_bytes());
   }
 }
 
@@ -230,11 +247,9 @@ pub(super) fn noise(seed: &[u8], nonce: u16, eta: u32, out: &mut Poly) -> Result
 
 fn noise_from_bytes(bytes: &[u8; NOISE_BYTES], eta: u32, out: &mut Poly) -> Result<(), MlDsaError> {
   let limit = if eta == 2 { 15 } else { 9 };
-  let mut output_planes = ZeroizingBytes::<NOISE_PLANE_BYTES>::zeroed();
-  let mut accepted = 0u32;
+  let mut output_planes = ZeroizingBytes::<NOISE_STATE_BYTES>::zeroed();
   for block in 0usize..16 {
-    let mut acceptance = 0u64;
-    let mut input_planes = ZeroizingBytes::<NOISE_INPUT_PLANE_BYTES>::zeroed();
+    let mut input_planes = ZeroizingBytes::<NOISE_INPUT_BYTES>::zeroed();
     for lane in 0usize..64 {
       let index = block.strict_mul(64).strict_add(lane);
       let (nibble, accept) = if index < NOISE_CANDIDATES {
@@ -244,7 +259,8 @@ fn noise_from_bytes(bytes: &[u8; NOISE_BYTES], eta: u32, out: &mut Poly) -> Resu
       } else {
         (0, 0)
       };
-      acceptance |= u64::from(accept) << lane;
+      let acceptance = read_u64_word(input_planes.as_array(), 4) | (u64::from(accept) << lane);
+      write_u64_word(input_planes.as_mut_array(), 4, acceptance);
       for bit in 0..4 {
         let plane = read_u64_word(input_planes.as_array(), bit);
         write_u64_word(
@@ -255,16 +271,8 @@ fn noise_from_bytes(bytes: &[u8; NOISE_BYTES], eta: u32, out: &mut Poly) -> Resu
       }
     }
     for plane in 0usize..4 {
-      append_noise_plane(
-        output_planes.as_mut_array(),
-        plane,
-        compress_bits(read_u64_word(input_planes.as_array(), plane), acceptance),
-        accepted,
-      );
+      append_noise_plane(output_planes.as_mut_array(), plane, input_planes.as_array());
     }
-    // There are only 962 candidates. This addition is intentionally modular
-    // so overflow checks cannot branch on the secret-derived acceptance count.
-    accepted = accepted.wrapping_add(popcount_u64(acceptance));
   }
 
   for (index, output) in out.0.iter_mut().enumerate() {
@@ -292,6 +300,11 @@ fn noise_from_bytes(bytes: &[u8; NOISE_BYTES], eta: u32, out: &mut Poly) -> Resu
     *output = reduced.wrapping_add(0u32.wrapping_sub(reduced >> 31) & Q);
   }
 
+  let accepted = u32::from_le_bytes(
+    output_planes.as_array()[NOISE_PLANE_BYTES..]
+      .try_into()
+      .expect("four count bytes"),
+  );
   if less_than_bit(accepted, 256) == 0 {
     Ok(())
   } else {
