@@ -1070,6 +1070,29 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakCoreImpl<RATE, P
   }
 }
 
+#[cfg(feature = "ml-dsa")]
+impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P, true> {
+  pub(crate) fn finalize_xof_into(&self, ds: u8, out: &mut [u8]) {
+    // Initialize the cleanup owner before copying secret state. Finalize and
+    // squeeze in that owner to avoid returning a secret-valued state or reader.
+    let mut reader = KeccakXofImpl::<RATE, P, true> {
+      state: [0; 25],
+      pos: 0,
+      permuter: self.permuter,
+    };
+    reader.state.copy_from_slice(&self.state);
+    debug_assert!(
+      self.buf_len < RATE,
+      "buf_len={} should be < RATE={}",
+      self.buf_len,
+      RATE
+    );
+    pad_absorbed_state::<RATE>(&mut reader.state, self.buf_len, ds);
+    reader.permuter.permute(&mut reader.state, 0);
+    reader.squeeze_into(out);
+  }
+}
+
 impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P, false> {
   pub(crate) fn into_xof(mut self, ds: u8) -> KeccakXofImpl<RATE, P, false> {
     let permuter = self.permuter;

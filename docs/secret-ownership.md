@@ -25,6 +25,11 @@ Typed private keys, shared secrets, keyed states, expanded schedules, and
 private-operation scratch follow the same confidential-owner rules even when
 not named individually above.
 
+ML-DSA's private SHAKE256 helper borrows its output buffer. It copies absorbed
+state into an already initialized zeroizing reader, then finalizes and squeezes
+inside that owner. Both the absorbing core and reader are dropped locally;
+the helper returns no secret-valued state or reader.
+
 ## Public authentication values
 
 AEAD tags, HMAC tags, `Poly1305Tag`, and `Blake3KeyedHash` are

@@ -144,7 +144,11 @@ pub(super) fn xof<const RATE: usize>(parts: &[&[u8]]) -> KeccakXof<RATE> {
 }
 
 pub(super) fn hash(parts: &[&[u8]], out: &mut [u8]) {
-  xof::<136>(parts).squeeze_into(out);
+  let mut state = KeccakCore::<136>::default();
+  for part in parts {
+    state.update(part);
+  }
+  state.finalize_xof_into(0x1f, out);
 }
 
 pub(super) fn matrix(rho: &[u8], row: u8, column: u8, out: &mut [u32; N]) -> Result<(), MlDsaError> {
@@ -220,7 +224,7 @@ pub(super) fn matrix_pair(
 
 pub(super) fn noise(seed: &[u8], nonce: u16, eta: u32, out: &mut Poly) -> Result<(), MlDsaError> {
   let mut bytes = ZeroizingBytes::<NOISE_BYTES>::zeroed();
-  xof::<136>(&[seed, &nonce.to_le_bytes()]).squeeze_into(bytes.as_mut_array());
+  hash(&[seed, &nonce.to_le_bytes()], bytes.as_mut_array());
   noise_from_bytes(bytes.as_array(), eta, out)
 }
 
@@ -298,19 +302,19 @@ fn noise_from_bytes(bytes: &[u8; NOISE_BYTES], eta: u32, out: &mut Poly) -> Resu
 pub(super) fn mask(seed: &[u8], nonce: u16, p: Parameters, out: &mut Poly) {
   let mut bytes = ZeroizingBytes::<640>::zeroed();
   let len = p.z_bits.strict_mul(32);
-  xof::<136>(&[seed, &nonce.to_le_bytes()]).squeeze_into(&mut bytes.as_mut_array()[..len]);
+  hash(&[seed, &nonce.to_le_bytes()], &mut bytes.as_mut_array()[..len]);
   super::encoding::unpack(&bytes.as_array()[..len], p.z_bits, p.gamma1, out);
 }
 
 pub(super) fn challenge(seed: &[u8], tau: usize, out: &mut Poly) -> Result<(), MlDsaError> {
   let mut bytes = ZeroizingBytes::<CHALLENGE_BYTES>::zeroed();
-  xof::<136>(&[seed]).squeeze_into(bytes.as_mut_array());
+  hash(&[seed], bytes.as_mut_array());
   challenge_from_bytes(bytes.as_array(), tau, out)
 }
 
 pub(super) fn challenge_public(seed: &[u8], tau: usize, out: &mut Poly) -> Result<(), MlDsaError> {
   let mut bytes = ZeroizingBytes::<CHALLENGE_BYTES>::zeroed();
-  xof::<136>(&[seed]).squeeze_into(bytes.as_mut_array());
+  hash(&[seed], bytes.as_mut_array());
   let b = bytes.as_array();
   let mut signs = u64::from_le_bytes(b[..8].try_into().expect("fixed challenge sign prefix"));
   let mut offset = 8usize;
@@ -405,6 +409,33 @@ fn challenge_from_bytes_valid(bytes: &[u8; CHALLENGE_BYTES], tau: usize, out: &m
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn hash_parts_match_independent_shake256_across_rate_boundaries() {
+    use tiny_keccak::Hasher as _;
+
+    let mut input = [0u8; 409];
+    for (index, byte) in input.iter_mut().enumerate() {
+      *byte = u8::try_from(index % 251).expect("test byte fits u8");
+    }
+    for input_len in [0, 1, 66, 135, 136, 137, 271, 272, 273, 409] {
+      let message = &input[..input_len];
+      let mut oracle = tiny_keccak::Shake::v256();
+      oracle.update(message);
+      let mut expected = [0u8; 640];
+      oracle.finalize(&mut expected);
+      for split in [0, input_len / 2, input_len.min(135), input_len.min(136), input_len] {
+        let parts = [&message[..split], &[][..], &message[split..]];
+        for output_len in [0, 1, 32, 64, 135, 136, 137, 221, 272, 481, 576, 640] {
+          let mut actual = [0xa5; 642];
+          hash(&parts, &mut actual[1..output_len + 1]);
+          assert_eq!(&actual[1..output_len + 1], &expected[..output_len]);
+          assert_eq!(actual[0], 0xa5);
+          assert!(actual[output_len + 1..].iter().all(|&byte| byte == 0xa5));
+        }
+      }
+    }
+  }
 
   #[test]
   fn paired_matrix_preserves_stream_order_and_coefficients() {
