@@ -214,6 +214,10 @@ for tool in "$LLVM_OBJDUMP" "$LLVM_NM"; do
 done
 BINARY_OBJECT_PATH=""
 BINARY_OBJECT_ARGS=()
+objdump_args=(--disassemble --reloc --demangle)
+if [[ "$TARGET" == "s390x-unknown-linux-gnu" ]]; then
+  objdump_args+=(--mattr=+vector)
+fi
 if [[ "$TARGET" == *-windows-* ]]; then
   shopt -s nullglob
   binary_objects=("$BUILD_TARGET_DIR/$TARGET/$PROFILE/deps"/rscrypto_ct_dudect*.o)
@@ -223,11 +227,11 @@ if [[ "$TARGET" == *-windows-* ]]; then
   fi
   BINARY_OBJECT_PATH="$OUT_DIR/$(basename "${binary_objects[0]}")"
   cp "${binary_objects[0]}" "$BINARY_OBJECT_PATH"
-  "$LLVM_OBJDUMP" --disassemble --reloc --demangle "$BINARY_OBJECT_PATH" > "$BINARY_DISASM_PATH"
+  "$LLVM_OBJDUMP" "${objdump_args[@]}" "$BINARY_OBJECT_PATH" > "$BINARY_DISASM_PATH"
   "$LLVM_NM" --defined-only --demangle "$BINARY_OBJECT_PATH" > "$BINARY_SYMBOLS_PATH"
   BINARY_OBJECT_ARGS=(--binary-object "$BINARY_OBJECT_PATH")
 else
-  "$LLVM_OBJDUMP" --disassemble --reloc --dynamic-reloc --demangle "$BINARY_PATH" > "$BINARY_DISASM_PATH"
+  "$LLVM_OBJDUMP" "${objdump_args[@]}" --dynamic-reloc "$BINARY_PATH" > "$BINARY_DISASM_PATH"
   "$LLVM_NM" --defined-only --demangle "$BINARY_PATH" > "$BINARY_SYMBOLS_PATH"
 fi
 

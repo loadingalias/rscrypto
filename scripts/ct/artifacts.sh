@@ -246,12 +246,12 @@ if [[ ${#OBJECTS[@]} -ne 2 ]]; then
   exit 1
 fi
 
+objdump_args=(--disassemble --reloc --demangle)
+if [[ "$TARGET" == "s390x-unknown-linux-gnu" ]]; then
+  objdump_args+=(--mattr=+vector)
+fi
 for obj in "${OBJECTS[@]}"; do
   base="$(basename "$obj")"
-  objdump_args=(--disassemble --reloc --demangle)
-  if [[ "$TARGET" == "s390x-unknown-linux-gnu" ]]; then
-    objdump_args+=(--mattr=+vector)
-  fi
   "$LLVM_OBJDUMP" "${objdump_args[@]}" "$obj" > "$ARTIFACT_DIR/$base.disasm.txt"
   "$LLVM_NM" --defined-only "$obj" > "$ARTIFACT_DIR/$base.raw-symbols.txt"
   "$LLVM_NM" --defined-only --demangle "$obj" > "$ARTIFACT_DIR/$base.symbols.txt"
@@ -262,7 +262,7 @@ linked_binary="$ARTIFACT_DIR/$(basename "$FINAL_BINARY")"
 linked_base="$(basename "$linked_binary")"
 raw_disassembly="$ARTIFACT_DIR/$linked_base.binary.raw-disasm.txt"
 nm_symbols="$ARTIFACT_DIR/$linked_base.binary.nm-symbols.txt"
-"$LLVM_OBJDUMP" --disassemble --reloc --demangle "$linked_binary" > "$raw_disassembly"
+"$LLVM_OBJDUMP" "${objdump_args[@]}" "$linked_binary" > "$raw_disassembly"
 "$LLVM_NM" --defined-only --demangle "$linked_binary" > "$nm_symbols" || true
 "$LLVM_SIZE" "$linked_binary" > "$ARTIFACT_DIR/$linked_base.binary.size.txt"
 indirect_symbols=""

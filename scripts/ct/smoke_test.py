@@ -28,7 +28,11 @@ def main():
       path.chmod(0o755)
     tool(root / 'scripts/lib/toolchain.sh', "print('fixture-toolchain')")
     tool(binary / 'rustc', "print('host: fixture-host')")
-    tool(binary / 'llvm', "print('fixture symbols')")
+    tool(binary / 'llvm', '''
+with Path('llvm-calls.jsonl').open('a') as log:
+  log.write(json.dumps(sys.argv[1:]) + '\\n')
+print('fixture symbols')
+''')
     tool(binary / 'cargo', '''
 args = sys.argv
 Path('build-flags.json').write_text(json.dumps(os.environ['CARGO_ENCODED_RUSTFLAGS'].split('\\x1f')))
@@ -87,14 +91,20 @@ if __name__ == '__main__':
         assert report['requested_samples_by_case'] == dict(expected)
     # Foreign code may be prepared but must never be timed by this host.
     (root / 'budgets.jsonl').write_text('')
-    cross = ['bash', 'scripts/ct/dudect.sh', '--target', 'riscv64gc-unknown-linux-gnu']
-    result = subprocess.run(cross, cwd=root, env=env, capture_output=True, text=True, timeout=20)
-    assert result.returncode == 2 and 'physical host' in result.stderr, result.stderr
-    result = subprocess.run([*cross, '--prepare-only'], cwd=root, env=env, capture_output=True, text=True, timeout=20)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert json.loads((root / 'build-flags.json').read_text()) == expected_flags
-    assert json.loads((root / 'report-flags.json').read_text()) == expected_flags
-    assert not (root / 'budgets.jsonl').read_text()
+    for target in ('riscv64gc-unknown-linux-gnu', 's390x-unknown-linux-gnu'):
+      (root / 'llvm-calls.jsonl').write_text('')
+      cross = ['bash', 'scripts/ct/dudect.sh', '--target', target]
+      result = subprocess.run(cross, cwd=root, env=env, capture_output=True, text=True, timeout=20)
+      assert result.returncode == 2 and 'physical host' in result.stderr, result.stderr
+      result = subprocess.run([*cross, '--prepare-only'], cwd=root, env=env, capture_output=True, text=True, timeout=20)
+      assert result.returncode == 0, result.stdout + result.stderr
+      assert json.loads((root / 'build-flags.json').read_text()) == expected_flags
+      assert json.loads((root / 'report-flags.json').read_text()) == expected_flags
+      assert not (root / 'budgets.jsonl').read_text()
+      disassemblies = [json.loads(line) for line in (root / 'llvm-calls.jsonl').read_text().splitlines()
+                      if '--disassemble' in json.loads(line)]
+      assert len(disassemblies) == 1, disassemblies
+      assert ('--mattr=+vector' in disassemblies[0]) == target.startswith('s390x'), disassemblies
   manifest = tomllib.loads((ROOT / 'ct.toml').read_text())
   assert all(isinstance(case['smoke_samples'], int) and case['smoke_samples'] >= 2 for case in manifest['dudect_case'])
   print('DudeCT smoke policy regressions passed')

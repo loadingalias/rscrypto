@@ -32,14 +32,15 @@ def snapshot(root):
 class PreparationTests(unittest.TestCase):
   def test_artifacts_preserve_evidence_on_success_and_failure(self):
     for target, failure in ((target, failure)
-                            for target in (TARGET, "x86_64-pc-windows-msvc", "riscv64gc-unknown-linux-gnu")
+                            for target in (TARGET, "x86_64-pc-windows-msvc", "riscv64gc-unknown-linux-gnu",
+                                           "s390x-unknown-linux-gnu")
                             for failure in ("", "--lib", "--bin")):
       with self.subTest(target=target, failure=failure), tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary).resolve()
         commands = root / "commands"
         executable(commands / "git", f"#!/bin/sh\nprintf '%s\\n' '{root}'\n")
         sysroot = root / "sysroot"
-        host = TARGET if target.startswith("riscv64") else target
+        host = TARGET if target.startswith(("riscv64", "s390x")) else target
         executable(commands / "rustc", f"#!/bin/sh\n" +
                    f"if [ \"$*\" = '--print sysroot' ]; then echo '{sysroot}'; else echo 'host: {host}'; fi\n")
         llvm_bin = sysroot / "lib/rustlib" / host / "bin"
@@ -47,7 +48,13 @@ class PreparationTests(unittest.TestCase):
           executable(llvm_bin / tool, f"#!/bin/sh\necho 'sysroot {tool}'\n")
         objdump = commands / "custom tools/objdump"
         nm = commands / "custom tools/nm.exe"
-        executable(objdump, "#!/bin/sh\necho 'override objdump'\n")
+        executable(objdump, f"#!{sys.executable}\n" + '''
+import json, os, sys
+from pathlib import Path
+with Path(os.environ['OBJDUMP_CALLS']).open('a') as log:
+  log.write(json.dumps(sys.argv[1:]) + '\\n')
+print('override objdump')
+''')
         executable(nm, "#!/bin/sh\necho 'override nm'\n")
         executable(commands / "cc", "#!/bin/sh\necho 'fixture linker'\n")
         executable(root / "scripts/lib/python.sh", f"#!/bin/sh\necho '{commands / 'reporter'}'\n")
@@ -118,6 +125,7 @@ if '--bin' in args:
                if key not in {"BASH_ENV", "ENV"} and not key.startswith("BASH_FUNC_")}
         env.update(PATH=str(commands) + os.pathsep + os.environ["PATH"], FAIL_BUILD=failure)
         env.update(LLVM_OBJDUMP=str(objdump), LLVM_NM=str(nm.with_suffix("")))
+        env["OBJDUMP_CALLS"] = str(root / "objdump-calls.jsonl")
         env['EXPECTED_TOOLCHAIN'] = subprocess.check_output(
           [str(ROOT / 'scripts/lib/toolchain.sh'), '--target', target], text=True).strip()
         env.pop("LLVM_SIZE", None)
@@ -137,6 +145,11 @@ if '--bin' in args:
           elif path.exists():
             self.assertNotEqual(path.read_text(), "stale report", name)
         if not failure:
+          disassemblies = [json.loads(line) for line in (root / "objdump-calls.jsonl").read_text().splitlines()
+                           if "--disassemble" in json.loads(line)]
+          self.assertEqual(len(disassemblies), 3)  # Two objects and the final linked binary.
+          for command in disassemblies:
+            self.assertEqual("--mattr=+vector" in command, target == "s390x-unknown-linux-gnu", command)
           binary = "rscrypto-ct-evidence.exe" if "windows" in target else "rscrypto-ct-evidence"
           self.assertEqual((artifacts / binary).read_text(), "binary")
           tools = json.loads((output / "provenance.json").read_text())["tools"]
