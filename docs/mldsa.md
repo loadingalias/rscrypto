@@ -91,8 +91,8 @@ when it is dropped.
 
 ## Work and memory
 
-Operations allocate no heap memory and do not copy messages into an intermediate
-message-sized buffer. Pure signing absorbs the borrowed message; prehash callers
+Operations allocate no heap memory, except the explicit `*_in` constructors
+below, and do not copy messages into an intermediate message-sized buffer. Pure signing absorbs the borrowed message; prehash callers
 can hash incrementally before signing. The compact path expands matrix rows as
 needed. `prepare(&mut storage)` fills caller-owned storage with the complete
 matrix and transformed key for repeated work; it does not change signature
@@ -134,6 +134,23 @@ values; they do not bound Windows, macOS, or WASM builds. Compact signing
 decodes the secret polynomials on the stack; prepared signing reads them from
 storage. A core-only build does not establish that signing fits a particular
 microcontroller.
+
+### Secret keys in caller-selected memory
+
+Returning a secret key by value moves its bytes, and a Rust move leaves the old
+bytes behind. Measured on QEMU RV32 and Cortex-M, a caller that generates a
+key, signs, and drops it keeps one unwiped copy of the expanded key in its dead
+stack frame. With the `alloc` feature, `keypair_from_seed_in`,
+`generate_keypair_in`, `try_generate_keypair_in`, and
+`SecretKey::try_from_slice_in` take an `Allocator` and return
+`Box<SecretKey, A>`. The key is generated or copied directly into that
+allocation, so moving the box moves only a pointer; the box clears the key on
+drop, and a failed call clears it before returning. In the same measurement
+these constructors leave no copy of the key on the stack or in the freed
+allocation. Allocation failure behaves as `Box::new_in`. Pass `Global`, or an
+allocator that provides locked or dump-excluded memory; rscrypto supplies no
+such allocator. The by-value constructors remain for core-only use, and
+`serde-secrets` deserialization still constructs a by-value key.
 
 Matrix sampling considers at most 298 candidates (894 SHAKE bytes). Secret-noise
 sampling consumes all 481 bytes and compacts accepted coefficients with fixed

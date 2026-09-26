@@ -3098,8 +3098,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2478
-compiler_api_sha256 = "264686b9c880a9cfc523c5dc9671eda264e009a1ef7871eda0a027625c96e66d"
+compiler_api_item_count = 2490
+compiler_api_sha256 = "b6284729dc3b92ac46c9210c90e9a2bdda01430f205fe796c0a320ae437cdd8e"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3109,8 +3109,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2478
-compiler_api_sha256 = "264686b9c880a9cfc523c5dc9671eda264e009a1ef7871eda0a027625c96e66d"
+compiler_api_item_count = 2490
+compiler_api_sha256 = "b6284729dc3b92ac46c9210c90e9a2bdda01430f205fe796c0a320ae437cdd8e"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3143,8 +3143,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 2478
-compiler_api_sha256 = "264686b9c880a9cfc523c5dc9671eda264e009a1ef7871eda0a027625c96e66d"
+compiler_api_item_count = 2490
+compiler_api_sha256 = "b6284729dc3b92ac46c9210c90e9a2bdda01430f205fe796c0a320ae437cdd8e"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3165,8 +3165,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 2478
-compiler_api_sha256 = "264686b9c880a9cfc523c5dc9671eda264e009a1ef7871eda0a027625c96e66d"
+compiler_api_item_count = 2490
+compiler_api_sha256 = "b6284729dc3b92ac46c9210c90e9a2bdda01430f205fe796c0a320ae437cdd8e"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3177,8 +3177,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2478
-compiler_api_sha256 = "264686b9c880a9cfc523c5dc9671eda264e009a1ef7871eda0a027625c96e66d"
+compiler_api_item_count = 2490
+compiler_api_sha256 = "b6284729dc3b92ac46c9210c90e9a2bdda01430f205fe796c0a320ae437cdd8e"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3189,8 +3189,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2478
-compiler_api_sha256 = "264686b9c880a9cfc523c5dc9671eda264e009a1ef7871eda0a027625c96e66d"
+compiler_api_item_count = 2490
+compiler_api_sha256 = "b6284729dc3b92ac46c9210c90e9a2bdda01430f205fe796c0a320ae437cdd8e"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3201,8 +3201,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2478
-compiler_api_sha256 = "264686b9c880a9cfc523c5dc9671eda264e009a1ef7871eda0a027625c96e66d"
+compiler_api_item_count = 2490
+compiler_api_sha256 = "b6284729dc3b92ac46c9210c90e9a2bdda01430f205fe796c0a320ae437cdd8e"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -5308,8 +5308,8 @@ claim = "ct-intended"
 [[operation]]
 id = "signature.mldsa"
 api = [
-  "rscrypto::MlDsa{44,65,87}::{keypair_from_seed,generate_keypair,try_generate_keypair}",
-  "rscrypto::MlDsa{44,65,87}SecretKey::{sign_deterministic,sign_with,try_sign,sign_prehash_deterministic,sign_prehash_with,prepare,public_key,expose_secret,try_from_slice}",
+  "rscrypto::MlDsa{44,65,87}::{keypair_from_seed,generate_keypair,try_generate_keypair,keypair_from_seed_in,generate_keypair_in,try_generate_keypair_in}",
+  "rscrypto::MlDsa{44,65,87}SecretKey::{sign_deterministic,sign_with,try_sign,sign_prehash_deterministic,sign_prehash_with,prepare,public_key,expose_secret,try_from_slice,try_from_slice_in}",
   "rscrypto::MlDsa{44,65,87}PreparedSecretKey::{sign_deterministic,sign_with,try_sign,sign_prehash_deterministic,sign_prehash_with}",
   "rscrypto::MlDsa{44,65,87}PublicKey::{verify,verify_with_context,verify_prehash,prepare,as_bytes,to_bytes,from_bytes,try_from_slice}",
   "rscrypto::MlDsa{44,65,87}PreparedPublicKey::{verify,verify_with_context,verify_prehash}",

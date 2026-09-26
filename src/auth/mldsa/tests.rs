@@ -281,6 +281,61 @@ macro_rules! prepared_storage_lifecycle {
   }};
 }
 
+#[cfg(feature = "alloc")]
+macro_rules! allocated_keys {
+  ($profile:ident, $secret:ident) => {{
+    use alloc::alloc::Global;
+    for seed in [[0u8; 32], [0x5a; 32]] {
+      let (public, secret) = $profile::keypair_from_seed(&seed).expect("key generation");
+      let (boxed_public, boxed) = $profile::keypair_from_seed_in(&seed, Global).expect("allocated key generation");
+      assert_eq!(boxed_public, public);
+      assert_eq!(boxed.expose_secret().as_bytes(), secret.expose_secret().as_bytes());
+      assert_eq!(boxed.public_key(), &public);
+      let imported = $secret::try_from_slice_in(secret.expose_secret().as_bytes(), Global).expect("allocated import");
+      assert_eq!(
+        imported.sign_deterministic(b"message", b"context").expect("signature"),
+        secret.sign_deterministic(b"message", b"context").expect("signature")
+      );
+      let (generated_public, generated) = $profile::generate_keypair_in(
+        |out| {
+          out.copy_from_slice(&seed);
+          Ok(())
+        },
+        Global,
+      )
+      .expect("allocated callback generation");
+      assert_eq!(generated_public, public);
+      assert_eq!(generated.expose_secret().as_bytes(), secret.expose_secret().as_bytes());
+    }
+    // Import rejections match the by-value constructor, including length.
+    let (_, secret) = $profile::keypair_from_seed(&[1; 32]).expect("key generation");
+    let mut invalid = *secret.expose_secret().as_bytes();
+    invalid[128] = 0xff;
+    assert_eq!(
+      $secret::try_from_slice(&invalid).err(),
+      Some(MlDsaError::InvalidSecretKey)
+    );
+    assert_eq!(
+      $secret::try_from_slice_in(&invalid, Global).err(),
+      Some(MlDsaError::InvalidSecretKey)
+    );
+    assert_eq!(
+      $secret::try_from_slice_in(&invalid[1..], Global).err(),
+      Some(MlDsaError::InvalidSecretKey)
+    );
+    let failed = $profile::generate_keypair_in(|_| Err(MlDsaError::RandomGenerationFailed), Global);
+    assert_eq!(failed.err(), Some(MlDsaError::RandomGenerationFailed));
+  }};
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn allocated_constructors_match_by_value_keys() {
+  allocated_keys!(MlDsa44, MlDsa44SecretKey);
+  allocated_keys!(MlDsa65, MlDsa65SecretKey);
+  allocated_keys!(MlDsa87, MlDsa87SecretKey);
+}
+
 #[test]
 fn prepared_storage_is_reusable_and_cleared() {
   prepared_storage_lifecycle!(

@@ -36,6 +36,10 @@ mod tests;
 
 use crate::secret::ZeroizingBytes;
 use crate::{SecretBytes, VerificationError, Verifier};
+#[cfg(feature = "alloc")]
+use alloc::boxed::Box;
+#[cfg(feature = "alloc")]
+use core::alloc::Allocator;
 use core::fmt;
 
 /// ML-DSA construction or signing failure. Verification uses opaque [`VerificationError`].
@@ -405,6 +409,43 @@ macro_rules! parameter_set {
       pub fn try_generate_keypair() -> Result<($public, $secret), MlDsaError> {
         Self::generate_keypair(|out| getrandom::fill(out).map_err(|_| MlDsaError::RandomGenerationFailed))
       }
+
+      /// Like [`Self::keypair_from_seed`], with the secret key in memory from `alloc`.
+      ///
+      /// The key is generated directly into its allocation, so moving the box
+      /// moves only a pointer and no by-value copy of the key is left behind.
+      /// The box clears the key on drop; failure clears it before returning.
+      /// Allocation failure is handled as by [`Box::new_in`].
+      #[cfg(feature = "alloc")]
+      pub fn keypair_from_seed_in<A: Allocator>(
+        seed: &[u8; 32],
+        alloc: A,
+      ) -> Result<($public, Box<$secret, A>), MlDsaError> {
+        let mut secret = Box::new_in($secret::zeroed(), alloc);
+        portable::keygen::<$k, $l>(seed, $p, &mut secret.public.0, secret.bytes.as_mut_array())?;
+        Ok((secret.public.clone(), secret))
+      }
+
+      /// Like [`Self::generate_keypair`], with the secret key in memory from `alloc`.
+      /// See [`Self::keypair_from_seed_in`].
+      #[cfg(feature = "alloc")]
+      pub fn generate_keypair_in<A: Allocator>(
+        mut fill_random: impl FnMut(&mut [u8]) -> Result<(), MlDsaError>,
+        alloc: A,
+      ) -> Result<($public, Box<$secret, A>), MlDsaError> {
+        let mut seed = ZeroizingBytes::zeroed();
+        fill_random(seed.as_mut_array())?;
+        Self::keypair_from_seed_in(seed.as_array(), alloc)
+      }
+
+      /// Like [`Self::try_generate_keypair`], with the secret key in memory from `alloc`.
+      #[cfg(all(feature = "alloc", feature = "getrandom"))]
+      pub fn try_generate_keypair_in<A: Allocator>(alloc: A) -> Result<($public, Box<$secret, A>), MlDsaError> {
+        Self::generate_keypair_in(
+          |out| getrandom::fill(out).map_err(|_| MlDsaError::RandomGenerationFailed),
+          alloc,
+        )
+      }
     }
 
     /// Canonical FIPS 204 encoded public key.
@@ -510,6 +551,32 @@ macro_rules! parameter_set {
           bytes: ZeroizingBytes::new(*bytes.as_array()),
           public,
         })
+      }
+
+      /// Like [`Self::try_from_slice`], with the key imported into memory from `alloc`.
+      ///
+      /// The key is copied directly into its allocation, so moving the box moves
+      /// only a pointer. The box clears the key on drop; a rejected key is
+      /// cleared before returning. Allocation failure is handled as by
+      /// [`Box::new_in`]. The caller retains responsibility for clearing `input`.
+      #[cfg(feature = "alloc")]
+      pub fn try_from_slice_in<A: Allocator>(input: &[u8], alloc: A) -> Result<Box<Self, A>, MlDsaError> {
+        if input.len() != $sk {
+          return Err(MlDsaError::InvalidSecretKey);
+        }
+        let mut secret = Box::new_in(Self::zeroed(), alloc);
+        secret.bytes.as_mut_array().copy_from_slice(input);
+        portable::validate_secret::<$k, $l>(secret.bytes.as_array(), $p, &mut secret.public.0)?;
+        Ok(secret)
+      }
+
+      /// Zero-filled owner that an allocation is filled from; never returned.
+      #[cfg(feature = "alloc")]
+      const fn zeroed() -> Self {
+        Self {
+          bytes: ZeroizingBytes::zeroed(),
+          public: $public([0; $pk]),
+        }
       }
 
       /// Prepare secret polynomials and the public matrix in caller-owned

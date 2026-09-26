@@ -6,6 +6,11 @@ Add original portable ML-DSA-44, ML-DSA-65, and ML-DSA-87 signatures with explic
 deterministic and hedged signing, contexts, HashML-DSA, strict encodings,
 prepared keys, and core-only operation under the `ml-dsa` feature.
 
+With `alloc`, `keypair_from_seed_in`, `generate_keypair_in`,
+`try_generate_keypair_in`, and `SecretKey::try_from_slice_in` write the secret
+key directly into a box from a caller-selected allocator, so moves leave no
+by-value copies of the key.
+
 Prepared keys fill caller-owned storage in place: construct
 `MlDsa{44,65,87}Prepared{Secret,Public}KeyStorage::new()` where the storage
 should live, then call `prepare(&mut storage)`. Preparation needs at most
