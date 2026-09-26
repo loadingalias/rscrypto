@@ -83,7 +83,7 @@ try {
     Invoke-Native $python @($catalogHelper, 'validate')
     $native = $catalog.$Platform
     $toolchainHelper = Join-Path $PSScriptRoot '../lib/toolchain.py'
-    $channel = & $python $toolchainHelper --target $native.'rust-host'
+    $channel = & $python $toolchainHelper
     if ($LASTEXITCODE -ne 0) { throw 'Unable to read rust-toolchain.toml.' }
 
     $channelFile = Join-Path $prefix ('vs-channel-' + $catalog.windows.'channel-sha256' + '.json')
@@ -148,7 +148,7 @@ try {
     $rustupInstaller = Join-Path $temporary 'rustup-init.exe'
     Get-PinnedDownload $native.assets.rustup.url $native.assets.rustup.sha256 $rustupInstaller
     Invoke-Native $rustupInstaller @('-y', '--no-modify-path', '--default-host', $native.'rust-host', '--default-toolchain', 'none')
-    $rustArguments = @($toolchainHelper, '--install', $native.'rust-host')
+    $rustArguments = @($toolchainHelper, '--install')
     if (-not $Ci) {
         foreach ($component in $native.components) { $rustArguments += @('--component', $component) }
     }
