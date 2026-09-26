@@ -23,7 +23,8 @@ pub(super) fn run(data: &[u8]) {
       public
         .verify_with_context(message, b"fuzz", &signature)
         .expect("valid signature");
-      let prepared = secret.prepare().expect("prepare secret");
+      let mut storage = Default::default();
+      let prepared = secret.prepare(&mut storage).expect("prepare secret");
       assert_eq!(
         signature,
         prepared

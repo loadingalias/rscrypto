@@ -38,7 +38,8 @@ implementation source is copied, translated, or bundled into the primitive.
 ## API contract
 
 Each parameter set has distinct public-key, secret-key, signature, prepared
-secret-key, and prepared public-key types. Raw FIPS encodings have these sizes:
+secret-key, and prepared public-key types, plus caller-owned storage for each
+prepared key. Raw FIPS encodings have these sizes:
 
 | Parameter set | Public key | Expanded secret key | Signature |
 | --- | ---: | ---: | ---: |
@@ -83,36 +84,56 @@ Public keys and signatures support `serde`. Secret serialization additionally
 requires `serde-secrets`. Deserialization uses the same strict import checks,
 rejects extra bytes, and guards partial secret sequence reads. Secret owners
 are neither `Clone` nor `Copy`, have redacted `Debug`, and export explicitly
-into `SecretBytes`. Prepared secret owners borrow their originating key and
-clear their transformed polynomial arrays on drop.
+into `SecretBytes`. A prepared secret key borrows its originating key and its
+storage, and clears the transformed secret polynomials when dropped; a failed
+preparation clears them before returning. The secret storage clears them again
+when it is dropped.
 
 ## Work and memory
 
 Operations allocate no heap memory and do not copy messages into an intermediate
 message-sized buffer. Pure signing absorbs the borrowed message; prehash callers
 can hash incrementally before signing. The compact path expands matrix rows as
-needed. `.prepare()` explicitly retains the complete matrix and transformed
-key for repeated work; it does not change signature bytes or validation.
+needed. `prepare(&mut storage)` fills caller-owned storage with the complete
+matrix and transformed key for repeated work; it does not change signature
+bytes or validation. The caller chooses where storage lives: stack, static, or
+heap. `new()` is a `const fn`, so storage can also be a static initializer.
+The module's rustdoc example shows the flow. Preparation writes the storage in
+place and returns a handle that borrows the key and the storage. Storage can be
+reused after its handle drops.
 
-| Parameter set | Prepared signing polynomial payload | Prepared verification polynomial payload |
+| Parameter set | Prepared secret-key storage | Prepared public-key storage |
 | --- | ---: | ---: |
-| ML-DSA-44 | 28 KiB | 20 KiB |
-| ML-DSA-65 | 47 KiB | 36 KiB |
-| ML-DSA-87 | 79 KiB | 64 KiB |
+| ML-DSA-44 | 28,672 B | 20,544 B |
+| ML-DSA-65 | 48,128 B | 36,928 B |
+| ML-DSA-87 | 80,896 B | 65,600 B |
 
-These are retained polynomial payloads, not whole-call stack bounds. Pointer,
-hash, output, temporary, and compiler spill storage is additional. Constructors
-return inline owners and can create large stack temporaries. Matrix expansion
-now fills the prepared owner directly. The measured macOS AArch64 build removes
-one large callee frame but does not bound the complete call. The signing path
-requires tens of KiB of stack even without preparation. A core-only build does
-not establish that it fits a particular microcontroller.
-Caller-provided scratch and full in-place prepared-owner construction remain
-open portable resource work.
+Measured whole-call stack bounds, in bytes, excluding the caller's own storage:
 
-Prepared signing also decodes private polynomials directly into the retained
-owner. This removes a separate decoded-state temporary; it does not guarantee
-erasure of copies introduced when the complete prepared owner is returned.
+| Operation | ML-DSA-44 | ML-DSA-65 | ML-DSA-87 |
+| --- | ---: | ---: | ---: |
+| Key generation | 24,976 | 34,688 | 42,000 |
+| Expanded secret-key import | 27,024 | 36,384 | 45,536 |
+| Compact signing (pure, hedged, prehash) | 37,488 | 48,480 | 63,408 |
+| Prepared signing | 25,088 | 30,960 | 39,744 |
+| Compact verification (pure, prehash) | 12,496 | 13,504 | 15,568 |
+| Prepared verification | 12,304 | 13,312 | 15,376 |
+| Secret-key `prepare` | 1,504 | 1,504 | 1,552 |
+| Public-key `prepare` | 4,000 | 4,000 | 4,000 |
+| Storage `new` | 320 | 320 | 320 |
+
+Each value is the largest static bound across native and `portable-only`
+release builds (fat LTO, one codegen unit) for s390x, POWER, RV64, x86-64, and
+AArch64 Linux GNU, and for RV32, Thumb, x86-64, and AArch64 bare metal, built
+with the pinned nightly compiler. Values include the returned key or
+signature. They exclude one-time runtime capability detection, which adds up to
+4.4 KiB on first use in Linux native builds. Linux values also exclude libc
+memory routines. QEMU stack painting on RV32 and Cortex-M stays within every
+static bound. Other compilers, profiles, and caller inlining can change these
+values; they do not bound Windows, macOS, or WASM builds. Compact signing
+decodes the secret polynomials on the stack; prepared signing reads them from
+storage. A core-only build does not establish that signing fits a particular
+microcontroller.
 
 Matrix sampling considers at most 298 candidates (894 SHAKE bytes). Secret-noise
 sampling consumes all 481 bytes and compacts accepted coefficients with fixed
@@ -151,10 +172,11 @@ Target qualification must preserve these boundaries:
    BINSEC root covers only the portable Montgomery leaf, not complete transforms,
    accelerated kernels, samplers, or signing. Registration defines required
    evidence; each target still needs passing results for the exact candidate.
-2. Establish full stack bounds and caller-owned scratch for constrained targets.
-   Qualify prepared-owner construction and cleanup, including success, rejection,
-   import failure, entropy failure, and exhaustion. Compiler-created move, register,
-   and spill copies remain outside the general cleanup claim.
+2. Reduce signing stack for constrained targets and collect device evidence
+   for the measured bounds. Prepared storage is written in place and its secret
+   polynomials are cleared on handle drop, failed preparation, and storage drop.
+   Compiler-created move, register, and spill copies remain outside the general
+   cleanup claim.
 3. Exercise bounded-sampler and signing exhaustion through production paths.
    Extend fuzz/corpus coverage and execute the remaining native/device targets.
    The initial native/portable suites, feature/MSRV matrix, packaging consumers,

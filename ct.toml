@@ -3098,8 +3098,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2454
-compiler_api_sha256 = "c6fc384e408f8d16058b61ccd177e220cea6a229fa83269eaba01bea1fcbbbb8"
+compiler_api_item_count = 2478
+compiler_api_sha256 = "264686b9c880a9cfc523c5dc9671eda264e009a1ef7871eda0a027625c96e66d"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3109,8 +3109,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2454
-compiler_api_sha256 = "c6fc384e408f8d16058b61ccd177e220cea6a229fa83269eaba01bea1fcbbbb8"
+compiler_api_item_count = 2478
+compiler_api_sha256 = "264686b9c880a9cfc523c5dc9671eda264e009a1ef7871eda0a027625c96e66d"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3143,8 +3143,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 2454
-compiler_api_sha256 = "c6fc384e408f8d16058b61ccd177e220cea6a229fa83269eaba01bea1fcbbbb8"
+compiler_api_item_count = 2478
+compiler_api_sha256 = "264686b9c880a9cfc523c5dc9671eda264e009a1ef7871eda0a027625c96e66d"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3165,8 +3165,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 2454
-compiler_api_sha256 = "c6fc384e408f8d16058b61ccd177e220cea6a229fa83269eaba01bea1fcbbbb8"
+compiler_api_item_count = 2478
+compiler_api_sha256 = "264686b9c880a9cfc523c5dc9671eda264e009a1ef7871eda0a027625c96e66d"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3177,8 +3177,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2454
-compiler_api_sha256 = "c6fc384e408f8d16058b61ccd177e220cea6a229fa83269eaba01bea1fcbbbb8"
+compiler_api_item_count = 2478
+compiler_api_sha256 = "264686b9c880a9cfc523c5dc9671eda264e009a1ef7871eda0a027625c96e66d"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3189,8 +3189,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2454
-compiler_api_sha256 = "c6fc384e408f8d16058b61ccd177e220cea6a229fa83269eaba01bea1fcbbbb8"
+compiler_api_item_count = 2478
+compiler_api_sha256 = "264686b9c880a9cfc523c5dc9671eda264e009a1ef7871eda0a027625c96e66d"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3201,8 +3201,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2454
-compiler_api_sha256 = "c6fc384e408f8d16058b61ccd177e220cea6a229fa83269eaba01bea1fcbbbb8"
+compiler_api_item_count = 2478
+compiler_api_sha256 = "264686b9c880a9cfc523c5dc9671eda264e009a1ef7871eda0a027625c96e66d"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -5313,10 +5313,12 @@ api = [
   "rscrypto::MlDsa{44,65,87}PreparedSecretKey::{sign_deterministic,sign_with,try_sign,sign_prehash_deterministic,sign_prehash_with}",
   "rscrypto::MlDsa{44,65,87}PublicKey::{verify,verify_with_context,verify_prehash,prepare,as_bytes,to_bytes,from_bytes,try_from_slice}",
   "rscrypto::MlDsa{44,65,87}PreparedPublicKey::{verify,verify_with_context,verify_prehash}",
+  "rscrypto::MlDsa{44,65,87}PreparedSecretKeyStorage::new",
+  "rscrypto::MlDsa{44,65,87}PreparedPublicKeyStorage::new",
   "rscrypto::MlDsa{44,65,87}Signature::{as_bytes,to_bytes,try_from_slice}",
   "rscrypto::MlDsaPrehash::new",
   "rscrypto::MlDsaPrehashAlgorithm::digest_len",
-  "rscrypto::MlDsa*::{Serialize,Deserialize,Debug,Clone,PartialEq,AsRef,Verifier}",
+  "rscrypto::MlDsa*::{Serialize,Deserialize,Debug,Clone,Default,PartialEq,AsRef,Verifier,Drop}",
   "rscrypto::MlDsa{Error,PrehashAlgorithm}",
 ]
 features = ["ml-dsa", "getrandom", "serde", "serde-secrets"]

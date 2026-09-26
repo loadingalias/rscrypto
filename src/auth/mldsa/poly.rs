@@ -60,6 +60,11 @@ impl Poly {
     Self([0; N])
   }
 
+  /// Clear the coefficients with the same volatile wipe as `Drop`.
+  pub(super) fn clear(&mut self) {
+    ct::zeroize_words(&mut self.0);
+  }
+
   pub(super) fn copy_from(&mut self, other: &Self) {
     self.0.copy_from_slice(&other.0);
   }
@@ -346,7 +351,7 @@ impl Poly {
 
 impl Drop for Poly {
   fn drop(&mut self) {
-    ct::zeroize_words(&mut self.0);
+    self.clear();
   }
 }
 

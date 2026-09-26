@@ -446,10 +446,12 @@ pub use auth::{HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512,
 pub use auth::{Kmac128, Kmac256};
 #[cfg(feature = "ml-dsa")]
 pub use auth::{
-  MlDsa44, MlDsa44PreparedPublicKey, MlDsa44PreparedSecretKey, MlDsa44PublicKey, MlDsa44SecretKey, MlDsa44Signature,
-  MlDsa65, MlDsa65PreparedPublicKey, MlDsa65PreparedSecretKey, MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature,
-  MlDsa87, MlDsa87PreparedPublicKey, MlDsa87PreparedSecretKey, MlDsa87PublicKey, MlDsa87SecretKey, MlDsa87Signature,
-  MlDsaError, MlDsaPrehash, MlDsaPrehashAlgorithm,
+  MlDsa44, MlDsa44PreparedPublicKey, MlDsa44PreparedPublicKeyStorage, MlDsa44PreparedSecretKey,
+  MlDsa44PreparedSecretKeyStorage, MlDsa44PublicKey, MlDsa44SecretKey, MlDsa44Signature, MlDsa65,
+  MlDsa65PreparedPublicKey, MlDsa65PreparedPublicKeyStorage, MlDsa65PreparedSecretKey, MlDsa65PreparedSecretKeyStorage,
+  MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature, MlDsa87, MlDsa87PreparedPublicKey,
+  MlDsa87PreparedPublicKeyStorage, MlDsa87PreparedSecretKey, MlDsa87PreparedSecretKeyStorage, MlDsa87PublicKey,
+  MlDsa87SecretKey, MlDsa87Signature, MlDsaError, MlDsaPrehash, MlDsaPrehashAlgorithm,
 };
 #[cfg(feature = "ml-kem")]
 pub use auth::{

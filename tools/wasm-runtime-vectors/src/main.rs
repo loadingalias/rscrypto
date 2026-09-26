@@ -370,7 +370,10 @@ fn assert_mldsa_fips204_vectors() {
       let context = fixture!("sigGen-context");
       let signature = secret.sign_deterministic(message, context).expect("FIPS 204 signature");
       assert_eq!(signature.as_bytes(), fixture!("sigGen-signature"));
-      let prepared = secret.prepare().expect("prepare FIPS 204 secret key");
+      let mut secret_storage = Default::default();
+      let prepared = secret
+        .prepare(&mut secret_storage)
+        .expect("prepare FIPS 204 secret key");
       assert_eq!(
         prepared
           .sign_deterministic(message, context)
@@ -384,7 +387,10 @@ fn assert_mldsa_fips204_vectors() {
       public
         .verify_with_context(message, context, &signature)
         .expect("FIPS 204 verification");
-      let prepared = public.prepare().expect("prepare FIPS 204 public key");
+      let mut public_storage = Default::default();
+      let prepared = public
+        .prepare(&mut public_storage)
+        .expect("prepare FIPS 204 public key");
       prepared
         .verify_with_context(message, context, &signature)
         .expect("prepared verification");

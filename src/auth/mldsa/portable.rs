@@ -23,8 +23,8 @@ fn vector<const LEN: usize>() -> [Poly; LEN] {
 }
 
 // Matrix coefficients depend only on the public rho seed. They need no secret
-// Drop owner. Expansion writes into the prepared owner to avoid a matrix-sized
-// temporary frame.
+// Drop owner. Expansion writes into caller-owned prepared storage to avoid a
+// matrix-sized temporary frame.
 pub(super) struct Matrix<const K: usize, const L: usize>([[[u32; 256]; L]; K]);
 
 impl<const K: usize, const L: usize> Matrix<K, L> {
@@ -174,12 +174,29 @@ pub(super) struct SigningState<const K: usize, const L: usize> {
 }
 
 impl<const K: usize, const L: usize> SigningState<K, L> {
-  pub(super) fn zero() -> Self {
+  pub(super) const fn zero() -> Self {
     Self {
-      s1: vector(),
-      s2: vector(),
-      t0: vector(),
+      s1: [const { Poly::zero() }; L],
+      s2: [const { Poly::zero() }; K],
+      t0: [const { Poly::zero() }; K],
     }
+  }
+
+  /// Clear every transformed secret polynomial while the owner stays in place.
+  pub(super) fn clear(&mut self) {
+    for poly in self.s1.iter_mut().chain(&mut self.s2).chain(&mut self.t0) {
+      poly.clear();
+    }
+  }
+
+  #[cfg(test)]
+  pub(super) fn is_clear(&self) -> bool {
+    self
+      .s1
+      .iter()
+      .chain(&self.s2)
+      .chain(&self.t0)
+      .all(|poly| poly.0.iter().all(|&x| x == 0))
   }
 
   pub(super) fn decode(&mut self, secret: &[u8], p: Parameters) -> Result<(), MlDsaError> {
@@ -386,20 +403,28 @@ pub(super) struct VerifyingState<const K: usize, const L: usize> {
 }
 
 impl<const K: usize, const L: usize> VerifyingState<K, L> {
-  pub(super) fn prepare(public: &[u8]) -> Result<Self, MlDsaError> {
-    let mut state = Self {
-      tr: [0; 64],
-      matrix: Matrix::zero(),
-      t1: [[0; 256]; K],
-    };
-    state.matrix.expand_into(&public[..32])?;
-    sampling::hash(&[public], &mut state.tr);
+  // Copying one zero constant lets LLVM write caller storage in place. The
+  // field-wise literal built a 64 KiB stack temporary for ML-DSA-87.
+  const ZERO: Self = Self {
+    tr: [0; 64],
+    matrix: Matrix::zero(),
+    t1: [[0; 256]; K],
+  };
+
+  pub(super) const fn zero() -> Self {
+    Self::ZERO
+  }
+
+  /// Overwrite every field from `public` in place. All inputs are public.
+  pub(super) fn prepare(&mut self, public: &[u8]) -> Result<(), MlDsaError> {
+    self.matrix.expand_into(&public[..32])?;
+    sampling::hash(&[public], &mut self.tr);
     let mut poly = Poly::zero();
-    for (i, t1) in state.t1.iter_mut().enumerate() {
+    for (i, t1) in self.t1.iter_mut().enumerate() {
       decode_public_poly(public, i, &mut poly);
       t1.copy_from_slice(&poly.0);
     }
-    Ok(state)
+    Ok(())
   }
 }
 

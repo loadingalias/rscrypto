@@ -225,6 +225,87 @@ fn exhaustion_and_reuse<const K: usize, const L: usize>(
   assert_eq!(signature, expected, "prepared state reuse must match ACVP");
 }
 
+macro_rules! prepared_storage_lifecycle {
+  ($profile:ident, $secret:ident, $secret_storage:ident, $public_storage:ident, $p:ident) => {{
+    let mut storage = $secret_storage::new();
+    let mut public_storage = $public_storage::new();
+    assert_eq!(
+      alloc::format!("{storage:?}"),
+      concat!(stringify!($secret_storage), "(****)")
+    );
+    let first = $profile::keypair_from_seed(&[1; 32]).expect("first key");
+    let second = $profile::keypair_from_seed(&[2; 32]).expect("second key");
+    // Reuse across different keys must not retain state from the previous key.
+    for (public, secret) in [&first, &second, &first] {
+      let expected = secret
+        .sign_deterministic(b"message", b"context")
+        .expect("compact signature");
+      {
+        let prepared = secret.prepare(&mut storage).expect("prepare secret");
+        assert!(!prepared.storage.state.is_clear(), "preparation must fill storage");
+        assert_eq!(
+          prepared
+            .sign_deterministic(b"message", b"context")
+            .expect("prepared signature"),
+          expected
+        );
+        let verifier = public.prepare(&mut public_storage).expect("prepare public");
+        let copy = verifier;
+        verifier
+          .verify_with_context(b"message", b"context", &expected)
+          .expect("prepared verification");
+        copy
+          .verify_with_context(b"other", b"context", &expected)
+          .expect_err("changed message");
+      }
+      assert!(storage.state.is_clear(), "dropping the handle must clear secrets");
+    }
+
+    // A forgotten handle leaves secrets in storage. A failed preparation must
+    // clear what it decoded before returning. Out-of-range noise fails decode
+    // only after every polynomial has been written.
+    let _leaked = core::mem::ManuallyDrop::new(first.1.prepare(&mut storage).expect("prepare secret"));
+    assert!(!storage.state.is_clear());
+    let mut bytes = *first.1.bytes.as_array();
+    let noise_end = 128usize.strict_add($p.eta_bits.strict_mul(32));
+    bytes[128..noise_end].fill(0xff);
+    let invalid = $secret {
+      bytes: ZeroizingBytes::new(bytes),
+      public: first.0.clone(),
+    };
+    assert_eq!(
+      invalid.prepare(&mut storage).map(|_| ()),
+      Err(MlDsaError::InvalidSecretKey)
+    );
+    assert!(storage.state.is_clear(), "failed preparation must clear secrets");
+  }};
+}
+
+#[test]
+fn prepared_storage_is_reusable_and_cleared() {
+  prepared_storage_lifecycle!(
+    MlDsa44,
+    MlDsa44SecretKey,
+    MlDsa44PreparedSecretKeyStorage,
+    MlDsa44PreparedPublicKeyStorage,
+    P44
+  );
+  prepared_storage_lifecycle!(
+    MlDsa65,
+    MlDsa65SecretKey,
+    MlDsa65PreparedSecretKeyStorage,
+    MlDsa65PreparedPublicKeyStorage,
+    P65
+  );
+  prepared_storage_lifecycle!(
+    MlDsa87,
+    MlDsa87SecretKey,
+    MlDsa87PreparedSecretKeyStorage,
+    MlDsa87PreparedPublicKeyStorage,
+    P87
+  );
+}
+
 #[test]
 fn signing_exhaustion_clears_output_and_preserves_reusable_state() {
   let prompt = vectors("sigGen-prompt");

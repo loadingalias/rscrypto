@@ -6,16 +6,22 @@
 //! allocation nor OS entropy. See [`MlDsaPrehash`] for HashML-DSA.
 //!
 //! Target qualification is ongoing; no whole-operation constant-time claim
-//! is made. Signing needs tens of KiB of stack. Prepared owners retain up to
-//! 79 KiB of polynomial storage, and construction uses additional stack temporaries.
-//! Core-only availability does not establish suitability for a constrained stack.
+//! is made. Signing needs tens of KiB of stack. Prepared keys keep up to
+//! 79 KiB of polynomials in caller-owned storage, which may live on the stack,
+//! in a static, or on the heap. Core-only availability does not establish
+//! suitability for a constrained stack.
 //!
 //! ```
-//! use rscrypto::{MlDsa44, MlDsaError};
+//! use rscrypto::{MlDsa44, MlDsa44PreparedSecretKeyStorage, MlDsaError};
 //! // Fixed seeds are suitable for reproducible examples, not production keys.
 //! let (public, secret) = MlDsa44::keypair_from_seed(&[7; 32])?;
 //! let signature = secret.sign_deterministic(b"release manifest", b"example")?;
 //! public.verify_with_context(b"release manifest", b"example", &signature)?;
+//!
+//! // Repeated signing: expand the key once into caller-owned storage.
+//! let mut storage = MlDsa44PreparedSecretKeyStorage::new();
+//! let prepared = secret.prepare(&mut storage)?;
+//! assert_eq!(prepared.sign_deterministic(b"release manifest", b"example")?, signature);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
@@ -362,7 +368,7 @@ macro_rules! verification_methods {
 }
 
 macro_rules! parameter_set {
-  ($profile:ident, $public:ident, $secret:ident, $signature:ident, $prepared_secret:ident, $prepared_public:ident, $p:ident, $k:literal, $l:literal, $pk:literal, $sk:literal, $sig:literal) => {
+  ($profile:ident, $public:ident, $secret:ident, $signature:ident, $prepared_secret:ident, $prepared_public:ident, $secret_storage:ident, $public_storage:ident, $p:ident, $k:literal, $l:literal, $pk:literal, $sk:literal, $sig:literal) => {
     /// FIPS 204 parameter set with typed key-generation outputs.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct $profile;
@@ -421,12 +427,17 @@ macro_rules! parameter_set {
         Ok(Self(array))
       }
 
-      /// Prepare the matrix and transformed public key for repeated verification.
-      /// This explicit owner uses more memory; ordinary verification expands rows on demand.
-      pub fn prepare(&self) -> Result<$prepared_public<'_>, MlDsaError> {
+      /// Prepare the matrix and transformed public key in caller-owned storage
+      /// for repeated verification.
+      ///
+      /// The returned handle borrows this key and `storage`; the storage can be
+      /// reused after every handle is dropped. Ordinary verification expands
+      /// rows on demand instead. No heap allocation.
+      pub fn prepare<'a>(&'a self, storage: &'a mut $public_storage) -> Result<$prepared_public<'a>, MlDsaError> {
+        storage.state.prepare(&self.0)?;
         Ok($prepared_public {
           key: self,
-          state: portable::VerifyingState::prepare(&self.0)?,
+          state: &storage.state,
         })
       }
 
@@ -501,17 +512,17 @@ macro_rules! parameter_set {
         })
       }
 
-      /// Prepare secret polynomials and the public matrix for repeated signing.
-      /// The returned owner borrows this key, owns and clears transformed secrets,
-      /// and performs no heap allocation. See the module's resource contract.
-      pub fn prepare(&self) -> Result<$prepared_secret<'_>, MlDsaError> {
-        let mut prepared = $prepared_secret {
-          key: self,
-          state: portable::SigningState::zero(),
-          matrix: portable::Matrix::zero(),
-        };
-        prepared.state.decode(self.bytes.as_array(), $p)?;
-        prepared.matrix.expand_into(&self.bytes.as_array()[..32])?;
+      /// Prepare secret polynomials and the public matrix in caller-owned
+      /// storage for repeated signing.
+      ///
+      /// The returned handle borrows this key and `storage`. It clears the
+      /// transformed secrets when dropped; a failed preparation clears them
+      /// before returning. The storage can be reused after the handle is
+      /// dropped. No heap allocation. See the module's resource contract.
+      pub fn prepare<'a>(&'a self, storage: &'a mut $secret_storage) -> Result<$prepared_secret<'a>, MlDsaError> {
+        let prepared = $prepared_secret { key: self, storage };
+        prepared.storage.state.decode(self.bytes.as_array(), $p)?;
+        prepared.storage.matrix.expand_into(&self.bytes.as_array()[..32])?;
         Ok(prepared)
       }
 
@@ -547,12 +558,54 @@ macro_rules! parameter_set {
       }
     }
 
-    /// Reusable signing state with an explicit borrowed key lifetime.
-    /// Transformed secrets are zeroized on drop. Not `Clone` or `Copy`.
-    pub struct $prepared_secret<'a> {
-      key: &'a $secret,
+    /// Caller-owned storage for a prepared signing key: transformed secret
+    /// polynomials and the expanded public matrix.
+    ///
+    /// Create it where it should live (stack, static, or heap), then pass it to
+    /// the secret key's `prepare`. The prepared handle clears the secret
+    /// polynomials when dropped, and the storage clears them again when it is
+    /// dropped. Not `Clone` or `Copy`.
+    pub struct $secret_storage {
       state: portable::SigningState<$k, $l>,
       matrix: portable::Matrix<$k, $l>,
+    }
+
+    impl $secret_storage {
+      /// Empty storage; the size is fixed by the parameter set.
+      #[must_use]
+      pub const fn new() -> Self {
+        Self {
+          state: portable::SigningState::zero(),
+          matrix: portable::Matrix::zero(),
+        }
+      }
+    }
+
+    impl Default for $secret_storage {
+      fn default() -> Self {
+        Self::new()
+      }
+    }
+
+    impl fmt::Debug for $secret_storage {
+      fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(concat!(stringify!($secret_storage), "(****)"))
+      }
+    }
+
+    /// Prepared signing key over caller-owned storage.
+    ///
+    /// Borrows the secret key and its storage, and clears the transformed
+    /// secrets when dropped. Not `Clone` or `Copy`.
+    pub struct $prepared_secret<'a> {
+      key: &'a $secret,
+      storage: &'a mut $secret_storage,
+    }
+
+    impl Drop for $prepared_secret<'_> {
+      fn drop(&mut self) {
+        self.storage.state.clear();
+      }
     }
 
     impl $prepared_secret<'_> {
@@ -570,8 +623,8 @@ macro_rules! parameter_set {
           random,
           $p,
           output.as_mut_array(),
-          &self.state,
-          Some(&self.matrix),
+          &self.storage.state,
+          Some(&self.storage.matrix),
         )?;
         Ok($signature(*output.as_array()))
       }
@@ -583,10 +636,41 @@ macro_rules! parameter_set {
       }
     }
 
-    /// Reusable public matrix and transformed key for verification.
+    /// Caller-owned storage for a prepared public key: the expanded matrix,
+    /// transformed key, and public-key hash. All contents are public.
+    pub struct $public_storage {
+      state: portable::VerifyingState<$k, $l>,
+    }
+
+    impl $public_storage {
+      /// Empty storage; the size is fixed by the parameter set.
+      #[must_use]
+      pub const fn new() -> Self {
+        Self {
+          state: portable::VerifyingState::zero(),
+        }
+      }
+    }
+
+    impl Default for $public_storage {
+      fn default() -> Self {
+        Self::new()
+      }
+    }
+
+    impl fmt::Debug for $public_storage {
+      fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct(stringify!($public_storage)).finish_non_exhaustive()
+      }
+    }
+
+    /// Prepared verification key over caller-owned storage.
+    ///
+    /// Borrows the public key and its storage. Copies share the same storage.
+    #[derive(Clone, Copy)]
     pub struct $prepared_public<'a> {
       key: &'a $public,
-      state: portable::VerifyingState<$k, $l>,
+      state: &'a portable::VerifyingState<$k, $l>,
     }
 
     impl $prepared_public<'_> {
@@ -602,7 +686,7 @@ macro_rules! parameter_set {
         let mut mu = ZeroizingBytes::zeroed();
         representative(&self.state.tr, message, context, prehash, mu.as_mut_array())
           .map_err(|_| VerificationError::new())?;
-        portable::verify_with_state(&self.key.0, mu.as_array(), &signature.0, $p, Some(&self.state))
+        portable::verify_with_state(&self.key.0, mu.as_array(), &signature.0, $p, Some(self.state))
           .map_err(|_| VerificationError::new())
       }
     }
@@ -670,6 +754,8 @@ parameter_set!(
   MlDsa44Signature,
   MlDsa44PreparedSecretKey,
   MlDsa44PreparedPublicKey,
+  MlDsa44PreparedSecretKeyStorage,
+  MlDsa44PreparedPublicKeyStorage,
   P44,
   4,
   4,
@@ -684,6 +770,8 @@ parameter_set!(
   MlDsa65Signature,
   MlDsa65PreparedSecretKey,
   MlDsa65PreparedPublicKey,
+  MlDsa65PreparedSecretKeyStorage,
+  MlDsa65PreparedPublicKeyStorage,
   P65,
   6,
   5,
@@ -698,6 +786,8 @@ parameter_set!(
   MlDsa87Signature,
   MlDsa87PreparedSecretKey,
   MlDsa87PreparedPublicKey,
+  MlDsa87PreparedSecretKeyStorage,
+  MlDsa87PreparedPublicKeyStorage,
   P87,
   8,
   7,

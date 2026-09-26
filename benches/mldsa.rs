@@ -18,15 +18,24 @@ macro_rules! profile {
       let (public, secret) = $profile::keypair_from_seed(&seed).expect("benchmark key generation");
       let external = oracle::ExpandedSigningKey::<oracle::$oracle>::from_seed(&seed.into());
       let external_public = external.verifying_key();
-      let prepared_secret = secret.prepare().expect("prepare secret");
-      let prepared_public = public.prepare().expect("prepare public");
+      // Retained memory: borrowed key, caller-owned storage, and the handle.
+      let mut secret_storage = Default::default();
+      let mut public_storage = Default::default();
+      let secret_storage_len = core::mem::size_of_val(&secret_storage);
+      let public_storage_len = core::mem::size_of_val(&public_storage);
+      let prepared_secret = secret.prepare(&mut secret_storage).expect("prepare secret");
+      let prepared_public = public.prepare(&mut public_storage).expect("prepare public");
       eprintln!(
         "{} retained bytes: compact secret={}, prepared secret including borrowed key={} vs oracle={}, prepared public including borrowed key={} vs oracle={}",
         $name,
         core::mem::size_of_val(&secret),
-        core::mem::size_of_val(&secret).strict_add(core::mem::size_of_val(&prepared_secret)),
+        core::mem::size_of_val(&secret)
+          .strict_add(secret_storage_len)
+          .strict_add(core::mem::size_of_val(&prepared_secret)),
         core::mem::size_of_val(&external),
-        core::mem::size_of_val(&public).strict_add(core::mem::size_of_val(&prepared_public)),
+        core::mem::size_of_val(&public)
+          .strict_add(public_storage_len)
+          .strict_add(core::mem::size_of_val(&prepared_public)),
         core::mem::size_of_val(&external_public),
       );
       let message = [0xa5; 32];
@@ -68,16 +77,23 @@ macro_rules! profile {
         })
       });
       group.finish();
-      // Preparation constructs and drops the complete retained owner. Keep the
-      // encoded key outside timing, as in the signing and verification rows.
+      // Preparation fills reused caller-owned storage; the secret handle's drop
+      // clears it. Keep the encoded key outside timing, as in the signing and
+      // verification rows.
       let mut group = c.benchmark_group(concat!($name, "/prepare/encoded-secret"));
+      let mut storage = Default::default();
       group.bench_function("rscrypto", |b| {
-        b.iter(|| black_box(secret.prepare().expect("prepare secret")))
+        b.iter(|| {
+          black_box(secret.prepare(&mut storage).expect("prepare secret"));
+        })
       });
       group.finish();
       let mut group = c.benchmark_group(concat!($name, "/prepare/encoded-public"));
+      let mut storage = Default::default();
       group.bench_function("rscrypto", |b| {
-        b.iter(|| black_box(public.prepare().expect("prepare public")))
+        b.iter(|| {
+          black_box(public.prepare(&mut storage).expect("prepare public"));
+        })
       });
       group.finish();
       // Compact keys and explicit prepared keys have distinct memory contracts.
@@ -161,7 +177,8 @@ macro_rules! profile {
         let seed_byte = u8::try_from(index.strict_add(1)).expect("eight corpus seeds");
         let seed = [seed_byte; 32];
         let (public, secret) = $profile::keypair_from_seed(&seed).expect("corpus key generation");
-        let prepared = secret.prepare().expect("corpus preparation");
+        let mut storage = Default::default();
+        let prepared = secret.prepare(&mut storage).expect("corpus preparation");
         let external = oracle::ExpandedSigningKey::<oracle::$oracle>::from_seed(&seed.into());
         let message = vec![seed_byte ^ 0xa5; message_len];
         let context = vec![0x55; context_len];
@@ -242,8 +259,10 @@ mod aws {
         let seed = [0x42; 32];
         let message = [0xa5; 32];
         let (public, secret) = $profile::keypair_from_seed(&seed).expect("keygen");
-        let prepared = secret.prepare().expect("prepare secret");
-        let prepared_public = public.prepare().expect("prepare public");
+        let mut secret_storage = Default::default();
+        let prepared = secret.prepare(&mut secret_storage).expect("prepare secret");
+        let mut public_storage = Default::default();
+        let prepared_public = public.prepare(&mut public_storage).expect("prepare public");
         let external = PqdsaKeyPair::from_seed(&aws_lc_rs::signature::$sign, &seed).expect("AWS-LC keygen");
         assert_eq!(external.public_key().as_ref(), public.as_bytes().as_slice());
         assert_eq!(

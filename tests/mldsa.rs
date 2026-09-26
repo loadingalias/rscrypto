@@ -51,8 +51,10 @@ macro_rules! interop {
         let encoded = external.to_expanded();
         assert_eq!(secret.expose_secret().as_bytes().as_slice(), encoded.as_slice());
         let imported = $secret::try_from_slice(encoded.as_slice()).expect("key import");
-        let prepared = imported.prepare().expect("prepare signing key");
-        let verifier = public.prepare().expect("prepare public key");
+        let mut signing_storage = Default::default();
+        let prepared = imported.prepare(&mut signing_storage).expect("prepare signing key");
+        let mut verifying_storage = Default::default();
+        let verifier = public.prepare(&mut verifying_storage).expect("prepare public key");
         assert_eq!(imported.public_key(), &public);
         if seed_byte == 0 {
           reject_signing_failures!(secret);
