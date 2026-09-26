@@ -18,6 +18,9 @@ Supporting modules are invoked by those entry points.
 `check/check_runner_test.py` tests command selection, repair behavior, and failure propagation with substitute executors.
 Run it with `scripts/lib/python.sh scripts/check/check_runner_test.py`.
 
+`check/lint-independent-workspaces.sh` lints every independent Cargo workspace that Git tracks or would add;
+ignored manifests, such as local evidence crates, are not repository policy.
+
 ## Test entry points
 
 | Script                   | Caller |

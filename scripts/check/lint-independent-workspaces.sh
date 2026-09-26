@@ -22,8 +22,18 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "Independent workspace discovery requires a Git work tree at $REPO_ROOT" >&2
+  exit 1
+fi
+
+# Lint what can be committed: tracked manifests plus untracked, unignored ones.
+# Ignored paths (build output, local evidence crates) are not repository policy.
 manifests=()
-while IFS= read -r package_manifest; do
+while IFS= read -r -d '' relative_package_manifest; do
+  package_manifest="$REPO_ROOT/$relative_package_manifest"
+  # The index still lists tracked manifests deleted from the working tree.
+  [[ -f "$package_manifest" ]] || continue
   if ! metadata=$(cargo metadata \
     --locked \
     --no-deps \
@@ -49,7 +59,7 @@ while IFS= read -r package_manifest; do
   if [[ "$already_listed" == false ]]; then
     manifests+=("$workspace_manifest")
   fi
-done < <(find "$REPO_ROOT" -type d -name target -prune -o -type f -name Cargo.toml -print | sort)
+done < <(git -C "$REPO_ROOT" ls-files -z --cached --others --exclude-standard -- ':(glob)**/Cargo.toml' | sort -z)
 
 if [[ ${#manifests[@]} -eq 0 ]]; then
   echo "No independent Cargo workspaces found through Cargo metadata"

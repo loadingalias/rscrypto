@@ -54,7 +54,10 @@ else:
     cargo.chmod(0o755)
     (binary / 'jq').symlink_to(cargo)
     environment = {key: value for key, value in os.environ.items()
-                   if key not in ('BASH_ENV', 'ENV') and not key.startswith('BASH_FUNC_')}
+                   if key not in ('BASH_ENV', 'ENV') and not key.startswith('BASH_FUNC_') and not key.startswith('GIT_')}
+    # Discovery follows Git; keep personal and system excludes out of the fixture.
+    environment.update({'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1'})
+    subprocess.run(['git', 'init', '-q', str(root)], check=True, env=environment)
     log = root / 'commands.json'
     for prefix, separator in [('/repo/tools/harness/', '/'), ('C:\\repo\\tools\\harness\\', '\\')]:
       result = subprocess.run(['bash', str(script)], cwd=root, capture_output=True, text=True, timeout=30,
@@ -67,6 +70,26 @@ else:
       excluded = [command[i + 1] for i, arg in enumerate(command) if arg == '--exclude']
       assert excluded == ['upstream'], (prefix, command)
       assert '--workspace' in command and '--all-targets' in command and '--no-deps' in command
+
+    # Ignored manifests are local scratch, not repository policy, even when broken. Untracked
+    # unignored manifests are linted before commit; tracked manifests deleted from the working
+    # tree are skipped.
+    (root / '.gitignore').write_text('/evidence/**\n')
+    ignored = root / 'evidence/campaign'
+    ignored.mkdir(parents=True)
+    (ignored / 'Cargo.toml').write_text('[dependencies]\nmissing = { path = "/nonexistent" }\n')
+    deleted = root / 'tools/deleted'
+    deleted.mkdir()
+    (deleted / 'Cargo.toml').write_text('[workspace]\n')
+    subprocess.run(['git', '-C', str(root), 'add', 'tools/deleted/Cargo.toml'], check=True, env=environment)
+    (deleted / 'Cargo.toml').unlink()
+    result = subprocess.run(['bash', str(script)], cwd=root, capture_output=True, text=True, timeout=30,
+                            env={**environment, 'PATH': f'{binary}:{os.environ["PATH"]}',
+                                 'CHECK_LOG': str(log), 'METADATA_PREFIX': '/repo/tools/harness/',
+                                 'REAL_JQ': shutil.which('jq'), 'METADATA_SEPARATOR': '/'})
+    assert result.returncode == 0, result.stderr
+    linted = [line for line in result.stdout.splitlines() if line.startswith('Linting independent workspace: ')]
+    assert linted == ['Linting independent workspace: tools/harness/Cargo.toml'], result.stdout
 
     later = root / 'tools/later'
     later.mkdir()
