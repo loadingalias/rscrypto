@@ -263,12 +263,11 @@ class LinuxInstall(unittest.TestCase):
                 if profile != 'ci-bench':
                     self.assertNotIn('jq=1.0', apt)
                 rustup = [c for c in calls if c[:3] == ['rustup', 'toolchain', 'install']]
-                self.assertEqual(len(rustup), 2 if profile in ('ci-fuzz', 'ci-miri') or platform in ('s390x-linux', 'powerpc64le-linux', 'riscv64-linux') else 1)
+                # One canonical toolchain carries every lane's components.
+                self.assertEqual(len(rustup), 1)
+                self.assertEqual(rustup[0][3], tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel'])
                 self.assertEqual([c[i + 1] for c in rustup for i, arg in enumerate(c) if arg == '--component'],
                                  components)
-                if profile in ('ci-fuzz', 'ci-miri'):
-                    policy = tomllib.loads((ROOT / '.config/toolchains.toml').read_text())
-                    self.assertEqual(rustup[1][3], policy['nightly'])
                 self.assertFalse(any('musl-tools=1.0' in c or 'target' in c and c[0] == 'rustup' for c in calls))
                 archives = [c[-2] for c in calls if c[0] == 'python3' and 'install-archive' in c]
                 self.assertEqual(archives, ['cargo-binstall'] if 'cargo-binstall' in CATALOG[platform]['assets'] else [])
@@ -293,8 +292,7 @@ class LinuxInstall(unittest.TestCase):
         self.assertFalse(any('musl-tools=1.0' in c for c in calls))
 
     def test_cross_build_and_execution_tooling_are_separate(self):
-        nightly = tomllib.loads((ROOT / '.config/toolchains.toml').read_text())['nightly']
-        stable = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel']
+        channel = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel']
         for platform, target, prefix, libc in (
             ('aarch64-linux', 'aarch64-unknown-linux-gnu', 'aarch64-linux-gnu', 'arm64'),
             ('riscv64-linux', 'riscv64gc-unknown-linux-gnu', 'riscv64-linux-gnu', 'riscv64'),
@@ -313,17 +311,16 @@ class LinuxInstall(unittest.TestCase):
                         packages += ['gcc-' + prefix, 'g++-' + prefix, 'libc6-dev-' + libc + '-cross']
                     self.assertEqual([a for a in apt if a.endswith('=1.0')], [p + '=1.0' for p in packages])
                     installs = [c for c in calls if c[:3] == ['rustup', 'toolchain', 'install']]
-                    target_toolchain = stable if platform in ('aarch64-linux', 'x86_64-linux') else nightly
-                    self.assertIn(target_toolchain, [c[3] for c in installs])
+                    self.assertEqual([c[3] for c in installs], [channel])
                     components = [c[i + 1] for c in installs for i, arg in enumerate(c) if arg == '--component']
                     self.assertEqual(components, ['rustfmt', 'clippy', 'llvm-tools'] if profile.endswith('build') else [])
                     if profile.endswith('build'):
-                        self.assertIn(['rustup', 'target', 'add', '--toolchain', target_toolchain, target], calls)
+                        self.assertIn(['rustup', 'target', 'add', '--toolchain', channel, target], calls)
                         archives = [c[-2] for c in calls if c[0] == 'python3' and 'install-archive' in c]
                         self.assertEqual(archives, CATALOG['ci-cross-build']['assets'])
                         self.assertFalse(any(c[0] == 'cargo' and ('install' in c or 'binstall' in c) for c in calls))
                         self.assertIn(['just', '--version'], calls)
-                        self.assertIn(['cargo', f'+{stable}', 'nextest', '--version'], calls)
+                        self.assertIn(['cargo', f'+{channel}', 'nextest', '--version'], calls)
                     else:
                         self.assertFalse(any(c[0] == 'cargo' and ('build' in c or 'install' in c or 'binstall' in c) for c in calls))
                     transfers = [c for c in calls if c[0] == 'python3' and c[1].endswith('/tooling/transfer.py')]

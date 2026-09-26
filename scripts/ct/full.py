@@ -1089,7 +1089,7 @@ def main() -> int:
 
   root = Path(__file__).resolve().parents[2]
   os.environ["RUSTUP_TOOLCHAIN"] = subprocess.check_output(
-    python_script(root, "scripts/lib/toolchain.py", "--host"), text=True, cwd=root,
+    python_script(root, "scripts/lib/toolchain.py"), text=True, cwd=root,
   ).strip()
   target = args.target or host_target(root)
   transferred = None

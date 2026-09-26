@@ -127,7 +127,7 @@ if '--bin' in args:
         env.update(LLVM_OBJDUMP=str(objdump), LLVM_NM=str(nm.with_suffix("")))
         env["OBJDUMP_CALLS"] = str(root / "objdump-calls.jsonl")
         env['EXPECTED_TOOLCHAIN'] = subprocess.check_output(
-          [str(ROOT / 'scripts/lib/toolchain.sh'), '--target', target], text=True).strip()
+          [str(ROOT / 'scripts/lib/toolchain.sh')], text=True).strip()
         env.pop("LLVM_SIZE", None)
         result = subprocess.run(
           [shutil.which("bash"), str(ROOT / "scripts/ct/artifacts.sh"), "--target", target],

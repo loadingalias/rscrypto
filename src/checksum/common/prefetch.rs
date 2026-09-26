@@ -40,7 +40,7 @@
 /// Prefetch distance for large buffer kernels (xl size, 1MB+).
 ///
 /// The x86-64 folding loops use this 1,024-byte lookahead.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(in crate::checksum) const LARGE_BLOCK_DISTANCE: usize = 1024;
 
 /// Prefetch distance for large buffer kernels on ARM64.
@@ -51,7 +51,7 @@ pub(in crate::checksum) const LARGE_BLOCK_DISTANCE: usize = 768;
 
 // x86-64 Prefetch Intrinsics
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 mod x86_64_impl {
   use core::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
 
@@ -114,14 +114,20 @@ mod aarch64_impl {
 
 #[cfg(target_arch = "aarch64")]
 pub(in crate::checksum) use aarch64_impl::prefetch_read_l1;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(in crate::checksum) use x86_64_impl::prefetch_read_l1;
 
 // Fallback for other architectures (no-op)
-#[cfg(all(not(any(target_arch = "x86_64", target_arch = "aarch64")), test))]
+#[cfg(all(
+  not(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64")),
+  test
+))]
 pub(in crate::checksum) const LARGE_BLOCK_DISTANCE: usize = 512;
 
-#[cfg(all(not(any(target_arch = "x86_64", target_arch = "aarch64")), test))]
+#[cfg(all(
+  not(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64")),
+  test
+))]
 #[inline(always)]
 /// No-op prefetch fallback used only by tests on unsupported architectures.
 ///

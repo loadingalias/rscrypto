@@ -476,7 +476,7 @@ impl KernelTable {
   target_arch = "powerpc64",
   target_arch = "riscv64",
   target_arch = "s390x",
-  target_arch = "x86_64"
+  all(target_arch = "x86_64", target_feature = "sse2")
 ))]
 macro_rules! kernel_table {
   (
@@ -597,7 +597,7 @@ fn capability_match(caps: Caps) -> Option<&'static KernelTable> {
     }
   }
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     use crate::platform::caps::x86::{CRC32C_READY, PCLMUL_READY, VPCLMUL_READY};
 
@@ -1660,7 +1660,7 @@ mod aarch64_tables {
 
 // x86_64 Platform Tables
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 mod x86_64_tables {
   use super::*;
   #[cfg(feature = "crc16")]
@@ -2356,7 +2356,7 @@ mod x86_64_tables {
   };
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 use x86_64_tables::*;
 
 // s390x Platform Tables
@@ -3056,7 +3056,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(all(target_arch = "x86_64", feature = "crc64"))]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "crc64"))]
   fn test_vpclmul_without_crc32c_selects_crc64_xz_4x512_above_4096() {
     use crate::platform::caps::x86::{CRC32C_READY, VPCLMUL_READY};
 

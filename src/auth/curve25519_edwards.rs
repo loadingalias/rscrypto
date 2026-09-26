@@ -9,15 +9,15 @@
 pub(crate) mod constants;
 #[path = "ed25519/field.rs"]
 pub(crate) mod field;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[path = "ed25519/field_avx2.rs"]
 pub(crate) mod field_avx2;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[path = "ed25519/field_ifma.rs"]
 pub(crate) mod field_ifma;
 #[path = "ed25519/point.rs"]
 pub(crate) mod point;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[path = "ed25519/point_avx2.rs"]
 pub(crate) mod point_avx2;
 #[cfg(feature = "ed25519")]
@@ -25,14 +25,19 @@ pub(crate) mod point_avx2;
 pub(crate) mod scalar;
 
 // Keep the retained Rust fixed-base authorities checked when assembly owns dispatch.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const _: unsafe fn(&[u8; 32]) -> point::ExtendedPoint = point_avx2::scalar_mul_basepoint_avx2;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const _: unsafe fn(&[u8; 32]) -> point::ExtendedPoint = point_avx2::scalar_mul_basepoint_ifma;
 
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "ed25519"))]
 pub use point::diag_select_basepoint_cached_limb_digest as diag_ed25519_select_basepoint_cached_limb_digest;
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "ed25519", target_arch = "x86_64"))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  feature = "ed25519",
+  all(target_arch = "x86_64", target_feature = "sse2")
+))]
 pub use point_avx2::{
   diag_select_basepoint_cached_avx2_limb_digest as diag_ed25519_select_basepoint_cached_avx2_limb_digest,
   diag_select_basepoint_cached_ifma_limb_digest as diag_ed25519_select_basepoint_cached_ifma_limb_digest,
@@ -40,13 +45,13 @@ pub use point_avx2::{
 
 /// Dispatch `[s]B` (fixed-base scalar mul) to the fastest validated CT path.
 #[cfg(not(all(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_os = "linux",
   not(any(test, miri, feature = "portable-only"))
 )))]
 #[must_use]
 pub(crate) fn basepoint_mul_dispatch(scalar_bytes: &[u8; 32]) -> point::ExtendedPoint {
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     let caps = crate::platform::caps();
     if caps.has(crate::platform::caps::x86::AVX512IFMA)

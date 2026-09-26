@@ -104,7 +104,7 @@ macro_rules! impl_std_io_write_for_digest {
 }
 
 #[cfg(all(
-  any(target_arch = "aarch64", target_arch = "x86_64"),
+  any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2")),
   any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
 ))]
 macro_rules! define_target_feature_forwarder {
@@ -338,12 +338,12 @@ macro_rules! define_blake2_dispatch {
     #[cfg(feature = "diag")]
     const fn compile_time_name() -> &'static str {
       if cfg!(all(
-        target_arch = "x86_64",
+        all(target_arch = "x86_64", target_feature = "sse2"),
         target_feature = "avx512f",
         target_feature = "avx512vl"
       )) {
         "x86/avx512vl"
-      } else if cfg!(all(target_arch = "x86_64", target_feature = "avx2")) {
+      } else if cfg!(all(target_arch = "x86_64", target_feature = "sse2", target_feature = "avx2")) {
         "x86/avx2"
       } else if cfg!(all(
         target_arch = "aarch64",

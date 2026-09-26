@@ -81,7 +81,7 @@ jobs:
             RSCRYPTO_FUZZ_VALIDATE_ONLY=1 just test-fuzz "${args[@]}"
             mkdir -p "$RSCRYPTO_FUZZ_LOG_DIR"
             git rev-parse HEAD > "$RSCRYPTO_FUZZ_LOG_DIR/source.txt"
-            rustc +"$(scripts/lib/toolchain.sh --nightly)" -vV > "$RSCRYPTO_FUZZ_LOG_DIR/compiler.txt"
+            rustc +"$(scripts/lib/toolchain.sh)" -vV > "$RSCRYPTO_FUZZ_LOG_DIR/compiler.txt"
             just test-fuzz-asan --all
             just test-fuzz "${args[@]}"
           fi

@@ -164,9 +164,9 @@ fn resolve_compute_block(primitive: AeadPrimitive) -> ComputeBlockFn {
   match select_backend(primitive, Arch::current(), current_caps()) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     crate::aead::targets::AeadBackend::WasmSimd128 => wasm_simd128::compute_block,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     crate::aead::targets::AeadBackend::X86Avx512 => x86_avx512::compute_block,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     crate::aead::targets::AeadBackend::X86Avx2 => x86_avx2::compute_block,
     #[cfg(target_arch = "aarch64")]
     crate::aead::targets::AeadBackend::Aarch64Neon => aarch64_neon::compute_block,
@@ -180,7 +180,7 @@ fn resolve_compute_block(primitive: AeadPrimitive) -> ComputeBlockFn {
   }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[target_feature(enable = "avx2")]
 /// Absorbs one Poly1305 block with the x86-64 AVX2 multiplier.
 ///
@@ -320,7 +320,7 @@ unsafe fn compute_block_x86_avx2(state: &mut State, block: &[u8; 16], partial: b
   state.h = [h0, h1, h2, h3, h4];
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq")]
 /// Absorbs one Poly1305 block with the x86-64 AVX-512 multiplier.
 ///
@@ -958,7 +958,7 @@ pub(crate) fn authenticate(message: &[u8], key: &[u8; 32]) -> [u8; 16] {
 pub(crate) fn authenticate_aead(primitive: AeadPrimitive, aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
   let lengths = super::AeadByteLengths::from_usize(aad.len(), ciphertext.len());
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     use crate::platform::caps::x86;
     if lengths.total_at_least(64) && current_caps().has(x86::AVX2) {
@@ -987,7 +987,10 @@ pub(crate) fn authenticate_aead(primitive: AeadPrimitive, aad: &[u8], ciphertext
   test,
   all(
     feature = "chacha20poly1305",
-    any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little"))
+    any(
+      all(target_arch = "x86_64", target_feature = "sse2"),
+      all(target_arch = "powerpc64", target_endian = "little")
+    )
   )
 ))]
 fn authenticate_aead_portable_blocks(
@@ -1012,7 +1015,10 @@ fn authenticate_aead_portable_blocks(
   test,
   all(
     feature = "chacha20poly1305",
-    any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little"))
+    any(
+      all(target_arch = "x86_64", target_feature = "sse2"),
+      all(target_arch = "powerpc64", target_endian = "little")
+    )
   )
 ))]
 pub(crate) fn authenticate_aead_empty_text_portable(aad: &[u8], key: &[u8; 32]) -> [u8; 16] {
@@ -1089,7 +1095,7 @@ fn authenticate_aead_with(
 #[cfg(target_arch = "aarch64")]
 #[path = "poly1305/aarch64_neon.rs"]
 pub(crate) mod aarch64_neon;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[path = "poly1305/x86_64_avx2_par4.rs"]
 mod avx2_par4;
 #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
@@ -1104,10 +1110,10 @@ mod s390x_vector;
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 #[path = "poly1305/wasm32_simd128.rs"]
 mod wasm_simd128;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[path = "poly1305/x86_64_avx2.rs"]
 mod x86_avx2;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[path = "poly1305/x86_64_avx512.rs"]
 mod x86_avx512;
 #[cfg(test)]
@@ -1115,9 +1121,17 @@ mod tests {
   use alloc::vec::Vec;
 
   use super::authenticate;
-  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64"))]
+  #[cfg(any(
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    target_arch = "aarch64",
+    target_arch = "riscv64"
+  ))]
   use super::{ComputeBlockFn, authenticate_aead_with};
-  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64"))]
+  #[cfg(any(
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    target_arch = "aarch64",
+    target_arch = "riscv64"
+  ))]
   use crate::aead::AeadByteLengths;
   use crate::aead::targets::AeadPrimitive;
 
@@ -1135,7 +1149,7 @@ mod tests {
   use crate::platform::caps::aarch64;
   #[cfg(target_arch = "riscv64")]
   use crate::platform::caps::riscv;
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   use crate::platform::caps::x86;
 
   fn patterned_bytes(length: usize, factor: usize, offset: usize) -> Vec<u8> {
@@ -1214,13 +1228,21 @@ mod tests {
     }
   }
 
-  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64"))]
+  #[cfg(any(
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    target_arch = "aarch64",
+    target_arch = "riscv64"
+  ))]
   fn authenticate_aead_portable(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
     let lengths = AeadByteLengths::from_usize(aad.len(), ciphertext.len());
     super::authenticate_aead_portable_blocks(aad, ciphertext, key, lengths)
   }
 
-  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64"))]
+  #[cfg(any(
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    target_arch = "aarch64",
+    target_arch = "riscv64"
+  ))]
   fn exercise_backend(backend: ComputeBlockFn) {
     let key = [0x5au8; 32];
     for aad_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 80] {
@@ -1236,7 +1258,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   fn avx512_backend_matches_portable_when_available() {
     if !crate::platform::caps().has(x86::AVX512_READY) {
       return;
@@ -1246,7 +1268,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   fn avx2_backend_matches_portable_when_available() {
     if !crate::platform::caps().has(x86::AVX2) {
       return;
@@ -1276,7 +1298,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   fn avx2_par4_matches_portable() {
     if !crate::platform::caps().has(x86::AVX2) {
       return;
@@ -1337,7 +1359,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   fn avx2_par4_handles_high_carry_reduction() {
     if !crate::platform::caps().has(x86::AVX2) {
       return;
@@ -1390,7 +1412,7 @@ mod tests {
 
   /// Verify the RFC 8439 AEAD test vector goes through the parallel path.
   #[test]
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   fn avx2_par4_rfc_8439_aead_vector() {
     if !crate::platform::caps().has(x86::AVX2) {
       return;

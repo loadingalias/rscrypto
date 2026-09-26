@@ -1,5 +1,9 @@
 #[cfg(not(any(
-  all(target_arch = "x86_64", any(target_feature = "avx512f", target_feature = "avx2")),
+  all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    any(target_feature = "avx512f", target_feature = "avx2")
+  ),
   all(target_arch = "aarch64", target_feature = "neon"),
   target_arch = "riscv64"
 )))]
@@ -11,13 +15,21 @@ use super::{
 use crate::{backend::cache::OnceCache, platform::Caps};
 
 #[cfg(not(any(
-  all(target_arch = "x86_64", any(target_feature = "avx512f", target_feature = "avx2")),
+  all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    any(target_feature = "avx512f", target_feature = "avx2")
+  ),
   all(target_arch = "aarch64", target_feature = "neon"),
   target_arch = "riscv64"
 )))]
 type Hash64Fn = fn(&[u8], u64) -> u64;
 #[cfg(not(any(
-  all(target_arch = "x86_64", any(target_feature = "avx512f", target_feature = "avx2")),
+  all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    any(target_feature = "avx512f", target_feature = "avx2")
+  ),
   all(target_arch = "aarch64", target_feature = "neon"),
   target_arch = "riscv64"
 )))]
@@ -27,14 +39,22 @@ type Hash128Fn = fn(&[u8], u64) -> u128;
 struct ActiveDispatch {
   /// Long-path-only entry for 64-bit hash (>240B, no redundant length checks).
   #[cfg(not(any(
-    all(target_arch = "x86_64", any(target_feature = "avx512f", target_feature = "avx2")),
+    all(
+      target_arch = "x86_64",
+      target_feature = "sse2",
+      any(target_feature = "avx512f", target_feature = "avx2")
+    ),
     all(target_arch = "aarch64", target_feature = "neon"),
     target_arch = "riscv64"
   )))]
   long64: Hash64Fn,
   /// Long-path-only entry for 128-bit hash (>240B, no redundant length checks).
   #[cfg(not(any(
-    all(target_arch = "x86_64", any(target_feature = "avx512f", target_feature = "avx2")),
+    all(
+      target_arch = "x86_64",
+      target_feature = "sse2",
+      any(target_feature = "avx512f", target_feature = "avx2")
+    ),
     all(target_arch = "aarch64", target_feature = "neon"),
     target_arch = "riscv64"
   )))]
@@ -46,12 +66,12 @@ struct ActiveDispatch {
 
 static ACTIVE: OnceCache<ActiveDispatch> = OnceCache::new();
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 // Zen5 measurements show AVX-512 startup cost losing badly for XXH3-64 at 256B/1KiB,
 // while larger buffers amortize it. Keep this limited to 64-bit long paths.
 const ZEN5_XXH3_64_AVX2_LONG_MAX: usize = 1024;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline(always)]
 fn use_zen5_xxh3_64_avx2_short_long(len: usize) -> bool {
   len <= ZEN5_XXH3_64_AVX2_LONG_MAX
@@ -79,13 +99,21 @@ fn active() -> ActiveDispatch {
 
     ActiveDispatch {
       #[cfg(not(any(
-        all(target_arch = "x86_64", any(target_feature = "avx512f", target_feature = "avx2")),
+        all(
+          target_arch = "x86_64",
+          target_feature = "sse2",
+          any(target_feature = "avx512f", target_feature = "avx2")
+        ),
         all(target_arch = "aarch64", target_feature = "neon"),
         target_arch = "riscv64"
       )))]
       long64: hash64_long_fn(long_id),
       #[cfg(not(any(
-        all(target_arch = "x86_64", any(target_feature = "avx512f", target_feature = "avx2")),
+        all(
+          target_arch = "x86_64",
+          target_feature = "sse2",
+          any(target_feature = "avx512f", target_feature = "avx2")
+        ),
         all(target_arch = "aarch64", target_feature = "neon"),
         target_arch = "riscv64"
       )))]
@@ -102,7 +130,7 @@ pub(crate) fn stream_accumulate_fn() -> StreamAccumulateFn {
   active().stream_accumulate
 }
 
-#[cfg(any(feature = "diag", all(test, target_arch = "x86_64")))]
+#[cfg(any(feature = "diag", all(test, all(target_arch = "x86_64", target_feature = "sse2"))))]
 #[inline]
 #[must_use]
 fn kernel_id64_for_len(long_id: Xxh3KernelId, caps: Caps, len: usize) -> Xxh3KernelId {
@@ -110,7 +138,7 @@ fn kernel_id64_for_len(long_id: Xxh3KernelId, caps: Caps, len: usize) -> Xxh3Ker
     return Xxh3KernelId::Portable;
   }
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   if len <= ZEN5_XXH3_64_AVX2_LONG_MAX
     && caps.has(crate::platform::caps::x86::AMD_ZEN5 | crate::platform::caps::x86::AVX2)
   {
@@ -223,7 +251,12 @@ pub(crate) fn hash64_with_seed(seed: u64, data: &[u8]) -> u64 {
   hash64_long(seed, data)
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx2"))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  target_feature = "avx512f",
+  target_feature = "avx2"
+))]
 #[inline(always)]
 fn hash64_long_default(data: &[u8]) -> u64 {
   if use_zen5_xxh3_64_avx2_short_long(data.len()) {
@@ -233,13 +266,23 @@ fn hash64_long_default(data: &[u8]) -> u64 {
   }
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f", not(target_feature = "avx2")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  target_feature = "avx512f",
+  not(target_feature = "avx2")
+))]
 #[inline(always)]
 fn hash64_long_default(data: &[u8]) -> u64 {
   super::x86_64_avx512::xxh3_64_long_default(data)
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2", not(target_feature = "avx512f")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  target_feature = "avx2",
+  not(target_feature = "avx512f")
+))]
 #[inline(always)]
 fn hash64_long_default(data: &[u8]) -> u64 {
   super::x86_64_avx2::xxh3_64_long_default(data)
@@ -258,7 +301,11 @@ fn hash64_long_default(data: &[u8]) -> u64 {
 }
 
 #[cfg(not(any(
-  all(target_arch = "x86_64", any(target_feature = "avx512f", target_feature = "avx2")),
+  all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    any(target_feature = "avx512f", target_feature = "avx2")
+  ),
   all(target_arch = "aarch64", target_feature = "neon"),
   target_arch = "riscv64"
 )))]
@@ -278,7 +325,12 @@ fn hash64_long_default(data: &[u8]) -> u64 {
 /// Falls back to runtime dispatch when features are unknown at compile time,
 /// using the dedicated long-path entry point that skips redundant ≤240B length
 /// checks in the kernel.
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx2"))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  target_feature = "avx512f",
+  target_feature = "avx2"
+))]
 #[inline(always)]
 fn hash64_long(seed: u64, data: &[u8]) -> u64 {
   if use_zen5_xxh3_64_avx2_short_long(data.len()) {
@@ -288,13 +340,23 @@ fn hash64_long(seed: u64, data: &[u8]) -> u64 {
   }
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f", not(target_feature = "avx2")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  target_feature = "avx512f",
+  not(target_feature = "avx2")
+))]
 #[inline(always)]
 fn hash64_long(seed: u64, data: &[u8]) -> u64 {
   super::x86_64_avx512::xxh3_64_long(data, seed)
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2", not(target_feature = "avx512f")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  target_feature = "avx2",
+  not(target_feature = "avx512f")
+))]
 #[inline(always)]
 fn hash64_long(seed: u64, data: &[u8]) -> u64 {
   super::x86_64_avx2::xxh3_64_long(data, seed)
@@ -315,7 +377,11 @@ fn hash64_long(seed: u64, data: &[u8]) -> u64 {
 }
 
 #[cfg(not(any(
-  all(target_arch = "x86_64", any(target_feature = "avx512f", target_feature = "avx2")),
+  all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    any(target_feature = "avx512f", target_feature = "avx2")
+  ),
   all(target_arch = "aarch64", target_feature = "neon"),
   target_arch = "riscv64"
 )))]
@@ -325,13 +391,17 @@ fn hash64_long(seed: u64, data: &[u8]) -> u64 {
 }
 
 #[cfg(not(any(
-  all(target_arch = "x86_64", any(target_feature = "avx512f", target_feature = "avx2")),
+  all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    any(target_feature = "avx512f", target_feature = "avx2")
+  ),
   all(target_arch = "aarch64", target_feature = "neon"),
   target_arch = "riscv64"
 )))]
 #[inline(never)]
 fn hash64_long_runtime(seed: u64, data: &[u8]) -> u64 {
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     if use_zen5_xxh3_64_avx2_short_long(data.len()) {
       return super::x86_64_avx2::xxh3_64_long(data, seed);
@@ -368,13 +438,18 @@ pub(crate) fn hash128_with_seed(seed: u64, data: &[u8]) -> u128 {
   hash128_long(seed, data)
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", target_feature = "avx512f"))]
 #[inline(always)]
 fn hash128_long_default(data: &[u8]) -> u128 {
   super::x86_64_avx512::xxh3_128_long_default(data)
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2", not(target_feature = "avx512f")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  target_feature = "avx2",
+  not(target_feature = "avx512f")
+))]
 #[inline(always)]
 fn hash128_long_default(data: &[u8]) -> u128 {
   super::x86_64_avx2::xxh3_128_long_default(data)
@@ -393,7 +468,11 @@ fn hash128_long_default(data: &[u8]) -> u128 {
 }
 
 #[cfg(not(any(
-  all(target_arch = "x86_64", any(target_feature = "avx512f", target_feature = "avx2")),
+  all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    any(target_feature = "avx512f", target_feature = "avx2")
+  ),
   all(target_arch = "aarch64", target_feature = "neon"),
   target_arch = "riscv64"
 )))]
@@ -404,13 +483,18 @@ fn hash128_long_default(data: &[u8]) -> u128 {
 }
 
 /// See [`hash64_long`] for the compile-time dispatch rationale.
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", target_feature = "avx512f"))]
 #[inline(always)]
 fn hash128_long(seed: u64, data: &[u8]) -> u128 {
   super::x86_64_avx512::xxh3_128_long(data, seed)
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2", not(target_feature = "avx512f")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  target_feature = "avx2",
+  not(target_feature = "avx512f")
+))]
 #[inline(always)]
 fn hash128_long(seed: u64, data: &[u8]) -> u128 {
   super::x86_64_avx2::xxh3_128_long(data, seed)
@@ -430,7 +514,11 @@ fn hash128_long(seed: u64, data: &[u8]) -> u128 {
 }
 
 #[cfg(not(any(
-  all(target_arch = "x86_64", any(target_feature = "avx512f", target_feature = "avx2")),
+  all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    any(target_feature = "avx512f", target_feature = "avx2")
+  ),
   all(target_arch = "aarch64", target_feature = "neon"),
   target_arch = "riscv64"
 )))]
@@ -440,7 +528,11 @@ fn hash128_long(seed: u64, data: &[u8]) -> u128 {
 }
 
 #[cfg(not(any(
-  all(target_arch = "x86_64", any(target_feature = "avx512f", target_feature = "avx2")),
+  all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    any(target_feature = "avx512f", target_feature = "avx2")
+  ),
   all(target_arch = "aarch64", target_feature = "neon"),
   target_arch = "riscv64"
 )))]
@@ -450,7 +542,7 @@ fn hash128_long_runtime(seed: u64, data: &[u8]) -> u128 {
   (d.long128)(data, seed)
 }
 
-#[cfg(all(test, target_arch = "x86_64"))]
+#[cfg(all(test, all(target_arch = "x86_64", target_feature = "sse2")))]
 mod tests {
   use super::*;
   use crate::platform::caps::x86;

@@ -47,7 +47,7 @@ mod fixslice64;
 #[cfg(target_arch = "s390x")]
 #[path = "aes/s390x_km.rs"]
 mod km;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[path = "aes/x86_64_ni.rs"]
 mod ni;
 #[cfg(target_arch = "powerpc64")]
@@ -60,7 +60,7 @@ mod rv_aes;
 #[path = "aes/riscv64_scalar_aes.rs"]
 mod rv_scalar_aes;
 #[cfg(all(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_os = "linux",
   any(feature = "aes-gcm", feature = "aes-gcm-siv")
 ))]
@@ -79,7 +79,7 @@ pub(crate) struct Aarch64GcmTables<'a> {
   pub(crate) h_powers_rev_16_pair: &'a [u128; 24],
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
 #[derive(Clone, Copy)]
 pub(crate) struct X86GcmTables<'a> {
   pub(crate) h_polyval: u128,
@@ -116,7 +116,7 @@ pub(crate) struct Aes256EncKey {
 enum KeyInner {
   #[cfg(not(any(target_arch = "riscv64", target_arch = "s390x")))]
   PortableRoundKeys([u32; EXPANDED_KEY_WORDS]),
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   X86AesNi(ni::NiRoundKeys),
   #[cfg(target_arch = "aarch64")]
   Aarch64Aes(ce::CeRoundKeys),
@@ -146,7 +146,7 @@ impl Drop for Aes256EncKey {
           core::slice::from_raw_parts_mut(rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS.strict_mul(4))
         });
       }
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       KeyInner::X86AesNi(_) => {}
       #[cfg(target_arch = "aarch64")]
       KeyInner::Aarch64Aes(_) => {}
@@ -194,7 +194,7 @@ pub(crate) struct Aes128EncKey {
 enum Key128Inner {
   #[cfg(not(any(target_arch = "riscv64", target_arch = "s390x")))]
   PortableRoundKeys([u32; EXPANDED_KEY_WORDS_128]),
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   X86AesNi(ni::Ni128RoundKeys),
   #[cfg(target_arch = "aarch64")]
   Aarch64Aes(ce::Ce128RoundKeys),
@@ -224,7 +224,7 @@ impl Drop for Aes128EncKey {
           core::slice::from_raw_parts_mut(rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS_128.strict_mul(4))
         });
       }
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Key128Inner::X86AesNi(_) => {}
       #[cfg(target_arch = "aarch64")]
       Key128Inner::Aarch64Aes(_) => {}
@@ -479,7 +479,7 @@ fn fixslice64_key_inner(key: &[u8; KEY_SIZE]) -> KeyInner {
 /// round key format at expansion time. Otherwise uses the portable path.
 #[inline]
 pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     if crate::platform::caps().has(crate::platform::caps::x86::AESNI) {
       return Aes256EncKey {
@@ -565,7 +565,7 @@ fn fixslice64_key_inner_128(key: &[u8; KEY_SIZE_128]) -> Key128Inner {
 /// detected; otherwise the table-free portable schedule is used.
 #[inline]
 pub(crate) fn aes128_expand_key(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     if crate::platform::caps().has(crate::platform::caps::x86::AESNI) {
       return Aes128EncKey {
@@ -723,7 +723,7 @@ pub(crate) fn aes128_expand_key_riscv_ttable(key: &[u8; KEY_SIZE_128]) -> Aes128
 ///
 /// # Safety
 /// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
 #[inline]
 pub(super) unsafe fn x86_gcmsiv_derive_keys_128_inline(
@@ -744,7 +744,7 @@ pub(super) unsafe fn x86_gcmsiv_derive_keys_128_inline(
 ///
 /// # Safety
 /// Caller must ensure AES-NI and SSE2 are available.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "aes,sse2")]
 #[inline]
 pub(super) unsafe fn x86_expand_key_128_inline(key: &[u8; KEY_SIZE_128]) -> ni::Ni128RoundKeys {
@@ -756,7 +756,7 @@ pub(super) unsafe fn x86_expand_key_128_inline(key: &[u8; KEY_SIZE_128]) -> ni::
 ///
 /// # Safety
 /// Caller must ensure AES-NI and SSE2 are available.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "aes,sse2")]
 #[inline]
 pub(super) unsafe fn x86_encrypt_block_128_inline(keys: &ni::Ni128RoundKeys, block: &mut [u8; BLOCK_SIZE]) {
@@ -768,7 +768,7 @@ pub(super) unsafe fn x86_encrypt_block_128_inline(keys: &ni::Ni128RoundKeys, blo
 ///
 /// # Safety
 /// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2 and `data.len() <= 64`.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
 #[inline]
 pub(super) unsafe fn x86_ctr32_le_xor_short_128_inline(
@@ -1805,7 +1805,7 @@ pub(crate) fn aes256_encrypt_block(ek: &Aes256EncKey, block: &mut [u8; BLOCK_SIZ
   match &ek.inner {
     #[cfg(not(any(target_arch = "riscv64", target_arch = "s390x")))]
     KeyInner::PortableRoundKeys(rk) => aes256_encrypt_block_portable(rk, block),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     KeyInner::X86AesNi(ni_rk) => {
       // SAFETY: AesNi variant is only constructed after runtime detection confirms AES-NI.
       unsafe { ni::encrypt_block(ni_rk, block) }
@@ -1851,7 +1851,7 @@ pub(crate) fn aes128_encrypt_block(ek: &Aes128EncKey, block: &mut [u8; BLOCK_SIZ
   match &ek.inner {
     #[cfg(not(any(target_arch = "riscv64", target_arch = "s390x")))]
     Key128Inner::PortableRoundKeys(rk) => aes128_encrypt_block_portable(rk, block),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Key128Inner::X86AesNi(ni_rk) => {
       // SAFETY: X86AesNi variant is only constructed after runtime detection confirms AES-NI.
       unsafe { ni::encrypt_block_128(ni_rk, block) }
@@ -1894,7 +1894,7 @@ pub(crate) fn aes128_encrypt_block(ek: &Aes128EncKey, block: &mut [u8; BLOCK_SIZ
 #[cfg(feature = "aes-gcm")]
 #[inline]
 pub(crate) fn aes256_encrypt_block_prefix_5(ek: &Aes256EncKey, block: &[u8; BLOCK_SIZE]) -> [u8; 5] {
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   if let KeyInner::X86AesNi(ni_rk) = &ek.inner {
     // SAFETY: this variant is constructed only after runtime detection confirms AES-NI.
     return unsafe { ni::encrypt_block_prefix_5(ni_rk, block) };
@@ -1921,7 +1921,7 @@ pub(crate) fn aes256_encrypt_block_prefix_5(ek: &Aes256EncKey, block: &[u8; BLOC
 #[cfg(feature = "aes-gcm")]
 #[inline]
 pub(crate) fn aes128_encrypt_block_prefix_5(ek: &Aes128EncKey, block: &[u8; BLOCK_SIZE]) -> [u8; 5] {
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   if let Key128Inner::X86AesNi(ni_rk) = &ek.inner {
     // SAFETY: this variant is constructed only after runtime detection confirms AES-NI.
     return unsafe { ni::encrypt_block_prefix_5_128(ni_rk, block) };
@@ -1962,7 +1962,7 @@ pub(crate) fn aes128_xor_encrypt_blocks(ek: &Aes128EncKey, state: &mut [u8; BLOC
         aes128_encrypt_block_portable(rk, state);
       }
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Key128Inner::X86AesNi(rk) => {
       // SAFETY: this key variant is constructed only after AES-NI runtime detection.
       unsafe { ni::xor_encrypt_blocks_128(rk, state, blocks) }
@@ -2036,7 +2036,7 @@ pub(crate) fn aes128_xor_encrypt_blocks(ek: &Aes128EncKey, state: &mut [u8; BLOC
 ))]
 #[inline]
 pub(crate) fn aes128_encrypt_blocks_ecb(ek: &Aes128EncKey, blocks: &mut [[u8; BLOCK_SIZE]]) {
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   if let Key128Inner::X86AesNi(ni_rk) = &ek.inner {
     if !blocks.is_empty() {
       if blocks.len() >= 16 && crate::platform::caps().has(crate::platform::caps::x86::VAES_READY) {
@@ -2939,7 +2939,7 @@ pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; 
 ///
 /// # Safety
 /// Caller must ensure AVX-512F is available.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
 #[target_feature(enable = "avx512f")]
 #[inline]
 unsafe fn x86_gcm_ctr_blocks_be_4(iv_words: [u32; 3], ctr: u32) -> core::arch::x86_64::__m512i {
@@ -2967,7 +2967,7 @@ unsafe fn x86_gcm_ctr_blocks_be_4(iv_words: [u32; 3], ctr: u32) -> core::arch::x
 ///
 /// # Safety
 /// Caller must ensure AVX-512F and AVX-512BW are available.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
 #[target_feature(enable = "avx512f,avx512bw")]
 #[inline]
 unsafe fn x86_gcm_ctr_blocks_be_16(
@@ -3006,7 +3006,7 @@ unsafe fn x86_gcm_ctr_blocks_be_16(
   (make!(offsets0), make!(offsets1), make!(offsets2), make!(offsets3))
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm", test))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm", test))]
 #[target_feature(enable = "avx2")]
 #[inline]
 /// # Safety
@@ -3028,7 +3028,7 @@ unsafe fn x86_gcm_ctr_blocks_be_2(iv_words: [u32; 3], ctr: u32) -> core::arch::x
 ///
 /// # Safety
 /// Caller must ensure SSE2 is available.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
 #[target_feature(enable = "sse2")]
 #[inline]
 unsafe fn x86_gcm_ctr_block_be(iv_words: [u32; 3], ctr: u32) -> core::arch::x86_64::__m128i {
@@ -3046,7 +3046,7 @@ unsafe fn x86_gcm_ctr_block_be(iv_words: [u32; 3], ctr: u32) -> core::arch::x86_
 ///
 /// # Safety
 /// Caller must ensure AVX-512F is available.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "avx512f")]
 #[inline]
 unsafe fn x86_gcmsiv_ctr_blocks_le_4(suffix_words: [u32; 3], ctr: u32) -> core::arch::x86_64::__m512i {
@@ -3063,7 +3063,11 @@ unsafe fn x86_gcmsiv_ctr_blocks_le_4(suffix_words: [u32; 3], ctr: u32) -> core::
 }
 
 #[cfg(all(
-  any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "powerpc64"),
+  any(
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    target_arch = "aarch64",
+    target_arch = "powerpc64"
+  ),
   feature = "aes-gcm"
 ))]
 #[inline]
@@ -3092,7 +3096,7 @@ fn ghash_ciphertext_fallback(mut acc: u128, h_polyval: u128, data: &[u8]) -> u12
 ///
 /// # Safety
 /// Caller must ensure AES-NI, PCLMULQDQ, SSE2, and SSSE3 are available.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
 #[target_feature(enable = "aes,pclmulqdq,sse2,ssse3")]
 pub(crate) unsafe fn aes256_ctr32_encrypt_be_aesni_pclmul_ghash(
   ek: &Aes256EncKey,
@@ -3204,7 +3208,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_aesni_pclmul_ghash(
 ///
 /// # Safety
 /// Caller must ensure AES-NI, PCLMULQDQ, SSE2, and SSSE3 are available.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
 #[target_feature(enable = "aes,pclmulqdq,sse2,ssse3")]
 pub(crate) unsafe fn aes256_ctr32_decrypt_be_aesni_pclmul_ghash(
   ek: &Aes256EncKey,
@@ -3317,7 +3321,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_aesni_pclmul_ghash(
 /// # Safety
 /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
 /// VAES + VPCLMULQDQ + PCLMULQDQ + AES + SSE2.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,avx512bw,avx512dq,vaes,vpclmulqdq,pclmulqdq")]
 pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide_ghash(
   ek: &Aes256EncKey,
@@ -3490,7 +3494,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide_ghash(
 /// # Safety
 /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
 /// VAES + VPCLMULQDQ + PCLMULQDQ + AES + SSE2.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,avx512bw,avx512dq,vaes,vpclmulqdq,pclmulqdq")]
 pub(crate) unsafe fn aes256_ctr32_decrypt_be_wide_ghash(
   ek: &Aes256EncKey,
@@ -4217,7 +4221,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_aarch64_ghash(
 ///
 /// # Safety
 /// Caller must ensure AES-NI, PCLMULQDQ, SSE2, and SSSE3 are available.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
 #[target_feature(enable = "aes,pclmulqdq,sse2,ssse3")]
 pub(crate) unsafe fn aes128_ctr32_encrypt_be_aesni_pclmul_ghash(
   ek: &Aes128EncKey,
@@ -4329,7 +4333,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_aesni_pclmul_ghash(
 ///
 /// # Safety
 /// Caller must ensure AES-NI, PCLMULQDQ, SSE2, and SSSE3 are available.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
 #[target_feature(enable = "aes,pclmulqdq,sse2,ssse3")]
 pub(crate) unsafe fn aes128_ctr32_decrypt_be_aesni_pclmul_ghash(
   ek: &Aes128EncKey,
@@ -4442,7 +4446,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_aesni_pclmul_ghash(
 /// # Safety
 /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
 /// VAES + VPCLMULQDQ + PCLMULQDQ + AES + SSE2.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,avx512bw,avx512dq,vaes,vpclmulqdq,pclmulqdq")]
 pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide_ghash(
   ek: &Aes128EncKey,
@@ -4615,7 +4619,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide_ghash(
 /// # Safety
 /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
 /// VAES + VPCLMULQDQ + PCLMULQDQ + AES + SSE2.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,avx512bw,avx512dq,vaes,vpclmulqdq,pclmulqdq")]
 pub(crate) unsafe fn aes128_ctr32_decrypt_be_wide_ghash(
   ek: &Aes128EncKey,
@@ -4787,7 +4791,12 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_wide_ghash(
   }
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "linux", feature = "aes-gcm-siv"))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  target_os = "linux",
+  feature = "aes-gcm-siv"
+))]
 #[inline(always)]
 const fn usize_low_u32(value: usize) -> u32 {
   let bytes = value.to_le_bytes();
@@ -4800,7 +4809,7 @@ const fn usize_low_u32(value: usize) -> u32 {
 ///
 /// # Safety
 /// Caller must ensure AES-NI, SSE2, AVX-512F, AVX-512VL, and VAES are available.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
 pub(crate) unsafe fn aes256_ctr32_encrypt_wide(ek: &Aes256EncKey, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
   use core::arch::x86_64::*;
@@ -4935,7 +4944,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_wide(ek: &Aes256EncKey, initial_counte
 ///
 /// # Safety
 /// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
 pub(crate) unsafe fn aes128_ctr32_encrypt_wide(ek: &Aes128EncKey, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
   use core::arch::x86_64::*;
@@ -5605,7 +5614,7 @@ mod tests {
     );
   }
 
-  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
   fn x86_gcm_iv_words(iv_prefix: &[u8; 12]) -> [u32; 3] {
     [
       u32::from_le_bytes([iv_prefix[0], iv_prefix[1], iv_prefix[2], iv_prefix[3]]),
@@ -5614,7 +5623,7 @@ mod tests {
     ]
   }
 
-  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
   fn fill_expected_gcm_counter_blocks<const N: usize>(iv_prefix: &[u8; 12], ctr: u32, expected: &mut [u8; N]) {
     debug_assert_eq!(N.strict_rem(BLOCK_SIZE), 0);
     let (blocks, tail) = expected.as_chunks_mut::<BLOCK_SIZE>();
@@ -5625,7 +5634,7 @@ mod tests {
     }
   }
 
-  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
   #[target_feature(enable = "sse2")]
   /// # Safety
   ///
@@ -5642,7 +5651,7 @@ mod tests {
     out
   }
 
-  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
   #[target_feature(enable = "avx2")]
   /// # Safety
   ///
@@ -5659,7 +5668,7 @@ mod tests {
     out
   }
 
-  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
   #[target_feature(enable = "avx512f")]
   /// # Safety
   ///
@@ -5676,7 +5685,7 @@ mod tests {
     out
   }
 
-  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
   #[target_feature(enable = "avx512f,avx512bw")]
   /// # Safety
   ///
@@ -5700,7 +5709,7 @@ mod tests {
     out
   }
 
-  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
   #[test]
   fn x86_gcm_ctr_block_be_preserves_prefix_and_encodes_counter() {
     if !crate::platform::caps().has(crate::platform::caps::x86::SSE2) {
@@ -5723,7 +5732,7 @@ mod tests {
     }
   }
 
-  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
   #[test]
   fn x86_gcm_ctr_blocks_be_2_preserves_prefix_and_wraps_counter() {
     if !crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
@@ -5746,7 +5755,7 @@ mod tests {
     }
   }
 
-  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
   #[test]
   fn x86_gcm_ctr_blocks_be_4_preserves_prefix_and_wraps_counter() {
     if !crate::platform::caps().has(crate::platform::caps::x86::AVX512F) {
@@ -5769,7 +5778,7 @@ mod tests {
     }
   }
 
-  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
   #[test]
   fn x86_gcm_ctr_blocks_be_16_preserves_prefix_and_wraps_counter() {
     let required = crate::platform::caps::x86::AVX512F | crate::platform::caps::x86::AVX512BW;
@@ -5795,7 +5804,7 @@ mod tests {
   }
 
   #[cfg(all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     feature = "aes-gcm",
     any(target_os = "linux", target_os = "macos")
   ))]
@@ -5807,7 +5816,7 @@ mod tests {
   }
 
   #[cfg(all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     feature = "aes-gcm",
     any(target_os = "linux", target_os = "macos")
   ))]
@@ -5824,7 +5833,7 @@ mod tests {
   }
 
   #[cfg(all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     feature = "aes-gcm",
     any(target_os = "linux", target_os = "macos")
   ))]
@@ -5845,7 +5854,7 @@ mod tests {
   }
 
   #[cfg(all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     feature = "aes-gcm",
     any(target_os = "linux", target_os = "macos")
   ))]
@@ -5874,7 +5883,7 @@ mod tests {
   }
 
   #[cfg(all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     feature = "aes-gcm",
     any(target_os = "linux", target_os = "macos")
   ))]
@@ -5886,7 +5895,7 @@ mod tests {
   }
 
   #[cfg(all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     feature = "aes-gcm",
     any(target_os = "linux", target_os = "macos")
   ))]
@@ -5901,7 +5910,7 @@ mod tests {
   }
 
   #[cfg(all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     feature = "aes-gcm",
     any(target_os = "linux", target_os = "macos")
   ))]
@@ -5963,7 +5972,7 @@ mod tests {
   }
 
   #[cfg(all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     feature = "aes-gcm",
     any(target_os = "linux", target_os = "macos")
   ))]

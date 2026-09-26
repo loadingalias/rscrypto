@@ -215,9 +215,9 @@ fn resolve_xor_keystream(primitive: AeadPrimitive) -> XorKeystreamFn {
   match select_backend(primitive, Arch::current(), current_caps()) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     crate::aead::targets::AeadBackend::WasmSimd128 => wasm_simd128::xor_keystream,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     crate::aead::targets::AeadBackend::X86Avx512 => x86_avx512::xor_keystream,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     crate::aead::targets::AeadBackend::X86Avx2 => x86_avx2::xor_keystream,
     #[cfg(target_arch = "aarch64")]
     crate::aead::targets::AeadBackend::Aarch64Neon => aarch64_neon::xor_keystream,
@@ -485,13 +485,13 @@ mod s390x_vector;
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 #[path = "chacha20/wasm32_simd128.rs"]
 mod wasm_simd128;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[path = "chacha20/x86_64_avx2.rs"]
 mod x86_avx2;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[path = "chacha20/x86_64_avx512.rs"]
 mod x86_avx512;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[path = "chacha20/x86_64_ssse3_x4.rs"]
 mod x86_ssse3_x4;
 
@@ -549,7 +549,11 @@ pub unsafe fn diag_chacha20_xor_keystream_aarch64_neon(
 ///
 /// Caller must verify the host has `x86::AVX2` and that `buffer`'s 64-byte block count fits the counter range starting
 /// at `initial_counter`.
-#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  all(target_arch = "x86_64", target_feature = "sse2")
+))]
 pub unsafe fn diag_chacha20_xor_keystream_x86_avx2(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
@@ -566,7 +570,11 @@ pub unsafe fn diag_chacha20_xor_keystream_x86_avx2(
 ///
 /// Caller must verify the host has `x86::AVX512F + AVX512VL + AVX512BW + AVX512DQ` and that `buffer`'s 64-byte block
 /// count fits the counter range starting at `initial_counter`.
-#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  all(target_arch = "x86_64", target_feature = "sse2")
+))]
 pub unsafe fn diag_chacha20_xor_keystream_x86_avx512(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
@@ -662,7 +670,7 @@ pub unsafe fn diag_chacha20_xor_keystream_wasm_simd128(
 #[cfg(test)]
 mod tests {
   #[cfg(any(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
     all(target_arch = "powerpc64", target_endian = "little"),
     target_arch = "s390x"
@@ -672,7 +680,7 @@ mod tests {
   #[cfg(feature = "xchacha20poly1305")]
   use super::hchacha20;
   #[cfg(any(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
     all(target_arch = "powerpc64", target_endian = "little"),
     target_arch = "s390x"
@@ -697,7 +705,7 @@ mod tests {
   use crate::platform::caps::power;
   #[cfg(target_arch = "s390x")]
   use crate::platform::caps::s390x;
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   use crate::platform::caps::x86;
 
   #[test]
@@ -765,7 +773,7 @@ mod tests {
       .expect_err("a second block after the final counter must fail");
   }
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   /// Compare one capability-gated x86 backend with the portable authority and preserve both guard regions.
   ///
   /// # Safety
@@ -812,7 +820,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   fn avx512_backend_matches_portable_when_available() {
     if !crate::platform::caps().has(x86::AVX512_READY) {
       return;
@@ -866,7 +874,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   fn avx2_backend_matches_portable_when_available() {
     if !crate::platform::caps().has(x86::AVX2) {
       return;

@@ -44,7 +44,7 @@ if [[ "$PROFILE" != "release" ]]; then
 fi
 
 export RUSTUP_TOOLCHAIN
-RUSTUP_TOOLCHAIN="$("$TOOLCHAIN" --target "$TARGET")"
+RUSTUP_TOOLCHAIN="$("$TOOLCHAIN")"
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"

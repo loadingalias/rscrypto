@@ -378,24 +378,54 @@ def update_actions():
                 path.write_text(updated)
 
 
+def nightly_manifest(date):
+    url = f'https://static.rust-lang.org/dist/{date}/channel-rust-nightly.toml'
+    return tomllib.loads(fetch(url)[0].decode())
+
+
 def update_rust():
+    """Pin the newest nightly that is complete for every host, component, and target.
+
+    rust-toolchain.toml owns the one canonical compiler. Walk back from the
+    current nightly until every catalog host has the selected components and
+    every catalog target has a standard library.
+    """
+    from datetime import date as calendar_date, timedelta
     import tomlkit
     path = ROOT / 'rust-toolchain.toml'
     document = tomlkit.parse(path.read_text())
-    channel = 'stable'
-    latest = tomllib.loads(fetch('https://static.rust-lang.org/dist/channel-rust-stable.toml')[0].decode())
     data = read()
     hosts = {data[platform]['rust-host']: data[platform]['components'] for platform in PLATFORMS}
     hosts['aarch64-apple-darwin'] = document['toolchain']['components']
+    profile_components = {c for profile in ('ci-fuzz', 'ci-miri', 'ci-ct') for c in data[profile]['components']}
+    targets = json.loads((ROOT / '.config/target-matrix.json').read_text())['targets']
     names = {'clippy': 'clippy-preview', 'rustfmt': 'rustfmt-preview', 'llvm-tools': 'llvm-tools-preview',
-             'rust-analyzer': 'rust-analyzer-preview'}
-    for host, components in hosts.items():
-        for component in {'rustc', 'cargo', 'rust-std', 'clippy', 'rustfmt', *components}:
-            targets = latest['pkg'][names.get(component, component)]['target']
-            if not targets.get(host, targets.get('*', {})).get('available'):
-                raise ValueError(f'{channel} {latest["date"]}: {component} unavailable for {host}')
-    document['toolchain']['channel'] = latest['pkg']['rust']['version'].split()[0]
-    path.write_text(tomlkit.dumps(document))
+             'rust-analyzer': 'rust-analyzer-preview', 'miri': 'miri-preview'}
+
+    def missing(manifest):
+        gaps = []
+        for host, components in hosts.items():
+            for component in {'rustc', 'cargo', 'rust-std', 'clippy', 'rustfmt', *components, *profile_components}:
+                available = manifest['pkg'][names.get(component, component)]['target']
+                if not available.get(host, available.get('*', {})).get('available'):
+                    gaps.append(f'{component} for {host}')
+        for target in targets:
+            if not manifest['pkg']['rust-std']['target'].get(target, {}).get('available'):
+                gaps.append(f'rust-std for {target}')
+        return gaps
+
+    today = calendar_date.today()
+    for age in range(15):
+        date = (today - timedelta(days=age)).isoformat()
+        try:
+            manifest = nightly_manifest(date)
+        except OSError:
+            continue  # not yet published
+        if not missing(manifest):
+            document['toolchain']['channel'] = f'nightly-{date}'
+            path.write_text(tomlkit.dumps(document))
+            return
+    raise ValueError('no complete nightly in the last 15 days')
 
 
 def sync_gungraun_runner():

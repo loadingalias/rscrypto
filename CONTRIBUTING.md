@@ -94,8 +94,7 @@ cross checks compile the library without foreign test or benchmark C dependencie
 Bare-metal and browser WASM use `full` plus applicable serialization features without std, threads,
 or OS entropy.
 WASI adds std and entropy, without threads.
-POWER, IBM Z, and RISC-V use the repository-pinned nightly;
-other targets use the development toolchain.
+Every target uses the one repository-pinned nightly from `rust-toolchain.toml`.
 Validation also checks independent workspaces, dependencies, and docs.
 
 `just test` selects the production-auto feature set: every crate feature except `portable-only`,
@@ -158,7 +157,7 @@ stage new seed files before running that check.
 
 Coverage uses the development toolchain, cargo-nextest, cargo-llvm-cov, and the `llvm-tools-preview` rustup component.
 It measures Rust source under `src/` on the host, including inline tests, with the existing test profile.
-Doctest coverage is deferred until supported without nightly.
+Doctest coverage is deferred.
 Live fuzzing, sanitizers, Miri, timing checks, release-only paths,
 and other target architectures remain separate evidence;
 corpus replay reuses the fuzz implementations without launching nightly libFuzzer.

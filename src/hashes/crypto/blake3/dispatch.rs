@@ -1,7 +1,7 @@
 #[cfg(feature = "parallel")]
 use super::dispatch_tables::ParallelTable;
 #[cfg(any(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "aarch64",
   target_arch = "s390x",
   target_arch = "powerpc64",
@@ -12,11 +12,11 @@ use super::{
   dispatch_tables::{DispatchTable, StreamingTable},
   kernels::{Blake3KernelId, Kernel, kernel},
 };
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 use crate::platform::caps::x86;
 use crate::{backend::cache::OnceCache, hashes::crypto::dispatch_util::SizeClassDispatch, platform::Caps};
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline]
 #[must_use]
 fn allow_avx2_hash_many_one_chunk_fast_path(caps: Caps) -> bool {
@@ -24,7 +24,7 @@ fn allow_avx2_hash_many_one_chunk_fast_path(caps: Caps) -> bool {
 }
 
 /// Return the configured four-block policy class for x86-64.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline]
 #[must_use]
 fn is_wide_pipeline_for_hash_many(caps: Caps) -> bool {
@@ -49,7 +49,7 @@ static HASHER: OnceCache<HasherDispatch> = OnceCache::new();
 #[cfg(feature = "parallel")]
 static PARALLEL: OnceCache<ParallelDispatch> = OnceCache::new();
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[derive(Clone, Copy)]
 struct X86Policy {
   avx2_hash_many_one_chunk_fast_path: bool,
@@ -58,7 +58,7 @@ struct X86Policy {
   avx2_available: bool,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 static X86_POLICY: OnceCache<X86Policy> = OnceCache::new();
 
 #[derive(Clone, Copy)]
@@ -118,7 +118,7 @@ impl HasherDispatch {
 #[inline]
 #[must_use]
 fn resolve(id: Blake3KernelId, caps: Caps) -> Blake3KernelId {
-  #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+  #[cfg(not(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64")))]
   let _ = caps;
 
   // Tables express *preferences*. Here we enforce correctness (required CPU
@@ -129,7 +129,7 @@ fn resolve(id: Blake3KernelId, caps: Caps) -> Blake3KernelId {
   // would work.
   match id {
     Blake3KernelId::Portable => Blake3KernelId::Portable,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake3KernelId::X86Avx512 => {
       if caps.has(required_caps(Blake3KernelId::X86Avx512)) {
         Blake3KernelId::X86Avx512
@@ -141,7 +141,7 @@ fn resolve(id: Blake3KernelId, caps: Caps) -> Blake3KernelId {
         Blake3KernelId::Portable
       }
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake3KernelId::X86Avx2 => {
       if caps.has(required_caps(Blake3KernelId::X86Avx2)) {
         Blake3KernelId::X86Avx2
@@ -151,7 +151,7 @@ fn resolve(id: Blake3KernelId, caps: Caps) -> Blake3KernelId {
         Blake3KernelId::Portable
       }
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake3KernelId::X86Sse41 => {
       if caps.has(required_caps(Blake3KernelId::X86Sse41)) {
         Blake3KernelId::X86Sse41
@@ -234,7 +234,7 @@ fn active_parallel() -> ParallelDispatch {
   })
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline]
 #[must_use]
 fn x86_policy() -> X86Policy {
@@ -313,14 +313,14 @@ pub(crate) fn parallel_dispatch() -> ParallelDispatch {
   active_parallel()
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline]
 #[must_use]
 pub(crate) fn avx2_hash_many_one_chunk_fast_path() -> bool {
   x86_policy().avx2_hash_many_one_chunk_fast_path
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline]
 #[must_use]
 pub(crate) fn hash_many_wide_pipeline() -> bool {
@@ -328,7 +328,7 @@ pub(crate) fn hash_many_wide_pipeline() -> bool {
 }
 
 #[cfg(all(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   any(target_os = "linux", target_os = "macos", target_os = "windows")
 ))]
 #[inline]
@@ -349,14 +349,14 @@ mod tests {
     }
   }
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   const ALL_AMX: Caps = x86::AMX_TILE
     .union(x86::AMX_BF16)
     .union(x86::AMX_INT8)
     .union(x86::AMX_FP16)
     .union(x86::AMX_COMPLEX);
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   #[test]
   fn sapphire_rapids_shortcut_policy_does_not_depend_on_amx_permission() {
     let sapphire_rapids = x86::AVX512_READY | x86::INTEL_SAPPHIRE_RAPIDS;

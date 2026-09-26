@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
-RUSTUP_TOOLCHAIN=$("$SCRIPT_DIR/../lib/toolchain.sh" --host)
+RUSTUP_TOOLCHAIN=$("$SCRIPT_DIR/../lib/toolchain.sh")
 export RUSTUP_TOOLCHAIN
 
 examples=$(cargo metadata --locked --no-deps --format-version 1 | jq -cer '

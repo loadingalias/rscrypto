@@ -318,7 +318,7 @@ class Doctests(unittest.TestCase):
     def test_pinned_rustdoc_compile_and_native_execution_contract(self):
         # A small independent fixture exercises rustdoc itself, including negative
         # compilation, no_run, expected panic, and a failing runtime assertion.
-        channel = __import__('toolchain').contracts()['nightly']
+        channel = __import__('toolchain').channel()
         with tempfile.TemporaryDirectory(prefix='rscrypto doctest transfer ') as temporary:
             root = Path(temporary)
             for failing in (False, True):
@@ -352,7 +352,7 @@ class NativeArchive(unittest.TestCase):
     def test_real_nextest_archive_executes_after_transfer(self):
         # Test the complete consumer locally with a tiny host-native archive.
         # Only host identification is substituted; this is not RISC-V evidence.
-        channel = __import__('toolchain').contracts()['nightly']
+        channel = __import__('toolchain').channel()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / 'Cargo.toml').write_text('[package]\nname="archive-fixture"\nversion="0.0.0"\nedition="2024"\n'

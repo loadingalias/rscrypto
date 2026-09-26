@@ -121,7 +121,7 @@ def main():
     root = Path(temporary)
     for name in ('scripts/check/check.sh', 'scripts/check/dependencies.sh', 'scripts/lib/toolchain.sh',
                  'scripts/lib/toolchain.py', 'scripts/lib/cross_build.py', 'scripts/lib/python.sh', 'Cargo.toml',
-                 'rust-toolchain.toml', '.config/toolchains.toml', '.config/target-matrix.json'):
+                 'rust-toolchain.toml', '.config/target-matrix.json'):
       destination = root / name
       destination.parent.mkdir(parents=True, exist_ok=True)
       shutil.copy2(source / name, destination)
@@ -178,13 +178,13 @@ if name == 'cargo' and 'clippy' in args:
             pending.append(dependency)
       return expanded
 
-    stable = tomllib.loads((root / 'rust-toolchain.toml').read_text())['toolchain']['channel']
-    nightly = tomllib.loads((root / '.config/toolchains.toml').read_text())['nightly']
+    # One canonical toolchain checks every target.
+    channel = tomllib.loads((root / 'rust-toolchain.toml').read_text())['toolchain']['channel']
     for mode in ('fix', 'local', 'native'):
       result, commands = run(mode)
       assert result.returncode == 0, result.stderr
       inventories = [tuple(c) for c in commands if c[0] == 'rustup']
-      assert len(inventories) == len(set(inventories)) == (2 if mode == 'native' else 4), inventories
+      assert len(inventories) == len(set(inventories)) == 2, inventories
       clippy = [c for c in commands if c[0] == 'cargo' and 'clippy' in c]
       expected = targets if mode != 'native' else ['aarch64-apple-darwin']
       assert len(clippy) == 2 * len(expected), clippy
@@ -200,7 +200,7 @@ if name == 'cargo' and 'clippy' in args:
           assert '--locked' in command and '--no-default-features' in command
           assert ('--all-targets' in command) == (target == 'aarch64-apple-darwin')
           assert ('--lib' in command) == (target != 'aarch64-apple-darwin')
-          assert (command[1] == '+' + nightly) == target.startswith(('powerpc64le-', 's390x-', 'riscv32', 'riscv64gc-'))
+          assert command[1] == '+' + channel
           if target == 'aarch64-apple-darwin':
             assert selected - {'portable-only'} == features - {'portable-only'}
           if '-none' in target or target == 'wasm32-unknown-unknown':
@@ -208,9 +208,9 @@ if name == 'cargo' and 'clippy' in args:
             assert 'full' in selected
           if target == 'wasm32-wasip1':
             assert {'std', 'getrandom', 'full'} <= selected and 'parallel' not in selected
-      fmt = [c for c in commands if c[:3] == ['cargo', '+' + stable, 'fmt']]
-      assert fmt == ([['cargo', '+' + stable, 'fmt', '--all']] * 2 if mode == 'fix' else
-                     [['cargo', '+' + stable, 'fmt', '--all', '--', '--check']])
+      fmt = [c for c in commands if c[:3] == ['cargo', '+' + channel, 'fmt']]
+      assert fmt == ([['cargo', '+' + channel, 'fmt', '--all']] * 2 if mode == 'fix' else
+                     [['cargo', '+' + channel, 'fmt', '--all', '--', '--check']])
       assert not any('plan' in c for c in commands)
       deny = [c for c in commands if c[:2] == ['cargo', 'deny']]
       assert len(deny) == (0 if mode in ('fix', 'native') else 1)
@@ -224,14 +224,14 @@ if name == 'cargo' and 'clippy' in args:
       cross = [c for c in commands if c[0] == 'cargo' and 'clippy' in c]
       assert len(cross) == 2
       assert all('--all-targets' in c and c[c.index('--target') + 1] == target for c in cross)
-      assert all(c[1] == '+' + nightly for c in cross)
+      assert all(c[1] == '+' + channel for c in cross)
       assert sum('--release' in c for c in cross) == 1
       assert ['lint-independent-workspaces.sh'] in commands
       assert not any('--fix' in c for c in commands)
     result, commands = run('check')
     assert result.returncode == 0, result.stderr
     inventories = [c for c in commands if c[0] == 'rustup']
-    assert len(inventories) == 4, inventories
+    assert len(inventories) == 2, inventories
     clippy = [c for c in commands if c[0] == 'cargo' and 'clippy' in c]
     assert len(clippy) == 4 * len(targets)
     assert sum('--fix' in c for c in clippy) == 2 * len(targets)
@@ -241,8 +241,7 @@ if name == 'cargo' and 'clippy' in args:
     for host in sorted(hosts):
       result, commands = run('native', CHECK_HOST=host, RUSTUP_TOOLCHAIN='wrong-ambient-channel')
       assert result.returncode == 0, result.stderr
-      expected = nightly if host in {'powerpc64le-unknown-linux-gnu', 's390x-unknown-linux-gnu', 'riscv64gc-unknown-linux-gnu'} else stable
-      assert all(c[1] == '+' + expected for c in commands if c[0] == 'cargo' and 'clippy' in c)
+      assert all(c[1] == '+' + channel for c in commands if c[0] == 'cargo' and 'clippy' in c)
     result, commands = run('fix', CHECK_MISSING='thumbv6m-none-eabi')
     assert result.returncode != 0 and not any(c[0] == 'cargo' for c in commands)
     result, commands = run('native', CHECK_CLIPPY_EXIT='7')

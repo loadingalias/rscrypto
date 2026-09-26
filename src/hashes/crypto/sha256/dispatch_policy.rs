@@ -12,7 +12,7 @@ use crate::platform::Caps;
 #[inline]
 #[must_use]
 pub(crate) fn select_runtime_kernel(caps: Caps) -> KernelId {
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     if caps.has(super::kernels::required_caps(KernelId::X86Sha)) {
       return KernelId::X86Sha;

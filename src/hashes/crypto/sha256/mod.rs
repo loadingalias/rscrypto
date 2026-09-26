@@ -21,7 +21,7 @@ pub(crate) mod riscv64;
 pub(crate) mod s390x;
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 pub(crate) mod wasm;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(crate) mod x86_64;
 
 pub(crate) const BLOCK_LEN: usize = 64;
@@ -93,14 +93,14 @@ fn small_sigma1(x: u32) -> u32 {
 /// This matches the `sha2` crate's `rk()` strategy.
 #[inline(always)]
 fn rk(i: usize) -> u32 {
-  #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+  #[cfg(any(target_arch = "x86", all(target_arch = "x86_64", target_feature = "sse2")))]
   {
     // x86 has short immediates for 32-bit constants; constant-folding the
     // table is fine and produces tighter code than a load.
     // SAFETY: i is always in 0..64, and K has exactly 64 elements.
     unsafe { core::ptr::read(K.0.as_ptr().add(i)) }
   }
-  #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+  #[cfg(not(any(target_arch = "x86", all(target_arch = "x86_64", target_feature = "sse2"))))]
   {
     let base = core::hint::black_box(K.0.as_ptr());
     // SAFETY: i is always in 0..64, K has exactly 64 elements, and
@@ -346,11 +346,11 @@ pub struct Sha256 {
   compress_blocks: CompressBlocksFn,
   // True also preserves an explicitly supplied compression backend.
   dispatch_initialized: bool,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   update_mode: Sha256UpdateMode,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Sha256UpdateMode {
   RuntimeDispatch,
@@ -365,7 +365,7 @@ pub(crate) struct Sha256Prefix {
   compress_blocks: CompressBlocksFn,
   // True also preserves an explicitly supplied compression backend.
   dispatch_initialized: bool,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   update_mode: Sha256UpdateMode,
 }
 
@@ -405,7 +405,7 @@ impl Default for Sha256 {
       bytes_hashed: 0,
       compress_blocks: kernels::compile_time_best(),
       dispatch_initialized: false,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       update_mode: Sha256UpdateMode::RuntimeDispatch,
     }
   }
@@ -470,7 +470,7 @@ impl Sha256 {
     if data.is_empty() {
       return;
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
       // Check this before `COMPILE_TIME_HW`: SPR + `target-cpu=native` otherwise
       // keeps streaming on the slow function-pointer wrapper shape.
@@ -496,7 +496,7 @@ impl Sha256 {
     self.update_with_fn(data, compress_blocks);
   }
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   #[inline]
   fn try_enable_x86_sha_direct_update(&mut self) -> bool {
     if self.dispatch_initialized || !sha256_streaming_prefers_direct_x86_sha(crate::platform::caps()) {
@@ -508,7 +508,7 @@ impl Sha256 {
     true
   }
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   #[inline]
   fn update_with_x86_sha(&mut self, data: &[u8]) {
     self.update_with_fn(data, |state, blocks| {
@@ -629,7 +629,7 @@ impl Sha256 {
       bytes_hashed: self.bytes_hashed,
       compress_blocks: self.compress_blocks,
       dispatch_initialized: self.dispatch_initialized,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       update_mode: self.update_mode,
     }
   }
@@ -645,7 +645,7 @@ impl Sha256 {
       bytes_hashed: prefix.bytes_hashed,
       compress_blocks: prefix.compress_blocks,
       dispatch_initialized: prefix.dispatch_initialized,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       update_mode: prefix.update_mode,
     }
   }
@@ -680,13 +680,13 @@ impl Sha256 {
   }
 
   #[inline]
-  #[cfg(all(feature = "hmac", target_arch = "x86_64"))]
+  #[cfg(all(feature = "hmac", all(target_arch = "x86_64", target_feature = "sse2")))]
   fn reset_update_mode_to_aligned_prefix(&mut self, prefix: Sha256Prefix) {
     self.update_mode = prefix.update_mode;
   }
 
   #[inline]
-  #[cfg(all(feature = "hmac", not(target_arch = "x86_64")))]
+  #[cfg(all(feature = "hmac", not(all(target_arch = "x86_64", target_feature = "sse2"))))]
   fn reset_update_mode_to_aligned_prefix(&mut self, _prefix: Sha256Prefix) {}
 
   #[cfg(all(
@@ -702,13 +702,13 @@ impl Sha256 {
       bytes_hashed: 0,
       compress_blocks,
       dispatch_initialized: true,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       update_mode: Sha256UpdateMode::RuntimeDispatch,
     }
   }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline]
 fn sha256_streaming_prefers_direct_x86_sha(caps: crate::platform::Caps) -> bool {
   caps.has(
@@ -768,7 +768,7 @@ impl_std_io_write_for_digest!(Sha256);
 #[cfg(test)]
 mod tests {
   use super::Sha256;
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   use super::sha256_streaming_prefers_direct_x86_sha;
 
   fn hex32(bytes: &[u8; 32]) -> alloc::string::String {
@@ -824,7 +824,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   fn sapphire_rapids_streaming_policy_uses_direct_sha_ni() {
     let spr_sha = crate::platform::caps::x86::INTEL_SAPPHIRE_RAPIDS
       | crate::platform::caps::x86::SHA

@@ -29,8 +29,6 @@ def main():
     toolchain = root / 'scripts/lib/toolchain.sh'
     toolchain.write_text('#!/bin/sh\necho fixture-nightly\n')
     toolchain.chmod(0o755)
-    (root / '.config').mkdir()
-    (root / '.config/toolchains.toml').touch()
     packages = [root / 'fuzz', root / 'fuzz-packages/scoped']
     for package in packages:
       package.mkdir(parents=True)

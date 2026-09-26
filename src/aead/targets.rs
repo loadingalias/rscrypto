@@ -30,7 +30,7 @@ pub(super) enum AeadPrimitive {
         target_arch = "powerpc64",
         target_arch = "riscv64",
         target_arch = "s390x",
-        target_arch = "x86_64",
+        all(target_arch = "x86_64", target_feature = "sse2"),
       )
     )
   ))]
@@ -49,7 +49,7 @@ pub(super) enum AeadPrimitive {
         target_arch = "powerpc64",
         target_arch = "riscv64",
         target_arch = "s390x",
-        target_arch = "x86_64",
+        all(target_arch = "x86_64", target_feature = "sse2"),
       )
     )
   ))]
@@ -64,7 +64,7 @@ pub(super) enum AeadPrimitive {
         all(target_arch = "powerpc64", target_endian = "little"),
         target_arch = "riscv64",
         target_arch = "s390x",
-        target_arch = "x86_64",
+        all(target_arch = "x86_64", target_feature = "sse2"),
       )
     )
   ))]
@@ -93,7 +93,7 @@ pub(super) enum AeadBackend {
         all(target_arch = "powerpc64", target_endian = "little"),
         target_arch = "riscv64",
         target_arch = "s390x",
-        target_arch = "x86_64",
+        all(target_arch = "x86_64", target_feature = "sse2"),
       )
     )
   ))]
@@ -114,7 +114,7 @@ pub(super) enum AeadBackend {
         all(target_arch = "powerpc64", target_endian = "little"),
         target_arch = "riscv64",
         target_arch = "s390x",
-        target_arch = "x86_64",
+        all(target_arch = "x86_64", target_feature = "sse2"),
       )
     )
   ))]
@@ -137,7 +137,7 @@ pub(super) enum AeadBackend {
         all(target_arch = "powerpc64", target_endian = "little"),
         target_arch = "riscv64",
         target_arch = "s390x",
-        target_arch = "x86_64",
+        all(target_arch = "x86_64", target_feature = "sse2"),
       )
     )
   ))]
@@ -180,7 +180,7 @@ impl AeadBackend {
             all(target_arch = "powerpc64", target_endian = "little"),
             target_arch = "riscv64",
             target_arch = "s390x",
-            target_arch = "x86_64",
+            all(target_arch = "x86_64", target_feature = "sse2"),
           )
         )
       ))]
@@ -201,7 +201,7 @@ impl AeadBackend {
             all(target_arch = "powerpc64", target_endian = "little"),
             target_arch = "riscv64",
             target_arch = "s390x",
-            target_arch = "x86_64",
+            all(target_arch = "x86_64", target_feature = "sse2"),
           )
         )
       ))]
@@ -222,7 +222,7 @@ impl AeadBackend {
             all(target_arch = "powerpc64", target_endian = "little"),
             target_arch = "riscv64",
             target_arch = "s390x",
-            target_arch = "x86_64",
+            all(target_arch = "x86_64", target_feature = "sse2"),
           )
         )
       ))]
@@ -264,7 +264,7 @@ pub(super) fn select_backend(primitive: AeadPrimitive, arch: Arch, caps: Caps) -
           target_arch = "powerpc64",
           target_arch = "riscv64",
           target_arch = "s390x",
-          target_arch = "x86_64",
+          all(target_arch = "x86_64", target_feature = "sse2"),
         )
       )
     ))]
@@ -281,7 +281,7 @@ pub(super) fn select_backend(primitive: AeadPrimitive, arch: Arch, caps: Caps) -
           all(target_arch = "powerpc64", target_endian = "little"),
           target_arch = "riscv64",
           target_arch = "s390x",
-          target_arch = "x86_64",
+          all(target_arch = "x86_64", target_feature = "sse2"),
         )
       )
     ))]
@@ -407,7 +407,7 @@ fn select_gcm_backend(arch: Arch, caps: Caps) -> AeadBackend {
       all(target_arch = "powerpc64", target_endian = "little"),
       target_arch = "riscv64",
       target_arch = "s390x",
-      target_arch = "x86_64",
+      all(target_arch = "x86_64", target_feature = "sse2"),
     )
   )
 ))]

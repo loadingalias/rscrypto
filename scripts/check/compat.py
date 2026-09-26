@@ -27,13 +27,8 @@ def targets():
 
 
 def install():
-    channels = {toolchain.stable(): set(targets())}
-    for target in targets():
-        channel = toolchain.for_target(target)
-        if channel != toolchain.stable():
-            channels[toolchain.stable()].remove(target)
-            channels.setdefault(channel, set()).add(target)
-    channels.setdefault(read('Cargo.toml')['package']['rust-version'], set()).add('thumbv6m-none-eabi')
+    channels = {toolchain.channel(): set(targets())}
+    channels.setdefault(toolchain.msrv_channel(), set()).add('thumbv6m-none-eabi')
     for channel, selected in channels.items():
         subprocess.run(['rustup', 'toolchain', 'install', channel, '--profile', 'minimal',
                         '--target', ','.join(sorted(selected))], check=True)
@@ -56,8 +51,8 @@ def boundary_features(graph, boundary):
 def cases():
     manifest = read('Cargo.toml')
     graph = manifest['features']
-    stable = toolchain.stable()
-    msrv = manifest['package']['rust-version']
+    canonical = toolchain.channel()
+    msrv = toolchain.msrv_channel()
     host = toolchain.host()
 
     def check(channel, target, features, operation='check'):
@@ -70,7 +65,8 @@ def cases():
         return command
 
     # Standalone features include umbrella aliases: they are also public contracts.
-    for channel in dict.fromkeys([stable, msrv]):
+    # While the MSRV is unreleased, its lane is the canonical nightly itself.
+    for channel in dict.fromkeys([canonical, msrv]):
         for feature in ['', *sorted(graph)]:
             yield f'{channel}-{feature or "empty"}', [check(channel, host, [feature] if feature else [])], {}
         for boundary in ('core', 'alloc'):
@@ -83,13 +79,13 @@ def cases():
         features = ['full', 'serde', 'serde-secrets', 'websocket-sha1']
         if target == 'wasm32-wasip1':
             features += ['std', 'diag', 'getrandom']
-        yield target, [check(toolchain.for_target(target), target, features, 'build')], {}
+        yield target, [check(canonical, target, features, 'build')], {}
 
     # Execute the same independent vectors in bare WASM and WASI, scalar and SIMD.
     for target in ('wasm32-unknown-unknown', 'wasm32-wasip1'):
         for simd in (False, True):
             name = f'{target}-{"simd" if simd else "scalar"}'
-            build = ['cargo', '+' + stable, 'build', '--locked', '--release', '--manifest-path',
+            build = ['cargo', '+' + canonical, 'build', '--locked', '--release', '--manifest-path',
                      'tools/wasm-runtime-vectors/Cargo.toml', '--target', target]
             invoke = ['--invoke', 'run_vectors'] if target.endswith('unknown-unknown') else []
             run = ['wasmtime', 'run', '-W', f'simd={"y" if simd else "n"},relaxed-simd=n',

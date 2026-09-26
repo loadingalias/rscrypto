@@ -8,11 +8,11 @@ pub(crate) type StreamAccumulateFn =
 #[repr(u8)]
 pub(crate) enum Xxh3KernelId {
   Portable = 0,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   Avx2 = 1,
   #[cfg(target_arch = "aarch64")]
   Neon = 2,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   Avx512 = 3,
   #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
   Vsx = 4,
@@ -27,11 +27,11 @@ impl Xxh3KernelId {
   pub(crate) const fn as_str(self) -> &'static str {
     match self {
       Self::Portable => "portable",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::Avx2 => "avx2",
       #[cfg(target_arch = "aarch64")]
       Self::Neon => "neon",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::Avx512 => "avx512",
       #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
       Self::Vsx => "vsx",
@@ -45,7 +45,11 @@ impl Xxh3KernelId {
 #[cfg(any(
   all(test, not(miri)),
   not(any(
-    all(target_arch = "x86_64", any(target_feature = "avx512f", target_feature = "avx2")),
+    all(
+      target_arch = "x86_64",
+      target_feature = "sse2",
+      any(target_feature = "avx512f", target_feature = "avx2")
+    ),
     all(target_arch = "aarch64", target_feature = "neon"),
     target_arch = "riscv64"
   ))
@@ -54,11 +58,11 @@ impl Xxh3KernelId {
 pub(crate) fn hash64_long_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u64 {
   match id {
     Xxh3KernelId::Portable => super::xxh3_64_long,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Xxh3KernelId::Avx2 => super::x86_64_avx2::xxh3_64_long,
     #[cfg(target_arch = "aarch64")]
     Xxh3KernelId::Neon => super::aarch64_neon::xxh3_64_long,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Xxh3KernelId::Avx512 => super::x86_64_avx512::xxh3_64_long,
     #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
     Xxh3KernelId::Vsx => super::power::xxh3_64_long,
@@ -71,7 +75,11 @@ pub(crate) fn hash64_long_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u64 {
 #[cfg(any(
   all(test, not(miri)),
   not(any(
-    all(target_arch = "x86_64", any(target_feature = "avx512f", target_feature = "avx2")),
+    all(
+      target_arch = "x86_64",
+      target_feature = "sse2",
+      any(target_feature = "avx512f", target_feature = "avx2")
+    ),
     all(target_arch = "aarch64", target_feature = "neon"),
     target_arch = "riscv64"
   ))
@@ -80,11 +88,11 @@ pub(crate) fn hash64_long_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u64 {
 pub(crate) fn hash128_long_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u128 {
   match id {
     Xxh3KernelId::Portable => super::xxh3_128_long,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Xxh3KernelId::Avx2 => super::x86_64_avx2::xxh3_128_long,
     #[cfg(target_arch = "aarch64")]
     Xxh3KernelId::Neon => super::aarch64_neon::xxh3_128_long,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Xxh3KernelId::Avx512 => super::x86_64_avx512::xxh3_128_long,
     #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
     Xxh3KernelId::Vsx => super::power::xxh3_128_long,
@@ -97,11 +105,11 @@ pub(crate) fn hash128_long_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u128 {
 pub(crate) fn stream_accumulate_fn(id: Xxh3KernelId) -> StreamAccumulateFn {
   match id {
     Xxh3KernelId::Portable => super::stream_accumulate_portable,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Xxh3KernelId::Avx2 => super::x86_64_avx2::stream_accumulate,
     #[cfg(target_arch = "aarch64")]
     Xxh3KernelId::Neon => super::aarch64_neon::stream_accumulate,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Xxh3KernelId::Avx512 => super::x86_64_avx512::stream_accumulate,
     #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
     Xxh3KernelId::Vsx => super::power::stream_accumulate,
@@ -115,11 +123,11 @@ pub(crate) fn stream_accumulate_fn(id: Xxh3KernelId) -> StreamAccumulateFn {
 pub(crate) const fn required_caps(id: Xxh3KernelId) -> Caps {
   match id {
     Xxh3KernelId::Portable => Caps::NONE,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Xxh3KernelId::Avx2 => crate::platform::caps::x86::AVX2,
     #[cfg(target_arch = "aarch64")]
     Xxh3KernelId::Neon => crate::platform::caps::aarch64::NEON,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Xxh3KernelId::Avx512 => crate::platform::caps::x86::AVX512F,
     #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
     Xxh3KernelId::Vsx => crate::platform::caps::power::ALTIVEC

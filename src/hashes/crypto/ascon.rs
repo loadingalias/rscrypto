@@ -21,9 +21,9 @@ pub(crate) mod dispatch_tables;
 mod kernel_test;
 #[cfg(any(test, feature = "std"))]
 pub(crate) mod kernels;
-#[cfg(all(target_arch = "x86_64", any(test, feature = "std")))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", any(test, feature = "std")))]
 mod x86_64_avx2;
-#[cfg(all(target_arch = "x86_64", any(test, feature = "std")))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", any(test, feature = "std")))]
 mod x86_64_avx512;
 
 const RATE: usize = 8;

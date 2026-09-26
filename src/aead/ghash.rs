@@ -109,7 +109,7 @@ pub(super) fn ghash_update_padded_wide(mut acc: u128, h_polyval: u128, h_powers_
   acc
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline]
 pub(super) fn ghash_collect_padded_block(blocks: &mut [u128; 4], block_count: &mut usize, block: u128) -> bool {
   if *block_count == 4 {
@@ -120,7 +120,7 @@ pub(super) fn ghash_collect_padded_block(blocks: &mut [u128; 4], block_count: &m
   true
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline]
 pub(super) fn ghash_collect_padded(blocks: &mut [u128; 4], block_count: &mut usize, data: &[u8]) -> bool {
   let (full_blocks, remainder) = data.as_chunks::<16>();
@@ -143,7 +143,7 @@ pub(super) fn ghash_collect_padded(blocks: &mut [u128; 4], block_count: &mut usi
 ///
 /// # Safety
 /// Caller must ensure VPCLMULQDQ, PCLMULQDQ, AVX-512F/VL/BW/DQ, and SSE2 are available.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
 pub(super) unsafe fn ghash_update_padded_wide_x86(
   mut acc: u128,
@@ -342,7 +342,7 @@ mod tests {
             let actual = unsafe { ghash_update_padded_wide_aarch64(initial, h, &reversed, data) };
             assert_eq!(actual, expected, "aarch64 len={len} offset={offset}");
           }
-          #[cfg(target_arch = "x86_64")]
+          #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
           if _caps.has(crate::platform::caps::x86::VPCLMUL_READY) {
             // SAFETY: VPCLMUL_READY establishes the helper's target features; inputs are initialized.
             let actual = unsafe { ghash_update_padded_wide_x86(initial, h, &reversed, data) };
@@ -360,7 +360,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   fn padded_collection_preserves_field_boundaries_and_capacity() {
     let mut blocks = [0u128; 4];
     let mut count = 0;

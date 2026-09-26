@@ -19,7 +19,7 @@ def main():
     parser.add_argument('--allow-dirty', action='store_true', help='local validation of uncommitted work')
     args = parser.parse_args()
     manifest = read('Cargo.toml')
-    channels = list(dict.fromkeys([toolchain.stable(), manifest['package']['rust-version']]))
+    channels = list(dict.fromkeys([toolchain.channel(), toolchain.msrv_channel()]))
     if args.install:
         for channel in channels:
             subprocess.run(['rustup', 'toolchain', 'install', channel, '--profile', 'minimal',

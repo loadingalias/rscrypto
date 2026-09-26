@@ -9,7 +9,10 @@ const KEY_SIZE: usize = chacha20::KEY_SIZE;
 const TAG_SIZE: usize = 16;
 const NONCE_SIZE: usize = Nonce96::LENGTH;
 const MAX_PLAINTEXT_LEN: u64 = (u32::MAX as u64) * (chacha20::BLOCK_SIZE as u64);
-#[cfg(any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little")))]
+#[cfg(any(
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  all(target_arch = "powerpc64", target_endian = "little")
+))]
 const SMALL_AAD_FAST_MAX: usize = 63;
 #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
 const POWER_SHORT_FAST_MAX: usize = chacha20::BLOCK_SIZE;
@@ -20,19 +23,19 @@ const AARCH64_INTERLEAVED_BLOCKS: u32 = 16 * 1024;
 #[cfg(target_arch = "aarch64")]
 const AARCH64_INTERLEAVED_CHUNK: usize = (AARCH64_INTERLEAVED_BLOCKS as usize) * chacha20::BLOCK_SIZE;
 #[cfg(all(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_os = "linux",
   any(test, all(not(debug_assertions), not(feature = "portable-only")))
 ))]
 const X86_64_ASM_ZEN5_MAX: usize = 1024;
 #[cfg(all(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_os = "linux",
   any(test, all(not(debug_assertions), not(feature = "portable-only")))
 ))]
 const X86_64_ASM_SPR_MAX: usize = 256;
 #[cfg(all(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_os = "linux",
   any(test, all(not(debug_assertions), not(feature = "portable-only")))
 ))]
@@ -47,7 +50,7 @@ const X86_64_OPEN_ASM_SHORT_MAX: usize = 256;
 #[path = "chacha20poly1305/aarch64_asm.rs"]
 mod aarch64_asm;
 #[cfg(all(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_os = "linux",
   any(
     all(rscrypto_internal, feature = "diag"),
@@ -171,7 +174,10 @@ impl ChaCha20Poly1305 {
     tag
   }
 
-  #[cfg(any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little")))]
+  #[cfg(any(
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    all(target_arch = "powerpc64", target_endian = "little")
+  ))]
   fn encrypt_empty_text_fast(&self, nonce: &Nonce96, aad: &[u8]) -> Option<Result<ChaCha20Poly1305Tag, SealError>> {
     if aad.len() > SMALL_AAD_FAST_MAX {
       return None;
@@ -183,7 +189,10 @@ impl ChaCha20Poly1305 {
     Some(Ok(ChaCha20Poly1305Tag::from_bytes(tag)))
   }
 
-  #[cfg(any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little")))]
+  #[cfg(any(
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    all(target_arch = "powerpc64", target_endian = "little")
+  ))]
   fn decrypt_empty_text_fast(
     &self,
     nonce: &Nonce96,
@@ -246,7 +255,7 @@ impl ChaCha20Poly1305 {
   }
 
   #[cfg(all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_os = "linux",
     any(
       test,
@@ -262,7 +271,7 @@ impl ChaCha20Poly1305 {
   }
 
   #[cfg(all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_os = "linux",
     any(test, all(not(debug_assertions), not(feature = "portable-only")))
   ))]
@@ -286,7 +295,7 @@ impl ChaCha20Poly1305 {
   }
 
   #[cfg(all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_os = "linux",
     any(test, all(not(debug_assertions), not(feature = "portable-only")))
   ))]
@@ -308,7 +317,12 @@ impl ChaCha20Poly1305 {
     }
   }
 
-  #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+  #[cfg(all(
+    rscrypto_internal,
+    feature = "diag",
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    target_os = "linux"
+  ))]
   fn encrypt_in_place_asm_x86_64_forced(
     &self,
     nonce: &Nonce96,
@@ -334,7 +348,12 @@ impl ChaCha20Poly1305 {
     Some(Ok(ChaCha20Poly1305Tag::from_bytes(tag)))
   }
 
-  #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+  #[cfg(all(
+    rscrypto_internal,
+    feature = "diag",
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    target_os = "linux"
+  ))]
   fn decrypt_in_place_asm_x86_64_forced(
     &self,
     nonce: &Nonce96,
@@ -366,7 +385,7 @@ impl ChaCha20Poly1305 {
   }
 
   #[cfg(all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_os = "linux",
     not(debug_assertions),
     not(feature = "portable-only")
@@ -393,7 +412,7 @@ impl ChaCha20Poly1305 {
   }
 
   #[cfg(all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_os = "linux",
     not(debug_assertions),
     not(feature = "portable-only")
@@ -654,7 +673,12 @@ pub fn diag_chacha20poly1305_encrypt_in_place_owned(
   cipher.encrypt_in_place_owned_unchecked(nonce, aad, buffer)
 }
 
-#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  target_os = "linux"
+))]
 /// Encrypts in place through the Linux x86-64 assembly entrypoint when that entrypoint is available.
 ///
 /// Returns `None` when the current CPU cannot execute the assembly backend.
@@ -671,7 +695,12 @@ pub fn diag_chacha20poly1305_encrypt_in_place_x86_64_asm(
   cipher.encrypt_in_place_asm_x86_64_forced(nonce, aad, buffer)
 }
 
-#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  target_os = "linux"
+))]
 /// Authenticates and decrypts in place through the Linux x86-64 assembly entrypoint when it is available.
 ///
 /// Returns `None` when the current CPU cannot execute the assembly backend.
@@ -740,7 +769,10 @@ impl Aead for ChaCha20Poly1305 {
   ) -> Result<Self::Tag, SealError> {
     super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
 
-    #[cfg(any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little")))]
+    #[cfg(any(
+      all(target_arch = "x86_64", target_feature = "sse2"),
+      all(target_arch = "powerpc64", target_endian = "little")
+    ))]
     if buffer.is_empty()
       && let Some(result) = self.encrypt_empty_text_fast(nonce, aad)
     {
@@ -763,7 +795,7 @@ impl Aead for ChaCha20Poly1305 {
     }
 
     #[cfg(all(
-      target_arch = "x86_64",
+      all(target_arch = "x86_64", target_feature = "sse2"),
       target_os = "linux",
       not(debug_assertions),
       not(feature = "portable-only")
@@ -784,7 +816,10 @@ impl Aead for ChaCha20Poly1305 {
   ) -> Result<(), OpenError> {
     super::open_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
 
-    #[cfg(any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little")))]
+    #[cfg(any(
+      all(target_arch = "x86_64", target_feature = "sse2"),
+      all(target_arch = "powerpc64", target_endian = "little")
+    ))]
     if buffer.is_empty()
       && let Some(result) = self.decrypt_empty_text_fast(nonce, aad, tag)
     {
@@ -797,7 +832,7 @@ impl Aead for ChaCha20Poly1305 {
     }
 
     #[cfg(all(
-      target_arch = "x86_64",
+      all(target_arch = "x86_64", target_feature = "sse2"),
       target_os = "linux",
       not(debug_assertions),
       not(feature = "portable-only")
@@ -822,7 +857,10 @@ impl Aead for ChaCha20Poly1305 {
 
 #[cfg(test)]
 mod tests {
-  #[cfg(any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little")))]
+  #[cfg(any(
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    all(target_arch = "powerpc64", target_endian = "little")
+  ))]
   use alloc::vec::Vec;
 
   use super::*;
@@ -880,7 +918,7 @@ mod tests {
     assert!(buf.iter().all(|&b| b == 0), "buffer not zeroed on auth failure");
   }
 
-  #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", target_os = "linux"))]
   #[test]
   fn x86_64_asm_policy_matches_configured_thresholds() {
     use crate::platform::{Caps, caps::x86};
@@ -932,7 +970,10 @@ mod tests {
     ));
   }
 
-  #[cfg(any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little")))]
+  #[cfg(any(
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    all(target_arch = "powerpc64", target_endian = "little")
+  ))]
   #[test]
   fn empty_text_fast_decrypt_matches_owned_path() {
     let key = ChaCha20Poly1305Key::from_bytes([0x42; KEY_SIZE]);
@@ -975,7 +1016,12 @@ mod tests {
     }
   }
 
-  #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+  #[cfg(all(
+    rscrypto_internal,
+    feature = "diag",
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    target_os = "linux"
+  ))]
   #[test]
   fn x86_64_open_asm_matches_owned_path() {
     if !ChaCha20Poly1305::x86_64_asm_caps_available(crate::platform::caps()) {

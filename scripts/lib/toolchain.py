@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
-"""Resolve pinned Rust toolchains for provisioning and execution."""
+"""Resolve the canonical Rust toolchain for provisioning and execution.
+
+`rust-toolchain.toml` owns the only development compiler for every host,
+target, and tool lane. The MSRV lane uses the manifest's `rust-version`,
+except while that release is unpublished: then the canonical toolchain must
+report the matching `-nightly` version and runs the MSRV lane itself.
+"""
 
 import argparse
-import fnmatch
+import functools
 import os
 from pathlib import Path
 import subprocess
@@ -11,73 +17,78 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def stable():
+def channel():
   return tomllib.loads((ROOT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
 
 
-def contracts():
-  return tomllib.loads((ROOT / ".config/toolchains.toml").read_text())
+def msrv():
+  return tomllib.loads((ROOT / "Cargo.toml").read_text())["package"]["rust-version"]
 
 
-def for_target(target):
-  policy = contracts()
-  return policy["nightly"] if any(fnmatch.fnmatchcase(target, pattern) for pattern in policy["nightly_targets"]) else stable()
+@functools.cache
+def release(selected):
+  """Return the `rustc` release string (for example `1.100.0-nightly`) of a toolchain."""
+  output = subprocess.check_output(["rustc", "+" + selected, "-vV"], text=True)
+  for line in output.splitlines():
+    if line.startswith("release: "):
+      return line.removeprefix("release: ").strip()
+  raise ValueError(f"cannot determine the {selected} release")
+
+
+def msrv_channel():
+  """Toolchain that validates the declared MSRV.
+
+  A preview MSRV is accepted only when the canonical toolchain is its nightly;
+  otherwise the MSRV must name an installable released toolchain.
+  """
+  declared = msrv()
+  canonical = channel()
+  if canonical.startswith("nightly-") and release(canonical) == declared + "-nightly":
+    return canonical
+  return declared
 
 
 def host():
-  output = subprocess.check_output(["rustc", "+" + stable(), "-vV"], text=True)
+  output = subprocess.check_output(["rustc", "+" + channel(), "-vV"], text=True)
   for line in output.splitlines():
     if line.startswith("host: "):
       return line.removeprefix("host: ").strip()
   raise ValueError("cannot determine Rust host")
 
 
-def select_host():
-  channel = for_target(host())
-  os.environ["RUSTUP_TOOLCHAIN"] = channel
-  return channel
+def select():
+  os.environ["RUSTUP_TOOLCHAIN"] = channel()
+  return channel()
 
 
-def install_commands(target, components):
-  development = stable()
-  native = for_target(target)
-  return [["rustup", "toolchain", "install", channel, "--profile", "minimal",
-           *[arg for component in dict.fromkeys([
-             *(["clippy"] if channel == native else []),
-             *(["rustfmt"] if channel == development else []), *components])
-             for arg in ("--component", component)]]
-          for channel in dict.fromkeys([development, native])]
+def install_command(components):
+  return ["rustup", "toolchain", "install", channel(), "--profile", "minimal",
+          *[arg for component in dict.fromkeys(["clippy", "rustfmt", *components])
+            for arg in ("--component", component)]]
 
 
 def main():
   parser = argparse.ArgumentParser(description=__doc__)
   mode = parser.add_mutually_exclusive_group()
-  mode.add_argument("--nightly", action="store_true")
-  mode.add_argument("--target")
-  mode.add_argument("--host", action="store_true")
+  mode.add_argument("--msrv", action="store_true", help="print the toolchain for the MSRV lane")
   mode.add_argument("--print-host", action="store_true")
-  mode.add_argument("--install", metavar="HOST")
+  mode.add_argument("--install", action="store_true", help="install the canonical toolchain")
   mode.add_argument("--exec", dest="command", nargs=argparse.REMAINDER)
   parser.add_argument("--component", action="append", default=[])
   args = parser.parse_args()
   if args.print_host:
     print(host())
-    return 0
-  if args.command is not None:
+  elif args.command is not None:
     if not args.command:
       parser.error("--exec requires a command")
-    select_host()
+    select()
     return subprocess.run(args.command).returncode
-  if args.install:
-    for command in install_commands(args.install, args.component):
-      subprocess.run(command, check=True)
-    return 0
-  if args.nightly:
-    print(contracts()["nightly"])
-  elif args.target or args.host:
-    print(for_target(args.target or host()))
+  elif args.install:
+    subprocess.run(install_command(args.component), check=True)
+  elif args.msrv:
+    print(msrv_channel())
   else:
-    print(stable())
+    print(channel())
   return 0
 
 

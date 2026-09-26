@@ -14,7 +14,7 @@ pub(crate) fn select_runtime_kernel(caps: Caps) -> KernelId {
   // Both AVX2 and AVX-512VL handle a trailing single block inside their SIMD
   // kernels. Vendor-specific ordering between the implementations remains a
   // manually maintained dispatch policy.
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     use crate::platform::caps::x86;
     if caps.has(x86::SHA512) {

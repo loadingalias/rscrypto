@@ -183,7 +183,7 @@ def test_proof_failure_stops_timing():
          patch.dict(os.environ, GITHUB_STEP_SUMMARY=str(summary)), patch.object(sys, "argv", ["full.py"]):
       assert full.main() == 1
       timing.assert_not_called()
-      assert selector.call_args_list[0].args[0] == [sys.executable, "-X", "utf8", str(root.resolve() / "scripts/lib/toolchain.py"), "--host"]
+      assert selector.call_args_list[0].args[0] == [sys.executable, "-X", "utf8", str(root.resolve() / "scripts/lib/toolchain.py")]
     report = json.loads((root / "target/ct/x86_64-unknown-linux-gnu/release/ct-report.json").read_text())
     assert report["status"] == "fail"
     assert report["steps"][-1]["name"] == "ct-dudect"

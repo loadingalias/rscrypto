@@ -6,7 +6,7 @@
 use core::fmt;
 
 #[cfg(any(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "aarch64",
   all(target_arch = "powerpc64", target_endian = "little"),
   target_arch = "riscv64",
@@ -14,7 +14,7 @@ use core::fmt;
 ))]
 use super::targets::AeadBackend;
 #[cfg(any(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "aarch64",
   all(target_arch = "powerpc64", target_endian = "little"),
   target_arch = "riscv64",
@@ -218,7 +218,7 @@ fn finalize(s: &mut State, ad_len: usize, msg_len: usize) -> [u8; TAG_SIZE] {
 #[cfg(target_arch = "aarch64")]
 #[path = "aegis256/aarch64_ce.rs"]
 mod ce;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[path = "aegis256/x86_64_ni.rs"]
 mod ni;
 #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
@@ -234,7 +234,7 @@ mod rv_zvkned;
 #[path = "aegis256/s390x_vperm.rs"]
 mod s390x_vperm;
 #[cfg(any(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "aarch64",
   all(target_arch = "powerpc64", target_endian = "little"),
   target_arch = "riscv64",
@@ -313,7 +313,7 @@ define_aead_tag_type!(Aegis256Tag, TAG_SIZE, "AEGIS-256 128-bit authentication t
 pub struct Aegis256 {
   key: Aegis256Key,
   #[cfg(any(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
     all(target_arch = "powerpc64", target_endian = "little"),
     target_arch = "riscv64",
@@ -477,7 +477,7 @@ impl Aead for Aegis256 {
     Self {
       key: key.duplicate_secret(),
       #[cfg(any(
-        target_arch = "x86_64",
+        all(target_arch = "x86_64", target_feature = "sse2"),
         target_arch = "aarch64",
         all(target_arch = "powerpc64", target_endian = "little"),
         target_arch = "riscv64",
@@ -511,7 +511,7 @@ impl Aead for Aegis256 {
     // AEGIS-256 updates six dependent state lanes. The wide VAES kernel packs
     // them into three YMM registers and needs cross-lane shuffles between
     // updates; this path keeps the serial state in XMM registers.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     if self.backend == AeadBackend::X86Aesni {
       // SAFETY: backend resolution confirmed AES-NI + AVX are available.
       // VEX encoding gives 3-operand VAESENC, eliminating register copies.
@@ -572,7 +572,7 @@ impl Aead for Aegis256 {
     let key = self.key.as_bytes();
     let nonce = nonce.as_bytes();
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     let computed = if self.backend == AeadBackend::X86Aesni {
       // SAFETY: backend resolution confirmed AES-NI + AVX are available.
       // VEX encoding gives 3-operand VAESENC, eliminating register copies.
@@ -620,7 +620,7 @@ impl Aead for Aegis256 {
     };
 
     #[cfg(not(any(
-      target_arch = "x86_64",
+      all(target_arch = "x86_64", target_feature = "sse2"),
       target_arch = "aarch64",
       all(target_arch = "powerpc64", target_endian = "little"),
       target_arch = "riscv64",

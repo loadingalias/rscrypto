@@ -133,7 +133,7 @@ def validate(data):
     for platform in PLATFORMS:
         config = data[platform]
         if 'miri' in config['components']:
-            raise ValueError(f'{platform}: Miri belongs to the separate nightly lane')
+            raise ValueError(f'{platform}: Miri belongs to the ci-miri profile')
         required = {'cargo-nextest', 'just', 'ripgrep', 'cargo-audit', 'cargo-deny'}
         if not required <= set(config['cargo']):
             raise ValueError(f'{platform}: missing check/test/bench tools')

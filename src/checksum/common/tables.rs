@@ -249,7 +249,10 @@ pub(super) const fn crc64_table_entry(poly: u64, index: u8) -> u64 {
 /// # Arguments
 ///
 /// * `poly` - The reflected polynomial
-#[cfg(all(feature = "crc64", any(target_arch = "x86_64", target_arch = "aarch64", test)))]
+#[cfg(all(
+  feature = "crc64",
+  any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64", test)
+))]
 #[must_use]
 pub(in crate::checksum) const fn generate_crc64_tables_8(poly: u64) -> [[u64; 256]; 8] {
   let mut tables = [[0u64; 256]; 8];

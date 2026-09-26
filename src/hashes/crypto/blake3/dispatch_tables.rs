@@ -12,20 +12,20 @@ use crate::platform::caps::power;
 use crate::platform::caps::riscv;
 #[cfg(target_arch = "s390x")]
 use crate::platform::caps::s390x;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 use crate::platform::caps::x86;
 
 pub(crate) const DEFAULT_BOUNDARIES: [usize; 3] = [64, 256, 4096];
 
 // Architecture-specific thresholds for when to switch from table bulk kernel to size-class
 // selection. These are tuned based on SIMD width and latency characteristics.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const THRESHOLD_AVX512: usize = 4 * 1024; // AVX-512 is very fast, switch early
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const THRESHOLD_AVX2: usize = 8 * 1024; // AVX2 - used for fallback/default x86_64 profile
 #[cfg(target_arch = "aarch64")]
 const THRESHOLD_NEON: usize = 16 * 1024; // NEON - slightly higher due to different characteristics
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
 const THRESHOLD_PORTABLE: usize = 32 * 1024; // Conservative for scalar
 
 #[cfg(feature = "parallel")]
@@ -114,15 +114,15 @@ pub(crate) struct FamilyProfile {
 // The runtime dispatcher (`dispatch::resolve`) will still validate CPU feature
 // availability and fall back to Portable when needed.
 #[cfg(any(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "riscv64",
   target_arch = "s390x",
   target_arch = "powerpc64"
 ))]
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const SIMD_KERNEL: KernelId = KernelId::X86Avx2;
 #[cfg(any(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "riscv64",
   target_arch = "s390x",
   target_arch = "powerpc64"
@@ -130,7 +130,7 @@ const SIMD_KERNEL: KernelId = KernelId::X86Avx2;
 #[cfg(target_arch = "s390x")]
 const SIMD_KERNEL: KernelId = KernelId::S390xVector;
 #[cfg(any(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "riscv64",
   target_arch = "s390x",
   target_arch = "powerpc64"
@@ -138,7 +138,7 @@ const SIMD_KERNEL: KernelId = KernelId::S390xVector;
 #[cfg(target_arch = "powerpc64")]
 const SIMD_KERNEL: KernelId = KernelId::PowerVsx;
 #[cfg(any(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "riscv64",
   target_arch = "s390x",
   target_arch = "powerpc64"
@@ -146,13 +146,13 @@ const SIMD_KERNEL: KernelId = KernelId::PowerVsx;
 #[cfg(target_arch = "riscv64")]
 const SIMD_KERNEL: KernelId = KernelId::RiscvV;
 #[cfg(any(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "riscv64",
   target_arch = "s390x",
   target_arch = "powerpc64"
 ))]
 #[cfg(not(any(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "riscv64",
   target_arch = "s390x",
   target_arch = "powerpc64"
@@ -166,62 +166,62 @@ const S390X_VECTOR_KERNEL: KernelId = KernelId::S390xVector;
 const POWER_VSX_KERNEL: KernelId = KernelId::PowerVsx;
 
 #[cfg(any(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "riscv64",
   target_arch = "s390x",
   target_arch = "powerpc64"
 ))]
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const DEFAULT_XS: KernelId = KernelId::X86Sse41;
 #[cfg(any(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "riscv64",
   target_arch = "s390x",
   target_arch = "powerpc64"
 ))]
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
 const DEFAULT_XS: KernelId = KernelId::Portable;
 
 #[cfg(any(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "riscv64",
   target_arch = "s390x",
   target_arch = "powerpc64"
 ))]
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const DEFAULT_S: KernelId = KernelId::X86Sse41;
 #[cfg(any(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "riscv64",
   target_arch = "s390x",
   target_arch = "powerpc64"
 ))]
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
 const DEFAULT_S: KernelId = KernelId::Portable;
 
 #[cfg(any(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "riscv64",
   target_arch = "s390x",
   target_arch = "powerpc64"
 ))]
 const DEFAULT_M: KernelId = SIMD_KERNEL;
 #[cfg(any(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "riscv64",
   target_arch = "s390x",
   target_arch = "powerpc64"
 ))]
 const DEFAULT_L: KernelId = SIMD_KERNEL;
 
-#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const DEFAULT_STREAM_KERNEL: KernelId = KernelId::X86Avx2;
-#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64"))]
+#[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
 const DEFAULT_STREAM_KERNEL: KernelId = KernelId::Portable;
 
-#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
+#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64"))]
 const DEFAULT_BULK_KERNEL: KernelId = SIMD_KERNEL;
 
 #[cfg(feature = "parallel")]
@@ -409,7 +409,7 @@ const fn scalar_profile_parallel(
 #[inline]
 #[must_use]
 #[cfg(any(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "riscv64",
   target_arch = "s390x",
   target_arch = "powerpc64"
@@ -425,14 +425,14 @@ const fn default_kind_table() -> DispatchTable {
 }
 
 // Default threshold matches the default SIMD tier for each architecture.
-#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const DEFAULT_BULK_THRESHOLD: usize = THRESHOLD_AVX2;
-#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64"))]
+#[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
 const DEFAULT_BULK_THRESHOLD: usize = THRESHOLD_PORTABLE;
 
-#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
+#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64"))]
 #[inline]
 #[must_use]
 const fn default_kind_streaming_table() -> StreamingTable {
@@ -443,21 +443,27 @@ const fn default_kind_streaming_table() -> StreamingTable {
   }
 }
 
-#[cfg(all(feature = "parallel", any(target_arch = "x86_64", target_arch = "riscv64")))]
+#[cfg(all(
+  feature = "parallel",
+  any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64")
+))]
 #[inline]
 #[must_use]
 const fn default_kind_parallel_table() -> ParallelTable {
   default_parallel_costs(128 * 1024, 64, 0)
 }
 
-#[cfg(all(feature = "parallel", any(target_arch = "x86_64", target_arch = "riscv64")))]
+#[cfg(all(
+  feature = "parallel",
+  any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64")
+))]
 #[inline]
 #[must_use]
 const fn default_kind_streaming_parallel_table() -> ParallelTable {
   default_kind_parallel_table()
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
+#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64"))]
 #[inline]
 #[must_use]
 const fn default_kind_profile() -> FamilyProfile {
@@ -471,7 +477,7 @@ const fn default_kind_profile() -> FamilyProfile {
   }
 }
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
 #[inline]
 #[must_use]
 const fn portable_profile() -> FamilyProfile {
@@ -495,12 +501,12 @@ const fn portable_profile() -> FamilyProfile {
   }
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "riscv64"))]
+#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64"))]
 pub(crate) static PROFILE_DEFAULT_KIND: FamilyProfile = default_kind_profile();
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
 pub(crate) static PROFILE_PORTABLE: FamilyProfile = portable_profile();
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(crate) static PROFILE_INTEL_SAPPHIRE_RAPIDS: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 1024, 4096],
@@ -543,7 +549,7 @@ pub(crate) static PROFILE_INTEL_SAPPHIRE_RAPIDS: FamilyProfile = FamilyProfile {
     medium_limit_bytes: 2097152,
   },
 };
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(crate) static PROFILE_X86_AVX512: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 1024, 4096],
@@ -795,7 +801,7 @@ pub(crate) static PROFILE_POWER10: FamilyProfile = FamilyProfile {
 #[inline]
 #[must_use]
 pub(crate) fn select_profile_for_caps(caps: Caps) -> &'static FamilyProfile {
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     if caps.has(x86::AVX512_READY) {
       return if caps.has(x86::INTEL_SAPPHIRE_RAPIDS) {
@@ -855,7 +861,7 @@ pub(crate) fn select_profile_for_caps(caps: Caps) -> &'static FamilyProfile {
   }
 
   #[cfg(not(any(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
     target_arch = "s390x",
     target_arch = "powerpc64",
@@ -893,7 +899,7 @@ pub(crate) fn select_streaming_parallel_table_for_caps(caps: Caps) -> &'static P
   &select_profile_for_caps(caps).streaming_parallel
 }
 
-#[cfg(all(test, target_arch = "x86_64"))]
+#[cfg(all(test, all(target_arch = "x86_64", target_feature = "sse2")))]
 mod tests {
   use super::*;
 

@@ -81,7 +81,7 @@ PYTHON
 fi
 
 export RUSTUP_TOOLCHAIN
-RUSTUP_TOOLCHAIN=$("$SCRIPT_DIR/../lib/toolchain.sh" --host)
+RUSTUP_TOOLCHAIN=$("$SCRIPT_DIR/../lib/toolchain.sh")
 
 echo "Running tests..."
 

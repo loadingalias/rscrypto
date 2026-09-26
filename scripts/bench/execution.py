@@ -15,7 +15,7 @@ import tempfile
 import tomllib
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
-from toolchain import select_host, host
+from toolchain import select, host
 
 from evidence import collect
 
@@ -75,7 +75,7 @@ def execute(command: list[str], output: Path, *, env=None, capture=False) -> str
 
 
 def build_environment() -> None:
-  select_host()
+  select()
   local = os.environ.get("RSCRYPTO_BENCH_MODE", "remote" if os.environ.get("DEV_MACHINE_TARGET") else "local") == "local"
   if local and platform.system() == "Darwin" and not {"RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"} & os.environ.keys():
     os.environ["RUSTFLAGS"] = "-C target-cpu=native"

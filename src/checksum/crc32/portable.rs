@@ -9,7 +9,7 @@ use crate::checksum::common::portable;
 // Polynomial-specific wrappers
 
 /// Canonical kernel name for byte-at-a-time table lookup kernels.
-#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+#[cfg(any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2")))]
 pub(crate) const BYTEWISE_KERNEL_NAME: &str = "portable/bytewise";
 
 /// CRC-32 (IEEE) byte-at-a-time lookup computation.

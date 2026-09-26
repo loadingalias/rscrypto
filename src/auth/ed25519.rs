@@ -48,10 +48,10 @@ use self::constants::{PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH, SIGNATURE_LENGTH};
   not(miri)
 ))]
 mod aarch64_asm;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(crate) use crate::auth::curve25519_edwards::point_avx2;
 #[cfg(all(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_os = "linux",
   not(feature = "portable-only"),
   not(miri)
@@ -90,9 +90,9 @@ const _: fn() -> point::ExtendedPoint = point::ExtendedPoint::basepoint;
 const _: fn(&point::ExtendedPoint, &[u8; 32]) -> point::ExtendedPoint = point::ExtendedPoint::scalar_mul;
 const _: fn(&point::ExtendedPoint, &[u8; 32]) -> point::ExtendedPoint = point::ExtendedPoint::scalar_mul_vartime;
 const _: fn(&[u8; 32]) -> point::ExtendedPoint = point::ExtendedPoint::scalar_mul_basepoint;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const _: unsafe fn(&point::ExtendedPoint, &[u8; 32]) -> point::ExtendedPoint = point_avx2::scalar_mul_vartime_avx2;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const _: unsafe fn(&point::ExtendedPoint, &[u8; 32]) -> point::ExtendedPoint = point_avx2::scalar_mul_vartime_ifma;
 const _: fn(&point::ExtendedPoint) -> point::ExtendedPoint = point::ExtendedPoint::mul_by_cofactor;
 const _: fn(&point::ExtendedPoint) -> bool = point::ExtendedPoint::is_small_order;
@@ -618,7 +618,7 @@ fn basepoint_mul_encoded_dispatch(scalar_bytes: &[u8; SECRET_KEY_LENGTH]) -> [u8
   }
 
   #[cfg(all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_os = "linux",
     not(feature = "portable-only"),
     not(miri)
@@ -635,7 +635,7 @@ fn basepoint_mul_encoded_dispatch(scalar_bytes: &[u8; SECRET_KEY_LENGTH]) -> [u8
       not(miri)
     ),
     all(
-      target_arch = "x86_64",
+      all(target_arch = "x86_64", target_feature = "sse2"),
       target_os = "linux",
       not(feature = "portable-only"),
       not(miri)
@@ -855,7 +855,7 @@ fn is_small_order_encoded(bytes: &[u8; PUBLIC_KEY_LENGTH]) -> bool {
 // Dispatch: AArch64 assembly verify fast path → IFMA → AVX2 → portable
 
 #[cfg(not(all(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_os = "linux",
   not(feature = "portable-only"),
   not(miri)
@@ -866,7 +866,7 @@ pub(crate) use crate::auth::curve25519_edwards::basepoint_mul_dispatch;
 #[must_use]
 fn public_key_from_scalar(scalar_bytes: &[u8; SECRET_KEY_LENGTH]) -> Ed25519PublicKey {
   #[cfg(all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_os = "linux",
     not(feature = "portable-only"),
     not(miri)
@@ -877,7 +877,7 @@ fn public_key_from_scalar(scalar_bytes: &[u8; SECRET_KEY_LENGTH]) -> Ed25519Publ
   }
 
   #[cfg(not(all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_os = "linux",
     not(feature = "portable-only"),
     not(miri)
@@ -897,7 +897,7 @@ fn public_key_from_scalar(scalar_bytes: &[u8; SECRET_KEY_LENGTH]) -> Ed25519Publ
 /// AVX2 wNAF Straus remains as the fallback for pre-IFMA hardware.
 #[must_use]
 fn straus_dispatch(s: &[u8; 32], h: &[u8; 32], a: &point::ExtendedPoint) -> point::ExtendedPoint {
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     use crate::platform::caps::x86;
 
@@ -1160,7 +1160,7 @@ mod tests {
       not(miri)
     ),
     all(
-      target_arch = "x86_64",
+      all(target_arch = "x86_64", target_feature = "sse2"),
       target_os = "linux",
       not(feature = "portable-only"),
       not(miri)
@@ -1184,7 +1184,7 @@ mod tests {
       assert_eq!(asm, portable);
 
       #[cfg(all(
-        target_arch = "x86_64",
+        all(target_arch = "x86_64", target_feature = "sse2"),
         target_os = "linux",
         not(feature = "portable-only"),
         not(miri)

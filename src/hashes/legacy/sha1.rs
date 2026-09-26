@@ -4,7 +4,7 @@ use crate::backend::cache::OnceCache;
 
 #[cfg(all(not(miri), target_arch = "aarch64"))]
 mod aarch64;
-#[cfg(all(not(miri), target_arch = "x86_64"))]
+#[cfg(all(not(miri), target_arch = "x86_64", target_feature = "sse2"))]
 mod x86_64;
 
 const BLOCK_LEN: usize = 64;
@@ -27,7 +27,7 @@ const COMPILE_TIME_HW: bool = cfg!(all(
       any(target_os = "macos", target_feature = "sha2")
     ),
     all(
-      target_arch = "x86_64",
+      all(target_arch = "x86_64", target_feature = "sse2"),
       target_feature = "sha",
       target_feature = "ssse3",
       target_feature = "sse4.1"
@@ -177,7 +177,7 @@ fn compress_compile_time(state: &mut [u32; 5], block: &[u8; BLOCK_LEN]) {
   #[cfg(all(
     not(miri),
     not(feature = "portable-only"),
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_feature = "sha",
     target_feature = "ssse3",
     target_feature = "sse4.1"
@@ -194,7 +194,7 @@ fn compress_compile_time(state: &mut [u32; 5], block: &[u8; BLOCK_LEN]) {
     any(
       all(target_arch = "aarch64", any(target_os = "macos", target_feature = "sha2")),
       all(
-        target_arch = "x86_64",
+        all(target_arch = "x86_64", target_feature = "sse2"),
         target_feature = "sha",
         target_feature = "ssse3",
         target_feature = "sse4.1"
@@ -254,7 +254,7 @@ fn compress_aarch64_sha2(state: &mut [u32; 5], block: &[u8; BLOCK_LEN]) {
   unsafe { aarch64::compress(state, block) }
 }
 
-#[cfg(all(not(miri), target_arch = "x86_64"))]
+#[cfg(all(not(miri), all(target_arch = "x86_64", target_feature = "sse2")))]
 fn selected_compress() -> CompressFn {
   ACTIVE_COMPRESS.get_or_init(|| {
     use crate::platform::caps::x86;
@@ -268,14 +268,17 @@ fn selected_compress() -> CompressFn {
   })
 }
 
-#[cfg(all(not(miri), target_arch = "x86_64"))]
+#[cfg(all(not(miri), all(target_arch = "x86_64", target_feature = "sse2")))]
 fn compress_x86_sha(state: &mut [u32; 5], block: &[u8; BLOCK_LEN]) {
   // SAFETY: This wrapper is selected only after compile-time or runtime
   // validation of SHA, SSSE3, and SSE4.1. x86_64 supplies SSE2.
   unsafe { x86_64::compress(state, block) }
 }
 
-#[cfg(all(not(miri), not(any(target_arch = "aarch64", target_arch = "x86_64"))))]
+#[cfg(all(
+  not(miri),
+  not(any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2")))
+))]
 fn selected_compress() -> CompressFn {
   ACTIVE_COMPRESS.get_or_init(|| compress_portable)
 }
@@ -658,14 +661,20 @@ fn compress_portable(state: &mut [u32; 5], block: &[u8; BLOCK_LEN]) {
 mod tests {
   use super::{compress_portable, digest_parts, digest_parts_with, digest_websocket_key};
 
-  #[cfg(all(not(miri), any(target_arch = "aarch64", target_arch = "x86_64")))]
+  #[cfg(all(
+    not(miri),
+    any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2"))
+  ))]
   use super::CompressFn;
 
   fn assert_hex(message: &[u8], expected: [u8; 20]) {
     assert_eq!(digest_parts_with(message, b"", compress_portable), expected);
   }
 
-  #[cfg(all(not(miri), any(target_arch = "aarch64", target_arch = "x86_64")))]
+  #[cfg(all(
+    not(miri),
+    any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2"))
+  ))]
   fn assert_backend_matches_portable(compress: CompressFn) {
     let mut input = [0u8; 257];
     for (index, byte) in input.iter_mut().enumerate() {
@@ -734,7 +743,7 @@ mod tests {
     }
   }
 
-  #[cfg(all(not(miri), target_arch = "x86_64"))]
+  #[cfg(all(not(miri), all(target_arch = "x86_64", target_feature = "sse2")))]
   #[test]
   fn x86_sha_matches_portable_when_available() {
     use crate::platform::caps::x86;

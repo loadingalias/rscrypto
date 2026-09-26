@@ -17,7 +17,7 @@ pub(crate) mod kernel_test;
 pub(crate) mod kernels;
 #[cfg(all(target_arch = "s390x", not(miri)))]
 pub(crate) mod s390x;
-#[cfg(all(target_arch = "x86_64", not(miri)))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(miri)))]
 pub(crate) mod x86_64;
 
 const KECCAKF_ROUNDS: usize = 24;
@@ -585,14 +585,22 @@ pub(crate) trait Permuter: Copy {
 /// indirection — LLVM can inline `keccakf_portable` into the absorb loop.
 #[cfg(any(
   miri,
-  not(any(target_arch = "aarch64", target_arch = "x86_64", target_arch = "s390x"))
+  not(any(
+    target_arch = "aarch64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    target_arch = "s390x"
+  ))
 ))]
 #[derive(Clone, Copy, Default)]
 pub(crate) struct InlinePermuter;
 
 #[cfg(any(
   miri,
-  not(any(target_arch = "aarch64", target_arch = "x86_64", target_arch = "s390x"))
+  not(any(
+    target_arch = "aarch64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    target_arch = "s390x"
+  ))
 ))]
 impl Permuter for InlinePermuter {
   #[inline(always)]
@@ -603,13 +611,13 @@ impl Permuter for InlinePermuter {
 
 /// x86_64 permuter: portable single-state Keccak, AVX-512VL two-state Keccak
 /// when available.
-#[cfg(all(target_arch = "x86_64", not(miri)))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(miri)))]
 #[derive(Clone, Copy)]
 pub(crate) struct X86Permuter {
   has_avx512_x2: bool,
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri)))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(miri)))]
 impl Default for X86Permuter {
   #[inline]
   fn default() -> Self {
@@ -622,7 +630,7 @@ impl Default for X86Permuter {
   }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri)))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(miri)))]
 impl Permuter for X86Permuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
@@ -933,7 +941,7 @@ impl Permuter for S390xPermuter {
 #[cfg(all(target_arch = "aarch64", not(miri)))]
 pub(crate) type PlatformPermuter = Aarch64Permuter;
 
-#[cfg(all(target_arch = "x86_64", not(miri)))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(miri)))]
 pub(crate) type PlatformPermuter = X86Permuter;
 
 #[cfg(all(target_arch = "s390x", not(miri)))]
@@ -941,7 +949,11 @@ pub(crate) type PlatformPermuter = S390xPermuter;
 
 #[cfg(any(
   miri,
-  not(any(target_arch = "aarch64", target_arch = "x86_64", target_arch = "s390x"))
+  not(any(
+    target_arch = "aarch64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    target_arch = "s390x"
+  ))
 ))]
 pub(crate) type PlatformPermuter = InlinePermuter;
 

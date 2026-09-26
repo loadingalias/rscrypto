@@ -57,7 +57,7 @@ fn split_u128_le(value: u128) -> (u64, u64) {
 
 // x86_64 PCLMULQDQ backend
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 mod pclmul {
   use core::arch::x86_64::*;
 
@@ -995,7 +995,7 @@ mod rv_scalar_clmul {
 
 // x86_64 VPCLMULQDQ wide backend (4-block aggregate)
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 mod vpclmul {
   use core::arch::x86_64::*;
 
@@ -1350,7 +1350,11 @@ mod vpclmul {
 ///
 /// # Safety
 /// Caller must ensure PCLMULQDQ and SSE2 are available.
-#[cfg(all(target_arch = "x86_64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  any(feature = "aes-gcm", feature = "aes-gcm-siv")
+))]
 #[target_feature(enable = "pclmulqdq,sse2")]
 #[inline]
 pub(super) unsafe fn x86_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
@@ -1364,7 +1368,11 @@ pub(super) unsafe fn x86_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
 ///
 /// # Safety
 /// Caller must ensure PCLMULQDQ and SSE2 are available.
-#[cfg(all(target_arch = "x86_64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  any(feature = "aes-gcm", feature = "aes-gcm-siv")
+))]
 #[target_feature(enable = "pclmulqdq,sse2")]
 #[inline]
 pub(super) unsafe fn x86_pclmul_aggregate_4blocks_inline(
@@ -1384,7 +1392,7 @@ pub(super) unsafe fn x86_pclmul_aggregate_4blocks_inline(
 /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
 /// VPCLMULQDQ + PCLMULQDQ + SSE2 are available, and `block_ptr` points at
 /// at least 64 initialized bytes.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
 #[inline]
 pub(super) unsafe fn x86_aggregate_4blocks_le_bytes_inline(
@@ -1404,7 +1412,7 @@ pub(super) unsafe fn x86_aggregate_4blocks_le_bytes_inline(
 /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
 /// VPCLMULQDQ + PCLMULQDQ + SSE2 are available, and `block_ptr` points at
 /// at least 256 initialized bytes.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
 #[inline]
 pub(super) unsafe fn x86_aggregate_16blocks_le_bytes_inline(
@@ -1423,7 +1431,7 @@ pub(super) unsafe fn x86_aggregate_16blocks_le_bytes_inline(
 ///
 /// # Safety
 /// Caller must ensure PCLMULQDQ, SSE2, and SSSE3 are available.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
 #[target_feature(enable = "pclmulqdq,sse2,ssse3")]
 #[inline]
 pub(super) unsafe fn x86_pclmul_aggregate_4blocks_be_xmm_inline(
@@ -1445,7 +1453,7 @@ pub(super) unsafe fn x86_pclmul_aggregate_4blocks_be_xmm_inline(
 /// # Safety
 /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
 /// VPCLMULQDQ + PCLMULQDQ + SSE2 are available.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
 #[inline]
 pub(super) unsafe fn x86_aggregate_4blocks_be_bytes_inline(
@@ -1465,7 +1473,7 @@ pub(super) unsafe fn x86_aggregate_4blocks_be_bytes_inline(
 /// # Safety
 /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
 /// VPCLMULQDQ + PCLMULQDQ + SSE2 are available.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
 #[inline]
 pub(super) unsafe fn x86_aggregate_4blocks_be_lanes_inline(
@@ -1484,7 +1492,7 @@ pub(super) unsafe fn x86_aggregate_4blocks_be_lanes_inline(
 /// # Safety
 /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
 /// VPCLMULQDQ + PCLMULQDQ + SSE2 are available.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm"))]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
 #[inline]
 pub(super) unsafe fn x86_aggregate_16blocks_be_lanes_inline(
@@ -1676,7 +1684,7 @@ pub(super) fn clmul128_reduce_portable(a: u128, b: u128) -> u128 {
   mont_reduce(clmul128(a, b))
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline]
 fn clmul128_reduce_x86_pclmul(a: u128, b: u128) -> u128 {
   // SAFETY: resolver only selects this backend after verifying PCLMULQDQ support.
@@ -1722,7 +1730,7 @@ fn clmul128_reduce_riscv_scalar(a: u128, b: u128) -> u128 {
 fn resolve_clmul128_reduce() -> Clmul128ReduceFn {
   let _caps = current_caps();
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   if _caps.has(crate::platform::caps::x86::PCLMULQDQ) {
     return clmul128_reduce_x86_pclmul;
   }
@@ -1783,7 +1791,7 @@ pub fn diag_polyval_reduce_portable(a: &[u8; 16], b: &[u8; 16]) -> [u8; 16] {
   all(
     feature = "aes-gcm-siv",
     any(
-      target_arch = "x86_64",
+      all(target_arch = "x86_64", target_feature = "sse2"),
       target_arch = "aarch64",
       target_arch = "powerpc64",
       target_arch = "s390x"
@@ -1812,13 +1820,13 @@ pub(super) fn precompute_powers_8(h: u128) -> [u128; 8] {
 
 /// Precompute hash key powers [H, H^2, ..., H^16] for 16-block GHASH/POLYVAL windows.
 #[cfg(any(
-  all(feature = "aes-gcm", target_arch = "x86_64"),
+  all(feature = "aes-gcm", all(target_arch = "x86_64", target_feature = "sse2")),
   all(
     feature = "aes-gcm",
     target_arch = "aarch64",
     any(target_os = "macos", target_os = "linux")
   ),
-  all(feature = "aes-gcm-siv", target_arch = "x86_64"),
+  all(feature = "aes-gcm-siv", all(target_arch = "x86_64", target_feature = "sse2")),
   test
 ))]
 pub(super) fn precompute_powers_16(h: u128) -> [u128; 16] {
@@ -1835,7 +1843,7 @@ pub(super) fn precompute_powers_16(h: u128) -> [u128; 16] {
 }
 
 /// Precompute hash key powers [H, H^2, ..., H^32] for 32-block GHASH windows.
-#[cfg(any(all(feature = "aes-gcm", target_arch = "x86_64"), test))]
+#[cfg(any(all(feature = "aes-gcm", all(target_arch = "x86_64", target_feature = "sse2")), test))]
 pub(super) fn precompute_powers_32(h: u128) -> [u128; 32] {
   let mut powers = [0u128; 32];
   powers[0] = h;
@@ -1850,7 +1858,7 @@ pub(super) fn precompute_powers_32(h: u128) -> [u128; 32] {
 }
 
 /// Precompute hash key powers [H, H^2, ..., H^64] for 64-block GHASH windows.
-#[cfg(any(all(feature = "aes-gcm", target_arch = "x86_64"), test))]
+#[cfg(any(all(feature = "aes-gcm", all(target_arch = "x86_64", target_feature = "sse2")), test))]
 pub(super) fn precompute_powers_64(h: u128) -> [u128; 64] {
   let mut powers = [0u128; 64];
   powers[0] = h;
@@ -1865,7 +1873,7 @@ pub(super) fn precompute_powers_64(h: u128) -> [u128; 64] {
 }
 
 /// Precompute hash key powers [H, H^2, ..., H^128] for 128-block GHASH windows.
-#[cfg(any(all(feature = "aes-gcm", target_arch = "x86_64"), test))]
+#[cfg(any(all(feature = "aes-gcm", all(target_arch = "x86_64", target_feature = "sse2")), test))]
 pub(super) fn precompute_powers_128(h: u128) -> [u128; 128] {
   let mut powers = [0u128; 128];
   powers[0] = h;
@@ -1931,8 +1939,8 @@ pub(super) fn precompute_powers_16_pair(h_powers_rev_16: &[u128; 16]) -> [u128; 
 /// otherwise falls back to 4 sequential `clmul128_reduce` calls.
 #[cfg(any(
   feature = "aes-gcm",
-  all(feature = "aes-gcm-siv", target_arch = "x86_64"),
-  target_arch = "x86_64",
+  all(feature = "aes-gcm-siv", all(target_arch = "x86_64", target_feature = "sse2")),
+  all(target_arch = "x86_64", target_feature = "sse2"),
   test
 ))]
 pub(super) fn accumulate_4blocks(
@@ -1941,7 +1949,7 @@ pub(super) fn accumulate_4blocks(
   h_powers_rev: &[u128; 4], // [H^4, H^3, H^2, H]
   blocks: &[u128; 4],
 ) -> u128 {
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     if crate::platform::caps().has(crate::platform::caps::x86::VPCLMUL_READY) {
       // SAFETY: VPCLMULQDQ + AVX-512 availability verified via CPUID.
@@ -1984,7 +1992,7 @@ pub(super) fn accumulate_4blocks(
   }
 
   #[cfg(not(any(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
     target_arch = "powerpc64",
     target_arch = "s390x"
@@ -2005,9 +2013,12 @@ pub(super) fn accumulate_4blocks(
 /// Process 16 blocks through the hash accumulator in one shot.
 ///
 /// Computes `(acc ^ b0) * H^16 ^ b1 * H^15 ^ ... ^ b15 * H`.
-#[cfg(any(all(feature = "aes-gcm-siv", target_arch = "x86_64"), test))]
+#[cfg(any(
+  all(feature = "aes-gcm-siv", all(target_arch = "x86_64", target_feature = "sse2")),
+  test
+))]
 pub(super) fn accumulate_16blocks(acc: u128, h: u128, h_powers_rev: &[u128; 16], blocks: &[u128; 16]) -> u128 {
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     if crate::platform::caps().has(crate::platform::caps::x86::VPCLMUL_READY) {
       // SAFETY: VPCLMUL aggregate call because:
@@ -2033,7 +2044,7 @@ pub(super) fn accumulate_16blocks(acc: u128, h: u128, h_powers_rev: &[u128; 16],
 /// Full 16-byte blocks are folded with 16-block VPCLMUL windows when the caller
 /// provides H powers through H^16, then 4-block windows, then scalar tails.
 /// A final partial block is zero-padded as required by RFC 8452.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
 pub(super) fn accumulate_padded_x86(
   mut acc: u128,
   h: u128,
@@ -2577,7 +2588,7 @@ mod tests {
   }
 
   /// Verify the x86 padded wide path matches scalar POLYVAL over boundary sizes.
-  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "aes-gcm-siv"))]
   #[test]
   fn accumulate_padded_x86_matches_sequential_boundaries() {
     let h = u128::from_le_bytes(RFC_H);

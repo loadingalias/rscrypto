@@ -219,7 +219,7 @@ fi
 python3 "$SCRIPT_DIR/catalog.py" download "$platform" rustup "$temporary/rustup-init"
 chmod +x "$temporary/rustup-init"
 host="$(catalog_get "$platform" rust-host)"
-channel="$(python3 "$SCRIPT_DIR/../lib/toolchain.py" --target "$host")"
+channel="$(python3 "$SCRIPT_DIR/../lib/toolchain.py")"
 "$temporary/rustup-init" -y --no-modify-path --default-host "$host" --default-toolchain none
 cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
 export PATH="$cargo_bin:$PATH"
@@ -228,15 +228,11 @@ if [[ "$ci" == false ]]; then mapfile -t components < <(catalog_get "$platform" 
 component_args=()
 for component in "${components[@]}"; do component_args+=(--component "$component"); done
 if [[ "$profile" == ci-cross-build ]]; then
-  nightly="$(python3 "$SCRIPT_DIR/../lib/toolchain.py" --target "$cross_target")"
-  rustup toolchain install "$channel" --profile minimal --component rustfmt
-  rustup toolchain install "$nightly" --profile minimal --component clippy --component llvm-tools
-  rustup target add --toolchain "$nightly" "$cross_target"
+  rustup toolchain install "$channel" --profile minimal --component rustfmt --component clippy --component llvm-tools
+  rustup target add --toolchain "$channel" "$cross_target"
 elif [[ "$profile" == ci-cross-run ]]; then
   # No compiler workloads run here; Rust supplies the pinned Nextest launcher
   # and host identity used by the existing CT orchestrator.
-  stable="$(python3 "$SCRIPT_DIR/../lib/toolchain.py")"
-  rustup toolchain install "$stable" --profile minimal
   rustup toolchain install "$channel" --profile minimal
 elif [[ "$profile" == ci-compat ]]; then
   python3 "$REPO_ROOT/scripts/check/compat.py" --install
@@ -246,18 +242,9 @@ elif [[ "$profile" == ci-fuzz || "$profile" == ci-miri || "$profile" == ci-ct ||
   mapfile -t components < <(catalog_get "$profile" components)
   component_args=()
   for component in "${components[@]}"; do component_args+=(--component "$component"); done
-  stable="$(python3 "$SCRIPT_DIR/../lib/toolchain.py")"
-  if [[ "$channel" != "$stable" ]]; then rustup toolchain install "$stable" --profile minimal; fi
   rustup toolchain install "$channel" --profile minimal "${component_args[@]}"
-  if [[ "$profile" == ci-fuzz || "$profile" == ci-miri ]]; then
-    nightly="$(python3 "$SCRIPT_DIR/../lib/toolchain.py" --nightly)"
-    mapfile -t components < <(catalog_get "$profile" nightly-components)
-    component_args=()
-    for component in "${components[@]}"; do component_args+=(--component "$component"); done
-    rustup toolchain install "$nightly" --profile minimal "${component_args[@]}"
-  fi
 else
-  python3 "$SCRIPT_DIR/../lib/toolchain.py" --install "$host" "${component_args[@]}"
+  python3 "$SCRIPT_DIR/../lib/toolchain.py" --install "${component_args[@]}"
   if [[ "$ci" == true && ( "$platform" == x86_64-linux || "$platform" == aarch64-linux ) ]]; then
     rustup target add --toolchain "$channel" "${host%-gnu}-musl"
   fi

@@ -33,12 +33,12 @@ pub enum KernelId {
   Aarch64Neon,
 
   /// x86_64 AVX2 (4-way parallel BlaMka across YMM registers).
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   X86Avx2,
 
   /// x86_64 AVX-512F + AVX-512VL (asymmetric ZMM/YMM design: 8-way
   /// 2-row batched row pass + 4-way YMM column pass with native VPRORQ).
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   X86Avx512,
 
   /// powerpc64 VSX (4-way parallel BlaMka over `core::simd::u64x2`).
@@ -68,9 +68,9 @@ impl KernelId {
       Self::Portable => "portable",
       #[cfg(target_arch = "aarch64")]
       Self::Aarch64Neon => "aarch64-neon",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx2 => "x86-avx2",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx512 => "x86-avx512",
       #[cfg(target_arch = "powerpc64")]
       Self::PowerVsx => "power-vsx",
@@ -91,9 +91,9 @@ impl KernelId {
 /// Portable is always the last entry — it has empty caps, so it always
 /// matches.
 pub const ALL_KERNELS: &[KernelId] = &[
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   KernelId::X86Avx512,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   KernelId::X86Avx2,
   #[cfg(target_arch = "aarch64")]
   KernelId::Aarch64Neon,
@@ -130,9 +130,9 @@ pub const fn required_caps(kernel: KernelId) -> Caps {
     // NEON is baseline on aarch64 — the cap is always present, but we
     // encode it explicitly so the dispatcher treats all kernels uniformly.
     KernelId::Aarch64Neon => crate::platform::caps::aarch64::NEON,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     KernelId::X86Avx2 => crate::platform::caps::x86::AVX2,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     // AVX-512F powers the ZMM-wide row pass; AVX-512VL gives the YMM-form
     // VPRORQ used by the 4-way column pass. Both are required.
     KernelId::X86Avx512 => crate::platform::caps::x86::AVX512F.union(crate::platform::caps::x86::AVX512VL),
@@ -159,9 +159,9 @@ pub(super) fn compress_fn_for(kernel: KernelId) -> CompressFn {
     KernelId::Portable => kernels::compress_portable,
     #[cfg(target_arch = "aarch64")]
     KernelId::Aarch64Neon => super::aarch64::compress_neon,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     KernelId::X86Avx2 => super::x86_64::compress_avx2,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     KernelId::X86Avx512 => super::x86_64::compress_avx512,
     #[cfg(target_arch = "powerpc64")]
     KernelId::PowerVsx => super::power::compress_vsx,
@@ -269,25 +269,25 @@ mod tests {
     assert!(!production_dispatch_enabled(KernelId::Aarch64Neon));
   }
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   #[test]
   fn x86_avx2_kernel_name() {
     assert_eq!(KernelId::X86Avx2.as_str(), "x86-avx2");
   }
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   #[test]
   fn x86_avx2_required_caps_are_avx2() {
     assert_eq!(required_caps(KernelId::X86Avx2), crate::platform::caps::x86::AVX2);
   }
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   #[test]
   fn x86_avx512_kernel_name() {
     assert_eq!(KernelId::X86Avx512.as_str(), "x86-avx512");
   }
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   #[test]
   fn x86_avx512_required_caps_are_f_and_vl() {
     let caps = required_caps(KernelId::X86Avx512);
@@ -295,7 +295,7 @@ mod tests {
     assert!(caps.has(crate::platform::caps::x86::AVX512VL));
   }
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   #[test]
   fn x86_kernels_ordered_avx512_then_avx2_then_portable() {
     // The dispatcher walks ALL_KERNELS in order and picks the first whose

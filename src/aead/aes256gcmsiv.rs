@@ -2,14 +2,14 @@
 
 use core::fmt;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 use super::polyval::{accumulate_padded_x86, precompute_powers, precompute_powers_16};
 #[cfg(any(
   target_arch = "aarch64",
   target_arch = "powerpc64",
   target_arch = "riscv64",
   target_arch = "s390x",
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
 ))]
 use super::targets::{AeadBackend, AeadPrimitive, select_backend};
 use super::{AeadBufferError, Nonce96, OpenError, SealError, aes, polyval};
@@ -92,7 +92,7 @@ pub struct Aes256GcmSiv {
     target_arch = "powerpc64",
     target_arch = "riscv64",
     target_arch = "s390x",
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
   ))]
   backend: AeadBackend,
 }
@@ -440,7 +440,7 @@ fn expand_message_key_riscv(enc_key: &[u8; 32], backend: AeadBackend) -> aes::Ae
   target_arch = "powerpc64",
   target_arch = "riscv64",
   target_arch = "s390x",
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
 ))]
 #[inline]
 fn resolve_backend() -> AeadBackend {
@@ -543,7 +543,7 @@ fn decrypt_riscv(
 ///
 /// Same semantics as `compute_tag` but processes data in 4-block (64-byte)
 /// chunks via `accumulate_4blocks`.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline]
 fn compute_tag_wide(
   auth_key: &[u8; 16],
@@ -1514,7 +1514,7 @@ impl Aead for Aes256GcmSiv {
       target_arch = "powerpc64",
       target_arch = "riscv64",
       target_arch = "s390x",
-      target_arch = "x86_64",
+      all(target_arch = "x86_64", target_feature = "sse2"),
     ))]
     let backend = resolve_backend();
 
@@ -1528,7 +1528,7 @@ impl Aead for Aes256GcmSiv {
         target_arch = "powerpc64",
         target_arch = "riscv64",
         target_arch = "s390x",
-        target_arch = "x86_64",
+        all(target_arch = "x86_64", target_feature = "sse2"),
       ))]
       backend,
     }
@@ -1555,7 +1555,7 @@ impl Aead for Aes256GcmSiv {
     super::seal_bit_lengths(aad.len(), buffer.len())?;
 
     // Wide path: VPCLMULQDQ POLYVAL + VAES-512 CTR when available.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     if self.backend == AeadBackend::X86VaesVpclmul {
       let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
       let ek = aes::aes256_expand_key(&enc_key);
@@ -1641,7 +1641,7 @@ impl Aead for Aes256GcmSiv {
     super::open_bit_lengths(aad.len(), buffer.len())?;
 
     // Wide path: VAES-512 CTR + VPCLMULQDQ POLYVAL when available.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     if self.backend == AeadBackend::X86VaesVpclmul {
       let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
       let ek = aes::aes256_expand_key(&enc_key);

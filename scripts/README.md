@@ -275,16 +275,16 @@ Windows x86-64 installs catalog-pinned NASM for native dependency assembly in bo
 All full profiles install the prerequisites for `just ci-check`, `just test`, and Criterion `just bench`.
 RISC-V, Z, and POWER use snapshot-pinned native CMake/Clang.
 They do not install cross targets, Miri, browsers, or profiling tools.
-The shared selector in `lib/toolchain.py` uses `.config/toolchains.toml` to choose the pinned nightly for POWER, IBM Z, and RISC-V;
-other hosts use `rust-toolchain.toml`.
-Installers provision stable tooling plus the selected native toolchain.
-Build, native check, test, and benchmark entry points use that selection rather than an ambient `RUSTUP_TOOLCHAIN`;
-formatting uses the stable development pin.
-Specialized Miri and fuzz checks retain their opt-in nightly recipes.
+`rust-toolchain.toml` pins the one canonical nightly for every host, target, and tool lane,
+including formatting, Miri, fuzzing, coverage, and CT evidence. `lib/toolchain.py` reads that pin;
+build, check, test, and benchmark entry points use it rather than an ambient `RUSTUP_TOOLCHAIN`.
+The MSRV lane uses `rust-version` from `Cargo.toml`. While that release is unpublished, the
+canonical nightly must report the matching `-nightly` version and runs the MSRV lane itself.
+`just update` pins the newest nightly that is complete for every catalog host, component, and target.
 
 `ci.yml` also runs `--ci-package` provisioning and `just ci-package` on an independent runner.
 This executes examples, verifies the publishable Cargo archive,
-and runs external std/core/alloc consumers against the unpacked crate on stable and MSRV.
+and runs external std/core/alloc consumers against the unpacked crate on the canonical and MSRV toolchains.
 Core and alloc also compile on the existing Thumb sentinel.
 No package is published.
 

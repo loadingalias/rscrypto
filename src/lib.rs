@@ -129,7 +129,7 @@ assert!(
 
 // Exotic-architecture backends require nightly-only features (inline asm +
 // portable_simd + unstable target-feature flags). Primary targets (x86_64,
-// aarch64, wasm) compile on stable Rust 1.91.0.
+// aarch64, wasm) compile on stable Rust from the declared MSRV.
 #![cfg_attr(
   all(
     target_arch = "powerpc64",

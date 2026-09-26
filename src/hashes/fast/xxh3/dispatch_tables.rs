@@ -17,11 +17,11 @@ pub(crate) static DEFAULT_TABLE: DispatchTable = DispatchTable {
 // Platform-specific tables
 
 /// x86-64 with AVX-512F: single-iteration per stripe.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(crate) static AVX512_TABLE: DispatchTable = DispatchTable { long: KernelId::Avx512 };
 
 /// x86-64 with AVX2 (no AVX-512): two iterations per stripe.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(crate) static AVX2_TABLE: DispatchTable = DispatchTable { long: KernelId::Avx2 };
 
 /// aarch64 with NEON: four iterations per stripe.
@@ -40,7 +40,7 @@ pub(crate) static ZVECTOR_TABLE: DispatchTable = DispatchTable { long: KernelId:
 #[must_use]
 pub(crate) fn select_runtime_table(caps: Caps) -> &'static DispatchTable {
   let _ = caps;
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     // Prefer AVX-512 over AVX2 when available.
     if caps.has(crate::platform::caps::x86::AVX512F) {

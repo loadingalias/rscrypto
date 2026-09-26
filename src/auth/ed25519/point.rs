@@ -82,7 +82,7 @@ impl CachedPoint {
   };
 
   /// Borrow the cached-point components.
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   #[must_use]
   pub(crate) const fn components(&self) -> (&FieldElement, &FieldElement, &FieldElement) {
     (&self.y_plus_x, &self.y_minus_x, &self.t2d)
@@ -400,7 +400,12 @@ impl ExtendedPoint {
           any(target_os = "macos", target_os = "linux"),
           not(feature = "portable-only")
         ),
-        all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+        all(
+          target_arch = "x86_64",
+          target_feature = "sse2",
+          target_os = "linux",
+          not(feature = "portable-only")
+        )
       ))
     )
   ))]
@@ -434,14 +439,14 @@ impl ExtendedPoint {
   }
 
   /// Construct from raw field elements (no validation).
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   #[must_use]
   pub(crate) const fn from_raw(x: FieldElement, y: FieldElement, z: FieldElement, t: FieldElement) -> Self {
     Self { x, y, z, t }
   }
 
   /// Borrow the extended-coordinate components.
-  #[cfg(any(feature = "ed25519", target_arch = "x86_64"))]
+  #[cfg(any(feature = "ed25519", all(target_arch = "x86_64", target_feature = "sse2")))]
   #[must_use]
   pub(crate) const fn components(&self) -> (&FieldElement, &FieldElement, &FieldElement, &FieldElement) {
     (&self.x, &self.y, &self.z, &self.t)

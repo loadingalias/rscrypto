@@ -10,12 +10,12 @@ pub(crate) mod kernels;
   target_arch = "powerpc64",
   target_arch = "riscv64",
   target_arch = "s390x",
-  target_arch = "x86_64"
+  all(target_arch = "x86_64", target_feature = "sse2")
 ))]
 pub(crate) mod keys;
 pub(crate) mod portable;
 #[cfg(any(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "aarch64",
   target_arch = "powerpc64",
   target_arch = "s390x",
@@ -39,7 +39,7 @@ mod power;
 mod riscv64;
 #[cfg(target_arch = "s390x")]
 mod s390x;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 mod x86_64;
 
 // Kernel Tables (compile-time)

@@ -5,7 +5,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
   echo 'macOS CI requires an Apple Silicon runner' >&2
   exit 1
 }
-python3 scripts/lib/toolchain.py --install aarch64-apple-darwin
+python3 scripts/lib/toolchain.py --install
 channel=$(scripts/lib/toolchain.sh)
 while IFS= read -r tool; do
   version=$(python3 scripts/tooling/catalog.py get cargo "$tool")

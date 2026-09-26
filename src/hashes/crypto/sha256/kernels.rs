@@ -8,7 +8,7 @@ use crate::platform::caps::riscv;
 use crate::platform::caps::s390x;
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 use crate::platform::caps::wasm;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 use crate::platform::caps::x86;
 
 pub(crate) type CompressBlocksFn = fn(&mut [u32; 8], &[u8]);
@@ -18,7 +18,7 @@ pub(crate) type CompressBlocksFn = fn(&mut [u32; 8], &[u8]);
 #[non_exhaustive]
 pub(crate) enum Sha256KernelId {
   Portable = 0,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   X86Sha = 1,
   #[cfg(target_arch = "aarch64")]
   Aarch64Sha2 = 2,
@@ -37,7 +37,7 @@ impl Sha256KernelId {
   pub(crate) const fn as_str(self) -> &'static str {
     match self {
       Self::Portable => "portable",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Sha => "x86-sha",
       #[cfg(target_arch = "aarch64")]
       Self::Aarch64Sha2 => "aarch64-sha2",
@@ -54,7 +54,7 @@ impl Sha256KernelId {
 #[cfg(test)]
 pub(crate) const ALL: &[Sha256KernelId] = &[
   Sha256KernelId::Portable,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   Sha256KernelId::X86Sha,
   #[cfg(target_arch = "aarch64")]
   Sha256KernelId::Aarch64Sha2,
@@ -68,7 +68,7 @@ pub(crate) const ALL: &[Sha256KernelId] = &[
 
 // Safe wrappers — dispatch validates caps before calling.
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 fn compress_blocks_x86_sha(state: &mut [u32; 8], blocks: &[u8]) {
   // SAFETY: SHA-NI compression through the dispatch wrapper because:
   // 1. Runtime dispatch only selects this wrapper when `sha` and `sse4.1` are available.
@@ -105,7 +105,7 @@ fn compress_blocks_s390x_kimd(state: &mut [u32; 8], blocks: &[u8]) {
 pub(crate) fn compress_blocks_fn(id: Sha256KernelId) -> CompressBlocksFn {
   match id {
     Sha256KernelId::Portable => Sha256::compress_blocks_portable,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Sha256KernelId::X86Sha => compress_blocks_x86_sha,
     #[cfg(target_arch = "aarch64")]
     Sha256KernelId::Aarch64Sha2 => compress_blocks_aarch64_sha2,
@@ -123,7 +123,7 @@ pub(crate) fn compress_blocks_fn(id: Sha256KernelId) -> CompressBlocksFn {
 pub(crate) const fn required_caps(id: Sha256KernelId) -> Caps {
   match id {
     Sha256KernelId::Portable => Caps::NONE,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Sha256KernelId::X86Sha => x86::SHA.union(x86::SSE41),
     #[cfg(target_arch = "aarch64")]
     Sha256KernelId::Aarch64Sha2 => aarch64::SHA2,
@@ -149,7 +149,7 @@ pub(crate) const fn required_caps(id: Sha256KernelId) -> Caps {
 pub(crate) const COMPILE_TIME_HW: bool = cfg!(not(miri))
   && cfg!(any(
     all(
-      target_arch = "x86_64",
+      all(target_arch = "x86_64", target_feature = "sse2"),
       target_feature = "sha",
       target_feature = "sse4.1"
     ),
@@ -173,7 +173,12 @@ pub(crate) fn compile_time_best() -> CompressBlocksFn {
   {
     Sha256::compress_blocks_portable
   }
-  #[cfg(all(not(miri), target_arch = "x86_64", target_feature = "sha", target_feature = "sse4.1"))]
+  #[cfg(all(
+    not(miri),
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    target_feature = "sha",
+    target_feature = "sse4.1"
+  ))]
   {
     compress_blocks_x86_sha
   }
@@ -200,7 +205,12 @@ pub(crate) fn compile_time_best() -> CompressBlocksFn {
   #[cfg(all(
     not(miri),
     not(any(
-      all(target_arch = "x86_64", target_feature = "sha", target_feature = "sse4.1"),
+      all(
+        target_arch = "x86_64",
+        target_feature = "sse2",
+        target_feature = "sha",
+        target_feature = "sse4.1"
+      ),
       all(target_arch = "aarch64", any(target_os = "macos", target_feature = "sha2")),
       all(any(target_arch = "riscv64", target_arch = "riscv32"), target_feature = "zknh"),
       all(target_arch = "wasm32", target_feature = "simd128")
@@ -216,7 +226,7 @@ pub(crate) fn compile_time_best() -> CompressBlocksFn {
 pub(crate) const COMPILE_TIME_NAME: &str = if cfg!(miri) {
   "portable"
 } else if cfg!(all(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_feature = "sha",
   target_feature = "sse4.1"
 )) {

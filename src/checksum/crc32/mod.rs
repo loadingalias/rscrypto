@@ -20,7 +20,7 @@ pub(crate) mod config;
 pub(crate) mod kernels;
 pub(crate) mod portable;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 mod x86_64;
 
 #[cfg(target_arch = "aarch64")]
@@ -56,7 +56,7 @@ mod kernel_tables {
 }
 
 /// Block size for CRC-32 folding operations.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(crate) const CRC32_FOLD_BLOCK_BYTES: usize = 128;
 
 // Portable Kernel Wrappers
@@ -109,7 +109,7 @@ fn crc32_buffered_threshold() -> usize {
   crc32_buffered_threshold_impl()
 }
 
-#[cfg(all(feature = "alloc", target_arch = "x86_64"))]
+#[cfg(all(feature = "alloc", all(target_arch = "x86_64", target_feature = "sse2")))]
 #[inline]
 #[must_use]
 fn crc32_buffered_threshold_impl() -> usize {
@@ -125,7 +125,10 @@ fn crc32_buffered_threshold_impl() -> usize {
   THRESHOLD
 }
 
-#[cfg(all(feature = "alloc", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
+#[cfg(all(
+  feature = "alloc",
+  not(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64"))
+))]
 #[inline]
 #[must_use]
 fn crc32_buffered_threshold_impl() -> usize {
@@ -1118,10 +1121,10 @@ mod tests {
 
     let cfg = Crc32::config();
     let kernel = Crc32::kernel_name_for_len(len);
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(not(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64")))]
     let _ = (cfg, kernel);
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
       let caps = crate::platform::caps();
       // Verify the force mode was recognized - checksum correctness already validated above.
@@ -1179,10 +1182,10 @@ mod tests {
 
     let cfg = Crc32C::config();
     let kernel = Crc32C::kernel_name_for_len(len);
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(not(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64")))]
     let _ = (cfg, kernel);
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
       let caps = crate::platform::caps();
       // Verify the force mode was recognized - checksum correctness already validated above.

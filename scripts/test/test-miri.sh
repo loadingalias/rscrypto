@@ -31,7 +31,7 @@ echo "Running Memory Safety Tests via Miri..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-RUSTUP_TOOLCHAIN=$("$SCRIPT_DIR/../lib/toolchain.sh" --nightly)
+RUSTUP_TOOLCHAIN=$("$SCRIPT_DIR/../lib/toolchain.sh")
 export RUSTUP_TOOLCHAIN
 export CARGO_RAIL_CACHE=off
 export CARGO_PROFILE_TEST_OPT_LEVEL=0

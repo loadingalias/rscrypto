@@ -4638,9 +4638,9 @@ fn montgomery_mul<const L: usize>(lhs: Uint<L>, rhs: Uint<L>, modulus: &'static 
   let mut limbs = [0u64; 13];
   for i in 0..L {
     let mut carry = 0u64;
-    for j in 0..L {
+    for (j, &rhs_limb) in rhs.0.iter().enumerate() {
       let k = i.strict_add(j);
-      (limbs[k], carry) = mac_limb(limbs[k], lhs.0[i], rhs.0[j], carry);
+      (limbs[k], carry) = mac_limb(limbs[k], lhs.0[i], rhs_limb, carry);
     }
     add_limb(&mut limbs, i.strict_add(L), carry);
   }
@@ -4648,9 +4648,9 @@ fn montgomery_mul<const L: usize>(lhs: Uint<L>, rhs: Uint<L>, modulus: &'static 
   for i in 0..L {
     let factor = mul_u64_low(limbs[i], modulus.n0_inv);
     let mut carry = 0u64;
-    for j in 0..L {
+    for (j, &modulus_limb) in modulus.value.0.iter().enumerate() {
       let k = i.strict_add(j);
-      (limbs[k], carry) = mac_limb(limbs[k], factor, modulus.value.0[j], carry);
+      (limbs[k], carry) = mac_limb(limbs[k], factor, modulus_limb, carry);
     }
     add_limb(&mut limbs, i.strict_add(L), carry);
   }

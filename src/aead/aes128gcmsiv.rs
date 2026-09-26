@@ -2,14 +2,14 @@
 
 use core::fmt;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 use super::polyval::{accumulate_padded_x86, precompute_powers, precompute_powers_16};
 #[cfg(any(
   target_arch = "aarch64",
   target_arch = "powerpc64",
   target_arch = "riscv64",
   target_arch = "s390x",
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
 ))]
 use super::targets::{AeadBackend, AeadPrimitive, select_backend};
 use super::{AeadBufferError, Nonce96, OpenError, SealError, aes, polyval};
@@ -93,7 +93,7 @@ pub struct Aes128GcmSiv {
     target_arch = "powerpc64",
     target_arch = "riscv64",
     target_arch = "s390x",
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
   ))]
   backend: AeadBackend,
 }
@@ -444,7 +444,7 @@ fn expand_message_key_riscv(enc_key: &[u8; 16], backend: AeadBackend) -> aes::Ae
   target_arch = "powerpc64",
   target_arch = "riscv64",
   target_arch = "s390x",
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
 ))]
 #[inline]
 fn resolve_backend() -> AeadBackend {
@@ -543,7 +543,7 @@ fn decrypt_riscv(
   Ok(())
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline]
 fn collect_short_polyval_blocks(blocks: &mut [u128; 4], index: &mut usize, data: &[u8]) {
   let (full_blocks, remainder) = data.as_chunks::<16>();
@@ -570,7 +570,7 @@ fn collect_short_polyval_blocks(blocks: &mut [u128; 4], index: &mut usize, data:
 /// The current CPU and OS must support AES-NI, SSE2, SSSE3, AVX-512F, AVX-512VL, AVX-512BW,
 /// AVX-512DQ, VAES, PCLMULQDQ, and VPCLMULQDQ. Callers must establish those capabilities through
 /// validated backend selection before entering this function.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[target_feature(enable = "aes,sse2,ssse3,avx512f,avx512vl,avx512bw,avx512dq,vaes,pclmulqdq,vpclmulqdq")]
 unsafe fn encrypt_short_fused_x86(
   master_ek: &aes::Aes128EncKey,
@@ -661,7 +661,7 @@ unsafe fn encrypt_short_fused_x86(
 }
 
 /// Compute the POLYVAL-based authentication tag using 4-block wide processing.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline]
 fn compute_tag_wide(
   auth_key: &[u8; 16],
@@ -1565,7 +1565,7 @@ impl Aead for Aes128GcmSiv {
       target_arch = "powerpc64",
       target_arch = "riscv64",
       target_arch = "s390x",
-      target_arch = "x86_64",
+      all(target_arch = "x86_64", target_feature = "sse2"),
     ))]
     let backend = resolve_backend();
 
@@ -1579,7 +1579,7 @@ impl Aead for Aes128GcmSiv {
         target_arch = "powerpc64",
         target_arch = "riscv64",
         target_arch = "s390x",
-        target_arch = "x86_64",
+        all(target_arch = "x86_64", target_feature = "sse2"),
       ))]
       backend,
     }
@@ -1606,7 +1606,7 @@ impl Aead for Aes128GcmSiv {
     super::seal_bit_lengths(aad.len(), buffer.len())?;
 
     // Wide path: VPCLMULQDQ POLYVAL + VAES-512 CTR when available.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     if self.backend == AeadBackend::X86VaesVpclmul {
       // SAFETY: backend resolution selected this variant only after CPUID and OS-state checks
       // confirmed AES-NI, VAES, PCLMULQDQ, VPCLMULQDQ, and the required AVX-512 features.
@@ -1698,7 +1698,7 @@ impl Aead for Aes128GcmSiv {
     super::open_bit_lengths(aad.len(), buffer.len())?;
 
     // Wide path: VAES-512 CTR + VPCLMULQDQ POLYVAL when available.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     if self.backend == AeadBackend::X86VaesVpclmul {
       let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
       let ek = aes::aes128_expand_key(&enc_key);

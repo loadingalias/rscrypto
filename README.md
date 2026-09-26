@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/rscrypto.svg)](https://crates.io/crates/rscrypto)
 [![Docs.rs](https://docs.rs/rscrypto/badge.svg)](https://docs.rs/rscrypto)
-[![MSRV 1.91.0](https://img.shields.io/badge/MSRV-1.91.0-blue)](Cargo.toml)
+[![MSRV 1.100.0](https://img.shields.io/badge/MSRV-1.100.0-blue)](Cargo.toml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/crates/l/rscrypto)](#license)
 
 `rscrypto` puts cryptographic primitives, cryptographic and fast hashes, password hashing,

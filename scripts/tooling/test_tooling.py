@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tarfile
+import shutil
 import tempfile
 import unittest
 import zipfile
@@ -156,23 +157,38 @@ dep="1"
             update.sync_gungraun_runner()
         self.assertEqual(write.call_args.args[0]['cargo']['gungraun-runner'], '0.19.4')
 
-    def test_stable_update_checks_only_selected_native_components(self):
+    def test_nightly_update_pins_newest_complete_manifest(self):
         data = catalog.read()
         hosts = [data[p]['rust-host'] for p in catalog.PLATFORMS] + ['aarch64-apple-darwin']
-        packages = {name: {'target': {h: {'available': True} for h in hosts}}
-                    for name in ('rustc', 'cargo', 'rust-std', 'clippy-preview', 'rustfmt-preview',
-                                 'rust-src', 'llvm-tools-preview', 'rust-analyzer-preview')}
-        packages['rust'] = {'version': '1.98.1 (fixture)'}
-        manifest = tomlkit.dumps({'date': '2026-09-03', 'pkg': packages}).encode()
+        targets = json.loads((catalog.ROOT / '.config/target-matrix.json').read_text())['targets']
+        def manifest(complete):
+            packages = {name: {'target': {h: {'available': True} for h in hosts}}
+                        for name in ('rustc', 'cargo', 'clippy-preview', 'rustfmt-preview', 'rust-src',
+                                     'llvm-tools-preview', 'rust-analyzer-preview', 'miri-preview')}
+            packages['rust-std'] = {'target': {t: {'available': True} for t in {*hosts, *targets}}}
+            if not complete:
+                packages['rust-std']['target']['s390x-unknown-linux-gnu']['available'] = False
+            return tomlkit.dumps({'date': 'fixture', 'pkg': packages}).encode()
+        responses = [OSError('not yet published'), (manifest(False), ''), (manifest(True), '')]
+        def fetch(url):
+            response = responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            return response
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
+            (root / '.config').mkdir()
+            shutil.copy2(catalog.ROOT / '.config/target-matrix.json', root / '.config/target-matrix.json')
             path = root / 'rust-toolchain.toml'
-            path.write_text('[toolchain]\nchannel="1.98.0"\ncomponents=["clippy","rustfmt","rust-src","rust-analyzer"]\n')
+            path.write_text('[toolchain]\nchannel="nightly-2026-01-01"\ncomponents=["clippy","rustfmt","rust-src","rust-analyzer"]\n')
             with patch.object(update, 'ROOT', root), patch.object(update, 'read', return_value=data), \
-                 patch.object(update, 'fetch', return_value=(manifest, '')) as fetch:
+                 patch.object(update, 'fetch', side_effect=fetch) as fetched:
                 update.update_rust()
-            fetch.assert_called_once_with('https://static.rust-lang.org/dist/channel-rust-stable.toml')
-            self.assertEqual(catalog.read(path)['toolchain']['channel'], '1.98.1')
+            urls = [c.args[0] for c in fetched.call_args_list]
+            self.assertEqual(len(urls), 3)
+            self.assertTrue(all(u.endswith('/channel-rust-nightly.toml') for u in urls))
+            third = urls[2].split('/dist/')[1].split('/')[0]
+            self.assertEqual(catalog.read(path)['toolchain']['channel'], f'nightly-{third}')
 
     def test_nextest_recommendation_preserves_minimum_and_configuration(self):
         with tempfile.TemporaryDirectory() as temporary:

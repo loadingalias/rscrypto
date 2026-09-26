@@ -112,7 +112,7 @@ def collect(root, work, env):
 def verify_mappings(cov, args, root, work, env):
     # Rust emits zero-hash unused-function placeholders. LLVM can warn when another
     # binary supplies the real mapping. Accept these only if that mapping is loaded.
-    # https://github.com/rust-lang/rust/blob/1.98.1/compiler/rustc_codegen_llvm/src/coverageinfo/mapgen/covfun.rs
+    # https://github.com/rust-lang/rust/blob/f7575a9da8e4a4fca3b5668d5a2ea7476db44b3f/compiler/rustc_codegen_llvm/src/coverageinfo/mapgen/covfun.rs
     mapping = work / 'mappings.json'
     with mapping.open('w') as stream:
         result = run([cov, 'export', *args, '-dump', '-num-threads=1', '-skip-expansions',
@@ -197,8 +197,8 @@ def main():
     env = os.environ.copy()
     env['RUSTUP_TOOLCHAIN'] = tomllib.loads((root / 'rust-toolchain.toml').read_text())['toolchain']['channel']
     rustc_version = capture(['rustc', '--version', '--verbose'], root, env)
-    if 'nightly' in rustc_version or 'dev' in rustc_version.splitlines()[0]:
-        raise RuntimeError('coverage requires a stable development toolchain')
+    if 'dev' in rustc_version.splitlines()[0]:
+        raise RuntimeError('coverage requires the pinned development toolchain, not a local compiler build')
     host = next(line.removeprefix('host: ') for line in rustc_version.splitlines() if line.startswith('host: '))
     sysroot = Path(capture(['rustc', '--print', 'sysroot'], root, env).strip())
     llvm_bin = sysroot / 'lib/rustlib' / host / 'bin'

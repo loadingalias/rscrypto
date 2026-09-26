@@ -78,7 +78,7 @@ mod riscv64;
 mod s390x;
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 mod wasm;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 mod x86_64;
 
 use dispatch::active_compress;

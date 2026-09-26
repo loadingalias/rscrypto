@@ -347,7 +347,10 @@ pub(in crate::checksum) fn slice16_32(mut crc: u32, data: &[u8], tables: &[[u32;
 /// * `crc` - Current CRC state (pre-inverted)
 /// * `data` - Input data
 /// * `tables` - 8 lookup tables (256 entries each)
-#[cfg(all(feature = "crc64", any(target_arch = "x86_64", target_arch = "aarch64", test)))]
+#[cfg(all(
+  feature = "crc64",
+  any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64", test)
+))]
 #[inline]
 pub(in crate::checksum) fn slice8_64(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 8]) -> u64 {
   let (chunks, remainder) = data.as_chunks::<8>();

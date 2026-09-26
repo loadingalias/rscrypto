@@ -195,7 +195,7 @@ mod polyval;
       target_arch = "powerpc64",
       target_arch = "riscv64",
       target_arch = "s390x",
-      target_arch = "x86_64",
+      all(target_arch = "x86_64", target_feature = "sse2"),
     )
   ),
   all(
@@ -206,7 +206,7 @@ mod polyval;
       all(target_arch = "powerpc64", target_endian = "little"),
       target_arch = "riscv64",
       target_arch = "s390x",
-      target_arch = "x86_64",
+      all(target_arch = "x86_64", target_feature = "sse2"),
     )
   )
 ))]
@@ -298,7 +298,7 @@ pub use chacha20::diag_chacha20_xor_keystream_wasm_simd128;
 #[cfg(all(
   rscrypto_internal,
   feature = "diag",
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
 ))]
 pub use chacha20::{diag_chacha20_xor_keystream_x86_avx2, diag_chacha20_xor_keystream_x86_avx512};
@@ -312,7 +312,7 @@ pub use chacha20poly1305::{
   rscrypto_internal,
   feature = "diag",
   feature = "chacha20poly1305",
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   target_os = "linux"
 ))]
 pub use chacha20poly1305::{
@@ -810,7 +810,12 @@ impl AeadByteLengths {
   #[inline]
   #[cfg(all(
     any(feature = "chacha20poly1305", feature = "xchacha20poly1305"),
-    any(test, target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64")
+    any(
+      test,
+      all(target_arch = "x86_64", target_feature = "sse2"),
+      target_arch = "aarch64",
+      target_arch = "riscv64"
+    )
   ))]
   pub(crate) const fn total_at_least(self, minimum: u64) -> bool {
     if self.aad >= minimum {

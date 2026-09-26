@@ -7,7 +7,12 @@
 mod aarch64;
 #[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
 mod s390x;
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 mod x86_64;
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
@@ -26,7 +31,12 @@ use core::arch::aarch64::{
   vdup_n_u16, vget_low_u16, vreinterpret_s16_u16, vreinterpret_u16_s16, vreinterpret_u32_u16, vreinterpretq_u16_u32,
   vreinterpretq_u32_u16, vset_lane_s16, vshr_n_s16, vsub_u16, vuzp1q_u32, vuzp2q_u32, vzip1_u32, vzip2_u32,
 };
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 use core::arch::x86_64::{
   __m128i, __m256i, _mm_add_epi16, _mm_and_si128, _mm_cmpgt_epi16, _mm_mulhi_epi16, _mm_mullo_epi16, _mm_set1_epi16,
   _mm_setr_epi8, _mm_setzero_si128, _mm_shuffle_epi8, _mm_srli_epi16, _mm_sub_epi16, _mm_unpacklo_epi16,
@@ -54,15 +64,20 @@ const Q: u16 = 3329;
 const Q_U32: u32 = Q as u32;
 #[cfg(any(
   all(target_arch = "aarch64", not(miri), not(feature = "portable-only")),
-  all(target_arch = "x86_64", not(miri), not(feature = "portable-only"))
+  all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(miri),
+    not(feature = "portable-only")
+  )
 ))]
 const Q_I16: i16 = Q.cast_signed();
 #[cfg(any(
   test,
   miri,
   feature = "portable-only",
-  target_arch = "x86_64",
-  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  not(any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2")))
 ))]
 const Q_I32: i32 = Q as i32;
 const Q_HALF: u32 = Q_U32 / 2;
@@ -240,10 +255,10 @@ pub(super) fn validate_and_prepare_encapsulation_key<const K: usize, const EK_BY
   let mut arithmetic = prepare_encapsulation_key::<K, EK_BYTES>(ek);
   let mut encoded = [0u8; POLY_BYTES];
 
-  for i in 0..K {
+  for (i, t_hat) in arithmetic.t_hat.iter().enumerate() {
     let start = i.strict_mul(POLY_BYTES);
     let end = start.strict_add(POLY_BYTES);
-    byte_encode::<12>(&arithmetic.t_hat[i], &mut encoded);
+    byte_encode::<12>(t_hat, &mut encoded);
     ok &= ct_eq_mask(&encoded, &ek[start..end]);
   }
 
@@ -1834,17 +1849,17 @@ fn sample_matrix_ntt_materialized_k3_rows(
   row1: &mut PolyVec<3>,
   row2: &mut PolyVec<3>,
 ) {
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     sample_matrix_ntt_materialized_k3_rows_quad(rho, row0, row1, row2);
   }
-  #[cfg(not(target_arch = "x86_64"))]
+  #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
   {
     sample_matrix_ntt_materialized_k3_rows_triple(rho, row0, row1, row2);
   }
 }
 
-#[cfg(any(test, not(target_arch = "x86_64")))]
+#[cfg(any(test, not(all(target_arch = "x86_64", target_feature = "sse2"))))]
 #[inline(always)]
 fn sample_matrix_ntt_materialized_k3_rows_triple(
   rho: &[u8; SEED_BYTES],
@@ -1866,7 +1881,7 @@ fn sample_matrix_ntt_materialized_k3_rows_triple(
   }
 }
 
-#[cfg(any(test, target_arch = "x86_64"))]
+#[cfg(any(test, all(target_arch = "x86_64", target_feature = "sse2")))]
 #[inline(always)]
 fn sample_matrix_ntt_materialized_k3_rows_quad(
   rho: &[u8; SEED_BYTES],
@@ -1988,17 +2003,27 @@ fn sample_matrix_ntt_materialized_k4_rows(
   row2: &mut PolyVec<4>,
   row3: &mut PolyVec<4>,
 ) {
-  #[cfg(any(all(target_arch = "aarch64", target_os = "macos"), target_arch = "x86_64"))]
+  #[cfg(any(
+    all(target_arch = "aarch64", target_os = "macos"),
+    all(target_arch = "x86_64", target_feature = "sse2")
+  ))]
   {
     sample_matrix_ntt_materialized_k4_rows_quad(rho, row0, row1, row2, row3);
   }
-  #[cfg(not(any(all(target_arch = "aarch64", target_os = "macos"), target_arch = "x86_64")))]
+  #[cfg(not(any(
+    all(target_arch = "aarch64", target_os = "macos"),
+    all(target_arch = "x86_64", target_feature = "sse2")
+  )))]
   {
     sample_matrix_ntt_materialized_k4_rows_triple(rho, row0, row1, row2, row3);
   }
 }
 
-#[cfg(any(test, all(target_arch = "aarch64", target_os = "macos"), target_arch = "x86_64"))]
+#[cfg(any(
+  test,
+  all(target_arch = "aarch64", target_os = "macos"),
+  all(target_arch = "x86_64", target_feature = "sse2")
+))]
 #[inline(always)]
 fn sample_matrix_ntt_materialized_k4_rows_quad(
   rho: &[u8; SEED_BYTES],
@@ -2027,7 +2052,10 @@ fn sample_matrix_ntt_materialized_k4_rows_quad(
 
 #[cfg(any(
   test,
-  not(any(all(target_arch = "aarch64", target_os = "macos"), target_arch = "x86_64"))
+  not(any(
+    all(target_arch = "aarch64", target_os = "macos"),
+    all(target_arch = "x86_64", target_feature = "sse2")
+  ))
 ))]
 #[inline(always)]
 fn sample_matrix_ntt_materialized_k4_rows_triple(
@@ -2235,11 +2263,13 @@ fn matrix_accumulate_coord<const K: usize>(entry: usize, transpose: bool) -> ((u
 
 #[inline]
 fn use_fused_matrix_accumulate<const K: usize>() -> bool {
-  if cfg!(any(miri, feature = "portable-only")) {
-    return true;
-  }
+  cfg!(any(miri, feature = "portable-only")) || arch_prefers_fused_matrix_accumulate()
+}
 
-  #[cfg(target_arch = "x86_64")]
+/// Whether the selected architecture lacks a faster separate accumulation path.
+#[inline]
+fn arch_prefers_fused_matrix_accumulate() -> bool {
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     !crate::platform::caps().has(crate::platform::caps::x86::AVX2 | crate::platform::caps::x86::SSE41)
   }
@@ -2264,7 +2294,7 @@ fn use_fused_matrix_accumulate<const K: usize>() -> bool {
     target_arch = "powerpc64",
     target_arch = "riscv64",
     target_arch = "s390x",
-    target_arch = "x86_64"
+    all(target_arch = "x86_64", target_feature = "sse2")
   )))]
   {
     true
@@ -2367,7 +2397,12 @@ fn use_s390x_vector_arithmetic() -> bool {
   crate::platform::caps().has(crate::platform::caps::s390x::VECTOR)
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[inline(always)]
 fn use_x86_sample_ntt_simd() -> bool {
   crate::platform::caps()
@@ -2809,7 +2844,12 @@ fn sample_ntt_block_public(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly, fill
     }
   }
 
-  #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
   {
     if use_x86_sample_ntt_simd() {
       // SAFETY: x86_64 SIMD SampleNTT block dispatch because:
@@ -2891,7 +2931,12 @@ fn sample_ntt_pair_block_scalar(
   out1: &mut Poly,
   filled1: &mut usize,
 ) {
-  #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
   {
     if use_x86_sample_ntt_simd() {
       // SAFETY: x86_64 SIMD SampleNTT pair dispatch because:
@@ -3233,7 +3278,12 @@ impl<'a> SampleNttProduct<'a> {
       }
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_feature = "sse2",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
     {
       if use_x86_sample_ntt_simd() {
         // SAFETY: x86_64 AVX2 fused SampleNTT block dispatch because:
@@ -3492,7 +3542,12 @@ unsafe fn sample_ntt_product_absorb_rate_ptr_neon(
   }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1,ssse3")]
 /// # Safety
 ///
@@ -3522,7 +3577,12 @@ fn sample_ntt_product_absorb_block_avx2(
   sample_ntt_product_absorb_candidates_avx2(product, &candidates, acc);
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1,ssse3")]
 /// # Safety
 ///
@@ -3685,7 +3745,12 @@ fn sample_ntt_quad_block(bufs: &[[u8; SHAKE128_RATE_BYTES]; 4], out: [&mut Poly;
   {
     let [out0, out1, out2, out3] = out;
 
-    #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_feature = "sse2",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
     {
       if use_x86_sample_ntt_simd() {
         // SAFETY: x86_64 SIMD SampleNTT quad dispatch because:
@@ -4010,7 +4075,12 @@ unsafe fn sample_ntt_block_ptr(rate_ptr: *const u8, out: &mut Poly, filled: &mut
   *filled = n;
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1,ssse3")]
 /// # Safety
 ///
@@ -4031,7 +4101,12 @@ unsafe fn sample_ntt_block_avx2(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly,
   }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1,ssse3")]
 /// # Safety
 ///
@@ -4060,7 +4135,12 @@ fn sample_ntt_block_avx2_full(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly, f
   *filled = n;
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1,ssse3")]
 /// # Safety
 ///
@@ -4096,7 +4176,12 @@ fn sample_ntt_block_avx2_bounded(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly
   *filled = n;
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[inline(always)]
 fn sample_ntt_store_candidates_full(out: *mut u16, n: &mut usize, candidates: &[u16; 8]) {
   for &candidate in candidates {
@@ -4115,7 +4200,12 @@ fn sample_ntt_store_candidates_full(out: *mut u16, n: &mut usize, candidates: &[
   }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[inline(always)]
 fn sample_ntt_store_candidates_bounded(out: *mut u16, n: &mut usize, candidates: &[u16; 8]) {
   for &candidate in candidates {
@@ -4136,7 +4226,12 @@ fn sample_ntt_store_candidates_bounded(out: *mut u16, n: &mut usize, candidates:
   }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1,ssse3")]
 /// Decode eight SampleNTT candidates from a potentially unaligned 16-byte window.
 ///
@@ -4329,7 +4424,12 @@ fn ntt(poly: &mut Poly) {
   }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 fn ntt(poly: &mut Poly) {
   if crate::platform::caps().has(crate::platform::caps::x86::AVX2 | crate::platform::caps::x86::SSE41) {
     // SAFETY: x86_64 AVX2 NTT dispatch because:
@@ -4368,7 +4468,11 @@ fn ntt(poly: &mut Poly) {
 #[cfg(any(
   miri,
   feature = "portable-only",
-  not(any(target_arch = "aarch64", target_arch = "s390x", target_arch = "x86_64"))
+  not(any(
+    target_arch = "aarch64",
+    target_arch = "s390x",
+    all(target_arch = "x86_64", target_feature = "sse2")
+  ))
 ))]
 fn ntt(poly: &mut Poly) {
   ntt_scalar(poly);
@@ -4397,8 +4501,8 @@ fn ntt_to_montgomery_product_domain(poly: &mut Poly) {
   test,
   miri,
   feature = "portable-only",
-  target_arch = "x86_64",
-  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  not(any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2")))
 ))]
 fn ntt_scalar(poly: &mut Poly) {
   let mut zeta_index = 1usize;
@@ -4434,7 +4538,12 @@ fn inverse_ntt_scaled(poly: &mut Poly, final_scale_mont: i16) {
   }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 fn inverse_ntt_scaled(poly: &mut Poly, final_scale_mont: i16) {
   if crate::platform::caps().has(crate::platform::caps::x86::AVX2 | crate::platform::caps::x86::SSE41) {
     // SAFETY: x86_64 AVX2 inverse-NTT dispatch because:
@@ -4475,7 +4584,11 @@ fn inverse_ntt_scaled(poly: &mut Poly, final_scale_mont: i16) {
 #[cfg(any(
   miri,
   feature = "portable-only",
-  not(any(target_arch = "aarch64", target_arch = "s390x", target_arch = "x86_64"))
+  not(any(
+    target_arch = "aarch64",
+    target_arch = "s390x",
+    all(target_arch = "x86_64", target_feature = "sse2")
+  ))
 ))]
 fn inverse_ntt_scaled(poly: &mut Poly, final_scale_mont: i16) {
   inverse_ntt_scalar_with_scale(poly, final_scale_mont);
@@ -4523,8 +4636,8 @@ fn inverse_ntt_scaled_add_assign(poly: &mut Poly, addend: &Poly, final_scale_mon
   test,
   miri,
   feature = "portable-only",
-  target_arch = "x86_64",
-  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  not(any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2")))
 ))]
 fn inverse_ntt_scalar_with_scale(poly: &mut Poly, final_scale_mont: i16) {
   let mut zeta_index = 127usize;
@@ -4555,7 +4668,12 @@ fn inverse_ntt_scalar(poly: &mut Poly) {
   inverse_ntt_scalar_with_scale(poly, INV_NTT_SCALE_MONT);
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[inline(always)]
 fn multiply_ntts_add_assign_chunk(
   acc: &mut Poly,
@@ -4585,7 +4703,11 @@ fn multiply_ntts_add_assign_chunk(
 #[cfg(any(
   miri,
   feature = "portable-only",
-  not(any(target_arch = "aarch64", target_arch = "s390x", target_arch = "x86_64"))
+  not(any(
+    target_arch = "aarch64",
+    target_arch = "s390x",
+    all(target_arch = "x86_64", target_feature = "sse2")
+  ))
 ))]
 #[inline(always)]
 fn multiply_ntts_add_assign_chunk(
@@ -4626,8 +4748,8 @@ fn multiply_ntts_add_assign_chunk(
   test,
   miri,
   feature = "portable-only",
-  target_arch = "x86_64",
-  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  not(any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2")))
 ))]
 #[inline(always)]
 fn multiply_ntts_add_assign_chunk_scalar(
@@ -4685,7 +4807,12 @@ fn multiply_ntts_add_assign(acc: &mut Poly, a: &Poly, b: &Poly) {
   }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 fn multiply_ntts_add_assign(acc: &mut Poly, a: &Poly, b: &Poly) {
   let caps = crate::platform::caps();
   let avx2_required = crate::platform::caps::x86::AVX2 | crate::platform::caps::x86::SSE41;
@@ -4723,7 +4850,11 @@ fn multiply_ntts_add_assign(acc: &mut Poly, a: &Poly, b: &Poly) {
 #[cfg(any(
   miri,
   feature = "portable-only",
-  not(any(target_arch = "aarch64", target_arch = "s390x", target_arch = "x86_64"))
+  not(any(
+    target_arch = "aarch64",
+    target_arch = "s390x",
+    all(target_arch = "x86_64", target_feature = "sse2")
+  ))
 ))]
 fn multiply_ntts_add_assign(acc: &mut Poly, a: &Poly, b: &Poly) {
   multiply_ntts_add_assign_scalar(acc, a, b);
@@ -4749,7 +4880,12 @@ fn multiply_ntts_add_assign(acc: &mut Poly, a: &Poly, b: &Poly) {
 
 #[inline]
 fn multiply_ntts_accumulate<const K: usize>(acc: &mut Poly, a: &PolyVec<K>, b: &PolyVec<K>) {
-  #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
   {
     let caps = crate::platform::caps();
     let avx2_required = crate::platform::caps::x86::AVX2 | crate::platform::caps::x86::SSE41;
@@ -4994,8 +5130,8 @@ fn multiply_ntts_accumulate<const K: usize>(acc: &mut Poly, a: &PolyVec<K>, b: &
   test,
   miri,
   feature = "portable-only",
-  target_arch = "x86_64",
-  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  not(any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2")))
 ))]
 fn multiply_ntts_add_assign_scalar(acc: &mut Poly, a: &Poly, b: &Poly) {
   for (i, &gamma) in GAMMAS_MONT.iter().enumerate() {
@@ -5916,7 +6052,12 @@ fn from_montgomery_product_domain_neon(poly: &mut Poly) {
   }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -5964,7 +6105,12 @@ fn ntt_avx2(poly: &mut Poly) {
   }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -5990,7 +6136,12 @@ fn ntt_len4_avx2(poly: &mut Poly, zeta_index: &mut usize) {
   }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -6057,7 +6208,12 @@ fn inverse_ntt_avx2(poly: &mut Poly, final_scale_mont: i16) {
   }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -6086,7 +6242,12 @@ fn inverse_ntt_len4_avx2(poly: &mut Poly, zeta_index: &mut usize) {
   }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -6134,7 +6295,12 @@ fn multiply_ntts_add_assign_avx2(acc: &mut Poly, a: &Poly, b: &Poly) {
   }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -6186,7 +6352,12 @@ fn multiply_ntts_add_assign_chunk_avx2(
   }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -6195,7 +6366,12 @@ fn set1_u32x8_avx2(value: u32) -> __m256i {
   _mm256_set1_epi32(value.cast_signed())
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// Load 16 potentially unaligned coefficients without asserting SIMD alignment.
 ///
@@ -6210,7 +6386,12 @@ fn load_u16x16_avx2(ptr: *const u16) -> __m256i {
   unsafe { core::mem::transmute::<[u16; 16], __m256i>(lanes) }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// Store 16 coefficients without asserting SIMD alignment.
 ///
@@ -6224,7 +6405,12 @@ fn store_u16x16_avx2(ptr: *mut u16, value: __m256i) {
   unsafe { ptr.cast::<[u16; 16]>().write_unaligned(lanes) };
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -6237,7 +6423,12 @@ fn load_u16x8_avx2(ptr: *const u16) -> __m128i {
   unsafe { core::mem::transmute::<[u16; 8], __m128i>(lanes) }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -6252,7 +6443,12 @@ fn load_u16x4_avx2(ptr: *const u16) -> __m128i {
   unsafe { core::mem::transmute::<[u16; 8], __m128i>(lanes) }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -6264,7 +6460,12 @@ fn store_u16x8_avx2(ptr: *mut u16, values: __m128i) {
   unsafe { ptr.cast::<[u16; 8]>().write_unaligned(lanes) };
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -6280,7 +6481,12 @@ fn store_u16x4_avx2(ptr: *mut u16, values: __m128i) {
   };
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -6293,7 +6499,12 @@ fn mul_mont_const_mod_u16x8_avx2(a: __m128i, b_mont: i16) -> __m128i {
   ))
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -6304,7 +6515,12 @@ fn montgomery_reduce_s16x8_avx2(low: __m128i, high: __m128i) -> __m128i {
   _mm_sub_epi16(high, c)
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -6314,7 +6530,12 @@ fn signed_to_mod_q_s16x8_avx2(value: __m128i) -> __m128i {
   _mm_add_epi16(value, _mm_and_si128(negative, _mm_set1_epi16(Q_I16)))
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -6325,7 +6546,12 @@ fn add_mod_u16x8_avx2(a: __m128i, b: __m128i) -> __m128i {
   _mm_sub_epi16(sum, _mm_and_si128(ge_q, _mm_set1_epi16(Q_I16)))
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -6336,7 +6562,12 @@ fn sub_mod_u16x8_avx2(a: __m128i, b: __m128i) -> __m128i {
   _mm_add_epi16(diff, _mm_and_si128(borrowed, _mm_set1_epi16(Q_I16)))
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -6354,7 +6585,12 @@ fn load_i16x8_as_i32x8_avx2(ptr: *const i16) -> __m256i {
   _mm256_cvtepi16_epi32(packed)
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -6367,7 +6603,12 @@ fn montgomery_reduce_i32x8_avx2(value: __m256i) -> __m256i {
   _mm256_srai_epi32::<16>(_mm256_slli_epi32::<16>(reduced))
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -6377,7 +6618,12 @@ fn signed_to_mod_q_i32x8_avx2(value: __m256i) -> __m256i {
   _mm256_add_epi32(value, _mm256_and_si256(negative, set1_u32x8_avx2(Q_U32)))
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "avx2,sse4.1")]
 /// # Safety
 ///
@@ -6394,8 +6640,8 @@ fn add_mod_u32x8_avx2(a: __m256i, b: __m256i) -> __m256i {
   test,
   miri,
   feature = "portable-only",
-  target_arch = "x86_64",
-  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  not(any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2")))
 ))]
 fn base_case_multiply(a0: u16, a1: u16, b0: u16, b1: u16, gamma_mont: i16) -> (u16, u16) {
   let a0b0 = mul_i32_secret(i32::from(a0), i32::from(b0));
@@ -7486,8 +7732,8 @@ fn mul_mod(a: u16, b: u16) -> u16 {
   test,
   miri,
   feature = "portable-only",
-  target_arch = "x86_64",
-  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  not(any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2")))
 ))]
 fn mul_mont_const_mod(a: u16, b_mont: i16) -> u16 {
   signed_to_mod_q(montgomery_reduce_i32(mul_i32_secret(i32::from(a), i32::from(b_mont))))
@@ -7498,8 +7744,8 @@ fn mul_mont_const_mod(a: u16, b_mont: i16) -> u16 {
   test,
   miri,
   feature = "portable-only",
-  target_arch = "x86_64",
-  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  not(any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2")))
 ))]
 fn to_montgomery_product_domain(value: u16) -> u16 {
   signed_to_mod_q(montgomery_reduce_i32(i32::from(value)))
@@ -7510,8 +7756,8 @@ fn to_montgomery_product_domain(value: u16) -> u16 {
   test,
   miri,
   feature = "portable-only",
-  target_arch = "x86_64",
-  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  not(any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2")))
 ))]
 fn from_montgomery_product_domain(value: u16) -> u16 {
   mul_mont_const_mod(value, MONT_R_SQUARED_MOD_Q)
@@ -7522,8 +7768,8 @@ fn from_montgomery_product_domain(value: u16) -> u16 {
   test,
   miri,
   feature = "portable-only",
-  target_arch = "x86_64",
-  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  not(any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2")))
 ))]
 fn montgomery_reduce_i32(value: i32) -> i16 {
   #[inline(always)]
@@ -7543,8 +7789,8 @@ fn montgomery_reduce_i32(value: i32) -> i16 {
   test,
   miri,
   feature = "portable-only",
-  target_arch = "x86_64",
-  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  not(any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2")))
 ))]
 fn signed_to_mod_q(value: i16) -> u16 {
   let value = i32::from(value);
@@ -7599,8 +7845,8 @@ fn mul_u32_secret(a: u32, b: u32) -> u32 {
   test,
   miri,
   feature = "portable-only",
-  target_arch = "x86_64",
-  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  not(any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2")))
 ))]
 fn mul_i32_secret(a: i32, b: i32) -> i32 {
   debug_assert!((i32::from(i16::MIN)..=i32::from(i16::MAX)).contains(&a));
@@ -8296,7 +8542,12 @@ mod tests {
       not(miri),
       not(feature = "portable-only")
     ),
-    all(target_arch = "x86_64", not(miri), not(feature = "portable-only"))
+    all(
+      target_arch = "x86_64",
+      target_feature = "sse2",
+      not(miri),
+      not(feature = "portable-only")
+    )
   ))]
   fn scalar_sample_ntt_block_to_slice(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut [u16]) -> usize {
     let mut n = 0usize;
@@ -8324,7 +8575,12 @@ mod tests {
     n
   }
 
-  #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
   #[test]
   fn sample_ntt_block_avx2_matches_scalar_reference() {
     if !use_x86_sample_ntt_simd() {
@@ -9359,7 +9615,12 @@ mod tests {
     }
   }
 
-  #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
   #[test]
   fn ntt_avx2_matches_scalar_reference() {
     if !crate::platform::caps().has(crate::platform::caps::x86::AVX2 | crate::platform::caps::x86::SSE41) {
@@ -9477,7 +9738,12 @@ mod tests {
     }
   }
 
-  #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
   #[test]
   fn multiply_ntts_avx2_matches_scalar_accumulator() {
     if !crate::platform::caps().has(crate::platform::caps::x86::AVX2 | crate::platform::caps::x86::SSE41) {
@@ -9506,7 +9772,12 @@ mod tests {
     }
   }
 
-  #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
   #[test]
   fn multiply_ntts_avx512_matches_scalar_accumulator() {
     let avx2_required = crate::platform::caps::x86::AVX2 | crate::platform::caps::x86::SSE41;

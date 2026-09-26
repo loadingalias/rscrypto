@@ -152,7 +152,7 @@ class RunnerTests(unittest.TestCase):
     for name in ("python.sh", "toolchain.py"):
       shutil.copy2(ROOT / "scripts/lib" / name, self.root / "scripts/lib" / name)
     (self.root / ".config").mkdir()
-    for name in ("criterion.json", "benchmark-matrix.json", "toolchains.toml"):
+    for name in ("criterion.json", "benchmark-matrix.json"):
       shutil.copy2(ROOT / ".config" / name, self.root / ".config" / name)
     for name in ("Cargo.toml", "justfile", "rust-toolchain.toml"):
       shutil.copy2(ROOT / name, self.root / name)
@@ -223,8 +223,7 @@ sys.exit(64)
     catalog = tomllib.loads((ROOT / '.config/tooling.toml').read_text())
     hosts = {row['rust-host'] for row in catalog.values() if isinstance(row, dict) and 'rust-host' in row}
     hosts.add('aarch64-apple-darwin')
-    stable = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel']
-    nightly = tomllib.loads((ROOT / '.config/toolchains.toml').read_text())['nightly']
+    channel = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel']
     for host in sorted(hosts):
       with self.subTest(host=host):
         log = self.root / 'toolchains.jsonl'
@@ -232,9 +231,8 @@ sys.exit(64)
         result = self.bench('sha256', '--list', CHECK_HOST=host, RUSTUP_TOOLCHAIN='wrong-ambient-channel')
         self.assertEqual(result.returncode, 0, result.stderr)
         channels = [json.loads(line) for line in log.read_text().splitlines()]
-        expected = nightly if host in {'powerpc64le-unknown-linux-gnu', 's390x-unknown-linux-gnu', 'riscv64gc-unknown-linux-gnu'} else stable
         self.assertTrue(channels)
-        self.assertEqual(set(channels), {expected})
+        self.assertEqual(set(channels), {channel})
 
   def tool(self, name, body):
     path = self.root / "bin" / name

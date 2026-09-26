@@ -6,7 +6,7 @@ use crate::platform::Caps;
 use crate::platform::caps::riscv;
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 use crate::platform::caps::wasm;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 use crate::platform::caps::x86;
 
 /// Blake2s compress function pointer type.
@@ -21,9 +21,9 @@ pub(crate) type CompressBlocksFn = fn(&mut [u32; 8], &[u8], &mut u64);
 #[non_exhaustive]
 pub(crate) enum Blake2sKernelId {
   Portable = 0,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   X86Avx2 = 1,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   X86Avx512vl = 2,
   #[cfg(target_arch = "riscv64")]
   Riscv64V = 6,
@@ -38,9 +38,9 @@ impl Blake2sKernelId {
   pub(crate) const fn as_str(self) -> &'static str {
     match self {
       Self::Portable => "portable",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx2 => "x86/avx2",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx512vl => "x86/avx512vl",
       #[cfg(target_arch = "riscv64")]
       Self::Riscv64V => "riscv64/v",
@@ -62,13 +62,13 @@ fn compress_wasm_simd128(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool)
   unsafe { super::wasm::compress_simd128(h, block, t, last) }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 fn compress_x86_avx2(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool) {
   // SAFETY: runtime/compile-time dispatch selects this only when AVX2 is available.
   unsafe { super::x86_64::compress_avx2(h, block, t, last) }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 fn compress_x86_avx512vl(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool) {
   // SAFETY: runtime/compile-time dispatch selects this only when AVX-512F/VL are available.
   unsafe { super::x86_64::compress_avx512vl(h, block, t, last) }
@@ -99,12 +99,12 @@ fn compress_blocks_wasm_simd128(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
   compress_blocks_with(h, blocks, t, compress_wasm_simd128);
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 fn compress_blocks_x86_avx2(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
   compress_blocks_with(h, blocks, t, compress_x86_avx2);
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 fn compress_blocks_x86_avx512vl(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
   compress_blocks_with(h, blocks, t, compress_x86_avx512vl);
 }
@@ -114,9 +114,9 @@ fn compress_blocks_x86_avx512vl(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
 pub(crate) fn compress_fn(id: Blake2sKernelId) -> CompressFn {
   match id {
     Blake2sKernelId::Portable => compress,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake2sKernelId::X86Avx2 => compress_x86_avx2,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake2sKernelId::X86Avx512vl => compress_x86_avx512vl,
     #[cfg(target_arch = "riscv64")]
     Blake2sKernelId::Riscv64V => compress_riscv64_v,
@@ -129,9 +129,9 @@ pub(crate) fn compress_fn(id: Blake2sKernelId) -> CompressFn {
 pub(crate) fn compress_blocks_fn(id: Blake2sKernelId) -> CompressBlocksFn {
   match id {
     Blake2sKernelId::Portable => compress_blocks_portable,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake2sKernelId::X86Avx2 => compress_blocks_x86_avx2,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake2sKernelId::X86Avx512vl => compress_blocks_x86_avx512vl,
     #[cfg(target_arch = "riscv64")]
     Blake2sKernelId::Riscv64V => compress_blocks_riscv64_v,
@@ -147,9 +147,9 @@ pub(crate) fn compress_blocks_fn(id: Blake2sKernelId) -> CompressBlocksFn {
 pub(crate) const fn required_caps(id: Blake2sKernelId) -> Caps {
   match id {
     Blake2sKernelId::Portable => Caps::NONE,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake2sKernelId::X86Avx2 => x86::AVX2,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake2sKernelId::X86Avx512vl => x86::AVX512F.union(x86::AVX512VL),
     #[cfg(target_arch = "riscv64")]
     Blake2sKernelId::Riscv64V => riscv::V,
@@ -162,9 +162,9 @@ pub(crate) const fn required_caps(id: Blake2sKernelId) -> Caps {
 #[cfg(test)]
 pub(crate) const ALL: &[Blake2sKernelId] = &[
   Blake2sKernelId::Portable,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   Blake2sKernelId::X86Avx2,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   Blake2sKernelId::X86Avx512vl,
   #[cfg(target_arch = "riscv64")]
   Blake2sKernelId::Riscv64V,
@@ -173,9 +173,9 @@ pub(crate) const ALL: &[Blake2sKernelId] = &[
 ];
 
 pub(crate) const COMPILE_TIME_HW: bool = cfg!(any(
-  all(target_arch = "x86_64", target_feature = "avx2"),
+  all(target_arch = "x86_64", target_feature = "sse2", target_feature = "avx2"),
   all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_feature = "avx512f",
     target_feature = "avx512vl"
   ),
@@ -183,12 +183,17 @@ pub(crate) const COMPILE_TIME_HW: bool = cfg!(any(
 
 #[inline(always)]
 pub(crate) fn compile_time_best() -> CompressFn {
-  #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512vl"))]
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    target_feature = "avx512f",
+    target_feature = "avx512vl"
+  ))]
   {
     compress_x86_avx512vl
   }
   #[cfg(all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_feature = "avx2",
     not(all(target_feature = "avx512f", target_feature = "avx512vl"))
   ))]
@@ -196,8 +201,13 @@ pub(crate) fn compile_time_best() -> CompressFn {
     compress_x86_avx2
   }
   #[cfg(not(any(
-    all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512vl"),
-    all(target_arch = "x86_64", target_feature = "avx2")
+    all(
+      target_arch = "x86_64",
+      target_feature = "sse2",
+      target_feature = "avx512f",
+      target_feature = "avx512vl"
+    ),
+    all(target_arch = "x86_64", target_feature = "sse2", target_feature = "avx2")
   )))]
   {
     compress
@@ -206,12 +216,17 @@ pub(crate) fn compile_time_best() -> CompressFn {
 
 #[inline(always)]
 pub(crate) fn compile_time_best_blocks() -> CompressBlocksFn {
-  #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512vl"))]
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    target_feature = "avx512f",
+    target_feature = "avx512vl"
+  ))]
   {
     compress_blocks_x86_avx512vl
   }
   #[cfg(all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_feature = "avx2",
     not(all(target_feature = "avx512f", target_feature = "avx512vl"))
   ))]
@@ -219,8 +234,13 @@ pub(crate) fn compile_time_best_blocks() -> CompressBlocksFn {
     compress_blocks_x86_avx2
   }
   #[cfg(not(any(
-    all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512vl"),
-    all(target_arch = "x86_64", target_feature = "avx2")
+    all(
+      target_arch = "x86_64",
+      target_feature = "sse2",
+      target_feature = "avx512f",
+      target_feature = "avx512vl"
+    ),
+    all(target_arch = "x86_64", target_feature = "sse2", target_feature = "avx2")
   )))]
   {
     compress_blocks_portable
@@ -415,7 +435,7 @@ fn split_counter(counter: u64) -> (u32, u32) {
 
 /// Initialize the 16-word working vector.
 #[cfg(any(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   all(target_arch = "wasm32", target_feature = "simd128"),
   target_arch = "riscv64"
 ))]

@@ -86,7 +86,7 @@ if [[ -z "$TARGET" ]]; then
 fi
 
 export RUSTUP_TOOLCHAIN
-RUSTUP_TOOLCHAIN="$("$TOOLCHAIN" --target "$TARGET")"
+RUSTUP_TOOLCHAIN="$("$TOOLCHAIN")"
 
 # Build and provenance reporting must observe the same internal compiler flags.
 PYTHON="$("$ROOT/scripts/lib/python.sh" --print)"

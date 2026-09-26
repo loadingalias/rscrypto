@@ -10,9 +10,9 @@ pub(crate) enum Sha384KernelId {
   Portable = 0,
   #[cfg(target_arch = "aarch64")]
   Aarch64Sha512 = 1,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   X86Sha512 = 2,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   X86Avx512vl = 5,
   #[cfg(target_arch = "riscv64")]
   Riscv64Zknh = 3,
@@ -20,9 +20,9 @@ pub(crate) enum Sha384KernelId {
   WasmSimd128 = 4,
   #[cfg(target_arch = "s390x")]
   S390xKimd = 7,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   X86Avx2Decoupled = 11,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   X86Avx512vlDecoupled = 12,
 }
 
@@ -35,9 +35,9 @@ impl Sha384KernelId {
       Self::Portable => "portable",
       #[cfg(target_arch = "aarch64")]
       Self::Aarch64Sha512 => "aarch64-sha512",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Sha512 => "x86-sha512",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx512vl => "x86-avx512vl",
       #[cfg(target_arch = "riscv64")]
       Self::Riscv64Zknh => "riscv/zknh",
@@ -45,9 +45,9 @@ impl Sha384KernelId {
       Self::WasmSimd128 => "wasm/simd128",
       #[cfg(target_arch = "s390x")]
       Self::S390xKimd => "s390x/kimd",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx2Decoupled => "x86-avx2-decoupled",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx512vlDecoupled => "x86-avx512vl-decoupled",
     }
   }
@@ -61,9 +61,9 @@ const fn to_sha512_kernel_id(id: Sha384KernelId) -> crate::hashes::crypto::sha51
     Sha384KernelId::Portable => Sha512KernelId::Portable,
     #[cfg(target_arch = "aarch64")]
     Sha384KernelId::Aarch64Sha512 => Sha512KernelId::Aarch64Sha512,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Sha384KernelId::X86Sha512 => Sha512KernelId::X86Sha512,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Sha384KernelId::X86Avx512vl => Sha512KernelId::X86Avx512vl,
     #[cfg(target_arch = "riscv64")]
     Sha384KernelId::Riscv64Zknh => Sha512KernelId::Riscv64Zknh,
@@ -71,9 +71,9 @@ const fn to_sha512_kernel_id(id: Sha384KernelId) -> crate::hashes::crypto::sha51
     Sha384KernelId::WasmSimd128 => Sha512KernelId::WasmSimd128,
     #[cfg(target_arch = "s390x")]
     Sha384KernelId::S390xKimd => Sha512KernelId::S390xKimd,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Sha384KernelId::X86Avx2Decoupled => Sha512KernelId::X86Avx2Decoupled,
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Sha384KernelId::X86Avx512vlDecoupled => Sha512KernelId::X86Avx512vlDecoupled,
   }
 }
@@ -87,9 +87,9 @@ pub(crate) fn compress_blocks_fn(id: Sha384KernelId) -> CompressBlocksFn {
     Sha384KernelId::Aarch64Sha512 => {
       crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Sha384KernelId::X86Sha512 => crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id)),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Sha384KernelId::X86Avx512vl => crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id)),
     #[cfg(target_arch = "riscv64")]
     Sha384KernelId::Riscv64Zknh => crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id)),
@@ -97,11 +97,11 @@ pub(crate) fn compress_blocks_fn(id: Sha384KernelId) -> CompressBlocksFn {
     Sha384KernelId::WasmSimd128 => crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id)),
     #[cfg(target_arch = "s390x")]
     Sha384KernelId::S390xKimd => crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id)),
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Sha384KernelId::X86Avx2Decoupled => {
       crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Sha384KernelId::X86Avx512vlDecoupled => {
       crate::hashes::crypto::sha512::kernels::compress_blocks_fn(to_sha512_kernel_id(id))
     }
@@ -120,7 +120,7 @@ pub(crate) const ALL: &[Sha384KernelId] = &[
   Sha384KernelId::Portable,
   #[cfg(target_arch = "aarch64")]
   Sha384KernelId::Aarch64Sha512,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   Sha384KernelId::X86Sha512,
   #[cfg(target_arch = "riscv64")]
   Sha384KernelId::Riscv64Zknh,
@@ -128,8 +128,8 @@ pub(crate) const ALL: &[Sha384KernelId] = &[
   Sha384KernelId::WasmSimd128,
   #[cfg(target_arch = "s390x")]
   Sha384KernelId::S390xKimd,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   Sha384KernelId::X86Avx2Decoupled,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   Sha384KernelId::X86Avx512vlDecoupled,
 ];

@@ -22,9 +22,9 @@ pub(crate) mod kernels;
 pub(crate) mod power;
 #[cfg(target_arch = "s390x")]
 pub(crate) mod s390x;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(crate) mod x86_64_avx2;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(crate) mod x86_64_avx512;
 
 #[derive(Clone, Debug, Default)]

@@ -61,7 +61,7 @@ sys.exit(7 if count == int(os.environ['FAIL_AT']) else 0)
         names = [name for name, _, _ in plan]
         self.assertEqual(len(names), len(set(names)))
         manifest = compat.read('Cargo.toml')
-        for channel in (compat.toolchain.stable(), manifest['package']['rust-version']):
+        for channel in (compat.toolchain.channel(), compat.toolchain.msrv_channel()):
             for feature in manifest['features']:
                 self.assertIn(f'{channel}-{feature}', names)
             for boundary in ('core', 'alloc'):

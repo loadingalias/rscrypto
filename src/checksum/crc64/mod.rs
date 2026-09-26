@@ -18,7 +18,7 @@ pub(crate) mod kernels;
 // portable is pub(crate) but needs internal access from bench module
 pub(crate) mod portable;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 mod x86_64;
 
 #[cfg(target_arch = "aarch64")]
@@ -37,7 +37,7 @@ pub use config::{Crc64Config, Crc64Force};
 
 #[cfg(any(test, feature = "std"))]
 use crate::checksum::common::reference::crc64_bitwise;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64"))]
 use crate::checksum::common::tables::generate_crc64_tables_8;
 use crate::checksum::common::tables::{CRC64_NVME_POLY, CRC64_XZ_POLY, generate_crc64_tables_16};
 #[cfg(feature = "diag")]
@@ -176,9 +176,9 @@ pub(crate) fn diag_crc64_nvme(len: usize) -> Crc64SelectionDiag {
 /// Portable kernel tables (pre-computed at compile time).
 mod kernel_tables {
   use super::*;
-  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+  #[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64"))]
   pub(super) static XZ_TABLES_8: [[u64; 256]; 8] = generate_crc64_tables_8(CRC64_XZ_POLY);
-  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+  #[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64"))]
   pub(super) static NVME_TABLES_8: [[u64; 256]; 8] = generate_crc64_tables_8(CRC64_NVME_POLY);
   pub(super) static XZ_TABLES_16: [[u64; 256]; 16] = generate_crc64_tables_16(CRC64_XZ_POLY);
   pub(super) static NVME_TABLES_16: [[u64; 256]; 16] = generate_crc64_tables_16(CRC64_NVME_POLY);
@@ -1141,10 +1141,10 @@ mod tests {
   #[test]
   fn test_kernel_probe_selection() {
     let name = Crc64::kernel_name_for_len(1024);
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(not(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64")))]
     let _ = name;
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
       let caps = crate::platform::caps();
       let cfg = Crc64::config();
@@ -1231,7 +1231,7 @@ mod tests {
       assert_eq!(kernel, "portable/slice16");
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
       if force.eq_ignore_ascii_case("pclmul") {
         assert_eq!(cfg.requested_force, Crc64Force::Pclmul);

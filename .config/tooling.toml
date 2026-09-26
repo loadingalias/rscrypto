@@ -65,14 +65,12 @@ cargo = ["just"]
 
 [ci-fuzz]
 cargo = ["just", "cargo-fuzz"]
-components = []
-nightly-components = ["rust-src"]
+components = ["rust-src"]
 packages = ["build-essential", "ca-certificates", "curl", "git", "python3", "clang"]
 
 [ci-miri]
 cargo = ["just"]
-components = []
-nightly-components = ["miri", "rust-src"]
+components = ["miri", "rust-src"]
 packages = ["build-essential", "ca-certificates", "curl", "git", "python3"]
 
 [ci-ct]

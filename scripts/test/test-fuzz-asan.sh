@@ -8,7 +8,7 @@ cd "$REPO_ROOT"
 # shellcheck source=../lib/fuzz-packages.sh
 source "$SCRIPT_DIR/../lib/fuzz-packages.sh"
 
-RUSTUP_TOOLCHAIN=$("$SCRIPT_DIR/../lib/toolchain.sh" --nightly)
+RUSTUP_TOOLCHAIN=$("$SCRIPT_DIR/../lib/toolchain.sh")
 export RUSTUP_TOOLCHAIN
 export CARGO_RAIL_CACHE=off
 

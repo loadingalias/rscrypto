@@ -14,7 +14,7 @@
 #[cfg(all(
   feature = "crc64",
   any(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
     target_arch = "powerpc64",
     target_arch = "s390x"
@@ -26,7 +26,7 @@ pub(in crate::checksum) mod kernels;
 pub(in crate::checksum) mod portable;
 #[cfg(any(
   all(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
   ),
   all(

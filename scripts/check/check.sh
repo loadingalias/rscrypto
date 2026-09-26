@@ -18,9 +18,9 @@ if [[ "$mode" == target ]]; then
   export CARGO_BUILD_TARGET="$host"
 fi
 [[ -n "$host" ]] || { echo 'cannot determine Rust host' >&2; exit 1; }
-stable=$(scripts/lib/toolchain.sh)
-export RUSTUP_TOOLCHAIN
-RUSTUP_TOOLCHAIN=$(scripts/lib/toolchain.sh --target "$host")
+# rust-toolchain.toml owns the one compiler for every checked target.
+channel=$(scripts/lib/toolchain.sh)
+export RUSTUP_TOOLCHAIN="$channel"
 python=$(scripts/lib/python.sh --print)
 # Resolve feature roots from Cargo, rejecting aliases that enable portable-only.
 native_features=$("$python" - <<'PY'
@@ -43,47 +43,31 @@ fi
 
 # No implicit installation or skipped lanes: report prerequisites before editing.
 missing=false
-inventory_toolchains=()
-inventory_targets=()
-inventory_components=()
+installed=$(rustup target list --toolchain "$channel" --installed)
+components=$(rustup component list --toolchain "$channel" --installed)
 for target in "${targets[@]}"; do
-  toolchain=$(scripts/lib/toolchain.sh --target "$target")
-  index=0
-  while [[ "$index" -lt "${#inventory_toolchains[@]}" && "${inventory_toolchains[$index]}" != "$toolchain" ]]; do
-    index=$((index + 1))
-  done
-  if [[ "$index" -eq "${#inventory_toolchains[@]}" ]]; then
-    installed=$(rustup target list --toolchain "$toolchain" --installed)
-    components=$(rustup component list --toolchain "$toolchain" --installed)
-    inventory_toolchains+=("$toolchain")
-    inventory_targets+=("$installed")
-    inventory_components+=("$components")
-  fi
-  installed=${inventory_targets[$index]}
   if ! grep -qx "$target" <<<"$installed"; then
-    echo "missing check prerequisite: rustup target add --toolchain $toolchain $target" >&2
-    missing=true
-  fi
-  components=${inventory_components[$index]}
-  if ! grep -q '^clippy-' <<<"$components"; then
-    echo "missing check prerequisite: rustup component add --toolchain $toolchain clippy" >&2
+    echo "missing check prerequisite: rustup target add --toolchain $channel $target" >&2
     missing=true
   fi
 done
+if ! grep -q '^clippy-' <<<"$components"; then
+  echo "missing check prerequisite: rustup component add --toolchain $channel clippy" >&2
+  missing=true
+fi
 [[ "$missing" == false ]] || exit 1
 
 run_checks() {
   local mode=$1
   repair=()
   if [[ "$mode" == fix ]]; then
-    cargo "+$stable" fmt --all
+    cargo "+$channel" fmt --all
     repair=(--fix --allow-dirty --allow-staged)
   else
-    cargo "+$stable" fmt --all -- --check
+    cargo "+$channel" fmt --all -- --check
   fi
 
   for target in "${targets[@]}"; do
-    toolchain=$(scripts/lib/toolchain.sh --target "$target")
     scope=(--lib)
     [[ "$target" != "$host" ]] || scope=(--all-targets)
     features=$native_features
@@ -97,14 +81,14 @@ run_checks() {
         ;;
     esac
     args=(--workspace --locked --target "$target" "${scope[@]}" --no-default-features)
-    echo "Clippy ($mode): $target / $toolchain / release native"
-    cargo "+$toolchain" clippy "${args[@]}" --release --features "$features" "${repair[@]:+${repair[@]}}"
-    echo "Clippy ($mode): $target / $toolchain / debug portable"
-    cargo "+$toolchain" clippy "${args[@]}" --features "$features,portable-only" "${repair[@]:+${repair[@]}}"
+    echo "Clippy ($mode): $target / $channel / release native"
+    cargo "+$channel" clippy "${args[@]}" --release --features "$features" "${repair[@]:+${repair[@]}}"
+    echo "Clippy ($mode): $target / $channel / debug portable"
+    cargo "+$channel" clippy "${args[@]}" --features "$features,portable-only" "${repair[@]:+${repair[@]}}"
   done
 
   if [[ "$mode" == fix ]]; then
-    cargo "+$stable" fmt --all
+    cargo "+$channel" fmt --all
   fi
 }
 if [[ "$mode" == check ]]; then

@@ -17,14 +17,13 @@ def main():
   catalog = tomllib.loads((ROOT / '.config/tooling.toml').read_text())
   hosts = {row['rust-host']: row['components'] for row in catalog.values() if isinstance(row, dict) and 'rust-host' in row}
   hosts['aarch64-apple-darwin'] = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['components']
-  stable = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel']
-  nightly = tomllib.loads((ROOT / '.config/toolchains.toml').read_text())['nightly']
-  nightly_hosts = {'riscv64gc-unknown-linux-gnu', 's390x-unknown-linux-gnu', 'powerpc64le-unknown-linux-gnu'}
+  # rust-toolchain.toml owns the one compiler for every host and lane.
+  channel = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel']
   with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
     for name in ('scripts/lib/toolchain.py', 'scripts/lib/toolchain.sh', 'scripts/lib/python.sh',
                  'scripts/lib/rail-plan.sh', 'scripts/test/test.sh', 'scripts/test/test-examples.sh', 'rust-toolchain.toml',
-                 '.config/toolchains.toml', 'Cargo.toml'):
+                 'Cargo.toml'):
       path = root / name
       path.parent.mkdir(parents=True, exist_ok=True)
       shutil.copy2(ROOT / name, path)
@@ -62,16 +61,13 @@ else:
       return [json.loads(line) for line in log.read_text().splitlines()]
 
     for host in sorted(hosts):
-      channel = nightly if host in nightly_hosts else stable
       for requested in ([], hosts[host]):
         components = [arg for component in requested for arg in ('--component', component)]
-        commands = run([sys.executable, 'scripts/lib/toolchain.py', '--install', host, *components], host)
-        expected = [(stable, ['rustfmt']), (nightly, ['clippy'])] if host in nightly_hosts else [
-          (stable, ['clippy', 'rustfmt'])]
+        commands = run([sys.executable, 'scripts/lib/toolchain.py', '--install', *components], host)
         assert [row['command'] for row in commands] == [
-          ['rustup', 'toolchain', 'install', value, '--profile', 'minimal',
-           *[arg for component in dict.fromkeys([*defaults, *requested]) for arg in ('--component', component)]]
-          for value, defaults in expected], (host, requested, commands)
+          ['rustup', 'toolchain', 'install', channel, '--profile', 'minimal',
+           *[arg for component in dict.fromkeys(['clippy', 'rustfmt', *requested]) for arg in ('--component', component)]]
+        ], (host, requested, commands)
       commands = run(['bash', 'scripts/test/test.sh', '--all', '--portable', '--lib', 'two words'], host)
       assert commands and all(row['channel'] == channel for row in commands), (host, commands)
       assert commands[-1]['command'][-1] == 'two words'
@@ -81,11 +77,10 @@ else:
       assert len(commands) == 2 and all(row['channel'] == channel for row in commands), (host, commands)
       assert commands[-1]['command'] == ['cargo', 'run', '--locked', '--quiet', '--no-default-features',
                                         '--example', 'aead_seal_open', '--features', 'alloc,chacha20poly1305,getrandom']
-    # Cross-check every supported target, including the non-host RISC-V lane.
-    targets = json.loads((ROOT / '.config/target-matrix.json').read_text())['targets']
-    for target in targets:
-      result = subprocess.check_output([sys.executable, str(ROOT / 'scripts/lib/toolchain.py'), '--target', target], text=True).strip()
-      assert result == (nightly if target in nightly_hosts or target == 'riscv32imac-unknown-none-elf' else stable), target
+    # There is no per-target selector: the canonical channel is the only answer.
+    result = subprocess.check_output([sys.executable, str(ROOT / 'scripts/lib/toolchain.py')], text=True).strip()
+    assert result == channel, result
+    assert not (ROOT / '.config/toolchains.toml').exists(), 'a second toolchain contract reappeared'
   print(f'Toolchain provisioning and execution regressions passed for {len(hosts)} hosts')
 
 

@@ -260,7 +260,7 @@ pub(crate) const CRC64_NVME_CLMUL: Crc64ClmulConstants = Crc64ClmulConstants::ne
 /// - `combine_4way`: merge coefficients for 4-way (x86_64)
 /// - `combine_7way`: merge coefficients for 7-way (x86_64)
 /// - `combine_8way`: merge coefficients for 8-way (x86_64)
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64"))]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Crc64StreamConstants {
   /// 2-way fold coefficient (256B = 2×128B).
@@ -269,26 +269,26 @@ pub(crate) struct Crc64StreamConstants {
   #[cfg(target_arch = "aarch64")]
   pub fold_384b: (u64, u64),
   /// 4-way fold coefficient (512B = 4×128B).
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   pub fold_512b: (u64, u64),
   /// 7-way fold coefficient (896B = 7×128B).
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   pub fold_896b: (u64, u64),
   /// 8-way fold coefficient (1024B = 8×128B).
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   pub fold_1024b: (u64, u64),
   /// 4-way combine coefficients: shifts by 384B, 256B, 128B.
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   pub combine_4way: [(u64, u64); 3],
   /// 7-way combine coefficients: shifts by 768B, 640B, 512B, 384B, 256B, 128B.
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   pub combine_7way: [(u64, u64); 6],
   /// 8-way combine coefficients: shifts by 896B, 768B, 640B, 512B, 384B, 256B, 128B.
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   pub combine_8way: [(u64, u64); 7],
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64"))]
 impl Crc64StreamConstants {
   /// Compute all multi-stream folding constants for a given polynomial.
   #[must_use]
@@ -297,19 +297,19 @@ impl Crc64StreamConstants {
       fold_256b: fold16_coeff_for_bytes(reflected_poly, 256),
       #[cfg(target_arch = "aarch64")]
       fold_384b: fold16_coeff_for_bytes(reflected_poly, 384),
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       fold_512b: fold16_coeff_for_bytes(reflected_poly, 512),
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       fold_896b: fold16_coeff_for_bytes(reflected_poly, 896),
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       fold_1024b: fold16_coeff_for_bytes(reflected_poly, 1024),
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       combine_4way: [
         fold16_coeff_for_bytes(reflected_poly, 384),
         fold16_coeff_for_bytes(reflected_poly, 256),
         fold16_coeff_for_bytes(reflected_poly, 128),
       ],
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       combine_7way: [
         fold16_coeff_for_bytes(reflected_poly, 768),
         fold16_coeff_for_bytes(reflected_poly, 640),
@@ -318,7 +318,7 @@ impl Crc64StreamConstants {
         fold16_coeff_for_bytes(reflected_poly, 256),
         fold16_coeff_for_bytes(reflected_poly, 128),
       ],
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       combine_8way: [
         fold16_coeff_for_bytes(reflected_poly, 896),
         fold16_coeff_for_bytes(reflected_poly, 768),
@@ -333,9 +333,9 @@ impl Crc64StreamConstants {
 }
 
 // Pre-computed multi-stream constants for CRC-64.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64"))]
 pub(crate) const CRC64_XZ_STREAM: Crc64StreamConstants = Crc64StreamConstants::new(CRC64_XZ_POLY);
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64"))]
 pub(crate) const CRC64_NVME_STREAM: Crc64StreamConstants = Crc64StreamConstants::new(CRC64_NVME_POLY);
 
 // Tests

@@ -12,7 +12,7 @@ pub(crate) fn select_runtime_kernel(caps: Caps) -> KernelId {
   // x86_64 cascade: SHA-512 NI > vendor-aware AVX2/AVX-512VL > Portable
   // AMD: AVX2 decoupled > AVX-512VL; Intel: AVX-512VL decoupled > AVX2 decoupled.
   // See sha512/dispatch_policy.rs for full rationale.
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     use crate::platform::caps::x86;
     if caps.has(x86::SHA512) {

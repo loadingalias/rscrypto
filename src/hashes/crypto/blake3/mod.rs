@@ -24,16 +24,16 @@ mod kernel_test;
 pub(crate) mod kernels;
 #[cfg(feature = "parallel")]
 mod parallel;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(crate) mod x86_64;
 use self::{control::ParallelPolicyKind, kernels::Kernel};
 
 const OUT_LEN: usize = 32;
 const KEY_LEN: usize = 32;
 const BLOCK_LEN: usize = 64;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const BLOCK_LEN_U8: u8 = 64;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const BLOCK_LEN_U32: u32 = 64;
 const CHUNK_LEN: usize = 1024;
 const OUTPUT_BLOCK_LEN: usize = 2 * OUT_LEN;
@@ -601,7 +601,7 @@ fn hash_power_of_two_subtree_roots_parallel_rayon(req: SubtreeRootsRequest<'_>) 
 /// BLAKE3 message schedule.
 ///
 /// `MSG_SCHEDULE[round][i]` gives the index of the message word to use.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64"))]
 pub(crate) const MSG_SCHEDULE: [[usize; 16]; 7] = [
   [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
   [2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8],
@@ -1659,7 +1659,7 @@ fn absorb_exact_one_chunk_state(
 ) -> ([u32; 8], [u8; BLOCK_LEN]) {
   debug_assert_eq!(input.len(), CHUNK_LEN);
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     let (prefix_blocks, remainder) = input[..CHUNK_LEN.strict_sub(BLOCK_LEN)].as_chunks::<BLOCK_LEN>();
     debug_assert!(remainder.is_empty());
@@ -1767,7 +1767,7 @@ fn absorb_exact_one_chunk_state(
 
 #[inline]
 fn should_use_exact_one_chunk_fast_path(_kernel_id: kernels::Blake3KernelId) -> bool {
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     if matches!(
       _kernel_id,
@@ -2441,7 +2441,7 @@ fn digest_oneshot_words(kernel: Kernel, key_words: &[u32; 8], flags: u32, input:
   // Fast path for single-chunk inputs (≤1024B): use platform-specific helpers.
   // On x86, this also handles tiny inputs (≤64B) so they benefit from assembly
   // compress instead of the generic intrinsics/function-pointer path.
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     if input.len() <= CHUNK_LEN {
       match kernel.id {
@@ -2577,31 +2577,31 @@ pub fn diag_zeroize_blake3_xof_consume(mut reader: Blake3XofReader) -> u8 {
 pub enum Blake3DiagKernel {
   /// Portable Rust kernel.
   Portable,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   /// x86-64 SSE4.1 kernel.
   X86Sse41,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   /// x86-64 AVX2 kernel.
   X86Avx2,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   /// x86-64 AVX2 kernel with the owned hash-many implementation.
   X86Avx2OwnedHashMany,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   /// x86-64 AVX2 kernel with paired chunk-tail processing.
   X86Avx2PairChunkTail,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   /// x86-64 AVX2 kernel with paired parent-tail processing.
   X86Avx2PairParentTail,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   /// x86-64 AVX-512 kernel.
   X86Avx512,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   /// x86-64 AVX-512 kernel forced through exact-block assembly.
   X86Avx512ExactBlockAsm,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   /// x86-64 AVX-512 kernel with the owned hash-many implementation.
   X86Avx512OwnedHashMany,
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   /// x86-64 AVX-512 kernel with the owned compression implementation.
   X86Avx512OwnedCompress,
   #[cfg(target_arch = "aarch64")]
@@ -2617,23 +2617,23 @@ impl Blake3DiagKernel {
   pub const fn label(self) -> &'static str {
     match self {
       Self::Portable => "portable",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Sse41 => "x86-sse41",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx2 => "x86-avx2",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx2OwnedHashMany => "x86-avx2-owned-hash-many",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx2PairChunkTail => "x86-avx2-pair-chunk-tail",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx2PairParentTail => "x86-avx2-pair-parent-tail",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx512 => "x86-avx512",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx512ExactBlockAsm => "x86-avx512-exact-block-asm",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx512OwnedHashMany => "x86-avx512-owned-hash-many",
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx512OwnedCompress => "x86-avx512-owned-compress",
       #[cfg(target_arch = "aarch64")]
       Self::Aarch64Neon => "aarch64-neon",
@@ -2644,7 +2644,7 @@ impl Blake3DiagKernel {
   /// Returns whether this kernel supports streaming diagnostics.
   #[must_use]
   pub const fn supports_streaming(self) -> bool {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
       !matches!(
         self,
@@ -2657,7 +2657,7 @@ impl Blake3DiagKernel {
       )
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
     {
       true
     }
@@ -2665,7 +2665,7 @@ impl Blake3DiagKernel {
 
   #[inline]
   #[must_use]
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   const fn uses_owned_hash_many(self) -> bool {
     matches!(self, Self::X86Avx2OwnedHashMany | Self::X86Avx512OwnedHashMany)
   }
@@ -2675,23 +2675,23 @@ impl Blake3DiagKernel {
   const fn kernel_id(self) -> kernels::Blake3KernelId {
     match self {
       Self::Portable => kernels::Blake3KernelId::Portable,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Sse41 => kernels::Blake3KernelId::X86Sse41,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx2 => kernels::Blake3KernelId::X86Avx2,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx2OwnedHashMany => kernels::Blake3KernelId::X86Avx2,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx2PairChunkTail => kernels::Blake3KernelId::X86Avx2,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx2PairParentTail => kernels::Blake3KernelId::X86Avx2,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx512 => kernels::Blake3KernelId::X86Avx512,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx512ExactBlockAsm => kernels::Blake3KernelId::X86Avx512,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx512OwnedHashMany => kernels::Blake3KernelId::X86Avx512,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx512OwnedCompress => kernels::Blake3KernelId::X86Avx512,
       #[cfg(target_arch = "aarch64")]
       Self::Aarch64Neon => kernels::Blake3KernelId::Aarch64Neon,
@@ -2700,28 +2700,28 @@ impl Blake3DiagKernel {
 
   #[inline]
   #[must_use]
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   const fn uses_owned_compress(self) -> bool {
     matches!(self, Self::X86Avx512OwnedCompress)
   }
 
   #[inline]
   #[must_use]
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   const fn uses_avx2_pair_chunk_tail(self) -> bool {
     matches!(self, Self::X86Avx2PairChunkTail)
   }
 
   #[inline]
   #[must_use]
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   const fn uses_avx2_pair_parent_tail(self) -> bool {
     matches!(self, Self::X86Avx2PairParentTail)
   }
 
   #[inline]
   #[must_use]
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   const fn forces_exact_block_asm(self) -> bool {
     matches!(self, Self::X86Avx512ExactBlockAsm)
   }
@@ -2732,12 +2732,12 @@ impl Blake3DiagKernel {
 /// Returns whether the current CPU supports the diagnostic kernel.
 #[must_use]
 pub fn diag_blake3_kernel_available(kernel: Blake3DiagKernel) -> bool {
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   if kernel.uses_owned_hash_many() {
     return crate::platform::caps().has(kernels::required_caps_owned_hash_many(kernel.kernel_id()));
   }
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   if kernel.uses_owned_compress() {
     return crate::platform::caps().has(kernels::required_caps_owned_compress(kernel.kernel_id()));
   }
@@ -2753,17 +2753,17 @@ fn diag_blake3_kernel(kernel: Blake3DiagKernel) -> Option<Kernel> {
     return None;
   }
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   if kernel.uses_owned_hash_many() {
     return kernels::diag_kernel_owned_hash_many(kernel.kernel_id());
   }
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   if kernel.uses_owned_compress() {
     return kernels::diag_kernel_owned_compress(kernel.kernel_id());
   }
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   if kernel.forces_exact_block_asm() {
     let mut forced = kernels::kernel(kernel.kernel_id());
     forced.force_x86_avx512_exact_block_asm = true;
@@ -2842,7 +2842,7 @@ pub fn diag_blake3_streaming_digest_with_kernel(
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Writes full-chunk chaining values with a selected diagnostic kernel.
 pub fn diag_blake3_chunk_cvs_with_kernel(kernel: Blake3DiagKernel, data: &[u8], out: &mut [u8]) -> Option<()> {
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   let requested_kernel = kernel;
   if data.is_empty() || !data.len().is_multiple_of(CHUNK_LEN) {
     return None;
@@ -2853,7 +2853,7 @@ pub fn diag_blake3_chunk_cvs_with_kernel(kernel: Blake3DiagKernel, data: &[u8], 
   }
 
   let kernel = diag_blake3_kernel(kernel)?;
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   if requested_kernel.uses_avx2_pair_chunk_tail() && kernel.id == kernels::Blake3KernelId::X86Avx2 {
     kernels::diag_chunk_cvs_many_avx2_pair_from_bytes(data, IV, 0, 0, out);
     return Some(());
@@ -2871,7 +2871,7 @@ pub fn diag_blake3_chunk_cvs_with_kernel(kernel: Blake3DiagKernel, data: &[u8], 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 /// Writes parent chaining values with a selected diagnostic kernel.
 pub fn diag_blake3_parent_cvs_with_kernel(kernel: Blake3DiagKernel, children: &[u8], out: &mut [u8]) -> Option<()> {
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   let requested_kernel = kernel;
   let (children, children_remainder) = children.as_chunks::<OUT_LEN>();
   if !children_remainder.is_empty() || children.is_empty() || !children.len().is_multiple_of(2) {
@@ -2885,17 +2885,17 @@ pub fn diag_blake3_parent_cvs_with_kernel(kernel: Blake3DiagKernel, children: &[
   }
 
   let kernel = diag_blake3_kernel(kernel)?;
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   if requested_kernel.uses_owned_hash_many() && kernel.id == kernels::Blake3KernelId::X86Avx2 {
     kernels::diag_parent_cvs_many_avx2_owned_from_bytes(children, IV, 0, out);
     return Some(());
   }
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   if requested_kernel.uses_avx2_pair_parent_tail() && kernel.id == kernels::Blake3KernelId::X86Avx2 {
     kernels::diag_parent_cvs_many_avx2_pair_from_bytes(children, IV, 0, out);
     return Some(());
   }
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   if requested_kernel.uses_owned_hash_many() && kernel.id == kernels::Blake3KernelId::X86Avx512 {
     kernels::diag_parent_cvs_many_avx512_owned_from_bytes(children, IV, 0, out);
     return Some(());
@@ -3843,7 +3843,7 @@ fn xof_oneshot_single_chunk(kernel: Kernel, mut key_words: [u32; 8], flags: u32,
     return reader;
   }
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   if input.len().is_multiple_of(BLOCK_LEN) {
     // Mirror the x86 exact-block one-shot digest fast path so 256B..1KiB XOF
     // does not fall back to per-block compression on the same lanes.
@@ -4093,7 +4093,7 @@ fn compress_chunk_tail_to_root_words(
     final_flags |= CHUNK_START;
   }
 
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     match kernel.id {
       kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 | kernels::Blake3KernelId::X86Avx512 => {
@@ -4268,7 +4268,7 @@ fn digest_one_chunk_root_hash_words_generic(
 
 // x86_64 tiny one-shot helpers (keyed/derive sensitive)
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline]
 #[must_use]
 fn use_avx2_hash_many_one_chunk_fast_path() -> bool {
@@ -4276,7 +4276,7 @@ fn use_avx2_hash_many_one_chunk_fast_path() -> bool {
 }
 
 #[cfg(all(
-  target_arch = "x86_64",
+  all(target_arch = "x86_64", target_feature = "sse2"),
   any(target_os = "linux", target_os = "macos", target_os = "windows")
 ))]
 #[inline]
@@ -4285,7 +4285,7 @@ fn use_avx512_four_block_avx2_fast_path() -> bool {
   dispatch::avx2_available() && dispatch::avx2_hash_many_one_chunk_fast_path()
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline]
 #[must_use]
 fn use_x86_hash_many_exact_block_one_chunk_fast_path(kernel: Kernel, input_len: usize) -> bool {
@@ -4309,7 +4309,7 @@ fn use_x86_hash_many_exact_block_one_chunk_fast_path(kernel: Kernel, input_len: 
   }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline]
 /// Compresses an exact-block one-chunk prefix with AVX2.
 ///
@@ -4362,7 +4362,11 @@ unsafe fn avx2_owned_exact_block_chain(
   output
 }
 
-#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64"))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  all(target_arch = "x86_64", target_feature = "sse2")
+))]
 #[inline]
 /// Hashes one exact-block input through every AVX-512 lane.
 ///
@@ -4416,7 +4420,7 @@ unsafe fn avx512_owned_exact_block_hash_many(
   output
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline]
 /// Builds an XOF reader for an exact-block x86 one-chunk input.
 ///
@@ -4564,7 +4568,7 @@ unsafe fn xof_oneshot_single_chunk_x86_exact_blocks(
   Some(reader)
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline]
 /// Hashes a one-chunk input with the selected x86 kernel.
 ///
@@ -4961,19 +4965,19 @@ mod tests {
 
     const KERNELS: &[Blake3DiagKernel] = &[
       Blake3DiagKernel::Portable,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Blake3DiagKernel::X86Sse41,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Blake3DiagKernel::X86Avx2,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Blake3DiagKernel::X86Avx2OwnedHashMany,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Blake3DiagKernel::X86Avx512,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Blake3DiagKernel::X86Avx512ExactBlockAsm,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Blake3DiagKernel::X86Avx512OwnedHashMany,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Blake3DiagKernel::X86Avx512OwnedCompress,
       #[cfg(target_arch = "aarch64")]
       Blake3DiagKernel::Aarch64Neon,
@@ -5022,21 +5026,21 @@ mod tests {
 
     const KERNELS: &[Blake3DiagKernel] = &[
       Blake3DiagKernel::Portable,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Blake3DiagKernel::X86Sse41,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Blake3DiagKernel::X86Avx2,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Blake3DiagKernel::X86Avx2OwnedHashMany,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Blake3DiagKernel::X86Avx2PairChunkTail,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Blake3DiagKernel::X86Avx2PairParentTail,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Blake3DiagKernel::X86Avx512,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Blake3DiagKernel::X86Avx512OwnedHashMany,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Blake3DiagKernel::X86Avx512OwnedCompress,
       #[cfg(target_arch = "aarch64")]
       Blake3DiagKernel::Aarch64Neon,

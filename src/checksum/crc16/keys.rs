@@ -79,31 +79,31 @@ pub(super) struct Width32StreamConstants {
   pub(super) fold_384b: (u64, u64),
   /// 4-way fold coefficient (512B = 4×128B).
   #[cfg(any(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "powerpc64",
     target_arch = "s390x",
     target_arch = "riscv64"
   ))]
   pub(super) fold_512b: (u64, u64),
   /// 7-way fold coefficient (896B = 7×128B).
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   pub(super) fold_896b: (u64, u64),
   /// 8-way fold coefficient (1024B = 8×128B).
-  #[cfg(any(target_arch = "x86_64", target_arch = "powerpc64"))]
+  #[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "powerpc64"))]
   pub(super) fold_1024b: (u64, u64),
   /// 4-way combine coefficients: shifts by 384B, 256B, 128B.
   #[cfg(any(
-    target_arch = "x86_64",
+    all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "powerpc64",
     target_arch = "s390x",
     target_arch = "riscv64"
   ))]
   pub(super) combine_4way: [(u64, u64); 3],
   /// 7-way combine coefficients: shifts by 768B, 640B, 512B, 384B, 256B, 128B.
-  #[cfg(target_arch = "x86_64")]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   pub(super) combine_7way: [(u64, u64); 6],
   /// 8-way combine coefficients: shifts by 896B, 768B, 640B, 512B, 384B, 256B, 128B.
-  #[cfg(any(target_arch = "x86_64", target_arch = "powerpc64"))]
+  #[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "powerpc64"))]
   pub(super) combine_8way: [(u64, u64); 7],
 }
 
@@ -116,18 +116,18 @@ impl Width32StreamConstants {
       #[cfg(target_arch = "aarch64")]
       fold_384b: fold16_coeff_for_bytes(reflected_poly, 384),
       #[cfg(any(
-        target_arch = "x86_64",
+        all(target_arch = "x86_64", target_feature = "sse2"),
         target_arch = "powerpc64",
         target_arch = "s390x",
         target_arch = "riscv64"
       ))]
       fold_512b: fold16_coeff_for_bytes(reflected_poly, 512),
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       fold_896b: fold16_coeff_for_bytes(reflected_poly, 896),
-      #[cfg(any(target_arch = "x86_64", target_arch = "powerpc64"))]
+      #[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "powerpc64"))]
       fold_1024b: fold16_coeff_for_bytes(reflected_poly, 1024),
       #[cfg(any(
-        target_arch = "x86_64",
+        all(target_arch = "x86_64", target_feature = "sse2"),
         target_arch = "powerpc64",
         target_arch = "s390x",
         target_arch = "riscv64"
@@ -137,7 +137,7 @@ impl Width32StreamConstants {
         fold16_coeff_for_bytes(reflected_poly, 256),
         fold16_coeff_for_bytes(reflected_poly, 128),
       ],
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       combine_7way: [
         fold16_coeff_for_bytes(reflected_poly, 768),
         fold16_coeff_for_bytes(reflected_poly, 640),
@@ -146,7 +146,7 @@ impl Width32StreamConstants {
         fold16_coeff_for_bytes(reflected_poly, 256),
         fold16_coeff_for_bytes(reflected_poly, 128),
       ],
-      #[cfg(any(target_arch = "x86_64", target_arch = "powerpc64"))]
+      #[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "powerpc64"))]
       combine_8way: [
         fold16_coeff_for_bytes(reflected_poly, 896),
         fold16_coeff_for_bytes(reflected_poly, 768),
