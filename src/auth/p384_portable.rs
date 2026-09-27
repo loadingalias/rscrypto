@@ -187,6 +187,16 @@ impl Uint {
 
   #[inline(always)]
   fn select(left: Self, right: Self, mask: u64) -> Self {
+    #[cfg(any(
+      target_arch = "riscv32",
+      target_arch = "riscv64",
+      target_arch = "s390x",
+      target_arch = "x86_64"
+    ))]
+    // SECURITY: Keep the mask opaque so the tested LLVM builds retain bitwise
+    // selection instead of branching on a secret-derived mask. Binary CT evidence is
+    // still required; black_box is not a language-level constant-time guarantee.
+    let mask = core::hint::black_box(mask);
     let mut out = [0u64; LIMBS];
     for ((dst, left), right) in out.iter_mut().zip(left.0).zip(right.0) {
       *dst = left ^ (mask & (left ^ right));
@@ -1518,10 +1528,6 @@ mod tests {
   ))]
   #[test]
   fn accelerated_field_kernels_match_portable_authority() {
-    #[cfg(all(target_arch = "x86_64", not(feature = "portable-only"), not(miri)))]
-    if !super::has_bmi2_adx() {
-      eprintln!("BMI2/ADX unavailable; x86-64 multiplication uses the portable authority");
-    }
     fn splitmix(state: &mut u64) -> u64 {
       *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
       let mut z = *state;
