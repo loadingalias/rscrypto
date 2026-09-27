@@ -147,6 +147,15 @@ impl Uint {
   /// Return `p` when `mask` is all ones and zero when it is all zeros.
   #[inline(always)]
   fn masked_field_modulus(mask: u64) -> Self {
+    #[cfg(any(
+      target_arch = "riscv32",
+      target_arch = "riscv64",
+      target_arch = "s390x",
+      target_arch = "x86_64"
+    ))]
+    // SECURITY: RISC-V LLVM lowered the masked low limb to a branch around a
+    // move. Keep the secret-derived mask opaque, as in `Self::select`.
+    let mask = core::hint::black_box(mask);
     let p = FIELD_MODULUS.0;
     Self([p[0] & mask, p[1] & mask, p[2] & mask, mask, mask, mask])
   }
