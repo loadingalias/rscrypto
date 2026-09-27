@@ -213,6 +213,12 @@ impl Uint {
     Self(out)
   }
 
+  /// Return `candidate` when `mask` is all ones and zero when it is all zeros.
+  #[inline(always)]
+  fn masked(candidate: &[u64; LIMBS], mask: u64) -> Self {
+    Self(candidate.map(|limb| limb & mask))
+  }
+
   /// OR `candidate` into `self` when `mask` is all ones.
   #[inline(always)]
   fn accumulate_masked(&mut self, candidate: &[u64; LIMBS], mask: u64) {
@@ -791,15 +797,20 @@ impl CachedJacobian {
   fn select_signed(table: &[Self; WINDOW_TABLE_SIZE], digit: u8) -> Self {
     let sign = 0u8.wrapping_sub(digit >> 7);
     let magnitude = usize::from((digit ^ sign).wrapping_sub(sign));
-    let mut x = Uint::ZERO;
-    let mut y = Uint::ZERO;
-    let mut z = Uint::ZERO;
-    let mut zz = Uint::ZERO;
-    let mut zzz = Uint::ZERO;
-    for (index, candidate) in table.iter().enumerate() {
-      // SECURITY: Keep the equality mask opaque so LLVM retains the full
-      // table scan instead of loading from a secret-derived address.
-      let mask = core::hint::black_box(mask_equal_usize(magnitude, index.strict_add(1)));
+    // Start from the masked first entry instead of zero. AArch64 LLVM keeps
+    // the accumulators in SIMD registers and would copy zero into each with
+    // `fmov`, which BINSEC cannot interpret.
+    // SECURITY: Keep every equality mask opaque so LLVM retains the full
+    // table scan instead of loading from a secret-derived address.
+    let first = &table[0];
+    let mask = core::hint::black_box(mask_equal_usize(magnitude, 1));
+    let mut x = Uint::masked(&first.point.x.0.0, mask);
+    let mut y = Uint::masked(&first.point.y.0.0, mask);
+    let mut z = Uint::masked(&first.point.z.0.0, mask);
+    let mut zz = Uint::masked(&first.zz.0.0, mask);
+    let mut zzz = Uint::masked(&first.zzz.0.0, mask);
+    for (candidate, entry) in table[1..].iter().zip(2..) {
+      let mask = core::hint::black_box(mask_equal_usize(magnitude, entry));
       x.accumulate_masked(&candidate.point.x.0.0, mask);
       y.accumulate_masked(&candidate.point.y.0.0, mask);
       z.accumulate_masked(&candidate.point.z.0.0, mask);
