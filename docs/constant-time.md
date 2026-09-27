@@ -78,6 +78,19 @@ and Intel Granite Rapids results.
 Those development bundles preserve binaries and raw timing samples,
 but later source changes require new exact-candidate evidence.
 
+P-384 ECDH has the same public prelude boundary.
+Public derivation uses a fixed 48-row comb with full 256-entry table scans;
+agreement uses 77 fixed signed radix-32 windows with full 16-entry table scans,
+masked conditional negation, and masked handling of infinity and equal operands.
+AArch64 builds replace the field arithmetic and the comb scan with inline assembly
+that keeps the same fixed schedule, and replace the Fermat inversion with a fixed
+1116-step Bernstein–Yang divstep inversion. x86-64 builds use the same divstep inversion
+and inline-assembly field kernels, with BMI2/ADX multiplication and fused point doubling selected by runtime
+detection; window additions use the portable formula over those kernels.
+Other targets run the portable implementation.
+`ct.toml` declares its DudeCT cases and bounded BINSEC selector kernels;
+no native timing artifact has been recorded for P-384 ECDH yet.
+
 Recent ECDSA hardening preserves masked point selection on AArch64 and Windows,
 masked selection in portable P-256, and fixed-bound table traversal.
 RISC-V generator-table loads remain unconditional under LLVM optimization.

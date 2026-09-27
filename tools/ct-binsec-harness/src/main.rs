@@ -250,6 +250,14 @@ pub static mut CT_BINSEC_P256_ECDH_DIGIT: u8 = 0;
 
 #[unsafe(no_mangle)]
 #[used]
+pub static mut CT_BINSEC_P384_ECDH_GENERATOR_DIGIT: u8 = 0;
+
+#[unsafe(no_mangle)]
+#[used]
+pub static mut CT_BINSEC_P384_ECDH_WINDOW_DIGIT: u8 = 0;
+
+#[unsafe(no_mangle)]
+#[used]
 pub static mut CT_BINSEC_RSA_WINDOW_TABLE: [u64; RSA_WINDOW_TABLE_LIMBS] = [0u64; RSA_WINDOW_TABLE_LIMBS];
 
 #[unsafe(no_mangle)]
@@ -862,6 +870,36 @@ pub extern "C" fn ct_binsec_p256_ecdh_select_window() -> ! {
 
 #[unsafe(no_mangle)]
 #[inline(never)]
+pub extern "C" fn ct_binsec_p384_ecdh_select_generator() -> ! {
+  // SAFETY: This pointer references a fixed harness global with static storage.
+  let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_P384_ECDH_GENERATOR_DIGIT)) };
+  let limbs = rscrypto::auth::diag_p384_ecdh_select_generator_limb_digest(digit);
+
+  let mut acc = 0u64;
+  for limb in limbs {
+    acc ^= limb;
+  }
+  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+  ct_binsec_done(folded.to_le_bytes()[0])
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn ct_binsec_p384_ecdh_select_window() -> ! {
+  // SAFETY: This pointer references a fixed harness global with static storage.
+  let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_P384_ECDH_WINDOW_DIGIT)) };
+  let limbs = rscrypto::auth::diag_p384_ecdh_select_window_limb_digest(digit);
+
+  let mut acc = 0u64;
+  for limb in limbs {
+    acc ^= limb;
+  }
+  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+  ct_binsec_done(folded.to_le_bytes()[0])
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
 pub extern "C" fn ct_binsec_ecdsa_p384_select_signing_generator_affine() -> ! {
   // SAFETY: This pointer references a fixed harness global with static storage.
   let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ECDSA_DIGIT)) };
@@ -977,7 +1015,7 @@ pub extern "C" fn ct_binsec_mldsa_montgomery() -> ! {
 
 #[unsafe(no_mangle)]
 #[used]
-pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 47] = [
+pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 49] = [
   ct_binsec_mldsa_montgomery,
   ct_binsec_owner_eq_16,
   ct_binsec_owner_eq_32,
@@ -1022,6 +1060,8 @@ pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 47] = [
   ct_binsec_ed25519_select_basepoint_cached,
   ct_binsec_ecdsa_p256_select_signing_generator_affine,
   ct_binsec_p256_ecdh_select_window,
+  ct_binsec_p384_ecdh_select_generator,
+  ct_binsec_p384_ecdh_select_window,
   ct_binsec_ecdsa_p384_select_signing_generator_affine,
   ct_binsec_rsa_private_select_window_power_4,
   ct_binsec_rsa_private_component_validation_32,

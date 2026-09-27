@@ -344,6 +344,8 @@ symbols = [
   "ct_entry_x25519",
   "ct_entry_p256_ecdh_public_key",
   "ct_entry_p256_ecdh_agree",
+  "ct_entry_p384_ecdh_public_key",
+  "ct_entry_p384_ecdh_agree",
   "ct_entry_mlkem512_keygen",
   "ct_entry_mlkem512_encapsulate",
   "ct_entry_mlkem512_decapsulate",
@@ -406,6 +408,7 @@ covers = [
   "aead.open_authentication",
   "kx.x25519",
   "kx.p256_ecdh",
+  "kx.p384_ecdh",
   "kem.mlkem512",
   "kem.mlkem768",
   "kem.mlkem1024",
@@ -776,6 +779,28 @@ samples = 20000
 smoke_samples = 2000
 timeout_seconds = 1800
 timeout_reason = "Physical RISC-V agreement exceeded the default 300-second budget; retain the full 20,000-sample gate."
+
+[[dudect_case]]
+name = "p384_ecdh_public_key_fixed_vs_random_scalar"
+primitive = "kx.p384_ecdh"
+filter = "p384_ecdh_public_key_fixed_vs_random_scalar"
+left_class = "complete public derivation with fixed valid scalar"
+right_class = "complete public derivation with random valid scalar"
+samples = 20000
+smoke_samples = 2000
+timeout_seconds = 3600
+timeout_reason = "Portable P-384 public derivation costs several times the P-256 operation whose physical RISC-V run took 240 seconds; retain the full 20,000-sample gate."
+
+[[dudect_case]]
+name = "p384_ecdh_agree_fixed_vs_random_scalar"
+primitive = "kx.p384_ecdh"
+filter = "p384_ecdh_agree_fixed_vs_random_scalar"
+left_class = "complete agreement with fixed valid scalar"
+right_class = "complete agreement with random valid scalar"
+samples = 20000
+smoke_samples = 2000
+timeout_seconds = 3600
+timeout_reason = "Portable P-384 agreement costs several times the P-256 agreement that exceeded the default 300-second budget on physical RISC-V; retain the full 20,000-sample gate."
 
 [[dudect_case]]
 name = "aes128_header_protection_fixed_vs_random_key"
@@ -2188,6 +2213,22 @@ dudect = ["p256_ecdh_agree_fixed_vs_random_scalar"]
 binsec = ["kx.p256_ecdh.window_select.portable.all"]
 notes = "DudeCT covers the complete production operation; BINSEC bounds the same production full-table selector over a peer-derived public table."
 
+[[evidence_unit]]
+id = "kx.p384_ecdh.public_derivation"
+primitive = "kx.p384_ecdh"
+variant = "PublicDerivation"
+dudect = ["p384_ecdh_public_key_fixed_vs_random_scalar"]
+binsec = ["kx.p384_ecdh.generator_select.all"]
+notes = "DudeCT covers the complete production operation; BINSEC bounds the production 256-entry fixed-base comb selector that receives secret scalar digits."
+
+[[evidence_unit]]
+id = "kx.p384_ecdh.agreement"
+primitive = "kx.p384_ecdh"
+variant = "Agreement"
+dudect = ["p384_ecdh_agree_fixed_vs_random_scalar"]
+binsec = ["kx.p384_ecdh.window_select.portable.all"]
+notes = "DudeCT covers the complete production operation; BINSEC bounds the production 16-entry signed-window selector over a peer-derived public table."
+
 [[binsec_kernel]]
 id = "owner_equality.fixed.64.x86_64_linux"
 primitive = "owner_equality.fixed"
@@ -2760,6 +2801,36 @@ notes = "All-target bounded proof for the production 16-entry affine selector us
 claim = "ct-intended"
 
 [[binsec_kernel]]
+id = "kx.p384_ecdh.generator_select.all"
+primitive = "kx.p384_ecdh"
+symbol = "ct_binsec_p384_ecdh_select_generator"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 20000
+secrets = [{ name = "CT_BINSEC_P384_ECDH_GENERATOR_DIGIT", kind = "global", bytes = 1 }]
+public = []
+assumptions = []
+notes = "All-target bounded proof for the production 256-entry affine comb selector used by fixed-base public derivation: the portable masked scan, or the NEON inline-assembly scan on AArch64 outside Miri. Complete operations remain covered by linked artifacts, disassembly heuristics, and DudeCT because whole scalar multiplication exceeds BINSEC's practical scope."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "kx.p384_ecdh.window_select.portable.all"
+primitive = "kx.p384_ecdh"
+symbol = "ct_binsec_p384_ecdh_select_window"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 20000
+secrets = [{ name = "CT_BINSEC_P384_ECDH_WINDOW_DIGIT", kind = "global", bytes = 1 }]
+public = []
+assumptions = []
+notes = "All-target bounded proof for the production 16-entry signed Jacobian selector, including conditional negation, used by arbitrary-point agreement. The harness table holds public limb patterns; the proof concerns selector data flow only."
+claim = "ct-intended"
+
+[[binsec_kernel]]
 id = "signature.ecdsa_p384_sign.signing_generator_select.portable.all"
 primitive = "signature.ecdsa_p384_sign"
 symbol = "ct_binsec_ecdsa_p384_select_signing_generator_affine"
@@ -3098,8 +3169,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2490
-compiler_api_sha256 = "b6284729dc3b92ac46c9210c90e9a2bdda01430f205fe796c0a320ae437cdd8e"
+compiler_api_item_count = 2521
+compiler_api_sha256 = "b5c6215c465c3c7d9aeba87e0d4923ef1b3f323699d3c5dd0b3755508feab6a8"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3109,8 +3180,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2490
-compiler_api_sha256 = "b6284729dc3b92ac46c9210c90e9a2bdda01430f205fe796c0a320ae437cdd8e"
+compiler_api_item_count = 2521
+compiler_api_sha256 = "b5c6215c465c3c7d9aeba87e0d4923ef1b3f323699d3c5dd0b3755508feab6a8"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3143,8 +3214,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 2490
-compiler_api_sha256 = "b6284729dc3b92ac46c9210c90e9a2bdda01430f205fe796c0a320ae437cdd8e"
+compiler_api_item_count = 2521
+compiler_api_sha256 = "b5c6215c465c3c7d9aeba87e0d4923ef1b3f323699d3c5dd0b3755508feab6a8"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3165,8 +3236,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 2490
-compiler_api_sha256 = "b6284729dc3b92ac46c9210c90e9a2bdda01430f205fe796c0a320ae437cdd8e"
+compiler_api_item_count = 2521
+compiler_api_sha256 = "b5c6215c465c3c7d9aeba87e0d4923ef1b3f323699d3c5dd0b3755508feab6a8"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3177,8 +3248,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2490
-compiler_api_sha256 = "b6284729dc3b92ac46c9210c90e9a2bdda01430f205fe796c0a320ae437cdd8e"
+compiler_api_item_count = 2521
+compiler_api_sha256 = "b5c6215c465c3c7d9aeba87e0d4923ef1b3f323699d3c5dd0b3755508feab6a8"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3189,8 +3260,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2490
-compiler_api_sha256 = "b6284729dc3b92ac46c9210c90e9a2bdda01430f205fe796c0a320ae437cdd8e"
+compiler_api_item_count = 2521
+compiler_api_sha256 = "b5c6215c465c3c7d9aeba87e0d4923ef1b3f323699d3c5dd0b3755508feab6a8"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3201,8 +3272,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2490
-compiler_api_sha256 = "b6284729dc3b92ac46c9210c90e9a2bdda01430f205fe796c0a320ae437cdd8e"
+compiler_api_item_count = 2521
+compiler_api_sha256 = "b5c6215c465c3c7d9aeba87e0d4923ef1b3f323699d3c5dd0b3755508feab6a8"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3843,6 +3914,39 @@ evidence = [
 limitation = "The claim begins only after a valid scalar has been sampled and, for agreement, after the peer SEC1 point has passed public validation. Exact portable and assembly lowering are target-specific evidence. Physical Graviton3, Graviton4, and Intel Granite Rapids evidence covers the applicable Linux ELF backend on those CPUs. Windows x86-64 has native differential and performance evidence, while its exact-final-source timing artifact and other unavailable native rows remain pending."
 
 [[operation]]
+id = "kx.p384_ecdh_key_agreement"
+api = [
+  "rscrypto::P384EphemeralSecret::{try_generate_with,try_generate,public_key,diffie_hellman}",
+  "rscrypto::P384PublicKey::{from_sec1_bytes,to_sec1_bytes,as_sec1_bytes}",
+  "rscrypto::P384SharedSecret::{as_bytes,ct_eq,expose_secret}",
+]
+features = ["p384-ecdh", "getrandom"]
+targets = ["all-supported", "portable implementation", "AArch64 inline assembly where selected", "x86-64 inline assembly where selected"]
+secret_inputs = ["ephemeral scalar", "recoded window digits", "projective scalar-multiplication state", "shared secret"]
+public_inputs = ["canonical uncompressed peer SEC1 point", "entropy source outcome", "sampling attempt count"]
+variable_time_components = [
+  "caller entropy acquisition",
+  "bounded scalar rejection before public derivation or agreement",
+  "public SEC1 shape and curve validation before private agreement",
+]
+permitted_leakage = [
+  "public key",
+  "peer-key validity",
+  "entropy failure",
+  "scalar-sampling exhaustion",
+  "caller-authorized shared-secret exposure",
+]
+claim = "ct-intended"
+evidence = [
+  "primitive:kx.p384_ecdh",
+  "harness:ct_entry_p384_ecdh_public_key",
+  "harness:ct_entry_p384_ecdh_agree",
+  "dudect:p384_ecdh_public_key_fixed_vs_random_scalar",
+  "dudect:p384_ecdh_agree_fixed_vs_random_scalar",
+]
+limitation = "The claim begins only after a valid scalar has been sampled and, for agreement, after the peer SEC1 point has passed public validation. AArch64 builds outside Miri select inline-assembly field arithmetic, NEON fixed-base comb selection, and divstep field inversion. x86-64 builds outside Miri select inline-assembly field addition, subtraction, and divstep inversion, and BMI2/ADX multiplication and squaring after runtime detection. Other targets use the portable implementation. Exact lowering is target-specific evidence, and no native timing artifact has been recorded yet."
+
+[[operation]]
 id = "kem.mlkem512"
 api = [
   "rscrypto::MlKem512::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}",
@@ -4441,6 +4545,36 @@ notes = "Scalar sampling and peer parsing are retained in linked harness roots f
 [primitive.harness]
 status = "covered"
 symbols = ["ct_entry_p256_ecdh_public_key", "ct_entry_p256_ecdh_agree"]
+
+[[primitive]]
+id = "kx.p384_ecdh"
+tier = "A"
+claim = "ct-intended"
+features = ["p384-ecdh"]
+variants = ["PublicDerivation", "Agreement"]
+entrypoints = [
+  "P384EphemeralSecret::public_key",
+  "P384EphemeralSecret::diffie_hellman",
+]
+secrets = ["ephemeral_scalar", "window_digits", "projective_state", "shared_secret"]
+public = [
+  "validated_peer_public_key",
+  "public_key",
+  "entropy_failure",
+  "scalar_sampling_exhaustion",
+]
+may_leak = [
+  "public_key",
+  "peer_key_validity_before_private_work",
+  "entropy_failure_before_private_work",
+  "sampling_exhaustion_before_private_work",
+]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+notes = "Scalar sampling and peer parsing are retained in linked harness roots for reachability but are explicitly outside the fixed-work public-derivation and agreement claim."
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_p384_ecdh_public_key", "ct_entry_p384_ecdh_agree"]
 
 [[primitive]]
 id = "kem.mlkem512"

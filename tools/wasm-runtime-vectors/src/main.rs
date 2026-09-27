@@ -5,8 +5,8 @@ use rscrypto::aead::expert::header_protection::{
 use rscrypto::hashes::legacy::WebSocketAcceptDigest;
 use rscrypto::{
   AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, Blake2b512, Blake3, Digest, EcdsaP256SecretKey,
-  EcdsaP384SecretKey, P256EphemeralSecret, P256PublicKey, RsaPrivateKey, RsaPrivateOpError, RsaPssProfile,
-  RsaPublicKeyPolicy, Sha256, Sha512,
+  EcdsaP384SecretKey, P256EphemeralSecret, P256PublicKey, P384EphemeralSecret, P384PublicKey, RsaPrivateKey,
+  RsaPrivateOpError, RsaPssProfile, RsaPublicKeyPolicy, Sha256, Sha512,
 };
 
 const RSA_PRIVATE_KEY_PEM: &str = include_str!("../fixtures/rsa2048_private_pkcs1.txt");
@@ -326,6 +326,29 @@ fn assert_p256_ecdh_portable_vector() {
   );
 }
 
+fn assert_p384_ecdh_portable_vector() {
+  let private =
+    hex_array::<48>("3cc3122a68f0d95027ad38c067916ba0eb8c38894d22e1b15618b6818a661774ad463b205da88cf699ab4d43c9cf98a1");
+  let peer = hex_array::<97>(
+    "04a7c76b970c3b5fe8b05d2838ae04ab47697b9eaf52e764592efda27fe7513272734466b400091adbf2d68c58e0c50066ac68f19f2e1cb879aed43a9969b91a0839c4c38a49749b661efedf243451915ed0905a32b060992b468c64766fc8437a",
+  );
+  let secret = P384EphemeralSecret::try_generate_with(|candidate| {
+    candidate.copy_from_slice(&private);
+    Ok::<(), core::convert::Infallible>(())
+  })
+  .expect("fixed P-384 ECDH scalar is valid");
+  assert_hex(
+    secret.public_key().as_sec1_bytes(),
+    "049803807f2f6d2fd966cdd0290bd410c0190352fbec7ff6247de1302df86f25d34fe4a97bef60cff548355c015dbb3e5fba26ca69ec2f5b5d9dad20cc9da711383a9dbe34ea3fa5a2af75b46502629ad54dd8b7d73a8abb06a3a3be47d650cc99",
+  );
+  let peer = P384PublicKey::from_sec1_bytes(&peer).expect("NIST P-384 peer point must parse");
+  let shared = secret.diffie_hellman(&peer);
+  assert_hex(
+    shared.as_bytes(),
+    "5f9d29dc5e31a163060356213669c8ce132e22f57c9a04f40ba7fcead493b457e5621e766c40a2e3d4d6a04b25e533f1",
+  );
+}
+
 #[cfg(target_feature = "simd128")]
 fn assert_simd128_runtime_caps_are_detected() {
   assert!(rscrypto::platform::caps().has(rscrypto::platform::caps::wasm::SIMD128));
@@ -431,6 +454,7 @@ fn run_vectors() {
   assert_aes_siv_runtime_vector_and_failed_open_cleanup();
   assert_ecdsa_portable_signing_roundtrips();
   assert_p256_ecdh_portable_vector();
+  assert_p384_ecdh_portable_vector();
   assert_mldsa_fips204_vectors();
   assert_simd128_runtime_caps_are_detected();
 }

@@ -60,6 +60,7 @@ auxiliary_cargo_manifests = [
   "fuzz-packages/auth-hmac/Cargo.toml",
   "fuzz-packages/auth-kmac256/Cargo.toml",
   "fuzz-packages/auth-p256-ecdh/Cargo.toml",
+  "fuzz-packages/auth-p384-ecdh/Cargo.toml",
   "fuzz-packages/auth-pbkdf2/Cargo.toml",
   "fuzz-packages/auth-phc/Cargo.toml",
   "fuzz-packages/auth-scrypt/Cargo.toml",

@@ -115,6 +115,7 @@
 //!   RSAES-PKCS1-v1_5.
 //! - `scrypt` - scrypt password hashing (RFC 7914).
 //! - `p256_ecdh` - ephemeral P-256 Diffie-Hellman key agreement.
+//! - `p384_ecdh` - ephemeral P-384 Diffie-Hellman key agreement.
 //! - `x25519` - X25519 Diffie-Hellman key agreement.
 
 #[cfg(feature = "argon2")]
@@ -144,6 +145,7 @@ pub mod ecdsa;
   test,
   feature = "ecdsa-p256",
   feature = "ecdsa-p384",
+  feature = "p384-ecdh",
   all(
     feature = "p256-ecdh",
     any(
@@ -219,6 +221,10 @@ mod p256_platform;
   )
 ))]
 mod p256_portable;
+#[cfg(feature = "p384-ecdh")]
+pub mod p384_ecdh;
+#[cfg(feature = "p384-ecdh")]
+mod p384_portable;
 #[cfg(feature = "pbkdf2")]
 pub mod pbkdf2;
 #[cfg(all(feature = "phc-strings", any(feature = "argon2", feature = "scrypt")))]
@@ -403,6 +409,10 @@ pub use mlkem::{
 pub use p256_ecdh::diag_p256_ecdh_select_window_limb_digest;
 #[cfg(feature = "p256-ecdh")]
 pub use p256_ecdh::{P256EphemeralSecret, P256KeyGenerationError, P256PublicKey, P256PublicKeyError, P256SharedSecret};
+#[cfg(feature = "p384-ecdh")]
+pub use p384_ecdh::{P384EphemeralSecret, P384KeyGenerationError, P384PublicKey, P384PublicKeyError, P384SharedSecret};
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "p384-ecdh"))]
+pub use p384_ecdh::{diag_p384_ecdh_select_generator_limb_digest, diag_p384_ecdh_select_window_limb_digest};
 #[cfg(feature = "pbkdf2")]
 pub use pbkdf2::{Pbkdf2Error, Pbkdf2Params, Pbkdf2Sha256, Pbkdf2Sha512, Pbkdf2VerifyPolicy};
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "pbkdf2"))]

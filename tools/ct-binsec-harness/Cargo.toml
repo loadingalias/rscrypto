@@ -28,6 +28,7 @@ rscrypto = { path = "../..", default-features = false, features = [
   "kmac",
   "ml-dsa",
   "p256-ecdh",
+  "p384-ecdh",
   "pbkdf2",
   "portable-only",
   "rsa",

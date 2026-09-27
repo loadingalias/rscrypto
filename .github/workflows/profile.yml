@@ -28,6 +28,7 @@ on:
           - aead/aegis256
           - aead/ascon
           - auth/p256-ecdh
+          - auth/p384-ecdh
           - auth/p384-sign
           - auth/argon2id
           - auth/mldsa65-keygen

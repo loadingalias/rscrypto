@@ -14,8 +14,9 @@ use rscrypto::{
   Ed25519SecretKey, HkdfSha256, HkdfSha384, HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512,
   HmacSha512Tag, Kmac256, MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem768, MlKem768Ciphertext,
   MlKem768DecapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKemError, P256EphemeralSecret,
-  Pbkdf2Sha256, Pbkdf2Sha512, RsaBlindingPair, RsaEncryptionError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey,
-  RsaPssProfile, RsaPublicKeyPolicy, SecretBytes, Sha512, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  P384EphemeralSecret, Pbkdf2Sha256, Pbkdf2Sha512, RsaBlindingPair, RsaEncryptionError, RsaOaepProfile,
+  RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy, SecretBytes, Sha512, X25519SecretKey,
+  XChaCha20Poly1305, XChaCha20Poly1305Key,
   aead::{
     Nonce96, Nonce128, Nonce192, Nonce256, diag_aes_siv_cmac256_open_portable, diag_aes_siv_cmac256_s2v_portable,
     diag_aes128gcm_ctr32_be, diag_aes128gcm_ghash, diag_aes128gcm_tag_aes, diag_aes128gcmsiv_ctr32,
@@ -1027,6 +1028,56 @@ fn p256_ecdh_agree_fixed_vs_random_scalar(runner: &mut CtRunner, rng: &mut Bench
 
   for (class, scalar) in inputs {
     runner.run_one(class, || p256_ecdh_secret(scalar).diffie_hellman(&peer).as_bytes()[0]);
+  }
+}
+
+fn valid_p384_ecdh_scalar(rng: &mut BenchRng) -> [u8; P384EphemeralSecret::LENGTH] {
+  let mut scalar = rand_array::<{ P384EphemeralSecret::LENGTH }>(rng);
+  scalar[0] &= 0x7f;
+  scalar[P384EphemeralSecret::LENGTH - 1] |= 1;
+  scalar
+}
+
+fn p384_ecdh_secret(scalar: [u8; P384EphemeralSecret::LENGTH]) -> P384EphemeralSecret {
+  P384EphemeralSecret::try_generate_with(|candidate| {
+    candidate.copy_from_slice(&scalar);
+    Ok::<(), core::convert::Infallible>(())
+  })
+  .expect("DudeCT P-384 scalar construction must succeed")
+}
+
+fn p384_ecdh_public_key_fixed_vs_random_scalar(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let scalar = if matches!(class, Class::Left) {
+      [0x42; P384EphemeralSecret::LENGTH]
+    } else {
+      valid_p384_ecdh_scalar(rng)
+    };
+    inputs.push((class, scalar));
+  }
+
+  for (class, scalar) in inputs {
+    runner.run_one(class, || p384_ecdh_secret(scalar).public_key().as_sec1_bytes()[1]);
+  }
+}
+
+fn p384_ecdh_agree_fixed_vs_random_scalar(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let peer = p384_ecdh_secret([0x24; P384EphemeralSecret::LENGTH]).public_key();
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let scalar = if matches!(class, Class::Left) {
+      [0x42; P384EphemeralSecret::LENGTH]
+    } else {
+      valid_p384_ecdh_scalar(rng)
+    };
+    inputs.push((class, scalar));
+  }
+
+  for (class, scalar) in inputs {
+    runner.run_one(class, || p384_ecdh_secret(scalar).diffie_hellman(&peer).as_bytes()[0]);
   }
 }
 
@@ -2832,6 +2883,8 @@ ctbench_main_with_seeds!(
   (x25519_fixed_vs_random_scalar, Some(0x7832353531395f63)),
   (p256_ecdh_public_key_fixed_vs_random_scalar, Some(0x7032353665637075)),
   (p256_ecdh_agree_fixed_vs_random_scalar, Some(0x7032353665636167)),
+  (p384_ecdh_public_key_fixed_vs_random_scalar, Some(0x7033383465637075)),
+  (p384_ecdh_agree_fixed_vs_random_scalar, Some(0x7033383465636167)),
   (mldsa_inverse_ntt_fixed_vs_random, Some(0x6d6c647361000000)),
   (mldsa_inverse_ntt_portable_fixed_vs_random, Some(0x6d6c647361000006)),
   (mldsa_noise_eta2_fixed_vs_random, Some(0x6d6c647361000001)),

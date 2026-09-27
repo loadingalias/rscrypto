@@ -22,6 +22,7 @@ just test-examples
 | `mldsa_sign_verify` | Generate ML-DSA-65 keys, sign with OS-provided randomness and an explicit context, and verify. | `ml-dsa,getrandom` |
 | `mlkem_encapsulation` | Generate ML-KEM-768 keys and confirm encapsulation and decapsulation agree. | `ml-kem,getrandom` |
 | `p256_ecdh` | Generate two ephemeral P-256 keys and confirm both parties derive the same fixed-width ECC CDH output. | `p256-ecdh,getrandom` |
+| `p384_ecdh` | Generate two ephemeral P-384 keys and confirm both parties derive the same fixed-width ECC CDH output. | `p384-ecdh,getrandom` |
 | `x25519_key_agreement` | Generate two X25519 keypairs and confirm both parties derive the same raw secret. | `x25519,getrandom` |
 | `introspect` | Report platform capabilities and selected CRC, SHA-256, and AEAD backends. | `crc32,sha2,chacha20poly1305,diag` |
 

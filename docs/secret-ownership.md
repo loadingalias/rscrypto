@@ -15,6 +15,7 @@ that every compiler-created copy is erased.
 | ML-DSA expanded and prepared secret keys | Not `Clone` or `Copy`; `*_in` constructors write the key directly into an allocation from a caller-selected `Allocator` and return `Box<SecretKey, A>`. Preparation writes transformed secrets into caller-owned storage and returns a handle borrowing the key and storage. The handle clears the secrets on drop or failed preparation; the storage clears them again on drop | Expanded export returns `SecretBytes`; key, handle, and storage `Debug` are redacted; serialization requires `serde-secrets`. |
 | X25519 secrets and ML-KEM decapsulation/shared secrets | Explicit `duplicate_secret` | Secret export is explicit; `Debug` is redacted. |
 | `P256EphemeralSecret`, `P256SharedSecret` | Not `Clone` or `Copy` | The ephemeral scalar has no export or import API. `P256SharedSecret::expose_secret` creates an explicit `SecretBytes<32>` copy; borrowed access is available through `as_bytes`. Both owners have redacted `Debug`. |
+| `P384EphemeralSecret`, `P384SharedSecret` | Not `Clone` or `Copy` | The ephemeral scalar has no export or import API. `P384SharedSecret::expose_secret` creates an explicit `SecretBytes<48>` copy; borrowed access is available through `as_bytes`. Both owners have redacted `Debug`. |
 | `RsaPrivateKey`, `RsaPrivateScratch` | Not `Clone` or `Copy` | Private DER export returns `SecretVec`; `Debug` shows public metadata only. |
 | HMAC, HKDF, KMAC, PBKDF2, and Poly1305 state | No generic duplication | `Debug` is redacted; keyed state is not serialized. |
 | Keyed BLAKE2 state | `Clone` where required by the shared `Digest` contract | `Debug` is redacted; cloning duplicates keyed state. |
@@ -57,8 +58,9 @@ their buffers; the crate cannot manage caller-owned memory.
 - `serde-secrets` authorizes secret serialization.
 - `expert::DisplaySecret` deliberately prints borrowed secret bytes.
 - `as_bytes` and similar borrows expose bytes for the borrow's lifetime.
-- `P256SharedSecret::expose_secret()` creates a second zeroizing owner; the
-  original shared secret remains live until it is dropped.
+- `P256SharedSecret::expose_secret()` and `P384SharedSecret::expose_secret()`
+  create a second zeroizing owner; the original shared secret remains live
+  until it is dropped.
 
 Do not log, format, or serialize secrets unless the integration requires that
 exact transfer.

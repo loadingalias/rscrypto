@@ -39,6 +39,16 @@ public SEC1 validation crosses one target-shaped batch boundary instead of five 
 The deterministic provenance transform keeps those backends independent of the ECDSA feature
 and clears their secret-derived frames, saved-register spill slots, and volatile integer registers.
 
+P-384 ECDH is a standalone leaf with a safe Rust authority on every supported target.
+AArch64 builds select owned inline-assembly field multiplication, squaring, addition, subtraction,
+small multiples, NEON fixed-base comb selection, and Bernstein–Yang divstep field inversion
+at compile time unless `portable-only` or Miri is active.
+x86-64 builds select inline-assembly field addition, subtraction, and divstep inversion at compile time,
+and BMI2/ADX field multiplication and squaring and fused in-place point doubling
+after cached runtime capability detection;
+CPUs without BMI2 and ADX use the portable multiplication and point formulas.
+Other targets use the safe Rust authority.
+
 The [P-256 ECDH development snapshot](../benchmark_results/OVERVIEW.md#p-256-ecdh-development-snapshot) records the September 2026 Graviton3, Graviton4,
 and Intel Granite Rapids Linux/Windows results and their source identities.
 Its Linux timing and cleanup bundles predate later shared-source changes.

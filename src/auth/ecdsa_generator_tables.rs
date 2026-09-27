@@ -1,14 +1,64 @@
 // Generated fixed-base ECDSA signing comb tables.
-#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "p256-ecdh"))]
+#[cfg(any(
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
+  feature = "p256-ecdh",
+  feature = "p384-ecdh"
+))]
 #[derive(Clone, Copy)]
 pub(super) struct Uint<const L: usize>(pub(super) [u64; L]);
 
-#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "p256-ecdh"))]
+#[cfg(any(
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
+  all(
+    feature = "p256-ecdh",
+    any(
+      test,
+      feature = "portable-only",
+      miri,
+      not(any(
+        all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+        all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+      ))
+    )
+  )
+))]
 pub(super) const P256_SIGNING_COMB_WIDTH: usize = 7;
-#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "p256-ecdh"))]
+#[cfg(any(
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
+  all(
+    feature = "p256-ecdh",
+    any(
+      test,
+      feature = "portable-only",
+      miri,
+      not(any(
+        all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+        all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+      ))
+    )
+  )
+))]
 pub(super) const P256_SIGNING_COMB_TABLE_SIZE: usize = 1 << P256_SIGNING_COMB_WIDTH;
 
-#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "p256-ecdh"))]
+#[cfg(any(
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
+  all(
+    feature = "p256-ecdh",
+    any(
+      test,
+      feature = "portable-only",
+      miri,
+      not(any(
+        all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+        all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+      ))
+    )
+  )
+))]
 pub(super) const P256_SIGNING_GENERATOR_COMB_X: [Uint<4>; P256_SIGNING_COMB_TABLE_SIZE] = [
   Uint([
     0x79e730d418a9143c,
@@ -780,7 +830,22 @@ pub(super) const P256_SIGNING_GENERATOR_COMB_X: [Uint<4>; P256_SIGNING_COMB_TABL
   ]),
 ];
 
-#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "p256-ecdh"))]
+#[cfg(any(
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
+  all(
+    feature = "p256-ecdh",
+    any(
+      test,
+      feature = "portable-only",
+      miri,
+      not(any(
+        all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+        all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+      ))
+    )
+  )
+))]
 pub(super) const P256_SIGNING_GENERATOR_COMB_Y: [Uint<4>; P256_SIGNING_COMB_TABLE_SIZE] = [
   Uint([
     0xddf25357ce95560a,
@@ -4684,12 +4749,12 @@ pub(super) const P256_SIGNING_GENERATOR_COMB_SHIFT_25_Y: [Uint<4>; P256_SIGNING_
   ]),
 ];
 
-#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "p384-ecdh"))]
 pub(super) const P384_SIGNING_COMB_WIDTH: usize = 8;
-#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "p384-ecdh"))]
 pub(super) const P384_SIGNING_COMB_TABLE_SIZE: usize = 1 << P384_SIGNING_COMB_WIDTH;
 
-#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "p384-ecdh"))]
 pub(super) const P384_SIGNING_GENERATOR_COMB_X: [Uint<6>; P384_SIGNING_COMB_TABLE_SIZE] = [
   Uint([
     0x3dd0756649c0b528,
@@ -6741,7 +6806,7 @@ pub(super) const P384_SIGNING_GENERATOR_COMB_X: [Uint<6>; P384_SIGNING_COMB_TABL
   ]),
 ];
 
-#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "p384-ecdh"))]
 pub(super) const P384_SIGNING_GENERATOR_COMB_Y: [Uint<6>; P384_SIGNING_COMB_TABLE_SIZE] = [
   Uint([
     0x23043dad4b03a4fe,

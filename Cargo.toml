@@ -175,6 +175,7 @@ ecdsa-p256 = ["hmac"]
 ecdsa-p384 = ["hmac"]
 ecdsa = ["ecdsa-p256", "ecdsa-p384"]
 p256-ecdh = []
+p384-ecdh = []
 ed25519 = ["sha2"]
 rsa = ["alloc", "sha2"]
 x25519 = []
@@ -201,7 +202,7 @@ macs = ["hmac", "hmac-sha3", "kmac", "poly1305"]
 kdfs = ["hkdf", "pbkdf2"]
 password-hashing = ["argon2", "scrypt", "phc-strings"]
 signatures = ["ecdsa", "ed25519", "rsa", "ml-dsa"]
-key-exchange = ["x25519", "p256-ecdh", "ml-kem"]
+key-exchange = ["x25519", "p256-ecdh", "p384-ecdh", "ml-kem"]
 auth = ["macs", "kdfs", "password-hashing", "signatures", "key-exchange"]
 aead = ["aes-gcm", "aes-gcm-siv", "aes-siv", "chacha20poly1305", "xchacha20poly1305", "aegis256", "ascon-aead"]
 full = ["checksums", "hashes", "auth", "aead"]
@@ -254,7 +255,7 @@ rapidhash = "=4.5.1"
 tiny-keccak = { version = "2.0.2", features = ["kmac", "shake"] }
 digest = { version = "0.11.3", features = ["dev"] }
 p256 = { version = "0.14.0", default-features = false, features = ["ecdh", "ecdsa", "pkcs8", "std"] }
-p384 = { version = "0.14.0", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
+p384 = { version = "0.14.0", default-features = false, features = ["ecdh", "ecdsa", "pkcs8", "std"] }
 ed25519-dalek = "3.0.0"
 x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
 fips203 = { version = "0.4.3", default-features = false, features = [
@@ -351,6 +352,10 @@ required-features = ["x25519", "getrandom"]
 name = "p256_ecdh"
 required-features = ["p256-ecdh", "getrandom"]
 
+[[example]]
+name = "p384_ecdh"
+required-features = ["p384-ecdh", "getrandom"]
+
 [[test]]
 name = "websocket_accept_digest"
 path = "tests/websocket_sha1.rs"
@@ -412,7 +417,7 @@ required-features = ["ml-dsa"]
 [[bench]]
 name = "auth"
 harness = false
-required-features = ["hkdf", "pbkdf2", "ecdsa", "ed25519", "x25519", "p256-ecdh", "ml-kem"]
+required-features = ["hkdf", "pbkdf2", "ecdsa", "ed25519", "x25519", "p256-ecdh", "p384-ecdh", "ml-kem"]
 
 [[bench]]
 name = "rsa"

@@ -397,6 +397,7 @@ just bench bench=sha2
 just bench bench=auth filter='^ecdsa-p256/'
 just bench sha256 'filter=^sha256/rscrypto/\d+$' 'filter=^sha256/rscrypto/[0-9]{1,3}$'
 just bench p256-ecdh
+just bench p384-ecdh
 just bench mlkem
 ```
 
@@ -469,3 +470,4 @@ P-256 ECDH uses the `p256-ecdh` benchmark selector; exact profiling uses the own
 Its operation rows compare caller-filled generation, public derivation, canonical SEC1 parsing,
 agreement, and a TLS-shaped two-party roundtrip;
 raw target results and the overview remain the only performance record.
+P-384 ECDH uses the `p384-ecdh` selector with public-derivation, parsing, and agreement rows.

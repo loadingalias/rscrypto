@@ -94,7 +94,7 @@ assert_eq!(hasher.finalize(), one_shot);
 ```
 
 Hash APIs support one-shot and streaming use.
-Runnable workflows for AEAD, signatures, RSA, P-256 ECDH, X25519, ML-KEM, password hashing,
+Runnable workflows for AEAD, signatures, RSA, P-256 and P-384 ECDH, X25519, ML-KEM, password hashing,
 and backend introspection are in [`examples/README.md`](examples/README.md).
 
 ## Primitive and feature map
@@ -107,7 +107,7 @@ and backend introspection are in [`examples/README.md`](examples/README.md).
 | MACs and KDFs | HMAC-SHA-2/SHA-3, KMAC128/256, Poly1305, HKDF-SHA-2, PBKDF2-HMAC-SHA-2 | `macs`, `kdfs`, or leaf features |
 | Password hashing | Argon2d/i/id, scrypt, bounded PHC password records | `password-hashing` or leaf features |
 | Signatures and RSA | ECDSA P-256/P-384, Ed25519, [ML-DSA-44/65/87](docs/mldsa.md), RSA signing, verification, encryption, and key generation | `signatures` or leaf features |
-| Key exchange and KEMs | P-256 ECDH, X25519, ML-KEM-512/768/1024 | `key-exchange` or leaf features |
+| Key exchange and KEMs | P-256 ECDH, P-384 ECDH, X25519, ML-KEM-512/768/1024 | `key-exchange` or leaf features |
 | AEADs | AES-GCM, AES-GCM-SIV, AES-SIV-CMAC, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128 | `aead` or leaf features |
 
 The compatibility-only WebSocket accept digest requires `websocket-sha1`,

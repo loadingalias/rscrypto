@@ -92,6 +92,7 @@
         "ed25519",
         "x25519",
         "p256-ecdh",
+        "p384-ecdh",
         "ml-kem",
         "diag"
       ]
@@ -193,6 +194,7 @@
     "ed25519": { "bench": "auth", "filter": "ed25519" },
     "x25519": { "bench": "auth", "filter": "x25519" },
     "p256-ecdh": { "bench": "auth", "filter": "^p256-ecdh/" },
+    "p384-ecdh": { "bench": "auth", "filter": "^p384-ecdh/" },
     "mldsa44": { "bench": "mldsa", "filter": "^mldsa44/" },
     "mldsa65": { "bench": "mldsa", "filter": "^mldsa65/" },
     "mldsa87": { "bench": "mldsa", "filter": "^mldsa87/" },
@@ -258,6 +260,7 @@
       "ed25519",
       "x25519",
       "p256-ecdh",
+      "p384-ecdh",
       "mldsa44",
       "mldsa65",
       "mldsa87",
@@ -294,6 +297,7 @@
       "ed25519",
       "x25519",
       "p256-ecdh",
+      "p384-ecdh",
       "mldsa44",
       "mldsa65",
       "mldsa87",
@@ -416,6 +420,11 @@
     "auth/p256-ecdh": {
       "bench": "auth",
       "case": "p256-ecdh/public-key/rscrypto-selected",
+      "diagnostic": false
+    },
+    "auth/p384-ecdh": {
+      "bench": "auth",
+      "case": "p384-ecdh/agreement/rscrypto-selected",
       "diagnostic": false
     },
     "auth/p384-sign": {

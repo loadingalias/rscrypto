@@ -314,6 +314,7 @@ mod macros;
   feature = "ecdsa-p384",
   feature = "ed25519",
   feature = "p256-ecdh",
+  feature = "p384-ecdh",
   feature = "x25519",
   feature = "ml-kem",
   feature = "blake3"
@@ -343,6 +344,7 @@ pub mod aead;
   feature = "ml-kem",
   feature = "ml-dsa",
   feature = "p256-ecdh",
+  feature = "p384-ecdh",
   feature = "rsa",
   feature = "x25519",
   feature = "phc-strings",
@@ -463,6 +465,8 @@ pub use auth::{
 };
 #[cfg(feature = "p256-ecdh")]
 pub use auth::{P256EphemeralSecret, P256KeyGenerationError, P256PublicKey, P256PublicKeyError, P256SharedSecret};
+#[cfg(feature = "p384-ecdh")]
+pub use auth::{P384EphemeralSecret, P384KeyGenerationError, P384PublicKey, P384PublicKeyError, P384SharedSecret};
 #[cfg(all(feature = "phc-strings", any(feature = "argon2", feature = "scrypt")))]
 pub use auth::{PasswordHashError, PasswordStatus};
 #[cfg(feature = "pbkdf2")]
@@ -1225,6 +1229,20 @@ use rscrypto::P256SharedSecret;
 
 fn require_clone<T: Clone>() {}
 require_clone::<P256SharedSecret>();
+```
+
+```compile_fail,E0277
+use rscrypto::P384EphemeralSecret;
+
+fn require_clone<T: Clone>() {}
+require_clone::<P384EphemeralSecret>();
+```
+
+```compile_fail,E0277
+use rscrypto::P384SharedSecret;
+
+fn require_clone<T: Clone>() {}
+require_clone::<P384SharedSecret>();
 ```
 
 ```compile_fail,E0277

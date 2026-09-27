@@ -22,9 +22,9 @@ use rscrypto::{
   HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Kmac256, MlKem512, MlKem512Ciphertext,
   MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey,
   MlKem768EncapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey,
-  MlKemError, P256EphemeralSecret, P256PublicKey, Pbkdf2Sha256, Pbkdf2Sha512, RsaBlindingPair, RsaOaepProfile,
-  RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy, Scrypt, ScryptParams, SecretBytes, Sha256,
-  X25519PublicKey, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  MlKemError, P256EphemeralSecret, P256PublicKey, P384EphemeralSecret, P384PublicKey, Pbkdf2Sha256, Pbkdf2Sha512,
+  RsaBlindingPair, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy, Scrypt,
+  ScryptParams, SecretBytes, Sha256, X25519PublicKey, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
   aead::{Nonce96, Nonce128, Nonce192, Nonce256, diag_aes_siv_cmac256_open_portable},
   checksum::Checksum,
   traits::Kem as _,
@@ -453,6 +453,81 @@ pub unsafe extern "C" fn ct_entry_p256_ecdh_agree(out: *mut u8, scalar: *const u
   let shared = secret.diffie_hellman(&public);
   // SAFETY: The function contract establishes an exclusively writable
   // 32-byte output for this copy.
+  if unsafe { write_array(out, shared.as_bytes()) } {
+    STATUS_OK
+  } else {
+    STATUS_ERR
+  }
+}
+
+/// P-384 fixed-base public derivation harness.
+///
+/// Scalar sampling is part of this retained linked-binary root so reachability
+/// analysis sees the production constructor, but its validity branch is
+/// explicitly outside the public-derivation constant-time claim.
+///
+/// # Safety
+///
+/// - `scalar` must be valid for reads of 48 initialized bytes and must remain
+///   immutable while copied.
+/// - `out` must be valid for writes of 97 bytes and must not be accessed while
+///   written.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_p384_ecdh_public_key(out: *mut u8, scalar: *const u8) -> u8 {
+  // SAFETY: The function contract requires `scalar` to identify 48 readable,
+  // initialized bytes that remain valid while copied into owned storage.
+  let Some(scalar) = (unsafe { read_array::<48>(scalar) }) else {
+    return STATUS_ERR;
+  };
+  let Ok(secret) = P384EphemeralSecret::try_generate_with(|candidate| {
+    candidate.copy_from_slice(&scalar);
+    Ok::<(), core::convert::Infallible>(())
+  }) else {
+    return STATUS_ERR;
+  };
+  let public = secret.public_key().to_sec1_bytes();
+  // SAFETY: The function contract requires `out` to identify exactly 97
+  // writable bytes which remain exclusively accessible for this copy.
+  if unsafe { write_array(out, &public) } {
+    STATUS_OK
+  } else {
+    STATUS_ERR
+  }
+}
+
+/// P-384 arbitrary-point ECDH agreement harness.
+///
+/// Public SEC1 parsing and scalar sampling remain in this retained root but
+/// are explicitly outside the private agreement constant-time claim.
+///
+/// # Safety
+///
+/// - `scalar` and `point` must be valid for reads of 48 and 97 initialized
+///   bytes respectively and must remain immutable while copied.
+/// - `out` must be valid for writes of 48 bytes and must not be accessed while
+///   written.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ct_entry_p384_ecdh_agree(out: *mut u8, scalar: *const u8, point: *const u8) -> u8 {
+  // SAFETY: The function contract establishes a readable 48-byte input.
+  let Some(scalar) = (unsafe { read_array::<48>(scalar) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: The function contract establishes a readable 97-byte input.
+  let Some(point) = (unsafe { read_array::<97>(point) }) else {
+    return STATUS_ERR;
+  };
+  let Ok(public) = P384PublicKey::from_sec1_bytes(&point) else {
+    return STATUS_ERR;
+  };
+  let Ok(secret) = P384EphemeralSecret::try_generate_with(|candidate| {
+    candidate.copy_from_slice(&scalar);
+    Ok::<(), core::convert::Infallible>(())
+  }) else {
+    return STATUS_ERR;
+  };
+  let shared = secret.diffie_hellman(&public);
+  // SAFETY: The function contract establishes an exclusively writable
+  // 48-byte output for this copy.
   if unsafe { write_array(out, shared.as_bytes()) } {
     STATUS_OK
   } else {

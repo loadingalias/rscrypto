@@ -23,6 +23,7 @@ fuzz-packages/auth-kmac256/corpus/auth_kmac256/seed-basic
 fuzz-packages/auth-kmac256/corpus/auth_kmac256/seed-exact-key-bytepad
 fuzz-packages/auth-kmac256/corpus/auth_kmac256/seed-short-auth-tag
 fuzz-packages/auth-p256-ecdh/corpus/auth_p256_ecdh/seed-basic
+fuzz-packages/auth-p384-ecdh/corpus/auth_p384_ecdh/seed-basic
 fuzz-packages/auth-pbkdf2/corpus/auth_pbkdf2/seed-basic
 fuzz-packages/auth-phc/corpus/auth_phc/seed-basic
 fuzz-packages/auth-scrypt/corpus/auth_scrypt/seed-basic
@@ -450,6 +451,7 @@ fuzz/corpus/auth_mlkem768/fe4a731a298e5d50e76cf5f4651395ea3b9c3252
 fuzz/corpus/auth_mlkem768/seed
 fuzz/corpus/auth_mlkem768/seed-basic
 fuzz/corpus/auth_p256_ecdh/seed-basic
+fuzz/corpus/auth_p384_ecdh/seed-basic
 fuzz/corpus/auth_pbkdf2/seed-basic
 fuzz/corpus/auth_phc/seed-basic
 fuzz/corpus/auth_rsa_import/generated-pkcs1-bad-dp

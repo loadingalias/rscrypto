@@ -119,6 +119,8 @@ mod auth_x25519;
 
 #[path = "../target_impls/auth_p256_ecdh.rs"]
 mod auth_p256_ecdh;
+#[path = "../target_impls/auth_p384_ecdh.rs"]
+mod auth_p384_ecdh;
 
 #[path = "../target_impls/checksum_crc.rs"]
 mod checksum_crc;
@@ -456,6 +458,12 @@ fn replay_auth_x25519_corpus() {
 fn replay_auth_p256_ecdh_corpus() {
   let replayed = replay_corpus_dir("auth_p256_ecdh", corpus_dir("auth_p256_ecdh"), auth_p256_ecdh::run);
   assert_ne!(replayed, 0, "auth_p256_ecdh corpus should not be empty");
+}
+
+#[test]
+fn replay_auth_p384_ecdh_corpus() {
+  let replayed = replay_corpus_dir("auth_p384_ecdh", corpus_dir("auth_p384_ecdh"), auth_p384_ecdh::run);
+  assert_ne!(replayed, 0, "auth_p384_ecdh corpus should not be empty");
 }
 
 #[test]

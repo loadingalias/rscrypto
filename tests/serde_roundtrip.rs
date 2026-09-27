@@ -193,6 +193,27 @@ mod p256_ecdh_serde {
   }
 }
 
+#[cfg(feature = "p384-ecdh")]
+mod p384_ecdh_serde {
+  use rscrypto::{P384EphemeralSecret, P384PublicKey};
+
+  #[test]
+  fn public_key_round_trips_and_invalid_points_are_rejected() {
+    let secret = P384EphemeralSecret::try_generate_with(|candidate| {
+      candidate.fill(0x42);
+      Ok::<(), core::convert::Infallible>(())
+    })
+    .expect("fixed P-384 scalar must be valid");
+    let original = secret.public_key();
+    let json = serde_json::to_string(&original).expect("serialize P-384 public key");
+    let recovered: P384PublicKey = serde_json::from_str(&json).expect("deserialize P-384 public key");
+    assert_eq!(original, recovered);
+
+    let invalid = serde_json::to_string(&vec![0x04u8; P384PublicKey::SEC1_LENGTH]).expect("serialize invalid point");
+    let _error = serde_json::from_str::<P384PublicKey>(&invalid).expect_err("invalid P-384 point must be rejected");
+  }
+}
+
 #[cfg(feature = "aead")]
 #[test]
 fn wrong_length_bytes_rejected() {

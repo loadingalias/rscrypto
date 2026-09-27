@@ -74,6 +74,8 @@ use rscrypto::{
 };
 #[cfg(feature = "p256-ecdh")]
 use rscrypto::{P256EphemeralSecret, P256KeyGenerationError, P256PublicKey, P256PublicKeyError, P256SharedSecret};
+#[cfg(feature = "p384-ecdh")]
+use rscrypto::{P384EphemeralSecret, P384KeyGenerationError, P384PublicKey, P384PublicKeyError, P384SharedSecret};
 #[cfg(feature = "poly1305")]
 use rscrypto::{Poly1305, Poly1305OneTimeKey, Poly1305Tag};
 #[cfg(feature = "rsa")]
@@ -899,6 +901,31 @@ fn root_surface_p256_ecdh_exports_compile() {
   assert_eq!(alice_shared.expose_secret().as_bytes(), alice_shared.as_bytes());
   let _public_error = P256PublicKeyError;
   let _generation_error = P256KeyGenerationError::<()>::ScalarSamplingExhausted;
+}
+
+#[test]
+#[cfg(feature = "p384-ecdh")]
+fn root_surface_p384_ecdh_exports_compile() {
+  fn secret(byte: u8) -> P384EphemeralSecret {
+    P384EphemeralSecret::try_generate_with(|candidate| {
+      candidate.fill(byte);
+      Ok::<(), core::convert::Infallible>(())
+    })
+    .expect("fixed P-384 scalar must be valid")
+  }
+
+  let alice = secret(0x42);
+  let bob = secret(0x24);
+  let alice_public = P384PublicKey::from_sec1_bytes(alice.public_key().as_sec1_bytes())
+    .expect("generated P-384 public key must round-trip");
+  let bob_public = bob.public_key();
+  let alice_shared: P384SharedSecret = alice.diffie_hellman(&bob_public);
+  let bob_shared = bob.diffie_hellman(&alice_public);
+  assert!(alice_shared.ct_eq(&bob_shared).declassify());
+  assert_eq!(alice_shared.as_bytes().len(), P384SharedSecret::LENGTH);
+  assert_eq!(alice_shared.expose_secret().as_bytes(), alice_shared.as_bytes());
+  let _public_error = P384PublicKeyError;
+  let _generation_error = P384KeyGenerationError::<()>::ScalarSamplingExhausted;
 }
 
 #[test]

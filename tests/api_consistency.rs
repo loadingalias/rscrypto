@@ -48,6 +48,8 @@ use rscrypto::{HmacSha256, HmacSha384, HmacSha512};
 use rscrypto::{Kmac128, Kmac256};
 #[cfg(feature = "p256-ecdh")]
 use rscrypto::{P256EphemeralSecret, P256PublicKey, P256PublicKeyError};
+#[cfg(feature = "p384-ecdh")]
+use rscrypto::{P384EphemeralSecret, P384PublicKey, P384PublicKeyError};
 #[cfg(feature = "poly1305")]
 use rscrypto::{Poly1305, Poly1305OneTimeKey, Poly1305Tag};
 #[cfg(feature = "rsa")]
@@ -461,6 +463,21 @@ fn p256_ecdh_types_follow_sec1_and_secret_exposure_conventions() {
 }
 
 #[test]
+#[cfg(feature = "p384-ecdh")]
+fn p384_ecdh_types_follow_sec1_and_secret_exposure_conventions() {
+  let secret = P384EphemeralSecret::try_generate_with(|candidate| {
+    candidate.fill(0x42);
+    Ok::<(), core::convert::Infallible>(())
+  })
+  .expect("deterministic P-384 entropy callback must generate a key");
+  let public = P384PublicKey::from_sec1_bytes(secret.public_key().as_sec1_bytes())
+    .expect("generated P-384 public key must round-trip through SEC1");
+  let shared = secret.diffie_hellman(&public);
+  assert_eq!(public.to_sec1_bytes(), *public.as_sec1_bytes());
+  assert_eq!(shared.expose_secret().as_bytes(), shared.as_bytes());
+}
+
+#[test]
 #[cfg(feature = "ecdsa-p256")]
 fn ecdsa_p256_keygen_and_native_signature_traits_are_consistent() {
   let keypair = EcdsaP256Keypair::try_generate_with(|out| {
@@ -596,6 +613,15 @@ fn p256_ecdh_public_key_error_is_opaque() {
   assert_eq!(
     P256PublicKeyError.to_string(),
     "invalid canonical uncompressed P-256 public key"
+  );
+}
+
+#[test]
+#[cfg(feature = "p384-ecdh")]
+fn p384_ecdh_public_key_error_is_opaque() {
+  assert_eq!(
+    P384PublicKeyError.to_string(),
+    "invalid canonical uncompressed P-384 public key"
   );
 }
 

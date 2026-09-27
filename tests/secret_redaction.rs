@@ -292,6 +292,24 @@ fn private_key_and_shared_secret_debug_snapshots_are_redacted() {
     assert_debug_snapshot(&shared, "P256SharedSecret(****)");
   }
 
+  #[cfg(feature = "p384-ecdh")]
+  {
+    let secret = rscrypto::P384EphemeralSecret::try_generate_with(|candidate| {
+      candidate.fill(0x53);
+      Ok::<(), core::convert::Infallible>(())
+    })
+    .expect("fixed P-384 scalar must be valid");
+    assert_debug_snapshot(&secret, "P384EphemeralSecret(****)");
+    let peer = rscrypto::P384EphemeralSecret::try_generate_with(|candidate| {
+      candidate.fill(0x24);
+      Ok::<(), core::convert::Infallible>(())
+    })
+    .expect("fixed P-384 peer scalar must be valid")
+    .public_key();
+    let shared = secret.diffie_hellman(&peer);
+    assert_debug_snapshot(&shared, "P384SharedSecret(****)");
+  }
+
   #[cfg(feature = "ml-kem")]
   {
     assert_debug_snapshot(
@@ -448,6 +466,34 @@ fn secret_input_error_snapshots_do_not_echo_input_bytes() {
     .expect_err("P-256 entropy failure must be returned");
     assert_debug_snapshot(&error, "Random(..)");
     assert_eq!(error.to_string(), "P-256 key-generation random source failed");
+    assert!(core::error::Error::source(&error).is_none());
+  }
+
+  #[cfg(feature = "p384-ecdh")]
+  {
+    struct ScalarBearingError;
+
+    impl Debug for ScalarBearingError {
+      fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("ScalarBearingError(53535353)")
+      }
+    }
+
+    impl core::fmt::Display for ScalarBearingError {
+      fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("scalar-bearing error: 53535353")
+      }
+    }
+
+    impl core::error::Error for ScalarBearingError {}
+
+    let error = rscrypto::P384EphemeralSecret::try_generate_with(|candidate| {
+      candidate[..8].fill(0x53);
+      Err(ScalarBearingError)
+    })
+    .expect_err("P-384 entropy failure must be returned");
+    assert_debug_snapshot(&error, "Random(..)");
+    assert_eq!(error.to_string(), "P-384 key-generation random source failed");
     assert!(core::error::Error::source(&error).is_none());
   }
 
