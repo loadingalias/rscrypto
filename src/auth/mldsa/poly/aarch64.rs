@@ -167,7 +167,14 @@ pub(super) unsafe fn inverse_ntt(poly: &mut Poly) {
 #[cfg_attr(not(target_os = "linux"), inline)]
 #[target_feature(enable = "neon")]
 unsafe fn inverse_stage(poly: &mut Poly, width: usize, mut root: usize) -> usize {
-  for block in poly.0.chunks_exact_mut(width.strict_mul(2)) {
+  // Advance by addition: out of line, `chunks_exact_mut` divides by the
+  // runtime block length, and the CT gate rejects variable-latency division.
+  let step = width.strict_mul(2);
+  let mut start = 0;
+  while start < N {
+    let end = start.strict_add(step);
+    let block = &mut poly.0[start..end];
+    start = end;
     root = root.strict_sub(1);
     let zeta = vdupq_n_u32(Q.strict_sub(ROOTS[root]));
     let (left, right) = block.split_at_mut(width);
