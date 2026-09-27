@@ -36,10 +36,6 @@ env:
   INPUT_ARCHITECTURES: ${{ inputs.diagnose_p384 && 'riscv64-linux' || inputs.architectures || 'all' }}
   DIAGNOSTIC_CASE: ${{ inputs.diagnose_p384 && 'ecdsa_p384_public_key_fixed_vs_random_secret' || inputs.diagnostic_case || '' }}
 
-concurrency:
-  group: ct-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 defaults:
   run:
     shell: bash
