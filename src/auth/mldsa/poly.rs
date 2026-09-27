@@ -377,6 +377,17 @@ pub(super) fn opaque_mask(value: u32) -> u32 {
     }
     value
   }
+  #[cfg(all(target_arch = "aarch64", not(miri)))]
+  {
+    let mut value = value;
+    // SAFETY: The empty assembly preserves this general-purpose register and
+    // flags, accesses no memory, and does not touch the stack or require an ISA
+    // extension. The `w` operand names the 32-bit view matching the value.
+    unsafe {
+      core::arch::asm!("/* {0:w} */", inout(reg) value, options(nomem, nostack, preserves_flags));
+    }
+    value
+  }
   #[cfg(all(
     any(
       target_arch = "powerpc64",
@@ -399,6 +410,7 @@ pub(super) fn opaque_mask(value: u32) -> u32 {
   #[cfg(not(all(
     any(
       target_arch = "x86_64",
+      target_arch = "aarch64",
       target_arch = "powerpc64",
       target_arch = "s390x",
       target_arch = "riscv64",
