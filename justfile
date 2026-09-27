@@ -178,6 +178,7 @@ test-scripts:
     @scripts/lib/python.sh scripts/check/check_runner_test.py
     @scripts/lib/python.sh scripts/check/compat_test.py
     @scripts/lib/python.sh scripts/test/fuzz_runner_test.py
+    @scripts/lib/python.sh scripts/asm/p384_test.py
 
 # Exercise artifact transfer and the pinned rustdoc build/run contract.
 [group('tests')]

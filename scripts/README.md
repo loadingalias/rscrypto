@@ -14,12 +14,27 @@ Supporting modules are invoked by those entry points.
 | `check/macos.sh`                       | `just check-macos`, local commit hooks |
 | `check/dependencies.sh`                | `just ci-policy`, dependency checks within `just check` |
 | `check/lint-independent-workspaces.sh` | `check/check.sh` |
+| `asm/p384.py check`                    | `check/check.sh` |
 
 `check/check_runner_test.py` tests command selection, repair behavior, and failure propagation with substitute executors.
 Run it with `scripts/lib/python.sh scripts/check/check_runner_test.py`.
 
 `check/lint-independent-workspaces.sh` lints every independent Cargo workspace that Git tracks or would add;
 ignored manifests, such as local evidence crates, are not repository policy.
+
+## Generated P-384 assembly
+
+`asm/p384_x86_64.py` and `asm/p384_aarch64.py` generate the P-384 field kernels and the x86-64 in-place
+point doubling in `src/auth/p384_x86_64.rs` and `src/auth/p384_aarch64.rs`; the other assembly in those files
+is written by hand. `asm/p384.py` is the entry point:
+
+- `check` (run by `just check`) fails when a committed block differs from its generator.
+- `write` regenerates the blocks after a generator change.
+- `simulate [--cases N]` executes every generated kernel in bit-exact x86-64 and AArch64 models against Python
+  integers, including edge values and carry chains that random operands almost never reach.
+
+`asm/p384_test.py` (part of `just test-scripts`) checks that edits and single dropped carries are detected.
+Native differential tests against the portable authority remain the runtime evidence.
 
 ## Test entry points
 

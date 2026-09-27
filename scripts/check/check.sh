@@ -99,6 +99,7 @@ else
 fi
 [[ "$mode" != fix ]] || exit 0
 
+"$python" scripts/asm/p384.py check
 # Native CI keeps architecture-sensitive compilation and documentation here.
 scripts/check/lint-independent-workspaces.sh
 if [[ "$mode" != native && "$mode" != target ]]; then scripts/check/dependencies.sh; fi
