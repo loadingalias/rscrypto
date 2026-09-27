@@ -2838,11 +2838,11 @@ tier = "A"
 required = true
 targets = ["*"]
 rustflags = []
-sse_depth = 20000
+sse_depth = 30000
 secrets = [{ name = "CT_BINSEC_ECDSA_DIGIT", kind = "global", bytes = 1 }]
 public = []
 assumptions = []
-notes = "All-target bounded proof for the ECDSA/P-384 fixed-window signing generator selector. The optimized P-384 paths still use this selector before architecture-specific field arithmetic."
+notes = "All-target bounded proof for the ECDSA/P-384 fixed-window signing generator selector. The optimized P-384 paths still use this selector before architecture-specific field arithmetic. The x86-64 baseline build scans 256 entries at 78 instructions each, about 20,200 in total, so the depth bound is 30,000."
 claim = "ct-intended"
 
 [[binsec_kernel]]
@@ -2853,11 +2853,11 @@ tier = "A"
 required = true
 targets = ["*"]
 rustflags = []
-sse_depth = 20000
+sse_depth = 30000
 secrets = [{ name = "CT_BINSEC_ECDSA_DIGIT", kind = "global", bytes = 1 }]
 public = []
 assumptions = []
-notes = "Bounded proof of the production portable comb selector shared by blinded public derivation and signing. The public derivation path reaches scalar_mul_basepoint_comb_ct_secret_blinded and selects on secret scalar digits. This reuses the signing selector harness; whole derivation, public-key precomputation, and accelerated assembly require separate operation-level artifacts and DudeCT."
+notes = "Bounded proof of the production portable comb selector shared by blinded public derivation and signing. The public derivation path reaches scalar_mul_basepoint_comb_ct_secret_blinded and selects on secret scalar digits. This reuses the signing selector harness; whole derivation, public-key precomputation, and accelerated assembly require separate operation-level artifacts and DudeCT. The x86-64 baseline build scans 256 entries at 78 instructions each, about 20,200 in total, so the depth bound is 30,000."
 claim = "ct-intended"
 
 [[binsec_kernel]]
