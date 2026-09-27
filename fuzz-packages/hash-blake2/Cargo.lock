@@ -97,15 +97,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hmac"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
-dependencies = [
- "digest",
-]
-
-[[package]]
 name = "hybrid-array"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -155,8 +146,6 @@ name = "rscrypto-fuzz-hash-blake2"
 version = "0.0.0"
 dependencies = [
  "blake2",
- "digest",
- "hmac",
  "libfuzzer-sys",
  "rscrypto",
  "rscrypto-fuzz-support",
