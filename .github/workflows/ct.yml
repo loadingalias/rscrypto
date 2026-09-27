@@ -19,7 +19,7 @@ on:
         type: boolean
         default: false
       diagnostic_case:
-        description: Exact CT case, or mldsa for all required ML-DSA kernel cases, on POWER, IBM Z, or RISC-V; scoped evidence only
+        description: Exact CT case, mldsa for all required ML-DSA kernel cases, or mldsa-probe for the ML-DSA diagnostic probes, on POWER, IBM Z, or RISC-V; scoped evidence only
         type: string
         default: ""
       architectures:

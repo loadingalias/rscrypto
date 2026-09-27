@@ -1197,6 +1197,93 @@ mldsa_products_case!(mldsa_accumulate_fixed_vs_random, 3, |input: &[[u32; 256]; 
   rscrypto::auth::diag_mldsa_accumulate(&input[0], &input[1], &input[2])
 });
 
+// Diagnostic probes for operand-dependent timing in ML-DSA arithmetic. Each
+// case changes one input property: zero, one fixed random input, or a fixed
+// high-bit-count coefficient. Zero-versus-zero is the A/A control.
+const MLDSA_PROBE_HIGH_WEIGHT: u32 = 8_380_415;
+
+fn mldsa_probe_zero<const W: usize>(_: &[[u32; 256]; W], _: &mut BenchRng) -> [[u32; 256]; W] {
+  [[0; 256]; W]
+}
+
+fn mldsa_probe_fixed<const W: usize>(fixed: &[[u32; 256]; W], _: &mut BenchRng) -> [[u32; 256]; W] {
+  *fixed
+}
+
+fn mldsa_probe_high<const W: usize>(_: &[[u32; 256]; W], _: &mut BenchRng) -> [[u32; 256]; W] {
+  [[MLDSA_PROBE_HIGH_WEIGHT; 256]; W]
+}
+
+fn mldsa_probe_random<const W: usize>(_: &[[u32; 256]; W], rng: &mut BenchRng) -> [[u32; 256]; W] {
+  core::array::from_fn(|_| core::array::from_fn(|_| rng.random_range(0..8_380_417u32)))
+}
+
+macro_rules! mldsa_probe_case {
+  ($name:ident, $width:literal, $left:ident, $right:ident, $operation:expr) => {
+    fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let fixed = mldsa_probe_random::<$width>(&[[0; 256]; $width], rng);
+      let mut inputs = Vec::with_capacity(samples());
+      for _ in 0..samples() {
+        let class = random_class(rng);
+        let input = if matches!(class, Class::Left) {
+          $left::<$width>(&fixed, rng)
+        } else {
+          $right::<$width>(&fixed, rng)
+        };
+        inputs.push((class, input));
+      }
+      for (class, input) in inputs {
+        runner.run_one(class, || {
+          for _ in 0..64 {
+            core::hint::black_box(($operation)(core::hint::black_box(&input)));
+          }
+        });
+      }
+    }
+  };
+}
+
+macro_rules! mldsa_probe_product {
+  ($name:ident, $left:ident, $right:ident) => {
+    mldsa_probe_case!($name, 2, $left, $right, |input: &[[u32; 256]; 2]| {
+      rscrypto::auth::diag_mldsa_product(&input[0], &input[1])
+    });
+  };
+}
+
+macro_rules! mldsa_probe_montgomery {
+  ($name:ident, $left:ident, $right:ident) => {
+    mldsa_probe_case!($name, 1, $left, $right, |input: &[[u32; 256]; 1]| {
+      rscrypto::auth::diag_mldsa_montgomery_batch(&input[0])
+    });
+  };
+}
+
+mldsa_probe_product!(mldsa_probe_product_zero_vs_zero, mldsa_probe_zero, mldsa_probe_zero);
+mldsa_probe_product!(mldsa_probe_product_zero_vs_fixed, mldsa_probe_zero, mldsa_probe_fixed);
+mldsa_probe_product!(
+  mldsa_probe_product_fixed_vs_random,
+  mldsa_probe_fixed,
+  mldsa_probe_random
+);
+mldsa_probe_product!(mldsa_probe_product_high_vs_random, mldsa_probe_high, mldsa_probe_random);
+mldsa_probe_montgomery!(mldsa_probe_montgomery_zero_vs_zero, mldsa_probe_zero, mldsa_probe_zero);
+mldsa_probe_montgomery!(
+  mldsa_probe_montgomery_zero_vs_fixed,
+  mldsa_probe_zero,
+  mldsa_probe_fixed
+);
+mldsa_probe_montgomery!(
+  mldsa_probe_montgomery_fixed_vs_random,
+  mldsa_probe_fixed,
+  mldsa_probe_random
+);
+mldsa_probe_montgomery!(
+  mldsa_probe_montgomery_high_vs_random,
+  mldsa_probe_high,
+  mldsa_probe_random
+);
+
 fn mldsa_norm_first_vs_last(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
   for _ in 0..samples() {
@@ -2900,6 +2987,14 @@ ctbench_main_with_seeds!(
   (mldsa_mask19_fixed_vs_random, Some(0x6d6c64736100000c)),
   (mldsa_product_fixed_vs_random, Some(0x6d6c64736100000d)),
   (mldsa_accumulate_fixed_vs_random, Some(0x6d6c64736100000e)),
+  (mldsa_probe_product_zero_vs_zero, Some(0x6d6c647370720000)),
+  (mldsa_probe_product_zero_vs_fixed, Some(0x6d6c647370720001)),
+  (mldsa_probe_product_fixed_vs_random, Some(0x6d6c647370720002)),
+  (mldsa_probe_product_high_vs_random, Some(0x6d6c647370720003)),
+  (mldsa_probe_montgomery_zero_vs_zero, Some(0x6d6c647370720004)),
+  (mldsa_probe_montgomery_zero_vs_fixed, Some(0x6d6c647370720005)),
+  (mldsa_probe_montgomery_fixed_vs_random, Some(0x6d6c647370720006)),
+  (mldsa_probe_montgomery_high_vs_random, Some(0x6d6c647370720007)),
   (mldsa_norm_first_vs_last, Some(0x6d6c64736100000f)),
   (mldsa_prepare44_fixed_vs_random, Some(0x6d6c647361000010)),
   (mldsa_prepare65_fixed_vs_random, Some(0x6d6c647361000011)),

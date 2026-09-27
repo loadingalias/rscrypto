@@ -36,6 +36,16 @@ class Selection(unittest.TestCase):
             self.assertEqual(targets, {'s390x-unknown-linux-gnu', 'powerpc64le-unknown-linux-gnu',
                                        'riscv64gc-unknown-linux-gnu'})
 
+    def test_mldsa_probe_suite_selects_only_diagnostic_probes(self):
+        manifest = tomllib.loads((Path(__file__).resolve().parents[2] / 'ct.toml').read_text())
+        cases = {case['name']: case for case in manifest['dudect_case']}
+        selected = set(ci.replay_cases(cases, 'mldsa-probe'))
+        self.assertEqual(len(selected), 8)
+        self.assertTrue(all(cases[name]['gate'] == 'diagnostic' for name in selected))
+        self.assertFalse(selected & set(ci.replay_cases(cases, 'mldsa')))
+        required = {case['name'] for case in required_dudect_cases(manifest, 'powerpc64le-unknown-linux-gnu')}
+        self.assertFalse(selected & required)
+
     def test_power_diagnostic_preserves_target_bound_preparation(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / 'output'

@@ -5325,6 +5325,94 @@ smoke_samples = 512
 notes = "Production accumulation dispatch and normal polynomial cleanup are inside timing."
 
 [[dudect_case]]
+name = "mldsa_probe_product_zero_vs_zero"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_product_zero_vs_zero"
+left_class = "64 products of two zero canonical polynomials"
+right_class = "64 products of two zero canonical polynomials"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "A/A control for POWER operand-dependent timing; both classes are identical, so any bias is measurement or harness artifact."
+
+[[dudect_case]]
+name = "mldsa_probe_product_zero_vs_fixed"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_product_zero_vs_fixed"
+left_class = "64 products of two zero canonical polynomials"
+right_class = "64 products of one fixed pair of random canonical polynomials"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Isolates zero operands from per-sample input variation in the POWER vector product."
+
+[[dudect_case]]
+name = "mldsa_probe_product_fixed_vs_random"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_product_fixed_vs_random"
+left_class = "64 products of one fixed pair of random canonical polynomials"
+right_class = "64 products of two independently random canonical polynomials"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Realistic-secret probe: both classes have random-like bit counts."
+
+[[dudect_case]]
+name = "mldsa_probe_product_high_vs_random"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_product_high_vs_random"
+left_class = "64 products of polynomials whose coefficients are all 8380415 (22 set bits)"
+right_class = "64 products of two independently random canonical polynomials"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Bit-count probe: power-dependent throttling predicts the opposite sign to zero operands."
+
+[[dudect_case]]
+name = "mldsa_probe_montgomery_zero_vs_zero"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_montgomery_zero_vs_zero"
+left_class = "64 batches of 128 portable Montgomery products on zero canonical operands"
+right_class = "64 batches of 128 portable Montgomery products on zero canonical operands"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "A/A control for scalar Montgomery timing on POWER."
+
+[[dudect_case]]
+name = "mldsa_probe_montgomery_zero_vs_fixed"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_montgomery_zero_vs_fixed"
+left_class = "64 batches of 128 portable Montgomery products on zero canonical operands"
+right_class = "64 batches of 128 portable Montgomery products on one fixed random operand set"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Isolates zero operands from per-sample input variation in scalar Montgomery products."
+
+[[dudect_case]]
+name = "mldsa_probe_montgomery_fixed_vs_random"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_montgomery_fixed_vs_random"
+left_class = "64 batches of 128 portable Montgomery products on one fixed random operand set"
+right_class = "64 batches of 128 portable Montgomery products on random canonical operands"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Realistic-secret probe for scalar Montgomery products."
+
+[[dudect_case]]
+name = "mldsa_probe_montgomery_high_vs_random"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_montgomery_high_vs_random"
+left_class = "64 batches of 128 portable Montgomery products on operands 8380415 (22 set bits)"
+right_class = "64 batches of 128 portable Montgomery products on random canonical operands"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Bit-count probe for scalar Montgomery products."
+
+[[dudect_case]]
 name = "mldsa_norm_first_vs_last"
 primitive = "signature.mldsa.secret_kernels"
 filter = "mldsa_norm_first_vs_last"
