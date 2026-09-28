@@ -115,7 +115,9 @@ mod mlkem1024 {
 /// One SHAKE128 stream with empty input supplies, per iteration, the 64-byte
 /// `d || z` seed, the 32-byte encapsulation message, and a random ciphertext.
 /// A second SHAKE128 absorbs the encapsulation key, ciphertext, shared secret,
-/// and the implicit-rejection secret for the random ciphertext.
+/// and the implicit-rejection secret for the random ciphertext. Every
+/// decapsulation also runs through a prepared key, which masks its decryption,
+/// and must return the same secret.
 fn accumulated_mlkem768(iterations: usize) -> [u8; 32] {
   let mut source = Shake::v128();
   let mut accumulator = Shake::v128();
@@ -128,6 +130,7 @@ fn accumulated_mlkem768(iterations: usize) -> [u8; 32] {
     })
     .expect("key generation");
     accumulator.update(ek.as_bytes());
+    let prepared = dk.prepare().expect("key preparation");
 
     let mut message = [0u8; MlKem768::ENCAPSULATION_RANDOM_SIZE];
     source.squeeze(&mut message);
@@ -141,11 +144,15 @@ fn accumulated_mlkem768(iterations: usize) -> [u8; 32] {
 
     let decapsulated = MlKem768::decapsulate(&dk, &ciphertext).expect("decapsulation");
     assert!(decapsulated.expose_secret().as_bytes() == shared.expose_secret().as_bytes());
+    let decapsulated = prepared.decapsulate(&ciphertext).expect("prepared decapsulation");
+    assert!(decapsulated.expose_secret().as_bytes() == shared.expose_secret().as_bytes());
 
     let mut random = [0u8; MlKem768::CIPHERTEXT_SIZE];
     source.squeeze(&mut random);
     let random = MlKem768Ciphertext::try_from_slice(&random).expect("any ciphertext bytes are well-formed");
     let rejected = MlKem768::decapsulate(&dk, &random).expect("decapsulation");
+    let prepared_rejected = prepared.decapsulate(&random).expect("prepared decapsulation");
+    assert!(prepared_rejected.expose_secret().as_bytes() == rejected.expose_secret().as_bytes());
     accumulator.update(rejected.expose_secret().as_bytes());
   }
   let mut digest = [0u8; 32];

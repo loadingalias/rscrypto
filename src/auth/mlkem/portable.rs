@@ -163,6 +163,7 @@ pub(super) struct PreparedEncapsulationArithmetic<const K: usize> {
 #[derive(Clone)]
 pub(super) struct PreparedDecapsulationArithmetic<const K: usize> {
   s_hat: PolyVec<K>,
+  mask: DecryptionMask,
   encapsulation: PreparedEncapsulationArithmetic<K>,
 }
 
@@ -170,6 +171,45 @@ impl<const K: usize> Drop for PreparedDecapsulationArithmetic<K> {
   fn drop(&mut self) {
     zeroize_polyvec(&mut self.s_hat);
   }
+}
+
+/// Secret additive mask for the decryption inverse NTT.
+///
+/// Decryption starts its accumulator at `hat` and adds `normal`, the inverse
+/// NTT of `hat`, to `v` afterwards. By linearity the message is unchanged, but
+/// the inverse NTT always processes dense secret-masked data, so a ciphertext
+/// cannot make it process sparse, low-bit-count values. Frequency side
+/// channels on NTT inputs rely on that amplification (Yu et al., CHES 2024).
+#[derive(Clone)]
+struct DecryptionMask {
+  hat: Poly,
+  normal: Poly,
+}
+
+impl Drop for DecryptionMask {
+  fn drop(&mut self) {
+    zeroize_poly_no_fence(&mut self.hat);
+    zeroize_poly(&mut self.normal);
+  }
+}
+
+/// PRF nonce for the decryption mask. The 33-byte `z || nonce` input cannot
+/// collide with `J(z, c)`, whose input is `z` followed by a full ciphertext.
+const DECRYPTION_MASK_NONCE: u8 = 0xff;
+
+/// Derive the decryption mask from the implicit-rejection secret `z`.
+///
+/// Fixed work: a 384-byte SHAKE256 output, masked 12-bit reduction, and one
+/// inverse NTT. The coefficients need to be secret and dense, not uniform.
+fn decryption_mask(z: &[u8; SEED_BYTES]) -> DecryptionMask {
+  let mut bytes = [0u8; 384];
+  prf_eta(z, DECRYPTION_MASK_NONCE, &mut bytes);
+  let mut hat = [0u16; N];
+  byte_decode_12(&bytes, &mut hat);
+  ct::zeroize(&mut bytes);
+  let mut normal = hat;
+  inverse_ntt_montgomery_product(&mut normal);
+  DecryptionMask { hat, normal }
 }
 
 const ZETAS_MONT: [i16; 128] = [
@@ -289,8 +329,10 @@ pub(super) fn validate_and_prepare_decapsulation_key<
   }
 
   let ek = <&[u8; EK_BYTES]>::try_from(&dk[ek_start..ek_end]).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
+  let z = <&[u8; SEED_BYTES]>::try_from(&dk[h_end..]).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
   Ok(PreparedDecapsulationArithmetic {
     s_hat: prepare_decapsulation_key::<K, DK_PKE_BYTES, DK_BYTES>(dk),
+    mask: decryption_mask(z),
     encapsulation: prepare_encapsulation_key::<K, EK_BYTES>(ek),
   })
 }
@@ -488,7 +530,7 @@ pub(super) fn decapsulate_prepared_512(
   let h_stored = &dk[h_start..h_start.strict_add(HASH_BYTES)];
   let z = &dk[h_start.strict_add(HASH_BYTES)..];
 
-  let mut m_prime = pke_decrypt_prepared::<2, 768, 10, 4, 320, 128>(&prepared.s_hat, c);
+  let mut m_prime = pke_decrypt_prepared::<2, 768, 10, 4, 320, 128>(&prepared.s_hat, Some(&prepared.mask), c);
   let mut input = [0u8; 64];
   input[..SEED_BYTES].copy_from_slice(&m_prime);
   input[SEED_BYTES..].copy_from_slice(h_stored);
@@ -528,7 +570,7 @@ pub(super) fn decapsulate_prepared_768(
   let h_stored = &dk[h_start..h_start.strict_add(HASH_BYTES)];
   let z = &dk[h_start.strict_add(HASH_BYTES)..];
 
-  let mut m_prime = pke_decrypt_prepared::<3, 1088, 10, 4, 320, 128>(&prepared.s_hat, c);
+  let mut m_prime = pke_decrypt_prepared::<3, 1088, 10, 4, 320, 128>(&prepared.s_hat, Some(&prepared.mask), c);
   let mut input = [0u8; 64];
   input[..SEED_BYTES].copy_from_slice(&m_prime);
   input[SEED_BYTES..].copy_from_slice(h_stored);
@@ -568,7 +610,7 @@ pub(super) fn decapsulate_prepared_1024(
   let h_stored = &dk[h_start..h_start.strict_add(HASH_BYTES)];
   let z = &dk[h_start.strict_add(HASH_BYTES)..];
 
-  let mut m_prime = pke_decrypt_prepared::<4, 1568, 11, 5, 352, 160>(&prepared.s_hat, c);
+  let mut m_prime = pke_decrypt_prepared::<4, 1568, 11, 5, 352, 160>(&prepared.s_hat, Some(&prepared.mask), c);
   let mut input = [0u8; 64];
   input[..SEED_BYTES].copy_from_slice(&m_prime);
   input[SEED_BYTES..].copy_from_slice(h_stored);
@@ -1569,7 +1611,7 @@ fn pke_decrypt<
   c: &[u8; CT_BYTES],
 ) -> [u8; SEED_BYTES] {
   let mut s_hat = prepare_decapsulation_key_slice::<K, DK_PKE_BYTES>(dk_pke);
-  let message = pke_decrypt_prepared::<K, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(&s_hat, c);
+  let message = pke_decrypt_prepared::<K, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(&s_hat, None, c);
   zeroize_polyvec(&mut s_hat);
   message
 }
@@ -1583,6 +1625,7 @@ fn pke_decrypt_prepared<
   const POLY_DV_BYTES: usize,
 >(
   s_hat: &PolyVec<K>,
+  mask: Option<&DecryptionMask>,
   c: &[u8; CT_BYTES],
 ) -> [u8; SEED_BYTES] {
   let mut u = [[0u16; N]; K];
@@ -1599,13 +1642,20 @@ fn pke_decrypt_prepared<
     ntt(poly);
   }
 
-  let mut acc = [0u16; N];
+  // A masked accumulator decrypts `v + r - (w + r)`, which equals `v - w`.
+  let mut acc = mask.map_or([0u16; N], |mask| mask.hat);
   multiply_ntts_accumulate(&mut acc, s_hat, &u);
   inverse_ntt_montgomery_product(&mut acc);
+  if let Some(mask) = mask {
+    for (v, r) in v_prime.iter_mut().zip(&mask.normal) {
+      *v = add_mod(*v, *r);
+    }
+  }
 
   let mut message = [0u8; SEED_BYTES];
   subtract_compress_encode_message(&v_prime, &acc, &mut message);
 
+  zeroize_poly_no_fence(&mut v_prime);
   zeroize_poly(&mut acc);
   message
 }
@@ -9982,5 +10032,86 @@ mod tests {
         assert_eq!(compressed, y, "d={d} y={y}");
       }
     }
+  }
+
+  /// The masked decryption used by prepared keys must equal unmasked decryption,
+  /// including for an all-zero `u`, whose NTT is the sparse input that
+  /// frequency attacks on the inverse NTT construct.
+  type Keygen<const EK_BYTES: usize, const DK_BYTES: usize> = fn(&[u8; 64]) -> ([u8; EK_BYTES], [u8; DK_BYTES]);
+
+  fn assert_masked_decryption_matches<
+    const K: usize,
+    const ETA1_RANDOM_BYTES: usize,
+    const DK_PKE_BYTES: usize,
+    const EK_BYTES: usize,
+    const DK_BYTES: usize,
+    const CT_BYTES: usize,
+    const DU: usize,
+    const DV: usize,
+    const POLY_DU_BYTES: usize,
+    const POLY_DV_BYTES: usize,
+  >(
+    keygen: Keygen<EK_BYTES, DK_BYTES>,
+  ) {
+    let mut masks: Vec<Poly> = Vec::new();
+    for seed in 0u8..4 {
+      let random = core::array::from_fn(|i| test_low_byte(i.strict_mul(37).strict_add(usize::from(seed))));
+      let (ek, dk) = keygen(&random);
+      let prepared =
+        validate_and_prepare_decapsulation_key::<K, DK_PKE_BYTES, EK_BYTES, DK_BYTES>(&dk).expect("valid key");
+      let nonzero = prepared
+        .mask
+        .hat
+        .iter()
+        .filter(|&&coefficient| coefficient != 0)
+        .count();
+      assert!(nonzero > 240, "mask must be dense, got {nonzero} nonzero coefficients");
+      assert!(
+        masks.iter().all(|mask| *mask != prepared.mask.hat),
+        "mask must depend on the key"
+      );
+      masks.push(prepared.mask.hat);
+
+      let m = [seed ^ 0x5a; SEED_BYTES];
+      let r = [seed ^ 0xa5; SEED_BYTES];
+      let valid =
+        pke_encrypt::<K, ETA1_RANDOM_BYTES, EK_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(&ek, &m, &r);
+      let random_ciphertext: [u8; CT_BYTES] =
+        core::array::from_fn(|i| test_low_byte(i.strict_mul(131).strict_add(usize::from(seed))));
+      let mut zero_u = random_ciphertext;
+      zero_u[..POLY_DU_BYTES.strict_mul(K)].fill(0);
+      for ciphertext in [valid, random_ciphertext, zero_u] {
+        let unmasked =
+          pke_decrypt_prepared::<K, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(&prepared.s_hat, None, &ciphertext);
+        let masked = pke_decrypt_prepared::<K, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(
+          &prepared.s_hat,
+          Some(&prepared.mask),
+          &ciphertext,
+        );
+        assert_eq!(masked, unmasked, "seed {seed}");
+      }
+      assert_eq!(
+        pke_decrypt_prepared::<K, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(
+          &prepared.s_hat,
+          Some(&prepared.mask),
+          &valid
+        ),
+        m,
+        "seed {seed}"
+      );
+    }
+  }
+
+  #[test]
+  fn masked_decryption_matches_unmasked_decryption() {
+    assert_masked_decryption_matches::<2, 192, 768, 800, 1632, 768, 10, 4, 320, 128>(
+      keygen::<2, 2, 192, 768, 800, 1632>,
+    );
+    assert_masked_decryption_matches::<3, 128, 1152, 1184, 2400, 1088, 10, 4, 320, 128>(
+      keygen::<3, 3, 128, 1152, 1184, 2400>,
+    );
+    assert_masked_decryption_matches::<4, 128, 1536, 1568, 3168, 1568, 11, 5, 352, 160>(
+      keygen::<4, 4, 128, 1536, 1568, 3168>,
+    );
   }
 }

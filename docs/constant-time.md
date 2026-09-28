@@ -135,6 +135,31 @@ These are requirements for candidate qualification, not a statement that all
 targets have passed. Standard first-accepted signing retries remain variable-time;
 whole ML-DSA signing is best-effort and is not claimed strict constant time.
 
+## Power and frequency channels
+
+The constant-time claim covers control flow, memory addresses, and
+variable-latency operands. Data-dependent power is outside it, as
+[`THREAT_MODEL.md`](../THREAT_MODEL.md) states for physical side channels.
+Power can still reach timing: x86 frequency scaling reacts within milliseconds
+(Hertzbleed), and POWER9 and POWER10 slow the clock within nanoseconds when
+current causes a voltage droop.
+
+The POWER CI hosts show that effect. On some POWER10 hosts, DudeCT probes find
+vector Montgomery products faster when every coefficient repeats a value than
+when the coefficients are random; random operands of equal distribution are
+indistinguishable, and scalar Montgomery products show no difference. This
+is a power effect on those hosts, not a secret-dependent instruction choice.
+The `mldsa_probe_*` diagnostic cases in `ct.toml` reproduce it.
+
+ML-KEM decapsulation follows FIPS 203: the ciphertext polynomial is
+decompressed before its NTT, so an attacker cannot choose the sparse NTT inputs
+that frequency attacks on the inverse NTT require (Yu et al., CHES 2024).
+Prepared decapsulation keys add a second barrier: decryption adds a secret dense
+polynomial, derived once from the implicit-rejection secret `z`, before the
+inverse NTT and removes its transform afterwards. The message is unchanged and
+per-call work adds only 256 modular additions. One-shot decapsulation does not
+mask yet.
+
 Authentication failures remain opaque even when their inputs are public.
 See [`secret-ownership.md`](secret-ownership.md) for comparison capabilities and [`secret-lifecycle.md`](secret-lifecycle.md)
 for cleanup evidence.
