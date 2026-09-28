@@ -482,7 +482,7 @@ pub use auth::{
   RsaSignatureVerifier, RsaTlsSignatureSchemes, RsaX509PublicKey, RsaX509PublicKeyAlgorithm,
 };
 #[cfg(feature = "scrypt")]
-pub use auth::{Scrypt, ScryptError, ScryptParams};
+pub use auth::{Scrypt, ScryptBlock, ScryptError, ScryptParams};
 #[cfg(all(feature = "scrypt", feature = "phc-strings"))]
 pub use auth::{ScryptPassword, ScryptVerificationLimits};
 #[cfg(feature = "x25519")]

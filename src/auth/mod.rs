@@ -435,7 +435,7 @@ pub use rsa::{
   diag_rsa_validate_pkcs8_private_key_der, diag_rsa_validate_pkcs8_private_key_der_stage,
 };
 #[cfg(feature = "scrypt")]
-pub use scrypt::{Scrypt, ScryptError, ScryptParams};
+pub use scrypt::{Scrypt, ScryptBlock, ScryptError, ScryptParams};
 #[cfg(all(feature = "scrypt", feature = "phc-strings"))]
 pub use scrypt::{ScryptPassword, ScryptVerificationLimits};
 #[cfg(feature = "x25519")]

@@ -32,7 +32,8 @@
 //! - [`ScryptParams::new`] rejects invalid cost profiles; output length is taken from the caller's
 //!   destination slice.
 //! - Allocation failure surfaces as [`ScryptError::AllocationFailed`] rather than a panic.
-//! - Working buffers (B, V, scratch) are zeroised on drop.
+//! - Work memory (B, V, scratch) is cleared before an operation returns, whether rscrypto
+//!   allocated it or the caller provided it through a `*_with_memory` method.
 //! - [`Scrypt::verify`] traverses every reference-tag byte before returning an opaque result;
 //!   generated-code timing claims remain configuration- and release-evidence-bound.
 //!
@@ -47,6 +48,10 @@
 //! stack-allocated. Bare-metal / heap-less targets should select
 //! [`crate::Pbkdf2Sha256`] (alloc-free) or the `argon2` / `phc-strings`
 //! features under the same caveats.
+//!
+//! `derive` and `verify` allocate work memory for each call. To reuse it
+//! across operations or to place it in caller-selected storage, pass a slice
+//! of [`ScryptBlock`] to the `*_with_memory` methods.
 
 use alloc::vec::Vec;
 use core::fmt;
@@ -116,6 +121,9 @@ pub enum ScryptError {
   ResourceOverflow,
   /// The allocator refused to provide the working-set buffers.
   AllocationFailed,
+  /// Caller-provided work memory has fewer blocks than
+  /// [`ScryptParams::memory_blocks`].
+  MemoryTooSmall,
   /// The platform entropy source failed while generating a PHC salt.
   #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
   EntropyUnavailable,
@@ -133,6 +141,7 @@ impl fmt::Display for ScryptError {
       Self::InvalidOutputLen => "scrypt output length must be at least 1",
       Self::ResourceOverflow => "scrypt parameters exceed the target's address space",
       Self::AllocationFailed => "scrypt working-set allocation failed",
+      Self::MemoryTooSmall => "scrypt work memory has fewer blocks than the parameters require",
       #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
       Self::EntropyUnavailable => "scrypt entropy source unavailable",
       #[cfg(feature = "phc-strings")]
@@ -210,6 +219,18 @@ impl ScryptParams {
   #[must_use]
   pub const fn get_p(&self) -> u32 {
     self.p
+  }
+
+  /// Number of [`ScryptBlock`]s one operation uses: `(2p + N + 1) · 2r`.
+  ///
+  /// The `*_with_memory` methods require at least this many blocks.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`ScryptError::ResourceOverflow`] if that work memory exceeds
+  /// the target's address space.
+  pub fn memory_blocks(&self) -> Result<usize, ScryptError> {
+    scrypt_shape(self).map(|shape| shape.memory_blocks)
   }
 }
 
@@ -474,12 +495,47 @@ mod x86_sse2 {
 
 // ─── Salsa20/8 core ─────────────────────────────────────────────────────────
 
-/// A 64-byte (16 × u32) Salsa20/8 block.
+/// One 64-byte block of scrypt work memory, also used as a Salsa20/8 state.
+///
+/// Pass a slice of these to the `*_with_memory` methods to reuse work memory
+/// or place it in caller-selected storage, such as `Vec<ScryptBlock, A>` for
+/// any allocator `A`. See [`ScryptParams::memory_blocks`] for the required
+/// length.
+///
+/// An operation ignores the initial contents and clears every block it uses
+/// before returning. `Debug` never prints block contents.
+///
+/// # Examples
+///
+/// ```rust
+/// use rscrypto::{Scrypt, ScryptBlock, ScryptParams};
+///
+/// let params = ScryptParams::new(10, 8, 1)?;
+/// let mut memory = vec![ScryptBlock::ZERO; params.memory_blocks()?];
+///
+/// let (password, salt) = (b"correct horse battery staple", b"random-salt-1234");
+/// let mut hash = [0u8; 32];
+/// Scrypt::derive_with_memory(&params, password, salt, &mut hash, &mut memory)?;
+/// assert!(Scrypt::verify_with_memory(&params, password, salt, &hash, &mut memory).is_ok());
+/// # Ok::<(), rscrypto::ScryptError>(())
+/// ```
 #[repr(align(16))]
-#[derive(Clone, Copy)]
-struct SalsaBlock([u32; BLOCK_WORDS]);
+#[derive(Clone)]
+pub struct ScryptBlock([u32; BLOCK_WORDS]);
 
-impl SalsaBlock {
+// The byte view of work memory relies on blocks having no padding.
+const _: () = assert!(core::mem::size_of::<ScryptBlock>() == BLOCK_SIZE);
+
+impl fmt::Debug for ScryptBlock {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str("ScryptBlock([REDACTED])")
+  }
+}
+
+impl ScryptBlock {
+  /// A block with every byte set to zero.
+  pub const ZERO: Self = Self::zero();
+
   #[inline(always)]
   const fn zero() -> Self {
     Self([0u32; BLOCK_WORDS])
@@ -492,7 +548,7 @@ impl SalsaBlock {
 /// then adds the original input back word-wise. Additions are `u32`
 /// modular-wraparound per the spec.
 #[inline(always)]
-fn salsa20_8(block: &mut SalsaBlock) {
+fn salsa20_8(block: &mut ScryptBlock) {
   let input = block.0;
   let mut y = block.0;
 
@@ -552,7 +608,7 @@ fn salsa20_8(block: &mut SalsaBlock) {
 }
 
 #[inline(always)]
-fn xor_block_into(dst: &mut SalsaBlock, src: &SalsaBlock) {
+fn xor_block_into(dst: &mut ScryptBlock, src: &ScryptBlock) {
   for (d, s) in dst.0.iter_mut().zip(src.0.iter()) {
     *d ^= *s;
   }
@@ -574,18 +630,18 @@ fn xor_block_into(dst: &mut SalsaBlock, src: &SalsaBlock) {
 /// state is the previous output XOR'd with the next input block), then
 /// shuffles the outputs as `(Y_0, Y_2, …, Y_{2r−2}, Y_1, Y_3, …, Y_{2r−1})`.
 #[inline]
-fn block_mix_into(src: &[SalsaBlock], dst: &mut [SalsaBlock], r: usize) {
+fn block_mix_into(src: &[ScryptBlock], dst: &mut [ScryptBlock], r: usize) {
   let two_r = r.strict_mul(2);
   debug_assert_eq!(src.len(), two_r);
   debug_assert_eq!(dst.len(), two_r);
 
-  let mut x = src[two_r.strict_sub(1)];
+  let mut x = src[two_r.strict_sub(1)].clone();
   for (i, block_in) in src.iter().enumerate() {
     xor_block_into(&mut x, block_in);
     salsa20_8(&mut x);
     // Y_i → shuffle: even i → i/2; odd i → r + i/2.
     let out = if i & 1 == 0 { i >> 1 } else { r.strict_add(i >> 1) };
-    dst[out] = x;
+    dst[out] = x.clone();
   }
 }
 
@@ -600,7 +656,7 @@ fn block_mix_into(src: &[SalsaBlock], dst: &mut [SalsaBlock], r: usize) {
 /// `integerify_low64` works on native-order `u32`s that were decoded from
 /// LE bytes, the result matches the RFC integer on both LE and BE hosts.
 #[inline(always)]
-fn integerify_low64(block: &SalsaBlock) -> u64 {
+fn integerify_low64(block: &ScryptBlock) -> u64 {
   (block.0[0] as u64) | ((block.0[1] as u64) << 32)
 }
 
@@ -614,7 +670,7 @@ fn integerify_low64(block: &SalsaBlock) -> u64 {
 /// loop reuses the same alignment, so no conditional final copy is needed.
 ///
 /// `v` must have exactly `n · 2r` blocks; `scratch` must have `2r`.
-fn ro_mix(chunk: &mut [SalsaBlock], v: &mut [SalsaBlock], scratch: &mut [SalsaBlock], n: usize, r: usize) {
+fn ro_mix(chunk: &mut [ScryptBlock], v: &mut [ScryptBlock], scratch: &mut [ScryptBlock], n: usize, r: usize) {
   let two_r = r.strict_mul(2);
   debug_assert_eq!(chunk.len(), two_r);
   debug_assert_eq!(v.len(), n.strict_mul(two_r));
@@ -632,11 +688,11 @@ fn ro_mix(chunk: &mut [SalsaBlock], v: &mut [SalsaBlock], scratch: &mut [SalsaBl
   // ends in `chunk`.
   let mut v_off = 0usize;
   for _ in 0..pairs {
-    v[v_off..v_off.strict_add(two_r)].copy_from_slice(chunk);
+    v[v_off..v_off.strict_add(two_r)].clone_from_slice(chunk);
     block_mix_into(chunk, scratch, r);
     v_off = v_off.strict_add(two_r);
 
-    v[v_off..v_off.strict_add(two_r)].copy_from_slice(scratch);
+    v[v_off..v_off.strict_add(two_r)].clone_from_slice(scratch);
     block_mix_into(scratch, chunk, r);
     v_off = v_off.strict_add(two_r);
   }
@@ -672,90 +728,52 @@ fn ro_mix(chunk: &mut [SalsaBlock], v: &mut [SalsaBlock], scratch: &mut [SalsaBl
 // ─── Zeroisation helpers ────────────────────────────────────────────────────
 
 #[inline]
-fn zeroize_blocks_no_fence(blocks: &mut [SalsaBlock]) {
+fn zeroize_blocks_no_fence(blocks: &mut [ScryptBlock]) {
   for block in blocks {
     ct::zeroize_words_no_fence(&mut block.0);
   }
 }
 
-/// Zeroising working set. Holds every buffer allocated during a single
-/// scrypt call so `Drop` wipes them on every exit path.
-struct ScryptState {
-  b_bytes: Vec<u8>,
-  b_u32: Vec<SalsaBlock>,
-  v: Vec<SalsaBlock>,
-  scratch: Vec<SalsaBlock>,
+/// The work memory of one scrypt operation, borrowed from owned or
+/// caller-provided blocks. Dropping it clears every block on every exit path.
+struct ScryptWork<'a> {
+  blocks: &'a mut [ScryptBlock],
 }
 
-impl ScryptState {
-  fn new(total_b_blocks: usize, v_blocks: usize, scratch_blocks: usize) -> Result<Self, ScryptError> {
-    let b_bytes_len = total_b_blocks
-      .checked_mul(BLOCK_SIZE)
-      .ok_or(ScryptError::ResourceOverflow)?;
-
-    let b_bytes = alloc_u8_vec(b_bytes_len)?;
-    let b_u32 = alloc_block_vec(total_b_blocks)?;
-    let v = alloc_block_vec(v_blocks)?;
-    let scratch = alloc_block_vec(scratch_blocks)?;
-
-    Ok(Self {
-      b_bytes,
-      b_u32,
-      v,
-      scratch,
-    })
+impl<'a> ScryptWork<'a> {
+  /// Borrow the first `shape.memory_blocks` blocks of `memory`. Their initial
+  /// contents are never read: PBKDF2, ROMix's first loop, and BlockMix write
+  /// every buffer before reading it.
+  fn new(memory: &'a mut [ScryptBlock], shape: &ScryptShape) -> Result<Self, ScryptError> {
+    let blocks = memory
+      .get_mut(..shape.memory_blocks)
+      .ok_or(ScryptError::MemoryTooSmall)?;
+    Ok(Self { blocks })
   }
 }
 
-impl Drop for ScryptState {
+impl Drop for ScryptWork<'_> {
   fn drop(&mut self) {
-    ct::zeroize_no_fence(&mut self.b_bytes);
-    zeroize_blocks_no_fence(&mut self.b_u32);
-    zeroize_blocks_no_fence(&mut self.v);
-    zeroize_blocks_no_fence(&mut self.scratch);
+    zeroize_blocks_no_fence(self.blocks);
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
-struct ScryptByteState {
-  b: Vec<u8>,
-  v: Vec<u8>,
-  scratch: Vec<u8>,
+/// View work-memory blocks as the bytes they occupy.
+fn blocks_as_bytes_mut(blocks: &mut [ScryptBlock]) -> &mut [u8] {
+  let len = blocks.len().strict_mul(BLOCK_SIZE);
+  // SAFETY: `ScryptBlock` is `[u32; 16]` without padding (asserted beside its
+  // definition), so the `len` bytes starting at `blocks` are initialized and lie
+  // in one allocation. `u8` has alignment 1, and every byte pattern is a valid
+  // `u32`, so writes through the view keep the blocks valid. The view reborrows
+  // `blocks` exclusively for its whole lifetime.
+  unsafe { core::slice::from_raw_parts_mut(blocks.as_mut_ptr().cast::<u8>(), len) }
 }
 
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
-impl ScryptByteState {
-  fn new(b_len: usize, v_len: usize, scratch_len: usize) -> Result<Self, ScryptError> {
-    Ok(Self {
-      b: alloc_u8_vec(b_len)?,
-      v: alloc_u8_vec(v_len)?,
-      scratch: alloc_u8_vec(scratch_len)?,
-    })
-  }
-}
-
-#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
-impl Drop for ScryptByteState {
-  fn drop(&mut self) {
-    ct::zeroize_no_fence(&mut self.b);
-    ct::zeroize_no_fence(&mut self.v);
-    ct::zeroize_no_fence(&mut self.scratch);
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-  }
-}
-
-fn alloc_u8_vec(len: usize) -> Result<Vec<u8>, ScryptError> {
-  let mut v: Vec<u8> = Vec::new();
+fn alloc_blocks(len: usize) -> Result<Vec<ScryptBlock>, ScryptError> {
+  let mut v: Vec<ScryptBlock> = Vec::new();
   v.try_reserve_exact(len).map_err(|_| ScryptError::AllocationFailed)?;
-  v.resize(len, 0);
-  Ok(v)
-}
-
-fn alloc_block_vec(len: usize) -> Result<Vec<SalsaBlock>, ScryptError> {
-  let mut v: Vec<SalsaBlock> = Vec::new();
-  v.try_reserve_exact(len).map_err(|_| ScryptError::AllocationFailed)?;
-  v.resize(len, SalsaBlock::zero());
+  v.resize(len, ScryptBlock::zero());
   Ok(v)
 }
 
@@ -765,10 +783,12 @@ fn alloc_block_vec(len: usize) -> Result<Vec<SalsaBlock>, ScryptError> {
 struct ScryptShape {
   n: usize,
   r: usize,
-  p: usize,
   two_r: usize,
   total_b_blocks: usize,
   v_blocks: usize,
+  /// Work memory for the portable layout: B as bytes, B as words, V, and
+  /// scratch. The x86 SSE2 layout omits the word copy of B and uses a prefix.
+  memory_blocks: usize,
 }
 
 #[inline]
@@ -786,124 +806,157 @@ fn scrypt_shape(params: &ScryptParams) -> Result<ScryptShape, ScryptError> {
   let total_b_blocks = p.checked_mul(two_r).ok_or(ScryptError::ResourceOverflow)?;
   let v_blocks = n.checked_mul(two_r).ok_or(ScryptError::ResourceOverflow)?;
 
-  let b_bytes = total_b_blocks
+  let memory_blocks = total_b_blocks
+    .checked_mul(2)
+    .and_then(|blocks| blocks.checked_add(v_blocks))
+    .and_then(|blocks| blocks.checked_add(two_r))
+    .ok_or(ScryptError::ResourceOverflow)?;
+  let memory_bytes = memory_blocks
     .checked_mul(BLOCK_SIZE)
     .ok_or(ScryptError::ResourceOverflow)?;
-  let v_bytes = v_blocks.checked_mul(BLOCK_SIZE).ok_or(ScryptError::ResourceOverflow)?;
-  let scratch_bytes = two_r.checked_mul(BLOCK_SIZE).ok_or(ScryptError::ResourceOverflow)?;
-  let portable_bytes = b_bytes
-    .checked_mul(2)
-    .and_then(|bytes| bytes.checked_add(v_bytes))
-    .and_then(|bytes| bytes.checked_add(scratch_bytes))
-    .ok_or(ScryptError::ResourceOverflow)?;
-  if portable_bytes > isize::MAX as usize {
+  if memory_bytes > isize::MAX as usize {
     return Err(ScryptError::ResourceOverflow);
   }
 
   Ok(ScryptShape {
     n,
     r,
-    p,
     two_r,
     total_b_blocks,
     v_blocks,
+    memory_blocks,
   })
 }
 
 fn scrypt_hash_portable(
-  params: &ScryptParams,
-  password: &[u8],
+  prf: &Pbkdf2Sha256,
   salt: &[u8],
   out: &mut [u8],
+  shape: ScryptShape,
+  work: &mut [ScryptBlock],
 ) -> Result<(), ScryptError> {
-  if out.len() < MIN_OUTPUT_LEN {
-    return Err(ScryptError::InvalidOutputLen);
-  }
-  let shape = scrypt_shape(params)?;
-  let mut state = ScryptState::new(shape.total_b_blocks, shape.v_blocks, shape.two_r)?;
-
-  // Pre-compute the HMAC prefix state from `password` once; both PBKDF2
-  // legs use the same key and `Pbkdf2Sha256::new` hashes the password
-  // plus runs the inner/outer compress eagerly. Reusing the state saves
-  // one password hash and two compress calls on the second leg.
-  let prf = Pbkdf2Sha256::new(password);
+  let (b_bytes, rest) = work.split_at_mut(shape.total_b_blocks);
+  let b_bytes = blocks_as_bytes_mut(b_bytes);
+  let (b_words, rest) = rest.split_at_mut(shape.total_b_blocks);
+  let (v, scratch) = rest.split_at_mut(shape.v_blocks);
 
   // Step 1: (B_0 || … || B_{p-1}) ← PBKDF2-HMAC-SHA256(P, S, 1, p·128·r).
   prf
-    .derive(salt, 1, &mut state.b_bytes)
+    .derive(salt, 1, b_bytes)
     .map_err(|_| ScryptError::InvalidOutputLen)?;
 
   // Decode byte form into little-endian u32 blocks.
-  for (block, chunk) in state.b_u32.iter_mut().zip(state.b_bytes.as_chunks::<BLOCK_SIZE>().0) {
+  for (block, chunk) in b_words.iter_mut().zip(b_bytes.as_chunks::<BLOCK_SIZE>().0) {
     for (word, bytes) in block.0.iter_mut().zip(chunk.as_chunks::<4>().0) {
       *word = u32::from_le_bytes(*bytes);
     }
   }
 
   // Step 2: for each p-chunk, apply ROMix.
-  for chunk_idx in 0..shape.p {
-    let chunk_start = chunk_idx.strict_mul(shape.two_r);
-    let chunk_end = chunk_start.strict_add(shape.two_r);
-    let chunk = &mut state.b_u32[chunk_start..chunk_end];
-    ro_mix(chunk, &mut state.v, &mut state.scratch, shape.n, shape.r);
+  for chunk in b_words.chunks_exact_mut(shape.two_r) {
+    ro_mix(chunk, v, scratch, shape.n, shape.r);
   }
 
   // Re-serialise the mixed B back into the byte buffer for the final
   // PBKDF2 leg (the spec treats B as a byte string at this point).
-  for (block, chunk) in state.b_u32.iter().zip(state.b_bytes.as_chunks_mut::<BLOCK_SIZE>().0) {
+  for (block, chunk) in b_words.iter().zip(b_bytes.as_chunks_mut::<BLOCK_SIZE>().0) {
     for (word, bytes) in block.0.iter().zip(chunk.as_chunks_mut::<4>().0) {
       bytes.copy_from_slice(&word.to_le_bytes());
     }
   }
 
   // Step 3: DK ← PBKDF2-HMAC-SHA256(P, B, 1, dkLen).
-  prf
-    .derive(&state.b_bytes, 1, out)
-    .map_err(|_| ScryptError::InvalidOutputLen)?;
-
-  // `state` wipes every working buffer on drop; `prf` zeroises its HMAC
-  // prefix state on drop per `Pbkdf2Sha256::Drop`.
+  prf.derive(b_bytes, 1, out).map_err(|_| ScryptError::InvalidOutputLen)?;
   Ok(())
 }
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 fn scrypt_hash_x86_sse2(
+  prf: &Pbkdf2Sha256,
+  salt: &[u8],
+  out: &mut [u8],
+  shape: ScryptShape,
+  work: &mut [ScryptBlock],
+) -> Result<(), ScryptError> {
+  let (b, rest) = work.split_at_mut(shape.total_b_blocks);
+  let (v, rest) = rest.split_at_mut(shape.v_blocks);
+  let scratch = &mut rest[..shape.two_r];
+  let (b, v, scratch) = (
+    blocks_as_bytes_mut(b),
+    blocks_as_bytes_mut(v),
+    blocks_as_bytes_mut(scratch),
+  );
+
+  prf.derive(salt, 1, b).map_err(|_| ScryptError::InvalidOutputLen)?;
+
+  for chunk in b.chunks_exact_mut(scratch.len()) {
+    x86_sse2::ro_mix(chunk, v, scratch, shape.n);
+  }
+
+  prf.derive(b, 1, out).map_err(|_| ScryptError::InvalidOutputLen)?;
+  Ok(())
+}
+
+fn scrypt_hash(
   params: &ScryptParams,
   password: &[u8],
   salt: &[u8],
   out: &mut [u8],
+  memory: Option<&mut [ScryptBlock]>,
 ) -> Result<(), ScryptError> {
   if out.len() < MIN_OUTPUT_LEN {
     return Err(ScryptError::InvalidOutputLen);
   }
   let shape = scrypt_shape(params)?;
-  let r128 = shape.r.checked_mul(128).ok_or(ScryptError::ResourceOverflow)?;
-  let b_len = shape.p.checked_mul(r128).ok_or(ScryptError::ResourceOverflow)?;
-  let v_len = shape.n.checked_mul(r128).ok_or(ScryptError::ResourceOverflow)?;
-  let mut state = ScryptByteState::new(b_len, v_len, r128)?;
+  // `owned` is declared first so it is freed after `work` clears it.
+  let mut owned;
+  let memory = match memory {
+    Some(memory) => memory,
+    None => {
+      owned = alloc_blocks(shape.memory_blocks)?;
+      owned.as_mut_slice()
+    }
+  };
+  let work = ScryptWork::new(memory, &shape)?;
 
+  // Pre-compute the HMAC prefix state from `password` once; both PBKDF2
+  // legs use the same key and `Pbkdf2Sha256::new` hashes the password
+  // plus runs the inner/outer compress eagerly. Reusing the state saves
+  // one password hash and two compress calls on the second leg. `prf`
+  // zeroises its HMAC prefix state on drop per `Pbkdf2Sha256::Drop`.
   let prf = Pbkdf2Sha256::new(password);
-
-  prf
-    .derive(salt, 1, &mut state.b)
-    .map_err(|_| ScryptError::InvalidOutputLen)?;
-
-  for chunk in state.b.chunks_exact_mut(r128) {
-    x86_sse2::ro_mix(chunk, &mut state.v, &mut state.scratch, shape.n);
-  }
-
-  prf
-    .derive(&state.b, 1, out)
-    .map_err(|_| ScryptError::InvalidOutputLen)?;
-
-  Ok(())
-}
-
-fn scrypt_hash(params: &ScryptParams, password: &[u8], salt: &[u8], out: &mut [u8]) -> Result<(), ScryptError> {
   match active_kernel() {
     #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
-    KernelId::X86Sse2 => scrypt_hash_x86_sse2(params, password, salt, out),
-    KernelId::Portable => scrypt_hash_portable(params, password, salt, out),
+    KernelId::X86Sse2 => scrypt_hash_x86_sse2(&prf, salt, out, shape, work.blocks),
+    KernelId::Portable => scrypt_hash_portable(&prf, salt, out, shape, work.blocks),
+  }
+}
+
+fn scrypt_verify(
+  params: &ScryptParams,
+  password: &[u8],
+  salt: &[u8],
+  expected: &[u8],
+  memory: Option<&mut [ScryptBlock]>,
+) -> Result<(), VerificationError> {
+  if expected.len() < MIN_OUTPUT_LEN {
+    return Err(VerificationError::new());
+  }
+  let mut actual = Vec::new();
+  actual
+    .try_reserve_exact(expected.len())
+    .map_err(|_| VerificationError::new())?;
+  actual.resize(expected.len(), 0);
+  let hash_failed = scrypt_hash(params, password, salt, &mut actual, memory).is_err();
+
+  let bytes_match = ct::public_len_eq(&actual, expected);
+  ct::zeroize(&mut actual);
+
+  let success = !hash_failed & bytes_match.declassify();
+  if core::hint::black_box(success) {
+    Ok(())
+  } else {
+    Err(VerificationError::new())
   }
 }
 
@@ -948,7 +1001,29 @@ impl Scrypt {
   /// Returns [`ScryptError`] if the output length, resource shape, or
   /// working-set allocation is invalid.
   pub fn derive(params: &ScryptParams, password: &[u8], salt: &[u8], out: &mut [u8]) -> Result<(), ScryptError> {
-    scrypt_hash(params, password, salt, out)
+    scrypt_hash(params, password, salt, out, None)
+  }
+
+  /// Derive bytes into `out` using caller-provided work memory.
+  ///
+  /// The operation uses the first [`ScryptParams::memory_blocks`] blocks of
+  /// `memory` instead of allocating its own, ignores their initial contents,
+  /// and clears them before returning. Output-length and resource-shape
+  /// errors return before `memory` is touched.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`ScryptError::MemoryTooSmall`] if `memory` is too short, or
+  /// another [`ScryptError`] if the output length or resource shape is
+  /// invalid.
+  pub fn derive_with_memory(
+    params: &ScryptParams,
+    password: &[u8],
+    salt: &[u8],
+    out: &mut [u8],
+    memory: &mut [ScryptBlock],
+  ) -> Result<(), ScryptError> {
+    scrypt_hash(params, password, salt, out, Some(memory))
   }
 
   /// Verify `expected` after traversing the freshly computed hash and every
@@ -963,25 +1038,25 @@ impl Scrypt {
   /// input, or parameter error.
   #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
   pub fn verify(params: &ScryptParams, password: &[u8], salt: &[u8], expected: &[u8]) -> Result<(), VerificationError> {
-    if expected.len() < MIN_OUTPUT_LEN {
-      return Err(VerificationError::new());
-    }
-    let mut actual = Vec::new();
-    actual
-      .try_reserve_exact(expected.len())
-      .map_err(|_| VerificationError::new())?;
-    actual.resize(expected.len(), 0);
-    let hash_failed = Self::derive(params, password, salt, &mut actual).is_err();
+    scrypt_verify(params, password, salt, expected, None)
+  }
 
-    let bytes_match = ct::public_len_eq(&actual, expected);
-    ct::zeroize(&mut actual);
-
-    let success = !hash_failed & bytes_match.declassify();
-    if core::hint::black_box(success) {
-      Ok(())
-    } else {
-      Err(VerificationError::new())
-    }
+  /// Verify `expected` as [`Self::verify`] does, using caller-provided work
+  /// memory as described for [`Self::derive_with_memory`].
+  ///
+  /// # Errors
+  ///
+  /// Returns an opaque [`VerificationError`] on any mismatch, malformed
+  /// input, parameter error, or short `memory`.
+  #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+  pub fn verify_with_memory(
+    params: &ScryptParams,
+    password: &[u8],
+    salt: &[u8],
+    expected: &[u8],
+    memory: &mut [ScryptBlock],
+  ) -> Result<(), VerificationError> {
+    scrypt_verify(params, password, salt, expected, Some(memory))
   }
 }
 
@@ -1256,19 +1331,114 @@ mod tests {
     }
   }
 
+  /// Work memory whose every word differs from a freshly zeroed allocation.
+  fn dirty_memory(blocks: usize) -> alloc::vec::Vec<ScryptBlock> {
+    vec![ScryptBlock([0xa5a5_a5a5; BLOCK_WORDS]); blocks]
+  }
+
+  fn is_zero(block: &ScryptBlock) -> bool {
+    block.0.iter().all(|&word| word == 0)
+  }
+
+  fn is_dirty(block: &ScryptBlock) -> bool {
+    block.0.iter().all(|&word| word == 0xa5a5_a5a5)
+  }
+
+  #[test]
+  fn caller_memory_ignores_initial_contents_and_is_cleared() {
+    // RFC 7914 §5: B is p·2r blocks and V is N·2r blocks; the portable layout
+    // also holds B as bytes and one 2r-block scratch buffer.
+    assert_eq!(small_params().memory_blocks(), Ok((2 + 16 + 1) * 2));
+
+    let check = |params: ScryptParams, password: &[u8], salt: &[u8], expected: &[u8]| {
+      let used = params.memory_blocks().expect("test profile must fit");
+      // One block beyond the requirement must stay untouched.
+      let mut memory = dirty_memory(used.strict_add(1));
+      let mut actual = vec![0u8; expected.len()];
+      Scrypt::derive_with_memory(&params, password, salt, &mut actual, &mut memory)
+        .expect("scrypt must derive in caller memory");
+      assert_eq!(actual, expected);
+      assert!(memory[..used].iter().all(is_zero), "work memory left uncleared");
+      assert!(is_dirty(&memory[used]), "wrote past the work memory");
+    };
+    check(small_params(), b"", b"", &RFC_V1_EXPECTED);
+    // Several ROMix chunks; the oracle's AArch64 SHA-256 dependency is rejected by Miri.
+    #[cfg(not(miri))]
+    check(
+      ScryptParams::new(6, 2, 3).expect("multi-chunk scrypt profile must be valid"),
+      b"password",
+      b"salty-salty-salt",
+      &oracle_scrypt(b"password", b"salty-salty-salt", 6, 2, 3, 48),
+    );
+  }
+
+  #[test]
+  fn caller_memory_failures_and_verification() {
+    let params = small_params();
+    let used = params.memory_blocks().expect("small profile must fit");
+
+    let mut short = dirty_memory(used.strict_sub(1));
+    let mut out = [0u8; 16];
+    assert_eq!(
+      Scrypt::derive_with_memory(&params, b"password", b"salt", &mut out, &mut short),
+      Err(ScryptError::MemoryTooSmall)
+    );
+    assert_eq!(
+      Scrypt::derive_with_memory(&params, b"password", b"salt", &mut [], &mut short),
+      Err(ScryptError::InvalidOutputLen)
+    );
+    assert!(short.iter().all(is_dirty));
+
+    assert_eq!(
+      Scrypt::verify_with_memory(&params, b"", b"", &RFC_V1_EXPECTED, &mut short),
+      Err(VerificationError::new())
+    );
+    let mut memory = dirty_memory(used);
+    assert_eq!(
+      Scrypt::verify_with_memory(&params, b"", b"", &RFC_V1_EXPECTED, &mut memory),
+      Ok(())
+    );
+    assert!(memory.iter().all(is_zero));
+    memory.fill(ScryptBlock([0xa5a5_a5a5; BLOCK_WORDS]));
+    assert_eq!(
+      Scrypt::verify_with_memory(&params, b"wrong", b"", &RFC_V1_EXPECTED, &mut memory),
+      Err(VerificationError::new())
+    );
+    assert!(memory.iter().all(is_zero));
+  }
+
   #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
   #[test]
   fn sse2_backend_matches_portable() {
     let cases: &[(u8, u32, u32, usize)] = &[(4, 1, 1, 32), (5, 2, 1, 48), (6, 2, 2, 32), (7, 8, 1, 64)];
     for &(log_n, r, p, output_len) in cases {
       let params = ScryptParams::new(log_n, r, p).expect("backend differential scrypt profile must be valid");
+      let shape = scrypt_shape(&params).expect("backend differential shape must fit");
+      let prf = Pbkdf2Sha256::new(b"password");
       let mut portable = vec![0u8; output_len];
       let mut sse2 = vec![0u8; output_len];
-      scrypt_hash_portable(&params, b"password", b"salty-salty-salt", &mut portable)
-        .expect("portable scrypt derivation must succeed");
-      scrypt_hash_x86_sse2(&params, b"password", b"salty-salty-salt", &mut sse2)
-        .expect("SSE2 scrypt derivation must succeed");
+      // Both layouts must ignore whatever the work memory held before.
+      scrypt_hash_portable(
+        &prf,
+        b"salty-salty-salt",
+        &mut portable,
+        shape,
+        &mut dirty_memory(shape.memory_blocks),
+      )
+      .expect("portable scrypt derivation must succeed");
+      scrypt_hash_x86_sse2(
+        &prf,
+        b"salty-salty-salt",
+        &mut sse2,
+        shape,
+        &mut dirty_memory(shape.memory_blocks),
+      )
+      .expect("SSE2 scrypt derivation must succeed");
       assert_eq!(sse2, portable);
+      assert_eq!(
+        portable,
+        oracle_scrypt(b"password", b"salty-salty-salt", log_n, r, p, output_len)
+      );
     }
   }
 
@@ -1330,6 +1500,7 @@ mod tests {
       Scrypt::derive(&params, b"password", b"salt", &mut output),
       Err(ScryptError::ResourceOverflow)
     );
+    assert_eq!(params.memory_blocks(), Err(ScryptError::ResourceOverflow));
     #[cfg(feature = "phc-strings")]
     assert_eq!(ScryptPassword::new(params), Err(ScryptError::ResourceOverflow));
   }
@@ -1367,9 +1538,9 @@ mod tests {
 
   #[test]
   fn salsa20_8_is_deterministic_and_non_identity() {
-    let original = SalsaBlock([0x1234_5678; BLOCK_WORDS]);
-    let mut first = original;
-    let mut second = original;
+    let original = ScryptBlock([0x1234_5678; BLOCK_WORDS]);
+    let mut first = original.clone();
+    let mut second = original.clone();
     salsa20_8(&mut first);
     salsa20_8(&mut second);
     assert_eq!(first.0, second.0);

@@ -143,6 +143,10 @@ case "$MIRI_SCOPE" in
       "ml-kem,diag" \
       1
     run_miri_test_target "Argon2 MatrixView/portable kernel under Miri" "argon2_miri" "argon2"
+    run_miri_lib_filter_features "scrypt caller work-memory byte view under Miri" \
+      "auth::scrypt::tests::caller_memory" \
+      "scrypt" \
+      2
     ;;
   rsa)
     echo "Scope: RSA volatile fixed-window reads, private scratch/clearing layouts, and small-number Miller-Rabin"
