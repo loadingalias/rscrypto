@@ -5,7 +5,7 @@
 
 use super::{
   MlDsaError, Parameters, encoding,
-  poly::{Poly, add, decompose, high_bits, power2_round, use_hint},
+  poly::{NttBlinding, Poly, add, decompose, high_bits, power2_round, use_hint},
   sampling,
 };
 use crate::secret::ZeroizingBytes;
@@ -128,6 +128,7 @@ pub(super) fn keygen<const K: usize, const L: usize>(
   let noise_bytes = p.eta_bits.strict_mul(32);
   let s2_start = 128usize.strict_add(L.strict_mul(noise_bytes));
   let t0_start = s2_start.strict_add(K.strict_mul(noise_bytes));
+  let blinding = NttBlinding::new(&bytes[96..]);
   let mut s1 = vector::<L>();
   for (i, poly) in s1.iter_mut().enumerate() {
     sampling::noise(&bytes[32..96], nonce(i), p.eta, poly)?;
@@ -138,7 +139,7 @@ pub(super) fn keygen<const K: usize, const L: usize>(
       Some(p.eta),
       &mut secret[start..start.strict_add(noise_bytes)],
     );
-    poly.ntt();
+    blinding.ntt(poly);
   }
   let mut row = Poly::zero();
   let mut s2 = Poly::zero();
@@ -203,15 +204,16 @@ impl<const K: usize, const L: usize> SigningState<K, L> {
     let mut offset = 128usize;
     let size = p.eta_bits.strict_mul(32);
     let mut valid = true;
+    let blinding = NttBlinding::new(&secret[32..64]);
     for poly in self.s1.iter_mut().chain(self.s2.iter_mut()) {
       valid &= encoding::decode_noise(&secret[offset..offset.strict_add(size)], p, poly);
       offset = offset.strict_add(size);
-      poly.ntt();
+      blinding.ntt(poly);
     }
     for poly in &mut self.t0 {
       encoding::unpack(&secret[offset..offset.strict_add(416)], 13, 4096, poly);
       offset = offset.strict_add(416);
-      poly.ntt();
+      blinding.ntt(poly);
     }
     if !valid {
       return Err(MlDsaError::InvalidSecretKey);

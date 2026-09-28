@@ -150,6 +150,10 @@ when the coefficients are random; random operands of equal distribution are
 indistinguishable, and scalar Montgomery products show no difference. This
 is a power effect on those hosts, not a secret-dependent instruction choice.
 The `mldsa_probe_*` diagnostic cases in `ct.toml` reproduce it.
+ML-DSA secret polynomials have small, heavily repeated coefficients, so on
+POWER's vector backend their forward NTT is blinded: key generation and key
+preparation transform `s + r` and subtract `NTT(r)`, where `r` is derived from
+the secret seed `K`. Outputs are unchanged; other targets transform directly.
 
 ML-KEM decapsulation follows FIPS 203: the ciphertext polynomial is
 decompressed before its NTT, so an attacker cannot choose the sparse NTT inputs

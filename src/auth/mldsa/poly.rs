@@ -336,7 +336,6 @@ impl Poly {
       *a = sub(*a, b);
     }
   }
-
   /// Aggregate the norm decision without returning at the first coefficient.
   pub(super) fn exceeds_bound(&self, bound: u32) -> u32 {
     let mut invalid = 0;
@@ -346,6 +345,97 @@ impl Poly {
       invalid |= u32::from(magnitude >= bound);
     }
     invalid
+  }
+}
+
+/// Forward-NTT blinding for small secret polynomials on POWER.
+///
+/// Some POWER10 hosts run vector multiplies measurably faster when their
+/// operands repeat values, and small secret coefficients repeat heavily (see
+/// `docs/constant-time.md`). On that backend `ntt` transforms `s + r` and then
+/// subtracts `NTT(r)`, which equals `NTT(s)` by linearity, so the multiplier only
+/// sees uniform data. `r` is derived from the secret seed `K`, which keeps
+/// deterministic signing and key generation unchanged. Elsewhere `ntt` is the
+/// plain transform and construction does no work.
+pub(super) struct NttBlinding {
+  #[cfg(all(
+    target_arch = "powerpc64",
+    target_endian = "little",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  masks: Option<(Poly, Poly)>,
+}
+
+/// SHAKE256 domain for the blinding polynomial; distinct from every FIPS 204 use of `K`.
+#[cfg(all(
+  target_arch = "powerpc64",
+  target_endian = "little",
+  target_os = "linux",
+  not(miri),
+  not(feature = "portable-only")
+))]
+const NTT_BLINDING_DOMAIN: &[u8] = b"rscrypto ML-DSA POWER NTT blinding";
+
+impl NttBlinding {
+  /// Derive the blinding for secret seed `key` when the POWER vector backend is selected.
+  pub(super) fn new(key: &[u8]) -> Self {
+    #[cfg(all(
+      target_arch = "powerpc64",
+      target_endian = "little",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    {
+      if !vector4::available() {
+        return Self { masks: None };
+      }
+      // Fixed work: 768 SHAKE256 bytes, 23-bit coefficients below 2q, one masked
+      // reduction each, and one transform.
+      let mut bytes = crate::secret::ZeroizingBytes::<{ 3 * N }>::zeroed();
+      super::sampling::hash(&[key, NTT_BLINDING_DOMAIN], bytes.as_mut_array());
+      let mut mask = Poly::zero();
+      for (coefficient, chunk) in mask.0.iter_mut().zip(bytes.as_array().as_chunks::<3>().0) {
+        *coefficient = reduce(u32::from_le_bytes([chunk[0], chunk[1], chunk[2] & 0x7f, 0]));
+      }
+      let mut transformed = Poly::zero();
+      transformed.copy_from(&mask);
+      transformed.ntt();
+      Self {
+        masks: Some((mask, transformed)),
+      }
+    }
+    #[cfg(not(all(
+      target_arch = "powerpc64",
+      target_endian = "little",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    )))]
+    {
+      let _ = key;
+      Self {}
+    }
+  }
+
+  /// Forward-transform a canonical secret polynomial.
+  pub(super) fn ntt(&self, poly: &mut Poly) {
+    #[cfg(all(
+      target_arch = "powerpc64",
+      target_endian = "little",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    if let Some((mask, transformed)) = &self.masks {
+      poly.add_assign(mask);
+      poly.ntt();
+      poly.sub_assign(transformed);
+      return;
+    }
+    poly.ntt();
   }
 }
 
@@ -618,6 +708,41 @@ mod tests {
       not(feature = "portable-only")
     )
   ))]
+  #[test]
+  fn blinded_ntt_matches_plain_ntt() {
+    // On POWER with the vector backend this exercises `s + r` blinding; elsewhere
+    // it checks that the wrapper is the plain transform.
+    for (seed, key) in [[0u8; 32], [0x5a; 32], [0xff; 32]].iter().enumerate() {
+      let blinding = super::NttBlinding::new(key);
+      for case in 0..6u32 {
+        let mut plain = Poly::zero();
+        for (i, x) in plain.0.iter_mut().enumerate() {
+          let i = u32::try_from(i).expect("index fits u32");
+          *x = match case {
+            0 => 0,
+            1 => Q - 1,
+            // Small secret coefficients -2..=2 in canonical form.
+            2 => (i % 5 + Q - 2) % Q,
+            3 => (i.wrapping_mul(2_654_435_761) ^ u32::try_from(seed).expect("seed")) % Q,
+            4 => (i % 9 + Q - 4) % Q,
+            _ => {
+              if i % 2 == 0 {
+                1
+              } else {
+                Q - 1
+              }
+            }
+          };
+        }
+        let mut blinded = Poly::zero();
+        blinded.copy_from(&plain);
+        blinding.ntt(&mut blinded);
+        plain.ntt();
+        assert_eq!(blinded.0, plain.0, "key {seed} case {case}");
+      }
+    }
+  }
+
   #[test]
   fn ntt_accelerated_matches_portable() {
     #[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
