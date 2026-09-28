@@ -428,3 +428,213 @@ fn acvp_verification_accepts_and_rejects() {
   }
   assert_eq!(count, 180);
 }
+
+// C2SP Wycheproof ML-DSA corpora; provenance in testdata/mldsa/wycheproof/README.md.
+macro_rules! wycheproof {
+  ($name:literal) => {
+    serde_json::from_str::<Value>(include_str!(concat!("../../../testdata/mldsa/wycheproof/", $name)))
+      .expect("Wycheproof JSON")
+  };
+}
+
+fn optional_hex(value: &Value, field: &str) -> Vec<u8> {
+  value.get(field).map(hex).unwrap_or_default()
+}
+
+fn wycheproof_valid(case: &Value) -> bool {
+  let valid = case["result"] == "valid";
+  assert!(
+    valid || case["result"] == "invalid",
+    "unexpected result {}",
+    case["result"]
+  );
+  valid
+}
+
+/// Sign every case. Seeded corpora derive the key from `privateSeed`; the others
+/// import an expanded key. Invalid cases are wrong seed or key lengths,
+/// out-of-range secret vectors, and oversized contexts: each must refuse to sign.
+macro_rules! wycheproof_sign {
+  ($suite:expr, seeded = $seeded:literal, $profile:ident, $secret:ident, $p:ident, $valid:literal, $invalid:literal) => {{
+    let suite = $suite;
+    let (mut valid, mut invalid) = (0usize, 0usize);
+    for group in groups(&suite) {
+      let secret = if $seeded {
+        <[u8; 32]>::try_from(optional_hex(group, "privateSeed").as_slice())
+          .ok()
+          .map(|seed| {
+            let (public, secret) = $profile::keypair_from_seed(&seed).expect("key generation");
+            assert!(
+              public.as_bytes().as_slice() == hex(&group["publicKey"]).as_slice(),
+              "seeded public key"
+            );
+            secret
+          })
+      } else {
+        $secret::try_from_slice(&optional_hex(group, "privateKey")).ok()
+      };
+      for case in cases(group) {
+        let tc_id = &case["tcId"];
+        let expected_valid = wycheproof_valid(case);
+        let Some(secret) = secret.as_ref() else {
+          assert!(!expected_valid, "tcId {tc_id}: valid case with a rejected key");
+          invalid = invalid.strict_add(1);
+          continue;
+        };
+        let exposed = secret.expose_secret();
+        let secret_bytes = exposed.as_bytes();
+        let context = optional_hex(case, "ctx");
+        let random: [u8; 32] = case
+          .get("rnd")
+          .map_or([0; 32], |rnd| hex(rnd).try_into().expect("32-byte randomness"));
+        let signature = if let Some(message) = case.get("msg") {
+          let message = hex(message);
+          if let Some(expected_mu) = case.get("mu") {
+            let mut mu = [0; 64];
+            representative(&secret_bytes[64..128], &message, &context, None, &mut mu).expect("valid context");
+            assert!(mu.as_slice() == hex(expected_mu).as_slice(), "tcId {tc_id} mu");
+          }
+          let signed = if case.get("rnd").is_some() {
+            secret.sign_with(&message, &context, |out| {
+              out.copy_from_slice(&random);
+              Ok(())
+            })
+          } else {
+            secret.sign_deterministic(&message, &context)
+          };
+          signed.ok().map(|signature| signature.to_bytes().to_vec())
+        } else {
+          let mu: [u8; 64] = hex(&case["mu"]).try_into().expect("64-byte mu");
+          let mut signature = vec![0; $p.signature_len()];
+          with_parameters!($p, sign(secret_bytes, &mu, &random, $p, &mut signature))
+            .ok()
+            .map(|()| signature)
+        };
+        if expected_valid {
+          let signature = signature.expect("valid case must sign");
+          assert!(signature == hex(&case["sig"]), "tcId {tc_id} signature");
+          valid = valid.strict_add(1);
+        } else {
+          assert!(signature.is_none(), "tcId {tc_id}: invalid case produced a signature");
+          invalid = invalid.strict_add(1);
+        }
+      }
+    }
+    assert_eq!((valid, invalid), ($valid, $invalid));
+  }};
+}
+
+/// Verify every case through the public API. Rejection at key import, signature
+/// parsing, or verification all count as rejection.
+macro_rules! wycheproof_verify {
+  ($suite:expr, $public:ident, $signature:ident, $valid:literal, $invalid:literal) => {{
+    let suite = $suite;
+    let (mut valid, mut invalid) = (0usize, 0usize);
+    for group in groups(&suite) {
+      let key = $public::try_from_slice(&hex(&group["publicKey"])).ok();
+      for case in cases(group) {
+        let expected_valid = wycheproof_valid(case);
+        let message = hex(&case["msg"]);
+        let context = optional_hex(case, "ctx");
+        let accepted = key.as_ref().is_some_and(|key| {
+          $signature::try_from_slice(&hex(&case["sig"]))
+            .is_ok_and(|signature| key.verify_with_context(&message, &context, &signature).is_ok())
+        });
+        assert_eq!(accepted, expected_valid, "tcId {}", case["tcId"]);
+        if expected_valid {
+          valid = valid.strict_add(1);
+        } else {
+          invalid = invalid.strict_add(1);
+        }
+      }
+    }
+    assert_eq!((valid, invalid), ($valid, $invalid));
+  }};
+}
+
+#[test]
+fn wycheproof_mldsa44() {
+  wycheproof_sign!(
+    wycheproof!("mldsa_44_sign_noseed_test.json"),
+    seeded = false,
+    MlDsa44,
+    MlDsa44SecretKey,
+    P44,
+    68,
+    5
+  );
+  wycheproof_sign!(
+    wycheproof!("mldsa_44_sign_seed_test.json"),
+    seeded = true,
+    MlDsa44,
+    MlDsa44SecretKey,
+    P44,
+    82,
+    4
+  );
+  wycheproof_verify!(
+    wycheproof!("mldsa_44_verify_test.json"),
+    MlDsa44PublicKey,
+    MlDsa44Signature,
+    77,
+    103
+  );
+}
+
+#[test]
+fn wycheproof_mldsa65() {
+  wycheproof_sign!(
+    wycheproof!("mldsa_65_sign_noseed_test.json"),
+    seeded = false,
+    MlDsa65,
+    MlDsa65SecretKey,
+    P65,
+    73,
+    5
+  );
+  wycheproof_sign!(
+    wycheproof!("mldsa_65_sign_seed_test.json"),
+    seeded = true,
+    MlDsa65,
+    MlDsa65SecretKey,
+    P65,
+    101,
+    4
+  );
+  wycheproof_verify!(
+    wycheproof!("mldsa_65_verify_test.json"),
+    MlDsa65PublicKey,
+    MlDsa65Signature,
+    79,
+    131
+  );
+}
+
+#[test]
+fn wycheproof_mldsa87() {
+  wycheproof_sign!(
+    wycheproof!("mldsa_87_sign_noseed_test.json"),
+    seeded = false,
+    MlDsa87,
+    MlDsa87SecretKey,
+    P87,
+    64,
+    5
+  );
+  wycheproof_sign!(
+    wycheproof!("mldsa_87_sign_seed_test.json"),
+    seeded = true,
+    MlDsa87,
+    MlDsa87SecretKey,
+    P87,
+    92,
+    4
+  );
+  wycheproof_verify!(
+    wycheproof!("mldsa_87_verify_test.json"),
+    MlDsa87PublicKey,
+    MlDsa87Signature,
+    71,
+    170
+  );
+}

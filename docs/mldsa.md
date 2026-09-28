@@ -32,7 +32,9 @@ at the multiplication routine. Roots are generated from the standard's 1753
 root and eight-bit index reversal, not imported from an implementation table.
 
 All 615 retained ACVP cases and their provenance are described in
-[the vector manifest](../testdata/mldsa/acvp/README.md). No third-party
+[the vector manifest](../testdata/mldsa/acvp/README.md). All 1,138 pinned
+Wycheproof signing and verification cases are described in
+[the Wycheproof manifest](../testdata/mldsa/wycheproof/README.md). No third-party
 implementation source is copied, translated, or bundled into the primitive.
 
 ## API contract
