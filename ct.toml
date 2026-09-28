@@ -5545,6 +5545,39 @@ gate = "diagnostic"
 reason = "Tests whether the sign of small ML-DSA secret coefficients changes POWER vector product timing."
 
 [[dudect_case]]
+name = "mldsa_probe_prepare44_zero_secret_vs_random"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_prepare44_zero_secret_vs_random"
+left_class = "one valid ML-DSA-44 expanded secret whose s1 and s2 coefficients are all zero"
+right_class = "random selection from a pool of 32 independently seeded valid ML-DSA-44 expanded secret keys"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Measures the POWER repeated-value multiply effect at the production preparation boundary: maximally repetitive secret coefficients against generated keys."
+
+[[dudect_case]]
+name = "mldsa_probe_prepare65_zero_secret_vs_random"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_prepare65_zero_secret_vs_random"
+left_class = "one valid ML-DSA-65 expanded secret whose s1 and s2 coefficients are all zero"
+right_class = "random selection from a pool of 32 independently seeded valid ML-DSA-65 expanded secret keys"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Measures the POWER repeated-value multiply effect at the production preparation boundary: maximally repetitive secret coefficients against generated keys."
+
+[[dudect_case]]
+name = "mldsa_probe_prepare87_zero_secret_vs_random"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_prepare87_zero_secret_vs_random"
+left_class = "one valid ML-DSA-87 expanded secret whose s1 and s2 coefficients are all zero"
+right_class = "random selection from a pool of 32 independently seeded valid ML-DSA-87 expanded secret keys"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Measures the POWER repeated-value multiply effect at the production preparation boundary: maximally repetitive secret coefficients against generated keys."
+
+[[dudect_case]]
 name = "mldsa_norm_first_vs_last"
 primitive = "signature.mldsa.secret_kernels"
 filter = "mldsa_norm_first_vs_last"

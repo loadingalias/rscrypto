@@ -1438,6 +1438,86 @@ mldsa_preparation_case!(
   rscrypto::auth::diag_mldsa_prepare87
 );
 
+/// Re-encode every `s1` and `s2` coefficient of an expanded ML-DSA secret as zero.
+///
+/// Each coefficient stores `eta - value` in `eta_bits` bits, so zero is `eta`.
+/// Only `s1` and `s2` change; `rho`, `K`, `tr`, and `t0` keep their valid bytes.
+fn mldsa_zero_noise(secret: &mut [u8], k: usize, l: usize, eta: u8, eta_bits: usize) {
+  let polys = k.strict_add(l);
+  let bytes_per_poly = eta_bits.strict_mul(32);
+  let region = &mut secret[128..128usize.strict_add(polys.strict_mul(bytes_per_poly))];
+  region.fill(0);
+  for coefficient in 0..polys.strict_mul(256) {
+    for bit in 0..eta_bits {
+      if (eta >> bit) & 1 == 1 {
+        let position = coefficient.strict_mul(eta_bits).strict_add(bit);
+        region[position / 8] |= 1 << (position % 8);
+      }
+    }
+  }
+}
+
+// Diagnostic probe for the POWER power effect at the real preparation boundary:
+// a maximally repetitive valid secret against independently generated keys.
+macro_rules! mldsa_probe_preparation_case {
+  ($name:ident, $profile:ty, $operation:path, k = $k:literal, l = $l:literal, eta = $eta:literal, bits = $bits:literal) => {
+    fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let (_, fixed) =
+        <$profile>::keypair_from_seed(&[0x42; 32]).expect("fixed ML-DSA evidence seed must generate a key");
+      let mut zero = *fixed.expose_secret().as_bytes();
+      mldsa_zero_noise(&mut zero, $k, $l, $eta, $bits);
+      assert!($operation(&zero), "zero-coefficient secret must decode");
+      let pool: Vec<_> = (0..32)
+        .map(|_| {
+          let (_, secret) =
+            <$profile>::keypair_from_seed(&rand_array::<32>(rng)).expect("ML-DSA evidence seed must generate a key");
+          *secret.expose_secret().as_bytes()
+        })
+        .collect();
+      let mut inputs = Vec::with_capacity(samples());
+      for _ in 0..samples() {
+        let class = random_class(rng);
+        let encoded = if matches!(class, Class::Left) {
+          zero
+        } else {
+          pool[rng.random_range(0..pool.len())]
+        };
+        inputs.push((class, encoded));
+      }
+      for (class, encoded) in inputs {
+        runner.run_one(class, || $operation(core::hint::black_box(&encoded)));
+      }
+    }
+  };
+}
+mldsa_probe_preparation_case!(
+  mldsa_probe_prepare44_zero_secret_vs_random,
+  rscrypto::MlDsa44,
+  rscrypto::auth::diag_mldsa_prepare44,
+  k = 4,
+  l = 4,
+  eta = 2,
+  bits = 3
+);
+mldsa_probe_preparation_case!(
+  mldsa_probe_prepare65_zero_secret_vs_random,
+  rscrypto::MlDsa65,
+  rscrypto::auth::diag_mldsa_prepare65,
+  k = 6,
+  l = 5,
+  eta = 4,
+  bits = 4
+);
+mldsa_probe_preparation_case!(
+  mldsa_probe_prepare87_zero_secret_vs_random,
+  rscrypto::MlDsa87,
+  rscrypto::auth::diag_mldsa_prepare87,
+  k = 8,
+  l = 7,
+  eta = 2,
+  bits = 3
+);
+
 macro_rules! mlkem_dudect_profile {
   (
     $keygen_secret_noise:ident,
@@ -3095,6 +3175,9 @@ ctbench_main_with_seeds!(
   (mldsa_probe_product_minus_one_vs_fixed, Some(0x6d6c647370720011)),
   (mldsa_probe_product_offset_zero_vs_fixed, Some(0x6d6c647370720012)),
   (mldsa_probe_product_one_vs_minus_one, Some(0x6d6c647370720013)),
+  (mldsa_probe_prepare44_zero_secret_vs_random, Some(0x6d6c647370720014)),
+  (mldsa_probe_prepare65_zero_secret_vs_random, Some(0x6d6c647370720015)),
+  (mldsa_probe_prepare87_zero_secret_vs_random, Some(0x6d6c647370720016)),
   (mldsa_norm_first_vs_last, Some(0x6d6c64736100000f)),
   (mldsa_prepare44_fixed_vs_random, Some(0x6d6c647361000010)),
   (mldsa_prepare65_fixed_vs_random, Some(0x6d6c647361000011)),
