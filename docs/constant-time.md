@@ -156,9 +156,9 @@ decompressed before its NTT, so an attacker cannot choose the sparse NTT inputs
 that frequency attacks on the inverse NTT require (Yu et al., CHES 2024).
 Prepared decapsulation keys add a second barrier: decryption adds a secret dense
 polynomial, derived once from the implicit-rejection secret `z`, before the
-inverse NTT and removes its transform afterwards. The message is unchanged and
-per-call work adds only 256 modular additions. One-shot decapsulation does not
-mask yet.
+inverse NTT, and the inverse NTT's fused final pass removes its transform. The
+message is unchanged and per-call work is unchanged. One-shot decapsulation does
+not mask yet.
 
 Authentication failures remain opaque even when their inputs are public.
 See [`secret-ownership.md`](secret-ownership.md) for comparison capabilities and [`secret-lifecycle.md`](secret-lifecycle.md)

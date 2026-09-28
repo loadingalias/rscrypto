@@ -175,21 +175,22 @@ impl<const K: usize> Drop for PreparedDecapsulationArithmetic<K> {
 
 /// Secret additive mask for the decryption inverse NTT.
 ///
-/// Decryption starts its accumulator at `hat` and adds `normal`, the inverse
-/// NTT of `hat`, to `v` afterwards. By linearity the message is unchanged, but
-/// the inverse NTT always processes dense secret-masked data, so a ciphertext
-/// cannot make it process sparse, low-bit-count values. Frequency side
-/// channels on NTT inputs rely on that amplification (Yu et al., CHES 2024).
+/// Decryption starts its accumulator at `hat`, and the inverse NTT's fused final
+/// pass adds `negated`, the negation of the inverse NTT of `hat`. By linearity
+/// the result is unchanged, but the inverse NTT always processes dense
+/// secret-masked data, so a ciphertext cannot make it process sparse,
+/// low-bit-count values. Frequency side channels on NTT inputs rely on that
+/// amplification (Yu et al., CHES 2024).
 #[derive(Clone)]
 struct DecryptionMask {
   hat: Poly,
-  normal: Poly,
+  negated: Poly,
 }
 
 impl Drop for DecryptionMask {
   fn drop(&mut self) {
     zeroize_poly_no_fence(&mut self.hat);
-    zeroize_poly(&mut self.normal);
+    zeroize_poly(&mut self.negated);
   }
 }
 
@@ -207,9 +208,12 @@ fn decryption_mask(z: &[u8; SEED_BYTES]) -> DecryptionMask {
   let mut hat = [0u16; N];
   byte_decode_12(&bytes, &mut hat);
   ct::zeroize(&mut bytes);
-  let mut normal = hat;
-  inverse_ntt_montgomery_product(&mut normal);
-  DecryptionMask { hat, normal }
+  let mut negated = hat;
+  inverse_ntt_montgomery_product(&mut negated);
+  for coefficient in &mut negated {
+    *coefficient = sub_mod(0, *coefficient);
+  }
+  DecryptionMask { hat, negated }
 }
 
 const ZETAS_MONT: [i16; 128] = [
@@ -1642,20 +1646,17 @@ fn pke_decrypt_prepared<
     ntt(poly);
   }
 
-  // A masked accumulator decrypts `v + r - (w + r)`, which equals `v - w`.
+  // A masked accumulator yields `(w + r) - r`; the fused final pass removes `r`.
   let mut acc = mask.map_or([0u16; N], |mask| mask.hat);
   multiply_ntts_accumulate(&mut acc, s_hat, &u);
-  inverse_ntt_montgomery_product(&mut acc);
-  if let Some(mask) = mask {
-    for (v, r) in v_prime.iter_mut().zip(&mask.normal) {
-      *v = add_mod(*v, *r);
-    }
+  match mask {
+    Some(mask) => inverse_ntt_montgomery_product_add_assign(&mut acc, &mask.negated),
+    None => inverse_ntt_montgomery_product(&mut acc),
   }
 
   let mut message = [0u8; SEED_BYTES];
   subtract_compress_encode_message(&v_prime, &acc, &mut message);
 
-  zeroize_poly_no_fence(&mut v_prime);
   zeroize_poly(&mut acc);
   message
 }
