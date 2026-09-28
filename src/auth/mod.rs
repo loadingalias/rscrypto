@@ -300,7 +300,7 @@ where
 }
 
 #[cfg(feature = "argon2")]
-pub use argon2::{Argon2Context, Argon2Error, Argon2Params, Argon2d, Argon2i, Argon2id};
+pub use argon2::{Argon2Block, Argon2Context, Argon2Error, Argon2Params, Argon2d, Argon2i, Argon2id};
 #[cfg(all(feature = "argon2", feature = "phc-strings"))]
 pub use argon2::{Argon2VerificationLimits, Argon2idPassword};
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "ed25519"))]

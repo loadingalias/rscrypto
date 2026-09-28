@@ -424,7 +424,7 @@ pub use aead::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
 #[cfg(feature = "hkdf")]
 pub use auth::HkdfOutputLengthError;
 #[cfg(feature = "argon2")]
-pub use auth::{Argon2Context, Argon2Error, Argon2Params, Argon2d, Argon2i, Argon2id};
+pub use auth::{Argon2Block, Argon2Context, Argon2Error, Argon2Params, Argon2d, Argon2i, Argon2id};
 #[cfg(all(feature = "argon2", feature = "phc-strings"))]
 pub use auth::{Argon2VerificationLimits, Argon2idPassword};
 #[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]

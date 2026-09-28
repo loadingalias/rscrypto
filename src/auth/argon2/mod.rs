@@ -39,7 +39,8 @@
 //! - Memory cost must satisfy `m ≥ 8 · p` (KiB).
 //! - [`Argon2Params::new`] rejects invalid cost profiles, so constructed parameters are always
 //!   valid.
-//! - The memory matrix is zeroized on drop.
+//! - Work memory is cleared before an operation returns, whether rscrypto allocated it or the
+//!   caller provided it through a `*_with_memory` method.
 //! - [`Argon2id::verify`] traverses every stored-hash byte before returning an opaque result;
 //!   generated-code timing claims remain configuration- and release-evidence-bound.
 //!
@@ -53,6 +54,10 @@
 //! Requires `alloc` — the memory matrix (`m_kib · 1024` bytes) cannot be
 //! stack-allocated. Bare-metal / heap-less targets should select
 //! [`crate::Pbkdf2Sha256`] (alloc-free).
+//!
+//! `derive` and `verify` allocate work memory for each call. To reuse it
+//! across operations or to place it in caller-selected storage, pass a slice
+//! of [`Argon2Block`] to the `*_with_memory` methods.
 //!
 //! [owasp-passwords]: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
 
@@ -122,14 +127,47 @@ const P_LANE_WORDS: usize = 16;
 #[cfg(feature = "parallel")]
 const MIN_PARALLEL_SEGMENT_BLOCKS: u32 = 32;
 
+/// One 1 KiB block of Argon2 work memory.
+///
+/// Pass a slice of these to the `*_with_memory` methods to reuse work memory
+/// or place it in caller-selected storage, such as `Vec<Argon2Block, A>` for
+/// any allocator `A`. See [`Argon2Params::memory_blocks`] for the required
+/// length.
+///
+/// An operation ignores the initial contents and clears every block it uses
+/// before returning. `Debug` never prints block contents.
+///
+/// # Examples
+///
+/// ```rust
+/// use rscrypto::{Argon2Block, Argon2Params, Argon2id};
+///
+/// let params = Argon2Params::new(19 * 1024, 2, 1)?;
+/// let mut memory = vec![Argon2Block::ZERO; params.memory_blocks() as usize];
+///
+/// let (password, salt) = (b"correct horse battery staple", b"random-salt-1234");
+/// let mut hash = [0u8; 32];
+/// Argon2id::derive_with_memory(&params, password, salt, &mut hash, &mut memory)?;
+/// assert!(Argon2id::verify_with_memory(&params, password, salt, &hash, &mut memory).is_ok());
+/// # Ok::<(), rscrypto::Argon2Error>(())
+/// ```
 #[repr(align(64))]
-#[derive(Clone, Copy)]
-struct MemoryBlock([u64; BLOCK_WORDS]);
+#[derive(Clone)]
+pub struct Argon2Block([u64; BLOCK_WORDS]);
 
-impl MemoryBlock {
+impl Argon2Block {
+  /// A block with every byte set to zero.
+  pub const ZERO: Self = Self::zero();
+
   #[inline(always)]
   const fn zero() -> Self {
     Self([0u64; BLOCK_WORDS])
+  }
+}
+
+impl fmt::Debug for Argon2Block {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str("Argon2Block([REDACTED])")
   }
 }
 
@@ -218,6 +256,9 @@ pub enum Argon2Error {
   ResourceOverflow,
   /// The allocator refused to provide the memory matrix.
   AllocationFailed,
+  /// Caller-provided work memory has fewer blocks than
+  /// [`Argon2Params::memory_blocks`].
+  MemoryTooSmall,
   /// A forced diagnostic backend is unavailable on the current host.
   #[cfg(all(rscrypto_internal, feature = "diag"))]
   BackendUnavailable,
@@ -240,6 +281,7 @@ impl fmt::Display for Argon2Error {
       Self::AssociatedDataTooLong => "Argon2 associated data exceeds 2^32-1 bytes",
       Self::ResourceOverflow => "Argon2 memory matrix exceeds the target's address space",
       Self::AllocationFailed => "Argon2 memory-matrix allocation failed",
+      Self::MemoryTooSmall => "Argon2 work memory has fewer blocks than the parameters require",
       #[cfg(all(rscrypto_internal, feature = "diag"))]
       Self::BackendUnavailable => "requested Argon2 diagnostic backend is unavailable",
       #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
@@ -341,6 +383,16 @@ impl Argon2Params {
   #[must_use]
   pub const fn get_parallelism(&self) -> u32 {
     self.parallelism
+  }
+
+  /// Number of [`Argon2Block`]s one operation uses.
+  ///
+  /// This is the memory cost rounded down to a multiple of `4 · parallelism`
+  /// (RFC 9106 §3.2). The `*_with_memory` methods require at least this many
+  /// blocks.
+  #[must_use]
+  pub const fn memory_blocks(&self) -> u32 {
+    argon2_shape(*self).blocks
   }
 }
 
@@ -1053,8 +1105,8 @@ fn compute_h0_diag_blake2b_portable(
 // ─── Block conversion ───────────────────────────────────────────────────────
 
 #[inline(always)]
-fn block_from_bytes(bytes: &[u8; BLOCK_SIZE]) -> MemoryBlock {
-  let mut out = MemoryBlock::zero();
+fn block_from_bytes(bytes: &[u8; BLOCK_SIZE]) -> Argon2Block {
+  let mut out = Argon2Block::zero();
   for (word, bytes) in out.0.iter_mut().zip(bytes.as_chunks::<8>().0) {
     *word = u64::from_le_bytes(*bytes);
   }
@@ -1089,20 +1141,20 @@ struct SegmentConfig {
 /// (or Argon2id's data-independent slices).
 #[derive(Clone)]
 struct AddressBlock {
-  words: MemoryBlock,
+  words: Argon2Block,
 }
 
 impl AddressBlock {
   fn zeros() -> Self {
     Self {
-      words: MemoryBlock::zero(),
+      words: Argon2Block::zero(),
     }
   }
 
   /// Generate a fresh address block keyed by
   /// `(pass, lane, slice, blocks, total_passes, variant_y, counter)`.
   fn refresh(&mut self, config: SegmentConfig, lane: u32, counter: u64) {
-    let mut input = MemoryBlock::zero();
+    let mut input = Argon2Block::zero();
     input.0[0] = u64::from(config.pass);
     input.0[1] = u64::from(lane);
     input.0[2] = u64::from(config.slice);
@@ -1111,8 +1163,8 @@ impl AddressBlock {
     input.0[5] = u64::from(config.variant.y());
     input.0[6] = counter;
 
-    let zero = MemoryBlock::zero();
-    let mut intermediate = MemoryBlock::zero();
+    let zero = Argon2Block::zero();
+    let mut intermediate = Argon2Block::zero();
     // SAFETY: the CompressFn came from `active_compress()` (or
     // `compress_fn_for` in per-kernel tests), which only returns a
     // kernel whose `required_caps` are a subset of the host's caps.
@@ -1125,35 +1177,50 @@ impl AddressBlock {
 
 // ─── Fill engine ───────────────────────────────────────────────────────────
 
-/// Layout helper. A fresh Argon2 hash call allocates `m' × p` contiguous
-/// u64 blocks; rows correspond to lanes, columns to positions within a lane.
-struct Matrix {
-  blocks: Vec<MemoryBlock>,
+/// Number of blocks one operation uses, as an in-memory length.
+fn required_blocks(params: Argon2Params) -> Result<usize, Argon2Error> {
+  let shape = argon2_shape(params);
+  if shape.memory_bytes > isize::MAX as u64 {
+    return Err(Argon2Error::ResourceOverflow);
+  }
+  usize::try_from(shape.blocks).map_err(|_| Argon2Error::ResourceOverflow)
+}
+
+/// Allocate work memory for the entry points that do not borrow it.
+fn allocate_blocks(params: Argon2Params) -> Result<Vec<Argon2Block>, Argon2Error> {
+  let total = required_blocks(params)?;
+  let mut blocks = Vec::new();
+  blocks
+    .try_reserve_exact(total)
+    .map_err(|_| Argon2Error::AllocationFailed)?;
+  blocks.resize(total, Argon2Block::zero());
+  Ok(blocks)
+}
+
+/// The `m' × p` block matrix of one operation, borrowed from its work memory;
+/// rows correspond to lanes, columns to positions within a lane. Dropping it
+/// clears every block, so the work memory holds no operation state afterwards.
+struct Matrix<'a> {
+  blocks: &'a mut [Argon2Block],
   lane_len: u32,
   lanes: u32,
   segment_len: u32,
 }
 
-impl Matrix {
-  fn new(params: Argon2Params) -> Result<Self, Argon2Error> {
-    let shape = argon2_shape(params);
+impl<'a> Matrix<'a> {
+  /// Borrow the first `m'` blocks of `memory`. Their initial contents are
+  /// never read: RFC 9106 writes every block before any reference to it.
+  fn new(params: Argon2Params, memory: &'a mut [Argon2Block]) -> Result<Self, Argon2Error> {
+    let total = required_blocks(params)?;
+    let blocks = memory.get_mut(..total).ok_or(Argon2Error::MemoryTooSmall)?;
     let lanes = params.parallelism;
-    let m_prime = shape.blocks;
-    let lane_len = m_prime
+    let lane_len = argon2_shape(params)
+      .blocks
       .checked_div(lanes)
       .expect("validated Argon2 parallelism is nonzero");
     let segment_len = lane_len
       .checked_div(SYNC_POINTS)
       .expect("the Argon2 synchronization-point count is nonzero");
-    if shape.memory_bytes > isize::MAX as u64 {
-      return Err(Argon2Error::ResourceOverflow);
-    }
-    let total = usize::try_from(m_prime).map_err(|_| Argon2Error::ResourceOverflow)?;
-    let mut blocks = Vec::new();
-    blocks
-      .try_reserve_exact(total)
-      .map_err(|_| Argon2Error::AllocationFailed)?;
-    blocks.resize(total, MemoryBlock::zero());
     Ok(Self {
       blocks,
       lane_len,
@@ -1186,15 +1253,15 @@ impl Matrix {
   }
 
   #[inline(always)]
-  fn set(&mut self, lane: u32, col: u32, block: MemoryBlock) {
+  fn set(&mut self, lane: u32, col: u32, block: Argon2Block) {
     let idx = self.index(lane, col);
     self.blocks[idx] = block;
   }
 }
 
-impl Drop for Matrix {
+impl Drop for Matrix<'_> {
   fn drop(&mut self) {
-    for block in &mut self.blocks {
+    for block in self.blocks.iter_mut() {
       zeroize_u64_slice_no_fence(&mut block.0);
     }
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
@@ -1205,7 +1272,10 @@ impl Drop for Matrix {
 /// parallel fill paths.
 ///
 /// Carries no Rust-level borrow of the underlying [`Matrix`]; ownership /
-/// aliasing discipline is enforced by the callers:
+/// aliasing discipline is enforced by the callers. The matrix holds an
+/// exclusive borrow of the operation's work memory, owned or caller-provided,
+/// from before the fill until after its final read, so the view's pointer
+/// stays valid and unaliased by any other handle while a fill uses it:
 ///
 /// - **Sequential path** (`fill_segment`): the view is constructed under an exclusive `&mut Matrix`
 ///   borrow, the matrix is single-threaded for the call's duration, and the view is dropped before
@@ -1222,7 +1292,7 @@ impl Drop for Matrix {
 /// reason — the runtime, not the type system, owns the soundness proof.
 #[derive(Clone, Copy)]
 struct MatrixView {
-  ptr: *mut MemoryBlock,
+  ptr: *mut Argon2Block,
   total_len: usize,
 }
 
@@ -1245,7 +1315,7 @@ unsafe impl Sync for MatrixView {}
 
 impl MatrixView {
   #[inline(always)]
-  fn from_blocks(blocks: &mut [MemoryBlock]) -> Self {
+  fn from_blocks(blocks: &mut [Argon2Block]) -> Self {
     Self {
       ptr: blocks.as_mut_ptr(),
       total_len: blocks.len(),
@@ -1370,7 +1440,7 @@ fn reference_index(config: SegmentConfig, lane: u32, col: u32, j1: u32, j2: u32)
 /// [`fill_segment_inner`]. The exclusive borrow makes the inner kernel's
 /// safety contract trivially satisfied for single-threaded callers.
 fn fill_segment(
-  matrix: &mut Matrix,
+  matrix: &mut Matrix<'_>,
   compress: CompressFn,
   pass: u32,
   lane: u32,
@@ -1389,7 +1459,7 @@ fn fill_segment(
     variant,
     time_cost,
   };
-  let view = MatrixView::from_blocks(&mut matrix.blocks);
+  let view = MatrixView::from_blocks(&mut *matrix.blocks);
   // SAFETY: `&mut matrix` is held exclusively for the duration of the
   // call. The view is the only handle to the matrix's storage during
   // `fill_segment_inner`; aliasing and concurrency contracts are
@@ -1522,7 +1592,7 @@ unsafe fn fill_segment_inner(view: MatrixView, lane: u32, config: SegmentConfig)
 /// Sequential: one segment per lane, in order. Always available.
 #[inline]
 fn fill_slice_sequential(
-  matrix: &mut Matrix,
+  matrix: &mut Matrix<'_>,
   compress: CompressFn,
   pass: u32,
   slice: u32,
@@ -1550,7 +1620,7 @@ fn fill_slice_sequential(
 /// snapshot.
 #[cfg(feature = "parallel")]
 fn fill_slice_parallel(
-  matrix: &mut Matrix,
+  matrix: &mut Matrix<'_>,
   compress: CompressFn,
   pass: u32,
   slice: u32,
@@ -1561,7 +1631,7 @@ fn fill_slice_parallel(
   let segment_len = matrix.segment_len;
   let lane_len = matrix.lane_len;
   let total_blocks = u32::try_from(matrix.len()).expect("matrix length originates from the validated u32 block count");
-  let view = MatrixView::from_blocks(&mut matrix.blocks);
+  let view = MatrixView::from_blocks(&mut *matrix.blocks);
   let config = SegmentConfig {
     compress,
     pass,
@@ -1617,7 +1687,7 @@ fn fill_slice_parallel(
 /// spawned task, so it remains below the parallel admission threshold.
 #[inline]
 fn fill_slice(
-  matrix: &mut Matrix,
+  matrix: &mut Matrix<'_>,
   compress: CompressFn,
   pass: u32,
   slice: u32,
@@ -1648,7 +1718,7 @@ fn argon2_hash(
   variant: Argon2Variant,
   out: &mut [u8],
 ) -> Result<(), Argon2Error> {
-  argon2_hash_with_context(params, Argon2Context::default(), password, salt, variant, out)
+  argon2_hash_with_context(params, Argon2Context::default(), password, salt, variant, out, None)
 }
 
 fn argon2_hash_with_context(
@@ -1658,6 +1728,7 @@ fn argon2_hash_with_context(
   salt: &[u8],
   variant: Argon2Variant,
   out: &mut [u8],
+  memory: Option<&mut [Argon2Block]>,
 ) -> Result<(), Argon2Error> {
   argon2_hash_with_kernel_inner(
     params,
@@ -1671,6 +1742,7 @@ fn argon2_hash_with_context(
       #[cfg(all(rscrypto_internal, feature = "diag"))]
       diag_blake2b: false,
     },
+    memory,
   )
 }
 
@@ -1698,6 +1770,7 @@ fn argon2_hash_with_kernel(
       compress,
       diag_blake2b: false,
     },
+    None,
   )
 }
 
@@ -1721,9 +1794,14 @@ fn argon2_hash_with_kernel_diag_blake2b(
       compress,
       diag_blake2b: true,
     },
+    None,
   )
 }
 
+#[expect(
+  clippy::too_many_arguments,
+  reason = "the RFC 9106 inputs, output, backend, and work memory of one operation meet here"
+)]
 fn argon2_hash_with_kernel_inner(
   params: &Argon2Params,
   context: Argon2Context<'_>,
@@ -1732,15 +1810,26 @@ fn argon2_hash_with_kernel_inner(
   variant: Argon2Variant,
   out: &mut [u8],
   backend: HashBackend,
+  memory: Option<&mut [Argon2Block]>,
 ) -> Result<(), Argon2Error> {
   Argon2Params::check_inputs(password, salt, context)?;
   if out.len() < MIN_OUTPUT_LEN || out.len() as u64 > MAX_VAR_BYTES {
     return Err(Argon2Error::InvalidOutputLen);
   }
 
-  // Allocate the matrix before deriving H0 so allocation failure cannot leave
-  // a password-derived digest in an unwinding stack frame.
-  let mut matrix = Matrix::new(*params)?;
+  // Acquire the matrix before deriving H0 so allocation failure or short
+  // caller memory cannot leave a password-derived digest in an unwinding
+  // stack frame. `owned` is declared first so it is freed after `matrix`
+  // clears it.
+  let mut owned;
+  let memory = match memory {
+    Some(memory) => memory,
+    None => {
+      owned = allocate_blocks(*params)?;
+      owned.as_mut_slice()
+    }
+  };
+  let mut matrix = Matrix::new(*params, memory)?;
   let lane_len = matrix.lane_len;
   let lanes = matrix.lanes;
 
@@ -1824,6 +1913,43 @@ fn argon2_hash_with_kernel_inner(
   Ok(())
 }
 
+fn argon2_verify(
+  params: &Argon2Params,
+  password: &[u8],
+  salt: &[u8],
+  variant: Argon2Variant,
+  expected: &[u8],
+  memory: Option<&mut [Argon2Block]>,
+) -> Result<(), VerificationError> {
+  if expected.len() < MIN_OUTPUT_LEN || expected.len() as u64 > MAX_VAR_BYTES {
+    return Err(VerificationError::new());
+  }
+  let mut actual = Vec::new();
+  actual
+    .try_reserve_exact(expected.len())
+    .map_err(|_| VerificationError::new())?;
+  actual.resize(expected.len(), 0);
+  let hash_failed = argon2_hash_with_context(
+    params,
+    Argon2Context::default(),
+    password,
+    salt,
+    variant,
+    &mut actual,
+    memory,
+  )
+  .is_err();
+  let bytes_match = ct::public_len_eq(&actual, expected);
+  ct::zeroize(&mut actual);
+
+  let success = !hash_failed & bytes_match.declassify();
+  if core::hint::black_box(success) {
+    Ok(())
+  } else {
+    Err(VerificationError::new())
+  }
+}
+
 // ─── Public typed hashers ───────────────────────────────────────────────────
 
 macro_rules! define_argon2_variant {
@@ -1865,7 +1991,47 @@ macro_rules! define_argon2_variant {
         salt: &[u8],
         out: &mut [u8],
       ) -> Result<(), Argon2Error> {
-        argon2_hash_with_context(params, context, password, salt, $variant, out)
+        argon2_hash_with_context(params, context, password, salt, $variant, out, None)
+      }
+
+      /// Derive bytes into `out` using caller-provided work memory.
+      ///
+      /// The operation uses the first [`Argon2Params::memory_blocks`] blocks of
+      /// `memory` instead of allocating its own, ignores their initial
+      /// contents, and clears them before returning. Input errors return
+      /// before `memory` is touched.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`Argon2Error::MemoryTooSmall`] if `memory` is too short, or
+      /// another [`Argon2Error`] if the salt or output length is invalid.
+      pub fn derive_with_memory(
+        params: &Argon2Params,
+        password: &[u8],
+        salt: &[u8],
+        out: &mut [u8],
+        memory: &mut [Argon2Block],
+      ) -> Result<(), Argon2Error> {
+        argon2_hash_with_context(params, Argon2Context::default(), password, salt, $variant, out, Some(memory))
+      }
+
+      /// Derive bytes with borrowed pepper and associated data, using
+      /// caller-provided work memory as described for
+      /// [`Self::derive_with_memory`].
+      ///
+      /// # Errors
+      ///
+      /// Returns [`Argon2Error::MemoryTooSmall`] if `memory` is too short, or
+      /// another [`Argon2Error`] if any input length is invalid.
+      pub fn derive_with_context_and_memory(
+        params: &Argon2Params,
+        context: Argon2Context<'_>,
+        password: &[u8],
+        salt: &[u8],
+        out: &mut [u8],
+        memory: &mut [Argon2Block],
+      ) -> Result<(), Argon2Error> {
+        argon2_hash_with_context(params, context, password, salt, $variant, out, Some(memory))
       }
 
       /// Verify `expected` after traversing the freshly computed hash and every
@@ -1885,26 +2051,26 @@ macro_rules! define_argon2_variant {
         salt: &[u8],
         expected: &[u8],
       ) -> Result<(), VerificationError> {
-        if expected.len() < MIN_OUTPUT_LEN || expected.len() as u64 > MAX_VAR_BYTES {
-          return Err(VerificationError::new());
-        }
-        let mut actual = Vec::new();
-        actual
-          .try_reserve_exact(expected.len())
-          .map_err(|_| VerificationError::new())?;
-        actual.resize(expected.len(), 0);
-        let hash_failed = Self::derive(params, password, salt, &mut actual).is_err();
-        let bytes_match = ct::public_len_eq(&actual, expected);
-        ct::zeroize(&mut actual);
-
-        let success = !hash_failed & bytes_match.declassify();
-        if core::hint::black_box(success) {
-          Ok(())
-        } else {
-          Err(VerificationError::new())
-        }
+        argon2_verify(params, password, salt, $variant, expected, None)
       }
 
+      /// Verify `expected` as [`Self::verify`] does, using caller-provided
+      /// work memory as described for [`Self::derive_with_memory`].
+      ///
+      /// # Errors
+      ///
+      /// Returns an opaque [`VerificationError`] on any mismatch, malformed
+      /// input, parameter error, or short `memory`.
+      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+      pub fn verify_with_memory(
+        params: &Argon2Params,
+        password: &[u8],
+        salt: &[u8],
+        expected: &[u8],
+        memory: &mut [Argon2Block],
+      ) -> Result<(), VerificationError> {
+        argon2_verify(params, password, salt, $variant, expected, Some(memory))
+      }
     }
   };
 }
@@ -2242,32 +2408,35 @@ mod tests {
     Argon2Context::new(SECRET, AD)
   }
 
+  #[cfg(not(miri))]
+  const RFC9106_D: [u8; 32] = [
+    0x51, 0x2b, 0x39, 0x1b, 0x6f, 0x11, 0x62, 0x97, 0x53, 0x71, 0xd3, 0x09, 0x19, 0x73, 0x42, 0x94, 0xf8, 0x68, 0xe3,
+    0xbe, 0x39, 0x84, 0xf3, 0xc1, 0xa1, 0x3a, 0x4d, 0xb9, 0xfa, 0xbe, 0x4a, 0xcb,
+  ];
+  #[cfg(not(miri))]
+  const RFC9106_I: [u8; 32] = [
+    0xc8, 0x14, 0xd9, 0xd1, 0xdc, 0x7f, 0x37, 0xaa, 0x13, 0xf0, 0xd7, 0x7f, 0x24, 0x94, 0xbd, 0xa1, 0xc8, 0xde, 0x6b,
+    0x01, 0x6d, 0xd3, 0x88, 0xd2, 0x99, 0x52, 0xa4, 0xc4, 0x67, 0x2b, 0x6c, 0xe8,
+  ];
+  #[cfg(not(miri))]
+  const RFC9106_ID: [u8; 32] = [
+    0x0d, 0x64, 0x0d, 0xf5, 0x8d, 0x78, 0x76, 0x6c, 0x08, 0xc0, 0x37, 0xa3, 0x4a, 0x8b, 0x53, 0xc9, 0xd0, 0x1e, 0xf0,
+    0x45, 0x2d, 0x75, 0xb6, 0x5e, 0xb5, 0x25, 0x20, 0xe9, 0x6b, 0x01, 0xe6, 0x59,
+  ];
+
   #[test]
   #[cfg(not(miri))]
   fn rfc9106_appendix_a_vectors() {
-    let expected_d: [u8; 32] = [
-      0x51, 0x2b, 0x39, 0x1b, 0x6f, 0x11, 0x62, 0x97, 0x53, 0x71, 0xd3, 0x09, 0x19, 0x73, 0x42, 0x94, 0xf8, 0x68, 0xe3,
-      0xbe, 0x39, 0x84, 0xf3, 0xc1, 0xa1, 0x3a, 0x4d, 0xb9, 0xfa, 0xbe, 0x4a, 0xcb,
-    ];
-    let expected_i: [u8; 32] = [
-      0xc8, 0x14, 0xd9, 0xd1, 0xdc, 0x7f, 0x37, 0xaa, 0x13, 0xf0, 0xd7, 0x7f, 0x24, 0x94, 0xbd, 0xa1, 0xc8, 0xde, 0x6b,
-      0x01, 0x6d, 0xd3, 0x88, 0xd2, 0x99, 0x52, 0xa4, 0xc4, 0x67, 0x2b, 0x6c, 0xe8,
-    ];
-    let expected_id: [u8; 32] = [
-      0x0d, 0x64, 0x0d, 0xf5, 0x8d, 0x78, 0x76, 0x6c, 0x08, 0xc0, 0x37, 0xa3, 0x4a, 0x8b, 0x53, 0xc9, 0xd0, 0x1e, 0xf0,
-      0x45, 0x2d, 0x75, 0xb6, 0x5e, 0xb5, 0x25, 0x20, 0xe9, 0x6b, 0x01, 0xe6, 0x59,
-    ];
-
     let mut actual = [0u8; 32];
     Argon2d::derive_with_context(&canon_params(), canon_context(), PASSWORD, SALT, &mut actual)
       .expect("RFC 9106 Argon2d vector inputs must derive");
-    assert_eq!(actual, expected_d);
+    assert_eq!(actual, RFC9106_D);
     Argon2i::derive_with_context(&canon_params(), canon_context(), PASSWORD, SALT, &mut actual)
       .expect("RFC 9106 Argon2i vector inputs must derive");
-    assert_eq!(actual, expected_i);
+    assert_eq!(actual, RFC9106_I);
     Argon2id::derive_with_context(&canon_params(), canon_context(), PASSWORD, SALT, &mut actual)
       .expect("RFC 9106 Argon2id vector inputs must derive");
-    assert_eq!(actual, expected_id);
+    assert_eq!(actual, RFC9106_ID);
   }
 
   #[test]
@@ -2401,6 +2570,112 @@ mod tests {
         )
       );
     }
+  }
+
+  /// Work memory whose every word differs from a freshly zeroed allocation.
+  #[cfg(not(miri))]
+  fn dirty_memory(blocks: usize) -> vec::Vec<Argon2Block> {
+    vec![Argon2Block([0xa5a5_a5a5_a5a5_a5a5; BLOCK_WORDS]); blocks]
+  }
+
+  #[cfg(not(miri))]
+  fn is_zero(block: &Argon2Block) -> bool {
+    block.0.iter().all(|&word| word == 0)
+  }
+
+  #[cfg(not(miri))]
+  fn is_dirty(block: &Argon2Block) -> bool {
+    block.0.iter().all(|&word| word == 0xa5a5_a5a5_a5a5_a5a5)
+  }
+
+  #[test]
+  #[cfg(not(miri))]
+  fn caller_memory_ignores_initial_contents_and_is_cleared() {
+    let params = canon_params();
+    let used = params.memory_blocks() as usize;
+    assert_eq!(used, 32);
+    let cases = [
+      (Argon2Variant::Argon2d, RFC9106_D),
+      (Argon2Variant::Argon2i, RFC9106_I),
+      (Argon2Variant::Argon2id, RFC9106_ID),
+    ];
+    for (variant, expected) in cases {
+      // One block beyond the requirement must stay untouched.
+      let mut memory = dirty_memory(used.strict_add(1));
+      let mut actual = [0u8; 32];
+      let result = match variant {
+        Argon2Variant::Argon2d => {
+          Argon2d::derive_with_context_and_memory(&params, canon_context(), PASSWORD, SALT, &mut actual, &mut memory)
+        }
+        Argon2Variant::Argon2i => {
+          Argon2i::derive_with_context_and_memory(&params, canon_context(), PASSWORD, SALT, &mut actual, &mut memory)
+        }
+        Argon2Variant::Argon2id => {
+          Argon2id::derive_with_context_and_memory(&params, canon_context(), PASSWORD, SALT, &mut actual, &mut memory)
+        }
+      };
+      result.expect("RFC 9106 vector inputs must derive in caller memory");
+      assert_eq!(actual, expected);
+      assert!(
+        memory[..used].iter().all(is_zero),
+        "{variant:?} left work memory uncleared"
+      );
+      assert!(is_dirty(&memory[used]), "{variant:?} wrote past its work memory");
+    }
+  }
+
+  #[test]
+  #[cfg(not(miri))]
+  fn caller_memory_failures_and_verification() {
+    let params = Argon2Params::new(16, 2, 1).expect("test parameters must be valid");
+    let used = params.memory_blocks() as usize;
+    let mut out = [0u8; 16];
+
+    let mut short = dirty_memory(used.strict_sub(1));
+    assert_eq!(
+      Argon2id::derive_with_memory(&params, b"password", &[0u8; 16], &mut out, &mut short),
+      Err(Argon2Error::MemoryTooSmall)
+    );
+    assert!(short.iter().all(is_dirty));
+    assert_eq!(
+      Argon2id::derive_with_memory(&params, b"password", &[0u8; 7], &mut out, &mut short),
+      Err(Argon2Error::SaltTooShort)
+    );
+
+    let expected = oracle_hash(argon2::Algorithm::Argon2id, b"password", &[0u8; 16], 16, 2, 1, 16);
+    assert_eq!(
+      Argon2id::verify_with_memory(&params, b"password", &[0u8; 16], &expected, &mut short),
+      Err(VerificationError::new())
+    );
+    let mut memory = dirty_memory(used);
+    assert_eq!(
+      Argon2id::verify_with_memory(&params, b"password", &[0u8; 16], &expected, &mut memory),
+      Ok(())
+    );
+    assert!(memory.iter().all(is_zero));
+    memory.fill(Argon2Block([0xa5a5_a5a5_a5a5_a5a5; BLOCK_WORDS]));
+    assert_eq!(
+      Argon2id::verify_with_memory(&params, b"wrong", &[0u8; 16], &expected, &mut memory),
+      Err(VerificationError::new())
+    );
+    assert!(memory.iter().all(is_zero));
+  }
+
+  /// `p = 4` with 32-block segments reaches the Rayon lane filler.
+  #[test]
+  #[cfg(all(feature = "parallel", not(miri)))]
+  fn caller_memory_drives_the_parallel_filler() {
+    let params = Argon2Params::new(512, 2, 4).expect("parallel test parameters must be valid");
+    assert!(params.memory_blocks() / 4 / SYNC_POINTS >= MIN_PARALLEL_SEGMENT_BLOCKS);
+    let mut memory = dirty_memory(params.memory_blocks() as usize);
+    let mut actual = [0u8; 32];
+    Argon2id::derive_with_memory(&params, b"password", &[0u8; 16], &mut actual, &mut memory)
+      .expect("parallel inputs must derive in caller memory");
+    assert_eq!(
+      actual[..],
+      oracle_hash(argon2::Algorithm::Argon2id, b"password", &[0u8; 16], 512, 2, 4, 32)[..]
+    );
+    assert!(memory.iter().all(is_zero));
   }
 
   #[test]
