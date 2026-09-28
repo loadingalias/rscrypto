@@ -682,32 +682,6 @@ mod tests {
     poly: Poly,
   }
 
-  #[cfg(any(
-    all(
-      any(target_arch = "riscv32", target_arch = "riscv64"),
-      target_feature = "m",
-      not(miri),
-      not(feature = "portable-only")
-    ),
-    all(
-      any(target_arch = "s390x", all(target_arch = "powerpc64", target_endian = "little")),
-      target_os = "linux",
-      not(miri),
-      not(feature = "portable-only")
-    ),
-    all(
-      target_arch = "aarch64",
-      any(target_os = "macos", target_os = "linux"),
-      target_feature = "neon",
-      not(feature = "portable-only")
-    ),
-    all(
-      target_arch = "x86_64",
-      target_os = "linux",
-      not(miri),
-      not(feature = "portable-only")
-    )
-  ))]
   #[test]
   fn blinded_ntt_matches_plain_ntt() {
     // On POWER with the vector backend this exercises `s + r` blinding; elsewhere
@@ -743,6 +717,32 @@ mod tests {
     }
   }
 
+  #[cfg(any(
+    all(
+      any(target_arch = "riscv32", target_arch = "riscv64"),
+      target_feature = "m",
+      not(miri),
+      not(feature = "portable-only")
+    ),
+    all(
+      any(target_arch = "s390x", all(target_arch = "powerpc64", target_endian = "little")),
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ),
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      target_feature = "neon",
+      not(feature = "portable-only")
+    ),
+    all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    )
+  ))]
   #[test]
   fn ntt_accelerated_matches_portable() {
     #[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
