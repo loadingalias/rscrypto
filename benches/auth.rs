@@ -2504,6 +2504,13 @@ macro_rules! mlkem_profile_benches {
       let fips_ct = $fips::CipherText::try_from_bytes(ct_bytes).expect("fips203 ciphertext import");
       let libcrux_dk = libcrux_ml_kem::MlKemPrivateKey::from(dk_bytes);
       let libcrux_ct = libcrux_ml_kem::MlKemCiphertext::from(ct_bytes);
+      // Preparation decodes the key, expands the public matrix, and derives the
+      // decryption mask once; the reuse row below amortizes all of it.
+      let mut g = c.benchmark_group(concat!($group, "/decapsulate/prepare-key"));
+      g.bench_function("rscrypto", |b| {
+        b.iter(|| black_box(black_box(&dk).prepare().expect("ML-KEM key preparation")))
+      });
+      g.finish();
       let mut g = c.benchmark_group(concat!($group, "/decapsulate/reuse-matrix-prepared"));
       checked_mlkem_bench(&mut g, "rscrypto", &expected, || {
         *black_box(&prepared_dk).decapsulate(black_box(&ct)).expect("ML-KEM decapsulation").as_bytes()
