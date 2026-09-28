@@ -174,11 +174,20 @@ jobs:
           just ct-full
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package CT evidence
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
         run: |
           if [[ -d target/ct ]]; then
             tar -czf "target/ct-${PLATFORM}-full.tar.gz" -C target ct
           fi
+      # Windows resolves a bare `bash` to the WSL launcher; use the bundled tar.
+      - name: Package CT evidence (Windows)
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          if (Test-Path target/ct) {
+            tar -czf "target/ct-$env:PLATFORM-full.tar.gz" -C target ct
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - name: Retain CT evidence
         if: ${{ !cancelled() }}
         uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1

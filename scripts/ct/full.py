@@ -545,6 +545,12 @@ def run_dudect_cases(root, out_dir, logs_dir, target, profile, manifest_cases, t
     dudect_run = prepared.parent.parent
     timestamp = now_utc()
     preparation = CommandResult("ct-dudect-import", [], "pass", 0, "", "", timestamp, timestamp, 0.0)
+  if preparation.status != "pass":
+    for key, value in (("stdout", preparation.stdout_path), ("stderr", preparation.stderr_path)):
+      path = Path(value)
+      if value and path.is_file():
+        print(f"ct-full: {preparation.name} {key}: {path}\n{path.read_text(errors='replace')[-16384:]}",
+              file=sys.stderr, flush=True)
   fallback_samples = int(os.environ.get("RSCRYPTO_CT_DUDECT_SAMPLES", "20000"))
   for case in manifest_cases if preparation.status == "pass" else []:
     samples = case_sample_count(case, fallback=fallback_samples)
