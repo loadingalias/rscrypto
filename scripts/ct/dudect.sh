@@ -157,8 +157,18 @@ elif [[ "$PROFILE" != "debug" ]]; then
   exit 2
 fi
 
+# Name the Windows LTO object explicitly; Cargo's intermediate layout varies by release.
+WINDOWS_OBJECT_PATH="$BUILD_TARGET_DIR/rscrypto_ct_dudect.o"
+EMIT="obj,link"
+if [[ "$TARGET" == *-windows-* ]]; then
+  rustc_object_path="$WINDOWS_OBJECT_PATH"
+  if command -v cygpath >/dev/null 2>&1; then
+    rustc_object_path="$(cygpath -m "$rustc_object_path")"
+  fi
+  EMIT="obj=$rustc_object_path,link"
+fi
 linker_log_candidate="$(mktemp "$OUT_DIR/.dudect-linker-command.XXXXXXXX")"
-cargo rustc --locked "${CARGO_ARGS[@]}" --bin rscrypto-ct-dudect -- --emit=obj,link --print link-args 2>&1 | tee "$linker_log_candidate"
+cargo rustc --locked "${CARGO_ARGS[@]}" --bin rscrypto-ct-dudect -- "--emit=$EMIT" --print link-args 2>&1 | tee "$linker_log_candidate"
 link_command_count=$(grep -Ec '"-o"|"/OUT:' "$linker_log_candidate" || true)
 if [[ "$link_command_count" -gt 1 ]]; then
   echo "expected at most one DudeCT linker command; found $link_command_count" >&2
@@ -219,14 +229,12 @@ if [[ "$TARGET" == "s390x-unknown-linux-gnu" ]]; then
   objdump_args+=(--mattr=+vector)
 fi
 if [[ "$TARGET" == *-windows-* ]]; then
-  shopt -s nullglob
-  binary_objects=("$BUILD_TARGET_DIR/$TARGET/$PROFILE/deps"/rscrypto_ct_dudect*.o)
-  if [[ ${#binary_objects[@]} -ne 1 ]]; then
-    echo "expected one preserved Windows DudeCT LTO object; found ${#binary_objects[@]}" >&2
+  if [[ ! -s "$WINDOWS_OBJECT_PATH" ]]; then
+    echo "Windows DudeCT LTO object missing: $WINDOWS_OBJECT_PATH" >&2
     exit 1
   fi
-  BINARY_OBJECT_PATH="$OUT_DIR/$(basename "${binary_objects[0]}")"
-  cp "${binary_objects[0]}" "$BINARY_OBJECT_PATH"
+  BINARY_OBJECT_PATH="$OUT_DIR/$(basename "$WINDOWS_OBJECT_PATH")"
+  cp "$WINDOWS_OBJECT_PATH" "$BINARY_OBJECT_PATH"
   "$LLVM_OBJDUMP" "${objdump_args[@]}" "$BINARY_OBJECT_PATH" > "$BINARY_DISASM_PATH"
   "$LLVM_NM" --defined-only --demangle "$BINARY_OBJECT_PATH" > "$BINARY_SYMBOLS_PATH"
   BINARY_OBJECT_ARGS=(--binary-object "$BINARY_OBJECT_PATH")
