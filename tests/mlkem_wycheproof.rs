@@ -1,5 +1,11 @@
 #![cfg(feature = "ml-kem")]
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
+#[cfg(feature = "alloc")]
+use alloc::alloc::Global;
+
 use rscrypto::{
   Kem, MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem768, MlKem768Ciphertext,
   MlKem768DecapsulationKey, MlKem768EncapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey,
@@ -103,6 +109,26 @@ macro_rules! wycheproof_suite {
           dk.expose_secret().as_bytes() == bytes(case, "dk").as_slice(),
           "keygen tcId {tc_id} dk"
         );
+        #[cfg(feature = "alloc")]
+        {
+          let seed = bytes(case, "seed");
+          let (ek, dk) = <$profile>::generate_keypair_in(
+            |out| {
+              out.copy_from_slice(&seed);
+              Ok(())
+            },
+            Global,
+          )
+          .expect("allocated key generation from a full seed must succeed");
+          assert!(
+            ek.as_bytes() == bytes(case, "ek").as_slice(),
+            "keygen_in tcId {tc_id} ek"
+          );
+          assert!(
+            dk.expose_secret().as_bytes() == bytes(case, "dk").as_slice(),
+            "keygen_in tcId {tc_id} dk"
+          );
+        }
         tally.record(true);
       }
       assert_eq!(tally.valid.strict_add(tally.invalid), total(&suite));
@@ -136,6 +162,17 @@ macro_rules! wycheproof_suite {
               shared.expose_secret().as_bytes() == bytes(case, "K").as_slice(),
               "combined tcId {tc_id} K"
             );
+            #[cfg(feature = "alloc")]
+            {
+              let prepared = dk.prepare_in(Global).expect("a generated key must prepare");
+              let shared = prepared
+                .decapsulate(&ciphertext)
+                .expect("decapsulation of a well-formed input");
+              assert!(
+                shared.expose_secret().as_bytes() == bytes(case, "K").as_slice(),
+                "combined prepare_in tcId {tc_id} K"
+              );
+            }
           }
           (valid, keys, ciphertext) => assert!(
             !valid && (keys.is_none() || ciphertext.is_none()),
@@ -205,6 +242,25 @@ macro_rules! wycheproof_suite {
         let tc_id = &case["tcId"];
         let key = <$dk>::try_from_slice(&bytes(case, "dk")).ok();
         let ciphertext = <$ct>::try_from_slice(&bytes(case, "c")).ok();
+        #[cfg(feature = "alloc")]
+        {
+          let boxed = <$dk>::try_from_slice_in(&bytes(case, "dk"), Global).ok();
+          assert_eq!(
+            boxed.as_deref().map(|key| *key.expose_secret().as_bytes()),
+            key.as_ref().map(|key| *key.expose_secret().as_bytes()),
+            "decaps tcId {tc_id}: allocated import disagrees with import"
+          );
+          if let (true, Some(boxed), Some(ciphertext)) = (is_valid(case), &boxed, &ciphertext) {
+            let prepared = boxed.prepare_in(Global).expect("a valid key must prepare");
+            let shared = prepared
+              .decapsulate(ciphertext)
+              .expect("decapsulation of a well-formed input");
+            assert!(
+              shared.expose_secret().as_bytes() == bytes(case, "K").as_slice(),
+              "decaps try_from_slice_in tcId {tc_id} K"
+            );
+          }
+        }
         let shared = match (&key, &ciphertext) {
           (Some(key), Some(ciphertext)) => <$profile>::decapsulate(key, ciphertext).ok(),
           _ => None,
@@ -220,6 +276,17 @@ macro_rules! wycheproof_suite {
             shared.is_none(),
             "decaps tcId {tc_id}: invalid input produced a shared secret"
           );
+          // Preparation must reject a full-length corrupted key it is handed unvalidated.
+          #[cfg(feature = "alloc")]
+          if let Ok(raw) = <[u8; <$dk>::LENGTH]>::try_from(bytes(case, "dk").as_slice()) {
+            if key.is_none() {
+              assert_eq!(
+                <$dk>::from_bytes(raw).prepare_in(Global).err(),
+                Some(MlKemError::InvalidDecapsulationKey),
+                "decaps tcId {tc_id}: prepare_in accepted a corrupted key"
+              );
+            }
+          }
         }
         tally.record(is_valid(case));
       }

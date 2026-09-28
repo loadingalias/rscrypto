@@ -167,6 +167,26 @@ pub(super) struct PreparedDecapsulationArithmetic<const K: usize> {
   encapsulation: PreparedEncapsulationArithmetic<K>,
 }
 
+impl<const K: usize> PreparedDecapsulationArithmetic<K> {
+  /// All-zero arithmetic that `validate_and_prepare_decapsulation_key_into`
+  /// fills in place.
+  pub(super) const fn zeroed() -> Self {
+    Self {
+      s_hat: [[0; N]; K],
+      mask: DecryptionMask {
+        hat: [0; N],
+        negated: [0; N],
+      },
+      encapsulation: PreparedEncapsulationArithmetic {
+        t_hat: [[0; N]; K],
+        #[cfg(test)]
+        rho: [0; SEED_BYTES],
+        a_transpose_hat: [[[0; N]; K]; K],
+      },
+    }
+  }
+}
+
 impl<const K: usize> Drop for PreparedDecapsulationArithmetic<K> {
   fn drop(&mut self) {
     zeroize_polyvec(&mut self.s_hat);
@@ -202,18 +222,16 @@ const DECRYPTION_MASK_NONCE: u8 = 0xff;
 ///
 /// Fixed work: a 384-byte SHAKE256 output, masked 12-bit reduction, and one
 /// inverse NTT. The coefficients need to be secret and dense, not uniform.
-fn decryption_mask(z: &[u8; SEED_BYTES]) -> DecryptionMask {
+fn decryption_mask_into(z: &[u8; SEED_BYTES], mask: &mut DecryptionMask) {
   let mut bytes = [0u8; 384];
   prf_eta(z, DECRYPTION_MASK_NONCE, &mut bytes);
-  let mut hat = [0u16; N];
-  byte_decode_12(&bytes, &mut hat);
+  byte_decode_12(&bytes, &mut mask.hat);
   ct::zeroize(&mut bytes);
-  let mut negated = hat;
-  inverse_ntt_montgomery_product(&mut negated);
-  for coefficient in &mut negated {
+  mask.negated = mask.hat;
+  inverse_ntt_montgomery_product(&mut mask.negated);
+  for coefficient in &mut mask.negated {
     *coefficient = sub_mod(0, *coefficient);
   }
-  DecryptionMask { hat, negated }
 }
 
 const ZETAS_MONT: [i16; 128] = [
@@ -322,6 +340,22 @@ pub(super) fn validate_and_prepare_decapsulation_key<
 >(
   dk: &[u8; DK_BYTES],
 ) -> Result<PreparedDecapsulationArithmetic<K>, MlKemError> {
+  let mut arithmetic = PreparedDecapsulationArithmetic::zeroed();
+  validate_and_prepare_decapsulation_key_into::<K, DK_PKE_BYTES, EK_BYTES, DK_BYTES>(dk, &mut arithmetic)?;
+  Ok(arithmetic)
+}
+
+/// Validate `dk` and write its prepared arithmetic into `out` without moving
+/// secret state. A rejected key returns before `out` is written.
+pub(super) fn validate_and_prepare_decapsulation_key_into<
+  const K: usize,
+  const DK_PKE_BYTES: usize,
+  const EK_BYTES: usize,
+  const DK_BYTES: usize,
+>(
+  dk: &[u8; DK_BYTES],
+  out: &mut PreparedDecapsulationArithmetic<K>,
+) -> Result<(), MlKemError> {
   let ek_start = DK_PKE_BYTES;
   let ek_end = ek_start.strict_add(EK_BYTES);
   let h_start = ek_end;
@@ -334,18 +368,30 @@ pub(super) fn validate_and_prepare_decapsulation_key<
 
   let ek = <&[u8; EK_BYTES]>::try_from(&dk[ek_start..ek_end]).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
   let z = <&[u8; SEED_BYTES]>::try_from(&dk[h_end..]).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
-  Ok(PreparedDecapsulationArithmetic {
-    s_hat: prepare_decapsulation_key::<K, DK_PKE_BYTES, DK_BYTES>(dk),
-    mask: decryption_mask(z),
-    encapsulation: prepare_encapsulation_key::<K, EK_BYTES>(ek),
-  })
+  prepare_decapsulation_key_slice_into::<K, DK_PKE_BYTES>(&dk[..DK_PKE_BYTES], &mut out.s_hat);
+  decryption_mask_into(z, &mut out.mask);
+  prepare_encapsulation_key_into::<K, EK_BYTES>(ek, &mut out.encapsulation);
+  Ok(())
 }
 
 fn prepare_encapsulation_key<const K: usize, const EK_BYTES: usize>(
   ek: &[u8; EK_BYTES],
 ) -> PreparedEncapsulationArithmetic<K> {
-  let mut t_hat = [[0u16; N]; K];
-  for (i, poly) in t_hat.iter_mut().enumerate() {
+  let mut arithmetic = PreparedEncapsulationArithmetic {
+    t_hat: [[0; N]; K],
+    #[cfg(test)]
+    rho: [0; SEED_BYTES],
+    a_transpose_hat: [[[0; N]; K]; K],
+  };
+  prepare_encapsulation_key_into::<K, EK_BYTES>(ek, &mut arithmetic);
+  arithmetic
+}
+
+fn prepare_encapsulation_key_into<const K: usize, const EK_BYTES: usize>(
+  ek: &[u8; EK_BYTES],
+  out: &mut PreparedEncapsulationArithmetic<K>,
+) {
+  for (i, poly) in out.t_hat.iter_mut().enumerate() {
     let start = i.strict_mul(POLY_BYTES);
     byte_decode::<12>(&ek[start..start.strict_add(POLY_BYTES)], poly);
   }
@@ -354,18 +400,14 @@ fn prepare_encapsulation_key<const K: usize, const EK_BYTES: usize>(
   let rho_start = K.strict_mul(POLY_BYTES);
   rho.copy_from_slice(&ek[rho_start..rho_start.strict_add(SEED_BYTES)]);
 
-  let a_transpose_hat = prepare_matrix_transpose::<K>(&rho);
-
-  PreparedEncapsulationArithmetic {
-    t_hat,
-    #[cfg(test)]
-    rho,
-    a_transpose_hat,
+  prepare_matrix_transpose_into::<K>(&rho, &mut out.a_transpose_hat);
+  #[cfg(test)]
+  {
+    out.rho = rho;
   }
 }
 
-fn prepare_matrix_transpose<const K: usize>(rho: &[u8; SEED_BYTES]) -> PolyMatrix<K> {
-  let mut a_transpose_hat = [[[0u16; N]; K]; K];
+fn prepare_matrix_transpose_into<const K: usize>(rho: &[u8; SEED_BYTES], a_transpose_hat: &mut PolyMatrix<K>) {
   for (i, row) in a_transpose_hat.iter_mut().enumerate() {
     for (j, poly) in row.iter_mut().enumerate() {
       let i = u8::try_from(i).expect("ML-KEM matrix row fits in u8");
@@ -373,23 +415,23 @@ fn prepare_matrix_transpose<const K: usize>(rho: &[u8; SEED_BYTES]) -> PolyMatri
       sample_ntt_into(rho, i, j, poly);
     }
   }
-  a_transpose_hat
-}
-
-fn prepare_decapsulation_key<const K: usize, const DK_PKE_BYTES: usize, const DK_BYTES: usize>(
-  dk: &[u8; DK_BYTES],
-) -> PolyVec<K> {
-  prepare_decapsulation_key_slice::<K, DK_PKE_BYTES>(&dk[..DK_PKE_BYTES])
 }
 
 fn prepare_decapsulation_key_slice<const K: usize, const DK_PKE_BYTES: usize>(dk_pke: &[u8]) -> PolyVec<K> {
-  debug_assert_eq!(dk_pke.len(), DK_PKE_BYTES);
   let mut s_hat = [[0u16; N]; K];
+  prepare_decapsulation_key_slice_into::<K, DK_PKE_BYTES>(dk_pke, &mut s_hat);
+  s_hat
+}
+
+fn prepare_decapsulation_key_slice_into<const K: usize, const DK_PKE_BYTES: usize>(
+  dk_pke: &[u8],
+  s_hat: &mut PolyVec<K>,
+) {
+  debug_assert_eq!(dk_pke.len(), DK_PKE_BYTES);
   for (i, poly) in s_hat.iter_mut().enumerate() {
     let start = i.strict_mul(POLY_BYTES);
     byte_decode::<12>(&dk_pke[start..start.strict_add(POLY_BYTES)], poly);
   }
-  s_hat
 }
 
 pub(super) fn keygen<
@@ -402,25 +444,41 @@ pub(super) fn keygen<
 >(
   random: &[u8; 64],
 ) -> ([u8; EK_BYTES], [u8; DK_BYTES]) {
+  let mut ek = [0u8; EK_BYTES];
+  let mut dk = [0u8; DK_BYTES];
+  keygen_into::<K, K_U8, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES, DK_BYTES>(random, &mut ek, &mut dk);
+  (ek, dk)
+}
+
+/// Generate a keypair directly into `ek` and `dk`, so no secret key bytes are
+/// moved through a return value.
+pub(super) fn keygen_into<
+  const K: usize,
+  const K_U8: u8,
+  const ETA1_RANDOM_BYTES: usize,
+  const DK_PKE_BYTES: usize,
+  const EK_BYTES: usize,
+  const DK_BYTES: usize,
+>(
+  random: &[u8; 64],
+  ek: &mut [u8; EK_BYTES],
+  dk: &mut [u8; DK_BYTES],
+) {
   let mut d = [0u8; SEED_BYTES];
   let mut z = [0u8; SEED_BYTES];
   d.copy_from_slice(&random[..SEED_BYTES]);
   z.copy_from_slice(&random[SEED_BYTES..]);
 
-  let (ek, mut dk_pke) = pke_keygen::<K, K_U8, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES>(&d);
-  let mut dk = [0u8; DK_BYTES];
-  dk[..DK_PKE_BYTES].copy_from_slice(&dk_pke);
-  dk[DK_PKE_BYTES..DK_PKE_BYTES.strict_add(EK_BYTES)].copy_from_slice(&ek);
-
-  let ek_hash = h(&ek);
-  let h_start = DK_PKE_BYTES.strict_add(EK_BYTES);
-  dk[h_start..h_start.strict_add(HASH_BYTES)].copy_from_slice(&ek_hash);
-  dk[h_start.strict_add(HASH_BYTES)..].copy_from_slice(&z);
+  let (dk_pke, tail) = dk.split_at_mut(DK_PKE_BYTES);
+  pke_keygen_into::<K, K_U8, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES>(&d, ek, dk_pke);
+  let (dk_ek, tail) = tail.split_at_mut(EK_BYTES);
+  dk_ek.copy_from_slice(ek);
+  let (dk_hash, dk_z) = tail.split_at_mut(HASH_BYTES);
+  dk_hash.copy_from_slice(&h(ek));
+  dk_z.copy_from_slice(&z);
 
   ct::zeroize(&mut d);
   ct::zeroize(&mut z);
-  ct::zeroize(&mut dk_pke);
-  (ek, dk)
 }
 
 pub(super) fn encapsulate<
@@ -703,7 +761,7 @@ pub(super) fn decapsulate<
   Ok(shared)
 }
 
-fn pke_keygen<
+fn pke_keygen_into<
   const K: usize,
   const K_U8: u8,
   const ETA1_RANDOM_BYTES: usize,
@@ -711,7 +769,9 @@ fn pke_keygen<
   const EK_BYTES: usize,
 >(
   d: &[u8; SEED_BYTES],
-) -> ([u8; EK_BYTES], [u8; DK_PKE_BYTES]) {
+  ek: &mut [u8; EK_BYTES],
+  dk_pke: &mut [u8],
+) {
   let mut seed = [0u8; 33];
   seed[..SEED_BYTES].copy_from_slice(d);
   seed[SEED_BYTES] = K_U8;
@@ -722,14 +782,13 @@ fn pke_keygen<
   rho.copy_from_slice(&expanded[..SEED_BYTES]);
   sigma.copy_from_slice(&expanded[SEED_BYTES..]);
 
-  let keys = pke_keygen_expanded::<K, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES>(&rho, &sigma);
+  pke_keygen_expanded_into::<K, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES>(&rho, &sigma, ek, dk_pke);
   ct::zeroize(&mut seed);
   ct::zeroize(&mut expanded);
   ct::zeroize(&mut sigma);
-  keys
 }
 
-fn pke_keygen_expanded<
+fn pke_keygen_expanded_into<
   const K: usize,
   const ETA1_RANDOM_BYTES: usize,
   const DK_PKE_BYTES: usize,
@@ -737,7 +796,9 @@ fn pke_keygen_expanded<
 >(
   rho: &[u8; SEED_BYTES],
   sigma: &[u8; SEED_BYTES],
-) -> ([u8; EK_BYTES], [u8; DK_PKE_BYTES]) {
+  ek: &mut [u8; EK_BYTES],
+  dk_pke: &mut [u8],
+) {
   let mut s_hat = [[0u16; N]; K];
   let mut t_hat = [[0u16; N]; K];
   keygen_sample_noise::<K, ETA1_RANDOM_BYTES>(sigma, &mut s_hat, &mut t_hat);
@@ -745,10 +806,9 @@ fn pke_keygen_expanded<
   keygen_matrix_accumulate::<K>(rho, &s_hat, &mut t_hat);
   keygen_from_product_domain::<K>(&mut t_hat);
 
-  let keys = keygen_encode::<K, DK_PKE_BYTES, EK_BYTES>(rho, &s_hat, &t_hat);
+  keygen_encode_into::<K, DK_PKE_BYTES, EK_BYTES>(rho, &s_hat, &t_hat, ek, dk_pke);
   zeroize_polyvec(&mut s_hat);
   zeroize_polyvec(&mut t_hat);
-  keys
 }
 
 #[inline(always)]
@@ -863,25 +923,24 @@ fn keygen_from_product_domain<const K: usize>(t_hat: &mut PolyVec<K>) {
 }
 
 #[inline(always)]
-fn keygen_encode<const K: usize, const DK_PKE_BYTES: usize, const EK_BYTES: usize>(
+fn keygen_encode_into<const K: usize, const DK_PKE_BYTES: usize, const EK_BYTES: usize>(
   rho: &[u8; SEED_BYTES],
   s_hat: &PolyVec<K>,
   t_hat: &PolyVec<K>,
-) -> ([u8; EK_BYTES], [u8; DK_PKE_BYTES]) {
-  let mut ek = [0u8; EK_BYTES];
+  ek: &mut [u8; EK_BYTES],
+  dk_pke: &mut [u8],
+) {
+  debug_assert_eq!(dk_pke.len(), DK_PKE_BYTES);
   for (i, poly) in t_hat.iter().enumerate() {
     let start = i.strict_mul(POLY_BYTES);
     byte_encode::<12>(poly, &mut ek[start..start.strict_add(POLY_BYTES)]);
   }
   ek[DK_PKE_BYTES..].copy_from_slice(rho);
 
-  let mut dk_pke = [0u8; DK_PKE_BYTES];
   for (i, poly) in s_hat.iter().enumerate() {
     let start = i.strict_mul(POLY_BYTES);
     byte_encode::<12>(poly, &mut dk_pke[start..start.strict_add(POLY_BYTES)]);
   }
-
-  (ek, dk_pke)
 }
 
 #[inline]
@@ -899,7 +958,9 @@ pub(super) fn diag_keygen_secret_noise_digest<
   rho: &[u8; SEED_BYTES],
   sigma: &[u8; SEED_BYTES],
 ) -> [u8; HASH_BYTES] {
-  let (mut ek, mut dk_pke) = pke_keygen_expanded::<K, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES>(rho, sigma);
+  let mut ek = [0u8; EK_BYTES];
+  let mut dk_pke = [0u8; DK_PKE_BYTES];
+  pke_keygen_expanded_into::<K, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES>(rho, sigma, &mut ek, &mut dk_pke);
   let mut digest = [0u8; HASH_BYTES];
 
   for (i, byte) in ek.iter().chain(dk_pke.iter()).copied().enumerate() {
@@ -9425,11 +9486,12 @@ mod tests {
       *poly = test_poly(0x50usize.strict_add(i.strict_mul(0x10)));
     }
 
-    let ek = PreparedEncapsulationArithmetic {
+    let mut ek = PreparedEncapsulationArithmetic {
       t_hat: [[0u16; N]; K],
       rho,
-      a_transpose_hat: prepare_matrix_transpose::<K>(&rho),
+      a_transpose_hat: [[[0u16; N]; K]; K],
     };
+    prepare_matrix_transpose_into::<K>(&rho, &mut ek.a_transpose_hat);
 
     let mut cached = [[0u16; N]; K];
     matrix_ntt_mul_accumulate_prepared_transpose(&ek, &rhs, &mut cached);

@@ -3169,8 +3169,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2538
-compiler_api_sha256 = "e61123170460a6aa60f5b39757cdd35923eb8cd2fb0db8a1f2a39a38abb2c10c"
+compiler_api_item_count = 2550
+compiler_api_sha256 = "b65224d8199eaf94353851a8cc9e07e5fcd378a56053a1106c9217cc2d31dfc0"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3180,8 +3180,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2538
-compiler_api_sha256 = "e61123170460a6aa60f5b39757cdd35923eb8cd2fb0db8a1f2a39a38abb2c10c"
+compiler_api_item_count = 2550
+compiler_api_sha256 = "b65224d8199eaf94353851a8cc9e07e5fcd378a56053a1106c9217cc2d31dfc0"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3214,8 +3214,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 2538
-compiler_api_sha256 = "e61123170460a6aa60f5b39757cdd35923eb8cd2fb0db8a1f2a39a38abb2c10c"
+compiler_api_item_count = 2550
+compiler_api_sha256 = "b65224d8199eaf94353851a8cc9e07e5fcd378a56053a1106c9217cc2d31dfc0"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3236,8 +3236,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 2538
-compiler_api_sha256 = "e61123170460a6aa60f5b39757cdd35923eb8cd2fb0db8a1f2a39a38abb2c10c"
+compiler_api_item_count = 2550
+compiler_api_sha256 = "b65224d8199eaf94353851a8cc9e07e5fcd378a56053a1106c9217cc2d31dfc0"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3248,8 +3248,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2538
-compiler_api_sha256 = "e61123170460a6aa60f5b39757cdd35923eb8cd2fb0db8a1f2a39a38abb2c10c"
+compiler_api_item_count = 2550
+compiler_api_sha256 = "b65224d8199eaf94353851a8cc9e07e5fcd378a56053a1106c9217cc2d31dfc0"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3260,8 +3260,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2538
-compiler_api_sha256 = "e61123170460a6aa60f5b39757cdd35923eb8cd2fb0db8a1f2a39a38abb2c10c"
+compiler_api_item_count = 2550
+compiler_api_sha256 = "b65224d8199eaf94353851a8cc9e07e5fcd378a56053a1106c9217cc2d31dfc0"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3272,8 +3272,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2538
-compiler_api_sha256 = "e61123170460a6aa60f5b39757cdd35923eb8cd2fb0db8a1f2a39a38abb2c10c"
+compiler_api_item_count = 2550
+compiler_api_sha256 = "b65224d8199eaf94353851a8cc9e07e5fcd378a56053a1106c9217cc2d31dfc0"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3949,8 +3949,9 @@ limitation = "The claim begins only after a valid scalar has been sampled and, f
 [[operation]]
 id = "kem.mlkem512"
 api = [
-  "rscrypto::MlKem512::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}",
+  "rscrypto::MlKem512::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate,generate_keypair_in,try_generate_keypair_in}",
   "rscrypto::MlKem512*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret}",
+  "rscrypto::MlKem512DecapsulationKey::{try_from_slice_in,prepare_in}",
   "rscrypto::MlKem512{DecapsulationKey,PreparedDecapsulationKey,SharedSecret}::ct_eq",
   "rscrypto::MlKem512{EncapsulationKey,PreparedEncapsulationKey,Ciphertext}::eq",
 ]
@@ -3988,8 +3989,9 @@ limitation = "Public encapsulation-key/ciphertext equality is ordinary equality.
 [[operation]]
 id = "kem.mlkem768"
 api = [
-  "rscrypto::MlKem768::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}",
+  "rscrypto::MlKem768::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate,generate_keypair_in,try_generate_keypair_in}",
   "rscrypto::MlKem768*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret}",
+  "rscrypto::MlKem768DecapsulationKey::{try_from_slice_in,prepare_in}",
   "rscrypto::MlKem768{DecapsulationKey,PreparedDecapsulationKey,SharedSecret}::ct_eq",
   "rscrypto::MlKem768{EncapsulationKey,PreparedEncapsulationKey,Ciphertext}::eq",
 ]
@@ -4027,8 +4029,9 @@ limitation = "Public encapsulation-key/ciphertext equality is ordinary equality.
 [[operation]]
 id = "kem.mlkem1024"
 api = [
-  "rscrypto::MlKem1024::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}",
+  "rscrypto::MlKem1024::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate,generate_keypair_in,try_generate_keypair_in}",
   "rscrypto::MlKem1024*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret}",
+  "rscrypto::MlKem1024DecapsulationKey::{try_from_slice_in,prepare_in}",
   "rscrypto::MlKem1024{DecapsulationKey,PreparedDecapsulationKey,SharedSecret}::ct_eq",
   "rscrypto::MlKem1024{EncapsulationKey,PreparedEncapsulationKey,Ciphertext}::eq",
 ]

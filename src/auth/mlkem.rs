@@ -6,6 +6,10 @@
 
 mod portable;
 
+#[cfg(feature = "alloc")]
+use alloc::boxed::Box;
+#[cfg(feature = "alloc")]
+use core::alloc::Allocator;
 use core::{
   error::Error,
   fmt,
@@ -619,6 +623,28 @@ macro_rules! impl_mlkem_profile_ops {
         Ok(key)
       }
 
+      /// Like [`Self::try_from_slice`], with the key imported into memory from `alloc`.
+      ///
+      /// The key is copied directly into its allocation, so moving the box moves
+      /// only a pointer. The box clears the key on drop; a rejected key is
+      /// cleared before returning. Allocation failure is handled as by
+      /// [`Box::new_in`]. The caller retains responsibility for clearing `bytes`.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`MlKemError::InvalidDecapsulationKey`] for a wrong length or a
+      /// failed FIPS 203 embedded-key hash check.
+      #[cfg(feature = "alloc")]
+      pub fn try_from_slice_in<A: Allocator>(bytes: &[u8], alloc: A) -> Result<Box<Self, A>, MlKemError> {
+        if bytes.len() != Self::LENGTH {
+          return Err(MlKemError::InvalidDecapsulationKey);
+        }
+        let mut key = Box::new_in(Self::from_bytes([0; Self::LENGTH]), alloc);
+        key.0.copy_from_slice(bytes);
+        key.validate()?;
+        Ok(key)
+      }
+
       /// Validate this decapsulation key using the FIPS 203 embedded-key hash check.
       #[inline]
       pub fn validate(&self) -> Result<(), MlKemError> {
@@ -629,6 +655,35 @@ macro_rules! impl_mlkem_profile_ops {
       #[inline]
       pub fn prepare(&self) -> Result<$prepared_decapsulation_key, MlKemError> {
         $prepared_decapsulation_key::try_from(self)
+      }
+
+      /// Like [`Self::prepare`], with the prepared key in memory from `alloc`.
+      ///
+      /// The key is validated and prepared directly into its allocation, so
+      /// moving the box moves only a pointer and no by-value copy of the
+      /// prepared secrets is left behind. The box clears them on drop; a
+      /// rejected key returns before they are written. Allocation failure is
+      /// handled as by [`Box::new_in`].
+      #[cfg(feature = "alloc")]
+      pub fn prepare_in<A: Allocator>(&self, alloc: A) -> Result<Box<$prepared_decapsulation_key, A>, MlKemError> {
+        let mut prepared = Box::new_in($prepared_decapsulation_key::zeroed(), alloc);
+        portable::validate_and_prepare_decapsulation_key_into::<$k, $dk_pke_bytes, $ek_bytes, $dk_bytes>(
+          self.as_bytes(),
+          &mut prepared.arithmetic,
+        )?;
+        prepared.key.0.copy_from_slice(self.as_bytes());
+        Ok(prepared)
+      }
+    }
+
+    impl $prepared_decapsulation_key {
+      /// Zero-filled owner that an allocation is filled from; never returned.
+      #[cfg(feature = "alloc")]
+      const fn zeroed() -> Self {
+        Self {
+          key: $decapsulation_key::from_bytes([0; $dk_bytes]),
+          arithmetic: portable::PreparedDecapsulationArithmetic::zeroed(),
+        }
       }
     }
 
@@ -657,6 +712,51 @@ macro_rules! impl_mlkem_profile_ops {
     }
 
     impl $profile {
+      /// Like [`Kem::generate_keypair`], with the decapsulation key in memory
+      /// from `alloc`.
+      ///
+      /// The key is generated directly into its allocation, so moving the box
+      /// moves only a pointer and no by-value copy of the key is left behind.
+      /// The box clears the key on drop; entropy failure returns before any
+      /// key is written. Allocation failure is handled as by [`Box::new_in`].
+      ///
+      /// # Errors
+      ///
+      /// Returns the error from `fill_random`.
+      #[cfg(feature = "alloc")]
+      pub fn generate_keypair_in<A: Allocator>(
+        mut fill_random: impl FnMut(&mut [u8]) -> Result<(), MlKemError>,
+        alloc: A,
+      ) -> Result<($encapsulation_key, Box<$decapsulation_key, A>), MlKemError> {
+        let mut random = ZeroizingBytes::<{ Self::KEY_GENERATION_RANDOM_SIZE }>::zeroed();
+        fill_random(random.as_mut_array())?;
+        let mut encapsulation_key = [0u8; $ek_bytes];
+        let mut decapsulation_key = Box::new_in($decapsulation_key::from_bytes([0; $dk_bytes]), alloc);
+        portable::keygen_into::<$k, $k_u8, $eta1_random_bytes, $dk_pke_bytes, $ek_bytes, $dk_bytes>(
+          random.as_array(),
+          &mut encapsulation_key,
+          &mut decapsulation_key.0,
+        );
+        Ok(($encapsulation_key::from_bytes(encapsulation_key), decapsulation_key))
+      }
+
+      /// Like [`Self::try_generate_keypair`], with the decapsulation key in
+      /// memory from `alloc`. See [`Self::generate_keypair_in`].
+      ///
+      /// # Errors
+      ///
+      /// Returns [`MlKemError::RandomGenerationFailed`] if the entropy source is unavailable.
+      #[cfg(all(feature = "alloc", feature = "getrandom"))]
+      #[cfg_attr(docsrs, doc(cfg(all(feature = "alloc", feature = "getrandom"))))]
+      pub fn try_generate_keypair_in<A: Allocator>(
+        alloc: A,
+      ) -> Result<($encapsulation_key, Box<$decapsulation_key, A>), MlKemError> {
+        Self::generate_keypair_in(
+          |out| getrandom::fill(out).map_err(|_| MlKemError::RandomGenerationFailed),
+          alloc,
+        )
+      }
+
       #[doc = concat!("Generate an ", $doc_name, " keypair from the platform entropy source.")]
       /// # Errors
       ///
