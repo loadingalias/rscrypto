@@ -15,7 +15,8 @@ use dryoc::{
   constants::{CRYPTO_PWHASH_ARGON2I_OPSLIMIT_MIN, CRYPTO_PWHASH_ARGON2ID_OPSLIMIT_MIN},
 };
 use rscrypto::{
-  Argon2Error, Argon2Params, Argon2d, Argon2i, Argon2id, Argon2idPassword, Scrypt, ScryptParams, ScryptPassword,
+  Argon2Block, Argon2Error, Argon2Params, Argon2d, Argon2i, Argon2id, Argon2idPassword, Scrypt, ScryptBlock,
+  ScryptParams, ScryptPassword,
 };
 
 /// Function pointer shared by all three raw Argon2 variants.
@@ -337,6 +338,118 @@ fn scrypt_owasp(c: &mut Criterion) {
   g.finish();
 }
 
+/// Fresh versus reused work memory at the OWASP shapes; see the comparison
+/// contract in `docs/benchmarking.md`.
+///
+/// `rscrypto/fresh-allocation` calls `derive`, which allocates, zero-fills, and
+/// clears its work memory on every call. `reused-memory` rows lend one buffer,
+/// allocated and freed outside timing, to every call; rscrypto still clears the
+/// blocks it used before returning. The RustCrypto row reuses its own `Block`
+/// buffer and, built without its `zeroize` feature, does not clear it.
+fn reused_memory(c: &mut Criterion) {
+  let argon2_group = "argon2id-owasp/salt16-raw32-reused-memory";
+  if bench_config::selected(argon2_group) {
+    let mut g = c.benchmark_group(argon2_group);
+    let params = rs_params(19 * 1024, 2, 1, 32);
+    let oracle = oracle_ctx(argon2::Algorithm::Argon2id, 19 * 1024, 2, 1, 32);
+    let blocks = usize::try_from(params.memory_blocks()).expect("benchmark block count must fit usize");
+    let mut memory = vec![Argon2Block::ZERO; blocks];
+    let mut oracle_memory = vec![argon2::Block::new(); blocks];
+
+    let mut expected = [0u8; 32];
+    Argon2id::derive(&params, PASSWORD, ARGON2_SALT, &mut expected).expect("Argon2 reuse fixture");
+    let mut actual = [0u8; 32];
+    Argon2id::derive_with_memory(&params, PASSWORD, ARGON2_SALT, &mut actual, &mut memory)
+      .expect("Argon2 reused-memory fixture");
+    assert_eq!(actual, expected, "rscrypto Argon2 reused-memory comparison");
+    oracle
+      .hash_password_into_with_memory(PASSWORD, ARGON2_SALT, &mut actual, &mut oracle_memory)
+      .expect("RustCrypto Argon2 reused-memory fixture");
+    assert_eq!(actual, expected, "RustCrypto Argon2 reused-memory comparison");
+
+    g.bench_function(BenchmarkId::new("rscrypto/fresh-allocation", "m=19MiB_t=2_p=1"), |b| {
+      let mut out = [0u8; 32];
+      b.iter(|| {
+        Argon2id::derive(
+          black_box(&params),
+          black_box(PASSWORD),
+          black_box(ARGON2_SALT),
+          black_box(&mut out),
+        )
+        .expect("supported password-hashing benchmark parameters must succeed")
+      });
+    });
+    g.bench_function(BenchmarkId::new("rscrypto/reused-memory", "m=19MiB_t=2_p=1"), |b| {
+      let mut out = [0u8; 32];
+      b.iter(|| {
+        Argon2id::derive_with_memory(
+          black_box(&params),
+          black_box(PASSWORD),
+          black_box(ARGON2_SALT),
+          black_box(&mut out),
+          black_box(&mut memory),
+        )
+        .expect("supported password-hashing benchmark parameters must succeed")
+      });
+    });
+    g.bench_function(BenchmarkId::new("rustcrypto/reused-memory", "m=19MiB_t=2_p=1"), |b| {
+      let mut out = [0u8; 32];
+      b.iter(|| {
+        oracle
+          .hash_password_into_with_memory(
+            black_box(PASSWORD),
+            black_box(ARGON2_SALT),
+            black_box(&mut out),
+            black_box(&mut oracle_memory),
+          )
+          .expect("supported password-hashing benchmark parameters must succeed")
+      });
+    });
+    g.finish();
+  }
+
+  let scrypt_group = "scrypt-owasp-reused-memory";
+  if bench_config::selected(scrypt_group) {
+    let mut g = c.benchmark_group(scrypt_group);
+    let params = rs_scrypt_params(17, 8, 1, 32);
+    let mut memory = vec![ScryptBlock::ZERO; params.memory_blocks().expect("OWASP scrypt shape must fit")];
+
+    let mut expected = [0u8; 32];
+    Scrypt::derive(&params, PASSWORD, SALT, &mut expected).expect("scrypt reuse fixture");
+    let mut actual = [0u8; 32];
+    Scrypt::derive_with_memory(&params, PASSWORD, SALT, &mut actual, &mut memory)
+      .expect("scrypt reused-memory fixture");
+    assert_eq!(actual, expected, "rscrypto scrypt reused-memory comparison");
+
+    g.bench_function(BenchmarkId::new("rscrypto/fresh-allocation", "log_n=17_r=8_p=1"), |b| {
+      let mut out = [0u8; 32];
+      b.iter(|| {
+        Scrypt::derive(
+          black_box(&params),
+          black_box(PASSWORD),
+          black_box(SALT),
+          black_box(&mut out),
+        )
+        .expect("supported password-hashing benchmark parameters must succeed")
+      });
+    });
+    g.bench_function(BenchmarkId::new("rscrypto/reused-memory", "log_n=17_r=8_p=1"), |b| {
+      let mut out = [0u8; 32];
+      b.iter(|| {
+        Scrypt::derive_with_memory(
+          black_box(&params),
+          black_box(PASSWORD),
+          black_box(SALT),
+          black_box(&mut out),
+          black_box(&mut memory),
+        )
+        .expect("supported password-hashing benchmark parameters must succeed")
+      });
+    });
+    g.finish();
+  }
+}
+
 fn scrypt_phc_roundtrip(c: &mut Criterion) {
   if !bench_config::selected("scrypt-phc-roundtrip") {
     return;
@@ -491,5 +604,6 @@ fn main() {
     #[cfg(feature = "parallel")]
     argon2id_parallel_owasp,
     scrypt_owasp,
+    reused_memory,
   ]);
 }

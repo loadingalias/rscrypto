@@ -314,6 +314,15 @@ where its parameter limits allow a row, dryoc.
 Argon2 parallel-scaling rows use the same salt and output size while varying lane count.
 Scrypt and PHC fixtures are separate workloads.
 
+Reused-memory groups (`argon2id-owasp/salt16-raw32-reused-memory` and `scrypt-owasp-reused-memory`)
+isolate work-memory reuse at the OWASP shapes.
+`rscrypto/fresh-allocation` calls `derive`, so its allocation, zero fill, computation, and cleanup are timed.
+`reused-memory` rows lend one buffer that is allocated and freed outside timing;
+rscrypto still clears every block it used inside timing.
+`rustcrypto/reused-memory` calls `hash_password_into_with_memory`, built without RustCrypto's `zeroize` feature,
+so it does not clear its buffer and the rows do not perform equal cleanup.
+Untimed checks compare all 32 output bytes with `derive`.
+
 ## Measure locally
 
 [`.config/criterion.json`](../.config/criterion.json) supplies one configuration for every Criterion harness,
