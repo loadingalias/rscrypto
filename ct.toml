@@ -5501,6 +5501,50 @@ gate = "diagnostic"
 reason = "Bit-count probe for the POWER inverse NTT: power-dependent throttling predicts the opposite sign to zero operands."
 
 [[dudect_case]]
+name = "mldsa_probe_product_one_vs_fixed"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_product_one_vs_fixed"
+left_class = "64 products of two polynomials whose coefficients are all 1"
+right_class = "64 products of two one fixed pair of random canonical polynomials"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Tests whether small nonzero operands, like small positive ML-DSA secret coefficients, change POWER vector product timing."
+
+[[dudect_case]]
+name = "mldsa_probe_product_minus_one_vs_fixed"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_product_minus_one_vs_fixed"
+left_class = "64 products of two polynomials whose coefficients are all q - 1"
+right_class = "64 products of two one fixed pair of random canonical polynomials"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Tests whether q - 1 operands, like small negative ML-DSA secret coefficients, change POWER vector product timing."
+
+[[dudect_case]]
+name = "mldsa_probe_product_offset_zero_vs_fixed"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_product_offset_zero_vs_fixed"
+left_class = "64 products of two polynomials whose coefficients are all q (zero offset by the modulus)"
+right_class = "64 products of two one fixed pair of random canonical polynomials"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Tests the candidate fix: zero offset by q must not run faster than random operands."
+
+[[dudect_case]]
+name = "mldsa_probe_product_one_vs_minus_one"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_product_one_vs_minus_one"
+left_class = "64 products of two polynomials whose coefficients are all 1"
+right_class = "64 products of two polynomials whose coefficients are all q - 1"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Tests whether the sign of small ML-DSA secret coefficients changes POWER vector product timing."
+
+[[dudect_case]]
 name = "mldsa_norm_first_vs_last"
 primitive = "signature.mldsa.secret_kernels"
 filter = "mldsa_norm_first_vs_last"

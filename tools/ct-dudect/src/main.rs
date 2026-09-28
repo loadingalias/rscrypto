@@ -1214,6 +1214,21 @@ fn mldsa_probe_high<const W: usize>(_: &[[u32; 256]; W], _: &mut BenchRng) -> [[
   [[MLDSA_PROBE_HIGH_WEIGHT; 256]; W]
 }
 
+// Small ML-DSA secret coefficients are 1 or q - 1; q is zero offset by the modulus.
+const MLDSA_PROBE_Q: u32 = 8_380_417;
+
+fn mldsa_probe_one<const W: usize>(_: &[[u32; 256]; W], _: &mut BenchRng) -> [[u32; 256]; W] {
+  [[1; 256]; W]
+}
+
+fn mldsa_probe_minus_one<const W: usize>(_: &[[u32; 256]; W], _: &mut BenchRng) -> [[u32; 256]; W] {
+  [[MLDSA_PROBE_Q - 1; 256]; W]
+}
+
+fn mldsa_probe_offset_zero<const W: usize>(_: &[[u32; 256]; W], _: &mut BenchRng) -> [[u32; 256]; W] {
+  [[MLDSA_PROBE_Q; 256]; W]
+}
+
 fn mldsa_probe_random<const W: usize>(_: &[[u32; 256]; W], rng: &mut BenchRng) -> [[u32; 256]; W] {
   core::array::from_fn(|_| core::array::from_fn(|_| rng.random_range(0..8_380_417u32)))
 }
@@ -1267,6 +1282,22 @@ mldsa_probe_product!(
   mldsa_probe_random
 );
 mldsa_probe_product!(mldsa_probe_product_high_vs_random, mldsa_probe_high, mldsa_probe_random);
+mldsa_probe_product!(mldsa_probe_product_one_vs_fixed, mldsa_probe_one, mldsa_probe_fixed);
+mldsa_probe_product!(
+  mldsa_probe_product_minus_one_vs_fixed,
+  mldsa_probe_minus_one,
+  mldsa_probe_fixed
+);
+mldsa_probe_product!(
+  mldsa_probe_product_offset_zero_vs_fixed,
+  mldsa_probe_offset_zero,
+  mldsa_probe_fixed
+);
+mldsa_probe_product!(
+  mldsa_probe_product_one_vs_minus_one,
+  mldsa_probe_one,
+  mldsa_probe_minus_one
+);
 mldsa_probe_montgomery!(mldsa_probe_montgomery_zero_vs_zero, mldsa_probe_zero, mldsa_probe_zero);
 mldsa_probe_montgomery!(
   mldsa_probe_montgomery_zero_vs_fixed,
@@ -3060,6 +3091,10 @@ ctbench_main_with_seeds!(
   (mldsa_probe_inverse_ntt_zero_vs_fixed, Some(0x6d6c64737072000d)),
   (mldsa_probe_inverse_ntt_fixed_vs_random, Some(0x6d6c64737072000e)),
   (mldsa_probe_inverse_ntt_high_vs_random, Some(0x6d6c64737072000f)),
+  (mldsa_probe_product_one_vs_fixed, Some(0x6d6c647370720010)),
+  (mldsa_probe_product_minus_one_vs_fixed, Some(0x6d6c647370720011)),
+  (mldsa_probe_product_offset_zero_vs_fixed, Some(0x6d6c647370720012)),
+  (mldsa_probe_product_one_vs_minus_one, Some(0x6d6c647370720013)),
   (mldsa_norm_first_vs_last, Some(0x6d6c64736100000f)),
   (mldsa_prepare44_fixed_vs_random, Some(0x6d6c647361000010)),
   (mldsa_prepare65_fixed_vs_random, Some(0x6d6c647361000011)),

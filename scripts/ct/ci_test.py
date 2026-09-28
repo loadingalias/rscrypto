@@ -40,7 +40,7 @@ class Selection(unittest.TestCase):
         manifest = tomllib.loads((Path(__file__).resolve().parents[2] / 'ct.toml').read_text())
         cases = {case['name']: case for case in manifest['dudect_case']}
         selected = set(ci.replay_cases(cases, 'mldsa-probe'))
-        self.assertEqual(len(selected), 16)
+        self.assertEqual(len(selected), 20)
         self.assertTrue(all(cases[name]['gate'] == 'diagnostic' for name in selected))
         self.assertFalse(selected & set(ci.replay_cases(cases, 'mldsa')))
         required = {case['name'] for case in required_dudect_cases(manifest, 'powerpc64le-unknown-linux-gnu')}
