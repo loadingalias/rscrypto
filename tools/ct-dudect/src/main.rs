@@ -1284,6 +1284,63 @@ mldsa_probe_montgomery!(
   mldsa_probe_random
 );
 
+macro_rules! mldsa_probe_transform {
+  ($name:ident, $transform:path, $left:ident, $right:ident) => {
+    mldsa_probe_case!($name, 1, $left, $right, |input: &[[u32; 256]; 1]| {
+      $transform(&input[0])
+    });
+  };
+}
+
+mldsa_probe_transform!(
+  mldsa_probe_ntt_zero_vs_zero,
+  rscrypto::auth::diag_mldsa_ntt,
+  mldsa_probe_zero,
+  mldsa_probe_zero
+);
+mldsa_probe_transform!(
+  mldsa_probe_ntt_zero_vs_fixed,
+  rscrypto::auth::diag_mldsa_ntt,
+  mldsa_probe_zero,
+  mldsa_probe_fixed
+);
+mldsa_probe_transform!(
+  mldsa_probe_ntt_fixed_vs_random,
+  rscrypto::auth::diag_mldsa_ntt,
+  mldsa_probe_fixed,
+  mldsa_probe_random
+);
+mldsa_probe_transform!(
+  mldsa_probe_ntt_high_vs_random,
+  rscrypto::auth::diag_mldsa_ntt,
+  mldsa_probe_high,
+  mldsa_probe_random
+);
+mldsa_probe_transform!(
+  mldsa_probe_inverse_ntt_zero_vs_zero,
+  rscrypto::auth::diag_mldsa_inverse_ntt,
+  mldsa_probe_zero,
+  mldsa_probe_zero
+);
+mldsa_probe_transform!(
+  mldsa_probe_inverse_ntt_zero_vs_fixed,
+  rscrypto::auth::diag_mldsa_inverse_ntt,
+  mldsa_probe_zero,
+  mldsa_probe_fixed
+);
+mldsa_probe_transform!(
+  mldsa_probe_inverse_ntt_fixed_vs_random,
+  rscrypto::auth::diag_mldsa_inverse_ntt,
+  mldsa_probe_fixed,
+  mldsa_probe_random
+);
+mldsa_probe_transform!(
+  mldsa_probe_inverse_ntt_high_vs_random,
+  rscrypto::auth::diag_mldsa_inverse_ntt,
+  mldsa_probe_high,
+  mldsa_probe_random
+);
+
 fn mldsa_norm_first_vs_last(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
   for _ in 0..samples() {
@@ -2995,6 +3052,14 @@ ctbench_main_with_seeds!(
   (mldsa_probe_montgomery_zero_vs_fixed, Some(0x6d6c647370720005)),
   (mldsa_probe_montgomery_fixed_vs_random, Some(0x6d6c647370720006)),
   (mldsa_probe_montgomery_high_vs_random, Some(0x6d6c647370720007)),
+  (mldsa_probe_ntt_zero_vs_zero, Some(0x6d6c647370720008)),
+  (mldsa_probe_ntt_zero_vs_fixed, Some(0x6d6c647370720009)),
+  (mldsa_probe_ntt_fixed_vs_random, Some(0x6d6c64737072000a)),
+  (mldsa_probe_ntt_high_vs_random, Some(0x6d6c64737072000b)),
+  (mldsa_probe_inverse_ntt_zero_vs_zero, Some(0x6d6c64737072000c)),
+  (mldsa_probe_inverse_ntt_zero_vs_fixed, Some(0x6d6c64737072000d)),
+  (mldsa_probe_inverse_ntt_fixed_vs_random, Some(0x6d6c64737072000e)),
+  (mldsa_probe_inverse_ntt_high_vs_random, Some(0x6d6c64737072000f)),
   (mldsa_norm_first_vs_last, Some(0x6d6c64736100000f)),
   (mldsa_prepare44_fixed_vs_random, Some(0x6d6c647361000010)),
   (mldsa_prepare65_fixed_vs_random, Some(0x6d6c647361000011)),

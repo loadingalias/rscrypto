@@ -5413,6 +5413,94 @@ gate = "diagnostic"
 reason = "Bit-count probe for scalar Montgomery products."
 
 [[dudect_case]]
+name = "mldsa_probe_ntt_zero_vs_zero"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_ntt_zero_vs_zero"
+left_class = "64 forward NTTs of a zero canonical polynomial"
+right_class = "64 forward NTTs of a zero canonical polynomial"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "A/A control for the POWER forward NTT; both classes are identical."
+
+[[dudect_case]]
+name = "mldsa_probe_ntt_zero_vs_fixed"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_ntt_zero_vs_fixed"
+left_class = "64 forward NTTs of a zero canonical polynomial"
+right_class = "64 forward NTTs of one fixed random canonical polynomial"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Isolates zero operands in the POWER forward NTT from per-sample input variation."
+
+[[dudect_case]]
+name = "mldsa_probe_ntt_fixed_vs_random"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_ntt_fixed_vs_random"
+left_class = "64 forward NTTs of one fixed random canonical polynomial"
+right_class = "64 forward NTTs of independently random canonical polynomials"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Realistic-secret probe for the POWER forward NTT: both classes have random-like bit counts."
+
+[[dudect_case]]
+name = "mldsa_probe_ntt_high_vs_random"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_ntt_high_vs_random"
+left_class = "64 forward NTTs of a polynomial whose coefficients are all 8380415 (22 set bits)"
+right_class = "64 forward NTTs of independently random canonical polynomials"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Bit-count probe for the POWER forward NTT: power-dependent throttling predicts the opposite sign to zero operands."
+
+[[dudect_case]]
+name = "mldsa_probe_inverse_ntt_zero_vs_zero"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_inverse_ntt_zero_vs_zero"
+left_class = "64 inverse NTTs of a zero canonical polynomial"
+right_class = "64 inverse NTTs of a zero canonical polynomial"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "A/A control for the POWER inverse NTT; both classes are identical."
+
+[[dudect_case]]
+name = "mldsa_probe_inverse_ntt_zero_vs_fixed"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_inverse_ntt_zero_vs_fixed"
+left_class = "64 inverse NTTs of a zero canonical polynomial"
+right_class = "64 inverse NTTs of one fixed random canonical polynomial"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Isolates zero operands in the POWER inverse NTT from per-sample input variation."
+
+[[dudect_case]]
+name = "mldsa_probe_inverse_ntt_fixed_vs_random"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_inverse_ntt_fixed_vs_random"
+left_class = "64 inverse NTTs of one fixed random canonical polynomial"
+right_class = "64 inverse NTTs of independently random canonical polynomials"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Realistic-secret probe for the POWER inverse NTT: both classes have random-like bit counts."
+
+[[dudect_case]]
+name = "mldsa_probe_inverse_ntt_high_vs_random"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_probe_inverse_ntt_high_vs_random"
+left_class = "64 inverse NTTs of a polynomial whose coefficients are all 8380415 (22 set bits)"
+right_class = "64 inverse NTTs of independently random canonical polynomials"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Bit-count probe for the POWER inverse NTT: power-dependent throttling predicts the opposite sign to zero operands."
+
+[[dudect_case]]
 name = "mldsa_norm_first_vs_last"
 primitive = "signature.mldsa.secret_kernels"
 filter = "mldsa_norm_first_vs_last"
