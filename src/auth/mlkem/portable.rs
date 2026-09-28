@@ -4677,7 +4677,41 @@ fn inverse_ntt_scaled_add_assign(poly: &mut Poly, addend: &Poly, final_scale_mon
   }
 }
 
-#[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
+fn inverse_ntt_scaled_add_assign(poly: &mut Poly, addend: &Poly, final_scale_mont: i16) {
+  if crate::platform::caps().has(crate::platform::caps::x86::AVX2 | crate::platform::caps::x86::SSE41) {
+    // SAFETY: x86_64 AVX2 inverse-NTT + add dispatch because:
+    // 1. Runtime capability detection confirmed AVX2 and SSE4.1 before entering the target-feature
+    //    function.
+    // 2. `poly` and `addend` are fixed 256-coefficient polynomials; all loads/stores use public fixed
+    //    offsets.
+    // 3. `addend` is already in canonical modulo-Q representation, so the final add uses the same
+    //    fixed-schedule modular addition as `poly_add_assign`.
+    // 4. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
+    //    values.
+    unsafe {
+      return inverse_ntt_avx2_add_assign(poly, addend, final_scale_mont);
+    }
+  }
+
+  inverse_ntt_scaled(poly, final_scale_mont);
+  poly_add_assign(poly, addend);
+}
+
+#[cfg(not(any(
+  all(target_arch = "aarch64", not(miri), not(feature = "portable-only")),
+  all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(miri),
+    not(feature = "portable-only")
+  )
+)))]
 fn inverse_ntt_scaled_add_assign(poly: &mut Poly, addend: &Poly, final_scale_mont: i16) {
   inverse_ntt_scaled(poly, final_scale_mont);
   poly_add_assign(poly, addend);
@@ -6198,6 +6232,64 @@ fn ntt_len4_avx2(poly: &mut Poly, zeta_index: &mut usize) {
 ///
 /// The active CPU must support AVX2 and SSE4.1.
 fn inverse_ntt_avx2(poly: &mut Poly, final_scale_mont: i16) {
+  inverse_ntt_avx2_butterflies(poly);
+
+  for i in (0..N).step_by(8) {
+    // SAFETY: fixed-size AVX2 final inverse-NTT scale because:
+    // 1. `i` advances by 8 while `i < N == 256`.
+    // 2. Each load/store touches `i..i + 8`, which is in bounds.
+    // 3. The function is gated by `#[target_feature(enable = "avx2,sse4.1")]`, and the caller proves
+    //    AVX2 and SSE4.1 availability.
+    unsafe {
+      let coeffs = load_u16x8_avx2(poly.as_ptr().add(i));
+      store_u16x8_avx2(
+        poly.as_mut_ptr().add(i),
+        mul_mont_const_mod_u16x8_avx2(coeffs, final_scale_mont),
+      );
+    }
+  }
+}
+
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1.
+fn inverse_ntt_avx2_add_assign(poly: &mut Poly, addend: &Poly, final_scale_mont: i16) {
+  inverse_ntt_avx2_butterflies(poly);
+
+  for i in (0..N).step_by(8) {
+    // SAFETY: fixed-size AVX2 final inverse-NTT scale plus add because:
+    // 1. `i` advances by 8 while `i < N == 256`.
+    // 2. Each load/store touches `i..i + 8`, which is in bounds for both polynomials.
+    // 3. `addend` contains canonical modulo-Q coefficients, matching the `poly_add_assign` contract.
+    // 4. The function is gated by `#[target_feature(enable = "avx2,sse4.1")]`, and the caller proves
+    //    AVX2 and SSE4.1 availability.
+    unsafe {
+      let coeffs = load_u16x8_avx2(poly.as_ptr().add(i));
+      let scaled = mul_mont_const_mod_u16x8_avx2(coeffs, final_scale_mont);
+      let addend = load_u16x8_avx2(addend.as_ptr().add(i));
+      store_u16x8_avx2(poly.as_mut_ptr().add(i), add_mod_u16x8_avx2(scaled, addend));
+    }
+  }
+}
+
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1.
+fn inverse_ntt_avx2_butterflies(poly: &mut Poly) {
   let mut zeta_index = 127usize;
   let mut len = 2usize;
   if len == 2 {
@@ -6242,21 +6334,6 @@ fn inverse_ntt_avx2(poly: &mut Poly, final_scale_mont: i16) {
   }
 
   x86_64::inverse_ntt_len_ge16_avx2(poly, &mut zeta_index);
-
-  for i in (0..N).step_by(8) {
-    // SAFETY: fixed-size AVX2 final inverse-NTT scale because:
-    // 1. `i` advances by 8 while `i < N == 256`.
-    // 2. Each load/store touches `i..i + 8`, which is in bounds.
-    // 3. The function is gated by `#[target_feature(enable = "avx2,sse4.1")]`, and the caller proves
-    //    AVX2 and SSE4.1 availability.
-    unsafe {
-      let coeffs = load_u16x8_avx2(poly.as_ptr().add(i));
-      store_u16x8_avx2(
-        poly.as_mut_ptr().add(i),
-        mul_mont_const_mod_u16x8_avx2(coeffs, final_scale_mont),
-      );
-    }
-  }
 }
 
 #[cfg(all(
@@ -9534,6 +9611,26 @@ mod tests {
           "gamma lane {i}, sample {sample_index}"
         );
       }
+    }
+  }
+
+  #[test]
+  fn fused_inverse_ntt_add_matches_scalar_transform_then_add() {
+    for seed in 0usize..32 {
+      let mut fused = test_poly(seed);
+      let mut expected = fused;
+      let mut addend = test_poly(seed.strict_add(1000));
+      // Include the reduction boundaries in the addend.
+      addend[0] = 0;
+      addend[1] = Q - 1;
+
+      inverse_ntt_scaled_add_assign(&mut fused, &addend, INV_NTT_PRODUCT_SCALE_MONT);
+      inverse_ntt_scalar_with_scale(&mut expected, INV_NTT_PRODUCT_SCALE_MONT);
+      for (value, add) in expected.iter_mut().zip(&addend) {
+        *value = add_mod(*value, *add);
+      }
+
+      assert_eq!(fused, expected, "seed {seed}");
     }
   }
 
