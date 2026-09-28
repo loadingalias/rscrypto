@@ -289,12 +289,26 @@ libcrux-ml-kem = { version = "0.0.10", default-features = false, features = [
   "mlkem1024",
   "simd256",
 ] }
+libcrux-ml-dsa = { version = "0.0.10", default-features = false, features = [
+  "std",
+  "mldsa44",
+  "mldsa65",
+  "mldsa87",
+  "simd256",
+] }
 
 [target.'cfg(target_arch = "aarch64")'.dev-dependencies]
 libcrux-ml-kem = { version = "0.0.10", default-features = false, features = [
   "mlkem512",
   "mlkem768",
   "mlkem1024",
+  "simd128",
+] }
+libcrux-ml-dsa = { version = "0.0.10", default-features = false, features = [
+  "std",
+  "mldsa44",
+  "mldsa65",
+  "mldsa87",
   "simd128",
 ] }
 
@@ -304,6 +318,7 @@ libcrux-ml-kem = { version = "0.0.10", default-features = false, features = [
   "mlkem768",
   "mlkem1024",
 ] }
+libcrux-ml-dsa = { version = "0.0.10", default-features = false, features = ["std", "mldsa44", "mldsa65", "mldsa87"] }
 
 [target.'cfg(all(any(unix, windows), not(target_arch = "wasm32"), not(any(target_arch = "s390x", target_arch = "powerpc64"))))'.dev-dependencies]
 aws-lc-rs = "1.18.1"

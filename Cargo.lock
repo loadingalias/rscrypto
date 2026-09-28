@@ -1354,6 +1354,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "libcrux-ml-dsa"
+version = "0.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "783ebed7cb27de6d44ef2aa662648d1a0869694f2f754f2f1ed45e959ef3b48e"
+dependencies = [
+ "core-models",
+ "hax-lib",
+ "libcrux-intrinsics",
+ "libcrux-macros",
+ "libcrux-platform",
+ "libcrux-secrets",
+ "libcrux-sha3",
+ "tls_codec",
+]
+
+[[package]]
 name = "libcrux-ml-kem"
 version = "0.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2120,6 +2136,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "keccak 0.2.2",
+ "libcrux-ml-dsa",
  "libcrux-ml-kem",
  "libcrux-p256",
  "ml-dsa",
@@ -2518,6 +2535,27 @@ checksum = "be4d6b5f19ff7664e8c98d03e2139cb510db9b0a60b55f8e8709b689d939b6bc"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "tls_codec"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18cc98286004cea38f717e2b03d990fc774fbfd38a82720de40e5c94365067c8"
+dependencies = [
+ "tls_codec_derive",
+ "zeroize",
+]
+
+[[package]]
+name = "tls_codec_derive"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "674f41dd95f76cdeb005c83f9444e20cf43daebef37cde9e49a9ca6f4e87b423"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

@@ -9,7 +9,7 @@ use rscrypto::{MlDsa44, MlDsa65, MlDsa87};
 use rustcrypto_ml_dsa as oracle;
 
 macro_rules! profile {
-  ($function:ident, $corpus:ident, $name:literal, $profile:ident, $secret:ident, $oracle:ident) => {
+  ($function:ident, $corpus:ident, $name:literal, $profile:ident, $secret:ident, $oracle:ident, $libcrux:ident) => {
     fn $function(c: &mut Criterion) {
       if !bench_config::selected(concat!($name, "/")) {
         return;
@@ -59,6 +59,16 @@ macro_rules! profile {
         .verify_with_context(&message, context, &signature)
         .expect("prepared benchmark verification");
       assert!(external_public.verify_with_context(&message, context, &expected));
+      // libcrux takes the FIPS 204 key-generation seed and signs deterministically
+      // with all-zero randomness; its keys and signature must match byte for byte.
+      let libcrux = libcrux_ml_dsa::$libcrux::generate_key_pair(seed);
+      assert_eq!(libcrux.verification_key.as_ref().as_slice(), public.as_bytes().as_slice());
+      assert_eq!(libcrux.signing_key.as_ref().as_slice(), secret.expose_secret().as_bytes().as_slice());
+      let libcrux_signature =
+        libcrux_ml_dsa::$libcrux::sign(&libcrux.signing_key, &message, context, [0; 32]).expect("libcrux signature");
+      assert_eq!(libcrux_signature.as_ref().as_slice(), signature.as_bytes().as_slice());
+      libcrux_ml_dsa::$libcrux::verify(&libcrux.verification_key, &message, context, &libcrux_signature)
+        .expect("libcrux verification");
       // Seed expansion, output encoding and destruction are timed. No OS entropy.
       let mut group = c.benchmark_group(concat!($name, "/keygen/seed-encoded"));
       group.bench_function("rscrypto", |b| {
@@ -75,6 +85,9 @@ macro_rules! profile {
           let encoded = rscrypto::SecretBytes::<{ rscrypto::$secret::LENGTH }>::new(encoded.into());
           black_box((sk.verifying_key().encode(), encoded));
         })
+      });
+      group.bench_function("libcrux", |b| {
+        b.iter(|| black_box(libcrux_ml_dsa::$libcrux::generate_key_pair(black_box(seed))))
       });
       group.finish();
       // Preparation fills reused caller-owned storage; the secret handle's drop
@@ -109,6 +122,20 @@ macro_rules! profile {
           );
         })
       });
+      // libcrux signs from the encoded key on every call, like this row.
+      group.bench_function("libcrux", |b| {
+        b.iter(|| {
+          black_box(
+            libcrux_ml_dsa::$libcrux::sign(
+              black_box(&libcrux.signing_key),
+              black_box(&message),
+              black_box(context),
+              [0; 32],
+            )
+            .expect("sign"),
+          );
+        })
+      });
       group.finish();
       let mut group = c.benchmark_group(concat!($name, "/sign/prepared-key-deterministic"));
       group.bench_function("rscrypto", |b| {
@@ -138,6 +165,17 @@ macro_rules! profile {
         b.iter(|| {
           black_box(public.verify_with_context(black_box(&message), black_box(context), black_box(&signature)))
             .expect("verify");
+        })
+      });
+      group.bench_function("libcrux", |b| {
+        b.iter(|| {
+          black_box(libcrux_ml_dsa::$libcrux::verify(
+            black_box(&libcrux.verification_key),
+            black_box(&message),
+            black_box(context),
+            black_box(&libcrux_signature),
+          ))
+          .expect("verify");
         })
       });
       group.finish();
@@ -225,9 +263,33 @@ macro_rules! profile {
   };
 }
 
-profile!(mldsa44, corpus44, "mldsa44", MlDsa44, MlDsa44SecretKey, MlDsa44);
-profile!(mldsa65, corpus65, "mldsa65", MlDsa65, MlDsa65SecretKey, MlDsa65);
-profile!(mldsa87, corpus87, "mldsa87", MlDsa87, MlDsa87SecretKey, MlDsa87);
+profile!(
+  mldsa44,
+  corpus44,
+  "mldsa44",
+  MlDsa44,
+  MlDsa44SecretKey,
+  MlDsa44,
+  ml_dsa_44
+);
+profile!(
+  mldsa65,
+  corpus65,
+  "mldsa65",
+  MlDsa65,
+  MlDsa65SecretKey,
+  MlDsa65,
+  ml_dsa_65
+);
+profile!(
+  mldsa87,
+  corpus87,
+  "mldsa87",
+  MlDsa87,
+  MlDsa87SecretKey,
+  MlDsa87,
+  ml_dsa_87
+);
 
 #[cfg(any(
   all(
