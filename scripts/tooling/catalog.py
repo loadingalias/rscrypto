@@ -122,6 +122,12 @@ def validate(data):
             or not perf_source.get('packages') \
             or any(not re.fullmatch(r'[a-z0-9][a-z0-9+.-]*', package) for package in perf_source.get('packages', [])):
         raise ValueError('ci-cross-run: invalid pinned perf source')
+    for section in ('linux', 'linux-ci'):
+        codename = data[section]['codename']
+        pins = data[section].get('inrelease', {})
+        if set(pins) != {codename, f'{codename}-updates', f'{codename}-security'} \
+                or any(not re.fullmatch(r'[0-9a-f]{64}', digest) for digest in pins.values()):
+            raise ValueError(f'{section}: every suite requires a pinned InRelease SHA-256')
     proof = data['ci-ct-proof']
     if not re.fullmatch(r'git\+https://github\.com/ocaml/opam-repository\.git#[0-9a-f]{40}', proof['opam-repository']):
         raise ValueError('ci-ct-proof: opam repository requires an exact commit')

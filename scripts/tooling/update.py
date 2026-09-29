@@ -173,6 +173,12 @@ def resolve_catalog():
     if f'Version: {data["linux-ci"]["ubuntu"]}\n' not in ci_release:
         raise ValueError('Ubuntu snapshot does not match the CI runner release')
     data['linux'].update(ubuntu=ubuntu, codename=record['Dist'], snapshot=snapshot)
+    # Installers verify cached APT indexes offline against these signed-release pins.
+    for section in ('linux', 'linux-ci'):
+        codename = data[section]['codename']
+        data[section]['inrelease'] = {
+            suite: hashlib.sha256(fetch(f'https://snapshot.ubuntu.com/ubuntu/{snapshot}/dists/{suite}/InRelease')[0]).hexdigest()
+            for suite in (codename, f'{codename}-updates', f'{codename}-security')}
     channel_bytes, channel_url = fetch('https://aka.ms/vs/stable/channel')
     channel = json.loads(channel_bytes)
     vsman = next(item['payloads'][0] for item in channel['channelItems'] if item['id'] == 'Microsoft.VisualStudio.Manifests.VisualStudio')

@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BASH = shutil.which('bash')
 CATALOG = tomllib.loads((ROOT / '.config/tooling.toml').read_text())
 
-STUB = r'''import json, os, pathlib, shlex, subprocess, sys, urllib.parse
+STUB = r'''import json, os, pathlib, shlex, shutil, subprocess, sys, urllib.parse
 name = pathlib.Path(sys.argv[0]).name
 args = sys.argv[1:]
 with open(os.environ['INSTALL_LOG'], 'a') as log:
@@ -33,8 +33,12 @@ if name == 'uname':
 elif name == 'id':
     print(os.geteuid() if os.environ.get('INSTALL_ROOT_CACHE') else '0')
 elif name == 'sudo':
-    command = [os.environ['INSTALL_REAL_SUDO'], '-n', '/bin/rm', *args[1:]] if args[0] == 'rm' else args
+    privileged = {'rm': '/bin/rm', 'chown': shutil.which('chown')}
+    command = [os.environ['INSTALL_REAL_SUDO'], '-n', privileged[args[0]], *args[1:]] if args[0] in privileged else args
     sys.exit(subprocess.run(command).returncode)
+elif name == 'dpkg':
+    print({'x86_64': 'amd64', 'aarch64': 'arm64', 'ppc64le': 'ppc64el'}.get(os.environ['INSTALL_ARCH'],
+                                                                           os.environ['INSTALL_ARCH']))
 elif name == 'apt-cache':
     if not (os.environ.get('INSTALL_NO_EXACT_PERF') and args[-1].startswith('linux-tools-')
             and args[-1] != 'linux-tools-generic'):
@@ -119,6 +123,14 @@ elif name == 'python3':
         )
         executable.chmod(0o755)
         print(directory)
+    elif script == 'apt_state.py':
+        # A restored state verifies only when the fixture says so; fetched indexes verify
+        # unless the fixture models a snapshot that no longer matches its pins.
+        calls = [json.loads(line) for line in pathlib.Path(os.environ['INSTALL_LOG']).read_text().splitlines()]
+        updated = any(call[0] == 'apt-get' and call[-1] == 'update'
+                      and any(arg.startswith('Dir::Etc::sourcelist=') for arg in call) for call in calls)
+        valid = (os.environ.get('INSTALL_APT_STATE_VALID') or updated) and not os.environ.get('INSTALL_APT_STATE_UNVERIFIABLE')
+        sys.exit(0 if valid else 1)
     elif script == 'transfer.py':
         if args[1] == 'install': print(str(pathlib.Path(args[-1]) / 'bin'))
     elif script in ('compat.py', 'package.py') and '--install' in args:
@@ -136,7 +148,7 @@ class LinuxInstall(unittest.TestCase):
         root = Path(temporary.name)
         binaries = root / 'bin'
         binaries.mkdir()
-        for name in ('uname', 'id', 'apt-get', 'apt-cache', 'cargo', 'clang', 'cmake', 'make', 'nproc', 'patch',
+        for name in ('uname', 'id', 'apt-get', 'apt-cache', 'dpkg', 'cargo', 'clang', 'cmake', 'make', 'nproc', 'patch',
                      'perf', 'python3', 'rustup', 'sudo', 'tar',
                      'wasmtime', 'opam', 'just', 'rg', 'lychee', 'rumdl', 'samply', 'gungraun-runner', 'sysctl'):
             script = binaries / name
@@ -160,7 +172,7 @@ class LinuxInstall(unittest.TestCase):
                'TMPDIR': str(temporary_path),
                'PATH': str(binaries) + os.pathsep + os.environ['PATH'],
                'BASH_ENV': str(bash_env), 'INSTALL_ARCH': arch,
-               'INSTALL_LOG': str(root / 'commands.jsonl')}
+               'INSTALL_LOG': str(root / 'commands.jsonl'), 'RSCRYPTO_APT_STATE': str(root / 'apt state')}
         env.update(extra_env or {})
         if env.get('INSTALL_ROOT_CACHE'):
             self.addCleanup(subprocess.run, [env['INSTALL_REAL_SUDO'], '-n', 'rm', '-rf', '--', str(temporary_path)],
@@ -397,6 +409,28 @@ class LinuxInstall(unittest.TestCase):
                 else:
                     self.assertEqual(opam, [])
 
+    @staticmethod
+    def snapshot_updates(calls):
+        return [c for c in calls if c[0] == 'apt-get' and c[-1] == 'update'
+                and any(arg.startswith('Dir::Etc::sourcelist=') for arg in c)]
+
+    def test_verified_apt_state_installs_without_fetching_indexes(self):
+        result, calls, root = self.provision('x86_64-linux', extra_env={'INSTALL_APT_STATE_VALID': '1'})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.snapshot_updates(calls), [])
+        self.assertTrue(any(c[0] == 'apt-get' and '--allow-downgrades' in c for c in calls))
+        # CI saves only states that this run verified and installed from.
+        self.assertTrue((root / 'apt state' / 'ready').exists())
+
+    def test_indexes_that_miss_the_pins_stop_before_installation(self):
+        result, calls, root = self.provision('x86_64-linux', extra_env={'INSTALL_APT_STATE_UNVERIFIABLE': '1'})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((root / 'apt state' / 'ready').exists())
+        self.assertEqual(len(self.snapshot_updates(calls)), 1)
+        verifications = [c for c in calls if c[0] == 'python3' and c[1].endswith('apt_state.py')]
+        self.assertEqual(len(verifications), 2, 'restored state, then fetched indexes')
+        self.assertFalse(any(c[0] == 'apt-get' and '--allow-downgrades' in c for c in calls))
+
     def test_package_failure_stops_before_rust_installation(self):
         result, calls, _ = self.provision('x86_64-linux', fail=True)
         self.assertEqual(result.returncode, 42)
@@ -404,7 +438,7 @@ class LinuxInstall(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == 'linux' and os.geteuid() != 0 and shutil.which('sudo'),
                          'requires a non-root Linux user with sudo')
-    def test_non_root_cleanup_removes_privileged_apt_cache_and_preserves_status(self):
+    def test_non_root_run_returns_privileged_apt_state_and_removes_its_mirror_list(self):
         sudo = shutil.which('sudo')
         if subprocess.run([sudo, '-n', 'true'], capture_output=True).returncode:
             self.skipTest('requires passwordless sudo')
@@ -417,7 +451,8 @@ class LinuxInstall(unittest.TestCase):
                 cache = json.loads((root / 'root-cache.json').read_text())
                 self.assertEqual(cache['uid'], 0)
                 self.assertEqual(result.returncode, 42 if fail else 0, result.stdout + result.stderr)
-                self.assertFalse(Path(cache['path']).parent.parent.exists())
+                # APT state persists for reuse, but nothing in it stays owned by root.
+                self.assertEqual(Path(cache['path']).stat().st_uid, os.geteuid())
                 source = (root / 'apt-sources.list').read_text()
                 mirror = Path(source.split('mirror+file:', 1)[1].split()[0])
                 self.assertFalse(mirror.exists())

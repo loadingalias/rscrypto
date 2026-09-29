@@ -13,6 +13,7 @@ import zipfile
 from unittest.mock import patch
 
 import tomlkit
+import apt_state
 import catalog
 import update
 
@@ -227,6 +228,82 @@ dep="1"
                     with self.assertRaises(subprocess.CalledProcessError):
                         update.main()
                 actions.assert_not_called()
+
+
+class AptState(unittest.TestCase):
+    PREFIX = '_tmp_rscrypto-apt-mirrors'
+    SUITES = ('noble', 'noble-updates', 'noble-security')
+
+    def lists(self):
+        """Build a signed-shaped lists directory and the matching catalog pins."""
+        import hashlib
+        lists = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, lists)
+        pins = {}
+        for suite in self.SUITES:
+            indexes = {f'{component}/binary-amd64/Packages': f'Package: {component}-{suite}\n'.encode()
+                       for component in ('main', 'universe')}
+            for name, data in indexes.items():
+                (lists / f'{self.PREFIX}_dists_{suite}_{name.replace("/", "_")}').write_bytes(data)
+            signed = ''.join(f' {hashlib.sha256(data).hexdigest()} {len(data)} {name}\n' for name, data in indexes.items())
+            inrelease = ('-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nOrigin: Ubuntu\nSHA256:\n' + signed
+                         + '-----BEGIN PGP SIGNATURE-----\n\nsignature\n-----END PGP SIGNATURE-----\n').encode()
+            (lists / f'{self.PREFIX}_dists_{suite}_InRelease').write_bytes(inrelease)
+            pins[suite] = hashlib.sha256(inrelease).hexdigest()
+        (lists / 'lock').write_bytes(b'')
+        (lists / 'partial').mkdir()
+        return lists, pins
+
+    def verify(self, lists, pins, prefix=PREFIX):
+        with patch.object(apt_state, 'verify_signature'):
+            apt_state.verify(lists, prefix, 'amd64', pins)
+
+    def test_accepts_only_indexes_signed_by_pinned_releases(self):
+        lists, pins = self.lists()
+        self.verify(lists, pins)
+
+    def test_rejects_state_apt_would_trust_without_proof(self):
+        cases = {
+            'differs from its signed size or SHA-256':
+                lambda lists, pins: (lists / f'{self.PREFIX}_dists_noble-updates_main_binary-amd64_Packages')
+                .write_bytes(b'Package: planted\n'),
+            'differs from the catalog pin': lambda lists, pins: pins.update({'noble': '0' * 64}),
+            'not signed by its InRelease':
+                lambda lists, pins: (lists / f'{self.PREFIX}_dists_noble_main_binary-amd64_Packages.extra')
+                .write_bytes(b'x'),
+            'missing universe package index':
+                lambda lists, pins: (lists / f'{self.PREFIX}_dists_noble-security_universe_binary-amd64_Packages')
+                .unlink(),
+        }
+        for reason, tamper in cases.items():
+            with self.subTest(reason):
+                lists, pins = self.lists()
+                tamper(lists, pins)
+                with self.assertRaisesRegex(apt_state.Unusable, reason):
+                    self.verify(lists, pins)
+        lists, pins = self.lists()
+        with self.assertRaisesRegex(apt_state.Unusable, 'missing InRelease'):
+            self.verify(lists, pins, prefix='_other_mirrors')
+
+    def test_signed_body_rejects_unsigned_additions(self):
+        message = ('-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nSHA256:\n x 1 a\n'
+                   '-----BEGIN PGP SIGNATURE-----\n\ns\n-----END PGP SIGNATURE-----\n')
+        self.assertIn('SHA256:', apt_state.signed_body(message.encode()))
+        with self.assertRaisesRegex(apt_state.Unusable, 'single clearsigned'):
+            apt_state.signed_body((message + 'SHA256:\n y 1 b\n').encode())
+
+    def test_failed_signature_is_fatal(self):
+        lists, pins = self.lists()
+        failed = subprocess.CompletedProcess([], 1, '', 'BAD signature')
+        with patch.object(apt_state.subprocess, 'run', return_value=failed):
+            with self.assertRaisesRegex(apt_state.Unusable, 'signature did not verify'):
+                apt_state.verify(lists, self.PREFIX, 'amd64', pins)
+
+    def test_catalog_requires_every_suite_pin(self):
+        data = catalog.read()
+        del data['linux-ci']['inrelease']['noble-security']
+        with self.assertRaisesRegex(ValueError, 'pinned InRelease'):
+            catalog.validate(data)
 
 
 class ActionPins(unittest.TestCase):

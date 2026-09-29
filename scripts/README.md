@@ -227,6 +227,7 @@ Check, Miri, and fuzz commands run independently of that plan.
 | `lib/python.sh`                        | Python-backed check, test, CT, and benchmark scripts |
 | `lib/toolchain.py`, `lib/toolchain.sh` | Shared toolchain selection for installers, builds, checks, tests, and benchmarks |
 | `tooling/transfer.py`                  | Cross-build and verify the pinned native runner tools |
+| `tooling/apt_state.py`                 | Verify restored APT indexes against the pinned Ubuntu snapshot before `tooling/linux.sh` uses them |
 | `lib/evidence_bundle.py`               | Source binding, sealing, and transfer integrity for cross-compiled tests, tools, and CT |
 | `lib/cross_build.py`                   | Explicit target identities and cross-compiler environment for test, tool, and CT preparation |
 
@@ -278,6 +279,19 @@ Only that signed snapshot supplies package indexes and version choices.
 If its package endpoint fails, APT can fetch the exact package from Ubuntu's live archive;
 the snapshot's authenticated package checksum still applies.
 The live archive cannot supply indexes or change the selected versions.
+The installer keeps APT's indexes and downloaded packages in `/var/cache/rscrypto-apt`
+(`RSCRYPTO_APT_STATE` overrides it). CI restores that directory with
+[`.github/actions/apt-state`](../.github/actions/apt-state/action.yml) and saves it as each job's
+final step with [`apt-state/save`](../.github/actions/apt-state/save/action.yml), even after a later
+failure, but only when the installer's `ready` marker shows that this run verified the state and
+installed from it.
+APT trusts any index already in its lists directory, so `tooling/apt_state.py` proves a restored
+state first: each suite's InRelease must match the catalog's `inrelease` SHA-256 pin and Ubuntu's
+archive signature, and every index must carry its signed size and SHA-256.
+A verified state installs without contacting the snapshot service;
+APT still rejects any cached package that differs from those indexes.
+Otherwise the installer discards the indexes, fetches them, and requires the same proof.
+`just update` records the pins whenever it selects a snapshot.
 It uses Cargo Binstall on x86-64, ARM64, and RISC-V to select compatible binaries,
 falling back to source when unavailable.
 IBM Z and POWER build Cargo tools from source.

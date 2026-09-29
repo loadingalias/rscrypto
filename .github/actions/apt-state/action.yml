@@ -1,0 +1,32 @@
+name: Restore verified Ubuntu package state
+description: >-
+  Restore the APT index and package state that scripts/tooling/linux.sh verifies
+  against the catalog's pinned Ubuntu snapshot before using it offline.
+  Pair it with ./.github/actions/apt-state/save as the job's final step.
+inputs:
+  id:
+    description: Package-set identity, such as the tooling profile, platform, and cross target.
+    required: true
+outputs:
+  key:
+    description: Cache key for this package set and catalog.
+    value: ${{ steps.restore.outputs.cache-primary-key }}
+  hit:
+    description: Whether the exact key was restored.
+    value: ${{ steps.restore.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    # APT downloads as _apt, which must traverse this path, and the cache runs as this user.
+    - name: Prepare APT state directory
+      shell: bash
+      run: sudo install -d -m 755 -o "$(id -u)" -g "$(id -g)" /var/cache/rscrypto-apt
+    # A restored state is untrusted: the installer checks it against pinned InRelease
+    # digests, Ubuntu's signature, and signed index hashes, or fetches from the network.
+    - id: restore
+      uses: "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" # v6.1.0
+      with:
+        path: /var/cache/rscrypto-apt
+        key: rscrypto-apt-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.id }}-${{ hashFiles('.config/tooling.toml') }}
+        restore-keys: |
+          rscrypto-apt-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.id }}-

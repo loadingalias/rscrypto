@@ -38,6 +38,7 @@ nasm = "3.02"
 ubuntu = "26.04"
 codename = "resolute"
 snapshot = "20260921T220043Z"
+inrelease = { "resolute" = "45f95ce276cdba3e41870516a130e03c58b8b7a79e9546b0efe9e526d255740c", "resolute-updates" = "ad9a9babfa671f7b80146381ba3d89632225af5e9834cfae73f4470121858c58", "resolute-security" = "7454e9ecafe98566426568ef453ffd008aca7735cd94dd5089536f23091cf7bc" }
 packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "pkgconf", "python3", "python3-venv", "unzip", "xz-utils", "zstd", "ninja-build", "libssl-dev", "perl", "m4", "shellcheck"]
 
 [ci]
@@ -97,6 +98,7 @@ cargo = ["cargo-deny", "cargo-audit"]
 [linux-ci]
 ubuntu = "24.04"
 codename = "noble"
+inrelease = { "noble" = "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0", "noble-updates" = "ec5f6d33cd3376f2bca4c6a6985ff8342af7198b09ad3bf606b6731cea9e8640", "noble-security" = "59b23711c8738657e5d921c420e6a13a6a85c675c462371384dfb80a07faca93" }
 packages = ["build-essential", "ca-certificates", "curl", "git", "jq", "python3", "cmake", "clang", "libclang-dev", "perl"]
 
 [windows]

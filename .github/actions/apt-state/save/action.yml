@@ -1,0 +1,29 @@
+name: Save verified Ubuntu package state
+description: >-
+  Save the APT state restored by ./.github/actions/apt-state once the installer has
+  verified it and installed from it, even when a later step fails.
+inputs:
+  key:
+    description: The key output of ./.github/actions/apt-state.
+    required: true
+  hit:
+    description: The hit output of ./.github/actions/apt-state.
+    required: true
+runs:
+  using: composite
+  steps:
+    # The installer deletes this marker at start and writes it only after a verified
+    # installation, so an interrupted run cannot store an empty or stale state.
+    - id: ready
+      shell: bash
+      env:
+        HIT: ${{ inputs.hit }}
+      run: |
+        if [[ "$HIT" != true && -f /var/cache/rscrypto-apt/ready ]]; then
+          echo "save=true" >>"$GITHUB_OUTPUT"
+        fi
+    - if: steps.ready.outputs.save == 'true'
+      uses: "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" # v6.1.0
+      with:
+        path: /var/cache/rscrypto-apt
+        key: ${{ inputs.key }}

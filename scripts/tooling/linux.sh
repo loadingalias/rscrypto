@@ -56,13 +56,26 @@ source /etc/os-release
 }
 sudo_cmd=()
 if [[ "$(id -u)" != 0 ]]; then sudo_cmd=(sudo); fi
-# APT 2.8.3's mirror method stalls on escaped spaces in the mirror-list URI.
-# Keep this small file under /tmp; larger build files still follow TMPDIR.
-mirror_list="$(mktemp /tmp/rscrypto-apt-mirrors.XXXXXX)"
-trap 'rm -f "$mirror_list"' EXIT
+# APT names cached index files after the mirror-list path, so the path is fixed.
+# APT 2.8.3's mirror method stalls on escaped spaces in the mirror-list URI; this path has none.
+mirror_list=/tmp/rscrypto-apt-mirrors
+apt_prefix=_tmp_rscrypto-apt-mirrors
+# Snapshot indexes and packages persist here so CI can restore them. APT downloads as
+# _apt, which must traverse this path; a mode-750 home would force unsandboxed root downloads.
+apt_state="${RSCRYPTO_APT_STATE:-/var/cache/rscrypto-apt}"
+apt_ready=false
 temporary="$(mktemp -d)"
-# APT creates root-owned mirror cache entries inside this temporary directory.
-trap '"${sudo_cmd[@]}" rm -rf -- "$temporary" "$mirror_list"' EXIT
+settle_apt_state() {
+  [[ "$apt_ready" == true ]] || return 0
+  # Drop packages the pinned snapshot no longer provides, then return ownership so the
+  # invoking user (and CI's cache) can read everything APT wrote as root.
+  "${apt[@]}" autoclean >/dev/null || true
+  if [[ "${#sudo_cmd[@]}" -gt 0 && -n "$(find "$apt_state" -user 0 -print -quit)" ]]; then
+    "${sudo_cmd[@]}" chown -R "$(id -u):$(id -g)" "$apt_state"
+  fi
+}
+# APT creates root-owned entries inside these paths.
+trap 'settle_apt_state; "${sudo_cmd[@]}" rm -rf -- "$temporary" "$mirror_list"' EXIT
 # Minimal Ubuntu images may omit the HTTPS trust store and Python. Bootstrap
 # those through Ubuntu's signed archive, then converge them to the snapshot too.
 if ! command -v python3 >/dev/null || [[ ! -f /etc/ssl/certs/ca-certificates.crt ]]; then
@@ -70,15 +83,18 @@ if ! command -v python3 >/dev/null || [[ ! -f /etc/ssl/certs/ca-certificates.crt
   "${sudo_cmd[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y python3 ca-certificates
 fi
 codename="$(bootstrap_value codename)"
-mkdir -p "$temporary/lists/partial"
-chmod 755 "$temporary" "$temporary/lists" "$temporary/lists/partial"
+mkdir -p "$apt_state" 2>/dev/null || "${sudo_cmd[@]}" install -d -m 755 -o "$(id -u)" -g "$(id -g)" "$apt_state"
+mkdir -p "$apt_state/lists/partial" "$apt_state/archives/partial"
+# CI saves this state only after this run has verified it and installed from it.
+rm -f "$apt_state/ready"
+chmod 755 "$temporary" "$apt_state/lists" "$apt_state/archives"
 # Only the snapshot may supply indexes. The live archive is a package-only
 # fallback; APT still checks each package against the signed snapshot index.
 package_mirror=https://ports.ubuntu.com/ubuntu-ports
 [[ "$platform" != x86_64-linux ]] || package_mirror=https://archive.ubuntu.com/ubuntu
 printf 'https://snapshot.ubuntu.com/ubuntu/%s\tpriority:1\n%s\tpriority:2 type:deb\n' \
-  "$snapshot" "$package_mirror" > "$mirror_list"
-chmod 644 "$mirror_list"
+  "$snapshot" "$package_mirror" | "${sudo_cmd[@]}" tee "$mirror_list" >/dev/null
+"${sudo_cmd[@]}" chmod 644 "$mirror_list"
 # The archive remains signed; historical snapshots intentionally outlive Valid-Until.
 for suite in "$codename" "$codename-updates" "$codename-security"; do
   printf 'deb [check-valid-until=no signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] mirror+file:%s %s main universe\n' "$mirror_list" "$suite"
@@ -90,11 +106,32 @@ Package: *
 Pin: release o=Ubuntu
 Pin-Priority: 1001
 PREFERENCES
+# Fetch only package indexes, store them uncompressed so their bytes match the signed
+# InRelease hashes, and keep downloaded packages for reuse.
 apt_options=(-o "Dir::Etc::sourcelist=$temporary/sources.list" -o Dir::Etc::sourceparts=-
   -o "Dir::Etc::preferences=$temporary/preferences" -o Dir::Etc::preferencesparts=-
-  -o "Dir::State::lists=$temporary/lists" -o APT::Update::Error-Mode=any)
+  -o "Dir::State::lists=$apt_state/lists" -o "Dir::Cache::archives=$apt_state/archives"
+  -o APT::Update::Error-Mode=any -o Acquire::GzipIndexes=false -o Acquire::Languages=none
+  -o APT::Keep-Downloaded-Packages=true -o Binary::apt-get::APT::Keep-Downloaded-Packages=true
+  -o Acquire::IndexTargets::deb::CNF::DefaultEnabled=false
+  -o Acquire::IndexTargets::deb::Contents-deb::DefaultEnabled=false
+  -o Acquire::IndexTargets::deb::DEP-11::DefaultEnabled=false
+  -o Acquire::IndexTargets::deb::DEP-11-icons::DefaultEnabled=false
+  -o Acquire::IndexTargets::deb::DEP-11-icons-small::DefaultEnabled=false
+  -o Acquire::IndexTargets::deb::DEP-11-icons-hidpi::DefaultEnabled=false)
 apt=("${sudo_cmd[@]}" env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}")
-"${apt[@]}" update
+apt_ready=true
+apt_architecture="$(dpkg --print-architecture)"
+verify_apt_state() {
+  python3 "$SCRIPT_DIR/apt_state.py" verify "$apt_state/lists" "$apt_prefix" "$apt_architecture" "$linux_section"
+}
+# A restored state is used offline only after the same proof apt-get update performs.
+if ! verify_apt_state; then
+  "${sudo_cmd[@]}" find "$apt_state/lists" -mindepth 1 -maxdepth 1 ! -name partial -exec rm -rf -- {} +
+  "${apt[@]}" update
+  # Freshly fetched indexes must also match the catalog's pinned snapshot.
+  verify_apt_state
+fi
 catalog_get() { python3 "$SCRIPT_DIR/catalog.py" get "$@"; }
 python3 "$SCRIPT_DIR/catalog.py" validate
 package_section="$linux_section"
@@ -131,6 +168,7 @@ done
 install_options=(--allow-downgrades)
 [[ "$ci" == false ]] || install_options+=(--no-install-recommends)
 "${apt[@]}" install -y "${install_options[@]}" "${pinned_packages[@]}"
+touch "$apt_state/ready"
 
 ensure_kernel_perf() {
   if perf --version >/dev/null 2>&1; then perf --version; return; fi
