@@ -173,8 +173,9 @@ jobs:
           - platform: riscv64-linux
             target: riscv64gc-unknown-linux-gnu
             runner: ubuntu-24.04-riscv
-            # Compilation runs on x86-64; this budget covers native execution and bootstrap.
-            timeout: 30
+            # Compilation runs on x86-64. This budget also covers the ~540 MiB test-archive
+            # download, which takes about 9 minutes on this runner's ~1 MiB/s link.
+            timeout: 45
           - platform: x86_64-win
             runner: runs-on=${{ github.run_id }}/runner=x86_64-win/env=production
             timeout: 60
