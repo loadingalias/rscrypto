@@ -783,6 +783,7 @@ fn alloc_blocks(len: usize) -> Result<Vec<ScryptBlock>, ScryptError> {
 struct ScryptShape {
   n: usize,
   r: usize,
+  p: usize,
   two_r: usize,
   total_b_blocks: usize,
   v_blocks: usize,
@@ -821,6 +822,7 @@ fn scrypt_shape(params: &ScryptParams) -> Result<ScryptShape, ScryptError> {
   Ok(ScryptShape {
     n,
     r,
+    p,
     two_r,
     total_b_blocks,
     v_blocks,
@@ -852,9 +854,12 @@ fn scrypt_hash_portable(
     }
   }
 
-  // Step 2: for each p-chunk, apply ROMix.
-  for chunk in b_words.chunks_exact_mut(shape.two_r) {
-    ro_mix(chunk, v, scratch, shape.n, shape.r);
+  // Step 2: for each p-chunk, apply ROMix. Explicit offsets avoid the division
+  // that `chunks_exact_mut` emits on the CT-reviewed verification path.
+  for chunk_idx in 0..shape.p {
+    let chunk_start = chunk_idx.strict_mul(shape.two_r);
+    let chunk_end = chunk_start.strict_add(shape.two_r);
+    ro_mix(&mut b_words[chunk_start..chunk_end], v, scratch, shape.n, shape.r);
   }
 
   // Re-serialise the mixed B back into the byte buffer for the final
