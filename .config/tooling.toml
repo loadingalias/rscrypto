@@ -21,7 +21,7 @@ tomlkit = "0.15.1"
 PyYAML = "6.0.3"
 
 [versions]
-cargo-rail = "0.29.0"
+cargo-rail = "0.30.0"
 cargo-binstall = "1.23.0"
 llvm = "23.1.1"
 cmake = "4.4.3"
@@ -124,8 +124,8 @@ url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.23.0/ca
 sha256 = "c458cfe9534d1958f159fc17b5f50e839297b4ee752b23ffdd80c5e15a734c42"
 
 [aarch64-linux.assets.cargo-rail]
-url = "https://github.com/loadingalias/cargo-rail/releases/download/v0.29.0/cargo-rail-aarch64-unknown-linux-gnu.zip"
-sha256 = "e0b1680120bc81abf4a3c878eab40c034e5508097f34cf099ddcd06a912c9371"
+url = "https://github.com/loadingalias/cargo-rail/releases/download/v0.30.0/cargo-rail-aarch64-unknown-linux-gnu.zip"
+sha256 = "b3ea26eb00c317378cd9bf2e6f07f8006a6c92d440e6868a739a8caca7e1e55e"
 
 [aarch64-linux.assets.cmake]
 url = "https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-linux-aarch64.tar.gz"
@@ -155,8 +155,8 @@ url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.23.0/ca
 sha256 = "cdada45ad6bb501185ab309f5eef3f628b6bc44460746565cb3e0c7538815bf3"
 
 [x86_64-linux.assets.cargo-rail]
-url = "https://github.com/loadingalias/cargo-rail/releases/download/v0.29.0/cargo-rail-x86_64-unknown-linux-gnu.zip"
-sha256 = "8fd5ecac4e8ea7352338b30c4b6202cc5bd7af645c809f8ab552d91497616d83"
+url = "https://github.com/loadingalias/cargo-rail/releases/download/v0.30.0/cargo-rail-x86_64-unknown-linux-gnu.zip"
+sha256 = "ebcf59af05cd11cc65c1ff60670358f413e307264dfb42087e2d066547673c5d"
 
 [x86_64-linux.assets.cmake]
 url = "https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-linux-x86_64.tar.gz"
@@ -235,8 +235,8 @@ url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.23.0/ca
 sha256 = "f4641479477aca40387e88297e3813fab8e44a8d21f25faa44e0ff33e2bc1726"
 
 [x86_64-win.assets.cargo-rail]
-url = "https://github.com/loadingalias/cargo-rail/releases/download/v0.29.0/cargo-rail-x86_64-pc-windows-msvc.zip"
-sha256 = "26c1a5f92906ce7c8c96acb8c3d7094e5fbfd7ab9bf2c9c5dcce95c44d289533"
+url = "https://github.com/loadingalias/cargo-rail/releases/download/v0.30.0/cargo-rail-x86_64-pc-windows-msvc.zip"
+sha256 = "8b19061141c6f6aae5465a41d8ef1f42b56ea0617dace3e4006fdfb0a1bd88a2"
 
 [x86_64-win.assets.cmake]
 url = "https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-windows-x86_64.zip"
