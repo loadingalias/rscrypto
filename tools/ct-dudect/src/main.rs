@@ -1371,7 +1371,7 @@ mldsa_probe_transform!(
   mldsa_probe_fixed
 );
 mldsa_probe_transform!(
-  mldsa_probe_inverse_ntt_fixed_vs_random,
+  mldsa_inverse_ntt_dense_fixed_vs_random,
   rscrypto::auth::diag_mldsa_inverse_ntt,
   mldsa_probe_fixed,
   mldsa_probe_random
@@ -3180,7 +3180,7 @@ ctbench_main_with_seeds!(
   (mldsa_probe_ntt_high_vs_random, Some(0x6d6c64737072000b)),
   (mldsa_probe_inverse_ntt_zero_vs_zero, Some(0x6d6c64737072000c)),
   (mldsa_probe_inverse_ntt_zero_vs_fixed, Some(0x6d6c64737072000d)),
-  (mldsa_probe_inverse_ntt_fixed_vs_random, Some(0x6d6c64737072000e)),
+  (mldsa_inverse_ntt_dense_fixed_vs_random, Some(0x6d6c64737072000e)),
   (mldsa_probe_inverse_ntt_high_vs_random, Some(0x6d6c64737072000f)),
   (mldsa_probe_product_one_vs_fixed, Some(0x6d6c647370720010)),
   (mldsa_probe_product_minus_one_vs_fixed, Some(0x6d6c647370720011)),

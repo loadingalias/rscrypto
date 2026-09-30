@@ -5186,6 +5186,8 @@ right_class = "64 inverse NTT executions on a random canonical polynomial"
 samples = 20000
 smoke_samples = 512
 notes = "Required production-kernel evidence; no whole-signing CT claim."
+diagnostic_targets = ["powerpc64le-unknown-linux-gnu"]
+diagnostic_targets_reason = "POWER10 vector multiplies run faster on zero operands. Production inverse NTTs take dense NTT-domain operands; mldsa_inverse_ntt_dense_fixed_vs_random gates that distribution."
 
 [[dudect_case]]
 name = "mldsa_inverse_ntt_portable_fixed_vs_random"
@@ -5495,15 +5497,14 @@ gate = "diagnostic"
 reason = "Isolates zero operands in the POWER inverse NTT from per-sample input variation."
 
 [[dudect_case]]
-name = "mldsa_probe_inverse_ntt_fixed_vs_random"
+name = "mldsa_inverse_ntt_dense_fixed_vs_random"
 primitive = "signature.mldsa.secret_kernels"
-filter = "mldsa_probe_inverse_ntt_fixed_vs_random"
+filter = "mldsa_inverse_ntt_dense_fixed_vs_random"
 left_class = "64 inverse NTTs of one fixed random canonical polynomial"
 right_class = "64 inverse NTTs of independently random canonical polynomials"
 samples = 200000
 smoke_samples = 512
-gate = "diagnostic"
-reason = "Realistic-secret probe for the POWER inverse NTT: both classes have random-like bit counts."
+notes = "Required on every target. Every production inverse NTT input is a dense NTT-domain polynomial."
 
 [[dudect_case]]
 name = "mldsa_probe_inverse_ntt_high_vs_random"
@@ -5645,6 +5646,7 @@ dudect = [
   "mldsa_product_fixed_vs_random",
   "mldsa_accumulate_fixed_vs_random",
   "mldsa_ntt_dense_fixed_vs_random",
+  "mldsa_inverse_ntt_dense_fixed_vs_random",
   "mldsa_montgomery_dense_fixed_vs_random",
   "mldsa_product_dense_fixed_vs_random",
   "mldsa_accumulate_dense_fixed_vs_random",
@@ -5669,6 +5671,7 @@ dudect = [
   "mldsa_product_fixed_vs_random",
   "mldsa_accumulate_fixed_vs_random",
   "mldsa_ntt_dense_fixed_vs_random",
+  "mldsa_inverse_ntt_dense_fixed_vs_random",
   "mldsa_montgomery_dense_fixed_vs_random",
   "mldsa_product_dense_fixed_vs_random",
   "mldsa_accumulate_dense_fixed_vs_random",
@@ -5693,6 +5696,7 @@ dudect = [
   "mldsa_product_fixed_vs_random",
   "mldsa_accumulate_fixed_vs_random",
   "mldsa_ntt_dense_fixed_vs_random",
+  "mldsa_inverse_ntt_dense_fixed_vs_random",
   "mldsa_montgomery_dense_fixed_vs_random",
   "mldsa_product_dense_fixed_vs_random",
   "mldsa_accumulate_dense_fixed_vs_random",

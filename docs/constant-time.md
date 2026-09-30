@@ -157,16 +157,17 @@ preparation transform `s + r` and subtract `NTT(r)`, where `r` is derived from
 the secret seed `K`. Outputs are unchanged; other targets transform directly.
 
 The ML-DSA gate measures the operand distribution production uses.
-The `mldsa_*_dense_fixed_vs_random` cases compare one fixed dense polynomial
-with fresh ones at 200,000 samples and are required on every target: NTT-domain
-secrets and the signing mask are dense residues. The all-zero product,
-accumulate, and forward NTT cases stay required everywhere except POWER, where
-`diagnostic_targets` in `ct.toml` records them as non-gating diagnostics with
-the reason. On POWER, production never gives those kernels zero or small
-repeated secrets. Products and accumulations take NTT-domain operands, and
-small secrets reach the vector NTT only blinded, which the required
-`mldsa_prepare*` cases measure. The zero Montgomery case stays required on
-every target.
+POWER dispatches four ML-DSA kernels to its vector unit: forward NTT, inverse
+NTT, product, and accumulation. The `mldsa_*_dense_fixed_vs_random` cases
+compare one fixed dense polynomial with fresh ones at 200,000 samples and are
+required on every target: NTT-domain secrets and the signing mask are dense
+residues. The all-zero cases of those four kernels stay required everywhere
+except POWER, where `diagnostic_targets` in `ct.toml` records them as
+non-gating diagnostics with the reason. On POWER, production never gives those
+kernels zero or small repeated secrets. Products, accumulations, and inverse
+NTTs take NTT-domain operands, and small secrets reach the vector NTT only
+blinded, which the required `mldsa_prepare*` cases measure. The zero scalar
+Montgomery and scalar inverse NTT cases stay required on every target.
 
 ML-KEM decapsulation follows FIPS 203: the ciphertext polynomial is
 decompressed before its NTT, so an attacker cannot choose the sparse NTT inputs

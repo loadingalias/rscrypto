@@ -20,12 +20,14 @@ class Selection(unittest.TestCase):
     def test_mldsa_suite_uses_the_required_inventory_on_all_three_native_targets(self):
         manifest = tomllib.loads((Path(__file__).resolve().parents[2] / 'ct.toml').read_text())
         cases = {case['name']: case for case in manifest['dudect_case']}
-        dense = {'mldsa_ntt_dense_fixed_vs_random', 'mldsa_montgomery_dense_fixed_vs_random',
-                 'mldsa_product_dense_fixed_vs_random', 'mldsa_accumulate_dense_fixed_vs_random'}
-        power_zero = {'mldsa_ntt_fixed_vs_random', 'mldsa_product_fixed_vs_random',
-                      'mldsa_accumulate_fixed_vs_random'}
-        for target, count in (('s390x-unknown-linux-gnu', 23), ('powerpc64le-unknown-linux-gnu', 20),
-                              ('riscv64gc-unknown-linux-gnu', 23), ('x86_64-unknown-linux-gnu', 23)):
+        dense = {'mldsa_ntt_dense_fixed_vs_random', 'mldsa_inverse_ntt_dense_fixed_vs_random',
+                 'mldsa_montgomery_dense_fixed_vs_random', 'mldsa_product_dense_fixed_vs_random',
+                 'mldsa_accumulate_dense_fixed_vs_random'}
+        # The zero-input cases of the four kernels POWER dispatches to its vector unit.
+        power_zero = {'mldsa_ntt_fixed_vs_random', 'mldsa_inverse_ntt_fixed_vs_random',
+                      'mldsa_product_fixed_vs_random', 'mldsa_accumulate_fixed_vs_random'}
+        for target, count in (('s390x-unknown-linux-gnu', 24), ('powerpc64le-unknown-linux-gnu', 20),
+                              ('riscv64gc-unknown-linux-gnu', 24), ('x86_64-unknown-linux-gnu', 24)):
             selected = set(ci.replay_cases(cases, 'mldsa', target))
             required = {case['name'] for case in required_dudect_cases(manifest, target)
                         if case['primitive'] == 'signature.mldsa.secret_kernels'}
@@ -48,7 +50,7 @@ class Selection(unittest.TestCase):
         manifest = tomllib.loads((Path(__file__).resolve().parents[2] / 'ct.toml').read_text())
         cases = {case['name']: case for case in manifest['dudect_case']}
         selected = set(ci.replay_cases(cases, 'mldsa-probe'))
-        self.assertEqual(len(selected), 20)
+        self.assertEqual(len(selected), 19)
         self.assertTrue(all(cases[name]['gate'] == 'diagnostic' for name in selected))
         self.assertFalse(selected & set(ci.replay_cases(cases, 'mldsa')))
         required = {case['name'] for case in required_dudect_cases(manifest, 'powerpc64le-unknown-linux-gnu')}
