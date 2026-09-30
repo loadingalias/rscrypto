@@ -3,6 +3,18 @@
 //! This is the correctness-first baseline for signing and verification. It
 //! keeps the representation fixed at four little-endian `u64` limbs and uses
 //! simple modular double/add reduction rather than trying to be clever early.
+//!
+//! # Arithmetic convention
+//!
+//! Multiplication inputs have `Scalar52` limbs below 2^52, so each product is
+//! below 2^104. A `mul_internal` column sums at most five products. A Montgomery
+//! reduction step adds one column, at most four more products, and a carry below
+//! 2^56, so every `u128` accumulator stays below 2^108. The unreduced top limb
+//! is below 2^56 and `sub` masks it back to 52 bits; limb additions stay below
+//! 2^54. Overflow is provably impossible, so this arithmetic uses `wrapping_*`,
+//! as the Curve25519 field backend does. A checked `strict_*` add here tests
+//! secret-derived carries, and RV64GC, which has no conditional move, compiles
+//! that test to a secret-dependent branch.
 
 use core::{cmp::Ordering, sync::atomic};
 
@@ -51,7 +63,7 @@ struct Scalar52([u64; 5]);
 #[inline(always)]
 #[must_use]
 fn wide_mul(lhs: u64, rhs: u64) -> u128 {
-  u128::from(lhs).strict_mul(u128::from(rhs))
+  u128::from(lhs).wrapping_mul(u128::from(rhs))
 }
 
 #[inline(always)]
@@ -191,7 +203,7 @@ impl Scalar52 {
     let mut carry = 0u64;
 
     for (dst, (&left, &right)) in out.iter_mut().zip(lhs.0.iter().zip(rhs.0.iter())) {
-      carry = left.strict_add(right).strict_add(carry >> 52);
+      carry = left.wrapping_add(right).wrapping_add(carry >> 52);
       *dst = carry & RADIX52_MASK;
     }
 
@@ -211,7 +223,7 @@ impl Scalar52 {
     let mut borrow = 0u64;
 
     for (dst, (&left, &right)) in out.iter_mut().zip(lhs.0.iter().zip(rhs.0.iter())) {
-      borrow = left.wrapping_sub(right.strict_add(borrow >> 63));
+      borrow = left.wrapping_sub(right.wrapping_add(borrow >> 63));
       *dst = borrow & RADIX52_MASK;
     }
 
@@ -219,8 +231,8 @@ impl Scalar52 {
     let mut carry = 0u64;
     for (i, limb) in out.iter_mut().enumerate() {
       carry = (carry >> 52)
-        .strict_add(*limb)
-        .strict_add(ORDER52.0[i] & barrier(underflow_mask));
+        .wrapping_add(*limb)
+        .wrapping_add(ORDER52.0[i] & barrier(underflow_mask));
       *limb = carry & RADIX52_MASK;
     }
 
@@ -240,7 +252,7 @@ impl Scalar52 {
     let mut borrow = 0u64;
 
     for (dst, (&left, &right)) in out.iter_mut().zip(lhs.0.iter().zip(rhs.0.iter())) {
-      borrow = left.wrapping_sub(right.strict_add(borrow >> 63));
+      borrow = left.wrapping_sub(right.wrapping_add(borrow >> 63));
       *dst = borrow & RADIX52_MASK;
     }
 
@@ -248,8 +260,8 @@ impl Scalar52 {
     let mut carry = 0u64;
     for (i, limb) in out.iter_mut().enumerate() {
       carry = (carry >> 52)
-        .strict_add(*limb)
-        .strict_add(ORDER52.0[i] & barrier(underflow_mask));
+        .wrapping_add(*limb)
+        .wrapping_add(ORDER52.0[i] & barrier(underflow_mask));
       *limb = carry & RADIX52_MASK;
     }
 
@@ -262,27 +274,27 @@ impl Scalar52 {
   fn mul_internal(lhs: &Self, rhs: &Self) -> [u128; 9] {
     [
       wide_mul(lhs.0[0], rhs.0[0]),
-      wide_mul(lhs.0[0], rhs.0[1]).strict_add(wide_mul(lhs.0[1], rhs.0[0])),
+      wide_mul(lhs.0[0], rhs.0[1]).wrapping_add(wide_mul(lhs.0[1], rhs.0[0])),
       wide_mul(lhs.0[0], rhs.0[2])
-        .strict_add(wide_mul(lhs.0[1], rhs.0[1]))
-        .strict_add(wide_mul(lhs.0[2], rhs.0[0])),
+        .wrapping_add(wide_mul(lhs.0[1], rhs.0[1]))
+        .wrapping_add(wide_mul(lhs.0[2], rhs.0[0])),
       wide_mul(lhs.0[0], rhs.0[3])
-        .strict_add(wide_mul(lhs.0[1], rhs.0[2]))
-        .strict_add(wide_mul(lhs.0[2], rhs.0[1]))
-        .strict_add(wide_mul(lhs.0[3], rhs.0[0])),
+        .wrapping_add(wide_mul(lhs.0[1], rhs.0[2]))
+        .wrapping_add(wide_mul(lhs.0[2], rhs.0[1]))
+        .wrapping_add(wide_mul(lhs.0[3], rhs.0[0])),
       wide_mul(lhs.0[0], rhs.0[4])
-        .strict_add(wide_mul(lhs.0[1], rhs.0[3]))
-        .strict_add(wide_mul(lhs.0[2], rhs.0[2]))
-        .strict_add(wide_mul(lhs.0[3], rhs.0[1]))
-        .strict_add(wide_mul(lhs.0[4], rhs.0[0])),
+        .wrapping_add(wide_mul(lhs.0[1], rhs.0[3]))
+        .wrapping_add(wide_mul(lhs.0[2], rhs.0[2]))
+        .wrapping_add(wide_mul(lhs.0[3], rhs.0[1]))
+        .wrapping_add(wide_mul(lhs.0[4], rhs.0[0])),
       wide_mul(lhs.0[1], rhs.0[4])
-        .strict_add(wide_mul(lhs.0[2], rhs.0[3]))
-        .strict_add(wide_mul(lhs.0[3], rhs.0[2]))
-        .strict_add(wide_mul(lhs.0[4], rhs.0[1])),
+        .wrapping_add(wide_mul(lhs.0[2], rhs.0[3]))
+        .wrapping_add(wide_mul(lhs.0[3], rhs.0[2]))
+        .wrapping_add(wide_mul(lhs.0[4], rhs.0[1])),
       wide_mul(lhs.0[2], rhs.0[4])
-        .strict_add(wide_mul(lhs.0[3], rhs.0[3]))
-        .strict_add(wide_mul(lhs.0[4], rhs.0[2])),
-      wide_mul(lhs.0[3], rhs.0[4]).strict_add(wide_mul(lhs.0[4], rhs.0[3])),
+        .wrapping_add(wide_mul(lhs.0[3], rhs.0[3]))
+        .wrapping_add(wide_mul(lhs.0[4], rhs.0[2])),
+      wide_mul(lhs.0[3], rhs.0[4]).wrapping_add(wide_mul(lhs.0[4], rhs.0[3])),
       wide_mul(lhs.0[4], rhs.0[4]),
     ]
   }
@@ -309,7 +321,7 @@ impl Scalar52 {
     #[inline(always)]
     fn part1(sum: u128) -> (u128, u64) {
       let p = low_u64(sum).wrapping_mul(LFACTOR52) & RADIX52_MASK;
-      ((sum.strict_add(wide_mul(p, ORDER52.0[0]))) >> 52, p)
+      ((sum.wrapping_add(wide_mul(p, ORDER52.0[0]))) >> 52, p)
     }
 
     #[inline(always)]
@@ -319,42 +331,42 @@ impl Scalar52 {
     }
 
     let (carry, n0) = part1(limbs[0]);
-    let (carry, n1) = part1(carry.strict_add(limbs[1]).strict_add(wide_mul(n0, ORDER52.0[1])));
+    let (carry, n1) = part1(carry.wrapping_add(limbs[1]).wrapping_add(wide_mul(n0, ORDER52.0[1])));
     let (carry, n2) = part1(
       carry
-        .strict_add(limbs[2])
-        .strict_add(wide_mul(n0, ORDER52.0[2]))
-        .strict_add(wide_mul(n1, ORDER52.0[1])),
+        .wrapping_add(limbs[2])
+        .wrapping_add(wide_mul(n0, ORDER52.0[2]))
+        .wrapping_add(wide_mul(n1, ORDER52.0[1])),
     );
     let (carry, n3) = part1(
       carry
-        .strict_add(limbs[3])
-        .strict_add(wide_mul(n1, ORDER52.0[2]))
-        .strict_add(wide_mul(n2, ORDER52.0[1])),
+        .wrapping_add(limbs[3])
+        .wrapping_add(wide_mul(n1, ORDER52.0[2]))
+        .wrapping_add(wide_mul(n2, ORDER52.0[1])),
     );
     let (carry, n4) = part1(
       carry
-        .strict_add(limbs[4])
-        .strict_add(wide_mul(n0, ORDER52.0[4]))
-        .strict_add(wide_mul(n2, ORDER52.0[2]))
-        .strict_add(wide_mul(n3, ORDER52.0[1])),
+        .wrapping_add(limbs[4])
+        .wrapping_add(wide_mul(n0, ORDER52.0[4]))
+        .wrapping_add(wide_mul(n2, ORDER52.0[2]))
+        .wrapping_add(wide_mul(n3, ORDER52.0[1])),
     );
 
     let (carry, r0) = part2(
       carry
-        .strict_add(limbs[5])
-        .strict_add(wide_mul(n1, ORDER52.0[4]))
-        .strict_add(wide_mul(n3, ORDER52.0[2]))
-        .strict_add(wide_mul(n4, ORDER52.0[1])),
+        .wrapping_add(limbs[5])
+        .wrapping_add(wide_mul(n1, ORDER52.0[4]))
+        .wrapping_add(wide_mul(n3, ORDER52.0[2]))
+        .wrapping_add(wide_mul(n4, ORDER52.0[1])),
     );
     let (carry, r1) = part2(
       carry
-        .strict_add(limbs[6])
-        .strict_add(wide_mul(n2, ORDER52.0[4]))
-        .strict_add(wide_mul(n4, ORDER52.0[2])),
+        .wrapping_add(limbs[6])
+        .wrapping_add(wide_mul(n2, ORDER52.0[4]))
+        .wrapping_add(wide_mul(n4, ORDER52.0[2])),
     );
-    let (carry, r2) = part2(carry.strict_add(limbs[7]).strict_add(wide_mul(n3, ORDER52.0[4])));
-    let (carry, r3) = part2(carry.strict_add(limbs[8]).strict_add(wide_mul(n4, ORDER52.0[4])));
+    let (carry, r2) = part2(carry.wrapping_add(limbs[7]).wrapping_add(wide_mul(n3, ORDER52.0[4])));
+    let (carry, r3) = part2(carry.wrapping_add(limbs[8]).wrapping_add(wide_mul(n4, ORDER52.0[4])));
     let r4 = low_u64(carry);
 
     Self([r0, r1, r2, r3, r4])
@@ -383,7 +395,7 @@ impl Scalar52 {
     let mut carry = 0u64;
 
     for (dst, (&left, &right)) in out.iter_mut().zip(lhs.0.iter().zip(rhs.0.iter())) {
-      carry = left.strict_add(right).strict_add(carry >> 52);
+      carry = left.wrapping_add(right).wrapping_add(carry >> 52);
       *dst = carry & RADIX52_MASK;
     }
 
