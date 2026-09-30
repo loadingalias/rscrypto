@@ -686,6 +686,76 @@ fn hash_challenge(r_bytes: &[u8; PUBLIC_KEY_LENGTH], public_key: &[u8; PUBLIC_KE
   Sha512::digest_64_byte_prefix(&prefix, message)
 }
 
+/// Secret intermediates of one production signature, for phase timing probes.
+#[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
+#[doc(hidden)]
+#[derive(Clone, Copy)]
+pub struct DiagEd25519SignInputs {
+  /// SHA-512 of the nonce prefix and message, before reduction.
+  pub nonce_digest: [u8; 64],
+  /// Reduced nonce scalar `r`.
+  pub nonce: [u8; SECRET_KEY_LENGTH],
+  /// Clamped secret scalar `a`.
+  pub secret_scalar: [u8; SECRET_KEY_LENGTH],
+  /// Reduced challenge scalar `k`.
+  pub challenge: [u8; SECRET_KEY_LENGTH],
+}
+
+#[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
+impl core::fmt::Debug for DiagEd25519SignInputs {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("DiagEd25519SignInputs").finish_non_exhaustive()
+  }
+}
+
+/// Derive the signing intermediates `sign` computes for `secret` and `message`.
+#[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
+#[doc(hidden)]
+#[must_use]
+pub fn diag_ed25519_sign_inputs(secret: &Ed25519SecretKey, message: &[u8]) -> DiagEd25519SignInputs {
+  let expanded = hash::ExpandedSecret::from_secret_key(secret);
+  let mut nonce_hasher = Sha512::new();
+  nonce_hasher.update(expanded.nonce_prefix());
+  nonce_hasher.update(message);
+  let nonce_digest = nonce_hasher.finalize_secret();
+  let nonce = scalar::to_bytes(&scalar::reduce_64_bytes_mod_order_secret(&nonce_digest));
+  let r_encoded = basepoint_mul_encoded_dispatch(&nonce);
+  let challenge_digest = hash_challenge(&r_encoded, &expanded.public_key_bytes(), message);
+  DiagEd25519SignInputs {
+    nonce_digest,
+    nonce,
+    secret_scalar: *expanded.scalar_bytes(),
+    challenge: scalar::to_bytes(&scalar::reduce_bytes_mod_order(&challenge_digest)),
+  }
+}
+
+/// Execute the production signing nonce reduction.
+#[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
+#[doc(hidden)]
+#[must_use]
+pub fn diag_ed25519_sign_nonce_reduce(nonce_digest: &[u8; 64]) -> [u8; SECRET_KEY_LENGTH] {
+  scalar::to_bytes(&scalar::reduce_64_bytes_mod_order_secret(nonce_digest))
+}
+
+/// Execute the production signing commitment `R = r·B`.
+#[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
+#[doc(hidden)]
+#[must_use]
+pub fn diag_ed25519_sign_commitment(nonce: &[u8; SECRET_KEY_LENGTH]) -> [u8; PUBLIC_KEY_LENGTH] {
+  basepoint_mul_encoded_dispatch(nonce)
+}
+
+/// Execute the production signing response `S = k·a + r (mod L)`.
+#[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
+#[doc(hidden)]
+#[must_use]
+pub fn diag_ed25519_sign_response(inputs: &DiagEd25519SignInputs) -> [u8; SECRET_KEY_LENGTH] {
+  let challenge = scalar::decode_words_le(&inputs.challenge);
+  let secret_scalar = scalar::decode_words_le(&inputs.secret_scalar);
+  let nonce = scalar::decode_words_le(&inputs.nonce);
+  scalar::to_bytes(&scalar::mul_add_mod_secret(&challenge, &secret_scalar, &nonce))
+}
+
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
 #[must_use]
@@ -923,8 +993,28 @@ mod tests {
   use alloc::format;
 
   use super::{
-    Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, constants, field, hash, point, scalar, verify,
+    Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, constants, diag_ed25519_sign_commitment,
+    diag_ed25519_sign_inputs, diag_ed25519_sign_nonce_reduce, diag_ed25519_sign_response, field, hash, point, scalar,
+    verify,
   };
+
+  /// The signing-phase timing probes must time the steps `sign` executes: the
+  /// phases rebuilt from their intermediates must reproduce the real signature.
+  #[test]
+  fn sign_phase_hooks_reproduce_the_signature() {
+    for (seed, message) in [
+      ([0x42; 32], &b"rscrypto ct-dudect"[..]),
+      ([0x00; 32], &b""[..]),
+      ([0xff; 32], &[0xa5; 200][..]),
+    ] {
+      let secret = Ed25519SecretKey::from_bytes(seed);
+      let signature = secret.sign(message).to_bytes();
+      let inputs = diag_ed25519_sign_inputs(&secret, message);
+      assert_eq!(diag_ed25519_sign_nonce_reduce(&inputs.nonce_digest), inputs.nonce);
+      assert_eq!(diag_ed25519_sign_commitment(&inputs.nonce), signature[..32]);
+      assert_eq!(diag_ed25519_sign_response(&inputs), signature[32..]);
+    }
+  }
 
   #[test]
   fn internal_layout_matches_phase_2b_plan() {

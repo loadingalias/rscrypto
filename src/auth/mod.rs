@@ -343,7 +343,8 @@ pub use ecdsa::{
 pub use ed25519::diag_ed25519_verify_aarch64_asm_double_scalar_digest;
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "ed25519"))]
 pub use ed25519::{
-  DiagEd25519VerifyScalars, diag_ed25519_verify_challenge_reduce_digest,
+  DiagEd25519SignInputs, DiagEd25519VerifyScalars, diag_ed25519_sign_commitment, diag_ed25519_sign_inputs,
+  diag_ed25519_sign_nonce_reduce, diag_ed25519_sign_response, diag_ed25519_verify_challenge_reduce_digest,
   diag_ed25519_verify_portable_double_scalar_digest, diag_ed25519_verify_public_decode_digest,
   diag_ed25519_verify_r_decode_digest, diag_ed25519_verify_scalars,
 };

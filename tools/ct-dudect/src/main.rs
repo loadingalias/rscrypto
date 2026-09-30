@@ -1890,6 +1890,43 @@ fn ed25519_keypair_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut 
   }
 }
 
+// Signing-phase probes: each times one secret step of `sign`, on the intermediates
+// production derives from the same fixed or random secret as the keypair case.
+fn ed25519_sign_phase_inputs(rng: &mut BenchRng) -> Vec<(Class, rscrypto::auth::DiagEd25519SignInputs)> {
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let secret = if matches!(class, Class::Left) {
+      [0x42; Ed25519SecretKey::LENGTH]
+    } else {
+      rand_array::<{ Ed25519SecretKey::LENGTH }>(rng)
+    };
+    inputs.push((
+      class,
+      rscrypto::auth::diag_ed25519_sign_inputs(&Ed25519SecretKey::from_bytes(secret), MESSAGE),
+    ));
+  }
+  inputs
+}
+
+fn ed25519_sign_nonce_reduce_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
+  for (class, inputs) in ed25519_sign_phase_inputs(rng) {
+    runner.run_one(class, || rscrypto::auth::diag_ed25519_sign_nonce_reduce(&inputs.nonce_digest)[0]);
+  }
+}
+
+fn ed25519_sign_commitment_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
+  for (class, inputs) in ed25519_sign_phase_inputs(rng) {
+    runner.run_one(class, || rscrypto::auth::diag_ed25519_sign_commitment(&inputs.nonce)[0]);
+  }
+}
+
+fn ed25519_sign_response_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
+  for (class, inputs) in ed25519_sign_phase_inputs(rng) {
+    runner.run_one(class, || rscrypto::auth::diag_ed25519_sign_response(&inputs)[0]);
+  }
+}
+
 fn valid_p256_secret(rng: &mut BenchRng) -> [u8; EcdsaP256SecretKey::LENGTH] {
   let mut secret = rand_array::<{ EcdsaP256SecretKey::LENGTH }>(rng);
   secret[0] &= 0x7f;
@@ -3252,6 +3289,9 @@ ctbench_main_with_seeds!(
     Some(0x6564323535314853)
   ),
   (ed25519_keypair_sign_fixed_vs_random_secret, Some(0x656432353531394b)),
+  (ed25519_sign_nonce_reduce_fixed_vs_random_secret, Some(0x6564323535313960)),
+  (ed25519_sign_commitment_fixed_vs_random_secret, Some(0x6564323535313961)),
+  (ed25519_sign_response_fixed_vs_random_secret, Some(0x6564323535313962)),
   (ecdsa_p256_public_key_fixed_vs_random_secret, Some(0x703235365f707562)),
   (ecdsa_p384_public_key_fixed_vs_random_secret, Some(0x703338345f707562)),
   (ecdsa_p256_sign_fixed_vs_random_secret, Some(0x703235365f736967)),
