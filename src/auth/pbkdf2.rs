@@ -501,6 +501,13 @@ macro_rules! define_pbkdf2_sha2 {
       /// [`verify_password`](Self::verify_password).
       #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify_primitive(&self, salt: &[u8], iterations: u32, expected: &[u8]) -> Result<(), VerificationError> {
+        let _dit = crate::traits::ct::DataIndependentTiming::enter();
+        self.verify_primitive_unguarded(salt, iterations, expected)
+      }
+
+      /// [`verify_primitive`](Self::verify_primitive) without the Arm DIT mode switch,
+      /// so bounded proofs analyze only the verification arithmetic.
+      fn verify_primitive_unguarded(&self, salt: &[u8], iterations: u32, expected: &[u8]) -> Result<(), VerificationError> {
         if iterations == 0 || expected.is_empty() {
           return Err(VerificationError::new());
         }
@@ -784,7 +791,7 @@ pub fn diag_pbkdf2_sha256_verify_portable(
     crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable,
   );
   Pbkdf2Sha256::new_with_compress_for_test(password, compress)
-    .verify_primitive(b"salt", 1, expected)
+    .verify_primitive_unguarded(b"salt", 1, expected)
     .is_ok()
 }
 
@@ -800,7 +807,7 @@ pub fn diag_pbkdf2_sha512_verify_portable(
     crate::hashes::crypto::sha512::kernels::Sha512KernelId::Portable,
   );
   Pbkdf2Sha512::new_with_compress_for_test(password, compress)
-    .verify_primitive(b"salt", 1, expected)
+    .verify_primitive_unguarded(b"salt", 1, expected)
     .is_ok()
 }
 

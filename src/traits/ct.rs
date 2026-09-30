@@ -712,7 +712,31 @@ pub(crate) mod tests {
       covered("PBKDF2 verification", || {
         crate::Pbkdf2Sha256::verify_password_primitive(b"pw", b"salt", 1, &[0; 32])
       });
+      covered("PBKDF2 instance verification", || {
+        crate::Pbkdf2Sha256::new(b"pw").verify_primitive(b"salt", 1, &[0; 32])
+      });
     }
+  }
+
+  /// BINSEC proves arithmetic leaves; the DIT register write and its feature
+  /// detection must stay out of them, at the public entry points instead.
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
+  #[test]
+  fn proof_leaves_stay_outside_data_independent_timing() {
+    #[cfg(feature = "ml-dsa")]
+    assert_eq!(
+      dit_entries_during(|| {
+        core::hint::black_box(crate::auth::diag_mldsa_montgomery(3, 5));
+      }),
+      0
+    );
+    #[cfg(feature = "pbkdf2")]
+    assert_eq!(
+      dit_entries_during(|| {
+        core::hint::black_box(crate::auth::diag_pbkdf2_sha256_verify_portable(&[1; 32], &[2; 32]));
+      }),
+      0
+    );
   }
 
   #[test]

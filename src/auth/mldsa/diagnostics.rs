@@ -92,7 +92,6 @@ prepare_adapter!(diag_mldsa_prepare87, 4896, 8, 7, P87);
 /// Execute the production portable Montgomery arithmetic for operands below 2q.
 #[must_use]
 pub fn diag_mldsa_montgomery(a: u32, b: u32) -> u32 {
-  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   super::poly::montgomery(a, b)
 }
 
