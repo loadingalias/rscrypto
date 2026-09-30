@@ -24,6 +24,7 @@ mod kernel_test;
 pub(crate) mod kernels;
 #[cfg(feature = "parallel")]
 mod parallel;
+pub(crate) mod tree;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(crate) mod x86_64;
 use self::{control::ParallelPolicyKind, kernels::Kernel};

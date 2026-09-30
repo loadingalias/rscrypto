@@ -98,6 +98,26 @@ pub mod crypto;
 pub mod fast;
 #[cfg(feature = "diag")]
 pub mod introspect;
+
+/// Hash capabilities whose inputs callers must structure correctly.
+///
+/// Normal hashing needs none of these; their placement is an intentional opt-in.
+#[cfg(feature = "blake3")]
+pub mod expert {
+  /// BLAKE3 subtree hashing.
+  ///
+  /// Hash parts of one input independently, on your own threads or machines,
+  /// then merge their chaining values into the same root that one-shot
+  /// hashing produces. This enables caller-scheduled parallel hashing,
+  /// verified streaming, and incremental rehashing of large inputs.
+  ///
+  /// Every [`Blake3ChainingValue`](blake3_tree::Blake3ChainingValue) records
+  /// its input range and mode. A merge that does not form a valid BLAKE3 tree
+  /// returns an error instead of an unrelated hash.
+  pub mod blake3_tree {
+    pub use crate::hashes::crypto::blake3::tree::{Blake3ChainingValue, Blake3Subtree, Blake3SubtreeError, Blake3Tree};
+  }
+}
 #[cfg(all(
   feature = "std",
   any(

@@ -20,6 +20,7 @@ that every compiler-created copy is erased.
 | HMAC, HKDF, KMAC, PBKDF2, and Poly1305 state | No generic duplication | `Debug` is redacted; keyed state is not serialized. |
 | Keyed BLAKE2 state | `Clone` where required by the shared `Digest` contract | `Debug` is redacted; cloning duplicates keyed state. |
 | `Blake3`, `Blake3XofReader` | `Clone` | In keyed or derive-key mode, cloning duplicates secret-derived state. |
+| `Blake3Tree`, `Blake3Subtree`, `Blake3ChainingValue` (`hashes::expert::blake3_tree`) | `Clone` | A keyed tree holds its key; in keyed or derive-key mode, subtrees and chaining values hold secret-derived state, and cloning duplicates it. Drop clears the tree key and chaining-value bytes; `Debug` shows only mode and input range. `Blake3ChainingValue::as_bytes` borrows the bytes. |
 | Password-hashing state and work memory | Borrowed contexts may be `Copy`; owned state is not. Caller-provided `Argon2Block` and `ScryptBlock` memory is `Clone`, not `Copy`; it holds operation state only while an operation borrows it | Borrowed copies duplicate references, not password or pepper bytes. The operation clears every block it used before returning; block `Debug` is redacted. |
 
 Typed private keys, shared secrets, keyed states, expanded schedules, and

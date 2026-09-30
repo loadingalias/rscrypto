@@ -217,3 +217,285 @@ fn blake3_multi_chunk_then_small_tail_matches_official_in_all_modes() {
     assert_eq!(actual, expected);
   }
 }
+
+mod subtree {
+  use blake3::hazmat::{self, HasherExt as _};
+  use proptest::prelude::*;
+  use rscrypto::{
+    hashes::{
+      crypto::{Blake3, Blake3DeriveContext},
+      expert::blake3_tree::{Blake3ChainingValue, Blake3SubtreeError, Blake3Tree},
+    },
+    traits::Xof as _,
+  };
+
+  use super::patterned_bytes;
+
+  const CHUNK_LEN: u64 = 1024;
+  const KEY: [u8; 32] = *b"whats the Elvish word for friend";
+  const CONTEXT: &str = "rscrypto blake3 subtree test context";
+
+  #[derive(Clone, Copy, Debug)]
+  enum Mode {
+    Hash,
+    Keyed,
+    DeriveKey,
+  }
+
+  const MODES: [Mode; 3] = [Mode::Hash, Mode::Keyed, Mode::DeriveKey];
+
+  fn tree(mode: Mode) -> Blake3Tree {
+    match mode {
+      Mode::Hash => Blake3Tree::new(),
+      Mode::Keyed => Blake3Tree::keyed(&KEY),
+      Mode::DeriveKey => Blake3Tree::derive_key(&Blake3DeriveContext::new(CONTEXT)),
+    }
+  }
+
+  fn reference_hasher(mode: Mode) -> blake3::Hasher {
+    match mode {
+      Mode::Hash => blake3::Hasher::new(),
+      Mode::Keyed => blake3::Hasher::new_keyed(&KEY),
+      Mode::DeriveKey => blake3::Hasher::new_derive_key(CONTEXT),
+    }
+  }
+
+  fn reference_root(mode: Mode, input: &[u8]) -> blake3::Hasher {
+    let mut hasher = reference_hasher(mode);
+    hasher.update(input);
+    hasher
+  }
+
+  fn reference_cv(mode: Mode, offset: u64, input: &[u8]) -> [u8; 32] {
+    let mut hasher = reference_hasher(mode);
+    hasher.set_input_offset(offset);
+    hasher.update(input);
+    hasher.finalize_non_root()
+  }
+
+  fn subtree_cv(tree: &Blake3Tree, offset: u64, input: &[u8]) -> Blake3ChainingValue {
+    // One update reaches the multi-chunk paths; uneven pieces cross buffer and
+    // chunk boundaries inside the hasher.
+    let mut whole = tree.subtree(offset).expect("test offsets are chunk-aligned");
+    whole.update(input).expect("test subtrees fit their offset");
+    let mut pieces = tree.subtree(offset).expect("test offsets are chunk-aligned");
+    for piece in input.chunks(1537) {
+      pieces.update(piece).expect("test subtrees fit their offset");
+    }
+    let cv = whole.finalize().expect("test subtrees are non-empty");
+    assert_eq!(
+      cv.as_bytes(),
+      pieces.finalize().expect("test subtrees are non-empty").as_bytes(),
+      "update split mismatch at offset={offset} len={}",
+      input.len()
+    );
+    cv
+  }
+
+  /// Hash `input` at `offset` as a subtree split recursively down to `leaf_len`
+  /// bytes, checking every chaining value and merge against `blake3::hazmat`.
+  fn split_cv(mode: Mode, tree: &Blake3Tree, offset: u64, input: &[u8], leaf_len: u64) -> Blake3ChainingValue {
+    let len = input.len() as u64;
+    let cv = match Blake3Tree::left_subtree_len(len) {
+      Some(left_len) if len > leaf_len => {
+        let (left, right) = input.split_at(usize::try_from(left_len).expect("test inputs fit in memory"));
+        let left_cv = split_cv(mode, tree, offset, left, leaf_len);
+        let right_cv = split_cv(mode, tree, offset.strict_add(left_len), right, leaf_len);
+        let merged = tree
+          .merge(&left_cv, &right_cv)
+          .expect("recursive splits are valid merges");
+        assert_eq!(
+          merged.as_bytes(),
+          &hazmat::merge_subtrees_non_root(left_cv.as_bytes(), right_cv.as_bytes(), hazmat_mode(mode)),
+          "merge mismatch for {mode:?} at offset={offset} len={len}"
+        );
+        merged
+      }
+      _ => subtree_cv(tree, offset, input),
+    };
+    assert_eq!(
+      cv.as_bytes(),
+      &reference_cv(mode, offset, input),
+      "chaining value mismatch for {mode:?} at offset={offset} len={len}"
+    );
+    assert_eq!((cv.input_offset(), cv.len()), (offset, len));
+    cv
+  }
+
+  fn hazmat_mode(mode: Mode) -> hazmat::Mode<'static> {
+    static CONTEXT_KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    match mode {
+      Mode::Hash => hazmat::Mode::Hash,
+      Mode::Keyed => hazmat::Mode::KeyedHash(&KEY),
+      Mode::DeriveKey => {
+        hazmat::Mode::DeriveKeyMaterial(CONTEXT_KEY.get_or_init(|| hazmat::hash_derive_key_context(CONTEXT)))
+      }
+    }
+  }
+
+  fn check_split_root(mode: Mode, input: &[u8], leaf_len: u64) {
+    let tree = tree(mode);
+    let len = input.len() as u64;
+    let Some(left_len) = Blake3Tree::left_subtree_len(len) else {
+      return;
+    };
+    let (left, right) = input.split_at(usize::try_from(left_len).expect("test inputs fit in memory"));
+    let left_cv = split_cv(mode, &tree, 0, left, leaf_len);
+    let right_cv = split_cv(mode, &tree, left_len, right, leaf_len);
+
+    let reference = reference_root(mode, input);
+    let root = tree
+      .merge_root(&left_cv, &right_cv)
+      .expect("the top split is a valid root");
+    assert_eq!(
+      &root,
+      reference.finalize().as_bytes(),
+      "root mismatch for {mode:?} len={len}"
+    );
+    let expected_root = match mode {
+      Mode::Hash => Blake3::digest(input),
+      Mode::Keyed => Blake3::keyed_digest(&KEY, input).to_bytes(),
+      Mode::DeriveKey => Blake3::derive_key_with(&Blake3DeriveContext::new(CONTEXT), input),
+    };
+    assert_eq!(root, expected_root, "one-shot mismatch for {mode:?} len={len}");
+
+    let mut expected_xof = [0u8; 131];
+    reference.finalize_xof().fill(&mut expected_xof);
+    let mut xof = [0u8; 131];
+    tree
+      .merge_root_xof(&left_cv, &right_cv)
+      .expect("the top split is a valid root")
+      .squeeze(&mut xof);
+    assert_eq!(xof, expected_xof, "root XOF mismatch for {mode:?} len={len}");
+  }
+
+  #[test]
+  fn recursive_splits_match_reference_at_tree_boundaries() {
+    for chunks in [2u64, 3, 4, 5, 7, 8, 9, 16, 17, 31, 33] {
+      for delta in [-1i64, 0, 1] {
+        let len = (chunks * CHUNK_LEN).strict_add_signed(delta);
+        let input = patterned_bytes(usize::try_from(len).expect("test inputs fit in memory"));
+        for mode in MODES {
+          check_split_root(mode, &input, CHUNK_LEN);
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn wide_subtrees_at_nonzero_offsets_match_reference() {
+    // 128- and 256-chunk leaves reach the multi-chunk update paths with a
+    // nonzero starting counter.
+    let input = patterned_bytes(1024 * 1024 + 77);
+    for mode in MODES {
+      check_split_root(mode, &input, 256 * CHUNK_LEN);
+      check_split_root(mode, &input, 128 * CHUNK_LEN);
+    }
+  }
+
+  #[test]
+  fn subtrees_at_large_offsets_match_reference() {
+    let input = patterned_bytes(3 * 1024 + 5);
+    for offset_chunks in [1u64 << 20, 1 << 40, 1 << 53, (1 << 54) - 4] {
+      let offset = offset_chunks * CHUNK_LEN;
+      for mode in MODES {
+        let cv = subtree_cv(&tree(mode), offset, &input);
+        assert_eq!(
+          cv.as_bytes(),
+          &reference_cv(mode, offset, &input),
+          "{mode:?} at chunk {offset_chunks}"
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn subtree_rejects_unaligned_offsets_and_empty_input() {
+    let tree = Blake3Tree::new();
+    assert_eq!(tree.subtree(1).err(), Some(Blake3SubtreeError::UnalignedOffset));
+    assert_eq!(tree.subtree(1023).err(), Some(Blake3SubtreeError::UnalignedOffset));
+    let empty = tree.subtree(CHUNK_LEN).expect("chunk-aligned offset");
+    assert_eq!(empty.finalize().err(), Some(Blake3SubtreeError::Empty));
+    assert_eq!(
+      tree.chaining_value([0; 32], CHUNK_LEN, 0).err(),
+      Some(Blake3SubtreeError::Empty)
+    );
+  }
+
+  #[test]
+  fn subtree_rejects_input_past_its_maximum_without_absorbing_it() {
+    let tree = Blake3Tree::new();
+    // Chunk 6 starts a subtree of at most two chunks.
+    let offset = 6 * CHUNK_LEN;
+    let mut subtree = tree.subtree(offset).expect("chunk-aligned offset");
+    assert_eq!(subtree.max_len(), 2 * CHUNK_LEN);
+    let input = patterned_bytes(2 * 1024);
+    subtree.update(&input[..1500]).expect("within the maximum");
+    assert_eq!(subtree.update(&[0; 549]).err(), Some(Blake3SubtreeError::TooLong));
+    assert_eq!(subtree.len(), 1500);
+    subtree.update(&input[1500..]).expect("exactly the maximum");
+    assert_eq!(subtree.update(&[0]).err(), Some(Blake3SubtreeError::TooLong));
+    let cv = subtree.finalize().expect("non-empty subtree");
+    assert_eq!(cv.as_bytes(), &reference_cv(Mode::Hash, offset, &input));
+
+    assert_eq!(
+      tree.chaining_value([0; 32], offset, 2 * CHUNK_LEN + 1).err(),
+      Some(Blake3SubtreeError::TooLong)
+    );
+    assert_eq!(Blake3Tree::new().subtree(0).expect("offset 0").max_len(), u64::MAX);
+  }
+
+  #[test]
+  fn merges_reject_every_invalid_parent() {
+    let tree = Blake3Tree::new();
+    let cv = |offset_chunks: u64, len: u64| {
+      tree
+        .chaining_value([0; 32], offset_chunks * CHUNK_LEN, len)
+        .expect("valid chaining value position")
+    };
+    let full = CHUNK_LEN;
+
+    // Valid: chunks 0 and 1, chunks 2 and 3, and a short right edge.
+    tree.merge(&cv(0, full), &cv(1, full)).expect("sibling chunks");
+    tree.merge(&cv(2, full), &cv(3, 10)).expect("short right edge");
+    tree
+      .merge_root(&cv(0, 2 * full), &cv(2, full))
+      .expect("root over three chunks");
+
+    let invalid = Err(Blake3SubtreeError::InvalidMerge);
+    // Not adjacent.
+    assert_eq!(tree.merge(&cv(0, full), &cv(2, full)).map(drop), invalid);
+    // Swapped children.
+    assert_eq!(tree.merge(&cv(1, full), &cv(0, full)).map(drop), invalid);
+    // A short left child leaves a gap before the next chunk.
+    assert_eq!(tree.merge(&cv(0, 10), &cv(1, full)).map(drop), invalid);
+    // A right child larger than its left sibling cannot be constructed.
+    assert_eq!(
+      tree.chaining_value([0; 32], CHUNK_LEN, 2 * full).err(),
+      Some(Blake3SubtreeError::TooLong)
+    );
+    // Parent not aligned: chunks 1 and 2 are not siblings.
+    assert_eq!(tree.merge(&cv(1, full), &cv(2, full)).map(drop), invalid);
+    // A root must start at offset 0.
+    assert_eq!(tree.merge_root(&cv(2, full), &cv(3, full)).map(drop), invalid);
+    assert_eq!(tree.merge_root_xof(&cv(2, full), &cv(3, full)).map(drop), invalid);
+    // A partial parent cannot be a left child.
+    let partial = tree.merge(&cv(0, 2 * full), &cv(2, full)).expect("right-edge parent");
+    assert_eq!(tree.merge(&partial, &cv(3, full)).map(drop), invalid);
+
+    let keyed = Blake3Tree::keyed(&KEY);
+    let keyed_cv = keyed.chaining_value([0; 32], CHUNK_LEN, full).expect("valid position");
+    assert_eq!(
+      tree.merge(&cv(0, full), &keyed_cv).map(drop),
+      Err(Blake3SubtreeError::ModeMismatch)
+    );
+  }
+
+  proptest! {
+    #[test]
+    fn random_splits_match_reference(len in 1025usize..40_000, leaf_shift in 0u32..5, mode in 0usize..3) {
+      let input = patterned_bytes(len);
+      check_split_root(MODES[mode], &input, CHUNK_LEN << leaf_shift);
+    }
+  }
+}
