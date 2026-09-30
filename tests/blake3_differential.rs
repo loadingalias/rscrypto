@@ -2,7 +2,7 @@
 
 use proptest::prelude::*;
 use rscrypto::{
-  hashes::crypto::Blake3,
+  hashes::crypto::{Blake3, Blake3DeriveContext},
   traits::{Digest as _, Xof as _},
 };
 
@@ -58,6 +58,34 @@ fn blake3_digest_const_matches_reference_and_streaming_for_every_one_chunk_lengt
 #[should_panic(expected = "Blake3::digest_const accepts at most 1,024 bytes")]
 fn blake3_digest_const_rejects_more_than_one_chunk() {
   core::hint::black_box(Blake3::digest_const(core::hint::black_box(&[0; 1025])));
+}
+
+#[test]
+fn blake3_derive_context_const_matches_runtime_for_every_one_chunk_length() {
+  for len in 0..=1024 {
+    let context: String = patterned_bytes(len)
+      .iter()
+      .map(|&b| char::from(b'a'.strict_add(b % 26)))
+      .collect();
+    let prehashed = Blake3DeriveContext::new_const(&context);
+    assert_eq!(
+      prehashed,
+      Blake3DeriveContext::new(&context),
+      "context mismatch at len={len}"
+    );
+    assert_eq!(
+      Blake3::derive_key_with(&prehashed, b"key material"),
+      blake3_ref_derive(&context, b"key material"),
+      "reference mismatch at len={len}"
+    );
+  }
+}
+
+#[test]
+#[should_panic(expected = "Blake3DeriveContext::new_const accepts at most 1,024 bytes")]
+fn blake3_derive_context_const_rejects_more_than_one_chunk() {
+  let context = "a".repeat(1025);
+  core::hint::black_box(Blake3DeriveContext::new_const(core::hint::black_box(&context)));
 }
 
 proptest! {
@@ -120,6 +148,20 @@ proptest! {
 
     let expected = blake3_ref_derive(CONTEXT, &data);
     let mut h = Blake3::new_derive_key(CONTEXT);
+    h.update(&data);
+    prop_assert_eq!(h.finalize(), expected);
+  }
+
+  #[test]
+  fn blake3_prehashed_derive_key_matches_official(
+    context in "[ -~]{0,2100}",
+    data in proptest::collection::vec(any::<u8>(), 0..4096),
+  ) {
+    let prehashed = Blake3DeriveContext::new(&context);
+    let expected = blake3_ref_derive(&context, &data);
+    prop_assert_eq!(Blake3::derive_key_with(&prehashed, &data), expected);
+
+    let mut h = Blake3::new_derive_key_from(&prehashed);
     h.update(&data);
     prop_assert_eq!(h.finalize(), expected);
   }

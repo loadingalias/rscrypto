@@ -45,7 +45,7 @@ pub use blake2s::{Blake2s128, Blake2s256, Blake2sKey, Blake2sParams};
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "blake3"))]
 pub use blake3::diag_blake3_keyed_digest_portable;
 #[cfg(feature = "blake3")]
-pub use blake3::{Blake3, Blake3KeyedHash, Blake3XofReader};
+pub use blake3::{Blake3, Blake3DeriveContext, Blake3KeyedHash, Blake3XofReader};
 #[cfg(feature = "sha3")]
 pub use cshake::{Cshake128, Cshake128XofReader, Cshake256, Cshake256XofReader};
 #[cfg(feature = "sha3")]

@@ -2,7 +2,11 @@
 
 mod support;
 
-use rscrypto::{Digest, hashes::crypto::Blake3, traits::Xof as _};
+use rscrypto::{
+  Digest,
+  hashes::crypto::{Blake3, Blake3DeriveContext},
+  traits::Xof as _,
+};
 use support::vector_blob::BlobIterator;
 
 fn update_input_pattern(hasher: &mut Blake3, len: usize) {
@@ -40,6 +44,10 @@ const _: () = {
     i += 1;
   }
 };
+
+// The official derive-key context, hashed at compile time.
+const OFFICIAL_CONTEXT: Blake3DeriveContext =
+  Blake3DeriveContext::new_const("BLAKE3 2019-12-27 16:29:52 test vectors context");
 
 fn decode_u64_le(bytes: &[u8]) -> u64 {
   let arr: [u8; 8] = bytes.try_into().expect("expected 8-byte little-endian u64");
@@ -111,6 +119,22 @@ fn blake3_official_test_vectors() {
       let mut out = vec![0u8; derive_key_xof.len()];
       xof.squeeze(&mut out);
       assert_eq!(&out[..], derive_key_xof, "derive xof case {i}");
+
+      assert_eq!(context, "BLAKE3 2019-12-27 16:29:52 test vectors context");
+      let runtime_context = Blake3DeriveContext::new(context);
+      assert_eq!(runtime_context, OFFICIAL_CONTEXT, "derive context case {i}");
+      let mut h = Blake3::new_derive_key_from(&OFFICIAL_CONTEXT);
+      update_input_pattern(&mut h, input_len);
+      assert_eq!(
+        &h.finalize()[..],
+        &derive_key_xof[..32],
+        "prehashed derive digest case {i}"
+      );
+      assert_eq!(
+        &Blake3::derive_key_with(&OFFICIAL_CONTEXT, &input_pattern(input_len))[..],
+        &derive_key_xof[..32],
+        "prehashed one-shot derive case {i}"
+      );
     }
   }
 }

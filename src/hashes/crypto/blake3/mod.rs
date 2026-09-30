@@ -108,6 +108,86 @@ impl core::fmt::Debug for Blake3KeyedHash {
   }
 }
 
+/// A BLAKE3 key-derivation context, hashed once.
+///
+/// [`Blake3::derive_key`] and [`Blake3::new_derive_key`] hash the context
+/// string on every call. Build this value once, ideally as a constant, and
+/// pass it to [`Blake3::derive_key_with`] or [`Blake3::new_derive_key_from`]
+/// to skip that work. The output is identical.
+///
+/// The context string is public, and so is this value. BLAKE3 expects a
+/// hardcoded, globally unique, application-specific context, such as
+/// `"example.com 2026-09-30 session tokens"`; never build it from secrets or
+/// untrusted input.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Blake3, Blake3DeriveContext};
+///
+/// const CONTEXT: Blake3DeriveContext = Blake3DeriveContext::new_const("example.com 2026-09-30 session tokens");
+///
+/// let key = Blake3::derive_key_with(&CONTEXT, b"input key material");
+/// assert_eq!(
+///   key,
+///   Blake3::derive_key("example.com 2026-09-30 session tokens", b"input key material")
+/// );
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Blake3DeriveContext {
+  key_words: [u32; 8],
+}
+
+impl Blake3DeriveContext {
+  /// Hash a context string of at most 1,024 bytes in constant context.
+  ///
+  /// This runs the portable compression function. Use [`Self::new`] for a
+  /// longer context.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `context` is longer than 1,024 bytes. In constant context, this
+  /// fails the build.
+  #[must_use]
+  pub const fn new_const(context: &str) -> Self {
+    assert!(
+      context.len() <= CHUNK_LEN,
+      "Blake3DeriveContext::new_const accepts at most 1,024 bytes"
+    );
+    let mut scratch = OneChunkScratch::ZERO;
+    Self {
+      key_words: one_chunk_root_words_portable(&IV, DERIVE_KEY_CONTEXT, context.as_bytes(), &mut scratch),
+    }
+  }
+
+  /// Hash a context string of any length at runtime.
+  #[inline]
+  #[must_use]
+  pub fn new(context: &str) -> Self {
+    Self {
+      key_words: control::derive_context_key_words(context),
+    }
+  }
+
+  /// Hash `context` through the per-thread cache of the last context used.
+  #[inline]
+  fn cached(context: &str) -> Self {
+    #[cfg(feature = "std")]
+    let key_words = control::derive_context_key_words_cached(context);
+    #[cfg(not(feature = "std"))]
+    let key_words = control::derive_context_key_words(context);
+    Self { key_words }
+  }
+}
+
+impl core::fmt::Debug for Blake3DeriveContext {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "Blake3DeriveContext(")?;
+    crate::hex::fmt_hex_lower(&words8_to_le_bytes(&self.key_words), f)?;
+    write!(f, ")")
+  }
+}
+
 #[cfg(any(feature = "parallel", not(target_endian = "little")))]
 type CvBytes = [u8; OUT_LEN];
 
@@ -3156,18 +3236,17 @@ impl Blake3 {
   #[inline]
   #[must_use]
   pub fn derive_key(context: &str, key_material: &[u8]) -> [u8; OUT_LEN] {
-    let context_key_words = {
-      #[cfg(feature = "std")]
-      {
-        control::derive_context_key_words_cached(context)
-      }
-      #[cfg(not(feature = "std"))]
-      {
-        control::derive_context_key_words(context)
-      }
-    };
+    Self::derive_key_with(&Blake3DeriveContext::cached(context), key_material)
+  }
 
-    let mut context_key_words = context_key_words;
+  /// Compute the derived key for `key_material` under a prehashed `context`, in one shot.
+  ///
+  /// The result equals [`Blake3::derive_key`] with the context string that
+  /// built `context`, without hashing that string again.
+  #[inline]
+  #[must_use]
+  pub fn derive_key_with(context: &Blake3DeriveContext, key_material: &[u8]) -> [u8; OUT_LEN] {
+    let mut context_key_words = context.key_words;
     digest_public_oneshot(&mut context_key_words, DERIVE_KEY_MATERIAL, key_material)
   }
 
@@ -3473,14 +3552,17 @@ impl Blake3 {
   #[must_use]
   #[inline]
   pub fn new_derive_key(context: &str) -> Self {
-    #[cfg(feature = "std")]
-    let key_words = control::derive_context_key_words_cached(context);
-    #[cfg(not(feature = "std"))]
-    let key_words = control::derive_context_key_words(context);
-    let mut key_words = key_words;
-    let state = Self::new_internal(key_words, DERIVE_KEY_MATERIAL);
-    ct::zeroize_words(&mut key_words);
-    state
+    Self::new_derive_key_from(&Blake3DeriveContext::cached(context))
+  }
+
+  /// Construct a new key-derivation hasher from a prehashed `context`.
+  ///
+  /// The result equals [`Blake3::new_derive_key`] with the context string
+  /// that built `context`, without hashing that string again.
+  #[must_use]
+  #[inline]
+  pub fn new_derive_key_from(context: &Blake3DeriveContext) -> Self {
+    Self::new_internal(context.key_words, DERIVE_KEY_MATERIAL)
   }
 
   #[inline]

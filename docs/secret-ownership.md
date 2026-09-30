@@ -44,7 +44,7 @@ serialization. Their verification still uses full-traversal comparison where
 the concrete type provides it.
 
 Public keys, signatures, nonces, ciphertexts, PHC records, unkeyed hash state,
-and checksums are not secret owners. Callers can still place sensitive data in
+`Blake3DeriveContext`, and checksums are not secret owners. Callers can still place sensitive data in
 their buffers; the crate cannot manage caller-owned memory.
 
 ## Explicit escape hatches

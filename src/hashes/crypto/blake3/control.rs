@@ -16,16 +16,7 @@ thread_local! {
   static DERIVE_KEY_CONTEXT_LOCAL_CACHE: RefCell<Option<(String, [u32; 8])>> = const { RefCell::new(None) };
 }
 
-#[cfg(feature = "std")]
 #[inline]
-fn compute_derive_context_key_words(context: &str) -> [u32; 8] {
-  let context_bytes = context.as_bytes();
-  let kernel_ctx = dispatch::size_class_kernel(context_bytes.len());
-  digest_oneshot_words(kernel_ctx, &IV, DERIVE_KEY_CONTEXT, context_bytes)
-}
-
-#[inline]
-#[cfg(not(feature = "std"))]
 pub(super) fn derive_context_key_words(context: &str) -> [u32; 8] {
   let context_bytes = context.as_bytes();
   let kernel_ctx = dispatch::size_class_kernel(context_bytes.len());
@@ -44,7 +35,7 @@ pub(super) fn derive_context_key_words_cached(context: &str) -> [u32; 8] {
     return words;
   }
 
-  let computed = compute_derive_context_key_words(context);
+  let computed = derive_context_key_words(context);
   DERIVE_KEY_CONTEXT_LOCAL_CACHE.with(|slot| {
     *slot.borrow_mut() = Some((context.to_string(), computed));
   });

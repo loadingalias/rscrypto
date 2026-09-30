@@ -507,7 +507,7 @@ pub use hashes::crypto::{Blake2b, Blake2b256, Blake2b512, Blake2bKey, Blake2bPar
 #[cfg(feature = "blake2s")]
 pub use hashes::crypto::{Blake2s128, Blake2s256, Blake2sKey, Blake2sParams};
 #[cfg(feature = "blake3")]
-pub use hashes::crypto::{Blake3, Blake3KeyedHash, Blake3XofReader};
+pub use hashes::crypto::{Blake3, Blake3DeriveContext, Blake3KeyedHash, Blake3XofReader};
 #[cfg(feature = "sha3")]
 pub use hashes::crypto::{
   Cshake128, Cshake128XofReader, Cshake256, Cshake256XofReader, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128,
@@ -1528,6 +1528,7 @@ mod send_sync_assertions {
 
     // BLAKE3
     assert_send_sync::<Blake3>();
+    assert_send_sync::<Blake3DeriveContext>();
     assert_send_sync::<Blake3XofReader>();
 
     // Fast hashes
@@ -1656,6 +1657,7 @@ mod send_sync_assertions {
     assert_clone::<AsconCxof128>();
     assert_clone::<AsconCxof128Reader>();
     assert_clone::<Blake3>();
+    assert_clone::<Blake3DeriveContext>();
     assert_clone::<Blake3XofReader>();
     assert_clone::<Xxh3>();
     assert_clone::<Xxh3_128>();
@@ -1684,6 +1686,7 @@ mod send_sync_assertions {
     assert_debug::<AsconCxof128>();
     assert_debug::<AsconCxof128Reader>();
     assert_debug::<Blake3>();
+    assert_debug::<Blake3DeriveContext>();
     assert_debug::<Blake3XofReader>();
     assert_debug::<Xxh3>();
     assert_debug::<Xxh3_128>();
