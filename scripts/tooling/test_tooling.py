@@ -234,14 +234,14 @@ class AptState(unittest.TestCase):
     PREFIX = '_tmp_rscrypto-apt-mirrors'
     SUITES = ('noble', 'noble-updates', 'noble-security')
 
-    def lists(self):
+    def lists(self, binary='binary-amd64'):
         """Build a signed-shaped lists directory and the matching catalog pins."""
         import hashlib
         lists = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, lists)
         pins = {}
         for suite in self.SUITES:
-            indexes = {f'{component}/binary-amd64/Packages': f'Package: {component}-{suite}\n'.encode()
+            indexes = {f'{component}/{binary}/Packages': f'Package: {component}-{suite}\n'.encode()
                        for component in ('main', 'universe')}
             for name, data in indexes.items():
                 (lists / f'{self.PREFIX}_dists_{suite}_{name.replace("/", "_")}').write_bytes(data)
@@ -260,6 +260,10 @@ class AptState(unittest.TestCase):
 
     def test_accepts_only_indexes_signed_by_pinned_releases(self):
         lists, pins = self.lists()
+        self.verify(lists, pins)
+
+    def test_accepts_architecture_variant_indexes(self):
+        lists, pins = self.lists(binary='binary-amd64v3')
         self.verify(lists, pins)
 
     def test_rejects_state_apt_would_trust_without_proof(self):

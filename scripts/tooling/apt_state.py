@@ -118,8 +118,21 @@ def verify(lists, prefix, architecture, pins):
 
     for suite in suites:
         for component in COMPONENTS:
-            if f'{component}_binary-{architecture}_Packages' not in present[suite]:
+            if not any(is_package_index(name, component, architecture) for name in present[suite]):
                 raise Unusable(f'{suite}: missing {component} package index for {architecture}')
+
+
+def is_package_index(name, component, architecture):
+    """Whether NAME is COMPONENT's package index for ARCHITECTURE or one of its variants.
+
+    APT on an x86-64-v3 host with architecture variants enabled fetches
+    binary-amd64v3 instead of binary-amd64; both are signed indexes of the suite.
+    """
+    head = f'{component}_binary-{architecture}'
+    if not name.startswith(head) or not name.endswith('_Packages'):
+        return False
+    variant = name[len(head):-len('_Packages')]
+    return variant == '' or (variant.startswith('v') and variant[1:].isdigit())
 
 
 def main():
