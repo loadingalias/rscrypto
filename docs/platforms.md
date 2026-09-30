@@ -56,6 +56,26 @@ The snapshot does not supply exact-candidate Windows timing or cleanup evidence.
 Native runtime tests and benchmarks do not replace those gates,
 and evidence from one CPU does not qualify another.
 
+## Toolchain
+
+rscrypto requires Rust 1.100 (`rust-version = "1.100.0"`). Until Rust 1.100 is stable on
+2026-11-12, build with a 1.100 nightly; the repository tests the nightly pinned in
+[`rust-toolchain.toml`](../rust-toolchain.toml).
+
+On stable Rust, every catalogued target builds except four, whose accelerated backends use
+unstable compiler features. They need a nightly compiler, and the `portable-only` feature does not
+remove that requirement:
+
+| Target | Unstable features |
+| --- | --- |
+| `powerpc64le-unknown-linux-gnu` | `portable_simd`, `powerpc_target_feature` |
+| `s390x-unknown-linux-gnu` | `asm_experimental_reg`, `portable_simd`, `stdarch_s390x` |
+| `riscv64gc-unknown-linux-gnu` | `asm_experimental_reg`, `portable_simd`, `riscv_ext_intrinsics`, `riscv_target_feature` |
+| `riscv32imac-unknown-none-elf` with `sha2` | `riscv_ext_intrinsics` |
+
+Unstable features can change between nightlies. The tested contract for these targets is the
+pinned nightly; a newer nightly may fail to build them until rscrypto adapts.
+
 ## Supported targets
 
 [`.config/target-matrix.json`](../.config/target-matrix.json) is the target support catalog.

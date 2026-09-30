@@ -60,6 +60,9 @@ Report suspected vulnerabilities through [GitHub Private Vulnerability Reporting
 
 ## Install only what you use
 
+rscrypto requires Rust 1.100; until it is stable, use a 1.100 nightly. POWER, IBM Z, and RISC-V
+builds need a nightly compiler; see [Toolchain](docs/platforms.md#toolchain).
+
 Minimal `no_std` SHA-2 build:
 
 ```toml
