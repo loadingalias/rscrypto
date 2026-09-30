@@ -1890,7 +1890,7 @@ fn ed25519_keypair_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut 
   }
 }
 
-// Signing-phase probes: each times one secret step of `sign`, on the intermediates
+// Signing-phase cases: each times one secret step of `sign`, on the intermediates
 // production derives from the same fixed or random secret as the keypair case.
 fn ed25519_sign_phase_inputs(rng: &mut BenchRng) -> Vec<(Class, rscrypto::auth::DiagEd25519SignInputs)> {
   let mut inputs = Vec::with_capacity(samples());

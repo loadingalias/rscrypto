@@ -1035,8 +1035,7 @@ left_class = "signing nonce digest reduction mod L for the fixed keypair secret"
 right_class = "signing nonce digest reduction mod L for random keypair secrets"
 samples = 200000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "Localizes the intermittent RISC-V ed25519_keypair_sign_fixed_vs_random_secret failures (|t| 10.0 and 13.4 on one binary) to one secret signing step."
+notes = "Required on every target. Isolates one secret signing step; on RISC-V it caught branches that the whole-signature case detected only intermittently."
 
 [[dudect_case]]
 name = "ed25519_sign_commitment_fixed_vs_random_secret"
@@ -1046,8 +1045,7 @@ left_class = "signing commitment R = r*B for the fixed keypair secret's nonce"
 right_class = "signing commitment R = r*B for random keypair secrets' nonces"
 samples = 200000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "Localizes the intermittent RISC-V ed25519_keypair_sign_fixed_vs_random_secret failures (|t| 10.0 and 13.4 on one binary) to one secret signing step."
+notes = "Required on every target. Isolates one secret signing step; on RISC-V it caught branches that the whole-signature case detected only intermittently."
 
 [[dudect_case]]
 name = "ed25519_sign_response_fixed_vs_random_secret"
@@ -1057,8 +1055,7 @@ left_class = "signing response S = k*a + r mod L for the fixed keypair secret"
 right_class = "signing response S = k*a + r mod L for random keypair secrets"
 samples = 200000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "Localizes the intermittent RISC-V ed25519_keypair_sign_fixed_vs_random_secret failures (|t| 10.0 and 13.4 on one binary) to one secret signing step."
+notes = "Required on every target. Isolates one secret signing step; on RISC-V it caught branches that the whole-signature case detected only intermittently."
 
 [[dudect_case]]
 name = "ecdsa_p256_public_key_fixed_vs_random_secret"

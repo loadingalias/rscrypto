@@ -23,6 +23,10 @@ Release evidence combines:
 
 Source that looks branchless is not proof.
 Compiler lowering, inlining, target features, and linking can change machine behavior.
+For example, a checked `strict_*` operation on a secret-derived value tests that value:
+RV64GC has no conditional move, so the test can compile to a secret-dependent branch.
+Bounded secret arithmetic uses `wrapping_*` with the bound written at the definition,
+as the Curve25519 field and scalar code do.
 Evidence for the release harness does not automatically cover a downstream binary compiled
 differently.
 
