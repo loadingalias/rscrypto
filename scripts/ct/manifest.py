@@ -21,25 +21,43 @@ def primitive_supports_physical_timing(primitive: dict, target: str | None) -> b
   return target not in set(primitive.get("physical_timing_unsupported_targets", []))
 
 
-def is_diagnostic_dudect_case(case: dict) -> bool:
-  return case.get("gate") == "diagnostic"
+def dudect_case_gate(case: dict, target: str | None = None) -> str:
+  """Return the case's gate on `target`; `diagnostic_targets` demotes a required case on named targets only."""
+  if target is not None and target in case.get("diagnostic_targets", ()):
+    return "diagnostic"
+  return str(case.get("gate", "required"))
+
+
+def dudect_case_reason(case: dict, target: str | None = None) -> str | None:
+  if target is not None and target in case.get("diagnostic_targets", ()):
+    return case.get("diagnostic_targets_reason")
+  return case.get("reason") or case.get("notes")
+
+
+def resolve_dudect_case(case: dict, target: str | None) -> dict:
+  """Copy a manifest case with its gate and reason resolved for `target`."""
+  return {**case, "gate": dudect_case_gate(case, target), "reason": dudect_case_reason(case, target)}
+
+
+def is_diagnostic_dudect_case(case: dict, target: str | None = None) -> bool:
+  return dudect_case_gate(case, target) == "diagnostic"
 
 
 REPLAY_GROUPS = ("mldsa", "mldsa-probe")
 
 
-def replay_cases(cases: dict[str, dict], selection: str) -> list[str]:
-  """Resolve an exact case, the required ML-DSA kernel suite, or the ML-DSA probes."""
+def replay_cases(cases: dict[str, dict], selection: str, target: str | None = None) -> list[str]:
+  """Resolve an exact case, the required ML-DSA kernel suite on `target`, or the ML-DSA probes."""
   if selection == "mldsa":
     selected = sorted(name for name, case in cases.items()
                       if case.get("primitive") == "signature.mldsa.secret_kernels"
-                      and not is_diagnostic_dudect_case(case))
+                      and not is_diagnostic_dudect_case(case, target))
     if not selected:
       raise ValueError("ML-DSA replay requires the manifest's required kernel cases")
     return selected
   if selection == "mldsa-probe":
     selected = sorted(name for name, case in cases.items()
-                      if name.startswith("mldsa_probe_") and is_diagnostic_dudect_case(case))
+                      if name.startswith("mldsa_probe_") and is_diagnostic_dudect_case(case, target))
     if not selected:
       raise ValueError("ML-DSA probe replay requires the manifest's diagnostic probe cases")
     return selected
@@ -53,7 +71,7 @@ def required_dudect_cases(ct: dict, target: str | None = None, *, cases: list[di
   return [
     case
     for case in (ct.get("dudect_case", []) if cases is None else cases)
-    if not is_diagnostic_dudect_case(case)
+    if not is_diagnostic_dudect_case(case, target)
     and primitive_supports_physical_timing(primitives.get(case.get("primitive"), {}), target)
   ]
 

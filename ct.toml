@@ -5256,6 +5256,8 @@ right_class = "64 forward NTT executions on a random canonical polynomial"
 samples = 20000
 smoke_samples = 512
 notes = "Production dispatch and normal polynomial cleanup are inside timing."
+diagnostic_targets = ["powerpc64le-unknown-linux-gnu"]
+diagnostic_targets_reason = "POWER10 vector multiplies run faster on zero operands. On POWER, production sends small secrets only through the blinded NTT, which mldsa_prepare44/65/87 gate; mldsa_ntt_dense_fixed_vs_random gates the plain NTT on dense inputs."
 
 [[dudect_case]]
 name = "mldsa_montgomery_fixed_vs_random"
@@ -5316,6 +5318,8 @@ right_class = "64 products of two independently random canonical polynomials"
 samples = 20000
 smoke_samples = 512
 notes = "Production product dispatch and normal polynomial cleanup are inside timing."
+diagnostic_targets = ["powerpc64le-unknown-linux-gnu"]
+diagnostic_targets_reason = "POWER10 vector multiplies run faster on zero operands. Production products take NTT-domain operands, which are dense; mldsa_product_dense_fixed_vs_random gates that distribution."
 
 [[dudect_case]]
 name = "mldsa_accumulate_fixed_vs_random"
@@ -5326,6 +5330,8 @@ right_class = "64 accumulations with three independently random canonical polyno
 samples = 20000
 smoke_samples = 512
 notes = "Production accumulation dispatch and normal polynomial cleanup are inside timing."
+diagnostic_targets = ["powerpc64le-unknown-linux-gnu"]
+diagnostic_targets_reason = "POWER10 vector multiplies run faster on zero operands. Production accumulations take NTT-domain operands, which are dense; mldsa_accumulate_dense_fixed_vs_random gates that distribution."
 
 [[dudect_case]]
 name = "mldsa_probe_product_zero_vs_zero"
@@ -5350,15 +5356,24 @@ gate = "diagnostic"
 reason = "Isolates zero operands from per-sample input variation in the POWER vector product."
 
 [[dudect_case]]
-name = "mldsa_probe_product_fixed_vs_random"
+name = "mldsa_product_dense_fixed_vs_random"
 primitive = "signature.mldsa.secret_kernels"
-filter = "mldsa_probe_product_fixed_vs_random"
+filter = "mldsa_product_dense_fixed_vs_random"
 left_class = "64 products of one fixed pair of random canonical polynomials"
 right_class = "64 products of two independently random canonical polynomials"
 samples = 200000
 smoke_samples = 512
-gate = "diagnostic"
-reason = "Realistic-secret probe: both classes have random-like bit counts."
+notes = "Required on every target. NTT-domain secrets and masks are dense residues; this is the production operand distribution."
+
+[[dudect_case]]
+name = "mldsa_accumulate_dense_fixed_vs_random"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_accumulate_dense_fixed_vs_random"
+left_class = "64 accumulations with one fixed triple of random canonical polynomials"
+right_class = "64 accumulations with three independently random canonical polynomials"
+samples = 200000
+smoke_samples = 512
+notes = "Required on every target. NTT-domain secrets and masks are dense residues; this is the production operand distribution."
 
 [[dudect_case]]
 name = "mldsa_probe_product_high_vs_random"
@@ -5394,15 +5409,14 @@ gate = "diagnostic"
 reason = "Isolates zero operands from per-sample input variation in scalar Montgomery products."
 
 [[dudect_case]]
-name = "mldsa_probe_montgomery_fixed_vs_random"
+name = "mldsa_montgomery_dense_fixed_vs_random"
 primitive = "signature.mldsa.secret_kernels"
-filter = "mldsa_probe_montgomery_fixed_vs_random"
+filter = "mldsa_montgomery_dense_fixed_vs_random"
 left_class = "64 batches of 128 portable Montgomery products on one fixed random operand set"
 right_class = "64 batches of 128 portable Montgomery products on random canonical operands"
 samples = 200000
 smoke_samples = 512
-gate = "diagnostic"
-reason = "Realistic-secret probe for scalar Montgomery products."
+notes = "Required on every target. NTT-domain secrets and masks are dense residues; this is the production operand distribution."
 
 [[dudect_case]]
 name = "mldsa_probe_montgomery_high_vs_random"
@@ -5438,15 +5452,14 @@ gate = "diagnostic"
 reason = "Isolates zero operands in the POWER forward NTT from per-sample input variation."
 
 [[dudect_case]]
-name = "mldsa_probe_ntt_fixed_vs_random"
+name = "mldsa_ntt_dense_fixed_vs_random"
 primitive = "signature.mldsa.secret_kernels"
-filter = "mldsa_probe_ntt_fixed_vs_random"
+filter = "mldsa_ntt_dense_fixed_vs_random"
 left_class = "64 forward NTTs of one fixed random canonical polynomial"
 right_class = "64 forward NTTs of independently random canonical polynomials"
 samples = 200000
 smoke_samples = 512
-gate = "diagnostic"
-reason = "Realistic-secret probe for the POWER forward NTT: both classes have random-like bit counts."
+notes = "Required on every target. Signing transforms the dense mask y with the plain forward NTT."
 
 [[dudect_case]]
 name = "mldsa_probe_ntt_high_vs_random"
@@ -5631,6 +5644,10 @@ dudect = [
   "mldsa_montgomery_fixed_vs_random",
   "mldsa_product_fixed_vs_random",
   "mldsa_accumulate_fixed_vs_random",
+  "mldsa_ntt_dense_fixed_vs_random",
+  "mldsa_montgomery_dense_fixed_vs_random",
+  "mldsa_product_dense_fixed_vs_random",
+  "mldsa_accumulate_dense_fixed_vs_random",
   "mldsa_norm_first_vs_last",
   "mldsa_rounding44_fixed_vs_random",
   "mldsa_noise_eta2_fixed_vs_random",
@@ -5651,6 +5668,10 @@ dudect = [
   "mldsa_montgomery_fixed_vs_random",
   "mldsa_product_fixed_vs_random",
   "mldsa_accumulate_fixed_vs_random",
+  "mldsa_ntt_dense_fixed_vs_random",
+  "mldsa_montgomery_dense_fixed_vs_random",
+  "mldsa_product_dense_fixed_vs_random",
+  "mldsa_accumulate_dense_fixed_vs_random",
   "mldsa_norm_first_vs_last",
   "mldsa_rounding65_fixed_vs_random",
   "mldsa_noise_eta4_fixed_vs_random",
@@ -5671,6 +5692,10 @@ dudect = [
   "mldsa_montgomery_fixed_vs_random",
   "mldsa_product_fixed_vs_random",
   "mldsa_accumulate_fixed_vs_random",
+  "mldsa_ntt_dense_fixed_vs_random",
+  "mldsa_montgomery_dense_fixed_vs_random",
+  "mldsa_product_dense_fixed_vs_random",
+  "mldsa_accumulate_dense_fixed_vs_random",
   "mldsa_norm_first_vs_last",
   "mldsa_rounding65_fixed_vs_random",
   "mldsa_noise_eta2_fixed_vs_random",

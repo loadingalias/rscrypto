@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from provenance import load_toml, sha256_file
 from manifest import (
   dudect_sample_count,
-  is_diagnostic_dudect_case, primitive_supports_physical_timing, target_record,
+  is_diagnostic_dudect_case, primitive_supports_physical_timing, resolve_dudect_case, target_record,
   required_dudect_cases as select_required_dudect_cases,
 )
 
@@ -205,7 +205,7 @@ def primitive_ids_requiring_dudect(ct: dict[str, Any], target: str | None = None
 
 
 def required_dudect_cases(ct: dict[str, Any], target: str | None = None) -> list[dict[str, Any]]:
-  return select_required_dudect_cases(ct, target, cases=manifest_dudect_cases(ct))
+  return select_required_dudect_cases(ct, target, cases=manifest_dudect_cases(ct, target))
 
 
 def required_dudect_primitives(ct: dict[str, Any], target: str | None = None) -> set[str]:
@@ -225,13 +225,14 @@ def binsec_policy(ct: dict[str, Any], target: str) -> tuple[str, str]:
   return "unsupported", f"unknown BINSEC policy {policy!r}; treating as unsupported"
 
 
-def manifest_dudect_cases(ct: dict[str, Any]) -> list[dict[str, Any]]:
+def manifest_dudect_cases(ct: dict[str, Any], target: str | None) -> list[dict[str, Any]]:
+  """Load manifest cases with each gate resolved for `target`."""
   cases = []
   for case in ct.get("dudect_case", []):
     missing = [key for key in ("name", "primitive", "filter") if not case.get(key)]
     if missing:
       raise ValueError(f"dudect_case missing required keys {missing}: {case!r}")
-    cases.append(case)
+    cases.append(resolve_dudect_case(case, target))
   return cases
 
 
@@ -450,7 +451,7 @@ def dudect_case_result(
     "primitive": case["primitive"],
     "filter": case["filter"],
     "gate": case.get("gate", "required"),
-    "diagnostic_reason": case.get("reason") or case.get("notes"),
+    "diagnostic_reason": case.get("reason"),
     "left_class": case.get("left_class"),
     "right_class": case.get("right_class"),
     "status": status,
@@ -521,7 +522,7 @@ def dudect_case_result(
         row[key] = report[key]
   row["primitive"] = case["primitive"]
   row["gate"] = case.get("gate", "required")
-  row["diagnostic_reason"] = case.get("reason") or case.get("notes") or row.get("diagnostic_reason")
+  row["diagnostic_reason"] = case.get("reason") or row.get("diagnostic_reason")
   row["left_class"] = case.get("left_class", row.get("left_class"))
   row["right_class"] = case.get("right_class", row.get("right_class"))
   if row["gate"] == "diagnostic" and row["status"] == "fail":
@@ -624,7 +625,7 @@ def summarize_findings(findings: list[dict[str, Any]], diagnostics: list[dict[st
 
 
 def primitive_manifest_dudect_cases(ct: dict[str, Any], primitive_id: str, target: str | None) -> list[dict[str, Any]]:
-  return [case for case in manifest_dudect_cases(ct) if case["primitive"] == primitive_id and dudect_case_supported_on_target(ct, case, target)]
+  return [case for case in manifest_dudect_cases(ct, target) if case["primitive"] == primitive_id and dudect_case_supported_on_target(ct, case, target)]
 
 
 def primitive_binsec_kernels(ct: dict[str, Any], primitive_id: str) -> list[dict[str, Any]]:
@@ -1130,7 +1131,7 @@ def main() -> int:
       (out_dir / name).unlink(missing_ok=True)
 
   ct = load_toml(root / "ct.toml")
-  all_manifest_cases = manifest_dudect_cases(ct)
+  all_manifest_cases = manifest_dudect_cases(ct, target)
   all_gate_manifest_cases = filter_dudect_cases_by_gate(all_manifest_cases, args.dudect_gate)
   filtered_gate_manifest_cases, dudect_filter = filter_dudect_cases(all_gate_manifest_cases, args.dudect_filter)
   target_skipped_cases = [

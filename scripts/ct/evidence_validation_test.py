@@ -338,6 +338,47 @@ def main() -> None:
     in manifest_errors(evidence_unit_with_undeclared_variant)
   )
 
+  def dudect_case(manifest, name):
+    return next(case for case in manifest["dudect_case"] if case["name"] == name)
+
+  def diagnostic_target_unknown(manifest) -> None:
+    dudect_case(manifest, "mldsa_product_fixed_vs_random")["diagnostic_targets"] = ["sparc64-unknown-linux-gnu"]
+
+  assert (
+    "DudeCT case mldsa_product_fixed_vs_random diagnostic_targets names unknown target(s): sparc64-unknown-linux-gnu"
+    in manifest_errors(diagnostic_target_unknown)
+  )
+
+  def diagnostic_target_without_reason(manifest) -> None:
+    del dudect_case(manifest, "mldsa_product_fixed_vs_random")["diagnostic_targets_reason"]
+
+  assert (
+    "DudeCT case mldsa_product_fixed_vs_random diagnostic_targets requires diagnostic_targets_reason"
+    in manifest_errors(diagnostic_target_without_reason)
+  )
+
+  def diagnostic_target_on_diagnostic_case(manifest) -> None:
+    case = dudect_case(manifest, "mldsa_probe_product_zero_vs_zero")
+    case["diagnostic_targets"] = ["powerpc64le-unknown-linux-gnu"]
+    case["diagnostic_targets_reason"] = "fixture"
+
+  assert (
+    "DudeCT case mldsa_probe_product_zero_vs_zero diagnostic_targets applies only to a required case"
+    in manifest_errors(diagnostic_target_on_diagnostic_case)
+  )
+
+  # A target-scoped demotion must leave every evidence unit with a case required on that target.
+  power = "powerpc64le-unknown-linux-gnu"
+  demoted = manifest_validation.load_toml(Path(__file__).resolve().parents[2] / "ct.toml")
+  unit = next(row for row in demoted["evidence_unit"] if row["id"] == "signature.mldsa.secret_kernels.44")
+  for name in unit["dudect"]:
+    dudect_case(demoted, name)["diagnostic_targets"] = [power]
+  for target, expected in ((power, True), ("x86_64-unknown-linux-gnu", False)):
+    errors: list[str] = []
+    manifest_validation.validate_strict_coverage(demoted, errors, target)
+    missing = f"primitive signature.mldsa.secret_kernels evidence unit {unit['id']} has no DudeCT case required on {target}"
+    assert (missing in errors) == expected, errors
+
   with tempfile.TemporaryDirectory() as temporary:
     temporary_path = Path(temporary)
     link_map = temporary_path / "link-map.txt"

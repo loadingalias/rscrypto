@@ -22,7 +22,8 @@ import evidence_bundle as bundle
 from dudect_report import raw_csv_rows
 from provenance import ct_function_symbols, dudect_runner_sources, load_toml, sha256_file
 from manifest import (
-  binsec_kernel_targets, binsec_required_targets, primitive_supports_physical_timing, required_dudect_cases,
+  binsec_kernel_targets, binsec_required_targets, is_diagnostic_dudect_case, primitive_supports_physical_timing,
+  required_dudect_cases,
 )
 
 
@@ -556,6 +557,26 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
       fail(errors, f"DudeCT case {name} missing filter")
     if case.get("gate") == "diagnostic" and not (case.get("reason") or case.get("notes")):
       fail(errors, f"diagnostic DudeCT case {name} requires reason or notes")
+    if "diagnostic_targets" in case:
+      diagnostic_targets = case["diagnostic_targets"]
+      if (
+        not isinstance(diagnostic_targets, list)
+        or not diagnostic_targets
+        or any(not isinstance(target, str) for target in diagnostic_targets)
+        or len(set(diagnostic_targets)) != len(diagnostic_targets)
+      ):
+        fail(errors, f"DudeCT case {name} diagnostic_targets must be a non-empty list of distinct target names")
+      else:
+        unknown_targets = sorted(set(diagnostic_targets) - set(target_by_name))
+        if unknown_targets:
+          fail(errors, f"DudeCT case {name} diagnostic_targets names unknown target(s): {', '.join(unknown_targets)}")
+      if case.get("gate", "required") != "required":
+        fail(errors, f"DudeCT case {name} diagnostic_targets applies only to a required case")
+      reason = case.get("diagnostic_targets_reason")
+      if not isinstance(reason, str) or not reason.strip():
+        fail(errors, f"DudeCT case {name} diagnostic_targets requires diagnostic_targets_reason")
+    elif case.get("diagnostic_targets_reason") is not None:
+      fail(errors, f"DudeCT case {name} diagnostic_targets_reason requires diagnostic_targets")
     limit = case.get("threshold_abs_max_t")
     if limit is not None and (
       isinstance(limit, bool) or not isinstance(limit, (int, float)) or not math.isfinite(limit) or limit <= 0
@@ -893,6 +914,7 @@ def validate_strict_coverage(ct: dict, errors: list[str], target: str | None = N
   targets = binsec_required_targets(ct)
   dudect_primitives = {case.get("primitive") for case in required_dudect_cases(ct, target)}
   dudect_case_names = {case.get("name") for case in required_dudect_cases(ct, target)}
+  dudect_cases_by_name = {case.get("name"): case for case in ct.get("dudect_case", [])}
   evidence_units_by_primitive: dict[str, list[dict]] = {}
   for unit in ct.get("evidence_unit", []):
     primitive = unit.get("primitive")
@@ -923,7 +945,13 @@ def validate_strict_coverage(ct: dict, errors: list[str], target: str | None = N
         fail(errors, f"primitive {primitive_id} requires DudeCT evidence for variant(s): {', '.join(missing_variants)}")
       for unit in units:
         unit_id = unit.get("id", "<unnamed>")
-        for case_name in unit.get("dudect", []):
+        unit_cases = [
+          case_name for case_name in unit.get("dudect", [])
+          if not is_diagnostic_dudect_case(dudect_cases_by_name.get(case_name, {}), target)
+        ]
+        if unit.get("dudect") and not unit_cases:
+          fail(errors, f"primitive {primitive_id} evidence unit {unit_id} has no DudeCT case required on {target}")
+        for case_name in unit_cases:
           if case_name not in dudect_case_names:
             fail(errors, f"primitive {primitive_id} evidence unit {unit_id} lacks a non-diagnostic DudeCT case {case_name!r}")
     if primitive_requires_evidence(ct, primitive, "binsec"):

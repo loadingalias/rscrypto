@@ -1197,9 +1197,10 @@ mldsa_products_case!(mldsa_accumulate_fixed_vs_random, 3, |input: &[[u32; 256]; 
   rscrypto::auth::diag_mldsa_accumulate(&input[0], &input[1], &input[2])
 });
 
-// Diagnostic probes for operand-dependent timing in ML-DSA arithmetic. Each
-// case changes one input property: zero, one fixed random input, or a fixed
-// high-bit-count coefficient. Zero-versus-zero is the A/A control.
+// Probes for operand-dependent timing in ML-DSA arithmetic. Each case changes
+// one input property: zero, one fixed random input, or a fixed high-bit-count
+// coefficient. Zero-versus-zero is the A/A control. The `*_dense_*` cases are
+// required gates; the `mldsa_probe_*` cases are diagnostics.
 const MLDSA_PROBE_HIGH_WEIGHT: u32 = 8_380_415;
 
 fn mldsa_probe_zero<const W: usize>(_: &[[u32; 256]; W], _: &mut BenchRng) -> [[u32; 256]; W] {
@@ -1276,8 +1277,11 @@ macro_rules! mldsa_probe_montgomery {
 
 mldsa_probe_product!(mldsa_probe_product_zero_vs_zero, mldsa_probe_zero, mldsa_probe_zero);
 mldsa_probe_product!(mldsa_probe_product_zero_vs_fixed, mldsa_probe_zero, mldsa_probe_fixed);
+// Required dense cases: one fixed canonical polynomial against fresh ones. NTT-domain
+// secrets and masks are dense residues in production, so this is the secret distribution
+// the gate must hold for on every target.
 mldsa_probe_product!(
-  mldsa_probe_product_fixed_vs_random,
+  mldsa_product_dense_fixed_vs_random,
   mldsa_probe_fixed,
   mldsa_probe_random
 );
@@ -1305,9 +1309,16 @@ mldsa_probe_montgomery!(
   mldsa_probe_fixed
 );
 mldsa_probe_montgomery!(
-  mldsa_probe_montgomery_fixed_vs_random,
+  mldsa_montgomery_dense_fixed_vs_random,
   mldsa_probe_fixed,
   mldsa_probe_random
+);
+mldsa_probe_case!(
+  mldsa_accumulate_dense_fixed_vs_random,
+  3,
+  mldsa_probe_fixed,
+  mldsa_probe_random,
+  |input: &[[u32; 256]; 3]| rscrypto::auth::diag_mldsa_accumulate(&input[0], &input[1], &input[2])
 );
 mldsa_probe_montgomery!(
   mldsa_probe_montgomery_high_vs_random,
@@ -1336,7 +1347,7 @@ mldsa_probe_transform!(
   mldsa_probe_fixed
 );
 mldsa_probe_transform!(
-  mldsa_probe_ntt_fixed_vs_random,
+  mldsa_ntt_dense_fixed_vs_random,
   rscrypto::auth::diag_mldsa_ntt,
   mldsa_probe_fixed,
   mldsa_probe_random
@@ -3157,15 +3168,15 @@ ctbench_main_with_seeds!(
   (mldsa_accumulate_fixed_vs_random, Some(0x6d6c64736100000e)),
   (mldsa_probe_product_zero_vs_zero, Some(0x6d6c647370720000)),
   (mldsa_probe_product_zero_vs_fixed, Some(0x6d6c647370720001)),
-  (mldsa_probe_product_fixed_vs_random, Some(0x6d6c647370720002)),
+  (mldsa_product_dense_fixed_vs_random, Some(0x6d6c647370720002)),
   (mldsa_probe_product_high_vs_random, Some(0x6d6c647370720003)),
   (mldsa_probe_montgomery_zero_vs_zero, Some(0x6d6c647370720004)),
   (mldsa_probe_montgomery_zero_vs_fixed, Some(0x6d6c647370720005)),
-  (mldsa_probe_montgomery_fixed_vs_random, Some(0x6d6c647370720006)),
+  (mldsa_montgomery_dense_fixed_vs_random, Some(0x6d6c647370720006)),
   (mldsa_probe_montgomery_high_vs_random, Some(0x6d6c647370720007)),
   (mldsa_probe_ntt_zero_vs_zero, Some(0x6d6c647370720008)),
   (mldsa_probe_ntt_zero_vs_fixed, Some(0x6d6c647370720009)),
-  (mldsa_probe_ntt_fixed_vs_random, Some(0x6d6c64737072000a)),
+  (mldsa_ntt_dense_fixed_vs_random, Some(0x6d6c64737072000a)),
   (mldsa_probe_ntt_high_vs_random, Some(0x6d6c64737072000b)),
   (mldsa_probe_inverse_ntt_zero_vs_zero, Some(0x6d6c64737072000c)),
   (mldsa_probe_inverse_ntt_zero_vs_fixed, Some(0x6d6c64737072000d)),
@@ -3178,6 +3189,7 @@ ctbench_main_with_seeds!(
   (mldsa_probe_prepare44_zero_secret_vs_random, Some(0x6d6c647370720014)),
   (mldsa_probe_prepare65_zero_secret_vs_random, Some(0x6d6c647370720015)),
   (mldsa_probe_prepare87_zero_secret_vs_random, Some(0x6d6c647370720016)),
+  (mldsa_accumulate_dense_fixed_vs_random, Some(0x6d6c647370720017)),
   (mldsa_norm_first_vs_last, Some(0x6d6c64736100000f)),
   (mldsa_prepare44_fixed_vs_random, Some(0x6d6c647361000010)),
   (mldsa_prepare65_fixed_vs_random, Some(0x6d6c647361000011)),

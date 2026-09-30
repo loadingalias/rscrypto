@@ -20,11 +20,19 @@ class Selection(unittest.TestCase):
     def test_mldsa_suite_uses_the_required_inventory_on_all_three_native_targets(self):
         manifest = tomllib.loads((Path(__file__).resolve().parents[2] / 'ct.toml').read_text())
         cases = {case['name']: case for case in manifest['dudect_case']}
-        selected = set(ci.replay_cases(cases, 'mldsa'))
-        self.assertEqual(len(selected), 19)
-        for target in ('s390x-unknown-linux-gnu', 'powerpc64le-unknown-linux-gnu', 'riscv64gc-unknown-linux-gnu'):
-            required = {case['name'] for case in required_dudect_cases(manifest, target)}
-            self.assertTrue(selected <= required)
+        dense = {'mldsa_ntt_dense_fixed_vs_random', 'mldsa_montgomery_dense_fixed_vs_random',
+                 'mldsa_product_dense_fixed_vs_random', 'mldsa_accumulate_dense_fixed_vs_random'}
+        power_zero = {'mldsa_ntt_fixed_vs_random', 'mldsa_product_fixed_vs_random',
+                      'mldsa_accumulate_fixed_vs_random'}
+        for target, count in (('s390x-unknown-linux-gnu', 23), ('powerpc64le-unknown-linux-gnu', 20),
+                              ('riscv64gc-unknown-linux-gnu', 23), ('x86_64-unknown-linux-gnu', 23)):
+            selected = set(ci.replay_cases(cases, 'mldsa', target))
+            required = {case['name'] for case in required_dudect_cases(manifest, target)
+                        if case['primitive'] == 'signature.mldsa.secret_kernels'}
+            self.assertEqual(selected, required)
+            self.assertEqual(len(selected), count)
+            self.assertTrue(dense <= selected)
+            self.assertEqual(not power_zero & selected, target == 'powerpc64le-unknown-linux-gnu')
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / 'output'
             with patch.dict(os.environ, INPUT_ARCHITECTURES='s390x-linux,powerpc64le-linux,riscv64-linux',
@@ -40,7 +48,7 @@ class Selection(unittest.TestCase):
         manifest = tomllib.loads((Path(__file__).resolve().parents[2] / 'ct.toml').read_text())
         cases = {case['name']: case for case in manifest['dudect_case']}
         selected = set(ci.replay_cases(cases, 'mldsa-probe'))
-        self.assertEqual(len(selected), 23)
+        self.assertEqual(len(selected), 20)
         self.assertTrue(all(cases[name]['gate'] == 'diagnostic' for name in selected))
         self.assertFalse(selected & set(ci.replay_cases(cases, 'mldsa')))
         required = {case['name'] for case in required_dudect_cases(manifest, 'powerpc64le-unknown-linux-gnu')}

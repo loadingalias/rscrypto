@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
 import evidence_bundle as bundle
+from manifest import resolve_dudect_case
 from provenance import cfg_target_features, codegen_value, codegen_values, dudect_runner_sources, resolved_rustflags, sha256_file
 
 
@@ -34,7 +35,8 @@ RESULT_RE = re.compile(
 )
 
 
-def manifest_dudect_cases(ct: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def manifest_dudect_cases(ct: dict[str, Any], target: str | None = None) -> dict[str, dict[str, Any]]:
+  """Load manifest cases with each gate resolved for `target`."""
   cases: dict[str, dict[str, Any]] = {}
   for raw_case in ct.get("dudect_case", []):
     missing = [key for key in ("name", "primitive", "filter", "left_class", "right_class") if not raw_case.get(key)]
@@ -46,9 +48,7 @@ def manifest_dudect_cases(ct: dict[str, Any]) -> dict[str, dict[str, Any]]:
     gate = str(raw_case.get("gate", "required"))
     if gate not in ("required", "diagnostic"):
       raise ValueError(f"dudect_case {name!r} has unsupported gate {gate!r}")
-    case = dict(raw_case)
-    case["gate"] = gate
-    cases[name] = case
+    cases[name] = resolve_dudect_case({**raw_case, "gate": gate}, target)
   return cases
 
 
@@ -94,7 +94,7 @@ def dudect_case_rows(
         "left_class": metadata["left_class"],
         "right_class": metadata["right_class"],
         "gate": gate,
-        "diagnostic_reason": metadata.get("reason") or metadata.get("notes"),
+        "diagnostic_reason": metadata.get("reason"),
         "seed": seeds.get(name),
         "requested_samples": requested_samples,
         "raw_csv": raw,
@@ -317,7 +317,7 @@ def prepare_report(args):
   with ct_manifest_path.open("rb") as source:
     ct_manifest = tomllib.load(source)
   release_binary = ct_manifest["equality_evidence"]["release_binary"]
-  manifest_cases = manifest_dudect_cases(ct_manifest)
+  manifest_cases = manifest_dudect_cases(ct_manifest, args.target)
   dudect_manifest_path = root / "tools" / "ct-dudect" / "Cargo.toml"
   harness_manifest_path = root / "tools" / "ct-harness" / "Cargo.toml"
   dudect_lockfile_path = root / "tools" / "ct-dudect" / "Cargo.lock"
@@ -501,7 +501,7 @@ def main() -> int:
     return 0
   # Validate measurements before collecting the (more expensive) binary provenance.
   with (Path(__file__).resolve().parents[2] / "ct.toml").open("rb") as source:
-    manifest_cases = manifest_dudect_cases(tomllib.load(source))
+    manifest_cases = manifest_dudect_cases(tomllib.load(source), args.target)
   measurement = case_report({"metadata": {}, "manifest_cases": manifest_cases}, args)
   report = {**prepare_report(args)["metadata"], **measurement}
   write_report(args.out, report)
