@@ -1195,17 +1195,21 @@ const fn words8_to_le_bytes(words: &[u32; 8]) -> [u8; OUT_LEN] {
 
 /// Caller-owned intermediates of [`one_chunk_root_words_portable`], so keyed
 /// runtime callers can clear them after use.
+///
+/// `final_block` comes first in a 16-byte-aligned layout, so its clearing loop
+/// has a compile-time alignment: no byte-count derived from the stack address.
+#[repr(C, align(16))]
 struct OneChunkScratch {
-  cv: [u32; 8],
-  block_words: [u32; 16],
   final_block: [u8; BLOCK_LEN],
+  block_words: [u32; 16],
+  cv: [u32; 8],
 }
 
 impl OneChunkScratch {
   const ZERO: Self = Self {
-    cv: [0; 8],
-    block_words: [0; 16],
     final_block: [0; BLOCK_LEN],
+    block_words: [0; 16],
+    cv: [0; 8],
   };
 }
 
