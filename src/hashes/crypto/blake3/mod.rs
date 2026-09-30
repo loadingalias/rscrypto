@@ -33,7 +33,6 @@ const KEY_LEN: usize = 32;
 const BLOCK_LEN: usize = 64;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const BLOCK_LEN_U8: u8 = 64;
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const BLOCK_LEN_U32: u32 = 64;
 const CHUNK_LEN: usize = 1024;
 const OUTPUT_BLOCK_LEN: usize = 2 * OUT_LEN;
@@ -633,15 +632,20 @@ fn words8_from_le_bytes_32(bytes: &[u8; 32]) -> [u32; 8] {
 }
 
 #[inline(always)]
-fn words16_from_le_bytes_64(bytes: &[u8; 64]) -> [u32; 16] {
+const fn words16_from_le_bytes_64(bytes: &[u8; 64]) -> [u32; 16] {
   if cfg!(target_endian = "little") {
     // SAFETY: `bytes` is exactly 64 bytes, and `read_unaligned` supports the
     // 1-byte alignment of `[u8; 64]`.
     unsafe { ptr::read_unaligned(bytes.as_ptr().cast::<[u32; 16]>()) }
   } else {
-    let (words, remainder) = bytes.as_chunks::<4>();
-    debug_assert!(remainder.is_empty());
-    core::array::from_fn(|i| u32::from_le_bytes(words[i]))
+    let (chunks, _) = bytes.as_chunks::<4>();
+    let mut words = [0u32; 16];
+    let mut i = 0;
+    while i < words.len() {
+      words[i] = u32::from_le_bytes(chunks[i]);
+      i = i.strict_add(1);
+    }
+    words
   }
 }
 
@@ -1031,7 +1035,7 @@ fn add_chunk_cvs_batched_bytes(
 // from the 16-word XOF finalization. Inlining the round state lets LLVM omit
 // the unused second output half from the CV caller without changing XOF output.
 #[inline(always)]
-fn compress_pre(
+const fn compress_pre(
   chaining_value: &[u32; 8],
   block_words: &[u32; 16],
   counter: u64,
@@ -1152,7 +1156,7 @@ fn first_8_words(words: [u32; 16]) -> [u32; 8] {
 
 // Keep the unrolled rounds out of tiny one-shot callers.
 #[inline(never)]
-fn compress_cv_portable(
+const fn compress_cv_portable(
   chaining_value: &[u32; 8],
   block_words: &[u32; 16],
   counter: u64,
@@ -1173,18 +1177,95 @@ fn compress_cv_portable(
 }
 
 #[inline(always)]
-fn words8_to_le_bytes(words: &[u32; 8]) -> [u8; OUT_LEN] {
+const fn words8_to_le_bytes(words: &[u32; 8]) -> [u8; OUT_LEN] {
   let mut out = [0u8; OUT_LEN];
   if cfg!(target_endian = "little") {
     // SAFETY: `words` is 8 u32s = 32 bytes, and `out` is 32 bytes.
     unsafe { ptr::copy_nonoverlapping(words.as_ptr().cast::<u8>(), out.as_mut_ptr(), OUT_LEN) };
   } else {
-    for (i, word) in words.iter().copied().enumerate() {
-      let offset = i.strict_mul(4);
-      out[offset..offset.strict_add(4)].copy_from_slice(&word.to_le_bytes());
+    let (chunks, _) = out.as_chunks_mut::<4>();
+    let mut i = 0;
+    while i < words.len() {
+      chunks[i] = words[i].to_le_bytes();
+      i = i.strict_add(1);
     }
   }
   out
+}
+
+/// Caller-owned intermediates of [`one_chunk_root_words_portable`], so keyed
+/// runtime callers can clear them after use.
+struct OneChunkScratch {
+  cv: [u32; 8],
+  block_words: [u32; 16],
+  final_block: [u8; BLOCK_LEN],
+}
+
+impl OneChunkScratch {
+  const ZERO: Self = Self {
+    cv: [0; 8],
+    block_words: [0; 16],
+    final_block: [0; BLOCK_LEN],
+  };
+}
+
+/// Portable root words of an input of at most one chunk.
+///
+/// Const so `Blake3::digest_const` and the runtime portable one-shot path run
+/// the same code. Every intermediate lives in `scratch`.
+const fn one_chunk_root_words_portable(
+  key_words: &[u32; 8],
+  flags: u32,
+  input: &[u8],
+  scratch: &mut OneChunkScratch,
+) -> [u32; 8] {
+  assert!(input.len() <= CHUNK_LEN);
+  // Every block but the last is full; an empty input is one empty final block.
+  let full_blocks = input.len().saturating_sub(1).strict_div(BLOCK_LEN);
+  let (blocks, _) = input.as_chunks::<BLOCK_LEN>();
+
+  scratch.cv = *key_words;
+  let mut i = 0;
+  while i < full_blocks {
+    scratch.block_words = words16_from_le_bytes_64(&blocks[i]);
+    let start = if i == 0 { CHUNK_START } else { 0 };
+    scratch.cv = compress_cv_portable(&scratch.cv, &scratch.block_words, 0, BLOCK_LEN_U32, flags | start);
+    i = i.strict_add(1);
+  }
+
+  let (_, tail) = input.split_at(full_blocks.strict_mul(BLOCK_LEN));
+  scratch.final_block = [0; BLOCK_LEN];
+  let (padded, _) = scratch.final_block.split_at_mut(tail.len());
+  padded.copy_from_slice(tail);
+  scratch.block_words = words16_from_le_bytes_64(&scratch.final_block);
+  #[expect(
+    clippy::cast_possible_truncation,
+    reason = "the final block holds at most BLOCK_LEN bytes"
+  )]
+  let block_len = tail.len() as u32;
+  let start = if full_blocks == 0 { CHUNK_START } else { 0 };
+  compress_cv_portable(
+    &scratch.cv,
+    &scratch.block_words,
+    0,
+    block_len,
+    flags | start | CHUNK_END | ROOT,
+  )
+}
+
+/// Runtime portable one-chunk digest; clears the scratch in keyed modes.
+#[inline]
+#[must_use]
+fn digest_one_chunk_root_words_portable(key_words: &[u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
+  let mut scratch = OneChunkScratch::ZERO;
+  let output = one_chunk_root_words_portable(key_words, flags, input, &mut scratch);
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_words_no_fence(&mut scratch.cv);
+    ct::zeroize_words_no_fence(&mut scratch.block_words);
+    ct::zeroize_no_fence(&mut scratch.final_block);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+  output
 }
 
 #[derive(Clone)]
@@ -2454,7 +2535,12 @@ fn digest_oneshot_words(kernel: Kernel, key_words: &[u32; 8], flags: u32, input:
     }
   }
 
-  // Tiny inputs (≤64B) on non-x86 or portable kernel: unified helper.
+  // The portable kernel shares its one-chunk path with `Blake3::digest_const`.
+  if input.len() <= CHUNK_LEN && kernel.id == kernels::Blake3KernelId::Portable {
+    return digest_one_chunk_root_words_portable(key_words, flags, input);
+  }
+
+  // Tiny inputs (≤64B) on non-x86 kernels: unified helper.
   if input.len() <= BLOCK_LEN {
     return hash_tiny_to_root_words(kernel, key_words, flags, input);
   }
@@ -2960,6 +3046,44 @@ impl Blake3 {
   pub fn digest(data: &[u8]) -> [u8; OUT_LEN] {
     let mut iv = IV;
     digest_public_oneshot(&mut iv, 0, data)
+  }
+
+  /// Compute the hash of at most 1,024 bytes (one BLAKE3 chunk) in constant context.
+  ///
+  /// The result equals [`Blake3::digest`]. This runs the portable compression
+  /// function, which the runtime portable backend shares, so use it to build
+  /// constants. At runtime, [`Blake3::digest`] selects faster kernels and has no
+  /// length limit.
+  ///
+  /// It is unkeyed only and makes no constant-time or zeroization claim.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `data` is longer than 1,024 bytes. In constant context, this
+  /// fails the build.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// use rscrypto::Blake3;
+  ///
+  /// const ABC: [u8; 32] = Blake3::digest_const(b"abc");
+  /// assert_eq!(ABC, Blake3::digest(b"abc"));
+  /// ```
+  ///
+  /// ```compile_fail
+  /// use rscrypto::Blake3;
+  ///
+  /// const TOO_LONG: [u8; 32] = Blake3::digest_const(&[0; 1025]);
+  /// ```
+  #[must_use]
+  pub const fn digest_const(data: &[u8]) -> [u8; OUT_LEN] {
+    assert!(
+      data.len() <= CHUNK_LEN,
+      "Blake3::digest_const accepts at most 1,024 bytes"
+    );
+    let mut scratch = OneChunkScratch::ZERO;
+    words8_to_le_bytes(&one_chunk_root_words_portable(&IV, 0, data, &mut scratch))
   }
 
   /// Compute the XOF output state of `data` in one shot.

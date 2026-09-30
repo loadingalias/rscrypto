@@ -42,7 +42,30 @@ fn patterned_bytes(len: usize) -> Vec<u8> {
     .collect()
 }
 
+#[test]
+fn blake3_digest_const_matches_reference_and_streaming_for_every_one_chunk_length() {
+  for len in 0..=1024 {
+    let data = patterned_bytes(len);
+    let digest = Blake3::digest_const(&data);
+    assert_eq!(digest, blake3_ref_hash(&data), "reference mismatch at len={len}");
+    let mut streaming = Blake3::new();
+    streaming.update(&data);
+    assert_eq!(digest, streaming.finalize(), "streaming mismatch at len={len}");
+  }
+}
+
+#[test]
+#[should_panic(expected = "Blake3::digest_const accepts at most 1,024 bytes")]
+fn blake3_digest_const_rejects_more_than_one_chunk() {
+  core::hint::black_box(Blake3::digest_const(core::hint::black_box(&[0; 1025])));
+}
+
 proptest! {
+  #[test]
+  fn blake3_digest_const_matches_official(data in proptest::collection::vec(any::<u8>(), 0..=1024)) {
+    prop_assert_eq!(Blake3::digest_const(&data), blake3_ref_hash(&data));
+  }
+
   #[test]
   fn blake3_one_shot_matches_official(data in proptest::collection::vec(any::<u8>(), 0..4096)) {
     prop_assert_eq!(Blake3::digest(&data), blake3_ref_hash(&data));

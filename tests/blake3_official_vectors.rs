@@ -21,6 +21,26 @@ fn update_input_pattern(hasher: &mut Blake3, len: usize) {
   }
 }
 
+fn input_pattern(len: usize) -> Vec<u8> {
+  (0..len)
+    .map(|i| u8::try_from(i.strict_rem(251)).expect("BLAKE3 fixture byte must fit in u8"))
+    .collect()
+}
+
+// Official vector for the empty input, evaluated at compile time.
+const EMPTY_DIGEST: [u8; 32] = Blake3::digest_const(&[]);
+const EMPTY_EXPECTED: [u8; 32] = [
+  0xaf, 0x13, 0x49, 0xb9, 0xf5, 0xf9, 0xa1, 0xa6, 0xa0, 0x40, 0x4d, 0xea, 0x36, 0xdc, 0xc9, 0x49, 0x9b, 0xcb, 0x25,
+  0xc9, 0xad, 0xc1, 0x12, 0xb7, 0xcc, 0x9a, 0x93, 0xca, 0xe4, 0x1f, 0x32, 0x62,
+];
+const _: () = {
+  let mut i = 0;
+  while i < EMPTY_DIGEST.len() {
+    assert!(EMPTY_DIGEST[i] == EMPTY_EXPECTED[i]);
+    i += 1;
+  }
+};
+
 fn decode_u64_le(bytes: &[u8]) -> u64 {
   let arr: [u8; 8] = bytes.try_into().expect("expected 8-byte little-endian u64");
   u64::from_le_bytes(arr)
@@ -55,6 +75,13 @@ fn blake3_official_test_vectors() {
       let mut h = Blake3::new();
       update_input_pattern(&mut h, input_len);
       assert_eq!(&h.finalize()[..], &hash_xof[..32], "hash digest case {i}");
+      if input_len <= 1024 {
+        assert_eq!(
+          &Blake3::digest_const(&input_pattern(input_len))[..],
+          &hash_xof[..32],
+          "const digest case {i}"
+        );
+      }
 
       let mut xof = h.finalize_xof();
       let mut out = vec![0u8; hash_xof.len()];
