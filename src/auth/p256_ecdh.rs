@@ -140,6 +140,7 @@ impl P256EphemeralSecret {
   /// Derive the matching canonical uncompressed public key.
   #[must_use]
   pub fn public_key(&self) -> P256PublicKey {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
     #[cfg(all(
       not(feature = "portable-only"),
       not(miri),
@@ -176,6 +177,7 @@ impl P256EphemeralSecret {
   /// application keys with a protocol-specific KDF.
   #[must_use]
   pub fn diffie_hellman(self, public: &P256PublicKey) -> P256SharedSecret {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
     #[cfg(all(
       not(feature = "portable-only"),
       not(miri),

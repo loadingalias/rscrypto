@@ -118,6 +118,7 @@ pub(super) fn keygen<const K: usize, const L: usize>(
   public: &mut [u8],
   secret: &mut [u8],
 ) -> Result<(), MlDsaError> {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut expanded = ZeroizingBytes::<128>::zeroed();
   sampling::hash(&[seed, &[index_byte(K), index_byte(L)]], expanded.as_mut_array());
   let bytes = expanded.as_array();
@@ -201,6 +202,7 @@ impl<const K: usize, const L: usize> SigningState<K, L> {
   }
 
   pub(super) fn decode(&mut self, secret: &[u8], p: Parameters) -> Result<(), MlDsaError> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
     let mut offset = 128usize;
     let size = p.eta_bits.strict_mul(32);
     let mut valid = true;
@@ -228,6 +230,7 @@ pub(super) fn validate_secret<const K: usize, const L: usize>(
   p: Parameters,
   public: &mut [u8],
 ) -> Result<(), MlDsaError> {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut state = SigningState::<K, L>::zero();
   state.decode(secret, p)?;
   public[..32].copy_from_slice(&secret[..32]);
@@ -271,6 +274,7 @@ pub(super) fn sign<const K: usize, const L: usize>(
   p: Parameters,
   signature: &mut [u8],
 ) -> Result<(), MlDsaError> {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut state = SigningState::<K, L>::zero();
   state.decode(secret, p)?;
   sign_with_state(secret, mu, random, p, signature, &state, None)
@@ -285,6 +289,7 @@ pub(super) fn sign_with_state<const K: usize, const L: usize>(
   state: &SigningState<K, L>,
   matrix: Option<&Matrix<K, L>>,
 ) -> Result<(), MlDsaError> {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut rho_prime = ZeroizingBytes::<64>::zeroed();
   sampling::hash(&[&secret[32..64], random, mu], rho_prime.as_mut_array());
   let mut y = vector::<L>();

@@ -380,9 +380,360 @@ pub(crate) fn zeroize_words<T: WordZero>(words: &mut [T]) {
   core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
+/// Run `f` with Arm data-independent timing (`PSTATE.DIT`) set for the calling thread.
+///
+/// On AArch64 cores with `FEAT_DIT`, the architecture guarantees data-independent
+/// timing for its listed instructions only while `PSTATE.DIT` is set. rscrypto sets
+/// it inside its asymmetric, post-quantum, and password operations, where the toggle
+/// costs well under 1% at realistic parameters. Short symmetric operations such as MACs, AEADs, and
+/// fixed-size comparisons do not toggle it per call, because a toggle costs about
+/// 30 ns on Apple Silicon. Wrap that work, or a whole worker loop, in this function
+/// to cover it for one toggle per scope.
+///
+/// The previous state is restored when `f` returns or unwinds. On other
+/// architectures, on cores without `FEAT_DIT`, and under Miri, this calls `f`
+/// unchanged. It adds no constant-time claim beyond `ct.toml`.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::traits::ct::with_data_independent_timing;
+///
+/// let sum = with_data_independent_timing(|| 2 + 2);
+/// assert_eq!(sum, 4);
+/// ```
+#[inline]
+pub fn with_data_independent_timing<R>(f: impl FnOnce() -> R) -> R {
+  let _guard = DataIndependentTiming::enter();
+  f()
+}
+
+/// Holds `PSTATE.DIT` set on AArch64 and restores the previous state when dropped.
+#[must_use = "the guard must stay alive for the whole secret-dependent operation"]
+pub(crate) struct DataIndependentTiming {
+  #[cfg(all(target_arch = "aarch64", not(miri)))]
+  restore_disabled: bool,
+}
+
+impl DataIndependentTiming {
+  /// Set `PSTATE.DIT` where `FEAT_DIT` exists; a no-op elsewhere.
+  #[inline]
+  pub(crate) fn enter() -> Self {
+    #[cfg(test)]
+    tests::DIT_ENTRIES.with(|entries| entries.set(entries.get().strict_add(1)));
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
+    {
+      let Some(previous) = Self::state_if_supported() else {
+        return Self {
+          restore_disabled: false,
+        };
+      };
+      let restore_disabled = previous == 0;
+      if restore_disabled {
+        // SAFETY: `state_if_supported` established FEAT_DIT. `.inst 0xd503415f`
+        // encodes `msr DIT, #1`; it has no register operands. MSR DIT is available
+        // at EL0, writes only PSTATE.DIT, and `Drop` restores the prior disabled
+        // state on every normal or unwinding exit.
+        unsafe {
+          core::arch::asm!(".inst 0xd503415f", options(nostack, preserves_flags));
+        }
+      }
+      Self { restore_disabled }
+    }
+    #[cfg(not(all(target_arch = "aarch64", not(miri))))]
+    {
+      Self {}
+    }
+  }
+
+  #[cfg(all(target_arch = "aarch64", not(miri)))]
+  #[inline]
+  fn supported() -> bool {
+    #[cfg(feature = "std")]
+    {
+      std::arch::is_aarch64_feature_detected!("dit")
+    }
+    #[cfg(not(feature = "std"))]
+    {
+      cfg!(target_feature = "dit")
+    }
+  }
+
+  /// Read `PSTATE.DIT` when `FEAT_DIT` exists.
+  #[cfg(all(target_arch = "aarch64", not(miri)))]
+  #[inline]
+  pub(crate) fn state_if_supported() -> Option<u64> {
+    if !Self::supported() {
+      return None;
+    }
+    let state: u64;
+    // SAFETY: `supported` establishes FEAT_DIT before the DIT system register is
+    // accessed. `.inst 0xd53b42a8` encodes `mrs x8, DIT`; the explicit late
+    // output declares the complete register effect. MRS DIT is available at
+    // EL0, touches no memory or stack, and the conservative asm options keep it
+    // ordered with the guarded arithmetic.
+    unsafe {
+      core::arch::asm!(
+        ".inst 0xd53b42a8",
+        lateout("x8") state,
+        options(nostack, preserves_flags)
+      );
+    }
+    Some(state)
+  }
+}
+
+impl Drop for DataIndependentTiming {
+  #[inline]
+  fn drop(&mut self) {
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
+    if self.restore_disabled {
+      // SAFETY: `restore_disabled` can be true only after FEAT_DIT was
+      // established and `enter` enabled PSTATE.DIT. `.inst 0xd503405f` encodes
+      // `msr DIT, #0`; it restores the prior state, has no register operands,
+      // and touches no memory.
+      unsafe {
+        core::arch::asm!(".inst 0xd503405f", options(nostack, preserves_flags));
+      }
+    }
+  }
+}
+
+impl core::fmt::Debug for DataIndependentTiming {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.write_str("DataIndependentTiming")
+  }
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
   use super::*;
+
+  std::thread_local! {
+    /// Guard entries on this thread; lets tests prove an operation entered DIT.
+    pub(crate) static DIT_ENTRIES: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+  }
+
+  /// Guard entries on this thread made while running `f`.
+  pub(crate) fn dit_entries_during(f: impl FnOnce()) -> u64 {
+    let before = DIT_ENTRIES.with(core::cell::Cell::get);
+    f();
+    DIT_ENTRIES.with(core::cell::Cell::get).strict_sub(before)
+  }
+
+  /// Every asymmetric, post-quantum, and password operation must run under the guard.
+  #[cfg(any(
+    feature = "x25519",
+    feature = "ed25519",
+    feature = "ecdsa-p256",
+    feature = "ecdsa-p384",
+    feature = "p256-ecdh",
+    feature = "p384-ecdh",
+    feature = "ml-kem",
+    feature = "ml-dsa",
+    feature = "argon2",
+    feature = "scrypt",
+    feature = "pbkdf2"
+  ))]
+  #[test]
+  fn slow_secret_operations_enter_data_independent_timing() {
+    fn covered<R>(name: &str, operation: impl FnOnce() -> R) {
+      let entries = dit_entries_during(|| {
+        core::hint::black_box(operation());
+      });
+      assert!(entries >= 1, "{name} must enter data-independent timing");
+    }
+
+    #[cfg(feature = "x25519")]
+    {
+      let secret = crate::X25519SecretKey::from_bytes([0x53; 32]);
+      let peer = crate::X25519SecretKey::from_bytes([0x35; 32]).public_key();
+      covered("X25519 public key", || core::hint::black_box(secret.public_key()));
+      covered("X25519 agreement", || {
+        core::hint::black_box(secret.diffie_hellman(&peer))
+      });
+    }
+    #[cfg(feature = "ed25519")]
+    {
+      let secret = crate::Ed25519SecretKey::from_bytes([0x53; 32]);
+      covered("Ed25519 public key", || core::hint::black_box(secret.public_key()));
+      covered("Ed25519 signing", || core::hint::black_box(secret.sign(b"dit")));
+      let keypair = crate::Ed25519Keypair::from_secret_key(crate::Ed25519SecretKey::from_bytes([0x35; 32]));
+      covered("Ed25519 keypair signing", || {
+        core::hint::black_box(keypair.sign(b"dit"))
+      });
+      covered("Ed25519 keypair derivation", || {
+        core::hint::black_box(crate::Ed25519Keypair::from_secret_key(
+          crate::Ed25519SecretKey::from_bytes([7; 32]),
+        ))
+      });
+    }
+    #[cfg(feature = "ecdsa-p256")]
+    {
+      let secret = crate::EcdsaP256SecretKey::from_bytes([1; 32]).expect("valid scalar");
+      covered("P-256 ECDSA public key", || core::hint::black_box(secret.public_key()));
+      covered("P-256 ECDSA blinded public key", || {
+        core::hint::black_box(secret.try_public_key_blinded_with(|blind| {
+          blind.fill(3);
+          Ok::<(), ()>(())
+        }))
+      });
+      covered("P-256 ECDSA signing", || core::hint::black_box(secret.try_sign(b"dit")));
+      covered("P-256 ECDSA blinded signing", || {
+        core::hint::black_box(secret.try_sign_blinded_with(b"dit", |blind| {
+          blind.fill(3);
+          Ok::<(), ()>(())
+        }))
+      });
+    }
+    #[cfg(feature = "ecdsa-p384")]
+    {
+      let secret = crate::EcdsaP384SecretKey::from_bytes([1; 48]).expect("valid scalar");
+      covered("P-384 ECDSA public key", || core::hint::black_box(secret.public_key()));
+      covered("P-384 ECDSA blinded public key", || {
+        core::hint::black_box(secret.try_public_key_blinded_with(|blind| {
+          blind.fill(3);
+          Ok::<(), ()>(())
+        }))
+      });
+      covered("P-384 ECDSA signing", || core::hint::black_box(secret.try_sign(b"dit")));
+      covered("P-384 ECDSA blinded signing", || {
+        core::hint::black_box(secret.try_sign_blinded_with(b"dit", |blind| {
+          blind.fill(3);
+          Ok::<(), ()>(())
+        }))
+      });
+    }
+    #[cfg(feature = "p256-ecdh")]
+    {
+      let generate = |byte: u8| {
+        crate::P256EphemeralSecret::try_generate_with(|candidate| {
+          candidate.fill(byte);
+          Ok::<(), ()>(())
+        })
+        .expect("valid scalar")
+      };
+      let peer = generate(0x35).public_key();
+      let secret = generate(0x53);
+      covered("P-256 ECDH public key", || core::hint::black_box(secret.public_key()));
+      covered("P-256 ECDH agreement", || {
+        core::hint::black_box(secret.diffie_hellman(&peer))
+      });
+    }
+    #[cfg(feature = "p384-ecdh")]
+    {
+      let generate = |byte: u8| {
+        crate::P384EphemeralSecret::try_generate_with(|candidate| {
+          candidate.fill(byte);
+          Ok::<(), ()>(())
+        })
+        .expect("valid scalar")
+      };
+      let peer = generate(0x35).public_key();
+      let secret = generate(0x53);
+      covered("P-384 ECDH public key", || core::hint::black_box(secret.public_key()));
+      covered("P-384 ECDH agreement", || {
+        core::hint::black_box(secret.diffie_hellman(&peer))
+      });
+    }
+    #[cfg(feature = "ml-kem")]
+    {
+      use crate::traits::Kem as _;
+      let fill = |byte: u8| {
+        move |out: &mut [u8]| {
+          out.fill(byte);
+          Ok::<(), crate::MlKemError>(())
+        }
+      };
+      let mut keys = None;
+      covered("ML-KEM key generation", || {
+        keys = Some(crate::MlKem768::generate_keypair(fill(1)).expect("key generation"))
+      });
+      let (ek, dk) = keys.expect("generated keys");
+      let mut encapsulated = None;
+      covered("ML-KEM encapsulation", || {
+        encapsulated = Some(crate::MlKem768::encapsulate(&ek, fill(2)).expect("encapsulation"))
+      });
+      let (ciphertext, _) = encapsulated.expect("encapsulated");
+      covered("ML-KEM decapsulation", || {
+        core::hint::black_box(crate::MlKem768::decapsulate(&dk, &ciphertext))
+      });
+      let mut prepared = None;
+      covered("ML-KEM key preparation", || {
+        prepared = Some(dk.prepare().expect("prepare"))
+      });
+      let prepared = prepared.expect("prepared key");
+      covered("ML-KEM prepared decapsulation", || {
+        core::hint::black_box(prepared.decapsulate(&ciphertext))
+      });
+    }
+    #[cfg(feature = "ml-dsa")]
+    {
+      let mut keys = None;
+      covered("ML-DSA key generation", || {
+        keys = Some(crate::MlDsa65::keypair_from_seed(&[0x31; 32]).expect("key generation"))
+      });
+      let (_, secret) = keys.expect("generated keys");
+      covered("ML-DSA signing", || {
+        core::hint::black_box(secret.sign_deterministic(b"dit", &[]))
+      });
+      let mut storage = Default::default();
+      let mut prepared = None;
+      covered("ML-DSA key preparation", || {
+        prepared = Some(secret.prepare(&mut storage).expect("prepare"))
+      });
+      let prepared = prepared.expect("prepared key");
+      covered("ML-DSA prepared signing", || {
+        core::hint::black_box(prepared.sign_deterministic(b"dit", &[]))
+      });
+    }
+    #[cfg(feature = "argon2")]
+    {
+      let params = crate::Argon2Params::new(8, 1, 1).expect("minimal params");
+      let mut out = [0u8; 16];
+      covered("Argon2id", || {
+        core::hint::black_box(crate::Argon2id::derive(&params, b"pw", b"abcdefgh", &mut out))
+      });
+    }
+    #[cfg(feature = "scrypt")]
+    {
+      let params = crate::ScryptParams::new(1, 1, 1).expect("minimal params");
+      let mut out = [0u8; 16];
+      covered("scrypt", || {
+        core::hint::black_box(crate::Scrypt::derive(&params, b"pw", b"salt", &mut out))
+      });
+    }
+    #[cfg(feature = "pbkdf2")]
+    {
+      let mut out = [0u8; 32];
+      covered("PBKDF2 derivation", || {
+        crate::Pbkdf2Sha256::derive_key_primitive(b"pw", b"salt", 1, &mut out)
+      });
+      covered("PBKDF2 verification", || {
+        crate::Pbkdf2Sha256::verify_password_primitive(b"pw", b"salt", 1, &[0; 32])
+      });
+    }
+  }
+
+  #[test]
+  fn data_independent_timing_is_scoped_and_restores_the_previous_state() {
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
+    let before = DataIndependentTiming::state_if_supported();
+    assert_eq!(
+      dit_entries_during(|| assert_eq!(with_data_independent_timing(|| 7), 7)),
+      1
+    );
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
+    if let Some(before) = before {
+      let _outer = DataIndependentTiming::enter();
+      assert_ne!(DataIndependentTiming::state_if_supported(), Some(0));
+      // A nested scope must not clear the state its caller set.
+      with_data_independent_timing(|| ());
+      assert_ne!(DataIndependentTiming::state_if_supported(), Some(0));
+      drop(_outer);
+      assert_eq!(DataIndependentTiming::state_if_supported(), Some(before));
+    }
+  }
 
   #[test]
   fn fixed_eq_checks_every_position() {

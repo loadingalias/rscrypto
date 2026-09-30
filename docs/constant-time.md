@@ -139,6 +139,23 @@ These are requirements for candidate qualification, not a statement that all
 targets have passed. Standard first-accepted signing retries remain variable-time;
 whole ML-DSA signing is best-effort and is not claimed strict constant time.
 
+## Arm data-independent timing
+
+On AArch64 cores with `FEAT_DIT`, the architecture guarantees data-independent
+timing for its listed instructions only while `PSTATE.DIT` is set; the Linux and
+macOS default is clear. rscrypto sets it for the duration of every asymmetric,
+post-quantum, and password operation, and restores the caller's state afterwards:
+X25519, Ed25519, ECDSA, P-256 and P-384 ECDH, ML-KEM, ML-DSA, RSA private
+operations, Argon2, scrypt, and PBKDF2. One toggle costs about 30 ns on Apple
+Silicon, well under 1% of these operations at realistic parameters.
+
+Short symmetric operations do not toggle it per call: MACs and tag verification,
+AEADs, keyed hashes, HKDF, and fixed-size `ct_eq`. For them a toggle would cost
+14% to 15×. Callers that want DIT there wrap the work, or a whole worker loop, in
+`rscrypto::traits::ct::with_data_independent_timing`. A unit test checks that every
+covered operation enters the guard. DIT is hardening; it does not replace the
+evidence in `ct.toml`, and cores without `FEAT_DIT` run unchanged.
+
 ## Power and frequency channels
 
 The constant-time claim covers control flow, memory addresses, and

@@ -292,6 +292,7 @@ pub(super) fn validate_encapsulation_key<const K: usize, const EK_BYTES: usize>(
 pub(super) fn validate_decapsulation_key<const DK_PKE_BYTES: usize, const EK_BYTES: usize, const DK_BYTES: usize>(
   dk: &[u8; DK_BYTES],
 ) -> Result<(), MlKemError> {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let ek_start = DK_PKE_BYTES;
   let ek_end = ek_start.strict_add(EK_BYTES);
   let h_start = ek_end;
@@ -340,6 +341,7 @@ pub(super) fn validate_and_prepare_decapsulation_key<
 >(
   dk: &[u8; DK_BYTES],
 ) -> Result<PreparedDecapsulationArithmetic<K>, MlKemError> {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut arithmetic = PreparedDecapsulationArithmetic::zeroed();
   validate_and_prepare_decapsulation_key_into::<K, DK_PKE_BYTES, EK_BYTES, DK_BYTES>(dk, &mut arithmetic)?;
   Ok(arithmetic)
@@ -356,6 +358,7 @@ pub(super) fn validate_and_prepare_decapsulation_key_into<
   dk: &[u8; DK_BYTES],
   out: &mut PreparedDecapsulationArithmetic<K>,
 ) -> Result<(), MlKemError> {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let ek_start = DK_PKE_BYTES;
   let ek_end = ek_start.strict_add(EK_BYTES);
   let h_start = ek_end;
@@ -444,6 +447,7 @@ pub(super) fn keygen<
 >(
   random: &[u8; 64],
 ) -> ([u8; EK_BYTES], [u8; DK_BYTES]) {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut ek = [0u8; EK_BYTES];
   let mut dk = [0u8; DK_BYTES];
   keygen_into::<K, K_U8, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES, DK_BYTES>(random, &mut ek, &mut dk);
@@ -464,6 +468,7 @@ pub(super) fn keygen_into<
   ek: &mut [u8; EK_BYTES],
   dk: &mut [u8; DK_BYTES],
 ) {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut d = [0u8; SEED_BYTES];
   let mut z = [0u8; SEED_BYTES];
   d.copy_from_slice(&random[..SEED_BYTES]);
@@ -495,6 +500,7 @@ pub(super) fn encapsulate<
   ek: &[u8; EK_BYTES],
   m: &[u8; SEED_BYTES],
 ) -> ([u8; CT_BYTES], [u8; SHARED_SECRET_BYTES]) {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let ek_hash = encapsulation_key_hash(ek);
   let arithmetic = prepare_encapsulation_key::<K, EK_BYTES>(ek);
   encapsulate_prepared::<K, ETA1_RANDOM_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(&arithmetic, &ek_hash, m)
@@ -513,6 +519,7 @@ pub(super) fn encapsulate_prepared<
   ek_hash: &[u8; HASH_BYTES],
   m: &[u8; SEED_BYTES],
 ) -> ([u8; CT_BYTES], [u8; SHARED_SECRET_BYTES]) {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut input = [0u8; 64];
   input[..SEED_BYTES].copy_from_slice(m);
   input[SEED_BYTES..].copy_from_slice(ek_hash);
@@ -536,6 +543,7 @@ pub(super) fn encapsulate_prepared_512(
   ek_hash: &[u8; HASH_BYTES],
   m: &[u8; SEED_BYTES],
 ) -> ([u8; 768], [u8; SHARED_SECRET_BYTES]) {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   encapsulate_prepared::<2, 192, 768, 10, 4, 320, 128>(ek, ek_hash, m)
 }
 
@@ -544,6 +552,7 @@ pub(super) fn encapsulate_prepared_768(
   ek_hash: &[u8; HASH_BYTES],
   m: &[u8; SEED_BYTES],
 ) -> ([u8; 1088], [u8; SHARED_SECRET_BYTES]) {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut input = [0u8; 64];
   input[..SEED_BYTES].copy_from_slice(m);
   input[SEED_BYTES..].copy_from_slice(ek_hash);
@@ -566,6 +575,7 @@ pub(super) fn encapsulate_prepared_1024(
   ek_hash: &[u8; HASH_BYTES],
   m: &[u8; SEED_BYTES],
 ) -> ([u8; 1568], [u8; SHARED_SECRET_BYTES]) {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut input = [0u8; 64];
   input[..SEED_BYTES].copy_from_slice(m);
   input[SEED_BYTES..].copy_from_slice(ek_hash);
@@ -588,6 +598,7 @@ pub(super) fn decapsulate_prepared_512(
   prepared: &PreparedDecapsulationArithmetic<2>,
   c: &[u8; 768],
 ) -> [u8; SHARED_SECRET_BYTES] {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let h_start = 768usize.strict_add(800);
   let h_stored = &dk[h_start..h_start.strict_add(HASH_BYTES)];
   let z = &dk[h_start.strict_add(HASH_BYTES)..];
@@ -628,6 +639,7 @@ pub(super) fn decapsulate_prepared_768(
   prepared: &PreparedDecapsulationArithmetic<3>,
   c: &[u8; 1088],
 ) -> [u8; SHARED_SECRET_BYTES] {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let h_start = 1152usize.strict_add(1184);
   let h_stored = &dk[h_start..h_start.strict_add(HASH_BYTES)];
   let z = &dk[h_start.strict_add(HASH_BYTES)..];
@@ -668,6 +680,7 @@ pub(super) fn decapsulate_prepared_1024(
   prepared: &PreparedDecapsulationArithmetic<4>,
   c: &[u8; 1568],
 ) -> [u8; SHARED_SECRET_BYTES] {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let h_start = 1536usize.strict_add(1568);
   let h_stored = &dk[h_start..h_start.strict_add(HASH_BYTES)];
   let z = &dk[h_start.strict_add(HASH_BYTES)..];
@@ -718,6 +731,7 @@ pub(super) fn decapsulate<
   dk: &[u8; DK_BYTES],
   c: &[u8; CT_BYTES],
 ) -> Result<[u8; SHARED_SECRET_BYTES], MlKemError> {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let dk_pke = &dk[..DK_PKE_BYTES];
   let ek_start = DK_PKE_BYTES;
   let ek_end = ek_start.strict_add(EK_BYTES);
@@ -945,6 +959,7 @@ fn keygen_encode_into<const K: usize, const DK_PKE_BYTES: usize, const EK_BYTES:
 
 #[inline]
 pub(super) fn keygen_1024(random: &[u8; 64]) -> ([u8; 1568], [u8; 3168]) {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   keygen::<4, 4, 128, 1536, 1568, 3168>(random)
 }
 

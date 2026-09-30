@@ -167,6 +167,7 @@ impl Ed25519SecretKey {
   /// Derive the matching Ed25519 public key.
   #[must_use]
   pub fn public_key(&self) -> Ed25519PublicKey {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
     let expanded = hash::ExpandedSecret::from_secret_key(self);
     public_key_from_scalar(expanded.scalar_bytes())
   }
@@ -174,6 +175,7 @@ impl Ed25519SecretKey {
   /// Sign a message with this secret key.
   #[must_use]
   pub fn sign(&self, message: &[u8]) -> Ed25519Signature {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
     let expanded = hash::ExpandedSecret::from_secret_key(self);
     let public = public_key_from_scalar(expanded.scalar_bytes());
     sign_with_expanded(&expanded, &public, message)
@@ -476,6 +478,7 @@ impl Ed25519Keypair {
   /// Derive a keypair from a secret key.
   #[must_use]
   pub fn from_secret_key(secret: Ed25519SecretKey) -> Self {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
     let expanded = hash::ExpandedSecret::from_secret_key(&secret);
     let public = public_key_from_scalar(expanded.scalar_bytes());
     Self {
@@ -500,6 +503,7 @@ impl Ed25519Keypair {
   /// Sign a message with the keypair secret key.
   #[must_use]
   pub fn sign(&self, message: &[u8]) -> Ed25519Signature {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
     sign_with_expanded(&self.expanded, &self.public, message)
   }
 }
@@ -734,6 +738,7 @@ pub fn diag_ed25519_sign_inputs(secret: &Ed25519SecretKey, message: &[u8]) -> Di
 #[doc(hidden)]
 #[must_use]
 pub fn diag_ed25519_sign_nonce_reduce(nonce_digest: &[u8; 64]) -> [u8; SECRET_KEY_LENGTH] {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   scalar::to_bytes(&scalar::reduce_64_bytes_mod_order_secret(nonce_digest))
 }
 
@@ -742,6 +747,7 @@ pub fn diag_ed25519_sign_nonce_reduce(nonce_digest: &[u8; 64]) -> [u8; SECRET_KE
 #[doc(hidden)]
 #[must_use]
 pub fn diag_ed25519_sign_commitment(nonce: &[u8; SECRET_KEY_LENGTH]) -> [u8; PUBLIC_KEY_LENGTH] {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   basepoint_mul_encoded_dispatch(nonce)
 }
 
@@ -750,6 +756,7 @@ pub fn diag_ed25519_sign_commitment(nonce: &[u8; SECRET_KEY_LENGTH]) -> [u8; PUB
 #[doc(hidden)]
 #[must_use]
 pub fn diag_ed25519_sign_response(inputs: &DiagEd25519SignInputs) -> [u8; SECRET_KEY_LENGTH] {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let challenge = scalar::decode_words_le(&inputs.challenge);
   let secret_scalar = scalar::decode_words_le(&inputs.secret_scalar);
   let nonce = scalar::decode_words_le(&inputs.nonce);

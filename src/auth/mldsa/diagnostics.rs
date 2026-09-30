@@ -9,6 +9,7 @@ use super::{P44, P65, P87, poly::Poly, portable::SigningState, sampling};
 /// Execute the production forward transform on canonical coefficients.
 #[must_use]
 pub fn diag_mldsa_ntt(input: &[u32; 256]) -> u32 {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut value = Poly::zero();
   value.0.copy_from_slice(input);
   value.ntt();
@@ -18,6 +19,7 @@ pub fn diag_mldsa_ntt(input: &[u32; 256]) -> u32 {
 /// Execute the production product on two canonical polynomials.
 #[must_use]
 pub fn diag_mldsa_product(left: &[u32; 256], right: &[u32; 256]) -> u32 {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut left_owner = Poly::zero();
   left_owner.0.copy_from_slice(left);
   let mut out = Poly::zero();
@@ -28,6 +30,7 @@ pub fn diag_mldsa_product(left: &[u32; 256], right: &[u32; 256]) -> u32 {
 /// Execute production accumulation; all three inputs contain canonical residues.
 #[must_use]
 pub fn diag_mldsa_accumulate(accumulator: &[u32; 256], left: &[u32; 256], right: &[u32; 256]) -> u32 {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut out = Poly::zero();
   out.0.copy_from_slice(accumulator);
   let mut right_owner = Poly::zero();
@@ -39,6 +42,7 @@ pub fn diag_mldsa_accumulate(accumulator: &[u32; 256], left: &[u32; 256], right:
 /// Execute the production complete norm scan at a public bound.
 #[must_use]
 pub fn diag_mldsa_norm(input: &[u32; 256], bound: u32) -> u32 {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut value = Poly::zero();
   value.0.copy_from_slice(input);
   value.exceeds_bound(bound)
@@ -47,6 +51,7 @@ pub fn diag_mldsa_norm(input: &[u32; 256], bound: u32) -> u32 {
 /// Execute production rounding and decomposition at a standard public gamma2.
 #[must_use]
 pub fn diag_mldsa_rounding(input: &[u32; 256], gamma2: u32) -> u32 {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut digest = 0;
   for &coefficient in input {
     let (high, low) = core::hint::black_box(super::poly::power2_round(coefficient));
@@ -59,6 +64,7 @@ pub fn diag_mldsa_rounding(input: &[u32; 256], gamma2: u32) -> u32 {
 /// Execute production mask sampling; `large` selects the public gamma1 profile.
 #[must_use]
 pub fn diag_mldsa_mask(seed: &[u8; 64], large: bool) -> u32 {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut out = Poly::zero();
   sampling::mask(seed, 0, if large { P65 } else { P44 }, &mut out);
   core::hint::black_box(&out.0).iter().fold(0, |digest, x| digest ^ x)
@@ -86,6 +92,7 @@ prepare_adapter!(diag_mldsa_prepare87, 4896, 8, 7, P87);
 /// Execute the production portable Montgomery arithmetic for operands below 2q.
 #[must_use]
 pub fn diag_mldsa_montgomery(a: u32, b: u32) -> u32 {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   super::poly::montgomery(a, b)
 }
 
@@ -95,6 +102,7 @@ pub fn diag_mldsa_montgomery(a: u32, b: u32) -> u32 {
 /// adapter separates arithmetic timing from transform scheduling and cleanup.
 #[must_use]
 pub fn diag_mldsa_montgomery_batch(input: &[u32; 256]) -> u32 {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut digest = 0;
   for pair in input.as_chunks::<2>().0 {
     digest ^= core::hint::black_box(super::poly::montgomery(pair[0], pair[1]));

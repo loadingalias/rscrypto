@@ -1812,6 +1812,7 @@ fn argon2_hash_with_kernel_inner(
   backend: HashBackend,
   memory: Option<&mut [Argon2Block]>,
 ) -> Result<(), Argon2Error> {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   Argon2Params::check_inputs(password, salt, context)?;
   if out.len() < MIN_OUTPUT_LEN || out.len() as u64 > MAX_VAR_BYTES {
     return Err(Argon2Error::InvalidOutputLen);

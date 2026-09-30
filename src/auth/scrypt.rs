@@ -909,6 +909,7 @@ fn scrypt_hash(
   out: &mut [u8],
   memory: Option<&mut [ScryptBlock]>,
 ) -> Result<(), ScryptError> {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   if out.len() < MIN_OUTPUT_LEN {
     return Err(ScryptError::InvalidOutputLen);
   }

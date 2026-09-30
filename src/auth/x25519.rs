@@ -234,6 +234,7 @@ impl X25519SecretKey {
   /// Derive the matching public key.
   #[must_use]
   pub fn public_key(&self) -> X25519PublicKey {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
     #[cfg(any(
       all(
         target_arch = "aarch64",
@@ -533,6 +534,7 @@ impl X25519SharedSecret {
   /// Returns [`X25519Error`] when the derived shared secret is all-zero,
   /// which indicates a low-order peer input.
   pub fn diffie_hellman(secret: &X25519SecretKey, public: &X25519PublicKey) -> Result<Self, X25519Error> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
     #[cfg(any(
       all(
         target_arch = "aarch64",

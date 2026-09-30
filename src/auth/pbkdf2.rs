@@ -391,6 +391,7 @@ macro_rules! define_pbkdf2_sha2 {
         iterations: u32,
         okm: &mut [u8],
       ) -> Result<(), Pbkdf2Error> {
+        let _dit = crate::traits::ct::DataIndependentTiming::enter();
         if iterations == 0 {
           return Err(Pbkdf2Error::InvalidIterations);
         }
@@ -563,6 +564,7 @@ macro_rules! define_pbkdf2_sha2 {
       /// [`derive_key_with_params`](Self::derive_key_with_params).
       #[inline]
       pub fn derive_key_primitive(password: &[u8], salt: &[u8], iterations: u32, okm: &mut [u8]) -> Result<(), Pbkdf2Error> {
+        let _dit = crate::traits::ct::DataIndependentTiming::enter();
         if $derive_key_fast_path(password, salt, iterations, okm)? {
           return Ok(());
         }
@@ -650,6 +652,7 @@ macro_rules! define_pbkdf2_sha2 {
         iterations: u32,
         expected: &[u8],
       ) -> Result<(), VerificationError> {
+        let _dit = crate::traits::ct::DataIndependentTiming::enter();
         Self::new(password).verify_primitive(salt, iterations, expected)
       }
 

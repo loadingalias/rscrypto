@@ -943,6 +943,7 @@ impl EcdsaP256SecretKey {
   /// Derive the matching P-256 public key.
   #[must_use]
   pub fn public_key(&self) -> EcdsaP256PublicKey {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
     EcdsaP256PublicKey::from_secret_affine_ct(public_key_from_secret_p256(&self.0))
   }
 
@@ -961,6 +962,7 @@ impl EcdsaP256SecretKey {
     &self,
     fill: impl FnOnce(&mut [u8; 64]) -> Result<(), E>,
   ) -> Result<EcdsaP256PublicKey, E> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
     let mut blind = ZeroizingBytes::zeroed();
     fill(blind.as_mut_array())?;
     Ok(EcdsaP256PublicKey::from_secret_affine_ct(
@@ -976,6 +978,7 @@ impl EcdsaP256SecretKey {
   /// produces an invalid ECDSA scalar. This is cryptographically negligible,
   /// but the API reports it instead of panicking.
   pub fn try_sign(&self, message: &[u8]) -> Result<EcdsaP256Signature, EcdsaError> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
     let digest = Sha256::digest(message);
     sign_digest_p256(&self.0, &digest)
   }
@@ -998,6 +1001,7 @@ impl EcdsaP256SecretKey {
     message: &[u8],
     fill: impl FnOnce(&mut [u8; 64]) -> Result<(), E>,
   ) -> Result<EcdsaP256Signature, EcdsaBlindedSigningError<E>> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
     let mut blind = ZeroizingBytes::zeroed();
     fill(blind.as_mut_array()).map_err(EcdsaBlindedSigningError::Random)?;
     let digest = Sha256::digest(message);
@@ -1118,6 +1122,7 @@ impl EcdsaP384SecretKey {
   /// Derive the matching P-384 public key.
   #[must_use]
   pub fn public_key(&self) -> EcdsaP384PublicKey {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
     EcdsaP384PublicKey::from_secret_affine_ct(public_key_from_secret_p384(&self.0))
   }
 
@@ -1136,6 +1141,7 @@ impl EcdsaP384SecretKey {
     &self,
     fill: impl FnOnce(&mut [u8; 96]) -> Result<(), E>,
   ) -> Result<EcdsaP384PublicKey, E> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
     let mut blind = ZeroizingBytes::zeroed();
     fill(blind.as_mut_array())?;
     Ok(EcdsaP384PublicKey::from_secret_affine_ct(
@@ -1151,6 +1157,7 @@ impl EcdsaP384SecretKey {
   /// produces an invalid ECDSA scalar. This is cryptographically negligible,
   /// but the API reports it instead of panicking.
   pub fn try_sign(&self, message: &[u8]) -> Result<EcdsaP384Signature, EcdsaError> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
     let digest = Sha384::digest(message);
     sign_digest_p384(&self.0, &digest)
   }
@@ -1173,6 +1180,7 @@ impl EcdsaP384SecretKey {
     message: &[u8],
     fill: impl FnOnce(&mut [u8; 96]) -> Result<(), E>,
   ) -> Result<EcdsaP384Signature, EcdsaBlindedSigningError<E>> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
     let mut blind = ZeroizingBytes::zeroed();
     fill(blind.as_mut_array()).map_err(EcdsaBlindedSigningError::Random)?;
     let digest = Sha384::digest(message);

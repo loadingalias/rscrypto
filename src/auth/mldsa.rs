@@ -878,6 +878,7 @@ pub use diagnostics::{
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 #[must_use]
 pub fn diag_mldsa_inverse_ntt(input: &[u32; 256]) -> u32 {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut value = poly::Poly::zero();
   value.0.copy_from_slice(input);
   value.inverse_ntt();
@@ -890,6 +891,7 @@ pub fn diag_mldsa_inverse_ntt(input: &[u32; 256]) -> u32 {
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 #[must_use]
 pub fn diag_mldsa_inverse_ntt_portable(input: &[u32; 256]) -> u32 {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut value = poly::Poly::zero();
   value.0.copy_from_slice(input);
   value.inverse_ntt_scalar::<false>();
@@ -902,6 +904,7 @@ pub fn diag_mldsa_inverse_ntt_portable(input: &[u32; 256]) -> u32 {
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 #[must_use]
 pub fn diag_mldsa_noise(seed: &[u8; 64], eta: u32) -> (bool, u32) {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut value = poly::Poly::zero();
   let valid = sampling::noise(seed, 0, eta, &mut value).is_ok();
   (
@@ -916,6 +919,7 @@ pub fn diag_mldsa_noise(seed: &[u8; 64], eta: u32) -> (bool, u32) {
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 #[must_use]
 pub fn diag_mldsa_challenge(seed: &[u8], tau: usize) -> (bool, u32) {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut value = poly::Poly::zero();
   let valid = sampling::challenge(seed, tau, &mut value).is_ok();
   (

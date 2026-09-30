@@ -1313,39 +1313,6 @@ mldsa_probe_montgomery!(
   mldsa_probe_fixed,
   mldsa_probe_random
 );
-
-// Diagnostic twin of `mldsa_montgomery_dense_fixed_vs_random` with Arm PSTATE.DIT held set for
-// the whole case. Both use one seed, so the pair measured on one host differs only in DIT and
-// shows whether data-independent timing mode removes an operand-value effect.
-fn mldsa_dit_montgomery_dense_fixed_vs_random(runner: &mut CtRunner, rng: &mut BenchRng) {
-  with_arm_dit(|| mldsa_montgomery_dense_fixed_vs_random(runner, rng));
-}
-
-#[cfg(target_arch = "aarch64")]
-fn with_arm_dit(body: impl FnOnce()) {
-  if !std::arch::is_aarch64_feature_detected!("dit") {
-    eprintln!("FEAT_DIT unavailable; measuring without data-independent timing");
-    return body();
-  }
-  let previous: u64;
-  // SAFETY: FEAT_DIT was detected. `.inst 0xd53b42a8` encodes `mrs x8, DIT`, which EL0 may
-  // read; it writes only the declared x8 output and touches no memory or flags.
-  unsafe { core::arch::asm!(".inst 0xd53b42a8", lateout("x8") previous, options(nostack, preserves_flags)) };
-  // SAFETY: FEAT_DIT was detected. `.inst 0xd503415f` encodes `msr DIT, #1`, which writes only
-  // PSTATE.DIT and has no register or memory operands.
-  unsafe { core::arch::asm!(".inst 0xd503415f", options(nostack, preserves_flags)) };
-  body();
-  if previous == 0 {
-    // SAFETY: FEAT_DIT was detected. `.inst 0xd503405f` encodes `msr DIT, #0`, restoring the
-    // disabled state read above; it writes only PSTATE.DIT.
-    unsafe { core::arch::asm!(".inst 0xd503405f", options(nostack, preserves_flags)) };
-  }
-}
-
-#[cfg(not(target_arch = "aarch64"))]
-fn with_arm_dit(body: impl FnOnce()) {
-  body();
-}
 mldsa_probe_case!(
   mldsa_accumulate_dense_fixed_vs_random,
   3,
@@ -3243,8 +3210,6 @@ ctbench_main_with_seeds!(
   (mldsa_probe_montgomery_zero_vs_zero, Some(0x6d6c647370720004)),
   (mldsa_probe_montgomery_zero_vs_fixed, Some(0x6d6c647370720005)),
   (mldsa_montgomery_dense_fixed_vs_random, Some(0x6d6c647370720006)),
-  // Same seed as the base case: identical inputs, only DIT differs.
-  (mldsa_dit_montgomery_dense_fixed_vs_random, Some(0x6d6c647370720006)),
   (mldsa_probe_montgomery_high_vs_random, Some(0x6d6c647370720007)),
   (mldsa_probe_ntt_zero_vs_zero, Some(0x6d6c647370720008)),
   (mldsa_probe_ntt_zero_vs_fixed, Some(0x6d6c647370720009)),
