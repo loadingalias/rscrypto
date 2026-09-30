@@ -43,11 +43,16 @@ def is_diagnostic_dudect_case(case: dict, target: str | None = None) -> bool:
   return dudect_case_gate(case, target) == "diagnostic"
 
 
-REPLAY_GROUPS = ("mldsa", "mldsa-probe")
-
-
 def replay_cases(cases: dict[str, dict], selection: str, target: str | None = None) -> list[str]:
-  """Resolve an exact case, the required ML-DSA kernel suite on `target`, or the ML-DSA probes."""
+  """Resolve an exact case, a comma-separated list of selections, the required ML-DSA kernel
+  suite on `target`, or the ML-DSA probes."""
+  if "," in selection:
+    selected = []
+    for part in selection.split(","):
+      for name in replay_cases(cases, part.strip(), target):
+        if name not in selected:
+          selected.append(name)
+    return selected
   if selection == "mldsa":
     selected = sorted(name for name, case in cases.items()
                       if case.get("primitive") == "signature.mldsa.secret_kernels"

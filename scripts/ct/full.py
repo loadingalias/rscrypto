@@ -265,6 +265,15 @@ def filter_dudect_cases(cases: list[dict[str, Any]], filter_value: str | None) -
   return [case for case in cases if case_matches_dudect_filter(case, tokens)], tokens
 
 
+def select_dudect_cases_by_name(cases: list[dict[str, Any]], names: list[str]) -> list[dict[str, Any]]:
+  """Select exact cases in request order, from any gate, without duplicates."""
+  by_name = {case["name"]: case for case in cases}
+  unknown = sorted(set(names) - set(by_name))
+  if unknown:
+    raise ValueError(f"unknown DudeCT case(s): {', '.join(unknown)}")
+  return [by_name[name] for name in dict.fromkeys(names)]
+
+
 def filter_dudect_cases_by_gate(cases: list[dict[str, Any]], gate: str) -> list[dict[str, Any]]:
   if gate == "all":
     return cases
@@ -1085,6 +1094,12 @@ def main() -> int:
     help="comma-separated DudeCT case/name/filter substrings; empty runs every case in the selected gate",
   )
   parser.add_argument(
+    "--dudect-case",
+    action="append",
+    default=[],
+    help="exact DudeCT case name in any gate; repeatable; diagnostic evidence, never release coverage",
+  )
+  parser.add_argument(
     "--dudect-gate",
     choices=("required", "diagnostic", "all"),
     default=os.environ.get("RSCRYPTO_CT_DUDECT_GATE", "required"),
@@ -1104,7 +1119,8 @@ def main() -> int:
   if args.prepare_archive or args.run_archive:
     from transfer import bundle
     from cross_build import TARGETS
-    if target not in TARGETS or args.profile != "release" or args.dudect_filter or args.dudect_gate != "required":
+    if (target not in TARGETS or args.profile != "release" or args.dudect_filter or args.dudect_case
+        or args.dudect_gate != "required"):
       parser.error("CT transfer requires the complete supported cross-compiled release lane")
     if args.threshold != 10.0 or "RSCRYPTO_CT_DUDECT_SAMPLES" in os.environ:
       parser.error("CT transfer requires unchanged manifest sampling and threshold")
@@ -1134,6 +1150,14 @@ def main() -> int:
   all_manifest_cases = manifest_dudect_cases(ct, target)
   all_gate_manifest_cases = filter_dudect_cases_by_gate(all_manifest_cases, args.dudect_gate)
   filtered_gate_manifest_cases, dudect_filter = filter_dudect_cases(all_gate_manifest_cases, args.dudect_filter)
+  if args.dudect_case:
+    if args.dudect_filter:
+      parser.error("--dudect-case and --dudect-filter are exclusive")
+    try:
+      filtered_gate_manifest_cases = select_dudect_cases_by_name(all_manifest_cases, args.dudect_case)
+    except ValueError as error:
+      parser.error(str(error))
+    dudect_filter = [case["name"] for case in filtered_gate_manifest_cases]
   target_skipped_cases = [
     case for case in filtered_gate_manifest_cases if not dudect_case_supported_on_target(ct, case, target)
   ]

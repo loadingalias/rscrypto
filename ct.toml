@@ -5398,6 +5398,17 @@ smoke_samples = 512
 notes = "Required on every target. NTT-domain secrets and masks are dense residues; this is the production operand distribution."
 
 [[dudect_case]]
+name = "mldsa_dit_montgomery_dense_fixed_vs_random"
+primitive = "signature.mldsa.secret_kernels"
+filter = "mldsa_dit_montgomery_dense_fixed_vs_random"
+left_class = "64 batches of 128 portable Montgomery products on one fixed random operand set, Arm DIT set"
+right_class = "64 batches of 128 portable Montgomery products on random canonical operands, Arm DIT set"
+samples = 200000
+smoke_samples = 512
+gate = "diagnostic"
+reason = "Twin of mldsa_montgomery_dense_fixed_vs_random with PSTATE.DIT set and the same seed. It tests whether Arm data-independent timing mode removes the fixed-operand effect seen on Graviton5 (|t| 7.65 and 18.81). Without FEAT_DIT it equals the base case."
+
+[[dudect_case]]
 name = "mldsa_accumulate_dense_fixed_vs_random"
 primitive = "signature.mldsa.secret_kernels"
 filter = "mldsa_accumulate_dense_fixed_vs_random"

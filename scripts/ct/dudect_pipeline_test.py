@@ -192,7 +192,20 @@ def test_proof_failure_stops_timing():
     assert summary.read_text() == (root / "target/ct/x86_64-unknown-linux-gnu/release/ct-report.md").read_text()
 
 
+def test_exact_case_selection():
+  cases = [{"name": name, "gate": gate} for name, gate in (("alpha", "required"), ("beta", "diagnostic"), ("alphabet", "required"))]
+  # Exact names, not substrings; request order; any gate; duplicates collapse.
+  assert [case["name"] for case in full.select_dudect_cases_by_name(cases, ["beta", "alpha", "beta"])] == ["beta", "alpha"]
+  try:
+    full.select_dudect_cases_by_name(cases, ["alph"])
+  except ValueError as error:
+    assert "unknown DudeCT case(s): alph" in str(error)
+  else:
+    raise AssertionError("a substring must not select a case")
+
+
 if __name__ == "__main__":
+  test_exact_case_selection()
   test_utf8_child_process()
   test_windows_shell_entry_paths()
   test_proof_failure_stops_timing()

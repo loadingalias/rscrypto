@@ -31,11 +31,14 @@ def main():
             if row['platform'] == 'riscv64-linux':
                 target = 'riscv64gc-unknown-linux-gnu'
             if case_name:
-                if target not in TARGETS:
-                    raise ValueError('CT diagnostic replay requires POWER, IBM Z, or RISC-V Linux')
+                if not row['platform'].endswith('-linux'):
+                    raise ValueError('CT diagnostic cases run on Linux platforms')
                 if any(not primitive_supports_physical_timing(primitive, target)
                        for primitive in selected_primitives):
                     raise ValueError(f'CT diagnostic case {case_name} does not support {target}')
+                if target not in TARGETS:
+                    # Native rows measure through ct-full; cross rows replay sealed archives.
+                    row['diagnostic_cases'] = ' '.join(replay_cases(cases, case_name, target))
             if target in TARGETS:
                 row['target'] = target
                 builds.append({'target': target})

@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from transfer import consume
 from dudect_execute import measure
 from dudect_report import write_report
-from manifest import REPLAY_GROUPS, dudect_sample_count, replay_cases
+from manifest import dudect_sample_count, replay_cases
 from cross_build import TARGETS
 
 
@@ -61,14 +61,14 @@ def repeat(prepared, args, cpu):
 
 def campaign(prepared, args, cpu):
     cases = replay_cases(prepared['manifest_cases'], args.case)
-    if args.case not in REPLAY_GROUPS:
+    if args.case in prepared['manifest_cases']:
         return repeat(prepared, args, cpu)
     report = {
         'diagnostic_only': True, 'selection': args.case,
         'planned_cases': cases, 'planned_repetitions': args.repetitions,
         'source': prepared['metadata']['transfer']['source'],
         'binary': prepared['metadata']['binary'], 'cases': [], 'complete': False,
-        'note': 'Scoped ML-DSA campaign; not a full release qualification. '
+        'note': 'Scoped diagnostic campaign; not a full release qualification. '
                 'Timing failures do not discard or shorten the remaining cases.',
     }
     report_path = args.out / 'campaign.json'
@@ -94,8 +94,8 @@ def main():
     parser.add_argument('--archive', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--case', required=True,
-                        help='exact manifest case, mldsa for every required ML-DSA kernel case, '
-                             'or mldsa-probe for the diagnostic ML-DSA probes')
+                        help='exact manifest case, comma-separated cases, mldsa for every required '
+                             'ML-DSA kernel case, or mldsa-probe for the diagnostic ML-DSA probes')
     parser.add_argument('--target', choices=sorted(TARGETS), default='riscv64gc-unknown-linux-gnu',
                         help='native target of the sealed archive; defaults to RISC-V for existing replays')
     parser.add_argument('--repetitions', type=int, choices=(1, 3), default=3,

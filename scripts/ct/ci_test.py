@@ -71,11 +71,26 @@ class Selection(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]['target'], 'powerpc64le-unknown-linux-gnu')
 
+    def test_native_diagnostic_measures_exact_cases_without_cross_builds(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / 'output'
+            with patch.dict(os.environ, INPUT_ARCHITECTURES='aarch64-linux',
+                            DIAGNOSTIC_CASE='mldsa_montgomery_dense_fixed_vs_random, mldsa_ntt_dense_fixed_vs_random',
+                            GITHUB_RUN_ID='123', GITHUB_OUTPUT=str(output)), patch.object(sys, 'argv', ['ci.py', 'plan']):
+                ci.main()
+            values = dict(line.split('=', 1) for line in output.read_text().splitlines())
+            self.assertEqual(values['cross'], 'false')
+            [row] = json.loads(values['matrix'])['include']
+            self.assertNotIn('target', row)
+            self.assertEqual(row['diagnostic_cases'],
+                             'mldsa_montgomery_dense_fixed_vs_random mldsa_ntt_dense_fixed_vs_random')
+
     def test_invalid_diagnostic_emits_no_runnable_matrix(self):
         for architectures, case, error in (
             ('powerpc64le-linux', 'mldsa_*', 'unknown CT diagnostic case'),
-            ('x86_64-linux', 'mldsa_inverse_ntt_fixed_vs_random', 'requires POWER, IBM Z, or RISC-V'),
-            ('all', 'mldsa_inverse_ntt_fixed_vs_random', 'requires POWER, IBM Z, or RISC-V'),
+            ('x86_64-win', 'mldsa_inverse_ntt_fixed_vs_random', 'run on Linux platforms'),
+            ('all', 'mldsa_inverse_ntt_fixed_vs_random', 'run on Linux platforms'),
+            ('aarch64-linux', 'mldsa_ntt_fixed_vs_random,unknown_case', 'unknown CT diagnostic case'),
         ):
             with self.subTest(architectures=architectures, case=case), tempfile.TemporaryDirectory() as temporary:
                 output = Path(temporary) / 'output'
