@@ -553,3 +553,162 @@ proptest! {
     }
   }
 }
+
+mod seekable_xof {
+  use proptest::prelude::*;
+  use rscrypto::{
+    hashes::crypto::{Blake3, Blake3XofReader},
+    traits::{Digest as _, Xof as _},
+  };
+
+  use super::patterned_bytes;
+
+  const KEY: [u8; 32] = *b"rscrypto seekable xof test key!!";
+  const CONTEXT: &str = "rscrypto blake3 seekable XOF test context";
+  const STREAM_LEN: usize = 640;
+  /// First byte of output block 2^32, where the block counter's high word changes.
+  const COUNTER_HIGH_WORD: u64 = (1 << 32) * 64;
+
+  #[derive(Clone, Copy, Debug)]
+  enum Mode {
+    Hash,
+    Keyed,
+    DeriveKey,
+  }
+
+  const MODES: [Mode; 3] = [Mode::Hash, Mode::Keyed, Mode::DeriveKey];
+
+  /// Our reader, built one-shot or by streaming, and the upstream reader for one input.
+  fn readers(mode: Mode, data: &[u8], one_shot: bool) -> (Blake3XofReader, blake3::OutputReader) {
+    let (ours, mut reference) = match mode {
+      Mode::Hash if one_shot => (Blake3::xof(data), blake3::Hasher::new()),
+      Mode::Keyed if one_shot => (Blake3::keyed_xof(&KEY, data), blake3::Hasher::new_keyed(&KEY)),
+      Mode::Hash => (streamed(Blake3::new(), data), blake3::Hasher::new()),
+      Mode::Keyed => (streamed(Blake3::new_keyed(&KEY), data), blake3::Hasher::new_keyed(&KEY)),
+      Mode::DeriveKey => (
+        streamed(Blake3::new_derive_key(CONTEXT), data),
+        blake3::Hasher::new_derive_key(CONTEXT),
+      ),
+    };
+    reference.update(data);
+    (ours, reference.finalize_xof())
+  }
+
+  fn streamed(mut hasher: Blake3, data: &[u8]) -> Blake3XofReader {
+    hasher.update(data);
+    hasher.finalize_xof()
+  }
+
+  fn upstream_at(mut reference: blake3::OutputReader, position: u64, len: usize) -> Vec<u8> {
+    reference.set_position(position);
+    let mut out = vec![0u8; len];
+    reference.fill(&mut out);
+    out
+  }
+
+  #[test]
+  fn seeks_match_one_long_squeeze_and_upstream() {
+    let data = patterned_bytes(5000);
+    for mode in MODES {
+      // One-chunk, multi-block, and parent-root inputs reach different reader constructors.
+      for len in [0, 1, 64, 65, 1024, 1025, 2049, 5000] {
+        for one_shot in [true, false] {
+          let input = &data[..len];
+          let (mut ours, reference) = readers(mode, input, one_shot);
+          let mut stream = [0u8; STREAM_LEN];
+          ours.squeeze(&mut stream);
+          assert_eq!(
+            stream[..],
+            upstream_at(reference, 0, STREAM_LEN)[..],
+            "{mode:?} len={len} one_shot={one_shot}"
+          );
+
+          for position in [0, 1, 31, 32, 33, 63, 64, 65, 127, 128, 129, 300, 575] {
+            for read_len in [0, 1, 31, 32, 33, 64, 65, 200] {
+              let end = position + read_len;
+              if end > STREAM_LEN {
+                continue;
+              }
+              let (mut reader, _) = readers(mode, input, one_shot);
+              reader.set_position(position as u64);
+              assert_eq!(reader.position(), position as u64);
+              let mut out = vec![0u8; read_len];
+              reader.squeeze(&mut out);
+              assert_eq!(
+                out[..],
+                stream[position..end],
+                "{mode:?} len={len} one_shot={one_shot} position={position} read_len={read_len}"
+              );
+              assert_eq!(reader.position(), end as u64);
+            }
+          }
+
+          // Seeking a used reader backward replays earlier output.
+          let mut out = [0u8; 100];
+          ours.set_position(17);
+          ours.squeeze(&mut out);
+          assert_eq!(out[..], stream[17..117], "{mode:?} len={len} one_shot={one_shot}");
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn large_positions_match_upstream() {
+    let data = patterned_bytes(3000);
+    for mode in MODES {
+      for len in [0, 33, 1024, 3000] {
+        for position in [
+          COUNTER_HIGH_WORD - 100,
+          COUNTER_HIGH_WORD,
+          COUNTER_HIGH_WORD + 7,
+          1 << 40,
+          u64::MAX - 400,
+          u64::MAX - 63,
+        ] {
+          let (mut ours, reference) = readers(mode, &data[..len], true);
+          ours.set_position(position);
+          assert_eq!(ours.position(), position);
+          let mut out = [0u8; 400];
+          ours.squeeze(&mut out);
+          assert_eq!(
+            out[..],
+            upstream_at(reference, position, out.len())[..],
+            "{mode:?} len={len} position={position}"
+          );
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn position_wraps_after_the_last_u64_offset() {
+    let (mut ours, reference) = readers(Mode::Keyed, b"wrap", true);
+    ours.set_position(u64::MAX);
+    let mut out = [0u8; 130];
+    ours.squeeze(&mut out);
+    // Byte u64::MAX is the last byte of block 2^58 - 1; the read then continues into block 2^58.
+    assert_eq!(out[..], upstream_at(reference, u64::MAX, out.len())[..]);
+    assert_eq!(ours.position(), 129);
+  }
+
+  proptest! {
+    #[test]
+    fn seeks_after_partial_reads_match_upstream(
+      mode in 0usize..3,
+      data in proptest::collection::vec(any::<u8>(), 0..2100),
+      one_shot in any::<bool>(),
+      first_read in 0usize..200,
+      position in prop_oneof![0u64..4096, any::<u64>()],
+      read_len in 0usize..600,
+    ) {
+      let (mut ours, reference) = readers(MODES[mode], &data, one_shot);
+      let mut first = vec![0u8; first_read];
+      ours.squeeze(&mut first);
+      ours.set_position(position);
+      let mut out = vec![0u8; read_len];
+      ours.squeeze(&mut out);
+      prop_assert_eq!(out, upstream_at(reference, position, read_len));
+    }
+  }
+}

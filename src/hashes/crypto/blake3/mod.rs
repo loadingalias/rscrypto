@@ -4205,6 +4205,52 @@ impl Blake3XofReader {
     Self::new(output.into_root_emit_state())
   }
 
+  const OUTPUT_BLOCK_LEN_U64: u64 = OUTPUT_BLOCK_LEN as u64;
+
+  /// Returns the offset in the output stream of the next byte to squeeze.
+  ///
+  /// A new reader starts at 0. Each squeeze advances the position by the
+  /// number of bytes written, and [`set_position`](Self::set_position) sets
+  /// it. Past `u64::MAX` bytes of output, the position wraps modulo 2^64.
+  #[inline]
+  #[must_use]
+  pub fn position(&self) -> u64 {
+    // The output stream is 2^64 blocks long, so its byte offsets can exceed u64.
+    self
+      .root
+      .counter
+      .wrapping_mul(Self::OUTPUT_BLOCK_LEN_U64)
+      .wrapping_add(u64::from(self.position_within_block))
+  }
+
+  /// Moves to byte offset `position` of the output stream.
+  ///
+  /// The next squeeze returns output starting at that offset, so a reader can
+  /// read any range of the stream, forward or backward, without producing the
+  /// bytes before it. Seeking costs no compression.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// use rscrypto::{Blake3, Xof};
+  ///
+  /// let mut stream = [0u8; 100];
+  /// Blake3::xof(b"abc").squeeze(&mut stream);
+  ///
+  /// let mut reader = Blake3::xof(b"abc");
+  /// reader.set_position(70);
+  /// let mut tail = [0u8; 30];
+  /// reader.squeeze(&mut tail);
+  /// assert_eq!(tail, stream[70..]);
+  /// assert_eq!(reader.position(), 100);
+  /// ```
+  #[inline]
+  pub fn set_position(&mut self, position: u64) {
+    self.root.counter = position.strict_div(Self::OUTPUT_BLOCK_LEN_U64);
+    self.position_within_block = u8::try_from(position.strict_rem(Self::OUTPUT_BLOCK_LEN_U64))
+      .expect("BLAKE3 output position within a block fits in u8");
+  }
+
   #[inline]
   fn fill_root_hash_prefix(&mut self, out: &mut &mut [u8]) {
     let offset = usize::from(self.position_within_block);
