@@ -355,8 +355,9 @@ They do not install cross targets, Miri, browsers, or profiling tools.
 `rust-toolchain.toml` pins the one canonical nightly for every host, target, and tool lane,
 including formatting, Miri, fuzzing, coverage, and CT evidence. `lib/toolchain.py` reads that pin;
 build, check, test, and benchmark entry points use it rather than an ambient `RUSTUP_TOOLCHAIN`.
-The MSRV lane uses `rust-version` from `Cargo.toml`. While that release is unpublished, the
-canonical nightly must report the matching `-nightly` version and runs the MSRV lane itself.
+The MSRV lane uses `rust-version` from `Cargo.toml`. While that release is unpublished, a canonical
+nightly of the same release runs the MSRV lane itself; a nightly one release ahead means the MSRV is
+in beta, and the lane runs on the exact beta in `MSRV_PREVIEW` (`lib/toolchain.py`).
 `just update` pins the newest nightly that is complete for every catalog host, component, and target.
 
 `ci.yml` also runs `--ci-package` provisioning and `just ci-package` on an independent runner.

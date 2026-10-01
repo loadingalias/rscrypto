@@ -65,7 +65,7 @@ def cases():
         return command
 
     # Standalone features include umbrella aliases: they are also public contracts.
-    # While the MSRV is unreleased, its lane is the canonical nightly itself.
+    # While the MSRV is unreleased, its lane is its own nightly or its exact beta.
     for channel in dict.fromkeys([canonical, msrv]):
         for feature in ['', *sorted(graph)]:
             yield f'{channel}-{feature or "empty"}', [check(channel, host, [feature] if feature else [])], {}

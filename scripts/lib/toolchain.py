@@ -3,8 +3,9 @@
 
 `rust-toolchain.toml` owns the only development compiler for every host,
 target, and tool lane. The MSRV lane uses the manifest's `rust-version`,
-except while that release is unpublished: then the canonical toolchain must
-report the matching `-nightly` version and runs the MSRV lane itself.
+except while that release is unpublished: a canonical nightly of the same
+release runs the MSRV lane itself, and a nightly one release ahead means the
+MSRV is in beta, so the lane runs on the exact `MSRV_PREVIEW` beta.
 """
 
 import argparse
@@ -15,6 +16,9 @@ import subprocess
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
+# Exact beta of the unpublished MSRV release. Ignored once the canonical nightly
+# is two releases past the MSRV, because the MSRV is then a stable release.
+MSRV_PREVIEW = "1.100.0-beta.1"
 
 
 def channel():
@@ -35,16 +39,30 @@ def release(selected):
   raise ValueError(f"cannot determine the {selected} release")
 
 
+def minor(version):
+  return int(version.split(".")[1])
+
+
 def msrv_channel():
   """Toolchain that validates the declared MSRV.
 
-  A preview MSRV is accepted only when the canonical toolchain is its nightly;
-  otherwise the MSRV must name an installable released toolchain.
+  Rust releases follow a train: when the canonical nightly is release N, the
+  beta is N-1 and every release up to N-2 is stable. A preview MSRV is
+  accepted only on its own nightly or its exact beta; otherwise the MSRV must
+  name an installable released toolchain.
   """
   declared = msrv()
   canonical = channel()
-  if canonical.startswith("nightly-") and release(canonical) == declared + "-nightly":
+  if not canonical.startswith("nightly-"):
+    return declared
+  current = release(canonical)
+  if current == declared + "-nightly":
     return canonical
+  if minor(current) == minor(declared) + 1:
+    if not MSRV_PREVIEW.startswith(declared + "-beta."):
+      raise ValueError(f"MSRV {declared} is in beta under {canonical}; "
+                       f"set MSRV_PREVIEW to an exact {declared}-beta.N")
+    return MSRV_PREVIEW
   return declared
 
 

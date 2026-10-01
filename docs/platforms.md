@@ -59,8 +59,9 @@ and evidence from one CPU does not qualify another.
 ## Toolchain
 
 rscrypto requires Rust 1.100 (`rust-version = "1.100.0"`). Until Rust 1.100 is stable on
-2026-11-12, build with a 1.100 nightly; the repository tests the nightly pinned in
-[`rust-toolchain.toml`](../rust-toolchain.toml).
+2026-11-12, build with the 1.100 beta or a newer nightly. The repository tests the nightly pinned
+in [`rust-toolchain.toml`](../rust-toolchain.toml) and checks the MSRV on the exact 1.100 beta
+pinned in [`scripts/lib/toolchain.py`](../scripts/lib/toolchain.py).
 
 On stable Rust, every catalogued target builds except four, whose accelerated backends use
 unstable compiler features. They need a nightly compiler, and the `portable-only` feature does not
