@@ -92,7 +92,7 @@ Current validation is defined by the [CI workflow](../.github/workflows/ci.yml) 
 | ------------------ | ----- |
 | `just check`       | Host and catalogued cross-target compilation and lint checks. |
 | Native CI          | Native and portable suites plus doctests on Linux x86-64, AArch64, POWER, IBM Z, and RISC-V, and Windows x86-64. RISC-V, POWER, and IBM Z build on x86-64 and execute transferred artifacts on native hardware. |
-| `just check-macos` | Local Apple Silicon checks, native and portable release suites plus doctests, internal evidence regressions, and physical RSA assembly qualification before every commit. |
+| `just check-macos` | Local Apple Silicon checks, native and portable release suites plus doctests, internal evidence regressions, and physical RSA assembly qualification before every push. |
 | `just test-musl`   | Native and portable suites plus doctests on matching x86-64 or AArch64 Linux hosts. |
 | `just ci-compat`   | Feature/MSRV and bare-metal compilation; scalar and SIMD vector execution for `wasm32-unknown-unknown` and `wasm32-wasip1` in Wasmtime. |
 
@@ -100,7 +100,7 @@ A configured check is not a passing result for the current revision.
 Inspect matching run artifacts before qualifying a release.
 Bare-metal checks do not execute on devices,
 and Wasmtime results do not establish browser-engine behavior.
-Windows AArch64 runtime CI remains deferred. macOS checks and tests run locally before commits;
+Windows AArch64 runtime CI remains deferred. macOS checks and tests run locally before pushes;
 physical Apple Silicon timing qualification remains a separate local requirement.
 
 AWS runner shapes and Spot policy live in [`.github/runs-on.yml`](../.github/runs-on.yml).

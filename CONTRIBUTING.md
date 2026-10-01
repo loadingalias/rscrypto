@@ -58,15 +58,20 @@ including Miri and machine-code zeroization evidence.
 
 ## Validate
 
-macOS ARM64 qualification runs on the maintainer's physical Apple Silicon Mac, before every commit,
+macOS ARM64 qualification runs on the maintainer's physical Apple Silicon Mac before every push,
 including documentation and tooling changes.
 Run `just install-hooks` once per checkout.
-The pre-commit and pre-merge-commit hooks run `just check-macos`: native checks,
+The pre-commit and pre-merge-commit hooks run `just ci-check`: formatting, native and portable
+host lints, and documentation.
+The pre-push hook runs `just check-macos`: native checks,
 complete release tests with native and portable dispatch
 (including doctests), internal evidence regressions, and the Apple Silicon RSA assembly gate.
+It qualifies the pushed commit, which must be the clean checkout, and records each passing tree
+and compiler in the repository's Git directory, so pushing an already qualified tree from any
+worktree skips the run. Intermediate commits of a multi-commit push receive only `just ci-check`.
 Install prerequisites with `scripts/tooling/aarch64-macos.sh` when needed.
 The hooks reject unstaged tracked changes and untracked files
-so the tested source matches the staged commit.
+so the tested source matches the commit.
 Do not bypass the hooks.
 Git hooks are local; GitHub does not enforce this qualification
 and remote-created commits must not replace the locally validated submission path.

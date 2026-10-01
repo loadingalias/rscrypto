@@ -127,7 +127,7 @@ ci-check:
 check-macos:
     @scripts/check/macos.sh
 
-# Enable mandatory local macOS validation for commits and merge commits in this checkout.
+# Enable mandatory local checks for commits and macOS validation for pushes in this checkout.
 [group('tooling')]
 install-hooks:
     @git config --local core.hooksPath .githooks

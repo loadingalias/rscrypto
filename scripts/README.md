@@ -11,7 +11,7 @@ Supporting modules are invoked by those entry points.
 | `check/check.sh`                       | `just check`, `just ci-check`, `just ci-check-target` |
 | `check/compat.py`                      | `just ci-compat` |
 | `test/test-musl.sh`                    | `just test-musl` |
-| `check/macos.sh`                       | `just check-macos`, local commit hooks |
+| `check/macos.sh`                       | `just check-macos`, local pre-push hook |
 | `check/dependencies.sh`                | `just ci-policy`, dependency checks within `just check` |
 | `check/lint-independent-workspaces.sh` | `check/check.sh` |
 | `asm/p384.py check`                    | `check/check.sh` |
@@ -464,7 +464,7 @@ The library also receives broad feature builds for both WASM targets.
 The x86-64 and ARM64 Linux rows install native musl build prerequisites and run `just test-musl`:
 the complete native and portable test suites plus doctests and separate internal evidence suites,
 compiled and executed for the matching musl target.
-Apple ARM64 checks and tests execute locally through `just check-macos` before commits;
+Apple ARM64 checks and tests execute locally through `just check-macos` before pushes;
 Windows ARM64 execution remains deferred.
 No compatibility lane enables persistent caches.
 

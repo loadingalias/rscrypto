@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+# Qualify the pushed source once. The checkout must be that commit, unchanged.
+head=$(git rev-parse HEAD)
+pushing=false
+while read -r local_ref local_sha _remote_ref _remote_sha; do
+  [[ ! "$local_sha" =~ ^0+$ ]] || continue # Deleting a remote ref pushes no source.
+  [[ "$local_sha" == "$head" ]] || {
+    echo "Pre-push qualifies the checked-out commit; check out $local_ref and push again." >&2
+    exit 1
+  }
+  pushing=true
+done
+[[ "$pushing" == true ]] || exit 0
+
+clean() {
+  git diff --quiet && git diff --cached --quiet && [[ -z "$(git ls-files --others --exclude-standard)" ]]
+}
+clean || { echo 'Commit or set aside every change before pushing; qualification tests the checkout.' >&2; exit 1; }
+tree=$(git rev-parse 'HEAD^{tree}')
+compiler=$(rustc "+$(scripts/lib/toolchain.sh)" -vV)
+# A pass is bound to the exact tree and compiler and shared by every worktree of this repository.
+record="$(git rev-parse --git-common-dir)/rscrypto-macos-qualified/$tree"
+if [[ -f "$record" && "$(cat "$record")" == "$compiler" ]]; then
+  echo "macOS qualification already passed for tree $tree with this compiler."
+  exit 0
+fi
+just check-macos
+clean && [[ "$(git rev-parse 'HEAD^{tree}')" == "$tree" ]] || {
+  echo 'Source changed during macOS validation; review and retry the push.' >&2
+  exit 1
+}
+mkdir -p "$(dirname "$record")"
+printf '%s' "$compiler" > "$record"
