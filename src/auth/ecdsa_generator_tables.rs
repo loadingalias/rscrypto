@@ -1617,16 +1617,28 @@ pub(super) const P256_SIGNING_GENERATOR_COMB_Y: [Uint<4>; P256_SIGNING_COMB_TABL
   ]),
 ];
 
-#[cfg(all(
-  feature = "p256-ecdh",
-  any(
-    test,
-    feature = "portable-only",
-    miri,
-    not(any(
+// Used by `p256_portable`'s generator multiply: always under ECDH, and under ECDSA alone where
+// `portable-only` or Miri routes signing through the portable substrate.
+#[cfg(any(
+  all(
+    feature = "p256-ecdh",
+    any(
+      test,
+      feature = "portable-only",
+      miri,
+      not(any(
+        all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+        all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+      ))
+    )
+  ),
+  all(
+    feature = "ecdsa-p256",
+    any(feature = "portable-only", miri),
+    any(
       all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-      all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
-    ))
+      all(target_arch = "x86_64", target_os = "linux")
+    )
   )
 ))]
 pub(super) const P256_SIGNING_GENERATOR_COMB_SHIFT_13_X: [Uint<4>; P256_SIGNING_COMB_TABLE_SIZE] = [
@@ -2400,16 +2412,28 @@ pub(super) const P256_SIGNING_GENERATOR_COMB_SHIFT_13_X: [Uint<4>; P256_SIGNING_
   ]),
 ];
 
-#[cfg(all(
-  feature = "p256-ecdh",
-  any(
-    test,
-    feature = "portable-only",
-    miri,
-    not(any(
+// Used by `p256_portable`'s generator multiply: always under ECDH, and under ECDSA alone where
+// `portable-only` or Miri routes signing through the portable substrate.
+#[cfg(any(
+  all(
+    feature = "p256-ecdh",
+    any(
+      test,
+      feature = "portable-only",
+      miri,
+      not(any(
+        all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+        all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+      ))
+    )
+  ),
+  all(
+    feature = "ecdsa-p256",
+    any(feature = "portable-only", miri),
+    any(
       all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-      all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
-    ))
+      all(target_arch = "x86_64", target_os = "linux")
+    )
   )
 ))]
 pub(super) const P256_SIGNING_GENERATOR_COMB_SHIFT_13_Y: [Uint<4>; P256_SIGNING_COMB_TABLE_SIZE] = [
@@ -3183,16 +3207,28 @@ pub(super) const P256_SIGNING_GENERATOR_COMB_SHIFT_13_Y: [Uint<4>; P256_SIGNING_
   ]),
 ];
 
-#[cfg(all(
-  feature = "p256-ecdh",
-  any(
-    test,
-    feature = "portable-only",
-    miri,
-    not(any(
+// Used by `p256_portable`'s generator multiply: always under ECDH, and under ECDSA alone where
+// `portable-only` or Miri routes signing through the portable substrate.
+#[cfg(any(
+  all(
+    feature = "p256-ecdh",
+    any(
+      test,
+      feature = "portable-only",
+      miri,
+      not(any(
+        all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+        all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+      ))
+    )
+  ),
+  all(
+    feature = "ecdsa-p256",
+    any(feature = "portable-only", miri),
+    any(
       all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-      all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
-    ))
+      all(target_arch = "x86_64", target_os = "linux")
+    )
   )
 ))]
 pub(super) const P256_SIGNING_GENERATOR_COMB_SHIFT_25_X: [Uint<4>; P256_SIGNING_COMB_TABLE_SIZE] = [
@@ -3966,16 +4002,28 @@ pub(super) const P256_SIGNING_GENERATOR_COMB_SHIFT_25_X: [Uint<4>; P256_SIGNING_
   ]),
 ];
 
-#[cfg(all(
-  feature = "p256-ecdh",
-  any(
-    test,
-    feature = "portable-only",
-    miri,
-    not(any(
+// Used by `p256_portable`'s generator multiply: always under ECDH, and under ECDSA alone where
+// `portable-only` or Miri routes signing through the portable substrate.
+#[cfg(any(
+  all(
+    feature = "p256-ecdh",
+    any(
+      test,
+      feature = "portable-only",
+      miri,
+      not(any(
+        all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+        all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+      ))
+    )
+  ),
+  all(
+    feature = "ecdsa-p256",
+    any(feature = "portable-only", miri),
+    any(
       all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-      all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
-    ))
+      all(target_arch = "x86_64", target_os = "linux")
+    )
   )
 ))]
 pub(super) const P256_SIGNING_GENERATOR_COMB_SHIFT_25_Y: [Uint<4>; P256_SIGNING_COMB_TABLE_SIZE] = [

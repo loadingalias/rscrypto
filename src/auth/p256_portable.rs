@@ -1,7 +1,7 @@
 //! Portable P-256 arithmetic and encoding authority shared by ECDSA and ECDH.
 
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -19,7 +19,7 @@ use super::ecdsa_generator_tables::{
 use core::cmp::Ordering;
 
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -33,14 +33,14 @@ use crate::traits::ct;
 const FIELD_BYTES: usize = 32;
 #[cfg(feature = "p256-ecdh")]
 const SEC1_BYTES: usize = 65;
-#[cfg(test)]
+#[cfg(all(test, feature = "p256-ecdh"))]
 const COMB_WINDOW_BITS: usize = 4;
-#[cfg(test)]
+#[cfg(all(test, feature = "p256-ecdh"))]
 const COMB_WINDOW_SIZE: usize = 1usize << COMB_WINDOW_BITS;
-#[cfg(test)]
+#[cfg(all(test, feature = "p256-ecdh"))]
 const COMB_WINDOW_ROWS: usize = 256 / COMB_WINDOW_BITS;
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -48,9 +48,10 @@ const COMB_WINDOW_ROWS: usize = 256 / COMB_WINDOW_BITS;
     all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
   ))
 ))]
+#[cfg(feature = "p256-ecdh")]
 const SIGNED_WINDOW_SIZE: usize = 16;
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -58,9 +59,10 @@ const SIGNED_WINDOW_SIZE: usize = 16;
     all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
   ))
 ))]
+#[cfg(feature = "p256-ecdh")]
 const SIGNED_WINDOW_DIGITS: usize = 52;
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -70,7 +72,7 @@ const SIGNED_WINDOW_DIGITS: usize = 52;
 ))]
 const FIXED_BASE_COMB_ROWS: usize = 37;
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -95,7 +97,7 @@ const SCALAR_MODULUS: Uint = Uint([
 ]);
 #[cfg(any(
   feature = "p256-ecdh",
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -103,26 +105,28 @@ const SCALAR_MODULUS: Uint = Uint([
     all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
   ))
 ))]
+#[cfg(feature = "p256-ecdh")]
 const CURVE_B_MONTGOMERY: Uint = Uint([
   0xd89c_df62_29c4_bddf,
   0xacf0_05cd_7884_3090,
   0xe5a2_20ab_f721_2ed6,
   0xdc30_061d_0487_4834,
 ]);
-#[cfg(test)]
+#[cfg(all(test, feature = "p256-ecdh"))]
 const GENERATOR_X: Uint = Uint([
   0xf4a1_3945_d898_c296,
   0x7703_7d81_2deb_33a0,
   0xf8bc_e6e5_63a4_40f2,
   0x6b17_d1f2_e12c_4247,
 ]);
-#[cfg(test)]
+#[cfg(all(test, feature = "p256-ecdh"))]
 const GENERATOR_Y: Uint = Uint([
   0xcbb6_4068_37bf_51f5,
   0x2bce_3357_6b31_5ece,
   0x8ee7_eb4a_7c0f_9e16,
   0x4fe3_42e2_fe1a_7f9b,
 ]);
+#[cfg(feature = "p256-ecdh")]
 const FIELD_R2: Uint = Uint([
   0x0000_0000_0000_0003,
   0xffff_fffb_ffff_ffff,
@@ -130,7 +134,7 @@ const FIELD_R2: Uint = Uint([
   0x0000_0004_ffff_fffd,
 ]);
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -149,7 +153,7 @@ struct Uint([u64; 4]);
 
 impl Uint {
   #[cfg(any(
-    test,
+    all(test, feature = "p256-ecdh"),
     feature = "portable-only",
     miri,
     not(any(
@@ -158,7 +162,7 @@ impl Uint {
     ))
   ))]
   const ZERO: Self = Self([0; 4]);
-  #[cfg(test)]
+  #[cfg(all(test, feature = "p256-ecdh"))]
   const ONE: Self = Self([1, 0, 0, 0]);
 
   #[cfg(feature = "p256-ecdh")]
@@ -228,7 +232,7 @@ impl Uint {
   }
 
   #[cfg(any(
-    test,
+    all(test, feature = "p256-ecdh"),
     feature = "portable-only",
     miri,
     not(any(
@@ -265,7 +269,7 @@ impl Uint {
   }
 
   #[cfg(any(
-    test,
+    all(test, feature = "p256-ecdh"),
     feature = "portable-only",
     miri,
     not(any(
@@ -279,7 +283,7 @@ impl Uint {
 }
 
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -290,7 +294,7 @@ impl Uint {
 struct Scalar(Uint);
 
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -304,6 +308,7 @@ impl Scalar {
     Self(Uint::from_be_slice(bytes).unwrap_or(Uint::ZERO))
   }
 
+  #[cfg(feature = "p256-ecdh")]
   fn signed_radix_32(&self) -> [u8; SIGNED_WINDOW_DIGITS] {
     let mut digits = [0u8; SIGNED_WINDOW_DIGITS];
     let mut carry = 0u32;
@@ -324,7 +329,7 @@ impl Scalar {
 }
 
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -342,6 +347,7 @@ impl Drop for Scalar {
 struct FieldElement(Uint);
 
 impl FieldElement {
+  #[cfg(feature = "p256-ecdh")]
   fn from_uint(value: Uint) -> Self {
     Self(montgomery_mul(value, FIELD_R2))
   }
@@ -356,7 +362,7 @@ impl FieldElement {
   }
 
   #[cfg(any(
-    test,
+    all(test, feature = "p256-ecdh"),
     feature = "portable-only",
     miri,
     not(any(
@@ -369,7 +375,7 @@ impl FieldElement {
   }
 
   #[cfg(any(
-    test,
+    all(test, feature = "p256-ecdh"),
     feature = "portable-only",
     miri,
     not(any(
@@ -390,7 +396,7 @@ impl FieldElement {
   }
 
   #[cfg(any(
-    test,
+    all(test, feature = "p256-ecdh"),
     feature = "portable-only",
     miri,
     not(any(
@@ -403,7 +409,7 @@ impl FieldElement {
   }
 
   #[cfg(any(
-    test,
+    all(test, feature = "p256-ecdh"),
     feature = "portable-only",
     miri,
     not(any(
@@ -416,7 +422,7 @@ impl FieldElement {
   }
 
   #[cfg(any(
-    test,
+    all(test, feature = "p256-ecdh"),
     feature = "portable-only",
     miri,
     not(any(
@@ -441,7 +447,7 @@ impl FieldElement {
   }
 
   #[cfg(any(
-    test,
+    all(test, feature = "p256-ecdh"),
     feature = "portable-only",
     miri,
     not(any(
@@ -472,7 +478,7 @@ impl FieldElement {
   }
 
   #[cfg(any(
-    test,
+    all(test, feature = "p256-ecdh"),
     feature = "portable-only",
     miri,
     not(any(
@@ -492,7 +498,7 @@ struct Affine {
 }
 
 impl Affine {
-  #[cfg(test)]
+  #[cfg(all(test, feature = "p256-ecdh"))]
   fn generator() -> Self {
     Self {
       x: FieldElement::from_uint(GENERATOR_X),
@@ -503,7 +509,7 @@ impl Affine {
   #[cfg(all(
     feature = "p256-ecdh",
     any(
-      test,
+      all(test, feature = "p256-ecdh"),
       feature = "portable-only",
       miri,
       not(any(
@@ -537,7 +543,7 @@ impl Affine {
     bytes
   }
 
-  #[cfg(test)]
+  #[cfg(all(test, feature = "p256-ecdh"))]
   fn select(table: &[Self; COMB_WINDOW_SIZE], digit: usize) -> Self {
     let mut selected = table[0];
     for (index, &candidate) in table.iter().enumerate() {
@@ -549,7 +555,7 @@ impl Affine {
   }
 
   #[cfg(any(
-    test,
+    all(test, feature = "p256-ecdh"),
     feature = "portable-only",
     miri,
     not(any(
@@ -626,7 +632,7 @@ impl Affine {
 
 #[derive(Clone, Copy)]
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -642,7 +648,7 @@ struct Projective {
 }
 
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -704,6 +710,7 @@ impl Projective {
     self.infinity_mask
   }
 
+  #[cfg(feature = "p256-ecdh")]
   fn double(self) -> Self {
     let s = self.y.mul(self.z).double();
     let w = self.x.sub(self.z).mul(self.x.add(self.z)).triple();
@@ -769,7 +776,7 @@ impl Projective {
     Self::select(with_self_infinity, self, rhs_infinity_mask)
   }
 
-  #[cfg(test)]
+  #[cfg(all(test, feature = "p256-ecdh"))]
   fn add_mixed(self, rhs: Affine, rhs_infinity_mask: u64) -> Self {
     // Complete Renes-Costello-Batina addition for a = -3, specialized for
     // affine `rhs` (ePrint 2015/1060, algorithm 4 with Z2 = 1).
@@ -829,6 +836,7 @@ impl Projective {
     }
   }
 
+  #[cfg(feature = "p256-ecdh")]
   fn to_affine(self) -> Affine {
     let inverse_z = self.z.invert();
     Affine {
@@ -839,7 +847,7 @@ impl Projective {
 }
 
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -850,7 +858,7 @@ impl Projective {
 struct SecretProjective(Projective);
 
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -859,7 +867,7 @@ struct SecretProjective(Projective);
   ))
 ))]
 impl SecretProjective {
-  #[cfg(test)]
+  #[cfg(all(test, feature = "p256-ecdh"))]
   fn add_mixed(&self, rhs: Affine, rhs_infinity_mask: u64) -> Self {
     Self(self.0.add_mixed(rhs, rhs_infinity_mask))
   }
@@ -869,6 +877,7 @@ impl SecretProjective {
     Self(self.0.add(rhs))
   }
 
+  #[cfg(feature = "p256-ecdh")]
   fn to_affine(&self) -> Affine {
     self.0.to_affine()
   }
@@ -884,7 +893,7 @@ impl SecretProjective {
 }
 
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -938,7 +947,7 @@ pub(super) fn scalar_mul_generator_words(scalar: &[u64; 4]) -> [u64; 8] {
 }
 
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -989,7 +998,7 @@ fn scalar_mul_generator_portable(scalar: &Scalar) -> SecretProjective {
   SecretProjective(acc)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "p256-ecdh"))]
 fn scalar_mul_generator_comb_reference(scalar: &Scalar) -> SecretProjective {
   let table = generator_comb_table();
   let mut acc = SecretProjective(Projective::infinity());
@@ -1007,7 +1016,7 @@ fn scalar_mul_generator_comb_reference(scalar: &Scalar) -> SecretProjective {
 
 #[cfg(feature = "p256-ecdh")]
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -1021,7 +1030,7 @@ fn scalar_mul_public_table(scalar: &Scalar, table: &[Projective; SIGNED_WINDOW_S
 
 #[cfg(feature = "p256-ecdh")]
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -1043,7 +1052,7 @@ fn scalar_mul_table(scalar: &Scalar, table: &[Projective; SIGNED_WINDOW_SIZE]) -
 
 #[cfg(feature = "p256-ecdh")]
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -1126,7 +1135,7 @@ impl PublicPoint {
   }
 
   #[cfg(any(
-    test,
+    all(test, feature = "p256-ecdh"),
     feature = "portable-only",
     miri,
     not(any(
@@ -1164,7 +1173,7 @@ pub(super) fn parse_sec1_words(bytes: &[u8]) -> Option<[u64; 8]> {
 }
 
 #[cfg(all(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "p256-ecdh",
   not(feature = "portable-only"),
   not(miri),
@@ -1240,7 +1249,7 @@ pub(super) fn diag_select_window_limb_digest(digit: u8) -> [u64; 8] {
   output
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "p256-ecdh"))]
 fn generator_comb_table() -> [Affine; COMB_WINDOW_SIZE] {
   let mut table = [Affine::generator(); COMB_WINDOW_SIZE];
   for ((point, x), y) in table.iter_mut().zip(GENERATOR_COMB_X).zip(GENERATOR_COMB_Y) {
@@ -1264,7 +1273,7 @@ fn mask_zero(value: u64) -> u64 {
 
 #[inline(always)]
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -1334,7 +1343,7 @@ fn sbb_limb(left: u64, right: u64, borrow: u64) -> (u64, u64) {
   }
 }
 
-#[cfg(any(test, target_arch = "riscv32", target_arch = "s390x"))]
+#[cfg(any(all(test, feature = "p256-ecdh"), target_arch = "riscv32", target_arch = "s390x"))]
 #[inline(never)]
 fn ct_mul_u64_wide(left: u64, right: u64) -> (u64, u64) {
   let mut product_low = 0u64;
@@ -1361,7 +1370,7 @@ fn ct_mul_u64_wide(left: u64, right: u64) -> (u64, u64) {
   (product_low, product_high)
 }
 
-#[cfg(any(test, target_arch = "riscv64"))]
+#[cfg(any(all(test, feature = "p256-ecdh"), target_arch = "riscv64"))]
 #[derive(Clone, Copy)]
 struct Riscv64MulLimb {
   normalized: u64,
@@ -1370,7 +1379,7 @@ struct Riscv64MulLimb {
   shift_high: u64,
 }
 
-#[cfg(any(test, target_arch = "riscv64"))]
+#[cfg(any(all(test, feature = "p256-ecdh"), target_arch = "riscv64"))]
 impl Riscv64MulLimb {
   #[inline(always)]
   fn new(value: u64) -> Self {
@@ -1385,7 +1394,7 @@ impl Riscv64MulLimb {
   }
 }
 
-#[cfg(any(test, target_arch = "riscv64"))]
+#[cfg(any(all(test, feature = "p256-ecdh"), target_arch = "riscv64"))]
 #[inline(always)]
 fn ct_mul_riscv64_limbs(left: Riscv64MulLimb, right: Riscv64MulLimb) -> (u64, u64) {
   const HIGH_BIT: u64 = 1 << 63;
@@ -1408,7 +1417,7 @@ fn ct_mul_riscv64_limbs(left: Riscv64MulLimb, right: Riscv64MulLimb) -> (u64, u6
   (product_low, product_high)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "p256-ecdh"))]
 #[inline(never)]
 fn ct_mul_u64_wide_riscv64(left: u64, right: u64) -> (u64, u64) {
   ct_mul_riscv64_limbs(Riscv64MulLimb::new(left), Riscv64MulLimb::new(right))
@@ -1429,7 +1438,10 @@ fn mul_u64_wide(left: u64, right: u64) -> (u64, u64) {
 }
 
 #[inline(always)]
-#[cfg(any(test, not(any(target_arch = "riscv32", target_arch = "s390x"))))]
+#[cfg(any(
+  all(test, feature = "p256-ecdh"),
+  not(any(target_arch = "riscv32", target_arch = "s390x"))
+))]
 fn split_u128(value: u128) -> (u64, u64) {
   let [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15] = value.to_le_bytes();
   (
@@ -1455,14 +1467,14 @@ fn mac_limb(acc: u64, left: u64, right: u64, carry: u64) -> (u64, u64) {
   mac_wide(acc, product_low, product_high, carry)
 }
 
-#[cfg(any(test, target_arch = "riscv64"))]
+#[cfg(any(all(test, feature = "p256-ecdh"), target_arch = "riscv64"))]
 #[inline(always)]
 fn mac_riscv64_limb(acc: u64, left: Riscv64MulLimb, right: Riscv64MulLimb, carry: u64) -> (u64, u64) {
   let (product_low, product_high) = ct_mul_riscv64_limbs(left, right);
   mac_wide(acc, product_low, product_high, carry)
 }
 
-#[cfg(any(test, target_arch = "riscv64"))]
+#[cfg(any(all(test, feature = "p256-ecdh"), target_arch = "riscv64"))]
 #[inline(always)]
 fn mul_riscv64_limb(left: Riscv64MulLimb, right: Riscv64MulLimb) -> (u64, u64) {
   ct_mul_riscv64_limbs(left, right)
@@ -1486,7 +1498,7 @@ fn mac_p256_modulus_limb_3(acc: u64, value: u64, carry: u64) -> (u64, u64) {
 }
 
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -1501,7 +1513,7 @@ struct WideAccumulator {
 }
 
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -1556,7 +1568,7 @@ fn multiply_256_wide<T: Copy>(left: [T; 4], right: [T; 4], mac: impl Fn(u64, T, 
   [w0, w1, w2, w3, w4, w5, w6, w7]
 }
 
-#[cfg(any(test, target_arch = "riscv64"))]
+#[cfg(any(all(test, feature = "p256-ecdh"), target_arch = "riscv64"))]
 #[inline(always)]
 fn riscv64_mul_limbs(value: Uint) -> [Riscv64MulLimb; 4] {
   [
@@ -1567,7 +1579,7 @@ fn riscv64_mul_limbs(value: Uint) -> [Riscv64MulLimb; 4] {
   ]
 }
 
-#[cfg(any(test, target_arch = "riscv64"))]
+#[cfg(any(all(test, feature = "p256-ecdh"), target_arch = "riscv64"))]
 #[inline(never)]
 fn montgomery_mul_riscv64(left: Uint, right: Uint) -> Uint {
   montgomery_reduce(multiply_256_wide(
@@ -1577,7 +1589,7 @@ fn montgomery_mul_riscv64(left: Uint, right: Uint) -> Uint {
   ))
 }
 
-#[cfg(any(test, target_arch = "riscv64"))]
+#[cfg(any(all(test, feature = "p256-ecdh"), target_arch = "riscv64"))]
 #[inline(never)]
 fn montgomery_square_riscv64(value: Uint) -> Uint {
   montgomery_reduce(square_256_wide(riscv64_mul_limbs(value), mul_riscv64_limb))
@@ -1596,7 +1608,7 @@ fn montgomery_mul(left: Uint, right: Uint) -> Uint {
 }
 
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -1652,7 +1664,7 @@ fn square_256_wide<T: Copy>(value: [T; 4], mul: impl Fn(T, T) -> (u64, u64)) -> 
 }
 
 #[cfg(any(
-  test,
+  all(test, feature = "p256-ecdh"),
   feature = "portable-only",
   miri,
   not(any(
@@ -1711,7 +1723,7 @@ fn subtract_modulus_once(limbs: [u64; 5]) -> Uint {
   Uint([w0, w1, w2, w3])
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "p256-ecdh"))]
 const GENERATOR_COMB_X: [Uint; COMB_WINDOW_SIZE] = [
   Uint([
     0x79e7_30d4_18a9_143c,
@@ -1811,7 +1823,7 @@ const GENERATOR_COMB_X: [Uint; COMB_WINDOW_SIZE] = [
   ]),
 ];
 
-#[cfg(test)]
+#[cfg(all(test, feature = "p256-ecdh"))]
 const GENERATOR_COMB_Y: [Uint; COMB_WINDOW_SIZE] = [
   Uint([
     0xddf2_5357_ce95_560a,
