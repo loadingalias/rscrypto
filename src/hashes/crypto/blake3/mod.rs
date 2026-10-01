@@ -14,6 +14,7 @@ use crate::traits::{Digest, VerificationError, Xof, ct};
 
 #[cfg(target_arch = "aarch64")]
 pub(crate) mod aarch64;
+mod batch;
 mod control;
 #[doc(hidden)]
 pub(crate) mod dispatch;
@@ -3169,6 +3170,35 @@ impl Blake3 {
     );
     let mut scratch = OneChunkScratch::ZERO;
     words8_to_le_bytes(&one_chunk_root_words_portable(&IV, 0, data, &mut scratch))
+  }
+
+  /// Hash many independent inputs: `outputs[i]` becomes `Blake3::digest(inputs[i])`.
+  ///
+  /// Runs of equal-length inputs of at most 1,024 bytes share SIMD lanes, so
+  /// many small messages hash faster than one call each. Other inputs take
+  /// the one-shot path.
+  ///
+  /// # Panics
+  ///
+  /// Panics unless `inputs` and `outputs` have the same length.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// use rscrypto::Blake3;
+  ///
+  /// let inputs: [&[u8]; 3] = [b"one", b"two", b"three"];
+  /// let mut outputs = [[0u8; 32]; 3];
+  /// Blake3::digest_batch(&inputs, &mut outputs);
+  /// assert_eq!(outputs[2], Blake3::digest(b"three"));
+  /// ```
+  pub fn digest_batch(inputs: &[&[u8]], outputs: &mut [[u8; OUT_LEN]]) {
+    assert_eq!(
+      inputs.len(),
+      outputs.len(),
+      "Blake3::digest_batch needs one output per input"
+    );
+    batch::digest_batch(inputs, outputs);
   }
 
   /// Compute the XOF output state of `data` in one shot.

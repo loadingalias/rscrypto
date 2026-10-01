@@ -1,0 +1,283 @@
+//! Batched unkeyed hashing of many independent small inputs across SIMD lanes.
+//!
+//! A run of equal-length inputs of 1 to 1,024 bytes shares one lane-parallel
+//! kernel call; each lane hashes a whole input with counter 0 and a rooted last
+//! block. Every other input takes the one-shot path. Inputs and outputs are
+//! public, so no intermediate here needs clearing.
+
+use super::{IV, OUT_LEN, digest_public_oneshot};
+
+/// Hash `inputs[i]` into `outputs[i]` with the unkeyed hash.
+pub(super) fn digest_batch(inputs: &[&[u8]], outputs: &mut [[u8; OUT_LEN]]) {
+  debug_assert_eq!(inputs.len(), outputs.len());
+  #[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64"))]
+  if let Some(lanes) = lanes::Lanes::select() {
+    lanes::digest_batch(lanes, inputs, outputs);
+    return;
+  }
+  digest_serial(inputs, outputs);
+}
+
+fn digest_serial(inputs: &[&[u8]], outputs: &mut [[u8; OUT_LEN]]) {
+  for (input, output) in inputs.iter().zip(outputs) {
+    let mut iv = IV;
+    *output = digest_public_oneshot(&mut iv, 0, input);
+  }
+}
+
+#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64"))]
+mod lanes {
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  use super::super::{BLOCK_LEN, CHUNK_END, CHUNK_START, ROOT, x86_64};
+  use super::super::{CHUNK_LEN, IV, OUT_LEN, dispatch, kernels::Blake3KernelId};
+  use super::digest_serial;
+
+  /// Widest lane count of any kernel below.
+  const MAX_DEGREE: usize = 16;
+
+  /// A lane-parallel kernel whose CPU features are available.
+  #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+  pub(super) enum Lanes {
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    Sse41,
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    Avx2,
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    Avx512,
+    #[cfg(target_arch = "aarch64")]
+    Neon,
+  }
+
+  impl Lanes {
+    /// The lane kernel for the bulk backend that dispatch selected, if it has lanes.
+    pub(super) fn select() -> Option<Self> {
+      let bulk = dispatch::hasher_dispatch().bulk_kernel_for_update(usize::MAX).id;
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+      {
+        [Self::Avx512, Self::Avx2, Self::Sse41].into_iter().find(|lanes| {
+          lanes.available()
+            && match lanes {
+              Self::Avx512 => bulk == Blake3KernelId::X86Avx512,
+              Self::Avx2 => matches!(bulk, Blake3KernelId::X86Avx512 | Blake3KernelId::X86Avx2),
+              Self::Sse41 => bulk != Blake3KernelId::Portable,
+            }
+        })
+      }
+      #[cfg(target_arch = "aarch64")]
+      {
+        (bulk == Blake3KernelId::Aarch64Neon && Self::Neon.available()).then_some(Self::Neon)
+      }
+    }
+
+    /// Whether the current CPU has this kernel's target features.
+    fn available(self) -> bool {
+      match self {
+        #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+        Self::Sse41 | Self::Avx2 | Self::Avx512 => {
+          use crate::platform::caps::x86;
+          crate::platform::caps().has(match self {
+            Self::Sse41 => x86::SSE41.union(x86::SSSE3),
+            Self::Avx2 => x86::AVX2,
+            Self::Avx512 => x86::AVX512F.union(x86::AVX512VL).union(x86::AVX512DQ).union(x86::AVX2),
+          })
+        }
+        #[cfg(target_arch = "aarch64")]
+        Self::Neon => crate::platform::caps().has(crate::platform::caps::aarch64::NEON),
+      }
+    }
+
+    const fn degree(self) -> usize {
+      match self {
+        #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+        Self::Sse41 => x86_64::sse41::DEGREE,
+        #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+        Self::Avx2 => x86_64::avx2::DEGREE,
+        #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+        Self::Avx512 => x86_64::avx512::DEGREE,
+        #[cfg(target_arch = "aarch64")]
+        Self::Neon => 4,
+      }
+    }
+  }
+
+  pub(super) fn digest_batch(lanes: Lanes, inputs: &[&[u8]], outputs: &mut [[u8; OUT_LEN]]) {
+    let degree = lanes.degree();
+    let mut rest = inputs;
+    let mut rest_out = outputs;
+    while let Some((first, _)) = rest.split_first() {
+      let len = first.len();
+      // The run of inputs that share this length, capped at one lane group.
+      let group = rest.iter().take(degree).take_while(|input| input.len() == len).count();
+      let (group_inputs, next) = rest.split_at(group);
+      let (group_outputs, next_out) = rest_out.split_at_mut(group);
+      if group >= 2 && (1..=CHUNK_LEN).contains(&len) {
+        hash_group(lanes, len, group_inputs, group_outputs);
+      } else {
+        digest_serial(group_inputs, group_outputs);
+      }
+      rest = next;
+      rest_out = next_out;
+    }
+  }
+
+  /// Hash 2..=degree inputs of `len` bytes each, `len` in `1..=CHUNK_LEN`, in one lane-parallel call.
+  ///
+  /// Unused lanes repeat the first input; their outputs are discarded.
+  fn hash_group(lanes: Lanes, len: usize, inputs: &[&[u8]], outputs: &mut [[u8; OUT_LEN]]) {
+    debug_assert!((2..=lanes.degree()).contains(&inputs.len()) && inputs.len() == outputs.len());
+    debug_assert!((1..=CHUNK_LEN).contains(&len) && inputs.iter().all(|input| input.len() == len));
+
+    let mut ptrs = [inputs[0].as_ptr(); MAX_DEGREE];
+    for (ptr, input) in ptrs.iter_mut().zip(inputs) {
+      *ptr = input.as_ptr();
+    }
+    let mut out = [[0u8; OUT_LEN]; MAX_DEGREE];
+
+    match lanes {
+      #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+      Lanes::Sse41 | Lanes::Avx2 | Lanes::Avx512 => {
+        let blocks = len.div_ceil(BLOCK_LEN);
+        let padded_len = blocks.strict_mul(BLOCK_LEN);
+        let last_block_len =
+          u32::try_from(len.strict_sub(padded_len.strict_sub(BLOCK_LEN))).expect("a block length fits in u32");
+        // The x86 kernels read whole blocks, so a partial final block needs zeroed
+        // padding; scratch sized to the padded length keeps the zeroing short.
+        let hash = |ptrs: &[*const u8; MAX_DEGREE], out: &mut [[u8; OUT_LEN]; MAX_DEGREE]| {
+          hash_many_x86(lanes, ptrs, blocks, last_block_len, out)
+        };
+        if padded_len == len {
+          hash(&ptrs, &mut out);
+        } else if padded_len <= BLOCK_LEN {
+          with_padded_lanes::<BLOCK_LEN>(inputs, |padded| hash(padded, &mut out));
+        } else if padded_len <= 4 * BLOCK_LEN {
+          with_padded_lanes::<{ 4 * BLOCK_LEN }>(inputs, |padded| hash(padded, &mut out));
+        } else {
+          with_padded_lanes::<CHUNK_LEN>(inputs, |padded| hash(padded, &mut out));
+        }
+      }
+      #[cfg(target_arch = "aarch64")]
+      Lanes::Neon => {
+        let (lane_ptrs, _) = ptrs
+          .split_first_chunk::<4>()
+          .expect("MAX_DEGREE covers the NEON degree");
+        let (lane_out, _) = out
+          .split_first_chunk_mut::<4>()
+          .expect("MAX_DEGREE covers the NEON degree");
+        // SAFETY: `Lanes::select` chose NEON only after detecting it. Every lane
+        // pointer addresses an input of `len` readable bytes (unused lanes repeat
+        // input 0), `hash_group`'s contract bounds `len` to `1..=CHUNK_LEN`, and
+        // the kernel pads the partial final block itself.
+        unsafe { super::super::aarch64::hash4_roots_neon(*lane_ptrs, len, &IV, 0, lane_out) };
+      }
+    }
+
+    let (used, _) = out.split_at(outputs.len());
+    outputs.copy_from_slice(used);
+  }
+
+  /// Copy each input into zeroed `N`-byte lane scratch and pass the lane pointers to `f`.
+  ///
+  /// Unused lanes repeat the first input.
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  fn with_padded_lanes<const N: usize>(inputs: &[&[u8]], f: impl FnOnce(&[*const u8; MAX_DEGREE])) {
+    let mut scratch = [[0u8; N]; MAX_DEGREE];
+    for (lane, input) in scratch.iter_mut().zip(inputs) {
+      let (prefix, _) = lane.split_at_mut(input.len());
+      prefix.copy_from_slice(input);
+    }
+    let mut ptrs = [scratch[0].as_ptr(); MAX_DEGREE];
+    for (ptr, lane) in ptrs.iter_mut().zip(&scratch[..inputs.len()]) {
+      *ptr = lane.as_ptr();
+    }
+    f(&ptrs);
+  }
+
+  /// Hash one lane group with the owned x86 kernel for `lanes`.
+  ///
+  /// Every pointer in `ptrs` must be readable for `blocks * BLOCK_LEN` bytes,
+  /// with the final block's bytes past `last_block_len` zero.
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  fn hash_many_x86(
+    lanes: Lanes,
+    ptrs: &[*const u8; MAX_DEGREE],
+    blocks: usize,
+    last_block_len: u32,
+    out: &mut [[u8; OUT_LEN]; MAX_DEGREE],
+  ) {
+    macro_rules! hash_many {
+      ($module:ident :: $kernel:ident) => {{
+        const DEGREE: usize = x86_64::$module::DEGREE;
+        let (lane_ptrs, _) = ptrs
+          .split_first_chunk::<DEGREE>()
+          .expect("MAX_DEGREE covers every x86 degree");
+        // SAFETY: `Lanes::select` chose this kernel only after `Lanes::available`
+        // detected its target features. The caller guarantees every lane pointer
+        // is readable for `blocks * BLOCK_LEN` bytes, `hash_group` bounds
+        // `last_block_len` to `1..=BLOCK_LEN`, and `out` holds
+        // `MAX_DEGREE >= DEGREE` outputs of `OUT_LEN` bytes.
+        unsafe {
+          x86_64::$module::$kernel(
+            x86_64::HashManyRequest {
+              inputs: lane_ptrs,
+              blocks,
+              key: &IV,
+              counter: 0,
+              increment_counter: false,
+              flags: 0,
+              flags_start: CHUNK_START,
+              flags_end: CHUNK_END | ROOT,
+              out: out.as_mut_ptr().cast::<u8>(),
+            },
+            last_block_len,
+          )
+        }
+      }};
+    }
+    match lanes {
+      Lanes::Sse41 => hash_many!(sse41::hash4_with_last_block_len),
+      Lanes::Avx2 => hash_many!(avx2::hash8_owned_with_last_block_len),
+      Lanes::Avx512 => hash_many!(avx512::hash16_owned_with_last_block_len),
+    }
+  }
+
+  #[cfg(test)]
+  mod tests {
+    use super::*;
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    const ALL: &[Lanes] = &[Lanes::Sse41, Lanes::Avx2, Lanes::Avx512];
+    #[cfg(target_arch = "aarch64")]
+    const ALL: &[Lanes] = &[Lanes::Neon];
+
+    /// Every lane kernel the CPU supports matches the one-shot path for every
+    /// one-chunk length, full and partial lane groups, and unaligned inputs.
+    #[test]
+    fn every_available_lane_kernel_matches_one_shot() {
+      let data: alloc::vec::Vec<u8> = (0..MAX_DEGREE * (CHUNK_LEN + 1) + 1)
+        .map(|i| u8::try_from(i % 251).expect("fits in u8"))
+        .collect();
+      for &lanes in ALL.iter().filter(|lanes| lanes.available()) {
+        for len in 0..=CHUNK_LEN + 1 {
+          // Offset by one byte so no input is aligned.
+          let inputs: alloc::vec::Vec<&[u8]> = data[1..]
+            .chunks_exact(len.max(1))
+            .take(MAX_DEGREE)
+            .map(|chunk| &chunk[..len])
+            .collect();
+          for count in [2, lanes.degree(), inputs.len().min(MAX_DEGREE)] {
+            let mut outputs = alloc::vec![[0u8; OUT_LEN]; count];
+            digest_batch(lanes, &inputs[..count], &mut outputs);
+            for (input, output) in inputs.iter().zip(&outputs) {
+              let mut iv = IV;
+              assert_eq!(
+                *output,
+                super::super::super::digest_public_oneshot(&mut iv, 0, input),
+                "{lanes:?} len={len} count={count}"
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -354,7 +354,23 @@ unsafe fn transpose_msg_vecs16(inputs: &[*const u8; 16], block_offset: usize) ->
 /// every input pointer is valid for `blocks * BLOCK_LEN` readable bytes, and
 /// `out` is valid for `DEGREE * OUT_LEN` writable bytes.
 #[target_feature(enable = "avx512f,avx512vl,avx512dq,avx2")]
-pub(crate) unsafe fn hash16_owned(
+pub(crate) unsafe fn hash16_owned(request: HashManyRequest<'_, DEGREE>) {
+  // SAFETY: this function's contract is `hash16_owned_with_last_block_len`'s contract with a full
+  // final block, which `BLOCK_LEN_U32` states.
+  unsafe { hash16_owned_with_last_block_len(request, BLOCK_LEN_U32) }
+}
+
+/// Like [`hash16_owned`], but the final block of every input holds `last_block_len` bytes.
+///
+/// # Safety
+///
+/// As for [`hash16_owned`]: every input pointer stays readable for `blocks * BLOCK_LEN`
+/// bytes, including all of its final block. `last_block_len` must be in
+/// `1..=BLOCK_LEN`; BLAKE3 also requires the final block's bytes past
+/// `last_block_len` to be zero for the output to be correct.
+#[target_feature(enable = "avx512f,avx512vl,avx512dq,avx2")]
+#[inline]
+pub(crate) unsafe fn hash16_owned_with_last_block_len(
   HashManyRequest {
     inputs,
     blocks,
@@ -366,6 +382,7 @@ pub(crate) unsafe fn hash16_owned(
     flags_end,
     out,
   }: HashManyRequest<'_, DEGREE>,
+  last_block_len: u32,
 ) {
   // SAFETY: 16-way AVX-512 BLAKE3 contiguous hash-many because:
   // 1. The caller guarantees AVX-512F/VL/DQ plus AVX2 availability.
@@ -373,7 +390,8 @@ pub(crate) unsafe fn hash16_owned(
   // 3. `out` is writable for `DEGREE * OUT_LEN` bytes.
   // 4. All lane pointers and stores are bounded by fixed-size local arrays.
   unsafe {
-    let block_len_vec = set1(BLOCK_LEN_U32);
+    let full_block_len_vec = set1(BLOCK_LEN_U32);
+    let last_block_len_vec = set1(last_block_len);
     let iv0 = set1(IV[0]);
     let iv1 = set1(IV[1]);
     let iv2 = set1(IV[2]);
@@ -402,6 +420,11 @@ pub(crate) unsafe fn hash16_owned(
       }
 
       let block_flags_vec = set1(block_flags);
+      let block_len_vec = if block.strict_add(1) == blocks {
+        last_block_len_vec
+      } else {
+        full_block_len_vec
+      };
 
       let m = transpose_msg_vecs16(inputs, block.strict_mul(BLOCK_LEN));
 

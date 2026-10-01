@@ -886,7 +886,23 @@ pub(crate) unsafe fn hash2_chunks_owned(input: *const u8, key: &[u32; 8], counte
 /// `blocks * BLOCK_LEN` readable bytes, and `out` is valid for
 /// `DEGREE * OUT_LEN` writable bytes.
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn hash8_owned(
+pub(crate) unsafe fn hash8_owned(request: HashManyRequest<'_, DEGREE>) {
+  // SAFETY: this function's contract is `hash8_owned_with_last_block_len`'s contract with a full
+  // final block, which `BLOCK_LEN_U32` states.
+  unsafe { hash8_owned_with_last_block_len(request, BLOCK_LEN_U32) }
+}
+
+/// Like [`hash8_owned`], but the final block of every input holds `last_block_len` bytes.
+///
+/// # Safety
+///
+/// As for [`hash8_owned`]: every input pointer stays readable for `blocks * BLOCK_LEN`
+/// bytes, including all of its final block. `last_block_len` must be in
+/// `1..=BLOCK_LEN`; BLAKE3 also requires the final block's bytes past
+/// `last_block_len` to be zero for the output to be correct.
+#[target_feature(enable = "avx2")]
+#[inline]
+pub(crate) unsafe fn hash8_owned_with_last_block_len(
   HashManyRequest {
     inputs,
     blocks,
@@ -898,6 +914,7 @@ pub(crate) unsafe fn hash8_owned(
     flags_end,
     out,
   }: HashManyRequest<'_, DEGREE>,
+  last_block_len: u32,
 ) {
   // SAFETY: 8-way AVX2 BLAKE3 hash-many because:
   // 1. The caller guarantees AVX2 availability for this target-feature function.
@@ -912,7 +929,8 @@ pub(crate) unsafe fn hash8_owned(
       1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12, 1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12,
     );
 
-    let block_len_vec = set1(BLOCK_LEN_U32);
+    let full_block_len_vec = set1(BLOCK_LEN_U32);
+    let last_block_len_vec = set1(last_block_len);
     let iv0 = set1(IV[0]);
     let iv1 = set1(IV[1]);
     let iv2 = set1(IV[2]);
@@ -941,6 +959,11 @@ pub(crate) unsafe fn hash8_owned(
       }
 
       let block_flags_vec = set1(block_flags);
+      let block_len_vec = if block.strict_add(1) == blocks {
+        last_block_len_vec
+      } else {
+        full_block_len_vec
+      };
       let msg_vecs = transpose_msg_vecs(inputs, block.strict_mul(BLOCK_LEN));
 
       let mut v = [

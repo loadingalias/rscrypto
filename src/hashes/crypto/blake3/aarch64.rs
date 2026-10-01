@@ -25,7 +25,9 @@ use core::arch::aarch64::*;
 mod asm;
 
 // Constants
-use super::{BLOCK_LEN, CHUNK_LEN, CHUNK_START, IV, MSG_SCHEDULE, OUT_LEN, PARENT, words16_from_le_bytes_64};
+use super::{
+  BLOCK_LEN, CHUNK_END, CHUNK_LEN, CHUNK_START, IV, MSG_SCHEDULE, OUT_LEN, PARENT, ROOT, words16_from_le_bytes_64,
+};
 
 const BLOCK_LEN_U32: u32 = 64;
 
@@ -951,6 +953,33 @@ unsafe fn hash4_neon(
       storeu_128(hi[lane], dst.add(16));
     }
   }
+}
+
+/// Hash four independent inputs of `input_len` bytes each to their root hashes.
+///
+/// Each input is one whole BLAKE3 input of at most one chunk, so every lane
+/// uses counter 0 and roots its last block.
+///
+/// # Safety
+///
+/// The current CPU must support NEON. Each input pointer must be readable for
+/// `input_len` bytes, and `input_len` must be in `1..=CHUNK_LEN`.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn hash4_roots_neon(
+  inputs: [*const u8; 4],
+  input_len: usize,
+  key: &[u32; 8],
+  flags: u32,
+  out: &mut [[u8; OUT_LEN]; 4],
+) {
+  let flags = Hash4Flags {
+    base: flags,
+    start: CHUNK_START,
+    end: CHUNK_END | ROOT,
+  };
+  // SAFETY: the caller upholds `hash4_neon`'s NEON, pointer, and length contract.
+  unsafe { hash4_neon(inputs, input_len, key, 0, false, flags, out) }
 }
 
 /// Hash exactly 4 contiguous full chunks (4 * 1024 bytes) and write 4 CVs.

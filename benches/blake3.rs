@@ -227,6 +227,72 @@ fn derive_key(c: &mut Criterion) {
   g.finish();
 }
 
+/// Hash 64 independent equal-length messages: one batch call versus one call each.
+///
+/// 64 messages fill every lane width evenly. 21 bytes is a short fingerprint
+/// with a partial final block; 64, 256, and 1,024 bytes end on a block
+/// boundary. The `blake3` row hashes one message per call; the reference crate
+/// has no batch API.
+fn batch(c: &mut Criterion) {
+  if !bench_config::selected("blake3/batch") {
+    return;
+  }
+  print_blake3_diag_once();
+
+  const MESSAGES: usize = 64;
+  let cases: Vec<(usize, Vec<u8>)> = [21usize, 64, 256, 1024]
+    .into_iter()
+    .map(|len| (len, common::random_bytes(MESSAGES.strict_mul(len))))
+    .collect();
+
+  let mut g = c.benchmark_group("blake3/batch");
+  for (len, data) in &cases {
+    let len = *len;
+    let inputs: Vec<&[u8]> = data.chunks_exact(len).collect();
+    let mut outputs = vec![[0u8; 32]; MESSAGES];
+    rscrypto::Blake3::digest_batch(&inputs, &mut outputs);
+    for (input, output) in inputs.iter().zip(&outputs) {
+      assert_eq!(
+        output,
+        blake3::hash(input).as_bytes(),
+        "batch output mismatch at len={len}"
+      );
+    }
+    common::set_throughput(&mut g, MESSAGES.strict_mul(len));
+
+    g.bench_function(BenchmarkId::new("rscrypto", len), |b| {
+      b.iter(|| rscrypto::Blake3::digest_batch(black_box(&inputs), black_box(&mut outputs)))
+    });
+    g.bench_function(BenchmarkId::new("blake3", len), |b| {
+      b.iter(|| {
+        for (input, output) in inputs.iter().zip(outputs.iter_mut()) {
+          *output = *blake3::hash(black_box(input)).as_bytes();
+        }
+        black_box(&outputs);
+      })
+    });
+  }
+  g.finish();
+
+  let mut g = c.benchmark_group("blake3/batch-serial");
+  for (len, data) in &cases {
+    let len = *len;
+    let inputs: Vec<&[u8]> = data.chunks_exact(len).collect();
+    let mut outputs = vec![[0u8; 32]; MESSAGES];
+    common::set_throughput(&mut g, MESSAGES.strict_mul(len));
+
+    g.bench_function(BenchmarkId::new("rscrypto", len), |b| {
+      b.iter(|| {
+        for (input, output) in inputs.iter().zip(outputs.iter_mut()) {
+          *output = rscrypto::Blake3::digest(black_box(input));
+        }
+        black_box(&outputs);
+      })
+    });
+  }
+  g.finish();
+}
+
 fn streaming(c: &mut Criterion) {
   if !bench_config::selected("blake3/streaming") {
     return;
@@ -495,6 +561,7 @@ fn main() {
     oneshot,
     keyed,
     derive_key,
+    batch,
     streaming,
     xof,
     #[cfg(all(rscrypto_internal, feature = "diag"))]

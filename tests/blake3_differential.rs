@@ -499,3 +499,47 @@ mod subtree {
     }
   }
 }
+
+#[test]
+fn blake3_digest_batch_matches_reference_for_every_one_chunk_length() {
+  let data = patterned_bytes(33 * 1025);
+  for len in 0..=1025 {
+    // 33 inputs fill every lane width and leave a partial group.
+    let inputs: Vec<&[u8]> = (0..33).map(|i| &data[i * len..i * len + len]).collect();
+    for count in [1, 2, 3, 4, 5, 8, 9, 16, 17, 33] {
+      let mut outputs = vec![[0u8; 32]; count];
+      Blake3::digest_batch(&inputs[..count], &mut outputs);
+      for (i, output) in outputs.iter().enumerate() {
+        assert_eq!(*output, blake3_ref_hash(inputs[i]), "len={len} count={count} index={i}");
+      }
+    }
+  }
+}
+
+#[test]
+#[should_panic(expected = "Blake3::digest_batch needs one output per input")]
+fn blake3_digest_batch_rejects_mismatched_outputs() {
+  let mut outputs = [[0u8; 32]; 1];
+  Blake3::digest_batch(&[b"a", b"b"], &mut outputs);
+}
+
+proptest! {
+  #[test]
+  fn blake3_digest_batch_matches_reference_for_mixed_lengths(
+    lens in proptest::collection::vec(prop_oneof![Just(64usize), Just(21), Just(1024), 0usize..1100], 0..40),
+  ) {
+    let data = patterned_bytes(lens.iter().sum());
+    let mut inputs = Vec::with_capacity(lens.len());
+    let mut rest = data.as_slice();
+    for &len in &lens {
+      let (input, next) = rest.split_at(len);
+      inputs.push(input);
+      rest = next;
+    }
+    let mut outputs = vec![[0u8; 32]; inputs.len()];
+    Blake3::digest_batch(&inputs, &mut outputs);
+    for (input, output) in inputs.iter().zip(&outputs) {
+      prop_assert_eq!(*output, blake3_ref_hash(input));
+    }
+  }
+}
