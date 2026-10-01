@@ -59,6 +59,21 @@ def manifest_errors(mutate) -> list[str]:
     manifest_validation.compiler_public_api_snapshot = original_snapshot
 
 
+SOURCE = {"commit": "candidate", "sha256": "current"}
+
+
+def complete_report(
+  *, name="fixture", status="pass", gate="required", source=SOURCE, requested=100, rows=100, classes=("0", "1")
+):
+  """A child DudeCT report with every requested sample, from `source`."""
+  labels = {label: rows // len(classes) for label in classes}
+  row = {
+    "name": name, "gate": gate, "status": status, "requested_samples": requested,
+    "raw_csv": {"row_count": rows, "labels": labels},
+  }
+  return json.dumps({"source": source, "cases": [row]})
+
+
 def test_dudect_invocation_evidence() -> None:
   with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
@@ -80,11 +95,11 @@ sys.exit(124 if '--timeout' in sys.argv else mode['exit'])
       with patch.object(full, "python_script", return_value=[sys.executable, str(child)]):
         return full.dudect_case_result(
           root, root / "logs",
-          100, 10.0, {**case, "gate": gate}, timeout, root / "out/dudect/run/shared/prepared.json",
+          100, 10.0, {**case, "gate": gate}, timeout, root / "out/dudect/run/shared/prepared.json", SOURCE,
         )
 
     def report(status="pass", gate="required"):
-      return json.dumps({"cases": [{"name": "fixture", "gate": gate, "status": status}]})
+      return complete_report(status=status, gate=gate)
 
     # Seed both legacy locations as well as a successful current invocation.
     legacy = root / "out/dudect"
@@ -184,10 +199,77 @@ def test_dudect_source_identity_rejects_stale_worktree() -> None:
       assert errors == ["dudect source identity mismatch; rebuild and rerun timing evidence"]
 
 
+def test_qualification_negative_controls() -> None:
+  """Each defect in otherwise valid timing evidence must block `ct-full`."""
+  with tempfile.TemporaryDirectory() as temporary:
+    root = Path(temporary)
+    child = root / "child.py"
+    child.write_text("""
+import json, sys
+from pathlib import Path
+mode = json.loads(Path('mode.json').read_text())
+evidence = Path(sys.argv[sys.argv.index('--evidence-dir') + 1])
+(evidence / 'dudect-report.json').write_text(mode['report'])
+sys.exit(mode['exit'])
+""")
+    planned = [
+      {"name": "fixture", "filter": "fixture", "primitive": "fixture", "gate": "required"},
+      {"name": "second", "filter": "second", "primitive": "fixture", "gate": "required"},
+      {"name": "probe", "filter": "probe", "primitive": "fixture", "gate": "diagnostic"},
+    ]
+
+    def qualify(report, exit_code=0, *, cases=planned):
+      (root / "mode.json").write_text(json.dumps({"report": report, "exit": exit_code}))
+      rows = []
+      with patch.object(full, "python_script", return_value=[sys.executable, str(child)]):
+        for case in cases:
+          rows.append(full.dudect_case_result(
+            root, root / "logs", 100, 10.0, case, None, root / "out/dudect/run/shared/prepared.json", SOURCE,
+          ))
+      # Only the first planned case runs, so the other required case is also
+      # reported missing; the defect under test must be the first finding.
+      findings, _ = build_findings([], rows, [], [], full.missing_required_dudect_cases(planned, rows))
+      return [finding["category"] for finding in findings]
+
+    def report_for(case, **overrides):
+      return complete_report(name=case["name"], gate=case["gate"], **overrides)
+
+    # Positive control: current, complete, passing evidence for every case.
+    rows = []
+    with patch.object(full, "python_script", return_value=[sys.executable, str(child)]):
+      for case in planned:
+        (root / "mode.json").write_text(json.dumps({"report": report_for(case), "exit": 0}))
+        rows.append(full.dudect_case_result(
+          root, root / "logs", 100, 10.0, case, None, root / "out/dudect/run/shared/prepared.json", SOURCE,
+        ))
+    assert build_findings([], rows, [], [], full.missing_required_dudect_cases(planned, rows)) == ([], [])
+
+    # A missing required case blocks even when its primitive has other results;
+    # a missing diagnostic case does not.
+    missing = full.missing_required_dudect_cases(planned, rows[:1] + rows[2:])
+    assert missing == [{"name": "second", "primitive": "fixture"}]
+    assert full.missing_required_dudect_cases(planned, rows[:2]) == []
+    findings, _ = build_findings([], rows[:1] + rows[2:], [], [], missing)
+    assert [finding["kind"] for finding in findings] == ["missing_dudect_case"]
+
+    first = planned[:1]
+    # A stale artifact: a report measured from other source.
+    stale = report_for(first[0], source={"commit": "candidate", "sha256": "older"})
+    assert qualify(stale, cases=first)[0] == "tooling_failure"
+    # Lost samples: fewer rows than requested, or one class absent.
+    assert qualify(report_for(first[0], rows=99), cases=first)[0] == "tooling_failure"
+    # A complete run of a different sample budget is not this run's evidence.
+    assert qualify(report_for(first[0], requested=50, rows=100), cases=first)[0] == "tooling_failure"
+    assert qualify(report_for(first[0], classes=("0",)), cases=first)[0] == "tooling_failure"
+    # A detected timing failure.
+    assert qualify(report_for(first[0], status="fail"), 1, cases=first)[0] == "timing_failure"
+
+
 def main() -> None:
   test_dudect_invocation_evidence()
   test_dudect_smoke_summary_is_insufficient()
   test_dudect_source_identity_rejects_stale_worktree()
+  test_qualification_negative_controls()
   root = Path(__file__).resolve().parents[2]
   target_matrix = manifest_validation.json.loads((root / ".config" / "target-matrix.json").read_text())
   assert manifest_validation.matrix_targets(target_matrix) == {

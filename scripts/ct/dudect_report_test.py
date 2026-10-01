@@ -199,13 +199,19 @@ def main() -> None:
       {"name": required_case["name"], "gate": "required", "status": "diagnostic-fail"},
     )
   )
-  valid_required_row = {"name": required_case["name"], "gate": "required", "status": "fail"}
-  assert validated_dudect_case_report(required_case, {"cases": [valid_required_row]}) == valid_required_row
-  expect_failure(lambda: validated_dudect_case_report(required_case, {"cases": []}))
-  expect_failure(lambda: validated_dudect_case_report(required_case, {"cases": [valid_required_row] * 2}))
-  expect_failure(lambda: validated_dudect_case_report(
-    required_case, {"cases": [valid_required_row, {"name": "unexpected", "status": "pass"}]}
-  ))
+  valid_required_row = {
+    "name": required_case["name"], "gate": "required", "status": "fail", "requested_samples": 4,
+    "raw_csv": {"row_count": 4, "labels": {"0": 2, "1": 2}},
+  }
+  source = {"commit": "candidate", "sha256": "current"}
+
+  def validated(cases):
+    return validated_dudect_case_report(required_case, {"source": source, "cases": cases}, samples=4, source=source)
+
+  assert validated([valid_required_row]) == valid_required_row
+  expect_failure(lambda: validated([]))
+  expect_failure(lambda: validated([valid_required_row] * 2))
+  expect_failure(lambda: validated([valid_required_row, {"name": "unexpected", "status": "pass"}]))
   expect_failure(
     lambda: dudect_case_rows(
       {"undeclared_case": {"abs_max_t": 11.0}},

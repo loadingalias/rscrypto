@@ -19,7 +19,9 @@ from typing import Any
 
 # Embedded Windows Python omits the script directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
+import evidence_bundle
 from provenance import load_toml, sha256_file
 from manifest import (
   dudect_sample_count,
@@ -329,7 +331,14 @@ def validate_dudect_case_report(manifest_case: dict[str, Any], reported_case: di
     raise ValueError(f"manifest-required DudeCT case {name!r} cannot report diagnostic-fail")
 
 
-def validated_dudect_case_report(manifest_case: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
+def validated_dudect_case_report(
+  manifest_case: dict[str, Any], report: dict[str, Any], *, samples: int, source: dict[str, str]
+) -> dict[str, Any]:
+  """Return the requested case's row if the report is current and complete.
+
+  A report measured from other source, or one that kept fewer samples than
+  this run requested, is not evidence for the candidate.
+  """
   name = str(manifest_case["name"])
   if not isinstance(report, dict) or not isinstance(report.get("cases"), list):
     raise ValueError("DudeCT child report must contain a cases array")
@@ -341,7 +350,29 @@ def validated_dudect_case_report(manifest_case: dict[str, Any], report: dict[str
   if matches[0].get("status") not in ("pass", "fail", "diagnostic-fail"):
     raise ValueError(f"DudeCT case {name!r} has an invalid or missing status")
   validate_dudect_case_report(manifest_case, matches[0])
+  if report.get("source") != source:
+    raise ValueError(f"DudeCT case {name!r} was measured from other source; rebuild the timing binary")
+  raw = matches[0].get("raw_csv")
+  if (
+    matches[0].get("requested_samples") != samples
+    or not isinstance(raw, dict)
+    or raw.get("row_count") != samples
+    or any(raw.get("labels", {}).get(label, 0) <= 0 for label in ("0", "1"))
+  ):
+    raise ValueError(f"DudeCT case {name!r} did not retain all {samples} requested samples in both classes")
   return matches[0]
+
+
+def missing_required_dudect_cases(
+  planned_cases: list[dict[str, Any]], dudect_cases: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+  """Required planned cases with no result row, in manifest order."""
+  executed = {case["name"] for case in dudect_cases}
+  return [
+    {"name": case["name"], "primitive": case["primitive"]}
+    for case in planned_cases
+    if not is_diagnostic_dudect_case(case) and case["name"] not in executed
+  ]
 
 
 def candidate_identity(out_dir: Path) -> dict[str, Any]:
@@ -416,6 +447,7 @@ def dudect_case_result(
   case: dict[str, Any],
   timeout: int | None,
   prepared: Path,
+  source: dict[str, str],
 ) -> dict[str, Any]:
   cases_dir = prepared.parent.parent / "cases"
   cases_dir.mkdir(parents=True, exist_ok=True)
@@ -439,7 +471,7 @@ def dudect_case_result(
   report_error = None
   try:
     report = json.loads(report_path.read_text())
-    case_report = validated_dudect_case_report(case, report)
+    case_report = validated_dudect_case_report(case, report, samples=samples, source=source)
   except (OSError, UnicodeError, ValueError) as exc:
     report_error = f"Missing or invalid current DudeCT report: {exc}"
     report = None
@@ -539,7 +571,9 @@ def dudect_case_result(
   return row
 
 
-def run_dudect_cases(root, out_dir, logs_dir, target, profile, manifest_cases, threshold, dudect_timeout, transferred=None):
+def run_dudect_cases(
+  root, out_dir, logs_dir, target, profile, manifest_cases, threshold, dudect_timeout, source, transferred=None
+):
   dudect_cases = []
   if transferred is None:
     dudect_runs = out_dir / "dudect" / "runs"
@@ -575,6 +609,7 @@ def run_dudect_cases(root, out_dir, logs_dir, target, profile, manifest_cases, t
         case,
         timeout_seconds,
         prepared,
+        source,
       )
     )
     row = dudect_cases[-1]
@@ -955,6 +990,7 @@ def build_findings(
   dudect_cases: list[dict[str, Any]],
   binsec_kernels: list[dict[str, Any]],
   missing_dudect: list[str],
+  missing_dudect_cases: list[dict[str, Any]] = (),
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
   findings: list[dict[str, Any]] = []
   diagnostics: list[dict[str, Any]] = []
@@ -1053,6 +1089,17 @@ def build_findings(
         "severity": "blocker",
         "summary": f"{primitive} requires DudeCT evidence but has no executed manifest case",
         "primitive": primitive,
+      }
+    )
+
+  for case in missing_dudect_cases:
+    findings.append(
+      {
+        "kind": "missing_dudect_case",
+        "category": "coverage_gap",
+        "severity": "blocker",
+        "summary": f"required DudeCT case {case['name']} has no result",
+        "primitive": case["primitive"],
       }
     )
 
@@ -1392,8 +1439,12 @@ def main() -> int:
   dudect_run = None
   dudect_cases = []
   if all(step["status"] in ("pass", "not_applicable") for step in steps):
+    # Every case report must come from this source; a transferred binary was
+    # built from the same checkout, which `transfer.consume` has verified.
+    source = evidence_bundle.source_identity(root)
     dudect_run, preparation, dudect_cases = run_dudect_cases(
-      root, out_dir, logs_dir, target, profile, manifest_cases, args.threshold, args.dudect_timeout, transferred,
+      root, out_dir, logs_dir, target, profile, manifest_cases, args.threshold, args.dudect_timeout, source,
+      transferred,
     )
     steps.append(result_record(preparation))
   else:
@@ -1416,13 +1467,18 @@ def main() -> int:
     [] if filtered_dudect or args.dudect_gate != "required" else sorted(required_dudect - manifest_required_dudect)
   )
   missing_dudect = sorted(set(missing_dudect) | set(missing_manifest_required_dudect))
+  # A complete required run needs a result for every planned required case,
+  # not only one case per primitive.
+  missing_cases = (
+    [] if filtered_dudect or args.dudect_gate != "required" else missing_required_dudect_cases(manifest_cases, dudect_cases)
+  )
 
   artifact_records = collect_artifact_records(out_dir, dudect_run)
   if transferred is not None:
     from transfer import KIND, bundle
     original = Path(json.loads(transferred.read_text())["metadata"]["transfer"]["original"])
     bundle.verify(root, original, KIND, target)
-  findings, diagnostics = build_findings(steps, dudect_cases, binsec_kernels, missing_dudect)
+  findings, diagnostics = build_findings(steps, dudect_cases, binsec_kernels, missing_dudect, missing_cases)
   asm_report = load_json_if_exists(out_dir / "asm-heuristics.json")
 
   failure_count = len(findings)
@@ -1490,6 +1546,7 @@ def main() -> int:
       "passing_dudect_primitives": sorted(passing_dudect),
       "passing_required_dudect_primitives": sorted(passing_required_dudect),
       "missing_dudect_primitives": missing_dudect,
+      "missing_required_dudect_cases": [case["name"] for case in missing_cases],
     },
     "findings": findings,
     "diagnostics": diagnostics,

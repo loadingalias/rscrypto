@@ -15,6 +15,10 @@ import full
 from dudect_report import write_report
 
 
+# The source identity the fixture preparation records, as `dudect_report` does.
+SOURCE = {"commit": "fixture", "sha256": "fixture"}
+
+
 def main():
   repository = Path(__file__).resolve().parents[2]
   with tempfile.TemporaryDirectory() as temporary:
@@ -64,7 +68,8 @@ shared.mkdir()
 executable = Path('runner-path').read_text()
 binary = shared / executable
 shutil.copy2(executable, binary)
-metadata = {'binary': {'path': str(binary), 'sha256': hashlib.sha256(binary.read_bytes()).hexdigest()}}
+metadata = {'binary': {'path': str(binary), 'sha256': hashlib.sha256(binary.read_bytes()).hexdigest()},
+            'source': {'commit': 'fixture', 'sha256': 'fixture'}}
 manifest = {'manifest_' + name: {'primitive': 'fixture', 'gate': 'required', 'left_class': 'left', 'right_class': 'right'} for name in ('alpha', 'beta')}
 (shared / 'prepared.json').write_text(json.dumps({'metadata': metadata, 'manifest_cases': manifest}))
 ''')
@@ -74,7 +79,7 @@ manifest = {'manifest_' + name: {'primitive': 'fixture', 'gate': 'required', 'le
       with patch.object(full, "shell_script", return_value=[sys.executable, str(prep)]), patch.object(
         full, "python_script", return_value=[sys.executable, str(repository / "scripts/ct/dudect_execute.py")],
       ):
-        return full.run_dudect_cases(root, root / "out", root / "logs", "fixture", "release", cases, 10.0, 10)
+        return full.run_dudect_cases(root, root / "out", root / "logs", "fixture", "release", cases, 10.0, 10, SOURCE)
 
     run, preparation, rows = invoke("success")
     assert preparation.status == "pass"
@@ -103,7 +108,7 @@ manifest = {'manifest_' + name: {'primitive': 'fixture', 'gate': 'required', 'le
     assert len((root / "executions").read_text().splitlines()) == 5
     (root / "mode").write_text("success")
     with patch.object(full, "python_script", return_value=[sys.executable, str(repository / "scripts/ct/dudect_execute.py")]):
-      timed_out = full.dudect_case_result(root, root / "logs", 4, 10.0, cases[0], 0, run / "shared/prepared.json")
+      timed_out = full.dudect_case_result(root, root / "logs", 4, 10.0, cases[0], 0, run / "shared/prepared.json", SOURCE)
     assert timed_out["status"] == "timeout" and timed_out["report"] is None
     assert all(Path(path).read_bytes() == data for path, data in snapshot.items())
     interrupted = root / "interrupted.json"
@@ -122,7 +127,7 @@ manifest = {'manifest_' + name: {'primitive': 'fixture', 'gate': 'required', 'le
     with patch.object(full, 'shell_script', side_effect=AssertionError('transferred binary must not rebuild')), \
          patch.object(full, 'python_script', return_value=[sys.executable, str(repository / 'scripts/ct/dudect_execute.py')]):
       transferred_run, transferred_preparation, transferred_rows = full.run_dudect_cases(
-        root, root / 'out', root / 'logs', 'fixture', 'release', cases, 10.0, 10,
+        root, root / 'out', root / 'logs', 'fixture', 'release', cases, 10.0, 10, SOURCE,
         transferred=run / 'shared/prepared.json')
     assert transferred_run == run
     assert transferred_preparation.status == 'pass'
