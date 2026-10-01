@@ -155,6 +155,40 @@ because keyed mode still clears every secret-derived intermediate. Round 2 on x8
 keyed rows in both trees, so those ranges are wide. The machines were destroyed after the runs;
 per-run summaries are local only.
 
+## 2026-10-01 ML-KEM Keccak stack scrub
+
+GitHub Bench `mlkem768,mlkem1024`, `nightly-2026-09-25`, on `c8i.2xlarge` (Intel), `c8a.2xlarge`
+(AMD), and `c9g.2xlarge` (Graviton5). Run
+[#36376376070](https://github.com/loadingalias/rscrypto/actions/runs/36376376070) measured
+`931b738f` before the scrub; run
+[#36904620694](https://github.com/loadingalias/rscrypto/actions/runs/36904620694) measured
+`c2af568c`, which runs G, J, and the PRF in the scrubbed worker (`b20a18de`). The runs used
+different physical hosts, so the comparison uses rscrypto's median divided by the competitor
+median from the same run.
+
+Change in that ratio for ML-KEM-768 and ML-KEM-1024 decapsulation, one-shot and reused
+encoded key:
+
+| Host | Versus libcrux | Versus AWS-LC |
+| --- | --- | --- |
+| x86-64 Intel | −1.3% to +0.3% | +2.5% to +3.1% |
+| x86-64 AMD | −2.4% to +0.5% | −2.1% to +1.6% |
+| Graviton5 | +1.4% to +2.6% | +1.5% to +2.4% |
+
+The scrub costs about 2% of decapsulation where the signal is clear. Median confidence
+half-widths were ≤0.5% except the earlier AMD run (≤3.3%); the AMD ML-KEM-1024 rows are now
+≤0.07%. The earlier run measured decapsulation only, so key generation and encapsulation have no
+pre-scrub comparison on these hosts.
+
+Standing after the scrub, ML-KEM-768 (Intel, AMD, Graviton5):
+
+- Key generation from a seed: rscrypto 10.71, 8.27, and 8.82 µs; libcrux 16.03, 11.72, and
+  17.23 µs. AWS-LC's row, which also times its internal entropy, is 12.48, 12.99, and 11.98 µs.
+- One-shot decapsulation (`import-encoded`, identical work in every library): rscrypto 1.79x,
+  1.33x, and 1.78x AWS-LC; 1.39x, 1.44x, and 0.97x libcrux.
+- One-shot encapsulation (`import-encoded`): rscrypto 1.13x, 1.15x, and 0.77x libcrux. AWS-LC's
+  internal-entropy row is faster on every host (rscrypto 1.62x, 1.17x, and 1.43x).
+
 ## 2026-09 allocator-adoption runs
 
 GitHub Bench runs keep their Criterion artifacts. Hosts: x86-64 Intel, x86-64 AMD, and AArch64 Linux.
