@@ -16,8 +16,12 @@ use rscrypto::{
 macro_rules! mldsa {
   ($profile:ty, $storage:ty, $seed:expr) => {{
     let (public, secret) = <$profile>::keypair_from_seed(black_box($seed)).expect("ML-DSA key generation");
-    let signature = secret.sign_deterministic(black_box(b"frame review"), b"").expect("ML-DSA signing");
-    public.verify_with_context(b"frame review", b"", &signature).expect("ML-DSA verification");
+    let signature = secret
+      .sign_deterministic(black_box(b"frame review"), b"")
+      .expect("ML-DSA signing");
+    public
+      .verify_with_context(b"frame review", b"", &signature)
+      .expect("ML-DSA verification");
     let mut storage = Box::new(<$storage>::new());
     let prepared = secret.prepare(&mut storage).expect("ML-DSA preparation");
     let hedged = prepared
@@ -26,7 +30,9 @@ macro_rules! mldsa {
         Ok(())
       })
       .expect("ML-DSA prepared signing");
-    public.verify_with_context(b"frame review", b"", &hedged).expect("ML-DSA verification");
+    public
+      .verify_with_context(b"frame review", b"", &hedged)
+      .expect("ML-DSA verification");
   }};
 }
 
@@ -41,7 +47,9 @@ macro_rules! mlkem {
     let decapsulated = <$profile>::decapsulate(&decapsulation_key, &ciphertext).expect("ML-KEM decapsulation");
     assert!(shared.ct_eq(&decapsulated).declassify());
     let prepared = <$profile>::prepare_decapsulation_key(&decapsulation_key).expect("ML-KEM preparation");
-    let again = prepared.decapsulate(&ciphertext).expect("ML-KEM prepared decapsulation");
+    let again = prepared
+      .decapsulate(&ciphertext)
+      .expect("ML-KEM prepared decapsulation");
     assert!(shared.ct_eq(&again).declassify());
   }};
 }

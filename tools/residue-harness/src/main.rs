@@ -289,7 +289,9 @@ fn measure(scenario: fn()) {
     for (source, destination) in [(&HEAP, SNAPSHOT.heap.get()), (&ARENA, SNAPSHOT.arena.get())] {
       let destination = destination.cast::<u32>();
       for index in 0..ARENA_BYTES / 4 {
-        destination.add(index).write_volatile(source.base().add(index).read_volatile());
+        destination
+          .add(index)
+          .write_volatile(source.base().add(index).read_volatile());
       }
     }
     *SNAPSHOT.stack_words.get() = words;
@@ -307,7 +309,11 @@ fn dump(name: &str, base: usize, words: &[u32], keep_end: bool) {
     let last = words.iter().rposition(|&word| word != PAINT);
     last.map_or(first, |last| last.strict_add(8) & !7).min(words.len())
   };
-  say!("region {name} {:#x} {:#x}", base.strict_add(first.strict_mul(4)), end.strict_sub(first).strict_mul(4));
+  say!(
+    "region {name} {:#x} {:#x}",
+    base.strict_add(first.strict_mul(4)),
+    end.strict_sub(first).strict_mul(4)
+  );
   let mut line = [0u8; 32];
   for chunk in words[first..end].chunks(8) {
     for (slot, word) in line.chunks_mut(4).zip(chunk) {
@@ -498,7 +504,13 @@ macro_rules! scenario {
     scenario!($name, $expect, nothing, $run, $needles)
   };
   ($name:literal, $expect:literal, $prepare:path, $run:path, $needles:path) => {
-    Scenario { name: $name, expect: $expect, prepare: $prepare, run: $run, needles: $needles }
+    Scenario {
+      name: $name,
+      expect: $expect,
+      prepare: $prepare,
+      run: $run,
+      needles: $needles,
+    }
   };
 }
 
@@ -508,16 +520,57 @@ const SCENARIOS: &[Scenario] = &[
   scenario!("control-cleared-stack", "none", cleared_stack, control_needles),
   scenario!("ml-kem-512-keygen", "report", mlkem512::keygen, mlkem512::needles),
   scenario!("ml-kem-512-keygen-in", "none", mlkem512::keygen_in, mlkem512::needles),
-  scenario!("ml-kem-512-import", "report", mlkem512::prepare, mlkem512::import, mlkem512::needles),
-  scenario!("ml-kem-512-import-in", "none", mlkem512::prepare, mlkem512::import_in, mlkem512::needles),
+  scenario!(
+    "ml-kem-512-import",
+    "report",
+    mlkem512::prepare,
+    mlkem512::import,
+    mlkem512::needles
+  ),
+  scenario!(
+    "ml-kem-512-import-in",
+    "none",
+    mlkem512::prepare,
+    mlkem512::import_in,
+    mlkem512::needles
+  ),
   scenario!("ml-kem-768-keygen", "report", mlkem768::keygen, mlkem768::needles),
   scenario!("ml-kem-768-keygen-in", "none", mlkem768::keygen_in, mlkem768::needles),
-  scenario!("ml-kem-768-import", "report", mlkem768::prepare, mlkem768::import, mlkem768::needles),
-  scenario!("ml-kem-768-import-in", "none", mlkem768::prepare, mlkem768::import_in, mlkem768::needles),
+  scenario!(
+    "ml-kem-768-import",
+    "report",
+    mlkem768::prepare,
+    mlkem768::import,
+    mlkem768::needles
+  ),
+  scenario!(
+    "ml-kem-768-import-in",
+    "none",
+    mlkem768::prepare,
+    mlkem768::import_in,
+    mlkem768::needles
+  ),
   scenario!("ml-kem-1024-keygen", "report", mlkem1024::keygen, mlkem1024::needles),
-  scenario!("ml-kem-1024-keygen-in", "none", mlkem1024::keygen_in, mlkem1024::needles),
-  scenario!("ml-kem-1024-import", "report", mlkem1024::prepare, mlkem1024::import, mlkem1024::needles),
-  scenario!("ml-kem-1024-import-in", "none", mlkem1024::prepare, mlkem1024::import_in, mlkem1024::needles),
+  scenario!(
+    "ml-kem-1024-keygen-in",
+    "none",
+    mlkem1024::keygen_in,
+    mlkem1024::needles
+  ),
+  scenario!(
+    "ml-kem-1024-import",
+    "report",
+    mlkem1024::prepare,
+    mlkem1024::import,
+    mlkem1024::needles
+  ),
+  scenario!(
+    "ml-kem-1024-import-in",
+    "none",
+    mlkem1024::prepare,
+    mlkem1024::import_in,
+    mlkem1024::needles
+  ),
   scenario!("ml-dsa-44-keygen", "report", mldsa44::keygen, mldsa44::needles),
   scenario!("ml-dsa-44-keygen-in", "none", mldsa44::keygen_in, mldsa44::needles),
   scenario!("ml-dsa-65-keygen", "report", mldsa65::keygen, mldsa65::needles),
@@ -529,8 +582,16 @@ const SCENARIOS: &[Scenario] = &[
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
   board::init();
-  let backend = if cfg!(feature = "portable-only") { "portable" } else { "native" };
-  say!("residue 1 board={} backend={backend} scenarios={}", board::NAME, SCENARIOS.len());
+  let backend = if cfg!(feature = "portable-only") {
+    "portable"
+  } else {
+    "native"
+  };
+  say!(
+    "residue 1 board={} backend={backend} scenarios={}",
+    board::NAME,
+    SCENARIOS.len()
+  );
   for scenario in SCENARIOS {
     (scenario.prepare)();
     measure(scenario.run);
