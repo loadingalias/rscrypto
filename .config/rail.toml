@@ -41,6 +41,8 @@ targets = "workspace"
 [release]
 # Release preparation must have conclusive compatibility evidence. Remote effects remain unconfigured.
 semver_check = "deny"
+# Match the `v<version>` tags that `release.yml` creates, so planning finds the previous release.
+tag_format = "{prefix}{version}"
 # Keep standalone fuzz and evidence-tool lockfiles on the released package version.
 auxiliary_cargo_manifests = [
   "fuzz-packages/aead-aegis256/Cargo.toml",
