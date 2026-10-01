@@ -1298,7 +1298,9 @@ impl OneChunkScratch {
 /// Portable root words of an input of at most one chunk.
 ///
 /// Const so `Blake3::digest_const` and the runtime portable one-shot path run
-/// the same code. Every intermediate lives in `scratch`.
+/// the same code. Every intermediate lives in `scratch`. Inlining lets the
+/// unkeyed runtime caller keep them in registers and skip the dead zeroing.
+#[inline(always)]
 const fn one_chunk_root_words_portable(
   key_words: &[u32; 8],
   flags: u32,
@@ -1320,10 +1322,15 @@ const fn one_chunk_root_words_portable(
   }
 
   let (_, tail) = input.split_at(full_blocks.strict_mul(BLOCK_LEN));
-  scratch.final_block = [0; BLOCK_LEN];
-  let (padded, _) = scratch.final_block.split_at_mut(tail.len());
-  padded.copy_from_slice(tail);
-  scratch.block_words = words16_from_le_bytes_64(&scratch.final_block);
+  // A full final block is read in place; only a partial one needs padding.
+  if let ([block], []) = tail.as_chunks::<BLOCK_LEN>() {
+    scratch.block_words = words16_from_le_bytes_64(block);
+  } else {
+    scratch.final_block = [0; BLOCK_LEN];
+    let (padded, _) = scratch.final_block.split_at_mut(tail.len());
+    padded.copy_from_slice(tail);
+    scratch.block_words = words16_from_le_bytes_64(&scratch.final_block);
+  }
   #[expect(
     clippy::cast_possible_truncation,
     reason = "the final block holds at most BLOCK_LEN bytes"

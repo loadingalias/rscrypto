@@ -54,6 +54,16 @@ fn blake3_digest_const_matches_reference_and_streaming_for_every_one_chunk_lengt
   }
 }
 
+// Constant evaluation of a full final block, alone and after the multi-block loop.
+const FULL_BLOCK_DIGEST: [u8; 32] = Blake3::digest_const(&[0x5a; 64]);
+const FULL_CHUNK_DIGEST: [u8; 32] = Blake3::digest_const(&[0x5a; 1024]);
+
+#[test]
+fn blake3_digest_const_evaluates_full_final_blocks_at_compile_time() {
+  assert_eq!(FULL_BLOCK_DIGEST, blake3_ref_hash(&[0x5a; 64]));
+  assert_eq!(FULL_CHUNK_DIGEST, blake3_ref_hash(&[0x5a; 1024]));
+}
+
 #[test]
 #[should_panic(expected = "Blake3::digest_const accepts at most 1,024 bytes")]
 fn blake3_digest_const_rejects_more_than_one_chunk() {
