@@ -180,6 +180,7 @@ test-scripts:
     @scripts/lib/python.sh scripts/test/fuzz_runner_test.py
     @scripts/lib/python.sh scripts/asm/p384_test.py
     @scripts/lib/python.sh scripts/stack/frames_test.py
+    @scripts/lib/python.sh scripts/stack/residue_test.py
 
 # Exercise artifact transfer and the pinned rustdoc build/run contract.
 [group('tests')]
@@ -257,6 +258,11 @@ ct-validate *args:
 [group('secret-lifecycle')]
 stack-frames *args:
     @scripts/lib/python.sh scripts/stack/frames.py "$@"
+
+# Measure moved-copy residue of secret owners on QEMU RV32 and Cortex-M3 boards.
+[group('secret-lifecycle')]
+stack-residue *args:
+    @scripts/lib/python.sh scripts/stack/residue.py "$@"
 
 # Coverage
 

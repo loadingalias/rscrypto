@@ -54,16 +54,20 @@ fails this gate. The sentinel does not qualify other alignments, owners, heap
 storage, error paths, or compiler-created copies; the retained machine code
 still needs target-specific review.
 
-The moved-copy claims for ML-KEM rest on one residue campaign, run on
-`nightly-2026-09-25` under QEMU 11.1.1 on the RV32 `virt` and Cortex-M3
-`mps2-an385` boards, with native and portable backends. By-value key generation
-left all of `dk_pke` (1,536, 2,304, or 3,072 bytes) and `z` in the caller's
-frame; import, preparation, and decapsulation left 4.2–6.4 KiB of prepared
-state. The `*_in` paths left nothing on the stack or in the freed allocation for
-all three parameter sets, both boards, and both backends, and the controls
-behaved. The harness was removed on 2026-09-28; rebuild it before citing new
-residue results, including for Ed25519, X25519, and ECDSA owners, which it did
-not measure.
+`just stack-residue` measures moved-copy residue under QEMU on the RV32 `virt`
+and Cortex-M3 `mps2-an385` boards, with native and portable backends;
+[`scripts/README.md`](../scripts/README.md) describes the method and its
+controls. On `nightly-2026-09-25` and QEMU 11.1.2, by-value ML-KEM key
+generation leaves every byte of `dk_pke` (768, 1,152, or 1,536 bytes) and `z`
+in the caller's frame. By-value ML-KEM import leaves all of `dk_pke` except one
+16-byte window, and all of `z`. By-value ML-DSA key generation leaves `K` and
+the encoded `s1`, `s2`, and `t0`: one whole copy on RV32 and two on Cortex-M3.
+The `*_in` paths leave none of these bytes on the stack or in the freed
+allocation, for every parameter set, both boards, and both backends. An earlier
+campaign with a harness removed on 2026-09-28 also found 4.2–6.4 KiB of prepared
+ML-KEM state after import, preparation, and decapsulation. The rebuilt harness
+does not yet measure prepared state, decapsulation, or Ed25519, X25519, and
+ECDSA owners.
 
 `tests/secret_redaction.rs` pins public `Debug` and error behavior. Errors expose
 only public sizes or opaque verification failures unless a documented variant

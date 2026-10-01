@@ -184,6 +184,7 @@ Diagnostic modes do not qualify a release.
 | Script            | Caller |
 | ----------------- | ------ |
 | `stack/frames.py` | `just stack-frames [--target TARGET]... [--portable] [--rustflags FLAGS] [--json PATH]` |
+| `stack/residue.py` | `just stack-residue [--board BOARD]... [--backend native\|portable]... [--output DIR]` |
 
 `stack/frames.py` reviews each scrubbed secret-worker boundary in a linked release binary.
 It builds `tools/frame-review` with `-Z emit-stack-sizes` and the shipping release profile;
@@ -206,6 +207,22 @@ It is static build evidence for the reviewed compiler, target, and features.
 It does not execute the binary.
 `stack/frames_test.py` (part of `just test-scripts`) checks the parsing and failure rules
 on synthetic disassembly for each architecture.
+
+`stack/residue.py` measures moved-copy residue of secret owners.
+It builds `tools/residue-harness` for RV32 (`riscv32imac-unknown-none-elf`) and Cortex-M3
+(`thumbv6m-none-eabi`), with native and `portable-only` backends, and boots each build in QEMU on the
+`virt` and `mps2-an385` boards. Each scenario runs once on a painted stack and painted allocator arenas.
+When it returns, the harness copies the dead stack and both arenas to a snapshot,
+using loops that make no calls. Only then does it derive the scenario's secret byte strings again.
+The host reports how many bytes of each secret occur in 16-byte windows in each region,
+and how many whole copies remain.
+Scenarios marked `none` fail on any secret byte found. Two controls must find a planted secret in full,
+one in a returned frame and one in a freed allocation. A third control clears its copy before returning,
+and must find nothing. A panic, a missing scenario, or a truncated log also fails.
+`--output DIR` keeps the raw UART logs and `report.json`.
+QEMU runs establish what the compiled code leaves in memory under emulation. They are not device timing
+or device stack evidence. `stack/residue_test.py` (part of `just test-scripts`) checks the parsing and
+judgement on synthetic logs.
 
 ## Benchmarks and updates
 

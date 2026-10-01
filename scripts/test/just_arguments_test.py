@@ -59,6 +59,7 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
       'ct-replay': ['scripts/ct/replay.py'],
       'ct-validate': ['scripts/ct/validate.py'],
       'stack-frames': ['scripts/stack/frames.py'],
+      'stack-residue': ['scripts/stack/residue.py'],
       'bench': ['scripts/bench/bounded.py', str(recorder), 'scripts/bench/runner.py', 'bench'],
       'profile': ['scripts/bench/bounded.py', str(recorder), 'scripts/bench/runner.py', 'profile'],
       'perf-codegen': ['scripts/bench/runner.py', 'codegen'],
