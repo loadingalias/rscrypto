@@ -136,6 +136,25 @@ memory in every mode. Only the portable backend runs this path. Dispatched SIMD 
 (`blake3/rscrypto/*`, 0 B to 1 MiB, plain and keyed) stayed within ±1% of `2cbc2cb2` on x86-64,
 including after the x86 owned hash-many kernels gained a final-block length.
 
+`b18697fd` sends only keyed and derive-key portable inputs through the shared helper; unkeyed
+inputs return to the tiny-input and generic one-chunk paths. Rerun on 2026-10-01 on fresh hosts of
+the same types, three interleaved rounds of `2cbc2cb2` and `b18697fd`, same filter and features.
+Median change versus `2cbc2cb2`, with the per-round range:
+
+| Input | x86-64 unkeyed | x86-64 keyed | Graviton4 unkeyed | Graviton4 keyed |
+| ---: | ---: | ---: | ---: | ---: |
+| 0 B | −0.1% (−0.1 to 0.0) | +7.3% (+7.1 to +11.7) | +0.1% (0.0 to +0.3) | +1.1% (+1.0 to +1.2) |
+| 1 B | −0.1% (−0.2 to 0.0) | +6.2% (+6.2 to +8.5) | +0.1% (−0.2 to +0.4) | +2.7% (+2.7 to +3.2) |
+| 32 B | −0.3% (−0.3 to −0.1) | +6.5% (+5.9 to +7.3) | +1.1% (+1.0 to +1.1) | +0.8% (+0.7 to +0.9) |
+| 64 B | +0.5% (+0.3 to +0.6) | +7.0% (−0.9 to +7.0) | −1.8% (−1.9 to −1.6) | +2.3% (+2.2 to +2.3) |
+| 256 B | −0.9% (−1.0 to −0.8) | −1.6% (−2.0 to −1.6) | +0.4% (+0.3 to +0.4) | −0.8% (−0.8 to −0.7) |
+| 1,024 B | −0.1% (−0.2 to −0.1) | −0.8% (−0.8 to −0.8) | +0.1% (0.0 to +0.1) | −0.4% (−0.4 to −0.4) |
+
+Unkeyed portable digests are back at the `2cbc2cb2` cost. The keyed 0–64 byte cost remains,
+because keyed mode still clears every secret-derived intermediate. Round 2 on x86-64 had noisy
+keyed rows in both trees, so those ranges are wide. The machines were destroyed after the runs;
+per-run summaries are local only.
+
 ## 2026-09 allocator-adoption runs
 
 GitHub Bench runs keep their Criterion artifacts. Hosts: x86-64 Intel, x86-64 AMD, and AArch64 Linux.
