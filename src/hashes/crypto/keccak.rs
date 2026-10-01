@@ -983,6 +983,20 @@ impl<const RATE: usize, const ZEROIZE: bool> Default for KeccakCoreImpl<RATE, Pl
   }
 }
 
+#[cfg(feature = "ml-dsa")]
+impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakCoreImpl<RATE, P, ZEROIZE> {
+  /// Start an empty sponge with a permuter whose capabilities the caller has
+  /// already detected.
+  #[inline]
+  pub(crate) const fn with_permuter(permuter: P) -> Self {
+    Self {
+      state: [0u64; 25],
+      buf_len: 0,
+      permuter,
+    }
+  }
+}
+
 impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> Drop for KeccakCoreImpl<RATE, P, ZEROIZE> {
   fn drop(&mut self) {
     if ZEROIZE {

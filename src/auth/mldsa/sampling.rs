@@ -5,7 +5,7 @@ use super::{
   poly::{N, Poly, Q, select, to_montgomery},
 };
 use crate::{
-  hashes::crypto::keccak::{KeccakCore, KeccakXof, PublicKeccakXof, xof_seeded_32_2_pair},
+  hashes::crypto::keccak::{KeccakCore, KeccakXof, PlatformPermuter, PublicKeccakXof, xof_seeded_32_2_pair},
   secret::ZeroizingBytes,
 };
 
@@ -167,17 +167,21 @@ const HASH_STACK_SCRUB_WORDS: usize = 256;
 const _: () = assert!(HASH_STACK_SCRUB_WORDS.is_multiple_of(4));
 
 pub(super) fn hash(parts: &[&[u8]], out: &mut [u8]) {
-  absorb_and_squeeze(parts, out);
+  // Capability detection runs here, before any secret is loaded. Its first
+  // call in a process initializes a cache far deeper than the scrub, so it
+  // must return before the worker starts rather than run inside it.
+  let permuter = PlatformPermuter::default();
+  absorb_and_squeeze(permuter, parts, out);
   // Both calls start from this frame, so the scrubber's buffer overlays the
   // worker's dead frame. That covers compiler-created Keccak lane spills that
-  // no named state owner can clear. Changes to this boundary require linked
-  // frame review on every reviewed target.
+  // no named state owner can clear. Changes to this boundary require
+  // `just stack-frames` on every reviewed target.
   scrub_dead_stack();
 }
 
 #[inline(never)]
-fn absorb_and_squeeze(parts: &[&[u8]], out: &mut [u8]) {
-  let mut state = KeccakCore::<136>::default();
+fn absorb_and_squeeze(permuter: PlatformPermuter, parts: &[&[u8]], out: &mut [u8]) {
+  let mut state = KeccakCore::<136>::with_permuter(permuter);
   for part in parts {
     state.update(part);
   }
