@@ -196,7 +196,7 @@ assert!(
       feature = "xxh3",
       feature = "chacha20poly1305",
       feature = "xchacha20poly1305",
-      feature = "ml-kem",
+      all(feature = "ml-kem", not(feature = "portable-only"), not(miri)),
       all(feature = "ml-dsa", not(feature = "portable-only"), not(miri)),
       feature = "argon2"
     )
