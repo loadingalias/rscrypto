@@ -1,0 +1,28 @@
+[package]
+name = "rscrypto-frame-review"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[workspace]
+
+[profile.release]
+codegen-units = 1
+debug = false
+lto = "fat"
+opt-level = 3
+overflow-checks = true
+panic = "abort"
+strip = false
+
+[dependencies]
+rscrypto = { path = "../..", default-features = false, features = ["ml-dsa", "ml-kem", "std"] }
+
+[[bin]]
+name = "rscrypto-frame-review"
+path = "src/main.rs"
+bench = false
+
+[features]
+portable-only = ["rscrypto/portable-only"]

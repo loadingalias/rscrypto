@@ -58,6 +58,7 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
       'ct-full': ['scripts/ct/full.py'], 'ct-binsec': ['scripts/ct/binsec.py'],
       'ct-replay': ['scripts/ct/replay.py'],
       'ct-validate': ['scripts/ct/validate.py'],
+      'stack-frames': ['scripts/stack/frames.py'],
       'bench': ['scripts/bench/bounded.py', str(recorder), 'scripts/bench/runner.py', 'bench'],
       'profile': ['scripts/bench/bounded.py', str(recorder), 'scripts/bench/runner.py', 'profile'],
       'perf-codegen': ['scripts/bench/runner.py', 'codegen'],

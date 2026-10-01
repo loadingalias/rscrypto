@@ -179,6 +179,34 @@ Each native runner verifies the complete prepared archive and measures the selec
 Release callers and manual runs with no diagnostic selection retain the full required lane.
 Diagnostic modes do not qualify a release.
 
+## Secret stack evidence
+
+| Script            | Caller |
+| ----------------- | ------ |
+| `stack/frames.py` | `just stack-frames [--target TARGET]... [--portable] [--rustflags FLAGS] [--json PATH]` |
+
+`stack/frames.py` reviews each scrubbed secret-worker boundary in a linked release binary.
+It builds `tools/frame-review` with `-Z emit-stack-sizes` and the shipping release profile;
+the binary runs every ML-DSA and ML-KEM public operation once. Linux targets other than the host
+link through `ct/zig-cc.sh`. Frames come from the compiler's `.stack_sizes` records,
+and calls come from the linked disassembly, resolved by address.
+The review fails when a worker's depth below its caller exceeds the scrub buffer,
+when a worker reaches capability detection,
+or when a caller of a worker does not also call the scrub.
+It also fails on any path it cannot bound: a function without a frame record,
+an indirect transfer, an unresolved import, or recursion. These paths are reported, never dropped.
+libc `memcpy`, `memmove`, `memset`, `memcmp`, and `bcmp` count as frameless leaves plus the
+target red zone, and each report lists that assumption.
+Panic exits are listed but not counted, because the artifact uses `panic = "abort"`.
+The tool does not verify where the buffer sits inside the scrub frame;
+it checks only that the scrub's extent can hold the buffer.
+
+The review covers x86-64, AArch64, POWER, IBM Z, and RISC-V 64 Linux ELF binaries.
+It is static build evidence for the reviewed compiler, target, and features.
+It does not execute the binary.
+`stack/frames_test.py` (part of `just test-scripts`) checks the parsing and failure rules
+on synthetic disassembly for each architecture.
+
 ## Benchmarks and updates
 
 | Script                | Caller |

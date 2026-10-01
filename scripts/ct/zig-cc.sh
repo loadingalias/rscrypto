@@ -24,6 +24,10 @@ PRINT_CT_MAP=false
 for arg in "$@"; do
 	if [[ "$arg" == --target=* ]]; then
 		TARGET="${arg#--target=}"
+	elif [[ "$arg" == "-Wl,--fix-cortex-a53-843419" ]]; then
+		# rustc passes this erratum workaround for every AArch64 Linux link, and
+		# zig cc rejects it. The cross-linked artifacts are reviewed, never run.
+		continue
 	else
 		ARGS+=("$arg")
 		if [[ "$arg" == "-Wl,--print-map" ]]; then

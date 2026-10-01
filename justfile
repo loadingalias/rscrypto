@@ -179,6 +179,7 @@ test-scripts:
     @scripts/lib/python.sh scripts/check/compat_test.py
     @scripts/lib/python.sh scripts/test/fuzz_runner_test.py
     @scripts/lib/python.sh scripts/asm/p384_test.py
+    @scripts/lib/python.sh scripts/stack/frames_test.py
 
 # Exercise artifact transfer and the pinned rustdoc build/run contract.
 [group('tests')]
@@ -250,6 +251,12 @@ ct-artifacts *args:
 [group('constant-time')]
 ct-validate *args:
     @scripts/lib/python.sh scripts/ct/validate.py "$@"
+
+# Secret stack evidence
+# Review secret-worker stack depth against its scrub in linked release binaries.
+[group('secret-lifecycle')]
+stack-frames *args:
+    @scripts/lib/python.sh scripts/stack/frames.py "$@"
 
 # Coverage
 
