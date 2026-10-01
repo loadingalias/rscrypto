@@ -8220,6 +8220,8 @@ fn zeroize_poly_no_fence(poly: &mut Poly) {
 
 #[cfg(test)]
 mod tests {
+  use alloc::vec::Vec;
+
   use super::*;
   #[cfg(miri)]
   use crate::{Kem, MlKem512, MlKem512Ciphertext};

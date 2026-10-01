@@ -1422,6 +1422,8 @@ fn subtract_modulus_once(value: Uint, high: u64) -> Uint {
 
 #[cfg(all(test, feature = "p384-ecdh"))]
 mod tests {
+  use alloc::{vec, vec::Vec};
+
   use super::{Affine, FieldElement, Jacobian, Scalar, Uint, WINDOW_TABLE_SIZE};
 
   const GENERATOR_X: Uint = Uint([
