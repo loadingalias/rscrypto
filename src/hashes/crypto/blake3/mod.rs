@@ -1297,9 +1297,10 @@ impl OneChunkScratch {
 
 /// Portable root words of an input of at most one chunk.
 ///
-/// Const so `Blake3::digest_const` and the runtime portable one-shot path run
-/// the same code. Every intermediate lives in `scratch`. Inlining lets the
-/// unkeyed runtime caller keep them in registers and skip the dead zeroing.
+/// Const so `Blake3::digest_const` and the keyed and derive-key runtime
+/// portable one-shot paths run the same code. Every intermediate lives in
+/// `scratch`, which those runtime callers clear. Inlining avoids an
+/// out-of-line call on scratch in memory.
 #[inline(always)]
 const fn one_chunk_root_words_portable(
   key_words: &[u32; 8],
@@ -2628,8 +2629,13 @@ fn digest_oneshot_words(kernel: Kernel, key_words: &[u32; 8], flags: u32, input:
     }
   }
 
-  // The portable kernel shares its one-chunk path with `Blake3::digest_const`.
-  if input.len() <= CHUNK_LEN && kernel.id == kernels::Blake3KernelId::Portable {
+  // Keyed and derive-key portable inputs share the one-chunk path of
+  // `Blake3::digest_const`, which clears its scratch. Unkeyed inputs take the
+  // generic path below: the shared scratch stays in memory and slows them.
+  if input.len() <= CHUNK_LEN
+    && kernel.id == kernels::Blake3KernelId::Portable
+    && flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0
+  {
     return digest_one_chunk_root_words_portable(key_words, flags, input);
   }
 
