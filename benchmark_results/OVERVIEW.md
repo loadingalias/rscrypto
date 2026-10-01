@@ -94,6 +94,32 @@ That scorecard uses a different eight-host Linux matrix and predates the current
 ML-KEM, Argon2, and timed-workload comparison contracts. Replacing it requires a
 fresh fastest-equivalent-case curation rather than combining the two campaigns.
 
+## 2026-09 allocator-adoption runs
+
+GitHub Bench runs keep their Criterion artifacts. Hosts: x86-64 Intel, x86-64 AMD, and AArch64 Linux.
+
+- ML-KEM, `ebe24ea9` (run
+  [#36483389850](https://github.com/loadingalias/rscrypto/actions/runs/36483389850)) versus
+  `b672f572` (run [#36495823483](https://github.com/loadingalias/rscrypto/actions/runs/36495823483)):
+  key preparation was 0.4–3.0% faster on all nine host and parameter-set pairs; every other row
+  stayed within ±1.6% in both directions.
+- Caller-provided work memory, `2c901505` (run
+  [#36497076205](https://github.com/loadingalias/rscrypto/actions/runs/36497076205)), fresh versus
+  reused memory within one run:
+
+  | Host | Argon2id 19 MiB | RustCrypto, reused | scrypt 128 MiB |
+  | --- | --- | --- | --- |
+  | x86-64 Intel | 9.75 → 8.85 ms (−9.2%) | 13.82 ms | 245.7 → 198.8 ms (−19.1%) |
+  | x86-64 AMD | 6.02 → 5.90 ms (−1.9%, intervals overlap) | 10.54 ms | 327.4 → 295.1 ms (−9.8%) |
+  | AArch64 Linux | 11.65 → 11.55 ms (−0.8%) | 11.40 ms | 161.1 → 130.7 ms (−18.9%) |
+
+  RustCrypto's reused row does not clear its buffer; rscrypto clears it on every call. Apple
+  Silicon showed no reuse gain. The cost is keeping the buffer resident between calls.
+
+No compiler-driven performance claim exists for Rust 1.100: the comparison of the
+pre-change implementation on Rust 1.98.1, the same implementation on the release
+compiler, and the release candidate on that compiler has not run.
+
 ## P-256 ECDH development snapshot
 
 The Apple M1 run measured complete API operations with Criterion. Rscrypto

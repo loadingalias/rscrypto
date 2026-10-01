@@ -54,6 +54,17 @@ fails this gate. The sentinel does not qualify other alignments, owners, heap
 storage, error paths, or compiler-created copies; the retained machine code
 still needs target-specific review.
 
+The moved-copy claims for ML-KEM rest on one residue campaign, run on
+`nightly-2026-09-25` under QEMU 11.1.1 on the RV32 `virt` and Cortex-M3
+`mps2-an385` boards, with native and portable backends. By-value key generation
+left all of `dk_pke` (1,536, 2,304, or 3,072 bytes) and `z` in the caller's
+frame; import, preparation, and decapsulation left 4.2–6.4 KiB of prepared
+state. The `*_in` paths left nothing on the stack or in the freed allocation for
+all three parameter sets, both boards, and both backends, and the controls
+behaved. The harness was removed on 2026-09-28; rebuild it before citing new
+residue results, including for Ed25519, X25519, and ECDSA owners, which it did
+not measure.
+
 `tests/secret_redaction.rs` pins public `Debug` and error behavior. Errors expose
 only public sizes or opaque verification failures unless a documented variant
 explicitly returns caller data. `expert::DisplaySecret` and diagnostic APIs are

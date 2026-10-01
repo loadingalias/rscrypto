@@ -76,6 +76,10 @@ remove that requirement:
 Unstable features can change between nightlies. The tested contract for these targets is the
 pinned nightly; a newer nightly may fail to build them until rscrypto adapts.
 
+Allocator-aware APIs, such as the ML-KEM and ML-DSA `*_in` constructors, use only the allocator
+surface that is stable in Rust 1.100. rscrypto does not enable `allocator_api`, so fallible
+allocator extensions such as `Box::try_new_in` stay out of its API until they stabilize.
+
 ## Supported targets
 
 [`.config/target-matrix.json`](../.config/target-matrix.json) is the target support catalog.
