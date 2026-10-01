@@ -18,11 +18,15 @@
 //! `g = 0` and `f = +-1` for nonzero `x`, so `+-d` is `x^-1 * R^2`, the
 //! Montgomery form of the inverse of the Montgomery-form input.
 //!
-//! Every loop has a public, fixed trip count, and every secret-dependent
-//! choice is a mask. The divstep loop is AArch64 or x86-64 inline assembly
-//! so that its masks stay integer ALU operations without compiler-inserted
-//! selects. Like the
-//! Fermat chain, this does not clear its intermediate values.
+//! In [`invert_montgomery`] every loop has a public, fixed trip count, and
+//! every secret-dependent choice is a mask. Its divstep loop is AArch64 or
+//! x86-64 inline assembly so that its masks stay integer ALU operations without
+//! compiler-inserted selects. Like the Fermat chain, it does not clear its
+//! intermediate values.
+//!
+//! [`invert_montgomery_vartime`] runs the same divsteps for public inputs on
+//! every target, but its run time depends on the input: each batch branches on
+//! the low bits of `f` and `g`, and the loop stops once `g = 0`.
 
 const M62: u64 = (1 << 62) - 1;
 const LIMBS62: usize = 7;
@@ -31,6 +35,9 @@ const BATCHES: usize = 18;
 const STEPS_PER_BATCH: usize = 62;
 
 const _: () = assert!(BATCHES * STEPS_PER_BATCH >= 1110);
+/// `STEPS_PER_BATCH` as the shift and bit-count type of the variable-time loop.
+const BATCH_STEPS_U32: u32 = 62;
+const _: () = assert!(BATCH_STEPS_U32 as usize == STEPS_PER_BATCH);
 
 /// Signed radix-2^62 integer: limbs 0..6 hold 62 bits and limb 6 is signed.
 type Signed62 = [i64; LIMBS62];
@@ -97,6 +104,10 @@ fn fitting_i64(value: i128) -> i64 {
   low_u64(value).cast_signed()
 }
 
+#[cfg(any(
+  all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)),
+  all(target_arch = "x86_64", not(feature = "portable-only"), not(miri))
+))]
 /// Run 62 divsteps on the low 64 bits of `f` and `g`.
 ///
 /// Swap and negation are expressed as `(x ^ mask) - mask` and `x & mask`, so
@@ -332,6 +343,10 @@ fn negate_masked(value: &mut Signed62, mask: i64) {
   value[LIMBS62 - 1] = (value[LIMBS62 - 1] ^ mask).strict_sub(mask).strict_add(carry);
 }
 
+#[cfg(any(
+  all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)),
+  all(target_arch = "x86_64", not(feature = "portable-only"), not(miri))
+))]
 /// Return the Montgomery-form inverse of a canonical Montgomery-form value,
 /// or zero for zero.
 pub(super) fn invert_montgomery(value: &[u64; 6]) -> [u64; 6] {
@@ -350,6 +365,88 @@ pub(super) fn invert_montgomery(value: &[u64; 6]) -> [u64; 6] {
   }
   // `f = +-1`, or `p` for a zero input whose `d` is zero. Map `d` from
   // `(-2p, p)` to `[0, p)` and apply the sign of `f`.
+  add_modulus_if_negative(&mut d);
+  negate_masked(&mut d, f[LIMBS62 - 1] >> 63);
+  add_modulus_if_negative(&mut d);
+  from_signed62(&d)
+}
+
+/// Run 62 divsteps on the low 64 bits of `f` and `g` in variable time.
+///
+/// This computes the same transition as the constant-time divstep loop. When
+/// `g` is even, a divstep only halves it, so all trailing zeros are taken at
+/// once. When `g` is odd and `delta > 0`, the swap step is written as
+/// `(f, g) <- (g, -f)` and `delta <- -delta` followed by an ordinary odd
+/// step. With `delta <= 0`, the next `1 - delta` divsteps cannot swap, so
+/// they amount to adding to `g` the multiple of `f` that clears that many low
+/// bits; the multiple uses `f^-1 mod 2^6`, so one pass clears at most six.
+/// Matrix entries are tracked modulo 2^64; the module bounds make the final
+/// values exact.
+fn divsteps_vartime(mut delta: i64, mut f: u64, mut g: u64) -> (i64, Transition) {
+  let (mut u, mut v, mut q, mut r) = (1u64, 0u64, 0u64, 1u64);
+  let mut remaining = BATCH_STEPS_U32;
+  loop {
+    // The sentinel bit stops the count at the steps left in this batch.
+    let zeros = (g | (u64::MAX << remaining)).trailing_zeros();
+    g >>= zeros;
+    u <<= zeros;
+    v <<= zeros;
+    delta = delta.strict_add(i64::from(zeros));
+    remaining = remaining.strict_sub(zeros);
+    if remaining == 0 {
+      break;
+    }
+    // `f` and `g` are both odd here.
+    if delta > 0 {
+      (f, g) = (g, f.wrapping_neg());
+      (u, v, q, r) = (q, r, u.wrapping_neg(), v.wrapping_neg());
+      delta = delta.strict_neg();
+    }
+    let bits = 1i64.strict_sub(delta).min(i64::from(remaining)).min(6);
+    let mask = (1u64 << bits).strict_sub(1);
+    // Newton's step lifts `f^-1 = f (mod 8)` to `f^-1 mod 2^6`.
+    let f_inverse = f.wrapping_mul(2u64.wrapping_sub(f.wrapping_mul(f)));
+    let w = g.wrapping_mul(f_inverse).wrapping_neg() & mask;
+    g = g.wrapping_add(f.wrapping_mul(w));
+    q = q.wrapping_add(u.wrapping_mul(w));
+    r = r.wrapping_add(v.wrapping_mul(w));
+  }
+  (
+    delta,
+    Transition {
+      u: u.cast_signed(),
+      v: v.cast_signed(),
+      q: q.cast_signed(),
+      r: r.cast_signed(),
+    },
+  )
+}
+
+/// Return the Montgomery-form inverse of a canonical Montgomery-form value,
+/// or zero for zero, in variable time.
+///
+/// SECURITY: Run time depends on `value`. Pass only values derived from public
+/// data.
+pub(super) fn invert_montgomery_vartime(value: &[u64; 6]) -> [u64; 6] {
+  let mut f = MODULUS;
+  let mut g = to_signed62(value);
+  let mut d = [0i64; LIMBS62];
+  let mut e = to_signed62(&super::FIELD_R2.0);
+  let mut delta = 1i64;
+  // The batches run the original divstep, so the constant-time bound also
+  // bounds this loop.
+  for _ in 0..BATCHES {
+    if g == [0; LIMBS62] {
+      break;
+    }
+    let f_low = f[0].cast_unsigned() | (f[1].cast_unsigned() << 62);
+    let g_low = g[0].cast_unsigned() | (g[1].cast_unsigned() << 62);
+    let (next_delta, transition) = divsteps_vartime(delta, f_low, g_low);
+    delta = next_delta;
+    update_fg(&mut f, &mut g, &transition);
+    update_de(&mut d, &mut e, &transition);
+  }
+  debug_assert!(g == [0; LIMBS62]);
   add_modulus_if_negative(&mut d);
   negate_masked(&mut d, f[LIMBS62 - 1] >> 63);
   add_modulus_if_negative(&mut d);

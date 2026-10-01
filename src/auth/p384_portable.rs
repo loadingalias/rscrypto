@@ -24,10 +24,6 @@ use crate::traits::ct;
 #[cfg(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))]
 #[path = "p384_aarch64.rs"]
 mod aarch64;
-#[cfg(any(
-  all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)),
-  all(target_arch = "x86_64", not(feature = "portable-only"), not(miri))
-))]
 #[path = "p384_divsteps.rs"]
 mod divsteps;
 #[cfg(all(target_arch = "x86_64", not(feature = "portable-only"), not(miri)))]
@@ -468,6 +464,13 @@ impl FieldElement {
     }
   }
 
+  /// Return the inverse of a nonzero public element and zero for zero.
+  ///
+  /// SECURITY: Variable time. Pass only values derived from public data.
+  fn invert_public(self) -> Self {
+    Self(Uint(divsteps::invert_montgomery_vartime(&self.0.0)))
+  }
+
   /// Return `self^(p - 2)`, the inverse of a nonzero element and zero for zero.
   #[cfg(any(
     test,
@@ -541,6 +544,38 @@ impl Affine {
     self.y.to_uint().write_be(&mut coordinate);
     y.copy_from_slice(&coordinate);
     bytes
+  }
+
+  /// Select `sign(digit) * table[|digit| - 1]` and report whether `digit` is
+  /// zero, in which case the point is meaningless.
+  fn select_signed(table: &[Self; WINDOW_TABLE_SIZE], digit: u8) -> (Self, u64) {
+    let sign = 0u8.wrapping_sub(digit >> 7);
+    let magnitude = usize::from((digit ^ sign).wrapping_sub(sign));
+    // Start from the masked first entry instead of zero. AArch64 LLVM keeps
+    // the accumulators in SIMD registers and would copy zero into each with
+    // `fmov`, which BINSEC cannot interpret.
+    // SECURITY: Keep every equality mask opaque so LLVM retains the full
+    // table scan instead of loading from a secret-derived address.
+    let first = &table[0];
+    let mask = core::hint::black_box(mask_equal_usize(magnitude, 1));
+    let mut x = Uint::masked(&first.x.0.0, mask);
+    let mut y = Uint::masked(&first.y.0.0, mask);
+    for (candidate, entry) in table[1..].iter().zip(2..) {
+      let mask = core::hint::black_box(mask_equal_usize(magnitude, entry));
+      x.accumulate_masked(&candidate.x.0.0, mask);
+      y.accumulate_masked(&candidate.y.0.0, mask);
+    }
+    let y = FieldElement::from_montgomery(y);
+    // SECURITY: Keep the sign mask opaque. Otherwise LLVM can lower this
+    // select to a branch on the digit's sign bit.
+    let negate = core::hint::black_box(0u64.wrapping_sub(u64::from(sign & 1)));
+    (
+      Self {
+        x: FieldElement::from_montgomery(x),
+        y: FieldElement::select(y, y.negate(), negate),
+      },
+      mask_equal_usize(magnitude, 0),
+    )
   }
 
   /// Select a fixed-base comb entry and report whether `digit` is zero.
@@ -672,58 +707,18 @@ impl Jacobian {
     Self { x, y, z }
   }
 
-  /// Add a cached table entry (add-2007-bl with cached `Z2^2` and `Z2^3`,
-  /// 10M + 4S).
-  ///
-  /// Returns the formula result and a mask that is set when `U1 = U2` and
-  /// `S1 = S2`. The result is correct for distinct finite points, including
-  /// opposites, which yield `Z3 = 0`. Callers select the result for infinity
-  /// operands and, when reachable, equal operands.
-  #[inline(always)]
-  fn add_formula(self, rhs: CachedJacobian) -> (Self, u64) {
-    // Statements alternate the critical u -> h -> i -> j -> x -> y chain
-    // with independent products so adjacent kernels can overlap.
-    let z1z1 = self.z.square();
-    let u1 = self.x.mul(rhs.zz);
-    let s1 = self.y.mul(rhs.zzz);
-    let u2 = rhs.point.x.mul(z1z1);
-    let z1_cubed = self.z.mul(z1z1);
-    let h = u2.sub(u1);
-    let s2 = rhs.point.y.mul(z1_cubed);
-    let i = h.double().square();
-    let z = self.z.add(rhs.point.z).square();
-    let j = h.mul(i);
-    let v = u1.mul(i);
-    let r = s2.sub(s1).double();
-    let r_squared = r.square();
-    let s1j = s1.mul(j);
-    let x = r_squared.sub(j).sub(v.double());
-    let z = z.sub(z1z1).sub(rhs.zz).mul(h);
-    let y = r.mul(v.sub(x)).sub(s1j.double());
-    (Self { x, y, z }, h.zero_mask() & r.zero_mask())
-  }
-
-  /// Add points that are known not to be equal finite points.
-  #[inline(always)]
-  fn add_distinct(self, rhs: CachedJacobian) -> Self {
-    let (sum, _) = self.add_formula(rhs);
-    let sum = Self::select(sum, rhs.point, self.infinity_mask());
-    Self::select(sum, self, rhs.point.infinity_mask())
-  }
-
-  /// Add any two points.
-  fn add_complete(self, rhs: CachedJacobian) -> Self {
-    let (sum, equal) = self.add_formula(rhs);
-    let finite = !(self.infinity_mask() | rhs.point.infinity_mask());
-    let sum = Self::select(sum, self.double(), equal & finite);
-    let sum = Self::select(sum, rhs.point, self.infinity_mask());
-    Self::select(sum, self, rhs.point.infinity_mask())
-  }
-
   /// Add a finite affine point (madd-2007-bl, 7M + 4S) when the finite
   /// operands are known to be neither equal nor opposite.
   #[inline(always)]
   fn add_mixed_formula(self, rhs: Affine) -> Self {
+    self.add_mixed_formula_with_equality(rhs).0
+  }
+
+  /// Return [`Self::add_mixed_formula`] and a mask that is set when `U1 = U2`
+  /// and `S1 = S2`. The result is correct for distinct finite points,
+  /// including opposites, which yield `Z3 = 0`.
+  #[inline(always)]
+  fn add_mixed_formula_with_equality(self, rhs: Affine) -> (Self, u64) {
     let z1z1 = self.z.square();
     let u2 = rhs.x.mul(z1z1);
     let s2 = rhs.y.mul(self.z);
@@ -740,7 +735,7 @@ impl Jacobian {
     let x = r_squared.sub(j).sub(v.double());
     let y = r.mul(v.sub(x)).sub(y1j.double());
     let z = z.sub(z1z1).sub(hh);
-    Self { x, y, z }
+    (Self { x, y, z }, h.zero_mask() & r.zero_mask())
   }
 
   /// Mixed addition that also handles either operand being infinity.
@@ -754,8 +749,21 @@ impl Jacobian {
     Self::select(sum, self, rhs_infinity_mask)
   }
 
+  /// Add an affine point to any point. Either operand may be infinity, and the
+  /// finite operands may be equal.
+  fn add_mixed_complete(self, rhs: Affine, rhs_infinity_mask: u64) -> Self {
+    let (sum, equal) = self.add_mixed_formula_with_equality(rhs);
+    let sum = Self::select(sum, self.double(), equal);
+    let sum = Self::select(sum, Self::from_affine(rhs), self.infinity_mask());
+    Self::select(sum, self, rhs_infinity_mask)
+  }
+
   fn to_affine(self) -> Affine {
-    let z_inverse = self.z.invert();
+    self.to_affine_with(self.z.invert())
+  }
+
+  /// Return the affine point for `z_inverse = 1 / Z`.
+  fn to_affine_with(self, z_inverse: FieldElement) -> Affine {
     let z_inverse_squared = z_inverse.square();
     Affine {
       x: self.x.mul(z_inverse_squared),
@@ -765,71 +773,6 @@ impl Jacobian {
 
   fn affine_x(self) -> FieldElement {
     self.x.mul(self.z.invert().square())
-  }
-}
-
-/// Window table entry: a Jacobian point with cached `Z^2` and `Z^3`.
-#[derive(Clone, Copy)]
-struct CachedJacobian {
-  point: Jacobian,
-  zz: FieldElement,
-  zzz: FieldElement,
-}
-
-impl CachedJacobian {
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  const INFINITY: Self = Self {
-    point: Jacobian::INFINITY,
-    zz: FieldElement::ZERO,
-    zzz: FieldElement::ZERO,
-  };
-
-  fn new(point: Jacobian) -> Self {
-    let zz = point.z.square();
-    Self {
-      point,
-      zz,
-      zzz: zz.mul(point.z),
-    }
-  }
-
-  /// Select `sign(digit) * table[|digit| - 1]`, or infinity for digit zero.
-  fn select_signed(table: &[Self; WINDOW_TABLE_SIZE], digit: u8) -> Self {
-    let sign = 0u8.wrapping_sub(digit >> 7);
-    let magnitude = usize::from((digit ^ sign).wrapping_sub(sign));
-    // Start from the masked first entry instead of zero. AArch64 LLVM keeps
-    // the accumulators in SIMD registers and would copy zero into each with
-    // `fmov`, which BINSEC cannot interpret.
-    // SECURITY: Keep every equality mask opaque so LLVM retains the full
-    // table scan instead of loading from a secret-derived address.
-    let first = &table[0];
-    let mask = core::hint::black_box(mask_equal_usize(magnitude, 1));
-    let mut x = Uint::masked(&first.point.x.0.0, mask);
-    let mut y = Uint::masked(&first.point.y.0.0, mask);
-    let mut z = Uint::masked(&first.point.z.0.0, mask);
-    let mut zz = Uint::masked(&first.zz.0.0, mask);
-    let mut zzz = Uint::masked(&first.zzz.0.0, mask);
-    for (candidate, entry) in table[1..].iter().zip(2..) {
-      let mask = core::hint::black_box(mask_equal_usize(magnitude, entry));
-      x.accumulate_masked(&candidate.point.x.0.0, mask);
-      y.accumulate_masked(&candidate.point.y.0.0, mask);
-      z.accumulate_masked(&candidate.point.z.0.0, mask);
-      zz.accumulate_masked(&candidate.zz.0.0, mask);
-      zzz.accumulate_masked(&candidate.zzz.0.0, mask);
-    }
-    let y = FieldElement::from_montgomery(y);
-    // SECURITY: Keep the sign mask opaque. Otherwise LLVM can lower this
-    // select to a branch on the digit's sign bit.
-    let negate = core::hint::black_box(0u64.wrapping_sub(u64::from(sign & 1)));
-    Self {
-      point: Jacobian {
-        x: FieldElement::from_montgomery(x),
-        y: FieldElement::select(y, y.negate(), negate),
-        z: FieldElement::from_montgomery(z),
-      },
-      zz: FieldElement::from_montgomery(zz),
-      zzz: FieldElement::from_montgomery(zzz),
-    }
   }
 }
 
@@ -863,8 +806,12 @@ fn scalar_mul_generator(scalar: &Scalar) -> SecretJacobian {
   acc
 }
 
-/// Precompute `1P..=16P` for a validated finite public point.
-fn precompute_window_table(point: Affine) -> [CachedJacobian; WINDOW_TABLE_SIZE] {
+/// Precompute `1P..=16P` as affine points for a validated finite public point.
+///
+/// The entries depend only on the public point, so one variable-time inversion
+/// normalizes them all (Montgomery's batch trick). Affine entries make every
+/// window addition mixed and halve the coordinates the secret scan reads.
+fn precompute_window_table(point: Affine) -> [Affine; WINDOW_TABLE_SIZE] {
   let base = Jacobian::from_affine(point);
   let mut multiples = [base; WINDOW_TABLE_SIZE];
   multiples[1] = base.double();
@@ -873,20 +820,40 @@ fn precompute_window_table(point: Affine) -> [CachedJacobian; WINDOW_TABLE_SIZE]
     // in a group of prime order far above 17.
     multiples[index] = multiples[index.strict_sub(1)].add_mixed_formula(point);
   }
-  multiples.map(CachedJacobian::new)
+  // Entry 0 is `P` with `Z = 1`. `prefix[i]` is `Z_1 * ... * Z_i`.
+  let mut prefix = [FieldElement::ONE; WINDOW_TABLE_SIZE];
+  prefix[1] = multiples[1].z;
+  for index in 2..WINDOW_TABLE_SIZE {
+    prefix[index] = prefix[index.strict_sub(1)].mul(multiples[index].z);
+  }
+  // No multiple is infinity, so every `Z` and the product are nonzero.
+  let mut inverse = prefix[WINDOW_TABLE_SIZE - 1].invert_public();
+  let mut table = [point; WINDOW_TABLE_SIZE];
+  for index in (2..WINDOW_TABLE_SIZE).rev() {
+    // `inverse` is `1 / prefix[index]`.
+    table[index] = multiples[index].to_affine_with(inverse.mul(prefix[index.strict_sub(1)]));
+    inverse = inverse.mul(multiples[index].z);
+  }
+  table[1] = multiples[1].to_affine_with(inverse);
+  table
 }
 
 /// Multiply a public point by a secret scalar with a fixed signed window.
-fn scalar_mul_window(scalar: &Scalar, table: &[CachedJacobian; WINDOW_TABLE_SIZE]) -> SecretJacobian {
+fn scalar_mul_window(scalar: &Scalar, table: &[Affine; WINDOW_TABLE_SIZE]) -> SecretJacobian {
   let digits = scalar.signed_window_digits();
-  let mut acc = SecretJacobian(CachedJacobian::select_signed(table, digits.0[WINDOW_DIGITS - 1]).point);
+  let (top, top_infinity) = Affine::select_signed(table, digits.0[WINDOW_DIGITS - 1]);
+  let mut acc = SecretJacobian(Jacobian::select(
+    Jacobian::from_affine(top),
+    Jacobian::INFINITY,
+    top_infinity,
+  ));
   for row in (0..WINDOW_DIGITS - 1).rev() {
     for _ in 0..WINDOW_BITS {
       acc.0.double_in_place();
     }
-    let selected = CachedJacobian::select_signed(table, digits.0[row]);
+    let (selected, infinity) = Affine::select_signed(table, digits.0[row]);
     if row == 0 {
-      acc.0 = acc.0.add_complete(selected);
+      acc.0 = acc.0.add_mixed_complete(selected, infinity);
     } else {
       // Before digit `row`, the accumulator is m * P with m = 32 * S, where S
       // is the recoded prefix and S <= floor(k / 32^(row + 1)) + 1. For
@@ -894,7 +861,7 @@ fn scalar_mul_window(scalar: &Scalar, table: &[CachedJacobian; WINDOW_TABLE_SIZE
       // selected digit has magnitude at most 16, so m cannot equal it or its
       // negation modulo n unless an operand is infinity. Only the final
       // addition can meet equal operands.
-      acc.0 = acc.0.add_distinct(selected);
+      acc.0 = acc.0.add_mixed_distinct(selected, infinity);
     }
   }
   acc
@@ -963,36 +930,27 @@ pub(super) fn diag_select_generator_limb_digest(digit: u8) -> [u64; 2 * LIMBS] {
   output
 }
 
-/// Return the production signed-window selection over a fixed public table.
+/// Return the production signed-window selection over a fixed public table,
+/// followed by its digit-zero mask.
 ///
 /// The table holds distinct canonical limb patterns rather than curve points;
 /// the evidence concerns only the selector's data flow.
 #[cfg(all(rscrypto_internal, feature = "diag"))]
-pub(super) fn diag_select_window_limb_digest(digit: u8) -> [u64; 5 * LIMBS] {
-  let mut table = [CachedJacobian::INFINITY; WINDOW_TABLE_SIZE];
+pub(super) fn diag_select_window_limb_digest(digit: u8) -> [u64; 2 * LIMBS + 1] {
+  let zero = FieldElement::ZERO;
+  let mut table = [Affine { x: zero, y: zero }; WINDOW_TABLE_SIZE];
   for (index, entry) in (1u64..).zip(table.iter_mut()) {
     let pattern = |lane: u64| FieldElement::from_montgomery(Uint([index.strict_mul(lane); LIMBS]));
-    *entry = CachedJacobian {
-      point: Jacobian {
-        x: pattern(0x0101),
-        y: pattern(0x0303),
-        z: pattern(0x0505),
-      },
-      zz: pattern(0x0707),
-      zzz: pattern(0x0909),
+    *entry = Affine {
+      x: pattern(0x0101),
+      y: pattern(0x0303),
     };
   }
-  let selected = CachedJacobian::select_signed(&table, digit);
-  let mut output = [0u64; 5 * LIMBS];
-  for (chunk, coordinate) in output.chunks_exact_mut(LIMBS).zip([
-    selected.point.x,
-    selected.point.y,
-    selected.point.z,
-    selected.zz,
-    selected.zzz,
-  ]) {
-    chunk.copy_from_slice(&coordinate.0.0);
-  }
+  let (selected, infinity) = Affine::select_signed(&table, digit);
+  let mut output = [0u64; 2 * LIMBS + 1];
+  output[..LIMBS].copy_from_slice(&selected.x.0.0);
+  output[LIMBS..2 * LIMBS].copy_from_slice(&selected.y.0.0);
+  output[2 * LIMBS] = infinity;
   output
 }
 
@@ -1464,7 +1422,7 @@ fn subtract_modulus_once(value: Uint, high: u64) -> Uint {
 
 #[cfg(all(test, feature = "p384-ecdh"))]
 mod tests {
-  use super::{Affine, CachedJacobian, FieldElement, Jacobian, Scalar, Uint};
+  use super::{Affine, FieldElement, Jacobian, Scalar, Uint, WINDOW_TABLE_SIZE};
 
   const GENERATOR_X: Uint = Uint([
     0x3a54_5e38_7276_0ab7,
@@ -1695,12 +1653,8 @@ mod tests {
     }
   }
 
-  #[cfg(any(
-    all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)),
-    all(target_arch = "x86_64", not(feature = "portable-only"), not(miri))
-  ))]
-  #[test]
-  fn divstep_inversion_matches_fermat_chain() {
+  /// Edge values and `count` pseudorandom canonical field values.
+  fn inversion_inputs(count: usize) -> Vec<Uint> {
     let mut state = 0x0384_1111_2222_3333u64;
     let (p_minus_two, _) = P_MINUS_ONE.sub_raw(Uint([1, 0, 0, 0, 0, 0]));
     let mut inputs = vec![
@@ -1713,7 +1667,7 @@ mod tests {
       GENERATOR_X,
       GENERATOR_Y,
     ];
-    while inputs.len() < 3000 {
+    while inputs.len() < count {
       let mut limbs = [0u64; 6];
       for limb in &mut limbs {
         state = state
@@ -1726,9 +1680,27 @@ mod tests {
         inputs.push(candidate);
       }
     }
-    for value in inputs {
+    inputs
+  }
+
+  #[cfg(any(
+    all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)),
+    all(target_arch = "x86_64", not(feature = "portable-only"), not(miri))
+  ))]
+  #[test]
+  fn divstep_inversion_matches_fermat_chain() {
+    for value in inversion_inputs(3000) {
       let value = FieldElement::from_montgomery(value);
       assert!(value.invert() == value.invert_fermat());
+    }
+  }
+
+  #[test]
+  fn vartime_divstep_inversion_matches_fermat_chain() {
+    let count = if cfg!(miri) { 12 } else { 3000 };
+    for value in inversion_inputs(count) {
+      let value = FieldElement::from_montgomery(value);
+      assert!(value.invert_public() == value.invert_fermat());
     }
   }
 
@@ -1835,43 +1807,51 @@ mod tests {
     }
   }
 
+  /// `k * G` from the fixed-base comb, an independent path from the window.
+  fn generator_multiple(k: u8) -> Jacobian {
+    let mut bytes = [0u8; 48];
+    bytes[47] = k;
+    super::scalar_mul_generator(&Scalar::from_bytes(&bytes)).0
+  }
+
   #[test]
-  fn complete_addition_handles_equal_opposite_and_infinity() {
-    let point = Jacobian::from_affine(generator());
-    let cached = CachedJacobian::new(point);
-    let doubled = point.double().to_affine().encode_sec1();
-    assert_eq!(point.add_complete(cached).to_affine().encode_sec1(), doubled);
+  fn window_table_holds_affine_multiples() {
+    let table = super::precompute_window_table(generator());
+    for (entry, k) in table.iter().zip(1u8..) {
+      assert_eq!(
+        entry.encode_sec1(),
+        generator_multiple(k).to_affine().encode_sec1(),
+        "{k}G"
+      );
+    }
+    assert_eq!(table.len(), WINDOW_TABLE_SIZE);
+  }
+
+  #[test]
+  fn complete_mixed_addition_handles_equal_opposite_and_infinity() {
+    let g = generator();
+    let point = Jacobian::from_affine(g);
     let mut negated = point;
     negated.y = negated.y.negate();
-    assert_ne!(negated.add_complete(cached).infinity_mask(), 0);
-    assert_eq!(
-      Jacobian::INFINITY.add_complete(cached).to_affine().encode_sec1(),
-      generator().encode_sec1()
-    );
-    assert_eq!(
-      point
-        .add_complete(CachedJacobian::new(Jacobian::INFINITY))
-        .to_affine()
-        .encode_sec1(),
-      generator().encode_sec1()
-    );
+    let encode = |point: Jacobian| point.to_affine().encode_sec1();
+    assert_eq!(encode(point.add_mixed_complete(g, 0)), encode(generator_multiple(2)));
+    assert_ne!(negated.add_mixed_complete(g, 0).infinity_mask(), 0);
+    assert_eq!(encode(Jacobian::INFINITY.add_mixed_complete(g, 0)), g.encode_sec1());
+    assert_eq!(encode(point.add_mixed_complete(g, u64::MAX)), g.encode_sec1());
+    assert_ne!(Jacobian::INFINITY.add_mixed_complete(g, u64::MAX).infinity_mask(), 0);
     assert_ne!(Jacobian::INFINITY.double().infinity_mask(), 0);
 
-    // Cached entries with Z != 1: 2G + 2G = 4G and 2G + G = 3G, checked
-    // against doubling and the independent mixed-addition formula.
+    // Accumulators with Z != 1: 2G + G, 2G + 2G, and 2G - 2G.
     let two = point.double();
-    let three = two.add_mixed_formula(generator());
+    let two_affine = two.to_affine();
+    assert_eq!(encode(two.add_mixed_complete(g, 0)), encode(generator_multiple(3)));
     assert_eq!(
-      point.add_complete(CachedJacobian::new(two)).to_affine().encode_sec1(),
-      three.to_affine().encode_sec1()
+      encode(two.add_mixed_complete(two_affine, 0)),
+      encode(generator_multiple(4))
     );
-    assert_eq!(
-      two.add_complete(CachedJacobian::new(two)).to_affine().encode_sec1(),
-      two.double().to_affine().encode_sec1()
-    );
-    assert_eq!(
-      three.add_distinct(CachedJacobian::new(point)).to_affine().encode_sec1(),
-      two.double().to_affine().encode_sec1()
-    );
+    let mut minus_two = two;
+    minus_two.y = minus_two.y.negate();
+    assert_ne!(minus_two.add_mixed_complete(two_affine, 0).infinity_mask(), 0);
+    assert_eq!(encode(two.add_mixed_distinct(g, 0)), encode(generator_multiple(3)));
   }
 }

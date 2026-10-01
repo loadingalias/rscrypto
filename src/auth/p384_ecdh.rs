@@ -288,10 +288,11 @@ pub fn diag_p384_ecdh_select_generator_limb_digest(digit: u8) -> [u64; 12] {
   p384_portable::diag_select_generator_limb_digest(digit)
 }
 
-/// Return the production P-384 signed-window selection as Montgomery limbs.
+/// Return the production P-384 signed-window selection as Montgomery limbs,
+/// followed by its digit-zero mask.
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]
-pub fn diag_p384_ecdh_select_window_limb_digest(digit: u8) -> [u64; 30] {
+pub fn diag_p384_ecdh_select_window_limb_digest(digit: u8) -> [u64; 13] {
   p384_portable::diag_select_window_limb_digest(digit)
 }
 

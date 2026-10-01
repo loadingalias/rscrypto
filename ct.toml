@@ -2857,7 +2857,7 @@ sse_depth = 20000
 secrets = [{ name = "CT_BINSEC_P384_ECDH_WINDOW_DIGIT", kind = "global", bytes = 1 }]
 public = []
 assumptions = []
-notes = "All-target bounded proof for the production 16-entry signed Jacobian selector, including conditional negation, used by arbitrary-point agreement. The harness table holds public limb patterns; the proof concerns selector data flow only."
+notes = "All-target bounded proof for the production 16-entry signed affine selector, including conditional negation and the digit-zero mask, used by arbitrary-point agreement. The harness table holds public limb patterns; the proof concerns selector data flow only."
 claim = "ct-intended"
 
 [[binsec_kernel]]

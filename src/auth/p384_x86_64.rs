@@ -3,10 +3,10 @@
 //! Each kernel computes the same canonical result as its portable authority
 //! in `p384_portable.rs`: `montgomery_mul`, `montgomery_square`,
 //! `Uint::add_mod`, `Uint::sub_mod`, the addition chains behind
-//! `FieldElement::{triple, times4, times8}`, and the point operations
-//! `Jacobian::double_formula` and `Jacobian::add_distinct`. The two point
-//! blocks fuse whole formulas so that field values stay in one frame instead
-//! of passing through Rust between kernels. Multiplication and squaring use BMI2
+//! `FieldElement::{triple, times4, times8}`, and the point operation
+//! `Jacobian::double_formula`. The point block fuses the whole formula so that
+//! field values stay in one frame instead of passing through Rust between
+//! kernels. Multiplication and squaring use BMI2
 //! `MULX` with
 //! the ADX `ADCX`/`ADOX` pair, which lets each product row run its low-half
 //! and high-half carry chains through CF and OF independently. Callers select
