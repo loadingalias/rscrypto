@@ -94,6 +94,48 @@ That scorecard uses a different eight-host Linux matrix and predates the current
 ML-KEM, Argon2, and timed-workload comparison contracts. Replacing it requires a
 fresh fastest-equivalent-case curation rather than combining the two campaigns.
 
+## 2026-09-30 BLAKE3 batch and portable one-chunk runs
+
+Native AWS hosts, `nightly-2026-09-25`, catalog Criterion defaults, `blake3,parallel,std`.
+x86-64 is `c8i.4xlarge` (Intel Xeon 6975P-C, AVX-512 lanes); AArch64 is `c8g.4xlarge`
+(Graviton4, Neoverse-V2, NEON lanes). The source was the uncommitted working tree on top of
+`5ef7858a`. The machines were destroyed after the runs; per-run summaries are local only.
+
+`Blake3::digest_batch` over 64 equal-length messages, versus one `Blake3::digest` call each
+(`blake3/batch` and `blake3/batch-serial`, medians):
+
+| Message | x86-64 batch | x86-64 serial | Speedup | Graviton4 batch | Graviton4 serial | Speedup |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 21 B | 0.82 µs | 4.01 µs | 4.9× | 3.41 µs | 6.28 µs | 1.8× |
+| 64 B | 0.75 µs | 2.79 µs | 3.7× | 2.72 µs | 5.99 µs | 2.2× |
+| 256 B | 2.47 µs | 14.80 µs | 6.0× | 9.79 µs | 22.43 µs | 2.3× |
+| 1,024 B | 9.45 µs | 47.12 µs | 5.0× | 37.99 µs | 88.76 µs | 2.3× |
+
+The `blake3` crate, called once per message, was within 15% of rscrypto's serial row at every
+size on both hosts. The Graviton4 batch run preceded the x86 partial-block kernel change, which
+does not touch the NEON path.
+
+Portable one-chunk digest (`blake3/rscrypto-portable/*`, `--diag`), three interleaved rounds of
+`2cbc2cb2` (before `Blake3::digest_const`), `12cd0bfd` (current `main`), and the working tree,
+which inlines the shared one-chunk helper and reads a full final block in place. Median change
+versus `2cbc2cb2`:
+
+| Input | x86-64 `12cd0bfd` | x86-64 working tree | Graviton4 `12cd0bfd` | Graviton4 working tree |
+| ---: | ---: | ---: | ---: | ---: |
+| 0 B | +7.4% | +6.0% | +6.0% | +3.0% |
+| 32 B | +8.5% | +6.0% | +4.2% | +2.4% |
+| 64 B | +14.6% | +5.0% | +6.6% | +1.0% |
+| 256 B | −1.5% | −2.0% | +1.6% | +0.5% |
+| 1,024 B | −0.8% | −0.9% | +1.0% | +0.6% |
+| keyed 0–64 B | +8.1 to +16.1% | +6.9 to +7.2% | +1.7 to +6.5% | +0.5 to +3.9% |
+
+The remaining 2–5 ns at 0–64 bytes comes from sharing one const helper between
+`Blake3::digest_const` and the runtime portable path: keyed mode needs every intermediate in
+caller-owned scratch so it can clear it, and those escaping references keep the scratch in
+memory in every mode. Only the portable backend runs this path. Dispatched SIMD rows
+(`blake3/rscrypto/*`, 0 B to 1 MiB, plain and keyed) stayed within ±1% of `2cbc2cb2` on x86-64,
+including after the x86 owned hash-many kernels gained a final-block length.
+
 ## 2026-09 allocator-adoption runs
 
 GitHub Bench runs keep their Criterion artifacts. Hosts: x86-64 Intel, x86-64 AMD, and AArch64 Linux.
