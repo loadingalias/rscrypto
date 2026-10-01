@@ -3199,8 +3199,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2552
-compiler_api_sha256 = "4557ec2fe7929fd898ab4cda9676a28412d237527f29e228261b9741337a7cf1"
+compiler_api_item_count = 2594
+compiler_api_sha256 = "307a413ea5a4f6373e35a53025386e407795996e65468e81ecfd76ef867acb22"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3210,8 +3210,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2552
-compiler_api_sha256 = "4557ec2fe7929fd898ab4cda9676a28412d237527f29e228261b9741337a7cf1"
+compiler_api_item_count = 2594
+compiler_api_sha256 = "307a413ea5a4f6373e35a53025386e407795996e65468e81ecfd76ef867acb22"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3244,8 +3244,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 2552
-compiler_api_sha256 = "4557ec2fe7929fd898ab4cda9676a28412d237527f29e228261b9741337a7cf1"
+compiler_api_item_count = 2594
+compiler_api_sha256 = "307a413ea5a4f6373e35a53025386e407795996e65468e81ecfd76ef867acb22"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3266,8 +3266,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 2552
-compiler_api_sha256 = "4557ec2fe7929fd898ab4cda9676a28412d237527f29e228261b9741337a7cf1"
+compiler_api_item_count = 2594
+compiler_api_sha256 = "307a413ea5a4f6373e35a53025386e407795996e65468e81ecfd76ef867acb22"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3278,8 +3278,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2552
-compiler_api_sha256 = "4557ec2fe7929fd898ab4cda9676a28412d237527f29e228261b9741337a7cf1"
+compiler_api_item_count = 2594
+compiler_api_sha256 = "307a413ea5a4f6373e35a53025386e407795996e65468e81ecfd76ef867acb22"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3290,8 +3290,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2552
-compiler_api_sha256 = "4557ec2fe7929fd898ab4cda9676a28412d237527f29e228261b9741337a7cf1"
+compiler_api_item_count = 2594
+compiler_api_sha256 = "307a413ea5a4f6373e35a53025386e407795996e65468e81ecfd76ef867acb22"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3302,8 +3302,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2552
-compiler_api_sha256 = "4557ec2fe7929fd898ab4cda9676a28412d237527f29e228261b9741337a7cf1"
+compiler_api_item_count = 2594
+compiler_api_sha256 = "307a413ea5a4f6373e35a53025386e407795996e65468e81ecfd76ef867acb22"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3702,8 +3702,9 @@ limitation = "The source follows the same structure as KMAC256 and the default v
 id = "keyed_hash.compute_and_verify"
 api = [
   "rscrypto::Blake2*::{new_keyed,keyed_digest}",
-  "rscrypto::Blake3::{new_keyed,keyed_digest,derive_key,verify_keyed}",
+  "rscrypto::Blake3::{new_keyed,keyed_digest,derive_key,derive_key_with,new_derive_key_from,verify_keyed}",
   "rscrypto::Blake3KeyedHash::{from_bytes,to_bytes,as_bytes,ct_eq}",
+  "rscrypto::hashes::expert::blake3_tree::{Blake3Tree,Blake3Subtree,Blake3ChainingValue} in keyed and derive-key modes",
 ]
 features = ["blake2b", "blake2s", "blake3", "parallel"]
 targets = ["all-supported", "backend selected by public target capabilities"]
@@ -3713,11 +3714,12 @@ secret_inputs = [
   "keyed state",
   "keyed output when caller keeps it secret",
 ]
-public_inputs = ["message", "context", "message/output lengths", "backend capabilities"]
+public_inputs = ["message", "context", "message/output lengths", "subtree offsets and lengths", "backend capabilities"]
 variable_time_components = [
   "public-length chunking",
   "public parallel threshold",
   "public backend dispatch",
+  "public subtree position checks",
   "fixed owner comparison for Blake3 verification",
 ]
 permitted_leakage = ["algorithm", "context", "lengths", "backend", "verification result"]
