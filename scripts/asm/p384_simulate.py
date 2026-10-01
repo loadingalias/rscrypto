@@ -119,9 +119,10 @@ def run_x86(lines, regs, memory):
             write(ops[0], result)
         elif op == 'test':
             flags.update(cf=0, of=0, zf=int(read(ops[0]) & read(ops[1]) == 0))
-        elif op == 'cmovnz':
-            if not flag('zf'):
-                write(ops[0], read(ops[1]))
+        elif op in ('cmovz', 'cmovnz'):
+            value = read(ops[1])  # the source operand is read whether or not it moves
+            if flag('zf') == (op == 'cmovz'):
+                write(ops[0], value)
         else:
             raise ValueError(f'unmodeled x86 instruction: {line}')
 

@@ -230,18 +230,24 @@ def _memory(offset):
     return f'qword ptr [rsp + {8 * (offset - POINT_LIMBS)}]'
 
 
-def _finish_masked(lines, low, carry, scratch):
-    """Subtract p and add it back under the mask `carry - borrow`."""
-    lines.append(f'sub {low[0]}, qword ptr [rip + {{modulus}}]')
-    for j in range(1, 6):
-        lines.append(f'sbb {low[j]}, qword ptr [rip + {{modulus}} + {8 * j}]')
-    mask, t0, t1, t2 = scratch
-    lines += [f'sbb {mask}, {mask}', f'add {mask}, {carry}',
-              f'mov {t0}, {mask}', f'shr {t0}, 32',
-              f'mov {t1}, {mask}', f'sub {t1}, {t0}',
-              f'mov {t2}, {mask}', f'and {t2}, -2',
-              f'add {low[0]}, {t0}', f'adc {low[1]}, {t1}', f'adc {low[2]}, {t2}',
-              f'adc {low[3]}, {mask}', f'adc {low[4]}, {mask}', f'adc {low[5]}, {mask}']
+def _finish_into(lines, low, carry, destination):
+    """Store `carry:low mod p` for `carry:low < 2p`.
+
+    The unreduced limbs go to `destination` first. Adding `c = 2^384 - p` carries out of
+    bit 384 exactly when the value is at least `p`; otherwise CMOVZ reloads the stored
+    limbs. The serial chain is seven additions and one select, half that of subtracting
+    `p` and adding it back under a mask.
+    """
+    for j in range(6):
+        lines.append(f'mov {_memory(destination + j)}, {low[j]}')
+    addend = ['qword ptr [rip + {consts}]', 'qword ptr [rip + {consts} + 8]', '1', '0', '0', '0']
+    for j in range(6):
+        lines.append(f"{'add' if j == 0 else 'adc'} {low[j]}, {addend[j]}")
+    lines.append(f'adc {carry}, 0')  # ZF is set exactly when the value was below p
+    for j in range(6):
+        lines.append(f'cmovz {low[j]}, {_memory(destination + j)}')
+    for j in range(6):
+        lines.append(f'mov {_memory(destination + j)}, {low[j]}')
 
 
 def _reduce_low(lines, low, borrow):
@@ -266,9 +272,7 @@ def _finish_high(lines, low, borrow, destination, buffer):
     for j in range(1, 6):
         lines.append(f'adc {low[j]}, {_memory(buffer + 6 + j)}')
     lines += [f'mov {borrow}, 0', f'adc {borrow}, 0']
-    _finish_masked(lines, low, borrow, ['rdx', '{lo}', '{hi}', '{s1}'])
-    for j in range(6):
-        lines.append(f'mov {_memory(destination + j)}, {low[j]}')
+    _finish_into(lines, low, borrow, destination)
 
 
 def _square_into(lines, destination, source, buffer):
@@ -373,9 +377,7 @@ def _interleaved_mul_into(lines, destination, a, b):
             lines += [f'sbb {reg(9)}, 0', f'sbb {reg(10)}, 0', f'sbb {reg(11)}, 0', f'sbb {reg(12)}, 0',
                       f'add {reg(11)}, rdx', f'adc {reg(12)}, 0']
     low = [reg(k) for k in range(6, 12)]
-    _finish_masked(lines, low, reg(12), ['rdx', '{lo}', '{hi}', reg(13)])
-    for j in range(6):
-        lines.append(f'mov {_memory(destination + j)}, {low[j]}')
+    _finish_into(lines, low, reg(12), destination)
 
 
 def _add_mod_into(lines, destination, a, b):
@@ -386,9 +388,7 @@ def _add_mod_into(lines, destination, a, b):
     for j in range(1, 6):
         lines.append(f'adc {d[j]}, {_memory(b + j)}')
     lines += ['mov {w6}, 0', 'adc {w6}, 0']
-    _finish_masked(lines, d, '{w6}', ['rdx', '{lo}', '{hi}', '{s1}'])
-    for j in range(6):
-        lines.append(f'mov {_memory(destination + j)}, {d[j]}')
+    _finish_into(lines, d, '{w6}', destination)
 
 
 def _sub_mod_into(lines, destination, a, b):
@@ -441,9 +441,7 @@ def _linear_combination_into(lines, destination, a, k1, b, k2):
               f'add {d[0]}, {{lo}}', f'adc {d[1]}, {{s2}}', f'adc {d[2]}, {{w6}}',
               f'adc {d[3]}, 0', f'adc {d[4]}, 0', f'adc {d[5]}, 0',
               'mov {w6}, 0', 'adc {w6}, 0']
-    _finish_masked(lines, d, '{w6}', ['rdx', '{lo}', '{hi}', '{s1}'])
-    for j in range(6):
-        lines.append(f'mov {_memory(destination + j)}, {d[j]}')
+    _finish_into(lines, d, '{w6}', destination)
 
 
 def point_double():
@@ -500,8 +498,10 @@ POINT_DOUBLE_DOC = """/// Double a Jacobian point in place: `(X, Y, Z)` becomes 
 /// borrow deferred to the next step, and the quotient is added at limb
 /// `i + 6`, so the accumulator stays in an eight-register window.
 /// `k1 * a - k2 * b` terms are formed as `k1 * a + k2 * (p - b) < 2^389`, the
-/// top limb is folded through `c = 2^384 - p`, and one masked subtraction of
-/// `p` finishes.
+/// top limb is folded through `c = 2^384 - p`. Squares, products, additions,
+/// and linear combinations finish by storing their unreduced limbs, adding `c`,
+/// and reloading the stored limbs with CMOVZ when the sum does not carry out
+/// of bit 384.
 ///
 /// The block writes Z3 early and Y3 last, so a following doubling can start
 /// `Z3^2` while this one finishes. X, Y, and Z are last read before X3, Y3,
