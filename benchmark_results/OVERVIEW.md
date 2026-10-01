@@ -189,6 +189,33 @@ Standing after the scrub, ML-KEM-768 (Intel, AMD, Graviton5):
 - One-shot encapsulation (`import-encoded`): rscrypto 1.13x, 1.15x, and 0.77x libcrux. AWS-LC's
   internal-entropy row is faster on every host (rscrypto 1.62x, 1.17x, and 1.43x).
 
+## 2026-10-01 P-384 ECDH agreement
+
+GitHub Bench `p384-ecdh` on `c8i.2xlarge` (Intel Xeon 6975P-C), `c8a.2xlarge` (AMD EPYC 9R45), and `c9g.2xlarge` (Graviton5, Neoverse V3).
+Each row is the median of `p384-ecdh/agreement/rscrypto-selected`; the ratio divides it by the AWS-LC (`aws-lc-rs-native`) median from the same run,
+so values above 1.00x mean rscrypto is slower.
+Median confidence half-widths are ≤0.11% except the AMD row of run #36932716916 (≤0.40%).
+
+| Run | Source | Toolchain | Intel | AMD | Graviton5 |
+| --- | --- | --- | --- | --- | --- |
+| [#36908596212](https://github.com/loadingalias/rscrypto/actions/runs/36908596212) | `c2af568c` | `nightly-2026-09-25` | 127.22 µs, 1.067x | 97.70 µs, 1.077x | 131.38 µs, 1.007x |
+| [#36930494688](https://github.com/loadingalias/rscrypto/actions/runs/36930494688) | `fce695f6` | `nightly-2026-09-30` | 121.34 µs, 1.018x | 96.45 µs, 1.057x | 128.55 µs, 0.989x |
+| [#36932716916](https://github.com/loadingalias/rscrypto/actions/runs/36932716916) | `129ea97a` (reverted) | `nightly-2026-09-30` | 127.97 µs, 1.072x | 98.48 µs, 1.079x | 128.89 µs, 0.990x |
+
+`fce695f6` adds the affine window table (`b41e5e5c`) and the add-and-select field finish in the x86-64 doubling to `c2af568c`,
+and moves the compiler pin; the run does not separate their effects.
+`129ea97a` computed the doubling's squares as interleaved products;
+it was slower on both x86-64 hosts and `4add945a` reverts it, restoring the `fce695f6` tree.
+AWS-LC moved by at most 0.7% between runs.
+
+Retained for v0.10.0 (the `fce695f6` tree):
+P-384 agreement is ahead of AWS-LC on Graviton5 (0.989x) and behind it on x86-64,
+by 1.8% on Intel and 5.7% on AMD.
+In the same run rscrypto is 2.13x, 2.42x, and 2.15x faster than ring and 2.93x, 3.43x,
+and 2.70x faster than RustCrypto `p384` (Intel, AMD, Graviton5).
+The public-key row compares against AWS-LC's cached public key,
+so it supports no key-derivation claim.
+
 ## 2026-09 allocator-adoption runs
 
 GitHub Bench runs keep their Criterion artifacts. Hosts: x86-64 Intel, x86-64 AMD, and AArch64 Linux.
