@@ -17,6 +17,8 @@ pub(crate) mod kernel_test;
 pub(crate) mod kernels;
 #[cfg(all(target_arch = "s390x", not(miri)))]
 pub(crate) mod s390x;
+#[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
+pub(crate) mod secret;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(miri)))]
 pub(crate) mod x86_64;
 
@@ -983,7 +985,7 @@ impl<const RATE: usize, const ZEROIZE: bool> Default for KeccakCoreImpl<RATE, Pl
   }
 }
 
-#[cfg(feature = "ml-dsa")]
+#[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
 impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakCoreImpl<RATE, P, ZEROIZE> {
   /// Start an empty sponge with a permuter whose capabilities the caller has
   /// already detected.
@@ -1096,7 +1098,7 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakCoreImpl<RATE, P
   }
 }
 
-#[cfg(feature = "ml-dsa")]
+#[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
 impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P, true> {
   pub(crate) fn finalize_xof_into(&self, ds: u8, out: &mut [u8]) {
     // Initialize the cleanup owner before copying secret state. Finalize and
@@ -1382,9 +1384,15 @@ fn xof_seeded_32_1_state<const RATE: usize>(ds: u8, seed: &[u8; 32], x: u8) -> [
   state
 }
 
+// The seeded secret constructors take a permuter whose capabilities the caller
+// detected, so `secret` can run them inside its scrubbed workers.
 #[cfg(feature = "ml-kem")]
-pub(crate) fn xof_seeded_32_1_secret<const RATE: usize>(ds: u8, seed: &[u8; 32], x: u8) -> KeccakXof<RATE> {
-  let permuter = PlatformPermuter::default();
+fn xof_seeded_32_1_secret<const RATE: usize>(
+  permuter: PlatformPermuter,
+  ds: u8,
+  seed: &[u8; 32],
+  x: u8,
+) -> KeccakXof<RATE> {
   let mut state = xof_seeded_32_1_state::<RATE>(ds, seed, x);
   permuter.permute(&mut state, 0);
   let reader = KeccakXofImpl {
@@ -1397,13 +1405,13 @@ pub(crate) fn xof_seeded_32_1_secret<const RATE: usize>(ds: u8, seed: &[u8; 32],
 }
 
 #[cfg(feature = "ml-kem")]
-pub(crate) fn xof_seeded_32_1_pair_secret<const RATE: usize>(
+fn xof_seeded_32_1_pair_secret<const RATE: usize>(
+  permuter: PlatformPermuter,
   ds: u8,
   seed: &[u8; 32],
   a: u8,
   b: u8,
 ) -> (KeccakXof<RATE>, KeccakXof<RATE>) {
-  let permuter = PlatformPermuter::default();
   let mut state_a = xof_seeded_32_1_state::<RATE>(ds, seed, a);
   let mut state_b = xof_seeded_32_1_state::<RATE>(ds, seed, b);
   permuter.permute_x2(&mut state_a, &mut state_b, 0);
@@ -1427,7 +1435,8 @@ pub(crate) fn xof_seeded_32_1_pair_secret<const RATE: usize>(
 }
 
 #[cfg(feature = "ml-kem")]
-pub(crate) fn xof_seeded_32_1_quad_secret<const RATE: usize>(
+fn xof_seeded_32_1_quad_secret<const RATE: usize>(
+  permuter: PlatformPermuter,
   ds: u8,
   seed: &[u8; 32],
   a: u8,
@@ -1435,7 +1444,6 @@ pub(crate) fn xof_seeded_32_1_quad_secret<const RATE: usize>(
   c: u8,
   d: u8,
 ) -> (KeccakXof<RATE>, KeccakXof<RATE>, KeccakXof<RATE>, KeccakXof<RATE>) {
-  let permuter = PlatformPermuter::default();
   let mut state_a = xof_seeded_32_1_state::<RATE>(ds, seed, a);
   let mut state_b = xof_seeded_32_1_state::<RATE>(ds, seed, b);
   let mut state_c = xof_seeded_32_1_state::<RATE>(ds, seed, c);

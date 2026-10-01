@@ -5,7 +5,7 @@ use super::{
   poly::{N, Poly, Q, select, to_montgomery},
 };
 use crate::{
-  hashes::crypto::keccak::{KeccakCore, KeccakXof, PlatformPermuter, PublicKeccakXof, xof_seeded_32_2_pair},
+  hashes::crypto::keccak::{KeccakCore, KeccakXof, PublicKeccakXof, secret, xof_seeded_32_2_pair},
   secret::ZeroizingBytes,
 };
 
@@ -160,55 +160,10 @@ pub(super) fn xof<const RATE: usize>(parts: &[&[u8]]) -> KeccakXof<RATE> {
   state.finalize_xof(0x1f)
 }
 
-// Dead stack cleared below `hash` after each secret SHAKE-256 call. The
-// linked frame of `absorb_and_squeeze`, including every Keccak callee frame
-// and leaf red zone, must fit within this bound on each reviewed target.
-const HASH_STACK_SCRUB_WORDS: usize = 256;
-const _: () = assert!(HASH_STACK_SCRUB_WORDS.is_multiple_of(4));
-
+/// SHAKE256 of secret (or conservatively scrubbed) input, through the shared
+/// scrubbed Keccak worker.
 pub(super) fn hash(parts: &[&[u8]], out: &mut [u8]) {
-  // Capability detection runs here, before any secret is loaded. Its first
-  // call in a process initializes a cache far deeper than the scrub, so it
-  // must return before the worker starts rather than run inside it.
-  let permuter = PlatformPermuter::default();
-  absorb_and_squeeze(permuter, parts, out);
-  // Both calls start from this frame, so the scrubber's buffer overlays the
-  // worker's dead frame. That covers compiler-created Keccak lane spills that
-  // no named state owner can clear. Changes to this boundary require
-  // `just stack-frames` on every reviewed target.
-  scrub_dead_stack();
-}
-
-#[inline(never)]
-fn absorb_and_squeeze(permuter: PlatformPermuter, parts: &[&[u8]], out: &mut [u8]) {
-  let mut state = KeccakCore::<136>::with_permuter(permuter);
-  for part in parts {
-    state.update(part);
-  }
-  state.finalize_xof_into(0x1f, out);
-}
-
-#[inline(never)]
-fn scrub_dead_stack() {
-  // Leave the buffer uninitialized so only the volatile stores write it.
-  // Volatile stores cannot be elided, and no later access depends on their
-  // order, so no fence is needed.
-  let mut scratch = core::mem::MaybeUninit::<[u64; HASH_STACK_SCRUB_WORDS]>::uninit();
-  let words = scratch.as_mut_ptr().cast::<u64>();
-  // Four stores per iteration let cores with two store ports retire the
-  // scrub faster than a one-store loop.
-  for index in (0..HASH_STACK_SCRUB_WORDS).step_by(4) {
-    // SAFETY: the word count is a multiple of four, so `index + 3` is below
-    // the array length and every pointer stays inside this local, properly
-    // aligned `[u64; N]` allocation. Writing a `u64` needs no prior
-    // initialization, and the buffer is never read.
-    unsafe {
-      words.add(index).write_volatile(0);
-      words.add(index.strict_add(1)).write_volatile(0);
-      words.add(index.strict_add(2)).write_volatile(0);
-      words.add(index.strict_add(3)).write_volatile(0);
-    }
-  }
+  secret::shake256(parts, out);
 }
 
 pub(super) fn matrix(rho: &[u8], row: u8, column: u8, out: &mut [u32; N]) -> Result<(), MlDsaError> {

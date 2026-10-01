@@ -59,13 +59,24 @@ class Boundary:
   constant: str
 
 
+SECRET_HASHING = ROOT / "src" / "hashes" / "crypto" / "keccak" / "secret.rs"
 BOUNDARIES = [
   Boundary(
-    name="ml-dsa secret SHAKE256",
-    workers=re.compile(r"^rscrypto::auth::mldsa::sampling::absorb_and_squeeze$"),
-    scrub=re.compile(r"^rscrypto::auth::mldsa::sampling::scrub_dead_stack$"),
-    source=ROOT / "src" / "auth" / "mldsa" / "sampling.rs",
-    constant="HASH_STACK_SCRUB_WORDS",
+    name="secret SHA-3/SHAKE (ML-DSA; ML-KEM G, J, PRF)",
+    workers=re.compile(
+      r"^rscrypto::hashes::crypto::keccak::secret::"
+      r"(absorb_and_squeeze::<\d+>|squeeze_seeded|squeeze_seeded_pair)$"
+    ),
+    scrub=re.compile(r"^rscrypto::hashes::crypto::keccak::secret::scrub_dead_stack::<256>$"),
+    source=SECRET_HASHING,
+    constant="STACK_SCRUB_WORDS",
+  ),
+  Boundary(
+    name="secret four-state SHAKE256 (ML-KEM PRF)",
+    workers=re.compile(r"^rscrypto::hashes::crypto::keccak::secret::squeeze_seeded_quad$"),
+    scrub=re.compile(r"^rscrypto::hashes::crypto::keccak::secret::scrub_dead_stack::<512>$"),
+    source=SECRET_HASHING,
+    constant="QUAD_STACK_SCRUB_WORDS",
   ),
 ]
 
@@ -104,6 +115,7 @@ class Function:
   demangled: str
   frame: int | None = None
   edges: list[Edge] = field(default_factory=list)
+  instructions: list[tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -261,6 +273,43 @@ def riscv_jalr(operands: str, upper: dict[str, int]) -> tuple[str, int | None]:
 
 
 GOT_SLOT = re.compile(r"\*0x[0-9a-f]+\(%rip\)\s+#\s+0x([0-9a-f]+)")
+GOT_LOAD = re.compile(r"^-?0x[0-9a-f]+\(%rip\),\s*(%\w+)\s+#\s+0x([0-9a-f]+)")
+X86_CALLER_SAVED = {"%rax", "%rcx", "%rdx", "%rsi", "%rdi", "%r8", "%r9", "%r10", "%r11"}
+
+
+def x86_destination(operands: str) -> str | None:
+  """The register an AT&T-syntax instruction writes, if its last operand is one."""
+  text = operands.split("#", 1)[0].strip()
+  last = text.rsplit(",", 1)[-1].strip() if text else ""
+  return last if re.fullmatch(r"%\w+", last) else None
+
+
+AARCH64_SP_SUB = re.compile(r"^sp, sp, #(0x[0-9a-f]+|\d+)$")
+AARCH64_SP_PREINDEX = re.compile(r"\[sp, #-(0x[0-9a-f]+|\d+)\]!")
+
+
+def assembly_frame(target: str, function: Function) -> int | None:
+  """Derive the frame of a leaf assembly routine that has no compiler record.
+
+  Only AArch64 is supported: every stack-pointer decrement must be an
+  immediate `sub sp, sp, #N` or a pre-indexed `[sp, #-N]!` store, and any other
+  write to `sp` (other than `add sp, sp, #N`) makes the frame unknown.
+  """
+  if not target.startswith("aarch64") or function.edges or not function.instructions:
+    return None
+  frame = 0
+  for mnemonic, operands in function.instructions:
+    text = ANNOTATION.sub("", operands).strip()
+    if mnemonic == "sub" and text.startswith("sp,"):
+      match = AARCH64_SP_SUB.match(text)
+      if match is None:
+        return None
+      frame += int(match.group(1), 0)
+    elif match := AARCH64_SP_PREINDEX.search(text):
+      frame += int(match.group(1), 0)
+    elif text.startswith("sp,") and not (mnemonic == "add" and re.match(r"^sp, sp, #", text)):
+      return None
+  return frame
 
 
 def parse_dynamic_symbols(text: str) -> dict[int, str]:
@@ -305,11 +354,21 @@ def parse_disassembly(
 
   program = Program(target, functions, sorted(functions))
   upper: dict[str, int] = {}
+  held: dict[str, str] = {}  # x86 registers loaded from a GOT slot
   previous: Function | None = None
   for function, address, mnemonic, operands in rows:
     if function is not previous:
       upper = {}
+      held = {}
       previous = function
+    function.instructions.append((mnemonic, operands))
+    if target.startswith("x86_64") and not mnemonic.startswith(("call", "j")):
+      destination_register = x86_destination(operands)
+      if destination_register is not None:
+        held.pop(destination_register, None)
+      load = GOT_LOAD.match(operands)
+      if mnemonic.startswith("mov") and load is not None and imports and int(load.group(2), 16) in imports:
+        held[load.group(1)] = imports[int(load.group(2), 16)]
     is_riscv = target.startswith("riscv")
     if is_riscv and mnemonic == "auipc":
       register, immediate = (part.strip() for part in operands.split(","))
@@ -338,17 +397,27 @@ def parse_disassembly(
     if kind is None:
       continue
     if kind in {"indirect-call", "indirect-jump"}:
-      # A call through a GOT slot names its import in the dynamic relocations.
+      # A call through a GOT slot, directly or through a register loaded from
+      # one, names its import in the dynamic relocations.
       slot = GOT_SLOT.search(operands)
+      register = operands.strip().removeprefix("*")
+      stub = None
       if slot is not None and imports and int(slot.group(1), 16) in imports:
         stub = imports[int(slot.group(1), 16)]
+      elif operands.strip().startswith("*%") and register in held:
+        stub = held[register]
+      if stub is not None:
         function.edges.append(Edge("import" if kind == "indirect-call" else "import-tail", address, name=stub))
+        if kind == "indirect-call":
+          held = {name: value for name, value in held.items() if name not in X86_CALLER_SAVED}
         continue
       function.edges.append(Edge("indirect", address, name=f"{mnemonic} {operands}".strip()))
       continue
     if destination is None:
       function.edges.append(Edge("indirect", address, name=f"{mnemonic} {operands}".strip()))
       continue
+    if target.startswith("x86_64") and kind == "call":
+      held = {name: value for name, value in held.items() if name not in X86_CALLER_SAVED}
     callee = program.containing(destination)
     annotation = ANNOTATION.search(operands)
     if callee is None:
@@ -397,6 +466,8 @@ def depth_of(program: Program, root: Function) -> Depth:
     imported = external_name(program, function)
     if imported in EXTERNAL_LEAVES:
       result = Depth(arch.red_zone, [name], [], [], set(), {f"{imported}: external leaf, frame 0 + red zone"})
+    elif function.frame is None and (derived := assembly_frame(program.target, function)) is not None:
+      result = Depth(derived + arch.red_zone, [name], [], [], set(), {f"{name}: leaf assembly frame {derived} B"})
     elif function.frame is None:
       reason = "external" if imported is not None else "no frame record"
       result = Depth(0, [name], [{"reason": reason, "path": [name]}], [], set(), set())

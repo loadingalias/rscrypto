@@ -49,10 +49,7 @@ use core::arch::x86_64::{
 use crate::hashes::crypto::Shake256;
 use crate::{
   auth::mlkem::MlKemError,
-  hashes::crypto::{
-    Sha3_256, Shake128, Shake128XofReader,
-    sha3::{MlKemShake256XofReader, mlkem_sha3_512_digest, mlkem_shake256_two_part_into},
-  },
+  hashes::crypto::{Sha3_256, Shake128, Shake128XofReader, keccak::secret},
   traits::{
     Digest, Xof,
     ct::{self},
@@ -4451,10 +4448,9 @@ fn sample_noise_pair<const RANDOM_BYTES: usize>(
     matches!(RANDOM_BYTES, ETA2_RANDOM_BYTES | ETA3_RANDOM_BYTES),
     "unsupported ML-KEM noise width"
   );
-  let (mut reader0, mut reader1) = MlKemShake256XofReader::seeded_32_1_pair(seed, nonce0, nonce1);
   let mut buf0 = [0u8; RANDOM_BYTES];
   let mut buf1 = [0u8; RANDOM_BYTES];
-  MlKemShake256XofReader::squeeze_pair(&mut reader0, &mut reader1, &mut buf0, &mut buf1);
+  secret::shake256_seeded_pair(seed, [nonce0, nonce1], [&mut buf0, &mut buf1]);
   match RANDOM_BYTES {
     ETA2_RANDOM_BYTES => {
       sample_poly_cbd_eta2(&buf0, out0);
@@ -4479,10 +4475,8 @@ fn sample_noise_quad<const RANDOM_BYTES: usize>(
     matches!(RANDOM_BYTES, ETA2_RANDOM_BYTES | ETA3_RANDOM_BYTES),
     "unsupported ML-KEM noise width"
   );
-  let (mut reader0, mut reader1, mut reader2, mut reader3) =
-    MlKemShake256XofReader::seeded_32_1_quad(seed, nonce0, nonce1, nonce2, nonce3);
   let mut bufs = [[0u8; RANDOM_BYTES]; 4];
-  reader0.squeeze_quad(&mut reader1, &mut reader2, &mut reader3, &mut bufs);
+  secret::shake256_seeded_quad(seed, [nonce0, nonce1, nonce2, nonce3], bufs.each_mut());
   match RANDOM_BYTES {
     ETA2_RANDOM_BYTES => {
       sample_poly_cbd_eta2(&bufs[0], out0);
@@ -8159,19 +8153,22 @@ fn h(input: &[u8]) -> [u8; HASH_BYTES] {
   Sha3_256::digest(input)
 }
 
+// G, J, and the PRF hash secrets, so they run in the scrubbed Keccak worker.
+// H hashes the public encapsulation key and stays on public SHA3-256.
 fn g(input: &[u8]) -> [u8; 64] {
-  mlkem_sha3_512_digest(input)
+  let mut out = [0u8; 64];
+  secret::sha3_512(input, &mut out);
+  out
 }
 
 fn j(z: &[u8], c: &[u8]) -> [u8; SHARED_SECRET_BYTES] {
   let mut out = [0u8; SHARED_SECRET_BYTES];
-  mlkem_shake256_two_part_into(z, c, &mut out);
+  secret::shake256(&[z, c], &mut out);
   out
 }
 
 fn prf_eta<const RANDOM_BYTES: usize>(seed: &[u8; SEED_BYTES], nonce: u8, out: &mut [u8; RANDOM_BYTES]) {
-  let mut reader = MlKemShake256XofReader::seeded_32_1(seed, nonce);
-  reader.squeeze(out);
+  secret::shake256_seeded(seed, nonce, out);
 }
 
 fn ct_eq_mask(a: &[u8], b: &[u8]) -> u8 {

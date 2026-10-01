@@ -212,6 +212,52 @@ def test_x86_got_imports_call_slots_and_red_zone(directory: Path) -> None:
   assert worker["detection"] == [[WORKER, "getauxval"]], worker
 
 
+def test_x86_register_held_imports(directory: Path) -> None:
+  dynamic = "0000000000009000 R_X86_64_GLOB_DAT        memcpy"
+  caller = (0x1000, CALLER, 24, ["    1000:      \tcallq\t0x2000 <worker>", "    1005:      \tcallq\t0x3000 <scrub>"])
+  scrub = (0x3000, SCRUB, 1920, ["    3000:      \tretq"])
+  leaf = (0x4000, "rscrypto::keccak::keccakf_portable", 64, ["    4000:      \tretq"])
+
+  def worker(*body: str) -> dict:
+    functions = [caller, (0x2000, WORKER, 128, list(body)), scrub, leaf]
+    return worker_report(review(program("x86_64-unknown-linux-gnu", functions, dynamic), [boundary(directory)]))
+
+  load = "    2000:      \tmovq\t0x7000(%rip), {}     # 0x9000 <write+0x9000>"
+  # A callee-saved register keeps the import across calls.
+  held = worker(load.format("%r12"), "    2007:      \tcallq\t*%r12", "    200a:      \tcallq\t0x4000 <leaf>",
+                "    200f:      \tcallq\t*%r12")
+  assert not held["unbounded"] and held["assumptions"] == ["memcpy: external leaf, frame 0 + red zone"], held
+  # Overwriting the register, or a call clobbering a caller-saved one, ends it.
+  overwritten = worker(load.format("%r12"), "    2007:      \tmovq\t%rax, %r12", "    200a:      \tcallq\t*%r12")
+  assert [item["reason"] for item in overwritten["unbounded"]] == ["indirect"], overwritten
+  clobbered = worker(load.format("%rax"), "    2007:      \tcallq\t0x4000 <leaf>", "    200c:      \tcallq\t*%rax")
+  assert [item["reason"] for item in clobbered["unbounded"]] == ["indirect"], clobbered
+
+
+def test_aarch64_leaf_assembly_frames(directory: Path) -> None:
+  def quad(*body: str) -> dict:
+    functions = [
+      (0x1000, CALLER, 32, ["    1000:      \tbl\t0x2000 <worker>", "    1004:      \tbl\t0x3000 <scrub>"]),
+      (0x2000, WORKER, 1888, ["    2000:      \tbl\t0x5000 <kernel>", "    2004:      \tret"]),
+      (0x3000, SCRUB, 2064, ["    3000:      \tret"]),
+      (0x5000, "rscrypto_keccakf1600_aarch64_sve2_sha3_x4", None, list(body)),
+    ]
+    return worker_report(review(program("aarch64-unknown-linux-gnu", functions), [boundary(directory, words=512)]))
+
+  derived = quad(
+    "    5000:      \tsub\tsp, sp, #0x60",
+    "    5004:      \tstp\td8, d9, [sp]",
+    "    5008:      \tstp\tx29, x30, [sp, #-16]!",
+    "    500c:      \tadd\tsp, sp, #0x70",
+    "    5010:      \tret",
+  )
+  assert derived["depth"] == 1888 + 96 + 16 and not derived["problems"], derived
+  assert derived["assumptions"] == ["rscrypto_keccakf1600_aarch64_sve2_sha3_x4: leaf assembly frame 112 B"], derived
+  for body in (["    5000:      \tmov\tsp, x9"], ["    5000:      \tsub\tsp, sp, x9"], ["    5000:      \tbl\t0x2000"]):
+    unknown = quad(*body, "    5004:      \tret")
+    assert any(item["reason"] in {"no frame record", "recursion"} for item in unknown["unbounded"]), unknown
+
+
 def test_panic_exits_are_listed_and_not_counted(directory: Path) -> None:
   functions = [
     (0x1000, CALLER, 32, ["    1000:      \tbl\t0x2000 <worker>", "    1004:      \tbl\t0x3000 <scrub>"]),
@@ -252,6 +298,8 @@ def main() -> None:
     test_power_local_entries_returns_and_red_zone(directory)
     test_riscv_auipc_pairs_labels_and_returns(directory)
     test_x86_got_imports_call_slots_and_red_zone(directory)
+    test_x86_register_held_imports(directory)
+    test_aarch64_leaf_assembly_frames(directory)
     test_panic_exits_are_listed_and_not_counted(directory)
   test_record_parsers()
   print("frames tests passed")
