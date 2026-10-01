@@ -250,6 +250,86 @@ def _finish_into(lines, low, carry, destination):
         lines.append(f'mov {_memory(destination + j)}, {low[j]}')
 
 
+def _reduce_low(lines, low, borrow):
+    h0, k1, k2 = '{lo}', '{hi}', '{s1}'
+    for step in range(6):
+        window = [low[(step + j) % 6] for j in range(6)]
+        first, last = step == 0, step == 5
+        lines += [f'mov rdx, {window[0]}', 'shl rdx, 32', f'add rdx, {window[0]}',
+                  f'mulx {h0}, {k1}, qword ptr [rip + {{consts}}]',
+                  f'mulx {k2}, {k1}, qword ptr [rip + {{consts}} + 8]',
+                  f'add {k1}, {h0}', f'adc {k2}, rdx', f'mov {h0}, 0',
+                  f"adc {h0}, {'0' if first else borrow}",
+                  f'sub {window[1]}, {k1}', f'sbb {window[2]}, {k2}', f'sbb {window[3]}, {h0}']
+        if last:
+            lines += [f'sbb {window[4]}, 0', f'sbb {window[5]}, 0', 'sbb rdx, 0', f'mov {window[0]}, rdx']
+        else:
+            lines += [f'mov {borrow}, 0', f'adc {borrow}, 0', f'mov {window[0]}, rdx']
+
+
+def _finish_high(lines, low, borrow, destination, buffer):
+    lines.append(f'add {low[0]}, {_memory(buffer + 6)}')
+    for j in range(1, 6):
+        lines.append(f'adc {low[j]}, {_memory(buffer + 6 + j)}')
+    lines += [f'mov {borrow}, 0', f'adc {borrow}, 0']
+    _finish_into(lines, low, borrow, destination)
+
+
+def _square_into(lines, destination, source, buffer):
+    reg = {}
+    free = W[:]
+
+    def operand(j):
+        return _memory(source + j)
+
+    def take(k):
+        reg[k] = free.pop(0)
+        return reg[k]
+
+    def release(k):
+        free.append(reg.pop(k))
+
+    lines.append(f'mov rdx, {operand(0)}')
+    take(1)
+    take(2)
+    lines.append(f'mulx {reg[2]}, {reg[1]}, {operand(1)}')
+    for j in range(2, 6):
+        take(j + 1)
+        lines.append(f'mulx {reg[j + 1]}, {{lo}}, {operand(j)}')
+        lines.append(f"{'add' if j == 2 else 'adc'} {reg[j]}, {{lo}}")
+    lines.append(f'adc {reg[6]}, 0')
+    for k in (1, 2):
+        lines.append(f'mov {_memory(buffer + k)}, {reg[k]}')
+        release(k)
+    for i in range(1, 5):
+        lines.append(f'mov rdx, {operand(i)}')
+        top = i + 6
+        take(top)
+        lines.append(f'xor {reg[top]}, {reg[top]}')
+        for j in range(i + 1, 6):
+            lines.append(f'mulx {{hi}}, {{lo}}, {operand(j)}')
+            lines.append(f'adcx {reg[i + j]}, {{lo}}')
+            lines.append(f'adox {reg[i + j + 1]}, {{hi}}')
+        lines.append(f'adc {reg[top]}, 0')
+        for k in (2 * i + 1, 2 * i + 2):
+            lines.append(f'mov {_memory(buffer + k)}, {reg[k]}')
+            release(k)
+    low, borrow = W[:6], W[6]
+    lines.append(f'xor {borrow}, {borrow}')
+    for i in range(6):
+        lines.append(f'mov rdx, {operand(i)}')
+        lines.append('mulx {hi}, {lo}, rdx')
+        for k, part in ((2 * i, '{lo}'), (2 * i + 1, '{hi}')):
+            target = low[k] if k < 6 else '{s1}'
+            lines.append(f'mov {target}, 0' if k in (0, 11) else f'mov {target}, {_memory(buffer + k)}')
+            lines.append(f'adcx {target}, {target}')
+            lines.append(f'adox {target}, {part}')
+            if k >= 6:
+                lines.append(f'mov {_memory(buffer + k)}, {target}')
+    _reduce_low(lines, low, borrow)
+    _finish_high(lines, low, borrow, destination, buffer)
+
+
 def _interleaved_mul_into(lines, destination, a, b):
     """Interleaved Montgomery multiplication: row i, then reduce limb i.
 
@@ -370,29 +450,34 @@ def point_double():
     Algebra (a = -3, 3M + 5S): delta = Z^2, gamma = Y^2, x2p = (X - delta)(X + delta),
     beta = X * gamma, d = 12 beta - 9 x2p^2, X3 = 4 beta - d, Y3 = 3 d x2p - 8 gamma^2,
     Z3 = (Y + Z)^2 - gamma - delta. Z3 is finished early and Y3 is the tail, so the next
-    doubling's Z3^2 can overlap this block's last kernels. Squares use the interleaved
-    product with both operands equal: a dedicated square reduces only after its whole
-    product, and that serial reduction cost more than the fifteen multiplications it saves.
+    doubling's Z3^2 can overlap this block's last kernels.
     """
     lines = []
     o = OFFSET
-    _interleaved_mul_into(lines, o['delta'], Z, Z)
-    _interleaved_mul_into(lines, o['gamma'], Y, Y)
+    next_buffer = [POINT_LIMBS + 6 * len(TEMPORARIES)]
+
+    def buffer():
+        start = next_buffer[0]
+        next_buffer[0] += 12
+        return start
+
+    _square_into(lines, o['delta'], Z, buffer())
+    _square_into(lines, o['gamma'], Y, buffer())
     _add_mod_into(lines, o['yz'], Y, Z)  # last read of Y and Z
     _sub_mod_into(lines, o['t1'], X, o['delta'])
     _add_mod_into(lines, o['t2'], X, o['delta'])
-    _interleaved_mul_into(lines, o['yz2'], o['yz'], o['yz'])
+    _square_into(lines, o['yz2'], o['yz'], buffer())
     _interleaved_mul_into(lines, o['x2p'], o['t1'], o['t2'])
     _interleaved_mul_into(lines, o['beta'], X, o['gamma'])  # last read of X
     _sub_mod_into(lines, o['zt'], o['yz2'], o['gamma'])
     _sub_mod_into(lines, Z, o['zt'], o['delta'])  # Z3
-    _interleaved_mul_into(lines, o['x4p'], o['x2p'], o['x2p'])
+    _square_into(lines, o['x4p'], o['x2p'], buffer())
     _linear_combination_into(lines, o['d'], o['beta'], 12, o['x4p'], 9)
-    _interleaved_mul_into(lines, o['g2'], o['gamma'], o['gamma'])
+    _square_into(lines, o['g2'], o['gamma'], buffer())
     _linear_combination_into(lines, X, o['beta'], 4, o['d'], 1)  # X3
     _interleaved_mul_into(lines, o['dx2'], o['d'], o['x2p'])
     _linear_combination_into(lines, Y, o['dx2'], 3, o['g2'], 8)  # Y3
-    frame = 8 * 6 * len(TEMPORARIES)
+    frame = 8 * (next_buffer[0] - POINT_LIMBS)
     return [f'sub rsp, {frame}'] + lines + [f'add rsp, {frame}'], frame
 
 
@@ -407,8 +492,8 @@ POINT_DOUBLE_DOC = """/// Double a Jacobian point in place: `(X, Y, Z)` becomes 
 /// `beta = X * Y^2`. These are the same polynomials as the portable formula,
 /// so the canonical results are identical, including infinity (`Z = 0`).
 ///
-/// Multiplication, which also computes the squares with both operands equal,
-/// interleaves the reduction with the product rows: after row `i`, limb `i` sets the
+/// Squaring matches `montgomery_square_bmi2_adx`. Multiplication interleaves
+/// the reduction with the product rows: after row `i`, limb `i` sets the
 /// quotient, `(k1, k2, h0)` is subtracted from limbs `i + 1..=i + 3` with the
 /// borrow deferred to the next step, and the quotient is added at limb
 /// `i + 6`, so the accumulator stays in an eight-register window.
