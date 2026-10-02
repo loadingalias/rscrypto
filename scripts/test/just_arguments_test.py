@@ -86,7 +86,7 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
     run('rail-cache-setup', words, [words])
     release_check = ['rail', 'release', 'check', 'rscrypto', '--bump', words[0], '--skip-tag']
     run('release-check', [words[0]], [release_check])
-    run('release-prepare', [words[0]], [['rail', 'surface', '--check', '--explain'], release_check,
+    run('release-prepare', [words[0]], [release_check,
                                       ['rail', 'release', 'run', 'rscrypto', '--bump', words[0], '--skip-tag',
                                        '--allow-non-default-branch']])
     env.pop('HOME', None)
