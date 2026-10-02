@@ -163,13 +163,8 @@ fn cpuid_leaf_count(leaf: u32, subleaf: u32) -> CpuidRegisters {
 
 #[cfg(all(target_arch = "x86", feature = "std"))]
 #[inline]
-// MSRV: CPUID is unsafe on Rust 1.91 but safe on the pinned nightly.
 fn cpuid_leaf(leaf: u32) -> core::arch::x86::CpuidResult {
-  // SAFETY: CPUID leaf read is safe here because:
-  // 1. This function is compiled only for x86 targets.
-  // 2. CPUID is a non-privileged CPU-identification instruction.
-  // 3. The intrinsic returns register values and does not access Rust memory.
-  unsafe { core::arch::x86::__cpuid(leaf) }
+  core::arch::x86::__cpuid(leaf)
 }
 
 /// Batch CPUID result containing all extracted information.
@@ -604,9 +599,6 @@ fn decode_cpuid_x86_64(snapshot: CpuidSnapshot) -> CpuidBatch {
 }
 
 /// Runtime x86 (32-bit) feature detection using CPUID.
-///
-/// # Safety
-/// Uses CPUID instruction which requires unsafe, but is always safe to call on x86.
 #[cfg(all(target_arch = "x86", feature = "std"))]
 fn runtime_x86_32() -> Caps {
   use crate::platform::caps::x86;
@@ -649,18 +641,18 @@ fn runtime_x86_32() -> Caps {
 /// # Environment Variable
 ///
 /// `RSCRYPTO_FORCE_AVX512=1` enables AVX-512 on hybrid Intel CPUs.
-#[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
 fn hybrid_avx512_override() -> bool {
   let value = std::env::var("RSCRYPTO_FORCE_AVX512").ok();
   parse_hybrid_avx512_override(value.as_deref())
 }
 
-#[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
 fn parse_hybrid_avx512_override(value: Option<&str>) -> bool {
   matches!(value, Some("1")) || value.is_some_and(|value| value.eq_ignore_ascii_case("true"))
 }
 
-#[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
 fn is_intel_sapphire_rapids(is_intel: bool, family: u32, model: u32) -> bool {
   is_intel && family == 6 && model == 0x8F
 }
@@ -670,7 +662,7 @@ fn is_intel_sapphire_rapids(is_intel: bool, family: u32, model: u32) -> bool {
 /// Returns true if this is an Intel hybrid CPU (P+E cores) where AVX-512
 /// is problematic. These CPUs have family 6, model 0x97 (ADL-S), 0x9A (ADL-P),
 /// 0xB7 (RPL-S), 0xBA (RPL-P), etc.
-#[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
 fn is_intel_hybrid(is_amd: bool, family: u32, model: u32) -> bool {
   if is_amd {
     return false;

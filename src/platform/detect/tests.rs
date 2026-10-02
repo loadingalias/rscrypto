@@ -264,7 +264,7 @@ mod tests {
   // Hybrid Intel Detection Tests
 
   #[test]
-  #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
   fn test_is_intel_hybrid_amd_returns_false() {
     // AMD CPUs should never be detected as Intel hybrid
     assert!(!is_intel_hybrid(true, 6, 0x97)); // Even with ADL model
@@ -273,7 +273,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
   fn test_is_intel_hybrid_known_models() {
     // Alder Lake models
     assert!(is_intel_hybrid(false, 6, 0x97)); // ADL-S
@@ -289,7 +289,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
   fn test_is_intel_sapphire_rapids_known_model() {
     assert!(is_intel_sapphire_rapids(true, 6, 0x8F));
 
@@ -300,7 +300,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
   fn test_hybrid_avx512_override_parser() {
     for value in [None, Some(""), Some("0"), Some("false"), Some("yes"), Some("2")] {
       assert!(!parse_hybrid_avx512_override(value), "accepted {value:?}");
