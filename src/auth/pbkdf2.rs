@@ -495,9 +495,8 @@ macro_rules! define_pbkdf2_sha2 {
       /// Validate stored-password parameters and bound total verification work.
       ///
       /// Each output block runs an `iterations`-long PRF chain, so the limit
-      /// applies to `iterations * blocks`. `blocks * iterations <= max_iterations`
-      /// holds exactly when `blocks <= max_iterations / iterations`, which
-      /// avoids overflow.
+      /// applies to `iterations * blocks`. The checked multiply avoids a
+      /// variable-latency division in the verification path.
       fn verification_params_bounded<'a>(
         salt: &'a [u8],
         iterations: u32,
@@ -507,9 +506,10 @@ macro_rules! define_pbkdf2_sha2 {
       ) -> Result<Pbkdf2Params<'a>, VerificationError> {
         let params = Self::params_with_policy_bounded(salt, iterations, policy, max_iterations)
           .map_err(|_| VerificationError::new())?;
-        let blocks = expected.len().div_ceil($output_size_const);
-        let max_blocks = max_iterations.checked_div(params.iterations()).unwrap_or(0);
-        if u32::try_from(blocks).is_ok_and(|blocks| blocks <= max_blocks) {
+        let work = u64::try_from(expected.len().div_ceil($output_size_const))
+          .ok()
+          .and_then(|blocks| blocks.checked_mul(u64::from(params.iterations())));
+        if work.is_some_and(|work| work <= u64::from(max_iterations)) {
           Ok(params)
         } else {
           Err(VerificationError::new())
