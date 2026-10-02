@@ -8869,6 +8869,45 @@ mod tests {
     not(feature = "portable-only")
   ))]
   #[test]
+  fn sample_ntt_rej_uniform_block_asm_never_writes_past_candidate_capacity() {
+    const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
+    const GUARD_LANES: usize = 8;
+    const OUT_LANES: usize = MAX_CANDIDATES.strict_add(GUARD_LANES);
+    const GUARD: u16 = 0xa5a5;
+
+    // An all-zero block accepts every candidate, so the final eight-lane compact
+    // store starts at its latest possible offset. The seeded blocks vary the
+    // accepted count before each store.
+    let blocks = core::iter::once([0u8; SHAKE128_RATE_BYTES]).chain((0usize..256).map(|seed| {
+      let mut buf = [0u8; SHAKE128_RATE_BYTES];
+      for (i, byte) in buf.iter_mut().enumerate() {
+        *byte = test_low_byte(seed.strict_mul(131).strict_add(i.strict_mul(7)) & 0xff);
+      }
+      buf
+    }));
+
+    for buf in blocks {
+      let mut out = [GUARD; OUT_LANES];
+      // SAFETY: direct aarch64 block parser capacity test because:
+      // 1. `buf` is one full 168-byte SHAKE128 rate block.
+      // 2. `out` has the 112-candidate capacity the parser requires plus guard lanes.
+      let accepted = unsafe { aarch64::sample_ntt_rej_uniform_block_asm(out.as_mut_ptr(), buf.as_ptr()) };
+
+      assert!(accepted <= MAX_CANDIDATES);
+      assert!(
+        out[MAX_CANDIDATES..].iter().all(|&lane| lane == GUARD),
+        "compact stores wrote past the 112-candidate capacity"
+      );
+    }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  #[test]
   fn sample_ntt_rej_uniform_triple_block_asm_matches_scalar_reference() {
     const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
 
