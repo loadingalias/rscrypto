@@ -12722,14 +12722,13 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
     let mut oaep = |ciphertext: &[u8], blinding: RsaBlindingPair<'_>, out: &mut [u8]| {
       let profile = RsaOaepProfile::Sha256;
-      let mut results = vec![
-        decrypt_into_canary(out, |out| {
-          key.decrypt_oaep_with_blinding_factor(profile, label, ciphertext, blinding, out)
-        }),
-        decrypt_into_canary(out, |out| {
-          key.decrypt_oaep_with_blinding_factor_and_scratch(profile, label, ciphertext, blinding, out, &mut scratch)
-        }),
-      ];
+      let mut results = Vec::new();
+      results.push(decrypt_into_canary(out, |out| {
+        key.decrypt_oaep_with_blinding_factor(profile, label, ciphertext, blinding, out)
+      }));
+      results.push(decrypt_into_canary(out, |out| {
+        key.decrypt_oaep_with_blinding_factor_and_scratch(profile, label, ciphertext, blinding, out, &mut scratch)
+      }));
       #[cfg(feature = "getrandom")]
       {
         results.push(decrypt_into_canary(out, |out| {
@@ -12757,14 +12756,13 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     }
 
     let mut pkcs1v15 = |ciphertext: &[u8], blinding: RsaBlindingPair<'_>, out: &mut [u8]| {
-      let mut results = vec![
-        decrypt_into_canary(out, |out| {
-          key.decrypt_pkcs1v15_with_blinding_factor(ciphertext, blinding, out)
-        }),
-        decrypt_into_canary(out, |out| {
-          key.decrypt_pkcs1v15_with_blinding_factor_and_scratch(ciphertext, blinding, out, &mut scratch)
-        }),
-      ];
+      let mut results = Vec::new();
+      results.push(decrypt_into_canary(out, |out| {
+        key.decrypt_pkcs1v15_with_blinding_factor(ciphertext, blinding, out)
+      }));
+      results.push(decrypt_into_canary(out, |out| {
+        key.decrypt_pkcs1v15_with_blinding_factor_and_scratch(ciphertext, blinding, out, &mut scratch)
+      }));
       #[cfg(feature = "getrandom")]
       {
         results.push(decrypt_into_canary(out, |out| key.decrypt_pkcs1v15(ciphertext, out)));
