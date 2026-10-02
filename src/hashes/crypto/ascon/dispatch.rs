@@ -89,7 +89,7 @@ pub(crate) fn kernel_name_for_len(len: usize) -> &'static str {
   select(&d, len).1
 }
 
-#[cfg(any(test, feature = "std"))]
+#[cfg(feature = "std")]
 #[inline]
 #[must_use]
 pub(crate) fn scalar_kernel_id() -> AsconPermute12KernelId {
@@ -98,7 +98,7 @@ pub(crate) fn scalar_kernel_id() -> AsconPermute12KernelId {
   resolve(table.xs, caps)
 }
 
-#[cfg(any(test, feature = "std"))]
+#[cfg(feature = "std")]
 #[inline]
 #[must_use]
 pub(crate) fn batch_kernel_id_for_count(_count: usize) -> AsconPermute12KernelId {
@@ -127,7 +127,7 @@ pub(crate) fn batch_kernel_id_for_count(_count: usize) -> AsconPermute12KernelId
   scalar_kernel_id()
 }
 
-#[cfg(any(test, feature = "std"))]
+#[cfg(feature = "std")]
 #[inline]
 #[must_use]
 pub(crate) fn batch_fallback_kernel_id(requested: AsconPermute12KernelId, _count: usize) -> AsconPermute12KernelId {

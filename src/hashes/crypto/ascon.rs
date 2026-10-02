@@ -9,21 +9,21 @@ use crate::{
   traits::{Digest, Xof},
 };
 
-#[cfg(all(target_arch = "aarch64", any(test, feature = "std")))]
+#[cfg(all(target_arch = "aarch64", feature = "std"))]
 mod aarch64;
 #[doc(hidden)]
-#[cfg(any(test, feature = "std"))]
+#[cfg(feature = "std")]
 pub(crate) mod dispatch;
 #[doc(hidden)]
-#[cfg(any(test, feature = "std"))]
+#[cfg(feature = "std")]
 pub(crate) mod dispatch_tables;
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod kernel_test;
-#[cfg(any(test, feature = "std"))]
+#[cfg(feature = "std")]
 pub(crate) mod kernels;
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", any(test, feature = "std")))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "std"))]
 mod x86_64_avx2;
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", any(test, feature = "std")))]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "std"))]
 mod x86_64_avx512;
 
 const RATE: usize = 8;
@@ -49,7 +49,7 @@ impl Permuter for InlinePermuter {
 
 // Ascon permutation round constants (12 rounds).
 // Used by SIMD kernels; the shared portable permutation inlines the constants.
-#[cfg(all(any(test, feature = "std"), any(target_arch = "aarch64", target_arch = "x86_64")))]
+#[cfg(all(feature = "std", any(target_arch = "aarch64", target_arch = "x86_64")))]
 const RC: [u64; 12] = [0xF0, 0xE1, 0xD2, 0xC3, 0xB4, 0xA5, 0x96, 0x87, 0x78, 0x69, 0x5A, 0x4B];
 
 // Domain-specific IVs (from the Ascon hash/XOF specification).
@@ -207,13 +207,13 @@ fn squeeze_xof_into(mut state: [u64; 5], out: &mut [u8], mut permute: impl FnMut
   }
 }
 
-#[cfg(any(test, feature = "std"))]
+#[cfg(feature = "std")]
 #[inline(always)]
 const fn init_states<const N: usize>(iv: [u64; 5]) -> [[u64; 5]; N] {
   [iv; N]
 }
 
-#[cfg(any(test, feature = "std"))]
+#[cfg(feature = "std")]
 #[inline(always)]
 fn permute_12_many_portable<const N: usize>(states: &mut [[u64; 5]; N]) {
   for state in states {
@@ -221,7 +221,7 @@ fn permute_12_many_portable<const N: usize>(states: &mut [[u64; 5]; N]) {
   }
 }
 
-#[cfg(any(test, feature = "std"))]
+#[cfg(feature = "std")]
 fn absorb_equal_len_group<const N: usize>(
   states: &mut [[u64; 5]; N],
   inputs: &[&[u8]],
@@ -250,7 +250,7 @@ fn absorb_equal_len_group<const N: usize>(
   permute_many(states);
 }
 
-#[cfg(any(test, feature = "std"))]
+#[cfg(feature = "std")]
 fn squeeze_hash256_group<const N: usize>(
   states: &mut [[u64; 5]; N],
   outputs: &mut [[u8; 32]],
@@ -270,7 +270,7 @@ fn squeeze_hash256_group<const N: usize>(
   }
 }
 
-#[cfg(any(test, feature = "std"))]
+#[cfg(feature = "std")]
 fn squeeze_xof_group<const N: usize>(
   states: &mut [[u64; 5]; N],
   out_len: usize,
@@ -291,7 +291,7 @@ fn squeeze_xof_group<const N: usize>(
   }
 }
 
-#[cfg(any(test, feature = "std"))]
+#[cfg(feature = "std")]
 #[inline]
 fn inputs_have_equal_len(inputs: &[&[u8]]) -> bool {
   inputs
@@ -299,7 +299,7 @@ fn inputs_have_equal_len(inputs: &[&[u8]]) -> bool {
     .is_none_or(|(first, rest)| rest.iter().all(|input| input.len() == first.len()))
 }
 
-#[cfg(any(test, feature = "std"))]
+#[cfg(feature = "std")]
 fn digest_many_equal_len_group<const N: usize>(
   inputs: &[&[u8]],
   outputs: &mut [[u8; 32]],
@@ -313,7 +313,7 @@ fn digest_many_equal_len_group<const N: usize>(
   squeeze_hash256_group(&mut states, outputs, permute_many);
 }
 
-#[cfg(any(test, feature = "std"))]
+#[cfg(feature = "std")]
 fn xof_many_equal_len_group<const N: usize>(
   inputs: &[&[u8]],
   out_len: usize,
@@ -343,14 +343,14 @@ pub struct AsconHash256 {
 
 impl AsconHash256 {
   #[inline]
-  #[cfg(any(test, feature = "std"))]
+  #[cfg(feature = "std")]
   fn batch_kernel_id_for_count(count: usize) -> kernels::AsconPermute12KernelId {
     dispatch::batch_kernel_id_for_count(count)
   }
 
   #[inline]
   #[must_use]
-  #[cfg(any(test, feature = "std"))]
+  #[cfg(feature = "std")]
   pub(crate) fn digest_with_kernel(kid: kernels::AsconPermute12KernelId, data: &[u8]) -> [u8; 32] {
     let permute = kernels::permute_fn(kid);
     let state = finalize_state_one_shot(HASH256_IV, data, permute);
@@ -361,7 +361,7 @@ impl AsconHash256 {
   ///
   /// `outputs.len()` must equal `inputs.len()`.
   #[inline]
-  #[cfg(any(test, feature = "std"))]
+  #[cfg(feature = "std")]
   pub(crate) fn digest_many_with_kernel(
     mut kid: kernels::AsconPermute12KernelId,
     inputs: &[&[u8]],
@@ -462,7 +462,7 @@ impl AsconHash256 {
   /// permutation backend; mixed lengths automatically fall back to per-message
   /// hashing.
   #[inline]
-  #[cfg(any(test, feature = "std"))]
+  #[cfg(feature = "std")]
   pub fn digest_many(inputs: &[&[u8]], outputs: &mut [[u8; 32]]) {
     assert_eq!(inputs.len(), outputs.len(), "input/output batch length mismatch");
 
@@ -573,7 +573,7 @@ impl AsconXof {
   }
 
   #[inline]
-  #[cfg(any(test, feature = "std"))]
+  #[cfg(feature = "std")]
   pub(crate) fn hash_into_with_kernel(kid: kernels::AsconPermute12KernelId, data: &[u8], out: &mut [u8]) {
     let permute = kernels::permute_fn(kid);
     let state = finalize_state_one_shot(XOF128_IV, data, permute);
@@ -585,7 +585,7 @@ impl AsconXof {
   /// `outputs` is a flat buffer laid out as `inputs.len()` adjacent outputs of
   /// `out_len` bytes each.
   #[inline]
-  #[cfg(any(test, feature = "std"))]
+  #[cfg(feature = "std")]
   pub(crate) fn hash_many_into_with_kernel(
     mut kid: kernels::AsconPermute12KernelId,
     inputs: &[&[u8]],
@@ -705,7 +705,7 @@ impl AsconXof {
   /// inputs allow batched permutation backends; mixed lengths automatically fall
   /// back to the scalar per-message path.
   #[inline]
-  #[cfg(any(test, feature = "std"))]
+  #[cfg(feature = "std")]
   pub fn hash_many_into(inputs: &[&[u8]], out_len: usize, outputs: &mut [u8]) {
     assert_eq!(
       outputs.len(),
