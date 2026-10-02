@@ -234,7 +234,13 @@ impl core::error::Error for RsaEncryptionError {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum RsaKeyGenerationError {
-  /// Requested modulus length is outside this implementation's RSA policy.
+  /// Requested modulus length is outside the key-generation policy.
+  ///
+  /// `RsaPrivateKey::generate` accepts even lengths from 3072 through 8192
+  /// bits. To mint an RSA-2048 compatibility key, call
+  /// `RsaPrivateKey::generate_with_policy` with
+  /// [`RsaPublicKeyPolicy::legacy_verification`]. Odd lengths and lengths
+  /// below 2048 bits are always rejected.
   InvalidModulusBits,
   /// The platform entropy source was unavailable.
   EntropyUnavailable,
@@ -1460,8 +1466,10 @@ impl RsaPrivateKey {
   ///
   /// # Errors
   ///
-  /// Returns [`RsaKeyGenerationError`] if the requested size is outside policy,
-  /// entropy is unavailable, or bounded prime search fails.
+  /// Returns [`RsaKeyGenerationError::InvalidModulusBits`] unless
+  /// `modulus_bits` is even and in `3072..=8192`. Returns another
+  /// [`RsaKeyGenerationError`] if entropy is unavailable or bounded prime
+  /// search fails.
   #[cfg(feature = "getrandom")]
   #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
   pub fn generate(modulus_bits: usize) -> Result<Self, RsaKeyGenerationError> {
