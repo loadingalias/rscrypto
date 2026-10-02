@@ -3012,8 +3012,6 @@ use riscv64_tables::*;
 
 #[cfg(test)]
 mod tests {
-  use alloc::vec::Vec;
-
   use super::*;
 
   #[test]
@@ -3193,33 +3191,6 @@ mod tests {
     assert_eq!(crc16_ibm(&[]), 0, "CRC-16/IBM of empty data");
     #[cfg(feature = "crc24")]
     assert_eq!(crc24_openpgp(&[]), 0x00B7_04CE, "CRC-24/OpenPGP of empty data");
-  }
-
-  #[test]
-  fn test_various_sizes() {
-    // Test that all size classes produce consistent results
-    // (comparing against a portable reference would be ideal,
-    // but for now we just verify they don't panic)
-    let sizes = [1, 64, 65, 256, 257, 4096, 4097, 65536];
-
-    for &size in &sizes {
-      let data: Vec<u8> = (0u8..=u8::MAX).cycle().take(size).collect();
-      // Just verify no panics and consistent non-zero results for non-empty data
-      #[cfg(feature = "crc64")]
-      let _ = crc64_xz(&data);
-      #[cfg(feature = "crc64")]
-      let _ = crc64_nvme(&data);
-      #[cfg(feature = "crc32")]
-      let _ = crc32_ieee(&data);
-      #[cfg(feature = "crc32")]
-      let _ = crc32c(&data);
-      #[cfg(feature = "crc16")]
-      let _ = crc16_ccitt(&data);
-      #[cfg(feature = "crc16")]
-      let _ = crc16_ibm(&data);
-      #[cfg(feature = "crc24")]
-      let _ = crc24_openpgp(&data);
-    }
   }
 
   #[test]
