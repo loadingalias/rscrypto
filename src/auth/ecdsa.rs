@@ -16,21 +16,41 @@ use crate::{
   traits::{Mac, VerificationError, ct},
 };
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(feature = "portable-only"),
+  not(miri)
+))]
 #[path = "ecdsa_aarch64_asm.rs"]
 mod ecdsa_aarch64_asm;
 #[cfg(any(
   test,
   not(any(
-    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", target_os = "linux")
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only"),
+      not(miri)
+    ),
+    all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(feature = "portable-only"),
+      not(miri)
+    )
   ))
 ))]
 #[path = "ecdsa_p384_field.rs"]
 mod ecdsa_p384_field;
 #[path = "ecdsa_safegcd.rs"]
 mod ecdsa_safegcd;
-#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_os = "linux",
+  not(feature = "portable-only"),
+  not(miri)
+))]
 #[path = "ecdsa_x86_64_asm.rs"]
 mod ecdsa_x86_64_asm;
 
@@ -39,9 +59,19 @@ use super::ecdsa_generator_tables::{
   P384_SIGNING_GENERATOR_COMB_X, P384_SIGNING_GENERATOR_COMB_Y, Uint as GeneratorTableUint,
 };
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(feature = "portable-only"),
+  not(miri)
+))]
 use self::ecdsa_aarch64_asm as ecdsa_platform_asm;
-#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_os = "linux",
+  not(feature = "portable-only"),
+  not(miri)
+))]
 use self::ecdsa_x86_64_asm as ecdsa_platform_asm;
 
 const TAG_SEQUENCE: u8 = 0x30;
@@ -1831,6 +1861,20 @@ struct ZeroizingWords<const N: usize> {
   all(target_arch = "x86_64", target_os = "linux")
 ))]
 impl<const N: usize> ZeroizingWords<N> {
+  #[cfg(any(
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only"),
+      not(miri)
+    ),
+    all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(feature = "portable-only"),
+      not(miri)
+    )
+  ))]
   const fn new(value: [u64; N]) -> Self {
     Self { value }
   }
@@ -2147,8 +2191,18 @@ impl<const L: usize> Uint<L> {
 
   fn inv_mod_ct_montgomery(&self, modulus: &'static Modulus<L>, exponent: Self) -> Self {
     #[cfg(any(
-      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-      all(target_arch = "x86_64", target_os = "linux")
+      all(
+        target_arch = "aarch64",
+        any(target_os = "macos", target_os = "linux"),
+        not(feature = "portable-only"),
+        not(miri)
+      ),
+      all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        not(feature = "portable-only"),
+        not(miri)
+      )
     ))]
     {
       if is_p256_order_modulus(modulus) || is_p384_order_modulus(modulus) {
@@ -2355,8 +2409,18 @@ impl<const L: usize> FieldElement<L> {
 
   fn inv_ct(self, exponent: Uint<L>) -> Self {
     #[cfg(any(
-      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-      all(target_arch = "x86_64", target_os = "linux")
+      all(
+        target_arch = "aarch64",
+        any(target_os = "macos", target_os = "linux"),
+        not(feature = "portable-only"),
+        not(miri)
+      ),
+      all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        not(feature = "portable-only"),
+        not(miri)
+      )
     ))]
     {
       if is_p384_field_modulus(self.modulus) {
@@ -3013,8 +3077,18 @@ fn reduce_wide_order_nonzero<const L: usize, const N: usize>(bytes: &[u8; N], mo
 #[cfg(not(target_arch = "s390x"))]
 fn reduce_wide_order_nonzero<const L: usize, const N: usize>(bytes: &[u8; N], modulus: &'static Modulus<L>) -> Uint<L> {
   #[cfg(any(
-    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", target_os = "linux")
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only"),
+      not(miri)
+    ),
+    all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(feature = "portable-only"),
+      not(miri)
+    )
   ))]
   {
     if N == 64 && is_p256_order_modulus(modulus) {
@@ -3028,7 +3102,12 @@ fn reduce_wide_order_nonzero<const L: usize, const N: usize>(bytes: &[u8; N], mo
     }
   }
 
-  #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
   {
     if N == 96 && is_p384_order_modulus(modulus) {
       let mut fixed = ZeroizingBytes::zeroed();
@@ -3238,15 +3317,28 @@ fn scalar_mul_basepoint_backend<const L: usize>(curve: &Curve<L>, scalar: &Secre
   }
 }
 
-#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+#[cfg(any(
+  all(target_arch = "x86_64", target_os = "linux"),
+  all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    any(feature = "portable-only", miri)
+  )
+))]
 fn p384_scalar_mul_basepoint_platform<const L: usize>(curve: &Curve<L>, scalar: &SecretScalar<L>) -> Jacobian<L> {
   // The x86 nonexceptional comb backend showed measurable DudeCT separation on
   // Zen4/Ice Lake P-384 signing. Keep the complete comb path until that backend
-  // has architecture-specific CT evidence.
+  // has architecture-specific CT evidence. Portable-only and Miri AArch64
+  // builds use the same portable comb.
   scalar_mul_basepoint_comb_ct_secret(curve, scalar)
 }
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(feature = "portable-only"),
+  not(miri)
+))]
 fn p384_scalar_mul_basepoint_platform<const L: usize>(curve: &Curve<L>, scalar: &SecretScalar<L>) -> Jacobian<L> {
   let mut scalar_words = ZeroizingWords::zeroed();
   scalar_words.as_mut_array().copy_from_slice(&scalar.words()[..6]);
@@ -3527,16 +3619,36 @@ impl P384Jacobian {
 #[cfg(test)]
 fn p384_field_mul_words(lhs: [u64; 6], rhs: [u64; 6]) -> [u64; 6] {
   #[cfg(any(
-    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", target_os = "linux")
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only"),
+      not(miri)
+    ),
+    all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(feature = "portable-only"),
+      not(miri)
+    )
   ))]
   {
     ecdsa_platform_asm::p384_field_mul(&lhs, &rhs)
   }
 
   #[cfg(not(any(
-    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", target_os = "linux")
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only"),
+      not(miri)
+    ),
+    all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(feature = "portable-only"),
+      not(miri)
+    )
   )))]
   {
     ecdsa_p384_field::mul(lhs, rhs)
@@ -3546,16 +3658,36 @@ fn p384_field_mul_words(lhs: [u64; 6], rhs: [u64; 6]) -> [u64; 6] {
 #[cfg(test)]
 fn p384_field_square_words(value: [u64; 6]) -> [u64; 6] {
   #[cfg(any(
-    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", target_os = "linux")
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only"),
+      not(miri)
+    ),
+    all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(feature = "portable-only"),
+      not(miri)
+    )
   ))]
   {
     ecdsa_platform_asm::p384_field_square(&value)
   }
 
   #[cfg(not(any(
-    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", target_os = "linux")
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only"),
+      not(miri)
+    ),
+    all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(feature = "portable-only"),
+      not(miri)
+    )
   )))]
   {
     ecdsa_p384_field::square(value)
@@ -3608,7 +3740,12 @@ fn p384_scalar_mul_basepoint_comb_nonexceptional_ct(scalar: &SecretScalar<6>) ->
   acc.to_generic()
 }
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(feature = "portable-only"),
+  not(miri)
+))]
 fn p384_scalar_mul_basepoint_comb_backend(scalar: &SecretScalar<6>) -> Jacobian<6> {
   let curve = &P384;
   let rows = curve.signing_comb_rows;
@@ -3635,7 +3772,12 @@ fn p384_scalar_mul_basepoint_comb_backend(scalar: &SecretScalar<6>) -> Jacobian<
   acc
 }
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(feature = "portable-only"),
+  not(miri)
+))]
 fn p384_jacobian_to_words(point: Jacobian<6>) -> [u64; 18] {
   let mut out = [0u64; 18];
   out[..6].copy_from_slice(&point.x.value.0);
@@ -3644,7 +3786,12 @@ fn p384_jacobian_to_words(point: Jacobian<6>) -> [u64; 18] {
   out
 }
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(feature = "portable-only"),
+  not(miri)
+))]
 fn p384_affine_to_words(point: Affine<6>) -> [u64; 12] {
   let mut out = [0u64; 12];
   out[..6].copy_from_slice(&point.x.value.0);
@@ -3652,7 +3799,12 @@ fn p384_affine_to_words(point: Affine<6>) -> [u64; 12] {
   out
 }
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(feature = "portable-only"),
+  not(miri)
+))]
 fn p384_jacobian_from_words(words: &[u64; 18]) -> Jacobian<6> {
   Jacobian {
     x: FieldElement::from_montgomery(
@@ -3671,7 +3823,12 @@ fn p384_jacobian_from_words(words: &[u64; 18]) -> Jacobian<6> {
   }
 }
 
-#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(feature = "portable-only"),
+  not(miri)
+))]
 fn jacobian_from_p384_words<const L: usize>(modulus: &'static Modulus<L>, words: &[u64; 18]) -> Jacobian<L> {
   let mut x = [0u64; L];
   let mut y = [0u64; L];
@@ -3804,8 +3961,18 @@ pub fn diag_ecdsa_p256_select_signing_generator_affine_limb_digest(digit: u8) ->
   feature = "diag",
   feature = "ecdsa-p256",
   any(
-    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", target_os = "linux")
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only"),
+      not(miri)
+    ),
+    all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(feature = "portable-only"),
+      not(miri)
+    )
   )
 ))]
 #[doc(hidden)]
@@ -4028,7 +4195,9 @@ pub fn diag_ecdsa_p384_select_signing_generator_affine_limb_digest(digit: u8) ->
   feature = "diag",
   feature = "ecdsa-p384",
   target_arch = "aarch64",
-  any(target_os = "macos", target_os = "linux")
+  any(target_os = "macos", target_os = "linux"),
+  not(feature = "portable-only"),
+  not(miri)
 ))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]
@@ -4609,13 +4778,33 @@ fn montgomery_mul<const L: usize>(lhs: Uint<L>, rhs: Uint<L>, modulus: &'static 
     let lhs = [lhs.0[0], lhs.0[1], lhs.0[2], lhs.0[3], lhs.0[4], lhs.0[5]];
     let rhs = [rhs.0[0], rhs.0[1], rhs.0[2], rhs.0[3], rhs.0[4], rhs.0[5]];
     #[cfg(any(
-      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-      all(target_arch = "x86_64", target_os = "linux")
+      all(
+        target_arch = "aarch64",
+        any(target_os = "macos", target_os = "linux"),
+        not(feature = "portable-only"),
+        not(miri)
+      ),
+      all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        not(feature = "portable-only"),
+        not(miri)
+      )
     ))]
     let reduced = ecdsa_platform_asm::p384_field_mul(&lhs, &rhs);
     #[cfg(not(any(
-      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-      all(target_arch = "x86_64", target_os = "linux")
+      all(
+        target_arch = "aarch64",
+        any(target_os = "macos", target_os = "linux"),
+        not(feature = "portable-only"),
+        not(miri)
+      ),
+      all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        not(feature = "portable-only"),
+        not(miri)
+      )
     )))]
     let reduced = ecdsa_p384_field::mul(lhs, rhs);
     let mut out = [0u64; L];
@@ -4679,13 +4868,33 @@ fn montgomery_square<const L: usize>(value: Uint<L>, modulus: &'static Modulus<L
   if is_p384_field_modulus(modulus) {
     let value = [value.0[0], value.0[1], value.0[2], value.0[3], value.0[4], value.0[5]];
     #[cfg(any(
-      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-      all(target_arch = "x86_64", target_os = "linux")
+      all(
+        target_arch = "aarch64",
+        any(target_os = "macos", target_os = "linux"),
+        not(feature = "portable-only"),
+        not(miri)
+      ),
+      all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        not(feature = "portable-only"),
+        not(miri)
+      )
     ))]
     let reduced = ecdsa_platform_asm::p384_field_square(&value);
     #[cfg(not(any(
-      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-      all(target_arch = "x86_64", target_os = "linux")
+      all(
+        target_arch = "aarch64",
+        any(target_os = "macos", target_os = "linux"),
+        not(feature = "portable-only"),
+        not(miri)
+      ),
+      all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        not(feature = "portable-only"),
+        not(miri)
+      )
     )))]
     let reduced = ecdsa_p384_field::square(value);
     let mut out = [0u64; L];
@@ -5911,8 +6120,18 @@ mod tests {
   }
 
   #[cfg(any(
-    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-    all(target_arch = "x86_64", target_os = "linux")
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only"),
+      not(miri)
+    ),
+    all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(feature = "portable-only"),
+      not(miri)
+    )
   ))]
   #[test]
   fn p384_portable_field_arithmetic_matches_platform_backend() {
@@ -6014,7 +6233,12 @@ mod tests {
     }
   }
 
-  #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
   #[test]
   fn p384_owned_wide_order_reduction_matches_platform_reduction() {
     for bytes in [[0u8; 96], [0xffu8; 96], {
