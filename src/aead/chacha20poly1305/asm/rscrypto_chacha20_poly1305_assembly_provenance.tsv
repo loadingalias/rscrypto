@@ -1,0 +1,14 @@
+# rscrypto ChaCha20-Poly1305 assembly provenance manifest v1
+schema	1
+transform	chacha20-poly1305-aws-lc-sys-0.41.0-transform-v1
+archive	aws-lc-sys-0.41.0	1a2f9779ce85b93ab6170dd940ad0169b5766ff848247aff13bb788b832fe3f4	44766fa7daa88e5afc7fc6de3311c48eeeb02f39
+member	aws-lc-sys-0.41.0/aws-lc/generated-src/ios-aarch64/crypto/cipher_extra/chacha20_poly1305_armv8.S	17d07527b13c10c24d3eec341b664ac53e02ce73b67509892ba0c636169a1564
+member	aws-lc-sys-0.41.0/aws-lc/generated-src/linux-aarch64/crypto/cipher_extra/chacha20_poly1305_armv8.S	79f7baacffc67e4b3953285c58d2b23540333de1253c79f7caf17c6ca5ddd01c
+member	aws-lc-sys-0.41.0/aws-lc/generated-src/linux-x86_64/crypto/cipher_extra/chacha20_poly1305_x86_64.S	05a68f364879ef8bfe2f475e82536ad49a8bde61986d480810346e12915a5c94
+member	aws-lc-sys-0.41.0/aws-lc/crypto/cipher_extra/asm/chacha20_poly1305_armv8.pl	5fb8668595d8f1eb8951381413adb3da0c219629d3136828fed4c4ddf4fbda30
+member	aws-lc-sys-0.41.0/aws-lc/crypto/cipher_extra/asm/chacha20_poly1305_x86_64.pl	a6d44ceac0afb0f911c767bb0b1e145c4c587af5b68db1fe2f53da1fdf9e9c1a
+member	aws-lc-sys-0.41.0/aws-lc/crypto/perlasm/arm-xlate.pl	cf58ab9cf9c02c849aca10a83c0e640178bf6ff0bb98a34de54c56d5c2856f80
+member	aws-lc-sys-0.41.0/aws-lc/crypto/perlasm/x86_64-xlate.pl	2745d9400c9a5d2385da57eceb94b4c1ba8991cfe4ee90ba017fba7b361fe5b7
+output	src/aead/chacha20poly1305/asm/rscrypto_chacha20_poly1305_aarch64_apple_darwin.s	3013	74283	1ff3d39bbe03b5a09e354ce8d8476ef32819096545cdbfc1068dbc0a7c8ef7da
+output	src/aead/chacha20poly1305/asm/rscrypto_chacha20_poly1305_aarch64_linux.s	3007	74022	13ab15d710b4bac3fe12c4df680360f8948fef5c43cf138b16f412aa19b27d14
+output	src/aead/chacha20poly1305/asm/rscrypto_chacha20_poly1305_x86_64_linux.s	8922	194005	014d679d5f8ee22dd099699eab045cddad44fff1d7ec19d91d9c4b2c37ad7d1c

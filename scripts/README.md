@@ -16,6 +16,7 @@ Those entry points call the supporting modules.
 | `check/dependencies.sh`                | `just ci-policy`, and the dependency checks in `just check` |
 | `check/lint-independent-workspaces.sh` | `check/check.sh` |
 | `asm/p384.py check`                    | `check/check.sh` |
+| `asm/provenance.py check`              | `check/check.sh` |
 
 `check/check_runner_test.py` tests command selection, repair behavior, and failure propagation with substitute executors.
 Run it with `scripts/lib/python.sh scripts/check/check_runner_test.py`.
@@ -36,6 +37,14 @@ The other assembly in those files is written by hand.
 
 `asm/p384_test.py` (part of `just test-scripts`) checks that edits and single dropped carries are detected.
 Native differential tests against the portable implementation are the runtime evidence.
+
+## Derived assembly provenance
+
+Each `src/**/*_assembly_provenance.tsv` manifest pins the upstream archive, the upstream members, and the SHA-256 of
+every committed output derived from them.
+`asm/provenance.py check` fails when an output differs from its manifest, or when assembly under `src/` without an
+`rscrypto contributors` copyright header has no manifest output.
+It does not download upstream archives.
 
 ## Test entry points
 

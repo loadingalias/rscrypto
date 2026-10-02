@@ -174,11 +174,11 @@ if name == 'cargo' and 'clippy' in args:
       (binary / name).symlink_to(stub)
     for name in ('lint-independent-workspaces.sh',):
       (root / 'scripts/check' / name).symlink_to(stub)
-    generated_check = root / 'scripts/asm/p384.py'
-    generated_check.parent.mkdir(parents=True)
-    generated_check.write_text('import json, os, sys\n'
-                               "with open(os.environ['CHECK_LOG'], 'a') as output:\n"
-                               "    output.write(json.dumps(['p384.py', *sys.argv[1:]]) + '\\n')\n")
+    (root / 'scripts/asm').mkdir(parents=True)
+    for name in ('p384.py', 'provenance.py'):
+      (root / 'scripts/asm' / name).write_text('import json, os, sys\n'
+                                               "with open(os.environ['CHECK_LOG'], 'a') as output:\n"
+                                               f"    output.write(json.dumps(['{name}', *sys.argv[1:]]) + '\\n')\n")
     environment = {key: value for key, value in os.environ.items()
                    if key not in ('BASH_ENV', 'ENV') and not key.startswith('BASH_FUNC_')}
     environment.update(PATH=f'{binary}:{os.environ["PATH"]}', CHECK_PYTHON=sys.executable,
@@ -247,6 +247,7 @@ if name == 'cargo' and 'clippy' in args:
         assert '--target' not in deny[0]
       assert (['lint-independent-workspaces.sh'] in commands) == (mode != 'fix')
       assert (['p384.py', 'check'] in commands) == (mode != 'fix')
+      assert (['provenance.py', 'check'] in commands) == (mode != 'fix')
     for target in ('riscv64gc-unknown-linux-gnu', 'powerpc64le-unknown-linux-gnu', 's390x-unknown-linux-gnu'):
       result, commands = run('target', target)
       assert result.returncode == 0, result.stderr
@@ -257,6 +258,7 @@ if name == 'cargo' and 'clippy' in args:
       assert sum('--release' in c for c in cross) == 1
       assert ['lint-independent-workspaces.sh'] in commands
       assert ['p384.py', 'check'] in commands
+      assert ['provenance.py', 'check'] in commands
       assert not any('--fix' in c for c in commands)
     result, commands = run('check')
     assert result.returncode == 0, result.stderr
