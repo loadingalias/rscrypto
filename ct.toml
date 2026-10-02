@@ -3796,26 +3796,25 @@ api = [
   "rscrypto::Pbkdf2Sha{256,512}::{new,params,params_with_policy,params_with_policy_bounded}",
   "rscrypto::Pbkdf2Sha{256,512}::{derive,derive_with_params,derive_array,derive_array_with_params}",
   "rscrypto::Pbkdf2Sha{256,512}::{derive_key,derive_key_with_params,derive_key_primitive,derive_key_array,derive_key_array_with_params,derive_key_array_primitive}",
-  "rscrypto::Pbkdf2Sha{256,512}::{verify,verify_with_policy,verify_with_policy_bounded,verify_primitive}",
-  "rscrypto::Pbkdf2Sha{256,512}::{verify_password,verify_password_with_policy,verify_password_with_policy_bounded,verify_password_primitive}",
+  "rscrypto::Pbkdf2Sha{256,512}::{verify,verify_with_policy_bounded,verify_primitive}",
+  "rscrypto::Pbkdf2Sha{256,512}::{verify_password,verify_password_with_policy_bounded,verify_password_primitive}",
   "rscrypto::Pbkdf2Params::*",
   "rscrypto::Pbkdf2VerifyPolicy::*",
 ]
-features = ["pbkdf2", "alloc", "phc-strings"]
+features = ["pbkdf2"]
 targets = ["all-supported"]
 secret_inputs = ["password", "derived key", "computed verifier"]
 public_inputs = [
   "salt",
   "iteration count",
-  "caller-selected maximum iteration count",
+  "caller-selected maximum verification work",
   "output length",
-  "PHC string",
   "verification policy",
 ]
 variable_time_components = [
   "public iteration count",
   "public output-length loops",
-  "PHC parsing and public work-policy rejection",
+  "public work-policy rejection",
   "public-length full-content comparison",
 ]
 permitted_leakage = [
@@ -3827,7 +3826,7 @@ permitted_leakage = [
 ]
 claim = "ct-intended"
 evidence = ["primitive:kdf.pbkdf2", "unit:kdf.pbkdf2.sha256", "unit:kdf.pbkdf2.sha512"]
-limitation = "Iteration count, policy minima, and max_iterations are public. Bounded verification rejects excessive public work before constructing password-derived HMAC state; primitive and compatibility methods deliberately do not cap it."
+limitation = "Iteration count, output length, policy minima, and max_iterations are public. Bounded verification rejects iterations * ceil(output length / digest size) above max_iterations before constructing password-derived HMAC state; primitive and compatibility methods deliberately do not cap it."
 
 [[operation]]
 id = "password.argon2i"

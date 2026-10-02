@@ -213,7 +213,10 @@ impl Pbkdf2VerifyPolicy {
   }
 
   /// Return `true` when `params` satisfies this policy and the explicit
-  /// verification work limit.
+  /// verification work limit for a single-block output.
+  ///
+  /// Bounded verification also counts output blocks; see
+  /// [`Pbkdf2Sha256::MAX_VERIFY_ITERATIONS`].
   #[must_use]
   pub const fn allows_bounded(&self, params: &Pbkdf2Params<'_>, max_iterations: u32) -> bool {
     self.allows(params) && params.iterations() <= max_iterations
@@ -275,11 +278,13 @@ macro_rules! define_pbkdf2_sha2 {
       pub const OUTPUT_SIZE: usize = $output_size_const;
       /// Minimum iteration count recommended for compliance-sensitive deployments.
       pub const MIN_RECOMMENDED_ITERATIONS: u32 = $recommended_iterations;
-      /// Maximum iteration count accepted by default password-verification APIs.
+      /// Maximum verification work accepted by default password-verification APIs.
       ///
-      /// Raw PBKDF2 derivation and primitive verification remain unbounded for
-      /// protocol compatibility. Stored-password verification rejects larger
-      /// attacker-controlled work before constructing HMAC state.
+      /// Work is `iterations * expected.len().div_ceil(OUTPUT_SIZE)`, because
+      /// each output block runs its own PRF chain. Raw PBKDF2 derivation and
+      /// primitive verification remain unbounded for protocol compatibility.
+      /// Stored-password verification rejects larger attacker-controlled work
+      /// before constructing HMAC state.
       pub const MAX_VERIFY_ITERATIONS: u32 = $recommended_iterations * 10;
       /// Minimum salt length (bytes) recommended for compliance-sensitive deployments.
       pub const MIN_SALT_LEN: usize = 16;
@@ -470,6 +475,10 @@ macro_rules! define_pbkdf2_sha2 {
 
       /// Verify `expected` under an explicit lower-bound policy and
       /// caller-selected verification work limit.
+      ///
+      /// Verification fails before derivation when
+      /// `iterations * expected.len().div_ceil(OUTPUT_SIZE)` exceeds
+      /// `max_iterations`.
       #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify_with_policy_bounded(
         &self,
@@ -479,18 +488,32 @@ macro_rules! define_pbkdf2_sha2 {
         policy: &Pbkdf2VerifyPolicy,
         max_iterations: u32,
       ) -> Result<(), VerificationError> {
-        let params = Self::verification_params_bounded(salt, iterations, policy, max_iterations)?;
+        let params = Self::verification_params_bounded(salt, iterations, expected, policy, max_iterations)?;
         self.verify_primitive(params.salt(), params.iterations(), expected)
       }
 
+      /// Validate stored-password parameters and bound total verification work.
+      ///
+      /// Each output block runs an `iterations`-long PRF chain, so the limit
+      /// applies to `iterations * blocks`. `blocks * iterations <= max_iterations`
+      /// holds exactly when `blocks <= max_iterations / iterations`, which
+      /// avoids overflow.
       fn verification_params_bounded<'a>(
         salt: &'a [u8],
         iterations: u32,
+        expected: &[u8],
         policy: &Pbkdf2VerifyPolicy,
         max_iterations: u32,
       ) -> Result<Pbkdf2Params<'a>, VerificationError> {
-        Self::params_with_policy_bounded(salt, iterations, policy, max_iterations)
-          .map_err(|_| VerificationError::new())
+        let params = Self::params_with_policy_bounded(salt, iterations, policy, max_iterations)
+          .map_err(|_| VerificationError::new())?;
+        let blocks = expected.len().div_ceil($output_size_const);
+        let max_blocks = max_iterations.checked_div(params.iterations()).unwrap_or(0);
+        if u32::try_from(blocks).is_ok_and(|blocks| blocks <= max_blocks) {
+          Ok(params)
+        } else {
+          Err(VerificationError::new())
+        }
       }
 
       /// Verify `expected` against the derived key without password policy checks.
@@ -632,6 +655,10 @@ macro_rules! define_pbkdf2_sha2 {
 
       /// Verify a password in one shot under an explicit lower-bound policy
       /// and caller-selected verification work limit.
+      ///
+      /// Verification fails before derivation when
+      /// `iterations * expected.len().div_ceil(OUTPUT_SIZE)` exceeds
+      /// `max_iterations`.
       #[inline]
       #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify_password_with_policy_bounded(
@@ -642,7 +669,7 @@ macro_rules! define_pbkdf2_sha2 {
         policy: &Pbkdf2VerifyPolicy,
         max_iterations: u32,
       ) -> Result<(), VerificationError> {
-        let params = Self::verification_params_bounded(salt, iterations, policy, max_iterations)?;
+        let params = Self::verification_params_bounded(salt, iterations, expected, policy, max_iterations)?;
         Self::new(password).verify_primitive(params.salt(), params.iterations(), expected)
       }
 
@@ -1784,6 +1811,72 @@ mod tests {
         .is_err()
     );
     assert_eq!(SHA512_VERIFY_BLOCKS.load(Ordering::Relaxed), 0);
+  }
+
+  #[test]
+  fn password_verification_limits_total_block_work_before_hmac_work() {
+    let policy = Pbkdf2VerifyPolicy::new(1, 0);
+
+    macro_rules! assert_block_work_limit {
+      ($pbkdf2:ty, $compress:path, $counter:ident, $output_size:expr) => {{
+        // Three iterations over two blocks is six units of work.
+        let max_work = 6;
+        let mut at_limit = vec![0u8; 2 * $output_size];
+        <$pbkdf2>::derive_key_primitive(b"pw", b"salt", 3, &mut at_limit).expect("work-limit fixture derives");
+        let mut over_limit = vec![0u8; 2 * $output_size + 1];
+        <$pbkdf2>::derive_key_primitive(b"pw", b"salt", 3, &mut over_limit).expect("work-limit fixture derives");
+
+        let state = <$pbkdf2>::new_with_compress_for_test(b"pw", $compress);
+        assert!(
+          state
+            .verify_with_policy_bounded(b"salt", 3, &at_limit, &policy, max_work)
+            .is_ok()
+        );
+        assert!(
+          <$pbkdf2>::verify_password_with_policy_bounded(b"pw", b"salt", 3, &at_limit, &policy, max_work).is_ok()
+        );
+
+        // A correct key fails once its third block exceeds the work limit.
+        $counter.store(0, Ordering::Relaxed);
+        assert!(
+          state
+            .verify_with_policy_bounded(b"salt", 3, &over_limit, &policy, max_work)
+            .is_err()
+        );
+        assert_eq!($counter.load(Ordering::Relaxed), 0);
+        assert!(
+          <$pbkdf2>::verify_password_with_policy_bounded(b"pw", b"salt", 3, &over_limit, &policy, max_work).is_err()
+        );
+
+        // At the default per-block limit, a second block is already excessive.
+        $counter.store(0, Ordering::Relaxed);
+        assert!(
+          state
+            .verify_with_policy_bounded(
+              b"salt",
+              <$pbkdf2>::MAX_VERIFY_ITERATIONS,
+              &[0; $output_size + 1],
+              &policy,
+              <$pbkdf2>::MAX_VERIFY_ITERATIONS,
+            )
+            .is_err()
+        );
+        assert_eq!($counter.load(Ordering::Relaxed), 0);
+      }};
+    }
+
+    assert_block_work_limit!(
+      Pbkdf2Sha256,
+      counting_sha256_compress,
+      SHA256_VERIFY_BLOCKS,
+      Pbkdf2Sha256::OUTPUT_SIZE
+    );
+    assert_block_work_limit!(
+      Pbkdf2Sha512,
+      counting_sha512_compress,
+      SHA512_VERIFY_BLOCKS,
+      Pbkdf2Sha512::OUTPUT_SIZE
+    );
   }
 
   #[test]
