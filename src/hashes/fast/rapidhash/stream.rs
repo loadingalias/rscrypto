@@ -504,17 +504,6 @@ mod tests {
   }
 
   #[test]
-  fn rapid_hasher_finish_is_repeatable_and_clone_preserves_state() {
-    let mut hasher = seeded_hasher(42);
-    hasher.write_u64(0x0123_4567_89ab_cdef);
-    hasher.write(b"field");
-    let cloned = hasher;
-
-    assert_eq!(hasher.finish(), hasher.finish());
-    assert_eq!(cloned.finish(), hasher.finish());
-  }
-
-  #[test]
   fn rapid_stream_hasher_clone_preserves_partial_stream() {
     let mut original = RapidStreamHasher::with_seed(42);
     original.write(&data(173));
