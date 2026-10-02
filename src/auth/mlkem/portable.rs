@@ -4245,7 +4245,9 @@ fn sample_ntt_block_avx2_full(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly, f
     // 1. `chunk < 13`, so `chunk * 12 + 16 <= 160 <= SHAKE128_RATE_BYTES`.
     // 2. The surrounding function is gated by AVX2/SSE4.1/SSSE3 target features.
     let candidates = unsafe { sample_ntt_extract_8_candidates_avx2(buf.as_ptr().add(chunk.strict_mul(12)), false) };
-    sample_ntt_store_candidates_full(out_ptr, &mut n, &candidates);
+    // SAFETY: the caller's remaining-capacity check leaves room for every accepted candidate in
+    // this rate block, and `out_ptr` comes from the unique `out` borrow.
+    unsafe { sample_ntt_store_candidates_full(out_ptr, &mut n, &candidates) };
   }
 
   // SAFETY: final shifted extraction because:
@@ -4253,7 +4255,9 @@ fn sample_ntt_block_avx2_full(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly, f
   // 2. The shifted shuffle masks decode logical bytes 156..168, the final 12-byte SampleNTT group.
   // 3. The surrounding function is gated by AVX2/SSE4.1/SSSE3 target features.
   let candidates = unsafe { sample_ntt_extract_8_candidates_avx2(buf.as_ptr().add(152), true) };
-  sample_ntt_store_candidates_full(out_ptr, &mut n, &candidates);
+  // SAFETY: the caller's remaining-capacity check leaves room for every accepted candidate in this
+  // rate block, and `out_ptr` comes from the unique `out` borrow.
+  unsafe { sample_ntt_store_candidates_full(out_ptr, &mut n, &candidates) };
 
   debug_assert!(n <= N);
   *filled = n;
@@ -4284,7 +4288,9 @@ fn sample_ntt_block_avx2_bounded(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly
     // 1. `chunk < 13`, so `chunk * 12 + 16 <= 160 <= SHAKE128_RATE_BYTES`.
     // 2. The surrounding function is gated by AVX2/SSE4.1/SSSE3 target features.
     let candidates = unsafe { sample_ntt_extract_8_candidates_avx2(buf.as_ptr().add(chunk.strict_mul(12)), false) };
-    sample_ntt_store_candidates_bounded(out_ptr, &mut n, &candidates);
+    // SAFETY: `n < N` here, `out_ptr` addresses the unique `N`-coefficient `out` polynomial, and
+    // the callee stops at `N`.
+    unsafe { sample_ntt_store_candidates_bounded(out_ptr, &mut n, &candidates) };
   }
 
   if n != N {
@@ -4293,7 +4299,9 @@ fn sample_ntt_block_avx2_bounded(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly
     // 2. The shifted shuffle masks decode logical bytes 156..168, the final 12-byte SampleNTT group.
     // 3. The surrounding function is gated by AVX2/SSE4.1/SSSE3 target features.
     let candidates = unsafe { sample_ntt_extract_8_candidates_avx2(buf.as_ptr().add(152), true) };
-    sample_ntt_store_candidates_bounded(out_ptr, &mut n, &candidates);
+    // SAFETY: `n < N` here, `out_ptr` addresses the unique `N`-coefficient `out` polynomial, and
+    // the callee stops at `N`.
+    unsafe { sample_ntt_store_candidates_bounded(out_ptr, &mut n, &candidates) };
   }
 
   debug_assert!(n <= N);
@@ -4307,7 +4315,12 @@ fn sample_ntt_block_avx2_bounded(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly
   not(feature = "portable-only")
 ))]
 #[inline(always)]
-fn sample_ntt_store_candidates_full(out: *mut u16, n: &mut usize, candidates: &[u16; 8]) {
+/// Store every accepted candidate at `out[*n..]` and advance `n`.
+///
+/// # Safety
+///
+/// `out` must be valid to write `*n + 8` `u16` values, and no other reference may access them.
+unsafe fn sample_ntt_store_candidates_full(out: *mut u16, n: &mut usize, candidates: &[u16; 8]) {
   for &candidate in candidates {
     if candidate < Q {
       // SAFETY: full-capacity public SampleNTT store because:
@@ -4331,7 +4344,13 @@ fn sample_ntt_store_candidates_full(out: *mut u16, n: &mut usize, candidates: &[
   not(feature = "portable-only")
 ))]
 #[inline(always)]
-fn sample_ntt_store_candidates_bounded(out: *mut u16, n: &mut usize, candidates: &[u16; 8]) {
+/// Store accepted candidates at `out[*n..N]`, stopping when `*n == N`, and advance `n`.
+///
+/// # Safety
+///
+/// `*n <= N` on entry, `out` must be valid to write `N` `u16` values, and no other reference may
+/// access them.
+unsafe fn sample_ntt_store_candidates_bounded(out: *mut u16, n: &mut usize, candidates: &[u16; 8]) {
   for &candidate in candidates {
     if candidate < Q {
       if *n == N {
@@ -6577,7 +6596,7 @@ fn set1_u32x8_avx2(value: u32) -> __m256i {
 ///
 /// The active CPU must support AVX2 and SSE4.1, and `ptr` must be valid to read 16 initialized
 /// `u16` values.
-fn load_u16x16_avx2(ptr: *const u16) -> __m256i {
+unsafe fn load_u16x16_avx2(ptr: *const u16) -> __m256i {
   // SAFETY: the caller provides 16 readable coefficients; `[u16; 16]` retains two-byte alignment.
   let lanes = unsafe { ptr.cast::<[u16; 16]>().read_unaligned() };
   // SAFETY: `[u16; 16]` and `__m256i` are 256-bit values, and every bit pattern is valid for both.
@@ -6596,7 +6615,7 @@ fn load_u16x16_avx2(ptr: *const u16) -> __m256i {
 /// # Safety
 ///
 /// The active CPU must support AVX2 and SSE4.1, and `ptr` must be valid to write 16 `u16` values.
-fn store_u16x16_avx2(ptr: *mut u16, value: __m256i) {
+unsafe fn store_u16x16_avx2(ptr: *mut u16, value: __m256i) {
   // SAFETY: `__m256i` and `[u16; 16]` are 256-bit values, and every bit pattern is valid for both.
   let lanes = unsafe { core::mem::transmute::<__m256i, [u16; 16]>(value) };
   // SAFETY: the caller provides 16 writable coefficients; `[u16; 16]` retains two-byte alignment.
@@ -6614,7 +6633,7 @@ fn store_u16x16_avx2(ptr: *mut u16, value: __m256i) {
 ///
 /// The active CPU must support AVX2 and SSE4.1, and `ptr` must be valid to read eight initialized
 /// `u16` values.
-fn load_u16x8_avx2(ptr: *const u16) -> __m128i {
+unsafe fn load_u16x8_avx2(ptr: *const u16) -> __m128i {
   // SAFETY: the caller proves `ptr..ptr + 8` is readable.
   let lanes = unsafe { ptr.cast::<[u16; 8]>().read_unaligned() };
   // SAFETY: `[u16; 8]` and `__m128i` are 128-bit values, and every bit pattern is valid for both.
@@ -6632,7 +6651,7 @@ fn load_u16x8_avx2(ptr: *const u16) -> __m128i {
 ///
 /// The active CPU must support AVX2 and SSE4.1, and `ptr` must be valid to read four initialized
 /// `u16` values.
-fn load_u16x4_avx2(ptr: *const u16) -> __m128i {
+unsafe fn load_u16x4_avx2(ptr: *const u16) -> __m128i {
   // SAFETY: the caller proves `ptr..ptr + 4` is readable.
   let low = unsafe { ptr.cast::<[u16; 4]>().read_unaligned() };
   // Match `_mm_loadl_epi64` by zeroing the upper 64 bits.
@@ -6651,7 +6670,7 @@ fn load_u16x4_avx2(ptr: *const u16) -> __m128i {
 /// # Safety
 ///
 /// The active CPU must support AVX2 and SSE4.1, and `ptr` must be valid to write eight `u16` values.
-fn store_u16x8_avx2(ptr: *mut u16, values: __m128i) {
+unsafe fn store_u16x8_avx2(ptr: *mut u16, values: __m128i) {
   // SAFETY: `__m128i` and `[u16; 8]` are 128-bit values, and every bit pattern is valid for both.
   let lanes = unsafe { core::mem::transmute::<__m128i, [u16; 8]>(values) };
   // SAFETY: the caller proves `ptr..ptr + 8` is writable.
@@ -6668,7 +6687,7 @@ fn store_u16x8_avx2(ptr: *mut u16, values: __m128i) {
 /// # Safety
 ///
 /// The active CPU must support AVX2 and SSE4.1, and `ptr` must be valid to write four `u16` values.
-fn store_u16x4_avx2(ptr: *mut u16, values: __m128i) {
+unsafe fn store_u16x4_avx2(ptr: *mut u16, values: __m128i) {
   // SAFETY: `__m128i` and `[u16; 8]` are 128-bit values, and every bit pattern is valid for both.
   let lanes = unsafe { core::mem::transmute::<__m128i, [u16; 8]>(values) };
   // SAFETY: the caller proves `ptr..ptr + 4` is writable.
@@ -6771,7 +6790,7 @@ fn sub_mod_u16x8_avx2(a: __m128i, b: __m128i) -> __m128i {
 ///
 /// The active CPU must support AVX2 and SSE4.1, and `ptr` must be valid to read eight initialized
 /// `i16` values.
-fn load_i16x8_as_i32x8_avx2(ptr: *const i16) -> __m256i {
+unsafe fn load_i16x8_as_i32x8_avx2(ptr: *const i16) -> __m256i {
   // SAFETY: unaligned 8-coefficient AVX2 input load because:
   // 1. The caller proves `ptr..ptr + 8` is readable.
   // 2. `_mm_loadu_si128` accepts arbitrary alignment.

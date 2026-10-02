@@ -547,7 +547,7 @@ fn acc_lanes1_avx2(acc_pairs: __m256i) -> __m256i {
 /// # Safety
 ///
 /// The active CPU must support AVX2 and SSE4.1, and `ptr` must be valid to write 16 `u16` values.
-fn store_u32_pair_lanes_as_u16_avx2(ptr: *mut u16, lo: __m256i, hi: __m256i) {
+unsafe fn store_u32_pair_lanes_as_u16_avx2(ptr: *mut u16, lo: __m256i, hi: __m256i) {
   let packed = _mm256_or_si256(lo, _mm256_slli_epi32::<16>(hi));
   // SAFETY: fixed-size AVX2 polynomial chunk store because:
   // 1. The caller passes a pointer to the start of a 16-coefficient in-bounds chunk.
@@ -561,7 +561,7 @@ fn store_u32_pair_lanes_as_u16_avx2(ptr: *mut u16, lo: __m256i, hi: __m256i) {
 ///
 /// The active CPU must support AVX2 and SSE4.1, and `ptr` must be valid to read eight initialized
 /// `i16` values.
-fn load_i16x8_as_i32x8_avx2(ptr: *const i16) -> __m256i {
+unsafe fn load_i16x8_as_i32x8_avx2(ptr: *const i16) -> __m256i {
   // SAFETY: unaligned 8-coefficient input load because:
   // 1. The caller proves `ptr..ptr + 8` is readable.
   // 2. `_mm_loadu_si128` accepts arbitrary alignment.
@@ -653,7 +653,7 @@ fn acc_lanes1_avx512(acc_pairs: __m512i) -> __m512i {
 ///
 /// The active CPU must support AVX2, AVX-512F, AVX-512BW, AVX-512DQ, and SSE4.1, and `ptr` must be
 /// valid to write 32 `u16` values.
-fn store_u32_pair_lanes_as_u16_avx512(ptr: *mut u16, lo: __m512i, hi: __m512i) {
+unsafe fn store_u32_pair_lanes_as_u16_avx512(ptr: *mut u16, lo: __m512i, hi: __m512i) {
   let packed = _mm512_or_si512(lo, _mm512_slli_epi32::<16>(hi));
   // SAFETY: fixed-size AVX-512 polynomial chunk store because:
   // 1. The caller passes a pointer to the start of a 32-coefficient in-bounds chunk.
@@ -667,7 +667,7 @@ fn store_u32_pair_lanes_as_u16_avx512(ptr: *mut u16, lo: __m512i, hi: __m512i) {
 ///
 /// The active CPU must support AVX2, AVX-512F, AVX-512BW, AVX-512DQ, and SSE4.1, and `ptr` must be
 /// valid to read 16 initialized `i16` values.
-fn load_i16x16_as_i32x16_avx512(ptr: *const i16) -> __m512i {
+unsafe fn load_i16x16_as_i32x16_avx512(ptr: *const i16) -> __m512i {
   // SAFETY: unaligned 16-coefficient input load because:
   // 1. The caller proves `ptr..ptr + 16` is readable.
   // 2. `_mm256_loadu_si256` accepts arbitrary alignment.

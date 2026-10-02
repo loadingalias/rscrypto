@@ -18,7 +18,7 @@ impl PpcRoundKeys {
   }
 }
 
-/// Load 16 bytes from `ptr` into `i64x2` in ISA byte order (big-endian AES state).
+/// Load 16 bytes into `i64x2` in ISA byte order (big-endian AES state).
 ///
 /// On ppc64le, `i64x2` element `[0]` maps to ISA doubleword 1 (bytes 8-15)
 /// and element `[1]` maps to ISA doubleword 0 (bytes 0-7). So to place
@@ -28,9 +28,7 @@ impl PpcRoundKeys {
 /// Pure-Rust approach avoids VSX `lxvd2x` asm which needs VSR register
 /// numbers incompatible with the `vreg` register class.
 #[inline]
-fn load_block_be(ptr: *const u8) -> i64x2 {
-  // SAFETY: Caller guarantees ptr is valid for 16 bytes.
-  let bytes: [u8; 16] = unsafe { core::ptr::read_unaligned(ptr.cast()) };
+fn load_block_be(bytes: &[u8; 16]) -> i64x2 {
   let dw0 = i64::from_be_bytes([
     bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
   ]);
@@ -52,17 +50,14 @@ fn load_block_be(ptr: *const u8) -> i64x2 {
 ///
 /// Inverse of `load_block_be`.
 #[inline]
-fn store_block_be(ptr: *mut u8, block: i64x2) {
+fn store_block_be(out: &mut [u8; 16], block: i64x2) {
   let elems = block.to_array();
   #[cfg(target_endian = "little")]
   let (hi, lo) = (elems[1].to_be_bytes(), elems[0].to_be_bytes());
   #[cfg(target_endian = "big")]
   let (hi, lo) = (elems[0].to_be_bytes(), elems[1].to_be_bytes());
-  let mut bytes = [0u8; 16];
-  bytes[0..8].copy_from_slice(&hi);
-  bytes[8..16].copy_from_slice(&lo);
-  // SAFETY: Caller guarantees ptr is valid for 16 bytes.
-  unsafe { core::ptr::write_unaligned(ptr.cast(), bytes) };
+  out[0..8].copy_from_slice(&hi);
+  out[8..16].copy_from_slice(&lo);
 }
 
 /// Convert portable round keys (60 × big-endian u32) to POWER8 vector format.
@@ -81,7 +76,7 @@ pub(super) fn from_portable(rk: &[u32; 60]) -> PpcRoundKeys {
     bytes[4..8].copy_from_slice(&rk[base.strict_add(1)].to_be_bytes());
     bytes[8..12].copy_from_slice(&rk[base.strict_add(2)].to_be_bytes());
     bytes[12..16].copy_from_slice(&rk[base.strict_add(3)].to_be_bytes());
-    keys[i] = load_block_be(bytes.as_ptr());
+    keys[i] = load_block_be(&bytes);
     i = i.strict_add(1);
   }
   PpcRoundKeys { rk: keys }
@@ -102,7 +97,7 @@ unsafe fn sub_word_hw(w: u32) -> u32 {
     word[0], word[1], word[2], word[3], word[0], word[1], word[2], word[3], word[0], word[1], word[2], word[3],
     word[0], word[1], word[2], word[3],
   ];
-  let state = load_block_be(bytes.as_ptr());
+  let state = load_block_be(&bytes);
   // SAFETY: caller guarantees POWER8 crypto availability.
   unsafe {
     let out: i64x2;
@@ -113,7 +108,7 @@ unsafe fn sub_word_hw(w: u32) -> u32 {
       options(nomem, nostack, pure),
     );
     let mut out_bytes = [0u8; 16];
-    store_block_be(out_bytes.as_mut_ptr(), out);
+    store_block_be(&mut out_bytes, out);
     u32::from_be_bytes([out_bytes[0], out_bytes[1], out_bytes[2], out_bytes[3]])
   }
 }
@@ -188,7 +183,7 @@ pub(super) unsafe fn encrypt_block_core(keys: &PpcRoundKeys, block: &mut [u8; 16
   unsafe {
     let k = &keys.rk;
 
-    let mut state = load_block_be(block.as_ptr());
+    let mut state = load_block_be(block);
 
     // Rounds 1–13: vcipher (SubBytes + ShiftRows + MixColumns + AddRoundKey).
     macro_rules! vcipher_round {
@@ -240,7 +235,7 @@ pub(super) unsafe fn encrypt_block_core(keys: &PpcRoundKeys, block: &mut [u8; 16
       options(nomem, nostack),
     );
 
-    store_block_be(block.as_mut_ptr(), state);
+    store_block_be(block, state);
   }
 }
 
@@ -263,10 +258,10 @@ pub(super) unsafe fn encrypt_4blocks_core(keys: &PpcRoundKeys, blocks: &mut [[u8
   unsafe {
     let k = &keys.rk;
 
-    let mut s0 = load_block_be(blocks[0].as_ptr());
-    let mut s1 = load_block_be(blocks[1].as_ptr());
-    let mut s2 = load_block_be(blocks[2].as_ptr());
-    let mut s3 = load_block_be(blocks[3].as_ptr());
+    let mut s0 = load_block_be(&blocks[0]);
+    let mut s1 = load_block_be(&blocks[1]);
+    let mut s2 = load_block_be(&blocks[2]);
+    let mut s3 = load_block_be(&blocks[3]);
 
     macro_rules! vxor_all {
       ($rk:expr) => {
@@ -330,10 +325,10 @@ pub(super) unsafe fn encrypt_4blocks_core(keys: &PpcRoundKeys, blocks: &mut [[u8
       options(nomem, nostack),
     );
 
-    store_block_be(blocks[0].as_mut_ptr(), s0);
-    store_block_be(blocks[1].as_mut_ptr(), s1);
-    store_block_be(blocks[2].as_mut_ptr(), s2);
-    store_block_be(blocks[3].as_mut_ptr(), s3);
+    store_block_be(&mut blocks[0], s0);
+    store_block_be(&mut blocks[1], s1);
+    store_block_be(&mut blocks[2], s2);
+    store_block_be(&mut blocks[3], s3);
   }
 }
 
@@ -378,7 +373,7 @@ pub(super) fn from_portable_128(rk: &[u32; 44]) -> Ppc128RoundKeys {
     bytes[4..8].copy_from_slice(&rk[base.strict_add(1)].to_be_bytes());
     bytes[8..12].copy_from_slice(&rk[base.strict_add(2)].to_be_bytes());
     bytes[12..16].copy_from_slice(&rk[base.strict_add(3)].to_be_bytes());
-    keys[i] = load_block_be(bytes.as_ptr());
+    keys[i] = load_block_be(&bytes);
     i = i.strict_add(1);
   }
   Ppc128RoundKeys { rk: keys }
@@ -448,7 +443,7 @@ pub(super) unsafe fn encrypt_block_128_core(keys: &Ppc128RoundKeys, block: &mut 
   unsafe {
     let k = &keys.rk;
 
-    let mut state = load_block_be(block.as_ptr());
+    let mut state = load_block_be(block);
 
     macro_rules! vcipher_round {
       ($rk:expr) => {
@@ -485,7 +480,7 @@ pub(super) unsafe fn encrypt_block_128_core(keys: &Ppc128RoundKeys, block: &mut 
       options(nomem, nostack),
     );
 
-    store_block_be(block.as_mut_ptr(), state);
+    store_block_be(block, state);
   }
 }
 
@@ -504,10 +499,10 @@ pub(super) unsafe fn encrypt_4blocks_128_core(keys: &Ppc128RoundKeys, blocks: &m
   unsafe {
     let k = &keys.rk;
 
-    let mut s0 = load_block_be(blocks[0].as_ptr());
-    let mut s1 = load_block_be(blocks[1].as_ptr());
-    let mut s2 = load_block_be(blocks[2].as_ptr());
-    let mut s3 = load_block_be(blocks[3].as_ptr());
+    let mut s0 = load_block_be(&blocks[0]);
+    let mut s1 = load_block_be(&blocks[1]);
+    let mut s2 = load_block_be(&blocks[2]);
+    let mut s3 = load_block_be(&blocks[3]);
 
     macro_rules! vxor_all {
       ($rk:expr) => {
@@ -567,10 +562,10 @@ pub(super) unsafe fn encrypt_4blocks_128_core(keys: &Ppc128RoundKeys, blocks: &m
       options(nomem, nostack),
     );
 
-    store_block_be(blocks[0].as_mut_ptr(), s0);
-    store_block_be(blocks[1].as_mut_ptr(), s1);
-    store_block_be(blocks[2].as_mut_ptr(), s2);
-    store_block_be(blocks[3].as_mut_ptr(), s3);
+    store_block_be(&mut blocks[0], s0);
+    store_block_be(&mut blocks[1], s1);
+    store_block_be(&mut blocks[2], s2);
+    store_block_be(&mut blocks[3], s3);
   }
 }
 

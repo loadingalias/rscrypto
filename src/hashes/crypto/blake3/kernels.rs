@@ -2181,8 +2181,15 @@ fn compress_simd_leaf(
 
 #[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
 #[inline(always)]
-fn load_msg_lanes4_contiguous(base: *const u8, block_offset: usize) -> [core::simd::u32x4; 16] {
-  // SAFETY: caller provides 4 contiguous full chunks; each block load is in-bounds.
+/// Transposes block `block_offset / BLOCK_LEN` of four contiguous chunks into message lanes.
+///
+/// # Safety
+///
+/// `base` must be readable for `4 * CHUNK_LEN` bytes, and `block_offset + BLOCK_LEN` must not
+/// exceed `CHUNK_LEN`.
+unsafe fn load_msg_lanes4_contiguous(base: *const u8, block_offset: usize) -> [core::simd::u32x4; 16] {
+  // SAFETY: the caller provides four contiguous full chunks and an in-chunk block offset, so each
+  // 64-byte block load below is in bounds; `[u8; BLOCK_LEN]` has alignment 1.
   let b0 = unsafe { words16_from_le_bytes_64(&*base.add(block_offset).cast::<[u8; BLOCK_LEN]>()) };
   // SAFETY: see above.
   let b1 =
@@ -2383,7 +2390,9 @@ unsafe fn hash4_contiguous_full_chunks_simd(input: *const u8, key: &[u32; 8], co
 
   let mut block_idx = 0usize;
   while block_idx < CHUNK_LEN.strict_div(BLOCK_LEN) {
-    let msg = load_msg_lanes4_contiguous(input, block_idx.strict_mul(BLOCK_LEN));
+    // SAFETY: the caller provides four readable chunks at `input`, and the loop bound keeps
+    // `block_idx * BLOCK_LEN + BLOCK_LEN <= CHUNK_LEN`.
+    let msg = unsafe { load_msg_lanes4_contiguous(input, block_idx.strict_mul(BLOCK_LEN)) };
     let block_flags = flags
       | if block_idx == 0 { CHUNK_START } else { 0 }
       | if block_idx.strict_add(1) == CHUNK_LEN.strict_div(BLOCK_LEN) {
@@ -3291,7 +3300,12 @@ unsafe fn hash_many_contiguous_riscv_v_wrapper(
 // x86_64 SSSE3 wrappers
 
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-fn x86_compress_cv_portable_wrapper(
+/// Compress one block with the portable kernel.
+///
+/// # Safety
+///
+/// `block` must be readable for 64 bytes.
+unsafe fn x86_compress_cv_portable_wrapper(
   cv: &[u32; 8],
   block: *const u8,
   counter: u64,

@@ -142,7 +142,11 @@ mod lanes {
           u32::try_from(len.strict_sub(padded_len.strict_sub(BLOCK_LEN))).expect("a block length fits in u32");
         // The x86 kernels read whole blocks, so a partial final block needs zeroed
         // padding; scratch sized to the padded length keeps the zeroing short.
-        let hash = |ptrs: &[*const u8; MAX_DEGREE], out: &mut [[u8; OUT_LEN]; MAX_DEGREE]| {
+        // SAFETY: each `ptrs` passed to `hash` is readable for `padded_len` bytes: the inputs
+        // themselves when `padded_len == len` (so `last_block_len == BLOCK_LEN`), otherwise
+        // `with_padded_lanes::<N>` lanes with `N >= padded_len` and zeroed padding.
+        // `len` in `1..=CHUNK_LEN` bounds `last_block_len` to `1..=BLOCK_LEN`.
+        let hash = |ptrs: &[*const u8; MAX_DEGREE], out: &mut [[u8; OUT_LEN]; MAX_DEGREE]| unsafe {
           hash_many_x86(lanes, ptrs, blocks, last_block_len, out)
         };
         if padded_len == len {
@@ -194,10 +198,13 @@ mod lanes {
 
   /// Hash one lane group with the owned x86 kernel for `lanes`.
   ///
+  /// # Safety
+  ///
   /// Every pointer in `ptrs` must be readable for `blocks * BLOCK_LEN` bytes,
-  /// with the final block's bytes past `last_block_len` zero.
+  /// with the final block's bytes past `last_block_len` zero, and
+  /// `last_block_len` must be in `1..=BLOCK_LEN`.
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-  fn hash_many_x86(
+  unsafe fn hash_many_x86(
     lanes: Lanes,
     ptrs: &[*const u8; MAX_DEGREE],
     blocks: usize,
