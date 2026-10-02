@@ -347,11 +347,19 @@ macro_rules! define_pbkdf2_sha2 {
           return state;
         }
 
-        let compress = $dispatch::compress_dispatch();
+        Self::from_key_schedule(password, $dispatch::compress_dispatch(), <$digest_ty>::digest_secret)
+      }
 
+      /// Run the HMAC key schedule with `compress`, hashing a long password with `digest_long_password`.
+      #[inline(always)]
+      fn from_key_schedule(
+        password: &[u8],
+        compress: $compress_ty,
+        digest_long_password: impl FnOnce(&[u8]) -> [u8; $output_size_const],
+      ) -> Self {
         let mut key_block = [0u8; $block_size_const];
         if password.len() > $block_size_const {
-          let mut digest = <$digest_ty>::digest_secret(password);
+          let mut digest = digest_long_password(password);
           key_block[..$output_size_const].copy_from_slice(&digest);
           ct::zeroize(&mut digest);
         } else {
@@ -693,30 +701,7 @@ macro_rules! define_pbkdf2_sha2 {
       /// Build with a specific digest compress function for tests and internal proofs.
       #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
       pub(crate) fn new_with_compress_for_test(password: &[u8], compress: $compress_ty) -> Self {
-        let mut key_block = [0u8; $block_size_const];
-        if password.len() > $block_size_const {
-          let mut digest = $test_oneshot(password, compress);
-          key_block[..$output_size_const].copy_from_slice(&digest);
-          ct::zeroize(&mut digest);
-        } else {
-          key_block[..password.len()].copy_from_slice(password);
-        }
-
-        let (inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
-          let mut inner_init = $h0;
-          compress(&mut inner_init, ipad);
-
-          let mut outer_init = $h0;
-          compress(&mut outer_init, opad);
-
-          (inner_init, outer_init)
-        });
-
-        Self {
-          inner_init,
-          outer_init,
-          compress,
-        }
+        Self::from_key_schedule(password, compress, |password| $test_oneshot(password, compress))
       }
     }
 

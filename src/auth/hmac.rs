@@ -236,38 +236,49 @@ impl HmacSha256 {
     }
   }
 
+  /// Run the HMAC key schedule with digest states from `new_hash`.
+  #[inline(always)]
+  fn from_key_with(key: &[u8], new_hash: impl Fn() -> Sha256) -> Self {
+    let mut key_block = [0u8; SHA256_BLOCK_SIZE];
+    if key.len() > SHA256_BLOCK_SIZE {
+      let mut digest = Sha256::digest_secret(key);
+      for (dst, src) in key_block.iter_mut().zip(digest.iter()) {
+        *dst = *src;
+      }
+      ct::zeroize(&mut digest);
+    } else {
+      for (dst, src) in key_block.iter_mut().zip(key.iter()) {
+        *dst = *src;
+      }
+    }
+
+    let (inner_init, inner_init_prefix, outer_init_prefix) = hmac_prefix_state(&mut key_block, |ipad, opad| {
+      let mut inner_init = new_hash();
+      inner_init.update(ipad);
+
+      let mut outer_init = new_hash();
+      outer_init.update(opad);
+
+      let inner_init_prefix = inner_init.aligned_prefix();
+      let outer_init_prefix = outer_init.aligned_prefix();
+      outer_init.zeroize_secret_state();
+
+      (inner_init, inner_init_prefix, outer_init_prefix)
+    });
+
+    Self {
+      inner: inner_init,
+      inner_init: inner_init_prefix,
+      outer_init: outer_init_prefix,
+    }
+  }
+
   #[cfg(any(all(rscrypto_internal, feature = "diag"), all(test, feature = "hkdf")))]
   pub(crate) fn new_with_compress_for_test(
     key: &[u8],
     compress: crate::hashes::crypto::sha256::kernels::CompressBlocksFn,
   ) -> Self {
-    let mut key_block = [0u8; SHA256_BLOCK_SIZE];
-    if key.len() > SHA256_BLOCK_SIZE {
-      let mut digest = Sha256::digest_secret(key);
-      key_block[..SHA256_TAG_SIZE].copy_from_slice(&digest);
-      ct::zeroize(&mut digest);
-    } else if let Some(dst) = key_block.get_mut(..key.len()) {
-      dst.copy_from_slice(key);
-    }
-
-    let (inner, inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
-      let mut inner = Sha256::new_with_compress_for_test(compress);
-      inner.update(ipad);
-      let inner_init = inner.aligned_prefix();
-
-      let mut outer = Sha256::new_with_compress_for_test(compress);
-      outer.update(opad);
-      let outer_init = outer.aligned_prefix();
-      outer.zeroize_secret_state();
-
-      (inner, inner_init, outer_init)
-    });
-
-    Self {
-      inner,
-      inner_init,
-      outer_init,
-    }
+    Self::from_key_with(key, || Sha256::new_with_compress_for_test(compress))
   }
 
   #[cfg(any(all(rscrypto_internal, feature = "diag"), all(test, feature = "hkdf")))]
@@ -325,38 +336,7 @@ impl Mac for HmacSha256 {
   type Tag = HmacSha256Tag;
 
   fn new(key: &[u8]) -> Self {
-    let mut key_block = [0u8; SHA256_BLOCK_SIZE];
-    if key.len() > SHA256_BLOCK_SIZE {
-      let mut digest = Sha256::digest_secret(key);
-      for (dst, src) in key_block.iter_mut().zip(digest.iter()) {
-        *dst = *src;
-      }
-      ct::zeroize(&mut digest);
-    } else {
-      for (dst, src) in key_block.iter_mut().zip(key.iter()) {
-        *dst = *src;
-      }
-    }
-
-    let (inner_init, inner_init_prefix, outer_init_prefix) = hmac_prefix_state(&mut key_block, |ipad, opad| {
-      let mut inner_init = Sha256::new();
-      inner_init.update(ipad);
-
-      let mut outer_init = Sha256::new();
-      outer_init.update(opad);
-
-      let inner_init_prefix = inner_init.aligned_prefix();
-      let outer_init_prefix = outer_init.aligned_prefix();
-      outer_init.zeroize_secret_state();
-
-      (inner_init, inner_init_prefix, outer_init_prefix)
-    });
-
-    Self {
-      inner: inner_init,
-      inner_init: inner_init_prefix,
-      outer_init: outer_init_prefix,
-    }
+    Self::from_key_with(key, Sha256::new)
   }
 
   #[inline]
@@ -569,38 +549,49 @@ impl HmacSha384 {
     <Self as Mac>::verify_tag(key, data, expected)
   }
 
+  /// Run the HMAC key schedule with digest states from `new_hash`.
+  #[inline(always)]
+  fn from_key_with(key: &[u8], new_hash: impl Fn() -> Sha384) -> Self {
+    let mut key_block = [0u8; SHA512_FAMILY_BLOCK_SIZE];
+    if key.len() > SHA512_FAMILY_BLOCK_SIZE {
+      let mut digest = Sha384::digest_secret(key);
+      for (dst, src) in key_block.iter_mut().zip(digest.iter()) {
+        *dst = *src;
+      }
+      ct::zeroize(&mut digest);
+    } else {
+      for (dst, src) in key_block.iter_mut().zip(key.iter()) {
+        *dst = *src;
+      }
+    }
+
+    let (inner_init, inner_init_prefix, outer_init_prefix) = hmac_prefix_state(&mut key_block, |ipad, opad| {
+      let mut inner_init = new_hash();
+      inner_init.update(ipad);
+
+      let mut outer_init = new_hash();
+      outer_init.update(opad);
+
+      let inner_init_prefix = inner_init.aligned_prefix();
+      let outer_init_prefix = outer_init.aligned_prefix();
+      outer_init.zeroize_secret_state();
+
+      (inner_init, inner_init_prefix, outer_init_prefix)
+    });
+
+    Self {
+      inner: inner_init,
+      inner_init: inner_init_prefix,
+      outer_init: outer_init_prefix,
+    }
+  }
+
   #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
   pub(crate) fn new_with_compress_for_test(
     key: &[u8],
     compress: crate::hashes::crypto::sha384::kernels::CompressBlocksFn,
   ) -> Self {
-    let mut key_block = [0u8; SHA512_FAMILY_BLOCK_SIZE];
-    if key.len() > SHA512_FAMILY_BLOCK_SIZE {
-      let mut digest = Sha384::digest_secret(key);
-      key_block[..SHA384_TAG_SIZE].copy_from_slice(&digest);
-      ct::zeroize(&mut digest);
-    } else if let Some(dst) = key_block.get_mut(..key.len()) {
-      dst.copy_from_slice(key);
-    }
-
-    let (inner, inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
-      let mut inner = Sha384::new_with_compress_for_test(compress);
-      inner.update(ipad);
-      let inner_init = inner.aligned_prefix();
-
-      let mut outer = Sha384::new_with_compress_for_test(compress);
-      outer.update(opad);
-      let outer_init = outer.aligned_prefix();
-      outer.zeroize_secret_state();
-
-      (inner, inner_init, outer_init)
-    });
-
-    Self {
-      inner,
-      inner_init,
-      outer_init,
-    }
+    Self::from_key_with(key, || Sha384::new_with_compress_for_test(compress))
   }
 
   #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
@@ -633,38 +624,7 @@ impl Mac for HmacSha384 {
   type Tag = HmacSha384Tag;
 
   fn new(key: &[u8]) -> Self {
-    let mut key_block = [0u8; SHA512_FAMILY_BLOCK_SIZE];
-    if key.len() > SHA512_FAMILY_BLOCK_SIZE {
-      let mut digest = Sha384::digest_secret(key);
-      for (dst, src) in key_block.iter_mut().zip(digest.iter()) {
-        *dst = *src;
-      }
-      ct::zeroize(&mut digest);
-    } else {
-      for (dst, src) in key_block.iter_mut().zip(key.iter()) {
-        *dst = *src;
-      }
-    }
-
-    let (inner_init, inner_init_prefix, outer_init_prefix) = hmac_prefix_state(&mut key_block, |ipad, opad| {
-      let mut inner_init = Sha384::new();
-      inner_init.update(ipad);
-
-      let mut outer_init = Sha384::new();
-      outer_init.update(opad);
-
-      let inner_init_prefix = inner_init.aligned_prefix();
-      let outer_init_prefix = outer_init.aligned_prefix();
-      outer_init.zeroize_secret_state();
-
-      (inner_init, inner_init_prefix, outer_init_prefix)
-    });
-
-    Self {
-      inner: inner_init,
-      inner_init: inner_init_prefix,
-      outer_init: outer_init_prefix,
-    }
+    Self::from_key_with(key, Sha384::new)
   }
 
   #[inline]
@@ -860,38 +820,49 @@ impl HmacSha512 {
     <Self as Mac>::verify_tag(key, data, expected)
   }
 
+  /// Run the HMAC key schedule with digest states from `new_hash`.
+  #[inline(always)]
+  fn from_key_with(key: &[u8], new_hash: impl Fn() -> Sha512) -> Self {
+    let mut key_block = [0u8; SHA512_FAMILY_BLOCK_SIZE];
+    if key.len() > SHA512_FAMILY_BLOCK_SIZE {
+      let mut digest = Sha512::digest_secret(key);
+      for (dst, src) in key_block.iter_mut().zip(digest.iter()) {
+        *dst = *src;
+      }
+      ct::zeroize(&mut digest);
+    } else {
+      for (dst, src) in key_block.iter_mut().zip(key.iter()) {
+        *dst = *src;
+      }
+    }
+
+    let (inner_init, inner_init_prefix, outer_init_prefix) = hmac_prefix_state(&mut key_block, |ipad, opad| {
+      let mut inner_init = new_hash();
+      inner_init.update(ipad);
+
+      let mut outer_init = new_hash();
+      outer_init.update(opad);
+
+      let inner_init_prefix = inner_init.aligned_prefix();
+      let outer_init_prefix = outer_init.aligned_prefix();
+      outer_init.zeroize_secret_state();
+
+      (inner_init, inner_init_prefix, outer_init_prefix)
+    });
+
+    Self {
+      inner: inner_init,
+      inner_init: inner_init_prefix,
+      outer_init: outer_init_prefix,
+    }
+  }
+
   #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
   pub(crate) fn new_with_compress_for_test(
     key: &[u8],
     compress: crate::hashes::crypto::sha512::kernels::CompressBlocksFn,
   ) -> Self {
-    let mut key_block = [0u8; SHA512_FAMILY_BLOCK_SIZE];
-    if key.len() > SHA512_FAMILY_BLOCK_SIZE {
-      let mut digest = Sha512::digest_secret(key);
-      key_block[..SHA512_TAG_SIZE].copy_from_slice(&digest);
-      ct::zeroize(&mut digest);
-    } else if let Some(dst) = key_block.get_mut(..key.len()) {
-      dst.copy_from_slice(key);
-    }
-
-    let (inner, inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
-      let mut inner = Sha512::new_with_compress_for_test(compress);
-      inner.update(ipad);
-      let inner_init = inner.aligned_prefix();
-
-      let mut outer = Sha512::new_with_compress_for_test(compress);
-      outer.update(opad);
-      let outer_init = outer.aligned_prefix();
-      outer.zeroize_secret_state();
-
-      (inner, inner_init, outer_init)
-    });
-
-    Self {
-      inner,
-      inner_init,
-      outer_init,
-    }
+    Self::from_key_with(key, || Sha512::new_with_compress_for_test(compress))
   }
 
   #[cfg(any(test, all(rscrypto_internal, feature = "diag")))]
@@ -924,38 +895,7 @@ impl Mac for HmacSha512 {
   type Tag = HmacSha512Tag;
 
   fn new(key: &[u8]) -> Self {
-    let mut key_block = [0u8; SHA512_FAMILY_BLOCK_SIZE];
-    if key.len() > SHA512_FAMILY_BLOCK_SIZE {
-      let mut digest = Sha512::digest_secret(key);
-      for (dst, src) in key_block.iter_mut().zip(digest.iter()) {
-        *dst = *src;
-      }
-      ct::zeroize(&mut digest);
-    } else {
-      for (dst, src) in key_block.iter_mut().zip(key.iter()) {
-        *dst = *src;
-      }
-    }
-
-    let (inner_init, inner_init_prefix, outer_init_prefix) = hmac_prefix_state(&mut key_block, |ipad, opad| {
-      let mut inner_init = Sha512::new();
-      inner_init.update(ipad);
-
-      let mut outer_init = Sha512::new();
-      outer_init.update(opad);
-
-      let inner_init_prefix = inner_init.aligned_prefix();
-      let outer_init_prefix = outer_init.aligned_prefix();
-      outer_init.zeroize_secret_state();
-
-      (inner_init, inner_init_prefix, outer_init_prefix)
-    });
-
-    Self {
-      inner: inner_init,
-      inner_init: inner_init_prefix,
-      outer_init: outer_init_prefix,
-    }
+    Self::from_key_with(key, Sha512::new)
   }
 
   #[inline]

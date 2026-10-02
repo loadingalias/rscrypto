@@ -147,11 +147,25 @@ impl HkdfSha256 {
   /// Perform HKDF-Extract with `salt` and `input_key_material`.
   #[must_use]
   pub fn extract(salt: &[u8], input_key_material: &[u8]) -> Self {
+    Self::extract_with(
+      salt,
+      input_key_material,
+      sha256_dispatch::compress_dispatch(),
+      |salt, input_key_material| HmacSha256::mac(salt, input_key_material).to_bytes(),
+    )
+  }
+
+  /// Run HKDF-Extract with `mac`, then precompute the expand prefixes with `compress`.
+  #[inline(always)]
+  fn extract_with(
+    salt: &[u8],
+    input_key_material: &[u8],
+    compress: Sha256CompressBlocksFn,
+    mac: impl FnOnce(&[u8], &[u8]) -> [u8; SHA256_OUTPUT_SIZE],
+  ) -> Self {
     let zero_salt = [0u8; SHA256_OUTPUT_SIZE];
     let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
-    let prk = HmacSha256::mac(salt, input_key_material).to_bytes();
-
-    let compress = sha256_dispatch::compress_dispatch();
+    let prk = mac(salt, input_key_material);
 
     let mut key_block = [0u8; SHA256_BLOCK_SIZE];
     key_block[..SHA256_OUTPUT_SIZE].copy_from_slice(&prk);
@@ -303,29 +317,9 @@ impl HkdfSha256 {
     input_key_material: &[u8],
     compress: Sha256CompressBlocksFn,
   ) -> Self {
-    let zero_salt = [0u8; SHA256_OUTPUT_SIZE];
-    let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
-    let prk = HmacSha256::mac_with_compress_for_test(salt, input_key_material, compress);
-
-    let mut key_block = [0u8; SHA256_BLOCK_SIZE];
-    key_block[..SHA256_OUTPUT_SIZE].copy_from_slice(&prk);
-
-    let (inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
-      let mut inner_init = SHA256_H0;
-      compress(&mut inner_init, ipad);
-
-      let mut outer_init = SHA256_H0;
-      compress(&mut outer_init, opad);
-
-      (inner_init, outer_init)
-    });
-
-    Self {
-      prk,
-      inner_init,
-      outer_init,
-      compress,
-    }
+    Self::extract_with(salt, input_key_material, compress, |salt, input_key_material| {
+      HmacSha256::mac_with_compress_for_test(salt, input_key_material, compress)
+    })
   }
 }
 
@@ -402,11 +396,25 @@ impl HkdfSha384 {
   /// Perform HKDF-Extract with `salt` and `input_key_material`.
   #[must_use]
   pub fn extract(salt: &[u8], input_key_material: &[u8]) -> Self {
+    Self::extract_with(
+      salt,
+      input_key_material,
+      sha384_dispatch::compress_dispatch(),
+      |salt, input_key_material| HmacSha384::mac(salt, input_key_material).to_bytes(),
+    )
+  }
+
+  /// Run HKDF-Extract with `mac`, then precompute the expand prefixes with `compress`.
+  #[inline(always)]
+  fn extract_with(
+    salt: &[u8],
+    input_key_material: &[u8],
+    compress: Sha384CompressBlocksFn,
+    mac: impl FnOnce(&[u8], &[u8]) -> [u8; SHA384_OUTPUT_SIZE],
+  ) -> Self {
     let zero_salt = [0u8; SHA384_OUTPUT_SIZE];
     let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
-    let prk = HmacSha384::mac(salt, input_key_material).to_bytes();
-
-    let compress = sha384_dispatch::compress_dispatch();
+    let prk = mac(salt, input_key_material);
 
     let mut key_block = [0u8; SHA384_BLOCK_SIZE];
     key_block[..SHA384_OUTPUT_SIZE].copy_from_slice(&prk);
@@ -542,29 +550,9 @@ impl HkdfSha384 {
     input_key_material: &[u8],
     compress: Sha384CompressBlocksFn,
   ) -> Self {
-    let zero_salt = [0u8; SHA384_OUTPUT_SIZE];
-    let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
-    let prk = HmacSha384::mac_with_compress_for_test(salt, input_key_material, compress);
-
-    let mut key_block = [0u8; SHA384_BLOCK_SIZE];
-    key_block[..SHA384_OUTPUT_SIZE].copy_from_slice(&prk);
-
-    let (inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
-      let mut inner_init = SHA384_H0;
-      compress(&mut inner_init, ipad);
-
-      let mut outer_init = SHA384_H0;
-      compress(&mut outer_init, opad);
-
-      (inner_init, outer_init)
-    });
-
-    Self {
-      prk,
-      inner_init,
-      outer_init,
-      compress,
-    }
+    Self::extract_with(salt, input_key_material, compress, |salt, input_key_material| {
+      HmacSha384::mac_with_compress_for_test(salt, input_key_material, compress)
+    })
   }
 }
 
@@ -626,11 +614,25 @@ impl HkdfSha512 {
   /// Perform HKDF-Extract with `salt` and `input_key_material`.
   #[must_use]
   pub fn extract(salt: &[u8], input_key_material: &[u8]) -> Self {
+    Self::extract_with(
+      salt,
+      input_key_material,
+      sha512_dispatch::compress_dispatch(),
+      |salt, input_key_material| HmacSha512::mac(salt, input_key_material).to_bytes(),
+    )
+  }
+
+  /// Run HKDF-Extract with `mac`, then precompute the expand prefixes with `compress`.
+  #[inline(always)]
+  fn extract_with(
+    salt: &[u8],
+    input_key_material: &[u8],
+    compress: Sha512CompressBlocksFn,
+    mac: impl FnOnce(&[u8], &[u8]) -> [u8; SHA512_OUTPUT_SIZE],
+  ) -> Self {
     let zero_salt = [0u8; SHA512_OUTPUT_SIZE];
     let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
-    let prk = HmacSha512::mac(salt, input_key_material).to_bytes();
-
-    let compress = sha512_dispatch::compress_dispatch();
+    let prk = mac(salt, input_key_material);
 
     let mut key_block = [0u8; SHA512_BLOCK_SIZE];
     key_block[..SHA512_OUTPUT_SIZE].copy_from_slice(&prk);
@@ -762,29 +764,9 @@ impl HkdfSha512 {
     input_key_material: &[u8],
     compress: Sha512CompressBlocksFn,
   ) -> Self {
-    let zero_salt = [0u8; SHA512_OUTPUT_SIZE];
-    let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
-    let prk = HmacSha512::mac_with_compress_for_test(salt, input_key_material, compress);
-
-    let mut key_block = [0u8; SHA512_BLOCK_SIZE];
-    key_block[..SHA512_OUTPUT_SIZE].copy_from_slice(&prk);
-
-    let (inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
-      let mut inner_init = SHA512_H0;
-      compress(&mut inner_init, ipad);
-
-      let mut outer_init = SHA512_H0;
-      compress(&mut outer_init, opad);
-
-      (inner_init, outer_init)
-    });
-
-    Self {
-      prk,
-      inner_init,
-      outer_init,
-      compress,
-    }
+    Self::extract_with(salt, input_key_material, compress, |salt, input_key_material| {
+      HmacSha512::mac_with_compress_for_test(salt, input_key_material, compress)
+    })
   }
 }
 
