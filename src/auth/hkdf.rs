@@ -60,7 +60,12 @@ fn write_u64x8_be(dst: &mut [u8], words: &[u64; 8]) {
   dst[56..64].copy_from_slice(&words[7].to_be_bytes());
 }
 
-#[cfg(all(target_arch = "aarch64", target_os = "macos", not(miri)))]
+#[cfg(all(
+  target_arch = "aarch64",
+  target_feature = "sha2",
+  not(feature = "portable-only"),
+  not(miri)
+))]
 #[inline(always)]
 fn compress_hkdf_sha256_block(
   _compress: Sha256CompressBlocksFn,
@@ -68,7 +73,7 @@ fn compress_hkdf_sha256_block(
   block: &[u8; SHA256_BLOCK_SIZE],
 ) {
   // SAFETY: Direct Apple SHA2 single-block compression because:
-  // 1. macOS/aarch64 is treated as compile-time SHA2-capable by the SHA-256 dispatch layer.
+  // 1. This build enables `target_feature = "sha2"` at compile time.
   // 2. HKDF passes exactly one initialized 64-byte SHA-256 block at each call site.
   // 3. `state` is the initialized HKDF-owned SHA-256 chaining state.
   unsafe {
@@ -76,7 +81,12 @@ fn compress_hkdf_sha256_block(
   }
 }
 
-#[cfg(not(all(target_arch = "aarch64", target_os = "macos", not(miri))))]
+#[cfg(not(all(
+  target_arch = "aarch64",
+  target_feature = "sha2",
+  not(feature = "portable-only"),
+  not(miri)
+)))]
 #[inline(always)]
 fn compress_hkdf_sha256_block(compress: Sha256CompressBlocksFn, state: &mut [u32; 8], block: &[u8; SHA256_BLOCK_SIZE]) {
   compress(state, block);
@@ -1022,6 +1032,7 @@ mod tests {
 
   use super::*;
   use crate::hashes::crypto::{
+    Sha256,
     sha256::kernels::{
       ALL as SHA256_KERNELS, Sha256KernelId, compress_blocks_fn as sha256_compress_blocks_fn,
       required_caps as sha256_required_caps,
@@ -1236,6 +1247,26 @@ mod tests {
         salt_len,
         ikm_len
       );
+    }
+  }
+
+  #[test]
+  fn hkdf_sha256_block_compression_matches_portable_compression() {
+    let blocks = [[0u8; SHA256_BLOCK_SIZE], [0xffu8; SHA256_BLOCK_SIZE], {
+      let mut block = [0u8; SHA256_BLOCK_SIZE];
+      block.copy_from_slice(&pattern(SHA256_BLOCK_SIZE, 37, 5));
+      block
+    }];
+    let states = [SHA256_H0, [0u32; 8], [u32::MAX; 8]];
+
+    for block in &blocks {
+      for initial in states {
+        let mut expected = initial;
+        Sha256::compress_blocks_portable(&mut expected, block);
+        let mut actual = initial;
+        compress_hkdf_sha256_block(sha256_dispatch::compress_dispatch(), &mut actual, block);
+        assert_eq!(actual, expected);
+      }
     }
   }
 
