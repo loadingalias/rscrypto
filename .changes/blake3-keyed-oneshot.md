@@ -2,4 +2,6 @@
 "rscrypto" = "patch"
 ---
 
-Reduce keyed BLAKE3 one-shot overhead by removing redundant dispatch, input, secret-key, and full compression-output work while preserving cleanup.
+Make keyed BLAKE3 one-shot hashing faster.
+It no longer repeats dispatch, input handling, secret-key handling, or full compression-output work.
+Cleanup does not change.

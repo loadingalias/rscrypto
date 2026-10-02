@@ -1,7 +1,8 @@
 # Contributing
 
-Develop and commit directly on `main`. Keep `main` as the only development branch.
-Validate every commit locally before pushing it.
+Develop and commit directly on `main`.
+`main` is the only development branch.
+Validate every commit locally before you push it.
 
 ## Start a change
 
@@ -14,69 +15,84 @@ git pull --ff-only
 ```
 
 Do not discard unrelated work to make the worktree clean.
-Preserve it before switching or updating the checkout.
+Keep it safe before you switch or update the checkout.
 
 ## Record release intent
 
-Add a `.changes/*.md` file when crate users will observe an API, behavior, security, performance, compatibility,
-or release-artifact change:
+Add a `.changes/*.md` file when crate users will see a change in the API, behavior, security, performance,
+compatibility, or release artifacts:
 
 ```bash
 cargo rail change add rscrypto --bump patch --message "Describe the user-visible result."
 ```
 
-Use `minor` or `major` when compatibility requires it.
-Internal tooling and maintainer-only documentation normally need no change file.
-Review release intent manually before committing.
+- Use `minor` or `major` when compatibility needs it.
+- Internal tooling and maintainer-only documentation usually need no change file.
+- Review the release intent manually before you commit.
+- Keep pending notes about user-visible results.
+- Merge notes that overlap, but keep distinct changes and their bump levels.
+- Maintainer-only runner adjustments belong in the runner catalog and the tooling guide.
 
-Keep pending notes focused on user-visible results.
-Consolidate overlapping notes while retaining distinct changes and their bump levels;
-maintainer-only runner adjustments belong in the runner catalog and tooling guide.
 `cargo rail change status` validates and lists the pending intent.
-The release command consumes it into `CHANGELOG.md`;
-do not add unreleased work to a published version's changelog section.
+The release command moves it into `CHANGELOG.md`.
+Do not add unreleased work to the changelog section of a published version.
 
 ## Configure compiler reuse
 
-Cargo Rail can reuse compiler results across Cargo, Nextest, Just, and IDE invocations. Choose a configured rscrypto
-target from `~/dev-machines/dev-machine list rscrypto`, mint a short-lived credential, then enroll this checkout in
-the same remote cache used by trusted development machines and CI:
+Cargo Rail can reuse compiler results across Cargo, Nextest, Just, and IDE invocations.
 
-```bash
-eval "$("$HOME/dev-machines/dev-machine" cache-env rscrypto <target>)"
-just rail-cache-setup --max-size 10GiB
-just cache-status
-```
+1. Choose a configured `rscrypto` target from `~/dev-machines/dev-machine list rscrypto`.
+1. Get a short-lived credential, and enroll this checkout in the remote cache
+   that trusted development machines and CI use:
 
-Run `cache-env` again when the lease expires. It owns the remote URL, credentials, and read/write authority; none of
-them belong in repository configuration. Without that environment, `rail-cache-setup` installs and proves private
-local reuse only. `dev-machine ssh` and `dev-machine just` refresh the corresponding remote-machine lease before
-execution. CI uses the same remote with read-write authority only on trusted `main` pushes; other credentialed jobs
-are read-only, and fork pull requests remain cold.
-Use `CARGO_RAIL_CACHE=off` only when a check requires a cold compiler process,
-including Miri and machine-code zeroization evidence.
+   ```bash
+   eval "$("$HOME/dev-machines/dev-machine" cache-env rscrypto <target>)"
+   just rail-cache-setup --max-size 10GiB
+   just cache-status
+   ```
+
+1. Run `cache-env` again when the lease expires.
+
+`cache-env` owns the remote URL, the credentials, and the read/write authority.
+None of them belong in repository configuration.
+Without that environment, `rail-cache-setup` installs and checks private local reuse only.
+`dev-machine ssh` and `dev-machine just` refresh the lease of the remote machine before they run.
+
+CI uses the same remote cache.
+It has read-write authority only on trusted `main` pushes.
+Other jobs with credentials are read-only, and pull requests from forks stay cold.
+Use `CARGO_RAIL_CACHE=off` only when a check needs a cold compiler process,
+for example Miri and machine-code zeroization evidence.
 
 ## Validate
 
-macOS ARM64 qualification runs on the maintainer's physical Apple Silicon Mac before every push,
-including documentation and tooling changes.
-Run `just install-hooks` once per checkout.
-The pre-commit and pre-merge-commit hooks run `just ci-check`: formatting, native and portable
-host lints, and documentation.
-The pre-push hook runs `just check-macos`: native checks,
-complete release tests with native and portable dispatch
-(including doctests), internal evidence regressions, and the Apple Silicon RSA assembly gate.
-It qualifies the pushed commit, which must be the clean checkout, and records each passing tree
-and compiler in the repository's Git directory, so pushing an already qualified tree from any
-worktree skips the run. Intermediate commits of a multi-commit push receive only `just ci-check`.
-Install prerequisites with `scripts/tooling/aarch64-macos.sh` when needed.
-The hooks reject unstaged tracked changes and untracked files
-so the tested source matches the commit.
-Do not bypass the hooks.
-Git hooks are local; GitHub does not enforce this qualification
-and remote-created commits must not replace the locally validated submission path.
+### Local hooks
 
-Run `just --list` to discover the current recipes.
+macOS ARM64 qualification runs on the maintainer's physical Apple Silicon Mac before every push,
+also for documentation and tooling changes.
+
+Run `just install-hooks` once for each checkout.
+
+- The pre-commit and pre-merge-commit hooks run `just ci-check`:
+  formatting, native and portable host lints, and documentation.
+- The pre-push hook runs `just check-macos`:
+  native checks, complete release tests with native and portable dispatch (including doctests),
+  internal evidence regressions, and the Apple Silicon RSA assembly gate.
+- `check-macos` qualifies the pushed commit, which must be the clean checkout.
+  It records each passing tree and compiler in the repository's Git directory,
+  so a push of a tree that already passed skips the run, from any worktree.
+- In a push of more than one commit, the intermediate commits get only `just ci-check`.
+- The hooks reject unstaged tracked changes and untracked files,
+  so that the tested source matches the commit.
+
+Install the prerequisites with `scripts/tooling/aarch64-macos.sh` when you need them.
+Do not bypass the hooks.
+Git hooks are local, and GitHub does not enforce this qualification.
+Commits made remotely must not replace the locally validated submission path.
+
+### Checks
+
+Run `just --list` to see the current recipes.
 Start with:
 
 ```bash
@@ -84,35 +100,41 @@ just check
 just test
 ```
 
-`just check` repairs sources before validation.
-It covers the host and every entry in `.config/target-matrix.json`;
-missing target libraries or Clippy components fail before repairs start.
-The repair pass applies rustfmt and Clippy suggestions, including in a dirty or staged worktree.
-Review the resulting diff.
-`just ci-check` validates only the native host without source fixes.
-`just ci-policy` checks dependencies across the full supported target graph.
-Neither command uses affected-work selection.
+- `just check` repairs the source, then validates it.
+  It covers the host and every entry in `.config/target-matrix.json`.
+  Missing target libraries or Clippy components fail before the repairs start.
+  The repair pass applies rustfmt and Clippy suggestions, also in a dirty or staged worktree.
+  Review the resulting diff.
+- `just ci-check` validates only the native host, without source fixes.
+- `just ci-policy` checks dependencies across the full supported target graph.
+- Neither command selects only the affected work.
 
-Every target receives release/native and debug/portable Clippy passes.
-The host checks all Cargo targets;
-cross checks compile the library without foreign test or benchmark C dependencies.
-Bare-metal and browser WASM use `full` plus applicable serialization features without std, threads,
-or OS entropy.
-WASI adds std and entropy, without threads.
-Every target uses the one repository-pinned nightly from `rust-toolchain.toml`.
-Validation also checks independent workspaces, dependencies, and docs.
+What the checks cover:
+
+- Every target gets a release/native Clippy pass and a debug/portable Clippy pass.
+- The host checks all Cargo targets.
+  Cross checks compile the library without foreign C dependencies of tests or benchmarks.
+- Bare-metal and browser WASM use `full`, plus the applicable serialization features, without `std`, threads,
+  or operating-system entropy.
+  WASI adds `std` and entropy, without threads.
+- Every target uses the one repository-pinned nightly from `rust-toolchain.toml`.
+- Validation also checks the independent workspaces, dependencies, and documentation.
+
+### Tests
 
 `just test` selects the production-auto feature set: every crate feature except `portable-only`,
 with production dispatch enabled.
 Use `just test --portable` for the portable-only lane.
-That lane uses Cargo's all-feature set, which necessarily includes `portable-only`;
-an all-feature host run is therefore portable-only evidence, never native backend evidence.
-Both modes print their dispatch profile; `--all` widens test scope independently of that choice.
-Run `just test-evidence` for changes to internal evidence hooks or forced-kernel tests. It executes their
-production-auto and portable-only regressions through the internal build boundary;
-ordinary test builds keep that boundary closed.
-ChaCha20 differential tests report accelerated backend and kernel execution counts,
-including an explicit result when no accelerated backend ran.
+That lane uses Cargo's all-feature set, which includes `portable-only`.
+An all-feature host run is therefore portable-only evidence, never native backend evidence.
+Both modes print their dispatch profile.
+`--all` widens the test scope, independently of that choice.
+
+Run `just test-evidence` for changes to internal evidence hooks or forced-kernel tests.
+It runs their production-auto and portable-only regressions through the internal build boundary.
+Ordinary test builds keep that boundary closed.
+ChaCha20 differential tests report how often the accelerated backend and kernels ran,
+and they report explicitly when no accelerated backend ran.
 
 Use the same command for a focused loop:
 
@@ -122,11 +144,23 @@ just test --test aead_kernel_equivalence chacha20
 just test -- --lib -- --exact checksum::crc16::tests::test_vectors_crc16_ccitt_x25 --nocapture
 ```
 
-`just test` uses the pinned Nextest runner; it requires `cargo-nextest` and has no Cargo-test fallback.
-Put repository options (`--all`, `--release`, `--native`, `--portable`) first.
-`--release` selects optimized builds for both Nextest and doctests.
-The first runner argument, or an explicit `--`, starts verbatim forwarding to `cargo nextest run`.
-For example:
+How `just test` handles arguments:
+
+- It uses the pinned Nextest runner.
+  It needs `cargo-nextest`, and it has no `cargo test` fallback.
+- Put repository options first: `--all`, `--release`, `--native`, `--portable`.
+- `--release` selects optimized builds for both Nextest and doctests.
+- The first runner argument, or an explicit `--`, starts verbatim forwarding to `cargo nextest run`.
+- The wrapper consumes the first `--`.
+  A second `--` reaches Nextest for its libtest-compatible arguments, such as `--skip` and `--exact`.
+- `--test` selects an integration binary, `--lib` selects library tests, and a name filters tests.
+- Forwarded Cargo feature flags are rejected, because the dispatch profile owns feature selection.
+- Runner arguments select explicit work, independent of the affected scope, and they skip doctests.
+  Runs without runner arguments keep the separate Cargo doctest step.
+- `RSCRYPTO_TEST_THREADS` sets `NEXTEST_TEST_THREADS`.
+  Nextest's explicit `--test-threads` option takes precedence.
+
+Examples:
 
 ```bash
 just test --portable -- --release --lib
@@ -134,46 +168,49 @@ just test -- --no-run
 just test -- --lib -- --skip slow_test
 ```
 
-The wrapper consumes the first `--`;
-a second one reaches Nextest for its libtest-compatible arguments such as `--skip` and `--exact`.
-`--test` selects an integration binary, `--lib` selects library tests, and a name filters tests.
-Forwarded Cargo feature flags are rejected because the dispatch profile owns feature selection.
-Runner arguments select explicit work regardless of affected scope and skip doctests.
-Runs without runner arguments retain the separate Cargo doctest step.
-`RSCRYPTO_TEST_THREADS` sets `NEXTEST_TEST_THREADS`; Nextest's explicit `--test-threads` option takes precedence.
+### Coverage
 
 Run `just test-coverage` when you need source coverage.
-It runs the complete native and portable test suites plus committed corpus replay in the full
-and scoped fuzz workspaces, then writes `coverage/total.lcov`, `coverage/SUMMARY.txt`, browsable
-`coverage/html/index.html`, and `coverage/provenance.json` with source, tool, suite, environment, and artifact evidence.
-Use it instead of a separate `just test` step in a coverage job; reporting does not rerun tests.
-Ordinary uninstrumented test results cannot retroactively produce coverage.
-The merged profile and executable list remain in `coverage/` for report diagnosis.
 
-Corpus replay defaults to the paths in `fuzz/committed-seeds.txt`, using their working-tree contents.
+- It runs the complete native and portable test suites,
+  and it replays the committed corpus in the full and scoped fuzz workspaces.
+- It writes `coverage/total.lcov`, `coverage/SUMMARY.txt`, browsable `coverage/html/index.html`,
+  and `coverage/provenance.json` with source, tool, suite, environment, and artifact evidence.
+- In a coverage job, use it instead of a separate `just test` step.
+  Reporting does not run the tests again.
+- Ordinary uninstrumented test results cannot produce coverage later.
+- The merged profile and the executable list stay in `coverage/` for report diagnosis.
+
+Corpus replay uses the paths in `fuzz/committed-seeds.txt` by default, with their working-tree contents.
 Unlisted files, including local fuzz discoveries, are excluded.
 To include all local corpus files, run `RSCRYPTO_FUZZ_CORPUS=local just test-coverage` or `RSCRYPTO_FUZZ_CORPUS=local just test-fuzz-asan --all`.
-The same variable applies to direct Cargo replay tests; `committed` explicitly selects the default.
+The same variable applies to direct Cargo replay tests.
+`committed` selects the default explicitly.
 Replay never deletes discoveries.
-Promote a minimized regression by adding its seed file and repository-relative path to `fuzz/committed-seeds.txt`
+
+To promote a minimized regression, add its seed file, and add its repository-relative path to `fuzz/committed-seeds.txt`
 (sorted, one path per line).
-`just test-scripts` checks that this inventory matches the tracked corpus files;
-stage new seed files before running that check.
+`just test-scripts` checks that this list matches the tracked corpus files.
+Stage new seed files before you run that check.
 
-Coverage uses the development toolchain, cargo-nextest, cargo-llvm-cov, and the `llvm-tools-preview` rustup component.
+Coverage uses the development toolchain, `cargo-nextest`, `cargo-llvm-cov`, and the `llvm-tools-preview` rustup component.
 It measures Rust source under `src/` on the host, including inline tests, with the existing test profile.
-Doctest coverage is deferred.
-Live fuzzing, sanitizers, Miri, timing checks, release-only paths,
-and other target architectures remain separate evidence;
-corpus replay reuses the fuzz implementations without launching nightly libFuzzer.
-Reporting validates LLVM function mappings before publishing;
-a failed run does not publish a report.
 
-Run `just test-scripts` after changing command selection or script orchestration.
-It uses substitute executors without running cryptographic workloads.
+- Doctest coverage is deferred.
+- Live fuzzing, sanitizers, Miri, timing checks, release-only paths,
+  and other target architectures are separate evidence.
+- Corpus replay reuses the fuzz implementations without starting nightly libFuzzer.
+- Reporting validates the LLVM function mappings before it publishes.
+  A failed run publishes no report.
 
-Run `just ct-test` for CT tooling regressions, including DudeCT balancing and raw-exporter self-tests without
-timing cases.
+### Tooling tests
+
+- Run `just test-scripts` after you change command selection or script orchestration.
+  It uses substitute executors and runs no cryptographic workloads.
+- Run `just ct-test` for CT tooling regressions,
+  including DudeCT balancing and the raw-exporter self-tests, without timing cases.
+
+### Evidence by risk
 
 For broad or compatibility-sensitive changes, run:
 
@@ -183,34 +220,38 @@ just test --all
 just test --all --portable
 ```
 
-Add the risk-specific evidence reached by the change:
+Then add the evidence that the change reaches:
 
 | Change                                          | Required evidence |
 | ----------------------------------------------- | ----------------- |
 | Parser, import, DER, PHC, hex, or hostile input | `just test-fuzz <target>` or `just test-fuzz --all` |
-| Unsafe Rust, SIMD, assembly, or dispatch        | Backend differential tests; `just test-fuzz-asan --all` where native |
+| Unsafe Rust, SIMD, assembly, or dispatch        | Backend differential tests, and `just test-fuzz-asan --all` where native |
 | Portable unsafe path                            | `just test-miri`  |
-| Constant-time claim boundary                    | `just ct-full --target <triple>`; update `ct.toml` only with matching evidence |
+| Constant-time claim boundary                    | `just ct-full --target <triple>`; change `ct.toml` only with matching evidence |
 | Apple Silicon RSA assembly                      | `just test-rsa-macos-asm` on physical Apple Silicon |
-| Public API, examples, or compatibility          | Run `just test-examples`; review callers, tests, docs, explicit API removals, and release intent |
+| Public API, examples, or compatibility          | `just test-examples`; review callers, tests, docs, explicit API removals, and release intent |
 | Dependency                                      | `just check`; inspect the selected graph |
 
-Cross-compilation proves compilation, not runtime behavior, constant-time execution, or performance.
-Record target lanes that cannot run.
+Cross-compilation proves compilation only.
+It does not prove runtime behavior, constant-time execution, or performance.
+Record the target lanes that cannot run.
 
-RISC-V, POWER, and IBM Z CI separate cross-compilation from native execution to avoid long builds on
-the physical runner.
-The x86-64 producers use the shared Cargo-Rail cache under the same CI read/write policy described above;
-the native runners consume source-bound archives and do not compile the crate.
-Both native-dispatch and portable release suites, doctests,
-and the full CT campaign remain required.
-The transfer commands and integrity requirements are documented in [scripts/README.md](scripts/README.md).
-A successful preparation job does not qualify the target;
-its execution job must also pass for the same source and artifacts.
+### Cross-built targets
+
+RISC-V, POWER, and IBM Z CI separate cross-compilation from native execution,
+to avoid long builds on the physical runner.
+
+- The x86-64 producers use the shared Cargo Rail cache, under the CI read/write policy above.
+- The native runners consume archives bound to the source.
+  They do not compile the crate.
+- The native-dispatch and portable release suites, doctests, and the full CT campaign stay required.
+- [scripts/README.md](scripts/README.md) documents the transfer commands and integrity requirements.
+- A successful preparation job does not qualify the target.
+  Its execution job must also pass for the same source and artifacts.
 
 ## Review and submit
 
-Inspect and commit only the intended files:
+Inspect and commit only the files you intend:
 
 ```bash
 git status --short
@@ -226,73 +267,86 @@ Push the validated commits:
 git push origin main
 ```
 
-Before pushing, resolve review findings, inspect the final diff,
+Before you push, resolve review findings, inspect the final diff,
 and confirm the required local and target-specific evidence.
 
 ## Release
 
-Preview the exact local release plan at any time. On a clean `main` checkout, prepare the release from the reviewed
-change files:
+### Prepare
+
+You can preview the exact local release plan at any time.
+On a clean `main` checkout, prepare the release from the reviewed change files:
 
 ```bash
 just release-check
 just release-prepare
 ```
 
-`release-prepare` runs the complete host-and-target Surface gate, repeats the local release check, then creates the
-local version, changelog, auxiliary-lockfile, and release commit. It does not tag, push, publish, or create a forge
-release. Pass an exact bump or version only when reviewed intent requires it, for example `just release-check minor`.
-Surface is deliberately absent from routine planning and validation because this full release boundary is heavy.
+- `release-prepare` repeats the local release check.
+  It then creates the local version, the changelog, the auxiliary lockfiles, and the release commit.
+- It does not tag, push, publish, or create a forge release.
+- Pass an exact bump or version only when the reviewed intent needs it,
+  for example `just release-check minor`.
+- The Surface gate (`just release-surface`) is paused for releases until its target preflight passes.
+  It is not part of routine planning or validation.
 
-If preparation is interrupted, inspect and resume the retained transaction:
+If preparation stops before it finishes, inspect and resume the retained transaction:
 
 ```bash
 cargo rail release status
 cargo rail release resume
 ```
 
-Review the prepared commit and its complete diff, including manifests and lockfiles in independent workspaces,
-validate it, and push it to `main`.
-The `release.auxiliary_cargo_manifests` list in [`.config/rail.toml`](.config/rail.toml) owns the
-standalone workspaces whose lockfiles must follow the package version.
-Complete physical Apple Silicon RSA assembly and timing qualification locally
+Review the prepared commit and its complete diff,
+including the manifests and lockfiles in independent workspaces.
+Validate it, then push it to `main`.
+The `release.auxiliary_cargo_manifests` list in [`.config/rail.toml`](.config/rail.toml) names the standalone workspaces whose
+lockfiles must follow the package version.
+Complete the physical Apple Silicon RSA assembly and timing qualification locally
 before submission. macOS does not run in hosted CI.
 
-For the one-time publishing setup, create a GitHub environment named `release` restricted to `main`.
-Configure rscrypto's crates.io Trusted Publisher for `loadingalias/rscrypto`, workflow `release.yml`, and environment `release`.
-The workflow obtains a short-lived token; no crates.io secret is required.
+### One-time publishing setup
+
+1. Create a GitHub environment named `release`, restricted to `main`.
+1. Configure the crates.io Trusted Publisher for `loadingalias/rscrypto`,
+   workflow `release.yml`, environment `release`.
+
+The workflow gets a short-lived token, so no crates.io secret is needed.
 See the [crates.io setup instructions](https://crates.io/docs/trusted-publishing).
 
-To deploy, select **Actions → Release → Run workflow → main**.
-No version input is needed.
-The workflow rejects unconsumed change files, a version/changelog mismatch,
-or a tag pointing elsewhere.
-CI (with macOS ARM64 qualified locally before committing),
-full CT on all configured CI architectures,
-and both fuzz architectures plus Miri run concurrently against the triggering commit.
-Publication requires all three workflows to succeed.
-Benchmarks are separate.
+### Deploy
 
-The final job packages the same commit, publishes to crates.io,
-then creates `v<version>` and a GitHub Release using the reviewed changelog entry.
-Only this job receives registry authentication and repository write permission.
+Select **Actions → Release → Run workflow → main**.
+No version input is needed.
+
+- The workflow rejects unconsumed change files, a version and changelog mismatch,
+  and a tag that points elsewhere.
+- Three workflows run at the same time against the triggering commit: CI
+  (with macOS ARM64 qualified locally before the commit),
+  full CT on all configured CI architectures, and fuzzing on both architectures plus Miri.
+  Publication needs all three to pass.
+- Benchmarks are separate.
+- The final job packages the same commit and publishes it to crates.io.
+  It then creates `v<version>` and a GitHub Release with the reviewed changelog entry.
+  Only this job gets registry authentication and repository write permission.
 
 After a transient failure, use **Re-run failed jobs** on the same run.
-A retry accepts an existing crates.io version only when its checksum matches the local package
-and it is not yanked.
-It never moves an existing tag or overwrites a GitHub Release.
-If qualification artifacts have expired, rerun all jobs.
-Resolve checksum, tag, or release-note conflicts before retrying; do not bypass them.
+
+- A retry accepts an existing crates.io version only if its checksum matches the local package
+  and it is not yanked.
+- A retry never moves an existing tag, and never overwrites a GitHub Release.
+- If the qualification artifacts have expired, rerun all jobs.
+- Resolve checksum, tag, and release-note conflicts before you retry.
+  Do not bypass them.
 
 ## Security and test evidence
 
-Do not broaden constant-time, audit, FIPS, compliance, secret-lifecycle,
+Do not widen constant-time, audit, FIPS, compliance, secret-lifecycle,
 or platform claims without matching evidence.
-Security boundaries are defined by [`THREAT_MODEL.md`](THREAT_MODEL.md), [`ct.toml`](ct.toml),
-and the linked evidence documents.
+[`THREAT_MODEL.md`](THREAT_MODEL.md), [`ct.toml`](ct.toml), and the linked evidence documents define the security boundaries.
 Report vulnerabilities privately through [`SECURITY.md`](SECURITY.md).
 
 Use official vectors or an independent implementation as the oracle for cryptographic correctness.
 Keep vector provenance, licensing, transforms, and coverage reviewable.
-Fuzz targets live in [`fuzz/`](fuzz/) and [`fuzz-packages/`](fuzz-packages/); commit only small,
-minimized seeds that exercise production paths.
+Fuzz targets live in [`fuzz/`](fuzz/) and [`fuzz-packages/`](fuzz-packages/).
+Commit only small, minimized seeds that exercise production paths.

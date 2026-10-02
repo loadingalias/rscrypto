@@ -1,54 +1,49 @@
 # Compliance
 
-`rscrypto` is not a FIPS 140-3 validated cryptographic module. Depending on it
-does not make a product compliant.
+`rscrypto` is not a FIPS 140-3 validated cryptographic module.
+A product that depends on it does not become compliant because of it.
 
-NIST validates defined cryptographic modules, not isolated algorithm
-implementations. Implementing an approved algorithm or passing algorithm tests
-is not a module validation. Confirm required modules in the
-[CMVP validated modules database](https://csrc.nist.gov/projects/cryptographic-module-validation-program/validated-modules).
+NIST validates defined cryptographic modules, not single algorithm implementations.
+An approved algorithm, or a passing algorithm test, is not a module validation.
+To confirm that a module is validated, search the [CMVP validated modules database](https://csrc.nist.gov/projects/cryptographic-module-validation-program/validated-modules).
 
-## What rscrypto provides
+## What rscrypto supplies
 
-The crate provides review evidence that may support a separately defined
-module or product:
+`rscrypto` supplies review evidence that can support a module or product that someone else defines:
 
-- Standards-based primitive implementations and public test vectors.
+- Primitive implementations based on published standards, with public test vectors.
 - Differential, property, fuzz, Miri, and backend-equivalence tests.
-- Scoped constant-time and secret-lifecycle evidence.
+- Constant-time and secret-lifecycle evidence, each with a stated scope.
 - Explicit feature and platform contracts.
 
-Start with [`test-vector-coverage.md`](test-vector-coverage.md),
-[`constant-time.md`](constant-time.md), and
-[`secret-lifecycle.md`](secret-lifecycle.md).
+Start with [`test-vector-coverage.md`](test-vector-coverage.md), [`constant-time.md`](constant-time.md), and [`secret-lifecycle.md`](secret-lifecycle.md).
 
-## What an integrator owns
+## What the integrator owns
 
-The product or module owner must define and validate:
+The owner of the product or module must define and validate:
 
-- The cryptographic boundary and operational environments.
-- Approved algorithms, modes, parameters, and protocol profiles.
-- Entropy, keys, nonces, salts, counters, and error-state behavior.
-- Required self-tests and known-answer tests.
+- The cryptographic boundary and the operational environments.
+- The approved algorithms, modes, parameters, and protocol profiles.
+- The behavior for entropy, keys, nonces, salts, counters, and error states.
+- The required self-tests and known-answer tests.
 - Build provenance, binary distribution, and change control.
-- The lab, assessor, or customer evidence package.
+- The evidence package for the lab, assessor, or customer.
 
-`portable-only` can make runtime dispatch choose portable backends. It does not
-remove accelerated code, override compile-time target features, prove constant
-time, or create a validation boundary.
+`portable-only` can make runtime dispatch select portable backends.
+It does not remove accelerated code, override compile-time target features, prove constant time,
+or create a validation boundary.
 
-Use accurate downstream wording:
+Use accurate wording downstream:
 
 ```text
-This product uses rscrypto, a pure Rust cryptographic primitives library.
+This product uses rscrypto, a Rust library of cryptographic primitives.
 rscrypto is not a FIPS 140-3 validated module. Its public evidence includes
 test vectors, differential tests, platform coverage, and scoped constant-time
 analysis.
 ```
 
-Do not describe the crate as FIPS validated, FIPS certified, approved, audited,
-or a compliance replacement.
+Do not describe `rscrypto` as FIPS validated, FIPS certified, approved, audited,
+or a replacement for compliance work.
 
-Current program requirements live in the
-[FIPS 140-3 standard](https://csrc.nist.gov/pubs/fips/140-3/final) and the
-[CMVP FIPS 140-3 program documents](https://csrc.nist.gov/projects/cryptographic-module-validation-program/fips-140-3-standards).
+The [FIPS 140-3 standard](https://csrc.nist.gov/pubs/fips/140-3/final) and the [CMVP FIPS 140-3 program documents](https://csrc.nist.gov/projects/cryptographic-module-validation-program/fips-140-3-standards) define the current program
+requirements.

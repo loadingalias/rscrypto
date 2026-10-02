@@ -2,7 +2,7 @@
 "rscrypto" = "minor"
 ---
 
-Add `Blake3::digest_const`, which computes the unkeyed BLAKE3 digest of at most
-1,024 bytes in constant context, so callers can build digest tables at compile
-time. It shares the portable compression code with the runtime portable
-backend; longer inputs panic, which fails the build in constant context.
+Add `Blake3::digest_const`, which computes the unkeyed BLAKE3 digest of at most 1,024 bytes in a constant context.
+Callers can use it to build digest tables at compile time.
+It uses the same portable compression code as the runtime portable backend.
+Longer inputs panic, which makes the build fail in a constant context.

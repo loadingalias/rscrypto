@@ -2,4 +2,4 @@
 "rscrypto" = "patch"
 ---
 
-Synchronize standalone fuzz and evidence-tool lockfiles with the rscrypto version during release preparation.
+Keep the standalone fuzz and evidence-tool lockfiles at the `rscrypto` version during release preparation.

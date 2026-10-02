@@ -2,10 +2,12 @@
 "rscrypto" = "patch"
 ---
 
-Preserve masked ECDSA point selection on AArch64 and Windows
+Keep masked ECDSA point selection on AArch64 and Windows,
 and masked secret selection in portable P-256.
-Use fixed-bound ECDSA table traversal
-and retain unconditional RISC-V generator-table loads under LLVM optimization without changing
-signature semantics.
-Accelerate portable P-256 public derivation and agreement with target-shaped RV64 multiplication,
-sparse field arithmetic, and shared fixed-base tables without changing ECDH or signature semantics.
+Use ECDSA table traversal with fixed bounds.
+Keep RISC-V generator-table loads unconditional under LLVM optimization.
+Signature behavior does not change.
+
+Make portable P-256 public derivation and agreement faster with RV64-shaped multiplication,
+sparse field arithmetic, and shared fixed-base tables.
+ECDH and signature behavior do not change.

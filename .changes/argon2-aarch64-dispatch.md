@@ -2,4 +2,5 @@
 "rscrypto" = "patch"
 ---
 
-Use the portable Argon2 compression authority on AArch64 after native measurements showed it outperforms the NEON backend.
+Use the portable Argon2 compression on AArch64.
+Native measurements showed that it is faster than the NEON backend.

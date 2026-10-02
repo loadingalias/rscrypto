@@ -1,27 +1,35 @@
 # Benchmark Overview
 
-> **Comparison validity correction:** The historical ML-KEM comparisons below
-> mixed caller-supplied and internal entropy, key preparation, and output
-> representations. Argon2 comparisons supplied a longer salt to rscrypto and
-> RustCrypto than to dryoc. Affected ratios, rankings, and aggregates containing
-> those rows are withdrawn as performance claims. The corrected 2026-09-14
-> campaign is recorded below, but replacement aggregates have not been curated.
-> The numerical impact on the historical scorecard remains unmeasured. Tables
-> and raw artifacts are retained as historical records, not corrected results.
-> See the [current comparison contracts](../docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts).
+This file keeps the retained benchmark campaigns.
+Each section names its revision, toolchain, hosts, method, and limits.
+The dated campaign records come first.
+The 2026-08-18 Linux snapshot near the end is historical:
+its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
-> **Workload identity correction:** Historical AEAD encrypt/decrypt and ChaCha
-> XOR rows include timed buffer restoration. BLAKE2's former host-overhead rows
-> measure complete hashes and include duplicates of the main groups; its plain
-> parameter rows also duplicate main one-shot cases. Ascon's former
-> `ascon-hash256/scalar-loop` and `ascon-xof128/scalar-loop` labels both invoke
-> rscrypto. Treat those as internal comparisons, not external competitors.
-> Current [timed-boundary policy](../docs/benchmarking.md#timed-workload-boundaries)
-> names the actual work and removes duplicate cases. No historical ratios have
-> been recomputed from these changes. The 2026-09-14 campaign uses the corrected
-> workload identities.
+## Corrections
 
-Sources:
+**Comparison validity.**
+The historical ML-KEM comparisons mixed caller-supplied and internal entropy, key preparation,
+and output representations.
+The Argon2 comparisons gave `rscrypto` and RustCrypto a longer salt than dryoc.
+The affected ratios, rankings,
+and aggregates that contain those rows are withdrawn as performance claims.
+The corrected 2026-09-14 campaign is recorded below, but no replacement aggregate exists yet.
+The numerical effect on the historical scorecard has not been measured.
+The tables and raw artifacts stay as historical records, not corrected results.
+See the [current comparison contracts](../docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts).
+
+**Workload identity.**
+Historical AEAD encrypt and decrypt rows, and ChaCha XOR rows, include timed buffer restoration.
+The former BLAKE2 host-overhead rows measure complete hashes and duplicate the main groups.
+Its plain parameter rows also duplicate the main one-shot cases.
+The former Ascon `ascon-hash256/scalar-loop` and `ascon-xof128/scalar-loop` labels both call `rscrypto`.
+Treat those rows as internal comparisons, not external comparisons.
+The current [timed-boundary policy](../docs/benchmarking.md#timed-workload-boundaries) names the actual work and removes duplicate cases.
+No historical ratio was recomputed after these changes.
+The 2026-09-14 campaign uses the corrected workload identities.
+
+## Sources
 
 - Full benchmark workflow run
   [#34874736834](https://github.com/loadingalias/rscrypto/actions/runs/34874736834),
@@ -35,90 +43,85 @@ Sources:
 - Local P-256 ECDH development run on Apple M1, 2026-09-03, based on
   `fdd4eec6` with uncommitted Phase 4 changes; curated below and not treated as
   release or cross-target evidence.
-- Physical AWS Graviton4 P-256 ECDH development run, 2026-09-03, from an
-  intermediate Phase 4 worktree. The sealed Criterion and native-evidence bundles are
-  under `benchmark_results/2026-09-03/linux/aarch64/graviton4/`.
-- Physical AWS Graviton3 P-256 ECDH development run, 2026-09-03, from an
-  intermediate Phase 4 worktree. The sealed Criterion and native-evidence bundles are
-  under `benchmark_results/2026-09-03/linux/aarch64/graviton3/`.
+- Physical AWS Graviton4 P-256 ECDH development run, 2026-09-03,
+  from an intermediate Phase 4 worktree.
+  The sealed Criterion and native-evidence bundles are under `benchmark_results/2026-09-03/linux/aarch64/graviton4/`.
+- Physical AWS Graviton3 P-256 ECDH development run, 2026-09-03,
+  from an intermediate Phase 4 worktree.
+  The sealed Criterion and native-evidence bundles are under `benchmark_results/2026-09-03/linux/aarch64/graviton3/`.
 - Physical AWS Intel Granite Rapids P-256 ECDH development run, 2026-09-03,
-  from an intermediate Phase 4 worktree. The sealed Criterion and native-evidence
-  bundles are under `benchmark_results/2026-09-03/linux/x86_64/intel-gnr/`.
-- Physical AWS Windows x86-64 Intel Granite Rapids P-256 ECDH development
-  runs, 2026-09-03. The full native-backend run used an intermediate Phase 4
-  worktree; the final batch-parser comparison matches the current P-256 source.
-  Both are under
-  `benchmark_results/2026-09-03/windows/x86_64/intel-gnr/`.
-
-Scope: the 2026-08-18 eight-host Linux benchmark matrix for commit `7eb44e9`. Ratios are `external_crate_time / rscrypto_time`; higher is better. Wins are `>1.05x`, ties are `0.95x..1.05x`, and losses are `<0.95x`. Fastest-external comparisons keep only the fastest external implementation for each platform, primitive, operation, and input shape. Internal kernel, scratch-buffer, padding-only, cold-path, PHC roundtrip, parallel-scaling, threshold-selection, public-overhead, and phase-attribution microbenches are parsed as raw rows but excluded from external win/loss claims. The macOS local run is listed separately and is not mixed into Linux claims.
-
-This is a historical snapshot of commit `7eb44e9`, not an inventory of the
-current public API. Primitive rows remain as measured even when a later commit
-changes or removes that surface.
+  from an intermediate Phase 4 worktree.
+  The sealed Criterion and native-evidence bundles are under `benchmark_results/2026-09-03/linux/x86_64/intel-gnr/`.
+- Physical AWS Windows x86-64 Intel Granite Rapids P-256 ECDH development runs, 2026-09-03.
+  The full native-backend run used an intermediate Phase 4 worktree;
+  the final batch-parser comparison matches the current P-256 source.
+  Both are under `benchmark_results/2026-09-03/windows/x86_64/intel-gnr/`.
 
 ## 2026-09-14 full benchmark run
 
-Run [#34874736834](https://github.com/loadingalias/rscrypto/actions/runs/34874736834)
-completed successfully on its first attempt. It selected `all` architectures
-and `all` benchmark groups with diagnostic features disabled. The plan, three
-cross-build preparation jobs, and all eight measurement jobs passed. The run
-measured commit `ae6f54af` from `main`. Native jobs used Rust 1.98.1; the
-cross-built POWER, s390x, and RISC-V binaries used Rust 1.99.0-nightly
-(`3d6c19bb9`, 2026-08-11).
+Run [#34874736834](https://github.com/loadingalias/rscrypto/actions/runs/34874736834) completed successfully on its first attempt.
+It selected `all` architectures and `all` benchmark groups with diagnostic features disabled.
+The plan, three cross-build preparation jobs, and all eight measurement jobs passed.
+The run measured commit `ae6f54af` from `main`.
+Native jobs used Rust 1.98.1; the cross-built POWER, s390x,
+and RISC-V binaries used Rust 1.99.0-nightly (`3d6c19bb9`, 2026-08-11).
 
-The campaign used the catalog defaults: 20 samples, 100 ms warm-up, 400 ms
-measurement time, 10,000 resamples, 95% confidence, and a 1% noise threshold.
-It executed 14 benchmark binaries per platform. In total, the retained
-measurement artifacts contain 19,614 completed Criterion cases.
+The campaign used the catalog defaults: 20 samples, 100 ms warm-up, 400 ms measurement time,
+10,000 resamples, 95% confidence, and a 1% noise threshold.
+It executed 14 benchmark binaries per platform.
+In total, the retained measurement artifacts contain 19,614 completed Criterion cases.
 
-| Measurement job   | System  | Runner shape | Rust toolchain | Completed cases | Artifact                                 |
-| ----------------- | ------- | ------------ | -------------- | --------------: | ---------------------------------------- |
-| x86_64-linux-amd  | Linux   | c8a.2xlarge  | 1.98.1         |           2,517 | `bench-x86_64-linux-amd-34874736834-1`   |
-| x86_64-linux-intel | Linux  | c8i.2xlarge  | 1.98.1         |           2,517 | `bench-x86_64-linux-intel-34874736834-1` |
-| aarch64-linux     | Linux   | c9g.2xlarge  | 1.98.1         |           2,521 | `bench-aarch64-linux-34874736834-1`      |
-| powerpc64le-linux | Linux   | native       | 1.99.0-nightly |           2,255 | `bench-powerpc64le-linux-34874736834-1`  |
-| s390x-linux       | Linux   | native       | 1.99.0-nightly |           2,255 | `bench-s390x-linux-34874736834-1`        |
-| riscv64-linux     | Linux   | native       | 1.99.0-nightly |           2,515 | `bench-riscv64-linux-34874736834-1`      |
-| x86_64-win-amd    | Windows | c8a.2xlarge  | 1.98.1         |           2,517 | `bench-x86_64-win-amd-34874736834-1`     |
-| x86_64-win-intel  | Windows | c8i.2xlarge  | 1.98.1         |           2,517 | `bench-x86_64-win-intel-34874736834-1`   |
+| Measurement job    | System  | Runner shape | Rust toolchain | Completed cases | Artifact |
+| ------------------ | ------- | ------------ | -------------- | --------------: | -------- |
+| x86_64-linux-amd   | Linux   | c8a.2xlarge  | 1.98.1         |           2,517 | `bench-x86_64-linux-amd-34874736834-1` |
+| x86_64-linux-intel | Linux   | c8i.2xlarge  | 1.98.1         |           2,517 | `bench-x86_64-linux-intel-34874736834-1` |
+| aarch64-linux      | Linux   | c9g.2xlarge  | 1.98.1         |           2,521 | `bench-aarch64-linux-34874736834-1` |
+| powerpc64le-linux  | Linux   | native       | 1.99.0-nightly |           2,255 | `bench-powerpc64le-linux-34874736834-1` |
+| s390x-linux        | Linux   | native       | 1.99.0-nightly |           2,255 | `bench-s390x-linux-34874736834-1` |
+| riscv64-linux      | Linux   | native       | 1.99.0-nightly |           2,515 | `bench-riscv64-linux-34874736834-1` |
+| x86_64-win-amd     | Windows | c8a.2xlarge  | 1.98.1         |           2,517 | `bench-x86_64-win-amd-34874736834-1` |
+| x86_64-win-intel   | Windows | c8i.2xlarge  | 1.98.1         |           2,517 | `bench-x86_64-win-intel-34874736834-1` |
 
-Case counts differ where the target-specific catalog omits unavailable
-implementations or adds target-specific coverage. Each artifact retains the
-exact source state, build environment, host identity, plan, case inventory,
-Criterion estimates, and samples. The short per-case measurement window and
-non-uniform hosts make this a broad cross-platform snapshot, not a regression
-gate or a license to compare absolute times between machines.
+Case counts differ where the target-specific catalog omits unavailable implementations
+or adds target-specific coverage.
+Each artifact retains the exact source state, build environment, host identity, plan,
+case inventory, Criterion estimates, and samples.
+The short per-case measurement window
+and non-uniform hosts make this a broad cross-platform snapshot,
+not a regression gate or a license to compare absolute times between machines.
 
 No ratios from this campaign are folded into the historical scorecard below.
-That scorecard uses a different eight-host Linux matrix and predates the current
-ML-KEM, Argon2, and timed-workload comparison contracts. Replacing it requires a
-fresh fastest-equivalent-case curation rather than combining the two campaigns.
+That scorecard uses a different eight-host Linux matrix and predates the current ML-KEM, Argon2,
+and timed-workload comparison contracts.
+Replacing it requires a fresh fastest-equivalent-case curation rather than combining the two
+campaigns.
 
 ## 2026-09-30 BLAKE3 batch and portable one-chunk runs
 
-Native AWS hosts, `nightly-2026-09-25`, catalog Criterion defaults, `blake3,parallel,std`.
-x86-64 is `c8i.4xlarge` (Intel Xeon 6975P-C, AVX-512 lanes); AArch64 is `c8g.4xlarge`
-(Graviton4, Neoverse-V2, NEON lanes). The source was the uncommitted working tree on top of
-`5ef7858a`. The machines were destroyed after the runs; per-run summaries are local only.
+Native AWS hosts, `nightly-2026-09-25`, catalog Criterion defaults, `blake3,parallel,std`. x86-64 is `c8i.4xlarge`
+(Intel Xeon 6975P-C, AVX-512 lanes); AArch64 is `c8g.4xlarge` (Graviton4, Neoverse-V2, NEON lanes).
+The source was the uncommitted working tree on top of `5ef7858a`.
+The machines were destroyed after the runs; per-run summaries are local only.
 
-`Blake3::digest_batch` over 64 equal-length messages, versus one `Blake3::digest` call each
-(`blake3/batch` and `blake3/batch-serial`, medians):
+`Blake3::digest_batch` over 64 equal-length messages, versus one `Blake3::digest` call each (`blake3/batch` and `blake3/batch-serial`, medians):
 
 | Message | x86-64 batch | x86-64 serial | Speedup | Graviton4 batch | Graviton4 serial | Speedup |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 21 B | 0.82 µs | 4.01 µs | 4.9× | 3.41 µs | 6.28 µs | 1.8× |
-| 64 B | 0.75 µs | 2.79 µs | 3.7× | 2.72 µs | 5.99 µs | 2.2× |
-| 256 B | 2.47 µs | 14.80 µs | 6.0× | 9.79 µs | 22.43 µs | 2.3× |
-| 1,024 B | 9.45 µs | 47.12 µs | 5.0× | 37.99 µs | 88.76 µs | 2.3× |
+| ------: | -----------: | ------------: | ------: | --------------: | ---------------: | ------: |
+|    21 B |      0.82 µs |       4.01 µs |    4.9× |         3.41 µs |          6.28 µs |    1.8× |
+|    64 B |      0.75 µs |       2.79 µs |    3.7× |         2.72 µs |          5.99 µs |    2.2× |
+|   256 B |      2.47 µs |      14.80 µs |    6.0× |         9.79 µs |         22.43 µs |    2.3× |
+| 1,024 B |      9.45 µs |      47.12 µs |    5.0× |        37.99 µs |         88.76 µs |    2.3× |
 
-The `blake3` crate, called once per message, was within 15% of rscrypto's serial row at every
-size on both hosts. The Graviton4 batch run preceded the x86 partial-block kernel change, which
-does not touch the NEON path.
+The `blake3` crate, called once per message,
+was within 15% of rscrypto's serial row at every size on both hosts.
+The Graviton4 batch run preceded the x86 partial-block kernel change,
+which does not touch the NEON path.
 
-Portable one-chunk digest (`blake3/rscrypto-portable/*`, `--diag`), three interleaved rounds of
-`2cbc2cb2` (before `Blake3::digest_const`), `12cd0bfd` (current `main`), and the working tree,
-which inlines the shared one-chunk helper and reads a full final block in place. Median change
-versus `2cbc2cb2`:
+Portable one-chunk digest (`blake3/rscrypto-portable/*`, `--diag`), three interleaved rounds of `2cbc2cb2` (before `Blake3::digest_const`), `12cd0bfd`
+(current `main`),
+and the working tree, which inlines the shared one-chunk helper
+and reads a full final block in place.
+Median change versus `2cbc2cb2`:
 
 | Input | x86-64 `12cd0bfd` | x86-64 working tree | Graviton4 `12cd0bfd` | Graviton4 working tree |
 | ---: | ---: | ---: | ---: | ---: |
@@ -129,65 +132,64 @@ versus `2cbc2cb2`:
 | 1,024 B | −0.8% | −0.9% | +1.0% | +0.6% |
 | keyed 0–64 B | +8.1 to +16.1% | +6.9 to +7.2% | +1.7 to +6.5% | +0.5 to +3.9% |
 
-The remaining 2–5 ns at 0–64 bytes comes from sharing one const helper between
-`Blake3::digest_const` and the runtime portable path: keyed mode needs every intermediate in
-caller-owned scratch so it can clear it, and those escaping references keep the scratch in
-memory in every mode. Only the portable backend runs this path. Dispatched SIMD rows
-(`blake3/rscrypto/*`, 0 B to 1 MiB, plain and keyed) stayed within ±1% of `2cbc2cb2` on x86-64,
+The remaining 2–5 ns at 0–64 bytes comes from sharing one const helper between `Blake3::digest_const`
+and the runtime portable path:
+keyed mode needs every intermediate in caller-owned scratch so it can clear it,
+and those escaping references keep the scratch in memory in every mode.
+Only the portable backend runs this path.
+Dispatched SIMD rows (`blake3/rscrypto/*`, 0 B to 1 MiB, plain and keyed) stayed within ±1% of `2cbc2cb2` on x86-64,
 including after the x86 owned hash-many kernels gained a final-block length.
 
-`b18697fd` sends only keyed and derive-key portable inputs through the shared helper; unkeyed
-inputs return to the tiny-input and generic one-chunk paths. Rerun on 2026-10-01 on fresh hosts of
-the same types, three interleaved rounds of `2cbc2cb2` and `b18697fd`, same filter and features.
+`b18697fd` sends only keyed and derive-key portable inputs through the shared helper;
+unkeyed inputs return to the tiny-input and generic one-chunk paths.
+Rerun on 2026-10-01 on fresh hosts of the same types, three interleaved rounds of `2cbc2cb2` and `b18697fd`,
+same filter and features.
 Median change versus `2cbc2cb2`, with the per-round range:
 
-| Input | x86-64 unkeyed | x86-64 keyed | Graviton4 unkeyed | Graviton4 keyed |
-| ---: | ---: | ---: | ---: | ---: |
-| 0 B | −0.1% (−0.1 to 0.0) | +7.3% (+7.1 to +11.7) | +0.1% (0.0 to +0.3) | +1.1% (+1.0 to +1.2) |
-| 1 B | −0.1% (−0.2 to 0.0) | +6.2% (+6.2 to +8.5) | +0.1% (−0.2 to +0.4) | +2.7% (+2.7 to +3.2) |
-| 32 B | −0.3% (−0.3 to −0.1) | +6.5% (+5.9 to +7.3) | +1.1% (+1.0 to +1.1) | +0.8% (+0.7 to +0.9) |
-| 64 B | +0.5% (+0.3 to +0.6) | +7.0% (−0.9 to +7.0) | −1.8% (−1.9 to −1.6) | +2.3% (+2.2 to +2.3) |
-| 256 B | −0.9% (−1.0 to −0.8) | −1.6% (−2.0 to −1.6) | +0.4% (+0.3 to +0.4) | −0.8% (−0.8 to −0.7) |
-| 1,024 B | −0.1% (−0.2 to −0.1) | −0.8% (−0.8 to −0.8) | +0.1% (0.0 to +0.1) | −0.4% (−0.4 to −0.4) |
+|   Input |       x86-64 unkeyed |          x86-64 keyed |    Graviton4 unkeyed | Graviton4 keyed |
+| ------: | -------------------: | --------------------: | -------------------: | --------------: |
+|     0 B |  −0.1% (−0.1 to 0.0) | +7.3% (+7.1 to +11.7) |  +0.1% (0.0 to +0.3) | +1.1% (+1.0 to +1.2) |
+|     1 B |  −0.1% (−0.2 to 0.0) |  +6.2% (+6.2 to +8.5) | +0.1% (−0.2 to +0.4) | +2.7% (+2.7 to +3.2) |
+|    32 B | −0.3% (−0.3 to −0.1) |  +6.5% (+5.9 to +7.3) | +1.1% (+1.0 to +1.1) | +0.8% (+0.7 to +0.9) |
+|    64 B | +0.5% (+0.3 to +0.6) |  +7.0% (−0.9 to +7.0) | −1.8% (−1.9 to −1.6) | +2.3% (+2.2 to +2.3) |
+|   256 B | −0.9% (−1.0 to −0.8) |  −1.6% (−2.0 to −1.6) | +0.4% (+0.3 to +0.4) | −0.8% (−0.8 to −0.7) |
+| 1,024 B | −0.1% (−0.2 to −0.1) |  −0.8% (−0.8 to −0.8) |  +0.1% (0.0 to +0.1) | −0.4% (−0.4 to −0.4) |
 
-Unkeyed portable digests are back at the `2cbc2cb2` cost. The keyed 0–64 byte cost remains,
-because keyed mode still clears every secret-derived intermediate. Round 2 on x86-64 had noisy
-keyed rows in both trees, so those ranges are wide. The machines were destroyed after the runs;
-per-run summaries are local only.
+Unkeyed portable digests are back at the `2cbc2cb2` cost.
+The keyed 0–64 byte cost remains, because keyed mode still clears every secret-derived intermediate.
+Round 2 on x86-64 had noisy keyed rows in both trees, so those ranges are wide.
+The machines were destroyed after the runs; per-run summaries are local only.
 
 ## 2026-10-01 ML-KEM Keccak stack scrub
 
-GitHub Bench `mlkem768,mlkem1024`, `nightly-2026-09-25`, on `c8i.2xlarge` (Intel), `c8a.2xlarge`
-(AMD), and `c9g.2xlarge` (Graviton5). Run
-[#36376376070](https://github.com/loadingalias/rscrypto/actions/runs/36376376070) measured
-`931b738f` before the scrub; run
-[#36904620694](https://github.com/loadingalias/rscrypto/actions/runs/36904620694) measured
-`c2af568c`, which runs G, J, and the PRF in the scrubbed worker (`b20a18de`). The runs used
-different physical hosts, so the comparison uses rscrypto's median divided by the competitor
-median from the same run.
+GitHub Bench `mlkem768,mlkem1024`, `nightly-2026-09-25`, on `c8i.2xlarge` (Intel), `c8a.2xlarge` (AMD), and `c9g.2xlarge` (Graviton5).
+Run [#36376376070](https://github.com/loadingalias/rscrypto/actions/runs/36376376070) measured `931b738f` before the scrub; run [#36904620694](https://github.com/loadingalias/rscrypto/actions/runs/36904620694) measured `c2af568c`,
+which runs G, J, and the PRF in the scrubbed worker (`b20a18de`).
+The runs used different physical hosts,
+so the comparison uses rscrypto's median divided by the competitor median from the same run.
 
-Change in that ratio for ML-KEM-768 and ML-KEM-1024 decapsulation, one-shot and reused
-encoded key:
+Change in that ratio for ML-KEM-768 and ML-KEM-1024 decapsulation, one-shot and reused encoded key:
 
-| Host | Versus libcrux | Versus AWS-LC |
-| --- | --- | --- |
+| Host         | Versus libcrux | Versus AWS-LC |
+| ------------ | -------------- | ------------- |
 | x86-64 Intel | −1.3% to +0.3% | +2.5% to +3.1% |
-| x86-64 AMD | −2.4% to +0.5% | −2.1% to +1.6% |
-| Graviton5 | +1.4% to +2.6% | +1.5% to +2.4% |
+| x86-64 AMD   | −2.4% to +0.5% | −2.1% to +1.6% |
+| Graviton5    | +1.4% to +2.6% | +1.5% to +2.4% |
 
-The scrub costs about 2% of decapsulation where the signal is clear. Median confidence
-half-widths were ≤0.5% except the earlier AMD run (≤3.3%); the AMD ML-KEM-1024 rows are now
-≤0.07%. The earlier run measured decapsulation only, so key generation and encapsulation have no
-pre-scrub comparison on these hosts.
+The scrub costs about 2% of decapsulation where the signal is clear.
+Median confidence half-widths were ≤0.5% except the earlier AMD run (≤3.3%);
+the AMD ML-KEM-1024 rows are now ≤0.07%.
+The earlier run measured decapsulation only,
+so key generation and encapsulation have no pre-scrub comparison on these hosts.
 
 Standing after the scrub, ML-KEM-768 (Intel, AMD, Graviton5):
 
-- Key generation from a seed: rscrypto 10.71, 8.27, and 8.82 µs; libcrux 16.03, 11.72, and
-  17.23 µs. AWS-LC's row, which also times its internal entropy, is 12.48, 12.99, and 11.98 µs.
+- Key generation from a seed: rscrypto 10.71, 8.27, and 8.82 µs; libcrux 16.03, 11.72, and 17.23 µs.
+  AWS-LC's row, which also times its internal entropy, is 12.48, 12.99, and 11.98 µs.
 - One-shot decapsulation (`import-encoded`, identical work in every library): rscrypto 1.79x,
   1.33x, and 1.78x AWS-LC; 1.39x, 1.44x, and 0.97x libcrux.
-- One-shot encapsulation (`import-encoded`): rscrypto 1.13x, 1.15x, and 0.77x libcrux. AWS-LC's
-  internal-entropy row is faster on every host (rscrypto 1.62x, 1.17x, and 1.43x).
+- One-shot encapsulation (`import-encoded`): rscrypto 1.13x, 1.15x, and 0.77x libcrux.
+  AWS-LC's internal-entropy row is faster on every host (rscrypto 1.62x, 1.17x, and 1.43x).
 
 ## 2026-10-01 P-384 ECDH agreement
 
@@ -218,169 +220,193 @@ so it supports no key-derivation claim.
 
 ## 2026-09 allocator-adoption runs
 
-GitHub Bench runs keep their Criterion artifacts. Hosts: x86-64 Intel, x86-64 AMD, and AArch64 Linux.
+GitHub Bench runs keep their Criterion artifacts.
+Hosts: x86-64 Intel, x86-64 AMD, and AArch64 Linux.
 
-- ML-KEM, `ebe24ea9` (run
-  [#36483389850](https://github.com/loadingalias/rscrypto/actions/runs/36483389850)) versus
-  `b672f572` (run [#36495823483](https://github.com/loadingalias/rscrypto/actions/runs/36495823483)):
-  key preparation was 0.4–3.0% faster on all nine host and parameter-set pairs; every other row
-  stayed within ±1.6% in both directions.
-- Caller-provided work memory, `2c901505` (run
-  [#36497076205](https://github.com/loadingalias/rscrypto/actions/runs/36497076205)), fresh versus
-  reused memory within one run:
+- ML-KEM, `ebe24ea9` (run [#36483389850](https://github.com/loadingalias/rscrypto/actions/runs/36483389850)) versus `b672f572`
+  (run [#36495823483](https://github.com/loadingalias/rscrypto/actions/runs/36495823483)):
+  key preparation was 0.4–3.0% faster on all nine host and parameter-set pairs;
+  every other row stayed within ±1.6% in both directions.
+- Caller-provided work memory, `2c901505`
+  (run [#36497076205](https://github.com/loadingalias/rscrypto/actions/runs/36497076205)), fresh versus reused memory within one run:
 
-  | Host | Argon2id 19 MiB | RustCrypto, reused | scrypt 128 MiB |
-  | --- | --- | --- | --- |
-  | x86-64 Intel | 9.75 → 8.85 ms (−9.2%) | 13.82 ms | 245.7 → 198.8 ms (−19.1%) |
-  | x86-64 AMD | 6.02 → 5.90 ms (−1.9%, intervals overlap) | 10.54 ms | 327.4 → 295.1 ms (−9.8%) |
-  | AArch64 Linux | 11.65 → 11.55 ms (−0.8%) | 11.40 ms | 161.1 → 130.7 ms (−18.9%) |
+  | Host          | Argon2id 19 MiB                           | RustCrypto, reused | scrypt 128 MiB |
+  | ------------- | ----------------------------------------- | ------------------ | -------------- |
+  | x86-64 Intel  | 9.75 → 8.85 ms (−9.2%)                    | 13.82 ms           | 245.7 → 198.8 ms (−19.1%) |
+  | x86-64 AMD    | 6.02 → 5.90 ms (−1.9%, intervals overlap) | 10.54 ms           | 327.4 → 295.1 ms (−9.8%) |
+  | AArch64 Linux | 11.65 → 11.55 ms (−0.8%)                  | 11.40 ms           | 161.1 → 130.7 ms (−18.9%) |
 
-  RustCrypto's reused row does not clear its buffer; rscrypto clears it on every call. Apple
-  Silicon showed no reuse gain. The cost is keeping the buffer resident between calls.
+  RustCrypto's reused row does not clear its buffer; rscrypto clears it on every call.
+  Apple Silicon showed no reuse gain.
+  The cost is keeping the buffer resident between calls.
 
-No compiler-driven performance claim exists for Rust 1.100: the comparison of the
-pre-change implementation on Rust 1.98.1, the same implementation on the release
-compiler, and the release candidate on that compiler has not run.
+No compiler-driven performance claim exists for Rust 1.100:
+the comparison of the pre-change implementation on Rust 1.98.1,
+the same implementation on the release compiler,
+and the release candidate on that compiler has not run.
 
 ## P-256 ECDH development snapshot
 
-The Apple M1 run measured complete API operations with Criterion. Rscrypto
-medians were 3.5779 ns for caller-filled ephemeral generation, 7.8186 us for
-public derivation, 111.74 ns for canonical SEC1 parsing, 34.297 us for
-agreement, and 85.106 us for a two-party TLS-shaped roundtrip. The fastest
-equivalent competitors were RustCrypto at 4.9748 ns for generation, `ring` at
-10.579 us for public derivation, CRRL at 121.05 ns for parsing, and AWS-LC at
-34.990 us for agreement. Under the repository's +/-5% classification these are
-three wins and one agreement tie. AWS-LC's 1.2915 us cached-public row excludes
-key import/precomputation and is retained only as a non-equivalent diagnostic;
-its equivalent import-plus-public row measured 15.769 us.
+The Apple M1 run measured complete API operations with Criterion.
+Rscrypto medians were 3.5779 ns for caller-filled ephemeral generation,
+7.8186 us for public derivation, 111.74 ns for canonical SEC1 parsing, 34.297 us for agreement,
+and 85.106 us for a two-party TLS-shaped roundtrip.
+The fastest equivalent competitors were RustCrypto at 4.9748 ns for generation,
+`ring` at 10.579 us for public derivation, CRRL at 121.05 ns for parsing,
+and AWS-LC at 34.990 us for agreement.
+Under the repository's +/-5% classification these are three wins and one agreement tie.
+AWS-LC's 1.2915 us cached-public row excludes key import/precomputation and is retained only
+as a non-equivalent diagnostic; its equivalent import-plus-public row measured 15.769 us.
 
 The physical Graviton4 run measured 7.0706 ns for caller-filled generation,
-10.187 us for public derivation, 149.09 ns for canonical parsing, 48.241 us for
-agreement, and 117.23 us for the TLS-shaped roundtrip. Public derivation beat
-`ring` at 12.373 us and the equivalent AWS-LC import-plus-public row at
-18.187 us. Agreement tied the fastest native competitors while narrowly
-leading AWS-LC at 48.715 us and `ring` at 49.509 us. Parsing was within the
-repository's 5% tie band of CRRL at 141.76 ns and ahead of RustCrypto at
-206.73 ns. AWS-LC's 1.4721 us cached-public row remains a non-equivalent
-diagnostic because it excludes import and precomputation.
+10.187 us for public derivation, 149.09 ns for canonical parsing, 48.241 us for agreement,
+and 117.23 us for the TLS-shaped roundtrip.
+Public derivation beat `ring` at 12.373 us and the equivalent AWS-LC import-plus-public row at 18.187 us.
+Agreement tied the fastest native competitors while narrowly leading AWS-LC at 48.715 us
+and `ring` at 49.509 us.
+Parsing was within the repository's 5% tie band of CRRL at 141.76 ns
+and ahead of RustCrypto at 206.73 ns.
+AWS-LC's 1.4721 us cached-public row remains a non-equivalent diagnostic because it excludes import
+and precomputation.
 
 The physical Graviton3 run measured 8.7453 ns for caller-filled generation,
-11.939 us for public derivation, 182.76 ns for canonical parsing, 56.296 us for
-agreement, and 136.89 us for the TLS-shaped roundtrip. Public derivation beat
-`ring` at 14.100 us and the equivalent AWS-LC import-plus-public row at
-21.537 us. Agreement tied AWS-LC at 56.262 us and was faster than `ring` at
-58.263 us. Generation tied RustCrypto at 9.0616 ns. Parsing is a measured loss:
-CRRL completed the same operation in 166.98 ns, about 8.6% less time. Under the
-repository's 5% classification, the G3 result is one win, two ties, and one
-loss. AWS-LC's 1.7023 us cached-public row remains a non-equivalent diagnostic.
-This is an intermediate-candidate result: later shared parser and dispatch
-changes have not been rerun on Graviton3, so the retained parsing loss is not a
-measurement of the exact final source.
+11.939 us for public derivation, 182.76 ns for canonical parsing, 56.296 us for agreement,
+and 136.89 us for the TLS-shaped roundtrip.
+Public derivation beat `ring` at 14.100 us and the equivalent AWS-LC import-plus-public row at 21.537 us.
+Agreement tied AWS-LC at 56.262 us and was faster than `ring` at 58.263 us.
+Generation tied RustCrypto at 9.0616 ns.
+Parsing is a measured loss: CRRL completed the same operation in 166.98 ns, about 8.6% less time.
+Under the repository's 5% classification, the G3 result is one win, two ties, and one loss.
+AWS-LC's 1.7023 us cached-public row remains a non-equivalent diagnostic.
+This is an intermediate-candidate result:
+later shared parser and dispatch changes have not been rerun on Graviton3,
+so the retained parsing loss is not a measurement of the exact final source.
 
-The retained physical Linux Intel Granite Rapids run measured 3.9060 ns for
-caller-filled generation, 8.5669 us for public derivation, 83.420 ns for
-canonical parsing, 36.130 us for agreement, and 90.004 us for the TLS-shaped
-roundtrip. Generation beat RustCrypto at 10.297 ns, and public derivation beat
-`ring` at 10.712 us and the equivalent AWS-LC import-plus-public row at
-16.109 us. Agreement tied AWS-LC at 37.255 us while beating `ring` at
-45.600 us. Parsing narrowly led CRRL at 83.878 ns; the repository's 5%
-classification treats that difference as a tie. The result is two wins and two
-ties. AWS-LC's 1.4492 us cached-public row remains a non-equivalent diagnostic.
+The retained physical Linux Intel Granite Rapids run measured 3.9060 ns
+for caller-filled generation, 8.5669 us for public derivation, 83.420 ns for canonical parsing,
+36.130 us for agreement, and 90.004 us for the TLS-shaped roundtrip.
+Generation beat RustCrypto at 10.297 ns,
+and public derivation beat `ring` at 10.712 us
+and the equivalent AWS-LC import-plus-public row at 16.109 us.
+Agreement tied AWS-LC at 37.255 us while beating `ring` at 45.600 us.
+Parsing narrowly led CRRL at 83.878 ns;
+the repository's 5% classification treats that difference as a tie.
+The result is two wins and two ties.
+AWS-LC's 1.4492 us cached-public row remains a non-equivalent diagnostic.
 
 The physical Windows x86-64 Intel Granite Rapids full run measured 4.2754 ns
-for caller-filled generation, 8.6592 us for public derivation, 36.188 us for
-agreement, and 90.309 us for the TLS-shaped roundtrip. Generation beat
-RustCrypto at 18.837 ns; public derivation beat `ring` at 9.9571 us and the
-equivalent AWS-LC import-plus-public row at 18.001 us; agreement beat AWS-LC at
-43.019 us and `ring` at 42.176 us. After batching the five native public-field
-operations behind one Microsoft x64 ABI boundary, the exact final parser-only
-run measured 82.507 ns against CRRL at 83.339 ns, with non-overlapping
-Criterion intervals. That is faster in the same run and a tie under the
-repository's conservative 5% classification. The exact-final-source
-whole-operation hardware benchmark remains awaiting a future physical run. The
-Windows qualification row is wired to retain exact-source P-256 timing and
-cleanup evidence, but its first successful artifact is still pending.
+for caller-filled generation, 8.6592 us for public derivation, 36.188 us for agreement,
+and 90.309 us for the TLS-shaped roundtrip.
+Generation beat RustCrypto at 18.837 ns;
+public derivation beat `ring` at 9.9571 us and the equivalent AWS-LC import-plus-public row at 18.001 us;
+agreement beat AWS-LC at 43.019 us and `ring` at 42.176 us.
+After batching the five native public-field operations behind one Microsoft x64 ABI boundary,
+the exact final parser-only run measured 82.507 ns against CRRL at 83.339 ns,
+with non-overlapping Criterion intervals.
+That is faster in the same run and a tie under the repository's conservative 5% classification.
+The exact-final-source whole-operation hardware benchmark remains awaiting a future physical run.
+The Windows qualification row is wired to retain exact-source P-256 timing and cleanup evidence,
+but its first successful artifact is still pending.
 
 This snapshot evaluates the independently proven safe Rust authority everywhere
-and embedded s2n-bignum assembly for Apple/Linux AArch64 and Linux/Windows
-x86-64 public derivation and agreement. The candidate Linux and Apple assembly
-passed portable differential, NIST, Wycheproof, native timing, cleanup, and
-deterministic provenance gates on M1 and physical G3/G4/Intel as scoped above.
-Those development bundles predate later shared-source edits and are not
-exact-final release evidence;
-the final Windows backend has native differential, independent-oracle, and
-performance evidence, with exact-final-source qualification timing and cleanup
-still open until the wired job succeeds. The
-retained G4 DudeCT maxima were 1.8903 for public derivation and 1.55471 for
-agreement; the G3 maxima were 1.12000 and 2.59291 respectively, all against
-threshold 10. Target
-qualification remains owned by [`docs/platforms.md`](../docs/platforms.md),
-[`docs/constant-time.md`](../docs/constant-time.md), and `ct.toml`. These results
-must be rerun from the exact candidate commit before publication.
+and embedded s2n-bignum assembly for Apple/Linux AArch64 and Linux/Windows x86-64 public derivation
+and agreement.
+The candidate Linux and Apple assembly passed portable differential, NIST, Wycheproof,
+native timing, cleanup, and deterministic provenance gates on M1 and physical G3/G4/Intel
+as scoped above.
+Those development bundles predate later shared-source edits
+and are not exact-final release evidence; the final Windows backend has native differential,
+independent-oracle, and performance evidence,
+with exact-final-source qualification timing and cleanup still open until the wired job succeeds.
+The retained G4 DudeCT maxima were 1.8903 for public derivation and 1.55471 for agreement;
+the G3 maxima were 1.12000 and 2.59291 respectively, all against threshold 10.
+Target qualification remains owned by [`docs/platforms.md`](../docs/platforms.md), [`docs/constant-time.md`](../docs/constant-time.md),
+and `ct.toml`.
+These results must be rerun from the exact candidate commit before publication.
 
-Host coverage change: this run has eight Linux hosts. The RISE RISC-V
-host did not contribute results in run #32185659553, so every aggregate below is over
-eight platforms rather than the nine in the 2026-07-04 snapshot. Row counts are
-therefore not directly comparable to that snapshot; ratios and geomeans are.
+Host coverage change: this run has eight Linux hosts.
+The RISE RISC-V host did not contribute results in run #32185659553,
+so every aggregate below is over eight platforms rather than the nine in the 2026-07-04 snapshot.
+Row counts are therefore not directly comparable to that snapshot; ratios and geomeans are.
 
-Equivalence correction resolved: the historical RustCrypto HMAC-SHA-256 rows
-included key setup inside the timed loop. The current benchmark source hoists
-`RustCryptoHmacSha256::new_from_slice` out of the timed loop and clones the
-keyed state per iteration, matching the reusable-keyed-state treatment given to
-rscrypto, ring, and AWS-LC. This artifact is a complete regenerated benchmark
-pass, so the HMAC-SHA-256 rows and the aggregates that include them are
-equivalent-work performance claims.
+Equivalence correction resolved:
+the historical RustCrypto HMAC-SHA-256 rows included key setup inside the timed loop.
+The current benchmark source hoists `RustCryptoHmacSha256::new_from_slice` out of the timed loop and clones the keyed state per iteration,
+matching the reusable-keyed-state treatment given to rscrypto, ring, and AWS-LC.
+This artifact is a complete regenerated benchmark pass,
+so the HMAC-SHA-256 rows and the aggregates
+that include them are equivalent-work performance claims.
 
 Surface change since 2026-07-04: the rapidhash benchmark surface was collapsed.
-The former `rapidhash-64`, `rapidhash-128`, and `rapidhash-v3-128` primitives no
-longer exist; `rapidhash-v3-64`, `rapidhash-stream`, `rapidhash-buildhasher`,
-`rapidhash-hash-one`, and `rapidhash-hashmap` are the current rows.
+The former `rapidhash-64`, `rapidhash-128`, and `rapidhash-v3-128` primitives no longer exist; `rapidhash-v3-64`, `rapidhash-stream`, `rapidhash-buildhasher`, `rapidhash-hash-one`, and `rapidhash-hashmap` are the current rows.
 
-Coverage note: this is a full Linux public benchmark pass. It includes checksum, hash, XOF, MAC, KDF, password-hashing, BLAKE2/BLAKE3, RSA import/verification, ECDSA P-256/P-384 signing and verification, Ed25519, X25519, AEAD, and ML-KEM-512/768/1024 keygen, encapsulation, and decapsulation rows. ML-KEM phase/arithmetic microbenches are present in the raw artifacts and intentionally excluded from release-level competitor claims.
+Coverage note: this is a full Linux public benchmark pass.
+It includes checksum, hash, XOF, MAC, KDF, password-hashing, BLAKE2/BLAKE3, RSA import/verification,
+ECDSA P-256/P-384 signing and verification, Ed25519, X25519, AEAD, and ML-KEM-512/768/1024 keygen,
+encapsulation, and decapsulation rows.
+ML-KEM phase/arithmetic microbenches are present in the raw artifacts
+and intentionally excluded from release-level competitor claims.
 
 ## 2026-07-28 Ed25519 Direct-Secret Diagnostic
 
-This local diagnostic compares the exact 1 KiB
-`ed25519/sign/rscrypto-direct-secret/1024` Criterion case before and after the
-maintenance remediation that removed duplicate secret expansion. The baseline
-source is repository commit `c7338116bf8155566f9a028db1b28b5f0665e370`
-with only the identical benchmark row added. The current source is that commit
-plus the maintenance working-tree diff.
+This local diagnostic compares the exact 1 KiB `ed25519/sign/rscrypto-direct-secret/1024` Criterion case before and
+after the maintenance remediation that removed duplicate secret expansion.
+The baseline source is repository commit `c7338116bf8155566f9a028db1b28b5f0665e370` with only the identical benchmark row added.
+The current source is that commit plus the maintenance working-tree diff.
 
-Both runs used the pinned `rustc 1.97.0-nightly (ca9a134e0 2026-04-26)`
-toolchain on the same Apple Silicon macOS host. Criterion used 50 samples, a
-1-second warm-up, and a 3-second measurement window.
+Both runs used the pinned `rustc 1.97.0-nightly (ca9a134e0 2026-04-26)` toolchain on the same Apple Silicon macOS host.
+Criterion used 50 samples, a 1-second warm-up, and a 3-second measurement window.
 
-| Source   |    Median | 95% confidence interval |      Mean |
-| -------- | --------: | ----------------------: | --------: |
+| Source   |    Median | 95% confidence interval | Mean |
+| -------- | --------: | ----------------------: | ---: |
 | Baseline | 21.892 µs |        21.874–21.919 µs | 21.885 µs |
 | Current  | 21.754 µs |        21.704–21.799 µs | 21.757 µs |
 
-The observed current/baseline median ratio is 0.9937. This check found no
-regression. It was not an interleaved release benchmark, so it does not support
-a speedup claim.
+The observed current/baseline median ratio is 0.9937.
+This check found no regression.
+It was not an interleaved release benchmark, so it does not support a speedup claim.
 
-The repository policy retains only this curated overview. The local Criterion
-metadata, estimates, and raw 50-sample files were distinct and hashed before
-curation:
+The repository policy retains only this curated overview.
+The local Criterion metadata, estimates,
+and raw 50-sample files were distinct and hashed before curation:
 
-| Artifact         | Baseline SHA-256                                                   | Current SHA-256                                                    |
+| Artifact | Baseline SHA-256 | Current SHA-256 |
 | ---------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------ |
 | `benchmark.json` | `6d27e19fd2a9563ecea5328345420c12b79f9924d3ecde179bc0166f5a62e6dd` | `6d27e19fd2a9563ecea5328345420c12b79f9924d3ecde179bc0166f5a62e6dd` |
 | `estimates.json` | `728945652c3ec804ec064e9888fc431a5fa3528e885edf76e350392ae95ea2fc` | `3b987405f949847972740cb549826d46f2529caa1187bc13786f7d662ca63e03` |
-| `sample.json`    | `f36052bcf65362d6203a6be768e251822dc3182ce8fab75dd9bba20097db30f9` | `a92a7e9fcc1af048c2bb5dcfd8782d07b8727e46477a27bc7948cd02c7a8a6bc` |
+| `sample.json` | `f36052bcf65362d6203a6be768e251822dc3182ce8fab75dd9bba20097db30f9` | `a92a7e9fcc1af048c2bb5dcfd8782d07b8727e46477a27bc7948cd02c7a8a6bc` |
 
-## Headline
+## 2026-08-18 Linux snapshot (historical)
 
-| Scope                                   | Pairs | W/T/L           | Win % | Geomean | Median |
-| --------------------------------------- | ----- | --------------- | ----- | ------- | ------ |
+Scope: the 2026-08-18 eight-host Linux benchmark matrix for commit `7eb44e9`.
+Ratios are `external_crate_time / rscrypto_time`; higher is better.
+Wins are `>1.05x`, ties are `0.95x..1.05x`, and losses are `<0.95x`.
+Fastest-external comparisons keep only the fastest external implementation for each platform,
+primitive, operation, and input shape.
+Internal kernel, scratch-buffer, padding-only, cold-path, PHC roundtrip, parallel-scaling,
+threshold-selection, public-overhead,
+and phase-attribution microbenches are parsed as raw rows
+but excluded from external win/loss claims.
+The macOS local run is listed separately and is not mixed into Linux claims.
+
+This is a historical snapshot of commit `7eb44e9`, not an inventory of the current public API.
+Primitive rows remain as measured even when a later commit changes or removes that surface.
+
+The aggregates in the sections below include the withdrawn ML-KEM and Argon2 rows.
+They are historical records, not current claims.
+
+## Headline (2026-08-18, historical)
+
+| Scope                                | Pairs | W/T/L           | Win % | Geomean | Median |
+| ------------------------------------ | ----- | --------------- | ----- | ------- | ------ |
 | Linux: all matched performance pairs | 9,674 | 6,831/2,085/758 | 71%   | 1.78x   | 1.24x  |
 | Linux: fastest external per case     | 6,144 | 3,780/1,695/669 | 62%   | 1.62x   | 1.12x  |
 
 Snapshot summary:
 
-- **Headline:** 3,780 of 6,144 matched Linux fastest-external comparisons are wins; 5,475 are wins or ties. Linux fastest-external geomean is 1.62x.
+- **Headline:** 3,780 of 6,144 matched Linux fastest-external comparisons are wins;
+  5,475 are wins or ties.
+  Linux fastest-external geomean is 1.62x.
 - **Checksums:** 6.18x geomean across 616 fastest-external rows; W/T/L is 476/118/22.
 - **Hashes/MACs/XOFs:** 1.35x geomean across 3,456 fastest-external rows; W/T/L is 1,926/1,181/349.
 - **Auth/KDF:** 1.28x geomean across 160 fastest-external rows; W/T/L is 140/20/0.
@@ -390,20 +416,23 @@ Snapshot summary:
 - **AEAD:** 1.61x geomean across 1,408 fastest-external rows; W/T/L is 910/288/210.
 - **ML-KEM:** 1.55x geomean across 72 fastest-external rows; W/T/L is 64/0/8.
 - **ECDSA P-256/P-384:** Linux 0.87x geomean across 128 fastest-external rows; W/T/L is 88/7/33.
-- **Top current loss areas:** `ecdsa-p384` / `sign`: 0.70x geomean across 32 rows; W/T/L is 12/0/20; pressure `aws-lc-rs` 16, `rustcrypto-p384` 4; `ecdsa-p256` / `verify`: 0.84x geomean across 32 rows; W/T/L is 20/7/5; pressure `rustcrypto-p256` 4, `aws-lc-rs` 1; `rapidhash-stream` / `one-write`: 0.87x geomean across 88 rows; W/T/L is 27/25/36; pressure `rapidhash` 36; `ecdsa-p256` / `sign`: 0.91x geomean across 32 rows; W/T/L is 28/0/4; pressure `ring` 4; `argon2id-owasp` / `hash`: 0.98x geomean across 8 rows; W/T/L is 3/1/4; pressure `rustcrypto` 3, `dryoc` 1.
+- **Top current loss areas:** `ecdsa-p384` / `sign`: 0.70x geomean across 32 rows; W/T/L is 12/0/20; pressure `aws-lc-rs` 16, `rustcrypto-p384` 4;
+  `ecdsa-p256` / `verify`: 0.84x geomean across 32 rows; W/T/L is 20/7/5; pressure `rustcrypto-p256` 4, `aws-lc-rs` 1; `rapidhash-stream` / `one-write`:
+  0.87x geomean across 88 rows; W/T/L is 27/25/36; pressure `rapidhash` 36; `ecdsa-p256` / `sign`: 0.91x geomean across 32 rows;
+  W/T/L is 28/0/4; pressure `ring` 4; `argon2id-owasp` / `hash`: 0.98x geomean across 8 rows; W/T/L is 3/1/4; pressure `rustcrypto` 3, `dryoc` 1.
 
 ## Coverage Matrix
 
-| Platform              | Raw Criterion rows | All pairs | Fastest rows | W/T/L       | Win % | Geomean | Median |
+| Platform | Raw Criterion rows | All pairs | Fastest rows | W/T/L | Win % | Geomean | Median |
 | --------------------- | ------------------ | --------- | ------------ | ----------- | ----- | ------- | ------ |
-| AMD Zen4              | 2,304              | 1,269     | 768          | 525/171/72  | 68%   | 1.47x   | 1.14x  |
-| AMD Zen5              | 2,304              | 1,269     | 768          | 447/245/76  | 58%   | 1.47x   | 1.10x  |
-| AWS Graviton3         | 2,308              | 1,269     | 768          | 367/287/114 | 48%   | 1.36x   | 1.04x  |
-| AWS Graviton4         | 2,308              | 1,269     | 768          | 366/337/65  | 48%   | 1.37x   | 1.04x  |
-| IBM Power10           | 2,055              | 1,030     | 768          | 400/302/66  | 52%   | 1.83x   | 1.06x  |
-| IBM z16/s390x         | 2,055              | 1,030     | 768          | 620/67/81   | 81%   | 2.77x   | 2.19x  |
-| Intel Ice Lake        | 2,304              | 1,269     | 768          | 517/137/114 | 67%   | 1.45x   | 1.17x  |
-| Intel Sapphire Rapids | 2,304              | 1,269     | 768          | 538/149/81  | 70%   | 1.60x   | 1.18x  |
+| AMD Zen4 | 2,304 | 1,269 | 768 | 525/171/72 | 68% | 1.47x | 1.14x |
+| AMD Zen5 | 2,304 | 1,269 | 768 | 447/245/76 | 58% | 1.47x | 1.10x |
+| AWS Graviton3 | 2,308 | 1,269 | 768 | 367/287/114 | 48% | 1.36x | 1.04x |
+| AWS Graviton4 | 2,308 | 1,269 | 768 | 366/337/65 | 48% | 1.37x | 1.04x |
+| IBM Power10 | 2,055 | 1,030 | 768 | 400/302/66 | 52% | 1.83x | 1.06x |
+| IBM z16/s390x | 2,055 | 1,030 | 768 | 620/67/81 | 81% | 2.77x | 2.19x |
+| Intel Ice Lake | 2,304 | 1,269 | 768 | 517/137/114 | 67% | 1.45x | 1.17x |
+| Intel Sapphire Rapids | 2,304 | 1,269 | 768 | 538/149/81 | 70% | 1.60x | 1.18x |
 
 ## Category Summary
 
@@ -419,9 +448,9 @@ Snapshot summary:
 
 ## BLAKE3 Summary
 
-BLAKE3 rows come from the Linux snapshot. All-pair and fastest-external BLAKE3
-metrics are identical because official `blake3` is the only external
-implementation in this bench.
+BLAKE3 rows come from the Linux snapshot.
+All-pair and fastest-external BLAKE3 metrics are identical
+because official `blake3` is the only external implementation in this bench.
 
 | Scope                 | Rows | W/T/L      | Geomean | Median |
 | --------------------- | ---- | ---------- | ------- | ------ |
@@ -450,41 +479,45 @@ implementation in this bench.
 
 ## ML-KEM Summary
 
-ML-KEM public coverage is complete for the selected primitive set: ML-KEM-512, ML-KEM-768, and ML-KEM-1024 each include keygen, encapsulate, and decapsulate on all eight Linux platforms. POWER10 and s390x do not have `aws-lc-rs` ML-KEM rows in this artifact set, but still have rscrypto plus `libcrux`, `fips203`, and RustCrypto comparison rows for every public operation.
+ML-KEM public coverage is complete for the selected primitive set: ML-KEM-512, ML-KEM-768,
+and ML-KEM-1024 each include keygen, encapsulate, and decapsulate on all eight Linux platforms.
+POWER10 and s390x do not have `aws-lc-rs` ML-KEM rows in this artifact set, but still have rscrypto plus `libcrux`, `fips203`,
+and RustCrypto comparison rows for every public operation.
 
-| Platform              | Raw ML-KEM rows | Fastest rows | W/T/L | Geomean | Median | Fastest external split     |
+| Platform | Raw ML-KEM rows | Fastest rows | W/T/L | Geomean | Median | Fastest external split |
 | --------------------- | --------------- | ------------ | ----- | ------- | ------ | -------------------------- |
-| AMD Zen4              | 45              | 9            | 9/0/0 | 1.83x   | 1.82x  | `libcrux` 7, `aws-lc-rs` 2 |
-| AMD Zen5              | 45              | 9            | 9/0/0 | 1.95x   | 1.91x  | `libcrux` 9                |
-| AWS Graviton3         | 45              | 9            | 5/0/4 | 1.09x   | 1.12x  | `aws-lc-rs` 9              |
-| AWS Graviton4         | 45              | 9            | 5/0/4 | 1.08x   | 1.18x  | `aws-lc-rs` 9              |
-| IBM Power10           | 36              | 9            | 9/0/0 | 1.41x   | 1.53x  | `libcrux` 9                |
-| IBM z16/s390x         | 36              | 9            | 9/0/0 | 1.68x   | 1.74x  | `libcrux` 9                |
-| Intel Ice Lake        | 45              | 9            | 9/0/0 | 1.80x   | 1.75x  | `libcrux` 7, `aws-lc-rs` 2 |
-| Intel Sapphire Rapids | 45              | 9            | 9/0/0 | 1.84x   | 1.80x  | `aws-lc-rs` 7, `libcrux` 2 |
+| AMD Zen4 | 45 | 9 | 9/0/0 | 1.83x | 1.82x | `libcrux` 7, `aws-lc-rs` 2 |
+| AMD Zen5 | 45 | 9 | 9/0/0 | 1.95x | 1.91x | `libcrux` 9 |
+| AWS Graviton3 | 45 | 9 | 5/0/4 | 1.09x | 1.12x | `aws-lc-rs` 9 |
+| AWS Graviton4 | 45 | 9 | 5/0/4 | 1.08x | 1.18x | `aws-lc-rs` 9 |
+| IBM Power10 | 36 | 9 | 9/0/0 | 1.41x | 1.53x | `libcrux` 9 |
+| IBM z16/s390x | 36 | 9 | 9/0/0 | 1.68x | 1.74x | `libcrux` 9 |
+| Intel Ice Lake | 45 | 9 | 9/0/0 | 1.80x | 1.75x | `libcrux` 7, `aws-lc-rs` 2 |
+| Intel Sapphire Rapids | 45 | 9 | 9/0/0 | 1.84x | 1.80x | `aws-lc-rs` 7, `libcrux` 2 |
 
-| Primitive/op                | Rows | W/T/L | Win % | Geomean | Median | Pressure      |
-| --------------------------- | ---- | ----- | ----- | ------- | ------ | ------------- |
-| `mlkem1024` / `decapsulate` | 8    | 8/0/0 | 100%  | 1.70x   | 1.86x  | none          |
-| `mlkem1024` / `encapsulate` | 8    | 8/0/0 | 100%  | 2.51x   | 2.63x  | none          |
+| Primitive/op                | Rows | W/T/L | Win % | Geomean | Median | Pressure |
+| --------------------------- | ---- | ----- | ----- | ------- | ------ | -------- |
+| `mlkem1024` / `decapsulate` | 8    | 8/0/0 | 100%  | 1.70x   | 1.86x  | none     |
+| `mlkem1024` / `encapsulate` | 8    | 8/0/0 | 100%  | 2.51x   | 2.63x  | none     |
 | `mlkem1024` / `keygen`      | 8    | 6/0/2 | 75%   | 1.02x   | 1.13x  | `aws-lc-rs` 2 |
 | `mlkem512` / `decapsulate`  | 8    | 6/0/2 | 75%   | 1.41x   | 1.59x  | `aws-lc-rs` 2 |
-| `mlkem512` / `encapsulate`  | 8    | 8/0/0 | 100%  | 1.94x   | 2.17x  | none          |
+| `mlkem512` / `encapsulate`  | 8    | 8/0/0 | 100%  | 1.94x   | 2.17x  | none     |
 | `mlkem512` / `keygen`       | 8    | 6/0/2 | 75%   | 1.09x   | 1.22x  | `aws-lc-rs` 2 |
-| `mlkem768` / `decapsulate`  | 8    | 8/0/0 | 100%  | 1.58x   | 1.75x  | none          |
-| `mlkem768` / `encapsulate`  | 8    | 8/0/0 | 100%  | 2.33x   | 2.54x  | none          |
+| `mlkem768` / `decapsulate`  | 8    | 8/0/0 | 100%  | 1.58x   | 1.75x  | none     |
+| `mlkem768` / `encapsulate`  | 8    | 8/0/0 | 100%  | 2.33x   | 2.54x  | none     |
 | `mlkem768` / `keygen`       | 8    | 6/0/2 | 75%   | 1.06x   | 1.13x  | `aws-lc-rs` 2 |
 
 ## ECDSA Summary
 
-ECDSA signing includes both deterministic and blinded rscrypto rows in raw results; aggregate fastest-external comparisons use the fastest rscrypto row for the exact case. Constant-time release evidence is tracked separately by `ct.toml` and CT artifacts.
+ECDSA signing includes both deterministic and blinded rscrypto rows in raw results;
+aggregate fastest-external comparisons use the fastest rscrypto row for the exact case.
+Constant-time release evidence is tracked separately by `ct.toml` and CT artifacts.
 
-Regression: every ECDSA aggregate in this snapshot is dominated by a single
-platform. On IBM z16/s390x, P-256 signing went from 137.10 µs (2026-07-04) to
-8,889.30 µs, and P-384 signing from 562.91 µs to 34,557.00 µs, while the
-external crates on the same host moved by less than 1.4x. Excluding s390x, the
-seven-host geomeans are `ecdsa-p256` / `sign` 1.33x, `ecdsa-p256` / `verify`
-1.19x, `ecdsa-p384` / `sign` 1.01x, and `ecdsa-p384` / `verify` 1.53x.
+Regression: every ECDSA aggregate in this snapshot is dominated by a single platform.
+On IBM z16/s390x, P-256 signing went from 137.10 µs (2026-07-04) to 8,889.30 µs,
+and P-384 signing from 562.91 µs to 34,557.00 µs,
+while the external crates on the same host moved by less than 1.4x.
+Excluding s390x, the seven-host geomeans are `ecdsa-p256` / `sign` 1.33x, `ecdsa-p256` / `verify` 1.19x, `ecdsa-p384` / `sign` 1.01x, and `ecdsa-p384` / `verify` 1.53x.
 
 | Operation               | Rows | W/T/L   | Geomean | Median |
 | ----------------------- | ---- | ------- | ------- | ------ |
@@ -495,78 +528,80 @@ seven-host geomeans are `ecdsa-p256` / `sign` 1.33x, `ecdsa-p256` / `verify`
 
 ## Primitive Summary
 
-Linux primitives with matched exact `rscrypto` comparisons. Fastest columns are strongest-external comparisons; all-pair columns include every matched external implementation.
+Linux primitives with matched exact `rscrypto` comparisons.
+Fastest columns are strongest-external comparisons;
+all-pair columns include every matched external implementation.
 
-| Primitive               | Fastest rows | Fastest W/T/L | Fastest geomean | All pairs | All W/T/L  | All geomean |
+| Primitive | Fastest rows | Fastest W/T/L | Fastest geomean | All pairs | All W/T/L | All geomean |
 | ----------------------- | ------------ | ------------- | --------------- | --------- | ---------- | ----------- |
-| `ecdsa-p384`            | 64           | 40/0/24       | 0.87x           | 176       | 144/0/32   | 2.27x       |
-| `ecdsa-p256`            | 64           | 48/7/9        | 0.87x           | 176       | 148/11/17  | 1.57x       |
-| `rapidhash-stream`      | 176          | 61/33/82      | 0.92x           | 176       | 61/33/82   | 0.92x       |
-| `argon2id-owasp`        | 8            | 3/1/4         | 0.98x           | 16        | 7/4/5      | 1.25x       |
-| `xxh3-buildhasher`      | 88           | 41/12/35      | 0.99x           | 88        | 41/12/35   | 0.99x       |
-| `x25519`                | 16           | 3/13/0        | 1.02x           | 44        | 31/13/0    | 1.58x       |
-| `argon2i-small`         | 24           | 10/3/11       | 1.03x           | 40        | 26/3/11    | 1.34x       |
-| `argon2id-small`        | 24           | 10/3/11       | 1.03x           | 40        | 25/4/11    | 1.35x       |
-| `argon2d-small`         | 24           | 10/5/9        | 1.04x           | 24        | 10/5/9     | 1.04x       |
-| `rapidhash-v3-64`       | 88           | 21/45/22      | 1.05x           | 88        | 21/45/22   | 1.05x       |
-| `blake2b256`            | 200          | 101/99/0      | 1.07x           | 312       | 204/108/0  | 1.31x       |
-| `scrypt-owasp`          | 8            | 4/2/2         | 1.08x           | 8         | 4/2/2      | 1.08x       |
-| `blake2b512`            | 176          | 106/69/1      | 1.08x           | 264       | 194/69/1   | 1.33x       |
-| `blake2s256`            | 200          | 114/86/0      | 1.11x           | 200       | 114/86/0   | 1.11x       |
-| `chacha20-poly1305`     | 176          | 75/101/0      | 1.12x           | 484       | 304/180/0  | 1.32x       |
-| `xxh3-128`              | 88           | 34/42/12      | 1.13x           | 88        | 34/42/12   | 1.13x       |
-| `xxh3-64`               | 88           | 34/34/20      | 1.13x           | 88        | 34/34/20   | 1.13x       |
-| `blake2s128`            | 176          | 113/63/0      | 1.13x           | 176       | 113/63/0   | 1.13x       |
-| `ed25519`               | 80           | 32/39/9       | 1.14x           | 256       | 194/48/14  | 1.41x       |
-| `xxh3-hashmap`          | 8            | 7/1/0         | 1.15x           | 8         | 7/1/0      | 1.15x       |
-| `scrypt-small`          | 32           | 18/13/1       | 1.18x           | 32        | 18/13/1    | 1.18x       |
-| `rapidhash-buildhasher` | 88           | 44/29/15      | 1.19x           | 88        | 44/29/15   | 1.19x       |
-| `aegis-256`             | 176          | 81/65/30      | 1.23x           | 176       | 81/65/30   | 1.23x       |
-| `hmac-sha256`           | 104          | 42/36/26      | 1.24x           | 258       | 144/78/36  | 1.60x       |
-| `hmac-sha384`           | 88           | 28/49/11      | 1.24x           | 242       | 133/93/16  | 1.29x       |
-| `hmac-sha512`           | 88           | 32/44/12      | 1.27x           | 242       | 137/88/17  | 1.31x       |
-| `sha256`                | 104          | 44/46/14      | 1.27x           | 258       | 143/89/26  | 1.60x       |
-| `hkdf-sha384`           | 32           | 29/3/0        | 1.27x           | 88        | 85/3/0     | 1.59x       |
-| `rsa-8192`              | 16           | 14/2/0        | 1.28x           | 28        | 26/2/0     | 1.33x       |
-| `hkdf-sha256`           | 32           | 27/5/0        | 1.28x           | 88        | 83/5/0     | 1.93x       |
-| `pbkdf2-sha256`         | 48           | 43/5/0        | 1.28x           | 132       | 127/5/0    | 1.71x       |
-| `pbkdf2-sha512`         | 48           | 41/7/0        | 1.28x           | 132       | 125/7/0    | 1.34x       |
-| `sha512`                | 104          | 48/51/5       | 1.29x           | 258       | 160/88/10  | 1.31x       |
-| `sha384`                | 88           | 43/39/6       | 1.30x           | 242       | 151/80/11  | 1.32x       |
-| `ascon-hash256`         | 88           | 56/31/1       | 1.30x           | 88        | 56/31/1    | 1.30x       |
-| `sha512-256`            | 88           | 50/38/0       | 1.33x           | 88        | 50/38/0    | 1.33x       |
-| `blake3`                | 384          | 187/134/63    | 1.35x           | 384       | 187/134/63 | 1.35x       |
-| `ascon-aead128`         | 176          | 136/39/1      | 1.39x           | 176       | 136/39/1   | 1.39x       |
-| `ascon-xof128`          | 88           | 66/20/2       | 1.39x           | 88        | 66/20/2    | 1.39x       |
-| `xchacha20-poly1305`    | 176          | 173/3/0       | 1.43x           | 176       | 173/3/0    | 1.43x       |
-| `mlkem512`              | 24           | 20/0/4        | 1.44x           | 90        | 86/0/4     | 2.90x       |
-| `rapidhash-hash-one`    | 24           | 18/4/2        | 1.47x           | 24        | 18/4/2     | 1.47x       |
-| `mlkem768`              | 24           | 22/0/2        | 1.57x           | 90        | 88/0/2     | 3.38x       |
-| `rapidhash-hashmap`     | 24           | 24/0/0        | 1.61x           | 24        | 24/0/0     | 1.61x       |
-| `mlkem1024`             | 24           | 22/0/2        | 1.63x           | 90        | 88/0/2     | 3.60x       |
-| `rsa-4096`              | 24           | 24/0/0        | 1.70x           | 52        | 52/0/0     | 2.69x       |
-| `crc32c`                | 88           | 42/38/8       | 1.73x           | 176       | 130/38/8   | 2.41x       |
-| `rsa-3072`              | 24           | 24/0/0        | 1.75x           | 52        | 52/0/0     | 2.73x       |
-| `rsa-2048`              | 24           | 24/0/0        | 1.79x           | 52        | 52/0/0     | 2.77x       |
-| `aes-128-gcm`           | 176          | 96/42/38      | 1.80x           | 484       | 390/50/44  | 2.01x       |
-| `crc32`                 | 88           | 47/33/8       | 1.80x           | 176       | 133/35/8   | 2.51x       |
-| `aes-256-gcm`           | 176          | 94/36/46      | 1.83x           | 484       | 382/44/58  | 2.02x       |
-| `kmac256`               | 88           | 58/19/11      | 1.86x           | 88        | 58/19/11   | 1.86x       |
-| `cshake256`             | 88           | 58/21/9       | 1.90x           | 88        | 58/21/9    | 1.90x       |
-| `shake128`              | 88           | 58/30/0       | 1.94x           | 88        | 58/30/0    | 1.94x       |
-| `shake256`              | 88           | 63/25/0       | 1.98x           | 88        | 63/25/0    | 1.98x       |
-| `sha224`                | 88           | 51/37/0       | 2.01x           | 88        | 51/37/0    | 2.01x       |
-| `aes-128-gcm-siv`       | 176          | 127/1/48      | 2.20x           | 308       | 237/16/55  | 2.92x       |
-| `sha3-224`              | 88           | 77/11/0       | 2.27x           | 88        | 77/11/0    | 2.27x       |
-| `sha3-256`              | 104          | 91/13/0       | 2.28x           | 104       | 91/13/0    | 2.28x       |
-| `aes-256-gcm-siv`       | 176          | 128/1/47      | 2.34x           | 308       | 259/2/47   | 3.16x       |
-| `crc64-nvme`            | 88           | 52/35/1       | 2.34x           | 88        | 52/35/1    | 2.34x       |
-| `sha3-384`              | 88           | 79/9/0        | 2.35x           | 88        | 79/9/0     | 2.35x       |
-| `sha3-512`              | 88           | 77/11/0       | 2.38x           | 88        | 77/11/0    | 2.38x       |
-| `crc64-xz`              | 88           | 73/12/3       | 2.78x           | 88        | 73/12/3    | 2.78x       |
-| `crc24-openpgp`         | 88           | 86/0/2        | 17.62x          | 88        | 86/0/2     | 17.62x      |
-| `crc16-ccitt`           | 88           | 88/0/0        | 30.24x          | 88        | 88/0/0     | 30.24x      |
-| `crc16-ibm`             | 88           | 88/0/0        | 32.07x          | 88        | 88/0/0     | 32.07x      |
+| `ecdsa-p384` | 64 | 40/0/24 | 0.87x | 176 | 144/0/32 | 2.27x |
+| `ecdsa-p256` | 64 | 48/7/9 | 0.87x | 176 | 148/11/17 | 1.57x |
+| `rapidhash-stream` | 176 | 61/33/82 | 0.92x | 176 | 61/33/82 | 0.92x |
+| `argon2id-owasp` | 8 | 3/1/4 | 0.98x | 16 | 7/4/5 | 1.25x |
+| `xxh3-buildhasher` | 88 | 41/12/35 | 0.99x | 88 | 41/12/35 | 0.99x |
+| `x25519` | 16 | 3/13/0 | 1.02x | 44 | 31/13/0 | 1.58x |
+| `argon2i-small` | 24 | 10/3/11 | 1.03x | 40 | 26/3/11 | 1.34x |
+| `argon2id-small` | 24 | 10/3/11 | 1.03x | 40 | 25/4/11 | 1.35x |
+| `argon2d-small` | 24 | 10/5/9 | 1.04x | 24 | 10/5/9 | 1.04x |
+| `rapidhash-v3-64` | 88 | 21/45/22 | 1.05x | 88 | 21/45/22 | 1.05x |
+| `blake2b256` | 200 | 101/99/0 | 1.07x | 312 | 204/108/0 | 1.31x |
+| `scrypt-owasp` | 8 | 4/2/2 | 1.08x | 8 | 4/2/2 | 1.08x |
+| `blake2b512` | 176 | 106/69/1 | 1.08x | 264 | 194/69/1 | 1.33x |
+| `blake2s256` | 200 | 114/86/0 | 1.11x | 200 | 114/86/0 | 1.11x |
+| `chacha20-poly1305` | 176 | 75/101/0 | 1.12x | 484 | 304/180/0 | 1.32x |
+| `xxh3-128` | 88 | 34/42/12 | 1.13x | 88 | 34/42/12 | 1.13x |
+| `xxh3-64` | 88 | 34/34/20 | 1.13x | 88 | 34/34/20 | 1.13x |
+| `blake2s128` | 176 | 113/63/0 | 1.13x | 176 | 113/63/0 | 1.13x |
+| `ed25519` | 80 | 32/39/9 | 1.14x | 256 | 194/48/14 | 1.41x |
+| `xxh3-hashmap` | 8 | 7/1/0 | 1.15x | 8 | 7/1/0 | 1.15x |
+| `scrypt-small` | 32 | 18/13/1 | 1.18x | 32 | 18/13/1 | 1.18x |
+| `rapidhash-buildhasher` | 88 | 44/29/15 | 1.19x | 88 | 44/29/15 | 1.19x |
+| `aegis-256` | 176 | 81/65/30 | 1.23x | 176 | 81/65/30 | 1.23x |
+| `hmac-sha256` | 104 | 42/36/26 | 1.24x | 258 | 144/78/36 | 1.60x |
+| `hmac-sha384` | 88 | 28/49/11 | 1.24x | 242 | 133/93/16 | 1.29x |
+| `hmac-sha512` | 88 | 32/44/12 | 1.27x | 242 | 137/88/17 | 1.31x |
+| `sha256` | 104 | 44/46/14 | 1.27x | 258 | 143/89/26 | 1.60x |
+| `hkdf-sha384` | 32 | 29/3/0 | 1.27x | 88 | 85/3/0 | 1.59x |
+| `rsa-8192` | 16 | 14/2/0 | 1.28x | 28 | 26/2/0 | 1.33x |
+| `hkdf-sha256` | 32 | 27/5/0 | 1.28x | 88 | 83/5/0 | 1.93x |
+| `pbkdf2-sha256` | 48 | 43/5/0 | 1.28x | 132 | 127/5/0 | 1.71x |
+| `pbkdf2-sha512` | 48 | 41/7/0 | 1.28x | 132 | 125/7/0 | 1.34x |
+| `sha512` | 104 | 48/51/5 | 1.29x | 258 | 160/88/10 | 1.31x |
+| `sha384` | 88 | 43/39/6 | 1.30x | 242 | 151/80/11 | 1.32x |
+| `ascon-hash256` | 88 | 56/31/1 | 1.30x | 88 | 56/31/1 | 1.30x |
+| `sha512-256` | 88 | 50/38/0 | 1.33x | 88 | 50/38/0 | 1.33x |
+| `blake3` | 384 | 187/134/63 | 1.35x | 384 | 187/134/63 | 1.35x |
+| `ascon-aead128` | 176 | 136/39/1 | 1.39x | 176 | 136/39/1 | 1.39x |
+| `ascon-xof128` | 88 | 66/20/2 | 1.39x | 88 | 66/20/2 | 1.39x |
+| `xchacha20-poly1305` | 176 | 173/3/0 | 1.43x | 176 | 173/3/0 | 1.43x |
+| `mlkem512` | 24 | 20/0/4 | 1.44x | 90 | 86/0/4 | 2.90x |
+| `rapidhash-hash-one` | 24 | 18/4/2 | 1.47x | 24 | 18/4/2 | 1.47x |
+| `mlkem768` | 24 | 22/0/2 | 1.57x | 90 | 88/0/2 | 3.38x |
+| `rapidhash-hashmap` | 24 | 24/0/0 | 1.61x | 24 | 24/0/0 | 1.61x |
+| `mlkem1024` | 24 | 22/0/2 | 1.63x | 90 | 88/0/2 | 3.60x |
+| `rsa-4096` | 24 | 24/0/0 | 1.70x | 52 | 52/0/0 | 2.69x |
+| `crc32c` | 88 | 42/38/8 | 1.73x | 176 | 130/38/8 | 2.41x |
+| `rsa-3072` | 24 | 24/0/0 | 1.75x | 52 | 52/0/0 | 2.73x |
+| `rsa-2048` | 24 | 24/0/0 | 1.79x | 52 | 52/0/0 | 2.77x |
+| `aes-128-gcm` | 176 | 96/42/38 | 1.80x | 484 | 390/50/44 | 2.01x |
+| `crc32` | 88 | 47/33/8 | 1.80x | 176 | 133/35/8 | 2.51x |
+| `aes-256-gcm` | 176 | 94/36/46 | 1.83x | 484 | 382/44/58 | 2.02x |
+| `kmac256` | 88 | 58/19/11 | 1.86x | 88 | 58/19/11 | 1.86x |
+| `cshake256` | 88 | 58/21/9 | 1.90x | 88 | 58/21/9 | 1.90x |
+| `shake128` | 88 | 58/30/0 | 1.94x | 88 | 58/30/0 | 1.94x |
+| `shake256` | 88 | 63/25/0 | 1.98x | 88 | 63/25/0 | 1.98x |
+| `sha224` | 88 | 51/37/0 | 2.01x | 88 | 51/37/0 | 2.01x |
+| `aes-128-gcm-siv` | 176 | 127/1/48 | 2.20x | 308 | 237/16/55 | 2.92x |
+| `sha3-224` | 88 | 77/11/0 | 2.27x | 88 | 77/11/0 | 2.27x |
+| `sha3-256` | 104 | 91/13/0 | 2.28x | 104 | 91/13/0 | 2.28x |
+| `aes-256-gcm-siv` | 176 | 128/1/47 | 2.34x | 308 | 259/2/47 | 3.16x |
+| `crc64-nvme` | 88 | 52/35/1 | 2.34x | 88 | 52/35/1 | 2.34x |
+| `sha3-384` | 88 | 79/9/0 | 2.35x | 88 | 79/9/0 | 2.35x |
+| `sha3-512` | 88 | 77/11/0 | 2.38x | 88 | 77/11/0 | 2.38x |
+| `crc64-xz` | 88 | 73/12/3 | 2.78x | 88 | 73/12/3 | 2.78x |
+| `crc24-openpgp` | 88 | 86/0/2 | 17.62x | 88 | 86/0/2 | 17.62x |
+| `crc16-ccitt` | 88 | 88/0/0 | 30.24x | 88 | 88/0/0 | 30.24x |
+| `crc16-ibm` | 88 | 88/0/0 | 32.07x | 88 | 88/0/0 | 32.07x |
 
 ## Linux Worst Individual Rows
 
@@ -587,8 +622,8 @@ Linux primitives with matched exact `rscrypto` comparisons. Fastest columns are 
 
 ## Linux Strongest Individual Rows
 
-| Platform              | Case                    | Fastest external | Ratio   |
-| --------------------- | ----------------------- | ---------------- | ------- |
+| Platform              | Case                    | Fastest external | Ratio |
+| --------------------- | ----------------------- | ---------------- | ----- |
 | Intel Sapphire Rapids | `crc16-ibm / 262144`    | `crc`            | 212.60x |
 | Intel Sapphire Rapids | `crc16-ccitt / 262144`  | `crc`            | 209.27x |
 | Intel Sapphire Rapids | `crc16-ccitt / 16384`   | `crc`            | 206.40x |
@@ -641,7 +676,10 @@ Linux primitives with matched exact `rscrypto` comparisons. Fastest columns are 
 
 ## macOS Local Snapshot
 
-The macOS Apple Silicon run is local evidence from the 2026-07-04 full benchmark at commit `596498f`, carried forward unchanged in this refresh. It is useful for Apple Silicon planning but is not folded into Linux release claims. The ML-KEM row uses the same artifact's public ML-KEM rows.
+The macOS Apple Silicon run is local evidence from the 2026-07-04 full benchmark at commit `596498f`,
+carried forward unchanged in this refresh.
+It is useful for Apple Silicon planning but is not folded into Linux release claims.
+The ML-KEM row uses the same artifact's public ML-KEM rows.
 
 | Scope                                      | Pairs | W/T/L      | Win % | Geomean | Median |
 | ------------------------------------------ | ----- | ---------- | ----- | ------- | ------ |
@@ -649,30 +687,16 @@ The macOS Apple Silicon run is local evidence from the 2026-07-04 full benchmark
 | macOS local: fastest external per case     | 774   | 382/326/66 | 49%   | 1.37x   | 1.05x  |
 | macOS local: ML-KEM fastest external       | 9     | 6/1/2      | 67%   | 1.35x   | 1.39x  |
 
-## README Numbers
-
-- **Headline:** 3,780 of 6,144 matched Linux fastest-external comparisons are wins; 5,475 are wins or ties. Linux geomean is 1.62x.
-- **Checksums:** 6.18x geomean across 616 Linux fastest-external rows; W/T/L 476/118/22.
-- **Hashes/MACs/XOFs:** 1.35x geomean across 3,456 Linux fastest-external rows; W/T/L 1,926/1,181/349.
-- **Auth/KDF:** 1.28x geomean across 160 Linux fastest-external rows; W/T/L 140/20/0.
-- **Password hashing:** 1.07x geomean across 120 Linux fastest-external rows; W/T/L 55/27/38.
-- **Public-key:** 1.09x geomean across 296 Linux fastest-external rows; W/T/L 187/59/50.
-- **RSA:** 1.65x geomean across 88 Linux fastest-external rows; W/T/L 86/2/0.
-- **AEAD:** 1.61x geomean across 1,408 Linux fastest-external rows; W/T/L 910/288/210.
-- **ML-KEM:** 1.55x geomean across 72 Linux fastest-external rows; W/T/L 64/0/8.
-- **ECDSA P-256/P-384:** 0.87x Linux geomean across 128 fastest-external rows; W/T/L 88/7/33.
-- **Current top losses:** `ecdsa-p384` / `sign`: 0.70x geomean across 32 rows; W/T/L 12/0/20; pressure `aws-lc-rs` 16, `rustcrypto-p384` 4; `ecdsa-p256` / `verify`: 0.84x geomean across 32 rows; W/T/L 20/7/5; pressure `rustcrypto-p256` 4, `aws-lc-rs` 1; `rapidhash-stream` / `one-write`: 0.87x geomean across 88 rows; W/T/L 27/25/36; pressure `rapidhash` 36; `ecdsa-p256` / `sign`: 0.91x geomean across 32 rows; W/T/L 28/0/4; pressure `ring` 4; `argon2id-owasp` / `hash`: 0.98x geomean across 8 rows; W/T/L 3/1/4; pressure `rustcrypto` 3, `dryoc` 1.
-
 ## Raw Results
 
-| Platform              | Mode    | Date/time             | Parsed rows | Result                                                       |
-| --------------------- | ------- | --------------------- | ----------- | ------------------------------------------------------------ |
-| AMD Zen4              | `remote` | `2026-08-18 21_03_07` | 2,304       | `benchmark_results/2026-08-18/linux/amd-zen4/results.txt`    |
-| AMD Zen5              | `remote` | `2026-08-18 21_03_07` | 2,304       | `benchmark_results/2026-08-18/linux/amd-zen5/results.txt`    |
-| AWS Graviton3         | `remote` | `2026-08-18 21_03_07` | 2,308       | `benchmark_results/2026-08-18/linux/graviton3/results.txt`   |
-| AWS Graviton4         | `remote` | `2026-08-18 21_03_07` | 2,308       | `benchmark_results/2026-08-18/linux/graviton4/results.txt`   |
+| Platform              | Mode     | Date/time             | Parsed rows | Result |
+| --------------------- | -------- | --------------------- | ----------- | ------ |
+| AMD Zen4              | `remote` | `2026-08-18 21_03_07` | 2,304       | `benchmark_results/2026-08-18/linux/amd-zen4/results.txt` |
+| AMD Zen5              | `remote` | `2026-08-18 21_03_07` | 2,304       | `benchmark_results/2026-08-18/linux/amd-zen5/results.txt` |
+| AWS Graviton3         | `remote` | `2026-08-18 21_03_07` | 2,308       | `benchmark_results/2026-08-18/linux/graviton3/results.txt` |
+| AWS Graviton4         | `remote` | `2026-08-18 21_03_07` | 2,308       | `benchmark_results/2026-08-18/linux/graviton4/results.txt` |
 | IBM Power10           | `remote` | `2026-08-18 21_03_07` | 2,055       | `benchmark_results/2026-08-18/linux/ibm-power10/results.txt` |
-| IBM z16/s390x         | `remote` | `2026-08-18 21_03_07` | 2,055       | `benchmark_results/2026-08-18/linux/ibm-s390x/results.txt`   |
-| Intel Ice Lake        | `remote` | `2026-08-18 21_03_07` | 2,304       | `benchmark_results/2026-08-18/linux/intel-icl/results.txt`   |
-| Intel Sapphire Rapids | `remote` | `2026-08-18 21_03_07` | 2,304       | `benchmark_results/2026-08-18/linux/intel-spr/results.txt`   |
-| macOS Apple Silicon   | `local` | `2026-07-04 12_28_04` | 2,277       | `benchmark_results/2026-07-04/macos/aarch64/results.txt`     |
+| IBM z16/s390x         | `remote` | `2026-08-18 21_03_07` | 2,055       | `benchmark_results/2026-08-18/linux/ibm-s390x/results.txt` |
+| Intel Ice Lake        | `remote` | `2026-08-18 21_03_07` | 2,304       | `benchmark_results/2026-08-18/linux/intel-icl/results.txt` |
+| Intel Sapphire Rapids | `remote` | `2026-08-18 21_03_07` | 2,304       | `benchmark_results/2026-08-18/linux/intel-spr/results.txt` |
+| macOS Apple Silicon   | `local`  | `2026-07-04 12_28_04` | 2,277       | `benchmark_results/2026-07-04/macos/aarch64/results.txt` |

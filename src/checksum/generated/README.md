@@ -1,8 +1,6 @@
 # Generated scratch space
 
-This directory is reserved for ad hoc developer output while inspecting
-checksum benchmark baselines.
+This directory is for temporary developer output when you inspect checksum benchmark baselines.
 
-The production kernel tables live in `src/checksum/kernel_table.rs`.
-There is no checked-in generator-driven source of truth for checksum runtime
-dispatch.
+The production kernel tables are in `src/checksum/kernel_table.rs`.
+No checked-in generator defines checksum runtime dispatch.

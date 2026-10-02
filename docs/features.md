@@ -1,72 +1,76 @@
 # Features
 
-Select the smallest feature set that exposes the primitives you use.
-[`Cargo.toml`](../Cargo.toml) is the complete, authoritative feature graph.
+Select the smallest feature set that gives you the primitives you use.
+[`Cargo.toml`](../Cargo.toml) defines the complete feature graph.
 
 ## Start here
 
-The default feature is `std`; `std` enables `alloc`.
-Disable defaults for `no_std`, then name every required primitive:
+The default feature is `std`, and `std` enables `alloc`.
+For `no_std`, disable the default features, then name each primitive you need:
 
 ```toml
 # no_std SHA-2
 rscrypto = { version = "0.10", default-features = false, features = ["sha2"] }
 
-# Full API with OS randomness
+# All primitives, with operating-system randomness
 rscrypto = { version = "0.10", features = ["full", "getrandom"] }
 ```
 
-Umbrella features trade build size for convenience:
+Umbrella features are convenient, but they make the build larger:
 
 | Feature         | Includes |
 | --------------- | -------- |
 | `checksums`     | CRC-16, CRC-24, CRC-32, and CRC-64 |
-| `crypto-hashes` | SHA-2, SHA-3, BLAKE2, BLAKE3, and Ascon hash |
+| `crypto-hashes` | SHA-2, SHA-3, BLAKE2, BLAKE3, and Ascon-Hash |
 | `fast-hashes`   | XXH3 and RapidHash |
-| `hashes`        | Cryptographic and fast hashes |
+| `hashes`        | Cryptographic hashes and fast hashes |
 | `auth`          | MACs, KDFs, password hashing, signatures, and key exchange |
-| `aead`          | Every AEAD implementation |
+| `aead`          | All AEADs |
 | `full`          | Checksums, hashes, authentication, and AEADs |
 
-Prefer leaf features such as `sha2`, `blake3`, `aes-gcm`, `ed25519`, `p256-ecdh`, `p384-ecdh`, `ml-dsa`, or `ml-kem` in libraries and constrained builds.
+In libraries and constrained builds, use leaf features such as `sha2`, `blake3`, `aes-gcm`, `ed25519`, `p256-ecdh`, `p384-ecdh`, `ml-dsa`, or `ml-kem`.
 
-`websocket-sha1` exposes only the compatibility digest for WebSocket handshakes.
-It is excluded from every umbrella feature, including `full`; enable it explicitly.
+`websocket-sha1` gives only the compatibility digest for WebSocket handshakes.
+No umbrella feature enables it, including `full`.
+Enable it by name.
 
 ## Capability features
 
 | Feature         | Effect |
 | --------------- | ------ |
-| `alloc`         | Enables APIs that own dynamic memory, including `SecretVec` and `SecretString`. |
-| `std`           | Enables runtime CPU detection and standard-library integrations; implies `alloc`. |
-| `getrandom`     | Enables fallible helpers that obtain keys, nonces, salts, or seeds from the OS. |
-| `parallel`      | Enables Rayon-backed BLAKE3 and Argon2 work; implies `std`, `blake3`, and `argon2`. |
+| `alloc`         | Enables APIs that own heap memory, including `SecretVec` and `SecretString`. |
+| `std`           | Enables runtime CPU detection and standard-library integration. Enables `alloc`. |
+| `getrandom`     | Enables fallible helpers that get keys, nonces, salts, or seeds from the operating system. |
+| `parallel`      | Enables Rayon-based BLAKE3 and Argon2 work. Enables `std`, `blake3`, and `argon2`. |
 | `serde`         | Serializes public types. |
-| `serde-secrets` | Also serializes secret keys and shared secrets; use only at an explicit key-storage boundary. |
-| `portable-only` | Makes runtime capability detection report no SIMD or ASM capabilities. |
-| `diag`          | Exposes capability and backend-selection introspection; implies `std`. |
+| `serde-secrets` | Also serializes secret keys and shared secrets. Use it only at an explicit key-storage boundary. |
+| `portable-only` | Makes runtime capability detection report no SIMD or assembly capabilities. |
+| `diag`          | Exposes capability and backend-selection introspection. Enables `std`. |
 
-Benchmark, constant-time, zeroization, forced-kernel, and component hooks require both `diag` and the
-repository-only `rscrypto_internal` compiler cfg. Ordinary Cargo feature combinations, including
-`--all-features`, do not expose those operations. The internal cfg is unsupported for application dependencies
-and carries no compatibility guarantee.
+Benchmark, constant-time, zeroization, forced-kernel,
+and component hooks need both `diag` and the repository-only `rscrypto_internal` compiler cfg.
+No Cargo feature combination exposes them, including `--all-features`.
+Applications must not use the internal cfg.
+It has no compatibility guarantee.
 
-`getrandom` changes entropy acquisition, not algorithm availability.
-APIs that accept caller-provided entropy remain available without it.
+`getrandom` changes how `rscrypto` gets entropy.
+It does not change which algorithms are available.
+APIs that accept entropy from the caller work without it.
 
-`ml-dsa` supports all three ML-DSA parameter sets without allocation or OS entropy.
-See [ML-DSA](mldsa.md) for the API, memory costs, and open qualification gates.
+`ml-dsa` supports all three ML-DSA parameter sets without allocation and without operating-system entropy.
+See [ML-DSA](mldsa.md) for the API, the memory costs, and the open qualification gates.
 
-`p256-ecdh` and `p384-ecdh` are standalone leaves: they do not enable ECDSA, HMAC, `alloc`, or `std`.
+`p256-ecdh` and `p384-ecdh` are standalone leaf features.
+They do not enable ECDSA, HMAC, `alloc`, or `std`.
 See [`platforms.md`](platforms.md) for backend selection, [`constant-time.md`](constant-time.md) for timing claims,
 and [`test-vector-coverage.md`](test-vector-coverage.md) for independent vectors.
 
-`portable-only` affects dispatchers that consult `platform::caps()`.
-It does not remove accelerated code from the binary
-or override backends selected by compile-time `target_feature` settings.
+`portable-only` affects only the dispatchers that read `platform::caps()`.
+It does not remove accelerated code from the binary.
+It does not override backends that compile-time `target_feature` settings select.
 See [`platforms.md`](platforms.md).
 
-## Verify a selection
+## Check a selection
 
 ```bash
 cargo check --no-default-features --features sha2
@@ -74,10 +78,13 @@ just plan
 just check
 ```
 
-`just check` and `just ci-check` lint the combined native and portable feature sets.
-`just ci-compat` additionally checks each standalone feature on the development compiler
-and the minimum supported Rust version.
-It also builds bare-metal targets and executes scalar and SIMD WebAssembly vectors in Wasmtime.
-Use the Cargo command above to check an isolated feature selection.
+- `just check` repairs formatting and lints, then checks the host and the target catalog.
+- `just ci-check` checks the host without repairs.
+- Both lint the combined native and portable feature sets.
+- `just ci-compat` checks each feature alone on the development compiler and on the MSRV.
+  It also builds the bare-metal targets and runs the scalar
+  and SIMD WebAssembly vectors in Wasmtime.
 
-Use [docs.rs](https://docs.rs/rscrypto) to see which items each feature exposes.
+To check one feature selection by itself, use the `cargo check` command above.
+
+[docs.rs](https://docs.rs/rscrypto) shows which items each feature exposes.

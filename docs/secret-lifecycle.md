@@ -1,77 +1,162 @@
 # Secret lifecycle
 
-`rscrypto` clears its named secret owners and explicit secret temporaries on
-success, failure, early return, reuse, and drop. Cleanup uses volatile writes
-and a compiler fence.
+`rscrypto` clears its named secret owners and its explicit secret temporaries on success, failure,
+early return, reuse, and drop.
+Cleanup uses volatile writes and a compiler fence.
 
-This claim covers crate-owned arrays, initialized heap storage, reusable
-scratch, parser and generator staging, finalized keyed-hash snapshots, and
-expanded key state.
+## Scope
 
-It does not cover caller-owned input, ordinary bytes after explicit export,
-compiler-created register or spill copies, swapped pages, crash dumps, or
-hardware-backed storage.
+The claim covers:
+
+- arrays that the crate owns;
+- initialized heap storage;
+- reusable scratch;
+- parser and generator staging;
+- finalized keyed-hash snapshots;
+- expanded key state.
+
+The claim does not cover:
+
+- input that the caller owns;
+- ordinary bytes after an explicit export;
+- register or spill copies that the compiler makes;
+- swapped pages and crash dumps;
+- hardware-backed storage.
 
 ## Cleanup boundaries
 
-| Owner or operation | Cleanup boundary |
+| Owner or operation | When cleanup happens |
 | --- | --- |
-| Typed keys, private keys, and shared secrets | Concrete or nested `Drop`; consuming export clears the source or transfers responsibility explicitly. |
-| AEAD and header protection | Context drop clears retained keys; operation-local schedules, authentication state, and materialized cipher output are cleared after use. Failed opens clear unauthenticated plaintext. |
+| Typed keys, private keys, and shared secrets | On concrete or nested `Drop`. A consuming export clears the source, or moves responsibility to the caller explicitly. |
+| AEAD and header protection | Context drop clears the retained keys. Operation-local schedules, authentication state, and materialized cipher output are cleared after use. A failed open clears the unauthenticated plaintext. |
 | HMAC, HKDF, KMAC, PBKDF2, and keyed BLAKE2/BLAKE3 | Finalization copies, keyed prefixes, work buffers, emitted blocks, and replaced state are cleared after their last use. |
-| ECDSA, Ed25519, X25519, P-256 ECDH, P-384 ECDH, ML-KEM, and RSA private work | Secret scalars, digests, limbs, encoded messages, inverse state, and initialized scratch are cleared on every return path. Prepared ML-KEM decapsulation keys retain a decryption mask derived from the implicit-rejection secret; both of its polynomials are cleared when the prepared key drops. ML-KEM's secret SHA-3 and SHAKE calls (G, J, and the PRF) run in an out-of-line worker followed by a fixed volatile scrub of its dead stack: 2 KiB, or 4 KiB after the four-lane PRF. `just stack-frames` checks that each linked worker fits its scrub on the reviewed targets. By-value ML-KEM key generation, import, and preparation leave moved-from copies in the caller's frame; the `*_in` constructors fill a caller-allocated box in place and leave none in the measured RV32 and Cortex-M runs. Portable P-256 ECDH uses a type-distinct projective owner whose coordinates are cleared whenever an intermediate is replaced or the operation returns. Its selected AArch64 and x86-64 assembly clears secret-derived frames, saved-register spill slots, and volatile integer registers before return. The Windows public-point batch wrapper handles public coordinates only. P-384 ECDH has no register-clearing assembly: its Jacobian accumulator owner is overwritten in place by each intermediate and cleared on return, and its scalar limbs, recoded window digits, and affine shared x-coordinate are cleared before return. Field-arithmetic and table-selection temporaries outside those owners, including the general-purpose and vector registers used by its AArch64 inline assembly and the stack frames and registers of its x86-64 fused point doubling and addition, are not claimed cleared. |
-| ML-DSA private work | Expanded keys, transformed polynomials, seeds, randomness, message representatives, SHAKE state, rejected candidates, and Serde staging use zeroizing owners. Ordinary decode and message hashing fill existing owners in place. Private SHAKE256 finalization and squeezing use a local zeroizing reader, initialized before the absorbed state is copied into it; the reader is dropped before returning to the sampler or hashing caller. Secret-noise acceptance masks and counts share the wiped bit-plane owners. By-value key constructors leave moved-from copies in the caller's frame; the `*_in` constructors fill a caller-allocated box in place and leave none in the measured RV32 and Cortex-M runs. Preparation decodes directly into caller-owned storage without moving the prepared owner; the handle clears it on drop or failed preparation, and the storage clears it again on drop. Full target qualification remains open; see [ML-DSA](mldsa.md). |
-| Argon2 and scrypt | Every block an operation uses is cleared before it returns, including error paths, whether rscrypto allocated the work memory or the caller provided it to an Argon2 or scrypt `*_with_memory` method. Input errors return before caller memory is touched, and blocks beyond the required length are never written. |
+| ECDSA, Ed25519, X25519, P-256 ECDH, P-384 ECDH, ML-KEM, and RSA private work | Secret scalars, digests, limbs, encoded messages, inverse state, and initialized scratch are cleared on every return path. See the notes below. |
+| ML-DSA private work | See [ML-DSA](#ml-dsa). |
+| Argon2 and scrypt | See [Argon2 and scrypt](#argon2-and-scrypt). |
 | Secret parsing and generation | RAII owners cover success, parse failure, entropy failure, and early return. |
-| Caller-filled secret owners, P-256 and P-384 ECDH generation, and ECDSA blinding | The zero-initialized owner exists before the callback runs. Success, immediate failure, partial-fill failure, and P-256 or P-384 scalar rejection/exhaustion all reach its `Drop`. ECDSA callback failure returns before message hashing or private scalar arithmetic; ECDH callback failure returns before public derivation or agreement. |
+| Caller-filled secret owners, P-256 and P-384 ECDH generation, and ECDSA blinding | See [Caller-filled owners](#caller-filled-owners). |
 
-`SecretBytes::expose()` clears its source before returning an ordinary array.
-`SecretVec::into_unprotected_vec()` transfers the existing allocation without
-clearing it. `SecretString::into_unprotected_string()` does the same for a UTF-8
-allocation. That distinction is intentional.
+### ML-KEM
+
+- A prepared decapsulation key keeps a decryption mask derived from the implicit-rejection secret.
+  Both of its polynomials are cleared when the prepared key drops.
+- The secret SHA-3 and SHAKE calls (G, J, and the PRF) run in an out-of-line worker.
+  After the worker returns, a fixed volatile scrub clears its dead stack: 2 KiB,
+  or 4 KiB after the four-lane PRF.
+  `just stack-frames` checks that each linked worker fits inside its scrub on the reviewed targets.
+- By-value key generation, import, and preparation leave moved-from copies in the caller's frame.
+  The `*_in` constructors fill a box that the caller allocated, in place.
+  In the measured RV32 and Cortex-M runs, they leave no copies.
+
+### P-256 ECDH
+
+- Portable P-256 ECDH uses a separate projective owner type.
+  Its coordinates are cleared each time an intermediate is replaced, and when the operation returns.
+- The selected AArch64 and x86-64 assembly clears secret-derived frames, saved-register spill slots,
+  and volatile integer registers before it returns.
+- The Windows public-point batch wrapper handles only public coordinates.
+
+### P-384 ECDH
+
+- P-384 ECDH has no register-clearing assembly.
+- Each intermediate overwrites the Jacobian accumulator owner in place.
+  The owner is cleared on return.
+- The scalar limbs, the recoded window digits,
+  and the affine shared x-coordinate are cleared before return.
+- **Not claimed:** field-arithmetic and table-selection temporaries outside those owners.
+  This includes the general-purpose and vector registers that the AArch64 inline assembly uses,
+  and the stack frames and registers of the x86-64 fused point doubling and addition.
+
+### ML-DSA
+
+- Expanded keys, transformed polynomials, seeds, randomness, message representatives, SHAKE state,
+  rejected candidates, and Serde staging use zeroizing owners.
+- Ordinary decode and message hashing fill existing owners in place.
+- Private SHAKE256 finalization and squeezing use a local zeroizing reader.
+  The reader is initialized before the absorbed state is copied into it.
+  It is dropped before control returns to the sampler or the hashing caller.
+- Secret-noise acceptance masks and counts share the wiped bit-plane owners.
+- By-value key constructors leave moved-from copies in the caller's frame.
+  The `*_in` constructors fill a box that the caller allocated, in place.
+  In the measured RV32 and Cortex-M runs, they leave no copies.
+- Preparation decodes directly into storage that the caller owns, without moving the prepared owner.
+  The handle clears it on drop and when preparation fails.
+  The storage clears it again on drop.
+- Full target qualification is still open.
+  See [ML-DSA](mldsa.md).
+
+### Argon2 and scrypt
+
+- Every block that an operation uses is cleared before the operation returns, also on error paths.
+  This applies when `rscrypto` allocates the work memory,
+  and when the caller supplies it to an Argon2 or scrypt `*_with_memory` method.
+- An input error returns before the operation touches caller memory.
+- Blocks past the required length are never written.
+
+### Caller-filled owners
+
+- The zero-initialized owner exists before the callback runs.
+- These cases all reach its `Drop`: success, immediate failure, partial-fill failure,
+  and P-256 or P-384 scalar rejection or exhaustion.
+- If the ECDSA callback fails, the operation returns before message hashing
+  and before private scalar arithmetic.
+- If the ECDH callback fails, the operation returns before public derivation and before agreement.
+
+## Export and capacity
+
+- `SecretBytes::expose()` clears its source, then returns an ordinary array.
+- `SecretVec::into_unprotected_vec()` moves the existing allocation without clearing it.
+- `SecretString::into_unprotected_string()` does the same for a UTF-8 allocation.
+
+This difference is intentional.
 
 `SecretVec` and `SecretString` clear every byte in their initialized length.
-They do not claim to clear spare allocation capacity, which is not an
-initialized region exposed by these owners. `SecretBytes<N>` always clears all
-`N` bytes.
+They do not claim to clear spare capacity,
+because these owners do not expose it as initialized memory.
+`SecretBytes<N>` always clears all `N` bytes.
 
-When panic unwinding is enabled, an owner already constructed around callback
-storage is dropped during an unwind. Process abort, termination, and power loss
-do not run destructors and carry no cleanup claim.
+When panic unwinding is enabled,
+an owner that already wraps callback storage is dropped during the unwind.
+Process abort, termination, and power loss do not run destructors.
+They have no cleanup claim.
 
 ## Optimized evidence
 
-`just check` and `just ci-check` do not verify optimized zeroization. Source
-cleanup and passing tests alone do not establish that secret stores survive
-optimization; machine-code evidence must be scoped to the compiler, target,
-features, and operation inspected.
+`just check` and `just ci-check` do not verify optimized zeroization.
+Source cleanup and passing tests do not prove that secret stores survive optimization.
+Machine-code evidence applies only to the compiler, target, features, and operation inspected.
 
-`just ct-full` additionally checks an 8-byte-aligned `SecretBytes<32>` destructor
-sentinel in the existing linked release harness. It requires complete volatile
-clearing and a compiler fence in the emitted release-LTO IR, and retains the
-linked symbol, disassembly, and artifact hashes. Missing or partial cleanup
-fails this gate. The sentinel does not qualify other alignments, owners, heap
-storage, error paths, or compiler-created copies; the retained machine code
-still needs target-specific review.
+`just ct-full` also checks a destructor sentinel in the linked release harness: an 8-byte-aligned `SecretBytes<32>`.
+The check needs complete volatile clearing and a compiler fence in the emitted release-LTO IR.
+It keeps the linked symbol, the disassembly, and the artifact hashes.
+Missing or partial cleanup fails the gate.
+The sentinel does not qualify other alignments, owners, heap storage, error paths,
+or compiler-made copies.
+The retained machine code still needs review for each target.
 
-`just stack-residue` measures moved-copy residue under QEMU on the RV32 `virt`
-and Cortex-M3 `mps2-an385` boards, with native and portable backends;
-[`scripts/README.md`](../scripts/README.md) describes the method and its
-controls. On `nightly-2026-09-25` and QEMU 11.1.2, by-value ML-KEM key
-generation leaves every byte of `dk_pke` (768, 1,152, or 1,536 bytes) and `z`
-in the caller's frame. By-value ML-KEM import leaves all of `dk_pke` except one
-16-byte window, and all of `z`. By-value ML-DSA key generation leaves `K` and
-the encoded `s1`, `s2`, and `t0`: one whole copy on RV32 and two on Cortex-M3.
-The `*_in` paths leave none of these bytes on the stack or in the freed
-allocation, for every parameter set, both boards, and both backends. An earlier
-campaign with a harness removed on 2026-09-28 also found 4.2–6.4 KiB of prepared
-ML-KEM state after import, preparation, and decapsulation. The rebuilt harness
-does not yet measure prepared state, decapsulation, or Ed25519, X25519, and
-ECDSA owners.
+`just stack-residue` measures moved-copy residue under QEMU on the RV32 `virt` board and the Cortex-M3 `mps2-an385` board,
+with native and portable backends.
+[`scripts/README.md`](../scripts/README.md) describes the method and its controls.
+Results on `nightly-2026-09-25` and QEMU 11.1.2:
 
-`tests/secret_redaction.rs` pins public `Debug` and error behavior. Errors expose
-only public sizes or opaque verification failures unless a documented variant
-explicitly returns caller data. `expert::DisplaySecret` and diagnostic APIs are
-deliberate declassification boundaries.
+- By-value ML-KEM key generation leaves every byte of `dk_pke` (768, 1,152, or 1,536 bytes)
+  and of `z` in the caller's frame.
+- By-value ML-KEM import leaves all of `dk_pke` except one 16-byte window, and all of `z`.
+- By-value ML-DSA key generation leaves `K` and the encoded `s1`, `s2`, and `t0`:
+  one whole copy on RV32, and two on Cortex-M3.
+- The `*_in` paths leave none of these bytes on the stack or in the freed allocation,
+  for every parameter set, both boards, and both backends.
 
-See [`secret-ownership.md`](secret-ownership.md) for the capability inventory.
+An earlier campaign, whose harness was removed on 2026-09-28,
+also found 4.2–6.4 KiB of prepared ML-KEM state after import, preparation, and decapsulation.
+The rebuilt harness does not measure prepared state, decapsulation, or the Ed25519, X25519,
+and ECDSA owners yet.
+
+## Redaction
+
+`tests/secret_redaction.rs` pins the public `Debug` and error behavior.
+Errors expose only public sizes or opaque verification failures,
+unless a documented variant explicitly returns caller data.
+`expert::DisplaySecret` and the diagnostic APIs are deliberate declassification boundaries.
+
+See [`secret-ownership.md`](secret-ownership.md) for the inventory of types.

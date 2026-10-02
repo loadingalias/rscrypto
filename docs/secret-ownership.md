@@ -1,78 +1,107 @@
 # Secret ownership
 
-This inventory tells users which public values retain secrets and which generic
-operations can duplicate or expose them. It is a type-level contract, not proof
-that every compiler-created copy is erased.
+This inventory tells users which public values keep secrets,
+and which generic operations can copy or expose them.
+It is a type-level contract.
+It does not prove that the compiler erases every copy it makes.
 
-## Confidential owners
+## Types that own secrets
 
-| Owner | Duplication | Exposure |
+| Owner | Copying | Exposure |
 | --- | --- | --- |
-| `SecretBytes<N>`, `SecretVec`, `SecretString` | Not `Clone` or `Copy` | Consuming export transfers bytes or UTF-8 text and cleanup responsibility to the caller. |
-| AEAD keys and contexts | Keys use explicit `duplicate_secret`; contexts do not duplicate | Key export is explicit; `Debug` is redacted. |
-| Header-protection keys and contexts | No generic duplication | No public export; `Debug` is redacted. |
-| ECDSA and Ed25519 secret keys and keypairs | Explicit `duplicate_secret` | Secret-key export is explicit; keypair `Debug` shows only public data. |
-| ML-DSA expanded and prepared secret keys | Not `Clone` or `Copy`; `*_in` constructors write the key directly into an allocation from a caller-selected `Allocator` and return `Box<SecretKey, A>`. Preparation writes transformed secrets into caller-owned storage and returns a handle borrowing the key and storage. The handle clears the secrets on drop or failed preparation; the storage clears them again on drop | Expanded export returns `SecretBytes`; key, handle, and storage `Debug` are redacted; serialization requires `serde-secrets`. |
-| X25519 secrets and ML-KEM decapsulation/shared secrets | Explicit `duplicate_secret`. With `alloc`, ML-KEM `generate_keypair_in`, `try_generate_keypair_in`, `DecapsulationKey::try_from_slice_in`, and `DecapsulationKey::prepare_in` write the key or prepared key directly into an allocation from a caller-selected `Allocator` and return a `Box<_, A>` | Secret export is explicit; `Debug` is redacted. |
-| `P256EphemeralSecret`, `P256SharedSecret` | Not `Clone` or `Copy` | The ephemeral scalar has no export or import API. `P256SharedSecret::expose_secret` creates an explicit `SecretBytes<32>` copy; borrowed access is available through `as_bytes`. Both owners have redacted `Debug`. |
-| `P384EphemeralSecret`, `P384SharedSecret` | Not `Clone` or `Copy` | The ephemeral scalar has no export or import API. `P384SharedSecret::expose_secret` creates an explicit `SecretBytes<48>` copy; borrowed access is available through `as_bytes`. Both owners have redacted `Debug`. |
-| `RsaPrivateKey`, `RsaPrivateScratch` | Not `Clone` or `Copy` | Private DER export returns `SecretVec`; `Debug` shows public metadata only. |
-| HMAC, HKDF, KMAC, PBKDF2, and Poly1305 state | No generic duplication | `Debug` is redacted; keyed state is not serialized. |
-| Keyed BLAKE2 state | `Clone` where required by the shared `Digest` contract | `Debug` is redacted; cloning duplicates keyed state. |
-| `Blake3`, `Blake3XofReader` | `Clone` | In keyed or derive-key mode, cloning duplicates secret-derived state. |
-| `Blake3Tree`, `Blake3Subtree`, `Blake3ChainingValue` (`hashes::expert::blake3_tree`) | `Clone` | A keyed tree holds its key; in keyed or derive-key mode, subtrees and chaining values hold secret-derived state, and cloning duplicates it. Drop clears the tree key and chaining-value bytes; `Debug` shows only mode and input range. `Blake3ChainingValue::as_bytes` borrows the bytes. |
-| Password-hashing state and work memory | Borrowed contexts may be `Copy`; owned state is not. Caller-provided `Argon2Block` and `ScryptBlock` memory is `Clone`, not `Copy`; it holds operation state only while an operation borrows it | Borrowed copies duplicate references, not password or pepper bytes. The operation clears every block it used before returning; block `Debug` is redacted. |
+| `SecretBytes<N>`, `SecretVec`, `SecretString` | Not `Clone` or `Copy`. | A consuming export moves the bytes or UTF-8 text to the caller, and the caller becomes responsible for cleanup. |
+| AEAD keys and contexts | Keys copy only through explicit `duplicate_secret`. Contexts do not copy. | Key export is explicit. `Debug` is redacted. |
+| Header-protection keys and contexts | No generic copy. | No public export. `Debug` is redacted. |
+| ECDSA and Ed25519 secret keys and keypairs | Explicit `duplicate_secret`. | Secret-key export is explicit. Keypair `Debug` shows only public data. |
+| ML-DSA expanded and prepared secret keys | Not `Clone` or `Copy`. See [ML-DSA storage](#ml-dsa-storage). | Expanded export returns `SecretBytes`. Key, handle, and storage `Debug` are redacted. Serialization needs `serde-secrets`. |
+| X25519 secrets; ML-KEM decapsulation keys and shared secrets | Explicit `duplicate_secret`. See [ML-KEM allocation](#ml-kem-allocation). | Secret export is explicit. `Debug` is redacted. |
+| `P256EphemeralSecret`, `P256SharedSecret` | Not `Clone` or `Copy`. | The ephemeral scalar has no export or import API. `P256SharedSecret::expose_secret` makes an explicit `SecretBytes<32>` copy. `as_bytes` gives borrowed access. Both types redact `Debug`. |
+| `P384EphemeralSecret`, `P384SharedSecret` | Not `Clone` or `Copy`. | The ephemeral scalar has no export or import API. `P384SharedSecret::expose_secret` makes an explicit `SecretBytes<48>` copy. `as_bytes` gives borrowed access. Both types redact `Debug`. |
+| `RsaPrivateKey`, `RsaPrivateScratch` | Not `Clone` or `Copy`. | Private DER export returns `SecretVec`. `Debug` shows only public metadata. |
+| HMAC, HKDF, KMAC, PBKDF2, and Poly1305 state | No generic copy. | `Debug` is redacted. Keyed state is not serialized. |
+| Keyed BLAKE2 state | `Clone` where the shared `Digest` contract needs it. | `Debug` is redacted. A clone copies the keyed state. |
+| `Blake3`, `Blake3XofReader` | `Clone`. | In keyed or derive-key mode, a clone copies secret-derived state. |
+| `Blake3Tree`, `Blake3Subtree`, `Blake3ChainingValue` (`hashes::expert::blake3_tree`) | `Clone`. | See [BLAKE3 trees](#blake3-trees). |
+| Password-hashing state and work memory | Borrowed contexts can be `Copy`. Owned state is not. See [password-hashing memory](#password-hashing-memory). | Block `Debug` is redacted. |
 
-Typed private keys, shared secrets, keyed states, expanded schedules, and
-private-operation scratch follow the same confidential-owner rules even when
-not named individually above.
+Typed private keys, shared secrets, keyed states, expanded schedules,
+and private-operation scratch follow the same rules, also when the table does not name them.
 
-ML-DSA's private SHAKE256 helper borrows its output buffer. It copies absorbed
-state into an already initialized zeroizing reader, then finalizes and squeezes
-inside that owner. Both the absorbing core and reader are dropped locally;
-the helper returns no secret-valued state or reader.
+### ML-DSA storage
 
-ML-DSA's secret-noise sampler keeps its acceptance mask with the input bit
-planes and its accepted count with the output bit planes. The input owner is
-cleared after each fixed block; the output owner is cleared on success and
-exhaustion. Compiler-created copies remain subject to target-specific review.
+- The `*_in` constructors write the key directly into an allocation from a caller-selected `Allocator` and return `Box<SecretKey, A>`.
+- Preparation writes transformed secrets into storage that the caller owns.
+  It returns a handle that borrows the key and the storage.
+- The handle clears the secrets on drop and when preparation fails.
+  The storage clears them again on drop.
+
+### ML-KEM allocation
+
+With `alloc`, these functions write the key
+or prepared key directly into an allocation from a caller-selected `Allocator`, and return `Box<_, A>`: `generate_keypair_in`, `try_generate_keypair_in`, `DecapsulationKey::try_from_slice_in`, and `DecapsulationKey::prepare_in`.
+
+### BLAKE3 trees
+
+- A keyed tree holds its key.
+- In keyed or derive-key mode, subtrees and chaining values hold secret-derived state.
+  A clone copies that state.
+- Drop clears the tree key and the chaining-value bytes.
+- `Debug` shows only the mode and the input range.
+- `Blake3ChainingValue::as_bytes` borrows the bytes.
+
+### Password-hashing memory
+
+- Caller-provided `Argon2Block` and `ScryptBlock` memory is `Clone`, not `Copy`.
+  It holds operation state only while an operation borrows it.
+- A copy of a borrowed context copies references, not password or pepper bytes.
+- The operation clears every block it used before it returns.
+
+### ML-DSA internal helpers
+
+- The private SHAKE256 helper borrows its output buffer.
+  It copies the absorbed state into a zeroizing reader that already exists,
+  then finalizes and squeezes inside that owner.
+  It drops the absorbing core and the reader locally.
+  It returns no state or reader that holds secret values.
+- The secret-noise sampler keeps its acceptance mask with the input bit planes,
+  and its accepted count with the output bit planes.
+  It clears the input owner after each fixed block.
+  It clears the output owner on success and on exhaustion.
+- Copies that the compiler makes still need review for each target.
 
 ## Public authentication values
 
-AEAD tags, HMAC tags, `Poly1305Tag`, and `Blake3KeyedHash` are
-protocol-visible. They may implement `Clone`, `Copy`, raw `Debug`, or public
-serialization. Their verification still uses full-traversal comparison where
-the concrete type provides it.
+AEAD tags, HMAC tags, `Poly1305Tag`, and `Blake3KeyedHash` are visible in protocols.
+They can implement `Clone`, `Copy`, raw `Debug`, or public serialization.
+Where the concrete type supplies it, their verification still compares every byte.
 
-Public keys, signatures, nonces, ciphertexts, PHC records, unkeyed hash state,
-`Blake3DeriveContext`, and checksums are not secret owners. Callers can still place sensitive data in
-their buffers; the crate cannot manage caller-owned memory.
+Public keys, signatures, nonces, ciphertexts, PHC records, unkeyed hash state, `Blake3DeriveContext`,
+and checksums do not own secrets.
+Callers can still put sensitive data in these buffers.
+`rscrypto` cannot manage memory that the caller owns.
 
 ## Explicit escape hatches
 
-- `duplicate_secret()` creates another secret lifetime.
-- `SecretBytes::expose()` returns ordinary bytes after clearing its source.
-- `SecretVec::into_unprotected_vec()` transfers an allocation without clearing
-  it; the caller becomes responsible for that memory.
-- `SecretString::into_unprotected_string()` transfers its UTF-8 allocation
-  without clearing it; the caller becomes responsible for that memory.
-- `serde-secrets` authorizes secret serialization.
-- `expert::DisplaySecret` deliberately prints borrowed secret bytes.
-- `as_bytes` and similar borrows expose bytes for the borrow's lifetime.
-- `P256SharedSecret::expose_secret()` and `P384SharedSecret::expose_secret()`
-  create a second zeroizing owner; the original shared secret remains live
-  until it is dropped.
+- `duplicate_secret()` creates a second secret lifetime.
+- `SecretBytes::expose()` clears its source, then returns ordinary bytes.
+- `SecretVec::into_unprotected_vec()` moves the allocation without clearing it.
+  The caller becomes responsible for that memory.
+- `SecretString::into_unprotected_string()` moves its UTF-8 allocation without clearing it.
+  The caller becomes responsible for that memory.
+- `serde-secrets` allows secret serialization.
+- `expert::DisplaySecret` prints borrowed secret bytes on purpose.
+- `as_bytes` and similar borrows expose bytes for the life of the borrow.
+- `P256SharedSecret::expose_secret()` and `P384SharedSecret::expose_secret()` create a second zeroizing owner.
+  The original shared secret stays live until it is dropped.
 
-Do not log, format, or serialize secrets unless the integration requires that
-exact transfer.
+Do not log, format, or serialize a secret unless the integration needs that exact transfer.
 
-`SecretBytes::try_fill_with` and `SecretVec::try_fill_with` give fillers direct
-access to zero-initialized owner storage. `SecretVec::from_vec` and
-`SecretString::from_string` transfer an existing allocation without copying or
-reallocating it. These constructors create no second rscrypto-owned plaintext
-buffer.
+`SecretBytes::try_fill_with` and `SecretVec::try_fill_with` give a filler direct access to the zero-initialized storage of the owner.
+`SecretVec::from_vec` and `SecretString::from_string` move an existing allocation without copying or reallocating it.
+These constructors create no second plaintext buffer that `rscrypto` owns.
 
-Changes to secret owners require review of `Clone`, `Copy`, `Debug`, Serde,
-export, allocation, comparison, and cleanup behavior. See
-[`secret-lifecycle.md`](secret-lifecycle.md) for cleanup evidence and
-[`constant-time.md`](constant-time.md) for timing claims.
+## Changing a secret owner
+
+A change to a secret owner needs review of `Clone`, `Copy`, `Debug`, Serde, export, allocation, comparison,
+and cleanup behavior.
+See [`secret-lifecycle.md`](secret-lifecycle.md) for cleanup evidence and [`constant-time.md`](constant-time.md) for timing claims.

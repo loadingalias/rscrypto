@@ -1,132 +1,145 @@
 # Platforms
 
 Portable Rust defines every supported primitive.
-SIMD and assembly are accelerators, never separate specifications.
+SIMD and assembly backends make it faster; they are never a second specification.
 
 ## Backend selection
 
 Dispatch has three tiers:
 
-1. Compile-time target features may select an eligible backend.
-1. With `std`, cached runtime detection selects from CPU- and OS-authorized
-   capabilities.
-1. Otherwise, the portable implementation runs.
+1. Compile-time target features can select an eligible backend.
+1. With `std`, cached runtime detection selects a backend from the capabilities
+   that the CPU and the operating system allow.
+1. If neither selects a backend, the portable implementation runs.
 
-`no_std` builds use compile-time selection only.
-`portable-only` makes runtime detection return no accelerated capabilities,
-but it does not override compile-time target features or remove code from the binary.
+`no_std` builds use only compile-time selection.
+`portable-only` makes runtime detection report no accelerated capabilities.
+It does not override compile-time target features, and it does not remove code from the binary.
 
-Capability overrides and process authorization such as Linux AMX permission must occur
-before the first `platform::caps()` call because detection is cached.
+Detection runs once and is cached.
+Set capability overrides, and get process permissions such as Linux AMX authorization,
+before the first `platform::caps()` call.
 
-Every accelerated path must match portable Rust for representative lengths, alignments, tails,
-and state transitions.
-Cross-compilation proves only that a target builds; runtime behavior requires target execution.
+Every accelerated path must give the same output as portable Rust for representative lengths,
+alignments, tails, and state transitions.
+Cross-compilation proves only that a target builds.
+Runtime behavior needs execution on the target.
 
-SHA-224 and SHA-256 share the SHA-256 compression capability policy.
-Their x86-64 SHA-NI backend requires both `sha` and `sse4.1`; unsupported CPUs retain portable fallback.
-Scalar WebAssembly builds exclude SIMD backends from hash, AEAD,
-and Argon2 dispatch when `simd128` is disabled.
-This compile-time boundary is separate from `portable-only` runtime dispatch.
+### Notes by primitive
 
-P-256 ECDH remains a standalone leaf with a safe Rust authority on every supported target.
-Apple and Linux AArch64 builds select embedded s2n-bignum fixed-base
-and arbitrary-point assembly at compile time unless `portable-only` or Miri is active.
-Linux x86-64 selects the corresponding baseline or ADX/BMI2 ELF kernels
-after cached runtime capability detection.
-Windows x86-64 uses the same baseline or ADX/BMI2 arithmetic behind Microsoft x64 wrappers;
-public SEC1 validation crosses one target-shaped batch boundary instead of five field-call wrappers.
-The deterministic provenance transform keeps those backends independent of the ECDSA feature
-and clears their secret-derived frames, saved-register spill slots, and volatile integer registers.
+- **SHA-224 and SHA-256** use the same SHA-256 compression capability policy.
+  The x86-64 SHA-NI backend needs both `sha` and `sse4.1`.
+  Other CPUs use the portable fallback.
+- **Scalar WebAssembly:** when `simd128` is disabled, hash, AEAD, and Argon2 dispatch exclude SIMD backends.
+  This compile-time boundary is separate from `portable-only` runtime dispatch.
+- **P-256 ECDH** is a standalone leaf feature with a safe Rust reference implementation on every
+  supported target.
+  - Apple and Linux AArch64 select embedded s2n-bignum fixed-base and arbitrary-point assembly
+    at compile time, unless `portable-only` or Miri is active.
+  - Linux x86-64 selects the baseline or ADX/BMI2 ELF kernels after cached runtime detection.
+  - Windows x86-64 uses the same baseline or ADX/BMI2 arithmetic behind Microsoft x64 wrappers.
+    Public SEC1 validation crosses one batch boundary
+    for the target instead of five field-call wrappers.
+  - A deterministic provenance transform keeps these backends independent of the ECDSA feature.
+    It also clears their secret-derived frames, saved-register spill slots,
+    and volatile integer registers.
+- **P-384 ECDH** is a standalone leaf feature with a safe Rust reference implementation on every
+  supported target.
+  - AArch64 selects these at compile time, unless `portable-only` or Miri is active:
+    owned inline-assembly field multiplication, squaring, addition, subtraction, small multiples,
+    NEON fixed-base comb selection, and Bernstein–Yang divstep field inversion.
+  - x86-64 selects inline-assembly field addition, subtraction,
+    and divstep inversion at compile time.
+    After cached runtime detection,
+    it selects BMI2/ADX field multiplication and squaring and fused in-place point doubling.
+    CPUs without BMI2 and ADX use the portable multiplication and point formulas.
+  - Other targets use the safe Rust reference implementation.
 
-P-384 ECDH is a standalone leaf with a safe Rust authority on every supported target.
-AArch64 builds select owned inline-assembly field multiplication, squaring, addition, subtraction,
-small multiples, NEON fixed-base comb selection, and Bernstein–Yang divstep field inversion
-at compile time unless `portable-only` or Miri is active.
-x86-64 builds select inline-assembly field addition, subtraction, and divstep inversion at compile time,
-and BMI2/ADX field multiplication and squaring and fused in-place point doubling
-after cached runtime capability detection;
-CPUs without BMI2 and ADX use the portable multiplication and point formulas.
-Other targets use the safe Rust authority.
-
-The [P-256 ECDH development snapshot](../benchmark_results/OVERVIEW.md#p-256-ecdh-development-snapshot) records the September 2026 Graviton3, Graviton4,
-and Intel Granite Rapids Linux/Windows results and their source identities.
-Its Linux timing and cleanup bundles predate later shared-source changes.
-The snapshot does not supply exact-candidate Windows timing or cleanup evidence.
-Native runtime tests and benchmarks do not replace those gates,
-and evidence from one CPU does not qualify another.
+The [P-256 ECDH development snapshot](../benchmark_results/OVERVIEW.md#p-256-ecdh-development-snapshot) records the September 2026 results for Graviton3, Graviton4,
+and Intel Granite Rapids on Linux and Windows, with their source identities.
+Its Linux timing and cleanup bundles are older than later shared-source changes.
+It does not supply Windows timing or cleanup evidence for the exact candidate.
+Native runtime tests and benchmarks do not replace those gates.
+Evidence from one CPU does not qualify another CPU.
 
 ## Toolchain
 
-rscrypto requires Rust 1.100 (`rust-version = "1.100.0"`). Until Rust 1.100 is stable on
-2026-11-12, build with the 1.100 beta or a newer nightly. The repository tests the nightly pinned
-in [`rust-toolchain.toml`](../rust-toolchain.toml) and checks the MSRV on the exact 1.100 beta
-pinned in [`scripts/lib/toolchain.py`](../scripts/lib/toolchain.py).
+`rscrypto` needs Rust 1.100 (`rust-version = "1.100.0"`).
+Rust 1.100 becomes stable on 2026-11-12.
+Until then, build with the 1.100 beta or a newer nightly.
+The repository tests with the nightly pinned in [`rust-toolchain.toml`](../rust-toolchain.toml).
+It checks the MSRV with the exact 1.100 beta pinned in [`scripts/lib/toolchain.py`](../scripts/lib/toolchain.py).
 
-On stable Rust, every catalogued target builds except four, whose accelerated backends use
-unstable compiler features. They need a nightly compiler, and the `portable-only` feature does not
-remove that requirement:
+On stable Rust, every target in the catalog builds except the four below.
+Their accelerated backends use unstable compiler features, so they need a nightly compiler.
+The `portable-only` feature does not remove this requirement.
 
-| Target | Unstable features |
-| --- | --- |
-| `powerpc64le-unknown-linux-gnu` | `portable_simd`, `powerpc_target_feature` |
-| `s390x-unknown-linux-gnu` | `asm_experimental_reg`, `portable_simd`, `stdarch_s390x` |
-| `riscv64gc-unknown-linux-gnu` | `asm_experimental_reg`, `portable_simd`, `riscv_ext_intrinsics`, `riscv_target_feature` |
+| Target                                     | Unstable features |
+| ------------------------------------------ | ----------------- |
+| `powerpc64le-unknown-linux-gnu`            | `portable_simd`, `powerpc_target_feature` |
+| `s390x-unknown-linux-gnu`                  | `asm_experimental_reg`, `portable_simd`, `stdarch_s390x` |
+| `riscv64gc-unknown-linux-gnu`              | `asm_experimental_reg`, `portable_simd`, `riscv_ext_intrinsics`, `riscv_target_feature` |
 | `riscv32imac-unknown-none-elf` with `sha2` | `riscv_ext_intrinsics` |
 
-Unstable features can change between nightlies. The tested contract for these targets is the
-pinned nightly; a newer nightly may fail to build them until rscrypto adapts.
+Unstable features can change between nightlies.
+For these targets, the tested contract is the pinned nightly.
+A newer nightly can fail to build them until `rscrypto` adapts.
 
-Allocator-aware APIs, such as the ML-KEM and ML-DSA `*_in` constructors, use only the allocator
-surface that is stable in Rust 1.100. rscrypto does not enable `allocator_api`, so fallible
-allocator extensions such as `Box::try_new_in` stay out of its API until they stabilize.
+Allocator-aware APIs, such as the ML-KEM and ML-DSA `*_in` constructors,
+use only the allocator API that is stable in Rust 1.100.
+`rscrypto` does not enable `allocator_api`.
+Fallible allocator extensions, such as `Box::try_new_in`, stay out of the API until they are stable.
 
 ## Supported targets
 
-[`.config/target-matrix.json`](../.config/target-matrix.json) is the target support catalog.
-Targets outside it may compile, but are not part of the tested support contract.
-Target-specific evidence must be collected independently.
+[`.config/target-matrix.json`](../.config/target-matrix.json) is the catalog of supported targets.
+Targets outside it can compile, but they are not part of the tested support contract.
+Each target needs its own evidence.
 
-Current validation is defined by the [CI workflow](../.github/workflows/ci.yml) and [repository recipes](../scripts/README.md):
+The [CI workflow](../.github/workflows/ci.yml) and the [repository recipes](../scripts/README.md) define current validation:
 
 | Check              | Scope |
 | ------------------ | ----- |
-| `just check`       | Host and catalogued cross-target compilation and lint checks. |
-| Native CI          | Native and portable suites plus doctests on Linux x86-64, AArch64, POWER, IBM Z, and RISC-V, and Windows x86-64. RISC-V, POWER, and IBM Z build on x86-64 and execute transferred artifacts on native hardware. |
-| `just check-macos` | Local Apple Silicon checks, native and portable release suites plus doctests, internal evidence regressions, and physical RSA assembly qualification before every push. |
-| `just test-musl`   | Native and portable suites plus doctests on matching x86-64 or AArch64 Linux hosts. |
-| `just ci-compat`   | Feature/MSRV and bare-metal compilation; scalar and SIMD vector execution for `wasm32-unknown-unknown` and `wasm32-wasip1` in Wasmtime. |
+| `just check`       | Compilation and lint checks for the host and every catalog cross-target. |
+| Native CI          | Native and portable suites, plus doctests, on Linux x86-64, AArch64, POWER, IBM Z, and RISC-V, and on Windows x86-64. POWER, IBM Z, and RISC-V build on x86-64 and run the transferred artifacts on native hardware. |
+| `just check-macos` | Local Apple Silicon checks before every push: native and portable release suites, doctests, internal evidence regressions, and physical RSA assembly qualification. |
+| `just test-musl`   | Native and portable suites, plus doctests, on a matching x86-64 or AArch64 Linux host. |
+| `just ci-compat`   | Feature, MSRV, and bare-metal compilation. Scalar and SIMD vector execution for `wasm32-unknown-unknown` and `wasm32-wasip1` in Wasmtime. |
 
 A configured check is not a passing result for the current revision.
-Inspect matching run artifacts before qualifying a release.
-Bare-metal checks do not execute on devices,
-and Wasmtime results do not establish browser-engine behavior.
-Windows AArch64 runtime CI remains deferred. macOS checks and tests run locally before pushes;
-physical Apple Silicon timing qualification remains a separate local requirement.
+Inspect the matching run artifacts before you qualify a release.
+Bare-metal checks do not run on devices.
+Wasmtime results do not show browser-engine behavior.
+Windows AArch64 runtime CI is deferred. macOS checks and tests run locally before each push.
+Timing qualification on physical Apple Silicon is a separate local requirement.
 
-AWS runner shapes and Spot policy live in [`.github/runs-on.yml`](../.github/runs-on.yml).
+[`.github/runs-on.yml`](../.github/runs-on.yml) defines the AWS runner shapes and the Spot policy.
 Native CI, cross-build preparation, fuzzing, and CT measurement use separate profiles.
-The [runner guidance](../scripts/README.md#native-tooling) explains profile selection and when catalog changes take effect.
+The [runner guidance](../scripts/README.md#native-tooling) explains how to select a profile and when catalog changes take effect.
 A smaller runner does not reduce the required test or evidence surface.
 
-Performance and constant-time claims require retained evidence for the exact operation
+Performance and constant-time claims need retained evidence for the exact operation
 and configuration.
-Neither a target's presence in the catalog nor a passing compile check supplies that evidence.
-See the [benchmark record](../benchmark_results/OVERVIEW.md) and [constant-time evidence model](constant-time.md).
+A target in the catalog, or a passing compile check, does not supply that evidence.
+See the [benchmark record](../benchmark_results/OVERVIEW.md) and the [constant-time evidence model](constant-time.md).
 
-Retained POWER, IBM Z, and RISC-V evidence covers native unit/backend behavior
+Retained POWER, IBM Z, and RISC-V evidence covers native unit and backend behavior
 and focused portable-versus-accelerated tests.
-Windows AArch64 has compile-only evidence; Windows x86-64 has native runtime evidence.
-Apple Silicon is the only supported macOS architecture.
-`x86_64-apple-darwin` is not catalogued, tested, or maintained; it may compile incidentally,
-but that does not make it a supported target.
+Windows AArch64 has compile-only evidence.
+Windows x86-64 has native runtime evidence.
 
-Backend availability varies by primitive, target, compiler, and CPU.
+Apple Silicon is the only supported macOS architecture.
+`x86_64-apple-darwin` is not in the catalog, and it is not tested or maintained.
+It can compile by chance, but that does not make it a supported target.
+
+## Inspect one build
+
+Backend availability changes with the primitive, the target, the compiler, and the CPU.
 Use `rscrypto::platform` and the `introspect` example to inspect one build:
 
 ```bash
 cargo run --example introspect --features 'crc32,sha2,chacha20poly1305,diag'
 ```
 
-Use [`constant-time.md`](constant-time.md) for target-specific timing claims and [`benchmarking.md`](benchmarking.md)
-for performance evidence.
+For target-specific timing claims, see [`constant-time.md`](constant-time.md).
+For performance evidence, see [`benchmarking.md`](benchmarking.md).

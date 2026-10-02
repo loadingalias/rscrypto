@@ -5,82 +5,42 @@
 [![MSRV 1.100.0](https://img.shields.io/badge/MSRV-1.100.0-blue)](Cargo.toml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/crates/l/rscrypto)](#license)
 
-`rscrypto` puts cryptographic primitives, cryptographic and fast hashes, password hashing,
-and checksums behind one feature model.
-Target-gated SIMD and assembly accelerate portable Rust backends without a production C/FFI,
-OpenSSL, or system-library dependency.
+`rscrypto` is a Rust library of cryptographic primitives, hashes, password hashing, and checksums.
+One feature model controls all of them.
+Portable Rust is the reference implementation.
+SIMD and assembly backends make it faster on supported targets.
+Production builds do not depend on C, FFI, OpenSSL, or system libraries.
 
-`rscrypto` is a primitives crate, not a TLS stack, PKI toolkit, key store, or protocol implementation.
+`rscrypto` supplies primitives only.
+It is not a TLS stack, a PKI toolkit, a key store, or a protocol implementation.
 
-## Measured performance
+## Install
 
-Performance claims are limited to exact retained campaigns and equivalent workloads.
-The corrected September 2026 campaign contains 19,614 completed cases,
-including corrected ML-KEM and Argon2 comparisons,
-but no replacement aggregate scorecard has been curated.
-Older aggregates that mixed entropy, key preparation, output representation,
-or salt lengths remain historical records and are not current performance claims.
+`rscrypto` needs Rust 1.100.
+Until Rust 1.100 is stable, use the 1.100 beta or a newer nightly.
+POWER, IBM Z, and RISC-V builds need a nightly compiler.
+See [Toolchain](docs/platforms.md#toolchain).
 
-The [`benchmark overview`](benchmark_results/OVERVIEW.md) records the campaigns, target-specific results, and remaining limits.
-The [`comparison contracts`](docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts) define equivalent ML-KEM and Argon2 workloads.
-
-## Assurance
-
-Security claims fail closed: missing
-or stale evidence removes the claim rather than weakening the gate.
-
-- Correctness evidence combines NIST, RFC, upstream, and Wycheproof vectors
-  with separate implementations, properties, negative tests, and Miri.
-- Fuzz targets exercise production implementations across primitive, parser, state-machine,
-  and trait boundaries.
-  Minimized seeds replay as tests, with a separate sanitizer lane.
-- Portable-versus-accelerated differential tests cover lengths, alignments,
-  tails, state transitions, dispatch, and fallback behavior on native targets.
-- The constant-time harness inventories exact operations in [`ct.toml`](ct.toml)
-  and combines optimized linked-binary inspection, BINSEC proofs for declared
-  fixed-shape kernels, and DudeCT timing tests for declared end-to-end cases.
-- Secret owners redact `Debug` and clear initialized storage on drop.
-  Duplication rules vary by type: keyed BLAKE2/BLAKE3 state supports `Clone`.
-  The [ownership inventory](docs/secret-ownership.md) lists these boundaries.
-  Verification failures are opaque; failed AEAD opens clear unauthenticated plaintext.
-
-A constant-time claim exists only when evidence for the required target, feature, compiler, profile,
-and operation passes.
-Source that looks branchless is not treated as proof.
-
-Inspect the [`test evidence`](docs/test-vector-coverage.md), [`constant-time model`](docs/constant-time.md), [`secret lifecycle`](docs/secret-lifecycle.md), and [`threat model`](THREAT_MODEL.md).
-
-The remaining independent-review gap is a third-party security audit.
-The project cannot currently fund one.
-Automated evidence does not replace that review, so `rscrypto` does not claim to be audited,
-FIPS 140-3 validated, formally verified, or constant time as a whole crate.
-
-Report suspected vulnerabilities through [GitHub Private Vulnerability Reporting](https://github.com/loadingalias/rscrypto/security/advisories/new) under the
-[`SECURITY.md`](SECURITY.md) process, not a public issue.
-
-## Install only what you use
-
-rscrypto requires Rust 1.100; until it is stable, use the 1.100 beta or a newer nightly. POWER, IBM Z, and RISC-V
-builds need a nightly compiler; see [Toolchain](docs/platforms.md#toolchain).
-
-Minimal `no_std` SHA-2 build:
+Minimal `no_std` build with SHA-2 only:
 
 ```toml
 [dependencies]
 rscrypto = { version = "0.10", default-features = false, features = ["sha2"] }
 ```
 
-Full primitive stack with OS randomness enabled:
+All primitives, with operating-system randomness:
 
 ```toml
 [dependencies]
 rscrypto = { version = "0.10", features = ["full", "getrandom"] }
 ```
 
-The default feature is `std`; `default-features = false` removes it.
-Enable `getrandom` only for APIs that obtain salts, keys, nonces,
+The default feature is `std`.
+Set `default-features = false` to remove it.
+Enable `getrandom` only for the APIs that get salts, keys, nonces,
 or RSA key-generation entropy from the operating system.
-The [`feature guide`](docs/features.md) explains build selection; [`Cargo.toml`](Cargo.toml) owns the exact feature graph.
+The [feature guide](docs/features.md) explains how to select features.
+[`Cargo.toml`](Cargo.toml) defines the exact feature graph.
 
 ## Quick start
 
@@ -96,45 +56,100 @@ hasher.update(b"world");
 assert_eq!(hasher.finalize(), one_shot);
 ```
 
-Hash APIs support one-shot and streaming use.
-Runnable workflows for AEAD, signatures, RSA, P-256 and P-384 ECDH, X25519, ML-KEM, password hashing,
-and backend introspection are in [`examples/README.md`](examples/README.md).
+Hash types support one-shot and streaming use.
+[`examples/README.md`](examples/README.md) has runnable examples for AEAD, signatures, RSA, P-256 and P-384 ECDH,
+X25519, ML-KEM, password hashing, and backend introspection.
 
-## Primitive and feature map
+## Primitives and features
 
-| Family | Included | Enable |
+| Family | Primitives | Feature |
 | --- | --- | --- |
-| Checksums | CRC-16, CRC-24, CRC-32, CRC-32C, CRC-64/XZ, CRC-64/NVMe | `checksums` or leaf features |
-| Cryptographic hashes | SHA-2, SHA-3, SHAKE, cSHAKE, BLAKE2, BLAKE3, Ascon-Hash/XOF/CXOF | `crypto-hashes` or leaf features |
-| Fast hashes | XXH3-64/128, RapidHash V3-64 | `fast-hashes` or leaf features |
-| MACs and KDFs | HMAC-SHA-2/SHA-3, KMAC128/256, Poly1305, HKDF-SHA-2, PBKDF2-HMAC-SHA-2 | `macs`, `kdfs`, or leaf features |
-| Password hashing | Argon2d/i/id, scrypt, bounded PHC password records | `password-hashing` or leaf features |
-| Signatures and RSA | ECDSA P-256/P-384, Ed25519, [ML-DSA-44/65/87](docs/mldsa.md), RSA signing, verification, encryption, and key generation | `signatures` or leaf features |
-| Key exchange and KEMs | P-256 ECDH, P-384 ECDH, X25519, ML-KEM-512/768/1024 | `key-exchange` or leaf features |
-| AEADs | AES-GCM, AES-GCM-SIV, AES-SIV-CMAC, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128 | `aead` or leaf features |
+| Checksums | CRC-16, CRC-24, CRC-32, CRC-32C, CRC-64/XZ, CRC-64/NVMe | `checksums` or a leaf feature |
+| Cryptographic hashes | SHA-2, SHA-3, SHAKE, cSHAKE, BLAKE2, BLAKE3, Ascon-Hash/XOF/CXOF | `crypto-hashes` or a leaf feature |
+| Fast hashes | XXH3-64/128, RapidHash V3-64 | `fast-hashes` or a leaf feature |
+| MACs and KDFs | HMAC-SHA-2/SHA-3, KMAC128/256, Poly1305, HKDF-SHA-2, PBKDF2-HMAC-SHA-2 | `macs`, `kdfs`, or a leaf feature |
+| Password hashing | Argon2d/i/id, scrypt, bounded PHC password records | `password-hashing` or a leaf feature |
+| Signatures and RSA | ECDSA P-256/P-384, Ed25519, [ML-DSA-44/65/87](docs/mldsa.md), RSA signing, verification, encryption, and key generation | `signatures` or a leaf feature |
+| Key exchange and KEMs | P-256 ECDH, P-384 ECDH, X25519, ML-KEM-512/768/1024 | `key-exchange` or a leaf feature |
+| AEADs | AES-GCM, AES-GCM-SIV, AES-SIV-CMAC, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128 | `aead` or a leaf feature |
 
-The compatibility-only WebSocket accept digest requires `websocket-sha1`,
-which is excluded from `full` and every other umbrella feature.
+The WebSocket accept digest exists only for protocol compatibility.
+It needs the `websocket-sha1` feature.
+No umbrella feature, including `full`, enables it.
 
-Use [docs.rs](https://docs.rs/rscrypto) for exact types and methods.
+See [docs.rs](https://docs.rs/rscrypto) for exact types and methods.
 
 ## Platforms and dispatch
 
-The portable Rust implementation is the byte-for-byte authority.
-Compile-time target support and, with `std`,
-detected runtime CPU capabilities select eligible SIMD or assembly kernels.
-Unsupported acceleration falls back to portable Rust.
+The portable Rust implementation defines the correct output, byte for byte.
+Every accelerated backend must give the same output.
+At compile time, the target sets which backends are available.
+With `std`, `rscrypto` also detects CPU features at run time and selects a backend.
+If no accelerated backend is available, the portable implementation runs.
 
-The [`platform guide`](docs/platforms.md) explains the supported target catalog, dispatch, `no_std` coverage,
-and the limits of `portable-only`.
+The [platform guide](docs/platforms.md) lists the supported targets.
+It also explains dispatch, `no_std` support, and the limits of `portable-only`.
+
+## Assurance
+
+A security claim exists only while its evidence passes.
+Missing or old evidence removes the claim; it never weakens a gate.
+
+- **Correctness:** NIST, RFC, upstream, and Wycheproof vectors, independent implementations,
+  property tests, negative tests, and Miri.
+- **Fuzzing:** fuzz targets run the production code across primitives, parsers, state machines,
+  and trait boundaries.
+  Minimized inputs replay as tests.
+  A separate lane runs them with sanitizers.
+- **Backends:** differential tests compare each accelerated backend with portable Rust.
+  They cover lengths, alignments, tails, state transitions, dispatch,
+  and fallback on native targets.
+- **Constant time:** [`ct.toml`](ct.toml) lists the exact operations under test.
+  The evidence combines inspection of optimized linked binaries,
+  BINSEC proofs for fixed-shape kernels, and DudeCT timing tests for end-to-end operations.
+- **Secrets:** types that own secrets hide their contents in `Debug` output
+  and clear their initialized storage on drop.
+  Copy rules vary by type; for example, keyed BLAKE2 and BLAKE3 state supports `Clone`.
+  The [secret ownership inventory](docs/secret-ownership.md) lists each type.
+- **Failures:** verification failures do not tell why they failed.
+  A failed AEAD open clears the unauthenticated plaintext.
+
+A constant-time claim applies only to the target, features, compiler, profile,
+and operation that its evidence covers.
+Source code that looks branchless is not proof.
+
+For details, see the [test evidence](docs/test-vector-coverage.md), the [constant-time model](docs/constant-time.md), the [secret lifecycle](docs/secret-lifecycle.md),
+and the [threat model](THREAT_MODEL.md).
+
+`rscrypto` has not had a third-party security audit.
+The project cannot pay for one now, and automated evidence does not replace it.
+`rscrypto` does not claim to be audited, FIPS 140-3 validated, formally verified,
+or constant time as a whole crate.
+
+Report a suspected vulnerability through [GitHub Private Vulnerability Reporting](https://github.com/loadingalias/rscrypto/security/advisories/new).
+Follow the [`SECURITY.md`](SECURITY.md) process.
+Do not open a public issue.
+
+## Performance
+
+A performance claim applies only to a retained benchmark campaign with equivalent workloads.
+The September 2026 campaign has 19,614 completed cases,
+including corrected ML-KEM and Argon2 comparisons.
+It does not have a summary scorecard yet.
+Older summary tables mixed different workloads: entropy, key preparation, output format,
+or salt length.
+They are historical records, not current claims.
+
+The [benchmark overview](benchmark_results/OVERVIEW.md) records each campaign, its target results, and its limits.
+The [comparison contracts](docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts) define equivalent ML-KEM and Argon2 workloads.
 
 ## Project
 
-The guides and examples describe the accompanying source.
-Use the matching version of the [API documentation](https://docs.rs/rscrypto) for a published dependency.
+The guides and examples describe the source in this repository.
+For a published version, use the matching [API documentation](https://docs.rs/rscrypto).
 
-Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before changing code.
-Published changes live in [`CHANGELOG.md`](CHANGELOG.md).
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before you change code.
+[`CHANGELOG.md`](CHANGELOG.md) lists published changes.
 
 ## License
 

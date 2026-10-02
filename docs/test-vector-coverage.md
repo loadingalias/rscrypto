@@ -1,36 +1,50 @@
 # Test evidence
 
-This map identifies the independent evidence behind each primitive family
-and the important boundaries that remain outside it.
-Test filenames are the stable entry points;
-individual corpus files remain owned by `testdata/` and the test readers.
+This map shows the independent evidence for each primitive family,
+and the important limits outside that evidence.
+Test filenames are the stable entry points.
+`testdata/` and the test readers own the individual corpus files.
 
 ## Coverage map
 
-| Family | Independent evidence | Boundary or gap |
+| Family | Independent evidence | Limit or gap |
 | --- | --- | --- |
-| CRC-16/24/32/64 | Property tests plus `crc`, `crc-fast`, `crc32fast`, `crc32c`, and `crc64fast` oracles where applicable | Checksums have no Wycheproof suites. |
-| SHA-2, SHA-3, SHAKE, cSHAKE, KMAC | NIST vectors, vendored `.blb` corpora, and RustCrypto differentials | KMAC128 has no mapped Wycheproof suite. |
-| BLAKE2, BLAKE3, Ascon hash/XOF | Upstream or NIST corpora plus independent differentials | Hash functions have no invalid ciphertext or signature class. |
-| XXH3 and RapidHash | Upstream-crate differentials, streaming tests, and fuzzing | Non-cryptographic; no Wycheproof suite applies. |
-| HMAC, HKDF, PBKDF2, Poly1305 | Official vectors, Wycheproof where the public profile maps, properties, and differentials | HMAC-SHA3 has no mapped Wycheproof suite. Only explicitly exposed tag widths map. |
-| Argon2 and scrypt | Published vectors, RustCrypto differentials, kernel/parallel tests, and Miri | No Wycheproof PHC-string suite exists. |
-| AEADs | Wycheproof where variants and nonce widths map, official vectors, RustCrypto oracles, corruption tests, and backend equivalence | Unsupported key or nonce sizes are filtered at the typed API boundary. Wycheproof's older Ascon variant does not match NIST Ascon-AEAD128. |
-| ECDSA, Ed25519, X25519 | RFC or official vectors, Wycheproof, RustCrypto/dalek oracles, properties, and fuzzing | ASN.1, JWK, or variable-length profiles are excluded where the public API accepts fixed arrays only. |
-| P-256 ECDH | All 25 NIST CAVP P-256 ECC CDH component records, all 355 pinned Wycheproof `ecpoint` cases, RustCrypto differentials, a ring cross-agreement, Miri, and fuzzing | The first public surface accepts canonical uncompressed SEC1 points only. Wycheproof supplies the full-width leading-zero and all-zero x-coordinate cases; the NIST slice does not contain a full leading-zero byte. |
-| P-384 ECDH | All 25 NIST CAVP P-384 ECC CDH component records, all 790 pinned Wycheproof `ecpoint` cases, RustCrypto differentials and properties, a ring cross-agreement, and fuzzing | The public surface accepts canonical uncompressed SEC1 points only. |
-| ML-KEM-512/768/1024 | NIST ACVP key-generation, encapsulation, decapsulation, and key-check vectors; all 1,725 pinned Wycheproof cases; all 2,595 CCTV modulus-check keys and the CCTV `strcmp` rejection vectors; the Go standard library's accumulated ML-KEM-768 hashes (10,000 iterations, 1,000,000 ignored); and `fips203` differentials | [Wycheproof provenance](../testdata/mlkem/wycheproof/README.md) and [CCTV provenance](../testdata/mlkem/cctv/README.md). CCTV's unlucky-sampling and accumulated vectors target the FIPS 203 draft and are not imported; Wycheproof's high-rejection matrix seeds cover sampling under the final standard. |
-| ML-DSA-44/65/87 | All 615 pinned NIST ACVP cases; all 1,138 pinned Wycheproof signing and verification cases; RustCrypto 0.1.1 differentials; context, encoding, entropy, and prehash-domain rejection tests | [ACVP provenance](../testdata/mldsa/acvp/README.md) and [Wycheproof provenance](../testdata/mldsa/wycheproof/README.md); successful sigGen vectors close positive prehash cases absent from the sigVer corpus. Timing and resource qualification remain open. |
-| RSA signatures, encryption, and parsing | NIST CAVP, Wycheproof, RustCrypto and system OpenSSL/LibreSSL oracles, profile-confusion, allocation, and leakage tests | Public APIs expose fixed SHA-2 profiles rather than every Wycheproof parameter combination; system-library oracle availability depends on the test host. |
-| Dispatch and fallback | Portable-versus-accelerated differential tests across lengths, tails, and vectored input | Cross-compilation alone is not runtime evidence. |
+| CRC-16/24/32/64 | Property tests, and the `crc`, `crc-fast`, `crc32fast`, `crc32c`, and `crc64fast` oracles where they apply. | No Wycheproof suites exist for checksums. |
+| SHA-2, SHA-3, SHAKE, cSHAKE, KMAC | NIST vectors, vendored `.blb` corpora, and RustCrypto differentials. | No Wycheproof suite maps to KMAC128. |
+| BLAKE2, BLAKE3, Ascon-Hash/XOF | Upstream or NIST corpora, and independent differentials. | Hash functions have no invalid-ciphertext or invalid-signature class. |
+| XXH3 and RapidHash | Differentials against the upstream crates, streaming tests, and fuzzing. | Not cryptographic. No Wycheproof suite applies. |
+| HMAC, HKDF, PBKDF2, Poly1305 | Official vectors, Wycheproof where the public profile maps, properties, and differentials. | No Wycheproof suite maps to HMAC-SHA3. Only the tag widths that the API exposes map. |
+| Argon2 and scrypt | Published vectors, RustCrypto differentials, kernel and parallel tests, and Miri. | No Wycheproof suite exists for PHC strings. |
+| AEADs | Wycheproof where the variant and nonce width map, official vectors, RustCrypto oracles, corruption tests, and backend equivalence. | The typed API rejects unsupported key and nonce sizes, so those cases are filtered out. Wycheproof's older Ascon variant does not match NIST Ascon-AEAD128. |
+| ECDSA, Ed25519, X25519 | RFC or official vectors, Wycheproof, RustCrypto and dalek oracles, properties, and fuzzing. | ASN.1, JWK, and variable-length profiles are excluded where the public API accepts only fixed arrays. |
+| P-256 ECDH | All 25 NIST CAVP P-256 ECC CDH component records, all 355 pinned Wycheproof `ecpoint` cases, RustCrypto differentials, a ring cross-agreement, Miri, and fuzzing. | The public API accepts only canonical uncompressed SEC1 points. Wycheproof supplies the full-width leading-zero and all-zero x-coordinate cases. The NIST slice has no full leading-zero byte. |
+| P-384 ECDH | All 25 NIST CAVP P-384 ECC CDH component records, all 790 pinned Wycheproof `ecpoint` cases, RustCrypto differentials and properties, a ring cross-agreement, and fuzzing. | The public API accepts only canonical uncompressed SEC1 points. |
+| ML-KEM-512/768/1024 | See [ML-KEM evidence](#ml-kem-evidence). | CCTV's unlucky-sampling and accumulated vectors target the FIPS 203 draft and are not imported. Wycheproof's high-rejection matrix seeds cover sampling under the final standard. |
+| ML-DSA-44/65/87 | All 615 pinned NIST ACVP cases, all 1,138 pinned Wycheproof signing and verification cases, RustCrypto 0.1.1 differentials, and rejection tests for context, encoding, entropy, and prehash domain. | Successful sigGen vectors cover the positive prehash cases that the sigVer corpus lacks. Timing and resource qualification are still open. Provenance: [ACVP](../testdata/mldsa/acvp/README.md), [Wycheproof](../testdata/mldsa/wycheproof/README.md). |
+| RSA signatures, encryption, and parsing | NIST CAVP, Wycheproof, RustCrypto and system OpenSSL/LibreSSL oracles, and profile-confusion, allocation, and leakage tests. | The public API exposes fixed SHA-2 profiles, not every Wycheproof parameter combination. The system-library oracles run only where the test host has them. |
+| Dispatch and fallback | Differential tests, portable against accelerated, across lengths, tails, and vectored input. | Cross-compilation alone is not runtime evidence. |
+
+### ML-KEM evidence
+
+- NIST ACVP key-generation, encapsulation, decapsulation, and key-check vectors.
+- All 1,725 pinned Wycheproof cases ([provenance](../testdata/mlkem/wycheproof/README.md)).
+- All 2,595 CCTV modulus-check keys, and the CCTV `strcmp` rejection vectors
+  ([provenance](../testdata/mlkem/cctv/README.md)).
+- The accumulated ML-KEM-768 hashes from the Go standard library:
+  10,000 iterations run by default; the 1,000,000-iteration test is ignored by default.
+- `fips203` differentials.
+
+### Other cases
 
 The WebSocket accept digest has the RFC 6455 example, private SHA-1 known-answer tests,
 RustCrypto differential tests, and fuzzing.
-It is compatibility-only and makes no collision-resistance or authentication claim.
+It exists only for compatibility.
+It makes no collision-resistance or authentication claim.
 
-ECDSA P-256/SHA-384 and P-384/SHA-256 verification use RFC 6979 Appendix A.2.5/A.2.6 vectors
-and RustCrypto differentials in `tests/ecdsa_oracle.rs`. They cover digest truncation, hash selection,
-message boundaries, and rejection of changed messages, keys, and signatures.
+ECDSA P-256/SHA-384 and P-384/SHA-256 verification use the RFC 6979 Appendix A.2.5 and A.2.6 vectors
+and RustCrypto differentials in `tests/ecdsa_oracle.rs`.
+They cover digest truncation, hash selection, message boundaries, and rejection of changed messages,
+keys, and signatures.
 The vendored ECDSA Wycheproof suites cover P-256/SHA-256 and P-384/SHA-384.
 
 ## Run the evidence
@@ -40,14 +54,15 @@ just test --all
 just test-fuzz --all
 ```
 
-Specialized Miri, target, constant-time, and leakage recipes are listed by `just --list`.
+`just --list` shows the specialized Miri, target, constant-time, and leakage recipes.
 
 The [Fuzz workflow](../.github/workflows/fuzz.yml) runs x86-64 fuzzing and focused Miri checks for pull requests.
 Release qualification selects both x86-64 and ARM64 fuzzing.
-Each fuzz job replays the committed corpus under AddressSanitizer before its bounded live campaign.
-Runner profiles can change independently of the target selection, concurrency, and sampling budgets;
-elapsed time alone does not establish equal fuzzing throughput.
+Each fuzz job first replays the committed corpus under AddressSanitizer,
+then runs a bounded live campaign.
+Runner profiles can change independently of target selection, concurrency, and sampling budgets.
+The same elapsed time does not mean the same fuzzing throughput.
 
-A passing vector proves behavior for that vector.
-Stronger assurance comes from combining published vectors, a separate implementation, properties,
-hostile inputs, fuzzing, portable-versus-accelerated equivalence, and target execution.
+A passing vector proves the behavior for that vector only.
+Stronger assurance comes from a combination: published vectors, a separate implementation,
+properties, hostile inputs, fuzzing, portable-versus-accelerated equivalence, and target execution.
