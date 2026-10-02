@@ -83,6 +83,13 @@ mod rsa_aarch64_linux_asm;
 mod rsa_x86_64_asm;
 
 const TAG_SEQUENCE: u8 = 0x30;
+/// RSAES-PKCS1-v1_5 padding bytes: `0x00 0x02`, at least eight PS bytes, and `0x00` (RFC 8017 7.2.1).
+const RSAES_PKCS1V15_OVERHEAD: usize = 11;
+
+/// RSAES-OAEP padding bytes for `profile`: `2 * hLen + 2` (RFC 8017 7.1.1).
+const fn rsaes_oaep_overhead(profile: RsaOaepProfile) -> usize {
+  profile.digest_len().strict_mul(2).strict_add(2)
+}
 const TAG_INTEGER: u8 = 0x02;
 const TAG_BIT_STRING: u8 = 0x03;
 const TAG_OCTET_STRING: u8 = 0x04;
@@ -1445,6 +1452,21 @@ impl fmt::Debug for RsaPrivateKeyParts<'_> {
 }
 
 impl RsaPrivateKey {
+  /// Reject `out` shorter than the longest message the padding admits.
+  ///
+  /// The check depends only on public lengths and runs before entropy use or
+  /// private arithmetic. A check against the decoded message length would
+  /// distinguish valid from invalid padding.
+  fn reject_short_decryption_output(&self, overhead: usize, out: &mut [u8]) -> Result<(), RsaPrivateOpError> {
+    if out.len() < self.signature_len().saturating_sub(overhead) {
+      ct::zeroize(out);
+      return Err(RsaPrivateOpError::InvalidLength);
+    }
+    Ok(())
+  }
+}
+
+impl RsaPrivateKey {
   /// Key-generation contract used by [`Self::generate`] and
   /// [`Self::generate_with_policy`].
   ///
@@ -2343,7 +2365,17 @@ impl RsaPrivateKey {
     ciphertext: &[u8],
     out: &mut [u8],
   ) -> Result<usize, RsaPrivateOpError> {
-    self.decrypt_oaep_with_scratch(profile, label, ciphertext, out, &mut self.private_scratch())
+    self.reject_short_decryption_output(rsaes_oaep_overhead(profile), out)?;
+    let result = self.components.random_blinding_factor().and_then(|blinding| {
+      self.components.decrypt_oaep_with_blinding_factor(
+        profile,
+        label,
+        ciphertext,
+        RsaBlindingPair::trusted(blinding.factor(), blinding.inverse()),
+        out,
+      )
+    });
+    clear_output_on_error(result, out)
   }
 
   /// Decrypt an RSAES-OAEP ciphertext using OS-backed blinding and caller-owned scratch.
@@ -2373,12 +2405,17 @@ impl RsaPrivateKey {
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<usize, RsaPrivateOpError> {
-    self.components.decrypt_with_random_blinding_and_scratch(
-      RsaDecryptionPadding::Oaep { profile, label },
-      ciphertext,
-      out,
-      scratch,
-    )
+    self.reject_short_decryption_output(rsaes_oaep_overhead(profile), out)?;
+    let result = self
+      .components
+      .random_blinding_factor_into_scratch(scratch)
+      .and_then(|()| {
+        self
+          .components
+          .decrypt_oaep_with_stored_blinding_and_scratch(profile, label, ciphertext, out, scratch)
+      });
+    scratch.clear();
+    clear_decryption_output_on_error(result, out)
   }
 
   /// Decrypt an RSAES-PKCS1-v1_5 ciphertext using OS-backed blinding.
@@ -2400,7 +2437,15 @@ impl RsaPrivateKey {
   #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
   #[must_use = "RSA decryption failure must be checked; a dropped Result silently discards plaintext"]
   pub fn decrypt_pkcs1v15(&self, ciphertext: &[u8], out: &mut [u8]) -> Result<usize, RsaPrivateOpError> {
-    self.decrypt_pkcs1v15_with_scratch(ciphertext, out, &mut self.private_scratch())
+    self.reject_short_decryption_output(RSAES_PKCS1V15_OVERHEAD, out)?;
+    let result = self.components.random_blinding_factor().and_then(|blinding| {
+      self.components.decrypt_pkcs1v15_with_blinding_factor(
+        ciphertext,
+        RsaBlindingPair::trusted(blinding.factor(), blinding.inverse()),
+        out,
+      )
+    });
+    clear_output_on_error(result, out)
   }
 
   /// Decrypt an RSAES-PKCS1-v1_5 ciphertext using OS-backed blinding and caller-owned scratch.
@@ -2428,9 +2473,17 @@ impl RsaPrivateKey {
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<usize, RsaPrivateOpError> {
-    self
+    self.reject_short_decryption_output(RSAES_PKCS1V15_OVERHEAD, out)?;
+    let result = self
       .components
-      .decrypt_with_random_blinding_and_scratch(RsaDecryptionPadding::Pkcs1v15, ciphertext, out, scratch)
+      .random_blinding_factor_into_scratch(scratch)
+      .and_then(|()| {
+        self
+          .components
+          .decrypt_pkcs1v15_with_stored_blinding_and_scratch(ciphertext, out, scratch)
+      });
+    scratch.clear();
+    clear_decryption_output_on_error(result, out)
   }
 
   /// Sign a message using RSASSA-PKCS1-v1_5 with caller-supplied blinding.
@@ -2554,12 +2607,11 @@ impl RsaPrivateKey {
     blinding: RsaBlindingPair<'_>,
     out: &mut [u8],
   ) -> Result<usize, RsaPrivateOpError> {
-    self.components.decrypt_with_blinding_factor(
-      RsaDecryptionPadding::Oaep { profile, label },
-      ciphertext,
-      blinding,
-      out,
-    )
+    self.reject_short_decryption_output(rsaes_oaep_overhead(profile), out)?;
+    let result = self
+      .components
+      .decrypt_oaep_with_blinding_factor(profile, label, ciphertext, blinding, out);
+    clear_decryption_output_on_error(result, out)
   }
 
   /// Decrypt RSAES-PKCS1-v1_5 with caller-supplied blinding.
@@ -2585,9 +2637,11 @@ impl RsaPrivateKey {
     blinding: RsaBlindingPair<'_>,
     out: &mut [u8],
   ) -> Result<usize, RsaPrivateOpError> {
-    self
+    self.reject_short_decryption_output(RSAES_PKCS1V15_OVERHEAD, out)?;
+    let result = self
       .components
-      .decrypt_with_blinding_factor(RsaDecryptionPadding::Pkcs1v15, ciphertext, blinding, out)
+      .decrypt_pkcs1v15_with_blinding_factor(ciphertext, blinding, out);
+    clear_decryption_output_on_error(result, out)
   }
 
   /// Decrypt RSAES-OAEP with caller-supplied blinding and scratch.
@@ -2617,13 +2671,11 @@ impl RsaPrivateKey {
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<usize, RsaPrivateOpError> {
-    self.components.decrypt_with_blinding_factor_and_scratch(
-      RsaDecryptionPadding::Oaep { profile, label },
-      ciphertext,
-      blinding,
-      out,
-      scratch,
-    )
+    self.reject_short_decryption_output(rsaes_oaep_overhead(profile), out)?;
+    let result = self
+      .components
+      .decrypt_oaep_with_blinding_factor_and_scratch(profile, label, ciphertext, blinding, out, scratch);
+    clear_decryption_output_on_error(result, out)
   }
 
   /// Decrypt RSAES-PKCS1-v1_5 with caller-supplied blinding and scratch.
@@ -2651,13 +2703,11 @@ impl RsaPrivateKey {
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<usize, RsaPrivateOpError> {
-    self.components.decrypt_with_blinding_factor_and_scratch(
-      RsaDecryptionPadding::Pkcs1v15,
-      ciphertext,
-      blinding,
-      out,
-      scratch,
-    )
+    self.reject_short_decryption_output(RSAES_PKCS1V15_OVERHEAD, out)?;
+    let result = self
+      .components
+      .decrypt_pkcs1v15_with_blinding_factor_and_scratch(ciphertext, blinding, out, scratch);
+    clear_decryption_output_on_error(result, out)
   }
 }
 
@@ -3025,6 +3075,57 @@ impl RsaPrivateKeyComponents {
   }
 
   #[cfg(feature = "getrandom")]
+  fn random_blinding_factor(&self) -> Result<RsaBlindingFactor, RsaPrivateOpError> {
+    self.random_blinding_factor_with(getrandom::fill)
+  }
+
+  #[cfg(feature = "getrandom")]
+  fn random_blinding_factor_with<E>(
+    &self,
+    mut fill_random: impl FnMut(&mut [u8]) -> Result<(), E>,
+  ) -> Result<RsaBlindingFactor, RsaPrivateOpError> {
+    let len = self.public.modulus().len();
+    for _ in 0..128 {
+      let mut factor = vec![0u8; len];
+      if fill_random(&mut factor).is_err() {
+        ct::zeroize(&mut factor);
+        return Err(RsaPrivateOpError::EntropyUnavailable);
+      }
+      if is_zero_unsigned_be(&factor) || unsigned_be_cmp(&factor, self.public.modulus()) != core::cmp::Ordering::Less {
+        ct::zeroize(&mut factor);
+        continue;
+      }
+
+      let mut inverse = vec![0u8; len];
+      match self.blinding_factor_inverse(&factor, &mut inverse) {
+        Ok(()) => {
+          let mut check = vec![0u8; len];
+          if mod_mul_representatives(&self.public.modulus, &factor, &inverse, &mut check).is_ok()
+            && check.last() == Some(&1)
+          {
+            let is_one = check
+              .get(..check.len().strict_sub(1))
+              .is_some_and(|prefix| prefix.iter().all(|&byte| byte == 0));
+            if is_one {
+              return Ok(RsaBlindingFactor {
+                factor: SecretBigEndianBuffer::new(factor),
+                inverse: SecretBigEndianBuffer::new(inverse),
+              });
+            }
+          }
+          ct::zeroize(&mut factor);
+          ct::zeroize(&mut inverse);
+        }
+        Err(_) => {
+          ct::zeroize(&mut factor);
+          ct::zeroize(&mut inverse);
+        }
+      }
+    }
+    Err(RsaPrivateOpError::InvalidBlindingFactor)
+  }
+
+  #[cfg(feature = "getrandom")]
   fn random_blinding_factor_into_scratch(&self, scratch: &mut RsaPrivateScratch) -> Result<(), RsaPrivateOpError> {
     self.random_blinding_factor_into_scratch_with(scratch, getrandom::fill)
   }
@@ -3080,7 +3181,7 @@ impl RsaPrivateKeyComponents {
     Err(RsaPrivateOpError::InvalidBlindingFactor)
   }
 
-  #[cfg(all(feature = "getrandom", any(test, all(rscrypto_internal, feature = "diag"))))]
+  #[cfg(feature = "getrandom")]
   fn blinding_factor_inverse(&self, factor: &[u8], out: &mut [u8]) -> Result<(), RsaPrivateOpError> {
     let n_len = self.public.modulus().len();
     if factor.len() != n_len || out.len() != n_len {
@@ -3117,8 +3218,15 @@ impl RsaPrivateKeyComponents {
     blinding: RsaBlindingPair<'_>,
     out: &mut [u8],
   ) -> Result<(), RsaPrivateOpError> {
-    let mut scratch = RsaPrivateScratch::new_components(self);
-    self.sign_pkcs1v15_with_blinding_factor_and_scratch(profile, message, blinding, out, &mut scratch)
+    let mut encoded = vec![0u8; self.public.modulus().len()];
+    let result = match profile {
+      RsaPkcs1v15Profile::Sha256 => encode_pkcs1v15::<Sha256>(message, SHA256_DIGEST_INFO_PREFIX, &mut encoded),
+      RsaPkcs1v15Profile::Sha384 => encode_pkcs1v15::<Sha384>(message, SHA384_DIGEST_INFO_PREFIX, &mut encoded),
+      RsaPkcs1v15Profile::Sha512 => encode_pkcs1v15::<Sha512>(message, SHA512_DIGEST_INFO_PREFIX, &mut encoded),
+    }
+    .and_then(|()| self.sign_encoded_message_with_blinding_factor(&encoded, blinding, out));
+    ct::zeroize(&mut encoded);
+    result
   }
 
   fn sign_pkcs1v15_with_blinding_factor_and_scratch(
@@ -3176,8 +3284,22 @@ impl RsaPrivateKeyComponents {
     blinding: RsaBlindingPair<'_>,
     out: &mut [u8],
   ) -> Result<(), RsaPrivateOpError> {
-    let mut scratch = RsaPrivateScratch::new_components(self);
-    self.sign_pss_with_salt_and_blinding_factor_and_scratch(profile, message, salt, blinding, out, &mut scratch)
+    let em_bits = self.public.modulus_bits().strict_sub(1);
+    let em_len = em_bits.strict_add(7) / 8;
+    let mut encoded = vec![0u8; self.public.modulus().len()];
+    let leading = encoded.len().strict_sub(em_len);
+    let Some(encoded_message) = encoded.get_mut(leading..) else {
+      ct::zeroize(&mut encoded);
+      return Err(RsaPrivateOpError::MessageTooLong);
+    };
+    let result = match profile {
+      RsaPssProfile::Sha256 => encode_pss::<Sha256>(message, salt, em_bits, encoded_message),
+      RsaPssProfile::Sha384 => encode_pss::<Sha384>(message, salt, em_bits, encoded_message),
+      RsaPssProfile::Sha512 => encode_pss::<Sha512>(message, salt, em_bits, encoded_message),
+    }
+    .and_then(|()| self.sign_encoded_message_with_blinding_factor(&encoded, blinding, out));
+    ct::zeroize(&mut encoded);
+    result
   }
 
   fn sign_pss_with_salt_and_blinding_factor_and_scratch(
@@ -3275,6 +3397,20 @@ impl RsaPrivateKeyComponents {
     .and_then(|()| self.sign_encoded_message_with_stored_blinding_and_scratch(out, scratch))
   }
 
+  fn sign_encoded_message_with_blinding_factor(
+    &self,
+    encoded: &[u8],
+    blinding: RsaBlindingPair<'_>,
+    out: &mut [u8],
+  ) -> Result<(), RsaPrivateOpError> {
+    let len = self.public.modulus().len();
+    if encoded.len() != len || out.len() != len {
+      return Err(RsaPrivateOpError::InvalidLength);
+    }
+
+    self.private_operation_with_blinding_factor(encoded, blinding, out)
+  }
+
   fn sign_encoded_message_with_blinding_factor_and_scratch(
     &self,
     blinding: RsaBlindingPair<'_>,
@@ -3306,69 +3442,198 @@ impl RsaPrivateKeyComponents {
       })
   }
 
-  fn decrypt_with_blinding_factor(
+  fn decrypt_oaep_with_blinding_factor(
     &self,
-    padding: RsaDecryptionPadding<'_>,
+    profile: RsaOaepProfile,
+    label: &[u8],
     ciphertext: &[u8],
     blinding: RsaBlindingPair<'_>,
     out: &mut [u8],
   ) -> Result<usize, RsaPrivateOpError> {
-    let mut scratch = RsaPrivateScratch::new_components(self);
-    self.decrypt_with_blinding_factor_and_scratch(padding, ciphertext, blinding, out, &mut scratch)
+    let mut encoded = vec![0u8; self.public.modulus().len()];
+    let result = self
+      .private_operation_with_blinding_factor(ciphertext, blinding, &mut encoded)
+      .and_then(|()| match profile {
+        RsaOaepProfile::Sha256 => decode_oaep::<Sha256>(label, &mut encoded, out),
+        RsaOaepProfile::Sha384 => decode_oaep::<Sha384>(label, &mut encoded, out),
+        RsaOaepProfile::Sha512 => decode_oaep::<Sha512>(label, &mut encoded, out),
+      });
+    ct::zeroize(&mut encoded);
+    clear_decryption_output_on_error(result, out)
   }
 
-  fn decrypt_with_blinding_factor_and_scratch(
+  fn decrypt_pkcs1v15_with_blinding_factor(
     &self,
-    padding: RsaDecryptionPadding<'_>,
     ciphertext: &[u8],
     blinding: RsaBlindingPair<'_>,
     out: &mut [u8],
-    scratch: &mut RsaPrivateScratch,
   ) -> Result<usize, RsaPrivateOpError> {
+    let mut encoded = vec![0u8; self.public.modulus().len()];
     let result = self
-      .load_decryption_input(padding, ciphertext, out, scratch)
-      .and_then(|()| self.private_operation_from_scratch_encoded(blinding, scratch))
-      .and_then(|()| padding.decode_from_scratch(out, scratch));
-    scratch.clear();
-    clear_output_on_error(result, out)
+      .private_operation_with_blinding_factor(ciphertext, blinding, &mut encoded)
+      .and_then(|()| decode_pkcs1v15_encryption(&encoded, out));
+    ct::zeroize(&mut encoded);
+    clear_decryption_output_on_error(result, out)
   }
 
   #[cfg(feature = "getrandom")]
-  fn decrypt_with_random_blinding_and_scratch(
+  fn decrypt_oaep_with_stored_blinding_and_scratch(
     &self,
-    padding: RsaDecryptionPadding<'_>,
+    profile: RsaOaepProfile,
+    label: &[u8],
     ciphertext: &[u8],
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<usize, RsaPrivateOpError> {
-    let result = self
-      .load_decryption_input(padding, ciphertext, out, scratch)
-      .and_then(|()| self.random_blinding_factor_into_scratch(scratch))
-      .and_then(|()| self.private_operation_from_scratch_encoded_with_stored_blinding(scratch))
-      .and_then(|()| padding.decode_from_scratch(out, scratch));
-    scratch.clear();
-    clear_output_on_error(result, out)
+    let result = scratch.ensure_len(self.public.modulus().len()).and_then(|()| {
+      if ciphertext.len() != scratch.encoded.as_slice().len() {
+        Err(RsaPrivateOpError::InvalidLength)
+      } else {
+        scratch.encoded.as_mut_slice().copy_from_slice(ciphertext);
+        self
+          .private_operation_from_scratch_encoded_with_stored_blinding(scratch)
+          .map(|()| {
+            scratch
+              .encoded
+              .as_mut_slice()
+              .copy_from_slice(scratch.blinded_private_result.as_slice())
+          })
+          .and_then(|()| match profile {
+            RsaOaepProfile::Sha256 => decode_oaep_with_masks::<Sha256>(
+              label,
+              scratch.encoded.as_mut_slice(),
+              out,
+              scratch.blinding_power.as_mut_slice(),
+              scratch.blinded.as_mut_slice(),
+            ),
+            RsaOaepProfile::Sha384 => decode_oaep_with_masks::<Sha384>(
+              label,
+              scratch.encoded.as_mut_slice(),
+              out,
+              scratch.blinding_power.as_mut_slice(),
+              scratch.blinded.as_mut_slice(),
+            ),
+            RsaOaepProfile::Sha512 => decode_oaep_with_masks::<Sha512>(
+              label,
+              scratch.encoded.as_mut_slice(),
+              out,
+              scratch.blinding_power.as_mut_slice(),
+              scratch.blinded.as_mut_slice(),
+            ),
+          })
+      }
+    });
+    clear_decryption_output_on_error(result, out)
   }
 
-  /// Validate the public decryption shape and copy `ciphertext` into scratch.
-  ///
-  /// `out` must hold the longest message `padding` admits for this modulus, so
-  /// the capacity check depends only on public lengths. A check against the
-  /// decoded message length would distinguish valid from invalid padding.
-  fn load_decryption_input(
+  #[cfg(feature = "getrandom")]
+  fn decrypt_pkcs1v15_with_stored_blinding_and_scratch(
     &self,
-    padding: RsaDecryptionPadding<'_>,
     ciphertext: &[u8],
-    out: &[u8],
+    out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
+  ) -> Result<usize, RsaPrivateOpError> {
+    let result = scratch.ensure_len(self.public.modulus().len()).and_then(|()| {
+      if ciphertext.len() != scratch.encoded.as_slice().len() {
+        Err(RsaPrivateOpError::InvalidLength)
+      } else {
+        scratch.encoded.as_mut_slice().copy_from_slice(ciphertext);
+        self
+          .private_operation_from_scratch_encoded_with_stored_blinding(scratch)
+          .and_then(|()| decode_pkcs1v15_encryption(scratch.blinded_private_result.as_slice(), out))
+      }
+    });
+    clear_decryption_output_on_error(result, out)
+  }
+
+  fn decrypt_oaep_with_blinding_factor_and_scratch(
+    &self,
+    profile: RsaOaepProfile,
+    label: &[u8],
+    ciphertext: &[u8],
+    blinding: RsaBlindingPair<'_>,
+    out: &mut [u8],
+    scratch: &mut RsaPrivateScratch,
+  ) -> Result<usize, RsaPrivateOpError> {
+    let result = scratch.ensure_len(self.public.modulus().len()).and_then(|()| {
+      if ciphertext.len() != scratch.encoded.as_slice().len() {
+        Err(RsaPrivateOpError::InvalidLength)
+      } else {
+        scratch.encoded.as_mut_slice().copy_from_slice(ciphertext);
+        self
+          .private_operation_from_scratch_encoded(blinding, scratch)
+          .map(|()| {
+            scratch
+              .encoded
+              .as_mut_slice()
+              .copy_from_slice(scratch.blinded_private_result.as_slice())
+          })
+          .and_then(|()| match profile {
+            RsaOaepProfile::Sha256 => decode_oaep_with_masks::<Sha256>(
+              label,
+              scratch.encoded.as_mut_slice(),
+              out,
+              scratch.blinding_power.as_mut_slice(),
+              scratch.blinded.as_mut_slice(),
+            ),
+            RsaOaepProfile::Sha384 => decode_oaep_with_masks::<Sha384>(
+              label,
+              scratch.encoded.as_mut_slice(),
+              out,
+              scratch.blinding_power.as_mut_slice(),
+              scratch.blinded.as_mut_slice(),
+            ),
+            RsaOaepProfile::Sha512 => decode_oaep_with_masks::<Sha512>(
+              label,
+              scratch.encoded.as_mut_slice(),
+              out,
+              scratch.blinding_power.as_mut_slice(),
+              scratch.blinded.as_mut_slice(),
+            ),
+          })
+      }
+    });
+    scratch.clear();
+    clear_decryption_output_on_error(result, out)
+  }
+
+  fn decrypt_pkcs1v15_with_blinding_factor_and_scratch(
+    &self,
+    ciphertext: &[u8],
+    blinding: RsaBlindingPair<'_>,
+    out: &mut [u8],
+    scratch: &mut RsaPrivateScratch,
+  ) -> Result<usize, RsaPrivateOpError> {
+    let result = scratch.ensure_len(self.public.modulus().len()).and_then(|()| {
+      if ciphertext.len() != scratch.encoded.as_slice().len() {
+        Err(RsaPrivateOpError::InvalidLength)
+      } else {
+        scratch.encoded.as_mut_slice().copy_from_slice(ciphertext);
+        self
+          .private_operation_from_scratch_encoded(blinding, scratch)
+          .and_then(|()| decode_pkcs1v15_encryption(scratch.blinded_private_result.as_slice(), out))
+      }
+    });
+    scratch.clear();
+    clear_decryption_output_on_error(result, out)
+  }
+
+  fn private_operation_with_blinding_factor(
+    &self,
+    input: &[u8],
+    blinding: RsaBlindingPair<'_>,
+    out: &mut [u8],
   ) -> Result<(), RsaPrivateOpError> {
     let len = self.public.modulus().len();
-    scratch.ensure_len(len)?;
-    if ciphertext.len() != len || out.len() < padding.max_message_len(len) {
+    if input.len() != len || out.len() != len || blinding.factor.len() != len || blinding.inverse.len() != len {
       return Err(RsaPrivateOpError::InvalidLength);
     }
-    scratch.encoded.as_mut_slice().copy_from_slice(ciphertext);
-    Ok(())
+
+    let mut scratch = RsaPrivateScratch::new_components(self);
+    scratch.encoded.as_mut_slice().copy_from_slice(input);
+    let result = self.private_operation_with_blinding_factor_and_scratch(blinding, out, &mut scratch);
+    scratch.clear();
+    result
   }
 
   fn private_operation_with_blinding_factor_and_scratch(
@@ -3399,16 +3664,18 @@ impl RsaPrivateKeyComponents {
     }
     scratch.ensure_len(len)?;
 
-    scratch.set_one()?;
-    mod_mul_representatives_with_scratch(
-      &self.public.modulus,
-      blinding.factor,
-      blinding.inverse,
-      scratch.checked.as_mut_slice(),
-      &mut scratch.mul_scratch,
-    )?;
-    if !ct::public_len_eq(scratch.checked.as_slice(), scratch.one.as_slice()).declassify() {
-      return Err(RsaPrivateOpError::InvalidBlindingFactor);
+    if blinding.validate {
+      scratch.set_one()?;
+      mod_mul_representatives_with_scratch(
+        &self.public.modulus,
+        blinding.factor,
+        blinding.inverse,
+        scratch.checked.as_mut_slice(),
+        &mut scratch.mul_scratch,
+      )?;
+      if !ct::public_len_eq(scratch.checked.as_slice(), scratch.one.as_slice()).declassify() {
+        return Err(RsaPrivateOpError::InvalidBlindingFactor);
+      }
     }
 
     self
@@ -3782,6 +4049,25 @@ impl Drop for SecretBigEndianBuffer {
   }
 }
 
+#[cfg(feature = "getrandom")]
+struct RsaBlindingFactor {
+  factor: SecretBigEndianBuffer,
+  inverse: SecretBigEndianBuffer,
+}
+
+#[cfg(feature = "getrandom")]
+impl RsaBlindingFactor {
+  #[inline]
+  fn factor(&self) -> &[u8] {
+    self.factor.as_slice()
+  }
+
+  #[inline]
+  fn inverse(&self) -> &[u8] {
+    self.inverse.as_slice()
+  }
+}
+
 /// Borrowed inputs for a caller-blinded RSA private operation.
 ///
 /// The factor and inverse must be fixed-width, modulus-sized representatives
@@ -3792,6 +4078,7 @@ impl Drop for SecretBigEndianBuffer {
 pub struct RsaBlindingPair<'a> {
   factor: &'a [u8],
   inverse: &'a [u8],
+  validate: bool,
 }
 
 impl fmt::Debug for RsaBlindingPair<'_> {
@@ -3811,7 +4098,21 @@ impl<'a> RsaBlindingPair<'a> {
   #[inline]
   #[must_use]
   pub const fn new(factor: &'a [u8], inverse: &'a [u8]) -> Self {
-    Self { factor, inverse }
+    Self {
+      factor,
+      inverse,
+      validate: true,
+    }
+  }
+
+  #[cfg(feature = "getrandom")]
+  #[inline]
+  const fn trusted(factor: &'a [u8], inverse: &'a [u8]) -> Self {
+    Self {
+      factor,
+      inverse,
+      validate: false,
+    }
   }
 }
 
@@ -8237,58 +8538,6 @@ fn encode_pkcs1v15_encryption_with_seed(message: &[u8], seed: &[u8], out: &mut [
   Ok(())
 }
 
-/// RSAES padding scheme selected for one decryption.
-#[derive(Clone, Copy)]
-enum RsaDecryptionPadding<'a> {
-  Oaep { profile: RsaOaepProfile, label: &'a [u8] },
-  Pkcs1v15,
-}
-
-impl RsaDecryptionPadding<'_> {
-  /// Longest message this padding admits for a `modulus_len`-byte modulus.
-  ///
-  /// A modulus too short for the padding admits no message, so the bound
-  /// clamps to zero and decoding then fails with
-  /// [`RsaPrivateOpError::DecryptionFailed`].
-  const fn max_message_len(self, modulus_len: usize) -> usize {
-    let overhead = match self {
-      Self::Oaep { profile, .. } => profile.digest_len().strict_mul(2).strict_add(2),
-      Self::Pkcs1v15 => 11,
-    };
-    modulus_len.saturating_sub(overhead)
-  }
-
-  /// Decode the private-operation result in scratch into `out`.
-  ///
-  /// OAEP unmasks the result in place and uses the blinding buffers, which the
-  /// private operation no longer needs, as MGF1 mask scratch.
-  fn decode_from_scratch(self, out: &mut [u8], scratch: &mut RsaPrivateScratch) -> Result<usize, RsaPrivateOpError> {
-    let encoded = scratch.blinded_private_result.as_mut_slice();
-    let seed_mask = scratch.blinding_power.as_mut_slice();
-    let db_mask = scratch.blinded.as_mut_slice();
-    match self {
-      Self::Oaep {
-        profile: RsaOaepProfile::Sha256,
-        label,
-      } => decode_oaep_with_masks::<Sha256>(label, encoded, out, seed_mask, db_mask),
-      Self::Oaep {
-        profile: RsaOaepProfile::Sha384,
-        label,
-      } => decode_oaep_with_masks::<Sha384>(label, encoded, out, seed_mask, db_mask),
-      Self::Oaep {
-        profile: RsaOaepProfile::Sha512,
-        label,
-      } => decode_oaep_with_masks::<Sha512>(label, encoded, out, seed_mask, db_mask),
-      Self::Pkcs1v15 => decode_pkcs1v15_encryption(encoded, out),
-    }
-  }
-}
-
-/// Decode an RSAES-PKCS1-v1_5 encoded message into `out`.
-///
-/// Every failure, including an `out` too short for the decoded message, is
-/// [`RsaPrivateOpError::DecryptionFailed`]. Callers reject short output
-/// buffers against the public maximum before decryption.
 fn decode_pkcs1v15_encryption(encoded: &[u8], out: &mut [u8]) -> Result<usize, RsaPrivateOpError> {
   if encoded.len() < 11 {
     return Err(RsaPrivateOpError::DecryptionFailed);
@@ -8323,10 +8572,33 @@ fn decode_pkcs1v15_encryption(encoded: &[u8], out: &mut [u8]) -> Result<usize, R
   Ok(message.len())
 }
 
+fn clear_decryption_output_on_error(
+  result: Result<usize, RsaPrivateOpError>,
+  out: &mut [u8],
+) -> Result<usize, RsaPrivateOpError> {
+  clear_output_on_error(result, out)
+}
+
 fn clear_output_on_error<T, E>(result: Result<T, E>, out: &mut [u8]) -> Result<T, E> {
   if result.is_err() {
     ct::zeroize(out);
   }
+  result
+}
+
+fn encode_pss<D>(message: &[u8], salt: &[u8], em_bits: usize, out: &mut [u8]) -> Result<(), RsaPrivateOpError>
+where
+  D: Digest,
+{
+  let h_len = D::OUTPUT_SIZE;
+  let db_len = out
+    .len()
+    .checked_sub(h_len)
+    .and_then(|len| len.checked_sub(1))
+    .ok_or(RsaPrivateOpError::MessageTooLong)?;
+  let mut db_mask = vec![0u8; db_len];
+  let result = encode_pss_with_mask::<D>(message, salt, em_bits, out, &mut db_mask);
+  ct::zeroize(&mut db_mask);
   result
 }
 
@@ -8442,11 +8714,24 @@ where
   Ok(())
 }
 
-/// Decode an RSAES-OAEP encoded message into `out`, unmasking `encoded` in place.
-///
-/// Padding failures, including an `out` too short for the decoded message, are
-/// [`RsaPrivateOpError::DecryptionFailed`]. Callers reject short output
-/// buffers against the public maximum before decryption.
+fn decode_oaep<D>(label: &[u8], encoded: &mut [u8], out: &mut [u8]) -> Result<usize, RsaPrivateOpError>
+where
+  D: Digest,
+{
+  let h_len = D::OUTPUT_SIZE;
+  let db_mask_len = encoded
+    .len()
+    .checked_sub(h_len)
+    .and_then(|len| len.checked_sub(1))
+    .ok_or(RsaPrivateOpError::DecryptionFailed)?;
+  let mut seed_mask = vec![0u8; h_len];
+  let mut db_mask = vec![0u8; db_mask_len];
+  let result = decode_oaep_with_masks::<D>(label, encoded, out, &mut seed_mask, &mut db_mask);
+  ct::zeroize(&mut seed_mask);
+  ct::zeroize(&mut db_mask);
+  result
+}
+
 fn decode_oaep_with_masks<D>(
   label: &[u8],
   encoded: &mut [u8],
@@ -8505,10 +8790,10 @@ where
     return Err(RsaPrivateOpError::DecryptionFailed);
   }
   let message = &rest[separator.strict_add(1)..];
-  let out = out
-    .get_mut(..message.len())
-    .ok_or(RsaPrivateOpError::DecryptionFailed)?;
-  out.copy_from_slice(message);
+  if out.len() < message.len() {
+    return Err(RsaPrivateOpError::DecryptionFailed);
+  }
+  out[..message.len()].copy_from_slice(message);
   Ok(message.len())
 }
 
@@ -11449,12 +11734,6 @@ ca5b455045218c7e196209c1c651702ece090a15e3cbcc265971300023a86fe9d34ad527e9ef03b7
     encoded
   }
 
-  fn decode_oaep_sha256(label: &[u8], encoded: &mut [u8], out: &mut [u8]) -> Result<usize, RsaPrivateOpError> {
-    let mut seed_mask = [0u8; Sha256::OUTPUT_SIZE];
-    let mut db_mask = vec![0u8; encoded.len().strict_sub(Sha256::OUTPUT_SIZE).strict_sub(1)];
-    decode_oaep_with_masks::<Sha256>(label, encoded, out, &mut seed_mask, &mut db_mask)
-  }
-
   fn decoded_oaep_sha256_db(label: &[u8], message: &[u8], ps_len: usize) -> Vec<u8> {
     let label_hash = Sha256::digest(label);
     let mut db = Vec::with_capacity(
@@ -12582,15 +12861,15 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
     let mut valid = masked_oaep_sha256_from_decoded_db(&seed, &decoded_db);
     let mut out = vec![0u8; message.len()];
-    let len =
-      decode_oaep_sha256(label, &mut valid, &mut out).expect("the canonical OAEP encoded-message fixture must decode");
+    let len = decode_oaep::<Sha256>(label, &mut valid, &mut out)
+      .expect("the canonical OAEP encoded-message fixture must decode");
     assert_eq!(len, message.len());
     assert_eq!(out, message);
 
     let mut bad_leading = masked_oaep_sha256_from_decoded_db(&seed, &decoded_db);
     bad_leading[0] = 1;
     assert_eq!(
-      decode_oaep_sha256(label, &mut bad_leading, &mut out),
+      decode_oaep::<Sha256>(label, &mut bad_leading, &mut out),
       Err(RsaPrivateOpError::DecryptionFailed)
     );
 
@@ -12598,7 +12877,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     bad_label_db[0] ^= 0x80;
     let mut bad_label = masked_oaep_sha256_from_decoded_db(&seed, &bad_label_db);
     assert_eq!(
-      decode_oaep_sha256(label, &mut bad_label, &mut out),
+      decode_oaep::<Sha256>(label, &mut bad_label, &mut out),
       Err(RsaPrivateOpError::DecryptionFailed)
     );
 
@@ -12606,7 +12885,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     bad_padding_db[Sha256::OUTPUT_SIZE.strict_add(3)] = 0x7f;
     let mut bad_padding = masked_oaep_sha256_from_decoded_db(&seed, &bad_padding_db);
     assert_eq!(
-      decode_oaep_sha256(label, &mut bad_padding, &mut out),
+      decode_oaep::<Sha256>(label, &mut bad_padding, &mut out),
       Err(RsaPrivateOpError::DecryptionFailed)
     );
 
@@ -12614,14 +12893,14 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     missing_separator_db[Sha256::OUTPUT_SIZE..].fill(0);
     let mut missing_separator = masked_oaep_sha256_from_decoded_db(&seed, &missing_separator_db);
     assert_eq!(
-      decode_oaep_sha256(label, &mut missing_separator, &mut out),
+      decode_oaep::<Sha256>(label, &mut missing_separator, &mut out),
       Err(RsaPrivateOpError::DecryptionFailed)
     );
 
     let mut valid_short_out = masked_oaep_sha256_from_decoded_db(&seed, &decoded_db);
     let mut short_out = vec![0u8; message.len().strict_sub(1)];
     assert_eq!(
-      decode_oaep_sha256(label, &mut valid_short_out, &mut short_out),
+      decode_oaep::<Sha256>(label, &mut valid_short_out, &mut short_out),
       Err(RsaPrivateOpError::DecryptionFailed)
     );
   }
@@ -13703,17 +13982,16 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[test]
   fn private_key_random_blinding_factor_has_valid_crt_inverse() {
     let key = prevalidated_test_private_key();
-    let mut scratch = key.private_scratch();
-    key
+    let blinding = key
       .components
-      .random_blinding_factor_into_scratch(&mut scratch)
+      .random_blinding_factor()
       .expect("test key must yield an invertible random blinding factor");
 
     let mut check = vec![0u8; key.signature_len()];
     mod_mul_representatives(
       &key.public_key().modulus,
-      scratch.blinding_factor.as_slice(),
-      scratch.blinding_inverse.as_slice(),
+      blinding.factor(),
+      blinding.inverse(),
       &mut check,
     )
     .expect("blinding factor and inverse must multiply modulo n");
