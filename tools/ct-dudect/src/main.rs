@@ -2975,6 +2975,73 @@ fn aes_siv_cmac256_fixed_vs_random_key_seal(runner: &mut CtRunner, rng: &mut Ben
     });
   }
 }
+
+/// Time the same construction and seal as `aes_siv_cmac256_fixed_vs_random_key_seal` with probe keys.
+fn aes_siv_cmac256_seal_probe(
+  runner: &mut CtRunner,
+  rng: &mut BenchRng,
+  left: fn(&mut BenchRng) -> [u8; 32],
+  right: fn(&mut BenchRng) -> [u8; 32],
+) {
+  let nonce_bytes = [0x5F; 16];
+  let nonce = AesSivCmac256Nonce::try_from(nonce_bytes.as_slice()).expect("timing nonce is non-empty");
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let key_bytes = if matches!(class, Class::Left) {
+      left(rng)
+    } else {
+      right(rng)
+    };
+    inputs.push((class, AesSivCmac256Key::from_bytes(key_bytes)));
+  }
+
+  for (class, key) in inputs {
+    runner.run_one(class, || {
+      let cipher = AesSivCmac256::new(&key);
+      let mut buffer = AEAD_PLAINTEXT;
+      cipher.seal_in_place(nonce, AAD, &mut buffer).as_bytes()[0]
+    });
+  }
+}
+
+fn aes_siv_probe_fixed_equal_halves(_: &mut BenchRng) -> [u8; 32] {
+  [0x60; 32]
+}
+
+fn aes_siv_probe_fixed_distinct_halves(_: &mut BenchRng) -> [u8; 32] {
+  let mut key = [0x60; 32];
+  key[16..].fill(0x9F);
+  key
+}
+
+fn aes_siv_probe_random_equal_halves(rng: &mut BenchRng) -> [u8; 32] {
+  let half = rand_array::<16>(rng);
+  let mut key = [0u8; 32];
+  key[..16].copy_from_slice(&half);
+  key[16..].copy_from_slice(&half);
+  key
+}
+
+fn aes_siv_probe_random(rng: &mut BenchRng) -> [u8; 32] {
+  rand_array::<32>(rng)
+}
+
+fn aes_siv_cmac256_probe_seal_fixed_vs_fixed_key(runner: &mut CtRunner, rng: &mut BenchRng) {
+  aes_siv_cmac256_seal_probe(
+    runner,
+    rng,
+    aes_siv_probe_fixed_equal_halves,
+    aes_siv_probe_fixed_equal_halves,
+  );
+}
+
+fn aes_siv_cmac256_probe_seal_equal_vs_distinct_halves(runner: &mut CtRunner, rng: &mut BenchRng) {
+  aes_siv_cmac256_seal_probe(runner, rng, aes_siv_probe_random_equal_halves, aes_siv_probe_random);
+}
+
+fn aes_siv_cmac256_probe_seal_fixed_distinct_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
+  aes_siv_cmac256_seal_probe(runner, rng, aes_siv_probe_fixed_distinct_halves, aes_siv_probe_random);
+}
 aead_fixed_vs_random_key_seal!(
   aes256gcm_fixed_vs_random_key_seal,
   Aes256Gcm,
@@ -3466,6 +3533,9 @@ ctbench_main_with_seeds!(
   (aegis256_fixed_vs_random_key_seal, Some(0x6165676973736561)),
   (ascon_aead128_fixed_vs_random_key_seal, Some(0x6173636f6e736561)),
   (aes_siv_cmac256_fixed_vs_random_key_seal, Some(0x7369765f7365616c)),
+  (aes_siv_cmac256_probe_seal_fixed_vs_fixed_key, Some(0x7369767072620000)),
+  (aes_siv_cmac256_probe_seal_equal_vs_distinct_halves, Some(0x7369767072620001)),
+  (aes_siv_cmac256_probe_seal_fixed_distinct_vs_random_key, Some(0x7369767072620002)),
   (
     aes_siv_cmac256_portable_s2v_seal_fixed_vs_random_key,
     Some(0x7369765f73327673)

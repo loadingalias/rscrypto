@@ -1737,6 +1737,39 @@ samples = 20000
 smoke_samples = 2000
 
 [[dudect_case]]
+name = "aes_siv_cmac256_probe_seal_fixed_vs_fixed_key"
+primitive = "aead.symmetric_transform"
+filter = "aes_siv_cmac256_probe_seal_fixed_vs_fixed_key"
+left_class = "complete context construction and seal with the fixed key [0x60; 32]"
+right_class = "complete context construction and seal with the fixed key [0x60; 32]"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "A/A control for aes_siv_cmac256_fixed_vs_random_key_seal on IBM Z; both classes are identical, so any bias is measurement, host, or harness artifact."
+
+[[dudect_case]]
+name = "aes_siv_cmac256_probe_seal_equal_vs_distinct_halves"
+primitive = "aead.symmetric_transform"
+filter = "aes_siv_cmac256_probe_seal_equal_vs_distinct_halves"
+left_class = "complete context construction and seal with a random key whose CMAC and CTR halves are equal"
+right_class = "complete context construction and seal with a random key"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "Tests whether equal CMAC and CTR AES keys, a property of the fixed key in aes_siv_cmac256_fixed_vs_random_key_seal, change CPACF timing on IBM Z."
+
+[[dudect_case]]
+name = "aes_siv_cmac256_probe_seal_fixed_distinct_vs_random_key"
+primitive = "aead.symmetric_transform"
+filter = "aes_siv_cmac256_probe_seal_fixed_distinct_vs_random_key"
+left_class = "complete context construction and seal with a fixed key whose CMAC and CTR halves differ"
+right_class = "complete context construction and seal with a random key"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "Separates a fixed-key timing bias from the equal-halves property of the fixed key in aes_siv_cmac256_fixed_vs_random_key_seal."
+
+[[dudect_case]]
 name = "aes_siv_cmac256_fixed_vs_random_key_open"
 primitive = "aead.open_authentication"
 filter = "aes_siv_cmac256_fixed_vs_random_key_open"
