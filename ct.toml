@@ -1727,6 +1727,9 @@ right_class = "random secret key"
 samples = 20000
 smoke_samples = 2000
 
+# IBM Z: one failure (|t| = 40.64, run 36930497997 on fce695f6) did not reproduce. Six later native runs
+# passed with |t| <= 2.63 (36944117350, 36948704245, 37032153879, and diagnostic 37044582684,
+# 37044592840, 37044603635); the three probes stayed at |t| <= 2.59. Closed as a host or runner artifact.
 [[dudect_case]]
 name = "aes_siv_cmac256_fixed_vs_random_key_seal"
 primitive = "aead.symmetric_transform"
