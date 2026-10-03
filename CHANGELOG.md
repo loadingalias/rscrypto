@@ -1,6 +1,313 @@
 # Changelog
 
 
+## [0.10.0](https://github.com/loadingalias/rscrypto/compare/v0.9.0...v0.10.0) - 2026-10-03
+- Make short AES-128-GCM-SIV sealing faster on x86-64 CPUs with VAES and VPCLMUL.
+  Secret cleanup does not change.
+
+- Use the portable Argon2 compression on AArch64.
+  Native measurements showed that it is faster than the NEON backend.
+
+- Add `Argon2Block`, `Argon2Params::memory_blocks`, and these methods on `Argon2d`, `Argon2i`, and `Argon2id`: `derive_with_memory`, `derive_with_context_and_memory`, and `verify_with_memory`.
+  They borrow work memory from the caller instead of allocating it.
+  Callers can reuse the memory across operations, or take it from any allocator.
+  The operation ignores the initial contents, and clears every block it uses before it returns.
+  If the memory is too short, the operation returns the new `Argon2Error::MemoryTooSmall`.
+
+- On AArch64 cores with `FEAT_DIT`, set Arm data-independent timing (`PSTATE.DIT`) during X25519, Ed25519, ECDSA,
+  P-256 and P-384 ECDH, ML-KEM, ML-DSA, RSA private operations, Argon2, scrypt, and PBKDF2.
+  The caller's state is restored after each operation.
+  Add `traits::ct::with_data_independent_timing`, which sets DIT for a scope that the caller selects.
+  Use it to cover short symmetric operations without a toggle on each call.
+
+- The package now pins the upstream source and SHA-256 of the ChaCha20-Poly1305 and BLAKE3 x86-64 assembly that
+  derives from AWS-LC and BLAKE3, as it already did for the RSA and signature assembly.
+  The x86-64 ChaCha20-Poly1305 assembly now carries the CloudFlare copyright notice of its upstream source.
+
+- Add `Blake3::digest_batch`, which hashes many independent inputs in one call.
+  Runs of inputs with equal length, from 1 to 1,024 bytes, share SIMD lanes
+  (SSE4.1, AVX2, AVX-512, and NEON).
+  Other inputs, and targets without those kernels, use the one-shot path.
+  For every input, the output is equal to `Blake3::digest`.
+
+- Add `Blake3DeriveContext`, a BLAKE3 key-derivation context that is hashed only once, with `Blake3::derive_key_with` and `Blake3::new_derive_key_from`.
+  Build it at compile time with `Blake3DeriveContext::new_const` (for contexts of at most 1,024 bytes), or at run time with `Blake3DeriveContext::new`.
+  The outputs are equal to `Blake3::derive_key` and `Blake3::new_derive_key`, without hashing the context on each call.
+
+- Add `Blake3::digest_const`, which computes the unkeyed BLAKE3 digest of at most 1,024 bytes in a constant context.
+  Callers can use it to build digest tables at compile time.
+  It uses the same portable compression code as the runtime portable backend.
+  Longer inputs panic, which makes the build fail in a constant context.
+
+- Make keyed BLAKE3 one-shot hashing faster.
+  It no longer repeats dispatch, input handling, secret-key handling, or full compression-output work.
+  Cleanup does not change.
+
+- Add BLAKE3 subtree hashing in `hashes::expert::blake3_tree`.
+  `Blake3Tree` hashes chunk-aligned parts of one input independently into `Blake3ChainingValue`s.
+  It then merges them into the same root hash, keyed hash, derived key,
+  or XOF output as one-shot hashing.
+  Each chaining value records its input range and mode.
+  An invalid offset, an oversized subtree,
+  or a merge that is not a BLAKE3 parent node returns a `Blake3SubtreeError` instead of an unrelated hash.
+
+- Add `Blake3XofReader::position` and `Blake3XofReader::set_position` for random access into BLAKE3 output.
+  A seek moves to any byte offset of the output stream, forward or backward,
+  without producing the bytes before it.
+  It matches `OutputReader::set_position` of the upstream `blake3` crate in hash, keyed, and derive-key modes.
+
+- Reduce the CRC-32 and CRC-64 selection diagnostics to these fields: polynomial, input length,
+  architecture, selection reason, effective force setting, and selected kernel.
+  Remove old policy thresholds, stream counts, capability flags,
+  and placeholder values that no longer described active dispatch.
+  Remove the unused `SelectionReason::BelowSmallThreshold` and `BelowSimdThreshold` variants.
+  The numeric discriminants of the remaining selection reasons change.
+  Checksum computation and backend selection do not change.
+
+- Remove the migration guide and the broad API tours.
+  Keep the current API contracts, feature selection, secret ownership,
+  and focused runnable examples in the documentation that owns them.
+  Correct the platform coverage and the limits of retained evidence.
+  Update the installation examples for v0.10, and remove temporary notes about development versions.
+  Rewrite the guides in short, direct technical English, and correct stale evidence statements.
+  Document the modulus lengths that `RsaPrivateKey::generate` accepts, and how to generate an RSA-2048 compatibility key.
+
+- Add `EcdsaP256PublicKey::verify_sha384` and `EcdsaP384PublicKey::verify_sha256` for explicit P-256/SHA-384 and P-384/SHA-256 signature verification.
+  The existing `verify` methods keep their P-256/SHA-256 and P-384/SHA-384 behavior.
+
+- Keep masked ECDSA point selection on AArch64 and Windows,
+  and masked secret selection in portable P-256.
+  Use ECDSA table traversal with fixed bounds.
+  Keep RISC-V generator-table loads unconditional under LLVM optimization.
+  Signature behavior does not change.
+  
+  Make portable P-256 public derivation and agreement faster with RV64-shaped multiplication,
+  sparse field arithmetic, and shared fixed-base tables.
+  ECDH and signature behavior do not change.
+
+- Remove secret-dependent branches from Ed25519 scalar arithmetic on RISC-V.
+  On RV64GC, checked 128-bit additions on secret-derived carries compiled to branches.
+  The bounded arithmetic now uses wrapping operations.
+  Signatures and public APIs do not change.
+
+- Expose fallible P-256 and P-384 blinded signing
+  and public-key derivation with entropy from the caller.
+  Remove `public_key_blinded` and `try_sign_blinded`.
+  The supported entry points are `try_public_key_blinded_with` and `try_sign_blinded_with`.
+  They report an entropy failure before any private arithmetic.
+  
+  Add direct-fill constructors for `SecretBytes` and `SecretVec`,
+  and ownership transfer from `Vec` and `String` that keeps the existing allocation.
+
+- Keep Ed25519 and X25519 building on x86-64 Linux with every supported compiler
+  when the assembly backend owns fixed-base dispatch.
+  Keep standalone AEAD features lint-clean on Linux.
+  When SIMD128 is disabled, exclude SIMD backends from scalar WebAssembly hash, AEAD,
+  and Argon2 dispatch.
+
+- Limit ordinary `diag` builds to capability and backend-selection introspection.
+  Remove benchmark, forced-kernel, constant-time, zeroization,
+  and component operations from ordinary public module paths, re-exports, and associated methods.
+  This covers AEADs, MACs, KDFs, password hashing, signatures, key agreement, RSA, ML-KEM,
+  and cryptographic hashes.
+  It includes the RSA seeded diagnostic encryption methods, the BLAKE3 diagnostic selectors,
+  the SHA-256 benchmark compression helper, and the diagnostic-only `Argon2Error::BackendUnavailable` variant.
+  Removing that variant changes the numeric discriminant of `VerificationLimitTooLow` in ordinary `diag` builds with `phc-strings`.
+  
+  Repository evidence tools keep explicit internal access.
+  Internal PBKDF2 verification probes now exercise the primitive,
+  instead of being rejected by the application password policy because of their fixed parameters.
+  Application cryptographic operations do not change.
+
+- Copy complete SHAKE output lanes directly into the caller's buffer.
+  Do not use a temporary lane byte array when extracting a short output tail.
+
+- Make ML-DSA forward and inverse transforms faster with NEON on macOS AArch64.
+  The portable fallback and byte-for-byte results do not change.
+  Merge the portable forward-transform conversion into the first butterfly to remove repeated
+  arithmetic.
+  
+  Make fixed-work ML-DSA challenge selection parallel, with a minimum reduction.
+  Memory access stays independent of secrets, and failure stays bounded.
+  
+  Make matrix-product accumulation faster with four-lane NEON on macOS AArch64.
+  
+  Batch public matrix expansion through paired SHAKE on macOS AArch64.
+  `portable-only` and other targets keep scalar expansion.
+  Private polynomial cleanup does not change.
+  The accelerated row path uses one more public polynomial buffer.
+
+- Require evidence for the ML-DSA secret kernels in the constant-time harness.
+  Cover all parameter sets with production timing adapters, retained linked-binary roots,
+  and a bounded proof root for the portable Montgomery multiplication.
+  The existing sample budgets and thresholds do not change.
+  Whole signing keeps its variable retries, and stays outside a strict constant-time claim.
+  
+  Protect x86-64 scalar selections and secret sampler masks from branches that the compiler creates.
+  The standard arithmetic and sampling order do not change.
+  
+  Follow direct tail transfers when building linked-code call closures,
+  so that optimized evidence wrappers cannot hide the production kernel from assembly review.
+
+- Add original ML-DSA arithmetic for Linux IBM Z and little-endian POWER8,
+  with CPU and OS capability checks.
+  Add it also for RISC-V32 and RISC-V64 with compile-time M support.
+  The targets share the vector transform schedule.
+  The portable fallback, public APIs, encodings, canonical coefficients,
+  and secret-owner cleanup do not change.
+  
+  Keep scalar ML-DSA reduction and selection masks opaque to the compiler on IBM Z and RISC-V,
+  including `portable-only` builds, without forcing the masks through memory.
+  Protect the secret-candidate minimum of the challenge sampler on these targets too.
+
+- Clear the dead stack below ML-DSA's private SHAKE256 helper after each call.
+  This removes Keccak lane spill copies that the compiler creates and
+  that named state wipes cannot reach.
+  Capability detection now runs before the helper.
+  The first call in a process therefore no longer initializes the detection cache below the cleared
+  region.
+  Outputs and public APIs do not change.
+
+- Make ML-DSA transforms and matrix-product accumulation faster: with AVX2, selected at run time,
+  on Linux x86-64, and with compile-time NEON on Linux AArch64.
+  The portable fallback, public APIs, encodings, and byte-for-byte results do not change.
+  The Linux NEON inverse middle stage stays out of line,
+  to prevent the coefficient spills seen in the reviewed build.
+
+- Remove secret-coefficient branches from ML-DSA secret-noise coefficient mapping in IBM Z release
+  builds.
+  The eta=2 reduction now uses a multiply-shift without comparisons.
+  The final modular correction uses the shared register-barrier reduction.
+  Outputs, sampling order, and public APIs do not change.
+
+- Add original portable ML-DSA-44, ML-DSA-65, and ML-DSA-87 signatures under the `ml-dsa` feature.
+  They support explicit deterministic and hedged signing, contexts, HashML-DSA, strict encodings,
+  prepared keys, and core-only operation.
+  
+  With `alloc`, `keypair_from_seed_in`, `generate_keypair_in`, `try_generate_keypair_in`, and `SecretKey::try_from_slice_in` write the secret key directly into a box from an allocator
+  that the caller selects.
+  Moves then leave no by-value copies of the key.
+  
+  Prepared keys fill storage that the caller owns, in place.
+  Construct `MlDsa{44,65,87}Prepared{Secret,Public}KeyStorage::new()` where the storage should live, then call `prepare(&mut storage)`.
+  Preparation needs at most 4 KiB of measured stack, instead of holding two copies of a prepared owner
+  (up to 163 KiB for ML-DSA-87).
+  
+  Remove unguarded byte-array temporaries from the partial Keccak lane extraction
+  that secret SHAKE operations use.
+  
+  Decode prepared ML-DSA signing state directly into its caller-owned storage,
+  without secret-bearing construction temporaries.
+  
+  Remove repeated inverse-NTT reductions.
+  Outputs stay canonical.
+  
+  Do not compute unused low remainders when ML-DSA signing needs only the high bits.
+
+- Protect POWER ML-DSA scalar selections and sampler masks from secret-dependent branches
+  that the compiler creates.
+  The register barrier applies to native and `portable-only` builds.
+  Arithmetic, sampling order, and timing-test requirements do not change.
+  
+  Blind the POWER vector forward NTT of secret polynomials with a mask derived from the secret seed,
+  so that repeated small coefficients never reach the vector multiplier.
+  Signatures and keys do not change.
+
+- Keep the ML-DSA secret-noise acceptance masks and counts inside zeroizing scratch owners.
+  Sampling order, bounded work, public APIs,
+  and the existing timing and cleanup claim boundaries do not change.
+
+- Keep ML-DSA SHAKE256 finalization and squeezing inside a local zeroizing reader,
+  so that no temporary with secret state is returned.
+  Sampler output, public hash APIs,
+  and the existing cleanup and constant-time claim boundaries do not change.
+
+- Add the ML-KEM functions `generate_keypair_in`, `try_generate_keypair_in`, `DecapsulationKey::try_from_slice_in`, and `DecapsulationKey::prepare_in`.
+  With `alloc`, they take an `Allocator` and write the decapsulation key or prepared key directly into its `Box`,
+  so that no by-value copy of the secret stays behind.
+  On QEMU RV32 and Cortex-M, generating, importing,
+  or preparing a key by value leaves up to a full secret-key copy in the caller's dead stack.
+  The new constructors leave none, on the stack or in the freed allocation.
+  The by-value constructors stay for core-only use.
+
+- Clear the dead stack below ML-KEM's secret SHA-3 and SHAKE calls
+  (G, J, and the PRF) after each call, as ML-DSA does.
+  This removes Keccak lane spill copies of seeds, messages,
+  and the implicit-rejection secret that the compiler creates and that named state wipes cannot reach.
+  Outputs and public APIs do not change.
+  Public SHA-3 and SHAKE hashing is not scrubbed.
+
+- Mask the decryption inverse NTT in prepared ML-KEM decapsulation keys.
+  Preparation derives a secret dense polynomial from the implicit-rejection secret.
+  Decryption adds it before the inverse NTT, and the fused final pass of the transform removes it.
+  A ciphertext therefore cannot make the transform process sparse data.
+  Outputs and the work for each call do not change.
+  One-shot decapsulation does not change.
+
+- Add standalone `no_std` P-256 ephemeral Diffie-Hellman under the `p256-ecdh` feature.
+  It validates canonical uncompressed SEC1 peer points,
+  generates scalars with a bounded fallible loop, and uses zeroizing secret owners that are not `Clone`.
+  Assembly derived from s2n-bignum accelerates it on Apple and Linux AArch64,
+  and on Linux and Windows x86-64 (baseline and BMI2/ADX).
+  RV64 uses accelerated field arithmetic.
+  Other targets use the safe Rust implementation.
+
+- Add the `p384-ecdh` feature with ephemeral P-384 Diffie-Hellman key agreement: `P384EphemeralSecret`, `P384PublicKey`, `P384SharedSecret`, `P384KeyGenerationError`, and `P384PublicKeyError`.
+  Peer keys must be canonical uncompressed SEC1 points on the curve.
+  The `key-exchange` umbrella feature now enables `p384-ecdh`.
+
+- With the `portable-only` feature, or under Miri, ECDSA no longer calls its AArch64 and x86-64 assembly.
+  It uses the portable Rust implementation, as other targets do.
+  HKDF-SHA256 uses its AArch64 SHA2 single-block path only when the build enables `target_feature = "sha2"` and not
+  `portable-only`.
+
+- Keep the standalone fuzz and evidence-tool lockfiles at the `rscrypto` version during release preparation.
+
+- Remove Intel macOS from the supported target catalog.
+  Apple Silicon is now the only supported macOS architecture.
+
+- Remove `verify_with_policy` and `verify_password_with_policy` from PBKDF2-SHA256 and PBKDF2-SHA512.
+  Explicit password policies use `verify_with_policy_bounded` and `verify_password_with_policy_bounded`, which need an upper iteration limit.
+  Default password verification and explicit primitive operations stay.
+  
+  Bounded PBKDF2 verification now limits total work, not only the iteration count.
+  Each `OUTPUT_SIZE` block of `expected` costs one full run of `iterations`, so verification fails before derivation when `iterations * expected.len().div_ceil(OUTPUT_SIZE)` exceeds the limit.
+  Before, a stored record with a long `expected` value could multiply verification time without bound.
+  `verify` and `verify_password` apply the same rule with `MAX_VERIFY_ITERATIONS`.
+
+- Remove the retired performance chart and its withdrawn claims from crate packages.
+
+- RSA decryption now requires `out` to hold the longest message the padding admits: `k - 11` bytes for PKCS#1 v1.5 and `k - 2 * profile.digest_len() - 2` bytes for OAEP, for a `k`-byte modulus.
+  A shorter `out` returns `RsaPrivateOpError::InvalidLength` before decryption, whatever the ciphertext.
+  Before, a short `out` returned `InvalidLength` only when the padding was valid and `DecryptionFailed` otherwise, so an attacker could tell valid padding from invalid padding.
+  An `out` of modulus length, as in the examples, still works.
+
+- Raise the minimum supported Rust version to 1.100.0,
+  the release that stabilizes the allocator API subset.
+  Until Rust 1.100 is stable, build with the 1.100 beta or a newer nightly.
+  POWER, IBM Z, and RISC-V builds still need a nightly compiler after that.
+  `docs/platforms.md` lists their unstable features.
+  
+  Exclude x86 SIMD backends on soft-float x86-64 targets, such as `x86_64-unknown-none`.
+  Those targets never selected them, because their compile-time capabilities lack SSE2.
+  The portable backends stay.
+  Rust is phasing out `#[target_feature]` SSE functions on soft-float targets.
+
+- Add `ScryptBlock`, `ScryptParams::memory_blocks`, `Scrypt::derive_with_memory`, and `Scrypt::verify_with_memory`.
+  They borrow work memory from the caller instead of allocating it.
+  Callers can reuse the memory across operations, or take it from any allocator.
+  The operation ignores the initial contents, and clears every block it uses before it returns.
+  If the memory is too short, the operation returns the new `ScryptError::MemoryTooSmall`.
+
+- Require both SHA and SSE4.1 for SHA-224 SHA-NI dispatch.
+  SHA-224 now uses the same compression capability policy as SHA-256.
+
+- Move the shared RSA verification fixtures out of the benchmark tree.
+  Document the provenance, integrity, inventory,
+  and consumers of the checked-in external test corpora.
+  Make ChaCha20 forced-backend differential runs report production-derived backend IDs, availability,
+  and the number of cases run.
+  Add source, toolchain, suite, environment, and artifact provenance to coverage reports.
 ## [0.9.0](https://github.com/loadingalias/rscrypto/compare/v0.8.1...v0.9.0) - 2026-08-27
 
 - Add a misuse-resistant AES-SIV-CMAC-256 nonce-based AEAD profile with allocation-free in-place seal/open operations, typed keys, non-empty borrowed nonces, opaque failed-open errors, and complete rejected-plaintext cleanup.
