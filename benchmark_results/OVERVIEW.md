@@ -31,6 +31,9 @@ The 2026-09-14 campaign uses the corrected workload identities.
 
 ## Sources
 
+- AArch64 Linux benchmark job from run
+  [#37092266645](https://github.com/loadingalias/rscrypto/actions/runs/37092266645),
+  commit `18fb791fef2b5d92e300b757408dac19d327c30c`, 2026-10-03.
 - Full benchmark workflow run
   [#34874736834](https://github.com/loadingalias/rscrypto/actions/runs/34874736834),
   created 2026-09-14 17:26:15 UTC and completed 2026-09-14 18:33:05 UTC.
@@ -56,6 +59,39 @@ The 2026-09-14 campaign uses the corrected workload identities.
   The full native-backend run used an intermediate Phase 4 worktree;
   the final batch-parser comparison matches the current P-256 source.
   Both are under `benchmark_results/2026-09-03/windows/x86_64/intel-gnr/`.
+
+## 2026-10-03 AArch64 Linux run
+
+Bench run [#37092266645](https://github.com/loadingalias/rscrypto/actions/runs/37092266645), job `aarch64-linux`,
+measured commit `18fb791f` on a `c9g.2xlarge` (Graviton5) host
+with `rustc 1.101.0-nightly (5c543b0b8 2026-09-29)` and the catalog Criterion defaults.
+The artifact `bench-aarch64-linux-37092266645-1` holds 2,702 completed cases.
+
+The table compares each `rscrypto` median with the fastest external crate's median
+for the same group and input, on rows named `group/implementation/input`.
+It covers 346 such rows: 147 faster, 121 within 3%, and 78 slower.
+A ratio above 1.00x means `rscrypto` is faster.
+Rows with other names, including AEAD, signature, key-exchange, ML-KEM, Argon2, and RSA rows, are not in the table
+because their comparisons need per-group curation under the
+[comparison contracts](../docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts).
+
+| Family | Rows | Faster / within 3% / slower | Geometric mean | Range | Fastest comparator |
+| --- | ---: | --- | ---: | --- | --- |
+| CRC-16/24/32/64 | 77 | 58 / 13 / 6 | 5.01x | 0.80x to 106.04x | `crc`, `crc-fast`, `crc32fast`, `crc64fast` |
+| XXH3 | 33 | 19 / 12 / 2 | 1.08x | 0.64x to 1.81x | `xxhash-rust` |
+| RapidHash | 22 | 6 / 14 / 2 | 1.16x | 0.50x to 4.70x | `rapidhash` |
+| BLAKE3 | 11 | 8 / 2 / 1 | 1.67x | 0.96x to 8.23x | `blake3` |
+| Ascon-Hash and Ascon-XOF | 22 | 19 / 3 / 0 | 1.07x | 1.02x to 1.37x | `ascon-hash` |
+| SHA-2 | 55 | 15 / 29 / 11 | 1.01x | 0.86x to 1.30x | `aws-lc-rs`, `ring`, `sha2` |
+| HMAC-SHA-2 | 33 | 0 / 15 / 18 | 0.96x | 0.86x to 1.02x | `aws-lc-rs`, `ring`, `rustcrypto` |
+| SHA-3 | 44 | 0 / 19 / 25 | 0.95x | 0.80x to 1.01x | `sha3` |
+| SHAKE | 22 | 6 / 9 / 7 | 0.99x | 0.88x to 1.10x | `tiny-keccak` |
+| cSHAKE and KMAC | 22 | 11 / 5 / 6 | 1.01x | 0.94x to 1.07x | `tiny-keccak` |
+| scrypt | 5 | 5 / 0 / 0 | 1.33x | 1.22x to 1.42x | `rustcrypto` |
+
+This is one host and one run with short measurement windows.
+It is not a regression gate, and it does not cover other AArch64 hosts or macOS.
+The largest CRC ratios are CRC-16 and CRC-24, where the only comparator is the table-driven `crc` crate.
 
 ## 2026-09-14 full benchmark run
 

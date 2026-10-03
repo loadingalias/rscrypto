@@ -140,6 +140,11 @@ Older summary tables mixed different workloads: entropy, key preparation, output
 or salt length.
 They are historical records, not current claims.
 
+On AArch64 Linux (Graviton5, October 2026), `rscrypto` was faster than the fastest external crate
+in 147 of 346 directly comparable hash, checksum, and scrypt rows, within 3% in 121, and slower in 78.
+Most of the slower rows are SHA-3 and HMAC-SHA-2.
+That snapshot covers one host and one run.
+
 The [benchmark overview](benchmark_results/OVERVIEW.md) records each campaign, its target results, and its limits.
 The [comparison contracts](docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts) define equivalent ML-KEM and Argon2 workloads.
 
