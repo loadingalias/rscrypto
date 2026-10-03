@@ -85,5 +85,7 @@ auxiliary_cargo_manifests = [
   "tools/ct-binsec-harness/Cargo.toml",
   "tools/ct-dudect/Cargo.toml",
   "tools/ct-harness/Cargo.toml",
+  "tools/frame-review/Cargo.toml",
+  "tools/residue-harness/Cargo.toml",
   "tools/wasm-runtime-vectors/Cargo.toml",
 ]
