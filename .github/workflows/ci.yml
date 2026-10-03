@@ -99,7 +99,7 @@ jobs:
       - name: Configure shared compiler cache
         id: cache
         if: steps.cache-authority.outputs.enabled == 'true'
-        uses: "loadingalias/cargo-rail-action/cache@4d7bebe671430eee0db376de3f943d8de26e78de" # v10.1.0
+        uses: "loadingalias/cargo-rail-action/cache@409962f05d90a78aae995ef6b1c8466010c0a460" # v10.1.1
         with:
           remote: ${{ vars.CARGO_RAIL_CACHE_URL }}
           mode: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'read-write' || 'read' }}
@@ -122,7 +122,7 @@ jobs:
       - name: Collect compiler-cache measurements
         id: cache-record
         if: always() && steps.cache.outcome == 'success'
-        uses: "loadingalias/cargo-rail-action/cache/collect@4d7bebe671430eee0db376de3f943d8de26e78de" # v10.1.0
+        uses: "loadingalias/cargo-rail-action/cache/collect@409962f05d90a78aae995ef6b1c8466010c0a460" # v10.1.1
         with:
           job: cross-${{ matrix.target }}
           output-directory: ${{ runner.temp }}/cache-records
@@ -244,7 +244,7 @@ jobs:
       - name: Configure shared compiler cache
         id: cache
         if: steps.cache-authority.outputs.enabled == 'true'
-        uses: "loadingalias/cargo-rail-action/cache@4d7bebe671430eee0db376de3f943d8de26e78de" # v10.1.0
+        uses: "loadingalias/cargo-rail-action/cache@409962f05d90a78aae995ef6b1c8466010c0a460" # v10.1.1
         with:
           remote: ${{ vars.CARGO_RAIL_CACHE_URL }}
           mode: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'read-write' || 'read' }}
@@ -336,7 +336,7 @@ jobs:
       - name: Collect compiler-cache measurements
         id: cache-record
         if: always() && steps.cache.outcome == 'success'
-        uses: "loadingalias/cargo-rail-action/cache/collect@4d7bebe671430eee0db376de3f943d8de26e78de" # v10.1.0
+        uses: "loadingalias/cargo-rail-action/cache/collect@409962f05d90a78aae995ef6b1c8466010c0a460" # v10.1.1
         with:
           job: ${{ matrix.platform }}
           output-directory: ${{ runner.temp }}/cache-records
@@ -373,7 +373,7 @@ jobs:
           path: ${{ runner.temp }}/cache-records
       - name: Report compiler-cache results
         if: always()
-        uses: "loadingalias/cargo-rail-action/cache/report@4d7bebe671430eee0db376de3f943d8de26e78de" # v10.1.0
+        uses: "loadingalias/cargo-rail-action/cache/report@409962f05d90a78aae995ef6b1c8466010c0a460" # v10.1.1
         with:
           records-directory: ${{ runner.temp }}/cache-records
           expected-jobs: '["cross-riscv64gc-unknown-linux-gnu","cross-powerpc64le-unknown-linux-gnu","cross-s390x-unknown-linux-gnu","x86_64-linux","aarch64-linux"]'
