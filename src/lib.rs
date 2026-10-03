@@ -122,8 +122,10 @@ assert!(
 //! exposes FIPS-aligned primitives (AES-256-GCM, SHA-2, SHA-3 / SHAKE, HMAC,
 //! KMAC, HKDF, PBKDF2) alongside non-FIPS ones. The `portable-only` feature
 //! makes runtime capability detection report no SIMD/ASM capabilities, so
-//! dispatchers that consult runtime caps fall through to portable backends.
-//! It is a deployment control, not a substitute for release constant-time
+//! dispatchers that consult runtime caps fall through to portable backends,
+//! and it turns off assembly that the crate selects at compile time from the
+//! target alone. Hash backends that a compile-time `target_feature` enables
+//! can still run. It is a deployment control, not a substitute for release constant-time
 //! evidence. See the security guidance for nonce lifecycle, PHC verification
 //! limits, and platform fallback notes.
 

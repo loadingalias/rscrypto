@@ -44,7 +44,7 @@ Enable it by name.
 | `parallel`      | Enables Rayon-based BLAKE3 and Argon2 work. Enables `std`, `blake3`, and `argon2`. |
 | `serde`         | Serializes public types. |
 | `serde-secrets` | Also serializes secret keys and shared secrets. Use it only at an explicit key-storage boundary. |
-| `portable-only` | Makes runtime capability detection report no SIMD or assembly capabilities. |
+| `portable-only` | Uses portable Rust instead of accelerated backends, with the exceptions below. |
 | `diag`          | Exposes capability and backend-selection introspection. Enables `std`. |
 
 Benchmark, constant-time, zeroization, forced-kernel,
@@ -65,9 +65,12 @@ They do not enable ECDSA, HMAC, `alloc`, or `std`.
 See [`platforms.md`](platforms.md) for backend selection, [`constant-time.md`](constant-time.md) for timing claims,
 and [`test-vector-coverage.md`](test-vector-coverage.md) for independent vectors.
 
-`portable-only` affects only the dispatchers that read `platform::caps()`.
+`portable-only` makes runtime detection report no accelerated capabilities.
+It also turns off assembly that the crate selects at compile time from the target alone,
+such as the RSA, elliptic-curve, ML-KEM, and ML-DSA backends.
 It does not remove accelerated code from the binary.
-It does not override backends that compile-time `target_feature` settings select.
+Some hash backends that a compile-time `target_feature` setting enables still run,
+for example SHA-256 on Apple Silicon.
 See [`platforms.md`](platforms.md).
 
 ## Check a selection

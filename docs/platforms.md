@@ -14,7 +14,11 @@ Dispatch has three tiers:
 
 `no_std` builds use only compile-time selection.
 `portable-only` makes runtime detection report no accelerated capabilities.
-It does not override compile-time target features, and it does not remove code from the binary.
+It also turns off assembly that the crate selects at compile time from the target alone,
+such as the RSA, elliptic-curve, ML-KEM, and ML-DSA backends.
+Some hash backends that a compile-time `target_feature` setting enables still run,
+for example SHA-256 on Apple Silicon.
+`portable-only` does not remove code from the binary.
 
 Detection runs once and is cached.
 Set capability overrides, and get process permissions such as Linux AMX authorization,

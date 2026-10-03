@@ -212,9 +212,10 @@ serde-secrets = ["serde"]
 parallel = ["std", "blake3", "argon2", "dep:rayon"]
 diag = ["std"]
 
-# Force runtime dispatch through portable fallbacks. This does not remove
-# compiled SIMD/ASM code or replace CT evidence; use target-feature flags when
-# binary-level exclusion is required.
+# Select portable Rust: runtime detection reports no capabilities, and assembly
+# that the crate selects from the target alone is turned off. Hash backends that
+# a compile-time target_feature enables can still run. This does not remove
+# compiled SIMD/ASM code or replace CT evidence; see docs/features.md.
 portable-only = []
 
 [dependencies]

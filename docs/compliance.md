@@ -29,9 +29,8 @@ The owner of the product or module must define and validate:
 - Build provenance, binary distribution, and change control.
 - The evidence package for the lab, assessor, or customer.
 
-`portable-only` can make runtime dispatch select portable backends.
-It does not remove accelerated code, override compile-time target features, prove constant time,
-or create a validation boundary.
+`portable-only` selects portable Rust for most backends, with the exceptions in [`features.md`](features.md).
+It does not remove accelerated code, prove constant time, or create a validation boundary.
 
 Use accurate wording downstream:
 
