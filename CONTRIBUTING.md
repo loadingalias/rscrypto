@@ -322,11 +322,12 @@ See the [crates.io setup instructions](https://crates.io/docs/trusted-publishing
 
 ### Deploy
 
-Select **Actions → Release → Run workflow → main**.
-No version input is needed.
+Select **Actions → Release → Run workflow → main**, and enter the version from `Cargo.toml` without the `v` prefix,
+or run `gh workflow run release.yml --ref main -f version=<version>`.
+The run is named `Release v<version>`.
 
-- The workflow rejects unconsumed change files, a version and changelog mismatch,
-  and a tag that points elsewhere.
+- The workflow rejects a version input that differs from `Cargo.toml`, unconsumed change files,
+  a version and changelog mismatch, and a tag that points elsewhere.
 - Three workflows run at the same time against the triggering commit: CI
   (with macOS ARM64 qualified locally before the commit),
   full CT on all configured CI architectures, and fuzzing on both architectures plus Miri.

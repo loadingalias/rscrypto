@@ -1,8 +1,13 @@
 name: Release
-run-name: Release ${{ github.sha }}
+run-name: Release v${{ inputs.version }}
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, without the v prefix; must match Cargo.toml
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -28,6 +33,8 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - name: Validate the release candidate
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
         run: python3 scripts/release/release.py preflight
 
   ci:

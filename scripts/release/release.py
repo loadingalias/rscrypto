@@ -58,6 +58,9 @@ def candidate():
     version = package['version']
     if package['name'] != 'rscrypto' or not re.fullmatch(r'\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?', version):
         raise ValueError('Invalid release package/version')
+    requested = os.environ.get('RELEASE_VERSION')
+    if requested is not None and requested != version:
+        raise ValueError(f'Requested release {requested} does not match Cargo.toml version {version}')
     sections = re.split(r'^## ', (ROOT / 'CHANGELOG.md').read_text(), flags=re.MULTILINE)
     if len(sections) < 2 or not sections[1].startswith(f'[{version}]'):
         raise ValueError('The first changelog entry must match Cargo.toml')

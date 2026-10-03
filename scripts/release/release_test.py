@@ -46,6 +46,14 @@ class Release(unittest.TestCase):
         self.git('tag', '-am', 'release', 'v1.2.3')
         self.assertEqual(release.candidate()[2], self.sha)
 
+    def test_requested_version_must_match_the_package(self):
+        with patch.dict(os.environ, RELEASE_VERSION='1.2.3'):
+            self.assertEqual(release.candidate()[0], '1.2.3')
+        for requested in ('1.2.4', 'v1.2.3', ''):
+            with self.subTest(requested=requested), patch.dict(os.environ, RELEASE_VERSION=requested), \
+                 self.assertRaisesRegex(ValueError, 'does not match Cargo.toml'):
+                release.candidate()
+
     def test_wrong_ref_sha_dirty_notes_pending_and_tag_are_rejected(self):
         for key, value in [('GITHUB_REF', 'refs/heads/feature'), ('GITHUB_SHA', '0' * 40)]:
             with self.subTest(key=key), patch.dict(os.environ, {key: value}), self.assertRaises(ValueError):
