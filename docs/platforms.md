@@ -49,8 +49,8 @@ Runtime behavior needs execution on the target.
     and volatile integer registers.
 - **P-384 ECDH** is a standalone leaf feature with a safe Rust reference implementation on every
   supported target.
-  - AArch64 selects these at compile time, unless `portable-only` or Miri is active:
-    owned inline-assembly field multiplication, squaring, addition, subtraction, small multiples,
+  - AArch64 selects these backends at compile time, unless `portable-only` or Miri is active.
+    They are owned inline-assembly field multiplication, squaring, addition, subtraction, and small multiples,
     NEON fixed-base comb selection, and Bernstein–Yang divstep field inversion.
   - x86-64 selects inline-assembly field addition, subtraction,
     and divstep inversion at compile time.

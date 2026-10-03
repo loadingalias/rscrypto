@@ -14,7 +14,8 @@ and output representations.
 The Argon2 comparisons gave `rscrypto` and RustCrypto a longer salt than dryoc.
 The affected ratios, rankings,
 and aggregates that contain those rows are withdrawn as performance claims.
-The corrected 2026-09-14 campaign is recorded below, but no replacement aggregate exists yet.
+The 2026-10-03 run below has a like-for-like summary for hashes, checksums, MACs, XOFs, and scrypt.
+ML-KEM and Argon2 still have no replacement aggregate.
 The numerical effect on the historical scorecard has not been measured.
 The tables and raw artifacts stay as historical records, not corrected results.
 See the [current comparison contracts](../docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts).
@@ -31,9 +32,9 @@ The 2026-09-14 campaign uses the corrected workload identities.
 
 ## Sources
 
-- AArch64 Linux benchmark job from run
+- Full benchmark workflow run
   [#37092266645](https://github.com/loadingalias/rscrypto/actions/runs/37092266645),
-  commit `18fb791fef2b5d92e300b757408dac19d327c30c`, 2026-10-03.
+  commit `18fb791fef2b5d92e300b757408dac19d327c30c`, 2026-10-03, eight platforms.
 - Full benchmark workflow run
   [#34874736834](https://github.com/loadingalias/rscrypto/actions/runs/34874736834),
   created 2026-09-14 17:26:15 UTC and completed 2026-09-14 18:33:05 UTC.
@@ -60,38 +61,91 @@ The 2026-09-14 campaign uses the corrected workload identities.
   the final batch-parser comparison matches the current P-256 source.
   Both are under `benchmark_results/2026-09-03/windows/x86_64/intel-gnr/`.
 
-## 2026-10-03 AArch64 Linux run
+## 2026-10-03 full benchmark run (v0.10.0)
 
-Bench run [#37092266645](https://github.com/loadingalias/rscrypto/actions/runs/37092266645), job `aarch64-linux`,
-measured commit `18fb791f` on a `c9g.2xlarge` (Graviton5) host
-with `rustc 1.101.0-nightly (5c543b0b8 2026-09-29)` and the catalog Criterion defaults.
-The artifact `bench-aarch64-linux-37092266645-1` holds 2,702 completed cases.
+Bench run [#37092266645](https://github.com/loadingalias/rscrypto/actions/runs/37092266645) measured commit `18fb791f`
+on eight platforms with `architectures=all`, `selection=all`, and diagnostics off.
+The source and benchmark code are the same as the v0.10.0 tag (`87a8f220`). Only the package version differs.
+All jobs used `rustc 1.101.0-nightly (5c543b0b8 2026-09-29)` and the catalog Criterion defaults:
+20 samples, 100 ms warm-up, 400 ms measurement, 10,000 resamples, 95% confidence, 1% noise threshold.
 
-The table compares each `rscrypto` median with the fastest external crate's median
-for the same group and input, on rows named `group/implementation/input`.
-It covers 346 such rows: 147 faster, 121 within 3%, and 78 slower.
+| Platform | Host | Completed cases | Artifact |
+| --- | --- | ---: | --- |
+| Intel Linux | `c8i.2xlarge` | 2,698 | `bench-x86_64-linux-intel-37092266645-1` |
+| AMD Linux | `c8a.2xlarge` | 2,698 | `bench-x86_64-linux-amd-37092266645-1` |
+| Intel Windows | `c8i.2xlarge` | 2,698 | `bench-x86_64-win-intel-37092266645-1` |
+| AMD Windows | `c8a.2xlarge` | 2,698 | `bench-x86_64-win-amd-37092266645-1` |
+| Graviton5 Linux | `c9g.2xlarge` | 2,702 | `bench-aarch64-linux-37092266645-1` |
+| POWER10 Linux | native GitHub runner | 2,432 | `bench-powerpc64le-linux-37092266645-1` |
+| IBM Z Linux | native GitHub runner | 2,414 | `bench-s390x-linux-37092266645-1` |
+| RISC-V Linux | native GitHub runner | 2,694 | `bench-riscv64-linux-37092266645-1` |
+
+POWER10, IBM Z, and RISC-V ran binaries that x86-64 compiled for them.
+
+### Method
+
+Each comparison uses the case names `group/implementation/input`.
+For each group and input, the comparison divides the median time of the fastest external crate
+by the median time of `rscrypto`.
 A ratio above 1.00x means `rscrypto` is faster.
-Rows with other names, including AEAD, signature, key-exchange, ML-KEM, Argon2, and RSA rows, are not in the table
-because their comparisons need per-group curation under the
-[comparison contracts](../docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts).
+"Within 3%" means a ratio from 0.97x to 1.03x.
+Each platform has the same 346 comparisons: hashes, checksums, MACs, XOFs, and scrypt.
 
-| Family | Rows | Faster / within 3% / slower | Geometric mean | Range | Fastest comparator |
-| --- | ---: | --- | ---: | --- | --- |
-| CRC-16/24/32/64 | 77 | 58 / 13 / 6 | 5.01x | 0.80x to 106.04x | `crc`, `crc-fast`, `crc32fast`, `crc64fast` |
-| XXH3 | 33 | 19 / 12 / 2 | 1.08x | 0.64x to 1.81x | `xxhash-rust` |
-| RapidHash | 22 | 6 / 14 / 2 | 1.16x | 0.50x to 4.70x | `rapidhash` |
-| BLAKE3 | 11 | 8 / 2 / 1 | 1.67x | 0.96x to 8.23x | `blake3` |
-| Ascon-Hash and Ascon-XOF | 22 | 19 / 3 / 0 | 1.07x | 1.02x to 1.37x | `ascon-hash` |
-| SHA-2 | 55 | 15 / 29 / 11 | 1.01x | 0.86x to 1.30x | `aws-lc-rs`, `ring`, `sha2` |
-| HMAC-SHA-2 | 33 | 0 / 15 / 18 | 0.96x | 0.86x to 1.02x | `aws-lc-rs`, `ring`, `rustcrypto` |
-| SHA-3 | 44 | 0 / 19 / 25 | 0.95x | 0.80x to 1.01x | `sha3` |
-| SHAKE | 22 | 6 / 9 / 7 | 0.99x | 0.88x to 1.10x | `tiny-keccak` |
-| cSHAKE and KMAC | 22 | 11 / 5 / 6 | 1.01x | 0.94x to 1.07x | `tiny-keccak` |
-| scrypt | 5 | 5 / 0 / 0 | 1.33x | 1.22x to 1.42x | `rustcrypto` |
+The comparisons do not include AEAD, signature, key-exchange, ML-KEM, ML-DSA, Argon2, or RSA cases.
+Those cases use other names, and each one needs a review under the
+[comparison contracts](../docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts) before it gives a ratio.
 
-This is one host and one run with short measurement windows.
-It is not a regression gate, and it does not cover other AArch64 hosts or macOS.
-The largest CRC ratios are CRC-16 and CRC-24, where the only comparator is the table-driven `crc` crate.
+### Results by platform
+
+| Platform | Faster | Within 3% | Slower | Median ratio |
+| --- | ---: | ---: | ---: | ---: |
+| Intel Linux | 211 | 88 | 47 | 1.09x |
+| AMD Linux | 256 | 81 | 9 | 1.13x |
+| Intel Windows | 186 | 105 | 55 | 1.05x |
+| AMD Windows | 262 | 68 | 16 | 1.09x |
+| Graviton5 Linux | 147 | 121 | 78 | 1.01x |
+| POWER10 Linux | 206 | 122 | 18 | 1.07x |
+| IBM Z Linux | 301 | 19 | 26 | 2.77x |
+| RISC-V Linux | 197 | 79 | 70 | 1.05x |
+
+### Results by family
+
+Each cell is the geometric mean ratio for that family on that platform.
+
+| Family | Rows | Intel Linux | AMD Linux | Intel Windows | AMD Windows | Graviton5 | POWER10 | IBM Z | RISC-V |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| CRC | 77 | 6.62x | 5.96x | 6.93x | 6.39x | 5.01x | 11.16x | 7.20x | 1.32x |
+| XXH3 | 33 | 1.24x | 1.28x | 1.20x | 1.26x | 1.08x | 1.32x | 1.65x | 0.79x |
+| RapidHash | 22 | 1.32x | 1.13x | 1.28x | 1.19x | 1.16x | 1.19x | 1.06x | 1.09x |
+| BLAKE3 | 11 | 1.11x | 1.23x | 0.92x | 1.19x | 1.67x | 1.83x | 1.77x | 1.11x |
+| Ascon | 22 | 1.09x | 1.07x | 1.09x | 1.10x | 1.07x | 1.06x | 1.05x | 1.06x |
+| SHA-2 | 55 | 1.03x | 1.08x | 1.06x | 1.08x | 1.01x | 1.03x | 5.32x | 1.03x |
+| HMAC-SHA-2 | 33 | 1.01x | 1.06x | 0.95x | 1.07x | 0.96x | 1.02x | 4.95x | 1.02x |
+| SHA-3 | 44 | 1.17x | 1.14x | 0.99x | 1.09x | 0.95x | 2.37x | 8.24x | 2.64x |
+| SHAKE | 22 | 0.98x | 1.16x | 1.14x | 1.10x | 0.99x | 1.01x | 4.27x | 1.16x |
+| cSHAKE/KMAC | 22 | 0.98x | 1.13x | 0.97x | 1.09x | 1.01x | 0.94x | 3.96x | 1.09x |
+| scrypt | 5 | 0.96x | 0.98x | 0.91x | 1.00x | 1.33x | 1.60x | 1.41x | 1.60x |
+| **All** | **346** | **1.63x** | **1.63x** | **1.61x** | **1.65x** | **1.48x** | **2.05x** | **3.99x** | **1.23x** |
+
+How to read the table:
+
+- CRC ratios are large because some comparators use tables, not carry-less multiplication.
+  The largest CRC ratios are CRC-16 and CRC-24, where the only comparator is the `crc` crate.
+  The CRC rows also raise the "All" row, so the median ratio above is the better summary.
+- On IBM Z, `rscrypto` uses the CPACF hash instructions (KIMD) for SHA-2 and SHA-3.
+  The fastest comparators there are portable crates (`sha2`, `sha3`, `tiny-keccak`, and RustCrypto `hmac`),
+  and AWS-LC is not in the IBM Z comparison. This explains most of the IBM Z lead.
+- `rscrypto` is slower than the fastest comparator (family mean below 0.97x) in eight results:
+  XXH3 on RISC-V (0.79x), BLAKE3 on Intel Windows (0.92x), HMAC-SHA-2 on Intel Windows (0.95x)
+  and Graviton5 (0.96x), SHA-3 on Graviton5 (0.95x), cSHAKE and KMAC on POWER10 (0.94x),
+  and scrypt on Intel Linux (0.96x) and Intel Windows (0.91x).
+
+### Limits
+
+This is one run on shared or cloud hosts, with short measurement windows.
+It is not a regression gate.
+Do not compare absolute times between platforms.
+It does not include macOS: the last macOS numbers are from 2026-07-04 (see the macOS local snapshot below).
 
 ## 2026-09-14 full benchmark run
 

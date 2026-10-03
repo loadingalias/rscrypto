@@ -132,21 +132,30 @@ Do not open a public issue.
 
 ## Performance
 
-A performance claim applies only to a retained benchmark campaign with equivalent workloads.
-The September 2026 campaign has 19,614 completed cases,
-including corrected ML-KEM and Argon2 comparisons.
-It does not have a summary scorecard yet.
-Older summary tables mixed different workloads: entropy, key preparation, output format,
-or salt length.
-They are historical records, not current claims.
+Bench run [#37092266645](https://github.com/loadingalias/rscrypto/actions/runs/37092266645) measured the v0.10.0 source
+on eight platforms on 2026-10-03.
+Each platform has 346 like-for-like comparisons of hashes, checksums, MACs, XOFs, and scrypt.
+Each comparison divides the median time of the fastest external crate by the median time of `rscrypto`.
+A ratio above 1.00x means `rscrypto` is faster.
 
-On AArch64 Linux (Graviton5, October 2026), `rscrypto` was faster than the fastest external crate
-in 147 of 346 directly comparable hash, checksum, and scrypt rows, within 3% in 121, and slower in 78.
-Most of the slower rows are SHA-3 and HMAC-SHA-2.
-That snapshot covers one host and one run.
+| Platform | Faster | Within 3% | Slower | Median ratio |
+| --- | ---: | ---: | ---: | ---: |
+| Intel Linux (`c8i`) | 211 | 88 | 47 | 1.09x |
+| AMD Linux (`c8a`) | 256 | 81 | 9 | 1.13x |
+| Intel Windows (`c8i`) | 186 | 105 | 55 | 1.05x |
+| AMD Windows (`c8a`) | 262 | 68 | 16 | 1.09x |
+| Graviton5 Linux (`c9g`) | 147 | 121 | 78 | 1.01x |
+| POWER10 Linux | 206 | 122 | 18 | 1.07x |
+| IBM Z Linux | 301 | 19 | 26 | 2.77x |
+| RISC-V Linux | 197 | 79 | 70 | 1.05x |
 
-The [benchmark overview](benchmark_results/OVERVIEW.md) records each campaign, its target results, and its limits.
+These results are from one run on cloud and shared hosts.
+They do not include AEAD, signature, key-exchange, ML-KEM, ML-DSA, Argon2, or RSA cases,
+and they do not include macOS.
+The [benchmark overview](benchmark_results/OVERVIEW.md#2026-10-03-full-benchmark-run-v0100) gives the results by family,
+the method, and the limits.
 The [comparison contracts](docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts) define equivalent ML-KEM and Argon2 workloads.
+Older summary tables mixed different workloads. They are historical records, not current claims.
 
 ## Project
 
