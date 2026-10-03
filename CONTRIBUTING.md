@@ -348,5 +348,8 @@ Report vulnerabilities privately through [`SECURITY.md`](SECURITY.md).
 
 Use official vectors or an independent implementation as the oracle for cryptographic correctness.
 Keep vector provenance, licensing, transforms, and coverage reviewable.
+Assembly derived from upstream sources needs an `output` row in a `src/**/*_assembly_provenance.tsv` manifest
+that pins the upstream archive, the members, and the output SHA-256, and it must keep the upstream license notice.
+`just check` fails on derived assembly without a manifest row and on any output that differs from its pinned hash.
 Fuzz targets live in [`fuzz/`](fuzz/) and [`fuzz-packages/`](fuzz-packages/).
 Commit only small, minimized seeds that exercise production paths.

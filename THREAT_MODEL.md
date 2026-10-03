@@ -99,6 +99,8 @@ ignoring a result, or breaking a protocol rule.
 
 An attacker can target the source, the dependencies, the build hosts, or the published artifacts.
 Treat the origin and integrity of an artifact as unverified until you confirm them independently.
+Assembly derived from upstream code is pinned to its upstream archive and member hashes
+in `src/**/*_assembly_provenance.tsv` manifests, which `just check` verifies against the committed files.
 
 ## Outside this model
 
