@@ -458,6 +458,17 @@ mod aws {
 }
 
 fn main() {
+  // ML-DSA-87 fixtures and the RustCrypto oracle's key expansion overflow the
+  // 1 MiB Windows main-thread stack; run on a thread with an explicit stack.
+  std::thread::Builder::new()
+    .stack_size(8 << 20)
+    .spawn(benchmarks)
+    .expect("spawn benchmark thread")
+    .join()
+    .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+}
+
+fn benchmarks() {
   bench_config::run(&[
     mldsa44,
     mldsa65,

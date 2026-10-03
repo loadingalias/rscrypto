@@ -10,9 +10,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
   exit 1
 }
 # A clean checkout whose tree passed `just ci-check`, for example in the pre-commit hook, reuses that pass.
-if [[ -n "$(git status --porcelain)" ]] || ! scripts/lib/python.sh scripts/check/qualified.py check ci-check HEAD; then
+clean() { [[ -z "$(git status --porcelain 2>/dev/null || echo unknown)" ]]; }
+if ! clean || ! scripts/lib/python.sh scripts/check/qualified.py check ci-check HEAD; then
   just ci-check
-  [[ -n "$(git status --porcelain)" ]] || scripts/lib/python.sh scripts/check/qualified.py record ci-check HEAD
+  if clean; then scripts/lib/python.sh scripts/check/qualified.py record ci-check HEAD; fi
 fi
 just test --all --release
 just test --all --release --portable

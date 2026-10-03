@@ -48,6 +48,8 @@ def qualified(kind, tree):
   rustc = compiler()
   if passed(kind, tree, rustc):
     return f'{kind} already passed for tree {tree}'
+  if subprocess.run(['git', 'rev-parse', '--verify', '--quiet', 'HEAD'], cwd=ROOT, capture_output=True).returncode:
+    return None
   for commit in git('rev-list', '--first-parent', f'--max-count={ANCESTORS}', 'HEAD').splitlines():
     ancestor = git('rev-parse', f'{commit}^{{tree}}')
     if not passed(kind, ancestor, rustc):

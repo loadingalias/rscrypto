@@ -10,6 +10,19 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def install_qualification(root):
+    """Give a fixture repository the real qualification helper and a pinned compiler."""
+    for name in ('scripts/check/qualified.py', 'scripts/lib/python.sh'):
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / name, root / name)
+    toolchain = root / 'scripts/lib/toolchain.sh'
+    toolchain.write_text('#!/bin/sh\necho pinned\n')
+    toolchain.chmod(0o755)
+    rustc = root / '.git/rustc'
+    rustc.write_text('#!/bin/sh\necho "$1 ${COMPILER:-one}"\n')
+    rustc.chmod(0o755)
+
+
 class MacOSCommit(unittest.TestCase):
     def test_gate_preserves_ci_modes_and_stops_on_failure(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -44,6 +57,8 @@ class MacOSCommit(unittest.TestCase):
             subprocess.run(['git', 'init', '-q', directory], check=True)
             hook = root / '.git/hooks/pre-commit'
             shutil.copy2(ROOT / '.githooks/pre-commit', hook)
+            install_qualification(root)
+            subprocess.run(['git', '-C', directory, 'add', 'scripts'], check=True)
             tool = root / '.git/just'
             tool.write_text('#!/bin/sh\necho "$*" >> .git/calls\nexit "${CHECK_STATUS:-0}"\n')
             tool.chmod(0o755)
@@ -56,9 +71,9 @@ class MacOSCommit(unittest.TestCase):
                 return subprocess.run([str(hook)], cwd=root, env={**env, **extra},
                                       capture_output=True, text=True).returncode
 
-            self.assertEqual(run(), 0)
-            self.assertEqual((root / '.git/calls').read_text(), 'ci-check\n')
+            # A failing check propagates and records nothing; a passing check records its tree.
             self.assertEqual(run(CHECK_STATUS='7'), 7)
+            self.assertEqual(run(), 0)
             source.write_text('unstaged')
             self.assertNotEqual(run(), 0)
             source.write_text('staged')
@@ -67,6 +82,24 @@ class MacOSCommit(unittest.TestCase):
             self.assertEqual((root / '.git/calls').read_text().splitlines(),
                              ['ci-check', 'ci-check'])
 
+            # A recorded tree, and a descendant that changes only unchecked paths, reuse the pass.
+            (root / 'untracked').unlink()
+            self.assertEqual(run(), 0)
+            git = ['git', '-C', directory, '-c', 'user.name=t', '-c', 'user.email=t@t']
+            subprocess.run([*git, 'commit', '-qm', 'checked', '--no-verify'], check=True)
+            self.assertEqual(run(), 0)
+            (root / 'docs').mkdir()
+            (root / 'docs/guide.md').write_text('prose')
+            subprocess.run([*git, 'add', 'docs'], check=True)
+            self.assertEqual(run(), 0)
+            self.assertEqual((root / '.git/calls').read_text().splitlines(), ['ci-check', 'ci-check'])
+            # Checked paths and compiler changes run the check again.
+            source.write_text('changed')
+            subprocess.run([*git, 'add', 'source'], check=True)
+            self.assertEqual(run(), 0)
+            self.assertEqual(run(COMPILER='two'), 0)
+            self.assertEqual(len((root / '.git/calls').read_text().splitlines()), 4)
+
     def test_push_qualifies_each_tree_once_per_compiler(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -74,13 +107,9 @@ class MacOSCommit(unittest.TestCase):
             subprocess.run(['git', 'init', '-q', directory], check=True)
             hook = root / '.git/hooks/pre-push'
             shutil.copy2(ROOT / '.githooks/pre-push', hook)
-            (root / 'scripts/lib').mkdir(parents=True)
-            toolchain = root / 'scripts/lib/toolchain.sh'
-            toolchain.write_text('#!/bin/sh\necho pinned\n')
-            toolchain.chmod(0o755)
+            install_qualification(root)
             for name, body in {
                 'just': 'echo "$*" >> .git/calls\nexit "${CHECK_STATUS:-0}"',
-                'rustc': 'echo "$1 ${COMPILER:-one}"',
             }.items():
                 tool = root / '.git' / name
                 tool.write_text('#!/bin/sh\n' + body + '\n')
@@ -124,6 +153,18 @@ class MacOSCommit(unittest.TestCase):
             self.assertEqual(push('0' * 40), 0)
             self.assertEqual(push(second), 0)
             self.assertEqual(len(calls()), 4)
+
+            # A push that changes only unchecked paths reuses the nearest passing ancestor.
+            (root / '.changes').mkdir()
+            (root / '.changes/note.md').write_text('note')
+            subprocess.run([*git, 'add', '-A'], check=True)
+            subprocess.run([*git, 'commit', '-qm', 'note'], check=True)
+            note = subprocess.run([*git, 'rev-parse', 'HEAD'], check=True, capture_output=True, text=True).stdout.strip()
+            self.assertEqual(push(note), 0)
+            self.assertEqual(len(calls()), 4)
+            third = commit('third')
+            self.assertEqual(push(third), 0)
+            self.assertEqual(len(calls()), 5)
 
 
 if __name__ == '__main__':
