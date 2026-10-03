@@ -23,7 +23,7 @@ from dudect_report import raw_csv_rows
 from provenance import ct_function_symbols, dudect_runner_sources, load_toml, sha256_file
 from manifest import (
   binsec_kernel_targets, binsec_required_targets, is_diagnostic_dudect_case, primitive_supports_physical_timing,
-  required_dudect_cases,
+  required_dudect_cases, dudect_confirmation_policy,
 )
 
 
@@ -541,6 +541,11 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
       fail(errors, f"asm_public_operand[{index}] source must identify an existing source line")
     if not isinstance(rule.get("rationale"), str) or not rule.get("rationale", "").strip():
       fail(errors, f"asm_public_operand[{index}] requires a rationale")
+
+  try:
+    dudect_confirmation_policy(ct)
+  except ValueError as exc:
+    fail(errors, str(exc))
 
   dudect_names: set[str] = set()
   dudect_by_name: dict[str, dict] = {}

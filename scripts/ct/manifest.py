@@ -93,3 +93,25 @@ def dudect_sample_count(case, *, smoke=False, override=None, fallback=20000):
   if isinstance(value, bool) or not isinstance(value, int) or value < 2:
     raise ValueError("DudeCT sample budget must be an integer of at least two")
   return value
+
+
+def dudect_confirmation_policy(ct: dict) -> tuple[int, float]:
+  """Return `(sample_factor, review_fraction)` from `[dudect_confirmation]`.
+
+  A required case whose screening |t| reaches `review_fraction` of its threshold
+  is measured again with `sample_factor` times its samples; that measurement
+  decides the case.
+  """
+  policy = ct.get("dudect_confirmation")
+  if not isinstance(policy, dict):
+    raise ValueError("ct.toml requires a [dudect_confirmation] table")
+  factor = policy.get("sample_factor")
+  if isinstance(factor, bool) or not isinstance(factor, int) or factor < 2:
+    raise ValueError("dudect_confirmation.sample_factor must be an integer of at least two")
+  fraction = policy.get("review_fraction")
+  if isinstance(fraction, bool) or not isinstance(fraction, (int, float)) or not 0 < fraction <= 1:
+    raise ValueError("dudect_confirmation.review_fraction must be in (0, 1]")
+  rationale = policy.get("rationale")
+  if not isinstance(rationale, str) or not rationale.strip():
+    raise ValueError("dudect_confirmation requires a rationale")
+  return factor, float(fraction)

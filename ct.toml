@@ -8,6 +8,14 @@ release_report = "ct-report.json"
 harness = "tools/ct-harness"
 artifact_script = "scripts/ct/artifacts.sh"
 
+# Sequential DudeCT decision. A required case whose screening |t| reaches
+# review_fraction of its threshold is measured again on the same prepared binary
+# with sample_factor times its samples, and that measurement decides the case.
+[dudect_confirmation]
+sample_factor = 4
+review_fraction = 0.75
+rationale = "A stationary timing difference grows |t| by about sqrt(sample_factor) with more samples; host noise does not. Confirming at four times the samples keeps every threshold, doubles the expected |t| of a real leak, and also escalates passing results within 25% of the threshold instead of accepting them on one draw."
+
 [equality_evidence.release_binary]
 name = "rscrypto-ct-evidence"
 kind = "executable"

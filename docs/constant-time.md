@@ -105,6 +105,25 @@ P-384 ECDH has the same public prelude boundary.
 `ct.toml` declares the DudeCT cases and the bounded BINSEC selector kernels.
 The full Constant-Time workflow measures the DudeCT cases on every native platform.
 
+### DudeCT decision
+
+Each required DudeCT case is decided in two steps on the same prepared binary.
+
+1. A screening measurement runs with the case's sample budget.
+2. If its |t| reaches `review_fraction` of the threshold, or exceeds the threshold,
+   a confirmation measurement runs with `sample_factor` times the samples.
+   The confirmation decides the case.
+
+`[dudect_confirmation]` in `ct.toml` sets both values.
+Neither step changes a threshold.
+A stationary timing difference grows |t| by about the square root of the sample ratio,
+so four times the samples roughly doubles the |t| of a real leak.
+Host noise does not grow that way, so a one-off outlier does not fail the gate.
+The near-threshold rule also measures borderline passes again, so a real difference that screening
+underestimated can fail instead of passing on one draw.
+The report keeps the screening result under `screening`.
+A screening failure that the confirmation does not reproduce is reported as a `dudect_unconfirmed` diagnostic.
+
 ### ECDSA
 
 Recent ECDSA hardening keeps masked point selection on AArch64 and Windows,

@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 import evidence_bundle
 from provenance import load_toml, sha256_file
 from manifest import (
-  dudect_sample_count,
+  dudect_confirmation_policy, dudect_sample_count,
   is_diagnostic_dudect_case, primitive_supports_physical_timing, resolve_dudect_case, target_record,
   required_dudect_cases as select_required_dudect_cases,
 )
@@ -571,8 +571,40 @@ def dudect_case_result(
   return row
 
 
+def dudect_confirmation_reason(row: dict[str, Any], review_fraction: float) -> str | None:
+  """Return why a screened required case needs a confirming measurement, if it does.
+
+  A failing case is confirmed before it fails the gate. A passing case within
+  `review_fraction` of its threshold is confirmed before it passes, so a real
+  difference that screening happened to underestimate is measured again too.
+  """
+  if row.get("gate") == "diagnostic":
+    return None
+  if row["status"] == "fail":
+    return "threshold"
+  limit = row.get("threshold_abs_max_t")
+  measured = row.get("abs_max_t")
+  if (
+    row["status"] == "pass"
+    and isinstance(limit, (int, float))
+    and isinstance(measured, (int, float))
+    and measured >= review_fraction * limit
+  ):
+    return "near-threshold"
+  return None
+
+
+def dudect_screening_record(row: dict[str, Any]) -> dict[str, Any]:
+  """Keep the screening measurement that a confirmation superseded."""
+  keys = (
+    "status", "statistical_status", "abs_max_t", "max_t", "max_tau", "seed", "requested_samples",
+    "threshold_abs_max_t", "timeout_seconds", "report", "artifacts", "command_result",
+  )
+  return {key: row[key] for key in keys if key in row}
+
+
 def run_dudect_cases(
-  root, out_dir, logs_dir, target, profile, manifest_cases, threshold, dudect_timeout, source, transferred=None
+  root, out_dir, logs_dir, target, profile, manifest_cases, threshold, dudect_timeout, source, confirmation, transferred=None
 ):
   dudect_cases = []
   if transferred is None:
@@ -596,29 +628,34 @@ def run_dudect_cases(
         print(f"ct-full: {preparation.name} {key}: {path}\n{path.read_text(errors='replace')[-16384:]}",
               file=sys.stderr, flush=True)
   fallback_samples = int(os.environ.get("RSCRYPTO_CT_DUDECT_SAMPLES", "20000"))
+  sample_factor, review_fraction = confirmation
   for case in manifest_cases if preparation.status == "pass" else []:
     samples = case_sample_count(case, fallback=fallback_samples)
     timeout_seconds = case_timeout_seconds(case, dudect_timeout)
     print(f"ct-full: dudect {case['name']}", flush=True)
-    dudect_cases.append(
-      dudect_case_result(
-        root,
-        logs_dir,
-        samples,
-        threshold,
-        case,
-        timeout_seconds,
-        prepared,
-        source,
+    row = dudect_case_result(root, logs_dir, samples, threshold, case, timeout_seconds, prepared, source)
+    reason = dudect_confirmation_reason(row, review_fraction)
+    if reason is not None:
+      print(
+        f"ct-full: dudect {row['name']}: screening {row['status']} "
+        f"(abs_max_t={row.get('abs_max_t')}, threshold={row.get('threshold_abs_max_t')}, samples={samples}); "
+        f"confirming with {samples * sample_factor} samples",
+        flush=True,
       )
-    )
-    row = dudect_cases[-1]
+      screening = dudect_screening_record(row)
+      row = dudect_case_result(
+        root, logs_dir, samples * sample_factor, threshold, case, timeout_seconds * sample_factor, prepared, source
+      )
+      row["confirmation_reason"] = reason
+      row["screening"] = screening
+    dudect_cases.append(row)
     result = row["command_result"]
     print(
       f"ct-full: dudect {row['name']}: {row['status']} "
       f"({result['duration_seconds']:.1f}s, exit={result['returncode']}, "
       f"timeout={row['timeout_seconds']}s, abs_max_t={row.get('abs_max_t')}, "
-      f"threshold={row.get('threshold_abs_max_t', threshold)})",
+      f"threshold={row.get('threshold_abs_max_t', threshold)}, samples={row['requested_samples']}"
+      f"{', confirmed' if reason is not None else ''})",
       flush=True,
     )
     if row["status"] not in ("pass", "diagnostic-fail"):
@@ -865,6 +902,37 @@ def markdown_escape_cell(value: Any) -> str:
   return str(value).replace("|", "\\|")
 
 
+def dudect_confirmation_lines(cases: list[dict[str, Any]]) -> list[str]:
+  """Render every confirmed case: why it was confirmed, both measurements, and the decision."""
+  confirmed = [case for case in cases if case.get("screening") is not None]
+  if not confirmed:
+    return []
+  lines = [
+    "",
+    "### Confirmations",
+    "",
+    "| Case | Reason | Screening \\|t\\| (samples) | Confirmation \\|t\\| (samples) | Threshold | Decision |",
+    "| --- | --- | --- | --- | --- | --- |",
+  ]
+  for case in confirmed:
+    screening = case["screening"]
+    lines.append(
+      "| "
+      + " | ".join(
+        [
+          f"`{markdown_escape_cell(case['name'])}`",
+          f"`{markdown_escape_cell(case.get('confirmation_reason'))}`",
+          f"{markdown_escape_cell(screening.get('abs_max_t'))} ({markdown_escape_cell(screening.get('requested_samples'))})",
+          f"{markdown_escape_cell(case.get('abs_max_t'))} ({markdown_escape_cell(case.get('requested_samples'))})",
+          f"{markdown_escape_cell(case.get('threshold_abs_max_t'))}",
+          f"`{markdown_escape_cell(case.get('status'))}`",
+        ]
+      )
+      + " |"
+    )
+  return lines
+
+
 def markdown_report(report: dict[str, Any]) -> str:
   summary = report.get("summary", {})
   lines = [
@@ -968,7 +1036,9 @@ def markdown_report(report: dict[str, Any]) -> str:
     for case in non_pass:
       detail = f", failures={case['failure_count']}" if case.get("failure_count") is not None else ""
       reason = f" - {case['diagnostic_reason']}" if case.get("diagnostic_reason") else ""
-      lines.append(f"- `{case['name']}` (`{case['primitive']}`): `{case['status']}`{detail}{reason}")
+      measured = f", abs_max_t={case['abs_max_t']}" if case.get("abs_max_t") is not None else ""
+      lines.append(f"- `{case['name']}` (`{case['primitive']}`): `{case['status']}`{measured}{detail}{reason}")
+  lines.extend(dudect_confirmation_lines(report["dudect"]["cases"]))
   if report["coverage"]["missing_dudect_primitives"]:
     lines.extend(["", "## Missing DudeCT Coverage", ""])
     for primitive in report["coverage"]["missing_dudect_primitives"]:
@@ -1008,6 +1078,20 @@ def build_findings(
     )
 
   for case in dudect_cases:
+    screening = case.get("screening")
+    if case["status"] == "pass" and screening is not None and screening.get("status") == "fail":
+      diagnostics.append(
+        {
+          "kind": "dudect_unconfirmed",
+          "severity": "diagnostic",
+          "summary": (
+            f"{case['name']} exceeded its threshold at screening (abs_max_t={screening.get('abs_max_t')}, "
+            f"{screening.get('requested_samples')} samples) and passed confirmation "
+            f"(abs_max_t={case.get('abs_max_t')}, {case.get('requested_samples')} samples)"
+          ),
+          "primitive": case["primitive"],
+        }
+      )
     if case["status"] == "pass":
       continue
     if case.get("gate") == "diagnostic" and case["status"] in {"fail", "diagnostic-fail"}:
@@ -1044,7 +1128,14 @@ def build_findings(
           "kind": "dudect_failure",
           "category": "timing_failure",
           "severity": "blocker",
-          "summary": f"{case['name']} produced a timing result above the DudeCT threshold",
+          "summary": (
+            f"{case['name']} produced a timing result above the DudeCT threshold"
+            + (
+              f" in its {case.get('requested_samples')}-sample confirmation"
+              if case.get("screening") is not None
+              else ""
+            )
+          ),
           "primitive": case["primitive"],
         }
       )
@@ -1444,7 +1535,7 @@ def main() -> int:
     source = evidence_bundle.source_identity(root)
     dudect_run, preparation, dudect_cases = run_dudect_cases(
       root, out_dir, logs_dir, target, profile, manifest_cases, args.threshold, args.dudect_timeout, source,
-      transferred,
+      dudect_confirmation_policy(ct), transferred,
     )
     steps.append(result_record(preparation))
   else:

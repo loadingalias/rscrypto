@@ -12,11 +12,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 import full
+from manifest import dudect_confirmation_policy
 from dudect_report import write_report
 
 
 # The source identity the fixture preparation records, as `dudect_report` does.
 SOURCE = {"commit": "fixture", "sha256": "fixture"}
+# Confirm at four times the samples; review passes within 25% of the threshold.
+CONFIRMATION = (4, 0.75)
 
 
 def main():
@@ -42,7 +45,11 @@ name = 'manifest_' + name
 count = int(os.environ['RSCRYPTO_CT_DUDECT_SAMPLES'])
 Path(sys.argv[2]).write_text('benchname,sequence,class,runtime_ns\\n' + ''.join(
   f'{name},{i},{i % 2},100\\n' for i in range(count)))
-t = '+20.00' if mode == 'timing' else '+1.00'
+runs = Path('runs-' + name)
+attempt = int(runs.read_text()) + 1 if runs.exists() else 1
+runs.write_text(str(attempt))
+t = {'timing': '+20.00', 'noise': '+20.00' if attempt == 1 else '+1.00',
+     'near': '+8.00' if attempt == 1 else '+1.00', 'near-leak': '+8.00' if attempt == 1 else '+16.00'}.get(mode, '+1.00')
 print(f'bench {name} ... : n == +0.01M, max t = {t}, max tau = +0.01, (5/tau)^2 = 250000')
 ''')
     runner.chmod(0o755)
@@ -76,10 +83,12 @@ manifest = {'manifest_' + name: {'primitive': 'fixture', 'gate': 'required', 'le
 
     def invoke(mode):
       (root / "mode").write_text(mode)
+      for counter in root.glob("runs-*"):
+        counter.unlink()
       with patch.object(full, "shell_script", return_value=[sys.executable, str(prep)]), patch.object(
         full, "python_script", return_value=[sys.executable, str(repository / "scripts/ct/dudect_execute.py")],
       ):
-        return full.run_dudect_cases(root, root / "out", root / "logs", "fixture", "release", cases, 10.0, 10, SOURCE)
+        return full.run_dudect_cases(root, root / "out", root / "logs", "fixture", "release", cases, 10.0, 10, SOURCE, CONFIRMATION)
 
     run, preparation, rows = invoke("success")
     assert preparation.status == "pass"
@@ -127,7 +136,7 @@ manifest = {'manifest_' + name: {'primitive': 'fixture', 'gate': 'required', 'le
     with patch.object(full, 'shell_script', side_effect=AssertionError('transferred binary must not rebuild')), \
          patch.object(full, 'python_script', return_value=[sys.executable, str(repository / 'scripts/ct/dudect_execute.py')]):
       transferred_run, transferred_preparation, transferred_rows = full.run_dudect_cases(
-        root, root / 'out', root / 'logs', 'fixture', 'release', cases, 10.0, 10, SOURCE,
+        root, root / 'out', root / 'logs', 'fixture', 'release', cases, 10.0, 10, SOURCE, CONFIRMATION,
         transferred=run / 'shared/prepared.json')
     assert transferred_run == run
     assert transferred_preparation.status == 'pass'
@@ -137,10 +146,51 @@ manifest = {'manifest_' + name: {'primitive': 'fixture', 'gate': 'required', 'le
     console = io.StringIO()
     with redirect_stdout(console), redirect_stderr(console):
       _, _, failed = invoke("timing")
+    # A screening failure that reproduces at four times the samples fails the gate.
     assert len(failed) == 1 and failed[0]["status"] == "fail"
+    assert failed[0]["requested_samples"] == 16 and failed[0]["confirmation_reason"] == "threshold"
+    assert failed[0]["screening"]["status"] == "fail" and failed[0]["screening"]["requested_samples"] == 4
+    assert "screening fail (abs_max_t=20.0, threshold=10.0, samples=4); confirming with 16 samples" in console.getvalue()
     assert "manifest_alpha: fail" in console.getvalue()
-    assert "abs_max_t=20.0, threshold=10.0" in console.getvalue()
+    assert "abs_max_t=20.0, threshold=10.0, samples=16, confirmed" in console.getvalue()
     assert "tooling-fail" not in console.getvalue()
+    findings, diagnostics = full.build_findings([], failed, [], [])
+    assert [finding["kind"] for finding in findings] == ["dudect_failure"] and not diagnostics
+    assert findings[0]["summary"].endswith("above the DudeCT threshold in its 16-sample confirmation")
+
+    # A screening failure that does not reproduce passes, and the report keeps it.
+    with redirect_stdout(io.StringIO()):
+      _, _, noisy = invoke("noise")
+    assert [row["status"] for row in noisy] == ["pass", "pass"]
+    assert all(row["confirmation_reason"] == "threshold" and row["screening"]["abs_max_t"] == 20.0 for row in noisy)
+    assert all(row["requested_samples"] == 16 and row["abs_max_t"] == 1.0 for row in noisy)
+    findings, diagnostics = full.build_findings([], noisy, [], [])
+    assert not findings and [item["kind"] for item in diagnostics] == ["dudect_unconfirmed"] * 2
+
+    # A pass within 25% of the threshold is measured again before it passes.
+    with redirect_stdout(io.StringIO()):
+      _, _, near = invoke("near")
+    assert [row["status"] for row in near] == ["pass", "pass"]
+    assert all(row["confirmation_reason"] == "near-threshold" for row in near)
+    findings, diagnostics = full.build_findings([], near, [], [])
+    assert not findings and not diagnostics
+    # The job summary shows every confirmation, including passes that left no diagnostic.
+    summary = "\n".join(full.dudect_confirmation_lines(near + noisy))
+    assert "| `manifest_alpha` | `near-threshold` | 8.0 (4) | 1.0 (16) | 10.0 | `pass` |" in summary
+    assert "| `manifest_alpha` | `threshold` | 20.0 (4) | 1.0 (16) | 10.0 | `pass` |" in summary
+    assert full.dudect_confirmation_lines(rows) == []
+
+    # A real difference that screening underestimated fails once it is measured with more samples.
+    with redirect_stdout(io.StringIO()):
+      _, _, leak = invoke("near-leak")
+    assert len(leak) == 1 and leak[0]["status"] == "fail"
+    assert leak[0]["screening"]["status"] == "pass" and leak[0]["confirmation_reason"] == "near-threshold"
+
+    # Clear passes and diagnostic cases are not measured again.
+    assert full.dudect_confirmation_reason({"status": "pass", "abs_max_t": 7.4, "threshold_abs_max_t": 10.0}, 0.75) is None
+    assert full.dudect_confirmation_reason(
+      {"gate": "diagnostic", "status": "diagnostic-fail", "abs_max_t": 30.0, "threshold_abs_max_t": 10.0}, 0.75
+    ) is None
 
 
 def test_utf8_child_process():
@@ -197,6 +247,27 @@ def test_proof_failure_stops_timing():
     assert summary.read_text() == (root / "target/ct/x86_64-unknown-linux-gnu/release/ct-report.md").read_text()
 
 
+def test_confirmation_policy():
+  rationale = "fixture"
+  assert dudect_confirmation_policy(
+    {"dudect_confirmation": {"sample_factor": 4, "review_fraction": 0.75, "rationale": rationale}}
+  ) == (4, 0.75)
+  for policy in (
+    None,
+    {"sample_factor": 1, "review_fraction": 0.75, "rationale": rationale},
+    {"sample_factor": True, "review_fraction": 0.75, "rationale": rationale},
+    {"sample_factor": 4, "review_fraction": 0.0, "rationale": rationale},
+    {"sample_factor": 4, "review_fraction": 1.5, "rationale": rationale},
+    {"sample_factor": 4, "review_fraction": float("nan"), "rationale": rationale},
+    {"sample_factor": 4, "review_fraction": 0.75, "rationale": " "},
+  ):
+    try:
+      dudect_confirmation_policy({} if policy is None else {"dudect_confirmation": policy})
+    except ValueError:
+      continue
+    raise AssertionError(f"invalid confirmation policy accepted: {policy}")
+
+
 def test_exact_case_selection():
   cases = [{"name": name, "gate": gate} for name, gate in (("alpha", "required"), ("beta", "diagnostic"), ("alphabet", "required"))]
   # Exact names, not substrings; request order; any gate; duplicates collapse.
@@ -210,6 +281,7 @@ def test_exact_case_selection():
 
 
 if __name__ == "__main__":
+  test_confirmation_policy()
   test_exact_case_selection()
   test_utf8_child_process()
   test_windows_shell_entry_paths()
