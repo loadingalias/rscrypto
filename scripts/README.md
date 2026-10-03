@@ -13,6 +13,7 @@ Those entry points call the supporting modules.
 | `check/compat.py`                      | `just ci-compat` |
 | `test/test-musl.sh`                    | `just test-musl` |
 | `check/macos.sh`                       | `just check-macos`, local pre-push hook |
+| `check/qualified.py`                   | local pre-commit and pre-push hooks, `check/macos.sh` |
 | `check/dependencies.sh`                | `just ci-policy`, and the dependency checks in `just check` |
 | `check/lint-independent-workspaces.sh` | `check/check.sh` |
 | `asm/p384.py check`                    | `check/check.sh` |

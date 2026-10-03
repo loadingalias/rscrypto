@@ -8,9 +8,14 @@ if [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
   exit 1
 fi
 before=$(git write-tree)
-# Format, lint, and documentation checks per commit; pre-push runs the full macOS qualification.
+# A tree that already passed, or differs from the last passing tree only in paths that
+# no check reads, keeps that pass. Anything else runs format, lint, and documentation checks.
+if scripts/lib/python.sh scripts/check/qualified.py check ci-check "$before"; then
+  exit 0
+fi
 just ci-check
 git diff --quiet && [[ "$(git write-tree)" == "$before" && -z "$(git ls-files --others --exclude-standard)" ]] || {
   echo 'Source changed during native checks; review and retry the commit.' >&2
   exit 1
 }
+scripts/lib/python.sh scripts/check/qualified.py record ci-check "$before"

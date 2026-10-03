@@ -81,6 +81,12 @@ Run `just install-hooks` once for each checkout.
 - `check-macos` qualifies the pushed commit, which must be the clean checkout.
   It records each passing tree and compiler in the repository's Git directory,
   so a push of a tree that already passed skips the run, from any worktree.
+- Both hooks reuse a pass when the new tree differs from the nearest passing first-parent ancestor
+  only in paths that no check reads: `docs/`, `.changes/`, `.github/`, `benchmark_results/`,
+  `.config/tooling.toml`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, and `THREAT_MODEL.md`.
+  `scripts/check/qualified.py` owns this list. A change to any other path, or a different compiler, runs the checks.
+  `README.md` is checked because the crate documentation includes it.
+- `check-macos` skips `just ci-check` when the clean checkout already passed it in the pre-commit hook.
 - In a push of more than one commit, the intermediate commits get only `just ci-check`.
 - The hooks reject unstaged tracked changes and untracked files,
   so that the tested source matches the commit.
