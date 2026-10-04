@@ -6,6 +6,78 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-04: Ed25519 and X25519 vector fixed-base tables
+
+On native x86-64 Windows, precomputing the 512 public conversions used by each fixed-base multiply
+reduces short-message Ed25519 signing time by 54% / 59% with IFMA and 43% / 42% with AVX2 (Intel /
+AMD).
+The public APIs, scalar recoding, point addition, and dispatch stay the same.
+Normal Linux Ed25519 and X25519 public-key operations use separate assembly
+and do not gain from this change.
+These are primitive results, not authenticated-channel measurements.
+
+Baseline: effective `main` at `d8db85642e1ff2a176c7925eb873fa2f23021c30`, with the same benchmark capability switch in both trees.
+Baseline `point_avx2.rs` SHA-256: `35b435987711a077737a118c5e1acb9659221a1605694eb8ab9ae483c099686e`; measured candidate: `964278728d945bdb5ff7d13a95590870c32c987fe7cee052fcae0965dd5da3ab`.
+The later selector-source changes add safety documentation only.
+Both hosts used `nightly-2026-09-30`, rustc `1.101.0-nightly (5c543b0b8 2026-09-29)`, LLVM 23.1.1, `x86_64-pc-windows-msvc`, the repository `bench` profile, and only `--cfg rscrypto_internal` in Rust flags.
+The `auth` benchmark used its catalog features.
+
+- Intel: AWS `c8i.4xlarge`, Xeon 6975P-C, 8 cores / 16 logical processors.
+- AMD: Azure `Standard_F8as_v7`, EPYC 9V45, 8 cores / 8 logical processors.
+- Ten same-host baseline/candidate rounds, alternating order, with IFMA and forced AVX2.
+  Each case used 300 ms warmup, 700 ms measurement, and 30 samples.
+  No observations or rounds were removed.
+- Values below are medians of the ten Criterion slope estimates, in microseconds.
+  Percentage changes use the median of the ten paired candidate/baseline ratios.
+  Full rows, paired ranges, and deterministic 95% bootstrap intervals are in the retained summary.
+
+| Public operation                 |    Intel IFMA |    Intel AVX2 |      AMD IFMA | AMD AVX2 |
+| -------------------------------- | ------------: | ------------: | ------------: | -------: |
+| Ed25519 public key               |  19.76 → 8.85 | 20.42 → 11.52 |  16.83 → 6.71 | 14.53 → 8.28 |
+| Ed25519 keypair                  |  19.76 → 8.85 | 20.42 → 11.62 |  16.76 → 6.69 | 14.55 → 8.22 |
+| Ed25519 keypair sign, 32 B       |  20.16 → 9.25 | 20.85 → 11.89 |  17.12 → 7.03 | 14.81 → 8.55 |
+| Ed25519 direct-secret sign, 32 B | 39.91 → 18.10 | 41.27 → 23.32 | 33.89 → 13.73 | 29.30 → 16.77 |
+| Ed25519 keypair sign, 16 KiB     | 67.34 → 56.07 | 67.96 → 58.96 | 50.63 → 40.69 | 48.34 → 42.06 |
+| X25519 public key                |  19.49 → 8.59 | 20.35 → 11.54 |  16.55 → 6.55 | 14.25 → 8.08 |
+
+Verification (0, 32, 1,024, and 16,384 B) and X25519 agreement were controls.
+Their median changes range from −0.41% to +0.25%, below Criterion's configured 1% noise threshold.
+Some Intel IFMA verification intervals extend to +1.64%;
+this campaign does not rule out small layout or host effects in every control.
+The first candidate build occurred between the first baseline and candidate measurements;
+that limitation and all ten rounds remain in the record.
+
+The matched Intel benchmark EXE grows by 162,304 bytes
+(158.5 KiB): raw `.rdata` grows by 163,840 bytes and `.text` shrinks by 1,536 bytes.
+Both linked selectors have no EVEX instructions or nested calls.
+Fixed-base worker frames get smaller, but the X25519 wrapper gets larger;
+these observations do not establish lower whole-operation peak stack use.
+The [secret-lifecycle boundary](../docs/secret-lifecycle.md#ed25519-and-x25519) records unwiped arithmetic temporaries without claiming complete
+stack or register cleanup.
+
+Correctness evidence includes exhaustive table-entry and signed-digit comparisons,
+portable-field oracles, and native vector differential tests:
+102 focused Linux tests and 99 on each Windows host.
+The two Linux BINSEC selector proofs report `secure`; the IFMA leaf is now a required kernel.
+The final proof archives match the working tree's selector, table, harness, and manifest hashes.
+AVX2 completes one path in 534 instructions and IFMA in 452, with no unknown instructions or cuts.
+Both reports, executables, disassemblies, and source hashes are in `final-linux-proofs.tgz` below.
+Both Windows hosts pass the five selected Ed25519/X25519 timing cases at their manifest budgets
+(20,000 samples, or 200,000 for signing commitment), with maximum |t| of 2.35 and 2.94.
+These selected runs are diagnostic evidence, not the full release CT matrix.
+
+Reproduce each tree with `just bench --bench auth` and the filter `^(x25519/|ed25519/(sign|verify|public-key-from-secret|keypair-from-secret)/).*rscrypto`, plus `--warmup-ms 300 --measure-ms 700 --sample-size 30 --output-dir PATH`.
+Set `RSCRYPTO_BENCH_DISABLE_IFMA=1` for the AVX2 run before process initialization.
+Intel key construction was measured in a separate ten-round pass
+after correcting the initial filter.
+The early metadata collector did not list that new environment key; the preserved script,
+per-backend directories, and captured capability output identify it explicitly.
+The collector now records it for subsequent runs.
+
+Local raw archives, exact plans and hashes, timing reports, linked-code review, scripts,
+and `summary.json` are retained under `benchmark_results/2026-10-04/ed25519-tables/`.
+That directory is ignored; this overview preserves the measurements and limits in Git.
+
 ## Corrections
 
 **Comparison validity.**

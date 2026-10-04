@@ -30,7 +30,8 @@ The claim does not cover:
 | Typed keys, private keys, and shared secrets | On concrete or nested `Drop`. A consuming export clears the source, or moves responsibility to the caller explicitly. |
 | AEAD and header protection | Context drop clears the retained keys. Operation-local schedules, authentication state, and materialized cipher output are cleared after use. A failed open clears the unauthenticated plaintext. |
 | HMAC, HKDF, KMAC, PBKDF2, and keyed BLAKE2/BLAKE3 | Finalization copies, keyed prefixes, work buffers, emitted blocks, and replaced state are cleared after their last use. |
-| ECDSA, Ed25519, X25519, P-256 ECDH, P-384 ECDH, ML-KEM, and RSA private work | Secret scalars, digests, limbs, encoded messages, inverse state, and initialized scratch are cleared on every return path. See the notes below. |
+| ECDSA, P-256 ECDH, P-384 ECDH, ML-KEM, and RSA private work | Secret scalars, digests, limbs, encoded messages, inverse state, and initialized scratch are cleared on every return path. See the notes below. |
+| Ed25519 and X25519 private work | Secret owners and staging are cleared; arithmetic temporaries have a narrower boundary. See [Ed25519 and X25519](#ed25519-and-x25519). |
 | ML-DSA private work | See [ML-DSA](#ml-dsa). |
 | Argon2 and scrypt | See [Argon2 and scrypt](#argon2-and-scrypt). |
 | Secret parsing and generation | RAII owners cover success, parse failure, entropy failure, and early return. |
@@ -66,6 +67,16 @@ The claim does not cover:
 - **Not claimed:** field-arithmetic and table-selection temporaries outside those owners.
   This includes the general-purpose and vector registers that the AArch64 inline assembly uses,
   and the stack frames and registers of the x86-64 fused point doubling and addition.
+
+### Ed25519 and X25519
+
+- Ed25519 clears its expanded secret and signing scalar/digest staging.
+  X25519 clears its secret-key and clamped-scalar owners.
+- **Not claimed:** recoded digits, cached selections,
+  and field/point arithmetic temporaries in the Rust Edwards fixed-base workers.
+  This includes the AVX2 and IFMA selectors' stack frames and register-save slots.
+- The separate AVX2 selector boundary supports binary constant-time analysis.
+  It does not establish whole-operation stack or register cleanup.
 
 ### ML-DSA
 

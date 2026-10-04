@@ -2447,7 +2447,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 rustflags = ["-C", "target-feature=+avx2"]
 sse_depth = 20000
 secrets = [{ name = "CT_BINSEC_ED25519_DIGIT", kind = "global", bytes = 1 }]
-public = [{ name = "BASEPOINT_RADIX16_TABLE[0]", kind = "const", value = 0 }]
+public = [{ name = "BASEPOINT_RADIX16_AVX2_RAW[0]", kind = "const", value = 0 }]
 assumptions = []
 notes = "Production passes an Ed25519 signed radix-16 digit; this kernel validates the AVX2 fixed-base selector used by the accelerated signing/public-key path."
 claim = "ct-intended"
@@ -2457,14 +2457,14 @@ id = "signature.ed25519_sign.basepoint_select_ifma.x86_64_linux"
 primitive = "signature.ed25519_sign"
 symbol = "ct_binsec_ed25519_select_basepoint_cached_ifma"
 tier = "A"
-required = false
+required = true
 targets = ["x86_64-unknown-linux-gnu"]
-rustflags = ["-C", "target-feature=+avx2,+avx512ifma,+avx512vl"]
+rustflags = ["-C", "target-feature=+avx2"]
 sse_depth = 20000
 secrets = [{ name = "CT_BINSEC_ED25519_DIGIT", kind = "global", bytes = 1 }]
-public = [{ name = "BASEPOINT_RADIX16_TABLE[0]", kind = "const", value = 0 }]
+public = [{ name = "BASEPOINT_RADIX16_IFMA_RAW[0]", kind = "const", value = 0 }]
 assumptions = []
-notes = "Diagnostic verifier target for the shipped AVX-512 IFMA Ed25519 signing/public-key path. BINSEC/Rel 0.11.1 currently cuts this proof at AVX-512 IFMA vpmadd52* instructions; release evidence for the IFMA path is therefore DudeCT plus artifact/heuristic evidence until BINSEC gains those instruction semantics."
+notes = "The production IFMA fixed-base path selects precomputed vector limbs in an out-of-line AVX2-only leaf. This isolates selection from EVEX instructions, which BINSEC/Rel 0.11.1 cannot decode. This leaf proof does not cover the surrounding IFMA point arithmetic."
 claim = "ct-intended"
 
 [[binsec_kernel]]

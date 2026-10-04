@@ -64,12 +64,13 @@ class ProfileTests(unittest.TestCase):
     self.assertFalse(self.fixture.runs())
 
   def test_exact_capture_and_shared_evidence(self):
-    controls = {'RAYON_NUM_THREADS': '3', 'RSCRYPTO_FORCE_AVX512': '1'}
+    controls = {'RAYON_NUM_THREADS': '3', 'RSCRYPTO_FORCE_AVX512': '1', 'RSCRYPTO_BENCH_DISABLE_IFMA': '1'}
     self.fixture.ok(self.fixture.bench('sha256', **controls))
     self.fixture.ok(self.profile('sha2', 'sha256/rscrypto/64', '1', **controls))
     metadata = self.metadata()
     self.assertEqual(metadata['status'], 'complete')
     self.assertEqual(metadata['compatibility'], self.fixture.plan()[0]['compatibility'])
+    self.assertEqual(metadata['compatibility']['environment']['runtime']['RSCRYPTO_BENCH_DISABLE_IFMA'], '1')
     self.assertEqual(metadata['artifact']['sha256'], hashlib.sha256(Path(metadata['artifact']['path']).read_bytes()).hexdigest())
     self.assertEqual(metadata['command'], [metadata['artifact']['path'], '--bench', '--profile-time', '1.0', '--noplot'])
     root = next((self.root / 'target/profiles').iterdir())

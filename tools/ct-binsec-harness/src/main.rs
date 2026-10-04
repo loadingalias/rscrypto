@@ -968,16 +968,14 @@ pub unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_avx2() -> ! {
 #[cfg(target_arch = "x86_64")]
 #[unsafe(no_mangle)]
 #[inline(never)]
-#[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+#[target_feature(enable = "avx2")]
 /// # Safety
 ///
-/// The caller must ensure AVX2, AVX-512 IFMA, and AVX-512 VL are available
-/// before invoking this entrypoint.
+/// The caller must ensure AVX2 is available before invoking this entrypoint.
 pub unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_ifma() -> ! {
   // SAFETY: This pointer references a fixed harness global with static storage.
   let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ED25519_DIGIT)) };
-  // SAFETY: This entrypoint is compiled with AVX2, AVX-512 IFMA, and AVX-512 VL
-  // enabled and is selected only for the x86_64 IFMA BINSEC kernel.
+  // SAFETY: AVX2 is enabled; the IFMA table selector itself uses only AVX2.
   let limbs = unsafe { rscrypto::auth::diag_ed25519_select_basepoint_cached_ifma_limb_digest(digit) };
 
   let mut acc = 0u64;
