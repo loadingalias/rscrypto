@@ -707,7 +707,7 @@ impl Jacobian {
     Self { x, y, z }
   }
 
-  /// Add a finite affine point (madd-2007-bl, 7M + 4S) when the finite
+  /// Add a finite affine point (madd-2004-hmv, 8M + 3S) when the finite
   /// operands are known to be neither equal nor opposite.
   #[inline(always)]
   fn add_mixed_formula(self, rhs: Affine) -> Self {
@@ -725,16 +725,14 @@ impl Jacobian {
     let h = u2.sub(self.x);
     let hh = h.square();
     let s2 = s2.mul(z1z1);
-    let i = hh.times4();
-    let z = self.z.add(h).square();
-    let j = h.mul(i);
-    let v = self.x.mul(i);
-    let r = s2.sub(self.y).double();
+    let z = self.z.mul(h);
+    let j = h.mul(hh);
+    let v = self.x.mul(hh);
+    let r = s2.sub(self.y);
     let r_squared = r.square();
     let y1j = self.y.mul(j);
     let x = r_squared.sub(j).sub(v.double());
-    let y = r.mul(v.sub(x)).sub(y1j.double());
-    let z = z.sub(z1z1).sub(hh);
+    let y = r.mul(v.sub(x)).sub(y1j);
     (Self { x, y, z }, h.zero_mask() & r.zero_mask())
   }
 
@@ -1809,11 +1807,16 @@ mod tests {
     }
   }
 
-  /// `k * G` from the fixed-base comb, an independent path from the window.
+  /// `k * G` from RustCrypto, independent of this module's point formulas.
   fn generator_multiple(k: u8) -> Jacobian {
+    use p384::elliptic_curve::sec1::ToSec1Point as _;
+
     let mut bytes = [0u8; 48];
     bytes[47] = k;
-    super::scalar_mul_generator(&Scalar::from_bytes(&bytes)).0
+    let key = p384::SecretKey::from_slice(&bytes).expect("nonzero generator multiple");
+    let encoded = key.public_key().to_sec1_point(false);
+    let point = super::PublicPoint::from_sec1_bytes(encoded.as_bytes()).expect("valid oracle point");
+    Jacobian::from_affine(point.0)
   }
 
   #[test]
