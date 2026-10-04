@@ -78,6 +78,49 @@ Local raw archives, exact plans and hashes, timing reports, linked-code review, 
 and `summary.json` are retained under `benchmark_results/2026-10-04/ed25519-tables/`.
 That directory is ignored; this overview preserves the measurements and limits in Git.
 
+## 2026-10-04: P-384 reduction overlap rejected
+
+Advancing the next Montgomery quotient with flag-preserving SHLX/LEA instructions made P-384
+agreement 2.42% slower on Intel Granite Rapids.
+The candidate passed correctness checks but was removed.
+No P-384 production or generator change remains from this experiment.
+
+The candidate changed only the square reduction schedule inside the fused x86-64 doubling kernel,
+retaining the 21-MULX square product.
+Its premise was to overlap the next quotient calculation with the current borrow chain.
+This measurement rejects that schedule;
+it does not establish the microarchitectural cause of the loss.
+
+Baseline: effective `main` at `d8db85642e1ff2a176c7925eb873fa2f23021c30`.
+Both trees included the same pending Ed25519 changes.
+Baseline `p384_x86_64.rs` SHA-256: `a8a1314398d09935ec54af0c7d56b1095c9dd527023f25d1c04c4e3059e6fb80`; candidate: `4feee455e0e90458402ee82071d6b5ab406acaaf331df29c77aaf958d68314d4`.
+The host was AWS `c8i.4xlarge`, Xeon 6975P-C, 8 cores / 16 logical processors, running `x86_64-unknown-linux-gnu`, `nightly-2026-09-30`, rustc `1.101.0-nightly (5c543b0b8 2026-09-29)`,
+and LLVM 23.1.1.
+Both artifacts were built before measurement, using the repository `bench` profile, the `auth` catalog features,
+and `--cfg rscrypto_internal`.
+
+Ten same-host rounds alternated baseline/candidate order.
+Each case used 300 ms warmup, 1,000 ms measurement, and 40 samples.
+All ten rounds are retained.
+Values below are medians of Criterion slope estimates;
+changes and intervals use the paired candidate/baseline ratios.
+The deterministic bootstrap uses 10,000 resamples and seed `20261004`.
+
+| Agreement implementation | Baseline | Candidate | Paired median change | Paired bootstrap 95% interval |
+| --- | ---: | ---: | ---: | ---: |
+| rscrypto | 122.23 µs | 125.14 µs | +2.42% | +1.98% to +2.67% |
+| AWS-LC control | 120.06 µs | 119.99 µs | −0.02% | −0.14% to +0.04% |
+
+Correctness evidence: 3,000 cases per generated kernel against Python integer arithmetic,
+simulator negative controls including a carry-flag mutation, and 26 native P-384 tests.
+The performance loss stopped qualification before new CT evidence or an AMD run.
+The restored generator passes `python3 scripts/asm/p384.py check`.
+
+Reproduce the comparison with `just bench --bench auth`, filter `^p384-ecdh/agreement/(rscrypto-selected|aws-lc-rs-native)$`, and `--warmup-ms 300 --measure-ms 1000 --sample-size 40 --output-dir PATH`.
+The rejected source, exact diff, run script, plans, hashes, raw measurements,
+and `summary.json` are retained locally under `benchmark_results/2026-10-04/p384-overlap/` (ignored).
+The x86 agreement gap and the remaining architecture backends are still open.
+
 ## Corrections
 
 **Comparison validity.**
