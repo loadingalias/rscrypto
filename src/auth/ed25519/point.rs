@@ -82,7 +82,7 @@ impl CachedPoint {
   };
 
   /// Borrow the cached-point components.
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  #[cfg(all(feature = "ed25519", target_arch = "x86_64", target_feature = "sse2"))]
   #[must_use]
   pub(crate) const fn components(&self) -> (&FieldElement, &FieldElement, &FieldElement) {
     (&self.y_plus_x, &self.y_minus_x, &self.t2d)
