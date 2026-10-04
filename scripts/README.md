@@ -498,6 +498,9 @@ It does not run on pull requests or pushes.
 - The release workflow calls it for all platforms,
   and needs it to pass on the same candidate before it publishes.
 - Linux uses `--ci-ct-full`, and Windows uses `-CiCt`.
+- On a native GNU Linux x86-64 or ARM64 development host,
+  `scripts/tooling/x86_64-linux.sh --ct-proof` or `scripts/tooling/aarch64-linux.sh --ct-proof` adds the same pinned proof tools to the native tool catalog.
+  The `--ci-*` modes retain their separate operating-system checks.
 - On GNU Linux x86-64 and ARM64, the Linux installer also installs the pinned BINSEC, Bitwuzla,
   and the decoder.
   Proof dependencies use a fixed opam repository revision from `.config/tooling.toml`.

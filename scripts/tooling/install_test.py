@@ -98,10 +98,18 @@ elif name == 'make':
     executable.chmod(0o755)
 elif name == 'nproc':
     print('4')
+elif name == 'tee':
+    data = sys.stdin.read()
+    sys.stdout.write(data)
+    for path in args:
+        if path != '/etc/sysctl.d/99-rscrypto-profiling.conf':
+            pathlib.Path(path).write_text(data)
 elif name == 'sysctl':
     if args == ['-n', 'kernel.perf_event_paranoid']:
         print(os.environ.get('INSTALL_PERF_PARANOID', '2'))
     elif args == ['-w', 'kernel.perf_event_paranoid=-1']:
+        print('kernel.perf_event_paranoid = -1')
+    elif args == ['-p', '/etc/sysctl.d/99-rscrypto-profiling.conf']:
         print('kernel.perf_event_paranoid = -1')
     else:
         sys.exit(1)
@@ -111,6 +119,8 @@ elif name == 'python3':
         pathlib.Path(args[-1]).write_text('#!/bin/sh\nexit 0\n')
     elif script == 'catalog.py' and args[1] == 'download-entry':
         pathlib.Path(args[-1]).write_text('pinned source fixture')
+    elif script == 'catalog.py' and args[1] == 'install-archives':
+        pass
     elif script == 'catalog.py' and args[1] == 'install-archive':
         directory = pathlib.Path(args[-1]) / args[-2]
         directory.mkdir(parents=True, exist_ok=True)
@@ -149,7 +159,7 @@ class LinuxInstall(unittest.TestCase):
         binaries = root / 'bin'
         binaries.mkdir()
         for name in ('uname', 'id', 'apt-get', 'apt-cache', 'dpkg', 'cargo', 'clang', 'cmake', 'make', 'nproc', 'patch',
-                     'perf', 'python3', 'rustup', 'sudo', 'tar',
+                     'perf', 'python3', 'rustup', 'sudo', 'tar', 'tee', 'valgrind',
                      'wasmtime', 'opam', 'just', 'rg', 'lychee', 'rumdl', 'samply', 'gungraun-runner', 'sysctl'):
             script = binaries / name
             script.write_text('#!' + sys.executable + '\n' + STUB)
@@ -158,7 +168,7 @@ class LinuxInstall(unittest.TestCase):
         bash_env.write_text('''source() {
   if [[ "$1" == /etc/os-release ]]; then
     ID=ubuntu
-    VERSION_ID=24.04
+    VERSION_ID=${INSTALL_UBUNTU_VERSION:-24.04}
     PRETTY_NAME=fixture
   else
     builtin source "$@"
@@ -408,6 +418,18 @@ class LinuxInstall(unittest.TestCase):
                     self.assertEqual(install[-3:], CATALOG['ci-ct-proof']['opam'])
                 else:
                     self.assertEqual(opam, [])
+
+    def test_native_proof_tools_preserve_the_native_ubuntu_catalog(self):
+        result, calls, root = self.provision(
+            'x86_64-linux', profile='ct-proof',
+            extra_env={'INSTALL_UBUNTU_VERSION': CATALOG['linux']['ubuntu']})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(CATALOG['linux']['codename'], (root / 'apt-sources.list').read_text())
+        self.assertTrue(any('jq=1.0' in call for call in calls))
+        opam = [call for call in calls if call[0] == 'opam']
+        self.assertIn(CATALOG['ci-ct-proof']['opam-repository'], opam[0])
+        install = next(call for call in opam if call[1] == 'install')
+        self.assertEqual(install[-3:], CATALOG['ci-ct-proof']['opam'])
 
     @staticmethod
     def snapshot_updates(calls):

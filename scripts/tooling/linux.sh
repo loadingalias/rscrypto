@@ -9,6 +9,7 @@ ci=false
 profile=ci
 proof=false
 case "${1:-}" in
+  --ct-proof) proof=true; shift ;;
   --ci-ct-full) ci=true; profile=ci-ct; proof=true; shift ;;
   --ci) ci=true; shift ;;
   --ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-bench|--ci-cross-build|--ci-cross-run) ci=true; profile="${1#--}"; shift ;;
@@ -28,7 +29,7 @@ elif [[ "$profile" == ci-cross-run ]]; then
   tools_archive="${1:?runner tools archive is required}"
   shift
 fi
-[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh [--ci|--ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-ct-full|--ci-bench|--ci-cross-build TARGET|--ci-cross-run TOOLS_ARCHIVE]" >&2; exit 64; }
+[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh [--ct-proof|--ci|--ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-ct-full|--ci-bench|--ci-cross-build TARGET|--ci-cross-run TOOLS_ARCHIVE]" >&2; exit 64; }
 machine="${platform%-linux}"
 [[ "$machine" != powerpc64le ]] || machine=ppc64le
 case "$platform" in
