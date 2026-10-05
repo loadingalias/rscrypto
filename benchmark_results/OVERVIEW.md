@@ -761,6 +761,257 @@ Retained artifacts: `benchmark_results/2026-10-04/blake3-const-tree/` contains
 snapshots and hashes, the candidate patch, and the measurement script. The
 record binds both executable hashes and output digests to those builds.
 
+## 2026-10-04: P-384 caller regression remains unresolved
+
+The rejected shift-reduction executables do not reproduce their original public-key
+slowdown on a second AMD EPYC 9R45 `c8a.4xlarge`. The rejection stands; this diagnostic
+campaign establishes no optimization or causal mechanism.
+
+Mapping the original public-key captures locates 2 baseline samples and 40 candidate
+samples in the unchanged `x2p` multiply (0.40% and 8.09% of sampled cycles).
+Its 257 instructions and operands match after resolving constant loads, but the
+candidate block moves 87 bytes earlier. Sampling skid and overlap prevent treating
+these locations as exclusive latency or proof of a cache conflict.
+
+The second host uses CPU 2 affinity, Ubuntu 26.04.1, kernel `7.0.0-1014-aws`, and
+perf `7.0.14`. Both exact retained executables keep the original compiler and source
+identity. Three alternating five-second counter pairs per operation show increased
+frontend empty-slot fractions and decreased backend blocked-slot fractions, with
+almost unchanged public-key cycles per instruction. Every selected event runs
+continuously; whole-command counts include Criterion setup and warmup.
+
+Two fixed diagnostic pairs then use the original three cases and measurement mode:
+300 ms warmup, 1,000 ms measurement, 40 samples, and 10,000 resamples.
+Public-key times are 54.003 → 53.980 µs and 54.701 → 54.008 µs, rather than the
+original 53.478 → 66.552 µs. Agreement changes are -4.54% and -3.89%; the AWS-LC
+controls change +0.38% and +1.31%. The second control exceeds the 1% threshold.
+These two pairs do not replace the original ten-pair rejection or qualify a win.
+
+Reproduce the regression and collect counters in that same execution context
+before choosing another arithmetic change. Host/runtime/caller differences remain
+unresolved. Source and production binaries are unchanged. Exact identities, raw
+exports, counter definitions, scripts, and limitations are retained locally in
+`benchmark_results/2026-10-04/p384-amd-callers-review/` (ignored).
+The instance is terminated; AWS independently confirms its EBS volume is absent.
+
+## 2026-10-04: P-384 shift reduction rejected
+
+Replacing the fixed-constant products in x86-64 square reduction improves AMD
+P-384 agreement by 1.58%, but slows public-key derivation by 24.43%.
+The candidate is rejected and all four experimental source files are restored.
+
+The preserved `d4045559` AMD profile maps 21.52% of sampled agreement cycles to
+the fused square reduction and 12.93% to square-product accumulation.
+Those are sampled locations, with instruction-pointer skid and overlapping work;
+they are not exclusive stage latency or proof of an individual instruction's cost.
+The candidate derives the same reduction limbs with a flag-preserving shift and
+subtracts. It retains the 21 products per square, existing registers, dispatch,
+and 1,104-byte assembly frame. The linked doubling body removes 60 `MULX`, adds
+35 instructions overall, and shrinks from 13,726 to 13,581 bytes.
+
+Both isolated source trees start at `d4045559`; only the candidate applies the
+retained four-file patch. The production `auth` harness and fixtures are unchanged.
+The host is AMD EPYC 9R45 on AWS `c8a.4xlarge`, with CPU 2 affinity,
+Ubuntu 26.04.1, and the pinned `nightly-2026-09-30` toolchain.
+Both executables are built and pass their known-answer checks before timing.
+Ten paired rounds alternate order, with 300 ms warmup, 1,000 ms measurement,
+and 40 samples per case. All 20 runs pass source, artifact, configuration,
+case, sample-count, and order checks; no rounds are removed.
+
+Times are medians of Criterion slopes. Changes use the median paired ratio
+and a 95% bootstrap interval from 10,000 resamples with seed `20261004`.
+
+| Operation | Before, µs | After, µs | Change | 95% interval |
+| --- | ---: | ---: | ---: | ---: |
+| rscrypto agreement | 93.165 | 91.698 | -1.578% | -1.634% to -1.550% |
+| rscrypto public-key derivation | 53.478 | 66.552 | +24.432% | +24.358% to +24.481% |
+| AWS-LC agreement control | 90.384 | 90.695 | +0.040% | -0.396% to +0.740% |
+
+Every public-key pair regresses by more than 24%, while the control interval
+stays within the configured 1% noise threshold. Candidate agreement still takes
+1.011x the same-run AWS-LC time. The public-key regression disqualifies the change.
+
+Correctness passes 23 focused native and 20 portable tests, including independent
+oracles, Wycheproof, properties, allocation checks, and backend differential tests.
+Generator simulation passes with `python3 scripts/asm/p384.py simulate --cases 3000`.
+Both the simulator and the native production differential test reject a deliberate
+carry-clobbering mutation; the exact candidate is restored before positive checks.
+
+Two post-decision five-second native profiles retain the exact measured binaries.
+Flat self samples in doubling rise from 18.01% to 27.51% of the public-key workload.
+The public-key function's 4,032 instructions match after normalizing relocated call
+targets. This identifies a caller-dependent doubling cost to investigate; the short
+profiles do not establish its mechanism. The rejection stands without another
+candidate. The [later diagnostic replay](#2026-10-04-p-384-caller-regression-remains-unresolved)
+does not reproduce the slowdown on a second host or supersede this decision.
+Intel, ARM, Windows, CT, and sanitizer qualification
+were not run for this discarded candidate.
+
+Reproduce the timing with `just bench --bench auth`, filter
+`^p384-ecdh/(agreement/(rscrypto-selected|aws-lc-rs-native)|public-key/rscrypto-selected)$`,
+and `--warmup-ms 300 --measure-ms 1000 --sample-size 40 --output-dir PATH`.
+The patch, arithmetic review, scripts, test logs, raw samples, binaries, disassembly,
+profiles, and decision are retained locally in
+`benchmark_results/2026-10-04/p384-amd-shift-reduction/` (ignored).
+The original instruction mapping is in `p384-amd-instruction-review/` beside it.
+The campaign instance is terminated; AWS independently confirms its EBS volume is absent.
+
+## 2026-10-04: P-384 mixed-addition field work
+
+A shared Rust formula improves P-384 ECDH agreement by 2.61% on Intel, 3.00% on AMD,
+2.06% on M1 Pro, and 1.20% with portable dispatch on M1 Pro.
+Public-key derivation also improves in every measured configuration.
+The change is pushed to `main` as `d4045559`.
+Native CI and the full constant-time matrix passed; all six CT artifacts are retained and reviewed.
+These results cover the named primitive operations and configurations.
+
+The [EFD mixed-addition formula](https://www.hyperelliptic.org/EFD/g1p/auto-shortw-jacobian-3.html) `madd-2004-hmv` replaces one square with one product
+and removes six field add/scale operations: 8M + 3S rather than 7M + 4S.
+Exceptional-point handling, serialized values, public APIs, dispatch,
+and the allocation-free contract are preserved.
+There is no new assembly or architecture-specific formula.
+
+Both isolated source trees start at `f21ef7e7`.
+The measured candidate applies only `candidate.patch` from the retained campaign; its `src/auth/p384_portable.rs` matches `d4045559` byte for byte.
+The commit additionally records release intent.
+The production `auth` benchmark and its fixtures are unchanged.
+The portable comparison adds `portable-only` to the existing `auth` catalog entry in both temporary source trees;
+this configuration patch is retained with the results and is not a repository change.
+
+Hosts and build:
+
+- Intel: AWS `c8i.4xlarge`, Xeon 6975P-C, 8 cores / 16 logical processors.
+- AMD: AWS `c8a.4xlarge`, EPYC 9R45, 16 cores / 16 logical processors.
+- Both Linux hosts: Ubuntu 26.04.1, kernel `7.0.0-1014-aws`, CPU 2 affinity.
+- Apple: physical M1 Pro, 8 performance / 2 efficiency cores, macOS 26.6.2.
+  macOS measurements have no CPU affinity or guaranteed host isolation.
+- `nightly-2026-09-30`, rustc `1.101.0-nightly (5c543b0b8 2026-09-29)`,
+  LLVM 23.1.1, repository `bench` profile and `auth` catalog features,
+  with `--cfg rscrypto_internal` and no CPU-capability override.
+
+Each configuration uses ten paired rounds with alternating order, 300 ms warmup,
+1,000 ms measurement, and 40 samples per case.
+Both executables and their known-answer checks precede measurement.
+All 80 runs pass source, artifact, configuration, case, and sample-count checks.
+Intel and AMD use byte-identical baseline and candidate executables.
+No observations or rounds were removed.
+The first native M1 baseline round was slower for both rscrypto and AWS-LC;
+it remains in the raw data and the paired analysis.
+
+Times are medians of Criterion slope estimates.
+Changes and intervals use paired candidate/baseline ratios,
+with 10,000 bootstrap resamples and seed `20261004`.
+
+Agreement:
+
+| Host / path  | Before, µs | After, µs |  Change | 95% interval |
+| ------------ | ---------: | --------: | ------: | -----------: |
+| Intel native |    122.012 |   118.830 | -2.610% | -2.631% to -2.560% |
+| AMD native   |     96.433 |    93.457 | -3.001% | -3.418% to -2.849% |
+| M1 native    |    118.561 |   115.597 | -2.061% | -2.780% to -1.699% |
+| M1 portable  |    212.810 |   210.280 | -1.204% | -1.235% to -1.080% |
+
+Public-key derivation:
+
+| Host / path  | Before, µs | After, µs |  Change | 95% interval |
+| ------------ | ---------: | --------: | ------: | -----------: |
+| Intel native |     63.209 |    60.622 | -4.056% | -4.129% to -4.032% |
+| AMD native   |     55.322 |    53.606 | -3.209% | -3.292% to -3.051% |
+| M1 native    |     40.274 |    39.353 | -2.403% | -3.397% to -1.904% |
+| M1 portable  |     78.587 |    77.140 | -1.850% | -1.918% to -1.808% |
+
+AWS-LC agreement controls change by +0.048% on Intel, +0.182% on AMD, −0.019% on native M1,
+and +0.009% in the portable M1 campaign.
+All four control intervals stay within the configured 1% noise threshold.
+Candidate agreement takes 0.995x the same-run AWS-LC time on Intel and 1.028x on AMD:
+Intel is at practical parity, and the AMD gap remains open.
+No performance claim is made for unmeasured architectures.
+
+The retained x86 agreement symbol shrinks from 75,329 to 69,806 bytes.
+Its local stack reservation shrinks from 6,360 to 6,136 bytes;
+the six register pushes are unchanged.
+These are exact-artifact observations, not a whole-operation peak stack bound.
+The existing arithmetic-temporary cleanup exclusions remain unchanged.
+
+Correctness includes native and portable NIST, RustCrypto, ring, Wycheproof, property,
+and allocation tests.
+Each Linux host passes 23 focused native and 20 portable tests.
+Apple passes the corresponding oracles and group tests in both configurations.
+The existing mixed-addition and table tests now obtain expected points from RustCrypto instead of
+another path through the changed formula.
+A deliberate Z-only scaling fault fails the independent mixed-addition test;
+the exact candidate is restored afterward.
+The clean local commit passes `just ci-check` and `just check-macos`: 1,919 native tests, 1,889 portable tests,
+320 doctests in each mode, 1,263 native and 1,234 portable internal-evidence tests,
+and the RSA assembly gate.
+Each ordinary test mode retains one existing ignored test.
+
+Each Linux host passes all 48 BINSEC kernels
+and the two selected P-384 timing cases at 20,000 samples each.
+The largest `|t|` is 2.66 on Intel and 2.44 on AMD.
+M1 Pro passes both timing cases at 20,000 samples, with maximum `|t|` 2.39.
+These are scoped checks, not the full release CT matrix or a proof of whole operation constant time.
+The initial AMD attempt stopped before timing because BINSEC was absent.
+Its failed report is retained;
+the pinned proof-tool installer resolved the missing prerequisite before the successful run.
+
+Reproduce with `just bench --bench auth`, with `--filter` set to `^p384-ecdh/(agreement/(rscrypto-selected|aws-lc-rs-native)|public-key/rscrypto-selected)$`, and `--warmup-ms 300 --measure-ms 1000 --sample-size 40 --output-dir PATH`.
+The patch, source identities, run/review scripts, raw samples, measured executables,
+proof and timing archives, and cleanup receipts are retained locally under `benchmark_results/2026-10-04/p384-mixed-formula/` (ignored).
+Both EC2 instances are terminated; AWS independently confirms all three EBS volumes are deleted.
+
+Qualification of the pushed commit is complete:
+[Native CI](https://github.com/loadingalias/rscrypto/actions/runs/37235765568) passed on all six native platforms; compatibility, package, and the final cache report also passed.
+The [full constant-time matrix](https://github.com/loadingalias/rscrypto/actions/runs/37235805079) passed on all six native platforms; RISC-V finished at 23:36 UTC on 2026-10-04.
+All six final reports pass the source, required-coverage, raw-sample, and measured-binary review.
+Each target passes 123 required timing cases except POWER, whose configured set has 119.
+Both P-384 operations have 20,000 samples on every target.
+IBM Z records maximum `|t|` of 1.80196 for public-key derivation and 3.20631 for agreement;
+RISC-V records 2.1108 and 1.77754.
+The retained `github-ct-review.json` records all six archives and their target-specific proof scope.
+These are empirical timing checks and the configured bounded proofs, not a whole-operation constant-time proof.
+[P-384 fuzzing, ASan, and Miri](https://github.com/loadingalias/rscrypto/actions/runs/37235807480) and the [Intel, AMD, and Graviton benchmarks](https://github.com/loadingalias/rscrypto/actions/runs/37235810070) have passed.
+
+The final RISC-V CI execution archive matches `d4045559` and the source hash in the retained POWER and IBM Z reports.
+It records 1,818 native and 1,815 portable tests passed, with one existing skipped test in each mode;
+1,167 native and 1,163 portable internal-evidence tests passed;
+and 320 doctests per mode, comprising 149 executions and 171 compile-fail checks.
+Both ordinary modes execute the P-384 independent vectors, group tests, allocation checks, and Wycheproof corpus.
+The native host has no RVV, so this does not qualify RVV kernels.
+Artifact `11316288887` has verified SHA-256 `7597ea4828f643f40ad0bbcba1615e418355a23963d9435c7b32717f69ded60a`;
+the archive, selected logs, and consolidated `github-ci-cross-review.json` are retained locally with the campaign.
+
+AWS checks at 22:46–22:47 UTC confirm that the three remaining CI instances are terminated,
+their known root EBS volumes are absent, and no repository-tagged EBS volumes remain in `us-east-1`.
+The campaign directory retains both API receipts, closing the outstanding AWS cleanup task.
+
+The benchmark run passed on all three hosts at `d4045559`,
+with clean source and 20 samples for each of the ten P-384 cases per host.
+It uses catalog defaults: 100 ms warmup and 400 ms measurement.
+Agreement estimates and their within-run 95% slope intervals are:
+
+| CI host | rscrypto, µs | AWS-LC, µs | rscrypto / AWS-LC |
+| --- | ---: | ---: | ---: |
+| Intel `c8i.2xlarge` | 118.948 [118.892, 119.046] | 119.347 [119.306, 119.394] | 0.997x |
+| AMD `c8a.2xlarge` | 93.720 [93.627, 93.812] | 90.302 [90.129, 90.567] | 1.038x |
+| Graviton5 `c9g.2xlarge` | 128.150 [128.011, 128.398] | 130.281 [130.250, 130.309] | 0.984x |
+
+These single-run comparisons do not measure the change against its parent.
+The paired campaign above supplies that evidence; its AMD ratio is from a different host and run.
+The AMD gap remains open in both campaigns.
+AWS-LC's cached public-key row does not measure fresh public-key derivation.
+
+A [fresh AMD production profile](https://github.com/loadingalias/rscrypto/actions/runs/37235974343) at `d4045559` passes artifact verification:
+five seconds of `cycles:u` sampling at 99 Hz, 510 samples, none lost.
+Flat self attribution places 64.21% in `point_double_bmi2_adx` and 28.91% in `agree`
+(including inlined mixed additions and public table construction).
+This short capture guides the next experiment;
+it does not establish a small speedup or an instruction-level cause.
+Unresolved assembly callchains prevent reliable inclusive attribution.
+The transferred profile binary has the same production source, features, and bench profile,
+but a different explicit-target build and linker identity from the native benchmark binary.
+Raw data, the exact binary, and the review are retained in the same local campaign directory.
+
 ## 2026-10-04: Ed25519 and X25519 vector fixed-base tables
 
 On native x86-64 Windows, precomputing the 512 public conversions used by each fixed-base multiply
@@ -832,6 +1083,168 @@ The collector now records it for subsequent runs.
 Local raw archives, exact plans and hashes, timing reports, linked-code review, scripts,
 and `summary.json` are retained under `benchmark_results/2026-10-04/ed25519-tables/`.
 That directory is ignored; this overview preserves the measurements and limits in Git.
+
+### Linux regression controls
+
+The matched Linux comparison found no material regression in normal dispatch.
+Across all 16 Ed25519/X25519 cases, the median paired change ranges from −0.051% to +0.075%.
+Every paired 95% interval stays below +0.120%, within the configured 1% noise threshold.
+This is regression evidence for one Intel Linux host;
+it does not establish a Linux speedup or change the library-wide loss count.
+
+Baseline: `d8db85642e1ff2a176c7925eb873fa2f23021c30`.
+Candidate: `f21ef7e7ed23e21d48feb5338a86b43a74494877`.
+Both trees use the candidate's identical `benches/auth.rs` and `scripts/bench/evidence.py`; the baseline has no other overlay,
+and the candidate is clean.
+Cargo manifests, lockfile, catalog, Criterion settings, compiler, features,
+and build environment match.
+
+The host was AWS `c8i.4xlarge`, Xeon 6975P-C, 8 cores / 16 logical processors, Ubuntu 26.04.1, kernel `7.0.0-1014-aws`, and `x86_64-unknown-linux-gnu`.
+Both artifacts were built before measurement with `nightly-2026-09-30`, rustc `1.101.0-nightly (5c543b0b8 2026-09-29)`, LLVM 23.1.1, the repository `bench` profile,
+and the `auth` catalog features.
+The supplied `RUSTFLAGS='--cfg rscrypto_internal'` is recorded alongside the runner's effective flags.
+No CPU capability override was set.
+
+Ten rounds alternate baseline/candidate order, pinned to logical CPU 2.
+Each case uses 300 ms warmup, 700 ms measurement, and 30 samples.
+No rounds or observations were removed.
+The recorded host monitor shows no CPU steal time
+and 94% median machine-wide idle time during measurement.
+All 20 runs passed source, executable, configuration, case, and sample checks;
+their executable hashes match the artifacts captured before timing.
+The setup script's initial artifact-path error occurred before measurement;
+the corrected script resumed the unchanged builds using the paths reported by the benchmark runner.
+
+The table shows representative operations in microseconds,
+using medians of Criterion slope estimates.
+Changes and intervals use the paired candidate/baseline ratios;
+the bootstrap uses 10,000 resamples with seed `20261004`.
+Signing and verification cover 0, 32, 1,024,
+and 16,384-byte messages in the complete retained record.
+
+| Public operation | Baseline → candidate, µs | Paired median change | Paired bootstrap 95% interval |
+| --- | ---: | ---: | ---: |
+| Ed25519 public key | 6.5231 → 6.5282 | +0.075% | −0.030% to +0.103% |
+| Ed25519 keypair | 6.5382 → 6.5402 | +0.031% | −0.026% to +0.120% |
+| Ed25519 keypair sign, 32 B | 6.8715 → 6.8680 | −0.048% | −0.105% to +0.029% |
+| Ed25519 direct-secret sign, 32 B | 13.4471 → 13.4445 | −0.023% | −0.050% to +0.025% |
+| Ed25519 keypair sign, 16 KiB | 53.1259 → 53.1255 | −0.002% | −0.398% to +0.011% |
+| Ed25519 verify, 32 B | 34.9494 → 34.9559 | +0.027% | −0.013% to +0.070% |
+| X25519 public key | 6.1634 → 6.1637 | +0.035% | −0.017% to +0.047% |
+| X25519 agreement | 19.6215 → 19.6274 | +0.027% | −0.050% to +0.063% |
+
+Reproduce with the filter and sampling arguments above, the recorded `RUSTFLAGS`, and `taskset -c 2 just bench --bench auth --filter FILTER` in each tree.
+Build both first using the same command with `--list`, then alternate measurement order.
+The source-bound CI run below supplies the candidate's independent correctness evidence;
+the benchmark fixtures also execute successfully in each measured binary before timing.
+
+The plan, script, both executables, complete results, logs, and `summary.json` are retained in `benchmark_results/2026-10-04/ed25519-linux-control/`.
+Raw archive SHA-256: `28daa82f36f9bda38d57a5ac4941aadb08c4afedd86c5e2db33d2895504090c1`.
+Baseline executable SHA-256: `670fd11820d9c6f44cb8913bde249c04548cab7c12a0e30bcccd22168c11670e`; candidate: `bf033f2eba8cefdaac75872071d721d17909c33c2a83dd4408a2bae8687af1ce`.
+
+### Full candidate qualification
+
+Production commit `f21ef7e7ed23e21d48feb5338a86b43a74494877` passes [CI](https://github.com/loadingalias/rscrypto/actions/runs/37217311306), [Fuzz/Miri](https://github.com/loadingalias/rscrypto/actions/runs/37217382133),
+and the [full Constant-Time matrix](https://github.com/loadingalias/rscrypto/actions/runs/37217380419).
+CI covers the native and portable suites and feature combinations,
+including the corrected X25519-only Windows build.
+Fuzzing completes 102 targets on each of x86 Linux and AArch64 at the requested 120-second budget,
+with no retained crash findings.
+Sanitizer corpus replay covers those 102 targets on each host;
+the selected Miri suites pass 17 tests, including the RSA selection.
+
+| Full CT platform | Passing timing cases | Secure BINSEC kernels |
+| ---------------- | -------------------: | --------------------: |
+| x86-64 Linux     |                  123 |                    48 |
+| AArch64 Linux    |                  123 |                    46 |
+| x86-64 Windows   |                  123 |        Not applicable |
+| POWER Linux      |                  119 |        Not applicable |
+| s390x Linux      |                  123 |        Not applicable |
+| RISC-V Linux     |                  123 |        Not applicable |
+
+All six reports match the candidate, report clean source, use full required coverage,
+and have no failures or missing required cases.
+Both x86 vector selector kernels are required and secure.
+Each platform passes all eight required Ed25519/X25519 timing cases at their manifest sample
+budgets.
+The final RISC-V report records a native `riscv64` host and maximum |t| of 2.30323 across those eight cases.
+No confirmation was required for them.
+These results preserve the manifest's operation and target boundaries;
+they do not establish whole-program constant time or complete secret-stack cleanup.
+
+The corrected-candidate archives, reports, logs, and consolidated `qualification-review.json` are retained in `benchmark_results/2026-10-04/ed25519-qualification/corrected/`.
+The RISC-V artifact is `11312385028`, SHA-256 `64ee4159248f71b1e0972a3028e91e4633dd28c7329b5041b0ea80a4ad2c144d`.
+The cancelled earlier qualification attempt remains separate;
+its X25519-only feature-gate defect reproduces before `f21ef7e7` and passes the targeted builds after it.
+
+The benchmark AWS and Azure machines and their storage were destroyed and verified.
+Both qualification attempts' AWS runners are terminated, with no retained runner EBS volumes.
+The additional Linux control instance is terminated and both of its EBS volumes are deleted,
+independently confirmed through the AWS API at 18:48 UTC on 2026-10-04.
+The campaign directories retain those cleanup records.
+
+## 2026-10-04: P-384 register finish rejected
+
+Keeping five unreduced limbs in spare registers improved Intel P-384 agreement
+by only 0.13%.
+The gain does not materially close the agreement gap, so the candidate was
+removed.
+No production or generator change remains from this experiment.
+
+The candidate changed only the canonical reduction tails inside the fused x86-64
+point doubling.
+It replaced five temporary stores and five reloads per tail with existing
+scratch registers:
+130 fewer memory operations per doubling, with the same arithmetic instructions,
+declared registers,
+and 1,104-byte stack frame.
+The linked doubling function shrank from 13,726 to 13,220 bytes.
+Those structural savings did not produce a useful agreement improvement.
+This result does not establish the microarchitectural reason for the small gain.
+
+Both isolated trees started at `f21ef7e7ed23e21d48feb5338a86b43a74494877` ;
+the candidate applied only the retained generator and generated-source patch.
+The host was AWS `c8i.4xlarge` , Xeon 6975P-C, 8 cores / 16 logical processors,
+with `nightly-2026-09-30` , rustc `1.101.0-nightly (5c543b0b8 2026-09-29)` , and
+LLVM 23.1.1.
+Both artifacts used the repository `bench` profile and identical `auth` catalog
+features and flags.
+Builds and known-answer checks finished before timing.
+
+Ten same-host rounds alternated baseline/candidate order on CPU 2.
+Each case used 300 ms warmup, 1,000 ms measurement, and 40 samples.
+All twenty runs passed source, artifact, configuration, case, and sample-count
+validation.
+Values below are medians of Criterion slope estimates;
+changes use paired candidate/baseline ratios and a 10,000-resample bootstrap
+with seed `20261004` .
+
+| Implementation | Baseline | Candidate | Paired change | 95% interval |
+| --- | ---: | ---: | ---: | ---: |
+| rscrypto | 121.980 µs | 121.812 µs | −0.131% | −0.177% to −0.110% |
+| AWS-LC control | 119.338 µs | 119.347 µs | +0.018% | −0.015% to +0.034% |
+
+Correctness passed: the generator simulator with `--cases 3000` (including 663
+fused-doubling inputs),
+2,016 targeted reduction-boundary cases, a selection-condition mutant rejected
+in 413 cases,
+26 native and 23 portable tests on x86-64, and 28 native and 23 portable tests
+on Apple Silicon.
+The performance decision stopped qualification before new CT evidence or an AMD
+run.
+The restored generator passes `python3 scripts/asm/p384.py check` .
+
+Reproduce with `just bench --bench auth` , filter
+`^p384-ecdh/agreement/(rscrypto-selected|aws-lc-rs-native)$` ,
+and `--warmup-ms 300 --measure-ms 1000 --sample-size 40 --output-dir PATH` .
+The patch, run and review scripts, exact executables, raw measurements, and
+`summary.json`
+are retained locally under `benchmark_results/2026-10-04/p384-register-finish/`
+(ignored).
+The collected archive SHA-256 is
+`7b693eb751c504466c80cd9500a1d9714484017975c934fe868aebd8a3b127b2` .
+The instance was terminated and AWS independently confirmed both EBS volumes
+were deleted.
 
 ## 2026-10-04: P-384 reduction overlap rejected
 
