@@ -44,14 +44,14 @@
 //! policy should use [`crate::Pbkdf2Sha256`]. This module is suitable
 //! for OWASP-aligned password hashing outside strict FIPS boundaries.
 //!
-//! Requires `alloc` — the memory matrix (`N · 128 · r` bytes) cannot be
-//! stack-allocated. Bare-metal / heap-less targets should select
-//! [`crate::Pbkdf2Sha256`] (alloc-free) or the `argon2` / `phc-strings`
-//! features under the same caveats.
+//! # Memory and features
+//!
+//! The `scrypt` feature enables `alloc`, including in `no_std` builds.
 //!
 //! `derive` and `verify` allocate work memory for each call. To reuse it
 //! across operations or to place it in caller-selected storage, pass a slice
-//! of [`ScryptBlock`] to the `*_with_memory` methods.
+//! of [`ScryptBlock`] to the `*_with_memory` methods. `verify_with_memory`
+//! still allocates a temporary digest of the expected length.
 
 use alloc::vec::Vec;
 use core::fmt;
@@ -1050,6 +1050,9 @@ impl Scrypt {
   /// Verify `expected` as [`Self::verify`] does, using caller-provided work
   /// memory as described for [`Self::derive_with_memory`].
   ///
+  /// This reuses the work memory but still allocates a temporary digest of
+  /// `expected.len()` bytes.
+  ///
   /// # Errors
   ///
   /// Returns an opaque [`VerificationError`] on any mismatch, malformed
@@ -1159,10 +1162,56 @@ impl ScryptPassword {
     password: &[u8],
     encoded: &str,
   ) -> Result<crate::auth::PasswordStatus, VerificationError> {
+    let _dit = ct::DataIndependentTiming::enter();
+    self.verify_password_inner(password, encoded, None)
+  }
+
+  /// Verify a PHC password record using caller-provided work memory.
+  ///
+  /// The record must pass the same validation and resource limits as
+  /// [`Self::verify_password`] before `memory` is touched. The operation uses
+  /// the first [`ScryptParams::memory_blocks`] blocks for the **record's**
+  /// parameters, ignores their initial contents, and clears them before
+  /// returning. Surplus blocks stay unchanged. To accommodate every permitted
+  /// record, size from the profile used to construct the verification limits,
+  /// which can be larger than the generation profile passed to [`Self::with_limits`].
+  ///
+  /// The digest uses fixed-size stack storage; this method allocates neither
+  /// workspace nor digest. The `scrypt` and `phc-strings` features continue to
+  /// require `alloc`.
+  ///
+  /// # Errors
+  ///
+  /// Returns an opaque [`VerificationError`] on a mismatch, rejected record,
+  /// or short `memory`. Rejection before derivation leaves `memory` unchanged;
+  /// a mismatch clears the used prefix.
+  #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+  pub fn verify_password_with_memory(
+    &self,
+    password: &[u8],
+    encoded: &str,
+    memory: &mut [ScryptBlock],
+  ) -> Result<crate::auth::PasswordStatus, VerificationError> {
+    let _dit = ct::DataIndependentTiming::enter();
+    self.verify_password_inner(password, encoded, Some(memory))
+  }
+
+  fn verify_password_inner(
+    &self,
+    password: &[u8],
+    encoded: &str,
+    memory: Option<&mut [ScryptBlock]>,
+  ) -> Result<crate::auth::PasswordStatus, VerificationError> {
     let approved = password_phc::approve(encoded, self.limits).map_err(|_| VerificationError::new())?;
     let mut actual = crate::secret::ZeroizingBytes::<PASSWORD_OUTPUT_LEN>::zeroed();
-    Scrypt::derive(&approved.params, password, approved.salt(), actual.as_mut_array())
-      .map_err(|_| VerificationError::new())?;
+    scrypt_hash(
+      &approved.params,
+      password,
+      approved.salt(),
+      actual.as_mut_array(),
+      memory,
+    )
+    .map_err(|_| VerificationError::new())?;
     let verified = ct::fixed_eq(actual.as_array(), &approved.expected);
     if !core::hint::black_box(verified.declassify()) {
       return Err(VerificationError::new());
@@ -1584,6 +1633,48 @@ mod tests {
     }
 
     #[test]
+    fn caller_memory_verifies_record_profiles_and_preserves_storage_bounds() {
+      let generation = small_params();
+      let ceiling = ScryptParams::new(5, 2, 2).expect("verification ceiling must be valid");
+      let password = ScryptPassword::with_limits(generation, ScryptVerificationLimits::for_profile(ceiling))
+        .expect("generation must fit verification limits");
+      let capacity = ceiling.memory_blocks().expect("ceiling must fit").strict_add(1);
+      let cases = [
+        (4, 1, 1, PasswordStatus::Current),
+        (3, 1, 1, PasswordStatus::NeedsRehash),
+        (5, 1, 1, PasswordStatus::NeedsRehash),
+        (4, 2, 2, PasswordStatus::NeedsRehash),
+      ];
+      for (log_n, r, p, status) in cases {
+        let params = ScryptParams::new(log_n, r, p).expect("record profile must be valid");
+        let used = params.memory_blocks().expect("record must fit");
+        let salt = b"random-salt-1234";
+        let expected = oracle_scrypt(b"password", salt, log_n, r, p, 32);
+        let encoded = password_phc::encode(params, salt, expected.as_slice().try_into().expect("32-byte oracle"));
+        assert_eq!(password.verify_password(b"password", &encoded), Ok(status));
+
+        let mut memory = dirty_memory(capacity);
+        assert_eq!(
+          password.verify_password_with_memory(b"password", &encoded, &mut memory[..used.strict_sub(1)]),
+          Err(VerificationError::new())
+        );
+        assert!(memory.iter().all(is_dirty), "short workspace was changed");
+        for (input, result) in [
+          (&b"password"[..], Ok(status)),
+          (&b"wrong"[..], Err(VerificationError::new())),
+        ] {
+          memory.fill(ScryptBlock([0xa5a5_a5a5; BLOCK_WORDS]));
+          assert_eq!(
+            password.verify_password_with_memory(input, &encoded, &mut memory),
+            result
+          );
+          assert!(memory[..used].iter().all(is_zero), "used prefix was not cleared");
+          assert!(memory[used..].iter().all(is_dirty), "surplus blocks were changed");
+        }
+      }
+    }
+
+    #[test]
     fn accepted_older_profile_requests_rehash() {
       let generation = ScryptParams::new(5, 1, 1).expect("rehash target profile must be valid");
       let password = ScryptPassword::new(generation).expect("rehash target resource shape must be valid");
@@ -1605,6 +1696,14 @@ mod tests {
         password.verify_password(b"password", &encoded),
         Ok(PasswordStatus::NeedsRehash)
       );
+      assert_eq!(
+        password.verify_password_with_memory(
+          b"password",
+          &encoded,
+          &mut dirty_memory(params.memory_blocks().expect("small profile must fit")),
+        ),
+        Ok(PasswordStatus::NeedsRehash)
+      );
     }
 
     #[test]
@@ -1621,6 +1720,15 @@ mod tests {
         password_phc::approve(admitted, limits).err(),
         Some(PhcError::InvalidLength)
       );
+      let password = ScryptPassword::new(small_params()).expect("bounded verification profile must fit");
+      let mut memory = dirty_memory(small_params().memory_blocks().expect("small profile must fit"));
+      for encoded in [expensive, admitted] {
+        assert_eq!(
+          password.verify_password_with_memory(b"password", encoded, &mut memory),
+          Err(VerificationError::new())
+        );
+        assert!(memory.iter().all(is_dirty), "rejected PHC changed caller memory");
+      }
     }
 
     #[test]
@@ -1659,6 +1767,13 @@ mod tests {
           Some(expected),
           "{encoded}"
         );
+        let password = ScryptPassword::new(small_params()).expect("bounded verification profile must fit");
+        let mut memory = dirty_memory(small_params().memory_blocks().expect("small profile must fit"));
+        assert_eq!(
+          password.verify_password_with_memory(b"password", &encoded, &mut memory),
+          Err(VerificationError::new())
+        );
+        assert!(memory.iter().all(is_dirty), "rejected PHC changed caller memory");
       }
     }
 

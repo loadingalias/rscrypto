@@ -104,6 +104,12 @@ The claim does not cover:
   and when the caller supplies it to an Argon2 or scrypt `*_with_memory` method.
 - An input error returns before the operation touches caller memory.
 - Blocks past the required length are never written.
+- PHC `verify_password_with_memory` and Argon2's
+  `verify_password_with_context_and_memory` approve the record and its resource
+  limits before borrowing the required workspace prefix for derivation.
+  Malformed records and short workspaces leave caller memory unchanged;
+  password or context mismatches clear the used prefix. The computed PHC digest
+  remains in `ZeroizingBytes<32>` and is cleared when that owner drops.
 
 ### Caller-filled owners
 

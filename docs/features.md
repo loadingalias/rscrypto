@@ -57,6 +57,12 @@ It has no compatibility guarantee.
 It does not change which algorithms are available.
 APIs that accept entropy from the caller work without it.
 
+`argon2`, `scrypt`, and `phc-strings` enable `alloc`, including when default
+features are disabled. Their caller-memory methods reuse the work buffer;
+raw `verify_with_memory` still allocates a temporary digest. See
+[password-hashing memory APIs](password-hashing-memory.md) for PHC verification
+with reusable, allocator-backed storage and the allocation contract.
+
 `ml-dsa` supports all three ML-DSA parameter sets without allocation and without operating-system entropy.
 See [ML-DSA](mldsa.md) for the API, the memory costs, and the open qualification gates.
 

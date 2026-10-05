@@ -55,6 +55,10 @@ or prepared key directly into an allocation from a caller-selected `Allocator`, 
   It holds operation state only while an operation borrows it.
 - A copy of a borrowed context copies references, not password or pepper bytes.
 - The operation clears every block it used before it returns.
+- PHC caller-memory verification borrows the same block storage and keeps its
+  computed 32-byte digest in the existing `ZeroizingBytes` stack owner. It adds
+  no owned workspace or password/pepper copy. Storage from `Vec<Block, A>` stays
+  owned by the caller's allocator.
 
 ### ML-DSA internal helpers
 

@@ -13,7 +13,10 @@ use core::{
 };
 use std::alloc::System;
 
-use rscrypto::{Argon2Params, Argon2idPassword, PasswordStatus, ScryptParams, ScryptPassword};
+use rscrypto::{
+  Argon2Block, Argon2Context, Argon2Params, Argon2idPassword, PasswordStatus, ScryptBlock, ScryptParams,
+  ScryptPassword, VerificationError,
+};
 
 struct TrackingAllocator;
 
@@ -90,6 +93,80 @@ fn allocations_during<T>(operation: impl FnOnce() -> T) -> (T, usize) {
   TRACK_ALLOCATIONS.with(|tracking| tracking.set(false));
   let allocations = ALLOCATION_COUNT.with(Cell::get);
   (result, allocations)
+}
+
+#[test]
+fn caller_memory_phc_verification_does_not_allocate() {
+  // One lane keeps Argon2 sequential even with the parallel feature enabled.
+  let argon2_params = Argon2Params::new(32, 2, 1).expect("bounded Argon2 profile");
+  let argon2 = Argon2idPassword::new(argon2_params).expect("Argon2 profile fits");
+  let argon2_record = argon2
+    .hash_password_with(b"password", |salt| {
+      salt.fill(0x42);
+      Ok::<(), core::convert::Infallible>(())
+    })
+    .expect("Argon2 allocation fixture");
+  let mut argon2_memory = Vec::new_in(System);
+  let argon2_blocks = argon2_params.memory_blocks() as usize;
+  argon2_memory
+    .try_reserve_exact(argon2_blocks)
+    .expect("allocate caller Argon2 memory");
+  argon2_memory.resize(argon2_blocks, Argon2Block::ZERO);
+
+  let scrypt_params = ScryptParams::new(4, 1, 1).expect("bounded scrypt profile");
+  let scrypt = ScryptPassword::new(scrypt_params).expect("scrypt profile fits");
+  let scrypt_record = scrypt
+    .hash_password_with(b"password", |salt| {
+      salt.fill(0x42);
+      Ok::<(), core::convert::Infallible>(())
+    })
+    .expect("scrypt allocation fixture");
+  let mut scrypt_memory = Vec::new_in(System);
+  let scrypt_blocks = scrypt_params.memory_blocks().expect("scrypt memory shape fits");
+  scrypt_memory
+    .try_reserve_exact(scrypt_blocks)
+    .expect("allocate caller scrypt memory");
+  scrypt_memory.resize(scrypt_blocks, ScryptBlock::ZERO);
+
+  // Positive controls prove that the observer sees the owned workspace path.
+  let (result, allocations) = allocations_during(|| argon2.verify_password(b"password", &argon2_record));
+  assert_eq!(result, Ok(PasswordStatus::Current));
+  assert!(allocations > 0);
+  let (result, allocations) = allocations_during(|| scrypt.verify_password(b"password", &scrypt_record));
+  assert_eq!(result, Ok(PasswordStatus::Current));
+  assert!(allocations > 0);
+
+  for (input, expected) in [
+    (&b"password"[..], Ok(PasswordStatus::Current)),
+    (&b"wrong"[..], Err(VerificationError::new())),
+  ] {
+    let (result, allocations) =
+      allocations_during(|| argon2.verify_password_with_memory(input, &argon2_record, &mut argon2_memory));
+    assert_eq!(result, expected);
+    assert_eq!(allocations, 0, "Argon2 borrowed verification allocated");
+    let (result, allocations) = allocations_during(|| {
+      argon2.verify_password_with_context_and_memory(
+        input,
+        &argon2_record,
+        Argon2Context::default(),
+        &mut argon2_memory,
+      )
+    });
+    assert_eq!(result, expected);
+    assert_eq!(allocations, 0, "Argon2 context verification allocated");
+    let (result, allocations) =
+      allocations_during(|| scrypt.verify_password_with_memory(input, &scrypt_record, &mut scrypt_memory));
+    assert_eq!(result, expected);
+    assert_eq!(allocations, 0, "scrypt borrowed verification allocated");
+  }
+  let (result, allocations) =
+    allocations_during(|| argon2.verify_password_with_memory(b"password", &argon2_record, &mut []));
+  assert_eq!(result, Err(VerificationError::new()));
+  assert_eq!(allocations, 0, "short Argon2 workspace allocated");
+  let (result, allocations) =
+    allocations_during(|| scrypt.verify_password_with_memory(b"password", &scrypt_record, &mut []));
+  assert_eq!(result, Err(VerificationError::new()));
+  assert_eq!(allocations, 0, "short scrypt workspace allocated");
 }
 
 #[test]
@@ -173,6 +250,13 @@ fn every_rejected_phc_class_allocates_nothing() {
     let (result, allocations) = allocations_during(|| argon2.verify_password(b"password", encoded));
     result.expect_err("known-invalid Argon2 PHC record must be rejected");
     assert_eq!(allocations, 0, "rejected Argon2 PHC allocated: {encoded}");
+    let (result, allocations) =
+      allocations_during(|| argon2.verify_password_with_memory(b"password", encoded, &mut []));
+    assert_eq!(result, Err(VerificationError::new()));
+    assert_eq!(
+      allocations, 0,
+      "rejected Argon2 PHC with caller memory allocated: {encoded}"
+    );
   }
 
   let scrypt_params = ScryptParams::new(4, 1, 1).expect("scrypt rejection-test parameters must be valid");
@@ -192,6 +276,13 @@ fn every_rejected_phc_class_allocates_nothing() {
     let (result, allocations) = allocations_during(|| scrypt.verify_password(b"password", encoded));
     result.expect_err("known-invalid scrypt PHC record must be rejected");
     assert_eq!(allocations, 0, "rejected scrypt PHC allocated: {encoded}");
+    let (result, allocations) =
+      allocations_during(|| scrypt.verify_password_with_memory(b"password", encoded, &mut []));
+    assert_eq!(result, Err(VerificationError::new()));
+    assert_eq!(
+      allocations, 0,
+      "rejected scrypt PHC with caller memory allocated: {encoded}"
+    );
   }
 }
 

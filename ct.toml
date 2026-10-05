@@ -3243,8 +3243,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2596
-compiler_api_sha256 = "426f34be499e66afb203df98ef87b09899545f5c9d36ce40b7dbedb7d7f5338d"
+compiler_api_item_count = 2599
+compiler_api_sha256 = "892d8ef27b8e67e395d683b0cb9ad61c6ab1fe1c7f4a4f4ec4fd8dc408f17eb7"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3254,8 +3254,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2596
-compiler_api_sha256 = "426f34be499e66afb203df98ef87b09899545f5c9d36ce40b7dbedb7d7f5338d"
+compiler_api_item_count = 2599
+compiler_api_sha256 = "892d8ef27b8e67e395d683b0cb9ad61c6ab1fe1c7f4a4f4ec4fd8dc408f17eb7"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3288,8 +3288,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 2596
-compiler_api_sha256 = "426f34be499e66afb203df98ef87b09899545f5c9d36ce40b7dbedb7d7f5338d"
+compiler_api_item_count = 2599
+compiler_api_sha256 = "892d8ef27b8e67e395d683b0cb9ad61c6ab1fe1c7f4a4f4ec4fd8dc408f17eb7"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3310,8 +3310,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 2596
-compiler_api_sha256 = "426f34be499e66afb203df98ef87b09899545f5c9d36ce40b7dbedb7d7f5338d"
+compiler_api_item_count = 2599
+compiler_api_sha256 = "892d8ef27b8e67e395d683b0cb9ad61c6ab1fe1c7f4a4f4ec4fd8dc408f17eb7"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3322,8 +3322,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2596
-compiler_api_sha256 = "426f34be499e66afb203df98ef87b09899545f5c9d36ce40b7dbedb7d7f5338d"
+compiler_api_item_count = 2599
+compiler_api_sha256 = "892d8ef27b8e67e395d683b0cb9ad61c6ab1fe1c7f4a4f4ec4fd8dc408f17eb7"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3334,8 +3334,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2596
-compiler_api_sha256 = "426f34be499e66afb203df98ef87b09899545f5c9d36ce40b7dbedb7d7f5338d"
+compiler_api_item_count = 2599
+compiler_api_sha256 = "892d8ef27b8e67e395d683b0cb9ad61c6ab1fe1c7f4a4f4ec4fd8dc408f17eb7"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3346,8 +3346,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2596
-compiler_api_sha256 = "426f34be499e66afb203df98ef87b09899545f5c9d36ce40b7dbedb7d7f5338d"
+compiler_api_item_count = 2599
+compiler_api_sha256 = "892d8ef27b8e67e395d683b0cb9ad61c6ab1fe1c7f4a4f4ec4fd8dc408f17eb7"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3877,7 +3877,7 @@ limitation = "OS allocation and parallel scheduling are outside instruction-leve
 id = "password.argon2d_and_argon2id"
 api = [
   "rscrypto::{Argon2d,Argon2id}::{derive,derive_with_context,derive_with_memory,derive_with_context_and_memory,verify,verify_with_memory}",
-  "rscrypto::Argon2idPassword::{hash_password,verify_password,verify_password_with_context}",
+  "rscrypto::Argon2idPassword::{hash_password,verify_password,verify_password_with_context,verify_password_with_memory,verify_password_with_context_and_memory}",
 ]
 features = ["argon2", "alloc", "parallel", "phc-strings", "getrandom"]
 targets = ["all-supported", "backend selected by public target capabilities"]
@@ -3904,7 +3904,7 @@ limitation = "Argon2d and the data-dependent Argon2id phase intentionally use pa
 id = "password.scrypt"
 api = [
   "rscrypto::Scrypt::{derive,derive_with_memory,verify,verify_with_memory}",
-  "rscrypto::ScryptPassword::{hash_password,verify_password}",
+  "rscrypto::ScryptPassword::{hash_password,verify_password,verify_password_with_memory}",
   "rscrypto::ScryptParams::*",
 ]
 features = ["scrypt", "alloc", "parallel", "phc-strings", "getrandom"]
@@ -5056,6 +5056,8 @@ entrypoints = [
   "Argon2id::*",
   "Argon2idPassword::verify_password",
   "Argon2idPassword::verify_password_with_context",
+  "Argon2idPassword::verify_password_with_memory",
+  "Argon2idPassword::verify_password_with_context_and_memory",
 ]
 secrets = ["password", "derived_key", "expected_key"]
 public = ["salt", "params", "phc_string"]
@@ -5079,7 +5081,7 @@ id = "password.scrypt"
 tier = "A"
 claim = "best-effort"
 features = ["scrypt"]
-entrypoints = ["Scrypt::derive", "Scrypt::verify", "ScryptPassword::verify_password"]
+entrypoints = ["Scrypt::derive", "Scrypt::verify", "ScryptPassword::verify_password", "ScryptPassword::verify_password_with_memory"]
 secrets = ["password", "derived_key", "expected_key"]
 public = ["salt", "params", "phc_string"]
 may_leak = ["input_length", "public_parameter_error", "opaque_success_or_failure"]

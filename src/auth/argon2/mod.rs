@@ -51,13 +51,16 @@
 //! policy should use [`crate::Pbkdf2Sha256`]. This module is suitable
 //! for OWASP-aligned password hashing outside strict FIPS boundaries.
 //!
-//! Requires `alloc` — the memory matrix (`m_kib · 1024` bytes) cannot be
-//! stack-allocated. Bare-metal / heap-less targets should select
-//! [`crate::Pbkdf2Sha256`] (alloc-free).
+//! # Memory and features
+//!
+//! The `argon2` feature enables `alloc`, including in `no_std` builds.
 //!
 //! `derive` and `verify` allocate work memory for each call. To reuse it
 //! across operations or to place it in caller-selected storage, pass a slice
-//! of [`Argon2Block`] to the `*_with_memory` methods.
+//! of [`Argon2Block`] to the `*_with_memory` methods. `verify_with_memory`
+//! still allocates a temporary digest of the expected length. With `parallel`
+//! enabled, eligible calls also use Rayon; caller-provided work memory does
+//! not guarantee allocation-free scheduling.
 //!
 //! [owasp-passwords]: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
 
@@ -2047,6 +2050,9 @@ macro_rules! define_argon2_variant {
       /// Verify `expected` as [`Self::verify`] does, using caller-provided
       /// work memory as described for [`Self::derive_with_memory`].
       ///
+      /// This reuses the work matrix but still allocates a temporary digest
+      /// of `expected.len()` bytes.
+      ///
       /// # Errors
       ///
       /// Returns an opaque [`VerificationError`] on any mismatch, malformed
@@ -2239,14 +2245,77 @@ impl Argon2idPassword {
     encoded: &str,
     context: Argon2Context<'_>,
   ) -> Result<crate::auth::PasswordStatus, VerificationError> {
+    let _dit = ct::DataIndependentTiming::enter();
+    self.verify_password_inner(password, encoded, context, None)
+  }
+
+  /// Verify a PHC password record using caller-provided work memory.
+  ///
+  /// The record must pass the same validation and resource limits as
+  /// [`Self::verify_password`] before `memory` is touched. The operation uses
+  /// the first [`Argon2Params::memory_blocks`] blocks for the **record's**
+  /// parameters, ignores their initial contents, and clears them before
+  /// returning. Surplus blocks stay unchanged. To accommodate every permitted
+  /// record, size from the profile used to construct the verification limits,
+  /// which can be larger than the generation profile passed to [`Self::with_limits`].
+  ///
+  /// The digest uses fixed-size stack storage. No workspace or digest is
+  /// allocated by this method. Eligible calls with `parallel` enabled still
+  /// use Rayon, whose scheduling may allocate. The `argon2` and `phc-strings`
+  /// features continue to require `alloc`.
+  ///
+  /// # Errors
+  ///
+  /// Returns an opaque [`VerificationError`] on a mismatch, rejected record,
+  /// invalid input length, or short `memory`. Rejection before derivation
+  /// leaves `memory` unchanged; a mismatch clears the used prefix.
+  #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+  pub fn verify_password_with_memory(
+    &self,
+    password: &[u8],
+    encoded: &str,
+    memory: &mut [Argon2Block],
+  ) -> Result<crate::auth::PasswordStatus, VerificationError> {
+    self.verify_password_with_context_and_memory(password, encoded, Argon2Context::default(), memory)
+  }
+
+  /// Verify a PHC password record with borrowed pepper and associated data,
+  /// using caller-provided memory as described for [`Self::verify_password_with_memory`].
+  ///
+  /// # Errors
+  ///
+  /// Returns an opaque [`VerificationError`] on a mismatch, rejected record,
+  /// invalid input or context length, or short `memory`. Rejection before
+  /// derivation leaves `memory` unchanged; a mismatch clears the used prefix.
+  #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+  pub fn verify_password_with_context_and_memory(
+    &self,
+    password: &[u8],
+    encoded: &str,
+    context: Argon2Context<'_>,
+    memory: &mut [Argon2Block],
+  ) -> Result<crate::auth::PasswordStatus, VerificationError> {
+    let _dit = ct::DataIndependentTiming::enter();
+    self.verify_password_inner(password, encoded, context, Some(memory))
+  }
+
+  fn verify_password_inner(
+    &self,
+    password: &[u8],
+    encoded: &str,
+    context: Argon2Context<'_>,
+    memory: Option<&mut [Argon2Block]>,
+  ) -> Result<crate::auth::PasswordStatus, VerificationError> {
     let approved = password_phc::approve(encoded, self.limits).map_err(|_| VerificationError::new())?;
     let mut actual = crate::secret::ZeroizingBytes::<PASSWORD_OUTPUT_LEN>::zeroed();
-    Argon2id::derive_with_context(
+    argon2_hash_with_context(
       &approved.params,
       context,
       password,
       approved.salt(),
+      Argon2Variant::Argon2id,
       actual.as_mut_array(),
+      memory,
     )
     .map_err(|_| VerificationError::new())?;
     let verified = ct::fixed_eq(actual.as_array(), &approved.expected);
@@ -2711,6 +2780,56 @@ mod tests {
     }
 
     #[test]
+    fn caller_memory_verifies_record_profiles_and_preserves_storage_bounds() {
+      let generation = small_params();
+      let ceiling = Argon2Params::new(512, 2, 4).expect("verification ceiling must be valid");
+      let password = Argon2idPassword::with_limits(generation, Argon2VerificationLimits::for_profile(ceiling))
+        .expect("generation must fit verification limits");
+      let cases = [
+        (32, 2, 1, PasswordStatus::Current),
+        (16, 1, 1, PasswordStatus::NeedsRehash),
+        (40, 2, 1, PasswordStatus::NeedsRehash),
+        (35, 2, 1, PasswordStatus::NeedsRehash),
+        // Admitted by the parallel filler when that feature is enabled.
+        (512, 2, 4, PasswordStatus::NeedsRehash),
+      ];
+      for (memory_kib, time, lanes, status) in cases {
+        let params = Argon2Params::new(memory_kib, time, lanes).expect("record profile must be valid");
+        let used = params.memory_blocks() as usize;
+        let expected = oracle_hash(
+          argon2::Algorithm::Argon2id,
+          b"password",
+          SALT,
+          memory_kib,
+          time,
+          lanes,
+          32,
+        );
+        let encoded = password_phc::encode(params, SALT, expected.as_slice().try_into().expect("32-byte oracle"));
+        assert_eq!(password.verify_password(b"password", &encoded), Ok(status));
+
+        let mut memory = dirty_memory((ceiling.memory_blocks() as usize).strict_add(1));
+        assert_eq!(
+          password.verify_password_with_memory(b"password", &encoded, &mut memory[..used.strict_sub(1)]),
+          Err(VerificationError::new())
+        );
+        assert!(memory.iter().all(is_dirty), "short workspace was changed");
+        for (input, result) in [
+          (&b"password"[..], Ok(status)),
+          (&b"wrong"[..], Err(VerificationError::new())),
+        ] {
+          memory.fill(Argon2Block([0xa5a5_a5a5_a5a5_a5a5; BLOCK_WORDS]));
+          assert_eq!(
+            password.verify_password_with_memory(input, &encoded, &mut memory),
+            result
+          );
+          assert!(memory[..used].iter().all(is_zero), "used prefix was not cleared");
+          assert!(memory[used..].iter().all(is_dirty), "surplus blocks were changed");
+        }
+      }
+    }
+
+    #[test]
     fn accepted_older_profile_requests_rehash() {
       let generation = Argon2Params::new(40, 2, 1).expect("generation profile must be valid");
       let password = Argon2idPassword::new(generation).expect("generation profile must be admissible");
@@ -2732,27 +2851,50 @@ mod tests {
         password.verify_password(b"password", &encoded),
         Ok(PasswordStatus::NeedsRehash)
       );
+      assert_eq!(
+        password.verify_password_with_memory(
+          b"password",
+          &encoded,
+          &mut dirty_memory(params.memory_blocks() as usize)
+        ),
+        Ok(PasswordStatus::NeedsRehash)
+      );
     }
 
     #[test]
     fn borrowed_context_is_required_for_context_bound_records() {
-      let params = small_params();
+      let params = canon_params();
       let password = Argon2idPassword::new(params).expect("test verification profile must be admissible");
-      let context = Argon2Context::new(b"pepper", b"tenant");
-      let encoded = encode(params, b"password", &[0xcc; 16], context);
+      let context = canon_context();
+      let encoded = password_phc::encode(params, SALT, &RFC9106_ID);
 
       assert_eq!(
-        password.verify_password(b"password", &encoded),
+        password.verify_password(PASSWORD, &encoded),
         Err(VerificationError::new())
       );
       assert_eq!(
-        password.verify_password_with_context(b"password", &encoded, context),
+        password.verify_password_with_context(PASSWORD, &encoded, context),
         Ok(PasswordStatus::Current)
       );
-      assert_eq!(
-        password.verify_password_with_context(b"password", &encoded, Argon2Context::new(b"wrong", b"tenant"),),
-        Err(VerificationError::new())
-      );
+      let used = params.memory_blocks() as usize;
+      for (candidate, result) in [
+        (context, Ok(PasswordStatus::Current)),
+        (Argon2Context::new(b"wrong", AD), Err(VerificationError::new())),
+        (Argon2Context::new(SECRET, b"wrong"), Err(VerificationError::new())),
+        (Argon2Context::default(), Err(VerificationError::new())),
+      ] {
+        let mut memory = dirty_memory(used.strict_add(1));
+        assert_eq!(
+          password.verify_password_with_context(PASSWORD, &encoded, candidate),
+          result
+        );
+        assert_eq!(
+          password.verify_password_with_context_and_memory(PASSWORD, &encoded, candidate, &mut memory),
+          result
+        );
+        assert!(memory[..used].iter().all(is_zero));
+        assert!(is_dirty(&memory[used]));
+      }
     }
 
     #[test]
@@ -2769,6 +2911,15 @@ mod tests {
         password_phc::approve(admitted, limits).err(),
         Some(PhcError::InvalidLength)
       );
+      let password = Argon2idPassword::new(small_params()).expect("bounded verification profile must fit");
+      let mut memory = dirty_memory(small_params().memory_blocks() as usize);
+      for encoded in [expensive, admitted] {
+        assert_eq!(
+          password.verify_password_with_memory(b"password", encoded, &mut memory),
+          Err(VerificationError::new())
+        );
+        assert!(memory.iter().all(is_dirty), "rejected PHC changed caller memory");
+      }
     }
 
     #[test]
@@ -2806,6 +2957,13 @@ mod tests {
         password_phc::approve(&encoded, limits)
           .err()
           .expect("noncanonical record must be rejected");
+        let password = Argon2idPassword::new(small_params()).expect("bounded verification profile must fit");
+        let mut memory = dirty_memory(small_params().memory_blocks() as usize);
+        assert_eq!(
+          password.verify_password_with_memory(b"password", &encoded, &mut memory),
+          Err(VerificationError::new())
+        );
+        assert!(memory.iter().all(is_dirty), "rejected PHC changed caller memory");
       }
     }
 

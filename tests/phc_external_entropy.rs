@@ -33,6 +33,12 @@ fn argon2_hashes_with_one_caller_entropy_fill() {
     passwords.verify_password(PASSWORD, &record),
     Ok(PasswordStatus::Current)
   );
+  let mut memory = Vec::new_in(std::alloc::System);
+  memory.resize(params.memory_blocks() as usize, rscrypto::Argon2Block::ZERO);
+  assert_eq!(
+    passwords.verify_password_with_memory(PASSWORD, &record, &mut memory),
+    Ok(PasswordStatus::Current)
+  );
 }
 
 #[cfg(feature = "scrypt")]
@@ -56,6 +62,15 @@ fn scrypt_hashes_with_one_caller_entropy_fill() {
   assert_eq!(record.split('$').nth(3), Some(SALT_B64));
   assert_eq!(
     passwords.verify_password(PASSWORD, &record),
+    Ok(PasswordStatus::Current)
+  );
+  let mut memory = Vec::new_in(std::alloc::System);
+  memory.resize(
+    params.memory_blocks().expect("scrypt profile fits"),
+    rscrypto::ScryptBlock::ZERO,
+  );
+  assert_eq!(
+    passwords.verify_password_with_memory(PASSWORD, &record, &mut memory),
     Ok(PasswordStatus::Current)
   );
 }

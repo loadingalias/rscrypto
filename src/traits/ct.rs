@@ -694,6 +694,24 @@ pub(crate) mod tests {
       covered("Argon2id", || {
         core::hint::black_box(crate::Argon2id::derive(&params, b"pw", b"abcdefgh", &mut out))
       });
+      #[cfg(feature = "phc-strings")]
+      {
+        let policy = crate::Argon2idPassword::new(params).expect("bounded PHC profile");
+        let mut memory = [const { crate::Argon2Block::ZERO }; 8];
+        // Rejection never enters derivation, so these calls prove the PHC
+        // entry point enters the guard before approval can return.
+        covered("Argon2id PHC caller memory", || {
+          core::hint::black_box(policy.verify_password_with_memory(b"pw", "invalid", &mut memory))
+        });
+        covered("Argon2id PHC context and caller memory", || {
+          core::hint::black_box(policy.verify_password_with_context_and_memory(
+            b"pw",
+            "invalid",
+            crate::Argon2Context::new(b"pepper", b"tenant"),
+            &mut memory,
+          ))
+        });
+      }
     }
     #[cfg(feature = "scrypt")]
     {
@@ -702,6 +720,14 @@ pub(crate) mod tests {
       covered("scrypt", || {
         core::hint::black_box(crate::Scrypt::derive(&params, b"pw", b"salt", &mut out))
       });
+      #[cfg(feature = "phc-strings")]
+      {
+        let policy = crate::ScryptPassword::new(params).expect("bounded PHC profile");
+        let mut memory = [const { crate::ScryptBlock::ZERO }; 10];
+        covered("scrypt PHC caller memory", || {
+          core::hint::black_box(policy.verify_password_with_memory(b"pw", "invalid", &mut memory))
+        });
+      }
     }
     #[cfg(feature = "pbkdf2")]
     {
