@@ -59,8 +59,10 @@ elif name == 'apt-get':
         if os.environ.get('INSTALL_ROOT_CACHE'):
             cache = pathlib.Path(options['Dir::State::lists']) / 'auxfiles'
             sudo = [os.environ['INSTALL_REAL_SUDO'], '-n']
-            subprocess.run([*sudo, 'install', '-d', '-m', '755', str(cache)], check=True)
+            owner = int(os.environ.get('INSTALL_CACHE_UID', '0'))
+            subprocess.run([*sudo, 'install', '-d', '-m', '700', str(cache)], check=True)
             subprocess.run([*sudo, 'touch', str(cache / 'mirror-list')], check=True)
+            subprocess.run([*sudo, 'chown', '-R', str(owner), str(cache)], check=True)
             (fixture / 'root-cache.json').write_text(json.dumps({'path': str(cache), 'uid': cache.stat().st_uid}))
             if os.environ.get('INSTALL_FAIL_AFTER_APT'):
                 sys.exit(42)
@@ -186,6 +188,8 @@ class LinuxInstall(unittest.TestCase):
         env.update(extra_env or {})
         if env.get('INSTALL_ROOT_CACHE'):
             self.addCleanup(subprocess.run, [env['INSTALL_REAL_SUDO'], '-n', 'rm', '-rf', '--', str(temporary_path)],
+                            check=True, capture_output=True)
+            self.addCleanup(subprocess.run, [env['INSTALL_REAL_SUDO'], '-n', 'rm', '-rf', '--', str(root / 'apt state')],
                             check=True, capture_output=True)
         if fail:
             env['INSTALL_FAIL_APT'] = '1'
@@ -461,23 +465,31 @@ class LinuxInstall(unittest.TestCase):
     @unittest.skipUnless(sys.platform == 'linux' and os.geteuid() != 0 and shutil.which('sudo'),
                          'requires a non-root Linux user with sudo')
     def test_non_root_run_returns_privileged_apt_state_and_removes_its_mirror_list(self):
+        import pwd
         sudo = shutil.which('sudo')
         if subprocess.run([sudo, '-n', 'true'], capture_output=True).returncode:
             self.skipTest('requires passwordless sudo')
-        for fail in (False, True):
-            with self.subTest(fail_after_apt=fail):
-                result, _, root = self.provision('x86_64-linux', extra_env={
-                    'INSTALL_ROOT_CACHE': '1', 'INSTALL_REAL_SUDO': sudo,
-                    'INSTALL_FAIL_AFTER_APT': '1' if fail else '',
-                })
-                cache = json.loads((root / 'root-cache.json').read_text())
-                self.assertEqual(cache['uid'], 0)
-                self.assertEqual(result.returncode, 42 if fail else 0, result.stdout + result.stderr)
-                # APT state persists for reuse, but nothing in it stays owned by root.
-                self.assertEqual(Path(cache['path']).stat().st_uid, os.geteuid())
-                source = (root / 'apt-sources.list').read_text()
-                mirror = Path(source.split('mirror+file:', 1)[1].split()[0])
-                self.assertFalse(mirror.exists())
+        try:
+            apt_uid = pwd.getpwnam('_apt').pw_uid
+        except KeyError:
+            self.skipTest('requires the APT sandbox account')
+        for owner in (0, apt_uid):
+            for fail in (False, True):
+                with self.subTest(cache_owner=owner, fail_after_apt=fail):
+                    result, _, root = self.provision('x86_64-linux', extra_env={
+                        'INSTALL_ROOT_CACHE': '1', 'INSTALL_REAL_SUDO': sudo,
+                        'INSTALL_CACHE_UID': str(owner),
+                        'INSTALL_FAIL_AFTER_APT': '1' if fail else '',
+                    })
+                    cache = json.loads((root / 'root-cache.json').read_text())
+                    self.assertEqual(cache['uid'], owner)
+                    self.assertEqual(result.returncode, 42 if fail else 0, result.stdout + result.stderr)
+                    self.assertEqual(Path(cache['path']).stat().st_uid, os.geteuid())
+                    subprocess.run(['tar', '-cf', str(root / 'apt-cache.tar'), '-C', str(root / 'apt state'), '.'],
+                                   check=True, capture_output=True)
+                    source = (root / 'apt-sources.list').read_text()
+                    mirror = Path(source.split('mirror+file:', 1)[1].split()[0])
+                    self.assertFalse(mirror.exists())
 
     @unittest.skipUnless(shutil.which('apt-get') and shutil.which('dpkg'), 'requires the real APT resolver')
     def test_snapshot_resolves_newer_installed_dependencies(self):

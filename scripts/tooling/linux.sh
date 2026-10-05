@@ -69,9 +69,9 @@ temporary="$(mktemp -d)"
 settle_apt_state() {
   [[ "$apt_ready" == true ]] || return 0
   # Drop packages the pinned snapshot no longer provides, then return ownership so the
-  # invoking user (and CI's cache) can read everything APT wrote as root.
+  # invoking user (and CI's cache) can read entries owned by root or APT's sandbox user.
   "${apt[@]}" autoclean >/dev/null || true
-  if [[ "${#sudo_cmd[@]}" -gt 0 && -n "$(find "$apt_state" -user 0 -print -quit)" ]]; then
+  if [[ "${#sudo_cmd[@]}" -gt 0 ]]; then
     "${sudo_cmd[@]}" chown -R "$(id -u):$(id -g)" "$apt_state"
   fi
 }
