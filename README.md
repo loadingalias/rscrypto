@@ -79,6 +79,8 @@ It needs the `websocket-sha1` feature.
 No umbrella feature, including `full`, enables it.
 
 See [docs.rs](https://docs.rs/rscrypto) for exact types and methods.
+The [API compatibility notes](docs/api-compatibility.md) explain output types, collection seeds,
+and retained method names.
 
 ## Platforms and dispatch
 
