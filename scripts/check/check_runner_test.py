@@ -144,7 +144,7 @@ def main():
     root = Path(temporary)
     for name in ('scripts/check/check.sh', 'scripts/check/dependencies.sh', 'scripts/lib/toolchain.sh',
                  'scripts/lib/toolchain.py', 'scripts/lib/cross_build.py', 'scripts/lib/python.sh', 'Cargo.toml',
-                 'rust-toolchain.toml', '.config/target-matrix.json'):
+                 'rust-toolchain.toml', '.config/target-matrix.json', 'scripts/test/fixtures.py'):
       destination = root / name
       destination.parent.mkdir(parents=True, exist_ok=True)
       shutil.copy2(source / name, destination)
@@ -180,9 +180,17 @@ if name == 'cargo' and 'clippy' in args:
                                                "with open(os.environ['CHECK_LOG'], 'a') as output:\n"
                                                f"    output.write(json.dumps(['{name}', *sys.argv[1:]]) + '\\n')\n")
     environment = {key: value for key, value in os.environ.items()
-                   if key not in ('BASH_ENV', 'ENV') and not key.startswith('BASH_FUNC_')}
+                   if key not in ('BASH_ENV', 'ENV') and not key.startswith(('BASH_FUNC_', 'GIT_'))}
     environment.update(PATH=f'{binary}:{os.environ["PATH"]}', CHECK_PYTHON=sys.executable,
-                       CHECK_LOG=str(log), CHECK_HOST='aarch64-apple-darwin')
+                       CHECK_LOG=str(log), CHECK_HOST='aarch64-apple-darwin',
+                       GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+    subprocess.run(['git', 'init', '-q', str(root)], check=True, env=environment)
+    vectors = root / 'testdata/family'
+    vectors.mkdir(parents=True)
+    payload = vectors / 'vector.bin'
+    payload.write_bytes(b'abc')
+    (vectors / 'SHA256SUMS').write_text(
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  vector.bin\n')
 
     def run(mode, *args, **extra):
       log.write_text('')
@@ -211,6 +219,7 @@ if name == 'cargo' and 'clippy' in args:
     for mode in ('fix', 'local', 'native'):
       result, commands = run(mode)
       assert result.returncode == 0, result.stderr
+      assert 'Vector fixtures: 1 payloads verified across 1 manifests' in result.stdout
       inventories = [tuple(c) for c in commands if c[0] == 'rustup']
       assert len(inventories) == len(set(inventories)) == 2, inventories
       clippy = [c for c in commands if c[0] == 'cargo' and 'clippy' in c]
@@ -282,6 +291,11 @@ if name == 'cargo' and 'clippy' in args:
     assert result.returncode == 19 and not any(c[0] == 'cargo' for c in commands)
     result, commands = run('bogus')
     assert result.returncode == 2 and not commands
+    payload.write_bytes(b'corrupted')
+    for args in (('fix',), ('local',), ('native',), ('check',), ('target', 's390x-unknown-linux-gnu')):
+      result, commands = run(*args)
+      assert result.returncode != 0 and 'vector checksum mismatch' in result.stderr, result.stderr
+      assert not any(c[0] == 'cargo' for c in commands), commands
   print('Check runner regressions passed')
 
 

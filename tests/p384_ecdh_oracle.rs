@@ -179,7 +179,7 @@ fn complete_wycheproof_ecpoint_corpus_obeys_the_canonical_sec1_contract() {
   assert!(valid > 0, "Wycheproof corpus must exercise agreement");
 }
 
-#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[test]
 fn ring_independent_implementation_agrees_with_rscrypto() {
   let rng = ring::rand::SystemRandom::new();

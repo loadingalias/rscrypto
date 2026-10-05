@@ -1,0 +1,446 @@
+{
+  "date": "2026-10-04",
+  "base_commit": "d8db85642e1ff2a176c7925eb873fa2f23021c30",
+  "target": "aarch64-apple-darwin",
+  "cpu": "Apple M1 Pro",
+  "rustc": "rustc 1.101.0-nightly (5c543b0b8 2026-09-29)\nbinary: rustc\ncommit-hash: 5c543b0b8c73c7b72bc8284ced4fb22ead15734d\ncommit-date: 2026-09-29\nhost: aarch64-apple-darwin\nrelease: 1.101.0-nightly\nLLVM version: 23.1.1",
+  "cargo_mutants": "27.1.0",
+  "mutated_source": {
+    "path": "src/hex.rs",
+    "sha256": "2521d12cbffeccce579d59b5a1806aaefd1e247f102a2ed26747c8f5f5eec83a"
+  },
+  "features": [
+    "std",
+    "x25519"
+  ],
+  "selected_tests": [
+    "hex::tests::from_hex_invalid_char",
+    "hex::tests::from_hex_invalid_length",
+    "hex::tests::from_hex_mixed_case"
+  ],
+  "runs": [
+    {
+      "cap_lints": false,
+      "start_time": "2026-10-04T04:24:54.466569Z",
+      "end_time": "2026-10-04T04:26:12.307937Z",
+      "outcomes": [
+        {
+          "scenario": "Baseline",
+          "summary": "Success",
+          "phase_results": [
+            {
+              "phase": "Build",
+              "duration": 50.04576925,
+              "process_status": "Success",
+              "argv": [
+                "/Users/mr.wolf/.rustup/toolchains/nightly-2026-09-30-aarch64-apple-darwin/bin/cargo",
+                "test",
+                "--no-run",
+                "--verbose",
+                "--package=rscrypto@0.10.0",
+                "--no-default-features",
+                "--features=std,x25519"
+              ]
+            },
+            {
+              "phase": "Test",
+              "duration": 0.59322,
+              "process_status": "Success",
+              "argv": [
+                "/Users/mr.wolf/.rustup/toolchains/nightly-2026-09-30-aarch64-apple-darwin/bin/cargo",
+                "test",
+                "--verbose",
+                "--package=rscrypto@0.10.0",
+                "--no-default-features",
+                "--features=std,x25519",
+                "--lib",
+                "hex::tests::from_hex_"
+              ]
+            }
+          ],
+          "log_sha256": "58b6ad607aa974466513c467ff6a8b156640a7026dcddf83437318c996f92e44",
+          "test_output": "running 3 tests\ntest hex::tests::from_hex_invalid_length ... ok\ntest hex::tests::from_hex_invalid_char ... ok\ntest hex::tests::from_hex_mixed_case ... ok\n\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 112 filtered out; finished in 0.00s\n\n\n*** result: Success"
+        },
+        {
+          "scenario": {
+            "Mutant": {
+              "name": "src/hex.rs:134:3: replace from_hex -> Result<(), InvalidHexError> with Ok(())",
+              "package": "rscrypto",
+              "file": "src/hex.rs",
+              "function": {
+                "function_name": "from_hex",
+                "return_type": "-> Result<(), InvalidHexError>",
+                "span": {
+                  "start": {
+                    "line": 118,
+                    "column": 1
+                  },
+                  "end": {
+                    "line": 164,
+                    "column": 2
+                  }
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 134,
+                  "column": 3
+                },
+                "end": {
+                  "line": 163,
+                  "column": 9
+                }
+              },
+              "replacement": "Ok(())",
+              "genre": "FnValue"
+            }
+          },
+          "summary": "Unviable",
+          "phase_results": [
+            {
+              "phase": "Build",
+              "duration": 0.65944075,
+              "process_status": {
+                "Failure": 101
+              },
+              "argv": [
+                "/Users/mr.wolf/.rustup/toolchains/nightly-2026-09-30-aarch64-apple-darwin/bin/cargo",
+                "test",
+                "--no-run",
+                "--verbose",
+                "--package=rscrypto@0.10.0",
+                "--no-default-features",
+                "--features=std,x25519"
+              ]
+            }
+          ],
+          "log_sha256": "0ecc7625435b1323834e4ee27b30e3616187355c79f2de58c6c8f711104f300b",
+          "diff": "--- src/hex.rs\n+++ replace from_hex -> Result<(), InvalidHexError> with Ok(())\n@@ -126,46 +126,17 @@\n   feature = \"ascon-aead\",\n   feature = \"chacha20poly1305\",\n   feature = \"ed25519\",\n   feature = \"ml-kem\",\n   feature = \"x25519\",\n   feature = \"xchacha20poly1305\"\n ))]\n pub(crate) fn from_hex(hex: &str, out: &mut [u8]) -> Result<(), InvalidHexError> {\n-  let hex = hex.as_bytes();\n-  if hex.len() != out.len().strict_mul(2) {\n-    return Err(InvalidHexError::InvalidLength);\n-  }\n-  let mut i = 0;\n-  while i < out.len() {\n-    let hi_idx = i.strict_mul(2);\n-    let lo_idx = hi_idx.strict_add(1);\n-    let hi = match decode_nibble(hex[hi_idx]) {\n-      Some(v) => v,\n-      None => {\n-        return Err(InvalidHexError::InvalidChar {\n-          byte: hex[hi_idx],\n-          index: hi_idx,\n-        });\n-      }\n-    };\n-    let lo = match decode_nibble(hex[lo_idx]) {\n-      Some(v) => v,\n-      None => {\n-        return Err(InvalidHexError::InvalidChar {\n-          byte: hex[lo_idx],\n-          index: lo_idx,\n-        });\n-      }\n-    };\n-    out[i] = (hi << 4) | lo;\n-    i = i.strict_add(1);\n-  }\n-  Ok(())\n+  Ok(()) /* ~ changed by cargo-mutants ~ */\n }\n \n /// Write each byte as two lowercase hex characters.\n pub(crate) fn fmt_hex_lower(bytes: &[u8], f: &mut fmt::Formatter<'_>) -> fmt::Result {\n   for &b in bytes {\n     write!(f, \"{b:02x}\")?;\n   }\n   Ok(())\n",
+          "build_errors": [
+            "error: unused variable: `hex`",
+            "error: unused variable: `out`",
+            "error: function `decode_nibble` is never used",
+            "error: could not compile `rscrypto` (lib) due to 3 previous errors",
+            "error: could not compile `rscrypto` (lib test) due to 3 previous errors"
+          ]
+        },
+        {
+          "scenario": {
+            "Mutant": {
+              "name": "src/hex.rs:135:16: replace != with == in from_hex",
+              "package": "rscrypto",
+              "file": "src/hex.rs",
+              "function": {
+                "function_name": "from_hex",
+                "return_type": "-> Result<(), InvalidHexError>",
+                "span": {
+                  "start": {
+                    "line": 118,
+                    "column": 1
+                  },
+                  "end": {
+                    "line": 164,
+                    "column": 2
+                  }
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 135,
+                  "column": 16
+                },
+                "end": {
+                  "line": 135,
+                  "column": 18
+                }
+              },
+              "replacement": "==",
+              "genre": "BinaryOperator"
+            }
+          },
+          "summary": "CaughtMutant",
+          "phase_results": [
+            {
+              "phase": "Build",
+              "duration": 6.163814792,
+              "process_status": "Success",
+              "argv": [
+                "/Users/mr.wolf/.rustup/toolchains/nightly-2026-09-30-aarch64-apple-darwin/bin/cargo",
+                "test",
+                "--no-run",
+                "--verbose",
+                "--package=rscrypto@0.10.0",
+                "--no-default-features",
+                "--features=std,x25519"
+              ]
+            },
+            {
+              "phase": "Test",
+              "duration": 0.412537125,
+              "process_status": {
+                "Failure": 101
+              },
+              "argv": [
+                "/Users/mr.wolf/.rustup/toolchains/nightly-2026-09-30-aarch64-apple-darwin/bin/cargo",
+                "test",
+                "--verbose",
+                "--package=rscrypto@0.10.0",
+                "--no-default-features",
+                "--features=std,x25519",
+                "--lib",
+                "hex::tests::from_hex_"
+              ]
+            }
+          ],
+          "log_sha256": "e922314798cb3a20e348d91854c4dbb66263b27e75f7fce12c4856a793002f22",
+          "diff": "--- src/hex.rs\n+++ replace != with == in from_hex\n@@ -127,17 +127,17 @@\n   feature = \"chacha20poly1305\",\n   feature = \"ed25519\",\n   feature = \"ml-kem\",\n   feature = \"x25519\",\n   feature = \"xchacha20poly1305\"\n ))]\n pub(crate) fn from_hex(hex: &str, out: &mut [u8]) -> Result<(), InvalidHexError> {\n   let hex = hex.as_bytes();\n-  if hex.len() != out.len().strict_mul(2) {\n+  if hex.len() == /* ~ changed by cargo-mutants ~ */ out.len().strict_mul(2) {\n     return Err(InvalidHexError::InvalidLength);\n   }\n   let mut i = 0;\n   while i < out.len() {\n     let hi_idx = i.strict_mul(2);\n     let lo_idx = hi_idx.strict_add(1);\n     let hi = match decode_nibble(hex[hi_idx]) {\n       Some(v) => v,\n",
+          "test_output": "running 3 tests\ntest hex::tests::from_hex_mixed_case ... FAILED\ntest hex::tests::from_hex_invalid_char ... FAILED\ntest hex::tests::from_hex_invalid_length ... FAILED\n\nfailures:\n\n---- hex::tests::from_hex_mixed_case stdout ----\n\nthread 'hex::tests::from_hex_mixed_case' (16341630) panicked at src/hex.rs:624:34:\nmixed-case hex fixture must decode: InvalidLength\n\n---- hex::tests::from_hex_invalid_char stdout ----\n\nthread 'hex::tests::from_hex_invalid_char' (16341628) panicked at src/hex.rs:638:5:\nassertion `left == right` failed\n  left: InvalidLength\n right: InvalidChar { index: 2, .. }\n\n---- hex::tests::from_hex_invalid_length stdout ----\n\nthread 'hex::tests::from_hex_invalid_length' (16341629) panicked at src/hex.rs:151:34:\nindex out of bounds: the len is 3 but the index is 3\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    hex::tests::from_hex_invalid_char\n    hex::tests::from_hex_invalid_length\n    hex::tests::from_hex_mixed_case\n\ntest result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 112 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `-p rscrypto --lib`\n\n*** result: Failure(101)"
+        },
+        {
+          "scenario": {
+            "Mutant": {
+              "name": "src/hex.rs:160:24: replace | with & in from_hex",
+              "package": "rscrypto",
+              "file": "src/hex.rs",
+              "function": {
+                "function_name": "from_hex",
+                "return_type": "-> Result<(), InvalidHexError>",
+                "span": {
+                  "start": {
+                    "line": 118,
+                    "column": 1
+                  },
+                  "end": {
+                    "line": 164,
+                    "column": 2
+                  }
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 160,
+                  "column": 24
+                },
+                "end": {
+                  "line": 160,
+                  "column": 25
+                }
+              },
+              "replacement": "&",
+              "genre": "BinaryOperator"
+            }
+          },
+          "summary": "CaughtMutant",
+          "phase_results": [
+            {
+              "phase": "Build",
+              "duration": 5.976942792,
+              "process_status": "Success",
+              "argv": [
+                "/Users/mr.wolf/.rustup/toolchains/nightly-2026-09-30-aarch64-apple-darwin/bin/cargo",
+                "test",
+                "--no-run",
+                "--verbose",
+                "--package=rscrypto@0.10.0",
+                "--no-default-features",
+                "--features=std,x25519"
+              ]
+            },
+            {
+              "phase": "Test",
+              "duration": 0.4117,
+              "process_status": {
+                "Failure": 101
+              },
+              "argv": [
+                "/Users/mr.wolf/.rustup/toolchains/nightly-2026-09-30-aarch64-apple-darwin/bin/cargo",
+                "test",
+                "--verbose",
+                "--package=rscrypto@0.10.0",
+                "--no-default-features",
+                "--features=std,x25519",
+                "--lib",
+                "hex::tests::from_hex_"
+              ]
+            }
+          ],
+          "log_sha256": "bba0eed1d7af45c987ffe0f81378b9cab83d99c95121f89325a653b61c1e2bc7",
+          "diff": "--- src/hex.rs\n+++ replace | with & in from_hex\n@@ -152,17 +152,17 @@\n       Some(v) => v,\n       None => {\n         return Err(InvalidHexError::InvalidChar {\n           byte: hex[lo_idx],\n           index: lo_idx,\n         });\n       }\n     };\n-    out[i] = (hi << 4) | lo;\n+    out[i] = (hi << 4) & /* ~ changed by cargo-mutants ~ */ lo;\n     i = i.strict_add(1);\n   }\n   Ok(())\n }\n \n /// Write each byte as two lowercase hex characters.\n pub(crate) fn fmt_hex_lower(bytes: &[u8], f: &mut fmt::Formatter<'_>) -> fmt::Result {\n   for &b in bytes {\n",
+          "test_output": "running 3 tests\ntest hex::tests::from_hex_invalid_char ... ok\ntest hex::tests::from_hex_invalid_length ... ok\ntest hex::tests::from_hex_mixed_case ... FAILED\n\nfailures:\n\n---- hex::tests::from_hex_mixed_case stdout ----\n\nthread 'hex::tests::from_hex_mixed_case' (16348470) panicked at src/hex.rs:625:5:\nassertion `left == right` failed\n  left: [0, 0, 0]\n right: [170, 187, 204]\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    hex::tests::from_hex_mixed_case\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 112 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `-p rscrypto --lib`\n\n*** result: Failure(101)"
+        }
+      ]
+    },
+    {
+      "cap_lints": true,
+      "start_time": "2026-10-04T04:28:47.237829Z",
+      "end_time": "2026-10-04T04:29:59.715359Z",
+      "outcomes": [
+        {
+          "scenario": "Baseline",
+          "summary": "Success",
+          "phase_results": [
+            {
+              "phase": "Build",
+              "duration": 50.740941125,
+              "process_status": "Success",
+              "argv": [
+                "/Users/mr.wolf/.rustup/toolchains/nightly-2026-09-30-aarch64-apple-darwin/bin/cargo",
+                "test",
+                "--no-run",
+                "--verbose",
+                "--package=rscrypto@0.10.0",
+                "--no-default-features",
+                "--features=std,x25519"
+              ]
+            },
+            {
+              "phase": "Test",
+              "duration": 0.633928917,
+              "process_status": "Success",
+              "argv": [
+                "/Users/mr.wolf/.rustup/toolchains/nightly-2026-09-30-aarch64-apple-darwin/bin/cargo",
+                "test",
+                "--verbose",
+                "--package=rscrypto@0.10.0",
+                "--no-default-features",
+                "--features=std,x25519",
+                "--lib",
+                "hex::tests::from_hex_"
+              ]
+            }
+          ],
+          "log_sha256": "ba7c0543b4e70ac1474bf6dfa086a36d6393025c811363273f0b1cec716104c0",
+          "test_output": "running 3 tests\ntest hex::tests::from_hex_invalid_length ... ok\ntest hex::tests::from_hex_invalid_char ... ok\ntest hex::tests::from_hex_mixed_case ... ok\n\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 112 filtered out; finished in 0.00s\n\n\n*** result: Success"
+        },
+        {
+          "scenario": {
+            "Mutant": {
+              "name": "src/hex.rs:134:3: replace from_hex -> Result<(), InvalidHexError> with Ok(())",
+              "package": "rscrypto",
+              "file": "src/hex.rs",
+              "function": {
+                "function_name": "from_hex",
+                "return_type": "-> Result<(), InvalidHexError>",
+                "span": {
+                  "start": {
+                    "line": 118,
+                    "column": 1
+                  },
+                  "end": {
+                    "line": 164,
+                    "column": 2
+                  }
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 134,
+                  "column": 3
+                },
+                "end": {
+                  "line": 163,
+                  "column": 9
+                }
+              },
+              "replacement": "Ok(())",
+              "genre": "FnValue"
+            }
+          },
+          "summary": "CaughtMutant",
+          "phase_results": [
+            {
+              "phase": "Build",
+              "duration": 6.58271225,
+              "process_status": "Success",
+              "argv": [
+                "/Users/mr.wolf/.rustup/toolchains/nightly-2026-09-30-aarch64-apple-darwin/bin/cargo",
+                "test",
+                "--no-run",
+                "--verbose",
+                "--package=rscrypto@0.10.0",
+                "--no-default-features",
+                "--features=std,x25519"
+              ]
+            },
+            {
+              "phase": "Test",
+              "duration": 0.514541875,
+              "process_status": {
+                "Failure": 101
+              },
+              "argv": [
+                "/Users/mr.wolf/.rustup/toolchains/nightly-2026-09-30-aarch64-apple-darwin/bin/cargo",
+                "test",
+                "--verbose",
+                "--package=rscrypto@0.10.0",
+                "--no-default-features",
+                "--features=std,x25519",
+                "--lib",
+                "hex::tests::from_hex_"
+              ]
+            }
+          ],
+          "log_sha256": "cc67732165822b85be485945d15c352e4df68f6e83a40fe570de609c168f143e",
+          "diff": "--- src/hex.rs\n+++ replace from_hex -> Result<(), InvalidHexError> with Ok(())\n@@ -126,46 +126,17 @@\n   feature = \"ascon-aead\",\n   feature = \"chacha20poly1305\",\n   feature = \"ed25519\",\n   feature = \"ml-kem\",\n   feature = \"x25519\",\n   feature = \"xchacha20poly1305\"\n ))]\n pub(crate) fn from_hex(hex: &str, out: &mut [u8]) -> Result<(), InvalidHexError> {\n-  let hex = hex.as_bytes();\n-  if hex.len() != out.len().strict_mul(2) {\n-    return Err(InvalidHexError::InvalidLength);\n-  }\n-  let mut i = 0;\n-  while i < out.len() {\n-    let hi_idx = i.strict_mul(2);\n-    let lo_idx = hi_idx.strict_add(1);\n-    let hi = match decode_nibble(hex[hi_idx]) {\n-      Some(v) => v,\n-      None => {\n-        return Err(InvalidHexError::InvalidChar {\n-          byte: hex[hi_idx],\n-          index: hi_idx,\n-        });\n-      }\n-    };\n-    let lo = match decode_nibble(hex[lo_idx]) {\n-      Some(v) => v,\n-      None => {\n-        return Err(InvalidHexError::InvalidChar {\n-          byte: hex[lo_idx],\n-          index: lo_idx,\n-        });\n-      }\n-    };\n-    out[i] = (hi << 4) | lo;\n-    i = i.strict_add(1);\n-  }\n-  Ok(())\n+  Ok(()) /* ~ changed by cargo-mutants ~ */\n }\n \n /// Write each byte as two lowercase hex characters.\n pub(crate) fn fmt_hex_lower(bytes: &[u8], f: &mut fmt::Formatter<'_>) -> fmt::Result {\n   for &b in bytes {\n     write!(f, \"{b:02x}\")?;\n   }\n   Ok(())\n",
+          "test_output": "running 3 tests\ntest hex::tests::from_hex_mixed_case ... FAILED\ntest hex::tests::from_hex_invalid_length ... FAILED\ntest hex::tests::from_hex_invalid_char ... FAILED\n\nfailures:\n\n---- hex::tests::from_hex_mixed_case stdout ----\n\nthread 'hex::tests::from_hex_mixed_case' (16408326) panicked at src/hex.rs:596:5:\nassertion `left == right` failed\n  left: [0, 0, 0]\n right: [170, 187, 204]\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n---- hex::tests::from_hex_invalid_length stdout ----\n\nthread 'hex::tests::from_hex_invalid_length' (16408325) panicked at src/hex.rs:602:5:\nassertion `left == right` failed\n  left: Ok(())\n right: Err(InvalidLength)\n\n---- hex::tests::from_hex_invalid_char stdout ----\n\nthread 'hex::tests::from_hex_invalid_char' (16408324) panicked at src/hex.rs:608:42:\nnon-hex characters must be rejected: ()\n\n\nfailures:\n    hex::tests::from_hex_invalid_char\n    hex::tests::from_hex_invalid_length\n    hex::tests::from_hex_mixed_case\n\ntest result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 112 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `-p rscrypto --lib`\n\n*** result: Failure(101)"
+        }
+      ]
+    }
+  ],
+  "coverage": [
+    {
+      "mode": "committed",
+      "source": {
+        "commit": "d8db85642e1ff2a176c7925eb873fa2f23021c30",
+        "sha256": "fb3795524edbfacf775e942596dd77649a2cbb338df7e58808342ab3b199c0f8"
+      },
+      "summary_total": "TOTAL                                              7129              4407    38.18%         308               144    53.25%        3598              2082    42.13%           0                 0         -",
+      "report_provenance_sha256": "fef98c24bf2eb950ba995ccf23c1636826684afdd9e031f971f6585a97e895f4",
+      "suites": [
+        {
+          "name": "hash-sha2",
+          "executed_tests": [
+            "replay_hash_sha2_corpus"
+          ],
+          "corpus_input_count": 1,
+          "lcov_sha256": "387a696dd5afffadad6a2d36a95aade746d4fcdc69ec657054bb85a2e6186901"
+        },
+        {
+          "name": "checksums-crc32",
+          "executed_tests": [
+            "replay_checksum_crc32_corpus"
+          ],
+          "corpus_input_count": 1,
+          "lcov_sha256": "24e7d543917f3b9a1a0694a1e059a1519c01411dc352db9ecdbb6608fdece446"
+        }
+      ]
+    },
+    {
+      "mode": "local",
+      "source": {
+        "commit": "d8db85642e1ff2a176c7925eb873fa2f23021c30",
+        "sha256": "fb3795524edbfacf775e942596dd77649a2cbb338df7e58808342ab3b199c0f8"
+      },
+      "summary_total": "TOTAL                                              7129              2440    65.77%         308               119    61.36%        3598              1343    62.67%           0                 0         -",
+      "report_provenance_sha256": "34297b403dd41bd3de4ec42b3a08cbfcaeea5f136711e9ed9a165f5a2785d490",
+      "suites": [
+        {
+          "name": "hash-sha2",
+          "executed_tests": [
+            "replay_hash_sha2_corpus"
+          ],
+          "corpus_input_count": 69,
+          "lcov_sha256": "7a602f32327ca890fce45a24c609bdec271ca60eba18fdebd56e0ee25419f280"
+        },
+        {
+          "name": "checksums-crc32",
+          "executed_tests": [
+            "replay_checksum_crc32_corpus"
+          ],
+          "corpus_input_count": 617,
+          "lcov_sha256": "1acb7d0ae659fc2e11fa5501cb1cb9dac5ad1fbbab633bd09ab4f24e06b61b2b"
+        }
+      ]
+    }
+  ]
+}

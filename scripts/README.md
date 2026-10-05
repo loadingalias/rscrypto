@@ -59,15 +59,37 @@ It does not download upstream archives.
 | `test/test-fuzz.sh`      | `just test-fuzz` |
 | `test/test-fuzz-asan.sh` | `just test-fuzz-asan` |
 | `test/test-coverage.py`  | `just test-coverage` |
+| `test/coverage_run.py`   | Coverage-only nextest target runner, invoked by `test-coverage.py` |
 | `test/test-rsa-asm.sh`   | `just test-rsa-linux-asm`, `just test-rsa-macos-asm` |
 
 - `just test-scripts` runs the argument-forwarding, toolchain, test, check, and fuzz regressions
   with substitute executors.
+- Check recipes run `test/fixtures.py` before compilation.
+  It verifies Git-visible payloads under `testdata/` and `tests/vectors/`.
+  Each directory's `SHA256SUMS` must cover its payloads, including new untracked inputs.
+  Missing, extra, duplicate, changed, or symlinked inputs fail.
+  `README.md` and `NIST-NOTICE.txt` are provenance metadata, not hashed payloads.
+  Git-ignored scratch files stay outside this inventory.
+- Each ChaCha20 differential test must report execution of every backend marked runnable.
+  All three tests must report the same inventory and target architecture.
+  The inventory includes required features and availability.
+  Portable-only and unavailable results do not claim accelerated execution.
 - `just ct-test` runs the CT tooling regressions, the harness self-tests,
   and the raw timing exporter tests, without timing cases.
 - Coverage publishes raw LCOV, its merged profile, the exact executable inventory, and `provenance.json`.
   `provenance.json` binds the report to the effective source, tool versions, suite arguments,
   the environment that affects execution, and the core artifact hashes.
+  Schema 2 records discovered tests, ignored/filter status, executed tests, executable hashes,
+  and profile counts per test and suite.
+  The coverage-only target runner separates discovery profiles from test profiles.
+  Collection requires every selected test to execute successfully and produce a nonempty profile.
+  Executable replacement and incomplete publication fail; `provenance.json` is published last.
+  Per-suite LCOV files remain in `coverage/suites/` and are hashed in provenance.
+  The replay helper records consumed paths only during coverage collection.
+  The collector reconciles those receipts with corpus hashes taken before and after each suite,
+  including ignored local discoveries when requested.
+  `test/coverage_test.py` exercises attribution and deliberate publication failures through `just test-scripts`.
+  The bounded qualification and mutation results are in [validation evidence](../docs/validation-evidence.md).
 - `just test-transfer` checks source binding, artifact integrity, safe extraction,
   and the pinned rustdoc compile-and-run contract, including deliberate failures.
   It needs the repository-pinned nightly and runs a small Rust fixture.

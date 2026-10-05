@@ -31,6 +31,10 @@ if not os.environ.get('NO_BACKEND_EVIDENCE'):
   portable = '--portable' in sys.argv
   unavailable = bool(os.environ.get('BACKEND_UNAVAILABLE')) and not portable
   zero_execution = bool(os.environ.get('BACKEND_ZERO_EXECUTION')) and not portable
+  compiled = [{'id': 'fixture/backend', 'required_features': ['fixture'],
+               'runtime_available': None if portable else not unavailable}]
+  if os.environ.get('BACKEND_PARTIAL_EXECUTION') and not portable:
+    compiled.append({'id': 'fixture/omitted', 'required_features': ['omitted'], 'runtime_available': True})
   for test in ('counter-zero', 'arbitrary-counters', 'self-inverse'):
     print('RSCRYPTO_BACKEND_EVIDENCE=' + json.dumps({
       'schema': 1,
@@ -39,8 +43,7 @@ if not os.environ.get('NO_BACKEND_EVIDENCE'):
       'test': test,
       'dispatch': 'portable-only' if portable else 'production-auto',
       'target_arch': 'fixture',
-      'compiled': [{'id': 'fixture/backend', 'required_features': ['fixture'],
-                    'runtime_available': None if portable else not unavailable}],
+      'compiled': compiled,
       'executed_backend_ids': [] if portable or unavailable or zero_execution else ['fixture/backend'],
       'executed_case_count': 0 if portable or unavailable or zero_execution else 1,
       'kernel_call_count': 0 if portable or unavailable or zero_execution else 1,
@@ -71,7 +74,8 @@ sys.exit(int(os.environ.get('RUN_EXIT', '0')))
                             cwd=root, env={**env, 'BACKEND_UNAVAILABLE': '1'}, capture_output=True, text=True)
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert len(log.read_text().splitlines()) == 2
-    for extra in ({'NO_BACKEND_EVIDENCE': '1'}, {'BACKEND_ZERO_EXECUTION': '1'}):
+    for extra in ({'NO_BACKEND_EVIDENCE': '1'}, {'BACKEND_ZERO_EXECUTION': '1'},
+                  {'BACKEND_PARTIAL_EXECUTION': '1'}):
       log.write_text('')
       result = subprocess.run([shutil.which('just'), '--justfile', str(root / 'justfile'), 'test-evidence'],
                               cwd=root, env={**env, **extra}, capture_output=True, text=True)

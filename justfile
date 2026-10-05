@@ -170,6 +170,9 @@ test-scripts:
     @scripts/lib/python.sh scripts/release/release_test.py
     @scripts/lib/python.sh scripts/check/qualified_test.py
     @scripts/lib/python.sh scripts/test/test_runner_test.py
+    @scripts/lib/python.sh scripts/test/evidence_suite_test.py
+    @scripts/lib/python.sh scripts/test/fixtures_test.py
+    @scripts/lib/python.sh scripts/test/coverage_test.py
     @scripts/lib/python.sh scripts/test/just_arguments_test.py
     @scripts/lib/python.sh scripts/test/ci_cache_test.py
     @scripts/lib/python.sh scripts/tooling/cache_test.py

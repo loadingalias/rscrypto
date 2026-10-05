@@ -125,6 +125,9 @@ What the checks cover:
   WASI adds `std` and entropy, without threads.
 - Every target uses the one repository-pinned nightly from `rust-toolchain.toml`.
 - Validation also checks the independent workspaces, dependencies, and documentation.
+- Check recipes verify vector inventories and checksums before compilation.
+  Add or update each payload's adjacent `SHA256SUMS` with its provenance when changing vectors.
+  Missing or unlisted payloads fail validation, including new untracked inputs.
 
 ### Tests
 
@@ -186,6 +189,15 @@ Run `just test-coverage` when you need source coverage.
   Reporting does not run the tests again.
 - Ordinary uninstrumented test results cannot produce coverage later.
 - The merged profile and the executable list stay in `coverage/` for report diagnosis.
+- Coverage provenance records discovered tests, ignored/filter status, actual executions,
+  executable hashes, and profile counts per test and suite.
+  Discovery profiles are excluded.
+  A missing execution, missing test profile, or changed executable fails collection.
+  `provenance.json` is the completion marker; failed collection or publication removes old reports.
+- `coverage/suites/` retains each suite's LCOV contribution, linked from provenance.
+  Corpus receipts identify replayed files;
+  their SHA-256 hashes must match before and after the suite.
+  This includes ignored discoveries when local replay is requested.
 
 Corpus replay uses the paths in `fuzz/committed-seeds.txt` by default, with their working-tree contents.
 Unlisted files, including local fuzz discoveries, are excluded.

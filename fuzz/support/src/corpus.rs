@@ -1,4 +1,4 @@
-use std::{fs, path::Path, path::PathBuf};
+use std::{fs, io::Write, path::Path, path::PathBuf};
 
 /// Replay the explicit committed seed set against the runner used by libFuzzer.
 ///
@@ -38,10 +38,18 @@ where
     .filter(|path| path.parent() == Some(relative))
     .map(|path| root.join(path))
     .collect();
-  replay(target, &corpus_dir, seeds, mode == "local", run)
+  let evidence = std::env::var_os("RSCRYPTO_COVERAGE_INPUTS").map(PathBuf::from);
+  replay(target, &corpus_dir, seeds, mode == "local", evidence.as_deref(), run)
 }
 
-fn replay(target: &str, corpus_dir: &Path, seeds: Vec<PathBuf>, local: bool, run: impl Fn(&[u8])) -> usize {
+fn replay(
+  target: &str,
+  corpus_dir: &Path,
+  seeds: Vec<PathBuf>,
+  local: bool,
+  evidence: Option<&Path>,
+  run: impl Fn(&[u8]),
+) -> usize {
   let mut files = if local {
     fs::read_dir(corpus_dir)
       .expect("corpus replay directory must be readable")
@@ -62,11 +70,28 @@ fn replay(target: &str, corpus_dir: &Path, seeds: Vec<PathBuf>, local: bool, run
     "corpus replay: target `{target}` has an empty replay set at {}",
     corpus_dir.display()
   );
+  let mut evidence = evidence.map(|path| {
+    std::io::BufWriter::new(
+      fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .expect("open coverage corpus receipt"),
+    )
+  });
   for path in &files {
     let data = fs::read(path)
       .map_err(|error| format!("{}: {error}", path.display()))
       .expect("corpus replay input must be readable");
     run(&data);
+    if let Some(output) = evidence.as_mut() {
+      let name = path.to_str().expect("coverage corpus paths must be UTF-8");
+      output.write_all(name.as_bytes()).expect("write coverage corpus path");
+      output.write_all(&[0]).expect("terminate coverage corpus path");
+    }
+  }
+  if let Some(output) = evidence.as_mut() {
+    output.flush().expect("flush coverage corpus receipt");
   }
   eprintln!(
     "corpus replay: {target}: {} inputs ({})",
@@ -113,14 +138,20 @@ mod tests {
     fs::write(&seed, b"committed").expect("write committed seed");
     let seen = RefCell::new(Vec::new());
     let run = |data: &[u8]| seen.borrow_mut().push(data.to_vec());
-    assert_eq!(replay("fixture", &fixture.0, vec![seed.clone()], false, run), 1);
+    assert_eq!(replay("fixture", &fixture.0, vec![seed.clone()], false, None, run), 1);
     assert_eq!(*seen.borrow(), [b"committed".to_vec()]);
     fs::write(fixture.0.join("discovery"), b"local").expect("write local discovery");
     seen.borrow_mut().clear();
-    assert_eq!(replay("fixture", &fixture.0, vec![seed.clone()], false, run), 1);
+    assert_eq!(replay("fixture", &fixture.0, vec![seed.clone()], false, None, run), 1);
     assert_eq!(*seen.borrow(), [b"committed".to_vec()]);
     seen.borrow_mut().clear();
-    assert_eq!(replay("fixture", &fixture.0, vec![seed], true, run), 2);
+    let receipt = fixture.0.join("receipt");
+    assert_eq!(
+      replay("fixture", &fixture.0, vec![seed.clone()], true, Some(&receipt), run),
+      2
+    );
+    let expected = format!("{}\0{}\0", fixture.0.join("discovery").display(), seed.display());
+    assert_eq!(fs::read(&receipt).expect("read corpus receipt"), expected.as_bytes());
     assert_eq!(*seen.borrow(), [b"local".to_vec(), b"committed".to_vec()]);
     assert_eq!(
       fs::read(fixture.0.join("discovery")).expect("read preserved local discovery"),
@@ -133,7 +164,14 @@ mod tests {
   fn missing_seed_fails_even_with_local_discoveries() {
     let fixture = Fixture::new();
     fs::write(fixture.0.join("discovery"), b"local").expect("write local discovery");
-    replay("fixture", &fixture.0, vec![fixture.0.join("missing")], false, |_| {});
+    replay(
+      "fixture",
+      &fixture.0,
+      vec![fixture.0.join("missing")],
+      false,
+      None,
+      |_| {},
+    );
   }
 
   #[test]
@@ -141,6 +179,6 @@ mod tests {
   fn empty_inventory_fails_even_with_local_discoveries() {
     let fixture = Fixture::new();
     fs::write(fixture.0.join("discovery"), b"local").expect("write local discovery");
-    replay("fixture", &fixture.0, vec![], false, |_| {});
+    replay("fixture", &fixture.0, vec![], false, None, |_| {});
   }
 }

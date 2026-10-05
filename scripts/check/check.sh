@@ -22,6 +22,7 @@ fi
 channel=$(scripts/lib/toolchain.sh)
 export RUSTUP_TOOLCHAIN="$channel"
 python=$(scripts/lib/python.sh --print)
+"$python" scripts/test/fixtures.py
 # Resolve feature roots from Cargo, rejecting aliases that enable portable-only.
 native_features=$("$python" - <<'PY'
 import tomllib
