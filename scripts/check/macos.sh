@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
+export RUSTUP_TOOLCHAIN
+RUSTUP_TOOLCHAIN=$(scripts/lib/toolchain.sh)
+# Full qualification includes doctests even if an interactive test session skipped them.
+unset RSCRYPTO_SKIP_DOCTESTS
 [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || {
   echo 'macOS validation requires the local Apple Silicon Mac.' >&2
   exit 1

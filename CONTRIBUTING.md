@@ -68,19 +68,19 @@ for example Miri and machine-code zeroization evidence.
 
 ### Local hooks
 
-macOS ARM64 qualification runs on the maintainer's physical Apple Silicon Mac before every push,
-also for documentation and tooling changes.
+Every pushed tip queues macOS ARM64 qualification on the maintainer's physical Apple Silicon Mac.
+The push returns while qualification runs; a release waits for its passing GitHub status.
 
 Run `just install-hooks` once for each checkout.
 
 - The pre-commit and pre-merge-commit hooks run `just ci-check`:
   formatting, native and portable host lints, and documentation.
-- The pre-push hook runs `just check-macos`:
+- The pre-push hook queues `just check-macos` in a detached worktree of the pushed commit:
   native checks, complete release tests with native and portable dispatch (including doctests),
   internal evidence regressions, and the Apple Silicon RSA assembly gate.
-- `check-macos` qualifies the pushed commit, which must be the clean checkout.
-  It records each passing tree and compiler in the repository's Git directory,
-  so a push of a tree that already passed skips the run, from any worktree.
+- The pushed tip must be the clean checkout. Later work in that checkout cannot change the background job.
+  Jobs run one at a time and keep their logs and passing tree/compiler records in the common Git directory.
+  A tree that already passed skips testing, from any worktree, and publishes the result for the pushed commit.
 - Both hooks reuse a pass when the new tree differs from the nearest passing first-parent ancestor
   only in paths that no check reads: `docs/`, `.changes/`, `.github/`, `benchmark_results/`,
   `.config/tooling.toml`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, and `THREAT_MODEL.md`.
@@ -92,9 +92,21 @@ Run `just install-hooks` once for each checkout.
   so that the tested source matches the commit.
 
 Install the prerequisites with `scripts/tooling/aarch64-macos.sh` when you need them.
+Authenticate `gh` as a repository maintainer with permission to write commit statuses
+(`repo:status` for an OAuth token, or Commit statuses: write for a fine-grained token).
+See GitHub's [commit status API](https://docs.github.com/en/rest/commits/statuses).
+Run `just macos-status` to find each job's result and log.
+After fixing a failed check, commit and push the fix.
+For an interrupted job or failed status publication, run `just qualify-macos` on the clean commit to retry.
+The retry reuses a completed local pass when only publication failed.
+`just check-macos` remains available as a foreground diagnostic; it does not publish a status.
+
 Do not bypass the hooks.
-Git hooks are local, and GitHub does not enforce this qualification.
-Commits made remotely must not replace the locally validated submission path.
+Release preflight, packaging, and publication require the latest `rscrypto/macos` status to pass
+for that commit, its exact Git tree, and the pinned compiler distribution.
+A missing, failed, pending, or mismatched status blocks release.
+Pushes to destinations other than GitHub keep their results local.
+Commits made remotely still need qualification on the physical Mac before release.
 
 ### Checks
 
@@ -320,8 +332,9 @@ including the manifests and lockfiles in independent workspaces.
 Validate it, then push it to `main`.
 The `release.auxiliary_cargo_manifests` list in [`.config/rail.toml`](.config/rail.toml) names the standalone workspaces whose
 lockfiles must follow the package version.
-Complete the physical Apple Silicon RSA assembly and timing qualification locally
-before submission. macOS does not run in hosted CI.
+The background Mac job includes physical Apple Silicon RSA assembly qualification.
+Complete any separately required timing qualification locally before submission;
+`check-macos` does not run it. macOS does not run in hosted CI.
 
 ### One-time publishing setup
 
@@ -337,11 +350,12 @@ See the [crates.io setup instructions](https://crates.io/docs/trusted-publishing
 Select **Actions → Release → Run workflow → main**, and enter the version from `Cargo.toml` without the `v` prefix,
 or run `gh workflow run release.yml --ref main -f version=<version>`.
 The run is named `Release v<version>`.
+Wait for the release commit's `rscrypto/macos` status before starting the workflow.
 
 - The workflow rejects a version input that differs from `Cargo.toml`, unconsumed change files,
   a version and changelog mismatch, and a tag that points elsewhere.
 - Three workflows run at the same time against the triggering commit: CI
-  (with macOS ARM64 qualified locally before the commit),
+  (with macOS ARM64 qualified locally for the triggering commit),
   full CT on all configured CI architectures, and fuzzing on both architectures plus Miri.
   Publication needs all three to pass.
 - Benchmarks are separate.

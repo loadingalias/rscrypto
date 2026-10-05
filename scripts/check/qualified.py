@@ -9,6 +9,7 @@ first-parent ancestor of HEAD with a pass differs from it only in paths that no
 local check reads. Any other difference, and any compiler change, requires a new run.
 """
 
+import hashlib
 import re
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 KINDS = {'ci-check', 'macos'}
+MACOS_CONTEXT = 'rscrypto/macos'
 # Paths that `just ci-check` and `just check-macos` never compile, test, or read.
 # README.md is not here: `src/lib.rs` includes it as crate documentation, so doctests run it.
 INERT = re.compile(
@@ -36,7 +38,16 @@ def compiler():
 
 
 def records(kind):
-  return Path(git('rev-parse', '--git-common-dir')).resolve() / f'rscrypto-{kind}-qualified'
+  return Path(git('rev-parse', '--path-format=absolute', '--git-common-dir')) / f'rscrypto-{kind}-qualified'
+
+
+def macos_description(tree, rustc):
+  """Bind a GitHub status to the tree and compiler distribution across host triples."""
+  if not re.fullmatch(r'[0-9a-f]{40}', tree) or not re.search(r'^commit-hash: [0-9a-f]{40}$', rustc, re.MULTILINE):
+    raise ValueError('Mac qualification needs a Git tree and a versioned Rust compiler')
+  # Release verification runs on Linux. Every rustc -vV field except its host must match.
+  identity = '\n'.join(line for line in rustc.splitlines() if not line.startswith('host: '))
+  return f'tree={tree} rustc={hashlib.sha256(identity.encode()).hexdigest()}'
 
 
 def passed(kind, tree, rustc):

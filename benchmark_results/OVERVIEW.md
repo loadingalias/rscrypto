@@ -149,6 +149,70 @@ needs causal evidence and fresh target qualification; the present threshold,
 sample budgets, confirmation decision, and fail-closed behavior remain
 unchanged.
 
+## 2026-10-05: Background Mac qualification (contended diagnostics)
+
+The pre-push hook now queues the complete Mac qualification in an isolated worktree.
+Release preflight, packaging, and publication require the latest `rscrypto/macos` status
+for the commit, Git tree, and compiler identity. No evidence lane moved to CI.
+This is workflow evidence, not a cryptographic performance result or a build-time speedup claim.
+
+The actual local push returned in **2.308 s** while qualification continued.
+The background job passed in **946.238 s** from push start,
+including worktree setup and cleanup. It reused the exact pre-commit `ci-check` pass.
+The unchanged full native and portable suites passed 1,923 and 1,893 Nextest cases respectively
+(with one existing skip in each), and both ran their doctests.
+Internal native/portable evidence passed 1,265/1,236 cases without skips.
+The physical Apple Silicon RSA gate passed its debug/release differential tests,
+optimized symbol checks, and public-operation comparison.
+
+These runs do **not** satisfy the requested quiet comparison. Other repositories started
+Cargo, Nextest, and Miri work after the host appeared idle; the logs also contain package-cache lock waits.
+The initial blocking push passed. A second attempt passed every qualification command but the hook
+correctly rejected its push: the measurement harness put generated artifacts outside Git's ignored paths.
+Those artifacts were moved outside the checkout without changing the source guard or ignore rules.
+The figures below retain observations only. They do not establish comparable build costs or a speedup ratio.
+
+| Observed span | Initial blocking run (s) | Background run (s) |
+| --- | ---: | ---: |
+| Push, to a local bare repository | 768.092 | 2.308 |
+| Native release tests and doctests | 213.482 | 284.348 |
+| Portable release tests and doctests | 206.719 | 252.396 |
+| Internal native evidence | 145.215 | 152.661 |
+| Internal portable evidence | 105.391 | 111.663 |
+| Physical RSA assembly gate | 92.878 | 139.614 |
+| Entire `just check-macos` | 764.830 | 942.213 |
+
+These are wall times including builds and test execution, not CPU-only compilation times.
+Raw Cargo build durations and Just step durations remain in the logs.
+The initial blocking run shared its fresh target directory with the preceding `ci-check`;
+the candidate's qualification started with a separate fresh target directory.
+Normal Cargo policy remained enabled, with no compiler wrapper or explicit Rust flag override.
+Native and portable feature sets, internal `rscrypto_internal` builds, and RSA debug/release profiles
+remain distinct. Cargo shares compatible artifacts between serialized background jobs.
+
+The host was a physical Apple M1 Pro (`MacBookPro18,3`, 10 CPUs, 16 GiB RAM), macOS Darwin 25.6.0,
+using `nightly-2026-09-30`: rustc `5c543b0b8c73c7b72bc8284ced4fb22ead15734d`, LLVM 23.1.1,
+and target `aarch64-apple-darwin`.
+The baseline snapshot is `e482866eba0b15477e0c4ca0d25f52c2a8717186` (tree `655aab3272ca5fe4af7c191006f773799354faa1`),
+containing `d4045559` plus the preserved pre-task worktree.
+The candidate is `71390b611e91f11e0968377c76e095a3502448f8` (tree `54525b4d7c7b563dc39435ab39c212abef545273`),
+with identical Rust code, manifests, Rust tests, fixtures, and dependencies; only hook, qualification,
+release orchestration, script regression tests, and maintainer documentation differ.
+Both pushes targeted disposable local bare repositories. No GitHub status or release was written.
+
+`just test-scripts`, the final Mac/release script regressions, `actionlint`, `shellcheck`,
+and the candidate's real `just ci-check` passed.
+The script regressions cover a held background job, deduplication, serialized snapshots,
+source/compiler changes, interruption recovery, publication failure/retry, and release refusal
+for missing, pending, failed, stale, or mismatched evidence.
+
+Local artifacts: `benchmark_results/2026-10-05/pre-push/` contains source bundles,
+pre-task hashes and diff, host metadata, timing JSON, process/load samples, raw command logs,
+the candidate's job record, and the exact compiler pass record.
+No quiet before/after comparison was obtained; these timings remain contended diagnostics.
+The asynchronous implementation and release gate are retained in source and
+[the tooling guide](../scripts/README.md#release-orchestration).
+
 ## 2026-10-05: Share the Poly1305 arithmetic owner
 
 Standalone Poly1305 and the ChaCha20-Poly1305 family now share the five-limb state,

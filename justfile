@@ -130,6 +130,14 @@ ci-check:
 check-macos:
     @scripts/check/macos.sh
 
+# Queue isolated Mac qualification and publish its result for the current commit.
+qualify-macos:
+    @scripts/lib/python.sh scripts/check/macos_async.py queue
+
+# Inspect queued Mac qualification and find its retained logs.
+macos-status:
+    @scripts/lib/python.sh scripts/check/macos_async.py status
+
 # Enable mandatory local checks for commits and macOS validation for pushes in this checkout.
 [group('tooling')]
 install-hooks:

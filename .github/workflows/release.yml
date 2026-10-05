@@ -27,14 +27,20 @@ jobs:
   preflight:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: read
     steps:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Install the compiler whose Mac qualification is required
+        run: rustup toolchain install "$(scripts/lib/toolchain.sh)" --profile minimal --no-self-update
       - name: Validate the release candidate
         env:
           RELEASE_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: python3 scripts/release/release.py preflight
 
   ci:
@@ -64,6 +70,7 @@ jobs:
     environment: release
     permissions:
       contents: write
+      statuses: read
       id-token: write
     steps:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
@@ -72,6 +79,8 @@ jobs:
           fetch-depth: 0
       - name: Prepare the checked candidate for publication
         id: package
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           scripts/tooling/x86_64-linux.sh --ci-package
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"

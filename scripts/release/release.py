@@ -12,6 +12,8 @@ import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'scripts/check'))
+from qualified import MACOS_CONTEXT, compiler, macos_description
 
 
 def run(*command):
@@ -89,11 +91,29 @@ def published(version, archive):
     return True
 
 
+def require_macos(sha):
+    expected = macos_description(run('git', 'rev-parse', f'{sha}^{{tree}}'), compiler())
+    # GitHub returns newest statuses first. Never fall back to an older success
+    # after the latest result for this context failed or used another compiler.
+    page = 1
+    while True:
+        statuses = github(f'/commits/{sha}/statuses?per_page=100&page={page}') or []
+        for status in statuses:
+            if status['context'].casefold() == MACOS_CONTEXT.casefold():
+                if status['state'] != 'success' or status['description'] != expected:
+                    raise ValueError('The latest Mac qualification did not pass for this tree and compiler')
+                return
+        if len(statuses) < 100:
+            raise ValueError('Missing Mac qualification; run just qualify-macos on the physical Mac and wait for its status')
+        page += 1
+
+
 def main():
     operation, = sys.argv[1:]
     if operation not in ('preflight', 'package', 'publish'):
         raise ValueError('usage: release.py {preflight|package|publish}')
     version, tag, sha, notes = candidate()
+    require_macos(sha)
     if operation == 'preflight':
         print(f'Qualify rscrypto {version} at {sha}')
         return

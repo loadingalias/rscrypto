@@ -111,7 +111,7 @@ The [CI workflow](../.github/workflows/ci.yml) and the [repository recipes](../s
 | ------------------ | ----- |
 | `just check`       | Compilation and lint checks for the host and every catalog cross-target. |
 | Native CI          | Native and portable suites, plus doctests, on Linux x86-64, AArch64, POWER, IBM Z, and RISC-V, and on Windows x86-64. POWER, IBM Z, and RISC-V build on x86-64 and run the transferred artifacts on native hardware. |
-| `just check-macos` | Local Apple Silicon checks before every push: native and portable release suites, doctests, internal evidence regressions, and physical RSA assembly qualification. |
+| `just check-macos` | Full local Apple Silicon qualification: native and portable release suites, doctests, internal evidence regressions, and physical RSA assembly checks. The push hook queues this suite in the background. |
 | `just test-musl`   | Native and portable suites, plus doctests, on a matching x86-64 or AArch64 Linux host. |
 | `just ci-compat`   | Feature, MSRV, bare-metal, and MSRV `portable-only` compilation on POWER, IBM Z, RV64, and RV32. Scalar and SIMD vector execution for `wasm32-unknown-unknown` and `wasm32-wasip1` in Wasmtime. |
 
@@ -119,7 +119,8 @@ A configured check is not a passing result for the current revision.
 Inspect the matching run artifacts before you qualify a release.
 Bare-metal checks do not run on devices.
 Wasmtime results do not show browser-engine behavior.
-Windows AArch64 runtime CI is deferred. macOS checks and tests run locally before each push.
+Windows AArch64 runtime CI is deferred. The pre-push hook queues macOS checks and tests locally.
+Releases require the passing `rscrypto/macos` status for the commit's tree and compiler.
 Timing qualification on physical Apple Silicon is a separate local requirement.
 
 [`.github/runs-on.yml`](../.github/runs-on.yml) defines the AWS runner shapes and the Spot policy.

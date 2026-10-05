@@ -12,8 +12,9 @@ Those entry points call the supporting modules.
 | `check/check.sh`                       | `just check`, `just ci-check`, `just ci-check-target` |
 | `check/compat.py`                      | `just ci-compat` |
 | `test/test-musl.sh`                    | `just test-musl` |
-| `check/macos.sh`                       | `just check-macos`, local pre-push hook |
-| `check/qualified.py`                   | local pre-commit and pre-push hooks, `check/macos.sh` |
+| `check/macos.sh`                       | `just check-macos`, background Mac qualification |
+| `check/macos_async.py`                 | local pre-push hook, `just qualify-macos`, `just macos-status` |
+| `check/qualified.py`                   | local qualification reuse and release status identity |
 | `check/dependencies.sh`                | `just ci-policy`, and the dependency checks in `just check` |
 | `check/lint-independent-workspaces.sh` | `check/check.sh` |
 | `asm/p384.py check`                    | `check/check.sh` |
@@ -663,7 +664,7 @@ with scalar and SIMD artifacts tested separately.
 The x86-64 and ARM64 Linux rows install the native musl build prerequisites and run `just test-musl`:
 the complete native and portable test suites, plus doctests and separate internal evidence suites,
 compiled and run for the matching musl target.
-Apple ARM64 checks and tests run locally through `just check-macos` before pushes.
+Apple ARM64 checks and tests run locally through `just check-macos` in a background job queued by each push.
 Windows ARM64 execution is deferred.
 No compatibility lane enables persistent caches.
 
@@ -701,9 +702,60 @@ Ordinary tests continue to check the application build without internal access.
 `.github/workflows/release.yml` calls CI, CT, and fuzz qualification before its publication job.
 `scripts/release/release.py` validates the candidate, reconciles registry checksums on retries,
 and creates the source tag and the GitHub Release.
+Preflight, packaging, and publication each require the newest `rscrypto/macos` commit status to pass.
+Its description binds the Git tree and a SHA-256 digest of `rustc -vV`, excluding only the host line
+so the Linux release runner can compare the same compiler distribution.
+An older successful status cannot override a newer failure or compiler mismatch.
+The workflow can read statuses but cannot write them.
 Its failure and recovery tests run through `just test-scripts`.
 [CONTRIBUTING.md](../CONTRIBUTING.md#release) has the maintainer setup, preparation, deployment, and retry instructions.
 
 `scripts/check/macos.sh` owns `just check-macos`, which replaces hosted macOS checks and tests with local Apple Silicon validation.
 Install `.githooks` with `just install-hooks` in each maintainer checkout. macOS is still a supported release target.
 Timing qualification on physical Apple Silicon is a separate local requirement before submission.
+
+`scripts/check/macos_async.py` queues a detached worktree of the pushed commit and returns immediately.
+It runs the unchanged `check-macos` suite, reuses `ci-check` and inert-only ancestor passes through
+`qualified.py`, and records a pass only if the source and compiler still match after testing.
+Jobs share the repository's common Git directory at `rscrypto-macos/`:
+
+- Each commit/compiler/destination job retains `state.json`, the runner from that commit, and an append-only `log`.
+  `just macos-status` reports results, interrupted jobs, and log paths.
+- An inherited file lock prevents duplicate jobs. A separate build lock serializes qualification.
+  Jobs create their source worktrees after acquiring that lock, so source timestamps cannot make
+  Cargo reuse an older checkout's executable. Cargo shares compatible artifacts in `rscrypto-macos/target/`;
+  native, portable, internal, debug, and release configurations remain distinct.
+- The worktree is removed after qualification. The log retains the RSA assembly gate's output.
+  The tree/compiler pass remains in `rscrypto-macos-qualified/` for reuse.
+- For a GitHub destination, `gh api` writes the `rscrypto/macos` status for the pushed SHA.
+  It briefly retries a commit that is not visible yet because the push is still transferring it.
+  Local destinations retain local evidence only. No evidence lane moves to CI.
+- `just qualify-macos` retries the clean current commit against `origin`.
+  Failed status publication retains the local pass, so retrying publication does not repeat testing.
+  Missing authentication, failed checks, interrupted jobs, and failed publication leave release blocked.
+
+The status uses the maintainer's existing repository write authority, not a separate signing or attestation service.
+The [GitHub status API](https://docs.github.com/en/rest/commits/statuses) owns permission and response semantics.
+
+### Exact-commit CI reuse decision, 2026-10-05
+
+Keep the release's full call to `ci.yml`.
+Reusing an earlier successful run by commit SHA alone does not preserve the current release
+qualification contract.
+`check/dependencies.sh` runs `cargo deny` and `cargo audit`; advisory and registry state can change
+after the push run without changing the source commit.
+Release CI currently checks that state again.
+
+A separate run verifier would also have to bind the repository, workflow, source,
+compiler and tooling to a complete successful attempt,
+reject missing or skipped required matrix jobs and later failed attempts,
+and retain the required execution evidence.
+Source identity alone does not establish those facts.
+The current workflow graph already requires CI, full CT,
+and fuzz/Miri qualification before publication,
+and the separate Mac gate binds its latest status to the source tree and compiler.
+
+Retaining the existing graph is the smallest complete choice.
+Reuse with a full qualification receipt
+and a fresh dependency-policy check remains a possible future design;
+this review does not introduce another implementation obligation or weaken any current gate.
