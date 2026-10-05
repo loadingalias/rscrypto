@@ -696,7 +696,7 @@ mod tests {
     assert_eq!(s[5], hex_block("a3240fceb68e32d5d114df1b5363ab67"));
   }
 
-  #[cfg(not(all(target_arch = "s390x", not(feature = "portable-only"))))]
+  #[cfg(not(target_arch = "s390x"))]
   #[test]
   fn riscv_fixslice_update_matches_portable_update() {
     let mut portable: State = [

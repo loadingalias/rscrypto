@@ -2020,28 +2020,14 @@ mod tests {
 
   use crate::hashes::crypto::{
     sha256::kernels::{
-      Sha256KernelId, compress_blocks_fn as sha256_compress_blocks_fn, required_caps as sha256_required_caps,
+      ALL as SHA256_KERNELS, Sha256KernelId, compress_blocks_fn as sha256_compress_blocks_fn,
+      required_caps as sha256_required_caps,
     },
     sha512::kernels::{
       ALL as SHA512_KERNELS, Sha512KernelId, compress_blocks_fn as sha512_compress_blocks_fn,
       required_caps as sha512_required_caps,
     },
   };
-
-  /// SHA-256 kernel list (sha256 module doesn't define ALL).
-  const SHA256_KERNELS: &[Sha256KernelId] = &[
-    Sha256KernelId::Portable,
-    #[cfg(target_arch = "x86_64")]
-    Sha256KernelId::X86Sha,
-    #[cfg(target_arch = "aarch64")]
-    Sha256KernelId::Aarch64Sha2,
-    #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
-    Sha256KernelId::RiscvZknh,
-    #[cfg(target_arch = "wasm32")]
-    Sha256KernelId::WasmSimd128,
-    #[cfg(target_arch = "s390x")]
-    Sha256KernelId::S390xKimd,
-  ];
 
   static SHA256_VERIFY_BLOCKS: AtomicUsize = AtomicUsize::new(0);
   static SHA512_VERIFY_BLOCKS: AtomicUsize = AtomicUsize::new(0);
