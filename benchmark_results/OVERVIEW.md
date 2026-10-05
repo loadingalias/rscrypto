@@ -269,6 +269,83 @@ The Graviton archive SHA-256 is `eeb7eb2295ca6a5b275d5f2647ccf1c0d2e0f092e52ae2c
 the complete AMD archive is `5444ebb25e030f549f1a0c9e76ad289b0a69ea51b37a29757be26304a6aa538b`.
 `source-hashes.json`, each campaign’s executable manifests, and `review-validation-sha256.json` identify the retained files.
 
+## 2026-10-04: Reuse Ed25519 public points on AArch64
+
+Ed25519 verification now reuses the validated point already stored in the public key on Linux
+and macOS AArch64.
+Generated keys retain the affine coordinates computed while encoding the public key.
+Imported keys already have affine coordinates.
+The assembly boundary checks `Z = 1`; a projective point uses the portable fallback.
+No key fields or allocation were added.
+
+On one AWS Graviton4 `c8g.4xlarge`, repeated verification of a 32-byte message improves by 8.06%,
+and importing the key before each verification improves by 7.02%.
+Verification saves about 3.2 µs across the measured message sizes.
+Public-key and keypair construction cost about 0.3–0.4% more
+(roughly 60–70 ns); reused-key signing is effectively unchanged.
+
+The host ran Ubuntu 26.04.1, kernel `7.0.0-1014-aws`, and native AArch64 assembly dispatch.
+Both builds used `nightly-2026-09-30` (`rustc 1.101.0-nightly`, `5c543b0b8`, LLVM 23.1.1), the `bench` profile,
+and features `diag,ecdsa,ed25519,hkdf,hmac,ml-kem,p256-ecdh,p384-ecdh,pbkdf2,std,x25519` with default features disabled and `--cfg rscrypto_internal`.
+The source is `d4045559` plus the retained effective worktree.
+Only `src/auth/ed25519.rs` and `src/auth/ed25519/aarch64_asm.rs` differ between the baseline and candidate.
+Both use the same benchmark rows, fixed key, and deterministic messages;
+untimed checks compare keys and signatures with Dalek.
+
+Ten paired rounds alternate baseline/candidate order on CPU 2.
+Each case uses 300 ms warmup, 700 ms measurement, 30 samples, and 10,000 Criterion resamples.
+Times below are the medians of per-round mean estimates.
+Change is the median paired candidate/baseline percentage; negative means faster.
+The intervals bootstrap those ten pairs with 20,000 resamples and seed 25519.
+They describe this host and these artifacts, not variation across machines or public keys.
+
+| Operation | Message bytes | Baseline µs | Candidate µs | Paired change | 95% bootstrap interval |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Verify, reused key | 0 | 40.060 | 36.835 | -8.05% | [-8.07%, -8.02%] |
+| Verify, reused key | 32 | 40.059 | 36.834 | -8.06% | [-8.07%, -8.04%] |
+| Verify, reused key | 1024 | 41.051 | 37.835 | -7.83% | [-7.84%, -7.82%] |
+| Verify, reused key | 16384 | 56.061 | 52.834 | -5.75% | [-5.76%, -5.74%] |
+| Import and verify | 0 | 45.928 | 42.697 | -7.04% | [-7.21%, -7.02%] |
+| Import and verify | 32 | 45.920 | 42.692 | -7.02% | [-7.10%, -7.01%] |
+| Import and verify | 1024 | 46.910 | 43.666 | -6.92% | [-7.04%, -6.86%] |
+| Import and verify | 16384 | 61.908 | 58.666 | -5.23% | [-5.34%, -5.20%] |
+| Derive public key | — | 17.931 | 17.989 | +0.31% | [+0.19%, +0.45%] |
+| Construct keypair | — | 17.921 | 17.988 | +0.37% | [+0.26%, +0.43%] |
+| Sign from secret | 32 | 26.365 | 26.416 | +0.21% | [+0.12%, +0.28%] |
+| Sign from secret | 16384 | 58.348 | 58.405 | +0.10% | [+0.06%, +0.14%] |
+| Sign, reused keypair | 32 | 8.345 | 8.344 | -0.02% | [-0.11%, +0.03%] |
+| Sign, reused keypair | 16384 | 40.341 | 40.349 | +0.02% | [-0.02%, +0.05%] |
+
+Two 15-second `perf record -e cycles:u -F 999 --call-graph dwarf` captures run the same `ed25519/verify/rscrypto/32` production benchmark.
+The baseline decoder symbols account for about 8.00% of self samples;
+the candidate has no decoder samples.
+Both captures report zero lost samples.
+The source removes the decoder call; sampling supports that mechanism.
+The embedded assembly itself is unchanged.
+
+Correctness evidence includes the RFC 8032, Dalek, and Wycheproof suites with native macOS,
+native Linux, and portable macOS dispatch; native backend differential tests cover generated,
+imported, and equivalent projective keys.
+`just ci-check`, `just test-evidence` (1,263 native and 1,234 portable tests), and `just test-fuzz-asan --all` (102 corpus targets) pass on Apple Silicon.
+An `ed25519`-only, no-default-features build passes.
+Compiler layout output on that host keeps `Ed25519PublicKey` at 208 bytes and `Ed25519Keypair` at 304 bytes in both versions.
+ASan covers the Rust boundary, not the embedded assembly.
+No new constant-time or zeroization claim is made,
+and no Apple Silicon performance improvement is claimed from this Linux run.
+
+The builds use separate target directories with `CARGO_RAIL_CACHE=off`.
+An earlier run shared a target directory and returned the baseline executable for both checkouts;
+those pairs are excluded.
+A small reproduction with plain pinned Cargo and no rustc wrapper confirms
+that preserved source mtimes can cause this reuse.
+It establishes no new cargo-rail defect.
+
+Retained artifacts: `benchmark_results/2026-10-04/ed25519-affine-cache/` contains the source archive and baseline overrides, implementation patch,
+exact commands, host metadata, all 20 verified measurement directories, both executables, profiles,
+paired summary, and validation logs.
+The baseline executable SHA-256 is `ac1464ace2b801bd50a07690d30241cc20a99881b353e39ddf99c2cab9670e85`; the candidate is `6d6b70534a9e6d7959c0b56c018f3b323ea215ccb3e26a29d2aac65d2957f2c6`.
+The existing `ed25519` benchmark selector includes the new `verify/rscrypto-import` rows.
+
 ## 2026-10-04: BLAKE3 constant tree evaluation
 
 `Blake3::digest_const` now accepts multi-chunk inputs with the production portable

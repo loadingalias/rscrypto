@@ -299,6 +299,13 @@ Construction-only and header-mask groups state their own boundaries next to thei
 
 ### Other primitive rows
 
+- Ed25519 `verify/rscrypto` reuses a public key constructed outside timing.
+  `verify/rscrypto-import` imports the encoded public key and verifies one signature in each timed call.
+  Both rows use the same message and signature;
+  untimed checks compare the public key and signature with Dalek.
+  The import row exposes setup costs that key reuse can amortize.
+  The diagnostic `verify-phase/portable-double-scalar` and `verify-phase/aarch64-asm-double-scalar` rows include portable public-point decoding and result encoding;
+  they do not measure cached-key verification alone.
 - The ChaCha diagnostic group `chacha20-copy-and-xor` restores the message and applies the keystream in the timed closure,
   with a reused allocated buffer.
   Poly1305 reads immutable fixture bytes and returns a tag, without restoring a message buffer.

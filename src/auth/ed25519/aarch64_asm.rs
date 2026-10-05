@@ -1,4 +1,4 @@
-//! Apple AArch64 Ed25519 assembly backend.
+//! Linux and Apple AArch64 Ed25519 assembly backend.
 //!
 //! The embedded routines are adapted from the s2n-bignum AArch64 Ed25519
 //! decode, fixed-base multiplication, and double-scalar multiplication
@@ -7,7 +7,11 @@
 
 use core::arch::global_asm;
 
-use super::constants::{PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH};
+use super::{
+  constants::{PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH},
+  field::FieldElement,
+  point::ExtendedPoint,
+};
 
 const AFFINE_POINT_LIMBS: usize = 8;
 const FIELD_LIMBS: usize = 4;
@@ -26,7 +30,6 @@ global_asm!(include_str!(
 ));
 
 unsafe extern "C" {
-  fn rscrypto_edwards25519_decode_alt(point: *mut u64, encoded: *const u8) -> u64;
   fn rscrypto_edwards25519_scalarmulbase_alt(out: *mut u64, scalar: *const u64);
   fn rscrypto_edwards25519_scalarmuldouble_alt(
     out: *mut u64,
@@ -58,46 +61,55 @@ pub(super) fn basepoint_mul_encoded(s: &[u8; SECRET_KEY_LENGTH]) -> [u8; PUBLIC_
 ///
 /// The s2n-bignum ABI takes its scalars as four little-endian `u64` limbs and
 /// its point as affine `(x, y)` field limbs. Callers pass `h = -H(R,A,M)` for
-/// strict Ed25519 verification.
+/// strict Ed25519 verification. The public-key constructors cache `Z = 1`;
+/// a projective point returns `None` so the caller can use its portable fallback.
 #[inline]
 pub(super) fn double_scalar_basepoint_encoded(
   s: &[u8; SECRET_KEY_LENGTH],
   h: &[u8; SECRET_KEY_LENGTH],
-  public_key: &[u8; PUBLIC_KEY_LENGTH],
+  public_point: &ExtendedPoint,
 ) -> Option<[u8; PUBLIC_KEY_LENGTH]> {
-  let s_words = words_from_le_bytes(s);
-  let h_words = words_from_le_bytes(h);
-  let mut public_point = [0u64; AFFINE_POINT_LIMBS];
-
-  // SAFETY: public-key decode call because:
-  // 1. This module is compiled only for supported AArch64 OS ABIs, matching the embedded assembly
-  //    target.
-  // 2. `public_point` has space for eight `u64` affine limbs and `public_key` is a fixed 32-byte
-  //    input.
-  // 3. The routine only reads the input bytes and writes the fixed output buffer.
-  let decode_failed = unsafe { rscrypto_edwards25519_decode_alt(public_point.as_mut_ptr(), public_key.as_ptr()) };
-  if decode_failed != 0 {
+  let (x, y, z, _) = public_point.components();
+  if *z != FieldElement::ONE {
     return None;
   }
+
+  let s_words = words_from_le_bytes(s);
+  let h_words = words_from_le_bytes(h);
+  let mut public_words = [0u64; AFFINE_POINT_LIMBS];
+  public_words[..FIELD_LIMBS].copy_from_slice(&words_from_le_bytes(&x.to_bytes()));
+  public_words[FIELD_LIMBS..].copy_from_slice(&words_from_le_bytes(&y.to_bytes()));
 
   let mut out = [0u64; AFFINE_POINT_LIMBS];
   // SAFETY: double-scalar multiplication call because:
   // 1. This module is compiled only for supported AArch64 OS ABIs, matching the embedded assembly
   //    target.
   // 2. `out` has space for eight `u64` affine limbs.
-  // 3. `h_words`, `public_point`, and `s_words` match the s2n-bignum ABI: scalar[4], point[8],
-  //    basepoint_scalar[4].
+  // 3. `h_words`, `public_words`, and `s_words` are initialized, aligned, disjoint from `out`,
+  //    and live for the call. They match the s2n-bignum ABI: scalar[4], point[8], basepoint_scalar[4].
+  //    The `Z = 1` check makes X and Y affine; field encoding supplies canonical little-endian limbs.
   // 4. The assembly routine is variable-time; Ed25519 verification inputs are public.
   unsafe {
     rscrypto_edwards25519_scalarmuldouble_alt(
       out.as_mut_ptr(),
       h_words.as_ptr(),
-      public_point.as_ptr(),
+      public_words.as_ptr(),
       s_words.as_ptr(),
     )
   };
 
   Some(encode_affine_point(&out))
+}
+
+/// Encode a generated public point and retain the affine coordinates computed for that encoding.
+#[inline]
+pub(super) fn encode_public_point(point: ExtendedPoint) -> ([u8; PUBLIC_KEY_LENGTH], ExtendedPoint) {
+  let Some((x, y)) = point.to_affine() else {
+    return ([0u8; PUBLIC_KEY_LENGTH], point);
+  };
+  let mut bytes = y.to_bytes();
+  bytes[PUBLIC_KEY_LENGTH - 1] |= u8::from(x.is_negative()) << 7;
+  (bytes, ExtendedPoint::from_affine(x, y))
 }
 
 #[inline]

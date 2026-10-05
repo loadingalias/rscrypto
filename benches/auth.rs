@@ -1517,6 +1517,8 @@ fn ed25519_verify(c: &mut Criterion) {
     common::set_throughput(&mut g, *len);
     let ours = keypair.sign(data);
     let dalek = signing_key.sign(data);
+    assert_eq!(ours.to_bytes(), dalek.to_bytes());
+    assert_eq!(public.to_bytes(), verifying_key.to_bytes());
     aws_lc_bench! {
       let aws_sig = aws_kp.sign(data);
     }
@@ -1533,6 +1535,15 @@ fn ed25519_verify(c: &mut Criterion) {
         black_box(())
       })
     });
+
+    let verify_imported = || {
+      Ed25519PublicKey::from_bytes(*black_box(public.as_bytes()))
+        .verify(black_box(data), black_box(&ours))
+        .expect("valid authentication benchmark operation must succeed");
+      black_box(())
+    };
+    verify_imported();
+    g.bench_function(BenchmarkId::new("rscrypto-import", len), |b| b.iter(verify_imported));
 
     g.bench_with_input(BenchmarkId::new("dalek", len), data, |b, d| {
       b.iter(|| {

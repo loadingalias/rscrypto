@@ -559,7 +559,7 @@ pub fn verify(
     not(feature = "portable-only"),
     not(miri)
   ))]
-  if let Some(result) = verify_aarch64_encoded_r(&r_bytes, &s_canonical, &neg_challenge_bytes, public_key.as_bytes()) {
+  if let Some(result) = verify_aarch64_encoded_r(&r_bytes, &s_canonical, &neg_challenge_bytes, &a_point) {
     return result;
   }
 
@@ -847,7 +847,9 @@ pub fn diag_ed25519_verify_aarch64_asm_double_scalar_digest(
   neg_challenge: &[u8; SECRET_KEY_LENGTH],
   public_key: &[u8; PUBLIC_KEY_LENGTH],
 ) -> [u8; PUBLIC_KEY_LENGTH] {
-  aarch64_asm::double_scalar_basepoint_encoded(s_canonical, neg_challenge, public_key).unwrap_or_default()
+  point::ExtendedPoint::from_bytes(public_key)
+    .and_then(|point| aarch64_asm::double_scalar_basepoint_encoded(s_canonical, neg_challenge, &point))
+    .unwrap_or_default()
 }
 
 #[cfg(all(
@@ -901,13 +903,13 @@ fn verify_aarch64_encoded_r(
   r_bytes: &[u8; PUBLIC_KEY_LENGTH],
   s_canonical: &[u8; SECRET_KEY_LENGTH],
   neg_challenge_bytes: &[u8; SECRET_KEY_LENGTH],
-  public_key: &[u8; PUBLIC_KEY_LENGTH],
+  public_point: &point::ExtendedPoint,
 ) -> Option<Result<(), VerificationError>> {
   if is_small_order_encoded(r_bytes) {
     return Some(Err(VerificationError::new()));
   }
 
-  aarch64_asm::double_scalar_basepoint_encoded(s_canonical, neg_challenge_bytes, public_key).map(|combined| {
+  aarch64_asm::double_scalar_basepoint_encoded(s_canonical, neg_challenge_bytes, public_point).map(|combined| {
     if ct::fixed_eq(&combined, r_bytes).declassify() {
       Ok(())
     } else {
@@ -961,7 +963,21 @@ fn public_key_from_scalar(scalar_bytes: &[u8; SECRET_KEY_LENGTH]) -> Ed25519Publ
   )))]
   {
     let point = basepoint_mul_dispatch(scalar_bytes);
-    Ed25519PublicKey::from_basepoint_mul(point.to_bytes().unwrap_or_default(), point)
+    #[cfg(all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only"),
+      not(miri)
+    ))]
+    let (bytes, point) = aarch64_asm::encode_public_point(point);
+    #[cfg(not(all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only"),
+      not(miri)
+    )))]
+    let bytes = point.to_bytes().unwrap_or_default();
+    Ed25519PublicKey::from_basepoint_mul(bytes, point)
   }
 }
 
@@ -1331,12 +1347,31 @@ mod tests {
       let portable = point::straus_wnaf_basepoint_vartime(&s_canonical, &neg_challenge_bytes, &a_point)
         .to_bytes()
         .expect("double-scalar multiplication produces an encodable Edwards point");
-      let asm =
-        super::aarch64_asm::double_scalar_basepoint_encoded(&s_canonical, &neg_challenge_bytes, public.as_bytes())
-          .expect("the assembly double-scalar path accepts a locally generated public key");
+      let asm = super::aarch64_asm::double_scalar_basepoint_encoded(&s_canonical, &neg_challenge_bytes, &a_point)
+        .expect("the assembly double-scalar path accepts a locally generated public key");
 
       assert_eq!(asm, portable);
       assert_eq!(asm, r_bytes);
+
+      let imported = Ed25519PublicKey::from_bytes(public.to_bytes());
+      let imported_point = imported.point().expect("a generated public key has a valid encoding");
+      assert_eq!(
+        super::aarch64_asm::double_scalar_basepoint_encoded(&s_canonical, &neg_challenge_bytes, &imported_point),
+        Some(r_bytes)
+      );
+
+      // The same key in projective coordinates must still verify through the portable fallback.
+      let projective = a_point.add(&point::ExtendedPoint::identity());
+      assert!(
+        super::aarch64_asm::double_scalar_basepoint_encoded(&s_canonical, &neg_challenge_bytes, &projective).is_none()
+      );
+      let fallback = Ed25519PublicKey {
+        point: Some(projective),
+        ..public
+      };
+      fallback
+        .verify(message, &signature)
+        .expect("an equivalent projective key verifies through the portable fallback");
     }
   }
 
@@ -1347,11 +1382,11 @@ mod tests {
     not(miri)
   ))]
   #[test]
-  fn aarch64_verify_backend_rejects_invalid_public_encoding() {
+  fn aarch64_verify_backend_falls_back_for_projective_points() {
     let s = [0u8; Ed25519SecretKey::LENGTH];
     let h = [0u8; Ed25519SecretKey::LENGTH];
-    let invalid_public_key = [0xffu8; Ed25519PublicKey::LENGTH];
+    let projective = point::ExtendedPoint::basepoint().double();
 
-    assert!(super::aarch64_asm::double_scalar_basepoint_encoded(&s, &h, &invalid_public_key).is_none());
+    assert!(super::aarch64_asm::double_scalar_basepoint_encoded(&s, &h, &projective).is_none());
   }
 }
