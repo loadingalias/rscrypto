@@ -73,6 +73,11 @@ else:
       assert commands[-1]['command'][-1] == 'two words'
       commands = run([sys.executable, 'scripts/lib/toolchain.py', '--exec', 'cargo', 'build', 'two words'], host)
       assert commands == [{'command': ['cargo', 'build', 'two words'], 'channel': channel}]
+      for arguments in (['rustc', '--release', '--', '--emit=obj,link', '--print', 'link-args'],
+                        ['clippy', '--', '-D', 'warnings'],
+                        ['run', '--', '--msrv', '--exec', 'two words', '']):
+        commands = run(['bash', 'scripts/lib/toolchain.sh', '--exec', 'cargo', *arguments], host)
+        assert commands == [{'command': ['cargo', *arguments], 'channel': channel}], commands
       commands = run(['bash', 'scripts/test/test-examples.sh'], host)
       assert len(commands) == 2 and all(row['channel'] == channel for row in commands), (host, commands)
       assert commands[-1]['command'] == ['cargo', 'run', '--locked', '--quiet', '--no-default-features',
@@ -80,6 +85,10 @@ else:
     # There is no per-target selector: the canonical channel is the only answer.
     result = subprocess.check_output([sys.executable, str(ROOT / 'scripts/lib/toolchain.py')], text=True).strip()
     assert result == channel, result
+    for arguments in (['--exec'], ['--msrv', '--exec', 'cargo', 'build']):
+      rejected = subprocess.run([sys.executable, 'scripts/lib/toolchain.py', *arguments],
+                                cwd=root, env=env, text=True, capture_output=True, timeout=20)
+      assert rejected.returncode == 2, (arguments, rejected.stderr)
     assert not (ROOT / '.config/toolchains.toml').exists(), 'a second toolchain contract reappeared'
   print(f'Toolchain provisioning and execution regressions passed for {len(hosts)} hosts')
 

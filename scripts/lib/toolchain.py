@@ -13,6 +13,7 @@ import functools
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -93,7 +94,17 @@ def main():
   mode.add_argument("--install", action="store_true", help="install the canonical toolchain")
   mode.add_argument("--exec", dest="command", nargs=argparse.REMAINDER)
   parser.add_argument("--component", action="append", default=[])
-  args = parser.parse_args()
+  argv = sys.argv[1:]
+  command = None
+  if '--exec' in argv:
+    index = argv.index('--exec')
+    # The child owns every token after --exec, including its own -- delimiter.
+    # argparse otherwise consumes that delimiter even with REMAINDER.
+    command = argv[index + 1:]
+    argv = argv[:index + 1]
+  args = parser.parse_args(argv)
+  if command is not None:
+    args.command = command
   if args.print_host:
     print(host())
   elif args.command is not None:
