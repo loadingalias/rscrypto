@@ -10440,7 +10440,10 @@ fn sub_modulus_in_place(value: &mut [u64], modulus: &[u64]) -> u64 {
 
 fn add_modulus_masked(value: &mut [u64], modulus: &[u64], choice: u64) {
   debug_assert_eq!(value.len(), modulus.len());
-  let mask = 0u64.wrapping_sub(choice & 1);
+  // SECURITY: Keep the complete mask opaque to discourage LLVM from splitting
+  // restoration by secret carry or borrow. Target-specific binary and timing evidence is
+  // still required for this optimization barrier.
+  let mask = core::hint::black_box(0u64.wrapping_sub(choice & 1));
   let mut carry = 0u64;
   for index in 0..value.len() {
     let addend = modulus[index] & mask;

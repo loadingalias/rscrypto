@@ -6,6 +6,289 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-05: RSA correction qualification
+
+**Decision:** the corrected RSA snapshot passes full native CT on Intel Linux,
+Windows, Graviton4, and Graviton5. Native POWER, IBM Z, and RISC-V evidence
+remains required before release readiness or allocation-contract evaluation.
+
+The HMAC diagnostic CLI blocker is resolved. Unknown control modes now print
+an error and exit with status 2 before collecting samples. A process-level
+regression failed before the fix (status 101) and passed afterward.
+`just ct-test` now includes that integration test. `just ct-test`,
+`just test-scripts`, and the complete local `just ci-check` passed. Valid control
+modes and the release timing binary's behavior are unchanged. This closes the
+CLI failure recorded in the earlier RSA investigation; it does not reopen the
+completed HMAC characterization.
+
+The native campaign qualifies the unchanged RSA mask correction against a
+frozen effective source snapshot over `d4045559`. Each host ran one full
+`ct-full` attempt through `just ssh-just`, with its native target selected.
+The required cases, thresholds, and confirmation policy were unchanged.
+No build or artifact transfer overlapped measurement. Every result and raw
+artifact is retained, including any failure.
+
+| Host and target | Required DudeCT cases | BINSEC kernels | PKCS#1 v1.5 decrypt abs(t) |
+| --- | ---: | ---: | ---: |
+| Intel Xeon 6975P-C, c8i.2xlarge, Ubuntu 26.04; x86_64-unknown-linux-gnu | 123/123 pass | 48 secure | 2.47036 |
+| Graviton4, c8g.2xlarge, Ubuntu 26.04; aarch64-unknown-linux-gnu | 123/123 pass | 46 secure | 1.16955 |
+| Graviton5, c9g.2xlarge, Ubuntu 24.04.5; aarch64-unknown-linux-gnu | 123/123 pass | 46 secure | 2.15241 |
+| Intel Xeon 6975P-C, c8i.2xlarge, Windows Server 2025; x86_64-pc-windows-msvc | 123/123 pass | Unsupported by target policy | 1.64762 |
+
+Each run passed all nine required RSA cases without RSA confirmation. The
+decryption case used 4,000 observations and threshold **8.0**.
+The Linux and Windows Intel hosts had eight logical CPUs on four cores;
+Graviton4 and Graviton5 each had eight cores, Neoverse-V2 and Neoverse-V3
+respectively. These are native development-host results. CI uses a smaller
+c8i.xlarge Windows host and Ubuntu 24.04 for Intel Linux. Graviton5 matches
+CI's c9g.2xlarge / Ubuntu 24.04 profile; its exact AMI, provider setup, and
+`--ci-ct-full` bootstrap are retained. Graviton4 is additional evidence.
+
+Graviton5 triggered the two existing policy confirmations below. The other
+three full runs triggered none. The campaign contains 494 measurements and
+15,723,968 observations, including both screenings and confirmations.
+
+| Graviton5 case | Screening abs(t) / observations | Confirmation abs(t) / observations | Threshold | Final gate |
+| --- | ---: | ---: | ---: | --- |
+| `secret_wrappers_debug_fixed_vs_random` | 7.60077 / 20,000 | 5.87926 / 80,000 | 10.0 | Pass |
+| `ed25519_sign_response_fixed_vs_random_secret` | **11.37683 / 200,000** | 2.18205 / 800,000 | 10.0 | Pass |
+
+The Ed25519 screening failure is retained. Confirmation on the same binary
+decides the case under the unchanged policy; no extra manual timing run was
+added. This Graviton5 artifact also passed HMAC-SHA256 valid/invalid at
+|t| 4.63823 with 20,000 observations. That pass neither dismisses the earlier
+HMAC failures nor identifies their still-unknown low-level cause.
+
+All builds used `nightly-2026-09-30`, rustc commit
+`5c543b0b8c73c7b72bc8284ced4fb22ead15734d`, and LLVM 23.1.1. They retained
+release optimization, fat LTO, one codegen unit, overflow checks, aborting
+panics, `std/full/parallel/diag/getrandom`, disabled default features,
+`rscrypto_internal`, and normal runtime dispatch. No target CPU or extra
+target features were requested. Linux proof tooling was BINSEC 0.11.1,
+Bitwuzla 1.0.6, and OCaml 5.4.1. Per-host compiler, linker, kernel, and tool
+identities are retained with the prepared artifacts.
+
+The new Intel linked artifact's CRT import has the same restoration
+instructions and branch structure as the previously reviewed mask candidate;
+its 281-instruction comparison differs only in three unrelated relative
+relocations. The Graviton4 artifact also retains masked addition at both
+restoration sites; inspected loop and bounds branches use public indices and
+lengths. The Graviton5 import has the same 211 normalized instructions as
+Graviton4 after removing instruction addresses, opcode words, and annotated
+absolute branch addresses; symbolic targets and relative offsets match.
+These inspections apply only to the named artifacts and sites.
+
+The Intel Linux and Graviton4 kernels were `7.0.0-1014-aws`; Graviton5 used
+`7.0.0-1013-aws`. Graviton5 linked with GCC 13.3.0; the Ubuntu 26.04 Linux
+hosts used GCC 15.2.0. The frozen source and release profile were identical.
+
+The transferred Linux source digest is
+`6159b1586d50a4b5573c9ed934c691523955edbff82f749b9356e12314adee7c`.
+Windows records
+`c0c3b9c75500317e93b1c20fbc1dbcded2ef665183e32621da79041375fe587c`.
+Comparing all 1,798 source-identity rows found matching contents for every
+transferred file and 49 executable-mode differences; restoring the local
+execute flags reproduces the Linux digest. The existing sync policy excludes
+`benchmark_results` and `fuzz/corpus` on all hosts: the overview and 483 corpus
+files appear as absent in remote identities. The complete local source archive retains them.
+The RSA source remains
+`3df25c4d979185658aba9bae8c5c9c47030e4620394a89fbf07cdeb1564a69f6`.
+
+| Native DudeCT binary | SHA-256 |
+| --- | --- |
+| Intel Linux | `3d4fddf429552fd284ef3e58ed2145630fae2f3fd85cc031fe543e45aff2a0e3` |
+| Graviton4 Linux | `70028713e50bb27f058c94dee6dffc34304979f8177773962337e5869150c590` |
+| Graviton5 Linux | `e13b56bead22b69d457f994f5285de12f9f9101f3ba657ef6302c01696d1c075` |
+| Windows | `c7f01a5f081056855ba4f8f841e2b5892f3b38bcf1ecb12e5ad1797ad1635121` |
+
+Local raw records live under
+`benchmark_results/rsa-qualification-2026-10-05/`. All 666 Intel Linux, 654
+Graviton4, 660 Graviton5, and 379 Windows report artifacts passed byte-count
+and SHA-256 verification after collection. The frozen source archive is
+23,811,397 bytes and has SHA-256
+`45d5568f5a1b9855f4ce2272ab47d0d2943c1cac252847d1cfae97bc80c61be8`.
+
+The retained bundle is
+`benchmark_results/rsa-qualification-2026-10-05-evidence.tar.gz`
+(696,052,533 bytes), SHA-256
+`fb6deb7101062f475f544ff421ed962075cf1f8edcbf5f6cb425140f821b241d`.
+It contains a file-hash manifest, source snapshot, all four native CT archives,
+local validation logs, linked-code reviews, and the source-identity comparison.
+
+All four temporary EC2 instances and their EBS volumes were removed. Final
+provider status records confirm that none remains.
+
+The current source still needs native POWER, IBM Z, and RISC-V qualification.
+Those CI lanes exist, but the correction is uncommitted and unpublished;
+no direct hosts for the snapshot were supplied. Existing published-commit
+passes cannot qualify it. The accepted Mac timing limitation is unchanged.
+Full release qualification and the RSA allocation-contract evaluation remain
+open. No threshold, failure, or target requirement is waived.
+
+## 2026-10-05: Intel RSA modular-restoration timing
+
+The [subsequent qualification record](#2026-10-05-rsa-correction-qualification)
+resolves the local CLI blocker and records the later native CT results. The
+investigation below retains its original observations and scope.
+
+**Decision:** keep the complete mask opaque in `add_modulus_masked` with
+`core::hint::black_box`. LLVM had split modular restoration into two loops,
+selected by secret-derived carry and borrow. The correction removes those
+branches in the inspected binary and restores the observed PKCS#1 v1.5
+decryption margin on the dedicated `c8i.2xlarge`. The threshold stays **8.0**.
+This is a bounded correction with native evidence, not complete release or
+cross-target qualification. Allocation-contract evaluation remains deferred.
+
+### Original failure and native controls
+
+The historical refactor at `c8e92e1e` coincided with CI results of |t| 8.10 and
+8.35. Prior same-host observations were `40eba620` 3.75, `ed34634a` 5.19,
+`c8e92e1e` 9.98, and `2392fc33` 18.5 and 12.67. The revert at `a06861e4`, which
+retained the capacity fix, observed 6.01 and 6.13 on that host and 7.09 and 7.33
+in CI. These historical observations alone did not identify the cause.
+
+[Run 37053902467, attempt 1](https://github.com/loadingalias/rscrypto/actions/runs/37053902467/attempts/1),
+job `110996746507`, retains the failed `2392fc33` binary and 4,000 raw samples.
+Independent replay reproduces **t = +8.099927**. At its largest Welch crop,
+the fixed class was slower by **287.71 ns**. The archive ZIP matched GitHub's
+published SHA-256, `05ae2fb09f485d82a403f504d5c1f848d6d54dd724833eecae895212f03b23cc`.
+
+The new native campaign used eight logical CPUs / four cores on Intel Xeon
+6975P-C, Linux `7.0.0-1014-aws`, and `x86_64-unknown-linux-gnu`. The original
+failure used kernel `7.0.0-1011-aws`; replay does not recreate its complete OS
+environment. Both native builds used `nightly-2026-09-30`, rustc
+`5c543b0b8c73c7b72bc8284ced4fb22ead15734d`, LLVM 23.1.1, release optimization,
+fat LTO, one codegen unit, overflow checks, aborting panics, and
+`std/full/parallel/diag/getrandom` with `rscrypto_internal` and default features
+disabled. No target CPU or extra target features were requested. Normal runtime
+dispatch remained enabled.
+The new builds used GCC 15.2.0-16ubuntu1; the archived binary used GCC 13.3.0.
+
+The unchanged production case uses a 2,048-bit fixture, fixed padding, a
+32-byte fixed or random plaintext, and the existing factor-two blinding fixture.
+The first two campaigns planned three repetitions of CPU 0 versus CPUs 0–7,
+rotating variant order and reversing affinity order. Each pair ran 4,000 and
+16,000 samples unconditionally. These are diagnostic pairs, not release gate
+decisions: some screening results would not trigger policy confirmation.
+
+| Campaign / variant | Runs | Max abs(t) | 4k >8 | 16k >8 |
+| --- | ---: | ---: | ---: | ---: |
+| Baseline / archived | 12 | 14.65578 | 0 | 6 |
+| Baseline / current | 12 | 13.68188 | 0 | 5 |
+| Controls / archived fixed-fixed | 12 | 3.46045 | 0 | 0 |
+| Controls / archived random-random | 12 | 3.11187 | 0 | 0 |
+| Controls / archived random-fixed | 12 | 12.89809 | 1 | 4 |
+| Controls / current fixed-fixed | 12 | 2.56306 | 0 | 0 |
+| Controls / current random-random | 12 | 2.58949 | 0 | 0 |
+| Controls / current random-fixed | 12 | 11.23762 | 0 | 6 |
+
+All 48 identical-input controls stayed below 8.0. Reversing the classes
+reversed the sign of the difference. The fixed/random baseline's largest crops
+showed fixed-class delays of 201–312 ns. Pinning did not remove the effect.
+
+The controls change only the six-byte conditional branch in untimed plaintext
+preparation: virtual address `0x1e863f` in the archived binary and `0x1eb54f` in
+the current binary. `0f844b010000` becomes `e94c01000090` for fixed/fixed,
+`909090909090` for random/random, or `0f854b010000` for reversed classes.
+Timed instructions and addresses, labels, and class sequences remain unchanged.
+The patcher checks exact binary hashes and original opcodes. Native LLVM
+disassembly independently confirms the substitutions. These fixtures did not
+change the maintained harness or RSA implementation.
+
+### Cause, correction, and cost
+
+`private_import_unsigned_be_mod_to_fixed` reduces ciphertext modulo the private
+primes before CRT exponentiation. Its inlined `add_modulus_masked` had become
+separate add-modulus and add-zero loops. The current binary branches on a
+secret-derived carry and borrow at `0x330353` and `0x330357`; its add-bit path
+has corresponding branches at `0x330484` and `0x330488`. The archived binary
+has matching restoration instruction sequences at `0x32eb50` and `0x32ec80`.
+
+Native GDB traces on the exact current controls confirm execution through the
+public decrypt method, private operation, and CRT reduction. Two fixed
+ciphertexts repeat the same branch sequences; two random ciphertexts change
+them. For example, the first prime reduction's double-carry count is 450 for
+both fixed inputs, versus 508 and 498 for the two random inputs. Debugger
+durations are excluded from timing evidence.
+
+An isolated source copy added one optimization barrier around the complete
+zero/all-ones mask. Comparing 479 relevant source and build files found only
+`src/auth/rsa.rs` changed. The candidate computes the mask without branching
+and keeps a masked add in each iteration at both traced restoration sites.
+Compiler, features, flags, release profile, and linker match the current
+baseline. Arithmetic, error paths, scratch cleanup, features, and dispatch are
+unchanged. The workspace RSA source exactly matches this tested candidate.
+
+Ten fixed alternating baseline/candidate rounds on CPU 0 then produced:
+
+| Variant | Runs | Max abs(t) | 4k >8 | 16k >8 |
+| --- | ---: | ---: | ---: | ---: |
+| Current baseline | 20 | 14.28949 | 0 | 10 |
+| Mask barrier | 20 | 2.51710 | 0 | 0 |
+
+The correction has a measured cost. At 16,000 samples, the median of per-run
+decryption medians rose from **1.07087 ms to 1.14645 ms**. The median paired
+increase was **7.10%**, with individual rounds between **6.91% and 7.33%**.
+This measures the complete production timing case, including its existing
+allocation and cleanup, and does not establish general RSA throughput across
+key sizes or targets.
+
+### Retained identity, validation, and limits
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Archived binary, `2392fc33225c55afe3ab708f35c96b7af8254d6d` | `4397f7af3edf9e1a5687d1b96f6ee782d3bccb7a26c1feef95cc3afb2fae0d71` |
+| Current binary, dirty `d4045559` | `a5c60202fc09954cc9ba439c461a5a1a9a1b627a94260b27eb5d489a96555728` |
+| Mask-barrier binary | `76b6ca366aa5344f1439e29435b9ef96cb85f0df3b51477a7aadf2053987e5a2` |
+| Current prepared source identity | `3738669770f2a2ae43a8e0f6901d79ec787b724425d5bbfce60f516d844fb7b2` |
+| Mask-barrier prepared source identity | `59b8b41383e0b878baa02552e2f0ae9184031bfb4d0b16ab6e80a836ea975579` |
+| Corrected `src/auth/rsa.rs` | `3df25c4d979185658aba9bae8c5c9c47030e4620394a89fbf07cdeb1564a69f6` |
+
+Local evidence is retained under `benchmark_results/rsa-timing-2026-10-05/`.
+The campaign retains **136 measurements and 1,360,000 observations**, including
+every failure. Independent analysis verifies every raw hash, sample count,
+balanced class count, execution sequence, and all 101 Welch crops. Reported
+and recomputed statistics agree within 0.0001. Prepared binaries, full linked
+disassembly, symbols, patch manifests, branch traces, source comparisons,
+before/after process snapshots, and fixed plans are retained. No build or
+artifact transfer overlapped measurement.
+
+The isolated candidate passed 167 selected native release tests through
+`just test`: RSA unit tests plus `rsa_nist_cavp`, `rsa_wycheproof`,
+`rsa_public_key`, `rsa_profile_confusion`, and `rsa_leakage`. These include
+independent vectors and oracles, arithmetic edges, hostile padding, failure
+opacity, scratch reuse, and cleanup.
+
+The same selection passed **166 portable-only release tests**. The isolated
+Linux source also passed `cargo check --locked --no-default-features --features
+rsa --lib` through the repository's remote Cargo recipe. `cargo rail change
+status` accepted the new patch intent. Local `just ci-check` passed formatting,
+fixture checks, main-crate native/portable Clippy, assembly provenance, and
+earlier independent workspaces, then failed on the pre-existing untracked
+`tools/ct-dudect/src/bin/hmac_host_controls.rs:13`: `clippy::panic` rejects its
+unknown-mode `panic!`. That file's hash matches the initial snapshot. It was
+left unchanged; the complete local gate and its later steps did not pass.
+
+The retained bundle is `benchmark_results/rsa-timing-2026-10-05-evidence.tar.gz`
+(538,586,839 bytes), SHA-256
+`eef7954e1745b44d443123d9ec1845721d2bd4fa03fcee1e30813f741f95f891`.
+It includes a file-hash manifest and the isolated effective source archive.
+The temporary EC2 instance and EBS volume were removed; the final provider
+status confirms neither remains.
+
+The evidence supports the observed restoration branches as a cause worth
+correcting. It does not identify why the historical refactor changed their
+timing impact: both relevant source helpers were identical across `40eba620`,
+`ed34634a`, `c8e92e1e`, `2392fc33`, `a06861e4`, and `d4045559`, and the candidate
+also changes code layout. Reintroducing that refactor needs separate evidence.
+An optimization barrier is not a language-level constant-time guarantee.
+The compiler materializes the mask in a stack slot; compiler-created spill
+copies retain the exclusion in `docs/secret-lifecycle.md`. This change adds no
+new secret owner and makes no stronger cleanup claim. Full `ct-full` and
+other-target qualification remain required before release. Existing failed
+results are not waived, and allocation work must not bypass the remaining
+timing qualification.
+
 ## 2026-10-05: Graviton5 HMAC timing characterization
 
 **Decision:** retain the HMAC threshold and existing release qualification. CPU
