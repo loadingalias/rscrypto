@@ -83,13 +83,11 @@ fn blake3_official_test_vectors() {
       let mut h = Blake3::new();
       update_input_pattern(&mut h, input_len);
       assert_eq!(&h.finalize()[..], &hash_xof[..32], "hash digest case {i}");
-      if input_len <= 1024 {
-        assert_eq!(
-          &Blake3::digest_const(&input_pattern(input_len))[..],
-          &hash_xof[..32],
-          "const digest case {i}"
-        );
-      }
+      assert_eq!(
+        &Blake3::digest_const(&input_pattern(input_len))[..],
+        &hash_xof[..32],
+        "const digest case {i}"
+      );
 
       let mut xof = h.finalize_xof();
       let mut out = vec![0u8; hash_xof.len()];

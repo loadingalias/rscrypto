@@ -1275,7 +1275,7 @@ const fn words8_to_le_bytes(words: &[u32; 8]) -> [u8; OUT_LEN] {
   out
 }
 
-/// Caller-owned intermediates of [`one_chunk_root_words_portable`], so keyed
+/// Caller-owned intermediates of [`chunk_words_portable`], so keyed
 /// runtime callers can clear them after use.
 ///
 /// `final_block` comes first in a 16-byte-aligned layout, so its clearing loop
@@ -1308,6 +1308,20 @@ const fn one_chunk_root_words_portable(
   input: &[u8],
   scratch: &mut OneChunkScratch,
 ) -> [u32; 8] {
+  chunk_words_portable(key_words, flags, 0, input, ROOT, scratch)
+}
+
+/// A chunk CV, or root words when `output_flags` includes `ROOT`.
+/// Only the last block receives `output_flags`; every block uses the chunk counter.
+#[inline(always)]
+const fn chunk_words_portable(
+  key_words: &[u32; 8],
+  flags: u32,
+  chunk_counter: u64,
+  input: &[u8],
+  output_flags: u32,
+  scratch: &mut OneChunkScratch,
+) -> [u32; 8] {
   assert!(input.len() <= CHUNK_LEN);
   // Every block but the last is full; an empty input is one empty final block.
   let full_blocks = input.len().saturating_sub(1).strict_div(BLOCK_LEN);
@@ -1318,7 +1332,13 @@ const fn one_chunk_root_words_portable(
   while i < full_blocks {
     scratch.block_words = words16_from_le_bytes_64(&blocks[i]);
     let start = if i == 0 { CHUNK_START } else { 0 };
-    scratch.cv = compress_cv_portable(&scratch.cv, &scratch.block_words, 0, BLOCK_LEN_U32, flags | start);
+    scratch.cv = compress_cv_portable(
+      &scratch.cv,
+      &scratch.block_words,
+      chunk_counter,
+      BLOCK_LEN_U32,
+      flags | start,
+    );
     i = i.strict_add(1);
   }
 
@@ -1341,9 +1361,9 @@ const fn one_chunk_root_words_portable(
   compress_cv_portable(
     &scratch.cv,
     &scratch.block_words,
-    0,
+    chunk_counter,
     block_len,
-    flags | start | CHUNK_END | ROOT,
+    flags | start | CHUNK_END | output_flags,
   )
 }
 
@@ -2630,7 +2650,7 @@ fn digest_oneshot_words(kernel: Kernel, key_words: &[u32; 8], flags: u32, input:
   }
 
   // Keyed and derive-key portable inputs share the one-chunk path of
-  // `Blake3::digest_const`, which clears its scratch. Unkeyed inputs take the
+  // `Blake3::digest_const`; the runtime wrapper clears its scratch. Unkeyed inputs take the
   // generic path below: the shared scratch stays in memory and slows them.
   if input.len() <= CHUNK_LEN
     && kernel.id == kernels::Blake3KernelId::Portable
@@ -2708,8 +2728,7 @@ fn digest_public_oneshot(key_words: &mut [u32; 8], flags: u32, input: &[u8]) -> 
 pub fn diag_blake3_keyed_digest_portable(key: &[u8; KEY_LEN]) -> Blake3KeyedHash {
   let mut key_words = words8_from_le_bytes_32(key);
   let kernel = kernels::kernel(kernels::Blake3KernelId::Portable);
-  let digest = Blake3KeyedHash::from_bytes(digest_oneshot(kernel, &mut key_words, KEYED_HASH, b"binsec"));
-  digest
+  Blake3KeyedHash::from_bytes(digest_oneshot(kernel, &mut key_words, KEYED_HASH, b"binsec"))
 }
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
@@ -3147,19 +3166,16 @@ impl Blake3 {
     digest_public_oneshot(&mut iv, 0, data)
   }
 
-  /// Compute the hash of at most 1,024 bytes (one BLAKE3 chunk) in constant context.
+  /// Compute the hash of any byte slice in constant context.
   ///
   /// The result equals [`Blake3::digest`]. This runs the portable compression
   /// function, which the runtime portable backend shares, so use it to build
-  /// constants. At runtime, [`Blake3::digest`] selects faster kernels and has no
-  /// length limit.
+  /// constants. At runtime, [`Blake3::digest`] selects faster kernels.
+  /// Tree reduction uses a fixed stack of 54 chaining values without allocation.
+  /// Large constants can require substantial compiler time and may trigger
+  /// Rust's `long_running_const_eval` lint at the call site.
   ///
   /// It is unkeyed only and makes no constant-time or zeroization claim.
-  ///
-  /// # Panics
-  ///
-  /// Panics if `data` is longer than 1,024 bytes. In constant context, this
-  /// fails the build.
   ///
   /// # Examples
   ///
@@ -3170,19 +3186,55 @@ impl Blake3 {
   /// assert_eq!(ABC, Blake3::digest(b"abc"));
   /// ```
   ///
-  /// ```compile_fail
+  /// ```
   /// use rscrypto::Blake3;
   ///
-  /// const TOO_LONG: [u8; 32] = Blake3::digest_const(&[0; 1025]);
+  /// const TREE: [u8; 32] = Blake3::digest_const(&[0; 2049]);
+  /// assert_eq!(TREE, Blake3::digest(&[0; 2049]));
   /// ```
   #[must_use]
-  pub const fn digest_const(data: &[u8]) -> [u8; OUT_LEN] {
-    assert!(
-      data.len() <= CHUNK_LEN,
-      "Blake3::digest_const accepts at most 1,024 bytes"
-    );
+  pub const fn digest_const(mut data: &[u8]) -> [u8; OUT_LEN] {
     let mut scratch = OneChunkScratch::ZERO;
-    words8_to_le_bytes(&one_chunk_root_words_portable(&IV, 0, data, &mut scratch))
+    if data.len() <= CHUNK_LEN {
+      return words8_to_le_bytes(&one_chunk_root_words_portable(&IV, 0, data, &mut scratch));
+    }
+
+    const fn parent(left: &[u32; 8], right: &[u32; 8], output_flags: u32) -> [u32; 8] {
+      let mut block = [0; 16];
+      let (left_words, right_words) = block.split_at_mut(8);
+      left_words.copy_from_slice(left);
+      right_words.copy_from_slice(right);
+      compress_cv_portable(&IV, &block, 0, BLOCK_LEN_U32, PARENT | output_flags)
+    }
+
+    let mut stack = [[0; 8]; CV_STACK_LEN];
+    let mut stack_len = 0usize;
+    let mut chunk_counter = 0u64;
+    // Leave the last chunk for finalization, including an exact full chunk.
+    // Completed subtrees are stacked from largest to smallest, one per set bit
+    // of the processed chunk count. CV_STACK_LEN covers the u64 byte-length bound.
+    while data.len() > CHUNK_LEN {
+      let (chunk, rest) = data.split_at(CHUNK_LEN);
+      let mut cv = chunk_words_portable(&IV, 0, chunk_counter, chunk, 0, &mut scratch);
+      chunk_counter = chunk_counter.strict_add(1);
+      let mut total = chunk_counter;
+      while total & 1 == 0 {
+        stack_len = stack_len.strict_sub(1);
+        cv = parent(&stack[stack_len], &cv, 0);
+        total >>= 1;
+      }
+      stack[stack_len] = cv;
+      stack_len = stack_len.strict_add(1);
+      data = rest;
+    }
+
+    let mut cv = chunk_words_portable(&IV, 0, chunk_counter, data, 0, &mut scratch);
+    while stack_len > 0 {
+      stack_len = stack_len.strict_sub(1);
+      // Only the final parent is the root; its output counter is zero.
+      cv = parent(&stack[stack_len], &cv, if stack_len == 0 { ROOT } else { 0 });
+    }
+    words8_to_le_bytes(&cv)
   }
 
   /// Hash many independent inputs: `outputs[i]` becomes `Blake3::digest(inputs[i])`.

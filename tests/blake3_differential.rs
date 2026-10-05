@@ -43,8 +43,8 @@ fn patterned_bytes(len: usize) -> Vec<u8> {
 }
 
 #[test]
-fn blake3_digest_const_matches_reference_and_streaming_for_every_one_chunk_length() {
-  for len in 0..=1024 {
+fn blake3_digest_const_matches_reference_and_streaming_for_every_two_chunk_length() {
+  for len in 0..=2048 {
     let data = patterned_bytes(len);
     let digest = Blake3::digest_const(&data);
     assert_eq!(digest, blake3_ref_hash(&data), "reference mismatch at len={len}");
@@ -57,17 +57,26 @@ fn blake3_digest_const_matches_reference_and_streaming_for_every_one_chunk_lengt
 // Constant evaluation of a full final block, alone and after the multi-block loop.
 const FULL_BLOCK_DIGEST: [u8; 32] = Blake3::digest_const(&[0x5a; 64]);
 const FULL_CHUNK_DIGEST: [u8; 32] = Blake3::digest_const(&[0x5a; 1024]);
+const TWO_CHUNK_DIGEST: [u8; 32] = Blake3::digest_const(&[0x5a; 2048]);
+const UNEVEN_TREE_DIGEST: [u8; 32] = Blake3::digest_const(&[0x5a; 3 * 1024 + 17]);
 
 #[test]
 fn blake3_digest_const_evaluates_full_final_blocks_at_compile_time() {
   assert_eq!(FULL_BLOCK_DIGEST, blake3_ref_hash(&[0x5a; 64]));
   assert_eq!(FULL_CHUNK_DIGEST, blake3_ref_hash(&[0x5a; 1024]));
+  assert_eq!(TWO_CHUNK_DIGEST, blake3_ref_hash(&[0x5a; 2048]));
+  assert_eq!(UNEVEN_TREE_DIGEST, blake3_ref_hash(&[0x5a; 3 * 1024 + 17]));
 }
 
 #[test]
-#[should_panic(expected = "Blake3::digest_const accepts at most 1,024 bytes")]
-fn blake3_digest_const_rejects_more_than_one_chunk() {
-  core::hint::black_box(Blake3::digest_const(core::hint::black_box(&[0; 1025])));
+fn blake3_digest_const_matches_reference_at_tree_boundaries() {
+  for chunks in [2usize, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 1024] {
+    let boundary = chunks.strict_mul(1024);
+    for len in [boundary.strict_sub(1), boundary, boundary.strict_add(1)] {
+      let data = patterned_bytes(len);
+      assert_eq!(Blake3::digest_const(&data), blake3_ref_hash(&data), "len={len}");
+    }
+  }
 }
 
 #[test]
@@ -100,7 +109,7 @@ fn blake3_derive_context_const_rejects_more_than_one_chunk() {
 
 proptest! {
   #[test]
-  fn blake3_digest_const_matches_official(data in proptest::collection::vec(any::<u8>(), 0..=1024)) {
+  fn blake3_digest_const_matches_official(data in proptest::collection::vec(any::<u8>(), 0..=32769)) {
     prop_assert_eq!(Blake3::digest_const(&data), blake3_ref_hash(&data));
   }
 

@@ -269,6 +269,40 @@ The Graviton archive SHA-256 is `eeb7eb2295ca6a5b275d5f2647ccf1c0d2e0f092e52ae2c
 the complete AMD archive is `5444ebb25e030f549f1a0c9e76ad289b0a69ea51b37a29757be26304a6aa538b`.
 `source-hashes.json`, each campaign’s executable manifests, and `review-validation-sha256.json` identify the retained files.
 
+## 2026-10-04: BLAKE3 constant tree evaluation
+
+`Blake3::digest_const` now accepts multi-chunk inputs with the production portable
+compressor and a fixed 54-entry tree stack. The source is based on `d4045559` plus
+the retained candidate patch. It is unkeyed, allocates no heap memory, and adds no
+constant-time or zeroization claim.
+
+An external consumer compiled repeated `0x5a` inputs using only the `blake3`
+feature, with default features disabled. On an Apple M1 Pro running macOS 26.6.2,
+Rust `1.100.0-beta.1` (`e3feeb59c`, LLVM 23.1.1) produced these observations:
+
+| Constant input | Release build time | Digest checks |
+| --- | ---: | --- |
+| 1 MiB | 78.978 s | Matches upstream `blake3` 1.8.7 and rscrypto runtime hashing |
+| 16 MiB | 1,003.120 s | Matches upstream `blake3` 1.8.7 and rscrypto runtime hashing |
+
+Each duration is one build on a shared development host, with dependencies
+already built. It includes constant evaluation, consumer code generation, and
+linking; it is not an isolated compiler benchmark or a speed comparison.
+The consumer explicitly allows `long_running_const_eval`; Rust still emits
+long-evaluation warnings. The library does not suppress the lint. The old
+implementation rejects both input sizes, so there is no successful-build
+baseline.
+
+Regression evidence includes every length through two chunks, tree boundaries
+through 1,024 chunks, official vectors, randomized inputs, and actual compile-time
+two-chunk and uneven-tree constants. The new compile-time regression failed with
+the old implementation before the production change.
+
+Retained artifacts: `benchmark_results/2026-10-04/blake3-const-tree/` contains
+`summary.json`, build and verification logs, the consumer and lockfile, source
+snapshots and hashes, the candidate patch, and the measurement script. The
+record binds both executable hashes and output digests to those builds.
+
 ## 2026-10-04: Ed25519 and X25519 vector fixed-base tables
 
 On native x86-64 Windows, precomputing the 512 public conversions used by each fixed-base multiply
