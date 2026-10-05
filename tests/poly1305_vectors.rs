@@ -33,6 +33,52 @@ fn poly1305_streaming_matches_oneshot() {
 }
 
 #[test]
+fn poly1305_block_boundaries_and_carries_match_dryoc() {
+  use dryoc::classic::crypto_onetimeauth::crypto_onetimeauth;
+
+  // The all-one key/message exercises clamp masks and long carry chains. The
+  // zero case covers the additive pad; mixed inputs vary all five limbs.
+  for seed in [0u8, 0xff, 0x42] {
+    let key = core::array::from_fn(|i| {
+      if seed == 0x42 {
+        seed.wrapping_add(u8::try_from(i).expect("key index fits u8").wrapping_mul(73))
+      } else {
+        seed
+      }
+    });
+    let data: Vec<u8> = (0..4098)
+      .map(|i| {
+        if seed == 0x42 {
+          u8::try_from(i % 251).expect("remainder fits u8")
+        } else {
+          seed
+        }
+      })
+      .collect();
+    for len in (0..=64).chain([127, 128, 129, 255, 256, 257, 1024, 4097]) {
+      // Offset the input to cover unaligned loads as well as every short tail.
+      let message = &data[1..=len];
+      let mut expected = [0; 16];
+      crypto_onetimeauth(&mut expected, message, &key);
+      let actual = Poly1305::authenticate_once(Poly1305OneTimeKey::from_bytes(key), message);
+      assert_eq!(actual.to_bytes(), expected, "seed={seed} len={len}");
+      for chunk in [1, 15, 16, 17, 31, 64] {
+        let mut state = Poly1305::new(Poly1305OneTimeKey::from_bytes(key));
+        for part in message.chunks(chunk) {
+          state.update(part);
+          state.update(&[]);
+        }
+        assert_eq!(
+          state.finalize().to_bytes(),
+          expected,
+          "seed={seed} len={len} chunk={chunk}"
+        );
+      }
+    }
+  }
+}
+
+#[test]
 fn poly1305_verify_rejects_corrupted_tag() {
   let key = Poly1305OneTimeKey::from_bytes([0x24; Poly1305OneTimeKey::LENGTH]);
   let message = b"message";

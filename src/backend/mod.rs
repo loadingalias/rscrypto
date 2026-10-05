@@ -66,3 +66,6 @@ pub(crate) mod curve25519;
 ))]
 #[path = "curve25519/swap.rs"]
 pub(crate) mod curve25519_swap;
+
+#[cfg(any(feature = "poly1305", feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+pub(crate) mod poly1305;

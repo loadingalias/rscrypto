@@ -1,6 +1,12 @@
 {
   "schema": 1,
   "benches": {
+    "poly1305": {
+      "binary": "poly1305",
+      "kind": "criterion",
+      "required": true,
+      "features": ["std", "poly1305"]
+    },
     "crc": {
       "binary": "crc",
       "kind": "criterion",
@@ -183,6 +189,7 @@
     "ascon-xof128": { "bench": "ascon", "filter": "ascon-xof128" },
     "ascon-cxof128": { "bench": "ascon", "filter": "ascon-cxof128" },
     "hmac-sha256": { "bench": "auth", "filter": "^hmac-sha256" },
+    "poly1305": { "bench": "poly1305", "filter": "^poly1305/" },
     "hmac-sha384": { "bench": "auth", "filter": "hmac-sha384" },
     "hmac-sha512": { "bench": "auth", "filter": "hmac-sha512" },
     "hkdf-sha256": { "bench": "auth", "filter": "^hkdf-sha256" },
@@ -221,6 +228,7 @@
   },
   "selectors": {
     "all": [
+      "poly1305",
       "crc16-ccitt",
       "crc16-ibm",
       "crc24-openpgp",
@@ -285,6 +293,7 @@
       "header-protection"
     ],
     "auth": [
+      "poly1305",
       "hmac-sha256",
       "hmac-sha384",
       "hmac-sha512",

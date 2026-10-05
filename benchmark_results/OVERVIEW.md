@@ -149,6 +149,126 @@ needs causal evidence and fresh target qualification; the present threshold,
 sample budgets, confirmation decision, and fail-closed behavior remain
 unchanged.
 
+## 2026-10-05: Share the Poly1305 arithmetic owner
+
+Standalone Poly1305 and the ChaCha20-Poly1305 family now share the five-limb state,
+key clamping, portable arithmetic, finalization, and state destruction in `src/backend/poly1305.rs`.
+Each caller retains its own framing and dispatch.
+The selected core uses checked `u64` products and sums with explicit multiplier bounds and `u32` carries.
+It adds no allocation; the state and scratch remain fixed-size stack values.
+
+The stable Graviton4 comparison preserves bulk authentication and AEAD throughput.
+The replacement AMD host was too variable to resolve small timing changes; its complete results remain inconclusive.
+One short-message tradeoff remains: 15-byte standalone authentication on Graviton4 costs
+4.28 ns more, from 45.88 to 50.16 ns (+9.13% median paired change).
+
+The baseline is `d4045559cd84e3c6673a7b2c2aa3897bf31a0361` plus the preserved pre-task worktree.
+The candidate includes the shared core and identical benchmark fixtures.
+Baseline overrides restore only `src/auth/poly1305.rs`, `src/aead/poly1305.rs`, and `src/backend/mod.rs`,
+and omit the new shared module; unrelated pending work is identical.
+Exact source archives, baseline overrides, effective patches, file hashes, and executable hashes are retained.
+
+Both hosts use Ubuntu 26.04.1, kernel `7.0.0-1014-aws`, and `nightly-2026-09-30`
+(`rustc 1.101.0-nightly`, `5c543b0b8`, LLVM 23.1.1).
+The machines are AWS `c8a.4xlarge` (AMD EPYC 9R45, Zen5) and `c8g.4xlarge` (Graviton4, Neoverse-V2).
+Builds use `-C target-cpu=generic`, the repository `bench` profile (O3, fat LTO, overflow checks,
+one codegen unit), no default features, separate target directories, `CARGO_RAIL_CACHE=off`, and no compiler wrapper.
+The standalone benchmark enables `poly1305,std`; AEAD enables
+`aegis256,aes-gcm,aes-gcm-siv,aes-siv,ascon-aead,chacha20poly1305,std,xchacha20poly1305`.
+Standalone authentication uses the portable scalar core; AEAD uses ordinary native dispatch without overrides.
+
+Ten paired rounds per host alternate baseline/candidate order on CPU 2.
+Each case uses 300 ms warmup, 700 ms measurement, 30 samples, and 10,000 Criterion resamples.
+All 20 runs per host contain the same 11 cases. The table reports Graviton4 only;
+the entire AMD campaign is retained as inconclusive, without selecting individual rounds.
+Times are medians of the ten per-round mean estimates.
+Change is the median paired candidate/baseline percentage; brackets show the complete min-to-max paired spread.
+Negative means faster.
+The figures describe these hosts, fixed inputs, and build configurations.
+
+The new `poly1305/authenticate/rscrypto` benchmark calls the public `authenticate_once` operation.
+It times key construction and consumption, authentication, finalization, state cleanup, and tag observation.
+Fixtures use an all-`0xff` message and `[0x42; 32]` key; allocation and Dryoc 1.0.0 oracle checks are untimed.
+The existing `chacha20-poly1305/copy-and-encrypt/rscrypto` row times input restoration into a preallocated buffer,
+encryption, and per-call output handling, with reusable cipher construction and destruction outside timing.
+
+| Graviton4 operation | Message bytes | Baseline ns | Shared ns | Paired change | Paired range |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Poly1305 authenticate | 0 | 38.190 | 38.438 | +0.60% | [-0.25%, +1.83%] |
+| Poly1305 authenticate | 15 | 45.884 | 50.163 | +9.13% | [+8.84%, +9.48%] |
+| Poly1305 authenticate | 16 | 42.210 | 42.033 | -0.45% | [-1.60%, +0.68%] |
+| Poly1305 authenticate | 17 | 54.184 | 54.297 | +0.19% | [-0.34%, +0.41%] |
+| Poly1305 authenticate | 64 | 73.282 | 71.800 | -1.80% | [-2.27%, -0.95%] |
+| Poly1305 authenticate | 1024 | 696.901 | 695.393 | -0.20% | [-0.27%, -0.09%] |
+| Poly1305 authenticate | 16384 | 10674.560 | 10672.891 | -0.01% | [-0.04%, +0.02%] |
+| ChaCha20-Poly1305 copy and encrypt | 0 | 168.765 | 168.785 | +0.02% | [-4.15%, +4.35%] |
+| ChaCha20-Poly1305 copy and encrypt | 64 | 293.805 | 293.534 | -0.09% | [-2.59%, +2.06%] |
+| ChaCha20-Poly1305 copy and encrypt | 1024 | 1020.902 | 1021.503 | +0.07% | [-0.56%, +0.52%] |
+| ChaCha20-Poly1305 copy and encrypt | 16384 | 12402.053 | 12400.160 | -0.01% | [-0.05%, +0.03%] |
+
+The repository front door for each round is:
+
+```sh
+taskset -c 2 just bench poly1305 chacha20-poly1305 \
+  --filter '^(poly1305/authenticate|chacha20-poly1305/copy-and-encrypt)/rscrypto/(0|15|16|17|64|1024|16384)$' \
+  --warmup-ms 300 --measure-ms 700 --sample-size 30 \
+  --output-dir "$run_dir"
+```
+
+Here `run_dir` is a fresh directory for one baseline or candidate round.
+The retained `campaign.sh` sets the build environment above and alternates the checkouts.
+A checked-`u128` version with wide carries regressed Graviton4 16 KiB authentication by 6.86%
+(paired range +6.79% to +6.89%). Narrowing those carries to `u32` reduced the regression to 3.42%
+(+3.24% to +3.43%). Both were rejected; their complete Graviton campaigns are retained.
+An inline-only experiment on the final core produced identical isolated-consumer assembly and object bytes
+on AArch64 and x86-64, so the existing public finalizer annotation remains unchanged.
+
+The arithmetic bounds explain why checked `u64` is sufficient.
+With `B = 2^26`, every clamped multiplier limb is below `B`; the explicit masks preserve those values.
+Even arbitrary `u32` input limbs give each five-term dot product a bound below `21 * 2^58 < 2^63`.
+Adding a preceding carry below `2^37` still fits `u64`.
+For valid accumulated state, every `h` limb is below `2B`; the exact constructor masks bound the
+five shifted carries by 3,053,453,909, 2,248,190,320, 1,445,617,656, 815,267,840, and 771,751,937.
+All fit `u32`, and folding the last carry into the first limb stays below 3,925,868,549.
+The portable transition restores `h1 <= B + 57` and masks the other limbs below `B`.
+The accelerated reductions also preserve `h_i < 2B` before portable tails.
+The retained range calculation and review cover those transitions; external vectors remain the algorithm oracle.
+
+Generic-CPU compiler artifacts for both Linux targets show no conditional branches or panic calls in the
+selected portable block body. The earlier checked-`u128` outlined bodies retained four unreachable carry-overflow checks.
+Named state destruction retains all 14 volatile word clears for `r`, `h`, and `pad`, followed by the compiler fence.
+Standalone buffer cleanup and existing AEAD clone cleanup also remain present.
+These are scoped compiler observations, not a new whole-operation constant-time or general register-erasure claim.
+Complete emitted IR/assembly, comparison scripts, thin public-API consumers, and final linked benchmark disassemblies are retained.
+`cargo-show-asm 0.2.63` could not locate the current nightly's artifact layout; direct compiler emission and
+`llvm-objdump` supplied the artifacts instead. A clean build without Cargo Rail reproduced the tool failure.
+
+Correctness evidence includes the RFC vectors, Dryoc comparisons across every short tail and varied streaming splits,
+and RustCrypto ChaCha20-Poly1305/XChaCha20-Poly1305 comparisons.
+On Apple Silicon, `just check`, `just test --all` (1,923 tests), `just test --all --portable` (1,893 tests),
+`just test-evidence` (1,265 native and 1,236 portable tests), `just test-fuzz-asan --all` (102 corpus targets),
+and `just ct-validate --manifest-only` pass. Both full suites retain one pre-existing skipped test
+and pass 320 doctests each.
+Each of `poly1305`, `chacha20poly1305`, and `xchacha20poly1305` also compiles alone, without default features,
+on the host and `thumbv6m-none-eabi`.
+Native Graviton tests pass all seven Poly1305 backend cases and all 15 standalone/AEAD integration cases.
+Native AMD tests pass all eight Poly1305 backend cases and all 15 standalone/AEAD integration cases.
+Cross-target checks provide compilation evidence for the other supported targets.
+Miri and BINSEC were not run for this change; no broader timing or zeroization claim is added.
+
+Retained artifacts are under `benchmark_results/2026-10-05/poly1305/` (ignored).
+They include source archives and overrides, full effective patches, all accepted raw Criterion runs and summaries,
+executables and disassemblies, compiler review and bounds, validation logs, and host cleanup receipts.
+The first AMD instance disappeared before its raw measurements were collected.
+Those observations are excluded; the replacement host supplied a complete new ten-pair campaign.
+Its bulk standalone baseline drifted from about 5.43 to 6.18 µs, while paired changes ranged from -4.78% to +12.40%.
+A separate fixed-workload `perf stat` capture observed 3.79–4.09 GHz across steady half-second intervals,
+with no CPU migrations in those intervals. This supports frequency variation as a contributor;
+it does not prove the sole cause. No AMD performance winner is declared.
+The Graviton archive SHA-256 is `eeb7eb2295ca6a5b275d5f2647ccf1c0d2e0f092e52ae2cdaee43181f8c3b484`;
+the complete AMD archive is `5444ebb25e030f549f1a0c9e76ad289b0a69ea51b37a29757be26304a6aa538b`.
+`source-hashes.json`, each campaign’s executable manifests, and `review-validation-sha256.json` identify the retained files.
+
 ## 2026-10-04: Ed25519 and X25519 vector fixed-base tables
 
 On native x86-64 Windows, precomputing the 512 public conversions used by each fixed-base multiply
