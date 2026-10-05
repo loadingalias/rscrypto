@@ -6,6 +6,149 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-05: Graviton5 HMAC timing characterization
+
+**Decision:** retain the HMAC threshold and existing release qualification. CPU
+pinning and a one-second confirmation delay did not reliably prevent threshold
+crossings. The archived release binary also crossed the threshold when both
+classes had valid tags, and when both classes had invalid tags. A validity
+difference is therefore unnecessary for this class-associated timing effect.
+This completes the requested host/control characterization; it does not identify
+the underlying processor, kernel, or harness mechanism, or prove HMAC constant
+time. A failed release measurement still blocks qualification. No
+retry-until-pass rule was introduced.
+
+### Archived failure and prior observations
+
+[Release run 37098163639, attempt 1](https://github.com/loadingalias/rscrypto/actions/runs/37098163639/attempts/1)
+used commit `1dd2a51a470dda129283f124b70306de590cea84` on `c9g.2xlarge`. The
+HMAC-SHA256 valid/invalid case screened at |t| **17.28731** with 20,000 samples,
+then confirmed at **69.95775** with 80,000 samples, against limit 10.
+Publication stopped. Independent replay of the retained raw durations reproduces
+both statistics. The largest cropped statistics use durations below 229 ns: the
+valid class was faster by **0.45049 ns** in screening and **0.88539 ns** in
+confirmation. These are measured class differences, not a diagnosis of their
+cause.
+
+Earlier diagnostics on `87a8f220` observed 32.7 → 12.3, 14.9 → 1.30, and a
+screening result of 1.50. A dedicated same-host, 20,000-sample comparison
+observed 1.6, 5.7, 1.7, 2.4, 1.4 on `87a8f220`, and 6.6, 12.2, 2.5 on
+`a06861e4`, whose CI result had been 2.62. The measured code was unchanged
+between those revisions; this excludes that code change as the cause, not a
+pre-existing defect. Before Arm DIT at `b4dfdd78`, this case and the ML-DSA
+dense Montgomery probe had shown intermittent offsets of about 1 ns. HMAC
+remains outside per-call DIT. [Release run
+37135507119](https://github.com/loadingalias/rscrypto/actions/runs/37135507119)
+passed all CT platforms on `87a8f220`, and v0.10.0 shipped. Those historical
+passes do not erase the failures.
+
+### Native campaign
+
+A disposable `c9g.2xlarge` provided eight Neoverse-V3 cores, Linux
+`7.0.0-1014-aws`, and native `aarch64-unknown-linux-gnu` execution. The archived
+artifact used kernel `7.0.0-1011-aws` originally; replay does not recreate every
+detail of the original OS environment. The current harness and separate control
+binary used `nightly-2026-09-30`, rustc
+`5c543b0b8c73c7b72bc8284ced4fb22ead15734d`, LLVM 23.1.1, release optimization,
+fat LTO, one codegen unit, and the harness's `std/full/parallel/diag/getrandom`
+features with `rscrypto_internal`. The current source was the dirty tree over
+`d4045559`, bound by `source-identity.json`:
+`bde51461faa05898bc16f7899f00353ef59e70ab734879c7207de62bedcb5391`. The HMAC
+implementation and release harness were not edited for this investigation.
+
+Every campaign planned three repetitions of CPU 0 pinning versus affinity to
+CPUs 0–7, and immediate versus one-second-separated confirmation. Each pair used
+new processes at 20,000 and 80,000 samples. All pairs ran regardless of
+screening results; these are diagnostic measurements, not simulated release
+decisions. Policy order reversed on alternate repetitions, and variant order
+rotated. All class sequences matched for a given sample count.
+
+| Campaign / case | Runs | Max abs(t) | 20k >10 | 80k >10 |
+| --- | ---: | ---: | ---: | ---: |
+| Initial / archived valid-invalid | 24 | 21.51848 | 2 | 1 |
+| Initial / current valid-invalid | 24 | 28.43055 | 2 | 2 |
+| Initial / control valid-invalid | 24 | 7.64625 | 0 | 0 |
+| Initial / control invalid-valid | 24 | 5.77738 | 0 | 0 |
+| Initial / control valid-valid | 24 | 7.93745 | 0 | 0 |
+| Initial / control invalid-invalid | 24 | 6.42172 | 0 | 0 |
+| No transfer / archived valid-invalid | 24 | 37.79537 | 3 | 4 |
+| No transfer / archived valid-valid | 24 | 17.55567 | 3 | 1 |
+| No transfer / archived invalid-invalid | 24 | 35.92848 | 1 | 2 |
+
+The separate control's different code layout did not reproduce the release case.
+The stronger archived controls change only one four-byte instruction at virtual
+address `0x96a1c` (file offset 616988), in expected-tag preparation before
+measurement. `eor w8, w19, w8` becomes `eor w8, w19, wzr` for both valid, or
+`eor w8, w19, #1` for both invalid. Here `w19` contains the correct first tag
+byte and `w8` the class bit. Both substitutions preserve instruction width,
+registers written, and flags; all other bytes, including every timed instruction
+and its address, remain identical. The patcher rejects any input except the
+exact archived SHA-256 and checks the original opcode. LLVM disassembly
+independently confirmed both substitutions. These are diagnostic fixtures only.
+
+An intervening 72-measurement archived-control campaign overlapped artifact
+collection at 50 measurement boundaries. It is retained separately, including
+its failures, but the table uses the fixed follow-up with no transfers at any
+measurement boundary. Across all three campaigns, **288 measurements and
+14,400,000 raw observations** are retained, including all failures. No build ran
+during measurement. Process, load, CPU, affinity, and timestamp snapshots bound
+each run; this is not a claim that the OS or hypervisor was noise-free.
+
+The initial pinned archived pair was -21.51848 → -20.37705. The no-transfer
+delayed archived pair was -15.12602 → -37.79537. Thus neither pinning nor delay
+is a reliable remedy. The same-layout A/A crossings also mean that raising the
+threshold or accepting a later pass would hide an unresolved measurement effect.
+The full workflow already launches a fresh process for each measurement; no
+process-isolation fix was needed.
+
+### Retained identity, validation, and limits
+
+Local evidence lives in `benchmark_results/2026-10-05/graviton5-hmac/`.
+`original-artifact.json` identifies failed job `111133295986` and artifact
+`11265082865`; the default jobs API shows the later, successful second attempt
+instead. The downloaded ZIP matched its published SHA-256:
+`bc9df1a7a13ed93eb500e3f4370e10c3d6790531ca262021ca902345f695c919`.
+`ct-aarch64-linux-full.tar.gz` retains the original full evidence.
+`hmac-native-all.tar.gz` retains all native binaries, disassembly, prepared
+metadata, campaign plans, raw CSVs, output, and host snapshots. Its SHA-256 is:
+`7c029fc93d6c5e98bfc1034b15b8b2efb6e022a1ef74e3fe7ad888c73f1fa232`.
+`campaign-summary.json` verifies binary/raw hashes, observation counts,
+ordering, and class sequences. The campaign, patch, and analysis scripts, build
+logs, source manifest, original raw analysis, and host lifecycle logs are
+retained beside the archives.
+
+Binary SHA-256 identities:
+
+- Archived: `ef9815afcd675746ec2bc5adcb05299a73610472c184119e4ec1f0759ae75356`.
+- Current: `2e754e0df79678b811aed6981e5fd1f1512e0909d83210a1697176bea2a39de1`.
+- Separate control:
+  `3d92a127ae0abf50dfd8b0979f05061c33ac69e180c0eb6a0139eeaa9c418446`.
+- Archived valid-valid:
+  `34a3deb7bc3ce1f1cedbe6cad88f6124931d434b1afc41688482d7621d471071`.
+- Archived invalid-invalid:
+  `7fd81c655c550298b018375ec80330246c3a530bde52dff13fd1c1de9a6a2739`.
+
+`just ct-test` passed the harness/exporter and orchestration checks plus 1,265
+native and 1,236 portable internal tests on the local Mac.
+`just ct-validate --manifest-only`, focused control-driver Clippy with warnings
+denied, and Rustfmt passed. These local checks are separate from Graviton5 timing.
+The host was terminated and its attached volume removed after evidence collection.
+
+Control preparation also exposed a local toolchain-wrapper defect: an inner
+Cargo `--` delimiter was rejected before the child command ran. The wrapper now
+forwards every token after `--exec` unchanged. The regression failed before the
+fix and passed for all eight host configurations afterward, including nested
+flags, spaces, empty arguments, and invalid wrapper modes. The original Clippy
+command also passed through the repaired wrapper. `just test-scripts` passed
+with four existing platform skips. No dependency was added.
+
+This is bounded characterization, not a new release qualification or a proof
+that every historical HMAC failure had the same cause. The exact low-level
+mechanism remains unknown. Any future harness or qualification-policy change
+needs causal evidence and fresh target qualification; the present threshold,
+sample budgets, confirmation decision, and fail-closed behavior remain
+unchanged.
+
 ## 2026-10-04: Ed25519 and X25519 vector fixed-base tables
 
 On native x86-64 Windows, precomputing the 512 public conversions used by each fixed-base multiply

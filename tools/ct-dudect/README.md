@@ -3,6 +3,23 @@
 Run `just ct-test` to check the exporter and the report validation.
 Run timing cases through `just ct-dudect` or `just ct-full`.
 
+## HMAC host controls
+
+The separate `hmac_host_controls` binary diagnoses the short HMAC-SHA256 case.
+It calls production `HmacSha256::verify_tag` with the release case's message,
+random keys, class sequence, and seed. Only expected-tag preparation changes.
+Set `RSCRYPTO_CT_HMAC_CONTROL` to `valid-invalid`, `invalid-valid`, `valid-valid`,
+or `invalid-invalid`, and set `RSCRYPTO_CT_DUDECT_SAMPLES` to a positive count.
+Both settings are required. They have no effect on the release timing binary.
+An unknown control mode prints a diagnostic and exits with status 2 before collecting samples.
+
+The two identical-work controls separate class-label effects from tag validity.
+Reversing validity checks whether a difference follows the result or the label.
+The control binary has its own code layout; it cannot qualify the release binary.
+Retain exact binaries, raw CSVs, compiler identity, CPU affinity, and all planned
+repetitions when comparing them. A passing control does not dismiss a failing
+release case.
+
 ## CSV format
 
 The CSV columns are `benchname,sequence,class,runtime_ns`.

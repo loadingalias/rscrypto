@@ -116,9 +116,14 @@ Each required DudeCT case is decided in two steps on the same prepared binary.
 
 `[dudect_confirmation]` in `ct.toml` sets both values.
 Neither step changes a threshold.
-A stationary timing difference grows |t| by about the square root of the sample ratio,
-so four times the samples roughly doubles the |t| of a real leak.
-Host noise does not grow that way, so a one-off outlier does not fail the gate.
+With stable distributions and independent samples, a fixed class difference grows
+expected |t| by about the square root of the sample ratio.
+Four times the samples therefore roughly doubles the expected |t|.
+Each measurement launches a new process, immediately after the preceding step
+on the same host.
+Persistent host or measurement bias can survive confirmation.
+A confirmation result does not by itself distinguish that bias from
+secret-dependent behavior.
 The near-threshold rule also measures borderline passes again, so a real difference that screening
 underestimated can fail instead of passing on one draw.
 The report keeps the screening result under `screening`.

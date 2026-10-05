@@ -14,7 +14,7 @@ artifact_script = "scripts/ct/artifacts.sh"
 [dudect_confirmation]
 sample_factor = 4
 review_fraction = 0.75
-rationale = "A stationary timing difference grows |t| by about sqrt(sample_factor) with more samples; host noise does not. Confirming at four times the samples keeps every threshold, doubles the expected |t| of a real leak, and also escalates passing results within 25% of the threshold instead of accepting them on one draw."
+rationale = "With stable distributions and independent samples, a fixed class difference grows expected |t| by about sqrt(sample_factor). Four times the samples keeps every threshold and also escalates passing results within 25% of the threshold. Confirmation uses a new process on the same host; persistent host or measurement bias can survive it, so it does not establish the cause of a timing difference."
 
 [equality_evidence.release_binary]
 name = "rscrypto-ct-evidence"

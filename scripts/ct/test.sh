@@ -15,5 +15,5 @@ cd "$ROOT"
 "$PYTHON" "$ROOT/scripts/ct/replay_test.py"
 "$PYTHON" scripts/ct/internal.py --target "$(scripts/lib/toolchain.sh --print-host)" -- \
   scripts/lib/toolchain.sh --exec cargo test --locked --manifest-path tools/ct-dudect/Cargo.toml \
-  -p rscrypto-ct-dudect -p dudect-bencher --lib --bins
+  -p rscrypto-ct-dudect -p dudect-bencher --lib --bins --tests
 just --justfile "$ROOT/justfile" test-evidence
