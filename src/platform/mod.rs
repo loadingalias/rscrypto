@@ -46,7 +46,7 @@ pub use caps::{Arch, Caps};
 pub use detect::Detected;
 
 // Architecture-specific feature constants are available via submodules:
-// - `caps::x86` - x86/x86_64 features (SSE, AVX, AVX-512, etc.)
+// - `caps::x86` - x86-64 features (SSE, AVX, AVX-512, etc.)
 // - `caps::aarch64` - AArch64 features (NEON, SVE, crypto, etc.)
 // - `caps::riscv` - RISC-V features (V, Zb*, Zk*, etc.)
 // - `caps::wasm` - WebAssembly features (simd128, relaxed-simd)

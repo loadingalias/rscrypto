@@ -495,7 +495,7 @@ mod pmull {
 
 // s390x VGFM backend (Galois field multiply)
 
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 mod s390x_vgfm {
   use core::{arch::asm, simd::i64x2};
 
@@ -729,7 +729,7 @@ mod s390x_vgfm {
 
 // powerpc64 VPMSUMD backend (polynomial multiply-sum doubleword)
 
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 mod ppc_vpmsum {
   use core::{arch::asm, simd::i64x2};
 
@@ -858,7 +858,7 @@ mod ppc_vpmsum {
 
 // riscv64 Zvbc backend (vector carryless multiply)
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 mod rv_clmul {
   use core::arch::asm;
 
@@ -933,7 +933,7 @@ mod rv_clmul {
 
 // riscv64 Zbc backend (scalar carryless multiply)
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 mod rv_scalar_clmul {
   use core::arch::asm;
 
@@ -1567,7 +1567,11 @@ pub(super) unsafe fn aarch64_aggregate_8blocks_be_lanes_inline(
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[cfg(all(
+  target_arch = "powerpc64",
+  not(feature = "portable-only"),
+  any(feature = "aes-gcm", feature = "aes-gcm-siv")
+))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
 pub(super) unsafe fn ppc_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
@@ -1582,7 +1586,11 @@ pub(super) unsafe fn ppc_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[cfg(all(
+  target_arch = "powerpc64",
+  not(feature = "portable-only"),
+  any(feature = "aes-gcm", feature = "aes-gcm-siv")
+))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
 pub(super) unsafe fn ppc_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
@@ -1596,7 +1604,7 @@ pub(super) unsafe fn ppc_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u12
 ///
 /// # Safety
 /// Caller must ensure z/Vector is available.
-#[cfg(all(target_arch = "s390x", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
 #[target_feature(enable = "vector")]
 #[inline]
 pub(super) unsafe fn s390x_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
@@ -1611,7 +1619,11 @@ pub(super) unsafe fn s390x_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
 ///
 /// # Safety
 /// Caller must ensure z/Vector is available.
-#[cfg(all(target_arch = "s390x", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[cfg(all(
+  target_arch = "s390x",
+  not(feature = "portable-only"),
+  any(feature = "aes-gcm", feature = "aes-gcm-siv")
+))]
 #[target_feature(enable = "vector")]
 #[inline]
 pub(super) unsafe fn s390x_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
@@ -1621,7 +1633,7 @@ pub(super) unsafe fn s390x_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u
   unsafe { s390x_vgfm::aggregate_4blocks(acc, h_powers_rev, blocks) }
 }
 
-#[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
 /// Explicit portable carryless multiply + reduce.
 ///
 /// Unlike `clmul128_reduce`, this never climbs into a hardware backend.
@@ -1634,7 +1646,7 @@ pub(super) fn portable_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
 ///
 /// # Safety
 /// Caller must ensure Zvbc is available.
-#[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
 #[target_feature(enable = "v", enable = "zvbc")]
 #[inline]
 pub(super) unsafe fn riscv_vector_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
@@ -1649,7 +1661,7 @@ pub(super) unsafe fn riscv_vector_clmul128_reduce_inline(a: u128, b: u128) -> u1
 ///
 /// # Safety
 /// Caller must ensure Zbc or Zbkc is available.
-#[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
 #[target_feature(enable = "zbc")]
 #[inline]
 pub(super) unsafe fn riscv_scalar_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
@@ -1698,28 +1710,28 @@ fn clmul128_reduce_aarch64_pmull(a: u128, b: u128) -> u128 {
   unsafe { pmull::clmul128_reduce(a, b) }
 }
 
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 #[inline]
 fn clmul128_reduce_s390x_vgfm(a: u128, b: u128) -> u128 {
   // SAFETY: resolver only selects this backend after verifying z/Vector support.
   unsafe { s390x_vgfm::clmul128_reduce(a, b) }
 }
 
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 #[inline]
 fn clmul128_reduce_power_vpmsum(a: u128, b: u128) -> u128 {
   // SAFETY: resolver only selects this backend after verifying POWER8 crypto support.
   unsafe { ppc_vpmsum::clmul128_reduce(a, b) }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[inline]
 fn clmul128_reduce_riscv_vector(a: u128, b: u128) -> u128 {
   // SAFETY: resolver only selects this backend after verifying Zvbc support.
   unsafe { rv_clmul::clmul128_reduce(a, b) }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[inline]
 fn clmul128_reduce_riscv_scalar(a: u128, b: u128) -> u128 {
   // SAFETY: resolver only selects this backend after verifying Zbc/Zbkc support.
@@ -1740,17 +1752,17 @@ fn resolve_clmul128_reduce() -> Clmul128ReduceFn {
     return clmul128_reduce_aarch64_pmull;
   }
 
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   if _caps.has(crate::platform::caps::s390x::VECTOR) {
     return clmul128_reduce_s390x_vgfm;
   }
 
-  #[cfg(target_arch = "powerpc64")]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
   if _caps.has(crate::platform::caps::power::POWER8_CRYPTO) {
     return clmul128_reduce_power_vpmsum;
   }
 
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   {
     use crate::platform::caps::riscv;
 
@@ -1793,8 +1805,8 @@ pub fn diag_polyval_reduce_portable(a: &[u8; 16], b: &[u8; 16]) -> [u8; 16] {
     any(
       all(target_arch = "x86_64", target_feature = "sse2"),
       target_arch = "aarch64",
-      target_arch = "powerpc64",
-      target_arch = "s390x"
+      all(target_arch = "powerpc64", not(feature = "portable-only")),
+      all(target_arch = "s390x", not(feature = "portable-only"))
     )
   )
 ))]
@@ -1971,7 +1983,7 @@ pub(super) fn accumulate_4blocks(
     }
   }
 
-  #[cfg(target_arch = "powerpc64")]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
   {
     if crate::platform::caps().has(crate::platform::caps::power::POWER8_CRYPTO) {
       // SAFETY: POWER8 crypto aggregate call because:
@@ -1981,7 +1993,7 @@ pub(super) fn accumulate_4blocks(
     }
   }
 
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   {
     if crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
       // SAFETY: z/Vector aggregate call because:
@@ -1994,8 +2006,8 @@ pub(super) fn accumulate_4blocks(
   #[cfg(not(any(
     all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
-    target_arch = "powerpc64",
-    target_arch = "s390x"
+    all(target_arch = "powerpc64", not(feature = "portable-only")),
+    all(target_arch = "s390x", not(feature = "portable-only"))
   )))]
   let _ = h_powers_rev;
 

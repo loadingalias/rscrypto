@@ -68,7 +68,9 @@ and [`test-vector-coverage.md`](test-vector-coverage.md) for independent vectors
 `portable-only` makes runtime detection report no accelerated capabilities.
 It also turns off assembly that the crate selects at compile time from the target alone,
 such as the RSA, elliptic-curve, ML-KEM, and ML-DSA backends.
-It does not remove accelerated code from the binary.
+It excludes nightly-only POWER, IBM Z, and RISC-V backends from compilation,
+so these targets can build on the declared MSRV.
+It does not promise to remove every accelerated backend from the binary.
 Some hash backends that a compile-time `target_feature` setting enables still run,
 for example SHA-256 on Apple Silicon.
 See [`platforms.md`](platforms.md).

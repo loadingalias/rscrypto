@@ -564,15 +564,15 @@ mod tests {
     let kernels = &[Xxh3KernelId::Avx2, Xxh3KernelId::Avx512][..];
     #[cfg(target_arch = "aarch64")]
     let kernels = &[Xxh3KernelId::Neon][..];
-    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
     let kernels = &[Xxh3KernelId::Vsx][..];
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     let kernels = &[Xxh3KernelId::Vector][..];
     #[cfg(not(any(
       target_arch = "x86_64",
       target_arch = "aarch64",
-      all(target_arch = "powerpc64", target_endian = "little"),
-      target_arch = "s390x"
+      all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+      all(target_arch = "s390x", not(feature = "portable-only"))
     )))]
     let kernels = &[][..];
 
@@ -639,8 +639,8 @@ mod tests {
     #[cfg(any(
       target_arch = "x86_64",
       target_arch = "aarch64",
-      all(target_arch = "powerpc64", target_endian = "little"),
-      target_arch = "s390x"
+      all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+      all(target_arch = "s390x", not(feature = "portable-only"))
     ))]
     use super::super::kernels::Xxh3KernelId;
     use super::super::kernels::{hash64_long_fn, hash128_long_fn, required_caps};
@@ -649,15 +649,15 @@ mod tests {
     let kernels = &[Xxh3KernelId::Avx2, Xxh3KernelId::Avx512][..];
     #[cfg(target_arch = "aarch64")]
     let kernels = &[Xxh3KernelId::Neon][..];
-    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
     let kernels = &[Xxh3KernelId::Vsx][..];
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     let kernels = &[Xxh3KernelId::Vector][..];
     #[cfg(not(any(
       target_arch = "x86_64",
       target_arch = "aarch64",
-      all(target_arch = "powerpc64", target_endian = "little"),
-      target_arch = "s390x"
+      all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+      all(target_arch = "s390x", not(feature = "portable-only"))
     )))]
     let kernels = &[][..];
 

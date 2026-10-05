@@ -105,28 +105,6 @@ const fn gate_x86_amx_permission(caps: Caps, permitted: bool) -> Caps {
   }
 }
 
-#[cfg(target_arch = "x86")]
-fn detect_x86() -> Detected {
-  // Start with compile-time detected features
-  let mut caps = caps_static();
-
-  #[cfg(feature = "std")]
-  {
-    use crate::platform::caps::x86;
-
-    // SSE2 is not guaranteed on 32-bit x86, detect at runtime
-    if std::arch::is_x86_feature_detected!("sse2") {
-      caps |= x86::SSE2;
-    }
-    caps |= runtime_x86_32();
-  }
-
-  Detected {
-    caps,
-    arch: Arch::X86,
-  }
-}
-
 #[cfg(all(target_arch = "x86_64", feature = "std"))]
 #[inline]
 fn cpuid_leaf(leaf: u32) -> CpuidRegisters {
@@ -159,12 +137,6 @@ fn cpuid_leaf_count(leaf: u32, subleaf: u32) -> CpuidRegisters {
   }
 
   CpuidRegisters { eax, ebx, ecx, edx }
-}
-
-#[cfg(all(target_arch = "x86", feature = "std"))]
-#[inline]
-fn cpuid_leaf(leaf: u32) -> core::arch::x86::CpuidResult {
-  core::arch::x86::__cpuid(leaf)
 }
 
 /// Batch CPUID result containing all extracted information.
@@ -596,39 +568,6 @@ fn decode_cpuid_x86_64(snapshot: CpuidSnapshot) -> CpuidBatch {
     model,
     amx_permission: snapshot.amx_permission,
   }
-}
-
-/// Runtime x86 (32-bit) feature detection using CPUID.
-#[cfg(all(target_arch = "x86", feature = "std"))]
-fn runtime_x86_32() -> Caps {
-  use crate::platform::caps::x86;
-
-  let mut caps = Caps::NONE;
-
-  // CPUID leaf 1: processor info and feature bits
-  let cpuid1 = cpuid_leaf(1);
-
-  // ECX features (leaf 1)
-  if cpuid1.ecx & (1 << 0) != 0 {
-    caps |= x86::SSE3;
-  }
-  if cpuid1.ecx & (1 << 9) != 0 {
-    caps |= x86::SSSE3;
-  }
-  if cpuid1.ecx & (1 << 19) != 0 {
-    caps |= x86::SSE41;
-  }
-  if cpuid1.ecx & (1 << 20) != 0 {
-    caps |= x86::SSE42;
-  }
-  if cpuid1.ecx & (1 << 1) != 0 {
-    caps |= x86::PCLMULQDQ;
-  }
-  if cpuid1.ecx & (1 << 25) != 0 {
-    caps |= x86::AESNI;
-  }
-
-  caps
 }
 
 /// Check if user has explicitly enabled AVX-512 on hybrid Intel CPUs.

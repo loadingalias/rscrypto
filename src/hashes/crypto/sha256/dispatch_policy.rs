@@ -24,7 +24,10 @@ pub(crate) fn select_runtime_kernel(caps: Caps) -> KernelId {
       return KernelId::Aarch64Sha2;
     }
   }
-  #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+  #[cfg(all(
+    any(target_arch = "riscv64", target_arch = "riscv32"),
+    not(feature = "portable-only")
+  ))]
   {
     if caps.has(super::kernels::required_caps(KernelId::RiscvZknh)) {
       return KernelId::RiscvZknh;

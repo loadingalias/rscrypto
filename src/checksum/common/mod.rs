@@ -16,8 +16,8 @@
   any(
     all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
-    target_arch = "powerpc64",
-    target_arch = "s390x"
+    all(target_arch = "powerpc64", not(feature = "portable-only")),
+    all(target_arch = "s390x", not(feature = "portable-only"))
   )
 ))]
 pub(in crate::checksum) mod clmul;
@@ -44,7 +44,8 @@ pub(in crate::checksum) mod tests;
 #[inline]
 #[cfg(all(
   feature = "crc16",
-  any(target_arch = "powerpc64", target_arch = "riscv64", target_arch = "s390x")
+  any(target_arch = "powerpc64", target_arch = "riscv64", target_arch = "s390x"),
+  not(feature = "portable-only")
 ))]
 pub(in crate::checksum) const fn low_u16(value: u32) -> u16 {
   let [b0, b1, ..] = value.to_le_bytes();
@@ -54,7 +55,8 @@ pub(in crate::checksum) const fn low_u16(value: u32) -> u16 {
 #[inline]
 #[cfg(all(
   any(feature = "crc16", feature = "crc24", feature = "crc32"),
-  any(target_arch = "powerpc64", target_arch = "riscv64", target_arch = "s390x")
+  any(target_arch = "powerpc64", target_arch = "riscv64", target_arch = "s390x"),
+  not(feature = "portable-only")
 ))]
 pub(in crate::checksum) const fn low_u32(value: u64) -> u32 {
   let [b0, b1, b2, b3, ..] = value.to_le_bytes();

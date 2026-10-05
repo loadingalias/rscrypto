@@ -2,7 +2,7 @@ use super::Sha512;
 use crate::platform::Caps;
 #[cfg(target_arch = "aarch64")]
 use crate::platform::caps::aarch64;
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 use crate::platform::caps::riscv;
 #[cfg(target_arch = "s390x")]
 use crate::platform::caps::s390x;
@@ -24,7 +24,7 @@ pub(crate) enum Sha512KernelId {
   X86Sha512 = 2,
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   X86Avx512vl = 5,
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   Riscv64Zknh = 3,
   #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
   WasmSimd128 = 4,
@@ -49,7 +49,7 @@ impl Sha512KernelId {
       Self::X86Sha512 => "x86-sha512",
       #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx512vl => "x86-avx512vl",
-      #[cfg(target_arch = "riscv64")]
+      #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
       Self::Riscv64Zknh => "riscv/zknh",
       #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
       Self::WasmSimd128 => "wasm/simd128",
@@ -86,7 +86,7 @@ fn compress_blocks_x86_avx512vl(state: &mut [u64; 8], blocks: &[u8]) {
   unsafe { super::x86_64_avx512vl::compress_blocks_avx512vl(state, blocks) }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 fn compress_blocks_riscv_zknh(state: &mut [u64; 8], blocks: &[u8]) {
   // SAFETY: Only called when dispatch has verified `riscv::ZKNH` is available.
   unsafe { super::riscv64::compress_blocks_zknh(state, blocks) }
@@ -126,7 +126,7 @@ pub(crate) fn compress_blocks_fn(id: Sha512KernelId) -> CompressBlocksFn {
     Sha512KernelId::X86Sha512 => compress_blocks_x86_sha512,
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Sha512KernelId::X86Avx512vl => compress_blocks_x86_avx512vl,
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     Sha512KernelId::Riscv64Zknh => compress_blocks_riscv_zknh,
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     Sha512KernelId::WasmSimd128 => compress_blocks_wasm_simd128,
@@ -150,7 +150,7 @@ pub(crate) const fn required_caps(id: Sha512KernelId) -> Caps {
     Sha512KernelId::X86Sha512 => x86::SHA512.union(x86::AVX2),
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Sha512KernelId::X86Avx512vl => x86::AVX512F.union(x86::AVX512VL).union(x86::BMI2),
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     Sha512KernelId::Riscv64Zknh => riscv::ZKNH,
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     Sha512KernelId::WasmSimd128 => wasm::SIMD128,
@@ -171,7 +171,7 @@ pub(crate) const ALL: &[Sha512KernelId] = &[
   Sha512KernelId::Aarch64Sha512,
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   Sha512KernelId::X86Sha512,
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   Sha512KernelId::Riscv64Zknh,
   #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
   Sha512KernelId::WasmSimd128,

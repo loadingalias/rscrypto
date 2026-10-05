@@ -75,11 +75,11 @@ use crate::{
 mod aarch64;
 mod dispatch;
 mod kernels;
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 mod power;
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 mod riscv64;
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 mod s390x;
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 mod wasm;
@@ -534,14 +534,7 @@ pub fn diag_hash_portable(
   variant: Argon2Variant,
   out: &mut [u8],
 ) -> Result<(), Argon2Error> {
-  argon2_hash_with_kernel_diag_blake2b(
-    params,
-    password,
-    salt,
-    variant,
-    out,
-    dispatch::compress_fn_for(KernelId::Portable),
-  )
+  argon2_hash_with_kernel_diag_blake2b(params, password, salt, variant, out, kernels::compress_portable)
 }
 
 #[cfg(all(
@@ -557,7 +550,7 @@ pub fn diag_hash_portable(
 ))]
 fn diag_compress_for(kernel: KernelId) -> Result<CompressFn, Argon2Error> {
   if crate::platform::caps().has(dispatch::required_caps(kernel)) {
-    Ok(dispatch::compress_fn_for(kernel))
+    dispatch::compress_fn_for(kernel).ok_or(Argon2Error::BackendUnavailable)
   } else {
     Err(Argon2Error::BackendUnavailable)
   }
@@ -576,14 +569,7 @@ pub fn diag_hash_aarch64_neon(
   variant: Argon2Variant,
   out: &mut [u8],
 ) -> Result<(), Argon2Error> {
-  argon2_hash_with_kernel(
-    params,
-    password,
-    salt,
-    variant,
-    out,
-    dispatch::compress_fn_for(KernelId::Aarch64Neon),
-  )
+  argon2_hash_with_kernel(params, password, salt, variant, out, aarch64::compress_neon)
 }
 
 /// Hash via the x86_64 AVX2 kernel.
@@ -818,8 +804,9 @@ pub fn diag_compress_power_vsx(
     crate::platform::caps().has(dispatch::required_caps(KernelId::PowerVsx)),
     "POWER VSX not available on host"
   );
+  let compress = dispatch::compress_fn_for(KernelId::PowerVsx).expect("POWER VSX backend is compiled");
   // SAFETY: assertion witnesses VSX on the host.
-  unsafe { power::compress_vsx(dst, x, y, xor_into) }
+  unsafe { compress(dst, x, y, xor_into) }
 }
 
 /// Single-block compress via the s390x z/Vector kernel (diagnostic).
@@ -838,8 +825,9 @@ pub fn diag_compress_s390x_vector(
     crate::platform::caps().has(dispatch::required_caps(KernelId::S390xVector)),
     "s390x vector facility not available on host"
   );
+  let compress = dispatch::compress_fn_for(KernelId::S390xVector).expect("s390x vector backend is compiled");
   // SAFETY: assertion witnesses the vector facility on the host.
-  unsafe { s390x::compress_vector(dst, x, y, xor_into) }
+  unsafe { compress(dst, x, y, xor_into) }
 }
 
 /// Single-block compress via the riscv64 RVV kernel (diagnostic).
@@ -858,8 +846,9 @@ pub fn diag_compress_riscv64_v(
     crate::platform::caps().has(dispatch::required_caps(KernelId::Riscv64V)),
     "RISC-V V extension not available on host"
   );
+  let compress = dispatch::compress_fn_for(KernelId::Riscv64V).expect("RISC-V V backend is compiled");
   // SAFETY: assertion witnesses the V extension on the host.
-  unsafe { riscv64::compress_rvv(dst, x, y, xor_into) }
+  unsafe { compress(dst, x, y, xor_into) }
 }
 
 /// Single-block compress via the wasm32 simd128 kernel (diagnostic).

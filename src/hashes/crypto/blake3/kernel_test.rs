@@ -16,11 +16,11 @@ const ALL: &[Blake3KernelId] = &[
   Blake3KernelId::X86Avx512,
   #[cfg(target_arch = "aarch64")]
   Blake3KernelId::Aarch64Neon,
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   Blake3KernelId::S390xVector,
-  #[cfg(target_arch = "powerpc64")]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
   Blake3KernelId::PowerVsx,
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   Blake3KernelId::RiscvV,
 ];
 

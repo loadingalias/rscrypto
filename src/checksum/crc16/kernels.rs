@@ -129,7 +129,7 @@ pub(in crate::checksum) mod aarch64 {
   pub(in crate::checksum) const IBM_PMULL_SMALL_KERNEL: Crc16Fn = arch::crc16_ibm_pmull_small_safe;
 }
 
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 pub(in crate::checksum) mod power {
   use super::super::power as arch;
   use crate::checksum::dispatchers::Crc16Fn;
@@ -153,7 +153,7 @@ pub(in crate::checksum) mod power {
   ];
 }
 
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 pub(in crate::checksum) mod s390x {
   use super::super::s390x as arch;
   use crate::checksum::dispatchers::Crc16Fn;
@@ -177,7 +177,7 @@ pub(in crate::checksum) mod s390x {
   ];
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 pub(in crate::checksum) mod riscv64 {
   use super::super::riscv64 as arch;
   use crate::checksum::dispatchers::Crc16Fn;

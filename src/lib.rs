@@ -1,4 +1,4 @@
-//! Pure Rust cryptography, hardware-accelerated on ten architectures. `no_std` first.
+//! Pure Rust cryptography with hardware acceleration. `no_std` first.
 //!
 //! `rscrypto` is a single-crate cryptography stack: hashes, AEADs, MACs, KDFs,
 //! password hashing, signatures, key exchange, and checksums. Enable one leaf
@@ -124,17 +124,19 @@ assert!(
 //! makes runtime capability detection report no SIMD/ASM capabilities, so
 //! dispatchers that consult runtime caps fall through to portable backends,
 //! and it turns off assembly that the crate selects at compile time from the
-//! target alone. Hash backends that a compile-time `target_feature` enables
+//! target alone. It excludes nightly-only POWER, IBM Z, and RISC-V backends
+//! from compilation. Hash backends that a compile-time `target_feature` enables
 //! can still run. It is a deployment control, not a substitute for release constant-time
 //! evidence. See the security guidance for nonce lifecycle, PHC verification
 //! limits, and platform fallback notes.
 
 // Exotic-architecture backends require nightly-only features (inline asm +
 // portable_simd + unstable target-feature flags). Primary targets (x86_64,
-// aarch64, wasm) compile on stable Rust from the declared MSRV.
+// aarch64, wasm) and portable-only builds compile from the declared MSRV.
 #![cfg_attr(
   all(
     target_arch = "powerpc64",
+    not(feature = "portable-only"),
     any(
       feature = "crc16",
       feature = "crc24",
@@ -164,6 +166,7 @@ assert!(
 #![cfg_attr(
   all(
     target_arch = "s390x",
+    not(feature = "portable-only"),
     any(
       feature = "crc16",
       feature = "crc24",
@@ -186,6 +189,7 @@ assert!(
 #![cfg_attr(
   all(
     target_arch = "s390x",
+    not(feature = "portable-only"),
     any(
       feature = "crc16",
       feature = "crc24",
@@ -220,6 +224,7 @@ assert!(
 #![cfg_attr(
   all(
     target_arch = "riscv64",
+    not(feature = "portable-only"),
     any(
       feature = "crc16",
       feature = "crc24",
@@ -241,6 +246,7 @@ assert!(
 #![cfg_attr(
   all(
     target_arch = "riscv64",
+    not(feature = "portable-only"),
     any(
       feature = "crc16",
       feature = "crc24",
@@ -256,6 +262,7 @@ assert!(
 #![cfg_attr(
   all(
     target_arch = "riscv64",
+    not(feature = "portable-only"),
     any(
       feature = "sha2",
       feature = "aes-gcm",
@@ -269,6 +276,7 @@ assert!(
 #![cfg_attr(
   all(
     target_arch = "riscv64",
+    not(feature = "portable-only"),
     any(
       feature = "blake3",
       feature = "chacha20poly1305",
@@ -278,9 +286,15 @@ assert!(
   ),
   feature(portable_simd)
 )]
-#![cfg_attr(all(target_arch = "riscv32", feature = "sha2"), feature(riscv_ext_intrinsics))]
+#![cfg_attr(
+  all(target_arch = "riscv32", feature = "sha2", not(feature = "portable-only")),
+  feature(riscv_ext_intrinsics)
+)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg(target_arch = "x86")]
+compile_error!("rscrypto does not support 32-bit x86 (i586/i686); use an x86_64 target");
 
 #[cfg(feature = "alloc")]
 extern crate alloc;

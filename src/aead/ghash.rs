@@ -234,7 +234,7 @@ pub(super) unsafe fn ghash_update_padded_wide_aarch64(
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 pub(super) unsafe fn ghash_update_padded_wide_ppc(
   mut acc: u128,
@@ -348,7 +348,7 @@ mod tests {
             let actual = unsafe { ghash_update_padded_wide_x86(initial, h, &reversed, data) };
             assert_eq!(actual, expected, "x86 len={len} offset={offset}");
           }
-          #[cfg(target_arch = "powerpc64")]
+          #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
           if _caps.has(crate::platform::caps::power::POWER8_CRYPTO) {
             // SAFETY: POWER8 crypto was checked above; slices and key powers are initialized.
             let actual = unsafe { ghash_update_padded_wide_ppc(initial, h, &reversed, data) };

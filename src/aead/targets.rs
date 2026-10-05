@@ -27,10 +27,10 @@ pub(super) enum AeadPrimitive {
       any(
         feature = "diag",
         target_arch = "aarch64",
-        target_arch = "powerpc64",
-        target_arch = "riscv64",
-        target_arch = "s390x",
-        all(target_arch = "x86_64", target_feature = "sse2"),
+        all(target_arch = "powerpc64", not(feature = "portable-only")),
+        all(target_arch = "riscv64", not(feature = "portable-only")),
+        all(target_arch = "s390x", not(feature = "portable-only")),
+        all(target_arch = "x86_64", target_feature = "sse2")
       )
     )
   ))]
@@ -46,10 +46,10 @@ pub(super) enum AeadPrimitive {
       any(
         feature = "diag",
         target_arch = "aarch64",
-        target_arch = "powerpc64",
-        target_arch = "riscv64",
-        target_arch = "s390x",
-        all(target_arch = "x86_64", target_feature = "sse2"),
+        all(target_arch = "powerpc64", not(feature = "portable-only")),
+        all(target_arch = "riscv64", not(feature = "portable-only")),
+        all(target_arch = "s390x", not(feature = "portable-only")),
+        all(target_arch = "x86_64", target_feature = "sse2")
       )
     )
   ))]
@@ -61,10 +61,10 @@ pub(super) enum AeadPrimitive {
       any(
         feature = "diag",
         target_arch = "aarch64",
-        all(target_arch = "powerpc64", target_endian = "little"),
-        target_arch = "riscv64",
-        target_arch = "s390x",
-        all(target_arch = "x86_64", target_feature = "sse2"),
+        all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+        all(target_arch = "riscv64", not(feature = "portable-only")),
+        all(target_arch = "s390x", not(feature = "portable-only")),
+        all(target_arch = "x86_64", target_feature = "sse2")
       )
     )
   ))]
@@ -90,10 +90,10 @@ pub(super) enum AeadBackend {
       any(
         feature = "diag",
         target_arch = "aarch64",
-        all(target_arch = "powerpc64", target_endian = "little"),
-        target_arch = "riscv64",
-        target_arch = "s390x",
-        all(target_arch = "x86_64", target_feature = "sse2"),
+        all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+        all(target_arch = "riscv64", not(feature = "portable-only")),
+        all(target_arch = "s390x", not(feature = "portable-only")),
+        all(target_arch = "x86_64", target_feature = "sse2")
       )
     )
   ))]
@@ -111,10 +111,10 @@ pub(super) enum AeadBackend {
       any(
         feature = "diag",
         target_arch = "aarch64",
-        all(target_arch = "powerpc64", target_endian = "little"),
-        target_arch = "riscv64",
-        target_arch = "s390x",
-        all(target_arch = "x86_64", target_feature = "sse2"),
+        all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+        all(target_arch = "riscv64", not(feature = "portable-only")),
+        all(target_arch = "s390x", not(feature = "portable-only")),
+        all(target_arch = "x86_64", target_feature = "sse2")
       )
     )
   ))]
@@ -134,10 +134,10 @@ pub(super) enum AeadBackend {
       any(
         feature = "diag",
         target_arch = "aarch64",
-        all(target_arch = "powerpc64", target_endian = "little"),
-        target_arch = "riscv64",
-        target_arch = "s390x",
-        all(target_arch = "x86_64", target_feature = "sse2"),
+        all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+        all(target_arch = "riscv64", not(feature = "portable-only")),
+        all(target_arch = "s390x", not(feature = "portable-only")),
+        all(target_arch = "x86_64", target_feature = "sse2")
       )
     )
   ))]
@@ -177,10 +177,10 @@ impl AeadBackend {
           any(
             feature = "diag",
             target_arch = "aarch64",
-            all(target_arch = "powerpc64", target_endian = "little"),
-            target_arch = "riscv64",
-            target_arch = "s390x",
-            all(target_arch = "x86_64", target_feature = "sse2"),
+            all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+            all(target_arch = "riscv64", not(feature = "portable-only")),
+            all(target_arch = "s390x", not(feature = "portable-only")),
+            all(target_arch = "x86_64", target_feature = "sse2")
           )
         )
       ))]
@@ -198,10 +198,10 @@ impl AeadBackend {
           any(
             feature = "diag",
             target_arch = "aarch64",
-            all(target_arch = "powerpc64", target_endian = "little"),
-            target_arch = "riscv64",
-            target_arch = "s390x",
-            all(target_arch = "x86_64", target_feature = "sse2"),
+            all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+            all(target_arch = "riscv64", not(feature = "portable-only")),
+            all(target_arch = "s390x", not(feature = "portable-only")),
+            all(target_arch = "x86_64", target_feature = "sse2")
           )
         )
       ))]
@@ -219,10 +219,10 @@ impl AeadBackend {
           any(
             feature = "diag",
             target_arch = "aarch64",
-            all(target_arch = "powerpc64", target_endian = "little"),
-            target_arch = "riscv64",
-            target_arch = "s390x",
-            all(target_arch = "x86_64", target_feature = "sse2"),
+            all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+            all(target_arch = "riscv64", not(feature = "portable-only")),
+            all(target_arch = "s390x", not(feature = "portable-only")),
+            all(target_arch = "x86_64", target_feature = "sse2")
           )
         )
       ))]
@@ -261,10 +261,10 @@ pub(super) fn select_backend(primitive: AeadPrimitive, arch: Arch, caps: Caps) -
         any(
           feature = "diag",
           target_arch = "aarch64",
-          target_arch = "powerpc64",
-          target_arch = "riscv64",
-          target_arch = "s390x",
-          all(target_arch = "x86_64", target_feature = "sse2"),
+          all(target_arch = "powerpc64", not(feature = "portable-only")),
+          all(target_arch = "riscv64", not(feature = "portable-only")),
+          all(target_arch = "s390x", not(feature = "portable-only")),
+          all(target_arch = "x86_64", target_feature = "sse2")
         )
       )
     ))]
@@ -278,10 +278,10 @@ pub(super) fn select_backend(primitive: AeadPrimitive, arch: Arch, caps: Caps) -
         any(
           feature = "diag",
           target_arch = "aarch64",
-          all(target_arch = "powerpc64", target_endian = "little"),
-          target_arch = "riscv64",
-          target_arch = "s390x",
-          all(target_arch = "x86_64", target_feature = "sse2"),
+          all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+          all(target_arch = "riscv64", not(feature = "portable-only")),
+          all(target_arch = "s390x", not(feature = "portable-only")),
+          all(target_arch = "x86_64", target_feature = "sse2")
         )
       )
     ))]
@@ -404,10 +404,10 @@ fn select_gcm_backend(arch: Arch, caps: Caps) -> AeadBackend {
     any(
       feature = "diag",
       target_arch = "aarch64",
-      all(target_arch = "powerpc64", target_endian = "little"),
-      target_arch = "riscv64",
-      target_arch = "s390x",
-      all(target_arch = "x86_64", target_feature = "sse2"),
+      all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+      all(target_arch = "riscv64", not(feature = "portable-only")),
+      all(target_arch = "s390x", not(feature = "portable-only")),
+      all(target_arch = "x86_64", target_feature = "sse2")
     )
   )
 ))]

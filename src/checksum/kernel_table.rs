@@ -473,9 +473,9 @@ impl KernelTable {
 /// converting it to `KernelTable::from_sets(...)` under the hood.
 #[cfg(any(
   target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "riscv64",
-  target_arch = "s390x",
+  all(target_arch = "powerpc64", not(feature = "portable-only")),
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only")),
   all(target_arch = "x86_64", target_feature = "sse2")
 ))]
 macro_rules! kernel_table {
@@ -623,7 +623,7 @@ fn capability_match(caps: Caps) -> Option<&'static KernelTable> {
     }
   }
 
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   {
     use crate::platform::caps::s390x::{Z13_READY, Z14_READY, Z15_READY, Z16_READY};
     if caps.has(Z16_READY) {
@@ -640,7 +640,7 @@ fn capability_match(caps: Caps) -> Option<&'static KernelTable> {
     }
   }
 
-  #[cfg(target_arch = "powerpc64")]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
   {
     use crate::platform::caps::power::{POWER9_READY, POWER10_READY, VPMSUM_READY};
     if caps.has(POWER10_READY) {
@@ -654,7 +654,7 @@ fn capability_match(caps: Caps) -> Option<&'static KernelTable> {
     }
   }
 
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   {
     use crate::platform::caps::riscv::{V, ZBC, ZVBC};
     let v_zvbc = V.union(ZVBC);
@@ -2361,7 +2361,7 @@ use x86_64_tables::*;
 
 // s390x Platform Tables
 
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 mod s390x_tables {
   use super::*;
   #[cfg(feature = "crc16")]
@@ -2575,12 +2575,12 @@ mod s390x_tables {
   };
 }
 
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 use s390x_tables::*;
 
 // powerpc64 Platform Tables
 
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 mod power_tables {
   use super::*;
   #[cfg(feature = "crc16")]
@@ -2794,12 +2794,12 @@ mod power_tables {
   };
 }
 
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 use power_tables::*;
 
 // riscv64 Platform Tables
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 mod riscv64_tables {
   use super::*;
   #[cfg(feature = "crc16")]
@@ -3005,7 +3005,7 @@ mod riscv64_tables {
   };
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 use riscv64_tables::*;
 
 // Tests
@@ -3067,7 +3067,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   fn test_s390x_z15_uses_vgfm_at_64b() {
     let names = S390X_Z15_TABLE.select_names(64);
     #[cfg(feature = "crc32")]
@@ -3077,7 +3077,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_arch = "powerpc64")]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
   fn test_power10_uses_vpmsum_at_64b() {
     let names = POWER10_TABLE.select_names(64);
     #[cfg(feature = "crc32")]
@@ -3087,7 +3087,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   fn test_riscv64_short_thresholds_keep_crc64_portable_at_64b() {
     let crc_names = RISCV64_ZVBC_TABLE.select_names(64);
     #[cfg(feature = "crc32")]

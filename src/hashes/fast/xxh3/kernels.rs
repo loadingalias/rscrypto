@@ -14,9 +14,9 @@ pub(crate) enum Xxh3KernelId {
   Neon = 2,
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   Avx512 = 3,
-  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
   Vsx = 4,
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   Vector = 5,
 }
 
@@ -33,9 +33,9 @@ impl Xxh3KernelId {
       Self::Neon => "neon",
       #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::Avx512 => "avx512",
-      #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+      #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
       Self::Vsx => "vsx",
-      #[cfg(target_arch = "s390x")]
+      #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
       Self::Vector => "zvector",
     }
   }
@@ -64,9 +64,9 @@ pub(crate) fn hash64_long_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u64 {
     Xxh3KernelId::Neon => super::aarch64_neon::xxh3_64_long,
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Xxh3KernelId::Avx512 => super::x86_64_avx512::xxh3_64_long,
-    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
     Xxh3KernelId::Vsx => super::power::xxh3_64_long,
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     Xxh3KernelId::Vector => super::s390x::xxh3_64_long,
   }
 }
@@ -94,9 +94,9 @@ pub(crate) fn hash128_long_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u128 {
     Xxh3KernelId::Neon => super::aarch64_neon::xxh3_128_long,
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Xxh3KernelId::Avx512 => super::x86_64_avx512::xxh3_128_long,
-    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
     Xxh3KernelId::Vsx => super::power::xxh3_128_long,
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     Xxh3KernelId::Vector => super::s390x::xxh3_128_long,
   }
 }
@@ -111,9 +111,9 @@ pub(crate) fn stream_accumulate_fn(id: Xxh3KernelId) -> StreamAccumulateFn {
     Xxh3KernelId::Neon => super::aarch64_neon::stream_accumulate,
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Xxh3KernelId::Avx512 => super::x86_64_avx512::stream_accumulate,
-    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
     Xxh3KernelId::Vsx => super::power::stream_accumulate,
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     Xxh3KernelId::Vector => super::s390x::stream_accumulate,
   }
 }
@@ -129,11 +129,11 @@ pub(crate) const fn required_caps(id: Xxh3KernelId) -> Caps {
     Xxh3KernelId::Neon => crate::platform::caps::aarch64::NEON,
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Xxh3KernelId::Avx512 => crate::platform::caps::x86::AVX512F,
-    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
     Xxh3KernelId::Vsx => crate::platform::caps::power::ALTIVEC
       .union(crate::platform::caps::power::VSX)
       .union(crate::platform::caps::power::POWER8_VECTOR),
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     Xxh3KernelId::Vector => crate::platform::caps::s390x::VECTOR,
   }
 }

@@ -18,9 +18,9 @@ pub(crate) mod dispatch;
 #[doc(hidden)]
 pub(crate) mod dispatch_tables;
 pub(crate) mod kernels;
-#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
 pub(crate) mod power;
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 pub(crate) mod s390x;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(crate) mod x86_64_avx2;

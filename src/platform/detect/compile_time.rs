@@ -20,7 +20,6 @@ pub(super) const fn caps_static() -> Caps {
   // The compiler eliminates dead branches entirely.
   #[cfg(any(
     target_arch = "x86_64",
-    target_arch = "x86",
     target_arch = "aarch64",
     target_arch = "riscv64",
     target_arch = "riscv32",
@@ -37,7 +36,6 @@ pub(super) const fn caps_static() -> Caps {
 
   #[cfg(any(
     target_arch = "x86_64",
-    target_arch = "x86",
     target_arch = "aarch64",
     target_arch = "riscv64",
     target_arch = "riscv32",
@@ -50,7 +48,6 @@ pub(super) const fn caps_static() -> Caps {
 
   #[cfg(not(any(
     target_arch = "x86_64",
-    target_arch = "x86",
     target_arch = "aarch64",
     target_arch = "riscv64",
     target_arch = "riscv32",
@@ -61,16 +58,13 @@ pub(super) const fn caps_static() -> Caps {
   )))]
   return Caps::NONE;
 
-  // x86/x86_64
-  #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+  // x86_64
+  #[cfg(target_arch = "x86_64")]
   {
     use crate::platform::caps::x86;
 
     // x86_64 baseline: SSE2 is guaranteed
-    #[cfg(target_arch = "x86_64")]
-    {
-      result = result.union(x86::SSE2);
-    }
+    result = result.union(x86::SSE2);
 
     detect!(result;
       // SSE family
@@ -296,7 +290,6 @@ pub(super) const fn caps_static() -> Caps {
 
   #[cfg(any(
     target_arch = "x86_64",
-    target_arch = "x86",
     target_arch = "aarch64",
     target_arch = "riscv64",
     target_arch = "riscv32",

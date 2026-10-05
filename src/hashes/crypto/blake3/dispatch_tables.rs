@@ -6,11 +6,11 @@ pub(crate) use super::kernels::Blake3KernelId as KernelId;
 use crate::platform::Caps;
 #[cfg(target_arch = "aarch64")]
 use crate::platform::caps::aarch64;
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 use crate::platform::caps::power;
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 use crate::platform::caps::riscv;
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 use crate::platform::caps::s390x;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 use crate::platform::caps::x86;
@@ -115,113 +115,122 @@ pub(crate) struct FamilyProfile {
 // availability and fall back to Portable when needed.
 #[cfg(any(
   all(target_arch = "x86_64", target_feature = "sse2"),
-  target_arch = "riscv64",
-  target_arch = "s390x",
-  target_arch = "powerpc64"
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only")),
+  all(target_arch = "powerpc64", not(feature = "portable-only"))
 ))]
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const SIMD_KERNEL: KernelId = KernelId::X86Avx2;
 #[cfg(any(
   all(target_arch = "x86_64", target_feature = "sse2"),
-  target_arch = "riscv64",
-  target_arch = "s390x",
-  target_arch = "powerpc64"
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only")),
+  all(target_arch = "powerpc64", not(feature = "portable-only"))
 ))]
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 const SIMD_KERNEL: KernelId = KernelId::S390xVector;
 #[cfg(any(
   all(target_arch = "x86_64", target_feature = "sse2"),
-  target_arch = "riscv64",
-  target_arch = "s390x",
-  target_arch = "powerpc64"
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only")),
+  all(target_arch = "powerpc64", not(feature = "portable-only"))
 ))]
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 const SIMD_KERNEL: KernelId = KernelId::PowerVsx;
 #[cfg(any(
   all(target_arch = "x86_64", target_feature = "sse2"),
-  target_arch = "riscv64",
-  target_arch = "s390x",
-  target_arch = "powerpc64"
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only")),
+  all(target_arch = "powerpc64", not(feature = "portable-only"))
 ))]
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 const SIMD_KERNEL: KernelId = KernelId::RiscvV;
 #[cfg(any(
   all(target_arch = "x86_64", target_feature = "sse2"),
-  target_arch = "riscv64",
-  target_arch = "s390x",
-  target_arch = "powerpc64"
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only")),
+  all(target_arch = "powerpc64", not(feature = "portable-only"))
 ))]
 #[cfg(not(any(
   all(target_arch = "x86_64", target_feature = "sse2"),
-  target_arch = "riscv64",
-  target_arch = "s390x",
-  target_arch = "powerpc64"
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only")),
+  all(target_arch = "powerpc64", not(feature = "portable-only"))
 )))]
 const SIMD_KERNEL: KernelId = KernelId::Portable;
 
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 const S390X_VECTOR_KERNEL: KernelId = KernelId::S390xVector;
 
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 const POWER_VSX_KERNEL: KernelId = KernelId::PowerVsx;
 
 #[cfg(any(
   all(target_arch = "x86_64", target_feature = "sse2"),
-  target_arch = "riscv64",
-  target_arch = "s390x",
-  target_arch = "powerpc64"
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only")),
+  all(target_arch = "powerpc64", not(feature = "portable-only"))
 ))]
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const DEFAULT_XS: KernelId = KernelId::X86Sse41;
 #[cfg(any(
   all(target_arch = "x86_64", target_feature = "sse2"),
-  target_arch = "riscv64",
-  target_arch = "s390x",
-  target_arch = "powerpc64"
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only")),
+  all(target_arch = "powerpc64", not(feature = "portable-only"))
 ))]
 #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
 const DEFAULT_XS: KernelId = KernelId::Portable;
 
 #[cfg(any(
   all(target_arch = "x86_64", target_feature = "sse2"),
-  target_arch = "riscv64",
-  target_arch = "s390x",
-  target_arch = "powerpc64"
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only")),
+  all(target_arch = "powerpc64", not(feature = "portable-only"))
 ))]
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const DEFAULT_S: KernelId = KernelId::X86Sse41;
 #[cfg(any(
   all(target_arch = "x86_64", target_feature = "sse2"),
-  target_arch = "riscv64",
-  target_arch = "s390x",
-  target_arch = "powerpc64"
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only")),
+  all(target_arch = "powerpc64", not(feature = "portable-only"))
 ))]
 #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
 const DEFAULT_S: KernelId = KernelId::Portable;
 
 #[cfg(any(
   all(target_arch = "x86_64", target_feature = "sse2"),
-  target_arch = "riscv64",
-  target_arch = "s390x",
-  target_arch = "powerpc64"
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only")),
+  all(target_arch = "powerpc64", not(feature = "portable-only"))
 ))]
 const DEFAULT_M: KernelId = SIMD_KERNEL;
 #[cfg(any(
   all(target_arch = "x86_64", target_feature = "sse2"),
-  target_arch = "riscv64",
-  target_arch = "s390x",
-  target_arch = "powerpc64"
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only")),
+  all(target_arch = "powerpc64", not(feature = "portable-only"))
 ))]
 const DEFAULT_L: KernelId = SIMD_KERNEL;
 
-#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64"))]
+#[cfg(any(
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  all(target_arch = "riscv64", not(feature = "portable-only"))
+))]
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const DEFAULT_STREAM_KERNEL: KernelId = KernelId::X86Avx2;
-#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64"))]
+#[cfg(any(
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  all(target_arch = "riscv64", not(feature = "portable-only"))
+))]
 #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
 const DEFAULT_STREAM_KERNEL: KernelId = KernelId::Portable;
 
-#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64"))]
+#[cfg(any(
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  all(target_arch = "riscv64", not(feature = "portable-only"))
+))]
 const DEFAULT_BULK_KERNEL: KernelId = SIMD_KERNEL;
 
 #[cfg(feature = "parallel")]
@@ -282,7 +291,11 @@ const fn parallel_table(
   }
 }
 
-#[cfg(all(feature = "parallel", any(target_arch = "s390x", target_arch = "powerpc64")))]
+#[cfg(all(
+  feature = "parallel",
+  any(target_arch = "s390x", target_arch = "powerpc64"),
+  not(feature = "portable-only")
+))]
 macro_rules! parallel_costs {
   (
     $min_bytes:expr,
@@ -335,7 +348,11 @@ const fn default_parallel_costs(min_bytes: usize, min_chunks: usize, max_threads
 
 #[inline]
 #[must_use]
-#[cfg(all(feature = "parallel", any(target_arch = "s390x", target_arch = "powerpc64")))]
+#[cfg(all(
+  feature = "parallel",
+  any(target_arch = "s390x", target_arch = "powerpc64"),
+  not(feature = "portable-only")
+))]
 const fn scalar_profile_parallel(
   min_bytes: usize,
   min_chunks: usize,
@@ -410,9 +427,9 @@ const fn scalar_profile_parallel(
 #[must_use]
 #[cfg(any(
   all(target_arch = "x86_64", target_feature = "sse2"),
-  target_arch = "riscv64",
-  target_arch = "s390x",
-  target_arch = "powerpc64"
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only")),
+  all(target_arch = "powerpc64", not(feature = "portable-only"))
 ))]
 const fn default_kind_table() -> DispatchTable {
   DispatchTable {
@@ -425,14 +442,23 @@ const fn default_kind_table() -> DispatchTable {
 }
 
 // Default threshold matches the default SIMD tier for each architecture.
-#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64"))]
+#[cfg(any(
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  all(target_arch = "riscv64", not(feature = "portable-only"))
+))]
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 const DEFAULT_BULK_THRESHOLD: usize = THRESHOLD_AVX2;
-#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64"))]
+#[cfg(any(
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  all(target_arch = "riscv64", not(feature = "portable-only"))
+))]
 #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
 const DEFAULT_BULK_THRESHOLD: usize = THRESHOLD_PORTABLE;
 
-#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64"))]
+#[cfg(any(
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  all(target_arch = "riscv64", not(feature = "portable-only"))
+))]
 #[inline]
 #[must_use]
 const fn default_kind_streaming_table() -> StreamingTable {
@@ -445,7 +471,10 @@ const fn default_kind_streaming_table() -> StreamingTable {
 
 #[cfg(all(
   feature = "parallel",
-  any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64")
+  any(
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    all(target_arch = "riscv64", not(feature = "portable-only"))
+  )
 ))]
 #[inline]
 #[must_use]
@@ -455,7 +484,10 @@ const fn default_kind_parallel_table() -> ParallelTable {
 
 #[cfg(all(
   feature = "parallel",
-  any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64")
+  any(
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    all(target_arch = "riscv64", not(feature = "portable-only"))
+  )
 ))]
 #[inline]
 #[must_use]
@@ -463,7 +495,10 @@ const fn default_kind_streaming_parallel_table() -> ParallelTable {
   default_kind_parallel_table()
 }
 
-#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64"))]
+#[cfg(any(
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  all(target_arch = "riscv64", not(feature = "portable-only"))
+))]
 #[inline]
 #[must_use]
 const fn default_kind_profile() -> FamilyProfile {
@@ -501,7 +536,10 @@ const fn portable_profile() -> FamilyProfile {
   }
 }
 
-#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "riscv64"))]
+#[cfg(any(
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  all(target_arch = "riscv64", not(feature = "portable-only"))
+))]
 pub(crate) static PROFILE_DEFAULT_KIND: FamilyProfile = default_kind_profile();
 #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
 pub(crate) static PROFILE_PORTABLE: FamilyProfile = portable_profile();
@@ -639,7 +677,7 @@ pub(crate) static PROFILE_AARCH64_NEON: FamilyProfile = FamilyProfile {
   },
 };
 // Family Profile: Z13
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 pub(crate) static PROFILE_Z13: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
@@ -654,7 +692,7 @@ pub(crate) static PROFILE_Z13: FamilyProfile = FamilyProfile {
 };
 
 // Family Profile: Z14
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 pub(crate) static PROFILE_Z14: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
@@ -669,7 +707,7 @@ pub(crate) static PROFILE_Z14: FamilyProfile = FamilyProfile {
 };
 
 // Family Profile: Z15
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 pub(crate) static PROFILE_Z15: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 256, 4096],
@@ -711,7 +749,7 @@ pub(crate) static PROFILE_Z15: FamilyProfile = FamilyProfile {
   },
 };
 // Family Profile: POWER7
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 pub(crate) static PROFILE_POWER7: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
@@ -726,7 +764,7 @@ pub(crate) static PROFILE_POWER7: FamilyProfile = FamilyProfile {
 };
 
 // Family Profile: POWER8
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 pub(crate) static PROFILE_POWER8: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
@@ -741,7 +779,7 @@ pub(crate) static PROFILE_POWER8: FamilyProfile = FamilyProfile {
 };
 
 // Family Profile: POWER9
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 pub(crate) static PROFILE_POWER9: FamilyProfile = FamilyProfile {
   dispatch: default_kind_table(),
   streaming: StreamingTable {
@@ -756,7 +794,7 @@ pub(crate) static PROFILE_POWER9: FamilyProfile = FamilyProfile {
 };
 
 // Family Profile: POWER10
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 pub(crate) static PROFILE_POWER10: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 256, 4096],
@@ -821,7 +859,7 @@ pub(crate) fn select_profile_for_caps(caps: Caps) -> &'static FamilyProfile {
     &PROFILE_PORTABLE
   }
 
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   {
     if caps.has(s390x::Z15_READY) {
       return &PROFILE_Z15;
@@ -835,7 +873,7 @@ pub(crate) fn select_profile_for_caps(caps: Caps) -> &'static FamilyProfile {
     &PROFILE_PORTABLE
   }
 
-  #[cfg(target_arch = "powerpc64")]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
   {
     if caps.has(power::POWER10_READY) {
       return &PROFILE_POWER10;
@@ -852,7 +890,7 @@ pub(crate) fn select_profile_for_caps(caps: Caps) -> &'static FamilyProfile {
     &PROFILE_PORTABLE
   }
 
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   {
     if caps.has(riscv::V) {
       return &PROFILE_DEFAULT_KIND;
@@ -863,9 +901,9 @@ pub(crate) fn select_profile_for_caps(caps: Caps) -> &'static FamilyProfile {
   #[cfg(not(any(
     all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
-    target_arch = "s390x",
-    target_arch = "powerpc64",
-    target_arch = "riscv64"
+    all(target_arch = "s390x", not(feature = "portable-only")),
+    all(target_arch = "powerpc64", not(feature = "portable-only")),
+    all(target_arch = "riscv64", not(feature = "portable-only"))
   )))]
   {
     let _ = caps;

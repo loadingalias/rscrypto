@@ -52,7 +52,7 @@ pub(crate) fn select_runtime_kernel(caps: Caps) -> KernelId {
       return KernelId::Aarch64Sha512;
     }
   }
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   {
     use crate::platform::caps::riscv;
     if caps.has(riscv::ZKNH) {

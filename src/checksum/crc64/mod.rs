@@ -26,10 +26,10 @@ mod aarch64;
 
 // NOTE: The VPMSUMD CRC64 backend is currently implemented for little-endian
 // POWER and supports both endiannesses (big-endian loads are normalized).
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 mod power;
 
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 mod s390x;
 
 // Re-export config types for public API (Crc64Force only used internally on SIMD archs)

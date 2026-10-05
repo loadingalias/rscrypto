@@ -16,7 +16,7 @@ pub(crate) mod kernels;
 
 #[cfg(target_arch = "aarch64")]
 pub(crate) mod aarch64;
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 pub(crate) mod riscv64;
 #[cfg(target_arch = "s390x")]
 pub(crate) mod s390x;
@@ -526,7 +526,7 @@ impl Sha512 {
 
 /// Read SHA-512 round constant K[i].
 ///
-/// On x86/x86_64, 64-bit constants can sometimes be encoded via `movabs`+`add`,
+/// On x86_64, 64-bit constants can sometimes be encoded via `movabs`+`add`,
 /// but on all other architectures (POWER, aarch64, s390x), materializing a
 /// 64-bit immediate requires 4+ instructions. Loading from the static K array
 /// via a single `ld`/`ldr` is far cheaper.
@@ -537,12 +537,12 @@ impl Sha512 {
 /// here too.
 #[inline(always)]
 fn rk(i: usize) -> u64 {
-  #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+  #[cfg(target_arch = "x86_64")]
   {
     // SAFETY: i is always in 0..80, and K has exactly 80 elements.
     unsafe { core::ptr::read(K.0.as_ptr().add(i)) }
   }
-  #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+  #[cfg(not(target_arch = "x86_64"))]
   {
     let base = core::hint::black_box(K.0.as_ptr());
     // SAFETY: i is always in 0..80, K has exactly 80 elements, and

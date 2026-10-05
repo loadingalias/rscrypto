@@ -11,7 +11,7 @@
 //!
 //! # Bit Layout
 //!
-//! - Bits 0-63: x86/x86_64 features
+//! - Bits 0-63: x86-64 features
 //! - Bits 64-127: aarch64/arm features
 //! - Bits 128-191: RISC-V features
 //! - Bits 192-255: WebAssembly and other architectures
@@ -228,8 +228,6 @@ impl core::ops::BitOrAssign for Caps {
 pub enum Arch {
   /// 64-bit x86 (`target_arch = "x86_64"`).
   X86_64,
-  /// 32-bit x86 (`target_arch = "x86"`).
-  X86,
   /// 64-bit Arm (`target_arch = "aarch64"`).
   Aarch64,
   /// 32-bit Arm (`target_arch = "arm"`).
@@ -259,10 +257,6 @@ impl Arch {
     #[cfg(target_arch = "x86_64")]
     {
       Self::X86_64
-    }
-    #[cfg(target_arch = "x86")]
-    {
-      Self::X86
     }
     #[cfg(target_arch = "aarch64")]
     {
@@ -298,7 +292,6 @@ impl Arch {
     }
     #[cfg(not(any(
       target_arch = "x86_64",
-      target_arch = "x86",
       target_arch = "aarch64",
       target_arch = "arm",
       target_arch = "riscv64",
@@ -319,7 +312,6 @@ impl Arch {
   pub const fn name(self) -> &'static str {
     match self {
       Self::X86_64 => "x86_64",
-      Self::X86 => "x86",
       Self::Aarch64 => "aarch64",
       Self::Arm => "arm",
       Self::Riscv64 => "riscv64",
@@ -339,9 +331,9 @@ impl core::fmt::Display for Arch {
   }
 }
 
-// x86/x86_64 Features (bits 0-63)
+// x86-64 Features (bits 0-63)
 
-/// x86/x86_64 CPU features.
+/// x86-64 CPU features.
 ///
 /// Includes SSE, AVX, AVX-512, crypto extensions, and bit manipulation.
 pub mod x86 {
@@ -900,7 +892,7 @@ pub mod power {
 /// Feature name entry: (bit_index, name).
 type FeatureEntry = (u8, &'static str);
 
-/// x86/x86_64 feature names.
+/// x86-64 feature names.
 const X86_FEATURES: &[FeatureEntry] = &[
   (0, "sse2"),
   (1, "sse3"),
@@ -1219,10 +1211,6 @@ mod tests {
       {
         Arch::X86_64
       }
-      #[cfg(target_arch = "x86")]
-      {
-        Arch::X86
-      }
       #[cfg(target_arch = "aarch64")]
       {
         Arch::Aarch64
@@ -1257,7 +1245,6 @@ mod tests {
       }
       #[cfg(not(any(
         target_arch = "x86_64",
-        target_arch = "x86",
         target_arch = "aarch64",
         target_arch = "arm",
         target_arch = "riscv64",
@@ -1441,12 +1428,10 @@ mod tests {
   }
 
   #[test]
-  fn test_debug_impl_without_alloc() {
-    // Test that Debug impl works correctly (it no longer uses alloc::vec::Vec)
+  fn debug_lists_enabled_capabilities() {
     let caps = x86::SSE42 | x86::PCLMULQDQ;
     let debug_str = alloc::format!("{:?}", caps);
 
-    // Should contain the arch and feature names
     assert!(debug_str.contains("Caps("));
     assert!(debug_str.contains("sse4.2"));
     assert!(debug_str.contains("pclmulqdq"));

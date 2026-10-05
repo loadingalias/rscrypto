@@ -116,7 +116,11 @@ mod aes256gcmsiv;
 mod aes_fixslice_round;
 #[cfg(any(
   feature = "aegis256",
-  all(target_arch = "riscv64", any(feature = "aes-gcm", feature = "aes-gcm-siv"))
+  all(
+    target_arch = "riscv64",
+    not(feature = "portable-only"),
+    any(feature = "aes-gcm", feature = "aes-gcm-siv")
+  )
 ))]
 mod aes_round;
 #[cfg(feature = "aes-siv")]
@@ -192,10 +196,10 @@ mod polyval;
     any(
       feature = "diag",
       target_arch = "aarch64",
-      target_arch = "powerpc64",
-      target_arch = "riscv64",
-      target_arch = "s390x",
-      all(target_arch = "x86_64", target_feature = "sse2"),
+      all(target_arch = "powerpc64", not(feature = "portable-only")),
+      all(target_arch = "riscv64", not(feature = "portable-only")),
+      all(target_arch = "s390x", not(feature = "portable-only")),
+      all(target_arch = "x86_64", target_feature = "sse2")
     )
   ),
   all(
@@ -203,10 +207,10 @@ mod polyval;
     any(
       feature = "diag",
       target_arch = "aarch64",
-      all(target_arch = "powerpc64", target_endian = "little"),
-      target_arch = "riscv64",
-      target_arch = "s390x",
-      all(target_arch = "x86_64", target_feature = "sse2"),
+      all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+      all(target_arch = "riscv64", not(feature = "portable-only")),
+      all(target_arch = "s390x", not(feature = "portable-only")),
+      all(target_arch = "x86_64", target_feature = "sse2")
     )
   )
 ))]
@@ -270,6 +274,7 @@ pub use chacha20::diag_chacha20_xor_keystream_portable;
   rscrypto_internal,
   feature = "diag",
   target_arch = "powerpc64",
+  not(feature = "portable-only"),
   target_endian = "little",
   any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
 ))]
@@ -278,6 +283,7 @@ pub use chacha20::diag_chacha20_xor_keystream_power_vsx;
   rscrypto_internal,
   feature = "diag",
   target_arch = "riscv64",
+  not(feature = "portable-only"),
   any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
 ))]
 pub use chacha20::diag_chacha20_xor_keystream_riscv64_vector;
@@ -285,6 +291,7 @@ pub use chacha20::diag_chacha20_xor_keystream_riscv64_vector;
   rscrypto_internal,
   feature = "diag",
   target_arch = "s390x",
+  not(feature = "portable-only"),
   any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
 ))]
 pub use chacha20::diag_chacha20_xor_keystream_s390x_vector;
@@ -814,7 +821,7 @@ impl AeadByteLengths {
       test,
       all(target_arch = "x86_64", target_feature = "sse2"),
       target_arch = "aarch64",
-      target_arch = "riscv64"
+      all(target_arch = "riscv64", not(feature = "portable-only"))
     )
   ))]
   pub(crate) const fn total_at_least(self, minimum: u64) -> bool {

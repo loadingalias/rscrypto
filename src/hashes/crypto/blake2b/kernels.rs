@@ -2,7 +2,7 @@
 
 #[cfg(any(test, not(all(target_arch = "aarch64", target_os = "macos"))))]
 use crate::platform::Caps;
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 use crate::platform::caps::riscv;
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 use crate::platform::caps::wasm;
@@ -70,7 +70,7 @@ pub(crate) enum Blake2bKernelId {
   X86Avx2 = 1,
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   X86Avx512vl = 2,
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   Riscv64V = 6,
   #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
   WasmSimd128 = 7,
@@ -87,7 +87,7 @@ impl Blake2bKernelId {
       Self::X86Avx2 => "x86/avx2",
       #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
       Self::X86Avx512vl => "x86/avx512vl",
-      #[cfg(target_arch = "riscv64")]
+      #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
       Self::Riscv64V => "riscv64/v",
       #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
       Self::WasmSimd128 => "wasm/simd128",
@@ -107,7 +107,7 @@ fn compress_x86_avx512vl(h: &mut [u64; 8], block: &[u8; 128], t: u128, last: boo
   unsafe { super::x86_64::compress_avx512vl(h, block, t, last) }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 fn compress_riscv64_v(h: &mut [u64; 8], block: &[u8; 128], t: u128, last: bool) {
   // SAFETY: Only called when dispatch has verified V extension is available.
   unsafe { super::riscv64::compress_rvv(h, block, t, last) }
@@ -144,7 +144,7 @@ fn compress_blocks_x86_avx512vl(h: &mut [u64; 8], blocks: &[u8], t: &mut Blake2b
   compress_blocks_with(h, blocks, t, compress_x86_avx512vl);
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 fn compress_blocks_riscv64_v(h: &mut [u64; 8], blocks: &[u8], t: &mut Blake2bCounter) {
   compress_blocks_with(h, blocks, t, compress_riscv64_v);
 }
@@ -163,7 +163,7 @@ pub(crate) fn compress_fn(id: Blake2bKernelId) -> CompressFn {
     Blake2bKernelId::X86Avx2 => compress_x86_avx2,
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake2bKernelId::X86Avx512vl => compress_x86_avx512vl,
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     Blake2bKernelId::Riscv64V => compress_riscv64_v,
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     Blake2bKernelId::WasmSimd128 => compress_wasm_simd128,
@@ -178,7 +178,7 @@ pub(crate) fn compress_blocks_fn(id: Blake2bKernelId) -> CompressBlocksFn {
     Blake2bKernelId::X86Avx2 => compress_blocks_x86_avx2,
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake2bKernelId::X86Avx512vl => compress_blocks_x86_avx512vl,
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     Blake2bKernelId::Riscv64V => compress_blocks_riscv64_v,
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     Blake2bKernelId::WasmSimd128 => compress_blocks_wasm_simd128,
@@ -196,7 +196,7 @@ pub(crate) const fn required_caps(id: Blake2bKernelId) -> Caps {
     Blake2bKernelId::X86Avx2 => x86::AVX2,
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake2bKernelId::X86Avx512vl => x86::AVX512F.union(x86::AVX512VL),
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     Blake2bKernelId::Riscv64V => riscv::V,
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     Blake2bKernelId::WasmSimd128 => wasm::SIMD128,
@@ -211,7 +211,7 @@ pub(crate) const ALL: &[Blake2bKernelId] = &[
   Blake2bKernelId::X86Avx2,
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   Blake2bKernelId::X86Avx512vl,
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   Blake2bKernelId::Riscv64V,
   #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
   Blake2bKernelId::WasmSimd128,
@@ -485,7 +485,7 @@ fn split_counter(counter: u128) -> (u64, u64) {
 #[cfg(any(
   all(target_arch = "x86_64", target_feature = "sse2"),
   all(target_arch = "wasm32", target_feature = "simd128"),
-  target_arch = "riscv64"
+  all(target_arch = "riscv64", not(feature = "portable-only"))
 ))]
 #[inline(always)]
 pub(crate) fn init_v(h: &[u64; 8], t: u128, last: bool) -> [u64; 16] {

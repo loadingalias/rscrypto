@@ -3,6 +3,9 @@
 Portable Rust defines every supported primitive.
 SIMD and assembly backends make it faster; they are never a second specification.
 
+32-bit x86 targets, including i586 and i686, are unsupported and fail compilation.
+Use an x86-64 target for x86 deployments. The platform API no longer exposes `Arch::X86`.
+
 ## Backend selection
 
 Dispatch has three tiers:
@@ -18,7 +21,8 @@ It also turns off assembly that the crate selects at compile time from the targe
 such as the RSA, elliptic-curve, ML-KEM, and ML-DSA backends.
 Some hash backends that a compile-time `target_feature` setting enables still run,
 for example SHA-256 on Apple Silicon.
-`portable-only` does not remove code from the binary.
+It excludes the nightly-only POWER, IBM Z, and RISC-V backends from compilation.
+It does not promise to remove every accelerated backend from the binary.
 
 Detection runs once and is cached.
 Set capability overrides, and get process permissions such as Linux AMX authorization,
@@ -74,9 +78,10 @@ Until then, build with the 1.100 beta or a newer nightly.
 The repository tests with the nightly pinned in [`rust-toolchain.toml`](../rust-toolchain.toml).
 It checks the MSRV with the exact 1.100 beta pinned in [`scripts/lib/toolchain.py`](../scripts/lib/toolchain.py).
 
-On stable Rust, every target in the catalog builds except the four below.
-Their accelerated backends use unstable compiler features, so they need a nightly compiler.
-The `portable-only` feature does not remove this requirement.
+Every target in the catalog supports `portable-only` on the declared MSRV.
+The compatibility lane checks core-only and allocation-enabled builds and generates release code
+for POWER, IBM Z, RV64, and RV32 with this feature on the MSRV compiler.
+Their accelerated backends still use the unstable compiler features below and need nightly Rust.
 
 | Target                                     | Unstable features |
 | ------------------------------------------ | ----------------- |
@@ -86,7 +91,7 @@ The `portable-only` feature does not remove this requirement.
 | `riscv32imac-unknown-none-elf` with `sha2` | `riscv_ext_intrinsics` |
 
 Unstable features can change between nightlies.
-For these targets, the tested contract is the pinned nightly.
+For accelerated builds on these targets, the tested contract is the pinned nightly.
 A newer nightly can fail to build them until `rscrypto` adapts.
 
 Allocator-aware APIs, such as the ML-KEM and ML-DSA `*_in` constructors,
@@ -108,7 +113,7 @@ The [CI workflow](../.github/workflows/ci.yml) and the [repository recipes](../s
 | Native CI          | Native and portable suites, plus doctests, on Linux x86-64, AArch64, POWER, IBM Z, and RISC-V, and on Windows x86-64. POWER, IBM Z, and RISC-V build on x86-64 and run the transferred artifacts on native hardware. |
 | `just check-macos` | Local Apple Silicon checks before every push: native and portable release suites, doctests, internal evidence regressions, and physical RSA assembly qualification. |
 | `just test-musl`   | Native and portable suites, plus doctests, on a matching x86-64 or AArch64 Linux host. |
-| `just ci-compat`   | Feature, MSRV, and bare-metal compilation. Scalar and SIMD vector execution for `wasm32-unknown-unknown` and `wasm32-wasip1` in Wasmtime. |
+| `just ci-compat`   | Feature, MSRV, bare-metal, and MSRV `portable-only` compilation on POWER, IBM Z, RV64, and RV32. Scalar and SIMD vector execution for `wasm32-unknown-unknown` and `wasm32-wasip1` in Wasmtime. |
 
 A configured check is not a passing result for the current revision.
 Inspect the matching run artifacts before you qualify a release.

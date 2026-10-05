@@ -97,11 +97,11 @@ pub const ALL_KERNELS: &[KernelId] = &[
   KernelId::X86Avx2,
   #[cfg(target_arch = "aarch64")]
   KernelId::Aarch64Neon,
-  #[cfg(target_arch = "powerpc64")]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
   KernelId::PowerVsx,
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   KernelId::S390xVector,
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   KernelId::Riscv64V,
   #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
   KernelId::WasmSimd128,
@@ -151,11 +151,11 @@ pub const fn required_caps(kernel: KernelId) -> Caps {
 ///
 /// Does **not** check `required_caps`; the caller must have verified the
 /// host supports the kernel (the dispatcher does this, and the forced-
-/// kernel tests do it explicitly).
+/// kernel tests do it explicitly). Returns `None` for an uncompiled backend.
 #[inline]
 #[must_use]
-pub(super) fn compress_fn_for(kernel: KernelId) -> CompressFn {
-  match kernel {
+pub(super) fn compress_fn_for(kernel: KernelId) -> Option<CompressFn> {
+  Some(match kernel {
     KernelId::Portable => kernels::compress_portable,
     #[cfg(target_arch = "aarch64")]
     KernelId::Aarch64Neon => super::aarch64::compress_neon,
@@ -163,15 +163,21 @@ pub(super) fn compress_fn_for(kernel: KernelId) -> CompressFn {
     KernelId::X86Avx2 => super::x86_64::compress_avx2,
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     KernelId::X86Avx512 => super::x86_64::compress_avx512,
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     KernelId::PowerVsx => super::power::compress_vsx,
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     KernelId::S390xVector => super::s390x::compress_vector,
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     KernelId::Riscv64V => super::riscv64::compress_rvv,
+    #[cfg(all(target_arch = "powerpc64", feature = "portable-only"))]
+    KernelId::PowerVsx => return None,
+    #[cfg(all(target_arch = "s390x", feature = "portable-only"))]
+    KernelId::S390xVector => return None,
+    #[cfg(all(target_arch = "riscv64", feature = "portable-only"))]
+    KernelId::Riscv64V => return None,
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     KernelId::WasmSimd128 => super::wasm::compress_simd128,
-  }
+  })
 }
 
 /// Cached active kernel id. The first call to [`active_kernel`] walks
@@ -220,7 +226,7 @@ pub(super) fn active_kernel() -> KernelId {
 /// (no linear walk over `ALL_KERNELS`, no caps-bitset comparison).
 #[inline]
 pub(super) fn active_compress() -> CompressFn {
-  compress_fn_for(active_kernel())
+  compress_fn_for(active_kernel()).expect("Argon2 dispatch selects a compiled kernel")
 }
 
 #[cfg(test)]
@@ -374,7 +380,7 @@ mod tests {
       if !host.has(required_caps(id)) {
         continue;
       }
-      let kernel = compress_fn_for(id);
+      let kernel = compress_fn_for(id).expect("ALL_KERNELS contains only compiled kernels");
       let mut got = [0u64; super::super::BLOCK_WORDS];
       // SAFETY: cap check above confirms the kernel's required_caps
       // are present on the host.

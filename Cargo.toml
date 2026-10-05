@@ -283,7 +283,7 @@ rsa = { version = "0.9.10", default-features = false, features = ["std", "u64_di
 dryoc = "1.0.0"
 rustcrypto-ml-dsa = { version = "=0.1.1", package = "ml-dsa", default-features = false, features = ["zeroize"] }
 
-[target.'cfg(any(target_arch = "x86", target_arch = "x86_64"))'.dev-dependencies]
+[target.'cfg(target_arch = "x86_64")'.dev-dependencies]
 libcrux-ml-kem = { version = "0.0.10", default-features = false, features = [
   "mlkem512",
   "mlkem768",
@@ -313,7 +313,7 @@ libcrux-ml-dsa = { version = "0.0.10", default-features = false, features = [
   "simd128",
 ] }
 
-[target.'cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))'.dev-dependencies]
+[target.'cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))'.dev-dependencies]
 libcrux-ml-kem = { version = "0.0.10", default-features = false, features = [
   "mlkem512",
   "mlkem768",

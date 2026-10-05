@@ -8,17 +8,17 @@ use core::fmt;
 #[cfg(any(
   all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "aarch64",
-  all(target_arch = "powerpc64", target_endian = "little"),
-  target_arch = "riscv64",
-  target_arch = "s390x",
+  all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only"))
 ))]
 use super::targets::AeadBackend;
 #[cfg(any(
   all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "aarch64",
-  all(target_arch = "powerpc64", target_endian = "little"),
-  target_arch = "riscv64",
-  target_arch = "s390x",
+  all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only"))
 ))]
 use super::targets::{AeadPrimitive, select_backend};
 use super::{AeadBufferError, Nonce256, OpenError, SealError};
@@ -221,24 +221,24 @@ mod ce;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[path = "aegis256/x86_64_ni.rs"]
 mod ni;
-#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
 #[path = "aegis256/powerpc64_ppc.rs"]
 mod ppc;
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[path = "aegis256/riscv64_zkne.rs"]
 mod rv_zkne;
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[path = "aegis256/riscv64_zvkned.rs"]
 mod rv_zvkned;
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 #[path = "aegis256/s390x_vperm.rs"]
 mod s390x_vperm;
 #[cfg(any(
   all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "aarch64",
-  all(target_arch = "powerpc64", target_endian = "little"),
-  target_arch = "riscv64",
-  target_arch = "s390x",
+  all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only"))
 ))]
 #[inline]
 fn resolve_backend() -> AeadBackend {
@@ -315,9 +315,9 @@ pub struct Aegis256 {
   #[cfg(any(
     all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
-    all(target_arch = "powerpc64", target_endian = "little"),
-    target_arch = "riscv64",
-    target_arch = "s390x",
+    all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+    all(target_arch = "riscv64", not(feature = "portable-only")),
+    all(target_arch = "s390x", not(feature = "portable-only"))
   ))]
   backend: AeadBackend,
 }
@@ -479,9 +479,9 @@ impl Aead for Aegis256 {
       #[cfg(any(
         all(target_arch = "x86_64", target_feature = "sse2"),
         target_arch = "aarch64",
-        all(target_arch = "powerpc64", target_endian = "little"),
-        target_arch = "riscv64",
-        target_arch = "s390x",
+        all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+        all(target_arch = "riscv64", not(feature = "portable-only")),
+        all(target_arch = "s390x", not(feature = "portable-only"))
       ))]
       backend: resolve_backend(),
     }
@@ -526,28 +526,28 @@ impl Aead for Aegis256 {
       return Ok(Aegis256Tag::from_bytes(tag));
     }
 
-    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
     if self.backend == AeadBackend::Power8Crypto {
       // SAFETY: backend resolution confirmed POWER8 crypto is available.
       let tag = unsafe { ppc::encrypt_fused(key, nonce, aad, buffer) };
       return Ok(Aegis256Tag::from_bytes(tag));
     }
 
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     if self.backend == AeadBackend::Riscv64VectorCrypto {
       // SAFETY: backend resolution confirmed vector AES (`zvkned`) is available.
       let tag = unsafe { rv_zvkned::encrypt_fused(key, nonce, aad, buffer) };
       return Ok(Aegis256Tag::from_bytes(tag));
     }
 
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     if self.backend == AeadBackend::Riscv64ScalarCrypto {
       // SAFETY: backend resolution confirmed scalar AES (`zkne`) is available.
       let tag = unsafe { rv_zkne::encrypt_fused(key, nonce, aad, buffer) };
       return Ok(Aegis256Tag::from_bytes(tag));
     }
 
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     if self.backend == AeadBackend::S390xVperm {
       // SAFETY: s390x vperm backend call because:
       // 1. `resolve_backend` selected `S390xVperm` through `select_backend`.
@@ -589,7 +589,7 @@ impl Aead for Aegis256 {
       decrypt_portable(key, nonce, aad, buffer)
     };
 
-    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
     let computed = if self.backend == AeadBackend::Power8Crypto {
       // SAFETY: backend resolution confirmed POWER8 crypto is available.
       unsafe { ppc::decrypt_fused(key, nonce, aad, buffer) }
@@ -597,7 +597,7 @@ impl Aead for Aegis256 {
       decrypt_portable(key, nonce, aad, buffer)
     };
 
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     let computed = if self.backend == AeadBackend::Riscv64VectorCrypto {
       // SAFETY: backend resolution confirmed vector AES (`zvkned`) is available.
       unsafe { rv_zvkned::decrypt_fused(key, nonce, aad, buffer) }
@@ -608,7 +608,7 @@ impl Aead for Aegis256 {
       decrypt_portable(key, nonce, aad, buffer)
     };
 
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     let computed = if self.backend == AeadBackend::S390xVperm {
       // SAFETY: s390x vperm backend call because:
       // 1. `resolve_backend` selected `S390xVperm` through `select_backend`.
@@ -622,9 +622,9 @@ impl Aead for Aegis256 {
     #[cfg(not(any(
       all(target_arch = "x86_64", target_feature = "sse2"),
       target_arch = "aarch64",
-      all(target_arch = "powerpc64", target_endian = "little"),
-      target_arch = "riscv64",
-      target_arch = "s390x",
+      all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+      all(target_arch = "riscv64", not(feature = "portable-only")),
+      all(target_arch = "s390x", not(feature = "portable-only"))
     )))]
     let computed = decrypt_portable(key, nonce, aad, buffer);
 
@@ -649,7 +649,7 @@ mod tests {
     test_vectors::{hex_array, hex_vec as hex},
   };
 
-  #[cfg(not(target_arch = "s390x"))]
+  #[cfg(not(all(target_arch = "s390x", not(feature = "portable-only"))))]
   #[inline(always)]
   fn portable_aes_round(block: &[u8; 16], round_key: &[u8; 16]) -> [u8; 16] {
     super::super::aes_round::aes_enc_round_portable(block, round_key)
@@ -661,7 +661,7 @@ mod tests {
 
   // -- AESRound test vector (Appendix A.1) --
 
-  #[cfg(not(target_arch = "s390x"))]
+  #[cfg(not(all(target_arch = "s390x", not(feature = "portable-only"))))]
   #[test]
   fn aes_round_matches_spec_vector() {
     let input = hex_block("000102030405060708090a0b0c0d0e0f");
@@ -673,7 +673,7 @@ mod tests {
 
   // -- Update test vector (Appendix A.2) --
 
-  #[cfg(not(target_arch = "s390x"))]
+  #[cfg(not(all(target_arch = "s390x", not(feature = "portable-only"))))]
   #[test]
   fn update_matches_spec_vector() {
     let mut s: State = [
@@ -696,7 +696,7 @@ mod tests {
     assert_eq!(s[5], hex_block("a3240fceb68e32d5d114df1b5363ab67"));
   }
 
-  #[cfg(not(target_arch = "s390x"))]
+  #[cfg(not(all(target_arch = "s390x", not(feature = "portable-only"))))]
   #[test]
   fn riscv_fixslice_update_matches_portable_update() {
     let mut portable: State = [
@@ -1173,7 +1173,7 @@ mod tests {
   // test vectors.
 
   /// Full vperm AES round simulation (scalar): SubBytes → ShiftRows → MixColumns → AddRoundKey.
-  #[cfg(not(target_arch = "s390x"))]
+  #[cfg(not(all(target_arch = "s390x", not(feature = "portable-only"))))]
   fn vperm_aes_round_scalar(block: &[u8; 16], round_key: &[u8; 16]) -> [u8; 16] {
     // SubBytes via vperm tower field (includes affine constant compensation)
     use super::super::aes_round::{AES_AFFINE, VPERM_SR as SR};
@@ -1213,7 +1213,7 @@ mod tests {
     result
   }
 
-  #[cfg(not(target_arch = "s390x"))]
+  #[cfg(not(all(target_arch = "s390x", not(feature = "portable-only"))))]
   #[test]
   fn vperm_full_round_matches_portable() {
     let input = hex_block("000102030405060708090a0b0c0d0e0f");

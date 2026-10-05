@@ -18,7 +18,8 @@ It is not a TLS stack, a PKI toolkit, a key store, or a protocol implementation.
 
 `rscrypto` needs Rust 1.100.
 Until Rust 1.100 is stable, use the 1.100 beta or a newer nightly.
-POWER, IBM Z, and RISC-V builds need a nightly compiler.
+Accelerated POWER, IBM Z, and RISC-V builds need a nightly compiler;
+`portable-only` builds support the declared MSRV.
 See [Toolchain](docs/platforms.md#toolchain).
 
 Minimal `no_std` build with SHA-2 only:

@@ -21,19 +21,31 @@ pub(crate) const KEY_SIZE: usize = 32;
 pub(crate) const KEY_SIZE_128: usize = 16;
 
 /// Number of rounds for AES-256.
-#[cfg(any(test, not(target_arch = "s390x")))]
+#[cfg(any(
+  test,
+  not(any(target_arch = "s390x", all(target_arch = "riscv64", feature = "portable-only")))
+))]
 const ROUNDS: usize = 14;
 
 /// Number of rounds for AES-128.
-#[cfg(any(test, not(target_arch = "s390x")))]
+#[cfg(any(
+  test,
+  not(any(target_arch = "s390x", all(target_arch = "riscv64", feature = "portable-only")))
+))]
 pub(crate) const ROUNDS_128: usize = 10;
 
 /// Number of 32-bit words in the AES-256 expanded key schedule.
-#[cfg(any(test, not(target_arch = "s390x")))]
+#[cfg(any(
+  test,
+  not(any(target_arch = "s390x", all(target_arch = "riscv64", feature = "portable-only")))
+))]
 const EXPANDED_KEY_WORDS: usize = 4 * (ROUNDS + 1); // 60
 
 /// Number of 32-bit words in the AES-128 expanded key schedule.
-#[cfg(any(test, not(target_arch = "s390x")))]
+#[cfg(any(
+  test,
+  not(any(target_arch = "s390x", all(target_arch = "riscv64", feature = "portable-only")))
+))]
 pub(crate) const EXPANDED_KEY_WORDS_128: usize = 4 * (ROUNDS_128 + 1); // 44
 
 // x86_64 AES-NI backend
@@ -44,19 +56,19 @@ mod ce;
 #[cfg(any(test, target_arch = "riscv64", target_arch = "s390x"))]
 #[path = "aes/fixslice64.rs"]
 mod fixslice64;
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 #[path = "aes/s390x_km.rs"]
 mod km;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[path = "aes/x86_64_ni.rs"]
 mod ni;
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 #[path = "aes/powerpc64_ppc.rs"]
 mod ppc;
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[path = "aes/riscv64_aes.rs"]
 mod rv_aes;
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[path = "aes/riscv64_scalar_aes.rs"]
 mod rv_scalar_aes;
 #[cfg(all(
@@ -107,7 +119,10 @@ pub(crate) struct Aes256EncKey {
 }
 
 #[cfg_attr(
-  any(target_arch = "s390x", all(target_arch = "riscv64", not(feature = "alloc"))),
+  all(
+    not(feature = "portable-only"),
+    any(target_arch = "s390x", all(target_arch = "riscv64", not(feature = "alloc")))
+  ),
   expect(
     clippy::large_enum_variant,
     reason = "IBM Z and no-alloc RISC-V keep the fallback schedule inline"
@@ -120,13 +135,13 @@ enum KeyInner {
   X86AesNi(ni::NiRoundKeys),
   #[cfg(target_arch = "aarch64")]
   Aarch64Aes(ce::CeRoundKeys),
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   S390xMsa(km::KmKey),
-  #[cfg(target_arch = "powerpc64")]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
   Power8Crypto(ppc::PpcRoundKeys),
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   ScalarCrypto(rv_scalar_aes::RvScalarRoundKeys),
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   VectorCrypto(rv_aes::RvRoundKeys),
   /// Boxed four-block table-free fixslice fallback for alloc-enabled RISC-V builds.
   #[cfg(all(target_arch = "riscv64", feature = "alloc"))]
@@ -150,19 +165,19 @@ impl Drop for Aes256EncKey {
       KeyInner::X86AesNi(_) => {}
       #[cfg(target_arch = "aarch64")]
       KeyInner::Aarch64Aes(_) => {}
-      #[cfg(target_arch = "s390x")]
+      #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
       KeyInner::S390xMsa(km_key) => {
         km_key.zeroize();
       }
-      #[cfg(target_arch = "powerpc64")]
+      #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
       KeyInner::Power8Crypto(ppc_rk) => {
         ppc_rk.zeroize();
       }
-      #[cfg(target_arch = "riscv64")]
+      #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
       KeyInner::ScalarCrypto(rv_rk) => {
         rv_rk.zeroize();
       }
-      #[cfg(target_arch = "riscv64")]
+      #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
       KeyInner::VectorCrypto(rv_rk) => {
         rv_rk.zeroize();
       }
@@ -185,7 +200,10 @@ pub(crate) struct Aes128EncKey {
 }
 
 #[cfg_attr(
-  any(target_arch = "s390x", all(target_arch = "riscv64", not(feature = "alloc"))),
+  all(
+    not(feature = "portable-only"),
+    any(target_arch = "s390x", all(target_arch = "riscv64", not(feature = "alloc")))
+  ),
   expect(
     clippy::large_enum_variant,
     reason = "IBM Z and no-alloc RISC-V keep the fallback schedule inline"
@@ -198,13 +216,13 @@ enum Key128Inner {
   X86AesNi(ni::Ni128RoundKeys),
   #[cfg(target_arch = "aarch64")]
   Aarch64Aes(ce::Ce128RoundKeys),
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   S390xMsa(km::Km128Key),
-  #[cfg(target_arch = "powerpc64")]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
   Power8Crypto(ppc::Ppc128RoundKeys),
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   ScalarCrypto(rv_scalar_aes::RvScalar128RoundKeys),
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   VectorCrypto(rv_aes::Rv128RoundKeys),
   /// Boxed four-block table-free fixslice fallback for alloc-enabled RISC-V builds.
   #[cfg(all(target_arch = "riscv64", feature = "alloc"))]
@@ -228,19 +246,19 @@ impl Drop for Aes128EncKey {
       Key128Inner::X86AesNi(_) => {}
       #[cfg(target_arch = "aarch64")]
       Key128Inner::Aarch64Aes(_) => {}
-      #[cfg(target_arch = "s390x")]
+      #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
       Key128Inner::S390xMsa(km_key) => {
         km_key.zeroize();
       }
-      #[cfg(target_arch = "powerpc64")]
+      #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
       Key128Inner::Power8Crypto(ppc_rk) => {
         ppc_rk.zeroize();
       }
-      #[cfg(target_arch = "riscv64")]
+      #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
       Key128Inner::ScalarCrypto(rv_rk) => {
         rv_rk.zeroize();
       }
-      #[cfg(target_arch = "riscv64")]
+      #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
       Key128Inner::VectorCrypto(rv_rk) => {
         rv_rk.zeroize();
       }
@@ -259,7 +277,10 @@ impl Drop for Aes128EncKey {
 ///
 /// The Rust source has a fixed operation count and no secret-dependent branches.
 #[inline(always)]
-#[cfg(any(test, not(target_arch = "s390x")))]
+#[cfg(any(
+  test,
+  not(any(target_arch = "s390x", all(target_arch = "riscv64", feature = "portable-only")))
+))]
 const fn gf256_mul(a: u8, b: u8) -> u8 {
   // Schoolbook carryless multiply into a u16, then reduce.
   let a = a as u16;
@@ -291,7 +312,10 @@ const fn gf256_mul(a: u8, b: u8) -> u8 {
 
 /// Square in GF(2^8). Equivalent to `gf256_mul(x, x)` but slightly cheaper.
 #[inline(always)]
-#[cfg(any(test, not(target_arch = "s390x")))]
+#[cfg(any(
+  test,
+  not(any(target_arch = "s390x", all(target_arch = "riscv64", feature = "portable-only")))
+))]
 const fn gf256_sq(x: u8) -> u8 {
   gf256_mul(x, x)
 }
@@ -301,7 +325,10 @@ const fn gf256_sq(x: u8) -> u8 {
 /// Returns 0 for input 0 (matching the AES S-box convention).
 /// The Rust source always executes the same operations regardless of input.
 #[inline(always)]
-#[cfg(any(test, not(target_arch = "s390x")))]
+#[cfg(any(
+  test,
+  not(any(target_arch = "s390x", all(target_arch = "riscv64", feature = "portable-only")))
+))]
 const fn gf256_inv(x: u8) -> u8 {
   // Addition chain for 254 = 2+4+8+16+32+64+128:
   //   x^2, x^3, x^6, x^12, x^14, x^15, x^30, x^60, x^62, x^63,
@@ -326,7 +353,10 @@ const fn gf256_inv(x: u8) -> u8 {
 /// Computes the inverse in GF(2^8), then applies the AES affine transform.
 /// The Rust source has no table lookups and a fixed operation schedule.
 #[inline(always)]
-#[cfg(any(test, not(target_arch = "s390x")))]
+#[cfg(any(
+  test,
+  not(any(target_arch = "s390x", all(target_arch = "riscv64", feature = "portable-only")))
+))]
 const fn sbox(x: u8) -> u8 {
   let inv = gf256_inv(x);
 
@@ -340,7 +370,10 @@ const fn sbox(x: u8) -> u8 {
 
 /// Apply SubBytes to a 32-bit word (four S-box applications).
 #[inline(always)]
-#[cfg(any(test, not(target_arch = "s390x")))]
+#[cfg(any(
+  test,
+  not(any(target_arch = "s390x", all(target_arch = "riscv64", feature = "portable-only")))
+))]
 const fn sub_word(w: u32) -> u32 {
   let [b0, b1, b2, b3] = w.to_be_bytes();
   u32::from_be_bytes([sbox(b0), sbox(b1), sbox(b2), sbox(b3)])
@@ -348,7 +381,10 @@ const fn sub_word(w: u32) -> u32 {
 
 /// Rotate a 32-bit word left by 8 bits.
 #[inline(always)]
-#[cfg(any(test, not(target_arch = "s390x")))]
+#[cfg(any(
+  test,
+  not(any(target_arch = "s390x", all(target_arch = "riscv64", feature = "portable-only")))
+))]
 const fn rot_word(w: u32) -> u32 {
   w.rotate_left(8)
 }
@@ -357,7 +393,10 @@ const fn rot_word(w: u32) -> u32 {
 
 /// AES key schedule round constants (rcon).
 /// Only the high byte is nonzero: rcon[i] = (rc[i], 0, 0, 0).
-#[cfg(any(test, not(target_arch = "s390x")))]
+#[cfg(any(
+  test,
+  not(any(target_arch = "s390x", all(target_arch = "riscv64", feature = "portable-only")))
+))]
 const RCON: [u32; 10] = [
   0x0100_0000,
   0x0200_0000,
@@ -375,7 +414,10 @@ const RCON: [u32; 10] = [
 
 /// Portable AES-256 key expansion into 60 big-endian u32 words.
 #[inline]
-#[cfg(any(test, not(target_arch = "s390x")))]
+#[cfg(any(
+  test,
+  not(any(target_arch = "s390x", all(target_arch = "riscv64", feature = "portable-only")))
+))]
 fn aes256_expand_key_portable(key: &[u8; KEY_SIZE]) -> [u32; EXPANDED_KEY_WORDS] {
   let mut rk = [0u32; EXPANDED_KEY_WORDS];
 
@@ -408,7 +450,7 @@ fn aes256_expand_key_portable(key: &[u8; KEY_SIZE]) -> [u32; EXPANDED_KEY_WORDS]
   rk
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[inline]
 fn zeroize_expanded_key_words(rk: &mut [u32; EXPANDED_KEY_WORDS]) {
   // SAFETY: [u32; 60] is layout-compatible with [u8; 240].
@@ -417,7 +459,7 @@ fn zeroize_expanded_key_words(rk: &mut [u32; EXPANDED_KEY_WORDS]) {
   });
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[inline]
 fn zeroize_expanded_key_words_128(rk: &mut [u32; EXPANDED_KEY_WORDS_128]) {
   // SAFETY: [u32; 44] is layout-compatible with [u8; 176].
@@ -428,7 +470,10 @@ fn zeroize_expanded_key_words_128(rk: &mut [u32; EXPANDED_KEY_WORDS_128]) {
 
 /// Portable AES-128 key expansion into 44 big-endian u32 words.
 #[inline]
-#[cfg(any(test, not(target_arch = "s390x")))]
+#[cfg(any(
+  test,
+  not(any(target_arch = "s390x", all(target_arch = "riscv64", feature = "portable-only")))
+))]
 pub(crate) fn aes128_expand_key_portable(key: &[u8; KEY_SIZE_128]) -> [u32; EXPANDED_KEY_WORDS_128] {
   let mut rk = [0u32; EXPANDED_KEY_WORDS_128];
 
@@ -498,7 +543,7 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
       };
     }
   }
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   {
     if crate::platform::caps().has(crate::platform::caps::s390x::MSA) {
       return Aes256EncKey {
@@ -506,7 +551,7 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
       };
     }
   }
-  #[cfg(target_arch = "powerpc64")]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
   {
     if crate::platform::caps().has(crate::platform::caps::power::POWER8_CRYPTO) {
       return Aes256EncKey {
@@ -515,7 +560,7 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
       };
     }
   }
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   {
     if crate::platform::caps().has(crate::platform::caps::riscv::ZVKNED) {
       let mut portable_rk = aes256_expand_key_portable(key);
@@ -583,7 +628,7 @@ pub(crate) fn aes128_expand_key(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
       };
     }
   }
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   {
     if crate::platform::caps().has(crate::platform::caps::s390x::MSA) {
       return Aes128EncKey {
@@ -591,7 +636,7 @@ pub(crate) fn aes128_expand_key(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
       };
     }
   }
-  #[cfg(target_arch = "powerpc64")]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
   {
     if crate::platform::caps().has(crate::platform::caps::power::POWER8_CRYPTO) {
       return Aes128EncKey {
@@ -600,7 +645,7 @@ pub(crate) fn aes128_expand_key(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
       };
     }
   }
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   {
     if crate::platform::caps().has(crate::platform::caps::riscv::ZVKNED) {
       let mut portable_rk = aes128_expand_key_portable(key);
@@ -652,7 +697,7 @@ pub(crate) fn aes128_expand_key_forced_portable(key: &[u8; KEY_SIZE_128]) -> Aes
   }
 }
 
-#[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
 #[inline]
 pub(crate) fn aes256_expand_key_riscv_vector(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
   let mut portable_rk = aes256_expand_key_portable(key);
@@ -663,7 +708,7 @@ pub(crate) fn aes256_expand_key_riscv_vector(key: &[u8; KEY_SIZE]) -> Aes256EncK
   }
 }
 
-#[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
 #[inline]
 pub(crate) fn aes256_expand_key_riscv_scalar(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
   let mut portable_rk = aes256_expand_key_portable(key);
@@ -674,7 +719,7 @@ pub(crate) fn aes256_expand_key_riscv_scalar(key: &[u8; KEY_SIZE]) -> Aes256EncK
   }
 }
 
-#[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
 #[inline]
 pub(crate) fn aes256_expand_key_riscv_ttable(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
   // Preserve the old RISC-V ttable entry point while routing to the table-free fixslice schedule.
@@ -683,7 +728,7 @@ pub(crate) fn aes256_expand_key_riscv_ttable(key: &[u8; KEY_SIZE]) -> Aes256EncK
   }
 }
 
-#[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
 #[inline]
 pub(crate) fn aes128_expand_key_riscv_vector(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
   let mut portable_rk = aes128_expand_key_portable(key);
@@ -694,7 +739,7 @@ pub(crate) fn aes128_expand_key_riscv_vector(key: &[u8; KEY_SIZE_128]) -> Aes128
   }
 }
 
-#[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
 #[inline]
 pub(crate) fn aes128_expand_key_riscv_scalar(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
   let mut portable_rk = aes128_expand_key_portable(key);
@@ -705,7 +750,7 @@ pub(crate) fn aes128_expand_key_riscv_scalar(key: &[u8; KEY_SIZE_128]) -> Aes128
   }
 }
 
-#[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
 #[inline]
 pub(crate) fn aes128_expand_key_riscv_ttable(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
   // Preserve the old RISC-V ttable entry point while routing to the table-free fixslice schedule.
@@ -1112,7 +1157,7 @@ pub(super) unsafe fn aarch64_ctr32_le_xor_8blocks_128_inline(
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
 pub(super) unsafe fn ppc_expand_key_inline(key: &[u8; KEY_SIZE]) -> ppc::PpcRoundKeys {
@@ -1127,7 +1172,7 @@ pub(super) unsafe fn ppc_expand_key_inline(key: &[u8; KEY_SIZE]) -> ppc::PpcRoun
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
 pub(super) unsafe fn ppc_encrypt_block_inline(keys: &ppc::PpcRoundKeys, block: &mut [u8; BLOCK_SIZE]) {
@@ -1144,6 +1189,7 @@ pub(super) unsafe fn ppc_encrypt_block_inline(keys: &ppc::PpcRoundKeys, block: &
 /// Caller must ensure POWER8 crypto is available.
 #[cfg(all(
   target_arch = "powerpc64",
+  not(feature = "portable-only"),
   any(test, feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")
 ))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
@@ -1180,7 +1226,7 @@ unsafe fn ppc_encrypt_blocks_inline(keys: &ppc::PpcRoundKeys, blocks: &mut [[u8;
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
 pub(super) unsafe fn ppc_expand_key_128_inline(key: &[u8; KEY_SIZE_128]) -> ppc::Ppc128RoundKeys {
@@ -1195,7 +1241,7 @@ pub(super) unsafe fn ppc_expand_key_128_inline(key: &[u8; KEY_SIZE_128]) -> ppc:
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
 pub(super) unsafe fn ppc_encrypt_block_128_inline(keys: &ppc::Ppc128RoundKeys, block: &mut [u8; BLOCK_SIZE]) {
@@ -1212,6 +1258,7 @@ pub(super) unsafe fn ppc_encrypt_block_128_inline(keys: &ppc::Ppc128RoundKeys, b
 /// Caller must ensure POWER8 crypto is available.
 #[cfg(all(
   target_arch = "powerpc64",
+  not(feature = "portable-only"),
   any(
     feature = "aes-gcm",
     feature = "aes-gcm-siv",
@@ -1250,7 +1297,7 @@ unsafe fn ppc_encrypt_blocks_128_inline(keys: &ppc::Ppc128RoundKeys, blocks: &mu
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 pub(crate) unsafe fn aes256_ctr32_encrypt_be_ppc_ghash(
   ek: &Aes256EncKey,
@@ -1356,7 +1403,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_ppc_ghash(
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 pub(crate) unsafe fn aes256_ctr32_decrypt_be_ppc_ghash(
   ek: &Aes256EncKey,
@@ -1472,7 +1519,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_ppc_ghash(
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 pub(crate) unsafe fn aes128_ctr32_encrypt_be_ppc_ghash(
   ek: &Aes128EncKey,
@@ -1578,7 +1625,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_ppc_ghash(
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm"))]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), feature = "aes-gcm"))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 pub(crate) unsafe fn aes128_ctr32_decrypt_be_ppc_ghash(
   ek: &Aes128EncKey,
@@ -1696,7 +1743,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_ppc_ghash(
 ///
 /// # Safety
 /// Caller must ensure MSA is available.
-#[cfg(all(target_arch = "s390x", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
 #[inline(always)]
 pub(super) unsafe fn s390x_encrypt_block_raw_inline(raw_key: &[u8; KEY_SIZE], block: &mut [u8; BLOCK_SIZE]) {
   // SAFETY: s390x KM AES-256 block encryption because:
@@ -1710,7 +1757,7 @@ pub(super) unsafe fn s390x_encrypt_block_raw_inline(raw_key: &[u8; KEY_SIZE], bl
 ///
 /// # Safety
 /// Caller must ensure MSA is available.
-#[cfg(all(target_arch = "s390x", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
 #[inline(always)]
 pub(super) unsafe fn s390x_encrypt_blocks_raw_inline(raw_key: &[u8; KEY_SIZE], blocks: &mut [u8], count: usize) {
   // SAFETY: s390x KM AES-256 raw-key block batch because:
@@ -1724,7 +1771,7 @@ pub(super) unsafe fn s390x_encrypt_blocks_raw_inline(raw_key: &[u8; KEY_SIZE], b
 ///
 /// # Safety
 /// Caller must ensure MSA is available.
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 #[inline(always)]
 pub(super) unsafe fn s390x_encrypt_blocks_inline(key: &km::KmKey, blocks: &mut [u8], count: usize) {
   // SAFETY: s390x KM AES-256 block batch because:
@@ -1741,7 +1788,7 @@ pub(super) unsafe fn s390x_encrypt_blocks_inline(key: &km::KmKey, blocks: &mut [
 ///
 /// # Safety
 /// Caller must ensure MSA is available.
-#[cfg(all(target_arch = "s390x", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
 #[inline(always)]
 pub(super) unsafe fn s390x_encrypt_block_raw_128_inline(raw_key: &[u8; KEY_SIZE_128], block: &mut [u8; BLOCK_SIZE]) {
   // SAFETY: s390x KM AES-128 block encryption because:
@@ -1755,7 +1802,7 @@ pub(super) unsafe fn s390x_encrypt_block_raw_128_inline(raw_key: &[u8; KEY_SIZE_
 ///
 /// # Safety
 /// Caller must ensure MSA is available.
-#[cfg(all(target_arch = "s390x", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
 #[inline(always)]
 pub(super) unsafe fn s390x_encrypt_blocks_raw_128_inline(
   raw_key: &[u8; KEY_SIZE_128],
@@ -1778,6 +1825,7 @@ pub(super) unsafe fn s390x_encrypt_blocks_raw_128_inline(
 /// Caller must ensure MSA is available.
 #[cfg(all(
   target_arch = "s390x",
+  not(feature = "portable-only"),
   any(
     feature = "aes-gcm",
     feature = "aes-gcm-siv",
@@ -1815,22 +1863,22 @@ pub(crate) fn aes256_encrypt_block(ek: &Aes256EncKey, block: &mut [u8; BLOCK_SIZ
       // SAFETY: Aarch64Ce variant is only constructed after runtime detection confirms AES-CE.
       unsafe { ce::encrypt_block(ce_rk, block) }
     }
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     KeyInner::S390xMsa(km_key) => {
       // SAFETY: S390xKm variant is only constructed after runtime detection confirms MSA/CPACF.
       unsafe { km::encrypt_block(km_key, block) }
     }
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     KeyInner::Power8Crypto(ppc_rk) => {
       // SAFETY: Power variant is only constructed after runtime detection confirms POWER8 crypto.
       unsafe { ppc::encrypt_block(ppc_rk, block) }
     }
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     KeyInner::ScalarCrypto(rv_rk) => {
       // SAFETY: RvScalar variant is only constructed after runtime detection confirms Zkne.
       unsafe { rv_scalar_aes::encrypt_block(rv_rk, block) }
     }
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     KeyInner::VectorCrypto(rv_rk) => {
       // SAFETY: RvAes variant is only constructed after runtime detection confirms Zvkned.
       unsafe { rv_aes::encrypt_block(rv_rk, block) }
@@ -1861,22 +1909,22 @@ pub(crate) fn aes128_encrypt_block(ek: &Aes128EncKey, block: &mut [u8; BLOCK_SIZ
       // SAFETY: Aarch64Aes variant is only constructed after runtime detection confirms AES-CE.
       unsafe { ce::encrypt_block_128(ce_rk, block) }
     }
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     Key128Inner::S390xMsa(km_key) => {
       // SAFETY: S390xMsa variant is only constructed after runtime detection confirms MSA/CPACF.
       unsafe { km::encrypt_block_128(km_key, block) }
     }
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     Key128Inner::Power8Crypto(ppc_rk) => {
       // SAFETY: Power8Crypto variant is only constructed after runtime detection confirms POWER8 crypto.
       unsafe { ppc::encrypt_block_128(ppc_rk, block) }
     }
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     Key128Inner::ScalarCrypto(rv_rk) => {
       // SAFETY: ScalarCrypto is only constructed after runtime detection confirms Zkne.
       unsafe { rv_scalar_aes::encrypt_block_128(rv_rk, block) }
     }
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     Key128Inner::VectorCrypto(rv_rk) => {
       // SAFETY: VectorCrypto is only constructed after runtime detection confirms Zvkned.
       unsafe { rv_aes::encrypt_block_128(rv_rk, block) }
@@ -1972,7 +2020,7 @@ pub(crate) fn aes128_xor_encrypt_blocks(ek: &Aes128EncKey, state: &mut [u8; BLOC
       // SAFETY: this key variant is constructed only after AES-CE runtime detection.
       unsafe { ce::xor_encrypt_blocks_128(rk, state, blocks) }
     }
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     Key128Inner::S390xMsa(rk) => {
       for block in blocks {
         xor_block(state, block);
@@ -1980,7 +2028,7 @@ pub(crate) fn aes128_xor_encrypt_blocks(ek: &Aes128EncKey, state: &mut [u8; BLOC
         unsafe { km::encrypt_block_128(rk, state) }
       }
     }
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     Key128Inner::Power8Crypto(rk) => {
       for block in blocks {
         xor_block(state, block);
@@ -1988,7 +2036,7 @@ pub(crate) fn aes128_xor_encrypt_blocks(ek: &Aes128EncKey, state: &mut [u8; BLOC
         unsafe { ppc::encrypt_block_128(rk, state) }
       }
     }
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     Key128Inner::ScalarCrypto(rk) => {
       for block in blocks {
         xor_block(state, block);
@@ -1996,7 +2044,7 @@ pub(crate) fn aes128_xor_encrypt_blocks(ek: &Aes128EncKey, state: &mut [u8; BLOC
         unsafe { rv_scalar_aes::encrypt_block_128(rk, state) }
       }
     }
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     Key128Inner::VectorCrypto(rk) => {
       for block in blocks {
         xor_block(state, block);
@@ -2061,7 +2109,7 @@ pub(crate) fn aes128_encrypt_blocks_ecb(ek: &Aes128EncKey, blocks: &mut [[u8; BL
     }
     return;
   }
-  #[cfg(target_arch = "powerpc64")]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
   if let Key128Inner::Power8Crypto(ppc_rk) = &ek.inner {
     if !blocks.is_empty() {
       // SAFETY: POWER8 AES-128 batch encryption because:
@@ -2072,7 +2120,7 @@ pub(crate) fn aes128_encrypt_blocks_ecb(ek: &Aes128EncKey, blocks: &mut [[u8; BL
     }
     return;
   }
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   if let Key128Inner::S390xMsa(km_key) = &ek.inner {
     let count = blocks.len();
     if count > 0 {
@@ -2085,7 +2133,7 @@ pub(crate) fn aes128_encrypt_blocks_ecb(ek: &Aes128EncKey, blocks: &mut [[u8; BL
     }
     return;
   }
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   if let Key128Inner::VectorCrypto(rk) = &ek.inner {
     let mut offset = 0usize;
     while offset.strict_add(4) <= blocks.len() {
@@ -2107,7 +2155,7 @@ pub(crate) fn aes128_encrypt_blocks_ecb(ek: &Aes128EncKey, blocks: &mut [[u8; BL
     }
     return;
   }
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   if let Key128Inner::ScalarCrypto(rk) = &ek.inner {
     let mut offset = 0usize;
     while offset.strict_add(4) <= blocks.len() {
@@ -2130,6 +2178,13 @@ pub(crate) fn aes128_encrypt_blocks_ecb(ek: &Aes128EncKey, blocks: &mut [[u8; BL
     return;
   }
   #[cfg(any(target_arch = "riscv64", target_arch = "s390x"))]
+  #[cfg_attr(
+    feature = "portable-only",
+    expect(
+      irrefutable_let_patterns,
+      reason = "only the fixslice key is compiled on this target"
+    )
+  )]
   if let Key128Inner::Fixslice(rk) = &ek.inner {
     let mut offset = 0usize;
     while offset.strict_add(4) <= blocks.len() {
@@ -2238,7 +2293,7 @@ pub(crate) fn aes256_encrypt_blocks_ecb(ek: &Aes256EncKey, blocks: &mut [[u8; BL
     }
     return;
   }
-  #[cfg(target_arch = "powerpc64")]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
   if let KeyInner::Power8Crypto(ppc_rk) = &ek.inner {
     if !blocks.is_empty() {
       // SAFETY: POWER8 AES-256 batch encryption because:
@@ -2249,7 +2304,7 @@ pub(crate) fn aes256_encrypt_blocks_ecb(ek: &Aes256EncKey, blocks: &mut [[u8; BL
     }
     return;
   }
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   if let KeyInner::S390xMsa(km_key) = &ek.inner {
     let count = blocks.len();
     if count > 0 {
@@ -2262,7 +2317,7 @@ pub(crate) fn aes256_encrypt_blocks_ecb(ek: &Aes256EncKey, blocks: &mut [[u8; BL
     }
     return;
   }
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   if let KeyInner::VectorCrypto(rk) = &ek.inner {
     let mut offset = 0usize;
     while offset.strict_add(4) <= blocks.len() {
@@ -2284,7 +2339,7 @@ pub(crate) fn aes256_encrypt_blocks_ecb(ek: &Aes256EncKey, blocks: &mut [[u8; BL
     }
     return;
   }
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   if let KeyInner::ScalarCrypto(rk) = &ek.inner {
     let mut offset = 0usize;
     while offset.strict_add(4) <= blocks.len() {
@@ -2307,6 +2362,13 @@ pub(crate) fn aes256_encrypt_blocks_ecb(ek: &Aes256EncKey, blocks: &mut [[u8; BL
     return;
   }
   #[cfg(any(target_arch = "riscv64", target_arch = "s390x"))]
+  #[cfg_attr(
+    feature = "portable-only",
+    expect(
+      irrefutable_let_patterns,
+      reason = "only the fixslice key is compiled on this target"
+    )
+  )]
   if let KeyInner::Fixslice(rk) = &ek.inner {
     let mut offset = 0usize;
     while offset.strict_add(4) <= blocks.len() {
@@ -2473,7 +2535,11 @@ const fn mix_column(col: [u8; 4]) -> u32 {
   (r0 as u32) << 24 | (r1 as u32) << 16 | (r2 as u32) << 8 | r3 as u32
 }
 
-#[cfg(all(target_arch = "s390x", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[cfg(all(
+  target_arch = "s390x",
+  not(feature = "portable-only"),
+  any(feature = "aes-gcm", feature = "aes-gcm-siv")
+))]
 #[inline]
 pub(super) fn ctr_tail_block_count(remaining: usize) -> usize {
   let full_blocks = remaining.strict_div(BLOCK_SIZE);
@@ -2481,7 +2547,11 @@ pub(super) fn ctr_tail_block_count(remaining: usize) -> usize {
   full_blocks.strict_add(tail_block).min(4)
 }
 
-#[cfg(all(target_arch = "s390x", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[cfg(all(
+  target_arch = "s390x",
+  not(feature = "portable-only"),
+  any(feature = "aes-gcm", feature = "aes-gcm-siv")
+))]
 #[inline]
 pub(super) fn xor_keystream_tail(
   data: &mut [u8],
@@ -2531,13 +2601,15 @@ pub(crate) fn aes256_ctr32_encrypt(ek: &Aes256EncKey, initial_counter: &[u8; BLO
   let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
   let mut offset = 0usize;
 
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   let use_four_block_backend = matches!(
     &ek.inner,
     KeyInner::VectorCrypto(_) | KeyInner::ScalarCrypto(_) | KeyInner::Fixslice(_)
   );
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   let use_four_block_backend = matches!(&ek.inner, KeyInner::Fixslice(_));
+  #[cfg(all(feature = "portable-only", any(target_arch = "riscv64", target_arch = "s390x")))]
+  let use_four_block_backend = true;
   #[cfg(any(target_arch = "riscv64", target_arch = "s390x"))]
   if use_four_block_backend {
     let iv_suffix: [u8; 12] = {
@@ -2575,7 +2647,7 @@ pub(crate) fn aes256_ctr32_encrypt(ek: &Aes256EncKey, initial_counter: &[u8; BLO
     counter_block[4..16].copy_from_slice(&iv_suffix);
   }
 
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   if matches!(&ek.inner, KeyInner::S390xMsa(_)) {
     while offset < data.len() {
       let remaining = data.len().strict_sub(offset);
@@ -2641,13 +2713,15 @@ pub(crate) fn aes128_ctr32_encrypt(ek: &Aes128EncKey, initial_counter: &[u8; BLO
   let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
   let mut offset = 0usize;
 
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   let use_four_block_backend = matches!(
     &ek.inner,
     Key128Inner::VectorCrypto(_) | Key128Inner::ScalarCrypto(_) | Key128Inner::Fixslice(_)
   );
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   let use_four_block_backend = matches!(&ek.inner, Key128Inner::Fixslice(_));
+  #[cfg(all(feature = "portable-only", any(target_arch = "riscv64", target_arch = "s390x")))]
+  let use_four_block_backend = true;
   #[cfg(any(target_arch = "riscv64", target_arch = "s390x"))]
   if use_four_block_backend {
     let iv_suffix: [u8; 12] = {
@@ -2685,7 +2759,7 @@ pub(crate) fn aes128_ctr32_encrypt(ek: &Aes128EncKey, initial_counter: &[u8; BLO
     counter_block[4..16].copy_from_slice(&iv_suffix);
   }
 
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   if matches!(&ek.inner, Key128Inner::S390xMsa(_)) {
     while offset < data.len() {
       let remaining = data.len().strict_sub(offset);
@@ -2752,12 +2826,14 @@ fn aes256_ctr32_be_uses_block_batch(ek: &Aes256EncKey) -> bool {
   match &ek.inner {
     #[cfg(target_arch = "aarch64")]
     KeyInner::Aarch64Aes(_) => true,
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     KeyInner::Power8Crypto(_) => true,
-    #[cfg(target_arch = "s390x")]
-    KeyInner::S390xMsa(_) | KeyInner::Fixslice(_) => true,
-    #[cfg(target_arch = "riscv64")]
-    KeyInner::VectorCrypto(_) | KeyInner::ScalarCrypto(_) | KeyInner::Fixslice(_) => true,
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
+    KeyInner::S390xMsa(_) => true,
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+    KeyInner::VectorCrypto(_) | KeyInner::ScalarCrypto(_) => true,
+    #[cfg(any(target_arch = "riscv64", target_arch = "s390x"))]
+    KeyInner::Fixslice(_) => true,
     #[cfg(not(any(target_arch = "riscv64", target_arch = "s390x")))]
     _ => false,
   }
@@ -2777,12 +2853,14 @@ fn aes128_ctr32_be_uses_block_batch(ek: &Aes128EncKey) -> bool {
   match &ek.inner {
     #[cfg(target_arch = "aarch64")]
     Key128Inner::Aarch64Aes(_) => true,
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     Key128Inner::Power8Crypto(_) => true,
-    #[cfg(target_arch = "s390x")]
-    Key128Inner::S390xMsa(_) | Key128Inner::Fixslice(_) => true,
-    #[cfg(target_arch = "riscv64")]
-    Key128Inner::VectorCrypto(_) | Key128Inner::ScalarCrypto(_) | Key128Inner::Fixslice(_) => true,
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
+    Key128Inner::S390xMsa(_) => true,
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
+    Key128Inner::VectorCrypto(_) | Key128Inner::ScalarCrypto(_) => true,
+    #[cfg(any(target_arch = "riscv64", target_arch = "s390x"))]
+    Key128Inner::Fixslice(_) => true,
     #[cfg(not(any(target_arch = "riscv64", target_arch = "s390x")))]
     _ => false,
   }
@@ -2879,7 +2957,7 @@ pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; 
     counter_block[..12].copy_from_slice(&iv_prefix);
   }
 
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   if matches!(&ek.inner, KeyInner::S390xMsa(_)) {
     while offset < data.len() {
       let remaining = data.len().strict_sub(offset);
@@ -3066,7 +3144,7 @@ unsafe fn x86_gcmsiv_ctr_blocks_le_4(suffix_words: [u32; 3], ctr: u32) -> core::
   any(
     all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
-    target_arch = "powerpc64"
+    all(target_arch = "powerpc64", not(feature = "portable-only"))
   ),
   feature = "aes-gcm"
 ))]
@@ -3957,7 +4035,7 @@ pub(crate) fn aes128_ctr32_encrypt_be(ek: &Aes128EncKey, initial_counter: &[u8; 
     counter_block[..12].copy_from_slice(&iv_prefix);
   }
 
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   if matches!(&ek.inner, Key128Inner::S390xMsa(_)) {
     while offset < data.len() {
       let remaining = data.len().strict_sub(offset);
@@ -6075,7 +6153,7 @@ mod tests {
     assert_eq!(blocks, expected);
   }
 
-  #[cfg(all(target_arch = "s390x", feature = "aes-gcm-siv"))]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
   #[test]
   fn s390x_km_parameter_blocks_and_batches_match_fixslice64() {
     if !crate::platform::caps().has(crate::platform::caps::s390x::MSA) {
@@ -6138,7 +6216,7 @@ mod tests {
     }
   }
 
-  #[cfg(all(target_arch = "s390x", feature = "aes-gcm-siv"))]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only"), feature = "aes-gcm-siv"))]
   #[test]
   fn s390x_km_and_fixslice64_ctr_match_across_lengths_and_alignments() {
     if !crate::platform::caps().has(crate::platform::caps::s390x::MSA) {

@@ -2,7 +2,10 @@ use super::Sha256;
 use crate::platform::Caps;
 #[cfg(target_arch = "aarch64")]
 use crate::platform::caps::aarch64;
-#[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+#[cfg(all(
+  any(target_arch = "riscv64", target_arch = "riscv32"),
+  not(feature = "portable-only")
+))]
 use crate::platform::caps::riscv;
 #[cfg(target_arch = "s390x")]
 use crate::platform::caps::s390x;
@@ -22,7 +25,10 @@ pub(crate) enum Sha256KernelId {
   X86Sha = 1,
   #[cfg(target_arch = "aarch64")]
   Aarch64Sha2 = 2,
-  #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+  #[cfg(all(
+    any(target_arch = "riscv64", target_arch = "riscv32"),
+    not(feature = "portable-only")
+  ))]
   RiscvZknh = 3,
   #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
   WasmSimd128 = 4,
@@ -41,7 +47,10 @@ impl Sha256KernelId {
       Self::X86Sha => "x86-sha",
       #[cfg(target_arch = "aarch64")]
       Self::Aarch64Sha2 => "aarch64-sha2",
-      #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+      #[cfg(all(
+        any(target_arch = "riscv64", target_arch = "riscv32"),
+        not(feature = "portable-only")
+      ))]
       Self::RiscvZknh => "riscv/zknh",
       #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
       Self::WasmSimd128 => "wasm/simd128",
@@ -58,7 +67,10 @@ pub(crate) const ALL: &[Sha256KernelId] = &[
   Sha256KernelId::X86Sha,
   #[cfg(target_arch = "aarch64")]
   Sha256KernelId::Aarch64Sha2,
-  #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+  #[cfg(all(
+    any(target_arch = "riscv64", target_arch = "riscv32"),
+    not(feature = "portable-only")
+  ))]
   Sha256KernelId::RiscvZknh,
   #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
   Sha256KernelId::WasmSimd128,
@@ -83,7 +95,10 @@ fn compress_blocks_aarch64_sha2(state: &mut [u32; 8], blocks: &[u8]) {
   unsafe { super::aarch64::compress_blocks_aarch64_sha2(state, blocks) }
 }
 
-#[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+#[cfg(all(
+  any(target_arch = "riscv64", target_arch = "riscv32"),
+  not(feature = "portable-only")
+))]
 fn compress_blocks_riscv_zknh(state: &mut [u32; 8], blocks: &[u8]) {
   // SAFETY: Only called when dispatch has verified `riscv::ZKNH` is available.
   unsafe { super::riscv64::compress_blocks_zknh(state, blocks) }
@@ -109,7 +124,10 @@ pub(crate) fn compress_blocks_fn(id: Sha256KernelId) -> CompressBlocksFn {
     Sha256KernelId::X86Sha => compress_blocks_x86_sha,
     #[cfg(target_arch = "aarch64")]
     Sha256KernelId::Aarch64Sha2 => compress_blocks_aarch64_sha2,
-    #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+    #[cfg(all(
+      any(target_arch = "riscv64", target_arch = "riscv32"),
+      not(feature = "portable-only")
+    ))]
     Sha256KernelId::RiscvZknh => compress_blocks_riscv_zknh,
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     Sha256KernelId::WasmSimd128 => compress_blocks_wasm_simd128,
@@ -127,7 +145,10 @@ pub(crate) const fn required_caps(id: Sha256KernelId) -> Caps {
     Sha256KernelId::X86Sha => x86::SHA.union(x86::SSE41),
     #[cfg(target_arch = "aarch64")]
     Sha256KernelId::Aarch64Sha2 => aarch64::SHA2,
-    #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+    #[cfg(all(
+      any(target_arch = "riscv64", target_arch = "riscv32"),
+      not(feature = "portable-only")
+    ))]
     Sha256KernelId::RiscvZknh => riscv::ZKNH,
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     Sha256KernelId::WasmSimd128 => wasm::SIMD128,
@@ -157,6 +178,7 @@ pub(crate) const COMPILE_TIME_HW: bool = cfg!(not(miri))
     all(target_arch = "aarch64", target_feature = "sha2"),
     all(
       any(target_arch = "riscv64", target_arch = "riscv32"),
+      not(feature = "portable-only"),
       target_feature = "zknh"
     ),
     all(target_arch = "wasm32", target_feature = "simd128"),
@@ -193,6 +215,7 @@ pub(crate) fn compile_time_best() -> CompressBlocksFn {
   #[cfg(all(
     not(miri),
     any(target_arch = "riscv64", target_arch = "riscv32"),
+    not(feature = "portable-only"),
     target_feature = "zknh"
   ))]
   {
@@ -212,7 +235,11 @@ pub(crate) fn compile_time_best() -> CompressBlocksFn {
         target_feature = "sse4.1"
       ),
       all(target_arch = "aarch64", any(target_os = "macos", target_feature = "sha2")),
-      all(any(target_arch = "riscv64", target_arch = "riscv32"), target_feature = "zknh"),
+      all(
+        any(target_arch = "riscv64", target_arch = "riscv32"),
+        not(feature = "portable-only"),
+        target_feature = "zknh"
+      ),
       all(target_arch = "wasm32", target_feature = "simd128")
     ))
   ))]
@@ -237,7 +264,10 @@ pub(crate) const COMPILE_TIME_NAME: &str = if cfg!(miri) {
 )) {
   "aarch64-sha2"
 } else if cfg!(all(
-  any(target_arch = "riscv64", target_arch = "riscv32"),
+  any(
+    all(target_arch = "riscv64", not(feature = "portable-only")),
+    all(target_arch = "riscv32", not(feature = "portable-only"))
+  ),
   target_feature = "zknh"
 )) {
   "riscv/zknh"

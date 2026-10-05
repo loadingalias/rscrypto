@@ -17,7 +17,7 @@ define_blake2_dispatch! {
     Blake2bKernelId::X86Avx512vl,
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake2bKernelId::X86Avx2,
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     Blake2bKernelId::Riscv64V,
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     Blake2bKernelId::WasmSimd128,

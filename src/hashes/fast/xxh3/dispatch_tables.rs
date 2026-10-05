@@ -29,11 +29,11 @@ pub(crate) static AVX2_TABLE: DispatchTable = DispatchTable { long: KernelId::Av
 pub(crate) static NEON_TABLE: DispatchTable = DispatchTable { long: KernelId::Neon };
 
 /// POWER8+ with VSX: four iterations per stripe (128-bit vectors).
-#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
 pub(crate) static VSX_TABLE: DispatchTable = DispatchTable { long: KernelId::Vsx };
 
 /// s390x z13+ with z/Vector: four iterations per stripe (128-bit vectors).
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 pub(crate) static ZVECTOR_TABLE: DispatchTable = DispatchTable { long: KernelId::Vector };
 
 #[inline]
@@ -59,14 +59,14 @@ pub(crate) fn select_runtime_table(caps: Caps) -> &'static DispatchTable {
     }
   }
 
-  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
   {
     if caps.has(super::kernels::required_caps(KernelId::Vsx)) {
       return &VSX_TABLE;
     }
   }
 
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   {
     if caps.has(crate::platform::caps::s390x::VECTOR) {
       return &ZVECTOR_TABLE;
@@ -79,7 +79,12 @@ pub(crate) fn select_runtime_table(caps: Caps) -> &'static DispatchTable {
   &DEFAULT_TABLE
 }
 
-#[cfg(all(test, target_arch = "powerpc64", target_endian = "little"))]
+#[cfg(all(
+  test,
+  target_arch = "powerpc64",
+  not(feature = "portable-only"),
+  target_endian = "little"
+))]
 mod tests {
   use super::*;
   use crate::platform::caps::power;

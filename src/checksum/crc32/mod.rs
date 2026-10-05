@@ -14,7 +14,10 @@
 //! - riscv64: ZVBC (RVV vector CLMUL) / Zbc folding (CRC-32 and CRC-32C)
 //! - wasm32/wasm64: portable only (no CRC32/CLMUL instructions)
 //!
-#[cfg(any(target_arch = "powerpc64", target_arch = "s390x", target_arch = "riscv64"))]
+#[cfg(all(
+  any(target_arch = "powerpc64", target_arch = "s390x", target_arch = "riscv64"),
+  not(feature = "portable-only")
+))]
 mod clmul;
 pub(crate) mod config;
 pub(crate) mod kernels;
@@ -26,13 +29,13 @@ mod x86_64;
 #[cfg(target_arch = "aarch64")]
 pub(crate) mod aarch64;
 
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 mod power;
 
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 mod s390x;
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 mod riscv64;
 
 pub use config::{Crc32Config, Crc32Force};

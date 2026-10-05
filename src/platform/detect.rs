@@ -177,11 +177,6 @@ pub fn detect_uncached() -> Detected {
     detect_x86_64()
   }
 
-  #[cfg(target_arch = "x86")]
-  {
-    detect_x86()
-  }
-
   #[cfg(target_arch = "aarch64")]
   {
     detect_aarch64()
@@ -219,7 +214,6 @@ pub fn detect_uncached() -> Detected {
 
   #[cfg(not(any(
     target_arch = "x86_64",
-    target_arch = "x86",
     target_arch = "aarch64",
     target_arch = "riscv64",
     target_arch = "riscv32",

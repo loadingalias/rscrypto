@@ -68,6 +68,23 @@ sys.exit(7 if count == int(os.environ['FAIL_AT']) else 0)
             for boundary in ('core', 'alloc'):
                 self.assertIn(f'{channel}-thumb-{boundary}', names)
         self.assertTrue(set(compat.targets()) <= set(names))
+        for target in ('powerpc64le-unknown-linux-gnu', 's390x-unknown-linux-gnu',
+                       'riscv64gc-unknown-linux-gnu', 'riscv32imac-unknown-none-elf'):
+            for boundary in ('core', 'alloc', 'build'):
+                _, commands, _ = next(row for row in plan if row[0] == f'{target}-portable-{boundary}')
+                command, = commands
+                self.assertEqual(command[1], '+' + compat.toolchain.msrv_channel())
+                self.assertEqual(command[command.index('--target') + 1], target)
+                features = set(command[command.index('--features') + 1].split(','))
+                self.assertIn('portable-only', features)
+                self.assertIn('sha2', features)
+                if boundary == 'core':
+                    self.assertNotIn('alloc', features)
+                if boundary != 'build' or '-none' in target:
+                    self.assertNotIn('std', features)
+                if boundary == 'build':
+                    self.assertEqual(command[2], 'build')
+                    self.assertIn('--release', command)
         wasm = [(commands, env) for name, commands, env in plan if name.endswith(('-scalar', '-simd'))]
         self.assertEqual(len(wasm), 4)
         self.assertTrue(all(commands[1][:2] == ['wasmtime', 'run'] for commands, _ in wasm))

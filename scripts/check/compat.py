@@ -26,9 +26,15 @@ def targets():
             if '-none' in t or t.startswith('wasm32-')]
 
 
+def portable_targets():
+    """Targets whose accelerated backends require nightly Rust."""
+    return [t for t in json.loads((ROOT / '.config/target-matrix.json').read_text())['targets']
+            if t.startswith(('powerpc64', 's390x', 'riscv'))]
+
+
 def install():
     channels = {toolchain.channel(): set(targets())}
-    channels.setdefault(toolchain.msrv_channel(), set()).add('thumbv6m-none-eabi')
+    channels.setdefault(toolchain.msrv_channel(), set()).update(['thumbv6m-none-eabi', *portable_targets()])
     for channel, selected in channels.items():
         subprocess.run(['rustup', 'toolchain', 'install', channel, '--profile', 'minimal',
                         '--target', ','.join(sorted(selected))], check=True)
@@ -74,6 +80,16 @@ def cases():
             yield f'{channel}-thumb-{boundary}', [check(channel, 'thumbv6m-none-eabi', selected)], {}
         native = sorted(set(graph) - {'portable-only'})
         yield f'{channel}-broad', [check(channel, host, native), check(channel, host, [*native, 'portable-only'])], {}
+
+    # Portable builds must not compile the nightly-only backend modules, even
+    # when every primitive is enabled. Check both allocation boundaries, then
+    # generate code with all features supported by the target.
+    for target in portable_targets():
+        for boundary in ('core', 'alloc'):
+            selected = boundary_features(graph, boundary)
+            yield f'{target}-portable-{boundary}', [check(msrv, target, selected)], {}
+        selected = boundary_features(graph, 'alloc') if '-none' in target else sorted(graph)
+        yield f'{target}-portable-build', [check(msrv, target, selected, 'build')], {}
 
     for target in targets():
         features = ['full', 'serde', 'serde-secrets', 'websocket-sha1']

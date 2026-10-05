@@ -15,7 +15,10 @@ pub(crate) mod dispatch_policy;
 #[cfg(test)]
 mod kernel_test;
 pub(crate) mod kernels;
-#[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+#[cfg(all(
+  any(target_arch = "riscv64", target_arch = "riscv32"),
+  not(feature = "portable-only")
+))]
 pub(crate) mod riscv64;
 #[cfg(target_arch = "s390x")]
 pub(crate) mod s390x;
@@ -73,7 +76,7 @@ fn small_sigma1(x: u32) -> u32 {
 
 /// Read SHA-256 round constant K[i].
 ///
-/// On x86/x86_64, 32-bit constants can be encoded as immediate operands in
+/// On x86_64, 32-bit constants can be encoded as immediate operands in
 /// `add r32, imm32`. On all other architectures
 /// (POWER, aarch64 portable, s390x, RISC-V), materializing a 32-bit
 /// immediate requires 2+ instructions (`lis`+`ori` on POWER, `movz`+`movk`
@@ -93,14 +96,14 @@ fn small_sigma1(x: u32) -> u32 {
 /// This matches the `sha2` crate's `rk()` strategy.
 #[inline(always)]
 fn rk(i: usize) -> u32 {
-  #[cfg(any(target_arch = "x86", all(target_arch = "x86_64", target_feature = "sse2")))]
+  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     // x86 has short immediates for 32-bit constants; constant-folding the
     // table is fine and produces tighter code than a load.
     // SAFETY: i is always in 0..64, and K has exactly 64 elements.
     unsafe { core::ptr::read(K.0.as_ptr().add(i)) }
   }
-  #[cfg(not(any(target_arch = "x86", all(target_arch = "x86_64", target_feature = "sse2"))))]
+  #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
   {
     let base = core::hint::black_box(K.0.as_ptr());
     // SAFETY: i is always in 0..64, K has exactly 64 elements, and

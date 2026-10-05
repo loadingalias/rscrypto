@@ -4,7 +4,7 @@ use core::fmt;
 
 #[cfg(target_arch = "aarch64")]
 use super::ghash::ghash_update_padded_wide_aarch64;
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 use super::ghash::ghash_update_padded_wide_ppc;
 use super::ghash::{GhashAccumulator, ghash_update_padded, ghash_update_padded_wide};
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
@@ -506,7 +506,7 @@ impl Aead for Aes256Gcm {
     #[cfg(not(any(
       all(target_arch = "x86_64", target_feature = "sse2"),
       target_arch = "aarch64",
-      target_arch = "powerpc64"
+      all(target_arch = "powerpc64", not(feature = "portable-only"))
     )))]
     let _ = length_block;
 
@@ -598,7 +598,7 @@ impl Aead for Aes256Gcm {
       return Ok(Aes256GcmTag::from_bytes(tag_bytes));
     }
 
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     if self.backend == AeadBackend::Power8Crypto {
       let h_polyval = self.h_powers_rev[3];
       // SAFETY: POWER8 GHASH AAD path because:
@@ -652,7 +652,7 @@ impl Aead for Aes256Gcm {
     #[cfg(not(any(
       all(target_arch = "x86_64", target_feature = "sse2"),
       target_arch = "aarch64",
-      target_arch = "powerpc64"
+      all(target_arch = "powerpc64", not(feature = "portable-only"))
     )))]
     let _ = length_block;
 
@@ -756,7 +756,7 @@ impl Aead for Aes256Gcm {
       return Ok(());
     }
 
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     if self.backend == AeadBackend::Power8Crypto {
       let h_polyval = self.h_powers_rev[3];
       // SAFETY: POWER8 GHASH AAD path because:

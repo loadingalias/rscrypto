@@ -6,10 +6,10 @@ use core::fmt;
 use super::polyval::{accumulate_padded_x86, precompute_powers, precompute_powers_16};
 #[cfg(any(
   target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "riscv64",
-  target_arch = "s390x",
-  all(target_arch = "x86_64", target_feature = "sse2"),
+  all(target_arch = "powerpc64", not(feature = "portable-only")),
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only")),
+  all(target_arch = "x86_64", target_feature = "sse2")
 ))]
 use super::targets::{AeadBackend, AeadPrimitive, select_backend};
 use super::{AeadBufferError, Nonce96, OpenError, SealError, aes, polyval};
@@ -90,10 +90,10 @@ pub struct Aes128GcmSiv {
   master_ek: aes::Aes128EncKey,
   #[cfg(any(
     target_arch = "aarch64",
-    target_arch = "powerpc64",
-    target_arch = "riscv64",
-    target_arch = "s390x",
-    all(target_arch = "x86_64", target_feature = "sse2"),
+    all(target_arch = "powerpc64", not(feature = "portable-only")),
+    all(target_arch = "riscv64", not(feature = "portable-only")),
+    all(target_arch = "s390x", not(feature = "portable-only")),
+    all(target_arch = "x86_64", target_feature = "sse2")
   ))]
   backend: AeadBackend,
 }
@@ -262,12 +262,12 @@ pub fn diag_aes128gcmsiv_polyval_digest(auth_key: &[u8; 16], aad: &[u8], plainte
 #[must_use]
 pub fn diag_aes128gcmsiv_raw_tag_aes(enc_key: &[u8; 16], block: &[u8; 16]) -> [u8; 16] {
   let mut out = *block;
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   {
     // SAFETY: diagnostic s390x CT runs execute on the native MSA runner.
     unsafe { aes::s390x_encrypt_block_raw_128_inline(enc_key, &mut out) };
   }
-  #[cfg(not(target_arch = "s390x"))]
+  #[cfg(not(all(target_arch = "s390x", not(feature = "portable-only"))))]
   {
     let ek = aes::aes128_expand_key(enc_key);
     aes::aes128_encrypt_block(&ek, &mut out);
@@ -282,7 +282,7 @@ pub fn diag_aes128gcmsiv_ctr32(enc_key: &[u8; 16], tag: &[u8; 16], plaintext: &[
   let mut counter_block = *tag;
   counter_block[15] |= 0x80;
   let mut buffer = *plaintext;
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   {
     let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
     let mut offset = 0usize;
@@ -310,7 +310,7 @@ pub fn diag_aes128gcmsiv_ctr32(enc_key: &[u8; 16], tag: &[u8; 16], plaintext: &[
       ctr = ctr.wrapping_add(1);
     }
   }
-  #[cfg(not(target_arch = "s390x"))]
+  #[cfg(not(all(target_arch = "s390x", not(feature = "portable-only"))))]
   {
     let ek = aes::aes128_expand_key(enc_key);
     aes::aes128_ctr32_encrypt(&ek, &counter_block, &mut buffer);
@@ -333,7 +333,7 @@ fn diag_fold16(data: &[u8]) -> [u8; 16] {
   acc.to_ne_bytes()
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[derive(Clone, Copy)]
 enum RiscvPolyvalBackend {
   Portable,
@@ -341,13 +341,13 @@ enum RiscvPolyvalBackend {
   Vector,
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[inline]
 fn reduce_riscv_portable(a: u128, b: u128) -> u128 {
   polyval::portable_clmul128_reduce_inline(a, b)
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[inline]
 fn reduce_riscv_scalar(a: u128, b: u128) -> u128 {
   // SAFETY: caller only selects this reducer after runtime detection confirms
@@ -355,7 +355,7 @@ fn reduce_riscv_scalar(a: u128, b: u128) -> u128 {
   unsafe { polyval::riscv_scalar_clmul128_reduce_inline(a, b) }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[inline]
 fn reduce_riscv_vector(a: u128, b: u128) -> u128 {
   // SAFETY: caller only selects this reducer after runtime detection confirms
@@ -363,7 +363,7 @@ fn reduce_riscv_vector(a: u128, b: u128) -> u128 {
   unsafe { polyval::riscv_vector_clmul128_reduce_inline(a, b) }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[inline]
 fn compute_tag_riscv_with_reduce(
   auth_key: &[u8; 16],
@@ -422,7 +422,7 @@ fn compute_tag_riscv_with_reduce(
   s
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[inline]
 fn expand_key_riscv_for_backend(key: &[u8; 16], backend: AeadBackend) -> aes::Aes128EncKey {
   match backend {
@@ -433,7 +433,7 @@ fn expand_key_riscv_for_backend(key: &[u8; 16], backend: AeadBackend) -> aes::Ae
   }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[inline]
 fn expand_message_key_riscv(enc_key: &[u8; 16], backend: AeadBackend) -> aes::Aes128EncKey {
   expand_key_riscv_for_backend(enc_key, backend)
@@ -441,10 +441,10 @@ fn expand_message_key_riscv(enc_key: &[u8; 16], backend: AeadBackend) -> aes::Ae
 
 #[cfg(any(
   target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "riscv64",
-  target_arch = "s390x",
-  all(target_arch = "x86_64", target_feature = "sse2"),
+  all(target_arch = "powerpc64", not(feature = "portable-only")),
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only")),
+  all(target_arch = "x86_64", target_feature = "sse2")
 ))]
 #[inline]
 fn resolve_backend() -> AeadBackend {
@@ -455,7 +455,7 @@ fn resolve_backend() -> AeadBackend {
   )
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[inline]
 fn riscv_polyval_backend(backend: AeadBackend) -> RiscvPolyvalBackend {
   match backend {
@@ -473,7 +473,7 @@ fn riscv_polyval_backend(backend: AeadBackend) -> RiscvPolyvalBackend {
   }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[inline]
 fn compute_tag_riscv(
   auth_key: &[u8; 16],
@@ -496,7 +496,7 @@ fn compute_tag_riscv(
   }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[inline]
 fn encrypt_riscv(
   master_ek: &aes::Aes128EncKey,
@@ -516,7 +516,7 @@ fn encrypt_riscv(
   tag_bytes
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[inline]
 fn decrypt_riscv(
   master_ek: &aes::Aes128EncKey,
@@ -1021,7 +1021,7 @@ unsafe fn decrypt_fused_aarch64(
 /// # Safety
 ///
 /// The executing CPU must support AltiVec, VSX, POWER8 vector, and POWER8 crypto.
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 unsafe fn encrypt_fused_ppc(
   auth_key: &mut [u8; 16],
@@ -1155,7 +1155,7 @@ unsafe fn encrypt_fused_ppc(
 /// # Safety
 ///
 /// The executing CPU must support AltiVec, VSX, POWER8 vector, and POWER8 crypto.
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 unsafe fn decrypt_fused_ppc(
   auth_key: &mut [u8; 16],
@@ -1296,7 +1296,7 @@ unsafe fn decrypt_fused_ppc(
 /// # Safety
 ///
 /// The executing CPU must support MSA AES instructions.
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 unsafe fn s390x_ctr32_le_xor_raw(enc_key_bytes: &[u8; 16], counter_block: &mut [u8; 16], buffer: &mut [u8]) {
   let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
   let mut offset = 0usize;
@@ -1332,7 +1332,7 @@ unsafe fn s390x_ctr32_le_xor_raw(enc_key_bytes: &[u8; 16], counter_block: &mut [
 /// # Safety
 ///
 /// The executing CPU must support the vector facility and MSA AES instructions.
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 #[target_feature(enable = "vector")]
 unsafe fn encrypt_fused_s390x(
   auth_key: &mut [u8; 16],
@@ -1441,7 +1441,7 @@ unsafe fn encrypt_fused_s390x(
 /// # Safety
 ///
 /// The executing CPU must support the vector facility and MSA AES instructions.
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 #[target_feature(enable = "vector")]
 unsafe fn decrypt_fused_s390x(
   auth_key: &mut [u8; 16],
@@ -1562,24 +1562,24 @@ impl Aead for Aes128GcmSiv {
   fn new(key: &Self::Key) -> Self {
     #[cfg(any(
       target_arch = "aarch64",
-      target_arch = "powerpc64",
-      target_arch = "riscv64",
-      target_arch = "s390x",
-      all(target_arch = "x86_64", target_feature = "sse2"),
+      all(target_arch = "powerpc64", not(feature = "portable-only")),
+      all(target_arch = "riscv64", not(feature = "portable-only")),
+      all(target_arch = "s390x", not(feature = "portable-only")),
+      all(target_arch = "x86_64", target_feature = "sse2")
     ))]
     let backend = resolve_backend();
 
     Self {
-      #[cfg(target_arch = "riscv64")]
+      #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
       master_ek: expand_key_riscv_for_backend(key.as_bytes(), backend),
-      #[cfg(not(target_arch = "riscv64"))]
+      #[cfg(not(all(target_arch = "riscv64", not(feature = "portable-only"))))]
       master_ek: aes::aes128_expand_key(key.as_bytes()),
       #[cfg(any(
         target_arch = "aarch64",
-        target_arch = "powerpc64",
-        target_arch = "riscv64",
-        target_arch = "s390x",
-        all(target_arch = "x86_64", target_feature = "sse2"),
+        all(target_arch = "powerpc64", not(feature = "portable-only")),
+        all(target_arch = "riscv64", not(feature = "portable-only")),
+        all(target_arch = "s390x", not(feature = "portable-only")),
+        all(target_arch = "x86_64", target_feature = "sse2")
       ))]
       backend,
     }
@@ -1644,7 +1644,7 @@ impl Aead for Aes128GcmSiv {
     }
 
     // Fused path: POWER8 crypto.
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     if self.backend == AeadBackend::Power8Crypto {
       let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
       // SAFETY: POWER8 crypto availability verified during backend resolution.
@@ -1653,7 +1653,7 @@ impl Aead for Aes128GcmSiv {
     }
 
     // Fused path: s390x z/Vector + MSA.
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     if self.backend == AeadBackend::S390xMsa {
       let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
       // SAFETY: z/Vector + MSA availability verified during backend resolution.
@@ -1661,7 +1661,7 @@ impl Aead for Aes128GcmSiv {
       return Ok(Aes128GcmSivTag::from_bytes(tag_bytes));
     }
 
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     {
       match self.backend {
         AeadBackend::Portable | AeadBackend::Riscv64VectorCrypto | AeadBackend::Riscv64ScalarCrypto => {
@@ -1737,7 +1737,7 @@ impl Aead for Aes128GcmSiv {
     }
 
     // Fused path: POWER8 crypto.
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     if self.backend == AeadBackend::Power8Crypto {
       let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
       // SAFETY: POWER8 crypto availability verified during backend resolution.
@@ -1746,7 +1746,7 @@ impl Aead for Aes128GcmSiv {
     }
 
     // Fused path: s390x z/Vector + MSA.
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     if self.backend == AeadBackend::S390xMsa {
       let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
       // SAFETY: z/Vector + MSA availability verified during backend resolution.
@@ -1754,7 +1754,7 @@ impl Aead for Aes128GcmSiv {
         .map_err(OpenError::from);
     }
 
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     {
       match self.backend {
         AeadBackend::Portable | AeadBackend::Riscv64VectorCrypto | AeadBackend::Riscv64ScalarCrypto => {

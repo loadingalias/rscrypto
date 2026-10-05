@@ -6,18 +6,18 @@ use super::{
   all(rscrypto_internal, feature = "diag"),
   all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "aarch64",
-  target_arch = "s390x",
-  target_arch = "powerpc64",
-  target_arch = "riscv64"
+  all(target_arch = "s390x", not(feature = "portable-only")),
+  all(target_arch = "powerpc64", not(feature = "portable-only")),
+  all(target_arch = "riscv64", not(feature = "portable-only"))
 ))]
 use crate::platform::Caps;
 #[cfg(target_arch = "aarch64")]
 use crate::platform::caps::aarch64;
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 use crate::platform::caps::power;
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 use crate::platform::caps::riscv;
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 use crate::platform::caps::s390x;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 use crate::platform::caps::x86;
@@ -33,7 +33,10 @@ fn assembly_flags(flags: u32) -> u8 {
   u8::try_from(flags).expect("BLAKE3 flags must fit the assembly ABI")
 }
 
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
+#[cfg(all(
+  any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"),
+  not(feature = "portable-only")
+))]
 #[inline(always)]
 fn counter_words(counter: u64) -> (u32, u32) {
   let [c0, c1, c2, c3, c4, c5, c6, c7] = counter.to_le_bytes();
@@ -43,7 +46,10 @@ fn counter_words(counter: u64) -> (u32, u32) {
   )
 }
 
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
+#[cfg(all(
+  any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"),
+  not(feature = "portable-only")
+))]
 #[inline(always)]
 fn wrapping_add4(lhs: core::simd::u32x4, rhs: core::simd::u32x4) -> core::simd::u32x4 {
   core::ops::Add::add(lhs, rhs)
@@ -128,11 +134,11 @@ pub(crate) enum Blake3KernelId {
   X86Avx512 = 4,
   #[cfg(target_arch = "aarch64")]
   Aarch64Neon = 5,
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   S390xVector = 6,
-  #[cfg(target_arch = "powerpc64")]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
   PowerVsx = 7,
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   RiscvV = 8,
 }
 
@@ -151,11 +157,11 @@ impl Blake3KernelId {
       Self::X86Avx512 => "x86_64/avx512",
       #[cfg(target_arch = "aarch64")]
       Self::Aarch64Neon => "aarch64/neon",
-      #[cfg(target_arch = "s390x")]
+      #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
       Self::S390xVector => "s390x/vector",
-      #[cfg(target_arch = "powerpc64")]
+      #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
       Self::PowerVsx => "powerpc64/vsx",
-      #[cfg(target_arch = "riscv64")]
+      #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
       Self::RiscvV => "riscv64/v",
     }
   }
@@ -174,11 +180,11 @@ impl Blake3KernelId {
       Self::X86Avx512 => 16,
       #[cfg(target_arch = "aarch64")]
       Self::Aarch64Neon => 4, // NEON processes 4 lanes
-      #[cfg(target_arch = "s390x")]
+      #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
       Self::S390xVector => 4,
-      #[cfg(target_arch = "powerpc64")]
+      #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
       Self::PowerVsx => 4,
-      #[cfg(target_arch = "riscv64")]
+      #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
       Self::RiscvV => 4,
     }
   }
@@ -321,7 +327,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       #[cfg(feature = "diag")]
       name: id.as_str(),
     },
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     Blake3KernelId::S390xVector => Kernel {
       id,
       compress: compress_s390x_vector_wrapper,
@@ -330,7 +336,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       #[cfg(feature = "diag")]
       name: id.as_str(),
     },
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     Blake3KernelId::PowerVsx => Kernel {
       id,
       compress: compress_power_vsx_wrapper,
@@ -339,7 +345,7 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       #[cfg(feature = "diag")]
       name: id.as_str(),
     },
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     Blake3KernelId::RiscvV => Kernel {
       id,
       compress: compress_riscv_v_wrapper,
@@ -423,15 +429,15 @@ pub(crate) fn chunk_compress_blocks_inline(
     Blake3KernelId::Aarch64Neon => {
       chunk_compress_blocks_neon_wrapper(chaining_value, chunk_counter, flags, blocks_compressed, blocks)
     }
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     Blake3KernelId::S390xVector => {
       chunk_compress_blocks_s390x_vector_wrapper(chaining_value, chunk_counter, flags, blocks_compressed, blocks)
     }
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     Blake3KernelId::PowerVsx => {
       chunk_compress_blocks_power_vsx_wrapper(chaining_value, chunk_counter, flags, blocks_compressed, blocks)
     }
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     Blake3KernelId::RiscvV => {
       chunk_compress_blocks_riscv_v_wrapper(chaining_value, chunk_counter, flags, blocks_compressed, blocks)
     }
@@ -558,17 +564,17 @@ pub(crate) unsafe fn hash_many_contiguous_inline(
       // SAFETY: caller upholds the contiguous-input and output-buffer contract.
       unsafe { hash_many_contiguous_neon_wrapper(input, num_chunks, key, counter, flags, out) }
     }
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     Blake3KernelId::S390xVector => {
       // SAFETY: caller upholds the contiguous-input and output-buffer contract.
       unsafe { hash_many_contiguous_s390x_vector_wrapper(input, num_chunks, key, counter, flags, out) }
     }
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     Blake3KernelId::PowerVsx => {
       // SAFETY: caller upholds the contiguous-input and output-buffer contract.
       unsafe { hash_many_contiguous_power_vsx_wrapper(input, num_chunks, key, counter, flags, out) }
     }
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     Blake3KernelId::RiscvV => {
       // SAFETY: caller upholds the contiguous-input and output-buffer contract.
       unsafe { hash_many_contiguous_riscv_v_wrapper(input, num_chunks, key, counter, flags, out) }
@@ -594,11 +600,11 @@ pub(crate) fn parent_cv_inline(
     Blake3KernelId::X86Avx512 => parent_cv_avx512_wrapper(left_child_cv, right_child_cv, key_words, flags),
     #[cfg(target_arch = "aarch64")]
     Blake3KernelId::Aarch64Neon => parent_cv_neon_wrapper(left_child_cv, right_child_cv, key_words, flags),
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     Blake3KernelId::S390xVector => parent_cv_s390x_vector_wrapper(left_child_cv, right_child_cv, key_words, flags),
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     Blake3KernelId::PowerVsx => parent_cv_power_vsx_wrapper(left_child_cv, right_child_cv, key_words, flags),
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     Blake3KernelId::RiscvV => parent_cv_riscv_v_wrapper(left_child_cv, right_child_cv, key_words, flags),
   }
 }
@@ -622,13 +628,13 @@ pub(crate) fn compress_block_inline(
     Blake3KernelId::X86Avx512 => compress_avx512_wrapper(chaining_value, block_words, counter, block_len, flags),
     #[cfg(target_arch = "aarch64")]
     Blake3KernelId::Aarch64Neon => compress_neon_wrapper(chaining_value, block_words, counter, block_len, flags),
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     Blake3KernelId::S390xVector => {
       compress_s390x_vector_wrapper(chaining_value, block_words, counter, block_len, flags)
     }
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     Blake3KernelId::PowerVsx => compress_power_vsx_wrapper(chaining_value, block_words, counter, block_len, flags),
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     Blake3KernelId::RiscvV => compress_riscv_v_wrapper(chaining_value, block_words, counter, block_len, flags),
   }
 }
@@ -731,7 +737,7 @@ fn root_output_block_words_inline(
     return;
   }
 
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   if id == Blake3KernelId::S390xVector {
     // SAFETY: dispatch only selects this kernel when the vector facility is present.
     unsafe {
@@ -740,14 +746,14 @@ fn root_output_block_words_inline(
     return;
   }
 
-  #[cfg(target_arch = "powerpc64")]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
   if id == Blake3KernelId::PowerVsx {
     // SAFETY: dispatch only selects this kernel when VSX is available.
     unsafe { root_output_blocks1_power_vsx(chaining_value, block_words, counter, block_len, flags, out.as_mut_ptr()) };
     return;
   }
 
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   if id == Blake3KernelId::RiscvV {
     // SAFETY: dispatch only selects this kernel when RVV is available.
     unsafe { root_output_blocks1_riscv_v(chaining_value, block_words, counter, block_len, flags, out.as_mut_ptr()) };
@@ -1496,17 +1502,17 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
       unsafe { super::aarch64::parent_cvs_many_neon(children, key_words, flags, out) };
       return;
     }
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     Blake3KernelId::S390xVector => {
       parent_cvs_many4_simd(children, key_words, flags, out);
       return;
     }
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     Blake3KernelId::PowerVsx => {
       parent_cvs_many4_simd(children, key_words, flags, out);
       return;
     }
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     Blake3KernelId::RiscvV => {
       parent_cvs_many4_simd(children, key_words, flags, out);
       return;
@@ -1816,9 +1822,9 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
   all(rscrypto_internal, feature = "diag"),
   all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "aarch64",
-  target_arch = "s390x",
-  target_arch = "powerpc64",
-  target_arch = "riscv64"
+  all(target_arch = "s390x", not(feature = "portable-only")),
+  all(target_arch = "powerpc64", not(feature = "portable-only")),
+  all(target_arch = "riscv64", not(feature = "portable-only"))
 ))]
 pub(crate) const fn required_caps(id: Blake3KernelId) -> Caps {
   match id {
@@ -1854,11 +1860,11 @@ pub(crate) const fn required_caps(id: Blake3KernelId) -> Caps {
     }
     #[cfg(target_arch = "aarch64")]
     Blake3KernelId::Aarch64Neon => aarch64::NEON,
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     Blake3KernelId::S390xVector => s390x::VECTOR,
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     Blake3KernelId::PowerVsx => power::VSX,
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     Blake3KernelId::RiscvV => riscv::V,
   }
 }
@@ -2013,7 +2019,10 @@ unsafe fn hash_many_contiguous_portable(
   }
 }
 
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
+#[cfg(all(
+  any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"),
+  not(feature = "portable-only")
+))]
 #[inline(always)]
 /// Writes one chaining value in little-endian byte order.
 ///
@@ -2028,25 +2037,37 @@ unsafe fn write_cv_words(out: *mut u8, cv: &[u32; 8]) {
   }
 }
 
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
+#[cfg(all(
+  any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"),
+  not(feature = "portable-only")
+))]
 #[inline(always)]
 fn rot_lanes_left_1(v: core::simd::u32x4) -> core::simd::u32x4 {
   core::simd::simd_swizzle!(v, [1, 2, 3, 0])
 }
 
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
+#[cfg(all(
+  any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"),
+  not(feature = "portable-only")
+))]
 #[inline(always)]
 fn rot_lanes_left_2(v: core::simd::u32x4) -> core::simd::u32x4 {
   core::simd::simd_swizzle!(v, [2, 3, 0, 1])
 }
 
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
+#[cfg(all(
+  any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"),
+  not(feature = "portable-only")
+))]
 #[inline(always)]
 fn rot_lanes_left_3(v: core::simd::u32x4) -> core::simd::u32x4 {
   core::simd::simd_swizzle!(v, [3, 0, 1, 2])
 }
 
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
+#[cfg(all(
+  any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"),
+  not(feature = "portable-only")
+))]
 #[inline(always)]
 fn rotr32<const N: u32>(v: core::simd::u32x4) -> core::simd::u32x4 {
   debug_assert!(N > 0 && N < 32);
@@ -2055,7 +2076,10 @@ fn rotr32<const N: u32>(v: core::simd::u32x4) -> core::simd::u32x4 {
   core::ops::BitOr::bitor(core::ops::Shr::shr(v, s0), core::ops::Shl::shl(v, s1))
 }
 
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
+#[cfg(all(
+  any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"),
+  not(feature = "portable-only")
+))]
 #[inline(always)]
 fn load_msg_vec_const<const I0: usize, const I1: usize, const I2: usize, const I3: usize>(
   block_words: &[u32; 16],
@@ -2069,7 +2093,10 @@ fn load_msg_vec_const<const I0: usize, const I1: usize, const I2: usize, const I
   core::simd::u32x4::from_array([block_words[I0], block_words[I1], block_words[I2], block_words[I3]])
 }
 
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
+#[cfg(all(
+  any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"),
+  not(feature = "portable-only")
+))]
 const MSG_SCHEDULE_SIMD: [[usize; 16]; 7] = [
   [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
   [2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8],
@@ -2080,7 +2107,10 @@ const MSG_SCHEDULE_SIMD: [[usize; 16]; 7] = [
   [11, 15, 5, 0, 1, 9, 8, 6, 14, 10, 2, 12, 3, 4, 7, 13],
 ];
 
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
+#[cfg(all(
+  any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"),
+  not(feature = "portable-only")
+))]
 #[inline(always)]
 fn compress_simd_leaf(
   chaining_value: &[u32; 8],
@@ -2179,7 +2209,10 @@ fn compress_simd_leaf(
   out
 }
 
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
+#[cfg(all(
+  any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"),
+  not(feature = "portable-only")
+))]
 #[inline(always)]
 /// Transposes block `block_offset / BLOCK_LEN` of four contiguous chunks into message lanes.
 ///
@@ -2219,7 +2252,10 @@ unsafe fn load_msg_lanes4_contiguous(base: *const u8, block_offset: usize) -> [c
   out
 }
 
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
+#[cfg(all(
+  any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"),
+  not(feature = "portable-only")
+))]
 #[inline(always)]
 fn g4_simd(
   v: &mut [core::simd::u32x4; 16],
@@ -2246,7 +2282,10 @@ fn g4_simd(
   v[b] = rotr32::<7>(v[b]);
 }
 
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
+#[cfg(all(
+  any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"),
+  not(feature = "portable-only")
+))]
 #[inline(always)]
 fn round4_simd(v: &mut [core::simd::u32x4; 16], m: &[core::simd::u32x4; 16], r: usize) {
   let s = &MSG_SCHEDULE_SIMD[r];
@@ -2260,7 +2299,10 @@ fn round4_simd(v: &mut [core::simd::u32x4; 16], m: &[core::simd::u32x4; 16], r: 
   g4_simd(v, 3, 4, 9, 14, m[s[14]], m[s[15]]);
 }
 
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
+#[cfg(all(
+  any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"),
+  not(feature = "portable-only")
+))]
 #[inline(always)]
 fn load_parent_msg_lanes4(children: &[[u8; OUT_LEN]], base: usize, rem: usize) -> [core::simd::u32x4; 16] {
   type Vec4 = core::simd::u32x4;
@@ -2290,7 +2332,10 @@ fn load_parent_msg_lanes4(children: &[[u8; OUT_LEN]], base: usize, rem: usize) -
   msg
 }
 
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
+#[cfg(all(
+  any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"),
+  not(feature = "portable-only")
+))]
 #[inline(always)]
 fn parent_cvs_many4_simd(children: &[[u8; OUT_LEN]], key_words: [u32; 8], flags: u32, out: &mut [[u8; OUT_LEN]]) {
   type Vec4 = core::simd::u32x4;
@@ -2358,7 +2403,10 @@ fn parent_cvs_many4_simd(children: &[[u8; OUT_LEN]], key_words: [u32; 8], flags:
   }
 }
 
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"))]
+#[cfg(all(
+  any(target_arch = "s390x", target_arch = "powerpc64", target_arch = "riscv64"),
+  not(feature = "portable-only")
+))]
 #[inline(always)]
 /// Hashes four contiguous full chunks with the portable SIMD kernel.
 ///
@@ -2462,7 +2510,7 @@ unsafe fn hash4_contiguous_full_chunks_simd(input: *const u8, key: &[u32; 8], co
 
 // s390x vector wrappers
 
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 /// Compresses one block with the s390x vector implementation.
 ///
 /// # Safety
@@ -2479,7 +2527,7 @@ unsafe fn compress_s390x_vector(
   compress_simd_leaf(chaining_value, block_words, counter, block_len, flags)
 }
 
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 fn compress_s390x_vector_wrapper(
   chaining_value: &[u32; 8],
   block_words: &[u32; 16],
@@ -2491,7 +2539,7 @@ fn compress_s390x_vector_wrapper(
   unsafe { compress_s390x_vector(chaining_value, block_words, counter, block_len, flags) }
 }
 
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 /// Writes one root-output block with the s390x vector implementation.
 ///
 /// # Safety
@@ -2514,7 +2562,7 @@ unsafe fn root_output_blocks1_s390x_vector(
   write_root_output_words(out, &words);
 }
 
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 /// Compresses full chunk blocks with the s390x vector implementation.
 ///
 /// # Safety
@@ -2577,7 +2625,7 @@ unsafe fn chunk_compress_blocks_s390x_vector(
   }
 }
 
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 fn chunk_compress_blocks_s390x_vector_wrapper(
   chaining_value: &mut [u32; 8],
   chunk_counter: u64,
@@ -2589,7 +2637,7 @@ fn chunk_compress_blocks_s390x_vector_wrapper(
   unsafe { chunk_compress_blocks_s390x_vector(chaining_value, chunk_counter, flags, blocks_compressed, blocks) }
 }
 
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 /// Compresses a parent node with the s390x vector implementation.
 ///
 /// # Safety
@@ -2614,7 +2662,7 @@ unsafe fn parent_cv_s390x_vector(
   ))
 }
 
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 fn parent_cv_s390x_vector_wrapper(
   left_child_cv: [u32; 8],
   right_child_cv: [u32; 8],
@@ -2625,7 +2673,7 @@ fn parent_cv_s390x_vector_wrapper(
   unsafe { parent_cv_s390x_vector(left_child_cv, right_child_cv, key_words, flags) }
 }
 
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 /// Hashes one full chunk with the s390x vector implementation.
 ///
 /// # Safety
@@ -2655,7 +2703,7 @@ unsafe fn hash_one_chunk_s390x_vector(input: *const u8, key: &[u32; 8], counter:
   unsafe { write_cv_words(out, &cv) };
 }
 
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 /// Hashes contiguous chunks with the s390x vector implementation.
 ///
 /// # Safety
@@ -2704,7 +2752,7 @@ unsafe fn hash_many_contiguous_s390x_vector(
   }
 }
 
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 /// Dispatches contiguous chunks through the s390x vector implementation.
 ///
 /// # Safety
@@ -2726,7 +2774,7 @@ unsafe fn hash_many_contiguous_s390x_vector_wrapper(
 
 // powerpc64 VSX wrappers
 
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 #[target_feature(enable = "vsx")]
 /// Compresses one block with the PowerPC64 VSX implementation.
 ///
@@ -2743,7 +2791,7 @@ unsafe fn compress_power_vsx(
   compress_simd_leaf(chaining_value, block_words, counter, block_len, flags)
 }
 
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 fn compress_power_vsx_wrapper(
   chaining_value: &[u32; 8],
   block_words: &[u32; 16],
@@ -2755,7 +2803,7 @@ fn compress_power_vsx_wrapper(
   unsafe { compress_power_vsx(chaining_value, block_words, counter, block_len, flags) }
 }
 
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 #[target_feature(enable = "vsx")]
 /// Writes one root-output block with the PowerPC64 VSX implementation.
 ///
@@ -2778,7 +2826,7 @@ unsafe fn root_output_blocks1_power_vsx(
   write_root_output_words(out, &words);
 }
 
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 #[target_feature(enable = "vsx")]
 /// Compresses full chunk blocks with the PowerPC64 VSX implementation.
 ///
@@ -2829,7 +2877,7 @@ unsafe fn chunk_compress_blocks_power_vsx(
   }
 }
 
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 fn chunk_compress_blocks_power_vsx_wrapper(
   chaining_value: &mut [u32; 8],
   chunk_counter: u64,
@@ -2841,7 +2889,7 @@ fn chunk_compress_blocks_power_vsx_wrapper(
   unsafe { chunk_compress_blocks_power_vsx(chaining_value, chunk_counter, flags, blocks_compressed, blocks) }
 }
 
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 #[target_feature(enable = "vsx")]
 /// Compresses a parent node with the PowerPC64 VSX implementation.
 ///
@@ -2866,7 +2914,7 @@ unsafe fn parent_cv_power_vsx(
   ))
 }
 
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 fn parent_cv_power_vsx_wrapper(
   left_child_cv: [u32; 8],
   right_child_cv: [u32; 8],
@@ -2877,7 +2925,7 @@ fn parent_cv_power_vsx_wrapper(
   unsafe { parent_cv_power_vsx(left_child_cv, right_child_cv, key_words, flags) }
 }
 
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 #[target_feature(enable = "vsx")]
 /// Hashes one full chunk with the PowerPC64 VSX implementation.
 ///
@@ -2907,7 +2955,7 @@ unsafe fn hash_one_chunk_power_vsx(input: *const u8, key: &[u32; 8], counter: u6
   unsafe { write_cv_words(out, &cv) };
 }
 
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 #[target_feature(enable = "vsx")]
 /// Hashes contiguous chunks with the PowerPC64 VSX implementation.
 ///
@@ -2956,7 +3004,7 @@ unsafe fn hash_many_contiguous_power_vsx(
   }
 }
 
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 /// Dispatches contiguous chunks through the PowerPC64 VSX implementation.
 ///
 /// # Safety
@@ -2977,7 +3025,7 @@ unsafe fn hash_many_contiguous_power_vsx_wrapper(
 
 // riscv64 RVV wrappers
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[inline(always)]
 fn compress_simd_leaf_riscv(
   chaining_value: &[u32; 8],
@@ -3044,7 +3092,7 @@ fn compress_simd_leaf_riscv(
   ]
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 /// Compresses one block with the RISC-V vector implementation.
 ///
 /// # Safety
@@ -3061,7 +3109,7 @@ unsafe fn compress_riscv_v(
   compress_simd_leaf_riscv(chaining_value, block_words, counter, block_len, flags)
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 fn compress_riscv_v_wrapper(
   chaining_value: &[u32; 8],
   block_words: &[u32; 16],
@@ -3073,7 +3121,7 @@ fn compress_riscv_v_wrapper(
   unsafe { compress_riscv_v(chaining_value, block_words, counter, block_len, flags) }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 /// Writes one root-output block with the RISC-V vector implementation.
 ///
 /// # Safety
@@ -3096,7 +3144,7 @@ unsafe fn root_output_blocks1_riscv_v(
   write_root_output_words(out, &words);
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 /// Compresses full chunk blocks with the RISC-V vector implementation.
 ///
 /// # Safety
@@ -3150,7 +3198,7 @@ unsafe fn chunk_compress_blocks_riscv_v(
   }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 fn chunk_compress_blocks_riscv_v_wrapper(
   chaining_value: &mut [u32; 8],
   chunk_counter: u64,
@@ -3162,7 +3210,7 @@ fn chunk_compress_blocks_riscv_v_wrapper(
   unsafe { chunk_compress_blocks_riscv_v(chaining_value, chunk_counter, flags, blocks_compressed, blocks) }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 /// Compresses a parent node with the RISC-V vector implementation.
 ///
 /// # Safety
@@ -3187,7 +3235,7 @@ unsafe fn parent_cv_riscv_v(
   ))
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 fn parent_cv_riscv_v_wrapper(
   left_child_cv: [u32; 8],
   right_child_cv: [u32; 8],
@@ -3198,7 +3246,7 @@ fn parent_cv_riscv_v_wrapper(
   unsafe { parent_cv_riscv_v(left_child_cv, right_child_cv, key_words, flags) }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 /// Hashes one full chunk with the RISC-V vector implementation.
 ///
 /// # Safety
@@ -3228,7 +3276,7 @@ unsafe fn hash_one_chunk_riscv_v(input: *const u8, key: &[u32; 8], counter: u64,
   unsafe { write_cv_words(out, &cv) };
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 /// Hashes contiguous chunks with the RISC-V vector implementation.
 ///
 /// # Safety
@@ -3277,7 +3325,7 @@ unsafe fn hash_many_contiguous_riscv_v(
   }
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 /// Dispatches contiguous chunks through the RISC-V vector implementation.
 ///
 /// # Safety

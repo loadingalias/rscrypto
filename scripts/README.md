@@ -570,6 +570,8 @@ The compatibility checks cover:
 - each Cargo feature alone, on the development compiler and on the declared minimum Rust version;
 - broad native and portable feature sets;
 - allocation-free and allocation-enabled Thumb sentinels;
+- MSRV `portable-only` builds on POWER, IBM Z, RV64, and RV32, including core-only,
+  allocation-enabled, and release code generation;
 - a release library build for every supported bare-metal target.
   Bare-metal evidence is compile-only, not device execution.
 

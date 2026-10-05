@@ -11,10 +11,10 @@ const NONCE_SIZE: usize = Nonce96::LENGTH;
 const MAX_PLAINTEXT_LEN: u64 = (u32::MAX as u64) * (chacha20::BLOCK_SIZE as u64);
 #[cfg(any(
   all(target_arch = "x86_64", target_feature = "sse2"),
-  all(target_arch = "powerpc64", target_endian = "little")
+  all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little")
 ))]
 const SMALL_AAD_FAST_MAX: usize = 63;
-#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
 const POWER_SHORT_FAST_MAX: usize = chacha20::BLOCK_SIZE;
 #[cfg(target_arch = "aarch64")]
 const AARCH64_INTERLEAVED_MIN: usize = 1024;
@@ -23,19 +23,22 @@ const AARCH64_INTERLEAVED_BLOCKS: u32 = 16 * 1024;
 #[cfg(target_arch = "aarch64")]
 const AARCH64_INTERLEAVED_CHUNK: usize = (AARCH64_INTERLEAVED_BLOCKS as usize) * chacha20::BLOCK_SIZE;
 #[cfg(all(
-  all(target_arch = "x86_64", target_feature = "sse2"),
+  target_arch = "x86_64",
+  target_feature = "sse2",
   target_os = "linux",
   any(test, all(not(debug_assertions), not(feature = "portable-only")))
 ))]
 const X86_64_ASM_ZEN5_MAX: usize = 1024;
 #[cfg(all(
-  all(target_arch = "x86_64", target_feature = "sse2"),
+  target_arch = "x86_64",
+  target_feature = "sse2",
   target_os = "linux",
   any(test, all(not(debug_assertions), not(feature = "portable-only")))
 ))]
 const X86_64_ASM_SPR_MAX: usize = 256;
 #[cfg(all(
-  all(target_arch = "x86_64", target_feature = "sse2"),
+  target_arch = "x86_64",
+  target_feature = "sse2",
   target_os = "linux",
   any(test, all(not(debug_assertions), not(feature = "portable-only")))
 ))]
@@ -50,7 +53,8 @@ const X86_64_OPEN_ASM_SHORT_MAX: usize = 256;
 #[path = "chacha20poly1305/aarch64_asm.rs"]
 mod aarch64_asm;
 #[cfg(all(
-  all(target_arch = "x86_64", target_feature = "sse2"),
+  target_arch = "x86_64",
+  target_feature = "sse2",
   target_os = "linux",
   any(
     all(rscrypto_internal, feature = "diag"),
@@ -176,7 +180,7 @@ impl ChaCha20Poly1305 {
 
   #[cfg(any(
     all(target_arch = "x86_64", target_feature = "sse2"),
-    all(target_arch = "powerpc64", target_endian = "little")
+    all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little")
   ))]
   fn encrypt_empty_text_fast(&self, nonce: &Nonce96, aad: &[u8]) -> Option<Result<ChaCha20Poly1305Tag, SealError>> {
     if aad.len() > SMALL_AAD_FAST_MAX {
@@ -191,7 +195,7 @@ impl ChaCha20Poly1305 {
 
   #[cfg(any(
     all(target_arch = "x86_64", target_feature = "sse2"),
-    all(target_arch = "powerpc64", target_endian = "little")
+    all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little")
   ))]
   fn decrypt_empty_text_fast(
     &self,
@@ -212,7 +216,7 @@ impl ChaCha20Poly1305 {
     Some(Ok(()))
   }
 
-  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
   fn encrypt_short_text_power_fast(
     &self,
     nonce: &Nonce96,
@@ -230,7 +234,7 @@ impl ChaCha20Poly1305 {
     Some(Ok(ChaCha20Poly1305Tag::from_bytes(tag)))
   }
 
-  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
   fn decrypt_short_text_power_fast(
     &self,
     nonce: &Nonce96,
@@ -255,7 +259,8 @@ impl ChaCha20Poly1305 {
   }
 
   #[cfg(all(
-    all(target_arch = "x86_64", target_feature = "sse2"),
+    target_arch = "x86_64",
+    target_feature = "sse2",
     target_os = "linux",
     any(
       test,
@@ -271,7 +276,8 @@ impl ChaCha20Poly1305 {
   }
 
   #[cfg(all(
-    all(target_arch = "x86_64", target_feature = "sse2"),
+    target_arch = "x86_64",
+    target_feature = "sse2",
     target_os = "linux",
     any(test, all(not(debug_assertions), not(feature = "portable-only")))
   ))]
@@ -295,7 +301,8 @@ impl ChaCha20Poly1305 {
   }
 
   #[cfg(all(
-    all(target_arch = "x86_64", target_feature = "sse2"),
+    target_arch = "x86_64",
+    target_feature = "sse2",
     target_os = "linux",
     any(test, all(not(debug_assertions), not(feature = "portable-only")))
   ))]
@@ -385,7 +392,8 @@ impl ChaCha20Poly1305 {
   }
 
   #[cfg(all(
-    all(target_arch = "x86_64", target_feature = "sse2"),
+    target_arch = "x86_64",
+    target_feature = "sse2",
     target_os = "linux",
     not(debug_assertions),
     not(feature = "portable-only")
@@ -412,7 +420,8 @@ impl ChaCha20Poly1305 {
   }
 
   #[cfg(all(
-    all(target_arch = "x86_64", target_feature = "sse2"),
+    target_arch = "x86_64",
+    target_feature = "sse2",
     target_os = "linux",
     not(debug_assertions),
     not(feature = "portable-only")
@@ -771,7 +780,7 @@ impl Aead for ChaCha20Poly1305 {
 
     #[cfg(any(
       all(target_arch = "x86_64", target_feature = "sse2"),
-      all(target_arch = "powerpc64", target_endian = "little")
+      all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little")
     ))]
     if buffer.is_empty()
       && let Some(result) = self.encrypt_empty_text_fast(nonce, aad)
@@ -779,7 +788,7 @@ impl Aead for ChaCha20Poly1305 {
       return result;
     }
 
-    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
     if let Some(result) = self.encrypt_short_text_power_fast(nonce, aad, buffer) {
       return result;
     }
@@ -795,7 +804,8 @@ impl Aead for ChaCha20Poly1305 {
     }
 
     #[cfg(all(
-      all(target_arch = "x86_64", target_feature = "sse2"),
+      target_arch = "x86_64",
+      target_feature = "sse2",
       target_os = "linux",
       not(debug_assertions),
       not(feature = "portable-only")
@@ -818,7 +828,7 @@ impl Aead for ChaCha20Poly1305 {
 
     #[cfg(any(
       all(target_arch = "x86_64", target_feature = "sse2"),
-      all(target_arch = "powerpc64", target_endian = "little")
+      all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little")
     ))]
     if buffer.is_empty()
       && let Some(result) = self.decrypt_empty_text_fast(nonce, aad, tag)
@@ -826,13 +836,14 @@ impl Aead for ChaCha20Poly1305 {
       return result;
     }
 
-    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
     if let Some(result) = self.decrypt_short_text_power_fast(nonce, aad, buffer, tag) {
       return result;
     }
 
     #[cfg(all(
-      all(target_arch = "x86_64", target_feature = "sse2"),
+      target_arch = "x86_64",
+      target_feature = "sse2",
       target_os = "linux",
       not(debug_assertions),
       not(feature = "portable-only")
@@ -859,7 +870,7 @@ impl Aead for ChaCha20Poly1305 {
 mod tests {
   #[cfg(any(
     all(target_arch = "x86_64", target_feature = "sse2"),
-    all(target_arch = "powerpc64", target_endian = "little")
+    all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little")
   ))]
   use alloc::vec::Vec;
 
@@ -972,7 +983,7 @@ mod tests {
 
   #[cfg(any(
     all(target_arch = "x86_64", target_feature = "sse2"),
-    all(target_arch = "powerpc64", target_endian = "little")
+    all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little")
   ))]
   #[test]
   fn empty_text_fast_decrypt_matches_owned_path() {
@@ -1069,7 +1080,7 @@ mod tests {
     }
   }
 
-  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
   #[test]
   fn power_short_fast_encrypt_matches_owned_path() {
     let key = ChaCha20Poly1305Key::from_bytes([0x42; KEY_SIZE]);
@@ -1120,7 +1131,7 @@ mod tests {
     }
   }
 
-  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
   #[test]
   fn power_short_fast_decrypt_matches_owned_path() {
     let key = ChaCha20Poly1305Key::from_bytes([0x42; KEY_SIZE]);

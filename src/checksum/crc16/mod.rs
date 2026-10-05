@@ -8,9 +8,9 @@ pub(crate) mod config;
 pub(crate) mod kernels;
 #[cfg(any(
   target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "riscv64",
-  target_arch = "s390x",
+  all(target_arch = "powerpc64", not(feature = "portable-only")),
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "s390x", not(feature = "portable-only")),
   all(target_arch = "x86_64", target_feature = "sse2")
 ))]
 pub(crate) mod keys;
@@ -26,11 +26,11 @@ use crate::checksum::common::{
 };
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
 mod power;
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 mod riscv64;
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 mod s390x;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 mod x86_64;

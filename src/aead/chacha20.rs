@@ -1,7 +1,7 @@
 //! Portable ChaCha20 and HChaCha20 core.
 
 use core::mem;
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 use core::simd::u32x4;
 
 use crate::{
@@ -221,11 +221,11 @@ fn resolve_xor_keystream(primitive: AeadPrimitive) -> XorKeystreamFn {
     crate::aead::targets::AeadBackend::X86Avx2 => x86_avx2::xor_keystream,
     #[cfg(target_arch = "aarch64")]
     crate::aead::targets::AeadBackend::Aarch64Neon => aarch64_neon::xor_keystream,
-    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
     crate::aead::targets::AeadBackend::PowerVector => power_vsx::xor_keystream,
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     crate::aead::targets::AeadBackend::S390xVector => s390x_vector::xor_keystream,
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     crate::aead::targets::AeadBackend::Riscv64Vector => riscv64_vector::xor_keystream,
     _ => xor_keystream_portable,
   }
@@ -262,7 +262,12 @@ fn xor_keystream_portable(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u
   }
 }
 
-#[cfg(all(feature = "chacha20poly1305", target_arch = "powerpc64", target_endian = "little"))]
+#[cfg(all(
+  feature = "chacha20poly1305",
+  target_arch = "powerpc64",
+  not(feature = "portable-only"),
+  target_endian = "little"
+))]
 pub(crate) fn xor_keystream_first_block_portable(
   key: &[u8; KEY_SIZE],
   counter: u32,
@@ -278,7 +283,7 @@ pub(crate) fn xor_keystream_first_block_portable(
   ct::zeroize(&mut stream);
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[inline(always)]
 fn simd_u32x4_rotl<const BITS: u32>(value: u32x4) -> u32x4 {
   const { assert!(BITS > 0 && BITS < 32) }
@@ -287,13 +292,13 @@ fn simd_u32x4_rotl<const BITS: u32>(value: u32x4) -> u32x4 {
   core::ops::BitOr::bitor(left, right)
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[inline(always)]
 fn simd_u32x4_wrapping_add(left: u32x4, right: u32x4) -> u32x4 {
   core::ops::Add::add(left, right)
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[inline(always)]
 fn simd_u32x4_quarter_round(a: &mut u32x4, b: &mut u32x4, c: &mut u32x4, d: &mut u32x4) {
   *a = simd_u32x4_wrapping_add(*a, *b);
@@ -313,7 +318,7 @@ fn simd_u32x4_quarter_round(a: &mut u32x4, b: &mut u32x4, c: &mut u32x4, d: &mut
   *b = simd_u32x4_rotl::<7>(*b);
 }
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 /// Generate and XOR a ChaCha20 stream in four-block RISC-V vector batches.
 ///
 /// # Safety
@@ -473,13 +478,13 @@ pub(crate) fn hchacha20(key: &[u8; KEY_SIZE], nonce: &[u8; HCHACHA_NONCE_SIZE]) 
 #[cfg(target_arch = "aarch64")]
 #[path = "chacha20/aarch64_neon.rs"]
 mod aarch64_neon;
-#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+#[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
 #[path = "chacha20/powerpc64_vsx.rs"]
 mod power_vsx;
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 #[path = "chacha20/riscv64_vector.rs"]
 mod riscv64_vector;
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 #[path = "chacha20/s390x_vector.rs"]
 mod s390x_vector;
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
@@ -596,6 +601,7 @@ pub unsafe fn diag_chacha20_xor_keystream_x86_avx512(
   rscrypto_internal,
   feature = "diag",
   target_arch = "powerpc64",
+  not(feature = "portable-only"),
   target_endian = "little"
 ))]
 pub unsafe fn diag_chacha20_xor_keystream_power_vsx(
@@ -614,7 +620,12 @@ pub unsafe fn diag_chacha20_xor_keystream_power_vsx(
 ///
 /// Caller must verify the host has `s390x::VECTOR` and that `buffer`'s 64-byte block count fits the counter range
 /// starting at `initial_counter`. Same correctness-oracle invariant as POWER VSX above.
-#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "s390x"))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "s390x",
+  not(feature = "portable-only")
+))]
 pub unsafe fn diag_chacha20_xor_keystream_s390x_vector(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
@@ -631,7 +642,12 @@ pub unsafe fn diag_chacha20_xor_keystream_s390x_vector(
 ///
 /// Caller must verify the host has `riscv::V` and that `buffer`'s 64-byte block count fits the counter range starting
 /// at `initial_counter`.
-#[cfg(all(rscrypto_internal, feature = "diag", target_arch = "riscv64"))]
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  target_arch = "riscv64",
+  not(feature = "portable-only")
+))]
 pub unsafe fn diag_chacha20_xor_keystream_riscv64_vector(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
@@ -672,8 +688,8 @@ mod tests {
   #[cfg(any(
     all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
-    all(target_arch = "powerpc64", target_endian = "little"),
-    target_arch = "s390x"
+    all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+    all(target_arch = "s390x", not(feature = "portable-only"))
   ))]
   use alloc::vec;
 
@@ -682,8 +698,8 @@ mod tests {
   #[cfg(any(
     all(target_arch = "x86_64", target_feature = "sse2"),
     target_arch = "aarch64",
-    all(target_arch = "powerpc64", target_endian = "little"),
-    target_arch = "s390x"
+    all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"),
+    all(target_arch = "s390x", not(feature = "portable-only"))
   ))]
   use super::xor_keystream_portable;
   use super::{KEY_SIZE, NONCE_SIZE, block, xor_keystream};
@@ -701,9 +717,9 @@ mod tests {
   }
   #[cfg(target_arch = "aarch64")]
   use crate::platform::caps::aarch64;
-  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
   use crate::platform::caps::power;
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   use crate::platform::caps::s390x;
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   use crate::platform::caps::x86;
@@ -966,7 +982,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only"), target_endian = "little"))]
   fn power_vsx_backend_matches_portable() {
     if !crate::platform::caps().has(power::POWER8_VECTOR) {
       return;
@@ -993,7 +1009,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   fn s390x_backend_matches_portable() {
     if !crate::platform::caps().has(s390x::VECTOR) {
       return;

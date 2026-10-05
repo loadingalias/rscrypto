@@ -3,9 +3,9 @@ use super::dispatch_tables::ParallelTable;
 #[cfg(any(
   all(target_arch = "x86_64", target_feature = "sse2"),
   target_arch = "aarch64",
-  target_arch = "s390x",
-  target_arch = "powerpc64",
-  target_arch = "riscv64"
+  all(target_arch = "s390x", not(feature = "portable-only")),
+  all(target_arch = "powerpc64", not(feature = "portable-only")),
+  all(target_arch = "riscv64", not(feature = "portable-only"))
 ))]
 use super::kernels::required_caps;
 use super::{
@@ -167,7 +167,7 @@ fn resolve(id: Blake3KernelId, caps: Caps) -> Blake3KernelId {
         Blake3KernelId::Portable
       }
     }
-    #[cfg(target_arch = "s390x")]
+    #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
     Blake3KernelId::S390xVector => {
       if caps.has(required_caps(Blake3KernelId::S390xVector)) {
         Blake3KernelId::S390xVector
@@ -175,7 +175,7 @@ fn resolve(id: Blake3KernelId, caps: Caps) -> Blake3KernelId {
         Blake3KernelId::Portable
       }
     }
-    #[cfg(target_arch = "powerpc64")]
+    #[cfg(all(target_arch = "powerpc64", not(feature = "portable-only")))]
     Blake3KernelId::PowerVsx => {
       if caps.has(required_caps(Blake3KernelId::PowerVsx)) {
         Blake3KernelId::PowerVsx
@@ -183,7 +183,7 @@ fn resolve(id: Blake3KernelId, caps: Caps) -> Blake3KernelId {
         Blake3KernelId::Portable
       }
     }
-    #[cfg(target_arch = "riscv64")]
+    #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
     Blake3KernelId::RiscvV => {
       if caps.has(required_caps(Blake3KernelId::RiscvV)) {
         Blake3KernelId::RiscvV

@@ -33,7 +33,7 @@
 pub(crate) mod kernels;
 
 mod dispatch;
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 mod riscv64;
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 mod wasm;
