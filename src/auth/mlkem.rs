@@ -1,10 +1,10 @@
 //! ML-KEM typed key, ciphertext, and shared-secret foundations.
 //!
 //! This module defines the public type surface for FIPS 203 ML-KEM parameter
-//! sets. The portable arithmetic and operations are added separately so the
-//! API contract can settle before backend work begins.
+//! sets. Private operations select accelerated arithmetic where available and
+//! retain the portable implementation as the semantic authority.
 
-mod portable;
+mod operations;
 
 #[cfg(feature = "alloc")]
 use alloc::boxed::Box;
@@ -270,7 +270,7 @@ macro_rules! define_mlkem_prepared_keys {
     pub struct $prepared_encapsulation_key {
       key: $encapsulation_key,
       key_hash: [u8; ML_KEM_KEY_HASH_SIZE],
-      arithmetic: portable::PreparedEncapsulationArithmetic<$k>,
+      arithmetic: operations::PreparedEncapsulationArithmetic<$k>,
     }
 
     impl $prepared_encapsulation_key {
@@ -321,8 +321,8 @@ macro_rules! define_mlkem_prepared_keys {
 
       #[inline]
       fn try_from(key: $encapsulation_key) -> Result<Self, Self::Error> {
-        let arithmetic = portable::validate_and_prepare_encapsulation_key::<$k, $ek_bytes>(key.as_bytes())?;
-        let key_hash = portable::encapsulation_key_hash(key.as_bytes());
+        let arithmetic = operations::validate_and_prepare_encapsulation_key::<$k, $ek_bytes>(key.as_bytes())?;
+        let key_hash = operations::encapsulation_key_hash(key.as_bytes());
         Ok(Self {
           key,
           key_hash,
@@ -336,8 +336,8 @@ macro_rules! define_mlkem_prepared_keys {
 
       #[inline]
       fn try_from(key: &$encapsulation_key) -> Result<Self, Self::Error> {
-        let arithmetic = portable::validate_and_prepare_encapsulation_key::<$k, $ek_bytes>(key.as_bytes())?;
-        let key_hash = portable::encapsulation_key_hash(key.as_bytes());
+        let arithmetic = operations::validate_and_prepare_encapsulation_key::<$k, $ek_bytes>(key.as_bytes())?;
+        let key_hash = operations::encapsulation_key_hash(key.as_bytes());
         Ok(Self {
           key: key.clone(),
           key_hash,
@@ -380,7 +380,7 @@ macro_rules! define_mlkem_prepared_keys {
     #[doc = concat!("Validated, reusable ", $doc_name, " decapsulation key.")]
     pub struct $prepared_decapsulation_key {
       key: $decapsulation_key,
-      arithmetic: portable::PreparedDecapsulationArithmetic<$k>,
+      arithmetic: operations::PreparedDecapsulationArithmetic<$k>,
     }
 
     impl $prepared_decapsulation_key {
@@ -442,8 +442,9 @@ macro_rules! define_mlkem_prepared_keys {
 
       #[inline]
       fn try_from(key: $decapsulation_key) -> Result<Self, Self::Error> {
-        let arithmetic =
-          portable::validate_and_prepare_decapsulation_key::<$k, $dk_pke_bytes, $ek_bytes, $dk_bytes>(key.as_bytes())?;
+        let arithmetic = operations::validate_and_prepare_decapsulation_key::<$k, $dk_pke_bytes, $ek_bytes, $dk_bytes>(
+          key.as_bytes(),
+        )?;
         Ok(Self { key, arithmetic })
       }
     }
@@ -453,8 +454,9 @@ macro_rules! define_mlkem_prepared_keys {
 
       #[inline]
       fn try_from(key: &$decapsulation_key) -> Result<Self, Self::Error> {
-        let arithmetic =
-          portable::validate_and_prepare_decapsulation_key::<$k, $dk_pke_bytes, $ek_bytes, $dk_bytes>(key.as_bytes())?;
+        let arithmetic = operations::validate_and_prepare_decapsulation_key::<$k, $dk_pke_bytes, $ek_bytes, $dk_bytes>(
+          key.as_bytes(),
+        )?;
         Ok(Self {
           key: key.duplicate_secret(),
           arithmetic,
@@ -598,7 +600,7 @@ macro_rules! impl_mlkem_profile_ops {
       /// Validate this encapsulation key using the FIPS 203 modulus check.
       #[inline]
       pub fn validate(&self) -> Result<(), MlKemError> {
-        portable::validate_encapsulation_key::<$k, $ek_bytes>(self.as_bytes())
+        operations::validate_encapsulation_key::<$k, $ek_bytes>(self.as_bytes())
       }
 
       /// Validate once and prepare this key for repeated encapsulation.
@@ -648,7 +650,7 @@ macro_rules! impl_mlkem_profile_ops {
       /// Validate this decapsulation key using the FIPS 203 embedded-key hash check.
       #[inline]
       pub fn validate(&self) -> Result<(), MlKemError> {
-        portable::validate_decapsulation_key::<$dk_pke_bytes, $ek_bytes, $dk_bytes>(self.as_bytes())
+        operations::validate_decapsulation_key::<$dk_pke_bytes, $ek_bytes, $dk_bytes>(self.as_bytes())
       }
 
       /// Validate once and prepare this key for repeated decapsulation.
@@ -667,7 +669,7 @@ macro_rules! impl_mlkem_profile_ops {
       #[cfg(feature = "alloc")]
       pub fn prepare_in<A: Allocator>(&self, alloc: A) -> Result<Box<$prepared_decapsulation_key, A>, MlKemError> {
         let mut prepared = Box::new_in($prepared_decapsulation_key::zeroed(), alloc);
-        portable::validate_and_prepare_decapsulation_key_into::<$k, $dk_pke_bytes, $ek_bytes, $dk_bytes>(
+        operations::validate_and_prepare_decapsulation_key_into::<$k, $dk_pke_bytes, $ek_bytes, $dk_bytes>(
           self.as_bytes(),
           &mut prepared.arithmetic,
         )?;
@@ -682,7 +684,7 @@ macro_rules! impl_mlkem_profile_ops {
       const fn zeroed() -> Self {
         Self {
           key: $decapsulation_key::from_bytes([0; $dk_bytes]),
-          arithmetic: portable::PreparedDecapsulationArithmetic::zeroed(),
+          arithmetic: operations::PreparedDecapsulationArithmetic::zeroed(),
         }
       }
     }
@@ -732,7 +734,7 @@ macro_rules! impl_mlkem_profile_ops {
         fill_random(random.as_mut_array())?;
         let mut encapsulation_key = [0u8; $ek_bytes];
         let mut decapsulation_key = Box::new_in($decapsulation_key::from_bytes([0; $dk_bytes]), alloc);
-        portable::keygen_into::<$k, $k_u8, $eta1_random_bytes, $dk_pke_bytes, $ek_bytes, $dk_bytes>(
+        operations::keygen_into::<$k, $k_u8, $eta1_random_bytes, $dk_pke_bytes, $ek_bytes, $dk_bytes>(
           random.as_array(),
           &mut encapsulation_key,
           &mut decapsulation_key.0,
@@ -878,7 +880,7 @@ macro_rules! impl_mlkem_profile_ops {
 
         let mut random = ZeroizingBytes::<{ Self::ENCAPSULATION_RANDOM_SIZE }>::zeroed();
         fill_random(random.as_mut_array())?;
-        let (ciphertext, shared_secret) = portable::encapsulate::<
+        let (ciphertext, shared_secret) = operations::encapsulate::<
           $k,
           $eta1_random_bytes,
           $dk_pke_bytes,
@@ -901,7 +903,7 @@ macro_rules! impl_mlkem_profile_ops {
       ) -> Result<Self::SharedSecret, Self::DecapsulationError> {
         decapsulation_key.validate()?;
         ciphertext.validate()?;
-        Ok($shared_secret::from_bytes(portable::decapsulate::<
+        Ok($shared_secret::from_bytes(operations::decapsulate::<
           $k,
           $eta1_random_bytes,
           $dk_pke_bytes,
@@ -940,9 +942,9 @@ impl_mlkem_profile_ops!(
   4,
   320,
   128,
-  portable::keygen::<2, 2, 192, 768, 800, 1632>,
-  portable::encapsulate_prepared_512,
-  portable::decapsulate_prepared_512,
+  operations::keygen::<2, 2, 192, 768, 800, 1632>,
+  operations::encapsulate_prepared_512,
+  operations::decapsulate_prepared_512,
   "ML-KEM-512"
 );
 
@@ -965,9 +967,9 @@ impl_mlkem_profile_ops!(
   4,
   320,
   128,
-  portable::keygen::<3, 3, 128, 1152, 1184, 2400>,
-  portable::encapsulate_prepared_768,
-  portable::decapsulate_prepared_768,
+  operations::keygen::<3, 3, 128, 1152, 1184, 2400>,
+  operations::encapsulate_prepared_768,
+  operations::decapsulate_prepared_768,
   "ML-KEM-768"
 );
 
@@ -990,9 +992,9 @@ impl_mlkem_profile_ops!(
   5,
   352,
   160,
-  portable::keygen_1024,
-  portable::encapsulate_prepared_1024,
-  portable::decapsulate_prepared_1024,
+  operations::keygen_1024,
+  operations::encapsulate_prepared_1024,
+  operations::decapsulate_prepared_1024,
   "ML-KEM-1024"
 );
 
@@ -1005,7 +1007,7 @@ macro_rules! mlkem_diag_keygen_secret_noise {
     #[inline]
     #[must_use]
     pub fn $name(rho: [u8; ML_KEM_SEED_SIZE], sigma: [u8; ML_KEM_SEED_SIZE]) -> [u8; ML_KEM_SHARED_SECRET_SIZE] {
-      portable::diag_keygen_secret_noise_digest::<$k, $eta1_random_bytes, $dk_pke_bytes, $ek_bytes>(&rho, &sigma)
+      operations::diag_keygen_secret_noise_digest::<$k, $eta1_random_bytes, $dk_pke_bytes, $ek_bytes>(&rho, &sigma)
     }
   };
 }
@@ -1033,7 +1035,7 @@ mlkem_diag_keygen_secret_noise!(
 #[inline]
 #[must_use]
 pub fn diag_mlkem_ntt_input_digest(poly: [u16; 256]) -> u16 {
-  portable::diag_ntt_input_digest(poly)
+  operations::diag_ntt_input_digest(poly)
 }
 
 /// Diagnostic digest for the s390x z/Vector NTT kernel.
@@ -1054,7 +1056,7 @@ pub fn diag_mlkem_ntt_input_digest(poly: [u16; 256]) -> u16 {
 #[must_use]
 pub unsafe fn diag_mlkem_s390x_ntt_input_digest(poly: [u16; 256]) -> u16 {
   // SAFETY: forwarded from this function's caller contract.
-  unsafe { portable::diag_s390x_ntt_input_digest(poly) }
+  unsafe { operations::diag_s390x_ntt_input_digest(poly) }
 }
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
@@ -1062,7 +1064,7 @@ pub unsafe fn diag_mlkem_s390x_ntt_input_digest(poly: [u16; 256]) -> u16 {
 #[inline]
 #[must_use]
 pub fn diag_mlkem_inverse_ntt_montgomery_product_input_digest(poly: [u16; 256]) -> u16 {
-  portable::diag_inverse_ntt_montgomery_product_input_digest(poly)
+  operations::diag_inverse_ntt_montgomery_product_input_digest(poly)
 }
 
 /// Diagnostic digest for the s390x z/Vector inverse-NTT kernel.
@@ -1083,7 +1085,7 @@ pub fn diag_mlkem_inverse_ntt_montgomery_product_input_digest(poly: [u16; 256]) 
 #[must_use]
 pub unsafe fn diag_mlkem_s390x_inverse_ntt_montgomery_product_input_digest(poly: [u16; 256]) -> u16 {
   // SAFETY: forwarded from this function's caller contract.
-  unsafe { portable::diag_s390x_inverse_ntt_montgomery_product_input_digest(poly) }
+  unsafe { operations::diag_s390x_inverse_ntt_montgomery_product_input_digest(poly) }
 }
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
@@ -1091,7 +1093,7 @@ pub unsafe fn diag_mlkem_s390x_inverse_ntt_montgomery_product_input_digest(poly:
 #[inline]
 #[must_use]
 pub fn diag_mlkem_multiply_ntts_add_assign_input_digest(a: [u16; 256], b: [u16; 256], acc: [u16; 256]) -> u16 {
-  portable::diag_multiply_ntts_add_assign_input_digest(a, b, acc)
+  operations::diag_multiply_ntts_add_assign_input_digest(a, b, acc)
 }
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
@@ -1103,7 +1105,7 @@ pub fn diag_mlkem768_multiply_ntts_accumulate_input_digest(
   b: [[u16; 256]; 3],
   acc: [u16; 256],
 ) -> u16 {
-  portable::diag_multiply_ntts_accumulate_k3_input_digest(a, b, acc)
+  operations::diag_multiply_ntts_accumulate_k3_input_digest(a, b, acc)
 }
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
@@ -1115,7 +1117,7 @@ pub fn diag_mlkem1024_multiply_ntts_accumulate_input_digest(
   b: [[u16; 256]; 4],
   acc: [u16; 256],
 ) -> u16 {
-  portable::diag_multiply_ntts_accumulate_k4_input_digest(a, b, acc)
+  operations::diag_multiply_ntts_accumulate_k4_input_digest(a, b, acc)
 }
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
@@ -1123,7 +1125,7 @@ pub fn diag_mlkem1024_multiply_ntts_accumulate_input_digest(
 #[inline]
 #[must_use]
 pub fn diag_mlkem_to_montgomery_product_domain_input_digest(poly: [u16; 256]) -> u16 {
-  portable::diag_to_montgomery_product_domain_input_digest(poly)
+  operations::diag_to_montgomery_product_domain_input_digest(poly)
 }
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
@@ -1131,7 +1133,7 @@ pub fn diag_mlkem_to_montgomery_product_domain_input_digest(poly: [u16; 256]) ->
 #[inline]
 #[must_use]
 pub fn diag_mlkem_from_montgomery_product_domain_input_digest(poly: [u16; 256]) -> u16 {
-  portable::diag_from_montgomery_product_domain_input_digest(poly)
+  operations::diag_from_montgomery_product_domain_input_digest(poly)
 }
 
 /// Diagnostic digest for the s390x z/Vector product-domain conversion kernel.
@@ -1152,7 +1154,7 @@ pub fn diag_mlkem_from_montgomery_product_domain_input_digest(poly: [u16; 256]) 
 #[must_use]
 pub unsafe fn diag_mlkem_s390x_to_montgomery_product_domain_input_digest(poly: [u16; 256]) -> u16 {
   // SAFETY: forwarded from this function's caller contract.
-  unsafe { portable::diag_s390x_to_montgomery_product_domain_input_digest(poly) }
+  unsafe { operations::diag_s390x_to_montgomery_product_domain_input_digest(poly) }
 }
 
 /// Diagnostic digest for the s390x z/Vector product-domain exit kernel.
@@ -1173,7 +1175,7 @@ pub unsafe fn diag_mlkem_s390x_to_montgomery_product_domain_input_digest(poly: [
 #[must_use]
 pub unsafe fn diag_mlkem_s390x_from_montgomery_product_domain_input_digest(poly: [u16; 256]) -> u16 {
   // SAFETY: forwarded from this function's caller contract.
-  unsafe { portable::diag_s390x_from_montgomery_product_domain_input_digest(poly) }
+  unsafe { operations::diag_s390x_from_montgomery_product_domain_input_digest(poly) }
 }
 
 /// Diagnostic digest for the s390x z/Vector base-multiply accumulator kernel.
@@ -1198,7 +1200,7 @@ pub unsafe fn diag_mlkem_s390x_multiply_ntts_add_assign_input_digest(
   acc: [u16; 256],
 ) -> u16 {
   // SAFETY: forwarded from this function's caller contract.
-  unsafe { portable::diag_s390x_multiply_ntts_add_assign_input_digest(a, b, acc) }
+  unsafe { operations::diag_s390x_multiply_ntts_add_assign_input_digest(a, b, acc) }
 }
 
 /// Diagnostic digest for the s390x z/Vector k=3 NTT dot-product kernel.
@@ -1223,7 +1225,7 @@ pub unsafe fn diag_mlkem_s390x_multiply_ntts_accumulate_k3_input_digest(
   acc: [u16; 256],
 ) -> u16 {
   // SAFETY: forwarded from this function's caller contract.
-  unsafe { portable::diag_s390x_multiply_ntts_accumulate_k3_input_digest(a, b, acc) }
+  unsafe { operations::diag_s390x_multiply_ntts_accumulate_k3_input_digest(a, b, acc) }
 }
 
 /// Diagnostic digest for the s390x z/Vector k=4 NTT dot-product kernel.
@@ -1248,7 +1250,7 @@ pub unsafe fn diag_mlkem_s390x_multiply_ntts_accumulate_k4_input_digest(
   acc: [u16; 256],
 ) -> u16 {
   // SAFETY: forwarded from this function's caller contract.
-  unsafe { portable::diag_s390x_multiply_ntts_accumulate_k4_input_digest(a, b, acc) }
+  unsafe { operations::diag_s390x_multiply_ntts_accumulate_k4_input_digest(a, b, acc) }
 }
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
@@ -1256,7 +1258,7 @@ pub unsafe fn diag_mlkem_s390x_multiply_ntts_accumulate_k4_input_digest(
 #[inline]
 #[must_use]
 pub fn diag_mlkem_compress_decompress_values_digest(values: [u16; 4]) -> u16 {
-  portable::diag_compress_decompress_values_digest(values)
+  operations::diag_compress_decompress_values_digest(values)
 }
 
 /// Diagnostic digest for the s390x z/Vector compress/decompress kernels.
@@ -1277,5 +1279,5 @@ pub fn diag_mlkem_compress_decompress_values_digest(values: [u16; 4]) -> u16 {
 #[must_use]
 pub unsafe fn diag_mlkem_s390x_compress_decompress_values_digest(values: [u16; 4]) -> u16 {
   // SAFETY: forwarded from this function's caller contract.
-  unsafe { portable::diag_s390x_compress_decompress_values_digest(values) }
+  unsafe { operations::diag_s390x_compress_decompress_values_digest(values) }
 }

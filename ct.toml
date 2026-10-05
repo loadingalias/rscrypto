@@ -221,7 +221,7 @@ limitation = "The two Miller-Rabin key-generation comparisons and three public v
 
 [[public_len_comparison]]
 id = "mlkem.parameter_set_shapes"
-source = "src/auth/mlkem/portable.rs"
+source = "src/auth/mlkem/operations.rs"
 call_count = 1
 operations = ["kem.mlkem512", "kem.mlkem768", "kem.mlkem1024"]
 public_length = "Encoded key/ciphertext widths are fixed by the public ML-KEM parameter set and validated before comparison."

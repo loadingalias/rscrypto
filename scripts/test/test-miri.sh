@@ -139,7 +139,7 @@ case "$MIRI_SCOPE" in
     run_miri_lib_filter "P-384 ECDH portable path under Miri" \
       "auth::p384_ecdh::tests::miri_uses_portable_p384_ecdh_path"
     run_miri_lib_filter_features "ML-KEM portable round trip and rejection under Miri" \
-      "auth::mlkem::portable::tests::miri_mlkem512_portable_round_trip_and_rejection" \
+      "auth::mlkem::operations::tests::miri_mlkem512_portable_round_trip_and_rejection" \
       "ml-kem,diag" \
       1
     run_miri_test_target "Argon2 MatrixView/portable kernel under Miri" "argon2_miri" "argon2"
