@@ -77,8 +77,8 @@ def verify(root, directory, kind, target):
     return manifest
 
 
-def pack(directory, archive):
-    with tarfile.open(archive, 'x:gz') as output:
+def pack(directory, archive, *, compression='gz'):
+    with tarfile.open(archive, 'x:' + compression) as output:
         for path in sorted(directory.rglob('*')):
             if path.is_file():
                 output.add(path, arcname=path.relative_to(directory).as_posix(), recursive=False)
@@ -87,7 +87,7 @@ def pack(directory, archive):
 def unpack(archive, destination):
     # No links, devices, duplicate names, or path traversal, even in trusted CI artifacts.
     destination.mkdir(parents=True, exist_ok=False)
-    with tarfile.open(archive, 'r:gz') as source:
+    with tarfile.open(archive, 'r:*') as source:
         members = source.getmembers()
         seen = set()
         for member in members:

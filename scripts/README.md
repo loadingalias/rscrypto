@@ -98,10 +98,40 @@ It does not download upstream archives.
 
 RISC-V, POWER, and IBM Z CI build on Ubuntu x86-64 with the `--ci-cross-build TARGET` tooling.
 
+CI, CT, Bench, and Profile share two preparation actions:
+
+- [cross-build/setup](../.github/actions/cross-build/setup/action.yml) restores the target's APT state, runs the pinned cross-build installer,
+  and saves verified state after the last package installer.
+  CI selects compiler-cache authority afterward.
+  The other workflows keep compiler caching disabled.
+- [cross-build/upload](../.github/actions/cross-build/upload/action.yml) requires both the prepared suite and its runner-tools archive
+  before uploading the target's existing artifact name for two days.
+  Diagnostic logs retain their separate failure handling and retention periods.
+
+Each workflow still owns its preparation command, runner selection, timeout, native execution,
+and fail-fast matrix.
+The actions do not select tests or qualify targets.
+`test/cross_workflow_test.py` exercises the action shell steps, including installation failure and either missing archive,
+and checks their caller/consumer wiring through `just test-scripts`.
+The transfer regressions in `just test-transfer` remain responsible for source, compiler, target, suite,
+and file-integrity checks.
+
+The 2026-10-05 consolidation passed `just test-scripts`, all 12 `just test-transfer` tests, the seven CT planner tests, `actionlint`,
+and ShellCheck on both action shell steps.
+Four existing installer tests needed Linux/APT/sudo or PowerShell and were skipped on macOS.
+Comparison with the initial worktree confirmed unchanged native jobs, planners, runner matrices,
+timeouts, and workflow-level settings.
+No hosted run of the uncommitted actions exists yet;
+these local results do not claim native qualification.
+
+Test preparation and native execution retain these contracts:
+
 - The build runs the same target-specific checks.
   It builds all release tests in both dispatch modes, including all doctest compilation checks.
 - Nextest archives and persisted doctest programs move to the matching native runner.
   Its `--ci-cross-run TOOLS_ARCHIVE` tooling only runs them.
+- The test bundle uses XZ compression to reuse repeated code across standalone doctest programs.
+  Its executable bytes, modes, and sealed hashes stay unchanged; existing gzip bundles remain readable.
 - Preparation is not a runtime pass.
 - The Rust release profile, target compiler, feature sets, and test assertions do not change.
 - Profile CI uses the same exact-artifact transfer boundary for x86-64, AArch64, RISC-V, POWER,
@@ -237,18 +267,14 @@ Replay is diagnostic evidence, not full qualification.
 
 ### Diagnostic CT runs
 
-The CT workflow has three diagnostic inputs.
-None of them qualifies a release.
+The CT workflow's `diagnostic_case` input takes exact case names, a comma-separated list,
+or the `mldsa` and `mldsa-probe` groups, on any requested Linux architecture.
+Native rows run `ct-full --dudect-case`.
+Cross rows (POWER, IBM Z, RISC-V) verify the complete prepared archive and replay the cases once.
+These runs provide scoped evidence and do not qualify a release.
 
-- `replay_p384` replays the original run 34672864167 and commit 32734d2d.
-  It needs the prepared artifact of that run to still exist.
-- `diagnose_p384` (when `replay_p384` is off) prepares the current commit and measures its P-384 public-key derivation case
-  once on RISC-V.
-  It overrides the architecture and `diagnostic_case` selections.
-- `diagnostic_case` (when both P-384 modes are off) takes exact case names, a comma-separated list,
-  or the `mldsa` and `mldsa-probe` groups, on any requested Linux architecture.
-  Native rows run `ct-full --dudect-case`.
-  Cross rows (POWER, IBM Z, RISC-V) verify the complete prepared archive and replay the cases once.
+For a P-384 public-key diagnostic on RISC-V, set `architectures` to `riscv64-linux`
+and `diagnostic_case` to `ecdsa_p384_public_key_fixed_vs_random_secret`.
 
 The planner rejects unknown cases and unsupported targets before it schedules builds.
 Release callers, and manual runs with no diagnostic input, keep the full required lane.
@@ -396,6 +422,33 @@ Workflows refer to profile names, and do not override their shapes.
 - For this public repository, RunsOn reads the catalog from the default branch.
   A new profile must be on the default branch before workflow jobs can resolve its name.
 
+#### Local compiler-cache evidence, 2026-10-05
+
+On the local Apple Silicon checkout,
+cargo-rail 0.30.1 initially reported drifted compiler components, no workspace enrollment,
+and zero recorded events.
+`just rail-cache-setup --max-size 10GiB`, with remote-cache environment settings removed, repaired the installation and passed its uncached,
+cold-miss, and verified warm-hit checks.
+The resulting profile uses physical-root identity, with no remote authority configured.
+
+Two production builds ran `cargo check --locked --lib --no-default-features --features blake3` with the same dedicated `--target-dir`,
+deleting only that probe's Cargo outputs before each build.
+Both passed.
+The first added one miss; the second added one hit.
+Neither added a bypass or failure.
+The selected profile's hit/miss/event counters were `1/1/2` after setup, `1/2/3` after the first build,
+and `2/2/4` after the second.
+This verifies private local compiler reuse for that library configuration.
+It does not establish shared R2 reuse, registry/native-library coverage, target execution, timing,
+or CT evidence.
+Workflow cache coverage is unchanged until the relevant shared profiles demonstrate hits.
+
+The probe used the dirty effective source based on `d4045559`, host `aarch64-apple-darwin`, and `nightly-2026-09-30` (`rustc 1.101.0-nightly`, commit `5c543b0b8c73c7b72bc8284ced4fb22ead15734d`).
+The SHA-256 of the sorted compact JSON mapping of `src/`, `.cargo/`, `Cargo.toml`, `Cargo.lock`,
+and `rust-toolchain.toml` paths to their file SHA-256 values was `f2a6db50d362dd32ec7cfc3b6e40fab14d0045303a0f7a3feb5ebb27c9b9ff0c`.
+Raw commands, source hashes, build logs, and cache reports remain locally in `target/workflow-cleanup-20261005/cache/`;
+these ignored artifacts are not distributed.
+
 ### Updates
 
 `just update` refreshes the tooling catalog, stable Rust, every Cargo manifest
@@ -476,7 +529,8 @@ with packages from the same archive snapshot as development provisioning.
 - The installer keeps APT's indexes and downloaded packages in `/var/cache/rscrypto-apt`
   (`RSCRYPTO_APT_STATE` overrides it).
 - CI restores that directory with [`.github/actions/apt-state`](../.github/actions/apt-state/action.yml),
-  and saves it as the final step of each job with [`apt-state/save`](../.github/actions/apt-state/save/action.yml), also after a later failure.
+  and calls [`apt-state/save`](../.github/actions/apt-state/save/action.yml) after the last package installer.
+  Cross-build jobs save inside setup; native jobs save as their final step, including failure paths.
   It saves only when the installer's `ready` marker shows that this run verified the state
   and installed from it.
 

@@ -107,22 +107,23 @@ class Bundles(unittest.TestCase):
 
     def test_round_trip_and_corruption(self):
         self.seal()
-        archive = self.root / 'target/test.tar.gz'
-        bundle.pack(self.out, archive)
-        incoming = self.root / 'target/incoming'
-        bundle.unpack(archive, incoming)
-        bundle.verify(self.root, incoming, 'test', 'target')
-        self.assertTrue((incoming / 'program').stat().st_mode & 0o111)
-        for mutation in ('content', 'missing', 'extra', 'mode'):
-            with self.subTest(mutation=mutation):
-                path = incoming / 'program'
-                if mutation == 'content': path.write_bytes(b'changed')
-                elif mutation == 'missing': path.unlink()
-                elif mutation == 'extra': (incoming / 'extra').touch()
-                else: path.chmod(0o644)
-                with self.assertRaises(ValueError): bundle.verify(self.root, incoming, 'test', 'target')
-                shutil.rmtree(incoming)
-                bundle.unpack(archive, incoming)
+        for compression in ('gz', 'xz'):
+            archive = self.root / f'target/test.tar.{compression}'
+            bundle.pack(self.out, archive, compression=compression)
+            incoming = self.root / f'target/incoming-{compression}'
+            bundle.unpack(archive, incoming)
+            bundle.verify(self.root, incoming, 'test', 'target')
+            self.assertTrue((incoming / 'program').stat().st_mode & 0o111)
+            for mutation in ('content', 'missing', 'extra', 'mode'):
+                with self.subTest(compression=compression, mutation=mutation):
+                    path = incoming / 'program'
+                    if mutation == 'content': path.write_bytes(b'changed')
+                    elif mutation == 'missing': path.unlink()
+                    elif mutation == 'extra': (incoming / 'extra').touch()
+                    else: path.chmod(0o644)
+                    with self.assertRaises(ValueError): bundle.verify(self.root, incoming, 'test', 'target')
+                    shutil.rmtree(incoming)
+                    bundle.unpack(archive, incoming)
 
     def test_source_and_target_binding(self):
         self.seal()
@@ -132,14 +133,16 @@ class Bundles(unittest.TestCase):
         with self.assertRaises(ValueError): self.seal()
 
     def test_archive_rejects_traversal_links_and_duplicates(self):
-        for index, names in enumerate((['../escape'], ['/absolute'], ['a', 'a'], ['link'], ['a\\b'])):
-            archive = self.root / f'target/bad-{index}.tar.gz'
-            with tarfile.open(archive, 'w:gz') as output:
-                for name in names:
-                    member = tarfile.TarInfo(name)
-                    if name == 'link': member.type, member.linkname = tarfile.SYMTYPE, '/tmp'
-                    output.addfile(member, io.BytesIO())
-            with self.assertRaises(ValueError): bundle.unpack(archive, self.root / f'target/unpack-{index}')
+        for compression in ('gz', 'xz'):
+            for index, names in enumerate((['../escape'], ['/absolute'], ['a', 'a'], ['link'], ['a\\b'])):
+                archive = self.root / f'target/bad-{index}.tar.{compression}'
+                with tarfile.open(archive, 'w:' + compression) as output:
+                    for name in names:
+                        member = tarfile.TarInfo(name)
+                        if name == 'link': member.type, member.linkname = tarfile.SYMTYPE, '/tmp'
+                        output.addfile(member, io.BytesIO())
+                with self.assertRaises(ValueError):
+                    bundle.unpack(archive, self.root / f'target/unpack-{index}-{compression}')
 
     def test_ct_transfer_relocates_but_preserves_producer_identity(self):
         for target, (machine, _, _, _) in TARGETS.items():
@@ -286,7 +289,7 @@ elif name.endswith('gcc'): print('gcc pinned fixture')
              patch('platform.machine', return_value='x86_64'), patch.object(doctest_bundle, 'prepare', side_effect=docs) as prepare_docs, \
              patch.dict(os.environ, PATH=str(commands) + os.pathsep + os.environ['PATH'],
                         TRANSFER_TEST_LOG=str(log), TRANSFER_NEXTEST=pin):
-            archive = self.root / 'target/test-suites.tar.gz'
+            archive = self.root / 'target/test-suites.tar.xz'
             cross.prepare(target, archive)
             calls = [json.loads(row) for row in log.read_text().splitlines()]
             self.assertIn(['just', 'ci-check-target', target], calls)
@@ -408,7 +411,7 @@ class NativeArchive(unittest.TestCase):
                 metadata['modes'][mode] = {'doctests': plan['total'], 'internal': internal,
                     'encoded_rustflags': mode_env.get('CARGO_ENCODED_RUSTFLAGS')}
             bundle.seal(root, directory, 'rscrypto.cross.tests', TARGET, bundle.source_identity(root), metadata)
-            archive = root / 'target/transfer.tar.gz'; bundle.pack(directory, archive)
+            archive = root / 'target/transfer.tar.xz'; bundle.pack(directory, archive, compression='xz')
             # Removing the original build tree catches hidden dependencies on it.
             shutil.rmtree(root / 'target/release')
             with patch.object(cross, 'ROOT', root), patch('platform.system', return_value='Linux'), \
@@ -434,7 +437,7 @@ class NativeArchive(unittest.TestCase):
                     broken['modes']['native']['internal'] = True
                 bundle.seal(root, directory, 'rscrypto.cross.tests', TARGET, bundle.source_identity(root), broken)
                 archive.unlink()
-                bundle.pack(directory, archive)
+                bundle.pack(directory, archive, compression='xz')
                 with self.subTest(mutation=mutation), patch.object(cross, 'ROOT', root), \
                      patch('platform.system', return_value='Linux'), patch('platform.machine', return_value='riscv64'):
                     with self.assertRaisesRegex(ValueError, 'suites|suite'):

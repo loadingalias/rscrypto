@@ -79,6 +79,7 @@ for name, steps, label in (
   assert collect["with"]["job"] == label, name
 
 cross_steps = cross["steps"]
+assert step(cross_steps, "Install cross-build tooling")["uses"] == "./.github/actions/cross-build/setup"
 assert cross_steps.index(step(cross_steps, "Install cross-build tooling")) < \
        cross_steps.index(step(cross_steps, "Configure shared compiler cache")) < \
        cross_steps.index(step(cross_steps, "Cross-check and prepare complete target suites"))

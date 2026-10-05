@@ -2,7 +2,7 @@ name: Restore verified Ubuntu package state
 description: >-
   Restore the APT index and package state that scripts/tooling/linux.sh verifies
   against the catalog's pinned Ubuntu snapshot before using it offline.
-  Pair it with ./.github/actions/apt-state/save as the job's final step.
+  Pair it with ./.github/actions/apt-state/save after the last package installer.
 inputs:
   id:
     description: Package-set identity, such as the tooling profile, platform, and cross target.

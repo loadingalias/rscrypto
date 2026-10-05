@@ -1,0 +1,39 @@
+name: Transfer prepared target artifacts
+description: Require both the prepared suite and its runner tools, then upload them together.
+inputs:
+  target:
+    description: Destination Rust target selected by the calling workflow.
+    required: true
+  suite:
+    description: Prepared suite (tests, ct, bench, or profile).
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Require the complete target bundle
+      id: bundle
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+        SUITE: ${{ inputs.suite }}
+      run: |
+        case "$SUITE" in
+          tests) archive="target/$TARGET-tests.tar.xz"; artifact="$TARGET-tests" ;;
+          ct|bench|profile) archive="target/$TARGET-$SUITE.tar.gz"; artifact="$TARGET-$SUITE-prepared" ;;
+          *) echo "Unknown prepared suite: $SUITE" >&2; exit 2 ;;
+        esac
+        for path in "$archive" "target/$TARGET-tools.tar.gz"; do
+          if [[ ! -f "$path" ]]; then
+            echo "Missing prepared artifact: $path" >&2
+            exit 1
+          fi
+        done
+        printf 'archive=%s\nartifact=%s\n' "$archive" "$artifact" >>"$GITHUB_OUTPUT"
+    - uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+      with:
+        name: ${{ steps.bundle.outputs.artifact }}
+        path: |
+          ${{ steps.bundle.outputs.archive }}
+          target/${{ inputs.target }}-tools.tar.gz
+        if-no-files-found: error
+        retention-days: 2

@@ -1,0 +1,29 @@
+name: Prepare cross-build tooling
+description: Restore, verify, install, and save the target's shared build prerequisites.
+inputs:
+  target:
+    description: Destination Rust target selected by the calling workflow.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Restore verified Ubuntu package state
+      id: apt-state
+      uses: ./.github/actions/apt-state
+      with:
+        id: cross-build-${{ inputs.target }}
+    - name: Install cross-build tooling
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+      run: |
+        scripts/tooling/x86_64-linux.sh --ci-cross-build "$TARGET"
+        printf '%s\n' "$HOME/.cargo/bin" >>"$GITHUB_PATH"
+    # Preparation only uses these installed packages. Save after their last installer,
+    # before the caller selects compiler-cache authority or builds its evidence.
+    - name: Save verified Ubuntu package state
+      if: always() && steps.apt-state.outputs.key
+      uses: ./.github/actions/apt-state/save
+      with:
+        key: ${{ steps.apt-state.outputs.key }}
+        hit: ${{ steps.apt-state.outputs.hit }}

@@ -77,26 +77,20 @@ jobs:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
           persist-credentials: false
-      - name: Restore verified Ubuntu package state
-        id: apt-state
-        uses: ./.github/actions/apt-state
+      - name: Install cross-build tooling
+        uses: ./.github/actions/cross-build/setup
         with:
-          id: cross-build-${{ matrix.target }}
+          target: ${{ matrix.target }}
       - name: Cross-build selected benchmark configurations
         run: |
-          scripts/tooling/x86_64-linux.sh --ci-cross-build "$TARGET"
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           python3 scripts/bench/ci.py prepare "$TARGET" "target/$TARGET-bench.tar.gz"
           git diff --exit-code HEAD
       - name: Transfer exact benchmark binaries and runner tools
-        uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+        uses: ./.github/actions/cross-build/upload
         with:
-          name: ${{ matrix.target }}-bench-prepared
-          path: |
-            target/${{ matrix.target }}-bench.tar.gz
-            target/${{ matrix.target }}-tools.tar.gz
-          if-no-files-found: error
-          retention-days: 2
+          target: ${{ matrix.target }}
+          suite: bench
       - name: Retain benchmark preparation evidence
         if: ${{ !cancelled() }}
         uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
@@ -105,12 +99,6 @@ jobs:
           path: target/bench/preparation/
           if-no-files-found: warn
           retention-days: 30
-      - name: Save verified Ubuntu package state
-        if: always() && steps.apt-state.outputs.key
-        uses: ./.github/actions/apt-state/save
-        with:
-          key: ${{ steps.apt-state.outputs.key }}
-          hit: ${{ steps.apt-state.outputs.hit }}
 
   bench:
     needs: [plan, cross-build]

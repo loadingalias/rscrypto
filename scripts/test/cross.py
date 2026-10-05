@@ -85,7 +85,9 @@ def prepare(target, archive):
             metadata['modes'][mode] = {'command': command, 'doctests': plan['total'],
                 'internal': internal, 'encoded_rustflags': mode_env.get('CARGO_ENCODED_RUSTFLAGS')}
         bundle.seal(ROOT, out, 'rscrypto.cross.tests', target, identity, metadata)
-        bundle.pack(out, archive)
+        # The larger dictionary reuses code across standalone doctest programs.
+        # Executables and their sealed hashes remain unchanged.
+        bundle.pack(out, archive, compression='xz')
 
 
 def execute(target, archive):

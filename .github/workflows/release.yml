@@ -46,11 +46,6 @@ jobs:
 
   ct:
     needs: preflight
-    # GitHub validates every nested job's permissions before the run starts, including
-    # ct.yml's skipped diagnostic replay job, which reads artifacts from another run.
-    permissions:
-      contents: read
-      actions: read
     uses: ./.github/workflows/ct.yml
     with:
       architectures: all

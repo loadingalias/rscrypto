@@ -346,6 +346,40 @@ paired summary, and validation logs.
 The baseline executable SHA-256 is `ac1464ace2b801bd50a07690d30241cc20a99881b353e39ddf99c2cab9670e85`; the candidate is `6d6b70534a9e6d7959c0b56c018f3b323ea215ccb3e26a29d2aac65d2957f2c6`.
 The existing `ed25519` benchmark selector includes the new `verify/rscrypto-import` rows.
 
+## 2026-10-04: Smaller cross-target test bundles
+
+XZ compression reduces the RISC-V test payload by 57.06% while preserving every
+sealed file. The input is the successful `d4045559` CI campaign
+([run 37235765568](https://github.com/loadingalias/rscrypto/actions/runs/37235765568),
+artifact `11315399857`). Its four Nextest archives contain ordinary and internal
+suites in native and portable modes. The two standalone doctest inventories
+contain about 1.5 GB of executables before compression.
+
+The production `scripts/lib/evidence_bundle.py` packer compressed the same
+extracted files with each codec:
+
+| Codec | Payload | Pack time | Unpack time |
+| --- | ---: | ---: | ---: |
+| Gzip | 574,681,410 B (548.06 MiB) | 138.23 s | 4.12 s |
+| XZ | 246,774,232 B (235.34 MiB) | 296.83 s | 12.13 s |
+
+The file sizes are exact. Durations are one observation per codec on a shared
+Apple M1 Pro, macOS 26.6.2, Python 3.14.8; they do not predict native CI times.
+XZ costs more preparation and decompression work in this observation. The size
+reduction addresses the RISC-V runner's slow download; no end-to-end CI duration
+improvement is claimed before a new workflow run.
+
+After each round trip, all 308 manifest file hashes, sizes, executable modes,
+and the manifest itself matched the original. No executable was stripped,
+rebuilt, or omitted. CI now transports `.tar.xz` test bundles; existing gzip
+bundles remain readable. `just test-transfer` passed all 12 checks, including
+real Nextest execution after transfer, source binding, corruption, unsafe
+archive members, and altered suite metadata.
+
+Retained artifacts: `benchmark_results/2026-10-04/cross-test-archive/` contains
+the original and both repacked bundles, the original manifest, byte counts and
+hashes, measurements, the production packer snapshot, and the measurement script.
+
 ## 2026-10-04: BLAKE3 constant tree evaluation
 
 `Blake3::digest_const` now accepts multi-chunk inputs with the production portable
