@@ -6,6 +6,79 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-05: RSA native target qualification
+
+**Checkpoint at 2026-10-06T02:06:01Z:** POWER passed its full native CT gate.
+IBM Z and RISC-V were still running. The allocation-contract evaluation remained
+behind these results.
+
+This campaign qualifies the correction already pushed to `main` at
+`ef5d4c7997d309450d9868887b3c811596a02049`, tree
+`2d1f5f5a0eaa7801e58d7b9547e82dac261160b3`. It extends the earlier
+[Intel, Windows, and Graviton qualification](#2026-10-05-rsa-correction-qualification).
+Each target gets one full native attempt with the existing required inventory,
+sampling, thresholds, and confirmation policy. PKCS#1 v1.5 decryption retains
+4,000 screening observations and threshold **8.0**. Preparation and measurement
+use separate hosts; the native runner verifies and executes the sealed binary.
+
+| Native runner profile | Full required gate | RSA cases | PKCS#1 v1.5 decrypt abs(t) | Workflow |
+| --- | --- | --- | --- | --- |
+| `ubuntu-24.04-ppc64le-p10` | 119/119 pass | 9/9 pass | 1.40082 | [37395735606](https://github.com/loadingalias/rscrypto/actions/runs/37395735606) |
+| `ubuntu-24.04-s390x` | Pending | Pending | Pending | [37396293617](https://github.com/loadingalias/rscrypto/actions/runs/37396293617) |
+| `ubuntu-24.04-riscv` | Pending | Pending | Pending | [37396295570](https://github.com/loadingalias/rscrypto/actions/runs/37396295570) |
+
+POWER required no confirmation. Its 119 measurements retain 3,630,992
+observations; all raw sequence numbers, class labels, and counts match their
+reports. All 366 report artifacts passed size and SHA-256 verification. Its
+native kernel was `6.12.0-264.el10.ppc64le`. Runner profiles identify the selected
+hardware lane; the current reports do not capture a separate CPU model or
+microcode inventory, so these results do not qualify every host of the architecture.
+
+All three preparations passed strict artifact validation, the compiler API
+inventory, generated-code checks, and the cleanup sentinel. Their source digest
+is `460992e35a7e3ada294c4f2ac14c3615cc265d417657ef08f47230d52bd5cca1`,
+independently reproduced from all 1,794 tracked files and executable modes in
+the retained commit archive. The RSA file remains
+`3df25c4d979185658aba9bae8c5c9c47030e4620394a89fbf07cdeb1564a69f6`.
+
+The compiler is `nightly-2026-09-30`, rustc
+`5c543b0b8c73c7b72bc8284ced4fb22ead15734d`, LLVM 23.1.1. Each target links
+with its GCC 13.3.0 cross driver, Ubuntu `13.3.0-6ubuntu2~24.04.1`. Builds use
+release optimization, fat LTO, one codegen unit, overflow checks, aborting
+panics, `std/full/parallel/diag/getrandom`, disabled default features, and
+`rscrypto_internal`. IBM Z also uses its configured `-C target-feature=+vector`;
+POWER and RISC-V request no extra target features. No target CPU is requested.
+
+| Prepared native DudeCT binary | SHA-256 |
+| --- | --- |
+| POWER | `81015ecc0f72c51782f0b65616ac718954245671a116bcc967a41da7de2ac6e4` |
+| IBM Z | `e902567926379e50cb1e2eb909f78e3ddf2a0b0ba7f4d7a132ddfd69c400d554` |
+| RISC-V | `d3dc1556a75e7f807d5eccc24a96022b8ad9907a3a90e607a49f21799a3a9fb2` |
+
+The first combined IBM Z/RISC-V dispatch, `37395861831`, was cancelled during
+preparation before any native runner was allocated. The published workflow
+would give both uploads the same default artifact name; the pinned upload
+action rejects that collision. Separate single-target runs retain this
+campaign's evidence. The local workflow correction gives each matrix row a
+unique artifact name and preserves fail-fast behavior. Six-name validation and
+`just test-scripts` passed; four installer tests require other platforms.
+
+Raw records and verification scripts are retained under
+`benchmark_results/rsa-native-qualification-2026-10-05-8g_3e4pj/`.
+The interim checkpoint at `2026-10-06T02:06:01Z` is
+`benchmark_results/rsa-native-qualification-2026-10-05-8g_3e4pj.checkpoint-20261006T020601Z.tar.gz`
+(204,820,324 bytes; SHA-256
+`d783f7f834835663b2542b9ed9736a55438783df512e8c522e147ec442c48f67`).
+All 72 retained files were verified after packing. It contains POWER's final
+evidence, all three preparations, functional CI records, and the allocation
+inventory. IBM Z and RISC-V have no final measurement artifacts in this checkpoint.
+
+The earlier Intel cost and causal limits and accepted Mac timing limitation remain
+unchanged. [Functional CI attempt 2](https://github.com/loadingalias/rscrypto/actions/runs/37391759607/attempts/2)
+passed all 12 jobs at this commit. Attempt 1's Windows failure, whose cause remains
+unestablished, is retained alongside the passing attempt's metadata and complete logs.
+Functional CI does not replace timing evidence. This campaign does not request or perform a release.
+
 ## 2026-10-05: RSA correction qualification
 
 **Decision:** the corrected RSA snapshot passes full native CT on Intel Linux,
@@ -118,12 +191,12 @@ local validation logs, linked-code reviews, and the source-identity comparison.
 All four temporary EC2 instances and their EBS volumes were removed. Final
 provider status records confirm that none remains.
 
-The current source still needs native POWER, IBM Z, and RISC-V qualification.
-Those CI lanes exist, but the correction is uncommitted and unpublished;
-no direct hosts for the snapshot were supplied. Existing published-commit
-passes cannot qualify it. The accepted Mac timing limitation is unchanged.
-Full release qualification and the RSA allocation-contract evaluation remain
-open. No threshold, failure, or target requirement is waived.
+This four-host campaign preceded publication of the correction. It is now
+published on `main`; the subsequent
+[native target campaign](#2026-10-05-rsa-native-target-qualification) owns
+POWER, IBM Z, and RISC-V qualification and the allocation evaluation checkpoint.
+The accepted Mac timing limitation and full release requirements are unchanged.
+No threshold, failure, or target requirement is waived.
 
 ## 2026-10-05: Intel RSA modular-restoration timing
 
