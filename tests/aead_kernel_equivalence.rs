@@ -5,11 +5,11 @@
 
 #[cfg(target_arch = "aarch64")]
 use rscrypto::platform::caps::aarch64;
-#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+#[cfg(all(target_arch = "powerpc64", target_endian = "little", not(feature = "portable-only")))]
 use rscrypto::platform::caps::power;
-#[cfg(target_arch = "riscv64")]
+#[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
 use rscrypto::platform::caps::riscv;
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
 use rscrypto::platform::caps::s390x;
 #[cfg(target_arch = "wasm32")]
 use rscrypto::platform::caps::wasm;
@@ -49,17 +49,17 @@ const BACKENDS: &[Backend] = &[
     required: x86::AVX512_READY,
     xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_x86_avx512,
   },
-  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  #[cfg(all(target_arch = "powerpc64", target_endian = "little", not(feature = "portable-only")))]
   Backend {
     required: power::POWER8_VECTOR,
     xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_power_vsx,
   },
-  #[cfg(target_arch = "s390x")]
+  #[cfg(all(target_arch = "s390x", not(feature = "portable-only")))]
   Backend {
     required: s390x::VECTOR,
     xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_s390x_vector,
   },
-  #[cfg(target_arch = "riscv64")]
+  #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   Backend {
     required: riscv::V,
     xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_riscv64_vector,
