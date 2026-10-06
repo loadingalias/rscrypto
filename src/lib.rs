@@ -34,6 +34,8 @@
 //! - AEADs: typed keys and nonces, with combined, detached, and `alloc` Vec helpers.
 #![deny(missing_debug_implementations, missing_docs)]
 #![deny(clippy::print_stderr, clippy::print_stdout)]
+// NIGHTLY: Kani's pinned compiler (a 1.100 nightly) still gates the allocator API.
+#![cfg_attr(kani, feature(allocator_api))]
 #![cfg_attr(
   feature = "sha2",
   doc = r#"
