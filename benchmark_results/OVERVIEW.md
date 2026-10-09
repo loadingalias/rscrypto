@@ -6,6 +6,34 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-09: Graviton5 DudeCT class-label artifact
+
+**Decision:** the DudeCT runner's class-dependent recording branch causes the Graviton5
+class-associated offsets. Recording every duration and label in execution order, and splitting
+by class only after the case completes, removes them. This is a measurement correction; it
+qualifies no binary, and every target needs new full CT evidence with the corrected runner.
+
+Constant-Time run [37983487781](https://github.com/loadingalias/rscrypto/actions/runs/37983487781)
+at `915427e6` failed `ed25519_sign_response_fixed_vs_random_secret` on `c9g.2xlarge`:
++18.59601 at 200,000 samples, then −22.47854 at 800,000 with the same seed. The timed machine
+code matched the last passing Graviton5 artifact (run 37235805079, |t| 2.55399) apart from data
+addresses. The sign reversed between processes on identical inputs. The retained 2026-10-05 HMAC
+A/A data showed the same association at lag 0 only.
+
+One disposable Graviton5 host ran 184 planned measurements and 16 positive-control runs, with
+every run retained. The failing CI binary, a rebuilt baseline, and a baseline A/A fixture crossed
+|t| 10 in 18 of 92 runs, with mean cropped lag-0 |t| 4.1–7.6. Label-independent recording crossed
+in 0 of 54 runs (largest 3.25, mean cropped |t| 0.7–1.0) with the same noise floor. `ISB` before
+both timestamps did not remove the offsets and added a lag −1 association. Both runners detected a
+3–4 ns hardware-divide difference in every positive-control run. The host's vDSO reads
+`CNTVCTSS_EL0` without `ISB`; Graviton4 lacks FEAT_ECV. The processor mechanism is not
+established.
+
+Record: `benchmark_results/ct-graviton5-runner-20261009/report.md`. Bundle:
+`benchmark_results/ct-graviton5-runner-20261009-evidence.tar.gz` (534,101,155 bytes), SHA-256
+`7a467ccd9e2f1bb67e580d6d052fc9e3848785462078cab9b462e7aeaaa3ff99`, local only, with both CI
+artifact ZIPs at their published digests. The host and its volume were deleted.
+
 ## 2026-10-09: BLAKE3 partial-chunk forest accepted; x86 ratio open
 
 The accepted record (`benchmark_results/blake3-rail-forest-v2-20261009T031500Z/report.md`)

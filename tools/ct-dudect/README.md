@@ -48,8 +48,13 @@ The CSV columns are `benchname,sequence,class,runtime_ns`.
 - `UPSTREAM.json` records the identity of the crate archive and the original file hashes.
 - Its `local_files` entry records the exact hash of the documented whitespace normalization in the macros.
   The identity test checks that hash, and keeps the original.
-- The local patch records the class order after the timed closure,
-  and exports every sample in that order.
+- The local patch records each duration and its class after the timed closure, in execution order,
+  without branching on the class. It splits the durations by class only after the case completes,
+  and exports every sample in execution order.
+  Upstream's per-class push branched on the class right after the end timestamp.
+  On Graviton5 that branch gave the classes different timings even when both ran identical work;
+  label-independent recording removed the difference
+  ([2026-10-09 record](../../benchmark_results/OVERVIEW.md#2026-10-09-graviton5-dudect-class-label-artifact)).
 - Buffered output is flushed before a result is reported.
 - The statistical implementation in `src/stats.rs` does not change.
 - The export tests cover unequal classes, deterministic duration and order fixtures,

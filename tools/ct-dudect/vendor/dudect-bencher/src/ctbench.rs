@@ -80,8 +80,7 @@ impl CtBencher {
         // This populates self.samples
         let mut runner = CtRunner::default();
         f(&mut runner, &mut self.rng);
-        self.samples = runner.runtimes;
-        self.order = runner.order;
+        (self.samples, self.order) = runner.into_samples();
 
         // Replace the old CtCtx with an updated one
         let old_self = ::std::mem::replace(self, CtBencher::new());
@@ -364,8 +363,8 @@ pub enum Class {
 /// Used for timing single operations at a time
 #[derive(Default)]
 pub struct CtRunner {
-    // Runtimes of left and right distributions in nanoseconds
-    runtimes: (Vec<u64>, Vec<u64>),
+    // Runtimes in nanoseconds, in execution order; `order` labels each one
+    runtimes: Vec<u64>,
     order: Vec<Class>,
 }
 
@@ -387,13 +386,24 @@ impl CtRunner {
         self.record(class, runtime);
     }
 
-    // Both consumers retain the same duration; ordering work stays outside the timed closure.
+    // Recording must not branch on the class. On Graviton5, a class branch here timed the
+    // classes differently even when both ran identical work; serializing the timestamps with
+    // ISB did not remove the difference. The mechanism is not established.
     fn record(&mut self, class: Class, runtime: u64) {
-        match class {
-            Class::Left => self.runtimes.0.push(runtime),
-            Class::Right => self.runtimes.1.push(runtime),
-        }
+        self.runtimes.push(runtime);
         self.order.push(class);
+    }
+
+    // Split durations by class only after every measurement has completed.
+    fn into_samples(self) -> ((Vec<u64>, Vec<u64>), Vec<Class>) {
+        let mut samples = (Vec::new(), Vec::new());
+        for (&class, runtime) in self.order.iter().zip(self.runtimes) {
+            match class {
+                Class::Left => samples.0.push(runtime),
+                Class::Right => samples.1.push(runtime),
+            }
+        }
+        (samples, self.order)
     }
 }
 
@@ -413,13 +423,15 @@ mod export_tests {
         ] {
             runner.record(class, runtime);
         }
+        let (samples, order) = runner.into_samples();
+        assert_eq!(samples, (vec![11, 12], vec![31, 32, 33]));
         let mut out = Vec::new();
         let mut sequence = 0;
         write_samples(
             &mut out,
             &BenchName("unequal"),
-            &runner.runtimes,
-            &runner.order,
+            &samples,
+            &order,
             &mut sequence,
         )
         .unwrap();
