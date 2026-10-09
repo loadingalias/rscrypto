@@ -60,6 +60,11 @@ The raw FIPS encodings have these sizes, in bytes:
   and verifies the redundant low polynomial and the public-key hash.
 - The expanded format has no independent consistency check for the signing seed K.
 - Public-key decoding accepts every bit pattern of the correct length.
+- Key import returns `MlDsaKeyError`.
+  Generation, preparation, and signing return `MlDsaError`.
+- Signing with a secret key and preparing it re-check its noise coefficient ranges.
+  Construction validates every key, so `MlDsaError::InvalidSecretKey` arises only if key memory
+  changes after validation. The operation clears its secret state before it returns.
 
 ### Signatures and contexts
 
@@ -191,7 +196,8 @@ With the `alloc` feature, these functions take an `Allocator` and return `Box<Se
 - Unpublished-challenge sampling consumes all 221 bytes and uses fixed scans.
 - Verification samples its public challenge directly.
 - Signing tries at most 821 candidates, with at most 5747 mask nonces for ML-DSA-87.
-- Every exhausted sampler or signing loop returns `MlDsaError::RejectionLimit`.
+- Every exhausted sampler or signing loop returns `RejectionLimit`:
+  `MlDsaKeyError::RejectionLimit` during expanded-key import, otherwise `MlDsaError::RejectionLimit`.
   There is no fallback signature and no partial private output.
 
 ## Security evidence and qualification limits

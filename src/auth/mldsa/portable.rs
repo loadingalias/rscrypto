@@ -4,7 +4,7 @@
 //! Secret polynomial owners are cleared on every return path.
 
 use super::{
-  MlDsaError, Parameters, encoding,
+  MlDsaError, MlDsaKeyError, Parameters, encoding,
   poly::{NttBlinding, Poly, add, decompose, high_bits, power2_round, use_hint},
   sampling,
 };
@@ -201,7 +201,10 @@ impl<const K: usize, const L: usize> SigningState<K, L> {
       .all(|poly| poly.0.iter().all(|&x| x == 0))
   }
 
-  pub(super) fn decode(&mut self, secret: &[u8], p: Parameters) -> Result<(), MlDsaError> {
+  /// Decode and transform the secret polynomials. Returns whether every noise
+  /// coefficient was in range; the result is computed without early exit.
+  #[must_use]
+  pub(super) fn decode(&mut self, secret: &[u8], p: Parameters) -> bool {
     let _dit = crate::traits::ct::DataIndependentTiming::enter();
     let mut offset = 128usize;
     let size = p.eta_bits.strict_mul(32);
@@ -217,10 +220,7 @@ impl<const K: usize, const L: usize> SigningState<K, L> {
       offset = offset.strict_add(416);
       blinding.ntt(poly);
     }
-    if !valid {
-      return Err(MlDsaError::InvalidSecretKey);
-    }
-    Ok(())
+    valid
   }
 }
 
@@ -229,10 +229,12 @@ pub(super) fn validate_secret<const K: usize, const L: usize>(
   secret: &[u8],
   p: Parameters,
   public: &mut [u8],
-) -> Result<(), MlDsaError> {
+) -> Result<(), MlDsaKeyError> {
   let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut state = SigningState::<K, L>::zero();
-  state.decode(secret, p)?;
+  if !state.decode(secret, p) {
+    return Err(MlDsaKeyError::InvalidSecretKey);
+  }
   public[..32].copy_from_slice(&secret[..32]);
   let mut difference = 0u32;
   let mut row = Poly::zero();
@@ -240,7 +242,8 @@ pub(super) fn validate_secret<const K: usize, const L: usize>(
   let mut s2 = Poly::zero();
   let mut high = Poly::zero();
   for i in 0..K {
-    matrix_row(&secret[..32], i, &state.s1, &mut row)?;
+    // Matrix expansion fails only by exhausting its FIPS 204 sampling bound.
+    matrix_row(&secret[..32], i, &state.s1, &mut row).map_err(|_| MlDsaKeyError::RejectionLimit)?;
     s2.copy_from(&state.s2[i]);
     s2.inverse_ntt();
     row.add_assign(&s2);
@@ -260,7 +263,7 @@ pub(super) fn validate_secret<const K: usize, const L: usize>(
     difference |= u32::from(a ^ b);
   }
   if difference != 0 {
-    return Err(MlDsaError::InvalidSecretKey);
+    return Err(MlDsaKeyError::InvalidSecretKey);
   }
   Ok(())
 }
@@ -276,7 +279,9 @@ pub(super) fn sign<const K: usize, const L: usize>(
 ) -> Result<(), MlDsaError> {
   let _dit = crate::traits::ct::DataIndependentTiming::enter();
   let mut state = SigningState::<K, L>::zero();
-  state.decode(secret, p)?;
+  if !state.decode(secret, p) {
+    return Err(MlDsaError::InvalidSecretKey);
+  }
   sign_with_state(secret, mu, random, p, signature, &state, None)
 }
 

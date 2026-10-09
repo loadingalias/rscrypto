@@ -79,7 +79,7 @@ macro_rules! prepare_adapter {
     #[must_use]
     pub fn $name(secret: &[u8; $size]) -> bool {
       let mut state = SigningState::<$k, $l>::zero();
-      let valid = state.decode(secret, $parameters).is_ok();
+      let valid = state.decode(secret, $parameters);
       core::hint::black_box(&state);
       valid
     }

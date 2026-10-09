@@ -42,12 +42,15 @@ use alloc::boxed::Box;
 use core::alloc::Allocator;
 use core::fmt;
 
-/// ML-DSA construction or signing failure. Verification uses opaque [`VerificationError`].
+/// ML-DSA key generation, preparation, or signing failure.
+///
+/// Key import uses [`MlDsaKeyError`]; verification uses opaque [`VerificationError`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MlDsaError {
-  /// The public-key encoding has the wrong length.
-  InvalidPublicKey,
-  /// The secret-key encoding is malformed or its redundant fields disagree.
+  /// Signing or preparation found an invalid stored secret-key encoding.
+  ///
+  /// Every constructor validates the key, so this arises only if key memory
+  /// changes after validation. The operation clears its secret state first.
   InvalidSecretKey,
   /// The signature has the wrong length, noncanonical hints, or an invalid response norm.
   InvalidSignature,
@@ -64,7 +67,6 @@ pub enum MlDsaError {
 impl fmt::Display for MlDsaError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.write_str(match self {
-      Self::InvalidPublicKey => "invalid ML-DSA public key",
       Self::InvalidSecretKey => "invalid ML-DSA secret key",
       Self::InvalidSignature => "invalid ML-DSA signature",
       Self::ContextTooLong => "ML-DSA context exceeds 255 bytes",
@@ -76,6 +78,31 @@ impl fmt::Display for MlDsaError {
 }
 
 impl core::error::Error for MlDsaError {}
+
+/// ML-DSA key import failure.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum MlDsaKeyError {
+  /// The public-key encoding has the wrong length.
+  InvalidPublicKey,
+  /// The secret-key encoding is malformed or its redundant fields disagree.
+  InvalidSecretKey,
+  /// Expanding the key's public matrix exhausted the FIPS 204 Appendix C
+  /// sampling bound. The outcome depends only on the public seed.
+  RejectionLimit,
+}
+
+impl fmt::Display for MlDsaKeyError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str(match self {
+      Self::InvalidPublicKey => "invalid ML-DSA public key",
+      Self::InvalidSecretKey => "invalid ML-DSA secret key",
+      Self::RejectionLimit => "ML-DSA key expansion reached its rejection limit",
+    })
+  }
+}
+
+impl core::error::Error for MlDsaKeyError {}
 
 /// Standard hash identifiers for HashML-DSA.
 ///
@@ -463,8 +490,8 @@ macro_rules! parameter_set {
       }
 
       /// Parse a public key, rejecting an incorrect length.
-      pub fn try_from_slice(bytes: &[u8]) -> Result<Self, MlDsaError> {
-        let array = bytes.try_into().map_err(|_| MlDsaError::InvalidPublicKey)?;
+      pub fn try_from_slice(bytes: &[u8]) -> Result<Self, MlDsaKeyError> {
+        let array = bytes.try_into().map_err(|_| MlDsaKeyError::InvalidPublicKey)?;
         Ok(Self(array))
       }
 
@@ -539,9 +566,9 @@ macro_rules! parameter_set {
 
       /// Import and validate an expanded secret key, including t0 and the public-key hash.
       /// The caller retains responsibility for clearing the borrowed input.
-      pub fn try_from_slice(input: &[u8]) -> Result<Self, MlDsaError> {
+      pub fn try_from_slice(input: &[u8]) -> Result<Self, MlDsaKeyError> {
         if input.len() != $sk {
-          return Err(MlDsaError::InvalidSecretKey);
+          return Err(MlDsaKeyError::InvalidSecretKey);
         }
         let mut bytes = ZeroizingBytes::zeroed();
         bytes.as_mut_array().copy_from_slice(input);
@@ -560,9 +587,9 @@ macro_rules! parameter_set {
       /// cleared before returning. Allocation failure is handled as by
       /// [`Box::new_in`]. The caller retains responsibility for clearing `input`.
       #[cfg(feature = "alloc")]
-      pub fn try_from_slice_in<A: Allocator>(input: &[u8], alloc: A) -> Result<Box<Self, A>, MlDsaError> {
+      pub fn try_from_slice_in<A: Allocator>(input: &[u8], alloc: A) -> Result<Box<Self, A>, MlDsaKeyError> {
         if input.len() != $sk {
-          return Err(MlDsaError::InvalidSecretKey);
+          return Err(MlDsaKeyError::InvalidSecretKey);
         }
         let mut secret = Box::new_in(Self::zeroed(), alloc);
         secret.bytes.as_mut_array().copy_from_slice(input);
@@ -588,7 +615,9 @@ macro_rules! parameter_set {
       /// dropped. No heap allocation. See the module's resource contract.
       pub fn prepare<'a>(&'a self, storage: &'a mut $secret_storage) -> Result<$prepared_secret<'a>, MlDsaError> {
         let prepared = $prepared_secret { key: self, storage };
-        prepared.storage.state.decode(self.bytes.as_array(), $p)?;
+        if !prepared.storage.state.decode(self.bytes.as_array(), $p) {
+          return Err(MlDsaError::InvalidSecretKey);
+        }
         prepared.storage.matrix.expand_into(&self.bytes.as_array()[..32])?;
         Ok(prepared)
       }

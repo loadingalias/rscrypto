@@ -208,7 +208,7 @@ fn exhaustion_and_reuse<const K: usize, const L: usize>(
   assert_eq!(signature, expected, "compact key reuse must match ACVP");
 
   let mut state = portable::SigningState::<K, L>::zero();
-  state.decode(secret, p).expect("official secret decode");
+  assert!(state.decode(secret, p), "official secret decode");
   let mut matrix = portable::Matrix::<K, L>::zero();
   matrix.expand_into(&secret[..32]).expect("public matrix expansion");
   signature.fill(0xa5);
@@ -313,15 +313,15 @@ macro_rules! allocated_keys {
     invalid[128] = 0xff;
     assert_eq!(
       $secret::try_from_slice(&invalid).err(),
-      Some(MlDsaError::InvalidSecretKey)
+      Some(MlDsaKeyError::InvalidSecretKey)
     );
     assert_eq!(
       $secret::try_from_slice_in(&invalid, Global).err(),
-      Some(MlDsaError::InvalidSecretKey)
+      Some(MlDsaKeyError::InvalidSecretKey)
     );
     assert_eq!(
       $secret::try_from_slice_in(&invalid[1..], Global).err(),
-      Some(MlDsaError::InvalidSecretKey)
+      Some(MlDsaKeyError::InvalidSecretKey)
     );
     let failed = $profile::generate_keypair_in(|_| Err(MlDsaError::RandomGenerationFailed), Global);
     assert_eq!(failed.err(), Some(MlDsaError::RandomGenerationFailed));

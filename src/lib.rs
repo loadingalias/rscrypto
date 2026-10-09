@@ -471,7 +471,7 @@ pub use auth::{
   MlDsa65PreparedPublicKey, MlDsa65PreparedPublicKeyStorage, MlDsa65PreparedSecretKey, MlDsa65PreparedSecretKeyStorage,
   MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature, MlDsa87, MlDsa87PreparedPublicKey,
   MlDsa87PreparedPublicKeyStorage, MlDsa87PreparedSecretKey, MlDsa87PreparedSecretKeyStorage, MlDsa87PublicKey,
-  MlDsa87SecretKey, MlDsa87Signature, MlDsaError, MlDsaPrehash, MlDsaPrehashAlgorithm,
+  MlDsa87SecretKey, MlDsa87Signature, MlDsaError, MlDsaKeyError, MlDsaPrehash, MlDsaPrehashAlgorithm,
 };
 #[cfg(feature = "ml-kem")]
 pub use auth::{
