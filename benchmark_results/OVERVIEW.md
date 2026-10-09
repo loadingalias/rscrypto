@@ -6,6 +6,1692 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-09: BLAKE3 partial-chunk forest accepted; x86 ratio open
+
+The accepted record (`benchmark_results/blake3-rail-forest-v2-20261009T031500Z/report.md`)
+qualifies Rail's derive-key bulk-then-suffix digests on c8g.xlarge Graviton4 and
+c8i.xlarge Granite Rapids. Each host ran production, the candidate, and production
+again, each within 600 seconds. No candidate row is more than 3% slower than both
+production runs. Graviton4 cuts 4,052+60 B by 61% and 16,340+60 B by 36%; the worst
+ratio to one update is 1.075. Granite Rapids cuts them by 36% and 42%, but stays at
+1.53x and 1.31x one update, above the accepted 1.10 bar: the owned partial-lane kernels
+are slower than the production assembly pass. Rail's original 5% target is below an
+estimated 6-7% cost floor at 4 KiB. The first candidate failed its gates on x86
+(`benchmark_results/blake3-rail-forest-20261009T020000Z/report.md`); its apparent
+one-shot losses were run-to-run drift. Full native tests passed on both hosts. All
+task instances and EBS volumes are deleted.
+
+## 2026-10-08: BLAKE3 reader diagnostic; overlap remains unqualified
+
+The streaming/files record (`benchmark_results/blake3-delivery-20261008T185226Z/streaming-files/report.md`)
+retains a qualified 24-row diagnostic in 204.145 seconds. Moving the reader
+inside Rayon gains 2.39–2.80% at 1/10 GiB and fails its 5% screen. Read accounts
+for 19.26–19.52% of large-file time, supporting one bounded overlap experiment.
+That candidate remains unqualified: native artifact review detected baseline
+reuse, and the same-host correction could not find the instance. No candidate
+timing ran. The exact accepted S25 reader is restored; source, raw packets and
+fixed gates are retained. Three large-reader contract tests remain, with nine
+reader tests passing against accepted source. All task instances and EBS volumes
+are absent. Ordered streaming and the complete cold/warm ARM/x86 matrix remain
+open; no new speedup is accepted.
+
+## 2026-10-08: BLAKE3 API delivery and mixed-batch rejection
+
+The delivery record (`benchmark_results/blake3-delivery-20261008T185226Z/report.md`) resumes after
+S35 while preserving E10/S7/S25 and every rejected candidate. Public
+`Blake3Tree::merge_level` and the std-only `hashes::expert::bao::Decoder`
+meet their functional requirements. Their closure review (`benchmark_results/blake3-delivery-20261008T185226Z/api-closure-review.md`)
+binds independent all-mode tree checks through 1,048,576 leaves, 13 official
+Bao vectors, exhaustive fixture corruption/truncation, failure-state tests,
+live decoder/batch fuzzing and native x86 execution. Additive keyed/derive-key
+batch APIs retain existing serial/tree calls and named scratch cleanup.
+
+The sole mixed-lane candidate is **not accepted**. A complete Graviton3 capture
+passes its native controls in 226.105 seconds (128 rows, 2,560 samples), but
+15/18 mixed cases regress against serial rscrypto and three are stable.
+Against upstream-auto, 17 regress and one is stable. The complete estimates
+and fixed decision (`benchmark_results/blake3-delivery-20261008T185226Z/batch-native-summary.md`)
+remain with the original source and ordinary binary. Plain one-shot controls
+at 4/16/64/256 KiB and 1 MiB lead upstream, but do not qualify SVE or streaming.
+
+X86 stops at its fixed idle gate after 183.076 seconds: one steal tick on CPU3
+and the aggregate counter, with **zero timing rows**. No retry follows. The
+recovered complete packet (`benchmark_results/blake3-delivery-20261008T185226Z/x86-native-recovery.json`)
+contains its raw observations, source and executables. The unaccepted lane
+worker is removed from production; accepted equal-length plain kernels remain.
+This outcome does not close the lane-refill requirement.
+
+The standalone b3sum 1.8.7 row now binds the official source, version and binary
+receipt; functional file verification (`benchmark_results/blake3-delivery-20261008T185226Z/b3sum-functional/report.md`)
+passes on Apple Silicon. It supplies no cold/warm throughput result. The
+[published matrix](../docs/blake3-performance.md) includes every retained
+win, loss, uncertainty and missing target cell. Ordered-streaming 5% targets,
+the full ARM/x86 1 MiB–10 GiB matrix, SVE, keyed streaming/XOF cost and final
+CI instruction limits remain open. Width-only and paired-word SVE layouts and
+an unsupported wide-clear proposal are rejected before editing. WASM deferral
+remains 61/80 workloads and 8/16 controls. The final structural profiles (`benchmark_results/blake3-delivery-20261008T185226Z/structural-result.md`)
+failed: ARM stopped on its fixture-symbol rule, and x86 exceeded the control
+observer budget. Both archives are retained; no CI limit is promoted. An
+earlier ARM GNU export lost its raw files and supplies no count or cause claim.
+All task EC2 instances and EBS volumes are deleted. Raw bundles remain local;
+durable archival is still an open retention obligation.
+
+## 2026-10-08: BLAKE3 short-buffer boundary rejected; work stopped
+
+S35 (`benchmark_results/blake3-short-buffer-boundary-20261008T155000Z/report.md`) completes its
+single fixed comparison in **587.657 seconds**: all 14,640 rows and 292,800
+samples remain. Tiny streaming C/S31 is 0.986573 [0.838838, 1.012919]; the 1.34%
+median improvement and two losing repetitions fail the fixed gain gate.
+Streaming/one-shot is 1.126086 [1.098933, 1.159052], above the separate 5% target.
+The protected gate fails: 256 KiB XOF C/production is 2.175612
+[1.285716, 7.213329], and 89 production-relative / 105 S31-relative controls
+remain uncertain. All three original primary gains pass; seven of eight
+resumed-prefix target bounds pass. No subset grants acceptance.
+
+Structural, focused native/Portable, minimal-feature and scoped ordinary cleanup
+checks pass, including 2,904 independent consumer cases. Existing cleanup limits
+remain explicit. Production stays E10/S7/S25; no native host is allocated.
+The isolated build directory is removed after retaining source, binaries and
+evidence. At the user's request, work stops after this slice. Completed history
+is removed from the active owner/index but retained here and in the
+prior owner snapshot (`benchmark_results/blake3-short-buffer-boundary-20261008T155000Z/owner-before-closure.md`).
+The handoff (`benchmark_results/blake3-short-buffer-boundary-20261008T155000Z/handoff.md`) preserves
+seven ordered unfinished items and deferred WASM. No next candidate is selected.
+
+## 2026-10-08: BLAKE3 tiny-state profile remains incomplete
+
+S34 (`benchmark_results/blake3-tiny-state-cause-20261008T153800Z/report.md`) retains three of four
+fixed ordinary profiles before its 60-second watchdog stops at 55.007 seconds.
+Both streaming profiles describe 8.58% / 8.71% CPU in construction plus the
+unchanged short-buffer helper. The missing fourth capture fails completion;
+these partial samples do not qualify a comparison or waive earlier gates.
+The separate S35 experiment above evaluates the private fast/slow boundary
+without replaying this failed capture. Root remains E10/S7/S25.
+
+## 2026-10-08: BLAKE3 native entry passes; software profiles unavailable
+
+S33 (`benchmark_results/blake3-reader-native-entry-20261008T151500Z/report.md`) qualifies exact-instance
+readiness, ssh-just preparation/discovery and CPU1 launch/supervisor/control
+inheritance. Actual reader/subtree/upstream file checks at 1/16 MiB and all three
+cache branches pass. Software `cpu-clock:u` sampling is unavailable on the native
+host, so zero workload profiles or activity/occupancy windows run. No file-cost
+attribution or candidate follows. Complete failure output is collected and all
+instance/EBS absence checks pass. No event fallback or replacement host runs.
+Independent item-1 work continues; production stays E10/S7/S25.
+
+## 2026-10-08: BLAKE3 file-profile preparation fails before capture
+
+S32 (`benchmark_results/blake3-reader-native-cause-20261008T145200Z/report.md`) retains an exact
+accepted-source payload and six passing offline control fixtures, but produces
+zero native profiles. A separately frozen provider-config correction reaches
+allocation; immediate bootstrap then misses the just-created instance. Initial
+termination waiting fails, followed by explicit recovery and verified absence
+of the instance/EBS across all 16 AWS targets. No product or performance claim
+follows. S33 freezes an exact-allocation readiness barrier before the same native
+profile; S32's original payload, failed sources and gates remain unchanged.
+
+## 2026-10-08: BLAKE3 tiny inlining fails qualification
+
+S31 (`benchmark_results/blake3-tiny-inlining-20261008T134100Z/report.md`) passes structural,
+correctness and scoped cleanup checks, but remains unaccepted. The fixed
+600-second watchdog stops after 595.017 seconds, retaining 9,526 rows / 190,520
+samples, including six rows from an unfinished window. Six repetitions complete;
+the tiny primary loses against S30 in repetitions three and five, already failing
+the every-pair gain gate. Missing repetitions prevent full confidence and
+protected-control qualification. No retry or promotion follows. The smaller
+reviewed stack chain and retained clears do not establish a speedup. Two inactive
+build trees are removed with source/artifacts/raw evidence retained. All configured
+task cloud resources are absent. Production stays E10/S7/S25; owner requirements
+and every earlier rejection remain unchanged.
+
+## 2026-10-08: BLAKE3 compact dispatch remains unaccepted
+
+S30 (`benchmark_results/blake3-compact-dispatch-20261008T130600Z/report.md`) completes all 14,640
+rows / 292,800 samples in 471.740 seconds. Tiny streaming improves 3.53% at the
+median, but its upper ratio 0.983983 misses the fixed 0.97 gain gate. No regression
+is resolved above 3%; 25 controls versus production and 26 versus S28 remain
+uncertain. The tiny one-shot gap remains 18%. Eight prefix 5% gates and three
+original gains pass. Metadata shrinks 224→48 bytes, with a 320-byte smaller wrapper
+frame, passing correctness/lifecycle and 2,904 ordinary cleanup cases. Structural
+gains do not waive failed performance gates. The candidate stays isolated; root
+production remains E10/S7/S25, no cloud was created and no comparison is repeated.
+
+## 2026-10-08: BLAKE3 native preparation passes; no timing starts
+
+S29 (`benchmark_results/blake3-resumed-forest-linux-20261008T121600Z/report.md`) retains passing
+Linux native/Portable correctness and 2,904 ordinary consumer cases, with exact
+source/artifact binding and scoped normal/unwind cleanup. The task instance
+shuts down before launch; EC2 reports guest-initiated shutdown, with the mechanism
+unresolved. Actual timing result is zero rows. No replacement host or retry runs;
+teardown and global AWS absence checks pass. Production remains E10/S7/S25 and
+S28's local failed gate is unchanged. Separate fixed 13.346-second profiles place
+7.51–7.95% of tiny-streaming CPU in dispatch copies, supporting a new representation
+candidate. They do not establish its gain or complete the streaming/file targets.
+
+## 2026-10-08: BLAKE3 resumed forest closes eight prefix gaps locally
+
+S28 (`benchmark_results/blake3-resumed-forest-20261008T113300Z/report.md`) completes all 14,640 rows
+and 292,800 samples in 469.531 seconds. All eight 8/16 KiB prefix primaries improve
+3.9–6.8% versus S26 and pass both their gain gates and the separate 5% one-shot
+objective. The three original streaming gains also pass. No protected regression
+is resolved, but 31 controls versus production and 29 versus S26 remain uncertain
+across 3%; the candidate is unaccepted. Correctness and 2,904 ordinary cleanup
+cases pass, with named-owner and whole-route limits retained. Production remains
+E10/S7/S25; no cloud resource was allocated. Linux qualification needs a separate
+frozen outcome and does not waive this local decision.
+
+## 2026-10-08: BLAKE3 caller participation remains unaccepted
+
+S27 (`benchmark_results/blake3-caller-participation-20261008T105500Z/report.md`) finishes all
+14,640 rows and 292,800 samples in 323.426 seconds. The four 64 KiB medians improve
+12–14% versus S26, but every fixed gain gate fails and 20 protected controls per
+reference remain uncertain. No regression is resolved above 3%; uncertainty is
+not waived. Correctness, 600 ordinary consumer cases and scoped heap/owner review
+pass. The pointer-only heap capture preserves borrows; separate key-copy and
+other erasure limits remain. Production stays E10/S7/S25. No cloud resources
+were created or capture retried. The next independent streaming cause is the
+separate parent reductions after a resumed group; S27 is not carried forward.
+
+## 2026-10-08: BLAKE3 forest reduction closes one streaming gap
+
+S26 (`benchmark_results/blake3-streaming-forest-20261008T101300Z/report.md`) reduces derive 16340+60
+time by 7.00% versus S19, with 95% paired reduction 6.43–7.07%. That case reaches
+1.01520 times one-shot [1.01170,1.02214]. All 12,240 rows / 244,800 samples finish in
+260.207 seconds. No protected regression is resolved, but five C/A and seven C/B
+64 KiB controls remain uncertain; eight 8/16 KiB prefix rows still miss 5%.
+Correctness, 2,160 ordinary consumer cases and scoped 896-byte owner cleanup pass.
+The candidate stays isolated and unaccepted. Current production remains E10/S7/S25;
+the next causal lead is external Rayon entry in the 64 KiB controls. No cloud
+resource or repeat comparison was created; every earlier decision remains.
+
+## 2026-10-08: BLAKE3 ARM reader accepted; file matrix stops at its bound
+
+S25 (`benchmark_results/blake3-full-file-matrix-20261008T090400Z/report.md`) accepts the Linux
+little-endian AArch64 plain-reader path after exact code/cleanup reuse checks.
+S24's passing ARM evidence resolves 56% / 66% gains at 1 / 16 MiB. Excluded x86
+behavior retains accepted production. Required full checks pass: 1,936 native
+and 1,906 portable tests, plus 322 doctests in each lane and CT manifest checks.
+The separate full file capture stops at 595.219 seconds under its 600-second
+watchdog, retaining 59/60 rows and 590/600 samples. Eleven windows pass; the last
+10 GiB warm reader row is incomplete. Every result and failed interval remains;
+no matrix acceptance, restart or replacement host follows. Instance/EBS deletion
+and global AWS absence are verified. Full file, streaming and later gates remain.
+
+## 2026-10-08: BLAKE3 Linux reader passes ARM, x86 entry fails
+
+S24 (`benchmark_results/blake3-linux-reader-20261008T074000Z/report.md`) retains its failed two-target
+decision. ARM completes 132 rows / 2,640 samples in 355.240 seconds, resolving
+56% / 66% reader gains at 1 / 16 MiB with every protected control passing.
+x86 passes correctness through 10 GiB and scoped cleanup, then stops before
+timing on observed steal. Its separate first streaming profile fails the 1%
+activity gate; no causal claim or retry follows. Both targets retain ordinary
+abort/unwind cleanup evidence and explicit copy/array/spill limits. All task
+instances and EBS volumes are deleted, with all AWS targets verified absent.
+A separately frozen ARM-only scope may reuse its passing evidence after checking
+code equivalence; production remains E10/S7 at S24 closure. Full file/streaming
+and later roadmap gates stay open.
+
+## 2026-10-08: BLAKE3 reader parallelism remains unqualified
+
+S23 (`benchmark_results/blake3-file-reader-cause-20261008T061314Z/report.md`) implements an isolated
+plain-reader parallel path with correct pending roots, errors and continuation.
+All 8,280 rows and 164,400 samples finish in 239.746 seconds. Reader medians improve
+12%/26% at 1/16 MiB, but both confidence gates fail; one protected subtree control
+regresses and 36 intervals remain uncertain. Native/portable/feature checks and
+348 ordinary cleanup consumer cases pass, with explicit copy/unwind/spill limits.
+Exact post-profiles identify repeated external Rayon entry and caller latch waits.
+Investigate caller participation in a separate candidate. Production stays E10/S7;
+Linux cold/warm evidence and streaming gates remain open. No host was allocated.
+
+## 2026-10-08: BLAKE3 serial 64 KiB gains remain unqualified
+
+S22 (`benchmark_results/blake3-parallel-admission-20261008T060017Z/report.md`) completes all
+14,640 rows and 292,800 samples in 561.169 seconds. Keeping inputs below 256 KiB
+on the serial SIMD path reduces the four 64 KiB medians by 46–66% versus S20.
+The full gate still fails: one resolved regression against root and 57/67
+uncertain C/A/C/B controls remain. The separate 5% streaming target also fails.
+Final profiles confirm that the newly serial work stays on the caller.
+Eighty focused tests and 564 ordinary consumer cases pass; normal named clears
+are retained, with existing unwind/copy/spill limitations. Production stays
+E10/S7. S23 now investigates accepted production's file-reader CPU cost.
+No host was allocated, and no earlier decision or gate changes.
+
+## 2026-10-08: BLAKE3 fewer Rayon tasks rejected
+
+S21 (`benchmark_results/blake3-parallel-control-cause-20261008T051735Z/report.md`) completes
+14,160 rows and 283,200 samples in437.633seconds. Raising the macOS AArch64
+small-task work cost fails the promised64KiB gains: keyed hashing is48.31%
+slower than S20. Six protected regressions are resolved against root and five
+against S20;42/49 more controls remain uncertain. Final profiles retain the
+main-thread latch and ten-worker pool despite fewer recursive join leaves.
+Investigate pool admission itself; do not promote this policy. Eighty focused
+native/portable tests, core/alloc, Clippy and scoped cleanup review pass.
+Production remains E10/S7; no host was allocated. All earlier decisions remain.
+
+## 2026-10-08: BLAKE3 subtree clear cost confirmed; gates still fail
+
+S20 (`benchmark_results/blake3-streaming-parent-cause-20261008T043954Z/report.md`) reduces the
+measured derive 16340+60 clear cost: 3.55% less time than S19, with a 95% paired
+interval of 3.02–4.57% less. All 12,240 rows and 244,800 samples finish in
+418.320 seconds. The candidate stays isolated: protected regressions and
+uncertainty remain, and the derive streaming median is still 6.54% above
+equivalent one-shot. Eighty native/portable tests and 344 ordinary consumer
+cases pass. The scoped prefix wipe/fence proof passes; existing unwind/copy/spill
+gaps remain. No host was allocated. Current-source diagnosis follows the highly
+variable 64 KiB control path; no passing subset is accepted.
+
+## 2026-10-08: BLAKE3 composed streaming gains remain unaccepted
+
+S19 (`benchmark_results/blake3-streaming-closure-20261008T031350Z/report.md`) completes all 408 Mac
+cases, ten pairs, 8,160 rows and 163,200 samples in 215.115 seconds. Unaligned
+plain 70+4096 takes 63.29% less time and reaches one-shot speed; derive 4052+60
+and 16340+60 improve 62.00% and 31.10%. Zero protected regressions are resolved
+above 3%, but 16 controls remain uncertain. The separate 5% objective still fails.
+
+Linux preparation and native/portable correctness pass. The capture stops at
+window 20: CPU1 averages 1.63934% against the unchanged 1% gate. All 4,080 rows and
+81,600 samples, including that failed window, remain. Affinity passes; no
+passing subset or replacement host is accepted. The instance/EBS are deleted,
+with global absence verified at 04:31:20 UTC. Named-owner cleanup and 688 ordinary
+consumer cases pass; the shared update frame grows 16 B and existing copy/spill
+limits remain. Root production stays E10/S7. Continue current-source streaming
+diagnosis; every older decision, deferred requirement and later item remains.
+
+## 2026-10-08: BLAKE3 partial-lane direction demonstrated within ten minutes
+
+**Decision:** retain S16's partial-lane NEON mechanism as a strong lead; keep the
+candidate isolated and unaccepted. The separately authorized
+S18 experiment (`benchmark_results/blake3-partial-lane-direction-20261008T010000Z/report.md`) completes
+in **510.24 seconds**, including both fresh builds, every measurement and analysis.
+All 67 prospectively selected cases, eight adjacent AB/BA pairs, 1,072 rows and
+21,440 samples are retained. There are no retries or discarded intervals.
+
+| Operation | Paired time reduction | 95% interval |
+| --- | ---: | ---: |
+| Derive, bulk 4052 then suffix 60 | 62.05% | 61.91–62.20% |
+| Derive, bulk 16340 then suffix 60 | 31.17% | 31.02–31.27% |
+| Plain, unaligned prefix 70 then bulk 4096 | 46.70% | 46.27–46.86% |
+
+Both original primaries improve in every pair. The 4052+60 case reaches 1.01645
+times one-shot, within the separate 5% objective; five of 22 selected streaming
+medians still miss that objective. No protected row has a resolved regression
+above 3%, but four 64 KiB controls remain unresolved. All 24 S13 unresolved rows
+were included. The original full-matrix and native gates remain open.
+
+This result is specific to the Apple M1 Pro, nightly-2026-09-30, native CPU flags
+and the exact frozen sources/features in the report. Source hashes reconcile
+the reused S16 correctness checks. The ordinary abort/unwind cleanup follow-up
+passes four builds and 240 public-API consumer cases; named-owner clears and the
+unchanged shared update frame are retained. Portable-state, outer-key, native
+fallback and compiler-created copy/spill limits remain explicit.
+
+Root production is unchanged; E10, S7 and all original decisions remain intact.
+No cloud resources were created. This bounded outcome is closed and work stops.
+File/streaming qualification, later roadmap items and deferred WASM remain open.
+
+## 2026-10-08: BLAKE3 stopped after correctness and partial collection
+
+**Decision:** stop at the user's requested boundary. Retain E10 and S7 readers;
+restore S14's unaccepted production change; keep S16 as an isolated draft.
+All captures are collected and every task EC2 instance/EBS is deleted. Global
+absence passes at 00:25:57 UTC. The
+closure record (`benchmark_results/blake3-stop-and-budget-20261008T003238Z/report.md`) also records
+the new **600-second maximum for a complete benchmark comparison**, including
+repetitions. No repeated invocation may bypass it. Historical frozen inputs and
+budgets remain unchanged, with no authority to rerun the long captures.
+
+| Outcome | Actual result | Decision |
+| --- | --- | --- |
+| S14 (`benchmark_results/blake3-native-partial-groups-20261007T231500Z/report.md`) | 9,316 Mac rows / 186,320 samples; incomplete fixed matrix | Unaccepted; production restored; retained native/portable tests pass |
+| S15 (`benchmark_results/blake3-file-budget-correction-20261007T234000Z/report.md`) | File operations through 10 GiB pass on both native targets; 19 rows / 190 samples | ARM capture incomplete; x86 fails zero-steal before user stop; no qualified matrix |
+| S16 (`benchmark_results/blake3-streaming-partial-lane-20261007T235000Z/report.md`) | All partial lengths/modes/counters, 40 native and 40 portable public tests, minimal features and Clippy pass | Isolated draft; emitted cleanup and performance unexecuted |
+| S17 (`benchmark_results/blake3-partial-groups-entrypoint-20261007T235400Z/report.md`) | Actual corrected Linux preparation passes; 184 rows / 3,680 samples | No complete native timing-window qualification |
+
+Every partial result, failed interval, initial failure and original gate remains.
+No subset or best-of-N timing is accepted. The
+S7 API inventory follow-up (`benchmark_results/blake3-reader-implementation-20261007T195000Z/api-inventory-closure/report.md`)
+passes exact two-method deltas on seven compiler targets and manifest validation.
+It does not claim constant-time arbitrary I/O. These implementation/correctness
+results are progress, but file/streaming performance and all later roadmap items
+remain open. Deferred WASM stays at 61/80 workloads and 8/16 controls.
+
+## 2026-10-07: BLAKE3 file watchdog budget rejected
+
+**Decision:** close S11 without performance evidence. Both native preparations
+pass all three real file operations through 10 GiB, plus native/portable tests,
+root EBS/storage checks and the 1 MiB cache controls. The supervisor then rejects
+its 6,600-second worker budget against the unchanged 5,400-second maximum.
+S11 report (`benchmark_results/blake3-file-entrypoint-correction-20261007T212600Z/report.md`) retains
+zero timed rows, both terminal exceptions, complete preparation records and all
+original frozen inputs. Both instances and root volumes are deleted; target and
+global absence pass. No activity interval or sample was discarded.
+
+S15 separately freezes a 5,400-second worker, 5,430-second hold and 5,450-second
+no-contact window around the same 1,805 production entries and all original
+workload/sample gates. The actual watchdog entry and eight offline checks pass;
+native preparation repeats that entry check before builds or fixtures. S15 later
+closes with partial captures and deleted allocations, as recorded above. No S14
+source enters its file packet. Neither outcome closes the 5% streaming target
+or the rest of the roadmap; the old budget is no longer permitted.
+
+## 2026-10-07: BLAKE3 outlined resumed group rejected
+
+**Decision:** reject S13 and restore its three source additions under hash guards.
+The S13 report (`benchmark_results/blake3-streaming-outline-20261007T222000Z/report.md`) retains all
+6,528 Mac rows, 130,560 samples and 408 cases across eight adjacent pairs.
+Unaligned `70+4096` improves in every pair (ratio 0.36661, 95% interval
+[0.35926, 0.37025]), but 24 protected rows remain unresolved above 3%.
+There are no resolved >3% regressions. Nineteen of 80 streaming medians still
+exceed the separate 1.05 objective. No repeated timing or discarded interval
+changes the decision. Native and portable retained streaming tests pass after
+restoration; the independent tests, E10 and S7 readers remain.
+
+Linux produced zero timed rows and incomplete preparation evidence, as recorded
+below. Its instance/root volume are absent. S14 separately evaluates a smaller
+plain two/three-chunk NEON tail change; S11's zero-row outcome is recorded above; S15 owns its separate correction.
+
+## 2026-10-07: BLAKE3 native streaming evidence gaps
+
+**Decision:** reject S12's x86 baseline as qualification evidence. Its first
+complete pass retained 332 rows and 6,640 samples, but three nonzero steal
+observations failed the frozen activity gate. The remaining passes and all
+profiles did not run. S12 report (`benchmark_results/blake3-x86-streaming-cause-20261007T221000Z/report.md`)
+retains every row, interval, source identity and teardown record. Its instance
+and both EBS volumes are deleted; no replacement host was tried for quiet data.
+
+S13's separate AArch64 preparation stopped before timing after a pre-launch
+check found identical baseline/candidate binaries for different frozen source
+states. Subsequent SSH collection timed out; its zero-byte archive is incomplete.
+S13 native failure (`benchmark_results/blake3-streaming-outline-20261007T222000Z/linux/failure.md`)
+preserves that evidence limit and the possible source-timestamp freshness cause.
+Its instance and root volume are absent. S13's Mac comparison also rejects the
+candidate, as recorded above. S11 later failed its supervisor budget before timing; none of these
+failures changes an acceptance gate.
+
+## 2026-10-07: BLAKE3 resumed NEON group rejected
+
+**Decision:** reject S10 under its unchanged Mac regression gate and restore its
+production additions. The S10 report (`benchmark_results/blake3-streaming-resume-20261007T212000Z/report.md`)
+retains the candidate, ordinary optimized cleanup review, complete fixed four-pair
+comparison and all uncertainty: 3,168 rows, 63,360 samples, 396 paired cases.
+Plain unaligned 70+4096 improves in every pair, with paired median ratio 0.36477
+and streaming/one-shot ratio 0.98272. However, 40 protected rows remain unresolved
+across the 3% boundary. None is a resolved >3% regression; neither correctness
+nor the primary gain waives the unresolved-regression gate.
+
+Twenty of 80 rscrypto streaming medians still exceed the separate 1.05 objective.
+No intervals or outliers were discarded and no replacement timing was run.
+The independent public streaming-group tests remain; E10, S7 and S3's independent
+tail-CV test are preserved. No Linux S10 candidate execution or cloud allocation
+occurred. S11's separate native file outcome used unchanged S9 production and
+later failed before timing; its failure and S15's partial correction are above.
+
+## 2026-10-07: BLAKE3 file preparation failures
+
+**Decision:** retain the functional S7 readers and S9's actual file benchmark;
+close both S9 allocations without performance evidence. The
+S9 report (`benchmark_results/blake3-file-qualification-20261007T203000Z/report.md`) retains the frozen
+payload, native artifacts, commands, failures and teardown. Both benchmark builds
+and 30-case discovery pass. AArch64 passes 36 native and 36 portable tests, plus
+all three real file operations through 1 GiB. Its 10 GiB fixture hits quota
+exhaustion under `/tmp`; the exact mount/quota cause remains unproved. x86's broad
+native test compilation hits unrelated existing XXH3 AVX2 dead-code diagnostics.
+Neither host reaches cache controls or timing: zero of 120 rows and 1,200 samples.
+
+All original failed scripts and payloads remain unchanged. A correction must be
+separately frozen; no warnings, cache or activity gates were relaxed. Both task
+instances and EBS volumes were deleted; final global absence passed at 21:10:25
+UTC. Cold/warm 1 MiB–10 GiB qualification on both targets remains open.
+
+## 2026-10-07: BLAKE3 complete native tail comparison
+
+**Decision:** accept S8's complete Linux evidence; keep S3 unaccepted. The
+S8 report (`benchmark_results/blake3-native-tail-comparison-20261007T200000Z/report.md`) records all
+sixteen windows, 3,168 rows and 63,360 samples from the exact retained artifacts.
+All native controls pass, with no protected resolved or unresolved >3% Linux
+regression. The unaligned plain 70+4096 primary improves 24.80%, but still takes
+2.01158x one-shot and is 5.88% slower than upstream streaming. Across the compared
+streaming rows, 58 of 160 median ratios exceed the separate 1.05 objective.
+
+S3's original rejection, failed interval and unresolved Mac regressions remain.
+No candidate was restored. Fixed AB/BA/AB/BA measurements, every raw sample and
+paired uncertainty are retained. S8's instance and EBS volume were deleted;
+global absence passed at 20:54:59 UTC. This comparison does not time S7 readers
+or close the file, streaming, cleanup or deferred WASM requirements.
+
+## 2026-10-07: BLAKE3 bounded reader implementation
+
+**Decision:** retain S7's additive `std` reader APIs with functional and scoped
+cleanup qualification. The S7 report (`benchmark_results/blake3-reader-implementation-20261007T195000Z/report.md`)
+binds the prior hypothesis, implementation, independent upstream comparisons,
+full logs and optimized named-buffer cleanup evidence. `Blake3::update_reader`
+coalesces short reads into an aligned 1 MiB buffer; the subtree variant bounds
+reads to remaining capacity and leaves excess bytes unread. Successfully read
+input survives later I/O errors. Callers retain scheduling and range ownership.
+
+Four changed-path reader tests and 36 portable reader/vector/differential tests
+pass. The full lanes pass 1,932 native and 1,902 portable tests, with one skip
+each, plus 152 runnable and 170 compile-fail doctests per lane. All ten examples,
+minimal core/alloc/std checks and `just check` pass. The buffer audit retains
+ordinary optimized AArch64 macOS clears before free on success, I/O error and
+unwind; all 54 observed allocations were zero before deallocation.
+
+These are implementation and correctness results, not throughput measurements.
+Existing streaming thread policy is preserved. Cold/warm 1 MiB–10 GiB native
+file comparisons, parallel-file qualification and the 5% streaming target remain
+open. Portable-state, outer-key, native fallback and compiler-spill findings are
+unchanged. S3 remains unaccepted; deferred WASM remains 61/80 and 8/16. S7
+allocated no cloud resources.
+
+## 2026-10-07: BLAKE3 native entrypoint controls
+
+**Decision:** accept S6's bounded Linux control qualification. The
+S6 report (`benchmark_results/blake3-native-entrypoint-control-20261007T194000Z/report.md`) retains
+the separately frozen correction and actual entrypoint, affinity, activity and
+complete-output evidence. All 396 rows and 7,920 samples are present. Launcher,
+supervisor and worker inherited CPU1; every observed benchmark thread was CPU2-only.
+Normal/component observer occupancy was 0.042440%/0.040952%. Every periodic and
+closing interval passed zero steal and unchanged <=30% non-timing peak/<=1% mean
+limits. The largest non-timing peak was 2.127660%, mean 0.082645%.
+
+Eight orchestration and three entrypoint checks pass. The initial fixture failure
+is retained. A complete script-suite recheck passes with four prerequisite skips;
+its original macOS fixture timeout remains recorded. All 216 original S5 files
+are unchanged. No candidate is accepted by this control outcome. Its instance
+and EBS volume were deleted; target/global absence passed at 19:59:02 UTC.
+The next S8 comparison uses a separate frozen plan and the exact retained S3
+binaries. Earlier S3 failures, unresolved regressions and the 5%/3% distinction
+remain authoritative.
+
+## 2026-10-07: BLAKE3 native control setup failure
+
+**Decision:** close S5 as an unsuccessful native control attempt; retain E10
+production and all earlier decisions. The S5 record (`benchmark_results/blake3-native-window-control-20261007T174522Z/report.md`)
+preserves the frozen plan, actual payload, commands, setup failure and cleanup.
+No benchmark launched: zero of two controls, zero of 396 planned rows and zero
+of 7,920 planned samples ran. There is no new native performance evidence.
+
+The single Graviton4 bootstrapped and passed configuration preflight, but campaign recipe
+discovery used raw SSH and failed with `just: command not found` (exit 127).
+That command bypassed the provider's project tool environment. A separate
+two-file correction patch routes discovery through `ssh-just --no-sync --command`
+and pins/checks the launcher on CPU1 before detaching the supervisor. The affinity
+issue is a source finding; the launcher never ran on this host.
+
+Seven orchestration checks and three final entrypoint checks pass offline.
+The first entrypoint fixture failure is retained: inherited `BASH_ENV` defeated
+its missing-PATH case. An isolated fixture reproduces exit 127, then resolves
+the tool through the actual provider shell body. These fixtures do not qualify
+Linux affinity, observer occupancy, activity or benchmark output. Unchanged
+S3/S4 correctness, cleanup and broader script evidence is reused by identity.
+
+The instance and its EBS volume were deleted; target/global absence is verified.
+No second allocation or retry followed. All 425 checked production/contract
+entries, reused payload inputs and S4 evidence remain unchanged. Next is a
+separately frozen native control outcome incorporating the offline correction.
+S3 remains unaccepted; the 5% streaming target and 3% regression classification
+remain distinct. Portable-state, outer-key, native fallback and compiler-spill
+limits remain. Later owner items and postponed WASM leaf/fixed-count/PMU/Intel
+requirements stay open at the unchanged 61/80 workloads and 8/16 controls.
+
+## 2026-10-07: BLAKE3 native measurement-window correction
+
+**Decision:** accept S4's offline-tested campaign correction with runtime limits;
+retain E10 production and S3's failed qualification. The
+S4 report (`benchmark_results/blake3-native-window-review-20261007T164430Z/report.md`) binds the old
+driver, four binaries, raw counters and current repository measurement helpers.
+Source review establishes that the old monitor included artifact hashing,
+discovery and verification. The first measurement call starts 0.532245231 s after
+monitoring begins. This does not attribute either failed interval to a process.
+
+Replaying all 183 retained snapshots preserves CPU1's 57% and CPU3's 31.31%
+peak failures, with zero observed steal. An independent closing-steal fixture
+passes the actual old final assertions and is rejected by the correction.
+The new observer surrounds only the existing benchmark execution boundary,
+checks closing intervals, propagates collector failures and preserves the first
+observed failure. It keeps zero steal, <=30% non-timing peak and <=1% mean;
+the mean now applies to each complete subprocess window.
+
+All 13 focused checks pass. The actual runner/helper replay keeps 44 hashes,
+four discoveries and sixteen output verifications outside the windows, while
+preserving the 332 normal/64 component inventories and fixed sixteen-run order.
+These external-process fixtures are not cryptographic timings. `just test-scripts`
+passes with four platform-prerequisite skips; the three budget and twenty runner
+checks also pass. All 425 production/contract entries and 28,439 retained S3 files
+are unchanged, with complete preservation evidence linked in the report. No native
+timing ran. Existing Portable-state, outer-key and compiler-spill limits remain.
+
+Next is one separately frozen native control-only outcome to qualify Linux
+affinity, observer occupancy and activity boundaries before candidate comparison.
+No host was allocated; fresh global task EC2/EBS absence is verified. The 5%
+streaming target remains distinct from 3% regression classification. The later
+owner items and postponed WASM leaf/fixed-count/PMU/Intel requirements remain
+open, including the unchanged 61/80 workloads and 8/16 controls.
+
+## 2026-10-07: BLAKE3 plain unaligned native tail candidate
+
+**Decision:** reject S3 acceptance and retain E10 production. The
+S3 report (`benchmark_results/blake3-native-portable-tail-20261007T064426Z/report.md`) retains the
+smallest plain-only Portable-tail candidate, exact source/artifacts, independent
+correctness/cleanup reviews and fixed plans. No second spelling or weaker gate
+was used. The independent tail-CV test is retained.
+
+All 396 Mac rows and 63,360 samples completed. Unaligned plain 70+4096 two-update
+latency falls from 8051.84 to 5804.78 ns; paired candidate/baseline is 0.72255
+[0.68175, 0.88561], lower in all four pairs. However, 57 normal rscrypto and
+17 component rows cross the 3% regression boundary. They remain unresolved on
+the shared M1 Pro. The candidate is still 1.92430× matching one-shot, so the
+separate 5% streaming objective remains open. Every protected row, upstream loss,
+suffix and non-power-of-two tail is in the complete results (`benchmark_results/blake3-native-portable-tail-20261007T064426Z/all-results.md`).
+
+The one native Graviton4 qualification passed idle/correctness/cleanup gates,
+then failed the frozen 30% non-timing CPU peak limit at 57% and 31.31%. All steal
+deltas are zero. One baseline normal run remains (332 rows, 6,640 samples), with
+no candidate run or pair. No Linux gain/regression claim follows. Raw counters
+do not attribute either spike to a process; preparation/discovery and read-only
+control traffic require offline review before another qualification plan.
+No retry, replacement host, discarded interval or relaxed gate followed.
+
+Both executed targets passed 32 public differentials/vector tests and the new
+forced-tail test. Exact normal artifacts preserve nonzero-mode storage and
+caller clears, the 112-byte frame and byte-identical aligned single-leaf assembly.
+The candidate-wide `just check` passed; final evidence tests pass 1,266 native
+and 1,237 portable cases, and `just ci-check` passes. Exact restoration identities
+are linked in the report. Existing Portable-state,
+outer-key, native fallback and compiler-spill limits remain explicit.
+The task instance and EBS volume are deleted, with target/global absence verified.
+File/scheduling work, the 5% streaming target and later owner items remain open.
+WASM leaf/fixed-count/PMU and Intel qualification remain postponed at 61/80
+workloads and 8/16 controls, with their original requirements and decisions.
+
+## 2026-10-07: BLAKE3 native leaf alignment cause
+
+**Decision:** close S2's native incomplete-leaf evaluation; retain E10 production.
+The S2 record (`benchmark_results/blake3-native-leaf-alignment-20261007T042756Z/report.md`) retains
+136 rows × four fixed passes (10,880 raw samples), independent output checks,
+two normal profiles and exact linked-code mapping. No optimization is accepted.
+
+Current source and controlled input/output offsets identify the serial NEON
+alignment fallback. Two unaligned leaves cost 4680.18 ns [4650.60, 4703.82]
+versus Portable's 2507.74 ns [2502.35, 2514.06], +86.63% [+85.85, +87.10].
+Aligned NEON uses assembly and costs 2620.26 ns. Misaligning output alone
+selects the same costly fallback; four/eight-leaf controls avoid it.
+
+Normal 70+4096 streaming costs 5817.66 ns with aligned input versus 7900.15 ns
+unaligned: +36.10% [+34.45, +37.14]. The exact normal profiles place 45.40%
+of aligned self samples in single-leaf assembly and 59.23% of unaligned samples
+in the fallback. Derive 4052+60 shows +34.81% from input misalignment;
+4096+60 does not show that effect. Below-4096 one-shot dispatch stays Portable.
+All 3/5/6/7-chunk tails, upstream losses and noisy rows remain in the
+complete results (`benchmark_results/blake3-native-leaf-alignment-20261007T042756Z/all-results.md`).
+
+The smallest next candidate is to reuse Portable only for the native unaligned
+1–3-leaf remainder, keeping aligned assembly and full-four SIMD. Freeze and
+run its own correctness/security, normal-caller gain and regression gates
+before acceptance; component timings are not a demonstrated replacement gain.
+Aligned 70+4096 streaming still costs about twice one-shot, so the 5% streaming
+target remains open, separate from the 3% regression classification.
+
+These are shared-M1 diagnostic results, not qualified Apple or cross-target
+timing. All 425 checked production/contract entries match E10. Native BLAKE3
+differentials and official corpus pass (32 tests); `just ci-check` passes.
+Applicable S1 portable and E10 evidence is reused. Portable-state/outer-key
+cleanup findings and compiler-spill limits remain open. No task resources were
+allocated; global EC2/EBS absence is verified. File/scheduling and later owner
+items remain active. WASM leaf/fixed-count/PMU/Intel qualification stays deferred
+with 61/80 workloads and 8/16 controls, unchanged gates and decisions.
+
+## 2026-10-07: BLAKE3 ordered streaming baseline
+
+**Decision:** retain accepted E10 production; complete one native baseline and
+coverage outcome. The S1 report (`benchmark_results/blake3-streaming-baseline-20261007T035657Z/report.md`)
+records current reader/subtree APIs, 224 public-operation benchmark rows, two new
+integration tests, four fixed interleaved passes, all 17,920 raw Criterion samples,
+and two normal native profiles. No optimization is accepted.
+
+On the shared M1 Pro, plain 70+4096 B costs 2978.58 ns one-shot versus 8019.59 ns
+in two updates: +168.89%, with all four pass ratios spanning +167.95–170.82%.
+Derive 4052+60 B costs 3004.77 versus 8023.17 ns: +167.47% [+166.37, +172.79].
+Its separate one-update baseline is 3001.72 ns. Plain 24+3104 B stays close:
+4206.95 versus 4205.14 ns. Every suffix comparison preserves envelope||fields.
+Three/five/six/seven full chunks plus tails, every requested prefix and 1–64 KiB
+bulk, the retained envelope cases and one-chunk controls are in the
+complete results (`benchmark_results/blake3-streaming-baseline-20261007T035657Z/all-results.md`).
+
+Current source and the exact normal profiles locate lost four-leaf batching:
+70+4096 streaming spends 54.32% of weighted self samples in the NEON contiguous
+wrapper's range, which contains its serial remainder, and 38.82% in scalar
+compression. One-shot spends 74.10% in the four-leaf worker. AArch64 one-shot
+below 4096 B selects Portable, so a NEON remainder change alone cannot change
+three-chunk-plus-tail one-shot rows. Sample shares are not predicted gains.
+Next: one bounded native incomplete-leaf cost evaluation with this dispatch
+context, before selecting a production candidate.
+
+All four passes, small losses and upstream gaps remain visible. The host was
+not quiet; 64 KiB rows and some suffix rows vary materially. Reported ranges
+are pass spreads, not confidence intervals. No best-of-N, retry, new host,
+qualified Apple performance or cross-target claim follows. The 5% streaming
+objective remains open and distinct from the 3% candidate regression rule.
+
+The exact E10 production/configuration identity passes. Native and portable each
+pass 31 differentials plus official corpus; `just ci-check` passes. Upstream is
+locked 1.8.7 with std+rayon, zeroize off; benchmark setup/output/cleanup stays
+timed, with derive-cache and cleanup differences explicit. Portable-state,
+outer-key and compiler-spill findings remain open. No task resource was created;
+global EC2/EBS absence is verified. Owner/index and retained evidence keep the
+file/streaming roadmap open. WASM leaf/fixed-count/PMU and Intel qualification
+remain postponed, including the unchanged incomplete 61/80 and 8/16 capture.
+
+## 2026-10-07: BLAKE3 fixed-count diagnostic attempt
+
+**Decision:** retain E10 unchanged; per-hash diagnosis remains incomplete. The
+report (`benchmark_results/blake3-wasm-fixed-count-20261007T030000Z/report.md`) retains a qualified
+public-API driver, codegen/output evidence, the original collector failure, one
+separately frozen completion attempt, and all available raw results. No source
+candidate or new timing gain/loss is accepted.
+
+The final driver keeps the normal Criterion suite reachable to preserve LLVM's
+mode knowledge. Six complete Wasm entry functions and one helper match E10 after
+proved relocations; both native leaf loops match exactly. Thirty-five official
+vector rows, all eight plain/keyed 4/64 KiB fixtures, count/protocol checks and
+native Intel verification passed. Unchanged product correctness, minimal size
+and security evidence is reused by exact source identity.
+
+The first host failed its disable-ACK probe before planned measurements: perf
+7.0.14 writes a trailing NUL that the old reader left behind. The correction
+passed offline split/malformed-frame checks and 70 live ACK pairs on the next
+host. That host passed idle qualification, eight initial controls and 60 workload
+activity gates. Workload 61, upstream plain 4 KiB, advanced aggregate steal by
+one tick while displayed per-CPU steal stayed unchanged. The frozen all-row gate
+correctly stopped collection. The raw set retains all 61 workloads, including
+the failed row, and eight controls. Nineteen workloads and eight final controls
+are missing; no complete ratios, overhead qualification or confidence intervals
+are claimed. No retry, data splicing or relaxed gate followed.
+
+Both instances and EBS volumes are deleted, with fresh target/global absence.
+The next bounded step is to qualify an isolated Intel host/control plan for the
+same measurement contract, reusing this driver and the retained host failure.
+Do not allocate similar VMs just to seek a passing run. The leaf-cost mechanism,
+existing cleanup findings, Apple/browser timing and all eight owner outcomes
+remain open. All rejected source candidates retain their original gates.
+
+## 2026-10-07: BLAKE3 complete matched keyed profiles
+
+**Decision:** matched-profile requirement complete; retain E10 unchanged. The
+corrected collector ran all 16 fixed forward/reverse captures on one native
+Intel host. All artifact/CPU/activity, sample and symbol gates passed. The prior
+failed attempt stays closed. No source candidate or new timing gain/loss is accepted.
+
+The report (`benchmark_results/blake3-wasm-matched-profiles-20261007T020024Z/report.md`) preserves
+159,605 samples, every raw capture and host interval, exact identities, commands
+and observed two-pass spread. Keyed root-array clears account for 0.83–0.86% of
+4 KiB samples and 0.65–0.75% at 64 KiB. Within the leaf, mapped state/message and
+output cleanup together account for 0.04–0.12%. Leaf work remains dominant in
+both libraries. These sample shares do not establish removable time, spill
+latency, or the cause of E10's remaining upstream gaps. No further cleanup
+rewrite follows from them. Two undecoded regex setup sites are retained at
+function scope; BLAKE3 phase ranges are unchanged.
+
+All 1,797 E10 entries still match except later OVERVIEW prose. Unchanged
+correctness, codegen, size and security evidence is reused. Existing cleanup
+findings, Apple/browser timing limits, rejected candidates and owner order remain.
+The next need is a demonstrated cost mechanism inside normal leaf compression
+before another candidate or host. All task EC2/EBS resources are deleted, with
+fresh target/global absence verified. Eight owner outcomes remain open; task
+file deletion requires their completion or an explicit scope change.
+
+## 2026-10-07: BLAKE3 matched keyed profile attempt
+
+**Decision:** incomplete diagnostic; retain accepted E10 unchanged. One qualified
+Intel host ran four 4 KiB captures before the fifth, keyed 64 KiB, failed the
+frozen aggregate zero-steal gate. The aggregate advanced one tick while displayed
+per-CPU steal counters stayed unchanged. Idle and capture gates used different counter
+scope; this is a collector limitation, not evidence of a BLAKE3 regression.
+No second attempt or relaxed gate followed.
+
+The report (`benchmark_results/blake3-wasm-keyed-profiles-20261007T010054Z/report.md`) retains all five
+raw profiles, including the failed capture, exact artifacts, commands and kernel
+accounting limits. The single qualified keyed 4 KiB capture places 77/9,970 samples
+(0.77%) in root-array clearing; leaf work accounts for 88.11%. Those shares are
+not per-hash costs, savings bounds or a demonstrated cause of the upstream gap.
+No repeat spread or complete matched 64 KiB comparison exists, so no new source
+candidate or performance gain is accepted.
+
+Source, correctness, cleanup and complete E10 reviews are reused after identity
+checks. The offline accounting follow-up (`benchmark_results/blake3-wasm-keyed-profiles-20261007T010054Z/counter-accounting.json`)
+now validates one conservative rule: zero steal in aggregate and every vCPU at
+both idle qualification and capture. Six retained intervals and 28 boundary checks
+pass; the rule rejects the old host at idle. Two exact arithmetic witnesses match
+the observed counter change while differing in measured-CPU activity, so dropping
+the aggregate check is not justified. This preserves the failed outcome and all
+original thresholds. The old runner, raw data, report and closeout are unchanged.
+A corrected live driver and complete matched profiles remain the next bounded
+step; no new production candidate or host was created. Original rejection decisions
+stand; WASM gaps and the later roadmap remain open. Instance/EBS absence evidence
+is reused because this follow-up created no resources.
+
+## 2026-10-06: BLAKE3 exact-tree cleanup extent
+
+**Decision:** reject one local candidate and retain E10 exactly. Retained caller
+profiles locate excess exact-tree scratch clearing: 52/5,997 Intel and 45/6,006
+Graviton keyed 64 KiB samples fall in the two array-clear loops. Source bounds
+show untouched public-zero suffixes: a covering clear would be 192 versus 768 B
+at 4 KiB, and 3,072 versus 6,144 B at 64 KiB. These sample shares do not measure
+the removable time or explain every upstream gap.
+
+The report (`benchmark_results/blake3-wasm-root-extent-20261006T222507Z/report.md`) retains the frozen
+plan, one clear-slice patch, commands, exact native baseline reproduction and
+reproducible attribution of sixteen retained profiles. Focused native/WASI
+differentials and official vectors passed. Minimal size stays 37,231 B, and
+Intel's root frame is unchanged. AArch64's root native stack-limit increment
+grows 576→608 B, failing the fixed no-growth gate. The 7,520-byte guest frame
+is unchanged. No broader qualification, cloud allocation or timing followed.
+
+All 1,797 E10 entries match after restoration except subsequent OVERVIEW prose.
+The retained-code follow-up accounts for the frame growth: four existing generic
+tree address values lose shared spill slots and take four separate 8-byte slots.
+Guest storage, Wasm local counts, saved registers and alignment are unchanged.
+The instruction evidence (`benchmark_results/blake3-wasm-root-extent-20261006T222507Z/frame-analysis.json`)
+does not establish spill latency or justify another source spelling. No speedup
+or runtime regression is claimed. Next, obtain matched E10/upstream keyed 4/64 KiB
+phase attribution with plain controls before another candidate. Preserve all
+rejected gates, cleanup findings and remaining WASM/roadmap requirements. No
+instance or volume was created.
+
+## 2026-10-06: BLAKE3 WASM message-lifetime evaluation
+
+**Decision:** reject the one local candidate and restore E10 exactly. Interleaving
+full-chunk message formation with round-zero use leaves all 16 input vectors
+loaded before the first native vector addition. Loop instructions rise
+1,520→1,522 and native-stack references fall only 291→287; the fixed gates
+required at most 1,496 and 275. The complete function still has 1,866 instructions.
+This changes register movement without the required work reduction.
+
+The report (`benchmark_results/blake3-wasm-message-lifetime-20261006T204235Z/report.md`) retains the
+single patch, normal artifacts, exact baseline reproduction, commands and raw
+code. Local Wasmtime 49.0.0 Granite Rapids compilation reproduces the retained
+Intel E10 leaf disassembly exactly. Parent/batch Wasm instruction streams and
+the 37,231-byte minimal size are unchanged; Intel prologue stack subtraction
+remains 1,040 B. These are structural facts, not measured speed or residue.
+
+WASI differential tests, official vectors, forced SIMD/portable comparisons and
+capability override passed. Two existing WASM-ignored panic tests were not run.
+The failed local gate stopped broader qualification and cloud timing. All 1,797
+E10 effective files match except subsequent OVERVIEW documentation, so matching
+E10 correctness/security reviews are reused after exact restoration. No cloud
+resources were created. No gain/loss is claimed; all performance and cleanup
+gaps remain open. Do not repeat this load-order family without new evidence.
+
+Reused E10 comparator code has 1,550 loop instructions/309 stack references,
+versus our 1,520/291 with the same core arithmetic counts. This does not establish
+relative throughput. Retained Intel plain/keyed medians differ by 352 ns for
+rscrypto and roughly zero upstream, whose zeroization feature is disabled.
+That difference does not isolate cleanup. Next, attribute the complete caller
+gap for both implementations before choosing another rewrite; the original
+performance gates and required cleanup remain unchanged.
+
+## 2026-10-06: BLAKE3 WASM raw Intel counters
+
+**Decision:** retain E10 unchanged. The fixed raw-event investigation (`benchmark_results/blake3-wasm-raw-counters-20261006T200449Z/report.md`)
+completed all eight keyed/plain 64 KiB captures with 100% counter scheduling.
+Keyed load-stall counts were 0.18509–0.23462% of user-mode cycles, store-buffer
+stalls 0.02535–0.02825%, and the selected zero-execution event 0.17323–0.17460%.
+The complete plain controls, repeat spread, exact event definitions and raw logs
+are retained. These small categories do not establish a large stall-latency
+problem or exclude throughput/spill costs. They are process-wide counters, not
+per-hash costs, a complete cycle partition or a new timing comparison.
+
+Matching normal Intel code loads all 16 input vectors before the first vector
+addition, with 12 native-stack vector stores in that prefix. The full leaf loop
+has 1,520 static instructions and 291 native-stack references. This identifies
+concrete instruction/lifetime work, not a proven removable fraction or speedup.
+Next is one local evaluation of interleaving message formation with round-zero
+use. The report fixes instruction/stack reduction, frame, size and cleanup gates;
+failure stops locally before another host allocation. No source candidate was
+made in this counter outcome.
+
+The exact accepted artifact, source, compiler, lock, features and matching E10
+correctness/security qualification were reused. No gain or loss is claimed;
+all upstream gaps, Portable/outer-key cleanup findings, compiler-spill limits
+and missing Apple/browser timing remain. E11 stays rejected. The one c8i instance
+and its EBS volume are deleted, with all configured-resource absence verified.
+The WASM requirement and the later owner sequence remain open.
+
+## 2026-10-06: BLAKE3 WASM Intel counter capability
+
+**Decision:** retain E10 unchanged. The bounded counter investigation (`benchmark_results/blake3-wasm-intel-counters-20261006T190614Z/report.md`)
+stopped at its fixed collector gate. On one c8i.xlarge, user-mode cycles and
+instructions worked, but `tma_core_bound,tma_memory_bound` failed because
+`topdown-retiring` was unavailable. Perf's metric catalog did not prove that its
+required events were exposed. No BLAKE3 capture or new timing occurred, and no
+memory-stall or execution/dependency cause was established.
+
+All 1,797 accepted-source entries still match except this outcome index.
+Existing E10 artifacts, correctness, codegen, size, and cleanup reviews were
+reused; no source, lock, feature, API or security contract changed. E11 remains
+rejected, and all Intel upstream gaps and Apple/browser/cleanup limits remain
+open. Basic counter support must not be misreported as complete PMU failure.
+
+Raw capability logs and the complete event catalog are retained. The task host
+and EBS volume were deleted after collection. Next, qualify a small raw-event
+plan from that catalog and Intel's Granite Rapids definitions before another
+allocation. This completes the collector evaluation, not the WASM requirement
+or any later owner item.
+
+## 2026-10-06: BLAKE3 WASM leaf output-transfer diagnosis
+
+**Decision:** retain E10; do not start a direct-output candidate from the current
+evidence. The bounded investigation (`benchmark_results/blake3-wasm-leaf-transfer-20261006T185516Z/report.md`)
+reuses accepted E10 source, normal generated code, and twelve existing Intel/Graviton
+profiles. Every E10 effective file matches except this outcome index. No production
+source, compiler, lock, feature, API, cleanup, or artifact changed.
+
+Normal code confirms a 128-byte output scratch transfer through Wasmtime's memory
+helper. Intel keyed 64 KiB attributes only 7 of 5,997 samples (0.117%) to scratch
+initialization/copy/clear and their identified descendants, versus 90.095% in the
+block loop. Eleven other memory-helper samples lack a leaf caller and remain
+unattributed. Per-capture counts and both hosts are retained; these are sample
+locations, not latency measurements, speedup estimates, or hard benefit bounds.
+The evidence does not establish this transfer as the remedy for E10's 1.25%
+Intel keyed 64 KiB upstream gap. No candidate was implemented or timed.
+
+No cloud allocation or repeated full validation occurred. Identical source keeps
+E10's correctness/cleanup evidence applicable, including existing owner/spill
+limits and missing Apple/browser timing. Next is one bounded accepted-artifact
+Intel counter investigation to distinguish block-loop execution/dependency
+pressure from load/store stalls. E11 remains rejected at its fixed gate; the
+remaining performance requirements and the owner's later sequence remain open.
+
+## 2026-10-06: BLAKE3 WASM two-parent reduction
+
+The private two-parent adapter is **rejected**. Intel keyed 4 KiB improved only
+0.46% (95% paired interval −0.48% to −0.32%), below its predeclared 1% gain gate.
+Graviton improved 0.81%; that cannot replace the named Intel requirement. Exact
+accepted E10 source is restored. The complete report (`benchmark_results/blake3-wasm-two-parents-20261006T171231Z/report.md`),
+fixed plan (`benchmark_results/blake3-wasm-two-parents-20261006T171231Z/plan.md`),
+all Intel rows (`benchmark_results/blake3-wasm-two-parents-20261006T171231Z/table-x64.md`), and
+all Graviton rows (`benchmark_results/blake3-wasm-two-parents-20261006T171231Z/table-arm64.md`)
+retain the candidate, medians, raw measurements, uncertainty, and limits.
+
+Current production profiles identified two scalar parent calls after four leaves.
+The candidate used our existing four-lane parent kernel with two repeated idle
+lanes, plus fully cleared 128-byte output scratch. Normal profiles confirm the
+scalar parent calls disappeared, but vector parent work occupied a similar sample
+share. LLVM also outlined a shared core for full four-parent groups. The small
+caller gain does not justify retaining this candidate; no individual overhead
+was isolated as its sole limiting cause.
+
+Ten fixed AB/BA pairs on one Intel c8i and one Graviton4 c8g host retained 36,800
+raw samples over 23 matched workloads, plus ten profiles per host, without retries.
+Wasmtime 49.0.0 executed the exact production Wasm artifacts compiled with
+nightly-2026-09-30/LLVM 23.1.1 and locked upstream blake3 1.8.7. Both hosts passed
+the fixed quiet preflight. Runtime Intel steal ticks and other-core activity are
+retained; no result was excluded. This is engine evidence, not native Rust backend
+timing or Apple/browser qualification.
+
+No row had a resolved loss above 3%, but plain/keyed/derive 64 KiB regressed
+0.17%/0.18%/0.14% on Intel and 0.28%/0.33%/0.34% on Graviton. Graviton derive-key
+empty/64 B medians rose 1.66%/1.93%, with intervals extending to +3.74%/+4.87%.
+These losses and uncertainties remain visible. The rejected candidate still
+trailed upstream on Intel keyed 4 KiB/64 KiB by 2.41%/1.47%. Accepted E10's
+remaining gaps are unchanged; this outcome closes no unmet performance target.
+The later 5% prefix-streaming target remains separate from the 3% classification.
+
+The candidate minimal no_std consumer shrank 37,231→37,106 bytes (−125), and its
+normal code section shrank by 2,366 bytes. Guest routing frames grew by 80/64
+bytes; the per-function native tradeoffs and actual spills remain recorded.
+Size reduction did not override the failed gain gate. Normal candidate Wasm
+SHA-256: `0b02ed742a423f6ab8297cdd92111c6b5482d96104ae9ec9ae7fe5b71aff45a5`.
+
+Native/portable and WASI SIMD/scalar/portable differentials, official vectors,
+forced/override checks, compatibility, no_std Clippy, and full `just check` passed.
+Independent source/compiler and exact measured native reviews retained all named
+scratch clears, with existing owner gaps and physical-residue limits explicit.
+Both EC2 instances and both EBS volumes were deleted; global configured-resource
+status is absent. All 1,797 effective E10 files matched after restoration, before
+adding this result. No vendored code, API, dependency, or production change remains
+from the rejected evaluation. Continue with a bounded current-leaf cost diagnosis,
+preserving the owner's later order and the missing Apple timing evidence.
+
+## 2026-10-06: BLAKE3 WASM root-mode specialization
+
+**Decision:** accept the private root-mode specialization. Batch64 time falls
+6.74% [6.70, 6.77] on Graviton and 0.43% [0.39, 0.49] on Intel, meeting the fixed
+resolved 3% gain gate on one host. Plain 64 KiB improves 2.24%/2.05%, respectively.
+No protected resolved loss exceeds 3%, and no interval includes one. The largest
+small loss is Graviton plain 1 KiB, +0.39% [0.36, 0.40]; Intel derive-key empty
+rises 0.20% [0.13, 0.25]. Earlier rejected bulk-gain candidates remain rejected.
+
+The complete report (`benchmark_results/blake3-wasm-root-specialization-20261006T132000Z/report.md`),
+all Intel rows (`benchmark_results/blake3-wasm-root-specialization-20261006T132000Z/table-x64.md`), and
+all Graviton rows (`benchmark_results/blake3-wasm-root-specialization-20261006T132000Z/table-arm64.md`)
+retain ten interleaved pairs per host, 36,800 raw samples, all medians and paired
+intervals, ten profiles per host, exact commands and source/artifact identities.
+No retry or workload change occurred. Intel keyed 4/64 KiB still trail upstream
+by 2.84%/1.25%, derive-key 64 KiB by 1.09%, and 4 KiB-update streaming by 1.72%.
+All measured Graviton rows are ahead, but no outstanding requirement is closed
+merely by dropping below the campaign's 3% loss classification.
+
+LLVM naturally inlines the two specializations without a source inline attribute.
+Root batches embed fixed inputs; full chunks lose unused padding initialization
+and input-tail copies. Minimal plain no_std shrinks 142 B to 37,231 B (-0.380%);
+normal executable Wasm grows 8,094 B (+0.522%). Guest frame sums shrink, but native
+batch frame increments grow on both engines. The cleanup review (`benchmark_results/blake3-wasm-root-specialization-20261006T132000Z/secret-review/final-report.md`)
+preserves every populated secret owner and fence while retaining actual native
+key-spill, existing Portable-state and outer-key-copy limitations. No copied
+implementation, allocation, public API or dependency was added.
+
+Native/portable, three WASI modes, independent differentials/vectors, forced
+dispatch, pinned compatibility, no_std Clippy, format and full `just check` pass.
+Both EC2 instances and EBS volumes are deleted; global configured-resource
+absence is verified. Runtime host activity and missing quiet Apple/browser
+timing remain explicit. Diagnose the remaining Intel bulk gaps from the new
+normal profiles/codegen before choosing another bounded change. The later
+prefix-streaming 5% target and owner sequence remain unchanged.
+
+## 2026-10-06: BLAKE3 WASM unused padding cleanup
+
+**Decision:** accept the single padding-clear guard. Full blocks never populate
+padding, so each secret full-chunk group now skips 256 bytes of unnecessary
+volatile wiping. Secret partial calls still clear every padding byte; state,
+message, output and fence behavior remains intact. This satisfies the fixed
+cleanup/size/protected-timing gate, not the earlier rejected bulk-gain gates.
+
+The minimal plain no_std consumer shrinks 37,858→37,373 B (-485/-1.281%). Normal
+executable Wasm grows only 9 B. Graviton keyed/derive 64 KiB improve 0.67%
+[0.66, 0.67] / 0.65% [0.64, 0.67]; Intel bulk effects are essentially unchanged.
+Graviton plain 4 KiB rises 0.20% [0.19, 0.21], and batch 21 B rises 0.26%
+[0.25, 0.28]. No resolved loss exceeds 3%, and no interval includes one.
+All Intel rows (`benchmark_results/blake3-wasm-padding-clear-20261006T122000Z/table-x64.md`) and
+all Graviton rows (`benchmark_results/blake3-wasm-padding-clear-20261006T122000Z/table-arm64.md`)
+retain every smaller loss and uncertainty. The complete report (`benchmark_results/blake3-wasm-padding-clear-20261006T122000Z/report.md`)
+binds ten interleaved pairs per host, all 36,800 raw samples, profiles, commands,
+source/build identities and the initial untimed Clippy correction.
+
+The normal codegen and cleanup review (`benchmark_results/blake3-wasm-padding-clear-20261006T122000Z/secret-review/final-report.md`)
+confirms the guard after all 32 vector clears. The normal generic frame and
+padding initialization remain; all measured native frame increments are unchanged.
+The specialized review harness has a smaller frame, which is not substituted for
+normal production evidence. Existing Portable-state/outer-key-copy and
+compiler/JIT-spill limitations remain explicit. Native/portable, three WASI modes,
+independent differentials/vectors, forced dispatch, pinned compatibility,
+no_std Clippy and full `just check` pass.
+
+Intel still trails upstream at keyed 4/64 KiB by 4.36%/3.29% and 4 KiB-update
+streaming by 3.25%; Graviton keyed/derive 64 KiB remain 0.56%/0.27% behind.
+No remaining performance requirement is closed. Separate full-chunk and root-batch
+specialization is a next hypothesis for the retained generic length/tail setup.
+Both EC2 instances and their EBS volumes are terminated/deleted, with global
+configured-resource absence verified. Missing quiet Apple/browser timing and the
+later 5% prefix-streaming target remain explicit.
+
+## 2026-10-06: BLAKE3 WASM fixed chunk boundary
+
+**Decision:** reject the private fixed-length wrapper and restore exact accepted
+E5 source. Plain 64 KiB rises 0.45% [0.41, 0.48] on Intel and falls 2.03%
+[2.03, 2.05] on Graviton, missing the fixed resolved 3% gain gate. No row has a
+resolved loss above 3%; Graviton derive-key 64 B has +1.01% [+0.06, +3.95]
+uncertainty. Batch gains of 3.08–7.56% on Graviton do not replace the bulk target.
+No E8 change remains in production or closes an unmet requirement.
+
+The complete report (`benchmark_results/blake3-wasm-chunk-boundary-20261006T113400Z/report.md`),
+all Intel rows (`benchmark_results/blake3-wasm-chunk-boundary-20261006T113400Z/table-x64.md`), and
+all Graviton rows (`benchmark_results/blake3-wasm-chunk-boundary-20261006T113400Z/table-arm64.md`)
+retain ten interleaved pairs per host, all 36,800 raw samples, medians, paired
+intervals, profiles, source/build/artifact identities and exact commands. Intel
+keyed/derive 64 KiB become 0.61%/0.60% slower; every smaller loss is retained.
+The fresh accepted baseline remains behind upstream on Intel keyed 4 KiB/64 KiB
+by 4.48%/3.16% and 4 KiB-update streaming by 3.32%; Graviton keyed/derive 64 KiB
+remain behind by 1.24%/0.93%. Earlier campaign values are preserved separately.
+
+The normal artifact has a distinct fixed 16-block leaf, no input-tail copies,
+and all original padding initialization/clears. Native leaf frame increments
+fall Intel 1072→848 B and Graviton 576→544 B, yet the bulk-gain gate still fails.
+Static stack-access reductions do not prove lower dynamic cost. Minimal plain
+no_std grows 110 B (+0.291%); executable Wasm grows 9,035 B (+0.582%). The
+cleanup review (`benchmark_results/blake3-wasm-chunk-boundary-20261006T113400Z/secret-review/final-report.md`)
+finds no new defect and retains the existing Portable-state/outer-key-copy limits.
+
+Native, portable, all three WASI modes, official/upstream/portable differentials,
+forced dispatch, pinned compatibility, no_std Clippy and full `just check` pass.
+Both qualified Wasmtime hosts completed the fixed plan without retries; all EC2
+instances and EBS volumes are deleted and global configured-resource absence is
+verified. Runtime host activity and missing Apple/browser timing remain explicit.
+The unused full-chunk padding owner is a next investigation lead, requiring a
+source and generated-code proof before any cleanup change. The later streaming
+5% target and owner sequence remain unchanged.
+
+## 2026-10-06: BLAKE3 WASM full-chunk inlining
+
+**Decision:** reject the single `inline(always)` annotation and restore exact
+accepted E5 source. It removes generic leaf tail handling, but plain 64 KiB time
+falls only 0.39% [-0.44, -0.37] on Intel and 1.92% [-1.93, -1.90] on Graviton.
+Neither meets the fixed resolved 3% gain gate. No protected row has a resolved
+loss above 3%. Graviton batch gains of 3.25–7.86% remain useful evidence, not
+permission to substitute a different acceptance workload. No E7 speedup remains
+in production and no unmet performance requirement is closed.
+
+The fixed plan and complete report (`benchmark_results/blake3-wasm-full-chunks-20261006T104100Z/report.md`),
+all Intel rows (`benchmark_results/blake3-wasm-full-chunks-20261006T104100Z/table-x64.md`), and
+all Graviton rows (`benchmark_results/blake3-wasm-full-chunks-20261006T104100Z/table-arm64.md`)
+retain every median, paired interval, raw sample, profile, artifact, command and
+source snapshot. Plain 1 KiB rises 0.11% [0.08, 0.15] on Intel and 0.10%
+[0.08, 0.13] on Graviton; every smaller positive change remains in the record.
+The same accepted baseline still trails upstream on Intel keyed 4 KiB/64 KiB
+by 5.07%/3.49%, and the existing 4 KiB-update streaming row by 3.54%, in this
+campaign. Graviton keyed/derive 64 KiB remain 1.23%/0.92% behind. These fresh
+baseline rows supplement the prior campaign, whose results remain unchanged.
+
+Full chunks now have a fixed 16-block loop in the rejected artifact. Padding
+initialization and all clears remain. Guest call-boundary storage shrinks 48 B,
+but native stack layout and parent message stores change. The
+cleanup review (`benchmark_results/blake3-wasm-full-chunks-20261006T104100Z/secret-review/final-report.md`)
+finds no new defect and retains all required clears/fences, without claiming equal
+physical residue. Increased static stack accesses and normal profiles do not
+isolate the remaining cost. The next bounded hypothesis is fixed-length
+specialization that preserves the outer call boundary; it is unmeasured.
+
+Minimal plain no_std grows 37,858→37,867 B (+9 B); normal executable Wasm code
+grows 1,551,476→1,560,419 B (+0.576%). Normal candidate SHA-256 is
+`1b78e35786f275fc860bd98d249cef3edf63fbb4511556c2cbc1d90fafec4340`.
+The debug-bearing benchmark's total size is not a consumer estimate. The exact
+normal and minimal rejected artifacts and restored source are retained.
+
+One c8i.xlarge and one c8g.xlarge completed ten fixed AB/BA pairs of the same
+46 cases, 20 samples, 100 ms warmup, 400 ms measurement, 10,000 resamples,
+95% paired intervals and seed 314159, without retries. All 36,800 samples and
+sixteen profiles are verified. Compiler, features, build profile, upstream
+1.8.7 configuration, warm derive-context cache and Wasmtime 49.0.0 match E5.
+Each CPU passed the quiet preflight; runtime noise includes three Intel steal
+ticks and zero on Graviton. Complete activity records remain.
+
+Native/portable and three WASI modes, official vectors, forced/override and
+runtime checks, pinned compatibility, no_std Clippy, formatting and full
+`just check` pass. All 1,797 accepted effective files were restored before
+documentation. Both EC2 instances and EBS volumes are deleted; global configured
+resource status confirms absence. Quiet Apple/browser evidence, existing cleanup
+follow-ups, all earlier rejections and the separate streaming 5% target stay open.
+
+## 2026-10-06: BLAKE3 WASM constant swizzle
+
+**Decision:** reject the rotate-eight intrinsic spelling before timing. Using
+single-input `i8x16_swizzle` with the same constant selectors produces identical
+own leaf/parent Wasm instructions. Independent local Wasmtime compilation also
+produces the byte-identical native object. Each path retains its 56 two-register
+TBL operations; the intended lowering change did not occur. The fixed codegen
+gate rejected the candidate without activating its conditional cloud plan.
+
+The plan and complete evidence (`benchmark_results/blake3-wasm-swizzle-20261006T102800Z/report.md`)
+retain source snapshots, locks, commands, exact binaries, both disassemblies,
+the decision and restoration proof. The minimal consumer remains byte-identical
+at 37,858 bytes. Its SHA-256 is
+`6ae03747f9eb452fdbf0bdc99a527d2b3f5c72f5a97b1199d612b51b42793b70`;
+both local native objects hash to
+`6a47a0c5ce3319a52cee8595b2bebb50dd8b3794fbfe67f5a6d65d6d12081901`.
+The debug-bearing normal WASM changes size, which is not an executable size gain.
+Build inputs match accepted E5; local codegen uses Wasmtime 49.0.2 opt2 and the
+pinned nightly-2026-09-30 LLVM 23.1.1 objdump. This adds no timing claim.
+
+Formatting, normal/minimal/forced builds and forced/override checks passed.
+The conditional full matrix and native timing were not run. All 1,797 accepted
+E5 effective files were restored before the outcome documentation; the qualified
+state-owner improvement remains intact. No cloud resources, public API,
+dependency, allocation, or vendored implementation were added. Upstream gaps,
+cleanup follow-ups, prior rejections and Apple/browser limitations remain open.
+Investigate a distinct current-source cost before another candidate.
+
+## 2026-10-06: BLAKE3 WASM state ownership
+
+**Decision:** accept carrying the CV in the existing round state. This removes
+one 128-byte vector owner and its separate stores/clear, preserves complete
+cleanup of every remaining scratch owner, and improves the normal production
+path on both hosts. No API, dependency, allocation, dispatch, native kernel, or
+vendored implementation changes. This closes the bounded storage outcome;
+remaining upstream WASM gaps and later owner items stay open.
+
+| Workload | Intel time change, 95% paired interval | Graviton time change, 95% paired interval |
+| --- | ---: | ---: |
+| Plain 4 KiB | -2.64% [-2.74, -2.54] | -4.53% [-4.54, -4.51] |
+| Plain 64 KiB | -2.42% [-2.46, -2.38] | -4.66% [-4.67, -4.66] |
+| Keyed 64 KiB | -2.75% [-2.81, -2.73] | -4.88% [-4.89, -4.86] |
+| Derive-key 64 KiB | -2.81% [-2.87, -2.77] | -4.90% [-4.93, -4.88] |
+| XOF 64 KiB | -2.35% [-2.39, -2.26] | -4.79% [-4.80, -4.77] |
+| Batch 64 B | -2.84% [-2.97, -2.78] | -5.43% [-5.46, -5.32] |
+
+Every Intel row (`benchmark_results/blake3-wasm-state-storage-20261006T093000Z/table-x64.md`) and
+every Graviton row (`benchmark_results/blake3-wasm-state-storage-20261006T093000Z/table-arm64.md`)
+retain medians, spread, all rounds, uncertainty, and individual losses. No row has
+a resolved baseline loss above 3%. The largest positive median is Intel derive-key
+64 B, +0.25% [+0.22, +0.27]. Graviton derive-key empty has a wider
++0.05% [-2.23, +4.07] result; that uncertainty is retained without extra runs.
+Intel still trails upstream at keyed 4 KiB by 4.41%, keyed 64 KiB by 3.11%, and
+the existing 4 KiB-update streaming row by 3.31%. Graviton plain 64 KiB is 0.13%
+ahead, but keyed/derive 64 KiB still trail by 1.24%/0.92%. These are engine/host
+results, not a universal ranking or closure of the later 5% prefix-streaming target.
+
+The baseline ownership investigation (`benchmark_results/blake3-wasm-state-storage-20261006T093000Z/secret-owner-investigation/final-report.md`)
+found separate CV stores outside the leaf's block loop and clear-only parent
+slots. The candidate review (`benchmark_results/blake3-wasm-state-storage-20261006T093000Z/secret-review/final-report.md`)
+proves that owner is gone and full remaining clears/fences survive O0/O2/O3 and
+final linking. Each inspected guest frame shrinks 128 bytes. A new per-block
+`state[7]` memory round trip remains, and native stack-limit increments grow:
+Intel leaf +176 B, parent +32 B; Graviton leaf +32 B, parent unchanged. No overall
+stack or JIT-residue reduction is claimed. Static leaf stack-access counts fall,
+but profiles do not isolate the contribution of each codegen change to the gains.
+Existing outer key-copy and Portable state-owner cleanup gaps remain separate.
+
+The fixed plan (`benchmark_results/blake3-wasm-state-storage-20261006T093000Z/candidate-plan.md`) and
+complete evidence (`benchmark_results/blake3-wasm-state-storage-20261006T093000Z/report.md`) retain
+the exact 1,797-file effective source, locks, commands, independent build outputs,
+all 36,800 verified samples, addressed codegen and sixteen normal-artifact profiles.
+Normal candidate WASM SHA-256 is
+`eafd13cdf21aa547d09e27cf176597d8a9950fbdc68e603d2f6badd62a883a55`.
+The minimal no_std artifact is 37,858 bytes, down 295 bytes (0.77%) from E3.
+The debug-bearing benchmark saves 10,629 bytes; it is not a consumer size estimate.
+
+One c8i.xlarge and one c8g.xlarge completed ten fixed AB/BA pairs, 46 cases,
+20 samples, 100 ms warmup, 400 ms measurement, 10,000 resamples, 95% paired
+median-ratio intervals and seed 314159, without retries. Builds use pinned
+nightly-2026-09-30/LLVM 23.1.1, wasm32-wasip1 SIMD128 without relaxed SIMD,
+`std,blake3`, defaults off, opt3/fat LTO/one CGU/abort/overflow checks, and Wasmtime
+49.0.0 opt2. Upstream is locked 1.8.7 with `std,wasm32_simd`, defaults and zeroize
+off. Repeated-context derive-key retains rscrypto's existing warm std cache;
+both libraries' normal public-operation and cleanup costs remain timed.
+
+Native/portable tests pass 29 differentials plus official vectors; all three WASI
+modes pass 27 plus the corpus locally and on both hosts. Forced/override checks,
+production runtime vectors, pinned MSRV bare/WASI, no_std Clippy, formatting and
+full `just check` pass. Both quiet preflights record zero busy/steal ticks after
+180 seconds. During timing Intel records one steal tick, other-core means below
+0.473% and a 22% peak; Graviton has zero steal, means below 0.330% and a 27% peak.
+Physical exclusivity, quiet Apple Silicon timing, browser performance and JIT
+residue remain unqualified. Both EC2 instances and EBS volumes are deleted and
+provider absence verified. Investigate the current leaf codegen before the next
+bounded WASM change; all prior rejected candidates remain rejected.
+
+## 2026-10-06: BLAKE3 WASM rotation evaluation
+
+**Decision:** reject the one-expression eight-bit rotation candidate and restore
+exact accepted parent-SIMD source. Replacing its byte shuffle with logical shifts
+and OR saves 473 bytes in the minimal no_std consumer, but causes thirteen
+Graviton regressions above 3%. No performance or size gain from this candidate
+remains in production. The roughly 5–6% accepted-source upstream bulk gap stays open.
+
+| Workload | Intel time change, 95% paired interval | Graviton time change, 95% paired interval |
+| --- | ---: | ---: |
+| Plain 4 KiB | -0.64% [-0.71, -0.55] | +9.31% [+9.29, +9.32] |
+| Plain 64 KiB | -0.39% [-0.44, -0.35] | +10.75% [+10.75, +10.78] |
+| Keyed 64 KiB | -0.58% [-0.62, -0.46] | +10.57% [+10.55, +10.58] |
+| Derive-key 64 KiB | -0.64% [-0.67, -0.57] | +10.52% [+10.51, +10.54] |
+| XOF 64 KiB | -0.27% [-0.31, -0.25] | +10.61% [+10.60, +10.63] |
+| Batch 64 B | +0.86% [+0.81, +0.89] | +9.10% [+9.09, +9.12] |
+
+Every Intel row (`benchmark_results/blake3-wasm-codegen-cost-20261006T082600Z/table-x64.md`) and
+every Graviton row (`benchmark_results/blake3-wasm-codegen-cost-20261006T082600Z/table-arm64.md`)
+retain absolute medians, spread, all round medians, individual regressions, and
+upstream comparisons. Intel has no resolved baseline loss above 3%, but its gains
+are below 1%. Its keyed-empty upstream loss is +3.07% [3.02, 3.10]. Smaller positive
+changes remain visible; they are not averaged away. Derive-key rows repeatedly
+supply the same context, warming rscrypto's documented std context cache. They
+measure repeated-context public API costs. No cache behavior changes here.
+
+The investigation (`benchmark_results/blake3-wasm-codegen-cost-20261006T082600Z/plan.md`),
+fixed candidate plan (`benchmark_results/blake3-wasm-codegen-cost-20261006T082600Z/measurement-plan.md`),
+and complete evidence (`benchmark_results/blake3-wasm-codegen-cost-20261006T082600Z/report.md`)
+retain exact effective source, commands, locks, separate build outputs, binary
+hashes, raw measurements, native profiles, generated code, and scoped reviews.
+Graviton's 56 eight-bit TBL sites were hot in the accepted-source profiles. The
+candidate eliminates them while retaining all 56 sixteen-bit REV32 operations,
+but introduces extra shifts and ORs. Excluding literal-pool data, the leaf has
+about 9.9% more vector/permutation instructions. The normal-build slowdown rejects
+the inference that removing those hot table operations improves throughput.
+Sample attribution alone did not establish their isolated latency or issue cost.
+
+Baseline normal WASM SHA-256 is
+`8cf0631638795ee696043f7e62e23a8f11ca87e4ab4fc5211e9ff209f5dbe5ba`;
+rejected candidate is
+`233411fd21715e79baf541fbdf5809436a444c5084e535892a26f9fdab0dd79c`.
+Their normal native objects and every test artifact were verified. The stripped
+minimal no_std artifact falls from 38,153 to 37,680 bytes (-1.24%); the debug-bearing
+benchmark grows 549 bytes. These rejected size savings do not justify a new feature.
+No public API, dependency, allocation, native kernel, or vendored implementation was added.
+
+One c8i.xlarge and one c8g.xlarge completed ten fixed interleaved AB/BA pairs,
+46 cases each, 20 samples, 100 ms warmup, 400 ms measurement, 10,000 resamples,
+95% paired median-ratio intervals and seed 314159. There were no retries, extra
+allocations, selected rounds, or changed workloads. The rule required a resolved
+3% plain 64 KiB ARM improvement and no protected resolved 3% loss on either host;
+both conditions fail on ARM. The separate 5% prefix-streaming target is untouched.
+All 36,800 raw samples, recomputed medians, orders and identities were checked.
+The eight follow-up profiles per host use the measured compiled object and report
+zero lost samples. Their codegen and attribution supply diagnosis, not speed estimates.
+
+Build inputs match the accepted E3 experiment: nightly-2026-09-30, rustc `5c543b0b`,
+LLVM 23.1.1, wasm32-wasip1, SIMD128 without relaxed SIMD, `std,blake3`, defaults off,
+opt3/fat LTO/one CGU/abort/overflow checks. Upstream is locked `blake3 1.8.7` with
+`std,wasm32_simd`, defaults and zeroize off; both libraries keep normal cleanup.
+Native engines are Wasmtime 49.0.0 opt2, CPU 2 measures and CPU 1 orchestrates.
+
+Native/portable tests pass 29 differentials plus official vectors; all three WASI
+modes pass 27 plus the corpus locally and on both native engine hosts. Forced
+Portable/upstream differentials, capability override, every two-chunk length,
+unaligned tails, parent/counter boundaries, randomized splits, all modes, long
+contexts and XOF pass. Pinned MSRV bare/WASI builds, no_std SIMD Clippy and full
+`just check` pass. The scoped cleanup review (`benchmark_results/blake3-wasm-codegen-cost-20261006T082600Z/secret-review/final-report.md`)
+retains named clears and fences; existing outer key-owner and Portable-state gaps
+remain separate follow-ups. Restoration matched every one of the 1,797 accepted
+source files before this record was added. Earlier accepted outcomes remain intact.
+
+Both hosts passed the fixed 180-second settlement and quiet check. Intel later
+recorded three steal ticks, other-core means below 0.512% and a 23% peak; Graviton
+had zero steal, means below 0.288% and a 26% peak. All observations remain retained.
+Physical exclusivity, Apple Silicon timing, browser performance and JIT residue
+are unqualified. Both EC2 instances and EBS volumes were deleted and provider
+absence verified; the global configured-target check also found no resources.
+Next, investigate the accepted-source WASM cost before another bounded candidate.
+
+## 2026-10-06: BLAKE3 WASM parent SIMD
+
+**Decision:** accept four-parent SIMD through the existing private batching hook.
+Both native engine hosts pass the fixed performance rule: a resolved plain 64 KiB
+improvement above 3%, with no protected row having a resolved loss above 3%.
+This closes one kernel outcome. Upstream gaps, the public parent API, streaming
+requirements, and the rest of the owner sequence remain open.
+
+Native profiles and addressed engine codegen established scalar parent compression
+at about 10% of 64 KiB caller samples. The candidate reuses our existing four-lane
+equations for four independent parent blocks, with zero counters and `PARENT`
+domain separation. It writes directly to existing outputs, preserves scalar tails
+and secret clears, and changes no leaf scheduling, public API, dependency,
+allocation, or native kernel. No competing implementation was imported or adapted.
+
+| 64 KiB mode | Intel time change, 95% paired interval | Graviton time change, 95% paired interval |
+| --- | ---: | ---: |
+| Plain | -5.71% [-6.02, -5.34] | -6.83% [-6.85, -6.82] |
+| Keyed | -6.55% [-6.74, -6.39] | -7.11% [-7.13, -7.10] |
+| Derive-key | -6.43% [-6.73, -6.08] | -7.06% [-7.08, -7.04] |
+| XOF | -4.85% [-5.07, -4.68] | -5.91% [-5.92, -5.90] |
+
+All individual rows remain in the Intel table (`benchmark_results/blake3-wasm-parent-cost-20261006T063400Z/intel-completion/table-x64.md`)
+and Graviton table (`benchmark_results/blake3-wasm-parent-cost-20261006T063400Z/table-arm64.md`).
+The largest positive point estimate is Intel batch 256: +0.27% [-0.37, +0.53].
+Small resolved increases remain, including Intel derive-key 4 KiB at +0.20%
+[+0.05, +0.45] and Graviton keyed empty at +0.16% [+0.13, +0.18].
+Upstream still leads 64 KiB by 4.88–6.30% on Intel and 4.63–6.43% on Graviton.
+Intel 4 KiB and 4 KiB-chunk streaming also retain losses. These are unmet targets.
+The minimal no_std artifact grew 8,327 bytes to 38,153 (+27.92% versus the accepted
+four-lane baseline). No compact-round feature is proposed.
+
+The full evidence index (`benchmark_results/blake3-wasm-parent-cost-20261006T063400Z/report.md`),
+fixed original plan (`benchmark_results/blake3-wasm-parent-cost-20261006T063400Z/plan.md`), and
+causal record (`benchmark_results/blake3-wasm-parent-cost-20261006T063400Z/cause.md`) retain effective
+source, dirty changes, exact commands, dependency locks, compiler/engine/CPU
+identities, separate build outputs, binaries, raw samples, spread, and codegen.
+The source is `105cf5af` plus the retained cleanup and accepted four-lane work;
+only the two WASM parent production files change from that baseline. Compiler:
+nightly-2026-09-30, rustc `5c543b0b8c73c7b72bc8284ced4fb22ead15734d`, LLVM 23.1.1.
+Target: wasm32-wasip1 with SIMD128 and no relaxed SIMD; production `std,blake3`,
+defaults off. Upstream is locked `blake3 1.8.7`, `std,wasm32_simd`, defaults and
+`zeroize` off. Both retain normal cleanup contracts; keyed comparisons do not
+imply identical secret-wipe policy. Normal builds use opt3, fat LTO, one codegen
+unit, abort and overflow checks. Both engines are Wasmtime 49.0.0, opt-level 2.
+
+Each host completed ten interleaved AB/BA pairs with the same 46 cases, 20 samples,
+100 ms warmup, 400 ms measurement, and 10,000 resamples. Paired intervals use seed
+314159. Independent collection checks verified 36,800 raw samples, every median,
+round order, and normal/profile compiled identities. Follow-up profiles place
+scalar compression below 0.7% in the named 64 KiB callers, with the new parent
+kernel near 5%; all captures report zero lost samples. Normal caller timings own
+the gains. Profiles corroborate the cause rather than supplying speed estimates.
+
+Both original Intel allocations failed quiet preflight before any timing sample.
+A separate fixed process diagnosis passed all three quiet windows without proving
+the earlier cause. One explicitly recorded completion allocation (`benchmark_results/blake3-wasm-parent-cost-20261006T063400Z/intel-completion/plan.md`)
+extended the infrastructure budget, using a fixed three-minute settling period
+and unchanged source, workloads, statistics, and thresholds. It passed and completed.
+The original failures and unresolved infrastructure cause remain retained; no
+Intel timing result was selected or discarded. This is not a claimed host repair.
+
+Native and portable differentials, official vectors, forced/override kernels,
+WASI SIMD/scalar/portable executions, all lengths through two chunks, unaligned
+inputs, parent tails/counters, randomized splits, all modes, XOF, and long derive
+contexts pass. The full local check, pinned MSRV bare/WASI builds, and no_std SIMD
+Clippy pass. Cleanup review (`benchmark_results/blake3-wasm-parent-cost-20261006T063400Z/secret-review/final-report.md`)
+retains the named clears. The caller follow-up (`benchmark_results/blake3-wasm-parent-cost-20261006T063400Z/secret-review/key-borrow-follow-up.md`)
+records a pre-existing outer by-value key-copy cleanup gap in both versions,
+distinct from the Portable state gap. No extra key owner or removed clear was found;
+changed lifetime markers and stack placement prevent an equal-residue claim.
+
+Every initial CPU was idle with zero steal. Intel later recorded one steal tick;
+other-core means were below 0.365% and peaked at 22%. Graviton had zero steal,
+means below 0.25%, and a 21.78% peak. All activity remains in the evidence; these
+cloud guests are not physically exclusive. Apple Silicon timing and browser
+performance remain missing. Local Mac runs provide functional/codegen evidence.
+All created EC2 instances and EBS volumes, including diagnostic and failed
+allocations, were deleted with provider absence verified. The next bounded step
+is current-source generated-code analysis of the remaining WASM cost. The later
+5% prefix-streaming target remains distinct from this campaign's 3% gate.
+
+## 2026-10-06: BLAKE3 WASM four-lane backend
+
+**Decision:** accept the independently implemented four-lane WASM backend with
+portable serial compression and the guarded plain-tiny specialization. Both native
+engine hosts pass the fixed gate: material four-lane gains and no measured row with
+a resolved regression above 3%. This closes the bounded backend outcome, not every
+WASM performance requirement. The single-block SIMD experiment remains rejected,
+and measured upstream bulk losses remain open. The earlier campaign below stays
+rejected; this is a separate cause, plan, baseline, candidate, and result.
+
+The first backend lost plain tiny hashes because bulk-kernel identity survived
+into the generic scalar call frame. The final eight-line branch uses the existing
+Portable tiny helper only for `flags == 0 && len <= 64` on SIMD-enabled WASM.
+The caller still resolves capabilities. Normal optimized codegen restores direct
+calls to the CV-only scalar compressor from the real Criterion timing routine.
+Secret-mode routing and all named cleanup are unchanged. A broader predicate was
+rejected **before timing** because it would expand a pre-existing Portable scratch
+ownership gap into forced-Wasm secret calls; its code, functional passes, and
+security rejection remain retained.
+
+The fixed plan (`benchmark_results/blake3-wasm-serial-specialization-20261006T054600Z/plan.md`),
+causal evidence (`benchmark_results/blake3-wasm-serial-specialization-20261006T054600Z/cause.md`),
+scoped security review (`benchmark_results/blake3-wasm-serial-specialization-20261006T054600Z/secret-delta-review.md`),
+and complete evidence index (`benchmark_results/blake3-wasm-serial-specialization-20261006T054600Z/report.md`)
+retain effective source archives, dirty changes, locks, commands, binaries, exact
+engine machine code, raw samples, medians, spread, and rejected revisions.
+Baseline is `105cf5af` plus the separately verified root-output cleanup, retained
+tests/watchdog, and preceding documentation. Baseline and candidate use separate
+source/build outputs and verified artifact hashes. No competing implementation,
+new public API, dependency, allocation, or native kernel was added.
+
+The compiler is `nightly-2026-09-30`, rustc
+`5c543b0b8c73c7b72bc8284ced4fb22ead15734d`, LLVM 23.1.1. Target:
+`wasm32-wasip1`, `+simd128,-relaxed-simd`. Production rscrypto uses `std,blake3`,
+defaults off, without `diag` or `parallel` in timing. The exact upstream is
+`blake3 1.8.7`, defaults off, `std,wasm32_simd`, without `zeroize`. Both keep their
+normal cleanup costs. The production catalog benchmark is referenced directly,
+with opt3/fat LTO/one CGU/overflow checks/aborting panics/debug information.
+
+Wasmtime 49.0.0/Cranelift opt2 ran on fresh native Intel Xeon 6975P-C `c8i.xlarge`
+and Graviton4 `c8g.xlarge` guests. CPU 2 measures; CPU 1 orchestrates. Ten fixed
+AB/BA pairs each run all 46 cases: 20 samples, 100 ms warmup, 400 ms measurement,
+10,000 resamples. Intervals are paired bootstraps of ten round medians, seed314159.
+No rerun, removed round, best-of selection, or averaged-away losing row is used.
+Guest timing excludes engine compilation/startup; those costs are recorded
+separately. Batch means 64 equal-length messages, compared with upstream serially
+hashing the identical ordered messages and outputs.
+
+| Workload | Intel baseline → candidate ns | Paired change, 95% CI | Graviton baseline → candidate ns | Paired change, 95% CI |
+| --- | ---: | ---: | ---: | ---: |
+| Plain 0 B | 71.37 → 69.31 | −2.81% [−3.02, −2.76] | 107.01 → 100.85 | −5.75% [−5.77, −5.74] |
+| Plain 64 B | 74.61 → 69.76 | −6.50% [−6.54, −6.39] | 106.45 → 101.26 | −4.87% [−4.88, −4.84] |
+| Plain 1 KiB | 1221.47 → 1223.26 | **+0.14%** [+0.09, +0.21] | 1643.72 → 1680.63 | **+2.25%** [+2.21, +2.26] |
+| Plain 4 KiB | 5097.17 → 2706.76 | −46.91% [−46.94, −46.87] | 6879.47 → 3508.90 | −49.00% [−49.01, −48.98] |
+| Plain 64 KiB | 82291.46 → 43805.94 | −46.76% [−46.80, −46.66] | 111081.41 → 57322.30 | −48.40% [−48.40, −48.40] |
+| Batch 1024 B | 77732.05 → 38800.50 | −50.08% [−50.11, −50.07] | 103654.41 → 50558.05 | −51.23% [−51.23, −51.22] |
+| Stream 1 MiB / 64 B updates | 1350852.68 → 1354692.76 | **+0.28%** [+0.24, +0.38] | 1821808.69 → 1823673.17 | **+0.11%** [+0.04, +0.13] |
+| Stream 1 MiB / 4096 B updates | 1334946.22 → 719364.11 | −46.10% [−46.16, −46.04] | 1801904.89 → 936288.81 | −48.03% [−48.06, −48.01] |
+
+All 23 matched workloads, including small positive changes and individual upstream
+losses, are in the Intel table (`benchmark_results/blake3-wasm-serial-specialization-20261006T054600Z/table-x64.md`)
+and Graviton table (`benchmark_results/blake3-wasm-serial-specialization-20261006T054600Z/table-arm64.md`).
+Batch improvements span 36.88–50.08% and 42.85–51.23%. At 64 KiB the accepted
+candidate still trails upstream by 10.44–13.75% on Intel and 11.23–14.61% on
+Graviton across plain/keyed/derive/XOF. Intel also retains >3% upstream losses at
+4 KiB plain/keyed/derive/XOF and 4096-byte streaming; Graviton retains the 4 KiB
+keyed loss. Smaller positive differences remain visible in the tables. These
+results do not establish a universal fastest-implementation claim.
+
+The stripped, linked, allocation-free bare-WASM digest probe grows from 16,746 B
+to 29,826 B: **+13,080 B (+78.11%)**. This is 144 B below the rejected bulk-only
+probe, but the substantial SIMD footprint remains a tradeoff. The benchmark
+artifacts include debug/Criterion code and are not shipped-library size measures.
+No compact-round feature or allocator API is introduced: this path needs no heap.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Baseline benchmark WASM | `885abc8a6378ca9697abb67bbaae6b2535c146a928a0c8a7406d95d9dbed7260` |
+| Accepted benchmark WASM | `fdb0fcadb9f3268c37796b4b422f38c183b6066412f63be1f72dc82ff2217b11` |
+| Intel raw archive | `56a6454d732cf3db8befd4082f536266f09112d2b4d589edd77e73d17923e226` |
+| Graviton raw archive | `7786a837f4b5b7b3cfa2f743dfc8a191c6b4548ec7a6e4b7858ff28b1dd1a1f8` |
+
+`just check` and all 150 `just ci-compat` cases pass. Native and portable integration
+runs each pass 28 differentials plus the official corpus; scalar, SIMD-enabled,
+and portable-only WASI each pass 26 plus the corpus. Two aborting-panic tests are
+WASI exclusions and pass natively. Both Linux engine hosts repeat these checks,
+forced production-kernel comparisons, and portable capability-override/rejection
+checks before timing. Coverage includes every length through two chunks, all modes,
+unaligned tails, randomized splits, XOF boundaries, 3/5/6/7-chunk tails, and tree
+counters crossing 32 bits. Bare-WASM/WASI SIMD compile on Rust1.100.0-beta.1;
+parallel/diag feature compilation also passes. Compilation-only lanes are not
+runtime or performance evidence.
+
+Both guests passed the fixed idle check. Runtime other-CPU means remained below
+0.43%; isolated one-second peaks reached 23% Intel / 25.75% Graviton. Intel recorded
+19 steal ticks; Graviton zero. All observations remain in the result. These are
+monitored cloud guests, not proven physically exclusive hosts. Apple Silicon timing,
+browser engines, physical WASM CT, and compiler/JIT register or spill erasure remain
+unqualified. The known Portable `compress_cv_portable::state` owner gap is materialized
+at O0 and scalarized at O3; no optimized stack-residue exploit was established.
+It remains explicit follow-up, separate from the fixed shared XOF scratch owners.
+
+All campaign EC2 instances and EBS volumes were deleted, and provider status for
+both targets confirms absence. Next, profile the remaining WASM bulk/upstream cost
+before another bounded change. Keep single-block SIMD and the later file/streaming,
+batching, parent API, Bao, SVE, keyed-cost and final-matrix owner sequence explicit.
+The separate prefix-streaming 5% target has not been measured or closed here.
+
+## 2026-10-06: BLAKE3 WASM SIMD128
+
+**Decision:** reject both candidates from this bounded campaign. Four-lane chunk
+and equal-length batch hashing materially improved, but plain 0-byte and 64-byte
+digests still regressed after the single permitted correction. The fixed gate
+rejects any measured row with a resolved loss above 3%. The experimental backend
+and all its dispatch wiring were removed. WASM SIMD128 remains an open requirement;
+no performance gain from these candidates is part of the production worktree.
+
+The independent cleanup review found two existing shared root-output scratch
+buffers that were not cleared after keyed/derive-key output transfer. Their clears
+are retained, along with stronger differential and WASM vector coverage and the
+WASI benchmark watchdog compatibility fix. This is a scoped cleanup correction,
+not a new constant-time or complete residue-erasure claim. No competing
+implementation was imported, vendored, or adapted. Upstream remains a comparison
+and test dependency only; the runtime vector runner reuses our existing decoder.
+
+The campaign report (`benchmark_results/blake3-wasm-simd128-20261006T040210Z/report.md`),
+fixed plan (`benchmark_results/blake3-wasm-simd128-20261006T040210Z/plan.md`), and
+single correction (`benchmark_results/blake3-wasm-simd128-20261006T040210Z/correction-plan.md`)
+retain exact effective source, dirty changes, lockfiles, commands, artifacts,
+codegen, raw samples, rejected candidates, and limitations. Baseline source is
+`105cf5afa49ae0fc3954d5800490cdd091409502` plus the pre-existing OVERVIEW edit and
+an identical benchmark watchdog cfg correction in both build trees. Builds use
+separate output directories and verified hashes. The compiler is
+`nightly-2026-09-30`, rustc `5c543b0b8c73c7b72bc8284ced4fb22ead15734d`, LLVM 23.1.1.
+
+The target is `wasm32-wasip1` with `+simd128,-relaxed-simd`; rscrypto features are
+`std,blake3`, defaults off, without `parallel` or `diag`. Upstream is exactly
+`blake3 1.8.7`, defaults off, `std,wasm32_simd`, without `zeroize`. Each library's
+normal cleanup remains included. The existing production Criterion benchmark is
+referenced directly by an external manifest. The profile uses opt-level 3, fat
+LTO, one CGU, overflow checks, aborting panics, and retained debug information.
+
+Wasmtime 49.0.0/Cranelift opt-level 2 executes the same WASM binaries on native
+Intel Xeon 6975P-C (`c8i.xlarge`) and Graviton4 (`c8g.xlarge`) guests. Guest timing
+excludes engine compilation/startup. Each artifact includes both libraries on all
+46 fixed cases. Ten baseline/candidate pairs alternate AB/BA on each host;
+20 samples, 100 ms warmup, 400 ms measurement, and 10,000 bootstrap resamples.
+Intervals below are 95% bootstrap intervals over paired round medians, seed
+314159. Every sample and round is retained. Batch means 64 equal-length messages;
+upstream hashes the same ordered inputs serially because it has no matching batch
+API. Both sides include equivalent output ownership and setup boundaries.
+
+The first row-vector compressor regressed ten rows per host, including serial
+modes and 64-byte streaming updates. Generated code gathers scalar words into
+vectors, shuffles rows, and implements vector rotates with shifts/or or byte
+shuffles. Removing that compressor and keeping serial Portable routes eliminated
+most losses, but not these four corrected-candidate results:
+
+| Host / plain workload | Baseline ns | Corrected ns | Change, 95% CI |
+| --- | ---: | ---: | ---: |
+| Intel / 0 B | 71.17 | 79.61 | +11.81% [+11.72%, +12.11%] |
+| Intel / 64 B | 74.41 | 80.30 | +8.00% [+7.89%, +8.06%] |
+| Graviton4 / 0 B | 106.92 | 115.91 | +8.39% [+8.37%, +8.46%] |
+| Graviton4 / 64 B | 106.38 | 114.65 | +7.79% [+7.73%, +7.82%] |
+
+The rejected correction reduced plain 4 KiB time by 46.91% on Intel and 49.05%
+on Graviton4. Batch reductions ranged from 37.31–49.66% and 42.84–51.23%,
+respectively. These gains do not cancel losing rows. At 64 KiB, it remained
+10.39–13.35% behind upstream across measured Intel modes and 11.19–14.55%
+behind on Graviton4. Full per-row medians, uncertainty, and individual upstream
+losses are in the Intel table (`benchmark_results/blake3-wasm-simd128-20261006T040210Z/corrected-table-x64.md`)
+and Graviton4 table (`benchmark_results/blake3-wasm-simd128-20261006T040210Z/corrected-table-arm64.md`).
+The first rejected result is retained in separate `paired-*` records. The cause
+of the remaining tiny-input regression needs a separate codegen investigation;
+its similarity across hosts is not proof of one instruction-level mechanism.
+
+The minimal allocation-free `wasm32-unknown-unknown` digest artifact was 16,738 B
+for the baseline with SIMD enabled, 37,347 B for the rejected row-vector version,
+and 29,970 B for the rejected bulk-only correction (+13,232 B, +79.05%). Scalar
+baseline/candidate artifacts were 18,529/18,525 B. These are stripped production
+probes, distinct from the approximately 20 MB debug-bearing Criterion artifacts.
+No compact-round feature is proposed.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Baseline WASM | `5913d0af072280089cc925bac2781d411961916f9355e0bdb8f7d4d52672825e` |
+| Rejected row-vector WASM | `fc7291e1a1ab64576938bfae73801ebb8046e1193ab8da2bd539c0f8e645fb2c` |
+| Rejected bulk-only WASM | `e5a6523d9e21249b66ec01d68cf77b5d1f67bf23d0a62990f02f62356c88e8f7` |
+| Corrected Intel raw archive | `029c5547580713c43205b5a62e0976e40a6be43fd641e83b7de71c823765db0f` |
+| Corrected Graviton4 raw archive | `ff47b9250fb2cb64b6b3426b0b48e55fa947362667a7b4ec2431465543fd9730` |
+
+Candidate qualification passed official vectors and independent upstream/Portable
+comparisons for every length through 2048 B, unaligned tails, all three modes,
+randomized splits, tree offsets crossing 32-bit counters, XOF boundaries, and
+forced production chunk/parent paths. The normal optimized artifacts also executed
+on both native engine hosts. `just ci-compat` passed 150 cases, including bare
+WASM and WASI with and without SIMD; the minimum Rust beta compiled both SIMD
+targets. Native/portable integration tests passed 28 differentials plus the
+complete official corpus each. Final cleanup-only validation and exact identities
+are recorded separately in the campaign report; candidate qualification does not
+turn a rejected backend into an accepted one.
+
+Both guests passed the fixed idle qualification (each CPU at most 1% busy, zero
+initial steal). During corrected runs, other CPUs averaged below 0.45% busy but
+had isolated 30% Intel / 24% ARM one-second peaks; Intel accumulated eight steal
+ticks, ARM zero. These are monitored cloud-guest results, not a claim of physical
+host exclusivity. No round was removed. Engine/compiler details and all generated
+machine code are retained. Apple Silicon performance, browser engines, JIT/native
+register or spill erasure, and physical WASM constant-time qualification are
+missing. The accepted Mac timing limitation remains unchanged. The later 5%
+prefix-streaming target was neither measured nor closed by this 3% campaign gate.
+All campaign EC2 instances and EBS volumes were deleted and absence verified.
+
+## 2026-10-05: BLAKE3 cleanup and minimal no_std size
+
+**Decision:** retain the current `root_output_oneshot` structure. The one helper
+prototype failed codegen parity. The minimal `no_std` size evaluation is complete;
+it does not justify a compact-round feature without a consumer size budget and a
+measured runtime tradeoff. No production change or speedup was accepted.
+
+The baseline is clean local `main` at `105cf5afa49ae0fc3954d5800490cdd091409502`.
+The complete source, lockfile, fixed plan, candidate patch, commands, compiler
+identities, linked artifacts, disassembly, and raw results are retained in
+`blake3-cleanup-size-20261006T025058Z/` (`benchmark_results/blake3-cleanup-size-20261006T025058Z/report.md`).
+The compiler is `nightly-2026-09-30`, rustc
+`5c543b0b8c73c7b72bc8284ced4fb22ead15734d`, LLVM 23.1.1.
+
+The candidate shares only the duplicated exact-tree reduction loops, borrowing
+the key and scratch while preserving the existing capacity, endian, and cleanup
+boundaries. It removes 19 net source lines. LLVM retains an out-of-line helper on
+all three inspected targets. The added frame is 248 bytes on x86-64, excluding its
+return address, 448 bytes on AArch64, and 240 bytes on Cortex-M0. The x86 caller's
+frame does not shrink; the AArch64 caller shrinks by 288 bytes. These are linked
+unkeyed-probe observations, not whole-operation stack or secret-residue proofs.
+The candidate was rejected before timing or full correctness qualification and
+never entered the production worktree. Its smaller code is retained as a tradeoff,
+not a latency result.
+
+The size consumer calls production `Blake3::digest` with a black-boxed slice,
+default features disabled, and only `blake3` enabled. The control keeps the same
+4 KiB fixture and loop without hashing. Builds use the repository release settings:
+optimization 3, fat LTO, one codegen unit, overflow checks, aborting panics, and
+stripped debug information. They use default target CPU features. Baseline and
+candidate have separate source and build directories.
+
+| Target | Control ELF | Baseline digest ELF | Added `.text` | Candidate `.text` change |
+| --- | ---: | ---: | ---: | ---: |
+| `x86_64-unknown-none` | 6,216 B | 27,152 B | 18,777 B | −1,280 B |
+| `aarch64-unknown-none` | 5,672 B | 63,616 B | 52,628 B | −572 B |
+| `thumbv6m-none-eabi` | 5,228 B | 24,148 B | 16,706 B | −514 B |
+
+File bytes include headers, alignment, symbols, and other sections. Two linked
+AArch64 NEON hash-many functions account for 20,268 code bytes. Cortex-M0's three
+portable compression bodies total 10,720 bytes. These are attribution leads, not
+proof of the savings a rolled loop would achieve. `just perf-llvm-lines blake3`
+was run with the normal catalog configuration, and each minimal consumer also
+retains its LLVM line report. Pre-link IR counts include code removed by the
+linker and are not shipped-byte or runtime measurements. Bare-metal targets were
+compiled and inspected, not executed.
+
+The unchanged production baseline also completed ten fixed Criterion rounds on
+each separate AWS host: `c8i.xlarge` (Xeon 6975P-C, 2 cores/4 vCPUs) and
+`c8g.xlarge` (Graviton4/Neoverse-V2, 4 cores/4 vCPUs), Linux `7.0.0-1014-aws`.
+There are 800 measurements: plain, keyed, and derive-key at 64 B, 1 KiB, 4 KiB,
+16 KiB, 64 KiB, and 256 KiB, plus 64-byte XOF output at 4 KiB and 64 KiB, for both
+libraries. Each adjacent comparison hashes the same deterministic input. Fixture
+preparation is outside timing; public API setup, output, and destruction remain
+inside. Derive-key uses a repeated context, warming rscrypto's documented context
+cache. These are complete API costs, not fresh-context or isolated kernel costs.
+
+Builds use catalog `blake3,parallel,std`, disabled defaults, the bench profile,
+generic CPU flags, CPU 2 affinity, and `RAYON_NUM_THREADS=1`. Upstream is the locked
+`blake3` **1.8.7** with `std,rayon` and disabled defaults; its `zeroize` feature is
+off. Each library retains its own cleanup policy. A separate public introspection
+probe reports AVX-512 at the measured x86 sizes; Graviton4 selects portable at
+64 B/1 KiB and NEON at larger sizes. Normal timing binaries have no diagnostic cfg.
+
+Both hosts passed the idle-CPU precheck. Runtime monitoring retained brief activity
+on other CPUs and occasional x86 VM steal-counter increments; the measured CPU
+reported no steal. Physical-host isolation, temperature, and power policy are not
+established. Treat these comparisons as investigation leads before selecting an
+optimization. All rounds remain included, with no timing retries or best-of
+selection. The complete table (`benchmark_results/blake3-cleanup-size-20261006T025058Z/native-summary.md`)
+retains medians, every round's range, Criterion intervals, and paired bootstrap
+uncertainty. The six rows classified as losses at 3% are:
+
+| Host / workload | rscrypto median | Upstream median | Paired slowdown, 95% interval |
+| --- | ---: | ---: | ---: |
+| x86 keyed 4 KiB | 920.63 ns | 889.83 ns | +3.40% [3.20%, 3.54%] |
+| x86 plain 256 KiB | 36,272.95 ns | 32,684.37 ns | +11.05% [10.90%, 11.49%] |
+| x86 keyed 256 KiB | 37,052.99 ns | 32,662.89 ns | +13.35% [13.07%, 14.08%] |
+| x86 derive-key 256 KiB | 37,062.72 ns | 32,773.68 ns | +13.06% [13.01%, 14.15%] |
+| ARM keyed 64 B | 98.33 ns | 94.23 ns | +4.35% [4.09%, 4.50%] |
+| ARM keyed 1 KiB | 1,390.42 ns | 1,343.13 ns | +3.51% [3.49%, 3.53%] |
+
+Intervals describe the ten observed paired rounds, not unobserved systematic
+error. The 3% classification is separate from the still-open streaming target of
+within 5% of equivalent one-shot at every measured size. No streaming-prefix
+requirement was evaluated or closed here.
+
+Native and portable BLAKE3 library, official-vector, and upstream differential
+tests passed: 42/42 in each x86 lane and 41/41 in each ARM lane. The diagnostic
+probe also compared complete outputs for every benchmark fixture. All planned
+cases, retained files, and executable hashes were verified. Each host used one
+unchanged benchmark binary across its ten rounds. The source replicas omit 483
+fuzz corpus files and this overview under the configured sync exclusions; all
+1,310 present files match the saved source. The initial whole-checkout equality
+failure, exact omissions, Git statuses, and proof that the selected builds do not
+consume them remain in the record. The full original source is retained separately.
+
+The sealed native archives each contain 3,307 verified files and their exact
+benchmark executables. x86: 11,925,073 bytes, SHA-256
+`33685b02994ff06d5481bbbb4d00fe95c5f4e102b8a3e7c709e60a70d3e13a19`.
+ARM: 10,550,126 bytes, SHA-256
+`74d25678479fa01640912ff075a51ebf900115e5044cccf54ce0627225a0e458`.
+Apple Silicon timing is missing; the loaded local Mac supplied compilation only.
+The accepted Mac timing limitation and completed constant-tree evidence remain
+unchanged. The next bounded implementation step is WASM SIMD128; the later owner
+sequence and all unmet performance requirements remain open.
+
 ## 2026-10-05: RSA native target qualification
 
 **Checkpoint at 2026-10-06T02:06:01Z:** POWER passed its full native CT gate.

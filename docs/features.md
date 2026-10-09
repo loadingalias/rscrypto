@@ -76,6 +76,9 @@ against an independently trusted BLAKE3 root. It returns only verified chunks
 and authenticates the final chunk before reporting EOF. It supports sequential
 unkeyed decoding; outboard encodings, slices and seeking are outside this API.
 
+The [BLAKE3 performance matrix](blake3-performance.md) records qualified
+results and the remaining target and workload gaps.
+
 `getrandom` changes how `rscrypto` gets entropy.
 It does not change which algorithms are available.
 APIs that accept entropy from the caller work without it.
