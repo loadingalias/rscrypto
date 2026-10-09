@@ -617,7 +617,9 @@ mod reader_tests {
       {
         return;
       }
-      let storage: alloc::vec::Vec<u8> = (0..len + 1).map(|i| (i % 251) as u8).collect();
+      let storage: alloc::vec::Vec<u8> = (0..len + 1)
+        .map(|i| u8::try_from(i % 251).expect("a residue below 251 fits a byte"))
+        .collect();
       let input = &storage[1..];
       for counter in [0, 1024, (1u64 << 32) - 1024, 1 << 32, 1 << 40, (1 << 54) - 2048] {
         let mut ours = Blake3::new();
