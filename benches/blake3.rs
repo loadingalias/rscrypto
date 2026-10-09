@@ -5,6 +5,9 @@ mod bench_config;
 
 mod common;
 
+#[path = "blake3/mixed.rs"]
+mod mixed_batches;
+
 use core::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion};
@@ -557,11 +560,13 @@ fn tail_diagnostics(c: &mut Criterion) {
 }
 
 fn main() {
+  mixed_batches::configure_isa().expect("valid BLAKE3 benchmark dispatch request");
   bench_config::run(&[
     oneshot,
     keyed,
     derive_key,
     batch,
+    mixed_batches::bench,
     streaming,
     xof,
     #[cfg(all(rscrypto_internal, feature = "diag"))]

@@ -183,6 +183,7 @@
       "filter": "^blake2/"
     },
     "blake3": { "bench": "blake3", "filter": "blake3" },
+    "blake3-mixed": { "bench": "blake3", "filter": "^blake3/mixed-batch/" },
     "xxh3": { "bench": "xxh3", "filter": "xxh3" },
     "rapidhash": { "bench": "rapidhash", "filter": "rapidhash" },
     "ascon-hash256": { "bench": "ascon", "filter": "ascon-hash256" },
@@ -251,6 +252,7 @@
       "cshake256",
       "blake2",
       "blake3",
+      "blake3-mixed",
       "xxh3",
       "rapidhash",
       "ascon-hash256",

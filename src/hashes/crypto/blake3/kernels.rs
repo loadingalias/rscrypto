@@ -1478,7 +1478,6 @@ pub(crate) fn diag_parent_cvs_many_avx512_owned_from_bytes(
 /// Compute many parent CVs from adjacent child CV pairs.
 ///
 /// `children` is interpreted as `[left0, right0, left1, right1, ...]`.
-#[cfg(any(target_endian = "little", feature = "parallel"))]
 #[inline]
 pub(crate) fn parent_cvs_many_from_cvs_inline(
   id: Blake3KernelId,

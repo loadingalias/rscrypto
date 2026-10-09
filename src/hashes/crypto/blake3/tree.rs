@@ -26,6 +26,10 @@ pub enum Blake3SubtreeError {
   InvalidMerge,
   /// A chaining value belongs to a tree with a different mode.
   ModeMismatch,
+  /// A merge level needs an even number of child chaining values.
+  OddChildCount,
+  /// A merge level needs one output slot per pair of child chaining values.
+  OutputLengthMismatch,
 }
 
 impl core::fmt::Display for Blake3SubtreeError {
@@ -36,6 +40,8 @@ impl core::fmt::Display for Blake3SubtreeError {
       Self::Empty => "BLAKE3 subtree has no input",
       Self::InvalidMerge => "BLAKE3 chaining values do not form a parent node",
       Self::ModeMismatch => "BLAKE3 chaining value belongs to a tree with a different mode",
+      Self::OddChildCount => "BLAKE3 merge level needs an even number of children",
+      Self::OutputLengthMismatch => "BLAKE3 merge level output length does not match its parent count",
     })
   }
 }
@@ -171,6 +177,98 @@ impl Blake3Tree {
     ct::zeroize_words_no_fence(&mut words);
     ct::zeroize_fence();
     Ok(cv)
+  }
+
+  /// Merge adjacent pairs of child chaining values into non-root parents.
+  ///
+  /// Writes `merge(&children[2 * i], &children[2 * i + 1])` to `out[i]`.
+  /// Each pair must form a valid parent, but separate pairs need not be
+  /// adjacent to each other or have the same height. An unpaired right edge
+  /// must be carried to the next level by the caller. The final two children
+  /// need [`Self::merge_root`] or [`Self::merge_root_xof`] to produce a root.
+  ///
+  /// This method allocates nothing and uses bounded scratch, cleared before
+  /// return or unwind. Existing output values are replaced and cleared by
+  /// their destructors. Initialize reusable output slots by cloning existing
+  /// chaining values. Empty input and output slices succeed without work.
+  ///
+  /// # Errors
+  ///
+  /// Checks the following conditions in order:
+  ///
+  /// 1. Returns [`Blake3SubtreeError::OddChildCount`] if `children.len()` is odd.
+  /// 2. Returns [`Blake3SubtreeError::OutputLengthMismatch`] unless
+  ///    `out.len() == children.len() / 2`.
+  /// 3. Validates every pair in input order with the same checks as
+  ///    [`Self::merge`], returning the first pair's error.
+  ///
+  /// Any error leaves every output value unchanged.
+  ///
+  /// # Example
+  ///
+  /// ```
+  /// use rscrypto::{Blake3, hashes::expert::blake3_tree::Blake3Tree};
+  ///
+  /// let tree = Blake3Tree::new();
+  /// let input = [7u8; 4096];
+  /// let mut children = Vec::new();
+  /// for (index, chunk) in input.chunks(1024).enumerate() {
+  ///     let mut subtree = tree.subtree(index as u64 * 1024)?;
+  ///     subtree.update(chunk)?;
+  ///     children.push(subtree.finalize()?);
+  /// }
+  /// let mut parents = children[..2].to_vec();
+  /// tree.merge_level(&children, &mut parents)?;
+  /// assert_eq!(tree.merge_root(&parents[0], &parents[1])?, Blake3::digest(&input));
+  /// # Ok::<(), rscrypto::hashes::expert::blake3_tree::Blake3SubtreeError>(())
+  /// ```
+  pub fn merge_level(
+    &self,
+    children: &[Blake3ChainingValue],
+    out: &mut [Blake3ChainingValue],
+  ) -> Result<(), Blake3SubtreeError> {
+    if !children.len().is_multiple_of(2) {
+      return Err(Blake3SubtreeError::OddChildCount);
+    }
+    if out.len() != children.len() / 2 {
+      return Err(Blake3SubtreeError::OutputLengthMismatch);
+    }
+    for pair in children.as_chunks::<2>().0 {
+      self.check_merge(&pair[0], &pair[1])?;
+    }
+    if out.is_empty() {
+      return Ok(());
+    }
+
+    let kernel = dispatch::hasher_dispatch().bulk_kernel_for_update(usize::MAX).id;
+    let mut scratch = MergeLevelScratch {
+      children: [[0; 8]; MERGE_LEVEL_PARENTS * 2],
+      parents: [[0; 8]; MERGE_LEVEL_PARENTS],
+    };
+    for (children, out) in children
+      .chunks(MERGE_LEVEL_PARENTS * 2)
+      .zip(out.chunks_mut(MERGE_LEVEL_PARENTS))
+    {
+      for (child, words) in children.iter().zip(scratch.children.iter_mut()) {
+        *words = child.words();
+      }
+      kernels::parent_cvs_many_from_cvs_inline(
+        kernel,
+        &scratch.children[..children.len()],
+        self.key_words,
+        self.flags,
+        &mut scratch.parents[..out.len()],
+      );
+      for ((pair, words), parent) in children.as_chunks::<2>().0.iter().zip(scratch.parents.iter()).zip(out) {
+        *parent = Blake3ChainingValue {
+          bytes: words8_to_le_bytes(words),
+          input_offset: pair[0].input_offset,
+          len: pair[0].len.strict_add(pair[1].len),
+          flags: self.flags,
+        };
+      }
+    }
+    Ok(())
   }
 
   /// Merge the two children of the root into the 32-byte hash.
@@ -445,6 +543,22 @@ impl core::fmt::Debug for Blake3ChainingValue {
       .field("input_offset", &self.input_offset)
       .field("len", &self.len)
       .finish_non_exhaustive()
+  }
+}
+
+// One group fills the widest parent kernel without allocating per-level storage.
+const MERGE_LEVEL_PARENTS: usize = 16;
+
+struct MergeLevelScratch {
+  children: [[u32; 8]; MERGE_LEVEL_PARENTS * 2],
+  parents: [[u32; 8]; MERGE_LEVEL_PARENTS],
+}
+
+impl Drop for MergeLevelScratch {
+  fn drop(&mut self) {
+    ct::zeroize_words_no_fence(self.children.as_flattened_mut());
+    ct::zeroize_words_no_fence(self.parents.as_flattened_mut());
+    ct::zeroize_fence();
   }
 }
 

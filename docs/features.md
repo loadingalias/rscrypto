@@ -53,6 +53,14 @@ No Cargo feature combination exposes them, including `--all-features`.
 Applications must not use the internal cfg.
 It has no compatibility guarantee.
 
+With the `blake3` leaf feature, `digest_batch`, `keyed_digest_batch`, and
+`Blake3DeriveContext::derive_key_batch` accept independent mixed-length inputs
+and caller-provided output storage. Plain equal-length runs can use SIMD;
+other plain inputs and keyed/derive-key batches use individual calls. Larger messages use
+the existing tree path. These APIs and
+`Blake3Tree::merge_level` require neither allocation nor `std`. A merge level
+validates every child pair before writing any output.
+
 `getrandom` changes how `rscrypto` gets entropy.
 It does not change which algorithms are available.
 APIs that accept entropy from the caller work without it.

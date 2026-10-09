@@ -1,11 +1,148 @@
-//! Batched unkeyed hashing of many independent small inputs across SIMD lanes.
+//! Batched hashing of independent inputs.
 //!
-//! A run of equal-length inputs of 1 to 1,024 bytes shares one lane-parallel
-//! kernel call; each lane hashes a whole input with counter 0 and a rooted last
-//! block. Every other input takes the one-shot path. Inputs and outputs are
-//! public, so no intermediate here needs clearing.
+//! Runs of equal-length unkeyed inputs retain their whole-input SIMD kernel.
+//! Keyed and derive-key inputs use the existing one-shot path. All modes
+//! preserve input order and use public input lengths for dispatch.
 
-use super::{IV, OUT_LEN, digest_public_oneshot};
+use super::{
+  Blake3, Blake3DeriveContext, Blake3KeyedHash, DERIVE_KEY_MATERIAL, IV, KEY_LEN, KEYED_HASH, OUT_LEN,
+  digest_public_oneshot,
+};
+use crate::traits::ct;
+
+impl Blake3 {
+  /// Hash independent inputs under one key, preserving their order.
+  ///
+  /// `outputs[i]` becomes [`Self::keyed_digest`] of `inputs[i]`, using the
+  /// existing one-shot path. This method does not allocate.
+  ///
+  /// Input lengths and the number of inputs are public. The batch-owned decoded
+  /// key and per-input key/digest scratch are cleared when their owners drop,
+  /// including during unwinding. Caller-owned inputs and output tags remain live.
+  ///
+  /// # Panics
+  ///
+  /// Panics before writing any output unless both slices have the same length.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// use rscrypto::{Blake3, Blake3KeyedHash};
+  ///
+  /// let key = [42; 32];
+  /// let inputs: [&[u8]; 2] = [b"one", b"another message"];
+  /// let mut outputs = [Blake3KeyedHash::default(); 2];
+  /// Blake3::keyed_digest_batch(&key, &inputs, &mut outputs);
+  /// assert!(outputs[1].ct_eq(&Blake3::keyed_digest(&key, inputs[1])).declassify());
+  /// ```
+  pub fn keyed_digest_batch(key: &[u8; KEY_LEN], inputs: &[&[u8]], outputs: &mut [Blake3KeyedHash]) {
+    assert_eq!(
+      inputs.len(),
+      outputs.len(),
+      "Blake3::keyed_digest_batch needs one output per input"
+    );
+    let mut key_words = BatchKey([0; 8]);
+    for (word, bytes) in key_words.0.iter_mut().zip(key.as_chunks::<4>().0) {
+      *word = u32::from_le_bytes(*bytes);
+    }
+    digest_with_key(&key_words.0, KEYED_HASH, inputs, &mut Outputs::Keyed(outputs));
+  }
+}
+
+impl Blake3DeriveContext {
+  /// Derive one key from each input under this prehashed context.
+  ///
+  /// `outputs[i]` equals [`Blake3::derive_key_with`] for `inputs[i]`, using the
+  /// existing one-shot path. This method does not allocate.
+  ///
+  /// Input lengths and the number of inputs are public. Per-input key/digest
+  /// scratch is cleared when its owner drops, including during unwinding.
+  /// Caller-owned key material and derived outputs remain live and are the
+  /// caller's cleanup responsibility.
+  ///
+  /// # Panics
+  ///
+  /// Panics before writing any output unless both slices have the same length.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// use rscrypto::{Blake3, Blake3DeriveContext};
+  ///
+  /// let context = Blake3DeriveContext::new("example.com 2026 session keys");
+  /// let inputs: [&[u8]; 2] = [b"first key material", b"second key material"];
+  /// let mut outputs = [[0; 32]; 2];
+  /// context.derive_key_batch(&inputs, &mut outputs);
+  /// assert_eq!(outputs[1], Blake3::derive_key_with(&context, inputs[1]));
+  /// ```
+  pub fn derive_key_batch(&self, inputs: &[&[u8]], outputs: &mut [[u8; OUT_LEN]]) {
+    assert_eq!(
+      inputs.len(),
+      outputs.len(),
+      "Blake3DeriveContext::derive_key_batch needs one output per input"
+    );
+    digest_with_key(
+      &self.key_words,
+      DERIVE_KEY_MATERIAL,
+      inputs,
+      &mut Outputs::Bytes(outputs),
+    );
+  }
+}
+
+struct BatchKey([u32; 8]);
+
+impl Drop for BatchKey {
+  fn drop(&mut self) {
+    ct::zeroize_words(&mut self.0);
+  }
+}
+
+enum Outputs<'a> {
+  Bytes(&'a mut [[u8; OUT_LEN]]),
+  Keyed(&'a mut [Blake3KeyedHash]),
+}
+
+impl Outputs<'_> {
+  fn get_mut(&mut self, index: usize) -> &mut [u8; OUT_LEN] {
+    match self {
+      Self::Bytes(outputs) => &mut outputs[index],
+      Self::Keyed(outputs) => &mut outputs[index].0,
+    }
+  }
+}
+
+fn digest_with_key(key: &[u32; 8], flags: u32, inputs: &[&[u8]], outputs: &mut Outputs<'_>) {
+  for (index, input) in inputs.iter().enumerate() {
+    digest_one(key, flags, input, outputs.get_mut(index));
+  }
+}
+
+/// Borrow the batch key; the existing one-shot route consumes a cleared copy.
+fn digest_one(key: &[u32; 8], flags: u32, input: &[u8], output: &mut [u8; OUT_LEN]) {
+  struct Scratch {
+    key: [u32; 8],
+    digest: [u8; OUT_LEN],
+    secret: bool,
+  }
+  impl Drop for Scratch {
+    fn drop(&mut self) {
+      if self.secret {
+        ct::zeroize_words_no_fence(&mut self.key);
+        ct::zeroize_no_fence(&mut self.digest);
+        ct::zeroize_fence();
+      }
+    }
+  }
+  let mut scratch = Scratch {
+    key: [0; 8],
+    digest: [0; OUT_LEN],
+    secret: flags != 0,
+  };
+  scratch.key.copy_from_slice(key);
+  scratch.digest = digest_public_oneshot(&mut scratch.key, flags, input);
+  *output = scratch.digest;
+}
 
 /// Hash `inputs[i]` into `outputs[i]` with the unkeyed hash.
 pub(super) fn digest_batch(inputs: &[&[u8]], outputs: &mut [[u8; OUT_LEN]]) {

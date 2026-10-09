@@ -274,7 +274,8 @@ sys.exit(64)
   def test_configuration_and_runtime_compatibility(self):
     self.ok(self.bench('sha256'))
     previous = self.runs()[0]
-    for env in ({'RAYON_NUM_THREADS': '2'}, {'COMPILER': 'different compiler'}, {'RUSTFLAGS': '-C opt-level=1'}):
+    for env in ({'RAYON_NUM_THREADS': '2'}, {'RSCRYPTO_BLAKE3_BENCH_ISA': 'avx2'},
+                {'COMPILER': 'different compiler'}, {'RUSTFLAGS': '-C opt-level=1'}):
       with self.subTest(env=env):
         result = self.bench('sha256', f'baseline={previous}', **env)
         self.assertNotEqual(result.returncode, 0)

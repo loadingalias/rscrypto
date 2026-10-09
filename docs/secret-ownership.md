@@ -49,6 +49,22 @@ or prepared key directly into an allocation from a caller-selected `Allocator`, 
 - `Debug` shows only the mode and the input range.
 - `Blake3ChainingValue::as_bytes` borrows the bytes.
 
+`Blake3Tree::merge_level` owns bounded scratch for 32 child and 16 parent CVs
+(1,536 bytes). Its destructor clears both arrays and fences. All shape and
+pair validation precedes scratch population and output mutation. The tree's
+existing outer by-value key arguments and backend scratch retain their separate
+cleanup limits.
+
+### BLAKE3 mixed batches
+
+Keyed batching borrows the caller's key and outputs typed `Blake3KeyedHash`
+values. Derive-key batching borrows its reusable context and writes ordinary
+caller-owned arrays. Neither API clones or serializes its internal scratch.
+Keyed batching owns a cleared key guard. Each serial/tree call owns key and
+digest guards; secret-mode destruction clears both and then fences.
+Input indexes, lengths and flags are public.
+Returned outputs and unchanged fallback/outer-key copies are separate owners.
+
 ### BLAKE3 WASM scratch
 
 - The SIMD128 backend borrows keys and input. Its round state also carries the vector

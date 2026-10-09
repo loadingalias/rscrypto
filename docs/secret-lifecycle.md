@@ -25,6 +25,15 @@ The claim does not cover:
 
 ## Cleanup boundaries
 
+Keyed and derive-key BLAKE3 batches clear their named key and fallback digest
+owners. `merge_level` clears its bounded
+child/parent scratch in every mode. RAII covers normal return and ordinary
+unwinding after population; no whole-route erasure follows. The
+delivery evidence (`benchmark_results/blake3-delivery-20261008T185226Z/report.md`)
+records the reviewed compiler/target scope. Existing Portable state, outer
+by-value keys, native fallbacks, plain-array unwind, returned outputs and
+compiler/register/spill copies remain separate limitations.
+
 The BLAKE3 SIMD128 backend clears its named vector, tail, parent, and output scratch in keyed
 and derive-key modes. Its plain tiny-input specialization adds no secret route. The
 [WASM backend record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-wasm-four-lane-backend)

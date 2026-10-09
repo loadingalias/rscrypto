@@ -1,7 +1,10 @@
 use rscrypto::{Blake3, Digest};
 use rscrypto_fuzz::{FuzzInput, assert_digest_chunked, assert_digest_reset, some_or_return};
 
+mod hash_blake3_batch;
+
 pub(super) fn run(data: &[u8]) {
+  hash_blake3_batch::run(data);
   let mut input = FuzzInput::new(data);
   let split: u8 = some_or_return!(input.byte());
   let out_len_byte: u8 = some_or_return!(input.byte());
