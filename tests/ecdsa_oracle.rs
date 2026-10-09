@@ -443,3 +443,42 @@ fn p384_blinded_sign_matches_deterministic_signature_and_rustcrypto_oracle() {
   p384::ecdsa::signature::Verifier::verify(&oracle_public, message, &oracle_signature)
     .expect("RustCrypto must verify rscrypto blinded P-384 signature");
 }
+
+#[cfg(feature = "ecdsa-p256")]
+#[test]
+fn p256_spki_rejection_names_the_failing_component() {
+  use rscrypto::EcdsaError;
+
+  // Well-formed keys of other algorithms: RFC 8410 section 10.1 Ed25519 (no
+  // AlgorithmIdentifier parameters) and the RSA-3072 fixture (NULL parameters).
+  let ed25519 =
+    decode_hex_vec("302a300506032b657003210019bf44096984cdfe8541bac167dc3b96c85086aa30b6b6cb0c5c38ad703166e1");
+  let rsa = include_bytes!("../testdata/rsa/fixtures/rsa3072_spki.der");
+  for foreign in [ed25519.as_slice(), rsa.as_slice()] {
+    assert_eq!(
+      EcdsaP256PublicKey::from_spki_der(foreign),
+      Err(EcdsaError::UnsupportedAlgorithm)
+    );
+  }
+
+  let sec1 = EcdsaP256SecretKey::from_bytes([0x11; 32])
+    .expect("P-256 rscrypto secret must parse")
+    .public_key()
+    .to_sec1_bytes();
+  let secp384r1 = [0x2b, 0x81, 0x04, 0x00, 0x22];
+  assert_eq!(
+    EcdsaP256PublicKey::from_spki_der(&spki_der(&secp384r1, sec1.as_slice())),
+    Err(EcdsaError::UnsupportedAlgorithm)
+  );
+
+  let mut null_parameters = tlv(0x06, ID_EC_PUBLIC_KEY_OID);
+  null_parameters.extend_from_slice(&[0x05, 0x00]);
+  let mut bit_string = vec![0];
+  bit_string.extend_from_slice(sec1.as_slice());
+  let mut spki = tlv(0x30, &null_parameters);
+  spki.extend_from_slice(&tlv(0x03, &bit_string));
+  assert_eq!(
+    EcdsaP256PublicKey::from_spki_der(&tlv(0x30, &spki)),
+    Err(EcdsaError::MalformedDer)
+  );
+}

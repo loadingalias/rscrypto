@@ -4708,12 +4708,14 @@ fn parse_spki_der<'a>(der: &'a [u8], curve_oid: &[u8]) -> Result<&'a [u8], Ecdsa
   spki.finish()?;
 
   let mut algorithm = DerReader::new(algorithm);
+  // Identify the algorithm before reading its parameters: another algorithm's
+  // parameters need not have the elliptic-curve shape.
   let algorithm_oid = algorithm.read_primitive(TAG_OBJECT_IDENTIFIER)?;
-  let named_curve = algorithm.read_primitive(TAG_OBJECT_IDENTIFIER)?;
-  algorithm.finish()?;
   if algorithm_oid != ID_EC_PUBLIC_KEY_OID {
     return Err(EcdsaError::UnsupportedAlgorithm);
   }
+  let named_curve = algorithm.read_primitive(TAG_OBJECT_IDENTIFIER)?;
+  algorithm.finish()?;
   if named_curve != curve_oid {
     return Err(EcdsaError::UnsupportedAlgorithm);
   }
