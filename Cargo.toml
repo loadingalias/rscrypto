@@ -283,7 +283,7 @@ serde_json = "1.0.151"
 ring = "0.17.14"
 rsa = { version = "0.9.10", default-features = false, features = ["std", "u64_digit", "sha2"] }
 dryoc = "1.0.0"
-rustcrypto-ml-dsa = { version = "=0.1.1", package = "ml-dsa", default-features = false, features = ["zeroize"] }
+rustcrypto-ml-dsa = { version = "=0.1.1", package = "ml-dsa", default-features = false, features = ["alloc", "pkcs8", "zeroize"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 # Explicit collection boundaries avoid ARM Callgrind return-heuristic leakage.

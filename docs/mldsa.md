@@ -43,13 +43,14 @@ No third-party implementation source is copied, translated, or bundled into the 
 Each parameter set has its own types for the public key, secret key, signature, prepared secret key,
 and prepared public key.
 Each prepared key also has storage that the caller owns.
-The raw FIPS encodings have these sizes, in bytes:
+The encodings have these sizes, in bytes. The SPKI column is the RFC 9881 DER form of the public key;
+the other columns are raw FIPS 204 encodings.
 
-| Parameter set | Public key | Expanded secret key | Signature |
-| ------------- | ---------: | ------------------: | --------: |
-| ML-DSA-44     |       1312 |                2560 |      2420 |
-| ML-DSA-65     |       1952 |                4032 |      3309 |
-| ML-DSA-87     |       2592 |                4896 |      4627 |
+| Parameter set | Public key | Expanded secret key | Signature | Public-key SPKI |
+| ------------- | ---------: | ------------------: | --------: | --------------: |
+| ML-DSA-44     |       1312 |                2560 |      2420 |            1334 |
+| ML-DSA-65     |       1952 |                4032 |      3309 |            1974 |
+| ML-DSA-87     |       2592 |                4896 |      4627 |            2614 |
 
 ### Keys
 
@@ -60,6 +61,11 @@ The raw FIPS encodings have these sizes, in bytes:
   and verifies the redundant low polynomial and the public-key hash.
 - The expanded format has no independent consistency check for the signing seed K.
 - Public-key decoding accepts every bit pattern of the correct length.
+- `from_spki_der` and `to_spki_der` use the [RFC 9881](https://www.rfc-editor.org/rfc/rfc9881.html)
+  SubjectPublicKeyInfo: this parameter set's `id-ml-dsa-*` identifier with absent parameters,
+  then the raw public key in a BIT STRING. Import accepts only that unique DER encoding.
+  It reports another algorithm or parameter set, including HashML-DSA, as `UnsupportedAlgorithm`.
+  Neither direction allocates. Private-key containers are not implemented.
 - Key import returns `MlDsaKeyError`.
   Generation, preparation, and signing return `MlDsaError`.
 - Signing with a secret key and preparing it re-check its noise coefficient ranges.

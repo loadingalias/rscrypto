@@ -41,6 +41,20 @@ pub(super) fn run(data: &[u8]) {
           .verify_with_context(message, b"fuzz", &changed)
           .expect_err("single-bit signature forgery");
       }
+      // An accepted SPKI is the unique encoding of its key: a one-bit change
+      // either yields another key's encoding or is rejected.
+      let mut encoded = public.to_spki_der();
+      assert_eq!($public::from_spki_der(&encoded), Ok(public.clone()));
+      mutation.apply(&mut encoded);
+      for candidate in [encoded.as_slice(), message] {
+        if let Ok(parsed) = $public::from_spki_der(candidate) {
+          assert_eq!(
+            parsed.to_spki_der().as_slice(),
+            candidate,
+            "accepted SPKI must be canonical"
+          );
+        }
+      }
       // Arbitrary byte lengths and contents must not panic at a public parser.
       let _public = $public::try_from_slice(message);
       let _secret = $secret::try_from_slice(message);

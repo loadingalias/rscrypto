@@ -5,6 +5,8 @@
 //! signing is an explicit, separate operation. The `ml-dsa` leaf needs neither
 //! allocation nor OS entropy. See [`MlDsaPrehash`] for HashML-DSA.
 //!
+//! Public keys also have RFC 9881 SubjectPublicKeyInfo import and export.
+//!
 //! Target qualification is ongoing; no whole-operation constant-time claim
 //! is made. Signing needs tens of KiB of stack. Prepared keys keep up to
 //! 79 KiB of polynomials in caller-owned storage, which may live on the stack,
@@ -31,6 +33,7 @@ mod portable;
 mod sampling;
 #[cfg(feature = "serde")]
 mod serde_impl;
+mod spki;
 #[cfg(test)]
 mod tests;
 
@@ -83,6 +86,10 @@ impl core::error::Error for MlDsaError {}
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub enum MlDsaKeyError {
+  /// DER input was malformed or non-canonical.
+  MalformedDer,
+  /// The algorithm identifier names another algorithm or ML-DSA parameter set.
+  UnsupportedAlgorithm,
   /// The public-key encoding has the wrong length.
   InvalidPublicKey,
   /// The secret-key encoding is malformed or its redundant fields disagree.
@@ -95,6 +102,8 @@ pub enum MlDsaKeyError {
 impl fmt::Display for MlDsaKeyError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.write_str(match self {
+      Self::MalformedDer => "malformed ML-DSA DER",
+      Self::UnsupportedAlgorithm => "unsupported ML-DSA key algorithm",
       Self::InvalidPublicKey => "invalid ML-DSA public key",
       Self::InvalidSecretKey => "invalid ML-DSA secret key",
       Self::RejectionLimit => "ML-DSA key expansion reached its rejection limit",
@@ -399,7 +408,7 @@ macro_rules! verification_methods {
 }
 
 macro_rules! parameter_set {
-  ($profile:ident, $public:ident, $secret:ident, $signature:ident, $prepared_secret:ident, $prepared_public:ident, $secret_storage:ident, $public_storage:ident, $p:ident, $k:literal, $l:literal, $pk:literal, $sk:literal, $sig:literal) => {
+  ($profile:ident, $public:ident, $secret:ident, $signature:ident, $prepared_secret:ident, $prepared_public:ident, $secret_storage:ident, $public_storage:ident, $p:ident, $k:literal, $l:literal, $pk:literal, $sk:literal, $sig:literal, $arc:literal) => {
     /// FIPS 204 parameter set with typed key-generation outputs.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct $profile;
@@ -493,6 +502,33 @@ macro_rules! parameter_set {
       pub fn try_from_slice(bytes: &[u8]) -> Result<Self, MlDsaKeyError> {
         let array = bytes.try_into().map_err(|_| MlDsaKeyError::InvalidPublicKey)?;
         Ok(Self(array))
+      }
+
+      /// DER-encoded RFC 9881 SubjectPublicKeyInfo length in bytes.
+      pub const SPKI_DER_LENGTH: usize = spki::HEADER_LENGTH.strict_add($pk);
+
+      const SPKI_HEADER: [u8; spki::HEADER_LENGTH] = spki::header($arc, $pk);
+
+      /// Parse an RFC 9881 SubjectPublicKeyInfo for this parameter set.
+      ///
+      /// Accepts only the unique DER encoding: this parameter set's algorithm
+      /// identifier with absent parameters, a BIT STRING with no unused bits,
+      /// the exact public-key length, and no trailing input.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`MlDsaKeyError::UnsupportedAlgorithm`] for a well-formed key of
+      /// another algorithm or ML-DSA parameter set, including HashML-DSA;
+      /// [`MlDsaKeyError::InvalidPublicKey`] for a wrong key length; and
+      /// [`MlDsaKeyError::MalformedDer`] for any other encoding. No heap allocation.
+      pub fn from_spki_der(der: &[u8]) -> Result<Self, MlDsaKeyError> {
+        Self::try_from_slice(spki::decode(der, &Self::SPKI_HEADER, $pk)?)
+      }
+
+      /// Encode the RFC 9881 SubjectPublicKeyInfo DER. No heap allocation.
+      #[must_use]
+      pub const fn to_spki_der(&self) -> [u8; Self::SPKI_DER_LENGTH] {
+        spki::encode(&Self::SPKI_HEADER, &self.0)
       }
 
       /// Prepare the matrix and transformed public key in caller-owned storage
@@ -857,7 +893,8 @@ parameter_set!(
   4,
   1312,
   2560,
-  2420
+  2420,
+  17
 );
 parameter_set!(
   MlDsa65,
@@ -873,7 +910,8 @@ parameter_set!(
   5,
   1952,
   4032,
-  3309
+  3309,
+  18
 );
 parameter_set!(
   MlDsa87,
@@ -889,7 +927,8 @@ parameter_set!(
   7,
   2592,
   4896,
-  4627
+  4627,
+  19
 );
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]

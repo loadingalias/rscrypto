@@ -35,7 +35,7 @@ macro_rules! reject_signing_failures {
 }
 
 macro_rules! interop {
-  ($name:ident, $profile:ident, $secret:ident, $signature:ident, $oracle:ident) => {
+  ($name:ident, $profile:ident, $public:ident, $secret:ident, $signature:ident, $oracle:ident) => {
     #[test]
     fn $name() {
       for seed_byte in [0, 1, 0x7f, 0xff] {
@@ -44,6 +44,10 @@ macro_rules! interop {
         let external = oracle::ExpandedSigningKey::<oracle::$oracle>::from_seed(&seed.into());
         let external_public = external.verifying_key();
         assert_eq!(public.as_bytes().as_slice(), external_public.encode().as_slice());
+        let external_spki =
+          oracle::pkcs8::EncodePublicKey::to_public_key_der(&external_public).expect("oracle SPKI export");
+        assert_eq!(public.to_spki_der().as_slice(), external_spki.as_bytes());
+        assert_eq!($public::from_spki_der(external_spki.as_bytes()), Ok(public.clone()));
         #[expect(
           deprecated,
           reason = "FIPS 204 expanded encoding is the interoperability contract under test"
@@ -120,9 +124,30 @@ macro_rules! interop {
   };
 }
 
-interop!(interop_44, MlDsa44, MlDsa44SecretKey, MlDsa44Signature, MlDsa44);
-interop!(interop_65, MlDsa65, MlDsa65SecretKey, MlDsa65Signature, MlDsa65);
-interop!(interop_87, MlDsa87, MlDsa87SecretKey, MlDsa87Signature, MlDsa87);
+interop!(
+  interop_44,
+  MlDsa44,
+  MlDsa44PublicKey,
+  MlDsa44SecretKey,
+  MlDsa44Signature,
+  MlDsa44
+);
+interop!(
+  interop_65,
+  MlDsa65,
+  MlDsa65PublicKey,
+  MlDsa65SecretKey,
+  MlDsa65Signature,
+  MlDsa65
+);
+interop!(
+  interop_87,
+  MlDsa87,
+  MlDsa87PublicKey,
+  MlDsa87SecretKey,
+  MlDsa87Signature,
+  MlDsa87
+);
 
 #[test]
 fn context_and_entropy_failure_leave_key_reusable() {
