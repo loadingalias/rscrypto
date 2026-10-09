@@ -388,6 +388,20 @@ Construction-only and header-mask groups state their own boundaries next to thei
   Plain parameter-group duplicates are removed.
   The main one-shot rows are the baselines for salt and personalization hashing.
   All of these are complete hash operations, not isolated host overhead.
+- BLAKE3 `ordered` rows compare identical ordered bytes through one-shot, one-update,
+  and two-update calls. Prefix/bulk and bulk/suffix cases have separate inputs;
+  reversing their byte order is not an equivalent comparison. Construction, output,
+  and destruction stay timed; fixture allocation does not. Derive rows use each
+  library's normal context setup, including rscrypto's warm context cache.
+  Upstream's `zeroize` feature is disabled, so cleanup costs are not equivalent.
+  Every measured operation is checked against upstream before timing.
+- BLAKE3 `ordered-alignment` repeats selected ordered cases with identical bytes
+  at addresses congruent to 0 and 1 modulo 64. It retains the `ordered` timing
+  boundary. Diagnostic `leaf-alignment-cvs` rows call existing full-chunk workers
+  with independently controlled input and output alignment. They include wrapper
+  validation and consume every CV, with allocation outside timing. Every CV is
+  checked against upstream's non-root hash at its chunk offset and against Portable.
+  These component rows do not measure public dispatch or complete hashing.
 - Ascon's `rscrypto/scalar-loop` rows compare repeated calls to the `rscrypto` scalar API with its batch API.
   They do not compare with an external library.
 

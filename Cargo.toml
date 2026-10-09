@@ -285,6 +285,10 @@ rsa = { version = "0.9.10", default-features = false, features = ["std", "u64_di
 dryoc = "1.0.0"
 rustcrypto-ml-dsa = { version = "=0.1.1", package = "ml-dsa", default-features = false, features = ["zeroize"] }
 
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# Explicit collection boundaries avoid ARM Callgrind return-heuristic leakage.
+gungraun = { version = "=0.19.4", features = ["client_requests"] }
+
 [target.'cfg(target_arch = "x86_64")'.dev-dependencies]
 libcrux-ml-kem = { version = "0.0.10", default-features = false, features = [
   "mlkem512",

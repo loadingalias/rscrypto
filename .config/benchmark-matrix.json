@@ -533,7 +533,7 @@
     "blake3": {
       "diagnostic": [
         "/rscrypto-[^/]+/",
-        "^blake3/(xof-output|chunk-tail-digest|chunk-tail-cvs|parent-tail-cvs)/"
+        "^blake3/(xof-output|chunk-tail-digest|chunk-tail-cvs|parent-tail-cvs|leaf-alignment-cvs)/"
       ]
 
     }

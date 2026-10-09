@@ -5,6 +5,12 @@ mod bench_config;
 
 mod common;
 
+#[path = "blake3/streaming.rs"]
+mod streaming_shapes;
+
+#[path = "blake3/leaf_alignment.rs"]
+mod leaf_alignment;
+
 #[path = "blake3/mixed.rs"]
 mod mixed_batches;
 
@@ -568,10 +574,14 @@ fn main() {
     batch,
     mixed_batches::bench,
     streaming,
+    streaming_shapes::bench,
+    streaming_shapes::alignment_bench,
     xof,
     #[cfg(all(rscrypto_internal, feature = "diag"))]
     xof_output,
     #[cfg(all(rscrypto_internal, feature = "diag"))]
     tail_diagnostics,
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
+    leaf_alignment::bench,
   ]);
 }
