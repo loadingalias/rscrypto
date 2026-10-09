@@ -14,6 +14,8 @@ use crate::traits::{Digest, VerificationError, Xof, ct};
 
 #[cfg(target_arch = "aarch64")]
 pub(crate) mod aarch64;
+#[cfg(feature = "std")]
+pub(crate) mod bao;
 mod batch;
 mod control;
 #[doc(hidden)]

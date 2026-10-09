@@ -12,6 +12,7 @@ Test filenames are the stable entry points.
 | CRC-16/24/32/64 | Property tests, and the `crc`, `crc-fast`, `crc32fast`, `crc32c`, and `crc64fast` oracles where they apply. | No Wycheproof suites exist for checksums. |
 | SHA-2, SHA-3, SHAKE, cSHAKE, KMAC | NIST vectors, vendored `.blb` corpora, and RustCrypto differentials. | No Wycheproof suite maps to KMAC128. |
 | BLAKE2, BLAKE3, Ascon-Hash/XOF | Upstream or NIST corpora, and independent differentials. | Hash functions have no invalid-ciphertext or invalid-signature class. |
+| Bao combined streams | Pinned Bao 0.13.1 vectors and encoder/decoder oracles, exhaustive corruption/truncation tests, maximum-depth proofs, and decoder fuzzing. | Covers sequential unkeyed combined decoding; outboard encodings, slices, and seeking are not implemented. |
 | XXH3 and RapidHash | Differentials against the upstream crates, streaming tests, and fuzzing. | Not cryptographic. No Wycheproof suite applies. |
 | HMAC, HKDF, PBKDF2, Poly1305 | Official vectors, Wycheproof where the public profile maps, properties, and differentials. | No Wycheproof suite maps to HMAC-SHA3. Only the tag widths that the API exposes map. |
 | Argon2 and scrypt | Published vectors, RustCrypto differentials, kernel and parallel tests, and Miri. | No Wycheproof suite exists for PHC strings. |

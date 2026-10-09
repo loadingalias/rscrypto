@@ -135,6 +135,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
+name = "bao"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f9125f93587b894c196d58b0a752ce2213552d0d483c98ee41530e38202a511"
+dependencies = [
+ "arrayvec",
+ "blake3",
+]
+
+[[package]]
 name = "base16ct"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -789,6 +799,7 @@ dependencies = [
  "argon2",
  "ascon-aead",
  "ascon-hash",
+ "bao",
  "blake2",
  "blake3",
  "chacha20",

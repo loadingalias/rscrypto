@@ -117,6 +117,16 @@ pub mod expert {
   pub mod blake3_tree {
     pub use crate::hashes::crypto::blake3::tree::{Blake3ChainingValue, Blake3Subtree, Blake3SubtreeError, Blake3Tree};
   }
+
+  /// Verified reading of Bao combined encodings against a trusted BLAKE3 root.
+  ///
+  /// Requires `std`. Verification uses the same subtree and parent operations
+  /// as [`blake3_tree`]. The caller must obtain the expected root through a
+  /// trusted channel; a root supplied with untrusted content authenticates nothing.
+  #[cfg(feature = "std")]
+  pub mod bao {
+    pub use crate::hashes::crypto::blake3::bao::Decoder;
+  }
 }
 #[cfg(all(
   feature = "std",

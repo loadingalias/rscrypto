@@ -76,6 +76,11 @@ resource use beyond the documented bounds, and authentication oracles.
   before private scalar arithmetic.
 - The APIs that receive rejected AEAD plaintext
   and RSA private-operation output clear those buffers.
+- The Bao combined-stream decoder verifies each chunk before returning bytes.
+  Its root must come from an independent trusted source. It bounds its own
+  memory, hides the unverified length, and stops permanently after an error.
+  Reading to EOF verifies the complete input; stopping early verifies only
+  the returned prefix. The caller owns I/O timeouts and the underlying reader.
 
 ### Timing observation
 

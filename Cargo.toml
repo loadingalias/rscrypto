@@ -233,6 +233,7 @@ gungraun = "=0.19.4"
 proptest = "1.11.0"
 
 # Oracles
+bao = "=0.13.1"
 aes = "0.9.3"
 aes-siv = { version = "0.8.0", default-features = false, features = ["alloc"] }
 cshake = { version = "0.2.1", default-features = false }

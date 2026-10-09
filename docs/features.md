@@ -71,6 +71,11 @@ the existing tree path. These APIs and
 `Blake3Tree::merge_level` require neither allocation nor `std`. A merge level
 validates every child pair before writing any output.
 
+With `std`, `hashes::expert::bao::Decoder` verifies Bao combined encodings
+against an independently trusted BLAKE3 root. It returns only verified chunks
+and authenticates the final chunk before reporting EOF. It supports sequential
+unkeyed decoding; outboard encodings, slices and seeking are outside this API.
+
 `getrandom` changes how `rscrypto` gets entropy.
 It does not change which algorithms are available.
 APIs that accept entropy from the caller work without it.

@@ -34,6 +34,11 @@ records the reviewed compiler/target scope. Existing Portable state, outer
 by-value keys, native fallbacks, plain-array unwind, returned outputs and
 compiler/register/spill copies remain separate limitations.
 
+The Bao decoder clears its fixed input buffer on returned errors and on drop.
+A caught reader panic permanently disables decoding; the buffer is cleared
+when the decoder drops. No claim covers the underlying reader or bytes already
+returned to the caller. Abort and double-panic exits do not guarantee cleanup.
+
 The BLAKE3 buffered reader methods clear their owned input allocation before
 deallocation on success, I/O error, and panic unwinding. The allocation stays
 fixed while it contains input; alignment uses a borrowed slice within it.

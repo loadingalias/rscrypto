@@ -65,6 +65,15 @@ digest guards; secret-mode destruction clears both and then fences.
 Input indexes, lengths and flags are public.
 Returned outputs and unchanged fallback/outer-key copies are separate owners.
 
+### Bao decoder input
+
+The unkeyed Bao decoder owns a fixed 1,024-byte input buffer and a bounded
+stack of subtree chaining values. Returned errors clear the input buffer;
+drop clears it in all states. A caught reader panic makes the decoder terminal
+but retains its internal buffer until drop. It exposes no content or unverified
+length through `Debug`, and has no clone or serialization path. Previously
+returned verified bytes and the underlying reader remain caller-owned.
+
 ### BLAKE3 reader input
 
 `Blake3::update_reader` and `Blake3Subtree::update_reader` own a temporary heap
