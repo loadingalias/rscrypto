@@ -566,4 +566,139 @@ mod tests {
       assert_eq!(ours_derived, expected_derived, "blake3 derive-key mismatch len={}", len);
     }
   }
+
+  #[cfg(any(
+    all(target_arch = "aarch64", target_endian = "little", not(feature = "portable-only")),
+    all(target_arch = "x86_64", target_feature = "sse2")
+  ))]
+  #[test]
+  fn partial_forests_match_portable_and_upstream() {
+    use blake3::hazmat::HasherExt as _;
+
+    use super::super::{CHUNK_LEN, DERIVE_KEY_CONTEXT, DERIVE_KEY_MATERIAL, IV, KEYED_HASH, words8_to_le_bytes};
+
+    #[cfg(target_arch = "aarch64")]
+    let kernels = [(Blake3KernelId::Aarch64Neon, vec![3usize, 7, 11, 15])];
+    #[cfg(target_arch = "x86_64")]
+    let kernels = {
+      let mut shapes = Vec::new();
+      if super::super::kernels::avx512vl_partial_lane_available() {
+        shapes.push(3usize);
+      }
+      if super::super::kernels::avx512_partial_lane_available() {
+        shapes.push(15);
+      }
+      [(Blake3KernelId::X86Avx512, shapes)]
+    };
+    let portable = Blake3KernelId::Portable;
+    let words = |bytes: &[u8; 32]| {
+      core::array::from_fn(|i| u32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().expect("key word")))
+    };
+    let context_key = blake3::hazmat::hash_derive_key_context(CONTEXT);
+    let modes = [
+      (0, IV, Some(blake3::Hasher::new())),
+      (KEYED_HASH, words(KEY), Some(blake3::Hasher::new_keyed(KEY))),
+      (
+        DERIVE_KEY_MATERIAL,
+        words(&context_key),
+        Some(blake3::Hasher::new_from_context_key(&context_key)),
+      ),
+      (DERIVE_KEY_CONTEXT, IV, None),
+    ];
+    let storage = pattern(17 * CHUNK_LEN + 15);
+    for (id, shapes) in kernels {
+      if !crate::platform::caps().has(required_caps(id)) {
+        continue;
+      }
+      // Shapes outside a kernel's exact lane groups keep the existing route.
+      for full in [3usize, 7, 11, 15].into_iter().filter(|full| !shapes.contains(full)) {
+        let mut declined = force_hasher_kernel(Blake3::new(), id);
+        assert_eq!(
+          declined.try_partial_forest_update(&storage[..full * CHUNK_LEN + 1]),
+          None
+        );
+      }
+      for full in shapes {
+        for offset in [0usize, 1, 7, 15] {
+          let data = &storage[offset..];
+          for counter in [0u64, 16, (1 << 32) - 16, (1 << 54) - 16] {
+            for (flags, key, initial) in &modes {
+              let mut seed = Blake3::new_internal(*key, *flags);
+              seed.chunk_state.chunk_counter = counter;
+              let mut expected_frontier = seed.clone();
+              expected_frontier.update_with(&data[..full * CHUNK_LEN + 1], portable, portable);
+              if let Some(initial) = initial {
+                let mut start = 0usize;
+                // Portable's canonical frontier is checked against independent
+                // upstream subtrees before it supplies the state expectation.
+                for (index, level) in (0..4).rev().filter(|level| full & (1 << level) != 0).enumerate() {
+                  let count = 1usize << level;
+                  let mut oracle = initial.clone();
+                  oracle.set_input_offset((counter + u64::try_from(start).expect("offset")) * 1024);
+                  oracle.update(&data[start * CHUNK_LEN..(start + count) * CHUNK_LEN]);
+                  // SAFETY: the Portable update initialized each live stack slot.
+                  let cv = unsafe { expected_frontier.cv_stack[index].assume_init_ref() };
+                  assert_eq!(words8_to_le_bytes(cv), oracle.finalize_non_root());
+                  start += count;
+                }
+              }
+              for partial in 1usize..CHUNK_LEN {
+                let end = full * CHUNK_LEN + partial;
+                let mut actual = force_hasher_kernel(seed.clone(), id);
+                assert_eq!(actual.try_partial_forest_update(&data[..end]), Some(end));
+                let mut expected = expected_frontier.clone();
+                expected.update_with(&data[full * CHUNK_LEN + 1..end], portable, portable);
+                let context = alloc::format!("{id:?}/{full}/{offset}/{counter}/{flags}/{partial}");
+                assert_eq!(
+                  actual.chunk_state.chunk_counter, expected.chunk_state.chunk_counter,
+                  "{context}"
+                );
+                assert_eq!(
+                  actual.chunk_state.chaining_value, expected.chunk_state.chaining_value,
+                  "{context}"
+                );
+                assert_eq!(
+                  actual.chunk_state.blocks_compressed, expected.chunk_state.blocks_compressed,
+                  "{context}"
+                );
+                assert_eq!(
+                  actual.chunk_state.block_len, expected.chunk_state.block_len,
+                  "{context}"
+                );
+                assert_eq!(actual.chunk_state.block, expected.chunk_state.block, "{context}");
+                assert!(actual.pending_chunk_cv.is_none(), "{context}");
+                assert_eq!(actual.cv_stack_len, expected.cv_stack_len, "{context}");
+                for index in 0..usize::from(actual.cv_stack_len) {
+                  // SAFETY: both updates initialized their independently tracked
+                  // live slots, and the equal lengths bound this shared read.
+                  unsafe {
+                    assert_eq!(
+                      actual.cv_stack[index].assume_init_ref(),
+                      expected.cv_stack[index].assume_init_ref(),
+                      "{context}"
+                    );
+                  }
+                }
+                if counter == 0 {
+                  let mut got = [0u8; 131];
+                  let mut want = [0u8; 131];
+                  actual.clone().finalize_xof().squeeze(&mut got);
+                  expected.clone().finalize_xof().squeeze(&mut want);
+                  assert_eq!(got, want, "{context}");
+                  if let Some(initial) = initial {
+                    initial.clone().update(&data[..end]).finalize_xof().fill(&mut want);
+                    assert_eq!(got, want, "{context}");
+                  }
+                  actual.update_with(&[], id, id);
+                  actual.update_with(&data[end..end + 70], id, id);
+                  expected.update_with(&data[end..end + 70], portable, portable);
+                  assert_eq!(actual.finalize(), expected.finalize(), "{context}");
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 }

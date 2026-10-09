@@ -76,6 +76,12 @@ OR-ing ROOT preserves the secret-mode bits for the generic source contract.
 Native batch frames grow, and observed compiler-created key spills lie outside the
 named guest clears. This is not a guarantee of erased native slots or equal residue.
 
+The BLAKE3 partial-chunk forest clears its populated leaf, parent and frontier
+scratch on normal return and unwinding in keyed and derive-key modes. Its NEON lane
+worker clears named vector working storage in every mode. Abort exits, the AVX-512
+lane workers' register and spill copies, and by-value frontier copies before the
+existing stack merge remain outside this claim.
+
 The shared BLAKE3 root-output fallback clears its decoded words and compression output
 after copying them in keyed and derive-key modes. Optimized WASM evidence and its limits are retained in
 the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-wasm-simd128).

@@ -4077,6 +4077,20 @@ unsafe fn hash_many_contiguous_avx2_wrapper(
   unsafe { hash_many_contiguous_avx2_inner(input, num_chunks, key, counter, flags, out) };
 }
 
+/// Whether the owned 16-lane AVX-512 partial-lane chunk kernel can run.
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+#[inline]
+pub(crate) fn avx512_partial_lane_available() -> bool {
+  crate::platform::caps().has(x86::AVX512F.union(x86::AVX512VL).union(x86::AVX512DQ).union(x86::AVX2))
+}
+
+/// Whether the four-lane AVX-512VL partial-lane chunk kernel can run.
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+#[inline]
+pub(crate) fn avx512vl_partial_lane_available() -> bool {
+  crate::platform::caps().has(x86::AVX512F.union(x86::AVX512VL).union(x86::SSE41).union(x86::SSSE3))
+}
+
 #[cfg(all(
   all(target_arch = "x86_64", target_feature = "sse2"),
   any(

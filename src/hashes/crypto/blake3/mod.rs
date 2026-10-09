@@ -981,6 +981,66 @@ fn reduce_power_of_two_chunk_cvs_any(
   result
 }
 
+/// Hash complete chunks and one following partial chunk's leading blocks.
+///
+/// Fills the complete chunks' CVs, then the partial chunk's CV before its last
+/// buffered block, and returns that chunk's compressed-block count.
+#[cfg(any(
+  all(target_arch = "aarch64", target_endian = "little", not(feature = "portable-only")),
+  all(target_arch = "x86_64", target_feature = "sse2")
+))]
+type PartialLanes = unsafe fn(&[u8], &[u32; 8], u64, u32, &mut [[u32; 8]; 16]) -> u8;
+
+/// NEON hashes all but the last three complete chunks normally, then shares
+/// one four-lane pass between those chunks and the partial chunk.
+///
+/// # Safety
+///
+/// NEON must be available. `input` must hold 3, 7, 11 or 15 complete chunks
+/// followed by 1..=1023 bytes, and `counter` must permit a successor per chunk.
+#[cfg(all(target_arch = "aarch64", target_endian = "little", not(feature = "portable-only")))]
+unsafe fn hash_forest_lanes_neon(
+  input: &[u8],
+  key: &[u32; 8],
+  counter: u64,
+  flags: u32,
+  leaves: &mut [[u32; 8]; 16],
+) -> u8 {
+  let full_chunks = input.len().strict_div(CHUNK_LEN);
+  let prefix_chunks = full_chunks.strict_sub(3);
+  let prefix_bytes = prefix_chunks.strict_mul(CHUNK_LEN);
+  if prefix_chunks != 0 {
+    // SAFETY: the caller establishes NEON and at least `prefix_chunks`
+    // complete chunks. `leaves` has more initialized, disjoint CV slots.
+    unsafe {
+      kernels::hash_many_contiguous_inline(
+        kernels::Blake3KernelId::Aarch64Neon,
+        input.as_ptr(),
+        prefix_chunks,
+        key,
+        counter,
+        flags,
+        leaves.as_mut_ptr().cast::<u8>(),
+      );
+    }
+  }
+  let tail: &mut [[u32; 8]; 4] = (&mut leaves[prefix_chunks..=full_chunks])
+    .try_into()
+    .expect("three complete leaves and one partial leaf");
+  // SAFETY: the remaining input contains exactly three full chunks and
+  // 1..=1023 bytes. The output borrow is disjoint, NEON is available, and the
+  // caller's counter bound covers the partial lane and its predecessors.
+  unsafe {
+    aarch64::hash3_and_partial_neon(
+      &input[prefix_bytes..],
+      key,
+      counter.strict_add(u64::try_from(prefix_chunks).expect("bounded BLAKE3 prefix")),
+      flags,
+      tail,
+    )
+  }
+}
+
 #[cfg(target_endian = "little")]
 #[inline]
 fn add_chunk_cvs_batched(
@@ -3516,6 +3576,129 @@ impl Blake3 {
     Some(subtree_len)
   }
 
+  /// Hash complete chunks and the leading blocks of a following partial chunk
+  /// in shared SIMD lanes.
+  ///
+  /// Aligned subtrees would leave the last complete chunks and the partial
+  /// chunk's blocks to serial compression. A later update or finalization then
+  /// resumes the partial chunk from its retained CV. NEON takes 3, 7, 11 or 15
+  /// complete chunks; AVX-512 takes 3 or 15, where a lane group fills exactly.
+  #[cfg(any(
+    all(target_arch = "aarch64", target_endian = "little", not(feature = "portable-only")),
+    all(target_arch = "x86_64", target_feature = "sse2")
+  ))]
+  #[inline]
+  fn try_partial_forest_update(&mut self, input: &[u8]) -> Option<usize> {
+    let full_chunks = input.len().strict_div(CHUNK_LEN);
+    if self.chunk_state.len() != 0
+      || !matches!(full_chunks, 3 | 7 | 11 | 15)
+      || input.len().is_multiple_of(CHUNK_LEN)
+      || !self.chunk_state.chunk_counter.is_multiple_of(16)
+    {
+      return None;
+    }
+    let lanes: PartialLanes = match self.bulk_kernel_id {
+      #[cfg(target_arch = "aarch64")]
+      kernels::Blake3KernelId::Aarch64Neon => hash_forest_lanes_neon,
+      #[cfg(target_arch = "x86_64")]
+      kernels::Blake3KernelId::X86Avx512 => match full_chunks {
+        3 if kernels::avx512vl_partial_lane_available() => x86_64::avx512::hash3_and_partial4_avx512vl,
+        15 if kernels::avx512_partial_lane_available() => x86_64::avx512::hash_chunks_and_partial16,
+        _ => return None,
+      },
+      _ => return None,
+    };
+    self.partial_forest_update(input, full_chunks, lanes);
+    Some(input.len())
+  }
+
+  // Reduce complete sibling pairs together before committing their canonical
+  // frontier. The partial chunk remains unfinalized for the next update.
+  #[cfg(any(
+    all(target_arch = "aarch64", target_endian = "little", not(feature = "portable-only")),
+    all(target_arch = "x86_64", target_feature = "sse2")
+  ))]
+  #[inline(never)]
+  fn partial_forest_update(&mut self, input: &[u8], full_chunks: usize, lanes: PartialLanes) {
+    let counter = self.chunk_state.chunk_counter;
+    let next_counter = counter.strict_add(u64::try_from(full_chunks).expect("bounded BLAKE3 forest"));
+    let flags = self.chunk_state.flags;
+
+    // Secret modes clear every slot this shape can populate: the complete and
+    // partial leaves, the first level of parents, and one frontier node per level.
+    struct Scratch {
+      leaves: [[u32; 8]; 16],
+      parents: [[u32; 8]; 8],
+      frontier: [[u32; 8]; 4],
+      full_chunks: usize,
+      secret: bool,
+    }
+    impl Drop for Scratch {
+      fn drop(&mut self) {
+        if self.secret {
+          let full_chunks = self.full_chunks;
+          ct::zeroize_words_no_fence(self.leaves[..=full_chunks].as_flattened_mut());
+          ct::zeroize_words_no_fence(self.parents[..full_chunks.strict_div(2)].as_flattened_mut());
+          let levels = usize::try_from(full_chunks.ilog2().strict_add(1)).expect("BLAKE3 forest levels fit in usize");
+          ct::zeroize_words_no_fence(self.frontier[..levels].as_flattened_mut());
+          core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        }
+      }
+    }
+    let mut scratch = Scratch {
+      leaves: [[0; 8]; 16],
+      parents: [[0; 8]; 8],
+      frontier: [[0; 8]; 4],
+      full_chunks,
+      secret: flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0,
+    };
+    // SAFETY: the caller selected `lanes` for the dispatched kernel and this
+    // chunk count after checking its CPU features. `input` holds those complete
+    // chunks followed by a partial chunk, and the checked counter advance covers
+    // every lane. The local output is disjoint from the borrowed input.
+    let blocks = unsafe { lanes(input, &self.key_words, counter, flags, &mut scratch.leaves) };
+
+    let mut count = full_chunks;
+    let mut level = 0usize;
+    while count != 0 {
+      if count & 1 != 0 {
+        scratch.frontier[level] = scratch.leaves[count.strict_sub(1)];
+      }
+      let pairs = count.strict_div(2);
+      if pairs != 0 {
+        kernels::parent_cvs_many_from_cvs_inline(
+          self.bulk_kernel_id,
+          &scratch.leaves[..pairs.strict_mul(2)],
+          self.key_words,
+          flags,
+          &mut scratch.parents[..pairs],
+        );
+        scratch.leaves[..pairs].copy_from_slice(&scratch.parents[..pairs]);
+      }
+      count = pairs;
+      level = level.strict_add(1);
+    }
+    // Counter alignment makes every retained node canonical. Descending levels
+    // give left-to-right input order, and each merge sees the counter after its
+    // subtree. The chunk state stays empty until the partial chunk resumes, so
+    // advancing its counter in place matches a fresh state at that counter.
+    debug_assert_eq!(self.chunk_state.chaining_value, self.key_words);
+    for level in (0..4).rev() {
+      let chunks = 1u64 << level;
+      if full_chunks & (1 << level) != 0 {
+        self.chunk_state.chunk_counter = self.chunk_state.chunk_counter.strict_add(chunks);
+        self.merge_cv_into_stack(scratch.frontier[level], chunks);
+      }
+    }
+    debug_assert_eq!(self.chunk_state.chunk_counter, next_counter);
+    self.chunk_state.chaining_value = scratch.leaves[full_chunks];
+    self.chunk_state.blocks_compressed = blocks;
+    let buffered_start = full_chunks
+      .strict_mul(CHUNK_LEN)
+      .strict_add(usize::from(blocks).strict_mul(BLOCK_LEN));
+    self.chunk_state.update(&input[buffered_start..]);
+  }
+
   #[cfg(not(target_endian = "little"))]
   fn try_simd_update_batch(&mut self, input: &[u8]) -> Option<usize> {
     if self.chunk_state.len() != 0 || self.bulk_kernel_id.simd_degree() <= 1 || input.len() <= CHUNK_LEN {
@@ -3639,6 +3822,15 @@ impl Blake3 {
           input = &input[consumed..];
           continue;
         }
+      }
+
+      #[cfg(any(
+        all(target_arch = "aarch64", target_endian = "little", not(feature = "portable-only")),
+        all(target_arch = "x86_64", target_feature = "sse2")
+      ))]
+      if let Some(consumed) = self.try_partial_forest_update(input) {
+        input = &input[consumed..];
+        continue;
       }
 
       #[cfg(target_endian = "little")]

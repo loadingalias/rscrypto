@@ -3,7 +3,7 @@
 use core::arch::x86_64::*;
 
 use super::{
-  super::{BLOCK_LEN, BLOCK_LEN_U32, IV, MSG_SCHEDULE},
+  super::{BLOCK_LEN, BLOCK_LEN_U32, CHUNK_END, CHUNK_LEN, CHUNK_START, IV, MSG_SCHEDULE},
   HashManyRequest, counter_high, counter_low,
 };
 
@@ -456,6 +456,124 @@ pub(crate) unsafe fn hash4_with_last_block_len(
     storeu(lo[3], out.add(6 * stride));
     storeu(hi[3], out.add(7 * stride));
   }
+}
+
+/// Finish three chunks while retaining the fourth chunk's unfinished state.
+///
+/// `out[0..3]` receive complete chunk CVs. `out[3]` receives the partial
+/// chunk's CV before its last buffered block; the return value counts the
+/// blocks already compressed there. Later outputs are left unchanged.
+///
+/// Callers compile this body under their own target features, so wider
+/// rotates can replace the SSE shift pairs.
+///
+/// # Safety
+///
+/// SSE4.1 and SSSE3 must be available. `input` must contain three full chunks
+/// followed by 1..=1023 bytes, and `counter` must permit three successors. The
+/// input and output borrows must be disjoint. `key` and `flags` define the same
+/// mode as the caller's chunk state.
+#[inline(always)]
+pub(crate) unsafe fn hash3_and_partial4(
+  input: &[u8],
+  key: &[u32; 8],
+  counter: u64,
+  flags: u32,
+  out: &mut [[u32; 8]; 16],
+) -> u8 {
+  debug_assert!((3 * CHUNK_LEN + 1..4 * CHUNK_LEN).contains(&input.len()));
+  debug_assert!(counter.checked_add(3).is_some());
+  let partial_blocks = input
+    .len()
+    .strict_sub(3 * CHUNK_LEN)
+    .strict_sub(1)
+    .strict_div(BLOCK_LEN);
+  out[3] = *key;
+
+  // SAFETY: the caller establishes SSE4.1/SSSE3, lengths and counter bounds.
+  // Lanes zero through two read complete chunks. Lane three reads only the
+  // blocks preceding its last buffered block; later blocks reread the first
+  // chunk, and that lane's final CV is never stored. Each store targets one of
+  // the first three disjoint `[u32; 8]` outputs.
+  unsafe {
+    let rot16_mask = _mm_setr_epi8(2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13);
+    let rot8_mask = _mm_setr_epi8(1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12);
+    let base = input.as_ptr();
+    let mut inputs = [
+      base,
+      base.add(CHUNK_LEN),
+      base.add(2 * CHUNK_LEN),
+      base.add(3 * CHUNK_LEN),
+    ];
+    let (counter_low_vec, counter_high_vec) = load_counters(counter, true);
+    let mut h_vecs = [
+      set1(key[0]),
+      set1(key[1]),
+      set1(key[2]),
+      set1(key[3]),
+      set1(key[4]),
+      set1(key[5]),
+      set1(key[6]),
+      set1(key[7]),
+    ];
+
+    for block in 0..CHUNK_LEN / BLOCK_LEN {
+      if block == partial_blocks {
+        inputs[3] = base;
+      }
+      let mut block_flags = flags;
+      if block == 0 {
+        block_flags |= CHUNK_START;
+      }
+      if block.strict_add(1) == CHUNK_LEN / BLOCK_LEN {
+        block_flags |= CHUNK_END;
+      }
+      let msg_vecs = transpose_msg_vecs(&inputs, block.strict_mul(BLOCK_LEN));
+      let mut v = [
+        h_vecs[0],
+        h_vecs[1],
+        h_vecs[2],
+        h_vecs[3],
+        h_vecs[4],
+        h_vecs[5],
+        h_vecs[6],
+        h_vecs[7],
+        set1(IV[0]),
+        set1(IV[1]),
+        set1(IV[2]),
+        set1(IV[3]),
+        counter_low_vec,
+        counter_high_vec,
+        set1(BLOCK_LEN_U32),
+        set1(block_flags),
+      ];
+      round(&mut v, &msg_vecs, 0, rot16_mask, rot8_mask);
+      round(&mut v, &msg_vecs, 1, rot16_mask, rot8_mask);
+      round(&mut v, &msg_vecs, 2, rot16_mask, rot8_mask);
+      round(&mut v, &msg_vecs, 3, rot16_mask, rot8_mask);
+      round(&mut v, &msg_vecs, 4, rot16_mask, rot8_mask);
+      round(&mut v, &msg_vecs, 5, rot16_mask, rot8_mask);
+      round(&mut v, &msg_vecs, 6, rot16_mask, rot8_mask);
+      for word in 0..8 {
+        h_vecs[word] = xor(v[word], v[word.strict_add(8)]);
+      }
+      if block.strict_add(1) == partial_blocks {
+        for (word, saved) in out[3].iter_mut().enumerate() {
+          *saved = _mm_extract_epi32::<3>(h_vecs[word]).cast_unsigned();
+        }
+      }
+    }
+
+    let mut lo = [h_vecs[0], h_vecs[1], h_vecs[2], h_vecs[3]];
+    let mut hi = [h_vecs[4], h_vecs[5], h_vecs[6], h_vecs[7]];
+    transpose_vecs(&mut lo);
+    transpose_vecs(&mut hi);
+    for (lane, cv) in out.iter_mut().enumerate().take(3) {
+      storeu(lo[lane], cv.as_mut_ptr().cast::<u8>());
+      storeu(hi[lane], cv.as_mut_ptr().add(4).cast::<u8>());
+    }
+  }
+  u8::try_from(partial_blocks).expect("unfinished BLAKE3 chunk has fewer than sixteen compressed blocks")
 }
 
 /// Generate 4 root output blocks (64 bytes each) in parallel.

@@ -107,6 +107,22 @@ outside this claim. Keyed and derive-key readers do not enter this path.
 - Returned chaining values and XOF output remain owned by their existing callers.
   This adds no public secret owner or serialization path.
 
+### BLAKE3 partial-chunk forest
+
+- With NEON or AVX-512 dispatch, a streaming update can start at an empty chunk
+  whose counter is divisible by 16. When it holds complete chunks followed by a
+  partial chunk (3, 7, 11 or 15 on NEON; 3 or 15 on AVX-512), it owns scratch for
+  up to 16 leaf, 8 parent and 4 frontier chaining values (896 bytes).
+- Keyed and derive-key updates clear every slot that shape populates on return or
+  unwind, then fence. Plain updates hold chaining values of public input and skip
+  the clear.
+- The NEON lane worker clears its named vector working storage in every mode. The
+  AVX-512 lane workers have no named working owner; their register copies and spills
+  retain the documented machine-code evidence boundary.
+- Frontier chaining values pass by value to the existing stack merge, which clears
+  its copies in secret modes. The partial chunk's chaining value moves into the
+  hasher's existing chunk state. This adds no public secret owner or serialization path.
+
 ### Password-hashing memory
 
 - Caller-provided `Argon2Block` and `ScryptBlock` memory is `Clone`, not `Copy`.

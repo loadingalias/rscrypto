@@ -533,6 +533,173 @@ pub(crate) unsafe fn hash16_contiguous_owned(input: *const u8, key: &[u32; 8], c
   }
 }
 
+/// Compress one block of 16 lanes into their chaining values.
+///
+/// # Safety
+///
+/// AVX-512F, AVX-512DQ, and AVX2 must be available. Every input must be
+/// readable for the complete block at `block`.
+#[inline(always)]
+unsafe fn chunk_block16(
+  h_vecs: &mut [__m512i; 8],
+  inputs: &[*const u8; DEGREE],
+  block: usize,
+  flags: u32,
+  counter_low_vec: __m512i,
+  counter_high_vec: __m512i,
+) {
+  // SAFETY: the caller establishes the target features and readable blocks.
+  unsafe {
+    let mut block_flags = flags;
+    if block == 0 {
+      block_flags |= super::super::CHUNK_START;
+    }
+    if block.strict_add(1) == CHUNK_LEN / BLOCK_LEN {
+      block_flags |= super::super::CHUNK_END;
+    }
+    let m = transpose_msg_vecs16(inputs, block.strict_mul(BLOCK_LEN));
+    let mut v = [
+      h_vecs[0],
+      h_vecs[1],
+      h_vecs[2],
+      h_vecs[3],
+      h_vecs[4],
+      h_vecs[5],
+      h_vecs[6],
+      h_vecs[7],
+      set1(IV[0]),
+      set1(IV[1]),
+      set1(IV[2]),
+      set1(IV[3]),
+      counter_low_vec,
+      counter_high_vec,
+      set1(BLOCK_LEN_U32),
+      set1(block_flags),
+    ];
+    round(&mut v, &m, 0);
+    round(&mut v, &m, 1);
+    round(&mut v, &m, 2);
+    round(&mut v, &m, 3);
+    round(&mut v, &m, 4);
+    round(&mut v, &m, 5);
+    round(&mut v, &m, 6);
+    for word in 0..8 {
+      h_vecs[word] = xor(v[word], v[word.strict_add(8)]);
+    }
+  }
+}
+
+/// Finish complete chunks while retaining the following chunk's unfinished state.
+///
+/// Lanes before `whole = input.len() / CHUNK_LEN` receive complete chunk CVs.
+/// Lane `whole` receives the partial chunk's CV before its last buffered block;
+/// the return value counts the blocks already compressed there. The caller
+/// retains the remaining one to 64 bytes. Later lanes are left unchanged.
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512F + AVX-512VL + AVX-512DQ + AVX2 are available.
+/// `input` must contain 1..=15 complete chunks followed by 1..=1023 bytes, and
+/// `counter` must permit `whole` successors. The input and output borrows must
+/// be disjoint. `key` and `flags` define the same mode as the caller's chunk state.
+#[target_feature(enable = "avx512f,avx512vl,avx512dq,avx2")]
+pub(crate) unsafe fn hash_chunks_and_partial16(
+  input: &[u8],
+  key: &[u32; 8],
+  counter: u64,
+  flags: u32,
+  out: &mut [[u32; 8]; DEGREE],
+) -> u8 {
+  let whole = input.len().strict_div(CHUNK_LEN);
+  let partial_len = input.len().strict_rem(CHUNK_LEN);
+  debug_assert!((1..DEGREE).contains(&whole));
+  debug_assert!(partial_len != 0);
+  debug_assert!(
+    counter
+      .checked_add(u64::try_from(whole).expect("BLAKE3 lane count fits in u64"))
+      .is_some()
+  );
+  let partial_blocks = partial_len.strict_sub(1).strict_div(BLOCK_LEN);
+  out[whole] = *key;
+
+  // SAFETY: the caller establishes AVX-512F/VL/DQ plus AVX2, lengths and
+  // counter bounds. Lanes before `whole` read complete chunks. Lane `whole`
+  // reads only the blocks preceding its last buffered block; later blocks and
+  // unused lanes reread the first complete chunk, and their CVs are never
+  // stored. Each store targets a distinct `[u32; 8]` output below `whole`.
+  unsafe {
+    let base = input.as_ptr();
+    let mut inputs = [base; DEGREE];
+    for (lane, ptr) in inputs.iter_mut().enumerate().take(whole) {
+      *ptr = base.add(lane.strict_mul(CHUNK_LEN));
+    }
+    inputs[whole] = base.add(whole.strict_mul(CHUNK_LEN));
+    let (counter_low_vec, counter_high_vec) = counter_vec(counter, true);
+    let mut h_vecs = [
+      set1(key[0]),
+      set1(key[1]),
+      set1(key[2]),
+      set1(key[3]),
+      set1(key[4]),
+      set1(key[5]),
+      set1(key[6]),
+      set1(key[7]),
+    ];
+
+    for block in 0..partial_blocks {
+      chunk_block16(&mut h_vecs, &inputs, block, flags, counter_low_vec, counter_high_vec);
+    }
+    if partial_blocks != 0 {
+      let partial_lane = _mm512_set1_epi32(i32::try_from(whole).expect("BLAKE3 lane index fits in i32"));
+      for (word, saved) in out[whole].iter_mut().enumerate() {
+        let lane = _mm512_permutexvar_epi32(partial_lane, h_vecs[word]);
+        *saved = _mm_cvtsi128_si32(_mm512_castsi512_si128(lane)).cast_unsigned();
+      }
+    }
+    inputs[whole] = base;
+    for block in partial_blocks..CHUNK_LEN / BLOCK_LEN {
+      chunk_block16(&mut h_vecs, &inputs, block, flags, counter_low_vec, counter_high_vec);
+    }
+
+    // Convert word-major vectors into `[chunk][word]` order without scatter.
+    let mut lo = [_mm256_setzero_si256(); 8];
+    let mut hi = [_mm256_setzero_si256(); 8];
+    for i in 0..8 {
+      lo[i] = _mm512_castsi512_si256(h_vecs[i]);
+      hi[i] = _mm512_extracti64x4_epi64(h_vecs[i], 1);
+    }
+    transpose8x8(&mut lo);
+    transpose8x8(&mut hi);
+    for (chunk, cv) in out.iter_mut().enumerate().take(whole) {
+      let words = if chunk < 8 { lo[chunk] } else { hi[chunk.strict_sub(8)] };
+      storeu256(words, cv.as_mut_ptr().cast::<u8>());
+    }
+  }
+  u8::try_from(partial_blocks).expect("unfinished BLAKE3 chunk has fewer than sixteen compressed blocks")
+}
+
+/// Finish three chunks and retain the fourth chunk's unfinished state with
+/// AVX-512VL rotates.
+///
+/// See [`super::sse41::hash3_and_partial4`] for the output contract.
+///
+/// # Safety
+///
+/// AVX-512F, AVX-512VL, SSE4.1, and SSSE3 must be available. The remaining
+/// contract is that of [`super::sse41::hash3_and_partial4`].
+#[target_feature(enable = "avx512f,avx512vl,sse4.1,ssse3")]
+pub(crate) unsafe fn hash3_and_partial4_avx512vl(
+  input: &[u8],
+  key: &[u32; 8],
+  counter: u64,
+  flags: u32,
+  out: &mut [[u32; 8]; DEGREE],
+) -> u8 {
+  // SAFETY: this function enables a superset of the body's SSE4.1/SSSE3
+  // requirement, and the caller upholds its input, counter and output contract.
+  unsafe { super::sse41::hash3_and_partial4(input, key, counter, flags, out) }
+}
+
 /// Hash 16 contiguous independent inputs in parallel.
 ///
 /// This is optimized for the contiguous chunk hashing hot path, where inputs

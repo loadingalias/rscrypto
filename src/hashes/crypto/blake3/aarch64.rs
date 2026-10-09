@@ -1415,6 +1415,129 @@ pub(crate) unsafe fn hash_many_contiguous_neon(
   }
 }
 
+/// Finish three chunks while retaining the fourth chunk's unfinished state.
+///
+/// The fourth output is the CV before its last buffered block. The return value
+/// counts the blocks already compressed in that lane; the caller retains the
+/// remaining one to 64 bytes for later absorption or finalization.
+///
+/// # Safety
+///
+/// NEON must be available. `input` must contain three full chunks followed by
+/// one to 1023 bytes, and `counter` must permit three successors. The input and
+/// output borrows must be disjoint. `key` and `flags` define the same mode as
+/// the caller's chunk state.
+#[cfg(all(target_endian = "little", not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+pub(crate) unsafe fn hash3_and_partial_neon(
+  input: &[u8],
+  key: &[u32; 8],
+  counter: u64,
+  flags: u32,
+  out: &mut [[u32; 8]; 4],
+) -> u8 {
+  debug_assert!((3 * CHUNK_LEN + 1..4 * CHUNK_LEN).contains(&input.len()));
+  debug_assert!(counter.checked_add(3).is_some());
+
+  struct Working {
+    cv: [uint32x4_t; 8],
+    message: [uint32x4_t; 16],
+    state: [uint32x4_t; 16],
+  }
+  impl Drop for Working {
+    fn drop(&mut self) {
+      fn clear(vectors: &mut [uint32x4_t]) {
+        // SAFETY: each initialized vector consists of four u32 lanes, with
+        // alignment at least that of u32 and no padding. Drop has exclusive
+        // access, and this view ends before another field is borrowed.
+        let words =
+          unsafe { core::slice::from_raw_parts_mut(vectors.as_mut_ptr().cast::<u32>(), vectors.len().strict_mul(4)) };
+        crate::traits::ct::zeroize_words_no_fence(words);
+      }
+      clear(&mut self.cv);
+      clear(&mut self.message);
+      clear(&mut self.state);
+      core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    }
+  }
+
+  let partial_len = input.len().strict_sub(3 * CHUNK_LEN);
+  let partial_blocks = partial_len.strict_sub(1).strict_div(BLOCK_LEN);
+  out[3].copy_from_slice(key);
+
+  // SAFETY: the caller establishes NEON, lengths and counter bounds. Lanes
+  // zero through two read complete chunks. Lane three reads only the blocks
+  // preceding its last buffered block; later rounds borrow the first complete
+  // chunk instead. That lane's later results are never returned or committed.
+  unsafe {
+    let zero = vdupq_n_u32(0);
+    let mut working = Working {
+      cv: core::array::from_fn(|word| vdupq_n_u32(key[word])),
+      message: [zero; 16],
+      state: [zero; 16],
+    };
+    let (low, high) = counter_lanes(counter, [0, 1, 2, 3]);
+    let low = vld1q_u32(low.as_ptr());
+    let high = vld1q_u32(high.as_ptr());
+    let rotate = vld1q_u8(ROT8_TABLE.as_ptr());
+    for block in 0usize..16 {
+      let inputs = [
+        input.as_ptr(),
+        input.as_ptr().add(CHUNK_LEN),
+        input.as_ptr().add(2 * CHUNK_LEN),
+        if block < partial_blocks {
+          input.as_ptr().add(3 * CHUNK_LEN)
+        } else {
+          input.as_ptr()
+        },
+      ];
+      for (lane_block, words) in working.message.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        let offset = block.strict_mul(BLOCK_LEN).strict_add(lane_block.strict_mul(16));
+        for (word, source) in words.iter_mut().zip(inputs) {
+          // These full 16-byte loads support unaligned input. Each selected
+          // source has this complete block, as established above.
+          *word = vreinterpretq_u32_u8(vld1q_u8(source.add(offset)));
+        }
+        transpose_vecs(words);
+      }
+      let block_flags = flags | if block == 0 { CHUNK_START } else { 0 } | if block == 15 { CHUNK_END } else { 0 };
+      working.state = [
+        working.cv[0],
+        working.cv[1],
+        working.cv[2],
+        working.cv[3],
+        working.cv[4],
+        working.cv[5],
+        working.cv[6],
+        working.cv[7],
+        vdupq_n_u32(IV[0]),
+        vdupq_n_u32(IV[1]),
+        vdupq_n_u32(IV[2]),
+        vdupq_n_u32(IV[3]),
+        low,
+        high,
+        vdupq_n_u32(BLOCK_LEN_U32),
+        vdupq_n_u32(block_flags),
+      ];
+      for round in 0..7 {
+        round4(&mut working.state, &working.message, round, rotate);
+      }
+      for word in 0usize..8 {
+        working.cv[word] = veorq_u32(working.state[word], working.state[word.strict_add(8)]);
+        if block.strict_add(1) == partial_blocks {
+          out[3][word] = vgetq_lane_u32::<3>(working.cv[word]);
+        }
+      }
+    }
+    for word in 0..8 {
+      out[0][word] = vgetq_lane_u32::<0>(working.cv[word]);
+      out[1][word] = vgetq_lane_u32::<1>(working.cv[word]);
+      out[2][word] = vgetq_lane_u32::<2>(working.cv[word]);
+    }
+  }
+  u8::try_from(partial_blocks).expect("unfinished BLAKE3 chunk has fewer than sixteen compressed blocks")
+}
+
 /// Compute many parent CVs from child-CV bytes using the NEON hash4 kernel.
 ///
 /// `children` is interpreted as `[left0, right0, left1, right1, ...]`.
