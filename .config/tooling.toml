@@ -72,12 +72,14 @@ packages = ["build-essential", "ca-certificates", "curl", "git", "python3", "cla
 [ci-miri]
 cargo = ["just"]
 components = ["miri", "rust-src"]
-packages = ["build-essential", "ca-certificates", "curl", "git", "python3"]
+# Linux test builds compile gungraun's valgrind-requests bindings, whose build script needs libclang.
+packages = ["build-essential", "ca-certificates", "curl", "git", "python3", "clang", "libclang-dev"]
 
 [ci-ct]
 cargo = ["just", "cargo-nextest"]
 components = ["llvm-tools"]
-packages = ["build-essential", "ca-certificates", "curl", "git", "python3"]
+# `ct-test` builds the crate's tests; see the libclang note under [ci-miri].
+packages = ["build-essential", "ca-certificates", "curl", "git", "python3", "clang", "libclang-dev"]
 
 [ci-ct-proof]
 opam-repository = "git+https://github.com/ocaml/opam-repository.git#40d8ad2a8bbef64bd1b88f2d61427310538bfcec"
