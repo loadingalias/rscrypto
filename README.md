@@ -81,6 +81,8 @@ No umbrella feature, including `full`, enables it.
 See [docs.rs](https://docs.rs/rscrypto) for exact types and methods.
 The [API compatibility notes](docs/api-compatibility.md) explain output types, collection seeds,
 and retained method names.
+The [cryptographic resilience guide](docs/cryptographic-resilience.md) explains security assumptions,
+migration boundaries, and the evidence to review when choosing stronger cryptography.
 
 ## Platforms and dispatch
 

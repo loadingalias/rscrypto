@@ -53,6 +53,16 @@ nonce policy, transport, and access control.
 1. Protect every secret that you export, format, or serialize.
    After an explicit escape hatch returns ordinary bytes, you own their lifetime.
 
+## Cryptographic assumptions and migration
+
+Primitive security depends on the assumptions, parameters, and usage bounds of its construction.
+Implementation tests, timing evidence, and formal proofs do not establish that these assumptions
+will withstand every future mathematical or quantum attack.
+The [cryptographic resilience guide](docs/cryptographic-resilience.md) explains how to distinguish
+algorithm families, authentication, confidentiality, and implementation evidence.
+The caller owns protocol migration, trust-anchor distribution, and downgrade policy.
+Planned algorithms and research results do not extend the crate's implemented security boundary.
+
 ## Threats in scope
 
 ### Hostile inputs
