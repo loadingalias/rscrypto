@@ -48,6 +48,10 @@ OR-ing ROOT preserves the secret-mode bits for the generic source contract.
 Native batch frames grow, and observed compiler-created key spills lie outside the
 named guest clears. This is not a guarantee of erased native slots or equal residue.
 
+The shared BLAKE3 root-output fallback clears its decoded words and compression output
+after copying them in keyed and derive-key modes. Optimized WASM evidence and its limits are retained in
+the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-wasm-simd128).
+
 | Owner or operation | When cleanup happens |
 | --- | --- |
 | Typed keys, private keys, and shared secrets | On concrete or nested `Drop`. A consuming export clears the source, or moves responsibility to the caller explicitly. |

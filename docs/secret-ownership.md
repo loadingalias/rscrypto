@@ -60,6 +60,13 @@ or prepared key directly into an allocation from a caller-selected `Allocator`, 
 - Returned chaining values remain owned by their callers. Arithmetic locals and compiler-created
   copies retain the documented machine-code evidence boundary.
 
+### BLAKE3 root-output scratch
+
+- Shared root-output helpers own decoded block words and compression-output scratch.
+- Keyed and derive-key operations clear these explicit copies after their last use.
+- Returned chaining values and XOF output remain owned by their existing callers.
+  This adds no public secret owner or serialization path.
+
 ### Password-hashing memory
 
 - Caller-provided `Argon2Block` and `ScryptBlock` memory is `Clone`, not `Copy`.

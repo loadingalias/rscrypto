@@ -803,8 +803,11 @@ fn root_output_block_words_inline(
     return;
   }
 
-  let words = compress_block_inline(id, chaining_value, block_words, counter, block_len, flags);
+  let mut words = compress_block_inline(id, chaining_value, block_words, counter, block_len, flags);
   write_root_output_words(out, &words);
+  if flags & (super::KEYED_HASH | super::DERIVE_KEY_MATERIAL) != 0 {
+    crate::traits::ct::zeroize_words(&mut words);
+  }
 }
 
 #[inline(always)]
@@ -845,8 +848,11 @@ fn root_output_block_bytes_inline(
     }
   }
 
-  let block_words = super::words16_from_le_bytes_64(block_bytes);
+  let mut block_words = super::words16_from_le_bytes_64(block_bytes);
   root_output_block_words_inline(id, chaining_value, &block_words, counter, block_len, flags, out);
+  if flags & (super::KEYED_HASH | super::DERIVE_KEY_MATERIAL) != 0 {
+    crate::traits::ct::zeroize_words(&mut block_words);
+  }
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
