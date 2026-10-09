@@ -11,6 +11,7 @@ use core::{
 use super::hmac::{HmacSha256, HmacSha384};
 use crate::{
   SecretBytes,
+  backend::der::{self, MalformedDer, TAG_BIT_STRING, TAG_OBJECT_IDENTIFIER, TAG_SEQUENCE},
   hashes::crypto::{Sha256, Sha384},
   secret::ZeroizingBytes,
   traits::{Mac, VerificationError, ct},
@@ -74,10 +75,7 @@ use self::ecdsa_aarch64_asm as ecdsa_platform_asm;
 ))]
 use self::ecdsa_x86_64_asm as ecdsa_platform_asm;
 
-const TAG_SEQUENCE: u8 = 0x30;
 const TAG_INTEGER: u8 = 0x02;
-const TAG_BIT_STRING: u8 = 0x03;
-const TAG_OBJECT_IDENTIFIER: u8 = 0x06;
 const COMB_WIDTH: usize = 4;
 const COMB_TABLE_SIZE: usize = 1 << COMB_WIDTH;
 const P256_SIGNING_COMB_ROWS: usize = 37;
@@ -5230,76 +5228,10 @@ fn add_limb(limbs: &mut [u64; 13], mut index: usize, mut value: u64) {
   }
 }
 
-struct DerReader<'a> {
-  input: &'a [u8],
-  offset: usize,
-}
+type DerReader<'a> = der::DerReader<'a, EcdsaError>;
 
-impl<'a> DerReader<'a> {
-  const fn new(input: &'a [u8]) -> Self {
-    Self { input, offset: 0 }
-  }
-
-  fn read_constructed(&mut self, tag: u8) -> Result<&'a [u8], EcdsaError> {
-    self.read_primitive(tag)
-  }
-
-  fn read_primitive(&mut self, tag: u8) -> Result<&'a [u8], EcdsaError> {
-    let actual = self.read_byte()?;
-    if actual != tag {
-      return Err(EcdsaError::MalformedDer);
-    }
-    let len = self.read_len()?;
-    let end = self.offset.checked_add(len).ok_or(EcdsaError::MalformedDer)?;
-    if end > self.input.len() {
-      return Err(EcdsaError::MalformedDer);
-    }
-    let value = self.input.get(self.offset..end).ok_or(EcdsaError::MalformedDer)?;
-    self.offset = end;
-    Ok(value)
-  }
-
-  fn finish(&self) -> Result<(), EcdsaError> {
-    if self.offset == self.input.len() {
-      Ok(())
-    } else {
-      Err(EcdsaError::MalformedDer)
-    }
-  }
-
-  fn read_byte(&mut self) -> Result<u8, EcdsaError> {
-    let byte = *self.input.get(self.offset).ok_or(EcdsaError::MalformedDer)?;
-    self.offset = self.offset.strict_add(1);
-    Ok(byte)
-  }
-
-  fn read_len(&mut self) -> Result<usize, EcdsaError> {
-    let first = self.read_byte()?;
-    if first & 0x80 == 0 {
-      return Ok(usize::from(first));
-    }
-
-    let len_len = usize::from(first & 0x7f);
-    if len_len == 0 || len_len > core::mem::size_of::<usize>() {
-      return Err(EcdsaError::MalformedDer);
-    }
-
-    let first_len_byte = self.read_byte()?;
-    if first_len_byte == 0 {
-      return Err(EcdsaError::MalformedDer);
-    }
-
-    let mut len = usize::from(first_len_byte);
-    for _ in 1..len_len {
-      len = len.checked_shl(8).ok_or(EcdsaError::MalformedDer)?;
-      len |= usize::from(self.read_byte()?);
-    }
-
-    if len < 128 {
-      return Err(EcdsaError::MalformedDer);
-    }
-    Ok(len)
-  }
+impl MalformedDer for EcdsaError {
+  const MALFORMED_DER: Self = Self::MalformedDer;
 }
 
 #[cfg(test)]
@@ -5307,44 +5239,6 @@ mod tests {
   use alloc::format;
 
   use super::*;
-
-  #[test]
-  fn der_reader_accepts_canonical_lengths() {
-    for len in [0, 1, 127] {
-      let encoded = [len];
-      let mut reader = DerReader::new(&encoded);
-      assert_eq!(reader.read_len(), Ok(usize::from(len)));
-      assert_eq!(reader.finish(), Ok(()));
-    }
-
-    for (encoded, expected) in [
-      (&[0x81, 0x80][..], 128),
-      (&[0x81, 0xff][..], 255),
-      (&[0x82, 0x01, 0x00][..], 256),
-    ] {
-      let mut reader = DerReader::new(encoded);
-      assert_eq!(reader.read_len(), Ok(expected));
-      assert_eq!(reader.finish(), Ok(()));
-    }
-  }
-
-  #[test]
-  fn der_reader_rejects_noncanonical_lengths() {
-    for encoded in [
-      &[0x80, 0x80][..],
-      &[0x81, 0x00][..],
-      &[0x81, 0x7f][..],
-      &[0x82, 0x00, 0x80][..],
-    ] {
-      let mut reader = DerReader::new(encoded);
-      assert_eq!(reader.read_len(), Err(EcdsaError::MalformedDer));
-    }
-
-    let length_bytes = u8::try_from(core::mem::size_of::<usize>()).expect("usize width fits in one DER length byte");
-    let oversized_len_len = [0x80 | length_bytes.strict_add(1)];
-    let mut reader = DerReader::new(&oversized_len_len);
-    assert_eq!(reader.read_len(), Err(EcdsaError::MalformedDer));
-  }
 
   fn p256_public_key() -> EcdsaP256PublicKey {
     let mut sec1 = [0u8; EcdsaP256PublicKey::SEC1_LENGTH];

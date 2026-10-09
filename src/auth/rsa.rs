@@ -51,6 +51,7 @@ use core::{
 
 use crate::{
   SecretVec,
+  backend::der::{self, MalformedDer, TAG_BIT_STRING, TAG_OBJECT_IDENTIFIER, TAG_SEQUENCE},
   hashes::crypto::{Sha256, Sha384, Sha512},
   traits::{Digest, VerificationError, ct},
 };
@@ -82,7 +83,6 @@ mod rsa_aarch64_linux_asm;
 #[path = "rsa_x86_64_asm.rs"]
 mod rsa_x86_64_asm;
 
-const TAG_SEQUENCE: u8 = 0x30;
 /// RSAES-PKCS1-v1_5 padding bytes: `0x00 0x02`, at least eight PS bytes, and `0x00` (RFC 8017 7.2.1).
 const RSAES_PKCS1V15_OVERHEAD: usize = 11;
 
@@ -91,10 +91,8 @@ const fn rsaes_oaep_overhead(profile: RsaOaepProfile) -> usize {
   profile.digest_len().strict_mul(2).strict_add(2)
 }
 const TAG_INTEGER: u8 = 0x02;
-const TAG_BIT_STRING: u8 = 0x03;
 const TAG_OCTET_STRING: u8 = 0x04;
 const TAG_NULL: u8 = 0x05;
-const TAG_OBJECT_IDENTIFIER: u8 = 0x06;
 const TAG_CONTEXT_0: u8 = 0xa0;
 const TAG_CONTEXT_1: u8 = 0xa1;
 const TAG_CONTEXT_2: u8 = 0xa2;
@@ -11159,91 +11157,10 @@ fn add_carry(t: &mut [u64], index: usize, mut carry: u64) {
   }
 }
 
-struct DerReader<'a> {
-  input: &'a [u8],
-  offset: usize,
-}
+type DerReader<'a> = der::DerReader<'a, RsaKeyError>;
 
-impl<'a> DerReader<'a> {
-  #[inline]
-  #[must_use]
-  const fn new(input: &'a [u8]) -> Self {
-    Self { input, offset: 0 }
-  }
-
-  fn peek_byte(&self) -> Option<u8> {
-    self.input.get(self.offset).copied()
-  }
-
-  fn read_constructed(&mut self, tag: u8) -> Result<&'a [u8], RsaKeyError> {
-    self.read_primitive(tag)
-  }
-
-  fn read_tlv(&mut self, tag: u8) -> Result<&'a [u8], RsaKeyError> {
-    let start = self.offset;
-    let _ = self.read_primitive(tag)?;
-    self.input.get(start..self.offset).ok_or(RsaKeyError::MalformedDer)
-  }
-
-  fn read_primitive(&mut self, tag: u8) -> Result<&'a [u8], RsaKeyError> {
-    let actual = self.read_byte()?;
-    if actual != tag {
-      return Err(RsaKeyError::MalformedDer);
-    }
-
-    let len = self.read_len()?;
-    let end = self.offset.checked_add(len).ok_or(RsaKeyError::MalformedDer)?;
-    if end > self.input.len() {
-      return Err(RsaKeyError::MalformedDer);
-    }
-
-    let value = self.input.get(self.offset..end).ok_or(RsaKeyError::MalformedDer)?;
-    self.offset = end;
-    Ok(value)
-  }
-
-  fn finish(&self) -> Result<(), RsaKeyError> {
-    if self.offset == self.input.len() {
-      Ok(())
-    } else {
-      Err(RsaKeyError::MalformedDer)
-    }
-  }
-
-  fn read_byte(&mut self) -> Result<u8, RsaKeyError> {
-    let byte = *self.input.get(self.offset).ok_or(RsaKeyError::MalformedDer)?;
-    self.offset = self.offset.strict_add(1);
-    Ok(byte)
-  }
-
-  fn read_len(&mut self) -> Result<usize, RsaKeyError> {
-    let first = self.read_byte()?;
-    if first & 0x80 == 0 {
-      return Ok(usize::from(first));
-    }
-
-    let len_len = usize::from(first & 0x7f);
-    if len_len == 0 || len_len > core::mem::size_of::<usize>() {
-      return Err(RsaKeyError::MalformedDer);
-    }
-
-    let first_len_byte = self.read_byte()?;
-    if first_len_byte == 0 {
-      return Err(RsaKeyError::MalformedDer);
-    }
-
-    let mut len = usize::from(first_len_byte);
-    for _ in 1..len_len {
-      len = len.checked_shl(8).ok_or(RsaKeyError::MalformedDer)?;
-      len |= usize::from(self.read_byte()?);
-    }
-
-    if len < 128 {
-      return Err(RsaKeyError::MalformedDer);
-    }
-
-    Ok(len)
-  }
+impl MalformedDer for RsaKeyError {
+  const MALFORMED_DER: Self = Self::MalformedDer;
 }
 
 #[cfg(test)]
