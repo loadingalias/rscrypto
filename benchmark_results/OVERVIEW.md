@@ -1694,31 +1694,71 @@ sequence and all unmet performance requirements remain open.
 
 ## 2026-10-05: RSA native target qualification
 
-**Checkpoint at 2026-10-06T02:06:01Z:** POWER passed its full native CT gate.
-IBM Z and RISC-V were still running. The allocation-contract evaluation remained
-behind these results.
+**Decision:** the corrected RSA snapshot passes full native CT on POWER, IBM Z,
+and RISC-V. Each target passed every required case, including all nine RSA
+cases, without a confirmation. With the earlier
+[Intel, Windows, and Graviton qualification](#2026-10-05-rsa-correction-qualification),
+this closes RSA timing qualification for the recorded snapshot and environments.
+The allocation-contract evaluation stays deferred until a consumer or measurement
+requires it.
 
 This campaign qualifies the correction already pushed to `main` at
 `ef5d4c7997d309450d9868887b3c811596a02049`, tree
-`2d1f5f5a0eaa7801e58d7b9547e82dac261160b3`. It extends the earlier
-[Intel, Windows, and Graviton qualification](#2026-10-05-rsa-correction-qualification).
-Each target gets one full native attempt with the existing required inventory,
-sampling, thresholds, and confirmation policy. PKCS#1 v1.5 decryption retains
-4,000 screening observations and threshold **8.0**. Preparation and measurement
-use separate hosts; the native runner verifies and executes the sealed binary.
+`2d1f5f5a0eaa7801e58d7b9547e82dac261160b3`. Each target got one full native
+attempt with the existing required inventory, sampling, thresholds, and
+confirmation policy. PKCS#1 v1.5 decryption retains 4,000 screening observations
+and threshold **8.0**. Preparation and measurement use separate hosts; the native
+runner verifies and executes the sealed binary. BINSEC is unsupported by target
+policy on all three targets, so native DudeCT is their timing evidence.
 
 | Native runner profile | Full required gate | RSA cases | PKCS#1 v1.5 decrypt abs(t) | Workflow |
 | --- | --- | --- | --- | --- |
 | `ubuntu-24.04-ppc64le-p10` | 119/119 pass | 9/9 pass | 1.40082 | [37395735606](https://github.com/loadingalias/rscrypto/actions/runs/37395735606) |
-| `ubuntu-24.04-s390x` | Pending | Pending | Pending | [37396293617](https://github.com/loadingalias/rscrypto/actions/runs/37396293617) |
-| `ubuntu-24.04-riscv` | Pending | Pending | Pending | [37396295570](https://github.com/loadingalias/rscrypto/actions/runs/37396295570) |
+| `ubuntu-24.04-s390x` | 123/123 pass | 9/9 pass | 2.40495 | [37396293617](https://github.com/loadingalias/rscrypto/actions/runs/37396293617) |
+| `ubuntu-24.04-riscv` | 123/123 pass | 9/9 pass | 1.5773 | [37396295570](https://github.com/loadingalias/rscrypto/actions/runs/37396295570) |
 
-POWER required no confirmation. Its 119 measurements retain 3,630,992
-observations; all raw sequence numbers, class labels, and counts match their
-reports. All 366 report artifacts passed size and SHA-256 verification. Its
-native kernel was `6.12.0-264.el10.ppc64le`. Runner profiles identify the selected
-hardware lane; the current reports do not capture a separate CPU model or
-microcode inventory, so these results do not qualify every host of the architecture.
+POWER has 119 required cases because `ct.toml` demotes four ML-DSA kernel cases
+to diagnostics on that target only.
+
+| RSA case | Samples | Threshold | POWER abs(t) | IBM Z abs(t) | RISC-V abs(t) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `rsa_pkcs1v15_fixed_vs_random_message` | 4,000 | 8.0 | 1.94111 | 1.70884 | 1.38252 |
+| `rsa_pkcs1v15_os_blinding_fixed_vs_random_message` | 4,000 | 8.0 | 1.69586 | 1.42942 | 2.21209 |
+| `rsa_pss_fixed_vs_random_message` | 4,000 | 8.0 | 2.06393 | 1.76020 | 1.36113 |
+| `rsa_private_exponent_fixed_width_high_byte` | 512 | 10.0 | 2.00889 | 2.62370 | 2.02554 |
+| `rsa_blinding_inverse_fixed_vs_random_factor` | 20,000 | 8.0 | 2.22532 | 3.54019 | 2.16321 |
+| `rsa_blinding_inverse_full_width_fixed_vs_random_factor` | 4,000 | 8.0 | 2.35751 | 2.35358 | 1.39322 |
+| `rsa_oaep_decrypt_fixed_vs_random_plaintext` | 4,000 | 8.0 | 1.78704 | 2.28607 | 1.65579 |
+| `rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext` | 4,000 | 8.0 | 1.40082 | 2.40495 | 1.57730 |
+| `rsa_private_component_validation_fixed_vs_random_component` | 20,000 | 10.0 | 3.44949 | 2.71924 | 1.26099 |
+
+No required case on any target reached 75% of its threshold, the point at which
+the policy requires confirmation. The closest cases were IBM Z's
+`rsa_blinding_inverse_fixed_vs_random_factor` (3.54019 of 8.0), RISC-V's
+`hmac_sha256_valid_vs_invalid_tag` (4.10764 of 10.0), and POWER's
+`rsa_private_component_validation_fixed_vs_random_component` (3.44949 of 10.0).
+
+An independent review (`review.py` in the bundle) derived each target's required
+case list from `ct.toml` at the qualified commit (SHA-256
+`7b2b9038a27f6babac422904bdc330c280a9be9ad11530b3e99feddb0b3d22a6`). For every
+case, it checked the case order, gate, status, sample count, effective threshold, raw
+row and class counts, source commit, manifest, and binary hash. It also checked
+that no unconfirmed case reached the confirmation point. The effective threshold
+is the smaller of the case threshold and the run's global 10.0 ceiling. All three
+targets passed the review. The IBM Z and RISC-V job logs contain no GitHub error or
+warning annotations, tracebacks, confirmations, or tooling failures.
+
+| Target | Measurements | Observations | Verified report artifacts | Native host |
+| --- | ---: | ---: | ---: | --- |
+| POWER | 119 | 3,630,992 | 366 | kernel `6.12.0-264.el10.ppc64le` |
+| IBM Z | 123 | 3,710,992 | 378 | kernel `6.8.0-138-generic` |
+| RISC-V | 123 | 3,710,992 | 378 | RISE machine `riscv-runner-41`, kernel `5.10.113-scw1` |
+
+Every raw sequence number, class label, and count matches its report. Every
+report artifact passed size and SHA-256 verification. Each runtime binary and
+transfer archive matches its preparation. Runner profiles identify the selected
+hardware lane; the reports do not capture a separate CPU model or microcode
+inventory, so these results do not qualify every host of the architecture.
 
 All three preparations passed strict artifact validation, the compiler API
 inventory, generated-code checks, and the cleanup sentinel. Their source digest
@@ -1735,11 +1775,11 @@ panics, `std/full/parallel/diag/getrandom`, disabled default features, and
 `rscrypto_internal`. IBM Z also uses its configured `-C target-feature=+vector`;
 POWER and RISC-V request no extra target features. No target CPU is requested.
 
-| Prepared native DudeCT binary | SHA-256 |
-| --- | --- |
-| POWER | `81015ecc0f72c51782f0b65616ac718954245671a116bcc967a41da7de2ac6e4` |
-| IBM Z | `e902567926379e50cb1e2eb909f78e3ddf2a0b0ba7f4d7a132ddfd69c400d554` |
-| RISC-V | `d3dc1556a75e7f807d5eccc24a96022b8ad9907a3a90e607a49f21799a3a9fb2` |
+| Target | Prepared native DudeCT binary SHA-256 | Measured CT artifact | Artifact SHA-256 |
+| --- | --- | --- | --- |
+| POWER | `81015ecc0f72c51782f0b65616ac718954245671a116bcc967a41da7de2ac6e4` | `11383384278` | `ff24f9e68a6eb4a2352c461933b06605e452351441267be18f78ad8d63716fa4` |
+| IBM Z | `e902567926379e50cb1e2eb909f78e3ddf2a0b0ba7f4d7a132ddfd69c400d554` | `11386183693` | `62ff2c4e23c8cca6d774a8da069745e2daa8111ec9064a9f9296b66daa62c46c` |
+| RISC-V | `d3dc1556a75e7f807d5eccc24a96022b8ad9907a3a90e607a49f21799a3a9fb2` | `11387124180` | `12f52da06ffb35b2c53f5ade65edb2e78c26b24fa941f5b601970e0c781c7b1b` |
 
 The first combined IBM Z/RISC-V dispatch, `37395861831`, was cancelled during
 preparation before any native runner was allocated. The published workflow
@@ -1749,15 +1789,28 @@ campaign's evidence. The local workflow correction gives each matrix row a
 unique artifact name and preserves fail-fast behavior. Six-name validation and
 `just test-scripts` passed; four installer tests require other platforms.
 
-Raw records and verification scripts are retained under
-`benchmark_results/rsa-native-qualification-2026-10-05-8g_3e4pj/`.
-The interim checkpoint at `2026-10-06T02:06:01Z` is
+The collection watcher stopped before RISC-V finished. On 2026-10-09, the same
+collection and verification scripts retrieved the completed run's artifact. No
+measurement was dispatched or retried. All three prepared artifacts expired on
+GitHub on 2026-10-08; their ZIPs had already been retained and verified against
+the published digests. The measured artifacts expire on 2026-10-13, so the local
+bundles are their only lasting copies.
+
+The final bundle is
+`benchmark_results/rsa-native-qualification-2026-10-05-8g_3e4pj.final-20261009T053701Z.tar.gz`
+(353,998,190 bytes; SHA-256
+`0eab623424c81b21ee12becc91d60f70beb2ab026b8ab7d4c34fc7de030c10a1`).
+All 98 files, including its manifest, were verified after extraction. It
+contains every target's verified preparation and measurement ZIPs, collection
+and verification records, case reviews, workflow logs, functional CI records,
+the source archive, and the allocation inventory. It omits duplicate unpacked
+copies. The working directory is
+`benchmark_results/rsa-native-qualification-2026-10-05-8g_3e4pj/`. The final bundle
+supersedes the interim checkpoint
 `benchmark_results/rsa-native-qualification-2026-10-05-8g_3e4pj.checkpoint-20261006T020601Z.tar.gz`
-(204,820,324 bytes; SHA-256
-`d783f7f834835663b2542b9ed9736a55438783df512e8c522e147ec442c48f67`).
-All 72 retained files were verified after packing. It contains POWER's final
-evidence, all three preparations, functional CI records, and the allocation
-inventory. IBM Z and RISC-V have no final measurement artifacts in this checkpoint.
+(SHA-256 `d783f7f834835663b2542b9ed9736a55438783df512e8c522e147ec442c48f67`),
+which is also retained. Both are local only; durable archival remains an open
+retention obligation.
 
 The earlier Intel cost and causal limits and accepted Mac timing limitation remain
 unchanged. [Functional CI attempt 2](https://github.com/loadingalias/rscrypto/actions/runs/37391759607/attempts/2)
@@ -1768,8 +1821,9 @@ Functional CI does not replace timing evidence. This campaign does not request o
 ## 2026-10-05: RSA correction qualification
 
 **Decision:** the corrected RSA snapshot passes full native CT on Intel Linux,
-Windows, Graviton4, and Graviton5. Native POWER, IBM Z, and RISC-V evidence
-remains required before release readiness or allocation-contract evaluation.
+Windows, Graviton4, and Graviton5. The later
+[native target campaign](#2026-10-05-rsa-native-target-qualification) adds
+passing POWER, IBM Z, and RISC-V results.
 
 The HMAC diagnostic CLI blocker is resolved. Unknown control modes now print
 an error and exit with status 2 before collecting samples. A process-level
