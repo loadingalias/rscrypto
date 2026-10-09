@@ -16,8 +16,8 @@ from bounded import run
 class BudgetTests(unittest.TestCase):
   def test_exit_status_and_limit_validation(self):
     self.assertEqual(run([sys.executable, "-c", "raise SystemExit(7)"], 2), 7)
-    self.assertEqual(run([sys.executable, "-c", "pass"], 5400), 0)
-    for limit in (0, -1, 5401):
+    self.assertEqual(run([sys.executable, "-c", "pass"], 600), 0)
+    for limit in (0, -1, 601):
       with self.assertRaises(ValueError):
         run([sys.executable, "-c", "pass"], limit)
 

@@ -12,7 +12,7 @@ import sys
 # Embedded Windows Python omits the script directory from its import path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from settings import load
+from settings import MAX_RUN_SECONDS, load
 
 
 class Terminated(Exception):
@@ -35,8 +35,8 @@ def stop(process: subprocess.Popen, sig: int) -> None:
 
 
 def run(command: list[str], seconds: float) -> int:
-  if not 0 < seconds <= 5400:
-    raise ValueError("run budget must be positive and at most 90 minutes")
+  if not 0 < seconds <= MAX_RUN_SECONDS:
+    raise ValueError("run budget must be positive and at most 10 minutes")
   grace = min(5.0, seconds / 10)
   with subprocess.Popen(command, start_new_session=os.name == "posix") as process:
     try:

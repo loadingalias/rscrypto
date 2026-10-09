@@ -427,10 +427,10 @@ No opt-in for expensive workloads is needed.
 
 ### Time budget
 
-`just bench` limits the whole pipeline to 90 minutes: build, discovery, measurement, analysis,
+`just bench` limits the whole pipeline to 10 minutes: build, discovery, measurement, analysis,
 and result verification.
-`just profile` uses the same limit for build, discovery, and capture.
-You can lower the limit, but it cannot be more than 5,400 seconds.
+`just bench-structural` and `just profile` use the same limit, including their builds.
+You can lower the limit, but it cannot be more than 600 seconds.
 
 - Shutdown starts before the deadline.
   It keeps up to five seconds to save failed-run evidence, then stops the remaining child processes.
@@ -438,8 +438,16 @@ You can lower the limit, but it cannot be more than 5,400 seconds.
   Partial results are not a complete run.
 - A plan whose requested sampling windows alone use up the budget is rejected before measurement.
   Build cost, analysis, and slow operations can still make a smaller plan reach the deadline.
-- Direct Cargo invocation limits each harness separately.
+- Direct Cargo invocation limits each Criterion harness separately.
   Use `just bench` to limit a selection that spans more than one harness, together with its builds.
+  Use `just bench-structural` for the structural benchmark deadline.
+
+A planned comparison must fit within this limit, including every repetition.
+Do not split an over-budget comparison across repeated invocations to bypass it.
+If required evidence cannot fit, record that requirement as unmet. A smaller future
+experiment needs a prospectively stated question and gates; it does not complete
+an older, larger qualification plan. Preserve historical frozen plans and failed
+captures unchanged; their old budgets do not authorize rerunning them.
 
 ### Select cases
 

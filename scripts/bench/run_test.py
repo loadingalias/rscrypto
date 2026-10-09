@@ -289,7 +289,7 @@ sys.exit(64)
     self.assertNotEqual(self.bench('sha256', f'baseline={previous}').returncode, 0)
     manifest.write_text(original)
     config = self.root / '.config/criterion.json'; data = json.loads(config.read_text())
-    data['max_run_seconds'] = 3599; config.write_text(json.dumps(data))
+    data['max_run_seconds'] = 599; config.write_text(json.dumps(data))
     self.ok(self.bench('sha256', f'baseline={previous}'))
 
   def test_literal_filters_and_zero_matches(self):
@@ -426,6 +426,17 @@ sys.exit(64)
     for env, code in (({'FAIL_BUILD': '1'}, 8), ({'FAIL_LIST': '1'}, 6), ({'DUPLICATE_CASES': '1'}, 1), ({'MEASURE_STATUS': '7'}, 7)):
       self.assertEqual(self.bench('sha256', **env).returncode, code)
     self.assertTrue(all('state=failed' in (root / 'status.txt').read_text() for root in self.runs()))
+
+  def test_excessive_budget_does_not_build(self):
+    path = self.root / '.config/criterion.json'
+    config = json.loads(path.read_text())
+    config['max_run_seconds'] = 601
+    path.write_text(json.dumps(config))
+    result = self.bench('sha256')
+    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+    self.assertIn('cannot exceed 10 minutes', result.stderr)
+    self.assertFalse((self.root / 'builds.jsonl').exists())
+    self.assertFalse(self.runs())
 
   def test_run_id_and_export_are_immutable(self):
     self.ok(self.bench('sha256', RSCRYPTO_BENCH_RUN_ID='fixed'))

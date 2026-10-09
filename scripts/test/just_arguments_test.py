@@ -28,7 +28,9 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
 ''')
     recorder.chmod(0o755)
     source = (root / "justfile").read_text()
-    for name in set(re.findall(r'scripts/[\w/.-]+\.(?:sh|py)', source)) | {'bin/cargo'}:
+    for name in set(re.findall(r'scripts/[\w/.-]+\.(?:sh|py)', source)) | {
+      'bin/cargo', 'bin/gungraun-runner', 'bin/valgrind',
+    }:
       path = root / name
       path.parent.mkdir(parents=True, exist_ok=True)
       path.symlink_to(recorder)
@@ -61,6 +63,9 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
       'stack-frames': ['scripts/stack/frames.py'],
       'stack-residue': ['scripts/stack/residue.py'],
       'bench': ['scripts/bench/bounded.py', str(recorder), 'scripts/bench/runner.py', 'bench'],
+      'bench-structural': ['scripts/bench/bounded.py', 'scripts/lib/toolchain.sh', '--exec', 'cargo', 'bench',
+                           '--locked', '--profile', 'bench', '--features', 'checksums,sha2,blake3',
+                           '--bench', 'structural'],
       'profile': ['scripts/bench/bounded.py', str(recorder), 'scripts/bench/runner.py', 'profile'],
       'perf-codegen': ['scripts/bench/runner.py', 'codegen'],
       'perf-llvm-lines': ['scripts/bench/runner.py', 'llvm-lines'],
