@@ -55,6 +55,64 @@ pub(super) fn diag_zeroize_blake3_parallel_scratch(input: [u32; 8]) -> u32 {
 }
 
 impl Blake3 {
+  #[cfg(all(target_os = "linux", target_endian = "little", target_arch = "aarch64"))]
+  pub(super) fn try_parallel_reader_update(&mut self, input: &[u8]) -> bool {
+    const CHUNKS: usize = super::io::BUFFER_LEN / CHUNK_LEN;
+    const HALF: u64 = (CHUNKS / 2) as u64;
+    if self.chunk_state.flags != 0
+      || self.chunk_state.len() != 0
+      || input.len() != super::io::BUFFER_LEN
+      || !self.chunk_state.chunk_counter.is_multiple_of(CHUNKS as u64)
+    {
+      return false;
+    }
+    let Some(threads) = control::parallel_policy_threads_with_admission(
+      control::ParallelPolicyKind::Oneshot,
+      input.len(),
+      CHUNKS,
+      CHUNKS.strict_sub(1),
+    ) else {
+      return false;
+    };
+    let threads = threads.min(rayon::current_num_threads());
+    if threads <= 1 {
+      return false;
+    }
+
+    struct ParentBlock([u8; BLOCK_LEN]);
+    impl Drop for ParentBlock {
+      fn drop(&mut self) {
+        ct::zeroize(&mut self.0);
+      }
+    }
+
+    let counter = self.chunk_state.chunk_counter;
+    let full_counter = counter.strict_add(CHUNKS as u64);
+    let stream_kernel_id = self.chunk_state.kernel_id;
+    let kernel = self.dispatch.bulk_kernel_for_update(input.len());
+    let budget = usize::try_from(threads.ilog2()).expect("parallel recursion depth fits in usize");
+    let parent = ParentBlock(compress_subtree_to_parent_node_bytes::<join::RayonJoin>(
+      kernel,
+      self.key_words,
+      counter,
+      0,
+      input,
+      budget,
+    ));
+
+    // The aligned buffer is one canonical subtree. Keep its right half pending
+    // so EOF can apply ROOT; the next nonempty update commits it at its own level.
+    self.bulk_kernel_id = kernel.id;
+    self.commit_pending_chunk_cv();
+    let (halves, remainder) = parent.0.as_chunks::<OUT_LEN>();
+    debug_assert!(remainder.is_empty());
+    self.add_subtree_cv(super::words8_from_le_bytes_32(&halves[0]), HALF);
+    self.chunk_state = ChunkState::new(self.key_words, full_counter, 0, stream_kernel_id);
+    self.pending_chunk_cv = Some(super::words8_from_le_bytes_32(&halves[1]));
+    self.pending_cv_chunks = HALF;
+    true
+  }
+
   #[inline]
   fn streaming_parallel_threads(
     &self,
@@ -533,4 +591,56 @@ pub(super) fn root_output_oneshot_join_parallel(
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
   output
+}
+
+#[cfg(all(test, target_os = "linux", target_endian = "little", target_arch = "aarch64"))]
+mod reader_tests {
+  use super::*;
+  use crate::traits::Digest as _;
+  use blake3::hazmat::HasherExt as _;
+
+  #[test]
+  fn parallel_reader_matches_portable_and_upstream_at_large_counters() {
+    let pool = rayon::ThreadPoolBuilder::new()
+      .num_threads(4)
+      .build()
+      .expect("four-worker test pool");
+    pool.install(|| {
+      let len = super::super::io::BUFFER_LEN;
+      if control::parallel_policy_threads_with_admission(
+        control::ParallelPolicyKind::Oneshot,
+        len,
+        len / CHUNK_LEN,
+        len / CHUNK_LEN - 1,
+      )
+      .is_none()
+      {
+        return;
+      }
+      let storage: alloc::vec::Vec<u8> = (0..len + 1).map(|i| (i % 251) as u8).collect();
+      let input = &storage[1..];
+      for counter in [0, 1024, (1u64 << 32) - 1024, 1 << 32, 1 << 40, (1 << 54) - 2048] {
+        let mut ours = Blake3::new();
+        ours.chunk_state = ChunkState::new(ours.key_words, counter, 0, ours.chunk_state.kernel_id);
+        assert!(ours.try_parallel_reader_update(input));
+        assert_eq!(ours.pending_cv_chunks, 512);
+        assert_eq!(ours.chunk_state.chunk_counter, counter + 1024);
+        let actual = words8_to_le_bytes(&ours.root_output().chaining_value());
+
+        let mut reference = blake3::Hasher::new();
+        reference.set_input_offset(counter * CHUNK_LEN as u64).update(input);
+        assert_eq!(actual, reference.finalize_non_root(), "upstream counter={counter}");
+
+        let id = kernels::Blake3KernelId::Portable;
+        let mut portable = Blake3::new();
+        portable.chunk_state = ChunkState::new(portable.key_words, counter, 0, id);
+        portable.update_with(input, id, id);
+        assert_eq!(
+          actual,
+          words8_to_le_bytes(&portable.root_output().chaining_value()),
+          "Portable counter={counter}"
+        );
+      }
+    });
+  }
 }

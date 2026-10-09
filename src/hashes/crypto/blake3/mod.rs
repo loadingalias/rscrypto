@@ -20,6 +20,8 @@ mod control;
 pub(crate) mod dispatch;
 #[doc(hidden)]
 pub(crate) mod dispatch_tables;
+#[cfg(feature = "std")]
+mod io;
 #[cfg(test)]
 mod kernel_test;
 pub(crate) mod kernels;

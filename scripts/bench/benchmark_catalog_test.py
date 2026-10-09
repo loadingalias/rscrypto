@@ -124,7 +124,7 @@ def main() -> None:
 
   for name, bench in catalog["benches"].items():
     features = set(bench["features"])
-    if "std" not in features or ("parallel" in features) != (name in {"blake3", "password_hashing"}):
+    if "std" not in features or ("parallel" in features) != (name in {"blake3", "blake3_file", "password_hashing"}):
       fail(f"incorrect runtime feature scope for {name}")
 
   for binary in catalog_binaries - {"structural"}:

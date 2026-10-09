@@ -427,6 +427,57 @@ impl Blake3Subtree {
     Ok(())
   }
 
+  /// Read into this subtree until EOF or its remaining capacity is filled.
+  ///
+  /// Returns the number of bytes read by this call. Reads at most
+  /// `self.max_len() - self.len()` bytes and leaves any excess input unread.
+  /// A full subtree returns zero without reading. A successful return does not
+  /// therefore imply EOF. For a smaller scheduled range, pass a
+  /// [`std::io::Read::take`] adapter and check the returned count.
+  ///
+  /// Uses the same bounded, cleared input buffer as [`Blake3::update_reader`].
+  /// Callers may schedule independent subtree readers on their own threads and
+  /// combine their results with [`Blake3Tree::merge`] or [`Blake3Tree::merge_root`].
+  /// Each reader must supply bytes from the subtree's position in the same input.
+  /// Requires `std`; it creates no threads and does not require `parallel`.
+  ///
+  /// # Errors
+  ///
+  /// Retries [`std::io::ErrorKind::Interrupted`]. Returns any other reader error
+  /// after absorbing every preceding successful read. Both [`Self::len`] and
+  /// the hash state retain that progress, so reading can resume after an error.
+  ///
+  /// # Example
+  ///
+  /// ```
+  /// use std::io::{Cursor, Read};
+  /// use rscrypto::{Blake3, hashes::expert::blake3_tree::Blake3Tree};
+  ///
+  /// let input = vec![7u8; 5000];
+  /// let tree = Blake3Tree::new();
+  /// let split = Blake3Tree::left_subtree_len(input.len() as u64).unwrap();
+  /// let mut left = tree.subtree(0)?;
+  /// let mut right = tree.subtree(split)?;
+  /// // These independent readers can also run in caller-scheduled workers.
+  /// assert_eq!(left.update_reader(&mut Cursor::new(&input).take(split))?, split);
+  /// let mut reader = Cursor::new(&input);
+  /// reader.set_position(split);
+  /// assert_eq!(right.update_reader(&mut reader)?, input.len() as u64 - split);
+  /// let root = tree.merge_root(&left.finalize()?, &right.finalize()?)?;
+  /// assert_eq!(root, Blake3::digest(&input));
+  /// # Ok::<(), Box<dyn std::error::Error>>(())
+  /// ```
+  #[cfg(feature = "std")]
+  pub fn update_reader(&mut self, reader: &mut (impl std::io::Read + ?Sized)) -> std::io::Result<u64> {
+    super::io::read_into(reader, self.max_len.strict_sub(self.len), |input| {
+      // read_into never supplies more than the remaining subtree capacity.
+      self.hasher.update(input);
+      self.len = self
+        .len
+        .strict_add(u64::try_from(input.len()).expect("read capacity fits u64"));
+    })
+  }
+
   /// Compute this subtree's non-root chaining value.
   ///
   /// # Errors

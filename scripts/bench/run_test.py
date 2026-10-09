@@ -293,6 +293,22 @@ sys.exit(64)
     data['max_run_seconds'] = 599; config.write_text(json.dumps(data))
     self.ok(self.bench('sha256', f'baseline={previous}'))
 
+  def test_external_b3sum_change_cannot_reuse_baseline(self):
+    binary = self.root / 'b3sum'
+    receipt = self.root / 'b3sum.json'
+    binary.write_bytes(b'first executable')
+    receipt.write_text('{"source": "first"}\n')
+    env = {'RSCRYPTO_BLAKE3_B3SUM': str(binary), 'RSCRYPTO_BLAKE3_B3SUM_RECEIPT': str(receipt)}
+    self.ok(self.bench('sha256', **env))
+    previous = self.runs()[0]
+    for path in (binary, receipt):
+      original = path.read_bytes()
+      path.write_bytes(original + b'changed')
+      result = self.bench('sha256', f'baseline={previous}', **env)
+      self.assertNotEqual(result.returncode, 0)
+      self.assertIn('no matching', result.stderr)
+      path.write_bytes(original)
+
   def test_literal_filters_and_zero_matches(self):
     for pattern in (r'^sha256/rscrypto/\d+$', r'^sha256/rscrypto/[0-9]{1,3}$'):
       self.ok(self.bench('sha256', 'filter=' + pattern))

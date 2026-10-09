@@ -250,6 +250,78 @@ Inspect the uncertainty, and repeat matched measurements, before you make a perf
 
 ## Timed workload boundaries
 
+### BLAKE3 file inputs
+
+The optional `blake3_file` target measures `Blake3::update_reader`, four
+caller-scheduled subtrees, upstream `update_mmap_rayon`, and standalone `b3sum`.
+Discover its 40 cases
+with `just bench bench=blake3_file --list`. It is excluded from default runs because
+it needs explicit file fixtures and Linux cache-residency checks.
+
+The artifact printed by discovery accepts `--rscrypto-prepare-file DIRECTORY BYTES`
+to create one new deterministic file and digest manifest, and
+`--rscrypto-verify-file DIRECTORY BYTES` to check the three library operations
+and the CLI when configured. The fixed
+sizes are 1 MiB, 16 MiB, 256 MiB, 1 GiB and 10 GiB. Preparation refuses to overwrite
+a fixture. Set `RSCRYPTO_BLAKE3_FILE_DIR` to that directory and
+`RSCRYPTO_BLAKE3_FILE_CACHE_LOG` to the retained JSONL output path before invoking
+`just bench bench=blake3_file` with the desired case filter.
+
+The `upstream-b3sum-4` rows require `RSCRYPTO_BLAKE3_B3SUM` and
+`RSCRYPTO_BLAKE3_B3SUM_RECEIPT`: an executable and a retained build receipt for
+the same upstream revision as the locked BLAKE3 dependency. The
+receipt contract and build identity (`benchmark_results/blake3-delivery-20261008T185226Z/b3sum-file.md`)
+describe the required fields. `--rscrypto-verify-b3sum` validates the receipt,
+binary hash and version without hashing a file. A receipt attests its build;
+retain the source and build logs that substantiate it. The shared benchmark
+metadata hashes both external files, preventing baseline reuse after a change
+at the same path. Discovery and filtered library rows require neither file.
+
+Every iteration conditions the file outside timing and checks residency with
+`fincore`. Cold cases require zero resident pages after file-scoped eviction
+advice; warm cases require the entire file resident. Warm conditioning checks
+residency first and reads the file once only if pages are missing, then checks
+again. The log retains both observations when a read is needed. This does not
+promise CPU-cache warmth, and results must not be pooled with the older method
+that reread every warm file. A failed
+check stops measurement and retains the observation. These are Linux page-cache
+states, not claims about device or storage-service caches. A host must have enough
+available memory for the warm fixture; a shared machine is unsuitable for cache
+qualification. Retain the fixtures' manifests, cache log, host/storage identity,
+activity observations and complete Criterion output with the result.
+
+Timing includes open/seek, hash-state construction, reading, allocation and input
+cleanup, finalization, and destruction. The subtree row also includes scoped
+thread creation/join and public parent merges. A shared four-worker Rayon pool
+is initialized before timing for upstream and the Linux AArch64 plain reader.
+Pool startup is therefore excluded; subtree thread creation stays included.
+The standalone CLI includes command construction, process and four-worker
+startup, hashing, output capture and exit in every timed call. Its provenance
+and correctness checks run outside timing.
+The comparison reports those actual
+caller costs. It enables mmap only in the upstream development dependency;
+rscrypto's production reader uses ordinary reads. The benchmark source owns
+these boundaries. This target does not qualify short-prefix streaming or keyed
+file performance.
+
+### BLAKE3 mixed batches
+
+`just bench blake3-mixed` compares batch and serial rscrypto calls with locked
+upstream serial calls over the same ordered inputs. Its 54 rows span plain,
+keyed and derive-key modes, three length mixes, and 16 or 65 inputs. Fixture
+allocation, correctness checks and derive-context hashing stay outside timing;
+production construction, internal cleanup and output writes remain timed.
+Each library retains its own cleanup policy. Caller output storage is reused.
+
+`RSCRYPTO_BLAKE3_BENCH_ISA` selects `auto`, `portable`, `sse41`, `avx2`, `avx512`
+or `neon` before cached detection. The override only removes capabilities and
+rejects unavailable tiers. Upstream remains explicitly labeled `blake3-auto`.
+Process output records capability masks; optional `--diag` also checks the
+selected bulk backend. Native performance qualification is separate from
+compilation, case discovery and output equality.
+
+### Other operation boundaries
+
 Choose the timed boundary from the question that the workload answers.
 Write it next to the benchmark group in the source.
 Include input restoration, allocation, key or state construction, output handling, and destruction.

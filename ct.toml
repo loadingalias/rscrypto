@@ -3777,6 +3777,53 @@ evidence = [
 limitation = "Keyed outputs are explicitly extractable/serializable. Only Blake3KeyedHash has a typed built-in verification path."
 
 [[operation]]
+id = "keyed_hash.blake3_readers"
+api = [
+  "rscrypto::Blake3::update_reader",
+  "rscrypto::hashes::expert::blake3_tree::Blake3Subtree::update_reader",
+]
+features = ["blake3", "std"]
+targets = ["all-supported targets with std"]
+secret_inputs = ["keyed state", "derive-key material", "owned input buffer"]
+public_inputs = ["reader", "read lengths", "subtree offsets and capacity", "I/O outcomes"]
+variable_time_components = [
+  "caller-provided Read implementation and operating-system I/O",
+  "public-length buffering and hashing",
+  "Interrupted retries, EOF and error returns",
+]
+permitted_leakage = ["read lengths", "I/O outcomes", "subtree capacity"]
+claim = "best-effort"
+limitation = "No whole-call constant-time claim applies to arbitrary Read implementations, I/O or thread scheduling. Keyed and derive-key readers use the existing update operations; complete plain buffers may use the parallel tree path on Linux AArch64. Both readers clear their owned input buffer before normal return or unwind; process abort does not guarantee destruction. Cryptographic generated-code evidence and compiler-copy limitations retain their existing target and operation scope."
+
+[[operation]]
+id = "keyed_hash.blake3_batches"
+api = [
+  "rscrypto::Blake3::keyed_digest_batch",
+  "rscrypto::Blake3DeriveContext::derive_key_batch",
+  "rscrypto::hashes::expert::blake3_tree::Blake3Tree::merge_level",
+]
+features = ["blake3"]
+targets = ["all-supported", "backend selected by public target capabilities"]
+secret_inputs = ["key", "derive-key material", "keyed child chaining values", "keyed output when caller keeps it secret"]
+public_inputs = ["message lengths", "batch and output lengths", "context", "subtree offsets and lengths", "backend capabilities"]
+variable_time_components = ["public-length serial and tree calls", "public pair validation", "public backend dispatch"]
+permitted_leakage = ["lengths", "context", "backend", "public validation outcome"]
+claim = "best-effort"
+limitation = "New batch and parent-level entry points have independent correctness and named-owner cleanup review; no new whole-call machine-code constant-time claim is made. Existing primitive evidence does not automatically qualify the new batch and parent callers. Portable-state, outer-key, native-fallback and compiler-copy/spill limitations remain."
+
+[[operation]]
+id = "hash.blake3_bao_decode"
+api = ["rscrypto::hashes::expert::bao::Decoder::{new,read,into_inner}"]
+features = ["blake3", "std"]
+targets = ["all-supported targets with std"]
+secret_inputs = []
+public_inputs = ["untrusted combined encoding", "trusted root", "reader and I/O outcomes", "output buffer length"]
+variable_time_components = ["caller-provided I/O", "public tree traversal", "verification failures"]
+permitted_leakage = ["verified bytes", "verification result", "I/O outcomes", "authenticated length at EOF"]
+claim = "best-effort"
+limitation = "Unkeyed verified streaming authenticates returned chunks against an independently trusted root. It has no whole-call timing claim and exposes no unauthenticated length. Outboard encodings, slices and seeking are unsupported."
+
+[[operation]]
 id = "kdf.hkdf_extract_expand"
 api = ["rscrypto::HkdfSha{256,384}::{new,extract,expand,expand_array,derive,derive_array,prk}"]
 features = ["hkdf", "hmac"]

@@ -65,6 +65,21 @@ digest guards; secret-mode destruction clears both and then fences.
 Input indexes, lengths and flags are public.
 Returned outputs and unchanged fallback/outer-key copies are separate owners.
 
+### BLAKE3 reader input
+
+`Blake3::update_reader` and `Blake3Subtree::update_reader` own a temporary heap
+buffer under `std`. The buffer is initialized before reading, never grows after
+input arrives, and has no clone, formatting, serialization, or export path.
+Drop clears its full initialized length, including alignment padding and bytes
+written by a reader that returns an error. This applies in every hash mode.
+The source reader and any copies it owns remain the caller's responsibility.
+
+The plain parallel reader on Linux AArch64 also owns a 64-byte `ParentBlock`.
+Its destructor clears all 64 bytes after the two child chaining values enter the
+hasher, including unwinding after construction. The recursive helper's separate
+return temporary, a caller-side left-CV argument and recursive plain arrays remain
+outside this claim. Keyed and derive-key readers do not enter this path.
+
 ### BLAKE3 WASM scratch
 
 - The SIMD128 backend borrows keys and input. Its round state also carries the vector

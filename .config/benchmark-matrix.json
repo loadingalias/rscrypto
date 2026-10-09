@@ -73,6 +73,12 @@
       "required": true,
       "features": ["std", "blake3", "parallel"]
     },
+    "blake3_file": {
+      "binary": "blake3_file",
+      "kind": "criterion",
+      "required": false,
+      "features": ["std", "blake3", "parallel"]
+    },
     "mldsa_portable": {
       "binary": "mldsa",
       "kind": "criterion",

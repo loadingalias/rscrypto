@@ -243,7 +243,7 @@ crc32fast = "1.5.2"
 crc64fast = "1.1.0"
 ascon-hash = "0.4.0"
 argon2 = { version = "0.6.0", default-features = false, features = ["alloc"] }
-blake3 = { version = "1.8.7", default-features = false, features = ["std", "rayon"] }
+blake3 = { version = "1.8.7", default-features = false, features = ["std", "rayon", "mmap"] }
 blake2 = "0.11.0"
 pbkdf2 = "0.13.0"
 scrypt = { version = "0.12.0", default-features = false }
@@ -410,6 +410,11 @@ required-features = ["blake2b", "blake2s"]
 name = "blake3"
 harness = false
 required-features = ["blake3"]
+
+[[bench]]
+name = "blake3_file"
+harness = false
+required-features = ["std", "blake3", "parallel"]
 
 [[bench]]
 name = "sha2"

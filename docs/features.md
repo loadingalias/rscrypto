@@ -53,6 +53,16 @@ No Cargo feature combination exposes them, including `--all-features`.
 Applications must not use the internal cfg.
 It has no compatibility guarantee.
 
+With `std` and `blake3`, `Blake3::update_reader` hashes through EOF with bounded
+input buffering. `Blake3Subtree::update_reader` also stops at the subtree's
+remaining capacity, allowing callers to schedule independent readers and merge
+their results through `hashes::expert::blake3_tree`. Both methods preserve
+successfully read input on an I/O error and clear their owned input buffer.
+Neither method requires `parallel`. On little-endian Linux AArch64, `parallel`
+allows the plain hasher to process complete aligned buffers in the current Rayon
+pool, initializing the global pool if needed. Keyed and derive-key readers use
+ordinary updates. The subtree reader creates no threads; callers own its scheduling.
+
 With the `blake3` leaf feature, `digest_batch`, `keyed_digest_batch`, and
 `Blake3DeriveContext::derive_key_batch` accept independent mixed-length inputs
 and caller-provided output storage. Plain equal-length runs can use SIMD;

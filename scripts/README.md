@@ -353,6 +353,7 @@ They are not device timing evidence or device stack evidence.
 | `bench/runner.py`     | `just bench`, `just profile`, `just bench-export`, code inspection recipes |
 | `bench/execution.py`  | Shared Cargo build, discovery, and provenance for measurement and profiling |
 | `bench/measure.py`    | Runner: measurement and completion verification |
+| `bench/file_cache.py` | Optional BLAKE3 file harness: file-scoped Linux cache conditioning and residency evidence |
 | `bench/profile.py`    | Runner: exact-case local Samply capture, or transferred native `perf` capture |
 | `bench/profile_ci.py` | Validation and dispatch of manual CI profile requests |
 | `bench/evidence.py`   | Shared build and runtime environment collector |

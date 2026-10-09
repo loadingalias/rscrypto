@@ -34,6 +34,20 @@ records the reviewed compiler/target scope. Existing Portable state, outer
 by-value keys, native fallbacks, plain-array unwind, returned outputs and
 compiler/register/spill copies remain separate limitations.
 
+The BLAKE3 buffered reader methods clear their owned input allocation before
+deallocation on success, I/O error, and panic unwinding. The allocation stays
+fixed while it contains input; alignment uses a borrowed slice within it.
+An abort does not run destructors. This buffer contract does not extend cleanup
+claims to the caller's reader, operating-system caches, or compiler-created copies.
+
+The Linux AArch64 plain parallel reader clears its named 64-byte `ParentBlock`
+on normal return and unwinding after construction. The
+ordinary native review (`benchmark_results/blake3-linux-reader-20261008T074000Z/cleanup-review/arm64-review/report.md`)
+retains emitted clears and fences for this owner and the input allocation.
+The recursive return copy, caller-side CV argument and recursive plain arrays
+remain outside that scope. This does not close the separate Portable-state,
+outer-key, native-fallback or compiler-spill findings.
+
 The BLAKE3 SIMD128 backend clears its named vector, tail, parent, and output scratch in keyed
 and derive-key modes. Its plain tiny-input specialization adds no secret route. The
 [WASM backend record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-wasm-four-lane-backend)
