@@ -15,6 +15,8 @@ fn criterion() -> criterion::Criterion {
   );
   // The orchestration watchdog bounds the entire multi-binary run. This also
   // bounds an individual harness invoked directly through Cargo.
+  // WASI has no thread spawn; its engine process needs the external watchdog.
+  #[cfg(not(target_arch = "wasm32"))]
   std::thread::spawn(move || {
     std::thread::sleep(Duration::from_secs(budget));
     eprintln!("benchmark harness exhausted its {budget}s run budget");

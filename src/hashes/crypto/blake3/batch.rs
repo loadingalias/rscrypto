@@ -10,7 +10,11 @@ use super::{IV, OUT_LEN, digest_public_oneshot};
 /// Hash `inputs[i]` into `outputs[i]` with the unkeyed hash.
 pub(super) fn digest_batch(inputs: &[&[u8]], outputs: &mut [[u8; OUT_LEN]]) {
   debug_assert_eq!(inputs.len(), outputs.len());
-  #[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64"))]
+  #[cfg(any(
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    target_arch = "aarch64",
+    all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only"))
+  ))]
   if let Some(lanes) = lanes::Lanes::select() {
     lanes::digest_batch(lanes, inputs, outputs);
     return;
@@ -25,11 +29,17 @@ fn digest_serial(inputs: &[&[u8]], outputs: &mut [[u8; OUT_LEN]]) {
   }
 }
 
-#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64"))]
+#[cfg(any(
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  target_arch = "aarch64",
+  all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only"))
+))]
 mod lanes {
+  #[cfg(any(test, not(target_arch = "wasm32")))]
+  use super::super::IV;
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   use super::super::{BLOCK_LEN, CHUNK_END, CHUNK_START, ROOT, x86_64};
-  use super::super::{CHUNK_LEN, IV, OUT_LEN, dispatch, kernels::Blake3KernelId};
+  use super::super::{CHUNK_LEN, OUT_LEN, dispatch, kernels::Blake3KernelId};
   use super::digest_serial;
 
   /// Widest lane count of any kernel below.
@@ -46,6 +56,8 @@ mod lanes {
     Avx512,
     #[cfg(target_arch = "aarch64")]
     Neon,
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+    Wasm,
   }
 
   impl Lanes {
@@ -67,6 +79,10 @@ mod lanes {
       {
         (bulk == Blake3KernelId::Aarch64Neon && Self::Neon.available()).then_some(Self::Neon)
       }
+      #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+      {
+        (bulk == Blake3KernelId::WasmSimd128 && Self::Wasm.available()).then_some(Self::Wasm)
+      }
     }
 
     /// Whether the current CPU has this kernel's target features.
@@ -83,6 +99,8 @@ mod lanes {
         }
         #[cfg(target_arch = "aarch64")]
         Self::Neon => crate::platform::caps().has(crate::platform::caps::aarch64::NEON),
+        #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+        Self::Wasm => crate::platform::caps().has(crate::platform::caps::wasm::SIMD128),
       }
     }
 
@@ -96,6 +114,8 @@ mod lanes {
         Self::Avx512 => x86_64::avx512::DEGREE,
         #[cfg(target_arch = "aarch64")]
         Self::Neon => 4,
+        #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+        Self::Wasm => 4,
       }
     }
   }
@@ -158,6 +178,15 @@ mod lanes {
         } else {
           with_padded_lanes::<CHUNK_LEN>(inputs, |padded| hash(padded, &mut out));
         }
+      }
+      #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+      Lanes::Wasm => {
+        let (lane_ptrs, _) = ptrs.split_first_chunk::<4>().expect("MAX_DEGREE covers SIMD128");
+        let (lane_out, _) = out.split_first_chunk_mut::<4>().expect("MAX_DEGREE covers SIMD128");
+        // SAFETY: selection requires the artifact's SIMD128 capability. Every
+        // pointer addresses len bytes, including repeated unused lanes, and
+        // separate output scratch cannot overlap any input. The kernel pads tails.
+        unsafe { super::super::wasm32::hash4_roots(*lane_ptrs, len, lane_out) };
       }
       #[cfg(target_arch = "aarch64")]
       Lanes::Neon => {
@@ -255,6 +284,8 @@ mod lanes {
     const ALL: &[Lanes] = &[Lanes::Sse41, Lanes::Avx2, Lanes::Avx512];
     #[cfg(target_arch = "aarch64")]
     const ALL: &[Lanes] = &[Lanes::Neon];
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+    const ALL: &[Lanes] = &[Lanes::Wasm];
 
     /// Every lane kernel the CPU supports matches the one-shot path for every
     /// one-chunk length, full and partial lane groups, and unaligned inputs.

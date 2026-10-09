@@ -49,6 +49,17 @@ or prepared key directly into an allocation from a caller-selected `Allocator`, 
 - `Debug` shows only the mode and the input range.
 - `Blake3ChainingValue::as_bytes` borrows the bytes.
 
+### BLAKE3 WASM scratch
+
+- The SIMD128 backend borrows keys and input. Its round state also carries the vector
+  chaining values; it owns no separate vector CV array. It also owns transposed message
+  words, padded tails, and temporary output arrays.
+- Keyed and derive-key operations clear these explicit copies after their last use.
+- Padding is populated only by a partial final block. Secret-mode calls clear all four
+  padding lanes when that block exists; full-block calls leave the padding owner zero.
+- Returned chaining values remain owned by their callers. Arithmetic locals and compiler-created
+  copies retain the documented machine-code evidence boundary.
+
 ### Password-hashing memory
 
 - Caller-provided `Argon2Block` and `ScryptBlock` memory is `Clone`, not `Copy`.

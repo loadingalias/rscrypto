@@ -40,6 +40,9 @@ Runtime behavior needs execution on the target.
   Other CPUs use the portable fallback.
 - **Scalar WebAssembly:** when `simd128` is disabled, hash, AEAD, and Argon2 dispatch exclude SIMD backends.
   This compile-time boundary is separate from `portable-only` runtime dispatch.
+- **BLAKE3 wasm32:** `simd128` enables four-lane chunk hashing, parent reduction, and equal-length
+  digest batching through `core::arch::wasm32`. Serial compression remains portable. The artifact requires a
+  SIMD128-capable engine. Builds without `simd128`, or with `portable-only`, use the portable backend.
 - **P-256 ECDH** is a standalone leaf feature with a safe Rust reference implementation on every
   supported target.
   - Apple and Linux AArch64 select embedded s2n-bignum fixed-base and arbitrary-point assembly

@@ -42,6 +42,204 @@ fn patterned_bytes(len: usize) -> Vec<u8> {
     .collect()
 }
 
+/// Exercise short tails, chunk transitions, and parent-lane boundaries in every mode.
+/// The offset slice also prevents vector loads from relying on input alignment.
+#[test]
+fn blake3_all_modes_match_reference_for_every_two_chunk_length() {
+  const KEY: [u8; 32] = [0xa7; 32];
+  const CONTEXT: &str = "rscrypto BLAKE3 backend differential";
+  let storage = patterned_bytes(129 * 1024 + 2);
+  let parent_boundaries = [7usize, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129]
+    .into_iter()
+    .flat_map(|chunks| {
+      let boundary = chunks.strict_mul(1024);
+      [boundary.strict_sub(1), boundary, boundary.strict_add(1)]
+    });
+  for len in (0usize..=2048).chain(parent_boundaries) {
+    let data = &storage[1..len.strict_add(1)];
+    assert_eq!(Blake3::digest(data), Blake3::digest_const(data), "portable len={len}");
+    assert_eq!(Blake3::digest(data), blake3_ref_hash(data), "hash len={len}");
+    assert_eq!(
+      Blake3::keyed_digest(&KEY, data).as_bytes(),
+      &blake3_ref_keyed(&KEY, data),
+      "keyed len={len}"
+    );
+    assert_eq!(
+      Blake3::derive_key(CONTEXT, data),
+      blake3_ref_derive(CONTEXT, data),
+      "derive len={len}"
+    );
+    let ours = [Blake3::new(), Blake3::new_keyed(&KEY), Blake3::new_derive_key(CONTEXT)];
+    let references = [
+      blake3::Hasher::new(),
+      blake3::Hasher::new_keyed(&KEY),
+      blake3::Hasher::new_derive_key(CONTEXT),
+    ];
+    for (mode, (mut hasher, mut reference)) in ours.into_iter().zip(references).enumerate() {
+      let mut remaining = data;
+      let mut state = u64::try_from(len)
+        .expect("test length fits")
+        .wrapping_add(0x517c_c1b7_2722_0a95);
+      while !remaining.is_empty() {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let take = usize::try_from(state & 127)
+          .expect("split fits")
+          .strict_add(1)
+          .min(remaining.len());
+        let (part, rest) = remaining.split_at(take);
+        hasher.update(part);
+        reference.update(part);
+        remaining = rest;
+      }
+      let mut actual = [0u8; 131];
+      let mut reader = hasher.finalize_xof();
+      reader.squeeze(&mut actual[..17]);
+      reader.squeeze(&mut actual[17..]);
+      let mut expected = [0u8; 131];
+      reference.finalize_xof().fill(&mut expected);
+      assert_eq!(actual, expected, "stream/XOF mode={mode} len={len}");
+
+      let mut whole = match mode {
+        0 => Blake3::xof(data),
+        1 => Blake3::keyed_xof(&KEY, data),
+        _ => {
+          let mut hasher = Blake3::new_derive_key(CONTEXT);
+          hasher.update(data);
+          hasher.finalize_xof()
+        }
+      };
+      whole.squeeze(&mut actual);
+      assert_eq!(actual, expected, "whole-input/XOF mode={mode} len={len}");
+    }
+  }
+}
+
+/// A short first update and a suffix that completes a chunk reach different tree states.
+/// Keep their ordered bytes fixed when comparing with one-shot and independent oracles.
+#[test]
+fn blake3_ordered_prefixes_and_suffixes_match_reference() {
+  const KEY: [u8; 32] = [0xa7; 32];
+  const CONTEXT: &str = "rscrypto BLAKE3 ordered streaming";
+  let mut cases = Vec::new();
+  for prefix in [1usize, 24, 70, 1023] {
+    for bulk in [1024usize, 2048, 4096, 8192, 16384, 32768, 65536] {
+      cases.push((prefix, bulk));
+    }
+  }
+  cases.push((24, 3104));
+  for bulk in [980, 1000, 4000, 4052, 4095, 4096, 16340, 16384] {
+    cases.push((bulk, 60));
+  }
+  for chunks in [3usize, 5, 6, 7] {
+    for tail in [1, 70, 1023] {
+      cases.push((chunks.strict_mul(1024), tail));
+    }
+  }
+  for (first, second) in cases {
+    let len = first.strict_add(second);
+    let storage = patterned_bytes(len.strict_add(2));
+    let data = &storage[1..len.strict_add(1)];
+    assert_eq!(
+      Blake3::digest(data),
+      Blake3::digest_const(data),
+      "portable {first}+{second}"
+    );
+    let oneshot = [
+      Blake3::digest(data),
+      *Blake3::keyed_digest(&KEY, data).as_bytes(),
+      Blake3::derive_key(CONTEXT, data),
+    ];
+    let ours = [Blake3::new(), Blake3::new_keyed(&KEY), Blake3::new_derive_key(CONTEXT)];
+    let references = [
+      blake3::Hasher::new(),
+      blake3::Hasher::new_keyed(&KEY),
+      blake3::Hasher::new_derive_key(CONTEXT),
+    ];
+    for (mode, (mut hasher, mut reference)) in ours.into_iter().zip(references).enumerate() {
+      reference.update(data);
+      assert_eq!(oneshot[mode], *reference.finalize().as_bytes());
+      hasher.update(&data[..first]);
+      hasher.update(&[]);
+      hasher.update(&data[first..]);
+      for _ in 0..2 {
+        assert_eq!(hasher.finalize(), oneshot[mode], "mode={mode} {first}+{second}");
+      }
+      let mut actual = [0u8; 131];
+      let mut expected = [0u8; 131];
+      let mut reader = hasher.finalize_xof();
+      reader.squeeze(&mut actual[..65]);
+      reader.squeeze(&mut actual[65..]);
+      reference.finalize_xof().fill(&mut expected);
+      assert_eq!(actual, expected, "XOF mode={mode} {first}+{second}");
+      // Finalization must leave pending subtree CVs usable by a later update.
+      hasher.update(&[]);
+      hasher.update(b"continued");
+      reference.update(b"continued");
+      assert_eq!(hasher.finalize(), *reference.finalize().as_bytes());
+    }
+  }
+}
+
+/// The I/O adapter must hash only returned bytes, including a short final read.
+#[cfg(feature = "std")]
+#[test]
+fn blake3_reader_preserves_short_read_partitions() {
+  use std::io::{Cursor, Read as _};
+
+  let storage = patterned_bytes(64 * 1024 + 1025);
+  for prefix in [1usize, 24, 70, 1023] {
+    for bulk in [1024usize, 3104, 4096, 65536] {
+      let len = prefix.strict_add(bulk);
+      let data = &storage[1..len.strict_add(1)];
+      let mut reader = Blake3::reader(Cursor::new(data));
+      let mut first = vec![0u8; prefix];
+      reader.read_exact(&mut first).expect("prefix read");
+      assert_eq!(reader.digest(), blake3_ref_hash(&data[..prefix]));
+      let mut buffer = [0xa5; 4096];
+      while reader.read(&mut buffer).expect("bulk read") != 0 {}
+      assert_eq!(reader.digest(), blake3_ref_hash(data), "reader {prefix}+{bulk}");
+      let (_, digest) = reader.into_parts();
+      assert_eq!(digest, Blake3::digest_const(data));
+    }
+  }
+}
+
+/// Long contexts exercise parent groups in the context domain, before material hashing.
+#[test]
+fn blake3_large_derive_context_matches_reference() {
+  let context_storage: String = (0..17 * 1024 + 2)
+    .map(|i| char::from(b'!' + u8::try_from(i % 94).expect("ASCII remainder fits")))
+    .collect();
+  let material_storage = patterned_bytes(64 * 1024 + 2);
+  for chunks in [8usize, 16, 17] {
+    let boundary = chunks.strict_mul(1024);
+    for context_len in [boundary.strict_sub(1), boundary, boundary.strict_add(1)] {
+      let context = context_storage
+        .get(1..context_len.strict_add(1))
+        .expect("context boundaries lie within the ASCII fixture");
+      let prehashed = Blake3DeriveContext::new(context);
+      for material_len in [0usize, 64, 1024, 64 * 1024 + 1] {
+        let material = &material_storage[1..material_len.strict_add(1)];
+        let expected = blake3_ref_derive(context, material);
+        assert_eq!(Blake3::derive_key(context, material), expected);
+        assert_eq!(Blake3::derive_key_with(&prehashed, material), expected);
+
+        let mut hasher = Blake3::new_derive_key_from(&prehashed);
+        for part in material.chunks(1023) {
+          hasher.update(part);
+        }
+        let mut actual = [0u8; 131];
+        hasher.finalize_xof().squeeze(&mut actual);
+        let mut expected = [0u8; 131];
+        blake3_ref_derive_xof(context, material, &mut expected);
+        assert_eq!(actual, expected, "context={context_len} material={material_len}");
+      }
+    }
+  }
+}
+
 #[test]
 fn blake3_digest_const_matches_reference_and_streaming_for_every_two_chunk_length() {
   for len in 0..=2048 {
@@ -415,7 +613,7 @@ mod subtree {
   #[test]
   fn subtrees_at_large_offsets_match_reference() {
     let input = patterned_bytes(3 * 1024 + 5);
-    for offset_chunks in [1u64 << 20, 1 << 40, 1 << 53, (1 << 54) - 4] {
+    for offset_chunks in [1u64 << 20, (1 << 32) - 4, 1 << 32, 1 << 40, 1 << 53, (1 << 54) - 4] {
       let offset = offset_chunks * CHUNK_LEN;
       for mode in MODES {
         let cv = subtree_cv(&tree(mode), offset, &input);

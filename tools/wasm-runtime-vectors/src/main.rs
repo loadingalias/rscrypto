@@ -3,6 +3,7 @@ use rscrypto::aead::expert::header_protection::{
   ChaCha20HeaderProtection, ChaCha20HeaderProtectionKey,
 };
 use rscrypto::hashes::legacy::WebSocketAcceptDigest;
+use rscrypto::traits::Xof as _;
 use rscrypto::{
   AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, Blake2b512, Blake3, Digest, EcdsaP256SecretKey,
   EcdsaP384SecretKey, P256EphemeralSecret, P256PublicKey, P384EphemeralSecret, P384PublicKey, RsaPrivateKey,
@@ -10,6 +11,9 @@ use rscrypto::{
 };
 
 const RSA_PRIVATE_KEY_PEM: &str = include_str!("../fixtures/rsa2048_private_pkcs1.txt");
+
+#[path = "../../../tests/support/vector_blob.rs"]
+mod vector_blob;
 
 fn hex_value(byte: u8) -> Option<u8> {
   match byte {
@@ -153,6 +157,51 @@ fn assert_streaming_hashes_match_oneshot_across_block_boundaries() {
     blake3.update(chunk);
   }
   assert_eq!(blake3.finalize(), blake3_oneshot);
+}
+
+fn assert_blake3_portable_differentials_and_official_vectors() {
+  // An offset slice exercises byte-aligned SIMD loads, including every short
+  // tail and partially filled batch. digest_const uses the portable authority.
+  let storage = patterned_bytes(7 * 1024 + 19);
+  for len in (0usize..=2048).chain([3071, 3072, 3089, 5119, 5120, 5137, 6144, 6161, 7168, 7185]) {
+    let input = &storage[1..len.strict_add(1)];
+    let expected = Blake3::digest_const(input);
+    assert_eq!(Blake3::digest(input), expected, "BLAKE3 length {len}");
+    let mut outputs = [[0; 32]; 7];
+    Blake3::digest_batch(&[input; 7], &mut outputs);
+    assert!(outputs.iter().all(|output| *output == expected));
+  }
+
+  // Reuse the official corpus and its existing decoder; no second algorithm
+  // or comparison dependency is linked into the runtime-vector executable.
+  let corpus = include_bytes!("../../../testdata/blake3/test_vectors.blb");
+  for row in vector_blob::BlobIterator::<6>::new(corpus).expect("BLAKE3 corpus") {
+    let [key, context, length, hash, keyed, derived] = row.expect("BLAKE3 vector");
+    let key: &[u8; 32] = key.try_into().expect("BLAKE3 key");
+    let context = core::str::from_utf8(context).expect("BLAKE3 context");
+    let len =
+      usize::try_from(u64::from_le_bytes(length.try_into().expect("BLAKE3 length"))).expect("fixture length fits");
+    let input: Vec<u8> = (0..len)
+      .map(|i| u8::try_from(i % 251).expect("fixture byte fits"))
+      .collect();
+    assert_eq!(&Blake3::digest(&input), &hash[..32]);
+    assert_eq!(Blake3::keyed_digest(key, &input).as_bytes(), &keyed[..32]);
+    assert_eq!(&Blake3::derive_key(context, &input), &derived[..32]);
+    for (mut hasher, expected) in [
+      (Blake3::new(), hash),
+      (Blake3::new_keyed(key), keyed),
+      (Blake3::new_derive_key(context), derived),
+    ] {
+      for chunk in input.chunks(70) {
+        hasher.update(chunk);
+      }
+      let mut output = vec![0; expected.len()];
+      let mut reader = hasher.finalize_xof();
+      reader.squeeze(&mut output[..17]);
+      reader.squeeze(&mut output[17..]);
+      assert_eq!(output, expected);
+    }
+  }
 }
 
 fn assert_rsa_caller_random_signing_roundtrips() {
@@ -448,6 +497,7 @@ fn run_vectors() {
   assert_argon2id_rfc9106();
   assert_core_hash_vectors_match_known_outputs();
   assert_streaming_hashes_match_oneshot_across_block_boundaries();
+  assert_blake3_portable_differentials_and_official_vectors();
   assert_rsa_caller_random_signing_roundtrips();
   assert_websocket_accept_digest_matches_rfc_6455();
   assert_header_protection_vectors_match_known_outputs();

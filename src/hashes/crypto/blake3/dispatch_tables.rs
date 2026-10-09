@@ -544,6 +544,26 @@ pub(crate) static PROFILE_DEFAULT_KIND: FamilyProfile = default_kind_profile();
 #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
 pub(crate) static PROFILE_PORTABLE: FamilyProfile = portable_profile();
 
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+static PROFILE_WASM_SIMD128: FamilyProfile = FamilyProfile {
+  dispatch: DispatchTable {
+    boundaries: [64, 1024, 4096],
+    xs: KernelId::Portable,
+    s: KernelId::Portable,
+    m: KernelId::WasmSimd128,
+    l: KernelId::WasmSimd128,
+  },
+  streaming: StreamingTable {
+    stream: KernelId::Portable,
+    bulk: KernelId::WasmSimd128,
+    bulk_sizeclass_threshold: THRESHOLD_PORTABLE,
+  },
+  #[cfg(feature = "parallel")]
+  parallel: default_parallel_costs(128 * 1024, 64, 0),
+  #[cfg(feature = "parallel")]
+  streaming_parallel: default_parallel_costs(128 * 1024, 64, 0),
+};
+
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(crate) static PROFILE_INTEL_SAPPHIRE_RAPIDS: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
@@ -839,6 +859,10 @@ pub(crate) static PROFILE_POWER10: FamilyProfile = FamilyProfile {
 #[inline]
 #[must_use]
 pub(crate) fn select_profile_for_caps(caps: Caps) -> &'static FamilyProfile {
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+  if caps.has(crate::platform::caps::wasm::SIMD128) {
+    return &PROFILE_WASM_SIMD128;
+  }
   #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
   {
     if caps.has(x86::AVX512_READY) {

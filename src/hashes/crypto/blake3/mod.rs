@@ -26,6 +26,8 @@ pub(crate) mod kernels;
 #[cfg(feature = "parallel")]
 mod parallel;
 pub(crate) mod tree;
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+mod wasm32;
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(crate) mod x86_64;
 use self::{control::ParallelPolicyKind, kernels::Kernel};
@@ -682,7 +684,11 @@ fn hash_power_of_two_subtree_roots_parallel_rayon(req: SubtreeRootsRequest<'_>) 
 /// BLAKE3 message schedule.
 ///
 /// `MSG_SCHEDULE[round][i]` gives the index of the message word to use.
-#[cfg(any(all(target_arch = "x86_64", target_feature = "sse2"), target_arch = "aarch64"))]
+#[cfg(any(
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  target_arch = "aarch64",
+  all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only"))
+))]
 pub(crate) const MSG_SCHEDULE: [[usize; 16]; 7] = [
   [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
   [2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8],
@@ -2695,6 +2701,14 @@ fn digest_oneshot_words_fallback(kernel: Kernel, mut key_words: [u32; 8], flags:
 
 #[inline]
 fn digest_oneshot(kernel: Kernel, key_words: &mut [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
+  // Both WASM kernels use scalar compression. Keep plain tiny hashes on their
+  // known portable route without carrying bulk dispatch into the generic frame.
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+  if flags == 0 && input.len() <= BLOCK_LEN {
+    let portable = kernels::kernel(kernels::Blake3KernelId::Portable);
+    return words8_to_le_bytes(&hash_tiny_to_root_words(portable, key_words, 0, input));
+  }
+
   #[cfg(target_arch = "aarch64")]
   {
     if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) == 0
@@ -2811,6 +2825,9 @@ pub enum Blake3DiagKernel {
   #[cfg(target_arch = "aarch64")]
   /// AArch64 NEON kernel.
   Aarch64Neon,
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+  /// WebAssembly SIMD128 kernel.
+  WasmSimd128,
 }
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
@@ -2841,6 +2858,8 @@ impl Blake3DiagKernel {
       Self::X86Avx512OwnedCompress => "x86-avx512-owned-compress",
       #[cfg(target_arch = "aarch64")]
       Self::Aarch64Neon => "aarch64-neon",
+      #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+      Self::WasmSimd128 => "wasm-simd128",
     }
   }
 
@@ -2899,6 +2918,8 @@ impl Blake3DiagKernel {
       Self::X86Avx512OwnedCompress => kernels::Blake3KernelId::X86Avx512,
       #[cfg(target_arch = "aarch64")]
       Self::Aarch64Neon => kernels::Blake3KernelId::Aarch64Neon,
+      #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+      Self::WasmSimd128 => kernels::Blake3KernelId::WasmSimd128,
     }
   }
 
@@ -3239,9 +3260,10 @@ impl Blake3 {
 
   /// Hash many independent inputs: `outputs[i]` becomes `Blake3::digest(inputs[i])`.
   ///
-  /// Runs of equal-length inputs of at most 1,024 bytes share SIMD lanes, so
-  /// many small messages hash faster than one call each. Other inputs take
-  /// the one-shot path.
+  /// Supported SIMD backends share lanes across runs of equal-length inputs
+  /// of at most 1,024 bytes. Other inputs use individual calls. Inputs above one
+  /// chunk use the one-shot tree
+  /// path. Other targets retain their available batch or portable paths.
   ///
   /// # Panics
   ///

@@ -25,6 +25,29 @@ The claim does not cover:
 
 ## Cleanup boundaries
 
+The BLAKE3 SIMD128 backend clears its named vector, tail, parent, and output scratch in keyed
+and derive-key modes. Its plain tiny-input specialization adds no secret route. The
+[WASM backend record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-wasm-four-lane-backend)
+retains source-bound cleanup evidence and the separate pre-existing Portable state-owner gap.
+The parent caller review (`benchmark_results/blake3-wasm-parent-cost-20261006T063400Z/secret-review/key-borrow-follow-up.md`)
+also records existing outer by-value key copies without explicit cleanup. The parent SIMD
+borrow introduces no key-copy owner and preserves explicit clears; differing stack placement is not proof
+of identical post-return residue. These outer copies remain a separate cleanup follow-up.
+The [state-owner reduction](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-wasm-state-ownership)
+removes the separate vector CV array while preserving full round-state, message,
+padding, and output cleanup. Its smaller guest frame does not imply smaller native
+frames or equal physical residue.
+The [padding-clear guard](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-wasm-unused-padding-cleanup)
+skips wiping padding that received no input bytes. A secret partial block still
+receives complete padding cleanup; all state, message, output clears and fences remain.
+That outcome left the normal generic frame and padding initialization unchanged.
+The later [root-mode specialization](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-wasm-root-mode-specialization)
+lets full chunks omit unused padding storage and initialization while preserving
+all populated secret-owner clears and fences. Plain partial batches retain padding;
+OR-ing ROOT preserves the secret-mode bits for the generic source contract.
+Native batch frames grow, and observed compiler-created key spills lie outside the
+named guest clears. This is not a guarantee of erased native slots or equal residue.
+
 | Owner or operation | When cleanup happens |
 | --- | --- |
 | Typed keys, private keys, and shared secrets | On concrete or nested `Drop`. A consuming export clears the source, or moves responsibility to the caller explicitly. |

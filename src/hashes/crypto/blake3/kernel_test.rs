@@ -22,6 +22,8 @@ const ALL: &[Blake3KernelId] = &[
   Blake3KernelId::PowerVsx,
   #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   Blake3KernelId::RiscvV,
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+  Blake3KernelId::WasmSimd128,
 ];
 
 #[derive(Clone, Debug)]
@@ -419,6 +421,105 @@ mod tests {
           id.as_str(),
           num_chunks
         );
+      }
+    }
+  }
+
+  #[test]
+  fn hash_many_unaligned_tails_match_independent_cvs() {
+    use blake3::hazmat::HasherExt as _;
+
+    use super::super::{CHUNK_LEN, DERIVE_KEY_MATERIAL, IV, KEYED_HASH, OUT_LEN};
+
+    let caps = crate::platform::caps();
+    let context_key = blake3::hazmat::hash_derive_key_context(CONTEXT);
+    let words = |bytes: &[u8; 32]| {
+      core::array::from_fn(|i| u32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().expect("key word")))
+    };
+    let modes = [
+      (0, IV, blake3::Hasher::new()),
+      (KEYED_HASH, words(KEY), blake3::Hasher::new_keyed(KEY)),
+      (
+        DERIVE_KEY_MATERIAL,
+        words(&context_key),
+        blake3::Hasher::new_from_context_key(&context_key),
+      ),
+    ];
+    let portable = kernel_for_id(Blake3KernelId::Portable);
+
+    // Include each remainder before and after four/eight-leaf groups. The high
+    // counter crosses the low-word boundary inside both vector groups and tails.
+    for num_chunks in 1usize..=11 {
+      let message = pattern(num_chunks * CHUNK_LEN);
+      let out_len = num_chunks * OUT_LEN;
+      for counter in [0u64, (1u64 << 32) - 3] {
+        for (flags, key, initial) in &modes {
+          let mut expected = Vec::with_capacity(out_len);
+          for (index, chunk) in message.as_chunks::<CHUNK_LEN>().0.iter().enumerate() {
+            let mut oracle = initial.clone();
+            let chunk_counter = counter + u64::try_from(index).expect("chunk index fits");
+            oracle.set_input_offset(chunk_counter * 1024).update(chunk);
+            expected.extend_from_slice(&oracle.finalize_non_root());
+          }
+          let mut reference = vec![0u8; out_len];
+          // SAFETY: message and reference cover exactly num_chunks chunks/CVs.
+          unsafe {
+            (portable.hash_many_contiguous)(
+              message.as_ptr(),
+              num_chunks,
+              key,
+              counter,
+              *flags,
+              reference.as_mut_ptr(),
+            );
+          }
+          assert_eq!(
+            reference, expected,
+            "Portable CVs, chunks={num_chunks}, counter={counter}, flags={flags}"
+          );
+
+          for input_offset in [0usize, 1, 4, 7, 8, 15] {
+            let mut input = vec![0u8; message.len() + 32];
+            let input_start = (16 - input.as_ptr() as usize % 16) % 16 + input_offset;
+            input[input_start..input_start + message.len()].copy_from_slice(&message);
+            for output_offset in [0usize, 1, 3, 4, 7] {
+              for &id in ALL {
+                if !caps.has(required_caps(id)) {
+                  continue;
+                }
+                let mut output = vec![0xa5u8; out_len + 32];
+                let start = (16 - output.as_ptr() as usize % 16) % 16 + output_offset;
+                let end = start + out_len;
+                // SAFETY: input/output are disjoint initialized allocations with
+                // full chunk/CV ranges at every offset; required CPU caps passed.
+                unsafe {
+                  (kernel_for_id(id).hash_many_contiguous)(
+                    input.as_ptr().add(input_start),
+                    num_chunks,
+                    key,
+                    counter,
+                    *flags,
+                    output.as_mut_ptr().add(start),
+                  );
+                }
+                assert_eq!(
+                  output[start..end],
+                  expected,
+                  "CVs: kernel={}, chunks={num_chunks}, counter={counter}, flags={flags}, in={input_offset}, out={output_offset}",
+                  id.as_str()
+                );
+                assert!(
+                  output[..start].iter().all(|&byte| byte == 0xa5),
+                  "output prefix overwritten"
+                );
+                assert!(
+                  output[end..].iter().all(|&byte| byte == 0xa5),
+                  "output suffix overwritten"
+                );
+              }
+            }
+          }
+        }
       }
     }
   }

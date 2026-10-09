@@ -8,7 +8,8 @@ use super::{
   target_arch = "aarch64",
   all(target_arch = "s390x", not(feature = "portable-only")),
   all(target_arch = "powerpc64", not(feature = "portable-only")),
-  all(target_arch = "riscv64", not(feature = "portable-only"))
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only"))
 ))]
 use crate::platform::Caps;
 #[cfg(target_arch = "aarch64")]
@@ -69,6 +70,7 @@ pub(crate) type CompressFn = fn(&[u32; 8], &[u32; 16], u64, u32, u32) -> [u32; 1
 ///
 /// - `input` must point to at least `CHUNK_LEN * num_chunks` readable bytes.
 /// - `out` must point to at least `OUT_LEN * num_chunks` writable bytes.
+/// - The input and output ranges must not overlap.
 pub(crate) type HashManyContiguousFn =
   unsafe fn(input: *const u8, num_chunks: usize, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8);
 
@@ -140,6 +142,8 @@ pub(crate) enum Blake3KernelId {
   PowerVsx = 7,
   #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
   RiscvV = 8,
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+  WasmSimd128 = 9,
 }
 
 impl Blake3KernelId {
@@ -163,6 +167,8 @@ impl Blake3KernelId {
       Self::PowerVsx => "powerpc64/vsx",
       #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
       Self::RiscvV => "riscv64/v",
+      #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+      Self::WasmSimd128 => "wasm32/simd128",
     }
   }
 
@@ -186,6 +192,8 @@ impl Blake3KernelId {
       Self::PowerVsx => 4,
       #[cfg(all(target_arch = "riscv64", not(feature = "portable-only")))]
       Self::RiscvV => 4,
+      #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+      Self::WasmSimd128 => 4,
     }
   }
 }
@@ -193,6 +201,15 @@ impl Blake3KernelId {
 #[must_use]
 pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
   match id {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+    Blake3KernelId::WasmSimd128 => Kernel {
+      id,
+      compress: super::compress,
+      chunk_compress_blocks: super::wasm32::chunk_compress_blocks,
+      hash_many_contiguous: super::wasm32::hash_many_contiguous,
+      #[cfg(feature = "diag")]
+      name: id.as_str(),
+    },
     Blake3KernelId::Portable => Kernel {
       id,
       compress: super::compress,
@@ -413,6 +430,10 @@ pub(crate) fn chunk_compress_blocks_inline(
     Blake3KernelId::Portable => {
       chunk_compress_blocks_portable(chaining_value, chunk_counter, flags, blocks_compressed, blocks)
     }
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+    Blake3KernelId::WasmSimd128 => {
+      super::wasm32::chunk_compress_blocks(chaining_value, chunk_counter, flags, blocks_compressed, blocks)
+    }
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake3KernelId::X86Sse41 => {
       chunk_compress_blocks_sse41_wrapper(chaining_value, chunk_counter, flags, blocks_compressed, blocks)
@@ -510,6 +531,19 @@ pub(crate) unsafe fn compress_block_asm_inline(
     _ => {}
   }
 
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+  if id == Blake3KernelId::WasmSimd128 {
+    let mut words = words16_from_le_bytes_64(block);
+    let mut output = super::compress(chaining_value, &words, chunk_counter, BLOCK_LEN_U32, flags);
+    *chaining_value = first_8_words(output);
+    if flags & (super::KEYED_HASH | super::DERIVE_KEY_MATERIAL) != 0 {
+      crate::traits::ct::zeroize_words_no_fence(&mut words);
+      crate::traits::ct::zeroize_words_no_fence(&mut output);
+      crate::traits::ct::zeroize_fence();
+    }
+    return;
+  }
+
   // Fallback: portable compress (also covers SSSE3, NEON, etc.)
   let _ = id;
   let block_words = words16_from_le_bytes_64(block);
@@ -543,6 +577,11 @@ pub(crate) unsafe fn hash_many_contiguous_inline(
     Blake3KernelId::Portable => {
       // SAFETY: caller upholds the contiguous-input and output-buffer contract.
       unsafe { hash_many_contiguous_portable(input, num_chunks, key, counter, flags, out) }
+    }
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+    Blake3KernelId::WasmSimd128 => {
+      // SAFETY: caller supplies disjoint readable chunks and writable CVs.
+      unsafe { super::wasm32::hash_many_contiguous(input, num_chunks, key, counter, flags, out) }
     }
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake3KernelId::X86Sse41 => {
@@ -592,6 +631,8 @@ pub(crate) fn parent_cv_inline(
 ) -> [u32; 8] {
   match id {
     Blake3KernelId::Portable => parent_cv_portable(left_child_cv, right_child_cv, key_words, flags),
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+    Blake3KernelId::WasmSimd128 => super::wasm32::parent_cv(left_child_cv, right_child_cv, key_words, flags),
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake3KernelId::X86Sse41 => parent_cv_sse41_wrapper(left_child_cv, right_child_cv, key_words, flags),
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
@@ -620,6 +661,8 @@ pub(crate) fn compress_block_inline(
 ) -> [u32; 16] {
   match id {
     Blake3KernelId::Portable => super::compress(chaining_value, block_words, counter, block_len, flags),
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+    Blake3KernelId::WasmSimd128 => super::compress(chaining_value, block_words, counter, block_len, flags),
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake3KernelId::X86Sse41 => compress_sse41_wrapper(chaining_value, block_words, counter, block_len, flags),
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
@@ -1495,6 +1538,8 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
 
   match id {
     Blake3KernelId::Portable => {}
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+    Blake3KernelId::WasmSimd128 => {}
     #[cfg(target_arch = "aarch64")]
     Blake3KernelId::Aarch64Neon => {
       // SAFETY: NEON is available per dispatch; this helper handles all tail
@@ -1803,7 +1848,19 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
     }
   }
 
-  // Scalar fallback.
+  #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+  let (children, out) = if id == Blake3KernelId::WasmSimd128 {
+    let (child_groups, child_tail) = children.as_chunks::<8>();
+    let (parent_groups, parent_tail) = out.as_chunks_mut::<4>();
+    for (children, out) in child_groups.iter().zip(parent_groups) {
+      super::wasm32::parent_cvs4(children, &key_words, flags, out);
+    }
+    (child_tail, parent_tail)
+  } else {
+    (children, out)
+  };
+
+  // Scalar fallback, including incomplete WASM parent groups.
   for (pair, out_cv) in children.as_chunks::<2>().0.iter().zip(out.iter_mut()) {
     let left = words8_from_le_bytes_32(&pair[0]);
     let right = words8_from_le_bytes_32(&pair[1]);
@@ -1824,11 +1881,14 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
   target_arch = "aarch64",
   all(target_arch = "s390x", not(feature = "portable-only")),
   all(target_arch = "powerpc64", not(feature = "portable-only")),
-  all(target_arch = "riscv64", not(feature = "portable-only"))
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only"))
 ))]
 pub(crate) const fn required_caps(id: Blake3KernelId) -> Caps {
   match id {
     Blake3KernelId::Portable => Caps::NONE,
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+    Blake3KernelId::WasmSimd128 => crate::platform::caps::wasm::SIMD128,
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake3KernelId::X86Sse41 => x86::SSE41.union(x86::SSSE3),
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]

@@ -5,7 +5,8 @@ use super::dispatch_tables::ParallelTable;
   target_arch = "aarch64",
   all(target_arch = "s390x", not(feature = "portable-only")),
   all(target_arch = "powerpc64", not(feature = "portable-only")),
-  all(target_arch = "riscv64", not(feature = "portable-only"))
+  all(target_arch = "riscv64", not(feature = "portable-only")),
+  all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only"))
 ))]
 use super::kernels::required_caps;
 use super::{
@@ -129,6 +130,14 @@ fn resolve(id: Blake3KernelId, caps: Caps) -> Blake3KernelId {
   // would work.
   match id {
     Blake3KernelId::Portable => Blake3KernelId::Portable,
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128", not(feature = "portable-only")))]
+    Blake3KernelId::WasmSimd128 => {
+      if caps.has(required_caps(id)) {
+        id
+      } else {
+        Blake3KernelId::Portable
+      }
+    }
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     Blake3KernelId::X86Avx512 => {
       if caps.has(required_caps(Blake3KernelId::X86Avx512)) {
