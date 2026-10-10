@@ -61,7 +61,11 @@ impl Params {
       "trees fit the node stack"
     );
     assert!(k <= MAX_FORS_TREES, "FORS roots fit their buffer");
-    assert!((k << a) <= 1 << 32, "FORS tree indices fit the 4-byte address word");
+    // In u64: the bound itself does not fit a 32-bit usize.
+    assert!(
+      (k as u64) << a <= 1u64 << 32,
+      "FORS tree indices fit the 4-byte address word"
+    );
 
     let len1 = (8usize.strict_mul(n)).div_ceil(lg_w as usize);
     let len2 = gen_len2(len1, lg_w);
