@@ -534,6 +534,7 @@ pub(crate) mod tests {
     feature = "p384-ecdh",
     feature = "ml-kem",
     feature = "ml-dsa",
+    feature = "slh-dsa",
     feature = "argon2",
     feature = "scrypt",
     feature = "pbkdf2"
@@ -711,6 +712,36 @@ pub(crate) mod tests {
       });
       covered("ML-DSA PKCS #8 seed import", || {
         core::hint::black_box(crate::MlDsa65Seed::from_pkcs8_der(&der))
+      });
+    }
+    #[cfg(feature = "slh-dsa")]
+    {
+      let fill = |out: &mut [u8]| {
+        out.fill(0x31);
+        Ok::<(), crate::SlhDsaError>(())
+      };
+      let mut keys = None;
+      covered("SLH-DSA key generation", || {
+        keys = Some(crate::SlhDsaShake128f::generate_keypair(fill).expect("key generation"))
+      });
+      let (_, secret) = keys.expect("generated keys");
+      let mut signature = [0; crate::SlhDsaShake128f::SIGNATURE_LENGTH];
+      covered("SLH-DSA signing", || {
+        core::hint::black_box(secret.sign_deterministic(b"dit", &[], &mut signature))
+      });
+      let encoded = secret.expose_secret();
+      covered("SLH-DSA secret-key import", || {
+        core::hint::black_box(crate::SlhDsaShake128fSecretKey::try_from_slice(encoded.as_bytes()))
+      });
+      let mut der = [0; crate::SlhDsaShake128fSecretKey::PKCS8_DER_LENGTH];
+      secret.to_pkcs8_der_into(&mut der);
+      covered("SLH-DSA PKCS #8 import", || {
+        core::hint::black_box(crate::SlhDsaShake128fSecretKey::from_pkcs8_der(&der))
+      });
+      let prehash = crate::HashSlhDsaShake128fWithShake128SecretKey::try_from_slice(encoded.as_bytes())
+        .expect("HashSLH-DSA secret key");
+      covered("HashSLH-DSA signing", || {
+        core::hint::black_box(prehash.sign_prehash_with(&[0x42; 32], &[], fill, &mut signature))
       });
     }
     #[cfg(feature = "argon2")]

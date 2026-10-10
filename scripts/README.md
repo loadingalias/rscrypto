@@ -96,6 +96,14 @@ It does not download upstream archives.
   and the pinned rustdoc compile-and-run contract, including deliberate failures.
   It needs the repository-pinned nightly and runs a small Rust fixture.
 
+### SLH-DSA ACVP fixtures
+
+`test/slhdsa_acvp.py derive` writes `testdata/slhdsa/acvp/sigGen.bin` and `sigVer.bin` from the pinned
+ACVP-Server SLH-DSA sigGen and sigVer JSON. It fetches the files from the pinned commit, or reads them
+with `--source DIR`, and refuses any file whose SHA-256 differs from the pin. The output is
+deterministic; the fixture README documents the format. No recipe or check runs it: `just check`
+verifies the committed bytes through `SHA256SUMS`.
+
 ### Cross-built tests
 
 RISC-V, POWER, and IBM Z CI build on Ubuntu x86-64 with the `--ci-cross-build TARGET` tooling.

@@ -31,7 +31,7 @@ impl<'a, E: MalformedDer> DerReader<'a, E> {
   }
 
   /// Return the next tag byte without consuming it.
-  #[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "rsa"))]
+  #[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "rsa", feature = "slh-dsa"))]
   pub(crate) fn peek_byte(&self) -> Option<u8> {
     self.input.get(self.offset).copied()
   }

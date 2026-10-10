@@ -70,7 +70,7 @@ X25519, ML-KEM, password hashing, and backend introspection.
 | Fast hashes | XXH3-64/128, RapidHash V3-64 | `fast-hashes` or a leaf feature |
 | MACs and KDFs | HMAC-SHA-2/SHA-3, KMAC128/256, Poly1305, HKDF-SHA-2, PBKDF2-HMAC-SHA-2 | `macs`, `kdfs`, or a leaf feature |
 | Password hashing | Argon2d/i/id, scrypt, bounded PHC password records | `password-hashing` or a leaf feature |
-| Signatures and RSA | ECDSA P-256/P-384, Ed25519, [ML-DSA-44/65/87](docs/mldsa.md), RSA signing, verification, encryption, and key generation | `signatures` or a leaf feature |
+| Signatures and RSA | ECDSA P-256/P-384, Ed25519, [ML-DSA-44/65/87](docs/mldsa.md), SLH-DSA (all 12 FIPS 205 sets, pure and HashSLH-DSA), RSA signing, verification, encryption, and key generation | `signatures` or a leaf feature |
 | Key exchange and KEMs | P-256 ECDH, P-384 ECDH, X25519, ML-KEM-512/768/1024 | `key-exchange` or a leaf feature |
 | AEADs | AES-GCM, AES-GCM-SIV, AES-SIV-CMAC, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128 | `aead` or a leaf feature |
 

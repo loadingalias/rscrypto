@@ -364,6 +364,7 @@ pub mod aead;
   feature = "p256-ecdh",
   feature = "p384-ecdh",
   feature = "rsa",
+  feature = "slh-dsa",
   feature = "x25519",
   feature = "phc-strings",
   feature = "argon2",
@@ -453,6 +454,30 @@ pub use auth::{EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP2
 pub use auth::{EcdsaP384Keypair, EcdsaP384PublicKey, EcdsaP384SecretKey, EcdsaP384Signature};
 #[cfg(feature = "ed25519")]
 pub use auth::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
+#[cfg(feature = "slh-dsa")]
+pub use auth::{
+  HashSlhDsaSha2_128fWithSha256, HashSlhDsaSha2_128fWithSha256PublicKey, HashSlhDsaSha2_128fWithSha256SecretKey,
+  HashSlhDsaSha2_128sWithSha256, HashSlhDsaSha2_128sWithSha256PublicKey, HashSlhDsaSha2_128sWithSha256SecretKey,
+  HashSlhDsaSha2_192fWithSha512, HashSlhDsaSha2_192fWithSha512PublicKey, HashSlhDsaSha2_192fWithSha512SecretKey,
+  HashSlhDsaSha2_192sWithSha512, HashSlhDsaSha2_192sWithSha512PublicKey, HashSlhDsaSha2_192sWithSha512SecretKey,
+  HashSlhDsaSha2_256fWithSha512, HashSlhDsaSha2_256fWithSha512PublicKey, HashSlhDsaSha2_256fWithSha512SecretKey,
+  HashSlhDsaSha2_256sWithSha512, HashSlhDsaSha2_256sWithSha512PublicKey, HashSlhDsaSha2_256sWithSha512SecretKey,
+  HashSlhDsaShake128fWithShake128, HashSlhDsaShake128fWithShake128PublicKey, HashSlhDsaShake128fWithShake128SecretKey,
+  HashSlhDsaShake128sWithShake128, HashSlhDsaShake128sWithShake128PublicKey, HashSlhDsaShake128sWithShake128SecretKey,
+  HashSlhDsaShake192fWithShake256, HashSlhDsaShake192fWithShake256PublicKey, HashSlhDsaShake192fWithShake256SecretKey,
+  HashSlhDsaShake192sWithShake256, HashSlhDsaShake192sWithShake256PublicKey, HashSlhDsaShake192sWithShake256SecretKey,
+  HashSlhDsaShake256fWithShake256, HashSlhDsaShake256fWithShake256PublicKey, HashSlhDsaShake256fWithShake256SecretKey,
+  HashSlhDsaShake256sWithShake256, HashSlhDsaShake256sWithShake256PublicKey, HashSlhDsaShake256sWithShake256SecretKey,
+  SlhDsaError, SlhDsaKeyError, SlhDsaSha2_128f, SlhDsaSha2_128fPublicKey, SlhDsaSha2_128fSecretKey, SlhDsaSha2_128s,
+  SlhDsaSha2_128sPublicKey, SlhDsaSha2_128sSecretKey, SlhDsaSha2_192f, SlhDsaSha2_192fPublicKey,
+  SlhDsaSha2_192fSecretKey, SlhDsaSha2_192s, SlhDsaSha2_192sPublicKey, SlhDsaSha2_192sSecretKey, SlhDsaSha2_256f,
+  SlhDsaSha2_256fPublicKey, SlhDsaSha2_256fSecretKey, SlhDsaSha2_256s, SlhDsaSha2_256sPublicKey,
+  SlhDsaSha2_256sSecretKey, SlhDsaShake128f, SlhDsaShake128fPublicKey, SlhDsaShake128fSecretKey, SlhDsaShake128s,
+  SlhDsaShake128sPublicKey, SlhDsaShake128sSecretKey, SlhDsaShake192f, SlhDsaShake192fPublicKey,
+  SlhDsaShake192fSecretKey, SlhDsaShake192s, SlhDsaShake192sPublicKey, SlhDsaShake192sSecretKey, SlhDsaShake256f,
+  SlhDsaShake256fPublicKey, SlhDsaShake256fSecretKey, SlhDsaShake256s, SlhDsaShake256sPublicKey,
+  SlhDsaShake256sSecretKey,
+};
 #[cfg(feature = "hkdf")]
 pub use auth::{HkdfSha256, HkdfSha384, HkdfSha512};
 #[cfg(feature = "hmac-sha3")]

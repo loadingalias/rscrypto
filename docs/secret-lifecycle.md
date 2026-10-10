@@ -95,6 +95,7 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
 | ECDSA, P-256 ECDH, P-384 ECDH, ML-KEM, and RSA private work | Secret scalars, digests, limbs, encoded messages, inverse state, and initialized scratch are cleared on every return path. See the notes below. |
 | Ed25519 and X25519 private work | Secret owners and staging are cleared; arithmetic temporaries have a narrower boundary. See [Ed25519 and X25519](#ed25519-and-x25519). |
 | ML-DSA private work | See [ML-DSA](#ml-dsa). |
+| SLH-DSA private work | See [SLH-DSA](#slh-dsa). |
 | Argon2 and scrypt | See [Argon2 and scrypt](#argon2-and-scrypt). |
 | Secret parsing and generation | RAII owners cover success, parse failure, entropy failure, and early return. |
 | Caller-filled secret owners, P-256 and P-384 ECDH generation, and ECDSA blinding | See [Caller-filled owners](#caller-filled-owners). |
@@ -163,6 +164,23 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
   The storage clears it again on drop.
 - Full target qualification is still open.
   See [ML-DSA](mldsa.md).
+
+### SLH-DSA
+
+- Secret keys keep SK.seed and SK.prf in zeroizing owners, apart from the public key.
+  Key generation and import fill the owners in place; a failed callback or a rejected key
+  clears every owner already built.
+- Hedged signing keeps `addrnd` in a zeroizing owner.
+  Every PRF and F call, which may hold SK.seed, a WOTS+ chain value, or a FORS leaf secret,
+  clears its hash block and state copies before it returns.
+  The HMAC and SHAKE state of PRF_msg clears on drop.
+  Signing and verification clear the message digest after use.
+- WOTS+ chain values advance in place in the caller's signature buffer to their revealed positions.
+  Signing fails only before it starts, and then zero-fills the buffer.
+- Raw and PKCS #8 import borrow the caller's input and never clear it.
+- **Not measured:** moved-copy residue of the by-value constructors.
+  **Not claimed:** register and spill copies in the hash workers.
+  Target qualification is still open.
 
 ### Argon2 and scrypt
 

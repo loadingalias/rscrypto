@@ -28,3 +28,9 @@ slow-timeout = { period = "60s", terminate-after = 4 }
 [[profile.default.overrides]]
 filter = 'binary(=rsa_wycheproof) & test(=wycheproof_oaep_sha2_decrypt_vectors_match_expected_results)'
 slow-timeout = { period = "60s", terminate-after = 4 }
+
+# Each runs 26 SLH-DSA small-set ACVP signatures (or 240 key generations)
+# portably at the test profile's opt-level 1.
+[[profile.default.overrides]]
+filter = 'binary(=rscrypto) & (test(/^auth::slhdsa::tests::acvp_signing_.*s_(deterministic|hedged)$/) | test(=auth::slhdsa::tests::acvp_key_generation_matches_all_cases))'
+slow-timeout = { period = "60s", terminate-after = 8 }

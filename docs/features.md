@@ -28,7 +28,7 @@ Umbrella features are convenient, but they make the build larger:
 | `aead`          | All AEADs |
 | `full`          | Checksums, hashes, authentication, and AEADs |
 
-In libraries and constrained builds, use leaf features such as `sha2`, `blake3`, `aes-gcm`, `ed25519`, `p256-ecdh`, `p384-ecdh`, `ml-dsa`, or `ml-kem`.
+In libraries and constrained builds, use leaf features such as `sha2`, `blake3`, `aes-gcm`, `ed25519`, `p256-ecdh`, `p384-ecdh`, `ml-dsa`, `slh-dsa`, or `ml-kem`.
 
 `websocket-sha1` gives only the compatibility digest for WebSocket handshakes.
 No umbrella feature enables it, including `full`.
@@ -91,6 +91,13 @@ with reusable, allocator-backed storage and the allocation contract.
 
 `ml-dsa` supports all three ML-DSA parameter sets without allocation and without operating-system entropy.
 See [ML-DSA](mldsa.md) for the API, the memory costs, and the open qualification gates.
+
+`slh-dsa` supports all 12 FIPS 205 SLH-DSA parameter sets, each as a pure profile and an RFC 9909
+HashSLH-DSA profile, without allocation and without operating-system entropy. It enables `hmac` and `sha3`.
+Signatures are 7,856 to 49,856 bytes and go into buffers that the caller provides. The small (`s`)
+sets compute larger trees than the fast (`f`) sets, so they sign much more slowly, and importing a
+secret key costs one key generation.
+The `rscrypto::auth::slhdsa` module documentation describes the API; target qualification is open.
 
 `p256-ecdh` and `p384-ecdh` are standalone leaf features.
 They do not enable ECDSA, HMAC, `alloc`, or `std`.

@@ -663,7 +663,7 @@ macro_rules! impl_mlkem_profile_ops {
       /// for a wrong length or a failed modulus check; and
       /// [`MlKemKeyError::MalformedDer`] for any other encoding.
       pub fn from_spki_der(der: &[u8]) -> Result<Self, MlKemKeyError> {
-        let key = Self::from_bytes(*pkix::decode_spki::<MlKemKeyError, $ek_bytes>(der, &Self::SPKI_HEADER)?);
+        let key = Self::from_bytes(*pkix::decode_spki::<MlKemKeyError, _, $ek_bytes>(der, &Self::SPKI_HEADER)?);
         key.validate().map_err(|_| MlKemKeyError::InvalidEncapsulationKey)?;
         Ok(key)
       }

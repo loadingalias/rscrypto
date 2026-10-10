@@ -51,7 +51,10 @@ use core::{
 
 use crate::{
   SecretVec,
-  backend::der::{self, MalformedDer, TAG_BIT_STRING, TAG_OBJECT_IDENTIFIER, TAG_SEQUENCE},
+  backend::{
+    der::{self, MalformedDer, TAG_BIT_STRING, TAG_OBJECT_IDENTIFIER, TAG_SEQUENCE},
+    mgf1::mgf1,
+  },
   hashes::crypto::{Sha256, Sha384, Sha512},
   traits::{Digest, VerificationError, ct},
 };
@@ -8926,24 +8929,6 @@ where
   valid &= ct::public_len_eq(value, digest.as_ref()).declassify();
 
   if valid { Ok(()) } else { Err(VerificationError::new()) }
-}
-
-fn mgf1<D>(seed: &[u8], out: &mut [u8])
-where
-  D: Digest,
-{
-  let mut counter = 0u32;
-  let mut offset = 0usize;
-  while offset < out.len() {
-    let digest = D::digest_vectored(&[seed, &counter.to_be_bytes()]);
-    let chunk_len = core::cmp::min(D::OUTPUT_SIZE, out.len().strict_sub(offset));
-    if let Some(dst) = out.get_mut(offset..offset.strict_add(chunk_len)) {
-      let src = digest.as_ref().get(..chunk_len).unwrap_or_default();
-      dst.copy_from_slice(src);
-    }
-    offset = offset.strict_add(chunk_len);
-    counter = counter.strict_add(1);
-  }
 }
 
 fn limbs_from_be(bytes: &[u8]) -> Vec<u64> {

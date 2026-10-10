@@ -985,7 +985,7 @@ impl<const RATE: usize, const ZEROIZE: bool> Default for KeccakCoreImpl<RATE, Pl
   }
 }
 
-#[cfg(any(feature = "ml-kem", feature = "ml-dsa"))]
+#[cfg(any(feature = "ml-kem", feature = "ml-dsa", feature = "slh-dsa"))]
 impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakCoreImpl<RATE, P, ZEROIZE> {
   /// Start an empty sponge with a permuter whose capabilities the caller has
   /// already detected.

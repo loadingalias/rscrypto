@@ -83,6 +83,8 @@
 //! - ML-KEM uses FIPS 203 names: encapsulation keys are public, decapsulation keys are secret.
 //! - ML-DSA keeps context and deterministic or randomized signing explicit; its `Verifier`
 //!   implementation selects pure ML-DSA with an empty context.
+//! - SLH-DSA does the same, with pure and HashSLH-DSA keys as distinct types; signatures go
+//!   into caller buffers and verification takes byte slices.
 //! - Key generation uses `try_generate_with(fill)` for caller-owned entropy and `try_generate()` /
 //!   `try_generate_keypair()` when `getrandom` is enabled.
 //! - Native generic signing uses `TrySigner`, `TrySignerInto`, and `Verifier`; RSA generic
@@ -114,6 +116,7 @@
 //! - `rsa` - RSA key import/export/generation, signing, verification, OAEP, and legacy
 //!   RSAES-PKCS1-v1_5.
 //! - `scrypt` - scrypt password hashing (RFC 7914).
+//! - `slhdsa` - SLH-DSA signatures for all 12 FIPS 205 sets, pure and RFC 9909 HashSLH-DSA.
 //! - `p256_ecdh` - ephemeral P-256 Diffie-Hellman key agreement.
 //! - `p384_ecdh` - ephemeral P-384 Diffie-Hellman key agreement.
 //! - `x25519` - X25519 Diffie-Hellman key agreement.
@@ -235,6 +238,8 @@ pub mod poly1305;
 pub mod rsa;
 #[cfg(feature = "scrypt")]
 pub mod scrypt;
+#[cfg(feature = "slh-dsa")]
+pub mod slhdsa;
 #[cfg(feature = "x25519")]
 pub mod x25519;
 
@@ -440,6 +445,30 @@ pub use rsa::{
 pub use scrypt::{Scrypt, ScryptBlock, ScryptError, ScryptParams};
 #[cfg(all(feature = "scrypt", feature = "phc-strings"))]
 pub use scrypt::{ScryptPassword, ScryptVerificationLimits};
+#[cfg(feature = "slh-dsa")]
+pub use slhdsa::{
+  HashSlhDsaSha2_128fWithSha256, HashSlhDsaSha2_128fWithSha256PublicKey, HashSlhDsaSha2_128fWithSha256SecretKey,
+  HashSlhDsaSha2_128sWithSha256, HashSlhDsaSha2_128sWithSha256PublicKey, HashSlhDsaSha2_128sWithSha256SecretKey,
+  HashSlhDsaSha2_192fWithSha512, HashSlhDsaSha2_192fWithSha512PublicKey, HashSlhDsaSha2_192fWithSha512SecretKey,
+  HashSlhDsaSha2_192sWithSha512, HashSlhDsaSha2_192sWithSha512PublicKey, HashSlhDsaSha2_192sWithSha512SecretKey,
+  HashSlhDsaSha2_256fWithSha512, HashSlhDsaSha2_256fWithSha512PublicKey, HashSlhDsaSha2_256fWithSha512SecretKey,
+  HashSlhDsaSha2_256sWithSha512, HashSlhDsaSha2_256sWithSha512PublicKey, HashSlhDsaSha2_256sWithSha512SecretKey,
+  HashSlhDsaShake128fWithShake128, HashSlhDsaShake128fWithShake128PublicKey, HashSlhDsaShake128fWithShake128SecretKey,
+  HashSlhDsaShake128sWithShake128, HashSlhDsaShake128sWithShake128PublicKey, HashSlhDsaShake128sWithShake128SecretKey,
+  HashSlhDsaShake192fWithShake256, HashSlhDsaShake192fWithShake256PublicKey, HashSlhDsaShake192fWithShake256SecretKey,
+  HashSlhDsaShake192sWithShake256, HashSlhDsaShake192sWithShake256PublicKey, HashSlhDsaShake192sWithShake256SecretKey,
+  HashSlhDsaShake256fWithShake256, HashSlhDsaShake256fWithShake256PublicKey, HashSlhDsaShake256fWithShake256SecretKey,
+  HashSlhDsaShake256sWithShake256, HashSlhDsaShake256sWithShake256PublicKey, HashSlhDsaShake256sWithShake256SecretKey,
+  SlhDsaError, SlhDsaKeyError, SlhDsaSha2_128f, SlhDsaSha2_128fPublicKey, SlhDsaSha2_128fSecretKey, SlhDsaSha2_128s,
+  SlhDsaSha2_128sPublicKey, SlhDsaSha2_128sSecretKey, SlhDsaSha2_192f, SlhDsaSha2_192fPublicKey,
+  SlhDsaSha2_192fSecretKey, SlhDsaSha2_192s, SlhDsaSha2_192sPublicKey, SlhDsaSha2_192sSecretKey, SlhDsaSha2_256f,
+  SlhDsaSha2_256fPublicKey, SlhDsaSha2_256fSecretKey, SlhDsaSha2_256s, SlhDsaSha2_256sPublicKey,
+  SlhDsaSha2_256sSecretKey, SlhDsaShake128f, SlhDsaShake128fPublicKey, SlhDsaShake128fSecretKey, SlhDsaShake128s,
+  SlhDsaShake128sPublicKey, SlhDsaShake128sSecretKey, SlhDsaShake192f, SlhDsaShake192fPublicKey,
+  SlhDsaShake192fSecretKey, SlhDsaShake192s, SlhDsaShake192sPublicKey, SlhDsaShake192sSecretKey, SlhDsaShake256f,
+  SlhDsaShake256fPublicKey, SlhDsaShake256fSecretKey, SlhDsaShake256s, SlhDsaShake256sPublicKey,
+  SlhDsaShake256sSecretKey,
+};
 #[cfg(feature = "x25519")]
 pub use x25519::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 

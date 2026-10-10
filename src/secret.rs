@@ -325,6 +325,7 @@ impl Drop for SecretString {
   feature = "ml-kem",
   feature = "ml-dsa",
   feature = "poly1305",
+  feature = "slh-dsa",
   feature = "x25519"
 ))]
 pub(crate) struct ZeroizingBytes<const N: usize>([u8; N]);
@@ -344,6 +345,7 @@ pub(crate) struct ZeroizingBytes<const N: usize>([u8; N]);
   feature = "ml-kem",
   feature = "ml-dsa",
   feature = "poly1305",
+  feature = "slh-dsa",
   feature = "x25519"
 ))]
 impl<const N: usize> ZeroizingBytes<N> {
@@ -390,6 +392,7 @@ impl<const N: usize> ZeroizingBytes<N> {
   feature = "ml-kem",
   feature = "ml-dsa",
   feature = "poly1305",
+  feature = "slh-dsa",
   feature = "x25519"
 ))]
 impl<const N: usize> Drop for ZeroizingBytes<N> {

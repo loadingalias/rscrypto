@@ -182,6 +182,7 @@ rsa = ["alloc", "sha2"]
 x25519 = []
 ml-kem = ["sha3"]
 ml-dsa = ["sha3"]
+slh-dsa = ["hmac", "sha3"]
 
 phc-strings = ["alloc"]
 argon2 = ["blake2b", "alloc"]
@@ -202,7 +203,7 @@ hashes = ["crypto-hashes", "fast-hashes"]
 macs = ["hmac", "hmac-sha3", "kmac", "poly1305"]
 kdfs = ["hkdf", "pbkdf2"]
 password-hashing = ["argon2", "scrypt", "phc-strings"]
-signatures = ["ecdsa", "ed25519", "rsa", "ml-dsa"]
+signatures = ["ecdsa", "ed25519", "rsa", "ml-dsa", "slh-dsa"]
 key-exchange = ["x25519", "p256-ecdh", "p384-ecdh", "ml-kem"]
 auth = ["macs", "kdfs", "password-hashing", "signatures", "key-exchange"]
 aead = ["aes-gcm", "aes-gcm-siv", "aes-siv", "chacha20poly1305", "xchacha20poly1305", "aegis256", "ascon-aead"]
@@ -286,6 +287,8 @@ ring = "0.17.14"
 rsa = { version = "0.9.10", default-features = false, features = ["std", "u64_digit", "sha2"] }
 dryoc = "1.0.0"
 rustcrypto-ml-dsa = { version = "=0.1.1", package = "ml-dsa", default-features = false, features = ["alloc", "pkcs8", "zeroize"] }
+rustcrypto-slh-dsa = { version = "=0.2.0-rc.5", package = "slh-dsa" }
+fips205 = "=0.4.1"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 # Explicit collection boundaries avoid ARM Callgrind return-heuristic leakage.
