@@ -495,7 +495,11 @@ macro_rules! curve_tests {
           &key,
         ])
         .expect("OpenSSL key generation");
-        let pkcs8 = std::fs::read(&key).expect("OpenSSL key file");
+        // OpenSSL 3 writes DER EC keys as SEC1 and OpenSSL 4 as PKCS #8, so request PKCS #8.
+        let pkcs8 = openssl(&[
+          "pkcs8", "-topk8", "-nocrypt", "-inform", "DER", "-in", &key, "-outform", "DER",
+        ])
+        .expect("OpenSSL PKCS #8");
         let spki =
           openssl(&["pkey", "-in", &key, "-inform", "DER", "-pubout", "-outform", "DER"]).expect("OpenSSL SPKI");
         let sec1 = openssl(&["ec", "-in", &key, "-inform", "DER", "-outform", "DER"]).expect("OpenSSL SEC1");
