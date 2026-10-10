@@ -3,6 +3,12 @@
 //! This module defines the public type surface for FIPS 203 ML-KEM parameter
 //! sets. Private operations select accelerated arithmetic where available and
 //! retain the portable implementation as the semantic authority.
+//!
+//! Encapsulation keys have RFC 9935 SubjectPublicKeyInfo import and export.
+//! Decapsulation keys have RFC 9935 PKCS #8 import and export: a seed owner
+//! such as [`MlKem768Seed`] keeps the recommended `d || z` seed form, and a
+//! decapsulation key exports the expanded form. PKCS #8 import of an expanded
+//! key adds a pairwise consistency check to the FIPS 203 checks of raw import.
 
 mod operations;
 
@@ -18,8 +24,15 @@ use core::{
 
 use crate::{
   SecretBytes,
+  backend::{
+    der::MalformedDer,
+    pkix::{self, KeyError},
+  },
   secret::ZeroizingBytes,
-  traits::{Kem, ct},
+  traits::{
+    Kem,
+    ct::{self, DataIndependentTiming},
+  },
 };
 
 const ML_KEM_SEED_SIZE: usize = 32;
@@ -53,6 +66,52 @@ impl fmt::Display for MlKemError {
 }
 
 impl Error for MlKemError {}
+
+/// ML-KEM SubjectPublicKeyInfo or PKCS #8 key-import failure.
+///
+/// Raw-byte import and the KEM operations use [`MlKemError`].
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum MlKemKeyError {
+  /// DER input was malformed or non-canonical.
+  MalformedDer,
+  /// The algorithm identifier names another algorithm or ML-KEM parameter set.
+  UnsupportedAlgorithm,
+  /// The DER is a well-formed key of this algorithm in a form this import
+  /// does not accept: PKCS #8 attributes, or an expanded-only private key
+  /// where a seed is required.
+  UnsupportedEncoding,
+  /// The encapsulation key has the wrong length or fails the FIPS 203 modulus check.
+  InvalidEncapsulationKey,
+  /// The decapsulation key has the wrong length, fails validation, or
+  /// disagrees with a redundant seed or public key.
+  InvalidDecapsulationKey,
+}
+
+impl fmt::Display for MlKemKeyError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str(match self {
+      Self::MalformedDer => "malformed ML-KEM DER",
+      Self::UnsupportedAlgorithm => "unsupported ML-KEM key algorithm",
+      Self::UnsupportedEncoding => "unsupported ML-KEM key encoding",
+      Self::InvalidEncapsulationKey => "invalid ML-KEM encapsulation key",
+      Self::InvalidDecapsulationKey => "invalid ML-KEM decapsulation key",
+    })
+  }
+}
+
+impl Error for MlKemKeyError {}
+
+impl MalformedDer for MlKemKeyError {
+  const MALFORMED_DER: Self = Self::MalformedDer;
+}
+
+impl KeyError for MlKemKeyError {
+  const UNSUPPORTED_ALGORITHM: Self = Self::UnsupportedAlgorithm;
+  const UNSUPPORTED_ENCODING: Self = Self::UnsupportedEncoding;
+  const INVALID_PUBLIC_KEY: Self = Self::InvalidEncapsulationKey;
+  const INVALID_SECRET_KEY: Self = Self::InvalidDecapsulationKey;
+}
 
 macro_rules! define_mlkem_public_bytes {
   ($name:ident, $len:expr, $doc:expr) => {
@@ -562,6 +621,7 @@ macro_rules! impl_mlkem_profile_ops {
     $profile:ident,
     $encapsulation_key:ident,
     $decapsulation_key:ident,
+    $seed:ident,
     $prepared_encapsulation_key:ident,
     $prepared_decapsulation_key:ident,
     $ciphertext:ident,
@@ -580,9 +640,40 @@ macro_rules! impl_mlkem_profile_ops {
     $keygen:path,
     $encapsulate_prepared:path,
     $decapsulate_prepared:path,
+    $arc:literal,
     $doc_name:literal
   ) => {
     impl $encapsulation_key {
+      /// DER-encoded RFC 9935 SubjectPublicKeyInfo length in bytes.
+      pub const SPKI_DER_LENGTH: usize = pkix::SPKI_HEADER_LENGTH.strict_add($ek_bytes);
+
+      const SPKI_HEADER: [u8; pkix::SPKI_HEADER_LENGTH] = pkix::spki_header($profile::ALGORITHM, $ek_bytes);
+
+      #[doc = concat!("Parse an RFC 9935 SubjectPublicKeyInfo for ", $doc_name, ".")]
+      ///
+      /// Accepts only the unique DER encoding: this parameter set's algorithm
+      /// identifier with absent parameters, a BIT STRING with no unused bits,
+      /// the exact key length, and no trailing input. The key must pass the
+      /// FIPS 203 modulus check. No heap allocation.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`MlKemKeyError::UnsupportedAlgorithm`] for a well-formed key
+      /// of another algorithm or parameter set; [`MlKemKeyError::InvalidEncapsulationKey`]
+      /// for a wrong length or a failed modulus check; and
+      /// [`MlKemKeyError::MalformedDer`] for any other encoding.
+      pub fn from_spki_der(der: &[u8]) -> Result<Self, MlKemKeyError> {
+        let key = Self::from_bytes(*pkix::decode_spki::<MlKemKeyError, $ek_bytes>(der, &Self::SPKI_HEADER)?);
+        key.validate().map_err(|_| MlKemKeyError::InvalidEncapsulationKey)?;
+        Ok(key)
+      }
+
+      /// Encode the RFC 9935 SubjectPublicKeyInfo DER. No heap allocation.
+      #[must_use]
+      pub const fn to_spki_der(&self) -> [u8; Self::SPKI_DER_LENGTH] {
+        pkix::concat(&Self::SPKI_HEADER, &self.0)
+      }
+
       #[doc = concat!("Parse and validate an ", $doc_name, " encapsulation key from raw bytes.")]
       #[inline]
       pub fn try_from_slice(bytes: &[u8]) -> Result<Self, MlKemError> {
@@ -612,6 +703,11 @@ macro_rules! impl_mlkem_profile_ops {
 
     impl $decapsulation_key {
       #[doc = concat!("Parse and validate an ", $doc_name, " decapsulation key from raw bytes.")]
+      ///
+      /// Runs the FIPS 203 length and hash checks, which do not detect a secret
+      /// vector that disagrees with the embedded encapsulation key. PKCS #8
+      /// import of an expanded key adds a pairwise consistency check; see
+      /// [`Self::from_pkcs8_der`].
       #[inline]
       pub fn try_from_slice(bytes: &[u8]) -> Result<Self, MlKemError> {
         if bytes.len() != Self::LENGTH {
@@ -645,6 +741,126 @@ macro_rules! impl_mlkem_profile_ops {
         key.0.copy_from_slice(bytes);
         key.validate()?;
         Ok(key)
+      }
+
+      /// Pairwise consistency check for imported expanded keys.
+      fn check_key_pair(&self) -> Result<(), MlKemKeyError> {
+        operations::check_decapsulation_key_pair::<
+          $k,
+          $eta1_random_bytes,
+          $dk_pke_bytes,
+          $ek_bytes,
+          $dk_bytes,
+          $ct_bytes,
+          $du,
+          $dv,
+          $poly_du_bytes,
+          $poly_dv_bytes,
+        >(self.as_bytes())
+        .map_err(expanded_import_error)
+      }
+
+      /// DER length of this key as an RFC 9935 expanded-form PKCS #8 private key.
+      pub const PKCS8_DER_LENGTH: usize = pkix::EXPANDED_HEADER_LENGTH.strict_add($dk_bytes);
+
+      const PKCS8_HEADER: [u8; pkix::EXPANDED_HEADER_LENGTH] = pkix::expanded_header($profile::ALGORITHM, $dk_bytes);
+
+      #[doc = concat!("Import an RFC 9935 private key for ", $doc_name, " from RFC 5958 OneAsymmetricKey (PKCS #8) DER.")]
+      ///
+      /// Accepts the seed, expanded, and both forms, in a version 1 container
+      /// or a version 2 container with a public key. An expanded key gets the
+      /// checks of [`Self::try_from_slice`] and a pairwise consistency check:
+      /// a deterministic encapsulation to the embedded encapsulation key must
+      /// decapsulate to the same shared secret, which rejects a secret vector
+      /// that the hash check accepts (RFC 9935 Appendix C.4.1, second
+      /// example). That costs one encapsulation and one decapsulation per
+      /// import. A seed is expanded and not retained. In the both form, the expanded key must equal the seed's;
+      /// a version 2 public key must equal the embedded encapsulation key. The
+      /// caller retains responsibility for clearing `der`. No heap allocation.
+      #[doc = concat!("Use [`", stringify!($seed), "::from_pkcs8_der`] to keep the seed.")]
+      ///
+      /// # Errors
+      ///
+      /// Returns [`MlKemKeyError::MalformedDer`] for malformed or non-canonical
+      /// DER, including a version that disagrees with the public-key field;
+      /// [`MlKemKeyError::UnsupportedAlgorithm`] for another algorithm or
+      /// parameter set; [`MlKemKeyError::UnsupportedEncoding`] for attributes;
+      /// [`MlKemKeyError::InvalidDecapsulationKey`] for a wrong-length or
+      /// invalid key, or redundant fields that disagree; and
+      /// [`MlKemKeyError::InvalidEncapsulationKey`] for a wrong-length public key.
+      pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, MlKemKeyError> {
+        let _dit = DataIndependentTiming::enter();
+        let decoded = pkix::decode_pkcs8::<MlKemKeyError, ML_KEM_KEY_GENERATION_RANDOM_SIZE, $dk_bytes, $ek_bytes>(
+          der,
+          $profile::ALGORITHM,
+        )?;
+        let (key, expanded) = match decoded.private_key {
+          pkix::PrivateKey::Seed(seed) => ($profile::keypair_from_seed(seed).1, None),
+          pkix::PrivateKey::Expanded(expanded) => {
+            let key = Self::try_from_slice(expanded).map_err(expanded_import_error)?;
+            key.check_key_pair()?;
+            (key, None)
+          }
+          pkix::PrivateKey::Both { seed, expanded } => ($profile::keypair_from_seed(seed).1, Some(expanded)),
+        };
+        key.check_redundant(expanded, decoded.public_key)?;
+        Ok(key)
+      }
+
+      /// Like [`Self::from_pkcs8_der`], with the key in memory from `alloc`.
+      ///
+      /// The key is written directly into its allocation, as by
+      /// [`Self::try_from_slice_in`]. The box clears the key on drop; a
+      /// rejected key is cleared before returning. Allocation failure is
+      /// handled as by [`Box::new_in`].
+      #[cfg(feature = "alloc")]
+      pub fn from_pkcs8_der_in<A: Allocator>(der: &[u8], alloc: A) -> Result<Box<Self, A>, MlKemKeyError> {
+        let _dit = DataIndependentTiming::enter();
+        let decoded = pkix::decode_pkcs8::<MlKemKeyError, ML_KEM_KEY_GENERATION_RANDOM_SIZE, $dk_bytes, $ek_bytes>(
+          der,
+          $profile::ALGORITHM,
+        )?;
+        let (key, expanded) = match decoded.private_key {
+          pkix::PrivateKey::Seed(seed) => ($profile::keypair_from_seed_in(seed, alloc).1, None),
+          pkix::PrivateKey::Expanded(expanded) => {
+            let key = Self::try_from_slice_in(expanded, alloc).map_err(expanded_import_error)?;
+            key.check_key_pair()?;
+            (key, None)
+          }
+          pkix::PrivateKey::Both { seed, expanded } => ($profile::keypair_from_seed_in(seed, alloc).1, Some(expanded)),
+        };
+        key.check_redundant(expanded, decoded.public_key)?;
+        Ok(key)
+      }
+
+      /// Write this key as an RFC 9935 expanded-form private key in version 1
+      /// OneAsymmetricKey (PKCS #8) DER. No heap allocation.
+      ///
+      /// `out` then holds the secret key, and the caller owns its cleanup.
+      /// This key keeps no seed, so it cannot write the recommended seed form.
+      #[doc = concat!("[`", stringify!($seed), "::to_pkcs8_der_into`] writes it.")]
+      pub fn to_pkcs8_der_into(&self, out: &mut [u8; Self::PKCS8_DER_LENGTH]) {
+        pkix::write(&Self::PKCS8_HEADER, &self.0, out);
+      }
+
+      /// Reject imported redundant fields that disagree with this key: an
+      /// expanded key that is not its seed's (RFC 9935 section 8), or a
+      /// public key that is not the embedded encapsulation key.
+      fn check_redundant(
+        &self,
+        expanded: Option<&[u8; $dk_bytes]>,
+        public: Option<&[u8; $ek_bytes]>,
+      ) -> Result<(), MlKemKeyError> {
+        if let Some(expanded) = expanded
+          && !ct::fixed_eq(&self.0, expanded).declassify()
+        {
+          return Err(MlKemKeyError::InvalidDecapsulationKey);
+        }
+        let embedded = &self.0[$dk_pke_bytes..$dk_pke_bytes + $ek_bytes];
+        if public.is_some_and(|public| public.as_slice() != embedded) {
+          return Err(MlKemKeyError::InvalidDecapsulationKey);
+        }
+        Ok(())
       }
 
       /// Validate this decapsulation key using the FIPS 203 embedded-key hash check.
@@ -714,6 +930,32 @@ macro_rules! impl_mlkem_profile_ops {
     }
 
     impl $profile {
+      #[doc = concat!("RFC 9935 `id-alg-ml-kem-*` identifier: 2.16.840.1.101.3.4.4.", stringify!($arc), ".")]
+      const ALGORITHM: pkix::Algorithm = pkix::Algorithm { family: 4, arc: $arc };
+
+      /// FIPS 203 ML-KEM.KeyGen_internal from a `d || z` seed.
+      fn keypair_from_seed(seed: &[u8; ML_KEM_KEY_GENERATION_RANDOM_SIZE]) -> ($encapsulation_key, $decapsulation_key) {
+        let (ek, dk) = $keygen(seed);
+        ($encapsulation_key::from_bytes(ek), $decapsulation_key::from_bytes(dk))
+      }
+
+      /// Like [`Self::keypair_from_seed`], with the decapsulation key generated
+      /// directly into an allocation from `alloc`.
+      #[cfg(feature = "alloc")]
+      fn keypair_from_seed_in<A: Allocator>(
+        seed: &[u8; ML_KEM_KEY_GENERATION_RANDOM_SIZE],
+        alloc: A,
+      ) -> ($encapsulation_key, Box<$decapsulation_key, A>) {
+        let mut encapsulation_key = [0u8; $ek_bytes];
+        let mut decapsulation_key = Box::new_in($decapsulation_key::from_bytes([0; $dk_bytes]), alloc);
+        operations::keygen_into::<$k, $k_u8, $eta1_random_bytes, $dk_pke_bytes, $ek_bytes, $dk_bytes>(
+          seed,
+          &mut encapsulation_key,
+          &mut decapsulation_key.0,
+        );
+        ($encapsulation_key::from_bytes(encapsulation_key), decapsulation_key)
+      }
+
       /// Like [`Kem::generate_keypair`], with the decapsulation key in memory
       /// from `alloc`.
       ///
@@ -920,13 +1162,124 @@ macro_rules! impl_mlkem_profile_ops {
         )?))
       }
     }
+
+    #[doc = concat!("FIPS 203 key-generation seed `d || z` for ", $doc_name, ": the RFC 9935 recommended private-key form.")]
+    ///
+    /// The seed determines the key pair, so protect it like the decapsulation
+    /// key. Not `Clone` or `Copy`; zeroized on drop; `Debug` is redacted.
+    pub struct $seed(ZeroizingBytes<ML_KEM_KEY_GENERATION_RANDOM_SIZE>);
+
+    impl $seed {
+      /// Seed length in bytes.
+      pub const LENGTH: usize = ML_KEM_KEY_GENERATION_RANDOM_SIZE;
+
+      /// DER length of the RFC 9935 seed-form PKCS #8 private key.
+      pub const PKCS8_DER_LENGTH: usize = pkix::SEED_HEADER_LENGTH.strict_add(Self::LENGTH);
+
+      const PKCS8_HEADER: [u8; pkix::SEED_HEADER_LENGTH] =
+        pkix::seed_header::<ML_KEM_KEY_GENERATION_RANDOM_SIZE>($profile::ALGORITHM);
+
+      /// Wrap a `d || z` seed. The caller retains responsibility for clearing `bytes`.
+      #[must_use]
+      pub const fn from_bytes(bytes: [u8; ML_KEM_KEY_GENERATION_RANDOM_SIZE]) -> Self {
+        Self(ZeroizingBytes::new(bytes))
+      }
+
+      /// Generate a seed using 64 bytes from `fill_random`.
+      /// The callback must fill the entire buffer with fresh cryptographic randomness.
+      /// Failure clears even a partially filled buffer and returns no seed.
+      pub fn generate(mut fill_random: impl FnMut(&mut [u8]) -> Result<(), MlKemError>) -> Result<Self, MlKemError> {
+        let mut seed = Self(ZeroizingBytes::zeroed());
+        fill_random(seed.0.as_mut_array())?;
+        Ok(seed)
+      }
+
+      /// Generate a seed using OS entropy.
+      #[cfg(feature = "getrandom")]
+      #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+      pub fn try_generate() -> Result<Self, MlKemError> {
+        Self::generate(|out| getrandom::fill(out).map_err(|_| MlKemError::RandomGenerationFailed))
+      }
+
+      /// Expand the seed into its key pair with FIPS 203 ML-KEM.KeyGen_internal.
+      /// Gives the same keys as [`Kem::generate_keypair`] filled with this seed.
+      #[must_use]
+      pub fn keypair(&self) -> ($encapsulation_key, $decapsulation_key) {
+        $profile::keypair_from_seed(self.0.as_array())
+      }
+
+      /// Like [`Self::keypair`], with the decapsulation key generated directly
+      /// into an allocation from `alloc`. Allocation failure is handled as by
+      /// [`Box::new_in`].
+      #[cfg(feature = "alloc")]
+      #[must_use]
+      pub fn keypair_in<A: Allocator>(&self, alloc: A) -> ($encapsulation_key, Box<$decapsulation_key, A>) {
+        $profile::keypair_from_seed_in(self.0.as_array(), alloc)
+      }
+
+      /// Explicitly export the seed into a zeroizing owner.
+      #[must_use]
+      pub fn expose_secret(&self) -> SecretBytes<ML_KEM_KEY_GENERATION_RANDOM_SIZE> {
+        SecretBytes::new(*self.0.as_array())
+      }
+
+      #[doc = concat!("Import the seed from an RFC 9935 private key for ", $doc_name, " in RFC 5958 OneAsymmetricKey (PKCS #8) DER.")]
+      ///
+      /// Accepts the seed and both forms, in a version 1 container or a
+      /// version 2 container with a public key. When the both form or a public
+      /// key is present, the seed is expanded once to check them. The caller
+      /// retains responsibility for clearing `der`. No heap allocation.
+      ///
+      /// # Errors
+      ///
+      #[doc = concat!("As [`", stringify!($decapsulation_key), "::from_pkcs8_der`], and [`MlKemKeyError::UnsupportedEncoding`]")]
+      /// for an expanded-only key: expansion cannot recover a discarded seed.
+      pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, MlKemKeyError> {
+        let _dit = DataIndependentTiming::enter();
+        let decoded = pkix::decode_pkcs8::<MlKemKeyError, ML_KEM_KEY_GENERATION_RANDOM_SIZE, $dk_bytes, $ek_bytes>(
+          der,
+          $profile::ALGORITHM,
+        )?;
+        let (seed, expanded) = match decoded.private_key {
+          pkix::PrivateKey::Seed(seed) => (seed, None),
+          pkix::PrivateKey::Both { seed, expanded } => (seed, Some(expanded)),
+          pkix::PrivateKey::Expanded(_) => return Err(MlKemKeyError::UnsupportedEncoding),
+        };
+        let owner = Self(ZeroizingBytes::new(*seed));
+        if expanded.is_some() || decoded.public_key.is_some() {
+          owner.keypair().1.check_redundant(expanded, decoded.public_key)?;
+        }
+        Ok(owner)
+      }
+
+      /// Write the seed as an RFC 9935 seed-form private key in version 1
+      /// OneAsymmetricKey (PKCS #8) DER. No heap allocation.
+      ///
+      /// `out` then holds the seed, and the caller owns its cleanup.
+      pub fn to_pkcs8_der_into(&self, out: &mut [u8; Self::PKCS8_DER_LENGTH]) {
+        pkix::write(&Self::PKCS8_HEADER, self.0.as_array(), out);
+      }
+    }
+
+    impl fmt::Debug for $seed {
+      fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(concat!(stringify!($seed), "(****)"))
+      }
+    }
   };
+}
+
+/// Expanded-key import and its pairwise check fail only as an invalid decapsulation key.
+fn expanded_import_error(error: MlKemError) -> MlKemKeyError {
+  debug_assert_eq!(error, MlKemError::InvalidDecapsulationKey);
+  MlKemKeyError::InvalidDecapsulationKey
 }
 
 impl_mlkem_profile_ops!(
   MlKem512,
   MlKem512EncapsulationKey,
   MlKem512DecapsulationKey,
+  MlKem512Seed,
   MlKem512PreparedEncapsulationKey,
   MlKem512PreparedDecapsulationKey,
   MlKem512Ciphertext,
@@ -945,6 +1298,7 @@ impl_mlkem_profile_ops!(
   operations::keygen::<2, 2, 192, 768, 800, 1632>,
   operations::encapsulate_prepared_512,
   operations::decapsulate_prepared_512,
+  1,
   "ML-KEM-512"
 );
 
@@ -952,6 +1306,7 @@ impl_mlkem_profile_ops!(
   MlKem768,
   MlKem768EncapsulationKey,
   MlKem768DecapsulationKey,
+  MlKem768Seed,
   MlKem768PreparedEncapsulationKey,
   MlKem768PreparedDecapsulationKey,
   MlKem768Ciphertext,
@@ -970,6 +1325,7 @@ impl_mlkem_profile_ops!(
   operations::keygen::<3, 3, 128, 1152, 1184, 2400>,
   operations::encapsulate_prepared_768,
   operations::decapsulate_prepared_768,
+  2,
   "ML-KEM-768"
 );
 
@@ -977,6 +1333,7 @@ impl_mlkem_profile_ops!(
   MlKem1024,
   MlKem1024EncapsulationKey,
   MlKem1024DecapsulationKey,
+  MlKem1024Seed,
   MlKem1024PreparedEncapsulationKey,
   MlKem1024PreparedDecapsulationKey,
   MlKem1024Ciphertext,
@@ -995,6 +1352,7 @@ impl_mlkem_profile_ops!(
   operations::keygen_1024,
   operations::encapsulate_prepared_1024,
   operations::decapsulate_prepared_1024,
+  3,
   "ML-KEM-1024"
 );
 

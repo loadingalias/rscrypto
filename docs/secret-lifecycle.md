@@ -108,8 +108,11 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
   or 4 KiB after the four-lane PRF.
   `just stack-frames` checks that each linked worker fits inside its scrub on the reviewed targets.
 - By-value key generation, import, and preparation leave moved-from copies in the caller's frame.
-  The `*_in` constructors fill a box that the caller allocated, in place.
+  The `*_in` constructors, including PKCS #8 import, fill a box that the caller allocated, in place.
   In the measured RV32 and Cortex-M runs, they leave no copies.
+- The pairwise check of PKCS #8 expanded-key import encapsulates with public coins and
+  decapsulates under data-independent timing. It clears both shared secrets before it returns.
+  A rejected import clears every owner it built.
 
 ### P-256 ECDH
 
@@ -239,6 +242,16 @@ on `nightly-2026-09-30` and QEMU 11.1.2, before the change was committed:
   three whole copies on RV32, and four on Cortex-M3.
 - `Seed::from_pkcs8_der` returns its owner by value and leaves one copy of the 32-byte seed.
 - Raw results: `benchmark_results/mldsa-pkcs8-residue-20261009/` (local).
+
+The ML-KEM PKCS #8 scenarios ran the same way:
+
+- `DecapsulationKey::from_pkcs8_der_in` leaves no `dk_pke` or `z` bytes,
+  from the seed form and from the expanded form with its pairwise check,
+  for every parameter set, both boards, and both backends.
+- By-value expanded import leaves all of `dk_pke` except one 16-byte window, and two or three copies of `z`,
+  as by-value raw import does.
+- `Seed::from_pkcs8_der` returns its owner by value and leaves copies of the seed.
+- Raw results: `benchmark_results/mlkem-pkix-residue-20261009/` (local).
 
 An earlier campaign, whose harness was removed on 2026-09-28,
 also found 4.2–6.4 KiB of prepared ML-KEM state after import, preparation, and decapsulation.

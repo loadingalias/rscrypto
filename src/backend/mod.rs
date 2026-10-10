@@ -67,8 +67,16 @@ pub(crate) mod curve25519;
 #[path = "curve25519/swap.rs"]
 pub(crate) mod curve25519_swap;
 
-#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "ml-dsa", feature = "rsa"))]
+#[cfg(any(
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
+  feature = "ml-dsa",
+  feature = "ml-kem",
+  feature = "rsa"
+))]
 pub(crate) mod der;
+#[cfg(any(feature = "ml-dsa", feature = "ml-kem"))]
+pub(crate) mod pkix;
 
 #[cfg(any(feature = "poly1305", feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
 pub(crate) mod poly1305;

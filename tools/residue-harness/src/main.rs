@@ -28,8 +28,8 @@ use core::{
 
 use rscrypto::{
   Kem, MlDsa44, MlDsa44SecretKey, MlDsa44Seed, MlDsa65, MlDsa65SecretKey, MlDsa65Seed, MlDsa87, MlDsa87SecretKey,
-  MlDsa87Seed, MlKem512, MlKem512DecapsulationKey, MlKem768, MlKem768DecapsulationKey, MlKem1024,
-  MlKem1024DecapsulationKey, MlKemError,
+  MlDsa87Seed, MlKem512, MlKem512DecapsulationKey, MlKem512Seed, MlKem768, MlKem768DecapsulationKey, MlKem768Seed,
+  MlKem1024, MlKem1024DecapsulationKey, MlKem1024Seed, MlKemError,
 };
 
 const PAINT: u32 = 0xA55A_5AA5;
@@ -427,7 +427,7 @@ fn key_input_mut<const N: usize>() -> &'static mut [u8; N] {
 }
 
 macro_rules! mlkem {
-  ($module:ident, $profile:ty, $key:ty, $byte:literal) => {
+  ($module:ident, $profile:ty, $key:ty, $seed:ty, $byte:literal) => {
     mod $module {
       use super::*;
 
@@ -458,6 +458,35 @@ macro_rules! mlkem {
         unsafe { (&mut *KEY_INPUT.0.get())[..<$key>::LENGTH].copy_from_slice(secret.as_bytes()) };
       }
 
+      pub(super) fn prepare_pkcs8_seed() {
+        <$seed>::from_bytes([$byte; 64]).to_pkcs8_der_into(key_input_mut());
+      }
+
+      pub(super) fn prepare_pkcs8_expanded() {
+        let (_, key) = <$profile>::generate_keypair_in(fill($byte), &HEAP).expect("key generation");
+        key.to_pkcs8_der_into(key_input_mut());
+      }
+
+      pub(super) fn pkcs8_seed_in() {
+        let key = <$key>::from_pkcs8_der_in(key_input(<$seed>::PKCS8_DER_LENGTH), &ARENA).expect("import");
+        black_box(&key);
+      }
+
+      pub(super) fn pkcs8_expanded() {
+        let key = <$key>::from_pkcs8_der(key_input(<$key>::PKCS8_DER_LENGTH)).expect("import");
+        black_box(&key);
+      }
+
+      pub(super) fn pkcs8_expanded_in() {
+        let key = <$key>::from_pkcs8_der_in(key_input(<$key>::PKCS8_DER_LENGTH), &ARENA).expect("import");
+        black_box(&key);
+      }
+
+      pub(super) fn seed_owner() {
+        let seed = <$seed>::from_pkcs8_der(key_input(<$seed>::PKCS8_DER_LENGTH)).expect("import");
+        black_box(&seed);
+      }
+
       pub(super) fn needles() {
         let (_, key) = <$profile>::generate_keypair_in(fill($byte), &HEAP).expect("key generation");
         let secret = key.expose_secret();
@@ -472,9 +501,9 @@ macro_rules! mlkem {
   };
 }
 
-mlkem!(mlkem512, MlKem512, MlKem512DecapsulationKey, 0x51);
-mlkem!(mlkem768, MlKem768, MlKem768DecapsulationKey, 0x76);
-mlkem!(mlkem1024, MlKem1024, MlKem1024DecapsulationKey, 0x10);
+mlkem!(mlkem512, MlKem512, MlKem512DecapsulationKey, MlKem512Seed, 0x51);
+mlkem!(mlkem768, MlKem768, MlKem768DecapsulationKey, MlKem768Seed, 0x76);
+mlkem!(mlkem1024, MlKem1024, MlKem1024DecapsulationKey, MlKem1024Seed, 0x10);
 
 const MLDSA_SEED: [u8; 32] = [0x3d; 32];
 
@@ -636,6 +665,90 @@ const SCENARIOS: &[Scenario] = &[
     "none",
     mlkem1024::prepare,
     mlkem1024::import_in,
+    mlkem1024::needles
+  ),
+  scenario!(
+    "ml-kem-512-pkcs8-seed-in",
+    "none",
+    mlkem512::prepare_pkcs8_seed,
+    mlkem512::pkcs8_seed_in,
+    mlkem512::needles
+  ),
+  scenario!(
+    "ml-kem-512-pkcs8-expanded",
+    "report",
+    mlkem512::prepare_pkcs8_expanded,
+    mlkem512::pkcs8_expanded,
+    mlkem512::needles
+  ),
+  scenario!(
+    "ml-kem-512-pkcs8-expanded-in",
+    "none",
+    mlkem512::prepare_pkcs8_expanded,
+    mlkem512::pkcs8_expanded_in,
+    mlkem512::needles
+  ),
+  scenario!(
+    "ml-kem-512-pkcs8-seed-owner",
+    "report",
+    mlkem512::prepare_pkcs8_seed,
+    mlkem512::seed_owner,
+    mlkem512::needles
+  ),
+  scenario!(
+    "ml-kem-768-pkcs8-seed-in",
+    "none",
+    mlkem768::prepare_pkcs8_seed,
+    mlkem768::pkcs8_seed_in,
+    mlkem768::needles
+  ),
+  scenario!(
+    "ml-kem-768-pkcs8-expanded",
+    "report",
+    mlkem768::prepare_pkcs8_expanded,
+    mlkem768::pkcs8_expanded,
+    mlkem768::needles
+  ),
+  scenario!(
+    "ml-kem-768-pkcs8-expanded-in",
+    "none",
+    mlkem768::prepare_pkcs8_expanded,
+    mlkem768::pkcs8_expanded_in,
+    mlkem768::needles
+  ),
+  scenario!(
+    "ml-kem-768-pkcs8-seed-owner",
+    "report",
+    mlkem768::prepare_pkcs8_seed,
+    mlkem768::seed_owner,
+    mlkem768::needles
+  ),
+  scenario!(
+    "ml-kem-1024-pkcs8-seed-in",
+    "none",
+    mlkem1024::prepare_pkcs8_seed,
+    mlkem1024::pkcs8_seed_in,
+    mlkem1024::needles
+  ),
+  scenario!(
+    "ml-kem-1024-pkcs8-expanded",
+    "report",
+    mlkem1024::prepare_pkcs8_expanded,
+    mlkem1024::pkcs8_expanded,
+    mlkem1024::needles
+  ),
+  scenario!(
+    "ml-kem-1024-pkcs8-expanded-in",
+    "none",
+    mlkem1024::prepare_pkcs8_expanded,
+    mlkem1024::pkcs8_expanded_in,
+    mlkem1024::needles
+  ),
+  scenario!(
+    "ml-kem-1024-pkcs8-seed-owner",
+    "report",
+    mlkem1024::prepare_pkcs8_seed,
+    mlkem1024::seed_owner,
     mlkem1024::needles
   ),
   scenario!("ml-dsa-44-keygen", "report", mldsa44::keygen, mldsa44::needles),

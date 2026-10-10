@@ -352,7 +352,8 @@ impl<const N: usize> ZeroizingBytes<N> {
     feature = "serde-secrets",
     feature = "ecdsa-p256",
     feature = "ecdsa-p384",
-    feature = "ml-dsa"
+    feature = "ml-dsa",
+    feature = "ml-kem"
   ))]
   pub(crate) const fn new(bytes: [u8; N]) -> Self {
     Self(bytes)

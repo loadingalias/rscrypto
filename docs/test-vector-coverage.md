@@ -21,7 +21,7 @@ Test filenames are the stable entry points.
 | P-256 ECDH | All 25 NIST CAVP P-256 ECC CDH component records, all 355 pinned Wycheproof `ecpoint` cases, RustCrypto differentials, a ring cross-agreement, Miri, and fuzzing. | The public API accepts only canonical uncompressed SEC1 points. Wycheproof supplies the full-width leading-zero and all-zero x-coordinate cases. The NIST slice has no full leading-zero byte. |
 | P-384 ECDH | All 25 NIST CAVP P-384 ECC CDH component records, all 790 pinned Wycheproof `ecpoint` cases, RustCrypto differentials and properties, a ring cross-agreement, and fuzzing. | The public API accepts only canonical uncompressed SEC1 points. |
 | ML-KEM-512/768/1024 | See [ML-KEM evidence](#ml-kem-evidence). | CCTV's unlucky-sampling and accumulated vectors target the FIPS 203 draft and are not imported. Wycheproof's high-rejection matrix seeds cover sampling under the final standard. |
-| ML-DSA-44/65/87 | All 615 pinned NIST ACVP cases, all 1,138 pinned Wycheproof signing and verification cases, RustCrypto 0.1.1 differentials, and rejection tests for context, encoding, entropy, and prehash domain. | Successful sigGen vectors cover the positive prehash cases that the sigVer corpus lacks. Timing and resource qualification are still open. Provenance: [ACVP](../testdata/mldsa/acvp/README.md), [Wycheproof](../testdata/mldsa/wycheproof/README.md). |
+| ML-DSA-44/65/87 | All 615 pinned NIST ACVP cases, all 1,138 pinned Wycheproof signing and verification cases, RustCrypto 0.1.1 differentials, and rejection tests for context, encoding, entropy, and prehash domain. RFC 9881 Appendix C public and private keys, including the inconsistent keys; SPKI and PKCS #8 exchange with RustCrypto 0.1.1, aws-lc-rs 1.18.1, and the OpenSSL CLI. | Successful sigGen vectors cover the positive prehash cases that the sigVer corpus lacks. Timing and resource qualification are still open. The OpenSSL exchange runs only where `openssl` supports ML-DSA. Provenance: [ACVP](../testdata/mldsa/acvp/README.md), [Wycheproof](../testdata/mldsa/wycheproof/README.md), [RFC 9881](../testdata/mldsa/rfc9881/README.md). |
 | RSA signatures, encryption, and parsing | NIST CAVP, Wycheproof, RustCrypto and system OpenSSL/LibreSSL oracles, and profile-confusion, allocation, and leakage tests. | The public API exposes fixed SHA-2 profiles, not every Wycheproof parameter combination. The system-library oracles run only where the test host has them. |
 | Dispatch and fallback | Differential tests, portable against accelerated, across lengths, tails, and vectored input. | Cross-compilation alone is not runtime evidence. |
 
@@ -34,6 +34,10 @@ Test filenames are the stable entry points.
 - The accumulated ML-KEM-768 hashes from the Go standard library:
   10,000 iterations run by default; the 1,000,000-iteration test is ignored by default.
 - `fips203` differentials.
+- RFC 9935 Appendix C public and private keys, including the four bad keys
+  ([provenance](../testdata/mlkem/rfc9935/README.md)).
+  SPKI and PKCS #8 exchange with RustCrypto ML-KEM 0.3.2 (seed form) and the OpenSSL CLI,
+  which runs only where `openssl` supports ML-KEM.
 
 ### Other cases
 

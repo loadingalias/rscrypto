@@ -267,7 +267,9 @@ fips203 = { version = "0.4.3", default-features = false, features = [
   "ml-kem-1024",
 ] }
 rustcrypto-ml-kem = { package = "ml-kem", version = "0.3.2", default-features = false, features = [
+  "alloc",
   "hazmat",
+  "pkcs8",
 ] }
 hmac = "0.13.0"
 hkdf = "0.13.0"

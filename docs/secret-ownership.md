@@ -14,7 +14,8 @@ It does not prove that the compiler erases every copy it makes.
 | Header-protection keys and contexts | No generic copy. | No public export. `Debug` is redacted. |
 | ECDSA and Ed25519 secret keys and keypairs | Explicit `duplicate_secret`. | Secret-key export is explicit. Keypair `Debug` shows only public data. |
 | ML-DSA seeds, expanded secret keys, and prepared secret keys | Not `Clone` or `Copy`. See [ML-DSA storage](#ml-dsa-storage). | Raw export returns `SecretBytes`. PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. Seed, key, handle, and storage `Debug` are redacted. Secret-key serialization needs `serde-secrets`; seeds have no Serde support. |
-| X25519 secrets; ML-KEM decapsulation keys and shared secrets | Explicit `duplicate_secret`. See [ML-KEM allocation](#ml-kem-allocation). | Secret export is explicit. `Debug` is redacted. |
+| X25519 secrets; ML-KEM decapsulation keys and shared secrets | Explicit `duplicate_secret`. See [ML-KEM allocation](#ml-kem-allocation). | Secret export is explicit. PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. `Debug` is redacted. |
+| ML-KEM seeds | Not `Clone` or `Copy`. | Raw export returns `SecretBytes<64>`. PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. `Debug` is redacted. No Serde support. |
 | `P256EphemeralSecret`, `P256SharedSecret` | Not `Clone` or `Copy`. | The ephemeral scalar has no export or import API. `P256SharedSecret::expose_secret` makes an explicit `SecretBytes<32>` copy. `as_bytes` gives borrowed access. Both types redact `Debug`. |
 | `P384EphemeralSecret`, `P384SharedSecret` | Not `Clone` or `Copy`. | The ephemeral scalar has no export or import API. `P384SharedSecret::expose_secret` makes an explicit `SecretBytes<48>` copy. `as_bytes` gives borrowed access. Both types redact `Debug`. |
 | `RsaPrivateKey`, `RsaPrivateScratch` | Not `Clone` or `Copy`. | Private DER export returns `SecretVec`. `Debug` shows only public metadata. |
@@ -41,7 +42,8 @@ and private-operation scratch follow the same rules, also when the table does no
 ### ML-KEM allocation
 
 With `alloc`, these functions write the key
-or prepared key directly into an allocation from a caller-selected `Allocator`, and return `Box<_, A>`: `generate_keypair_in`, `try_generate_keypair_in`, `DecapsulationKey::try_from_slice_in`, and `DecapsulationKey::prepare_in`.
+or prepared key directly into an allocation from a caller-selected `Allocator`, and return `Box<_, A>`: `generate_keypair_in`, `try_generate_keypair_in`, `DecapsulationKey::try_from_slice_in`, `DecapsulationKey::from_pkcs8_der_in`, `DecapsulationKey::prepare_in`, and `Seed::keypair_in`.
+PKCS #8 import borrows the caller's DER and does not clear it.
 
 ### BLAKE3 trees
 

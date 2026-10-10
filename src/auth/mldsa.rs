@@ -31,16 +31,18 @@
 //! ```
 
 mod encoding;
-mod pkcs8;
 mod poly;
 mod portable;
 mod sampling;
 #[cfg(feature = "serde")]
 mod serde_impl;
-mod spki;
 #[cfg(test)]
 mod tests;
 
+use crate::backend::{
+  der::MalformedDer,
+  pkix::{self, KeyError},
+};
 use crate::secret::ZeroizingBytes;
 use crate::traits::ct::{self, DataIndependentTiming};
 use crate::{SecretBytes, VerificationError, Verifier};
@@ -123,6 +125,20 @@ impl fmt::Display for MlDsaKeyError {
 }
 
 impl core::error::Error for MlDsaKeyError {}
+
+impl MalformedDer for MlDsaKeyError {
+  const MALFORMED_DER: Self = Self::MalformedDer;
+}
+
+impl KeyError for MlDsaKeyError {
+  const UNSUPPORTED_ALGORITHM: Self = Self::UnsupportedAlgorithm;
+  const UNSUPPORTED_ENCODING: Self = Self::UnsupportedEncoding;
+  const INVALID_PUBLIC_KEY: Self = Self::InvalidPublicKey;
+  const INVALID_SECRET_KEY: Self = Self::InvalidSecretKey;
+}
+
+/// FIPS 204 key-generation seed length.
+const SEED_LENGTH: usize = 32;
 
 /// Key import from a seed: generation fails only by exhausting a FIPS 204
 /// sampling bound.
@@ -432,6 +448,9 @@ macro_rules! parameter_set {
     pub struct $profile;
 
     impl $profile {
+      /// RFC 9881 `id-ml-dsa-*` identifier: 2.16.840.1.101.3.4.3.`$arc`.
+      const ALGORITHM: pkix::Algorithm = pkix::Algorithm { family: 3, arc: $arc };
+
       /// Deterministically expand a 32-byte secret seed into a key pair.
       ///
       /// Use a fresh cryptographically random seed in production. The caller owns
@@ -523,9 +542,9 @@ macro_rules! parameter_set {
       }
 
       /// DER-encoded RFC 9881 SubjectPublicKeyInfo length in bytes.
-      pub const SPKI_DER_LENGTH: usize = spki::HEADER_LENGTH.strict_add($pk);
+      pub const SPKI_DER_LENGTH: usize = pkix::SPKI_HEADER_LENGTH.strict_add($pk);
 
-      const SPKI_HEADER: [u8; spki::HEADER_LENGTH] = spki::header($arc, $pk);
+      const SPKI_HEADER: [u8; pkix::SPKI_HEADER_LENGTH] = pkix::spki_header($profile::ALGORITHM, $pk);
 
       /// Parse an RFC 9881 SubjectPublicKeyInfo for this parameter set.
       ///
@@ -540,13 +559,13 @@ macro_rules! parameter_set {
       /// [`MlDsaKeyError::InvalidPublicKey`] for a wrong key length; and
       /// [`MlDsaKeyError::MalformedDer`] for any other encoding. No heap allocation.
       pub fn from_spki_der(der: &[u8]) -> Result<Self, MlDsaKeyError> {
-        Self::try_from_slice(spki::decode(der, &Self::SPKI_HEADER, $pk)?)
+        pkix::decode_spki(der, &Self::SPKI_HEADER).map(|key| Self(*key))
       }
 
       /// Encode the RFC 9881 SubjectPublicKeyInfo DER. No heap allocation.
       #[must_use]
       pub const fn to_spki_der(&self) -> [u8; Self::SPKI_DER_LENGTH] {
-        spki::encode(&Self::SPKI_HEADER, &self.0)
+        pkix::concat(&Self::SPKI_HEADER, &self.0)
       }
 
       /// Prepare the matrix and transformed public key in caller-owned storage
@@ -661,9 +680,9 @@ macro_rules! parameter_set {
       }
 
       /// DER length of this key as an RFC 9881 expanded-form PKCS #8 private key.
-      pub const PKCS8_DER_LENGTH: usize = pkcs8::EXPANDED_HEADER_LENGTH.strict_add($sk);
+      pub const PKCS8_DER_LENGTH: usize = pkix::EXPANDED_HEADER_LENGTH.strict_add($sk);
 
-      const PKCS8_HEADER: [u8; pkcs8::EXPANDED_HEADER_LENGTH] = pkcs8::expanded_header($arc, $sk);
+      const PKCS8_HEADER: [u8; pkix::EXPANDED_HEADER_LENGTH] = pkix::expanded_header($profile::ALGORITHM, $sk);
 
       /// Import an RFC 9881 private key from RFC 5958 OneAsymmetricKey
       /// (PKCS #8) DER for this parameter set.
@@ -688,11 +707,11 @@ macro_rules! parameter_set {
       /// if expansion exhausts its sampling bound.
       pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, MlDsaKeyError> {
         let _dit = DataIndependentTiming::enter();
-        let decoded = pkcs8::decode::<$sk, $pk>(der, $arc)?;
+        let decoded = pkix::decode_pkcs8::<MlDsaKeyError, SEED_LENGTH, $sk, $pk>(der, $profile::ALGORITHM)?;
         let (secret, expanded) = match decoded.private_key {
-          pkcs8::PrivateKey::Seed(seed) => (Self::from_seed(seed)?, None),
-          pkcs8::PrivateKey::Expanded(expanded) => (Self::try_from_slice(expanded)?, None),
-          pkcs8::PrivateKey::Both { seed, expanded } => (Self::from_seed(seed)?, Some(expanded)),
+          pkix::PrivateKey::Seed(seed) => (Self::from_seed(seed)?, None),
+          pkix::PrivateKey::Expanded(expanded) => (Self::try_from_slice(expanded)?, None),
+          pkix::PrivateKey::Both { seed, expanded } => (Self::from_seed(seed)?, Some(expanded)),
         };
         secret.check_redundant(expanded, decoded.public_key)?;
         Ok(secret)
@@ -707,11 +726,11 @@ macro_rules! parameter_set {
       #[cfg(feature = "alloc")]
       pub fn from_pkcs8_der_in<A: Allocator>(der: &[u8], alloc: A) -> Result<Box<Self, A>, MlDsaKeyError> {
         let _dit = DataIndependentTiming::enter();
-        let decoded = pkcs8::decode::<$sk, $pk>(der, $arc)?;
+        let decoded = pkix::decode_pkcs8::<MlDsaKeyError, SEED_LENGTH, $sk, $pk>(der, $profile::ALGORITHM)?;
         let (secret, expanded) = match decoded.private_key {
-          pkcs8::PrivateKey::Seed(seed) => (Self::from_seed_in(seed, alloc)?, None),
-          pkcs8::PrivateKey::Expanded(expanded) => (Self::try_from_slice_in(expanded, alloc)?, None),
-          pkcs8::PrivateKey::Both { seed, expanded } => (Self::from_seed_in(seed, alloc)?, Some(expanded)),
+          pkix::PrivateKey::Seed(seed) => (Self::from_seed_in(seed, alloc)?, None),
+          pkix::PrivateKey::Expanded(expanded) => (Self::try_from_slice_in(expanded, alloc)?, None),
+          pkix::PrivateKey::Both { seed, expanded } => (Self::from_seed_in(seed, alloc)?, Some(expanded)),
         };
         secret.check_redundant(expanded, decoded.public_key)?;
         Ok(secret)
@@ -724,7 +743,7 @@ macro_rules! parameter_set {
       /// This key keeps no seed, so it cannot write the recommended seed form.
       #[doc = concat!("[`", stringify!($seed), "::to_pkcs8_der_into`] writes it.")]
       pub fn to_pkcs8_der_into(&self, out: &mut [u8; Self::PKCS8_DER_LENGTH]) {
-        pkcs8::write(&Self::PKCS8_HEADER, self.bytes.as_array(), out);
+        pkix::write(&Self::PKCS8_HEADER, self.bytes.as_array(), out);
       }
 
       fn from_seed(seed: &[u8; 32]) -> Result<Self, MlDsaKeyError> {
@@ -811,12 +830,12 @@ macro_rules! parameter_set {
 
     impl $seed {
       /// Seed length in bytes.
-      pub const LENGTH: usize = pkcs8::SEED_LENGTH;
+      pub const LENGTH: usize = SEED_LENGTH;
 
       /// DER length of the RFC 9881 seed-form PKCS #8 private key.
-      pub const PKCS8_DER_LENGTH: usize = pkcs8::SEED_HEADER_LENGTH.strict_add(pkcs8::SEED_LENGTH);
+      pub const PKCS8_DER_LENGTH: usize = pkix::SEED_HEADER_LENGTH.strict_add(SEED_LENGTH);
 
-      const PKCS8_HEADER: [u8; pkcs8::SEED_HEADER_LENGTH] = pkcs8::seed_header($arc);
+      const PKCS8_HEADER: [u8; pkix::SEED_HEADER_LENGTH] = pkix::seed_header::<SEED_LENGTH>($profile::ALGORITHM);
 
       /// Wrap a seed. The caller retains responsibility for clearing `bytes`.
       #[must_use]
@@ -870,11 +889,11 @@ macro_rules! parameter_set {
       /// for an expanded-only key: expansion cannot recover a discarded seed.
       pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, MlDsaKeyError> {
         let _dit = DataIndependentTiming::enter();
-        let decoded = pkcs8::decode::<$sk, $pk>(der, $arc)?;
+        let decoded = pkix::decode_pkcs8::<MlDsaKeyError, SEED_LENGTH, $sk, $pk>(der, $profile::ALGORITHM)?;
         let (seed, expanded) = match decoded.private_key {
-          pkcs8::PrivateKey::Seed(seed) => (seed, None),
-          pkcs8::PrivateKey::Both { seed, expanded } => (seed, Some(expanded)),
-          pkcs8::PrivateKey::Expanded(_) => return Err(MlDsaKeyError::UnsupportedEncoding),
+          pkix::PrivateKey::Seed(seed) => (seed, None),
+          pkix::PrivateKey::Both { seed, expanded } => (seed, Some(expanded)),
+          pkix::PrivateKey::Expanded(_) => return Err(MlDsaKeyError::UnsupportedEncoding),
         };
         let owner = Self(ZeroizingBytes::new(*seed));
         if expanded.is_some() || decoded.public_key.is_some() {
@@ -888,7 +907,7 @@ macro_rules! parameter_set {
       ///
       /// `out` then holds the seed, and the caller owns its cleanup.
       pub fn to_pkcs8_der_into(&self, out: &mut [u8; Self::PKCS8_DER_LENGTH]) {
-        pkcs8::write(&Self::PKCS8_HEADER, self.0.as_array(), out);
+        pkix::write(&Self::PKCS8_HEADER, self.0.as_array(), out);
       }
     }
 

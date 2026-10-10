@@ -476,10 +476,11 @@ pub use auth::{
 #[cfg(feature = "ml-kem")]
 pub use auth::{
   MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem512PreparedDecapsulationKey,
-  MlKem512PreparedEncapsulationKey, MlKem512SharedSecret, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey,
-  MlKem768EncapsulationKey, MlKem768PreparedDecapsulationKey, MlKem768PreparedEncapsulationKey, MlKem768SharedSecret,
-  MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey,
-  MlKem1024PreparedDecapsulationKey, MlKem1024PreparedEncapsulationKey, MlKem1024SharedSecret, MlKemError,
+  MlKem512PreparedEncapsulationKey, MlKem512Seed, MlKem512SharedSecret, MlKem768, MlKem768Ciphertext,
+  MlKem768DecapsulationKey, MlKem768EncapsulationKey, MlKem768PreparedDecapsulationKey,
+  MlKem768PreparedEncapsulationKey, MlKem768Seed, MlKem768SharedSecret, MlKem1024, MlKem1024Ciphertext,
+  MlKem1024DecapsulationKey, MlKem1024EncapsulationKey, MlKem1024PreparedDecapsulationKey,
+  MlKem1024PreparedEncapsulationKey, MlKem1024Seed, MlKem1024SharedSecret, MlKemError, MlKemKeyError,
 };
 #[cfg(feature = "p256-ecdh")]
 pub use auth::{P256EphemeralSecret, P256KeyGenerationError, P256PublicKey, P256PublicKeyError, P256SharedSecret};

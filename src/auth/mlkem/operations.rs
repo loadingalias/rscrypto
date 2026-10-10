@@ -303,6 +303,59 @@ pub(super) fn validate_decapsulation_key<const DK_PKE_BYTES: usize, const EK_BYT
   }
 }
 
+/// Pairwise consistency check of a PKCS #8 expanded decapsulation key: encapsulate to
+/// its embedded encapsulation key, then decapsulate. A secret vector that does
+/// not match the embedded key decapsulates to the implicit-rejection key, which
+/// FIPS 203's hash check cannot detect. The embedded `H(ek)` serves as the
+/// encapsulation randomness, so the check is deterministic and needs no entropy.
+/// Callers run the hash check first.
+pub(super) fn check_decapsulation_key_pair<
+  const K: usize,
+  const ETA1_RANDOM_BYTES: usize,
+  const DK_PKE_BYTES: usize,
+  const EK_BYTES: usize,
+  const DK_BYTES: usize,
+  const CT_BYTES: usize,
+  const DU: usize,
+  const DV: usize,
+  const POLY_DU_BYTES: usize,
+  const POLY_DV_BYTES: usize,
+>(
+  dk: &[u8; DK_BYTES],
+) -> Result<(), MlKemError> {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
+  let ek_end = DK_PKE_BYTES.strict_add(EK_BYTES);
+  let ek = <&[u8; EK_BYTES]>::try_from(&dk[DK_PKE_BYTES..ek_end]).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
+  let coins = <&[u8; SEED_BYTES]>::try_from(&dk[ek_end..ek_end.strict_add(HASH_BYTES)])
+    .map_err(|_| MlKemError::InvalidDecapsulationKey)?;
+  // Encapsulation requires the modulus check that the hash check does not cover.
+  validate_encapsulation_key::<K, EK_BYTES>(ek).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
+  let (ciphertext, mut expected) =
+    encapsulate::<K, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(
+      ek, coins,
+    );
+  let mut recovered = decapsulate::<
+    K,
+    ETA1_RANDOM_BYTES,
+    DK_PKE_BYTES,
+    EK_BYTES,
+    DK_BYTES,
+    CT_BYTES,
+    DU,
+    DV,
+    POLY_DU_BYTES,
+    POLY_DV_BYTES,
+  >(dk, &ciphertext)?;
+  let consistent = ct_eq_mask(&expected, &recovered) == 0xff;
+  ct::zeroize(&mut expected);
+  ct::zeroize(&mut recovered);
+  if consistent {
+    Ok(())
+  } else {
+    Err(MlKemError::InvalidDecapsulationKey)
+  }
+}
+
 #[inline]
 pub(super) fn encapsulation_key_hash<const EK_BYTES: usize>(ek: &[u8; EK_BYTES]) -> [u8; HASH_BYTES] {
   h(ek)

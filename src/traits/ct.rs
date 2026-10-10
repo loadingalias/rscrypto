@@ -669,6 +669,20 @@ pub(crate) mod tests {
       covered("ML-KEM prepared decapsulation", || {
         core::hint::black_box(prepared.decapsulate(&ciphertext))
       });
+      let seed = crate::MlKem768Seed::from_bytes([0x31; 64]);
+      let mut der = [0; crate::MlKem768Seed::PKCS8_DER_LENGTH];
+      seed.to_pkcs8_der_into(&mut der);
+      covered("ML-KEM PKCS #8 import", || {
+        core::hint::black_box(crate::MlKem768DecapsulationKey::from_pkcs8_der(&der))
+      });
+      covered("ML-KEM PKCS #8 seed import", || {
+        core::hint::black_box(crate::MlKem768Seed::from_pkcs8_der(&der))
+      });
+      let mut expanded = [0; crate::MlKem768DecapsulationKey::PKCS8_DER_LENGTH];
+      dk.to_pkcs8_der_into(&mut expanded);
+      covered("ML-KEM PKCS #8 expanded-key import", || {
+        core::hint::black_box(crate::MlKem768DecapsulationKey::from_pkcs8_der(&expanded))
+      });
     }
     #[cfg(feature = "ml-dsa")]
     {

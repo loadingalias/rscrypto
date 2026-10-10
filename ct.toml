@@ -3243,8 +3243,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2655
-compiler_api_sha256 = "404bfbee6d2cdbf6d7ce097443e8412071e70ee8aa589df5aae51a8472628d67"
+compiler_api_item_count = 2702
+compiler_api_sha256 = "9076b8181d3d86636c6462a40b42445aab8c2cd8a8527446cbd0597aba3eeaf1"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3254,8 +3254,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2655
-compiler_api_sha256 = "404bfbee6d2cdbf6d7ce097443e8412071e70ee8aa589df5aae51a8472628d67"
+compiler_api_item_count = 2702
+compiler_api_sha256 = "9076b8181d3d86636c6462a40b42445aab8c2cd8a8527446cbd0597aba3eeaf1"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3288,8 +3288,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 2655
-compiler_api_sha256 = "404bfbee6d2cdbf6d7ce097443e8412071e70ee8aa589df5aae51a8472628d67"
+compiler_api_item_count = 2702
+compiler_api_sha256 = "9076b8181d3d86636c6462a40b42445aab8c2cd8a8527446cbd0597aba3eeaf1"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3310,8 +3310,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 2655
-compiler_api_sha256 = "404bfbee6d2cdbf6d7ce097443e8412071e70ee8aa589df5aae51a8472628d67"
+compiler_api_item_count = 2702
+compiler_api_sha256 = "9076b8181d3d86636c6462a40b42445aab8c2cd8a8527446cbd0597aba3eeaf1"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3322,8 +3322,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2655
-compiler_api_sha256 = "404bfbee6d2cdbf6d7ce097443e8412071e70ee8aa589df5aae51a8472628d67"
+compiler_api_item_count = 2702
+compiler_api_sha256 = "9076b8181d3d86636c6462a40b42445aab8c2cd8a8527446cbd0597aba3eeaf1"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3334,8 +3334,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2655
-compiler_api_sha256 = "404bfbee6d2cdbf6d7ce097443e8412071e70ee8aa589df5aae51a8472628d67"
+compiler_api_item_count = 2702
+compiler_api_sha256 = "9076b8181d3d86636c6462a40b42445aab8c2cd8a8527446cbd0597aba3eeaf1"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3346,8 +3346,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2655
-compiler_api_sha256 = "404bfbee6d2cdbf6d7ce097443e8412071e70ee8aa589df5aae51a8472628d67"
+compiler_api_item_count = 2702
+compiler_api_sha256 = "9076b8181d3d86636c6462a40b42445aab8c2cd8a8527446cbd0597aba3eeaf1"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -4073,7 +4073,9 @@ id = "kem.mlkem512"
 api = [
   "rscrypto::MlKem512::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate,generate_keypair_in,try_generate_keypair_in}",
   "rscrypto::MlKem512*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret}",
-  "rscrypto::MlKem512DecapsulationKey::{try_from_slice_in,prepare_in}",
+  "rscrypto::MlKem512DecapsulationKey::{try_from_slice_in,prepare_in,from_pkcs8_der,from_pkcs8_der_in,to_pkcs8_der_into}",
+  "rscrypto::MlKem512EncapsulationKey::{from_spki_der,to_spki_der}",
+  "rscrypto::MlKem512Seed::{from_bytes,generate,try_generate,keypair,keypair_in,expose_secret,from_pkcs8_der,to_pkcs8_der_into}",
   "rscrypto::MlKem512{DecapsulationKey,PreparedDecapsulationKey,SharedSecret}::ct_eq",
   "rscrypto::MlKem512{EncapsulationKey,PreparedEncapsulationKey,Ciphertext}::eq",
 ]
@@ -4082,14 +4084,22 @@ targets = ["all-supported", "portable implementation"]
 secret_inputs = [
   "key-generation secret seed",
   "decapsulation key",
+  "PKCS #8 private-key contents",
   "encapsulation randomness",
   "shared secret",
   "implicit-rejection fallback",
 ]
-public_inputs = ["encapsulation key", "ciphertext", "parameter set", "encoded lengths"]
+public_inputs = [
+  "encapsulation key",
+  "ciphertext",
+  "parameter set",
+  "encoded lengths",
+  "SubjectPublicKeyInfo and PKCS #8 container structure and private-key form",
+]
 variable_time_components = [
   "public matrix rejection sampling",
   "public fixed-shape parsing",
+  "public SPKI and PKCS #8 structure parsing",
   "full fixed-shape implicit-rejection comparison",
 ]
 permitted_leakage = [
@@ -4113,7 +4123,9 @@ id = "kem.mlkem768"
 api = [
   "rscrypto::MlKem768::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate,generate_keypair_in,try_generate_keypair_in}",
   "rscrypto::MlKem768*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret}",
-  "rscrypto::MlKem768DecapsulationKey::{try_from_slice_in,prepare_in}",
+  "rscrypto::MlKem768DecapsulationKey::{try_from_slice_in,prepare_in,from_pkcs8_der,from_pkcs8_der_in,to_pkcs8_der_into}",
+  "rscrypto::MlKem768EncapsulationKey::{from_spki_der,to_spki_der}",
+  "rscrypto::MlKem768Seed::{from_bytes,generate,try_generate,keypair,keypair_in,expose_secret,from_pkcs8_der,to_pkcs8_der_into}",
   "rscrypto::MlKem768{DecapsulationKey,PreparedDecapsulationKey,SharedSecret}::ct_eq",
   "rscrypto::MlKem768{EncapsulationKey,PreparedEncapsulationKey,Ciphertext}::eq",
 ]
@@ -4122,14 +4134,22 @@ targets = ["all-supported", "portable implementation"]
 secret_inputs = [
   "key-generation secret seed",
   "decapsulation key",
+  "PKCS #8 private-key contents",
   "encapsulation randomness",
   "shared secret",
   "implicit-rejection fallback",
 ]
-public_inputs = ["encapsulation key", "ciphertext", "parameter set", "encoded lengths"]
+public_inputs = [
+  "encapsulation key",
+  "ciphertext",
+  "parameter set",
+  "encoded lengths",
+  "SubjectPublicKeyInfo and PKCS #8 container structure and private-key form",
+]
 variable_time_components = [
   "public matrix rejection sampling",
   "public fixed-shape parsing",
+  "public SPKI and PKCS #8 structure parsing",
   "full fixed-shape implicit-rejection comparison",
 ]
 permitted_leakage = [
@@ -4153,7 +4173,9 @@ id = "kem.mlkem1024"
 api = [
   "rscrypto::MlKem1024::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate,generate_keypair_in,try_generate_keypair_in}",
   "rscrypto::MlKem1024*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret}",
-  "rscrypto::MlKem1024DecapsulationKey::{try_from_slice_in,prepare_in}",
+  "rscrypto::MlKem1024DecapsulationKey::{try_from_slice_in,prepare_in,from_pkcs8_der,from_pkcs8_der_in,to_pkcs8_der_into}",
+  "rscrypto::MlKem1024EncapsulationKey::{from_spki_der,to_spki_der}",
+  "rscrypto::MlKem1024Seed::{from_bytes,generate,try_generate,keypair,keypair_in,expose_secret,from_pkcs8_der,to_pkcs8_der_into}",
   "rscrypto::MlKem1024{DecapsulationKey,PreparedDecapsulationKey,SharedSecret}::ct_eq",
   "rscrypto::MlKem1024{EncapsulationKey,PreparedEncapsulationKey,Ciphertext}::eq",
 ]
@@ -4162,14 +4184,22 @@ targets = ["all-supported", "portable implementation"]
 secret_inputs = [
   "key-generation secret seed",
   "decapsulation key",
+  "PKCS #8 private-key contents",
   "encapsulation randomness",
   "shared secret",
   "implicit-rejection fallback",
 ]
-public_inputs = ["encapsulation key", "ciphertext", "parameter set", "encoded lengths"]
+public_inputs = [
+  "encapsulation key",
+  "ciphertext",
+  "parameter set",
+  "encoded lengths",
+  "SubjectPublicKeyInfo and PKCS #8 container structure and private-key form",
+]
 variable_time_components = [
   "public matrix rejection sampling",
   "public fixed-shape parsing",
+  "public SPKI and PKCS #8 structure parsing",
   "full fixed-shape implicit-rejection comparison",
 ]
 permitted_leakage = [
