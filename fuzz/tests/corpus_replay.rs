@@ -81,6 +81,9 @@ mod auth_kmac256;
 #[path = "../target_impls/auth_mldsa.rs"]
 mod auth_mldsa;
 
+#[path = "../target_impls/auth_slhdsa.rs"]
+mod auth_slhdsa;
+
 #[path = "../target_impls/auth_mlkem512.rs"]
 mod auth_mlkem512;
 
@@ -578,4 +581,10 @@ fn replay_traits_io_corpus() {
 fn replay_auth_mldsa_corpus() {
   let replayed = replay_corpus_dir("auth_mldsa", corpus_dir("auth_mldsa"), auth_mldsa::run);
   assert_ne!(replayed, 0, "auth_mldsa corpus should not be empty");
+}
+
+#[test]
+fn replay_auth_slhdsa_corpus() {
+  let replayed = replay_corpus_dir("auth_slhdsa", corpus_dir("auth_slhdsa"), auth_slhdsa::run);
+  assert_ne!(replayed, 0, "auth_slhdsa corpus should not be empty");
 }

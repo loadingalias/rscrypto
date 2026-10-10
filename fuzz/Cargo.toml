@@ -358,3 +358,8 @@ doc = false
 name = "auth_mldsa"
 path = "fuzz_targets/auth_mldsa.rs"
 doc = false
+
+[[bin]]
+name = "auth_slhdsa"
+path = "fuzz_targets/auth_slhdsa.rs"
+doc = false
