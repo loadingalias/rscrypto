@@ -34,6 +34,9 @@ on:
           - auth/mldsa65-keygen
           - auth/mldsa65-prepared-sign
           - auth/mldsa65-prepared-verify
+          - auth/slhdsa-sha2-128s-sign
+          - auth/slhdsa-shake-128s-sign
+          - auth/slhdsa-sha2-128s-verify
           - hashes/sha256
           - hashes/blake3
           - hashes/blake3-keyed

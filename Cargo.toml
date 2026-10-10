@@ -452,6 +452,11 @@ harness = false
 required-features = ["ml-dsa"]
 
 [[bench]]
+name = "slhdsa"
+harness = false
+required-features = ["slh-dsa"]
+
+[[bench]]
 name = "auth"
 harness = false
 required-features = ["hkdf", "pbkdf2", "ecdsa", "ed25519", "x25519", "p256-ecdh", "p384-ecdh", "ml-kem"]

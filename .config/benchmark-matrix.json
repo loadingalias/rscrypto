@@ -91,6 +91,18 @@
       "required": true,
       "features": ["std", "ml-dsa"]
     },
+    "slhdsa_portable": {
+      "binary": "slhdsa",
+      "kind": "criterion",
+      "required": false,
+      "features": ["std", "slh-dsa", "portable-only"]
+    },
+    "slhdsa": {
+      "binary": "slhdsa",
+      "kind": "criterion",
+      "required": true,
+      "features": ["std", "slh-dsa"]
+    },
     "auth": {
       "binary": "auth",
       "kind": "criterion",
@@ -212,6 +224,18 @@
     "mldsa44": { "bench": "mldsa", "filter": "^mldsa44/" },
     "mldsa65": { "bench": "mldsa", "filter": "^mldsa65/" },
     "mldsa87": { "bench": "mldsa", "filter": "^mldsa87/" },
+    "slhdsa-sha2-128s": { "bench": "slhdsa", "filter": "^slhdsa-sha2-128s/" },
+    "slhdsa-sha2-128f": { "bench": "slhdsa", "filter": "^slhdsa-sha2-128f/" },
+    "slhdsa-sha2-192s": { "bench": "slhdsa", "filter": "^slhdsa-sha2-192s/" },
+    "slhdsa-sha2-192f": { "bench": "slhdsa", "filter": "^slhdsa-sha2-192f/" },
+    "slhdsa-sha2-256s": { "bench": "slhdsa", "filter": "^slhdsa-sha2-256s/" },
+    "slhdsa-sha2-256f": { "bench": "slhdsa", "filter": "^slhdsa-sha2-256f/" },
+    "slhdsa-shake-128s": { "bench": "slhdsa", "filter": "^slhdsa-shake-128s/" },
+    "slhdsa-shake-128f": { "bench": "slhdsa", "filter": "^slhdsa-shake-128f/" },
+    "slhdsa-shake-192s": { "bench": "slhdsa", "filter": "^slhdsa-shake-192s/" },
+    "slhdsa-shake-192f": { "bench": "slhdsa", "filter": "^slhdsa-shake-192f/" },
+    "slhdsa-shake-256s": { "bench": "slhdsa", "filter": "^slhdsa-shake-256s/" },
+    "slhdsa-shake-256f": { "bench": "slhdsa", "filter": "^slhdsa-shake-256f/" },
     "mlkem512": { "bench": "auth", "filter": "^mlkem512/(keygen|encapsulate|decapsulate)/" },
     "mlkem768": { "bench": "auth", "filter": "^mlkem768/(keygen|encapsulate|decapsulate)/" },
     "mlkem1024": { "bench": "auth", "filter": "^mlkem1024/(keygen|encapsulate|decapsulate)/" },
@@ -280,6 +304,18 @@
       "mldsa44",
       "mldsa65",
       "mldsa87",
+      "slhdsa-sha2-128s",
+      "slhdsa-sha2-128f",
+      "slhdsa-sha2-192s",
+      "slhdsa-sha2-192f",
+      "slhdsa-sha2-256s",
+      "slhdsa-sha2-256f",
+      "slhdsa-shake-128s",
+      "slhdsa-shake-128f",
+      "slhdsa-shake-192s",
+      "slhdsa-shake-192f",
+      "slhdsa-shake-256s",
+      "slhdsa-shake-256f",
       "mlkem512",
       "mlkem768",
       "mlkem1024",
@@ -318,6 +354,18 @@
       "mldsa44",
       "mldsa65",
       "mldsa87",
+      "slhdsa-sha2-128s",
+      "slhdsa-sha2-128f",
+      "slhdsa-sha2-192s",
+      "slhdsa-sha2-192f",
+      "slhdsa-sha2-256s",
+      "slhdsa-sha2-256f",
+      "slhdsa-shake-128s",
+      "slhdsa-shake-128f",
+      "slhdsa-shake-192s",
+      "slhdsa-shake-192f",
+      "slhdsa-shake-256s",
+      "slhdsa-shake-256f",
       "mlkem512",
       "mlkem768",
       "mlkem1024",
@@ -404,6 +452,20 @@
       "ascon-cxof128"
     ],
     "mlkem": ["mlkem512", "mlkem768", "mlkem1024"],
+    "slhdsa": [
+      "slhdsa-sha2-128s",
+      "slhdsa-sha2-128f",
+      "slhdsa-sha2-192s",
+      "slhdsa-sha2-192f",
+      "slhdsa-sha2-256s",
+      "slhdsa-sha2-256f",
+      "slhdsa-shake-128s",
+      "slhdsa-shake-128f",
+      "slhdsa-shake-192s",
+      "slhdsa-shake-192f",
+      "slhdsa-shake-256s",
+      "slhdsa-shake-256f"
+    ],
     "crc64": ["crc64-xz", "crc64-nvme"],
     "crc32": ["crc32-ieee", "crc32c"],
     "crc16": ["crc16-ccitt", "crc16-ibm"]
@@ -469,6 +531,21 @@
       "case": "mldsa65/verify/prepared-key/rscrypto",
       "diagnostic": false
     },
+    "auth/slhdsa-sha2-128s-sign": {
+      "bench": "slhdsa",
+      "case": "slhdsa-sha2-128s/sign/deterministic-32/rscrypto",
+      "diagnostic": false
+    },
+    "auth/slhdsa-shake-128s-sign": {
+      "bench": "slhdsa",
+      "case": "slhdsa-shake-128s/sign/deterministic-32/rscrypto",
+      "diagnostic": false
+    },
+    "auth/slhdsa-sha2-128s-verify": {
+      "bench": "slhdsa",
+      "case": "slhdsa-sha2-128s/verify/32/rscrypto",
+      "diagnostic": false
+    },
     "hashes/sha256": {
       "bench": "sha2",
       "case": "sha256/rscrypto/4096",
@@ -518,6 +595,11 @@
       ],
       "expensive": [
         "^rsa-[0-9]+-private-signing/"
+      ]
+    },
+    "slhdsa": {
+      "expensive": [
+        "/(keygen|sign|import)/"
       ]
     },
     "aead": {
