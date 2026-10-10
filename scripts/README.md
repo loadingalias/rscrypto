@@ -15,6 +15,7 @@ Those entry points call the supporting modules.
 | `check/macos.sh`                       | `just check-macos`, background Mac qualification |
 | `check/macos_async.py`                 | local pre-push hook, `just qualify-macos`, `just macos-status` |
 | `check/qualified.py`                   | local qualification reuse and release status identity |
+| `check/staged.py`                      | local pre-commit and pre-merge-commit hooks |
 | `check/dependencies.sh`                | `just ci-policy`, and the dependency checks in `just check` |
 | `check/lint-independent-workspaces.sh` | `check/check.sh` |
 | `asm/p384.py check`                    | `check/check.sh` |
@@ -714,6 +715,14 @@ Its failure and recovery tests run through `just test-scripts`.
 `scripts/check/macos.sh` owns `just check-macos`, which replaces hosted macOS checks and tests with local Apple Silicon validation.
 Install `.githooks` with `just install-hooks` in each maintainer checkout. macOS is still a supported release target.
 Timing qualification on physical Apple Silicon is a separate local requirement before submission.
+
+`scripts/check/staged.py` runs the pre-commit check on the staged tree in `rscrypto-ci-check/checkout`,
+a persistent detached worktree in the common Git directory, with Cargo output in `rscrypto-ci-check/target/`.
+Git rewrites only the files that changed since the previous check, so Cargo rebuilds only what changed.
+No other checkout shares that target directory, because Cargo decides freshness by timestamp.
+Hook-local Git variables are removed before any command runs in the worktree.
+A pass is recorded only if the staged tree, the checked files, and the compiler are unchanged after the check.
+To reclaim the space, delete `rscrypto-ci-check/` and run `git worktree prune`; the next commit rebuilds it.
 
 `scripts/check/macos_async.py` queues a detached worktree of the pushed commit and returns immediately.
 It runs the unchanged `check-macos` suite, reuses `ci-check` and inert-only ancestor passes through

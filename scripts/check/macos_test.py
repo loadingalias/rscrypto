@@ -18,7 +18,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def install_qualification(root):
     """Give a fixture repository the real qualification helper and a pinned compiler."""
-    for name in ('scripts/check/qualified.py', 'scripts/check/macos_async.py', 'scripts/lib/python.sh'):
+    for name in ('scripts/check/qualified.py', 'scripts/check/macos_async.py', 'scripts/check/staged.py',
+                 'scripts/lib/python.sh'):
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / name, root / name)
     toolchain = root / 'scripts/lib/toolchain.sh'
@@ -58,54 +59,87 @@ class MacOSCommit(unittest.TestCase):
             self.assertEqual((root / 'calls').read_text().splitlines(),
                              ['ci-check', 'test --all --release'])
 
-    def test_hook_checks_source_and_propagates_validation_failure(self):
+    def test_hook_checks_staged_tree_and_propagates_validation_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            git = ['git', '-C', directory, '-c', 'user.name=t', '-c', 'user.email=t@t']
             subprocess.run(['git', 'init', '-q', directory], check=True)
             hook = root / '.git/hooks/pre-commit'
             shutil.copy2(ROOT / '.githooks/pre-commit', hook)
             install_qualification(root)
-            subprocess.run(['git', '-C', directory, 'add', 'scripts'], check=True)
+            (root / '.gitignore').write_text('__pycache__/\n')
+            subprocess.run([*git, 'add', '.gitignore', 'scripts'], check=True)
+            subprocess.run([*git, 'commit', '-qm', 'tools', '--no-verify'], check=True)
+            # The check runs in the separate worktree; record the source it sees there.
             tool = root / '.git/just'
-            tool.write_text('#!/bin/sh\necho "$*" >> .git/calls\nexit "${CHECK_STATUS:-0}"\n')
+            tool.write_text('''#!/bin/sh
+common=$(git rev-parse --path-format=absolute --git-common-dir)
+[ ! -e untracked ] || exit 8
+echo "$* $(cat source)" >> "$common/calls"
+[ -z "${RESTAGE:-}" ] || { echo restaged > "$RESTAGE/source"; git -C "$RESTAGE" add source; }
+[ -z "${DIRTY:-}" ] || echo changed > source
+exit "${CHECK_STATUS:-0}"
+''')
             tool.chmod(0o755)
             env = {**os.environ, 'BASH_ENV': '/dev/null', 'PATH': str(root / '.git') + os.pathsep + os.environ['PATH']}
             source = root / 'source'
-            source.write_text('staged')
-            subprocess.run(['git', '-C', directory, 'add', 'source'], check=True)
+
+            def stage(text):
+                source.write_text(text)
+                subprocess.run([*git, 'add', 'source'], check=True)
 
             def run(**extra):
                 return subprocess.run([str(hook)], cwd=root, env={**env, **extra},
                                       capture_output=True, text=True).returncode
 
-            # A failing check propagates and records nothing; a passing check records its tree.
+            def calls():
+                return (root / '.git/calls').read_text().splitlines()
+
+            # A failing check propagates and records nothing.
+            stage('staged')
             self.assertEqual(run(CHECK_STATUS='7'), 7)
-            self.assertEqual(run(), 0)
+            # Unstaged edits and untracked files neither block the commit nor enter the check.
             source.write_text('unstaged')
-            self.assertNotEqual(run(), 0)
-            source.write_text('staged')
             (root / 'untracked').write_text('new source')
-            self.assertNotEqual(run(), 0)
-            self.assertEqual((root / '.git/calls').read_text().splitlines(),
-                             ['ci-check', 'ci-check'])
+            self.assertEqual(run(), 0)
+            self.assertEqual(calls(), ['ci-check staged', 'ci-check staged'])
+            self.assertEqual(source.read_text(), 'unstaged')
+            self.assertTrue((root / 'untracked').exists())
 
             # A recorded tree, and a descendant that changes only unchecked paths, reuse the pass.
-            (root / 'untracked').unlink()
             self.assertEqual(run(), 0)
-            git = ['git', '-C', directory, '-c', 'user.name=t', '-c', 'user.email=t@t']
             subprocess.run([*git, 'commit', '-qm', 'checked', '--no-verify'], check=True)
-            self.assertEqual(run(), 0)
             (root / 'docs').mkdir()
             (root / 'docs/guide.md').write_text('prose')
             subprocess.run([*git, 'add', 'docs'], check=True)
             self.assertEqual(run(), 0)
-            self.assertEqual((root / '.git/calls').read_text().splitlines(), ['ci-check', 'ci-check'])
+            self.assertEqual(len(calls()), 2)
             # Checked paths and compiler changes run the check again.
-            source.write_text('changed')
-            subprocess.run([*git, 'add', 'source'], check=True)
+            stage('changed')
             self.assertEqual(run(), 0)
             self.assertEqual(run(COMPILER='two'), 0)
-            self.assertEqual(len((root / '.git/calls').read_text().splitlines()), 4)
+            self.assertEqual(calls()[2:], ['ci-check changed', 'ci-check changed'])
+
+            # A partial commit's temporary index is the checked source. Hook-local Git variables
+            # cannot redirect the worktree's reset and clean to the developer's index or files.
+            index = root / '.git/partial-index'
+            shutil.copy2(root / '.git/index', index)
+            source.write_text('partial')
+            subprocess.run([*git, 'add', 'source'], env={**os.environ, 'GIT_INDEX_FILE': str(index)}, check=True)
+            source.write_text('working')
+            self.assertEqual(run(GIT_INDEX_FILE=str(index), GIT_DIR=str(root / '.git'), GIT_WORK_TREE=directory), 0)
+            self.assertEqual(calls()[-1], 'ci-check partial')
+            self.assertEqual(subprocess.check_output([*git, 'show', ':source'], text=True), 'changed')
+            self.assertEqual(source.read_text(), 'working')
+            self.assertTrue((root / 'untracked').exists())
+
+            # Restaging during the check, or a check that edits its source, records no pass.
+            # The next run restores the staged file before checking.
+            stage('next')
+            self.assertEqual(run(RESTAGE=directory), 1)
+            self.assertEqual(run(DIRTY='1'), 1)
+            self.assertEqual(run(), 0)
+            self.assertEqual(calls()[-3:], ['ci-check next', 'ci-check restaged', 'ci-check restaged'])
 
 class AsyncMacOS(unittest.TestCase):
     def setUp(self):

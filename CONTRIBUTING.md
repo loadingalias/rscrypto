@@ -73,8 +73,13 @@ The push returns while qualification runs; a release waits for its passing GitHu
 
 Run `just install-hooks` once for each checkout.
 
-- The pre-commit and pre-merge-commit hooks run `just ci-check`:
+- The pre-commit and pre-merge-commit hooks run `just ci-check` on the staged tree:
   formatting, native and portable host lints, and documentation.
+  The check runs in one persistent worktree, `rscrypto-ci-check/checkout` in the common Git directory,
+  with its own Cargo target directory.
+  One check runs at a time.
+  Unstaged edits and untracked files stay out of the check and do not block the commit,
+  so sessions can commit disjoint paths from one checkout.
 - The pre-push hook queues `just check-macos` in a detached worktree of the pushed commit:
   native checks, complete release tests with native and portable dispatch (including doctests),
   internal evidence regressions, and the Apple Silicon RSA assembly gate.
@@ -88,8 +93,6 @@ Run `just install-hooks` once for each checkout.
   `README.md` is checked because the crate documentation includes it.
 - `check-macos` skips `just ci-check` when the clean checkout already passed it in the pre-commit hook.
 - In a push of more than one commit, the intermediate commits get only `just ci-check`.
-- The hooks reject unstaged tracked changes and untracked files,
-  so that the tested source matches the commit.
 
 Install the prerequisites with `scripts/tooling/aarch64-macos.sh` when you need them.
 Authenticate `gh` as a repository maintainer with permission to write commit statuses

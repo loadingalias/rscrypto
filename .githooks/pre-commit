@@ -1,21 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
-# Check the staged source, not a different working-tree version.
-git diff --quiet || { echo 'Stage or set aside unstaged tracked changes before committing.' >&2; exit 1; }
-if [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
-  echo 'Stage intended new files or move unrelated untracked files outside the checkout before committing.' >&2
-  exit 1
-fi
-before=$(git write-tree)
-# A tree that already passed, or differs from the last passing tree only in paths that
-# no check reads, keeps that pass. Anything else runs format, lint, and documentation checks.
-if scripts/lib/python.sh scripts/check/qualified.py check ci-check "$before"; then
-  exit 0
-fi
-just ci-check
-git diff --quiet && [[ "$(git write-tree)" == "$before" && -z "$(git ls-files --others --exclude-standard)" ]] || {
-  echo 'Source changed during native checks; review and retry the commit.' >&2
-  exit 1
-}
-scripts/lib/python.sh scripts/check/qualified.py record ci-check "$before"
+# Check the staged tree in a separate worktree, so unstaged and untracked work stays out of the commit's check.
+exec scripts/lib/python.sh scripts/check/staged.py
