@@ -5,7 +5,10 @@
 //! signing is an explicit, separate operation. The `ml-dsa` leaf needs neither
 //! allocation nor OS entropy. See [`MlDsaPrehash`] for HashML-DSA.
 //!
-//! Public keys also have RFC 9881 SubjectPublicKeyInfo import and export.
+//! Public keys have RFC 9881 SubjectPublicKeyInfo import and export. Private
+//! keys have RFC 9881 PKCS #8 import and export: a seed owner such as
+//! [`MlDsa44Seed`] keeps the recommended seed form, and a secret key exports
+//! the expanded form.
 //!
 //! Target qualification is ongoing; no whole-operation constant-time claim
 //! is made. Signing needs tens of KiB of stack. Prepared keys keep up to
@@ -28,6 +31,7 @@
 //! ```
 
 mod encoding;
+mod pkcs8;
 mod poly;
 mod portable;
 mod sampling;
@@ -38,6 +42,7 @@ mod spki;
 mod tests;
 
 use crate::secret::ZeroizingBytes;
+use crate::traits::ct::{self, DataIndependentTiming};
 use crate::{SecretBytes, VerificationError, Verifier};
 #[cfg(feature = "alloc")]
 use alloc::boxed::Box;
@@ -90,12 +95,17 @@ pub enum MlDsaKeyError {
   MalformedDer,
   /// The algorithm identifier names another algorithm or ML-DSA parameter set.
   UnsupportedAlgorithm,
+  /// The DER is a well-formed key of this algorithm in a form this import
+  /// does not accept: PKCS #8 attributes, or an expanded-only private key
+  /// where a seed is required.
+  UnsupportedEncoding,
   /// The public-key encoding has the wrong length.
   InvalidPublicKey,
   /// The secret-key encoding is malformed or its redundant fields disagree.
   InvalidSecretKey,
-  /// Expanding the key's public matrix exhausted the FIPS 204 Appendix C
-  /// sampling bound. The outcome depends only on the public seed.
+  /// Key expansion exhausted a FIPS 204 Appendix C sampling bound. For an
+  /// expanded key the outcome depends only on its public seed; expanding a
+  /// private seed also samples the secret vectors.
   RejectionLimit,
 }
 
@@ -104,6 +114,7 @@ impl fmt::Display for MlDsaKeyError {
     f.write_str(match self {
       Self::MalformedDer => "malformed ML-DSA DER",
       Self::UnsupportedAlgorithm => "unsupported ML-DSA key algorithm",
+      Self::UnsupportedEncoding => "unsupported ML-DSA key encoding",
       Self::InvalidPublicKey => "invalid ML-DSA public key",
       Self::InvalidSecretKey => "invalid ML-DSA secret key",
       Self::RejectionLimit => "ML-DSA key expansion reached its rejection limit",
@@ -112,6 +123,13 @@ impl fmt::Display for MlDsaKeyError {
 }
 
 impl core::error::Error for MlDsaKeyError {}
+
+/// Key import from a seed: generation fails only by exhausting a FIPS 204
+/// sampling bound.
+fn seed_expansion_error(error: MlDsaError) -> MlDsaKeyError {
+  debug_assert_eq!(error, MlDsaError::RejectionLimit);
+  MlDsaKeyError::RejectionLimit
+}
 
 /// Standard hash identifiers for HashML-DSA.
 ///
@@ -408,7 +426,7 @@ macro_rules! verification_methods {
 }
 
 macro_rules! parameter_set {
-  ($profile:ident, $public:ident, $secret:ident, $signature:ident, $prepared_secret:ident, $prepared_public:ident, $secret_storage:ident, $public_storage:ident, $p:ident, $k:literal, $l:literal, $pk:literal, $sk:literal, $sig:literal, $arc:literal) => {
+  ($profile:ident, $public:ident, $secret:ident, $seed:ident, $signature:ident, $prepared_secret:ident, $prepared_public:ident, $secret_storage:ident, $public_storage:ident, $p:ident, $k:literal, $l:literal, $pk:literal, $sk:literal, $sig:literal, $arc:literal) => {
     /// FIPS 204 parameter set with typed key-generation outputs.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct $profile;
@@ -642,6 +660,101 @@ macro_rules! parameter_set {
         }
       }
 
+      /// DER length of this key as an RFC 9881 expanded-form PKCS #8 private key.
+      pub const PKCS8_DER_LENGTH: usize = pkcs8::EXPANDED_HEADER_LENGTH.strict_add($sk);
+
+      const PKCS8_HEADER: [u8; pkcs8::EXPANDED_HEADER_LENGTH] = pkcs8::expanded_header($arc, $sk);
+
+      /// Import an RFC 9881 private key from RFC 5958 OneAsymmetricKey
+      /// (PKCS #8) DER for this parameter set.
+      ///
+      /// Accepts the seed, expanded, and both forms, in a version 1 container
+      /// or a version 2 container with a public key. Expanded keys are
+      /// validated as by [`Self::try_from_slice`]. A seed is expanded and not
+      /// retained. In the both form, the expanded key must equal the seed's;
+      /// a version 2 public key must belong to the key. The caller retains
+      /// responsibility for clearing `der`. No heap allocation.
+      #[doc = concat!("Use [`", stringify!($seed), "::from_pkcs8_der`] to keep the seed.")]
+      ///
+      /// # Errors
+      ///
+      /// Returns [`MlDsaKeyError::MalformedDer`] for malformed or non-canonical
+      /// DER, including a version that disagrees with the public-key field;
+      /// [`MlDsaKeyError::UnsupportedAlgorithm`] for another algorithm or
+      /// parameter set; [`MlDsaKeyError::UnsupportedEncoding`] for attributes;
+      /// [`MlDsaKeyError::InvalidSecretKey`] for a wrong-length or invalid key,
+      /// or redundant fields that disagree; [`MlDsaKeyError::InvalidPublicKey`]
+      /// for a wrong-length public key; and [`MlDsaKeyError::RejectionLimit`]
+      /// if expansion exhausts its sampling bound.
+      pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, MlDsaKeyError> {
+        let _dit = DataIndependentTiming::enter();
+        let decoded = pkcs8::decode::<$sk, $pk>(der, $arc)?;
+        let (secret, expanded) = match decoded.private_key {
+          pkcs8::PrivateKey::Seed(seed) => (Self::from_seed(seed)?, None),
+          pkcs8::PrivateKey::Expanded(expanded) => (Self::try_from_slice(expanded)?, None),
+          pkcs8::PrivateKey::Both { seed, expanded } => (Self::from_seed(seed)?, Some(expanded)),
+        };
+        secret.check_redundant(expanded, decoded.public_key)?;
+        Ok(secret)
+      }
+
+      /// Like [`Self::from_pkcs8_der`], with the key in memory from `alloc`.
+      ///
+      /// The key is written directly into its allocation, as by
+      /// [`Self::try_from_slice_in`]. The box clears the key on drop; a
+      /// rejected key is cleared before returning. Allocation failure is
+      /// handled as by [`Box::new_in`].
+      #[cfg(feature = "alloc")]
+      pub fn from_pkcs8_der_in<A: Allocator>(der: &[u8], alloc: A) -> Result<Box<Self, A>, MlDsaKeyError> {
+        let _dit = DataIndependentTiming::enter();
+        let decoded = pkcs8::decode::<$sk, $pk>(der, $arc)?;
+        let (secret, expanded) = match decoded.private_key {
+          pkcs8::PrivateKey::Seed(seed) => (Self::from_seed_in(seed, alloc)?, None),
+          pkcs8::PrivateKey::Expanded(expanded) => (Self::try_from_slice_in(expanded, alloc)?, None),
+          pkcs8::PrivateKey::Both { seed, expanded } => (Self::from_seed_in(seed, alloc)?, Some(expanded)),
+        };
+        secret.check_redundant(expanded, decoded.public_key)?;
+        Ok(secret)
+      }
+
+      /// Write this key as an RFC 9881 expanded-form private key in version 1
+      /// OneAsymmetricKey (PKCS #8) DER. No heap allocation.
+      ///
+      /// `out` then holds the secret key, and the caller owns its cleanup.
+      /// This key keeps no seed, so it cannot write the recommended seed form.
+      #[doc = concat!("[`", stringify!($seed), "::to_pkcs8_der_into`] writes it.")]
+      pub fn to_pkcs8_der_into(&self, out: &mut [u8; Self::PKCS8_DER_LENGTH]) {
+        pkcs8::write(&Self::PKCS8_HEADER, self.bytes.as_array(), out);
+      }
+
+      fn from_seed(seed: &[u8; 32]) -> Result<Self, MlDsaKeyError> {
+        $profile::keypair_from_seed(seed)
+          .map(|(_, secret)| secret)
+          .map_err(seed_expansion_error)
+      }
+
+      #[cfg(feature = "alloc")]
+      fn from_seed_in<A: Allocator>(seed: &[u8; 32], alloc: A) -> Result<Box<Self, A>, MlDsaKeyError> {
+        $profile::keypair_from_seed_in(seed, alloc)
+          .map(|(_, secret)| secret)
+          .map_err(seed_expansion_error)
+      }
+
+      /// Reject imported redundant fields that disagree with this key: an
+      /// expanded key that is not its seed's (RFC 9881 section 8.2), or a
+      /// public key that is not its own.
+      fn check_redundant(&self, expanded: Option<&[u8; $sk]>, public: Option<&[u8; $pk]>) -> Result<(), MlDsaKeyError> {
+        if let Some(expanded) = expanded
+          && !ct::fixed_eq(self.bytes.as_array(), expanded).declassify()
+        {
+          return Err(MlDsaKeyError::InvalidSecretKey);
+        }
+        if public.is_some_and(|public| *public != self.public.0) {
+          return Err(MlDsaKeyError::InvalidSecretKey);
+        }
+        Ok(())
+      }
+
       /// Prepare secret polynomials and the public matrix in caller-owned
       /// storage for repeated signing.
       ///
@@ -687,6 +800,101 @@ macro_rules! parameter_set {
     impl fmt::Debug for $secret {
       fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(concat!(stringify!($secret), "(****)"))
+      }
+    }
+
+    /// FIPS 204 key-generation seed ξ: the RFC 9881 recommended private-key form.
+    ///
+    /// The seed determines the key pair, so protect it like the secret key.
+    /// Not `Clone` or `Copy`; zeroized on drop; `Debug` is redacted.
+    pub struct $seed(ZeroizingBytes<32>);
+
+    impl $seed {
+      /// Seed length in bytes.
+      pub const LENGTH: usize = pkcs8::SEED_LENGTH;
+
+      /// DER length of the RFC 9881 seed-form PKCS #8 private key.
+      pub const PKCS8_DER_LENGTH: usize = pkcs8::SEED_HEADER_LENGTH.strict_add(pkcs8::SEED_LENGTH);
+
+      const PKCS8_HEADER: [u8; pkcs8::SEED_HEADER_LENGTH] = pkcs8::seed_header($arc);
+
+      /// Wrap a seed. The caller retains responsibility for clearing `bytes`.
+      #[must_use]
+      pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(ZeroizingBytes::new(bytes))
+      }
+
+      /// Generate a seed using 32 bytes from `fill_random`.
+      /// The callback must fill the entire buffer with fresh cryptographic randomness.
+      /// Failure clears even a partially filled buffer and returns no seed.
+      pub fn generate(mut fill_random: impl FnMut(&mut [u8]) -> Result<(), MlDsaError>) -> Result<Self, MlDsaError> {
+        let mut seed = Self(ZeroizingBytes::zeroed());
+        fill_random(seed.0.as_mut_array())?;
+        Ok(seed)
+      }
+
+      /// Generate a seed using OS entropy.
+      #[cfg(feature = "getrandom")]
+      pub fn try_generate() -> Result<Self, MlDsaError> {
+        Self::generate(|out| getrandom::fill(out).map_err(|_| MlDsaError::RandomGenerationFailed))
+      }
+
+      #[doc = concat!("Expand the seed into its key pair, as by [`", stringify!($profile), "::keypair_from_seed`].")]
+      pub fn keypair(&self) -> Result<($public, $secret), MlDsaError> {
+        $profile::keypair_from_seed(self.0.as_array())
+      }
+
+      #[doc = concat!("Like [`Self::keypair`], with the secret key in memory from `alloc`, as by [`", stringify!($profile), "::keypair_from_seed_in`].")]
+      #[cfg(feature = "alloc")]
+      pub fn keypair_in<A: Allocator>(&self, alloc: A) -> Result<($public, Box<$secret, A>), MlDsaError> {
+        $profile::keypair_from_seed_in(self.0.as_array(), alloc)
+      }
+
+      /// Explicitly export the seed into a zeroizing owner.
+      #[must_use]
+      pub fn expose_secret(&self) -> SecretBytes<32> {
+        SecretBytes::new(*self.0.as_array())
+      }
+
+      /// Import the seed from an RFC 9881 private key in RFC 5958
+      /// OneAsymmetricKey (PKCS #8) DER for this parameter set.
+      ///
+      /// Accepts the seed and both forms, in a version 1 container or a
+      /// version 2 container with a public key. When the both form or a public
+      /// key is present, the seed is expanded once to check them. The caller
+      /// retains responsibility for clearing `der`. No heap allocation.
+      ///
+      /// # Errors
+      ///
+      #[doc = concat!("As [`", stringify!($secret), "::from_pkcs8_der`], and [`MlDsaKeyError::UnsupportedEncoding`]")]
+      /// for an expanded-only key: expansion cannot recover a discarded seed.
+      pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, MlDsaKeyError> {
+        let _dit = DataIndependentTiming::enter();
+        let decoded = pkcs8::decode::<$sk, $pk>(der, $arc)?;
+        let (seed, expanded) = match decoded.private_key {
+          pkcs8::PrivateKey::Seed(seed) => (seed, None),
+          pkcs8::PrivateKey::Both { seed, expanded } => (seed, Some(expanded)),
+          pkcs8::PrivateKey::Expanded(_) => return Err(MlDsaKeyError::UnsupportedEncoding),
+        };
+        let owner = Self(ZeroizingBytes::new(*seed));
+        if expanded.is_some() || decoded.public_key.is_some() {
+          $secret::from_seed(owner.0.as_array())?.check_redundant(expanded, decoded.public_key)?;
+        }
+        Ok(owner)
+      }
+
+      /// Write the seed as an RFC 9881 seed-form private key in version 1
+      /// OneAsymmetricKey (PKCS #8) DER. No heap allocation.
+      ///
+      /// `out` then holds the seed, and the caller owns its cleanup.
+      pub fn to_pkcs8_der_into(&self, out: &mut [u8; Self::PKCS8_DER_LENGTH]) {
+        pkcs8::write(&Self::PKCS8_HEADER, self.0.as_array(), out);
+      }
+    }
+
+    impl fmt::Debug for $seed {
+      fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(concat!(stringify!($seed), "(****)"))
       }
     }
 
@@ -883,6 +1091,7 @@ parameter_set!(
   MlDsa44,
   MlDsa44PublicKey,
   MlDsa44SecretKey,
+  MlDsa44Seed,
   MlDsa44Signature,
   MlDsa44PreparedSecretKey,
   MlDsa44PreparedPublicKey,
@@ -900,6 +1109,7 @@ parameter_set!(
   MlDsa65,
   MlDsa65PublicKey,
   MlDsa65SecretKey,
+  MlDsa65Seed,
   MlDsa65Signature,
   MlDsa65PreparedSecretKey,
   MlDsa65PreparedPublicKey,
@@ -917,6 +1127,7 @@ parameter_set!(
   MlDsa87,
   MlDsa87PublicKey,
   MlDsa87SecretKey,
+  MlDsa87Seed,
   MlDsa87Signature,
   MlDsa87PreparedSecretKey,
   MlDsa87PreparedPublicKey,

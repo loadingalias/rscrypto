@@ -27,7 +27,8 @@ use core::{
 };
 
 use rscrypto::{
-  Kem, MlDsa44, MlDsa65, MlDsa87, MlKem512, MlKem512DecapsulationKey, MlKem768, MlKem768DecapsulationKey, MlKem1024,
+  Kem, MlDsa44, MlDsa44SecretKey, MlDsa44Seed, MlDsa65, MlDsa65SecretKey, MlDsa65Seed, MlDsa87, MlDsa87SecretKey,
+  MlDsa87Seed, MlKem512, MlKem512DecapsulationKey, MlKem768, MlKem768DecapsulationKey, MlKem1024,
   MlKem1024DecapsulationKey, MlKemError,
 };
 
@@ -404,16 +405,25 @@ fn fill(byte: u8) -> impl FnMut(&mut [u8]) -> Result<(), MlKemError> {
 }
 
 /// Encoded key input for import scenarios, outside every scanned region.
-struct KeyInput(UnsafeCell<[u8; 3168]>);
+struct KeyInput(UnsafeCell<[u8; 4924]>);
 
 // SAFETY: the harness runs on one core with no interrupts.
 unsafe impl Sync for KeyInput {}
 
-static KEY_INPUT: KeyInput = KeyInput(UnsafeCell::new([0; 3168]));
+// The largest input is the 4,924-byte ML-DSA-87 expanded-form PKCS #8 key.
+static KEY_INPUT: KeyInput = KeyInput(UnsafeCell::new([0; 4924]));
 
 fn key_input(len: usize) -> &'static [u8] {
   // SAFETY: written only by a `prepare` function, never while borrowed.
   unsafe { &(&*KEY_INPUT.0.get())[..len] }
+}
+
+/// Fixed-size view of the input that a `prepare` function writes.
+fn key_input_mut<const N: usize>() -> &'static mut [u8; N] {
+  // SAFETY: called only by a `prepare` function, while no other reference
+  // into KEY_INPUT is live.
+  let input = unsafe { &mut *KEY_INPUT.0.get() };
+  input.first_chunk_mut().expect("key input holds every encoding")
 }
 
 macro_rules! mlkem {
@@ -499,6 +509,63 @@ mldsa!(mldsa44, MlDsa44);
 mldsa!(mldsa65, MlDsa65);
 mldsa!(mldsa87, MlDsa87);
 
+/// A seed with distinct bytes, so the seed itself is a usable needle.
+const MLDSA_PKCS8_SEED: [u8; 32] = [
+  0x9e, 0x37, 0x79, 0xb9, 0x7f, 0x4a, 0x7c, 0x15, 0xf3, 0x9c, 0xc0, 0x60, 0x5c, 0xed, 0xc8, 0x34, 0x10, 0x82, 0x27, 0x6b,
+  0xf3, 0xa2, 0x72, 0x39, 0x5a, 0x6c, 0xd4, 0x1e, 0x8b, 0x0f, 0x31, 0xc7,
+];
+
+macro_rules! mldsa_pkcs8 {
+  ($module:ident, $profile:ty, $secret:ty, $seed:ty) => {
+    mod $module {
+      use super::*;
+
+      pub(super) fn prepare_seed() {
+        <$seed>::from_bytes(MLDSA_PKCS8_SEED).to_pkcs8_der_into(key_input_mut());
+      }
+
+      pub(super) fn prepare_expanded() {
+        let (_, key) = <$profile>::keypair_from_seed_in(&MLDSA_PKCS8_SEED, &HEAP).expect("key generation");
+        key.to_pkcs8_der_into(key_input_mut());
+      }
+
+      pub(super) fn seed_in() {
+        let key = <$secret>::from_pkcs8_der_in(key_input(<$seed>::PKCS8_DER_LENGTH), &ARENA).expect("import");
+        black_box(&key);
+      }
+
+      pub(super) fn expanded() {
+        let key = <$secret>::from_pkcs8_der(key_input(<$secret>::PKCS8_DER_LENGTH)).expect("import");
+        black_box(&key);
+      }
+
+      pub(super) fn expanded_in() {
+        let key = <$secret>::from_pkcs8_der_in(key_input(<$secret>::PKCS8_DER_LENGTH), &ARENA).expect("import");
+        black_box(&key);
+      }
+
+      pub(super) fn seed_owner() {
+        let seed = <$seed>::from_pkcs8_der(key_input(<$seed>::PKCS8_DER_LENGTH)).expect("import");
+        black_box(&seed);
+      }
+
+      pub(super) fn needles() {
+        let (_, key) = <$profile>::keypair_from_seed_in(&MLDSA_PKCS8_SEED, &HEAP).expect("key generation");
+        let secret = key.expose_secret();
+        let bytes = secret.as_bytes();
+        needle("seed", &MLDSA_PKCS8_SEED);
+        // sk = rho || K || tr || s1 || s2 || t0; rho and tr are public.
+        needle("K", &bytes[32..64]);
+        needle("s1_s2_t0", &bytes[128..]);
+      }
+    }
+  };
+}
+
+mldsa_pkcs8!(mldsa44_pkcs8, MlDsa44, MlDsa44SecretKey, MlDsa44Seed);
+mldsa_pkcs8!(mldsa65_pkcs8, MlDsa65, MlDsa65SecretKey, MlDsa65Seed);
+mldsa_pkcs8!(mldsa87_pkcs8, MlDsa87, MlDsa87SecretKey, MlDsa87Seed);
+
 macro_rules! scenario {
   ($name:literal, $expect:literal, $run:path, $needles:path) => {
     scenario!($name, $expect, nothing, $run, $needles)
@@ -577,6 +644,90 @@ const SCENARIOS: &[Scenario] = &[
   scenario!("ml-dsa-65-keygen-in", "none", mldsa65::keygen_in, mldsa65::needles),
   scenario!("ml-dsa-87-keygen", "report", mldsa87::keygen, mldsa87::needles),
   scenario!("ml-dsa-87-keygen-in", "none", mldsa87::keygen_in, mldsa87::needles),
+  scenario!(
+    "ml-dsa-44-pkcs8-seed-in",
+    "none",
+    mldsa44_pkcs8::prepare_seed,
+    mldsa44_pkcs8::seed_in,
+    mldsa44_pkcs8::needles
+  ),
+  scenario!(
+    "ml-dsa-44-pkcs8-expanded",
+    "report",
+    mldsa44_pkcs8::prepare_expanded,
+    mldsa44_pkcs8::expanded,
+    mldsa44_pkcs8::needles
+  ),
+  scenario!(
+    "ml-dsa-44-pkcs8-expanded-in",
+    "none",
+    mldsa44_pkcs8::prepare_expanded,
+    mldsa44_pkcs8::expanded_in,
+    mldsa44_pkcs8::needles
+  ),
+  scenario!(
+    "ml-dsa-44-pkcs8-seed-owner",
+    "report",
+    mldsa44_pkcs8::prepare_seed,
+    mldsa44_pkcs8::seed_owner,
+    mldsa44_pkcs8::needles
+  ),
+  scenario!(
+    "ml-dsa-65-pkcs8-seed-in",
+    "none",
+    mldsa65_pkcs8::prepare_seed,
+    mldsa65_pkcs8::seed_in,
+    mldsa65_pkcs8::needles
+  ),
+  scenario!(
+    "ml-dsa-65-pkcs8-expanded",
+    "report",
+    mldsa65_pkcs8::prepare_expanded,
+    mldsa65_pkcs8::expanded,
+    mldsa65_pkcs8::needles
+  ),
+  scenario!(
+    "ml-dsa-65-pkcs8-expanded-in",
+    "none",
+    mldsa65_pkcs8::prepare_expanded,
+    mldsa65_pkcs8::expanded_in,
+    mldsa65_pkcs8::needles
+  ),
+  scenario!(
+    "ml-dsa-65-pkcs8-seed-owner",
+    "report",
+    mldsa65_pkcs8::prepare_seed,
+    mldsa65_pkcs8::seed_owner,
+    mldsa65_pkcs8::needles
+  ),
+  scenario!(
+    "ml-dsa-87-pkcs8-seed-in",
+    "none",
+    mldsa87_pkcs8::prepare_seed,
+    mldsa87_pkcs8::seed_in,
+    mldsa87_pkcs8::needles
+  ),
+  scenario!(
+    "ml-dsa-87-pkcs8-expanded",
+    "report",
+    mldsa87_pkcs8::prepare_expanded,
+    mldsa87_pkcs8::expanded,
+    mldsa87_pkcs8::needles
+  ),
+  scenario!(
+    "ml-dsa-87-pkcs8-expanded-in",
+    "none",
+    mldsa87_pkcs8::prepare_expanded,
+    mldsa87_pkcs8::expanded_in,
+    mldsa87_pkcs8::needles
+  ),
+  scenario!(
+    "ml-dsa-87-pkcs8-seed-owner",
+    "report",
+    mldsa87_pkcs8::prepare_seed,
+    mldsa87_pkcs8::seed_owner,
+    mldsa87_pkcs8::needles
+  ),
 ];
 
 #[unsafe(no_mangle)]

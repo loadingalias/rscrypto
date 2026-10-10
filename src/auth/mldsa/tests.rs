@@ -283,8 +283,38 @@ macro_rules! prepared_storage_lifecycle {
 
 #[cfg(feature = "alloc")]
 macro_rules! allocated_keys {
-  ($profile:ident, $secret:ident) => {{
+  ($profile:ident, $secret:ident, $seed:ident, $pkcs8:literal) => {{
     use alloc::alloc::Global;
+    let rfc9881_seed = $seed::from_bytes(core::array::from_fn(|index| {
+      u8::try_from(index).expect("seed index fits a byte")
+    }));
+    let (rfc9881_public, rfc9881_secret) = rfc9881_seed.keypair().expect("key generation");
+    let (seed_public, from_seed) = rfc9881_seed.keypair_in(Global).expect("allocated seed expansion");
+    assert_eq!(seed_public, rfc9881_public);
+    assert_eq!(
+      from_seed.expose_secret().as_bytes(),
+      rfc9881_secret.expose_secret().as_bytes()
+    );
+    for form in ["seed", "expanded", "both"] {
+      let der = match form {
+        "seed" => include_bytes!(concat!("../../../testdata/mldsa/rfc9881/", $pkcs8, "_seed.der")).as_slice(),
+        "expanded" => include_bytes!(concat!("../../../testdata/mldsa/rfc9881/", $pkcs8, "_expanded.der")).as_slice(),
+        _ => include_bytes!(concat!("../../../testdata/mldsa/rfc9881/", $pkcs8, "_both.der")).as_slice(),
+      };
+      let boxed = $secret::from_pkcs8_der_in(der, Global).expect("allocated PKCS #8 import");
+      assert_eq!(
+        boxed.expose_secret().as_bytes(),
+        rfc9881_secret.expose_secret().as_bytes(),
+        "{form}"
+      );
+      assert_eq!(boxed.public_key(), &rfc9881_public);
+      let mut truncated = der.to_vec();
+      truncated.pop();
+      assert_eq!(
+        $secret::from_pkcs8_der_in(&truncated, Global).err(),
+        Some(MlDsaKeyError::MalformedDer)
+      );
+    }
     for seed in [[0u8; 32], [0x5a; 32]] {
       let (public, secret) = $profile::keypair_from_seed(&seed).expect("key generation");
       let (boxed_public, boxed) = $profile::keypair_from_seed_in(&seed, Global).expect("allocated key generation");
@@ -331,9 +361,18 @@ macro_rules! allocated_keys {
 #[cfg(feature = "alloc")]
 #[test]
 fn allocated_constructors_match_by_value_keys() {
-  allocated_keys!(MlDsa44, MlDsa44SecretKey);
-  allocated_keys!(MlDsa65, MlDsa65SecretKey);
-  allocated_keys!(MlDsa87, MlDsa87SecretKey);
+  allocated_keys!(MlDsa44, MlDsa44SecretKey, MlDsa44Seed, "mldsa44_pkcs8");
+  allocated_keys!(MlDsa65, MlDsa65SecretKey, MlDsa65Seed, "mldsa65_pkcs8");
+  allocated_keys!(MlDsa87, MlDsa87SecretKey, MlDsa87Seed, "mldsa87_pkcs8");
+  // RFC 9881 section 8.2: the allocated import also rejects a seed that disagrees with its key.
+  assert_eq!(
+    MlDsa44SecretKey::from_pkcs8_der_in(
+      include_bytes!("../../../testdata/mldsa/rfc9881/mldsa44_pkcs8_inconsistent_seed.der"),
+      alloc::alloc::Global
+    )
+    .err(),
+    Some(MlDsaKeyError::InvalidSecretKey)
+  );
 }
 
 #[test]

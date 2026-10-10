@@ -40,6 +40,7 @@ impl CtDecision {
     feature = "hmac",
     feature = "hmac-sha3",
     feature = "kmac",
+    feature = "ml-dsa",
     feature = "ml-kem",
     feature = "p256-ecdh",
     feature = "p384-ecdh",
@@ -130,6 +131,7 @@ impl core::ops::Not for CtDecision {
   feature = "hmac",
   feature = "hmac-sha3",
   feature = "kmac",
+  feature = "ml-dsa",
   feature = "ml-kem",
   feature = "p256-ecdh",
   feature = "p384-ecdh",
@@ -177,6 +179,7 @@ fn byte_difference(left: &[u8], right: &[u8]) -> u64 {
   feature = "ed25519",
   feature = "hmac",
   feature = "hmac-sha3",
+  feature = "ml-dsa",
   feature = "ml-kem",
   feature = "p256-ecdh",
   feature = "p384-ecdh",
@@ -685,6 +688,15 @@ pub(crate) mod tests {
       let prepared = prepared.expect("prepared key");
       covered("ML-DSA prepared signing", || {
         core::hint::black_box(prepared.sign_deterministic(b"dit", &[]))
+      });
+      let seed = crate::MlDsa65Seed::from_bytes([0x31; 32]);
+      let mut der = [0; crate::MlDsa65Seed::PKCS8_DER_LENGTH];
+      seed.to_pkcs8_der_into(&mut der);
+      covered("ML-DSA PKCS #8 import", || {
+        core::hint::black_box(crate::MlDsa65SecretKey::from_pkcs8_der(&der))
+      });
+      covered("ML-DSA PKCS #8 seed import", || {
+        core::hint::black_box(crate::MlDsa65Seed::from_pkcs8_der(&der))
       });
     }
     #[cfg(feature = "argon2")]

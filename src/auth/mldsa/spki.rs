@@ -14,11 +14,14 @@ pub(super) const HEADER_LENGTH: usize = 22;
 /// `id-ml-dsa-*` OID appends one final arc.
 const SIG_ALGS: [u8; 8] = [0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x03];
 
+/// Length of the AlgorithmIdentifier element.
+const ALGORITHM_IDENTIFIER_LENGTH: usize = 13;
+
 /// Position of the 9-byte algorithm OID contents within the header.
 const OID: core::ops::Range<usize> = 8..17;
 
 /// Long-form DER length with two length octets.
-const LONG_LENGTH_2: u8 = 0x82;
+pub(super) const LONG_LENGTH_2: u8 = 0x82;
 
 type DerReader<'a> = der::DerReader<'a, MlDsaKeyError>;
 
@@ -26,22 +29,49 @@ impl MalformedDer for MlDsaKeyError {
   const MALFORMED_DER: Self = Self::MalformedDer;
 }
 
+/// DER contents of the `id-ml-dsa-*` OID that ends in `arc`.
+pub(super) const fn oid(arc: u8) -> [u8; 9] {
+  let [a, b, c, d, e, f, g, h] = SIG_ALGS;
+  [a, b, c, d, e, f, g, h, arc]
+}
+
+/// AlgorithmIdentifier for the OID that ends in `arc`. RFC 9881 section 2
+/// requires absent parameters.
+pub(super) const fn algorithm_identifier(arc: u8) -> [u8; ALGORITHM_IDENTIFIER_LENGTH] {
+  let [a, b, c, d, e, f, g, h, arc] = oid(arc);
+  // One 11-byte OID element and no parameters.
+  [
+    TAG_SEQUENCE,
+    0x0b,
+    TAG_OBJECT_IDENTIFIER,
+    0x09,
+    a,
+    b,
+    c,
+    d,
+    e,
+    f,
+    g,
+    h,
+    arc,
+  ]
+}
+
 /// Header for the parameter set whose OID ends in `arc` and whose raw public
-/// key has `key_len` bytes. RFC 9881 section 2 requires absent parameters.
+/// key has `key_len` bytes.
 pub(super) const fn header(arc: u8, key_len: usize) -> [u8; HEADER_LENGTH] {
   let [outer_high, outer_low] = two_byte_length(HEADER_LENGTH.strict_sub(4).strict_add(key_len));
   let [key_high, key_low] = two_byte_length(key_len.strict_add(1));
-  let [a, b, c, d, e, f, g, h] = SIG_ALGS;
+  let [s, s_len, o, o_len, a, b, c, d, e, f, g, h, arc] = algorithm_identifier(arc);
   [
     TAG_SEQUENCE,
     LONG_LENGTH_2,
     outer_high,
     outer_low,
-    // AlgorithmIdentifier: one 11-byte OID element and no parameters.
-    TAG_SEQUENCE,
-    0x0b,
-    TAG_OBJECT_IDENTIFIER,
-    0x09,
+    s,
+    s_len,
+    o,
+    o_len,
     a,
     b,
     c,
@@ -60,7 +90,7 @@ pub(super) const fn header(arc: u8, key_len: usize) -> [u8; HEADER_LENGTH] {
   ]
 }
 
-const fn two_byte_length(len: usize) -> [u8; 2] {
+pub(super) const fn two_byte_length(len: usize) -> [u8; 2] {
   assert!(
     len >= 0x100 && len <= 0xffff,
     "ML-DSA SPKI lengths use two length octets"

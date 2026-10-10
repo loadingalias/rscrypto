@@ -40,23 +40,26 @@ No third-party implementation source is copied, translated, or bundled into the 
 
 ## API contract
 
-Each parameter set has its own types for the public key, secret key, signature, prepared secret key,
-and prepared public key.
+Each parameter set has its own types for the public key, secret key, seed, signature,
+prepared secret key, and prepared public key.
 Each prepared key also has storage that the caller owns.
-The encodings have these sizes, in bytes. The SPKI column is the RFC 9881 DER form of the public key;
-the other columns are raw FIPS 204 encodings.
+The encodings have these sizes, in bytes. The first three columns are raw FIPS 204 encodings.
+The others are RFC 9881 DER: the public key's SubjectPublicKeyInfo,
+and version 1 PKCS #8 private keys in the seed and expanded forms.
+The seed itself is 32 bytes for every parameter set.
 
-| Parameter set | Public key | Expanded secret key | Signature | Public-key SPKI |
-| ------------- | ---------: | ------------------: | --------: | --------------: |
-| ML-DSA-44     |       1312 |                2560 |      2420 |            1334 |
-| ML-DSA-65     |       1952 |                4032 |      3309 |            1974 |
-| ML-DSA-87     |       2592 |                4896 |      4627 |            2614 |
+| Parameter set | Public key | Expanded secret key | Signature | Public-key SPKI | Seed PKCS #8 | Expanded PKCS #8 |
+| ------------- | ---------: | ------------------: | --------: | --------------: | -----------: | ---------------: |
+| ML-DSA-44     |       1312 |                2560 |      2420 |            1334 |           54 |             2588 |
+| ML-DSA-65     |       1952 |                4032 |      3309 |            1974 |           54 |             4060 |
+| ML-DSA-87     |       2592 |                4896 |      4627 |            2614 |           54 |             4924 |
 
 ### Keys
 
 - `keypair_from_seed` borrows a 32-byte seed.
-  Callers can keep the seed in `SecretBytes<32>`.
-  The key does not keep a second copy of the seed.
+  The secret key does not keep a copy of the seed.
+  To keep it, use the parameter set's seed owner, such as `MlDsa44Seed`:
+  it is not `Clone` or `Copy`, clears the seed on drop, and expands it with `keypair` or `keypair_in`.
 - Expanded import checks the noise coefficient ranges, rebuilds the public key,
   and verifies the redundant low polynomial and the public-key hash.
 - The expanded format has no independent consistency check for the signing seed K.
@@ -65,7 +68,25 @@ the other columns are raw FIPS 204 encodings.
   SubjectPublicKeyInfo: this parameter set's `id-ml-dsa-*` identifier with absent parameters,
   then the raw public key in a BIT STRING. Import accepts only that unique DER encoding.
   It reports another algorithm or parameter set, including HashML-DSA, as `UnsupportedAlgorithm`.
-  Neither direction allocates. Private-key containers are not implemented.
+  Neither direction allocates.
+- `SecretKey::from_pkcs8_der` imports an RFC 9881 private key from an
+  [RFC 5958](https://www.rfc-editor.org/rfc/rfc5958.html) OneAsymmetricKey (PKCS #8).
+  It accepts the seed, expanded, and both forms, selected by tag.
+  The container is version 1, or version 2 with a public key. Attributes are rejected as `UnsupportedEncoding`.
+  The algorithm identifier must be this parameter set's, with absent parameters.
+  DER must be canonical and complete.
+  An expanded key gets the expanded-import checks. A seed is expanded and not retained.
+  In the both form, the expanded key must equal the one the seed generates (RFC 9881 section 8.2),
+  compared without an early exit. A version 2 public key must belong to the key.
+  A disagreement is `InvalidSecretKey`.
+- `Seed::from_pkcs8_der` accepts the seed and both forms with the same checks.
+  An expanded-only key is `UnsupportedEncoding`: expansion cannot recover a discarded seed.
+- `Seed::to_pkcs8_der_into` writes the RFC 9881 recommended seed form.
+  `SecretKey::to_pkcs8_der_into` writes the expanded form.
+  Both write version 1 without a public key into a fixed-size buffer that the caller owns and clears.
+  Neither direction allocates.
+- The RFC 9881 Appendix C examples, RustCrypto ML-DSA 0.1.1, and aws-lc-rs 1.18.1 anchor both directions.
+  aws-lc-rs imports both exported forms. RustCrypto supports only the seed form.
 - Key import returns `MlDsaKeyError`.
   Generation, preparation, and signing return `MlDsaError`.
 - Signing with a secret key and preparing it re-check its noise coefficient ranges.
@@ -180,7 +201,7 @@ and a Rust move leaves the old bytes behind.
 On QEMU RV32 and Cortex-M, a caller that generates a key, signs,
 and drops the key keeps one unwiped copy of the expanded key in its dead stack frame.
 
-With the `alloc` feature, these functions take an `Allocator` and return `Box<SecretKey, A>`: `keypair_from_seed_in`, `generate_keypair_in`, `try_generate_keypair_in`, and `SecretKey::try_from_slice_in`.
+With the `alloc` feature, these functions take an `Allocator` and return `Box<SecretKey, A>`: `keypair_from_seed_in`, `generate_keypair_in`, `try_generate_keypair_in`, `SecretKey::try_from_slice_in`, `SecretKey::from_pkcs8_der_in`, and `Seed::keypair_in`.
 
 - They generate or copy the key directly into that allocation,
   so moving the box moves only a pointer.

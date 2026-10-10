@@ -467,11 +467,11 @@ pub use auth::{Kmac128, Kmac256};
 #[cfg(feature = "ml-dsa")]
 pub use auth::{
   MlDsa44, MlDsa44PreparedPublicKey, MlDsa44PreparedPublicKeyStorage, MlDsa44PreparedSecretKey,
-  MlDsa44PreparedSecretKeyStorage, MlDsa44PublicKey, MlDsa44SecretKey, MlDsa44Signature, MlDsa65,
+  MlDsa44PreparedSecretKeyStorage, MlDsa44PublicKey, MlDsa44SecretKey, MlDsa44Seed, MlDsa44Signature, MlDsa65,
   MlDsa65PreparedPublicKey, MlDsa65PreparedPublicKeyStorage, MlDsa65PreparedSecretKey, MlDsa65PreparedSecretKeyStorage,
-  MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature, MlDsa87, MlDsa87PreparedPublicKey,
+  MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Seed, MlDsa65Signature, MlDsa87, MlDsa87PreparedPublicKey,
   MlDsa87PreparedPublicKeyStorage, MlDsa87PreparedSecretKey, MlDsa87PreparedSecretKeyStorage, MlDsa87PublicKey,
-  MlDsa87SecretKey, MlDsa87Signature, MlDsaError, MlDsaKeyError, MlDsaPrehash, MlDsaPrehashAlgorithm,
+  MlDsa87SecretKey, MlDsa87Seed, MlDsa87Signature, MlDsaError, MlDsaKeyError, MlDsaPrehash, MlDsaPrehashAlgorithm,
 };
 #[cfg(feature = "ml-kem")]
 pub use auth::{

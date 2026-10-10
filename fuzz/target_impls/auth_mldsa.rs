@@ -12,7 +12,7 @@ pub(super) fn run(data: &[u8]) {
   let mutation = some_or_return!(input.bit_mutation());
   let message = input.rest();
   macro_rules! exercise {
-    ($profile:ident, $public:ident, $secret:ident, $signature:ident) => {{
+    ($profile:ident, $public:ident, $secret:ident, $seed:ident, $signature:ident) => {{
       let (public, secret) = $profile::keypair_from_seed(&seed).expect("fuzz key generation");
       let signature = secret
         .sign_with(message, b"fuzz", |out| {
@@ -55,6 +55,40 @@ pub(super) fn run(data: &[u8]) {
           );
         }
       }
+      // Each fixed-length PKCS #8 form has one encoding per key, so an
+      // accepted input of that length must re-encode to itself.
+      let seed_owner = $seed::from_bytes(seed);
+      let mut seed_der = [0; $seed::PKCS8_DER_LENGTH];
+      seed_owner.to_pkcs8_der_into(&mut seed_der);
+      let mut expanded_der = [0; $secret::PKCS8_DER_LENGTH];
+      secret.to_pkcs8_der_into(&mut expanded_der);
+      let imported = $secret::from_pkcs8_der(&seed_der).expect("seed-form import");
+      assert_eq!(imported.public_key(), &public);
+      let imported = $secret::from_pkcs8_der(&expanded_der).expect("expanded-form import");
+      assert_eq!(imported.public_key(), &public);
+      mutation.apply(&mut seed_der);
+      mutation.apply(&mut expanded_der);
+      for candidate in [seed_der.as_slice(), expanded_der.as_slice(), message] {
+        let parsed_seed = $seed::from_pkcs8_der(candidate);
+        if let Ok(parsed_seed) = &parsed_seed
+          && candidate.len() == $seed::PKCS8_DER_LENGTH
+        {
+          let mut encoded = [0; $seed::PKCS8_DER_LENGTH];
+          parsed_seed.to_pkcs8_der_into(&mut encoded);
+          assert_eq!(encoded.as_slice(), candidate, "accepted seed form must be canonical");
+        }
+        if let Ok(parsed) = $secret::from_pkcs8_der(candidate) {
+          if candidate.len() == $secret::PKCS8_DER_LENGTH {
+            let mut encoded = [0; $secret::PKCS8_DER_LENGTH];
+            parsed.to_pkcs8_der_into(&mut encoded);
+            assert_eq!(encoded.as_slice(), candidate, "accepted expanded form must be canonical");
+          }
+          if let Ok(parsed_seed) = parsed_seed {
+            let (seed_public, _) = parsed_seed.keypair().expect("accepted seed expansion");
+            assert_eq!(&seed_public, parsed.public_key(), "both imports name one key");
+          }
+        }
+      }
       // Arbitrary byte lengths and contents must not panic at a public parser.
       let _public = $public::try_from_slice(message);
       let _secret = $secret::try_from_slice(message);
@@ -62,8 +96,8 @@ pub(super) fn run(data: &[u8]) {
     }};
   }
   match seed[0] % 3 {
-    0 => exercise!(MlDsa44, MlDsa44PublicKey, MlDsa44SecretKey, MlDsa44Signature),
-    1 => exercise!(MlDsa65, MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature),
-    _ => exercise!(MlDsa87, MlDsa87PublicKey, MlDsa87SecretKey, MlDsa87Signature),
+    0 => exercise!(MlDsa44, MlDsa44PublicKey, MlDsa44SecretKey, MlDsa44Seed, MlDsa44Signature),
+    1 => exercise!(MlDsa65, MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Seed, MlDsa65Signature),
+    _ => exercise!(MlDsa87, MlDsa87PublicKey, MlDsa87SecretKey, MlDsa87Seed, MlDsa87Signature),
   }
 }

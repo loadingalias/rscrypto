@@ -13,7 +13,7 @@ It does not prove that the compiler erases every copy it makes.
 | AEAD keys and contexts | Keys copy only through explicit `duplicate_secret`. Contexts do not copy. | Key export is explicit. `Debug` is redacted. |
 | Header-protection keys and contexts | No generic copy. | No public export. `Debug` is redacted. |
 | ECDSA and Ed25519 secret keys and keypairs | Explicit `duplicate_secret`. | Secret-key export is explicit. Keypair `Debug` shows only public data. |
-| ML-DSA expanded and prepared secret keys | Not `Clone` or `Copy`. See [ML-DSA storage](#ml-dsa-storage). | Expanded export returns `SecretBytes`. Key, handle, and storage `Debug` are redacted. Serialization needs `serde-secrets`. |
+| ML-DSA seeds, expanded secret keys, and prepared secret keys | Not `Clone` or `Copy`. See [ML-DSA storage](#ml-dsa-storage). | Raw export returns `SecretBytes`. PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. Seed, key, handle, and storage `Debug` are redacted. Secret-key serialization needs `serde-secrets`; seeds have no Serde support. |
 | X25519 secrets; ML-KEM decapsulation keys and shared secrets | Explicit `duplicate_secret`. See [ML-KEM allocation](#ml-kem-allocation). | Secret export is explicit. `Debug` is redacted. |
 | `P256EphemeralSecret`, `P256SharedSecret` | Not `Clone` or `Copy`. | The ephemeral scalar has no export or import API. `P256SharedSecret::expose_secret` makes an explicit `SecretBytes<32>` copy. `as_bytes` gives borrowed access. Both types redact `Debug`. |
 | `P384EphemeralSecret`, `P384SharedSecret` | Not `Clone` or `Copy`. | The ephemeral scalar has no export or import API. `P384SharedSecret::expose_secret` makes an explicit `SecretBytes<48>` copy. `as_bytes` gives borrowed access. Both types redact `Debug`. |
@@ -29,7 +29,10 @@ and private-operation scratch follow the same rules, also when the table does no
 
 ### ML-DSA storage
 
-- The `*_in` constructors write the key directly into an allocation from a caller-selected `Allocator` and return `Box<SecretKey, A>`.
+- The `*_in` constructors, including `SecretKey::from_pkcs8_der_in` and `Seed::keypair_in`,
+  write the key directly into an allocation from a caller-selected `Allocator` and return `Box<SecretKey, A>`.
+- PKCS #8 import borrows the caller's DER and does not clear it.
+  A seed owner copies its 32 bytes out of the DER; secret-key import copies or expands the key into its owner.
 - Preparation writes transformed secrets into storage that the caller owns.
   It returns a handle that borrows the key and the storage.
 - The handle clears the secrets on drop and when preparation fails.

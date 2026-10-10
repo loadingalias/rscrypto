@@ -150,7 +150,10 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
   It is dropped before control returns to the sampler or the hashing caller.
 - Secret-noise acceptance masks and counts share the wiped bit-plane owners.
 - By-value key constructors leave moved-from copies in the caller's frame.
-  The `*_in` constructors fill a box that the caller allocated, in place.
+  The `*_in` constructors, including PKCS #8 import, fill a box that the caller allocated, in place.
+- PKCS #8 import borrows the caller's DER and never clears it.
+  PKCS #8 export writes into a fixed-size buffer that the caller owns and clears.
+  A rejected import clears every owner it built before it returns.
   In the measured RV32 and Cortex-M runs, they leave no copies.
 - Preparation decodes directly into storage that the caller owns, without moving the prepared owner.
   The handle clears it on drop and when preparation fails.
@@ -225,6 +228,17 @@ Results on `nightly-2026-09-25` and QEMU 11.1.2:
   one whole copy on RV32, and two on Cortex-M3.
 - The `*_in` paths leave none of these bytes on the stack or in the freed allocation,
   for every parameter set, both boards, and both backends.
+
+On 2026-10-09 the same harness measured ML-DSA PKCS #8 import from a static input buffer,
+on `nightly-2026-09-30` and QEMU 11.1.2, before the change was committed:
+
+- `SecretKey::from_pkcs8_der_in` leaves no seed, `K`, `s1`, `s2`, or `t0` bytes,
+  from the seed form and from the expanded form,
+  for every parameter set, both boards, and both backends.
+- By-value expanded import leaves `K` and `s1`, `s2`, and `t0`:
+  three whole copies on RV32, and four on Cortex-M3.
+- `Seed::from_pkcs8_der` returns its owner by value and leaves one copy of the 32-byte seed.
+- Raw results: `benchmark_results/mldsa-pkcs8-residue-20261009/` (local).
 
 An earlier campaign, whose harness was removed on 2026-09-28,
 also found 4.2–6.4 KiB of prepared ML-KEM state after import, preparation, and decapsulation.
