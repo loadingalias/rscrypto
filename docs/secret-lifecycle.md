@@ -94,6 +94,7 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
 | HMAC, HKDF, KMAC, PBKDF2, and keyed BLAKE2/BLAKE3 | Finalization copies, keyed prefixes, work buffers, emitted blocks, and replaced state are cleared after their last use. |
 | ECDSA, P-256 ECDH, P-384 ECDH, ML-KEM, and RSA private work | Secret scalars, digests, limbs, encoded messages, inverse state, and initialized scratch are cleared on every return path. See the notes below. |
 | Ed25519 and X25519 private work | Secret owners and staging are cleared; arithmetic temporaries have a narrower boundary. See [Ed25519 and X25519](#ed25519-and-x25519). |
+| ECDSA and Ed25519 key encodings | See [ECDSA and Ed25519 key encodings](#ecdsa-and-ed25519-key-encodings). |
 | ML-DSA private work | See [ML-DSA](#ml-dsa). |
 | SLH-DSA private work | See [SLH-DSA](#slh-dsa). |
 | Argon2 and scrypt | See [Argon2 and scrypt](#argon2-and-scrypt). |
@@ -143,6 +144,17 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
   This includes the AVX2 and IFMA selectors' stack frames and register-save slots.
 - The separate AVX2 selector boundary supports binary constant-time analysis.
   It does not establish whole-operation stack or register cleanup.
+
+### ECDSA and Ed25519 key encodings
+
+- PKCS #8 and SEC1 import borrow the caller's input and never clear it.
+  The import copies the scalar or key out of the input into its secret owner.
+- A scalar outside the group order, or a key whose carried public key is not its own,
+  is cleared before the error returns.
+- PKCS #8 export writes into a fixed-size buffer that the caller owns and clears.
+  ECDSA export and ECDSA import of a carried public key derive the public key
+  through the existing public-key path.
+- **Not measured:** moved-copy residue of the by-value copy out of the input.
 
 ### ML-DSA
 

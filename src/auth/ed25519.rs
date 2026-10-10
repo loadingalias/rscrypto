@@ -34,6 +34,10 @@ use core::{
 
 use crate::{
   SecretBytes,
+  backend::{
+    der::MalformedDer,
+    pkix::{self, KeyError},
+  },
   hashes::crypto::Sha512,
   secret::ZeroizingBytes,
   traits::{Digest, VerificationError, ct},
@@ -120,6 +124,68 @@ const _: fn(&scalar::Scalar, &scalar::Scalar) -> scalar::Scalar = scalar::add_mo
 const _: fn(&scalar::Scalar, &scalar::Scalar) -> scalar::Scalar = scalar::mul_mod;
 const _: fn(&scalar::Scalar, &scalar::Scalar, &scalar::Scalar) -> scalar::Scalar = scalar::mul_add_mod;
 
+/// DER contents of `id-Ed25519`, 1.3.101.112 (RFC 8410 section 3).
+const ED25519_OID: [u8; 3] = [0x2b, 0x65, 0x70];
+/// RFC 8410 SubjectPublicKeyInfo bytes before the 32-byte public key.
+const SPKI_HEADER: [u8; 12] = [
+  0x30, 0x2a, // SubjectPublicKeyInfo, 42 bytes
+  0x30, 0x05, // AlgorithmIdentifier, 5 bytes, parameters absent
+  0x06, 0x03, 0x2b, 0x65, 0x70, // id-Ed25519
+  0x03, 0x21, 0x00, // subjectPublicKey BIT STRING, 33 bytes, no unused bits
+];
+/// Version 1 RFC 8410 PKCS #8 bytes before the 32-byte private key.
+const PKCS8_HEADER: [u8; 16] = [
+  0x30, 0x2e, // OneAsymmetricKey, 46 bytes
+  0x02, 0x01, 0x00, // version 1 (v1)
+  0x30, 0x05, // AlgorithmIdentifier, 5 bytes, parameters absent
+  0x06, 0x03, 0x2b, 0x65, 0x70, // id-Ed25519
+  0x04, 0x22, // privateKey OCTET STRING, 34 bytes
+  0x04, 0x20, // CurvePrivateKey OCTET STRING, 32 bytes
+];
+
+/// Ed25519 key import failure.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum Ed25519KeyError {
+  /// DER input was malformed or non-canonical.
+  MalformedDer,
+  /// The algorithm identifier names another algorithm.
+  UnsupportedAlgorithm,
+  /// The DER is a well-formed key of this algorithm in a form this import
+  /// does not accept: PKCS #8 attributes.
+  UnsupportedEncoding,
+  /// The public-key encoding has the wrong length.
+  InvalidPublicKey,
+  /// The private key has the wrong length, or a PKCS #8 public key is not its
+  /// own.
+  InvalidSecretKey,
+}
+
+impl fmt::Display for Ed25519KeyError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str(match self {
+      Self::MalformedDer => "malformed Ed25519 DER",
+      Self::UnsupportedAlgorithm => "unsupported Ed25519 key algorithm",
+      Self::UnsupportedEncoding => "unsupported Ed25519 key encoding",
+      Self::InvalidPublicKey => "invalid Ed25519 public key",
+      Self::InvalidSecretKey => "invalid Ed25519 secret key",
+    })
+  }
+}
+
+impl core::error::Error for Ed25519KeyError {}
+
+impl MalformedDer for Ed25519KeyError {
+  const MALFORMED_DER: Self = Self::MalformedDer;
+}
+
+impl KeyError for Ed25519KeyError {
+  const UNSUPPORTED_ALGORITHM: Self = Self::UnsupportedAlgorithm;
+  const UNSUPPORTED_ENCODING: Self = Self::UnsupportedEncoding;
+  const INVALID_PUBLIC_KEY: Self = Self::InvalidPublicKey;
+  const INVALID_SECRET_KEY: Self = Self::InvalidSecretKey;
+}
+
 /// Ed25519 secret key bytes.
 ///
 /// Provides typed signing and public-key derivation instead of vague `&[u8]`
@@ -141,6 +207,45 @@ impl Ed25519SecretKey {
   #[must_use]
   pub const fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
     Self(bytes)
+  }
+
+  /// Length of [`Self::to_pkcs8_der_into`]'s encoding in bytes.
+  pub const PKCS8_DER_LENGTH: usize = PKCS8_HEADER.len().strict_add(Self::LENGTH);
+
+  /// Import an RFC 8410 private key from RFC 5958 OneAsymmetricKey (PKCS #8)
+  /// DER.
+  ///
+  /// The algorithm must be `id-Ed25519` with absent parameters. Accepts a
+  /// version 1 container, or a version 2 container whose public key equals
+  /// the key derived from the private key. The caller retains responsibility
+  /// for clearing `der`. No heap allocation.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`Ed25519KeyError::MalformedDer`] for malformed or non-canonical
+  /// DER, including parameters and a version that disagrees with the
+  /// public-key field; [`Ed25519KeyError::UnsupportedAlgorithm`] for another
+  /// algorithm; [`Ed25519KeyError::UnsupportedEncoding`] for attributes;
+  /// [`Ed25519KeyError::InvalidSecretKey`] for a wrong-length private key or
+  /// a public key that is not its own; and
+  /// [`Ed25519KeyError::InvalidPublicKey`] for a wrong-length public key.
+  pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, Ed25519KeyError> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
+    let (key, public) =
+      pkix::decode_pkcs8_wrapped::<Ed25519KeyError, { Self::LENGTH }, { Ed25519PublicKey::LENGTH }>(der, &ED25519_OID)?;
+    let secret = Self::from_bytes(*key);
+    if public.is_some_and(|public| public != secret.public_key().as_bytes()) {
+      return Err(Ed25519KeyError::InvalidSecretKey);
+    }
+    Ok(secret)
+  }
+
+  /// Write this key as a version 1 RFC 8410 PKCS #8 private key without a
+  /// public key, the form RFC 8410 section 10.3 shows. No heap allocation.
+  ///
+  /// `out` then holds the secret key, and the caller owns its cleanup.
+  pub fn to_pkcs8_der_into(&self, out: &mut [u8; Self::PKCS8_DER_LENGTH]) {
+    pkix::write(&PKCS8_HEADER, &self.0, out);
   }
 
   /// Explicitly extract the secret key bytes into a zeroizing wrapper.
@@ -265,6 +370,32 @@ impl Ed25519PublicKey {
       point,
       bytes,
     }
+  }
+
+  /// RFC 8410 SubjectPublicKeyInfo length in bytes.
+  pub const SPKI_DER_LENGTH: usize = SPKI_HEADER.len().strict_add(Self::LENGTH);
+
+  /// Import an RFC 8410 public key from SubjectPublicKeyInfo DER.
+  ///
+  /// Accepts exactly the unique encoding: `id-Ed25519` with absent parameters
+  /// and a 32-byte key. Like [`Self::from_bytes`], it does not reject an
+  /// encoding that is not a valid point; verification with such a key fails.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`Ed25519KeyError::MalformedDer`] for malformed or non-canonical
+  /// DER, including parameters; [`Ed25519KeyError::UnsupportedAlgorithm`] for
+  /// another algorithm; and [`Ed25519KeyError::InvalidPublicKey`] for a key of
+  /// the wrong length.
+  pub fn from_spki_der(der: &[u8]) -> Result<Self, Ed25519KeyError> {
+    let key = pkix::decode_spki::<Ed25519KeyError, { SPKI_HEADER.len() }, { Self::LENGTH }>(der, &SPKI_HEADER)?;
+    Ok(Self::from_bytes(*key))
+  }
+
+  /// Write this key as an RFC 8410 SubjectPublicKeyInfo.
+  #[must_use]
+  pub const fn to_spki_der(&self) -> [u8; Self::SPKI_DER_LENGTH] {
+    pkix::concat(&SPKI_HEADER, &self.bytes)
   }
 
   #[inline]

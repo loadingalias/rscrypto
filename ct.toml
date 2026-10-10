@@ -3243,8 +3243,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3395
-compiler_api_sha256 = "c27ec0b6bceeb6f23965e8962de57055adf15b6a528a90edc8b1c753bb08ae32"
+compiler_api_item_count = 3414
+compiler_api_sha256 = "4975635023aa7b585b6677ed9207e8b4ce324c527a3b2c940a926c7c123cbc68"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3254,8 +3254,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3395
-compiler_api_sha256 = "c27ec0b6bceeb6f23965e8962de57055adf15b6a528a90edc8b1c753bb08ae32"
+compiler_api_item_count = 3414
+compiler_api_sha256 = "4975635023aa7b585b6677ed9207e8b4ce324c527a3b2c940a926c7c123cbc68"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3288,8 +3288,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 3395
-compiler_api_sha256 = "c27ec0b6bceeb6f23965e8962de57055adf15b6a528a90edc8b1c753bb08ae32"
+compiler_api_item_count = 3414
+compiler_api_sha256 = "4975635023aa7b585b6677ed9207e8b4ce324c527a3b2c940a926c7c123cbc68"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3310,8 +3310,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 3395
-compiler_api_sha256 = "c27ec0b6bceeb6f23965e8962de57055adf15b6a528a90edc8b1c753bb08ae32"
+compiler_api_item_count = 3414
+compiler_api_sha256 = "4975635023aa7b585b6677ed9207e8b4ce324c527a3b2c940a926c7c123cbc68"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3322,8 +3322,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3395
-compiler_api_sha256 = "c27ec0b6bceeb6f23965e8962de57055adf15b6a528a90edc8b1c753bb08ae32"
+compiler_api_item_count = 3414
+compiler_api_sha256 = "4975635023aa7b585b6677ed9207e8b4ce324c527a3b2c940a926c7c123cbc68"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3334,8 +3334,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3395
-compiler_api_sha256 = "c27ec0b6bceeb6f23965e8962de57055adf15b6a528a90edc8b1c753bb08ae32"
+compiler_api_item_count = 3414
+compiler_api_sha256 = "4975635023aa7b585b6677ed9207e8b4ce324c527a3b2c940a926c7c123cbc68"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3346,8 +3346,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3395
-compiler_api_sha256 = "c27ec0b6bceeb6f23965e8962de57055adf15b6a528a90edc8b1c753bb08ae32"
+compiler_api_item_count = 3414
+compiler_api_sha256 = "4975635023aa7b585b6677ed9207e8b4ce324c527a3b2c940a926c7c123cbc68"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -4304,6 +4304,8 @@ api = [
   "rscrypto::EcdsaP256PublicKey::verify_sha384",
   "rscrypto::EcdsaP384PublicKey::verify_sha256",
   "rscrypto::{Ed25519,EcdsaP256,EcdsaP384}Signature::{from_bytes,from_der,to_bytes,as_bytes}",
+  "rscrypto::{Ed25519,EcdsaP256,EcdsaP384}PublicKey::{from_spki_der,to_spki_der}",
+  "rscrypto::{EcdsaP256,EcdsaP384}Signature::to_der_into",
 ]
 features = ["ed25519", "ecdsa-p256", "ecdsa-p384", "serde"]
 targets = ["all-supported"]
@@ -4319,6 +4321,25 @@ permitted_leakage = ["all inputs", "parse failure", "opaque verification result"
 claim = "best-effort"
 evidence = ["primitive:signature.ed25519_verify_failure_shape", "harness:ct_entry_ed25519_verify"]
 limitation = "Signature verification inputs are public and are not blanket constant-time claims. Failure remains opaque; public signature/key equality is intentionally ordinary."
+
+[[operation]]
+id = "signature.classical_private_key_encoding"
+api = [
+  "rscrypto::EcdsaP{256,384}SecretKey::{from_pkcs8_der,from_sec1_der,to_pkcs8_der_into}",
+  "rscrypto::Ed25519SecretKey::{from_pkcs8_der,to_pkcs8_der_into}",
+]
+features = ["ecdsa-p256", "ecdsa-p384", "ed25519"]
+targets = ["all-supported"]
+secret_inputs = ["private scalar or key bytes", "PKCS #8 and SEC1 private-key contents"]
+public_inputs = ["DER length and structure", "algorithm and curve identifiers", "carried public key"]
+variable_time_components = [
+  "public DER structure parsing",
+  "public-key derivation when a public key is carried or exported",
+  "ordinary equality of the carried and derived public keys",
+]
+permitted_leakage = ["DER length and structure", "structural parse failure", "public key", "opaque secret-key rejection"]
+claim = "best-effort"
+limitation = "No DudeCT or BINSEC case measures PKCS #8 or SEC1 import and export. Parsing reads only public DER structure. ECDSA import checks the scalar range as from_bytes does and, when the encoding carries a public key, derives the public key with the unblinded public_key path; ECDSA export always derives it. Ed25519 import derives the public key only for a version 2 container."
 
 [[operation]]
 id = "rsa.private_key_import_export_and_generation"

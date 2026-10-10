@@ -11,7 +11,10 @@ use core::{
 use super::hmac::{HmacSha256, HmacSha384};
 use crate::{
   SecretBytes,
-  backend::der::{self, MalformedDer, TAG_BIT_STRING, TAG_OBJECT_IDENTIFIER, TAG_SEQUENCE},
+  backend::{
+    der::{self, MalformedDer, TAG_BIT_STRING, TAG_OBJECT_IDENTIFIER, TAG_SEQUENCE},
+    pkix::{self, KeyError},
+  },
   hashes::crypto::{Sha256, Sha384},
   secret::ZeroizingBytes,
   traits::{Mac, VerificationError, ct},
@@ -85,6 +88,60 @@ const _: () = assert!(P256_SIGNING_COMB_ROWS * P256_SIGNING_COMB_WIDTH == 259);
 const ID_EC_PUBLIC_KEY_OID: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
 const SECP256R1_OID: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
 const SECP384R1_OID: &[u8] = &[0x2b, 0x81, 0x04, 0x00, 0x22];
+
+/// RFC 5480 SubjectPublicKeyInfo bytes before an uncompressed P-256 point.
+const P256_SPKI_HEADER: [u8; 26] = [
+  0x30, 0x59, // SubjectPublicKeyInfo, 89 bytes
+  0x30, 0x13, // AlgorithmIdentifier, 19 bytes
+  0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // id-ecPublicKey
+  0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, // prime256v1
+  0x03, 0x42, 0x00, // subjectPublicKey BIT STRING, 66 bytes, no unused bits
+];
+/// RFC 5480 SubjectPublicKeyInfo bytes before an uncompressed P-384 point.
+const P384_SPKI_HEADER: [u8; 23] = [
+  0x30, 0x76, // SubjectPublicKeyInfo, 118 bytes
+  0x30, 0x10, // AlgorithmIdentifier, 16 bytes
+  0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // id-ecPublicKey
+  0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22, // secp384r1
+  0x03, 0x62, 0x00, // subjectPublicKey BIT STRING, 98 bytes, no unused bits
+];
+/// Version 1 PKCS #8 bytes before a P-256 scalar. The RFC 5915 ECPrivateKey
+/// omits its parameters, which the algorithm identifier already names, and
+/// carries the public key after the scalar.
+const P256_PKCS8_PREFIX: [u8; 36] = [
+  0x30, 0x81, 0x87, // OneAsymmetricKey, 135 bytes
+  0x02, 0x01, 0x00, // version 1 (v1)
+  0x30, 0x13, // AlgorithmIdentifier, 19 bytes
+  0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // id-ecPublicKey
+  0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, // prime256v1
+  0x04, 0x6d, // privateKey OCTET STRING, 109 bytes
+  0x30, 0x6b, // ECPrivateKey, 107 bytes
+  0x02, 0x01, 0x01, // ecPrivkeyVer1
+  0x04, 0x20, // privateKey OCTET STRING, 32 bytes
+];
+/// ECPrivateKey bytes between a P-256 scalar and its uncompressed point.
+const P256_PKCS8_PUBLIC_KEY_HEADER: [u8; 5] = [
+  0xa1, 0x44, // publicKey [1], 68 bytes
+  0x03, 0x42, 0x00, // BIT STRING, 66 bytes, no unused bits
+];
+/// Version 1 PKCS #8 bytes before a P-384 scalar, in the same form as
+/// [`P256_PKCS8_PREFIX`].
+const P384_PKCS8_PREFIX: [u8; 35] = [
+  0x30, 0x81, 0xb6, // OneAsymmetricKey, 182 bytes
+  0x02, 0x01, 0x00, // version 1 (v1)
+  0x30, 0x10, // AlgorithmIdentifier, 16 bytes
+  0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // id-ecPublicKey
+  0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22, // secp384r1
+  0x04, 0x81, 0x9e, // privateKey OCTET STRING, 158 bytes
+  0x30, 0x81, 0x9b, // ECPrivateKey, 155 bytes
+  0x02, 0x01, 0x01, // ecPrivkeyVer1
+  0x04, 0x30, // privateKey OCTET STRING, 48 bytes
+];
+/// ECPrivateKey bytes between a P-384 scalar and its uncompressed point.
+const P384_PKCS8_PUBLIC_KEY_HEADER: [u8; 5] = [
+  0xa1, 0x64, // publicKey [1], 100 bytes
+  0x03, 0x62, 0x00, // BIT STRING, 98 bytes, no unused bits
+];
 const P256_NONCE_DOMAIN: &[u8] = b"rscrypto-ecdsa-p256-sha256-sign-v1";
 const P384_NONCE_DOMAIN: &[u8] = b"rscrypto-ecdsa-p384-sha384-sign-v1";
 const P256_PUBKEY_BLIND_DOMAIN: &[u8] = b"rscrypto-ecdsa-p256-pubkey-blind-v1";
@@ -760,9 +817,14 @@ pub enum EcdsaError {
   MalformedDer,
   /// The requested algorithm identifier is not supported by this type.
   UnsupportedAlgorithm,
+  /// The DER is a well-formed key of this algorithm in a form this import
+  /// does not accept: PKCS #8 attributes.
+  UnsupportedEncoding,
   /// SEC1 public-key bytes are malformed or not on the expected curve.
   InvalidPublicKey,
-  /// Secret key bytes are zero or outside the curve scalar range.
+  /// Secret key bytes are zero, outside the curve scalar range, or the wrong
+  /// length, or an encoded private key carries a public key that is not its
+  /// own.
   InvalidSecretKey,
   /// Raw signature bytes or DER signature integers are malformed.
   InvalidSignature,
@@ -775,6 +837,7 @@ impl fmt::Display for EcdsaError {
     let message = match self {
       Self::MalformedDer => "malformed ECDSA DER",
       Self::UnsupportedAlgorithm => "unsupported ECDSA algorithm",
+      Self::UnsupportedEncoding => "unsupported ECDSA key encoding",
       Self::InvalidPublicKey => "invalid ECDSA public key",
       Self::InvalidSecretKey => "invalid ECDSA secret key",
       Self::InvalidSignature => "invalid ECDSA signature",
@@ -892,6 +955,85 @@ impl EcdsaP256SecretKey {
   /// Parse a P-256 secret scalar.
   pub fn from_bytes(bytes: [u8; Self::LENGTH]) -> Result<Self, EcdsaError> {
     Self::from_zeroizing_bytes(ZeroizingBytes::new(bytes))
+  }
+
+  /// Length of [`Self::to_pkcs8_der_into`]'s encoding in bytes.
+  pub const PKCS8_DER_LENGTH: usize = 138;
+
+  /// Import a P-256 private key from RFC 5958 OneAsymmetricKey (PKCS #8)
+  /// DER that holds an RFC 5915 `ECPrivateKey`.
+  ///
+  /// The algorithm must be `id-ecPublicKey` with the `prime256v1` named curve.
+  /// Accepts a version 1 container, or a version 2 container with a public
+  /// key. `ECPrivateKey` parameters, if present, must name the same curve.
+  /// Every public key the encoding carries must equal the key derived from
+  /// the scalar. The scalar is checked as by [`Self::from_bytes`]. The caller
+  /// retains responsibility for clearing `der`. No heap allocation.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`EcdsaError::MalformedDer`] for malformed or non-canonical DER,
+  /// including explicit curve parameters and a version that disagrees with
+  /// the public-key field; [`EcdsaError::UnsupportedAlgorithm`] for another
+  /// algorithm or curve; [`EcdsaError::UnsupportedEncoding`] for attributes;
+  /// [`EcdsaError::InvalidSecretKey`] for a wrong-length, zero, or
+  /// out-of-range scalar, or a public key that is not its own; and
+  /// [`EcdsaError::InvalidPublicKey`] for a public key of the wrong length.
+  pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, EcdsaError> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
+    let (key, container_public) = pkix::decode_pkcs8_ec::<
+      EcdsaError,
+      { Self::LENGTH },
+      { EcdsaP256PublicKey::SEC1_LENGTH },
+    >(der, ID_EC_PUBLIC_KEY_OID, SECP256R1_OID)?;
+    Self::from_ec_private_key(&key, container_public)
+  }
+
+  /// Import a P-256 private key from an RFC 5915 `ECPrivateKey` (SEC1) DER
+  /// encoding, the `EC PRIVATE KEY` form.
+  ///
+  /// The parameters, if present, must name `prime256v1`, and a public key, if
+  /// present, must equal the key derived from the scalar. The scalar is
+  /// checked as by [`Self::from_bytes`]. The caller retains responsibility
+  /// for clearing `der`. No heap allocation.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`EcdsaError::MalformedDer`] for malformed or non-canonical DER,
+  /// including explicit curve parameters; [`EcdsaError::UnsupportedAlgorithm`]
+  /// for another curve; [`EcdsaError::InvalidSecretKey`] for a wrong-length,
+  /// zero, or out-of-range scalar, or a public key that is not its own; and
+  /// [`EcdsaError::InvalidPublicKey`] for a public key of the wrong length.
+  pub fn from_sec1_der(der: &[u8]) -> Result<Self, EcdsaError> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
+    let key = pkix::decode_ec_private_key::<EcdsaError, { Self::LENGTH }, { EcdsaP256PublicKey::SEC1_LENGTH }>(
+      der,
+      SECP256R1_OID,
+    )?;
+    Self::from_ec_private_key(&key, None)
+  }
+
+  fn from_ec_private_key(
+    key: &pkix::EcPrivateKey<'_, { Self::LENGTH }, { EcdsaP256PublicKey::SEC1_LENGTH }>,
+    container_public: Option<&[u8; EcdsaP256PublicKey::SEC1_LENGTH]>,
+  ) -> Result<Self, EcdsaError> {
+    let secret = Self::from_bytes(*key.scalar)?;
+    check_carried_public_keys([key.public_key, container_public], || {
+      secret.public_key().to_sec1_bytes()
+    })?;
+    Ok(secret)
+  }
+
+  /// Write this key as a version 1 PKCS #8 private key whose RFC 5915
+  /// `ECPrivateKey` carries the public key and omits the parameters, which the
+  /// algorithm identifier names. OpenSSL writes the same form. No heap
+  /// allocation.
+  ///
+  /// Derives the public key. `out` then holds the secret key, and the caller
+  /// owns its cleanup.
+  pub fn to_pkcs8_der_into(&self, out: &mut [u8; Self::PKCS8_DER_LENGTH]) {
+    let public = self.public_key().to_sec1_bytes();
+    write_pkcs8(&P256_PKCS8_PREFIX, &self.0, &P256_PKCS8_PUBLIC_KEY_HEADER, &public, out);
   }
 
   /// Try to generate a P-256 secret key with caller-supplied randomness.
@@ -1071,6 +1213,85 @@ impl EcdsaP384SecretKey {
   /// Parse a P-384 secret scalar.
   pub fn from_bytes(bytes: [u8; Self::LENGTH]) -> Result<Self, EcdsaError> {
     Self::from_zeroizing_bytes(ZeroizingBytes::new(bytes))
+  }
+
+  /// Length of [`Self::to_pkcs8_der_into`]'s encoding in bytes.
+  pub const PKCS8_DER_LENGTH: usize = 185;
+
+  /// Import a P-384 private key from RFC 5958 OneAsymmetricKey (PKCS #8)
+  /// DER that holds an RFC 5915 `ECPrivateKey`.
+  ///
+  /// The algorithm must be `id-ecPublicKey` with the `secp384r1` named curve.
+  /// Accepts a version 1 container, or a version 2 container with a public
+  /// key. `ECPrivateKey` parameters, if present, must name the same curve.
+  /// Every public key the encoding carries must equal the key derived from
+  /// the scalar. The scalar is checked as by [`Self::from_bytes`]. The caller
+  /// retains responsibility for clearing `der`. No heap allocation.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`EcdsaError::MalformedDer`] for malformed or non-canonical DER,
+  /// including explicit curve parameters and a version that disagrees with
+  /// the public-key field; [`EcdsaError::UnsupportedAlgorithm`] for another
+  /// algorithm or curve; [`EcdsaError::UnsupportedEncoding`] for attributes;
+  /// [`EcdsaError::InvalidSecretKey`] for a wrong-length, zero, or
+  /// out-of-range scalar, or a public key that is not its own; and
+  /// [`EcdsaError::InvalidPublicKey`] for a public key of the wrong length.
+  pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, EcdsaError> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
+    let (key, container_public) = pkix::decode_pkcs8_ec::<
+      EcdsaError,
+      { Self::LENGTH },
+      { EcdsaP384PublicKey::SEC1_LENGTH },
+    >(der, ID_EC_PUBLIC_KEY_OID, SECP384R1_OID)?;
+    Self::from_ec_private_key(&key, container_public)
+  }
+
+  /// Import a P-384 private key from an RFC 5915 `ECPrivateKey` (SEC1) DER
+  /// encoding, the `EC PRIVATE KEY` form.
+  ///
+  /// The parameters, if present, must name `secp384r1`, and a public key, if
+  /// present, must equal the key derived from the scalar. The scalar is
+  /// checked as by [`Self::from_bytes`]. The caller retains responsibility
+  /// for clearing `der`. No heap allocation.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`EcdsaError::MalformedDer`] for malformed or non-canonical DER,
+  /// including explicit curve parameters; [`EcdsaError::UnsupportedAlgorithm`]
+  /// for another curve; [`EcdsaError::InvalidSecretKey`] for a wrong-length,
+  /// zero, or out-of-range scalar, or a public key that is not its own; and
+  /// [`EcdsaError::InvalidPublicKey`] for a public key of the wrong length.
+  pub fn from_sec1_der(der: &[u8]) -> Result<Self, EcdsaError> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
+    let key = pkix::decode_ec_private_key::<EcdsaError, { Self::LENGTH }, { EcdsaP384PublicKey::SEC1_LENGTH }>(
+      der,
+      SECP384R1_OID,
+    )?;
+    Self::from_ec_private_key(&key, None)
+  }
+
+  fn from_ec_private_key(
+    key: &pkix::EcPrivateKey<'_, { Self::LENGTH }, { EcdsaP384PublicKey::SEC1_LENGTH }>,
+    container_public: Option<&[u8; EcdsaP384PublicKey::SEC1_LENGTH]>,
+  ) -> Result<Self, EcdsaError> {
+    let secret = Self::from_bytes(*key.scalar)?;
+    check_carried_public_keys([key.public_key, container_public], || {
+      secret.public_key().to_sec1_bytes()
+    })?;
+    Ok(secret)
+  }
+
+  /// Write this key as a version 1 PKCS #8 private key whose RFC 5915
+  /// `ECPrivateKey` carries the public key and omits the parameters, which the
+  /// algorithm identifier names. OpenSSL writes the same form. No heap
+  /// allocation.
+  ///
+  /// Derives the public key. `out` then holds the secret key, and the caller
+  /// owns its cleanup.
+  pub fn to_pkcs8_der_into(&self, out: &mut [u8; Self::PKCS8_DER_LENGTH]) {
+    let public = self.public_key().to_sec1_bytes();
+    write_pkcs8(&P384_PKCS8_PREFIX, &self.0, &P384_PKCS8_PUBLIC_KEY_HEADER, &public, out);
   }
 
   /// Try to generate a P-384 secret key with caller-supplied randomness.
@@ -1496,6 +1717,17 @@ impl EcdsaP256PublicKey {
     Self::from_sec1_bytes(public_key)
   }
 
+  /// RFC 5480 SubjectPublicKeyInfo length in bytes.
+  pub const SPKI_DER_LENGTH: usize = P256_SPKI_HEADER.len().strict_add(Self::SEC1_LENGTH);
+
+  /// Write this key as an RFC 5480 SubjectPublicKeyInfo with the `prime256v1`
+  /// named curve and an uncompressed point, the form that
+  /// [`Self::from_spki_der`] accepts.
+  #[must_use]
+  pub fn to_spki_der(&self) -> [u8; Self::SPKI_DER_LENGTH] {
+    pkix::concat(&P256_SPKI_HEADER, &self.to_sec1_bytes())
+  }
+
   /// Return the uncompressed SEC1 public-key bytes.
   #[must_use]
   pub fn to_sec1_bytes(&self) -> [u8; Self::SEC1_LENGTH] {
@@ -1581,6 +1813,17 @@ impl EcdsaP384PublicKey {
   pub fn from_spki_der(der: &[u8]) -> Result<Self, EcdsaError> {
     let public_key = parse_spki_der(der, SECP384R1_OID)?;
     Self::from_sec1_bytes(public_key)
+  }
+
+  /// RFC 5480 SubjectPublicKeyInfo length in bytes.
+  pub const SPKI_DER_LENGTH: usize = P384_SPKI_HEADER.len().strict_add(Self::SEC1_LENGTH);
+
+  /// Write this key as an RFC 5480 SubjectPublicKeyInfo with the `secp384r1`
+  /// named curve and an uncompressed point, the form that
+  /// [`Self::from_spki_der`] accepts.
+  #[must_use]
+  pub fn to_spki_der(&self) -> [u8; Self::SPKI_DER_LENGTH] {
+    pkix::concat(&P384_SPKI_HEADER, &self.to_sec1_bytes())
   }
 
   /// Return the uncompressed SEC1 public-key bytes.
@@ -1671,6 +1914,18 @@ impl EcdsaP256Signature {
     Self::from_bytes(parse_signature_der_bytes::<4, { Self::LENGTH }>(der)?)
   }
 
+  /// Maximum length of the DER `Ecdsa-Sig-Value` encoding in bytes.
+  pub const DER_MAX_LENGTH: usize = 72;
+
+  /// Write this signature as a DER `Ecdsa-Sig-Value` (RFC 3279), the form
+  /// that X.509 and TLS carry and that [`Self::from_der`] accepts, at the start
+  /// of `out`. Returns the encoding, which is at most
+  /// [`Self::DER_MAX_LENGTH`] bytes.
+  pub fn to_der_into<'a>(&self, out: &'a mut [u8; Self::DER_MAX_LENGTH]) -> &'a [u8] {
+    let (r, s) = self.bytes.split_at(32);
+    encode_signature_der(r, s, out)
+  }
+
   fn from_scalars(r: Uint<4>, s: Uint<4>) -> Self {
     let mut bytes = [0u8; Self::LENGTH];
     r.write_be(&mut bytes[..32]);
@@ -1722,6 +1977,18 @@ impl EcdsaP384Signature {
   /// Parse a DER `Ecdsa-Sig-Value` P-384 signature.
   pub fn from_der(der: &[u8]) -> Result<Self, EcdsaError> {
     Self::from_bytes(parse_signature_der_bytes::<6, { Self::LENGTH }>(der)?)
+  }
+
+  /// Maximum length of the DER `Ecdsa-Sig-Value` encoding in bytes.
+  pub const DER_MAX_LENGTH: usize = 104;
+
+  /// Write this signature as a DER `Ecdsa-Sig-Value` (RFC 3279), the form
+  /// that X.509 and TLS carry and that [`Self::from_der`] accepts, at the start
+  /// of `out`. Returns the encoding, which is at most
+  /// [`Self::DER_MAX_LENGTH`] bytes.
+  pub fn to_der_into<'a>(&self, out: &'a mut [u8; Self::DER_MAX_LENGTH]) -> &'a [u8] {
+    let (r, s) = self.bytes.split_at(48);
+    encode_signature_der(r, s, out)
   }
 
   fn from_scalars(r: Uint<6>, s: Uint<6>) -> Self {
@@ -5234,6 +5501,90 @@ type DerReader<'a> = der::DerReader<'a, EcdsaError>;
 
 impl MalformedDer for EcdsaError {
   const MALFORMED_DER: Self = Self::MalformedDer;
+}
+
+impl KeyError for EcdsaError {
+  const UNSUPPORTED_ALGORITHM: Self = Self::UnsupportedAlgorithm;
+  const UNSUPPORTED_ENCODING: Self = Self::UnsupportedEncoding;
+  const INVALID_PUBLIC_KEY: Self = Self::InvalidPublicKey;
+  const INVALID_SECRET_KEY: Self = Self::InvalidSecretKey;
+}
+
+/// Reject an encoded private key when a public key it carries differs from
+/// the key that `derive` computes from its scalar. Derives only when needed.
+fn check_carried_public_keys<const PK: usize>(
+  carried: [Option<&[u8; PK]>; 2],
+  derive: impl FnOnce() -> [u8; PK],
+) -> Result<(), EcdsaError> {
+  if carried.iter().all(Option::is_none) {
+    return Ok(());
+  }
+  let derived = derive();
+  if carried.into_iter().flatten().any(|public| *public != derived) {
+    return Err(EcdsaError::InvalidSecretKey);
+  }
+  Ok(())
+}
+
+/// Write a version 1 PKCS #8 key in the layout of [`P256_PKCS8_PREFIX`]:
+/// `prefix`, the scalar, `public_header`, then the uncompressed point.
+fn write_pkcs8<const P: usize, const N: usize, const PK: usize, const L: usize>(
+  prefix: &[u8; P],
+  scalar: &[u8; N],
+  public_header: &[u8; 5],
+  public: &[u8; PK],
+  out: &mut [u8; L],
+) {
+  const {
+    assert!(
+      L == P.strict_add(N).strict_add(5).strict_add(PK),
+      "the encoding is its prefix, scalar, public-key header, and point"
+    );
+  };
+  let (head, rest) = out.split_at_mut(P);
+  head.copy_from_slice(prefix);
+  let (secret, rest) = rest.split_at_mut(N);
+  secret.copy_from_slice(scalar);
+  let (header, point) = rest.split_at_mut(public_header.len());
+  header.copy_from_slice(public_header);
+  point.copy_from_slice(public);
+}
+
+/// Write the big-endian scalars `r` and `s` as a DER `Ecdsa-Sig-Value`
+/// (RFC 3279) at the start of `out`; return the encoding.
+///
+/// Signatures are public, so the variable length is not secret.
+fn encode_signature_der<'a, const MAX: usize>(r: &[u8], s: &[u8], out: &'a mut [u8; MAX]) -> &'a [u8] {
+  // A SEQUENCE header, then each INTEGER: tag, length, an optional sign
+  // octet, and its magnitude.
+  let mut at = 2;
+  for scalar in [r, s] {
+    // Signatures reject zero r and s, so the magnitude is never empty.
+    let leading_zeros = scalar.iter().take_while(|&&byte| byte == 0).count();
+    let magnitude = scalar.get(leading_zeros..).unwrap_or_default();
+    let sign_octet = magnitude.first().is_some_and(|&byte| byte & 0x80 != 0);
+    let contents = magnitude.len().strict_add(usize::from(sign_octet));
+    out[at] = TAG_INTEGER;
+    out[at.strict_add(1)] = short_der_length(contents);
+    at = at.strict_add(2);
+    if sign_octet {
+      out[at] = 0;
+      at = at.strict_add(1);
+    }
+    let end = at.strict_add(magnitude.len());
+    out[at..end].copy_from_slice(magnitude);
+    at = end;
+  }
+  out[0] = TAG_SEQUENCE;
+  out[1] = short_der_length(at.strict_sub(2));
+  &out[..at]
+}
+
+/// A DER length below 128, which fits its single length octet.
+fn short_der_length(len: usize) -> u8 {
+  debug_assert!(len < 0x80, "a short-form DER length");
+  let [.., low] = len.to_be_bytes();
+  low
 }
 
 #[cfg(test)]

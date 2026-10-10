@@ -70,6 +70,7 @@ pub(crate) mod curve25519_swap;
 #[cfg(any(
   feature = "ecdsa-p256",
   feature = "ecdsa-p384",
+  feature = "ed25519",
   feature = "ml-dsa",
   feature = "ml-kem",
   feature = "rsa",
@@ -78,7 +79,14 @@ pub(crate) mod curve25519_swap;
 pub(crate) mod der;
 #[cfg(any(feature = "rsa", feature = "slh-dsa"))]
 pub(crate) mod mgf1;
-#[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
+#[cfg(any(
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
+  feature = "ed25519",
+  feature = "ml-dsa",
+  feature = "ml-kem",
+  feature = "slh-dsa"
+))]
 pub(crate) mod pkix;
 
 #[cfg(any(feature = "poly1305", feature = "chacha20poly1305", feature = "xchacha20poly1305"))]

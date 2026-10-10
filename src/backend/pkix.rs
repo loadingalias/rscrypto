@@ -1,19 +1,23 @@
-//! NIST post-quantum key encodings from RFC 9881 (ML-DSA), RFC 9935
-//! (ML-KEM), and RFC 9909 (SLH-DSA): SubjectPublicKeyInfo and RFC 5958
-//! OneAsymmetricKey (PKCS #8).
+//! SubjectPublicKeyInfo and RFC 5958 OneAsymmetricKey (PKCS #8) key encodings.
 //!
-//! All three RFCs name a parameter set by the OID
+//! The NIST post-quantum encodings are RFC 9881 (ML-DSA), RFC 9935 (ML-KEM),
+//! and RFC 9909 (SLH-DSA). All three name a parameter set by the OID
 //! 2.16.840.1.101.3.4.`family`.`arc` with absent parameters and carry the raw
 //! public key in a BIT STRING. RFC 9881 and RFC 9935 encode a private key as a
 //! CHOICE of seed, expanded key, or both; RFC 9909 puts the raw private key
 //! directly in `privateKey`. Only the arcs, the private-key form, and the key
 //! lengths differ.
 //!
+//! RFC 8410 (Ed25519) also has absent parameters, and wraps the private key
+//! in an inner OCTET STRING. RFC 5915 (ECDSA) names the curve as the
+//! parameters of `id-ecPublicKey` and puts an `ECPrivateKey` in
+//! `privateKey`.
+//!
 //! SPKI import accepts exactly the unique encoding; a structural parse only
 //! classifies a rejection. PKCS #8 import accepts each private-key form in a
 //! version 1 container, or a version 2 container with a public key, and
-//! rejects attributes. Export writes version 1 without a public key, so each
-//! exported form is a fixed header followed by its payload.
+//! rejects attributes. Export writes version 1 without a container public key,
+//! so each exported form is a fixed layout around its payload.
 
 use crate::backend::der::{self, MalformedDer, TAG_BIT_STRING, TAG_OBJECT_IDENTIFIER, TAG_SEQUENCE};
 
@@ -26,10 +30,18 @@ const TAG_SEED: u8 = 0x80;
 const TAG_ATTRIBUTES: u8 = 0xa0;
 /// OneAsymmetricKey `publicKey [1] IMPLICIT BIT STRING`.
 const TAG_PUBLIC_KEY: u8 = 0x81;
+/// ECPrivateKey `parameters [0] EXPLICIT ECParameters`.
+#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+const TAG_EC_PARAMETERS: u8 = 0xa0;
+/// ECPrivateKey `publicKey [1] EXPLICIT BIT STRING`.
+#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+const TAG_EC_PUBLIC_KEY: u8 = 0xa1;
 /// Long-form DER length with two length octets.
+#[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
 const LONG_LENGTH_2: u8 = 0x82;
 
 /// DER contents of the NIST algorithms arc, 2.16.840.1.101.3.4.
+#[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
 const NIST_ALGORITHMS: [u8; 7] = [0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04];
 
 /// Header bytes before a raw public key of 255 bytes or more in an SPKI,
@@ -43,6 +55,7 @@ pub(crate) const SEED_HEADER_LENGTH: usize = 22;
 #[cfg(any(feature = "ml-dsa", feature = "ml-kem"))]
 pub(crate) const EXPANDED_HEADER_LENGTH: usize = 28;
 /// Bytes in an AlgorithmIdentifier with one 9-byte OID and no parameters.
+#[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
 const IDENTIFIER_LENGTH: usize = 13;
 
 /// Key-import failures that each family maps onto its own public error.
@@ -58,6 +71,7 @@ pub(crate) trait KeyError: MalformedDer {
 }
 
 /// The parameter set named by OID 2.16.840.1.101.3.4.`family`.`arc`.
+#[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
 #[derive(Clone, Copy)]
 pub(crate) struct Algorithm {
   /// `3` for signature algorithms, `4` for KEMs.
@@ -65,6 +79,7 @@ pub(crate) struct Algorithm {
   pub(crate) arc: u8,
 }
 
+#[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
 impl Algorithm {
   const fn oid(self) -> [u8; 9] {
     let [a, b, c, d, e, f, g] = NIST_ALGORITHMS;
@@ -93,6 +108,7 @@ impl Algorithm {
 }
 
 /// SPKI header length for a `key_len`-byte raw public key.
+#[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
 pub(crate) const fn spki_header_length(key_len: usize) -> usize {
   let bit_string = key_len.strict_add(1);
   1usize
@@ -105,6 +121,7 @@ pub(crate) const fn spki_header_length(key_len: usize) -> usize {
 }
 
 /// SPKI SEQUENCE contents: the AlgorithmIdentifier and the BIT STRING element.
+#[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
 const fn spki_contents_length(key_len: usize) -> usize {
   let bit_string = key_len.strict_add(1);
   IDENTIFIER_LENGTH
@@ -114,6 +131,7 @@ const fn spki_contents_length(key_len: usize) -> usize {
 }
 
 /// SPKI header for `algorithm` and a `key_len`-byte raw public key.
+#[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
 pub(crate) const fn spki_header<const H: usize>(algorithm: Algorithm, key_len: usize) -> [u8; H] {
   assert!(H == spki_header_length(key_len), "an SPKI header for this key length");
   let mut out = [0; H];
@@ -128,6 +146,9 @@ pub(crate) const fn spki_header<const H: usize>(algorithm: Algorithm, key_len: u
 }
 
 /// Return the raw public key if `der` is exactly `header` followed by `K` bytes.
+///
+/// `header` names one algorithm with absent parameters.
+#[cfg(any(feature = "ed25519", feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
 pub(crate) fn decode_spki<'a, E: KeyError, const H: usize, const K: usize>(
   der: &'a [u8],
   header: &[u8; H],
@@ -138,19 +159,23 @@ pub(crate) fn decode_spki<'a, E: KeyError, const H: usize, const K: usize>(
   }
 }
 
-/// The 9-byte OID contents of an SPKI header from [`spki_header`]: after the
-/// outer tag and length, the identifier's SEQUENCE header, and the OID header.
+/// The OID contents of an SPKI header: after the outer tag and length, the
+/// identifier's SEQUENCE header, and the OID tag, whose length octet follows.
+#[cfg(any(feature = "ed25519", feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
 fn spki_oid(header: &[u8]) -> &[u8] {
   let outer_length = match header.get(1) {
     Some(&first) if first >= 0x80 => usize::from(first & 0x7f).strict_add(1),
     _ => 1,
   };
-  let start = outer_length.strict_add(5);
-  header.get(start..start.strict_add(9)).unwrap_or_default()
+  let length_at = outer_length.strict_add(4);
+  let start = length_at.strict_add(1);
+  let oid_length = header.get(length_at).map_or(0, |&length| usize::from(length));
+  header.get(start..start.strict_add(oid_length)).unwrap_or_default()
 }
 
 /// Name the first failing component in order: DER structure, algorithm,
 /// parameters, then key length.
+#[cfg(any(feature = "ed25519", feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
 fn classify_spki<E: KeyError, const K: usize>(der: &[u8], oid: &[u8]) -> E {
   let classified = (|| {
     let mut root = der::DerReader::<E>::new(der);
@@ -162,12 +187,7 @@ fn classify_spki<E: KeyError, const K: usize>(der: &[u8], oid: &[u8]) -> E {
     let subject_public_key = spki.read_primitive(TAG_BIT_STRING)?;
     spki.finish()?;
 
-    let mut algorithm = der::DerReader::<E>::new(algorithm);
-    if algorithm.read_primitive(TAG_OBJECT_IDENTIFIER)? != oid {
-      return Err(E::UNSUPPORTED_ALGORITHM);
-    }
-    // Parameters must be absent.
-    algorithm.finish()?;
+    oid_without_parameters::<E>(algorithm, oid)?;
 
     let (&unused_bits, key) = subject_public_key.split_first().ok_or(E::MALFORMED_DER)?;
     if unused_bits != 0 {
@@ -181,6 +201,17 @@ fn classify_spki<E: KeyError, const K: usize>(der: &[u8], oid: &[u8]) -> E {
   // A well-formed encoding of this algorithm with the right key length is
   // exactly the header and key, which the caller's exact match accepts.
   classified.err().unwrap_or(E::MALFORMED_DER)
+}
+
+/// Check AlgorithmIdentifier contents that name `oid` with absent parameters.
+#[cfg(any(feature = "ed25519", feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
+fn oid_without_parameters<E: KeyError>(identifier: &[u8], oid: &[u8]) -> Result<(), E> {
+  let mut identifier = der::DerReader::<E>::new(identifier);
+  if identifier.read_primitive(TAG_OBJECT_IDENTIFIER)? != oid {
+    return Err(E::UNSUPPORTED_ALGORITHM);
+  }
+  // Parameters must be absent.
+  identifier.finish()
 }
 
 /// Borrowed private-key material from one OneAsymmetricKey.
@@ -209,7 +240,11 @@ pub(crate) fn decode_pkcs8<E: KeyError, const S: usize, const SK: usize, const P
   der: &[u8],
   algorithm: Algorithm,
 ) -> Result<Pkcs8<'_, S, SK, PK>, E> {
-  let (private_key, public_key) = decode_one_asymmetric_key(der, algorithm, private_key)?;
+  let (private_key, public_key) = decode_one_asymmetric_key(
+    der,
+    |identifier| oid_without_parameters(identifier, &algorithm.oid()),
+    private_key,
+  )?;
   Ok(Pkcs8 {
     private_key,
     public_key,
@@ -226,14 +261,122 @@ pub(crate) fn decode_pkcs8_raw<E: KeyError, const SK: usize, const PK: usize>(
   der: &[u8],
   algorithm: Algorithm,
 ) -> Result<(&[u8; SK], Option<&[u8; PK]>), E> {
-  decode_one_asymmetric_key(der, algorithm, fixed)
+  decode_one_asymmetric_key(
+    der,
+    |identifier| oid_without_parameters(identifier, &algorithm.oid()),
+    fixed,
+  )
 }
 
-/// Parse the OneAsymmetricKey container, reading `privateKey` contents with
+/// Parse a OneAsymmetricKey for `oid`, with absent parameters, whose
+/// `privateKey` wraps the raw `SK`-byte key in an inner OCTET STRING: RFC 8410
+/// `CurvePrivateKey`.
+///
+/// Returns the private key and the version 2 public key, whose consistency is
+/// the caller's check. Rejections follow the structure in order.
+#[cfg(feature = "ed25519")]
+pub(crate) fn decode_pkcs8_wrapped<'a, E: KeyError, const SK: usize, const PK: usize>(
+  der: &'a [u8],
+  oid: &[u8],
+) -> Result<(&'a [u8; SK], Option<&'a [u8; PK]>), E> {
+  decode_one_asymmetric_key(
+    der,
+    |identifier| oid_without_parameters(identifier, oid),
+    |contents| {
+      let mut wrapper = der::DerReader::<E>::new(contents);
+      let key = fixed(wrapper.read_primitive(TAG_OCTET_STRING)?)?;
+      wrapper.finish()?;
+      Ok(key)
+    },
+  )
+}
+
+/// RFC 5915 `ECPrivateKey` fields, borrowed from the input.
+#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+pub(crate) struct EcPrivateKey<'a, const N: usize, const PK: usize> {
+  /// The big-endian private scalar; its range is the caller's check.
+  pub(crate) scalar: &'a [u8; N],
+  /// The optional public key; its consistency is the caller's check.
+  pub(crate) public_key: Option<&'a [u8; PK]>,
+}
+
+/// Parse a OneAsymmetricKey for `algorithm` with the RFC 5480 `namedCurve`
+/// parameters `curve`, whose `privateKey` holds an RFC 5915 `ECPrivateKey`
+/// for the same curve with an `N`-byte scalar and a `PK`-byte public key.
+///
+/// Returns the `ECPrivateKey` and the version 2 container public key. The
+/// consistency of each public key is the caller's check. Rejections follow
+/// the structure in order.
+#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+pub(crate) fn decode_pkcs8_ec<'a, E: KeyError, const N: usize, const PK: usize>(
+  der: &'a [u8],
+  algorithm: &[u8],
+  curve: &[u8],
+) -> Result<(EcPrivateKey<'a, N, PK>, Option<&'a [u8; PK]>), E> {
+  decode_one_asymmetric_key(
+    der,
+    |identifier| {
+      let mut identifier = der::DerReader::<E>::new(identifier);
+      if identifier.read_primitive(TAG_OBJECT_IDENTIFIER)? != algorithm {
+        return Err(E::UNSUPPORTED_ALGORITHM);
+      }
+      // RFC 5480 permits only the namedCurve choice.
+      if identifier.read_primitive(TAG_OBJECT_IDENTIFIER)? != curve {
+        return Err(E::UNSUPPORTED_ALGORITHM);
+      }
+      identifier.finish()
+    },
+    |contents| decode_ec_private_key(contents, curve),
+  )
+}
+
+/// Parse an RFC 5915 `ECPrivateKey`: version 1, an `N`-byte private key,
+/// optional parameters that must name `curve`, and an optional `PK`-byte
+/// public key.
+///
+/// RFC 5915 requires the parameters, but PKCS #8 writers omit them because the
+/// algorithm identifier already names the curve, so absence is accepted.
+#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+pub(crate) fn decode_ec_private_key<'a, E: KeyError, const N: usize, const PK: usize>(
+  der: &'a [u8],
+  curve: &[u8],
+) -> Result<EcPrivateKey<'a, N, PK>, E> {
+  let mut root = der::DerReader::<E>::new(der);
+  let fields = root.read_constructed(TAG_SEQUENCE)?;
+  root.finish()?;
+
+  let mut fields = der::DerReader::<E>::new(fields);
+  // ecPrivkeyVer1.
+  if fields.read_primitive(TAG_INTEGER)? != [1] {
+    return Err(E::MALFORMED_DER);
+  }
+  let scalar = fixed(fields.read_primitive(TAG_OCTET_STRING)?)?;
+  if fields.peek_byte() == Some(TAG_EC_PARAMETERS) {
+    let mut parameters = der::DerReader::<E>::new(fields.read_constructed(TAG_EC_PARAMETERS)?);
+    if parameters.read_primitive(TAG_OBJECT_IDENTIFIER)? != curve {
+      return Err(E::UNSUPPORTED_ALGORITHM);
+    }
+    parameters.finish()?;
+  }
+  let public_key = if fields.peek_byte() == Some(TAG_EC_PUBLIC_KEY) {
+    let mut wrapper = der::DerReader::<E>::new(fields.read_constructed(TAG_EC_PUBLIC_KEY)?);
+    let key = public_key(wrapper.read_primitive(TAG_BIT_STRING)?)?;
+    wrapper.finish()?;
+    Some(key)
+  } else {
+    None
+  };
+  fields.finish()?;
+
+  Ok(EcPrivateKey { scalar, public_key })
+}
+
+/// Parse the OneAsymmetricKey container: check the AlgorithmIdentifier
+/// contents with `identifier`, then read the `privateKey` contents with
 /// `private_key` at their position in the structure.
 fn decode_one_asymmetric_key<'a, E: KeyError, P, const PK: usize>(
   der: &'a [u8],
-  algorithm: Algorithm,
+  identifier: impl FnOnce(&'a [u8]) -> Result<(), E>,
   private_key: impl FnOnce(&'a [u8]) -> Result<P, E>,
 ) -> Result<(P, Option<&'a [u8; PK]>), E> {
   let mut root = der::DerReader::<E>::new(der);
@@ -248,12 +391,7 @@ fn decode_one_asymmetric_key<'a, E: KeyError, P, const PK: usize>(
     _ => return Err(E::MALFORMED_DER),
   };
 
-  let mut identifier = der::DerReader::<E>::new(info.read_constructed(TAG_SEQUENCE)?);
-  if identifier.read_primitive(TAG_OBJECT_IDENTIFIER)? != algorithm.oid() {
-    return Err(E::UNSUPPORTED_ALGORITHM);
-  }
-  // Parameters must be absent.
-  identifier.finish()?;
+  identifier(info.read_constructed(TAG_SEQUENCE)?)?;
 
   let private_key = private_key(info.read_primitive(TAG_OCTET_STRING)?)?;
   if info.peek_byte() == Some(TAG_ATTRIBUTES) {
@@ -425,7 +563,7 @@ pub(crate) const fn concat<const H: usize, const P: usize, const N: usize>(
 }
 
 /// Write `header` followed by `payload` into the caller's buffer.
-#[cfg(any(feature = "ml-dsa", feature = "ml-kem"))]
+#[cfg(any(feature = "ed25519", feature = "ml-dsa", feature = "ml-kem"))]
 pub(crate) fn write<const H: usize, const P: usize, const N: usize>(
   header: &[u8; H],
   payload: &[u8; P],
@@ -438,6 +576,7 @@ pub(crate) fn write<const H: usize, const P: usize, const N: usize>(
 }
 
 /// Octets in the DER length of `len`.
+#[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
 const fn length_octets(len: usize) -> usize {
   if len < 0x80 {
     1
@@ -450,6 +589,7 @@ const fn length_octets(len: usize) -> usize {
 }
 
 /// Write the DER length of `len` at `at`; return the next position.
+#[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
 const fn put_length<const H: usize>(out: &mut [u8; H], at: usize, len: usize) -> usize {
   let [.., high, low] = len.to_be_bytes();
   match length_octets(len) {
@@ -460,6 +600,7 @@ const fn put_length<const H: usize>(out: &mut [u8; H], at: usize, len: usize) ->
 }
 
 /// Copy `bytes` to `at`; return the next position.
+#[cfg(any(feature = "ml-dsa", feature = "ml-kem", feature = "slh-dsa"))]
 const fn put<const H: usize>(out: &mut [u8; H], at: usize, bytes: &[u8]) -> usize {
   let mut i = 0;
   while i < bytes.len() {

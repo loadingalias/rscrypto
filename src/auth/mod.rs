@@ -354,7 +354,7 @@ pub use ed25519::{
   diag_ed25519_verify_r_decode_digest, diag_ed25519_verify_scalars,
 };
 #[cfg(feature = "ed25519")]
-pub use ed25519::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
+pub use ed25519::{Ed25519KeyError, Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 #[cfg(feature = "hkdf")]
 pub use hkdf::{HkdfOutputLengthError, HkdfSha256, HkdfSha384, HkdfSha512};
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "hkdf"))]

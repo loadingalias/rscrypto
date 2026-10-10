@@ -453,7 +453,7 @@ pub use auth::{EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP2
 #[cfg(feature = "ecdsa-p384")]
 pub use auth::{EcdsaP384Keypair, EcdsaP384PublicKey, EcdsaP384SecretKey, EcdsaP384Signature};
 #[cfg(feature = "ed25519")]
-pub use auth::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
+pub use auth::{Ed25519KeyError, Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 #[cfg(feature = "slh-dsa")]
 pub use auth::{
   HashSlhDsaSha2_128fWithSha256, HashSlhDsaSha2_128fWithSha256PublicKey, HashSlhDsaSha2_128fWithSha256SecretKey,

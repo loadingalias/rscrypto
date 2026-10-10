@@ -1,9 +1,10 @@
-use rscrypto::{Ed25519SecretKey, Ed25519Signature};
+use rscrypto::{Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 use rscrypto_fuzz::{FuzzInput, some_or_return};
 
 pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let key_bytes: [u8; 32] = some_or_return!(input.bytes());
+  let mutation = some_or_return!(input.bit_mutation());
   let message = input.rest();
 
   let secret = Ed25519SecretKey::from_bytes(key_bytes);
@@ -25,6 +26,33 @@ pub(super) fn run(data: &[u8]) {
       public.verify(&wrong, &sig).is_err(),
       "accepted signature for wrong message"
     );
+  }
+
+  // Exports round-trip, and an accepted input of the export length is the
+  // version 1 layout: a version 2 encoding is longer.
+  let mut pkcs8 = [0; Ed25519SecretKey::PKCS8_DER_LENGTH];
+  secret.to_pkcs8_der_into(&mut pkcs8);
+  assert_eq!(
+    Ed25519SecretKey::from_pkcs8_der(&pkcs8).map(|imported| *imported.as_bytes()),
+    Ok(key_bytes),
+    "PKCS #8 export must import"
+  );
+  assert_eq!(
+    Ed25519PublicKey::from_spki_der(&public.to_spki_der()).map(|imported| imported.to_bytes()),
+    Ok(public.to_bytes()),
+    "SPKI export must import"
+  );
+  mutation.apply(&mut pkcs8);
+  for candidate in [pkcs8.as_slice(), message] {
+    if let Ok(parsed) = Ed25519SecretKey::from_pkcs8_der(candidate)
+      && candidate.len() == Ed25519SecretKey::PKCS8_DER_LENGTH
+    {
+      let mut encoded = [0; Ed25519SecretKey::PKCS8_DER_LENGTH];
+      parsed.to_pkcs8_der_into(&mut encoded);
+      assert_eq!(encoded.as_slice(), candidate, "accepted PKCS #8 must be canonical");
+    }
+    // Arbitrary byte lengths and contents must not panic at a public parser.
+    let _spki = Ed25519PublicKey::from_spki_der(candidate);
   }
 
   // Differential: rscrypto ↔ ed25519-dalek

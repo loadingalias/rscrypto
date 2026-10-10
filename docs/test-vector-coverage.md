@@ -17,7 +17,7 @@ Test filenames are the stable entry points.
 | HMAC, HKDF, PBKDF2, Poly1305 | Official vectors, Wycheproof where the public profile maps, properties, and differentials. | No Wycheproof suite maps to HMAC-SHA3. Only the tag widths that the API exposes map. |
 | Argon2 and scrypt | Published vectors, RustCrypto differentials, kernel and parallel tests, and Miri. | No Wycheproof suite exists for PHC strings. |
 | AEADs | Wycheproof where the variant and nonce width map, official vectors, RustCrypto oracles, corruption tests, and backend equivalence. | The typed API rejects unsupported key and nonce sizes, so those cases are filtered out. Wycheproof's older Ascon variant does not match NIST Ascon-AEAD128. |
-| ECDSA, Ed25519, X25519 | RFC or official vectors, Wycheproof, RustCrypto and dalek oracles, properties, and fuzzing. | ASN.1, JWK, and variable-length profiles are excluded where the public API accepts only fixed arrays. |
+| ECDSA, Ed25519, X25519 | RFC or official vectors, Wycheproof, RustCrypto and dalek oracles, properties, and fuzzing. Key encodings: see [ECDSA and Ed25519 key encodings](#ecdsa-and-ed25519-key-encodings). | JWK and variable-length profiles are excluded where the public API accepts only fixed arrays. |
 | P-256 ECDH | All 25 NIST CAVP P-256 ECC CDH component records, all 355 pinned Wycheproof `ecpoint` cases, RustCrypto differentials, a ring cross-agreement, Miri, and fuzzing. | The public API accepts only canonical uncompressed SEC1 points. Wycheproof supplies the full-width leading-zero and all-zero x-coordinate cases. The NIST slice has no full leading-zero byte. |
 | P-384 ECDH | All 25 NIST CAVP P-384 ECC CDH component records, all 790 pinned Wycheproof `ecpoint` cases, RustCrypto differentials and properties, a ring cross-agreement, and fuzzing. | The public API accepts only canonical uncompressed SEC1 points. |
 | ML-KEM-512/768/1024 | See [ML-KEM evidence](#ml-kem-evidence). | CCTV's unlucky-sampling and accumulated vectors target the FIPS 203 draft and are not imported. Wycheproof's high-rejection matrix seeds cover sampling under the final standard. |
@@ -52,6 +52,20 @@ and RustCrypto differentials in `tests/ecdsa_oracle.rs`.
 They cover digest truncation, hash selection, message boundaries, and rejection of changed messages,
 keys, and signatures.
 The vendored ECDSA Wycheproof suites cover P-256/SHA-256 and P-384/SHA-384.
+
+### ECDSA and Ed25519 key encodings
+
+`tests/ecdsa_pkix.rs` exchanges P-256 and P-384 PKCS #8, SEC1, and SPKI keys with RustCrypto `p256`/`p384`
+0.14.0, ring 0.17.14, and the OpenSSL CLI, in both directions.
+The PKCS #8 export equals the RustCrypto and OpenSSL encodings byte for byte.
+DER signatures equal RustCrypto's encoding, round-trip through `from_der`, and verify under ring and
+`openssl pkeyutl`.
+`tests/ed25519_pkix.rs` round-trips the RFC 8410 section 10 public and private keys and exchanges keys with
+ring 0.17.14 and the OpenSSL CLI.
+Both files have a rejection test for each container, identifier, scalar, and public-key rule.
+The `auth_ecdsa_sign` and `auth_ed25519` fuzz targets check export round trips, canonical acceptance,
+and parser robustness.
+The OpenSSL exchanges run only where `openssl` is installed.
 
 ## Run the evidence
 

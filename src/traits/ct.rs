@@ -571,6 +571,11 @@ pub(crate) mod tests {
           crate::Ed25519SecretKey::from_bytes([7; 32]),
         ))
       });
+      let mut der = [0; crate::Ed25519SecretKey::PKCS8_DER_LENGTH];
+      secret.to_pkcs8_der_into(&mut der);
+      covered("Ed25519 PKCS #8 import", || {
+        core::hint::black_box(crate::Ed25519SecretKey::from_pkcs8_der(&der).expect("PKCS #8 import"))
+      });
     }
     #[cfg(feature = "ecdsa-p256")]
     {
@@ -589,6 +594,15 @@ pub(crate) mod tests {
           Ok::<(), ()>(())
         }))
       });
+      let mut der = [0; crate::EcdsaP256SecretKey::PKCS8_DER_LENGTH];
+      covered("P-256 ECDSA PKCS #8 export", || secret.to_pkcs8_der_into(&mut der));
+      covered("P-256 ECDSA PKCS #8 import", || {
+        core::hint::black_box(crate::EcdsaP256SecretKey::from_pkcs8_der(&der).expect("PKCS #8 import"))
+      });
+      // The export's privateKey contents are a SEC1 ECPrivateKey.
+      covered("P-256 ECDSA SEC1 import", || {
+        core::hint::black_box(crate::EcdsaP256SecretKey::from_sec1_der(&der[29..]).expect("SEC1 import"))
+      });
     }
     #[cfg(feature = "ecdsa-p384")]
     {
@@ -606,6 +620,15 @@ pub(crate) mod tests {
           blind.fill(3);
           Ok::<(), ()>(())
         }))
+      });
+      let mut der = [0; crate::EcdsaP384SecretKey::PKCS8_DER_LENGTH];
+      covered("P-384 ECDSA PKCS #8 export", || secret.to_pkcs8_der_into(&mut der));
+      covered("P-384 ECDSA PKCS #8 import", || {
+        core::hint::black_box(crate::EcdsaP384SecretKey::from_pkcs8_der(&der).expect("PKCS #8 import"))
+      });
+      // The export's privateKey contents are a SEC1 ECPrivateKey.
+      covered("P-384 ECDSA SEC1 import", || {
+        core::hint::black_box(crate::EcdsaP384SecretKey::from_sec1_der(&der[27..]).expect("SEC1 import"))
       });
     }
     #[cfg(feature = "p256-ecdh")]
