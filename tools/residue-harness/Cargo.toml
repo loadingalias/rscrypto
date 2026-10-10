@@ -20,7 +20,7 @@ strip = false
 panic = "abort"
 
 [dependencies]
-rscrypto = { path = "../..", default-features = false, features = ["alloc", "ml-dsa", "ml-kem"] }
+rscrypto = { path = "../..", default-features = false, features = ["alloc", "ml-dsa", "ml-kem", "slh-dsa"] }
 
 [features]
 portable-only = ["rscrypto/portable-only"]

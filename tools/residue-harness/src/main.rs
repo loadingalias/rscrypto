@@ -540,8 +540,8 @@ mldsa!(mldsa87, MlDsa87);
 
 /// A seed with distinct bytes, so the seed itself is a usable needle.
 const MLDSA_PKCS8_SEED: [u8; 32] = [
-  0x9e, 0x37, 0x79, 0xb9, 0x7f, 0x4a, 0x7c, 0x15, 0xf3, 0x9c, 0xc0, 0x60, 0x5c, 0xed, 0xc8, 0x34, 0x10, 0x82, 0x27, 0x6b,
-  0xf3, 0xa2, 0x72, 0x39, 0x5a, 0x6c, 0xd4, 0x1e, 0x8b, 0x0f, 0x31, 0xc7,
+  0x9e, 0x37, 0x79, 0xb9, 0x7f, 0x4a, 0x7c, 0x15, 0xf3, 0x9c, 0xc0, 0x60, 0x5c, 0xed, 0xc8, 0x34, 0x10, 0x82, 0x27,
+  0x6b, 0xf3, 0xa2, 0x72, 0x39, 0x5a, 0x6c, 0xd4, 0x1e, 0x8b, 0x0f, 0x31, 0xc7,
 ];
 
 macro_rules! mldsa_pkcs8 {
@@ -594,6 +594,222 @@ macro_rules! mldsa_pkcs8 {
 mldsa_pkcs8!(mldsa44_pkcs8, MlDsa44, MlDsa44SecretKey, MlDsa44Seed);
 mldsa_pkcs8!(mldsa65_pkcs8, MlDsa65, MlDsa65SecretKey, MlDsa65Seed);
 mldsa_pkcs8!(mldsa87_pkcs8, MlDsa87, MlDsa87SecretKey, MlDsa87Seed);
+
+/// Distinct SK.seed || SK.prf || PK.seed bytes, so each field is a usable needle.
+const SLHDSA_SEEDS: [u8; 96] = {
+  let mut bytes = [0u8; 96];
+  let mut state = 0x7F4A_7C15_u32;
+  let mut index = 0;
+  while index < bytes.len() {
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    bytes[index] = state.to_le_bytes()[1];
+    index += 1;
+  }
+  bytes
+};
+/// Hedged-signing randomness, also a needle.
+const SLHDSA_ADDRND: [u8; 32] = [
+  0x5c, 0xed, 0xc8, 0x34, 0x10, 0x82, 0x27, 0x6b, 0xf3, 0xa2, 0x72, 0x39, 0x5a, 0x6c, 0xd4, 0x1e, 0x8b, 0x0f, 0x31,
+  0xc7, 0x9e, 0x37, 0x79, 0xb9, 0x7f, 0x4a, 0x7c, 0x15, 0xf3, 0x9c, 0xc0, 0x60,
+];
+const SLHDSA_MESSAGE: &[u8] = b"rscrypto SLH-DSA residue";
+
+/// Signature output outside every scanned region, so the caller's buffer is
+/// not counted as operation stack. The largest signature is SLH-DSA-*-256f.
+struct SignatureBuffer(UnsafeCell<[u8; 49_856]>);
+
+// SAFETY: the harness runs on one core with no interrupts.
+unsafe impl Sync for SignatureBuffer {}
+
+static SLHDSA_SIGNATURE: SignatureBuffer = SignatureBuffer(UnsafeCell::new([0; 49_856]));
+
+fn slhdsa_signature<const N: usize>() -> &'static mut [u8; N] {
+  // SAFETY: used by one scenario function at a time, with no other live
+  // reference into the buffer.
+  let buffer = unsafe { &mut *SLHDSA_SIGNATURE.0.get() };
+  buffer.first_chunk_mut().expect("the buffer holds every signature")
+}
+
+/// A key built by `prepare`, outside every scanned region.
+struct KeyCell<T>(UnsafeCell<Option<T>>);
+
+// SAFETY: the harness runs on one core with no interrupts.
+unsafe impl<T> Sync for KeyCell<T> {}
+
+impl<T> KeyCell<T> {
+  const fn new() -> Self {
+    Self(UnsafeCell::new(None))
+  }
+
+  fn set(&self, value: T) {
+    // SAFETY: written only by a `prepare` function, never while borrowed.
+    unsafe { *self.0.get() = Some(value) };
+  }
+
+  fn get(&self) -> &T {
+    // SAFETY: read only after `prepare` has set it, never while written.
+    unsafe { (*self.0.get()).as_ref().expect("prepared key") }
+  }
+}
+
+macro_rules! slhdsa {
+  ($module:ident, $profile:ident, $secret:ident, $hash_secret:ident, $n:literal, $digest:literal) => {
+    mod $module {
+      use super::*;
+      use rscrypto::{$hash_secret, $profile, $secret};
+
+      static SECRET: KeyCell<$secret> = KeyCell::new();
+      static HASH_SECRET: KeyCell<$hash_secret> = KeyCell::new();
+
+      fn seeds(out: &mut [u8]) -> Result<(), rscrypto::SlhDsaError> {
+        out.copy_from_slice(black_box(&SLHDSA_SEEDS[..3 * $n]));
+        Ok(())
+      }
+
+      pub(super) fn keygen() {
+        let keys = $profile::generate_keypair(seeds).expect("key generation");
+        black_box(&keys);
+      }
+
+      pub(super) fn prepare_import() {
+        let (_, key) = $profile::generate_keypair(seeds).expect("key generation");
+        // SAFETY: no reference into KEY_INPUT is live while it is written.
+        unsafe { (&mut *KEY_INPUT.0.get())[..$secret::LENGTH].copy_from_slice(key.expose_secret().as_bytes()) };
+      }
+
+      pub(super) fn import() {
+        let key = $secret::try_from_slice(key_input($secret::LENGTH)).expect("import");
+        black_box(&key);
+      }
+
+      pub(super) fn prepare_pkcs8() {
+        let (_, key) = $profile::generate_keypair(seeds).expect("key generation");
+        key.to_pkcs8_der_into(key_input_mut());
+      }
+
+      pub(super) fn pkcs8() {
+        let key = $secret::from_pkcs8_der(key_input($secret::PKCS8_DER_LENGTH)).expect("import");
+        black_box(&key);
+      }
+
+      pub(super) fn prepare_keys() {
+        let (_, key) = $profile::generate_keypair(seeds).expect("key generation");
+        HASH_SECRET.set($hash_secret::try_from_slice(key.expose_secret().as_bytes()).expect("import"));
+        SECRET.set(key);
+      }
+
+      pub(super) fn sign() {
+        let signature = slhdsa_signature::<{ $profile::SIGNATURE_LENGTH }>();
+        let result = SECRET
+          .get()
+          .sign_deterministic(black_box(SLHDSA_MESSAGE), b"", signature);
+        black_box(&result);
+      }
+
+      pub(super) fn sign_hedged() {
+        let signature = slhdsa_signature::<{ $profile::SIGNATURE_LENGTH }>();
+        let result = SECRET.get().sign_with(
+          black_box(SLHDSA_MESSAGE),
+          b"",
+          |out| {
+            out.copy_from_slice(black_box(&SLHDSA_ADDRND[..$n]));
+            Ok(())
+          },
+          signature,
+        );
+        black_box(&result);
+      }
+
+      pub(super) fn sign_prehash() {
+        let signature = slhdsa_signature::<{ $profile::SIGNATURE_LENGTH }>();
+        let result = HASH_SECRET
+          .get()
+          .sign_prehash_deterministic(black_box(&[0x42; $digest]), b"", signature);
+        black_box(&result);
+      }
+
+      pub(super) fn prepare_verify() {
+        prepare_keys();
+        sign();
+      }
+
+      pub(super) fn verify() {
+        let signature = slhdsa_signature::<{ $profile::SIGNATURE_LENGTH }>();
+        let result = SECRET.get().public_key().verify(black_box(SLHDSA_MESSAGE), signature);
+        black_box(&result).expect("verification");
+      }
+
+      pub(super) fn needles() {
+        needle("sk_seed", &SLHDSA_SEEDS[..$n]);
+        needle("sk_prf", &SLHDSA_SEEDS[$n..2 * $n]);
+      }
+
+      pub(super) fn hedged_needles() {
+        needles();
+        needle("addrnd", &SLHDSA_ADDRND[..$n]);
+      }
+    }
+  };
+}
+
+slhdsa!(
+  slhdsa_sha2_128s,
+  SlhDsaSha2_128s,
+  SlhDsaSha2_128sSecretKey,
+  HashSlhDsaSha2_128sWithSha256SecretKey,
+  16,
+  32
+);
+slhdsa!(
+  slhdsa_sha2_128f,
+  SlhDsaSha2_128f,
+  SlhDsaSha2_128fSecretKey,
+  HashSlhDsaSha2_128fWithSha256SecretKey,
+  16,
+  32
+);
+slhdsa!(
+  slhdsa_sha2_192f,
+  SlhDsaSha2_192f,
+  SlhDsaSha2_192fSecretKey,
+  HashSlhDsaSha2_192fWithSha512SecretKey,
+  24,
+  64
+);
+slhdsa!(
+  slhdsa_sha2_256f,
+  SlhDsaSha2_256f,
+  SlhDsaSha2_256fSecretKey,
+  HashSlhDsaSha2_256fWithSha512SecretKey,
+  32,
+  64
+);
+slhdsa!(
+  slhdsa_shake_128f,
+  SlhDsaShake128f,
+  SlhDsaShake128fSecretKey,
+  HashSlhDsaShake128fWithShake128SecretKey,
+  16,
+  32
+);
+slhdsa!(
+  slhdsa_shake_192f,
+  SlhDsaShake192f,
+  SlhDsaShake192fSecretKey,
+  HashSlhDsaShake192fWithShake256SecretKey,
+  24,
+  64
+);
+slhdsa!(
+  slhdsa_shake_256f,
+  SlhDsaShake256f,
+  SlhDsaShake256fSecretKey,
+  HashSlhDsaShake256fWithShake256SecretKey,
+  32,
+  64
+);
 
 macro_rules! scenario {
   ($name:literal, $expect:literal, $run:path, $needles:path) => {
@@ -840,6 +1056,342 @@ const SCENARIOS: &[Scenario] = &[
     mldsa87_pkcs8::prepare_seed,
     mldsa87_pkcs8::seed_owner,
     mldsa87_pkcs8::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-128s-keygen",
+    "report",
+    slhdsa_sha2_128s::keygen,
+    slhdsa_sha2_128s::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-128s-import",
+    "report",
+    slhdsa_sha2_128s::prepare_import,
+    slhdsa_sha2_128s::import,
+    slhdsa_sha2_128s::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-128s-pkcs8",
+    "report",
+    slhdsa_sha2_128s::prepare_pkcs8,
+    slhdsa_sha2_128s::pkcs8,
+    slhdsa_sha2_128s::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-128s-sign",
+    "none",
+    slhdsa_sha2_128s::prepare_keys,
+    slhdsa_sha2_128s::sign,
+    slhdsa_sha2_128s::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-128s-sign-hedged",
+    "none",
+    slhdsa_sha2_128s::prepare_keys,
+    slhdsa_sha2_128s::sign_hedged,
+    slhdsa_sha2_128s::hedged_needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-128s-sign-prehash",
+    "none",
+    slhdsa_sha2_128s::prepare_keys,
+    slhdsa_sha2_128s::sign_prehash,
+    slhdsa_sha2_128s::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-128s-verify",
+    "none",
+    slhdsa_sha2_128s::prepare_verify,
+    slhdsa_sha2_128s::verify,
+    slhdsa_sha2_128s::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-128f-keygen",
+    "report",
+    slhdsa_sha2_128f::keygen,
+    slhdsa_sha2_128f::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-128f-import",
+    "report",
+    slhdsa_sha2_128f::prepare_import,
+    slhdsa_sha2_128f::import,
+    slhdsa_sha2_128f::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-128f-pkcs8",
+    "report",
+    slhdsa_sha2_128f::prepare_pkcs8,
+    slhdsa_sha2_128f::pkcs8,
+    slhdsa_sha2_128f::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-128f-sign",
+    "none",
+    slhdsa_sha2_128f::prepare_keys,
+    slhdsa_sha2_128f::sign,
+    slhdsa_sha2_128f::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-128f-sign-hedged",
+    "none",
+    slhdsa_sha2_128f::prepare_keys,
+    slhdsa_sha2_128f::sign_hedged,
+    slhdsa_sha2_128f::hedged_needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-128f-sign-prehash",
+    "none",
+    slhdsa_sha2_128f::prepare_keys,
+    slhdsa_sha2_128f::sign_prehash,
+    slhdsa_sha2_128f::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-128f-verify",
+    "none",
+    slhdsa_sha2_128f::prepare_verify,
+    slhdsa_sha2_128f::verify,
+    slhdsa_sha2_128f::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-192f-keygen",
+    "report",
+    slhdsa_sha2_192f::keygen,
+    slhdsa_sha2_192f::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-192f-import",
+    "report",
+    slhdsa_sha2_192f::prepare_import,
+    slhdsa_sha2_192f::import,
+    slhdsa_sha2_192f::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-192f-pkcs8",
+    "report",
+    slhdsa_sha2_192f::prepare_pkcs8,
+    slhdsa_sha2_192f::pkcs8,
+    slhdsa_sha2_192f::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-192f-sign",
+    "none",
+    slhdsa_sha2_192f::prepare_keys,
+    slhdsa_sha2_192f::sign,
+    slhdsa_sha2_192f::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-192f-sign-hedged",
+    "none",
+    slhdsa_sha2_192f::prepare_keys,
+    slhdsa_sha2_192f::sign_hedged,
+    slhdsa_sha2_192f::hedged_needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-192f-sign-prehash",
+    "none",
+    slhdsa_sha2_192f::prepare_keys,
+    slhdsa_sha2_192f::sign_prehash,
+    slhdsa_sha2_192f::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-192f-verify",
+    "none",
+    slhdsa_sha2_192f::prepare_verify,
+    slhdsa_sha2_192f::verify,
+    slhdsa_sha2_192f::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-256f-keygen",
+    "report",
+    slhdsa_sha2_256f::keygen,
+    slhdsa_sha2_256f::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-256f-import",
+    "report",
+    slhdsa_sha2_256f::prepare_import,
+    slhdsa_sha2_256f::import,
+    slhdsa_sha2_256f::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-256f-pkcs8",
+    "report",
+    slhdsa_sha2_256f::prepare_pkcs8,
+    slhdsa_sha2_256f::pkcs8,
+    slhdsa_sha2_256f::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-256f-sign",
+    "none",
+    slhdsa_sha2_256f::prepare_keys,
+    slhdsa_sha2_256f::sign,
+    slhdsa_sha2_256f::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-256f-sign-hedged",
+    "none",
+    slhdsa_sha2_256f::prepare_keys,
+    slhdsa_sha2_256f::sign_hedged,
+    slhdsa_sha2_256f::hedged_needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-256f-sign-prehash",
+    "none",
+    slhdsa_sha2_256f::prepare_keys,
+    slhdsa_sha2_256f::sign_prehash,
+    slhdsa_sha2_256f::needles
+  ),
+  scenario!(
+    "slh-dsa-sha2-256f-verify",
+    "none",
+    slhdsa_sha2_256f::prepare_verify,
+    slhdsa_sha2_256f::verify,
+    slhdsa_sha2_256f::needles
+  ),
+  scenario!(
+    "slh-dsa-shake-128f-keygen",
+    "report",
+    slhdsa_shake_128f::keygen,
+    slhdsa_shake_128f::needles
+  ),
+  scenario!(
+    "slh-dsa-shake-128f-import",
+    "report",
+    slhdsa_shake_128f::prepare_import,
+    slhdsa_shake_128f::import,
+    slhdsa_shake_128f::needles
+  ),
+  scenario!(
+    "slh-dsa-shake-128f-pkcs8",
+    "report",
+    slhdsa_shake_128f::prepare_pkcs8,
+    slhdsa_shake_128f::pkcs8,
+    slhdsa_shake_128f::needles
+  ),
+  scenario!(
+    "slh-dsa-shake-128f-sign",
+    "none",
+    slhdsa_shake_128f::prepare_keys,
+    slhdsa_shake_128f::sign,
+    slhdsa_shake_128f::needles
+  ),
+  scenario!(
+    "slh-dsa-shake-128f-sign-hedged",
+    "none",
+    slhdsa_shake_128f::prepare_keys,
+    slhdsa_shake_128f::sign_hedged,
+    slhdsa_shake_128f::hedged_needles
+  ),
+  scenario!(
+    "slh-dsa-shake-128f-sign-prehash",
+    "none",
+    slhdsa_shake_128f::prepare_keys,
+    slhdsa_shake_128f::sign_prehash,
+    slhdsa_shake_128f::needles
+  ),
+  scenario!(
+    "slh-dsa-shake-128f-verify",
+    "none",
+    slhdsa_shake_128f::prepare_verify,
+    slhdsa_shake_128f::verify,
+    slhdsa_shake_128f::needles
+  ),
+  scenario!(
+    "slh-dsa-shake-192f-keygen",
+    "report",
+    slhdsa_shake_192f::keygen,
+    slhdsa_shake_192f::needles
+  ),
+  scenario!(
+    "slh-dsa-shake-192f-import",
+    "report",
+    slhdsa_shake_192f::prepare_import,
+    slhdsa_shake_192f::import,
+    slhdsa_shake_192f::needles
+  ),
+  scenario!(
+    "slh-dsa-shake-192f-pkcs8",
+    "report",
+    slhdsa_shake_192f::prepare_pkcs8,
+    slhdsa_shake_192f::pkcs8,
+    slhdsa_shake_192f::needles
+  ),
+  scenario!(
+    "slh-dsa-shake-192f-sign",
+    "none",
+    slhdsa_shake_192f::prepare_keys,
+    slhdsa_shake_192f::sign,
+    slhdsa_shake_192f::needles
+  ),
+  scenario!(
+    "slh-dsa-shake-192f-sign-hedged",
+    "none",
+    slhdsa_shake_192f::prepare_keys,
+    slhdsa_shake_192f::sign_hedged,
+    slhdsa_shake_192f::hedged_needles
+  ),
+  scenario!(
+    "slh-dsa-shake-192f-sign-prehash",
+    "none",
+    slhdsa_shake_192f::prepare_keys,
+    slhdsa_shake_192f::sign_prehash,
+    slhdsa_shake_192f::needles
+  ),
+  scenario!(
+    "slh-dsa-shake-192f-verify",
+    "none",
+    slhdsa_shake_192f::prepare_verify,
+    slhdsa_shake_192f::verify,
+    slhdsa_shake_192f::needles
+  ),
+  scenario!(
+    "slh-dsa-shake-256f-keygen",
+    "report",
+    slhdsa_shake_256f::keygen,
+    slhdsa_shake_256f::needles
+  ),
+  scenario!(
+    "slh-dsa-shake-256f-import",
+    "report",
+    slhdsa_shake_256f::prepare_import,
+    slhdsa_shake_256f::import,
+    slhdsa_shake_256f::needles
+  ),
+  scenario!(
+    "slh-dsa-shake-256f-pkcs8",
+    "report",
+    slhdsa_shake_256f::prepare_pkcs8,
+    slhdsa_shake_256f::pkcs8,
+    slhdsa_shake_256f::needles
+  ),
+  scenario!(
+    "slh-dsa-shake-256f-sign",
+    "none",
+    slhdsa_shake_256f::prepare_keys,
+    slhdsa_shake_256f::sign,
+    slhdsa_shake_256f::needles
+  ),
+  scenario!(
+    "slh-dsa-shake-256f-sign-hedged",
+    "none",
+    slhdsa_shake_256f::prepare_keys,
+    slhdsa_shake_256f::sign_hedged,
+    slhdsa_shake_256f::hedged_needles
+  ),
+  scenario!(
+    "slh-dsa-shake-256f-sign-prehash",
+    "none",
+    slhdsa_shake_256f::prepare_keys,
+    slhdsa_shake_256f::sign_prehash,
+    slhdsa_shake_256f::needles
+  ),
+  scenario!(
+    "slh-dsa-shake-256f-verify",
+    "none",
+    slhdsa_shake_256f::prepare_verify,
+    slhdsa_shake_256f::verify,
+    slhdsa_shake_256f::needles
   ),
 ];
 

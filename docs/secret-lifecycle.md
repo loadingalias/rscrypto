@@ -190,8 +190,10 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
 - WOTS+ chain values advance in place in the caller's signature buffer to their revealed positions.
   Signing fails only before it starts, and then zero-fills the buffer.
 - Raw and PKCS #8 import borrow the caller's input and never clear it.
-- **Not measured:** moved-copy residue of the by-value constructors.
-  **Not claimed:** register and spill copies in the hash workers.
+- Signing and verification leave no SK.seed, SK.prf, or `addrnd` bytes in the measured RV32 and
+  Cortex-M runs; key generation and both imports return the key by value and leave moved-from copies.
+  See [the residue results](#optimized-evidence).
+- **Not claimed:** register and spill copies in the hash workers.
   Target qualification is still open.
 
 ### Argon2 and scrypt
@@ -282,6 +284,16 @@ The ML-KEM PKCS #8 scenarios ran the same way:
   as by-value raw import does.
 - `Seed::from_pkcs8_der` returns its owner by value and leaves copies of the seed.
 - Raw results: `benchmark_results/mlkem-pkix-residue-20261009/` (local).
+
+On 2026-10-10 the harness measured SLH-DSA at `1805bcdd` plus its uncommitted scenarios,
+on `nightly-2026-09-30` and QEMU 11.1.2, for SHA2-128s and the six fast sets, which cover every
+SLH-DSA code instantiation:
+
+- Deterministic, hedged, and pre-hash signing leave no SK.seed, SK.prf, or `addrnd` bytes,
+  for every measured set, both boards, and both backends. The scenarios now require this.
+- By-value key generation and PKCS #8 import leave three whole copies of SK.seed and SK.prf
+  on RV32, and two or three on Cortex-M3; raw import leaves two on RV32, and one or two on Cortex-M3.
+- Raw results: `benchmark_results/slhdsa-residue-20261010-final/` (local; `SHA256SUMS` inside).
 
 An earlier campaign, whose harness was removed on 2026-09-28,
 also found 4.2–6.4 KiB of prepared ML-KEM state after import, preparation, and decapsulation.
