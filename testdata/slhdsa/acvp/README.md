@@ -10,8 +10,9 @@ The two key-generation files are unmodified: local names prefix the operation to
 
 The signing and verification files total about 68 MB upstream, mostly hexadecimal signatures,
 so `sigGen.bin` and `sigVer.bin` keep every case in a compact derived form instead.
-[`scripts/test/slhdsa_acvp.py`](../../../scripts/test/slhdsa_acvp.py) `derive` writes them
-after checking each upstream file against these SHA-256 values:
+[`scripts/test/slhdsa_acvp.py`](../../../scripts/test/slhdsa_acvp.py) `derive` writes them, and
+the runtime subset below, after checking each upstream file against these SHA-256 values and
+the keyGen files against `SHA256SUMS`:
 
 | Upstream file | SHA-256 |
 | --- | --- |
@@ -35,6 +36,14 @@ the hexadecimal-decoded upstream values; an absent field is empty.
 The hash replaces only the expected signatures, which signing reproduces; comparing their
 SHA-256 keeps the full byte-equality check up to SHA-256 collision resistance. No case is
 dropped. Regenerating from the pinned files reproduces these bytes exactly.
+
+`runtime.bin` uses the same format, with 12 fields and one record per parameter set, for the
+WASM and WASI vector runner (`tools/wasm-runtime-vectors`): the parameter set; the first keyGen
+case's `skSeed || skPrf || pkSeed`, `pk`, and `sk`; the deterministic external pure sigGen case
+with the shortest message (first on ties), as `sk`, `message`, `context`, and the full expected
+`signature`; and the deterministic external pre-hash case whose `hashAlg` is the RFC 9909 pairing,
+in the same four fields. The runner generates the key, signs the pure case, verifies both
+expected signatures, and requires a changed message and a pure key to reject.
 
 The National Institute of Standards and Technology (NIST) supplies these vectors.
 The upstream licensing notice is retained in `NIST-NOTICE.txt`.

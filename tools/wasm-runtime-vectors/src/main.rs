@@ -481,6 +481,181 @@ fn assert_mldsa_fips204_vectors() {
   kat!("87", MlDsa87, MlDsa87SecretKey, MlDsa87Signature);
 }
 
+/// The SLH-DSA runtime subset: per parameter set, one ACVP keyGen case and the
+/// deterministic pure and RFC 9909 pre-hash sigGen cases
+/// (testdata/slhdsa/acvp/README.md). Each record is length-prefixed fields.
+fn assert_slhdsa_fips205_vectors() {
+  const RUNTIME: &[u8] = include_bytes!("../../../testdata/slhdsa/acvp/runtime.bin");
+
+  fn take<'a>(input: &mut &'a [u8], len: usize) -> &'a [u8] {
+    let (head, tail) = input.split_at(len);
+    *input = tail;
+    head
+  }
+  fn length(input: &mut &[u8]) -> usize {
+    let bytes = take(input, 4).try_into().expect("a length");
+    usize::try_from(u32::from_le_bytes(bytes)).expect("a length fits usize")
+  }
+
+  let mut input = RUNTIME;
+  assert_eq!(take(&mut input, 8), b"SLHACVP1");
+  assert_eq!(length(&mut input), 12);
+  let records = length(&mut input);
+  assert_eq!(records, 12);
+  for _ in 0..records {
+    let mut field = || {
+      let len = length(&mut input);
+      take(&mut input, len)
+    };
+    let set = field();
+    let [
+      seeds,
+      pk,
+      sk,
+      pure_sk,
+      pure_message,
+      pure_context,
+      pure_signature,
+      prehash_sk,
+      prehash_message,
+      prehash_context,
+      prehash_signature,
+    ] = core::array::from_fn(|_| field());
+
+    macro_rules! kat {
+      ($profile:ident, $public:ident, $secret:ident, $hash_public:ident) => {{
+        let (public, secret) = rscrypto::$profile::generate_keypair(|out| {
+          out.copy_from_slice(seeds);
+          Ok(())
+        })
+        .expect("FIPS 205 key generation");
+        assert_eq!(public.as_bytes().as_slice(), pk);
+        assert_eq!(secret.expose_secret().as_bytes().as_slice(), sk);
+
+        let secret = rscrypto::$secret::try_from_slice(pure_sk).expect("FIPS 205 secret key");
+        let mut signature = [0; rscrypto::$profile::SIGNATURE_LENGTH];
+        secret
+          .sign_deterministic(pure_message, pure_context, &mut signature)
+          .expect("FIPS 205 signature");
+        assert_eq!(signature.as_slice(), pure_signature);
+        let public = secret.public_key();
+        public
+          .verify_with_context(pure_message, pure_context, pure_signature)
+          .expect("FIPS 205 verification");
+        let mut changed = pure_message.to_vec();
+        changed[0] ^= 1;
+        public
+          .verify_with_context(&changed, pure_context, pure_signature)
+          .expect_err("changed message");
+
+        let prehash_public = &prehash_sk[prehash_sk.len().strict_sub(rscrypto::$public::LENGTH)..];
+        let hash_public = rscrypto::$hash_public::try_from_slice(prehash_public).expect("FIPS 205 public key");
+        hash_public
+          .verify_with_context(prehash_message, prehash_context, prehash_signature)
+          .expect("HashSLH-DSA verification");
+        rscrypto::$public::try_from_slice(prehash_public)
+          .expect("FIPS 205 public key")
+          .verify_with_context(prehash_message, prehash_context, prehash_signature)
+          .expect_err("a HashSLH-DSA signature is not a pure signature");
+      }};
+    }
+
+    const SETS: [&[u8]; 12] = [
+      b"SLH-DSA-SHA2-128s",
+      b"SLH-DSA-SHA2-128f",
+      b"SLH-DSA-SHA2-192s",
+      b"SLH-DSA-SHA2-192f",
+      b"SLH-DSA-SHA2-256s",
+      b"SLH-DSA-SHA2-256f",
+      b"SLH-DSA-SHAKE-128s",
+      b"SLH-DSA-SHAKE-128f",
+      b"SLH-DSA-SHAKE-192s",
+      b"SLH-DSA-SHAKE-192f",
+      b"SLH-DSA-SHAKE-256s",
+      b"SLH-DSA-SHAKE-256f",
+    ];
+    match SETS
+      .iter()
+      .position(|name| *name == set)
+      .expect("known SLH-DSA parameter set")
+    {
+      0 => kat!(
+        SlhDsaSha2_128s,
+        SlhDsaSha2_128sPublicKey,
+        SlhDsaSha2_128sSecretKey,
+        HashSlhDsaSha2_128sWithSha256PublicKey
+      ),
+      1 => kat!(
+        SlhDsaSha2_128f,
+        SlhDsaSha2_128fPublicKey,
+        SlhDsaSha2_128fSecretKey,
+        HashSlhDsaSha2_128fWithSha256PublicKey
+      ),
+      2 => kat!(
+        SlhDsaSha2_192s,
+        SlhDsaSha2_192sPublicKey,
+        SlhDsaSha2_192sSecretKey,
+        HashSlhDsaSha2_192sWithSha512PublicKey
+      ),
+      3 => kat!(
+        SlhDsaSha2_192f,
+        SlhDsaSha2_192fPublicKey,
+        SlhDsaSha2_192fSecretKey,
+        HashSlhDsaSha2_192fWithSha512PublicKey
+      ),
+      4 => kat!(
+        SlhDsaSha2_256s,
+        SlhDsaSha2_256sPublicKey,
+        SlhDsaSha2_256sSecretKey,
+        HashSlhDsaSha2_256sWithSha512PublicKey
+      ),
+      5 => kat!(
+        SlhDsaSha2_256f,
+        SlhDsaSha2_256fPublicKey,
+        SlhDsaSha2_256fSecretKey,
+        HashSlhDsaSha2_256fWithSha512PublicKey
+      ),
+      6 => kat!(
+        SlhDsaShake128s,
+        SlhDsaShake128sPublicKey,
+        SlhDsaShake128sSecretKey,
+        HashSlhDsaShake128sWithShake128PublicKey
+      ),
+      7 => kat!(
+        SlhDsaShake128f,
+        SlhDsaShake128fPublicKey,
+        SlhDsaShake128fSecretKey,
+        HashSlhDsaShake128fWithShake128PublicKey
+      ),
+      8 => kat!(
+        SlhDsaShake192s,
+        SlhDsaShake192sPublicKey,
+        SlhDsaShake192sSecretKey,
+        HashSlhDsaShake192sWithShake256PublicKey
+      ),
+      9 => kat!(
+        SlhDsaShake192f,
+        SlhDsaShake192fPublicKey,
+        SlhDsaShake192fSecretKey,
+        HashSlhDsaShake192fWithShake256PublicKey
+      ),
+      10 => kat!(
+        SlhDsaShake256s,
+        SlhDsaShake256sPublicKey,
+        SlhDsaShake256sSecretKey,
+        HashSlhDsaShake256sWithShake256PublicKey
+      ),
+      _ => kat!(
+        SlhDsaShake256f,
+        SlhDsaShake256fPublicKey,
+        SlhDsaShake256fSecretKey,
+        HashSlhDsaShake256fWithShake256PublicKey
+      ),
+    }
+  }
+  assert!(input.is_empty(), "trailing runtime fixture bytes");
+}
+
 fn main() {
   run_vectors();
 }
@@ -506,5 +681,6 @@ fn run_vectors() {
   assert_p256_ecdh_portable_vector();
   assert_p384_ecdh_portable_vector();
   assert_mldsa_fips204_vectors();
+  assert_slhdsa_fips205_vectors();
   assert_simd128_runtime_caps_are_detected();
 }

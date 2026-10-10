@@ -98,8 +98,8 @@ It does not download upstream archives.
 
 ### SLH-DSA ACVP fixtures
 
-`test/slhdsa_acvp.py derive` writes `testdata/slhdsa/acvp/sigGen.bin` and `sigVer.bin` from the pinned
-ACVP-Server SLH-DSA sigGen and sigVer JSON. It fetches the files from the pinned commit, or reads them
+`test/slhdsa_acvp.py derive` writes `testdata/slhdsa/acvp/sigGen.bin`, `sigVer.bin`, and the WASM
+runtime subset `runtime.bin` from the pinned ACVP-Server SLH-DSA JSON. It fetches the files from the pinned commit, or reads them
 with `--source DIR`, and refuses any file whose SHA-256 differs from the pin. The output is
 deterministic; the fixture README documents the format. No recipe or check runs it: `just check`
 verifies the committed bytes through `SHA256SUMS`.

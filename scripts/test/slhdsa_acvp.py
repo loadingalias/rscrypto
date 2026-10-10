@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Derive the SLH-DSA ACVP sigGen and sigVer fixtures from the pinned upstream JSON.
+"""Derive the SLH-DSA ACVP fixtures from the pinned upstream JSON.
 
 The upstream files total about 68 MB, mostly hexadecimal signatures. This writes
-every case's fields as length-prefixed binary instead, and replaces each expected
-sigGen signature with its SHA-256. The format is documented in
-testdata/slhdsa/acvp/README.md.
+every sigGen and sigVer case's fields as length-prefixed binary instead, and
+replaces each expected sigGen signature with its SHA-256. It also writes a small
+runtime subset, one record per parameter set with full expected signatures, for
+targets that run vectors outside the unit tests. The format and the subset's
+selection rule are documented in testdata/slhdsa/acvp/README.md.
 
   scripts/test/slhdsa_acvp.py derive            # fetch the pinned files
   scripts/test/slhdsa_acvp.py derive --source DIR
@@ -27,6 +29,14 @@ UPSTREAM = f"https://raw.githubusercontent.com/usnistgov/ACVP-Server/{COMMIT}/ge
 
 # Local name -> (upstream directory/file, SHA-256 of the unmodified bytes).
 SOURCES = {
+  "keyGen-prompt.json": (
+    "SLH-DSA-keyGen-FIPS205/prompt.json",
+    "bce170976f257ee3dfc8c54ea46722ccb553539847daa6d8048f0216cc28b51c",
+  ),
+  "keyGen-expectedResults.json": (
+    "SLH-DSA-keyGen-FIPS205/expectedResults.json",
+    "f35f74b6676d6b369c87e88c36698f28c14d5929d31e507d910288c69258afee",
+  ),
   "sigGen-prompt.json": (
     "SLH-DSA-sigGen-FIPS205/prompt.json",
     "afa673eacdf0aec53512a159159b7632684adfcd0d88f8640a7f6f5796aacdc8",
@@ -128,11 +138,73 @@ def verification_cases(prompt: dict, results: dict) -> list[list[bytes]]:
   return cases
 
 
+# The RFC 9909 HashSLH-DSA pre-hash pairing, by ACVP parameter-set name prefix.
+PAIRINGS = {
+  "SLH-DSA-SHA2-128": "SHA2-256",
+  "SLH-DSA-SHA2-192": "SHA2-512",
+  "SLH-DSA-SHA2-256": "SHA2-512",
+  "SLH-DSA-SHAKE-128": "SHAKE-128",
+  "SLH-DSA-SHAKE-192": "SHAKE-256",
+  "SLH-DSA-SHAKE-256": "SHAKE-256",
+}
+
+
+def runtime_cases(key_prompt: dict, key_results: dict, sign_prompt: dict, sign_results: dict) -> list[list[bytes]]:
+  """One record per parameter set, in keyGen order: the first keyGen case, the
+  deterministic external pure case with the shortest message (first on ties),
+  and the deterministic external pre-hash case that uses the RFC 9909 pairing."""
+  key_expected = expected_cases(key_results)
+  sign_expected = expected_cases(sign_results)
+  records = []
+  for key_group in key_prompt["testGroups"]:
+    parameter_set = key_group["parameterSet"]
+    key_case = key_group["tests"][0]
+    key_want = key_expected[(key_group["tgId"], key_case["tcId"])]
+
+    def group(pre_hash: str) -> dict:
+      (match,) = [
+        g
+        for g in sign_prompt["testGroups"]
+        if g["parameterSet"] == parameter_set
+        and g["deterministic"]
+        and g["signatureInterface"] == "external"
+        and g.get("preHash") == pre_hash
+      ]
+      return match
+
+    pure_group = group("pure")
+    pure = min(pure_group["tests"], key=lambda case: len(case["message"]))
+    prehash_group = group("preHash")
+    (prehash,) = [case for case in prehash_group["tests"] if case["hashAlg"] == PAIRINGS[parameter_set[:-1]]]
+    records.append([
+      text(parameter_set),
+      bytes.fromhex(key_case["skSeed"] + key_case["skPrf"] + key_case["pkSeed"]),
+      bytes.fromhex(key_want["pk"]),
+      bytes.fromhex(key_want["sk"]),
+      bytes.fromhex(pure["sk"]),
+      bytes.fromhex(pure["message"]),
+      bytes.fromhex(pure["context"]),
+      bytes.fromhex(sign_expected[(pure_group["tgId"], pure["tcId"])]["signature"]),
+      bytes.fromhex(prehash["sk"]),
+      bytes.fromhex(prehash["message"]),
+      bytes.fromhex(prehash["context"]),
+      bytes.fromhex(sign_expected[(prehash_group["tgId"], prehash["tcId"])]["signature"]),
+    ])
+  return records
+
+
 def derive(source: Path | None) -> None:
+  sign_prompt = load(source, "sigGen-prompt.json")
+  sign_results = load(source, "sigGen-expectedResults.json")
   outputs = {
-    "sigGen.bin": encode(signing_cases(load(source, "sigGen-prompt.json"), load(source, "sigGen-expectedResults.json"))),
+    "sigGen.bin": encode(signing_cases(sign_prompt, sign_results)),
     "sigVer.bin": encode(
       verification_cases(load(source, "sigVer-prompt.json"), load(source, "sigVer-expectedResults.json"))
+    ),
+    "runtime.bin": encode(
+      runtime_cases(
+        load(source, "keyGen-prompt.json"), load(source, "keyGen-expectedResults.json"), sign_prompt, sign_results
+      )
     ),
   }
   for name, data in outputs.items():
@@ -143,7 +215,7 @@ def derive(source: Path | None) -> None:
 def main() -> int:
   parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
   commands = parser.add_subparsers(dest="command", required=True)
-  derive_parser = commands.add_parser("derive", help="write sigGen.bin and sigVer.bin")
+  derive_parser = commands.add_parser("derive", help="write sigGen.bin, sigVer.bin, and runtime.bin")
   derive_parser.add_argument("--source", type=Path, help="directory holding the pinned upstream files under their local names")
   args = parser.parse_args()
   if args.command == "derive":
