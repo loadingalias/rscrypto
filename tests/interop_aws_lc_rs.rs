@@ -22,7 +22,7 @@ use aws_lc_rs::{
   pbkdf2 as aws_pbkdf2, signature as aws_signature,
 };
 use rscrypto::{
-  Aes256Gcm, Aes256GcmKey, ChaCha20Poly1305, ChaCha20Poly1305Key, Ed25519SecretKey, HkdfSha256, HmacSha256,
+  Aes256Gcm, Aes256GcmKey, ChaCha20Poly1305, ChaCha20Poly1305Key, Ed25519SecretKey, HkdfSha256, HkdfSha384, HmacSha256,
   Pbkdf2Sha256, RsaPkcs1v15Profile, RsaPssProfile, RsaPublicKey, Sha256, X25519PublicKey, X25519SecretKey,
   aead::{Nonce96, expert::AeadWithNonce},
 };
@@ -86,6 +86,69 @@ fn test_aws_lc_rs_digest_hmac_hkdf_and_pbkdf2_are_byte_equivalent() {
   Pbkdf2Sha256::derive_key(b"interoperability password", salt, iterations.get(), &mut ours_pbkdf2)
     .expect("rscrypto PBKDF2 parameters must be valid");
   assert_eq!(ours_pbkdf2, aws_pbkdf2);
+}
+
+/// PRK import and multi-part `info` must match AWS-LC, including rejection one
+/// byte past the RFC 5869 output bound.
+#[test]
+fn test_aws_lc_rs_hkdf_prk_import_and_multi_part_info_are_byte_equivalent() {
+  let transcript = [0x5a; 32];
+  let long = [0x01; 200];
+  // A TLS 1.3 HkdfLabel for a 32-byte "c hs traffic" secret, an empty info, and
+  // parts that include empty slices and cross a hash block.
+  let infos: [&[&[u8]]; 3] = [
+    &[&[0, 32], &[18], b"tls13 ", b"c hs traffic", &[32], &transcript],
+    &[],
+    &[b"", &long, b"", b"tail"],
+  ];
+  let prk256: [u8; 32] = core::array::from_fn(|i| u8::try_from(i).unwrap_or(u8::MAX) ^ 0x6b);
+  let prk384: [u8; 48] = core::array::from_fn(|i| u8::try_from(i).unwrap_or(u8::MAX) ^ 0xc6);
+  let hkdf256 = HkdfSha256::from_prk(&prk256);
+  let hkdf384 = HkdfSha384::from_prk(&prk384);
+
+  for info in infos {
+    for len in [
+      1,
+      12,
+      16,
+      32,
+      33,
+      97,
+      HkdfSha256::MAX_OUTPUT_SIZE,
+      HkdfSha256::MAX_OUTPUT_SIZE.strict_add(1),
+    ] {
+      let mut ours = vec![0u8; len];
+      let ours = hkdf256.expand_vectored(info, &mut ours).map(|()| ours);
+      let theirs = aws_lc_rs_hkdf_expand(aws_hkdf::HKDF_SHA256, &prk256, info, len);
+      assert_eq!(ours.ok(), theirs, "HKDF-SHA-256 output length {len}");
+    }
+    for len in [
+      1,
+      12,
+      32,
+      48,
+      49,
+      97,
+      HkdfSha384::MAX_OUTPUT_SIZE,
+      HkdfSha384::MAX_OUTPUT_SIZE.strict_add(1),
+    ] {
+      let mut ours = vec![0u8; len];
+      let ours = hkdf384.expand_vectored(info, &mut ours).map(|()| ours);
+      let theirs = aws_lc_rs_hkdf_expand(aws_hkdf::HKDF_SHA384, &prk384, info, len);
+      assert_eq!(ours.ok(), theirs, "HKDF-SHA-384 output length {len}");
+    }
+  }
+}
+
+/// Expand `prk` with AWS-LC, or return `None` when it rejects the length.
+fn aws_lc_rs_hkdf_expand(algorithm: aws_hkdf::Algorithm, prk: &[u8], info: &[&[u8]], len: usize) -> Option<Vec<u8>> {
+  let mut okm = vec![0u8; len];
+  aws_hkdf::Prk::new_less_safe(algorithm, prk)
+    .expand(info, AwsHkdfLen(len))
+    .ok()?
+    .fill(&mut okm)
+    .ok()?;
+  Some(okm)
 }
 
 #[test]

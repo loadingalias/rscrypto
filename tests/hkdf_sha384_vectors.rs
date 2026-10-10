@@ -50,24 +50,30 @@ fn hkdf_sha384_case_2() {
      f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
   );
 
-  let hkdf = HkdfSha384::new(&salt, &ikm);
-  assert_eq!(
-    hkdf.prk(),
-    &decode_hex_array::<48>(
-      "b319f6831dff9314efb643baa29263b30e4a8d779fe31e9c901efd7de737c85b62e676d4dc87b0895c6a7dc97b52cebb",
-    )
+  let prk = decode_hex_array::<48>(
+    "b319f6831dff9314efb643baa29263b30e4a8d779fe31e9c901efd7de737c85b62e676d4dc87b0895c6a7dc97b52cebb",
+  );
+  let expected = decode_hex_array::<82>(
+    "484ca052b8cc724fd1c4ec64d57b4e818c7e25a8e0f4569ed72a6a05fe0649eebf69f8d5c832856bf4e4fbc17967d549\
+     75324a94987f7f41835817d8994fdbd6f4c09c5500dca24a56222fea53d8967a8b2e",
   );
 
+  let hkdf = HkdfSha384::new(&salt, &ikm);
+  assert_eq!(hkdf.prk(), &prk);
   let okm = hkdf
     .expand_array::<82>(&info)
     .expect("HKDF-SHA-384 case 2 expansion must succeed");
-  assert_eq!(
-    okm,
-    decode_hex_array::<82>(
-      "484ca052b8cc724fd1c4ec64d57b4e818c7e25a8e0f4569ed72a6a05fe0649eebf69f8d5c832856bf4e4fbc17967d549\
-       75324a94987f7f41835817d8994fdbd6f4c09c5500dca24a56222fea53d8967a8b2e",
-    )
-  );
+  assert_eq!(okm, expected);
+
+  let imported = HkdfSha384::from_prk(&prk);
+  for split in 0..=info.len() {
+    let (head, tail) = info.split_at(split);
+    let mut okm = [0u8; 82];
+    imported
+      .expand_vectored(&[head, tail], &mut okm)
+      .expect("HKDF-SHA-384 case 2 expansion must succeed");
+    assert_eq!(okm, expected, "split {split}");
+  }
 }
 
 #[test]
@@ -122,4 +128,32 @@ fn hkdf_sha384_rejects_oversized_output() {
   let err =
     HkdfSha384::derive(b"salt", b"ikm", b"info", &mut out).expect_err("HKDF-SHA-384 must reject oversized output");
   assert_eq!(err, HkdfOutputLengthError::new());
+}
+
+#[test]
+fn hkdf_sha384_expand_vectored_enforces_the_output_bound() {
+  let prk = [0x5cu8; 48];
+  let info: [&[u8]; 2] = [b"in", b"fo"];
+  let hkdf = HkdfSha384::from_prk(&prk);
+
+  let mut oversized = vec![0xa5u8; HkdfSha384::MAX_OUTPUT_SIZE.strict_add(1)];
+  assert_eq!(
+    hkdf.expand_vectored(&info, &mut oversized),
+    Err(HkdfOutputLengthError::new())
+  );
+  assert!(
+    oversized.iter().all(|&byte| byte == 0xa5),
+    "a rejected expansion must not write the output"
+  );
+
+  let mut ours = vec![0u8; HkdfSha384::MAX_OUTPUT_SIZE];
+  hkdf
+    .expand_vectored(&info, &mut ours)
+    .expect("HKDF-SHA-384 must accept the maximum output length");
+  let mut expected = vec![0u8; HkdfSha384::MAX_OUTPUT_SIZE];
+  RustCryptoHkdf::<sha2::Sha384>::from_prk(&prk)
+    .expect("a 48-byte PRK is valid for RustCrypto HKDF-SHA-384")
+    .expand_multi_info(&info, &mut expected)
+    .expect("RustCrypto must accept the maximum output length");
+  assert_eq!(ours, expected);
 }

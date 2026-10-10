@@ -20,7 +20,7 @@ It does not prove that the compiler erases every copy it makes.
 | `P256EphemeralSecret`, `P256SharedSecret` | Not `Clone` or `Copy`. | The ephemeral scalar has no export or import API. `P256SharedSecret::expose_secret` makes an explicit `SecretBytes<32>` copy. `as_bytes` gives borrowed access. Both types redact `Debug`. |
 | `P384EphemeralSecret`, `P384SharedSecret` | Not `Clone` or `Copy`. | The ephemeral scalar has no export or import API. `P384SharedSecret::expose_secret` makes an explicit `SecretBytes<48>` copy. `as_bytes` gives borrowed access. Both types redact `Debug`. |
 | `RsaPrivateKey`, `RsaPrivateScratch` | Not `Clone` or `Copy`. | Private DER export returns `SecretVec`. `Debug` shows only public metadata. |
-| HMAC, HKDF, KMAC, PBKDF2, and Poly1305 state | No generic copy. | `Debug` is redacted. Keyed state is not serialized. |
+| HMAC, HKDF, KMAC, PBKDF2, and Poly1305 state | No generic copy. | `Debug` is redacted. Keyed state is not serialized. HKDF `prk()` gives borrowed access to the PRK. `from_prk` borrows the caller's PRK and does not clear it. |
 | Keyed BLAKE2 state | `Clone` where the shared `Digest` contract needs it. | `Debug` is redacted. A clone copies the keyed state. |
 | `Blake3`, `Blake3XofReader` | `Clone`. | In keyed or derive-key mode, a clone copies secret-derived state. |
 | `Blake3Tree`, `Blake3Subtree`, `Blake3ChainingValue` (`hashes::expert::blake3_tree`) | `Clone`. | See [BLAKE3 trees](#blake3-trees). |

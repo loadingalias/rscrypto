@@ -155,6 +155,32 @@ impl HkdfSha256 {
     )
   }
 
+  /// Build the expansion state from an existing pseudorandom key.
+  ///
+  /// `prk` must already be pseudorandom: an HKDF-Extract output or an earlier
+  /// HKDF-Expand block, such as a TLS 1.3 secret. Pass raw input key material
+  /// to [`new`](Self::new) instead. The state copies `prk`; the caller keeps
+  /// responsibility for clearing its own copy.
+  ///
+  /// # Examples
+  ///
+  /// ```rust
+  /// use rscrypto::HkdfSha256;
+  ///
+  /// let extracted = HkdfSha256::new(b"salt", b"input key material");
+  /// let imported = HkdfSha256::from_prk(extracted.prk());
+  ///
+  /// assert_eq!(
+  ///   imported.expand_array::<32>(b"context")?,
+  ///   extracted.expand_array::<32>(b"context")?
+  /// );
+  /// # Ok::<(), rscrypto::auth::HkdfOutputLengthError>(())
+  /// ```
+  #[must_use]
+  pub fn from_prk(prk: &[u8; SHA256_OUTPUT_SIZE]) -> Self {
+    Self::from_prk_with(prk, sha256_dispatch::compress_dispatch())
+  }
+
   /// Run HKDF-Extract with `mac`, then precompute the expand prefixes with `compress`.
   #[inline(always)]
   fn extract_with(
@@ -165,10 +191,17 @@ impl HkdfSha256 {
   ) -> Self {
     let zero_salt = [0u8; SHA256_OUTPUT_SIZE];
     let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
-    let prk = mac(salt, input_key_material);
+    let mut prk = mac(salt, input_key_material);
+    let hkdf = Self::from_prk_with(&prk, compress);
+    ct::zeroize(&mut prk);
+    hkdf
+  }
 
+  /// Store `prk` and precompute its HMAC prefixes with `compress`.
+  #[inline(always)]
+  fn from_prk_with(prk: &[u8; SHA256_OUTPUT_SIZE], compress: Sha256CompressBlocksFn) -> Self {
     let mut key_block = [0u8; SHA256_BLOCK_SIZE];
-    key_block[..SHA256_OUTPUT_SIZE].copy_from_slice(&prk);
+    key_block[..SHA256_OUTPUT_SIZE].copy_from_slice(prk);
 
     let (inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
       let mut inner_init = SHA256_H0;
@@ -181,7 +214,7 @@ impl HkdfSha256 {
     });
 
     Self {
-      prk,
+      prk: *prk,
       inner_init,
       outer_init,
       compress,
@@ -195,6 +228,34 @@ impl HkdfSha256 {
   /// overhead in the inner loop.
   #[inline]
   pub fn expand(&self, info: &[u8], okm: &mut [u8]) -> Result<(), HkdfOutputLengthError> {
+    self.expand_vectored(core::slice::from_ref(&info), okm)
+  }
+
+  /// Expand the stored pseudorandom key into `okm`, with `info` given in parts.
+  ///
+  /// The output equals [`expand`](Self::expand) over the concatenation of the
+  /// parts, without building that concatenation. A TLS 1.3 `HkdfLabel` is one
+  /// such `info`.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`HkdfOutputLengthError`] without writing `okm` when `okm` is
+  /// longer than [`MAX_OUTPUT_SIZE`](Self::MAX_OUTPUT_SIZE).
+  ///
+  /// # Examples
+  ///
+  /// ```rust
+  /// use rscrypto::HkdfSha256;
+  ///
+  /// let hkdf = HkdfSha256::new(b"salt", b"input key material");
+  ///
+  /// let mut okm = [0u8; 32];
+  /// hkdf.expand_vectored(&[b"con", b"", b"text"], &mut okm)?;
+  /// assert_eq!(okm, hkdf.expand_array::<32>(b"context")?);
+  /// # Ok::<(), rscrypto::auth::HkdfOutputLengthError>(())
+  /// ```
+  #[inline]
+  pub fn expand_vectored(&self, info: &[&[u8]], okm: &mut [u8]) -> Result<(), HkdfOutputLengthError> {
     if okm.len() > SHA256_MAX_OUTPUT_SIZE {
       return Err(HkdfOutputLengthError::new());
     }
@@ -404,6 +465,32 @@ impl HkdfSha384 {
     )
   }
 
+  /// Build the expansion state from an existing pseudorandom key.
+  ///
+  /// `prk` must already be pseudorandom: an HKDF-Extract output or an earlier
+  /// HKDF-Expand block, such as a TLS 1.3 secret. Pass raw input key material
+  /// to [`new`](Self::new) instead. The state copies `prk`; the caller keeps
+  /// responsibility for clearing its own copy.
+  ///
+  /// # Examples
+  ///
+  /// ```rust
+  /// use rscrypto::HkdfSha384;
+  ///
+  /// let extracted = HkdfSha384::new(b"salt", b"input key material");
+  /// let imported = HkdfSha384::from_prk(extracted.prk());
+  ///
+  /// assert_eq!(
+  ///   imported.expand_array::<48>(b"context")?,
+  ///   extracted.expand_array::<48>(b"context")?
+  /// );
+  /// # Ok::<(), rscrypto::auth::HkdfOutputLengthError>(())
+  /// ```
+  #[must_use]
+  pub fn from_prk(prk: &[u8; SHA384_OUTPUT_SIZE]) -> Self {
+    Self::from_prk_with(prk, sha384_dispatch::compress_dispatch())
+  }
+
   /// Run HKDF-Extract with `mac`, then precompute the expand prefixes with `compress`.
   #[inline(always)]
   fn extract_with(
@@ -414,10 +501,17 @@ impl HkdfSha384 {
   ) -> Self {
     let zero_salt = [0u8; SHA384_OUTPUT_SIZE];
     let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
-    let prk = mac(salt, input_key_material);
+    let mut prk = mac(salt, input_key_material);
+    let hkdf = Self::from_prk_with(&prk, compress);
+    ct::zeroize(&mut prk);
+    hkdf
+  }
 
+  /// Store `prk` and precompute its HMAC prefixes with `compress`.
+  #[inline(always)]
+  fn from_prk_with(prk: &[u8; SHA384_OUTPUT_SIZE], compress: Sha384CompressBlocksFn) -> Self {
     let mut key_block = [0u8; SHA384_BLOCK_SIZE];
-    key_block[..SHA384_OUTPUT_SIZE].copy_from_slice(&prk);
+    key_block[..SHA384_OUTPUT_SIZE].copy_from_slice(prk);
 
     let (inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
       let mut inner_init = SHA384_H0;
@@ -430,7 +524,7 @@ impl HkdfSha384 {
     });
 
     Self {
-      prk,
+      prk: *prk,
       inner_init,
       outer_init,
       compress,
@@ -444,6 +538,34 @@ impl HkdfSha384 {
   /// overhead in the inner loop.
   #[inline]
   pub fn expand(&self, info: &[u8], okm: &mut [u8]) -> Result<(), HkdfOutputLengthError> {
+    self.expand_vectored(core::slice::from_ref(&info), okm)
+  }
+
+  /// Expand the stored pseudorandom key into `okm`, with `info` given in parts.
+  ///
+  /// The output equals [`expand`](Self::expand) over the concatenation of the
+  /// parts, without building that concatenation. A TLS 1.3 `HkdfLabel` is one
+  /// such `info`.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`HkdfOutputLengthError`] without writing `okm` when `okm` is
+  /// longer than [`MAX_OUTPUT_SIZE`](Self::MAX_OUTPUT_SIZE).
+  ///
+  /// # Examples
+  ///
+  /// ```rust
+  /// use rscrypto::HkdfSha384;
+  ///
+  /// let hkdf = HkdfSha384::new(b"salt", b"input key material");
+  ///
+  /// let mut okm = [0u8; 48];
+  /// hkdf.expand_vectored(&[b"con", b"", b"text"], &mut okm)?;
+  /// assert_eq!(okm, hkdf.expand_array::<48>(b"context")?);
+  /// # Ok::<(), rscrypto::auth::HkdfOutputLengthError>(())
+  /// ```
+  #[inline]
+  pub fn expand_vectored(&self, info: &[&[u8]], okm: &mut [u8]) -> Result<(), HkdfOutputLengthError> {
     if okm.len() > SHA384_MAX_OUTPUT_SIZE {
       return Err(HkdfOutputLengthError::new());
     }
@@ -798,15 +920,20 @@ impl Drop for HkdfSha512 {
 fn expand_hmac_sha256_inner(
   compress: Sha256CompressBlocksFn,
   prev: Option<&[u8; SHA256_OUTPUT_SIZE]>,
-  info: &[u8],
+  info: &[&[u8]],
   counter: u8,
   state: &mut [u32; 8],
   out: &mut [u8; SHA256_OUTPUT_SIZE],
   block: &mut [u8; SHA256_BLOCK_SIZE],
 ) {
   let prev_len = if prev.is_some() { SHA256_OUTPUT_SIZE } else { 0 };
-  let msg_len = prev_len.strict_add(info.len()).strict_add(1);
-  let total_bytes = (SHA256_BLOCK_SIZE as u64).strict_add(msg_len as u64);
+  // Sum in u64, not usize: repeated parts can exceed usize on 32-bit targets. A total
+  // beyond SHA-256's message limit fails strict arithmetic, as in `Sha256::update`.
+  let info_len = info.iter().fold(0u64, |len, part| len.strict_add(part.len() as u64));
+  let total_bytes = (SHA256_BLOCK_SIZE as u64)
+    .strict_add(prev_len as u64)
+    .strict_add(info_len)
+    .strict_add(1);
 
   block.fill(0);
   let mut pos = 0usize;
@@ -816,18 +943,20 @@ fn expand_hmac_sha256_inner(
     pos = SHA256_OUTPUT_SIZE;
   }
 
-  let mut info_off = 0usize;
-  while info_off < info.len() {
-    let space = SHA256_BLOCK_SIZE.strict_sub(pos);
-    let remaining = info.len().strict_sub(info_off);
-    let take = if space < remaining { space } else { remaining };
-    block[pos..pos.strict_add(take)].copy_from_slice(&info[info_off..info_off.strict_add(take)]);
-    pos = pos.strict_add(take);
-    info_off = info_off.strict_add(take);
-    if pos == SHA256_BLOCK_SIZE {
-      compress_hkdf_sha256_block(compress, state, block);
-      block.fill(0);
-      pos = 0;
+  for part in info {
+    let mut part_off = 0usize;
+    while part_off < part.len() {
+      let space = SHA256_BLOCK_SIZE.strict_sub(pos);
+      let remaining = part.len().strict_sub(part_off);
+      let take = if space < remaining { space } else { remaining };
+      block[pos..pos.strict_add(take)].copy_from_slice(&part[part_off..part_off.strict_add(take)]);
+      pos = pos.strict_add(take);
+      part_off = part_off.strict_add(take);
+      if pos == SHA256_BLOCK_SIZE {
+        compress_hkdf_sha256_block(compress, state, block);
+        block.fill(0);
+        pos = 0;
+      }
     }
   }
 
@@ -870,15 +999,18 @@ fn expand_hmac_sha256_outer(
 fn expand_hmac_sha384_inner(
   compress: Sha384CompressBlocksFn,
   prev: Option<&[u8; SHA384_OUTPUT_SIZE]>,
-  info: &[u8],
+  info: &[&[u8]],
   counter: u8,
   state: &mut [u64; 8],
   outer_block: &mut [u8; SHA384_BLOCK_SIZE],
   block: &mut [u8; SHA384_BLOCK_SIZE],
 ) {
   let prev_len = if prev.is_some() { SHA384_OUTPUT_SIZE } else { 0 };
-  let msg_len = prev_len.strict_add(info.len()).strict_add(1);
-  let total_bytes = (SHA384_BLOCK_SIZE as u128).strict_add(msg_len as u128);
+  let info_len = info.iter().fold(0u128, |len, part| len.strict_add(part.len() as u128));
+  let total_bytes = (SHA384_BLOCK_SIZE as u128)
+    .strict_add(prev_len as u128)
+    .strict_add(info_len)
+    .strict_add(1);
 
   block.fill(0);
   let mut pos = 0usize;
@@ -888,18 +1020,20 @@ fn expand_hmac_sha384_inner(
     pos = SHA384_OUTPUT_SIZE;
   }
 
-  let mut info_off = 0usize;
-  while info_off < info.len() {
-    let space = SHA384_BLOCK_SIZE.strict_sub(pos);
-    let remaining = info.len().strict_sub(info_off);
-    let take = if space < remaining { space } else { remaining };
-    block[pos..pos.strict_add(take)].copy_from_slice(&info[info_off..info_off.strict_add(take)]);
-    pos = pos.strict_add(take);
-    info_off = info_off.strict_add(take);
-    if pos == SHA384_BLOCK_SIZE {
-      compress(state, block);
-      block.fill(0);
-      pos = 0;
+  for part in info {
+    let mut part_off = 0usize;
+    while part_off < part.len() {
+      let space = SHA384_BLOCK_SIZE.strict_sub(pos);
+      let remaining = part.len().strict_sub(part_off);
+      let take = if space < remaining { space } else { remaining };
+      block[pos..pos.strict_add(take)].copy_from_slice(&part[part_off..part_off.strict_add(take)]);
+      pos = pos.strict_add(take);
+      part_off = part_off.strict_add(take);
+      if pos == SHA384_BLOCK_SIZE {
+        compress(state, block);
+        block.fill(0);
+        pos = 0;
+      }
     }
   }
 
@@ -1268,6 +1402,78 @@ mod tests {
     for &id in SHA384_KERNELS {
       if caps.has(sha384_required_caps(id)) {
         assert_hkdf_sha384_kernel(id);
+      }
+    }
+  }
+
+  /// Splitting `info` into a head, an empty part, and a tail at every offset
+  /// must expand like the concatenation, on every available kernel. The info
+  /// spans two blocks and the output three HMAC iterations.
+  #[test]
+  fn hkdf_sha256_vectored_info_matches_oracle_at_every_split() {
+    const INFO_LEN: usize = 2 * SHA256_BLOCK_SIZE + 3;
+    const OKM_LEN: usize = 2 * SHA256_OUTPUT_SIZE + 1;
+    let salt = pattern(13, 11, 3);
+    let ikm = pattern(22, 17, 7);
+    let info = pattern(INFO_LEN, 29, 13);
+    let mut expected = [0u8; OKM_LEN];
+    RustCryptoHkdfSha256::new(Some(&salt), &ikm)
+      .expand(&info, &mut expected)
+      .expect("test output length should be within the HKDF-SHA256 limit");
+
+    let caps = crate::platform::caps();
+    for &id in SHA256_KERNELS {
+      if !caps.has(sha256_required_caps(id)) {
+        continue;
+      }
+      let hkdf = HkdfSha256::extract_with_compress_for_test(&salt, &ikm, sha256_compress_blocks_fn(id));
+      for split in 0..=INFO_LEN {
+        let (head, tail) = info.split_at(split);
+        let mut okm = [0u8; OKM_LEN];
+        hkdf
+          .expand_vectored(&[head, &[], tail], &mut okm)
+          .expect("test output length should be within the HKDF-SHA256 limit");
+        assert_eq!(
+          okm,
+          expected,
+          "hkdf-sha256 vectored mismatch kernel={} split={split}",
+          id.as_str()
+        );
+      }
+    }
+  }
+
+  /// The SHA-384 counterpart of the every-split test above.
+  #[test]
+  fn hkdf_sha384_vectored_info_matches_oracle_at_every_split() {
+    const INFO_LEN: usize = 2 * SHA384_BLOCK_SIZE + 3;
+    const OKM_LEN: usize = 2 * SHA384_OUTPUT_SIZE + 1;
+    let salt = pattern(13, 13, 5);
+    let ikm = pattern(22, 19, 9);
+    let info = pattern(INFO_LEN, 31, 17);
+    let mut expected = [0u8; OKM_LEN];
+    RustCryptoHkdfSha384::new(Some(&salt), &ikm)
+      .expand(&info, &mut expected)
+      .expect("test output length should be within the HKDF-SHA384 limit");
+
+    let caps = crate::platform::caps();
+    for &id in SHA384_KERNELS {
+      if !caps.has(sha384_required_caps(id)) {
+        continue;
+      }
+      let hkdf = HkdfSha384::extract_with_compress_for_test(&salt, &ikm, sha384_compress_blocks_fn(id));
+      for split in 0..=INFO_LEN {
+        let (head, tail) = info.split_at(split);
+        let mut okm = [0u8; OKM_LEN];
+        hkdf
+          .expand_vectored(&[head, &[], tail], &mut okm)
+          .expect("test output length should be within the HKDF-SHA384 limit");
+        assert_eq!(
+          okm,
+          expected,
+          "hkdf-sha384 vectored mismatch kernel={} split={split}",
+          id.as_str()
+        );
       }
     }
   }

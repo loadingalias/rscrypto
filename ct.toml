@@ -3243,8 +3243,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3414
-compiler_api_sha256 = "4975635023aa7b585b6677ed9207e8b4ce324c527a3b2c940a926c7c123cbc68"
+compiler_api_item_count = 3418
+compiler_api_sha256 = "865e574974a84a7a70b7e02f395d1456ac18e70191907e855ba24d948b4131df"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3254,8 +3254,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3414
-compiler_api_sha256 = "4975635023aa7b585b6677ed9207e8b4ce324c527a3b2c940a926c7c123cbc68"
+compiler_api_item_count = 3418
+compiler_api_sha256 = "865e574974a84a7a70b7e02f395d1456ac18e70191907e855ba24d948b4131df"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -3288,8 +3288,8 @@ group = "win"
 backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
-compiler_api_item_count = 3414
-compiler_api_sha256 = "4975635023aa7b585b6677ed9207e8b4ce324c527a3b2c940a926c7c123cbc68"
+compiler_api_item_count = 3418
+compiler_api_sha256 = "865e574974a84a7a70b7e02f395d1456ac18e70191907e855ba24d948b4131df"
 physical_timing = "required"
 binsec = "unsupported"
 binsec_reason = "BINSEC PE/Windows evidence is not part of the current release evidence gate."
@@ -3310,8 +3310,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 3414
-compiler_api_sha256 = "4975635023aa7b585b6677ed9207e8b4ce324c527a3b2c940a926c7c123cbc68"
+compiler_api_item_count = 3418
+compiler_api_sha256 = "865e574974a84a7a70b7e02f395d1456ac18e70191907e855ba24d948b4131df"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3322,8 +3322,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3414
-compiler_api_sha256 = "4975635023aa7b585b6677ed9207e8b4ce324c527a3b2c940a926c7c123cbc68"
+compiler_api_item_count = 3418
+compiler_api_sha256 = "865e574974a84a7a70b7e02f395d1456ac18e70191907e855ba24d948b4131df"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3334,8 +3334,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3414
-compiler_api_sha256 = "4975635023aa7b585b6677ed9207e8b4ce324c527a3b2c940a926c7c123cbc68"
+compiler_api_item_count = 3418
+compiler_api_sha256 = "865e574974a84a7a70b7e02f395d1456ac18e70191907e855ba24d948b4131df"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3346,8 +3346,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 3414
-compiler_api_sha256 = "4975635023aa7b585b6677ed9207e8b4ce324c527a3b2c940a926c7c123cbc68"
+compiler_api_item_count = 3418
+compiler_api_sha256 = "865e574974a84a7a70b7e02f395d1456ac18e70191907e855ba24d948b4131df"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3825,16 +3825,16 @@ limitation = "Unkeyed verified streaming authenticates returned chunks against a
 
 [[operation]]
 id = "kdf.hkdf_extract_expand"
-api = ["rscrypto::HkdfSha{256,384}::{new,extract,expand,expand_array,derive,derive_array,prk}"]
+api = ["rscrypto::HkdfSha{256,384}::{new,extract,from_prk,expand,expand_vectored,expand_array,derive,derive_array,prk}"]
 features = ["hkdf", "hmac"]
 targets = ["all-supported"]
 secret_inputs = ["input key material", "PRK", "OKM"]
-public_inputs = ["salt unless protocol classifies it secret", "info", "requested output length"]
-variable_time_components = ["public input/output-length loops", "public output-length validation"]
-permitted_leakage = ["salt/info/output lengths", "length error", "explicit PRK/OKM exposure"]
+public_inputs = ["salt unless protocol classifies it secret", "info and its part boundaries", "requested output length"]
+variable_time_components = ["public input/output-length loops", "public info-part loops", "public output-length validation"]
+permitted_leakage = ["salt/info/info-part/output lengths", "length error", "explicit PRK/OKM exposure"]
 claim = "ct-intended"
 evidence = ["primitive:kdf.hkdf", "unit:kdf.hkdf.sha256", "unit:kdf.hkdf.sha384"]
-limitation = "prk() and returned/output buffers expose derived secret material to the caller by design."
+limitation = "prk() and returned/output buffers expose derived secret material to the caller by design. from_prk copies a borrowed PRK and leaves the caller's copy for the caller to clear. The derive harness reaches from_prk's prefix computation through extract and expand_vectored through expand with one info part; no harness calls from_prk or splits info."
 
 [[operation]]
 id = "kdf.hkdf_sha512_extract_expand"
@@ -5085,10 +5085,14 @@ variants = ["HkdfSha256", "HkdfSha384"]
 entrypoints = [
   "HkdfSha256::new",
   "HkdfSha256::extract",
+  "HkdfSha256::from_prk",
   "HkdfSha256::expand",
+  "HkdfSha256::expand_vectored",
   "HkdfSha384::new",
   "HkdfSha384::extract",
+  "HkdfSha384::from_prk",
   "HkdfSha384::expand",
+  "HkdfSha384::expand_vectored",
 ]
 secrets = ["input_key_material", "prk", "okm"]
 public = ["salt", "info", "output_length"]

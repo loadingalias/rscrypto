@@ -41,4 +41,19 @@ pub(super) fn run(data: &[u8]) {
   let mut oracle_okm = vec![0u8; out_len];
   let oracle_expand = oracle.expand(info, &mut oracle_okm);
   assert_hkdf_against_oracle(ours_expand.is_ok(), &okm, oracle_expand.is_ok(), &oracle_okm);
+
+  // Differential: PRK import and two-part info, rscrypto ↔ hkdf crate.
+  let (info_head, info_tail) = split_at_ratio(info, salt_split ^ ikm_split);
+  let info_parts = [info_head, info_tail];
+  let mut vectored = vec![0u8; out_len];
+  let ours_vectored = HkdfSha256::from_prk(hk.prk()).expand_vectored(&info_parts, &mut vectored);
+  let prk_oracle = hkdf::Hkdf::<sha2::Sha256>::from_prk(hk.prk()).expect("a HashLen PRK is valid for the hkdf crate");
+  let mut oracle_vectored = vec![0u8; out_len];
+  let oracle_vectored_result = prk_oracle.expand_multi_info(&info_parts, &mut oracle_vectored);
+  assert_hkdf_against_oracle(
+    ours_vectored.is_ok(),
+    &vectored,
+    oracle_vectored_result.is_ok(),
+    &oracle_vectored,
+  );
 }
