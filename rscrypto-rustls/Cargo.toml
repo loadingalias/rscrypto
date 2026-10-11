@@ -1,0 +1,56 @@
+[package]
+name = "rscrypto-rustls"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100.0"
+publish = false
+description = "TLS 1.3 cryptographic provider for rustls, backed by rscrypto"
+license = "MIT OR Apache-2.0"
+authors = ["loadingalias"]
+repository = "https://github.com/loadingalias/rscrypto"
+readme = "README.md"
+keywords = ["cryptography", "tls", "rustls"]
+categories = ["cryptography", "network-programming"]
+
+[lints]
+workspace = true
+
+[features]
+default = [
+  "sha2",
+  "hmac",
+  "hkdf",
+  "aes-gcm",
+  "chacha20poly1305",
+  "x25519",
+  "p256-ecdh",
+  "p384-ecdh",
+  "ml-kem",
+  "ecdsa-p256",
+  "ecdsa-p384",
+  "ed25519",
+  "rsa",
+  "getrandom",
+]
+sha2 = ["rscrypto/sha2"]
+hmac = ["rscrypto/hmac"]
+hkdf = ["rscrypto/hkdf"]
+aes-gcm = ["rscrypto/aes-gcm"]
+chacha20poly1305 = ["rscrypto/chacha20poly1305"]
+x25519 = ["rscrypto/x25519"]
+p256-ecdh = ["rscrypto/p256-ecdh"]
+p384-ecdh = ["rscrypto/p384-ecdh"]
+ml-kem = ["rscrypto/ml-kem"]
+ecdsa-p256 = ["rscrypto/ecdsa-p256"]
+ecdsa-p384 = ["rscrypto/ecdsa-p384"]
+ed25519 = ["rscrypto/ed25519"]
+rsa = ["rscrypto/rsa"]
+ml-dsa = ["rscrypto/ml-dsa"]
+getrandom = ["rscrypto/getrandom"]
+portable-only = ["rscrypto/portable-only"]
+
+[dependencies]
+rscrypto = { version = "0.10.0", path = "..", default-features = false, features = ["std"] }
+rustls = { version = "=0.23.45", default-features = false, features = ["std", "custom-provider"] }
+rustls-webpki = { version = "=0.103.15", default-features = false, features = ["alloc", "std"] }
+rustls-pki-types = { version = "=1.15.1", default-features = false, features = ["std"] }

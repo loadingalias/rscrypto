@@ -39,6 +39,23 @@ confidence-threshold = 0.93
 name = "unicode-ident"
 allow = ["Unicode-3.0"]
 
+# Required certificate validation dependencies of the custom rustls provider.
+[[licenses.exceptions]]
+name = "rustls-webpki"
+version = "=0.103.15"
+allow = ["ISC"]
+
+[[licenses.exceptions]]
+name = "untrusted"
+version = "=0.9.0"
+allow = ["ISC"]
+
+# Required by rustls; keep its BSD license scoped to the selected version.
+[[licenses.exceptions]]
+name = "subtle"
+version = "=2.6.1"
+allow = ["BSD-3-Clause"]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"

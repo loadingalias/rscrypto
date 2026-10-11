@@ -11,6 +11,7 @@ Those entry points call the supporting modules.
 | -------------------------------------- | ------ |
 | `check/check.sh`                       | `just check`, `just ci-check`, `just ci-check-target` |
 | `check/compat.py`                      | `just ci-compat` |
+| `check/provider.py`                    | `just ci-provider`, `check/check.sh` |
 | `test/test-musl.sh`                    | `just test-musl` |
 | `check/macos.sh`                       | `just check-macos`, background Mac qualification |
 | `check/macos_async.py`                 | local pre-push hook, `just qualify-macos`, `just macos-status` |
@@ -26,6 +27,35 @@ Run it with `scripts/lib/python.sh scripts/check/check_runner_test.py`.
 
 `check/lint-independent-workspaces.sh` lints every independent Cargo workspace that Git tracks or would add.
 Ignored manifests, such as local evidence crates, are not repository policy.
+
+### Provider workspace checks
+
+`check/check.sh` checks rscrypto across the full target catalog. It checks
+`rscrypto-rustls` separately, with the provider's own native and portable features,
+on every catalog target with `std`, including WASI. Bare-metal and browser WASM
+remain rscrypto-only. Workspace documentation and host builds include both crates.
+
+`just ci-provider` checks empty, default, each individual feature, all production
+features, and all features on the host and minimum-Rust toolchain. CI runs it in
+the compatibility row of the existing fail-fast matrix.
+Each feature row also runs `cargo tree -p rscrypto-rustls -e normal,build --target all`.
+The gate rejects `ring`, `aws-lc-*`, `openssl-sys`, `boring-sys`, `cc`, and `cmake`.
+The all-features row contains every additive dependency feature, so its graph
+covers arbitrary feature combinations as well as the compiled rows.
+The shared lockfile is not the gate: it includes rscrypto's dev-only crypto oracles.
+
+Dependency policy checks duplicate versions without dev edges, matching the
+existing exclusion of dev-only duplicates. This keeps oracle-only features on
+shared dependencies from appearing as production duplicates. A second pass keeps
+every other deny rule, including wildcard checks, on the complete workspace graph.
+
+`test/test.sh` and cross-target Nextest archives include both workspace members.
+`lib/workspace_features.py` qualifies each feature with its package name, including
+when Cargo-Rail selects only the provider. A workspace plan explicitly selects
+`--workspace`; Cargo's root-package default would omit the provider.
+Doctest transfer prepares and validates a separate rustdoc inventory for each
+member, including members with no doctests. Coverage still measures core rscrypto
+and its corpus replays. Package checks and publication explicitly select rscrypto.
 
 ## Generated P-384 assembly
 

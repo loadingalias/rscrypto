@@ -29,7 +29,7 @@ targets = [
 include_renamed = true
 # Every feature spelling is actionable; unexpected cfg names must not be silently borrowed.
 skip_undeclared_patterns = []
-# Cargo.toml owns the single workspace member's public MSRV.
+# Each package manifest owns its public MSRV; the provider matches rscrypto.
 msrv_policy = { mode = "disabled" }
 
 # Plan uses Cargo-Rail's built-in Cargo work. Add no repository work without a matching executor.
@@ -89,3 +89,6 @@ auxiliary_cargo_manifests = [
   "tools/residue-harness/Cargo.toml",
   "tools/wasm-runtime-vectors/Cargo.toml",
 ]
+
+[crates.rscrypto-rustls.release]
+tag_format = "{crate}-{prefix}{version}"

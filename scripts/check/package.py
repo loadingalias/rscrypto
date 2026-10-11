@@ -34,7 +34,8 @@ def main():
         subprocess.run(command, cwd=cwd, env=environment, check=True)
 
     run(['just', 'test-examples'])
-    run(['cargo', '+' + channels[0], 'package', '--locked', *(['--allow-dirty'] if args.allow_dirty else [])])
+    run(['cargo', '+' + channels[0], 'package', '-p', 'rscrypto', '--locked',
+         *(['--allow-dirty'] if args.allow_dirty else [])])
     name = manifest['package']['name'] + '-' + manifest['package']['version']
     archive = output / 'build/package' / (name + '.crate')
     with tempfile.TemporaryDirectory(prefix='rscrypto-consumers-') as temporary:

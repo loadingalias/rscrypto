@@ -81,11 +81,20 @@ run_checks() {
         features=std,full,diag,serde,serde-secrets,websocket-sha1,getrandom
         ;;
     esac
-    args=(--workspace --locked --target "$target" "${scope[@]}" --no-default-features)
+    args=(-p rscrypto --locked --target "$target" "${scope[@]}" --no-default-features)
     echo "Clippy ($mode): $target / $channel / release native"
     cargo "+$channel" clippy "${args[@]}" --release --features "$features" "${repair[@]:+${repair[@]}}"
     echo "Clippy ($mode): $target / $channel / debug portable"
     cargo "+$channel" clippy "${args[@]}" --features "$features,portable-only" "${repair[@]:+${repair[@]}}"
+    case "$target" in
+      *-none*|wasm32-unknown-unknown) ;;
+      *)
+        provider_args=(--target "$target")
+        [[ "$target" != "$host" ]] || provider_args+=(--all-targets)
+        [[ "$mode" != fix ]] || provider_args+=(--fix)
+        "$python" scripts/check/provider.py lint "${provider_args[@]}"
+        ;;
+    esac
   done
 
   if [[ "$mode" == fix ]]; then

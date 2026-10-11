@@ -250,7 +250,7 @@ class Bundles(unittest.TestCase):
                     case.doCleanups()
 
     def check_test_prepare_keeps_both_full_release_modes_and_fails_closed(self, target, machine):
-        for name in ('Cargo.toml', '.config/tooling.toml', 'scripts/ct/internal.py', 'scripts/ct/provenance.py'):
+        for name in ('Cargo.toml', 'rscrypto-rustls/Cargo.toml', '.config/tooling.toml', 'scripts/ct/internal.py', 'scripts/ct/provenance.py'):
             destination = self.root / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, destination)
@@ -297,7 +297,9 @@ elif name.endswith('gcc'): print('gcc pinned fixture')
             self.assertEqual(len(builds), 4)
             self.assertTrue(all('--workspace' in row and '--locked' in row and '--release' in row for row in builds))
             self.assertTrue(all(row[row.index('--target') + 1] == target for row in builds))
-            self.assertNotIn('portable-only', builds[0][builds[0].index('--features') + 1].split(','))
+            native = builds[0][builds[0].index('--features') + 1].split(',')
+            self.assertFalse(any(feature.endswith('/portable-only') for feature in native))
+            self.assertIn('rscrypto-rustls/ml-dsa', native)
             self.assertIn('--all-features', builds[1])
             self.assertEqual(prepare_docs.call_count, 2)
             for row in builds[:2]:
@@ -327,28 +329,41 @@ class Doctests(unittest.TestCase):
             for failing in (False, True):
                 directory = root / str(failing); directory.mkdir()
                 source = directory / 'lib.rs'
-                source.write_text('//! ```\n//! assert!(' + str(not failing).lower() + ');\n//! ```\n'
+                source.write_text('//! ```\n//! assert!(true);\n//! ```\n'
                     '//! ```should_panic\n//! panic!("expected");\n//! ```\n'
                     '//! ```compile_fail,E0308\n//! let x: u8 = "no";\n//! ```\n'
                     '//! ```no_run\n//! panic!("must never execute");\n//! ```\n')
-                (directory / 'Cargo.toml').write_text('[package]\nname="doctest-transfer-fixture"\nversion="0.0.0"\nedition="2024"\n[lib]\npath="lib.rs"\n[workspace]\n')
+                (directory / 'Cargo.toml').write_text('[package]\nname="doctest-transfer-fixture"\nversion="0.0.0"\nedition="2024"\n[lib]\npath="lib.rs"\n[workspace]\nmembers=[".", "companion", "empty"]\n')
+                companion = directory / 'companion'; companion.mkdir()
+                (companion / 'Cargo.toml').write_text('[package]\nname="companion"\nversion="0.0.0"\nedition="2024"\n[lib]\npath="lib.rs"\n')
+                (companion / 'lib.rs').write_text('//! ```\n//! assert!(' + str(not failing).lower() + ');\n//! ```\n')
+                empty = directory / 'empty'; empty.mkdir()
+                (empty / 'Cargo.toml').write_text('[package]\nname="empty-docs"\nversion="0.0.0"\nedition="2024"\n[lib]\npath="lib.rs"\n')
+                (empty / 'lib.rs').write_text('// No doctests in this member.\n')
                 env = {**os.environ, 'RUSTUP_TOOLCHAIN': channel, 'CARGO_RAIL_CACHE': 'off'}
                 subprocess.run(['cargo', 'generate-lockfile', '--offline'], cwd=directory, env=env, check=True,
                                capture_output=True)
                 evidence = directory / 'evidence'
                 plan = doctest_bundle.prepare(directory, evidence, [], env)
-                inventory = json.loads((evidence / 'inventory.json').read_text())
+                package = evidence / 'doctest-transfer-fixture'
+                package_plan = json.loads((package / 'plan.json').read_text())
+                inventory = json.loads((package / 'inventory.json').read_text())
+                self.assertEqual(plan['packages'], ['companion', 'doctest-transfer-fixture', 'empty-docs'])
                 if failing:
                     with self.assertRaises(ValueError): doctest_bundle.execute(directory, evidence, directory / 'results')
                 else:
                     summary = doctest_bundle.execute(directory, evidence, directory / 'results')
-                    self.assertEqual(summary, {'status': 'pass', 'total': 4, 'compile_fail': 1, 'no_run': 1, 'executed': 2})
-                    incomplete = {**plan, 'programs': plan['programs'][:-1]}
-                    (evidence / 'plan.json').write_text(json.dumps(incomplete))
-                    with self.assertRaises(ValueError): doctest_bundle.execute(directory, evidence, directory / 'incomplete')
+                    self.assertEqual(summary, {'status': 'pass', 'total': 5, 'compile_fail': 1, 'no_run': 1, 'executed': 3})
+                    (evidence / 'plan.json').write_text(json.dumps({**plan, 'packages': plan['packages'][:-1]}))
+                    with self.assertRaisesRegex(ValueError, 'omits or adds'):
+                        doctest_bundle.execute(directory, evidence, directory / 'omitted-member')
                     (evidence / 'plan.json').write_text(json.dumps(plan))
-                    (evidence / 'programs' / plan['programs'][0]['binary']).unlink()
-                    with self.assertRaises(ValueError): doctest_bundle.plan_tests(inventory, evidence / 'programs')
+                    incomplete = {**package_plan, 'programs': package_plan['programs'][:-1]}
+                    (package / 'plan.json').write_text(json.dumps(incomplete))
+                    with self.assertRaises(ValueError): doctest_bundle.execute(directory, evidence, directory / 'incomplete')
+                    (package / 'plan.json').write_text(json.dumps(package_plan))
+                    (package / 'programs' / package_plan['programs'][0]['binary']).unlink()
+                    with self.assertRaises(ValueError): doctest_bundle.plan_tests(inventory, package / 'programs')
 
 
 class NativeArchive(unittest.TestCase):

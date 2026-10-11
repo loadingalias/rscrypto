@@ -86,7 +86,8 @@ sys.exit(int(os.environ.get('RUN_EXIT', '0')))
 def main():
   with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
-    for name in ('scripts/test/test.sh', 'scripts/lib/python.sh', 'scripts/lib/rail-plan.sh', 'Cargo.toml'):
+    for name in ('scripts/test/test.sh', 'scripts/lib/python.sh', 'scripts/lib/rail-plan.sh',
+                 'scripts/lib/workspace_features.py', 'Cargo.toml', 'rscrypto-rustls/Cargo.toml'):
       path = root / name
       path.parent.mkdir(parents=True, exist_ok=True)
       shutil.copy2(ROOT / name, path)
@@ -107,7 +108,8 @@ if args[:2] == ['rail', 'plan']:
   if os.environ.get('PLAN_FAIL'): sys.exit(23)
   if '--json' in args:
     state = os.environ.get('PLAN_STATE', 'required')
-    row = {'state': state, 'scope': {'kind': 'cargo', 'selection': {'kind': 'packages', 'cargo_args': ['-p', 'rscrypto']}}}
+    selection = {'kind': os.environ.get('PLAN_SCOPE', 'packages'), 'cargo_args': ['-p', os.environ.get('PLAN_PACKAGE', 'rscrypto')]}
+    row = {'state': state, 'scope': {'kind': 'cargo', 'selection': selection}}
     print(json.dumps({'plan_contract_version': 9, 'identity': 'plan-v9:sha256:fixture', 'required': [],
                       'work': {'cargo.test': row, 'cargo.doctest': row}}))
 else:
@@ -143,7 +145,8 @@ else:
       expected = args[1:] if args[0] == '--' else args
       assert rows[0]['args'][-len(expected):] == expected, rows
       features = rows[0]['args'][rows[0]['args'].index('--features') + 1].split(',')
-      assert 'portable-only' not in features
+      assert not any(feature.endswith('/portable-only') for feature in features)
+      assert {'rscrypto/hkdf', 'rscrypto-rustls/hkdf', 'rscrypto-rustls/ml-dsa'} <= set(features)
     result, rows = run([])
     assert result.returncode == 0, result.stderr
     plan_rows = [row for row in rows if row['args'][:2] == ['rail', 'plan']]
@@ -151,6 +154,12 @@ else:
     runners = [row['args'] for row in rows if row['args'][0] != 'rail']
     assert len(runners) == 2 and runners[0][:2] == ['nextest', 'run'] and '--doc' in runners[1]
     assert all('-p' in args and 'rscrypto' in args for args in runners)
+    result, rows = run([], PLAN_SCOPE='workspace')
+    assert result.returncode == 0, result.stderr
+    assert all('--workspace' in row['args'] for row in rows if row['args'][0] != 'rail')
+    result, rows = run([], PLAN_PACKAGE='rscrypto-rustls')
+    assert result.returncode == 0, result.stderr
+    assert all('rscrypto-rustls' in row['args'] for row in rows if row['args'][0] != 'rail')
     result, rows = run(['--all'], RSCRYPTO_TEST_THREADS='1')
     assert result.returncode == 0 and len(rows) == 2
     assert all('--workspace' in row['args'] for row in rows)

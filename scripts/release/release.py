@@ -119,7 +119,7 @@ def main():
         return
     archive = ROOT / 'target/package' / f'rscrypto-{version}.crate'
     if operation == 'package':
-        run('cargo', 'package', '--locked')
+        run('cargo', 'package', '-p', 'rscrypto', '--locked')
         # Package generation must not have altered the candidate's tracked files.
         candidate()
         exists = published(version, archive)
@@ -128,7 +128,7 @@ def main():
         return
     if not published(version, archive):
         # The package was verified before minting the short-lived registry token.
-        run('cargo', 'publish', '--locked', '--no-verify', '--registry', 'crates-io')
+        run('cargo', 'publish', '-p', 'rscrypto', '--locked', '--no-verify', '--registry', 'crates-io')
         if not published(version, archive):
             raise ValueError('Registry has not exposed the published checksum; rerun failed jobs')
     # Create the immutable source tag only after the registry upload is confirmed.

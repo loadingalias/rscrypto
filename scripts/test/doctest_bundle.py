@@ -10,8 +10,8 @@ import subprocess
 
 
 def plan_tests(inventory, directory):
-    if inventory.get('format_version') != 2 or not inventory.get('doctests'):
-        raise ValueError('unsupported or empty rustdoc inventory')
+    if inventory.get('format_version') != 2 or not isinstance(inventory.get('doctests'), list):
+        raise ValueError('unsupported rustdoc inventory')
     programs, occurrences, names = [], {}, set()
     expected_files = set()
     for test in inventory['doctests']:
@@ -43,9 +43,24 @@ def plan_tests(inventory, directory):
 
 
 def prepare(root, directory, cargo_args, environment):
+    metadata = json.loads(subprocess.check_output(
+        ['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1'],
+        cwd=root, env=environment, text=True))
+    members = set(metadata['workspace_members'])
+    packages = sorted(package['name'] for package in metadata['packages'] if package['id'] in members)
+    directory.mkdir(parents=True, exist_ok=False)
+    total = 0
+    for package in packages:
+        total += prepare_package(root, directory / package, package, cargo_args, environment)['total']
+    plan = {'total': total, 'packages': packages}
+    (directory / 'plan.json').write_text(json.dumps(plan, indent=2) + '\n')
+    return plan
+
+
+def prepare_package(root, directory, package, cargo_args, environment):
     directory.mkdir(parents=True, exist_ok=False)
     flags = ['-D', 'warnings', '-Z', 'unstable-options']
-    command = ['cargo', 'test', '--locked', '--workspace', '--release', '--doc', *cargo_args]
+    command = ['cargo', 'test', '--locked', '-p', package, '--release', '--doc', *cargo_args]
     extracted = subprocess.check_output(command, cwd=root, text=True,
         env={**environment, 'CARGO_ENCODED_RUSTDOCFLAGS': '\x1f'.join([*flags, '--output-format', 'doctest'])})
     inventory = json.loads(extracted)
@@ -64,6 +79,23 @@ def prepare(root, directory, cargo_args, environment):
 
 
 def execute(root, directory, log_directory):
+    plan = json.loads((directory / 'plan.json').read_text())
+    packages = plan['packages']
+    if not packages or len(set(packages)) != len(packages) or any(
+            not re.fullmatch(r'[A-Za-z0-9_-]+', name) for name in packages):
+        raise ValueError('invalid doctest package inventory')
+    if set(packages) != {path.name for path in directory.iterdir() if path.is_dir()}:
+        raise ValueError('doctest package inventory omits or adds a compiled member')
+    results = [execute_package(root, directory / name, log_directory / name) for name in packages]
+    summary = {'status': 'pass', **{key: sum(row[key] for row in results)
+                                  for key in ('total', 'compile_fail', 'no_run', 'executed')}}
+    if summary['total'] != plan['total']:
+        raise ValueError('doctest package totals disagree with the workspace plan')
+    (log_directory / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+    return summary
+
+
+def execute_package(root, directory, log_directory):
     plan = json.loads((directory / 'plan.json').read_text())
     binaries = directory / 'programs'
     inventory = json.loads((directory / 'inventory.json').read_text())

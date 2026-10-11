@@ -62,7 +62,7 @@ def cases():
     host = toolchain.host()
 
     def check(channel, target, features, operation='check'):
-        command = ['cargo', '+' + channel, operation, '--locked', '--lib', '--target', target,
+        command = ['cargo', '+' + channel, operation, '-p', 'rscrypto', '--locked', '--lib', '--target', target,
                    '--no-default-features']
         if operation == 'build':
             command.append('--release')

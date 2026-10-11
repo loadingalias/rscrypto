@@ -180,8 +180,8 @@ def collect(root, work, env):
     if any('portable-only' in features[name] for name in native):
         raise RuntimeError('native test features indirectly enable portable-only')
     suites = [
-        ('native', root / 'Cargo.toml', ['--workspace', '--no-default-features', '--features', ','.join(native)]),
-        ('portable', root / 'Cargo.toml', ['--workspace', '--all-features']),
+        ('native', root / 'Cargo.toml', ['-p', 'rscrypto', '--no-default-features', '--features', ','.join(native)]),
+        ('portable', root / 'Cargo.toml', ['-p', 'rscrypto', '--all-features']),
     ]
     manifests = [root / 'fuzz/Cargo.toml', *sorted(root.glob('fuzz-packages/*/Cargo.toml'))]
     suites.extend((str(p.parent.relative_to(root)), p, ['--all-features', '--test', 'corpus_replay']) for p in manifests)

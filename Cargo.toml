@@ -44,7 +44,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [workspace]
 resolver = "3"
-members = ["."]
+members = [".", "rscrypto-rustls"]
 
 [lints]
 workspace = true

@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts/lib'))
 import evidence_bundle as bundle
 from cross_build import TARGETS, environment, require_host
+from workspace_features import native_features
 import doctest_bundle
 from evidence_suite import TARGET_ARGS, validate_backend_evidence
 
@@ -22,11 +23,8 @@ MODES = ("native", "portable", "internal-native", "internal-portable")
 
 
 def features(mode):
-    graph = tomllib.loads((ROOT / 'Cargo.toml').read_text())['features']
-    selected = sorted(set(graph) - {'portable-only'})
-    if any('portable-only' in graph[name] for name in selected):
-        raise ValueError('native features indirectly enable portable-only')
-    return ['--all-features'] if mode.endswith('portable') else ['--no-default-features', '--features', ','.join(selected)]
+    return (['--all-features'] if mode.endswith('portable') else
+            ['--no-default-features', '--features', ','.join(native_features(ROOT))])
 
 
 def nextest_identity(report):

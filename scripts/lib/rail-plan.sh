@@ -115,6 +115,7 @@ select_cargo_scope() {
       return 1
       ;;
     workspace)
+      CARGO_ARGS=(--workspace)
       SCOPE_DESC="workspace (Cargo Rail)"
       ;;
     packages)

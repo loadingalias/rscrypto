@@ -157,6 +157,8 @@ class Release(unittest.TestCase):
 
         def run(*command):
             if command[:2] == ('cargo', 'publish'):
+                self.assertEqual(command, ('cargo', 'publish', '-p', 'rscrypto', '--locked',
+                                           '--no-verify', '--registry', 'crates-io'))
                 events.append('upload')
                 return ''
             return original(*command)

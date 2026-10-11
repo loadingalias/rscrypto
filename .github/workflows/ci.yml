@@ -299,6 +299,7 @@ jobs:
           scripts/tooling/x86_64-linux.sh --ci-compat
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           just ci-compat
+          just ci-provider
           git diff --exit-code HEAD
 
       - name: Install tooling, check, and test (Windows)

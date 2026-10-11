@@ -65,17 +65,7 @@ if [[ "$dispatch_profile" == portable ]]; then
   echo "Dispatch profile: portable-only (all Cargo features; accelerated dispatch disabled)"
 else
   PYTHON="$("$SCRIPT_DIR/../lib/python.sh" --print)"
-  native_features=$("$PYTHON" - "$SCRIPT_DIR/../../Cargo.toml" <<'PYTHON'
-import sys, tomllib
-
-with open(sys.argv[1], 'rb') as source:
-    features = tomllib.load(source)['features']
-selected = set(features) - {'portable-only'}
-if any('portable-only' in features[name] for name in selected):
-    raise SystemExit('native test features indirectly enable portable-only; fix the feature graph')
-print(','.join(sorted(selected)))
-PYTHON
-  )
+  native_features=$("$PYTHON" "$SCRIPT_DIR/../lib/workspace_features.py")
   feature_args=(--no-default-features --features "$native_features")
   echo "Dispatch profile: production-auto (all feature roots except portable-only; production dispatch enabled)"
 fi

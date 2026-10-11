@@ -146,7 +146,8 @@ def main():
     root = Path(temporary)
     for name in ('scripts/check/check.sh', 'scripts/check/dependencies.sh', 'scripts/lib/toolchain.sh',
                  'scripts/lib/toolchain.py', 'scripts/lib/cross_build.py', 'scripts/lib/python.sh', 'Cargo.toml',
-                 'rust-toolchain.toml', '.config/target-matrix.json', 'scripts/test/fixtures.py'):
+                 'rust-toolchain.toml', '.config/target-matrix.json', 'scripts/test/fixtures.py',
+                 'scripts/check/provider.py', 'rscrypto-rustls/Cargo.toml'):
       destination = root / name
       destination.parent.mkdir(parents=True, exist_ok=True)
       shutil.copy2(source / name, destination)
@@ -170,6 +171,9 @@ if name == 'rustup':
     else: print('clippy-fixture (installed)')
 if name == 'cargo' and 'clippy' in args:
     sys.exit(int(os.environ.get('CHECK_CLIPPY_EXIT', '0')))
+if name == 'cargo' and args[0] == 'deny':
+    scope = 'normal' if '--exclude-dev' in args else 'complete'
+    if os.environ.get('CHECK_DENY_FAIL') == scope: sys.exit(9)
 ''')
     stub.chmod(0o755)
     for name in ('cargo', 'rustc', 'rustup'):
@@ -224,9 +228,19 @@ if name == 'cargo' and 'clippy' in args:
       assert 'Vector fixtures: 1 payloads verified across 1 manifests' in result.stdout
       inventories = [tuple(c) for c in commands if c[0] == 'rustup']
       assert len(inventories) == len(set(inventories)) == 2, inventories
-      clippy = [c for c in commands if c[0] == 'cargo' and 'clippy' in c]
+      clippy = [c for c in commands if c[0] == 'cargo' and 'clippy' in c and 'rscrypto' in c]
       expected = targets if mode != 'native' else ['aarch64-apple-darwin']
       assert len(clippy) == 2 * len(expected), clippy
+      provider = [c for c in commands if c[0] == 'cargo' and 'clippy' in c and 'rscrypto-rustls' in c]
+      std_targets = {t for t in expected if '-none' not in t and t != 'wasm32-unknown-unknown'}
+      assert len(provider) == 2 * len(std_targets), provider
+      assert {c[c.index('--target') + 1] for c in provider} == std_targets
+      for command in provider:
+        selected = set(command[command.index('--features') + 1].split(','))
+        assert ('--release' in command) != ('portable-only' in selected)
+        assert ('--fix' in command) == (mode == 'fix')
+        assert 'full' not in selected and 'hkdf' in selected
+        assert '--workspace' not in command
       for target in expected:
         rows = [c for c in clippy if c[c.index('--target') + 1] == target]
         assert len(rows) == 2
@@ -237,6 +251,7 @@ if name == 'cargo' and 'clippy' in args:
           assert ('--allow-dirty' in command) == (mode == 'fix')
           assert ('--allow-staged' in command) == (mode == 'fix')
           assert '--locked' in command and '--no-default-features' in command
+          assert command[command.index('-p') + 1] == 'rscrypto' and '--workspace' not in command
           assert ('--all-targets' in command) == (target == 'aarch64-apple-darwin')
           assert ('--lib' in command) == (target != 'aarch64-apple-darwin')
           assert command[1] == '+' + channel
@@ -252,17 +267,19 @@ if name == 'cargo' and 'clippy' in args:
                      [['cargo', '+' + channel, 'fmt', '--all', '--', '--check']])
       assert not any('plan' in c for c in commands)
       deny = [c for c in commands if c[:2] == ['cargo', 'deny']]
-      assert len(deny) == (0 if mode in ('fix', 'native') else 1)
+      assert len(deny) == (0 if mode in ('fix', 'native') else 2)
       assert (['cargo', 'audit'] in commands) == (mode not in ('fix', 'native'))
       if deny:
-        assert '--target' not in deny[0]
+        assert all('--target' not in c and '--workspace' in c and '--locked' in c for c in deny)
+        assert '--exclude-dev' in deny[0] and deny[0][-3:] == ['-D', 'warnings', 'bans']
+        assert '--exclude-dev' not in deny[1] and deny[1][-5:] == ['-D', 'warnings', '-A', 'duplicate', 'all']
       assert (['lint-independent-workspaces.sh'] in commands) == (mode != 'fix')
       assert (['p384.py', 'check'] in commands) == (mode != 'fix')
       assert (['provenance.py', 'check'] in commands) == (mode != 'fix')
     for target in ('riscv64gc-unknown-linux-gnu', 'powerpc64le-unknown-linux-gnu', 's390x-unknown-linux-gnu'):
       result, commands = run('target', target)
       assert result.returncode == 0, result.stderr
-      cross = [c for c in commands if c[0] == 'cargo' and 'clippy' in c]
+      cross = [c for c in commands if c[0] == 'cargo' and 'clippy' in c and 'rscrypto' in c]
       assert len(cross) == 2
       assert all('--all-targets' in c and c[c.index('--target') + 1] == target for c in cross)
       assert all(c[1] == '+' + channel for c in cross)
@@ -275,7 +292,7 @@ if name == 'cargo' and 'clippy' in args:
     assert result.returncode == 0, result.stderr
     inventories = [c for c in commands if c[0] == 'rustup']
     assert len(inventories) == 2, inventories
-    clippy = [c for c in commands if c[0] == 'cargo' and 'clippy' in c]
+    clippy = [c for c in commands if c[0] == 'cargo' and 'clippy' in c and 'rscrypto' in c]
     assert len(clippy) == 4 * len(targets)
     assert sum('--fix' in c for c in clippy) == 2 * len(targets)
     tooling = tomllib.loads((source / '.config/tooling.toml').read_text())
@@ -289,6 +306,11 @@ if name == 'cargo' and 'clippy' in args:
     assert result.returncode != 0 and not any(c[0] == 'cargo' for c in commands)
     result, commands = run('native', CHECK_CLIPPY_EXIT='7')
     assert result.returncode == 7 and not any(c[:2] == ['cargo', 'deny'] for c in commands)
+    for scope, count in (('normal', 1), ('complete', 2)):
+      result, commands = run('local', CHECK_DENY_FAIL=scope)
+      assert result.returncode == 9, result.stderr
+      assert len([c for c in commands if c[:2] == ['cargo', 'deny']]) == count
+      assert ['cargo', 'audit'] not in commands and not any(c[:2] == ['cargo', 'doc'] for c in commands)
     result, commands = run('fix', CHECK_INVENTORY_EXIT='19')
     assert result.returncode == 19 and not any(c[0] == 'cargo' for c in commands)
     result, commands = run('bogus')

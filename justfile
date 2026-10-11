@@ -155,6 +155,11 @@ test-cross operation target archive:
 ci-policy:
     @scripts/check/dependencies.sh
 
+# Check provider feature subsets on the host/MSRV and reject C dependencies on every target.
+ci-provider:
+    @scripts/lib/python.sh scripts/check/provider.py features
+    @scripts/lib/python.sh scripts/check/provider.py no-c
+
 # Compile feature/MSRV/bare-metal compatibility and execute WASM/WASI vectors.
 ci-compat:
     @scripts/lib/python.sh scripts/check/compat.py
@@ -193,6 +198,7 @@ test-scripts:
     @scripts/lib/python.sh scripts/test/fuzz_features_test.py
     @scripts/lib/python.sh scripts/check/macos_test.py
     @scripts/lib/python.sh scripts/check/check_runner_test.py
+    @scripts/lib/python.sh scripts/check/provider_test.py
     @scripts/lib/python.sh scripts/check/compat_test.py
     @scripts/lib/python.sh scripts/test/fuzz_runner_test.py
     @scripts/lib/python.sh scripts/asm/p384_test.py
