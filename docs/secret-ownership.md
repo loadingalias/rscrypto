@@ -29,6 +29,21 @@ It does not prove that the compiler erases every copy it makes.
 Typed private keys, shared secrets, keyed states, expanded schedules,
 and private-operation scratch follow the same rules, also when the table does not name them.
 
+### rustls symmetric adapters
+
+The `rscrypto-rustls` companion owns its HMAC keys in `SecretVec` and its HKDF
+expansion state in `HkdfSha256` or `HkdfSha384`. Neither adapter is cloneable.
+HKDF imports borrow rustls's `OkmBlock`; block expansion uses a `SecretBytes`
+scratch owner before copying into rustls's clearing `OkmBlock`.
+HMAC results cross the boundary through rustls's clearing `hmac::Tag`.
+
+Record, packet, and header-protection keys own rscrypto AEAD or header-protection
+contexts. Construction borrows rustls's clearing `AeadKey`, then creates typed
+rscrypto key owners and expanded contexts. The adapters expose no key formatting
+or serialization. `Tls13AeadAlgorithm::extract_keys` explicitly transfers
+rustls-owned traffic secrets to the caller, as rustls requires.
+Transcript contexts can be cloned; they contain public handshake data.
+
 ### ML-DSA storage
 
 - The `*_in` constructors, including `SecretKey::from_pkcs8_der_in` and `Seed::keypair_in`,

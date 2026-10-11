@@ -97,7 +97,10 @@ It does not download upstream archives.
 - `just test-scripts` runs the argument-forwarding, toolchain, test, check, and fuzz regressions
   with substitute executors.
 - Check recipes run `test/fixtures.py` before compilation.
-  It verifies Git-visible payloads under `testdata/` and `tests/vectors/`.
+  It verifies Git-visible payloads under `testdata/`, `tests/vectors/`, and
+  `rscrypto-rustls/tests/vectors/`.
+  `test/provider_vectors.py` reproduces the provider's TLS/QUIC vectors from
+  checksum-pinned RFC Editor text; it performs no cryptographic computation.
   Each directory's `SHA256SUMS` must cover its payloads, including new untracked inputs.
   Missing, extra, duplicate, changed, or symlinked inputs fail.
   `README.md` and `NIST-NOTICE.txt` are provenance metadata, not hashed payloads.

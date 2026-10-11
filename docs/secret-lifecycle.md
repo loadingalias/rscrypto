@@ -219,6 +219,22 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
   and before private scalar arithmetic.
 - If the ECDH callback fails, the operation returns before public derivation and before agreement.
 
+### rustls symmetric adapters
+
+`rscrypto-rustls` holds HMAC keys, HKDF state, and AEAD/header-protection contexts
+in the clearing owners named in the [ownership inventory](secret-ownership.md#rustls-symmetric-adapters).
+No provider expansion loop duplicates HKDF. The adapter's fixed expansion
+scratch clears on return or unwind after rustls copies the output.
+Key construction crosses by-value arrays into typed rscrypto owners; compiler-made
+copies at that boundary remain unqualified.
+
+An entropy fill error clears the entire destination, including partial writes.
+An AEAD authentication failure clears the body before returning an opaque rustls
+error. Public length and key-shape rejections occur before decryption; those
+paths leave ciphertext unchanged. Successful plaintext belongs to rustls or its
+caller. The provider does not clear external record storage after successful use.
+These source contracts add no linked-code, residue, or timing qualification.
+
 ## Export and capacity
 
 - `SecretBytes::expose()` clears its source, then returns an ordinary array.

@@ -56,7 +56,8 @@ class FixtureTests(unittest.TestCase):
             verify(self.root)
 
     def test_unlisted_payloads_and_missing_manifests_are_rejected(self):
-        for name in ("testdata/family/extra.bin", "testdata/new-family/vector.bin", "tests/vectors/vector.json"):
+        for name in ("testdata/family/extra.bin", "testdata/new-family/vector.bin", "tests/vectors/vector.json",
+                     "rscrypto-rustls/tests/vectors/packet.txt"):
             with self.subTest(name=name):
                 path = self.root / name
                 path.parent.mkdir(parents=True, exist_ok=True)

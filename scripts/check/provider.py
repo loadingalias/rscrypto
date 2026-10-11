@@ -22,7 +22,9 @@ def feature_matrix(root=ROOT):
         raise ValueError('the provider rust-version must match rscrypto')
     graph = provider['features']
     for feature, edges in graph.items():
-        if feature != 'default' and (feature not in core['features'] or edges != ['rscrypto/' + feature]):
+        # OS entropy is delegated to the same getrandom crate as rscrypto.
+        expected = ['rscrypto/' + feature, *(['dep:getrandom'] if feature == 'getrandom' else [])]
+        if feature != 'default' and (feature not in core['features'] or edges != expected):
             raise ValueError(f'provider feature {feature} must forward one-to-one to rscrypto')
     native = sorted(set(graph) - {'default', 'portable-only'})
     return [('empty', []), ('default', ['default']), ('native', native),

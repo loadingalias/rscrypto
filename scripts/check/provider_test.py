@@ -30,11 +30,13 @@ class Provider(unittest.TestCase):
             valid = ('[package]\nrust-version="1.100.0"\n'
                      '[features]\ndefault=["hkdf"]\nhkdf=["rscrypto/hkdf"]\nportable-only=["rscrypto/portable-only"]\n')
             with (root / 'Cargo.toml').open('a') as output:
-                output.write('portable-only=[]\n')
+                output.write('portable-only=[]\ngetrandom=[]\n')
+            valid += 'getrandom=["rscrypto/getrandom", "dep:getrandom"]\n'
             manifest.write_text(valid)
             self.assertIn(('hkdf', ['hkdf']), provider.feature_matrix(root))
             for invalid in (valid.replace('1.100.0', '1.99.0'),
-                            valid.replace('["rscrypto/hkdf"]', '["rscrypto/hkdf", "rscrypto/full"]')):
+                            valid.replace('["rscrypto/hkdf"]', '["rscrypto/hkdf", "rscrypto/full"]'),
+                            valid.replace('"dep:getrandom"', '"dep:other-rng"')):
                 manifest.write_text(invalid)
                 with self.assertRaises(ValueError):
                     provider.feature_matrix(root)

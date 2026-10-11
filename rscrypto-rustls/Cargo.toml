@@ -46,7 +46,7 @@ ecdsa-p384 = ["rscrypto/ecdsa-p384"]
 ed25519 = ["rscrypto/ed25519"]
 rsa = ["rscrypto/rsa"]
 ml-dsa = ["rscrypto/ml-dsa"]
-getrandom = ["rscrypto/getrandom"]
+getrandom = ["rscrypto/getrandom", "dep:getrandom"]
 portable-only = ["rscrypto/portable-only"]
 
 [dependencies]
@@ -54,3 +54,7 @@ rscrypto = { version = "0.10.0", path = "..", default-features = false, features
 rustls = { version = "=0.23.45", default-features = false, features = ["std", "custom-provider"] }
 rustls-webpki = { version = "=0.103.15", default-features = false, features = ["alloc", "std"] }
 rustls-pki-types = { version = "=1.15.1", default-features = false, features = ["std"] }
+getrandom = { version = "0.4.3", optional = true }
+
+[dev-dependencies]
+rustls = { version = "=0.23.45", default-features = false, features = ["std", "aws_lc_rs", "ring"] }

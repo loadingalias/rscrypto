@@ -14,7 +14,7 @@ METADATA = {"README.md", "NIST-NOTICE.txt"}
 def verify(root):
     names = subprocess.check_output(
         ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--",
-         "testdata", "tests/vectors"], cwd=root, text=True
+         "testdata", "tests/vectors", "rscrypto-rustls/tests/vectors"], cwd=root, text=True
     ).split("\0")
     files = {Path(name) for name in names if name}
     manifests = sorted(path for path in files if path.name == "SHA256SUMS")
