@@ -5,6 +5,15 @@ use rustls::{CipherSuite, Error, Side, SupportedCipherSuite, quic::Version};
 
 use crate::{cipher_suite, hash};
 
+#[cfg(all(
+  feature = "getrandom",
+  feature = "x25519",
+  feature = "p256-ecdh",
+  feature = "p384-ecdh",
+  feature = "ml-kem"
+))]
+pub(crate) mod tls;
+
 pub(crate) fn hex(text: &str) -> Vec<u8> {
   assert!(text.len().is_multiple_of(2));
   text

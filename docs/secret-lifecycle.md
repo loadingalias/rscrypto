@@ -235,6 +235,17 @@ paths leave ciphertext unchanged. Successful plaintext belongs to rustls or its
 caller. The provider does not clear external record storage after successful use.
 These source contracts add no linked-code, residue, or timing qualification.
 
+### rustls key exchange
+
+Key generation uses fallible entropy callbacks into the primitives' clearing
+scratch owners. Partial-fill failure propagates without a share. Malformed
+peer shares consume and drop the active exchange. Successful agreement copies
+the primitive result into rustls's clearing `SharedSecret`; hybrid fallback
+also drops the unused ML-KEM decapsulation key. Ownership is listed in the
+[key-exchange inventory](secret-ownership.md#rustls-key-exchange).
+The adapter adds no raw private-key export or explicit secret duplication.
+Compiler-made moves and stack residue have not been separately qualified here.
+
 ## Export and capacity
 
 - `SecretBytes::expose()` clears its source, then returns an ordinary array.

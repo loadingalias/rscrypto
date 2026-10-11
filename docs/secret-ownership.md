@@ -44,6 +44,18 @@ or serialization. `Tls13AeadAlgorithm::extract_keys` explicitly transfers
 rustls-owned traffic secrets to the caller, as rustls requires.
 Transcript contexts can be cloned; they contain public handshake data.
 
+### rustls key exchange
+
+Each active exchange owns an rscrypto `X25519SecretKey`, `P256EphemeralSecret`,
+or `P384EphemeralSecret`. The hybrid also owns a boxed `MlKem768DecapsulationKey`,
+generated directly into its allocation. Exchanges are neither cloneable nor
+formattable. Completing or abandoning an exchange drops those clearing owners.
+
+Primitive shared secrets remain in rscrypto's clearing owners until copied into
+rustls's clearing `SharedSecret`. Hybrid concatenation creates one 64-byte vector
+and moves it into that rustls owner. The borrowed component secrets clear on return.
+Public shares and ciphertexts carry no secret ownership obligation.
+
 ### ML-DSA storage
 
 - The `*_in` constructors, including `SecretKey::from_pkcs8_der_in` and `Seed::keypair_in`,

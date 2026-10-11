@@ -29,6 +29,9 @@ def feature_matrix(root=ROOT):
     native = sorted(set(graph) - {'default', 'portable-only'})
     return [('empty', []), ('default', ['default']), ('native', native),
             ('all', sorted(graph)),
+            *[('kx-' + feature, ['getrandom', feature])
+              for feature in ('x25519', 'p256-ecdh', 'p384-ecdh')],
+            ('kx-hybrid', ['getrandom', 'x25519', 'ml-kem']),
             *[(feature, [feature]) for feature in sorted(set(graph) - {'default'})]]
 
 
