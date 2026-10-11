@@ -218,7 +218,7 @@ def prepared_profile(args, entry) -> None:
   failure = None
   try:
     artifacts, compatibility = consume(repository, args.target, args.run_archive.resolve(), root / 'input', rows, settings)
-    artifact = artifacts[tuple(build_command(entry['binary'], entry['features']))]
+    artifact = artifacts[tuple(build_command(entry['binary'], entry['features'], entry.get('manifest')))]
     env = dict(os.environ) | {'CRITERION_HOME': str(root / 'criterion')}
     cases = discover(artifact, '', root / 'output.txt', env)
     if cases.count(args.case) != 1:
@@ -268,7 +268,7 @@ def local_profile(args, entry) -> None:
   with tempfile.TemporaryDirectory(prefix='rscrypto-profile-build-') as directory:
     temporary = Path(directory)
     env = dict(os.environ) | {'CRITERION_HOME': str(temporary / 'criterion')}
-    artifact = build(build_command(entry['binary'], entry['features']), temporary / 'output.txt', env)
+    artifact = build(build_command(entry['binary'], entry['features'], entry.get('manifest')), temporary / 'output.txt', env)
     cases = discover(artifact, '', temporary / 'output.txt', env)
     if args.list:
       print('\n'.join(cases))

@@ -38,7 +38,7 @@ def prepare(root, target, archive, output, rows, settings):
                                'version': subprocess.check_output([str(compiler), '--version'], text=True)}}
         seen = set()
         for row in rows:
-            command = build_command(row['binary'], row['features'])
+            command = build_command(row['binary'], row['features'], row.get('manifest'))
             if tuple(command) in seen:
                 continue
             seen.add(tuple(command))
@@ -80,7 +80,7 @@ def consume(root, target, archive, directory, rows, settings):
                 or artifact['command'] != [*row['configuration'], '--target', target]):
             raise ValueError('prepared benchmark binary or build command differs')
         artifacts[key] = {**artifact, 'path': str(binary)}
-    expected = {tuple(build_command(row['binary'], row['features'])) for row in rows}
+    expected = {tuple(build_command(row['binary'], row['features'], row.get('manifest'))) for row in rows}
     if set(artifacts) != expected:
         raise ValueError('prepared benchmark configurations are incomplete or unexpected')
     # Build provenance remains unchanged in the input manifest. Compatibility

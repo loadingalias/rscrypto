@@ -1,6 +1,13 @@
 {
   "schema": 1,
   "benches": {
+    "tls_connections": {
+      "binary": "tls_connections",
+      "manifest": "tools/provider-bench/Cargo.toml",
+      "kind": "criterion",
+      "required": true,
+      "features": ["ml-dsa"]
+    },
     "poly1305": {
       "binary": "poly1305",
       "kind": "criterion",
@@ -173,6 +180,7 @@
     }
   },
   "algorithms": {
+    "tls-provider": { "bench": "tls_connections", "filter": "^tls13/" },
     "crc16-ccitt": { "bench": "crc", "filter": "crc16-ccitt" },
     "crc16-ibm": { "bench": "crc", "filter": "crc16-ibm" },
     "crc24-openpgp": { "bench": "crc", "filter": "crc24-openpgp" },
@@ -259,6 +267,7 @@
   },
   "selectors": {
     "all": [
+      "tls-provider",
       "poly1305",
       "crc16-ccitt",
       "crc16-ibm",

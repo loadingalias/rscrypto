@@ -48,6 +48,8 @@ rsa = ["rscrypto/rsa"]
 ml-dsa = ["rscrypto/ml-dsa"]
 getrandom = ["rscrypto/getrandom", "dep:getrandom"]
 portable-only = ["rscrypto/portable-only"]
+# Integration support uses the same primitive leaf features as ordinary TLS.
+quinn = ["dep:quinn-proto", "dep:bytes", "aes-gcm", "hkdf", "getrandom"]
 
 [dependencies]
 rscrypto = { version = "0.10.0", path = "..", default-features = false, features = ["std"] }
@@ -55,6 +57,19 @@ rustls = { version = "=0.23.45", default-features = false, features = ["std", "c
 rustls-webpki = { version = "=0.103.15", default-features = false, features = ["alloc", "std"] }
 rustls-pki-types = { version = "=1.15.1", default-features = false, features = ["std"] }
 getrandom = { version = "0.4.3", optional = true }
+zeroize = { version = "1.9.0", default-features = false }
+quinn-proto = { version = "=0.11.19", default-features = false, optional = true }
+bytes = { version = "1.12.1", optional = true }
 
 [dev-dependencies]
 rustls = { version = "=0.23.45", default-features = false, features = ["std", "aws_lc_rs", "ring"] }
+quinn = { version = "=0.11.12", default-features = false, features = ["runtime-tokio"] }
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "macros", "time", "io-util"] }
+
+[[example]]
+name = "interop"
+required-features = ["getrandom", "hkdf", "aes-gcm"]
+
+[[example]]
+name = "quic_interop"
+required-features = ["quinn"]

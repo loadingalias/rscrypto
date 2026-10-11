@@ -2,6 +2,8 @@
 //!
 //! Each group requires `getrandom` and its corresponding primitive feature.
 //! `X25519MLKEM768` requires both `x25519` and `ml-kem`.
+//! The constants use OS entropy. Construct a group with `new` to use a
+//! caller-supplied [`rustls::crypto::SecureRandom`] for all its entropy requests.
 
 use rustls::crypto::SupportedKxGroup;
 
@@ -18,13 +20,13 @@ pub static ALL_KX_GROUPS: &[&dyn SupportedKxGroup] = &[
 ];
 
 #[cfg(all(feature = "getrandom", feature = "p256-ecdh"))]
-pub use implementation::SECP256R1;
+pub use implementation::{P256Group, SECP256R1};
 #[cfg(all(feature = "getrandom", feature = "p384-ecdh"))]
-pub use implementation::SECP384R1;
+pub use implementation::{P384Group, SECP384R1};
 #[cfg(all(feature = "getrandom", feature = "x25519"))]
-pub use implementation::X25519;
+pub use implementation::{X25519, X25519Group};
 #[cfg(all(feature = "getrandom", feature = "x25519", feature = "ml-kem"))]
-pub use implementation::X25519MLKEM768;
+pub use implementation::{X25519MLKEM768, X25519MlKem768Group};
 
 #[cfg(all(
   feature = "getrandom",
@@ -48,9 +50,21 @@ mod implementation {
   };
 
   #[cfg(feature = "x25519")]
+  /// X25519 with a caller-selected entropy source.
   #[derive(Debug)]
-  struct X25519Group {
+  pub struct X25519Group {
     random: &'static dyn SecureRandom,
+  }
+
+  #[cfg(feature = "x25519")]
+  impl X25519Group {
+    /// Use `random` for key generation, propagating its failures without fallback.
+    ///
+    /// The source must provide cryptographically secure random bytes.
+    #[must_use]
+    pub const fn new(random: &'static dyn SecureRandom) -> Self {
+      Self { random }
+    }
   }
 
   #[cfg(feature = "x25519")]
@@ -121,9 +135,20 @@ mod implementation {
         random: crate::random::SECURE_RANDOM,
       };
 
+      #[doc = concat!(stringify!($name), " with a caller-selected entropy source.")]
       #[derive(Debug)]
-      struct $group {
+      pub struct $group {
         random: &'static dyn SecureRandom,
+      }
+
+      impl $group {
+        /// Use `random` for key generation, propagating its failures without fallback.
+        ///
+        /// The source must provide cryptographically secure random bytes.
+        #[must_use]
+        pub const fn new(random: &'static dyn SecureRandom) -> Self {
+          Self { random }
+        }
       }
 
       impl SupportedKxGroup for $group {
@@ -205,16 +230,27 @@ mod implementation {
     const HYBRID_SERVER_SHARE_LEN: usize = MlKem768::CIPHERTEXT_SIZE + 32;
 
     /// ML-KEM-768 followed by X25519, as specified by RFC 10024.
-    pub static X25519MLKEM768: &dyn SupportedKxGroup = &HybridGroup {
+    pub static X25519MLKEM768: &dyn SupportedKxGroup = &X25519MlKem768Group {
       random: crate::random::SECURE_RANDOM,
     };
 
+    /// ML-KEM-768 and X25519 with a caller-selected entropy source.
     #[derive(Debug)]
-    struct HybridGroup {
+    pub struct X25519MlKem768Group {
       random: &'static dyn SecureRandom,
     }
 
-    impl SupportedKxGroup for HybridGroup {
+    impl X25519MlKem768Group {
+      /// Use `random` for both components, propagating its failures without fallback.
+      ///
+      /// The source must provide cryptographically secure random bytes.
+      #[must_use]
+      pub const fn new(random: &'static dyn SecureRandom) -> Self {
+        Self { random }
+      }
+    }
+
+    impl SupportedKxGroup for X25519MlKem768Group {
       fn start(&self) -> Result<Box<dyn ActiveKeyExchange>, Error> {
         let classical = X25519Exchange::start(self.random)?;
         let (public_key, secret) = MlKem768::generate_keypair_in(
@@ -353,14 +389,14 @@ mod implementation {
       ];
       for random in &FAILURES[..2] {
         assert!(matches!(
-          HybridGroup { random }.start(),
+          X25519MlKem768Group::new(random).start(),
           Err(Error::FailedToGetRandomBytes)
         ));
         assert_eq!(random.calls.load(Ordering::Relaxed), random.fail_at.strict_add(1));
       }
       let client = X25519MLKEM768.start().expect("key exchange");
       for random in &FAILURES[2..] {
-        let group = HybridGroup { random };
+        let group = X25519MlKem768Group::new(random);
         let mut malformed = client.pub_key().to_vec();
         malformed[..1184].fill(0xff);
         assert!(matches!(
@@ -377,7 +413,7 @@ mod implementation {
     }
   }
   #[cfg(all(feature = "ml-kem", feature = "x25519"))]
-  pub use hybrid::X25519MLKEM768;
+  pub use hybrid::{X25519MLKEM768, X25519MlKem768Group};
 
   #[cfg(all(test, feature = "x25519", feature = "p256-ecdh", feature = "p384-ecdh"))]
   #[test]
@@ -391,9 +427,9 @@ mod implementation {
       }
     }
     for group in [
-      &X25519Group { random: &Unavailable } as &dyn SupportedKxGroup,
-      &P256Group { random: &Unavailable },
-      &P384Group { random: &Unavailable },
+      &X25519Group::new(&Unavailable) as &dyn SupportedKxGroup,
+      &P256Group::new(&Unavailable),
+      &P384Group::new(&Unavailable),
     ] {
       assert!(matches!(group.start(), Err(Error::FailedToGetRandomBytes)));
     }

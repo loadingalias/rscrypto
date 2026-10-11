@@ -1,0 +1,435 @@
+use alloc::sync::Arc;
+use rustls::pki_types::{
+  CertificateDer, InvalidSignature, PrivateKeyDer, PrivatePkcs1KeyDer, PrivatePkcs8KeyDer, PrivateSec1KeyDer, alg_id,
+};
+use rustls::{Error, SignatureAlgorithm, SignatureScheme};
+
+use super::tls::{self, Credential};
+use crate::{sign, verify};
+
+macro_rules! fixture {
+  ($file:literal) => {
+    &include_bytes!(concat!("../../tests/vectors/credentials/", $file))[..]
+  };
+}
+
+const MESSAGE: &[u8] = include_bytes!("../../tests/vectors/credentials/message.txt");
+
+#[test]
+fn selected_entropy_controls_key_loading_and_signing_without_fallback() {
+  use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+  use rustls::crypto::{GetRandomFailed, KeyProvider, SecureRandom};
+
+  #[derive(Debug)]
+  struct Source {
+    failing: AtomicBool,
+    calls: AtomicUsize,
+  }
+  impl SecureRandom for Source {
+    fn fill(&self, output: &mut [u8]) -> Result<(), GetRandomFailed> {
+      self.calls.fetch_add(1, Ordering::Relaxed);
+      if self.failing.load(Ordering::Relaxed) {
+        let length = output.len().min(17);
+        output[..length].fill(0x42);
+        Err(GetRandomFailed)
+      } else {
+        crate::random::SECURE_RANDOM.fill(output)
+      }
+    }
+  }
+  static SOURCE: Source = Source {
+    failing: AtomicBool::new(false),
+    calls: AtomicUsize::new(0),
+  };
+  let provider = sign::Provider::new(&SOURCE);
+  let peer = rustls::crypto::aws_lc_rs::default_provider().signature_verification_algorithms;
+  for (kind, public) in [
+    (Credential::P256, public_bits(fixture!("p256-spki.der"), 65)),
+    (Credential::P384, public_bits(fixture!("p384-spki.der"), 97)),
+    (Credential::Ed25519, public_bits(fixture!("ed25519-spki.der"), 32)),
+    (Credential::Rsa, fixture!("rsa3072-public.der")),
+    #[cfg(feature = "ml-dsa")]
+    (Credential::MlDsa44, &fixture!("mldsa44-spki.der")[22..]),
+    #[cfg(feature = "ml-dsa")]
+    (Credential::MlDsa65, &fixture!("mldsa65-spki.der")[22..]),
+    #[cfg(feature = "ml-dsa")]
+    (Credential::MlDsa87, &fixture!("mldsa87-spki.der")[22..]),
+  ] {
+    let (_, _, der) = tls::credentials(kind);
+    SOURCE.failing.store(true, Ordering::Relaxed);
+    let calls = SOURCE.calls.load(Ordering::Relaxed);
+    let loaded = provider.load_private_key(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(der.to_vec())));
+    if matches!(kind, Credential::P256 | Credential::P384) {
+      assert!(matches!(loaded, Err(Error::FailedToGetRandomBytes)));
+      assert_eq!(SOURCE.calls.load(Ordering::Relaxed), calls.strict_add(1));
+    } else {
+      assert!(loaded.is_ok(), "this key import does not require entropy");
+      assert_eq!(SOURCE.calls.load(Ordering::Relaxed), calls);
+    }
+    SOURCE.failing.store(false, Ordering::Relaxed);
+    let key = provider
+      .load_private_key(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(der.to_vec())))
+      .expect("key import after entropy recovery");
+    let signer = key.choose_scheme(&[kind.scheme()]).expect("fixture scheme");
+    SOURCE.failing.store(true, Ordering::Relaxed);
+    let calls = SOURCE.calls.load(Ordering::Relaxed);
+    let signature = signer.sign(MESSAGE);
+    if matches!(kind, Credential::Ed25519) {
+      assert_eq!(SOURCE.calls.load(Ordering::Relaxed), calls);
+      peer
+        .mapping
+        .iter()
+        .find(|(scheme, _)| *scheme == kind.scheme())
+        .expect("peer scheme")
+        .1[0]
+        .verify_signature(public, MESSAGE, &signature.expect("Ed25519 needs no entropy"))
+        .expect("independent Ed25519 verification");
+    } else {
+      assert!(matches!(signature, Err(Error::General(message)) if message == "TLS signing failed"));
+      assert_eq!(SOURCE.calls.load(Ordering::Relaxed), calls.strict_add(1));
+    }
+    SOURCE.failing.store(false, Ordering::Relaxed);
+    let signature = signer.sign(MESSAGE).expect("same signer after entropy recovery");
+    peer
+      .mapping
+      .iter()
+      .find(|(scheme, _)| *scheme == kind.scheme())
+      .expect("peer scheme")
+      .1[0]
+      .verify_signature(public, MESSAGE, &signature)
+      .expect("independent verification after entropy failure");
+  }
+}
+
+fn public_bits(spki: &[u8], length: usize) -> &[u8] {
+  // These pinned SPKIs end in a fixed-size, byte-aligned public-key BIT STRING.
+  // End-to-end certificate tests separately exercise WebPKI's DER interpretation.
+  &spki[spki.len().strict_sub(length)..]
+}
+
+#[test]
+fn all_fourteen_verifiers_accept_independent_signatures_and_reject_corruption() {
+  let p256 = public_bits(fixture!("p256-spki.der"), 65);
+  let p384 = public_bits(fixture!("p384-spki.der"), 97);
+  let ed25519 = public_bits(fixture!("ed25519-spki.der"), 32);
+  let rsa = fixture!("rsa3072-public.der");
+  let cases = [
+    (
+      alg_id::ECDSA_P256,
+      alg_id::ECDSA_SHA256,
+      p256,
+      fixture!("p256-sha256.sig"),
+    ),
+    (
+      alg_id::ECDSA_P256,
+      alg_id::ECDSA_SHA384,
+      p256,
+      fixture!("p256-sha384.sig"),
+    ),
+    (
+      alg_id::ECDSA_P384,
+      alg_id::ECDSA_SHA256,
+      p384,
+      fixture!("p384-sha256.sig"),
+    ),
+    (
+      alg_id::ECDSA_P384,
+      alg_id::ECDSA_SHA384,
+      p384,
+      fixture!("p384-sha384.sig"),
+    ),
+    (alg_id::ED25519, alg_id::ED25519, ed25519, fixture!("ed25519.sig")),
+    (
+      alg_id::RSA_ENCRYPTION,
+      alg_id::RSA_PSS_SHA256,
+      rsa,
+      fixture!("rsa3072-pss-sha256.sig"),
+    ),
+    (
+      alg_id::RSA_ENCRYPTION,
+      alg_id::RSA_PSS_SHA384,
+      rsa,
+      fixture!("rsa3072-pss-sha384.sig"),
+    ),
+    (
+      alg_id::RSA_ENCRYPTION,
+      alg_id::RSA_PSS_SHA512,
+      rsa,
+      fixture!("rsa3072-pss-sha512.sig"),
+    ),
+    (
+      alg_id::RSA_ENCRYPTION,
+      alg_id::RSA_PKCS1_SHA256,
+      rsa,
+      fixture!("rsa3072-pkcs1-sha256.sig"),
+    ),
+    (
+      alg_id::RSA_ENCRYPTION,
+      alg_id::RSA_PKCS1_SHA384,
+      rsa,
+      fixture!("rsa3072-pkcs1-sha384.sig"),
+    ),
+    (
+      alg_id::RSA_ENCRYPTION,
+      alg_id::RSA_PKCS1_SHA512,
+      rsa,
+      fixture!("rsa3072-pkcs1-sha512.sig"),
+    ),
+  ];
+  assert_eq!(
+    verify::SUPPORTED_ALGORITHMS.all.len(),
+    14 + if cfg!(feature = "ml-dsa") { 3 } else { 0 }
+  );
+  let peer = rustls::crypto::ring::default_provider().signature_verification_algorithms;
+  let mut exercised = 0_usize;
+  for algorithm in verify::SUPPORTED_ALGORITHMS.all {
+    if [alg_id::ML_DSA_44, alg_id::ML_DSA_65, alg_id::ML_DSA_87].contains(&algorithm.public_key_alg_id()) {
+      continue; // The independent ML-DSA fixtures are exercised in tests::mldsa.
+    }
+    let signature_algorithm = algorithm.signature_alg_id();
+    let signature_id = signature_algorithm.as_ref();
+    let (_, _, key, signature) = cases
+      .iter()
+      .find(|(public, signature, _, _)| {
+        *public == algorithm.public_key_alg_id()
+          && (signature.as_ref() == signature_id
+            || (signature.as_ref().ends_with(&[5, 0])
+              && signature.as_ref().strip_suffix(&[5, 0]) == Some(signature_id)))
+      })
+      .expect("independent fixture for each algorithm identifier");
+    let independent = peer
+      .all
+      .iter()
+      .find(|peer| {
+        peer.public_key_alg_id() == algorithm.public_key_alg_id()
+          && peer.signature_alg_id() == algorithm.signature_alg_id()
+      })
+      .expect("independent algorithm identifier");
+    algorithm
+      .verify_signature(key, MESSAGE, signature)
+      .expect("OpenSSL signature");
+    independent
+      .verify_signature(key, MESSAGE, signature)
+      .expect("ring accepts the same fixture");
+    let mut corrupt = signature.to_vec();
+    corrupt[0] ^= 1;
+    let mut trailing = signature.to_vec();
+    trailing.push(0);
+    for (key, message, signature) in [
+      (*key, &b"changed message"[..], *signature),
+      (&key[..key.len().strict_sub(1)], MESSAGE, *signature),
+      (*key, MESSAGE, &corrupt),
+      (*key, MESSAGE, &trailing),
+      (*key, MESSAGE, &signature[..signature.len().strict_sub(1)]),
+    ] {
+      assert!(matches!(
+        algorithm.verify_signature(key, message, signature),
+        Err(InvalidSignature)
+      ));
+    }
+    exercised = exercised.strict_add(1);
+  }
+  assert_eq!(exercised, 14);
+  for (scheme, public) in [
+    (SignatureScheme::ECDSA_NISTP256_SHA256, alg_id::ECDSA_P256),
+    (SignatureScheme::ECDSA_NISTP384_SHA384, alg_id::ECDSA_P384),
+  ] {
+    let mapped = verify::SUPPORTED_ALGORITHMS
+      .mapping
+      .iter()
+      .find(|(name, _)| *name == scheme)
+      .expect("TLS scheme")
+      .1;
+    assert_eq!(mapped.len(), 1, "TLS 1.3 never substitutes another curve");
+    assert_eq!(mapped[0].public_key_alg_id(), public);
+  }
+}
+
+#[test]
+fn loaded_signing_keys_match_spki_and_independent_verifiers() {
+  let peer = rustls::crypto::ring::default_provider().signature_verification_algorithms;
+  for (kind, scheme, algorithm, spki, public) in [
+    (
+      Credential::P256,
+      SignatureScheme::ECDSA_NISTP256_SHA256,
+      SignatureAlgorithm::ECDSA,
+      fixture!("p256-spki.der"),
+      public_bits(fixture!("p256-spki.der"), 65),
+    ),
+    (
+      Credential::P384,
+      SignatureScheme::ECDSA_NISTP384_SHA384,
+      SignatureAlgorithm::ECDSA,
+      fixture!("p384-spki.der"),
+      public_bits(fixture!("p384-spki.der"), 97),
+    ),
+    (
+      Credential::Ed25519,
+      SignatureScheme::ED25519,
+      SignatureAlgorithm::ED25519,
+      fixture!("ed25519-spki.der"),
+      public_bits(fixture!("ed25519-spki.der"), 32),
+    ),
+    (
+      Credential::Rsa,
+      SignatureScheme::RSA_PSS_SHA256,
+      SignatureAlgorithm::RSA,
+      fixture!("rsa3072-spki.der"),
+      fixture!("rsa3072-public.der"),
+    ),
+  ] {
+    let (_, cert, private) = tls::credentials(kind);
+    let key = sign::KEY_PROVIDER
+      .load_private_key(PrivatePkcs8KeyDer::from(private.to_vec()).into())
+      .expect("valid fixture key");
+    assert_eq!(key.algorithm(), algorithm);
+    assert_eq!(key.public_key().expect("SPKI").as_ref(), spki);
+    let certified = rustls::sign::CertifiedKey::new(vec![CertificateDer::from(cert.to_vec())], key);
+    certified.keys_match().expect("certificate and key match");
+    assert!(certified.key.choose_scheme(&[]).is_none());
+    assert!(
+      certified
+        .key
+        .choose_scheme(&[SignatureScheme::RSA_PKCS1_SHA256])
+        .is_none()
+    );
+    let schemes = if matches!(kind, Credential::Rsa) {
+      &[
+        SignatureScheme::RSA_PSS_SHA256,
+        SignatureScheme::RSA_PSS_SHA384,
+        SignatureScheme::RSA_PSS_SHA512,
+      ][..]
+    } else {
+      core::slice::from_ref(&scheme)
+    };
+    for &scheme in schemes {
+      let signer = certified.key.choose_scheme(&[scheme]).expect("supported scheme");
+      assert_eq!(signer.scheme(), scheme);
+      let signature = signer.sign(MESSAGE).expect("sign");
+      let verifier = peer
+        .mapping
+        .iter()
+        .find(|(name, _)| *name == scheme)
+        .expect("independent scheme")
+        .1[0];
+      verifier
+        .verify_signature(public, MESSAGE, &signature)
+        .expect("ring verifies provider signature");
+      assert!(matches!(
+        verifier.verify_signature(public, b"changed", &signature),
+        Err(InvalidSignature)
+      ));
+      if matches!(kind, Credential::Ed25519) {
+        assert_eq!(signature, fixture!("ed25519.sig"));
+      }
+      if matches!(kind, Credential::Rsa) {
+        assert_ne!(signature, signer.sign(MESSAGE).expect("fresh PSS salt"));
+      }
+    }
+    let (_, wrong_cert, _) = tls::credentials(if matches!(kind, Credential::P256) {
+      Credential::P384
+    } else {
+      Credential::P256
+    });
+    let mismatched = rustls::sign::CertifiedKey::new(vec![CertificateDer::from(wrong_cert.to_vec())], certified.key);
+    assert!(matches!(mismatched.keys_match(), Err(Error::InconsistentKeys(_))));
+  }
+}
+
+#[test]
+fn alternate_private_key_encodings_and_invalid_containers() {
+  for (private, expected) in [
+    (
+      PrivateKeyDer::Sec1(PrivateSec1KeyDer::from(fixture!("p256-sec1.der").to_vec())),
+      fixture!("p256-spki.der"),
+    ),
+    (
+      PrivateKeyDer::Sec1(PrivateSec1KeyDer::from(fixture!("p384-sec1.der").to_vec())),
+      fixture!("p384-spki.der"),
+    ),
+    (
+      PrivateKeyDer::Pkcs1(PrivatePkcs1KeyDer::from(fixture!("rsa3072-pkcs1.der").to_vec())),
+      fixture!("rsa3072-spki.der"),
+    ),
+  ] {
+    let key = sign::KEY_PROVIDER
+      .load_private_key(private)
+      .expect("alternate encoding");
+    assert_eq!(key.public_key().expect("SPKI").as_ref(), expected);
+  }
+  for kind in [Credential::P256, Credential::P384, Credential::Ed25519, Credential::Rsa] {
+    let private = tls::credentials(kind).2;
+    let mut trailing = private.to_vec();
+    trailing.push(0);
+    for malformed in [&private[..private.len().strict_sub(1)], &trailing, &[], &[0; 16_385]] {
+      let error = sign::KEY_PROVIDER
+        .load_private_key(PrivatePkcs8KeyDer::from(malformed.to_vec()).into())
+        .expect_err("reject malformed key");
+      assert!(matches!(error, Error::General(message) if message == "invalid or unsupported TLS private key"));
+    }
+  }
+}
+
+#[test]
+fn deployed_rsa2048_verifies_but_new_signing_keys_require_rsa3072() {
+  let verifier = verify::SUPPORTED_ALGORITHMS
+    .mapping
+    .iter()
+    .find(|(scheme, _)| *scheme == SignatureScheme::RSA_PSS_SHA256)
+    .expect("PSS verifier")
+    .1[0];
+  verifier
+    .verify_signature(
+      fixture!("rsa2048-public.der"),
+      MESSAGE,
+      fixture!("rsa2048-pss-sha256.sig"),
+    )
+    .expect("deployed RSA-2048 signature");
+  assert!(matches!(
+    sign::KEY_PROVIDER.load_private_key(PrivatePkcs8KeyDer::from(fixture!("rsa2048-key.der").to_vec()).into()),
+    Err(Error::General(_))
+  ));
+}
+
+#[test]
+fn authenticated_handshakes_use_each_credential_in_both_roles() {
+  for kind in [Credential::P256, Credential::P384, Credential::Ed25519, Credential::Rsa] {
+    for independent in [
+      rustls::crypto::ring::default_provider,
+      rustls::crypto::aws_lc_rs::default_provider,
+    ] {
+      for (client, server) in [
+        (crate::default_provider(), independent()),
+        (independent(), crate::default_provider()),
+      ] {
+        let (client, server) = tls::configs(client, server, kind, false);
+        let (mut client, mut server) = tls::connections_from_configs(Arc::new(client), Arc::new(server));
+        tls::drive(&mut client, &mut server).expect("authenticated handshake");
+        assert!(!client.is_handshaking() && !server.is_handshaking());
+        tls::application_exchange(&mut client, &mut server);
+      }
+    }
+  }
+}
+
+#[test]
+fn required_pq_refuses_classical_peers_in_both_roles() {
+  for (client, server) in [
+    (
+      crate::post_quantum_required_provider(),
+      rustls::crypto::ring::default_provider(),
+    ),
+    (
+      rustls::crypto::ring::default_provider(),
+      crate::post_quantum_required_provider(),
+    ),
+  ] {
+    let (client, server) = tls::configs(client, server, Credential::P256, false);
+    let (mut client, mut server) = tls::connections_from_configs(Arc::new(client), Arc::new(server));
+    assert!(matches!(
+      tls::drive(&mut client, &mut server),
+      Err(Error::PeerIncompatible(_))
+    ));
+    assert!(client.is_handshaking() && server.is_handshaking());
+  }
+}

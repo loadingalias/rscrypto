@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -55,11 +56,22 @@ def validate_catalog(catalog: dict) -> None:
     binary = bench.get("binary")
     if not isinstance(binary, str) or not binary:
       raise CatalogError(f"bench {name} needs a binary")
-    if not (ROOT / "benches" / f"{binary}.rs").is_file():
-      raise CatalogError(f"bench {name} references missing benches/{binary}.rs")
+    manifest = Path(bench.get("manifest", "Cargo.toml"))
+    if manifest.is_absolute() or '..' in manifest.parts or manifest.name != 'Cargo.toml':
+      raise CatalogError(f"bench {name} has invalid manifest path")
+    if not (ROOT / manifest).is_file():
+      raise CatalogError(f"bench {name} references missing {manifest}")
+    if not (ROOT / manifest.parent / "benches" / f"{binary}.rs").is_file():
+      raise CatalogError(f"bench {name} references missing {manifest.parent}/benches/{binary}.rs")
+    cargo = tomllib.loads((ROOT / manifest).read_text())
+    targets = {entry['name']: entry for entry in cargo.get('bench', [])}
+    if binary not in targets:
+      raise CatalogError(f"bench {name} is not declared by {manifest}")
     features = bench.get("features")
     if not isinstance(features, list) or not features or any(not isinstance(item, str) or not item for item in features):
       raise CatalogError(f"bench {name} needs a non-empty feature list")
+    if not set(targets[binary].get('required-features', [])) <= set(features):
+      raise CatalogError(f"bench {name} omits required features")
     if not isinstance(bench.get("required"), bool):
       raise CatalogError(f"bench {name} needs a Boolean required field")
 

@@ -3,6 +3,32 @@ use rustls::{Error, NamedGroup, PeerMisbehaved, ProtocolVersion};
 use super::{ALL_KX_GROUPS, SECP256R1, SECP384R1, X25519, X25519MLKEM768};
 
 #[test]
+fn caller_entropy_reaches_x25519_key_generation() {
+  use rustls::crypto::{GetRandomFailed, SecureRandom, SupportedKxGroup};
+
+  #[derive(Debug)]
+  struct Alice;
+  impl SecureRandom for Alice {
+    fn fill(&self, output: &mut [u8]) -> Result<(), GetRandomFailed> {
+      // RFC 7748 section 6.1, Alice's private input.
+      output.copy_from_slice(&[
+        0x77, 0x07, 0x6d, 0x0a, 0x73, 0x18, 0xa5, 0x7d, 0x3c, 0x16, 0xc1, 0x72, 0x51, 0xb2, 0x66, 0x45, 0xdf, 0x4c,
+        0x2f, 0x87, 0xeb, 0xc0, 0x99, 0x2a, 0xb1, 0x77, 0xfb, 0xa5, 0x1d, 0xb9, 0x2c, 0x2a,
+      ]);
+      Ok(())
+    }
+  }
+  let exchange = super::X25519Group::new(&Alice).start().expect("fixed RFC input");
+  assert_eq!(
+    exchange.pub_key(),
+    &[
+      0x85, 0x20, 0xf0, 0x09, 0x89, 0x30, 0xa7, 0x54, 0x74, 0x8b, 0x7d, 0xdc, 0xb4, 0x3e, 0xf7, 0x5a, 0x0d, 0xbf, 0x3a,
+      0x0d, 0x26, 0x38, 0x1a, 0xf4, 0xeb, 0xa4, 0xa9, 0x8e, 0xaa, 0x9b, 0x4e, 0x6a,
+    ]
+  );
+}
+
+#[test]
 fn group_inventory_and_both_roles_agree_with_independent_peers() {
   let aws = rustls::crypto::aws_lc_rs::default_provider();
   let ring = rustls::crypto::ring::default_provider();
@@ -119,7 +145,12 @@ fn hybrid_rejects_invalid_lengths_encapsulation_keys_and_classical_shares() {
   }
 }
 
-#[cfg(all(feature = "hkdf", feature = "aes-gcm", feature = "chacha20poly1305"))]
+#[cfg(all(
+  feature = "hkdf",
+  feature = "aes-gcm",
+  feature = "chacha20poly1305",
+  feature = "ecdsa-p256"
+))]
 #[test]
 fn negotiation_uses_hybrid_fallback_and_hello_retry_request() {
   use crate::tests::tls;
@@ -153,11 +184,13 @@ fn negotiation_uses_hybrid_fallback_and_hello_retry_request() {
       HandshakeKind::FullWithHelloRetryRequest,
     ),
   ] {
-    let mut client_provider = tls::symmetric_provider();
+    let mut client_provider = crate::default_provider();
     client_provider.kx_groups = client_groups;
-    let mut server_provider = tls::symmetric_provider();
+    let mut server_provider = crate::default_provider();
     server_provider.kx_groups = server_groups;
-    let (mut client, mut server) = tls::connections(client_provider, server_provider);
+    let (client, server) = tls::configs(client_provider, server_provider, tls::Credential::P256, false);
+    let (mut client, mut server) =
+      tls::connections_from_configs(alloc::sync::Arc::new(client), alloc::sync::Arc::new(server));
     tls::drive(&mut client, &mut server).expect("key exchange");
     for side in [&client, &server] {
       assert_eq!(

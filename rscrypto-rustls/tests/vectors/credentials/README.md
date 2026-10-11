@@ -1,29 +1,36 @@
-# TLS credential fixtures
+# TLS credential and signature fixtures
 
-These are public test credentials generated with OpenSSL 4.0.3 on 2026-10-11.
-The P-256 root signs a distinct P-256 leaf for `localhost`, usable for client
-and server authentication. Certificates are valid from 2026-01-01 through
-2036-01-01; in-process tests use a fixed time within that interval.
+These public test credentials and signatures were generated with OpenSSL 4.0.3
+on 2026-10-11. Each P-256, P-384, Ed25519, RSA-3072, and ML-DSA-44/65/87 root signs a distinct
+leaf for `localhost`, usable for client and server authentication. Certificates
+are valid from 2026-01-01 through 2036-01-01; in-process tests use a fixed time
+within that interval. All leaf keys are PKCS#8. Additional SEC1 and PKCS#1 files
+exercise the alternate key containers and raw RSA verification keys.
 
-The leaf private key is intentionally public and must never protect real traffic.
-`SHA256SUMS` pins the exact DER files. The root private key is not required by tests.
-The commands below generate equivalent new fixtures with fresh keys and signatures;
-they do not reproduce the pinned random bytes.
+The private keys are intentionally public and must never protect real traffic.
+`SHA256SUMS` pins every payload. Root private keys are not shipped. The
+RSA-2048 fixture distinguishes deployed certificate verification from the
+provider's stricter RSA signing-key policy.
+
+ECDSA signatures cover SHA-256 and SHA-384. RSA covers PKCS#1 v1.5 and PSS with
+SHA-256, SHA-384, and SHA-512; PSS uses a digest-length salt. Ed25519 signs the
+same `message.txt` directly. Tests check these independent signatures through
+both this provider and ring. They also verify provider-generated signatures
+with ring.
+
+ML-DSA fixtures include RFC 9881 combined and seed-only PKCS#8, SPKI, pure
+signatures with an empty context, and wrong-context signatures. Go's importer
+uses the seed-only form. Tests cover both forms, exact parameter-set binding,
+and independent AWS-LC verification of provider signatures.
+
+Generate equivalent classical and ML-DSA fixtures in separate new directories:
 
 ```sh
-openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out p256-root-key.pem
-openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out p256-leaf-key.pem
-openssl req -new -x509 -key p256-root-key.pem -subj '/CN=rscrypto provider test root' \
-  -set_serial 1 -not_before 20260101000000Z -not_after 20360101000000Z \
-  -addext 'basicConstraints=critical,CA:TRUE,pathlen:0' \
-  -addext 'keyUsage=critical,keyCertSign,cRLSign' -out p256-root.pem
-openssl req -new -x509 -key p256-leaf-key.pem -subj '/CN=rscrypto provider test leaf' \
-  -set_serial 2 -not_before 20260101000000Z -not_after 20360101000000Z \
-  -addext 'basicConstraints=critical,CA:FALSE' -addext 'keyUsage=critical,digitalSignature' \
-  -CA p256-root.pem -CAkey p256-root-key.pem -addext 'subjectAltName=DNS:localhost' \
-  -addext 'extendedKeyUsage=serverAuth,clientAuth' -out p256-leaf.pem
-openssl x509 -in p256-root.pem -outform DER -out p256-root.der
-openssl x509 -in p256-leaf.pem -outform DER -out p256-leaf.der
-openssl pkcs8 -topk8 -nocrypt -in p256-leaf-key.pem -outform DER -out p256-leaf-key.der
-openssl verify -CAfile p256-root.pem -purpose sslserver p256-leaf.pem
+python3 scripts/test/provider_credentials.py /tmp/provider-credentials-new --profile classical --openssl /opt/homebrew/bin/openssl
+python3 scripts/test/provider_credentials.py /tmp/provider-mldsa-new --profile mldsa --openssl /opt/homebrew/bin/openssl
 ```
+
+The generator records its commands beside that directory. It uses fresh keys
+and randomized signatures, so it reproduces the contracts, not the pinned bytes.
+The original P-256 certificate subjects omit the algorithm name; that difference
+has no effect on certificate purpose, identity, or key usage.

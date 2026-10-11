@@ -112,8 +112,10 @@ def target(catalog, name: str, diag: bool) -> dict:
   entry = catalog["benches"].get(name)
   if entry is None or entry["kind"] != "criterion":
     raise ValueError(f"unknown Criterion target: {name}")
+  if diag and 'manifest' in entry:
+    raise ValueError(f"diagnostics are not supported by independent benchmark target: {name}")
   features = sorted(set(entry["features"]) | ({"diag"} if diag else set()))
-  return {"binary": entry["binary"], "features": features}
+  return {"binary": entry["binary"], "features": features, **({'manifest': entry['manifest']} if 'manifest' in entry else {})}
 
 
 def requests(args, catalog) -> list[dict]:
@@ -147,12 +149,12 @@ def resolve(rows, effective, log, env, prepared=None) -> list[dict]:
   matches = {}
   matched = dict.fromkeys((row["pattern"] for row in rows), False)
   for row in rows:
-    command = build_command(row["binary"], row["features"])
+    command = build_command(row["binary"], row["features"], row.get("manifest"))
     key = tuple(command)
     if key not in builds:
       artifact = prepared[0][key] if prepared is not None else build(command, log, env)
       cases = discover(artifact, "", log, env)
-      patterns = [pattern for request in rows if build_command(request["binary"], request["features"]) == command
+      patterns = [pattern for request in rows if build_command(request["binary"], request["features"], request.get("manifest")) == command
                   for pattern in (request["scope"], request["pattern"])]
       matches[key] = match_cases(artifact, cases, patterns, log, env)
       config = identity([command, execution, effective])

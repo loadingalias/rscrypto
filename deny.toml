@@ -56,6 +56,28 @@ name = "subtle"
 version = "=2.6.1"
 allow = ["BSD-3-Clause"]
 
+# Dev-only independent peers. Cargo metadata unifies their rustls features;
+# ci-provider separately rejects these backends from the shipped graph.
+[[licenses.exceptions]]
+name = "aws-lc-rs"
+version = "=1.18.1"
+allow = ["ISC"]
+
+[[licenses.exceptions]]
+name = "aws-lc-sys"
+version = "=0.45.0"
+allow = ["ISC", "BSD-3-Clause"]
+
+[[licenses.exceptions]]
+name = "ring"
+version = "=0.17.14"
+allow = ["ISC"]
+
+[[licenses.exceptions]]
+name = "untrusted"
+version = "=0.7.1"
+allow = ["ISC"]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"

@@ -32,11 +32,13 @@ class Provider(unittest.TestCase):
             with (root / 'Cargo.toml').open('a') as output:
                 output.write('portable-only=[]\ngetrandom=[]\n')
             valid += 'getrandom=["rscrypto/getrandom", "dep:getrandom"]\n'
+            valid += 'quinn=["dep:quinn-proto", "dep:bytes", "aes-gcm", "hkdf", "getrandom"]\n'
             manifest.write_text(valid)
             self.assertIn(('hkdf', ['hkdf']), provider.feature_matrix(root))
             for invalid in (valid.replace('1.100.0', '1.99.0'),
                             valid.replace('["rscrypto/hkdf"]', '["rscrypto/hkdf", "rscrypto/full"]'),
-                            valid.replace('"dep:getrandom"', '"dep:other-rng"')):
+                            valid.replace('"dep:getrandom"', '"dep:other-rng"'),
+                            valid.replace('"dep:quinn-proto"', '"dep:quinn-proto", "quinn-proto/ring"')):
                 manifest.write_text(invalid)
                 with self.assertRaises(ValueError):
                     provider.feature_matrix(root)

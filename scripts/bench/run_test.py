@@ -157,6 +157,9 @@ class RunnerTests(unittest.TestCase):
     for name in ("Cargo.toml", "justfile", "rust-toolchain.toml"):
       shutil.copy2(ROOT / name, self.root / name)
     (self.root / "benches").symlink_to(ROOT / "benches", target_is_directory=True)
+    (self.root / 'tools/provider-bench').mkdir(parents=True)
+    shutil.copy2(ROOT / 'tools/provider-bench/Cargo.toml', self.root / 'tools/provider-bench/Cargo.toml')
+    shutil.copytree(ROOT / 'tools/provider-bench/benches', self.root / 'tools/provider-bench/benches')
     (self.root / "bin").mkdir()
     self.env = {key: value for key, value in os.environ.items()
                 if not key.startswith(("BENCH_", "CARGO_", "RUST", "DEV_MACHINE_", "RSCRYPTO_", "GIT_"))
@@ -433,7 +436,7 @@ sys.exit(64)
           self.assertEqual('blake3/rscrypto-scalar/64' in result.stdout, enabled)
 
   def test_invalid_requests_do_not_build(self):
-    for args in (('unknown-selector',), ('bench=missing',), ('sha256', 'filter='), ('sample_size=9',), ('diag=typo',), ('sha256', 'bench=auth')):
+    for args in (('unknown-selector',), ('bench=missing',), ('sha256', 'filter='), ('sample_size=9',), ('diag=typo',), ('sha256', 'bench=auth'), ('tls-provider', '--diag')):
       self.assertNotEqual(self.bench(*args).returncode, 0)
     self.assertNotEqual(self.bench(BENCH_UNKNOWN='1').returncode, 0)
     self.assertFalse((self.root / 'builds.jsonl').exists())

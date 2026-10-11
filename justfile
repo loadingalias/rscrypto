@@ -159,6 +159,32 @@ ci-policy:
 ci-provider:
     @scripts/lib/python.sh scripts/check/provider.py features
     @scripts/lib/python.sh scripts/check/provider.py no-c
+    @scripts/lib/python.sh scripts/check/provider.py runtime
+
+# Exercise TLS with the pinned OpenSSL and Go peers; retain process evidence locally.
+[group('tests')]
+test-provider-interop *args:
+    @scripts/lib/python.sh scripts/test/provider_interop.py "$@"
+
+# Exercise QUIC v1 with the pinned C-free quic-go peer and retain packet traces.
+[group('tests')]
+test-provider-quic *args:
+    @scripts/lib/python.sh scripts/test/provider_quic.py "$@"
+
+# Run the pinned QUIC Interop Runner in local Docker; each campaign has a ten-minute cap.
+[group('tests')]
+test-provider-quic-runner *args:
+    @scripts/lib/python.sh scripts/test/provider_quic_runner.py "$@"
+
+# Record individual TLS latency, CPU, bytes and process RSS for one catalog profile.
+[group('benchmarks')]
+bench-provider-scorecard *args:
+    @scripts/lib/python.sh scripts/bench/provider_scorecard.py "$@"
+
+# Run pinned BoGo TLS 1.3 cases and retain failures as well as passes.
+[group('tests')]
+test-provider-bogo *args:
+    @scripts/lib/python.sh scripts/test/provider_bogo.py "$@"
 
 # Compile feature/MSRV/bare-metal compatibility and execute WASM/WASI vectors.
 ci-compat:
@@ -199,6 +225,8 @@ test-scripts:
     @scripts/lib/python.sh scripts/check/macos_test.py
     @scripts/lib/python.sh scripts/check/check_runner_test.py
     @scripts/lib/python.sh scripts/check/provider_test.py
+    @scripts/lib/python.sh scripts/test/provider_bogo_test.py
+    @scripts/lib/python.sh scripts/test/provider_quic_runner_test.py
     @scripts/lib/python.sh scripts/check/compat_test.py
     @scripts/lib/python.sh scripts/test/fuzz_runner_test.py
     @scripts/lib/python.sh scripts/asm/p384_test.py

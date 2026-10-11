@@ -11,6 +11,7 @@ cargo-fuzz = true
 unexpected_cfgs = { level = "deny", check-cfg = ['cfg(fuzzing)', 'cfg(rscrypto_internal_fuzzing)'] }
 
 [dependencies]
+rscrypto-rustls = { path = "../rscrypto-rustls", default-features = false, features = ["quinn", "x25519", "ecdsa-p256"] }
 libfuzzer-sys = "0.4.13"
 rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "support", features = [
   "aead",
@@ -362,4 +363,24 @@ doc = false
 [[bin]]
 name = "auth_slhdsa"
 path = "fuzz_targets/auth_slhdsa.rs"
+doc = false
+
+[[bin]]
+name = "provider_quic_retry"
+path = "fuzz_targets/provider_quic_retry.rs"
+doc = false
+
+[[bin]]
+name = "provider_quic_header"
+path = "fuzz_targets/provider_quic_header.rs"
+doc = false
+
+[[bin]]
+name = "provider_quic_token"
+path = "fuzz_targets/provider_quic_token.rs"
+doc = false
+
+[[bin]]
+name = "provider_quic_handshake"
+path = "fuzz_targets/provider_quic_handshake.rs"
 doc = false

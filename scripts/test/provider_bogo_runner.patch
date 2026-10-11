@@ -1,0 +1,216 @@
+diff --git a/ssl/test/runner/delegated_credential_tests.go b/ssl/test/runner/delegated_credential_tests.go
+index 2ec5721..affcd92 100644
+--- a/ssl/test/runner/delegated_credential_tests.go
++++ b/ssl/test/runner/delegated_credential_tests.go
+@@ -54,7 +54,7 @@ func createDelegatedCredential(parent *Credential, config delegatedCredentialCon
+ 	var dcPriv crypto.Signer
+ 	switch dcAlgo {
+ 	case signatureRSAPKCS1WithMD5, signatureRSAPKCS1WithSHA1, signatureRSAPKCS1WithSHA256, signatureRSAPKCS1WithSHA384, signatureRSAPKCS1WithSHA512, signatureRSAPSSWithSHA256, signatureRSAPSSWithSHA384, signatureRSAPSSWithSHA512:
+-		dcPriv = &rsa2048Key
++		dcPriv = &rsaKey
+ 
+ 	case signatureECDSAWithSHA1, signatureECDSAWithP256AndSHA256, signatureECDSAWithP384AndSHA384, signatureECDSAWithP521AndSHA512:
+ 		var curve elliptic.Curve
+diff --git a/ssl/test/runner/ech_tests.go b/ssl/test/runner/ech_tests.go
+index 48382e4..a87ca22 100644
+--- a/ssl/test/runner/ech_tests.go
++++ b/ssl/test/runner/ech_tests.go
+@@ -81,11 +81,11 @@ func addEncryptedClientHelloTests() {
+ 	echConfigRepeatID := generateServerECHConfig(&ECHConfig{ConfigID: 42})
+ 
+ 	echSecretCertificate := rootCA.Issue(X509Info{
+-		PrivateKey: &rsa2048Key,
++		PrivateKey: &rsaKey,
+ 		DNSNames:   []string{"secret.example"},
+ 	}).ToCredential()
+ 	echPublicCertificate := rootCA.Issue(X509Info{
+-		PrivateKey: &rsa2048Key,
++		PrivateKey: &rsaKey,
+ 		DNSNames:   []string{"public.example"},
+ 	}).ToCredential()
+ 	echLongNameCertificate := rootCA.Issue(X509Info{
+diff --git a/ssl/test/runner/handshake_server.go b/ssl/test/runner/handshake_server.go
+index ad4c174..2303132 100644
+--- a/ssl/test/runner/handshake_server.go
++++ b/ssl/test/runner/handshake_server.go
+@@ -1639,6 +1639,11 @@ func (hs *serverHandshakeState) processClientExtensions(serverExtensions *server
+ 			}
+ 		} else {
+ 			serverExtensions.secureRenegotiation = hs.clientHello.secureRenegotiation
++			if config.Bugs.NegotiateRenegotiationInfoAtAllVersions && c.vers.protocolVersion() >= VersionTLS13 {
++				// A TLS 1.3-only client need not advertise the legacy extension
++				// or SCSV. Still inject the forbidden extension for this test.
++				serverExtensions.secureRenegotiation = []byte{}
++			}
+ 		}
+ 
+ 		if c.noRenegotiationInfo() {
+diff --git a/ssl/test/runner/key_usage_tests.go b/ssl/test/runner/key_usage_tests.go
+index c955506..ee5ad23 100644
+--- a/ssl/test/runner/key_usage_tests.go
++++ b/ssl/test/runner/key_usage_tests.go
+@@ -61,12 +61,12 @@ func addECDSAKeyUsageTests() {
+ 
+ func addRSAKeyUsageTests() {
+ 	dsCert := rootCA.Issue(X509Info{
+-		PrivateKey: &rsa2048Key,
++		PrivateKey: &rsaKey,
+ 		DNSNames:   []string{"test"},
+ 		KeyUsage:   x509.KeyUsageDigitalSignature,
+ 	}).ToCredential()
+ 	encCert := rootCA.Issue(X509Info{
+-		PrivateKey: &rsa2048Key,
++		PrivateKey: &rsaKey,
+ 		DNSNames:   []string{"test"},
+ 		KeyUsage:   x509.KeyUsageKeyEncipherment,
+ 	}).ToCredential()
+diff --git a/ssl/test/runner/runner.go b/ssl/test/runner/runner.go
+index f026a10..c4715ed 100644
+--- a/ssl/test/runner/runner.go
++++ b/ssl/test/runner/runner.go
+@@ -51,6 +51,8 @@ import (
+ )
+ 
+ var (
++	profileOutput      = flag.String("profile-output", "", "Write declared test protocol/version metadata as JSON and exit")
++	rsaKeyFile         = flag.String("rsa-key-file", "", "Optional PEM RSA fixture (at least 2048 bits); default uses the embedded 2048-bit key")
+ 	useValgrind        = flag.Bool("valgrind", false, "If true, run code under valgrind")
+ 	useGDB             = flag.Bool("gdb", false, "If true, run BoringSSL code under gdb")
+ 	useLLDB            = flag.Bool("lldb", false, "If true, run BoringSSL code under lldb")
+@@ -141,7 +143,7 @@ var channelIDKeyPEM []byte
+ 
+ var (
+ 	rsa1024Key rsa.PrivateKey
+-	rsa2048Key rsa.PrivateKey
++	rsaKey     rsa.PrivateKey
+ 
+ 	ecdsaP256Key ecdsa.PrivateKey
+ 	ecdsaP384Key ecdsa.PrivateKey
+@@ -159,6 +161,14 @@ var (
+ var channelIDKeyPath string
+ 
+ func initKeys() {
++	rsaFixture := rsa2048KeyPEM
++	if *rsaKeyFile != "" {
++		var err error
++		rsaFixture, err = os.ReadFile(*rsaKeyFile)
++		if err != nil {
++			panic(fmt.Sprintf("failed to read RSA fixture: %s", err))
++		}
++	}
+ 	// Since RSA key generation is not particularly cheap, and the runner is
+ 	// intended to run on systems which may be resource constrained, we load
+ 	// keys from disk instead of dynamically generating them. We treat key
+@@ -170,7 +180,7 @@ func initKeys() {
+ 		key      *rsa.PrivateKey
+ 	}{
+ 		{rsa1024KeyPEM, &rsa1024Key},
+-		{rsa2048KeyPEM, &rsa2048Key},
++		{rsaFixture, &rsaKey},
+ 	} {
+ 		key, err := loadPEMKey(k.pemBytes)
+ 		if err != nil {
+@@ -179,6 +189,10 @@ func initKeys() {
+ 		*k.key = *(key.(*rsa.PrivateKey))
+ 	}
+ 
++	if rsaKey.N.BitLen() < 2048 {
++		panic("RSA fixture must have at least 2048 bits")
++	}
++
+ 	for _, k := range []struct {
+ 		pemBytes []byte
+ 		key      *ecdsa.PrivateKey
+@@ -257,7 +271,7 @@ func initCertificates() {
+ 		out  *Credential
+ 	}{
+ 		{"RSA-1024", &rsa1024Key, &rsa1024Certificate},
+-		{"RSA-2048", &rsa2048Key, &rsaCertificate},
++		{fmt.Sprintf("RSA-%d", rsaKey.N.BitLen()), &rsaKey, &rsaCertificate},
+ 		{"ECDSA P-256", &ecdsaP256Key, &ecdsaP256Certificate},
+ 		{"ECDSA P-384", &ecdsaP384Key, &ecdsaP384Certificate},
+ 		{"ECDSA P-521", &ecdsaP521Key, &ecdsaP521Certificate},
+@@ -288,7 +302,7 @@ func initCertificates() {
+ 
+ 	// Make a default root CA for other test certificates.
+ 	rootCA = NewX509Root(X509Info{
+-		PrivateKey:   &rsa2048Key,
++		PrivateKey:   &rsaKey,
+ 		Name:         pkix.Name{CommonName: "Test Root"},
+ 		IsCA:         true,
+ 		SubjectKeyID: []byte("root"),
+@@ -296,12 +310,12 @@ func initCertificates() {
+ 
+ 	// Build a basic three cert chain for testing chain-specific things.
+ 	rsaChainCertificate = rootCA.Issue(X509Info{
+-		PrivateKey:   &rsa2048Key,
++		PrivateKey:   &rsaKey,
+ 		Name:         pkix.Name{CommonName: "Test Intermediate"},
+ 		IsCA:         true,
+ 		SubjectKeyID: []byte("intermediate"),
+ 	}).Issue(X509Info{
+-		PrivateKey: &rsa2048Key,
++		PrivateKey: &rsaKey,
+ 		DNSNames:   []string{"test"},
+ 	}).ToCredential()
+ 
+@@ -310,7 +324,7 @@ func initCertificates() {
+ 	// the certificate uses id-RSASSA-PSS. We do not support id-RSASSA-PSS with
+ 	// TLS, so this test only exists to ensure BoringSSL does not accept it.
+ 	pssCertificate = rootCA.Issue(X509Info{
+-		PrivateKey:         &rsa2048Key,
++		PrivateKey:         &rsaKey,
+ 		DNSNames:           []string{"test"},
+ 		EncodeSPKIAsRSAPSS: true,
+ 	}).ToCredential()
+@@ -345,7 +359,7 @@ func initRawPublicKeyCredentials() {
+ 	}{
+ 		{&ecdsaP256Key, &rpkEcdsaP256},
+ 		{&ecdsaP384Key, &rpkEcdsaP384},
+-		{&rsa2048Key, &rpkRsa},
++		{&rsaKey, &rpkRsa},
+ 	} {
+ 		var publicKey crypto.PublicKey
+ 		switch def.key.(type) {
+@@ -2419,6 +2433,41 @@ func main() {
+ 	}
+ 	testCases = append(testCases, toAppend...)
+ 
++	if *profileOutput != "" {
++		type profile struct {
++			Name                  string
++			Protocol              string
++			MinVersion            uint16
++			MaxVersion            uint16
++			ExpectedVersion       uint16
++			ResumeMinVersion      uint16
++			ResumeMaxVersion      uint16
++			ResumeExpectedVersion uint16
++		}
++		profiles := make([]profile, 0, len(testCases))
++		for _, test := range testCases {
++			entry := profile{Name: test.name, Protocol: test.protocol.String(),
++				MinVersion: test.config.minVersion(), MaxVersion: test.config.maxVersion(),
++				ExpectedVersion: test.expectations.version}
++			if test.resumeConfig != nil {
++				entry.ResumeMinVersion = test.resumeConfig.minVersion()
++				entry.ResumeMaxVersion = test.resumeConfig.maxVersion()
++			}
++			if test.resumeExpectations != nil {
++				entry.ResumeExpectedVersion = test.resumeExpectations.version
++			}
++			profiles = append(profiles, entry)
++		}
++		encoded, err := json.MarshalIndent(profiles, "", "  ")
++		if err != nil {
++			panic(err)
++		}
++		if err := os.WriteFile(*profileOutput, encoded, 0600); err != nil {
++			panic(err)
++		}
++		return
++	}
++
+ 	checkTests()
+ 
+ 	dispatcher, err := newShimDispatcher()

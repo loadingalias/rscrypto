@@ -1,0 +1,46 @@
+[package]
+name = "rscrypto-provider-bench"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.100.0"
+publish = false
+license = "MIT OR Apache-2.0"
+autobenches = false
+
+[workspace]
+
+[features]
+ml-dsa = ["rscrypto-rustls/ml-dsa"]
+portable-only = ["rscrypto-rustls/portable-only"]
+# Cross-target lint jobs can compile without a target OpenSSL installation.
+# Measurements still require the linked OpenSSL 4.0.3 checked by the fixture.
+vendored-openssl = ["openssl/vendored"]
+
+[dependencies]
+rscrypto-rustls = { path = "../../rscrypto-rustls" }
+rustls = { version = "=0.23.45", default-features = false, features = ["std", "aws_lc_rs"] }
+openssl = "=0.10.81"
+libc = "0.2.185"
+serde_json = "1.0.151"
+
+[dev-dependencies]
+criterion = { version = "0.8.2", default-features = false, features = ["html_reports", "plotters"] }
+
+[[bench]]
+name = "tls_connections"
+harness = false
+required-features = ["ml-dsa"]
+
+[profile.release]
+opt-level = 3
+debug = false
+strip = "debuginfo"
+overflow-checks = true
+lto = "fat"
+panic = "abort"
+codegen-units = 1
+
+[profile.bench]
+inherits = "release"
+debug = true
+strip = "none"

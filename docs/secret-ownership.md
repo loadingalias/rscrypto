@@ -216,3 +216,55 @@ These constructors create no second plaintext buffer that `rscrypto` owns.
 A change to a secret owner needs review of `Clone`, `Copy`, `Debug`, Serde, export, allocation, comparison,
 and cleanup behavior.
 See [`secret-lifecycle.md`](secret-lifecycle.md) for cleanup evidence and [`constant-time.md`](constant-time.md) for timing claims.
+
+### rustls authentication
+
+The provider shares `EcdsaP256SecretKey`, `EcdsaP384SecretKey`,
+`Ed25519SecretKey`, `RsaPrivateKey`, and boxed `MlDsa44/65/87SecretKey` values
+through `Arc`; their primitive owners
+clear when the last signing key or signer releases them. RSA signers each own
+one clearing `RsaPrivateScratch` behind a mutex. They borrow the key and scratch
+for the blinded operation and return only the resulting public signature.
+ECDSA signatures and cached SPKI are public. Key Debug formatting delegates to
+redacted primitive owners and the caller's selected entropy source; that source
+must not expose secret state through Debug. RSA signer formatting exposes only
+its signature scheme. Groups and signing keys borrow a static entropy source;
+the provider neither owns nor clones its state.
+
+The ML-DSA loader constructs compact keys directly in allocator-backed storage.
+Signers borrow those keys and return public signatures; no prepared matrix is
+retained per credential. PKCS#8 input uses rustls-pki-types' borrowed or owned
+DER containers. `Provider::load_private_key` immediately wraps the input in
+`zeroize::Zeroizing`, before the size check or any parser call. With
+rustls-pki-types 1.15.1 and zeroize 1.9.0, dropping this guard clears the owned
+vector's full allocation, then frees it. Success, rejection, and unwinding
+share that guard. Immutable borrowed static DER cannot be cleared and remains
+the caller's responsibility. Aborting the process does not run destructors.
+
+### rustls session tickets
+
+Each private ticket key owns a clearing `Aes256Gcm` context behind a
+`RwLock<Option<_>>`, a monotonic creation instant, and an atomic public nonce
+counter. On its first use at or after twelve hours, it takes and drops the cipher.
+The missing cipher is terminal; neither encryption nor decryption can revive it. A `SecretBytes<32>` protects entropy acquisition; the typed key
+and temporary owner clear after context construction. `TicketRotator` owns the
+current and previous keys and releases displaced keys on rotation. The adapter
+neither clones keys nor serializes them. Plaintext copies during seal/open stay
+in `SecretVec` until successful transfer to ciphertext or rustls-owned plaintext.
+The incoming borrowed plaintext and the returned plaintext belong to rustls.
+
+### rustls QUIC integration
+
+Each endpoint configuration owns a shared clearing `SecretBytes<32>` reset key.
+Its retained 64-bit connection-ID filter key is a non-cryptographic Quinn filter,
+not an authentication secret. Server configurations own a clearing `HkdfSha256`
+address-token root. Each token derives an `Aes256Gcm` context through a clearing
+`SecretBytes<32>` scratch. A derived context seals once; Quinn supplies the fresh
+128-bit derivation nonce. Incoming token buffers belong to Quinn.
+
+Sessions own rustls QUIC connections and the next traffic-secret generation.
+Packet and header wrappers own rustls trait objects backed by the same clearing
+rscrypto contexts as the symmetric adapters. Cloning endpoint or server
+configuration extends the corresponding root-key lifetime. Exporter buffers
+and successful plaintext belong to the caller. No adapter key export, clone,
+or Debug implementation exposes these keys.

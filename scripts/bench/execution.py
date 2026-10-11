@@ -90,9 +90,9 @@ def enable_internal(rows: list[dict], target: str | None = None) -> None:
     os.environ["CARGO_ENCODED_RUSTFLAGS"] = environment["CARGO_ENCODED_RUSTFLAGS"]
 
 
-def build_command(binary: str, features: list[str]) -> list[str]:
+def build_command(binary: str, features: list[str], manifest: str | None = None) -> list[str]:
   return ["cargo", "bench", "--locked", "--profile", "bench", "--features", ",".join(sorted(set(features))),
-          "--no-default-features", "--bench", binary]
+          "--no-default-features", "--bench", binary, *(['--manifest-path', manifest] if manifest else [])]
 
 
 
@@ -123,6 +123,11 @@ def build_identity() -> dict:
     "rustc": subprocess.check_output([os.environ.get("RUSTC", "rustc"), "-Vv"], text=True).strip(),
     "cargo": subprocess.check_output(["cargo", "-V"], text=True).strip(),
     "profiles": tomllib.loads((root / "Cargo.toml").read_text()).get("profile", {}),
+    "benchmark_workspace_profiles": {
+      str(path.relative_to(root)): tomllib.loads(path.read_text()).get("profile", {})
+      for path in sorted((root / "tools").glob("*/Cargo.toml"))
+      if tomllib.loads(path.read_text()).get("bench")
+    },
     "cargo_config_sha256": configs,
     "host": hardware(),
   }
@@ -173,7 +178,7 @@ def match_cases(artifact, cases, patterns, log, env):
 
 def source_evidence(root: Path) -> None:
   names = subprocess.check_output(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--",
-                                   "Cargo.toml", "Cargo.lock", "build.rs", "rust-toolchain.toml", ".cargo", ".config", "src", "benches", "scripts"])
+                                   "Cargo.toml", "Cargo.lock", "build.rs", "rust-toolchain.toml", ".cargo", ".config", "src", "benches", "scripts", "rscrypto-rustls", "tools/provider-bench"])
   write_json(root / "source.json", {name: digest(Path(name)) if Path(name).is_file() else None
                                    for name in sorted(set(names.decode().split("\0")) - {""})})
   write_json(root / "source-state.json", {

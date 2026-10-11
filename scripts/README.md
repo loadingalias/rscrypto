@@ -37,7 +37,10 @@ remain rscrypto-only. Workspace documentation and host builds include both crate
 
 `just ci-provider` checks empty, default, each individual feature, all production
 features, and all features on the host and minimum-Rust toolchain. CI runs it in
-the compatibility row of the existing fail-fast matrix.
+the compatibility row of the existing fail-fast matrix. Usable TLS and QUIC feature
+bundles also execute the connection matrix in native and portable modes:
+mutual authentication, stateful/stateless resumption where available, exporters,
+key updates, and closure against independent rustls crypto backends.
 Each feature row also runs `cargo tree -p rscrypto-rustls -e normal,build --target all`.
 The gate rejects `ring`, `aws-lc-*`, `openssl-sys`, `boring-sys`, `cc`, and `cmake`.
 The all-features row contains every additive dependency feature, so its graph
@@ -99,12 +102,58 @@ It does not download upstream archives.
 - Check recipes run `test/fixtures.py` before compilation.
   It verifies Git-visible payloads under `testdata/`, `tests/vectors/`, and
   `rscrypto-rustls/tests/vectors/`.
-  `test/provider_vectors.py` reproduces the provider's TLS/QUIC vectors from
-  checksum-pinned RFC Editor text; it performs no cryptographic computation.
   Each directory's `SHA256SUMS` must cover its payloads, including new untracked inputs.
   Missing, extra, duplicate, changed, or symlinked inputs fail.
   `README.md` and `NIST-NOTICE.txt` are provenance metadata, not hashed payloads.
   Git-ignored scratch files stay outside this inventory.
+  `test/provider_vectors.py` reproduces the provider's TLS/QUIC vectors from
+  checksum-pinned RFC Editor text; it performs no cryptographic computation.
+  `test/provider_credentials.py` generates equivalent fresh TLS credentials and
+  independent signatures with pinned OpenSSL 4.0.3 in a new output directory.
+- `just test-provider-interop` builds the bounded loopback endpoint and runs the
+  full suite/group/credential matrix in both roles against OpenSSL 4.0.3 and
+  Go 1.27.2. Each row requires a full and resumed mutually authenticated
+  connection. Go also supplies an independent exporter check. This POSIX process
+  harness retains commands, source, versions, stdout/stderr, and results beneath
+  `benchmark_results/`; `--quick` selects one diagnostic profile and is not full
+  qualification. The ephemeral session files and exporter values protect only
+  public test fixtures. The runner enforces timeouts and reaps peer processes.
+- `just test-provider-quic` runs quinn-proto 0.11.19 and quinn 0.11.12 through
+  this provider against quic-go 0.61.0 (`579ee19d`) on Go 1.27.2. The peer builds
+  with CGO disabled. Cases cover full/resumed mutual authentication, the selected
+  classical and ML-DSA profiles, all suites/groups, Retry, explicit 0-RTT, and
+  exporter equality. Peer qlogs must show a packet-key phase change. The Go-server
+  fixture uses bounded stateful tickets because its default stateless ML-DSA-87
+  tickets exceed quic-go's 16 KiB CRYPTO limit on resumption. Provider servers
+  exercise stateless tickets in ordinary/Retry cases and stateful tickets for
+  0-RTT. Stateless-reset cases replace the server endpoint while retaining its
+  reset key, then require the independent client to authenticate the reset.
+- `just test-provider-quic-runner` builds the pinned Quinn interoperability
+  application with this provider and runs the pinned QUIC Interop Runner in
+  local Docker. Source revisions, container digests, Python dependencies,
+  commands and packet traces are retained. `--prepared PATH` reuses the exact
+  recorded images; `--tests` selects a bounded case batch. Each campaign has a
+  ten-minute cap and removes its own containers and networks on exit. Failed,
+  unsupported and incomplete cases remain nonzero. The independent Go image
+  contains quic-go `99c7436` built with Go 1.27.0. This transport harness uses
+  the upstream application's permissive chain verifier; it tests handshake
+  signatures and transport behavior, not certificate trust. The separate
+  loopback matrix owns mutually authenticated trust-chain evidence.
+- `just test-provider-bogo` prepares pinned upstream rustls and runner checkouts,
+  applies the retained provider/fixture patches, and runs the declared TLS 1.3
+  profile. Scope exclusions come from protocol/version requirements and the
+  explicit profile, not observed failures. Failures remain nonzero. The shim
+  treats ML-DSA as an explicit `-verify-prefs` opt-in for the runner's default-policy
+  tests; all signature operations still use this provider. `--test` narrows the
+  campaign for diagnosis. It is not full-profile qualification.
+- The `provider_quic_*` fuzz targets call production Retry, header, token, and
+  handshake methods through hooks compiled only under `cfg(fuzzing)`. Ordinary
+  compiler checks do not execute those hooks. Live campaigns use the normal
+  `just test-fuzz --full --targets` front door with explicit duration and limits.
+- The `tls-provider` benchmark selector and `just bench-provider-scorecard`
+  use the independent [provider benchmark workspace](../tools/provider-bench/README.md).
+  Criterion measures complete TLS pairs and application records; the supplementary
+  command retains individual latencies, process CPU, wire flights and process RSS.
 - Each ChaCha20 differential test must report execution of every backend marked runnable.
   All three tests must report the same inventory and target architecture.
   The inventory includes required features and availability.

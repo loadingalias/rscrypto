@@ -1,0 +1,8 @@
+{
+  "*TLS12*": "Provider profile supports TLS 1.3 only; this case requires TLS 1.2 or a cross-version transition.",
+  "*P521*": "P-521 authentication is outside the selected provider profile.",
+  "*MLKEM1024*": "The provider offers X25519MLKEM768; pure ML-KEM-1024 is a later profile.",
+  "*ECH*": "ECH depends on the separate HPKE delivery and is outside the first provider profile.",
+  "EarlyDataVersionDowngrade-Client-TLS13": "The runner resumes a TLS 1.3 session against a TLS 1.2-only server; TLS 1.2 is outside this profile.",
+  "EarlyDataVersionDowngrade-Client-TLS13-WarningAlert": "The runner resumes a TLS 1.3 session against a TLS 1.2-only server; TLS 1.2 is outside this profile."
+}

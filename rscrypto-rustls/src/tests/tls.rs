@@ -6,17 +6,6 @@ use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
 use rustls::{ClientConfig, ClientConnection, Connection, Error, RootCertStore, ServerConfig, ServerConnection};
 
-// Only certificate signing and verification use the dev-only peer here.
-// This helper is removed when the authentication adapters enter the provider.
-pub(crate) fn symmetric_provider() -> CryptoProvider {
-  CryptoProvider {
-    cipher_suites: crate::cipher_suite::ALL_CIPHER_SUITES.to_vec(),
-    kx_groups: crate::kx_group::ALL_KX_GROUPS.to_vec(),
-    secure_random: crate::random::SECURE_RANDOM,
-    ..rustls::crypto::aws_lc_rs::default_provider()
-  }
-}
-
 #[derive(Debug)]
 struct FixtureTime;
 
@@ -27,44 +16,131 @@ impl rustls::time_provider::TimeProvider for FixtureTime {
   }
 }
 
-pub(crate) fn connections(client: CryptoProvider, server: CryptoProvider) -> (Connection, Connection) {
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Credential {
+  #[cfg(feature = "ecdsa-p256")]
+  P256,
+  #[cfg(feature = "ecdsa-p384")]
+  P384,
+  #[cfg(feature = "ed25519")]
+  Ed25519,
+  #[cfg(feature = "rsa")]
+  Rsa,
+  #[cfg(feature = "ml-dsa")]
+  MlDsa44,
+  #[cfg(feature = "ml-dsa")]
+  MlDsa65,
+  #[cfg(feature = "ml-dsa")]
+  MlDsa87,
+}
+
+impl Credential {
+  pub(crate) fn scheme(self) -> rustls::SignatureScheme {
+    match self {
+      #[cfg(feature = "ecdsa-p256")]
+      Self::P256 => rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+      #[cfg(feature = "ecdsa-p384")]
+      Self::P384 => rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+      #[cfg(feature = "ed25519")]
+      Self::Ed25519 => rustls::SignatureScheme::ED25519,
+      #[cfg(feature = "rsa")]
+      Self::Rsa => rustls::SignatureScheme::RSA_PSS_SHA256,
+      #[cfg(feature = "ml-dsa")]
+      Self::MlDsa44 => rustls::SignatureScheme::ML_DSA_44,
+      #[cfg(feature = "ml-dsa")]
+      Self::MlDsa65 => rustls::SignatureScheme::ML_DSA_65,
+      #[cfg(feature = "ml-dsa")]
+      Self::MlDsa87 => rustls::SignatureScheme::ML_DSA_87,
+    }
+  }
+}
+
+pub(crate) fn credentials(kind: Credential) -> (&'static [u8], &'static [u8], &'static [u8]) {
+  macro_rules! files {
+    ($kind:literal) => {
+      (
+        &include_bytes!(concat!("../../tests/vectors/credentials/", $kind, "-root.der"))[..],
+        &include_bytes!(concat!("../../tests/vectors/credentials/", $kind, "-leaf.der"))[..],
+        &include_bytes!(concat!("../../tests/vectors/credentials/", $kind, "-leaf-key.der"))[..],
+      )
+    };
+  }
+  match kind {
+    #[cfg(feature = "ecdsa-p256")]
+    Credential::P256 => files!("p256"),
+    #[cfg(feature = "ecdsa-p384")]
+    Credential::P384 => files!("p384"),
+    #[cfg(feature = "ed25519")]
+    Credential::Ed25519 => files!("ed25519"),
+    #[cfg(feature = "rsa")]
+    Credential::Rsa => files!("rsa3072"),
+    #[cfg(feature = "ml-dsa")]
+    Credential::MlDsa44 => files!("mldsa44"),
+    #[cfg(feature = "ml-dsa")]
+    Credential::MlDsa65 => files!("mldsa65"),
+    #[cfg(feature = "ml-dsa")]
+    Credential::MlDsa87 => files!("mldsa87"),
+  }
+}
+
+pub(crate) fn configs(
+  client: CryptoProvider,
+  server: CryptoProvider,
+  kind: Credential,
+  client_auth: bool,
+) -> (ClientConfig, ServerConfig) {
+  let (root, leaf, key) = credentials(kind);
   let mut roots = RootCertStore::empty();
-  roots
-    .add(CertificateDer::from(
-      include_bytes!("../../tests/vectors/credentials/p256-root.der").to_vec(),
-    ))
-    .expect("TLS fixture");
-  let mut client = ClientConfig::builder_with_details(Arc::new(client), Arc::new(FixtureTime))
+  roots.add(CertificateDer::from(root.to_vec())).expect("TLS fixture");
+  let server_provider = Arc::new(server);
+  let verifier =
+    rustls::server::WebPkiClientVerifier::builder_with_provider(Arc::new(roots.clone()), server_provider.clone())
+      .build()
+      .expect("client verifier");
+  let client = ClientConfig::builder_with_details(Arc::new(client), Arc::new(FixtureTime))
     .with_protocol_versions(&[&rustls::version::TLS13])
     .expect("TLS fixture")
-    .with_root_certificates(roots)
-    .with_no_client_auth();
+    .with_root_certificates(roots);
+  let mut client = if client_auth {
+    client
+      .with_client_auth_cert(
+        vec![CertificateDer::from(leaf.to_vec())],
+        PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.to_vec())),
+      )
+      .expect("client credential")
+  } else {
+    client.with_no_client_auth()
+  };
   client.alpn_protocols = vec![b"provider-test".to_vec()];
   client.max_fragment_size = Some(512);
-  let mut server = ServerConfig::builder_with_details(Arc::new(server), Arc::new(FixtureTime))
+  let server = ServerConfig::builder_with_details(server_provider, Arc::new(FixtureTime))
     .with_protocol_versions(&[&rustls::version::TLS13])
-    .expect("TLS fixture")
-    .with_no_client_auth()
+    .expect("TLS fixture");
+  let server = if client_auth {
+    server.with_client_cert_verifier(verifier)
+  } else {
+    server.with_no_client_auth()
+  };
+  let mut server = server
     .with_single_cert(
-      vec![CertificateDer::from(
-        include_bytes!("../../tests/vectors/credentials/p256-leaf.der").to_vec(),
-      )],
-      PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
-        include_bytes!("../../tests/vectors/credentials/p256-leaf-key.der").to_vec(),
-      )),
+      vec![CertificateDer::from(leaf.to_vec())],
+      PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.to_vec())),
     )
     .expect("TLS fixture");
   server.alpn_protocols = client.alpn_protocols.clone();
   server.max_fragment_size = Some(512);
+  (client, server)
+}
+
+pub(crate) fn connections_from_configs(
+  client: Arc<ClientConfig>,
+  server: Arc<ServerConfig>,
+) -> (Connection, Connection) {
   (
     Connection::Client(
-      ClientConnection::new(
-        Arc::new(client),
-        ServerName::try_from("localhost").expect("TLS fixture"),
-      )
-      .expect("TLS fixture"),
+      ClientConnection::new(client, ServerName::try_from("localhost").expect("TLS fixture")).expect("TLS fixture"),
     ),
-    Connection::Server(ServerConnection::new(Arc::new(server)).expect("TLS fixture")),
+    Connection::Server(ServerConnection::new(server).expect("TLS fixture")),
   )
 }
 

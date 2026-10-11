@@ -556,4 +556,9 @@ fuzz/corpus/hash_sha2/seed-basic
 fuzz/corpus/hash_sha3/seed-basic
 fuzz/corpus/hash_websocket_sha1/seed-basic
 fuzz/corpus/hex_parse/seed-basic
+fuzz/corpus/provider_quic_handshake/seed-basic
+fuzz/corpus/provider_quic_handshake/seed-client-hello
+fuzz/corpus/provider_quic_header/seed-basic
+fuzz/corpus/provider_quic_retry/seed-basic
+fuzz/corpus/provider_quic_token/seed-basic
 fuzz/corpus/traits_io/seed-basic

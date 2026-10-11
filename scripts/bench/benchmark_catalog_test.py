@@ -34,8 +34,13 @@ def main() -> None:
 
   validate_catalog(catalog)
 
-  cargo_benches = {bench["name"]: bench for bench in cargo["bench"]}
-  catalog_binaries = {bench["binary"] for bench in catalog["benches"].values()}
+  manifests = {entry.get('manifest', 'Cargo.toml') for entry in catalog['benches'].values()}
+  cargo_benches = {
+    (manifest, bench['name']): bench
+    for manifest in manifests
+    for bench in tomllib.loads((ROOT / manifest).read_text()).get('bench', [])
+  }
+  catalog_binaries = {(bench.get('manifest', 'Cargo.toml'), bench['binary']) for bench in catalog['benches'].values()}
   if set(cargo_benches) != catalog_binaries:
     fail(
       "Cargo and benchmark catalog targets differ: "
@@ -44,7 +49,7 @@ def main() -> None:
     )
 
   for name, bench in catalog["benches"].items():
-    required = set(cargo_benches[bench["binary"]].get("required-features", []))
+    required = set(cargo_benches[(bench.get('manifest', 'Cargo.toml'), bench["binary"])].get("required-features", []))
     selected = set(bench["features"])
     if not required <= selected:
       fail(f"catalog bench {name} omits required features: {sorted(required - selected)}")
@@ -124,15 +129,29 @@ def main() -> None:
 
   for name, bench in catalog["benches"].items():
     features = set(bench["features"])
+    if 'manifest' in bench:
+      continue  # Companion tools own their runtime features in their manifest.
     if "std" not in features or ("parallel" in features) != (name in {"blake3", "blake3_file", "password_hashing"}):
       fail(f"incorrect runtime feature scope for {name}")
 
-  for binary in catalog_binaries - {"structural"}:
-    source = (ROOT / "benches" / f"{binary}.rs").read_text()
+  for manifest, binary in catalog_binaries:
+    if binary == 'structural':
+      continue
+    source = (ROOT / Path(manifest).parent / "benches" / f"{binary}.rs").read_text()
     if 'bench_config::run(&[' not in source:
       fail(f"{binary} does not use the shared Criterion configuration")
     if re.search(r"\.(sample_size|measurement_time|warm_up_time|nresamples|confidence_level|significance_level|noise_threshold)\s*\(", source):
       fail(f"{binary} overrides the shared Criterion configuration")
+
+  for manifest in ('../Cargo.toml', '/tmp/Cargo.toml', 'tools/missing/Cargo.toml'):
+    broken = copy.deepcopy(catalog)
+    broken['benches']['tls_connections']['manifest'] = manifest
+    try:
+      validate_catalog(broken)
+    except CatalogError:
+      pass
+    else:
+      fail('catalog accepted an invalid companion manifest')
 
   subprocess.run([sys.executable, str(ROOT / "scripts/bench/bounded_test.py")], check=True)
   subprocess.run([sys.executable, str(ROOT / "scripts/bench/run_test.py")], check=True)
