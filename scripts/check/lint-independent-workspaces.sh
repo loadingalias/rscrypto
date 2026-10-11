@@ -68,7 +68,7 @@ fi
 
 lint_names() {
   local namespace=$1
-  awk -v section="[lints.$namespace]" '
+  awk -v section="[workspace.lints.$namespace]" '
     /^\[/ {
       active = ($0 == section)
       next

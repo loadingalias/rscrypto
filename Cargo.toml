@@ -46,7 +46,10 @@ rustdoc-args = ["--cfg", "docsrs"]
 resolver = "3"
 members = ["."]
 
-[lints.rust]
+[lints]
+workspace = true
+
+[workspace.lints.rust]
 warnings = { level = "deny", priority = -1 }
 ambiguous_negative_literals = "deny"
 unsafe_op_in_unsafe_fn = "deny"
@@ -62,7 +65,7 @@ unexpected_cfgs = { level = "deny", check-cfg = [
   'cfg(target_feature, values("movdiri", "movdir64b", "serialize"))',
 ] }
 
-[lints.clippy]
+[workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 
 non_send_fields_in_send_ty = "deny"
@@ -141,7 +144,7 @@ arithmetic_side_effects = "deny"
 cargo_common_metadata = "deny"
 cfg_not_test = "deny"
 
-[lints.rustdoc]
+[workspace.lints.rustdoc]
 all = "deny"
 
 [features]

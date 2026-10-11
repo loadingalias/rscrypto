@@ -70,6 +70,8 @@ else:
       excluded = [command[i + 1] for i, arg in enumerate(command) if arg == '--exclude']
       assert excluded == ['upstream'], (prefix, command)
       assert '--workspace' in command and '--all-targets' in command and '--no-deps' in command
+      assert {'-Dwarnings', '-Dclippy::arithmetic_side_effects',
+              '-Dclippy::undocumented_unsafe_blocks'} <= set(command), command
 
     # Ignored manifests are local scratch, not repository policy, even when broken. Untracked
     # unignored manifests are linted before commit; tracked manifests deleted from the working
