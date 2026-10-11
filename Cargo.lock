@@ -1088,10 +1088,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
- "js-sys",
  "libc",
  "wasi",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -2002,15 +2000,13 @@ dependencies = [
 [[package]]
 name = "quinn-proto"
 version = "0.11.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e750cca55fe4f0439a15d0bb529da9651e79993e8e72c61a899a36d462befbe"
+source = "git+https://github.com/loadingalias/quinn?rev=296064e6daf36526a2d062eceb4fe300dab82aa5#296064e6daf36526a2d062eceb4fe300dab82aa5"
 dependencies = [
  "bytes",
  "getrandom 0.4.3",
  "lru-slab",
  "rand 0.10.3",
  "rand_pcg",
- "ring",
  "rustc-hash",
  "rustls-pki-types",
  "slab",

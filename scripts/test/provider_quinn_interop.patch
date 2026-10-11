@@ -2,11 +2,14 @@ diff --git a/quinn-interop/Cargo.toml b/quinn-interop/Cargo.toml
 index 33d53df..058a674 100644
 --- a/quinn-interop/Cargo.toml
 +++ b/quinn-interop/Cargo.toml
-@@ -6,14 +6,17 @@ version = "0.0.0"
+@@ -6,14 +6,20 @@ version = "0.0.0"
  authors = ["Jean-Christophe BEGUE <jc.begue@pm.me>"]
  edition = "2018"
  
 +[workspace]
++
++[patch.crates-io]
++quinn-proto = { git = "https://github.com/loadingalias/quinn", rev = "296064e6daf36526a2d062eceb4fe300dab82aa5" }
 +
  [dependencies]
  anyhow = "1.0.86"

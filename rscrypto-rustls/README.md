@@ -15,10 +15,13 @@ validation, and rustls-pki-types provides credential types. Their built-in crypt
 backends are disabled. The provider's normal and build dependency graph must
 exclude ring, AWS-LC, OpenSSL, BoringSSL, and C build tools.
 
-The optional Quinn integration currently fails this gate for `--target all`:
-quinn-proto 0.11.19 unconditionally enables `ring` on browser-WASM. Native
-builds do not enable that dependency. An upstream manifest fix is required
-before the integration meets the all-target dependency contract.
+The workspace pins a one-line fix to quinn-proto 0.11.19 that makes its
+browser-WASM `ring` dependency optional. The upstream fix is
+[Quinn PR #2930](https://github.com/quinn-rs/quinn/pull/2930).
+Applications that enable `quinn` must copy the `[patch.crates-io]` entry from
+the [workspace manifest](../Cargo.toml) into their own workspace manifest.
+Cargo reads patches only from the consuming workspace root. Keep this exact
+commit pin until a compatible Quinn release includes the fix.
 
 ## Implementation inventory
 
