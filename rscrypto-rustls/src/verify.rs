@@ -1,7 +1,5 @@
 //! Certificate and TLS signature verification through rscrypto.
 
-use rustls::crypto::WebPkiSupportedAlgorithms;
-
 /// Enabled certificate algorithms and TLS signature-scheme mappings.
 #[cfg(any(
   feature = "ecdsa-p256",
@@ -10,16 +8,20 @@ use rustls::crypto::WebPkiSupportedAlgorithms;
   feature = "rsa",
   feature = "ml-dsa"
 ))]
-pub const SUPPORTED_ALGORITHMS: WebPkiSupportedAlgorithms = implementation::ALGORITHMS;
-#[cfg(not(any(
+pub const SUPPORTED_ALGORITHMS: rustls::crypto::WebPkiSupportedAlgorithms = implementation::ALGORITHMS;
+
+/// Enabled certificate algorithms, including encodings used only in certificate chains.
+///
+/// Use this list with [`rustls::crypto::WebPkiSupportedAlgorithms::new`] when selecting a subset
+/// of the TLS signature schemes in [`SUPPORTED_ALGORITHMS`].
+#[cfg(any(
   feature = "ecdsa-p256",
   feature = "ecdsa-p384",
   feature = "ed25519",
   feature = "rsa",
   feature = "ml-dsa"
-)))]
-/// No signature verification algorithms are enabled.
-pub const SUPPORTED_ALGORITHMS: WebPkiSupportedAlgorithms = WebPkiSupportedAlgorithms { all: &[], mapping: &[] };
+))]
+pub const ALL_ALGORITHMS: &[&dyn rustls::pki_types::SignatureVerificationAlgorithm] = implementation::ALL;
 #[cfg(any(
   feature = "ecdsa-p256",
   feature = "ecdsa-p384",
@@ -37,7 +39,7 @@ mod implementation {
   use rscrypto::{Ed25519PublicKey, Ed25519Signature};
   #[cfg(feature = "rsa")]
   use rscrypto::{RsaPublicKey, RsaPublicKeyPolicy, RsaSignatureProfile};
-  use rustls::SignatureScheme;
+  use rustls::crypto::SignatureScheme;
   use rustls::crypto::WebPkiSupportedAlgorithms;
   use rustls::pki_types::{AlgorithmIdentifier, InvalidSignature, SignatureVerificationAlgorithm, alg_id};
   #[derive(Clone, Copy, Debug)]
@@ -241,44 +243,44 @@ mod implementation {
     operation: Operation::MlDsa(SignatureScheme::ML_DSA_87),
   };
 
-  pub(super) const ALGORITHMS: WebPkiSupportedAlgorithms = WebPkiSupportedAlgorithms {
-    all: &[
-      #[cfg(feature = "ml-dsa")]
-      &ML_DSA_44,
-      #[cfg(feature = "ml-dsa")]
-      &ML_DSA_65,
-      #[cfg(feature = "ml-dsa")]
-      &ML_DSA_87,
-      #[cfg(feature = "ecdsa-p256")]
-      &P256_SHA256,
-      #[cfg(feature = "ecdsa-p256")]
-      &P256_SHA384,
-      #[cfg(feature = "ecdsa-p384")]
-      &P384_SHA256,
-      #[cfg(feature = "ecdsa-p384")]
-      &P384_SHA384,
-      #[cfg(feature = "ed25519")]
-      &ED25519,
-      #[cfg(feature = "rsa")]
-      &RSA_PSS_SHA256,
-      #[cfg(feature = "rsa")]
-      &RSA_PSS_SHA384,
-      #[cfg(feature = "rsa")]
-      &RSA_PSS_SHA512,
-      #[cfg(feature = "rsa")]
-      &RSA_PKCS1_SHA256,
-      #[cfg(feature = "rsa")]
-      &RSA_PKCS1_SHA384,
-      #[cfg(feature = "rsa")]
-      &RSA_PKCS1_SHA512,
-      #[cfg(feature = "rsa")]
-      &RSA_PKCS1_SHA256_ABSENT_PARAMS,
-      #[cfg(feature = "rsa")]
-      &RSA_PKCS1_SHA384_ABSENT_PARAMS,
-      #[cfg(feature = "rsa")]
-      &RSA_PKCS1_SHA512_ABSENT_PARAMS,
-    ],
-    mapping: &[
+  pub(super) const ALL: &[&dyn SignatureVerificationAlgorithm] = &[
+    #[cfg(feature = "ml-dsa")]
+    &ML_DSA_44,
+    #[cfg(feature = "ml-dsa")]
+    &ML_DSA_65,
+    #[cfg(feature = "ml-dsa")]
+    &ML_DSA_87,
+    #[cfg(feature = "ecdsa-p256")]
+    &P256_SHA256,
+    #[cfg(feature = "ecdsa-p256")]
+    &P256_SHA384,
+    #[cfg(feature = "ecdsa-p384")]
+    &P384_SHA256,
+    #[cfg(feature = "ecdsa-p384")]
+    &P384_SHA384,
+    #[cfg(feature = "ed25519")]
+    &ED25519,
+    #[cfg(feature = "rsa")]
+    &RSA_PSS_SHA256,
+    #[cfg(feature = "rsa")]
+    &RSA_PSS_SHA384,
+    #[cfg(feature = "rsa")]
+    &RSA_PSS_SHA512,
+    #[cfg(feature = "rsa")]
+    &RSA_PKCS1_SHA256,
+    #[cfg(feature = "rsa")]
+    &RSA_PKCS1_SHA384,
+    #[cfg(feature = "rsa")]
+    &RSA_PKCS1_SHA512,
+    #[cfg(feature = "rsa")]
+    &RSA_PKCS1_SHA256_ABSENT_PARAMS,
+    #[cfg(feature = "rsa")]
+    &RSA_PKCS1_SHA384_ABSENT_PARAMS,
+    #[cfg(feature = "rsa")]
+    &RSA_PKCS1_SHA512_ABSENT_PARAMS,
+  ];
+  pub(super) const ALGORITHMS: WebPkiSupportedAlgorithms = {
+    const MAPPING: &[(SignatureScheme, &[&dyn SignatureVerificationAlgorithm])] = &[
       #[cfg(feature = "ml-dsa")]
       (SignatureScheme::ML_DSA_87, &[&ML_DSA_87]),
       #[cfg(feature = "ml-dsa")]
@@ -305,6 +307,10 @@ mod implementation {
       (SignatureScheme::RSA_PKCS1_SHA384, &[&RSA_PKCS1_SHA384]),
       #[cfg(feature = "rsa")]
       (SignatureScheme::RSA_PKCS1_SHA256, &[&RSA_PKCS1_SHA256]),
-    ],
+    ];
+    match WebPkiSupportedAlgorithms::new(ALL, MAPPING) {
+      Ok(algorithms) => algorithms,
+      Err(_) => panic!("enabled signature mappings are nonempty"),
+    }
   };
 }

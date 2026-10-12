@@ -30,7 +30,7 @@ impl PacketKey for Packet {
     let (body, tag) = body_tag.split_at_mut(length);
     let sealed = self
       .0
-      .encrypt_in_place(packet, header, body)
+      .encrypt_in_place(packet, header, body, None)
       .expect("QUIC producer respects packet bounds");
     tag.copy_from_slice(sealed.as_ref());
   }
@@ -38,7 +38,7 @@ impl PacketKey for Packet {
   fn decrypt(&self, packet: u64, header: &[u8], payload: &mut BytesMut) -> Result<(), CryptoError> {
     let length = self
       .0
-      .decrypt_in_place(packet, header, payload)
+      .decrypt_in_place(packet, header, payload, None)
       .map_err(|_| CryptoError)?
       .len();
     payload.truncate(length);

@@ -42,7 +42,7 @@ allow = ["Unicode-3.0"]
 # Required certificate validation dependencies of the custom rustls provider.
 [[licenses.exceptions]]
 name = "rustls-webpki"
-version = "=0.103.15"
+version = "=0.104.0-alpha.7"
 allow = ["ISC"]
 
 [[licenses.exceptions]]
@@ -56,28 +56,6 @@ name = "subtle"
 version = "=2.6.1"
 allow = ["BSD-3-Clause"]
 
-# Dev-only independent peers. Cargo metadata unifies their rustls features;
-# ci-provider separately rejects these backends from the shipped graph.
-[[licenses.exceptions]]
-name = "aws-lc-rs"
-version = "=1.18.1"
-allow = ["ISC"]
-
-[[licenses.exceptions]]
-name = "aws-lc-sys"
-version = "=0.45.0"
-allow = ["ISC", "BSD-3-Clause"]
-
-[[licenses.exceptions]]
-name = "ring"
-version = "=0.17.14"
-allow = ["ISC"]
-
-[[licenses.exceptions]]
-name = "untrusted"
-version = "=0.7.1"
-allow = ["ISC"]
-
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
@@ -89,5 +67,5 @@ skip = []
 unknown-registry = "deny"
 unknown-git = "deny"
 required-git-spec = "rev"
-allow-git = ["https://github.com/loadingalias/quinn"]
+allow-git = ["https://github.com/loadingalias/quinn", "https://github.com/loadingalias/rustls"]
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -1,18 +1,19 @@
 use super::{fields, hex};
 use alloc::vec;
 
+use rustls::crypto::CipherSuite;
 use rustls::crypto::{cipher::AeadKey, cipher::Iv, tls13::OkmBlock};
-use rustls::{CipherSuite, Error, Side, SupportedCipherSuite, quic::Version};
+use rustls::{Error, Tls13CipherSuite, quic::Side, quic::Version};
 
 use crate::{cipher_suite, hash};
 
-fn peers() -> impl Iterator<Item = (SupportedCipherSuite, SupportedCipherSuite)> {
-  let aws = rustls::crypto::aws_lc_rs::default_provider();
+fn peers() -> impl Iterator<Item = (&'static Tls13CipherSuite, &'static Tls13CipherSuite)> {
+  let aws = rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER;
   cipher_suite::ALL_CIPHER_SUITES.iter().map(move |ours| {
     let peer = aws
-      .cipher_suites
+      .tls13_cipher_suites
       .iter()
-      .find(|peer| peer.suite() == ours.suite())
+      .find(|peer| peer.common.suite == ours.common.suite)
       .expect("AWS-LC suite");
     (*ours, *peer)
   })
@@ -39,14 +40,13 @@ fn implementation_inventory_covers_every_enabled_suite() {
   for (suite, (id, hash_len, key_len, record_limit, packet_limit, forgery_limit)) in
     cipher_suite::ALL_CIPHER_SUITES.iter().zip(expected)
   {
-    let suite = suite.tls13().expect("TLS 1.3 only");
     assert_eq!(suite.common.suite, id);
     assert_eq!(suite.common.hash_provider.output_len(), hash_len);
     assert_eq!(suite.hkdf_provider.extract_from_zero_ikm(None).hash_len(), hash_len);
     assert_eq!(suite.aead_alg.key_len(), key_len);
     assert_eq!(suite.common.confidentiality_limit, record_limit);
-    assert!(!suite.fips());
-    let quic = suite.quic_suite().expect("each suite has QUIC protection");
+    assert_eq!(suite.fips(), rustls::pki_types::FipsStatus::Unvalidated);
+    let quic = rustls::quic::Suite::try_from(*suite).expect("each suite has QUIC protection");
     let keys = quic.keys(b"inventory", Side::Client, Version::V1);
     assert_eq!(keys.local.packet.tag_len(), 16);
     assert_eq!(keys.local.header.sample_len(), 16);
@@ -58,8 +58,6 @@ fn implementation_inventory_covers_every_enabled_suite() {
 #[test]
 fn transcript_forks_and_hmac_scatter_reuse_match_aws_lc() {
   for (ours, peer) in peers().take(2) {
-    let ours = ours.tls13().expect("TLS 1.3");
-    let peer = peer.tls13().expect("TLS 1.3");
     for length in [0, 1, 55, 56, 63, 64, 65, 111, 112, 127, 128, 129, 1025] {
       let prefix = vec![0xa5; length];
       let expected = peer.common.hash_provider.hash(&prefix);
@@ -102,8 +100,8 @@ fn transcript_forks_and_hmac_scatter_reuse_match_aws_lc() {
 #[test]
 fn hkdf_extract_import_scatter_and_bounds_match_aws_lc() {
   for (ours, peer) in peers().take(2) {
-    let ours = ours.tls13().expect("TLS 1.3").hkdf_provider;
-    let peer = peer.tls13().expect("TLS 1.3").hkdf_provider;
+    let ours = ours.hkdf_provider;
+    let peer = peer.hkdf_provider;
     let size = ours.extract_from_zero_ikm(None).hash_len();
     let prk = OkmBlock::new(&[0x5a; 48][..size]);
     for (ours, peer) in [
@@ -148,20 +146,12 @@ fn hkdf_extract_import_scatter_and_bounds_match_aws_lc() {
 #[test]
 fn quic_packets_match_aws_lc_and_reject_corruption() {
   for (ours, peer) in peers() {
-    let ours =
-      ours
-        .tls13()
-        .expect("TLS 1.3")
-        .quic_suite()
-        .expect("QUIC")
-        .keys(b"packet-test", Side::Client, Version::V1);
-    let peer =
-      peer
-        .tls13()
-        .expect("TLS 1.3")
-        .quic_suite()
-        .expect("QUIC")
-        .keys(b"packet-test", Side::Client, Version::V1);
+    let ours = rustls::quic::Suite::try_from(ours)
+      .expect("QUIC")
+      .keys(b"packet-test", Side::Client, Version::V1);
+    let peer = rustls::quic::Suite::try_from(peer)
+      .expect("QUIC")
+      .keys(b"packet-test", Side::Client, Version::V1);
     for len in [0, 1, 31, 1200, 16_384] {
       for number in [0, 7, (1_u64 << 62).strict_sub(1)] {
         for path in [0, 0x0302_0100] {
@@ -171,12 +161,12 @@ fn quic_packets_match_aws_lc_and_reject_corruption() {
           let tag = ours
             .local
             .packet
-            .encrypt_in_place_for_path(path, number, b"header", &mut actual)
+            .encrypt_in_place(number, b"header", &mut actual, Some(path))
             .expect("encrypt");
           let peer_tag = peer
             .local
             .packet
-            .encrypt_in_place_for_path(path, number, b"header", &mut expected)
+            .encrypt_in_place(number, b"header", &mut expected, Some(path))
             .expect("peer encrypt");
           assert_eq!(actual, expected);
           assert_eq!(tag.as_ref(), peer_tag.as_ref());
@@ -186,7 +176,7 @@ fn quic_packets_match_aws_lc_and_reject_corruption() {
             peer
               .local
               .packet
-              .decrypt_in_place_for_path(path, number, b"header", &mut actual)
+              .decrypt_in_place(number, b"header", &mut actual, Some(path))
               .expect("peer decrypt"),
             plain
           );
@@ -195,7 +185,7 @@ fn quic_packets_match_aws_lc_and_reject_corruption() {
             ours
               .local
               .packet
-              .decrypt_in_place_for_path(path, number, b"header", &mut valid)
+              .decrypt_in_place(number, b"header", &mut valid, Some(path))
               .expect("decrypt"),
             plain
           );
@@ -211,10 +201,7 @@ fn quic_packets_match_aws_lc_and_reject_corruption() {
               _ => (number, &b"header"[..], path ^ 1),
             };
             assert!(matches!(
-              ours
-                .local
-                .packet
-                .decrypt_in_place_for_path(path, pn, header, &mut invalid),
+              ours.local.packet.decrypt_in_place(pn, header, &mut invalid, Some(path)),
               Err(Error::DecryptError)
             ));
             assert!(invalid[..len].iter().all(|&byte| byte == 0));
@@ -224,13 +211,13 @@ fn quic_packets_match_aws_lc_and_reject_corruption() {
     }
     for len in 0..16 {
       assert!(matches!(
-        ours.local.packet.decrypt_in_place(0, b"", &mut vec![0; len]),
+        ours.local.packet.decrypt_in_place(0, b"", &mut vec![0; len], None),
         Err(Error::DecryptError)
       ));
     }
     let mut payload = [0x55; 8];
     assert!(matches!(
-      ours.local.packet.encrypt_in_place(1 << 62, b"", &mut payload),
+      ours.local.packet.encrypt_in_place(1 << 62, b"", &mut payload, None),
       Err(Error::EncryptError)
     ));
     assert_eq!(payload, [0x55; 8]);
@@ -240,20 +227,12 @@ fn quic_packets_match_aws_lc_and_reject_corruption() {
 #[test]
 fn header_protection_matches_aws_lc_and_rejects_invalid_slices_atomically() {
   for (ours, peer) in peers() {
-    let ours =
-      ours
-        .tls13()
-        .expect("TLS 1.3")
-        .quic_suite()
-        .expect("QUIC")
-        .keys(b"header-test", Side::Client, Version::V1);
-    let peer =
-      peer
-        .tls13()
-        .expect("TLS 1.3")
-        .quic_suite()
-        .expect("QUIC")
-        .keys(b"header-test", Side::Client, Version::V1);
+    let ours = rustls::quic::Suite::try_from(ours)
+      .expect("QUIC")
+      .keys(b"header-test", Side::Client, Version::V1);
+    let peer = rustls::quic::Suite::try_from(peer)
+      .expect("QUIC")
+      .keys(b"header-test", Side::Client, Version::V1);
     for first in u8::MIN..=u8::MAX {
       let sample = [first; 16];
       let (mut a, mut b) = (first, first);
@@ -294,11 +273,7 @@ fn header_protection_matches_aws_lc_and_rejects_invalid_slices_atomically() {
 
 #[test]
 fn rfc9001_initial_packets_cover_derivation_packet_and_header_protection() {
-  let suite = cipher_suite::TLS13_AES_128_GCM_SHA256
-    .tls13()
-    .expect("TLS 1.3")
-    .quic_suite()
-    .expect("QUIC");
+  let suite = rustls::quic::Suite::try_from(cipher_suite::TLS13_AES_128_GCM_SHA256).expect("QUIC");
   let cid = hex("8394c8f03e515708");
   for (fixture, side, number, padded_len) in [
     (
@@ -325,7 +300,7 @@ fn rfc9001_initial_packets_cover_derivation_packet_and_header_protection() {
     let tag = keys
       .local
       .packet
-      .encrypt_in_place(number, &header, &mut payload)
+      .encrypt_in_place(number, &header, &mut payload, None)
       .expect("packet seal");
     payload.extend_from_slice(tag.as_ref());
     let sample_offset = 4_usize.strict_sub(pn_len);
@@ -348,7 +323,7 @@ fn rfc9001_initial_packets_cover_derivation_packet_and_header_protection() {
       keys
         .local
         .packet
-        .decrypt_in_place(number, &header, &mut payload)
+        .decrypt_in_place(number, &header, &mut payload, None)
         .expect("packet open"),
       plaintext
     );
@@ -395,7 +370,7 @@ fn rfc9001_chacha_short_packet_and_key_update() {
   let mut plaintext = [1];
   let aad = hex("4200bff4");
   let tag = packet
-    .encrypt_in_place(654_360_564, &aad, &mut plaintext)
+    .encrypt_in_place(654_360_564, &aad, &mut plaintext, None)
     .expect("seal");
   let ciphertext = [plaintext.as_slice(), tag.as_ref()].concat();
   let mut first = aad[0];

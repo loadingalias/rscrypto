@@ -5,7 +5,7 @@
 //! The constants use OS entropy. Construct a group with `new` to use a
 //! caller-supplied [`rustls::crypto::SecureRandom`] for all its entropy requests.
 
-use rustls::crypto::SupportedKxGroup;
+use rustls::crypto::kx::SupportedKxGroup;
 
 /// All enabled groups: hybrid first, then X25519, P-256, and P-384.
 pub static ALL_KX_GROUPS: &[&dyn SupportedKxGroup] = &[
@@ -40,9 +40,12 @@ mod implementation {
   use rscrypto::{P384EphemeralSecret, P384PublicKey};
   #[cfg(feature = "x25519")]
   use rscrypto::{X25519PublicKey, X25519SecretKey, X25519SharedSecret};
-  use rustls::crypto::{ActiveKeyExchange, SecureRandom, SharedSecret, SupportedKxGroup};
-  use rustls::ffdhe_groups::FfdheGroup;
-  use rustls::{Error, NamedGroup, PeerMisbehaved, ProtocolVersion};
+  use rustls::Error;
+  use rustls::crypto::SecureRandom;
+  use rustls::crypto::kx::NamedGroup;
+  use rustls::crypto::kx::ffdhe::FfdheGroup;
+  use rustls::crypto::kx::{ActiveKeyExchange, SharedSecret, StartedKeyExchange, SupportedKxGroup};
+  use rustls::error::PeerMisbehaved;
   #[cfg(feature = "x25519")]
   /// X25519 key agreement for TLS 1.3.
   pub static X25519: &dyn SupportedKxGroup = &X25519Group {
@@ -69,12 +72,10 @@ mod implementation {
 
   #[cfg(feature = "x25519")]
   impl SupportedKxGroup for X25519Group {
-    fn start(&self) -> Result<Box<dyn ActiveKeyExchange>, Error> {
-      Ok(Box::new(X25519Exchange::start(self.random)?))
-    }
-
-    fn usable_for_version(&self, version: ProtocolVersion) -> bool {
-      version == ProtocolVersion::TLSv1_3
+    fn start(&self) -> Result<StartedKeyExchange, Error> {
+      Ok(StartedKeyExchange::Single(Box::new(X25519Exchange::start(
+        self.random,
+      )?)))
     }
 
     fn name(&self) -> NamedGroup {
@@ -152,15 +153,11 @@ mod implementation {
       }
 
       impl SupportedKxGroup for $group {
-        fn start(&self) -> Result<Box<dyn ActiveKeyExchange>, Error> {
+        fn start(&self) -> Result<StartedKeyExchange, Error> {
           let secret =
             $secret::try_generate_with(|output| self.random.fill(output)).map_err(|_| Error::FailedToGetRandomBytes)?;
           let public = secret.public_key();
-          Ok(Box::new($exchange { secret, public }))
-        }
-
-        fn usable_for_version(&self, version: ProtocolVersion) -> bool {
-          version == ProtocolVersion::TLSv1_3
+          Ok(StartedKeyExchange::Single(Box::new($exchange { secret, public })))
         }
 
         fn name(&self) -> NamedGroup {
@@ -223,7 +220,7 @@ mod implementation {
     use super::*;
     use alloc::alloc::Global;
     use rscrypto::{Kem, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem768EncapsulationKey, MlKemError};
-    use rustls::crypto::CompletedKeyExchange;
+    use rustls::crypto::kx::{CompletedKeyExchange, HybridKeyExchange};
     // RFC 10024, sections 4.1–4.3: the ML-KEM component
     // precedes X25519 in both shares and the input to the TLS key schedule.
     const HYBRID_CLIENT_SHARE_LEN: usize = MlKem768::ENCAPSULATION_KEY_SIZE + 32;
@@ -251,7 +248,7 @@ mod implementation {
     }
 
     impl SupportedKxGroup for X25519MlKem768Group {
-      fn start(&self) -> Result<Box<dyn ActiveKeyExchange>, Error> {
+      fn start(&self) -> Result<StartedKeyExchange, Error> {
         let classical = X25519Exchange::start(self.random)?;
         let (public_key, secret) = MlKem768::generate_keypair_in(
           |output| self.random.fill(output).map_err(|_| MlKemError::RandomGenerationFailed),
@@ -261,11 +258,11 @@ mod implementation {
         let mut public = [0; HYBRID_CLIENT_SHARE_LEN];
         public[..MlKem768::ENCAPSULATION_KEY_SIZE].copy_from_slice(public_key.as_bytes());
         public[MlKem768::ENCAPSULATION_KEY_SIZE..].copy_from_slice(classical.pub_key());
-        Ok(Box::new(HybridExchange {
+        Ok(StartedKeyExchange::Hybrid(Box::new(HybridExchange {
           classical,
           secret,
           public,
-        }))
+        })))
       }
 
       fn start_and_complete(&self, client_share: &[u8]) -> Result<CompletedKeyExchange, Error> {
@@ -298,10 +295,6 @@ mod implementation {
       fn ffdhe_group(&self) -> Option<FfdheGroup<'static>> {
         None
       }
-
-      fn usable_for_version(&self, version: ProtocolVersion) -> bool {
-        version == ProtocolVersion::TLSv1_3
-      }
     }
 
     struct HybridExchange {
@@ -325,16 +318,6 @@ mod implementation {
         ))
       }
 
-      fn hybrid_component(&self) -> Option<(NamedGroup, &[u8])> {
-        Some((NamedGroup::X25519, self.classical.pub_key()))
-      }
-
-      fn complete_hybrid_component(self: Box<Self>, peer_pub_key: &[u8]) -> Result<SharedSecret, Error> {
-        Ok(SharedSecret::from(
-          self.classical.agree(peer_pub_key)?.as_bytes().as_slice(),
-        ))
-      }
-
       fn pub_key(&self) -> &[u8] {
         &self.public
       }
@@ -345,6 +328,26 @@ mod implementation {
 
       fn group(&self) -> NamedGroup {
         NamedGroup::X25519MLKEM768
+      }
+    }
+
+    impl HybridKeyExchange for HybridExchange {
+      fn component(&self) -> (NamedGroup, &[u8]) {
+        (NamedGroup::X25519, self.classical.pub_key())
+      }
+
+      fn complete_component(self: Box<Self>, peer_pub_key: &[u8]) -> Result<SharedSecret, Error> {
+        Ok(SharedSecret::from(
+          self.classical.agree(peer_pub_key)?.as_bytes().as_slice(),
+        ))
+      }
+
+      fn into_key_exchange(self: Box<Self>) -> Box<dyn ActiveKeyExchange> {
+        self
+      }
+
+      fn as_key_exchange(&self) -> &(dyn ActiveKeyExchange + 'static) {
+        self
       }
     }
 

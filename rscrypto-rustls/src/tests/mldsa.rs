@@ -1,7 +1,8 @@
 use alloc::sync::Arc;
+use rustls::Error;
+use rustls::crypto::SignatureScheme;
+use rustls::crypto::{Credentials, Identity};
 use rustls::pki_types::{PrivateKeyDer, SignatureVerificationAlgorithm, alg_id};
-use rustls::sign::CertifiedKey;
-use rustls::{Error, SignatureAlgorithm, SignatureScheme};
 
 use crate::{sign, verify};
 
@@ -44,7 +45,7 @@ fn fixtures() -> [Fixture; 3] {
 
 fn algorithm(scheme: SignatureScheme) -> &'static dyn SignatureVerificationAlgorithm {
   let algorithms = verify::SUPPORTED_ALGORITHMS
-    .mapping
+    .mapping()
     .iter()
     .find(|(name, _)| *name == scheme)
     .expect("ML-DSA scheme")
@@ -90,17 +91,20 @@ fn mldsa_verifiers_accept_openssl_and_reject_context_length_and_corruption() {
 
 #[test]
 fn mldsa_pkcs8_schemes_spki_and_signatures_match_independent_peer() {
-  let peer = rustls::crypto::aws_lc_rs::default_provider();
+  let peer = rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER;
   for fixture in fixtures() {
     for der in [fixture.key, fixture.seed] {
       let key = sign::KEY_PROVIDER
         .load_private_key(PrivateKeyDer::try_from(der.to_vec()).expect("DER"))
         .expect("ML-DSA key");
-      assert_eq!(key.algorithm(), SignatureAlgorithm::Unknown(0));
       assert_eq!(key.public_key().expect("SPKI").as_ref(), fixture.spki);
-      let certified = CertifiedKey::new(vec![fixture.leaf.to_vec().into()], Arc::clone(&key));
-      certified.keys_match().expect("certificate matches imported public key");
-      let signer = key
+      let certified = Credentials::new(
+        Arc::new(Identity::from_cert_chain(vec![fixture.leaf.to_vec().into()]).expect("identity")),
+        key,
+      )
+      .expect("certificate matches imported public key");
+      let signer = certified
+        .key
         .choose_scheme(&[SignatureScheme::ED25519, fixture.scheme])
         .expect("exact scheme");
       assert_eq!(signer.scheme(), fixture.scheme);
@@ -108,7 +112,7 @@ fn mldsa_pkcs8_schemes_spki_and_signatures_match_independent_peer() {
       assert_eq!(signature.len(), fixture.signature_len);
       let independent = peer
         .signature_verification_algorithms
-        .mapping
+        .mapping()
         .iter()
         .find(|(scheme, _)| *scheme == fixture.scheme)
         .expect("independent ML-DSA")
@@ -122,7 +126,7 @@ fn mldsa_pkcs8_schemes_spki_and_signatures_match_independent_peer() {
         SignatureScheme::ML_DSA_87,
         SignatureScheme::ED25519,
       ] {
-        assert_eq!(key.choose_scheme(&[other]).is_some(), other == fixture.scheme);
+        assert_eq!(certified.key.choose_scheme(&[other]).is_some(), other == fixture.scheme);
       }
     }
     let mut trailing = fixture.key.to_vec();
@@ -180,8 +184,8 @@ fn mldsa_import_and_sign_execute_on_a_256_kib_worker_stack() {
           let key = sign::KEY_PROVIDER
             .load_private_key(PrivateKeyDer::try_from(der.to_vec()).expect("DER"))
             .expect("key import");
-          let signer = key.choose_scheme(&[fixture.scheme]).expect("TLS scheme");
           for _ in 0..32 {
+            let signer = key.choose_scheme(&[fixture.scheme]).expect("TLS scheme");
             let signature = signer.sign(MESSAGE).expect("production signing on bounded stack");
             algorithm(fixture.scheme)
               .verify_signature(&fixture.spki[22..], MESSAGE, &signature)

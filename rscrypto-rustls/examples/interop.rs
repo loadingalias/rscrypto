@@ -12,7 +12,8 @@ use std::path::Path;
 use std::time::Instant;
 
 use rustls::pki_types::ServerName;
-use rustls::{ClientConfig, ClientConnection, Connection, ServerConfig, ServerConnection};
+use rustls::{ClientConfig, Connection, ServerConfig, SideData, Tcp};
+use rustls_util::StreamOwned;
 
 mod common;
 use common::{credentials, provider};
@@ -24,31 +25,10 @@ fn invalid(message: &str) -> io::Error {
   io::Error::new(io::ErrorKind::InvalidInput, message)
 }
 
-fn flush(connection: &mut Connection, socket: &mut TcpStream) -> io::Result<()> {
-  while connection.wants_write() {
-    connection.write_tls(socket)?;
-  }
-  socket.flush()
-}
-
-fn receive(connection: &mut Connection, socket: &mut TcpStream, output: &mut [u8]) -> io::Result<()> {
-  let mut offset = 0;
-  while offset < output.len() {
-    match connection.reader().read(&mut output[offset..]) {
-      Ok(0) => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated peer payload")),
-      Ok(length) => offset = offset.strict_add(length),
-      Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-        connection.complete_io(socket)?;
-      }
-      Err(error) => return Err(error),
-    }
-  }
-  Ok(())
-}
-
 fn exchange(
-  mut connection: Connection,
-  mut socket: TcpStream,
+  connection: Connection<impl SideData, Tcp>,
+  socket: TcpStream,
+  output: Vec<u8>,
   client: bool,
   reverse: bool,
 ) -> Result<(), Box<dyn Error>> {
@@ -56,17 +36,25 @@ fn exchange(
   socket.set_nonblocking(false)?;
   socket.set_read_timeout(Some(TIMEOUT))?;
   socket.set_write_timeout(Some(TIMEOUT))?;
-  connection.complete_io(&mut socket)?;
-  if connection.is_handshaking() || connection.alpn_protocol() != Some(b"provider-test") {
+  let mut stream = StreamOwned::new(connection, socket, output);
+  rustls_util::complete_io(
+    &mut stream.sock,
+    &mut stream.input,
+    &mut stream.received_plaintext,
+    &mut stream.output,
+    &mut stream.conn,
+  )?;
+  if stream.conn.is_handshaking() || stream.conn.alpn_protocol().map(AsRef::as_ref) != Some(b"provider-test".as_slice())
+  {
     return Err(invalid("handshake or ALPN mismatch").into());
   }
   for round in 0..2 {
     if client {
-      connection.writer().write_all(PAYLOAD)?;
-      flush(&mut connection, &mut socket)?;
+      stream.write_all(PAYLOAD)?;
+      stream.flush()?;
     }
     let mut received = vec![0; PAYLOAD.len()];
-    receive(&mut connection, &mut socket, &mut received)?;
+    stream.read_exact(&mut received)?;
     let mut expected = PAYLOAD.to_vec();
     if reverse {
       expected[..PAYLOAD.len().strict_sub(1)].reverse();
@@ -75,24 +63,24 @@ fn exchange(
       return Err(invalid("peer payload mismatch").into());
     }
     if !client {
-      connection.writer().write_all(PAYLOAD)?;
+      stream.write_all(PAYLOAD)?;
     }
     if round == 0 {
-      connection.refresh_traffic_keys()?;
+      stream.conn.refresh_traffic_keys(&mut stream.output)?;
     }
-    flush(&mut connection, &mut socket)?;
+    stream.flush()?;
   }
-  let exported = connection.export_keying_material([0; 32], b"provider-interop", None)?;
+  let exported = stream.conn.exporter()?.derive(b"provider-interop", None, [0; 32])?;
   let hex = exported.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
   println!(
     "RESULT {:?} {:?} {:?} {hex}",
-    connection.handshake_kind(),
-    connection.negotiated_cipher_suite().map(|suite| suite.suite()),
-    connection.negotiated_key_exchange_group().map(|group| group.name())
+    stream.conn.handshake_kind(),
+    stream.conn.negotiated_cipher_suite().map(|suite| suite.suite()),
+    stream.conn.negotiated_key_exchange_group().map(|group| group.name())
   );
   io::stdout().flush()?;
-  connection.send_close_notify();
-  flush(&mut connection, &mut socket)?;
+  stream.conn.send_close_notify(&mut stream.output)?;
+  stream.flush()?;
   Ok(())
 }
 
@@ -117,27 +105,25 @@ fn main() -> Result<(), Box<dyn Error>> {
   let (roots, certificates, key) = credentials(Path::new(&args[2]), &args[3])?;
   match args[0].as_str() {
     "client" => {
-      let mut config = ClientConfig::builder_with_provider(provider)
-        .with_protocol_versions(&[&rustls::version::TLS13])?
+      let mut config = ClientConfig::builder(provider)
         .with_root_certificates(roots)
         .with_client_auth_cert(certificates, key)?;
-      config.alpn_protocols = vec![b"provider-test".to_vec()];
+      config.alpn_protocols = vec![b"provider-test".to_vec().into()];
       let config = Arc::new(config);
       for _ in 0..count {
         let socket = TcpStream::connect_timeout(&address, TIMEOUT)?;
-        let connection = ClientConnection::new(config.clone(), ServerName::try_from("localhost")?)?;
-        exchange(Connection::Client(connection), socket, true, reverse)?;
+        let mut output = Vec::new();
+        let connection = config.connect(ServerName::try_from("localhost")?).build(&mut output)?;
+        exchange(connection, socket, output, true, reverse)?;
       }
     }
     "server" => {
-      let verifier =
-        rustls::server::WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider.clone()).build()?;
-      let mut config = ServerConfig::builder_with_provider(provider)
-        .with_protocol_versions(&[&rustls::version::TLS13])?
-        .with_client_cert_verifier(verifier)
+      let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(roots), &provider).build()?;
+      let mut config = ServerConfig::builder(provider)
+        .with_client_cert_verifier(Arc::new(verifier))
         .with_single_cert(certificates, key)?;
-      config.alpn_protocols = vec![b"provider-test".to_vec()];
-      config.ticketer = rscrypto_rustls::ticket::ticketer()?;
+      config.alpn_protocols = vec![b"provider-test".to_vec().into()];
+      config.ticketer = Some(rscrypto_rustls::ticket::ticketer()?);
       config.session_storage = Arc::new(rustls::server::NoServerSessionStorage {});
       let config = Arc::new(config);
       let listener = TcpListener::bind(address)?;
@@ -157,12 +143,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             Err(error) => return Err(error.into()),
           }
         };
-        exchange(
-          Connection::Server(ServerConnection::new(config.clone())?),
-          socket,
-          false,
-          false,
-        )?;
+        exchange(Connection::new(config.clone())?, socket, Vec::new(), false, false)?;
       }
     }
     _ => return Err(invalid("expected client or server").into()),

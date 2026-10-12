@@ -1,8 +1,8 @@
 diff --git a/quinn-interop/Cargo.toml b/quinn-interop/Cargo.toml
-index 33d53df..058a674 100644
+index 33d53df..d658464 100644
 --- a/quinn-interop/Cargo.toml
 +++ b/quinn-interop/Cargo.toml
-@@ -6,14 +6,20 @@ version = "0.0.0"
+@@ -6,14 +6,21 @@ version = "0.0.0"
  authors = ["Jean-Christophe BEGUE <jc.begue@pm.me>"]
  edition = "2018"
  
@@ -22,27 +22,34 @@ index 33d53df..058a674 100644
 -quinn = { version = "0.11.2", default-features = false, features = [ "rustls", "ring", "runtime-tokio" ] }
 -rustls = { version = "0.23", default-features = false }
 +quinn = { version = "=0.11.12", default-features = false, features = [ "runtime-tokio" ] }
-+rustls = { version = "=0.23.45", default-features = false, features = ["std", "custom-provider"] }
++rustls = { version = "=0.24.0-dev.1", git = "https://github.com/loadingalias/rustls", rev = "2e56badaef3fde0a0164b51a86ba117831f63c54", default-features = false, features = ["webpki"] }
++rustls-util = { version = "=0.1.0-dev.1", git = "https://github.com/loadingalias/rustls", rev = "2e56badaef3fde0a0164b51a86ba117831f63c54", default-features = false }
 +rscrypto-rustls = { path = "@RSCRYPTO_ROOT@/rscrypto-rustls", features = ["quinn"] }
  rustls-pemfile = "2"
  tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "io-std", "io-util", "fs"] }
  tracing = "0.1.10"
 diff --git a/quinn-interop/src/bin/client.rs b/quinn-interop/src/bin/client.rs
-index 41be89f..a8cd887 100644
+index 41be89f..c27c78e 100644
 --- a/quinn-interop/src/bin/client.rs
 +++ b/quinn-interop/src/bin/client.rs
-@@ -5,9 +5,9 @@ use bytes::Bytes;
+@@ -5,12 +5,10 @@ use bytes::Bytes;
  use h3::client::SendRequest;
  use h3_quinn::Endpoint;
  use quinn::{ClientConfig, Connection};
-+use rscrypto_rustls::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256;
- use rustls::{
-     client::danger::ServerCertVerified,
+-use rustls::{
+-    client::danger::ServerCertVerified,
 -    crypto::ring::cipher_suite::{TLS13_AES_128_GCM_SHA256, TLS13_CHACHA20_POLY1305_SHA256},
-     pki_types::{CertificateDer, ServerName, UnixTime},
-     version, KeyLogFile,
- };
-@@ -195,7 +195,8 @@ async fn h3_download_all(conn: Connection, requests: &[http::Uri]) -> anyhow::Re
+-    pki_types::{CertificateDer, ServerName, UnixTime},
+-    version, KeyLogFile,
+-};
++use rscrypto_rustls::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256;
++use rustls::client::danger::{ServerIdentity, SignatureVerificationInput};
++use rustls_util::KeyLogFile;
++use rustls::crypto::VerifiedIdentity;
+ use tokio::{self, fs::File, io::AsyncWriteExt as _, task::JoinSet};
+ use tracing::{debug, error, info};
+ 
+@@ -195,7 +193,8 @@ async fn h3_download_all(conn: Connection, requests: &[http::Uri]) -> anyhow::Re
      // Allow the connection to close automatically after all requests complete
      drop(send_request);
  
@@ -52,17 +59,27 @@ index 41be89f..a8cd887 100644
  
      while let Some(result) = set.join_next().await {
          result.unwrap()?;
-@@ -230,7 +231,7 @@ async fn h3_download(
+@@ -230,29 +229,20 @@ async fn h3_download(
  }
  
  fn config(alpn: &str, suites: CipherSuite) -> anyhow::Result<ClientConfig> {
 -    let mut provider = rustls::crypto::ring::default_provider();
 +    let mut provider = rscrypto_rustls::default_provider();
      if let CipherSuite::Chacha20 = suites {
-         provider.cipher_suites = vec![TLS13_CHACHA20_POLY1305_SHA256];
+-        provider.cipher_suites = vec![TLS13_CHACHA20_POLY1305_SHA256];
++        provider.tls13_cipher_suites = vec![TLS13_CHACHA20_POLY1305_SHA256].into();
      }
-@@ -244,15 +245,7 @@ fn config(alpn: &str, suites: CipherSuite) -> anyhow::Result<ClientConfig> {
-     tls_config.alpn_protocols = vec![alpn.into()];
+-    let mut tls_config = rustls::ClientConfig::builder_with_provider(Arc::new(provider))
+-        .with_protocol_versions(&[&version::TLS13])?
++    let mut tls_config = rustls::ClientConfig::builder(Arc::new(provider))
+         .dangerous()
+         .with_custom_certificate_verifier(Arc::new(YesVerifier))
+-        .with_no_client_auth();
++        .with_no_client_auth()?;
+ 
+     tls_config.enable_early_data = true;
+-    tls_config.alpn_protocols = vec![alpn.into()];
++    tls_config.alpn_protocols = vec![alpn.as_bytes().to_vec().into()];
      tls_config.key_log = Arc::new(KeyLogFile::new());
  
 -    let tls_config = quinn::crypto::rustls::QuicClientConfig::with_initial(
@@ -78,7 +95,7 @@ index 41be89f..a8cd887 100644
      client_config
          .version(0x00000001)
          .transport_config(h3_quinn_interop::transport_config());
-@@ -267,7 +260,7 @@ async fn connect(
+@@ -267,7 +257,7 @@ async fn connect(
      let (addr, host) = resolve(uri).await?;
  
      // quinn setup
@@ -87,35 +104,77 @@ index 41be89f..a8cd887 100644
      client_endpoint.set_default_client_config(client_config);
  
      let new_conn = client_endpoint.connect(addr, host)?.await?;
-@@ -332,7 +325,7 @@ impl rustls::client::danger::ServerCertVerifier for YesVerifier {
-             message,
-             cert,
-             dss,
+@@ -310,48 +300,39 @@ async fn resolve(uri: &http::Uri) -> anyhow::Result<(SocketAddr, &str)> {
+ #[derive(Debug)]
+ struct YesVerifier;
+ 
+-impl rustls::client::danger::ServerCertVerifier for YesVerifier {
+-    fn verify_server_cert(
+-        &self,
+-        _end_entity: &CertificateDer<'_>,
+-        _intermediates: &[CertificateDer<'_>],
+-        _server_name: &ServerName<'_>,
+-        _scts: &[u8],
+-        _now: UnixTime,
+-    ) -> Result<ServerCertVerified, rustls::Error> {
+-        Ok(ServerCertVerified::assertion())
++impl rustls::client::danger::ServerVerifier for YesVerifier {
++    fn verify_identity<'a>(&self, identity: &ServerIdentity<'a, '_>) -> Result<VerifiedIdentity<'a>, rustls::Error> {
++        Ok(VerifiedIdentity::assertion(identity.identity.clone()))
+     }
+ 
+     fn verify_tls12_signature(
+         &self,
+-        message: &[u8],
+-        cert: &CertificateDer<'_>,
+-        dss: &rustls::DigitallySignedStruct,
++        input: &SignatureVerificationInput<'_>,
+     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+         rustls::crypto::verify_tls12_signature(
+-            message,
+-            cert,
+-            dss,
 -            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
++            input,
 +            &rscrypto_rustls::default_provider().signature_verification_algorithms,
          )
      }
  
-@@ -346,12 +339,12 @@ impl rustls::client::danger::ServerCertVerifier for YesVerifier {
-             message,
-             cert,
-             dss,
+     fn verify_tls13_signature(
+         &self,
+-        message: &[u8],
+-        cert: &CertificateDer<'_>,
+-        dss: &rustls::DigitallySignedStruct,
++        input: &SignatureVerificationInput<'_>,
+     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+         rustls::crypto::verify_tls13_signature(
+-            message,
+-            cert,
+-            dss,
 -            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
++            input,
 +            &rscrypto_rustls::default_provider().signature_verification_algorithms,
          )
      }
  
-     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
 -        rustls::crypto::ring::default_provider()
++    fn request_ocsp_response(&self) -> bool { false }
++
++    fn hash_config(&self, h: &mut dyn std::hash::Hasher) {
++        h.write(b"quinn-interop::YesVerifier");
++    }
++
++    fn supported_verify_schemes(&self) -> Vec<rustls::crypto::SignatureScheme> {
 +        rscrypto_rustls::default_provider()
              .signature_verification_algorithms
              .supported_schemes()
      }
 diff --git a/quinn-interop/src/bin/server.rs b/quinn-interop/src/bin/server.rs
-index 4c49dbe..154f102 100644
+index 4c49dbe..bdaef21 100644
 --- a/quinn-interop/src/bin/server.rs
 +++ b/quinn-interop/src/bin/server.rs
-@@ -1,12 +1,13 @@
+@@ -1,16 +1,17 @@
  use std::path::PathBuf;
  use std::sync::Arc;
 -use std::{convert::TryFrom, io};
@@ -130,20 +189,26 @@ index 4c49dbe..154f102 100644
 +use rscrypto_rustls::quinn::HandshakeData;
  use rustls::{
      pki_types::{CertificateDer, PrivateKeyDer},
-     KeyLogFile,
-@@ -39,18 +40,19 @@ async fn main() -> anyhow::Result<()> {
+-    KeyLogFile,
+ };
++use rustls_util::KeyLogFile;
+ use tokio::fs::File;
+ use tokio::io::AsyncReadExt;
+ use tracing::{debug, error, info, trace};
+@@ -39,18 +40,18 @@ async fn main() -> anyhow::Result<()> {
      }
  
      let (certs, key) = load_crypto().await?;
 -    let mut crypto = rustls::ServerConfig::builder()
 +    let mut provider = rscrypto_rustls::default_provider();
-+    if test_case == "chacha20" { provider.cipher_suites = vec![rscrypto_rustls::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256]; }
-+    let mut crypto = rustls::ServerConfig::builder_with_provider(Arc::new(provider))
-+        .with_protocol_versions(&[&rustls::version::TLS13])?
++    if test_case == "chacha20" { provider.tls13_cipher_suites = vec![rscrypto_rustls::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256].into(); }
++    let mut crypto = rustls::ServerConfig::builder(Arc::new(provider))
          .with_no_client_auth()
-         .with_single_cert(certs, key)?;
+-        .with_single_cert(certs, key)?;
++        .with_single_cert(Arc::new(rustls::crypto::Identity::from_cert_chain(certs)?), key)?;
      crypto.max_early_data_size = u32::MAX;
-     crypto.alpn_protocols = ALPN.iter().map(|a| a[..].to_vec()).collect();
+-    crypto.alpn_protocols = ALPN.iter().map(|a| a[..].to_vec()).collect();
++    crypto.alpn_protocols = ALPN.iter().map(|a| a[..].to_vec().into()).collect();
      crypto.key_log = Arc::new(KeyLogFile::new());
 -    let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(crypto)?;
 -    let mut server_config = h3_quinn::quinn::ServerConfig::with_crypto(Arc::new(crypto));
@@ -156,7 +221,7 @@ index 4c49dbe..154f102 100644
  
      info!(
          "Listening on port {:?}",
-@@ -77,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
+@@ -77,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
                      return;
                  }
              };
@@ -165,7 +230,7 @@ index 4c49dbe..154f102 100644
              trace!("New connection being attempted for {}", alpn.escape_ascii());
  
              let res = match new_conn.await.context("handshake failed") {
-@@ -134,7 +136,8 @@ async fn serve_h3(conn: Connection) -> anyhow::Result<()> {
+@@ -134,7 +135,8 @@ async fn serve_h3(conn: Connection) -> anyhow::Result<()> {
          .await
          .unwrap();
  

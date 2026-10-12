@@ -77,24 +77,26 @@ pub fn handshake(data: &[u8]) {
   }
   static CONFIG: OnceLock<Arc<rustls::ServerConfig>> = OnceLock::new();
   let config = CONFIG.get_or_init(|| {
-    let mut config = rustls::ServerConfig::builder_with_provider(Arc::new(crate::default_provider()))
-      .with_protocol_versions(&[&rustls::version::TLS13])
-      .expect("TLS 1.3")
+    let mut config = rustls::ServerConfig::builder(Arc::new(crate::default_provider()))
       .with_no_client_auth()
       .with_single_cert(
-        vec![rustls::pki_types::CertificateDer::from(
-          include_bytes!("../../tests/vectors/credentials/p256-leaf.der").as_slice(),
-        )],
+        Arc::new(
+          rustls::crypto::Identity::from_cert_chain(vec![rustls::pki_types::CertificateDer::from(
+            include_bytes!("../../tests/vectors/credentials/p256-leaf.der").as_slice(),
+          )])
+          .expect("fixture identity"),
+        ),
         rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
           include_bytes!("../../tests/vectors/credentials/p256-leaf-key.der").as_slice(),
         )),
       )
       .expect("fixed fixture");
-    config.alpn_protocols = vec![b"provider-test".to_vec()];
+    config.alpn_protocols = vec![b"provider-test".to_vec().into()];
     Arc::new(config)
   });
-  let server = quic::ServerConnection::new(config.clone(), quic::Version::V1, Vec::new()).expect("valid configuration");
-  let mut session = Session::new(quic::Connection::Server(server), Side::Server);
+  let server = rustls::Connection::<ServerSide, quic::Quic>::new_quic(config.clone(), quic::Version::V1, Vec::new())
+    .expect("valid configuration");
+  let mut session = Session::new(server, Side::Server);
   for chunk in data.chunks(37) {
     if let Err(error) = session.read_handshake(chunk) {
       assert_eq!(

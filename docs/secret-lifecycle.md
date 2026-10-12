@@ -343,7 +343,7 @@ successful clearing key owners with signers. Rejected parsed keys drop before
 another format is attempted. Each RSA signer retains reusable clearing scratch;
 entropy failure returns no signature, and poisoned scratch fails opaquely.
 ECDSA and hedged ML-DSA entropy failure also return no signature. ML-DSA tests
-cover partial entropy failure and successful reuse for all three parameter sets. `CertifiedKey::keys_match`
+cover partial entropy failure and successful reuse for all three parameter sets. `rustls::crypto::Credentials::new`
 compares exported public SPKI with the certificate before use.
 
 The adapter tests cover partial entropy failure, subsequent RSA signing,
@@ -392,7 +392,8 @@ metadata remain owned by Quinn.
 
 Failed TLS handshake processing is sticky. The adapter suppresses subsequent
 handshake writes, traffic-key updates, exporters, identity, and handshake data.
-Rustls owns destruction of handshake and next-generation traffic secrets.
+Rustls types own destruction of handshake, next-generation traffic, and exporter
+secrets, including owners retained by the adapter's event queue and session.
 Packet-key wrappers preserve the primitive's authenticated-decryption failure
 contract. Source-level clearing and functional failure tests do not measure
 compiler-created copies or establish native timing evidence.

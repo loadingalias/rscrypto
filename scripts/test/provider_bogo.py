@@ -15,7 +15,8 @@ import tempfile
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
-RUSTLS = '2976d90fd1c2db6b518700dd101b714069cfcb17'
+RUSTLS_DEPENDENCY = tomllib.loads((ROOT / 'rscrypto-rustls/Cargo.toml').read_text())['dependencies']['rustls']
+RUSTLS = RUSTLS_DEPENDENCY['rev']
 BORINGSSL = '9389a4af2c6c47a59ec39bfb51e4da2fe971d1bc'
 
 
@@ -64,7 +65,7 @@ def main():
 
     versions = {'host': platform.platform(), 'source': subprocess.check_output(
         ['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
-        'rustls': RUSTLS, 'boringssl': BORINGSSL, 'test': args.test, 'work': str(work)}
+        'rustls': RUSTLS, 'rustls_repository': RUSTLS_DEPENDENCY['git'], 'boringssl': BORINGSSL, 'test': args.test, 'work': str(work)}
     for tool, arguments in (('go', ['version']), ('rustc', ['-Vv'])):
         versions[tool] = subprocess.check_output([tool, *arguments], cwd=ROOT, text=True).strip()
     if not versions['go'].startswith('go version go1.27.2 '):
@@ -79,7 +80,7 @@ def main():
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / path, destination)
     for name, repository, revision, directory in (
-        ('rustls', 'https://github.com/rustls/rustls.git', RUSTLS, rustls),
+        ('rustls', RUSTLS_DEPENDENCY['git'], RUSTLS, rustls),
         ('runner', 'https://github.com/rustls/boringssl.git', BORINGSSL, runner),
     ):
         run(name + '-init', ['git', 'init', str(directory)])

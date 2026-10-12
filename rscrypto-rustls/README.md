@@ -1,9 +1,14 @@
 # rscrypto-rustls
 
 This unpublished crate supplies rscrypto-backed TLS 1.3 and QUIC cryptographic
-adapters for rustls 0.23.45, including hybrid key exchange, classical authentication, and opt-in ML-DSA
-authentication. The `quinn` feature supplies a QUIC v1 transport adapter for
+adapters for rustls 0.24 development, including hybrid key exchange, classical
+authentication, and opt-in ML-DSA authentication. The `quinn` feature supplies a QUIC v1 transport adapter for
 quinn-proto 0.11.19.
+
+The [manifest](Cargo.toml) pins the rustls fork that contains
+[rustls PR #3349](https://github.com/rustls/rustls/pull/3349). This is a development
+revision, not a released 0.24 version. Consumers must use the same rustls Git
+source and revision so their configuration types match the provider's types.
 
 The crate requires `std` and the same minimum Rust version as rscrypto.
 Each algorithm feature forwards to the corresponding rscrypto leaf feature.
@@ -16,7 +21,7 @@ backends are disabled. The provider's normal and build dependency graph must
 exclude ring, AWS-LC, OpenSSL, BoringSSL, and C build tools.
 
 The workspace pins a one-line fix to quinn-proto 0.11.19 that makes its
-browser-WASM `ring` dependency optional. The upstream fix is
+browser-WASM `ring` dependency optional. The upstream fix was merged in
 [Quinn PR #2930](https://github.com/quinn-rs/quinn/pull/2930).
 Applications that enable `quinn` must copy the `[patch.crates-io]` entry from
 the [workspace manifest](../Cargo.toml) into their own workspace manifest.
@@ -62,27 +67,29 @@ Those contracts do not establish that compiler-made copies are erased.
 
 `kx_group::ALL_KX_GROUPS` prefers X25519MLKEM768, then X25519, P-256, and
 P-384. Every group requires `getrandom` and its primitive feature; the hybrid
-requires both `x25519` and `ml-kem`. All four groups accept only TLS 1.3.
+requires both `x25519` and `ml-kem`. The provider supplies no TLS 1.2 suites.
 The hybrid follows RFC 10024: ML-KEM precedes X25519 in both shares and the
 shared secret. It validates the ML-KEM encapsulation key before server key
 generation. A well-formed altered ciphertext retains ML-KEM's implicit rejection;
 the TLS Finished check rejects the resulting different secret. The classical
 component is available to rustls's fallback optimization.
 
-The pinned rustls version maps all key-exchange errors to `illegal_parameter`.
-RFC 10024 requires `internal_error` for an internal decapsulation failure.
-That upstream limitation remains; malformed public input and entropy failures
-never return a successful exchange. No new timing qualification is claimed.
+Malformed public shares and entropy failures never return a successful exchange.
+No new timing qualification is claimed.
 
-Use `default_provider()` with rustls's explicit `builder_with_provider` or
+Use `default_provider()` with rustls's explicit `builder` or
 `builder_with_details`. It prefers hybrid key exchange and permits classical
 fallback. `post_quantum_required_provider()` offers only X25519MLKEM768; it
 requires hybrid key establishment, not a post-quantum certificate chain. Neither
 constructor installs a global provider. Cargo features determine the available
-lists; rustls rejects configurations without usable suites or groups.
+lists. Provider constructors require `getrandom` and at least one signature
+verification feature. Primitive-only feature subsets still compile. Rustls
+rejects configurations without usable suites or groups.
+`verify::ALL_ALGORITHMS` preserves the certificate algorithm catalog when callers
+build a custom TLS signature-scheme mapping with `WebPkiSupportedAlgorithms::new`.
 
 `sign::KEY_PROVIDER` accepts PKCS#8 keys, EC SEC1 keys, and RSA PKCS#1 keys,
-bounded to 16 KiB. Its signing keys expose SPKI for `CertifiedKey::keys_match`.
+bounded to 16 KiB. Its signing keys expose SPKI for `rustls::crypto::Credentials::new`.
 Owned DER input is zeroized on success and rejection, including oversized input.
 Borrowed static DER remains the caller's responsibility; it cannot be cleared
 through an immutable borrow.
@@ -111,10 +118,10 @@ deterministic test sources are unsuitable for production. These constructors
 retain the same feature requirements as their OS-backed constants.
 
 `ticket::ticketer()` supplies stateless session tickets with six-hour key rotation
-and a twelve-hour advertised lifetime. It requires `aes-gcm` and `getrandom`.
+and a six-hour advertised lifetime, as defined by the pinned rustls rotator. It requires `aes-gcm` and `getrandom`.
 Share the returned owner across server connections. Each key issues at most
-2^24 tickets of at most 16 KiB plaintext. Rotation occurs on use; idle keys can
-remain resident until the next operation. Each key enforces a monotonic
+2^24 tickets of at most 16 KiB plaintext. Rotation occurs on use; inactive generations can remain resident until the
+rotator replaces or drops them. Each key enforces a monotonic
 twelve-hour deadline and releases its cipher on its first use at or after expiry,
 even when the rotator was idle. Process restart replaces ticket keys.
 Ticket encryption or rotation failure suppresses issuance without failing TLS.

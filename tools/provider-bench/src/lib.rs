@@ -12,7 +12,7 @@ use alloc::{collections::VecDeque, rc::Rc, sync::Arc};
 use core::cell::RefCell;
 use std::io::{self, Read, Write};
 
-use rustls::{ClientConfig, Connection, ServerConfig};
+use rustls::{ClientConfig, ClientSide, Connection, ServerConfig, ServerSide, SideData, Tcp, VecInput};
 use serde_json::{Value, json};
 
 mod credentials;
@@ -95,68 +95,98 @@ impl Write for Pipe {
   }
 }
 
+struct RustlsEndpoint<S: SideData> {
+  connection: Connection<S, Tcp>,
+  pipe: Pipe,
+  input: VecInput,
+  output: Vec<u8>,
+  plaintext: Vec<u8>,
+}
+
+impl<S: SideData> RustlsEndpoint<S> {
+  fn new(connection: Connection<S, Tcp>, pipe: Pipe, output: Vec<u8>) -> Self {
+    Self {
+      connection,
+      pipe,
+      input: VecInput::default(),
+      output,
+      plaintext: Vec::new(),
+    }
+  }
+}
+
 #[expect(
   clippy::large_enum_variant,
   reason = "do not add a harness-only allocation to the timed rustls connection"
 )]
-enum Endpoint {
-  Rustls(Connection, Pipe),
+enum Endpoint<S: SideData> {
+  Rustls(RustlsEndpoint<S>),
   OpenSsl(openssl_peer::Endpoint),
 }
 
-impl Drop for Endpoint {
+impl<S: SideData> Drop for Endpoint<S> {
   fn drop(&mut self) {
     match self {
-      Self::Rustls(connection, pipe) => {
-        connection.send_close_notify();
-        while connection.wants_write() {
-          connection.write_tls(pipe).expect("close notification");
-        }
+      Self::Rustls(peer) => {
+        peer
+          .connection
+          .send_close_notify(&mut peer.output)
+          .expect("close notification");
+        peer.pipe.write_all(&peer.output).expect("TLS output");
       }
       Self::OpenSsl(peer) => peer.close(),
     }
   }
 }
 
-impl Endpoint {
+impl<S: SideData> Endpoint<S> {
   fn pipe(&self) -> &Pipe {
     match self {
-      Self::Rustls(_, pipe) => pipe,
+      Self::Rustls(peer) => &peer.pipe,
       Self::OpenSsl(peer) => &peer.pipe,
     }
   }
   fn step(&mut self) {
     match self {
-      Self::Rustls(connection, pipe) => {
-        while pipe.pending() {
-          connection.read_tls(pipe).expect("TLS input");
-          connection.process_new_packets().expect("TLS authentication");
+      Self::Rustls(peer) => {
+        while peer.pipe.pending() {
+          assert!(
+            peer.input.read(&mut peer.pipe).expect("TLS input") > 0,
+            "TLS input stalled"
+          );
+          peer
+            .connection
+            .read_tls(&mut peer.input, &mut peer.output)
+            .handle_all(&mut peer.plaintext)
+            .expect("TLS authentication");
         }
-        while connection.wants_write() {
-          connection.write_tls(pipe).expect("TLS output");
-        }
+        peer.pipe.write_all(&peer.output).expect("TLS output");
+        peer.output.clear();
       }
       Self::OpenSsl(peer) => peer.step(),
     }
   }
   fn handshaking(&self) -> bool {
     match self {
-      Self::Rustls(connection, _) => connection.is_handshaking(),
+      Self::Rustls(peer) => peer.connection.is_handshaking(),
       Self::OpenSsl(peer) => peer.handshaking(),
     }
   }
   fn resumed(&self) -> bool {
     match self {
-      Self::Rustls(connection, _) => connection.handshake_kind() == Some(rustls::HandshakeKind::Resumed),
+      Self::Rustls(peer) => peer.connection.handshake_kind() == Some(rustls::HandshakeKind::Resumed),
       Self::OpenSsl(peer) => peer.resumed(),
     }
   }
-  fn exporter(&self) -> [u8; 32] {
+  fn exporter(&mut self) -> [u8; 32] {
     let mut bytes = [0; 32];
     match self {
-      Self::Rustls(connection, _) => {
-        connection
-          .export_keying_material(&mut bytes, b"provider-bench", Some(b"matched"))
+      Self::Rustls(peer) => {
+        peer
+          .connection
+          .exporter()
+          .expect("handshake exporter")
+          .derive(b"provider-bench", Some(b"matched"), &mut bytes)
           .expect("exporter");
       }
       Self::OpenSsl(peer) => peer.exporter(&mut bytes),
@@ -165,14 +195,21 @@ impl Endpoint {
   }
   fn send(&mut self, bytes: &[u8]) {
     match self {
-      Self::Rustls(connection, _) => connection.writer().write_all(bytes).expect("application write"),
+      Self::Rustls(peer) => peer
+        .connection
+        .write(bytes.into(), &mut peer.output)
+        .expect("application write"),
       Self::OpenSsl(peer) => peer.send(bytes),
     }
     self.step();
   }
   fn receive(&mut self, bytes: &mut [u8]) {
     match self {
-      Self::Rustls(connection, _) => connection.reader().read_exact(bytes).expect("application read"),
+      Self::Rustls(peer) => {
+        assert_eq!(peer.plaintext.len(), bytes.len(), "application length");
+        bytes.copy_from_slice(&peer.plaintext);
+        peer.plaintext.clear();
+      }
       Self::OpenSsl(peer) => peer.receive(bytes),
     }
   }
@@ -180,24 +217,29 @@ impl Endpoint {
 
 /// An authenticated client/server pair. No network delay is simulated here.
 pub struct Pair {
-  client: Endpoint,
-  server: Endpoint,
+  client: Endpoint<ClientSide>,
+  server: Endpoint<ServerSide>,
   /// Each nonempty TLS flight in client/server drive order, before application data.
   pub flights: Vec<(bool, usize)>,
 }
 
 impl Pair {
-  #[expect(clippy::panic, reason = "a stalled production handshake invalidates this bounded benchmark fixture")]
+  #[expect(
+    clippy::panic,
+    reason = "a stalled production handshake invalidates this bounded benchmark fixture"
+  )]
   fn handshake(mut self, resumed: bool) -> Self {
     for _ in 0..64 {
-      for (client, endpoint) in [(true, &mut self.client), (false, &mut self.server)] {
+      fn step<S: SideData>(endpoint: &mut Endpoint<S>, client: bool, flights: &mut Vec<(bool, usize)>) {
         let before = endpoint.pipe().written();
         endpoint.step();
         let size = endpoint.pipe().written().strict_sub(before);
         if size > 0 {
-          self.flights.push((client, size));
+          flights.push((client, size));
         }
       }
+      step(&mut self.client, true, &mut self.flights);
+      step(&mut self.server, false, &mut self.flights);
       if !self.client.handshaking()
         && !self.server.handshaking()
         && !self.client.pipe().pending()
@@ -211,7 +253,7 @@ impl Pair {
     panic!("TLS fixture exceeded its flight bound");
   }
 
-  pub fn verify(&self) {
+  pub fn verify(&mut self) {
     assert_eq!(
       self.client.exporter(),
       self.server.exporter(),
@@ -252,43 +294,56 @@ impl Fixture {
     } else {
       let mut provider = match backend {
         "rscrypto" => rscrypto_rustls::default_provider(),
-        "aws-lc-rs" => rustls::crypto::aws_lc_rs::default_provider(),
+        "aws-lc-rs" => rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER,
         _ => panic!("unknown benchmark backend"),
       };
       let group = match profile.group {
-        "X25519" => rustls::NamedGroup::X25519,
-        "secp256r1" => rustls::NamedGroup::secp256r1,
-        "secp384r1" => rustls::NamedGroup::secp384r1,
-        "X25519MLKEM768" => rustls::NamedGroup::X25519MLKEM768,
+        "X25519" => rustls::crypto::kx::NamedGroup::X25519,
+        "secp256r1" => rustls::crypto::kx::NamedGroup::secp256r1,
+        "secp384r1" => rustls::crypto::kx::NamedGroup::secp384r1,
+        "X25519MLKEM768" => rustls::crypto::kx::NamedGroup::X25519MLKEM768,
         _ => panic!("unknown group"),
       };
       let suite = match profile.suite {
-        "AES128-GCM-SHA256" => rustls::CipherSuite::TLS13_AES_128_GCM_SHA256,
-        "AES256-GCM-SHA384" => rustls::CipherSuite::TLS13_AES_256_GCM_SHA384,
-        "CHACHA20-POLY1305-SHA256" => rustls::CipherSuite::TLS13_CHACHA20_POLY1305_SHA256,
+        "AES128-GCM-SHA256" => rustls::crypto::CipherSuite::TLS13_AES_128_GCM_SHA256,
+        "AES256-GCM-SHA384" => rustls::crypto::CipherSuite::TLS13_AES_256_GCM_SHA384,
+        "CHACHA20-POLY1305-SHA256" => rustls::crypto::CipherSuite::TLS13_CHACHA20_POLY1305_SHA256,
         _ => panic!("unknown suite"),
       };
-      provider.kx_groups.retain(|entry| entry.name() == group);
-      provider.cipher_suites.retain(|entry| entry.suite() == suite);
+      provider.kx_groups.to_mut().retain(|entry| entry.name() == group);
+      provider
+        .tls13_cipher_suites
+        .to_mut()
+        .retain(|entry| entry.common.suite == suite);
       let scheme = credentials::scheme(profile.credential);
-      let mapping = provider.signature_verification_algorithms.mapping;
+      let mapping = provider.signature_verification_algorithms.mapping();
       let index = mapping
         .iter()
         .position(|(name, _)| *name == scheme)
         .expect("credential signature scheme");
-      provider.signature_verification_algorithms.mapping = &mapping[index..index.strict_add(1)];
+      let all = if backend == "rscrypto" {
+        rscrypto_rustls::verify::ALL_ALGORITHMS
+      } else {
+        rustls_aws_lc_rs::ALL_VERIFICATION_ALGS
+      };
+      provider.signature_verification_algorithms =
+        rustls::crypto::WebPkiSupportedAlgorithms::new(all, &mapping[index..index.strict_add(1)])
+          .expect("selected signature scheme");
       assert_eq!(provider.kx_groups.len(), 1);
-      assert_eq!(provider.cipher_suites.len(), 1);
+      assert_eq!(provider.tls13_cipher_suites.len(), 1);
       let (mut client, mut server) = credentials::configs(provider, profile.credential);
       if profile.resumed {
-        server.ticketer = if backend == "rscrypto" {
+        server.ticketer = Some(if backend == "rscrypto" {
           rscrypto_rustls::ticket::ticketer().expect("ticket key")
         } else {
-          rustls::crypto::aws_lc_rs::Ticketer::new().expect("ticket key")
-        };
+          rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER
+            .ticketer_factory
+            .ticketer()
+            .expect("ticket key")
+        });
       } else {
         client.resumption = rustls::client::Resumption::disabled();
-        server.send_tls13_tickets = 0;
+        server.send_tls13_tickets = rustls::server::Tls13Tickets { default: 0, max: 0 };
       }
       Configs::Rustls(Arc::new(client), Arc::new(server))
     };
@@ -298,7 +353,7 @@ impl Fixture {
     };
     // Seed the client cache once; every timed resumed connection must consume a
     // real ticket and process a replacement. Never time a disguised full handshake.
-    let first = fixture.connect_inner(false);
+    let mut first = fixture.connect_inner(false);
     first.verify();
     fixture
   }
@@ -311,15 +366,16 @@ impl Fixture {
     let (left, right) = Pipe::pair();
     let (client, server) = match &self.configs {
       Configs::Rustls(client, server) => {
-        let client = Connection::Client(
-          rustls::ClientConnection::new(
-            client.clone(),
-            rustls::pki_types::ServerName::try_from("localhost").expect("fixture name"),
-          )
-          .expect("client configuration"),
-        );
-        let server = Connection::Server(rustls::ServerConnection::new(server.clone()).expect("server configuration"));
-        (Endpoint::Rustls(client, left), Endpoint::Rustls(server, right))
+        let mut output = Vec::new();
+        let client = client
+          .connect(rustls::pki_types::ServerName::try_from("localhost").expect("fixture name"))
+          .build(&mut output)
+          .expect("client configuration");
+        let server = Connection::new(server.clone()).expect("server configuration");
+        (
+          Endpoint::Rustls(RustlsEndpoint::new(client, left, output)),
+          Endpoint::Rustls(RustlsEndpoint::new(server, right, Vec::new())),
+        )
       }
       Configs::OpenSsl(configs) => {
         let (client, server) = configs.endpoints(left, right, resumed);

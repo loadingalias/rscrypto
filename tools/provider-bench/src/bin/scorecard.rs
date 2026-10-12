@@ -82,7 +82,7 @@ fn main() {
           resumed,
         },
       );
-      let pair = fixture.connect();
+      let mut pair = fixture.connect();
       pair.verify();
       let wire = pair.wire_report();
       drop(pair);

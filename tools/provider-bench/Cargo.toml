@@ -18,7 +18,8 @@ vendored-openssl = ["openssl/vendored"]
 
 [dependencies]
 rscrypto-rustls = { path = "../../rscrypto-rustls" }
-rustls = { version = "=0.23.45", default-features = false, features = ["std", "aws_lc_rs"] }
+rustls = { version = "=0.24.0-dev.1", git = "https://github.com/loadingalias/rustls", rev = "2e56badaef3fde0a0164b51a86ba117831f63c54", default-features = false, features = ["webpki"] }
+rustls-aws-lc-rs = { version = "=0.1.0-dev.1", git = "https://github.com/loadingalias/rustls", rev = "2e56badaef3fde0a0164b51a86ba117831f63c54" }
 openssl = "=0.10.81"
 libc = "0.2.185"
 serde_json = "1.0.151"

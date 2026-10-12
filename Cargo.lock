@@ -2320,7 +2320,10 @@ dependencies = [
  "quinn-proto",
  "rscrypto",
  "rustls",
+ "rustls-aws-lc-rs",
  "rustls-pki-types",
+ "rustls-ring",
+ "rustls-util",
  "rustls-webpki",
  "tokio",
  "zeroize",
@@ -2356,15 +2359,23 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.45"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
+version = "0.24.0-dev.1"
+source = "git+https://github.com/loadingalias/rustls?rev=2e56badaef3fde0a0164b51a86ba117831f63c54#2e56badaef3fde0a0164b51a86ba117831f63c54"
 dependencies = [
- "aws-lc-rs",
- "once_cell",
- "ring",
  "rustls-pki-types",
  "rustls-webpki",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "rustls-aws-lc-rs"
+version = "0.1.0-dev.1"
+source = "git+https://github.com/loadingalias/rustls?rev=2e56badaef3fde0a0164b51a86ba117831f63c54#2e56badaef3fde0a0164b51a86ba117831f63c54"
+dependencies = [
+ "aws-lc-rs",
+ "rustls",
+ "rustls-pki-types",
  "subtle",
  "zeroize",
 ]
@@ -2380,13 +2391,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustls-webpki"
-version = "0.103.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+name = "rustls-ring"
+version = "0.1.0-dev.1"
+source = "git+https://github.com/loadingalias/rustls?rev=2e56badaef3fde0a0164b51a86ba117831f63c54#2e56badaef3fde0a0164b51a86ba117831f63c54"
 dependencies = [
- "aws-lc-rs",
  "ring",
+ "rustls",
+ "rustls-pki-types",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "rustls-util"
+version = "0.1.0-dev.1"
+source = "git+https://github.com/loadingalias/rustls?rev=2e56badaef3fde0a0164b51a86ba117831f63c54#2e56badaef3fde0a0164b51a86ba117831f63c54"
+dependencies = [
+ "rustls",
+]
+
+[[package]]
+name = "rustls-webpki"
+version = "0.104.0-alpha.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bea702cca24d344fc70973022bf7eb920c224e318466eb49784272337dd24b1a"
+dependencies = [
  "rustls-pki-types",
  "untrusted 0.9.0",
 ]

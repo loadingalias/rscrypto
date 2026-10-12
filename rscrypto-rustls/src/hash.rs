@@ -38,10 +38,10 @@ impl hash::Hash for Algorithm {
     }
   }
 
-  fn algorithm(&self) -> hash::HashAlgorithm {
+  fn algorithm(&self) -> rustls::crypto::HashAlgorithm {
     match self {
-      Self::Sha256 => hash::HashAlgorithm::SHA256,
-      Self::Sha384 => hash::HashAlgorithm::SHA384,
+      Self::Sha256 => rustls::crypto::HashAlgorithm::SHA256,
+      Self::Sha384 => rustls::crypto::HashAlgorithm::SHA384,
     }
   }
 }

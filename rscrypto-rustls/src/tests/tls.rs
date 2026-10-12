@@ -1,10 +1,13 @@
 use alloc::sync::Arc;
+use core::ops::Deref;
 use core::time::Duration;
-use std::io::{Read, Write};
 
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
-use rustls::{ClientConfig, ClientConnection, Connection, Error, RootCertStore, ServerConfig, ServerConnection};
+use rustls::{
+  ClientConfig, ClientSide, Connection, ConnectionOutputs, Error, KeyingMaterialExporter, RootCertStore, ServerConfig,
+  ServerSide, SideData, Tcp, VecInput,
+};
 
 #[derive(Debug)]
 struct FixtureTime;
@@ -35,22 +38,22 @@ pub(crate) enum Credential {
 }
 
 impl Credential {
-  pub(crate) fn scheme(self) -> rustls::SignatureScheme {
+  pub(crate) fn scheme(self) -> rustls::crypto::SignatureScheme {
     match self {
       #[cfg(feature = "ecdsa-p256")]
-      Self::P256 => rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+      Self::P256 => rustls::crypto::SignatureScheme::ECDSA_NISTP256_SHA256,
       #[cfg(feature = "ecdsa-p384")]
-      Self::P384 => rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+      Self::P384 => rustls::crypto::SignatureScheme::ECDSA_NISTP384_SHA384,
       #[cfg(feature = "ed25519")]
-      Self::Ed25519 => rustls::SignatureScheme::ED25519,
+      Self::Ed25519 => rustls::crypto::SignatureScheme::ED25519,
       #[cfg(feature = "rsa")]
-      Self::Rsa => rustls::SignatureScheme::RSA_PSS_SHA256,
+      Self::Rsa => rustls::crypto::SignatureScheme::RSA_PSS_SHA256,
       #[cfg(feature = "ml-dsa")]
-      Self::MlDsa44 => rustls::SignatureScheme::ML_DSA_44,
+      Self::MlDsa44 => rustls::crypto::SignatureScheme::ML_DSA_44,
       #[cfg(feature = "ml-dsa")]
-      Self::MlDsa65 => rustls::SignatureScheme::ML_DSA_65,
+      Self::MlDsa65 => rustls::crypto::SignatureScheme::ML_DSA_65,
       #[cfg(feature = "ml-dsa")]
-      Self::MlDsa87 => rustls::SignatureScheme::ML_DSA_87,
+      Self::MlDsa87 => rustls::crypto::SignatureScheme::ML_DSA_87,
     }
   }
 }
@@ -89,41 +92,50 @@ pub(crate) fn configs(
   kind: Credential,
   client_auth: bool,
 ) -> (ClientConfig, ServerConfig) {
+  configs_with_time(client, server, kind, client_auth, Arc::new(FixtureTime))
+}
+
+pub(crate) fn configs_with_time(
+  client: CryptoProvider,
+  server: CryptoProvider,
+  kind: Credential,
+  client_auth: bool,
+  time: Arc<dyn rustls::time_provider::TimeProvider>,
+) -> (ClientConfig, ServerConfig) {
   let (root, leaf, key) = credentials(kind);
   let mut roots = RootCertStore::empty();
   roots.add(CertificateDer::from(root.to_vec())).expect("TLS fixture");
   let server_provider = Arc::new(server);
-  let verifier =
-    rustls::server::WebPkiClientVerifier::builder_with_provider(Arc::new(roots.clone()), server_provider.clone())
-      .build()
-      .expect("client verifier");
-  let client = ClientConfig::builder_with_details(Arc::new(client), Arc::new(FixtureTime))
-    .with_protocol_versions(&[&rustls::version::TLS13])
-    .expect("TLS fixture")
-    .with_root_certificates(roots);
+  let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(roots.clone()), &server_provider)
+    .build()
+    .expect("client verifier");
+  let client = ClientConfig::builder_with_details(Arc::new(client), time.clone()).with_root_certificates(roots);
   let mut client = if client_auth {
     client
       .with_client_auth_cert(
-        vec![CertificateDer::from(leaf.to_vec())],
+        Arc::new(
+          rustls::crypto::Identity::from_cert_chain(vec![CertificateDer::from(leaf.to_vec())])
+            .expect("fixture identity"),
+        ),
         PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.to_vec())),
       )
       .expect("client credential")
   } else {
-    client.with_no_client_auth()
+    client.with_no_client_auth().expect("client configuration")
   };
-  client.alpn_protocols = vec![b"provider-test".to_vec()];
+  client.alpn_protocols = vec![b"provider-test".to_vec().into()];
   client.max_fragment_size = Some(512);
-  let server = ServerConfig::builder_with_details(server_provider, Arc::new(FixtureTime))
-    .with_protocol_versions(&[&rustls::version::TLS13])
-    .expect("TLS fixture");
+  let server = ServerConfig::builder_with_details(server_provider, time);
   let server = if client_auth {
-    server.with_client_cert_verifier(verifier)
+    server.with_client_cert_verifier(Arc::new(verifier))
   } else {
     server.with_no_client_auth()
   };
   let mut server = server
     .with_single_cert(
-      vec![CertificateDer::from(leaf.to_vec())],
+      Arc::new(
+        rustls::crypto::Identity::from_cert_chain(vec![CertificateDer::from(leaf.to_vec())]).expect("fixture identity"),
+      ),
       PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.to_vec())),
     )
     .expect("TLS fixture");
@@ -132,43 +144,102 @@ pub(crate) fn configs(
   (client, server)
 }
 
+pub(crate) struct Peer<S: SideData> {
+  pub(crate) connection: Connection<S, Tcp>,
+  input: VecInput,
+  pub(crate) output: Vec<u8>,
+  pub(crate) plaintext: Vec<u8>,
+  pub(crate) early: Vec<u8>,
+  pub(crate) closed: bool,
+  exporter: Option<KeyingMaterialExporter>,
+}
+
+impl<S: SideData> Peer<S> {
+  fn new(connection: Connection<S, Tcp>, output: Vec<u8>) -> Self {
+    Self {
+      connection,
+      input: VecInput::default(),
+      output,
+      plaintext: Vec::new(),
+      early: Vec::new(),
+      closed: false,
+      exporter: None,
+    }
+  }
+
+  pub(crate) fn export(&mut self, label: &[u8], context: Option<&[u8]>) -> [u8; 64] {
+    let exporter = self
+      .exporter
+      .get_or_insert_with(|| self.connection.exporter().expect("handshake exporter"));
+    exporter
+      .derive(label, context, [0; 64])
+      .expect("export keying material")
+  }
+}
+
+impl<S: SideData> Deref for Peer<S> {
+  type Target = ConnectionOutputs;
+  fn deref(&self) -> &Self::Target {
+    &self.connection
+  }
+}
+
 pub(crate) fn connections_from_configs(
   client: Arc<ClientConfig>,
   server: Arc<ServerConfig>,
-) -> (Connection, Connection) {
+) -> (Peer<ClientSide>, Peer<ServerSide>) {
+  let mut output = Vec::new();
+  let client = client
+    .connect(ServerName::try_from("localhost").expect("TLS fixture"))
+    .build(&mut output)
+    .expect("TLS fixture");
   (
-    Connection::Client(
-      ClientConnection::new(client, ServerName::try_from("localhost").expect("TLS fixture")).expect("TLS fixture"),
-    ),
-    Connection::Server(ServerConnection::new(server).expect("TLS fixture")),
+    Peer::new(client, output),
+    Peer::new(Connection::new(server).expect("TLS fixture"), Vec::new()),
   )
 }
 
-fn transfer(source: &mut Connection, destination: &mut Connection) -> Result<usize, Error> {
-  let mut flight = Vec::new();
-  while source.wants_write() {
-    source.write_tls(&mut flight).expect("write flight");
-    if flight.len() > 131_072 {
-      return Err(Error::General("test flight exceeded its size bound".into()));
-    }
+fn transfer<S: SideData>(
+  source: &mut Peer<impl SideData>,
+  destination: &mut Peer<S>,
+  mut take_early: impl FnMut(&mut rustls::MessageHandler<'_, '_, S>, &mut Vec<u8>) -> Result<(), Error>,
+) -> Result<usize, Error> {
+  if source.output.len() > 131_072 {
+    return Err(Error::General("test flight exceeded its size bound".into()));
   }
+  let length = source.output.len();
   // Transport fragmentation is independent of the configured record size.
-  for chunk in flight.chunks(37) {
+  for chunk in source.output.chunks(37) {
     let mut chunk = chunk;
     while !chunk.is_empty() {
-      if destination.read_tls(&mut chunk).expect("read flight") == 0 {
+      if destination.input.read(&mut chunk).expect("read flight") == 0 {
         return Err(Error::General("test receiver stalled".into()));
       }
-      destination.process_new_packets()?;
+      let mut messages = destination
+        .connection
+        .read_tls(&mut destination.input, &mut destination.output);
+      take_early(&mut messages, &mut destination.early)?;
+      destination.closed |= messages.handle_all(&mut destination.plaintext)?.peer_has_closed();
     }
   }
-  Ok(flight.len())
+  source.output.clear();
+  Ok(length)
 }
 
-pub(crate) fn drive(client: &mut Connection, server: &mut Connection) -> Result<(), Error> {
+pub(crate) fn drive(client: &mut Peer<ClientSide>, server: &mut Peer<ServerSide>) -> Result<(), Error> {
   for _ in 0..128 {
-    let progress = transfer(client, server)?.strict_add(transfer(server, client)?);
-    if !client.wants_write() && !server.wants_write() && !client.is_handshaking() && !server.is_handshaking() {
+    let progress = transfer(client, server, |messages, early| {
+      while let Some(payload) = messages.next_early_data() {
+        early.extend_from_slice(payload?.bytes());
+      }
+      Ok(())
+    })?
+    .strict_add(transfer(server, client, |_, _| Ok(()))?);
+    if client.output.is_empty()
+      && server.output.is_empty()
+      && !client.connection.is_handshaking()
+      && !server.connection.is_handshaking()
+    {
       return Ok(());
     }
     if progress == 0 {
@@ -178,22 +249,20 @@ pub(crate) fn drive(client: &mut Connection, server: &mut Connection) -> Result<
   Err(Error::General("test handshake exceeded its flight count".into()))
 }
 
-pub(crate) fn application_exchange(client: &mut Connection, server: &mut Connection) {
+pub(crate) fn application_exchange(client: &mut Peer<ClientSide>, server: &mut Peer<ServerSide>) {
   let request = b"client application data".repeat(100);
   let response = b"server application data".repeat(100);
-  client.writer().write_all(&request).expect("write request");
-  server.writer().write_all(&response).expect("write response");
-  drive(client, server).expect("application transfer");
-  let mut received = vec![0; request.len()];
-  server
-    .reader()
-    .read_exact(&mut received)
-    .expect("read application data");
-  assert_eq!(received, request);
-  received.resize(response.len(), 0);
   client
-    .reader()
-    .read_exact(&mut received)
-    .expect("read application data");
-  assert_eq!(received, response);
+    .connection
+    .write(request.as_slice().into(), &mut client.output)
+    .expect("write request");
+  server
+    .connection
+    .write(response.as_slice().into(), &mut server.output)
+    .expect("write response");
+  drive(client, server).expect("application transfer");
+  assert_eq!(server.plaintext, request);
+  assert_eq!(client.plaintext, response);
+  client.plaintext.clear();
+  server.plaintext.clear();
 }

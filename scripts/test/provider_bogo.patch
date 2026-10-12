@@ -1,91 +1,35 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index efbf1ef6..a46574d6 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -144,3 +144,6 @@ unused_qualifications = "warn"
+ # against the latest _published_ copy.
+ [patch.crates-io]
+ rustls = { path = "rustls" }
++
++[patch."https://github.com/loadingalias/rustls"]
++rustls = { path = "rustls" }
 diff --git a/bogo/Cargo.toml b/bogo/Cargo.toml
-index 88f59cb..0c4d7ba 100644
+index ed6312a2..f1bc60ab 100644
 --- a/bogo/Cargo.toml
 +++ b/bogo/Cargo.toml
-@@ -11,6 +11,9 @@ nix = { version = "0.30", default-features = false, features = ["signal"] }
- rustls = { path = "../rustls", features = ["aws_lc_rs", "ring", "tls12"] }
+@@ -13,8 +13,11 @@ rustls-ring = { path = "../rustls-ring" }
+ tracing-subscriber = { workspace = true }
  webpki = { workspace = true }
  
 +rscrypto-rustls = { path = "@RSCRYPTO_ROOT@/rscrypto-rustls", optional = true, features = ["ml-dsa"] }
 +
  [features]
  default = []
- fips = ["rustls/fips"]
 +rscrypto = ["dep:rscrypto-rustls"]
+ fips = ["rustls-aws-lc-rs/fips"]
+ 
+ [lints]
 diff --git a/bogo/src/main.rs b/bogo/src/main.rs
-index 4d5acb9..7c4d7c6 100644
+index c8736cf2..7ee8058d 100644
 --- a/bogo/src/main.rs
 +++ b/bogo/src/main.rs
-@@ -155,6 +155,8 @@ impl Options {
-             #[cfg(feature = "fips")]
-             Some("aws-lc-rs-fips") => SelectedProvider::AwsLcRsFips,
-             Some("ring") => SelectedProvider::Ring,
-+            #[cfg(feature = "rscrypto")]
-+            Some("rscrypto") => SelectedProvider::Rscrypto,
-             Some(other) => panic!("unrecognised value for BOGO_SHIM_PROVIDER: {other:?}"),
-         };
- 
-@@ -241,21 +243,39 @@ impl Options {
-                 .retain(|kxg| groups.contains(&kxg.name()));
-         }
- 
--        if !matches!(self.selected_provider, SelectedProvider::Ring)
--            && matches!(
--                self.verify_prefs,
--                Some(
--                    SignatureScheme::ML_DSA_44
--                        | SignatureScheme::ML_DSA_65
--                        | SignatureScheme::ML_DSA_87
--                )
-+        if matches!(
-+            self.selected_provider,
-+            SelectedProvider::AwsLcRs | SelectedProvider::AwsLcRsFips
-+        ) && matches!(
-+            self.verify_prefs,
-+            Some(
-+                SignatureScheme::ML_DSA_44
-+                    | SignatureScheme::ML_DSA_65
-+                    | SignatureScheme::ML_DSA_87
-             )
--        {
-+        ) {
-             // ML-DSA is disabled by default, enable for preferred verification scheme
-             provider.signature_verification_algorithms =
-                 aws_lc_rs::default_provider().signature_verification_algorithms;
-         }
- 
-+        // BoGo's default-policy cases require ML-DSA to be opt-in. The
-+        // Cargo feature supplies its implementations; -verify-prefs opts in
-+        // for the ML-DSA conformance cases, as for the upstream AWS-LC shim.
-+        #[cfg(feature = "rscrypto")]
-+        if matches!(self.selected_provider, SelectedProvider::Rscrypto)
-+            && self.verify_prefs.is_none()
-+        {
-+            static CLASSICAL: std::sync::OnceLock<rustls::crypto::WebPkiSupportedAlgorithms> = std::sync::OnceLock::new();
-+            provider.signature_verification_algorithms = *CLASSICAL.get_or_init(|| {
-+                let mut algorithms = provider.signature_verification_algorithms;
-+                algorithms.mapping = Box::leak(algorithms.mapping.iter().copied().filter(|(scheme, _)| {
-+                    !matches!(scheme, SignatureScheme::ML_DSA_44 | SignatureScheme::ML_DSA_65 | SignatureScheme::ML_DSA_87)
-+                }).collect::<Vec<_>>().into_boxed_slice());
-+                algorithms
-+            });
-+        }
-+
-         provider
-     }
- 
-@@ -270,7 +290,9 @@ impl Options {
-     }
- 
-     fn tls12_supported(&self) -> bool {
--        self.support_tls12 && self.version_allowed(ProtocolVersion::TLSv1_2)
-+        self.support_tls12
-+            && self.selected_provider.supports_tls12()
-+            && self.version_allowed(ProtocolVersion::TLSv1_2)
-     }
- 
-     fn expected_server_names(&self) -> Vec<ServerName<'static>> {
-@@ -369,6 +391,8 @@ enum SelectedProvider {
+@@ -635,6 +635,8 @@ enum SelectedProvider {
      #[cfg_attr(not(feature = "fips"), allow(dead_code))]
      AwsLcRsFips,
      Ring,
@@ -94,33 +38,16 @@ index 4d5acb9..7c4d7c6 100644
  }
  
  impl SelectedProvider {
-@@ -388,6 +412,8 @@ impl SelectedProvider {
+@@ -655,6 +657,8 @@ impl SelectedProvider {
              }
  
-             Self::Ring => ring::default_provider(),
+             Self::Ring => rustls_ring::DEFAULT_PROVIDER,
 +            #[cfg(feature = "rscrypto")]
 +            Self::Rscrypto => rscrypto_rustls::default_provider(),
          }
      }
  
-@@ -395,6 +421,16 @@ impl SelectedProvider {
-         match self {
-             Self::AwsLcRs | Self::AwsLcRsFips => aws_lc_rs::Ticketer::new().unwrap(),
-             Self::Ring => ring::Ticketer::new().unwrap(),
-+            #[cfg(feature = "rscrypto")]
-+            Self::Rscrypto => rscrypto_rustls::ticket::ticketer().unwrap(),
-+        }
-+    }
-+
-+    fn supports_tls12(&self) -> bool {
-+        match *self {
-+            #[cfg(feature = "rscrypto")]
-+            Self::Rscrypto => false,
-+            _ => true,
-         }
-     }
- 
-@@ -402,6 +438,8 @@ impl SelectedProvider {
+@@ -662,6 +666,8 @@ impl SelectedProvider {
          match *self {
              Self::AwsLcRs | Self::AwsLcRsFips => true,
              Self::Ring => false,
@@ -129,7 +56,7 @@ index 4d5acb9..7c4d7c6 100644
          }
      }
  }
-@@ -481,7 +519,7 @@ fn load_root_certs(filename: &str) -> Arc<RootCertStore> {
+@@ -745,7 +751,7 @@ fn load_root_certs(filename: &str) -> Arc<RootCertStore> {
      //
      // use an unrelated cert we have lying around.
      let filename = match filename {
@@ -138,3 +65,58 @@ index 4d5acb9..7c4d7c6 100644
          filename => filename,
      };
  
+diff --git a/bogo/src/opts.rs b/bogo/src/opts.rs
+index 8d3b26f7..c716be59 100644
+--- a/bogo/src/opts.rs
++++ b/bogo/src/opts.rs
+@@ -101,6 +101,8 @@ impl Options {
+             #[cfg(feature = "fips")]
+             Some("aws-lc-rs-fips") => SelectedProvider::AwsLcRsFips,
+             Some("ring") => SelectedProvider::Ring,
++            #[cfg(feature = "rscrypto")]
++            Some("rscrypto") => SelectedProvider::Rscrypto,
+             Some(other) => panic!("unrecognized value for BOGO_SHIM_PROVIDER: {other:?}"),
+         };
+ 
+@@ -200,7 +202,9 @@ impl Options {
+     }
+ 
+     fn tls12_supported(&self) -> bool {
+-        self.support_tls12 && self.version_allowed(ProtocolVersion::TLSv1_2)
++        self.support_tls12
++            && !self.provider.tls12_cipher_suites.is_empty()
++            && self.version_allowed(ProtocolVersion::TLSv1_2)
+     }
+ 
+     pub(crate) fn expected_server_names(&self) -> Vec<ServerName<'static>> {
+@@ -235,7 +239,7 @@ impl Options {
+     pub(crate) fn provider(&self) -> CryptoProvider {
+         let mut provider = self.provider.clone();
+ 
+-        if !matches!(self.selected_provider, SelectedProvider::Ring)
++        if matches!(self.selected_provider, SelectedProvider::AwsLcRs | SelectedProvider::AwsLcRsFips)
+             && let Some(
+                 SignatureScheme::ML_DSA_44
+                 | SignatureScheme::ML_DSA_65
+@@ -246,6 +250,21 @@ impl Options {
+             provider.signature_verification_algorithms = rustls_aws_lc_rs::SUPPORTED_SIG_ALGS;
+         }
+ 
++        // Cargo enables the implementations; -verify-prefs opts into ML-DSA
++        // for the conformance cases, as in the upstream AWS-LC profile.
++        #[cfg(feature = "rscrypto")]
++        if matches!(self.selected_provider, SelectedProvider::Rscrypto) && self.verify_prefs.is_none() {
++            static CLASSICAL: std::sync::OnceLock<rustls::crypto::WebPkiSupportedAlgorithms> = std::sync::OnceLock::new();
++            provider.signature_verification_algorithms = *CLASSICAL.get_or_init(|| {
++                let mapping = Box::leak(provider.signature_verification_algorithms.mapping().iter().copied()
++                    .filter(|(scheme, _)| !matches!(*scheme,
++                        SignatureScheme::ML_DSA_44 | SignatureScheme::ML_DSA_65 | SignatureScheme::ML_DSA_87))
++                    .collect::<Vec<_>>().into_boxed_slice());
++                rustls::crypto::WebPkiSupportedAlgorithms::new(rscrypto_rustls::verify::ALL_ALGORITHMS, mapping)
++                    .expect("classical signature schemes")
++            });
++        }
++
+         if let Some(groups) = &self.groups {
+             provider
+                 .kx_groups

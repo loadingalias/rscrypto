@@ -8,12 +8,12 @@ use rscrypto::{Aes128Gcm, Aes128GcmKey, Aes128GcmTag, Aes256Gcm, Aes256GcmKey, A
 #[cfg(feature = "chacha20poly1305")]
 use rscrypto::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
 use rustls::crypto::cipher::{
-  AeadKey, InboundOpaqueMessage, InboundPlainMessage, Iv, MessageDecrypter, MessageEncrypter, Nonce,
-  OutboundOpaqueMessage, OutboundPlainMessage, PrefixedPayload, Tls13AeadAlgorithm, UnsupportedOperationError,
-  make_tls13_aad,
+  AeadKey, InboundOpaque, Iv, Nonce, OutboundPlain, Record, RecordDecrypter, RecordEncrypter, Tls13AeadAlgorithm,
+  UnsupportedOperationError, make_tls13_aad,
 };
+use rustls::enums::ContentType;
 use rustls::quic::{PacketKey, Tag};
-use rustls::{ConnectionTrafficSecrets, ContentType, Error, ProtocolVersion};
+use rustls::{ConnectionTrafficSecrets, Error};
 
 const TAG_LEN: usize = 16;
 
@@ -70,14 +70,14 @@ impl Algorithm {
 }
 
 impl Tls13AeadAlgorithm for Algorithm {
-  fn encrypter(&self, key: AeadKey, iv: Iv) -> Box<dyn MessageEncrypter> {
+  fn encrypter(&self, key: AeadKey, iv: Iv) -> Box<dyn RecordEncrypter> {
     Box::new(RecordKey {
       cipher: self.cipher(key.as_ref()),
       iv,
     })
   }
 
-  fn decrypter(&self, key: AeadKey, iv: Iv) -> Box<dyn MessageDecrypter> {
+  fn decrypter(&self, key: AeadKey, iv: Iv) -> Box<dyn RecordDecrypter> {
     Box::new(RecordKey {
       cipher: self.cipher(key.as_ref()),
       iv,
@@ -122,7 +122,7 @@ enum Cipher {
 
 impl Cipher {
   fn seal(&self, nonce: Nonce, aad: &[u8], payload: &mut [u8]) -> Result<[u8; TAG_LEN], Error> {
-    let nonce = Nonce96::from_bytes(nonce.0);
+    let nonce = Nonce96::from_bytes(nonce.to_array().map_err(|_| Error::EncryptError)?);
     match self {
       #[cfg(feature = "aes-gcm")]
       Self::Aes128(key) => key.encrypt_in_place(&nonce, aad, payload).map(|tag| *tag.as_bytes()),
@@ -139,7 +139,7 @@ impl Cipher {
     let plain_len = payload.len().checked_sub(TAG_LEN).ok_or(Error::DecryptError)?;
     let (body, tag) = payload.split_at_mut(plain_len);
     let tag: [u8; TAG_LEN] = (&*tag).try_into().map_err(|_| Error::DecryptError)?;
-    let nonce = Nonce96::from_bytes(nonce.0);
+    let nonce = Nonce96::from_bytes(nonce.to_array().map_err(|_| Error::DecryptError)?);
     let result = match self {
       #[cfg(feature = "aes-gcm")]
       Self::Aes128(key) => key.decrypt_in_place(&nonce, aad, body, &Aes128GcmTag::from_bytes(tag)),
@@ -162,32 +162,40 @@ struct RecordKey {
   iv: Iv,
 }
 
-impl MessageEncrypter for RecordKey {
-  fn encrypt(&mut self, msg: OutboundPlainMessage<'_>, seq: u64) -> Result<OutboundOpaqueMessage, Error> {
-    // rustls fragments records at 2^14 bytes. Reject misuse before allocation.
+impl RecordEncrypter for RecordKey {
+  fn encrypt<'a>(
+    &mut self,
+    msg: Record<OutboundPlain<'_>>,
+    seq: u64,
+    out: &'a mut [u8],
+  ) -> Result<Record<&'a [u8]>, Error> {
+    // rustls fragments records at 2^14 bytes. Reject misuse before writing.
     if msg.payload.len() > 16_384 || matches!(self.cipher, Cipher::InvalidKeyLength) {
       return Err(Error::EncryptError);
     }
     let total_len = self.encrypted_payload_len(msg.payload.len());
-    let mut payload = PrefixedPayload::with_capacity(total_len);
-    payload.extend_from_chunks(&msg.payload);
-    payload.extend_from_slice(&msg.typ.to_array());
-    let tag = match self
-      .cipher
-      .seal(Nonce::new(&self.iv, seq), &make_tls13_aad(total_len), payload.as_mut())
-    {
+    let payload = out.get_mut(..total_len).ok_or(Error::EncryptError)?;
+    let (body, tag_out) = payload.split_at_mut(total_len.strict_sub(TAG_LEN));
+    let mut offset = 0usize;
+    for chunk in msg.payload.chunks() {
+      let end = offset.strict_add(chunk.len());
+      body[offset..end].copy_from_slice(chunk);
+      offset = end;
+    }
+    body[offset] = u8::from(msg.typ);
+    let tag = match self.cipher.seal(
+      Nonce::new(&self.iv, seq),
+      &make_tls13_aad(ContentType::ApplicationData, msg.version.encode(), total_len),
+      body,
+    ) {
       Ok(tag) => tag,
       Err(error) => {
-        rscrypto::traits::ct::zeroize(payload.as_mut());
+        rscrypto::traits::ct::zeroize(payload);
         return Err(error);
       }
     };
-    payload.extend_from_slice(&tag);
-    Ok(OutboundOpaqueMessage::new(
-      ContentType::ApplicationData,
-      ProtocolVersion::TLSv1_2,
-      payload,
-    ))
+    tag_out.copy_from_slice(&tag);
+    Ok(Record::new(ContentType::ApplicationData, msg.version, payload))
   }
 
   fn encrypted_payload_len(&self, payload_len: usize) -> usize {
@@ -195,15 +203,15 @@ impl MessageEncrypter for RecordKey {
   }
 }
 
-impl MessageDecrypter for RecordKey {
-  fn decrypt<'a>(&mut self, mut msg: InboundOpaqueMessage<'a>, seq: u64) -> Result<InboundPlainMessage<'a>, Error> {
-    let aad = make_tls13_aad(msg.payload.len());
+impl RecordDecrypter for RecordKey {
+  fn decrypt<'a>(&mut self, mut msg: Record<InboundOpaque<'a>>, seq: u64) -> Result<Record<&'a [u8]>, Error> {
+    let aad = make_tls13_aad(msg.typ, msg.version.encode(), msg.payload.len());
     let plain_len = self
       .cipher
       .open(Nonce::new(&self.iv, seq), &aad, &mut msg.payload)?
       .len();
     msg.payload.truncate(plain_len);
-    msg.into_tls13_unpadded_message()
+    msg.into_tls13_unpadded_record()
   }
 }
 
@@ -224,43 +232,35 @@ impl PacketKeyImpl {
 }
 
 impl PacketKey for PacketKeyImpl {
-  fn encrypt_in_place(&self, packet_number: u64, header: &[u8], payload: &mut [u8]) -> Result<Tag, Error> {
-    self.encrypt_in_place_for_path(0, packet_number, header, payload)
-  }
-
-  fn encrypt_in_place_for_path(
+  fn encrypt_in_place(
     &self,
-    path_id: u32,
     packet_number: u64,
     header: &[u8],
     payload: &mut [u8],
+    path_id: Option<u32>,
   ) -> Result<Tag, Error> {
     if packet_number >= 1 << 62 {
       return Err(Error::EncryptError);
     }
     self
       .cipher
-      .seal(Nonce::for_path(path_id, &self.iv, packet_number), header, payload)
+      .seal(Nonce::quic(path_id, &self.iv, packet_number), header, payload)
       .map(|tag| Tag::from(tag.as_slice()))
   }
 
-  fn decrypt_in_place<'a>(&self, packet_number: u64, header: &[u8], payload: &'a mut [u8]) -> Result<&'a [u8], Error> {
-    self.decrypt_in_place_for_path(0, packet_number, header, payload)
-  }
-
-  fn decrypt_in_place_for_path<'a>(
+  fn decrypt_in_place<'a>(
     &self,
-    path_id: u32,
     packet_number: u64,
     header: &[u8],
     payload: &'a mut [u8],
+    path_id: Option<u32>,
   ) -> Result<&'a [u8], Error> {
     if packet_number >= 1 << 62 {
       return Err(Error::DecryptError);
     }
     self
       .cipher
-      .open(Nonce::for_path(path_id, &self.iv, packet_number), header, payload)
+      .open(Nonce::quic(path_id, &self.iv, packet_number), header, payload)
   }
 
   fn tag_len(&self) -> usize {

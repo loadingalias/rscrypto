@@ -1,8 +1,9 @@
 use alloc::sync::Arc;
+use rustls::Error;
+use rustls::crypto::SignatureScheme;
 use rustls::pki_types::{
   CertificateDer, InvalidSignature, PrivateKeyDer, PrivatePkcs1KeyDer, PrivatePkcs8KeyDer, PrivateSec1KeyDer, alg_id,
 };
-use rustls::{Error, SignatureAlgorithm, SignatureScheme};
 
 use super::tls::{self, Credential};
 use crate::{sign, verify};
@@ -42,7 +43,7 @@ fn selected_entropy_controls_key_loading_and_signing_without_fallback() {
     calls: AtomicUsize::new(0),
   };
   let provider = sign::Provider::new(&SOURCE);
-  let peer = rustls::crypto::aws_lc_rs::default_provider().signature_verification_algorithms;
+  let peer = rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER.signature_verification_algorithms;
   for (kind, public) in [
     (Credential::P256, public_bits(fixture!("p256-spki.der"), 65)),
     (Credential::P384, public_bits(fixture!("p384-spki.der"), 97)),
@@ -77,7 +78,7 @@ fn selected_entropy_controls_key_loading_and_signing_without_fallback() {
     if matches!(kind, Credential::Ed25519) {
       assert_eq!(SOURCE.calls.load(Ordering::Relaxed), calls);
       peer
-        .mapping
+        .mapping()
         .iter()
         .find(|(scheme, _)| *scheme == kind.scheme())
         .expect("peer scheme")
@@ -89,9 +90,13 @@ fn selected_entropy_controls_key_loading_and_signing_without_fallback() {
       assert_eq!(SOURCE.calls.load(Ordering::Relaxed), calls.strict_add(1));
     }
     SOURCE.failing.store(false, Ordering::Relaxed);
-    let signature = signer.sign(MESSAGE).expect("same signer after entropy recovery");
+    let signature = key
+      .choose_scheme(&[kind.scheme()])
+      .expect("scheme after recovery")
+      .sign(MESSAGE)
+      .expect("same key after entropy recovery");
     peer
-      .mapping
+      .mapping()
       .iter()
       .find(|(scheme, _)| *scheme == kind.scheme())
       .expect("peer scheme")
@@ -177,12 +182,11 @@ fn all_fourteen_verifiers_accept_independent_signatures_and_reject_corruption() 
     ),
   ];
   assert_eq!(
-    verify::SUPPORTED_ALGORITHMS.all.len(),
+    verify::ALL_ALGORITHMS.len(),
     14 + if cfg!(feature = "ml-dsa") { 3 } else { 0 }
   );
-  let peer = rustls::crypto::ring::default_provider().signature_verification_algorithms;
   let mut exercised = 0_usize;
-  for algorithm in verify::SUPPORTED_ALGORITHMS.all {
+  for algorithm in verify::ALL_ALGORITHMS {
     if [alg_id::ML_DSA_44, alg_id::ML_DSA_65, alg_id::ML_DSA_87].contains(&algorithm.public_key_alg_id()) {
       continue; // The independent ML-DSA fixtures are exercised in tests::mldsa.
     }
@@ -197,8 +201,7 @@ fn all_fourteen_verifiers_accept_independent_signatures_and_reject_corruption() 
               && signature.as_ref().strip_suffix(&[5, 0]) == Some(signature_id)))
       })
       .expect("independent fixture for each algorithm identifier");
-    let independent = peer
-      .all
+    let independent = rustls_ring::ALL_VERIFICATION_ALGS
       .iter()
       .find(|peer| {
         peer.public_key_alg_id() == algorithm.public_key_alg_id()
@@ -235,7 +238,7 @@ fn all_fourteen_verifiers_accept_independent_signatures_and_reject_corruption() 
     (SignatureScheme::ECDSA_NISTP384_SHA384, alg_id::ECDSA_P384),
   ] {
     let mapped = verify::SUPPORTED_ALGORITHMS
-      .mapping
+      .mapping()
       .iter()
       .find(|(name, _)| *name == scheme)
       .expect("TLS scheme")
@@ -247,33 +250,29 @@ fn all_fourteen_verifiers_accept_independent_signatures_and_reject_corruption() 
 
 #[test]
 fn loaded_signing_keys_match_spki_and_independent_verifiers() {
-  let peer = rustls::crypto::ring::default_provider().signature_verification_algorithms;
-  for (kind, scheme, algorithm, spki, public) in [
+  let peer = rustls_ring::DEFAULT_TLS13_PROVIDER.signature_verification_algorithms;
+  for (kind, scheme, spki, public) in [
     (
       Credential::P256,
       SignatureScheme::ECDSA_NISTP256_SHA256,
-      SignatureAlgorithm::ECDSA,
       fixture!("p256-spki.der"),
       public_bits(fixture!("p256-spki.der"), 65),
     ),
     (
       Credential::P384,
       SignatureScheme::ECDSA_NISTP384_SHA384,
-      SignatureAlgorithm::ECDSA,
       fixture!("p384-spki.der"),
       public_bits(fixture!("p384-spki.der"), 97),
     ),
     (
       Credential::Ed25519,
       SignatureScheme::ED25519,
-      SignatureAlgorithm::ED25519,
       fixture!("ed25519-spki.der"),
       public_bits(fixture!("ed25519-spki.der"), 32),
     ),
     (
       Credential::Rsa,
       SignatureScheme::RSA_PSS_SHA256,
-      SignatureAlgorithm::RSA,
       fixture!("rsa3072-spki.der"),
       fixture!("rsa3072-public.der"),
     ),
@@ -282,10 +281,12 @@ fn loaded_signing_keys_match_spki_and_independent_verifiers() {
     let key = sign::KEY_PROVIDER
       .load_private_key(PrivatePkcs8KeyDer::from(private.to_vec()).into())
       .expect("valid fixture key");
-    assert_eq!(key.algorithm(), algorithm);
     assert_eq!(key.public_key().expect("SPKI").as_ref(), spki);
-    let certified = rustls::sign::CertifiedKey::new(vec![CertificateDer::from(cert.to_vec())], key);
-    certified.keys_match().expect("certificate and key match");
+    let certified = rustls::crypto::Credentials::new(
+      Arc::new(rustls::crypto::Identity::from_cert_chain(vec![CertificateDer::from(cert.to_vec())]).expect("identity")),
+      key,
+    )
+    .expect("certificate and key match");
     assert!(certified.key.choose_scheme(&[]).is_none());
     assert!(
       certified
@@ -307,7 +308,7 @@ fn loaded_signing_keys_match_spki_and_independent_verifiers() {
       assert_eq!(signer.scheme(), scheme);
       let signature = signer.sign(MESSAGE).expect("sign");
       let verifier = peer
-        .mapping
+        .mapping()
         .iter()
         .find(|(name, _)| *name == scheme)
         .expect("independent scheme")
@@ -323,7 +324,15 @@ fn loaded_signing_keys_match_spki_and_independent_verifiers() {
         assert_eq!(signature, fixture!("ed25519.sig"));
       }
       if matches!(kind, Credential::Rsa) {
-        assert_ne!(signature, signer.sign(MESSAGE).expect("fresh PSS salt"));
+        assert_ne!(
+          signature,
+          certified
+            .key
+            .choose_scheme(&[scheme])
+            .expect("scheme")
+            .sign(MESSAGE)
+            .expect("fresh PSS salt")
+        );
       }
     }
     let (_, wrong_cert, _) = tls::credentials(if matches!(kind, Credential::P256) {
@@ -331,8 +340,13 @@ fn loaded_signing_keys_match_spki_and_independent_verifiers() {
     } else {
       Credential::P256
     });
-    let mismatched = rustls::sign::CertifiedKey::new(vec![CertificateDer::from(wrong_cert.to_vec())], certified.key);
-    assert!(matches!(mismatched.keys_match(), Err(Error::InconsistentKeys(_))));
+    let mismatched = rustls::crypto::Credentials::new(
+      Arc::new(
+        rustls::crypto::Identity::from_cert_chain(vec![CertificateDer::from(wrong_cert.to_vec())]).expect("identity"),
+      ),
+      certified.key,
+    );
+    assert!(matches!(mismatched, Err(Error::InconsistentKeys(_))));
   }
 }
 
@@ -373,7 +387,7 @@ fn alternate_private_key_encodings_and_invalid_containers() {
 #[test]
 fn deployed_rsa2048_verifies_but_new_signing_keys_require_rsa3072() {
   let verifier = verify::SUPPORTED_ALGORITHMS
-    .mapping
+    .mapping()
     .iter()
     .find(|(scheme, _)| *scheme == SignatureScheme::RSA_PSS_SHA256)
     .expect("PSS verifier")
@@ -395,8 +409,8 @@ fn deployed_rsa2048_verifies_but_new_signing_keys_require_rsa3072() {
 fn authenticated_handshakes_use_each_credential_in_both_roles() {
   for kind in [Credential::P256, Credential::P384, Credential::Ed25519, Credential::Rsa] {
     for independent in [
-      rustls::crypto::ring::default_provider,
-      rustls::crypto::aws_lc_rs::default_provider,
+      (|| rustls_ring::DEFAULT_TLS13_PROVIDER),
+      (|| rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER),
     ] {
       for (client, server) in [
         (crate::default_provider(), independent()),
@@ -405,7 +419,7 @@ fn authenticated_handshakes_use_each_credential_in_both_roles() {
         let (client, server) = tls::configs(client, server, kind, false);
         let (mut client, mut server) = tls::connections_from_configs(Arc::new(client), Arc::new(server));
         tls::drive(&mut client, &mut server).expect("authenticated handshake");
-        assert!(!client.is_handshaking() && !server.is_handshaking());
+        assert!(!client.connection.is_handshaking() && !server.connection.is_handshaking());
         tls::application_exchange(&mut client, &mut server);
       }
     }
@@ -417,10 +431,10 @@ fn required_pq_refuses_classical_peers_in_both_roles() {
   for (client, server) in [
     (
       crate::post_quantum_required_provider(),
-      rustls::crypto::ring::default_provider(),
+      rustls_ring::DEFAULT_TLS13_PROVIDER,
     ),
     (
-      rustls::crypto::ring::default_provider(),
+      rustls_ring::DEFAULT_TLS13_PROVIDER,
       crate::post_quantum_required_provider(),
     ),
   ] {
@@ -430,6 +444,6 @@ fn required_pq_refuses_classical_peers_in_both_roles() {
       tls::drive(&mut client, &mut server),
       Err(Error::PeerIncompatible(_))
     ));
-    assert!(client.is_handshaking() && server.is_handshaking());
+    assert!(client.connection.is_handshaking() && server.connection.is_handshaking());
   }
 }

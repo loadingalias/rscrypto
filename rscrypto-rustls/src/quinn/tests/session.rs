@@ -1,6 +1,6 @@
 use super::*;
 use crate::tests::tls::{self, Credential};
-use quinn_proto::crypto::{ClientConfig as _, Session as _};
+use quinn_proto::crypto::ClientConfig as _;
 
 fn configs() -> (rustls::ClientConfig, rustls::ServerConfig) {
   tls::configs(
@@ -11,30 +11,28 @@ fn configs() -> (rustls::ClientConfig, rustls::ServerConfig) {
   )
 }
 
-fn sessions(client: rustls::ClientConfig, server: rustls::ServerConfig, server_params: Vec<u8>) -> [Session; 2] {
+fn sessions(
+  client: rustls::ClientConfig,
+  server: rustls::ServerConfig,
+  server_params: Vec<u8>,
+) -> [Box<dyn crypto::Session>; 2] {
   [
-    Session::new(
-      quic::Connection::Client(
-        quic::ClientConnection::new(
-          Arc::new(client),
-          quic::Version::V1,
-          ServerName::try_from("localhost").expect("name"),
-          Vec::new(),
-        )
+    Box::new(Session::new(
+      Arc::new(client)
+        .connect(ServerName::try_from("localhost").expect("name"))
+        .build_quic(quic::Version::V1, Vec::new())
         .expect("client"),
-      ),
       Side::Client,
-    ),
-    Session::new(
-      quic::Connection::Server(
-        quic::ServerConnection::new(Arc::new(server), quic::Version::V1, server_params).expect("server"),
-      ),
+    )),
+    Box::new(Session::new(
+      Connection::<ServerSide, quic::Quic>::new_quic(Arc::new(server), quic::Version::V1, server_params)
+        .expect("server"),
       Side::Server,
-    ),
+    )),
   ]
 }
 
-fn drive(peers: &mut [Session; 2]) -> Result<(), TransportError> {
+fn drive(peers: &mut [Box<dyn crypto::Session>; 2]) -> Result<(), TransportError> {
   for _ in 0..32 {
     let mut progress = false;
     for source in 0..2 {
@@ -63,8 +61,8 @@ fn configuration_rejects_missing_alpn_and_invalid_early_data_limits() {
   for protocols in [vec![], vec![vec![]], vec![vec![b'a'; 256]]] {
     let mut client = client.clone();
     let mut server = server.clone();
-    client.alpn_protocols = protocols.clone();
-    server.alpn_protocols = protocols;
+    client.alpn_protocols = protocols.iter().cloned().map(Into::into).collect();
+    server.alpn_protocols = client.alpn_protocols.clone();
     client_config(client).expect_err("invalid ALPN");
     server_config(server).expect_err("invalid ALPN");
   }
@@ -93,7 +91,7 @@ fn quic_omits_middlebox_compatibility_and_rejects_post_handshake_client_auth() {
     .expect_err("post-handshake authentication is forbidden in QUIC");
   assert_eq!(
     error.code,
-    TransportErrorCode::crypto(u8::from(rustls::AlertDescription::UnexpectedMessage))
+    TransportErrorCode::crypto(u8::from(rustls::error::AlertDescription::UnexpectedMessage))
   );
   assert!(peers[0].handshake_data().is_none());
 }
@@ -101,12 +99,12 @@ fn quic_omits_middlebox_compatibility_and_rejects_post_handshake_client_auth() {
 #[test]
 fn no_common_alpn_and_forbidden_key_update_fail_closed() {
   let (client, mut server) = configs();
-  server.alpn_protocols = vec![b"different-application".to_vec()];
+  server.alpn_protocols = vec![b"different-application".to_vec().into()];
   let mut peers = sessions(client, server, Vec::new());
   let error = drive(&mut peers).expect_err("disjoint ALPN");
   assert_eq!(
     error.code,
-    TransportErrorCode::crypto(u8::from(rustls::AlertDescription::NoApplicationProtocol))
+    TransportErrorCode::crypto(u8::from(rustls::error::AlertDescription::NoApplicationProtocol))
   );
 
   let (client, server) = configs();
@@ -117,7 +115,7 @@ fn no_common_alpn_and_forbidden_key_update_fail_closed() {
     let error = peer.read_handshake(&[24, 0, 0, 1, 0]).expect_err("forbidden KeyUpdate");
     assert_eq!(
       error.code,
-      TransportErrorCode::crypto(u8::from(rustls::AlertDescription::UnexpectedMessage))
+      TransportErrorCode::crypto(u8::from(rustls::error::AlertDescription::UnexpectedMessage))
     );
     assert_eq!(peer.read_handshake(&[]).expect_err("terminal failure").code, error.code);
     assert!(peer.handshake_data().is_none());

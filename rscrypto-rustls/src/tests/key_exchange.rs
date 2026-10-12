@@ -1,10 +1,13 @@
-use rustls::{Error, NamedGroup, PeerMisbehaved, ProtocolVersion};
+use rustls::Error;
+use rustls::crypto::kx::NamedGroup;
+use rustls::error::PeerMisbehaved;
 
 use super::{ALL_KX_GROUPS, SECP256R1, SECP384R1, X25519, X25519MLKEM768};
+use rustls::crypto::kx::{StartedKeyExchange, SupportedKxGroup};
 
 #[test]
 fn caller_entropy_reaches_x25519_key_generation() {
-  use rustls::crypto::{GetRandomFailed, SecureRandom, SupportedKxGroup};
+  use rustls::crypto::{GetRandomFailed, SecureRandom};
 
   #[derive(Debug)]
   struct Alice;
@@ -30,8 +33,8 @@ fn caller_entropy_reaches_x25519_key_generation() {
 
 #[test]
 fn group_inventory_and_both_roles_agree_with_independent_peers() {
-  let aws = rustls::crypto::aws_lc_rs::default_provider();
-  let ring = rustls::crypto::ring::default_provider();
+  let aws = rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER;
+  let ring = rustls_ring::DEFAULT_TLS13_PROVIDER;
   let expected = [
     (NamedGroup::X25519MLKEM768, 1216, 1120, 64),
     (NamedGroup::X25519, 32, 32, 32),
@@ -41,11 +44,15 @@ fn group_inventory_and_both_roles_agree_with_independent_peers() {
   assert_eq!(ALL_KX_GROUPS.len(), expected.len());
   for (ours, (name, client_len, server_len, secret_len)) in ALL_KX_GROUPS.iter().zip(expected) {
     assert_eq!(ours.name(), name);
-    assert!(ours.usable_for_version(ProtocolVersion::TLSv1_3));
-    assert!(!ours.usable_for_version(ProtocolVersion::TLSv1_2));
+    assert!(crate::default_provider().tls12_cipher_suites.is_empty());
     assert!(ours.ffdhe_group().is_none());
-    assert!(!ours.fips());
-    for peer in aws.kx_groups.iter().chain(&ring.kx_groups).filter(|p| p.name() == name) {
+    assert_eq!(ours.fips(), rustls::pki_types::FipsStatus::Unvalidated);
+    for peer in aws
+      .kx_groups
+      .iter()
+      .chain(ring.kx_groups.iter())
+      .filter(|p| p.name() == name)
+    {
       for (client, server) in [(*ours, *peer), (*peer, *ours)] {
         let client = client.start().expect("key exchange");
         assert_eq!(client.pub_key().len(), client_len);
@@ -55,7 +62,7 @@ fn group_inventory_and_both_roles_agree_with_independent_peers() {
         assert_eq!(server.group, name);
         assert_eq!(server.pub_key.len(), server_len);
         assert_eq!(server.secret.secret_bytes().len(), secret_len);
-        let agreed = client.complete(&server.pub_key).expect("key exchange");
+        let agreed = client.into_single().complete(&server.pub_key).expect("key exchange");
         assert_eq!(agreed.secret_bytes(), server.secret.secret_bytes());
       }
     }
@@ -68,7 +75,7 @@ fn classical_groups_reject_malformed_and_small_order_peers() {
   one[0] = 1;
   for peer in [&[][..], &[1; 31], &[1; 33], &[0; 32], &one] {
     assert!(matches!(
-      X25519.start().expect("key exchange").complete(peer),
+      X25519.start().expect("key exchange").into_single().complete(peer),
       Err(Error::PeerMisbehaved(PeerMisbehaved::InvalidKeyShare))
     ));
   }
@@ -82,7 +89,7 @@ fn classical_groups_reject_malformed_and_small_order_peers() {
     compressed[0] = 2;
     for peer in [&[][..], &valid[..length - 1], &off_curve, &noncanonical, &compressed] {
       assert!(matches!(
-        group.start().expect("key exchange").complete(peer),
+        group.start().expect("key exchange").into_single().complete(peer),
         Err(Error::PeerMisbehaved(PeerMisbehaved::InvalidKeyShare))
       ));
     }
@@ -90,26 +97,33 @@ fn classical_groups_reject_malformed_and_small_order_peers() {
 }
 
 #[test]
+#[expect(
+  clippy::panic,
+  reason = "the selected hybrid group must return its component exchange"
+)]
 fn hybrid_layout_and_classical_fallback_match_rfc10024() {
   let client = X25519MLKEM768.start().expect("key exchange");
-  let (name, classical) = client.hybrid_component().expect("classical component");
+  let StartedKeyExchange::Hybrid(client) = client else {
+    panic!("hybrid exchange")
+  };
+  let (name, classical) = client.component();
   assert_eq!(name, NamedGroup::X25519);
-  assert_eq!(classical, &client.pub_key()[1184..]);
-  let server = rustls::crypto::ring::kx_group::X25519
+  assert_eq!(classical, &client.as_key_exchange().pub_key()[1184..]);
+  let server = rustls_ring::kx_group::X25519
     .start_and_complete(classical)
     .expect("key exchange");
-  let agreed = client.complete_hybrid_component(&server.pub_key).expect("key exchange");
+  let agreed = client.complete_component(&server.pub_key).expect("key exchange");
   assert_eq!(agreed.secret_bytes(), server.secret.secret_bytes());
 
   // The independent hybrid peer verifies component order in both shares and
   // in the 64-byte shared secret. This case distinguishes implicit rejection
   // of a well-formed altered ciphertext from an invalid classical share.
   let client = X25519MLKEM768.start().expect("key exchange");
-  let mut server = rustls::crypto::aws_lc_rs::kx_group::X25519MLKEM768
+  let mut server = rustls_aws_lc_rs::kx_group::X25519MLKEM768
     .start_and_complete(client.pub_key())
     .expect("key exchange");
   server.pub_key[0] ^= 1;
-  let agreed = client.complete(&server.pub_key).expect("key exchange");
+  let agreed = client.into_single().complete(&server.pub_key).expect("key exchange");
   assert_ne!(&agreed.secret_bytes()[..32], &server.secret.secret_bytes()[..32]);
   assert_eq!(&agreed.secret_bytes()[32..], &server.secret.secret_bytes()[32..]);
 }
@@ -139,7 +153,11 @@ fn hybrid_rejects_invalid_lengths_encapsulation_keys_and_classical_shares() {
   ));
   for server in [&[][..], &[0; 1119], &[0; 1121], &[0; 1120]] {
     assert!(matches!(
-      X25519MLKEM768.start().expect("key exchange").complete(server),
+      X25519MLKEM768
+        .start()
+        .expect("key exchange")
+        .into_single()
+        .complete(server),
       Err(Error::PeerMisbehaved(PeerMisbehaved::InvalidKeyShare))
     ));
   }
@@ -185,14 +203,14 @@ fn negotiation_uses_hybrid_fallback_and_hello_retry_request() {
     ),
   ] {
     let mut client_provider = crate::default_provider();
-    client_provider.kx_groups = client_groups;
+    client_provider.kx_groups = client_groups.into();
     let mut server_provider = crate::default_provider();
-    server_provider.kx_groups = server_groups;
+    server_provider.kx_groups = server_groups.into();
     let (client, server) = tls::configs(client_provider, server_provider, tls::Credential::P256, false);
     let (mut client, mut server) =
       tls::connections_from_configs(alloc::sync::Arc::new(client), alloc::sync::Arc::new(server));
     tls::drive(&mut client, &mut server).expect("key exchange");
-    for side in [&client, &server] {
+    for side in [&*client, &*server] {
       assert_eq!(
         side.negotiated_key_exchange_group().expect("key exchange").name(),
         group

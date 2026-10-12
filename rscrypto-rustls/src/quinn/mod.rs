@@ -5,23 +5,26 @@
 //! [`server_config`]. Construct the endpoint with [`endpoint_config`]. Enable
 //! only `runtime-tokio` (or another runtime) on the application's `quinn` crate;
 //! its `rustls-*`, `ring`, and `aws-lc-rs` features are unnecessary.
-//! Quinn 0.11.19 still pulls `ring` into its browser-WASM dependency graph;
-//! that upstream manifest issue blocks the provider's all-target no-C gate.
+//! The pinned Quinn manifest fix keeps the browser-WASM graph free of C backends.
 //!
 //! Initial packets and Retry always use RFC 9001 AES-128-GCM, independently of
 //! the negotiated suite. Rustls owns handshake secrets and key updates. Quinn
 //! enforces the packet keys' confidentiality and integrity limits. Application
 //! policy still owns trust, ALPN, resumption, admission, and replay protection.
 
-use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, collections::VecDeque, string::String, sync::Arc, vec::Vec};
 use core::any::Any;
 use quinn_proto::crypto::{self, ExportKeyingMaterialError, KeyPair, Keys, UnsupportedVersion};
 use quinn_proto::transport_parameters::TransportParameters;
 use quinn_proto::{ConnectError, ConnectionId, Side, TransportError, TransportErrorCode};
 use rscrypto::aead::{Nonce96, expert::AeadWithNonce};
 use rscrypto::{Aes128Gcm, Aes128GcmKey, Aes128GcmTag};
+use rustls::crypto::CipherSuite;
+use rustls::crypto::kx::NamedGroup;
+use rustls::enums::ApplicationProtocol;
 use rustls::pki_types::ServerName;
-use rustls::{CipherSuite, Error, NamedGroup, quic};
+use rustls::{ClientSide, Connection, KeyingMaterialExporter, ServerSide, SideData, VecInput};
+use rustls::{Error, quic};
 
 mod packet;
 mod token;
@@ -73,13 +76,17 @@ pub fn endpoint_config_with_random(
   Ok(config)
 }
 
-fn validate(alpn: &[Vec<u8>], provider: &rustls::crypto::CryptoProvider) -> Result<(), Error> {
-  if alpn.is_empty() || alpn.iter().any(|protocol| protocol.is_empty() || protocol.len() > 255) {
+fn validate(alpn: &[ApplicationProtocol<'_>], provider: &rustls::crypto::CryptoProvider) -> Result<(), Error> {
+  if alpn.is_empty()
+    || alpn
+      .iter()
+      .any(|protocol| protocol.as_ref().is_empty() || protocol.as_ref().len() > 255)
+  {
     return Err(Error::General(
       "QUIC requires nonempty ALPN protocols of at most 255 bytes".into(),
     ));
   }
-  if provider.cipher_suites.is_empty() || provider.cipher_suites.iter().any(|suite| suite.tls13().is_none()) {
+  if provider.tls13_cipher_suites.is_empty() || !provider.tls12_cipher_suites.is_empty() {
     return Err(Error::General("QUIC requires a TLS 1.3-only provider".into()));
   }
   Ok(())
@@ -92,7 +99,7 @@ fn validate(alpn: &[Vec<u8>], provider: &rustls::crypto::CryptoProvider) -> Resu
 /// initialization error in `ConnectError`; a later entropy failure fails closed
 /// as `ConnectError::EndpointStopping`, without panicking.
 pub fn client_config(tls: rustls::ClientConfig) -> Result<quinn_proto::ClientConfig, Error> {
-  validate(&tls.alpn_protocols, tls.crypto_provider())?;
+  validate(&tls.alpn_protocols, tls.provider())?;
   let mut config = quinn_proto::ClientConfig::new(Arc::new(Client(Arc::new(tls))));
   config.version(1);
   Ok(config)
@@ -106,13 +113,13 @@ pub fn client_config(tls: rustls::ClientConfig) -> Result<quinn_proto::ClientCon
 /// for stateless resumption. QUIC early data must stay disabled or explicitly use
 /// `max_early_data_size = u32::MAX`, with application replay protection.
 pub fn server_config(tls: rustls::ServerConfig) -> Result<quinn_proto::ServerConfig, Error> {
-  validate(&tls.alpn_protocols, tls.crypto_provider())?;
+  validate(&tls.alpn_protocols, tls.provider())?;
   let tls = Arc::new(tls);
   // Pinned rustls validates only immutable configuration here: versions,
   // QUIC suites, early-data limits, and maximum fragment size. No entropy is
   // requested until processing ClientHello. Preserve that invariant on upgrades.
-  quic::ServerConnection::new(Arc::clone(&tls), quic::Version::V1, Vec::new())?;
-  let token_key = token::TokenKey::generate_with(|out| tls.crypto_provider().secure_random.fill(out))?;
+  Connection::<ServerSide, quic::Quic>::new_quic(Arc::clone(&tls), quic::Version::V1, Vec::new())?;
+  let token_key = token::TokenKey::generate_with(|out| tls.provider().secure_random.fill(out))?;
   Ok(quinn_proto::ServerConfig::new(
     Arc::new(Server(tls)),
     Arc::new(token_key),
@@ -136,12 +143,12 @@ impl crypto::ClientConfig for Client {
       ServerName::try_from(server_name.to_owned()).map_err(|_| ConnectError::InvalidServerName(server_name.into()))?;
     let mut encoded = Vec::new();
     params.write(&mut encoded);
-    let connection = quic::ClientConnection::new(Arc::clone(&self.0), quic::Version::V1, name, encoded)
+    let connection = self
+      .0
+      .connect(name)
+      .build_quic(quic::Version::V1, encoded)
       .map_err(|_| ConnectError::EndpointStopping)?;
-    Ok(Box::new(Session::new(
-      quic::Connection::Client(connection),
-      Side::Client,
-    )))
+    Ok(Box::new(Session::new(connection, Side::Client)))
   }
 }
 
@@ -165,24 +172,21 @@ impl crypto::ServerConfig for Server {
     assert_eq!(version, 1, "Quinn starts only a version accepted by initial_keys");
     let mut encoded = Vec::new();
     params.write(&mut encoded);
-    let connection = quic::ServerConnection::new(Arc::clone(&self.0), quic::Version::V1, encoded)
+    let connection = Connection::<ServerSide, quic::Quic>::new_quic(Arc::clone(&self.0), quic::Version::V1, encoded)
       .expect("immutable TLS configuration was validated by server_config");
-    Box::new(Session::new(quic::Connection::Server(connection), Side::Server))
+    Box::new(Session::new(connection, Side::Server))
   }
 }
 
 fn initial_keys(cid: &ConnectionId, side: Side) -> Keys {
-  let suite = crate::cipher_suite::TLS13_AES_128_GCM_SHA256
-    .tls13()
-    .expect("static TLS 1.3 suite");
+  let suite = crate::cipher_suite::TLS13_AES_128_GCM_SHA256;
   let side = match side {
-    Side::Client => rustls::Side::Client,
-    Side::Server => rustls::Side::Server,
+    Side::Client => quic::Side::Client,
+    Side::Server => quic::Side::Server,
   };
   packet::keys(quic::Keys::initial(
     quic::Version::V1,
-    suite,
-    crate::quic::AES_128_GCM,
+    quic::Suite::try_from(suite).expect("static QUIC suite"),
     cid,
     side,
   ))
@@ -234,18 +238,48 @@ fn valid_retry(cid: &ConnectionId, header: &[u8], payload: &[u8]) -> bool {
     .is_ok()
 }
 
-struct Session {
-  connection: quic::Connection,
+trait EndpointSide: SideData {
+  fn server_name(&self) -> Option<String>;
+  fn early_data_accepted(&self) -> Option<bool>;
+}
+
+impl EndpointSide for ClientSide {
+  fn server_name(&self) -> Option<String> {
+    None
+  }
+  fn early_data_accepted(&self) -> Option<bool> {
+    Some(self.is_early_data_accepted())
+  }
+}
+
+impl EndpointSide for ServerSide {
+  fn server_name(&self) -> Option<String> {
+    self.server_name().map(|name| String::from(name.as_ref()))
+  }
+  fn early_data_accepted(&self) -> Option<bool> {
+    None
+  }
+}
+
+struct Session<S: EndpointSide> {
+  connection: Connection<S, quic::Quic>,
+  input: VecInput,
+  pending: VecDeque<quic::QuicEvent>,
+  exporter: Option<KeyingMaterialExporter>,
   side: Side,
   next: Option<quic::Secrets>,
   notified: bool,
   failed: Option<TransportError>,
 }
 
-impl Session {
-  fn new(connection: quic::Connection, side: Side) -> Self {
+impl<S: EndpointSide> Session<S> {
+  fn new(mut connection: Connection<S, quic::Quic>, side: Side) -> Self {
+    let pending = connection.events().collect();
     Self {
       connection,
+      input: VecInput::default(),
+      pending,
+      exporter: None,
       side,
       next: None,
       notified: false,
@@ -254,7 +288,10 @@ impl Session {
   }
 }
 
-impl crypto::Session for Session {
+impl<S: EndpointSide> crypto::Session for Session<S>
+where
+  Connection<S, quic::Quic>: Send + Sync,
+{
   fn initial_keys(&self, cid: &ConnectionId, side: Side) -> Keys {
     initial_keys(cid, side)
   }
@@ -264,11 +301,8 @@ impl crypto::Session for Session {
       return None;
     }
     Some(Box::new(HandshakeData {
-      protocol: self.connection.alpn_protocol()?.to_vec(),
-      server_name: match &self.connection {
-        quic::Connection::Server(server) => server.server_name().map(String::from),
-        _ => None,
-      },
+      protocol: self.connection.alpn_protocol()?.as_ref().to_vec(),
+      server_name: self.connection.side().server_name(),
       cipher_suite: self.connection.negotiated_cipher_suite()?.suite(),
       key_exchange_group: self
         .connection
@@ -282,10 +316,13 @@ impl crypto::Session for Session {
     if self.failed.is_some() {
       return None;
     }
-    self
-      .connection
-      .peer_certificates()
-      .map(|certificates| Box::new(certificates.to_vec()) as Box<dyn Any>)
+    let rustls::crypto::Identity::X509(identity) = self.connection.peer_identity()?.identity() else {
+      return None;
+    };
+    let certificates: Vec<_> = core::iter::once(identity.end_entity.clone())
+      .chain(identity.intermediates.iter().cloned())
+      .collect();
+    Some(Box::new(certificates))
   }
 
   fn early_crypto(&self) -> Option<(Box<dyn crypto::HeaderKey>, Box<dyn crypto::PacketKey>)> {
@@ -300,10 +337,7 @@ impl crypto::Session for Session {
   }
 
   fn early_data_accepted(&self) -> Option<bool> {
-    match &self.connection {
-      quic::Connection::Client(client) => Some(client.is_early_data_accepted()),
-      _ => None,
-    }
+    self.connection.side().early_data_accepted()
   }
 
   fn is_handshaking(&self) -> bool {
@@ -314,27 +348,39 @@ impl crypto::Session for Session {
     if let Some(error) = &self.failed {
       return Err(error.clone());
     }
-    let result = self
-      .connection
-      .read_hs(input)
-      .map_err(|_| {
-        let alert = self
-          .connection
-          .alert()
-          .unwrap_or(rustls::AlertDescription::InternalError);
-        TransportError::from(TransportErrorCode::crypto(u8::from(alert)))
-      })
-      .and_then(|()| {
-        // A resumed client can restore cached transport parameters before
-        // EncryptedExtensions selects ALPN. Check at handshake completion,
-        // before Quinn can publish an established connection.
-        if !self.connection.is_handshaking() && self.connection.alpn_protocol().is_none() {
-          return Err(TransportErrorCode::crypto(u8::from(rustls::AlertDescription::NoApplicationProtocol)).into());
-        }
-        let ready = !self.notified && self.handshake_data().is_some();
-        self.notified |= ready;
-        Ok(ready)
-      });
+    let result = (|| {
+      let mut remaining = input;
+      while !remaining.is_empty() {
+        self
+          .input
+          .read(&mut remaining)
+          .map_err(|_| Error::PeerSentOversizedRecord)?;
+        self.connection.read_hs(&mut self.input)?;
+      }
+      self.pending.extend(self.connection.events());
+      if !self.connection.is_handshaking() && self.exporter.is_none() {
+        self.exporter = Some(self.connection.exporter()?);
+      }
+      Ok::<(), Error>(())
+    })()
+    .map_err(|error| {
+      let alert =
+        rustls::error::AlertDescription::try_from(&error).unwrap_or(rustls::error::AlertDescription::InternalError);
+      TransportError::from(TransportErrorCode::crypto(u8::from(alert)))
+    })
+    .and_then(|()| {
+      // A resumed client can restore cached transport parameters before
+      // EncryptedExtensions selects ALPN. Check at handshake completion,
+      // before Quinn can publish an established connection.
+      if !self.connection.is_handshaking() && self.connection.alpn_protocol().is_none() {
+        return Err(
+          TransportErrorCode::crypto(u8::from(rustls::error::AlertDescription::NoApplicationProtocol)).into(),
+        );
+      }
+      let ready = !self.notified && self.handshake_data().is_some();
+      self.notified |= ready;
+      Ok(ready)
+    });
     if let Err(error) = &result {
       self.failed = Some(error.clone());
     }
@@ -359,13 +405,18 @@ impl crypto::Session for Session {
     if self.failed.is_some() {
       return None;
     }
-    match self.connection.write_hs(output)? {
-      quic::KeyChange::Handshake { keys } => Some(packet::keys(keys)),
-      quic::KeyChange::OneRtt { keys, next } => {
-        self.next = Some(next);
-        Some(packet::keys(keys))
+    while let Some(event) = self.pending.pop_front() {
+      match event {
+        quic::QuicEvent::Message(message) => output.extend_from_slice(&message),
+        quic::QuicEvent::KeyChange(quic::KeyChange::Handshake { keys }) => return Some(packet::keys(keys)),
+        quic::QuicEvent::KeyChange(quic::KeyChange::OneRtt { keys, next }) => {
+          self.next = Some(next);
+          return Some(packet::keys(keys));
+        }
+        _ => {}
       }
     }
+    None
   }
 
   fn next_1rtt_keys(&mut self) -> Option<KeyPair<Box<dyn crypto::PacketKey>>> {
@@ -393,8 +444,10 @@ impl crypto::Session for Session {
       return Err(ExportKeyingMaterialError);
     }
     self
-      .connection
-      .export_keying_material(output, label, Some(context))
+      .exporter
+      .as_ref()
+      .ok_or(ExportKeyingMaterialError)?
+      .derive(label, Some(context), output)
       .map(|_| ())
       .map_err(|_| ExportKeyingMaterialError)
   }

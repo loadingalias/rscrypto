@@ -2,9 +2,10 @@
 
 use alloc::{alloc::Global, boxed::Box, sync::Arc, vec::Vec};
 use rscrypto::{MlDsa44SecretKey, MlDsa65SecretKey, MlDsa87SecretKey, MlDsaError};
+use rustls::Error;
+use rustls::crypto::SignatureScheme;
+use rustls::crypto::{Signer, SigningKey};
 use rustls::pki_types::{PrivateKeyDer, SubjectPublicKeyInfoDer};
-use rustls::sign::{Signer, SigningKey};
-use rustls::{Error, SignatureAlgorithm, SignatureScheme};
 
 pub(super) fn load(der: &PrivateKeyDer<'_>, random: &'static dyn rustls::crypto::SecureRandom) -> Option<Key> {
   let PrivateKeyDer::Pkcs8(der) = der else {
@@ -83,12 +84,6 @@ impl SigningKey for Key {
   fn public_key(&self) -> Option<SubjectPublicKeyInfoDer<'_>> {
     Some(SubjectPublicKeyInfoDer::from(self.spki.as_slice()))
   }
-
-  fn algorithm(&self) -> SignatureAlgorithm {
-    // This legacy enum describes TLS 1.2 algorithms. ML-DSA is TLS 1.3 only;
-    // rustls selects it through choose_scheme, never through this enum.
-    SignatureAlgorithm::Unknown(0)
-  }
 }
 
 #[derive(Debug)]
@@ -98,7 +93,7 @@ struct Sign {
 }
 
 impl Signer for Sign {
-  fn sign(&self, message: &[u8]) -> Result<Vec<u8>, Error> {
+  fn sign(self: Box<Self>, message: &[u8]) -> Result<Vec<u8>, Error> {
     self.secret.sign_with(message, |out| {
       self.random.fill(out).map_err(|_| MlDsaError::RandomGenerationFailed)
     })
@@ -128,12 +123,13 @@ fn partial_entropy_failure_is_opaque_and_key_stays_usable() {
     });
     assert!(matches!(result, Err(Error::General(message)) if message == "TLS signing failed"));
     let signer = key.choose_scheme(&[key.secret.scheme()]).expect("scheme");
+    let scheme = signer.scheme();
     let signature = signer.sign(b"message").expect("sign after failure");
-    let peer = rustls::crypto::aws_lc_rs::default_provider().signature_verification_algorithms;
+    let peer = rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER.signature_verification_algorithms;
     let verifier = peer
-      .mapping
+      .mapping()
       .iter()
-      .find(|(scheme, _)| *scheme == signer.scheme())
+      .find(|(candidate, _)| *candidate == scheme)
       .expect("peer scheme")
       .1[0];
     // RFC 9881 SPKI has a 22-byte header for all three parameter sets.

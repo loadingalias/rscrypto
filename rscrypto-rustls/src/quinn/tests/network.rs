@@ -265,10 +265,10 @@ impl Link {
 fn exercise(credential: Credential, distort: bool, retry: bool) {
   for suite in crate::cipher_suite::ALL_CIPHER_SUITES {
     let mut provider = crate::default_provider();
-    provider.cipher_suites = vec![*suite];
+    provider.tls13_cipher_suites = vec![*suite].into();
     let expected_group = provider.kx_groups[0].name();
     let (client, mut server) = tls::configs(provider.clone(), provider, credential, true);
-    server.ticketer = crate::ticket::ticketer().expect("ticket key");
+    server.ticketer = Some(crate::ticket::ticketer().expect("ticket key"));
     let mut link = Link::new(client, server, distort, retry);
     link.handshake();
     let mut exported = [[0; 32]; 2];
@@ -280,7 +280,7 @@ fn exercise(credential: Credential, distort: bool, retry: bool) {
         .downcast::<HandshakeData>()
         .expect("our adapter");
       assert_eq!(data.protocol, b"provider-test");
-      assert_eq!(data.cipher_suite, suite.suite());
+      assert_eq!(data.cipher_suite, suite.common.suite);
       assert_eq!(data.key_exchange_group, Some(expected_group));
       assert!(crypto.peer_identity().is_some(), "mutual authentication");
       crypto

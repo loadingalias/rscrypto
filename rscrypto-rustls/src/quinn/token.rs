@@ -108,9 +108,7 @@ mod tests {
     key.sign(b"Hi There", &mut tag);
     // This adapter fixes the random key length to 32 bytes; an independent
     // AWS-LC HMAC covers that exact key while the primitive owns RFC vectors.
-    let peer = rustls::crypto::aws_lc_rs::cipher_suite::TLS13_AES_128_GCM_SHA256
-      .tls13()
-      .expect("suite");
+    let peer = rustls_aws_lc_rs::cipher_suite::TLS13_AES_128_GCM_SHA256;
     let expected = peer.hkdf_provider.hmac_sign(&OkmBlock::new(&[0x0b; 32]), b"Hi There");
     assert_eq!(&tag, expected.as_ref());
     key.verify(b"Hi There", &tag).expect("valid reset MAC");
@@ -128,13 +126,8 @@ mod tests {
     let root = [0x42; 32];
     let key = TokenKey(HkdfSha256::from_prk(&root));
     let random = [0x13; 16];
-    let peer = rustls::crypto::aws_lc_rs::cipher_suite::TLS13_AES_256_GCM_SHA384
-      .tls13()
-      .expect("AES-256");
-    let hkdf = rustls::crypto::aws_lc_rs::cipher_suite::TLS13_AES_128_GCM_SHA256
-      .tls13()
-      .expect("SHA-256")
-      .hkdf_provider;
+    let peer = rustls_aws_lc_rs::cipher_suite::TLS13_AES_256_GCM_SHA384;
+    let hkdf = rustls_aws_lc_rs::cipher_suite::TLS13_AES_128_GCM_SHA256.hkdf_provider;
     let mut derived = [0; 32];
     hkdf
       .expander_for_okm(&OkmBlock::new(&root))
@@ -151,7 +144,7 @@ mod tests {
       cipher.seal(&mut sealed, b"address context").expect("seal");
       let mut expected = plaintext.clone();
       let tag = oracle
-        .encrypt_in_place(0, b"address context", &mut expected)
+        .encrypt_in_place(0, b"address context", &mut expected, None)
         .expect("independent AEAD");
       expected.extend_from_slice(tag.as_ref());
       assert_eq!(sealed, expected);

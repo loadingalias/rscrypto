@@ -29,9 +29,9 @@ impl rustls::quic::Algorithm for Algorithm {
     (*self).key_len()
   }
 
-  fn fips(&self) -> bool {
+  fn fips(&self) -> rustls::pki_types::FipsStatus {
     // rscrypto is not currently a FIPS-validated module.
-    false
+    rustls::pki_types::FipsStatus::Unvalidated
   }
 }
 

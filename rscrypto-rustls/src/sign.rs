@@ -4,11 +4,11 @@
 //! PKCS#1 supports RSA. ECDSA and RSA signing require `getrandom`. RSA signing
 //! keys must have 3,072–8,192-bit moduli and public exponent 65,537.
 
-use alloc::sync::Arc;
+use alloc::boxed::Box;
 use rustls::Error;
 use rustls::crypto::KeyProvider;
+use rustls::crypto::SigningKey;
 use rustls::pki_types::PrivateKeyDer;
-use rustls::sign::SigningKey;
 
 #[cfg(all(feature = "ml-dsa", feature = "getrandom"))]
 mod mldsa;
@@ -16,7 +16,7 @@ mod mldsa;
 /// Load enabled signing keys through rscrypto's validated key codecs.
 ///
 /// Containers larger than 16 KiB, unsupported formats, and invalid keys are
-/// rejected. Successful keys return SPKI for `CertifiedKey::keys_match`.
+/// rejected. Successful keys return SPKI for `rustls::crypto::Credentials::new`.
 /// Owned input DER is cleared on every return path. This provider uses OS entropy.
 pub static KEY_PROVIDER: &dyn KeyProvider = &Provider {
   #[cfg(feature = "getrandom")]
@@ -46,7 +46,7 @@ impl Provider {
 }
 
 impl KeyProvider for Provider {
-  fn load_private_key(&self, key_der: PrivateKeyDer<'static>) -> Result<Arc<dyn SigningKey>, Error> {
+  fn load_private_key(&self, key_der: PrivateKeyDer<'static>) -> Result<Box<dyn SigningKey>, Error> {
     // pki-types exposes Zeroize but does not clear owned DER automatically.
     let key_der = zeroize::Zeroizing::new(key_der);
     if key_der.secret_der().len() > 16_384 {
@@ -56,11 +56,11 @@ impl KeyProvider for Provider {
     let _random = self.random;
     #[cfg(all(feature = "ml-dsa", feature = "getrandom"))]
     if let Some(key) = mldsa::load(&key_der, _random) {
-      return Ok(Arc::new(key));
+      return Ok(Box::new(key));
     }
     #[cfg(all(feature = "rsa", feature = "getrandom"))]
     if let Some(key) = rsa::load(&key_der, _random) {
-      return Ok(Arc::new(key));
+      return Ok(Box::new(key));
     }
     #[cfg(any(
       feature = "ed25519",
@@ -71,7 +71,7 @@ impl KeyProvider for Provider {
       #[cfg(feature = "getrandom")]
       _random,
     )? {
-      return Ok(Arc::new(key));
+      return Ok(Box::new(key));
     }
     Err(key_rejected())
   }
@@ -95,9 +95,10 @@ fn signing_failed() -> Error {
 ))]
 mod curve {
   use alloc::{boxed::Box, sync::Arc, vec::Vec};
+  use rustls::Error;
+  use rustls::crypto::SignatureScheme;
+  use rustls::crypto::{Signer, SigningKey};
   use rustls::pki_types::{PrivateKeyDer, SubjectPublicKeyInfoDer};
-  use rustls::sign::{Signer, SigningKey};
-  use rustls::{Error, SignatureAlgorithm, SignatureScheme};
 
   #[cfg(all(feature = "ecdsa-p256", feature = "getrandom"))]
   use rscrypto::EcdsaP256SecretKey;
@@ -194,17 +195,6 @@ mod curve {
     fn public_key(&self) -> Option<SubjectPublicKeyInfoDer<'_>> {
       Some(SubjectPublicKeyInfoDer::from(self.spki.as_slice()))
     }
-
-    fn algorithm(&self) -> SignatureAlgorithm {
-      match self.secret.as_ref() {
-        #[cfg(all(feature = "ecdsa-p256", feature = "getrandom"))]
-        Secret::P256(..) => SignatureAlgorithm::ECDSA,
-        #[cfg(all(feature = "ecdsa-p384", feature = "getrandom"))]
-        Secret::P384(..) => SignatureAlgorithm::ECDSA,
-        #[cfg(feature = "ed25519")]
-        Secret::Ed25519(_) => SignatureAlgorithm::ED25519,
-      }
-    }
   }
 
   #[derive(Debug)]
@@ -245,7 +235,7 @@ mod curve {
   }
 
   impl Signer for Sign {
-    fn sign(&self, message: &[u8]) -> Result<Vec<u8>, Error> {
+    fn sign(self: Box<Self>, message: &[u8]) -> Result<Vec<u8>, Error> {
       match self.secret.as_ref() {
         #[cfg(all(feature = "ecdsa-p256", feature = "getrandom"))]
         Secret::P256(key, random) => sign_p256(key, message, |out| random.fill(out)),
@@ -291,9 +281,10 @@ mod rsa {
   use std::sync::Mutex;
 
   use rscrypto::{RsaPrivateKey, RsaPrivateScratch, RsaPublicKeyPolicy};
+  use rustls::Error;
+  use rustls::crypto::SignatureScheme;
+  use rustls::crypto::{Signer, SigningKey};
   use rustls::pki_types::{PrivateKeyDer, SubjectPublicKeyInfoDer};
-  use rustls::sign::{Signer, SigningKey};
-  use rustls::{Error, SignatureAlgorithm, SignatureScheme};
 
   const SCHEMES: &[SignatureScheme] = &[
     SignatureScheme::RSA_PSS_SHA512,
@@ -343,10 +334,6 @@ mod rsa {
     fn public_key(&self) -> Option<SubjectPublicKeyInfoDer<'_>> {
       Some(SubjectPublicKeyInfoDer::from(self.spki.as_slice()))
     }
-
-    fn algorithm(&self) -> SignatureAlgorithm {
-      SignatureAlgorithm::RSA
-    }
   }
 
   struct Sign {
@@ -387,7 +374,7 @@ mod rsa {
   }
 
   impl Signer for Sign {
-    fn sign(&self, message: &[u8]) -> Result<Vec<u8>, Error> {
+    fn sign(self: Box<Self>, message: &[u8]) -> Result<Vec<u8>, Error> {
       self.sign_with_random_fill(message, |out| self.random.fill(out))
     }
 
@@ -413,12 +400,13 @@ mod rsa {
     });
     assert!(matches!(result, Err(Error::General(message)) if message == "TLS signing failed"));
     // A failed entropy request must leave reusable scratch, not a partial signature.
-    let signature = signer.sign(b"message").expect("sign after entropy failure");
-    let peer = rustls::crypto::ring::default_provider().signature_verification_algorithms;
+    let scheme = signer.scheme;
+    let signature = Box::new(signer).sign(b"message").expect("sign after entropy failure");
+    let peer = rustls_ring::DEFAULT_TLS13_PROVIDER.signature_verification_algorithms;
     let verifier = peer
-      .mapping
+      .mapping()
       .iter()
-      .find(|(scheme, _)| *scheme == signer.scheme)
+      .find(|(candidate, _)| *candidate == scheme)
       .expect("RSA-PSS verifier")
       .1[0];
     verifier

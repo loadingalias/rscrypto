@@ -262,7 +262,10 @@ address-token root. Each token derives an `Aes256Gcm` context through a clearing
 `SecretBytes<32>` scratch. A derived context seals once; Quinn supplies the fresh
 128-bit derivation nonce. Incoming token buffers belong to Quinn.
 
-Sessions own rustls QUIC connections and the next traffic-secret generation.
+Sessions own rustls QUIC connections, queued handshake/key-change events, and
+next-generation traffic secrets. At handshake completion, each session takes
+rustls's `KeyingMaterialExporter` owner to support Quinn's repeated exporter calls.
+The move transfers ownership without exporting the secret bytes.
 Packet and header wrappers own rustls trait objects backed by the same clearing
 rscrypto contexts as the symmetric adapters. Cloning endpoint or server
 configuration extends the corresponding root-key lifetime. Exporter buffers

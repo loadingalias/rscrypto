@@ -126,11 +126,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
   let runtime = Arc::new(quinn::TokioRuntime);
   match args[0].as_str() {
     "client" => {
-      let mut tls = rustls::ClientConfig::builder_with_provider(provider)
-        .with_protocol_versions(&[&rustls::version::TLS13])?
+      let mut tls = rustls::ClientConfig::builder(provider)
         .with_root_certificates(roots)
         .with_client_auth_cert(certificates, key)?;
-      tls.alpn_protocols = vec![b"provider-test".to_vec()];
+      tls.alpn_protocols = vec![b"provider-test".to_vec().into()];
       tls.enable_early_data = early;
       let mut endpoint = quinn::Endpoint::new(
         adapter::endpoint_config()?,
@@ -165,19 +164,17 @@ async fn run() -> Result<(), Box<dyn Error>> {
       endpoint.wait_idle().await;
     }
     "server" => {
-      let verifier =
-        rustls::server::WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider.clone()).build()?;
-      let mut tls = rustls::ServerConfig::builder_with_provider(provider)
-        .with_protocol_versions(&[&rustls::version::TLS13])?
-        .with_client_cert_verifier(verifier)
+      let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(roots), &provider).build()?;
+      let mut tls = rustls::ServerConfig::builder(provider)
+        .with_client_cert_verifier(Arc::new(verifier))
         .with_single_cert(certificates, key)?;
-      tls.alpn_protocols = vec![b"provider-test".to_vec()];
+      tls.alpn_protocols = vec![b"provider-test".to_vec().into()];
       // Rustls requires stateful storage for 0-RTT anti-replay. Ordinary cases
       // exercise this provider's stateless ticket encryption instead.
       if early {
         tls.max_early_data_size = u32::MAX;
       } else {
-        tls.ticketer = rscrypto_rustls::ticket::ticketer()?;
+        tls.ticketer = Some(rscrypto_rustls::ticket::ticketer()?);
       }
       let endpoint_config = adapter::endpoint_config()?;
       let server_config = adapter::server_config(tls)?;

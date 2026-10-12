@@ -11,7 +11,7 @@ use rscrypto::aead::{Nonce96, expert::AeadWithNonce};
 use rscrypto::{Aes256Gcm, Aes256GcmKey, Aes256GcmTag, SecretBytes, SecretVec};
 use rustls::TicketRotator;
 use rustls::crypto::GetRandomFailed;
-use rustls::server::ProducesTickets;
+use rustls::crypto::TicketProducer;
 
 const ROTATION_SECONDS: u32 = 6 * 60 * 60;
 const MAX_PLAINTEXT: usize = 16_384;
@@ -22,9 +22,9 @@ const TAG_LEN: usize = 16;
 const OVERHEAD: usize = NONCE_LEN + TAG_LEN;
 const AAD: &[u8] = b"rscrypto-rustls ticket v1";
 
-/// Create a stateless ticketer with six-hour key rotation and a twelve-hour lifetime.
+/// Create a stateless ticketer with six-hour rotation and advertised ticket lifetime.
 ///
-/// Assign the returned shared owner to `ServerConfig::ticketer`. Keep it across
+/// Assign the returned shared owner to `ServerConfig::ticketer` as `Some(owner)`. Keep it across
 /// connections that should share resumption state. Each key encrypts at most
 /// 2^24 tickets, using unique counter nonces; exhaustion disables new tickets
 /// until rotation. Plaintext tickets are bounded to 16 KiB.
@@ -37,13 +37,17 @@ const AAD: &[u8] = b"rscrypto-rustls ticket v1";
 ///
 /// Returns an error if initial OS entropy acquisition fails. Later rotation or
 /// encryption failure suppresses ticket issuance without failing the connection.
-pub fn ticketer() -> Result<Arc<dyn ProducesTickets>, rustls::Error> {
-  Ok(Arc::new(TicketRotator::new(ROTATION_SECONDS, generate)?))
+pub fn ticketer() -> Result<Arc<dyn TicketProducer>, rustls::Error> {
+  Ok(Arc::new(TicketRotator::new(
+    Duration::from_secs(u64::from(ROTATION_SECONDS)),
+    generate,
+  )?))
 }
 
-fn generate() -> Result<Box<dyn ProducesTickets>, GetRandomFailed> {
+fn generate() -> Result<Box<dyn TicketProducer>, rustls::Error> {
   TicketKey::generate_with(|out| crate::random::SECURE_RANDOM.fill(out))
-    .map(|key| Box::new(key) as Box<dyn ProducesTickets>)
+    .map(|key| Box::new(key) as Box<dyn TicketProducer>)
+    .map_err(Into::into)
 }
 
 struct TicketKey {
@@ -69,8 +73,8 @@ impl TicketKey {
   }
 
   fn with_cipher<R>(&self, now: Instant, use_key: impl FnOnce(&Aes256Gcm) -> Option<R>) -> Option<R> {
-    // TicketRotator advances one generation per roll, even after a long idle
-    // period. Enforce a monotonic key lifetime before either encryption or open.
+    // Keep this key's twelve-hour bound independent of the rotator's retained
+    // generations. An expired key releases its cipher when called.
     if now.checked_duration_since(self.created_at)? >= Duration::from_secs(u64::from(ROTATION_SECONDS) * 2) {
       self.cipher.write().ok()?.take();
       return None;
@@ -86,13 +90,9 @@ impl fmt::Debug for TicketKey {
   }
 }
 
-impl ProducesTickets for TicketKey {
-  fn enabled(&self) -> bool {
-    true
-  }
-
-  fn lifetime(&self) -> u32 {
-    ROTATION_SECONDS * 2
+impl TicketProducer for TicketKey {
+  fn lifetime(&self) -> Duration {
+    Duration::from_secs(u64::from(ROTATION_SECONDS) * 2)
   }
 
   fn encrypt(&self, plain: &[u8]) -> Option<Vec<u8>> {
@@ -145,7 +145,7 @@ impl TicketKey {
         key.decrypt_in_place(&nonce, AAD, out, &tag)
       })
       .ok()?;
-      // ProducesTickets transfers plaintext ownership to rustls; it cannot borrow.
+      // TicketProducer transfers plaintext ownership to rustls; it cannot borrow.
       Some(plain.into_unprotected_vec())
     })
   }
@@ -159,9 +159,7 @@ mod tests {
   #[test]
   fn ticket_format_matches_independent_aes_and_rejects_every_corruption_class() {
     let key = TicketKey::from_key(&Aes256GcmKey::from_bytes([0x42; 32]));
-    let suite = rustls::crypto::aws_lc_rs::cipher_suite::TLS13_AES_256_GCM_SHA384
-      .tls13()
-      .expect("TLS 1.3");
+    let suite = rustls_aws_lc_rs::cipher_suite::TLS13_AES_256_GCM_SHA384;
     for len in [0, 1, 16, MAX_PLAINTEXT] {
       let plain = vec![0x5a; len];
       let ticket = key.encrypt(&plain).expect("ticket");
@@ -170,7 +168,7 @@ mod tests {
         Iv::from(<[u8; NONCE_LEN]>::try_from(&ticket[..NONCE_LEN]).expect("nonce")),
       );
       let mut expected = plain.clone();
-      let tag = peer.encrypt_in_place(0, AAD, &mut expected).expect("peer seal");
+      let tag = peer.encrypt_in_place(0, AAD, &mut expected, None).expect("peer seal");
       expected.extend_from_slice(tag.as_ref());
       assert_eq!(&ticket[NONCE_LEN..], expected);
       assert_eq!(key.decrypt(&ticket).expect("open"), plain);
@@ -238,28 +236,18 @@ mod tests {
   #[ignore = "bounded wall-clock rotation evidence; run explicitly"]
   fn rotator_accepts_previous_key_then_erases_it() {
     use core::time::Duration;
-    use rustls::pki_types::UnixTime;
-
-    fn advance_past(second: u64) {
-      let deadline = std::time::Instant::now() + Duration::from_secs(5);
-      while UnixTime::now().as_secs() <= second {
-        assert!(std::time::Instant::now() < deadline, "wall clock did not advance");
-        std::thread::sleep(Duration::from_millis(50));
-      }
-    }
-
-    let rotator = Arc::new(TicketRotator::new(1, generate).expect("rotator"));
+    let rotator = Arc::new(TicketRotator::new(Duration::from_secs(1), generate).expect("rotator"));
     let ticket = rotator.encrypt(b"session secret").expect("ticket");
     #[cfg(feature = "default")]
     let (client_config, server_config) = {
       use crate::tests::tls::{self, Credential};
       let (client, mut server) = tls::configs(
-        rustls::crypto::ring::default_provider(),
+        rustls_ring::DEFAULT_TLS13_PROVIDER,
         crate::default_provider(),
         Credential::P256,
         false,
       );
-      server.ticketer = rotator.clone();
+      server.ticketer = Some(rotator.clone());
       server.session_storage = Arc::new(rustls::server::NoServerSessionStorage {});
       let configs = (Arc::new(client), Arc::new(server));
       let (mut client, mut server) = tls::connections_from_configs(configs.0.clone(), configs.1.clone());
@@ -267,7 +255,7 @@ mod tests {
       assert_eq!(client.handshake_kind(), Some(rustls::HandshakeKind::Full));
       configs
     };
-    advance_past(UnixTime::now().as_secs() + 1);
+    std::thread::sleep(Duration::from_millis(1100));
     assert_eq!(rotator.decrypt(&ticket).expect("previous key"), b"session secret");
     #[cfg(feature = "default")]
     {
@@ -280,7 +268,7 @@ mod tests {
     }
     let next = rotator.encrypt(b"session secret").expect("rotated key");
     assert_ne!(next, ticket);
-    advance_past(UnixTime::now().as_secs() + 1);
+    std::thread::sleep(Duration::from_millis(1100));
     assert!(rotator.decrypt(&ticket).is_none());
     assert_eq!(rotator.decrypt(&next).expect("new previous key"), b"session secret");
   }
@@ -312,15 +300,16 @@ mod tests {
       }
     }
     let clock = Arc::new(Clock(AtomicU64::new(1_792_627_200)));
-    let (mut client, mut server) = tls::configs(
-      rustls::crypto::ring::default_provider(),
+    let (client, mut server) = tls::configs_with_time(
+      rustls_ring::DEFAULT_TLS13_PROVIDER,
       crate::default_provider(),
       Credential::P256,
       false,
+      clock.clone(),
     );
-    client.time_provider = clock.clone();
-    server.time_provider = clock.clone();
-    server.ticketer = ticketer().expect("production ticketer");
+    let tickets = ticketer().expect("production ticketer");
+    assert_eq!(tickets.lifetime(), Duration::from_secs(u64::from(ROTATION_SECONDS)));
+    server.ticketer = Some(tickets);
     server.session_storage = Arc::new(rustls::server::NoServerSessionStorage {});
     let client = Arc::new(client);
     let mut server = Arc::new(server);
@@ -340,7 +329,7 @@ mod tests {
     drop((expired_client, expired_server));
 
     // A restarted server cannot open tickets made with the old process key.
-    Arc::make_mut(&mut server).ticketer = ticketer().expect("replacement ticketer");
+    Arc::make_mut(&mut server).ticketer = Some(ticketer().expect("replacement ticketer"));
     let (mut client, mut server) = tls::connections_from_configs(client, server);
     tls::drive(&mut client, &mut server).expect("unknown key falls back");
     assert_eq!(client.handshake_kind(), Some(HandshakeKind::Full));
