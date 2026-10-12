@@ -184,12 +184,14 @@ const P256_B: Uint<4> = Uint([
   0xb3eb_bd55_7698_86bc,
   0x5ac6_35d8_aa3a_93e7,
 ]);
+#[cfg(any(test, all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256")))]
 const P256_GX: Uint<4> = Uint([
   0xf4a1_3945_d898_c296,
   0x7703_7d81_2deb_33a0,
   0xf8bc_e6e5_63a4_40f2,
   0x6b17_d1f2_e12c_4247,
 ]);
+#[cfg(test)]
 const P256_GY: Uint<4> = Uint([
   0xcbb6_4068_37bf_51f5,
   0x2bce_3357_6b31_5ece,
@@ -254,6 +256,7 @@ const P384_B: Uint<6> = Uint([
   0x988e_056b_e3f8_2d19,
   0xb331_2fa7_e23e_e7e4,
 ]);
+#[cfg(any(test, all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384")))]
 const P384_GX: Uint<6> = Uint([
   0x3a54_5e38_7276_0ab7,
   0x5502_f25d_bf55_296c,
@@ -262,6 +265,7 @@ const P384_GX: Uint<6> = Uint([
   0x8eb1_c71e_f320_ad74,
   0xaa87_ca22_be8b_0537,
 ]);
+#[cfg(test)]
 const P384_GY: Uint<6> = Uint([
   0x7a43_1d7c_90ea_0e5f,
   0x0a60_b1ce_1d7e_819d,
@@ -270,465 +274,6 @@ const P384_GY: Uint<6> = Uint([
   0x5d9e_98bf_9292_dc29,
   0x3617_de4a_9626_2c6f,
 ]);
-
-// Fixed generator comb-table coordinates are stored in Montgomery form so
-// verification does not rebuild them through field multiplications.
-const P256_GENERATOR_COMB_X: [Uint<4>; COMB_TABLE_SIZE] = [
-  Uint([
-    0x79e7_30d4_18a9_143c,
-    0x75ba_95fc_5fed_b601,
-    0x79fb_732b_7762_2510,
-    0x1890_5f76_a537_55c6,
-  ]),
-  Uint([
-    0x79e7_30d4_18a9_143c,
-    0x75ba_95fc_5fed_b601,
-    0x79fb_732b_7762_2510,
-    0x1890_5f76_a537_55c6,
-  ]),
-  Uint([
-    0x4f92_2fc5_16a0_d2bb,
-    0x0d5c_c16c_1a62_3499,
-    0x9241_cf3a_57c6_2c8b,
-    0x2f5e_6961_fd1b_667f,
-  ]),
-  Uint([
-    0x9e56_6847_e137_bbbc,
-    0xe434_469e_8a6a_0bec,
-    0xb1c4_2761_79d7_3463,
-    0x5abe_0285_133d_0015,
-  ]),
-  Uint([
-    0x62a8_c244_bfe2_0925,
-    0x91c1_9ac3_8fdc_e867,
-    0x5a96_a5d5_dd38_7063,
-    0x61d5_87d4_21d3_24f6,
-  ]),
-  Uint([
-    0x1c89_1f2b_2cb1_9ffd,
-    0x01ba_8d5b_b192_3c23,
-    0xb6d0_3d67_8ac5_ca8e,
-    0x586e_b04c_1f13_bedc,
-  ]),
-  Uint([
-    0x6257_7734_d2b5_33d5,
-    0x673b_8af6_a1bd_ddc0,
-    0x577e_7c9a_a79e_c293,
-    0xbb6d_e651_c3b2_66b1,
-  ]),
-  Uint([
-    0xbd6a_38e1_1ae5_aa1c,
-    0xb8b7_652b_49e7_3658,
-    0x0b13_0014_ee5f_87ed,
-    0x9d0f_27b2_aeeb_ffcd,
-  ]),
-  Uint([
-    0x56f8_410e_f4f8_b16a,
-    0x9724_1afe_c47b_266a,
-    0x0a40_6b8e_6d9c_87c1,
-    0x803f_3e02_cd42_ab1b,
-  ]),
-  Uint([
-    0x846a_56f2_c379_ab34,
-    0xa8ee_068b_841d_f8d1,
-    0x2031_4459_176c_68ef,
-    0xf1af_32d5_915f_1f30,
-  ]),
-  Uint([
-    0xed93_e225_d5be_5a2b,
-    0x6fe7_9983_5934_f3c6,
-    0x4314_0926_2262_6ffc,
-    0x50bb_b4d9_7990_216a,
-  ]),
-  Uint([
-    0xfc68_b5c5_9b39_1593,
-    0xc385_f5a2_5982_70fc,
-    0x7144_f3aa_d19a_dcbb,
-    0xdd55_8999_83fb_ae0c,
-  ]),
-  Uint([
-    0x5fe1_4bfe_80ec_21fe,
-    0xf6ce_116a_c255_be82,
-    0x98bc_5a07_2f4a_5d67,
-    0xfad2_7148_db7e_63af,
-  ]),
-  Uint([
-    0x1e9e_cc49_a56c_0dd7,
-    0xa5cf_fcd8_4608_6c74,
-    0x8f7a_1408_f505_aece,
-    0xb37b_85c0_bef0_c47e,
-  ]),
-  Uint([
-    0x0a1c_7294_95c8_f8be,
-    0x2961_c480_3bf3_62bf,
-    0x9e41_8403_df63_d4ac,
-    0xc109_f9cb_91ec_e900,
-  ]),
-  Uint([
-    0x0d5a_e356_4291_3074,
-    0x5549_1b27_48a5_42b1,
-    0x469c_a665_b310_732a,
-    0x2959_1d52_5f1a_4cc1,
-  ]),
-];
-const P256_GENERATOR_COMB_Y: [Uint<4>; COMB_TABLE_SIZE] = [
-  Uint([
-    0xddf2_5357_ce95_560a,
-    0x8b4a_b8e4_ba19_e45c,
-    0xd2e8_8688_dd21_f325,
-    0x8571_ff18_2588_5d85,
-  ]),
-  Uint([
-    0xddf2_5357_ce95_560a,
-    0x8b4a_b8e4_ba19_e45c,
-    0xd2e8_8688_dd21_f325,
-    0x8571_ff18_2588_5d85,
-  ]),
-  Uint([
-    0x5c15_c70b_f5a0_1797,
-    0x3d20_b44d_6095_6192,
-    0x0491_1b37_071f_db52,
-    0xf648_f916_8d6f_0f7b,
-  ]),
-  Uint([
-    0x92aa_837c_c04c_7dab,
-    0x573d_9f4c_4326_0c07,
-    0x0c93_1562_78e6_cc37,
-    0x94bb_725b_6b6f_7383,
-  ]),
-  Uint([
-    0xe876_73a2_a371_73ea,
-    0x2384_8008_5377_8b65,
-    0x10f8_441e_05ba_b43e,
-    0xfa11_fe12_4621_efbe,
-  ]),
-  Uint([
-    0x0c35_c6e5_27e8_ed09,
-    0x1e81_a33c_1819_ede2,
-    0x278f_d6c0_56c6_52fa,
-    0x19d5_ac08_7086_4f11,
-  ]),
-  Uint([
-    0xe7e9_303a_b652_59b3,
-    0xd6a0_afd3_d03a_7480,
-    0xc5ac_83d1_9b3c_fc27,
-    0x60b4_619a_5d18_b99b,
-  ]),
-  Uint([
-    0xca92_4631_7a73_0a55,
-    0x9c95_5b2f_ddbb_c83a,
-    0x07c1_dfe0_ac01_9a71,
-    0x244a_566d_356e_c48d,
-  ]),
-  Uint([
-    0x7f03_09a8_04db_ec69,
-    0xa83b_85f7_3bba_d05f,
-    0xc609_7273_ad8e_197f,
-    0xc097_440e_5067_adc1,
-  ]),
-  Uint([
-    0x99c3_7531_5d75_bd50,
-    0x837c_ffba_f72f_67bc,
-    0x0613_a418_48d7_723f,
-    0x23d0_f130_e2d4_1c8b,
-  ]),
-  Uint([
-    0x3781_91c6_e57e_c63e,
-    0x6542_2c40_181d_cdb2,
-    0x41a8_099b_0236_e0f6,
-    0x2b10_0118_01fe_49c3,
-  ]),
-  Uint([
-    0x93b8_8b8e_74b8_2ff4,
-    0xd2e0_3c40_71e7_34c9,
-    0x9a7a_9eaf_43c0_322a,
-    0xe6e4_c551_149d_6041,
-  ]),
-  Uint([
-    0x90c0_b6ac_29ab_05b3,
-    0x37a9_a83c_4e25_1ae6,
-    0x0a7d_c875_c2aa_de7d,
-    0x7738_7de3_9f0e_1a84,
-  ]),
-  Uint([
-    0x3596_b6e4_cc0e_6a8f,
-    0xfd6d_4bbf_6b38_8f23,
-    0xaba4_53fa_c39c_ef4e,
-    0x9c13_5ac8_f9f6_28d5,
-  ]),
-  Uint([
-    0xc2d0_95d0_5894_5705,
-    0xb908_3d96_ddeb_85c0,
-    0x8469_2b8d_7a40_449b,
-    0x9bc3_344f_2eee_1ee1,
-  ]),
-  Uint([
-    0xe76f_5b6b_b84f_983f,
-    0xbe7e_ef41_9f5f_84e1,
-    0x1200_d496_80ba_a189,
-    0x6376_551f_18ef_332c,
-  ]),
-];
-const P384_GENERATOR_COMB_X: [Uint<6>; COMB_TABLE_SIZE] = [
-  Uint([
-    0x3dd0_7566_49c0_b528,
-    0x20e3_78e2_a0d6_ce38,
-    0x879c_3afc_541b_4d6e,
-    0x6454_8684_59a3_0eff,
-    0x812f_f723_614e_de2b,
-    0x4d3a_adc2_299e_1513,
-  ]),
-  Uint([
-    0x3dd0_7566_49c0_b528,
-    0x20e3_78e2_a0d6_ce38,
-    0x879c_3afc_541b_4d6e,
-    0x6454_8684_59a3_0eff,
-    0x812f_f723_614e_de2b,
-    0x4d3a_adc2_299e_1513,
-  ]),
-  Uint([
-    0x2448_0c57_f26f_eef9,
-    0xc31a_2694_3a0e_1240,
-    0x7350_02c3_273e_2bc7,
-    0x8c42_e9c5_3ef1_ed4c,
-    0x028b_abf6_7f49_48e8,
-    0x6a50_2f43_8a97_8632,
-  ]),
-  Uint([
-    0x1142_6e2e_e349_ddd0,
-    0x9f11_7ef9_9b2f_c250,
-    0xff36_b480_ec01_74a6,
-    0x4f4b_de76_1845_8466,
-    0x2f2e_db6d_0580_6049,
-    0x8adc_75d1_19df_ca92,
-  ]),
-  Uint([
-    0x3782_05de_2f9f_be67,
-    0xc4af_cb83_7f72_8e44,
-    0xdbce_c06c_682e_00f1,
-    0xf2a1_45c3_114d_5423,
-    0xa01d_9874_7a52_463e,
-    0xfc09_35b1_7d71_7b0a,
-  ]),
-  Uint([
-    0x73ad_e4da_2341_c342,
-    0xdd32_6e54_ea70_4422,
-    0x336c_7d98_3741_cef3,
-    0x1eaf_a00d_59e6_1549,
-    0xcd3e_d892_bd9a_3efd,
-    0x03fa_f26c_c5c6_c7e4,
-  ]),
-  Uint([
-    0xfab0_8607_3f3b_236f,
-    0x19e9_d41d_81e2_21da,
-    0xf3f6_571e_3927_b428,
-    0x4348_a933_7550_f1f6,
-    0x7167_b996_a85e_62f0,
-    0x62d4_3759_7f54_52bf,
-  ]),
-  Uint([
-    0x90b2_e5b3_3062_e8af,
-    0xa857_2375_e8a3_d369,
-    0x3fe1_b00b_201d_b7b1,
-    0xe926_def0_ee65_1aa2,
-    0x6542_c9be_b9b1_0ad7,
-    0x098e_309b_a2fc_be74,
-  ]),
-  Uint([
-    0x070d_34e1_1697_3cf4,
-    0x20ae_e08b_7e4f_34f7,
-    0x269a_f9b9_5eb8_ad29,
-    0xdde0_a036_a6a4_5dda,
-    0xa18b_528e_63df_41e0,
-    0x03cc_71b2_a260_df2a,
-  ]),
-  Uint([
-    0xba14_64b4_01ab_5245,
-    0x9b8d_0b6d_c48d_93ff,
-    0x9398_67dc_93ad_272c,
-    0xbebe_085e_ae9f_dc77,
-    0x73ae_5103_894e_a8bd,
-    0x740f_c89a_39ac_22e1,
-  ]),
-  Uint([
-    0x03cf_2922_0062_3f3b,
-    0x095c_7111_5f29_ebff,
-    0x42d7_2247_80aa_6823,
-    0x044c_7ba1_7458_c0b0,
-    0xca62_f7ef_0959_ec20,
-    0x40ae_2ab7_f8ca_929f,
-  ]),
-  Uint([
-    0x744d_1400_8435_af04,
-    0x5f25_5b1d_fec1_92da,
-    0x1f17_dc12_336d_c542,
-    0x5c90_c2a7_636a_68a8,
-    0x960c_9eb7_7704_ca1e,
-    0x9de8_cf1e_6fb3_d65a,
-  ]),
-  Uint([
-    0x867d_b639_9868_3186,
-    0xfb5c_f424_ddcc_4ea9,
-    0xcc9a_7ffe_d4f0_e7bd,
-    0x7c57_f71c_7a77_9f7e,
-    0x9077_4079_d6b2_5ef2,
-    0x90ea_e903_b408_1680,
-  ]),
-  Uint([
-    0xfbd8_38f9_e054_0015,
-    0x2c32_3946_c390_77dc,
-    0x8b1f_b9e6_ad61_9124,
-    0x9612_440c_0ca6_2ea8,
-    0x9ad9_b52c_2dbe_00ff,
-    0xf52a_baa1_ae19_7643,
-  ]),
-  Uint([
-    0xcd96_866d_b8a9_e8c9,
-    0xa119_63b8_5bb8_091e,
-    0xc7f9_0d53_045b_3cd2,
-    0x755a_72b5_80f3_6504,
-    0x46f8_b399_21d3_751c,
-    0x4bff_dc91_53c1_93de,
-  ]),
-  Uint([
-    0xd71e_4aab_6328_e33f,
-    0x5486_782b_af81_36d1,
-    0x07a4_995f_86d5_7231,
-    0xf1f0_a5bd_1651_a968,
-    0xa5dc_5b24_7680_3b6d,
-    0x5c58_7cbc_42dd_a935,
-  ]),
-];
-const P384_GENERATOR_COMB_Y: [Uint<6>; COMB_TABLE_SIZE] = [
-  Uint([
-    0x2304_3dad_4b03_a4fe,
-    0xa1bf_a8bf_7bb4_a9ac,
-    0x8bad_e756_2e83_b050,
-    0xc6c3_5219_68f4_ffd9,
-    0xdd80_0226_3969_a840,
-    0x2b78_abc2_5a15_c5e9,
-  ]),
-  Uint([
-    0x2304_3dad_4b03_a4fe,
-    0xa1bf_a8bf_7bb4_a9ac,
-    0x8bad_e756_2e83_b050,
-    0xc6c3_5219_68f4_ffd9,
-    0xdd80_0226_3969_a840,
-    0x2b78_abc2_5a15_c5e9,
-  ]),
-  Uint([
-    0xf5f1_3a46_b745_36fe,
-    0x1d21_8bab_d8a9_f0eb,
-    0x30f3_6bcc_3723_2768,
-    0xc531_7b31_576e_8c18,
-    0xef1d_57a6_9bbc_b766,
-    0x917c_4930_b3e3_d4dc,
-  ]),
-  Uint([
-    0xa619_d097_b7d5_a7ce,
-    0x8742_75e5_a344_11e9,
-    0x5403_e047_0da4_b4ef,
-    0x2eba_afd9_7790_1d8f,
-    0x5e63_ebce_a747_170f,
-    0x12a3_6944_7f9d_8036,
-  ]),
-  Uint([
-    0x9653_bc4f_d4d0_1f95,
-    0x9aa8_3ea8_9560_ad34,
-    0xf779_43dc_af8e_3f3f,
-    0x7077_4a10_e86f_e16e,
-    0x6b62_e6f1_bf9f_fdcf,
-    0x8a72_f39e_5887_45c9,
-  ]),
-  Uint([
-    0x087e_2fcf_3045_f8ac,
-    0x14a6_5532_174f_1e73,
-    0x2cf8_4f28_fe0a_f9a7,
-    0xddfd_7a84_2cdc_935b,
-    0x4c0f_117b_6929_c895,
-    0x3565_72d6_4c8b_cfcc,
-  ]),
-  Uint([
-    0xd85f_eb9e_f295_5926,
-    0x440a_561f_6df7_8353,
-    0x3896_68ec_9ca3_6b59,
-    0x052b_f1a1_a22d_a016,
-    0xbdfb_ff72_f609_3254,
-    0x94e5_0f28_e222_09f3,
-  ]),
-  Uint([
-    0x779d_eeb3_fff1_d63f,
-    0x23d0_e80a_20bf_d374,
-    0x8452_bb3b_8768_f797,
-    0xcf75_bb4d_1f95_2856,
-    0x8fe6_b400_29ea_3faa,
-    0x12bd_3e40_8137_3a53,
-  ]),
-  Uint([
-    0x24a6_770a_a06b_1dd7,
-    0x5bfa_9c11_9d26_75d3,
-    0x73c1_e2a1_9684_4432,
-    0x3660_558d_131a_6cf0,
-    0xb028_9c83_2ee7_9454,
-    0xa6ae_fb01_c6d8_ddcd,
-  ]),
-  Uint([
-    0x5e28_b0a3_28e2_3b23,
-    0x2352_722e_e131_04d0,
-    0xf466_7a18_b0a2_640d,
-    0xac74_a72e_49bb_37c3,
-    0x79f7_34f0_e81e_183a,
-    0xbffe_5b6c_3fd9_c0eb,
-  ]),
-  Uint([
-    0xb8c5_377a_a927_b102,
-    0x398a_86a0_dc03_1771,
-    0x0490_8f9d_c216_a406,
-    0xb423_a73a_918d_3300,
-    0x634b_0ff1_e0b9_4739,
-    0xe29d_e725_2d69_f697,
-  ]),
-  Uint([
-    0xc60f_ee0d_511d_3d06,
-    0x466e_2313_f9eb_52c7,
-    0x743c_0f5f_206b_0914,
-    0x42f5_5bac_2191_aa4d,
-    0xcefc_7c8f_ffeb_dbc2,
-    0xd4fa_6081_e6e8_ed1c,
-  ]),
-  Uint([
-    0xdf2a_ae5e_0ee1_fceb,
-    0x3ff1_da24_e86c_1a1f,
-    0x80f5_87d6_ca19_3edf,
-    0xa569_5523_dc9b_9d6a,
-    0x7b84_0900_8592_0303,
-    0x1efa_4dfc_ba6d_bdef,
-  ]),
-  Uint([
-    0xd0e8_9894_2cac_32ad,
-    0xdfb7_9e42_62a9_8f91,
-    0x6545_2ecf_276f_55cb,
-    0xdb1a_c0d2_7ad2_3e12,
-    0xf68c_5f6a_de49_86f0,
-    0x389a_c37b_82ce_327d,
-  ]),
-  Uint([
-    0xcd15_c049_b895_54e7,
-    0x353c_6754_f7a2_6be6,
-    0x7960_2370_bd41_d970,
-    0xde16_470b_12b1_76c0,
-    0x56ba_1175_40c8_809d,
-    0xe2db_35c3_e435_fb1e,
-  ]),
-  Uint([
-    0x2b6c_db32_bae8_b4c0,
-    0x66d1_598b_b133_1138,
-    0x4a23_b2d2_5d7e_9614,
-    0x93e4_02a6_74a8_c05d,
-    0x45ac_94e6_da7c_e82e,
-    0xeb9f_8281_e463_d465,
-  ]),
-];
 
 static P256_FIELD_MODULUS: Modulus<4> = Modulus {
   value: P256_FIELD,
@@ -782,10 +327,6 @@ static P256: Curve<4> = Curve {
   field_inverse_exponent: P256_FIELD_MINUS_TWO,
   half_order: P256_ORDER_HALF,
   b: P256_B,
-  generator_x: P256_GX,
-  generator_y: P256_GY,
-  generator_comb_x: P256_GENERATOR_COMB_X,
-  generator_comb_y: P256_GENERATOR_COMB_Y,
   signing_comb_width: P256_SIGNING_COMB_WIDTH,
   signing_comb_rows: P256_SIGNING_COMB_ROWS,
   signing_generator_comb_x: &P256_SIGNING_GENERATOR_COMB_X,
@@ -799,10 +340,6 @@ static P384: Curve<6> = Curve {
   field_inverse_exponent: P384_FIELD_MINUS_TWO,
   half_order: P384_ORDER_HALF,
   b: P384_B,
-  generator_x: P384_GX,
-  generator_y: P384_GY,
-  generator_comb_x: P384_GENERATOR_COMB_X,
-  generator_comb_y: P384_GENERATOR_COMB_Y,
   signing_comb_width: P384_SIGNING_COMB_WIDTH,
   signing_comb_rows: P384_SIGNING_COMB_ROWS,
   signing_generator_comb_x: &P384_SIGNING_GENERATOR_COMB_X,
@@ -2922,38 +2459,10 @@ struct Curve<const L: usize> {
   field_inverse_exponent: Uint<L>,
   half_order: Uint<L>,
   b: Uint<L>,
-  generator_x: Uint<L>,
-  generator_y: Uint<L>,
-  generator_comb_x: [Uint<L>; COMB_TABLE_SIZE],
-  generator_comb_y: [Uint<L>; COMB_TABLE_SIZE],
   signing_comb_width: usize,
   signing_comb_rows: usize,
   signing_generator_comb_x: &'static [GeneratorTableUint<L>],
   signing_generator_comb_y: &'static [GeneratorTableUint<L>],
-}
-
-impl<const L: usize> Curve<L> {
-  fn generator(&self) -> Affine<L> {
-    Affine {
-      x: FieldElement::from_uint(self.generator_x, self.field_modulus),
-      y: FieldElement::from_uint(self.generator_y, self.field_modulus),
-    }
-  }
-
-  fn generator_comb_table(&self) -> [Affine<L>; COMB_TABLE_SIZE] {
-    let mut table = [self.generator(); COMB_TABLE_SIZE];
-    for ((point, &x), &y) in table
-      .iter_mut()
-      .zip(self.generator_comb_x.iter())
-      .zip(self.generator_comb_y.iter())
-    {
-      *point = Affine {
-        x: FieldElement::from_montgomery(x, self.field_modulus),
-        y: FieldElement::from_montgomery(y, self.field_modulus),
-      };
-    }
-    table
-  }
 }
 
 fn verify_digest<const L: usize>(
@@ -4691,35 +4200,50 @@ fn projective_x_matches_scalar<const L: usize>(point: Jacobian<L>, scalar: Uint<
 
 fn scalar_mul_two<const L: usize>(
   curve: &Curve<L>,
-  lhs_scalar: Uint<L>,
-  rhs_scalar: Uint<L>,
-  rhs_table: &[Affine<L>; COMB_TABLE_SIZE],
+  generator_scalar: Uint<L>,
+  point_scalar: Uint<L>,
+  point_table: &[Affine<L>; COMB_TABLE_SIZE],
 ) -> Jacobian<L> {
-  let lhs_table = curve.generator_comb_table();
   let rows = comb_rows::<L>();
+  let generator_rows = curve.signing_comb_rows;
   let mut acc = Jacobian::infinity(curve.field_modulus);
 
-  for i in (0..rows).rev() {
+  for row in (0..rows).rev() {
     acc = acc.double();
-    let lhs_digit = comb_digit(lhs_scalar, i, rows);
-    if lhs_digit != 0 {
-      acc = acc.add_mixed(lhs_table[lhs_digit]);
+    // The wider fixed-base signing comb has fewer rows. Adding its digit at
+    // the same row lets the remaining doublings scale it by 2^row, as signing
+    // does, so the generator term needs fewer additions and no extra doublings.
+    if row < generator_rows {
+      let digit = comb_digit(generator_scalar, row, generator_rows, curve.signing_comb_width);
+      if digit != 0 {
+        acc = acc.add_mixed(signing_generator_affine(curve, digit));
+      }
     }
-    let rhs_digit = comb_digit(rhs_scalar, i, rows);
-    if rhs_digit != 0 {
-      acc = acc.add_mixed(rhs_table[rhs_digit]);
+    let digit = comb_digit(point_scalar, row, rows, COMB_WIDTH);
+    if digit != 0 {
+      acc = acc.add_mixed(point_table[digit]);
     }
   }
   acc
+}
+
+const _: () = assert!(P256_SIGNING_COMB_ROWS <= comb_rows::<4>() && P384_SIGNING_COMB_ROWS <= comb_rows::<6>());
+
+/// Read the fixed-base signing-comb entry for a public digit.
+fn signing_generator_affine<const L: usize>(curve: &Curve<L>, digit: usize) -> Affine<L> {
+  Affine {
+    x: FieldElement::from_montgomery(Uint(curve.signing_generator_comb_x[digit].0), curve.field_modulus),
+    y: FieldElement::from_montgomery(Uint(curve.signing_generator_comb_y[digit].0), curve.field_modulus),
+  }
 }
 
 const fn comb_rows<const L: usize>() -> usize {
   L.strict_mul(64).div_ceil(COMB_WIDTH)
 }
 
-fn comb_digit<const L: usize>(scalar: Uint<L>, row: usize, rows: usize) -> usize {
+fn comb_digit<const L: usize>(scalar: Uint<L>, row: usize, rows: usize, width: usize) -> usize {
   let mut digit = 0usize;
-  for column in 0..COMB_WIDTH {
+  for column in 0..width {
     let bit = row.strict_add(column.strict_mul(rows));
     if scalar.bit(bit) {
       digit |= 1usize << column;

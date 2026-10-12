@@ -378,6 +378,10 @@ Construction-only and header-mask groups state their own boundaries next to thei
   The import row exposes setup costs that key reuse can amortize.
   The diagnostic `verify-phase/portable-double-scalar` and `verify-phase/aarch64-asm-double-scalar` rows include portable public-point decoding and result encoding;
   they do not measure cached-key verification alone.
+- ECDSA P-256 and P-384 `verify/rscrypto` reuse a public key and its verification table built outside timing.
+  `verify/rscrypto-import` parses the uncompressed SEC1 key, builds that table, and verifies one signature
+  in each timed call, as a TLS certificate or handshake signature check does.
+  The ring and AWS-LC rows parse the same SEC1 bytes in each timed call.
 - The ChaCha diagnostic group `chacha20-copy-and-xor` restores the message and applies the keystream in the timed closure,
   with a reused allocated buffer.
   Poly1305 reads immutable fixture bytes and returns a tag, without restoring a message buffer.

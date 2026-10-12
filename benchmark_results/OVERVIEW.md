@@ -6,6 +6,38 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-12: ECDSA verification generator term from the signing comb
+
+**Decision:** accepted. ECDSA verification adds `u1·G` from the existing width-7 fixed-base
+signing comb inside the public point's doubling chain, replacing a per-call width-4 comb.
+Expected generator additions fall from about 60 to 37 per P-256 verification and from about
+90 to 48 per P-384 verification. Doublings, key import, validation and failure behavior are
+unchanged.
+
+A frozen plan ran three interleaved rounds (ABBAAB) of `just bench` on AWS Graviton4
+(c8g.4xlarge, Neoverse V2) and AMD Zen 5 (c8a.4xlarge, EPYC 9R45), rustc `5c543b0b8`
+(nightly-2026-09-30, LLVM 23.1.1). The full mutually authenticated P-256 / X25519 /
+AES-128-GCM `rscrypto-rustls` pair fell from 670.56 to 641.55 µs (−4.33%, rounds −3.79% to
+−4.88%) on Graviton4 and from 384.50 to 366.41 µs (−4.70%) on Zen 5, with disjoint 95%
+intervals in every round. Same-run AWS-LC stayed at 372.3 and 224.4 µs. Full P-384 pairs
+improved 6.31% / 4.87%, hybrid P-256 pairs 3.74% / 3.75%, P-256 import plus verify
+5.12% / 5.94%, and prepared-key verify 12.5% / 12.4%. Resumed handshakes and signing
+stayed within ±1.1%. Repeated builds were byte-identical per variant; the candidate
+differed from the baseline only in `src/auth/ecdsa.rs`.
+
+On the macOS AArch64 artifact, only the two `verify_digest` instantiations changed;
+constant-time signing, derivation, field and point functions are unchanged after address
+normalization. Code and data shrink by 4,000 bytes; the `verify_digest` stack frame falls
+from 1,920 to 656 bytes (P-256) and from 2,720 to 992 bytes (P-384).
+
+Record: `benchmark_results/provider-p256-verify-20261012T013947Z/REPORT.md`. Bundle:
+`benchmark_results/provider-p256-verify-20261012T013947Z.tar.gz` (8,900,396 bytes), SHA-256
+`bc672f4f3890c3b5d8ad5720e4b9f7619feaab64b607dad39c11ed19792a9e4b`, local only, with raw
+runs from both hosts, both local artifacts, source patches and logs. Both hosts and volumes
+were deleted. This does not establish other
+CPUs, macOS, Windows, POWER, IBM Z, RISC-V or WASM timing, constant-time behavior, or the
+complete connection scorecard; P-256 full pairs remain 1.72× and 1.63× AWS-LC.
+
 ## 2026-10-09: Graviton5 DudeCT class-label artifact
 
 **Decision:** the DudeCT runner's class-dependent recording branch causes the Graviton5

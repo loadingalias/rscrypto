@@ -856,6 +856,16 @@ fn ecdsa_p256_verify(c: &mut Criterion) {
       })
     });
 
+    let verify_imported = || {
+      EcdsaP256PublicKey::from_sec1_bytes(black_box(sec1.as_slice()))
+        .expect("valid authentication benchmark operation must succeed")
+        .verify(black_box(data), black_box(&signature))
+        .expect("valid authentication benchmark operation must succeed");
+      black_box(())
+    };
+    verify_imported();
+    g.bench_function(BenchmarkId::new("rscrypto-import", len), |b| b.iter(verify_imported));
+
     g.bench_with_input(BenchmarkId::new("rustcrypto-p256", len), data, |b, d| {
       b.iter(|| {
         p256::ecdsa::signature::Verifier::verify(black_box(verifying_key), black_box(d), black_box(&oracle_signature))
@@ -1048,6 +1058,16 @@ fn ecdsa_p384_verify(c: &mut Criterion) {
         black_box(())
       })
     });
+
+    let verify_imported = || {
+      EcdsaP384PublicKey::from_sec1_bytes(black_box(sec1.as_slice()))
+        .expect("valid authentication benchmark operation must succeed")
+        .verify(black_box(data), black_box(&signature))
+        .expect("valid authentication benchmark operation must succeed");
+      black_box(())
+    };
+    verify_imported();
+    g.bench_function(BenchmarkId::new("rscrypto-import", len), |b| b.iter(verify_imported));
 
     g.bench_with_input(BenchmarkId::new("rustcrypto-p384", len), data, |b, d| {
       b.iter(|| {
