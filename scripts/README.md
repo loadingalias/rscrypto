@@ -57,7 +57,8 @@ every other deny rule, including wildcard checks, on the complete workspace grap
 when Cargo-Rail selects only the provider. A workspace plan explicitly selects
 `--workspace`; Cargo's root-package default would omit the provider.
 Doctest transfer prepares and validates a separate rustdoc inventory for each
-member, including members with no doctests. Coverage still measures core rscrypto
+member, including members with no doctests. Each member's `-p` build receives only
+its own qualified features, because Cargo rejects another member's. Coverage still measures core rscrypto
 and its corpus replays. Package checks and publication explicitly select rscrypto.
 
 ## Generated P-384 assembly

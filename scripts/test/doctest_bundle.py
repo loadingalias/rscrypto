@@ -51,10 +51,20 @@ def prepare(root, directory, cargo_args, environment):
     directory.mkdir(parents=True, exist_ok=False)
     total = 0
     for package in packages:
-        total += prepare_package(root, directory / package, package, cargo_args, environment)['total']
+        total += prepare_package(root, directory / package, package,
+                                 package_arguments(package, packages, cargo_args), environment)['total']
     plan = {'total': total, 'packages': packages}
     (directory / 'plan.json').write_text(json.dumps(plan, indent=2) + '\n')
     return plan
+
+
+def package_arguments(package, packages, cargo_args):
+    # Workspace feature lists qualify each feature with its member. Under -p,
+    # Cargo rejects another member's features, so keep only this package's own.
+    foreign = tuple(name + '/' for name in packages if name != package)
+    return [','.join(feature for feature in argument.split(',') if not feature.startswith(foreign))
+            if previous == '--features' else argument
+            for previous, argument in zip([None, *cargo_args], cargo_args)]
 
 
 def prepare_package(root, directory, package, cargo_args, environment):

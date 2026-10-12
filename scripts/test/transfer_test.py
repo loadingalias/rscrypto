@@ -329,14 +329,16 @@ class Doctests(unittest.TestCase):
             for failing in (False, True):
                 directory = root / str(failing); directory.mkdir()
                 source = directory / 'lib.rs'
-                source.write_text('//! ```\n//! assert!(true);\n//! ```\n'
+                source.write_text('//! ```\n//! doctest_transfer_fixture::marker();\n//! ```\n'
                     '//! ```should_panic\n//! panic!("expected");\n//! ```\n'
                     '//! ```compile_fail,E0308\n//! let x: u8 = "no";\n//! ```\n'
-                    '//! ```no_run\n//! panic!("must never execute");\n//! ```\n')
-                (directory / 'Cargo.toml').write_text('[package]\nname="doctest-transfer-fixture"\nversion="0.0.0"\nedition="2024"\n[lib]\npath="lib.rs"\n[workspace]\nmembers=[".", "companion", "empty"]\n')
+                    '//! ```no_run\n//! panic!("must never execute");\n//! ```\n'
+                    '#[cfg(feature = "marker")] pub fn marker() {}\n')
+                (directory / 'Cargo.toml').write_text('[package]\nname="doctest-transfer-fixture"\nversion="0.0.0"\nedition="2024"\n[lib]\npath="lib.rs"\n[features]\nmarker=[]\n[workspace]\nmembers=[".", "companion", "empty"]\n')
                 companion = directory / 'companion'; companion.mkdir()
-                (companion / 'Cargo.toml').write_text('[package]\nname="companion"\nversion="0.0.0"\nedition="2024"\n[lib]\npath="lib.rs"\n')
-                (companion / 'lib.rs').write_text('//! ```\n//! assert!(' + str(not failing).lower() + ');\n//! ```\n')
+                (companion / 'Cargo.toml').write_text('[package]\nname="companion"\nversion="0.0.0"\nedition="2024"\n[lib]\npath="lib.rs"\n[features]\nmarker=[]\n')
+                (companion / 'lib.rs').write_text('//! ```\n//! companion::marker();\n//! assert!(' + str(not failing).lower()
+                    + ');\n//! ```\n#[cfg(feature = "marker")] pub fn marker() {}\n')
                 empty = directory / 'empty'; empty.mkdir()
                 (empty / 'Cargo.toml').write_text('[package]\nname="empty-docs"\nversion="0.0.0"\nedition="2024"\n[lib]\npath="lib.rs"\n')
                 (empty / 'lib.rs').write_text('// No doctests in this member.\n')
@@ -344,7 +346,10 @@ class Doctests(unittest.TestCase):
                 subprocess.run(['cargo', 'generate-lockfile', '--offline'], cwd=directory, env=env, check=True,
                                capture_output=True)
                 evidence = directory / 'evidence'
-                plan = doctest_bundle.prepare(directory, evidence, [], env)
+                # Like the native workspace list, qualify every feature by its member. Cargo rejects
+                # another member's feature under -p (CI 38205185986); the doctests need their own.
+                plan = doctest_bundle.prepare(directory, evidence, ['--no-default-features', '--features',
+                    'companion/marker,doctest-transfer-fixture/marker'], env)
                 package = evidence / 'doctest-transfer-fixture'
                 package_plan = json.loads((package / 'plan.json').read_text())
                 inventory = json.loads((package / 'inventory.json').read_text())
