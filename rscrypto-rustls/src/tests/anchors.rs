@@ -50,21 +50,24 @@ fn identity(leaf: &[u8]) -> Identity<'static> {
   ))
 }
 
+/// Another enabled credential's roots, which did not issue `kind`'s leaf.
+fn foreign_roots(kind: Credential) -> Option<Arc<RootCertStore>> {
+  CREDENTIALS
+    .iter()
+    .copied()
+    .find(|candidate| candidate.scheme() != kind.scheme())
+    .map(roots)
+}
+
 /// Valid, re-signed, wrong-issuer, malformed and expired inputs for `kind`.
 fn cases(kind: Credential) -> Vec<(&'static str, Arc<RootCertStore>, Identity<'static>, UnixTime)> {
   let (_, leaf, _) = credentials(kind);
   let mut corrupted = leaf.to_vec();
   // The certificate's last byte belongs to its signature value.
   *corrupted.last_mut().expect("nonempty leaf") ^= 0x01;
-  let other = CREDENTIALS
-    .iter()
-    .copied()
-    .find(|candidate| candidate.scheme() != kind.scheme())
-    .unwrap_or(kind);
-  vec![
+  let mut cases = vec![
     ("valid", roots(kind), identity(leaf), VALID),
     ("bad signature", roots(kind), identity(&corrupted), VALID),
-    ("unknown issuer", roots(other), identity(leaf), VALID),
     ("malformed", roots(kind), identity(&leaf[..leaf.len() / 2]), VALID),
     ("expired", roots(kind), identity(leaf), EXPIRED),
     (
@@ -73,7 +76,12 @@ fn cases(kind: Credential) -> Vec<(&'static str, Arc<RootCertStore>, Identity<'s
       Identity::RawPublicKey(rustls::pki_types::SubjectPublicKeyInfoDer::from(&[0x30, 0x00][..])),
       VALID,
     ),
-  ]
+  ];
+  // A single-credential build has no other issuer.
+  if let Some(foreign) = foreign_roots(kind) {
+    cases.push(("unknown issuer", foreign, identity(leaf), VALID));
+  }
+  cases
 }
 
 #[test]
@@ -142,17 +150,16 @@ fn prepared_client_verifier_matches_webpki_results_and_errors() {
     let (_, leaf, _) = credentials(kind);
     let mut corrupted = leaf.to_vec();
     *corrupted.last_mut().expect("nonempty leaf") ^= 0x01;
-    let other = CREDENTIALS
-      .iter()
-      .copied()
-      .find(|candidate| candidate.scheme() != kind.scheme())
-      .unwrap_or(kind);
-    for (case, server_roots, client_leaf, server_time) in [
+    let mut cases = vec![
       ("valid", roots(kind), leaf, VALID),
       ("bad signature", roots(kind), corrupted.as_slice(), VALID),
-      ("unknown issuer", roots(other), leaf, VALID),
       ("expired", roots(kind), leaf, EXPIRED),
-    ] {
+    ];
+    // A single-credential build has no other issuer.
+    if let Some(foreign) = foreign_roots(kind) {
+      cases.push(("unknown issuer", foreign, leaf, VALID));
+    }
+    for (case, server_roots, client_leaf, server_time) in cases {
       let stock = WebPkiClientVerifier::builder(Arc::clone(&server_roots), &provider)
         .build()
         .expect("stock verifier");
@@ -176,6 +183,8 @@ fn only_ecdsa_anchor_keys_are_retained() {
       Credential::P256 => 65 + size_of::<rscrypto::EcdsaP256PublicKey>(),
       #[cfg(feature = "ecdsa-p384")]
       Credential::P384 => 97 + size_of::<rscrypto::EcdsaP384PublicKey>(),
+      // Only these credentials exist when neither feature is enabled.
+      #[cfg(any(feature = "ed25519", feature = "rsa", feature = "ml-dsa"))]
       _ => 0,
     };
     let server = PreparedServerVerifier::new(roots(kind)).expect("prepared verifier");
