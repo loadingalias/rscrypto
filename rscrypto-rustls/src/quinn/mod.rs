@@ -29,7 +29,7 @@ use rustls::{Error, quic};
 mod packet;
 mod token;
 
-#[cfg(fuzzing)]
+#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 #[doc(hidden)]
 pub mod fuzzing;
 

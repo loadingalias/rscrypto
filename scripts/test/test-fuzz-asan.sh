@@ -59,7 +59,8 @@ discover_fuzz_packages
 fuzz_select_packages "$PACKAGE_SCOPE"
 
 export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0:abort_on_error=1:strict_init_order=1}"
-export RUSTFLAGS="${RUSTFLAGS:-} -Zsanitizer=address -Cforce-frame-pointers=yes"
+# Replay through the internal fuzz entry points that cargo-fuzz compiles under `cfg(fuzzing)`.
+export RUSTFLAGS="${RUSTFLAGS:-} -Zsanitizer=address -Cforce-frame-pointers=yes --cfg rscrypto_internal_fuzzing"
 export RUSTDOCFLAGS="${RUSTDOCFLAGS:-} -Zsanitizer=address"
 export CARGO_TARGET_DIR="${RSCRYPTO_ASAN_TARGET_DIR:-$FUZZ_ROOT/target-asan}"
 

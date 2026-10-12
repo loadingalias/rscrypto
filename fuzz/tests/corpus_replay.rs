@@ -588,3 +588,49 @@ fn replay_auth_slhdsa_corpus() {
   let replayed = replay_corpus_dir("auth_slhdsa", corpus_dir("auth_slhdsa"), auth_slhdsa::run);
   assert_ne!(replayed, 0, "auth_slhdsa corpus should not be empty");
 }
+
+// The provider compiles its QUIC fuzz entry points only for fuzz builds. `just test-fuzz-asan`
+// sets `rscrypto_internal_fuzzing`; its replay inventory check fails if these tests are absent.
+#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
+#[test]
+fn replay_provider_quic_handshake_corpus() {
+  let replayed = replay_corpus_dir(
+    "provider_quic_handshake",
+    corpus_dir("provider_quic_handshake"),
+    rscrypto_rustls::quinn::fuzzing::handshake,
+  );
+  assert_ne!(replayed, 0, "provider_quic_handshake corpus should not be empty");
+}
+
+#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
+#[test]
+fn replay_provider_quic_header_corpus() {
+  let replayed = replay_corpus_dir(
+    "provider_quic_header",
+    corpus_dir("provider_quic_header"),
+    rscrypto_rustls::quinn::fuzzing::header,
+  );
+  assert_ne!(replayed, 0, "provider_quic_header corpus should not be empty");
+}
+
+#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
+#[test]
+fn replay_provider_quic_retry_corpus() {
+  let replayed = replay_corpus_dir(
+    "provider_quic_retry",
+    corpus_dir("provider_quic_retry"),
+    rscrypto_rustls::quinn::fuzzing::retry,
+  );
+  assert_ne!(replayed, 0, "provider_quic_retry corpus should not be empty");
+}
+
+#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
+#[test]
+fn replay_provider_quic_token_corpus() {
+  let replayed = replay_corpus_dir(
+    "provider_quic_token",
+    corpus_dir("provider_quic_token"),
+    rscrypto_rustls::quinn::fuzzing::token,
+  );
+  assert_ne!(replayed, 0, "provider_quic_token corpus should not be empty");
+}

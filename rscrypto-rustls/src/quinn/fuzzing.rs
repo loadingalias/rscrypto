@@ -1,8 +1,7 @@
 //! Internal fuzz entry points. Absent from ordinary builds and public API docs.
 
 use super::*;
-use quinn_proto::crypto::{HandshakeTokenKey as _, Session as _};
-use std::sync::OnceLock;
+use quinn_proto::crypto::HandshakeTokenKey as _;
 
 /// Exercise production Retry validation, with arbitrary framing and a valid-tag anchor.
 pub fn retry(data: &[u8]) {
@@ -72,6 +71,9 @@ pub fn token(data: &[u8]) {
 /// Parse arbitrary TLS handshake fragments through the production QUIC session.
 #[cfg(all(feature = "ecdsa-p256", feature = "x25519"))]
 pub fn handshake(data: &[u8]) {
+  use quinn_proto::crypto::Session as _;
+  use std::sync::OnceLock;
+
   if data.len() > 65_536 {
     return;
   }
