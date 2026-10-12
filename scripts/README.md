@@ -730,7 +730,7 @@ It accepts one native Linux architecture and one curated primitive.
 The compatibility matrix row starts with every native row, and uses the same fail-fast policy.
 
 - `x86_64-linux.sh --ci-compat` installs only the catalog-selected compatibility tools,
-  Rust versions, and cross-target libraries.
+  Rust versions, and cross-target libraries. Nextest runs `just ci-provider`'s runtime matrix.
 - `just ci-compat` uses bounded workers with separate build directories and a shared CPU budget.
   A failed command stops the running siblings and stops queued work from starting.
   Logs stay under `target/compat/`.

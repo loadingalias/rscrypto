@@ -249,11 +249,13 @@ class LinuxInstall(unittest.TestCase):
                 self.assertFalse((root / '.bashrc').exists())
                 self.assertFalse((root / '.profile').exists())
 
-    def test_compat_profile_omits_native_test_and_policy_tools(self):
+    def test_compat_profile_omits_policy_tools_and_native_suite_packages(self):
         result, calls, _ = self.provision('x86_64-linux', profile='ci-compat')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         installs = [c for c in calls if c[0] == 'cargo' and 'binstall' in c]
-        self.assertEqual([c[-1] for c in installs], [f"just@{CATALOG['cargo']['just']}"])
+        # Nextest runs the provider runtime matrix that `just ci-provider` executes in this row.
+        self.assertEqual([c[-1] for c in installs], [f"just@{CATALOG['cargo']['just']}",
+                                                     f"cargo-nextest@{CATALOG['cargo']['cargo-nextest']}"])
         archives = [c[-2] for c in calls if c[0] == 'python3' and 'install-archive' in c]
         self.assertEqual(archives, ['cargo-binstall', 'wasmtime'])
         self.assertFalse(any('jq=1.0' in c for c in calls))

@@ -101,7 +101,7 @@ def validate(data):
                               ('ci-cross-build', {'just', 'cargo-nextest'}),
                               ('ci-cross-run', set()),
                               ('ci-policy', {'cargo-deny', 'cargo-audit'}),
-                              ('ci-compat', {'just'}),
+                              ('ci-compat', {'just', 'cargo-nextest'}),
                               ('ci-fuzz', {'just', 'cargo-fuzz'}),
                               ('ci-ct', {'just', 'cargo-nextest'}),
                               ('ci-miri', {'just'}),
