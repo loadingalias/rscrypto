@@ -45,11 +45,13 @@ runners:
     image: ubuntu24-minimal-x64
     spot: price-capacity-optimized
     volume: 150gb:gp3
+  # On-Demand: a spot reclaim (BidEvictedEvent 22:49:45Z) cancelled this native row of
+  # CI 38315203643 after its test suites had passed.
   x86_64-linux:
     family: [c7a.4xlarge, c7i.4xlarge, c8a.4xlarge, c8i.4xlarge]
     cpu: 16
     image: ubuntu24-minimal-x64
-    spot: price-capacity-optimized
+    spot: false
     volume: 150gb:gp3
   aarch64-linux:
     family: [c7g.4xlarge, c8g.4xlarge, c9g.4xlarge]
