@@ -233,7 +233,10 @@ the provider neither owns nor clones its state.
 
 The ML-DSA loader constructs compact keys directly in allocator-backed storage.
 Signers borrow those keys and return public signatures; no prepared matrix is
-retained per credential. PKCS#8 input uses rustls-pki-types' borrowed or owned
+retained per credential. Each signature prepares a heap-allocated
+`MlDsa44/65/87PreparedSecretKeyStorage` and signs through its handle. The handle
+clears the transformed secret polynomials when it drops, including after a
+failed signature, and the storage clears them again before deallocation. PKCS#8 input uses rustls-pki-types' borrowed or owned
 DER containers. `Provider::load_private_key` immediately wraps the input in
 `zeroize::Zeroizing`, before the size check or any parser call. With
 rustls-pki-types 1.15.1 and zeroize 1.9.0, dropping this guard clears the owned

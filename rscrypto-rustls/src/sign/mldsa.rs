@@ -1,7 +1,10 @@
 //! Pure, hedged ML-DSA with the empty context required by TLS.
 
 use alloc::{alloc::Global, boxed::Box, sync::Arc, vec::Vec};
-use rscrypto::{MlDsa44SecretKey, MlDsa65SecretKey, MlDsa87SecretKey, MlDsaError};
+use rscrypto::{
+  MlDsa44PreparedSecretKeyStorage, MlDsa44SecretKey, MlDsa65PreparedSecretKeyStorage, MlDsa65SecretKey,
+  MlDsa87PreparedSecretKeyStorage, MlDsa87SecretKey, MlDsaError,
+};
 use rustls::Error;
 use rustls::crypto::SignatureScheme;
 use rustls::crypto::{Signer, SigningKey};
@@ -49,16 +52,23 @@ impl Secret {
   fn sign_with(&self, message: &[u8], fill: impl FnMut(&mut [u8]) -> Result<(), MlDsaError>) -> Result<Vec<u8>, Error> {
     // Rustls supplies the TLS CertificateVerify context and transcript. The
     // distinct FIPS 204 context must stay empty, without HashML-DSA prehashing.
+    // Compact signing expands the public matrix in every rejection attempt.
+    // Preparing per-signature heap storage expands it once and signs the same
+    // bytes. The handle clears the transformed secrets when it drops, and the
+    // storage clears them again.
+    macro_rules! sign {
+      ($key:expr, $storage:ident) => {{
+        let mut storage = Box::new($storage::new());
+        $key
+          .prepare(&mut storage)
+          .and_then(|prepared| prepared.sign_with(message, b"", fill))
+          .map(|signature| signature.as_bytes().to_vec())
+      }};
+    }
     match self {
-      Self::Dsa44(key) => key
-        .sign_with(message, b"", fill)
-        .map(|signature| signature.as_bytes().to_vec()),
-      Self::Dsa65(key) => key
-        .sign_with(message, b"", fill)
-        .map(|signature| signature.as_bytes().to_vec()),
-      Self::Dsa87(key) => key
-        .sign_with(message, b"", fill)
-        .map(|signature| signature.as_bytes().to_vec()),
+      Self::Dsa44(key) => sign!(key, MlDsa44PreparedSecretKeyStorage),
+      Self::Dsa65(key) => sign!(key, MlDsa65PreparedSecretKeyStorage),
+      Self::Dsa87(key) => sign!(key, MlDsa87PreparedSecretKeyStorage),
     }
     .map_err(|_| super::signing_failed())
   }

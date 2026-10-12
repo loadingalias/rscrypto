@@ -105,7 +105,10 @@ compact keys. Signing uses fresh randomness and the empty context required
 by draft-ietf-tls-mldsa-06. Pure ML-DSA and HashML-DSA remain separate; HashML-DSA
 keys and signatures do not enter this TLS profile. All three parameter sets
 support all-ML-DSA certificate chains. These keys are shared by `Arc`; the
-provider does not retain a prepared matrix per credential.
+provider does not retain a prepared matrix per credential. Each signature
+prepares temporary heap storage (28,672, 48,128, or 80,896 bytes for ML-DSA-44,
+65, or 87), so it expands the matrix once rather than in every rejection attempt.
+Its transformed secrets are cleared before it is freed.
 
 For scoped entropy, construct caller-owned static `kx_group::X25519Group`,
 `P256Group`, `P384Group`, or `X25519MlKem768Group` values and `sign::Provider`
