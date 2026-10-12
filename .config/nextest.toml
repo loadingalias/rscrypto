@@ -34,3 +34,10 @@ slow-timeout = { period = "60s", terminate-after = 4 }
 [[profile.default.overrides]]
 filter = 'binary(=rscrypto) & (test(/^auth::slhdsa::tests::acvp_signing_.*s_(deterministic|hedged)$/) | test(=auth::slhdsa::tests::acvp_key_generation_matches_all_cases))'
 slow-timeout = { period = "60s", terminate-after = 8 }
+
+# Each makes about eleven small-set signatures across rscrypto and two oracles.
+# Native RISC-V takes about 14 s per SHAKE-192s signature, so these exceeded
+# the 120 s default in CI 38075894796, as did the portable macOS run of 35f3582c.
+[[profile.default.overrides]]
+filter = 'binary(=slhdsa) & test(/^(sha2|shake)_(128|192|256)s_matches_independent_implementations$/)'
+slow-timeout = { period = "60s", terminate-after = 8 }
