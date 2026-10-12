@@ -23,17 +23,23 @@ fn connections(c: &mut Criterion) {
             if !bench_config::selected(&format!("{name}/{backend}")) {
               continue;
             }
-            let fixture = Fixture::new(
-              backend,
-              Profile {
-                credential,
-                group,
-                suite,
-                resumed,
-              },
-            );
-            fixture.connect().verify();
-            measured.bench_function(backend, |b| b.iter(|| drop(black_box(fixture.connect()))));
+            let profile = Profile {
+              credential,
+              group,
+              suite,
+              resumed,
+            };
+            // Discovery registers names without running routines, so build and
+            // check each fixture only when its case runs.
+            let mut fixture = None;
+            measured.bench_function(backend, |b| {
+              let fixture = fixture.get_or_insert_with(|| {
+                let fixture = Fixture::new(backend, profile);
+                fixture.connect().verify();
+                fixture
+              });
+              b.iter(|| drop(black_box(fixture.connect())));
+            });
           }
           measured.finish();
         }
@@ -55,22 +61,26 @@ fn traffic(c: &mut Criterion) {
         if !bench_config::selected(&format!("{name}/{backend}")) {
           continue;
         }
-        let fixture = Fixture::new(
-          backend,
-          Profile {
-            credential: "p256",
-            group: "X25519MLKEM768",
-            suite,
-            resumed: false,
-          },
-        );
-        let mut pair = fixture.connect();
-        pair.verify();
         let bytes = vec![0x42; size];
         let mut output = vec![0; size];
-        pair.transfer(&bytes, &mut output);
-        assert_eq!(bytes, output, "authenticated transfer before timing");
+        let mut state = None;
         measured.bench_function(backend, |b| {
+          let (_fixture, pair) = state.get_or_insert_with(|| {
+            let fixture = Fixture::new(
+              backend,
+              Profile {
+                credential: "p256",
+                group: "X25519MLKEM768",
+                suite,
+                resumed: false,
+              },
+            );
+            let mut pair = fixture.connect();
+            pair.verify();
+            pair.transfer(&bytes, &mut output);
+            assert_eq!(bytes, output, "authenticated transfer before timing");
+            (fixture, pair)
+          });
           b.iter(|| {
             pair.transfer(black_box(&bytes), black_box(&mut output));
             black_box(&output);

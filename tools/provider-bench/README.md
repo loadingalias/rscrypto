@@ -5,7 +5,11 @@ connections through rscrypto-rustls, rustls/AWS-LC, and OpenSSL 4.0.3.
 It calls each library's production implementation. The workspace is separate
 so its C comparison libraries do not enter the provider's shipped graph.
 
-`just bench tls-provider --list` validates and lists the catalog workloads.
+`just bench tls-provider --list` lists the catalog workloads without building
+their fixtures. A case builds and checks its fixture only when it runs, so a
+filtered campaign needs no unselected peer. Criterion's `--test` mode
+(`cargo bench --manifest-path tools/provider-bench/Cargo.toml --features ml-dsa
+--bench tls_connections -- --test`) checks every fixture once.
 Use `--filter` for a bounded campaign. For example:
 
 ```sh
