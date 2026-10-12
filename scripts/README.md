@@ -610,6 +610,8 @@ After Linux installation, source `$HOME/.local/share/rscrypto-tooling/environmen
 Windows CI runs installation and validation in one PowerShell step,
 to keep the MSVC and SDK environment.
 Windows x86-64 installs catalog-pinned NASM for native dependency assembly in both modes.
+It also installs pinned Strawberry Perl and selects it only through `OPENSSL_SRC_PERL`:
+the vendored OpenSSL that lints `tools/provider-bench` cannot configure under Git's MSYS Perl.
 
 ### APT snapshot
 

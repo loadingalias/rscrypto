@@ -25,6 +25,21 @@ class Tooling(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'missing NASM'):
             catalog.validate(data)
 
+    def test_windows_x64_requires_native_perl(self):
+        data = catalog.read()
+        del data['x86_64-win']['assets']['strawberry-perl']
+        with self.assertRaisesRegex(ValueError, 'missing native Perl'):
+            catalog.validate(data)
+
+    def test_strawberry_perl_release_reads_the_portable_asset_version(self):
+        names = ['strawberry-perl-5.42.3.1-64bit.msi', 'strawberry-perl-5.42.3.1-64bit-portable.zip',
+                 'strawberry-perl-5.42.3.1-64bit-portable.zip.sha256.txt']
+        with patch.object(update, 'release', return_value={'assets': [{'name': name} for name in names]}):
+            self.assertEqual(update.strawberry_perl_release(), '5.42.3.1')
+        with patch.object(update, 'release', return_value={'assets': [{'name': names[0]}]}):
+            with self.assertRaisesRegex(ValueError, 'no unique'):
+                update.strawberry_perl_release()
+
     def test_nasm_release_excludes_prereleases_and_sorts_numerically(self):
         index = b'<a href="3.02/">3.02</a><a href="3.10/">3.10</a><a href="4.00rc1/">rc</a>'
         with patch.object(update, 'fetch', return_value=(index, '')):

@@ -139,6 +139,14 @@ try {
         $paths += $toolBin
         if ($name -eq 'llvm') { $env:LIBCLANG_PATH = $toolBin }
     }
+    if ($Platform -eq 'x86_64-win' -and -not $CiCt) {
+        # Vendored OpenSSL needs a native Perl; Git's MSYS Perl cannot configure it.
+        # Select it only for OpenSSL builds and keep Git's tools first on PATH.
+        $perlDirectory = & $python $catalogHelper install-archive $Platform 'strawberry-perl' $prefix
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to install strawberry-perl' }
+        $env:OPENSSL_SRC_PERL = Join-Path $perlDirectory 'perl\bin\perl.exe'
+        if (-not (Test-Path $env:OPENSSL_SRC_PERL)) { throw 'Strawberry Perl did not install perl.exe.' }
+    }
     $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE '.cargo' }
     $cargoBin = Join-Path $cargoHome 'bin'
     $paths += $cargoBin
@@ -197,13 +205,17 @@ try {
         Invoke-Native $bash @('--version')
         Invoke-Native 'clang' @('--version')
         Invoke-Native 'cmake' @('--version')
-        if ($Platform -eq 'x86_64-win') { Invoke-Native 'nasm' @('-v') }
+        if ($Platform -eq 'x86_64-win') {
+            Invoke-Native 'nasm' @('-v')
+            # OpenSSL's Configure loads this module; Git's Perl lacks it.
+            Invoke-Native $env:OPENSSL_SRC_PERL @('-MLocale::Maketext::Simple', '-e', '1')
+        }
     }
     if (-not $Ci) { Invoke-Native 'cargo' @("+$channel", 'rail', '--version') }
 
     # Persist the complete MSVC/SDK environment, not only the paths to installed executables.
     if (-not $Ci) {
-        foreach ($name in @('PATH', 'INCLUDE', 'LIB', 'LIBPATH', 'LIBCLANG_PATH', 'RSCRYPTO_BASH', 'VSINSTALLDIR', 'VCINSTALLDIR', 'VCToolsInstallDir', 'WindowsSdkDir', 'WindowsSDKVersion', $linkerVariable)) {
+        foreach ($name in @('PATH', 'INCLUDE', 'LIB', 'LIBPATH', 'LIBCLANG_PATH', 'OPENSSL_SRC_PERL', 'RSCRYPTO_BASH', 'VSINSTALLDIR', 'VCINSTALLDIR', 'VCToolsInstallDir', 'WindowsSdkDir', 'WindowsSDKVersion', $linkerVariable)) {
             $value = [Environment]::GetEnvironmentVariable($name, 'Process')
             if ($value) { [Environment]::SetEnvironmentVariable($name, $value, 'User') }
         }

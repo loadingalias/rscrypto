@@ -99,6 +99,19 @@ def nasm_release():
     return max(versions, key=lambda version: tuple(map(int, version.split('.'))))
 
 
+STRAWBERRY_PERL_REPO = 'StrawberryPerl/Perl-Dist-Strawberry'
+
+
+def strawberry_perl_release():
+    # Release tags (SP_54231_64bit) do not carry the dotted version; asset names do.
+    names = [asset['name'] for asset in release(STRAWBERRY_PERL_REPO)['assets']]
+    versions = [match.group(1) for name in names
+                if (match := re.fullmatch(r'strawberry-perl-(\d+\.\d+\.\d+\.\d+)-64bit-portable\.zip', name))]
+    if len(versions) != 1:
+        raise ValueError('no unique 64-bit portable Strawberry Perl release asset')
+    return versions[0]
+
+
 def github_asset(repo, name):
     matches = [asset for asset in release(repo)['assets'] if asset['name'] == name]
     if len(matches) != 1:
@@ -155,6 +168,7 @@ def resolve_catalog():
     zig = api('https://ziglang.org/download/index.json')
     versions['zig'] = max((semver(v), v) for v in zig if semver(v))[1]
     versions['nasm'] = nasm_release()
+    versions['strawberry-perl'] = strawberry_perl_release()
     data['versions'] = versions
     # The release archive is authoritative even before the upgrade notifier enables an LTS.
     meta = fetch('https://changelogs.ubuntu.com/meta-release-lts')[0].decode()
@@ -224,6 +238,9 @@ def resolve_catalog():
             assets['powershell'] = github_asset(REPOS['powershell'], f'PowerShell-{versions["powershell"]}-win-' + ('arm64' if arch == 'aarch64' else 'x64') + '.zip')
             if platform == 'x86_64-win':
                 assets['nasm'] = pinned_url(f'https://www.nasm.us/pub/nasm/releasebuilds/{versions["nasm"]}/win64/nasm-{versions["nasm"]}-win64.zip')
+                # Vendored OpenSSL needs a native Perl; Git for Windows' MSYS Perl cannot configure it.
+                assets['strawberry-perl'] = github_asset(
+                    STRAWBERRY_PERL_REPO, f'strawberry-perl-{versions["strawberry-perl"]}-64bit-portable.zip')
         else:
             entry = zig[versions['zig']][f'{arch}-linux']
             assets['zig'] = {'url': entry['tarball'], 'sha256': entry['shasum']}

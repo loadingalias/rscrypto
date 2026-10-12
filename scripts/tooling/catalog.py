@@ -151,6 +151,8 @@ def validate(data):
             raise ValueError(f'{platform}: missing native rustup archive')
         if platform == 'x86_64-win' and 'nasm' not in assets:
             raise ValueError(f'{platform}: missing NASM for native dependency assembly')
+        if platform == 'x86_64-win' and 'strawberry-perl' not in assets:
+            raise ValueError(f'{platform}: missing native Perl for vendored OpenSSL builds')
         if platform not in NATIVE_SOURCE_PLATFORMS:
             required_archives = {'cargo-binstall', 'cmake', 'llvm'}
             if platform != 'aarch64-win':
