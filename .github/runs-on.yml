@@ -25,11 +25,13 @@ runners:
     image: ubuntu24-minimal-x64
     spot: price-capacity-optimized
     volume: 150gb:gp3
+  # On-Demand: the RISC-V, POWER and IBM Z rows wait on these ~20-minute builds, and
+  # spot reclaims (BidEvictedEvent) cancelled them twice in CI 38298834264.
   ci-cross-build:
     family: [c7a.4xlarge, c7i.4xlarge, c8a.4xlarge, c8i.4xlarge]
     cpu: 16
     image: ubuntu24-minimal-x64
-    spot: price-capacity-optimized
+    spot: false
     volume: 150gb:gp3
   ct-cross-build:
     family: [c7a.2xlarge, c7i.2xlarge, c8a.2xlarge, c8i.2xlarge]
