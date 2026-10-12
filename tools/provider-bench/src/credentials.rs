@@ -74,23 +74,47 @@ pub(crate) fn der(name: &str) -> (&'static [u8], &'static [u8], &'static [u8]) {
   }
 }
 
-pub(crate) fn configs(provider: rustls::crypto::CryptoProvider, name: &str) -> (ClientConfig, ServerConfig) {
+/// Build both endpoints. With `prepared`, the rscrypto provider's prepared-anchor
+/// verifiers replace rustls's WebPKI verifiers, with the same signature schemes.
+pub(crate) fn configs(
+  provider: rustls::crypto::CryptoProvider,
+  name: &str,
+  prepared: bool,
+) -> (ClientConfig, ServerConfig) {
   let (root, leaf, key) = der(name);
   let mut roots = RootCertStore::empty();
   roots.add(CertificateDer::from(root)).expect("root fixture");
+  let roots = Arc::new(roots);
   let provider = Arc::new(provider);
-  let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(roots.clone()), &provider)
-    .build()
-    .expect("client verifier");
-  let mut client = ClientConfig::builder_with_details(provider.clone(), Arc::new(FixtureTime))
-    .with_root_certificates(roots)
+  let supported = provider.signature_verification_algorithms;
+  let verifier: Arc<dyn rustls::server::danger::ClientVerifier> = if prepared {
+    Arc::new(
+      rscrypto_rustls::verify::PreparedClientVerifier::with_algorithms(Arc::clone(&roots), supported)
+        .expect("client verifier"),
+    )
+  } else {
+    Arc::new(
+      rustls::server::WebPkiClientVerifier::builder(Arc::clone(&roots), &provider)
+        .build()
+        .expect("client verifier"),
+    )
+  };
+  let client = ClientConfig::builder_with_details(provider.clone(), Arc::new(FixtureTime));
+  let client = if prepared {
+    client.dangerous().with_custom_certificate_verifier(Arc::new(
+      rscrypto_rustls::verify::PreparedServerVerifier::with_algorithms(roots, supported).expect("server verifier"),
+    ))
+  } else {
+    client.with_root_certificates(roots)
+  };
+  let mut client = client
     .with_client_auth_cert(
       Arc::new(rustls::crypto::Identity::from_cert_chain(vec![CertificateDer::from(leaf)]).expect("fixture identity")),
       PrivateKeyDer::try_from(key.to_vec()).expect("DER fixture"),
     )
     .expect("client identity");
   let mut server = ServerConfig::builder_with_details(provider, Arc::new(FixtureTime))
-    .with_client_cert_verifier(Arc::new(verifier))
+    .with_client_cert_verifier(verifier)
     .with_single_cert(
       Arc::new(rustls::crypto::Identity::from_cert_chain(vec![CertificateDer::from(leaf)]).expect("fixture identity")),
       PrivateKeyDer::try_from(key.to_vec()).expect("DER fixture"),

@@ -331,7 +331,7 @@ impl Fixture {
           .expect("selected signature scheme");
       assert_eq!(provider.kx_groups.len(), 1);
       assert_eq!(provider.tls13_cipher_suites.len(), 1);
-      let (mut client, mut server) = credentials::configs(provider, profile.credential);
+      let (mut client, mut server) = credentials::configs(provider, profile.credential, backend == "rscrypto");
       if profile.resumed {
         server.ticketer = Some(if backend == "rscrypto" {
           rscrypto_rustls::ticket::ticketer().expect("ticket key")

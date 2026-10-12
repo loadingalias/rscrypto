@@ -10,7 +10,7 @@ use rustls::{
 };
 
 #[derive(Debug)]
-struct FixtureTime;
+pub(crate) struct FixtureTime;
 
 impl rustls::time_provider::TimeProvider for FixtureTime {
   fn current_time(&self) -> Option<UnixTime> {

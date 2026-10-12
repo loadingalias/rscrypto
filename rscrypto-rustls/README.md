@@ -88,6 +88,21 @@ rejects configurations without usable suites or groups.
 `verify::ALL_ALGORITHMS` preserves the certificate algorithm catalog when callers
 build a custom TLS signature-scheme mapping with `WebPkiSupportedAlgorithms::new`.
 
+`verify::PreparedServerVerifier` and `verify::PreparedClientVerifier` import the
+configured roots' P-256 and P-384 keys once, when the verifier is built, instead of
+once per issued certificate. Install them with
+`ClientConfig::builder(..).dangerous().with_custom_certificate_verifier` and
+`ServerConfig::builder(..).with_client_cert_verifier`. Results, errors, signature
+schemes and configuration hashing match rustls's `WebPkiServerVerifier` and
+mandatory-authentication `WebPkiClientVerifier` for the same roots, with this
+provider's algorithms and no revocation lists; use those verifiers when you need
+CRLs, optional client authentication or custom root hints. The client verifier
+asks rustls's verifier for the exact error when a chain fails, so failures cost
+twice the work. RSA, Ed25519 and ML-DSA anchors, and every key a peer sends, are
+imported per signature and never retained. `retained_anchor_bytes()` reports
+the retained key memory: 1,425 bytes per P-256 anchor and 2,001 per P-384 anchor
+on 64-bit targets, plus hash-map overhead.
+
 `sign::KEY_PROVIDER` accepts PKCS#8 keys, EC SEC1 keys, and RSA PKCS#1 keys,
 bounded to 16 KiB. Its signing keys expose SPKI for `rustls::crypto::Credentials::new`.
 Owned DER input is zeroized on success and rejection, including oversized input.

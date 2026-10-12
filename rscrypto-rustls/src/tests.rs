@@ -58,3 +58,18 @@ mod profiles;
 
 #[cfg(all(feature = "ml-dsa", feature = "getrandom"))]
 mod mldsa;
+
+#[cfg(all(
+  feature = "getrandom",
+  feature = "hkdf",
+  any(feature = "aes-gcm", feature = "chacha20poly1305"),
+  any(feature = "x25519", feature = "p256-ecdh", feature = "p384-ecdh"),
+  any(
+    feature = "ecdsa-p256",
+    feature = "ecdsa-p384",
+    feature = "ed25519",
+    feature = "rsa",
+    feature = "ml-dsa"
+  )
+))]
+mod anchors;

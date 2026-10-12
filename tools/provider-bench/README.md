@@ -44,6 +44,10 @@ differ. Resumption comparisons measure the complete configured stacks; they do
 not isolate the negotiated record cipher's cost.
 
 Configuration and private-key import occur outside connection timing.
+The rscrypto backend verifies certificates through the provider's
+`PreparedServerVerifier` and `PreparedClientVerifier`, so its P-256 and P-384
+trust-anchor keys are imported with the configuration; AWS-LC uses rustls's
+WebPKI verifiers. Each backend advertises only the credential's signature scheme.
 Connection allocation, handshake cryptography, certificate validation, byte
 transport copies, ticket processing, close-notify creation and destruction are
 timed. A bounded in-process byte queue connects the peers. It adds no network
