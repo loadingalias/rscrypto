@@ -61,11 +61,13 @@ runners:
     image: ubuntu24-minimal-arm64
     spot: false
     volume: 150gb:gp3
+  # On-Demand: a spot reclaim (BidEvictedEvent 19:51:07Z) failed this row of
+  # CI 38453428973 during its tests.
   x86_64-win:
     family: [c7a.2xlarge, c8a.2xlarge]
     cpu: 8
     image: windows25-full-x64
-    spot: price-capacity-optimized
+    spot: false
     volume: 200gb:gp3
   # Eight concurrent fuzz targets need eight physical cores, including on x86.
   fuzz-x86_64-linux:
