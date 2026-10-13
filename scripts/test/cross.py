@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Build complete target suites on x86-64; execute sealed suites on native hardware."""
+"""Build target test suites on x86-64; execute the sealed suites on native hardware.
+
+Doctests run only on the native CI rows. Each cross suite runs under the `cross` or
+`cross-internal` Nextest profile, which skips work the native rows or another suite
+already cover on the same target (`.config/nextest.toml`).
+"""
 
 import argparse
 import json
@@ -16,7 +21,6 @@ sys.path.insert(0, str(ROOT / 'scripts/lib'))
 import evidence_bundle as bundle
 from cross_build import TARGETS, environment, require_host
 from workspace_features import native_features
-import doctest_bundle
 from evidence_suite import TARGET_ARGS, validate_backend_evidence
 
 MODES = ("native", "portable", "internal-native", "internal-portable")
@@ -79,12 +83,9 @@ def prepare(target, archive):
             if internal:
                 command += TARGET_ARGS
             subprocess.run(command, cwd=ROOT, env=mode_env, check=True)
-            plan = {'total': 0} if internal else doctest_bundle.prepare(ROOT, out / f'{mode}-docs', args, env)
-            metadata['modes'][mode] = {'command': command, 'doctests': plan['total'],
-                'internal': internal, 'encoded_rustflags': mode_env.get('CARGO_ENCODED_RUSTFLAGS')}
+            metadata['modes'][mode] = {'command': command, 'internal': internal,
+                'encoded_rustflags': mode_env.get('CARGO_ENCODED_RUSTFLAGS')}
         bundle.seal(ROOT, out, 'rscrypto.cross.tests', target, identity, metadata)
-        # The larger dictionary reuses code across standalone doctest programs.
-        # Executables and their sealed hashes remain unchanged.
         bundle.pack(out, archive, compression='xz')
 
 
@@ -109,22 +110,22 @@ def execute(target, archive):
             raise ValueError('test archive internal-build provenance differs from its suite')
     results = {}
     for mode in MODES:
+        internal = mode.startswith('internal-')
         with (out / f'{mode}-nextest.log').open('w') as log:
             subprocess.run(['cargo', 'nextest', 'run', '--archive-file', str(incoming / f'{mode}.tar.zst'),
                             '--workspace-remap', str(ROOT), '--config-file', str(ROOT / '.config/nextest.toml'),
+                            '--profile', 'cross-internal' if internal else 'cross',
                             '--no-tests', 'fail'], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=True)
-        if mode.startswith('internal-'):
-            records = validate_backend_evidence((out / f'{mode}-nextest.log').read_text(),
+        results[mode] = {'status': 'pass'}
+        if internal:
+            results[mode]['backend_evidence'] = validate_backend_evidence((out / f'{mode}-nextest.log').read_text(),
                 'portable-only' if mode.endswith('portable') else 'production-auto')
-            results[mode] = {'status': 'pass', 'backend_evidence': records}
-        else:
-            results[mode] = doctest_bundle.execute(ROOT, incoming / f'{mode}-docs', out / f'{mode}-docs')
     # Detect accidental changes to inputs throughout execution as well as before it.
     bundle.verify(ROOT, incoming, 'rscrypto.cross.tests', target)
     (out / 'summary.json').write_text(json.dumps({'status': 'pass', 'source': manifest['source'],
         'archive_sha256': bundle.digest(archive), 'host': platform.uname()._asdict(),
         'nextest': version, 'modes': results}, indent=2) + '\n')
-    print(f'{target} ordinary/internal suites and doctests passed: {out}', flush=True)
+    print(f'{target} ordinary and internal suites passed: {out}', flush=True)
 
 
 def main():

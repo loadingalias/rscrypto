@@ -18,7 +18,6 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / 'scripts/lib'), str(ROOT / 'scripts/ct'), str(ROOT / 'scripts/test')]
 import evidence_bundle as bundle
-import doctest_bundle
 import dudect_execute
 import transfer
 import cross
@@ -281,12 +280,8 @@ elif name.endswith('gcc'): print('gcc pinned fixture')
         # Do not include fixture executable symlinks in the effective source digest.
         with (self.root / '.gitignore').open('a') as output: output.write('commands/\n')
         pin = __import__('tomllib').loads((ROOT / '.config/tooling.toml').read_text())['cargo']['cargo-nextest']
-        def docs(root, directory, args, env):
-            directory.mkdir()
-            (directory / 'fixture').write_text('prepared')
-            return {'total': 232}
         with patch.object(cross, 'ROOT', self.root), patch('platform.system', return_value='Linux'), \
-             patch('platform.machine', return_value='x86_64'), patch.object(doctest_bundle, 'prepare', side_effect=docs) as prepare_docs, \
+             patch('platform.machine', return_value='x86_64'), \
              patch.dict(os.environ, PATH=str(commands) + os.pathsep + os.environ['PATH'],
                         TRANSFER_TEST_LOG=str(log), TRANSFER_NEXTEST=pin):
             archive = self.root / 'target/test-suites.tar.xz'
@@ -301,7 +296,6 @@ elif name.endswith('gcc'): print('gcc pinned fixture')
             self.assertFalse(any(feature.endswith('/portable-only') for feature in native))
             self.assertIn('rscrypto-rustls/ml-dsa', native)
             self.assertIn('--all-features', builds[1])
-            self.assertEqual(prepare_docs.call_count, 2)
             for row in builds[:2]:
                 self.assertNotIn('--lib', row)
             for row in builds[2:]:
@@ -317,58 +311,6 @@ elif name.endswith('gcc'): print('gcc pinned fixture')
                 failed = self.root / 'target/failed.tar.gz'
                 with self.assertRaises(subprocess.CalledProcessError): cross.prepare(target, failed)
                 self.assertFalse(failed.exists())
-
-
-class Doctests(unittest.TestCase):
-    def test_pinned_rustdoc_compile_and_native_execution_contract(self):
-        # A small independent fixture exercises rustdoc itself, including negative
-        # compilation, no_run, expected panic, and a failing runtime assertion.
-        channel = __import__('toolchain').channel()
-        with tempfile.TemporaryDirectory(prefix='rscrypto doctest transfer ') as temporary:
-            root = Path(temporary)
-            for failing in (False, True):
-                directory = root / str(failing); directory.mkdir()
-                source = directory / 'lib.rs'
-                source.write_text('//! ```\n//! doctest_transfer_fixture::marker();\n//! ```\n'
-                    '//! ```should_panic\n//! panic!("expected");\n//! ```\n'
-                    '//! ```compile_fail,E0308\n//! let x: u8 = "no";\n//! ```\n'
-                    '//! ```no_run\n//! panic!("must never execute");\n//! ```\n'
-                    '#[cfg(feature = "marker")] pub fn marker() {}\n')
-                (directory / 'Cargo.toml').write_text('[package]\nname="doctest-transfer-fixture"\nversion="0.0.0"\nedition="2024"\n[lib]\npath="lib.rs"\n[features]\nmarker=[]\n[workspace]\nmembers=[".", "companion", "empty"]\n')
-                companion = directory / 'companion'; companion.mkdir()
-                (companion / 'Cargo.toml').write_text('[package]\nname="companion"\nversion="0.0.0"\nedition="2024"\n[lib]\npath="lib.rs"\n[features]\nmarker=[]\n')
-                (companion / 'lib.rs').write_text('//! ```\n//! companion::marker();\n//! assert!(' + str(not failing).lower()
-                    + ');\n//! ```\n#[cfg(feature = "marker")] pub fn marker() {}\n')
-                empty = directory / 'empty'; empty.mkdir()
-                (empty / 'Cargo.toml').write_text('[package]\nname="empty-docs"\nversion="0.0.0"\nedition="2024"\n[lib]\npath="lib.rs"\n')
-                (empty / 'lib.rs').write_text('// No doctests in this member.\n')
-                env = {**os.environ, 'RUSTUP_TOOLCHAIN': channel, 'CARGO_RAIL_CACHE': 'off'}
-                subprocess.run(['cargo', 'generate-lockfile', '--offline'], cwd=directory, env=env, check=True,
-                               capture_output=True)
-                evidence = directory / 'evidence'
-                # Like the native workspace list, qualify every feature by its member. Cargo rejects
-                # another member's feature under -p (CI 38205185986); the doctests need their own.
-                plan = doctest_bundle.prepare(directory, evidence, ['--no-default-features', '--features',
-                    'companion/marker,doctest-transfer-fixture/marker'], env)
-                package = evidence / 'doctest-transfer-fixture'
-                package_plan = json.loads((package / 'plan.json').read_text())
-                inventory = json.loads((package / 'inventory.json').read_text())
-                self.assertEqual(plan['packages'], ['companion', 'doctest-transfer-fixture', 'empty-docs'])
-                if failing:
-                    with self.assertRaises(ValueError): doctest_bundle.execute(directory, evidence, directory / 'results')
-                else:
-                    summary = doctest_bundle.execute(directory, evidence, directory / 'results')
-                    self.assertEqual(summary, {'status': 'pass', 'total': 5, 'compile_fail': 1, 'no_run': 1, 'executed': 3})
-                    (evidence / 'plan.json').write_text(json.dumps({**plan, 'packages': plan['packages'][:-1]}))
-                    with self.assertRaisesRegex(ValueError, 'omits or adds'):
-                        doctest_bundle.execute(directory, evidence, directory / 'omitted-member')
-                    (evidence / 'plan.json').write_text(json.dumps(plan))
-                    incomplete = {**package_plan, 'programs': package_plan['programs'][:-1]}
-                    (package / 'plan.json').write_text(json.dumps(incomplete))
-                    with self.assertRaises(ValueError): doctest_bundle.execute(directory, evidence, directory / 'incomplete')
-                    (package / 'plan.json').write_text(json.dumps(package_plan))
-                    (package / 'programs' / package_plan['programs'][0]['binary']).unlink()
-                    with self.assertRaises(ValueError): doctest_bundle.plan_tests(inventory, package / 'programs')
 
 
 class NativeArchive(unittest.TestCase):
@@ -402,7 +344,8 @@ class NativeArchive(unittest.TestCase):
             config = __import__('tomllib').loads((ROOT / '.config/nextest.toml').read_text())
             (root / '.config/nextest.toml').write_text('nextest-version = ' +
                 '{ required = "' + config['nextest-version']['required'] + '" }\n'
-                '[profile.default]\nsuccess-output = "immediate"\n')
+                '[profile.default]\nsuccess-output = "immediate"\n'
+                '[profile.cross]\n[profile.cross-internal]\n')
             env = {**os.environ, 'RUSTUP_TOOLCHAIN': channel, 'CARGO_RAIL_CACHE': 'off'}
             subprocess.run(['cargo', 'generate-lockfile', '--offline'], cwd=root, env=env, check=True, capture_output=True)
             subprocess.run(['git', 'init', '-q', str(root)], check=True)
@@ -427,8 +370,7 @@ class NativeArchive(unittest.TestCase):
                                 *feature_args, '--archive-file', str(directory / (mode + '.tar.zst'))], cwd=root,
                                env=mode_env, capture_output=True, text=True)
                 self.assertEqual(built.returncode, 0, built.stderr)
-                plan = {'total': 0} if internal else doctest_bundle.prepare(root, directory / (mode + '-docs'), [], env)
-                metadata['modes'][mode] = {'doctests': plan['total'], 'internal': internal,
+                metadata['modes'][mode] = {'internal': internal,
                     'encoded_rustflags': mode_env.get('CARGO_ENCODED_RUSTFLAGS')}
             bundle.seal(root, directory, 'rscrypto.cross.tests', TARGET, bundle.source_identity(root), metadata)
             archive = root / 'target/transfer.tar.xz'; bundle.pack(directory, archive, compression='xz')

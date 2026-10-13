@@ -41,3 +41,14 @@ slow-timeout = { period = "60s", terminate-after = 8 }
 [[profile.default.overrides]]
 filter = 'binary(=slhdsa) & test(/^(sha2|shake)_(128|192|256)s_matches_independent_implementations$/)'
 slow-timeout = { period = "60s", terminate-after = 8 }
+
+# Cross-target suites (RISC-V, POWER, IBM Z) run on slow native hardware;
+# `scripts/test/cross.py` selects these profiles. The SLH-DSA small-set
+# independent-implementation differentials run only on the native rows, and the
+# internal evidence suites leave the SLH-DSA ACVP vectors to the ordinary suite
+# with the same dispatch on the same target. Overrides above still apply.
+[profile.cross]
+default-filter = 'not (binary(=slhdsa) & test(/_matches_independent_implementations$/))'
+
+[profile.cross-internal]
+default-filter = 'not (binary(=rscrypto) & test(/^auth::slhdsa::tests::acvp_/))'

@@ -159,8 +159,9 @@ jobs:
             target: riscv64gc-unknown-linux-gnu
             runner: ubuntu-24.04-riscv
             # Compilation runs on x86-64; this row only downloads and executes.
-            # CI 38332265993 took 85 minutes: 73.5 executing the native and
-            # portable suites and doctests, 11 on its slow artifact link.
+            # CI 38332265993 took 85 minutes (73.5 executing four suites and
+            # doctests); the cross Nextest profiles and native-only doctests
+            # remove most of that. Recalibrate from the next passing run.
             timeout: 120
           - platform: x86_64-win
             runner: runs-on=${{ github.run_id }}/runner=x86_64-win/env=production

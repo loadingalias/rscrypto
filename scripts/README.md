@@ -56,9 +56,7 @@ every other deny rule, including wildcard checks, on the complete workspace grap
 `lib/workspace_features.py` qualifies each feature with its package name, including
 when Cargo-Rail selects only the provider. A workspace plan explicitly selects
 `--workspace`; Cargo's root-package default would omit the provider.
-Doctest transfer prepares and validates a separate rustdoc inventory for each
-member, including members with no doctests. Each member's `-p` build receives only
-its own qualified features, because Cargo rejects another member's. Coverage still measures core rscrypto
+Coverage still measures core rscrypto
 and its corpus replays. Package checks and publication explicitly select rscrypto.
 
 ## Generated P-384 assembly
@@ -89,7 +87,6 @@ It does not download upstream archives.
 | ------------------------ | ------ |
 | `test/test.sh`           | `just test` |
 | `test/cross.py`          | `just test-cross prepare TARGET ARCHIVE`, `just test-cross run TARGET ARCHIVE` |
-| `test/doctest_bundle.py` | RISC-V doctest compilation and execution on the target |
 | `test/test-examples.sh`  | `just test-examples` |
 | `test/test-miri.sh`      | `just test-miri` |
 | `test/test-fuzz.sh`      | `just test-fuzz` |
@@ -220,11 +217,15 @@ these local results do not claim native qualification.
 Test preparation and native execution retain these contracts:
 
 - The build runs the same target-specific checks.
-  It builds all release tests in both dispatch modes, including all doctest compilation checks.
-- Nextest archives and persisted doctest programs move to the matching native runner.
+  It builds all release tests in both dispatch modes.
+- Nextest archives move to the matching native runner.
   Its `--ci-cross-run TOOLS_ARCHIVE` tooling only runs them.
-- The test bundle uses XZ compression to reuse repeated code across standalone doctest programs.
-  Its executable bytes, modes, and sealed hashes stay unchanged; existing gzip bundles remain readable.
+- The test bundle uses XZ compression; existing gzip bundles remain readable.
+- Doctests compile and run on the native CI rows only.
+- The suites run under the `cross` and `cross-internal` Nextest profiles in
+  [`.config/nextest.toml`](../.config/nextest.toml). The SLH-DSA small-set independent-implementation
+  differentials run on the native rows only, and the internal suites leave the SLH-DSA ACVP vectors to
+  the ordinary suite with the same dispatch on the same target. Every other test runs in every suite.
 - Preparation is not a runtime pass.
 - The Rust release profile, target compiler, feature sets, and test assertions do not change.
 - Profile CI uses the same exact-artifact transfer boundary for x86-64, AArch64, RISC-V, POWER,
@@ -261,13 +262,6 @@ Artifacts are not shared caches.
 The build runner and the artifact service stay trusted.
 Digests detect corruption and mismatches.
 They do not detect a compromised producer that forges its own metadata.
-
-Doctests use rustdoc's extraction inventory and compilation checks, and keep `compile_fail`, error-code checks, `no_run`,
-and `should_panic`.
-Transfer preparation disables merging,
-because the merged runner of the pinned rustdoc runs even with global `--no-run`.
-Each runnable standalone program must then run on the target hardware.
-Ordinary `just test` doctests keep rustdoc's default merging behavior.
 
 ### Examples, Miri, and fuzzing
 
