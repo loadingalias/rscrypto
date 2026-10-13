@@ -171,9 +171,13 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
   PKCS #8 export writes into a fixed-size buffer that the caller owns and clears.
   A rejected import clears every owner it built before it returns.
   In the measured RV32 and Cortex-M runs, they leave no copies.
-- Preparation decodes directly into storage that the caller owns, without moving the prepared owner.
-  The handle clears it on drop and when preparation fails.
-  The storage clears it again on drop.
+- Preparation decodes directly into its storage, without moving the prepared owner:
+  storage that the caller owns for `prepare`, or a box allocated first for `prepare_in`.
+  It copies rho, `K`, and tr from the key into the storage.
+  The prepared key clears the transformed polynomials and `K` on drop and when preparation fails.
+  The storage clears them again on drop.
+  Release frames of `prepare_in` on five Linux targets are at most 2,240 bytes,
+  so the storage is not built on the stack; residue of `prepare_in` is not measured.
 - Full target qualification is still open.
   See [ML-DSA](mldsa.md).
 
@@ -342,8 +346,10 @@ The provider's key loader uses rscrypto's bounded credential codecs and shares
 successful clearing key owners with signers. Rejected parsed keys drop before
 another format is attempted. Each RSA signer retains reusable clearing scratch;
 entropy failure returns no signature, and poisoned scratch fails opaquely.
-ECDSA and hedged ML-DSA entropy failure also return no signature. ML-DSA tests
-cover partial entropy failure and successful reuse for all three parameter sets. `rustls::crypto::Credentials::new`
+ECDSA and hedged ML-DSA entropy failure also return no signature. ML-DSA keys are
+prepared once by default and the compact key is dropped; a compact-mode key prepares
+temporary storage per signature. ML-DSA tests cover partial entropy failure and
+successful reuse in both forms for all three parameter sets. `rustls::crypto::Credentials::new`
 compares exported public SPKI with the certificate before use.
 
 The adapter tests cover partial entropy failure, subsequent RSA signing,

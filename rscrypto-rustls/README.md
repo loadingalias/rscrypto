@@ -41,7 +41,7 @@ commit pin until a compatible Quinn release includes the fix.
 | Entropy | OS entropy through `getrandom::fill`, or caller-selected `SecureRandom`; partial primitive inputs clear on failure | [random](src/random.rs), [kx_group](src/kx_group.rs), [sign](src/sign.rs) |
 | Certificate and handshake verification | ECDSA P-256/P-384, Ed25519, RSA-PSS and RSA PKCS#1 v1.5 | [verify](src/verify.rs) |
 | Key import and signing | rscrypto PKCS#8/SEC1/PKCS#1 codecs; blinded ECDSA, Ed25519, blinded RSA-PSS | [sign](src/sign.rs) |
-| ML-DSA authentication | Pure ML-DSA-44/65/87 with the empty TLS context; compact boxed keys and hedged signing | [sign](src/sign/mldsa.rs), [verify](src/verify.rs) |
+| ML-DSA authentication | Pure ML-DSA-44/65/87 with the empty TLS context; keys prepared once (or compact on request) and hedged signing | [sign](src/sign/mldsa.rs), [verify](src/verify.rs) |
 | QUIC Retry, reset, and address tokens | RFC 9001 AES-128-GCM Retry; HMAC-SHA256 reset tokens; HKDF-SHA256 and AES-256-GCM token keys | [quinn](src/quinn/) |
 | Key exchange | `X25519SecretKey`, `P256EphemeralSecret`, `P384EphemeralSecret`, `MlKem768` | [kx_group](src/kx_group.rs) |
 
@@ -88,8 +88,8 @@ rejects configurations without usable suites or groups.
 `verify::ALL_ALGORITHMS` preserves the certificate algorithm catalog when callers
 build a custom TLS signature-scheme mapping with `WebPkiSupportedAlgorithms::new`.
 
-`verify::PreparedServerVerifier` and `verify::PreparedClientVerifier` import the
-configured roots' P-256 and P-384 keys once, when the verifier is built, instead of
+`verify::PreparedServerVerifier` and `verify::PreparedClientVerifier` prepare the
+configured roots' P-256, P-384 and ML-DSA keys once, when the verifier is built, instead of
 once per issued certificate. Install them with
 `ClientConfig::builder(..).dangerous().with_custom_certificate_verifier` and
 `ServerConfig::builder(..).with_client_cert_verifier`. Results, errors, signature
@@ -98,10 +98,12 @@ mandatory-authentication `WebPkiClientVerifier` for the same roots, with this
 provider's algorithms and no revocation lists; use those verifiers when you need
 CRLs, optional client authentication or custom root hints. The client verifier
 asks rustls's verifier for the exact error when a chain fails, so failures cost
-twice the work. RSA, Ed25519 and ML-DSA anchors, and every key a peer sends, are
+twice the work. RSA and Ed25519 anchors, and every key a peer sends, are
 imported per signature and never retained. `retained_anchor_bytes()` reports
-the retained key memory: 1,425 bytes per P-256 anchor and 2,001 per P-384 anchor
-on 64-bit targets, plus hash-map overhead.
+the retained key memory on 64-bit targets: 1,425 bytes per P-256 anchor, 2,001 per
+P-384 anchor, and 21,864, 38,888 or 68,200 per ML-DSA-44, 65 or 87 anchor, plus
+hash-map overhead. rustls's own verifiers with `verify::SUPPORTED_ALGORITHMS`
+retain no prepared anchors.
 
 `sign::KEY_PROVIDER` accepts PKCS#8 keys, EC SEC1 keys, and RSA PKCS#1 keys,
 bounded to 16 KiB. Its signing keys expose SPKI for `rustls::crypto::Credentials::new`.
@@ -115,15 +117,18 @@ keys under rscrypto's legacy verification policy. TLS 1.3 ECDSA signature
 schemes match their exact curve and hash; cross-hash ECDSA and RSA PKCS#1 v1.5
 are available for certificate verification only.
 
-With `ml-dsa`, RFC 9881 PKCS#8 seed and combined seed/key forms load into boxed
-compact keys. Signing uses fresh randomness and the empty context required
+With `ml-dsa`, RFC 9881 PKCS#8 seed and combined seed/key forms load and are
+prepared once: the provider keeps the transformed secrets and public matrix
+(28,800, 48,256, or 81,024 bytes for ML-DSA-44, 65, or 87) and drops the compact
+key. Signing uses fresh randomness and the empty context required
 by draft-ietf-tls-mldsa-06. Pure ML-DSA and HashML-DSA remain separate; HashML-DSA
 keys and signatures do not enter this TLS profile. All three parameter sets
-support all-ML-DSA certificate chains. These keys are shared by `Arc`; the
-provider does not retain a prepared matrix per credential. Each signature
-prepares temporary heap storage (28,672, 48,128, or 80,896 bytes for ML-DSA-44,
-65, or 87), so it expands the matrix once rather than in every rejection attempt.
-Its transformed secrets are cleared before it is freed.
+support all-ML-DSA certificate chains. Keys are shared by `Arc`, and concurrent
+signers read the same prepared key. `sign::Provider::new(random).compact()` keeps
+compact keys (2,560, 4,032, or 4,896 bytes) instead; each signature then prepares
+temporary heap storage of the sizes above, so it expands the matrix once rather
+than in every rejection attempt, and produces the same signatures more slowly.
+Prepared secrets are cleared before their storage is freed.
 
 For scoped entropy, construct caller-owned static `kx_group::X25519Group`,
 `P256Group`, `P384Group`, or `X25519MlKem768Group` values and `sign::Provider`

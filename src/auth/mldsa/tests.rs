@@ -212,15 +212,17 @@ fn exhaustion_and_reuse<const K: usize, const L: usize>(
   let mut matrix = portable::Matrix::<K, L>::zero();
   matrix.expand_into(&secret[..32]).expect("public matrix expansion");
   signature.fill(0xa5);
+  // Prepared keys keep only rho, K, and tr from the encoded key.
+  let seeds = &secret[..128];
   assert_eq!(
-    portable::sign_with_state(secret, mu, random, rejecting, &mut signature, &state, Some(&matrix)),
+    portable::sign_with_state(seeds, mu, random, rejecting, &mut signature, &state, Some(&matrix)),
     Err(MlDsaError::RejectionLimit)
   );
   assert!(
     signature.iter().all(|&byte| byte == 0),
     "prepared rejected output escaped"
   );
-  portable::sign_with_state(secret, mu, random, p, &mut signature, &state, Some(&matrix))
+  portable::sign_with_state(seeds, mu, random, p, &mut signature, &state, Some(&matrix))
     .expect("prepared signing after exhaustion");
   assert_eq!(signature, expected, "prepared state reuse must match ACVP");
 }
@@ -244,6 +246,11 @@ macro_rules! prepared_storage_lifecycle {
         let prepared = secret.prepare(&mut storage).expect("prepare secret");
         assert!(!prepared.storage.state.is_clear(), "preparation must fill storage");
         assert_eq!(
+          prepared.storage.seeds.as_array(),
+          &secret.bytes.as_array()[..128],
+          "preparation must keep rho, K, and tr"
+        );
+        assert_eq!(
           prepared
             .sign_deterministic(b"message", b"context")
             .expect("prepared signature"),
@@ -259,6 +266,7 @@ macro_rules! prepared_storage_lifecycle {
           .expect_err("changed message");
       }
       assert!(storage.state.is_clear(), "dropping the handle must clear secrets");
+      assert_eq!(storage.seeds.as_array(), &[0; 128], "dropping the handle must clear K");
     }
 
     // A forgotten handle leaves secrets in storage. A failed preparation must
@@ -278,6 +286,7 @@ macro_rules! prepared_storage_lifecycle {
       Err(MlDsaError::InvalidSecretKey)
     );
     assert!(storage.state.is_clear(), "failed preparation must clear secrets");
+    assert_eq!(storage.seeds.as_array(), &[0; 128], "failed preparation must clear K");
   }};
 }
 
@@ -397,6 +406,263 @@ fn prepared_storage_is_reusable_and_cleared() {
     MlDsa87PreparedSecretKeyStorage,
     MlDsa87PreparedPublicKeyStorage,
     P87
+  );
+}
+
+/// Sign one external-interface ACVP case through `$signer`'s public API.
+macro_rules! sign_case {
+  ($signer:expr, $message:expr, $context:expr, $digest:expr, $random:expr) => {
+    match ($digest, $random) {
+      (Some((algorithm, digest)), Some(random)) => $signer.sign_prehash_with(
+        MlDsaPrehash::new(*algorithm, digest).expect("official digest"),
+        $context,
+        |out| {
+          out.copy_from_slice(random);
+          Ok(())
+        },
+      ),
+      (Some((algorithm, digest)), None) => $signer.sign_prehash_deterministic(
+        MlDsaPrehash::new(*algorithm, digest).expect("official digest"),
+        $context,
+      ),
+      (None, Some(random)) => $signer.sign_with($message, $context, |out| {
+        out.copy_from_slice(random);
+        Ok(())
+      }),
+      (None, None) => $signer.sign_deterministic($message, $context),
+    }
+  };
+}
+
+/// The compact key, a prepared key in borrowed storage, and a prepared key in
+/// allocated storage must each produce the official signature. The allocated
+/// key signs after the compact key is dropped.
+#[cfg(feature = "alloc")]
+macro_rules! public_signing_case {
+  ($secret:ident, $storage:ident, $sk:expr, $message:expr, $context:expr, $digest:expr, $random:expr, $expected:expr) => {{
+    let secret = $secret::try_from_slice($sk).expect("official secret key");
+    let compact = sign_case!(secret, $message, $context, $digest, $random).expect("compact signature");
+    assert_eq!(compact.as_bytes().as_slice(), $expected, "compact signature");
+    let mut storage = $storage::new();
+    let borrowed = secret.prepare(&mut storage).expect("borrowed preparation");
+    let borrowed = sign_case!(borrowed, $message, $context, $digest, $random).expect("borrowed signature");
+    assert_eq!(borrowed.as_bytes().as_slice(), $expected, "borrowed prepared signature");
+    let owned = secret.prepare_in(alloc::alloc::Global).expect("allocated preparation");
+    drop(secret);
+    let owned = sign_case!(owned, $message, $context, $digest, $random).expect("allocated signature");
+    assert_eq!(owned.as_bytes().as_slice(), $expected, "allocated prepared signature");
+  }};
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn acvp_public_signing_matches_through_every_key_form() {
+  let prompt = vectors("sigGen-prompt");
+  let expected = vectors("sigGen-expected");
+  let mut count = [0usize; 3];
+  for group in groups(&prompt) {
+    if group["signatureInterface"] != "external" || group["externalMu"] == true {
+      continue;
+    }
+    let answers = groups(&expected)
+      .iter()
+      .find(|g| g["tgId"] == group["tgId"])
+      .expect("matching group");
+    for case in cases(group) {
+      let answer = cases(answers)
+        .iter()
+        .find(|t| t["tcId"] == case["tcId"])
+        .expect("matching case");
+      let sk = hex(&case["sk"]);
+      let message = hex(&case["message"]);
+      let context = hex(&case["context"]);
+      let digest =
+        (group["preHash"] == "preHash").then(|| prehash(case["hashAlg"].as_str().expect("hash identifier"), &message));
+      let random: Option<[u8; 32]> =
+        (group["deterministic"] != true).then(|| hex(&case["rnd"]).try_into().expect("32-byte randomness"));
+      let signature = hex(&answer["signature"]);
+      let (message, context, digest, random) = (&message[..], &context[..], &digest, &random);
+      match params(group).k {
+        4 => public_signing_case!(
+          MlDsa44SecretKey,
+          MlDsa44PreparedSecretKeyStorage,
+          &sk,
+          message,
+          context,
+          digest,
+          random,
+          signature
+        ),
+        6 => public_signing_case!(
+          MlDsa65SecretKey,
+          MlDsa65PreparedSecretKeyStorage,
+          &sk,
+          message,
+          context,
+          digest,
+          random,
+          signature
+        ),
+        _ => public_signing_case!(
+          MlDsa87SecretKey,
+          MlDsa87PreparedSecretKeyStorage,
+          &sk,
+          message,
+          context,
+          digest,
+          random,
+          signature
+        ),
+      }
+      let index = match params(group).k {
+        4 => 0,
+        6 => 1,
+        _ => 2,
+      };
+      count[index] = count[index].strict_add(1);
+    }
+  }
+  assert!(
+    count.iter().all(|&cases| cases > 0),
+    "every parameter set needs cases: {count:?}"
+  );
+}
+
+/// Verify one external-interface ACVP case with the compact key, a prepared
+/// key in borrowed storage, and a prepared key in allocated storage.
+#[cfg(feature = "alloc")]
+macro_rules! public_verification_case {
+  ($public:ident, $signature:ident, $storage:ident, $pk:expr, $message:expr, $context:expr, $digest:expr, $signature_bytes:expr) => {{
+    let public = $public::try_from_slice($pk).expect("official public key");
+    let signature = $signature::try_from_slice($signature_bytes);
+    let mut storage = $storage::new();
+    let borrowed = public.prepare(&mut storage).expect("borrowed preparation");
+    let owned = public.prepare_in(alloc::alloc::Global).expect("allocated preparation");
+    let verdict = |key: &dyn Fn(&$signature) -> Result<(), VerificationError>| {
+      signature.as_ref().is_ok_and(|signature| key(signature).is_ok())
+    };
+    match $digest {
+      Some((algorithm, digest)) => {
+        let prehash = MlDsaPrehash::new(*algorithm, digest).expect("official digest");
+        [
+          verdict(&|s| public.verify_prehash(prehash, $context, s)),
+          verdict(&|s| borrowed.verify_prehash(prehash, $context, s)),
+          verdict(&|s| owned.verify_prehash(prehash, $context, s)),
+        ]
+      }
+      None => [
+        verdict(&|s| public.verify_with_context($message, $context, s)),
+        verdict(&|s| borrowed.verify_with_context($message, $context, s)),
+        verdict(&|s| owned.verify_with_context($message, $context, s)),
+      ],
+    }
+  }};
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn acvp_public_verification_matches_through_every_key_form() {
+  let prompt = vectors("sigVer-prompt");
+  let expected = vectors("sigVer-expected");
+  let mut verdicts = [0usize; 2];
+  for group in groups(&prompt) {
+    if group["signatureInterface"] != "external" || group["externalMu"] == true {
+      continue;
+    }
+    let answers = groups(&expected)
+      .iter()
+      .find(|g| g["tgId"] == group["tgId"])
+      .expect("matching group");
+    for case in cases(group) {
+      let answer = cases(answers)
+        .iter()
+        .find(|t| t["tcId"] == case["tcId"])
+        .expect("matching case");
+      let pk = hex(&case["pk"]);
+      let message = hex(&case["message"]);
+      let context = hex(&case["context"]);
+      let digest =
+        (group["preHash"] == "preHash").then(|| prehash(case["hashAlg"].as_str().expect("hash identifier"), &message));
+      let signature = hex(&case["signature"]);
+      let (message, context, digest) = (&message[..], &context[..], &digest);
+      let results = match params(group).k {
+        4 => public_verification_case!(
+          MlDsa44PublicKey,
+          MlDsa44Signature,
+          MlDsa44PreparedPublicKeyStorage,
+          &pk,
+          message,
+          context,
+          digest,
+          &signature
+        ),
+        6 => public_verification_case!(
+          MlDsa65PublicKey,
+          MlDsa65Signature,
+          MlDsa65PreparedPublicKeyStorage,
+          &pk,
+          message,
+          context,
+          digest,
+          &signature
+        ),
+        _ => public_verification_case!(
+          MlDsa87PublicKey,
+          MlDsa87Signature,
+          MlDsa87PreparedPublicKeyStorage,
+          &pk,
+          message,
+          context,
+          digest,
+          &signature
+        ),
+      };
+      let passed = answer["testPassed"].as_bool().expect("expected verdict");
+      assert_eq!(results, [passed; 3], "case {}", case["tcId"]);
+      verdicts[usize::from(passed)] = verdicts[usize::from(passed)].strict_add(1);
+    }
+  }
+  assert!(
+    verdicts.iter().all(|&cases| cases > 0),
+    "need accepted and rejected cases: {verdicts:?}"
+  );
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn allocated_prepared_keys_are_independent_and_shareable() {
+  fn shareable<T: Send + Sync + 'static>(_: &T) {}
+  let (public, secret) = MlDsa65::keypair_from_seed(&[5; 32]).expect("key generation");
+  let signing = secret.prepare_in(alloc::alloc::Global).expect("allocated preparation");
+  let verifying = public.prepare_in(alloc::alloc::Global).expect("allocated preparation");
+  shareable(&signing);
+  shareable(&verifying);
+  let expected = secret.sign_deterministic(b"message", b"").expect("compact signature");
+  drop((public, secret));
+  assert_eq!(
+    signing.sign_deterministic(b"message", b"").expect("prepared signature"),
+    expected
+  );
+  verifying.verify(b"message", &expected).expect("prepared verification");
+  assert_eq!(
+    alloc::format!("{signing:?} {verifying:?}"),
+    "MlDsa65PreparedSecretKey(****) MlDsa65PreparedPublicKey { .. }"
+  );
+
+  // An invalid stored key fails before any prepared key is returned.
+  let mut bytes = *MlDsa65::keypair_from_seed(&[6; 32])
+    .expect("key generation")
+    .1
+    .bytes
+    .as_array();
+  bytes[128..128 + P65.eta_bits * 32].fill(0xff);
+  let invalid = MlDsa65SecretKey {
+    bytes: ZeroizingBytes::new(bytes),
+    public: MlDsa65PublicKey([0; 1952]),
+  };
+  assert_eq!(
+    invalid.prepare_in(alloc::alloc::Global).map(|_| ()),
+    Err(MlDsaError::InvalidSecretKey)
   );
 }
 

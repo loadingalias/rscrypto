@@ -7,6 +7,7 @@
 //! cannot remove or specialize those paths.
 
 use core::hint::black_box;
+use std::alloc::Global;
 
 use rscrypto::{
   Kem, MlDsa44, MlDsa44PreparedSecretKeyStorage, MlDsa65, MlDsa65PreparedSecretKeyStorage, MlDsa87,
@@ -33,6 +34,18 @@ macro_rules! mldsa {
     public
       .verify_with_context(b"frame review", b"", &hedged)
       .expect("ML-DSA verification");
+    let allocated = secret.prepare_in(Global).expect("ML-DSA allocated preparation");
+    let hedged = allocated
+      .sign_with(b"frame review", b"", |out| {
+        out.fill(black_box(4));
+        Ok(())
+      })
+      .expect("ML-DSA allocated prepared signing");
+    public
+      .prepare_in(Global)
+      .expect("ML-DSA allocated public preparation")
+      .verify_with_context(b"frame review", b"", &hedged)
+      .expect("ML-DSA prepared verification");
   }};
 }
 

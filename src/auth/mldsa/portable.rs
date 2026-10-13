@@ -64,6 +64,8 @@ impl<const K: usize, const L: usize> Matrix<K, L> {
     Ok(())
   }
 
+  // Out of line for signing's code generation; see `sign_with_state`.
+  #[inline(never)]
   fn row(&self, i: usize, input: &[Poly; L], out: &mut Poly) {
     out.0.fill(0);
     for (entry, input) in self.0[i].iter().zip(input) {
@@ -73,6 +75,8 @@ impl<const K: usize, const L: usize> Matrix<K, L> {
   }
 }
 
+// Out of line for signing's code generation; see `sign_with_state`.
+#[inline(never)]
 fn matrix_row<const L: usize>(rho: &[u8], row: usize, input: &[Poly; L], out: &mut Poly) -> Result<(), MlDsaError> {
   out.0.fill(0);
   if !cfg!(all(
@@ -285,6 +289,9 @@ pub(super) fn sign<const K: usize, const L: usize>(
   sign_with_state(secret, mu, random, p, signature, &state, None)
 }
 
+// Kept out of line with both row products: when LLVM inlined this loop into
+// the generic prepared-key callers, prepared signing became measurably slower.
+#[inline(never)]
 pub(super) fn sign_with_state<const K: usize, const L: usize>(
   secret: &[u8],
   mu: &[u8; 64],
@@ -405,7 +412,15 @@ pub(super) fn verify<const K: usize, const L: usize>(
   signature: &[u8],
   p: Parameters,
 ) -> Result<(), MlDsaError> {
-  verify_with_state::<K, L>(public, mu, signature, p, None)
+  verify_with_state::<K, L>(VerifyingKey::Encoded(public), mu, signature, p)
+}
+
+/// The verification key: an encoded key whose rows are expanded on demand, or
+/// a prepared state.
+#[derive(Clone, Copy)]
+pub(super) enum VerifyingKey<'a, const K: usize, const L: usize> {
+  Encoded(&'a [u8]),
+  Prepared(&'a VerifyingState<K, L>),
 }
 
 pub(super) struct VerifyingState<const K: usize, const L: usize> {
@@ -450,11 +465,10 @@ fn decode_public_poly(public: &[u8], i: usize, t1: &mut Poly) {
 }
 
 pub(super) fn verify_with_state<const K: usize, const L: usize>(
-  public: &[u8],
+  key: VerifyingKey<'_, K, L>,
   mu: &[u8; 64],
   signature: &[u8],
   p: Parameters,
-  prepared: Option<&VerifyingState<K, L>>,
 ) -> Result<(), MlDsaError> {
   if !encoding::valid_signature(signature, p) {
     return Err(MlDsaError::InvalidSignature);
@@ -481,13 +495,16 @@ pub(super) fn verify_with_state<const K: usize, const L: usize>(
   hash.update(mu);
   let mut hint_start = 0usize;
   for i in 0..K {
-    if let Some(state) = prepared {
-      state.matrix.row(i, &z, &mut row);
-      work.product(&challenge, &state.t1[i]);
-    } else {
-      matrix_row(&public[..32], i, &z, &mut row)?;
-      decode_public_poly(public, i, &mut t1);
-      work.product(&challenge, &t1.0);
+    match key {
+      VerifyingKey::Prepared(state) => {
+        state.matrix.row(i, &z, &mut row);
+        work.product(&challenge, &state.t1[i]);
+      }
+      VerifyingKey::Encoded(public) => {
+        matrix_row(&public[..32], i, &z, &mut row)?;
+        decode_public_poly(public, i, &mut t1);
+        work.product(&challenge, &t1.0);
+      }
     }
     work.inverse_ntt();
     row.sub_assign(&work);

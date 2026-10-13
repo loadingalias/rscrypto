@@ -176,14 +176,21 @@ fn prepared_client_verifier_matches_webpki_results_and_errors() {
 }
 
 #[test]
-fn only_ecdsa_anchor_keys_are_retained() {
+fn ecdsa_and_mldsa_anchor_keys_are_retained() {
   for &kind in CREDENTIALS {
     let expected = match kind {
       #[cfg(feature = "ecdsa-p256")]
       Credential::P256 => 65 + size_of::<rscrypto::EcdsaP256PublicKey>(),
       #[cfg(feature = "ecdsa-p384")]
       Credential::P384 => 97 + size_of::<rscrypto::EcdsaP384PublicKey>(),
-      // Only these credentials exist when neither feature is enabled.
+      #[cfg(feature = "ml-dsa")]
+      Credential::MlDsa65 => {
+        1952
+          + size_of::<Box<rscrypto::MlDsa65PreparedPublicKeyStorage>>()
+          + size_of::<rscrypto::MlDsa65PreparedPublicKeyStorage>()
+      }
+      // Ed25519, RSA, ML-DSA-44 and ML-DSA-87 anchors are not in `CREDENTIALS`
+      // or are not prepared.
       #[cfg(any(feature = "ed25519", feature = "rsa", feature = "ml-dsa"))]
       _ => 0,
     };

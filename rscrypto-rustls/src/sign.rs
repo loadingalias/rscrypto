@@ -17,10 +17,13 @@ mod mldsa;
 ///
 /// Containers larger than 16 KiB, unsupported formats, and invalid keys are
 /// rejected. Successful keys return SPKI for `rustls::crypto::Credentials::new`.
-/// Owned input DER is cleared on every return path. This provider uses OS entropy.
+/// Owned input DER is cleared on every return path. This provider uses OS entropy
+/// and prepares ML-DSA keys for repeated signing; see [`Provider::compact`].
 pub static KEY_PROVIDER: &dyn KeyProvider = &Provider {
   #[cfg(feature = "getrandom")]
   random: crate::random::SECURE_RANDOM,
+  #[cfg(all(feature = "ml-dsa", feature = "getrandom"))]
+  compact: false,
 };
 
 /// Private-key loader with a caller-selected entropy source.
@@ -30,6 +33,8 @@ pub static KEY_PROVIDER: &dyn KeyProvider = &Provider {
 pub struct Provider {
   #[cfg(feature = "getrandom")]
   random: &'static dyn rustls::crypto::SecureRandom,
+  #[cfg(all(feature = "ml-dsa", feature = "getrandom"))]
+  compact: bool,
 }
 
 #[cfg(feature = "getrandom")]
@@ -41,7 +46,25 @@ impl Provider {
   /// cleanup match [`KEY_PROVIDER`].
   #[must_use]
   pub const fn new(random: &'static dyn rustls::crypto::SecureRandom) -> Self {
-    Self { random }
+    Self {
+      random,
+      #[cfg(all(feature = "ml-dsa", feature = "getrandom"))]
+      compact: false,
+    }
+  }
+
+  /// Keep loaded ML-DSA keys compact instead of prepared.
+  ///
+  /// By default each loaded ML-DSA key is prepared once and keeps its
+  /// transformed secrets and public matrix: 28,800, 48,256, or 81,024 bytes
+  /// for ML-DSA-44, 65, or 87, in place of the 2,560, 4,032, or 4,896-byte
+  /// compact key. A compact key prepares that storage again for every
+  /// signature, which is slower and produces the same signatures. Other
+  /// algorithms are unaffected.
+  #[cfg(feature = "ml-dsa")]
+  #[must_use]
+  pub const fn compact(self) -> Self {
+    Self { compact: true, ..self }
   }
 }
 
@@ -55,7 +78,7 @@ impl KeyProvider for Provider {
     #[cfg(feature = "getrandom")]
     let _random = self.random;
     #[cfg(all(feature = "ml-dsa", feature = "getrandom"))]
-    if let Some(key) = mldsa::load(&key_der, _random) {
+    if let Some(key) = mldsa::load(&key_der, _random, self.compact) {
       return Ok(Box::new(key));
     }
     #[cfg(all(feature = "rsa", feature = "getrandom"))]

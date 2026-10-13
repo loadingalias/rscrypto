@@ -62,10 +62,13 @@ Public shares and ciphertexts carry no secret ownership obligation.
   write the key directly into an allocation from a caller-selected `Allocator` and return `Box<SecretKey, A>`.
 - PKCS #8 import borrows the caller's DER and does not clear it.
   A seed owner copies its 32 bytes out of the DER; secret-key import copies or expands the key into its owner.
-- Preparation writes transformed secrets into storage that the caller owns.
-  It returns a handle that borrows the key and the storage.
-- The handle clears the secrets on drop and when preparation fails.
-  The storage clears them again on drop.
+- Preparation writes transformed secrets, the public matrix, and the key's rho, `K`, and tr into storage.
+  `prepare` uses storage that the caller owns and returns a prepared key that borrows it.
+  `prepare_in` allocates the storage from a caller-selected `Allocator`, prepares it in place,
+  and returns a prepared key that owns the box.
+  Neither prepared key borrows the source key.
+- The prepared key clears the transformed secrets and `K` on drop and when preparation fails.
+  The storage clears them again on drop, before an allocated box is freed.
 
 ### ML-KEM allocation
 
@@ -232,11 +235,16 @@ its signature scheme. Groups and signing keys borrow a static entropy source;
 the provider neither owns nor clones its state.
 
 The ML-DSA loader constructs compact keys directly in allocator-backed storage.
-Signers borrow those keys and return public signatures; no prepared matrix is
-retained per credential. Each signature prepares a heap-allocated
-`MlDsa44/65/87PreparedSecretKeyStorage` and signs through its handle. The handle
-clears the transformed secret polynomials when it drops, including after a
-failed signature, and the storage clears them again before deallocation. PKCS#8 input uses rustls-pki-types' borrowed or owned
+By default it then prepares each key once with `prepare_in`, keeps the prepared
+key, which owns its `MlDsa44/65/87PreparedSecretKeyStorage` box, and drops the
+compact key, which clears it. Signers share the prepared key through `Arc` and
+return public signatures. With `sign::Provider::compact`, the loader keeps the
+compact key instead, and each signature prepares a temporary prepared key with
+`prepare_in`. A prepared key clears its transformed secret polynomials and `K`
+when it drops, and its storage clears them again before deallocation; a failed
+signature leaves a retained prepared key unchanged.
+`PreparedServerVerifier` and `PreparedClientVerifier` retain prepared ML-DSA
+anchor keys; their storage is public. PKCS#8 input uses rustls-pki-types' borrowed or owned
 DER containers. `Provider::load_private_key` immediately wraps the input in
 `zeroize::Zeroizing`, before the size check or any parser call. With
 rustls-pki-types 1.15.1 and zeroize 1.9.0, dropping this guard clears the owned

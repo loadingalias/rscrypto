@@ -39,13 +39,13 @@ pub use verifiers::{PreparedClientVerifier, PreparedServerVerifier};
   feature = "ml-dsa"
 ))]
 mod verifiers {
-  //! Certificate verifiers that import operator-configured trust anchors once.
+  //! Certificate verifiers that prepare operator-configured trust anchors once.
   //!
   //! Each verifier wraps rustls's WebPKI verifier for the same roots, this
-  //! crate's algorithms, and no revocation lists. A prepared anchor key is the
-  //! import of exactly the bytes webpki passes back for that anchor, so every
-  //! result equals the wrapped verifier's. Keys a peer sends are imported per
-  //! signature, as before, and never retained.
+  //! crate's algorithms, and no revocation lists. A prepared anchor key is
+  //! prepared from exactly the bytes webpki passes back for that anchor, so
+  //! every result equals the wrapped verifier's. Keys a peer sends are imported
+  //! per signature, as before, and never retained.
 
   use alloc::{borrow::Cow, sync::Arc, vec::Vec};
   use core::hash::Hasher;
@@ -63,7 +63,7 @@ mod verifiers {
 
   use super::implementation::{Anchors, PreparedAlgorithm, prepared_algorithms};
 
-  /// Server-certificate verifier with P-256 and P-384 trust-anchor keys imported once.
+  /// Server-certificate verifier with P-256, P-384 and ML-DSA trust-anchor keys prepared once.
   ///
   /// Validation, name checks, errors, signature schemes and configuration
   /// hashing are those of [`WebPkiServerVerifier`] built from the same roots
@@ -78,7 +78,7 @@ mod verifiers {
   }
 
   impl PreparedServerVerifier {
-    /// Prepare `roots`' P-256 and P-384 anchor keys; other anchors import per use.
+    /// Prepare `roots`' P-256, P-384 and ML-DSA anchor keys; other anchors import per use.
     ///
     /// # Errors
     ///
@@ -108,6 +108,9 @@ mod verifiers {
     }
 
     /// Bytes retained by prepared anchor keys and their lookup keys, excluding map overhead.
+    ///
+    /// On 64-bit targets: 1,425 per P-256 anchor, 2,001 per P-384 anchor, and
+    /// 21,864, 38,888 or 68,200 per ML-DSA-44, 65 or 87 anchor.
     #[must_use]
     pub const fn retained_anchor_bytes(&self) -> usize {
       self.anchors.retained_bytes()
@@ -162,8 +165,8 @@ mod verifiers {
     }
   }
 
-  /// Client-certificate verifier, requiring authentication, with P-256 and
-  /// P-384 trust-anchor keys imported once.
+  /// Client-certificate verifier, requiring authentication, with P-256, P-384
+  /// and ML-DSA trust-anchor keys prepared once.
   ///
   /// Results, errors, root hints and signature schemes are those of
   /// [`WebPkiClientVerifier`] built from the same roots with
@@ -179,7 +182,7 @@ mod verifiers {
   }
 
   impl PreparedClientVerifier {
-    /// Prepare `roots`' P-256 and P-384 anchor keys; other anchors import per use.
+    /// Prepare `roots`' P-256, P-384 and ML-DSA anchor keys; other anchors import per use.
     ///
     /// # Errors
     ///
@@ -209,6 +212,9 @@ mod verifiers {
     }
 
     /// Bytes retained by prepared anchor keys and their lookup keys, excluding map overhead.
+    ///
+    /// On 64-bit targets: 1,425 per P-256 anchor, 2,001 per P-384 anchor, and
+    /// 21,864, 38,888 or 68,200 per ML-DSA-44, 65 or 87 anchor.
     #[must_use]
     pub const fn retained_anchor_bytes(&self) -> usize {
       self.anchors.retained_bytes()
@@ -322,7 +328,9 @@ mod verifiers {
 ))]
 mod implementation {
 
-  #[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+  #[cfg(feature = "ml-dsa")]
+  use alloc::alloc::Global;
+  #[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "ml-dsa"))]
   use alloc::boxed::Box;
   use alloc::vec::Vec;
   #[cfg(feature = "ecdsa-p256")]
@@ -331,13 +339,18 @@ mod implementation {
   use rscrypto::{EcdsaP384PublicKey, EcdsaP384Signature};
   #[cfg(feature = "ed25519")]
   use rscrypto::{Ed25519PublicKey, Ed25519Signature};
+  #[cfg(feature = "ml-dsa")]
+  use rscrypto::{
+    MlDsa44PreparedPublicKey, MlDsa44PreparedPublicKeyStorage, MlDsa65PreparedPublicKey,
+    MlDsa65PreparedPublicKeyStorage, MlDsa87PreparedPublicKey, MlDsa87PreparedPublicKeyStorage,
+  };
   #[cfg(feature = "rsa")]
   use rscrypto::{RsaPublicKey, RsaPublicKeyPolicy, RsaSignatureProfile};
   use rustls::RootCertStore;
   use rustls::crypto::SignatureScheme;
   use rustls::crypto::WebPkiSupportedAlgorithms;
   use rustls::pki_types::{AlgorithmIdentifier, InvalidSignature, SignatureVerificationAlgorithm, alg_id};
-  #[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+  #[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384", feature = "ml-dsa"))]
   use std::collections::HashMap;
   #[derive(Clone, Copy, Debug)]
   enum Operation {
@@ -430,16 +443,20 @@ mod implementation {
       #[cfg(feature = "ml-dsa")]
       Operation::MlDsa(scheme) => {
         macro_rules! verify {
-          ($public:ident, $signature:ident) => {{
+          ($public:ident, $signature:ident, $prepared:ident) => {{
             let signature = rscrypto::$signature::try_from_slice(signature).map_err(|_| InvalidSignature)?;
-            let key = rscrypto::$public::try_from_slice(key).map_err(|_| InvalidSignature)?;
-            key.verify(message, &signature)
+            match anchors.and_then(|anchors| anchors.$prepared.get(key)) {
+              Some(prepared) => prepared.verify(message, &signature),
+              None => rscrypto::$public::try_from_slice(key)
+                .map_err(|_| InvalidSignature)?
+                .verify(message, &signature),
+            }
           }};
         }
         match scheme {
-          SignatureScheme::ML_DSA_44 => verify!(MlDsa44PublicKey, MlDsa44Signature),
-          SignatureScheme::ML_DSA_65 => verify!(MlDsa65PublicKey, MlDsa65Signature),
-          _ => verify!(MlDsa87PublicKey, MlDsa87Signature),
+          SignatureScheme::ML_DSA_44 => verify!(MlDsa44PublicKey, MlDsa44Signature, ml_dsa_44),
+          SignatureScheme::ML_DSA_65 => verify!(MlDsa65PublicKey, MlDsa65Signature, ml_dsa_65),
+          _ => verify!(MlDsa87PublicKey, MlDsa87Signature, ml_dsa_87),
         }
       }
       #[cfg(feature = "rsa")]
@@ -463,18 +480,25 @@ mod implementation {
     .map_err(|_| InvalidSignature)
   }
 
-  /// Verification keys imported once from operator-configured trust anchors.
+  /// Verification keys prepared once from operator-configured trust anchors.
   ///
   /// Each map is keyed by the anchor's exact subjectPublicKey bytes, which
   /// webpki passes back unchanged when that anchor issues a certificate.
-  /// Peer-supplied keys are never inserted. Only ECDSA import builds a
-  /// per-key table; RSA, Ed25519 and ML-DSA anchors keep the import path.
+  /// Peer-supplied keys are never inserted. ECDSA import builds a per-key
+  /// table, and ML-DSA preparation expands the matrix and transformed key;
+  /// RSA and Ed25519 anchors keep the import path.
   #[derive(Debug, Default)]
   pub(super) struct Anchors {
     #[cfg(feature = "ecdsa-p256")]
     p256: HashMap<Box<[u8]>, EcdsaP256PublicKey>,
     #[cfg(feature = "ecdsa-p384")]
     p384: HashMap<Box<[u8]>, EcdsaP384PublicKey>,
+    #[cfg(feature = "ml-dsa")]
+    ml_dsa_44: HashMap<Box<[u8]>, MlDsa44PreparedPublicKey<Box<MlDsa44PreparedPublicKeyStorage>>>,
+    #[cfg(feature = "ml-dsa")]
+    ml_dsa_65: HashMap<Box<[u8]>, MlDsa65PreparedPublicKey<Box<MlDsa65PreparedPublicKeyStorage>>>,
+    #[cfg(feature = "ml-dsa")]
+    ml_dsa_87: HashMap<Box<[u8]>, MlDsa87PreparedPublicKey<Box<MlDsa87PreparedPublicKeyStorage>>>,
     retained: usize,
   }
 
@@ -512,6 +536,27 @@ mod implementation {
           .retained
           .strict_add(key.len())
           .strict_add(size_of::<EcdsaP384PublicKey>());
+      }
+      #[cfg(feature = "ml-dsa")]
+      {
+        macro_rules! prepare {
+          ($algorithm:ident, $map:ident, $public:ident, $storage:ident) => {
+            if algorithm == alg_id::$algorithm.as_ref()
+              && let Ok(public) = rscrypto::$public::try_from_slice(key)
+              && let Ok(prepared) = public.prepare_in(Global)
+              && self.$map.insert(key.into(), prepared).is_none()
+            {
+              self.retained = self
+                .retained
+                .strict_add(key.len())
+                .strict_add(size_of::<Box<$storage>>())
+                .strict_add(size_of::<$storage>());
+            }
+          };
+        }
+        prepare!(ML_DSA_44, ml_dsa_44, MlDsa44PublicKey, MlDsa44PreparedPublicKeyStorage);
+        prepare!(ML_DSA_65, ml_dsa_65, MlDsa65PublicKey, MlDsa65PreparedPublicKeyStorage);
+        prepare!(ML_DSA_87, ml_dsa_87, MlDsa87PublicKey, MlDsa87PreparedPublicKeyStorage);
       }
     }
 

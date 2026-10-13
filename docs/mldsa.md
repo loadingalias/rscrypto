@@ -41,8 +41,10 @@ No third-party implementation source is copied, translated, or bundled into the 
 ## API contract
 
 Each parameter set has its own types for the public key, secret key, seed, signature,
-prepared secret key, and prepared public key.
-Each prepared key also has storage that the caller owns.
+prepared secret key, and prepared public key, and a storage type for each prepared key.
+A prepared key is generic over where its storage lives:
+`&mut` storage that the caller owns, from `prepare`,
+or a `Box` that `prepare_in` allocates with `alloc`.
 The encodings have these sizes, in bytes. The first three columns are raw FIPS 204 encodings.
 The others are RFC 9881 DER: the public key's SubjectPublicKeyInfo,
 and version 1 PKCS #8 private keys in the seed and expanded forms.
@@ -135,10 +137,15 @@ The supported SHAKE outputs supply 128 and 256 bits.
 - Deserialization uses the same strict import checks, rejects extra bytes,
   and guards partial reads of secret sequences.
 - Secret owners are not `Clone` or `Copy`, redact `Debug`, and export explicitly into `SecretBytes`.
-- A prepared secret key borrows its source key and its storage.
-  It clears the transformed secret polynomials on drop.
+- A prepared key reads only its storage, not its source key.
+  Secret storage holds the transformed secret polynomials, the public matrix,
+  and the first 128 bytes of the encoded key: rho, `K`, and tr.
+- A prepared secret key clears the transformed polynomials and `K` on drop.
   A failed preparation clears them before it returns.
   The secret storage clears them again on drop.
+- A prepared key in borrowed storage borrows that storage.
+  A prepared key from `prepare_in` owns its box; it is `Send`, `Sync`, and `'static`
+  when its allocator is, so a long-lived signer or verifier can keep and share it.
 
 ## Work and memory
 
@@ -154,14 +161,23 @@ It does not change signature bytes or validation.
 The caller selects where the storage lives: stack, static, or heap.
 `new()` is a `const fn`, so a static initializer can also hold the storage.
 The module's Rustdoc example shows the flow.
-Preparation writes the storage in place and returns a handle that borrows the key and the storage.
-The storage can be used again after its handle drops.
+Preparation writes the storage in place and returns a prepared key that borrows the storage.
+The storage can be used again after the prepared key drops.
+
+With `alloc`, `prepare_in(alloc)` allocates the storage from a caller-selected `Allocator`
+and prepares it in place.
+The returned prepared key owns the box and does not borrow the source key.
+On x86-64, AArch64, RISC-V, POWER, and IBM Z Linux release builds,
+a non-inlined call that prepares a secret and a public key with `prepare_in`
+has a frame of 1,128 to 2,240 bytes for every parameter set,
+so the storage is not built on the stack first (2026-10-13, `nightly-2026-09-30`).
+That is a frame measurement, not a whole-call bound; the table below does not include `prepare_in`.
 
 | Parameter set | Prepared secret-key storage | Prepared public-key storage |
 | ------------- | --------------------------: | --------------------------: |
-| ML-DSA-44     |                    28,672 B |                    20,544 B |
-| ML-DSA-65     |                    48,128 B |                    36,928 B |
-| ML-DSA-87     |                    80,896 B |                    65,600 B |
+| ML-DSA-44     |                    28,800 B |                    20,544 B |
+| ML-DSA-65     |                    48,256 B |                    36,928 B |
+| ML-DSA-87     |                    81,024 B |                    65,600 B |
 
 Measured stack bounds for a whole call, in bytes, without the caller's own storage:
 
@@ -176,6 +192,12 @@ Measured stack bounds for a whole call, in bytes, without the caller's own stora
 | Secret-key `prepare`                    |     1,504 |     1,504 |     1,552 |
 | Public-key `prepare`                    |     4,000 |     4,000 |     4,000 |
 | Storage `new`                           |       320 |       320 |       320 |
+
+The rows for secret-key `prepare`, prepared signing and verification, and storage `new`
+were measured before the 2026-10-13 change.
+That change copies rho, `K`, and tr into secret storage,
+makes prepared keys read only their storage, and builds storage from one zero constant.
+Those rows have not been measured again.
 
 How these values were measured:
 
@@ -267,8 +289,8 @@ Target qualification must keep these boundaries:
      Each target still needs passing results for the exact candidate.
 1. **Reduce the signing stack for constrained targets, and collect device evidence for the measured
    bounds.**
-   Prepared storage is written in place.
-   Its secret polynomials are cleared on handle drop, on failed preparation, and on storage drop.
+   Prepared storage is written in place, including allocated storage from `prepare_in`.
+   Its secret polynomials and `K` are cleared on prepared-key drop, on failed preparation, and on storage drop.
    Move, register, and spill copies that the compiler makes stay outside the general cleanup claim.
 1. **Test bounded-sampler and signing exhaustion through production paths.**
    Extend the fuzz and corpus coverage, and run the remaining native and device targets.
