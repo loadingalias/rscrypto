@@ -58,55 +58,54 @@ fn take_attempts() -> Option<usize> {
 
 macro_rules! run_set {
   ($rows:expr, $keys:expr, $messages:expr, $name:literal, $set:ident, $storage:ident) => {{
-    let mut warm = None;
     for key in 0..$keys {
       let (public, secret) = $set::keypair_from_seed(&input(0, key, 0)).expect("key generation");
       let mut storage = Box::new($storage::new());
       let prepared = secret.prepare(&mut storage).expect("preparation");
-      if warm.is_none() {
+      if key == 0 {
         for message in 0..16 {
           let message = input(1, u32::MAX, message);
           black_box(secret.sign_deterministic(&message, b"").expect("warm-up"));
           black_box(prepared.sign_deterministic(&message, b"").expect("warm-up"));
         }
-        warm = Some(());
       }
       for message in 0..$messages {
         let text = input(1, key, message);
         let random = input(2, key, message);
-        let mut signatures = Vec::with_capacity(2);
-        for mode in ["deterministic", "hedged"] {
-          for form in ["compact", "prepared"] {
+        for hedged in [false, true] {
+          let mut compact_signature = None;
+          for prepared_form in [false, true] {
             let fill = |out: &mut [u8]| {
               out.copy_from_slice(&random);
               Ok::<(), rscrypto::MlDsaError>(())
             };
             let _ = take_attempts();
             let start = Instant::now();
-            let signature = match (form, mode) {
-              ("compact", "deterministic") => secret.sign_deterministic(black_box(&text), b""),
-              ("compact", _) => secret.sign_with(black_box(&text), b"", fill),
-              (_, "deterministic") => prepared.sign_deterministic(black_box(&text), b""),
-              _ => prepared.sign_with(black_box(&text), b"", fill),
+            let signature = match (prepared_form, hedged) {
+              (false, false) => secret.sign_deterministic(black_box(&text), b""),
+              (false, true) => secret.sign_with(black_box(&text), b"", fill),
+              (true, false) => prepared.sign_deterministic(black_box(&text), b""),
+              (true, true) => prepared.sign_with(black_box(&text), b"", fill),
             }
             .expect("signature");
             let nanos = u64::try_from(start.elapsed().as_nanos()).expect("signature time fits u64");
             let attempts = take_attempts();
             public.verify(&text, &signature).expect("signature verifies");
-            signatures.push(signature);
+            // Both key forms sign the same bytes.
+            match &compact_signature {
+              None => compact_signature = Some(signature),
+              Some(expected) => assert_eq!(expected.as_bytes(), signature.as_bytes(), "{} hedged={hedged}", $name),
+            }
             $rows.push(Row {
               set: $name,
-              form,
-              mode,
+              form: if prepared_form { "prepared" } else { "compact" },
+              mode: if hedged { "hedged" } else { "deterministic" },
               key,
               message,
               attempts,
               nanos,
             });
           }
-          // Both key forms sign the same bytes.
-          assert_eq!(signatures[0].as_bytes(), signatures[1].as_bytes(), "{} {mode}", $name);
-          signatures.clear();
         }
       }
     }

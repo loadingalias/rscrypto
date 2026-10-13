@@ -4,7 +4,7 @@
 Builds tools/mldsa-tail twice: the production build times each signature, and a
 `--cfg rscrypto_mldsa_attempts` build counts rejection-sampling attempts (its
 latency is not production latency). Both sign the same deterministic inputs.
-The summaries are printed so a remote `just ssh-just` log carries them home.
+Both outputs are printed so a remote `just ssh-just` log carries the raw rows home.
 """
 
 import argparse
@@ -33,7 +33,7 @@ def build(output, name, rustflags, portable):
   with (output / f'build-{name}.log').open('wb') as log:
     subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=1200, env=environment)
   binary = target_dir / 'release' / (BINARY + ('.exe' if os.name == 'nt' else ''))
-  return command, rustflags, binary
+  return command, binary
 
 
 def main():
@@ -54,15 +54,14 @@ def main():
   provenance = {'identity': build_identity(), 'keys': args.keys, 'messages': args.messages,
                 'portable': args.portable, 'runs': {}}
   for name, rustflags in (('production', ''), ('attempts', '--cfg rscrypto_mldsa_attempts')):
-    command, flags, binary = build(output, name, rustflags, args.portable)
+    command, binary = build(output, name, rustflags, args.portable)
     run = [str(binary), str(args.keys), str(args.messages)]
     result = subprocess.run(run, capture_output=True, check=True, timeout=3600)
     (output / f'{name}.txt').write_bytes(result.stdout)
-    provenance['runs'][name] = {'build': command, 'rustflags': flags, 'run': run,
+    provenance['runs'][name] = {'build': command, 'rustflags': rustflags, 'run': run,
                                 'executable_sha256': hashlib.sha256(binary.read_bytes()).hexdigest()}
-    summary = [line for line in result.stdout.decode().splitlines() if line.startswith('# summary')]
     print(f'== {name}')
-    print('\n'.join(summary))
+    print(result.stdout.decode(), end='')
   (output / 'provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')
   (output / 'SHA256SUMS').write_text(''.join(hashlib.sha256(path.read_bytes()).hexdigest() + '  ' + str(path.relative_to(output)) + '\n'
                                           for path in sorted(output.rglob('*')) if path.is_file() and path.name != 'SHA256SUMS'))
