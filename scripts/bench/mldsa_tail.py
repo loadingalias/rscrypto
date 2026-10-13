@@ -4,7 +4,7 @@
 Builds tools/mldsa-tail twice: the production build times each signature, and a
 `--cfg rscrypto_mldsa_attempts` build counts rejection-sampling attempts (its
 latency is not production latency). Both sign the same deterministic inputs.
-Both outputs are printed so a remote `just ssh-just` log carries the raw rows home.
+Both outputs and the provenance are printed so a remote `just ssh-just` log carries them home.
 """
 
 import argparse
@@ -63,6 +63,8 @@ def main():
     print(f'== {name}')
     print(result.stdout.decode(), end='')
   (output / 'provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')
+  print('== provenance')
+  print(json.dumps(provenance, indent=2))
   (output / 'SHA256SUMS').write_text(''.join(hashlib.sha256(path.read_bytes()).hexdigest() + '  ' + str(path.relative_to(output)) + '\n'
                                           for path in sorted(output.rglob('*')) if path.is_file() and path.name != 'SHA256SUMS'))
   print(f'ML-DSA signing-tail evidence: {output}')

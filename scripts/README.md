@@ -479,7 +479,7 @@ retains both runs under `benchmark_results/mldsa-tail-<time>/`. The production b
 compact and prepared, deterministic and hedged signature of fixed inputs; the second build adds
 `--cfg rscrypto_mldsa_attempts`, which counts rejection-sampling attempts and is not production
 latency. Inputs are deterministic, so attempt counts match on every target. The recipe prints both
-outputs, raw rows and summaries, so a `just ssh-just` log carries them home.
+outputs, raw rows and summaries, and the provenance, so a `just ssh-just` log carries them home.
 
 Local and development-machine benchmarks share unique run directories under `benchmark_results/criterion/<run-id>/`, with logs, the plan,
 provenance, raw data, and completion status.
