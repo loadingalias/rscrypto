@@ -414,6 +414,8 @@ pub use mlkem::{
   )
 ))]
 pub use p256_ecdh::diag_p256_ecdh_select_window_limb_digest;
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "p256-ecdh"))]
+pub use p256_ecdh::diag_p256_field_mul_chain;
 #[cfg(feature = "p256-ecdh")]
 pub use p256_ecdh::{P256EphemeralSecret, P256KeyGenerationError, P256PublicKey, P256PublicKeyError, P256SharedSecret};
 #[cfg(feature = "p384-ecdh")]

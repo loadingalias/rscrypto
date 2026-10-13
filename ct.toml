@@ -789,6 +789,54 @@ timeout_seconds = 1800
 timeout_reason = "Physical RISC-V agreement exceeded the default 300-second budget; retain the full 20,000-sample gate."
 
 [[dudect_case]]
+name = "p256_ecdh_probe_agree_same_vs_same"
+primitive = "kx.p256_ecdh"
+filter = "p256_ecdh_probe_agree_same_vs_same"
+left_class = "complete agreement with fixed valid scalar"
+right_class = "complete agreement with the same fixed valid scalar"
+samples = 100000
+smoke_samples = 500
+timeout_seconds = 1800
+timeout_reason = "Physical RISC-V agreement takes about 0.82 ms; 100,000 samples need about 90 seconds plus setup."
+gate = "diagnostic"
+reason = "A/A control for the RISC-V agreement failure; both classes are identical, so any bias is measurement or harness artifact."
+
+[[dudect_case]]
+name = "p256_ecdh_probe_agree_fixed_vs_fixed"
+primitive = "kx.p256_ecdh"
+filter = "p256_ecdh_probe_agree_fixed_vs_fixed"
+left_class = "complete agreement with fixed valid scalar"
+right_class = "complete agreement with a second fixed valid scalar"
+samples = 100000
+smoke_samples = 500
+timeout_seconds = 1800
+timeout_reason = "Physical RISC-V agreement takes about 0.82 ms; 100,000 samples need about 90 seconds plus setup."
+gate = "diagnostic"
+reason = "Tests whether agreement time depends on the scalar without per-sample input variation."
+
+[[dudect_case]]
+name = "p256_probe_field_mul_same_vs_same"
+primitive = "kx.p256_ecdh"
+filter = "p256_probe_field_mul_same_vs_same"
+left_class = "256 chained portable Montgomery products of one fixed operand pair"
+right_class = "256 chained portable Montgomery products of the same operand pair"
+samples = 200000
+smoke_samples = 500
+gate = "diagnostic"
+reason = "A/A control for the riscv64 normalized hardware multiply probe."
+
+[[dudect_case]]
+name = "p256_probe_field_mul_fixed_vs_random"
+primitive = "kx.p256_ecdh"
+filter = "p256_probe_field_mul_fixed_vs_random"
+left_class = "256 chained portable Montgomery products of one fixed operand pair"
+right_class = "256 chained portable Montgomery products of a fresh random operand pair"
+samples = 200000
+smoke_samples = 500
+gate = "diagnostic"
+reason = "Tests whether the riscv64 normalized hardware multiply has operand-dependent latency; elsewhere it measures the non-production portable multiply."
+
+[[dudect_case]]
 name = "p384_ecdh_public_key_fixed_vs_random_scalar"
 primitive = "kx.p384_ecdh"
 filter = "p384_ecdh_public_key_fixed_vs_random_scalar"

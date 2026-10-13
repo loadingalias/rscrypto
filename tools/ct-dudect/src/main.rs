@@ -1031,6 +1031,84 @@ fn p256_ecdh_agree_fixed_vs_random_scalar(runner: &mut CtRunner, rng: &mut Bench
   }
 }
 
+// Probes for the RISC-V P-256 agreement failure (docs/tasks/qualification.md). The
+// agreement probes keep the required case's structure but use two fixed scalars, so a
+// difference cannot come from per-sample input variation; same-versus-same is the A/A
+// control. The field probes chain portable Montgomery products, which on riscv64 are
+// the production normalized hardware multiply.
+fn p256_ecdh_probe_agree(
+  runner: &mut CtRunner,
+  rng: &mut BenchRng,
+  left: [u8; P256EphemeralSecret::LENGTH],
+  right: [u8; P256EphemeralSecret::LENGTH],
+) {
+  let peer = p256_ecdh_secret([0x24; P256EphemeralSecret::LENGTH]).public_key();
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    inputs.push((class, if matches!(class, Class::Left) { left } else { right }));
+  }
+
+  for (class, scalar) in inputs {
+    runner.run_one(class, || p256_ecdh_secret(scalar).diffie_hellman(&peer).as_bytes()[0]);
+  }
+}
+
+fn p256_ecdh_probe_agree_same_vs_same(runner: &mut CtRunner, rng: &mut BenchRng) {
+  p256_ecdh_probe_agree(
+    runner,
+    rng,
+    [0x42; P256EphemeralSecret::LENGTH],
+    [0x42; P256EphemeralSecret::LENGTH],
+  );
+}
+
+fn p256_ecdh_probe_agree_fixed_vs_fixed(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let other = valid_p256_ecdh_scalar(rng);
+  p256_ecdh_probe_agree(runner, rng, [0x42; P256EphemeralSecret::LENGTH], other);
+}
+
+const P256_PROBE_MUL_ROUNDS: usize = 256;
+
+// A field operand below 2^255, and so below p.
+fn p256_probe_field_operand(rng: &mut BenchRng) -> [u64; 4] {
+  let mut limbs: [u64; 4] = core::array::from_fn(|_| u64::from_le_bytes(rand_array::<8>(rng)));
+  limbs[3] >>= 1;
+  limbs
+}
+
+fn p256_probe_field_mul(runner: &mut CtRunner, rng: &mut BenchRng, random_right: bool) {
+  let fixed = (p256_probe_field_operand(rng), p256_probe_field_operand(rng));
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let operands = if matches!(class, Class::Right) && random_right {
+      (p256_probe_field_operand(rng), p256_probe_field_operand(rng))
+    } else {
+      fixed
+    };
+    inputs.push((class, operands));
+  }
+
+  for (class, (left, right)) in inputs {
+    runner.run_one(class, || {
+      rscrypto::auth::diag_p256_field_mul_chain(
+        core::hint::black_box(left),
+        core::hint::black_box(right),
+        P256_PROBE_MUL_ROUNDS,
+      )
+    });
+  }
+}
+
+fn p256_probe_field_mul_same_vs_same(runner: &mut CtRunner, rng: &mut BenchRng) {
+  p256_probe_field_mul(runner, rng, false);
+}
+
+fn p256_probe_field_mul_fixed_vs_random(runner: &mut CtRunner, rng: &mut BenchRng) {
+  p256_probe_field_mul(runner, rng, true);
+}
+
 fn valid_p384_ecdh_scalar(rng: &mut BenchRng) -> [u8; P384EphemeralSecret::LENGTH] {
   let mut scalar = rand_array::<{ P384EphemeralSecret::LENGTH }>(rng);
   scalar[0] &= 0x7f;
@@ -3253,6 +3331,10 @@ ctbench_main_with_seeds!(
   (x25519_fixed_vs_random_scalar, Some(0x7832353531395f63)),
   (p256_ecdh_public_key_fixed_vs_random_scalar, Some(0x7032353665637075)),
   (p256_ecdh_agree_fixed_vs_random_scalar, Some(0x7032353665636167)),
+  (p256_ecdh_probe_agree_same_vs_same, Some(0x7032353670720000)),
+  (p256_ecdh_probe_agree_fixed_vs_fixed, Some(0x7032353670720001)),
+  (p256_probe_field_mul_same_vs_same, Some(0x7032353670720002)),
+  (p256_probe_field_mul_fixed_vs_random, Some(0x7032353670720003)),
   (p384_ecdh_public_key_fixed_vs_random_scalar, Some(0x7033383465637075)),
   (p384_ecdh_agree_fixed_vs_random_scalar, Some(0x7033383465636167)),
   (mldsa_inverse_ntt_fixed_vs_random, Some(0x6d6c647361000000)),

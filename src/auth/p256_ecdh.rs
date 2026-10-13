@@ -395,6 +395,15 @@ pub fn diag_p256_ecdh_select_window_limb_digest(digit: u8) -> [u64; 8] {
   p256_portable::diag_select_window_limb_digest(digit)
 }
 
+/// Chain portable P-256 Montgomery multiplications for operand-timing probes.
+/// The portable field is production on targets without the assembly backend,
+/// including riscv64's normalized hardware multiply.
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+#[doc(hidden)]
+pub fn diag_p256_field_mul_chain(left: [u64; 4], right: [u64; 4], rounds: usize) -> u64 {
+  p256_portable::diag_montgomery_mul_chain(left, right, rounds)
+}
+
 /// Exercise P-256 ECDH candidate cleanup on success and partial-fill failure.
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 #[doc(hidden)]

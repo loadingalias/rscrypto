@@ -1249,6 +1249,18 @@ pub(super) fn diag_select_window_limb_digest(digit: u8) -> [u64; 8] {
   output
 }
 
+/// Chain `rounds` Montgomery multiplications by `right`, starting from `left`.
+/// On riscv64 each product is the production normalized hardware multiply.
+#[cfg(all(feature = "p256-ecdh", rscrypto_internal, feature = "diag"))]
+pub(super) fn diag_montgomery_mul_chain(left: [u64; 4], right: [u64; 4], rounds: usize) -> u64 {
+  let right = Uint(right);
+  let mut value = Uint(left);
+  for _ in 0..rounds {
+    value = montgomery_mul(value, right);
+  }
+  value.0.iter().fold(0, |digest, limb| digest ^ limb)
+}
+
 #[cfg(all(test, feature = "p256-ecdh"))]
 fn generator_comb_table() -> [Affine; COMB_WINDOW_SIZE] {
   let mut table = [Affine::generator(); COMB_WINDOW_SIZE];
