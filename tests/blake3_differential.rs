@@ -449,6 +449,8 @@ mod subtree {
   use super::patterned_bytes;
 
   const CHUNK_LEN: u64 = 1024;
+  /// Uneven update size that crosses buffer and chunk boundaries inside the hasher.
+  const UNEVEN_PIECE_LEN: usize = 1537;
   const KEY: [u8; 32] = *b"whats the Elvish word for friend";
   const CONTEXT: &str = "rscrypto blake3 subtree test context";
 
@@ -490,13 +492,13 @@ mod subtree {
     hasher.finalize_non_root()
   }
 
-  fn subtree_cv(tree: &Blake3Tree, offset: u64, input: &[u8]) -> Blake3ChainingValue {
-    // One update reaches the multi-chunk paths; uneven pieces cross buffer and
-    // chunk boundaries inside the hasher.
+  fn subtree_cv(tree: &Blake3Tree, offset: u64, input: &[u8], piece_len: usize) -> Blake3ChainingValue {
+    // One update reaches the multi-chunk paths; `piece_len` updates must give
+    // the same chaining value.
     let mut whole = tree.subtree(offset).expect("test offsets are chunk-aligned");
     whole.update(input).expect("test subtrees fit their offset");
     let mut pieces = tree.subtree(offset).expect("test offsets are chunk-aligned");
-    for piece in input.chunks(1537) {
+    for piece in input.chunks(piece_len) {
       pieces.update(piece).expect("test subtrees fit their offset");
     }
     let cv = whole.finalize().expect("test subtrees are non-empty");
@@ -510,14 +512,22 @@ mod subtree {
   }
 
   /// Hash `input` at `offset` as a subtree split recursively down to `leaf_len`
-  /// bytes, checking every chaining value and merge against `blake3::hazmat`.
-  fn split_cv(mode: Mode, tree: &Blake3Tree, offset: u64, input: &[u8], leaf_len: u64) -> Blake3ChainingValue {
+  /// bytes, updating each leaf in `piece_len` pieces and checking every chaining
+  /// value and merge against `blake3::hazmat`.
+  fn split_cv(
+    mode: Mode,
+    tree: &Blake3Tree,
+    offset: u64,
+    input: &[u8],
+    leaf_len: u64,
+    piece_len: usize,
+  ) -> Blake3ChainingValue {
     let len = input.len() as u64;
     let cv = match Blake3Tree::left_subtree_len(len) {
       Some(left_len) if len > leaf_len => {
         let (left, right) = input.split_at(usize::try_from(left_len).expect("test inputs fit in memory"));
-        let left_cv = split_cv(mode, tree, offset, left, leaf_len);
-        let right_cv = split_cv(mode, tree, offset.strict_add(left_len), right, leaf_len);
+        let left_cv = split_cv(mode, tree, offset, left, leaf_len, piece_len);
+        let right_cv = split_cv(mode, tree, offset.strict_add(left_len), right, leaf_len, piece_len);
         let merged = tree
           .merge(&left_cv, &right_cv)
           .expect("recursive splits are valid merges");
@@ -528,7 +538,7 @@ mod subtree {
         );
         merged
       }
-      _ => subtree_cv(tree, offset, input),
+      _ => subtree_cv(tree, offset, input, piece_len),
     };
     assert_eq!(
       cv.as_bytes(),
@@ -550,15 +560,23 @@ mod subtree {
     }
   }
 
-  fn check_split_root(mode: Mode, input: &[u8], leaf_len: u64) {
+  fn one_shot_root(mode: Mode, input: &[u8]) -> [u8; 32] {
+    match mode {
+      Mode::Hash => Blake3::digest(input),
+      Mode::Keyed => Blake3::keyed_digest(&KEY, input).to_bytes(),
+      Mode::DeriveKey => Blake3::derive_key_with(&Blake3DeriveContext::new(CONTEXT), input),
+    }
+  }
+
+  fn check_split_root(mode: Mode, input: &[u8], leaf_len: u64, piece_len: usize) {
     let tree = tree(mode);
     let len = input.len() as u64;
     let Some(left_len) = Blake3Tree::left_subtree_len(len) else {
       return;
     };
     let (left, right) = input.split_at(usize::try_from(left_len).expect("test inputs fit in memory"));
-    let left_cv = split_cv(mode, &tree, 0, left, leaf_len);
-    let right_cv = split_cv(mode, &tree, left_len, right, leaf_len);
+    let left_cv = split_cv(mode, &tree, 0, left, leaf_len, piece_len);
+    let right_cv = split_cv(mode, &tree, left_len, right, leaf_len, piece_len);
 
     let reference = reference_root(mode, input);
     let root = tree
@@ -569,12 +587,11 @@ mod subtree {
       reference.finalize().as_bytes(),
       "root mismatch for {mode:?} len={len}"
     );
-    let expected_root = match mode {
-      Mode::Hash => Blake3::digest(input),
-      Mode::Keyed => Blake3::keyed_digest(&KEY, input).to_bytes(),
-      Mode::DeriveKey => Blake3::derive_key_with(&Blake3DeriveContext::new(CONTEXT), input),
-    };
-    assert_eq!(root, expected_root, "one-shot mismatch for {mode:?} len={len}");
+    assert_eq!(
+      root,
+      one_shot_root(mode, input),
+      "one-shot mismatch for {mode:?} len={len}"
+    );
 
     let mut expected_xof = [0u8; 131];
     reference.finalize_xof().fill(&mut expected_xof);
@@ -593,7 +610,7 @@ mod subtree {
         let len = (chunks * CHUNK_LEN).strict_add_signed(delta);
         let input = patterned_bytes(usize::try_from(len).expect("test inputs fit in memory"));
         for mode in MODES {
-          check_split_root(mode, &input, CHUNK_LEN);
+          check_split_root(mode, &input, CHUNK_LEN, UNEVEN_PIECE_LEN);
         }
       }
     }
@@ -605,8 +622,76 @@ mod subtree {
     // nonzero starting counter.
     let input = patterned_bytes(1024 * 1024 + 77);
     for mode in MODES {
-      check_split_root(mode, &input, 256 * CHUNK_LEN);
-      check_split_root(mode, &input, 128 * CHUNK_LEN);
+      check_split_root(mode, &input, 256 * CHUNK_LEN, UNEVEN_PIECE_LEN);
+      check_split_root(mode, &input, 128 * CHUNK_LEN, UNEVEN_PIECE_LEN);
+    }
+  }
+
+  /// Hash `input` as consecutive `leaf_len` leaves, each in `piece_len` updates,
+  /// and reduce them level by level with `merge_level`, carrying an odd last
+  /// value up to the next level.
+  fn flat_root(mode: Mode, input: &[u8], leaf_len: usize, piece_len: usize) -> [u8; 32] {
+    let tree = tree(mode);
+    let mut level: Vec<Blake3ChainingValue> = input
+      .chunks(leaf_len)
+      .enumerate()
+      .map(|(index, leaf)| {
+        let offset = u64::try_from(index.strict_mul(leaf_len)).expect("test offsets fit u64");
+        subtree_cv(&tree, offset, leaf, piece_len)
+      })
+      .collect();
+    assert!(level.len() >= 2, "a root merges at least two leaves");
+    while level.len() > 2 {
+      let carry = if level.len().is_multiple_of(2) {
+        None
+      } else {
+        level.pop()
+      };
+      let mut parents = level[..level.len() / 2].to_vec();
+      tree
+        .merge_level(&level, &mut parents)
+        .expect("adjacent values form a level");
+      parents.extend(carry);
+      level = parents;
+    }
+    tree
+      .merge_root(&level[0], &level[1])
+      .expect("the last two values form the root")
+  }
+
+  #[test]
+  fn one_mib_leaves_with_64_kib_updates_match_digest() {
+    // The layout of a caller that hashes 1 MiB leaves in 64 KiB updates: the
+    // recursive split checks every chaining value and merge against upstream,
+    // and the flat merge_level reduction must reach the same root. Keyed and
+    // derive-key modes stop at 8 MiB + 65,537 to bound the runtime.
+    const MIB: usize = 1 << 20;
+    const PIECE_LEN: usize = 64 * 1024;
+    const ALL_MODES_UP_TO: usize = 8 * MIB + 65_537;
+    let lens = [
+      MIB + 1,
+      2 * MIB - 1,
+      2 * MIB,
+      2 * MIB + 1,
+      3 * MIB + 1025,
+      4 * MIB + 17,
+      ALL_MODES_UP_TO,
+      16 * MIB + 1,
+      50 * MIB,
+      50 * MIB + 1023,
+    ];
+    let data = patterned_bytes(50 * MIB + 1023);
+    for len in lens {
+      let input = &data[..len];
+      let modes: &[Mode] = if len <= ALL_MODES_UP_TO { &MODES } else { &[Mode::Hash] };
+      for &mode in modes {
+        check_split_root(mode, input, MIB as u64, PIECE_LEN);
+        assert_eq!(
+          flat_root(mode, input, MIB, PIECE_LEN),
+          one_shot_root(mode, input),
+          "flat merge_level root mismatch for {mode:?} len={len}"
+        );
+      }
     }
   }
 
@@ -616,7 +701,7 @@ mod subtree {
     for offset_chunks in [1u64 << 20, (1 << 32) - 4, 1 << 32, 1 << 40, 1 << 53, (1 << 54) - 4] {
       let offset = offset_chunks * CHUNK_LEN;
       for mode in MODES {
-        let cv = subtree_cv(&tree(mode), offset, &input);
+        let cv = subtree_cv(&tree(mode), offset, &input, UNEVEN_PIECE_LEN);
         assert_eq!(
           cv.as_bytes(),
           &reference_cv(mode, offset, &input),
@@ -712,7 +797,7 @@ mod subtree {
     #[test]
     fn random_splits_match_reference(len in 1025usize..40_000, leaf_shift in 0u32..5, mode in 0usize..3) {
       let input = patterned_bytes(len);
-      check_split_root(MODES[mode], &input, CHUNK_LEN << leaf_shift);
+      check_split_root(MODES[mode], &input, CHUNK_LEN << leaf_shift, UNEVEN_PIECE_LEN);
     }
   }
 }
