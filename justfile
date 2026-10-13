@@ -181,6 +181,11 @@ test-provider-quic-runner *args:
 bench-provider-scorecard *args:
     @scripts/lib/python.sh scripts/bench/provider_scorecard.py "$@"
 
+# Record ML-DSA per-signature latency tails and rejection-sampling attempt counts.
+[group('benchmarks')]
+bench-mldsa-tail *args:
+    @scripts/lib/python.sh scripts/bench/mldsa_tail.py "$@"
+
 # Run pinned BoGo TLS 1.3 cases and retain failures as well as passes.
 [group('tests')]
 test-provider-bogo *args:

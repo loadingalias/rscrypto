@@ -1219,6 +1219,17 @@ parameter_set!(
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 mod diagnostics;
+
+/// Return and reset the signing attempts counted since the last call.
+///
+/// Exists only in `--cfg rscrypto_mldsa_attempts` builds, for the signing-tail
+/// baseline; no production or evidence build contains the counter.
+#[cfg(rscrypto_mldsa_attempts)]
+#[doc(hidden)]
+#[must_use]
+pub fn diag_mldsa_take_sign_attempts() -> usize {
+  portable::attempts::take()
+}
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 pub use diagnostics::{
   diag_mldsa_accumulate, diag_mldsa_mask, diag_mldsa_montgomery, diag_mldsa_montgomery_batch, diag_mldsa_norm,

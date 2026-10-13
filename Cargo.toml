@@ -66,6 +66,7 @@ unexpected_cfgs = { level = "deny", check-cfg = [
   'cfg(fuzzing)',
   'cfg(rscrypto_internal_fuzzing)',
   'cfg(rscrypto_internal)',
+  'cfg(rscrypto_mldsa_attempts)',
   'cfg(target_feature, values("movdiri", "movdir64b", "serialize"))',
 ] }
 

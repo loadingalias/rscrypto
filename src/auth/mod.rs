@@ -478,6 +478,8 @@ pub use x25519::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecr
 pub use crate::backend::curve25519_swap::diag_curve25519_conditional_swap;
 pub use crate::traits::Mac;
 
+#[cfg(all(rscrypto_mldsa_attempts, feature = "ml-dsa"))]
+pub use mldsa::diag_mldsa_take_sign_attempts;
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "ml-dsa"))]
 pub use mldsa::{
   diag_mldsa_accumulate, diag_mldsa_challenge, diag_mldsa_inverse_ntt, diag_mldsa_inverse_ntt_portable,

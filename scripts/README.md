@@ -452,6 +452,7 @@ They are not device timing evidence or device stack evidence.
 | `bench/settings.py`   | Measurement, profiling, and watchdog settings |
 | `bench/transfer.py`   | Compile-only preparation and verified native consumption for RISC-V, POWER, and IBM Z |
 | `bench/bounded.py`    | `just bench`, `just profile`: process-tree deadline |
+| `bench/mldsa_tail.py` | `just bench-mldsa-tail`: ML-DSA signing-tail baseline |
 | `update-all.sh`       | `just update` |
 
 - `bench/benchmark_catalog.py` owns algorithm, target, and curated profile-preset selection.
@@ -472,6 +473,13 @@ Run that focused suite with `scripts/lib/python.sh scripts/bench/benchmark_catal
 It tests the Python runner, Just argument forwarding, and export in temporary directories,
 with substitute Cargo, benchmark, and profiler executors.
 It does not run cryptographic benchmarks.
+
+`just bench-mldsa-tail` builds [`tools/mldsa-tail`](../tools/mldsa-tail/src/main.rs) twice and
+retains both runs under `benchmark_results/mldsa-tail-<time>/`. The production build times each
+compact and prepared, deterministic and hedged signature of fixed inputs; the second build adds
+`--cfg rscrypto_mldsa_attempts`, which counts rejection-sampling attempts and is not production
+latency. Inputs are deterministic, so attempt counts match on every target. The recipe prints the
+summaries so a `just ssh-just` log carries them home.
 
 Local and development-machine benchmarks share unique run directories under `benchmark_results/criterion/<run-id>/`, with logs, the plan,
 provenance, raw data, and completion status.
@@ -774,6 +782,9 @@ No compatibility lane enables persistent caches.
 - The resolver keeps the target compiler flags and passes encoded arguments to Cargo.
   Build provenance records the effective flags.
 - Normal builds, docs, tests, and published Cargo feature combinations do not opt in.
+
+`--cfg rscrypto_mldsa_attempts` is a separate, narrower flag. Only `just bench-mldsa-tail` sets it,
+to count ML-DSA signing attempts; CT and other evidence builds never contain the counter.
 
 `just test-evidence` runs the production library and evidence integration tests,
 with production-auto and portable-only dispatch.
