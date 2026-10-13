@@ -159,8 +159,9 @@ jobs:
             target: riscv64gc-unknown-linux-gnu
             runner: ubuntu-24.04-riscv
             # Compilation runs on x86-64. Leave transfer headroom for this
-            # runner's slow artifact link as the test inventory grows.
-            timeout: 45
+            # runner's slow artifact link as the test inventory grows. The
+            # SLH-DSA small-set tests run several minutes each here.
+            timeout: 90
           - platform: x86_64-win
             runner: runs-on=${{ github.run_id }}/runner=x86_64-win/env=production
             timeout: 60
