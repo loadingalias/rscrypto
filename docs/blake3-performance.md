@@ -134,8 +134,9 @@ not change the failed native gate.
 ## Source and gate boundaries
 
 Source binding verifies that current `wasm32.rs` matches E10
-(`d640eaee…`), and current `io.rs` (`adef0aa2…`) and `parallel.rs`
-(`ce9d4822…`) match S25. Full hashes and original inventories are retained.
+(`d640eaee…`), and current `io.rs` matches S25 (`adef0aa2…`).
+`parallel.rs` matched S25 (`ce9d4822…`); commit `2f9e4807` later changed only
+its `reader_tests` module. Full hashes and original inventories are retained.
 Matching these individual files preserves their evidence scope; it does not
 turn historical artifacts into qualification of every later API or final build.
 

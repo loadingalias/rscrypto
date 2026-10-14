@@ -162,7 +162,8 @@ Each job keeps `target/bench/` as a GitHub artifact.
 It includes failed-run evidence, source and machine identity, the resolved case plan, logs,
 and raw Criterion results.
 
-Preparation and native measurement each have their own 90-minute budget.
+Each preparation and measurement job runs one `just bench`, so the ten-minute [time budget](#time-budget) applies to each.
+Job timeouts (120 minutes, 180 on RISC-V) cover provisioning and transfer.
 `all` is a selection; it does not guarantee that every case fits in that budget.
 Limit large runs by algorithm, group, target, or case filter.
 The workflow allows extra provisioning time, especially on RISC-V.
@@ -210,6 +211,7 @@ It takes one native Linux architecture and one curated primitive.
 - The ML-DSA presets use ML-DSA-65: `auth/mldsa65-keygen`, `auth/mldsa65-prepared-sign`, and `auth/mldsa65-prepared-verify`.
   Signing is deterministic.
   Signing and verification do not include key preparation.
+- The SLH-DSA presets are `auth/slhdsa-sha2-128s-sign`, `auth/slhdsa-shake-128s-sign`, and `auth/slhdsa-sha2-128s-verify`.
 
 The GitHub UI shows the same two inputs as the CLI:
 
@@ -269,9 +271,7 @@ a fixture. Set `RSCRYPTO_BLAKE3_FILE_DIR` to that directory and
 
 The `upstream-b3sum-4` rows require `RSCRYPTO_BLAKE3_B3SUM` and
 `RSCRYPTO_BLAKE3_B3SUM_RECEIPT`: an executable and a retained build receipt for
-the same upstream revision as the locked BLAKE3 dependency. The
-receipt contract and build identity (`benchmark_results/blake3-delivery-20261008T185226Z/b3sum-file.md`)
-describe the required fields. `--rscrypto-verify-b3sum` validates the receipt,
+the same upstream revision as the locked BLAKE3 dependency. `benches/blake3_file.rs` defines the required receipt fields. `--rscrypto-verify-b3sum` validates the receipt,
 binary hash and version without hashing a file. A receipt attests its build;
 retain the source and build logs that substantiate it. The shared benchmark
 metadata hashes both external files, preventing baseline reuse after a change
@@ -531,6 +531,8 @@ You can lower the limit, but it cannot be more than 600 seconds.
 - Direct Cargo invocation limits each Criterion harness separately.
   Use `just bench` to limit a selection that spans more than one harness, together with its builds.
   Use `just bench-structural` for the structural benchmark deadline.
+- `just bench-mldsa-tail` and `just bench-provider-scorecard` are separate tools with their own timeouts:
+  20 minutes per build and 60 per run for the ML-DSA tail, 10 minutes for each scorecard build and run.
 
 A planned comparison must fit within this limit, including every repetition.
 Do not split an over-budget comparison across repeated invocations to bypass it.

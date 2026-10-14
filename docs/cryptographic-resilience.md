@@ -17,14 +17,14 @@ This guide does not establish a new security or qualification claim.
 | ECDSA, Ed25519, and elliptic-curve key agreement | Signatures or key agreement based on elliptic-curve problems. | Changing curves or increasing their size does not remove dependence on this family of problems. |
 | RSA | Signatures and encryption whose security relies on RSA-related number-theoretic assumptions. | Larger keys preserve those assumptions. |
 | ML-KEM and ML-DSA | Key establishment and signatures based on module-lattice problems. | They offer post-quantum alternatives to classical public-key schemes, with implementation and protocol requirements of their own. |
-| SLH-DSA | Signatures based on hash-function properties. | It offers a different foundation from curves and lattices. It is planned for rscrypto and is not currently implemented. |
+| SLH-DSA | Signatures based on hash-function properties. | It offers a different foundation from curves and lattices. The `slh-dsa` feature implements all 12 FIPS 205 parameter sets. |
 | Symmetric encryption, MACs, and cryptographic hashes | Protect data using their construction-specific assumptions, keys, and usage bounds. | They remain necessary after public-key migration; they do not by themselves replace public-key authentication or key establishment. |
 
 [FIPS 203](https://csrc.nist.gov/pubs/fips/203/final),
 [FIPS 204](https://csrc.nist.gov/pubs/fips/204/final), and
 [FIPS 205](https://csrc.nist.gov/pubs/fips/205/final) define ML-KEM, ML-DSA, and SLH-DSA respectively.
 SLH-DSA supports signatures, not general-purpose encryption or key exchange.
-Supporting SHA-2 or SHAKE does not itself supply an SLH-DSA implementation.
+The `slh-dsa` feature supplies SLH-DSA; enabling `sha2` or `sha3` alone does not.
 
 Select parameters and prehashes together with the protocol's security target.
 For example, the prehash can limit the collision strength of an

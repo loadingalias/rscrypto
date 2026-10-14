@@ -10,23 +10,28 @@ For `no_std`, disable the default features, then name each primitive you need:
 
 ```toml
 # no_std SHA-2
-rscrypto = { version = "0.10", default-features = false, features = ["sha2"] }
+rscrypto = { version = "0.11", default-features = false, features = ["sha2"] }
 
 # All primitives, with operating-system randomness
-rscrypto = { version = "0.10", features = ["full", "getrandom"] }
+rscrypto = { version = "0.11", features = ["full", "getrandom"] }
 ```
 
 Umbrella features are convenient, but they make the build larger:
 
-| Feature         | Includes |
-| --------------- | -------- |
-| `checksums`     | CRC-16, CRC-24, CRC-32, and CRC-64 |
-| `crypto-hashes` | SHA-2, SHA-3, BLAKE2, BLAKE3, and Ascon-Hash |
-| `fast-hashes`   | XXH3 and RapidHash |
-| `hashes`        | Cryptographic hashes and fast hashes |
-| `auth`          | MACs, KDFs, password hashing, signatures, and key exchange |
-| `aead`          | All AEADs |
-| `full`          | Checksums, hashes, authentication, and AEADs |
+| Feature            | Includes |
+| ------------------ | -------- |
+| `checksums`        | CRC-16, CRC-24, CRC-32, and CRC-64 |
+| `crypto-hashes`    | SHA-2, SHA-3, BLAKE2, BLAKE3, and Ascon-Hash |
+| `fast-hashes`      | XXH3 and RapidHash |
+| `hashes`           | Cryptographic hashes and fast hashes |
+| `macs`             | HMAC-SHA-2, HMAC-SHA-3, KMAC, and Poly1305 |
+| `kdfs`             | HKDF and PBKDF2 |
+| `password-hashing` | Argon2, scrypt, and PHC password records |
+| `signatures`       | ECDSA, Ed25519, RSA, ML-DSA, and SLH-DSA |
+| `key-exchange`     | X25519, P-256 ECDH, P-384 ECDH, and ML-KEM |
+| `auth`             | MACs, KDFs, password hashing, signatures, and key exchange |
+| `aead`             | All AEADs |
+| `full`             | Checksums, hashes, authentication, and AEADs |
 
 In libraries and constrained builds, use leaf features such as `sha2`, `blake3`, `aes-gcm`, `ed25519`, `p256-ecdh`, `p384-ecdh`, `ml-dsa`, `slh-dsa`, or `ml-kem`.
 
@@ -49,8 +54,9 @@ Enable it by name.
 
 Benchmark, constant-time, zeroization, forced-kernel,
 and component hooks need both `diag` and the repository-only `rscrypto_internal` compiler cfg.
+The ML-DSA signing-attempt counter needs the repository-only `rscrypto_mldsa_attempts` cfg instead.
 No Cargo feature combination exposes them, including `--all-features`.
-Applications must not use the internal cfg.
+Applications must not use either cfg.
 It has no compatibility guarantee.
 
 With `std` and `blake3`, `Blake3::update_reader` hashes through EOF with bounded

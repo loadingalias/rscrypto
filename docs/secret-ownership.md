@@ -15,7 +15,7 @@ It does not prove that the compiler erases every copy it makes.
 | ECDSA and Ed25519 secret keys and keypairs | Explicit `duplicate_secret`. | Secret-key export is explicit. PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. PKCS #8 and SEC1 import borrow the caller's input and do not clear it. Keypair `Debug` shows only public data. |
 | ML-DSA seeds, expanded secret keys, and prepared secret keys | Not `Clone` or `Copy`. See [ML-DSA storage](#ml-dsa-storage). | Raw export returns `SecretBytes`. PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. Seed, key, handle, and storage `Debug` are redacted. Secret-key serialization needs `serde-secrets`; seeds have no Serde support. |
 | SLH-DSA secret keys, pure and HashSLH-DSA | Not `Clone` or `Copy`. | Raw export returns `SecretBytes`. PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. Raw and PKCS #8 import borrow the caller's input and do not clear it. `Debug` is redacted. No Serde support. |
-| X25519 secrets; ML-KEM decapsulation keys and shared secrets | Explicit `duplicate_secret`. See [ML-KEM allocation](#ml-kem-allocation). | Secret export is explicit. PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. `Debug` is redacted. |
+| X25519 secrets; ML-KEM decapsulation keys and shared secrets | Explicit `duplicate_secret`. See [ML-KEM allocation](#ml-kem-allocation). | Secret export is explicit. ML-KEM decapsulation-key PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. `Debug` is redacted. |
 | ML-KEM seeds | Not `Clone` or `Copy`. | Raw export returns `SecretBytes<64>`. PKCS #8 export writes into a fixed-size buffer that the caller owns and clears. `Debug` is redacted. No Serde support. |
 | `P256EphemeralSecret`, `P256SharedSecret` | Not `Clone` or `Copy`. | The ephemeral scalar has no export or import API. `P256SharedSecret::expose_secret` makes an explicit `SecretBytes<32>` copy. `as_bytes` gives borrowed access. Both types redact `Debug`. |
 | `P384EphemeralSecret`, `P384SharedSecret` | Not `Clone` or `Copy`. | The ephemeral scalar has no export or import API. `P384SharedSecret::expose_secret` makes an explicit `SecretBytes<48>` copy. `as_bytes` gives borrowed access. Both types redact `Debug`. |
@@ -55,6 +55,69 @@ Primitive shared secrets remain in rscrypto's clearing owners until copied into
 rustls's clearing `SharedSecret`. Hybrid concatenation creates one 64-byte vector
 and moves it into that rustls owner. The borrowed component secrets clear on return.
 Public shares and ciphertexts carry no secret ownership obligation.
+
+### rustls authentication
+
+The provider shares `EcdsaP256SecretKey`, `EcdsaP384SecretKey`,
+`Ed25519SecretKey`, `RsaPrivateKey`, and ML-DSA keys (prepared by default,
+compact with `sign::Provider::compact`) through `Arc`; their primitive owners
+clear when the last signing key or signer releases them. RSA signers each own
+one clearing `RsaPrivateScratch` behind a mutex. They borrow the key and scratch
+for the blinded operation and return only the resulting public signature.
+ECDSA signatures and cached SPKI are public. Key Debug formatting delegates to
+redacted primitive owners and the caller's selected entropy source; that source
+must not expose secret state through Debug. RSA signer formatting exposes only
+its signature scheme. Groups and signing keys borrow a static entropy source;
+the provider neither owns nor clones its state.
+
+The ML-DSA loader constructs compact keys directly in allocator-backed storage.
+By default it then prepares each key once with `prepare_in`, keeps the prepared
+key, which owns its `MlDsa44/65/87PreparedSecretKeyStorage` box, and drops the
+compact key, which clears it. Signers share the prepared key through `Arc` and
+return public signatures. With `sign::Provider::compact`, the loader keeps the
+compact key instead, and each signature prepares a temporary prepared key with
+`prepare_in`. A prepared key clears its transformed secret polynomials and `K`
+when it drops, and its storage clears them again before deallocation; a failed
+signature leaves a retained prepared key unchanged.
+`PreparedServerVerifier` and `PreparedClientVerifier` retain prepared ML-DSA
+anchor keys; their storage is public. PKCS#8 input uses rustls-pki-types' borrowed or owned
+DER containers. `Provider::load_private_key` immediately wraps the input in
+`zeroize::Zeroizing`, before the size check or any parser call. With
+rustls-pki-types 1.15.1 and zeroize 1.9.0, dropping this guard clears the owned
+vector's full allocation, then frees it. Success, rejection, and unwinding
+share that guard. Immutable borrowed static DER cannot be cleared and remains
+the caller's responsibility. Aborting the process does not run destructors.
+
+### rustls session tickets
+
+Each private ticket key owns a clearing `Aes256Gcm` context behind a
+`RwLock<Option<_>>`, a monotonic creation instant, and an atomic public nonce
+counter. On its first use at or after twelve hours, it takes and drops the cipher.
+The missing cipher is terminal; neither encryption nor decryption can revive it. A `SecretBytes<32>` protects entropy acquisition; the typed key
+and temporary owner clear after context construction. `TicketRotator` owns the
+current and previous keys and releases displaced keys on rotation. The adapter
+neither clones keys nor serializes them. Plaintext copies during seal/open stay
+in `SecretVec` until successful transfer to ciphertext or rustls-owned plaintext.
+The incoming borrowed plaintext and the returned plaintext belong to rustls.
+
+### rustls QUIC integration
+
+Each endpoint configuration owns a shared clearing `SecretBytes<32>` reset key.
+Its retained 64-bit connection-ID filter key is a non-cryptographic Quinn filter,
+not an authentication secret. Server configurations own a clearing `HkdfSha256`
+address-token root. Each token derives an `Aes256Gcm` context through a clearing
+`SecretBytes<32>` scratch. A derived context seals once; Quinn supplies the fresh
+128-bit derivation nonce. Incoming token buffers belong to Quinn.
+
+Sessions own rustls QUIC connections, queued handshake/key-change events, and
+next-generation traffic secrets. At handshake completion, each session takes
+rustls's `KeyingMaterialExporter` owner to support Quinn's repeated exporter calls.
+The move transfers ownership without exporting the secret bytes.
+Packet and header wrappers own rustls trait objects backed by the same clearing
+rscrypto contexts as the symmetric adapters. Cloning endpoint or server
+configuration extends the corresponding root-key lifetime. Exporter buffers
+and successful plaintext belong to the caller. No adapter key export, clone,
+or Debug implementation exposes these keys.
 
 ### ML-DSA storage
 
@@ -219,66 +282,3 @@ These constructors create no second plaintext buffer that `rscrypto` owns.
 A change to a secret owner needs review of `Clone`, `Copy`, `Debug`, Serde, export, allocation, comparison,
 and cleanup behavior.
 See [`secret-lifecycle.md`](secret-lifecycle.md) for cleanup evidence and [`constant-time.md`](constant-time.md) for timing claims.
-
-### rustls authentication
-
-The provider shares `EcdsaP256SecretKey`, `EcdsaP384SecretKey`,
-`Ed25519SecretKey`, `RsaPrivateKey`, and boxed `MlDsa44/65/87SecretKey` values
-through `Arc`; their primitive owners
-clear when the last signing key or signer releases them. RSA signers each own
-one clearing `RsaPrivateScratch` behind a mutex. They borrow the key and scratch
-for the blinded operation and return only the resulting public signature.
-ECDSA signatures and cached SPKI are public. Key Debug formatting delegates to
-redacted primitive owners and the caller's selected entropy source; that source
-must not expose secret state through Debug. RSA signer formatting exposes only
-its signature scheme. Groups and signing keys borrow a static entropy source;
-the provider neither owns nor clones its state.
-
-The ML-DSA loader constructs compact keys directly in allocator-backed storage.
-By default it then prepares each key once with `prepare_in`, keeps the prepared
-key, which owns its `MlDsa44/65/87PreparedSecretKeyStorage` box, and drops the
-compact key, which clears it. Signers share the prepared key through `Arc` and
-return public signatures. With `sign::Provider::compact`, the loader keeps the
-compact key instead, and each signature prepares a temporary prepared key with
-`prepare_in`. A prepared key clears its transformed secret polynomials and `K`
-when it drops, and its storage clears them again before deallocation; a failed
-signature leaves a retained prepared key unchanged.
-`PreparedServerVerifier` and `PreparedClientVerifier` retain prepared ML-DSA
-anchor keys; their storage is public. PKCS#8 input uses rustls-pki-types' borrowed or owned
-DER containers. `Provider::load_private_key` immediately wraps the input in
-`zeroize::Zeroizing`, before the size check or any parser call. With
-rustls-pki-types 1.15.1 and zeroize 1.9.0, dropping this guard clears the owned
-vector's full allocation, then frees it. Success, rejection, and unwinding
-share that guard. Immutable borrowed static DER cannot be cleared and remains
-the caller's responsibility. Aborting the process does not run destructors.
-
-### rustls session tickets
-
-Each private ticket key owns a clearing `Aes256Gcm` context behind a
-`RwLock<Option<_>>`, a monotonic creation instant, and an atomic public nonce
-counter. On its first use at or after twelve hours, it takes and drops the cipher.
-The missing cipher is terminal; neither encryption nor decryption can revive it. A `SecretBytes<32>` protects entropy acquisition; the typed key
-and temporary owner clear after context construction. `TicketRotator` owns the
-current and previous keys and releases displaced keys on rotation. The adapter
-neither clones keys nor serializes them. Plaintext copies during seal/open stay
-in `SecretVec` until successful transfer to ciphertext or rustls-owned plaintext.
-The incoming borrowed plaintext and the returned plaintext belong to rustls.
-
-### rustls QUIC integration
-
-Each endpoint configuration owns a shared clearing `SecretBytes<32>` reset key.
-Its retained 64-bit connection-ID filter key is a non-cryptographic Quinn filter,
-not an authentication secret. Server configurations own a clearing `HkdfSha256`
-address-token root. Each token derives an `Aes256Gcm` context through a clearing
-`SecretBytes<32>` scratch. A derived context seals once; Quinn supplies the fresh
-128-bit derivation nonce. Incoming token buffers belong to Quinn.
-
-Sessions own rustls QUIC connections, queued handshake/key-change events, and
-next-generation traffic secrets. At handshake completion, each session takes
-rustls's `KeyingMaterialExporter` owner to support Quinn's repeated exporter calls.
-The move transfers ownership without exporting the secret bytes.
-Packet and header wrappers own rustls trait objects backed by the same clearing
-rscrypto contexts as the symmetric adapters. Cloning endpoint or server
-configuration extends the corresponding root-key lifetime. Exporter buffers
-and successful plaintext belong to the caller. No adapter key export, clone,
-or Debug implementation exposes these keys.

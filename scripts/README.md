@@ -145,8 +145,10 @@ It does not download upstream archives.
   tests; all signature operations still use this provider. `--test` narrows the
   campaign for diagnosis. It is not full-profile qualification.
 - The `provider_quic_*` fuzz targets call production Retry, header, token, and
-  handshake methods through hooks compiled only under `cfg(fuzzing)`. Ordinary
-  compiler checks do not execute those hooks. Live campaigns use the normal
+  handshake methods through hooks compiled only under `cfg(fuzzing)` or
+  `cfg(rscrypto_internal_fuzzing)`. Ordinary builds omit them.
+  `just test-fuzz-asan` sets `rscrypto_internal_fuzzing` and replays the four committed
+  `provider_quic_*` corpora. Live campaigns use the normal
   `just test-fuzz --full --targets` front door with explicit duration and limits.
 - The `tls-provider` benchmark selector and `just bench-provider-scorecard`
   use the independent [provider benchmark workspace](../tools/provider-bench/README.md).
@@ -208,9 +210,10 @@ That run checks out the caller's commit and downloads the caller's prepared arch
 `lib/dispatched_run.py` reports its result to the calling job:
 
 - If no runner starts the run within 30 minutes, it cancels the run and passes with a skip notice.
-- A started run must pass, however long it takes.
+- A started run must pass within its budget: 120 minutes for CI tests, 360 for CT.
 - If another job of the calling run fails, it cancels the run and fails.
 - `require_riscv`, which releases set, removes the 30-minute limit.
+  The dispatching job still stops after six hours, including the queue wait.
 - Fork pull requests skip RISC-V, because their read-only token cannot dispatch a run.
 
 Only the dispatching job holds `actions: write`; it runs no build or test tooling.
@@ -226,8 +229,8 @@ and ShellCheck on both action shell steps.
 Four existing installer tests needed Linux/APT/sudo or PowerShell and were skipped on macOS.
 Comparison with the initial worktree confirmed unchanged native jobs, planners, runner matrices,
 timeouts, and workflow-level settings.
-No hosted run of the uncommitted actions exists yet;
-these local results do not claim native qualification.
+These local results do not claim native qualification;
+hosted CI has used the actions since `9d023e97`.
 
 Test preparation and native execution retain these contracts:
 
@@ -460,7 +463,7 @@ They are not device timing evidence or device stack evidence.
 | `bench/evidence.py`   | Shared build and runtime environment collector |
 | `bench/settings.py`   | Measurement, profiling, and watchdog settings |
 | `bench/transfer.py`   | Compile-only preparation and verified native consumption for RISC-V, POWER, and IBM Z |
-| `bench/bounded.py`    | `just bench`, `just profile`: process-tree deadline |
+| `bench/bounded.py`    | `just bench`, `just bench-structural`, `just profile`: process-tree deadline |
 | `bench/mldsa_tail.py` | `just bench-mldsa-tail`: ML-DSA signing-tail baseline |
 | `update-all.sh`       | `just update` |
 
@@ -505,6 +508,7 @@ Check, Miri, and fuzz commands run independently of that plan.
 | `lib/rail-plan.sh`                     | `test/test.sh`       |
 | `lib/fuzz-packages.sh`                 | Fuzz scripts         |
 | `lib/python.sh`                        | Python-based check, test, CT, and benchmark scripts |
+| `lib/dispatched_run.py`                | The CI and CT `riscv64-linux` jobs |
 | `lib/toolchain.py`, `lib/toolchain.sh` | Shared toolchain selection for installers, builds, checks, tests, and benchmarks |
 | `tooling/transfer.py`                  | Cross-build and verify the pinned native runner tools |
 | `tooling/apt_state.py`                 | Verify restored APT indexes against the pinned Ubuntu snapshot before `tooling/linux.sh` uses them |
@@ -526,6 +530,8 @@ Workflows refer to profile names, and do not override their shapes.
 - CI, CT, and benchmark cross-builds have separate profiles.
   So do native CI, fuzzing, and CT measurement.
 - Ordinary jobs use price-capacity-optimized Spot.
+  CI cross-build preparation and the native x86-64 Linux, AArch64 Linux, and Windows x86-64 CI rows
+  use On-Demand, because Spot reclaims cancelled them.
   CT and benchmark measurement use separate fixed On-Demand profiles.
 - Cargo Rail cache setup and reporting are enabled only for native x86-64
   and Arm64 Linux compilation, and for the three x86-64 cross-build producers.
@@ -610,7 +616,8 @@ CI calls the same installers with `--ci` on Linux or `-Ci` on Windows.
   Cargo Deny checks the full target graph in `deny.toml`, and Cargo Audit checks the lockfile.
 - Every host keeps native and portable Clippy, independent-workspace linting, documentation,
   and runtime tests.
-  RISC-V runs its compilation checks on the cross-build host, and runs the tests on native hardware.
+  RISC-V, POWER, and IBM Z run their compilation checks on the cross-build host,
+  and run the tests on native hardware.
 - Linux CI omits OpenSSL development packages, pkgconf, and recommended APT packages.
   CMake, Clang/libclang, Perl, and the C/C++ build tools stay,
   because native test dependencies need them.

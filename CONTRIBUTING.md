@@ -32,6 +32,8 @@ cargo rail change add rscrypto --bump patch --message "Describe the user-visible
 - Keep pending notes about user-visible results.
 - Merge notes that overlap, but keep distinct changes and their bump levels.
 - Maintainer-only runner adjustments belong in the runner catalog and the tooling guide.
+- `rscrypto-rustls` is unpublished (`publish = false`) and needs no change file.
+  The rscrypto release must consume every pending change file.
 
 `cargo rail change status` validates and lists the pending intent.
 The release command moves it into `CHANGELOG.md`.
@@ -264,6 +266,7 @@ Then add the evidence that the change reaches:
 | Apple Silicon RSA assembly                      | `just test-rsa-macos-asm` on physical Apple Silicon |
 | Public API, examples, or compatibility          | `just test-examples`; review callers, tests, docs, explicit API removals, and release intent |
 | Dependency                                      | `just check`; inspect the selected graph |
+| `rscrypto-rustls` provider                      | `just ci-provider`; `just test-provider-interop` (TLS) and `just test-provider-quic` (QUIC) for peer behavior; `just test-provider-bogo` for TLS 1.3 conformance |
 
 Cross-compilation proves compilation only.
 It does not prove runtime behavior, constant-time execution, or performance.
@@ -277,11 +280,13 @@ to avoid long builds on the physical runner.
 - The x86-64 producers use the shared Cargo Rail cache, under the CI read/write policy above.
 - The native runners consume archives bound to the source.
   They do not compile the crate.
-- The native-dispatch and portable release suites, doctests, and the full CT campaign stay required.
+- The native-dispatch and portable release suites and the full CT campaign stay required.
+  Doctests and the SLH-DSA small-set differentials run only on natively built rows.
 - RISC-V executes on a donated runner pool, in a separate `RISC-V` run that CI and Constant-Time dispatch.
   If no runner starts that run within 30 minutes, the calling job cancels it and passes with a skip notice.
   A skipped run supplies no RISC-V evidence for that revision. A started run must pass.
-  Releases set `require_riscv` and wait for a runner; manual CI and Constant-Time runs accept the same input.
+  Releases set `require_riscv` and wait for a runner, up to the six-hour job limit;
+  manual CI and Constant-Time runs accept the same input.
 - [scripts/README.md](scripts/README.md) documents the transfer commands and integrity requirements.
 - A successful preparation job does not qualify the target.
   Its execution job must also pass for the same source and artifacts.
@@ -339,6 +344,8 @@ including the manifests and lockfiles in independent workspaces.
 Validate it, then push it to `main`.
 The `release.auxiliary_cargo_manifests` list in [`.config/rail.toml`](.config/rail.toml) names the standalone workspaces whose
 lockfiles must follow the package version.
+The prepared commit also updates the `rscrypto` requirement in `rscrypto-rustls/Cargo.toml`.
+The companion keeps its own version and is neither packaged nor published.
 The background Mac job includes physical Apple Silicon RSA assembly qualification.
 Complete any separately required timing qualification locally before submission;
 `check-macos` does not run it. macOS does not run in hosted CI.

@@ -26,14 +26,14 @@ Minimal `no_std` build with SHA-2 only:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.10", default-features = false, features = ["sha2"] }
+rscrypto = { version = "0.11", default-features = false, features = ["sha2"] }
 ```
 
 All primitives, with operating-system randomness:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.10", features = ["full", "getrandom"] }
+rscrypto = { version = "0.11", features = ["full", "getrandom"] }
 ```
 
 The default feature is `std`.
@@ -73,6 +73,9 @@ X25519, ML-KEM, password hashing, and backend introspection.
 | Signatures and RSA | ECDSA P-256/P-384, Ed25519, [ML-DSA-44/65/87](docs/mldsa.md), SLH-DSA (all 12 FIPS 205 sets, pure and HashSLH-DSA), RSA signing, verification, encryption, and key generation | `signatures` or a leaf feature |
 | Key exchange and KEMs | P-256 ECDH, P-384 ECDH, X25519, ML-KEM-512/768/1024 | `key-exchange` or a leaf feature |
 | AEADs | AES-GCM, AES-GCM-SIV, AES-SIV-CMAC, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128 | `aead` or a leaf feature |
+
+Signature and KEM keys import and export standard DER (PKCS #8 and SubjectPublicKeyInfo)
+for ECDSA, Ed25519, RSA, ML-DSA, ML-KEM, and SLH-DSA.
 
 The WebSocket accept digest exists only for protocol compatibility.
 It needs the `websocket-sha1` feature.

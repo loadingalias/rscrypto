@@ -125,6 +125,7 @@ in `src/**/*_assembly_provenance.tsv` manifests, which `just check` verifies aga
 - The quality of entropy that the operating system or a caller-supplied source returns successfully.
 - Downstream protocol design, certificate path validation, key custody, transport security,
   and access control.
+- The unpublished `rscrypto-rustls` companion crate. Its README states its boundary.
 
 ## Assurance
 
@@ -145,7 +146,8 @@ It is not a proof for the whole crate.
 ## Review priorities
 
 1. Secret-dependent operations, comparisons, declassification, and failure paths listed in `ct.toml`.
-1. Parsers for untrusted input, bounded-resource policies, RSA key import,
+1. Parsers for untrusted input, including the shared DER reader and the PKCS #8, SEC1,
+   and SubjectPublicKeyInfo key codecs; bounded-resource policies; RSA key import;
    and private padding checks.
 1. Unsafe Rust, SIMD, assembly, target-feature gates, dispatch, and portable equivalence.
 1. Secret construction, duplication, export, serialization, cleanup, and error paths.

@@ -12,7 +12,8 @@ source and revision so their configuration types match the provider's types.
 
 The crate requires `std` and the same minimum Rust version as rscrypto.
 Each algorithm feature forwards to the corresponding rscrypto leaf feature.
-The default set covers the first TLS profile; `ml-dsa` is opt-in.
+Default features enable every TLS 1.3 suite, key-exchange group, and classical
+signature algorithm; `ml-dsa` and `quinn` are opt-in.
 `portable-only` selects rscrypto's portable dispatch for validation.
 
 rustls provides protocol composition, rustls-webpki provides certificate path
@@ -117,10 +118,11 @@ keys under rscrypto's legacy verification policy. TLS 1.3 ECDSA signature
 schemes match their exact curve and hash; cross-hash ECDSA and RSA PKCS#1 v1.5
 are available for certificate verification only.
 
-With `ml-dsa`, RFC 9881 PKCS#8 seed and combined seed/key forms load and are
-prepared once: the provider keeps the transformed secrets and public matrix
-(28,800, 48,256, or 81,024 bytes for ML-DSA-44, 65, or 87) and drops the compact
-key. Signing uses fresh randomness and the empty context required
+With `ml-dsa`, RFC 9881 PKCS#8 keys load and are prepared once. Provider tests
+cover the seed and combined seed/key forms; the expanded form also loads through
+the same rscrypto import. The prepared key keeps the transformed secrets and
+public matrix (28,800, 48,256, or 81,024 bytes for ML-DSA-44, 65, or 87), and
+the provider drops the compact key. Signing uses fresh randomness and the empty context required
 by draft-ietf-tls-mldsa-06. Pure ML-DSA and HashML-DSA remain separate; HashML-DSA
 keys and signatures do not enter this TLS profile. All three parameter sets
 support all-ML-DSA certificate chains. Keys are shared by `Arc`, and concurrent
@@ -196,5 +198,6 @@ make an ML-DSA-87 mutual-authentication ClientHello exceed its fixed 16 KiB
 CRYPTO-stream limit. Provider-server cases exercise the stateless ticketer.
 This is a peer configuration constraint, not a passed default-peer profile.
 
-rscrypto retains its `v<version>` tags. This crate uses
-`rscrypto-rustls-v<version>` tags when it becomes publishable, after rscrypto v0.11.
+The crate stays unpublished while it depends on the rustls fork and the Quinn patch.
+rscrypto keeps its `v<version>` tags. Once this crate can be published, its tags
+will be `rscrypto-rustls-v<version>`.

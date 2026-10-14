@@ -167,10 +167,10 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
 - Secret-noise acceptance masks and counts share the wiped bit-plane owners.
 - By-value key constructors leave moved-from copies in the caller's frame.
   The `*_in` constructors, including PKCS #8 import, fill a box that the caller allocated, in place.
+  In the measured RV32 and Cortex-M runs, the `*_in` constructors leave no copies.
 - PKCS #8 import borrows the caller's DER and never clears it.
   PKCS #8 export writes into a fixed-size buffer that the caller owns and clears.
   A rejected import clears every owner it built before it returns.
-  In the measured RV32 and Cortex-M runs, they leave no copies.
 - Preparation decodes directly into its storage, without moving the prepared owner:
   storage that the caller owns for `prepare`, or a box allocated first for `prepare_in`.
   It copies rho, `K`, and tr from the key into the storage.
@@ -249,6 +249,70 @@ also drops the unused ML-KEM decapsulation key. Ownership is listed in the
 [key-exchange inventory](secret-ownership.md#rustls-key-exchange).
 The adapter adds no raw private-key export or explicit secret duplication.
 Compiler-made moves and stack residue have not been separately qualified here.
+
+### rustls authentication
+
+The provider's key loader uses rscrypto's bounded credential codecs and shares
+successful clearing key owners with signers. Rejected parsed keys drop before
+another format is attempted. Each RSA signer retains reusable clearing scratch;
+entropy failure returns no signature, and poisoned scratch fails opaquely.
+ECDSA and hedged ML-DSA entropy failure also return no signature. ML-DSA keys are
+prepared once by default and the compact key is dropped; a compact-mode key prepares
+temporary storage per signature. ML-DSA tests cover partial entropy failure and
+successful reuse in both forms for all three parameter sets. `rustls::crypto::Credentials::new`
+compares exported public SPKI with the certificate before use.
+
+The adapter tests cover partial entropy failure, subsequent RSA signing,
+malformed and oversized credential rejection, and independent signature
+verification. They do not qualify compiler-made copies or native timing.
+
+Input DER enters a `zeroize::Zeroizing` guard before validation. The pinned
+pki-types/zeroize implementation wipes owned vector storage before deallocation
+on every return path and during unwinding. Borrowed static bytes remain unchanged.
+On `aarch64-apple-darwin` with `nightly-2026-09-30`, pre-deallocation observations
+cover all 13 accepted key forms, rejection, partial entropy failures, and unwind.
+A guard-removal control leaves the input uncleared. A separate, uninstrumented
+O3/fat-LTO/panic-abort artifact retains volatile writes through the vector's
+full capacity before deallocation. This evidence covers the owned input
+allocation, not earlier caller copies, parsed keys, registers, or abort cleanup.
+The local record is `benchmark_results/provider-entropy-closure-20261011T152551Z/`.
+Key loading and signers retain the selected entropy source; partial failures
+produce no signature and never select an OS fallback. Regression tests exercise
+ECDSA import, every signing family, and recovery through the same signer.
+
+### rustls session tickets
+
+Ticket generation fails on partial entropy acquisition without exposing a key.
+A nonce reservation is never returned to the counter, including after allocation
+or sealing failure. The bounded counter cannot wrap. Temporary plaintext uses
+`SecretVec::try_fill_with`, which clears initialized bytes on failure or unwind.
+The adapter transfers successful decryption output to rustls through the required
+`Vec<u8>` interface; this transfer does not promise cleanup of rustls's copies.
+
+The six-hour rotator keeps current and previous clearing key owners. Each key
+also enforces a monotonic twelve-hour deadline before either seal or open and
+takes/drops its cipher on the first expired operation. Expired keys cannot be
+revived by an earlier timestamp. On-use expiration can defer destruction while idle, and rustls configuration sharing can
+extend the rotator's lifetime. Tests cover independent AES-GCM, hostile tickets,
+concurrent exhaustion, entropy failure, resumption, expiry, and bounded real-clock
+rotation. They do not qualify compiler-made copies or linked-code erasure.
+
+### rustls QUIC integration
+
+Endpoint reset and server token-key acquisition use the selected fallible entropy source and
+clearing owners. Token derivation clears its intermediate key. The derived
+sealer atomically consumes its one-use permission before encryption and rejects
+plaintext above 4 KiB. Authentication failure clears the decrypted token body;
+length rejection occurs before mutation. Token buffers and authenticated
+metadata remain owned by Quinn.
+
+Failed TLS handshake processing is sticky. The adapter suppresses subsequent
+handshake writes, traffic-key updates, exporters, identity, and handshake data.
+Rustls types own destruction of handshake, next-generation traffic, and exporter
+secrets, including owners retained by the adapter's event queue and session.
+Packet-key wrappers preserve the primitive's authenticated-decryption failure
+contract. Source-level clearing and functional failure tests do not measure
+compiler-created copies or establish native timing evidence.
 
 ## Export and capacity
 
@@ -339,67 +403,3 @@ unless a documented variant explicitly returns caller data.
 `expert::DisplaySecret` and the diagnostic APIs are deliberate declassification boundaries.
 
 See [`secret-ownership.md`](secret-ownership.md) for the inventory of types.
-
-### rustls authentication
-
-The provider's key loader uses rscrypto's bounded credential codecs and shares
-successful clearing key owners with signers. Rejected parsed keys drop before
-another format is attempted. Each RSA signer retains reusable clearing scratch;
-entropy failure returns no signature, and poisoned scratch fails opaquely.
-ECDSA and hedged ML-DSA entropy failure also return no signature. ML-DSA keys are
-prepared once by default and the compact key is dropped; a compact-mode key prepares
-temporary storage per signature. ML-DSA tests cover partial entropy failure and
-successful reuse in both forms for all three parameter sets. `rustls::crypto::Credentials::new`
-compares exported public SPKI with the certificate before use.
-
-The adapter tests cover partial entropy failure, subsequent RSA signing,
-malformed and oversized credential rejection, and independent signature
-verification. They do not qualify compiler-made copies or native timing.
-
-Input DER enters a `zeroize::Zeroizing` guard before validation. The pinned
-pki-types/zeroize implementation wipes owned vector storage before deallocation
-on every return path and during unwinding. Borrowed static bytes remain unchanged.
-On `aarch64-apple-darwin` with `nightly-2026-09-30`, pre-deallocation observations
-cover all 13 accepted key forms, rejection, partial entropy failures, and unwind.
-A guard-removal control leaves the input uncleared. A separate, uninstrumented
-O3/fat-LTO/panic-abort artifact retains volatile writes through the vector's
-full capacity before deallocation. This evidence covers the owned input
-allocation, not earlier caller copies, parsed keys, registers, or abort cleanup.
-The local record is `benchmark_results/provider-entropy-closure-20261011T152551Z/`.
-Key loading and signers retain the selected entropy source; partial failures
-produce no signature and never select an OS fallback. Regression tests exercise
-ECDSA import, every signing family, and recovery through the same signer.
-
-### rustls session tickets
-
-Ticket generation fails on partial entropy acquisition without exposing a key.
-A nonce reservation is never returned to the counter, including after allocation
-or sealing failure. The bounded counter cannot wrap. Temporary plaintext uses
-`SecretVec::try_fill_with`, which clears initialized bytes on failure or unwind.
-The adapter transfers successful decryption output to rustls through the required
-`Vec<u8>` interface; this transfer does not promise cleanup of rustls's copies.
-
-The six-hour rotator keeps current and previous clearing key owners. Each key
-also enforces a monotonic twelve-hour deadline before either seal or open and
-takes/drops its cipher on the first expired operation. Expired keys cannot be
-revived by an earlier timestamp. On-use expiration can defer destruction while idle, and rustls configuration sharing can
-extend the rotator's lifetime. Tests cover independent AES-GCM, hostile tickets,
-concurrent exhaustion, entropy failure, resumption, expiry, and bounded real-clock
-rotation. They do not qualify compiler-made copies or linked-code erasure.
-
-### rustls QUIC integration
-
-Endpoint reset and server token-key acquisition use the selected fallible entropy source and
-clearing owners. Token derivation clears its intermediate key. The derived
-sealer atomically consumes its one-use permission before encryption and rejects
-plaintext above 4 KiB. Authentication failure clears the decrypted token body;
-length rejection occurs before mutation. Token buffers and authenticated
-metadata remain owned by Quinn.
-
-Failed TLS handshake processing is sticky. The adapter suppresses subsequent
-handshake writes, traffic-key updates, exporters, identity, and handshake data.
-Rustls types own destruction of handshake, next-generation traffic, and exporter
-secrets, including owners retained by the adapter's event queue and session.
-Packet-key wrappers preserve the primitive's authenticated-decryption failure
-contract. Source-level clearing and functional failure tests do not measure
-compiler-created copies or establish native timing evidence.

@@ -104,6 +104,7 @@ P-384 ECDH has the same public prelude boundary.
 
 `ct.toml` declares the DudeCT cases and the bounded BINSEC selector kernels.
 The full Constant-Time workflow measures the DudeCT cases on every native platform.
+A manual run can skip RISC-V; see [Native evidence by platform](#native-evidence-by-platform).
 
 ### DudeCT decision
 
@@ -158,6 +159,11 @@ They do not state that every target has passed.
 Standard signing retries until the first accepted candidate, so it stays variable-time.
 Whole ML-DSA signing is best effort, with no strict constant-time claim.
 
+### SLH-DSA
+
+`ct.toml` registers `signature.slhdsa` as best effort.
+It has no harness, DudeCT case, or BINSEC kernel yet, so SLH-DSA has no timing claim.
+
 ## Native evidence by platform
 
 Windows x86-64 needs the same evidence as the other selected native lanes:
@@ -178,6 +184,11 @@ Preparation alone gives no timing result.
 Transferred execution keeps the same required cases and acceptance thresholds.
 See [the transfer workflow](../scripts/README.md#constant-time-evidence).
 
+RISC-V measurement runs on a donated runner pool, in a separate `RISC-V` run.
+In a manual run, if no runner starts it within 30 minutes, the job passes with a skip notice,
+and that run gives no RISC-V timing evidence.
+Release qualification sets `require_riscv` and waits for a runner.
+
 The [Constant-Time workflow](../.github/workflows/ct.yml) runs on manual dispatch and in release qualification.
 It does not run on each pull request or push.
 Its AWS measurement profiles use fixed On-Demand instances.
@@ -193,7 +204,7 @@ On Linux and macOS, it is clear by default.
 
 `rscrypto` sets DIT for the full duration of every asymmetric, post-quantum, and password operation,
 then restores the caller's state: X25519, Ed25519, ECDSA, P-256 and P-384 ECDH, ML-KEM, ML-DSA,
-RSA private operations, Argon2, scrypt, and PBKDF2.
+SLH-DSA, RSA private operations, Argon2, scrypt, and PBKDF2.
 One toggle costs about 30 ns on Apple Silicon,
 which is less than 1% of these operations at realistic parameters.
 
