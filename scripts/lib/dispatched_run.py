@@ -13,6 +13,8 @@ import time
 import urllib.error
 import urllib.request
 
+# This version answers a dispatch with an empty 204 unless `return_run_details` is set.
+API_VERSION = '2022-11-28'
 POLL_SECONDS = 60
 # Consecutive transient API failures to tolerate, about ten minutes of polling.
 MAX_POLL_ERRORS = 10
@@ -28,8 +30,8 @@ class GitHub:
         request = urllib.request.Request(
             f'https://api.github.com/repos/{self.repository}{path}', method=method,
             data=json.dumps(payload).encode() if payload is not None else None,
-            headers={'Authorization': f'Bearer {self.token}',
-                     'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json'})
+            headers={'Authorization': f'Bearer {self.token}', 'Accept': 'application/vnd.github+json',
+                     'Content-Type': 'application/json', 'X-GitHub-Api-Version': API_VERSION})
         with urllib.request.urlopen(request, timeout=30) as response:
             body = response.read()
         return json.loads(body) if body else None
@@ -65,7 +67,7 @@ def run(api, *, workflow, ref, inputs, queue_minutes, state, parent, label,
         clock=time.monotonic, sleep=time.sleep):
     """Return 0 when the dispatched run passes or never starts in time, 1 when it fails."""
     dispatched = api.request('POST', f'/actions/workflows/{workflow}/dispatches',
-                             {'ref': ref, 'inputs': inputs})
+                             {'ref': ref, 'inputs': inputs, 'return_run_details': True})
     if not dispatched or 'workflow_run_id' not in dispatched:
         raise RuntimeError(f'GitHub did not identify the {workflow} run it dispatched')
     run_id, url = dispatched['workflow_run_id'], dispatched['html_url']

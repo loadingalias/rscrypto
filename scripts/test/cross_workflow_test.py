@@ -133,6 +133,9 @@ class CrossWorkflow(unittest.TestCase):
         execute = child['jobs']['execute']
         self.assertEqual(child['env']['TARGET'], 'riscv64gc-unknown-linux-gnu')
         self.assertEqual(execute['runs-on'], 'ubuntu-24.04-riscv')
+        # Run 38501560929 failed to start: a dispatched '120' is not a number.
+        self.assertEqual(child['on']['workflow_dispatch']['inputs']['timeout_minutes']['type'], 'string')
+        self.assertEqual(execute['timeout-minutes'], '${{ fromJSON(inputs.timeout_minutes) }}')
         self.assertEqual(execute['permissions'], {'contents': 'read', 'actions': 'read'})
         self.assertEqual(execute['steps'][0]['with']['ref'], '${{ inputs.sha }}')
         download, = [step for step in execute['steps']

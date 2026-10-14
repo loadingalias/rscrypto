@@ -58,6 +58,9 @@ class FakeGitHub:
             if failure:
                 raise failure
         if path.endswith('/dispatches'):
+            # GitHub answers 204 with no body unless the request opts in to run details.
+            if payload.get('return_run_details') is not True:
+                return None
             return {'workflow_run_id': RUN, 'run_url': 'https://api.github.com/runs/7', 'html_url': URL}
         if path == f'/actions/runs/{RUN}/cancel':
             self.cancelled_at = self.now
@@ -107,7 +110,8 @@ class DispatchedRun(unittest.TestCase):
         github = FakeGitHub(started_at=0, completed_at=MINUTE)
         self.run_with(github)
         self.assertEqual(github.calls[0], ('POST', '/actions/workflows/riscv.yml/dispatches',
-                                           {'ref': 'main', 'inputs': {'suite': 'tests'}}))
+                                           {'ref': 'main', 'inputs': {'suite': 'tests'},
+                                            'return_run_details': True}))
 
     def test_limit_bounds_only_the_runner_wait(self):
         # Started at minute 29 and finished at minute 120: the run outlasts the limit and still decides.

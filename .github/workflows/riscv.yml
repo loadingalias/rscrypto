@@ -21,8 +21,8 @@ on:
         options: [tests, ct]
         required: true
       timeout_minutes:
-        description: Execution budget the calling workflow selects
-        type: number
+        description: Execution budget in minutes that the calling workflow selects
+        type: string
         required: true
       diagnostic_case:
         description: CT case to replay instead of the full campaign
@@ -45,7 +45,8 @@ jobs:
   execute:
     name: riscv64-linux (${{ inputs.suite }})
     runs-on: ubuntu-24.04-riscv
-    timeout-minutes: ${{ inputs.timeout_minutes }}
+    # Dispatched inputs arrive as strings; timeout-minutes rejects '120'.
+    timeout-minutes: ${{ fromJSON(inputs.timeout_minutes) }}
     permissions:
       contents: read
       actions: read
