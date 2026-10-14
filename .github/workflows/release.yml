@@ -43,18 +43,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/release/release.py preflight
 
+  # Releases wait for RISC-V instead of skipping it; its dispatching jobs need actions: write.
   ci:
     needs: preflight
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/ci.yml
+    with:
+      require_riscv: true
     secrets:
       CARGO_RAIL_R2_READ_ACCESS_KEY_ID: ${{ secrets.CARGO_RAIL_R2_READ_ACCESS_KEY_ID }}
       CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY: ${{ secrets.CARGO_RAIL_R2_READ_SECRET_ACCESS_KEY }}
 
   ct:
     needs: preflight
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/ct.yml
     with:
       architectures: all
+      require_riscv: true
 
   fuzz:
     needs: preflight

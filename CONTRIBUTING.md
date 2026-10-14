@@ -278,6 +278,10 @@ to avoid long builds on the physical runner.
 - The native runners consume archives bound to the source.
   They do not compile the crate.
 - The native-dispatch and portable release suites, doctests, and the full CT campaign stay required.
+- RISC-V executes on a donated runner pool, in a separate `RISC-V` run that CI and Constant-Time dispatch.
+  If no runner starts that run within 30 minutes, the calling job cancels it and passes with a skip notice.
+  A skipped run supplies no RISC-V evidence for that revision. A started run must pass.
+  Releases set `require_riscv` and wait for a runner; manual CI and Constant-Time runs accept the same input.
 - [scripts/README.md](scripts/README.md) documents the transfer commands and integrity requirements.
 - A successful preparation job does not qualify the target.
   Its execution job must also pass for the same source and artifacts.

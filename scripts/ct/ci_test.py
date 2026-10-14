@@ -43,8 +43,8 @@ class Selection(unittest.TestCase):
                 ci.main()
             values = dict(line.split('=', 1) for line in output.read_text().splitlines())
             targets = {row['target'] for row in json.loads(values['matrix'])['include']}
-            self.assertEqual(targets, {'s390x-unknown-linux-gnu', 'powerpc64le-unknown-linux-gnu',
-                                       'riscv64gc-unknown-linux-gnu'})
+            self.assertEqual(targets, {'s390x-unknown-linux-gnu', 'powerpc64le-unknown-linux-gnu'})
+            self.assertEqual(json.loads(values['riscv'])['target'], 'riscv64gc-unknown-linux-gnu')
 
     def test_mldsa_probe_suite_selects_only_diagnostic_probes(self):
         manifest = tomllib.loads((Path(__file__).resolve().parents[2] / 'ct.toml').read_text())
@@ -111,7 +111,9 @@ class Selection(unittest.TestCase):
                             DIAGNOSTIC_CASE='', GITHUB_RUN_ID='123', GITHUB_OUTPUT=str(output)), patch.object(sys, 'argv', ['ci.py', 'plan']):
                 ci.main()
             values = dict(line.split('=', 1) for line in output.read_text().splitlines())
-            row = json.loads(values['matrix'])['include'][0]
+            self.assertEqual(values['native'], 'false')
+            self.assertEqual(json.loads(values['matrix']), {'include': []})
+            row = json.loads(values['riscv'])
             self.assertGreater(row['timeout'] * 60, longest_case)
 
     def test_one_many_all_selection(self):
@@ -123,7 +125,12 @@ class Selection(unittest.TestCase):
                                 DIAGNOSTIC_CASE='', GITHUB_RUN_ID='123', GITHUB_OUTPUT=str(output)), patch.object(sys, 'argv', ['ci.py', 'plan']):
                     ci.main()
                 values = dict(line.split('=', 1) for line in output.read_text().splitlines())
-                rows = json.loads(values['matrix'])['include']
+                native = json.loads(values['matrix'])['include']
+                self.assertEqual(values['native'], str(bool(native)).lower())
+                self.assertNotIn('riscv64-linux', [row['platform'] for row in native])
+                # RISC-V leaves the matrix for its dispatched run but keeps its plan row.
+                rows = native + ([json.loads(values['riscv'])] if values['riscv'] else [])
+                self.assertEqual(values['riscv'] != '', 'riscv' in selection or selection == 'all')
                 self.assertEqual(len(rows), count)
                 self.assertTrue(all(row['timeout'] == 360 for row in rows))
                 expected_runners = {

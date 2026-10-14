@@ -128,6 +128,44 @@ class CrossWorkflow(unittest.TestCase):
                 if suite in ('tests', 'ct'):
                     self.assertIn('just test-transfer', prepare['run'])
 
+    def test_riscv_executes_its_callers_artifacts_in_a_dispatched_run_releases_require(self):
+        child = read_yaml('.github/workflows/riscv.yml')
+        execute = child['jobs']['execute']
+        self.assertEqual(child['env']['TARGET'], 'riscv64gc-unknown-linux-gnu')
+        self.assertEqual(execute['runs-on'], 'ubuntu-24.04-riscv')
+        self.assertEqual(execute['permissions'], {'contents': 'read', 'actions': 'read'})
+        self.assertEqual(execute['steps'][0]['with']['ref'], '${{ inputs.sha }}')
+        download, = [step for step in execute['steps']
+                     if step.get('uses', '').startswith('actions/download-artifact@')]
+        self.assertEqual(download['with']['run-id'], '${{ inputs.run_id }}')
+        # The names cross-build/upload gives the tests and CT bundles.
+        self.assertEqual(download['with']['name'],
+                         "${{ env.TARGET }}-${{ inputs.suite == 'ct' && 'ct-prepared' || 'tests' }}")
+        ci_rows = read_yaml('.github/workflows/ci.yml')['jobs']['native']['strategy']['matrix']['include']
+        self.assertNotIn('riscv64-linux', [row['platform'] for row in ci_rows])
+        for filename, suite in (('ci', 'tests'), ('ct', 'ct')):
+            with self.subTest(workflow=filename):
+                workflow = read_yaml(f'.github/workflows/{filename}.yml')
+                self.assertEqual(workflow['permissions'], {'contents': 'read'})
+                # Only the dispatching job, which runs no project tooling, may change Actions state.
+                writers = [name for name, job in workflow['jobs'].items()
+                           if job.get('permissions', {}).get('actions') == 'write']
+                self.assertEqual(writers, ['riscv64-linux'])
+                proxy = workflow['jobs']['riscv64-linux']
+                self.assertEqual(proxy['runs-on'], 'ubuntu-24.04')
+                start, stop = proxy['steps'][1:]
+                self.assertIn('scripts/lib/dispatched_run.py run --workflow riscv.yml', start['run'])
+                self.assertIn(f'--input suite={suite}', start['run'])
+                self.assertEqual(start['env']['QUEUE_MINUTES'], "${{ inputs.require_riscv && '0' || '30' }}")
+                self.assertEqual(stop['if'], 'always()')
+                self.assertIn('scripts/lib/dispatched_run.py cancel', stop['run'])
+                self.assertEqual(workflow['on']['workflow_call']['inputs']['require_riscv']['default'], 'false')
+        release = read_yaml('.github/workflows/release.yml')['jobs']
+        for name in ('ci', 'ct'):
+            with self.subTest(release=name):
+                self.assertEqual(release[name]['with']['require_riscv'], 'true')
+                self.assertEqual(release[name]['permissions'], {'contents': 'read', 'actions': 'write'})
+
 
 if __name__ == '__main__':
     unittest.main()

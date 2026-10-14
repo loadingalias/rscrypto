@@ -42,8 +42,13 @@ def main():
             if target in TARGETS:
                 row['target'] = target
                 builds.append({'target': target})
+        # RISC-V executes in a dispatched run that the workflow skips when no runner starts it.
+        riscv = [row for row in matrix['include'] if row['platform'] == 'riscv64-linux']
+        matrix['include'] = [row for row in matrix['include'] if row['platform'] != 'riscv64-linux']
         with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
             output.write('matrix=' + json.dumps(matrix, separators=(',', ':')) + '\n')
+            output.write('native=' + str(bool(matrix['include'])).lower() + '\n')
+            output.write('riscv=' + (json.dumps(riscv[0], separators=(',', ':')) if riscv else '') + '\n')
             output.write('cross=' + str(bool(builds)).lower() + '\n')
             output.write('builds=' + json.dumps({'include': builds}, separators=(',', ':')) + '\n')
         return

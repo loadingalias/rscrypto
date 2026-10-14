@@ -113,7 +113,7 @@ The [CI workflow](../.github/workflows/ci.yml) and the [repository recipes](../s
 | Check              | Scope |
 | ------------------ | ----- |
 | `just check`       | Compilation and lint checks for the host and every catalog cross-target. |
-| Native CI          | Native and portable suites, plus doctests, on Linux x86-64, AArch64, POWER, IBM Z, and RISC-V, and on Windows x86-64. POWER, IBM Z, and RISC-V build on x86-64 and run the transferred artifacts on native hardware. |
+| Native CI          | Native and portable suites, plus doctests, on Linux x86-64, AArch64, POWER, IBM Z, and RISC-V, and on Windows x86-64. POWER, IBM Z, and RISC-V build on x86-64 and run the transferred artifacts on native hardware. RISC-V is skipped when no donated runner starts it within 30 minutes; releases wait for it. |
 | `just check-macos` | Full local Apple Silicon qualification: native and portable release suites, doctests, internal evidence regressions, and physical RSA assembly checks. The push hook queues this suite in the background. |
 | `just test-musl`   | Native and portable suites, plus doctests, on a matching x86-64 or AArch64 Linux host. |
 | `just ci-compat`   | Feature, MSRV, bare-metal, and MSRV `portable-only` compilation on POWER, IBM Z, RV64, and RV32. Scalar and SIMD vector execution for `wasm32-unknown-unknown` and `wasm32-wasip1` in Wasmtime. |

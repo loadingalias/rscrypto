@@ -1,0 +1,126 @@
+name: RISC-V
+run-name: RISC-V ${{ inputs.suite }} for run ${{ inputs.run_id }}
+
+# CI and Constant-Time dispatch this run so they can stop waiting for the donated
+# RISC-V runner pool. GitHub can neither time out a queued job nor cancel one job
+# of a run; scripts/lib/dispatched_run.py bounds the wait and reports the result.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Workflow run that prepared the riscv64gc-unknown-linux-gnu suite
+        type: string
+        required: true
+      sha:
+        description: Commit the prepared suite is bound to
+        type: string
+        required: true
+      suite:
+        description: Prepared suite to execute
+        type: choice
+        options: [tests, ct]
+        required: true
+      timeout_minutes:
+        description: Execution budget the calling workflow selects
+        type: number
+        required: true
+      diagnostic_case:
+        description: CT case to replay instead of the full campaign
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  CARGO_RAIL_CACHE: "off"
+  PLATFORM: riscv64-linux
+  TARGET: riscv64gc-unknown-linux-gnu
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  execute:
+    name: riscv64-linux (${{ inputs.suite }})
+    runs-on: ubuntu-24.04-riscv
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+      - name: Restore verified Ubuntu package state
+        id: apt-state
+        uses: ./.github/actions/apt-state
+        with:
+          id: cross-run-riscv64-linux
+      # The archives are bound to the source; execution rejects any other checkout.
+      - name: Download the prepared suite from the calling run
+        uses: "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" # v8.0.1
+        with:
+          name: ${{ env.TARGET }}-${{ inputs.suite == 'ct' && 'ct-prepared' || 'tests' }}
+          path: target/cross-download
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Execute complete cross-compiled suites
+        if: inputs.suite == 'tests'
+        run: |
+          scripts/tooling/"$PLATFORM.sh" --ci-cross-run "target/cross-download/$TARGET-tools.tar.gz"
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          just test-cross run "$TARGET" "target/cross-download/$TARGET-tests.tar.xz"
+          git diff --exit-code HEAD
+      - name: Package cross-compiled execution evidence
+        if: ${{ !cancelled() && inputs.suite == 'tests' }}
+        run: |
+          if [[ -d target/cross-results ]]; then
+            tar -czf target/cross-results.tar.gz -C target cross-results
+          fi
+      - name: Retain cross-compiled execution evidence
+        if: ${{ !cancelled() && inputs.suite == 'tests' }}
+        uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+        with:
+          path: target/cross-results.tar.gz
+          name: ${{ env.TARGET }}-results
+          archive: false
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Measure the prepared binaries on native hardware
+        if: inputs.suite == 'ct'
+        env:
+          DIAGNOSTIC_CASE: ${{ inputs.diagnostic_case }}
+        run: |
+          scripts/tooling/"$PLATFORM.sh" --ci-cross-run "target/cross-download/$TARGET-tools.tar.gz"
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          if [[ -n "$DIAGNOSTIC_CASE" ]]; then
+            just ct-replay --target "$TARGET" --source-root . --archive "target/cross-download/$TARGET-ct.tar.gz" --out target/ct/diagnostic --case="$DIAGNOSTIC_CASE" --repetitions 1
+          else
+            just ct-full --target "$TARGET" --run-archive "target/cross-download/$TARGET-ct.tar.gz"
+          fi
+      - name: Package CT evidence
+        if: ${{ !cancelled() && inputs.suite == 'ct' }}
+        run: |
+          if [[ -d target/ct ]]; then
+            tar -czf "target/ct-${PLATFORM}-full.tar.gz" -C target ct
+          fi
+      - name: Retain CT evidence
+        if: ${{ !cancelled() && inputs.suite == 'ct' }}
+        uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
+        with:
+          name: ct-${{ env.PLATFORM }}-full
+          path: target/ct-${{ env.PLATFORM }}-full.tar.gz
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Save verified Ubuntu package state
+        if: always() && steps.apt-state.outputs.key
+        uses: ./.github/actions/apt-state/save
+        with:
+          key: ${{ steps.apt-state.outputs.key }}
+          hit: ${{ steps.apt-state.outputs.hit }}

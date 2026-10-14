@@ -200,6 +200,21 @@ CI, CT, Bench, and Profile share two preparation actions:
 
 Each workflow still owns its preparation command, runner selection, timeout, native execution,
 and fail-fast matrix.
+
+RISC-V is the exception to the shared matrix.
+GitHub cannot time out a queued job or cancel one job of a run,
+so CI and CT dispatch RISC-V execution as a [RISC-V](../.github/workflows/riscv.yml) run.
+That run checks out the caller's commit and downloads the caller's prepared archives.
+`lib/dispatched_run.py` reports its result to the calling job:
+
+- If no runner starts the run within 30 minutes, it cancels the run and passes with a skip notice.
+- A started run must pass, however long it takes.
+- If another job of the calling run fails, it cancels the run and fails.
+- `require_riscv`, which releases set, removes the 30-minute limit.
+- Fork pull requests skip RISC-V, because their read-only token cannot dispatch a run.
+
+Only the dispatching job holds `actions: write`; it runs no build or test tooling.
+`lib/dispatched_run_test.py` and `test/cross_workflow_test.py` check these outcomes and that wiring through `just test-scripts`.
 The actions do not select tests or qualify targets.
 `test/cross_workflow_test.py` exercises the action shell steps, including installation failure and either missing archive,
 and checks their caller/consumer wiring through `just test-scripts`.

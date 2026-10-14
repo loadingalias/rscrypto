@@ -5,7 +5,17 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      require_riscv:
+        description: Wait for a RISC-V runner instead of skipping RISC-V after 30 queued minutes
+        type: boolean
+        default: false
   workflow_call:
+    inputs:
+      require_riscv:
+        description: Wait for a RISC-V runner instead of skipping RISC-V after 30 queued minutes
+        type: boolean
+        default: false
     secrets:
       CARGO_RAIL_R2_READ_ACCESS_KEY_ID:
         required: true
@@ -155,14 +165,6 @@ jobs:
             target: powerpc64le-unknown-linux-gnu
             runner: ubuntu-24.04-ppc64le-p10
             timeout: 30
-          - platform: riscv64-linux
-            target: riscv64gc-unknown-linux-gnu
-            runner: ubuntu-24.04-riscv
-            # Compilation runs on x86-64; this row only downloads and executes.
-            # CI 38332265993 took 85 minutes (73.5 executing four suites and
-            # doctests); the cross Nextest profiles and native-only doctests
-            # remove most of that. Recalibrate from the next passing run.
-            timeout: 120
           - platform: x86_64-win
             runner: runs-on=${{ github.run_id }}/runner=x86_64-win/env=production
             timeout: 60
@@ -342,6 +344,49 @@ jobs:
         with:
           key: ${{ steps.apt-state.outputs.key }}
           hit: ${{ steps.apt-state.outputs.hit }}
+
+  # RISC-V runs on a donated runner pool that can stay unavailable for hours. GitHub
+  # cannot time out a queued job or cancel one job of a run, so this job dispatches
+  # the RISC-V execution as its own run and skips it when no runner starts it in
+  # time. A started run must pass. It sits outside the native matrix so that only
+  # this job, which runs no build or test tooling, holds actions: write; the script
+  # cancels the dispatched run when another job of this run fails.
+  riscv64-linux:
+    needs: cross-build
+    name: riscv64-linux
+    # Fork pull requests receive a read-only token that cannot dispatch a run.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    # GitHub-hosted jobs stop at six hours; this one waits for the queue and the run.
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        with:
+          persist-credentials: false
+      # Compilation runs on x86-64; the dispatched run only downloads and executes.
+      # CI 38332265993 took 85 minutes (73.5 executing four suites and doctests);
+      # the cross Nextest profiles and native-only doctests remove most of that.
+      # Recalibrate the timeout from the next passing run.
+      - name: Execute the transferred suites on RISC-V hardware
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUEUE_MINUTES: ${{ inputs.require_riscv && '0' || '30' }}
+          REF: ${{ github.head_ref || github.ref_name }}
+        run: >-
+          python3 scripts/lib/dispatched_run.py run --workflow riscv.yml --ref "$REF" --label RISC-V
+          --queue-minutes "$QUEUE_MINUTES" --state "$RUNNER_TEMP/riscv-run"
+          --input run_id="$GITHUB_RUN_ID" --input sha="$GITHUB_SHA" --input suite=tests
+          --input timeout_minutes=120
+      - name: Cancel the RISC-V run if this job stopped first
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/lib/dispatched_run.py cancel --state "$RUNNER_TEMP/riscv-run"
 
   cache-report:
     name: Compiler cache report

@@ -8,6 +8,10 @@ on:
         description: Native architectures to qualify; release callers should use all
         type: string
         default: all
+      require_riscv:
+        description: Wait for a RISC-V runner instead of skipping RISC-V after 30 queued minutes
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       diagnostic_case:
@@ -19,6 +23,10 @@ on:
         type: string
         required: true
         default: all
+      require_riscv:
+        description: Wait for a RISC-V runner instead of skipping RISC-V after 30 queued minutes
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -38,6 +46,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.select.outputs.matrix }}
+      native: ${{ steps.select.outputs.native }}
+      riscv: ${{ steps.select.outputs.riscv }}
       cross: ${{ steps.select.outputs.cross }}
       builds: ${{ steps.select.outputs.builds }}
     steps:
@@ -78,7 +88,7 @@ jobs:
 
   ct:
     needs: [select, cross-build]
-    if: ${{ !cancelled() && needs.select.result == 'success' && (needs.cross-build.result == 'success' || needs.cross-build.result == 'skipped') }}
+    if: ${{ !cancelled() && needs.select.result == 'success' && needs.select.outputs.native == 'true' && (needs.cross-build.result == 'success' || needs.cross-build.result == 'skipped') }}
     name: ${{ matrix.platform }} (${{ inputs.diagnostic_case && 'diagnostic' || 'full' }})
     strategy:
       fail-fast: true
@@ -163,3 +173,40 @@ jobs:
         with:
           key: ${{ steps.apt-state.outputs.key }}
           hit: ${{ steps.apt-state.outputs.hit }}
+
+  # RISC-V runs on a donated runner pool that can stay unavailable for hours. GitHub
+  # cannot time out a queued job or cancel one job of a run, so this job dispatches
+  # the RISC-V measurement as its own run and skips it when no runner starts it in
+  # time. A started run must pass. It sits outside the CT matrix so that only this
+  # job, which runs no build or measurement tooling, holds actions: write; the script
+  # cancels the dispatched run when another job of this run fails.
+  riscv64-linux:
+    needs: [select, cross-build]
+    if: ${{ !cancelled() && needs.select.outputs.riscv != '' && needs.cross-build.result == 'success' }}
+    name: riscv64-linux (${{ inputs.diagnostic_case && 'diagnostic' || 'full' }})
+    runs-on: ubuntu-24.04
+    # GitHub-hosted jobs stop at six hours; this one waits for the queue and the run.
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Measure the prepared binaries on RISC-V hardware
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUEUE_MINUTES: ${{ inputs.require_riscv && '0' || '30' }}
+          REF: ${{ github.ref_name }}
+          TIMEOUT_MINUTES: ${{ fromJSON(needs.select.outputs.riscv).timeout }}
+        run: >-
+          python3 scripts/lib/dispatched_run.py run --workflow riscv.yml --ref "$REF" --label RISC-V
+          --queue-minutes "$QUEUE_MINUTES" --state "$RUNNER_TEMP/riscv-run"
+          --input run_id="$GITHUB_RUN_ID" --input sha="$GITHUB_SHA" --input suite=ct
+          --input timeout_minutes="$TIMEOUT_MINUTES" --input diagnostic_case="$DIAGNOSTIC_CASE"
+      - name: Cancel the RISC-V run if this job stopped first
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/lib/dispatched_run.py cancel --state "$RUNNER_TEMP/riscv-run"
