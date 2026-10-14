@@ -1,6 +1,79 @@
 # Changelog
 
 
+## [0.11.0](https://github.com/loadingalias/rscrypto/compare/v0.10.0...v0.11.0) - 2026-10-14
+- Add `Argon2idPassword::verify_password_with_memory`, `Argon2idPassword::verify_password_with_context_and_memory`, and `ScryptPassword::verify_password_with_memory`. They verify PHC records in a reusable block slice that the caller owns, from any allocator, with the same record limits, opaque failures, and workspace cleanup.
+
+- Add pseudorandom-key import and multi-part `info` expansion to `HkdfSha256` and `HkdfSha384`. `from_prk` builds the expansion state from an existing hash-length PRK, such as a TLS 1.3 secret, without repeating HKDF-Extract. `expand_vectored` expands over `info` given as several slices, such as a TLS 1.3 `HkdfLabel`, without concatenating them, and keeps the `HkdfOutputLengthError` bound of `expand`. `extract` now clears its working copy of the PRK once the state holds it.
+
+- Add RFC 9881 PKCS #8 import and export for ML-DSA private keys. `SecretKey::from_pkcs8_der` and `from_pkcs8_der_in` accept the seed, expanded, and both forms in a version 1 container or a version 2 container with a public key, check that redundant fields agree, and reject attributes as the new `MlDsaKeyError::UnsupportedEncoding`. The new `MlDsa44Seed`, `MlDsa65Seed`, and `MlDsa87Seed` owners keep the recommended seed form: `generate`, `keypair`, `keypair_in`, `from_pkcs8_der`, and `to_pkcs8_der_into`. `SecretKey::to_pkcs8_der_into` writes the expanded form. Exports write into caller-owned fixed-size buffers, and nothing allocates except the `_in` constructors.
+
+- Add RFC 9881 SubjectPublicKeyInfo import and export for ML-DSA public keys: `from_spki_der`, `to_spki_der`, and `SPKI_DER_LENGTH`. Import accepts only the unique DER encoding and reports `MlDsaKeyError::MalformedDer`, `UnsupportedAlgorithm`, or `InvalidPublicKey`. Neither direction allocates.
+
+- Add RFC 9935 key encodings for ML-KEM. `EncapsulationKey::from_spki_der` and `to_spki_der` handle SubjectPublicKeyInfo with the FIPS 203 modulus check. `DecapsulationKey::from_pkcs8_der` and `from_pkcs8_der_in` accept the seed, expanded, and both forms in a version 1 container or a version 2 container with a public key; an expanded key also passes a deterministic pairwise consistency check, which rejects a secret vector that FIPS 203's hash check accepts. Raw `try_from_slice` keeps exactly the FIPS 203 checks. The new `MlKem512Seed`, `MlKem768Seed`, and `MlKem1024Seed` owners keep the recommended `d || z` seed form, and `DecapsulationKey::to_pkcs8_der_into` writes the expanded form. Import failures use the new `MlKemKeyError`; KEM operations keep `MlKemError`. Nothing allocates except the `_in` constructors.
+
+- Add SLH-DSA (FIPS 205) behind the new `slh-dsa` leaf feature, also enabled by `signatures`. All 12 parameter sets ship, each as a pure profile such as `SlhDsaSha2_128s` and an RFC 9909 HashSLH-DSA profile such as `HashSlhDsaSha2_128sWithSha256`, whose keys are distinct types that never sign or verify for the other profile. Signing is hedged with caller randomness or deterministic, takes a context of up to 255 bytes, and writes into a caller-provided buffer; a failed call zero-fills it. Verification takes the signature as a byte slice. Secret-key import regenerates the public root, and keys have RFC 9909 SubjectPublicKeyInfo and PKCS #8 import and export. Nothing allocates. Failures use the new `SlhDsaError` and `SlhDsaKeyError`.
+
+- Add standard key encodings for ECDSA and Ed25519. `EcdsaP256SecretKey` and `EcdsaP384SecretKey` gain `from_pkcs8_der` (RFC 5958 with an RFC 5915 ECPrivateKey), `from_sec1_der`, and `to_pkcs8_der_into`, which writes the OpenSSL form with the public key. Every public key an encoding carries must match the key derived from the scalar. `EcdsaP256PublicKey` and `EcdsaP384PublicKey` gain `to_spki_der`, and `EcdsaP256Signature` and `EcdsaP384Signature` gain `to_der_into` for DER signatures. `Ed25519SecretKey` gains RFC 8410 `from_pkcs8_der` and `to_pkcs8_der_into`, and `Ed25519PublicKey` gains `from_spki_der` and `to_spki_der`, with the new `Ed25519KeyError`. PKCS #8 import accepts a version 1 container, or a version 2 container with a matching public key, and rejects attributes as the new `EcdsaError::UnsupportedEncoding` or `Ed25519KeyError::UnsupportedEncoding`. Exports write into caller-owned fixed-size buffers, and nothing allocates.
+
+- Avoid repeated public-key decoding during Ed25519 verification on Linux
+  and macOS AArch64 without enlarging key types.
+
+- Add a bounded Bao combined-stream decoder under `hashes::expert::bao` with
+  `std`. Verify each chunk before returning it and reject corrupt or truncated
+  encodings against an independently trusted BLAKE3 root.
+
+- Add `Blake3::keyed_digest_batch` and `Blake3DeriveContext::derive_key_batch`. They hash independent inputs into caller-provided outputs, in order, without allocation, through the existing one-shot tree paths.
+
+- Allow `Blake3::digest_const` to hash inputs longer than one chunk using portable compression and a fixed tree stack, without allocation.
+
+- Add allocation-free `Blake3Tree::merge_level` for batched non-root parent merges
+  in every BLAKE3 mode. Validate all child pairs before changing output and clear
+  the bounded child and parent scratch on return or unwind.
+
+- Speed up BLAKE3 streaming updates that end inside a chunk after complete chunks, at
+  chunk counters divisible by 16. One SIMD pass now hashes those chunks and the leading
+  blocks of the partial chunk, and their chaining values reduce together; a later update or
+  finalization resumes the partial chunk. NEON covers 3, 7, 11 or 15 complete chunks;
+  AVX-512 covers 3 or 15. Digest bytes and public APIs are unchanged, and keyed and
+  derive-key scratch is cleared.
+
+- Add `Blake3::update_reader` and `Blake3Subtree::update_reader` under `std`:
+  buffered BLAKE3 input reading, with bounded readers for caller-scheduled subtrees. Preserve successfully read input on I/O errors and
+  clear the owned input buffer before deallocation.
+  
+  With `parallel`, plain readers on little-endian Linux AArch64 can hash complete
+  aligned buffers through the current Rayon pool.
+
+- Clear decoded block words and compression-output scratch after keyed and derive-key
+  BLAKE3 root output in the shared fallback. Digest bytes and public APIs are unchanged.
+
+- Speed up BLAKE3 on WebAssembly builds that enable `simd128` at compile time.
+  Chunk hashing, parent reduction, and equal-length `digest_batch` runs use four
+  SIMD128 lanes. Builds without `simd128`, and `portable-only` builds, keep the
+  portable path. Digests and keyed and derive-key cleanup are unchanged.
+
+- Breaking: ML-DSA prepared keys no longer borrow their source key and are generic over their storage. `MlDsa{44,65,87}PreparedSecretKey<S>` and `MlDsa{44,65,87}PreparedPublicKey<S>` replace the borrowed `<'a>` handles: `prepare(&mut storage)` call sites are unchanged and return a prepared key in `&mut` storage (`&` for public keys), while the new `SecretKey::prepare_in` and `PublicKey::prepare_in` allocate the storage from a caller-selected `Allocator`, prepare it in place, and return a prepared key that owns the box and can be kept and shared across threads after the source key is dropped. Secret storage now also holds the key's rho, K, and tr (28,800, 48,256, or 81,024 bytes) and clears K with the transformed secrets. A borrowed prepared public key stays `Copy`; its `Debug` output no longer prints the public key. Code that names `MlDsa65PreparedSecretKey<'a>` or `MlDsa65PreparedPublicKey<'a>` must name `MlDsa65PreparedSecretKey<&'a mut MlDsa65PreparedSecretKeyStorage>` or `MlDsa65PreparedPublicKey<&'a MlDsa65PreparedPublicKeyStorage>`; ML-DSA-44 and ML-DSA-87 follow the same pattern.
+
+- Breaking: ML-DSA public- and secret-key imports (`try_from_slice`, `try_from_slice_in`) return the new `MlDsaKeyError`, which separates import failures, including matrix-expansion `RejectionLimit`, from generation, preparation, and signing failures. `MlDsaError::InvalidPublicKey` is removed; `MlDsaError::InvalidSecretKey` now reports only an invalid stored key found during signing or preparation.
+
+- Remove 32-bit x86 support, including i586/i686 detection and `platform::Arch::X86`. The later `Arch` variants' implicit numeric discriminants decrease by one. These targets now fail compilation with an explicit diagnostic. Use an x86-64 target for x86 deployments.
+
+- Build `portable-only` on POWER, IBM Z, RV64, and RV32 with the declared MSRV by excluding nightly-only backends. Preserve portable fallbacks and check these target and feature combinations in the compatibility lane.
+
+- Precompute the AVX2 and IFMA fixed-base tables used by the Rust Ed25519 and X25519 backends, trading 160 KiB of read-only data for faster signing and public-key derivation. Keep both table selectors in separate AVX2 functions for binary constant-time verification.
+
+- Reduce field arithmetic in P-384 ECDH mixed addition, accelerating agreement and public-key derivation without new assembly or allocation.
+
+- Report well-formed SubjectPublicKeyInfo keys of other algorithms, such as RSA or Ed25519, as `EcdsaError::UnsupportedAlgorithm` instead of `EcdsaError::MalformedDer`.
+
+- Keep RSA modular restoration masked through optimization to prevent the observed secret-dependent branches in CRT reduction on x86-64 Linux.
+
+- Standalone Poly1305 and ChaCha20-Poly1305 now share one bounded, checked arithmetic core, and each feature still builds alone. Bulk throughput is unchanged on Graviton4; 15-byte standalone Poly1305 authentication is about 9% slower there.
+
+- Speed up ECDSA P-256 and P-384 signature verification by taking the
+  generator term from the existing fixed-base signing table, with unchanged
+  keys and results.
 ## [0.10.0](https://github.com/loadingalias/rscrypto/compare/v0.9.0...v0.10.0) - 2026-10-03
 - Make short AES-128-GCM-SIV sealing faster on x86-64 CPUs with VAES and VPCLMUL.
   Secret cleanup does not change.
