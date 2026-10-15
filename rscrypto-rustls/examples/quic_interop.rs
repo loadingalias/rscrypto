@@ -21,11 +21,10 @@ fn invalid(message: &str) -> io::Error {
 async fn exchange(
   connection: &quinn::Connection,
   client: bool,
-  early: Option<quinn::ZeroRttAccepted>,
+  early: bool,
   reset: bool,
 ) -> Result<(), Box<dyn Error>> {
   let expected = PAYLOAD.repeat(1024);
-  let mut early = early;
   let mut accepted = false;
   for round in 0..2 {
     let (mut send, mut receive) = if client {
@@ -45,11 +44,12 @@ async fn exchange(
       send.write_all(&expected).await?;
       send.finish()?;
     }
-    if let Some(done) = early.take() {
-      accepted = done.await;
-      if !accepted {
-        return Err(invalid("0-RTT was rejected").into());
-      }
+    // Quinn fails I/O on streams opened during 0-RTT with `ZeroRttRejected`
+    // when the server rejects early data, so this completed exchange and the
+    // authenticated handshake show acceptance.
+    if early && round == 0 {
+      connection.authenticated().await?;
+      accepted = true;
     }
     if round == 0 {
       connection.force_key_update();
@@ -131,7 +131,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         .with_client_auth_cert(certificates, key)?;
       tls.alpn_protocols = vec![b"provider-test".to_vec().into()];
       tls.enable_early_data = early;
-      let mut endpoint = quinn::Endpoint::new(
+      let endpoint = quinn::Endpoint::new(
         adapter::endpoint_config()?,
         None,
         UdpSocket::bind("127.0.0.1:0")?,
@@ -140,15 +140,15 @@ async fn run() -> Result<(), Box<dyn Error>> {
       endpoint.set_default_client_config(adapter::client_config(tls)?);
       for index in 0..count {
         let connecting = endpoint.connect(address, "localhost")?;
-        let (connection, accepted) = if early && index > 0 {
-          let (connection, accepted) = connecting
+        let zero_rtt = early && index > 0;
+        let connection = if zero_rtt {
+          connecting
             .into_0rtt()
-            .map_err(|_| invalid("no cached QUIC early-data keys"))?;
-          (connection, Some(accepted))
+            .map_err(|_| invalid("no cached QUIC early-data keys"))?
         } else {
-          (connecting.await?, None)
+          connecting.await?
         };
-        exchange(&connection, true, accepted, reset).await?;
+        exchange(&connection, true, zero_rtt, reset).await?;
         if reset {
           reset_signal("exchanged", true).await?;
           reset_signal("ready", false).await?;
@@ -195,7 +195,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
           continue;
         }
         let connection = incoming.await?;
-        exchange(&connection, false, None, reset).await?;
+        exchange(&connection, false, false, reset).await?;
         if reset {
           reset_signal("exchanged", false).await?;
           // Retain the old connection without polling its original socket.

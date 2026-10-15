@@ -39,7 +39,7 @@ fn drive(peers: &mut [Box<dyn crypto::Session>; 2]) -> Result<(), TransportError
       let mut flight = Vec::new();
       let _keys = peers[source].write_handshake(&mut flight);
       if flight.len() >= 131_072 {
-        return Err(TransportErrorCode::INTERNAL_ERROR.into());
+        return Err(TransportError::new(TransportErrorCode::INTERNAL_ERROR, String::new()));
       }
       if !flight.is_empty() {
         progress = true;
@@ -52,7 +52,7 @@ fn drive(peers: &mut [Box<dyn crypto::Session>; 2]) -> Result<(), TransportError
       return Ok(());
     }
   }
-  Err(TransportErrorCode::INTERNAL_ERROR.into())
+  Err(TransportError::new(TransportErrorCode::INTERNAL_ERROR, String::new()))
 }
 
 #[test]

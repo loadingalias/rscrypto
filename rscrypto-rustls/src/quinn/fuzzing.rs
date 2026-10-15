@@ -10,14 +10,14 @@ pub fn retry(data: &[u8]) {
   }
   let cid = ConnectionId::new(&[0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08]);
   let split = data.first().map_or(0, |byte| usize::from(*byte).min(data.len()));
-  let _accepted = valid_retry(&cid, &data[..split], &data[split..]);
-  let tag = retry_tag(&cid, data);
+  let _accepted = valid_retry(cid, &data[..split], &data[split..]);
+  let tag = retry_tag(cid, data);
   let packet = [data, &tag].concat();
-  assert!(valid_retry(&cid, &[], &packet));
+  assert!(valid_retry(cid, &[], &packet));
   let mut bad = packet;
   let index = bad.len().strict_sub(1);
   bad[index] ^= 1;
-  assert!(!valid_retry(&cid, &[], &bad));
+  assert!(!valid_retry(cid, &[], &bad));
 }
 
 /// Remove production header protection on arbitrary packets and offsets.
@@ -25,7 +25,7 @@ pub fn header(data: &[u8]) {
   if data.len() > 4096 {
     return;
   }
-  let keys = initial_keys(&ConnectionId::new(&[1; 8]), Side::Client);
+  let keys = initial_keys(ConnectionId::new(&[1; 8]), Side::Client);
   let mut bytes = data.to_vec();
   for offset in [
     0,

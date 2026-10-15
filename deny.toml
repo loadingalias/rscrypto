@@ -67,5 +67,5 @@ skip = []
 unknown-registry = "deny"
 unknown-git = "deny"
 required-git-spec = "rev"
-allow-git = ["https://github.com/loadingalias/quinn", "https://github.com/loadingalias/rustls"]
+allow-git = ["https://github.com/quinn-rs/quinn", "https://github.com/rustls/rustls"]
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]

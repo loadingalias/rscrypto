@@ -7,7 +7,7 @@ index efbf1ef6..a46574d6 100644
  [patch.crates-io]
  rustls = { path = "rustls" }
 +
-+[patch."https://github.com/loadingalias/rustls"]
++[patch."https://github.com/rustls/rustls"]
 +rustls = { path = "rustls" }
 diff --git a/bogo/Cargo.toml b/bogo/Cargo.toml
 index ed6312a2..f1bc60ab 100644

@@ -5,7 +5,7 @@
 //! [`server_config`]. Construct the endpoint with [`endpoint_config`]. Enable
 //! only `runtime-tokio` (or another runtime) on the application's `quinn` crate;
 //! its `rustls-*`, `ring`, and `aws-lc-rs` features are unnecessary.
-//! The pinned Quinn manifest fix keeps the browser-WASM graph free of C backends.
+//! Quinn's browser-WASM `ring` dependency is optional, so that graph stays free of C backends.
 //!
 //! Initial packets and Retry always use RFC 9001 AES-128-GCM, independently of
 //! the negotiated suite. Rustls owns handshake secrets and key updates. Quinn
@@ -71,7 +71,9 @@ pub fn endpoint_config_with_random(
   let mut cid_key = [0; 8];
   random.fill(&mut cid_key)?;
   let cid_key = u64::from_le_bytes(cid_key);
-  config.cid_generator(move || Box::new(quinn_proto::HashedConnectionIdGenerator::from_key(cid_key)));
+  config.cid_generator(Arc::new(move || {
+    Box::new(quinn_proto::HashedConnectionIdGenerator::from_key(cid_key))
+  }));
   config.supported_versions(vec![1]);
   Ok(config)
 }
@@ -95,8 +97,8 @@ fn validate(alpn: &[ApplicationProtocol<'_>], provider: &rustls::crypto::CryptoP
 /// Adapt a TLS 1.3 client configuration with explicit ALPN to QUIC v1.
 ///
 /// Use this crate's provider in `tls`. Early data stays as configured by the
-/// caller and is disabled by rustls by default. Quinn 0.11 cannot express a TLS
-/// initialization error in `ConnectError`; a later entropy failure fails closed
+/// caller and is disabled by rustls by default. Quinn's `ConnectError` cannot express
+/// a TLS initialization error; a later entropy failure fails closed
 /// as `ConnectError::EndpointStopping`, without panicking.
 pub fn client_config(tls: rustls::ClientConfig) -> Result<quinn_proto::ClientConfig, Error> {
   validate(&tls.alpn_protocols, tls.provider())?;
@@ -153,14 +155,14 @@ impl crypto::ClientConfig for Client {
 }
 
 impl crypto::ServerConfig for Server {
-  fn initial_keys(&self, version: u32, dst_cid: &ConnectionId) -> Result<Keys, UnsupportedVersion> {
+  fn initial_keys(&self, version: u32, dst_cid: ConnectionId) -> Result<Keys, UnsupportedVersion> {
     if version != 1 {
       return Err(UnsupportedVersion);
     }
     Ok(initial_keys(dst_cid, Side::Server))
   }
 
-  fn retry_tag(&self, version: u32, orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {
+  fn retry_tag(&self, version: u32, orig_dst_cid: ConnectionId, packet: &[u8]) -> [u8; 16] {
     assert_eq!(
       version, 1,
       "Quinn calls Retry only for a version accepted by initial_keys"
@@ -178,7 +180,7 @@ impl crypto::ServerConfig for Server {
   }
 }
 
-fn initial_keys(cid: &ConnectionId, side: Side) -> Keys {
+fn initial_keys(cid: ConnectionId, side: Side) -> Keys {
   let suite = crate::cipher_suite::TLS13_AES_128_GCM_SHA256;
   let side = match side {
     Side::Client => quic::Side::Client,
@@ -187,7 +189,7 @@ fn initial_keys(cid: &ConnectionId, side: Side) -> Keys {
   packet::keys(quic::Keys::initial(
     quic::Version::V1,
     quic::Suite::try_from(suite).expect("static QUIC suite"),
-    cid,
+    &cid,
     side,
   ))
 }
@@ -198,7 +200,7 @@ const RETRY_KEY: [u8; 16] = [
 ];
 const RETRY_NONCE: [u8; 12] = [0x46, 0x15, 0x99, 0xd3, 0x5d, 0x63, 0x2b, 0xf2, 0x23, 0x98, 0x25, 0xbb];
 
-fn retry_aad(cid: &ConnectionId, header: &[u8], body: &[u8]) -> Vec<u8> {
+fn retry_aad(cid: ConnectionId, header: &[u8], body: &[u8]) -> Vec<u8> {
   let mut aad = Vec::with_capacity(
     1usize
       .strict_add(cid.len())
@@ -206,13 +208,13 @@ fn retry_aad(cid: &ConnectionId, header: &[u8], body: &[u8]) -> Vec<u8> {
       .strict_add(body.len()),
   );
   aad.push(u8::try_from(cid.len()).expect("QUIC connection IDs are at most 20 bytes"));
-  aad.extend_from_slice(cid);
+  aad.extend_from_slice(&cid);
   aad.extend_from_slice(header);
   aad.extend_from_slice(body);
   aad
 }
 
-fn retry_tag(cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {
+fn retry_tag(cid: ConnectionId, packet: &[u8]) -> [u8; 16] {
   let cipher = Aes128Gcm::new(&Aes128GcmKey::from_bytes(RETRY_KEY));
   *cipher
     .encrypt_in_place(&Nonce96::from_bytes(RETRY_NONCE), &retry_aad(cid, packet, &[]), &mut [])
@@ -220,7 +222,7 @@ fn retry_tag(cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {
     .as_bytes()
 }
 
-fn valid_retry(cid: &ConnectionId, header: &[u8], payload: &[u8]) -> bool {
+fn valid_retry(cid: ConnectionId, header: &[u8], payload: &[u8]) -> bool {
   let Some(length) = payload.len().checked_sub(16) else {
     return false;
   };
@@ -292,7 +294,7 @@ impl<S: EndpointSide> crypto::Session for Session<S>
 where
   Connection<S, quic::Quic>: Send + Sync,
 {
-  fn initial_keys(&self, cid: &ConnectionId, side: Side) -> Keys {
+  fn initial_keys(&self, cid: ConnectionId, side: Side) -> Keys {
     initial_keys(cid, side)
   }
 
@@ -366,16 +368,17 @@ where
     .map_err(|error| {
       let alert =
         rustls::error::AlertDescription::try_from(&error).unwrap_or(rustls::error::AlertDescription::InternalError);
-      TransportError::from(TransportErrorCode::crypto(u8::from(alert)))
+      TransportError::new(TransportErrorCode::crypto(u8::from(alert)), String::new())
     })
     .and_then(|()| {
       // A resumed client can restore cached transport parameters before
       // EncryptedExtensions selects ALPN. Check at handshake completion,
       // before Quinn can publish an established connection.
       if !self.connection.is_handshaking() && self.connection.alpn_protocol().is_none() {
-        return Err(
-          TransportErrorCode::crypto(u8::from(rustls::error::AlertDescription::NoApplicationProtocol)).into(),
-        );
+        return Err(TransportError::new(
+          TransportErrorCode::crypto(u8::from(rustls::error::AlertDescription::NoApplicationProtocol)),
+          String::new(),
+        ));
       }
       let ready = !self.notified && self.handshake_data().is_some();
       self.notified |= ready;
@@ -396,7 +399,7 @@ where
       .quic_transport_parameters()
       .map(|mut encoded| {
         TransportParameters::read(self.side, &mut encoded)
-          .map_err(|_| TransportErrorCode::TRANSPORT_PARAMETER_ERROR.into())
+          .map_err(|_| TransportError::new(TransportErrorCode::TRANSPORT_PARAMETER_ERROR, String::new()))
       })
       .transpose()
   }
@@ -430,7 +433,7 @@ where
     })
   }
 
-  fn is_valid_retry(&self, cid: &ConnectionId, header: &[u8], payload: &[u8]) -> bool {
+  fn is_valid_retry(&self, cid: ConnectionId, header: &[u8], payload: &[u8]) -> bool {
     valid_retry(cid, header, payload)
   }
 

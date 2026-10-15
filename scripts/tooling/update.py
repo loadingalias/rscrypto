@@ -334,6 +334,10 @@ def update_manifests(paths):
                       and not prerelease(dependency['version'])):
                     name = dependency.get('package', alias)
                     version = selected[(name, rust_version)]
+                    # An unreleased Git revision stays pinned until the registry has a newer release.
+                    current = semver(dependency['version'].removeprefix('='))
+                    if 'git' in dependency and current and semver(version) <= current:
+                        continue
                     dependency['version'] = ('=' if dependency['version'].startswith('=') else '') + version
                     if 'git' in dependency:
                         repo = dependency['git'].removeprefix('https://github.com/').removesuffix('.git')

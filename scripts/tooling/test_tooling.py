@@ -99,6 +99,7 @@ cargo-rail="1"
 [target.'cfg(unix)'.dependencies]
 dep="1"
 fork={version="=0.24.0-dev.1",git="https://github.com/owner/fork",rev="2e56badaef3fde0a0164b51a86ba117831f63c54"}
+ahead={version="=3.0.0",git="https://github.com/owner/ahead",rev="9d729c1b6b7ad30d45d40265037eeeb9d98a7420"}
 alpha="=0.104.0-alpha.7"
 '''
         with tempfile.TemporaryDirectory() as temporary:
@@ -114,6 +115,10 @@ alpha="=0.104.0-alpha.7"
             self.assertEqual(result['target']['cfg(unix)']['dependencies']['fork']['rev'],
                              '2e56badaef3fde0a0164b51a86ba117831f63c54')
             self.assertEqual(result['target']['cfg(unix)']['dependencies']['alpha'], '=0.104.0-alpha.7')
+            # A Git revision ahead of the newest registry release keeps its version and revision.
+            self.assertEqual(result['target']['cfg(unix)']['dependencies']['ahead']['version'], '=3.0.0')
+            self.assertEqual(result['target']['cfg(unix)']['dependencies']['ahead']['rev'],
+                             '9d729c1b6b7ad30d45d40265037eeeb9d98a7420')
             self.assertEqual(result['dependencies']['alias']['version'], '=1')
             self.assertEqual(result['dependencies']['alias']['features'], ['std'])
             self.assertFalse(result['dependencies']['alias']['default-features'])

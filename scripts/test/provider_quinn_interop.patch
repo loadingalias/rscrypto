@@ -1,15 +1,17 @@
 diff --git a/quinn-interop/Cargo.toml b/quinn-interop/Cargo.toml
-index 33d53df..d658464 100644
+index 33d53df..c5085d7 100644
 --- a/quinn-interop/Cargo.toml
 +++ b/quinn-interop/Cargo.toml
-@@ -6,14 +6,21 @@ version = "0.0.0"
+@@ -6,15 +6,25 @@ version = "0.0.0"
  authors = ["Jean-Christophe BEGUE <jc.begue@pm.me>"]
  edition = "2018"
  
 +[workspace]
 +
++# h3-quinn 0.0.10 with only its Quinn requirement moved to the provider's revision.
 +[patch.crates-io]
-+quinn-proto = { git = "https://github.com/loadingalias/quinn", rev = "296064e6daf36526a2d062eceb4fe300dab82aa5" }
++h3 = { path = "@H3_ROOT@/h3" }
++h3-quinn = { path = "@H3_ROOT@/h3-quinn" }
 +
  [dependencies]
  anyhow = "1.0.86"
@@ -21,15 +23,18 @@ index 33d53df..d658464 100644
  http = "1"
 -quinn = { version = "0.11.2", default-features = false, features = [ "rustls", "ring", "runtime-tokio" ] }
 -rustls = { version = "0.23", default-features = false }
-+quinn = { version = "=0.11.12", default-features = false, features = [ "runtime-tokio" ] }
-+rustls = { version = "=0.24.0-dev.1", git = "https://github.com/loadingalias/rustls", rev = "2e56badaef3fde0a0164b51a86ba117831f63c54", default-features = false, features = ["webpki"] }
-+rustls-util = { version = "=0.1.0-dev.1", git = "https://github.com/loadingalias/rustls", rev = "2e56badaef3fde0a0164b51a86ba117831f63c54", default-features = false }
++quinn = { version = "=0.12.0", git = "https://github.com/quinn-rs/quinn", rev = "9d729c1b6b7ad30d45d40265037eeeb9d98a7420", default-features = false, features = [ "runtime-tokio" ] }
++rustls = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "7ebba67075b0c3c2b8fe20c470d5c53410866544", default-features = false, features = ["webpki"] }
++rustls-util = { version = "=0.1.0-dev.1", git = "https://github.com/rustls/rustls", rev = "7ebba67075b0c3c2b8fe20c470d5c53410866544", default-features = false }
 +rscrypto-rustls = { path = "@RSCRYPTO_ROOT@/rscrypto-rustls", features = ["quinn"] }
  rustls-pemfile = "2"
- tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "io-std", "io-util", "fs"] }
+-tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "io-std", "io-util", "fs"] }
++# Quinn's revision declares tokio 1.28.1 but needs `OwnedNotified` from a later release.
++tokio = { version = "1.53.3", features = ["rt", "macros", "rt-multi-thread", "io-std", "io-util", "fs"] }
  tracing = "0.1.10"
+ tracing-subscriber = { version = "0.3.18", default-features = false, features = ["fmt", "ansi", "env-filter", "chrono", "tracing-log"] }
 diff --git a/quinn-interop/src/bin/client.rs b/quinn-interop/src/bin/client.rs
-index 41be89f..c27c78e 100644
+index 41be89f..15c4185 100644
 --- a/quinn-interop/src/bin/client.rs
 +++ b/quinn-interop/src/bin/client.rs
 @@ -5,12 +5,10 @@ use bytes::Bytes;
@@ -100,11 +105,19 @@ index 41be89f..c27c78e 100644
  
      // quinn setup
 -    let mut client_endpoint = h3_quinn::quinn::Endpoint::client("[::]:0".parse().unwrap())?;
-+    let mut client_endpoint = quinn::Endpoint::new(rscrypto_rustls::quinn::endpoint_config()?, None, std::net::UdpSocket::bind("[::]:0")?, Arc::new(quinn::TokioRuntime))?;
++    let client_endpoint = quinn::Endpoint::new(rscrypto_rustls::quinn::endpoint_config()?, None, std::net::UdpSocket::bind("[::]:0")?, Arc::new(quinn::TokioRuntime))?;
      client_endpoint.set_default_client_config(client_config);
  
      let new_conn = client_endpoint.connect(addr, host)?.await?;
-@@ -310,48 +300,39 @@ async fn resolve(uri: &http::Uri) -> anyhow::Result<(SocketAddr, &str)> {
+@@ -286,7 +276,6 @@ async fn connect_0rtt(uri: &http::Uri, endpoint: &Endpoint) -> anyhow::Result<Co
+     endpoint
+         .connect(addr, host)?
+         .into_0rtt()
+-        .map(|x| x.0)
+         .map_err(|_| anyhow!("0RTT failed"))
+ }
+ 
+@@ -310,48 +299,39 @@ async fn resolve(uri: &http::Uri) -> anyhow::Result<(SocketAddr, &str)> {
  #[derive(Debug)]
  struct YesVerifier;
  

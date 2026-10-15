@@ -80,10 +80,6 @@ crc = "3.4.0"
 [workspace]
 members = ["."]
 
-# Keep the same Quinn fix as the root workspace.
-[patch.crates-io]
-quinn-proto = { git = "https://github.com/loadingalias/quinn", rev = "296064e6daf36526a2d062eceb4fe300dab82aa5" }
-
 # ── AEAD targets ──────────────────────────────────────────────────────────────
 [[bin]]
 name = "aead_aes256gcm"

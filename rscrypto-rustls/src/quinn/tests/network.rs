@@ -36,7 +36,7 @@ impl Link {
     let now = Instant::now();
     let client_endpoint = Arc::new(endpoint_config().expect("endpoint"));
     let server_endpoint = Arc::new(endpoint_config().expect("endpoint"));
-    let mut endpoint = Endpoint::new(client_endpoint.clone(), None, false, None);
+    let mut endpoint = Endpoint::new(client_endpoint.clone(), None, false);
     let connection = endpoint
       .connect(
         now,
@@ -49,7 +49,6 @@ impl Link {
       server_endpoint.clone(),
       Some(Arc::new(server_config(server).expect("server config"))),
       false,
-      None,
     );
     Self {
       peers: [
@@ -405,7 +404,7 @@ fn quinn_reset_authenticates_forgotten_connection_in_both_directions() {
     let survivor = 1usize.strict_sub(forgotten);
     link.expected_reset = Some(survivor);
     link.peers[forgotten].connection = None;
-    link.peers[forgotten].endpoint = Endpoint::new(link.peers[forgotten].config.clone(), None, false, None);
+    link.peers[forgotten].endpoint = Endpoint::new(link.peers[forgotten].config.clone(), None, false);
     link.queue.clear();
     link.connection(survivor).ping();
     for _ in 0..1000 {

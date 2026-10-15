@@ -13,6 +13,8 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = '740c05a10b61d65e8abd3ad38d60898004d335d9'
 ENDPOINT = '82c845f6e5399ef15fac217ba2799c2a233d875b'
+# Tag h3-quinn-v0.0.10; its h3 sources equal h3-v0.0.8.
+H3 = '2dc3412bdf6083451920d5bfd7a9484d054c1859'
 GO = 'martenseemann/quic-go-interop@sha256:633266d83b816442975eb7ccb9123ba95b7f8356b71338e0ed319536f192c584'
 SIMULATOR = 'martenseemann/quic-network-simulator@sha256:c23d82a55caffe681b1bdae65d4d30d23e1283141a414a7f02ee56cf15f9c6b9'
 ENDPOINT_BASE = 'martenseemann/quic-network-simulator-endpoint@sha256:3b2b9e6fa317da238c8140a7b6d2bf8d4d45a8464b873eecac3ff2a32520b71a'
@@ -45,7 +47,11 @@ def checkout(output, name, url, revision):
 def prepare(output):
     runner = checkout(output, 'runner', 'https://github.com/quic-interop/quic-interop-runner.git', RUNNER)
     endpoint = checkout(output, 'endpoint', 'https://github.com/quinn-rs/quinn-interop.git', ENDPOINT)
-    patch = (ROOT / 'scripts/test/provider_quinn_interop.patch').read_text().replace('@RSCRYPTO_ROOT@', str(ROOT))
+    h3 = checkout(output, 'h3', 'https://github.com/hyperium/h3.git', H3)
+    run(output, 'h3-patch', ['git', 'apply', '-'], cwd=h3,
+        data=(ROOT / 'scripts/test/provider_h3_quinn.patch').read_bytes())
+    patch = (ROOT / 'scripts/test/provider_quinn_interop.patch').read_text()
+    patch = patch.replace('@RSCRYPTO_ROOT@', str(ROOT)).replace('@H3_ROOT@', str(h3))
     run(output, 'endpoint-patch', ['git', 'apply', '-'], cwd=endpoint, data=patch.encode())
     architecture = subprocess.check_output(['docker', 'info', '--format', '{{.Architecture}}'], text=True).strip()
     targets = {'aarch64': 'aarch64-unknown-linux-gnu', 'arm64': 'aarch64-unknown-linux-gnu',
@@ -92,7 +98,7 @@ def prepare(output):
     source = source.replace('image: martenseemann/quic-network-simulator\n', f'image: {SIMULATOR}\n')
     compose.write_text(source)
     (output / 'tmp').mkdir()
-    provenance = {'runner': RUNNER, 'endpoint': ENDPOINT, 'target': target,
+    provenance = {'runner': RUNNER, 'endpoint': ENDPOINT, 'h3': H3, 'target': target,
                   'endpoint_image': endpoint_image, 'driver_image': driver_image,
                   'head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()}
     for role, image in (('endpoint', endpoint_image), ('driver', driver_image)):
@@ -101,7 +107,8 @@ def prepare(output):
     (output / 'source.patch').write_bytes(subprocess.check_output(['git', 'diff', '--binary', 'HEAD'], cwd=ROOT))
     shutil.copytree(ROOT / 'rscrypto-rustls', output / 'source/rscrypto-rustls')
     for relative in ('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'scripts/test/provider_quic_runner.py',
-                     'scripts/test/provider_quic_runner_requirements.txt', 'scripts/test/provider_quinn_interop.patch'):
+                     'scripts/test/provider_quic_runner_requirements.txt', 'scripts/test/provider_quinn_interop.patch',
+                     'scripts/test/provider_h3_quinn.patch'):
         destination = output / 'source' / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, destination)

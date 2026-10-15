@@ -116,7 +116,7 @@ It does not download upstream archives.
   `benchmark_results/`; `--quick` selects one diagnostic profile and is not full
   qualification. The ephemeral session files and exporter values protect only
   public test fixtures. The runner enforces timeouts and reaps peer processes.
-- `just test-provider-quic` runs quinn-proto 0.11.19 and quinn 0.11.12 through
+- `just test-provider-quic` runs the pinned quinn-proto and quinn 0.12 revisions through
   this provider against quic-go 0.61.0 (`579ee19d`) on Go 1.27.2. The peer builds
   with CGO disabled. Cases cover full/resumed mutual authentication, the selected
   classical and ML-DSA profiles, all suites/groups, Retry, explicit 0-RTT, and
@@ -128,7 +128,8 @@ It does not download upstream archives.
   reset key, then require the independent client to authenticate the reset.
 - `just test-provider-quic-runner` builds the pinned Quinn interoperability
   application with this provider and runs the pinned QUIC Interop Runner in
-  local Docker. Source revisions, container digests, Python dependencies,
+  local Docker. The application uses h3-quinn 0.0.10 from its release tag with
+  only its Quinn requirement moved to the provider's Quinn revision. Source revisions, container digests, Python dependencies,
   commands and packet traces are retained. `--prepared PATH` reuses the exact
   recorded images; `--tests` selects a bounded case batch. Each campaign has a
   ten-minute cap and removes its own containers and networks on exit. Failed,

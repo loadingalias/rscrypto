@@ -81,9 +81,9 @@ fn unsupported_quic_versions_never_derive_initial_keys() {
   let server = server_config(server).expect("server configuration");
   let cid = ConnectionId::new(&[1; 8]);
   for version in [0, 2, 0x6b33_43cf, 0xff00_001d, 0xff00_0021] {
-    assert!(server.crypto.initial_keys(version, &cid).is_err());
+    assert!(server.crypto.initial_keys(version, cid).is_err());
   }
-  drop(server.crypto.initial_keys(1, &cid).expect("QUIC v1"));
+  drop(server.crypto.initial_keys(1, cid).expect("QUIC v1"));
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn rfc9001_initial_packets_through_quinn_traits() {
     let mut plaintext = vector["frame"].clone();
     plaintext.resize(length, 0);
     let mut packet = [header.as_slice(), plaintext.as_slice(), &[0; 16]].concat();
-    let keys = initial_keys(&cid, side);
+    let keys = initial_keys(cid, side);
     keys.packet.local.encrypt(number, &mut packet, header.len());
     keys.header.local.encrypt(offset, &mut packet);
     assert_eq!(packet, vector["packet"]);
@@ -132,18 +132,18 @@ fn rfc9001_retry_integrity_and_all_byte_tampering() {
   let cid = ConnectionId::new(&hex("8394c8f03e515708"));
   let packet = hex("ff000000010008f067a5502a4262b5746f6b656e04a265ba2eff4d829058fb3f0f2496ba");
   let split = packet.len().strict_sub(16);
-  assert_eq!(retry_tag(&cid, &packet[..split]), packet[split..]);
+  assert_eq!(retry_tag(cid, &packet[..split]), packet[split..]);
   for header_len in 0..=split {
-    assert!(valid_retry(&cid, &packet[..header_len], &packet[header_len..]));
+    assert!(valid_retry(cid, &packet[..header_len], &packet[header_len..]));
   }
   for index in 0..packet.len() {
     let mut corrupted = packet.clone();
     corrupted[index] ^= 1;
-    assert!(!valid_retry(&cid, &[], &corrupted));
+    assert!(!valid_retry(cid, &[], &corrupted));
   }
-  assert!(!valid_retry(&ConnectionId::new(&[0; 8]), &[], &packet));
+  assert!(!valid_retry(ConnectionId::new(&[0; 8]), &[], &packet));
   for length in 0..16 {
-    assert!(!valid_retry(&cid, &[], &packet[..length]));
+    assert!(!valid_retry(cid, &[], &packet[..length]));
   }
 }
 
@@ -176,7 +176,7 @@ fn rfc9001_chacha_short_packet_through_quinn_traits() {
 
 #[test]
 fn truncated_header_protection_is_untouched_and_does_not_panic() {
-  let keys = initial_keys(&ConnectionId::new(&[0; 8]), Side::Client);
+  let keys = initial_keys(ConnectionId::new(&[0; 8]), Side::Client);
   for length in 0..64 {
     for offset in [0, 1, length, usize::MAX] {
       let packet = vec![0xc3; length];

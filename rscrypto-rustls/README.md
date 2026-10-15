@@ -3,12 +3,12 @@
 This unpublished crate supplies rscrypto-backed TLS 1.3 and QUIC cryptographic
 adapters for rustls 0.24 development, including hybrid key exchange, classical
 authentication, and opt-in ML-DSA authentication. The `quinn` feature supplies a QUIC v1 transport adapter for
-quinn-proto 0.11.19.
+quinn-proto 0.12 development.
 
-The [manifest](Cargo.toml) pins the rustls fork that contains
-[rustls PR #3349](https://github.com/rustls/rustls/pull/3349). This is a development
-revision, not a released 0.24 version. Consumers must use the same rustls Git
-source and revision so their configuration types match the provider's types.
+The [manifest](Cargo.toml) pins rustls and Quinn to upstream `main` revisions.
+These are development revisions, not released rustls 0.24 or Quinn 0.12 versions.
+Consumers must use the same Git sources and revisions so their configuration
+types match the provider's types.
 
 The crate requires `std` and the same minimum Rust version as rscrypto.
 Each algorithm feature forwards to the corresponding rscrypto leaf feature.
@@ -19,15 +19,9 @@ signature algorithm; `ml-dsa` and `quinn` are opt-in.
 rustls provides protocol composition, rustls-webpki provides certificate path
 validation, and rustls-pki-types provides credential types. Their built-in crypto
 backends are disabled. The provider's normal and build dependency graph must
-exclude ring, AWS-LC, OpenSSL, BoringSSL, and C build tools.
-
-The workspace pins a one-line fix to quinn-proto 0.11.19 that makes its
-browser-WASM `ring` dependency optional. The upstream fix was merged in
-[Quinn PR #2930](https://github.com/quinn-rs/quinn/pull/2930).
-Applications that enable `quinn` must copy the `[patch.crates-io]` entry from
-the [workspace manifest](../Cargo.toml) into their own workspace manifest.
-Cargo reads patches only from the consuming workspace root. Keep this exact
-commit pin until a compatible Quinn release includes the fix.
+exclude ring, AWS-LC, OpenSSL, BoringSSL, and C build tools. The pinned
+quinn-proto revision makes its browser-WASM `ring` dependency optional
+([Quinn PR #2930](https://github.com/quinn-rs/quinn/pull/2930)).
 
 ## Implementation inventory
 
@@ -185,7 +179,7 @@ protocol, a client with `enable_early_data`, and a server with
 one-use early-data tickets. Rejected early requests must follow Quinn's retry
 contract; never assume that an application write has been accepted.
 
-Quinn 0.11 has no client error variant for TLS initialization failure. This
+Quinn has no client error variant for TLS initialization failure. This
 adapter returns `ConnectError::EndpointStopping` for such a failure, including
 entropy failure. It returns no usable session. TLS handshake-processing failures are terminal;
 failed sessions expose no keys, exporter output, peer identity, or handshake data.
@@ -198,6 +192,6 @@ make an ML-DSA-87 mutual-authentication ClientHello exceed its fixed 16 KiB
 CRYPTO-stream limit. Provider-server cases exercise the stateless ticketer.
 This is a peer configuration constraint, not a passed default-peer profile.
 
-The crate stays unpublished while it depends on the rustls fork and the Quinn patch.
+The crate stays unpublished while it depends on unreleased rustls and Quinn revisions.
 rscrypto keeps its `v<version>` tags. Once this crate can be published, its tags
 will be `rscrypto-rustls-v<version>`.

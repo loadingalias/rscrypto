@@ -1,0 +1,12 @@
+diff --git a/h3-quinn/Cargo.toml b/h3-quinn/Cargo.toml
+--- a/h3-quinn/Cargo.toml
++++ b/h3-quinn/Cargo.toml
+@@ -16,7 +16,7 @@ license = "MIT"
+ [dependencies]
+ h3 = { version = "0.0.8", path = "../h3" }
+ bytes = "1"
+-quinn = { version = "0.11.7", default-features = false, features = [
++quinn = { version = "=0.12.0", git = "https://github.com/quinn-rs/quinn", rev = "9d729c1b6b7ad30d45d40265037eeeb9d98a7420", default-features = false, features = [
+     "futures-io",
+ ] }
+ tokio-util = { version = "0.7.9" }
