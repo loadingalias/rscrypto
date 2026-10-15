@@ -311,6 +311,48 @@ def parse_power_import_thunks(
   return symbols
 
 
+def parse_s390_import_thunks(
+  raw_disassembly: Path, relocations: dict[int, tuple[str, str]] | None,
+) -> list[Symbol]:
+  """Resolve the exact s390x PLT load-and-branch path through a named slot."""
+  raw = raw_disassembly.read_text(errors="replace")
+  if "file format elf64-s390" not in raw:
+    return []
+  instructions: dict[int, bytes] = {}
+  in_plt = False
+  for line in raw.splitlines():
+    if section := re.match(r"^Disassembly of section (.+):$", line):
+      in_plt = section.group(1) == ".plt"
+      continue
+    if in_plt and (match := re.match(r"^\s*([0-9a-fA-F]+):\s+((?:[0-9a-fA-F]{2}\s+)+)", line)):
+      instructions[int(match.group(1), 16)] = bytes.fromhex(match.group(2))
+  if not instructions and not relocations:
+    return []
+  if relocations is None:
+    raise ValueError("s390x PLT requires dynamic-relocation evidence")
+  expected_slots = {slot for slot, (kind, _) in relocations.items() if kind == "R_390_JMP_SLOT"}
+  verified_slots: set[int] = set()
+  symbols = []
+  for address, first in sorted(instructions.items()):
+    # LARL r1,slot; LG r1,0(r1); BR r1. Decode the signed halfword
+    # displacement independently of the printed address and symbol annotation.
+    if (len(first) != 6 or first[:2] != b"\xc0\x10"
+        or instructions.get(address + 6) != b"\xe3\x10\x10\x00\x00\x04"
+        or instructions.get(address + 12) != b"\x07\xf1"):
+      continue
+    slot = address + 2 * int.from_bytes(first[2:], "big", signed=True)
+    relocation = relocations.get(slot)
+    if (relocation is None or relocation[0] != "R_390_JMP_SLOT"
+        or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:@[A-Za-z0-9_.]+)?", relocation[1]) is None):
+      raise ValueError(f"s390x PLT entry at 0x{address:x} has no named JMP_SLOT at 0x{slot:x}")
+    symbols.append(Symbol(address, 14, relocation[1] + "@plt"))
+    verified_slots.add(slot)
+  missing = expected_slots - verified_slots
+  if missing:
+    raise ValueError("s390x JMP_SLOT entries lack verified PLT code: " + ", ".join(f"0x{slot:x}" for slot in sorted(missing)))
+  return symbols
+
+
 def resolve_x86_got_transfer(
   line: str, relocations: dict[int, tuple[str, str]], symbols: dict[int, Symbol],
 ) -> str:
@@ -461,16 +503,31 @@ def symbolize(
     for line in raw_lines
     if (match := re.match(r"^\s*([0-9a-fA-F]+) <(\.[^<>]+)>:$", line))
   }
+  # ELF nm can bound _init by the next named text symbol across .plt. The
+  # decoder's exact import entry is stronger evidence than that inferred range.
+  plt_targets = {
+    int(match.group(1), 16): match.group(2)
+    for line in raw_lines
+    if (match := re.match(r"^\s*([0-9a-fA-F]+) <([^<>]+@plt)>:$", line))
+  }
   section_target_re = re.compile(r"<(\.[^<>+]+)(?:\+0x([0-9a-fA-F]+))?>$")
   output: list[str] = []
   seen: set[int] = set()
   for line in raw_lines:
-    existing_label = re.match(r"^\s*([0-9a-fA-F]+) <.+>:$", line)
+    existing_label = re.match(r"^\s*([0-9a-fA-F]+) <(.+)>:$", line)
     if existing_label is not None:
       address = int(existing_label.group(1), 16)
       if address in by_address:
         output.append(f"{address:016x} <{by_address[address].name}>:")
         seen.add(address)
+        continue
+      # GNU keeps assembly-local labels that LLD may omit. Within a mapped
+      # function they mark offsets, not new bodies; retain every instruction.
+      # Unknown boundaries and section labels still terminate the prior body.
+      if (
+        existing_label.group(2).startswith(("L", ".L", "$", "ltmp"))
+        and symbolized_target(address, starts, canonical) is not None
+      ):
         continue
     instruction = re.match(r"^\s*([0-9a-fA-F]+):", line)
     if instruction is not None:
@@ -481,7 +538,9 @@ def symbolize(
 
     def replace_target(match: re.Match[str]) -> str:
       address = int(match.group(1), 16)
-      name = symbolized_target(address, starts, canonical)
+      name = plt_targets.get(address) if address not in by_address else None
+      if name is None:
+        name = symbolized_target(address, starts, canonical)
       return match.group(0) if name is None else f"0x{address:x} <{name}>"
 
     if x86_elf and dynamic_relocations is not None:
@@ -531,7 +590,8 @@ def main() -> int:
   relocations = parse_dynamic_relocations(args.dynamic_relocations) if args.dynamic_relocations else None
   power_symbols = (parse_power_import_thunks(args.link_map, args.raw_disassembly, args.got_contents, relocations)
                    if args.got_contents else [])
-  symbols = merged_symbols(nm_symbols, [*map_symbols, *indirect_symbols, *power_symbols])
+  s390_symbols = parse_s390_import_thunks(args.raw_disassembly, relocations)
+  symbols = merged_symbols(nm_symbols, [*map_symbols, *indirect_symbols, *power_symbols, *s390_symbols])
   if not symbols:
     raise ValueError("neither the final binary nor the linker map contains text symbols")
   args.out_symbols.write_text(

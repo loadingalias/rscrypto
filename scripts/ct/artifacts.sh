@@ -272,7 +272,8 @@ if [[ "$TARGET" == *apple-darwin ]]; then
   indirect_symbols="$ARTIFACT_DIR/$linked_base.binary.indirect-symbols.txt"
   "$LLVM_OBJDUMP" --macho --indirect-symbols "$linked_binary" > "$indirect_symbols"
 fi
-if [[ "$TARGET" == "powerpc64le-unknown-linux-gnu" || "$TARGET" == "x86_64-unknown-linux-gnu" ]]; then
+if [[ "$TARGET" == "powerpc64le-unknown-linux-gnu" || "$TARGET" == "x86_64-unknown-linux-gnu" \
+  || "$TARGET" == "s390x-unknown-linux-gnu" ]]; then
   dynamic_relocations="$ARTIFACT_DIR/$linked_base.binary.dynamic-relocations.txt"
   "$LLVM_OBJDUMP" --dynamic-reloc "$linked_binary" > "$dynamic_relocations"
 fi

@@ -15,11 +15,13 @@ import full
 import validate as manifest_validation
 from asm_heuristics import (
   FunctionBody,
+  all_direct_callees,
   apply_public_operand_rules,
   apply_waivers,
   build_call_graph,
   parse_disassembly,
   reachable_closure,
+  scan_symbol,
   summarize,
   summarize_closure,
   validate_waivers,
@@ -33,6 +35,7 @@ from symbolize_linked_binary import (
   parse_link_map,
   parse_dynamic_relocations,
   parse_power_import_thunks,
+  parse_s390_import_thunks,
   resolve_x86_got_transfer,
   symbolize,
 )
@@ -45,6 +48,38 @@ def expect_failure(action) -> None:
 
 
 def test_linked_import_resolution() -> None:
+  # GNU s390x lacks decoded PLT names. Bind every import to its actual
+  # 14-byte register/width/branch sequence and independently decoded slot.
+  with tempfile.TemporaryDirectory() as temporary:
+    raw = Path(temporary) / "s390.raw.txt"
+    fixture = (
+      "evidence: file format elf64-s390\nDisassembly of section .plt:\n"
+      "5e48: c0 10 00 06 c7 34\tlarl\t%r1, 0xdecb0\n"
+      "5e4e: e3 10 10 00 00 04\tlg\t%r1, 0(%r1)\n"
+      "5e54: 07 f1\tbr\t%r1\n"
+    )
+    raw.write_text(fixture)
+    relocations = {0xDECB0: ("R_390_JMP_SLOT", "memcpy")}
+    assert parse_s390_import_thunks(raw, relocations) == [Symbol(0x5E48, 14, "memcpy@plt")]
+    expect_failure(lambda: parse_s390_import_thunks(raw, None))
+    expect_failure(lambda: parse_s390_import_thunks(raw, {}))
+    expect_failure(lambda: parse_s390_import_thunks(raw, {0xDECB0: ("R_390_GLOB_DAT", "memcpy")}))
+    expect_failure(lambda: parse_s390_import_thunks(raw, {**relocations, 0xDECB8: ("R_390_JMP_SLOT", "other")}))
+    raw.write_text(fixture.replace("Disassembly of section .plt:", "Disassembly of section .text:"))
+    expect_failure(lambda: parse_s390_import_thunks(raw, relocations))
+    # Printed operands are not evidence. Signed negative displacements must
+    # still resolve the encoded slot when that annotation is wrong.
+    raw.write_text(fixture.replace("00 06 c7 34", "ff ff ff f8"))
+    assert parse_s390_import_thunks(raw, {0x5E38: ("R_390_JMP_SLOT", "memcpy")}) == [
+      Symbol(0x5E48, 14, "memcpy@plt"),
+    ]
+    for original, replacement in (
+      ("c0 10", "c0 20"), ("c7 34", "c7 35"), ("e3 10 10 00", "e3 10 20 00"),
+      ("00 04", "00 14"), ("07 f1", "07 f2"),
+    ):
+      raw.write_text(fixture.replace(original, replacement))
+      expect_failure(lambda: parse_s390_import_thunks(raw, relocations))
+
   # Final POWER libc calls use unnamed 20-byte ELFv2 thunks. Their instruction
   # bytes and the dynamic JMP_SLOT, rather than the .text label, identify memcpy.
   with tempfile.TemporaryDirectory() as temporary:
@@ -693,6 +728,58 @@ def main() -> None:
       "ct_entry_owner_eq_16", "rscrypto::fixed_eq",
     }
     expect_failure(lambda: symbolize(raw_disassembly, symbolized, [Symbol(0x1020, 1, "missing")]))
+
+    # GNU ELF nm bounds _init by the next named text symbol, spanning .plt.
+    # A decoder-confirmed import entry must not become an offset inside _init.
+    raw_disassembly.write_text(
+      "00001000 <_init>:\n1000: d65f03c0\tret\n"
+      "00001040 <bcmp@plt>:\n1040: d61f0220\tbr\tx17\n"
+      "00001100 <ct_entry_p256_ecdh_agree>:\n"
+      "1100: 97ffffd0\tbl\t0x1040 <bcmp@plt>\n"
+      "1104: 97ffffd1\tbl\t0x1048 <bcmp@plt>\n"
+      "1108: d65f03c0\tret\n"
+    )
+    import_symbols = [Symbol(0x1000, 0x100, "_init"), Symbol(0x1100, 12, "ct_entry_p256_ecdh_agree")]
+    symbolize(raw_disassembly, symbolized, import_symbols)
+    output = symbolized.read_text()
+    assert "bl\t0x1040 <bcmp@plt>" in output
+    # A call-site annotation alone does not prove an import at another address.
+    assert "bl\t0x1048 <_init+0x48>" in output
+    linked_functions, _ = parse_disassembly(symbolized)
+    assert all_direct_callees(linked_functions["ct_entry_p256_ecdh_agree"]) == {"bcmp", "_init"}
+
+    # Native GNU ARM retains local ASM labels. They must not truncate the
+    # mapped RSA body before its real +0x64c conditional-copy selection.
+    assembly_name = "rscrypto_rsa_bn_mul_mont_words_aarch64_elf"
+    raw_disassembly.write_text(
+      f"0001a1e0 <{assembly_name}>:\n"
+      "1a1e0: f24008bf\ttst\tx5, #0x7\n"
+      "0001a1f0 <Lmul_mont>:\n1a1f0: a9bc7bfd\tstp\tx29, x30, [sp, #-0x40]!\n"
+      "0001a4d0 <Lsqr8x_outer_loop>:\n1a4d0: d503201f\tnop\n"
+      "0001a810 <Lsqr8x_break>:\n"
+      "1a810: a9401c06\tldp\tx6, x7, [x0]\n"
+      "1a82c: b4ffe52e\tcbz\tx14, 0x1a4d0 <Lsqr8x_outer_loop>\n"
+      "1a830: a9005053\tstp\tx19, x20, [x2]\n"
+      "1a834: a94051f3\tldp\tx19, x20, [x15]\n"
+      "1a838: a9015855\tstp\tx21, x22, [x2, #0x10]\n"
+      "1a83c: a94159f5\tldp\tx21, x22, [x15, #0x10]\n"
+      "1a840: a9026057\tstp\tx23, x24, [x2, #0x20]\n"
+      "1a844: a94261f7\tldp\tx23, x24, [x15, #0x20]\n"
+      "1a848: a9036859\tstp\tx25, x26, [x2, #0x30]\n"
+      "1a84c: aa0f03e2\tmov\tx2, x15\n"
+      "1a850: a94369f9\tldp\tx25, x26, [x15, #0x30]\n"
+      "1a854: 17ffff1f\tb\t0x1a4d0 <Lsqr8x_outer_loop>\n"
+      "0001b440 <Loutside_mapped_function>:\n1b440: d65f03c0\tret\n"
+    )
+    symbolize(raw_disassembly, symbolized, [Symbol(0x1A1E0, 0x1260, assembly_name)])
+    linked_functions, _ = parse_disassembly(symbolized)
+    assert "Lmul_mont" not in linked_functions and "Lsqr8x_break" not in linked_functions
+    assert "Loutside_mapped_function" in linked_functions
+    assembly_findings = scan_symbol(
+      "aarch64-unknown-linux-gnu", assembly_name, linked_functions[assembly_name], set(linked_functions),
+      scope="ct_intended_call_closure", primitive_ids=["rsa.private_ops"], roots=[],
+    )
+    assert any(row["kind"] == "select_branch" and row["offset"] == 0x64C for row in assembly_findings)
 
     # Inline x86 table data can consume the first byte of the next function.
     # Recover the whole function from original bytes at its mapped boundary.
