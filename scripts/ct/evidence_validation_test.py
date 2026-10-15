@@ -387,7 +387,60 @@ sys.exit(mode['exit'])
     assert qualify(report_for(first[0], status="fail"), 1, cases=first)[0] == "timing_failure"
 
 
+def test_msvc_flagless_assembly() -> None:
+  # Native MSVC flags Rust functions, but not global assembly functions. A
+  # matching object text symbol must recover the latter without admitting data
+  # or arbitrary CODE labels as function boundaries.
+  with tempfile.TemporaryDirectory() as temporary:
+    root = Path(temporary)
+    symbols = (
+      "00000000 T rscrypto_p256_scalarmul\n"
+      "00000004 t Llocal_loop\n"
+      "00000008 D data_label\n"
+      "0000000c U undefined_label\n"
+      "00000000 T outside_code\n"
+    )
+    (root / "input.o.raw-symbols.txt").write_text(symbols)
+    (root / "input.o.symbols.txt").write_text(symbols)
+    (root / "map").write_text(
+      " Start Length Name Class\n"
+      " 0001:00000000 00000030H .text CODE\n"
+      " 0002:00000000 00000010H .data DATA\n"
+      " Address Publics by Value Rva+Base Lib:Object\n"
+      " 0001:00000000 rscrypto_p256_scalarmul 0000000140001000 input.o\n"
+      " 0001:00000004 Llocal_loop 0000000140001004 input.o\n"
+      " 0001:00000008 data_label 0000000140001008 input.o\n"
+      " 0001:0000000c undefined_label 000000014000100c input.o\n"
+      " 0001:00000010 code_label 0000000140001010 input.o\n"
+      " 0001:00000020 ct_entry_p256_ecdh_agree 0000000140001020 f input.o\n"
+      " 0002:00000000 outside_code 0000000140002000 input.o\n"
+    )
+    (root / "nm").write_text("")  # The stripped PE has no final symbol table.
+    (root / "raw").write_text(
+      "fixture: file format coff-x86-64\nDisassembly of section .text:\n"
+      "0000000140001000 <.text>:\n"
+      "140001000: c3 retq\n"
+      "140001020: e8 db ff ff ff callq 0x140001000 <.text>\n"
+      "140001025: c3 retq\n"
+    )
+    subprocess.run([
+      sys.executable, str(Path(__file__).with_name("symbolize_linked_binary.py")),
+      "--artifact-dir", str(root), "--raw-disassembly", str(root / "raw"),
+      "--nm-symbols", str(root / "nm"), "--link-map", str(root / "map"),
+      "--out-disassembly", str(root / "out"), "--out-symbols", str(root / "symbols"),
+    ], check=True)
+    assert (root / "symbols").read_text().splitlines() == [
+      "0000000140001000 0000000000000020 T rscrypto_p256_scalarmul",
+      "0000000140001020 0000000000000010 T ct_entry_p256_ecdh_agree",
+    ]
+    functions, _ = parse_disassembly(root / "out", {})
+    assert reachable_closure("ct_entry_p256_ecdh_agree", build_call_graph(functions)) == {
+      "ct_entry_p256_ecdh_agree", "rscrypto_p256_scalarmul",
+    }
+
+
 def main() -> None:
+  test_msvc_flagless_assembly()
   test_linked_import_resolution()
   test_dudect_invocation_evidence()
   test_dudect_smoke_summary_is_insufficient()

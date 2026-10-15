@@ -31,7 +31,7 @@ def parse_nm_line(line: str) -> tuple[int, str, str] | None:
   return int(match.group(1), 16), match.group(2), match.group(3)
 
 
-def demangle_table(artifact_dir: Path) -> dict[str, str]:
+def demangle_table(artifact_dir: Path, *, text_only: bool = False) -> dict[str, str]:
   names: dict[str, str] = {}
   for raw_path in sorted(artifact_dir.glob("*.o.raw-symbols.txt")) + sorted(
     artifact_dir.glob("*.obj.raw-symbols.txt")
@@ -48,7 +48,8 @@ def demangle_table(artifact_dir: Path) -> dict[str, str]:
         continue
       if raw is None or demangled is None or raw[:2] != demangled[:2]:
         raise ValueError(f"raw and demangled symbol maps are inconsistent for {raw_path.name}")
-      names[raw[2]] = demangled[2]
+      if not text_only or raw[1] in {"T", "t"}:
+        names[raw[2]] = demangled[2]
   return names
 
 
@@ -65,7 +66,9 @@ def section_symbol(section: str, known_names: dict[str, str]) -> str | None:
   return None
 
 
-def parse_msvc_link_map(text: str, known_names: dict[str, str]) -> list[Symbol]:
+def parse_msvc_link_map(
+  text: str, known_names: dict[str, str], object_text_names: dict[str, str],
+) -> list[Symbol]:
   groups: list[tuple[int, int, int]] = []
   functions: list[tuple[int, int, int, str]] = []
   import_thunks: list[Symbol] = []
@@ -87,9 +90,12 @@ def parse_msvc_link_map(text: str, known_names: dict[str, str]) -> list[Symbol]:
       section, offset = (int(match.group(index), 16) for index in (1, 2))
       if is_local_label(match.group(3)):
         continue
-      # MSVC marks functions with `f`; LLD can omit that flag. The CODE
-      # groups identify text symbols independently of either spelling.
-      if has_function_flags and re.match(r"f(?:\s|$)", match.group(5) or "") is None:
+      # MSVC can omit `f` on assembly functions even when Rust functions have
+      # it. Require matching object text evidence for that exception; arbitrary
+      # CODE labels and object data symbols must not split function bodies.
+      # LLD can omit flags throughout the map, leaving CODE groups as authority.
+      if (has_function_flags and re.match(r"f(?:\s|$)", match.group(5) or "") is None
+          and match.group(3) not in object_text_names):
         continue
       in_code = any(group[0] == section and group[1] <= offset < group[2] for group in groups)
       # LLD places DLL import thunks after the listed CODE groups. Bind their
@@ -129,10 +135,12 @@ def parse_msvc_link_map(text: str, known_names: dict[str, str]) -> list[Symbol]:
   return symbols
 
 
-def parse_link_map(path: Path, known_names: dict[str, str]) -> list[Symbol]:
+def parse_link_map(
+  path: Path, known_names: dict[str, str], *, object_text_names: dict[str, str] | None = None,
+) -> list[Symbol]:
   text = path.read_text(errors="replace")
   if "Publics by Value" in text:
-    return parse_msvc_link_map(text, known_names)
+    return parse_msvc_link_map(text, known_names, object_text_names or {})
   symbols: list[Symbol] = []
   table_row = re.compile(r"^\s*([0-9a-fA-F]+)\s+([0-9a-fA-F]+)\s+([0-9a-fA-F]+)\s+\d+\s+(.+)$")
   gnu_section = re.compile(r"^\s*(\.text(?:\.[^ ]+)?)\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)(?:\s+.*)?$")
@@ -581,7 +589,9 @@ def main() -> int:
 
   known_names = demangle_table(args.artifact_dir)
   nm_symbols = parse_final_nm(args.nm_symbols)
-  map_symbols = parse_link_map(args.link_map, known_names) if args.link_map and args.link_map.is_file() else []
+  map_symbols = (parse_link_map(args.link_map, known_names,
+                                object_text_names=demangle_table(args.artifact_dir, text_only=True))
+                 if args.link_map and args.link_map.is_file() else [])
   indirect_symbols = (
     parse_indirect_symbols(args.indirect_symbols)
     if args.indirect_symbols and args.indirect_symbols.is_file()
