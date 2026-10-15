@@ -164,8 +164,16 @@ impl Fixture {
   }
 
   fn condition(&self, mode: &str, logfile: &Path, case: &str) {
-    let status = Command::new("python3")
-      .arg("-c")
+    // uv runs the repository's pinned Python, as every script does.
+    let status = Command::new("uv")
+      .args([
+        "run",
+        "--locked",
+        "--project",
+        env!("CARGO_MANIFEST_DIR"),
+        "python",
+        "-c",
+      ])
       .arg(include_str!("../scripts/bench/file_cache.py"))
       .arg(mode)
       .arg(&self.path)

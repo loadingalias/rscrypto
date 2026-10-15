@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Measure moved-copy residue of secret owners under QEMU.
 
 Boots `tools/residue-harness` on the RV32 `virt` and Cortex-M3 `mps2-an385`

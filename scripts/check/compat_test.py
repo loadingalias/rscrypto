@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Check compatibility coverage and prove failures terminate sibling work."""
 import importlib.util
 import os

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Exercise the runner with isolated Cargo and Criterion process fixtures."""
 
 from __future__ import annotations

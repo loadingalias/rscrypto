@@ -1,0 +1,14 @@
+# Images that dev-machines bakes from this repository's installer.
+# `dev-machine image-refresh rscrypto` rebuilds those whose installer inputs
+# changed or that aged out.
+
+# dev-machines SSH images.
+ssh = ["ubuntu-x64", "ubuntu-arm64"]
+
+# Each RunsOn image that .github/runs-on.yml selects, with every installer
+# operation its runners execute. Cross-build and cross-run installations
+# always converge, and the plan runner's 40 GB volume keeps the stock image.
+[ci]
+ubuntu24-minimal-x64 = ["ci", "ci-compat", "ci-package", "ci-fuzz", "ci-miri", "ci-ct-full", "ci-bench"]
+ubuntu24-minimal-arm64 = ["ci", "ci-fuzz", "ci-ct-full", "ci-bench"]
+windows25-full-x64 = ["ci", "ci-ct", "ci-bench"]

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Check provider features and its own normal/build dependency graph."""
 
 import argparse

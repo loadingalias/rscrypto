@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Local release selection for tooling, Cargo manifests, and action references."""
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from functools import cache
 from email.utils import parsedate_to_datetime
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -23,7 +24,8 @@ from catalog import CATALOG, PLATFORMS, NATIVE_SOURCE_PLATFORMS, ROOT, read, rus
 REPOS = {'cargo-rail': 'loadingalias/cargo-rail', 'cargo-binstall': 'cargo-bins/cargo-binstall',
          'llvm': 'llvm/llvm-project', 'cmake': 'Kitware/CMake', 'zig': None,
          'wasmtime': 'bytecodealliance/wasmtime',
-         'git': 'git-for-windows/git', 'jq': 'jqlang/jq', 'powershell': 'PowerShell/PowerShell'}
+         'git': 'git-for-windows/git', 'jq': 'jqlang/jq', 'powershell': 'PowerShell/PowerShell',
+         'uv': 'astral-sh/uv'}
 JUST_REPO = 'casey/just'
 NEXTEST_REPO = 'nextest-rs/nextest'
 
@@ -132,7 +134,7 @@ def toml_value(value):
 def catalog_text(data):
     lines = ['# Updated by just update on the local macOS workstation.',
              '# Installers consume these pins; they never select latest releases.',
-             '# Ubuntu system packages are pinned together by archive snapshot.',
+             "# Ubuntu system packages come from the guest's archive; a baked image pins them.",
              '# Rust and its components are owned by rust-toolchain.toml.', '']
     for section, fields in data.items():
         lines.append(f'[{section}]')
@@ -156,15 +158,9 @@ def resolve_catalog():
     with ThreadPoolExecutor(max_workers=6) as pool:
         data['cargo'] = dict(zip(cargo_names, pool.map(crate_version, cargo_names)))
         list(pool.map(release, [repo for repo in REPOS.values() if repo]))
-    data['updater'] = {name: api(f'https://pypi.org/pypi/{name}/json')['info']['version']
-                       for name in ('tomlkit', 'PyYAML')}
     versions = {name: release(repo)['tag_name'].removeprefix('v').removeprefix('llvmorg-').removeprefix('jq-')
                 for name, repo in REPOS.items() if repo}
     versions['rustup'] = tomllib.loads(fetch('https://static.rust-lang.org/rustup/release-stable.toml')[0].decode())['version']
-    python_releases = api('https://www.python.org/api/v2/downloads/release/')
-    versions['python'] = max((semver(item['name'].removeprefix('Python ')), item['name'].removeprefix('Python '))
-                             for item in python_releases if item['is_published'] and not item['pre_release']
-                             and semver(item['name'].removeprefix('Python ')))[1]
     zig = api('https://ziglang.org/download/index.json')
     versions['zig'] = max((semver(v), v) for v in zig if semver(v))[1]
     versions['nasm'] = nasm_release()
@@ -178,21 +174,7 @@ def resolve_catalog():
                   and parsedate_to_datetime(item['Date']).replace(tzinfo=timezone.utc) <= now),
                  key=lambda item: tuple(map(int, item['Version'].split()[0].split('.'))))
     ubuntu = '.'.join(record['Version'].split()[0].split('.')[:2])
-    snapshot = now.strftime('%Y%m%dT%H%M%SZ')
-    archive = f'https://snapshot.ubuntu.com/ubuntu/{snapshot}/dists/{record["Dist"]}/Release'
-    release_text = fetch(archive)[0].decode()
-    if f'Version: {ubuntu}\n' not in release_text:
-        raise ValueError('Ubuntu snapshot does not match the selected LTS')
-    ci_release = fetch(f'https://snapshot.ubuntu.com/ubuntu/{snapshot}/dists/{data["linux-ci"]["codename"]}/Release')[0].decode()
-    if f'Version: {data["linux-ci"]["ubuntu"]}\n' not in ci_release:
-        raise ValueError('Ubuntu snapshot does not match the CI runner release')
-    data['linux'].update(ubuntu=ubuntu, codename=record['Dist'], snapshot=snapshot)
-    # Installers verify cached APT indexes offline against these signed-release pins.
-    for section in ('linux', 'linux-ci'):
-        codename = data[section]['codename']
-        data[section]['inrelease'] = {
-            suite: hashlib.sha256(fetch(f'https://snapshot.ubuntu.com/ubuntu/{snapshot}/dists/{suite}/InRelease')[0]).hexdigest()
-            for suite in (codename, f'{codename}-updates', f'{codename}-security')}
+    data['linux']['ubuntu'] = ubuntu
     channel_bytes, channel_url = fetch('https://aka.ms/vs/stable/channel')
     channel = json.loads(channel_bytes)
     vsman = next(item['payloads'][0] for item in channel['channelItems'] if item['id'] == 'Microsoft.VisualStudio.Manifests.VisualStudio')
@@ -217,10 +199,11 @@ def resolve_catalog():
         rustup_url = f'https://static.rust-lang.org/rustup/archive/{versions["rustup"]}/{host}/rustup-init' + ('.exe' if windows else '')
         checksum = fetch(rustup_url + '.sha256')[0].decode().split()[0]
         assets['rustup'] = {'url': rustup_url, 'sha256': checksum}
+        assets['uv'] = github_asset(REPOS['uv'], f'uv-{host}.' + ('zip' if windows else 'tar.gz'))
         if platform == 'riscv64-linux':
             assets['cargo-binstall'] = github_asset(REPOS['cargo-binstall'], f'cargo-binstall-{host.removesuffix("gnu")}musl.tgz')
         if platform in NATIVE_SOURCE_PLATFORMS:
-            continue  # Distro CMake/Clang are snapshot-pinned; missing binaries build natively.
+            continue  # Distro CMake/Clang come from the guest's archive; missing binaries build natively.
         assets['cargo-binstall'] = github_asset(REPOS['cargo-binstall'], f'cargo-binstall-{host}.' + ('zip' if windows else 'tgz'))
         if platform != 'aarch64-win':
             assets['cargo-rail'] = github_asset(REPOS['cargo-rail'], f'cargo-rail-{host}.zip')
@@ -229,12 +212,11 @@ def resolve_catalog():
         llvm_name = f'clang+llvm-{versions["llvm"]}-{host}.tar.xz' if windows else f'LLVM-{versions["llvm"]}-Linux-' + ('ARM64' if arch == 'aarch64' else 'X64') + '.tar.xz'
         assets['llvm'] = github_asset(REPOS['llvm'], llvm_name)
         if windows:
-            pyarch = 'arm64' if arch == 'aarch64' else 'amd64'
-            assets['python'] = pinned_url(f'https://www.python.org/ftp/python/{versions["python"]}/python-{versions["python"]}-embed-{pyarch}.zip')
+            windows_arch = 'arm64' if arch == 'aarch64' else 'amd64'
             git_name = versions['git'].replace('.windows.', '.')
             # Full Git includes Git Bash, curl, archive utilities, and certificates.
             assets['git'] = github_asset(REPOS['git'], f'Git-{git_name}-' + ('arm64' if arch == 'aarch64' else '64-bit') + '.exe')
-            assets['jq'] = github_asset(REPOS['jq'], f'jq-windows-{pyarch}.exe')
+            assets['jq'] = github_asset(REPOS['jq'], f'jq-windows-{windows_arch}.exe')
             assets['powershell'] = github_asset(REPOS['powershell'], f'PowerShell-{versions["powershell"]}-win-' + ('arm64' if arch == 'aarch64' else 'x64') + '.zip')
             if platform == 'x86_64-win':
                 assets['nasm'] = pinned_url(f'https://www.nasm.us/pub/nasm/releasebuilds/{versions["nasm"]}/win64/nasm-{versions["nasm"]}-win64.zip')
@@ -253,6 +235,29 @@ def resolve_catalog():
         data[platform] = native
     validate(data)
     return data
+
+
+def update_python():
+    """Select the newest patch of the pinned Python minor release and the newest tooling packages, then relock.
+
+    A new minor release is an explicit change: compiled wheels, such as PyYAML's, follow it later.
+    """
+    import tomlkit
+    path = ROOT / '.python-version'
+    minor = path.read_text().strip().rsplit('.', 1)[0]
+    downloads = json.loads(subprocess.check_output(
+        ['uv', 'python', 'list', '--only-downloads', '--output-format', 'json', minor], cwd=ROOT, text=True))
+    path.write_text(max((item['version'] for item in downloads if item['implementation'] == 'cpython'
+                         and item['variant'] == 'default' and semver(item['version'])), key=semver) + '\n')
+    project = ROOT / 'pyproject.toml'
+    document = tomlkit.parse(project.read_text())
+    tooling = document['dependency-groups']['tooling']
+    for index, requirement in enumerate(tooling):
+        name = requirement.split('==')[0]
+        tooling[index] = f'{name}=={api(f"https://pypi.org/pypi/{name}/json")["info"]["version"]}'
+    project.write_text(tomlkit.dumps(document))
+    environment = {key: value for key, value in os.environ.items() if key != 'UV_LOCKED'}
+    subprocess.run(['uv', 'lock'], cwd=ROOT, env=environment, check=True)
 
 
 def write_catalog(data):
@@ -292,15 +297,21 @@ def update_manifests(paths):
         rust_versions[path] = rust_version
     # Renames can hold a compatibility version beside the current crate (sha2_010).
     # Preserve their requirements; cargo update still refreshes compatible lock entries.
+    # Only stable releases are eligible, so a prerelease pin, such as a fork's development
+    # version, keeps its requirement instead of moving back to an older stable release.
+    def prerelease(requirement):
+        return '-' in requirement
     requests = set()
     for path, document in documents.items():
         rust_version = rust_versions[path]
         for table in dependency_tables(document):
             for alias, dependency in table.items():
                 if isinstance(dependency, str):
-                    requests.add((alias, rust_version))
+                    if not prerelease(dependency):
+                        requests.add((alias, rust_version))
                 elif (not dependency.get('workspace') and not dependency.get('path')
-                      and dependency.get('package', alias) == alias and 'version' in dependency):
+                      and dependency.get('package', alias) == alias and 'version' in dependency
+                      and not prerelease(dependency['version'])):
                     if dependency.get('registry'):
                         raise ValueError(f'{alias}: updater needs a version source for custom registry {dependency["registry"]}')
                     requests.add((dependency.get('package', alias), rust_version))
@@ -314,10 +325,13 @@ def update_manifests(paths):
         for table in dependency_tables(document):
             for alias, dependency in list(table.items()):
                 if isinstance(dependency, str):
+                    if prerelease(dependency):
+                        continue
                     version = selected[(alias, rust_version)]
                     table[alias] = ('=' if dependency.startswith('=') else '') + version
                 elif (not dependency.get('workspace') and not dependency.get('path')
-                      and dependency.get('package', alias) == alias and 'version' in dependency):
+                      and dependency.get('package', alias) == alias and 'version' in dependency
+                      and not prerelease(dependency['version'])):
                     name = dependency.get('package', alias)
                     version = selected[(name, rust_version)]
                     dependency['version'] = ('=' if dependency['version'].startswith('=') else '') + version
@@ -486,6 +500,7 @@ def main():
 
     # Select releases before installing anything.
     write_catalog(resolve_catalog())
+    update_python()
     update_rust()
     subprocess.run(['rustup', 'toolchain', 'install', rust_channel(), '--profile', 'minimal',
                     '--component', 'clippy', '--component', 'rustfmt'], cwd=ROOT, check=True)

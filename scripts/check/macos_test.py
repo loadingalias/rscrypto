@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Qualification preserves evidence while pushes only wait for a durable background job."""
 import fcntl
 import json

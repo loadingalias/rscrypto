@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Check that a dispatched run's runner wait is bounded without hiding its result."""
 import contextlib
 import importlib.util

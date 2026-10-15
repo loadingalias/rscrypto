@@ -218,12 +218,13 @@ test-scripts:
     @scripts/lib/python.sh scripts/test/fixtures_test.py
     @scripts/lib/python.sh scripts/test/coverage_test.py
     @scripts/lib/python.sh scripts/test/just_arguments_test.py
-    @scripts/lib/python.sh scripts/test/ci_cache_test.py
-    @scripts/lib/python.sh scripts/test/cross_workflow_test.py
+    @scripts/lib/python.sh --group tooling scripts/test/ci_cache_test.py
+    @scripts/lib/python.sh --group tooling scripts/test/cross_workflow_test.py
     @scripts/lib/python.sh scripts/lib/dispatched_run_test.py
     @scripts/lib/python.sh scripts/tooling/cache_test.py
     @scripts/lib/python.sh scripts/tooling/toolchain_test.py
     @scripts/lib/python.sh scripts/tooling/install_test.py
+    @scripts/lib/python.sh --group tooling scripts/tooling/test_tooling.py
     @scripts/lib/python.sh scripts/bench/ci_test.py
     @scripts/lib/python.sh scripts/bench/file_cache_test.py
     @scripts/lib/python.sh scripts/bench/profile_ci_test.py

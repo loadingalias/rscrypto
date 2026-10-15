@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Regression tests for architecture-specific DudeCT evidence parsing."""
 
 from __future__ import annotations

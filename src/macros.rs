@@ -123,7 +123,12 @@ macro_rules! define_target_feature_forwarder {
     }
 
     #[target_feature(enable = $feature)]
-    #[doc = concat!("Forward through the `", $feature, "` target-feature boundary.\n\n# Safety\n\nThe current CPU must support the named target feature. The safe outer wrapper may call this function only after its dispatch invariant has established that capability.")]
+    #[doc = concat!("Forward through the `", $feature, "` target-feature boundary.")]
+    ///
+    /// # Safety
+    ///
+    /// The current CPU must support the named target feature. The safe outer wrapper may call this function only after
+    /// its dispatch invariant has established that capability.
     unsafe fn __target_feature_forwarder_impl($($arg : $arg_ty),*) $(-> $ret)? {
       // SAFETY: $inner_safety
       unsafe { $call }

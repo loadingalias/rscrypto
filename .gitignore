@@ -4,6 +4,7 @@ tools/**/target
 
 # Python
 __pycache__/
+/.venv/
 
 # OS
 Thumbs.db
@@ -79,3 +80,4 @@ proptest-regressions
 *.proptest-regressions
 assets/distribution/
 .ruff_cache/
+.rumdl_cache/

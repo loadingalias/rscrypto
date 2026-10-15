@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Regression tests for residue log parsing and judgement, on synthetic logs."""
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Verify Nextest forwarding, repository policy, and fail-closed planning."""
 
 import json

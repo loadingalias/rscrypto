@@ -238,8 +238,8 @@ criterion = { version = "0.8.2", default-features = false, features = [
   "html_reports",
   "plotters",
 ] }
-gungraun = "=0.19.4"
-proptest = "1.11.0"
+gungraun = "=0.20.0"
+proptest = "1.12.0"
 
 # Oracles
 bao = "=0.13.1"
@@ -257,12 +257,12 @@ blake3 = { version = "1.8.7", default-features = false, features = ["std", "rayo
 blake2 = "0.11.0"
 pbkdf2 = "0.13.0"
 scrypt = { version = "0.12.0", default-features = false }
-sha2 = "0.11.0"
+sha2 = "0.11.1"
 sha2_010 = { package = "sha2", version = "0.10.9" }
 sha3 = "0.12.0"
 sha1 = { version = "0.11.0", default-features = false }
 keccak = "0.2.2"
-xxhash-rust = { version = "0.8.18", features = ["xxh3"] }
+xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
 rapidhash = "=4.5.1"
 tiny-keccak = { version = "2.0.2", features = ["kmac", "shake"] }
 digest = { version = "0.11.3", features = ["dev"] }
@@ -286,30 +286,30 @@ chacha20poly1305 = "0.11.0"
 chacha20 = "0.10.2"
 aes-gcm = "0.11.1"
 aes-gcm-siv = "0.12.1"
-aegis = "0.9.19"
+aegis = "0.9.20"
 ascon-aead = { version = "0.6.0", default-features = false, features = ["alloc"] }
 crrl = { version = "0.9.0", default-features = false, features = ["p256"] }
-libcrux-p256 = { version = "0.0.8", default-features = false, features = ["expose-hacl"] }
-serde_json = "1.0.151"
+libcrux-p256 = { version = "0.0.9", default-features = false, features = ["expose-hacl"] }
+serde_json = "1.0.154"
 ring = "0.17.14"
 rsa = { version = "0.9.10", default-features = false, features = ["std", "u64_digit", "sha2"] }
-dryoc = "1.0.0"
+dryoc = "2.0.0"
 rustcrypto-ml-dsa = { version = "=0.1.1", package = "ml-dsa", default-features = false, features = ["alloc", "pkcs8", "zeroize"] }
 rustcrypto-slh-dsa = { version = "=0.2.0-rc.5", package = "slh-dsa" }
 fips205 = "=0.4.1"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 # Explicit collection boundaries avoid ARM Callgrind return-heuristic leakage.
-gungraun = { version = "=0.19.4", features = ["client_requests"] }
+gungraun = { version = "=0.20.0", features = ["act"] }
 
 [target.'cfg(target_arch = "x86_64")'.dev-dependencies]
-libcrux-ml-kem = { version = "0.0.10", default-features = false, features = [
+libcrux-ml-kem = { version = "0.0.11", default-features = false, features = [
   "mlkem512",
   "mlkem768",
   "mlkem1024",
   "simd256",
 ] }
-libcrux-ml-dsa = { version = "0.0.10", default-features = false, features = [
+libcrux-ml-dsa = { version = "0.0.11", default-features = false, features = [
   "std",
   "mldsa44",
   "mldsa65",
@@ -318,13 +318,13 @@ libcrux-ml-dsa = { version = "0.0.10", default-features = false, features = [
 ] }
 
 [target.'cfg(target_arch = "aarch64")'.dev-dependencies]
-libcrux-ml-kem = { version = "0.0.10", default-features = false, features = [
+libcrux-ml-kem = { version = "0.0.11", default-features = false, features = [
   "mlkem512",
   "mlkem768",
   "mlkem1024",
   "simd128",
 ] }
-libcrux-ml-dsa = { version = "0.0.10", default-features = false, features = [
+libcrux-ml-dsa = { version = "0.0.11", default-features = false, features = [
   "std",
   "mldsa44",
   "mldsa65",
@@ -333,19 +333,19 @@ libcrux-ml-dsa = { version = "0.0.10", default-features = false, features = [
 ] }
 
 [target.'cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))'.dev-dependencies]
-libcrux-ml-kem = { version = "0.0.10", default-features = false, features = [
+libcrux-ml-kem = { version = "0.0.11", default-features = false, features = [
   "mlkem512",
   "mlkem768",
   "mlkem1024",
 ] }
-libcrux-ml-dsa = { version = "0.0.10", default-features = false, features = ["std", "mldsa44", "mldsa65", "mldsa87"] }
+libcrux-ml-dsa = { version = "0.0.11", default-features = false, features = ["std", "mldsa44", "mldsa65", "mldsa87"] }
 
 [target.'cfg(all(any(unix, windows), not(target_arch = "wasm32"), not(any(target_arch = "s390x", target_arch = "powerpc64"))))'.dev-dependencies]
-aws-lc-rs = "1.18.1"
-aws-lc-sys = "0.45.0"
+aws-lc-rs = "1.18.2"
+aws-lc-sys = "0.46.0"
 
 [target.powerpc64le-unknown-linux-gnu.dev-dependencies]
-aws-lc-rs = "1.18.1"
+aws-lc-rs = "1.18.2"
 
 [lib]
 bench = false

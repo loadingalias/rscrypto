@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Run host tests and corpus replay once, then report their combined Rust coverage."""
 
 import argparse

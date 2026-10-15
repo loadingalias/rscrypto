@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Verify the complete checked-in vector payload inventory and its pinned hashes."""
 
 import hashlib

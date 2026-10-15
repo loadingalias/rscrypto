@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Exercise the rscrypto Quinn adapter against the pinned, C-free quic-go peer."""
 import argparse
 from datetime import datetime, timezone

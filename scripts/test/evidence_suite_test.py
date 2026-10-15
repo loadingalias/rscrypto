@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Reject incomplete or contradictory production backend-execution evidence."""
 
 import copy

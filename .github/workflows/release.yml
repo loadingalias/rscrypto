@@ -35,13 +35,16 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      # This job runs no installer; Python still runs through the catalog-pinned uv.
+      - name: Install the pinned uv
+        run: scripts/tooling/uv.sh x86_64-linux >>"$GITHUB_PATH"
       - name: Install the compiler whose Mac qualification is required
         run: rustup toolchain install "$(scripts/lib/toolchain.sh)" --profile minimal --no-self-update
       - name: Validate the release candidate
         env:
           RELEASE_VERSION: ${{ inputs.version }}
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/release/release.py preflight
+        run: scripts/lib/python.sh scripts/release/release.py preflight
 
   # Releases wait for RISC-V instead of skipping it; its dispatching jobs need actions: write.
   ci:
@@ -94,7 +97,7 @@ jobs:
         run: |
           scripts/tooling/x86_64-linux.sh --ci-package
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          python3 scripts/release/release.py package
+          scripts/lib/python.sh scripts/release/release.py package
       - name: Authenticate to crates.io
         if: steps.package.outputs.published == 'false'
         id: auth
@@ -105,4 +108,4 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          python3 scripts/release/release.py publish
+          scripts/lib/python.sh scripts/release/release.py publish

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Prove vector inventory and content changes cannot silently pass validation."""
 
 import os

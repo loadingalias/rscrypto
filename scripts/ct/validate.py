@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Validate rscrypto constant-time manifest and artifact structure."""
 
 from __future__ import annotations

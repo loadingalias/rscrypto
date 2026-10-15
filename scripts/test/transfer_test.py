@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Reject mixed-source, corrupt, incomplete, and unsafe transferred evidence."""
 
 import io

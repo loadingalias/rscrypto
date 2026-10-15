@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Resolve the canonical Rust toolchain for provisioning and execution.
 
 `rust-toolchain.toml` owns the only development compiler for every host,

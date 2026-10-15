@@ -1,7 +1,5 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Exercise Linux provisioning with substitute host and installation commands."""
-import hashlib
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
@@ -9,7 +7,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import threading
 import tomllib
 import unittest
 from unittest.mock import ANY
@@ -18,11 +15,27 @@ ROOT = Path(__file__).resolve().parents[2]
 BASH = shutil.which('bash')
 CATALOG = tomllib.loads((ROOT / '.config/tooling.toml').read_text())
 
-STUB = r'''import json, os, pathlib, shlex, shutil, subprocess, sys, urllib.parse
+STUB = r'''import json, os, pathlib, shutil, subprocess, sys, tomllib
 name = pathlib.Path(sys.argv[0]).name
 args = sys.argv[1:]
 with open(os.environ['INSTALL_LOG'], 'a') as log:
     log.write(json.dumps([name, *args]) + '\n')
+if name == 'uv' and args[:2] == ['python', 'install']:
+    sys.exit(0)
+if name == 'uv' and args[:2] == ['run', 'python']:
+    if args[2:3] == ['-c'] and 'sys.executable' in args[3]:
+        # uv selects the pinned interpreter: here, the substitute that records each helper.
+        print(os.environ['INSTALL_PYTHON'])
+        sys.exit(0)
+    name, args = 'python', args[2:]
+if os.environ.get('INSTALL_PINNED') and args[-1:] == ['--version']:
+    # A converged host: each installed tool reports its catalog pin.
+    catalog = tomllib.loads(pathlib.Path(os.environ['INSTALL_CATALOG']).read_text())
+    pins = {**catalog['versions'], **catalog['cargo']}
+    tool = 'cargo-' + args[-2] if name == 'cargo' else {'rg': 'ripgrep'}.get(name, name)
+    if tool in pins:
+        print(f'{tool} {pins[tool]}')
+        sys.exit(0)
 if name == 'uname':
     if args == ['-s']:
         print('Linux')
@@ -31,60 +44,22 @@ if name == 'uname':
     else:
         print(os.environ['INSTALL_ARCH'])
 elif name == 'id':
-    print(os.geteuid() if os.environ.get('INSTALL_ROOT_CACHE') else '0')
-elif name == 'sudo':
-    privileged = {'rm': '/bin/rm', 'chown': shutil.which('chown')}
-    command = [os.environ['INSTALL_REAL_SUDO'], '-n', privileged[args[0]], *args[1:]] if args[0] in privileged else args
-    sys.exit(subprocess.run(command).returncode)
-elif name == 'dpkg':
-    print({'x86_64': 'amd64', 'aarch64': 'arm64', 'ppc64le': 'ppc64el'}.get(os.environ['INSTALL_ARCH'],
-                                                                           os.environ['INSTALL_ARCH']))
+    print('0')
+elif name == 'dpkg-query':
+    # Only a fixture that says so already holds every requested package.
+    if os.environ.get('INSTALL_PACKAGES_PRESENT'):
+        for package in args[2:]:
+            print('ii ' + package)
 elif name == 'apt-cache':
     if not (os.environ.get('INSTALL_NO_EXACT_PERF') and args[-1].startswith('linux-tools-')
             and args[-1] != 'linux-tools-generic'):
-        print(args[-1] + ' | 1.0 | snapshot')
+        print(args[-1] + ' | 1.0 | archive')
 elif name == 'apt-get':
     if os.environ.get('INSTALL_FAIL_APT'):
         sys.exit(42)
-    options = dict(arg.split('=', 1) for arg in args if arg.startswith('Dir::'))
-    if args[-1] == 'update' and 'Dir::Etc::sourcelist' in options:
-        fixture = pathlib.Path(os.environ['INSTALL_LOG']).parent
-        source = pathlib.Path(options['Dir::Etc::sourcelist']).read_text()
-        (fixture / 'apt-sources.list').write_text(source)
-        (fixture / 'apt-preferences').write_text(pathlib.Path(options['Dir::Etc::preferences']).read_text())
-        for word in source.split():
-            if word.startswith('mirror+file:'):
-                path = urllib.parse.unquote(urllib.parse.urlsplit(word.removeprefix('mirror+')).path)
-                (fixture / 'apt-mirrors.list').write_text(pathlib.Path(path).read_text())
-        if os.environ.get('INSTALL_ROOT_CACHE'):
-            cache = pathlib.Path(options['Dir::State::lists']) / 'auxfiles'
-            sudo = [os.environ['INSTALL_REAL_SUDO'], '-n']
-            owner = int(os.environ.get('INSTALL_CACHE_UID', '0'))
-            subprocess.run([*sudo, 'install', '-d', '-m', '700', str(cache)], check=True)
-            subprocess.run([*sudo, 'touch', str(cache / 'mirror-list')], check=True)
-            subprocess.run([*sudo, 'chown', '-R', str(owner), str(cache)], check=True)
-            (fixture / 'root-cache.json').write_text(json.dumps({'path': str(cache), 'uid': cache.stat().st_uid}))
-            if os.environ.get('INSTALL_FAIL_AFTER_APT'):
-                sys.exit(42)
-    if os.environ.get('INSTALL_REAL_APT'):
-        fixture = pathlib.Path(os.environ['INSTALL_APT_FIXTURE'])
-        if args[-1] == 'update':
-            uris = subprocess.check_output([os.environ['INSTALL_REAL_APT'], *args, '--print-uris'], text=True)
-            for line in uris.splitlines():
-                name = shlex.split(line)[1]
-                if name.endswith('_InRelease'):
-                    pathlib.Path(options['Dir::State::lists'], name.removesuffix('InRelease') + 'Release').write_text('Origin: Ubuntu\n')
-                elif name.endswith('_Packages'):
-                    pathlib.Path(options['Dir::State::lists'], name).write_text((fixture / 'Packages').read_text())
-        else:
-            if os.environ.get('INSTALL_WITHOUT_PREFERENCE'):
-                pathlib.Path(options['Dir::Etc::preferences']).write_text('')
-            sys.exit(subprocess.run([os.environ['INSTALL_REAL_APT'], *args, '--simulate', '--no-remove',
-                '-o', 'Dir::State::status=' + str(fixture / 'status'),
-                '-o', 'Dir::Cache::pkgcache=', '-o', 'Dir::Cache::srcpkgcache=']).returncode)
 elif name == 'perf':
-    installed = any('linux-tools-generic=1.0' in line
-                    for line in pathlib.Path(os.environ['INSTALL_LOG']).read_text().splitlines())
+    installed = any(call[0] == 'apt-get' and 'linux-tools-generic' in call
+                    for call in map(json.loads, pathlib.Path(os.environ['INSTALL_LOG']).read_text().splitlines()))
     if os.environ.get('INSTALL_PERF_AFTER_PACKAGE') and not installed:
         sys.exit(1)
     print('perf version fixture')
@@ -115,7 +90,7 @@ elif name == 'sysctl':
         print('kernel.perf_event_paranoid = -1')
     else:
         sys.exit(1)
-elif name == 'python3':
+elif name == 'python':
     script = pathlib.Path(args[0]).name
     if script == 'catalog.py' and args[1] == 'download':
         pathlib.Path(args[-1]).write_text('#!/bin/sh\nexit 0\n')
@@ -135,14 +110,6 @@ elif name == 'python3':
         )
         executable.chmod(0o755)
         print(directory)
-    elif script == 'apt_state.py':
-        # A restored state verifies only when the fixture says so; fetched indexes verify
-        # unless the fixture models a snapshot that no longer matches its pins.
-        calls = [json.loads(line) for line in pathlib.Path(os.environ['INSTALL_LOG']).read_text().splitlines()]
-        updated = any(call[0] == 'apt-get' and call[-1] == 'update'
-                      and any(arg.startswith('Dir::Etc::sourcelist=') for arg in call) for call in calls)
-        valid = (os.environ.get('INSTALL_APT_STATE_VALID') or updated) and not os.environ.get('INSTALL_APT_STATE_UNVERIFIABLE')
-        sys.exit(0 if valid else 1)
     elif script == 'transfer.py':
         if args[1] == 'install': print(str(pathlib.Path(args[-1]) / 'bin'))
     elif script in ('compat.py', 'package.py') and '--install' in args:
@@ -152,20 +119,48 @@ elif name == 'python3':
 '''
 
 
+def stub(path):
+    path.write_text('#!' + sys.executable + '\n' + STUB)
+    path.chmod(0o755)
+
+
+def python(calls):
+    """Python helper invocations, each with the interpreter that uv selected."""
+    return [call[1:] for call in calls if call[0] == 'python']
+
+
+def package_installs(calls):
+    """The package lists of APT installations, after the bootstrap of curl and the trust store."""
+    installs = []
+    for call in calls:
+        if call[0] == 'apt-get' and 'install' in call:
+            packages = [arg for arg in call[call.index('install') + 1:] if not arg.startswith('-')]
+            if packages != ['curl', 'ca-certificates']:
+                installs.append(packages)
+    return installs
+
+
 class LinuxInstall(unittest.TestCase):
-    def provision(self, platform, fail=False, real_apt=False, without_preference=False, profile='ci', target=None,
-                  extra_env=None):
+    def provision(self, platform, fail=False, profile='ci', target=None, extra_env=None, arguments=None, again=None):
+        """Run the installer in a fixture home; `again` reruns it there with these environment changes."""
         temporary = tempfile.TemporaryDirectory(prefix='rscrypto installer ')
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
         binaries = root / 'bin'
         binaries.mkdir()
-        for name in ('uname', 'id', 'apt-get', 'apt-cache', 'dpkg', 'cargo', 'clang', 'cmake', 'make', 'nproc', 'patch',
-                     'perf', 'python3', 'rustup', 'sudo', 'tar', 'tee', 'valgrind',
-                     'wasmtime', 'opam', 'just', 'rg', 'lychee', 'rumdl', 'samply', 'gungraun-runner', 'sysctl'):
-            script = binaries / name
-            script.write_text('#!' + sys.executable + '\n' + STUB)
-            script.chmod(0o755)
+        (root / 'commands.jsonl').touch()
+        for name in ('uname', 'id', 'apt-get', 'apt-cache', 'dpkg-query', 'cargo', 'clang', 'cmake', 'make', 'nproc',
+                     'patch', 'perf', 'rustc', 'rustup', 'sudo', 'tar', 'tee', 'valgrind', 'wasmtime', 'opam', 'just',
+                     'rg', 'lychee', 'rumdl', 'samply', 'gungraun-runner', 'sysctl'):
+            stub(binaries / name)
+        # The pinned uv is installed, so the installer finds it by its receipt.
+        uv = CATALOG[platform]['assets']['uv']['sha256']
+        uv_directory = root / '.local/share/rscrypto-tooling/uv' / uv[:16]
+        uv_directory.mkdir(parents=True)
+        (uv_directory / '.rscrypto-installed').write_text(uv + '\n')
+        stub(uv_directory / 'uv')
+        (root / 'venv/bin').mkdir(parents=True)
+        stub(root / 'venv/bin/python')
         bash_env = root / 'bash-env'
         bash_env.write_text('''source() {
   if [[ "$1" == /etc/os-release ]]; then
@@ -184,34 +179,20 @@ class LinuxInstall(unittest.TestCase):
                'TMPDIR': str(temporary_path),
                'PATH': str(binaries) + os.pathsep + os.environ['PATH'],
                'BASH_ENV': str(bash_env), 'INSTALL_ARCH': arch,
-               'INSTALL_LOG': str(root / 'commands.jsonl'), 'RSCRYPTO_APT_STATE': str(root / 'apt state')}
+               'INSTALL_LOG': str(root / 'commands.jsonl'), 'INSTALL_CATALOG': str(ROOT / '.config/tooling.toml'),
+               'INSTALL_PYTHON': str(root / 'venv/bin/python')}
         env.update(extra_env or {})
-        if env.get('INSTALL_ROOT_CACHE'):
-            self.addCleanup(subprocess.run, [env['INSTALL_REAL_SUDO'], '-n', 'rm', '-rf', '--', str(temporary_path)],
-                            check=True, capture_output=True)
-            self.addCleanup(subprocess.run, [env['INSTALL_REAL_SUDO'], '-n', 'rm', '-rf', '--', str(root / 'apt state')],
-                            check=True, capture_output=True)
         if fail:
             env['INSTALL_FAIL_APT'] = '1'
-        if real_apt:
-            def package(name, version, installed=False, depends=''):
-                return (f'Package: {name}\nVersion: {version}\nArchitecture: all\n'
-                        + ('Status: install ok installed\n' if installed else
-                           f'Filename: pool/{name}_{version}_all.deb\nSize: 1\nSHA256: {"0" * 64}\n')
-                        + (f'Depends: {depends}\n' if depends else '')
-                        + 'Maintainer: Fixture <fixture@example.invalid>\nDescription: APT resolver fixture\n\n')
-            (root / 'Packages').write_text(''.join(
-                package(name, '1.0', depends='git-man (= 1.0)' if name == 'git' else '')
-                for name in [*CATALOG['linux-ci']['packages'], *CATALOG['ci-musl']['packages'], 'git-man', 'fixture-unrelated']))
-            (root / 'status').write_text(''.join(
-                package(name, '2.0', installed=True, depends='git-man (= 2.0)' if name == 'git' else '')
-                for name in ('git', 'git-man', 'fixture-unrelated')))
-            env.update(INSTALL_REAL_APT=shutil.which('apt-get'), INSTALL_APT_FIXTURE=str(root))
-            if without_preference:
-                env['INSTALL_WITHOUT_PREFERENCE'] = '1'
-        extra = [target] if profile == 'ci-cross-build' else ['tools.tar.gz'] if profile == 'ci-cross-run' else []
-        result = subprocess.run([BASH, str(ROOT / 'scripts/tooling/linux.sh'), platform, '--' + profile, *extra],
-                                env=env, capture_output=True, text=True)
+        if arguments is None:
+            extra = [target] if profile == 'ci-cross-build' else ['tools.tar.gz'] if profile == 'ci-cross-run' else []
+            arguments = ['--' + profile, *extra]
+        command = [BASH, str(ROOT / 'scripts/tooling/linux.sh'), platform, *arguments]
+        result = subprocess.run(command, env=env, capture_output=True, text=True)
+        if again is not None:
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            (root / 'commands.jsonl').write_text('')
+            result = subprocess.run(command, env={**env, **again}, capture_output=True, text=True)
         calls = [json.loads(line) for line in (root / 'commands.jsonl').read_text().splitlines()]
         return result, calls, root
 
@@ -220,12 +201,6 @@ class LinuxInstall(unittest.TestCase):
             with self.subTest(platform=platform):
                 result, calls, root = self.provision(platform)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertNotIn('%20', (root / 'apt-sources.list').read_text())
-                mirror = 'https://archive.ubuntu.com/ubuntu' if platform == 'x86_64-linux' else 'https://ports.ubuntu.com/ubuntu-ports'
-                self.assertEqual((root / 'apt-mirrors.list').read_text().splitlines(), [
-                    f'https://snapshot.ubuntu.com/ubuntu/{CATALOG["linux"]["snapshot"]}\tpriority:1',
-                    f'{mirror}\tpriority:2 type:deb',
-                ])
                 installs = [c for c in calls if c[0] == 'cargo' and ('install' in c or 'binstall' in c)]
                 expected_tools = CATALOG['ci']['cargo'] + (CATALOG['ci-policy']['cargo'] if platform == 'x86_64-linux' else [])
                 self.assertEqual(len(installs), len(expected_tools))
@@ -238,16 +213,25 @@ class LinuxInstall(unittest.TestCase):
                     self.assertIn(host, command)
                     targets = [command[i + 1] for i, arg in enumerate(command) if arg == '--targets']
                     self.assertEqual(targets, [host, host.removesuffix('gnu') + 'musl'] if binary else [])
-                apt = next(c for c in calls if c[0] == 'apt-get' and '--allow-downgrades' in c)
-                self.assertIn('--no-install-recommends', apt)
-                self.assertIn('jq=1.0', apt)
-                self.assertEqual([a for a in apt if a.endswith('=1.0')],
-                                 [p + '=1.0' for p in CATALOG['linux-ci']['packages'] +
-                                  (CATALOG['ci-musl']['packages'] if platform in ('x86_64-linux', 'aarch64-linux') else [])])
+                apt = next(c for c in calls if c[0] == 'apt-get' and '--no-install-recommends' in c)
+                self.assertNotIn('--allow-downgrades', apt)
+                self.assertEqual(package_installs(calls), [
+                    CATALOG['linux-ci']['packages'] +
+                    (CATALOG['ci-musl']['packages'] if platform in ('x86_64-linux', 'aarch64-linux') else [])])
                 environment = (root / '.local/share/rscrypto-tooling/environment.sh').read_text()
                 self.assertIn('custom\\ cargo/bin', environment)
+                self.assertIn('rscrypto-tooling/uv/' + CATALOG[platform]['assets']['uv']['sha256'][:16], environment)
                 self.assertFalse((root / '.bashrc').exists())
                 self.assertFalse((root / '.profile').exists())
+
+    def test_python_runs_only_through_the_pinned_uv(self):
+        result, calls, _ = self.provision('x86_64-linux')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(['uv', 'python', 'install', '--compile-bytecode'], calls)
+        self.assertIn(['uv', 'run', 'python', '-c', 'import sys; print(sys.executable)'], calls)
+        self.assertFalse(any(call[0] == 'python3' for call in calls))
+        helpers = {Path(call[0]).name for call in python(calls)}
+        self.assertLessEqual({'catalog.py', 'fingerprint.py', 'toolchain.py'}, helpers)
 
     def test_compat_profile_omits_policy_tools_and_native_suite_packages(self):
         result, calls, _ = self.provision('x86_64-linux', profile='ci-compat')
@@ -256,11 +240,10 @@ class LinuxInstall(unittest.TestCase):
         # Nextest runs the provider runtime matrix that `just ci-provider` executes in this row.
         self.assertEqual([c[-1] for c in installs], [f"just@{CATALOG['cargo']['just']}",
                                                      f"cargo-nextest@{CATALOG['cargo']['cargo-nextest']}"])
-        archives = [c[-2] for c in calls if c[0] == 'python3' and 'install-archive' in c]
+        archives = [c[-2] for c in python(calls) if 'install-archive' in c]
         self.assertEqual(archives, ['cargo-binstall', 'wasmtime'])
-        self.assertFalse(any('jq=1.0' in c for c in calls))
-        self.assertFalse(any('musl-tools=1.0' in c for c in calls))
-        self.assertFalse(any('--install' in c and any(arg.endswith('toolchain.py') for arg in c) for c in calls))
+        self.assertEqual(package_installs(calls), [CATALOG['ci-compat']['packages']])
+        self.assertFalse(any('--install' in c and c[0].endswith('toolchain.py') for c in python(calls)))
 
     def test_focused_profiles_install_only_their_execution_dependencies(self):
         for platform, profile, components in (
@@ -285,19 +268,16 @@ class LinuxInstall(unittest.TestCase):
                     installs = [f"{c[-1]}@{c[c.index('--version') + 1]}" for c in calls
                                 if c[0] == 'cargo' and 'install' in c]
                 self.assertEqual(installs, [f"{t}@{CATALOG['cargo'][t]}" for t in CATALOG[profile]['cargo']])
-                apt = next(c for c in calls if c[0] == 'apt-get' and '--allow-downgrades' in c)
-                self.assertEqual([a for a in apt if a.endswith('=1.0')],
-                                 [p + '=1.0' for p in CATALOG['linux-ci' if profile == 'ci-bench' else profile]['packages']])
-                if profile != 'ci-bench':
-                    self.assertNotIn('jq=1.0', apt)
+                self.assertEqual(package_installs(calls),
+                                 [CATALOG['linux-ci' if profile == 'ci-bench' else profile]['packages']])
                 rustup = [c for c in calls if c[:3] == ['rustup', 'toolchain', 'install']]
                 # One canonical toolchain carries every lane's components.
                 self.assertEqual(len(rustup), 1)
                 self.assertEqual(rustup[0][3], tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel'])
                 self.assertEqual([c[i + 1] for c in rustup for i, arg in enumerate(c) if arg == '--component'],
                                  components)
-                self.assertFalse(any('musl-tools=1.0' in c or 'target' in c and c[0] == 'rustup' for c in calls))
-                archives = [c[-2] for c in calls if c[0] == 'python3' and 'install-archive' in c]
+                self.assertFalse(any('target' in c and c[0] == 'rustup' for c in calls))
+                archives = [c[-2] for c in python(calls) if 'install-archive' in c]
                 self.assertEqual(archives, ['cargo-binstall'] if 'cargo-binstall' in CATALOG[platform]['assets'] else [])
                 for tool in CATALOG[profile]['cargo']:
                     if tool.startswith('cargo-'):
@@ -312,12 +292,10 @@ class LinuxInstall(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         installs = [c for c in calls if c[0] == 'cargo' and 'binstall' in c]
         self.assertEqual([c[-1] for c in installs], [f"just@{CATALOG['cargo']['just']}"])
-        apt = next(c for c in calls if c[0] == 'apt-get' and '--allow-downgrades' in c)
-        self.assertIn('jq=1.0', apt)
-        compiler_installs = [c for c in calls if '--install' in c]
+        self.assertEqual(package_installs(calls), [CATALOG['linux-ci']['packages']])
+        compiler_installs = [c for c in python(calls) if '--install' in c]
         self.assertEqual(len(compiler_installs), 1)
-        self.assertTrue(compiler_installs[0][1].endswith('scripts/check/package.py'))
-        self.assertFalse(any('musl-tools=1.0' in c for c in calls))
+        self.assertTrue(compiler_installs[0][0].endswith('scripts/check/package.py'))
 
     def test_cross_build_and_execution_tooling_are_separate(self):
         channel = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel']
@@ -330,30 +308,32 @@ class LinuxInstall(unittest.TestCase):
         ):
             for profile in ('ci-cross-build', 'ci-cross-run'):
                 with self.subTest(target=target, profile=profile):
-                    result, calls, _ = self.provision('x86_64-linux' if profile.endswith('build') else platform,
-                                                       profile=profile, target=target)
+                    result, calls, root = self.provision('x86_64-linux' if profile.endswith('build') else platform,
+                                                         profile=profile, target=target)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                    apt = next(c for c in calls if c[0] == 'apt-get' and '--allow-downgrades' in c)
                     packages = list(CATALOG[profile]['packages'])
                     if profile.endswith('build') and prefix is not None:
                         packages += ['gcc-' + prefix, 'g++-' + prefix, 'libc6-dev-' + libc + '-cross']
-                    self.assertEqual([a for a in apt if a.endswith('=1.0')], [p + '=1.0' for p in packages])
+                    self.assertEqual(package_installs(calls), [packages])
                     installs = [c for c in calls if c[:3] == ['rustup', 'toolchain', 'install']]
                     self.assertEqual([c[3] for c in installs], [channel])
                     components = [c[i + 1] for c in installs for i, arg in enumerate(c) if arg == '--component']
                     self.assertEqual(components, ['rustfmt', 'clippy', 'llvm-tools'] if profile.endswith('build') else [])
                     if profile.endswith('build'):
                         self.assertIn(['rustup', 'target', 'add', '--toolchain', channel, target], calls)
-                        archives = [c[-2] for c in calls if c[0] == 'python3' and 'install-archive' in c]
+                        archives = [c[-2] for c in python(calls) if 'install-archive' in c]
                         self.assertEqual(archives, CATALOG['ci-cross-build']['assets'])
                         self.assertFalse(any(c[0] == 'cargo' and ('install' in c or 'binstall' in c) for c in calls))
                         self.assertIn(['just', '--version'], calls)
                         self.assertIn(['cargo', f'+{channel}', 'nextest', '--version'], calls)
                     else:
                         self.assertFalse(any(c[0] == 'cargo' and ('build' in c or 'install' in c or 'binstall' in c) for c in calls))
-                    transfers = [c for c in calls if c[0] == 'python3' and c[1].endswith('/tooling/transfer.py')]
+                    transfers = [c for c in python(calls) if c[0].endswith('/tooling/transfer.py')]
                     self.assertEqual(len(transfers), 1)
-                    self.assertEqual(transfers[0][2:4], ['prepare' if profile.endswith('build') else 'install', target])
+                    self.assertEqual(transfers[0][1:3], ['prepare' if profile.endswith('build') else 'install', target])
+                    # A target or a transferred archive decides these installations; nothing records them.
+                    self.assertFalse(any(c[0].endswith('/fingerprint.py') for c in python(calls)))
+                    self.assertEqual(list((root / '.local/share/rscrypto-tooling').glob('fingerprint.*')), [])
 
     def test_cross_run_uses_generic_perf_when_the_kernel_package_is_absent(self):
         result, calls, _ = self.provision(
@@ -361,10 +341,9 @@ class LinuxInstall(unittest.TestCase):
             extra_env={'RSCRYPTO_REQUIRE_PERF': '1', 'INSTALL_NO_EXACT_PERF': '1',
                        'INSTALL_PERF_AFTER_PACKAGE': '1'})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        installs = [call for call in calls if call[0] == 'apt-get' and '--allow-downgrades' in call]
+        installs = package_installs(calls)
         self.assertEqual(len(installs), 2)
-        self.assertIn('linux-tools-generic=1.0', installs[-1])
-        self.assertFalse(any(arg.startswith('linux-tools-ppc64le=') for arg in installs[-1]))
+        self.assertEqual(installs[-1], ['linux-tools-generic'])
         self.assertIn('perf version fixture', result.stdout)
 
     def test_cross_run_enables_perf_when_runner_policy_denies_it(self):
@@ -387,13 +366,11 @@ class LinuxInstall(unittest.TestCase):
                        'INSTALL_KERNEL_RELEASE': source['version'] + '-scw1',
                        'INSTALL_PERF_SOURCE_VERSION': source['version']})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        installs = [call for call in calls if call[0] == 'apt-get' and '--allow-downgrades' in call]
+        installs = package_installs(calls)
         self.assertEqual(len(installs), 2)
-        for package in source['packages']:
-            self.assertIn(package + '=1.0', installs[-1])
-        self.assertNotIn('linux-tools-generic=1.0', installs[-1])
-        self.assertIn(['python3', str(ROOT / 'scripts/tooling/catalog.py'), 'download-entry',
-                       'ci-cross-run', 'perf-source', ANY], calls)
+        self.assertEqual(installs[-1], source['packages'])
+        self.assertIn([str(ROOT / 'scripts/tooling/catalog.py'), 'download-entry',
+                       'ci-cross-run', 'perf-source', ANY], python(calls))
         patch = next(call for call in calls if call[0] == 'patch')
         self.assertIn(str(ROOT / 'scripts/tooling/perf-riscv-mapping-symbols.patch'), patch)
         make = next(call for call in calls if call[0] == 'make')
@@ -416,7 +393,7 @@ class LinuxInstall(unittest.TestCase):
             with self.subTest(platform=platform):
                 result, calls, _ = self.provision(platform, profile='ci-ct-full')
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertFalse(any('jq=1.0' in c for c in calls))
+                self.assertFalse(any('jq' in packages for packages in package_installs(calls)))
                 opam = [c for c in calls if c[0] == 'opam']
                 if platform in ('x86_64-linux', 'aarch64-linux'):
                     self.assertIn(CATALOG['ci-ct-proof']['opam-repository'], opam[0])
@@ -426,194 +403,95 @@ class LinuxInstall(unittest.TestCase):
                     self.assertEqual(opam, [])
 
     def test_native_proof_tools_preserve_the_native_ubuntu_catalog(self):
-        result, calls, root = self.provision(
+        result, calls, _ = self.provision(
             'x86_64-linux', profile='ct-proof',
             extra_env={'INSTALL_UBUNTU_VERSION': CATALOG['linux']['ubuntu']})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(CATALOG['linux']['codename'], (root / 'apt-sources.list').read_text())
-        self.assertTrue(any('jq=1.0' in call for call in calls))
+        [packages] = package_installs(calls)
+        self.assertEqual(packages[:len(CATALOG['linux']['packages'])], CATALOG['linux']['packages'])
         opam = [call for call in calls if call[0] == 'opam']
         self.assertIn(CATALOG['ci-ct-proof']['opam-repository'], opam[0])
         install = next(call for call in opam if call[1] == 'install')
         self.assertEqual(install[-3:], CATALOG['ci-ct-proof']['opam'])
-
-    @staticmethod
-    def snapshot_updates(calls):
-        return [c for c in calls if c[0] == 'apt-get' and c[-1] == 'update'
-                and any(arg.startswith('Dir::Etc::sourcelist=') for arg in c)]
-
-    def test_verified_apt_state_installs_without_fetching_indexes(self):
-        result, calls, root = self.provision('x86_64-linux', extra_env={'INSTALL_APT_STATE_VALID': '1'})
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(self.snapshot_updates(calls), [])
-        self.assertTrue(any(c[0] == 'apt-get' and '--allow-downgrades' in c for c in calls))
-        # CI saves only states that this run verified and installed from.
-        self.assertTrue((root / 'apt state' / 'ready').exists())
-
-    def test_indexes_that_miss_the_pins_stop_before_installation(self):
-        result, calls, root = self.provision('x86_64-linux', extra_env={'INSTALL_APT_STATE_UNVERIFIABLE': '1'})
-        self.assertNotEqual(result.returncode, 0)
-        self.assertFalse((root / 'apt state' / 'ready').exists())
-        self.assertEqual(len(self.snapshot_updates(calls)), 1)
-        verifications = [c for c in calls if c[0] == 'python3' and c[1].endswith('apt_state.py')]
-        self.assertEqual(len(verifications), 2, 'restored state, then fetched indexes')
-        self.assertFalse(any(c[0] == 'apt-get' and '--allow-downgrades' in c for c in calls))
 
     def test_package_failure_stops_before_rust_installation(self):
         result, calls, _ = self.provision('x86_64-linux', fail=True)
         self.assertEqual(result.returncode, 42)
         self.assertFalse(any(c[0] == 'cargo' or 'download' in c for c in calls))
 
-    @unittest.skipUnless(sys.platform == 'linux' and os.geteuid() != 0 and shutil.which('sudo'),
-                         'requires a non-root Linux user with sudo')
-    def test_non_root_run_returns_privileged_apt_state_and_removes_its_mirror_list(self):
-        import pwd
-        sudo = shutil.which('sudo')
-        if subprocess.run([sudo, '-n', 'true'], capture_output=True).returncode:
-            self.skipTest('requires passwordless sudo')
-        try:
-            apt_uid = pwd.getpwnam('_apt').pw_uid
-        except KeyError:
-            self.skipTest('requires the APT sandbox account')
-        for owner in (0, apt_uid):
-            for fail in (False, True):
-                with self.subTest(cache_owner=owner, fail_after_apt=fail):
-                    result, _, root = self.provision('x86_64-linux', extra_env={
-                        'INSTALL_ROOT_CACHE': '1', 'INSTALL_REAL_SUDO': sudo,
-                        'INSTALL_CACHE_UID': str(owner),
-                        'INSTALL_FAIL_AFTER_APT': '1' if fail else '',
-                    })
-                    cache = json.loads((root / 'root-cache.json').read_text())
-                    self.assertEqual(cache['uid'], owner)
-                    self.assertEqual(result.returncode, 42 if fail else 0, result.stdout + result.stderr)
-                    self.assertEqual(Path(cache['path']).stat().st_uid, os.geteuid())
-                    subprocess.run(['tar', '-cf', str(root / 'apt-cache.tar'), '-C', str(root / 'apt state'), '.'],
-                                   check=True, capture_output=True)
-                    source = (root / 'apt-sources.list').read_text()
-                    mirror = Path(source.split('mirror+file:', 1)[1].split()[0])
-                    self.assertFalse(mirror.exists())
+    def test_operation_names_install_what_their_flags_install(self):
+        def installation(arguments):
+            result, calls, _ = self.provision('x86_64-linux', arguments=arguments)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return [c for c in calls if c[0] in ('apt-get', 'cargo', 'rustup')]
+        self.assertEqual(installation(['ci']), installation(['--ci']))
+        self.assertEqual(installation(['ci-ct-full']), installation(['--ci-ct-full']))
+        result, _, _ = self.provision('x86_64-linux', arguments=['ci-unknown'])
+        self.assertEqual(result.returncode, 64)
 
-    @unittest.skipUnless(shutil.which('apt-get') and shutil.which('dpkg'), 'requires the real APT resolver')
-    def test_snapshot_resolves_newer_installed_dependencies(self):
-        result, _, _ = self.provision('x86_64-linux', real_apt=True, without_preference=True)
-        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('unmet dependencies', result.stdout + result.stderr)
-        result, _, _ = self.provision('x86_64-linux', real_apt=True)
+    def test_installed_packages_skip_the_archive(self):
+        result, calls, _ = self.provision('x86_64-linux', extra_env={'INSTALL_PACKAGES_PRESENT': '1'})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('Inst git [2.0] (1.0 ', result.stdout)
-        self.assertIn('Inst git-man [2.0] (1.0 ', result.stdout)
-        self.assertNotIn('Inst fixture-unrelated', result.stdout)
-        self.assertNotIn('Remv ', result.stdout)
+        self.assertIn('Ubuntu packages are installed.', result.stdout)
+        self.assertEqual(package_installs(calls), [])
 
-    @unittest.skipUnless(all(shutil.which(tool) for tool in ('apt-get', 'gpg', 'gpgconf')), 'requires real APT and GnuPG')
-    def test_snapshot_package_fallback_preserves_index_and_package_authentication(self):
-        result, _, provisioned = self.provision('x86_64-linux')
+    def test_converged_tools_are_kept_and_the_run_records_its_fingerprint(self):
+        result, calls, root = self.provision('x86_64-linux', extra_env={'INSTALL_PINNED': '1'})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        temporary = tempfile.TemporaryDirectory(prefix='rscrypto-apt-transport-')
-        self.addCleanup(temporary.cleanup)
-        root = Path(temporary.name)
-        for path in provisioned.glob('apt-*'):
-            shutil.copy(path, root / path.name)
-        payload = b'pinned package transport fixture\n'
-        package_path = '/pool/fixture_1.0_all.deb'
-        packages = ('Package: fixture\nVersion: 1.0\nArchitecture: all\n'
-                    f'Filename: {package_path[1:]}\nSize: {len(payload)}\n'
-                    f'SHA256: {hashlib.sha256(payload).hexdigest()}\n'
-                    'Description: authenticated transport fixture\n\n').encode()
-        key_home = root / 'keys'
-        key_home.mkdir(mode=0o700)
-        self.addCleanup(subprocess.run, ['gpgconf', '--homedir', str(key_home), '--kill', 'gpg-agent'],
-                        check=True, capture_output=True)
-        gpg = ['gpg', '--homedir', str(key_home), '--batch', '--pinentry-mode', 'loopback', '--passphrase', '']
-        subprocess.run([*gpg, '--quick-generate-key', 'APT fixture <apt@example.invalid>', 'ed25519', 'sign', '0'],
-                       check=True, capture_output=True)
-        key = root / 'archive-key.gpg'
-        key.write_bytes(subprocess.check_output([*gpg, '--export']))
-        architecture = subprocess.check_output(['dpkg', '--print-architecture'], text=True).strip()
-        contents = {}
-        for suite in ('noble', 'noble-updates', 'noble-security'):
-            index_path = f'main/binary-{architecture}/Packages'
-            release = (f'Origin: Ubuntu\nSuite: {suite}\nCodename: {suite}\nArchitectures: {architecture}\n'
-                       f'Components: main\nSHA256:\n {hashlib.sha256(packages).hexdigest()} {len(packages)} {index_path}\n')
-            contents[f'/snapshot/dists/{suite}/InRelease'] = subprocess.check_output(
-                [*gpg, '--clearsign'], input=release.encode())
-            contents[f'/snapshot/dists/{suite}/{index_path}'] = packages
-        contents['/archive' + package_path] = payload
-        requests = []
+        self.assertFalse(any(c[0] == 'cargo' and ('install' in c or 'binstall' in c) for c in calls))
+        self.assertFalse(any('download' in c for c in python(calls)))
+        fingerprint = subprocess.check_output(
+            [sys.executable, str(ROOT / 'scripts/tooling/fingerprint.py'), 'x86_64-linux', 'ci'], text=True)
+        self.assertEqual((root / '.local/share/rscrypto-tooling/fingerprint.ci').read_text(), fingerprint)
 
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                requests.append(self.path)
-                if self.path not in contents:
-                    self.send_error(503)
-                    return
-                self.send_response(200)
-                self.send_header('Content-Length', str(len(contents[self.path])))
-                self.end_headers()
-                self.wfile.write(contents[self.path])
-
-            def log_message(self, *_args):
-                pass
-
-        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-        worker = threading.Thread(target=server.serve_forever, daemon=True)
-        worker.start()
-        self.addCleanup(server.server_close)
-        self.addCleanup(worker.join)
-        self.addCleanup(server.shutdown)
-        address = f'http://127.0.0.1:{server.server_port}'
-        source = (root / 'apt-sources.list').read_text()
-        mirror = root / 'apt-mirrors.list'
-        for word in source.split():
-            if word.startswith('mirror+file:'):
-                source = source.replace(word, mirror.as_uri().replace('file://', 'mirror+file:', 1))
-        source = source.replace('/usr/share/keyrings/ubuntu-archive-keyring.gpg', str(key))
-        snapshot = f'https://snapshot.ubuntu.com/ubuntu/{CATALOG["linux"]["snapshot"]}'
-        files = {root / 'apt-sources.list': source}
-        if mirror.exists():
-            files[mirror] = mirror.read_text()
-        for path, text in files.items():
-            path.write_text(text.replace(snapshot, address + '/snapshot')
-                            .replace('https://archive.ubuntu.com/ubuntu', address + '/archive')
-                            .replace('https://ports.ubuntu.com/ubuntu-ports', address + '/ports'))
-        lists = root / 'lists'
-        lists.mkdir()
-        options = ['-o', f'Dir::Etc::sourcelist={root / "apt-sources.list"}', '-o', 'Dir::Etc::sourceparts=-',
-                   '-o', f'Dir::Etc::preferences={root / "apt-preferences"}', '-o', 'Dir::Etc::preferencesparts=-',
-                   '-o', f'Dir::State::lists={lists}', '-o', 'Dir::State::status=/dev/null',
-                   '-o', 'APT::Get::List-Cleanup=0', '-o', 'APT::Update::Error-Mode=any',
-                   '-o', 'Acquire::Retries=0', '-o', 'Acquire::http::Timeout=5',
-                   '-o', 'Acquire::Languages=none', '-o', 'APT::Sandbox::User=' + os.environ.get('USER', 'root')]
-
-        def apt(*args):
-            try:
-                return subprocess.run(['apt-get', *options, *args], cwd=root, capture_output=True, text=True, timeout=30)
-            except subprocess.TimeoutExpired as error:
-                self.fail(f'APT timed out: {error.stdout!r}\n{error.stderr!r}')
-
-        result = apt('update')
+    def test_a_matching_fingerprint_republishes_without_installing(self):
+        result, calls, root = self.provision('x86_64-linux', extra_env={'INSTALL_PINNED': '1'}, again={})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        result = apt('download', 'fixture=1.0')
+        self.assertRegex(result.stdout, r'Tooling fingerprint [0-9a-f]{64} matches')
+        self.assertEqual(package_installs(calls), [])
+        self.assertFalse(any(c[0] in ('cargo', 'rustup') and ('install' in c or 'binstall' in c) for c in calls))
+        environment = (root / '.local/share/rscrypto-tooling/environment.sh').read_text()
+        self.assertIn('custom\\ cargo/bin', environment)
+
+    def test_a_matching_fingerprint_with_a_missing_tool_converges(self):
+        result, calls, _ = self.provision('x86_64-linux', extra_env={'INSTALL_PINNED': '1'},
+                                          again={'INSTALL_PINNED': ''})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        downloaded = root / 'fixture_1.0_all.deb'
-        self.assertEqual(downloaded.read_bytes(), payload)
-        self.assertIn('/snapshot' + package_path, requests)
-        self.assertIn('/archive' + package_path, requests)
-        downloaded.unlink()
-        contents['/archive' + package_path] = b'x' * len(payload)
-        result = apt('download', 'fixture=1.0')
-        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('Hash Sum mismatch', result.stderr)
-        self.assertFalse(downloaded.exists())
-        shutil.rmtree(lists)
-        lists.mkdir()
-        for path in list(contents):
-            if path.endswith('/InRelease'):
-                contents[path] = contents[path].replace(b'Origin: Ubuntu', b'Origin: Forged')
-        result = apt('update')
-        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('signature', result.stderr.lower())
-        self.assertFalse(any(path.startswith(('/archive/dists/', '/ports/dists/')) for path in requests), requests)
+        self.assertIn('a pinned tool is missing; converging', result.stderr)
+        installs = [c[-1] for c in calls if c[0] == 'cargo' and 'binstall' in c]
+        self.assertEqual(installs, [f"{tool}@{CATALOG['cargo'][tool]}"
+                                    for tool in CATALOG['ci']['cargo'] + CATALOG['ci-policy']['cargo']])
+
+
+class Fingerprint(unittest.TestCase):
+    def test_every_host_names_the_inputs_of_each_operation(self):
+        # No substitute host: the subcommand runs before any host check.
+        def named(*arguments):
+            return subprocess.run([BASH, str(ROOT / 'scripts/tooling/x86_64-linux.sh'), 'fingerprint', *arguments],
+                                  capture_output=True, text=True)
+        default, ci = named(), named('ci')
+        self.assertEqual(default.returncode, 0, default.stderr)
+        self.assertRegex(ci.stdout, r'^[0-9a-f]{64}\n$')
+        self.assertEqual(default.stdout, named('dev').stdout)
+        self.assertNotEqual(default.stdout, ci.stdout)
+        self.assertEqual(ci.stdout, subprocess.check_output(
+            [sys.executable, str(ROOT / 'scripts/tooling/fingerprint.py'), 'x86_64-linux', 'ci'], text=True))
+        refused = named('ci-cross-run')
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn('no reusable ci-cross-run installation', refused.stderr)
+
+    @unittest.skipUnless(shutil.which('pwsh') or shutil.which('powershell'), 'requires PowerShell')
+    def test_windows_front_door_names_the_same_fingerprint(self):
+        shell = shutil.which('pwsh') or shutil.which('powershell')
+        for operation in ('dev', 'ci-bench'):
+            with self.subTest(operation=operation):
+                result = subprocess.run([shell, '-NoProfile', '-NonInteractive', '-File',
+                                         str(ROOT / 'scripts/tooling/x86_64-win.ps1'), 'fingerprint', operation],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stdout.strip(), subprocess.check_output(
+                    [sys.executable, str(ROOT / 'scripts/tooling/fingerprint.py'), 'x86_64-win', operation],
+                    text=True).strip())
 
 
 class WindowsDownload(unittest.TestCase):

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Exercise fuzz discovery and cleanup without building or running fuzz targets."""
 
 import json

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Check one production SecretBytes<32> drop in final release-LTO LLVM IR.
 
 This is a fixed-owner compiler regression gate, not whole-library cleanup proof.

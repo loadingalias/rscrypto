@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Execute bounded TLS 1.3 interoperability with pinned OpenSSL and Go peers."""
 
 import argparse

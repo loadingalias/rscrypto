@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Check the benchmark catalog, then exercise benchmark and profiling front doors."""
 
 from __future__ import annotations

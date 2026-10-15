@@ -6,8 +6,10 @@
 //! caller would link it. Inputs pass through `black_box` so constant folding
 //! cannot remove or specialize those paths.
 
+extern crate alloc;
+
+use alloc::alloc::Global;
 use core::hint::black_box;
-use std::alloc::Global;
 
 use rscrypto::{
   Kem, MlDsa44, MlDsa44PreparedSecretKeyStorage, MlDsa65, MlDsa65PreparedSecretKeyStorage, MlDsa87,

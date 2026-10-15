@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Exercise shared preparation actions and protect their qualification boundaries."""
 import os
 from pathlib import Path
@@ -35,11 +35,7 @@ class CrossWorkflow(unittest.TestCase):
                               cwd=self.root, env={**self.env, **env}, text=True, capture_output=True)
 
     def test_setup_preserves_target_and_stops_on_installation_failure(self):
-        restore, install, save = self.setup
-        self.assertEqual(restore['with']['id'], 'cross-build-${{ inputs.target }}')
-        self.assertEqual(save['if'], 'always() && steps.apt-state.outputs.key')
-        self.assertEqual(save['with'], {'key': '${{ steps.apt-state.outputs.key }}',
-                                       'hit': '${{ steps.apt-state.outputs.hit }}'})
+        [install] = self.setup
         installer = self.root / 'scripts/tooling/x86_64-linux.sh'
         installer.parent.mkdir(parents=True)
         installer.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > arguments\nexit "${INSTALL_EXIT:-0}"\n')
@@ -97,8 +93,8 @@ class CrossWorkflow(unittest.TestCase):
         for filename, producer, consumer, suite, command, suffix in (
             ('ci', 'cross-build', 'native', 'tests', 'just test-cross prepare', 'tests'),
             ('ct', 'cross-build', 'ct', 'ct', 'just ct-full --target', 'ct-prepared'),
-            ('bench', 'cross-build', 'bench', 'bench', 'python3 scripts/bench/ci.py prepare', 'bench-prepared'),
-            ('profile', 'prepare', 'capture', 'profile', 'python3 scripts/bench/profile_ci.py prepare', 'profile-prepared'),
+            ('bench', 'cross-build', 'bench', 'bench', 'scripts/lib/python.sh scripts/bench/ci.py prepare', 'bench-prepared'),
+            ('profile', 'prepare', 'capture', 'profile', 'scripts/lib/python.sh scripts/bench/profile_ci.py prepare', 'profile-prepared'),
         ):
             with self.subTest(workflow=filename):
                 jobs = read_yaml(f'.github/workflows/{filename}.yml')['jobs']
@@ -150,13 +146,16 @@ class CrossWorkflow(unittest.TestCase):
             with self.subTest(workflow=filename):
                 workflow = read_yaml(f'.github/workflows/{filename}.yml')
                 self.assertEqual(workflow['permissions'], {'contents': 'read'})
-                # Only the dispatching job, which runs no project tooling, may change Actions state.
+                # Only the dispatching job, which builds nothing, may change Actions state.
                 writers = [name for name, job in workflow['jobs'].items()
                            if job.get('permissions', {}).get('actions') == 'write']
                 self.assertEqual(writers, ['riscv64-linux'])
                 proxy = workflow['jobs']['riscv64-linux']
                 self.assertEqual(proxy['runs-on'], 'ubuntu-24.04')
-                start, stop = proxy['steps'][1:]
+                install, start, stop = proxy['steps'][1:]
+                # The pinned uv runs the dispatcher; the token never reaches its installation.
+                self.assertEqual(install['run'], 'scripts/tooling/uv.sh x86_64-linux >>"$GITHUB_PATH"')
+                self.assertNotIn('env', install)
                 self.assertIn('scripts/lib/dispatched_run.py run --workflow riscv.yml', start['run'])
                 self.assertIn(f'--input suite={suite}', start['run'])
                 self.assertEqual(start['env']['QUEUE_MINUTES'], "${{ inputs.require_riscv && '0' || '30' }}")

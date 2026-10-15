@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Regressions for provider graph isolation, feature forwarding, and target scope."""
 
 import contextlib

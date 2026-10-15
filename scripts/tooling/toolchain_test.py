@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Check provisioning and native execution command generation for every host."""
 
 import json

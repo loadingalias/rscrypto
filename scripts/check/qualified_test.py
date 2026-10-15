@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Test qualification reuse: exact passes, inert-only descendants, and every invalidation."""
 
 import tempfile

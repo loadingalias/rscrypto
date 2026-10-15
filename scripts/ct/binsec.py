@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Run BINSEC/Rel checks for rscrypto CT kernels."""
 
 from __future__ import annotations

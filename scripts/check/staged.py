@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Run `just ci-check` on the staged tree for the pre-commit hook.
 
 Unstaged edits and untracked files stay in the developer's checkout and never enter the

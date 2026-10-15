@@ -3,18 +3,20 @@ import copy
 import io
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tarfile
 import shutil
 import tempfile
+import tomllib
 import unittest
 import zipfile
 from unittest.mock import patch
 
 import tomlkit
-import apt_state
 import catalog
+import fingerprint
 import update
 
 
@@ -66,7 +68,7 @@ class Tooling(unittest.TestCase):
                 catalog.validate(broken)
         for platform in catalog.NATIVE_SOURCE_PLATFORMS:
             self.assertEqual(set(data[platform]['assets']),
-                             {'rustup', 'cargo-binstall'} if platform == 'riscv64-linux' else {'rustup'})
+                             {'rustup', 'uv', 'cargo-binstall'} if platform == 'riscv64-linux' else {'rustup', 'uv'})
             self.assertEqual(data[platform]['components'], [])
 
     def test_stable_release_selection_respects_msrv_and_yanks(self):
@@ -96,14 +98,22 @@ rscrypto="1"
 cargo-rail="1"
 [target.'cfg(unix)'.dependencies]
 dep="1"
+fork={version="=0.24.0-dev.1",git="https://github.com/owner/fork",rev="2e56badaef3fde0a0164b51a86ba117831f63c54"}
+alpha="=0.104.0-alpha.7"
 '''
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             path = root / 'Cargo.toml'
             path.write_text(source)
-            with patch.object(update, 'ROOT', root), patch.object(update, 'crate_version', return_value='2.0.0'):
+            with patch.object(update, 'ROOT', root), patch.object(update, 'crate_version', return_value='2.0.0') as version:
                 update.update_manifests([path])
             result = tomlkit.parse(path.read_text())
+            # A prerelease pin has no eligible release: no lookup, and no move to an older stable.
+            self.assertNotIn(('fork', '1.91.0'), [call.args for call in version.call_args_list])
+            self.assertEqual(result['target']['cfg(unix)']['dependencies']['fork']['version'], '=0.24.0-dev.1')
+            self.assertEqual(result['target']['cfg(unix)']['dependencies']['fork']['rev'],
+                             '2e56badaef3fde0a0164b51a86ba117831f63c54')
+            self.assertEqual(result['target']['cfg(unix)']['dependencies']['alpha'], '=0.104.0-alpha.7')
             self.assertEqual(result['dependencies']['alias']['version'], '=1')
             self.assertEqual(result['dependencies']['alias']['features'], ['std'])
             self.assertFalse(result['dependencies']['alias']['default-features'])
@@ -226,7 +236,8 @@ dep="1"
                                                  'manifest_path': str(root / 'Cargo.toml')}]})
             with patch.object(update, 'ROOT', root), patch.object(update.sys, 'argv', ['update.py']), \
                  patch.object(update.sys, 'platform', 'darwin'), patch.object(update, 'resolve_catalog'), \
-                 patch.object(update, 'write_catalog'), patch.object(update, 'update_rust'), \
+                 patch.object(update, 'write_catalog'), patch.object(update, 'update_python'), \
+                 patch.object(update, 'update_rust'), \
                  patch.object(update, 'rust_channel', return_value='1.98.1'), \
                  patch.object(update, 'manifest_paths', return_value=[root / 'Cargo.toml']), \
                  patch.object(update, 'cargo_roots', return_value=[root / 'Cargo.toml']), \
@@ -245,84 +256,77 @@ dep="1"
                 actions.assert_not_called()
 
 
-class AptState(unittest.TestCase):
-    PREFIX = '_tmp_rscrypto-apt-mirrors'
-    SUITES = ('noble', 'noble-updates', 'noble-security')
+class Fingerprint(unittest.TestCase):
+    PLATFORMS = ('x86_64-linux', 'aarch64-linux', 'x86_64-win')
 
-    def lists(self, binary='binary-amd64'):
-        """Build a signed-shaped lists directory and the matching catalog pins."""
-        import hashlib
-        lists = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, lists)
-        pins = {}
-        for suite in self.SUITES:
-            indexes = {f'{component}/{binary}/Packages': f'Package: {component}-{suite}\n'.encode()
-                       for component in ('main', 'universe')}
-            for name, data in indexes.items():
-                (lists / f'{self.PREFIX}_dists_{suite}_{name.replace("/", "_")}').write_bytes(data)
-            signed = ''.join(f' {hashlib.sha256(data).hexdigest()} {len(data)} {name}\n' for name, data in indexes.items())
-            inrelease = ('-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nOrigin: Ubuntu\nSHA256:\n' + signed
-                         + '-----BEGIN PGP SIGNATURE-----\n\nsignature\n-----END PGP SIGNATURE-----\n').encode()
-            (lists / f'{self.PREFIX}_dists_{suite}_InRelease').write_bytes(inrelease)
-            pins[suite] = hashlib.sha256(inrelease).hexdigest()
-        (lists / 'lock').write_bytes(b'')
-        (lists / 'partial').mkdir()
-        return lists, pins
-
-    def verify(self, lists, pins, prefix=PREFIX):
-        with patch.object(apt_state, 'verify_signature'):
-            apt_state.verify(lists, prefix, 'amd64', pins)
-
-    def test_accepts_only_indexes_signed_by_pinned_releases(self):
-        lists, pins = self.lists()
-        self.verify(lists, pins)
-
-    def test_accepts_architecture_variant_indexes(self):
-        lists, pins = self.lists(binary='binary-amd64v3')
-        self.verify(lists, pins)
-
-    def test_rejects_state_apt_would_trust_without_proof(self):
-        cases = {
-            'differs from its signed size or SHA-256':
-                lambda lists, pins: (lists / f'{self.PREFIX}_dists_noble-updates_main_binary-amd64_Packages')
-                .write_bytes(b'Package: planted\n'),
-            'differs from the catalog pin': lambda lists, pins: pins.update({'noble': '0' * 64}),
-            'not signed by its InRelease':
-                lambda lists, pins: (lists / f'{self.PREFIX}_dists_noble_main_binary-amd64_Packages.extra')
-                .write_bytes(b'x'),
-            'missing universe package index':
-                lambda lists, pins: (lists / f'{self.PREFIX}_dists_noble-security_universe_binary-amd64_Packages')
-                .unlink(),
-        }
-        for reason, tamper in cases.items():
-            with self.subTest(reason):
-                lists, pins = self.lists()
-                tamper(lists, pins)
-                with self.assertRaisesRegex(apt_state.Unusable, reason):
-                    self.verify(lists, pins)
-        lists, pins = self.lists()
-        with self.assertRaisesRegex(apt_state.Unusable, 'missing InRelease'):
-            self.verify(lists, pins, prefix='_other_mirrors')
-
-    def test_signed_body_rejects_unsigned_additions(self):
-        message = ('-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nSHA256:\n x 1 a\n'
-                   '-----BEGIN PGP SIGNATURE-----\n\ns\n-----END PGP SIGNATURE-----\n')
-        self.assertIn('SHA256:', apt_state.signed_body(message.encode()))
-        with self.assertRaisesRegex(apt_state.Unusable, 'single clearsigned'):
-            apt_state.signed_body((message + 'SHA256:\n y 1 b\n').encode())
-
-    def test_failed_signature_is_fatal(self):
-        lists, pins = self.lists()
-        failed = subprocess.CompletedProcess([], 1, '', 'BAD signature')
-        with patch.object(apt_state.subprocess, 'run', return_value=failed):
-            with self.assertRaisesRegex(apt_state.Unusable, 'signature did not verify'):
-                apt_state.verify(lists, self.PREFIX, 'amd64', pins)
-
-    def test_catalog_requires_every_suite_pin(self):
+    def test_each_platform_counts_only_its_installer_inputs(self):
         data = catalog.read()
-        del data['linux-ci']['inrelease']['noble-security']
-        with self.assertRaisesRegex(ValueError, 'pinned InRelease'):
-            catalog.validate(data)
+        source = catalog.ROOT
+        with tempfile.TemporaryDirectory() as temporary, patch.object(catalog, 'ROOT', Path(temporary)):
+            root = Path(temporary)
+            names = {name for platform in self.PLATFORMS for operation in ('dev', 'ci-compat', 'ci-package')
+                     if operation in fingerprint.OPERATIONS[platform.rsplit('-', 1)[1]]
+                     for name in fingerprint.inputs(platform, operation)}
+            for name in names | {'Cargo.toml', 'scripts/tooling/test_tooling.py'}:
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_bytes((source / name).read_bytes())
+
+            def current():
+                return {**{platform: fingerprint.fingerprint(data, platform, 'dev') for platform in self.PLATFORMS},
+                        'compat': fingerprint.fingerprint(data, 'x86_64-linux', 'ci-compat')}
+            original = current()
+            self.assertEqual(len(set(original.values())), len(original))
+            self.assertNotEqual(fingerprint.fingerprint(data, 'x86_64-linux', 'ci'), original['x86_64-linux'])
+            for platform, operation in (('x86_64-linux', 'ci-cross-run'), ('x86_64-win', 'ci-fuzz')):
+                with self.assertRaisesRegex(ValueError, 'no reusable'):
+                    fingerprint.fingerprint(data, platform, operation)
+            linux = {'x86_64-linux', 'aarch64-linux', 'compat'}
+            everything = set(original)
+            manifest = (root / 'Cargo.toml').read_text()
+            msrv = tomllib.loads(manifest)['package']['rust-version']
+            for name, before, after, changed in [
+                    ('scripts/tooling/linux.sh', None, None, linux),
+                    ('scripts/tooling/uv.sh', None, None, linux),
+                    ('scripts/tooling/x86_64-linux.sh', None, None, {'x86_64-linux', 'compat'}),
+                    ('scripts/tooling/windows.ps1', None, None, {'x86_64-win'}),
+                    ('scripts/lib/toolchain.py', None, None, everything),
+                    ('rust-toolchain.toml', None, None, everything),
+                    ('.python-version', None, None, everything),
+                    ('scripts/check/compat.py', None, None, {'compat'}),
+                    ('Cargo.toml', '[package]', '[package]\n# changed', set()),
+                    ('Cargo.toml', f'rust-version = "{msrv}"', 'rust-version = "1.0"', {'compat'}),
+                    ('scripts/tooling/test_tooling.py', None, None, set())]:
+                with self.subTest(name=name, change=after):
+                    path = root / name
+                    original_bytes = path.read_bytes()
+                    if before is None:
+                        path.write_bytes(original_bytes + b'\n# changed\n')
+                    else:
+                        self.assertIn(before, original_bytes.decode())
+                        path.write_text(original_bytes.decode().replace(before, after, 1))
+                    updated = current()
+                    self.assertEqual({key for key in original if updated[key] != original[key]}, changed)
+                    path.write_bytes(original_bytes)
+            self.assertEqual(current(), original)
+
+    def test_inputs_cover_every_script_an_installer_reads(self):
+        # Only cross-build and cross-run installations, which never reuse a fingerprint, read these.
+        cross = {'scripts/tooling/transfer.py', 'scripts/tooling/perf-riscv-mapping-symbols.patch',
+                 'scripts/lib/cross_build.py'}
+        scripts = {path.relative_to(catalog.ROOT).as_posix()
+                   for directory in ('scripts/tooling', 'scripts/lib', 'scripts/check')
+                   for path in (catalog.ROOT / directory).iterdir() if path.is_file()}
+        for platform in ('x86_64-linux', 'aarch64-linux', 'riscv64-linux', 'x86_64-win', 'aarch64-win'):
+            family = platform.rsplit('-', 1)[1]
+            inputs = {name for operation in fingerprint.OPERATIONS[family]
+                      for name in fingerprint.inputs(platform, operation)}
+            # Shell and PowerShell installers run their helpers; the Python helpers
+            # import nothing beyond what the inputs already name.
+            text = '\n'.join((catalog.ROOT / name).read_text() for name in inputs
+                             if name.endswith(('.sh', '.ps1')))
+            for name in scripts:
+                if re.search(r'(?<![\w.-])' + re.escape(Path(name).name) + r'\b', text):
+                    self.assertIn(name, inputs | cross, f'{platform} reads {name}')
 
 
 class ActionPins(unittest.TestCase):

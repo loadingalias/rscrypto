@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Run the pinned BoGo TLS 1.3 profile against the rscrypto provider."""
 
 import argparse

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Publish a prepared, qualified commit; reconcile retries by package checksum."""
 import hashlib
 import json

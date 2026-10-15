@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Run one workflow job as a dispatched run whose runner wait the caller bounds.
 
 GitHub Actions cannot time out a queued job or cancel one job of a run. A caller

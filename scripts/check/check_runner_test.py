@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Verify command effects and coverage by executing the real check entry point."""
 
 import json

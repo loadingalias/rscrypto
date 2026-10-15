@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Regressions for execution attribution and failure-safe coverage publication."""
 
 import copy

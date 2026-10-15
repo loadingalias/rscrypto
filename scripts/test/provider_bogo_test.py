@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Keep BoGo profile filtering tied to declared protocol requirements."""
 import unittest
 from provider_bogo import exclusions

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Verify compile-only preparation and complete native measurement after transfer."""
 
 import contextlib

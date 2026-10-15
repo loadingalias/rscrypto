@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Bounded, fail-fast feature/target checks and real WASM/WASI execution."""
 import argparse
 from collections import deque

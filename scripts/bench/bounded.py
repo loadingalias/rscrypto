@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Bound a whole benchmark/profile process tree, reserving time for shutdown."""
 
 from __future__ import annotations

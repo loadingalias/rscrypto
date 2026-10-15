@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Derive the SLH-DSA ACVP fixtures from the pinned upstream JSON.
 
 The upstream files total about 68 MB, mostly hexadecimal signatures. This writes

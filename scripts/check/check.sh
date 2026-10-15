@@ -6,7 +6,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 mode=$1
 case "$mode" in
   check|fix|local|native) [[ $# -eq 1 ]] || exit 2 ;;
-  target) [[ $# -eq 2 ]] || exit 2; python3 scripts/lib/cross_build.py "$2" >/dev/null ;;
+  target) [[ $# -eq 2 ]] || exit 2; scripts/lib/python.sh scripts/lib/cross_build.py "$2" >/dev/null ;;
   *) echo 'usage: scripts/check/check.sh {check|fix|local|native}' >&2; exit 2 ;;
 esac
 

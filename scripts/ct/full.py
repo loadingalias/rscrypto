@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Run the full rscrypto CT evidence pipeline and emit release-style reports."""
 
 from __future__ import annotations

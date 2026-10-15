@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Verify the package Cargo will publish, then consume its unpacked contents."""
 import argparse
 import json

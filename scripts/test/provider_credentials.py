@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Generate independent TLS credential/signature fixtures with OpenSSL 4.0.3.
 
 The output must be a new directory. Keys and randomized signatures are fresh;

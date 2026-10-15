@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Execute Just recipes against recorders to verify exact argument boundaries."""
 
 import json

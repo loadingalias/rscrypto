@@ -12,3 +12,7 @@ version = "0.0.0"
 dependencies = [
  "rscrypto",
 ]
+
+[[patch.unused]]
+name = "rscrypto-rustls"
+version = "0.1.0"

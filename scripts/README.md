@@ -258,7 +258,7 @@ and Nextest tools into a separate archive bound to the source.
 - Both Nextest builds use the same locked crate release.
   The producer and consumer identities must match, except for the host architecture.
 - GNU cross-compilers and target libc development packages
-  use the same Ubuntu CI snapshot as native provisioning.
+  come from the same Ubuntu CI archive as native provisioning.
 - The x86-64 preparation jobs use the shared Cargo Rail compiler cache.
   Trusted `main` pushes can populate it.
   Other jobs with credentials are read-only, and pull requests from forks build cold.
@@ -507,17 +507,23 @@ Check, Miri, and fuzz commands run independently of that plan.
 | -------------------------------------- | -------------------- |
 | `lib/rail-plan.sh`                     | `test/test.sh`       |
 | `lib/fuzz-packages.sh`                 | Fuzz scripts         |
-| `lib/python.sh`                        | Python-based check, test, CT, and benchmark scripts |
+| `lib/python.sh`                        | Python-based check, test, CT, and benchmark scripts, through uv |
 | `lib/dispatched_run.py`                | The CI and CT `riscv64-linux` jobs |
 | `lib/toolchain.py`, `lib/toolchain.sh` | Shared toolchain selection for installers, builds, checks, tests, and benchmarks |
 | `tooling/transfer.py`                  | Cross-build and verify the pinned native runner tools |
-| `tooling/apt_state.py`                 | Verify restored APT indexes against the pinned Ubuntu snapshot before `tooling/linux.sh` uses them |
+| `tooling/uv.sh`                        | Install the catalog-pinned uv and Python on Linux, including jobs that run no installer |
+| `tooling/fingerprint.py`               | Digest the inputs of one platform's installation, so a converged host or image can trust it |
 | `lib/evidence_bundle.py`               | Source binding, sealing, and transfer integrity for cross-compiled tests, tools, and CT |
 | `lib/cross_build.py`                   | Explicit target identities and the cross-compiler environment for test, tool, and CT preparation |
 
-Python tooling needs Python 3.11 or newer.
-The updater installs its catalog-pinned Python libraries into a temporary virtual environment.
+Every Python command runs through uv: `lib/python.sh` runs `uv run`,
+and scripts start with `#!/usr/bin/env -S uv run python`.
+uv provides the interpreter that [`.python-version`](../.python-version) names,
+and [`uv.lock`](../uv.lock) pins the packages of [`pyproject.toml`](../pyproject.toml); a stale lock refuses.
 Checks and benchmarks use only the standard library.
+The `tooling` group holds the updater's libraries and those of the catalog and workflow tests;
+`lib/python.sh --group tooling` selects it.
+The installers install the catalog's pinned uv; on macOS, install uv with Homebrew.
 
 ## Native tooling
 
@@ -596,7 +602,7 @@ Local macOS tools are managed locally.
 `scripts/tooling/aarch64-macos.sh` can install the pinned prerequisites for `just check-macos`.
 
 All full profiles install the prerequisites for `just ci-check`, `just test`, and Criterion `just bench`.
-RISC-V, IBM Z, and POWER use native CMake and Clang pinned to the snapshot.
+RISC-V, IBM Z, and POWER use native CMake and Clang from the Ubuntu archive.
 They do not install cross targets, Miri, browsers, or profiling tools.
 
 Only x86-64 and ARM64 Linux development setup installs `perf`, Valgrind, Gungraun, and samply.
@@ -637,31 +643,32 @@ Windows x86-64 installs catalog-pinned NASM for native dependency assembly in bo
 It also installs pinned Strawberry Perl and selects it only through `OPENSSL_SRC_PERL`:
 the vendored OpenSSL that lints `tools/provider-bench` cannot configure under Git's MSYS Perl.
 
-### APT snapshot
+### Ubuntu packages and converged hosts
 
-Linux CI uses the catalog's `linux-ci` Ubuntu release,
-with packages from the same archive snapshot as development provisioning.
+Linux CI uses the catalog's `linux-ci` Ubuntu release; development uses `linux`.
+Both install Ubuntu packages from the guest's own archive, with retries.
+A host that already holds every selected package skips APT,
+and a baked image keeps the versions it installed.
 
-- Only that signed snapshot supplies package indexes and version choices.
-- If its package endpoint fails, APT can fetch the exact package from Ubuntu's live archive.
-  The snapshot's authenticated package checksum still applies.
-  The live archive cannot supply indexes or change the selected versions.
-- The installer keeps APT's indexes and downloaded packages in `/var/cache/rscrypto-apt`
-  (`RSCRYPTO_APT_STATE` overrides it).
-- CI restores that directory with [`.github/actions/apt-state`](../.github/actions/apt-state/action.yml),
-  and calls [`apt-state/save`](../.github/actions/apt-state/save/action.yml) after the last package installer.
-  Cross-build jobs save inside setup; native jobs save as their final step, including failure paths.
-  It saves only when the installer's `ready` marker shows that this run verified the state
-  and installed from it.
+Every installer can fingerprint its inputs on any host:
+`scripts/tooling/<platform>.sh fingerprint [<operation>]`, or the `.ps1` front door on Windows.
+An operation is `dev` or a flag without its dashes, such as `ci` or `ci-ct-full`;
+the installers also accept it in that form (`-Operation` on Windows).
+The fingerprint covers the files that the platform's installer reads for that operation,
+the operation, the required OS release, and the platform.
 
-APT trusts any index that is already in its lists directory.
-`tooling/apt_state.py` therefore proves a restored state first:
-each suite's InRelease must match the catalog's `inrelease` SHA-256 pin and Ubuntu's archive signature,
-and every index must carry its signed size and SHA-256.
-A verified state installs without contacting the snapshot service.
-APT still rejects any cached package that differs from those indexes.
-Otherwise, the installer discards the indexes, fetches them again, and requires the same proof.
-`just update` records the pins each time it selects a snapshot.
+- A complete run writes it to `fingerprint.<operation>` in the tooling prefix.
+- While it matches, a later run republishes the environment, checks the pinned tool versions, and stops.
+  A failed check converges instead.
+- Otherwise each step checks before it acts:
+  rustup and Cargo tools by their reported versions,
+  and on Windows Visual Studio by vswhere and Git and jq by their versions.
+- Cross-build and cross-run installations depend on a target or a transferred archive,
+  so they always converge.
+- Inside a container, development setup leaves perf and its kernel setting to the host.
+
+[`.config/images.toml`](../.config/images.toml) lists the dev-machines images baked from these installers,
+with the operations each RunsOn image runs.
 
 ### Workflows
 

@@ -57,7 +57,7 @@ rustls = { version = "=0.24.0-dev.1", git = "https://github.com/loadingalias/rus
 rustls-webpki = { version = "=0.104.0-alpha.7", default-features = false, features = ["alloc", "std"] }
 rustls-pki-types = { version = "=1.15.1", default-features = false, features = ["std"] }
 getrandom = { version = "0.4.3", optional = true }
-zeroize = { version = "1.9.0", default-features = false }
+zeroize = { version = "1.9.1", default-features = false }
 quinn-proto = { version = "=0.11.19", default-features = false, optional = true }
 bytes = { version = "1.12.1", optional = true }
 
@@ -66,7 +66,7 @@ rustls-aws-lc-rs = { version = "=0.1.0-dev.1", git = "https://github.com/loading
 rustls-ring = { version = "=0.1.0-dev.1", git = "https://github.com/loadingalias/rustls", rev = "2e56badaef3fde0a0164b51a86ba117831f63c54" }
 rustls-util = { version = "=0.1.0-dev.1", git = "https://github.com/loadingalias/rustls", rev = "2e56badaef3fde0a0164b51a86ba117831f63c54", default-features = false }
 quinn = { version = "=0.11.12", default-features = false, features = ["runtime-tokio"] }
-tokio = { version = "1.53.1", default-features = false, features = ["rt", "macros", "time", "io-util"] }
+tokio = { version = "1.53.3", default-features = false, features = ["rt", "macros", "time", "io-util"] }
 
 [[example]]
 name = "interop"

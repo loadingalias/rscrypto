@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Retain an ML-DSA signing-tail baseline: per-signature latency and attempt counts.
 
 Builds tools/mldsa-tail twice: the production build times each signature, and a

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Validate manual benchmark requests and dispatch the existing benchmark runner."""
 from __future__ import annotations
 

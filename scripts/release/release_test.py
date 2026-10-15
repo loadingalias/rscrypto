@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Exercise release refusal and recovery without registry or forge writes."""
 import hashlib
 import importlib.util

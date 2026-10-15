@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Verify CT preparation preserves measurements and rejects unmatched selectors."""
 
 import contextlib

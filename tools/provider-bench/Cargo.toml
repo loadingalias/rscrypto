@@ -21,8 +21,8 @@ rscrypto-rustls = { path = "../../rscrypto-rustls" }
 rustls = { version = "=0.24.0-dev.1", git = "https://github.com/loadingalias/rustls", rev = "2e56badaef3fde0a0164b51a86ba117831f63c54", default-features = false, features = ["webpki"] }
 rustls-aws-lc-rs = { version = "=0.1.0-dev.1", git = "https://github.com/loadingalias/rustls", rev = "2e56badaef3fde0a0164b51a86ba117831f63c54" }
 openssl = "=0.10.81"
-libc = "0.2.185"
-serde_json = "1.0.151"
+libc = "0.2.190"
+serde_json = "1.0.154"
 
 [dev-dependencies]
 criterion = { version = "0.8.2", default-features = false, features = ["html_reports", "plotters"] }

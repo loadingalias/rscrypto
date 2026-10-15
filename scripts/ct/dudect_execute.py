@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Execute a prepared DudeCT binary without rebuilding or copying its artifacts."""
 
 import argparse

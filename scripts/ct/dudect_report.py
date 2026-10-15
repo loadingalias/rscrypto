@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Build a machine-readable report from dudect-bencher output."""
 
 from __future__ import annotations

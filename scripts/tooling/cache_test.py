@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Exercise the repository cache front door against a recorded Cargo boundary."""
 
 import json

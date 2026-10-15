@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Scan CT harness disassembly for high-signal constant-time hazards."""
 
 from __future__ import annotations

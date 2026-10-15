@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Negative controls for the bounded optimized-cleanup gate."""
 import sys
 import json

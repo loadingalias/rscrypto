@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Verify internal compiler opt-in and BINSEC flag provenance."""
 
 import contextlib

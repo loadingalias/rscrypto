@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Enable repository-only evidence hooks for a Cargo invocation."""
 
 from __future__ import annotations

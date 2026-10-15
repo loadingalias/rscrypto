@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Build pinned runner tools on x86-64 and verify them before native installation."""
 
 import argparse

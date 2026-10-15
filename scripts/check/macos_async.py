@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Queue physical Mac qualification in an isolated worktree and publish its commit status."""
 import fcntl
 import hashlib

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Extract provider vectors from the pinned RFC 8448 and RFC 9001 text files."""
 
 import argparse

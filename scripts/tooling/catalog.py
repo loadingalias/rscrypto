@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Read the tooling catalog and install its verified, platform-specific archives."""
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import re
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -89,6 +90,34 @@ def install_archive(name, asset, prefix):
     return destination
 
 
+def version_report(name):
+    """Return the first line that the tool selected by PATH prints for its version."""
+    if name == 'ripgrep':
+        command = ['rg', '--version']
+    elif name.startswith('cargo-'):
+        command = ['cargo', name.removeprefix('cargo-'), '--version']
+    else:
+        command = [name, '--version']
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return ''
+    lines = (result.stdout or result.stderr).strip().splitlines()
+    return lines[0] if result.returncode == 0 and lines else ''
+
+
+def require(data, names):
+    """Refuse installed tools whose reported version differs from the catalog pin."""
+    errors = []
+    for name in names:
+        version = data['cargo'].get(name) or data['versions'][name]
+        report = version_report(name)
+        if not re.search(r'(?<![\d.])' + re.escape(version) + r'(?![\d.])', report):
+            errors.append(f'{name} {version} is required by .config/tooling.toml; found {report or "no working executable"}.')
+    if errors:
+        raise ValueError('\n'.join(errors))
+
+
 def validate(data):
     if not isinstance(data['ci-compat']['workers'], int) or data['ci-compat']['workers'] < 1:
         raise ValueError('ci-compat: workers must be a positive integer')
@@ -122,12 +151,8 @@ def validate(data):
             or not perf_source.get('packages') \
             or any(not re.fullmatch(r'[a-z0-9][a-z0-9+.-]*', package) for package in perf_source.get('packages', [])):
         raise ValueError('ci-cross-run: invalid pinned perf source')
-    for section in ('linux', 'linux-ci'):
-        codename = data[section]['codename']
-        pins = data[section].get('inrelease', {})
-        if set(pins) != {codename, f'{codename}-updates', f'{codename}-security'} \
-                or any(not re.fullmatch(r'[0-9a-f]{64}', digest) for digest in pins.values()):
-            raise ValueError(f'{section}: every suite requires a pinned InRelease SHA-256')
+    if not re.fullmatch(r'\d+\.\d+\.\d+\n', (ROOT / '.python-version').read_text()):
+        raise ValueError('.python-version must hold one exact Python version')
     proof = data['ci-ct-proof']
     if not re.fullmatch(r'git\+https://github\.com/ocaml/opam-repository\.git#[0-9a-f]{40}', proof['opam-repository']):
         raise ValueError('ci-ct-proof: opam repository requires an exact commit')
@@ -149,6 +174,9 @@ def validate(data):
         assets = config['assets']
         if 'rustup' not in assets:
             raise ValueError(f'{platform}: missing native rustup archive')
+        # Every installer starts from the pinned uv archive, which provides Python.
+        if f'/{data["versions"]["uv"]}/' not in assets.get('uv', {}).get('url', ''):
+            raise ValueError(f'{platform}: the uv asset must be uv {data["versions"]["uv"]}')
         if platform == 'x86_64-win' and 'nasm' not in assets:
             raise ValueError(f'{platform}: missing NASM for native dependency assembly')
         if platform == 'x86_64-win' and 'strawberry-perl' not in assets:
@@ -191,6 +219,8 @@ def main():
         print(json.dumps(data))
     elif command == 'rust-channel':
         print(rust_channel())
+    elif command == 'require':
+        require(data, args)
     elif command == 'validate':
         validate(data)
         print('Tooling catalog passed')
@@ -200,7 +230,8 @@ def main():
     elif command == 'install-archives':
         platform, prefix = args
         for name, asset in data[platform]['assets'].items():
-            if name == 'rustup':
+            # The installers acquire rustup and uv before they read the catalog.
+            if name in ('rustup', 'uv'):
                 continue
             directory = install_archive(name, asset, prefix)
             print(f'{name}\t{directory}')

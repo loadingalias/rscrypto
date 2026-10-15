@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Run pinned QUIC Interop Runner cases in bounded local Docker campaigns."""
 
 import argparse

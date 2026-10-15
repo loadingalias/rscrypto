@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Retain one bounded resource/latency observation of the catalog TLS workload."""
 
 import argparse

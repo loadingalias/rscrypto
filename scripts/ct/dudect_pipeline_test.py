@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Exercise shared preparation and isolated measurements through CT orchestration."""
 
 import json

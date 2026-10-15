@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Exercise smoke budgets and overrides through the real shell and executor."""
 
 import json

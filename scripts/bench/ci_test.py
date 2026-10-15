@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Manual selection must neither launch extra machines nor broaden measured work."""
 import json
 import os

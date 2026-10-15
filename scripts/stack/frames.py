@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Review secret-worker stack depth in linked release artifacts.
 
 A secret worker runs below a public frame, and the scrub that follows it

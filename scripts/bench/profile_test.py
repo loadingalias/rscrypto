@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Exercise profiling scope and shared builds without sampling the host."""
 
 import contextlib

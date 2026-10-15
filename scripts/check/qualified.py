@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Record and reuse local qualification passes by Git tree and compiler.
 
   qualified.py check KIND TREE    exit 0 if TREE is qualified for KIND, else 1

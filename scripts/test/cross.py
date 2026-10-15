@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """Build target test suites on x86-64; execute the sealed suites on native hardware.
 
 Doctests run only on the native CI rows. Each cross suite runs under the `cross` or

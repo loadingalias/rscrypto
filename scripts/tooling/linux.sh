@@ -5,6 +5,22 @@ export PYTHONDONTWRITEBYTECODE=1
 
 platform="${1:?native platform is required}"
 shift
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# uv runs every Python command with the interpreter and packages that the repository pins.
+export UV_PROJECT="$REPO_ROOT" UV_LOCKED=1
+# Any host, including the macOS workstation, can name the inputs of an installation.
+if [[ $# -ge 1 && $# -le 2 && "$1" == fingerprint ]]; then
+  exec uv run python "$SCRIPT_DIR/fingerprint.py" "$platform" "${2:-dev}"
+fi
+# Image builders name the operation; workflows spell it as a flag.
+case "${1:-}" in
+  dev) shift ;;
+  ct-proof|ci|ci-compat|ci-package|ci-fuzz|ci-miri|ci-ct|ci-ct-full|ci-bench) set -- "--$1" "${@:2}" ;;
+esac
+# The flag names the operation, and a converged host records one fingerprint per operation.
+operation=dev
+[[ "${1:-}" != --* ]] || operation="${1#--}"
 ci=false
 profile=ci
 proof=false
@@ -29,7 +45,7 @@ elif [[ "$profile" == ci-cross-run ]]; then
   tools_archive="${1:?runner tools archive is required}"
   shift
 fi
-[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh [--ct-proof|--ci|--ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-ct-full|--ci-bench|--ci-cross-build TARGET|--ci-cross-run TOOLS_ARCHIVE]" >&2; exit 64; }
+[[ "$#" -eq 0 ]] || { echo "usage: scripts/tooling/$platform.sh [--ct-proof|--ci|--ci-compat|--ci-package|--ci-fuzz|--ci-miri|--ci-ct|--ci-ct-full|--ci-bench|--ci-cross-build TARGET|--ci-cross-run TOOLS_ARCHIVE|<operation>|fingerprint [<operation>]]" >&2; exit 64; }
 machine="${platform%-linux}"
 [[ "$machine" != powerpc64le ]] || machine=ppc64le
 case "$platform" in
@@ -39,17 +55,13 @@ esac
 [[ "$(uname -s)" == Linux && "$(uname -m)" == "$machine" ]] || {
   echo "$platform requires a native ${platform%-linux} Linux host" >&2; exit 1;
 }
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
-# Ubuntu Server supplies Python; install it from the selected archive if absent.
-# Read only the two bootstrap strings before the full TOML reader is available.
+# Read only the bootstrap string before uv provides the full TOML reader.
 catalog="$REPO_ROOT/.config/tooling.toml"
 linux_section=linux
 [[ "$ci" == false ]] || linux_section=linux-ci
-bootstrap_value() { sed -n '/^\['"${2:-$linux_section}"'\]$/,/^\[/s/^'"$1"' = "\([^"]*\)"$/\1/p' "$catalog"; }
+bootstrap_value() { sed -n '/^\['"$linux_section"'\]$/,/^\[/s/^'"$1"' = "\([^"]*\)"$/\1/p' "$catalog"; }
 ubuntu="$(bootstrap_value ubuntu)"
-snapshot="$(bootstrap_value snapshot linux)"
 # shellcheck source=/dev/null
 source /etc/os-release
 [[ "$ID" == ubuntu && "$VERSION_ID" == "$ubuntu" ]] || {
@@ -57,89 +69,116 @@ source /etc/os-release
 }
 sudo_cmd=()
 if [[ "$(id -u)" != 0 ]]; then sudo_cmd=(sudo); fi
-# APT names cached index files after the mirror-list path, so the path is fixed.
-# APT 2.8.3's mirror method stalls on escaped spaces in the mirror-list URI; this path has none.
-mirror_list=/tmp/rscrypto-apt-mirrors
-apt_prefix=_tmp_rscrypto-apt-mirrors
-# Snapshot indexes and packages persist here so CI can restore them. APT downloads as
-# _apt, which must traverse this path; a mode-750 home would force unsandboxed root downloads.
-apt_state="${RSCRYPTO_APT_STATE:-/var/cache/rscrypto-apt}"
-apt_ready=false
 temporary="$(mktemp -d)"
-settle_apt_state() {
-  [[ "$apt_ready" == true ]] || return 0
-  # Drop packages the pinned snapshot no longer provides, then return ownership so the
-  # invoking user (and CI's cache) can read entries owned by root or APT's sandbox user.
-  "${apt[@]}" autoclean >/dev/null || true
-  if [[ "${#sudo_cmd[@]}" -gt 0 ]]; then
-    "${sudo_cmd[@]}" chown -R "$(id -u):$(id -g)" "$apt_state"
+trap 'rm -rf -- "$temporary"' EXIT
+# Ubuntu packages come from the guest's own archive; a baked image pins them.
+apt=("${sudo_cmd[@]}" env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o APT::Update::Error-Mode=any)
+apt_updated=false
+apt_update() {
+  [[ "$apt_updated" == true ]] || "${apt[@]}" update
+  apt_updated=true
+}
+# Minimal Ubuntu images may omit curl and the HTTPS trust store.
+if ! command -v curl >/dev/null || [[ ! -f /etc/ssl/certs/ca-certificates.crt ]]; then
+  apt_update
+  "${apt[@]}" install -y curl ca-certificates
+fi
+uv_directory="$("$SCRIPT_DIR/uv.sh" "$platform")"
+export PATH="$uv_directory:$PATH"
+# uv selects the pinned interpreter once; each helper then starts without uv's project check.
+python="$(uv run python -c 'import sys; print(sys.executable)')"
+catalog_get() { "$python" "$SCRIPT_DIR/catalog.py" get "$@"; }
+prefix="$HOME/.local/share/rscrypto-tooling"
+mkdir -p "$prefix"
+environment="$prefix/environment.sh"
+kernel_tools_dir=""
+host="$(catalog_get "$platform" rust-host)"
+channel="$("$python" "$SCRIPT_DIR/../lib/toolchain.py")"
+cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+export PATH="$cargo_bin:$PATH"
+binstall=false
+if catalog_get "$platform" assets cargo-binstall >/dev/null 2>&1; then binstall=true; fi
+tool_section="$platform"
+[[ "$ci" == false ]] || tool_section="$profile"
+mapfile -t cargo_tools < <(catalog_get "$tool_section" cargo)
+if [[ "$ci" == true && "$profile" == ci && "$platform" == x86_64-linux ]]; then
+  mapfile -t policy_tools < <(catalog_get ci-policy cargo)
+  cargo_tools+=("${policy_tools[@]}")
+fi
+
+# Archive tools retain their complete directory layouts, including LLVM and Zig libraries.
+# An installed archive is found by its receipt, without a download.
+install_archives() {
+  if [[ "$ci" == true ]]; then
+    : > "$temporary/archives"
+    if [[ "$binstall" == true && "$profile" != ci-cross-build && "$profile" != ci-cross-run ]]; then
+      directory="$("$python" "$SCRIPT_DIR/catalog.py" install-archive "$platform" cargo-binstall "$prefix")"
+      printf 'cargo-binstall\t%s\n' "$directory" > "$temporary/archives"
+    fi
+    if [[ "$profile" == ci-compat || "$profile" == ci-cross-build ]]; then
+      mapfile -t profile_assets < <(catalog_get "$profile" assets)
+      for asset in "${profile_assets[@]}"; do
+        directory="$("$python" "$SCRIPT_DIR/catalog.py" install-archive "$platform" "$asset" "$prefix")"
+        printf '%s\t%s\n' "$asset" "$directory" >> "$temporary/archives"
+      done
+    fi
+  else
+    "$python" "$SCRIPT_DIR/catalog.py" install-archives "$platform" "$prefix" > "$temporary/archives"
+  fi
+  tool_paths=("$uv_directory")
+  if [[ -n "$kernel_tools_dir" ]]; then tool_paths+=("$kernel_tools_dir"); fi
+  while IFS=$'\t' read -r name directory; do
+    if [[ -d "$directory/bin" ]]; then tool_paths+=("$directory/bin"); else tool_paths+=("$directory"); fi
+    if [[ "$name" == llvm ]]; then export LIBCLANG_PATH="$directory/lib"; fi
+  done < "$temporary/archives"
+  if [[ "$proof" == true && ( "$platform" == x86_64-linux || "$platform" == aarch64-linux ) ]]; then
+    export OPAMROOT="$prefix/opam"
+    tool_paths+=("$OPAMROOT/ct/bin")
+  fi
+  tool_paths+=("$cargo_bin")
+  path_prefix="$(IFS=:; echo "${tool_paths[*]}")"
+  export PATH="$path_prefix:$PATH"
+}
+# Persistent paths are shared by interactive shells and non-interactive Bash recipes.
+publish_environment() {
+  {
+    if [[ "$proof" == true && ( "$platform" == x86_64-linux || "$platform" == aarch64-linux ) ]]; then
+      printf 'eval "$(opam env --root=%q --switch=ct --shell=bash)"\n' "$OPAMROOT"
+    fi
+    printf "export PATH=%q:\"\$PATH\"\n" "$path_prefix"
+    if [[ -n "${LIBCLANG_PATH:-}" ]]; then printf 'export LIBCLANG_PATH=%q\n' "$LIBCLANG_PATH"; fi
+  } > "$environment"
+  if [[ "$ci" == false ]]; then
+    for startup in "$HOME/.profile" "$HOME/.bashrc"; do
+      line="source \"$environment\""
+      touch "$startup"
+      grep -Fxq "$line" "$startup" || printf '\n%s\n' "$line" >> "$startup"
+    done
   fi
 }
-# APT creates root-owned entries inside these paths.
-trap 'settle_apt_state; "${sudo_cmd[@]}" rm -rf -- "$temporary" "$mirror_list"' EXIT
-# Minimal Ubuntu images may omit the HTTPS trust store and Python. Bootstrap
-# those through Ubuntu's signed archive, then converge them to the snapshot too.
-if ! command -v python3 >/dev/null || [[ ! -f /etc/ssl/certs/ca-certificates.crt ]]; then
-  "${sudo_cmd[@]}" apt-get -o APT::Update::Error-Mode=any update
-  "${sudo_cmd[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y python3 ca-certificates
+# A complete run records the fingerprint of its inputs. While it matches, a converged
+# host or image republishes its environment for this operation and probes the pins.
+fingerprint=""
+if [[ "$profile" != ci-cross-build && "$profile" != ci-cross-run ]]; then
+  fingerprint="$("$python" "$SCRIPT_DIR/fingerprint.py" "$platform" "$operation")"
 fi
-codename="$(bootstrap_value codename)"
-mkdir -p "$apt_state" 2>/dev/null || "${sudo_cmd[@]}" install -d -m 755 -o "$(id -u)" -g "$(id -g)" "$apt_state"
-mkdir -p "$apt_state/lists/partial" "$apt_state/archives/partial"
-# CI saves this state only after this run has verified it and installed from it.
-rm -f "$apt_state/ready"
-chmod 755 "$temporary" "$apt_state/lists" "$apt_state/archives"
-# Only the snapshot may supply indexes. The live archive is a package-only
-# fallback; APT still checks each package against the signed snapshot index.
-package_mirror=https://ports.ubuntu.com/ubuntu-ports
-[[ "$platform" != x86_64-linux ]] || package_mirror=https://archive.ubuntu.com/ubuntu
-printf 'https://snapshot.ubuntu.com/ubuntu/%s\tpriority:1\n%s\tpriority:2 type:deb\n' \
-  "$snapshot" "$package_mirror" | "${sudo_cmd[@]}" tee "$mirror_list" >/dev/null
-"${sudo_cmd[@]}" chmod 644 "$mirror_list"
-# The archive remains signed; historical snapshots intentionally outlive Valid-Until.
-for suite in "$codename" "$codename-updates" "$codename-security"; do
-  printf 'deb [check-valid-until=no signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] mirror+file:%s %s main universe\n' "$mirror_list" "$suite"
-done > "$temporary/sources.list"
-# Dependencies must follow the snapshot even when a runner preinstalls newer packages.
-# Match signed release metadata: the mirror transport has no fixed network origin.
-cat > "$temporary/preferences" <<'PREFERENCES'
-Package: *
-Pin: release o=Ubuntu
-Pin-Priority: 1001
-PREFERENCES
-# Fetch only package indexes, store them uncompressed so their bytes match the signed
-# InRelease hashes, and keep downloaded packages for reuse.
-apt_options=(-o "Dir::Etc::sourcelist=$temporary/sources.list" -o Dir::Etc::sourceparts=-
-  -o "Dir::Etc::preferences=$temporary/preferences" -o Dir::Etc::preferencesparts=-
-  -o "Dir::State::lists=$apt_state/lists" -o "Dir::Cache::archives=$apt_state/archives"
-  -o APT::Update::Error-Mode=any -o Acquire::GzipIndexes=false -o Acquire::Languages=none
-  -o APT::Keep-Downloaded-Packages=true -o Binary::apt-get::APT::Keep-Downloaded-Packages=true
-  -o Acquire::IndexTargets::deb::CNF::DefaultEnabled=false
-  -o Acquire::IndexTargets::deb::Contents-deb::DefaultEnabled=false
-  -o Acquire::IndexTargets::deb::DEP-11::DefaultEnabled=false
-  -o Acquire::IndexTargets::deb::DEP-11-icons::DefaultEnabled=false
-  -o Acquire::IndexTargets::deb::DEP-11-icons-small::DefaultEnabled=false
-  -o Acquire::IndexTargets::deb::DEP-11-icons-hidpi::DefaultEnabled=false)
-apt=("${sudo_cmd[@]}" env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}")
-apt_ready=true
-apt_architecture="$(dpkg --print-architecture)"
-verify_apt_state() {
-  python3 "$SCRIPT_DIR/apt_state.py" verify "$apt_state/lists" "$apt_prefix" "$apt_architecture" "$linux_section"
-}
-# A restored state is used offline only after the same proof apt-get update performs.
-if ! verify_apt_state; then
-  "${sudo_cmd[@]}" find "$apt_state/lists" -mindepth 1 -maxdepth 1 ! -name partial -exec rm -rf -- {} +
-  "${apt[@]}" update
-  # Freshly fetched indexes must also match the catalog's pinned snapshot.
-  verify_apt_state
+if [[ -n "$fingerprint" && -f "$prefix/fingerprint.$operation" && "$(<"$prefix/fingerprint.$operation")" == "$fingerprint" ]]; then
+  install_archives
+  publish_environment
+  if RUSTUP_AUTO_INSTALL=0 rustc +"$channel" -vV >/dev/null 2>&1 \
+    && RUSTUP_TOOLCHAIN="$channel" "$python" "$SCRIPT_DIR/catalog.py" require rustup "${cargo_tools[@]}"; then
+    printf 'Tooling fingerprint %s matches; published %s.\n' "$fingerprint" "$environment"
+    exit 0
+  fi
+  echo "Tooling fingerprint $fingerprint matches, but a pinned tool is missing; converging." >&2
 fi
-catalog_get() { python3 "$SCRIPT_DIR/catalog.py" get "$@"; }
-python3 "$SCRIPT_DIR/catalog.py" validate
+
+"$python" "$SCRIPT_DIR/catalog.py" validate
 package_section="$linux_section"
 [[ "$profile" == ci || "$profile" == ci-bench || "$profile" == ci-package ]] || package_section="$profile"
 mapfile -t packages < <(catalog_get "$package_section" packages)
 if [[ "$profile" == ci-cross-build ]]; then
-  cross_prefix="$(python3 scripts/lib/cross_build.py "$cross_target")"
+  cross_prefix="$("$python" scripts/lib/cross_build.py "$cross_target")"
   if [[ "$cross_target" != x86_64-unknown-linux-gnu ]]; then
     cross_arch="${cross_prefix%-linux-gnu}"
     [[ "$cross_arch" != aarch64 ]] || cross_arch=arm64
@@ -159,37 +198,38 @@ if [[ "$proof" == true && ( "$platform" == x86_64-linux || "$platform" == aarch6
   mapfile -t proof_packages < <(catalog_get ci-ct-proof packages)
   packages+=("${proof_packages[@]}")
 fi
-# Exact candidates come from the selected snapshot, including repeat installations.
-pinned_packages=()
-for package in "${packages[@]}"; do
-  version="$(apt-cache "${apt_options[@]}" madison "$package" | awk 'NR == 1 {print $3}')"
-  [[ -n "$version" && "$version" != '(none)' ]] || { echo "missing Ubuntu package: $package" >&2; exit 1; }
-  pinned_packages+=("$package=$version")
-done
-install_options=(--allow-downgrades)
+install_options=()
 [[ "$ci" == false ]] || install_options+=(--no-install-recommends)
-"${apt[@]}" install -y "${install_options[@]}" "${pinned_packages[@]}"
-touch "$apt_state/ready"
+# A host that already holds every package needs no archive update at all.
+# shellcheck disable=SC2016 # dpkg-query expands its own format fields.
+installed="$(dpkg-query -W -f='${db:Status-Abbrev}${Package}\n' "${packages[@]}" 2>/dev/null || true)"
+if [[ "$(awk '$1 == "ii" { print $2 }' <<<"$installed" | sort -u | wc -l)" -eq "$(printf '%s\n' "${packages[@]}" | sort -u | wc -l)" ]]; then
+  echo "Ubuntu packages are installed."
+else
+  apt_update
+  "${apt[@]}" install -y "${install_options[@]}" "${packages[@]}"
+fi
 
 ensure_kernel_perf() {
   if perf --version >/dev/null 2>&1; then perf --version; return; fi
+  apt_update
   local package
   package="linux-tools-$(uname -r)"
   local version
-  version="$(apt-cache "${apt_options[@]}" madison "$package" | awk 'NR == 1 {print $3}')"
+  version="$(apt-cache madison "$package" | awk 'NR == 1 {print $3}')"
   if [[ -z "$version" || "$version" == '(none)' ]]; then
     if [[ "$platform" == riscv64-linux ]]; then
       install_riscv_perf
       return
     fi
     package="$(catalog_get ci-cross-run perf-package)"
-    version="$(apt-cache "${apt_options[@]}" madison "$package" | awk 'NR == 1 {print $3}')"
+    version="$(apt-cache madison "$package" | awk 'NR == 1 {print $3}')"
   fi
   [[ -n "$version" && "$version" != '(none)' ]] || {
-    echo "the selected Ubuntu snapshot provides no usable perf package" >&2
+    echo "the Ubuntu archive provides no usable perf package" >&2
     exit 1
   }
-  "${apt[@]}" install -y "${install_options[@]}" "$package=$version"
+  "${apt[@]}" install -y "${install_options[@]}" "$package"
   if perf --version >/dev/null 2>&1; then perf --version; return; fi
   local candidates=(/usr/lib/linux-tools/*/perf)
   [[ -x "${candidates[0]}" ]] || { echo "the installed $package package provides no perf binary" >&2; exit 1; }
@@ -220,20 +260,10 @@ install_riscv_perf() {
   }
   local source_packages=()
   mapfile -t source_packages < <(catalog_get ci-cross-run perf-source packages)
-  local pinned_source_packages=()
-  local package package_version
-  for package in "${source_packages[@]}"; do
-    package_version="$(apt-cache "${apt_options[@]}" madison "$package" | awk 'NR == 1 {print $3}')"
-    [[ -n "$package_version" && "$package_version" != '(none)' ]] || {
-      echo "missing Ubuntu package required to build perf: $package" >&2
-      exit 1
-    }
-    pinned_source_packages+=("$package=$package_version")
-  done
-  "${apt[@]}" install -y "${install_options[@]}" "${pinned_source_packages[@]}"
+  "${apt[@]}" install -y "${install_options[@]}" "${source_packages[@]}"
 
   local archive="$temporary/linux-$version.tar.xz"
-  python3 "$SCRIPT_DIR/catalog.py" download-entry ci-cross-run perf-source "$archive"
+  "$python" "$SCRIPT_DIR/catalog.py" download-entry ci-cross-run perf-source "$archive"
   tar -xf "$archive" -C "$temporary"
   # Backport Linux 4d631928 so perf reports functions instead of RISC-V mapping symbols.
   patch --batch --forward -d "$temporary/linux-$version" -p1 \
@@ -248,20 +278,16 @@ install_riscv_perf() {
   "$kernel_tools_dir/perf" --version
 }
 
-prefix="$HOME/.local/share/rscrypto-tooling"
-mkdir -p "$prefix"
-kernel_tools_dir=""
 if [[ "$profile" == ci-cross-run && "${RSCRYPTO_REQUIRE_PERF:-0}" == 1 ]]; then
   ensure_kernel_perf
   enable_ci_perf_access
 fi
-python3 "$SCRIPT_DIR/catalog.py" download "$platform" rustup "$temporary/rustup-init"
-chmod +x "$temporary/rustup-init"
-host="$(catalog_get "$platform" rust-host)"
-channel="$(python3 "$SCRIPT_DIR/../lib/toolchain.py")"
-"$temporary/rustup-init" -y --no-modify-path --default-host "$host" --default-toolchain none
-cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
-export PATH="$cargo_bin:$PATH"
+# rustup reports its own version; only a missing or different pin is installed.
+if ! "$python" "$SCRIPT_DIR/catalog.py" require rustup >/dev/null 2>&1; then
+  "$python" "$SCRIPT_DIR/catalog.py" download "$platform" rustup "$temporary/rustup-init"
+  chmod +x "$temporary/rustup-init"
+  "$temporary/rustup-init" -y --no-modify-path --default-host "$host" --default-toolchain none
+fi
 components=()
 if [[ "$ci" == false ]]; then mapfile -t components < <(catalog_get "$platform" components); fi
 component_args=()
@@ -274,71 +300,36 @@ elif [[ "$profile" == ci-cross-run ]]; then
   # and host identity used by the existing CT orchestrator.
   rustup toolchain install "$channel" --profile minimal
 elif [[ "$profile" == ci-compat ]]; then
-  python3 "$REPO_ROOT/scripts/check/compat.py" --install
+  "$python" "$REPO_ROOT/scripts/check/compat.py" --install
 elif [[ "$profile" == ci-package ]]; then
-  python3 "$REPO_ROOT/scripts/check/package.py" --install
+  "$python" "$REPO_ROOT/scripts/check/package.py" --install
 elif [[ "$profile" == ci-fuzz || "$profile" == ci-miri || "$profile" == ci-ct || "$profile" == ci-bench ]]; then
   mapfile -t components < <(catalog_get "$profile" components)
   component_args=()
   for component in "${components[@]}"; do component_args+=(--component "$component"); done
   rustup toolchain install "$channel" --profile minimal "${component_args[@]}"
 else
-  python3 "$SCRIPT_DIR/../lib/toolchain.py" --install "${component_args[@]}"
+  "$python" "$SCRIPT_DIR/../lib/toolchain.py" --install "${component_args[@]}"
   if [[ "$ci" == true && ( "$platform" == x86_64-linux || "$platform" == aarch64-linux ) ]]; then
     rustup target add --toolchain "$channel" "${host%-gnu}-musl"
   fi
 fi
 export RUSTUP_TOOLCHAIN="$channel"
-binstall=false
-if catalog_get "$platform" assets cargo-binstall >/dev/null 2>&1; then binstall=true; fi
-# Archive tools retain their complete directory layouts, including LLVM and Zig libraries.
-if [[ "$ci" == true ]]; then
-  : > "$temporary/archives"
-  if [[ "$binstall" == true && "$profile" != ci-cross-build && "$profile" != ci-cross-run ]]; then
-    directory="$(python3 "$SCRIPT_DIR/catalog.py" install-archive "$platform" cargo-binstall "$prefix")"
-    printf 'cargo-binstall\t%s\n' "$directory" > "$temporary/archives"
-  fi
-  if [[ "$profile" == ci-compat || "$profile" == ci-cross-build ]]; then
-    mapfile -t profile_assets < <(catalog_get "$profile" assets)
-    for asset in "${profile_assets[@]}"; do
-      directory="$(python3 "$SCRIPT_DIR/catalog.py" install-archive "$platform" "$asset" "$prefix")"
-      printf '%s\t%s\n' "$asset" "$directory" >> "$temporary/archives"
-    done
-  fi
-else
-  python3 "$SCRIPT_DIR/catalog.py" install-archives "$platform" "$prefix" > "$temporary/archives"
-fi
-tool_paths=()
-if [[ -n "$kernel_tools_dir" ]]; then tool_paths+=("$kernel_tools_dir"); fi
-while IFS=$'\t' read -r name directory; do
-  if [[ -d "$directory/bin" ]]; then tool_paths+=("$directory/bin"); else tool_paths+=("$directory"); fi
-  if [[ "$name" == llvm ]]; then export LIBCLANG_PATH="$directory/lib"; fi
-done < "$temporary/archives"
+install_archives
 if [[ "$proof" == true && ( "$platform" == x86_64-linux || "$platform" == aarch64-linux ) ]]; then
-  export OPAMROOT="$prefix/opam"
   opam init --bare --no-setup --no-opamrc --yes default "$(catalog_get ci-ct-proof opam-repository)"
   if ! opam switch list --short | grep -Fxq ct; then
     opam switch create ct "$(catalog_get ci-ct-proof compiler)" --yes --no-depexts
   fi
   mapfile -t proof_tools < <(catalog_get ci-ct-proof opam)
   opam install --switch ct --yes --no-depexts "${proof_tools[@]}"
-  tool_paths+=("$OPAMROOT/ct/bin")
-fi
-tool_paths+=("$cargo_bin")
-path_prefix="$(IFS=:; echo "${tool_paths[*]}")"
-export PATH="$path_prefix:$PATH"
-tool_section="$platform"
-[[ "$ci" == false ]] || tool_section="$profile"
-mapfile -t cargo_tools < <(catalog_get "$tool_section" cargo)
-if [[ "$ci" == true && "$profile" == ci && "$platform" == x86_64-linux ]]; then
-  mapfile -t policy_tools < <(catalog_get ci-policy cargo)
-  cargo_tools+=("${policy_tools[@]}")
 fi
 for tool in "${cargo_tools[@]}"; do
   version="$(catalog_get cargo "$tool")"
   # The cross-build profile installs every Cargo tool from its pinned archive.
   if [[ "$profile" == ci-cross-build ]]; then continue; fi
-  # Cargo's install registry verifies exact installed package versions on reruns.
+  # Each tool reports its own version; only a missing or different pin is installed.
+  if "$python" "$SCRIPT_DIR/catalog.py" require "$tool" >/dev/null 2>&1; then continue; fi
   if [[ "$binstall" == true ]]; then
     env -u RUSTC_WRAPPER -u CARGO_ENCODED_RUSTFLAGS \
       cargo +"$channel" binstall --locked --no-confirm --targets "$host" --targets "${host%-gnu}-musl" "$tool@$version"
@@ -362,31 +353,18 @@ if [[ "$ci" == false && "$platform" != aarch64-linux && "$platform" != x86_64-li
 fi
 
 if [[ "$profile" == ci-cross-build ]]; then
-  python3 "$SCRIPT_DIR/transfer.py" prepare "$cross_target" "target/$cross_target-tools.tar.gz"
+  "$python" "$SCRIPT_DIR/transfer.py" prepare "$cross_target" "target/$cross_target-tools.tar.gz"
 elif [[ "$profile" == ci-cross-run ]]; then
   tools_parent="$(mktemp -d "$prefix/runner-tools.XXXXXX")"
-  tools_bin="$(python3 "$SCRIPT_DIR/transfer.py" install "$host" "$tools_archive" "$tools_parent/verified")"
+  tools_bin="$("$python" "$SCRIPT_DIR/transfer.py" install "$host" "$tools_archive" "$tools_parent/verified")"
   path_prefix="$tools_bin:$path_prefix"
   export PATH="$path_prefix:$PATH"
 fi
 
-# Persistent paths are shared by interactive shells and non-interactive Bash recipes.
-environment="$prefix/environment.sh"
-{
-  if [[ "$proof" == true && ( "$platform" == x86_64-linux || "$platform" == aarch64-linux ) ]]; then
-    printf 'eval "$(opam env --root=%q --switch=ct --shell=bash)"\n' "$OPAMROOT"
-  fi
-  printf "export PATH=%q:\"\$PATH\"\n" "$path_prefix"
-  if [[ -n "${LIBCLANG_PATH:-}" ]]; then printf 'export LIBCLANG_PATH=%q\n' "$LIBCLANG_PATH"; fi
-} > "$environment"
-if [[ "$ci" == false ]]; then
-  for startup in "$HOME/.profile" "$HOME/.bashrc"; do
-    line="source \"$environment\""
-    touch "$startup"
-    grep -Fxq "$line" "$startup" || printf '\n%s\n' "$line" >> "$startup"
-  done
-fi
+publish_environment
 if [[ "$ci" == false && ( "$platform" == aarch64-linux || "$platform" == x86_64-linux ) ]]; then
+# A container shares its host's kernel, whose configuration belongs to that host.
+if [[ ! -f /.dockerenv && ! -f /run/.containerenv ]]; then
 # Linux profiling is available to the runner account, including non-root perf/samply.
 "${sudo_cmd[@]}" tee /etc/sysctl.d/99-rscrypto-profiling.conf >/dev/null <<'CONF'
 kernel.perf_event_paranoid = -1
@@ -394,6 +372,7 @@ CONF
 "${sudo_cmd[@]}" sysctl -p /etc/sysctl.d/99-rscrypto-profiling.conf
 # perf must match the running kernel; cloud kernels may differ from linux-generic.
 ensure_kernel_perf
+fi
 valgrind --version
 gungraun-runner --version
 samply --version
@@ -407,4 +386,5 @@ case "$profile" in
   ci-compat) wasmtime --version ;;
   ci-cross-run) just --version; cargo nextest --version ;;
 esac
+[[ -z "$fingerprint" ]] || printf '%s\n' "$fingerprint" > "$prefix/fingerprint.$operation"
 printf 'Installed %s tooling. Load with: source "%s"\n' "$platform" "$environment"
