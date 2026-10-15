@@ -247,6 +247,40 @@ def test_proof_failure_stops_timing():
     assert summary.read_text() == (root / "target/ct/x86_64-unknown-linux-gnu/release/ct-report.md").read_text()
 
 
+def test_artifact_failure_reports_child_output():
+  execute = full.run_command
+  for failed_step in ("ct-artifacts", "ct-validate-artifacts", "ct-zeroization-sentinel"):
+    with tempfile.TemporaryDirectory() as temporary:
+      root = Path(temporary)
+      def command(_root, logs, name, args, **kwargs):
+        if name == failed_step:
+          return execute(root, logs, name, [sys.executable, "-c",
+                         "import sys; print('artifact build context'); "
+                         "print('specific preparation error', file=sys.stderr); sys.exit(17)"])
+        return full.CommandResult(name, args, "pass", 0, "", "",
+                                  "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00", 0)
+      manifest = {"target": [{"name": "x86_64-unknown-linux-gnu", "binsec": "required"}]}
+      console = io.StringIO()
+      with redirect_stdout(console), redirect_stderr(console), \
+           patch.object(full, "__file__", str(root / "scripts/ct/full.py")), \
+           patch.object(full, "load_toml", return_value=manifest), \
+           patch.object(full, "host_target", return_value="x86_64-unknown-linux-gnu"), \
+           patch.object(full.subprocess, "check_output", return_value="fixture"), \
+           patch.object(full, "run_command", side_effect=command), \
+           patch.object(full, "run_dudect_cases") as timing, \
+           patch.dict(os.environ, GITHUB_STEP_SUMMARY=str(root / "summary.md")), \
+           patch.object(sys, "argv", ["full.py"]):
+        assert full.main() == 1
+        timing.assert_not_called()
+      assert f"stopping after failed gate-one step {failed_step}" in console.getvalue()
+      assert "artifact build context" in console.getvalue()
+      assert "specific preparation error" in console.getvalue()
+      report = json.loads((root / "target/ct/x86_64-unknown-linux-gnu/release/ct-report.json").read_text())
+      failure, = [step for step in report["steps"] if step["status"] == "fail"]
+      assert failure["name"] == failed_step and failure["returncode"] == 17
+      assert Path(failure["stderr"]).read_text() == "specific preparation error\n"
+
+
 def test_confirmation_policy():
   rationale = "fixture"
   assert dudect_confirmation_policy(
@@ -286,4 +320,5 @@ if __name__ == "__main__":
   test_utf8_child_process()
   test_windows_shell_entry_paths()
   test_proof_failure_stops_timing()
+  test_artifact_failure_reports_child_output()
   main()

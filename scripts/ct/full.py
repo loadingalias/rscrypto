@@ -143,6 +143,16 @@ def result_record(result: CommandResult) -> dict[str, Any]:
   }
 
 
+def print_command_logs(result: dict[str, Any]) -> None:
+  for stream in ("stdout", "stderr"):
+    value = result.get(stream)
+    if value:
+      path = Path(value)
+      if path.is_file():
+        print(f"ct-full: {result['name']} {stream}: {path}\n{path.read_text(errors='replace')[-16384:]}",
+              file=sys.stderr, flush=True)
+
+
 def skipped_step(name: str, reason: str) -> dict[str, Any]:
   timestamp = now_utc()
   return {
@@ -622,11 +632,7 @@ def run_dudect_cases(
     timestamp = now_utc()
     preparation = CommandResult("ct-dudect-import", [], "pass", 0, "", "", timestamp, timestamp, 0.0)
   if preparation.status != "pass":
-    for key, value in (("stdout", preparation.stdout_path), ("stderr", preparation.stderr_path)):
-      path = Path(value)
-      if value and path.is_file():
-        print(f"ct-full: {preparation.name} {key}: {path}\n{path.read_text(errors='replace')[-16384:]}",
-              file=sys.stderr, flush=True)
+    print_command_logs(result_record(preparation))
   fallback_samples = int(os.environ.get("RSCRYPTO_CT_DUDECT_SAMPLES", "20000"))
   sample_factor, review_fraction = confirmation
   for case in manifest_cases if preparation.status == "pass" else []:
@@ -661,11 +667,7 @@ def run_dudect_cases(
     if row["status"] not in ("pass", "diagnostic-fail"):
       if row.get("report_error"):
         print(row["report_error"], file=sys.stderr, flush=True)
-      for key in ("stdout", "stderr"):
-        path = Path(result[key])
-        if path.is_file():
-          print(f"ct-full: {key}: {path}\n{path.read_text(errors='replace')[-16384:]}",
-                file=sys.stderr, flush=True)
+      print_command_logs(result)
       break
 
   return dudect_run, preparation, dudect_cases
@@ -1348,6 +1350,7 @@ def main() -> int:
     for step in steps:
       if step["status"] != "pass":
         print(f"ct-full: stopping after failed gate-one step {step['name']}", file=sys.stderr)
+        print_command_logs(step)
     findings, diagnostics = build_findings(steps, [], [], [])
     asm_report = load_json_if_exists(out_dir / "asm-heuristics.json")
     report = {

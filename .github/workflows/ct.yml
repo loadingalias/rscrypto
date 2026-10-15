@@ -84,6 +84,14 @@ jobs:
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           just test-transfer
           just ct-full --target "$TARGET" --prepare-archive "target/$TARGET-ct.tar.gz"
+      - name: Retain failed CT preparation evidence
+        if: failure()
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
+        with:
+          name: ${{ matrix.target }}-ct-preparation-failure-${{ github.run_attempt }}
+          path: target/ct/${{ matrix.target }}/release/
+          if-no-files-found: warn
+          retention-days: 7
       - uses: ./.github/actions/cross-build/upload
         with:
           target: ${{ matrix.target }}

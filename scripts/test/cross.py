@@ -111,11 +111,16 @@ def execute(target, archive):
     results = {}
     for mode in MODES:
         internal = mode.startswith('internal-')
-        with (out / f'{mode}-nextest.log').open('w') as log:
-            subprocess.run(['cargo', 'nextest', 'run', '--archive-file', str(incoming / f'{mode}.tar.zst'),
+        log_path = out / f'{mode}-nextest.log'
+        with log_path.open('w') as log:
+            result = subprocess.run(['cargo', 'nextest', 'run', '--archive-file', str(incoming / f'{mode}.tar.zst'),
                             '--workspace-remap', str(ROOT), '--config-file', str(ROOT / '.config/nextest.toml'),
                             '--profile', 'cross-internal' if internal else 'cross',
-                            '--no-tests', 'fail'], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=True)
+                            '--no-tests', 'fail'], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=False)
+        if result.returncode:
+            print(f'{target} {mode} Nextest failed; full log: {log_path}\n'
+                  f'{log_path.read_text(errors="replace")[-16384:]}', file=sys.stderr, flush=True)
+            result.check_returncode()
         results[mode] = {'status': 'pass'}
         if internal:
             results[mode]['backend_evidence'] = validate_backend_evidence((out / f'{mode}-nextest.log').read_text(),

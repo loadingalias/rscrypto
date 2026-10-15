@@ -27,8 +27,8 @@ it requires a separate key-policy change and qualification.
 
 All six new bounded BINSEC proofs pass: KDK derivation, both IRPRF labels, and
 candidate/decoded-output selection at 2048 bits on AArch64 Linux and x86-64
-Linux with portable dispatch. The final linked assembly gate passes on all
-seven configured targets. It records 1,078 exact primitive/site classifications
+Linux with portable dispatch. The initial local linked assembly gate passed on all
+seven configured targets. It recorded 1,078 exact primitive/site classifications
 for 763 RSA selection findings and 14 shared SHA-256 caller classifications.
 Both RSA primitives now participate in the blocking selection gate. These
 bounded proofs and compiled-code reviews do not establish native timing.
@@ -38,9 +38,16 @@ proof binaries and configurations, review records, and functional logs. Common
 linked binaries, disassembly, relocations and provenance are retained under
 `ct-select-hardening-20261015/final-linked/`. Compiler: `nightly-2026-10-14`,
 rustc `822182db4`, LLVM 23.1.3. Both bundles remain local; off-machine retention
-is owed. The approved native Constant-Time run must qualify the new PKCS#1
-padding classes and OAEP valid-versus-invalid case before timing closure.
-No timing ran on the loaded Mac, and this campaign makes no performance claim.
+is owed. Native CI exposed differences between these local build contexts and
+GNU-linked artifacts. The follow-up repairs named import resolution and retained
+assembly-local labels, then re-reviews exact function identities in CI's build
+contexts. The instruction-identity policy and blocking dispositions are unchanged.
+
+Native workflow attempts, the new PKCS#1 padding classes and OAEP
+valid-versus-invalid results, exact CI build identities, and remaining qualification
+limits are recorded in `rsa-native-qualification-20261015/REPORT.md`. Failed
+attempts remain part of that record. No timing ran on the loaded Mac, and this
+campaign makes no performance claim.
 
 ## 2026-10-15: P-256 secret branch correction and selection hardening
 

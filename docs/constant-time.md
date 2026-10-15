@@ -41,6 +41,11 @@ instruction length, mnemonic, registers, condition, and exact destination symbol
 of the placement-dependent displacement bytes. Other bytes and operands remain exact, including
 data addresses and unresolved or indirect transfers. Different compiler or linker output can therefore
 require renewed review. The artifact hashes retain the exact binary identity.
+The retained Linux and Windows reviews use the workflow checkout path, pinned
+compiler, target flags, and native or GNU cross linker recorded with each artifact.
+A Mac/Zig build or another checkout path can change embedded source locations,
+data placement, and function hashes. Reclassify those exact artifacts before
+rebinding a waiver; the review does not grant a portable hash exemption.
 Waivers distinguish public operands from existing claim exclusions and allowed disclosures. The latter
 two require a reference to the existing `ct.toml` contract and do not classify the operand as public.
 An exclusion cites `primitive:<id>:notes`; an allowed disclosure cites
@@ -56,8 +61,14 @@ raw dump, bounded recovery command and output, and binary hash. A missing start
 after recovery fails evidence collection.
 Fixed x86 GOT calls require matching instruction bytes and dynamic relocations.
 POWER import-thunk resolution checks the complete supported instruction sequence,
-TOC slot and named relocation. Unresolved internal destinations fail the enforced
-call-closure check.
+TOC slot and named relocation. The s390x resolver checks the complete 14-byte
+`LARL %r1` / `LG %r1` / `BR %r1` sequence inside `.plt`, computes its signed
+halfword displacement, and requires a named `R_390_JMP_SLOT` at the resulting
+slot. Missing or mismatched relocation evidence rejects artifact collection.
+Exact decoder-provided PLT names take precedence over broad inferred symbol
+ranges. Recognized local labels inside a mapped function remain part of that
+function's body, so they cannot hide later instructions from review. Unresolved
+internal destinations fail the enforced call-closure check.
 
 Build and validate the local evidence artifacts:
 

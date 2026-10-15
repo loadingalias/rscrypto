@@ -2,6 +2,7 @@
 """Reject mixed-source, corrupt, incomplete, and unsafe transferred evidence."""
 
 import io
+from contextlib import redirect_stderr
 import importlib.util
 import json
 import os
@@ -404,6 +405,39 @@ class NativeArchive(unittest.TestCase):
                      patch('platform.system', return_value='Linux'), patch('platform.machine', return_value='riscv64'):
                     with self.assertRaisesRegex(ValueError, 'suites|suite'):
                         cross.execute(TARGET, archive)
+
+
+class ExecutionDiagnostics(unittest.TestCase):
+    def test_failed_nextest_reports_output_and_stops_before_later_suites(self):
+        execute = subprocess.run
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            modes = {mode: {'internal': mode.startswith('internal-'),
+                           'encoded_rustflags': '--cfg\x1frscrypto_internal' if mode.startswith('internal-') else ''}
+                     for mode in cross.MODES}
+            manifest = {'metadata': {'nextest': 'fixture', 'modes': modes}}
+            console = io.StringIO()
+
+            def fail_command(command, **kwargs):
+                self.assertIn('native.tar.zst', command[command.index('--archive-file') + 1])
+                return execute([sys.executable, '-c',
+                                "import sys; print('specific test failed', file=sys.stderr); sys.exit(100)"], **kwargs)
+
+            with patch.object(cross, 'ROOT', root), patch.object(cross, 'require_host'), \
+                 patch.object(cross, 'environment'), patch.object(cross, 'nextest_version', return_value='fixture'), \
+                 patch.object(cross, 'nextest_identity', return_value='fixture'), \
+                 patch.object(cross.bundle, 'unpack'), patch.object(cross.bundle, 'verify', return_value=manifest), \
+                 patch.object(cross.subprocess, 'run', side_effect=fail_command) as run, redirect_stderr(console):
+                with self.assertRaises(subprocess.CalledProcessError) as raised:
+                    cross.execute(TARGET, root / 'tests.tar.xz')
+            self.assertEqual(raised.exception.returncode, 100)
+            self.assertEqual(run.call_count, 1)
+            self.assertIn('specific test failed', console.getvalue())
+            self.assertIn(f'{TARGET} native Nextest failed; full log:', console.getvalue())
+            logs = list(root.glob('target/cross-results/*/*/native-nextest.log'))
+            self.assertEqual(len(logs), 1)
+            self.assertEqual(logs[0].read_text(), 'specific test failed\n')
+            self.assertFalse(list(root.rglob('summary.json')))
 
 
 if __name__ == '__main__':

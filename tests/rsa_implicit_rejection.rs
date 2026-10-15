@@ -9,6 +9,7 @@
 extern crate alloc;
 
 use alloc::collections::BTreeSet;
+use core::ops::Range;
 use std::collections::HashMap;
 
 use rscrypto::{
@@ -189,8 +190,7 @@ fn random_ciphertexts_match_openssl_implicit_rejection() {
   assert!(lengths.len() > 64, "synthetic lengths must vary: {lengths:?}");
 }
 
-#[test]
-fn wycheproof_padding_failures_match_openssl_and_format_failures_stay_errors() {
+fn check_wycheproof(suite_index: usize, group_range: Range<usize>, counts: (usize, usize, usize)) {
   let oracle: Value = serde_json::from_str(OPENSSL).expect("OpenSSL fixture must parse");
   let expected: HashMap<(&str, u64), Vec<u8>> = oracle["wycheproof"]
     .as_array()
@@ -206,46 +206,119 @@ fn wycheproof_padding_failures_match_openssl_and_format_failures_stay_errors() {
       )
     })
     .collect();
-  let (mut padding, mut format) = (0usize, 0usize);
-  for (file, json) in WYCHEPROOF {
-    let suite: Value = serde_json::from_str(json).expect("Wycheproof fixture must parse");
-    for group in suite["testGroups"].as_array().expect("groups") {
-      let key = import(&hex(&group["privateKeyPkcs8"]));
-      for test in group["tests"].as_array().expect("tests") {
-        let flags: Vec<&str> = test["flags"]
-          .as_array()
-          .expect("flags")
-          .iter()
-          .map(|flag| flag.as_str().expect("flag"))
-          .collect();
-        let id = test["tcId"].as_u64().expect("tcId");
-        decrypt_everywhere(&key, &hex(&test["ct"]), |result| {
-          if flags.contains(&"InvalidPkcs1Padding") {
-            assert_eq!(
-              result.expect("a padding failure must decrypt to the synthetic message"),
-              expected[&(file, id)],
-              "{file} tcId {id}"
-            );
-            padding += 1;
-          } else if flags.contains(&"InvalidCiphertextFormat") {
-            assert!(
-              matches!(
-                result,
-                Err(RsaPrivateOpError::InvalidLength | RsaPrivateOpError::RepresentativeOutOfRange)
-              ),
-              "{file} tcId {id}: {result:?}"
-            );
-            format += 1;
-          } else {
-            assert_eq!(
-              result.expect("a valid ciphertext must decrypt"),
-              hex(&test["msg"]),
-              "{file} tcId {id}"
-            );
-          }
-        });
-      }
+  assert_eq!(
+    expected.len(),
+    59,
+    "every OpenSSL padding-failure expectation must remain present"
+  );
+  let (file, json) = WYCHEPROOF[suite_index];
+  let suite: Value = serde_json::from_str(json).expect("Wycheproof fixture must parse");
+  let groups = suite["testGroups"].as_array().expect("groups");
+  assert_eq!(groups.len(), 33);
+  assert_eq!(suite["numberOfTests"].as_u64(), Some(67));
+  assert_eq!(
+    groups
+      .iter()
+      .map(|group| group["tests"].as_array().expect("tests").len())
+      .sum::<usize>(),
+    67
+  );
+  let (mut valid, mut padding, mut format) = (0usize, 0usize, 0usize);
+  for group in groups.get(group_range).expect("complete Wycheproof group range") {
+    let key = import(&hex(&group["privateKeyPkcs8"]));
+    for test in group["tests"].as_array().expect("tests") {
+      let flags: Vec<&str> = test["flags"]
+        .as_array()
+        .expect("flags")
+        .iter()
+        .map(|flag| flag.as_str().expect("flag"))
+        .collect();
+      let id = test["tcId"].as_u64().expect("tcId");
+      decrypt_everywhere(&key, &hex(&test["ct"]), |result| {
+        if flags.contains(&"InvalidPkcs1Padding") {
+          assert_eq!(
+            result.expect("a padding failure must decrypt to the synthetic message"),
+            expected[&(file, id)],
+            "{file} tcId {id}"
+          );
+          padding = padding.strict_add(1);
+        } else if flags.contains(&"InvalidCiphertextFormat") {
+          assert!(
+            matches!(
+              result,
+              Err(RsaPrivateOpError::InvalidLength | RsaPrivateOpError::RepresentativeOutOfRange)
+            ),
+            "{file} tcId {id}: {result:?}"
+          );
+          format = format.strict_add(1);
+        } else {
+          valid = valid.strict_add(1);
+          assert_eq!(
+            result.expect("a valid ciphertext must decrypt"),
+            hex(&test["msg"]),
+            "{file} tcId {id}"
+          );
+        }
+      });
     }
   }
-  assert_eq!((padding, format), (expected.len(), 18));
+  assert_eq!((valid, padding, format), counts, "{file}: every selected case must run");
+}
+
+// Keep the independent oracle checks within the existing per-test deadline on
+// native RISC-V. These disjoint group ranges cover all 201 cases and all 99 keys;
+// every selected ciphertext still exercises every decryption entry point.
+#[test]
+fn wycheproof_2048_matches_openssl_and_preserves_format_errors() {
+  check_wycheproof(0, 0..33, (42, 19, 6));
+}
+
+#[test]
+fn wycheproof_3072_matches_openssl_and_preserves_format_errors() {
+  check_wycheproof(1, 0..33, (41, 20, 6));
+}
+
+#[test]
+fn wycheproof_4096_cases_1_to_35_match_openssl_and_preserve_format_errors() {
+  check_wycheproof(2, 0..1, (10, 19, 6));
+}
+
+#[test]
+fn wycheproof_4096_cases_36_to_39_match_expected_messages() {
+  check_wycheproof(2, 1..5, (4, 0, 0));
+}
+
+#[test]
+fn wycheproof_4096_cases_40_to_43_match_expected_messages() {
+  check_wycheproof(2, 5..9, (4, 0, 0));
+}
+
+#[test]
+fn wycheproof_4096_cases_44_to_47_match_expected_messages() {
+  check_wycheproof(2, 9..13, (4, 0, 0));
+}
+
+#[test]
+fn wycheproof_4096_cases_48_to_51_match_expected_messages() {
+  check_wycheproof(2, 13..17, (4, 0, 0));
+}
+
+#[test]
+fn wycheproof_4096_cases_52_to_55_match_expected_messages() {
+  check_wycheproof(2, 17..21, (4, 0, 0));
+}
+
+#[test]
+fn wycheproof_4096_cases_56_to_59_match_openssl_and_expected_messages() {
+  check_wycheproof(2, 21..25, (3, 1, 0));
+}
+
+#[test]
+fn wycheproof_4096_cases_60_to_63_match_expected_messages() {
+  check_wycheproof(2, 25..29, (4, 0, 0));
+}
+
+#[test]
+fn wycheproof_4096_cases_64_to_67_match_expected_messages() {
+  check_wycheproof(2, 29..33, (4, 0, 0));
 }

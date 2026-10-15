@@ -124,6 +124,23 @@ class CrossWorkflow(unittest.TestCase):
                 if suite in ('tests', 'ct'):
                     self.assertIn('just test-transfer', prepare['run'])
 
+    def test_ct_preparation_failure_keeps_diagnostics_out_of_transfer(self):
+        jobs = read_yaml('.github/workflows/ct.yml')['jobs']
+        steps = jobs['cross-build']['steps']
+        prepare, = [step for step in steps if 'just ct-full --target' in step.get('run', '')]
+        failure, = [step for step in steps if step.get('name') == 'Retain failed CT preparation evidence']
+        self.assertLess(steps.index(prepare), steps.index(failure))
+        self.assertEqual(failure['if'], 'failure()')
+        self.assertNotIn('continue-on-error', prepare)
+        self.assertEqual(failure['with']['path'], 'target/ct/${{ matrix.target }}/release/')
+        self.assertEqual(failure['with']['name'],
+                         '${{ matrix.target }}-ct-preparation-failure-${{ github.run_attempt }}')
+        download, = [step for step in jobs['ct']['steps']
+                     if step.get('uses', '').startswith('actions/download-artifact@')]
+        self.assertNotEqual(failure['with']['name'], download['with']['name'])
+        transfer, = [step for step in steps if step.get('uses') == ACTION + 'upload']
+        self.assertNotIn('if', transfer)  # Failed preparation cannot produce a qualified transfer.
+
     def test_riscv_executes_its_callers_artifacts_in_a_dispatched_run_releases_require(self):
         child = read_yaml('.github/workflows/riscv.yml')
         execute = child['jobs']['execute']
