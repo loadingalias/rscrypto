@@ -28,6 +28,9 @@ fn fiat_p384_mulx_u64(arg1: u64, arg2: u64) -> (u64, u64) {
 #[inline(always)]
 fn fiat_p384_cmovznz_u64(choice: u8, zero: u64, nonzero: u64) -> u64 {
   let mask = u64::from(choice).wrapping_neg();
+  #[cfg(target_arch = "s390x")]
+  // SECURITY: IBM Z codegen otherwise branches on the secret reduction borrow.
+  let mask = core::hint::black_box(mask);
   (mask & nonzero) | (!mask & zero)
 }
 

@@ -643,6 +643,26 @@ pub(super) fn encapsulate_prepared_1024(
   (ciphertext, shared)
 }
 
+/// Return K' when the re-encryption matched and the implicit-rejection key
+/// otherwise (FIPS 203 ML-KEM.Decaps_internal, steps 9-10).
+#[inline(always)]
+fn select_shared_secret(
+  k_prime: &[u8; SHARED_SECRET_BYTES],
+  k_bar: &[u8; SHARED_SECRET_BYTES],
+  match_mask: u8,
+) -> [u8; SHARED_SECRET_BYTES] {
+  // SECURITY: riscv64 LLVM lowered this masked selection to a branch on the
+  // ciphertext comparison. Keep the mask opaque so the selection stays bitwise;
+  // binary CT evidence is still required.
+  let match_mask = core::hint::black_box(match_mask);
+  let reject_mask = !match_mask;
+  let mut shared = [0u8; SHARED_SECRET_BYTES];
+  for ((out, &accepted), &rejected) in shared.iter_mut().zip(k_prime).zip(k_bar) {
+    *out = (accepted & match_mask) | (rejected & reject_mask);
+  }
+  shared
+}
+
 pub(super) fn decapsulate_prepared_512(
   dk: &[u8; 1632],
   prepared: &PreparedDecapsulationArithmetic<2>,
@@ -666,12 +686,7 @@ pub(super) fn decapsulate_prepared_512(
 
   let mut k_bar = j(z, c);
   let mut match_mask = pke_encrypt_prepared_512_compare(&prepared.encapsulation, &m_prime, &r_prime, c);
-  let reject_mask = !match_mask;
-
-  let mut shared = [0u8; SHARED_SECRET_BYTES];
-  for i in 0..SHARED_SECRET_BYTES {
-    shared[i] = (k_prime[i] & match_mask) | (k_bar[i] & reject_mask);
-  }
+  let shared = select_shared_secret(&k_prime, &k_bar, match_mask);
 
   ct::zeroize(&mut m_prime);
   ct::zeroize(&mut input);
@@ -707,12 +722,7 @@ pub(super) fn decapsulate_prepared_768(
 
   let mut k_bar = j(z, c);
   let mut match_mask = pke_encrypt_prepared_768_compare(&prepared.encapsulation, &m_prime, &r_prime, c);
-  let reject_mask = !match_mask;
-
-  let mut shared = [0u8; SHARED_SECRET_BYTES];
-  for i in 0..SHARED_SECRET_BYTES {
-    shared[i] = (k_prime[i] & match_mask) | (k_bar[i] & reject_mask);
-  }
+  let shared = select_shared_secret(&k_prime, &k_bar, match_mask);
 
   ct::zeroize(&mut m_prime);
   ct::zeroize(&mut input);
@@ -748,12 +758,7 @@ pub(super) fn decapsulate_prepared_1024(
 
   let mut k_bar = j(z, c);
   let mut match_mask = pke_encrypt_prepared_1024_compare(&prepared.encapsulation, &m_prime, &r_prime, c);
-  let reject_mask = !match_mask;
-
-  let mut shared = [0u8; SHARED_SECRET_BYTES];
-  for i in 0..SHARED_SECRET_BYTES {
-    shared[i] = (k_prime[i] & match_mask) | (k_bar[i] & reject_mask);
-  }
+  let shared = select_shared_secret(&k_prime, &k_bar, match_mask);
 
   ct::zeroize(&mut m_prime);
   ct::zeroize(&mut input);
@@ -806,12 +811,7 @@ pub(super) fn decapsulate<
     ek, &m_prime, &r_prime,
   );
   let mut match_mask = ct_eq_mask(c, &c_prime);
-  let reject_mask = !match_mask;
-
-  let mut shared = [0u8; SHARED_SECRET_BYTES];
-  for i in 0..SHARED_SECRET_BYTES {
-    shared[i] = (k_prime[i] & match_mask) | (k_bar[i] & reject_mask);
-  }
+  let shared = select_shared_secret(&k_prime, &k_bar, match_mask);
 
   ct::zeroize(&mut m_prime);
   ct::zeroize(&mut input);

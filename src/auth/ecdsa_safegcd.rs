@@ -231,14 +231,24 @@ fn divstep(state: &mut DivstepState, modulus: &[u32; MAX_DIGITS], digits: usize)
 }
 
 #[inline(always)]
-fn select_word(lhs: u32, rhs: u32, choice: u32) -> u32 {
+fn selection_mask(choice: u32) -> u32 {
   let mask = 0u32.wrapping_sub(choice & 1);
+  #[cfg(target_arch = "s390x")]
+  // SECURITY: Keep the divstep choices opaque. IBM Z codegen otherwise
+  // replaces digit selection with secret-dependent branches and addresses.
+  let mask = core::hint::black_box(mask);
+  mask
+}
+
+#[inline(always)]
+fn select_word(lhs: u32, rhs: u32, choice: u32) -> u32 {
+  let mask = selection_mask(choice);
   lhs ^ (mask & (lhs ^ rhs))
 }
 
 #[inline(always)]
 fn select_digits<const N: usize>(out: &mut [u32; N], lhs: &[u32; N], rhs: &[u32; N], choice: u32, digits: usize) {
-  let mask = 0u32.wrapping_sub(choice & 1);
+  let mask = selection_mask(choice);
   for i in 0..digits {
     out[i] = lhs[i] ^ (mask & (lhs[i] ^ rhs[i]));
   }
@@ -246,7 +256,7 @@ fn select_digits<const N: usize>(out: &mut [u32; N], lhs: &[u32; N], rhs: &[u32;
 
 #[inline(always)]
 fn select_digits_in_place<const N: usize>(out: &mut [u32; N], lhs: &[u32; N], choice: u32, digits: usize) {
-  let mask = 0u32.wrapping_sub(choice & 1);
+  let mask = selection_mask(choice);
   for i in 0..digits {
     out[i] = lhs[i] ^ (mask & (lhs[i] ^ out[i]));
   }
@@ -264,7 +274,7 @@ fn twos_complement<const N: usize>(out: &mut [u32; N], value: &[u32; N], digits:
 
 #[inline(always)]
 fn add_masked_in_place<const N: usize>(acc: &mut [u32; N], rhs: &[u32; N], choice: u32, digits: usize) {
-  let mask = 0u32.wrapping_sub(choice & 1);
+  let mask = selection_mask(choice);
   let mut carry = 0u64;
   for i in 0..digits {
     let sum = u64::from(acc[i]).strict_add(u64::from(rhs[i] & mask)).strict_add(carry);
@@ -341,7 +351,7 @@ fn sub_mod(
 ) {
   let mut diff = [0u32; MAX_DIGITS];
   let borrow = sub_digits(&mut diff, lhs, rhs, digits);
-  let mask = 0u32.wrapping_sub(borrow);
+  let mask = selection_mask(borrow);
   let mut carry = 0u64;
   for i in 0..digits {
     let word = u64::from(diff[i])

@@ -29,6 +29,36 @@ Bounded secret arithmetic therefore uses `wrapping_*`, with the bound written at
 as the Curve25519 field and scalar code does.
 Evidence for the release harness does not cover a downstream binary that is compiled differently.
 
+LLVM can also turn a masked selection back into a branch on the mask.
+The binary inspection reports a conditional branch whose two paths rejoin after straight-line code
+as `select_branch`, the shape of that lowering.
+For the primitives under `[asm_select_branch]` in `ct.toml`, an unclassified `select_branch` fails the gate.
+An `asm_waiver` must bind each reviewed condition to its target, primitive, artifact, instruction locator,
+and complete function hash. A count-only `asm_public_operand` rule cannot exempt a branch:
+another instruction in the same function could depend on a secret while staying within that count.
+Instruction identities use function-relative positions. Resolved direct transfers retain their
+instruction length, mnemonic, registers, condition, and exact destination symbol and offset instead
+of the placement-dependent displacement bytes. Other bytes and operands remain exact, including
+data addresses and unresolved or indirect transfers. Different compiler or linker output can therefore
+require renewed review. The artifact hashes retain the exact binary identity.
+Waivers distinguish public operands from existing claim exclusions and allowed disclosures. The latter
+two require a reference to the existing `ct.toml` contract and do not classify the operand as public.
+An exclusion cites `primitive:<id>:notes`; an allowed disclosure cites
+`primitive:<id>:may_leak:<value>`, where the value must already belong to that primitive.
+Other primitives report the shape for review.
+If an enforced primitive shares a finding with other primitives, every affected
+primitive needs a classification before the shared finding is accepted.
+
+Linked disassembly must include every mapped function start. If stripped inline
+tables make x86 decoding cross a function boundary, the artifact collector restarts
+the matching decoder at that mapped address on the original binary. It retains the
+raw dump, bounded recovery command and output, and binary hash. A missing start
+after recovery fails evidence collection.
+Fixed x86 GOT calls require matching instruction bytes and dynamic relocations.
+POWER import-thunk resolution checks the complete supported instruction sequence,
+TOC slot and named relocation. Unresolved internal destinations fail the enforced
+call-closure check.
+
 Build and validate the local evidence artifacts:
 
 ```bash

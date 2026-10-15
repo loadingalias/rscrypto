@@ -377,7 +377,7 @@ impl Drop for P256SharedSecret {
   }
 }
 
-/// Return the production P-256 secret-window selection as Montgomery limbs.
+/// Return the production P-256 fixed-base comb selection as Montgomery limbs.
 #[cfg(all(
   rscrypto_internal,
   feature = "diag",
@@ -393,6 +393,25 @@ impl Drop for P256SharedSecret {
 #[doc(hidden)]
 pub fn diag_p256_ecdh_select_window_limb_digest(digit: u8) -> [u64; 8] {
   p256_portable::diag_select_window_limb_digest(digit)
+}
+
+/// Return the production P-256 signed agreement-window selection: projective
+/// Montgomery limbs, then the infinity mask.
+#[cfg(all(
+  rscrypto_internal,
+  feature = "diag",
+  any(
+    feature = "portable-only",
+    miri,
+    not(any(
+      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+      all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+    ))
+  )
+))]
+#[doc(hidden)]
+pub fn diag_p256_ecdh_select_signed_window_limb_digest(digit: u8) -> [u64; 13] {
+  p256_portable::diag_select_signed_window_limb_digest(digit)
 }
 
 /// Chain portable P-256 Montgomery multiplications for operand-timing probes.

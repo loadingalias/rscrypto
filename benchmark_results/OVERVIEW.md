@@ -6,6 +6,45 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-15: P-256 secret branch correction and selection hardening
+
+The RISC-V agreement failure came from a secret-digit branch in
+`Projective::select_signed`: LLVM protected the coordinate selections but branched
+on the separately selected infinity word. The correction at `543fa738` passed all
+six native rows of [Constant-Time 38768343193](https://github.com/loadingalias/rscrypto/actions/runs/38768343193).
+RISC-V agreement measured |t| 2.60 at 20,000 samples, below the unchanged 10.0
+threshold and 7.5 confirmation-review line. This closes that source snapshot's
+confirmed failure; it does not qualify the later changes below.
+
+The follow-up adds a blocking P-256 `select_branch` check and a separate BINSEC
+kernel for the production signed projective selector, including negation and
+infinity. The old proof covered the fixed-base affine comb selector. The new
+AArch64 Linux bounded proof and its functional sign/magnitude/zero test pass.
+x86 BINSEC is unknown because version 0.11.1 does not interpret `movmskps`.
+
+A bounded variant review corrected ML-KEM implicit rejection on RISC-V, ECDSA
+masked arithmetic on RISC-V and IBM Z, and Curve25519 normalization on those
+targets. Curve25519's zero predicate now reads every limb. IBM Z P-256 also
+needed opaque signed-recoding and point-identity masks. Exact compiled-code
+review rejected an incomplete ECDSA correction that introduced new carry-choice
+branches. The final reviewed ECDSA object and Curve25519 artifacts remove the
+confirmed sites. These are code-generation observations, not native timing passes.
+
+The gate now retains P-256's final linked roots and resolves architecture-specific
+calls, assembly symbols and compiler-outlined helpers. A reviewed public branch
+requires an exact artifact, instruction and function identity; count-only
+exemptions are rejected. Existing claim exclusions and allowed disclosures have
+separate classifications tied to their existing contracts. Other unclassified
+primitive findings remain a review backlog.
+
+Records: `ct-p256-ecdh-riscv-20261013T155720Z/REPORT.md` and
+`ct-select-hardening-20261015/REPORT.md`, with source patches, raw artifacts,
+positive controls and command logs. Compiler: `nightly-2026-10-14`, rustc
+`822182db4`, LLVM 23.1.3. The hardening record tracks final combined-checkout
+functional results and new native CT qualification, which remains pending.
+No timing ran on the development Mac. Both bundles remain local; off-machine
+retention is still owed. This campaign makes no performance claim.
+
 ## 2026-10-12: ECDSA verification generator term from the signing comb
 
 **Decision:** accepted. ECDSA verification adds `u1·G` from the existing width-7 fixed-base

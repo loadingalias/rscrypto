@@ -198,6 +198,11 @@ impl FieldElement {
     let reduced = carry_propagate(carry_propagate(self.0));
     let candidate = subtract_modulus(reduced);
     let use_candidate = u64::MAX.wrapping_mul(u64::from(candidate.1));
+    // SECURITY: LLVM otherwise lowers this secret reduction mask to branches
+    // on RISC-V and IBM Z. Keep the mask opaque; target-specific binary CT
+    // evidence is still required because `black_box` is not a CT guarantee.
+    #[cfg(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+    let use_candidate = core::hint::black_box(use_candidate);
     let keep_reduced = !use_candidate;
     let [r0, r1, r2, r3, r4] = reduced;
     let [c0, c1, c2, c3, c4] = candidate.0;
@@ -280,7 +285,9 @@ impl FieldElement {
   #[must_use]
   #[cfg(any(feature = "ed25519", feature = "x25519"))]
   pub(crate) fn is_zero(&self) -> bool {
-    self.normalize().0.iter().all(|&limb| limb == 0)
+    // SECURITY: Inspect all limbs; `Iterator::all` can return after the first
+    // nonzero secret limb even when the complete field element is nonzero.
+    self.normalize().0.into_iter().fold(0u64, |acc, limb| acc | limb) == 0
   }
 
   /// Branchless conditional swap at the Rust source level.

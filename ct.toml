@@ -169,6 +169,12 @@ max_count = 1
 source = "src/auth/rsa.rs:10040"
 rationale = "LLVM's scalable-vector loop partition divides the public modulus limb width by the target's public vector length. No private value feeds the operands."
 
+# Select-shaped branches block the gate for these primitives. Reviewed public
+# sites require exact asm_waiver identities; count-only rules cannot exempt them.
+# Other primitives retain needs-binsec findings pending complete classification.
+[asm_select_branch]
+enforced_primitives = ["kx.p256_ecdh"]
+
 [operation_inventory]
 schema_version = 1
 authority = "ct.toml"
@@ -2332,8 +2338,8 @@ id = "kx.p256_ecdh.agreement"
 primitive = "kx.p256_ecdh"
 variant = "Agreement"
 dudect = ["p256_ecdh_agree_fixed_vs_random_scalar"]
-binsec = ["kx.p256_ecdh.window_select.portable.all"]
-notes = "DudeCT covers the complete production operation. The BINSEC kernel bounds the fixed-base comb selector only; portable agreement selects from its peer-derived projective table with `Projective::select_signed`, which has no BINSEC kernel and relies on DudeCT and disassembly review."
+binsec = ["kx.p256_ecdh.window_select.portable.all", "kx.p256_ecdh.signed_window_select.portable.all"]
+notes = "DudeCT covers the complete production operation. One BINSEC kernel bounds the fixed-base comb selector; the other bounds `Projective::select_signed`, which portable agreement uses over its peer-derived projective table."
 
 [[evidence_unit]]
 id = "kx.p384_ecdh.public_derivation"
@@ -2919,7 +2925,22 @@ sse_depth = 20000
 secrets = [{ name = "CT_BINSEC_P256_ECDH_DIGIT", kind = "global", bytes = 1 }]
 public = []
 assumptions = []
-notes = "All-target bounded proof for the production 16-entry affine selector used by fixed-base public derivation and arbitrary-point agreement. Complete operations remain covered by linked artifacts, disassembly heuristics, and DudeCT because whole scalar multiplication exceeds BINSEC's practical scope."
+notes = "All-target bounded proof for the production affine comb selector used by fixed-base public derivation. Portable arbitrary-point agreement uses the separate signed projective selector. Complete operations remain covered by linked artifacts, disassembly heuristics, and DudeCT because whole scalar multiplication exceeds BINSEC's practical scope."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "kx.p256_ecdh.signed_window_select.portable.all"
+primitive = "kx.p256_ecdh"
+symbol = "ct_binsec_p256_ecdh_select_signed_window"
+tier = "A"
+required = true
+targets = ["aarch64-unknown-linux-gnu"]
+rustflags = []
+sse_depth = 20000
+secrets = [{ name = "CT_BINSEC_P256_ECDH_SIGNED_DIGIT", kind = "global", bytes = 1 }]
+public = []
+assumptions = []
+notes = "Bounded proof for the production 16-entry signed projective selector, including conditional negation and the digit-zero infinity mask, used by portable arbitrary-point agreement. The harness table holds public limb patterns; the proof concerns selector data flow only. AArch64 only: the x86-64 build compares the digit with every entry through SSE `movmskps`, which BINSEC 0.11.1 does not interpret. RISC-V, POWER, and IBM Z run this selector in production; the blocking `select_branch` heuristic checks their binaries."
 claim = "ct-intended"
 
 [[binsec_kernel]]
@@ -6030,3 +6051,412 @@ permitted_leakage = ["public shapes", "opaque success or failure", "caller-autho
 claim = "best-effort"
 evidence = ["primitive:signature.slhdsa"]
 limitation = "Registration only. Key generation, signing, and secret-key import have no CT harness, DudeCT case, or binary review; target qualification is open. Secret-key import regenerates the public root, so its cost equals key generation."
+
+# Exact P-256 public-condition reviews; code changes require renewed review.
+[[asm_waiver]]
+target = "riscv64gc-unknown-linux-gnu"
+primitive = "kx.p256_ecdh"
+symbol = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman+0x7e6:select_branch:4adc6fd1b4a0a89e"
+function_sha256 = "81198dfe5bfe60e98953b44e40c791b66aad498a37dcc5df6978b5b6d4653941"
+source = "src/auth/p256_portable.rs:243 bit_mask; :308 signed_radix_32; :311-315 fixed window/bit positions"
+classification = "public"
+rationale = "a0=0 at +0x530, a1=0 at +0x534; no call or write to these registers before the loop. a4=50 at +0x7c6 and a6=52 at +0x7cc. Each loop increments a1 by one (+0x892), a0 by five (+0x89c), and tests a1!=52 (+0x89e). bltu a4,a1 therefore distinguishes the final public window (index 51) from indices 0..50. The taken arm supplies zero for bits beyond the 256-bit scalar; it does not test the loaded scalar bit a7."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "s390x-unknown-linux-gnu"
+primitive = "kx.p256_ecdh"
+symbol = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman+0x1e0:select_branch:285099798546701c"
+function_sha256 = "d166a2d9bb14f86ed42d324db0154207731f06d4b3f0dcbbeedf61d90a21fccb"
+source = "src/auth/p256_portable.rs:243 bit_mask; src/auth/p256_portable.rs:308 signed_radix_32"
+classification = "public"
+rationale = "r2=0 at +0x1bc; r1=0 at +0x1c4. The loop increments r2 by 1 at +0x28e and r1 by 5 at +0x292, and compares r2 with 52 at +0x296. clgijh r2,50 selects the last public window (index51), whose bits 256..259 are out of range. The fallthrough loads those extra scalar bits for earlier windows; taken path sets r5=0 at +0x252. The loaded scalar bit r4 is not the branch condition."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "s390x-unknown-linux-gnu"
+primitive = "kx.p256_ecdh"
+symbol = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::public_key"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::public_key+0x10e0:select_branch:5acf3876cdab4164"
+function_sha256 = "76d0fa77cb9852698d5a43ab3824f2ab7acd3771714b7e54c32821daeabfceeb"
+source = "src/auth/p256_portable.rs:243 bit_mask; src/auth/p256_portable.rs:960 scalar_mul_generator_portable; src/auth/p256_portable.rs:964-966 digit bit index; src/auth/p256_portable.rs:981-990 low/middle/high rows"
+classification = "public"
+rationale = "Public countdown r10 starts 12 at +0xce, is stored in [sp+608] at +0x192, and copied to r9 at +0xd72. At +0xce2 the saved countdown is loaded into r12 and +0xce8 computes next r10=r12-1; the fixed loop exits when r10==0 at +0x18c. No intervening write to r9 follows +0xd72 before this branch; ABI calls preserve it. Therefore r9 is 12..1 and source row=r9-1. The last high-comb bit is row+25+6*37=r9+246. clgijl r9,10 skips zero replacement exactly when that bit is below 256. The fallthrough sets r2=0; otherwise r2 retains the high scalar limb loaded from [sp+992] at +0x10da. The later shift by r9+54 at +0x1174 extracts the corresponding in-range limb bit. This is a public bit-index bound, not a comparison of secret limb contents."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "s390x-unknown-linux-gnu"
+primitive = "kx.p256_ecdh"
+symbol = "ct_entry_p256_ecdh_agree"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "ct_entry_p256_ecdh_agree+0x512:select_branch:c67f1a9b3dd60fe6"
+function_sha256 = "c9978ed4e8084d50b8ff0258589f225f5eab4ba58079cc0becede1dd0f9cb2e2"
+source = "tools/ct-harness/src/lib.rs:146 write_array; tools/ct-harness/src/lib.rs:436 ct_entry_p256_ecdh_agree; tools/ct-harness/src/lib.rs:457 write_array call"
+classification = "public"
+rationale = "s390x entry r2 is out. stg r2,520(sp) at +0x84 saves it before any reuse. After the production diffie_hellman call at +0x506, ltg r1,520(sp) at +0x50c reloads and tests this pointer. je skips the 32-byte mvc output copy and selects status 0; otherwise status 1. No output bytes feed the condition."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "aarch64-unknown-linux-gnu"
+primitive = "kx.p256_ecdh"
+symbol = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman+0x108:select_branch:4235105f2bb2eb8e"
+function_sha256 = "ba0f063da96dd83b21a6d80410f53a52a1b203a477b6ac1c578c0c8981745171"
+source = "src/traits/ct.rs:424 DataIndependentTiming::enter, :453 supported, :468 state_if_supported, :491 drop; src/auth/p256_ecdh.rs:180"
+classification = "public"
+rationale = "Entry +0x24 reads the public CPU feature cache; +0x30 checks DIT feature bit8, then +0x34 reads PSTATE.DIT. w22=0 on unsupported/already-enabled paths (+0x3c); the disabled-supported path enables DIT (+0x1c4) and sets w22=1 (+0x1c8). tbz w22,#0 skips DIT restoration. ABI calls preserve x22."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "aarch64-unknown-linux-gnu"
+primitive = "kx.p256_ecdh"
+symbol = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman+0x1a4:select_branch:8e209c3f4e2964b1"
+function_sha256 = "ba0f063da96dd83b21a6d80410f53a52a1b203a477b6ac1c578c0c8981745171"
+source = "src/auth/p256_ecdh.rs:220 P256EphemeralSecret::drop; src/traits/ct.rs:225 zeroize_no_fence, :227 align_to_mut, :236 suffix loop"
+classification = "public"
+rationale = "x19 copies input x1 (consumed P256EphemeralSecret storage) at +0x20. +0x110..+0x130 derive aligned u64 start, fixed 32-byte extent, and suffix length x9 from that pointer. cmp x9,#6 at +0x19c controls whether the seventh trailing zero-byte store executes."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "aarch64-unknown-linux-gnu"
+primitive = "kx.p256_ecdh"
+symbol = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::public_key"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::public_key+0x160:select_branch:af9fe87195a9b1e7"
+function_sha256 = "7b28478163c6c5fee9a11f611fee866be39df72d629f16e887aa9d6b4adb9334"
+source = "src/traits/ct.rs:424 DataIndependentTiming::enter, :453 supported, :468 state_if_supported, :491 drop; src/auth/p256_ecdh.rs:143"
+classification = "public"
+rationale = "Entry +0x28 reads the public CPU feature cache; +0x30 tests feature bit8 and +0x34 reads DIT. w20=0 on unsupported/already-enabled paths (+0x3c); the supported-disabled path enables DIT (+0x188) and sets w20=1 (+0x18c). cbz w20 skips DIT restoration. The temporary x20 use across feature detection at +0x194 rejoins one of those initialization paths."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "aarch64-unknown-linux-gnu"
+primitive = "kx.p256_ecdh"
+symbol = "ct_entry_p256_ecdh_agree"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "ct_entry_p256_ecdh_agree+0x550:select_branch:991681fd59da1744"
+function_sha256 = "3c1c65a1e9dff425d2cdb3e86d8c598796e09ed42e0dce2f5bda08f872021d4a"
+source = "tools/ct-harness/src/lib.rs:146 write_array null guard; :436 ct_entry_p256_ecdh_agree; :457 output copy"
+classification = "public"
+rationale = "Entry x0 is saved by stp x0,x15,[sp,#8] at +0x88. After diffie_hellman returns (+0x548), ldr x8,[sp,#8] at +0x54c restores that pointer. cbz x8 skips the 32-byte output copy and chooses STATUS_ERR."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "aarch64-unknown-linux-gnu"
+primitive = "kx.p256_ecdh"
+symbol = "ct_entry_p256_ecdh_agree"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "ct_entry_p256_ecdh_agree+0x600:select_branch:12a195eba2c254bd"
+function_sha256 = "3c1c65a1e9dff425d2cdb3e86d8c598796e09ed42e0dce2f5bda08f872021d4a"
+source = "src/auth/p256_ecdh.rs:374 P256SharedSecret::drop; src/traits/ct.rs:225 zeroize_no_fence, :227 align_to_mut, :236 suffix loop"
+classification = "public"
+rationale = "x19=x29-0xb0 at +0x540 is the shared-result temporary passed as the diffie_hellman return pointer. +0x568..+0x588 compute its aligned u64 start and suffix length x9 for a fixed 32-byte extent. cmp x9,#6 at +0x5f8 controls the final zero-byte store."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "aarch64-apple-darwin"
+primitive = "kx.p256_ecdh"
+symbol = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman+0x2c:select_branch:64b70268b7757a3d"
+function_sha256 = "a47947b84781a70b7cf6fc60c07a02f531f5ba7b754261d93329d53b197e26ca"
+source = "src/traits/ct.rs:424 DataIndependentTiming::enter; :434 previous == 0; :468 state_if_supported; src/auth/p256_ecdh.rs:180"
+classification = "public"
+rationale = "mrs x8,DIT at +0x24 reads entry PSTATE.DIT; +0x28 saves it in x20. cbnz x8 skips msr DIT,#1. Neither condition operand comes from scalar, point, or output bytes."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "aarch64-apple-darwin"
+primitive = "kx.p256_ecdh"
+symbol = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman+0xfc:select_branch:36df52fa5d69ae04"
+function_sha256 = "a47947b84781a70b7cf6fc60c07a02f531f5ba7b754261d93329d53b197e26ca"
+source = "src/traits/ct.rs:491 DataIndependentTiming::drop; src/auth/p256_ecdh.rs:180"
+classification = "public"
+rationale = "x20 retains the entry DIT value saved at +0x28. cbnz x20 skips msr DIT,#0; the scalar-multiplication ABI preserves x20."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "aarch64-apple-darwin"
+primitive = "kx.p256_ecdh"
+symbol = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman+0x198:select_branch:c80df23324ffbf51"
+function_sha256 = "a47947b84781a70b7cf6fc60c07a02f531f5ba7b754261d93329d53b197e26ca"
+source = "src/auth/p256_ecdh.rs:220 P256EphemeralSecret::drop; src/traits/ct.rs:225 zeroize_no_fence, :227 align_to_mut, :236 suffix loop"
+classification = "public"
+rationale = "x19 copies input x1 (consumed P256EphemeralSecret storage) at +0x1c. +0x104..+0x124 derive the aligned u64 start, fixed 32-byte extent, and suffix length x9 from that pointer. cmp x9,#6 at +0x194 controls whether the seventh trailing zero-byte store executes. This is P256EphemeralSecret::Drop, not P256SharedSecret::Drop."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "aarch64-apple-darwin"
+primitive = "kx.p256_ecdh"
+symbol = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::public_key"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::public_key+0x2c:select_branch:fb1b2838c4ae9bd2"
+function_sha256 = "10167ec6151ecf8bd29ffa929c9fa06a9bccb6296c42b04fea23384611c3a106"
+source = "src/traits/ct.rs:424 DataIndependentTiming::enter; src/auth/p256_ecdh.rs:143"
+classification = "public"
+rationale = "mrs x8,DIT at +0x24 reads entry PSTATE.DIT; +0x28 saves it in x19. cbnz x8 skips msr DIT,#1."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "aarch64-apple-darwin"
+primitive = "kx.p256_ecdh"
+symbol = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::public_key"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::public_key+0x154:select_branch:a429ccf18ca875e5"
+function_sha256 = "10167ec6151ecf8bd29ffa929c9fa06a9bccb6296c42b04fea23384611c3a106"
+source = "src/traits/ct.rs:491 DataIndependentTiming::drop; src/auth/p256_ecdh.rs:143"
+classification = "public"
+rationale = "x19 retains the entry DIT value saved at +0x28. cbnz x19 skips msr DIT,#0; intervening ABI calls preserve x19."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "aarch64-apple-darwin"
+primitive = "kx.p256_ecdh"
+symbol = "ct_entry_p256_ecdh_agree"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "ct_entry_p256_ecdh_agree+0x544:select_branch:7c8d1f73ac90362f"
+function_sha256 = "d89af68b6de6806e458ec0d371f465862ba3bf1eefb86312380bd483642bebc7"
+source = "tools/ct-harness/src/lib.rs:146 write_array null guard; :436 ct_entry_p256_ecdh_agree; :457 output copy"
+classification = "public"
+rationale = "Entry x0 is saved by stp x0,x15,[sp,#8] at +0x84. After diffie_hellman returns (+0x53c), ldr x8,[sp,#8] at +0x540 restores that pointer. cbz x8 skips the 32-byte output copy and chooses STATUS_ERR; the condition does not inspect shared bytes."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "aarch64-apple-darwin"
+primitive = "kx.p256_ecdh"
+symbol = "ct_entry_p256_ecdh_agree"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "ct_entry_p256_ecdh_agree+0x5f4:select_branch:bdcd513ba7fedc94"
+function_sha256 = "d89af68b6de6806e458ec0d371f465862ba3bf1eefb86312380bd483642bebc7"
+source = "src/auth/p256_ecdh.rs:374 P256SharedSecret::drop; src/traits/ct.rs:225 zeroize_no_fence, :227 align_to_mut, :236 suffix loop"
+classification = "public"
+rationale = "x19=sp+0xe0 at +0x52c is the shared-result temporary passed as the diffie_hellman return pointer. +0x55c..+0x578 compute its aligned u64 start and suffix length x9 for a fixed 32-byte extent. cmp x9,#6 at +0x5f0 controls the final zero-byte store."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "x86_64-pc-windows-msvc"
+primitive = "kx.p256_ecdh"
+symbol = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.exe.binary.disasm.txt"
+locator = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman+0x2fe:select_branch:435813b3adcad3d0"
+function_sha256 = "f13d9fb3beb1138ec60af7cebed385971913b535e9773a11df70b5c0612f88b0"
+source = "src/auth/p256_ecdh.rs:220 P256EphemeralSecret::drop; src/traits/ct.rs:225 zeroize_no_fence, align_to_mut and suffix zeroization"
+classification = "public"
+rationale = "Entry rdx is consumed P256EphemeralSecret storage; +0x15 copies it into rsi. +0x153..+0x16e compute aligned_start=(rsi+7)&-8, prefix=aligned_start-rsi, and edx=(32-prefix)&7. No scalar bytes feed edx after that assignment. cmp edx,6 at+0x2fb and je+0x2fe select whether the seventh trailing zero-byte store executes."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "x86_64-pc-windows-msvc"
+primitive = "kx.p256_ecdh"
+symbol = "ct_entry_p256_ecdh_agree"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.exe.binary.disasm.txt"
+locator = "ct_entry_p256_ecdh_agree+0x8a3:select_branch:d7b9f99cfbf8626d"
+function_sha256 = "e9e4eb95d56ead9395acbf05171f51bc71725b3d27aac35cff17e996f05dc826"
+source = "tools/ct-harness/src/lib.rs:146 write_array; tools/ct-harness/src/lib.rs:436 ct_entry_p256_ecdh_agree"
+classification = "public"
+rationale = "Entry rcx is out; +0x111 stores it in [rsp+0x150] before reuse. After production diffie_hellman returns at+0x893, +0x898 reloads that pointer into rax. test rax,rax at+0x8a0 and je+0x8a3 skip the 32-byte result copy and choose status0 when null. No shared bytes feed the test."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "x86_64-pc-windows-msvc"
+primitive = "kx.p256_ecdh"
+symbol = "ct_entry_p256_ecdh_agree"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.exe.binary.disasm.txt"
+locator = "ct_entry_p256_ecdh_agree+0x9b4:select_branch:9bfaa799cc657551"
+function_sha256 = "e9e4eb95d56ead9395acbf05171f51bc71725b3d27aac35cff17e996f05dc826"
+source = "src/auth/p256_ecdh.rs:374 P256SharedSecret::drop; src/traits/ct.rs:225 zeroize_no_fence, align_to_mut and suffix zeroization"
+classification = "public"
+rationale = "rsi=rsp+0xd0 at+0x87b identifies the shared-result temporary. +0x8c2..+0x8e3 compute aligned_start=(rsp+0xd7)&-8, prefix=aligned_start-rsi, and r8d=(32-prefix)&7. cmp r8d,6 at+0x9b0 and je+0x9b4 select whether the seventh trailing zero-byte store executes. The test depends only on stack address and fixed extent."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "x86_64-pc-windows-msvc"
+primitive = "kx.p256_ecdh"
+symbol = "ct_entry_p256_ecdh_public_key"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.exe.binary.disasm.txt"
+locator = "ct_entry_p256_ecdh_public_key+0x285:select_branch:3f6651edf21f6dbf"
+function_sha256 = "668d2581f2990bc96b2085efce2281305f1ea4805675d4c53c25950d4a4a522f"
+source = "tools/ct-harness/src/lib.rs:402 ct_entry_p256_ecdh_public_key; src/auth/p256_ecdh.rs:220 P256EphemeralSecret::drop; src/traits/ct.rs:225 zeroize_no_fence"
+classification = "public"
+rationale = "The local scalar address is rsi=rsp+0x40 at+0x165. Its cleanup writes four zero u64 words at+0x230..+0x23e, using fixed count4. mov dl,1 at+0x240 followed by test dl,dl and jne+0x244 always bypasses the emitted suffix block. Even if reached, the reported branch has immediate xor edx,edx at+0x281 and test dl,dl at+0x283, so jne+0x285 is constant false. No secret feeds its flags."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+# Exact final POWER and Linux x86 P-256 public-condition reviews.
+
+[[asm_waiver]]
+target = "powerpc64le-unknown-linux-gnu"
+primitive = "kx.p256_ecdh"
+symbol = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman+0xc50:select_branch:5fc6c16038a46a7b"
+function_sha256 = "cded6f83991ce682be16b1aaca65590b8f9d5674b47cb4ec22e5b0ee870b15ac"
+source = "src/auth/p256_portable.rs:308 Scalar::signed_radix_32; src/auth/p256_portable.rs:243 Uint::bit_mask"
+classification = "public"
+rationale = "r5 is initialized to 0 at 0x8e5f8 and increments only by 1 at 0x8e6b0 within the fixed 52-iteration CTR loop established at 0x8e5e8..0x8e5f4. cmpldi r5,50 at 0x8e60c sets CR0.GT; rldic/ldx/srd/clrlwi before bt 1 at 0x8e620 do not change CR0. The branch skips out-of-range bit loads in the final window. r21 is the public bit index, initialized to 0 at 0x8db3c and incremented by 5 at 0x8e6b4. Secret scalar bits feed r7/r8/r9, not the compared loop counter."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "powerpc64le-unknown-linux-gnu"
+primitive = "kx.p256_ecdh"
+symbol = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman+0x1398:select_branch:3ef4db6c14a112ed"
+function_sha256 = "cded6f83991ce682be16b1aaca65590b8f9d5674b47cb4ec22e5b0ee870b15ac"
+source = "src/auth/p256_ecdh.rs:220 P256EphemeralSecret::drop; src/traits/ct.rs:225 zeroize_no_fence"
+classification = "public"
+rationale = "Entry r4 is the consumed P256EphemeralSecret storage; mr r30,r4 at 0x8da18 saves its address. At 0x8ec6c..0x8ec80, r3=(r30+7)&-8, r4=r3-r30, r5=32-r4. clrldi r5,r5,61 at 0x8ecf0 reduces this public remaining length modulo 8. cmpldi r5,6 at 0x8ed60 and bt 2 at 0x8ed68 decide whether the seventh suffix byte receives a zero store. No scalar bytes feed r5 after the length assignment."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "powerpc64le-unknown-linux-gnu"
+primitive = "kx.p256_ecdh"
+symbol = "ct_entry_p256_ecdh_agree"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "ct_entry_p256_ecdh_agree+0x964:select_branch:a8e576f1f0ce5c9e"
+function_sha256 = "741516fc68b3505f418e8c816d208c5118801fda9670b10bbf99a65c8cffcc3f"
+source = "tools/ct-harness/src/lib.rs:146 write_array; tools/ct-harness/src/lib.rs:436 ct_entry_p256_ecdh_agree"
+classification = "public"
+rationale = "Entry r3 is out; std r3,40(r1) at 0xbf3f0 saves that pointer before reuse. After diffie_hellman returns at 0xbfb98, ld r3,40(r1) at 0xbfb9c reloads it. cmpldi r3,0 at 0xbfba0 and bt 2 at 0xbfba4 select whether the 32-byte result copy is performed. Shared-secret contents do not feed the condition."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "powerpc64le-unknown-linux-gnu"
+primitive = "kx.p256_ecdh"
+symbol = "ct_entry_p256_ecdh_agree"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "ct_entry_p256_ecdh_agree+0xa88:select_branch:4fa427b6c6e71898"
+function_sha256 = "741516fc68b3505f418e8c816d208c5118801fda9670b10bbf99a65c8cffcc3f"
+source = "src/auth/p256_ecdh.rs:374 P256SharedSecret::drop; src/traits/ct.rs:225 zeroize_no_fence"
+classification = "public"
+rationale = "r30 is the shared-secret stack address r1+256, established at 0xbfb78. At 0xbfbc4..0xbfbd4, r3=(r1+263)&-8, r4=r3-r30, r5=32-r4. clrldi r5,r5,61 at 0xbfc50 keeps the public suffix length modulo 8. cmpldi r5,6 at 0xbfcc0 and bt 2 at 0xbfcc8 decide the final zero-byte store. No shared-secret value feeds that length."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "powerpc64le-unknown-linux-gnu"
+primitive = "kx.p256_ecdh"
+symbol = "ct_entry_p256_ecdh_public_key"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "ct_entry_p256_ecdh_public_key+0x30c:select_branch:092b154b54f50ba7"
+function_sha256 = "c25d6bde2082d6c4e5d9cc94058644ec0f58718881e7bab0ae93cb32699b330b"
+source = "src/auth/p256_ecdh.rs:220 P256EphemeralSecret::drop; src/traits/ct.rs:225 zeroize_no_fence"
+classification = "public"
+rationale = "crclr 20 at 0xbffe0 sets CR bit20 to false. Only zero-byte stores and earlier bt 20 checks intervene before bt 20 at 0xc000c; none sets CR20. The flagged branch is therefore constant false. The reachable aligned 32-byte cleanup takes the four u64 store loop at 0xbffd0 and branches directly to 0xc0014 at 0xbffd8, bypassing this residual suffix block. The earlier sub. r5,r30,r30 at 0xbff34 or 0xbff44 produces the constant zero prefix."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "x86_64-unknown-linux-gnu"
+primitive = "kx.p256_ecdh"
+symbol = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman+0x2be:select_branch:f4a11735b6ee54ce"
+function_sha256 = "e132deb0621cef6278060797ed7f9ce7aaf7b88f544acdbdc2ffe433eda32539"
+source = "src/auth/p256_ecdh.rs:179 diffie_hellman; src/auth/p256_ecdh.rs:222 Drop for P256EphemeralSecret; src/traits/ct.rs:zeroize"
+classification = "public"
+rationale = "Public cleanup suffix. Entry rsi (consumed scalar storage) is saved in rbx at +0xf. At +0x13e..+0x159, edx=(32-(align_up(rbx,8)-rbx))&7. cmp edx,6 at +0x2bb decides whether the final suffix byte needs zeroization; scalar contents do not feed edx."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "x86_64-unknown-linux-gnu"
+primitive = "kx.p256_ecdh"
+symbol = "ct_entry_p256_ecdh_agree"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "ct_entry_p256_ecdh_agree+0x8ff:select_branch:ad670371ea97492f"
+function_sha256 = "22ee83ce7e38f8d5cde93396b6507f4eab320bb8b6c41cf1d6ff0fb94365df71"
+source = "tools/ct-harness/src/lib.rs:436"
+classification = "public"
+rationale = "Public output pointer. Entry rdi is saved at [rsp+0x148] at +0x120; +0x8f4 reloads it to rax after diffie_hellman. test rax,rax and je decide whether to copy the shared output to the caller."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "x86_64-unknown-linux-gnu"
+primitive = "kx.p256_ecdh"
+symbol = "ct_entry_p256_ecdh_agree"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "ct_entry_p256_ecdh_agree+0x9fe:select_branch:9568c73bee22fcc0"
+function_sha256 = "22ee83ce7e38f8d5cde93396b6507f4eab320bb8b6c41cf1d6ff0fb94365df71"
+source = "tools/ct-harness/src/lib.rs:436; src/auth/p256_ecdh.rs:Drop for P256SharedSecret; src/traits/ct.rs:zeroize"
+classification = "public"
+rationale = "Public cleanup suffix. rbx=rsp+0xa0 at +0x8d9 identifies the shared temporary. At +0x91e..+0x93d, esi=(32-(align_up(rbx,8)-rbx))&7. cmp esi,6 at +0x9fb decides the last suffix zero-byte store. No shared-secret byte feeds the condition."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"
+
+[[asm_waiver]]
+target = "x86_64-unknown-linux-gnu"
+primitive = "kx.p256_ecdh"
+symbol = "ct_entry_p256_ecdh_public_key"
+kind = "select_branch"
+artifact = "artifacts/rscrypto-ct-evidence.binary.disasm.txt"
+locator = "ct_entry_p256_ecdh_public_key+0x265:select_branch:0012ddf769de4913"
+function_sha256 = "25b76d47ce8251bbeacc2e157c0a1fc13534d456e3e9b0683c4a804d54383d70"
+source = "tools/ct-harness/src/lib.rs:ct_entry_p256_ecdh_public_key; src/auth/p256_ecdh.rs:Drop for P256EphemeralSecret; src/traits/ct.rs:zeroize"
+classification = "public"
+rationale = "Constant condition in dead cleanup suffix. xor edx,edx at +0x261 and test dl,dl at +0x263 make jne constant false. The suffix is already bypassed by mov dl,1 at +0x220 and jne at +0x224 after the full-word scalar zeroization loop."
+reviewer = "rscrypto selection-hardening review"
+reviewed_at = "2026-10-15"

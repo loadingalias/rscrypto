@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
 import evidence_bundle as bundle
 from dudect_report import raw_csv_rows
+from asm_heuristics import validate_waivers
 from provenance import ct_function_symbols, dudect_runner_sources, load_toml, sha256_file
 from manifest import (
   binsec_kernel_targets, binsec_required_targets, is_diagnostic_dudect_case, primitive_supports_physical_timing,
@@ -486,11 +487,37 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
       if covered not in primitive_ids:
         fail(errors, f"harness {harness.get('name', '<unnamed>')} covers unknown primitive {covered}")
 
+  target_names = {row.get("name") for row in ct.get("target", [])}
+  configured_waivers = ct.get("asm_waiver", [])
+  errors.extend(validate_waivers(configured_waivers))
+  for index, waiver in enumerate(configured_waivers):
+    if waiver.get("target") not in target_names or waiver.get("primitive") not in primitive_ids:
+      fail(errors, f"asm_waiver[{index}] must name an existing target and primitive")
+    if waiver.get("classification") in {"outside-claim", "allowed-disclosure"}:
+      reference = str(waiver.get("contract", "")).split(":")
+      primitive = next((row for row in ct.get("primitive", []) if len(reference) >= 2 and row["id"] == reference[1]), {})
+      if waiver["classification"] == "outside-claim":
+        valid = len(reference) == 3 and reference[0] == "primitive" and reference[2] == "notes" and primitive.get("notes")
+      else:
+        valid = (
+          len(reference) == 4 and reference[0] == "primitive" and reference[2] == "may_leak"
+          and reference[1] == waiver.get("primitive") and reference[3] in primitive.get("may_leak", [])
+        )
+      if not valid:
+        fail(errors, f"asm_waiver[{index}] contract must reference existing primitive notes or an allowed disclosure")
   for index, rule in enumerate(ct.get("asm_public_operand", [])):
     required_fields = {"primitives", "roots", "symbol", "kind", "max_count", "source", "rationale"}
-    if set(rule) != required_fields:
+    if not required_fields <= set(rule) <= required_fields | {"targets"}:
       fail(errors, f"asm_public_operand[{index}] has incomplete or unknown fields")
       continue
+    rule_targets = rule.get("targets", [])
+    if "targets" in rule and (
+      not isinstance(rule_targets, list)
+      or not rule_targets
+      or any(not isinstance(value, str) or value not in target_names for value in rule_targets)
+      or len(rule_targets) != len(set(rule_targets))
+    ):
+      fail(errors, f"asm_public_operand[{index}] targets must be a non-empty list of unique ct.toml targets")
     rule_primitives = rule.get("primitives")
     rule_roots = rule.get("roots")
     if (
@@ -541,6 +568,34 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
       fail(errors, f"asm_public_operand[{index}] source must identify an existing source line")
     if not isinstance(rule.get("rationale"), str) or not rule.get("rationale", "").strip():
       fail(errors, f"asm_public_operand[{index}] requires a rationale")
+
+  select_branch = ct.get("asm_select_branch", {})
+  if not isinstance(select_branch, dict):
+    fail(errors, "asm_select_branch must be a table")
+    select_branch = {}
+  enforced = select_branch.get("enforced_primitives", [])
+  if set(select_branch) - {"enforced_primitives"}:
+    fail(errors, "asm_select_branch has unknown fields")
+  if (
+    not isinstance(enforced, list)
+    or any(not isinstance(value, str) or not value for value in enforced)
+    or len(enforced) != len(set(enforced))
+  ):
+    fail(errors, "asm_select_branch enforced_primitives must be a list of unique strings")
+  else:
+    claimed = {primitive.get("id") for primitive in ct.get("primitive", []) if primitive.get("claim") == "ct-intended"}
+    for primitive_id in sorted(set(enforced) - claimed):
+      fail(errors, f"asm_select_branch enforces {primitive_id}, which is not a ct-intended primitive")
+    retained = {
+      symbol for block in re.findall(r"retain!\((.*?)\n  \);", evidence_main.read_text(), re.DOTALL)
+      for symbol in re.findall(r"\bct_entry_[A-Za-z0-9_]+\b", block)
+    }
+    enforced_roots = {
+      symbol for primitive_id in enforced
+      for symbol in primitive_by_id.get(primitive_id, {}).get("harness", {}).get("symbols", [])
+    }
+    for symbol in sorted(enforced_roots - retained):
+      fail(errors, f"enforced CT root {symbol} is not retained in the linked harness")
 
   try:
     dudect_confirmation_policy(ct)

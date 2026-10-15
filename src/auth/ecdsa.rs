@@ -1560,7 +1560,12 @@ impl fmt::Debug for EcdsaP384Signature {
 
 #[inline(always)]
 fn mask_nonzero_u64(value: u64) -> u64 {
-  0u64.wrapping_sub((value | value.wrapping_neg()) >> 63)
+  let mask = 0u64.wrapping_sub((value | value.wrapping_neg()) >> 63);
+  #[cfg(target_arch = "s390x")]
+  // SECURITY: IBM Z codegen otherwise short-circuits combinations of carry,
+  // zero, and infinity masks before they reach the opaque arithmetic selectors.
+  let mask = core::hint::black_box(mask);
+  mask
 }
 
 #[inline(always)]
@@ -1930,10 +1935,16 @@ impl<const L: usize> Uint<L> {
   }
 
   fn select(lhs: Self, rhs: Self, mask: u64) -> Self {
-    #[cfg(any(target_arch = "s390x", all(target_arch = "x86_64", target_os = "windows")))]
-    // SECURITY: Keep the mask opaque on the tested IBM Z and Windows compilers,
-    // which otherwise lower masked selection to secret-dependent branches.
-    // This barrier still requires target-specific binary and timing evidence.
+    #[cfg(any(
+      target_arch = "riscv32",
+      target_arch = "riscv64",
+      target_arch = "s390x",
+      all(target_arch = "x86_64", target_os = "windows")
+    ))]
+    // SECURITY: Keep the mask opaque on the tested RISC-V, IBM Z, and Windows
+    // compilers, which otherwise lower masked selection to secret-dependent
+    // branches. This barrier still requires target-specific binary and timing
+    // evidence.
     let mask = core::hint::black_box(mask);
     let mut out = [0u64; L];
     for ((dst, &left), &right) in out.iter_mut().zip(lhs.0.iter()).zip(rhs.0.iter()) {

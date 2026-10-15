@@ -400,6 +400,10 @@ pub use mlkem::{
   diag_mlkem768_multiply_ntts_accumulate_input_digest, diag_mlkem1024_keygen_secret_noise_digest,
   diag_mlkem1024_multiply_ntts_accumulate_input_digest,
 };
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "p256-ecdh"))]
+pub use p256_ecdh::diag_p256_field_mul_chain;
+#[cfg(feature = "p256-ecdh")]
+pub use p256_ecdh::{P256EphemeralSecret, P256KeyGenerationError, P256PublicKey, P256PublicKeyError, P256SharedSecret};
 #[cfg(all(
   rscrypto_internal,
   feature = "diag",
@@ -413,11 +417,7 @@ pub use mlkem::{
     ))
   )
 ))]
-pub use p256_ecdh::diag_p256_ecdh_select_window_limb_digest;
-#[cfg(all(rscrypto_internal, feature = "diag", feature = "p256-ecdh"))]
-pub use p256_ecdh::diag_p256_field_mul_chain;
-#[cfg(feature = "p256-ecdh")]
-pub use p256_ecdh::{P256EphemeralSecret, P256KeyGenerationError, P256PublicKey, P256PublicKeyError, P256SharedSecret};
+pub use p256_ecdh::{diag_p256_ecdh_select_signed_window_limb_digest, diag_p256_ecdh_select_window_limb_digest};
 #[cfg(feature = "p384-ecdh")]
 pub use p384_ecdh::{P384EphemeralSecret, P384KeyGenerationError, P384PublicKey, P384PublicKeyError, P384SharedSecret};
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "p384-ecdh"))]

@@ -266,9 +266,19 @@ nm_symbols="$ARTIFACT_DIR/$linked_base.binary.nm-symbols.txt"
 "$LLVM_NM" --defined-only --demangle "$linked_binary" > "$nm_symbols" || true
 "$LLVM_SIZE" "$linked_binary" > "$ARTIFACT_DIR/$linked_base.binary.size.txt"
 indirect_symbols=""
+dynamic_relocations=""
+got_contents=""
 if [[ "$TARGET" == *apple-darwin ]]; then
   indirect_symbols="$ARTIFACT_DIR/$linked_base.binary.indirect-symbols.txt"
   "$LLVM_OBJDUMP" --macho --indirect-symbols "$linked_binary" > "$indirect_symbols"
+fi
+if [[ "$TARGET" == "powerpc64le-unknown-linux-gnu" || "$TARGET" == "x86_64-unknown-linux-gnu" ]]; then
+  dynamic_relocations="$ARTIFACT_DIR/$linked_base.binary.dynamic-relocations.txt"
+  "$LLVM_OBJDUMP" --dynamic-reloc "$linked_binary" > "$dynamic_relocations"
+fi
+if [[ "$TARGET" == "powerpc64le-unknown-linux-gnu" ]]; then
+  got_contents="$ARTIFACT_DIR/$linked_base.binary.got-contents.txt"
+  "$LLVM_OBJDUMP" --full-contents --section=.got "$linked_binary" > "$got_contents"
 fi
 
 symbolizer_args=(
@@ -277,12 +287,23 @@ symbolizer_args=(
   --nm-symbols "$nm_symbols"
   --out-disassembly "$ARTIFACT_DIR/$linked_base.binary.disasm.txt"
   --out-symbols "$ARTIFACT_DIR/$linked_base.binary.symbols.txt"
+  --binary "$linked_binary"
+  --llvm-objdump "$LLVM_OBJDUMP"
 )
+if [[ "$TARGET" == "s390x-unknown-linux-gnu" ]]; then
+  symbolizer_args+=(--objdump-arg=--mattr=+vector)
+fi
 if [[ -f "$LINK_MAP" ]]; then
   symbolizer_args+=(--link-map "$LINK_MAP")
 fi
 if [[ -n "$indirect_symbols" ]]; then
   symbolizer_args+=(--indirect-symbols "$indirect_symbols")
+fi
+if [[ -n "$dynamic_relocations" ]]; then
+  symbolizer_args+=(--dynamic-relocations "$dynamic_relocations")
+fi
+if [[ -n "$got_contents" ]]; then
+  symbolizer_args+=(--got-contents "$got_contents")
 fi
 "$PYTHON" -X utf8 scripts/ct/symbolize_linked_binary.py "${symbolizer_args[@]}"
 

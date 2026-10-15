@@ -247,20 +247,16 @@ impl Uint {
   }
 
   fn zero_mask(self) -> u64 {
-    mask_zero(self.0.into_iter().fold(0u64, |acc, limb| acc | limb))
+    // SECURITY: IBM Z LLVM folded `infinity | zero_mask(y)` into a branch on a
+    // secret coordinate. Return the mask opaque, as `select` receives it.
+    opaque_mask(mask_zero(self.0.into_iter().fold(0u64, |acc, limb| acc | limb)))
   }
 
   fn select(left: Self, right: Self, mask: u64) -> Self {
-    #[cfg(any(
-      target_arch = "riscv32",
-      target_arch = "riscv64",
-      target_arch = "s390x",
-      target_arch = "x86_64"
-    ))]
     // SECURITY: Keep the mask opaque so the tested LLVM builds retain bitwise
     // selection instead of branching on a secret digit. Binary CT evidence is
     // still required; black_box is not a language-level constant-time guarantee.
-    let mask = core::hint::black_box(mask);
+    let mask = opaque_mask(mask);
     let mut out = [0u64; 4];
     for ((dst, left), right) in out.iter_mut().zip(left.0).zip(right.0) {
       *dst = left ^ (mask & (left ^ right));
@@ -320,7 +316,9 @@ impl Scalar {
         value |= u32::from(bit) << offset;
       }
       value = value.strict_add(carry);
-      let negative = 16u32.wrapping_sub(value) >> 31;
+      // SECURITY: IBM Z LLVM lowered the digit correction to a branch on the
+      // secret window value. Keep the borrow bit opaque so it stays arithmetic.
+      let negative = core::hint::black_box(16u32.wrapping_sub(value) >> 31);
       *digit = value.wrapping_sub(negative << 5).to_le_bytes()[0];
       carry = negative;
     }
@@ -676,16 +674,10 @@ impl Projective {
   }
 
   fn select(left: Self, right: Self, mask: u64) -> Self {
-    #[cfg(any(
-      target_arch = "riscv32",
-      target_arch = "riscv64",
-      target_arch = "s390x",
-      target_arch = "x86_64"
-    ))]
     // SECURITY: RISC-V LLVM lowered the masked infinity word to a branch on the
     // secret window digit in `select_signed`. Keep the mask opaque, as in
     // `Uint::select`.
-    let mask = core::hint::black_box(mask);
+    let mask = opaque_mask(mask);
     Self {
       x: FieldElement::select(left.x, right.x, mask),
       y: FieldElement::select(left.y, right.y, mask),
@@ -1238,7 +1230,7 @@ pub(super) fn agree(bytes: &[u8; FIELD_BYTES], public: PublicPoint) -> [u8; FIEL
   shared
 }
 
-/// Return the production P-256 window-table selection as Montgomery limbs.
+/// Return the production P-256 fixed-base comb selection as Montgomery limbs.
 #[cfg(all(
   feature = "p256-ecdh",
   all(rscrypto_internal, feature = "diag"),
@@ -1256,6 +1248,43 @@ pub(super) fn diag_select_window_limb_digest(digit: u8) -> [u64; 8] {
   let mut output = [0u64; 8];
   output[..4].copy_from_slice(&selected.x.0.0);
   output[4..].copy_from_slice(&selected.y.0.0);
+  output
+}
+
+/// Return the production signed-window projective selection over a fixed
+/// public table: x, y, and z limbs, then the infinity mask.
+///
+/// The table holds distinct canonical limb patterns rather than curve points;
+/// the evidence concerns only the selector's data flow.
+#[cfg(all(
+  feature = "p256-ecdh",
+  all(rscrypto_internal, feature = "diag"),
+  any(
+    feature = "portable-only",
+    miri,
+    not(any(
+      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+      all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+    ))
+  )
+))]
+pub(super) fn diag_select_signed_window_limb_digest(digit: u8) -> [u64; 13] {
+  let mut table = [Projective::infinity(); SIGNED_WINDOW_SIZE];
+  for (index, entry) in (1u64..).zip(table.iter_mut()) {
+    let pattern = |lane: u64| FieldElement::from_montgomery(Uint([index.strict_mul(lane); 4]));
+    *entry = Projective {
+      x: pattern(0x0101),
+      y: pattern(0x0303),
+      z: pattern(0x0505),
+      infinity_mask: 0,
+    };
+  }
+  let selected = Projective::select_signed(&table, digit);
+  let mut output = [0u64; 13];
+  output[..4].copy_from_slice(&selected.x.0.0);
+  output[4..8].copy_from_slice(&selected.y.0.0);
+  output[8..12].copy_from_slice(&selected.z.0.0);
+  output[12] = selected.infinity_mask;
   output
 }
 
@@ -1281,6 +1310,23 @@ fn generator_comb_table() -> [Affine; COMB_WINDOW_SIZE] {
     };
   }
   table
+}
+
+/// Hide a secret selection mask from LLVM on the targets where it otherwise
+/// lowers masked selection to branches.
+///
+/// `black_box` is not a language-level constant-time guarantee; binary CT
+/// evidence for each target is still required.
+#[inline(always)]
+fn opaque_mask(mask: u64) -> u64 {
+  #[cfg(any(
+    target_arch = "riscv32",
+    target_arch = "riscv64",
+    target_arch = "s390x",
+    target_arch = "x86_64"
+  ))]
+  let mask = core::hint::black_box(mask);
+  mask
 }
 
 #[inline(always)]
@@ -1995,6 +2041,51 @@ mod tests {
       for right in field_edges {
         assert!(super::montgomery_mul_riscv64(left, right) == super::montgomery_mul(left, right));
       }
+    }
+  }
+
+  /// The BINSEC hook must exercise the signed selector: magnitude, sign, and
+  /// the digit-zero infinity entry. A hook that ignored the digit would let the
+  /// kernel prove a constant selection.
+  #[test]
+  #[cfg(all(
+    rscrypto_internal,
+    feature = "diag",
+    any(
+      feature = "portable-only",
+      miri,
+      not(any(
+        all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+        all(target_arch = "x86_64", any(target_os = "linux", target_os = "windows"))
+      ))
+    )
+  ))]
+  fn signed_window_hook_follows_digit() {
+    let modulus = super::FIELD_MODULUS.0;
+    let one = super::FieldElement::one().0.0;
+    for digit in -16i8..=16 {
+      let output = super::diag_select_signed_window_limb_digest(digit.to_le_bytes()[0]);
+      let magnitude = u64::from(digit.unsigned_abs());
+      if magnitude == 0 {
+        assert_eq!(output[..4], [0; 4]);
+        assert_eq!(output[4..8], one);
+        assert_eq!(output[8..12], [0; 4]);
+        assert_eq!(output[12], u64::MAX);
+        continue;
+      }
+      let y = [magnitude.strict_mul(0x0303); 4];
+      let mut negated = [0u64; 4];
+      let mut borrow = 0u128;
+      for ((out, &p), &limb) in negated.iter_mut().zip(&modulus).zip(&y) {
+        let difference = u128::from(p).wrapping_sub(u128::from(limb)).wrapping_sub(borrow);
+        *out = u64::try_from(difference & u128::from(u64::MAX)).expect("masked low limb fits");
+        borrow = difference >> 127;
+      }
+      let expected_y = if digit < 0 { negated } else { y };
+      assert_eq!(output[..4], [magnitude.strict_mul(0x0101); 4], "x for digit {digit}");
+      assert_eq!(output[4..8], expected_y, "y for digit {digit}");
+      assert_eq!(output[8..12], [magnitude.strict_mul(0x0505); 4], "z for digit {digit}");
+      assert_eq!(output[12], 0, "infinity for digit {digit}");
     }
   }
 

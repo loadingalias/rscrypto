@@ -2031,6 +2031,10 @@ use rscrypto::auth::p256_ecdh::diag_p256_ecdh_select_window_limb_digest;
 ```
 
 ```compile_fail,E0432
+use rscrypto::auth::p256_ecdh::diag_p256_ecdh_select_signed_window_limb_digest;
+```
+
+```compile_fail,E0432
 use rscrypto::auth::rsa::diag_rsa_verify_pss_encoded;
 ```
 

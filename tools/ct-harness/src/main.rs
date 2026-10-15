@@ -33,6 +33,11 @@ fn main() {
   );
 
   retain!(
+    rscrypto_ct_harness::ct_entry_p256_ecdh_public_key,
+    rscrypto_ct_harness::ct_entry_p256_ecdh_agree,
+  );
+
+  retain!(
     rscrypto_ct_harness::mldsa::ct_entry_mldsa_ntt,
     rscrypto_ct_harness::mldsa::ct_entry_mldsa_montgomery,
     rscrypto_ct_harness::mldsa::ct_entry_mldsa_inverse_ntt,

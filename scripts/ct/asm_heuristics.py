@@ -8,7 +8,7 @@ import sys
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -17,6 +17,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from provenance import load_toml, sha256_file
+from symbolize_linked_binary import demangle_table
 
 BRANCH_CONDS_AARCH64 = {
   "b.eq",
@@ -196,6 +197,71 @@ DIRECT_CALL_MNEMONICS = {"bl", "brasl", "call", "callq", "jal"}
 DIRECT_TAIL_MNEMONICS = {"b", "ba", "j", "jg", "jmp", "jmpq", "c.j"}
 INDIRECT_JUMP_MNEMONICS = {"br"}
 INDIRECT_CALL_MNEMONICS = {"blr", "jalr"}
+RESOLVED_RISCV_TRANSFERS = {"jalr", "c.jalr", "jr", "c.jr"}
+# s390x condition-code suffixes for relative jumps and compare-and-branch forms.
+S390X_CONDITION = r"(?:e|ne|h|nh|l|nl|lh|nlh|le|nle|he|nhe|o|no|p|np|m|nm|z|nz)"
+S390X_CONDITIONAL_JUMP = re.compile(rf"^(?:j|jg){S390X_CONDITION}$")
+S390X_COMPARE_AND_BRANCH = re.compile(rf"^cl?g?(?:r|i|f|fi|ih)?[jb]{S390X_CONDITION}$")
+POWER_BRANCH_CONDS = {
+  "bc",
+  "bdnz",
+  "bdnzf",
+  "bdnzt",
+  "bdz",
+  "bdzf",
+  "bdzt",
+  "beq",
+  "bf",
+  "bge",
+  "bgt",
+  "ble",
+  "blt",
+  "bne",
+  "bng",
+  "bnl",
+  "bns",
+  "bnu",
+  "bso",
+  "bt",
+  "bun",
+}
+CONTROL_FLOW_STOP_MNEMONICS = {
+  "basr",
+  "balr",
+  "bcctr",
+  "bcctrl",
+  "bclr",
+  "bctr",
+  "bctrl",
+  "bdnzlr",
+  "bdzlr",
+  "bflr",
+  "blr",
+  "br",
+  "btlr",
+  "brk",
+  "c.ebreak",
+  "c.jalr",
+  "c.jr",
+  "c.unimp",
+  "ebreak",
+  "int3",
+  "jr",
+  "ret",
+  "retq",
+  "trap",
+  "ud2",
+  "udf",
+  "unimp",
+}
+# Longest straight-line arm of a select-shaped branch. On riscv64, LLVM's
+# branchy lowering of ML-KEM's 32-byte implicit-rejection select spans 39
+# instructions.
+SELECT_BRANCH_MAX_ARM = 64
+RELOCATION_LINE = re.compile(r"^\s*[0-9a-fA-F]+:\s+(?:R_|IMAGE_REL_|ARM64_RELOC_|X86_64_RELOC_)")
+INSTRUCTION_ADDRESS = re.compile(r"^\s*([0-9a-fA-F]+):")
+BRANCH_TARGET_SYMBOL = re.compile(r"\s<(.+?)(?:\+0x([0-9a-fA-F]+))?>\s*$")
+BRANCH_TARGET_ADDRESS = re.compile(r"\b0x([0-9a-fA-F]+)\s*$")
 SUSPICIOUS_CALL_TARGETS = (
   "panic",
   "panic_bounds_check",
@@ -247,10 +313,19 @@ class FunctionBody:
   path: Path
   address: int
   lines: list[tuple[int, str]]
+  symbol_names: dict[str, str] = field(default_factory=dict, repr=False)
 
 
 def normalize_symbol(symbol: str) -> str:
-  return symbol[1:] if symbol.startswith("_ct_entry_") else symbol
+  return symbol[1:] if symbol.startswith(("_ct_entry_", "_rscrypto_", "_OUTLINED_FUNCTION_")) else symbol
+
+
+def scoped_symbol(symbol: str, path: Path) -> str:
+  # LLVM reuses outlined helper names in independent objects. Only the linked
+  # artifact provides one namespace for them.
+  if symbol.startswith("OUTLINED_FUNCTION_") and path.name.endswith((".o.disasm.txt", ".obj.disasm.txt")):
+    return f"{path.name}::{symbol}"
+  return symbol
 
 
 def expected_symbols(root: Path) -> set[str]:
@@ -296,18 +371,51 @@ def waivers(root: Path) -> list[dict[str, Any]]:
   return list(ct.get("asm_waiver", []))
 
 
+def select_branch_enforced_primitives(root: Path) -> set[str]:
+  ct = load_toml(root / "ct.toml")
+  return set(ct.get("asm_select_branch", {}).get("enforced_primitives", []))
+
+
+def apply_select_branch_enforcement(findings: list[dict[str, Any]], enforced: set[str]) -> None:
+  """Keep select-shaped branches blocking only where a primitive enforces them."""
+  for finding in findings:
+    if finding["kind"] != "select_branch" or enforced.intersection(finding.get("primitive_ids", [])):
+      continue
+    finding["severity"] = "warn"
+    finding["disposition"] = "needs-binsec"
+
+
 def public_operand_rules(root: Path) -> list[dict[str, Any]]:
   ct = load_toml(root / "ct.toml")
   return list(ct.get("asm_public_operand", []))
 
 
-def apply_public_operand_rules(findings: list[dict[str, Any]], configured: list[dict[str, Any]]) -> list[str]:
+def apply_public_operand_rules(
+  findings: list[dict[str, Any]],
+  configured: list[dict[str, Any]],
+  target: str | None = None,
+) -> list[str]:
+  """Accept findings whose operands a rule classifies as public.
+
+  A rule with `targets` applies only to those targets, so its `max_count`
+  bounds the findings of each listed target rather than of every target.
+  """
   required = {"primitives", "roots", "symbol", "kind", "max_count", "source", "rationale"}
   errors: list[str] = []
   match_counts = [0] * len(configured)
   for index, rule in enumerate(configured):
-    if set(rule) != required:
-      errors.append(f"asm_public_operand[{index}] must contain exactly: {', '.join(sorted(required))}")
+    if not required <= set(rule) <= required | {"targets"}:
+      errors.append(
+        f"asm_public_operand[{index}] must contain exactly: {', '.join(sorted(required))}, and optionally targets"
+      )
+      continue
+    if "targets" in rule and (
+      not isinstance(rule["targets"], list)
+      or not rule["targets"]
+      or any(not isinstance(value, str) or not value.strip() for value in rule["targets"])
+      or len(rule["targets"]) != len(set(rule["targets"]))
+    ):
+      errors.append(f"asm_public_operand[{index}] targets must be a non-empty list of unique strings")
       continue
     if any(
       not isinstance(rule.get(field), str) or not rule.get(field, "").strip()
@@ -326,6 +434,8 @@ def apply_public_operand_rules(findings: list[dict[str, Any]], configured: list[
     max_count = rule.get("max_count")
     if isinstance(max_count, bool) or not isinstance(max_count, int) or max_count <= 0:
       errors.append(f"asm_public_operand[{index}] max_count must be a positive integer")
+    if rule.get("kind") not in {"variable_latency_division", "variable_latency_multiply"}:
+      errors.append(f"asm_public_operand[{index}] kind requires an exact asm_waiver")
 
   if errors:
     return errors
@@ -336,6 +446,7 @@ def apply_public_operand_rules(findings: list[dict[str, Any]], configured: list[
       for index, rule in enumerate(configured)
       if rule["symbol"] == finding["symbol"]
       and rule["kind"] == finding["kind"]
+      and ("targets" not in rule or target in rule["targets"])
       and set(rule["primitives"]).issubset(finding.get("primitive_ids", []))
       and set(finding.get("roots", [])).issubset(rule["roots"])
     ]
@@ -368,7 +479,7 @@ def validate_waivers(configured: list[dict[str, Any]]) -> list[str]:
   identities = set()
   for index, waiver in enumerate(configured):
     missing = sorted(WAIVER_REQUIRED_FIELDS - set(waiver))
-    extra = sorted(set(waiver) - WAIVER_REQUIRED_FIELDS)
+    extra = sorted(set(waiver) - WAIVER_REQUIRED_FIELDS - {"contract"})
     if missing:
       errors.append(f"asm_waiver[{index}] missing field(s): {', '.join(missing)}")
     if extra:
@@ -376,8 +487,11 @@ def validate_waivers(configured: list[dict[str, Any]]) -> list[str]:
     for field in ("target", "primitive", "symbol", "kind", "artifact", "locator", "function_sha256"):
       if waiver.get(field) in (None, "", "*"):
         errors.append(f"asm_waiver[{index}] field {field} must be exact")
-    if waiver.get("classification") != "public":
-      errors.append(f"asm_waiver[{index}] classification must be 'public'; secret or uncertain findings cannot be waived")
+    classification = waiver.get("classification")
+    if classification not in {"public", "outside-claim", "allowed-disclosure"}:
+      errors.append(f"asm_waiver[{index}] classification must be public, outside-claim, or allowed-disclosure")
+    if classification in {"outside-claim", "allowed-disclosure"} and not str(waiver.get("contract", "")).strip():
+      errors.append(f"asm_waiver[{index}] requires the existing claim contract")
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(waiver.get("reviewed_at", ""))):
       errors.append(f"asm_waiver[{index}] reviewed_at must use YYYY-MM-DD")
     for field in ("source", "rationale", "reviewer"):
@@ -427,6 +541,7 @@ def apply_waivers(findings: list[dict[str, Any]], configured: list[dict[str, Any
             "rationale": waiver["rationale"],
             "reviewer": waiver["reviewer"],
             "reviewed_at": waiver["reviewed_at"],
+            **({"contract": waiver["contract"]} if "contract" in waiver else {}),
           }
         )
 
@@ -444,13 +559,18 @@ def apply_waivers(findings: list[dict[str, Any]], configured: list[dict[str, Any
     finding["unresolved_primitive_ids"] = unresolved
     finding["waived"] = not unresolved and bool(accepted)
     if not unresolved and resolved_primitives:
-      finding["operand_class"] = "public"
+      # An existing disclosure or claim exclusion does not make an operand public.
+      finding["operand_class"] = "public" if all(row["classification"] == "public" for row in accepted) else "unproven"
       finding["disposition"] = "accepted"
     elif unresolved and finding["disposition"] == "accepted":
       finding["operand_class"] = "unproven"
       finding["disposition"] = "needs-fix" if finding["severity"] == "fail" else "needs-binsec"
 
-  return [f"asm_waiver[{index}] did not match generated disassembly" for index in range(len(configured)) if index not in used]
+  return [
+    f"asm_waiver[{index}] did not match generated disassembly"
+    for index, waiver in enumerate(configured)
+    if waiver.get("target") == target and index not in used
+  ]
 
 
 def parse_symbol_addresses(artifact_dir: Path) -> dict[str, int]:
@@ -503,20 +623,25 @@ def apply_alias_bodies(functions: dict[str, FunctionBody], aliases: list[tuple[s
       functions.setdefault(symbol, body)
 
 
-def parse_disassembly(path: Path) -> tuple[dict[str, FunctionBody], dict[int, list[FunctionBody]]]:
+def parse_disassembly(
+  path: Path, symbol_names: dict[str, str] | None = None,
+) -> tuple[dict[str, FunctionBody], dict[int, list[FunctionBody]]]:
   functions_by_label: dict[str, FunctionBody] = {}
   functions_by_address: dict[int, list[FunctionBody]] = {}
   current: FunctionBody | None = None
   label_re = re.compile(r"^([0-9a-fA-F]+) <(.+)>:$")
   for line_number, line in enumerate(path.read_text(errors="replace").splitlines(), start=1):
+    if line.startswith("Disassembly of section "):
+      current = None
+      continue
     if match := label_re.match(line.strip()):
-      symbol = normalize_symbol(match.group(2))
+      symbol = scoped_symbol(normalize_symbol(match.group(2)), path)
       if symbol.startswith((".", "LBB", "Ltmp")):
         if current is not None:
           current.lines.append((line_number, line))
         continue
       address = int(match.group(1), 16)
-      current = FunctionBody(symbol=symbol, path=path, address=address, lines=[])
+      current = FunctionBody(symbol=symbol, path=path, address=address, lines=[], symbol_names=symbol_names or {})
       functions_by_address.setdefault(address, []).append(current)
       functions_by_label.setdefault(symbol, current)
       continue
@@ -544,15 +669,20 @@ def symbol_target_base(symbol: str) -> str:
   return normalize_symbol(symbol)
 
 
-def direct_call_targets(line: str) -> set[str]:
+def direct_call_targets(line: str, symbol_names: dict[str, str] | None = None) -> set[str]:
   targets = set()
   if match := re.search(r"<(.+)>", line):
     targets.add(symbol_target_base(match.group(1)))
   targets.update(
     symbol_target_base(match.group(1))
-    for match in re.finditer(r"\bR_[A-Z0-9_]+\s+(.+?)(?:\+0x[0-9a-fA-F]+)?\s*$", line)
+    for match in re.finditer(
+      r"\b(?:R_[A-Z0-9_]+|ARM64_RELOC_BRANCH26|X86_64_RELOC_BRANCH|IMAGE_REL_[A-Z0-9_]+)\s+(.+?)(?:\+0x[0-9a-fA-F]+)?\s*$",
+      line,
+    )
   )
-  return {target for target in targets if target and not target.startswith((".", "Ltmp", "LBB"))}
+  if symbol_names:
+    targets = {normalize_symbol(symbol_names.get(target, target)) for target in targets}
+  return {target for target in targets if target and not target.startswith(("Ltmp", "LBB"))}
 
 
 def is_call_relocation(line: str) -> bool:
@@ -563,17 +693,17 @@ def all_direct_callees(body: FunctionBody) -> set[str]:
   callees: set[str] = set()
   for index, (_, line) in enumerate(body.lines):
     inst = mnemonic(line)
-    if inst not in DIRECT_CALL_MNEMONICS | DIRECT_TAIL_MNEMONICS and not is_call_relocation(line):
+    if inst not in DIRECT_CALL_MNEMONICS | DIRECT_TAIL_MNEMONICS | RESOLVED_RISCV_TRANSFERS and not is_call_relocation(line):
       continue
-    targets = direct_call_targets(line)
+    targets = direct_call_targets(line, body.symbol_names)
     if inst in DIRECT_CALL_MNEMONICS | DIRECT_TAIL_MNEMONICS and index + 1 < len(body.lines):
       next_line = body.lines[index + 1][1]
       # A relocation immediately following this instruction supplies its target.
       # Tail transfers use architecture-specific jump/relative relocations, not
       # necessarily the CALL relocations recognized on standalone lines.
-      if is_call_relocation(next_line) or re.search(r"\bR_[A-Z0-9_]+\b", next_line):
-        targets.update(direct_call_targets(next_line))
-    callees.update(targets)
+      if is_call_relocation(next_line) or re.search(r"\b(?:R_|IMAGE_REL_)[A-Z0-9_]+\b", next_line):
+        targets.update(direct_call_targets(next_line, body.symbol_names))
+    callees.update(scoped_symbol(target, body.path) for target in targets)
   callees.discard(body.symbol)
   return callees
 
@@ -582,12 +712,15 @@ def direct_callees(body: FunctionBody, functions: dict[str, FunctionBody]) -> se
   return {
     target
     for target in all_direct_callees(body)
-    if target in functions and target.startswith(("rscrypto::", "rscrypto_", "ct_entry_", "<rscrypto::"))
+    if target in functions and is_ct_internal_symbol(target)
   }
 
 
 def is_ct_internal_symbol(symbol: str) -> bool:
-  return symbol.startswith(("rscrypto::", "rscrypto_", "ct_entry_", "<rscrypto::"))
+  return (
+    "rscrypto::" in symbol or "::OUTLINED_FUNCTION_" in symbol
+    or symbol.startswith(("rscrypto_", "ct_entry_", "OUTLINED_FUNCTION_"))
+  )
 
 
 def build_call_graph(functions: dict[str, FunctionBody]) -> dict[str, set[str]]:
@@ -616,7 +749,9 @@ def closure_roots(
   return by_primitive
 
 
-def final_equality_closure(roots: set[str], functions: dict[str, FunctionBody], artifact: Path) -> dict[str, Any]:
+def final_equality_closure(
+  roots: set[str], functions: dict[str, FunctionBody], artifact: Path, target: str | None = None,
+) -> dict[str, Any]:
   call_graph = build_call_graph(functions)
   by_root = {root: reachable_closure(root, call_graph) for root in sorted(roots) if root in functions}
   reachable = sorted({symbol for symbols in by_root.values() for symbol in symbols})
@@ -627,9 +762,17 @@ def final_equality_closure(roots: set[str], functions: dict[str, FunctionBody], 
     terminal = sorted(target for target in callees if not is_ct_internal_symbol(target))
     if terminal:
       terminal_calls[symbol] = terminal
-    for target in callees:
-      if is_ct_internal_symbol(target) and target not in functions:
-        unresolved_internal_calls.append({"caller": symbol, "target": target})
+    for callee in callees:
+      if ((is_ct_internal_symbol(callee) and callee not in functions) or callee.startswith(".text")
+          or (target == "powerpc64le-unknown-linux-gnu" and callee.startswith("."))):
+        unresolved_internal_calls.append({"caller": symbol, "target": callee})
+    if target == "x86_64-unknown-linux-gnu":
+      for _, line in functions[symbol].lines:
+        if re.search(r"\b(?:callq?|jmpq?)\s+\*[^\s]*\(%rip\)", line):
+          targets = direct_call_targets(line)
+          if (not re.search(r"# GOT 0x[0-9a-fA-F]+\s+<.+>\s*$", line)
+              or not targets or any(name.startswith(".") for name in targets)):
+            unresolved_internal_calls.append({"caller": symbol, "target": f"unresolved GOT transfer: {line.strip()}"})
   return {
     "artifact": f"artifacts/{artifact.name}",
     "artifact_sha256": sha256_file(artifact),
@@ -711,11 +854,125 @@ def is_target_division_review(target: str, inst: str) -> bool:
 
 
 def is_s390x_conditional_branch(target: str, inst: str) -> bool:
-  return target.startswith("s390x-") and inst in BRANCH_CONDS_S390X
+  return target.startswith("s390x-") and (
+    inst in BRANCH_CONDS_S390X
+    or S390X_CONDITIONAL_JUMP.match(inst) is not None
+    or S390X_COMPARE_AND_BRANCH.match(inst) is not None
+  )
 
 
 def is_riscv_conditional_branch(target: str, inst: str) -> bool:
   return target.startswith(("riscv32", "riscv64")) and inst in RISCV_BRANCH_CONDS
+
+
+def is_power_conditional_branch(target: str, inst: str) -> bool:
+  return target.startswith(("powerpc", "ppc")) and inst.rstrip("+-") in POWER_BRANCH_CONDS
+
+
+def is_conditional_branch(target: str, inst: str) -> bool:
+  # s390x `jg` is an unconditional long jump, not x86 "jump if greater".
+  if target.startswith("s390x-"):
+    return is_s390x_conditional_branch(target, inst)
+  return (
+    inst in BRANCH_CONDS_AARCH64
+    or inst in BRANCH_CONDS_X86
+    or is_riscv_conditional_branch(target, inst)
+    or is_power_conditional_branch(target, inst)
+  )
+
+
+@dataclass(frozen=True)
+class Instruction:
+  offset: int
+  mnemonic: str
+  local_target: int | None
+
+
+def parse_instructions(body: FunctionBody) -> list[Instruction]:
+  """Decode instruction lines with offsets and same-function branch targets.
+
+  llvm-objdump names most branch targets as `<symbol+offset>`; s390x prints
+  only the address. An address operand followed by a relocation is not local.
+  """
+  instructions = []
+  lines = [line for _, line in body.lines]
+  for index, line in enumerate(lines):
+    address = INSTRUCTION_ADDRESS.match(line)
+    inst = mnemonic(line)
+    if address is None or inst is None or RELOCATION_LINE.match(line):
+      continue
+    local_target = None
+    if symbol_target := BRANCH_TARGET_SYMBOL.search(line):
+      if scoped_symbol(normalize_symbol(symbol_target.group(1)), body.path) == body.symbol:
+        local_target = int(symbol_target.group(2) or "0", 16)
+    elif address_target := BRANCH_TARGET_ADDRESS.search(line):
+      relocated = index + 1 < len(lines) and RELOCATION_LINE.match(lines[index + 1]) is not None
+      if not relocated:
+        local_target = int(address_target.group(1), 16) - body.address
+    instructions.append(Instruction(int(address.group(1), 16) - body.address, inst, local_target))
+  return instructions
+
+
+def select_branch_arm(
+  target: str,
+  instructions: list[Instruction],
+  index_by_offset: dict[int, int],
+  index: int,
+) -> int | None:
+  """Return the arm length when a conditional branch only chooses between data values.
+
+  LLVM lowers a `select` to a short branch whose paths rejoin after straight-line
+  code when the target lacks a usable conditional move, or when it judges the
+  branch cheaper. The shapes are a skipped block, an arm that jumps to the
+  branch target, an out-of-line arm that jumps back, and a two-arm diamond.
+  """
+  branch = instructions[index]
+  if branch.local_target is None or index + 1 >= len(instructions):
+    return None
+  taken = index_by_offset.get(branch.local_target)
+  fall = index + 1
+
+  def is_stop(instruction: Instruction) -> bool:
+    return (
+      is_conditional_branch(target, instruction.mnemonic)
+      or instruction.mnemonic in DIRECT_TAIL_MNEMONICS
+      or instruction.mnemonic in DIRECT_CALL_MNEMONICS
+      or instruction.mnemonic in INDIRECT_CALL_MNEMONICS
+      or instruction.mnemonic in CONTROL_FLOW_STOP_MNEMONICS
+    )
+
+  def straight(start: int, end: int) -> bool:
+    return 0 < end - start <= SELECT_BRANCH_MAX_ARM and not any(map(is_stop, instructions[start:end]))
+
+  def arm_jump(start: int) -> tuple[int, int | None] | None:
+    """Return the length and destination of a straight-line arm ending in an unconditional jump."""
+    for length, instruction in enumerate(instructions[start : start + SELECT_BRANCH_MAX_ARM + 1]):
+      if instruction.mnemonic in DIRECT_TAIL_MNEMONICS and not is_conditional_branch(target, instruction.mnemonic):
+        return length, instruction.local_target
+      if is_stop(instruction):
+        return None
+    return None
+
+  if taken is not None and taken > fall and straight(fall, taken):
+    return taken - fall
+  fall_arm = arm_jump(fall)
+  if fall_arm is not None and fall_arm[0] > 0 and fall_arm[1] == branch.local_target:
+    return fall_arm[0]
+  if taken is None:
+    return None
+  taken_arm = arm_jump(taken)
+  if taken_arm is not None and taken_arm[0] > 0 and taken_arm[1] == instructions[fall].offset:
+    return taken_arm[0]
+  if fall_arm is None or fall_arm[1] is None:
+    return None
+  join = index_by_offset.get(fall_arm[1])
+  if join is None:
+    return None
+  if taken_arm is not None and taken_arm[1] == fall_arm[1] and fall_arm[0] + taken_arm[0] > 0:
+    return fall_arm[0] + taken_arm[0]
+  if join > taken and straight(taken, join):
+    return fall_arm[0] + join - taken
+  return None
 
 
 def finding(
@@ -757,6 +1014,39 @@ def finding(
   }
 
 
+def instruction_identity(target: str, body: FunctionBody, line: str, local_symbols: set[str]) -> str:
+  """Bind instruction semantics without binding resolved transfers to placement.
+
+  Keep non-control operands and bytes exact. For a decoded direct transfer to
+  a known symbol, retain its length, mnemonic, registers, condition, and exact
+  symbol/offset, but omit the encoding of its layout-dependent displacement.
+  Unknown encodings and unresolved destinations stay byte-exact.
+  """
+  address = INSTRUCTION_ADDRESS.match(line)
+  if address is None:
+    return line.strip()
+  offset = int(address.group(1), 16) - body.address
+  exact = f"{offset:x}: {line[address.end():].strip()}"
+  inst = mnemonic(line)
+  if inst not in DIRECT_CALL_MNEMONICS | DIRECT_TAIL_MNEMONICS and not is_conditional_branch(target, inst or ""):
+    return exact
+  fields = [part.strip() for part in line.split("\t") if part.strip()]
+  if len(fields) < 2 or ":" not in fields[0]:
+    return exact
+  encoded = fields[0].split(":", 1)[1].split()
+  if not encoded or any(not re.fullmatch(r"(?:[0-9a-fA-F]{2}){1,8}", word) for word in encoded):
+    return exact
+  text = " ".join(" ".join(fields[1:]).split())
+  destination = re.search(r"0x[0-9a-fA-F]+\s+<(.+)>$", text)
+  if destination is None:
+    return exact
+  symbol = normalize_symbol(destination.group(1))
+  if symbol_target_base(symbol) not in local_symbols:
+    return exact
+  length = sum(len(word) // 2 for word in encoded)
+  return f"{offset:x}: {length}B {text[:destination.start()]}<{symbol}>"
+
+
 def scan_symbol(
   target: str,
   symbol: str,
@@ -768,10 +1058,12 @@ def scan_symbol(
   roots: list[str],
 ) -> list[dict[str, Any]]:
   findings: list[dict[str, Any]] = []
+  instructions = parse_instructions(body)
+  index_by_offset = {instruction.offset: position for position, instruction in enumerate(instructions)}
   for line_index, (line_number, line) in enumerate(body.lines):
     inst = mnemonic(line)
     if not inst:
-      callees = direct_call_targets(line)
+      callees = direct_call_targets(line, body.symbol_names)
       if is_call_relocation(line) and callees and not callees <= local_symbols:
         findings.append(
           finding(
@@ -968,26 +1260,42 @@ def scan_symbol(
           roots=roots,
         )
       )
-    elif (
-      inst in BRANCH_CONDS_AARCH64
-      or inst in BRANCH_CONDS_X86
-      or is_riscv_conditional_branch(target, inst)
-      or is_s390x_conditional_branch(target, inst)
-    ):
-      findings.append(
-        finding(
-          symbol,
-          body.path,
-          line_number,
-          line,
-          "conditional_branch",
-          "warn",
-          "Conditional branch found inside CT harness symbol. It may be public-shape control flow, but needs review.",
-          scope=scope,
-          primitive_ids=primitive_ids,
-          roots=roots,
+    elif is_conditional_branch(target, inst):
+      address = INSTRUCTION_ADDRESS.match(line)
+      position = index_by_offset.get(int(address.group(1), 16) - body.address) if address else None
+      arm = select_branch_arm(target, instructions, index_by_offset, position) if position is not None else None
+      if arm is not None:
+        findings.append(
+          finding(
+            symbol,
+            body.path,
+            line_number,
+            line,
+            "select_branch",
+            "fail",
+            f"Conditional branch whose paths rejoin after {arm} straight-line instruction(s): the shape of a "
+            "masked selection lowered to control flow. Keep the selection mask opaque, or classify the "
+            "condition with an exact reviewed asm_waiver.",
+            scope=scope,
+            primitive_ids=primitive_ids,
+            roots=roots,
+          )
         )
-      )
+      else:
+        findings.append(
+          finding(
+            symbol,
+            body.path,
+            line_number,
+            line,
+            "conditional_branch",
+            "warn",
+            "Conditional branch found inside CT harness symbol. It may be public-shape control flow, but needs review.",
+            scope=scope,
+            primitive_ids=primitive_ids,
+            roots=roots,
+          )
+        )
     elif inst in DIRECT_CALL_MNEMONICS | DIRECT_TAIL_MNEMONICS:
       callees = direct_call_targets(line)
       if inst in DIRECT_TAIL_MNEMONICS and callees == {symbol}:
@@ -1041,10 +1349,18 @@ def scan_symbol(
           roots=roots,
         )
       )
-  function_text = "\n".join(item.strip() for _, item in body.lines)
+  identities = {number: instruction_identity(target, body, line, local_symbols) for number, line in body.lines}
+  function_text = "rscrypto.ct.instruction-identity.v1\n" + "\n".join(identities.values())
   function_sha256 = hashlib.sha256(function_text.encode()).hexdigest()
   for item in findings:
     item["function_sha256"] = function_sha256
+    if item["offset"] is not None:
+      item["offset"] -= body.address
+      offset = f"0x{item['offset']:x}"
+    else:
+      offset = f"line-{item['line']}"
+    text_hash = hashlib.sha256(identities[item["line"]].encode()).hexdigest()[:16]
+    item["locator"] = f"{symbol}+{offset}:{item['kind']}:{text_hash}"
   return findings
 
 
@@ -1222,10 +1538,11 @@ def main() -> int:
     return 2
   disassembly_files.extend(final_disassembly_files)
   symbol_addresses = parse_symbol_addresses(args.artifact_dir)
+  symbol_names = demangle_table(args.artifact_dir)
   aliases = parse_asm_aliases(args.artifact_dir)
 
   for path in disassembly_files:
-    by_label, by_address = parse_disassembly(path)
+    by_label, by_address = parse_disassembly(path, symbol_names)
     functions.update(by_label)
     for symbol in sorted(symbols):
       if symbol in functions:
@@ -1237,12 +1554,24 @@ def main() -> int:
     apply_alias_bodies(functions, aliases)
 
   final_functions, _ = parse_disassembly(final_disassembly_files[0])
-  final_equality = final_equality_closure(equality_roots, final_functions, final_disassembly_files[0])
+  final_equality = final_equality_closure(equality_roots, final_functions, final_disassembly_files[0], args.target)
   if final_equality["missing_root_symbols"] or final_equality["unresolved_internal_calls"]:
     for symbol in final_equality["missing_root_symbols"]:
       print(f"final equality binary is missing root {symbol}")
     for call in final_equality["unresolved_internal_calls"]:
       print(f"final equality closure cannot resolve {call['caller']} -> {call['target']}")
+    return 2
+
+  enforced_roots = {
+    symbol for primitive in select_branch_enforced_primitives(root)
+    for symbol in ct_roots_by_primitive.get(primitive, set())
+  }
+  final_enforced = final_equality_closure(enforced_roots, final_functions, final_disassembly_files[0], args.target)
+  if final_enforced["missing_root_symbols"] or final_enforced["unresolved_internal_calls"]:
+    for symbol in final_enforced["missing_root_symbols"]:
+      print(f"enforced CT closure is missing linked root {symbol}")
+    for call in final_enforced["unresolved_internal_calls"]:
+      print(f"enforced CT closure cannot resolve {call['caller']} -> {call['target']}")
     return 2
 
   call_graph = build_call_graph(functions)
@@ -1274,8 +1603,9 @@ def main() -> int:
       )
     )
 
+  apply_select_branch_enforcement(findings, select_branch_enforced_primitives(root))
   try:
-    public_operand_errors = apply_public_operand_rules(findings, configured_public_operands)
+    public_operand_errors = apply_public_operand_rules(findings, configured_public_operands, args.target)
     if public_operand_errors:
       for error in public_operand_errors:
         print(error)
@@ -1335,8 +1665,11 @@ def main() -> int:
     },
     "policy": {
       "needs_fix": ["variable_latency_division", "variable_latency_multiply", "indirect_jump"],
+      "needs_fix_for_enforced_primitives": ["select_branch"],
+      "select_branch_enforced_primitives": sorted(select_branch_enforced_primitives(root)),
       "needs_binsec": [
         "conditional_branch",
+        "select_branch",
         "call",
         "indirect_call",
         "register_branch",
@@ -1362,6 +1695,7 @@ def main() -> int:
       "reachable_symbol_count": len(closure_symbols),
     },
     "final_equality_call_closure": final_equality,
+    "final_enforced_call_closure": final_enforced,
     "missing_symbols": missing_symbols,
     "finding_count": len(findings),
     "needs_fix_count": len(needs_fix),

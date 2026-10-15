@@ -17,15 +17,23 @@ from asm_heuristics import (
   FunctionBody,
   apply_public_operand_rules,
   apply_waivers,
+  build_call_graph,
+  parse_disassembly,
+  reachable_closure,
   summarize,
   summarize_closure,
+  validate_waivers,
 )
 from full import build_findings, configure_target_environment
 from provenance import codegen_value, resolve_executable, resolved_linker_version, symbol_objects
 from symbolize_linked_binary import (
   Symbol,
   parse_indirect_symbols,
+  parse_final_nm,
   parse_link_map,
+  parse_dynamic_relocations,
+  parse_power_import_thunks,
+  resolve_x86_got_transfer,
   symbolize,
 )
 def expect_failure(action) -> None:
@@ -34,6 +42,85 @@ def expect_failure(action) -> None:
   except ValueError:
     return
   raise AssertionError("evidence mutation unexpectedly passed")
+
+
+def test_linked_import_resolution() -> None:
+  # Final POWER libc calls use unnamed 20-byte ELFv2 thunks. Their instruction
+  # bytes and the dynamic JMP_SLOT, rather than the .text label, identify memcpy.
+  with tempfile.TemporaryDirectory() as temporary:
+    root = Path(temporary)
+    link_map, raw, got, dynamic = [root / name for name in ("map", "raw", "got", "dynamic")]
+    link_map.write_text("1091cc 1091cc 14 16 <internal>:(.text.thunk)\n")
+    power_raw = (
+      "fixture: file format elf64-powerpcle\n"
+      "1091cc: 18 00 41 f8\tstd 2, 24(1)\n"
+      "1091d0: 00 00 82 3d\taddis 12, 2, 0\n"
+      "1091d4: 40 82 8c e9\tld 12, -32192(12)\n"
+      "1091d8: a6 03 89 7d\tmtctr 12\n"
+      "1091dc: 20 04 80 4e\tbctr\n"
+    )
+    raw.write_text(power_raw)
+    got.write_text("fixture: file format elf64-powerpcle\nContents of section .got:\n 12a310 10231300 00000000\n")
+    dynamic.write_text("000000000012a550 R_PPC64_JMP_SLOT memcpy\n")
+    relocations = parse_dynamic_relocations(dynamic)
+    assert parse_power_import_thunks(link_map, raw, got, relocations) == [Symbol(0x1091CC, 20, "memcpy@plt")]
+    for original, changed in (
+      ("18 00 41 f8", "18 00 61 f8"),  # save another register
+      ("00 00 82 3d", "00 00 83 3d"),  # address from a different base
+      ("40 82 8c e9", "44 82 8c e9"),  # load an unrelocated slot
+      ("a6 03 89 7d", "a6 03 69 7d"),  # transfer a different register
+      ("20 04 80 4e", "21 04 80 4e"),  # different transfer semantics
+    ):
+      raw.write_text(power_raw.replace(original, changed))
+      expect_failure(lambda: parse_power_import_thunks(link_map, raw, got, relocations))
+    raw.write_text(power_raw)
+    for changed in ({}, {0x12A550: ("R_PPC64_RELATIVE", "memcpy")}):
+      expect_failure(lambda: parse_power_import_thunks(link_map, raw, got, changed))
+    got.write_text(got.read_text().replace("10231300", "18231300"))
+    expect_failure(lambda: parse_power_import_thunks(link_map, raw, got, relocations))
+    dynamic.write_text(dynamic.read_text() * 2)
+    expect_failure(lambda: parse_dynamic_relocations(dynamic))
+    # A GNU map has no LLD synthetic thunk range. It gains no synthesized
+    # names; unresolved .text/.plt destinations remain the closure gate's job.
+    link_map.write_text(
+      " .text.unlikely.imports.stub\n"
+      "                0x0000000000008800      0x8c0 linker stubs\n"
+      "                0x0000000000008860                0000004c.plt_call.memcpy@@GLIBC_2.17\n"
+      "                0x0000000000008880                0000004c.plt_call.abort@@GLIBC_2.17\n"
+    )
+    assert parse_power_import_thunks(link_map, raw, got, relocations) == []
+    assert Symbol(0x8860, 0x20, "0000004c.plt_call.memcpy@@GLIBC_2.17") in parse_link_map(link_map, {})
+
+    # The final Linux x86 P-256 caller reaches ASM through a RELATIVE GOT slot.
+    # Resolve the encoded slot, not any incidental numeric data annotation.
+    call = "fcc20: ff 15 2a 85 06 00\tcallq\t*0x6852a(%rip) # 0x165150"
+    assembly = Symbol(0x44A34, 1, "rscrypto_p256_scalarmul_alt")
+    symbols = {assembly.address: assembly}
+    relative = {0x165150: ("R_X86_64_RELATIVE", "*ABS*+0x44a34")}
+    resolved = call.replace("# ", "# GOT ") + " <rscrypto_p256_scalarmul_alt>"
+    assert resolve_x86_got_transfer(call, relative, symbols) == resolved
+    jump = call.replace("ff 15", "ff 25").replace("callq", "jmpq")
+    assert resolve_x86_got_transfer(jump, relative, symbols) == jump.replace("# ", "# GOT ") + " <rscrypto_p256_scalarmul_alt>"
+    for kind in ("R_X86_64_GLOB_DAT", "R_X86_64_JUMP_SLOT"):
+      assert resolve_x86_got_transfer(call, {0x165150: (kind, "memcpy")}, symbols) == call.replace("# ", "# GOT ") + " <memcpy@plt>"
+    assert resolve_x86_got_transfer(call, {}, symbols) == call
+    assert resolve_x86_got_transfer(call, {0x165158: relative[0x165150]}, symbols) == call
+    data = call.replace("callq", "movq")
+    assert resolve_x86_got_transfer(data, relative, symbols) == data
+    for changed in (
+      call.replace("ff 15", "ff 25"),
+      call.replace("2a 85", "2b 85"),
+      call.replace("# 0x165150", "# 0x165158"),
+    ):
+      expect_failure(lambda: resolve_x86_got_transfer(changed, relative, symbols))
+    expect_failure(lambda: resolve_x86_got_transfer(call, {0x165150: ("R_X86_64_RELATIVE", "*ABS*+0x44a35")}, symbols))
+    raw.write_text("fixture: file format elf64-x86-64\n44a34: c3\tretq\n" + call + "\n")
+    output = root / "symbolized.disasm.txt"
+    symbolize(raw, output, [assembly, Symbol(0xFCC20, 6, "ct_entry_p256_ecdh_agree")], dynamic_relocations=relative)
+    functions, _ = parse_disassembly(output)
+    assert reachable_closure("ct_entry_p256_ecdh_agree", build_call_graph(functions)) == {
+      "ct_entry_p256_ecdh_agree", "rscrypto_p256_scalarmul_alt",
+    }
 
 
 def manifest_errors(mutate) -> list[str]:
@@ -266,6 +353,7 @@ sys.exit(mode['exit'])
 
 
 def main() -> None:
+  test_linked_import_resolution()
   test_dudect_invocation_evidence()
   test_dudect_smoke_summary_is_insufficient()
   test_dudect_source_identity_rejects_stale_worktree()
@@ -389,6 +477,24 @@ def main() -> None:
 
   assert "duplicate target x86_64-unknown-linux-gnu" in manifest_errors(duplicate_target)
 
+  assert "asm_select_branch must be a table" in manifest_errors(
+    lambda manifest: manifest.update(asm_select_branch=[])
+  )
+  for enforced in ["kx.p256_ecdh", ["kx.p256_ecdh", "kx.p256_ecdh"]]:
+    assert "asm_select_branch enforced_primitives must be a list of unique strings" in manifest_errors(
+      lambda manifest: manifest.update(asm_select_branch={"enforced_primitives": enforced})
+    )
+  assert "asm_select_branch enforces unknown, which is not a ct-intended primitive" in manifest_errors(
+    lambda manifest: manifest.update(asm_select_branch={"enforced_primitives": ["unknown"]})
+  )
+
+  def public_operand_unknown_target(manifest) -> None:
+    manifest["asm_public_operand"][0]["targets"] = ["unknown-target"]
+
+  assert "asm_public_operand[0] targets must be a non-empty list of unique ct.toml targets" in manifest_errors(
+    public_operand_unknown_target
+  )
+
   def required_target_without_snapshot(manifest) -> None:
     target = next(row for row in manifest["target"] if row["name"] == "x86_64-unknown-linux-musl")
     target["physical_timing"] = "required"
@@ -472,6 +578,38 @@ def main() -> None:
     mapped = parse_link_map(link_map, {"_RNv_test": "rscrypto::fixed_eq"})
     assert mapped == [Symbol(0x1000, 0x10, "ct_entry_owner_eq_16"), Symbol(0x1010, 0x10, "rscrypto::fixed_eq")]
 
+    # Assembly exports can have size zero inside a shared .text section.
+    # Bound them by the next named function, retaining local loop labels inside.
+    assembly_map = temporary_path / "assembly-map.txt"
+    assembly_map.write_text(
+      "1000 1000 40 16 input.o:(.text)\n"
+      "1000 1000 0 1 .L0\n"
+      "1000 1000 0 1 $x\n"
+      "1000 1000 0 1 rscrypto_p256_scalarmul_alt\n"
+      "1008 1008 0 1 Lp256_loop\n"
+      "1010 1010 0 1 .L0\n"
+      "1020 1020 0 1 rscrypto_p256_scalarmulbase_alt\n"
+    )
+    assembly_symbols = [Symbol(0x1000, 0x20, "rscrypto_p256_scalarmul_alt"),
+                        Symbol(0x1020, 0x20, "rscrypto_p256_scalarmulbase_alt")]
+    assert parse_link_map(assembly_map, {}) == assembly_symbols
+    assembly_nm = temporary_path / "assembly-nm.txt"
+    assembly_nm.write_text(
+      "1000 T rscrypto_p256_scalarmul_alt\n"
+      "1008 t Lp256_loop\n"
+      "1010 t $x\n"
+      "1020 T rscrypto_p256_scalarmulbase_alt\n"
+      "1040 T next_function\n"
+    )
+    assert parse_final_nm(assembly_nm)[:2] == assembly_symbols
+    assembly_map.write_text(
+      " .text 0x1000 0x40 input.o\n"
+      " 0x1000 rscrypto_p256_scalarmul_alt\n"
+      " 0x1008 Lp256_loop\n"
+      " 0x1020 rscrypto_p256_scalarmulbase_alt\n"
+    )
+    assert parse_link_map(assembly_map, {}) == assembly_symbols
+
     gnu_link_map = temporary_path / "gnu-link-map.txt"
     gnu_link_map.write_text(
       "Discarded input sections\n"
@@ -507,12 +645,22 @@ def main() -> None:
       " 0001:00000080 last_function                    0000000140001080 f input.obj\n"
       " 0002:00000000 data_value                       0000000140002000   input.obj\n"
     )
-    assert parse_link_map(msvc_link_map, {"_RNv_test": "rscrypto::fixed_eq"}) == [
+    msvc_symbols = [
       Symbol(0x140001020, 0x10, "ct_entry_owner_eq_16"),
       Symbol(0x140001030, 0x10, "rscrypto::fixed_eq"),
       Symbol(0x140001030, 0x10, "folded_alias"),
       Symbol(0x140001040, 0x10, "memcpy"),
       Symbol(0x140001080, 0x10, "last_function"),
+    ]
+    assert parse_link_map(msvc_link_map, {"_RNv_test": "rscrypto::fixed_eq"}) == msvc_symbols
+    lld_coff_map = temporary_path / "lld-coff-map.txt"
+    lld_coff_map.write_text("\n".join(
+      line.replace(" f ", "   ") for line in msvc_link_map.read_text().splitlines() if "code_label" not in line
+    ) + "\n 0001:00000028 Llocal_loop 0000000140001028 input.obj\n"
+      + " 0001:000000a0 memset 00000001400010a0 vcruntime:VCRUNTIME140.dll\n"
+      + " 0002:00000010 __imp_memset 0000000140002010 vcruntime:VCRUNTIME140.dll\n")
+    assert parse_link_map(lld_coff_map, {"_RNv_test": "rscrypto::fixed_eq"}) == [
+      Symbol(0x1400010a0, 1, "memset"), *msvc_symbols,
     ]
     msvc_link_map.write_text(msvc_link_map.read_text().replace("0000000140001030", "0000000140002030"))
     expect_failure(lambda: parse_link_map(msvc_link_map, {}))
@@ -530,6 +678,7 @@ def main() -> None:
       "Disassembly of section .text:\n"
       "    1000: e8 0b 00 00 00 callq 0x1010 <.text+0x10>\n"
       "    1005: e8 06 00 00 00 callq 0x1010 <<rscrypto::Owner>::verify::<128>>\n"
+      "    100a: c0 e5 00 00 00 03 brasl %r14, 0x1010\n"
       "    1010: c3 retq\n"
     )
     symbolized = temporary_path / "symbolized.disasm.txt"
@@ -537,8 +686,50 @@ def main() -> None:
     output = symbolized.read_text()
     assert "<ct_entry_owner_eq_16>:" in output and "<rscrypto::fixed_eq>" in output
     assert "0x1010 <rscrypto::fixed_eq>" in output
+    assert "brasl %r14, 0x1010 <rscrypto::fixed_eq>" in output
     assert "Owner" not in output
+    linked_functions, _ = parse_disassembly(symbolized)
+    assert reachable_closure("ct_entry_owner_eq_16", build_call_graph(linked_functions)) == {
+      "ct_entry_owner_eq_16", "rscrypto::fixed_eq",
+    }
     expect_failure(lambda: symbolize(raw_disassembly, symbolized, [Symbol(0x1020, 1, "missing")]))
+
+    # Inline x86 table data can consume the first byte of the next function.
+    # Recover the whole function from original bytes at its mapped boundary.
+    raw_disassembly.write_text("100f: 77 f3\tja 0x1004\n1011: 0f 1e\t<unknown>\n1013: fa\tcli\n1014: c3\tretq\n")
+    original = raw_disassembly.read_bytes()
+    binary = temporary_path / "original-binary"
+    binary.write_bytes(b"unchanged linked code")
+    recovered = "1010: f3 0f 1e fa\tendbr64\n1014: c3\tretq\n"
+    with patch("symbolize_linked_binary.subprocess.check_output", return_value=recovered) as decoder:
+      symbolize(raw_disassembly, symbolized, [Symbol(0x1010, 5, "rscrypto::fixed_eq")],
+                binary=binary, objdump=Path("llvm-objdump"))
+    assert "1010: f3 0f 1e fa" in symbolized.read_text() and "1011:" not in symbolized.read_text()
+    assert raw_disassembly.read_bytes() == original and binary.read_bytes() == b"unchanged linked code"
+    assert "--start-address=0x1010" in decoder.call_args.args[0]
+    assert "--stop-address=0x1015" in decoder.call_args.args[0]
+    recovery = json.loads(symbolized.with_name("symbolized.boundary-recovery.json").read_text())
+    assert recovery["recoveries"][0]["disassembly"] == recovered
+    with patch("symbolize_linked_binary.subprocess.check_output", return_value="1011: c3 retq\n"):
+      expect_failure(lambda: symbolize(raw_disassembly, symbolized, [Symbol(0x1010, 5, "rscrypto::fixed_eq")],
+                                       binary=binary, objdump=Path("llvm-objdump")))
+
+    # Linked RISC-V register operands may still have a statically resolved
+    # section annotation from llvm-objdump. Preserve that call-graph edge.
+    raw_disassembly.write_text(
+      "Disassembly of section .text:\n"
+      "00001000 <.text>:\n"
+      "1000: 00000097\tauipc\tra, 0x0\n"
+      "1004: 010080e7\tjalr\t0x10(ra) <.text+0x10>\n"
+      "1008: 8082\tret\n"
+      "1010: 8082\tret\n"
+    )
+    symbolize(raw_disassembly, symbolized, mapped)
+    assert "jalr\t0x10(ra) <rscrypto::fixed_eq>" in symbolized.read_text()
+    linked_functions, _ = parse_disassembly(symbolized)
+    assert reachable_closure("ct_entry_owner_eq_16", build_call_graph(linked_functions)) == {
+      "ct_entry_owner_eq_16", "rscrypto::fixed_eq",
+    }
 
   finding = {
     "symbol": "rscrypto::auth::argon2::fill_segment_inner",
@@ -602,6 +793,70 @@ def main() -> None:
 
   extra = dict(finding, locator="fixture-2", operand_class="unproven", disposition="needs-fix")
   assert apply_public_operand_rules([finding, extra], [rule])
+
+  # A target-scoped rule bounds each listed target and accepts nothing elsewhere.
+  scoped = dict(rule, targets=["s390x-unknown-linux-gnu"])
+  other = dict(finding, operand_class="unproven", disposition="needs-fix")
+  assert apply_public_operand_rules([other], [scoped], "riscv64gc-unknown-linux-gnu") == []
+  assert other["operand_class"] == "unproven" and other["disposition"] == "needs-fix"
+  assert apply_public_operand_rules([other], [scoped], "s390x-unknown-linux-gnu") == []
+  assert other["operand_class"] == "public" and other["disposition"] == "accepted"
+  assert apply_public_operand_rules([other], [dict(rule, targets=[])], "s390x-unknown-linux-gnu")
+
+  # A count bound cannot distinguish a reviewed public branch from a secret
+  # branch in the same function. In particular, the old s390x signed-digit
+  # correction also fit the public window-bound rule's max_count of one.
+  assert apply_public_operand_rules([], [dict(rule, kind="select_branch")])
+  assert "asm_public_operand[0] kind is not a public-operand-classifiable instruction" in manifest_errors(
+    lambda manifest: manifest["asm_public_operand"][0].update(kind="select_branch")
+  )
+  target = "s390x-unknown-linux-gnu"
+  public_site = dict(
+    finding, symbol="<rscrypto::auth::p256_ecdh::P256EphemeralSecret>::diffie_hellman",
+    kind="select_branch", primitive_ids=["kx.p256_ecdh"], public_classification=None,
+    file="artifacts/rscrypto_ct_evidence.o.disasm.txt", locator="public-window-bound+0x1e0",
+    function_sha256="a" * 64, operand_class="unproven", disposition="needs-fix", waived=False,
+  )
+  waiver = {
+    "target": target, "primitive": "kx.p256_ecdh", "symbol": public_site["symbol"],
+    "kind": "select_branch", "artifact": public_site["file"], "locator": public_site["locator"],
+    "function_sha256": public_site["function_sha256"], "source": "src/auth/p256_portable.rs:246",
+    "classification": "public", "rationale": "The compared value is the public window index.",
+    "reviewer": "regression fixture", "reviewed_at": "2026-10-15",
+  }
+  assert validate_waivers([waiver]) == []
+  assert apply_waivers([public_site], [waiver], target) == []
+  assert public_site["operand_class"] == "public" and public_site["waived"]
+  assert apply_waivers([], [waiver], "riscv64gc-unknown-linux-gnu") == []
+  for changes in (
+    {"locator": "secret-digit-correction+0x278"},
+    {"function_sha256": "b" * 64},
+    {"file": "artifacts/another.o.disasm.txt"},
+  ):
+    changed = dict(public_site, **changes, operand_class="unproven", disposition="needs-fix", waived=False)
+    assert apply_waivers([changed], [waiver], target)
+    assert not changed["waived"] and changed["disposition"] == "needs-fix"
+
+  for classification in ("outside-claim", "allowed-disclosure"):
+    bounded = dict(waiver, classification=classification)
+    assert validate_waivers([bounded])
+    bounded["contract"] = "primitive:kx.p256_ecdh:notes"
+    assert validate_waivers([bounded]) == []
+    classified = dict(public_site, operand_class="unproven", disposition="needs-fix", waived=False)
+    assert apply_waivers([classified], [bounded], target) == []
+    assert classified["operand_class"] == "unproven" and classified["waived"]
+    assert classified["waivers"][0]["contract"] == "primitive:kx.p256_ecdh:notes"
+
+  boundary = dict(waiver, classification="outside-claim", contract="primitive:kx.p256_ecdh:notes")
+  assert not manifest_errors(lambda manifest: manifest.update(asm_waiver=[boundary]))
+  disclosure = dict(waiver, classification="allowed-disclosure", primitive="rsa.private_ops",
+                    contract="primitive:rsa.private_ops:may_leak:opaque_success_or_failure")
+  assert not manifest_errors(lambda manifest: manifest.update(asm_waiver=[disclosure]))
+  for contract in ("ct.toml:1", "primitive:missing:notes", "primitive:rsa.private_ops:may_leak:padding_octets"):
+    invalid = dict(disclosure, contract=contract)
+    assert any("contract must reference" in error for error in manifest_errors(
+      lambda manifest: manifest.update(asm_waiver=[invalid])
+    ))
 
 
 if __name__ == "__main__":
