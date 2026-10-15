@@ -155,6 +155,8 @@ alpha="=0.104.0-alpha.7"
                     update.update_manifests(paths)
             self.assertEqual([p.read_text() for p in paths], originals)
 
+    # `just update` runs on the workstation, which requires ripgrep; CI images do not carry it.
+    @unittest.skipUnless(shutil.which('rg'), 'manifest discovery uses ripgrep')
     def test_discovers_support_untracked_and_lockless_workspaces(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
