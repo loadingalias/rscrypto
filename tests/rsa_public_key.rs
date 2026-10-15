@@ -34,6 +34,8 @@ use rsa::{
 };
 #[cfg(feature = "getrandom")]
 use rscrypto::RsaEncryptionError;
+#[cfg(feature = "getrandom")]
+use rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt;
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 use rscrypto::auth::rsa::{
   diag_rsa_private_exponentiate_fixed_width, diag_rsa_private_exponentiate_fixed_width_with_scratch,

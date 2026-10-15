@@ -101,6 +101,31 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
 | Secret parsing and generation | RAII owners cover success, parse failure, entropy failure, and early return. |
 | Caller-filled secret owners, P-256 and P-384 ECDH generation, and ECDSA blinding | See [Caller-filled owners](#caller-filled-owners). |
 
+### RSA implicit rejection
+
+Legacy PKCS#1 v1.5 decryption hashes the stored private exponent at the public
+modulus width. Import and generation pad its encoding once and retain the CRT
+coefficient at the factor width; key destruction clears both owners. Decryption
+clears the exponent hash after deriving the per-ciphertext key derivation key
+(KDK). SHA-256 uses its secret finalization path, which clears
+the copied state and final block; the live hash states clear on drop.
+
+Each internal HMAC call clears its padded key block, ipad, opad, and inner
+digest. The implicit-rejection PRF (IRPRF) clears every returned HMAC block after
+copying its required bytes. The decoder clears the KDK, the 256 candidate-length
+bytes, and the alternative message (AM) on every ordinary return, including
+public-length errors. AM is either an operation-local heap buffer or
+`RsaPrivateScratch::blinding_power`; scratch cleanup also clears
+the latter after the operation. The allocating caller clears the encoded
+message and AM before freeing them, including private-operation failure.
+
+Output selection reads both encoded and alternative messages in full and moves
+the chosen suffix through a fixed sequence of shifts. It clears the remainder
+of `out[..k - 11]`; bytes beyond that window remain untouched on success.
+The caller owns the returned message. Public-input or private-operation errors
+clear the entire output. These source-level cleanup boundaries do not establish
+erasure of every compiler-created copy, register, or spill.
+
 ### ML-KEM
 
 - A prepared decapsulation key keeps a decryption mask derived from the implicit-rejection secret.

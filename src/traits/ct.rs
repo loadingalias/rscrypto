@@ -537,7 +537,8 @@ pub(crate) mod tests {
     feature = "slh-dsa",
     feature = "argon2",
     feature = "scrypt",
-    feature = "pbkdf2"
+    feature = "pbkdf2",
+    feature = "rsa"
   ))]
   #[test]
   fn slow_secret_operations_enter_data_independent_timing() {
@@ -546,6 +547,43 @@ pub(crate) mod tests {
         core::hint::black_box(operation());
       });
       assert!(entries >= 1, "{name} must enter data-independent timing");
+    }
+
+    #[cfg(feature = "rsa")]
+    {
+      use crate::auth::rsa::expert::RsaPkcs1v15Decrypt as _;
+
+      let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../../testdata/rsa/implicit_rejection/appendix_b.json"))
+          .expect("Appendix B fixture");
+      let hex = vectors["keys"][0]["pkcs8"].as_str().expect("PKCS #8 hex");
+      let der: alloc::vec::Vec<u8> = hex
+        .as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u8::from_str_radix(core::str::from_utf8(pair).expect("ASCII hex"), 16).expect("hex byte"))
+        .collect();
+      let key =
+        crate::RsaPrivateKey::from_pkcs8_der_with_policy(&der, &crate::RsaPublicKeyPolicy::legacy_verification())
+          .expect("Appendix B RSA-2048 key");
+      let mut scratch = key.private_scratch();
+      let blinding = crate::RsaBlindingPair::new(&[], &[]);
+      // A short output rejects before arithmetic: this checks the public
+      // guard, not one of the nested guards in RSA's arithmetic workers.
+      covered("RSA implicit rejection with blinding", || {
+        key.decrypt_pkcs1v15_with_blinding_factor(&[], blinding, &mut [])
+      });
+      covered("RSA implicit rejection with blinding and scratch", || {
+        key.decrypt_pkcs1v15_with_blinding_factor_and_scratch(&[], blinding, &mut [], &mut scratch)
+      });
+      #[cfg(feature = "getrandom")]
+      {
+        covered("RSA implicit rejection", || key.decrypt_pkcs1v15(&[], &mut []));
+        covered("RSA implicit rejection with scratch", || {
+          key.decrypt_pkcs1v15_with_scratch(&[], &mut [], &mut scratch)
+        });
+      }
     }
 
     #[cfg(feature = "x25519")]
@@ -829,6 +867,26 @@ pub(crate) mod tests {
   #[cfg(all(rscrypto_internal, feature = "diag"))]
   #[test]
   fn proof_leaves_stay_outside_data_independent_timing() {
+    #[cfg(feature = "rsa")]
+    assert_eq!(
+      dit_entries_during(|| {
+        use crate::auth::rsa::{
+          diag_rsa_implicit_rejection_decode_256, diag_rsa_implicit_rejection_expand_256,
+          diag_rsa_implicit_rejection_kdk_256,
+        };
+
+        let kdk = diag_rsa_implicit_rejection_kdk_256(&[1; 256], &[2; 256]);
+        let mut candidates = [0; 256];
+        let mut alternative = [0; 256];
+        diag_rsa_implicit_rejection_expand_256(&kdk, &mut candidates, &mut alternative)
+          .expect("fixed-width derivation");
+        core::hint::black_box(
+          diag_rsa_implicit_rejection_decode_256(&[3; 256], &candidates, &mut alternative, &mut [0; 245])
+            .expect("fixed-width decoding"),
+        );
+      }),
+      0
+    );
     #[cfg(feature = "ml-dsa")]
     assert_eq!(
       dit_entries_during(|| {

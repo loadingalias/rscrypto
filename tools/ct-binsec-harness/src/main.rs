@@ -282,6 +282,26 @@ pub static mut CT_BINSEC_RSA_OTHER_32: [u8; 32] = [0u8; 32];
 
 #[unsafe(no_mangle)]
 #[used]
+pub static mut CT_BINSEC_RSA_EXPONENT_256: [u8; 256] = [0u8; 256];
+
+#[unsafe(no_mangle)]
+#[used]
+pub static mut CT_BINSEC_RSA_CIPHERTEXT_256: [u8; 256] = [0u8; 256];
+
+#[unsafe(no_mangle)]
+#[used]
+pub static mut CT_BINSEC_RSA_ENCODED_256: [u8; 256] = [0u8; 256];
+
+#[unsafe(no_mangle)]
+#[used]
+pub static mut CT_BINSEC_RSA_CANDIDATES_256: [u8; 256] = [0u8; 256];
+
+#[unsafe(no_mangle)]
+#[used]
+pub static mut CT_BINSEC_RSA_ALTERNATIVE_256: [u8; 256] = [0u8; 256];
+
+#[unsafe(no_mangle)]
+#[used]
 pub static mut CT_BINSEC_RESULT: u8 = 0;
 
 #[inline(always)]
@@ -962,6 +982,46 @@ pub extern "C" fn ct_binsec_rsa_private_component_validation_32() -> ! {
   ct_binsec_done(ok)
 }
 
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn ct_binsec_rsa_implicit_rejection_kdk_256() -> ! {
+  // SAFETY: Each pointer references an initialized fixed-size harness global.
+  let exponent = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RSA_EXPONENT_256)) };
+  // SAFETY: This pointer references an initialized fixed-size harness global.
+  let ciphertext = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RSA_CIPHERTEXT_256)) };
+  let kdk = rscrypto::auth::rsa::diag_rsa_implicit_rejection_kdk_256(&exponent, &ciphertext);
+  ct_binsec_done(kdk.iter().fold(0, |acc, byte| acc ^ byte))
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn ct_binsec_rsa_implicit_rejection_expand_256() -> ! {
+  // SAFETY: This pointer references an initialized fixed-size harness global.
+  let kdk = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_KEY_32)) };
+  let mut candidates = [0u8; 256];
+  let mut alternative = [0u8; 256];
+  let result = rscrypto::auth::rsa::diag_rsa_implicit_rejection_expand_256(&kdk, &mut candidates, &mut alternative);
+  let digest = candidates.iter().chain(&alternative).fold(0, |acc, byte| acc ^ byte);
+  ct_binsec_done(digest ^ u8::from(result.is_ok()))
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn ct_binsec_rsa_implicit_rejection_decode_256() -> ! {
+  // SAFETY: Each pointer references an initialized fixed-size harness global.
+  let encoded = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RSA_ENCODED_256)) };
+  // SAFETY: This pointer references an initialized fixed-size harness global.
+  let candidates = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RSA_CANDIDATES_256)) };
+  // SAFETY: This pointer references an initialized fixed-size harness global.
+  let mut alternative = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RSA_ALTERNATIVE_256)) };
+  let mut out = [0u8; 245];
+  let len =
+    rscrypto::auth::rsa::diag_rsa_implicit_rejection_decode_256(&encoded, &candidates, &mut alternative, &mut out)
+      .unwrap_or(0);
+  let digest = out.iter().fold(0, |acc, byte| acc ^ byte);
+  ct_binsec_done(digest ^ len.to_le_bytes()[0])
+}
+
 #[cfg(target_arch = "x86_64")]
 #[unsafe(no_mangle)]
 #[inline(never)]
@@ -1032,7 +1092,7 @@ pub extern "C" fn ct_binsec_mldsa_montgomery() -> ! {
 
 #[unsafe(no_mangle)]
 #[used]
-pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 50] = [
+pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 53] = [
   ct_binsec_mldsa_montgomery,
   ct_binsec_owner_eq_16,
   ct_binsec_owner_eq_32,
@@ -1083,6 +1143,9 @@ pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 50] = [
   ct_binsec_ecdsa_p384_select_signing_generator_affine,
   ct_binsec_rsa_private_select_window_power_4,
   ct_binsec_rsa_private_component_validation_32,
+  ct_binsec_rsa_implicit_rejection_kdk_256,
+  ct_binsec_rsa_implicit_rejection_expand_256,
+  ct_binsec_rsa_implicit_rejection_decode_256,
 ];
 
 #[cfg(target_arch = "x86_64")]

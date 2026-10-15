@@ -2,6 +2,7 @@
 
 use core::ops::Range;
 
+use rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt;
 use rscrypto::{
   RsaBlindingPair, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKey, RsaPublicKeyPolicy,
 };
@@ -99,6 +100,12 @@ fn field<'a>(value: &'a Value, name: &str) -> &'a str {
   value[name]
     .as_str()
     .expect("Wycheproof fixture must contain the requested string field")
+}
+
+fn has_flag(test: &Value, flag: &str) -> bool {
+  test["flags"]
+    .as_array()
+    .is_some_and(|flags| flags.iter().any(|value| value.as_str() == Some(flag)))
 }
 
 fn wycheproof_result(result: &str) -> WycheproofResult {
@@ -623,11 +630,43 @@ fn assert_rsaes_pkcs1v15_wycheproof_vectors(
             scratch_valid_checked = true;
           }
         }
+        WycheproofResult::Invalid if has_flag(test, "InvalidPkcs1Padding") => {
+          // Implicit rejection returns a synthetic message instead of an error;
+          // tests/rsa_implicit_rejection.rs checks its value against OpenSSL.
+          invalid = invalid.strict_add(1);
+          assert!(
+            decrypted.is_ok(),
+            "Wycheproof RSAES-PKCS1-v1_5 tcId {} padding failure must use implicit rejection: {decrypted:?}",
+            test["tcId"]
+          );
+          let plaintext_len = decrypted.expect("padding failure must use implicit rejection");
+          let window = key.public_key().modulus().len().strict_sub(11);
+          assert!(plaintext_len <= window);
+          assert!(plaintext[plaintext_len..window].iter().all(|&byte| byte == 0));
+          if !scratch_invalid_checked {
+            let mut scratch_plaintext = vec![0xa5; key.public_key().modulus().len()];
+            let scratch_len = key
+              .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
+                &ciphertext,
+                RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
+                &mut scratch_plaintext,
+                &mut scratch,
+              )
+              .expect("Wycheproof RSAES-PKCS1-v1_5 padding failure must use implicit rejection with scratch");
+            assert_eq!(
+              &scratch_plaintext[..scratch_len],
+              &plaintext[..plaintext_len],
+              "Wycheproof RSAES-PKCS1-v1_5 tcId {} scratch decrypt chose a different synthetic message",
+              test["tcId"]
+            );
+            scratch_invalid_checked = true;
+          }
+        }
         WycheproofResult::Invalid => {
           invalid = invalid.strict_add(1);
           assert!(
             decrypted.is_err(),
-            "Wycheproof RSAES-PKCS1-v1_5 tcId {} accepted invalid ciphertext: {}",
+            "Wycheproof RSAES-PKCS1-v1_5 tcId {} accepted a malformed ciphertext: {}",
             test["tcId"],
             field(test, "comment")
           );
@@ -636,28 +675,6 @@ fn assert_rsaes_pkcs1v15_wycheproof_vectors(
             "Wycheproof RSAES-PKCS1-v1_5 tcId {} decrypt must clear plaintext on failure",
             test["tcId"]
           );
-          if !scratch_invalid_checked {
-            let mut scratch_plaintext = vec![0xa5; key.public_key().modulus().len()];
-            assert!(
-              key
-                .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
-                  &ciphertext,
-                  RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
-                  &mut scratch_plaintext,
-                  &mut scratch,
-                )
-                .is_err(),
-              "Wycheproof RSAES-PKCS1-v1_5 tcId {} scratch decrypt accepted invalid ciphertext: {}",
-              test["tcId"],
-              field(test, "comment")
-            );
-            assert!(
-              scratch_plaintext.iter().all(|&byte| byte == 0),
-              "Wycheproof RSAES-PKCS1-v1_5 tcId {} scratch decrypt must clear plaintext on failure",
-              test["tcId"]
-            );
-            scratch_invalid_checked = true;
-          }
         }
         WycheproofResult::Acceptable => {
           acceptable = acceptable.strict_add(1);

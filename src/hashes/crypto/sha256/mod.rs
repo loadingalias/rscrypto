@@ -477,7 +477,9 @@ impl Sha256 {
     {
       // Check this before `COMPILE_TIME_HW`: SPR + `target-cpu=native` otherwise
       // keeps streaming on the slow function-pointer wrapper shape.
-      if self.update_mode == Sha256UpdateMode::X86ShaDirect || self.try_enable_x86_sha_direct_update() {
+      if !cfg!(feature = "portable-only")
+        && (self.update_mode == Sha256UpdateMode::X86ShaDirect || self.try_enable_x86_sha_direct_update())
+      {
         self.update_with_x86_sha(data);
         return;
       }
@@ -490,7 +492,13 @@ impl Sha256 {
       .bytes_hashed
       .strict_add(self.block_len as u64)
       .strict_add(data.len() as u64);
-    let compress = self.select_compress();
+    // The portable-only constructor already installs the portable compressor;
+    // keep that path independent of process-wide capability initialization.
+    let compress = if cfg!(feature = "portable-only") {
+      self.compress_blocks
+    } else {
+      self.select_compress()
+    };
     self.update_with(data, compress);
   }
 
@@ -572,7 +580,7 @@ impl Sha256 {
     self.finalize_inner_with::<false>(self.compress_blocks)
   }
 
-  #[cfg(feature = "hmac")]
+  #[cfg(any(feature = "hmac", feature = "rsa"))]
   #[cfg_attr(feature = "diag", inline(never))]
   #[cfg_attr(not(feature = "diag"), inline)]
   pub(crate) fn finalize_secret(&self) -> [u8; 32] {
@@ -665,7 +673,7 @@ impl Sha256 {
   }
 
   #[inline]
-  #[cfg(feature = "hmac")]
+  #[cfg(any(feature = "hmac", feature = "rsa"))]
   pub(crate) fn zeroize_secret_state(&mut self) {
     crate::traits::ct::zeroize_words_no_fence(&mut self.state);
     crate::traits::ct::zeroize_no_fence(&mut self.block);
@@ -673,7 +681,7 @@ impl Sha256 {
   }
 
   #[inline]
-  #[cfg(feature = "hmac")]
+  #[cfg(any(feature = "hmac", feature = "rsa"))]
   pub(crate) fn digest_secret(data: &[u8]) -> [u8; 32] {
     let mut state = Self::new();
     state.update(data);

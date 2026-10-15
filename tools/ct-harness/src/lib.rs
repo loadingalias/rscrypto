@@ -13,6 +13,7 @@ pub mod zeroization;
 use core::{ptr, slice};
 use std::format;
 
+use rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt;
 use rscrypto::{
   Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey, Aes256GcmSiv,
   Aes256GcmSivKey, AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, Argon2Params, Argon2d, Argon2i, Argon2id,

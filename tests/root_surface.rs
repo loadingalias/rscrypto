@@ -21,6 +21,8 @@ use rscrypto::aead::{
 };
 #[cfg(feature = "hkdf")]
 use rscrypto::auth::HkdfOutputLengthError;
+#[cfg(all(feature = "rsa", feature = "getrandom"))]
+use rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt;
 #[cfg(all(feature = "checksums", feature = "alloc"))]
 use rscrypto::checksum::buffered::BufferedCrc32C;
 #[cfg(all(feature = "checksums", feature = "diag"))]

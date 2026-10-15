@@ -6,6 +6,7 @@ use rscrypto::aead::expert::header_protection::{
   Aes128HeaderProtection, Aes128HeaderProtectionKey, Aes256HeaderProtection, Aes256HeaderProtectionKey,
   ChaCha20HeaderProtection, ChaCha20HeaderProtectionKey,
 };
+use rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt;
 use rscrypto::{
   Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey, Aes256GcmSiv,
   Aes256GcmSivKey, AesSivCmac256, AesSivCmac256Key, AesSivCmac256Nonce, AesSivCmac256Tag, Argon2Params, Argon2i,
@@ -1989,7 +1990,9 @@ fn ed25519_sign_phase_inputs(rng: &mut BenchRng) -> Vec<(Class, rscrypto::auth::
 
 fn ed25519_sign_nonce_reduce_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   for (class, inputs) in ed25519_sign_phase_inputs(rng) {
-    runner.run_one(class, || rscrypto::auth::diag_ed25519_sign_nonce_reduce(&inputs.nonce_digest)[0]);
+    runner.run_one(class, || {
+      rscrypto::auth::diag_ed25519_sign_nonce_reduce(&inputs.nonce_digest)[0]
+    });
   }
 }
 
@@ -2728,6 +2731,134 @@ fn rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext(runner: &mut CtRunner, rng: &m
   }
 }
 
+/// Encrypt an encoded message EM with the raw public operation.
+fn rsa_raw_ciphertext(key: &RsaPrivateKey, encoded: &[u8]) -> Vec<u8> {
+  let mut ciphertext = vec![0u8; encoded.len()];
+  key
+    .public_key()
+    .public_operation(encoded, &mut ciphertext)
+    .expect("an encoded message below the modulus must encrypt");
+  ciphertext
+}
+
+/// EM = 00 || block_type || nonzero PS || separator || 32-octet message.
+fn rsa_pkcs1v15_encoded(rng: &mut BenchRng, len: usize, block_type: u8, separator: u8) -> Vec<u8> {
+  let mut encoded = vec![0u8; len];
+  encoded[1] = block_type;
+  let message_start = len.strict_sub(32);
+  for byte in &mut encoded[2..message_start.strict_sub(1)] {
+    *byte = rand_array::<1>(rng)[0] | 1;
+  }
+  encoded[message_start.strict_sub(1)] = separator;
+  encoded[message_start..].copy_from_slice(&rand_array::<32>(rng));
+  encoded
+}
+
+/// Decrypt with the measured implicit-rejection path; padding failures are not errors.
+fn rsa_pkcs1v15_decrypt_measured(runner: &mut CtRunner, key: &RsaPrivateKey, inputs: Vec<(Class, Vec<u8>)>) {
+  let sig_len = key.signature_len();
+  let (blinding_factor, blinding_inverse) = rsa_blinding_pair(key);
+  for (class, ciphertext) in inputs {
+    runner.run_one(class, || {
+      let mut out = vec![0u8; sig_len];
+      let mut scratch = key.private_scratch();
+      key
+        .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
+          &ciphertext,
+          RsaBlindingPair::new(&blinding_factor, &blinding_inverse),
+          &mut out,
+          &mut scratch,
+        )
+        .expect("implicit rejection must decrypt every reduced ciphertext")
+    });
+  }
+}
+
+// The classes differ only in the block-type octet: 0x02 is valid, 0x01 fails
+// the padding check and selects the synthetic message.
+fn rsa_pkcs1v15_decrypt_valid_vs_invalid_padding(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let block_type = if matches!(class, Class::Left) { 2 } else { 1 };
+    let encoded = rsa_pkcs1v15_encoded(rng, key.signature_len(), block_type, 0);
+    inputs.push((class, rsa_raw_ciphertext(&key, &encoded)));
+  }
+  rsa_pkcs1v15_decrypt_measured(runner, &key, inputs);
+}
+
+// Two padding failures: a wrong block type against a missing separator.
+fn rsa_pkcs1v15_decrypt_invalid_padding_classes(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let encoded = if matches!(class, Class::Left) {
+      rsa_pkcs1v15_encoded(rng, key.signature_len(), 1, 0)
+    } else {
+      let mut encoded = rsa_pkcs1v15_encoded(rng, key.signature_len(), 2, 0x5a);
+      for byte in &mut encoded[2..] {
+        *byte |= 1;
+      }
+      encoded
+    };
+    inputs.push((class, rsa_raw_ciphertext(&key, &encoded)));
+  }
+  rsa_pkcs1v15_decrypt_measured(runner, &key, inputs);
+}
+
+// Valid OAEP ciphertexts against random reduced representatives, which fail
+// OAEP decoding; the error stays opaque by design.
+fn rsa_oaep_decrypt_valid_vs_invalid(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
+  let sig_len = key.signature_len();
+  let (blinding_factor, blinding_inverse) = rsa_blinding_pair(&key);
+  let label = b"rscrypto-ct-oaep";
+
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let ciphertext = if matches!(class, Class::Left) {
+      let plaintext = rand_array::<32>(rng);
+      let seed = rand_array::<32>(rng);
+      let mut ciphertext = vec![0u8; sig_len];
+      key
+        .public_key()
+        .encrypt_oaep_with_random_fill(RsaOaepProfile::Sha256, label, &plaintext, &mut ciphertext, |out| {
+          if out.len() != seed.len() {
+            return Err(RsaEncryptionError::InvalidLength);
+          }
+          out.copy_from_slice(&seed);
+          Ok(())
+        })
+        .expect("OAEP fixture must encrypt");
+      ciphertext
+    } else {
+      let mut encoded = vec![0u8; sig_len];
+      for byte in &mut encoded[1..] {
+        *byte = rand_array::<1>(rng)[0];
+      }
+      rsa_raw_ciphertext(&key, &encoded)
+    };
+    inputs.push((class, ciphertext));
+  }
+
+  for (class, ciphertext) in inputs {
+    runner.run_one(class, || {
+      let mut out = vec![0u8; sig_len];
+      let mut scratch = key.private_scratch();
+      key
+        .decrypt_oaep_with_blinding_factor_and_scratch(
+          RsaOaepProfile::Sha256,
+          label,
+          &ciphertext,
+          RsaBlindingPair::new(&blinding_factor, &blinding_inverse),
+          &mut out,
+          &mut scratch,
+        )
+        .unwrap_or(usize::MAX)
+    });
+  }
+}
+
 fn rsa_private_component_validation_fixed_vs_random_component(runner: &mut CtRunner, rng: &mut BenchRng) {
   let upper_bound = [0xff; 32];
   let other = [0xa5; 32];
@@ -3438,7 +3569,10 @@ ctbench_main_with_seeds!(
     Some(0x6564323535314853)
   ),
   (ed25519_keypair_sign_fixed_vs_random_secret, Some(0x656432353531394b)),
-  (ed25519_sign_nonce_reduce_fixed_vs_random_secret, Some(0x6564323535313960)),
+  (
+    ed25519_sign_nonce_reduce_fixed_vs_random_secret,
+    Some(0x6564323535313960)
+  ),
   (ed25519_sign_commitment_fixed_vs_random_secret, Some(0x6564323535313961)),
   (ed25519_sign_response_fixed_vs_random_secret, Some(0x6564323535313962)),
   (ecdsa_p256_public_key_fixed_vs_random_secret, Some(0x703235365f707562)),
@@ -3531,6 +3665,9 @@ ctbench_main_with_seeds!(
   ),
   (rsa_oaep_decrypt_fixed_vs_random_plaintext, Some(0x7273615f6f616570)),
   (rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext, Some(0x7273615f64656331)),
+  (rsa_pkcs1v15_decrypt_valid_vs_invalid_padding, Some(0x7273615f69727669)),
+  (rsa_pkcs1v15_decrypt_invalid_padding_classes, Some(0x7273615f69726363)),
+  (rsa_oaep_decrypt_valid_vs_invalid, Some(0x7273615f6f617669)),
   (
     rsa_private_component_validation_fixed_vs_random_component,
     Some(0x7273615f636f6d70)
@@ -3616,8 +3753,14 @@ ctbench_main_with_seeds!(
   (ascon_aead128_fixed_vs_random_key_seal, Some(0x6173636f6e736561)),
   (aes_siv_cmac256_fixed_vs_random_key_seal, Some(0x7369765f7365616c)),
   (aes_siv_cmac256_probe_seal_fixed_vs_fixed_key, Some(0x7369767072620000)),
-  (aes_siv_cmac256_probe_seal_equal_vs_distinct_halves, Some(0x7369767072620001)),
-  (aes_siv_cmac256_probe_seal_fixed_distinct_vs_random_key, Some(0x7369767072620002)),
+  (
+    aes_siv_cmac256_probe_seal_equal_vs_distinct_halves,
+    Some(0x7369767072620001)
+  ),
+  (
+    aes_siv_cmac256_probe_seal_fixed_distinct_vs_random_key,
+    Some(0x7369767072620002)
+  ),
   (
     aes_siv_cmac256_portable_s2v_seal_fixed_vs_random_key,
     Some(0x7369765f73327673)

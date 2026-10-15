@@ -6,6 +6,42 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-15: RSA implicit rejection and decrypt-path qualification
+
+Legacy RSAES-PKCS1-v1_5 decryption now implements section 7 of the pinned
+`draft-irtf-cfrg-rsa-guidance-10` through the explicitly imported
+`auth::rsa::expert::RsaPkcs1v15Decrypt` trait. Padding failures return a
+key-and-ciphertext-derived synthetic message. The four inherent methods and
+explicit padding-failure form are removed; the root decryption surface is OAEP.
+Public-format and private-operation errors still clear the output. TLS 1.2
+premaster-secret handling is not provided.
+
+Independent checks cover all 48 Appendix B derivation/depaddings, 36 cases
+through every public entry, 96 seeded ciphertexts against OpenSSL 4.0.3, and
+59 Wycheproof synthetic messages. The final focused suites pass 191 native and
+190 portable RSA/SHA/caller tests. Five RSA fuzz corpus replays and native DIT
+coverage pass. Appendix B.2's 2049-bit key remains outside the existing
+half-width-factor import policy: its 12 algorithm cases run below import at
+257 bytes, but public decryption of that key remains a coverage gap. Supporting
+it requires a separate key-policy change and qualification.
+
+All six new bounded BINSEC proofs pass: KDK derivation, both IRPRF labels, and
+candidate/decoded-output selection at 2048 bits on AArch64 Linux and x86-64
+Linux with portable dispatch. The final linked assembly gate passes on all
+seven configured targets. It records 1,078 exact primitive/site classifications
+for 763 RSA selection findings and 14 shared SHA-256 caller classifications.
+Both RSA primitives now participate in the blocking selection gate. These
+bounded proofs and compiled-code reviews do not establish native timing.
+
+Record: `rsa-implicit-rejection-20261015/REPORT.md`, with source identity,
+proof binaries and configurations, review records, and functional logs. Common
+linked binaries, disassembly, relocations and provenance are retained under
+`ct-select-hardening-20261015/final-linked/`. Compiler: `nightly-2026-10-14`,
+rustc `822182db4`, LLVM 23.1.3. Both bundles remain local; off-machine retention
+is owed. The approved native Constant-Time run must qualify the new PKCS#1
+padding classes and OAEP valid-versus-invalid case before timing closure.
+No timing ran on the loaded Mac, and this campaign makes no performance claim.
+
 ## 2026-10-15: P-256 secret branch correction and selection hardening
 
 The RISC-V agreement failure came from a secret-digit branch in

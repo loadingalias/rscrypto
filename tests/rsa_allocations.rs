@@ -7,6 +7,7 @@ use core::{
 use std::alloc::System;
 
 use rsa::{BigUint, RsaPrivateKey as RustCryptoRsaPrivateKey, pkcs1::EncodeRsaPrivateKey};
+use rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt;
 use rscrypto::{
   RsaBlindingPair, RsaEncryptionError, RsaJwtAlgorithm, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey,
   RsaPssProfile, RsaPublicKey, RsaPublicKeyPolicy, RsaSignatureProfile, RsaX509PublicKey,
@@ -793,6 +794,25 @@ fn assert_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
     )
     .expect("scratch-backed blinded PKCS#1 v1.5 decryption must succeed");
   assert_eq!(&decrypted[..len], pkcs1v15_plaintext);
+  assert_eq!(allocation_count(), 0);
+
+  // A wrong block type must select the synthetic message, using only scratch.
+  let mut invalid_encoded = vec![0x5au8; key.signature_len()];
+  invalid_encoded[..2].copy_from_slice(&[0, 1]);
+  key
+    .public_key()
+    .public_operation(&invalid_encoded, &mut ciphertext)
+    .expect("a zero-leading encoded block must be below the modulus");
+  reset_allocations();
+  let len = key
+    .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
+      &ciphertext,
+      RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
+      &mut decrypted,
+      &mut scratch,
+    )
+    .expect("implicit rejection must return a message for an invalid block type");
+  assert_ne!(&decrypted[..len], pkcs1v15_plaintext);
   assert_eq!(allocation_count(), 0);
 }
 

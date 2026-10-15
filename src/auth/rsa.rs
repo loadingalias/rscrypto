@@ -37,8 +37,10 @@
 //! ```
 //!
 //! RSA signing, OAEP encryption/decryption, legacy RSAES-PKCS1-v1_5
-//! encryption/decryption, private-key import, and private-key generation are
-//! available through [`RsaPrivateKey`] and [`RsaPublicKey`]. Private operations
+//! encryption, private-key import, and private-key generation are available
+//! through [`RsaPrivateKey`] and [`RsaPublicKey`]. Legacy RSAES-PKCS1-v1_5
+//! decryption, with implicit rejection, is the explicit opt-in
+//! [`expert::RsaPkcs1v15Decrypt`]. Private operations
 //! are blinded and fault-checked. Callers can provide signing entropy with the
 //! `rsa` feature alone; OS-backed convenience APIs and key generation require
 //! the `getrandom` feature.
@@ -138,14 +140,16 @@ const RSA_KEYGEN_PAIR_ATTEMPTS: usize = 64;
 const RSA_KEYGEN_MIN_PRIME_DISTANCE_SECURITY_MARGIN_BITS: usize = 100;
 #[cfg(feature = "getrandom")]
 const RSA_KEYGEN_DRBG_ENTROPY_BYTES: usize = 32;
+const HMAC_SHA256_OUT_BYTES: usize = 32;
+const HMAC_SHA256_BLOCK_BYTES: usize = 64;
+/// draft-irtf-cfrg-rsa-guidance-10 section 7.2: 128 two-octet candidate lengths.
+const IMPLICIT_REJECTION_CANDIDATE_BYTES: usize = 256;
 #[cfg(feature = "getrandom")]
 const RSA_KEYGEN_DRBG_NONCE_BYTES: usize = 16;
 #[cfg(feature = "getrandom")]
 const RSA_KEYGEN_DRBG_OUT_BYTES: usize = 32;
 #[cfg(feature = "getrandom")]
 const RSA_KEYGEN_DRBG_KEY_BYTES: usize = 32;
-#[cfg(feature = "getrandom")]
-const RSA_KEYGEN_DRBG_HMAC_BLOCK_BYTES: usize = 64;
 #[cfg(feature = "getrandom")]
 const RSA_KEYGEN_DRBG_PERSONALIZATION: &[u8] = b"rscrypto RSA FIPS 186-5 A.1.3 HMAC_DRBG";
 #[cfg(feature = "getrandom")]
@@ -300,7 +304,10 @@ pub enum RsaPrivateOpError {
   InvalidBlindingFactor,
   /// The caller-provided or platform entropy source was unavailable.
   EntropyUnavailable,
-  /// RSA decryption padding was invalid.
+  /// RSAES-OAEP decoding failed.
+  ///
+  /// RSAES-PKCS1-v1_5 decryption never returns this variant: it uses implicit
+  /// rejection ([`expert::RsaPkcs1v15Decrypt`]).
   DecryptionFailed,
   /// The public-operation fault check did not recover the encoded message.
   FaultCheckFailed,
@@ -2419,74 +2426,6 @@ impl RsaPrivateKey {
     clear_decryption_output_on_error(result, out)
   }
 
-  /// Decrypt an RSAES-PKCS1-v1_5 ciphertext using OS-backed blinding.
-  ///
-  /// Prefer OAEP for new protocols. This legacy primitive returns
-  /// [`RsaPrivateOpError::DecryptionFailed`] for PKCS#1 v1.5 padding failures.
-  ///
-  /// `out` must hold at least `k - 11` bytes for a `k`-byte modulus, the longest
-  /// message PKCS#1 v1.5 admits. A shorter `out` fails with
-  /// [`RsaPrivateOpError::InvalidLength`] before decryption, whatever the
-  /// ciphertext. On success the plaintext is `out[..len]`, where `len` is the
-  /// returned length. On failure `out` is zeroed.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`RsaPrivateOpError`] if entropy is unavailable, the ciphertext is
-  /// malformed, or PKCS#1 v1.5 decoding fails.
-  #[cfg(feature = "getrandom")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
-  #[must_use = "RSA decryption failure must be checked; a dropped Result silently discards plaintext"]
-  pub fn decrypt_pkcs1v15(&self, ciphertext: &[u8], out: &mut [u8]) -> Result<usize, RsaPrivateOpError> {
-    self.reject_short_decryption_output(RSAES_PKCS1V15_OVERHEAD, out)?;
-    let result = self.components.random_blinding_factor().and_then(|blinding| {
-      self.components.decrypt_pkcs1v15_with_blinding_factor(
-        ciphertext,
-        RsaBlindingPair::trusted(blinding.factor(), blinding.inverse()),
-        out,
-      )
-    });
-    clear_output_on_error(result, out)
-  }
-
-  /// Decrypt an RSAES-PKCS1-v1_5 ciphertext using OS-backed blinding and caller-owned scratch.
-  ///
-  /// Prefer OAEP for new protocols. Reusing scratch avoids top-level
-  /// private-operation temporary allocation after setup.
-  ///
-  /// `out` must hold at least `k - 11` bytes for a `k`-byte modulus, the longest
-  /// message PKCS#1 v1.5 admits. A shorter `out` fails with
-  /// [`RsaPrivateOpError::InvalidLength`] before decryption, whatever the
-  /// ciphertext. On success the plaintext is `out[..len]`, where `len` is the
-  /// returned length. On failure `out` is zeroed.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`RsaPrivateOpError`] if entropy is unavailable, `scratch` was
-  /// allocated for a different modulus width, the ciphertext is malformed, or
-  /// PKCS#1 v1.5 decoding fails.
-  #[cfg(feature = "getrandom")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
-  #[must_use = "RSA decryption failure must be checked; a dropped Result silently discards plaintext"]
-  pub fn decrypt_pkcs1v15_with_scratch(
-    &self,
-    ciphertext: &[u8],
-    out: &mut [u8],
-    scratch: &mut RsaPrivateScratch,
-  ) -> Result<usize, RsaPrivateOpError> {
-    self.reject_short_decryption_output(RSAES_PKCS1V15_OVERHEAD, out)?;
-    let result = self
-      .components
-      .random_blinding_factor_into_scratch(scratch)
-      .and_then(|()| {
-        self
-          .components
-          .decrypt_pkcs1v15_with_stored_blinding_and_scratch(ciphertext, out, scratch)
-      });
-    scratch.clear();
-    clear_decryption_output_on_error(result, out)
-  }
-
   /// Sign a message using RSASSA-PKCS1-v1_5 with caller-supplied blinding.
   ///
   /// # Errors
@@ -2615,36 +2554,6 @@ impl RsaPrivateKey {
     clear_decryption_output_on_error(result, out)
   }
 
-  /// Decrypt RSAES-PKCS1-v1_5 with caller-supplied blinding.
-  ///
-  /// Prefer OAEP for new protocols. This legacy primitive keeps padding
-  /// failures opaque but does not by itself make a protocol Bleichenbacher-safe.
-  ///
-  /// `out` must hold at least `k - 11` bytes for a `k`-byte modulus, the longest
-  /// message PKCS#1 v1.5 admits. A shorter `out` fails with
-  /// [`RsaPrivateOpError::InvalidLength`] before decryption, whatever the
-  /// ciphertext. On success the plaintext is `out[..len]`, where `len` is the
-  /// returned length. On failure `out` is zeroed.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`RsaPrivateOpError`] if lengths are invalid, the blinding pair is
-  /// invalid, the ciphertext representative is out of range, or PKCS#1 v1.5
-  /// decoding fails.
-  #[must_use = "RSA decryption failure must be checked; a dropped Result silently discards plaintext"]
-  pub fn decrypt_pkcs1v15_with_blinding_factor(
-    &self,
-    ciphertext: &[u8],
-    blinding: RsaBlindingPair<'_>,
-    out: &mut [u8],
-  ) -> Result<usize, RsaPrivateOpError> {
-    self.reject_short_decryption_output(RSAES_PKCS1V15_OVERHEAD, out)?;
-    let result = self
-      .components
-      .decrypt_pkcs1v15_with_blinding_factor(ciphertext, blinding, out);
-    clear_decryption_output_on_error(result, out)
-  }
-
   /// Decrypt RSAES-OAEP with caller-supplied blinding and scratch.
   ///
   /// Reusing scratch avoids top-level private-operation temporary allocation
@@ -2678,32 +2587,178 @@ impl RsaPrivateKey {
       .decrypt_oaep_with_blinding_factor_and_scratch(profile, label, ciphertext, blinding, out, scratch);
     clear_decryption_output_on_error(result, out)
   }
+}
 
-  /// Decrypt RSAES-PKCS1-v1_5 with caller-supplied blinding and scratch.
+/// Expert RSA capabilities that normal application code does not need.
+pub mod expert {
+  use super::{RsaBlindingPair, RsaPrivateOpError, RsaPrivateScratch};
+
+  /// RSAES-PKCS1-v1_5 decryption of legacy data, with implicit rejection.
   ///
-  /// Reusing scratch avoids top-level private-operation temporary allocation
-  /// after setup. The blinding-pair requirements are the same as
-  /// [`Self::decrypt_pkcs1v15_with_blinding_factor`].
+  /// Import this trait explicitly only to decrypt existing RSAES-PKCS1-v1_5
+  /// data, such as OpenPGP, CMS key-transport, or JWE `RSA1_5` messages. New
+  /// protocols must use RSAES-OAEP through
+  /// [`RsaPrivateKey::decrypt_oaep`](super::RsaPrivateKey::decrypt_oaep). Do not
+  /// expose this operation as an online decryption endpoint.
   ///
-  /// `out` must hold at least `k - 11` bytes for a `k`-byte modulus, the longest
-  /// message PKCS#1 v1.5 admits. A shorter `out` fails with
-  /// [`RsaPrivateOpError::InvalidLength`] before decryption, whatever the
-  /// ciphertext. On success the plaintext is `out[..len]`, where `len` is the
-  /// returned length. On failure `out` is zeroed.
+  /// Decryption follows the implicit rejection of
+  /// [draft-irtf-cfrg-rsa-guidance-10](https://datatracker.ietf.org/doc/draft-irtf-cfrg-rsa-guidance/10/)
+  /// section 7.2, which OpenSSL 3.2 and later also apply by default. A
+  /// ciphertext with invalid padding does not produce an error: it decrypts to a
+  /// synthetic message of at most `k - 11` bytes, derived from the private
+  /// exponent and the ciphertext, and the same ciphertext always yields the same
+  /// message. A returned message therefore does not show that the padding was
+  /// valid. Authenticate the recovered data, for example with the protocol's MAC
+  /// or AEAD, before acting on it. Errors report only public structure (the
+  /// output length, the ciphertext length, and a ciphertext representative that
+  /// is not below the modulus) and blinding, scratch, entropy, or fault-check
+  /// failures.
   ///
-  /// # Errors
-  ///
-  /// Returns [`RsaPrivateOpError`] if lengths are invalid, `scratch` was
-  /// allocated for a different modulus width, the blinding pair is invalid, the
-  /// ciphertext representative is out of range, or PKCS#1 v1.5 decoding fails.
-  #[must_use = "RSA decryption failure must be checked; a dropped Result silently discards plaintext"]
-  pub fn decrypt_pkcs1v15_with_blinding_factor_and_scratch(
+  /// TLS 1.2 RSA key exchange needs the fixed-length premaster-secret handling
+  /// of RFC 5246 section 7.4.7.1, which this trait does not provide.
+  pub trait RsaPkcs1v15Decrypt {
+    /// Decrypt an RSAES-PKCS1-v1_5 ciphertext using OS-backed blinding.
+    ///
+    /// `out` must hold at least `k - 11` bytes for a `k`-byte modulus. A shorter
+    /// `out` fails with [`RsaPrivateOpError::InvalidLength`] before decryption,
+    /// whatever the ciphertext. On success the message is `out[..len]`, where
+    /// `len` is the returned length, and the rest of `out[..k - 11]` is zero.
+    /// On failure `out` is zeroed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RsaPrivateOpError`] if entropy is unavailable, a length is
+    /// invalid, or the ciphertext representative is out of range. Invalid
+    /// padding is not an error.
+    #[cfg(feature = "getrandom")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+    #[must_use = "RSA decryption failure must be checked; a dropped Result silently discards plaintext"]
+    fn decrypt_pkcs1v15(&self, ciphertext: &[u8], out: &mut [u8]) -> Result<usize, RsaPrivateOpError>;
+
+    /// Decrypt an RSAES-PKCS1-v1_5 ciphertext using OS-backed blinding and
+    /// caller-owned scratch.
+    ///
+    /// Reusing scratch avoids top-level private-operation temporary allocation
+    /// after setup. The `out` contract is the same as
+    /// [`Self::decrypt_pkcs1v15`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RsaPrivateOpError`] if entropy is unavailable, `scratch` was
+    /// allocated for a different modulus width, a length is invalid, or the
+    /// ciphertext representative is out of range. Invalid padding is not an
+    /// error.
+    #[cfg(feature = "getrandom")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+    #[must_use = "RSA decryption failure must be checked; a dropped Result silently discards plaintext"]
+    fn decrypt_pkcs1v15_with_scratch(
+      &self,
+      ciphertext: &[u8],
+      out: &mut [u8],
+      scratch: &mut RsaPrivateScratch,
+    ) -> Result<usize, RsaPrivateOpError>;
+
+    /// Decrypt an RSAES-PKCS1-v1_5 ciphertext with caller-supplied blinding.
+    ///
+    /// The blinding pair must satisfy the requirements of
+    /// [`RsaBlindingPair::new`]. The `out` contract is the same as for OS-backed
+    /// blinding.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RsaPrivateOpError`] if a length is invalid, the blinding pair is
+    /// invalid, or the ciphertext representative is out of range. Invalid
+    /// padding is not an error.
+    #[must_use = "RSA decryption failure must be checked; a dropped Result silently discards plaintext"]
+    fn decrypt_pkcs1v15_with_blinding_factor(
+      &self,
+      ciphertext: &[u8],
+      blinding: RsaBlindingPair<'_>,
+      out: &mut [u8],
+    ) -> Result<usize, RsaPrivateOpError>;
+
+    /// Decrypt an RSAES-PKCS1-v1_5 ciphertext with caller-supplied blinding and
+    /// scratch.
+    ///
+    /// Reusing scratch avoids top-level private-operation temporary allocation
+    /// after setup. The blinding-pair and `out` contracts are the same as
+    /// [`Self::decrypt_pkcs1v15_with_blinding_factor`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RsaPrivateOpError`] if a length is invalid, `scratch` was
+    /// allocated for a different modulus width, the blinding pair is invalid,
+    /// or the ciphertext representative is out of range. Invalid padding is not
+    /// an error.
+    #[must_use = "RSA decryption failure must be checked; a dropped Result silently discards plaintext"]
+    fn decrypt_pkcs1v15_with_blinding_factor_and_scratch(
+      &self,
+      ciphertext: &[u8],
+      blinding: RsaBlindingPair<'_>,
+      out: &mut [u8],
+      scratch: &mut RsaPrivateScratch,
+    ) -> Result<usize, RsaPrivateOpError>;
+  }
+}
+
+impl expert::RsaPkcs1v15Decrypt for RsaPrivateKey {
+  #[cfg(feature = "getrandom")]
+  fn decrypt_pkcs1v15(&self, ciphertext: &[u8], out: &mut [u8]) -> Result<usize, RsaPrivateOpError> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
+    self.reject_short_decryption_output(RSAES_PKCS1V15_OVERHEAD, out)?;
+    let result = self.components.random_blinding_factor().and_then(|blinding| {
+      self.components.decrypt_pkcs1v15_with_blinding_factor(
+        ciphertext,
+        RsaBlindingPair::trusted(blinding.factor(), blinding.inverse()),
+        out,
+      )
+    });
+    clear_output_on_error(result, out)
+  }
+
+  #[cfg(feature = "getrandom")]
+  fn decrypt_pkcs1v15_with_scratch(
+    &self,
+    ciphertext: &[u8],
+    out: &mut [u8],
+    scratch: &mut RsaPrivateScratch,
+  ) -> Result<usize, RsaPrivateOpError> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
+    self.reject_short_decryption_output(RSAES_PKCS1V15_OVERHEAD, out)?;
+    let result = self
+      .components
+      .random_blinding_factor_into_scratch(scratch)
+      .and_then(|()| {
+        self
+          .components
+          .decrypt_pkcs1v15_with_stored_blinding_and_scratch(ciphertext, out, scratch)
+      });
+    scratch.clear();
+    clear_decryption_output_on_error(result, out)
+  }
+
+  fn decrypt_pkcs1v15_with_blinding_factor(
+    &self,
+    ciphertext: &[u8],
+    blinding: RsaBlindingPair<'_>,
+    out: &mut [u8],
+  ) -> Result<usize, RsaPrivateOpError> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
+    self.reject_short_decryption_output(RSAES_PKCS1V15_OVERHEAD, out)?;
+    let result = self
+      .components
+      .decrypt_pkcs1v15_with_blinding_factor(ciphertext, blinding, out);
+    clear_decryption_output_on_error(result, out)
+  }
+
+  fn decrypt_pkcs1v15_with_blinding_factor_and_scratch(
     &self,
     ciphertext: &[u8],
     blinding: RsaBlindingPair<'_>,
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<usize, RsaPrivateOpError> {
+    let _dit = crate::traits::ct::DataIndependentTiming::enter();
     self.reject_short_decryption_output(RSAES_PKCS1V15_OVERHEAD, out)?;
     let result = self
       .components
@@ -3470,10 +3525,20 @@ impl RsaPrivateKeyComponents {
     out: &mut [u8],
   ) -> Result<usize, RsaPrivateOpError> {
     let mut encoded = vec![0u8; self.public.modulus().len()];
+    let mut alternative = vec![0u8; self.public.modulus().len()];
     let result = self
       .private_operation_with_blinding_factor(ciphertext, blinding, &mut encoded)
-      .and_then(|()| decode_pkcs1v15_encryption(&encoded, out));
+      .and_then(|()| {
+        decode_pkcs1v15_with_implicit_rejection(
+          self.private_exponent.as_bytes(),
+          ciphertext,
+          &encoded,
+          &mut alternative,
+          out,
+        )
+      });
     ct::zeroize(&mut encoded);
+    ct::zeroize(&mut alternative);
     clear_decryption_output_on_error(result, out)
   }
 
@@ -3541,7 +3606,15 @@ impl RsaPrivateKeyComponents {
         scratch.encoded.as_mut_slice().copy_from_slice(ciphertext);
         self
           .private_operation_from_scratch_encoded_with_stored_blinding(scratch)
-          .and_then(|()| decode_pkcs1v15_encryption(scratch.blinded_private_result.as_slice(), out))
+          .and_then(|()| {
+            decode_pkcs1v15_with_implicit_rejection(
+              self.private_exponent.as_bytes(),
+              ciphertext,
+              scratch.blinded_private_result.as_slice(),
+              scratch.blinding_power.as_mut_slice(),
+              out,
+            )
+          })
       }
     });
     clear_decryption_output_on_error(result, out)
@@ -3612,7 +3685,15 @@ impl RsaPrivateKeyComponents {
         scratch.encoded.as_mut_slice().copy_from_slice(ciphertext);
         self
           .private_operation_from_scratch_encoded(blinding, scratch)
-          .and_then(|()| decode_pkcs1v15_encryption(scratch.blinded_private_result.as_slice(), out))
+          .and_then(|()| {
+            decode_pkcs1v15_with_implicit_rejection(
+              self.private_exponent.as_bytes(),
+              ciphertext,
+              scratch.blinded_private_result.as_slice(),
+              scratch.blinding_power.as_mut_slice(),
+              out,
+            )
+          })
       }
     });
     scratch.clear();
@@ -6980,12 +7061,13 @@ pub fn diag_rsa_import_pkcs8_private_key_der_stage(
     return Ok(core::hint::black_box(observed));
   }
 
-  let private_exponent = SecretBigEndianInteger::new(components.private_exponent)?;
+  let private_exponent =
+    SecretBigEndianInteger::new_fixed_width(components.private_exponent, components.modulus.len())?;
   let prime_p = SecretBigEndianInteger::new(components.prime_p)?;
   let prime_q = SecretBigEndianInteger::new(components.prime_q)?;
   let exponent_p = SecretBigEndianInteger::new_fixed_width(components.exponent_p, prime_p_modulus.bytes.len())?;
   let exponent_q = SecretBigEndianInteger::new_fixed_width(components.exponent_q, prime_q_modulus.bytes.len())?;
-  let coefficient = SecretBigEndianInteger::new(components.coefficient)?;
+  let coefficient = SecretBigEndianInteger::new_fixed_width(components.coefficient, prime_p_modulus.bytes.len())?;
   observed ^= private_exponent.bytes.len();
   observed ^= prime_p.bytes.len();
   observed ^= prime_q.bytes.len();
@@ -7020,14 +7102,14 @@ fn private_key_components_from_prevalidated_parts(
 
   Ok(RsaPrivateKeyComponents {
     public,
-    private_exponent: SecretBigEndianInteger::new(components.private_exponent)?,
+    private_exponent: SecretBigEndianInteger::new_fixed_width(components.private_exponent, components.modulus.len())?,
     prime_p: SecretBigEndianInteger::new(components.prime_p)?,
     prime_q: SecretBigEndianInteger::new(components.prime_q)?,
     prime_p_modulus,
     prime_q_modulus,
     exponent_p: SecretBigEndianInteger::new_fixed_width(components.exponent_p, components.prime_p.len())?,
     exponent_q: SecretBigEndianInteger::new_fixed_width(components.exponent_q, components.prime_q.len())?,
-    coefficient: SecretBigEndianInteger::new(components.coefficient)?,
+    coefficient: SecretBigEndianInteger::new_fixed_width(components.coefficient, components.prime_p.len())?,
   })
 }
 
@@ -7335,7 +7417,7 @@ impl RsaKeygenDrbg {
   fn fill(&mut self, out: &mut [u8]) {
     let mut offset = 0usize;
     while offset < out.len() {
-      self.value = keygen_hmac_sha256(&self.key, &[&self.value]);
+      self.value = hmac_sha256_parts(&self.key, &[&self.value]);
       let chunk_len = core::cmp::min(RSA_KEYGEN_DRBG_OUT_BYTES, out.len().strict_sub(offset));
       if let (Some(dst), Some(src)) = (
         out.get_mut(offset..offset.strict_add(chunk_len)),
@@ -7350,14 +7432,14 @@ impl RsaKeygenDrbg {
 
   fn update(&mut self, seed_material: &[&[u8]]) {
     self.key = keygen_drbg_update_key(&self.key, &self.value, 0, seed_material);
-    self.value = keygen_hmac_sha256(&self.key, &[&self.value]);
+    self.value = hmac_sha256_parts(&self.key, &[&self.value]);
 
     if seed_material.iter().all(|part| part.is_empty()) {
       return;
     }
 
     self.key = keygen_drbg_update_key(&self.key, &self.value, 1, seed_material);
-    self.value = keygen_hmac_sha256(&self.key, &[&self.value]);
+    self.value = hmac_sha256_parts(&self.key, &[&self.value]);
   }
 }
 
@@ -7381,25 +7463,17 @@ fn keygen_drbg_update_key(
   mac_parts.push(&value[..]);
   mac_parts.push(&domain[..]);
   mac_parts.extend_from_slice(seed_material);
-  keygen_hmac_sha256(key, &mac_parts)
+  hmac_sha256_parts(key, &mac_parts)
 }
 
-#[cfg(feature = "getrandom")]
-fn keygen_hmac_sha256(key: &[u8], data: &[&[u8]]) -> [u8; RSA_KEYGEN_DRBG_OUT_BYTES] {
-  let mut key_block = [0u8; RSA_KEYGEN_DRBG_HMAC_BLOCK_BYTES];
-  if key.len() > RSA_KEYGEN_DRBG_HMAC_BLOCK_BYTES {
-    let digest = Sha256::digest(key);
-    if let Some(dst) = key_block.get_mut(..RSA_KEYGEN_DRBG_OUT_BYTES) {
-      dst.copy_from_slice(digest.as_ref());
-    }
-  } else {
-    if let Some(dst) = key_block.get_mut(..key.len()) {
-      dst.copy_from_slice(key);
-    }
-  }
+/// HMAC-SHA256 over the concatenation of `data`, shared by the key-generation
+/// DRBG and PKCS#1 v1.5 implicit rejection without the `hmac` feature.
+fn hmac_sha256_parts(key: &[u8; HMAC_SHA256_OUT_BYTES], data: &[&[u8]]) -> [u8; HMAC_SHA256_OUT_BYTES] {
+  let mut key_block = [0u8; HMAC_SHA256_BLOCK_BYTES];
+  key_block[..HMAC_SHA256_OUT_BYTES].copy_from_slice(key);
 
-  let mut ipad = [0x36u8; RSA_KEYGEN_DRBG_HMAC_BLOCK_BYTES];
-  let mut opad = [0x5cu8; RSA_KEYGEN_DRBG_HMAC_BLOCK_BYTES];
+  let mut ipad = [0x36u8; HMAC_SHA256_BLOCK_BYTES];
+  let mut opad = [0x5cu8; HMAC_SHA256_BLOCK_BYTES];
   for ((ipad_byte, opad_byte), key_byte) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter().copied()) {
     *ipad_byte ^= key_byte;
     *opad_byte ^= key_byte;
@@ -7410,19 +7484,18 @@ fn keygen_hmac_sha256(key: &[u8], data: &[&[u8]]) -> [u8; RSA_KEYGEN_DRBG_OUT_BY
   for part in data {
     inner.update(part);
   }
-  let inner_digest = inner.finalize();
+  let mut inner_digest = inner.finalize_secret();
 
   let mut outer = Sha256::new();
   outer.update(&opad);
   outer.update(inner_digest.as_ref());
-  let tag = outer.finalize();
+  let tag = outer.finalize_secret();
 
   ct::zeroize(&mut key_block);
   ct::zeroize(&mut ipad);
   ct::zeroize(&mut opad);
-  let mut out = [0u8; RSA_KEYGEN_DRBG_OUT_BYTES];
-  out.copy_from_slice(tag.as_ref());
-  out
+  ct::zeroize(&mut inner_digest);
+  tag
 }
 
 #[cfg(feature = "getrandom")]
@@ -7541,10 +7614,11 @@ fn keygen_build_private_key_from_primes(
     private_component_modulus(prime_q.as_slice()).map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?;
   let prime_p_bytes = prime_p_modulus.bytes.len();
   let prime_q_bytes = prime_q_modulus.bytes.len();
+  let modulus_bytes = public.modulus().len();
 
   Ok(Some(RsaPrivateKeyComponents {
     public,
-    private_exponent: SecretBigEndianInteger::from_vec(private_exponent.into_vec())
+    private_exponent: SecretBigEndianInteger::new_fixed_width(private_exponent.as_slice(), modulus_bytes)
       .map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?,
     prime_p: SecretBigEndianInteger::from_vec(prime_p.into_vec())
       .map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?,
@@ -7556,7 +7630,7 @@ fn keygen_build_private_key_from_primes(
       .map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?,
     exponent_q: SecretBigEndianInteger::new_fixed_width(exponent_q.as_slice(), prime_q_bytes)
       .map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?,
-    coefficient: SecretBigEndianInteger::from_vec(coefficient.into_vec())
+    coefficient: SecretBigEndianInteger::new_fixed_width(coefficient.as_slice(), prime_p_bytes)
       .map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?,
   }))
 }
@@ -8539,38 +8613,207 @@ fn encode_pkcs1v15_encryption_with_seed(message: &[u8], seed: &[u8], out: &mut [
   Ok(())
 }
 
-fn decode_pkcs1v15_encryption(encoded: &[u8], out: &mut [u8]) -> Result<usize, RsaPrivateOpError> {
-  if encoded.len() < 11 {
-    return Err(RsaPrivateOpError::DecryptionFailed);
+// RSAES-PKCS1-v1_5 implicit rejection, draft-irtf-cfrg-rsa-guidance-10
+// section 7. A padding failure returns a synthetic message derived from the
+// private exponent and the ciphertext instead of an error, so a caller cannot
+// observe whether the padding check passed. The draft requires the algorithm
+// exactly as stated: implementations sharing a key must agree on every output.
+
+/// Finish RSAES-PKCS1-v1_5 decryption of `encoded` (EM) for `ciphertext`
+/// with implicit rejection. `ciphertext` has already passed the length and
+/// range checks; `alternative` is `k` octets of scratch, cleared on return.
+fn decode_pkcs1v15_with_implicit_rejection(
+  private_exponent: &[u8],
+  ciphertext: &[u8],
+  encoded: &[u8],
+  alternative: &mut [u8],
+  out: &mut [u8],
+) -> Result<usize, RsaPrivateOpError> {
+  let mut kdk = implicit_rejection_kdk(private_exponent, ciphertext);
+  let mut candidates = [0u8; IMPLICIT_REJECTION_CANDIDATE_BYTES];
+  let result = implicit_rejection_prf(&kdk, b"length", &mut candidates)
+    .and_then(|()| implicit_rejection_prf(&kdk, b"message", alternative))
+    .and_then(|()| {
+      let max_len = encoded
+        .len()
+        .checked_sub(RSAES_PKCS1V15_OVERHEAD)
+        .ok_or(RsaPrivateOpError::InvalidLength)?;
+      let alternative_len = implicit_rejection_length(&candidates, max_len);
+      decode_pkcs1v15_implicit_rejection(encoded, alternative, alternative_len, out)
+    });
+  ct::zeroize(&mut kdk);
+  ct::zeroize(&mut candidates);
+  ct::zeroize(alternative);
+  result
+}
+
+/// Derive the implicit-rejection key derivation key (draft section 7.2, step 3.1):
+/// `KDK = HMAC-SHA256(SHA256(I2OSP(d, k)), C)`.
+///
+/// `d` is retained at the public modulus width on import or generation, never
+/// recomputed from CRT values. This keeps the derivation's lengths and memory
+/// accesses independent of the exponent's significant-byte count.
+fn implicit_rejection_kdk(private_exponent: &[u8], ciphertext: &[u8]) -> [u8; HMAC_SHA256_OUT_BYTES] {
+  debug_assert_eq!(private_exponent.len(), ciphertext.len());
+  let mut exponent_hash = Sha256::digest_secret(private_exponent);
+  let kdk = hmac_sha256_parts(&exponent_hash, &[ciphertext]);
+  ct::zeroize(&mut exponent_hash);
+  kdk
+}
+
+/// Fill `out` with the implicit-rejection PRF (draft section 7.1):
+/// HMAC-SHA256 blocks over `I || label || bitLength`, with two-octet
+/// big-endian `I` and `bitLength`.
+fn implicit_rejection_prf(
+  kdk: &[u8; HMAC_SHA256_OUT_BYTES],
+  label: &[u8],
+  out: &mut [u8],
+) -> Result<(), RsaPrivateOpError> {
+  // The draft bounds the output at 8192 octets; every supported modulus is far below it.
+  let bit_length = out
+    .len()
+    .checked_mul(8)
+    .and_then(|bits| u16::try_from(bits).ok())
+    .ok_or(RsaPrivateOpError::InvalidLength)?
+    .to_be_bytes();
+  for (index, chunk) in out.chunks_mut(HMAC_SHA256_OUT_BYTES).enumerate() {
+    let index = u16::try_from(index)
+      .map_err(|_| RsaPrivateOpError::InvalidLength)?
+      .to_be_bytes();
+    let mut block = hmac_sha256_parts(kdk, &[&index, label, &bit_length]);
+    chunk.copy_from_slice(&block[..chunk.len()]);
+    ct::zeroize(&mut block);
   }
+  Ok(())
+}
+
+/// Select the synthetic message length (draft section 7.2, step 3.3): mask each
+/// candidate to the bit length of `max_len`, then keep the last one that is at
+/// most `max_len`, or zero if none is.
+fn implicit_rejection_length(candidates: &[u8; IMPLICIT_REJECTION_CANDIDATE_BYTES], max_len: usize) -> usize {
+  let bits = usize::BITS.strict_sub(max_len.leading_zeros());
+  let mask = (1usize << bits).strict_sub(1);
+  let mut selected = 0usize;
+  for pair in candidates.as_chunks::<2>().0 {
+    let candidate = usize::from(u16::from_be_bytes([pair[0], pair[1]])) & mask;
+    // Both values are below 2^16, so the borrow bit decides `candidate <= max_len`.
+    let fits = (max_len.wrapping_sub(candidate) >> (usize::BITS - 1)).to_le_bytes()[0] ^ 1;
+    selected = ct_select_usize(selected, candidate, fits);
+  }
+  selected
+}
+
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+#[inline(always)]
+/// Exercise the production implicit-rejection KDK derivation at a fixed 2048-bit width.
+pub fn diag_rsa_implicit_rejection_kdk_256(exponent: &[u8; 256], ciphertext: &[u8; 256]) -> [u8; 32] {
+  implicit_rejection_kdk(exponent, ciphertext)
+}
+
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+#[inline(always)]
+/// Exercise both production IRPRF labels at a fixed 2048-bit modulus width.
+pub fn diag_rsa_implicit_rejection_expand_256(
+  kdk: &[u8; 32],
+  candidates: &mut [u8; 256],
+  alternative: &mut [u8; 256],
+) -> Result<(), RsaPrivateOpError> {
+  implicit_rejection_prf(kdk, b"length", candidates)?;
+  implicit_rejection_prf(kdk, b"message", alternative)
+}
+
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+#[inline(always)]
+/// Exercise production candidate selection, padding scan, and output selection at 2048 bits.
+pub fn diag_rsa_implicit_rejection_decode_256(
+  encoded: &[u8; 256],
+  candidates: &[u8; 256],
+  alternative: &mut [u8; 256],
+  out: &mut [u8; 245],
+) -> Result<usize, RsaPrivateOpError> {
+  let alternative_len = implicit_rejection_length(candidates, 245);
+  decode_pkcs1v15_implicit_rejection(encoded, alternative, alternative_len, out)
+}
+
+/// Decode `encoded` (EM) with implicit rejection (draft section 7.2, steps 4-5).
+///
+/// `alternative` holds the synthetic message AM on entry; `alternative_len` is
+/// its selected length. Both are read in full whatever the padding check
+/// decides. Writes the selected message to the front of `out[..k - 11]`, zero
+/// fills the rest of that window, clears `alternative`, and returns the
+/// message length. The write pattern does not depend on the decision or the
+/// length.
+fn decode_pkcs1v15_implicit_rejection(
+  encoded: &[u8],
+  alternative: &mut [u8],
+  alternative_len: usize,
+  out: &mut [u8],
+) -> Result<usize, RsaPrivateOpError> {
+  let k = encoded.len();
+  let max_len = k
+    .checked_sub(RSAES_PKCS1V15_OVERHEAD)
+    .ok_or(RsaPrivateOpError::InvalidLength)?;
+  if alternative.len() != k {
+    return Err(RsaPrivateOpError::InvalidLength);
+  }
+  debug_assert!(alternative_len <= max_len);
+  let out = out.get_mut(..max_len).ok_or(RsaPrivateOpError::InvalidLength)?;
 
   let mut bad = u8::from(encoded.first().copied() != Some(0));
   bad |= u8::from(encoded.get(1).copied() != Some(2));
   let mut seen_separator = 0u8;
   let mut separator = 0usize;
-
   for (index, &byte) in encoded.iter().enumerate().skip(2) {
     let before_separator = seen_separator ^ 1;
-    let is_zero = u8::from(byte == 0);
+    // SECURITY: RISC-V LLVM lowered `before_separator & (byte == 0)` to a
+    // branch on the plaintext octet. Keep the comparison result opaque.
+    let is_zero = core::hint::black_box(u8::from(byte == 0));
     let separator_at_index = before_separator & is_zero;
     separator = ct_select_usize(separator, index, separator_at_index);
     seen_separator |= separator_at_index;
   }
-
   bad |= seen_separator ^ 1;
+  // PS = EM[2..separator] must hold at least eight octets.
   bad |= u8::from(separator < 10);
-  if bad != 0 {
-    return Err(RsaPrivateOpError::DecryptionFailed);
+
+  // L is the length after the separator, or zero without one (step 4). The
+  // separator index is below `k`; wrapping arithmetic keeps the secret index
+  // out of an overflow-panic branch.
+  debug_assert!(separator < k);
+  let message_len = ct_select_usize(0, k.wrapping_sub(1).wrapping_sub(separator), seen_separator);
+  let selected_len = ct_select_usize(message_len, alternative_len, bad);
+
+  // SECURITY: Keep the decision opaque so LLVM cannot unswitch these loops or
+  // lower the selection to branches on the padding result.
+  let use_alternative = core::hint::black_box(0u8.wrapping_sub(bad & 1));
+  for (chosen, &byte) in alternative.iter_mut().zip(encoded) {
+    *chosen = byte ^ (use_alternative & (byte ^ *chosen));
   }
 
-  let message = encoded
-    .get(separator.strict_add(1)..)
-    .ok_or(RsaPrivateOpError::DecryptionFailed)?;
-  let out = out
-    .get_mut(..message.len())
-    .ok_or(RsaPrivateOpError::DecryptionFailed)?;
-  out.copy_from_slice(message);
-  Ok(message.len())
+  // The selected message is the last `selected_len` octets. Within the
+  // `max_len`-octet window that ends at octet `k`, it starts at
+  // `max_len - selected_len`; shift it to the front in log2 fixed-pattern
+  // steps, filling with zeros.
+  let window = &mut alternative[RSAES_PKCS1V15_OVERHEAD..];
+  // Valid messages and every candidate length are at most `max_len`.
+  debug_assert!(selected_len <= max_len);
+  let shift = max_len.wrapping_sub(selected_len);
+  let mut bit = 0u32;
+  while (1usize << bit) <= max_len {
+    let step = 1usize << bit;
+    let take = core::hint::black_box(0u8.wrapping_sub(((shift >> bit) & 1).to_le_bytes()[0]));
+    for index in 0..max_len {
+      let source = match index.checked_add(step) {
+        Some(source) if source < max_len => window[source],
+        _ => 0,
+      };
+      window[index] ^= take & (window[index] ^ source);
+    }
+    bit = bit.strict_add(1);
+  }
+  out.copy_from_slice(window);
+  ct::zeroize(alternative);
+  Ok(selected_len)
 }
 
 fn clear_decryption_output_on_error(
@@ -8777,8 +9020,10 @@ where
   let mut separator = 0usize;
   for (index, &byte) in rest.iter().enumerate() {
     let before_separator = seen_separator ^ 1;
-    let is_zero = u8::from(byte == 0);
-    let is_one = u8::from(byte == 1);
+    // SECURITY: Keep the octet classes opaque so LLVM cannot branch on the
+    // decoded data block, as it did for the PKCS#1 v1.5 separator scan on RISC-V.
+    let is_zero = core::hint::black_box(u8::from(byte == 0));
+    let is_one = core::hint::black_box(u8::from(byte == 1));
     let separator_at_index = before_separator & is_one;
     let invalid_before_separator = before_separator & ((is_zero | is_one) ^ 1);
     bad |= invalid_before_separator;
@@ -8799,7 +9044,9 @@ where
 }
 
 fn ct_select_usize(zero: usize, one: usize, choice: u8) -> usize {
-  let mask = 0usize.wrapping_sub(usize::from(choice & 1));
+  // SECURITY: Keep the secret-derived mask opaque so LLVM cannot lower the
+  // selection to a branch on targets without a conditional move, such as RISC-V.
+  let mask = core::hint::black_box(0usize.wrapping_sub(usize::from(choice & 1)));
   (zero & !mask) | (one & mask)
 }
 
@@ -11157,6 +11404,7 @@ mod tests {
   #[cfg(feature = "getrandom")]
   use serde_json::Value;
 
+  use super::expert::RsaPkcs1v15Decrypt as _;
   use super::*;
 
   #[cfg(feature = "getrandom")]
@@ -11995,6 +12243,77 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   }
 
   #[test]
+  fn private_key_import_normalizes_a_short_crt_coefficient_without_changing_der_or_arithmetic() {
+    use rsa::{pkcs1::EncodeRsaPrivateKey as _, pkcs8::DecodePrivateKey as _};
+
+    // Recombine published Wycheproof factors so q^-1 mod p occupies 127
+    // octets, one fewer than p. RustCrypto supplies the independent key and
+    // private-operation expectation; no prime search runs in this test.
+    let signing: serde_json::Value = serde_json::from_str(include_str!(
+      "../../testdata/rsa/wycheproof/rsa_pkcs1_2048_sig_gen_test.json"
+    ))
+    .expect("Wycheproof signing fixture");
+    let encryption: serde_json::Value = serde_json::from_str(include_str!(
+      "../../testdata/rsa/wycheproof/rsa_oaep_2048_sha384_mgf1sha1_test.json"
+    ))
+    .expect("Wycheproof encryption fixture");
+    let signing_key = rsa::RsaPrivateKey::from_pkcs8_der(&hex_to_vec(
+      signing["testGroups"][0]["privateKeyPkcs8"]
+        .as_str()
+        .expect("signing key"),
+    ))
+    .expect("published signing key");
+    let encryption_key = rsa::RsaPrivateKey::from_pkcs8_der(&hex_to_vec(
+      encryption["testGroups"][0]["privateKeyPkcs8"]
+        .as_str()
+        .expect("encryption key"),
+    ))
+    .expect("published encryption key");
+    let oracle = rsa::RsaPrivateKey::from_p_q(
+      signing_key.primes()[1].clone(),
+      encryption_key.primes()[0].clone(),
+      rsa::BigUint::from(65_537u32),
+    )
+    .expect("published factors form a valid RSA key");
+    let coefficient = oracle
+      .qinv()
+      .and_then(|value| value.to_biguint())
+      .expect("CRT coefficient")
+      .to_bytes_be();
+    assert_eq!(coefficient.len(), 127);
+    let der = oracle.to_pkcs1_der().expect("independent canonical DER");
+    let key = RsaPrivateKey::from_pkcs1_der_with_policy(der.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
+      .expect("valid recombined RSA-2048 key");
+    let retained = key.components.coefficient.as_bytes();
+    assert_eq!(retained.len(), 128);
+    assert_eq!(retained[0], 0);
+    assert_eq!(&retained[1..], coefficient);
+    assert_eq!(key.components.private_exponent.as_bytes().len(), key.signature_len());
+    assert_eq!(key.to_pkcs1_der().as_bytes(), der.as_bytes());
+
+    let mut input = vec![0u8; key.signature_len()];
+    *input.last_mut().expect("RSA input") = 2;
+    let expected = rsa::BigUint::from(2u8).modpow(oracle.d(), oracle.n()).to_bytes_be();
+    let mut padded_expected = vec![0u8; key.signature_len().strict_sub(expected.len())];
+    padded_expected.extend_from_slice(&expected);
+    let (factor, inverse) = factor_two_and_inverse(key.public_key().modulus());
+    let blinding = RsaBlindingPair::new(&factor, &inverse);
+    let mut out = vec![0u8; key.signature_len()];
+    key
+      .components
+      .private_operation_with_blinding_factor(&input, blinding, &mut out)
+      .expect("private operation");
+    assert_eq!(out, padded_expected);
+    let mut scratch = key.private_scratch();
+    scratch.encoded.as_mut_slice().copy_from_slice(&input);
+    key
+      .components
+      .private_operation_with_blinding_factor_and_scratch(blinding, &mut out, &mut scratch)
+      .expect("private operation with scratch");
+    assert_eq!(out, padded_expected);
+  }
+
+  #[test]
   fn private_key_import_rejects_balanced_composite_factor_in_every_format() {
     let one = rsa::BigUint::from(1u8);
     let prime_q = rsa::BigUint::from_bytes_be(&rsa_private_prime_q());
@@ -12810,52 +13129,162 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     );
   }
 
+  /// Decode `encoded` against the alternative message `0x80, 0x81, ...` with
+  /// `alternative_len`; return the reported length and the written window.
+  fn implicit_rejection_decode(encoded: &[u8], alternative_len: usize) -> (usize, Vec<u8>) {
+    let mut alternative: Vec<u8> = (0..encoded.len())
+      .map(|index| 0x80u8.wrapping_add(u8::try_from(index).expect("test block fits one octet")))
+      .collect();
+    let mut out = vec![0xa5u8; encoded.len()];
+    let len = decode_pkcs1v15_implicit_rejection(encoded, &mut alternative, alternative_len, &mut out)
+      .expect("a modulus-sized encoded message must decode");
+    assert!(
+      alternative.iter().all(|&byte| byte == 0),
+      "the alternative message must be cleared"
+    );
+    let window = encoded.len().strict_sub(RSAES_PKCS1V15_OVERHEAD);
+    assert!(
+      out[window..].iter().all(|&byte| byte == 0xa5),
+      "bytes after the k - 11 window must stay untouched"
+    );
+    out.truncate(window);
+    (len, out)
+  }
+
   #[test]
-  fn pkcs1v15_encryption_padding_accepts_valid_and_rejects_oracle_shapes() {
-    let message = b"abc";
-    let seed = [0x7bu8; 10];
-    let mut encoded = [0u8; 16];
-    encode_pkcs1v15_encryption_with_seed(message, &seed, &mut encoded)
-      .expect("the canonical PKCS#1 v1.5 encryption-padding fixture must encode");
+  fn pkcs1v15_implicit_rejection_selects_the_message_or_the_alternative() {
+    const K: usize = 32;
+    let alternative = |len: usize| -> Vec<u8> {
+      (K.strict_sub(len)..K)
+        .map(|index| 0x80u8.wrapping_add(u8::try_from(index).expect("test block fits one octet")))
+        .collect()
+    };
+    let padded = |message: &[u8], window: usize| -> Vec<u8> {
+      let mut expected = message.to_vec();
+      expected.resize(window, 0);
+      expected
+    };
+    let window = K - RSAES_PKCS1V15_OVERHEAD;
 
-    let mut out = [0u8; 8];
-    let len = decode_pkcs1v15_encryption(&encoded, &mut out)
-      .expect("the canonical PKCS#1 v1.5 encryption-padding fixture must decode");
-    assert_eq!(&out[..len], message);
+    // EM = 00 02 PS 00 M with an eight-octet PS and a 13-octet M.
+    let message = b"thirteen byte";
+    let mut encoded = [0x5au8; K];
+    encoded[0] = 0;
+    encoded[1] = 2;
+    encoded[K - message.len() - 1] = 0;
+    encoded[K - message.len()..].copy_from_slice(message);
+    for alternative_len in [0, 4, window] {
+      assert_eq!(
+        implicit_rejection_decode(&encoded, alternative_len),
+        (message.len(), padded(message, window)),
+        "a valid message must be returned whatever the alternative length"
+      );
+    }
 
-    let mut zero_seed = seed;
-    zero_seed[4] = 0;
-    assert_eq!(
-      encode_pkcs1v15_encryption_with_seed(message, &zero_seed, &mut encoded),
-      Err(RsaEncryptionError::InvalidLength)
-    );
+    // Boundary messages: the longest (k - 11) and the empty message.
+    let mut longest = [0x5au8; K];
+    longest[..2].copy_from_slice(&[0, 2]);
+    longest[10] = 0;
+    assert_eq!(implicit_rejection_decode(&longest, 4), (window, longest[11..].to_vec()));
+    let mut empty = [0x5au8; K];
+    empty[..2].copy_from_slice(&[0, 2]);
+    empty[K - 1] = 0;
+    assert_eq!(implicit_rejection_decode(&empty, 4), (0, vec![0; window]));
 
-    let mut bad_type = encoded;
-    bad_type[1] = 1;
-    assert_eq!(
-      decode_pkcs1v15_encryption(&bad_type, &mut out),
-      Err(RsaPrivateOpError::DecryptionFailed)
-    );
-
-    let mut short_padding = encoded;
-    short_padding[5] = 0;
-    assert_eq!(
-      decode_pkcs1v15_encryption(&short_padding, &mut out),
-      Err(RsaPrivateOpError::DecryptionFailed)
-    );
-
+    // Each padding rule fails on its own and selects the alternative's last octets.
+    let mut first_byte = encoded;
+    first_byte[0] = 1;
+    let mut second_byte = encoded;
+    second_byte[1] = 1;
     let mut missing_separator = encoded;
-    missing_separator[12..].fill(0x55);
-    assert_eq!(
-      decode_pkcs1v15_encryption(&missing_separator, &mut out),
-      Err(RsaPrivateOpError::DecryptionFailed)
-    );
+    missing_separator[2..].fill(0x5a);
+    let mut short_padding = encoded;
+    short_padding[9] = 0;
+    let mut empty_padding = encoded;
+    empty_padding[2] = 0;
+    for (name, invalid) in [
+      ("first octet", first_byte),
+      ("block type", second_byte),
+      ("missing separator", missing_separator),
+      ("seven-octet PS", short_padding),
+      ("empty PS", empty_padding),
+    ] {
+      for alternative_len in [0, 1, 7, window] {
+        assert_eq!(
+          implicit_rejection_decode(&invalid, alternative_len),
+          (alternative_len, padded(&alternative(alternative_len), window)),
+          "{name} with alternative length {alternative_len} must return the alternative message"
+        );
+      }
+    }
+  }
 
-    let mut short_out = [0u8; 2];
+  #[test]
+  fn pkcs1v15_implicit_rejection_length_masks_and_keeps_the_last_fitting_candidate() {
+    let candidates = |values: &[u16]| -> [u8; IMPLICIT_REJECTION_CANDIDATE_BYTES] {
+      let mut bytes = [0xffu8; IMPLICIT_REJECTION_CANDIDATE_BYTES];
+      for (pair, value) in bytes.as_chunks_mut::<2>().0.iter_mut().zip(values) {
+        pair.copy_from_slice(&value.to_be_bytes());
+      }
+      bytes
+    };
+    // 245 = k - 11 for a 2048-bit modulus has bit length 8: 0x01f5 masks to 0xf5.
     assert_eq!(
-      decode_pkcs1v15_encryption(&encoded, &mut short_out),
-      Err(RsaPrivateOpError::DecryptionFailed)
+      implicit_rejection_length(&candidates(&[]), 245),
+      0,
+      "0xffff masks to 255 > 245"
     );
+    assert_eq!(implicit_rejection_length(&candidates(&[3]), 245), 3);
+    assert_eq!(implicit_rejection_length(&candidates(&[3, 0x01f5]), 245), 245);
+    assert_eq!(
+      implicit_rejection_length(&candidates(&[3, 246]), 245),
+      3,
+      "246 does not fit"
+    );
+    assert_eq!(implicit_rejection_length(&candidates(&[0, 9, 0x0110]), 245), 16);
+    // 500 has bit length 9: 0x03ff masks to 511, which does not fit; 0x03f4 masks to 500.
+    assert_eq!(implicit_rejection_length(&candidates(&[0x03ff]), 500), 0);
+    assert_eq!(implicit_rejection_length(&candidates(&[0x03f4]), 500), 500);
+  }
+
+  #[test]
+  fn pkcs1v15_implicit_rejection_depadding_matches_all_appendix_b_widths() {
+    let vectors: serde_json::Value =
+      serde_json::from_str(include_str!("../../testdata/rsa/implicit_rejection/appendix_b.json"))
+        .expect("Appendix B fixture must parse");
+    let mut checked = 0;
+    for key in vectors["keys"].as_array().expect("Appendix B keys") {
+      let der = hex_to_vec(key["pkcs8"].as_str().expect("PKCS #8 hex"));
+      // Read the stored exponent without importing a key. In particular, B.2's
+      // 2049-bit key is outside the public half-width-factor import policy.
+      let parts = parse_pkcs8_private_key_der_parts_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification())
+        .expect("Appendix B DER structure must parse");
+      for case in key["cases"].as_array().expect("Appendix B cases") {
+        let ciphertext = hex_to_vec(case["ciphertext"].as_str().expect("ciphertext hex"));
+        let encoded = hex_to_vec(case["encoded_message"].as_str().expect("OpenSSL raw RSA output"));
+        let expected = hex_to_vec(case["message"].as_str().expect("draft message hex"));
+        assert_eq!(encoded.len(), ciphertext.len());
+        let exponent = SecretBigEndianInteger::new_fixed_width(parts.private_exponent, encoded.len())
+          .expect("the stored exponent must fit the modulus width");
+        let mut alternative = vec![0u8; encoded.len()];
+        let mut out = vec![0xa5u8; encoded.len()];
+        let len = decode_pkcs1v15_with_implicit_rejection(
+          exponent.as_bytes(),
+          &ciphertext,
+          &encoded,
+          &mut alternative,
+          &mut out,
+        )
+        .expect("all Appendix B widths must decode below the import boundary");
+        assert_eq!(&out[..len], expected, "{}", case["section"]);
+        let window = encoded.len() - RSAES_PKCS1V15_OVERHEAD;
+        assert!(out[len..window].iter().all(|&byte| byte == 0));
+        assert!(out[window..].iter().all(|&byte| byte == 0xa5));
+        assert!(alternative.iter().all(|&byte| byte == 0));
+        checked += 1;
+      }
+    }
+    assert_eq!(checked, 48);
   }
 
   /// Run one decryption into `out` prefilled with a canary. Pair the result
@@ -13168,7 +13597,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   }
 
   #[test]
-  fn pkcs1v15_encrypt_decrypt_rejects_oracle_classes_opaquely() {
+  fn pkcs1v15_encrypt_decrypt_hides_padding_failures_behind_implicit_rejection() {
     let key = prevalidated_test_private_key();
     let (blinding_factor, blinding_factor_inverse) = factor_two_and_inverse(key.public_key().modulus());
     let plaintext = b"rsaes-pkcs1v15 legacy roundtrip";
@@ -13242,42 +13671,48 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       .public_key()
       .public_operation(&bad_block, &mut ciphertext)
       .expect("malformed encoded block must remain a valid RSA representative");
-    let mut assert_decrypt_error = |ciphertext: &[u8]| {
+    // Every entry point returns the same synthetic message for a padding
+    // failure: it depends only on the key and the ciphertext, not on blinding
+    // or scratch. The values are checked against Appendix B and OpenSSL in the
+    // integration tests.
+    let window = key.signature_len().strict_sub(RSAES_PKCS1V15_OVERHEAD);
+    let mut assert_implicit_rejection = |ciphertext: &[u8]| {
       out.fill(0xa5);
-      assert_eq!(
-        key.decrypt_pkcs1v15_with_blinding_factor(
+      let len = key
+        .decrypt_pkcs1v15_with_blinding_factor(
           ciphertext,
           RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
           &mut out,
-        ),
-        Err(RsaPrivateOpError::DecryptionFailed)
-      );
-      assert!(is_zero_unsigned_be(&out));
+        )
+        .expect("invalid padding must decrypt to the synthetic message");
+      assert!(len <= window);
+      assert!(out[len..window].iter().all(|&byte| byte == 0));
+      assert!(out[window..].iter().all(|&byte| byte == 0xa5));
+      assert_ne!(&out[..len], plaintext.as_slice());
+      let expected = (len, out.clone());
+
       out.fill(0xa5);
-      assert_eq!(
-        key.decrypt_pkcs1v15_with_blinding_factor_and_scratch(
+      let len = key
+        .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
           ciphertext,
           RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
           &mut out,
           &mut scratch,
-        ),
-        Err(RsaPrivateOpError::DecryptionFailed)
-      );
-      assert!(is_zero_unsigned_be(&out));
+        )
+        .expect("invalid padding must decrypt to the synthetic message with caller scratch");
+      assert_eq!((len, out.clone()), expected);
       #[cfg(feature = "getrandom")]
       {
         out.fill(0xa5);
-        assert_eq!(
-          key.decrypt_pkcs1v15(ciphertext, &mut out),
-          Err(RsaPrivateOpError::DecryptionFailed)
-        );
-        assert!(is_zero_unsigned_be(&out));
+        let len = key
+          .decrypt_pkcs1v15(ciphertext, &mut out)
+          .expect("invalid padding must decrypt to the synthetic message with random blinding");
+        assert_eq!((len, out.clone()), expected);
         out.fill(0xa5);
-        assert_eq!(
-          key.decrypt_pkcs1v15_with_scratch(ciphertext, &mut out, &mut scratch),
-          Err(RsaPrivateOpError::DecryptionFailed)
-        );
-        assert!(is_zero_unsigned_be(&out));
+        let len = key
+          .decrypt_pkcs1v15_with_scratch(ciphertext, &mut out, &mut scratch)
+          .expect("invalid padding must decrypt to the synthetic message with random blinding and scratch");
+        assert_eq!((len, out.clone()), expected);
       }
     };
 
@@ -13286,7 +13721,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       .public_key()
       .public_operation(&bad_block, &mut ciphertext)
       .expect("wrong block type must remain a valid RSA representative");
-    assert_decrypt_error(&ciphertext);
+    assert_implicit_rejection(&ciphertext);
 
     bad_block[1] = 2;
     bad_block[5] = 0;
@@ -13294,7 +13729,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       .public_key()
       .public_operation(&bad_block, &mut ciphertext)
       .expect("short padding block must remain a valid RSA representative");
-    assert_decrypt_error(&ciphertext);
+    assert_implicit_rejection(&ciphertext);
 
     bad_block[5] = 0xc5;
     bad_block[10..].fill(0xc5);
@@ -13302,7 +13737,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       .public_key()
       .public_operation(&bad_block, &mut ciphertext)
       .expect("missing separator block must remain a valid RSA representative");
-    assert_decrypt_error(&ciphertext);
+    assert_implicit_rejection(&ciphertext);
   }
 
   #[test]

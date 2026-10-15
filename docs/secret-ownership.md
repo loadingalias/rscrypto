@@ -29,6 +29,25 @@ It does not prove that the compiler erases every copy it makes.
 Typed private keys, shared secrets, keyed states, expanded schedules,
 and private-operation scratch follow the same rules, also when the table does not name them.
 
+### RSA implicit rejection
+
+`RsaPrivateKey` retains the imported private exponent's value, padded to the
+public modulus width. It retains the CRT coefficient at the public factor width,
+so steady-state copies do not use its significant-byte count. Legacy
+`expert::RsaPkcs1v15Decrypt` borrows the stored exponent to derive a rejection key
+for each ciphertext; neither the exponent hash nor that key is cached, exported,
+or formatted.
+The local owners are the exponent's 32-byte SHA-256 hash, the 32-byte key
+derivation key (KDK), 256 candidate-length bytes, and the modulus-width
+alternative message (AM). The allocating path owns AM in a `Vec`;
+scratch paths reuse `RsaPrivateScratch::blinding_power` after private arithmetic.
+
+The internal HMAC helper borrows a 32-byte key and owns its 64-byte key block,
+ipad and opad, SHA-256 states, inner digest, and returned 32-byte block.
+The caller clears each returned derivation block after use. The selected
+plaintext or synthetic message is copied into caller-owned `out`; its cleanup
+is the caller's responsibility. See [cleanup boundaries](secret-lifecycle.md#rsa-implicit-rejection).
+
 ### rustls symmetric adapters
 
 The `rscrypto-rustls` companion owns its HMAC keys in `SecretVec` and its HKDF

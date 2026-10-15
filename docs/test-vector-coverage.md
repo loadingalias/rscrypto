@@ -26,6 +26,24 @@ Test filenames are the stable entry points.
 | RSA signatures, encryption, and parsing | NIST CAVP, Wycheproof, RustCrypto and system OpenSSL/LibreSSL oracles, and profile-confusion, allocation, and leakage tests. | The public API exposes fixed SHA-2 profiles, not every Wycheproof parameter combination. The system-library oracles run only where the test host has them. |
 | Dispatch and fallback | Differential tests, portable against accelerated, across lengths, tails, and vectored input. | Cross-compilation alone is not runtime evidence. |
 
+### RSA implicit rejection
+
+`tests/rsa_implicit_rejection.rs` checks all four legacy decryption entry points
+against 36 Appendix B vectors from draft-irtf-cfrg-rsa-guidance-10 and 96 seeded
+OpenSSL 4.0.3 decryptions, for 2048-, 3072-, and 4096-bit keys. It also checks
+59 Wycheproof invalid-padding results against OpenSSL's synthetic messages and
+requires public ciphertext-format errors to remain errors. Unit tests isolate
+each padding rule, candidate masking and last-fit selection, empty and maximum
+messages, fixed-window output, and scratch equivalence.
+
+An additional unit test executes production derivation and depadding for all
+48 Appendix B cases, including the 2049-bit key, using the stored exponent and
+OpenSSL raw RSA outputs as inputs and the draft messages as expectations.
+Appendix B.2's 2049-bit key fails the existing half-width-factor import policy.
+Its 12 decryption vectors and 32 seeded ciphertexts remain in the fixture and
+are cross-checked with OpenSSL during generation; they do not qualify rscrypto's
+public decryption API. See [provenance and reproduction](../testdata/rsa/implicit_rejection/README.md).
+
 ### ML-KEM evidence
 
 - NIST ACVP key-generation, encapsulation, decapsulation, and key-check vectors.
