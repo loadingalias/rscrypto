@@ -2333,7 +2333,7 @@ primitive = "kx.p256_ecdh"
 variant = "Agreement"
 dudect = ["p256_ecdh_agree_fixed_vs_random_scalar"]
 binsec = ["kx.p256_ecdh.window_select.portable.all"]
-notes = "DudeCT covers the complete production operation; BINSEC bounds the same production full-table selector over a peer-derived public table."
+notes = "DudeCT covers the complete production operation. The BINSEC kernel bounds the fixed-base comb selector only; portable agreement selects from its peer-derived projective table with `Projective::select_signed`, which has no BINSEC kernel and relies on DudeCT and disassembly review."
 
 [[evidence_unit]]
 id = "kx.p384_ecdh.public_derivation"

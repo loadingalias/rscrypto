@@ -676,6 +676,16 @@ impl Projective {
   }
 
   fn select(left: Self, right: Self, mask: u64) -> Self {
+    #[cfg(any(
+      target_arch = "riscv32",
+      target_arch = "riscv64",
+      target_arch = "s390x",
+      target_arch = "x86_64"
+    ))]
+    // SECURITY: RISC-V LLVM lowered the masked infinity word to a branch on the
+    // secret window digit in `select_signed`. Keep the mask opaque, as in
+    // `Uint::select`.
+    let mask = core::hint::black_box(mask);
     Self {
       x: FieldElement::select(left.x, right.x, mask),
       y: FieldElement::select(left.y, right.y, mask),
