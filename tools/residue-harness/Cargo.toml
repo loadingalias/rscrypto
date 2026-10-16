@@ -24,9 +24,18 @@ rscrypto = { path = "../..", default-features = false, features = ["alloc", "ml-
 
 [features]
 portable-only = ["rscrypto/portable-only"]
+native-mldsa = ["rscrypto/std"]
+capture-mldsa = ["native-mldsa"]
 
 [[bin]]
 name = "rscrypto-residue-harness"
 path = "src/main.rs"
+bench = false
+test = false
+
+[[bin]]
+name = "rscrypto-mldsa-residue-native"
+path = "src/mldsa_native.rs"
+required-features = ["native-mldsa"]
 bench = false
 test = false

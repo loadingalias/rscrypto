@@ -15,7 +15,7 @@ for whole operations.
 ## Standard and provenance
 
 The arithmetic and encodings come from [FIPS 204](https://csrc.nist.gov/pubs/fips/204/final), final, 2024-08-13.
-The [potential corrections](https://csrc.nist.gov/files/pubs/fips/204/final/docs/fips-204-potential-updates.xlsx), updated 2026-07-31, were checked on 2026-09-21.
+The [potential corrections](https://csrc.nist.gov/files/pubs/fips/204/final/docs/fips-204-potential-updates.xlsx), updated 2026-07-31, were checked with the NIST FAQ on 2026-10-16 UTC.
 NIST calls them potential corrections, not an amended final publication.
 
 | Artifact                          | SHA-256 |
@@ -33,6 +33,15 @@ NIST calls them potential corrections, not an amended final publication.
   The multiplication routine carries the proof of its reduction bound.
 - The roots come from the standard's root 1753 and eight-bit index reversal.
   They are not imported from another implementation's table.
+
+The [2026-10-16 qualification summary](../benchmark_results/OVERVIEW.md#2026-10-16-ml-dsa-optimization-qualification)
+links the standards reconciliation, which maps all twelve spreadsheet rows to the selected source
+or identifies them as editorial. The local report retains fetched sources, checksums,
+regression references, ACVP coverage, and the limited formal-proof inventory.
+It also records the final-source native/portable AddressSanitizer tests and guarded
+signing-stack residue checks on macOS AArch64. Those bounded checks cover the
+selected calls and artifacts; broader target qualification remains separate.
+They do not establish module validation or whole-operation constant time.
 
 [The ACVP manifest](../testdata/mldsa/acvp/README.md) describes all 615 retained ACVP cases and their provenance.
 [The Wycheproof manifest](../testdata/mldsa/wycheproof/README.md) describes all 1,138 pinned Wycheproof signing and verification cases.

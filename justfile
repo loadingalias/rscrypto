@@ -317,7 +317,7 @@ ct-validate *args:
 stack-frames *args:
     @scripts/lib/python.sh scripts/stack/frames.py "$@"
 
-# Measure moved-copy residue of secret owners on QEMU RV32 and Cortex-M3 boards.
+# Measure secret residue on QEMU boards or native ML-DSA signing stacks.
 [group('secret-lifecycle')]
 stack-residue *args:
     @scripts/lib/python.sh scripts/stack/residue.py "$@"

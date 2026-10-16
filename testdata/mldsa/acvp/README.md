@@ -22,6 +22,22 @@ The twelve prehash identifiers use independent hash oracles.
 Official successful sigGen outputs also supply positive verification cases
 for prehash combinations missing from the sigVer sample corpus.
 
+The 2026-10-16 UTC reconciliation found all 36 parameter-set/prehash combinations
+in sigGen, each with deterministic and hedged cases. The sigVer files alone cover
+9 combinations with positive cases and 29 with negative cases.
+[Upstream issue 469](https://github.com/usnistgov/ACVP-Server/issues/469) and its
+[proposed fix 471](https://github.com/usnistgov/ACVP-Server/pull/471) were still open.
+The existing sigGen-derived positives close that positive-coverage gap in these tests.
+
+Independent sigVer negatives are absent for ML-DSA-44 with SHA2-224 or SHA3-256;
+ML-DSA-65 with SHA3-224 or SHA3-256; and ML-DSA-87 with SHA3-224, SHAKE-128,
+or SHAKE-256. The corpus also does not provide an exhaustive cross-product of
+prehash identifiers and rejection reasons. The separate Wycheproof corpus and
+public API regressions cover malformed signatures and contexts, but do not replace
+those missing prehash-specific negative vectors. The
+[qualification summary](../../../benchmark_results/OVERVIEW.md#2026-10-16-ml-dsa-optimization-qualification)
+links the local reconciliation record with its per-case coverage map and upstream snapshots.
+
 Vector success proves the covered contracts; timing, cleanup, resource bounds,
 hostile-input coverage beyond these cases,
 and independent ML-DSA differentials require separate evidence.

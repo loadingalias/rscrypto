@@ -1423,6 +1423,7 @@ extern "C" fn main() -> ! {
 }
 
 #[panic_handler]
+#[cfg(not(feature = "native-mldsa"))]
 fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
   say!("panic {info}");
   loop {

@@ -456,6 +456,27 @@ QEMU runs show what the compiled code leaves in memory under emulation.
 They are not device timing evidence or device stack evidence.
 `stack/residue_test.py` (part of `just test-scripts`) checks the parsing and the judgement on synthetic logs.
 
+`just stack-residue --native-mldsa --output DIR` checks signing scratch on macOS
+AArch64 and Linux AArch64/x86-64. It runs the production compact and prepared
+signer, with deterministic and fixed-randomness hedged inputs, for all three
+parameter sets and both dispatch configurations. Each call uses a private
+painted 1 MiB stack between inaccessible guard ranges; the caller scans that
+allocation after the call returns.
+It records no timing measurements.
+
+The runner captures coefficient masks, NTT masks, rejected responses and
+commitments, and hint maps from an isolated source copy. It retains the exact
+capture patch and matches every signature against the uninstrumented measured
+build. High-entropy values use 16-byte windows. Hint maps use discriminating
+256-byte windows or their complete 1,024-byte pattern when sparse; all-zero maps
+already equal the cleanup value. Planted and cleared controls cover each window
+class. Raw stack snapshots, captures, binaries, build logs, source hashes, and
+`report.json` stay in the output directory. This checks the selected calls and
+artifact, not arbitrary compiler-created fragments, registers, heap residue,
+every rejection path, or other targets. `--cases N` changes the deterministic
+message count per parameter set, key form, and mode (default eight); `--start N`
+selects the first message index for reproducing a discovered rejection case.
+
 ## Benchmarks and updates
 
 | Script                | Caller |

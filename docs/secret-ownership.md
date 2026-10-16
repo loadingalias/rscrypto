@@ -263,6 +263,10 @@ outside this claim. Keyed and derive-key readers do not enter this path.
   and its accepted count with the output bit planes.
   It clears the input owner after each fixed block.
   It clears the output owner on success and on exhaustion.
+- The [signing-residue qualification](../benchmark_results/OVERVIEW.md#2026-10-16-ml-dsa-optimization-qualification)
+  checks masks, NTT masks, rejected candidates, commitments and hint maps in the
+  measured macOS AArch64 stack. It does not change their ownership contract or
+  establish cleanup for every compiler-created copy.
 - Copies that the compiler makes still need review for each target.
 
 ## Public authentication values

@@ -243,12 +243,19 @@ def markdown(report: dict[str, object]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+  arguments = list(sys.argv[1:] if argv is None else argv)
+  if "--native-mldsa" in arguments:
+    import mldsa_residue
+
+    arguments.remove("--native-mldsa")
+    return mldsa_residue.main(arguments)
   parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+  parser.add_argument("--native-mldsa", action="store_true", help="check native ML-DSA signing scratch; combine with --help for its options")
   parser.add_argument("--board", action="append", choices=sorted(BOARDS), help="repeatable (default: all)")
   parser.add_argument("--backend", action="append", choices=BACKENDS, help="repeatable (default: both)")
   parser.add_argument("--timeout", type=float, default=900.0, help="seconds per boot")
   parser.add_argument("--output", type=Path, help="directory for raw UART logs and report.json")
-  args = parser.parse_args(argv)
+  args = parser.parse_args(arguments)
 
   reports = []
   for board_name in args.board or sorted(BOARDS):

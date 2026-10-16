@@ -203,6 +203,14 @@ erasure of every compiler-created copy, register, or spill.
   The storage clears them again on drop.
   Release frames of `prepare_in` on five Linux targets are at most 2,240 bytes,
   so the storage is not built on the stack; residue of `prepare_in` is not measured.
+- The 2026-10-16 macOS AArch64 signing-residue check found no selected secret
+  windows after 240 compact/prepared, deterministic/hedged calls across all three
+  parameter sets and native/portable dispatch. It includes NTT masks, rejected
+  responses and commitments, and hint maps from candidates rejected after hint
+  construction. Planted/cleared controls and an isolated missing-polynomial-wipe
+  mutation validate the scanner.
+  This checks the measured stack snapshots, not registers, heap residue or arbitrary
+  smaller fragments. See the [qualification record](../benchmark_results/OVERVIEW.md#2026-10-16-ml-dsa-optimization-qualification).
 - Full target qualification is still open.
   See [ML-DSA](mldsa.md).
 

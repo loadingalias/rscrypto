@@ -6,6 +6,41 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-16: ML-DSA optimization qualification
+
+Final-source local checks pass at `9e8de3c6`, with `nightly-2026-10-14`, rustc
+`822182db4`, LLVM 23.1.3. Standards reconciliation maps all twelve NIST potential
+correction rows and finds no implementation defect. Official sigGen outputs
+cover all 36 prehash combinations in deterministic and hedged modes; seven
+independent negative sigVer combinations remain absent and are named in the
+[corpus guide](../testdata/mldsa/acvp/README.md).
+
+On macOS AArch64, native and portable AddressSanitizer builds pass 22 / 20 unit
+tests, 27 API/encoding tests each, and all twelve committed ML-DSA fuzz inputs.
+The instrumented standard library and executed binary identities are recorded.
+These are bounded memory-error checks, not leak-detector or timing evidence.
+
+The guarded-stack residue campaign covers 240 compact/prepared,
+deterministic/hedged signatures across all three parameter sets and both
+dispatch configurations, including early norm rejection and rejection after hint
+construction. No selected secret window remains. Planted/cleared controls and an isolated mutation that
+omits polynomial wiping detect the expected residue. The scope excludes registers,
+heap residue, arbitrary smaller fragments and unmeasured targets.
+
+The existing Graviton4 / Zen 5 tail baseline retains 49,152 rows per host/build,
+identical attempt counts, and a maximum of 39 attempts. Its production source and
+workload match the selected source, but its older compiler makes latency a
+historical baseline. The corrected reference means are 4.36 / 5.14 / 3.91.
+The formal inventory remains one portable Montgomery BINSEC leaf, 24 kernel
+cases and 19 diagnostic probes. Whole signing retains variable first-accepted
+retries and no strict constant-time claim. Final native CT results remain pending.
+
+Record: `mldsa-qualification-20261016/REPORT.md`, with the standards, ASan and
+residue subreports and exact source/artifact identities. Production source is
+unchanged. No timing ran on the development Mac.
+Real-device, RV32 timing, browser WASM and stable IBM Z performance remain
+broader target requirements.
+
 ## 2026-10-16: RSA and selection qualification with rust-src
 
 At production source `9e8de3c6`, [workspace CI](https://github.com/loadingalias/rscrypto/actions/runs/38829390771),
