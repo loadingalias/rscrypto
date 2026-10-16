@@ -54,30 +54,58 @@ def main() -> None:
     if not required <= selected:
       fail(f"catalog bench {name} omits required features: {sorted(required - selected)}")
 
+  defaults = [name for name, bench in catalog["benches"].items() if bench["kind"] == "criterion" and bench["required"]]
   expected = {
-    "checksum": "crc16-ccitt,crc16-ibm,crc24-openpgp,crc32-ieee,crc32c,crc64-xz,crc64-nvme",
+    "all": ",".join(defaults),
+    "checksums": "crc16-ccitt,crc16-ibm,crc24-openpgp,crc32-ieee,crc32c,crc64-xz,crc64-nvme",
     "mlkem": "mlkem512,mlkem768,mlkem1024",
     "sha512-256": "sha512-256",
+    "SHA512_256": "sha512-256",
+    "password-hashing": "password_hashing",
   }
-  for selector, algorithms in expected.items():
+  for selector, names in expected.items():
     actual = ",".join(resolve_selector(catalog, selector))
-    if actual != algorithms:
-      fail(f"selector {selector} resolved to {actual}, expected {algorithms}")
+    if actual != names:
+      fail(f"selector {selector} resolved to {actual}, expected {names}")
+  if "tls_connections" in defaults or "structural" in defaults:
+    fail("default runs include a target that needs an external peer or another harness")
 
-  if resolve_selector(catalog, "unknown-selector") is not None:
-    fail("unknown selector accepted")
+  for selector in ("unknown-selector", "bench=sha2", "hash", "checksum"):
+    if resolve_selector(catalog, selector) is not None:
+      fail(f"unknown selector accepted: {selector}")
 
-  for name in catalog["algorithms"]:
-    if resolve_selector(catalog, name) != [name]:
-      fail(f"exact algorithm {name} selects other algorithms")
-  shadowed = copy.deepcopy(catalog)
-  shadowed["selectors"]["crc64nvme"] = ["crc64-xz", "crc64-nvme"]
-  try:
-    validate_catalog(shadowed)
-  except CatalogError:
-    pass
-  else:
-    fail("catalog accepted a family selector shadowing an exact algorithm")
+  for kind in ("algorithms", "benches"):
+    for name in catalog[kind]:
+      if resolve_selector(catalog, name) != [name]:
+        fail(f"exact name {name} selects other names")
+  for selector, collision in (("crc64nvme", "groups"), ("auth", "groups"), ("all", "groups"), ("blake3", "algorithms")):
+    shadowed = copy.deepcopy(catalog)
+    shadowed[collision][selector] = (["crc64-xz", "crc64-nvme"] if collision == "groups"
+                                     else {"bench": "blake3", "filter": "blake3"})
+    try:
+      validate_catalog(shadowed)
+    except CatalogError:
+      pass
+    else:
+      fail(f"catalog accepted a duplicate selector name: {selector}")
+  for change in ({"required": True}, {"external": ""}):
+    broken = copy.deepcopy(catalog)
+    broken["benches"]["tls_connections"].update(change)
+    try:
+      validate_catalog(broken)
+    except CatalogError:
+      pass
+    else:
+      fail(f"catalog accepted an invalid external prerequisite: {change}")
+  for members in ([], ["sha256", "sha256"], ["structural"], ["missing"]):
+    broken = copy.deepcopy(catalog)
+    broken["groups"]["hashes"] = members
+    try:
+      validate_catalog(broken)
+    except CatalogError:
+      pass
+    else:
+      fail(f"catalog accepted invalid group members: {members}")
   aes_profile = catalog["profile_presets"].get("aead/aes")
   if aes_profile != {
     "bench": "aead",
@@ -102,11 +130,6 @@ def main() -> None:
     pass
   else:
     fail("catalog accepted an architecture-specific profile bundle")
-  for case in ("blake2/rscrypto/blake2b256/64", "blake2/dryoc/blake2b256/64",
-               "blake2/keyed/dryoc/blake2b256/64", "blake2/streaming/dryoc/blake2b256/64B",
-               "blake2/params/rscrypto/blake2b256/salt+personal/64"):
-    if not re.search(catalog["algorithms"]["blake2"]["filter"], case):
-      fail(f"BLAKE2 selector excludes {case}")
   for binary, case, expected_class in (
     ("sha2", "sha256/rscrypto/64", "ordinary"),
     ("sha2", "sha256/internal/compress/rscrypto/64", "diagnostic"),

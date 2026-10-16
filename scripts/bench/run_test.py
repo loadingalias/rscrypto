@@ -337,7 +337,7 @@ sys.exit(64)
     result = self.bench('sha256', 'filter=sha512', '--list')
     self.assertNotEqual(result.returncode, 0)
     self.assertIn('no cases matched', result.stderr)
-    result = self.bench('bench=sha2', 'filter=rscrypto', '--list')
+    result = self.bench('sha2', 'filter=rscrypto', '--list')
     self.ok(result)
     listed = [line.split()[-1] for line in result.stdout.splitlines() if line.startswith('[')]
     self.assertEqual(listed, ['sha256/rscrypto/64', 'sha512/rscrypto/64', 'sha512-256/rscrypto/64'])
@@ -406,7 +406,7 @@ sys.exit(64)
     self.assertNotIn('crc64-xz/rscrypto/64', result.stdout)
     self.assertFalse(self.runs())
     self.assertFalse(self.calls())
-    self.ok(self.bench('bench=crc,sha2'))
+    self.ok(self.bench('crc', 'sha2'))
     self.assertEqual(len(self.calls()), 2)
     plan = self.plan()
     self.assertEqual(len(plan), 2)
@@ -418,7 +418,7 @@ sys.exit(64)
     self.assertEqual(len(self.calls(listing=True)), 1)
     self.assertEqual(len((self.root / 'filters.jsonl').read_text().splitlines()), 1)
     self.assertNotIn('--', self.calls(listing=True)[0]['args'])
-    self.ok(self.bench('bench=sha2,crc', 'filter=rscrypto', 'filter=64', '--list'))
+    self.ok(self.bench('sha2', 'crc', 'filter=rscrypto', 'filter=64', '--list'))
     self.assertEqual(len(self.calls(listing=True)), 3)
 
   def test_explicit_options_override_environment(self):
@@ -436,9 +436,12 @@ sys.exit(64)
           self.assertEqual('blake3/rscrypto-scalar/64' in result.stdout, enabled)
 
   def test_invalid_requests_do_not_build(self):
-    for args in (('unknown-selector',), ('bench=missing',), ('sha256', 'filter='), ('sample_size=9',), ('diag=typo',), ('sha256', 'bench=auth'), ('tls-provider', '--diag')):
+    # Target names are plain selectors; the old `bench=` and BENCH_BENCH forms must fail.
+    for args in (('unknown-selector',), ('bench=sha2',), ('--bench', 'sha2'), ('sha256', 'filter='), ('sample_size=9',),
+                 ('diag=typo',), ('structural',), ('tls-provider', '--diag')):
       self.assertNotEqual(self.bench(*args).returncode, 0)
-    self.assertNotEqual(self.bench(BENCH_UNKNOWN='1').returncode, 0)
+    for env in ({'BENCH_UNKNOWN': '1'}, {'BENCH_BENCH': 'sha2'}):
+      self.assertNotEqual(self.bench('sha256', **env).returncode, 0)
     self.assertFalse((self.root / 'builds.jsonl').exists())
     self.assertFalse(self.runs())
 

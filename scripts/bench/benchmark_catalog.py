@@ -28,21 +28,25 @@ def load_catalog() -> dict:
 
 
 def validate_catalog(catalog: dict) -> None:
-  if catalog.get("schema") != 1:
-    raise CatalogError("benchmark catalog schema must be 1")
+  if catalog.get("schema") != 2:
+    raise CatalogError("benchmark catalog schema must be 2")
 
   benches = catalog.get("benches")
   algorithms = catalog.get("algorithms")
-  selectors = catalog.get("selectors")
-  if not all(isinstance(value, dict) and value for value in (benches, algorithms, selectors)):
+  groups = catalog.get("groups")
+  if not all(isinstance(value, dict) and value for value in (benches, algorithms, groups)):
     raise CatalogError("benchmark catalog maps must be non-empty objects")
 
-  normalized_algorithms: dict[str, str] = {}
+  # Targets, algorithms, and groups share one selector name space; `all` is built in.
+  names = {"all": "the built-in all selector"}
+  for kind, entries in (("target", benches), ("algorithm", algorithms), ("group", groups)):
+    for name in entries:
+      key = normalize(name)
+      if key in names:
+        raise CatalogError(f"{kind} {name} has the same selector name as {names[key]}")
+      names[key] = f"{kind} {name}"
+
   for name, algorithm in algorithms.items():
-    key = normalize(name)
-    if key in normalized_algorithms:
-      raise CatalogError(f"algorithm names normalize to the same selector: {name}, {normalized_algorithms[key]}")
-    normalized_algorithms[key] = name
     bench = algorithm.get("bench")
     if bench not in benches:
       raise CatalogError(f"algorithm {name} references unknown bench {bench}")
@@ -74,19 +78,16 @@ def validate_catalog(catalog: dict) -> None:
       raise CatalogError(f"bench {name} omits required features")
     if not isinstance(bench.get("required"), bool):
       raise CatalogError(f"bench {name} needs a Boolean required field")
+    external = bench.get("external")
+    if external is not None and (not isinstance(external, str) or not external):
+      raise CatalogError(f"bench {name} needs a non-empty external prerequisite")
+    if external and bench["required"]:
+      raise CatalogError(f"bench {name} needs {external}, so default runs cannot include it")
 
-  for selector, names in selectors.items():
-    if normalize(selector) != selector:
-      raise CatalogError(f"selector key must already be normalized: {selector}")
-    if not isinstance(names, list) or not names or any(name not in algorithms for name in names):
-      raise CatalogError(f"selector {selector} references an unknown algorithm")
-    if selector in normalized_algorithms:
-      raise CatalogError(f"family selector shadows an exact algorithm: {selector}")
-
-  all_algorithms = set(selectors.get("all", []))
-  expected_algorithms = set(algorithms) - {"aead-diag"}
-  if all_algorithms != expected_algorithms:
-    raise CatalogError("the all selector must contain every non-diagnostic algorithm exactly once")
+  for group, members in groups.items():
+    if (not isinstance(members, list) or not members or len(set(members)) != len(members)
+        or any(member not in algorithms and benches.get(member, {}).get("kind") != "criterion" for member in members)):
+      raise CatalogError(f"group {group} must list distinct algorithms or Criterion targets")
 
   presets = catalog.get("profile_presets")
   if not isinstance(presets, dict) or not presets:
@@ -131,8 +132,20 @@ def case_class(catalog: dict, binary: str, case: str) -> str:
 
 
 def resolve_selector(catalog: dict, selector: str) -> list[str] | None:
+  """Expand one selector to target and algorithm names, or return None if it is unknown."""
   key = normalize(selector)
-  for name in catalog["algorithms"]:
-    if normalize(name) == key:
-      return [name]
-  return catalog["selectors"].get(key)
+  if key == "all":
+    return [name for name, bench in catalog["benches"].items() if bench["kind"] == "criterion" and bench["required"]]
+  for kind in ("benches", "algorithms", "groups"):
+    for name, entry in catalog[kind].items():
+      if normalize(name) == key:
+        return list(entry) if kind == "groups" else [name]
+  return None
+
+
+def scope(catalog: dict, name: str) -> tuple[str, str]:
+  """Return the target and the case scope that one target or algorithm name selects."""
+  if name in catalog["benches"]:
+    return name, ""
+  algorithm = catalog["algorithms"][name]
+  return algorithm["bench"], algorithm["filter"]

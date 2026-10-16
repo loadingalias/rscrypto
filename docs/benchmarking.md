@@ -94,43 +94,48 @@ A value above `1.00x` favors `rscrypto`.
 A value below `1.00x` favors the comparison.
 Summary tables treat `0.95x` through `1.05x` as a tie.
 
-[`.config/benchmark-matrix.json`](../.config/benchmark-matrix.json) owns the benchmark binaries, required features, aliases,
-and filters.
+[`.config/benchmark-matrix.json`](../.config/benchmark-matrix.json) owns the benchmark targets, required features,
+selector names, and filters.
 The benchmark source owns each timed operation.
 Inspect both before you claim equivalent work.
 
 ## Bench workflow
 
 The [Bench workflow](../.github/workflows/bench.yml) runs only on manual request.
-Select the revision with the GitHub branch selector, then set the inputs:
+Select the revision with the GitHub branch selector, then fill in the form:
 
-| Input           | Example                                       | Meaning |
-| --------------- | --------------------------------------------- | ------- |
-| `architectures` | `x86_64-linux`                                | One native platform. x86-64 runs both Intel and AMD. |
-| `architectures` | `s390x-linux,powerpc64le-linux,riscv64-linux` | Any subset, separated by commas or spaces. |
-| `architectures` | `all`                                         | Linux x86-64, Linux ARM64, Windows x86-64, IBM Z, IBM POWER, and RISC-V. |
-| `selection`     | `sha256`                                      | One catalog algorithm. |
-| `selection`     | `sha256,blake3`                               | More than one algorithm. |
-| `selection`     | `hashes`, `checksums`, `auth`, `aead`         | A catalog group. You can combine groups. |
-| `selection`     | `all`                                         | Every algorithm in the catalog's `all` selector. |
-| `selection`     | `bench=sha2,auth`                             | Whole benchmark targets, including cases outside one algorithm. |
-| `filter`        | `^sha256/rscrypto/64$`                        | Limit the selected scope to matching Criterion cases. |
+| Input        | Example                         | Meaning |
+| ------------ | ------------------------------- | ------- |
+| `benchmarks` | `sha256`                        | One catalog algorithm. |
+| `benchmarks` | `sha256,blake3-mixed`           | More than one name, separated by commas or spaces. |
+| `benchmarks` | `sha2`, `mldsa`, `auth`         | A whole benchmark target. |
+| `benchmarks` | `hashes`, `checksums`, `mlkem`  | A catalog group. |
+| `benchmarks` | `all`                           | Every default target. |
+| `filter`     | `^sha256/rscrypto/64$`          | Limit each selected target to matching Criterion cases. |
+| Platforms    | `x86_64-linux`, `riscv64-linux` | Check one box for each platform. |
 
-The other platform names are `aarch64-linux` and `x86_64-win`.
-Algorithm and group selectors and explicit `bench=` targets are different forms of `selection`.
-The workflow rejects invalid architecture and catalog selections
-before it starts measurement runners.
-A case filter that matches nothing fails during discovery.
-The catalog is the authority for the available selectors and targets.
+The platform checkboxes are `x86_64-linux`, `aarch64-linux`, `x86_64-win`, `s390x-linux`,
+`powerpc64le-linux`, and `riscv64-linux`. Only `x86_64-linux` is checked by default.
+Each x86-64 platform runs separate Intel and AMD jobs.
+`benchmarks` accepts the same names as `just bench`; see [Select cases](#select-cases).
 
-Optional sampling fields override the shared Criterion settings.
-Empty fields keep the repository defaults.
+The planner rejects unknown names, a form with no platform checked,
+and targets that need an external prerequisite, such as `tls-provider`,
+before it starts any build or measurement runner.
+A case filter that matches nothing in a target fails that target's job during discovery.
+
+Optional sampling fields override the shared Criterion settings in
+[`.config/criterion.json`](../.config/criterion.json). Empty fields keep those settings.
 The diagnostic checkbox enables diagnostic features for the selected targets.
 It does not select other targets.
 
 ### Runners
 
-A small planning job validates the request and creates the exact runner matrix.
+A small planning job validates the request and splits it by catalog target.
+Each checked platform and selected target pair becomes one job.
+For example, `sha256,blake3` on `x86_64-linux` runs four jobs:
+`Measure x86_64-linux-intel / sha2`, `Measure x86_64-linux-amd / sha2`, and the same two for `blake3`.
+The plan log prints the `just bench` command that each target runs.
 
 - AWS supplies fixed On-Demand instance types for Linux x86-64, Linux ARM64, and Windows x86-64.
   Both x86-64 operating systems run separate Intel and AMD jobs, with different artifact names.
@@ -142,10 +147,12 @@ A small planning job validates the request and creates the exact runner matrix.
 - IBM and RISE supply their existing native runners.
 - macOS benchmarks run locally on the Apple Silicon Mac.
 
-The selected architectures run at the same time.
-On each machine, benchmark configurations run one after another.
+Jobs run in parallel, up to the workflow's `max-parallel` limits.
+The limits keep concurrent AWS builders and measurement hosts within the account's vCPU quotas,
+so a large selection runs in waves.
 
-- RISC-V, POWER, and IBM Z compile the selected configurations on x86-64 with `--ci-cross-build TARGET`.
+- RISC-V, POWER, and IBM Z compile each target on x86-64 with `--ci-cross-build TARGET`,
+  in a `Prepare PLATFORM / TARGET` job.
   Their native jobs use `--ci-cross-run` with the verified tools archive,
   then discover and measure the transferred binaries.
 - Other Linux jobs use `--ci-bench`.
@@ -158,15 +165,18 @@ Use the recorded CPU topology to interpret parallel results.
 
 ### Artifacts and limits
 
-Each job keeps `target/bench/` as a GitHub artifact.
+Each measurement job keeps `target/bench/` as the `bench-RUNNER-TARGET-RUN-ATTEMPT` artifact,
+for example `bench-x86_64-linux-intel-sha2-<run>-1`.
 It includes failed-run evidence, source and machine identity, the resolved case plan, logs,
 and raw Criterion results.
+Preparation jobs keep their evidence as `bench-prepare-PLATFORM-TARGET-RUN-ATTEMPT`.
 
-Each preparation and measurement job runs one `just bench`, so the ten-minute [time budget](#time-budget) applies to each.
-Job timeouts (120 minutes, 180 on RISC-V) cover provisioning and transfer.
-`all` is a selection; it does not guarantee that every case fits in that budget.
-Limit large runs by algorithm, group, target, or case filter.
-The workflow allows extra provisioning time, especially on RISC-V.
+Each preparation and measurement job runs one `just bench` for one target,
+so the ten-minute [time budget](#time-budget) applies to each target separately.
+A target can still exceed its budget; narrow it with a case filter or sampling settings.
+Preparation jobs time out after 30 minutes.
+Measurement job timeouts (120 minutes, 180 on RISC-V) cover provisioning and transfer.
+One failed job cancels the rest of the run.
 Manual dispatch is available after the workflow reaches the default branch.
 
 ### Cross-build preparation
@@ -196,7 +206,7 @@ The same selections work locally:
 just bench sha256 blake3
 just bench hashes
 just bench all
-just bench bench=sha2 'filter=^sha256/rscrypto/64$'
+just bench sha2 'filter=^sha256/rscrypto/64$'
 ```
 
 ## Profile workflow
@@ -257,7 +267,7 @@ Inspect the uncertainty, and repeat matched measurements, before you make a perf
 The optional `blake3_file` target measures `Blake3::update_reader`, four
 caller-scheduled subtrees, upstream `update_mmap_rayon`, and standalone `b3sum`.
 Discover its 40 cases
-with `just bench bench=blake3_file --list`. It is excluded from default runs because
+with `just bench blake3_file --list`. It is excluded from default runs because
 it needs explicit file fixtures and Linux cache-residency checks.
 
 The artifact printed by discovery accepts `--rscrypto-prepare-file DIRECTORY BYTES`
@@ -267,7 +277,7 @@ and the CLI when configured. The fixed
 sizes are 1 MiB, 16 MiB, 256 MiB, 1 GiB and 10 GiB. Preparation refuses to overwrite
 a fixture. Set `RSCRYPTO_BLAKE3_FILE_DIR` to that directory and
 `RSCRYPTO_BLAKE3_FILE_CACHE_LOG` to the retained JSONL output path before invoking
-`just bench bench=blake3_file` with the desired case filter.
+`just bench blake3_file` with the desired case filter.
 
 The `upstream-b3sum-4` rows require `RSCRYPTO_BLAKE3_B3SUM` and
 `RSCRYPTO_BLAKE3_B3SUM_RECEIPT`: an executable and a retained build receipt for
@@ -543,10 +553,23 @@ captures unchanged; their old budgets do not authorize rerunning them.
 
 ### Select cases
 
-Use an algorithm or family selector, or select explicit benchmark targets with `bench=<target>`
-(`bench=<csv>` for more than one).
+Select cases by catalog name. Benchmark targets, algorithms, and groups share one name space,
+and the catalog rejects a name that two of them would share.
+Matching ignores case and punctuation, so `password-hashing` selects the `password_hashing` target.
+
+| Name kind | Example | Selects |
+| --------- | ------- | ------- |
+| Target    | `sha2`, `auth`, `blake3_file` | Every case in one benchmark target. |
+| Algorithm | `sha256`, `ed25519`, `blake3-mixed` | The cases for one algorithm, inside its target. |
+| Group     | `hashes`, `checksums`, `crc64`, `mlkem` | The algorithms and targets that the group lists. |
+| `all`     | `all` | Every default target. Running with no name does the same. |
+
+Default targets are the catalog's `required` Criterion targets.
+A target with an `external` prerequisite is never a default target.
+`tls_connections` needs OpenSSL 4.0.3, so select it, or its `tls-provider` algorithm, explicitly and run it locally.
+
 `filter=<pattern>` limits the selected algorithms or targets.
-For example, `sha256 filter=rscrypto` stays within SHA-256, but `bench=sha2 filter=rscrypto` searches the whole SHA-2 target.
+For example, `sha256 filter=rscrypto` stays within SHA-256, but `sha2 filter=rscrypto` searches the whole SHA-2 target.
 
 - Repeat `filter=<pattern>` for more than one pattern.
 - Each build configuration is listed once.
@@ -564,8 +587,8 @@ For example, `sha256 filter=rscrypto` stays within SHA-256, but `bench=sha2 filt
 - Positional selectors accept catalog names.
   Use `filter=` for raw regexes.
 - An exact algorithm name selects only that algorithm.
-  Use a family name, such as `crc64`, to select more than one.
-- `blake2` includes all implementations and operations, including the dryoc one-shot and keyed cases.
+  Use a group name, such as `crc64`, to select more than one.
+- `blake2` is a target name, so it includes all implementations and operations, including the dryoc one-shot and keyed cases.
 
 ### Discover cases
 
@@ -573,9 +596,9 @@ Discover the actual cases before you choose a measurement scope:
 
 ```bash
 just bench crc64-nvme --list
-just bench bench=sha2 --list
+just bench sha2 --list
 just bench blake3 --diag --list
-just bench bench=aead_kernels --list
+just bench aead_kernels --list
 ```
 
 `--list` builds the selected configuration and lists its cases.
@@ -598,22 +621,22 @@ Classes do not block execution.
 Some target configurations already need it.
 The cases depend on the compiled features and the host capabilities.
 Dedicated diagnostic targets, such as `aead_kernels`, need explicit selection.
-Generic runs include the catalog's required Criterion targets.
+`all` and runs with no name include only the default targets.
 
 ### Run
 
 Run the narrowest useful case:
 
 ```bash
-just bench bench=sha2
-just bench bench=auth filter='^ecdsa-p256/'
+just bench sha2
+just bench auth filter='^ecdsa-p256/'
 just bench sha256 'filter=^sha256/rscrypto/\d+$' 'filter=^sha256/rscrypto/[0-9]{1,3}$'
 just bench p256-ecdh
 just bench p384-ecdh
 just bench mlkem
 ```
 
-Explicit targets, including unfiltered `bench=sha2`, run without a scope override.
+Target names, including unfiltered `sha2`, run without a scope override.
 
 - P-256 ECDH uses the `p256-ecdh` selector.
   Exact profiling uses the `auth` catalog target that owns it.

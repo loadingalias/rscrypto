@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run python
-"""Validate manual benchmark requests and dispatch the existing benchmark runner."""
+"""Validate manual benchmark requests and plan one bounded benchmark run per platform and target."""
 from __future__ import annotations
 
 import json
@@ -12,13 +12,18 @@ import sys
 # Embedded Windows Python omits the script directory from its import path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from benchmark_catalog import load_catalog
+from benchmark_catalog import load_catalog, resolve_selector, scope
 import runner
 import settings
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
-from ci_platforms import platforms as native_platforms
+from ci_platforms import PLATFORMS, platforms as native_platforms
 from cross_build import TARGETS
+
+OPTIONS = ('filter', 'sample_size', 'warmup_ms', 'measure_ms')
+INPUTS = {'benchmarks', 'diagnostic', *OPTIONS, *PLATFORMS}
+# GitHub rejects a matrix with more than 256 jobs.
+MAX_MATRIX = 256
 
 
 def platforms(value: str, run_id: str) -> dict:
@@ -40,22 +45,59 @@ def platforms(value: str, run_id: str) -> dict:
     return {'include': rows}
 
 
-def arguments(env: dict) -> list[str]:
-    selection = env.get('INPUT_SELECTION', '').strip()
-    if selection.startswith('bench='):
-        names = selection.removeprefix('bench=').split(',')
-        if any(not re.fullmatch(r'[A-Za-z0-9_-]+', name.strip()) for name in names):
-            raise ValueError('bench= requires comma-separated catalog target names')
-        args = ['bench=' + ','.join(name.strip() for name in names)]
-    else:
-        args = selection.replace(',', ' ').split()
-        if not args or any(not re.fullmatch(r'[A-Za-z0-9_-]+', name) for name in args):
-            raise ValueError('selection requires catalog algorithms/groups, all, or bench=<targets>')
-    args += ['output_dir=target/bench', 'diag=' + env.get('INPUT_DIAGNOSTIC', 'false')]
-    for name in ('filter', 'sample_size', 'warmup_ms', 'measure_ms'):
-        value = env.get('INPUT_' + name.upper(), '')
-        if value:
-            args.append(name + '=' + value)
+def dispatch_inputs(env: dict) -> dict:
+    inputs = json.loads(env.get('DISPATCH_INPUTS') or '{}')
+    if not isinstance(inputs, dict):
+        raise ValueError('DISPATCH_INPUTS must be a JSON object')
+    if set(inputs) - INPUTS:
+        raise ValueError('unexpected workflow inputs: ' + ', '.join(sorted(set(inputs) - INPUTS)))
+    # An omitted optional input is blank.
+    inputs = {name: value for name, value in inputs.items() if value is not None}
+    if any(type(inputs.get(name, False)) is not bool for name in ('diagnostic', *PLATFORMS)):
+        raise ValueError('platform and diagnostic inputs must be Boolean')
+    if any(type(inputs.get(name, '')) is not str for name in ('benchmarks', *OPTIONS)):
+        raise ValueError('benchmarks and sampling inputs must be strings')
+    return inputs
+
+
+def selected_platforms(inputs: dict) -> str:
+    names = [name for name in PLATFORMS if inputs.get(name)]
+    if not names:
+        raise ValueError('select at least one platform')
+    return ','.join(names)
+
+
+def selection(value: str) -> dict[str, list[str]]:
+    """Group the selected target and algorithm names by the benchmark target that runs them."""
+    names = value.replace(',', ' ').split()
+    if not names or any(not re.fullmatch(r'[A-Za-z0-9_-]+', name) for name in names):
+        raise ValueError('benchmarks requires catalog algorithms, groups, targets, or all')
+    catalog = load_catalog()
+    runs: dict[str, list[str]] = {}
+    for name in names:
+        selected = resolve_selector(catalog, name)
+        if selected is None:
+            raise ValueError(f'unknown benchmark selector: {name}')
+        for member in selected:
+            bench, _ = scope(catalog, member)
+            external = catalog['benches'][bench].get('external')
+            if external:
+                raise ValueError(f'{bench} needs {external}, which CI does not provision; run it locally')
+            runs.setdefault(bench, [])
+            if member not in runs[bench]:
+                runs[bench].append(member)
+    # A selected whole target already contains its algorithms.
+    return {bench: [bench] if bench in members else members for bench, members in runs.items()}
+
+
+def options(inputs: dict) -> list[str]:
+    args = ['output_dir=target/bench', 'diag=' + str(inputs.get('diagnostic', False)).lower()]
+    args += [name + '=' + inputs[name] for name in OPTIONS if inputs.get(name)]
+    return args
+
+
+def arguments(names: list[str], common: list[str]) -> list[str]:
+    args = [*names, *common]
     parsed = runner.parse(['bench', *args])
     runner.requests(parsed, load_catalog())
     settings.load({key: getattr(parsed, key) for key in ('sample_size', 'warmup_ms', 'measure_ms')
@@ -63,27 +105,51 @@ def arguments(env: dict) -> list[str]:
     return args
 
 
+def plan(inputs: dict, run_id: str) -> tuple[dict, dict, dict]:
+    runs = selection(inputs.get('benchmarks', ''))
+    commands = {bench: arguments(names, options(inputs)) for bench, names in runs.items()}
+    rows = platforms(selected_platforms(inputs), run_id)['include']
+    # Target-major order starts every platform's first runs in the first parallel wave.
+    measurements = [{**row, 'bench': bench} for bench in runs for row in rows]
+    builds = [{'platform': row['platform'], 'target': row['target'], 'bench': bench}
+              for bench in runs for row in rows if 'target' in row]
+    if max(len(measurements), len(builds)) > MAX_MATRIX:
+        raise ValueError(f'the selection needs more than {MAX_MATRIX} jobs; select fewer targets or platforms')
+    return {'include': measurements}, {'include': builds}, commands
+
+
+def bench_arguments(inputs: dict, bench: str) -> list[str]:
+    runs = selection(inputs.get('benchmarks', ''))
+    if bench not in runs:
+        raise ValueError(f'{bench} is not a target of this selection')
+    return arguments(runs[bench], options(inputs))
+
+
 def main() -> int:
-    args = arguments(os.environ)
-    if sys.argv[1:] == ['plan']:
-        matrix = platforms(os.environ.get('INPUT_ARCHITECTURES', ''), os.environ['GITHUB_RUN_ID'])
+    inputs = dispatch_inputs(os.environ)
+    command = sys.argv[1:]
+    if command == ['plan']:
+        measurements, builds, commands = plan(inputs, os.environ.get('GITHUB_RUN_ID', ''))
         with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
-            output.write('matrix=' + json.dumps(matrix, separators=(',', ':')) + '\n')
-            builds = [{'target': row['target']} for row in matrix['include'] if 'target' in row]
-            output.write('cross=' + str(bool(builds)).lower() + '\n')
-            output.write('builds=' + json.dumps({'include': builds}, separators=(',', ':')) + '\n')
-        print('Platforms: ' + ', '.join(row['name'] for row in matrix['include']))
-        print('Benchmark arguments: ' + json.dumps(args))
+            output.write('measurements=' + json.dumps(measurements, separators=(',', ':')) + '\n')
+            output.write('cross=' + str(bool(builds['include'])).lower() + '\n')
+            output.write('builds=' + json.dumps(builds, separators=(',', ':')) + '\n')
+        print('Platforms: ' + ', '.join(dict.fromkeys(row['name'] for row in measurements['include'])))
+        for bench, args in commands.items():
+            print(f'{bench}: just bench ' + ' '.join(args))
+        print(f'Cross-builds: {len(builds["include"])}; measurements: {len(measurements["include"])}')
         return 0
-    if len(sys.argv) == 4 and sys.argv[1] in ('prepare', 'measure'):
-        operation, target, archive = sys.argv[1:]
+    if len(command) == 2 and command[0] == 'run':
+        args = bench_arguments(inputs, command[1])
+        return subprocess.run(['just', 'bench', *args], check=False).returncode
+    if len(command) == 4 and command[0] in ('prepare', 'measure'):
+        operation, bench, target, archive = command
         if target not in TARGETS:
             raise ValueError('unsupported cross-build target')
+        args = bench_arguments(inputs, bench)
         args += ['target=' + target, ('prepare_archive=' if operation == 'prepare' else 'run_archive=') + archive]
         return subprocess.run(['just', 'bench', *args], check=False).returncode
-    if sys.argv[1:] == ['run']:
-        return subprocess.run(['just', 'bench', *args], check=False).returncode
-    raise ValueError('usage: scripts/bench/ci.py plan|run|{prepare|measure} TARGET ARCHIVE')
+    raise ValueError('usage: scripts/bench/ci.py plan|run BENCH|{prepare|measure} BENCH TARGET ARCHIVE')
 
 
 if __name__ == '__main__':

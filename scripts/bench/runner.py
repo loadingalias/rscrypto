@@ -17,7 +17,7 @@ import tempfile
 # Embedded Windows Python omits the script directory from its import path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from benchmark_catalog import case_class, load_catalog, resolve_selector
+from benchmark_catalog import case_class, load_catalog, resolve_selector, scope
 from execution import enable_internal, build, build_command, build_environment, build_identity, digest, discover, match_cases, exit_code, identity, write_json, source_evidence
 from measure import measure, verify
 import settings
@@ -38,7 +38,6 @@ def parse(arguments: list[str]):
   commands = parser.add_subparsers(dest="mode", required=True)
   bench = commands.add_parser("bench")
   bench.add_argument("selectors", nargs="*")
-  bench.add_argument("--bench", action="append", default=[])
   bench.add_argument("--filter", action="append", default=[])
   bench.add_argument("--list", action="store_true")
   bench.add_argument("--diag", nargs="?", const=True, type=boolean, default=False)
@@ -77,7 +76,7 @@ def parse(arguments: list[str]):
       normalized.append("--" + key.replace("_", "-") + "=" + value)
     else:
       normalized.append(token)
-    value_follows = token in {"--bench", "--filter", "--output-dir", "--baseline", "--prepare-archive", "--run-archive", "--target", "--warmup-ms", "--measure-ms", "--sample-size"}
+    value_follows = token in {"--filter", "--output-dir", "--baseline", "--prepare-archive", "--run-archive", "--target", "--warmup-ms", "--measure-ms", "--sample-size"}
   if arguments[:1] in (["codegen"], ["llvm-lines"]):
     boundary = normalized.index("--") if "--" in normalized else len(normalized)
     args = parser.parse_args(normalized[:boundary])
@@ -86,7 +85,7 @@ def parse(arguments: list[str]):
     args = parser.parse_args(normalized)
   if args.mode == "bench":
     # Every accepted environment option has the same meaning as its CLI form.
-    known = {"BENCH_BENCH", "BENCH_FILTER", "BENCH_DIAG", "BENCH_LIST", "BENCH_OUTPUT_DIR", "BENCH_BASELINE",
+    known = {"BENCH_FILTER", "BENCH_DIAG", "BENCH_LIST", "BENCH_OUTPUT_DIR", "BENCH_BASELINE",
              "BENCH_WARMUP_MS", "BENCH_MEASURE_MS", "BENCH_SAMPLE_SIZE"}
     unknown = set(key for key in os.environ if key.startswith("BENCH_")) - known
     if unknown:
@@ -97,7 +96,7 @@ def parse(arguments: list[str]):
       name = key.removeprefix("BENCH_").lower()
       value = os.environ[key]
       explicit = any(token.split("=", 1)[0] == "--" + name.replace("_", "-") for token in normalized)
-      if name in {"bench", "filter"}:
+      if name == "filter":
         getattr(args, name).insert(0, value)
       elif not explicit:
         setattr(args, name, boolean(value) if name in {"diag", "list"} else
@@ -119,28 +118,20 @@ def target(catalog, name: str, diag: bool) -> dict:
 
 
 def requests(args, catalog) -> list[dict]:
-  names = list(dict.fromkeys(name.strip() for value in args.bench for name in value.split(",")))
-  algorithms = []
-  for selector in args.selectors:
+  names = []
+  for selector in args.selectors or ["all"]:
     selected = resolve_selector(catalog, selector)
     if selected is None:
       raise ValueError(f"unknown selector: {selector}")
-    algorithms.extend(selected)
+    names.extend(selected)
   rows = []
-  if algorithms:
-    for algorithm in dict.fromkeys(algorithms):
-      entry = catalog["algorithms"][algorithm]
-      if not names or entry["bench"] in names:
-        rows.extend((entry["bench"], entry["filter"], pattern) for pattern in (args.filter or [entry["filter"]]))
-  else:
-    names = names or [name for name, entry in catalog["benches"].items() if entry["kind"] == "criterion" and entry["required"]]
-    rows = [(name, "", pattern) for name in names for pattern in (args.filter or [""])]
-  for name in names:
-    target(catalog, name, args.diag)
+  for name in dict.fromkeys(names):
+    bench, case_scope = scope(catalog, name)
+    rows.extend((bench, case_scope, pattern) for pattern in (args.filter or [case_scope]))
   if not rows:
     raise ValueError("selection produced no benchmark configurations")
-  return [target(catalog, name, args.diag) | {"scope": scope, "pattern": pattern}
-          for name, scope, pattern in dict.fromkeys(rows)]
+  return [target(catalog, name, args.diag) | {"scope": case_scope, "pattern": pattern}
+          for name, case_scope, pattern in dict.fromkeys(rows)]
 
 
 def resolve(rows, effective, log, env, prepared=None) -> list[dict]:
@@ -163,8 +154,8 @@ def resolve(rows, effective, log, env, prepared=None) -> list[dict]:
                      "home": "criterion/" + row["binary"] + "-" + config}
     entry = builds[key]
 
-    scope = set(matches[key][row["scope"]])
-    cases = [case for case in matches[key][row["pattern"]] if case in scope]
+    in_scope = set(matches[key][row["scope"]])
+    cases = [case for case in matches[key][row["pattern"]] if case in in_scope]
     matched[row["pattern"]] |= bool(cases)
     entry["cases"] = list(dict.fromkeys([*entry["cases"], *cases]))
   if not all(matched.values()):

@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -11,6 +12,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 ACTION = './.github/actions/cross-build/'
+sys.path.insert(0, str(ROOT / 'scripts/bench'))
+import ci as bench_ci  # noqa: E402
 
 
 def read_yaml(path):
@@ -84,17 +87,26 @@ class CrossWorkflow(unittest.TestCase):
                     self.assertIn('Missing prepared artifact:', result.stderr)
                     self.assertEqual(self.output.read_text(), '')
                     missing.write_bytes(b'restored fixture')
+        archive = self.root / 'target' / f'{target}-bench.tar.gz'
+        archive.write_bytes(b'prepared suite')
+        self.output.write_text('')
+        result = self.execute(require, TARGET=target, SUITE='bench', ARTIFACT='bench-prepared-riscv64-linux-sha2')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.output.read_text(),
+                         f'archive=target/{target}-bench.tar.gz\nartifact=bench-prepared-riscv64-linux-sha2\n')
         self.output.write_text('')
         result = self.execute(require, TARGET=target, SUITE='unknown')
         self.assertEqual(result.returncode, 2)
         self.assertEqual(self.output.read_text(), '')
 
     def test_callers_keep_preparation_separate_from_native_qualification(self):
-        for filename, producer, consumer, suite, command, suffix in (
-            ('ci', 'cross-build', 'native', 'tests', 'just test-cross prepare', 'tests'),
-            ('ct', 'cross-build', 'ct', 'ct', 'just ct-full --target', 'ct-prepared'),
-            ('bench', 'cross-build', 'bench', 'bench', 'scripts/lib/python.sh scripts/bench/ci.py prepare', 'bench-prepared'),
-            ('profile', 'prepare', 'capture', 'profile', 'scripts/lib/python.sh scripts/bench/profile_ci.py prepare', 'profile-prepared'),
+        bench_artifact = 'bench-prepared-${{ matrix.platform }}-${{ matrix.bench }}'
+        for filename, producer, consumer, suite, command, artifact in (
+            ('ci', 'cross-build', 'native', 'tests', 'just test-cross prepare', '${{ matrix.target }}-tests'),
+            ('ct', 'cross-build', 'ct', 'ct', 'just ct-full --target', '${{ matrix.target }}-ct-prepared'),
+            ('bench', 'cross-build', 'bench', 'bench', 'scripts/lib/python.sh scripts/bench/ci.py prepare', bench_artifact),
+            ('profile', 'prepare', 'capture', 'profile', 'scripts/lib/python.sh scripts/bench/profile_ci.py prepare',
+             '${{ needs.plan.outputs.target }}-profile-prepared'),
         ):
             with self.subTest(workflow=filename):
                 jobs = read_yaml(f'.github/workflows/{filename}.yml')['jobs']
@@ -105,7 +117,11 @@ class CrossWorkflow(unittest.TestCase):
                 upload, = [step for step in steps if step.get('uses') == ACTION + 'upload']
                 prepare, = [step for step in steps if command in step.get('run', '')]
                 self.assertEqual(setup['with'], {'target': target})
-                self.assertEqual(upload['with'], {'target': target, 'suite': suite})
+                expected = {'target': target, 'suite': suite}
+                if suite == 'bench':
+                    # One transfer per platform and catalog target; the default name would collide.
+                    expected['artifact'] = bench_artifact
+                self.assertEqual(upload['with'], expected)
                 self.assertLess(steps.index(setup), steps.index(prepare))
                 self.assertLess(steps.index(prepare), steps.index(upload))
                 self.assertNotIn('if', setup)
@@ -116,13 +132,33 @@ class CrossWorkflow(unittest.TestCase):
                 self.assertIn(producer, needs if isinstance(needs, list) else [needs])
                 download, = [step for step in native['steps']
                              if step.get('uses', '').startswith('actions/download-artifact@')]
-                self.assertEqual(download['with']['name'], f'{target}-{suffix}')
+                self.assertEqual(download['with']['name'], artifact)
                 self.assertNotIn('run-id', download['with'])
                 if suite != 'profile':
                     self.assertEqual(build['strategy']['fail-fast'], 'true')
                     self.assertEqual(native['strategy']['fail-fast'], 'true')
                 if suite in ('tests', 'ct'):
                     self.assertIn('just test-transfer', prepare['run'])
+
+    def test_bench_form_matches_planner_inputs(self):
+        workflow = read_yaml('.github/workflows/bench.yml')
+        inputs = workflow['on']['workflow_dispatch']['inputs']
+        self.assertEqual(set(inputs), bench_ci.INPUTS)
+        self.assertEqual([name for name in inputs if inputs[name]['type'] == 'boolean'],
+                         [*bench_ci.PLATFORMS, 'diagnostic'])
+        self.assertEqual([name for name in bench_ci.PLATFORMS if inputs[name].get('default') == 'true'],
+                         ['x86_64-linux'])
+        self.assertEqual(workflow['env']['DISPATCH_INPUTS'], '${{ toJSON(inputs) }}')
+        for job, label in (('cross-build', 'Prepare ${{ matrix.platform }} / ${{ matrix.bench }}'),
+                           ('bench', 'Measure ${{ matrix.name }} / ${{ matrix.bench }}')):
+            with self.subTest(job=job):
+                self.assertEqual(workflow['jobs'][job]['name'], label)
+                self.assertEqual(workflow['jobs'][job]['env']['BENCHMARK'], '${{ matrix.bench }}')
+                self.assertTrue(int(workflow['jobs'][job]['strategy']['max-parallel']) > 0)
+                runs = [step['run'] for step in workflow['jobs'][job]['steps'] if 'scripts/bench/ci.py' in step.get('run', '')]
+                self.assertTrue(runs)
+                self.assertTrue(all('$BENCHMARK' in run or '$env:BENCHMARK' in run for run in runs))
+                self.assertTrue(all('${{' not in run for run in runs))
 
     def test_ct_preparation_failure_keeps_diagnostics_out_of_transfer(self):
         jobs = read_yaml('.github/workflows/ct.yml')['jobs']

@@ -7,6 +7,10 @@ inputs:
   suite:
     description: Prepared suite (tests, ct, bench, or profile).
     required: true
+  artifact:
+    description: Artifact name for callers that prepare more than one bundle per target.
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
@@ -16,12 +20,14 @@ runs:
       env:
         TARGET: ${{ inputs.target }}
         SUITE: ${{ inputs.suite }}
+        ARTIFACT: ${{ inputs.artifact }}
       run: |
         case "$SUITE" in
           tests) archive="target/$TARGET-tests.tar.xz"; artifact="$TARGET-tests" ;;
           ct|bench|profile) archive="target/$TARGET-$SUITE.tar.gz"; artifact="$TARGET-$SUITE-prepared" ;;
           *) echo "Unknown prepared suite: $SUITE" >&2; exit 2 ;;
         esac
+        artifact="${ARTIFACT:-$artifact}"
         for path in "$archive" "target/$TARGET-tools.tar.gz"; do
           if [[ ! -f "$path" ]]; then
             echo "Missing prepared artifact: $path" >&2

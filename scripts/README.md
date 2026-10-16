@@ -158,6 +158,8 @@ It does not download upstream archives.
   `just test-fuzz --full --targets` front door with explicit duration and limits.
 - The `tls-provider` benchmark selector and `just bench-provider-scorecard`
   use the independent [provider benchmark workspace](../tools/provider-bench/README.md).
+  Its catalog target declares OpenSSL 4.0.3 as an external prerequisite,
+  so default runs omit it and the Bench workflow rejects it; run it locally.
   Criterion measures complete TLS pairs and application records; the supplementary
   command retains individual latencies, process CPU, wire flights and process RSS.
 - Each ChaCha20 differential test must report execution of every backend marked runnable.
@@ -510,7 +512,8 @@ selects the first message index for reproducing a discovered rejection case.
 | `bench/mldsa_tail.py` | `just bench-mldsa-tail`: ML-DSA signing-tail baseline |
 | `update-all.sh`       | `just update` |
 
-- `bench/benchmark_catalog.py` owns algorithm, target, and curated profile-preset selection.
+- `bench/benchmark_catalog.py` owns the selector name space (targets, algorithms, groups, and `all`)
+  and curated profile-preset selection.
 - `.config/criterion.json` owns the shared Criterion defaults and the maximum run budget.
 - `benches/common/criterion.rs` applies them to every Criterion harness.
   `bench/settings.py` resolves overrides for one invocation.
@@ -785,9 +788,15 @@ They do not install Rust, build code, or call Cargo Rail.
 
 **`bench.yml`** runs only on manual request.
 
-- It selects one, several, or all six native CI platforms,
-  and catalog algorithms, groups, or benchmark targets, with optional case filters.
-- A small planner starts only the selected runners.
+- Its form takes catalog names in `benchmarks`, an optional case `filter`,
+  one checkbox per native CI platform, a diagnostic checkbox, and optional sampling overrides.
+  The jobs read the form as one `DISPATCH_INPUTS` JSON value.
+- `bench/ci.py plan` splits the selection by catalog target and starts one job per platform and target,
+  so each job is one bounded `just bench` run.
+  It rejects targets with an `external` prerequisite before any runner starts.
+- Job labels use platform names, never target triples:
+  `Prepare PLATFORM / TARGET` and `Measure RUNNER / TARGET`.
+- `max-parallel` keeps concurrent builders and measurement hosts within the AWS vCPU quotas.
 - The existing benchmark runner owns measurement and evidence.
 - `--ci-bench` (Linux) and `-CiBench` (Windows) install the native benchmark build prerequisites and Just, without test,
   profiling, or cross-target tools.
@@ -878,7 +887,7 @@ Run it with ordinary tests when you change evidence hooks.
 Ordinary tests continue to check the application build without internal access.
 
 - Use `just bench <selector> --diag` or `just profile <target> --diag` for diagnostic workloads.
-- The `aead-diag` selector and `--bench aead_kernels` enable their required internal hooks automatically.
+- The `aead_diag` and `aead_kernels` targets enable their required internal hooks automatically.
 - Cross-prepared diagnostic benchmarks resolve the flags for the destination target
   before they record build provenance.
 - Keep internal builds separate from public-surface checks.
