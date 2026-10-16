@@ -91,7 +91,7 @@ the [WASM SIMD128 record](../benchmark_results/OVERVIEW.md#2026-10-06-blake3-was
 | Typed keys, private keys, and shared secrets | On concrete or nested `Drop`. A consuming export clears the source, or moves responsibility to the caller explicitly. |
 | AEAD and header protection | Context drop clears the retained keys. Operation-local schedules, authentication state, and materialized cipher output are cleared after use. A failed open clears the unauthenticated plaintext. |
 | Poly1305 | The shared arithmetic owner clears its clamped key, accumulator, and additive pad on drop. The standalone authenticator also clears its partial-block buffer. AEAD framing and accelerated scratch retain their own cleanup. |
-| HMAC, HKDF, KMAC, PBKDF2, and keyed BLAKE2/BLAKE3 | Finalization copies, keyed prefixes, work buffers, emitted blocks, and replaced state are cleared after their last use. HKDF state clears its PRK and HMAC prefixes on drop, whether `new`, `extract`, or `from_prk` built it. |
+| HMAC, HKDF, KMAC, PBKDF2, and keyed BLAKE2/BLAKE3 | Finalization copies, keyed prefixes, work buffers, emitted blocks, and replaced state are cleared after their last use. HKDF state clears its PRK and HMAC prefixes on drop, whether `new`, `extract`, or `from_prk` built it. Extract writes the HMAC tag into a cleared PRK copy, and the compression function sees only cleared scratch; the state is built from plain values. |
 | ECDSA, P-256 ECDH, P-384 ECDH, ML-KEM, and RSA private work | Secret scalars, digests, limbs, encoded messages, inverse state, and initialized scratch are cleared on every return path. See the notes below. |
 | Ed25519 and X25519 private work | Secret owners and staging are cleared; arithmetic temporaries have a narrower boundary. See [Ed25519 and X25519](#ed25519-and-x25519). |
 | ECDSA and Ed25519 key encodings | See [ECDSA and Ed25519 key encodings](#ecdsa-and-ed25519-key-encodings). |
@@ -422,6 +422,17 @@ SLH-DSA code instantiation:
 - By-value key generation and PKCS #8 import leave three whole copies of SK.seed and SK.prf
   on RV32, and two or three on Cortex-M3; raw import leaves two on RV32, and one or two on Cortex-M3.
 - Raw results: `benchmark_results/slhdsa-residue-20261010-final/` (local; `SHA256SUMS` inside).
+
+On 2026-10-16 the harness measured HKDF-SHA256, HKDF-SHA384, and HKDF-SHA512 extract,
+on `nightly-2026-10-14` and QEMU 11.1.2. Each scenario searches for the PRK and both HMAC prefix states:
+
+- At `29c244fe`, extract left one whole SHA-512 PRK copy on both boards and both backends,
+  and 16 bytes of the SHA-384 PRK on Cortex-M3 with the portable backend.
+- A build with only the controls and HKDF scenarios found one or two whole copies of both
+  prefix states for every hash, board, and backend. The prefix states are as sensitive as the PRK.
+- After the fix, extract leaves no PRK or prefix-state bytes for any hash, board, or backend.
+  The scenarios now require this.
+- Raw results: `benchmark_results/hkdf-extract-residue-20261016/` (local).
 
 An earlier campaign, whose harness was removed on 2026-09-28,
 also found 4.2–6.4 KiB of prepared ML-KEM state after import, preparation, and decapsulation.

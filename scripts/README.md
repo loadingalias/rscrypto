@@ -458,6 +458,7 @@ Assumptions and limits:
 1. When the scenario returns, the harness copies the dead stack and both arenas to a snapshot,
    with loops that make no calls.
    Only then does it derive the scenario's secret byte strings again.
+   HKDF scenarios derive the HMAC prefix states with the independent `sha2` crate.
 1. The host reports how many bytes of each secret occur in 16-byte windows in each region,
    and how many whole copies remain.
 

@@ -811,6 +811,81 @@ slhdsa!(
   64
 );
 
+// RFC 5869 A.1 extract inputs. The input key material is caller-owned and
+// lives outside every scanned region. The PRK and its HMAC prefix states are
+// the owned secrets; `sha2` derives the prefix states independently.
+const HKDF_SALT: [u8; 13] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+static HKDF_IKM: [u8; 22] = [0x0b; 22];
+
+const SHA256_H0: [u32; 8] = [
+  0x6a09_e667,
+  0xbb67_ae85,
+  0x3c6e_f372,
+  0xa54f_f53a,
+  0x510e_527f,
+  0x9b05_688c,
+  0x1f83_d9ab,
+  0x5be0_cd19,
+];
+const SHA384_H0: [u64; 8] = [
+  0xcbbb_9d5d_c105_9ed8,
+  0x629a_292a_367c_d507,
+  0x9159_015a_3070_dd17,
+  0x152f_ecd8_f70e_5939,
+  0x6733_2667_ffc0_0b31,
+  0x8eb4_4a87_6858_1511,
+  0xdb0c_2e0d_64f9_8fa7,
+  0x47b5_481d_befa_4fa4,
+];
+const SHA512_H0: [u64; 8] = [
+  0x6a09_e667_f3bc_c908,
+  0xbb67_ae85_84ca_a73b,
+  0x3c6e_f372_fe94_f82b,
+  0xa54f_f53a_5f1d_36f1,
+  0x510e_527f_ade6_82d1,
+  0x9b05_688c_2b3e_6c1f,
+  0x1f83_d9ab_fb41_bd6b,
+  0x5be0_cd19_137e_2179,
+];
+
+macro_rules! hkdf {
+  ($module:ident, $hkdf:ident, $word:ty, $block:literal, $h0:expr, $compress:ident) => {
+    mod $module {
+      use alloc::vec::Vec;
+
+      use super::*;
+      use rscrypto::$hkdf;
+
+      pub(super) fn extract() {
+        let hkdf = $hkdf::extract(black_box(&HKDF_SALT), black_box(&HKDF_IKM));
+        black_box(&hkdf);
+      }
+
+      /// Chaining state after one pad block, as the owner stores its words.
+      fn prefix(prk: &[u8], pad: u8) -> Vec<u8> {
+        let mut block = [pad; $block];
+        for (byte, key) in block.iter_mut().zip(prk) {
+          *byte ^= key;
+        }
+        let mut state: [$word; 8] = $h0;
+        sha2::block_api::$compress(&mut state, &[block]);
+        state.iter().flat_map(|word| word.to_ne_bytes()).collect()
+      }
+
+      pub(super) fn needles() {
+        let hkdf = $hkdf::extract(&HKDF_SALT, &HKDF_IKM);
+        needle("prk", hkdf.prk());
+        needle("inner_init", &prefix(hkdf.prk(), 0x36));
+        needle("outer_init", &prefix(hkdf.prk(), 0x5c));
+      }
+    }
+  };
+}
+
+hkdf!(hkdf_sha256, HkdfSha256, u32, 64, SHA256_H0, compress256);
+hkdf!(hkdf_sha384, HkdfSha384, u64, 128, SHA384_H0, compress512);
+hkdf!(hkdf_sha512, HkdfSha512, u64, 128, SHA512_H0, compress512);
+
 macro_rules! scenario {
   ($name:literal, $expect:literal, $run:path, $needles:path) => {
     scenario!($name, $expect, nothing, $run, $needles)
@@ -1393,6 +1468,9 @@ const SCENARIOS: &[Scenario] = &[
     slhdsa_shake_256f::verify,
     slhdsa_shake_256f::needles
   ),
+  scenario!("hkdf-sha256-extract", "none", hkdf_sha256::extract, hkdf_sha256::needles),
+  scenario!("hkdf-sha384-extract", "none", hkdf_sha384::extract, hkdf_sha384::needles),
+  scenario!("hkdf-sha512-extract", "none", hkdf_sha512::extract, hkdf_sha512::needles),
 ];
 
 #[unsafe(no_mangle)]

@@ -2,7 +2,7 @@
 
 use core::fmt;
 
-use super::hmac::{HmacSha256, HmacSha384, HmacSha512, hmac_prefix_state};
+use super::hmac::{HmacSha256, HmacSha384, HmacSha512};
 use crate::{
   hashes::crypto::{
     sha256::{H0 as SHA256_H0, dispatch as sha256_dispatch, kernels::CompressBlocksFn as Sha256CompressBlocksFn},
@@ -92,6 +92,45 @@ fn compress_hkdf_sha256_block(compress: Sha256CompressBlocksFn, state: &mut [u32
   compress(state, block);
 }
 
+const HMAC_IPAD: u8 = 0x36;
+const HMAC_OPAD: u8 = 0x5C;
+
+/// Build an owner from the HMAC inner and outer prefix states of a hash-length `key`.
+///
+/// One block holds the inner pad and then becomes the outer pad in place. Each
+/// state is the only memory that `compress` writes, and `build` copies both into
+/// the owner before the block and states are cleared. No prefix value has to
+/// live anywhere else, so none is left in uncleared spill slots.
+#[inline(always)]
+fn with_hmac_prefix_states<W: ct::WordZero, const KEY_SIZE: usize, const BLOCK_SIZE: usize, T>(
+  key: &[u8; KEY_SIZE],
+  h0: [W; 8],
+  compress: fn(&mut [W; 8], &[u8]),
+  build: impl FnOnce(&[W; 8], &[W; 8]) -> T,
+) -> T {
+  const { assert!(KEY_SIZE <= BLOCK_SIZE, "an HKDF PRK fits in one HMAC block") };
+
+  let mut block = [HMAC_IPAD; BLOCK_SIZE];
+  for (pad, &byte) in block.iter_mut().zip(key) {
+    *pad ^= byte;
+  }
+  let mut inner = h0;
+  compress(&mut inner, &block);
+
+  for pad in &mut block {
+    *pad ^= HMAC_IPAD ^ HMAC_OPAD;
+  }
+  let mut outer = h0;
+  compress(&mut outer, &block);
+
+  let owner = build(&inner, &outer);
+  ct::zeroize_no_fence(&mut block);
+  ct::zeroize_words_no_fence(&mut inner);
+  ct::zeroize_words_no_fence(&mut outer);
+  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  owner
+}
+
 define_unit_error! {
   /// HKDF requested more output than RFC 5869 allows for a single expansion.
   pub struct HkdfOutputLengthError;
@@ -151,7 +190,7 @@ impl HkdfSha256 {
       salt,
       input_key_material,
       sha256_dispatch::compress_dispatch(),
-      |salt, input_key_material| HmacSha256::mac(salt, input_key_material).to_bytes(),
+      HmacSha256::mac_into,
     )
   }
 
@@ -187,11 +226,12 @@ impl HkdfSha256 {
     salt: &[u8],
     input_key_material: &[u8],
     compress: Sha256CompressBlocksFn,
-    mac: impl FnOnce(&[u8], &[u8]) -> [u8; SHA256_OUTPUT_SIZE],
+    mac: impl FnOnce(&[u8], &[u8], &mut [u8; SHA256_OUTPUT_SIZE]),
   ) -> Self {
     let zero_salt = [0u8; SHA256_OUTPUT_SIZE];
     let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
-    let mut prk = mac(salt, input_key_material);
+    let mut prk = [0u8; SHA256_OUTPUT_SIZE];
+    mac(salt, input_key_material, &mut prk);
     let hkdf = Self::from_prk_with(&prk, compress);
     ct::zeroize(&mut prk);
     hkdf
@@ -200,25 +240,12 @@ impl HkdfSha256 {
   /// Store `prk` and precompute its HMAC prefixes with `compress`.
   #[inline(always)]
   fn from_prk_with(prk: &[u8; SHA256_OUTPUT_SIZE], compress: Sha256CompressBlocksFn) -> Self {
-    let mut key_block = [0u8; SHA256_BLOCK_SIZE];
-    key_block[..SHA256_OUTPUT_SIZE].copy_from_slice(prk);
-
-    let (inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
-      let mut inner_init = SHA256_H0;
-      compress(&mut inner_init, ipad);
-
-      let mut outer_init = SHA256_H0;
-      compress(&mut outer_init, opad);
-
-      (inner_init, outer_init)
-    });
-
-    Self {
+    with_hmac_prefix_states::<_, _, SHA256_BLOCK_SIZE, _>(prk, SHA256_H0, compress, |inner_init, outer_init| Self {
       prk: *prk,
-      inner_init,
-      outer_init,
+      inner_init: *inner_init,
+      outer_init: *outer_init,
       compress,
-    }
+    })
   }
 
   /// Expand the stored pseudorandom key into `okm`.
@@ -378,8 +405,8 @@ impl HkdfSha256 {
     input_key_material: &[u8],
     compress: Sha256CompressBlocksFn,
   ) -> Self {
-    Self::extract_with(salt, input_key_material, compress, |salt, input_key_material| {
-      HmacSha256::mac_with_compress_for_test(salt, input_key_material, compress)
+    Self::extract_with(salt, input_key_material, compress, |salt, input_key_material, prk| {
+      *prk = HmacSha256::mac_with_compress_for_test(salt, input_key_material, compress);
     })
   }
 }
@@ -461,7 +488,7 @@ impl HkdfSha384 {
       salt,
       input_key_material,
       sha384_dispatch::compress_dispatch(),
-      |salt, input_key_material| HmacSha384::mac(salt, input_key_material).to_bytes(),
+      HmacSha384::mac_into,
     )
   }
 
@@ -497,11 +524,12 @@ impl HkdfSha384 {
     salt: &[u8],
     input_key_material: &[u8],
     compress: Sha384CompressBlocksFn,
-    mac: impl FnOnce(&[u8], &[u8]) -> [u8; SHA384_OUTPUT_SIZE],
+    mac: impl FnOnce(&[u8], &[u8], &mut [u8; SHA384_OUTPUT_SIZE]),
   ) -> Self {
     let zero_salt = [0u8; SHA384_OUTPUT_SIZE];
     let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
-    let mut prk = mac(salt, input_key_material);
+    let mut prk = [0u8; SHA384_OUTPUT_SIZE];
+    mac(salt, input_key_material, &mut prk);
     let hkdf = Self::from_prk_with(&prk, compress);
     ct::zeroize(&mut prk);
     hkdf
@@ -510,25 +538,12 @@ impl HkdfSha384 {
   /// Store `prk` and precompute its HMAC prefixes with `compress`.
   #[inline(always)]
   fn from_prk_with(prk: &[u8; SHA384_OUTPUT_SIZE], compress: Sha384CompressBlocksFn) -> Self {
-    let mut key_block = [0u8; SHA384_BLOCK_SIZE];
-    key_block[..SHA384_OUTPUT_SIZE].copy_from_slice(prk);
-
-    let (inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
-      let mut inner_init = SHA384_H0;
-      compress(&mut inner_init, ipad);
-
-      let mut outer_init = SHA384_H0;
-      compress(&mut outer_init, opad);
-
-      (inner_init, outer_init)
-    });
-
-    Self {
+    with_hmac_prefix_states::<_, _, SHA384_BLOCK_SIZE, _>(prk, SHA384_H0, compress, |inner_init, outer_init| Self {
       prk: *prk,
-      inner_init,
-      outer_init,
+      inner_init: *inner_init,
+      outer_init: *outer_init,
       compress,
-    }
+    })
   }
 
   /// Expand the stored pseudorandom key into `okm`.
@@ -672,8 +687,8 @@ impl HkdfSha384 {
     input_key_material: &[u8],
     compress: Sha384CompressBlocksFn,
   ) -> Self {
-    Self::extract_with(salt, input_key_material, compress, |salt, input_key_material| {
-      HmacSha384::mac_with_compress_for_test(salt, input_key_material, compress)
+    Self::extract_with(salt, input_key_material, compress, |salt, input_key_material, prk| {
+      *prk = HmacSha384::mac_with_compress_for_test(salt, input_key_material, compress);
     })
   }
 }
@@ -740,7 +755,7 @@ impl HkdfSha512 {
       salt,
       input_key_material,
       sha512_dispatch::compress_dispatch(),
-      |salt, input_key_material| HmacSha512::mac(salt, input_key_material).to_bytes(),
+      HmacSha512::mac_into,
     )
   }
 
@@ -750,31 +765,26 @@ impl HkdfSha512 {
     salt: &[u8],
     input_key_material: &[u8],
     compress: Sha512CompressBlocksFn,
-    mac: impl FnOnce(&[u8], &[u8]) -> [u8; SHA512_OUTPUT_SIZE],
+    mac: impl FnOnce(&[u8], &[u8], &mut [u8; SHA512_OUTPUT_SIZE]),
   ) -> Self {
     let zero_salt = [0u8; SHA512_OUTPUT_SIZE];
     let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
-    let prk = mac(salt, input_key_material);
+    let mut prk = [0u8; SHA512_OUTPUT_SIZE];
+    mac(salt, input_key_material, &mut prk);
+    let hkdf = Self::from_prk_with(&prk, compress);
+    ct::zeroize(&mut prk);
+    hkdf
+  }
 
-    let mut key_block = [0u8; SHA512_BLOCK_SIZE];
-    key_block[..SHA512_OUTPUT_SIZE].copy_from_slice(&prk);
-
-    let (inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
-      let mut inner_init = SHA512_H0;
-      compress(&mut inner_init, ipad);
-
-      let mut outer_init = SHA512_H0;
-      compress(&mut outer_init, opad);
-
-      (inner_init, outer_init)
-    });
-
-    Self {
-      prk,
-      inner_init,
-      outer_init,
+  /// Store `prk` and precompute its HMAC prefixes with `compress`.
+  #[inline(always)]
+  fn from_prk_with(prk: &[u8; SHA512_OUTPUT_SIZE], compress: Sha512CompressBlocksFn) -> Self {
+    with_hmac_prefix_states::<_, _, SHA512_BLOCK_SIZE, _>(prk, SHA512_H0, compress, |inner_init, outer_init| Self {
+      prk: *prk,
+      inner_init: *inner_init,
+      outer_init: *outer_init,
       compress,
-    }
+    })
   }
 
   /// Expand the stored pseudorandom key into `okm`.
@@ -886,8 +896,8 @@ impl HkdfSha512 {
     input_key_material: &[u8],
     compress: Sha512CompressBlocksFn,
   ) -> Self {
-    Self::extract_with(salt, input_key_material, compress, |salt, input_key_material| {
-      HmacSha512::mac_with_compress_for_test(salt, input_key_material, compress)
+    Self::extract_with(salt, input_key_material, compress, |salt, input_key_material, prk| {
+      *prk = HmacSha512::mac_with_compress_for_test(salt, input_key_material, compress);
     })
   }
 }

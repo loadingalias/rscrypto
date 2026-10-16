@@ -4020,7 +4020,7 @@ public_inputs = ["salt unless protocol classifies it secret", "info", "requested
 variable_time_components = ["public input/output-length loops", "public output-length validation"]
 permitted_leakage = ["salt/info/output lengths", "length error", "explicit PRK/OKM exposure"]
 claim = "best-effort"
-limitation = "HKDF-SHA512 has source, vector, differential, and optimized zeroization coverage, but no constant-time generated-code evidence unit. prk() and returned/output buffers expose derived secret material by design."
+limitation = "HKDF-SHA512 has source, vector, and differential coverage, and just stack-residue measures extract's PRK and HMAC prefix residue on the QEMU boards, but it has no constant-time generated-code evidence unit. prk() and returned/output buffers expose derived secret material by design."
 
 [[operation]]
 id = "kdf.pbkdf2_derive_and_verify"

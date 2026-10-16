@@ -206,6 +206,125 @@ impl HmacSha256 {
     <Self as Mac>::mac(key, data)
   }
 
+  /// Write the one-shot HMAC tag of `data` into `tag`.
+  ///
+  /// Every tag word reaches `tag` before the key and state scratch is cleared,
+  /// so no tag value has to outlive that cleanup in a register or spill slot.
+  /// HKDF-Extract writes its PRK through this path.
+  ///
+  /// For data <= 256 B the entire padded inner message is built on the stack
+  /// and compressed in one call, eliminating per-call overhead (function-pointer
+  /// dispatch, state save/restore) that dominates on fast SHA2-CE cores.
+  /// The outer hash is always merged into a single 128-byte (2-block) call, and
+  /// zeroization is batched under a single compiler fence.
+  #[inline]
+  pub(crate) fn mac_into(key: &[u8], data: &[u8], tag: &mut [u8; SHA256_TAG_SIZE]) {
+    if hmac_sha256_oneshot_should_stream() {
+      // The Sapphire Rapids policy uses the public streaming path instead of
+      // the fused stack-buffer shape.
+      let mut mac = Self::new(key);
+      mac.update(data);
+      *tag = mac.finalize().to_bytes();
+      return;
+    }
+
+    let mut ipad = [0x36u8; SHA256_BLOCK_SIZE];
+    if key.len() > SHA256_BLOCK_SIZE {
+      let mut digest = Sha256::digest_secret(key);
+      for (ip, &kb) in ipad[..SHA256_TAG_SIZE].iter_mut().zip(digest.iter()) {
+        *ip = kb ^ 0x36;
+      }
+      ct::zeroize(&mut digest);
+    } else {
+      for (ip, &kb) in ipad[..key.len()].iter_mut().zip(key.iter()) {
+        *ip = kb ^ 0x36;
+      }
+    }
+
+    let total_inner = (SHA256_BLOCK_SIZE as u64).strict_add(data.len() as u64);
+    let compress = sha256_dispatch::compress_dispatch();
+    let total_inner_bits = total_inner.strict_mul(8);
+
+    let mut state = SHA256_H0;
+
+    const INLINE_DATA_MAX: usize = 256;
+
+    if data.len() <= INLINE_DATA_MAX {
+      let data_end = SHA256_BLOCK_SIZE.strict_add(data.len());
+      let padded = data_end.strict_add(9).strict_add(63).strict_div(64).strict_mul(64);
+
+      macro_rules! compress_inline_inner {
+        ($len:expr) => {{
+          let mut inner_buf = [0u8; $len];
+          inner_buf[..SHA256_BLOCK_SIZE].copy_from_slice(&ipad);
+          inner_buf[SHA256_BLOCK_SIZE..data_end].copy_from_slice(data);
+          inner_buf[data_end] = 0x80;
+          inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
+          compress(&mut state, &inner_buf);
+          ct::zeroize_no_fence(&mut inner_buf);
+        }};
+      }
+
+      match padded {
+        128 => compress_inline_inner!(128),
+        192 => compress_inline_inner!(192),
+        256 => compress_inline_inner!(256),
+        320 => compress_inline_inner!(320),
+        384 => compress_inline_inner!(384),
+        _ => {
+          ct::zeroize(&mut ipad);
+          let mut mac = Self::new(key);
+          mac.update(data);
+          *tag = mac.finalize().to_bytes();
+          return;
+        }
+      }
+    } else {
+      compress(&mut state, &ipad);
+
+      let full_len = data.len().strict_sub(data.len() % SHA256_BLOCK_SIZE);
+      if full_len != 0 {
+        compress(&mut state, &data[..full_len]);
+      }
+      let rest = &data[full_len..];
+
+      let mut inner_buf = [0u8; SHA256_BLOCK_SIZE];
+      inner_buf[..rest.len()].copy_from_slice(rest);
+      inner_buf[rest.len()] = 0x80;
+      if rest.len() >= 56 {
+        compress(&mut state, &inner_buf[..SHA256_BLOCK_SIZE]);
+        inner_buf[..SHA256_BLOCK_SIZE].fill(0);
+      }
+      inner_buf[56..SHA256_BLOCK_SIZE].copy_from_slice(&total_inner_bits.to_be_bytes());
+      compress(&mut state, &inner_buf[..SHA256_BLOCK_SIZE]);
+      ct::zeroize_no_fence(&mut inner_buf);
+    }
+
+    let mut outer = [0u8; 128];
+    hmac_outer_pad_words(&mut outer, &ipad);
+    for (i, &word) in state.iter().enumerate() {
+      let off = SHA256_BLOCK_SIZE.strict_add(i.strict_mul(4));
+      outer[off..off.strict_add(4)].copy_from_slice(&word.to_be_bytes());
+    }
+    outer[SHA256_BLOCK_SIZE.strict_add(SHA256_TAG_SIZE)] = 0x80;
+    outer[120..128].copy_from_slice(&768u64.to_be_bytes());
+
+    state = SHA256_H0;
+    compress(&mut state, &outer);
+
+    for (chunk, &word) in tag.as_chunks_mut::<4>().0.iter_mut().zip(state.iter()) {
+      chunk.copy_from_slice(&word.to_be_bytes());
+    }
+
+    ct::zeroize_no_fence(&mut ipad);
+    ct::zeroize_no_fence(&mut outer);
+    for word in state.iter_mut() {
+      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+      unsafe { core::ptr::write_volatile(word, 0) };
+    }
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+
   /// Verify `expected` through the tag owner's sealed comparison decision.
   ///
   /// Generated-code timing claims are configuration- and release-evidence-bound;
@@ -361,119 +480,10 @@ impl Mac for HmacSha256 {
     self.inner.reset_to_aligned_prefix(self.inner_init);
   }
 
-  /// Oneshot HMAC-SHA256: merges compress calls for small inputs and batches
-  /// zeroization under a single compiler fence.
-  ///
-  /// For data <= 256 B the entire padded inner message is built on the stack
-  /// and compressed in one call, eliminating per-call overhead (function-pointer
-  /// dispatch, state save/restore) that dominates on fast SHA2-CE cores.
-  /// The outer hash is always merged into a single 128-byte (2-block) call.
   #[inline]
   fn mac(key: &[u8], data: &[u8]) -> Self::Tag {
-    if hmac_sha256_oneshot_should_stream() {
-      // The Sapphire Rapids policy uses the public streaming path instead of
-      // the fused stack-buffer shape.
-      let mut mac = Self::new(key);
-      mac.update(data);
-      return mac.finalize();
-    }
-
-    let mut ipad = [0x36u8; SHA256_BLOCK_SIZE];
-    if key.len() > SHA256_BLOCK_SIZE {
-      let mut digest = Sha256::digest_secret(key);
-      for (ip, &kb) in ipad[..SHA256_TAG_SIZE].iter_mut().zip(digest.iter()) {
-        *ip = kb ^ 0x36;
-      }
-      ct::zeroize(&mut digest);
-    } else {
-      for (ip, &kb) in ipad[..key.len()].iter_mut().zip(key.iter()) {
-        *ip = kb ^ 0x36;
-      }
-    }
-
-    let total_inner = (SHA256_BLOCK_SIZE as u64).strict_add(data.len() as u64);
-    let compress = sha256_dispatch::compress_dispatch();
-    let total_inner_bits = total_inner.strict_mul(8);
-
-    let mut state = SHA256_H0;
-
-    const INLINE_DATA_MAX: usize = 256;
-
-    if data.len() <= INLINE_DATA_MAX {
-      let data_end = SHA256_BLOCK_SIZE.strict_add(data.len());
-      let padded = data_end.strict_add(9).strict_add(63).strict_div(64).strict_mul(64);
-
-      macro_rules! compress_inline_inner {
-        ($len:expr) => {{
-          let mut inner_buf = [0u8; $len];
-          inner_buf[..SHA256_BLOCK_SIZE].copy_from_slice(&ipad);
-          inner_buf[SHA256_BLOCK_SIZE..data_end].copy_from_slice(data);
-          inner_buf[data_end] = 0x80;
-          inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
-          compress(&mut state, &inner_buf);
-          ct::zeroize_no_fence(&mut inner_buf);
-        }};
-      }
-
-      match padded {
-        128 => compress_inline_inner!(128),
-        192 => compress_inline_inner!(192),
-        256 => compress_inline_inner!(256),
-        320 => compress_inline_inner!(320),
-        384 => compress_inline_inner!(384),
-        _ => {
-          ct::zeroize(&mut ipad);
-          let mut mac = Self::new(key);
-          mac.update(data);
-          return mac.finalize();
-        }
-      }
-    } else {
-      compress(&mut state, &ipad);
-
-      let full_len = data.len().strict_sub(data.len() % SHA256_BLOCK_SIZE);
-      if full_len != 0 {
-        compress(&mut state, &data[..full_len]);
-      }
-      let rest = &data[full_len..];
-
-      let mut inner_buf = [0u8; SHA256_BLOCK_SIZE];
-      inner_buf[..rest.len()].copy_from_slice(rest);
-      inner_buf[rest.len()] = 0x80;
-      if rest.len() >= 56 {
-        compress(&mut state, &inner_buf[..SHA256_BLOCK_SIZE]);
-        inner_buf[..SHA256_BLOCK_SIZE].fill(0);
-      }
-      inner_buf[56..SHA256_BLOCK_SIZE].copy_from_slice(&total_inner_bits.to_be_bytes());
-      compress(&mut state, &inner_buf[..SHA256_BLOCK_SIZE]);
-      ct::zeroize_no_fence(&mut inner_buf);
-    }
-
-    let mut outer = [0u8; 128];
-    hmac_outer_pad_words(&mut outer, &ipad);
-    for (i, &word) in state.iter().enumerate() {
-      let off = SHA256_BLOCK_SIZE.strict_add(i.strict_mul(4));
-      outer[off..off.strict_add(4)].copy_from_slice(&word.to_be_bytes());
-    }
-    outer[SHA256_BLOCK_SIZE.strict_add(SHA256_TAG_SIZE)] = 0x80;
-    outer[120..128].copy_from_slice(&768u64.to_be_bytes());
-
-    state = SHA256_H0;
-    compress(&mut state, &outer);
-
     let mut tag = [0u8; SHA256_TAG_SIZE];
-    for (chunk, &word) in tag.as_chunks_mut::<4>().0.iter_mut().zip(state.iter()) {
-      chunk.copy_from_slice(&word.to_be_bytes());
-    }
-
-    ct::zeroize_no_fence(&mut ipad);
-    ct::zeroize_no_fence(&mut outer);
-    for word in state.iter_mut() {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
-    }
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-
+    Self::mac_into(key, data, &mut tag);
     HmacSha256Tag::from_bytes(tag)
   }
 
@@ -537,6 +547,108 @@ impl HmacSha384 {
   #[must_use]
   pub fn mac(key: &[u8], data: &[u8]) -> HmacSha384Tag {
     <Self as Mac>::mac(key, data)
+  }
+
+  /// Write the one-shot HMAC tag of `data` into `tag`.
+  ///
+  /// Every tag word reaches `tag` before the key and state scratch is cleared,
+  /// so no tag value has to outlive that cleanup in a register or spill slot.
+  /// HKDF-Extract writes its PRK through this path.
+  #[inline]
+  pub(crate) fn mac_into(key: &[u8], data: &[u8], tag: &mut [u8; SHA384_TAG_SIZE]) {
+    const INLINE_DATA_MAX: usize = 256;
+
+    let mut ipad = [0x36u8; SHA512_FAMILY_BLOCK_SIZE];
+    if key.len() > SHA512_FAMILY_BLOCK_SIZE {
+      let mut digest = Sha384::digest_secret(key);
+      for (ip, &kb) in ipad[..SHA384_TAG_SIZE].iter_mut().zip(digest.iter()) {
+        *ip = kb ^ 0x36;
+      }
+      ct::zeroize(&mut digest);
+    } else {
+      for (ip, &kb) in ipad[..key.len()].iter_mut().zip(key.iter()) {
+        *ip = kb ^ 0x36;
+      }
+    }
+
+    let total_inner = (SHA512_FAMILY_BLOCK_SIZE as u64).strict_add(data.len() as u64);
+    let compress = sha384_dispatch::compress_dispatch();
+    let total_inner_bits = total_inner.strict_mul(8);
+
+    let mut state = SHA384_H0;
+
+    if data.len() <= INLINE_DATA_MAX {
+      let data_end = SHA512_FAMILY_BLOCK_SIZE.strict_add(data.len());
+      let padded = data_end.strict_add(17).strict_add(127).strict_div(128).strict_mul(128);
+
+      macro_rules! compress_inline_inner {
+        ($len:expr) => {{
+          let mut inner_buf = [0u8; $len];
+          inner_buf[..SHA512_FAMILY_BLOCK_SIZE].copy_from_slice(&ipad);
+          inner_buf[SHA512_FAMILY_BLOCK_SIZE..data_end].copy_from_slice(data);
+          inner_buf[data_end] = 0x80;
+          inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
+          compress(&mut state, &inner_buf);
+          ct::zeroize_no_fence(&mut inner_buf);
+        }};
+      }
+
+      match padded {
+        256 => compress_inline_inner!(256),
+        384 => compress_inline_inner!(384),
+        512 => compress_inline_inner!(512),
+        _ => {
+          ct::zeroize(&mut ipad);
+          let mut mac = Self::new(key);
+          mac.update(data);
+          *tag = mac.finalize().to_bytes();
+          return;
+        }
+      }
+    } else {
+      compress(&mut state, &ipad);
+
+      let full_len = data.len().strict_sub(data.len() % SHA512_FAMILY_BLOCK_SIZE);
+      if full_len != 0 {
+        compress(&mut state, &data[..full_len]);
+      }
+      let rest = &data[full_len..];
+
+      let mut inner_buf = [0u8; SHA512_FAMILY_BLOCK_SIZE];
+      inner_buf[..rest.len()].copy_from_slice(rest);
+      inner_buf[rest.len()] = 0x80;
+      if rest.len() >= 112 {
+        compress(&mut state, &inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
+        inner_buf[..SHA512_FAMILY_BLOCK_SIZE].fill(0);
+      }
+      inner_buf[120..SHA512_FAMILY_BLOCK_SIZE].copy_from_slice(&total_inner_bits.to_be_bytes());
+      compress(&mut state, &inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
+      ct::zeroize_no_fence(&mut inner_buf);
+    }
+
+    let mut outer = [0u8; 256];
+    hmac_outer_pad_words(&mut outer, &ipad);
+    for (i, &word) in state.iter().take(6).enumerate() {
+      let off = SHA512_FAMILY_BLOCK_SIZE.strict_add(i.strict_mul(8));
+      outer[off..off.strict_add(8)].copy_from_slice(&word.to_be_bytes());
+    }
+    outer[SHA512_FAMILY_BLOCK_SIZE.strict_add(SHA384_TAG_SIZE)] = 0x80;
+    outer[248..256].copy_from_slice(&1408u64.to_be_bytes());
+
+    state = SHA384_H0;
+    compress(&mut state, &outer);
+
+    for (chunk, &word) in tag.as_chunks_mut::<8>().0.iter_mut().zip(state.iter()) {
+      chunk.copy_from_slice(&word.to_be_bytes());
+    }
+
+    ct::zeroize_no_fence(&mut ipad);
+    ct::zeroize_no_fence(&mut outer);
+    for word in state.iter_mut() {
+      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+      unsafe { core::ptr::write_volatile(word, 0) };
+    }
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 
   /// Verify `expected` through the tag owner's sealed comparison decision.
@@ -651,100 +763,8 @@ impl Mac for HmacSha384 {
 
   #[inline]
   fn mac(key: &[u8], data: &[u8]) -> Self::Tag {
-    const INLINE_DATA_MAX: usize = 256;
-
-    let mut ipad = [0x36u8; SHA512_FAMILY_BLOCK_SIZE];
-    if key.len() > SHA512_FAMILY_BLOCK_SIZE {
-      let mut digest = Sha384::digest_secret(key);
-      for (ip, &kb) in ipad[..SHA384_TAG_SIZE].iter_mut().zip(digest.iter()) {
-        *ip = kb ^ 0x36;
-      }
-      ct::zeroize(&mut digest);
-    } else {
-      for (ip, &kb) in ipad[..key.len()].iter_mut().zip(key.iter()) {
-        *ip = kb ^ 0x36;
-      }
-    }
-
-    let total_inner = (SHA512_FAMILY_BLOCK_SIZE as u64).strict_add(data.len() as u64);
-    let compress = sha384_dispatch::compress_dispatch();
-    let total_inner_bits = total_inner.strict_mul(8);
-
-    let mut state = SHA384_H0;
-
-    if data.len() <= INLINE_DATA_MAX {
-      let data_end = SHA512_FAMILY_BLOCK_SIZE.strict_add(data.len());
-      let padded = data_end.strict_add(17).strict_add(127).strict_div(128).strict_mul(128);
-
-      macro_rules! compress_inline_inner {
-        ($len:expr) => {{
-          let mut inner_buf = [0u8; $len];
-          inner_buf[..SHA512_FAMILY_BLOCK_SIZE].copy_from_slice(&ipad);
-          inner_buf[SHA512_FAMILY_BLOCK_SIZE..data_end].copy_from_slice(data);
-          inner_buf[data_end] = 0x80;
-          inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
-          compress(&mut state, &inner_buf);
-          ct::zeroize_no_fence(&mut inner_buf);
-        }};
-      }
-
-      match padded {
-        256 => compress_inline_inner!(256),
-        384 => compress_inline_inner!(384),
-        512 => compress_inline_inner!(512),
-        _ => {
-          ct::zeroize(&mut ipad);
-          let mut mac = Self::new(key);
-          mac.update(data);
-          return mac.finalize();
-        }
-      }
-    } else {
-      compress(&mut state, &ipad);
-
-      let full_len = data.len().strict_sub(data.len() % SHA512_FAMILY_BLOCK_SIZE);
-      if full_len != 0 {
-        compress(&mut state, &data[..full_len]);
-      }
-      let rest = &data[full_len..];
-
-      let mut inner_buf = [0u8; SHA512_FAMILY_BLOCK_SIZE];
-      inner_buf[..rest.len()].copy_from_slice(rest);
-      inner_buf[rest.len()] = 0x80;
-      if rest.len() >= 112 {
-        compress(&mut state, &inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
-        inner_buf[..SHA512_FAMILY_BLOCK_SIZE].fill(0);
-      }
-      inner_buf[120..SHA512_FAMILY_BLOCK_SIZE].copy_from_slice(&total_inner_bits.to_be_bytes());
-      compress(&mut state, &inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
-      ct::zeroize_no_fence(&mut inner_buf);
-    }
-
-    let mut outer = [0u8; 256];
-    hmac_outer_pad_words(&mut outer, &ipad);
-    for (i, &word) in state.iter().take(6).enumerate() {
-      let off = SHA512_FAMILY_BLOCK_SIZE.strict_add(i.strict_mul(8));
-      outer[off..off.strict_add(8)].copy_from_slice(&word.to_be_bytes());
-    }
-    outer[SHA512_FAMILY_BLOCK_SIZE.strict_add(SHA384_TAG_SIZE)] = 0x80;
-    outer[248..256].copy_from_slice(&1408u64.to_be_bytes());
-
-    state = SHA384_H0;
-    compress(&mut state, &outer);
-
     let mut tag = [0u8; SHA384_TAG_SIZE];
-    for (chunk, &word) in tag.as_chunks_mut::<8>().0.iter_mut().zip(state.iter()) {
-      chunk.copy_from_slice(&word.to_be_bytes());
-    }
-
-    ct::zeroize_no_fence(&mut ipad);
-    ct::zeroize_no_fence(&mut outer);
-    for word in state.iter_mut() {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
-    }
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-
+    Self::mac_into(key, data, &mut tag);
     HmacSha384Tag::from_bytes(tag)
   }
 
@@ -808,6 +828,108 @@ impl HmacSha512 {
   #[must_use]
   pub fn mac(key: &[u8], data: &[u8]) -> HmacSha512Tag {
     <Self as Mac>::mac(key, data)
+  }
+
+  /// Write the one-shot HMAC tag of `data` into `tag`.
+  ///
+  /// Every tag word reaches `tag` before the key and state scratch is cleared,
+  /// so no tag value has to outlive that cleanup in a register or spill slot.
+  /// HKDF-Extract writes its PRK through this path.
+  #[inline]
+  pub(crate) fn mac_into(key: &[u8], data: &[u8], tag: &mut [u8; SHA512_TAG_SIZE]) {
+    const INLINE_DATA_MAX: usize = 256;
+
+    let mut ipad = [0x36u8; SHA512_FAMILY_BLOCK_SIZE];
+    if key.len() > SHA512_FAMILY_BLOCK_SIZE {
+      let mut digest = Sha512::digest_secret(key);
+      for (ip, &kb) in ipad[..SHA512_TAG_SIZE].iter_mut().zip(digest.iter()) {
+        *ip = kb ^ 0x36;
+      }
+      ct::zeroize(&mut digest);
+    } else {
+      for (ip, &kb) in ipad[..key.len()].iter_mut().zip(key.iter()) {
+        *ip = kb ^ 0x36;
+      }
+    }
+
+    let total_inner = (SHA512_FAMILY_BLOCK_SIZE as u64).strict_add(data.len() as u64);
+    let compress = sha512_dispatch::compress_dispatch();
+    let total_inner_bits = total_inner.strict_mul(8);
+
+    let mut state = SHA512_H0;
+
+    if data.len() <= INLINE_DATA_MAX {
+      let data_end = SHA512_FAMILY_BLOCK_SIZE.strict_add(data.len());
+      let padded = data_end.strict_add(17).strict_add(127).strict_div(128).strict_mul(128);
+
+      macro_rules! compress_inline_inner {
+        ($len:expr) => {{
+          let mut inner_buf = [0u8; $len];
+          inner_buf[..SHA512_FAMILY_BLOCK_SIZE].copy_from_slice(&ipad);
+          inner_buf[SHA512_FAMILY_BLOCK_SIZE..data_end].copy_from_slice(data);
+          inner_buf[data_end] = 0x80;
+          inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
+          compress(&mut state, &inner_buf);
+          ct::zeroize_no_fence(&mut inner_buf);
+        }};
+      }
+
+      match padded {
+        256 => compress_inline_inner!(256),
+        384 => compress_inline_inner!(384),
+        512 => compress_inline_inner!(512),
+        _ => {
+          ct::zeroize(&mut ipad);
+          let mut mac = Self::new(key);
+          mac.update(data);
+          *tag = mac.finalize().to_bytes();
+          return;
+        }
+      }
+    } else {
+      compress(&mut state, &ipad);
+
+      let full_len = data.len().strict_sub(data.len() % SHA512_FAMILY_BLOCK_SIZE);
+      if full_len != 0 {
+        compress(&mut state, &data[..full_len]);
+      }
+      let rest = &data[full_len..];
+
+      let mut inner_buf = [0u8; SHA512_FAMILY_BLOCK_SIZE];
+      inner_buf[..rest.len()].copy_from_slice(rest);
+      inner_buf[rest.len()] = 0x80;
+      if rest.len() >= 112 {
+        compress(&mut state, &inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
+        inner_buf[..SHA512_FAMILY_BLOCK_SIZE].fill(0);
+      }
+      inner_buf[120..SHA512_FAMILY_BLOCK_SIZE].copy_from_slice(&total_inner_bits.to_be_bytes());
+      compress(&mut state, &inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
+      ct::zeroize_no_fence(&mut inner_buf);
+    }
+
+    let mut outer = [0u8; 256];
+    hmac_outer_pad_words(&mut outer, &ipad);
+    for (i, &word) in state.iter().enumerate() {
+      let off = SHA512_FAMILY_BLOCK_SIZE.strict_add(i.strict_mul(8));
+      outer[off..off.strict_add(8)].copy_from_slice(&word.to_be_bytes());
+    }
+    outer[SHA512_FAMILY_BLOCK_SIZE.strict_add(SHA512_TAG_SIZE)] = 0x80;
+    outer[248..256].copy_from_slice(&1536u64.to_be_bytes());
+
+    state = SHA512_H0;
+    compress(&mut state, &outer);
+
+    for (chunk, &word) in tag.as_chunks_mut::<8>().0.iter_mut().zip(state.iter()) {
+      chunk.copy_from_slice(&word.to_be_bytes());
+    }
+
+    ct::zeroize_no_fence(&mut ipad);
+    ct::zeroize_no_fence(&mut outer);
+    for word in state.iter_mut() {
+      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+      unsafe { core::ptr::write_volatile(word, 0) };
+    }
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 
   /// Verify `expected` through the tag owner's sealed comparison decision.
@@ -922,100 +1044,8 @@ impl Mac for HmacSha512 {
 
   #[inline]
   fn mac(key: &[u8], data: &[u8]) -> Self::Tag {
-    const INLINE_DATA_MAX: usize = 256;
-
-    let mut ipad = [0x36u8; SHA512_FAMILY_BLOCK_SIZE];
-    if key.len() > SHA512_FAMILY_BLOCK_SIZE {
-      let mut digest = Sha512::digest_secret(key);
-      for (ip, &kb) in ipad[..SHA512_TAG_SIZE].iter_mut().zip(digest.iter()) {
-        *ip = kb ^ 0x36;
-      }
-      ct::zeroize(&mut digest);
-    } else {
-      for (ip, &kb) in ipad[..key.len()].iter_mut().zip(key.iter()) {
-        *ip = kb ^ 0x36;
-      }
-    }
-
-    let total_inner = (SHA512_FAMILY_BLOCK_SIZE as u64).strict_add(data.len() as u64);
-    let compress = sha512_dispatch::compress_dispatch();
-    let total_inner_bits = total_inner.strict_mul(8);
-
-    let mut state = SHA512_H0;
-
-    if data.len() <= INLINE_DATA_MAX {
-      let data_end = SHA512_FAMILY_BLOCK_SIZE.strict_add(data.len());
-      let padded = data_end.strict_add(17).strict_add(127).strict_div(128).strict_mul(128);
-
-      macro_rules! compress_inline_inner {
-        ($len:expr) => {{
-          let mut inner_buf = [0u8; $len];
-          inner_buf[..SHA512_FAMILY_BLOCK_SIZE].copy_from_slice(&ipad);
-          inner_buf[SHA512_FAMILY_BLOCK_SIZE..data_end].copy_from_slice(data);
-          inner_buf[data_end] = 0x80;
-          inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
-          compress(&mut state, &inner_buf);
-          ct::zeroize_no_fence(&mut inner_buf);
-        }};
-      }
-
-      match padded {
-        256 => compress_inline_inner!(256),
-        384 => compress_inline_inner!(384),
-        512 => compress_inline_inner!(512),
-        _ => {
-          ct::zeroize(&mut ipad);
-          let mut mac = Self::new(key);
-          mac.update(data);
-          return mac.finalize();
-        }
-      }
-    } else {
-      compress(&mut state, &ipad);
-
-      let full_len = data.len().strict_sub(data.len() % SHA512_FAMILY_BLOCK_SIZE);
-      if full_len != 0 {
-        compress(&mut state, &data[..full_len]);
-      }
-      let rest = &data[full_len..];
-
-      let mut inner_buf = [0u8; SHA512_FAMILY_BLOCK_SIZE];
-      inner_buf[..rest.len()].copy_from_slice(rest);
-      inner_buf[rest.len()] = 0x80;
-      if rest.len() >= 112 {
-        compress(&mut state, &inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
-        inner_buf[..SHA512_FAMILY_BLOCK_SIZE].fill(0);
-      }
-      inner_buf[120..SHA512_FAMILY_BLOCK_SIZE].copy_from_slice(&total_inner_bits.to_be_bytes());
-      compress(&mut state, &inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
-      ct::zeroize_no_fence(&mut inner_buf);
-    }
-
-    let mut outer = [0u8; 256];
-    hmac_outer_pad_words(&mut outer, &ipad);
-    for (i, &word) in state.iter().enumerate() {
-      let off = SHA512_FAMILY_BLOCK_SIZE.strict_add(i.strict_mul(8));
-      outer[off..off.strict_add(8)].copy_from_slice(&word.to_be_bytes());
-    }
-    outer[SHA512_FAMILY_BLOCK_SIZE.strict_add(SHA512_TAG_SIZE)] = 0x80;
-    outer[248..256].copy_from_slice(&1536u64.to_be_bytes());
-
-    state = SHA512_H0;
-    compress(&mut state, &outer);
-
     let mut tag = [0u8; SHA512_TAG_SIZE];
-    for (chunk, &word) in tag.as_chunks_mut::<8>().0.iter_mut().zip(state.iter()) {
-      chunk.copy_from_slice(&word.to_be_bytes());
-    }
-
-    ct::zeroize_no_fence(&mut ipad);
-    ct::zeroize_no_fence(&mut outer);
-    for word in state.iter_mut() {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
-    }
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-
+    Self::mac_into(key, data, &mut tag);
     HmacSha512Tag::from_bytes(tag)
   }
 
