@@ -225,6 +225,9 @@ Replay never deletes discoveries.
 
 To promote a minimized regression, add its seed file, and add its repository-relative path to `fuzz/committed-seeds.txt`
 (sorted, one path per line).
+Name a new seed file `seed-<description>`.
+Git ignores every other untracked corpus name, including CI-restored and fuzzer-discovered inputs,
+so they stay out of the source identity that daily fuzz evidence records.
 `just test-scripts` checks that this list matches the tracked corpus files.
 Stage new seed files before you run that check.
 

@@ -132,6 +132,21 @@ class FuzzCI(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'symlink'):
             ci.restore(self.root, self.cache, rows)
 
+    def test_generated_corpus_inputs_stay_outside_source_identity(self):
+        # Source identity hashes untracked, unignored files, so restored and discovered inputs must be ignored.
+        directories = [ci.corpus_path(row).as_posix() for row in ci.inventory(ci.ROOT)]
+        generated = {f'{directory}/{name}' for directory in directories
+                     for name in ('ci-' + hashlib.sha256(b'restored').hexdigest(),
+                                  hashlib.sha1(b'discovered').hexdigest())}
+        promoted = {f'{directory}/seed-regression' for directory in directories}
+        result = subprocess.run(['git', '-c', 'core.excludesFile=/dev/null', 'check-ignore', '--stdin', '-z'],
+                                cwd=ci.ROOT, input='\0'.join(sorted(generated | promoted)).encode(),
+                                capture_output=True)
+        self.assertIn(result.returncode, (0, 1), result.stderr.decode())
+        ignored = set(result.stdout.decode().split('\0')) - {''}
+        self.assertEqual(sorted(generated - ignored), [])
+        self.assertEqual(sorted(promoted & ignored), [])
+
     def test_failed_snapshot_preserves_previous_checkpoint(self):
         rows = ci.inventory(self.root)
         ci.snapshot(self.root, self.cache, rows)
