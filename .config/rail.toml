@@ -39,10 +39,14 @@ msrv_policy = { mode = "disabled" }
 targets = "workspace"
 
 [release]
-# Release preparation must have conclusive compatibility evidence. Remote effects remain unconfigured.
+# `release.yml` runs `cargo rail release` with the defaults: publish to crates.io, create the
+# GitHub Release, and require every check on the source commit to pass.
+# Only rscrypto is released; rscrypto-rustls is unpublished and needs no change files.
+crates = ["rscrypto"]
+# Releases must have conclusive compatibility evidence.
 semver_check = "deny"
-# Match the `v<version>` tags that `release.yml` creates, so planning finds the previous release.
-tag_format = "{prefix}{version}"
+# Keep the existing `v<version>` tag line, so planning finds the previous release.
+tag_format = "v{version}"
 # Keep standalone fuzz and evidence-tool lockfiles on the released package version.
 auxiliary_cargo_manifests = [
   "fuzz-packages/aead-aegis256/Cargo.toml",
@@ -93,4 +97,4 @@ auxiliary_cargo_manifests = [
 ]
 
 [crates.rscrypto-rustls.release]
-tag_format = "{crate}-{prefix}{version}"
+tag_format = "{crate}-v{version}"

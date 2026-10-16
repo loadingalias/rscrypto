@@ -107,16 +107,16 @@ plan *args:
 release-surface:
     @cargo rail surface --check --explain
 
-# Preview the local release preparation without changing the repository.
+# Preview the next release and run every release check without any effect; exit 1 means checks are pending.
 release-check bump="auto":
-    @status=0; cargo rail release check rscrypto --bump "$1" --skip-tag || status=$?; [ "$status" -le 1 ] || exit "$status"
+    @status=0; cargo rail release rscrypto --bump "$1" --dry-run || status=$?; [ "$status" -le 1 ] || exit "$status"
 
 # Surface is paused: restore `release-surface` as the first dependency when its target preflight passes.
-# release-prepare bump="auto": release-surface (release-check bump)
+# release bump="auto": release-surface (release-check bump)
 
-# Validate the release and prepare its local commit without remote effects.
-release-prepare bump="auto": (release-check bump)
-    @cargo rail release run rscrypto --bump "$1" --skip-tag --allow-non-default-branch
+# Run the Release workflow on main; cargo-rail commits, tags, publishes, and creates the GitHub Release.
+release bump="auto": (release-check bump)
+    @gh workflow run release.yml --ref main -f bump="$1"
 
 # Repair, then validate the host and the explicit supported target catalog.
 check:

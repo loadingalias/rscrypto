@@ -29,7 +29,7 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
     recorder.chmod(0o755)
     source = (root / "justfile").read_text()
     for name in set(re.findall(r'scripts/[\w/.-]+\.(?:sh|py)', source)) | {
-      'bin/cargo', 'bin/gungraun-runner', 'bin/valgrind',
+      'bin/cargo', 'bin/gh', 'bin/gungraun-runner', 'bin/valgrind',
     }:
       path = root / name
       path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,11 +96,10 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
                                       ['collect-results', 'rscrypto', words[0], 'criterion', *words[1:3]]])
     run('bench-export', [words[2]], [['scripts/bench/runner.py', 'export', words[2]]])
     run('rail-cache-setup', words, [words])
-    release_check = ['rail', 'release', 'check', 'rscrypto', '--bump', words[0], '--skip-tag']
+    release_check = ['rail', 'release', 'rscrypto', '--bump', words[0], '--dry-run']
     run('release-check', [words[0]], [release_check])
-    run('release-prepare', [words[0]], [release_check,
-                                      ['rail', 'release', 'run', 'rscrypto', '--bump', words[0], '--skip-tag',
-                                       '--allow-non-default-branch']])
+    run('release', [words[0]], [release_check,
+                              ['workflow', 'run', 'release.yml', '--ref', 'main', '-f', f'bump={words[0]}']])
     env.pop('HOME', None)
     run('ci-check', [], [['native']])
     covered = set(prefixes) | {'ssh', 'ssh-create', 'ssh-just', 'ssh-cargo', 'rail-cache-setup'}

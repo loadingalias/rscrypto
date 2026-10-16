@@ -317,41 +317,35 @@ and confirm the required local and target-specific evidence.
 
 ## Release
 
-### Prepare
+`cargo rail release` performs the whole release from the reviewed change files on `main`.
+It writes one release commit with the version, the changelog, the consumed change files,
+and the lockfiles of the auxiliary workspaces.
+It tags the commit `v<version>`, pushes the branch and the tag atomically,
+publishes to crates.io, and creates the GitHub Release from the changelog entry.
+The `release.auxiliary_cargo_manifests` list in [`.config/rail.toml`](.config/rail.toml) names the standalone workspaces whose
+lockfiles must follow the package version.
+The release commit also updates the `rscrypto` requirement in `rscrypto-rustls/Cargo.toml`.
+The companion keeps its own version and is neither packaged nor published.
 
-You can preview the exact local release plan at any time.
-On a clean `main` checkout, prepare the release from the reviewed change files:
+### Check
+
+Push the reviewed commits to `main`, run `just qualify-macos` on the physical Mac, and wait for CI.
+Then preview the release and run every release check without any effect:
 
 ```bash
 just release-check
-just release-prepare
 ```
 
-- `release-prepare` repeats the local release check.
-  It then creates the local version, the changelog, the auxiliary lockfiles, and the release commit.
-- It does not tag, push, publish, or create a forge release.
+- The check needs a clean worktree whose `HEAD` is the tip of `origin/main`,
+  and a crates.io credential, such as one from `cargo login`.
+- Exit code 1 means that checks on the source commit are still running.
 - Pass an exact bump or version only when the reviewed intent needs it,
   for example `just release-check minor`.
 - The Surface gate (`just release-surface`) is paused for releases until its target preflight passes.
   It is not part of routine planning or validation.
-
-If preparation stops before it finishes, inspect and resume the retained transaction:
-
-```bash
-cargo rail release status
-cargo rail release resume
-```
-
-Review the prepared commit and its complete diff,
-including the manifests and lockfiles in independent workspaces.
-Validate it, then push it to `main`.
-The `release.auxiliary_cargo_manifests` list in [`.config/rail.toml`](.config/rail.toml) names the standalone workspaces whose
-lockfiles must follow the package version.
-The prepared commit also updates the `rscrypto` requirement in `rscrypto-rustls/Cargo.toml`.
-The companion keeps its own version and is neither packaged nor published.
-The background Mac job includes physical Apple Silicon RSA assembly qualification.
-Complete any separately required timing qualification locally before submission;
-`check-macos` does not run it. macOS does not run in hosted CI.
+- The background Mac job includes physical Apple Silicon RSA assembly qualification.
+  Complete any separately required timing qualification locally before submission;
+  `check-macos` does not run it. macOS does not run in hosted CI.
 
 ### One-time publishing setup
 
@@ -364,30 +358,28 @@ See the [crates.io setup instructions](https://crates.io/docs/trusted-publishing
 
 ### Deploy
 
-Select **Actions → Release → Run workflow → main**, and enter the version from `Cargo.toml` without the `v` prefix,
-or run `gh workflow run release.yml --ref main -f version=<version>`.
-The run is named `Release v<version>`.
-Wait for the release commit's `rscrypto/macos` status before starting the workflow.
+```bash
+just release
+```
 
-- The workflow rejects a version input that differs from `Cargo.toml`, unconsumed change files,
-  a version and changelog mismatch, and a tag that points elsewhere.
-- Three workflows run at the same time against the triggering commit: CI
-  (with macOS ARM64 qualified locally for the triggering commit),
+`just release` repeats the release check, then runs the Release workflow on `main`
+(`gh workflow run release.yml --ref main -f bump=<bump>`).
+The workflow also accepts `dry-run: true` to run every check in CI without any effect.
+
+- The preflight requires the newest `rscrypto/macos` status of the source commit to pass
+  for its tree and compiler.
+- Three workflows then run at the same time against the source commit: CI with RISC-V,
   full CT on all configured CI architectures, and fuzzing on both architectures plus Miri.
-  Publication needs all three to pass.
+  The release needs all three to pass.
 - Benchmarks are separate.
-- The final job packages the same commit and publishes it to crates.io.
-  It then creates `v<version>` and a GitHub Release with the reviewed changelog entry.
+- The final job runs `cargo rail release` through `cargo-rail-action/release`.
+  It also requires every other check and status on the source commit to pass,
+  and then requires the `released` state.
   Only this job gets registry authentication and repository write permission.
 
-After a transient failure, use **Re-run failed jobs** on the same run.
-
-- A retry accepts an existing crates.io version only if its checksum matches the local package
-  and it is not yanked.
-- A retry never moves an existing tag, and never overwrites a GitHub Release.
-- If the qualification artifacts have expired, rerun all jobs.
-- Resolve checksum, tag, and release-note conflicts before you retry.
-  Do not bypass them.
+After an interruption, run the workflow again with the same bump.
+cargo-rail reads the tag, crates.io, and GitHub, and finishes only the missing steps.
+It never moves an existing tag. It counts a published version as done only when the package names the release commit.
 
 ## Security and test evidence
 

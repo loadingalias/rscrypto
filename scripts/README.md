@@ -896,16 +896,16 @@ Ordinary tests continue to check the application build without internal access.
 
 ## Release orchestration
 
-`.github/workflows/release.yml` calls CI, CT, and fuzz qualification before its publication job.
-`scripts/release/release.py` validates the candidate, reconciles registry checksums on retries,
-and creates the source tag and the GitHub Release.
-Preflight, packaging, and publication each require the newest `rscrypto/macos` commit status to pass.
+`.github/workflows/release.yml` calls CI, CT, and fuzz qualification before its release job.
+That job runs `cargo rail release` through `cargo-rail-action/release`, which commits, tags, pushes,
+publishes to crates.io, and creates the GitHub Release.
+`scripts/release/release.py preflight` first requires the newest `rscrypto/macos` commit status of the source commit to pass.
 Its description binds the Git tree and a SHA-256 digest of `rustc -vV`, excluding only the host line
 so the Linux release runner can compare the same compiler distribution.
 An older successful status cannot override a newer failure or compiler mismatch.
-The workflow can read statuses but cannot write them.
-Its failure and recovery tests run through `just test-scripts`.
-[CONTRIBUTING.md](../CONTRIBUTING.md#release) has the maintainer setup, preparation, deployment, and retry instructions.
+The preflight can read statuses but cannot write them.
+Its refusal tests run through `just test-scripts`.
+[CONTRIBUTING.md](../CONTRIBUTING.md#release) has the maintainer setup, check, deployment, and retry instructions.
 
 `scripts/check/macos.sh` owns `just check-macos`, which replaces hosted macOS checks and tests with local Apple Silicon validation.
 Install `.githooks` with `just install-hooks` in each maintainer checkout. macOS is still a supported release target.
