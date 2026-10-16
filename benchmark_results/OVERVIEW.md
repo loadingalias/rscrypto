@@ -6,6 +6,38 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-16: Combined-source workflow acceptance
+
+At `ed86bcb3`, the full [Constant-Time run](https://github.com/loadingalias/rscrypto/actions/runs/38842297553)
+passed with `architectures=all` and required RISC-V. All six native rows report zero blocking
+findings: x86-64 and AArch64 Linux, x86-64 Windows, IBM Z, POWER and the
+[RISC-V child run](https://github.com/loadingalias/rscrypto/actions/runs/38842985221).
+Every row passed the twelve RSA cases, including the PKCS#1 v1.5 padding classes and OAEP
+valid-versus-invalid decryption, and every required ML-DSA kernel case. On POWER, `ct.toml`
+keeps four sparse-operand ML-DSA cases diagnostic; their dense variants gate there.
+The largest |t| was 5.52 on POWER, below the unchanged 7.5 review line and 10.0 threshold,
+so no confirmation rerun occurred. The x86 selector BINSEC result remains unknown because
+BINSEC 0.11.1 does not interpret `movmskps`.
+
+[Workspace CI](https://github.com/loadingalias/rscrypto/actions/runs/38842289301) passed on its
+second attempt, with its [native RISC-V child](https://github.com/loadingalias/rscrypto/actions/runs/38845017017).
+An AWS Spot interruption stopped the first attempt's `compatibility` job (exit 137);
+fail-fast cancelled the other rows and the first RISC-V child.
+
+The [push Fuzz run](https://github.com/loadingalias/rscrypto/actions/runs/38842289262) passed on
+both architectures. The [dispatched](https://github.com/loadingalias/rscrypto/actions/runs/38842294744)
+and [scheduled](https://github.com/loadingalias/rscrypto/actions/runs/38846436412) daily runs
+fuzzed all 14 selected package/target pairs on x86-64 without a finding. Both then failed
+before retention because the source identity changed after planning. `.gitignore` admitted
+every file in ten RSA, ECDSA and ML-KEM corpus directories, so restored and discovered inputs
+entered the hash; the scheduled run's artifact held 2,042 of them. Fail-fast cancelled AArch64.
+Since `cb9e0bae`, Git ignores every untracked corpus name except `seed-*`, and a script test
+checks each corpus directory. Daily Fuzz acceptance needs a passing run at the corrected source.
+
+Compiler: `nightly-2026-10-14`, rustc `822182db4`. These runs give timing-test, compiled-code
+and functional evidence for the recorded source and runners. They make no performance claim
+and do not extend the ML-DSA whole-signing claim boundary.
+
 ## 2026-10-16: Continuous fuzzing and retained corpora
 
 Every push to `main` now builds every fuzz target and replays committed and
@@ -22,8 +54,8 @@ coverage passes all 60 tests with 60 execution profiles and 514 committed inputs
 The coverage runner now enables the internal fuzz entry points used by ASan.
 
 Record: `fuzz-ci-20261016/REPORT.md`, with compiler, source, binary and corpus
-identities and bounded coverage results. Final push and daily Fuzz workflow
-acceptance remains pending alongside the full Constant-Time qualification.
+identities and bounded coverage results. [Workflow acceptance](#2026-10-16-combined-source-workflow-acceptance) records
+the push and daily Fuzz results.
 No timing ran on the development Mac. OSS-Fuzz enrollment and attacker-shaped
 corpus expansion remain separate work.
 
@@ -54,7 +86,7 @@ workload match the selected source, but its older compiler makes latency a
 historical baseline. The corrected reference means are 4.36 / 5.14 / 3.91.
 The formal inventory remains one portable Montgomery BINSEC leaf, 24 kernel
 cases and 19 diagnostic probes. Whole signing retains variable first-accepted
-retries and no strict constant-time claim. Final native CT results remain pending.
+retries and no strict constant-time claim. Final native CT [passed at `ed86bcb3`](#2026-10-16-combined-source-workflow-acceptance).
 
 Record: `mldsa-qualification-20261016/REPORT.md`, with the standards, ASan and
 residue subreports and exact source/artifact identities. Production source is
@@ -75,7 +107,7 @@ functions on x86-64, AArch64, RISC-V, POWER and IBM Z, with `rust-src` installed
 All five blocking gates pass. Only 700 whole-function hashes change; branch
 locators, classifications, thresholds, workloads and confirmation policy stay
 fixed. Changed static operands resolve the same imports, constants, public
-state and diagnostics. Final native Constant-Time execution remains pending.
+state and diagnostics. Final native Constant-Time execution [passed at `ed86bcb3`](#2026-10-16-combined-source-workflow-acceptance).
 Windows/Mac assembly evidence is unaffected. The x86 selector BINSEC result
 remains unknown because `movmskps` is unsupported.
 
@@ -160,7 +192,7 @@ Records: `ct-p256-ecdh-riscv-20261013T155720Z/REPORT.md` and
 `ct-select-hardening-20261015/REPORT.md`, with source patches, raw artifacts,
 positive controls and command logs. Compiler: `nightly-2026-10-14`, rustc
 `822182db4`, LLVM 23.1.3. The hardening record tracks final combined-checkout
-functional results and new native CT qualification, which remains pending.
+functional results. Native CT qualification [passed at `ed86bcb3`](#2026-10-16-combined-source-workflow-acceptance).
 No timing ran on the development Mac. This campaign makes no performance claim.
 
 ## 2026-10-12: ECDSA verification generator term from the signing comb
