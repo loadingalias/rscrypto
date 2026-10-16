@@ -24,7 +24,7 @@ use p384::ecdsa::{Signature as P384OracleSignature, SigningKey as P384OracleSign
 use rscrypto::{
   EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature, EcdsaP384Keypair, EcdsaP384PublicKey,
   EcdsaP384SecretKey, EcdsaP384Signature, Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, HkdfSha256, HkdfSha384,
-  HmacSha256, HmacSha384, HmacSha512, Kem as _, Mac as _, MlKem512, MlKem768, MlKem1024, MlKemError,
+  HkdfSha512, HmacSha256, HmacSha384, HmacSha512, Kem as _, Mac as _, MlKem512, MlKem768, MlKem1024, MlKemError,
   P256EphemeralSecret, P256PublicKey, P384EphemeralSecret, P384PublicKey, Pbkdf2Sha256, Pbkdf2Sha512, X25519SecretKey,
 };
 use rustcrypto_ml_kem::{
@@ -38,6 +38,7 @@ type RustCryptoHmacSha384 = Hmac<sha2::Sha384>;
 type RustCryptoHmacSha512 = Hmac<sha2::Sha512>;
 type RustCryptoHkdfSha256 = RustCryptoHkdf<sha2::Sha256>;
 type RustCryptoHkdfSha384 = RustCryptoHkdf<sha2::Sha384>;
+type RustCryptoHkdfSha512 = RustCryptoHkdf<sha2::Sha512>;
 
 fn array_from_slice<const N: usize>(slice: &[u8]) -> [u8; N] {
   let mut out = [0u8; N];
@@ -408,6 +409,7 @@ fn hkdf_sha256_expand(c: &mut Criterion) {
     return;
   }
   print_auth_diag_once();
+  hkdf_sha256_rfc5869_check();
 
   let salt = [0x11u8; 32];
   let ikm = [0x22u8; 32];
@@ -421,6 +423,30 @@ fn hkdf_sha256_expand(c: &mut Criterion) {
   let mut g = c.benchmark_group("hkdf-sha256/expand");
 
   for out_len in [32usize, 64, 256, 1024] {
+    let mut expected = vec![0u8; out_len];
+    hkdf
+      .expand(&info, &mut expected)
+      .expect("valid authentication benchmark operation must succeed");
+    let mut actual = vec![0u8; out_len];
+    rustcrypto
+      .expand(&info, &mut actual)
+      .expect("valid authentication benchmark operation must succeed");
+    assert_eq!(actual, expected, "HKDF-SHA256 expand mismatch: rustcrypto/{out_len}");
+    ring_prk
+      .expand(&[&info], RingHkdfLen(out_len))
+      .expect("valid authentication benchmark operation must succeed")
+      .fill(&mut actual)
+      .expect("valid authentication benchmark operation must succeed");
+    assert_eq!(actual, expected, "HKDF-SHA256 expand mismatch: ring/{out_len}");
+    aws_lc_bench! {
+      aws_prk
+        .expand(&[&info], AwsHkdfLen(out_len))
+        .expect("valid authentication benchmark operation must succeed")
+        .fill(&mut actual)
+        .expect("valid authentication benchmark operation must succeed");
+      assert_eq!(actual, expected, "HKDF-SHA256 expand mismatch: aws-lc-rs/{out_len}");
+    }
+
     g.throughput(criterion::Throughput::Bytes(out_len as u64));
     g.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
       let mut out = vec![0u8; len];
@@ -490,6 +516,30 @@ fn hkdf_sha384_expand(c: &mut Criterion) {
   let mut g = c.benchmark_group("hkdf-sha384/expand");
 
   for out_len in [48usize, 96, 256, 1024] {
+    let mut expected = vec![0u8; out_len];
+    hkdf
+      .expand(&info, &mut expected)
+      .expect("valid authentication benchmark operation must succeed");
+    let mut actual = vec![0u8; out_len];
+    rustcrypto
+      .expand(&info, &mut actual)
+      .expect("valid authentication benchmark operation must succeed");
+    assert_eq!(actual, expected, "HKDF-SHA384 expand mismatch: rustcrypto/{out_len}");
+    ring_prk
+      .expand(&[&info], RingHkdfLen(out_len))
+      .expect("valid authentication benchmark operation must succeed")
+      .fill(&mut actual)
+      .expect("valid authentication benchmark operation must succeed");
+    assert_eq!(actual, expected, "HKDF-SHA384 expand mismatch: ring/{out_len}");
+    aws_lc_bench! {
+      aws_prk
+        .expand(&[&info], AwsHkdfLen(out_len))
+        .expect("valid authentication benchmark operation must succeed")
+        .fill(&mut actual)
+        .expect("valid authentication benchmark operation must succeed");
+      assert_eq!(actual, expected, "HKDF-SHA384 expand mismatch: aws-lc-rs/{out_len}");
+    }
+
     g.throughput(criterion::Throughput::Bytes(out_len as u64));
     g.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
       let mut out = vec![0u8; len];
@@ -540,6 +590,229 @@ fn hkdf_sha384_expand(c: &mut Criterion) {
 
   g.finish();
 }
+
+fn hkdf_sha512_expand(c: &mut Criterion) {
+  if !bench_config::selected("hkdf-sha512/expand") {
+    return;
+  }
+  print_auth_diag_once();
+
+  // As in the SHA-256 and SHA-384 groups, salt and IKM are HashLen bytes, and
+  // `info` keeps T(1) in one compression block while each later T(i) needs two.
+  let salt = [0x11u8; 64];
+  let ikm = [0x22u8; 64];
+  let info = [0x33u8; 80];
+  let hkdf = HkdfSha512::new(&salt, &ikm);
+  let rustcrypto = RustCryptoHkdfSha512::new(Some(&salt), &ikm);
+  aws_lc_bench! {
+    let aws_prk = aws_lc_rs::hkdf::Salt::new(aws_lc_rs::hkdf::HKDF_SHA512, &salt).extract(&ikm);
+  }
+  let ring_prk = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA512, &salt).extract(&ikm);
+  let mut g = c.benchmark_group("hkdf-sha512/expand");
+
+  for out_len in [64usize, 128, 256, 1024] {
+    let mut expected = vec![0u8; out_len];
+    hkdf
+      .expand(&info, &mut expected)
+      .expect("valid authentication benchmark operation must succeed");
+    let mut actual = vec![0u8; out_len];
+    rustcrypto
+      .expand(&info, &mut actual)
+      .expect("valid authentication benchmark operation must succeed");
+    assert_eq!(actual, expected, "HKDF-SHA512 expand mismatch: rustcrypto/{out_len}");
+    ring_prk
+      .expand(&[&info], RingHkdfLen(out_len))
+      .expect("valid authentication benchmark operation must succeed")
+      .fill(&mut actual)
+      .expect("valid authentication benchmark operation must succeed");
+    assert_eq!(actual, expected, "HKDF-SHA512 expand mismatch: ring/{out_len}");
+    aws_lc_bench! {
+      aws_prk
+        .expand(&[&info], AwsHkdfLen(out_len))
+        .expect("valid authentication benchmark operation must succeed")
+        .fill(&mut actual)
+        .expect("valid authentication benchmark operation must succeed");
+      assert_eq!(actual, expected, "HKDF-SHA512 expand mismatch: aws-lc-rs/{out_len}");
+    }
+
+    g.throughput(criterion::Throughput::Bytes(out_len as u64));
+    g.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
+      let mut out = vec![0u8; len];
+      b.iter(|| {
+        hkdf
+          .expand(black_box(&info), black_box(&mut out))
+          .expect("valid authentication benchmark operation must succeed");
+        black_box(out[0])
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("rustcrypto", out_len), &out_len, |b, &len| {
+      let mut out = vec![0u8; len];
+      b.iter(|| {
+        rustcrypto
+          .expand(black_box(&info), black_box(&mut out))
+          .expect("valid authentication benchmark operation must succeed");
+        black_box(out[0])
+      })
+    });
+
+    aws_lc_bench! {
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
+        let mut out = vec![0u8; len];
+        b.iter(|| {
+          aws_prk
+            .expand(&[black_box(&info)], AwsHkdfLen(len))
+            .expect("valid authentication benchmark operation must succeed")
+            .fill(black_box(&mut out))
+            .expect("valid authentication benchmark operation must succeed");
+          black_box(out[0])
+        })
+      });
+    }
+
+    g.bench_with_input(BenchmarkId::new("ring", out_len), &out_len, |b, &len| {
+      let mut out = vec![0u8; len];
+      b.iter(|| {
+        ring_prk
+          .expand(&[black_box(&info)], RingHkdfLen(len))
+          .expect("valid authentication benchmark operation must succeed")
+          .fill(black_box(&mut out))
+          .expect("valid authentication benchmark operation must succeed");
+        black_box(out[0])
+      })
+    });
+  }
+
+  g.finish();
+}
+
+/// RFC 5869 Appendix A.1 (Test Case 1) pseudorandom key.
+const HKDF_SHA256_RFC5869_A1_PRK: [u8; 32] = [
+  0x07, 0x77, 0x09, 0x36, 0x2c, 0x2e, 0x32, 0xdf, 0x0d, 0xdc, 0x3f, 0x0d, 0xc4, 0x7b, 0xba, 0x63, 0x90, 0xb6, 0xc7,
+  0x3b, 0xb5, 0x0f, 0x9c, 0x31, 0x22, 0xec, 0x84, 0x4a, 0xd7, 0xc2, 0xb3, 0xe5,
+];
+
+/// RFC 5869 Appendix A.1 (Test Case 1) output keying material.
+const HKDF_SHA256_RFC5869_A1_OKM: [u8; 42] = [
+  0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a, 0x90, 0x43, 0x4f, 0x64, 0xd0, 0x36, 0x2f, 0x2a, 0x2d, 0x2d, 0x0a,
+  0x90, 0xcf, 0x1a, 0x5a, 0x4c, 0x5d, 0xb0, 0x2d, 0x56, 0xec, 0xc4, 0xc5, 0xbf, 0x34, 0x00, 0x72, 0x08, 0xd5, 0xb8,
+  0x87, 0x18, 0x58, 0x65,
+];
+
+/// Check the timed HKDF-SHA256 extract and expand calls against RFC 5869 Appendix A.1.
+fn hkdf_sha256_rfc5869_check() {
+  let salt = deterministic_bytes::<13>(0x00);
+  let ikm = [0x0bu8; 22];
+  let info = deterministic_bytes::<10>(0xf0);
+  let hkdf = HkdfSha256::extract(&salt, &ikm);
+  assert_eq!(
+    hkdf.prk(),
+    &HKDF_SHA256_RFC5869_A1_PRK,
+    "HKDF-SHA256 extract does not match RFC 5869 A.1"
+  );
+  let mut okm = [0u8; 42];
+  hkdf
+    .expand(&info, &mut okm)
+    .expect("valid authentication benchmark operation must succeed");
+  assert_eq!(
+    okm, HKDF_SHA256_RFC5869_A1_OKM,
+    "HKDF-SHA256 expand does not match RFC 5869 A.1"
+  );
+}
+
+// HKDF-Extract rows time salt keying, HMAC(salt, IKM), the PRK HMAC key
+// schedule that each library builds for later expansion, and state drop.
+// Salt is HashLen bytes. IKM is HashLen bytes, the TLS 1.3 early- and
+// master-secret shape; SHA-256 adds the 64-byte X25519MLKEM768 shared secret,
+// which crosses the SHA-256 block boundary. aws-lc-rs has no row: its
+// `Salt::extract` only copies the IKM and defers HKDF-Extract to `Okm::fill`.
+macro_rules! hkdf_extract_bench {
+  (
+    $name:ident,
+    $group:literal,
+    $rscrypto:ty,
+    $rustcrypto:ty,
+    $ring_algorithm:path,
+    $hash_len:literal,
+    [$($ikm_len:literal),+]
+    $(, $vector_check:path)?
+    $(,)?
+  ) => {
+    fn $name(c: &mut Criterion) {
+      if !bench_config::selected($group) {
+        return;
+      }
+      print_auth_diag_once();
+      $($vector_check();)?
+
+      let salt = [0x11u8; $hash_len];
+      let mut g = c.benchmark_group($group);
+      for ikm_len in [$($ikm_len),+] {
+        let ikm = vec![0x22u8; ikm_len];
+        // RustCrypto exposes the PRK. ring does not, so compare T(1) from its PRK.
+        let ours = <$rscrypto>::extract(&salt, &ikm);
+        let (rustcrypto_prk, _) = <$rustcrypto>::extract(Some(&salt), &ikm);
+        assert_eq!(
+          ours.prk().as_slice(),
+          rustcrypto_prk.as_slice(),
+          concat!($group, " PRK mismatch: rustcrypto")
+        );
+        let mut expected = [0u8; $hash_len];
+        ours
+          .expand(&[], &mut expected)
+          .expect("valid authentication benchmark operation must succeed");
+        let mut actual = [0u8; $hash_len];
+        ring::hkdf::Salt::new($ring_algorithm, &salt)
+          .extract(&ikm)
+          .expand(&[], RingHkdfLen($hash_len))
+          .expect("valid authentication benchmark operation must succeed")
+          .fill(&mut actual)
+          .expect("valid authentication benchmark operation must succeed");
+        assert_eq!(actual, expected, concat!($group, " PRK mismatch: ring"));
+
+        g.bench_with_input(BenchmarkId::new("rscrypto", ikm_len), &ikm, |b, ikm| {
+          b.iter(|| black_box(<$rscrypto>::extract(black_box(&salt), black_box(ikm))))
+        });
+        g.bench_with_input(BenchmarkId::new("rustcrypto", ikm_len), &ikm, |b, ikm| {
+          b.iter(|| black_box(<$rustcrypto>::extract(Some(black_box(&salt)), black_box(ikm))))
+        });
+        g.bench_with_input(BenchmarkId::new("ring", ikm_len), &ikm, |b, ikm| {
+          b.iter(|| black_box(ring::hkdf::Salt::new($ring_algorithm, black_box(&salt)).extract(black_box(ikm))))
+        });
+      }
+      g.finish();
+    }
+  };
+}
+
+hkdf_extract_bench!(
+  hkdf_sha256_extract,
+  "hkdf-sha256/extract",
+  HkdfSha256,
+  RustCryptoHkdfSha256,
+  ring::hkdf::HKDF_SHA256,
+  32,
+  [32, 64],
+  hkdf_sha256_rfc5869_check
+);
+hkdf_extract_bench!(
+  hkdf_sha384_extract,
+  "hkdf-sha384/extract",
+  HkdfSha384,
+  RustCryptoHkdfSha384,
+  ring::hkdf::HKDF_SHA384,
+  48,
+  [48]
+);
+hkdf_extract_bench!(
+  hkdf_sha512_extract,
+  "hkdf-sha512/extract",
+  HkdfSha512,
+  RustCryptoHkdfSha512,
+  ring::hkdf::HKDF_SHA512,
+  64,
+  [64]
+);
 
 fn pbkdf2_sha256_derive(c: &mut Criterion) {
   if !bench_config::selected("pbkdf2-sha256") {
@@ -2212,7 +2485,57 @@ fn p384_benchmark_preflight() {
     let rustcrypto_peer = p384::PublicKey::from_sec1_bytes(&P384_NIST_PEER).expect("valid RustCrypto benchmark peer");
     let shared = p384::ecdh::diffie_hellman(rustcrypto.to_nonzero_scalar(), rustcrypto_peer.as_affine());
     assert_eq!(shared.raw_secret_bytes().as_slice(), P384_NIST_SHARED);
+
+    aws_lc_bench! {
+      let aws_secret = aws_lc_rs::agreement::PrivateKey::from_private_key(
+        &aws_lc_rs::agreement::ECDH_P384,
+        &P384_NIST_PRIVATE,
+      )
+      .expect("valid AWS-LC benchmark scalar");
+      assert_eq!(
+        aws_secret.compute_public_key().expect("AWS-LC public derivation").as_ref(),
+        P384_NIST_PUBLIC,
+      );
+      let aws_peer = aws_lc_rs::agreement::UnparsedPublicKey::new(
+        &aws_lc_rs::agreement::ECDH_P384,
+        P384_NIST_PEER,
+      );
+      let aws_shared = aws_lc_rs::agreement::agree(&aws_secret, aws_peer, (), |bytes| {
+        Ok::<[u8; 48], ()>(array_from_slice(bytes))
+      })
+      .expect("AWS-LC benchmark agreement");
+      assert_eq!(aws_shared, P384_NIST_SHARED);
+    }
   });
+}
+
+fn p384_ecdh_key_generation(c: &mut Criterion) {
+  if !bench_config::selected("p384-ecdh/key-generation") {
+    return;
+  }
+  p384_benchmark_preflight();
+  let scalar = P384_NIST_PRIVATE;
+  let mut g = c.benchmark_group("p384-ecdh/key-generation");
+  g.bench_function("rscrypto-caller-fill", |b| {
+    b.iter(|| black_box(p384_ephemeral(*black_box(&scalar))))
+  });
+  g.bench_function("rustcrypto-p384-import", |b| {
+    b.iter(|| black_box(P384OracleSecretKey::from_slice(black_box(&scalar)).expect("valid oracle scalar")))
+  });
+  aws_lc_bench! {
+    g.bench_function("aws-lc-rs-native-import-and-precompute", |b| {
+      b.iter(|| {
+        black_box(
+          aws_lc_rs::agreement::PrivateKey::from_private_key(
+            &aws_lc_rs::agreement::ECDH_P384,
+            black_box(&scalar),
+          )
+          .expect("valid AWS-LC scalar"),
+        )
+      })
+    });
+  }
+  g.finish();
 }
 
 fn p384_ecdh_public_key(c: &mut Criterion) {
@@ -2661,6 +2984,10 @@ fn main() {
     hmac_sha256_internal,
     hkdf_sha256_expand,
     hkdf_sha384_expand,
+    hkdf_sha512_expand,
+    hkdf_sha256_extract,
+    hkdf_sha384_extract,
+    hkdf_sha512_extract,
     pbkdf2_sha256_derive,
     pbkdf2_sha256_internal,
     pbkdf2_sha512_derive,
@@ -2687,6 +3014,7 @@ fn main() {
     p256_ecdh_parse,
     p256_ecdh_agreement,
     p256_ecdh_tls_roundtrip,
+    p384_ecdh_key_generation,
     p384_ecdh_public_key,
     p384_ecdh_parse,
     p384_ecdh_agreement,

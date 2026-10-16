@@ -43,7 +43,7 @@
       "binary": "kmac_cshake",
       "kind": "criterion",
       "required": true,
-      "features": ["std", "sha3", "kmac"]
+      "features": ["std", "sha3", "kmac", "hmac-sha3"]
     },
     "ascon": {
       "binary": "ascon",
@@ -204,6 +204,7 @@
     },
     "shake128": { "bench": "sha3", "filter": "shake128" },
     "shake256": { "bench": "sha3", "filter": "shake256" },
+    "cshake128": { "bench": "kmac_cshake", "filter": "cshake128" },
     "cshake256": { "bench": "kmac_cshake", "filter": "cshake256" },
     "blake3-mixed": { "bench": "blake3", "filter": "^blake3/mixed-batch/" },
     "ascon-hash256": { "bench": "ascon", "filter": "ascon-hash256" },
@@ -214,6 +215,7 @@
     "hmac-sha512": { "bench": "auth", "filter": "hmac-sha512" },
     "hkdf-sha256": { "bench": "auth", "filter": "^hkdf-sha256" },
     "hkdf-sha384": { "bench": "auth", "filter": "hkdf-sha384" },
+    "hkdf-sha512": { "bench": "auth", "filter": "^hkdf-sha512/" },
     "pbkdf2-sha256": { "bench": "auth", "filter": "^pbkdf2-sha256(/|-state/)" },
     "pbkdf2-sha512": { "bench": "auth", "filter": "^pbkdf2-sha512(/|-state/)" },
     "ecdsa-p256": { "bench": "auth", "filter": "^ecdsa-p256/" },
@@ -240,7 +242,12 @@
     "mlkem512": { "bench": "auth", "filter": "^mlkem512/(keygen|encapsulate|decapsulate)/" },
     "mlkem768": { "bench": "auth", "filter": "^mlkem768/(keygen|encapsulate|decapsulate)/" },
     "mlkem1024": { "bench": "auth", "filter": "^mlkem1024/(keygen|encapsulate|decapsulate)/" },
+    "kmac128": { "bench": "kmac_cshake", "filter": "kmac128" },
     "kmac256": { "bench": "kmac_cshake", "filter": "kmac256" },
+    "hmac-sha3-224": { "bench": "kmac_cshake", "filter": "^hmac-sha3-224/" },
+    "hmac-sha3-256": { "bench": "kmac_cshake", "filter": "^hmac-sha3-256/" },
+    "hmac-sha3-384": { "bench": "kmac_cshake", "filter": "^hmac-sha3-384/" },
+    "hmac-sha3-512": { "bench": "kmac_cshake", "filter": "^hmac-sha3-512/" },
     "argon2d": { "bench": "password_hashing", "filter": "^argon2d-" },
     "argon2i": { "bench": "password_hashing", "filter": "^argon2i-" },
     "argon2id": { "bench": "password_hashing", "filter": "^argon2id-" },
@@ -283,6 +290,7 @@
       "websocket-accept-digest",
       "shake128",
       "shake256",
+      "cshake128",
       "cshake256",
       "blake2",
       "blake3",
@@ -418,12 +426,14 @@
         "-(bitserial-baseline|product-montgomery|generic-exponent|cios-candidate|cios-portable)$"
       ],
       "expensive": [
-        "^rsa-[0-9]+-private-signing/"
+        "^rsa-[0-9]+-private-signing/",
+        "^rsa-[0-9]+-oaep-sha256/decrypt/",
+        "^rsa-[0-9]+-keygen/"
       ]
     },
     "slhdsa": {
       "expensive": [
-        "/(keygen|sign|import)/"
+        "/(keygen|sign|hash-sign|import)/"
       ]
     },
     "aead": {

@@ -2,19 +2,26 @@
 //! RustCrypto `slh-dsa` and `fips205` comparison rows.
 //!
 //! Fixtures are public, deterministic benchmark keys. Messages are 32 bytes
-//! with an empty context, as the standard protocols use. HashSLH-DSA differs
-//! only in hashing the message outside the trees, so it has no separate rows.
+//! with an empty context, as the standard protocols use.
 //!
-//! Key generation, signing, and secret-key import compute whole hypertree
-//! layers, so those groups use flat sampling: every sample runs the same
-//! iteration count, instead of Criterion's linear ramp.
+//! HashSLH-DSA rows sign and verify the same message under each set's RFC 9909
+//! profile. Each implementation hashes the message with that profile's
+//! function (SHA-256, SHA-512, SHAKE128, or SHAKE256) inside timing. Only
+//! `fips205` implements HashSLH-DSA, so it is the sole comparison there.
+//!
+//! Key generation, pure and HashSLH-DSA signing, and secret-key import compute
+//! whole hypertree layers, so those groups use flat sampling: every sample
+//! runs the same iteration count, instead of Criterion's linear ramp.
 
 #[path = "common/criterion.rs"]
 mod bench_config;
 
 use core::hint::black_box;
 use criterion::{Criterion, SamplingMode};
-use fips205::traits::{SerDes as _, Signer as _, Verifier as _};
+use fips205::{
+  Ph,
+  traits::{SerDes as _, Signer as _, Verifier as _},
+};
 
 const MESSAGE: [u8; 32] = [0xa5; 32];
 
@@ -259,10 +266,214 @@ parameter_set!(
   32
 );
 
+macro_rules! prehash_set {
+  ($function:ident, $name:literal, $profile:ident, $fips:ident, $ph:ident, $prehash:literal, $n:literal) => {
+    fn $function(c: &mut Criterion) {
+      use rscrypto::$profile;
+
+      if !bench_config::selected(concat!($name, "/hash-")) {
+        return;
+      }
+      let seeds: [u8; 3 * $n] =
+        core::array::from_fn(|index| u8::try_from(index).expect("seed index").wrapping_mul(0x9d) ^ 0x42);
+      let (public, secret) = $profile::generate_keypair(|out| {
+        out.copy_from_slice(&seeds);
+        Ok(())
+      })
+      .expect("key generation");
+      let fips_secret =
+        fips205::$fips::PrivateKey::try_from_bytes(secret.expose_secret().as_bytes()).expect("fips205 secret key");
+      let fips_public = fips205::$fips::PublicKey::try_from_bytes(&public.to_bytes()).expect("fips205 public key");
+
+      // fips205 is an independent HashSLH-DSA: both must produce the same
+      // deterministic signature, so each verifier accepts the other's.
+      let mut signature = [0; $profile::SIGNATURE_LENGTH];
+      secret
+        .sign_deterministic(&MESSAGE, b"", &mut signature)
+        .expect("signature");
+      assert_eq!(
+        fips_secret
+          .try_hash_sign(&MESSAGE, b"", &Ph::$ph, false)
+          .expect("fips205 signature"),
+        signature
+      );
+      public.verify(&MESSAGE, &signature).expect("verification");
+      assert!(fips_public.hash_verify(&MESSAGE, &signature, b"", &Ph::$ph));
+
+      // As in the pure rows, rscrypto writes into a caller buffer and fips205
+      // returns the signature by value.
+      let mut group = c.benchmark_group(concat!($name, "/hash-sign/", $prehash, "/deterministic-32"));
+      group.sampling_mode(SamplingMode::Flat);
+      group.bench_function("rscrypto", |b| {
+        b.iter(|| {
+          secret
+            .sign_deterministic(black_box(&MESSAGE), b"", &mut signature)
+            .expect("signature");
+          black_box(&signature);
+        })
+      });
+      group.bench_function("fips205", |b| {
+        b.iter(|| {
+          black_box(
+            fips_secret
+              .try_hash_sign(black_box(&MESSAGE), b"", &Ph::$ph, false)
+              .expect("signature"),
+          )
+        })
+      });
+      group.finish();
+
+      let mut group = c.benchmark_group(concat!($name, "/hash-verify/", $prehash, "/32"));
+      group.bench_function("rscrypto", |b| {
+        b.iter(|| {
+          public
+            .verify(black_box(&MESSAGE), black_box(&signature))
+            .expect("verification")
+        })
+      });
+      group.bench_function("fips205", |b| {
+        b.iter(|| assert!(fips_public.hash_verify(black_box(&MESSAGE), black_box(&signature), b"", &Ph::$ph)))
+      });
+      group.finish();
+    }
+  };
+}
+
+prehash_set!(
+  hash_sha2_128s,
+  "slhdsa-sha2-128s",
+  HashSlhDsaSha2_128sWithSha256,
+  slh_dsa_sha2_128s,
+  SHA256,
+  "sha256",
+  16
+);
+prehash_set!(
+  hash_sha2_128f,
+  "slhdsa-sha2-128f",
+  HashSlhDsaSha2_128fWithSha256,
+  slh_dsa_sha2_128f,
+  SHA256,
+  "sha256",
+  16
+);
+prehash_set!(
+  hash_sha2_192s,
+  "slhdsa-sha2-192s",
+  HashSlhDsaSha2_192sWithSha512,
+  slh_dsa_sha2_192s,
+  SHA512,
+  "sha512",
+  24
+);
+prehash_set!(
+  hash_sha2_192f,
+  "slhdsa-sha2-192f",
+  HashSlhDsaSha2_192fWithSha512,
+  slh_dsa_sha2_192f,
+  SHA512,
+  "sha512",
+  24
+);
+prehash_set!(
+  hash_sha2_256s,
+  "slhdsa-sha2-256s",
+  HashSlhDsaSha2_256sWithSha512,
+  slh_dsa_sha2_256s,
+  SHA512,
+  "sha512",
+  32
+);
+prehash_set!(
+  hash_sha2_256f,
+  "slhdsa-sha2-256f",
+  HashSlhDsaSha2_256fWithSha512,
+  slh_dsa_sha2_256f,
+  SHA512,
+  "sha512",
+  32
+);
+prehash_set!(
+  hash_shake_128s,
+  "slhdsa-shake-128s",
+  HashSlhDsaShake128sWithShake128,
+  slh_dsa_shake_128s,
+  SHAKE128,
+  "shake128",
+  16
+);
+prehash_set!(
+  hash_shake_128f,
+  "slhdsa-shake-128f",
+  HashSlhDsaShake128fWithShake128,
+  slh_dsa_shake_128f,
+  SHAKE128,
+  "shake128",
+  16
+);
+prehash_set!(
+  hash_shake_192s,
+  "slhdsa-shake-192s",
+  HashSlhDsaShake192sWithShake256,
+  slh_dsa_shake_192s,
+  SHAKE256,
+  "shake256",
+  24
+);
+prehash_set!(
+  hash_shake_192f,
+  "slhdsa-shake-192f",
+  HashSlhDsaShake192fWithShake256,
+  slh_dsa_shake_192f,
+  SHAKE256,
+  "shake256",
+  24
+);
+prehash_set!(
+  hash_shake_256s,
+  "slhdsa-shake-256s",
+  HashSlhDsaShake256sWithShake256,
+  slh_dsa_shake_256s,
+  SHAKE256,
+  "shake256",
+  32
+);
+prehash_set!(
+  hash_shake_256f,
+  "slhdsa-shake-256f",
+  HashSlhDsaShake256fWithShake256,
+  slh_dsa_shake_256f,
+  SHAKE256,
+  "shake256",
+  32
+);
+
 fn benchmarks() {
   bench_config::run(&[
-    sha2_128s, shake_128s, sha2_128f, shake_128f, sha2_192s, shake_192s, sha2_192f, shake_192f, sha2_256s, shake_256s,
-    sha2_256f, shake_256f,
+    sha2_128s,
+    shake_128s,
+    sha2_128f,
+    shake_128f,
+    sha2_192s,
+    shake_192s,
+    sha2_192f,
+    shake_192f,
+    sha2_256s,
+    shake_256s,
+    sha2_256f,
+    shake_256f,
+    hash_sha2_128s,
+    hash_shake_128s,
+    hash_sha2_128f,
+    hash_shake_128f,
+    hash_sha2_192s,
+    hash_shake_192s,
+    hash_sha2_192f,
+    hash_shake_192f,
+    hash_sha2_256s,
+    hash_shake_256s,
+    hash_sha2_256f,
+    hash_shake_256f,
   ]);
 }
 

@@ -493,7 +493,7 @@ required-features = ["checksums"]
 [[bench]]
 name = "kmac_cshake"
 harness = false
-required-features = ["sha3", "kmac"]
+required-features = ["sha3", "kmac", "hmac-sha3"]
 
 [[bench]]
 name = "structural"

@@ -1,4 +1,5 @@
 //! ML-DSA production workloads. Fixtures use public, deterministic benchmark keys.
+//! HashML-DSA rows cover SHAKE128, the prehash libcrux shares, and SHA-512.
 
 #[path = "common/criterion.rs"]
 mod bench_config;
@@ -291,6 +292,171 @@ profile!(
   ml_dsa_87
 );
 
+/// DER OID of SHA-512, 2.16.840.1.101.3.4.2.3, as FIPS 204 Algorithm 4 binds it.
+const SHA512_OID: [u8; 11] = [0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03];
+
+// HashML-DSA (FIPS 204 Algorithm 4) with the pure rows' key, 32-byte message,
+// and context. rscrypto signs a caller-computed digest.
+macro_rules! prehash_profile {
+  ($function:ident, $name:literal, $profile:ident, $libcrux:ident) => {
+    fn $function(c: &mut Criterion) {
+      use rscrypto::{MlDsaPrehash, MlDsaPrehashAlgorithm, Shake128};
+      use sha2::Digest as _;
+
+      if !bench_config::selected(concat!($name, "/hash-")) {
+        return;
+      }
+      let seed = [0x42; 32];
+      let message = [0xa5; 32];
+      let context = b"rscrypto benchmark";
+      let (public, secret) = $profile::keypair_from_seed(&seed).expect("benchmark key generation");
+      let mut secret_storage = Default::default();
+      let mut public_storage = Default::default();
+      let prepared_secret = secret.prepare(&mut secret_storage).expect("prepare secret");
+      let prepared_public = public.prepare(&mut public_storage).expect("prepare public");
+
+      // SHAKE128 with a 32-byte digest is the only prehash libcrux exposes.
+      // libcrux is an independent HashML-DSA: the deterministic signatures
+      // must match byte for byte, so each verifier accepts the other's.
+      let libcrux = libcrux_ml_dsa::$libcrux::generate_key_pair(seed);
+      assert_eq!(
+        libcrux.verification_key.as_ref().as_slice(),
+        public.as_bytes().as_slice()
+      );
+      let mut shake128_digest = [0; 32];
+      Shake128::hash_into(&message, &mut shake128_digest);
+      let shake128 = MlDsaPrehash::new(MlDsaPrehashAlgorithm::Shake128, &shake128_digest).expect("digest length");
+      let shake128_signature = secret
+        .sign_prehash_deterministic(shake128, context)
+        .expect("SHAKE128 signature");
+      let libcrux_signature =
+        libcrux_ml_dsa::$libcrux::sign_pre_hashed_shake128(&libcrux.signing_key, &message, context, [0; 32])
+          .expect("libcrux signature");
+      assert_eq!(
+        libcrux_signature.as_ref().as_slice(),
+        shake128_signature.as_bytes().as_slice()
+      );
+      public
+        .verify_prehash(shake128, context, &shake128_signature)
+        .expect("SHAKE128 verification");
+      libcrux_ml_dsa::$libcrux::verify_pre_hashed_shake128(
+        &libcrux.verification_key,
+        &message,
+        context,
+        &libcrux_signature,
+      )
+      .expect("libcrux verification");
+
+      // NIST registers SHA-512 as the HashML-DSA prehash for all three sets.
+      // No comparison library signs HashML-DSA with SHA-512, so RustCrypto's
+      // Sign_internal over the FIPS 204 Algorithm 4 message M' is the oracle.
+      // rscrypto has no SHA-512 in this feature set; the digest is a fixture.
+      let sha512_digest: [u8; 64] = sha2::Sha512::digest(message).into();
+      let sha512 = MlDsaPrehash::new(MlDsaPrehashAlgorithm::Sha512, &sha512_digest).expect("digest length");
+      let sha512_signature = prepared_secret
+        .sign_prehash_deterministic(sha512, context)
+        .expect("SHA-512 signature");
+      assert_eq!(
+        secret
+          .sign_prehash_deterministic(sha512, context)
+          .expect("compact SHA-512 signature")
+          .as_bytes(),
+        sha512_signature.as_bytes()
+      );
+      let external = oracle::ExpandedSigningKey::<oracle::$profile>::from_seed(&seed.into());
+      let prefix = [1, u8::try_from(context.len()).expect("bounded context")];
+      let formatted = [&prefix[..], context, &SHA512_OID, &sha512_digest].concat();
+      let expected = external.sign_internal(&[formatted.as_slice()], &[0; 32].into());
+      assert_eq!(sha512_signature.as_bytes().as_slice(), expected.encode().as_slice());
+      prepared_public
+        .verify_prehash(sha512, context, &sha512_signature)
+        .expect("SHA-512 verification");
+      assert!(external.verifying_key().verify_internal(&formatted, &expected));
+
+      // libcrux takes the message, so the rscrypto row adds its public
+      // SHAKE128 before digest signing. Both sign from the encoded key.
+      let mut group = c.benchmark_group(concat!($name, "/hash-sign/shake128/encoded-key-deterministic"));
+      group.bench_function("rscrypto", |b| {
+        b.iter(|| {
+          let mut digest = [0; 32];
+          Shake128::hash_into(black_box(&message), &mut digest);
+          let prehash = MlDsaPrehash::new(MlDsaPrehashAlgorithm::Shake128, &digest).expect("digest length");
+          black_box(
+            secret
+              .sign_prehash_deterministic(prehash, black_box(context))
+              .expect("sign"),
+          )
+        })
+      });
+      group.bench_function("libcrux", |b| {
+        b.iter(|| {
+          black_box(
+            libcrux_ml_dsa::$libcrux::sign_pre_hashed_shake128(
+              black_box(&libcrux.signing_key),
+              black_box(&message),
+              black_box(context),
+              [0; 32],
+            )
+            .expect("sign"),
+          )
+        })
+      });
+      group.finish();
+      let mut group = c.benchmark_group(concat!($name, "/hash-verify/shake128/encoded-key"));
+      group.bench_function("rscrypto", |b| {
+        b.iter(|| {
+          let mut digest = [0; 32];
+          Shake128::hash_into(black_box(&message), &mut digest);
+          let prehash = MlDsaPrehash::new(MlDsaPrehashAlgorithm::Shake128, &digest).expect("digest length");
+          black_box(public.verify_prehash(prehash, black_box(context), black_box(&shake128_signature)))
+            .expect("verify");
+        })
+      });
+      group.bench_function("libcrux", |b| {
+        b.iter(|| {
+          black_box(libcrux_ml_dsa::$libcrux::verify_pre_hashed_shake128(
+            black_box(&libcrux.verification_key),
+            black_box(&message),
+            black_box(context),
+            black_box(&libcrux_signature),
+          ))
+          .expect("verify");
+        })
+      });
+      group.finish();
+
+      // These rows start from the digest; prepared keys are built untimed.
+      let mut group = c.benchmark_group(concat!($name, "/hash-sign/sha512-digest/prepared-key-deterministic"));
+      group.bench_function("rscrypto", |b| {
+        b.iter(|| {
+          let prehash =
+            MlDsaPrehash::new(MlDsaPrehashAlgorithm::Sha512, black_box(&sha512_digest)).expect("digest length");
+          black_box(
+            prepared_secret
+              .sign_prehash_deterministic(prehash, black_box(context))
+              .expect("sign"),
+          )
+        })
+      });
+      group.finish();
+      let mut group = c.benchmark_group(concat!($name, "/hash-verify/sha512-digest/prepared-key"));
+      group.bench_function("rscrypto", |b| {
+        b.iter(|| {
+          let prehash =
+            MlDsaPrehash::new(MlDsaPrehashAlgorithm::Sha512, black_box(&sha512_digest)).expect("digest length");
+          black_box(prepared_public.verify_prehash(prehash, black_box(context), black_box(&sha512_signature)))
+            .expect("verify");
+        })
+      });
+      group.finish();
+    }
+  };
+}
+
+prehash_profile!(prehash44, "mldsa44", MlDsa44, ml_dsa_44);
+prehash_profile!(prehash65, "mldsa65", MlDsa65, ml_dsa_65);
+prehash_profile!(prehash87, "mldsa87", MlDsa87, ml_dsa_87);
+
 #[cfg(any(
   all(
     any(unix, windows),
@@ -476,6 +642,9 @@ fn benchmarks() {
     corpus44,
     corpus65,
     corpus87,
+    prehash44,
+    prehash65,
+    prehash87,
     #[cfg(any(
       all(
         any(unix, windows),

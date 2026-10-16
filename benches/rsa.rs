@@ -1,4 +1,20 @@
-//! RSA verification benchmarks for rscrypto public APIs.
+//! RSA benchmarks for rscrypto public APIs: verification, private signing,
+//! RSAES-OAEP encryption and decryption, and key generation.
+//!
+//! Rows that use randomness name its source:
+//!
+//! - `fixed-entropy`: a caller blinding pair (factor 2) and, for PSS, a fixed
+//!   salt; no random fill.
+//! - `caller-entropy`: the caller fill closure copies fixed bytes.
+//! - `os-entropy`: `getrandom` fills the salt, seed, or blinding factor on
+//!   every operation.
+//! - `seeded-rng`: a deterministic SHA-256 counter stream ([`SeededRng`]),
+//!   used only where a comparison library accepts an RNG.
+//! - `internal-drbg`: aws-lc-rs takes no RNG and draws from AWS-LC's
+//!   OS-seeded DRBG.
+//!
+//! rscrypto private operations always blind. Comparison private rows are named
+//! `blinded` because their libraries also offer unblinded operations.
 
 #[path = "common/criterion.rs"]
 mod bench_config;
@@ -10,23 +26,27 @@ use core::hint::black_box;
   not(target_arch = "wasm32"),
   not(any(target_arch = "s390x", target_arch = "powerpc64"))
 ))]
-use aws_lc_rs::signature as aws_signature;
+use aws_lc_rs::{rsa as aws_rsa, signature as aws_signature};
 use criterion::Criterion;
 use ring::signature as ring_signature;
+use rsa::{
+  RsaPrivateKey as RustCryptoRsaPrivateKey, RsaPublicKey as RustCryptoRsaPublicKey,
+  oaep::{DecryptingKey as RustCryptoOaepDecryptingKey, EncryptingKey as RustCryptoOaepEncryptingKey},
+  pkcs1::DecodeRsaPrivateKey,
+  pkcs1v15::{
+    Signature as RustCryptoPkcs1v15Signature, SigningKey as RustCryptoPkcs1v15SigningKey,
+    VerifyingKey as RustCryptoPkcs1v15VerifyingKey,
+  },
+  pkcs8::{DecodePrivateKey, DecodePublicKey},
+  pss::{Signature as RustCryptoPssSignature, VerifyingKey as RustCryptoPssVerifyingKey},
+  rand_core::{CryptoRng as RustCryptoCryptoRng, Error as RustCryptoRngError, RngCore as RustCryptoRngCore},
+  signature::{SignatureEncoding as _, Signer as _, Verifier as _},
+  traits::{Decryptor as _, RandomizedEncryptor as _},
+};
 #[cfg(feature = "getrandom")]
 use rsa::{
-  RsaPrivateKey as RustCryptoRsaPrivateKey,
-  pkcs1::DecodeRsaPrivateKey,
-  pss::BlindedSigningKey as RustCryptoBlindedPssSigningKey,
-  rand_core::{CryptoRng as RustCryptoCryptoRng, Error as RustCryptoRngError, RngCore as RustCryptoRngCore},
-  signature::RandomizedSigner as _,
-};
-use rsa::{
-  RsaPublicKey as RustCryptoRsaPublicKey,
-  pkcs1v15::{Signature as RustCryptoPkcs1v15Signature, VerifyingKey as RustCryptoPkcs1v15VerifyingKey},
-  pkcs8::DecodePublicKey,
-  pss::{Signature as RustCryptoPssSignature, VerifyingKey as RustCryptoPssVerifyingKey},
-  signature::Verifier as _,
+  pss::BlindedSigningKey as RustCryptoBlindedPssSigningKey, signature::RandomizedSigner as _,
+  traits::RandomizedDecryptor as _,
 };
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 use rscrypto::auth::rsa::{
@@ -35,8 +55,8 @@ use rscrypto::auth::rsa::{
   diag_rsa_public_operation_product, diag_rsa_verify_pkcs1v15_encoded, diag_rsa_verify_pss_encoded_with_scratch,
 };
 use rscrypto::{
-  Digest, RsaBlindingPair, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateKeyParts, RsaPssProfile, RsaPublicKey,
-  RsaPublicKeyPolicy, Sha256, Sha384, Sha512,
+  Digest, RsaBlindingPair, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateKeyParts, RsaPssProfile,
+  RsaPublicKey, RsaPublicKeyPolicy, Sha256, Sha384, Sha512,
 };
 
 #[cfg(all(
@@ -74,6 +94,18 @@ const RSA8192_PKCS1V15_SHA256: &[u8] = include_bytes!("../testdata/rsa/fixtures/
 
 const PRIVATE_SIGNING_MESSAGE: &[u8] = b"rscrypto TLS-shaped RSA private signing benchmark";
 
+// Wycheproof RSAES-OAEP-SHA256 (MGF1-SHA256) documents. Each holds one private
+// key, which the OAEP rows use at every size and the 3072- and 4096-bit
+// private-signing rows reuse.
+const RSA2048_OAEP_SHA256: &str = include_str!("../testdata/rsa/wycheproof/rsa_oaep_2048_sha256_mgf1sha256_test.json");
+const RSA3072_OAEP_SHA256: &str = include_str!("../testdata/rsa/wycheproof/rsa_oaep_3072_sha256_mgf1sha256_test.json");
+const RSA4096_OAEP_SHA256: &str = include_str!("../testdata/rsa/wycheproof/rsa_oaep_4096_sha256_mgf1sha256_test.json");
+/// Wycheproof test with a 32-byte message, an empty label, and a valid
+/// ciphertext in each OAEP-SHA256 document: a symmetric-key transport shape.
+const OAEP_VECTOR_TC_ID: u64 = 7;
+const OAEP_MESSAGE_LEN: usize = 32;
+const OAEP_LABEL: &[u8] = b"";
+
 #[cfg(feature = "getrandom")]
 struct GetrandomRng;
 
@@ -100,6 +132,62 @@ impl RustCryptoRngCore for GetrandomRng {
 
 #[cfg(feature = "getrandom")]
 impl RustCryptoCryptoRng for GetrandomRng {}
+
+/// Deterministic SHA-256 counter-mode byte stream.
+///
+/// Untimed fixture input, not an entropy source. It gives RustCrypto key
+/// generation a reproducible stream, and it derives the fixed OAEP seed that
+/// the `caller-entropy` encryption row copies and an untimed check replays
+/// through RustCrypto.
+struct SeededRng {
+  seed: [u8; 32],
+  counter: u64,
+  block: [u8; 32],
+  used: usize,
+}
+
+impl SeededRng {
+  fn new(label: &[u8]) -> Self {
+    Self {
+      seed: <sha2_010::Sha256 as sha2_010::Digest>::digest(label).into(),
+      counter: 0,
+      block: [0; 32],
+      used: 32,
+    }
+  }
+}
+
+impl RustCryptoRngCore for SeededRng {
+  fn next_u32(&mut self) -> u32 {
+    rsa::rand_core::impls::next_u32_via_fill(self)
+  }
+
+  fn next_u64(&mut self) -> u64 {
+    rsa::rand_core::impls::next_u64_via_fill(self)
+  }
+
+  fn fill_bytes(&mut self, dest: &mut [u8]) {
+    for byte in dest {
+      if self.used == self.block.len() {
+        let mut hasher = <sha2_010::Sha256 as sha2_010::Digest>::new();
+        sha2_010::Digest::update(&mut hasher, self.seed);
+        sha2_010::Digest::update(&mut hasher, self.counter.to_be_bytes());
+        self.block = sha2_010::Digest::finalize(hasher).into();
+        self.counter = self.counter.strict_add(1);
+        self.used = 0;
+      }
+      *byte = self.block[self.used];
+      self.used = self.used.strict_add(1);
+    }
+  }
+
+  fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), RustCryptoRngError> {
+    self.fill_bytes(dest);
+    Ok(())
+  }
+}
+
+impl RustCryptoCryptoRng for SeededRng {}
 
 fn hex_to_vec(hex: &str) -> Vec<u8> {
   let mut out = Vec::with_capacity(hex.len() / 2);
@@ -323,6 +411,78 @@ fn rsa2048_private_key() -> RsaPrivateKey {
   .expect("valid RSA private benchmark fixture must succeed")
 }
 
+/// RSA-2048 keys need the legacy policy; larger keys use the modern default.
+fn key_policy(bits: usize) -> RsaPublicKeyPolicy {
+  if bits < 3072 {
+    RsaPublicKeyPolicy::legacy_verification()
+  } else {
+    RsaPublicKeyPolicy::modern_verification()
+  }
+}
+
+/// A Wycheproof RSAES-OAEP-SHA256 private key and one valid vector.
+struct OaepFixture {
+  private_key_pkcs8: Vec<u8>,
+  message: Vec<u8>,
+  ciphertext: Vec<u8>,
+}
+
+impl OaepFixture {
+  fn parse(document: &str, bits: usize) -> Self {
+    let document: serde_json::Value =
+      serde_json::from_str(document).expect("Wycheproof RSA-OAEP fixture must be valid JSON");
+    let group = &document["testGroups"][0];
+    assert_eq!(group["keySize"], bits, "Wycheproof RSA-OAEP fixture has the wrong size");
+    assert_eq!(
+      group["sha"], "SHA-256",
+      "Wycheproof RSA-OAEP fixture has the wrong hash"
+    );
+    assert_eq!(
+      group["mgfSha"], "SHA-256",
+      "Wycheproof RSA-OAEP fixture has the wrong MGF1 hash"
+    );
+    let test = group["tests"]
+      .as_array()
+      .expect("Wycheproof RSA-OAEP fixture must list tests")
+      .iter()
+      .find(|test| test["tcId"] == OAEP_VECTOR_TC_ID)
+      .expect("Wycheproof RSA-OAEP fixture must contain the benchmark vector");
+    assert_eq!(
+      test["result"], "valid",
+      "Wycheproof RSA-OAEP benchmark vector must be valid"
+    );
+    assert_eq!(
+      test["label"], "",
+      "Wycheproof RSA-OAEP benchmark vector must have an empty label"
+    );
+    let hex = |value: &serde_json::Value| {
+      hex_to_vec(
+        value
+          .as_str()
+          .expect("Wycheproof RSA-OAEP fixture fields must be hex strings"),
+      )
+    };
+    let message = hex(&test["msg"]);
+    assert_eq!(
+      message.len(),
+      OAEP_MESSAGE_LEN,
+      "Wycheproof RSA-OAEP benchmark message length"
+    );
+    Self {
+      private_key_pkcs8: hex(&group["privateKeyPkcs8"]),
+      message,
+      ciphertext: hex(&test["ct"]),
+    }
+  }
+
+  fn private_key(&self, bits: usize) -> RsaPrivateKey {
+    let key = RsaPrivateKey::from_pkcs8_der_with_policy(&self.private_key_pkcs8, &key_policy(bits))
+      .expect("Wycheproof RSA private key must import");
+    assert_eq!(key.public_key().modulus_bits(), bits);
+    key
+  }
+}
+
 fn factor_two_and_inverse(modulus: &[u8]) -> (Vec<u8>, Vec<u8>) {
   let mut factor = vec![0u8; modulus.len()];
   factor[modulus.len().strict_sub(1)] = 2;
@@ -345,26 +505,145 @@ fn factor_two_and_inverse(modulus: &[u8]) -> (Vec<u8>, Vec<u8>) {
 }
 
 fn rsa_private_signing(c: &mut Criterion) {
-  if !bench_config::selected("rsa-2048-private-signing") {
+  rsa_private_signing_for_size(c, 2048, rsa2048_private_key);
+  rsa_private_signing_for_size(c, 3072, || {
+    OaepFixture::parse(RSA3072_OAEP_SHA256, 3072).private_key(3072)
+  });
+  rsa_private_signing_for_size(c, 4096, || {
+    OaepFixture::parse(RSA4096_OAEP_SHA256, 4096).private_key(4096)
+  });
+}
+
+/// Verify a PSS-SHA256 signature over [`PRIVATE_SIGNING_MESSAGE`] with rscrypto
+/// and RustCrypto.
+fn assert_private_pss_signature(key: &RsaPrivateKey, rustcrypto: &RustCryptoRsaPublicKey, signature: &[u8]) {
+  key
+    .public_key()
+    .verify_pss(RsaPssProfile::Sha256, PRIVATE_SIGNING_MESSAGE, signature)
+    .expect("rscrypto must verify the RSA-PSS benchmark signature");
+  RustCryptoPssVerifyingKey::<sha2_010::Sha256>::new(rustcrypto.clone())
+    .verify(
+      PRIVATE_SIGNING_MESSAGE,
+      &RustCryptoPssSignature::try_from(signature).expect("RSA-PSS benchmark signature must have the modulus length"),
+    )
+    .expect("RustCrypto must verify the RSA-PSS benchmark signature");
+}
+
+fn rsa_private_signing_for_size(c: &mut Criterion, bits: usize, load_key: impl FnOnce() -> RsaPrivateKey) {
+  let name = format!("rsa-{bits}-private-signing");
+  if !bench_config::selected(&format!("{name}/")) {
     return;
   }
-  let key = rsa2048_private_key();
+  let key = load_key();
   let mut scratch = key.private_scratch();
   let mut signature = vec![0u8; key.signature_len()];
   let salt = [0x5au8; Sha256::OUTPUT_SIZE];
   let (factor, inverse) = factor_two_and_inverse(key.public_key().modulus());
-  #[cfg(feature = "getrandom")]
-  let rustcrypto_signing_key = {
+  let rustcrypto_private_key = {
     let private_key_der = key.to_pkcs1_der();
     let mut private_key = RustCryptoRsaPrivateKey::from_pkcs1_der(&private_key_der)
       .expect("RustCrypto must import the RSA private benchmark fixture");
     private_key
       .precompute()
       .expect("RustCrypto must precompute the RSA private benchmark fixture");
-    RustCryptoBlindedPssSigningKey::<rsa::sha2::Sha256>::new(private_key)
+    private_key
   };
+  let rustcrypto_public_key = rustcrypto_private_key.to_public_key();
+  #[cfg(feature = "getrandom")]
+  let rustcrypto_signing_key = RustCryptoBlindedPssSigningKey::<rsa::sha2::Sha256>::new(rustcrypto_private_key.clone());
 
-  let mut group = c.benchmark_group("rsa-2048-private-signing");
+  // Untimed checks of every signing call timed below. The fixed-entropy and
+  // caller-entropy rows supply the same salt, so their four PSS signatures are
+  // identical. PKCS #1 v1.5 is deterministic, so rscrypto must match
+  // RustCrypto byte for byte.
+  let mut expected = vec![0u8; key.signature_len()];
+  key
+    .sign_pss_with_salt_and_blinding_factor_and_scratch(
+      RsaPssProfile::Sha256,
+      PRIVATE_SIGNING_MESSAGE,
+      &salt,
+      RsaBlindingPair::new(&factor, &inverse),
+      &mut expected,
+      &mut scratch,
+    )
+    .expect("valid scratch-backed RSA-PSS benchmark signing must succeed");
+  assert_private_pss_signature(&key, &rustcrypto_public_key, &expected);
+  key
+    .sign_pss_with_salt_and_blinding_factor(
+      RsaPssProfile::Sha256,
+      PRIVATE_SIGNING_MESSAGE,
+      &salt,
+      RsaBlindingPair::new(&factor, &inverse),
+      &mut signature,
+    )
+    .expect("valid one-shot RSA-PSS benchmark signing must succeed");
+  assert_eq!(signature, expected, "one-shot fixed-entropy RSA-PSS signature");
+  let fixed_fill = |out: &mut [u8]| {
+    if out.len() == salt.len() {
+      out.copy_from_slice(&salt);
+    } else {
+      out.copy_from_slice(&factor);
+    }
+    Ok::<(), ()>(())
+  };
+  key
+    .sign_pss_with_random_fill_and_scratch(
+      RsaPssProfile::Sha256,
+      PRIVATE_SIGNING_MESSAGE,
+      &mut signature,
+      &mut scratch,
+      fixed_fill,
+    )
+    .expect("valid caller-random scratch-backed RSA-PSS benchmark signing must succeed");
+  assert_eq!(signature, expected, "scratch-backed caller-entropy RSA-PSS signature");
+  key
+    .sign_pss_with_random_fill(
+      RsaPssProfile::Sha256,
+      PRIVATE_SIGNING_MESSAGE,
+      &mut signature,
+      fixed_fill,
+    )
+    .expect("valid caller-random one-shot RSA-PSS benchmark signing must succeed");
+  assert_eq!(signature, expected, "one-shot caller-entropy RSA-PSS signature");
+  key
+    .sign_pkcs1v15_with_blinding_factor_and_scratch(
+      RsaPkcs1v15Profile::Sha256,
+      PRIVATE_SIGNING_MESSAGE,
+      RsaBlindingPair::new(&factor, &inverse),
+      &mut signature,
+      &mut scratch,
+    )
+    .expect("valid scratch-backed RSA-PKCS1-v1_5 benchmark signing must succeed");
+  let rustcrypto_pkcs1v15 = RustCryptoPkcs1v15SigningKey::<sha2_010::Sha256>::new(rustcrypto_private_key)
+    .try_sign(PRIVATE_SIGNING_MESSAGE)
+    .expect("RustCrypto RSA-PKCS1-v1_5 signing must succeed");
+  assert_eq!(
+    signature,
+    rustcrypto_pkcs1v15.to_vec(),
+    "RSA-PKCS1-v1_5 signature must match RustCrypto"
+  );
+  #[cfg(feature = "getrandom")]
+  {
+    key
+      .sign_pss_with_scratch(
+        RsaPssProfile::Sha256,
+        PRIVATE_SIGNING_MESSAGE,
+        &mut signature,
+        &mut scratch,
+      )
+      .expect("valid OS-random scratch-backed RSA-PSS benchmark signing must succeed");
+    assert_private_pss_signature(&key, &rustcrypto_public_key, &signature);
+    key
+      .sign_pss(RsaPssProfile::Sha256, PRIVATE_SIGNING_MESSAGE, &mut signature)
+      .expect("valid OS-random one-shot RSA-PSS benchmark signing must succeed");
+    assert_private_pss_signature(&key, &rustcrypto_public_key, &signature);
+    let rustcrypto_signature = rustcrypto_signing_key
+      .try_sign_with_rng(&mut GetrandomRng, PRIVATE_SIGNING_MESSAGE)
+      .expect("valid RustCrypto RSA-PSS benchmark signing must succeed");
+    assert_private_pss_signature(&key, &rustcrypto_public_key, &rustcrypto_signature.to_vec());
+  }
+
+  let mut group = c.benchmark_group(name);
   #[cfg(all(rscrypto_internal, feature = "diag"))]
   {
     let mut inverse_scratch = key.private_scratch();
@@ -497,6 +776,464 @@ fn rsa_private_signing(c: &mut Criterion) {
         .expect("valid RustCrypto RSA-PSS benchmark signing must succeed")
     })
   });
+  group.finish();
+}
+
+fn rsa_oaep(c: &mut Criterion) {
+  rsa_oaep_for_size(c, 2048, RSA2048_OAEP_SHA256);
+  rsa_oaep_for_size(c, 3072, RSA3072_OAEP_SHA256);
+  rsa_oaep_for_size(c, 4096, RSA4096_OAEP_SHA256);
+}
+
+/// rscrypto RSA-OAEP-SHA256 decryption with the fixed blinding pair, for
+/// untimed checks of other libraries' ciphertexts.
+fn rscrypto_oaep_plaintext(key: &RsaPrivateKey, ciphertext: &[u8]) -> Vec<u8> {
+  let (factor, inverse) = factor_two_and_inverse(key.public_key().modulus());
+  let mut out = vec![0u8; key.signature_len()];
+  let len = key
+    .decrypt_oaep_with_blinding_factor(
+      RsaOaepProfile::Sha256,
+      OAEP_LABEL,
+      ciphertext,
+      RsaBlindingPair::new(&factor, &inverse),
+      &mut out,
+    )
+    .expect("rscrypto must decrypt the RSA-OAEP benchmark ciphertext");
+  out.truncate(len);
+  out
+}
+
+/// RSAES-OAEP with SHA-256 for the label hash and MGF1, an empty label, and
+/// the 32-byte Wycheproof message.
+///
+/// Encryption rows time encoding, the seed fill, and the public operation.
+/// Decryption rows decrypt the Wycheproof ciphertext and time blinding, the
+/// private operation, and decoding. RustCrypto returns a new `Vec`, and
+/// aws-lc-rs builds an `EVP_PKEY_CTX` on every call; both stay timed because
+/// they are part of those APIs. rscrypto and RustCrypto draw a fresh blinding
+/// factor for every decryption. AWS-LC caches a blinding pair per key, squares
+/// it between uses, and draws a fresh one every 32 uses.
+fn rsa_oaep_for_size(c: &mut Criterion, bits: usize, document: &str) {
+  let name = format!("rsa-{bits}-oaep-sha256");
+  if !bench_config::selected(&format!("{name}/")) {
+    return;
+  }
+  let fixture = OaepFixture::parse(document, bits);
+  let message = fixture.message.as_slice();
+  let key = fixture.private_key(bits);
+  let public_key = key.public_key();
+  let mut public_scratch = public_key.public_scratch();
+  let mut private_scratch = key.private_scratch();
+  let mut ciphertext = vec![0u8; public_key.modulus().len()];
+  let mut plaintext = vec![0u8; public_key.modulus().len()];
+  let (factor, inverse) = factor_two_and_inverse(public_key.modulus());
+  let seed_label = format!("{name} caller seed");
+  let mut seed = [0u8; Sha256::OUTPUT_SIZE];
+  SeededRng::new(seed_label.as_bytes()).fill_bytes(&mut seed);
+
+  let rustcrypto_private_key = RustCryptoRsaPrivateKey::from_pkcs8_der(&fixture.private_key_pkcs8)
+    .expect("RustCrypto must import the Wycheproof RSA private key");
+  let rustcrypto_encrypting_key =
+    RustCryptoOaepEncryptingKey::<sha2_010::Sha256>::new(rustcrypto_private_key.to_public_key());
+  let rustcrypto_decrypting_key = RustCryptoOaepDecryptingKey::<sha2_010::Sha256>::new(rustcrypto_private_key);
+  aws_lc_bench! {
+    let aws_encrypting_key = aws_rsa::OaepPublicEncryptingKey::new(
+      aws_rsa::PublicEncryptingKey::from_der(&public_key.to_spki_der())
+        .expect("aws-lc-rs must import the RSA public key"),
+    )
+    .expect("aws-lc-rs must build the RSA-OAEP public key");
+    let aws_decrypting_key = aws_rsa::OaepPrivateDecryptingKey::new(
+      aws_rsa::PrivateDecryptingKey::from_pkcs8(&fixture.private_key_pkcs8)
+        .expect("aws-lc-rs must import the Wycheproof RSA private key"),
+    )
+    .expect("aws-lc-rs must build the RSA-OAEP private key");
+    let mut aws_ciphertext = vec![0u8; aws_encrypting_key.ciphertext_size()];
+    let mut aws_plaintext = vec![0u8; aws_decrypting_key.min_output_size()];
+  }
+
+  // Untimed checks of every call timed below. Each decryptor recovers the
+  // Wycheproof message from the Wycheproof ciphertext. Each rscrypto
+  // ciphertext decrypts with RustCrypto and aws-lc-rs, and each comparison
+  // ciphertext decrypts with rscrypto. With the same seed bytes, rscrypto and
+  // RustCrypto produce the same ciphertext.
+  let assert_decrypts_elsewhere = |candidate: &[u8]| {
+    assert_eq!(
+      rustcrypto_decrypting_key
+        .decrypt(candidate)
+        .expect("RustCrypto must decrypt the rscrypto RSA-OAEP ciphertext"),
+      message,
+      "RustCrypto decryption of an rscrypto RSA-OAEP ciphertext"
+    );
+    aws_lc_bench! {
+      let mut out = vec![0u8; aws_decrypting_key.min_output_size()];
+      let recovered = aws_decrypting_key
+        .decrypt(&aws_rsa::OAEP_SHA256_MGF1SHA256, candidate, &mut out, None)
+        .expect("aws-lc-rs must decrypt the rscrypto RSA-OAEP ciphertext");
+      assert_eq!(&*recovered, message, "aws-lc-rs decryption of an rscrypto RSA-OAEP ciphertext");
+    }
+  };
+  let len = key
+    .decrypt_oaep_with_blinding_factor_and_scratch(
+      RsaOaepProfile::Sha256,
+      OAEP_LABEL,
+      &fixture.ciphertext,
+      RsaBlindingPair::new(&factor, &inverse),
+      &mut plaintext,
+      &mut private_scratch,
+    )
+    .expect("valid fixed-blinding RSA-OAEP benchmark decryption must succeed");
+  assert_eq!(&plaintext[..len], message, "fixed-blinding RSA-OAEP decryption");
+  public_key
+    .encrypt_oaep_with_random_fill_and_scratch(
+      RsaOaepProfile::Sha256,
+      OAEP_LABEL,
+      message,
+      &mut ciphertext,
+      &mut public_scratch,
+      |out| {
+        out.copy_from_slice(&seed);
+        Ok(())
+      },
+    )
+    .expect("valid caller-random RSA-OAEP benchmark encryption must succeed");
+  let replayed = rustcrypto_encrypting_key
+    .encrypt_with_rng(&mut SeededRng::new(seed_label.as_bytes()), message)
+    .expect("RustCrypto RSA-OAEP encryption must succeed");
+  assert_eq!(ciphertext, replayed, "RSA-OAEP ciphertexts from the same seed");
+  assert_decrypts_elsewhere(&ciphertext);
+  assert_eq!(
+    rscrypto_oaep_plaintext(&key, &replayed),
+    message,
+    "rscrypto decryption of a RustCrypto RSA-OAEP ciphertext"
+  );
+  #[cfg(feature = "getrandom")]
+  {
+    let len = key
+      .decrypt_oaep_with_scratch(
+        RsaOaepProfile::Sha256,
+        OAEP_LABEL,
+        &fixture.ciphertext,
+        &mut plaintext,
+        &mut private_scratch,
+      )
+      .expect("valid OS-random scratch-backed RSA-OAEP benchmark decryption must succeed");
+    assert_eq!(
+      &plaintext[..len],
+      message,
+      "OS-random scratch-backed RSA-OAEP decryption"
+    );
+    let len = key
+      .decrypt_oaep(RsaOaepProfile::Sha256, OAEP_LABEL, &fixture.ciphertext, &mut plaintext)
+      .expect("valid OS-random one-shot RSA-OAEP benchmark decryption must succeed");
+    assert_eq!(&plaintext[..len], message, "OS-random one-shot RSA-OAEP decryption");
+    assert_eq!(
+      rustcrypto_decrypting_key
+        .decrypt_with_rng(&mut GetrandomRng, &fixture.ciphertext)
+        .expect("valid RustCrypto RSA-OAEP benchmark decryption must succeed"),
+      message,
+      "RustCrypto blinded RSA-OAEP decryption"
+    );
+    public_key
+      .encrypt_oaep_with_scratch(
+        RsaOaepProfile::Sha256,
+        OAEP_LABEL,
+        message,
+        &mut ciphertext,
+        &mut public_scratch,
+      )
+      .expect("valid OS-random scratch-backed RSA-OAEP benchmark encryption must succeed");
+    assert_decrypts_elsewhere(&ciphertext);
+    public_key
+      .encrypt_oaep(RsaOaepProfile::Sha256, OAEP_LABEL, message, &mut ciphertext)
+      .expect("valid OS-random one-shot RSA-OAEP benchmark encryption must succeed");
+    assert_decrypts_elsewhere(&ciphertext);
+    let rustcrypto_ciphertext = rustcrypto_encrypting_key
+      .encrypt_with_rng(&mut GetrandomRng, message)
+      .expect("valid RustCrypto RSA-OAEP benchmark encryption must succeed");
+    assert_eq!(
+      rscrypto_oaep_plaintext(&key, &rustcrypto_ciphertext),
+      message,
+      "rscrypto decryption of a RustCrypto RSA-OAEP ciphertext"
+    );
+  }
+  aws_lc_bench! {
+    let recovered = aws_decrypting_key
+      .decrypt(&aws_rsa::OAEP_SHA256_MGF1SHA256, &fixture.ciphertext, &mut aws_plaintext, None)
+      .expect("valid aws-lc-rs RSA-OAEP benchmark decryption must succeed");
+    assert_eq!(&*recovered, message, "aws-lc-rs RSA-OAEP decryption");
+    let encrypted = aws_encrypting_key
+      .encrypt(&aws_rsa::OAEP_SHA256_MGF1SHA256, message, &mut aws_ciphertext, None)
+      .expect("valid aws-lc-rs RSA-OAEP benchmark encryption must succeed");
+    assert_eq!(
+      rscrypto_oaep_plaintext(&key, encrypted),
+      message,
+      "rscrypto decryption of an aws-lc-rs RSA-OAEP ciphertext"
+    );
+  }
+
+  let mut group = c.benchmark_group(format!("{name}/encrypt"));
+  group.bench_function("caller-entropy-scratch-rscrypto", |b| {
+    b.iter(|| {
+      public_key
+        .encrypt_oaep_with_random_fill_and_scratch(
+          RsaOaepProfile::Sha256,
+          black_box(OAEP_LABEL),
+          black_box(message),
+          black_box(&mut ciphertext),
+          black_box(&mut public_scratch),
+          |out| {
+            out.copy_from_slice(black_box(&seed));
+            Ok(())
+          },
+        )
+        .expect("valid caller-random RSA-OAEP benchmark encryption must succeed")
+    })
+  });
+  #[cfg(feature = "getrandom")]
+  group.bench_function("os-entropy-scratch-rscrypto", |b| {
+    b.iter(|| {
+      public_key
+        .encrypt_oaep_with_scratch(
+          RsaOaepProfile::Sha256,
+          black_box(OAEP_LABEL),
+          black_box(message),
+          black_box(&mut ciphertext),
+          black_box(&mut public_scratch),
+        )
+        .expect("valid OS-random scratch-backed RSA-OAEP benchmark encryption must succeed")
+    })
+  });
+  #[cfg(feature = "getrandom")]
+  group.bench_function("os-entropy-oneshot-rscrypto", |b| {
+    b.iter(|| {
+      public_key
+        .encrypt_oaep(
+          RsaOaepProfile::Sha256,
+          black_box(OAEP_LABEL),
+          black_box(message),
+          black_box(&mut ciphertext),
+        )
+        .expect("valid OS-random one-shot RSA-OAEP benchmark encryption must succeed")
+    })
+  });
+  #[cfg(feature = "getrandom")]
+  group.bench_function("os-entropy-oneshot-rustcrypto", |b| {
+    let mut rng = GetrandomRng;
+    b.iter(|| {
+      black_box(&rustcrypto_encrypting_key)
+        .encrypt_with_rng(&mut rng, black_box(message))
+        .expect("valid RustCrypto RSA-OAEP benchmark encryption must succeed")
+    })
+  });
+  aws_lc_bench! {
+    group.bench_function("internal-drbg-oneshot-aws-lc-rs", |b| {
+      b.iter(|| {
+        let encrypted = aws_encrypting_key
+          .encrypt(
+            &aws_rsa::OAEP_SHA256_MGF1SHA256,
+            black_box(message),
+            black_box(&mut aws_ciphertext),
+            None,
+          )
+          .expect("valid aws-lc-rs RSA-OAEP benchmark encryption must succeed");
+        black_box(encrypted);
+      })
+    });
+  }
+  group.finish();
+
+  let mut group = c.benchmark_group(format!("{name}/decrypt"));
+  group.bench_function("fixed-entropy-scratch-rscrypto", |b| {
+    b.iter(|| {
+      key
+        .decrypt_oaep_with_blinding_factor_and_scratch(
+          RsaOaepProfile::Sha256,
+          black_box(OAEP_LABEL),
+          black_box(&fixture.ciphertext),
+          RsaBlindingPair::new(black_box(&factor), black_box(&inverse)),
+          black_box(&mut plaintext),
+          black_box(&mut private_scratch),
+        )
+        .expect("valid fixed-blinding RSA-OAEP benchmark decryption must succeed")
+    })
+  });
+  #[cfg(feature = "getrandom")]
+  group.bench_function("os-entropy-scratch-rscrypto", |b| {
+    b.iter(|| {
+      key
+        .decrypt_oaep_with_scratch(
+          RsaOaepProfile::Sha256,
+          black_box(OAEP_LABEL),
+          black_box(&fixture.ciphertext),
+          black_box(&mut plaintext),
+          black_box(&mut private_scratch),
+        )
+        .expect("valid OS-random scratch-backed RSA-OAEP benchmark decryption must succeed")
+    })
+  });
+  #[cfg(feature = "getrandom")]
+  group.bench_function("os-entropy-oneshot-rscrypto", |b| {
+    b.iter(|| {
+      key
+        .decrypt_oaep(
+          RsaOaepProfile::Sha256,
+          black_box(OAEP_LABEL),
+          black_box(&fixture.ciphertext),
+          black_box(&mut plaintext),
+        )
+        .expect("valid OS-random one-shot RSA-OAEP benchmark decryption must succeed")
+    })
+  });
+  #[cfg(feature = "getrandom")]
+  group.bench_function("os-entropy-oneshot-blinded-rustcrypto", |b| {
+    let mut rng = GetrandomRng;
+    b.iter(|| {
+      black_box(&rustcrypto_decrypting_key)
+        .decrypt_with_rng(&mut rng, black_box(&fixture.ciphertext))
+        .expect("valid RustCrypto RSA-OAEP benchmark decryption must succeed")
+    })
+  });
+  aws_lc_bench! {
+    group.bench_function("internal-drbg-oneshot-blinded-aws-lc-rs", |b| {
+      b.iter(|| {
+        let recovered = aws_decrypting_key
+          .decrypt(
+            &aws_rsa::OAEP_SHA256_MGF1SHA256,
+            black_box(&fixture.ciphertext),
+            black_box(&mut aws_plaintext),
+            None,
+          )
+          .expect("valid aws-lc-rs RSA-OAEP benchmark decryption must succeed");
+        black_box(recovered);
+      })
+    });
+  }
+  group.finish();
+}
+
+#[cfg(feature = "getrandom")]
+fn rsa_keygen(c: &mut Criterion) {
+  for bits in [2048, 3072, 4096] {
+    rsa_keygen_for_size(c, bits);
+  }
+}
+
+/// Check a generated public key's size and exponent with rscrypto, and verify
+/// its RSA-PKCS1-v1_5-SHA256 signature over [`PRIVATE_SIGNING_MESSAGE`].
+#[cfg(feature = "getrandom")]
+fn assert_generated_public_key(bits: usize, public_key_pkcs1: &[u8], signature: &[u8]) {
+  let key = RsaPublicKey::from_pkcs1_der_with_policy(public_key_pkcs1, &key_policy(bits))
+    .expect("rscrypto must import the generated RSA public key");
+  assert_eq!(key.modulus_bits(), bits, "generated RSA modulus size");
+  assert_eq!(key.public_exponent().as_u64(), 65_537, "generated RSA public exponent");
+  key
+    .verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, PRIVATE_SIGNING_MESSAGE, signature)
+    .expect("rscrypto must verify a signature from the generated RSA key");
+}
+
+/// Key generation with public exponent 65537.
+///
+/// Prime search makes the cost of each key vary widely. Flat sampling runs the
+/// same number of generations in every sample, so each estimate is a mean over
+/// at least `sample_size` keys; read its spread before comparing rows. The
+/// rscrypto and aws-lc-rs APIs take no RNG, so their keys differ between runs.
+/// RustCrypto draws from one [`SeededRng`] stream, so runs with the same
+/// iteration counts generate the same keys. Timing includes each library's key
+/// checks, CRT precomputation, and destruction. RSA-2048 is a legacy size for
+/// rscrypto, so every size calls `generate_with_policy`;
+/// `RsaPrivateKey::generate` is that call with the modern policy.
+#[cfg(feature = "getrandom")]
+fn rsa_keygen_for_size(c: &mut Criterion, bits: usize) {
+  use rsa::pkcs1::EncodeRsaPublicKey as _;
+
+  let name = format!("rsa-{bits}-keygen");
+  if !bench_config::selected(&format!("{name}/")) {
+    return;
+  }
+  let policy = key_policy(bits);
+  let mut rustcrypto_rng = SeededRng::new(name.as_bytes());
+
+  // Untimed checks: one key from each library has the requested size and
+  // exponent, and signs a message that a different library verifies.
+  let key = RsaPrivateKey::generate_with_policy(bits, &policy).expect("rscrypto RSA key generation must succeed");
+  assert_eq!(key.public_key().modulus_bits(), bits, "rscrypto RSA modulus size");
+  assert_eq!(
+    key.public_key().public_exponent().as_u64(),
+    65_537,
+    "rscrypto RSA public exponent"
+  );
+  let mut signature = vec![0u8; key.signature_len()];
+  key
+    .sign_pkcs1v15(RsaPkcs1v15Profile::Sha256, PRIVATE_SIGNING_MESSAGE, &mut signature)
+    .expect("a generated rscrypto RSA key must sign");
+  RustCryptoPkcs1v15VerifyingKey::<sha2_010::Sha256>::new(
+    RustCryptoRsaPublicKey::from_public_key_der(&key.public_key().to_spki_der())
+      .expect("RustCrypto must import the generated rscrypto RSA public key"),
+  )
+  .verify(
+    PRIVATE_SIGNING_MESSAGE,
+    &RustCryptoPkcs1v15Signature::try_from(signature.as_slice()).expect("RSA signature must have the modulus length"),
+  )
+  .expect("RustCrypto must verify a signature from a generated rscrypto RSA key");
+  let rustcrypto_key =
+    RustCryptoRsaPrivateKey::new(&mut rustcrypto_rng, bits).expect("RustCrypto RSA key generation must succeed");
+  let rustcrypto_signature = RustCryptoPkcs1v15SigningKey::<sha2_010::Sha256>::new(rustcrypto_key.clone())
+    .try_sign(PRIVATE_SIGNING_MESSAGE)
+    .expect("a generated RustCrypto RSA key must sign");
+  assert_generated_public_key(
+    bits,
+    rustcrypto_key
+      .to_public_key()
+      .to_pkcs1_der()
+      .expect("RustCrypto must encode the generated RSA public key")
+      .as_bytes(),
+    &rustcrypto_signature.to_vec(),
+  );
+  aws_lc_bench! {
+    use aws_signature::KeyPair as _;
+
+    let aws_size = [aws_rsa::KeySize::Rsa2048, aws_rsa::KeySize::Rsa3072, aws_rsa::KeySize::Rsa4096]
+      .into_iter()
+      .find(|size| size.len() == bits / 8)
+      .expect("aws-lc-rs must support the RSA key size");
+    let aws_key = aws_rsa::KeyPair::generate(aws_size).expect("aws-lc-rs RSA key generation must succeed");
+    let mut aws_key_signature = vec![0u8; aws_key.public_modulus_len()];
+    aws_key
+      .sign(
+        &aws_signature::RSA_PKCS1_SHA256,
+        &aws_lc_rs::rand::SystemRandom::new(),
+        PRIVATE_SIGNING_MESSAGE,
+        &mut aws_key_signature,
+      )
+      .expect("a generated aws-lc-rs RSA key must sign");
+    assert_generated_public_key(bits, aws_key.public_key().as_ref(), &aws_key_signature);
+  }
+
+  let mut group = c.benchmark_group(name);
+  group.sampling_mode(criterion::SamplingMode::Flat);
+  group.bench_function("os-entropy-rscrypto", |b| {
+    b.iter(|| {
+      black_box(
+        RsaPrivateKey::generate_with_policy(black_box(bits), &policy)
+          .expect("rscrypto RSA key generation must succeed"),
+      )
+    })
+  });
+  group.bench_function("seeded-rng-rustcrypto", |b| {
+    b.iter(|| {
+      black_box(
+        RustCryptoRsaPrivateKey::new(&mut rustcrypto_rng, black_box(bits))
+          .expect("RustCrypto RSA key generation must succeed"),
+      )
+    })
+  });
+  aws_lc_bench! {
+    group.bench_function("internal-drbg-aws-lc-rs", |b| {
+      b.iter(|| {
+        black_box(aws_rsa::KeyPair::generate(black_box(aws_size)).expect("aws-lc-rs RSA key generation must succeed"))
+      })
+    });
+  }
   group.finish();
 }
 
@@ -1168,5 +1905,9 @@ fn main() {
     rsa_hash_components,
     #[cfg(all(rscrypto_internal, feature = "diag"))]
     rsa_montgomery_thresholds,
+    rsa_oaep,
+    // Key generation runs last: it is the most expensive and variable target.
+    #[cfg(feature = "getrandom")]
+    rsa_keygen,
   ]);
 }

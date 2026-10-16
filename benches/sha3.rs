@@ -44,40 +44,81 @@ sha3_oneshot!(sha3_256, "sha3-256", rscrypto::Sha3_256, sha3::Sha3_256);
 sha3_oneshot!(sha3_384, "sha3-384", rscrypto::Sha3_384, sha3::Sha3_384);
 sha3_oneshot!(sha3_512, "sha3-512", rscrypto::Sha3_512, sha3::Sha3_512);
 
-fn sha3_256_streaming(c: &mut Criterion) {
-  if !bench_config::selected("sha3-256/streaming") {
-    return;
-  }
-  let data = common::random_bytes(1048576);
-  let mut g = c.benchmark_group("sha3-256/streaming");
-  g.throughput(criterion::Throughput::Bytes(data.len() as u64));
-
-  for chunk_size in [64, 4096] {
-    g.bench_function(format!("rscrypto/{chunk_size}B"), |b| {
-      b.iter(|| {
+/// Streams 1 MiB in fixed-size chunks. Before timing, each chunk size checks
+/// that the rscrypto and sha3 rows produce the same digest.
+macro_rules! sha3_streaming {
+  ($fn_name:ident, $group:literal, $ours:ty, $theirs:ty) => {
+    fn $fn_name(c: &mut Criterion) {
+      if !bench_config::selected($group) {
+        return;
+      }
+      let data = common::random_bytes(1048576);
+      let rscrypto_digest = |chunk_size: usize| {
         use rscrypto::Digest;
-        let mut h = rscrypto::Sha3_256::new();
+        let mut h = <$ours>::new();
         for chunk in data.chunks(chunk_size) {
           h.update(black_box(chunk));
         }
-        black_box(h.finalize())
-      })
-    });
-
-    g.bench_function(format!("sha3/{chunk_size}B"), |b| {
-      b.iter(|| {
+        h.finalize()
+      };
+      let sha3_digest = |chunk_size: usize| {
         use sha3::Digest;
-        let mut h = sha3::Sha3_256::new();
+        let mut h = <$theirs>::new();
         for chunk in data.chunks(chunk_size) {
           h.update(black_box(chunk));
         }
-        black_box(h.finalize())
-      })
-    });
-  }
+        h.finalize()
+      };
 
-  g.finish();
+      let mut g = c.benchmark_group($group);
+      g.throughput(criterion::Throughput::Bytes(data.len() as u64));
+
+      for chunk_size in [64, 4096] {
+        assert_eq!(
+          rscrypto_digest(chunk_size).as_ref(),
+          sha3_digest(chunk_size).as_slice(),
+          "{}/{chunk_size}B: rscrypto digest must match sha3",
+          $group
+        );
+
+        g.bench_function(format!("rscrypto/{chunk_size}B"), |b| {
+          b.iter(|| black_box(rscrypto_digest(chunk_size)))
+        });
+
+        g.bench_function(format!("sha3/{chunk_size}B"), |b| {
+          b.iter(|| black_box(sha3_digest(chunk_size)))
+        });
+      }
+
+      g.finish();
+    }
+  };
 }
+
+sha3_streaming!(
+  sha3_224_streaming,
+  "sha3-224/streaming",
+  rscrypto::Sha3_224,
+  sha3::Sha3_224
+);
+sha3_streaming!(
+  sha3_256_streaming,
+  "sha3-256/streaming",
+  rscrypto::Sha3_256,
+  sha3::Sha3_256
+);
+sha3_streaming!(
+  sha3_384_streaming,
+  "sha3-384/streaming",
+  rscrypto::Sha3_384,
+  sha3::Sha3_384
+);
+sha3_streaming!(
+  sha3_512_streaming,
+  "sha3-512/streaming",
+  rscrypto::Sha3_512,
+  sha3::Sha3_512
+);
 
 fn shake128(c: &mut Criterion) {
   if !bench_config::selected("shake128") {
@@ -187,7 +228,10 @@ fn main() {
     sha3_256,
     sha3_384,
     sha3_512,
+    sha3_224_streaming,
     sha3_256_streaming,
+    sha3_384_streaming,
+    sha3_512_streaming,
     shake128,
     shake256,
     sha3_256_digest_pair,

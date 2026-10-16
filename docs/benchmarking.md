@@ -642,7 +642,7 @@ Target names, including unfiltered `sha2`, run without a scope override.
   Exact profiling uses the `auth` catalog target that owns it.
   Its rows compare caller-filled generation, public derivation, canonical SEC1 parsing, agreement,
   and a TLS-shaped two-party roundtrip.
-- P-384 ECDH uses the `p384-ecdh` selector, with public-derivation, parsing, and agreement rows.
+- P-384 ECDH uses the `p384-ecdh` selector, with caller-filled generation, public-derivation, parsing, and agreement rows.
 
 The raw target results and the overview are the only performance record.
 

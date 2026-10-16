@@ -160,6 +160,8 @@ sha2_oneshot_ietf!(
 );
 sha2_oneshot!(sha512_256, "sha512-256", rscrypto::Sha512_256, sha2::Sha512_256);
 
+/// Streams 1 MiB in fixed-size chunks. Before timing, each chunk size checks
+/// that the rscrypto and sha2 rows produce the same digest.
 macro_rules! sha2_streaming {
   ($fn_name:ident, $group:literal, $ours:ty, $theirs:ty) => {
     fn $fn_name(c: &mut Criterion) {
@@ -169,29 +171,39 @@ macro_rules! sha2_streaming {
       print_sha2_diag_once();
 
       let data = common::random_bytes(1048576);
+      let rscrypto_digest = |chunk_size: usize| {
+        let mut h = <$ours as rscrypto::Digest>::new();
+        for chunk in data.chunks(chunk_size) {
+          rscrypto::Digest::update(&mut h, black_box(chunk));
+        }
+        rscrypto::Digest::finalize(&h)
+      };
+      let sha2_digest = |chunk_size: usize| {
+        use sha2::Digest;
+        let mut h = <$theirs>::new();
+        for chunk in data.chunks(chunk_size) {
+          h.update(black_box(chunk));
+        }
+        h.finalize()
+      };
+
       let mut g = c.benchmark_group($group);
       g.throughput(criterion::Throughput::Bytes(data.len() as u64));
 
       for chunk_size in [64, 4096] {
+        assert_eq!(
+          rscrypto_digest(chunk_size).as_ref(),
+          sha2_digest(chunk_size).as_slice(),
+          "{}/{chunk_size}B: rscrypto digest must match sha2",
+          $group
+        );
+
         g.bench_function(format!("rscrypto/{chunk_size}B"), |b| {
-          b.iter(|| {
-            let mut h = <$ours as rscrypto::Digest>::new();
-            for chunk in data.chunks(chunk_size) {
-              rscrypto::Digest::update(&mut h, black_box(chunk));
-            }
-            black_box(rscrypto::Digest::finalize(&h))
-          })
+          b.iter(|| black_box(rscrypto_digest(chunk_size)))
         });
 
         g.bench_function(format!("sha2/{chunk_size}B"), |b| {
-          b.iter(|| {
-            use sha2::Digest;
-            let mut h = <$theirs>::new();
-            for chunk in data.chunks(chunk_size) {
-              h.update(black_box(chunk));
-            }
-            black_box(h.finalize())
-          })
+          b.iter(|| black_box(sha2_digest(chunk_size)))
         });
       }
 
@@ -200,8 +212,16 @@ macro_rules! sha2_streaming {
   };
 }
 
+sha2_streaming!(sha224_streaming, "sha224/streaming", rscrypto::Sha224, sha2::Sha224);
 sha2_streaming!(sha256_streaming, "sha256/streaming", rscrypto::Sha256, sha2::Sha256);
+sha2_streaming!(sha384_streaming, "sha384/streaming", rscrypto::Sha384, sha2::Sha384);
 sha2_streaming!(sha512_streaming, "sha512/streaming", rscrypto::Sha512, sha2::Sha512);
+sha2_streaming!(
+  sha512_256_streaming,
+  "sha512-256/streaming",
+  rscrypto::Sha512_256,
+  sha2::Sha512_256
+);
 
 fn sha256_internal(_c: &mut Criterion) {
   if !bench_config::selected("sha256/internal/") {
@@ -247,8 +267,11 @@ fn main() {
     sha384,
     sha512,
     sha512_256,
+    sha224_streaming,
     sha256_streaming,
+    sha384_streaming,
     sha512_streaming,
+    sha512_256_streaming,
     sha256_internal,
   ]);
 }
