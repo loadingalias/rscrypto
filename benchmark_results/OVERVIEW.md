@@ -6,6 +6,27 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-16: RSA and selection qualification with rust-src
+
+At production source `9e8de3c6`, [workspace CI](https://github.com/loadingalias/rscrypto/actions/runs/38829390771),
+[its native RISC-V child](https://github.com/loadingalias/rscrypto/actions/runs/38831080520),
+and the exact-source Mac qualification pass. The Mac suites passed 2,189 native
+and 2,158 portable tests, plus 1,388 native and 1,359 portable internal tests,
+with their configured skips and the RSA assembly check.
+
+Corrected Linux assembly review covers 779 existing bindings and 170 complete
+functions on x86-64, AArch64, RISC-V, POWER and IBM Z, with `rust-src` installed.
+All five blocking gates pass. Only 700 whole-function hashes change; branch
+locators, classifications, thresholds, workloads and confirmation policy stay
+fixed. Changed static operands resolve the same imports, constants, public
+state and diagnostics. Final native Constant-Time execution remains pending.
+Windows/Mac assembly evidence is unaffected. The x86 selector BINSEC result
+remains unknown because `movmskps` is unsupported.
+
+Record: `rsa-native-qualification-20261015/closure-20261016/REPORT.md`.
+Compiler: `nightly-2026-10-14`, rustc `822182db4`, LLVM 23.1.3.
+This review provides generated-code evidence; it makes no timing or performance claim.
+
 ## 2026-10-15: RSA implicit rejection and decrypt-path qualification
 
 Legacy RSAES-PKCS1-v1_5 decryption now implements section 7 of the pinned
@@ -37,9 +58,8 @@ Record: `rsa-implicit-rejection-20261015/REPORT.md`, with source identity,
 proof binaries and configurations, review records, and functional logs. Common
 linked binaries, disassembly, relocations and provenance are retained under
 `ct-select-hardening-20261015/final-linked/`. Compiler: `nightly-2026-10-14`,
-rustc `822182db4`, LLVM 23.1.3. Both bundles remain local; off-machine retention
-is owed. Native CI exposed differences between these local build contexts and
-GNU-linked artifacts. The follow-up repairs named import resolution and retained
+rustc `822182db4`, LLVM 23.1.3. Native CI exposed differences between these local
+build contexts and GNU-linked artifacts. The follow-up repairs named import resolution and retained
 assembly-local labels, then re-reviews exact function identities in CI's build
 contexts. The instruction-identity policy and blocking dispositions are unchanged.
 
@@ -85,8 +105,7 @@ Records: `ct-p256-ecdh-riscv-20261013T155720Z/REPORT.md` and
 positive controls and command logs. Compiler: `nightly-2026-10-14`, rustc
 `822182db4`, LLVM 23.1.3. The hardening record tracks final combined-checkout
 functional results and new native CT qualification, which remains pending.
-No timing ran on the development Mac. Both bundles remain local; off-machine
-retention is still owed. This campaign makes no performance claim.
+No timing ran on the development Mac. This campaign makes no performance claim.
 
 ## 2026-10-12: ECDSA verification generator term from the signing comb
 
