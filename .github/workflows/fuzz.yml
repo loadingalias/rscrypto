@@ -1,7 +1,11 @@
 name: Fuzz
 
 on:
+  push:
+    branches: [main]
   pull_request:
+  schedule:
+    - cron: '23 3 * * *'
   workflow_call:
     inputs:
       architectures:
@@ -10,11 +14,19 @@ on:
       duration:
         type: string
         default: '120'
+      campaign:
+        type: string
+        default: smoke
       targets:
         type: string
         default: ''
   workflow_dispatch:
     inputs:
+      campaign:
+        description: Smoke affected targets, or exercise the daily rotation with minimization and coverage
+        type: choice
+        options: [smoke, daily]
+        default: smoke
       architectures:
         description: Native fuzz runners
         type: choice
@@ -33,15 +45,12 @@ permissions:
 
 env:
   CARGO_RAIL_CACHE: "off"
-  RSCRYPTO_FUZZ_DURATION_SECS: ${{ inputs.duration || '60' }}
-  RSCRYPTO_FUZZ_BUDGET_SECS: "1800"
   RSCRYPTO_FUZZ_LOG_DIR: ${{ github.workspace }}/target/fuzz-logs
-  RSCRYPTO_FUZZ_TARGET_CONCURRENCY: "8"
   RSCRYPTO_FUZZ_JOBS: "1"
 
 concurrency:
-  group: fuzz-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: fuzz-${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:
@@ -53,7 +62,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        platform: ${{ fromJSON(inputs.architectures == 'all' && '["x86_64-linux","aarch64-linux"]' || inputs.architectures == 'aarch64-linux' && '["aarch64-linux"]' || '["x86_64-linux"]') }}
+        platform: ${{ fromJSON((github.event_name == 'push' || github.event_name == 'schedule' || inputs.architectures == 'all') && '["x86_64-linux","aarch64-linux"]' || inputs.architectures == 'aarch64-linux' && '["aarch64-linux"]' || '["x86_64-linux"]') }}
         task: [fuzz]
         include:
           - platform: x86_64-linux
@@ -64,37 +73,81 @@ jobs:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
           persist-credentials: false
-      - name: Install tooling and run the selected memory-safety lane
+          fetch-depth: 0
+      - name: Install tooling
         env:
           PLATFORM: ${{ matrix.platform }}
           TASK: ${{ matrix.task }}
-          TARGETS: ${{ inputs.targets }}
         run: |
           scripts/tooling/"$PLATFORM.sh" "--ci-$TASK"
+      - name: Miri
+        if: matrix.task == 'miri'
+        run: |
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
-          if [[ "$TASK" == miri ]]; then
-            just test-miri
-            just test-miri --rsa
-          else
-            args=(--all)
-            if [[ -n "$TARGETS" ]]; then args+=(--targets "$TARGETS"); fi
-            RSCRYPTO_FUZZ_VALIDATE_ONLY=1 just test-fuzz "${args[@]}"
-            mkdir -p "$RSCRYPTO_FUZZ_LOG_DIR"
-            git rev-parse HEAD > "$RSCRYPTO_FUZZ_LOG_DIR/source.txt"
-            rustc +"$(scripts/lib/toolchain.sh)" -vV > "$RSCRYPTO_FUZZ_LOG_DIR/compiler.txt"
-            just test-fuzz-asan --all
-            just test-fuzz "${args[@]}"
-          fi
+          just test-miri
+          just test-miri --rsa
+      - name: Plan fuzz campaign
+        if: matrix.task == 'fuzz'
+        id: plan
+        env:
+          FUZZ_TARGETS: ${{ inputs.targets }}
+          FUZZ_DURATION: ${{ inputs.duration }}
+          FUZZ_CAMPAIGN: ${{ inputs.campaign }}
+        run: |
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          just test-fuzz-ci plan
+          rustc +"$(scripts/lib/toolchain.sh)" -vV > "$RSCRYPTO_FUZZ_LOG_DIR/compiler.txt"
+      - name: Restore corpus checkpoint
+        if: matrix.task == 'fuzz'
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: target/fuzz-corpus/
+          key: fuzz-corpus-v1-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: fuzz-corpus-v1-${{ matrix.platform }}-
+      - name: Build every target and replay every corpus under ASan
+        if: matrix.task == 'fuzz'
+        run: |
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          just test-fuzz-ci restore
+          just test-fuzz --build --all
+          RSCRYPTO_FUZZ_CORPUS=local just test-fuzz-asan --all
+      - name: Fuzz selected targets
+        if: matrix.task == 'fuzz' && steps.plan.outputs.live == 'true'
+        env:
+          TARGETS: ${{ steps.plan.outputs.targets }}
+          RSCRYPTO_FUZZ_DURATION_SECS: ${{ steps.plan.outputs.duration }}
+          RSCRYPTO_FUZZ_TARGET_CONCURRENCY: ${{ steps.plan.outputs.concurrency }}
+          RSCRYPTO_FUZZ_BUDGET_SECS: ${{ steps.plan.outputs.budget }}
+        run: |
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          just test-fuzz --all --targets "$TARGETS"
+      - name: Prepare corpus checkpoint
+        if: matrix.task == 'fuzz'
+        run: |
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          just test-fuzz-ci snapshot
+      - name: Minimize daily corpora and report source coverage
+        if: matrix.task == 'fuzz' && steps.plan.outputs.retain == 'true'
+        run: |
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          just test-fuzz-ci retain
+      - name: Save corpus checkpoint
+        if: matrix.task == 'fuzz' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: target/fuzz-corpus/
+          key: fuzz-corpus-v1-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Retain corpora and crash inputs
-        if: ${{ !cancelled() && matrix.task == 'fuzz' }}
+        if: ${{ always() && matrix.task == 'fuzz' }}
         uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
         with:
           name: fuzz-${{ matrix.platform }}
           path: |
             target/fuzz-logs/
+            target/fuzz-corpus/
             fuzz/artifacts/
             fuzz/corpus/
             fuzz-packages/*/artifacts/
             fuzz-packages/*/corpus/
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 30

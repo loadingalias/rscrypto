@@ -236,6 +236,7 @@ test-scripts:
     @scripts/lib/python.sh scripts/test/provider_quic_runner_test.py
     @scripts/lib/python.sh scripts/check/compat_test.py
     @scripts/lib/python.sh scripts/test/fuzz_runner_test.py
+    @scripts/lib/python.sh --group tooling scripts/test/fuzz_ci_test.py
     @scripts/lib/python.sh scripts/asm/p384_test.py
     @scripts/lib/python.sh scripts/stack/frames_test.py
     @scripts/lib/python.sh scripts/stack/residue_test.py
@@ -269,6 +270,11 @@ test-rsa-linux-asm:
 [group('tests')]
 test-fuzz *args:
     @scripts/test/test-fuzz.sh "$@"
+
+# Plan CI fuzz selection, restore/save corpora, or retain daily coverage.
+[group('tests')]
+test-fuzz-ci *args:
+    @scripts/lib/python.sh scripts/test/fuzz_ci.py "$@"
 
 # Run fuzz targets with AddressSanitizer.
 [group('tests')]

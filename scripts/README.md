@@ -297,6 +297,22 @@ They do not detect a compromised producer that forges its own metadata.
   `--full` and `--scoped` limit the scope.
   The default is full, including named targets.
 - `just test-fuzz --build --all` builds every fuzz package without starting fuzzing.
+- `just test-fuzz-ci plan` selects live targets from the GitHub event and validates the budget.
+  Product, shared harness, dependency, build, and unknown changes select all targets.
+  Exact harness or seed edits select the matching target in every package that contains it.
+  Documentation-only changes need no live campaign; CI still builds and replays every target.
+- `just test-fuzz-ci restore` merges the corpus checkpoint into the working corpora by SHA256.
+  It rejects symlinks and invalid hashes and preserves committed seed files.
+  `snapshot` prepares a new checkpoint after successful replay and fuzzing.
+- `just test-fuzz-ci retain` minimizes the planned corpora and collects branch coverage with
+  the pinned compiler's LLVM tools. It keeps committed regression seeds even when edge
+  minimization drops them. The merge runs the built production fuzzer directly because
+  `cargo-fuzz` 0.13.2 can return success after a failed `cmin` merge.
+  A failed merge, replay, or coverage export cannot publish a successful campaign.
+  `target/fuzz-logs/campaign.json` binds the compiler, effective source, selected targets,
+  binary hashes, and corpus hashes to each report. `branch-gaps.json` lists unobserved
+  outcomes in production code, including parser, decrypt, and verify paths; it does not
+  prove those outcomes are feasible. Coverage is specific to the recorded corpus and build.
 
 ## Constant-time evidence
 
@@ -705,16 +721,30 @@ and `alloc` consumers against the unpacked crate on the canonical and MSRV toolc
 `core` and `alloc` also compile on the existing Thumb sentinel.
 No package is published.
 
-**`fuzz.yml`** uses `--ci-fuzz` for committed ASan corpus replay and bounded live fuzzing.
+**`fuzz.yml`** uses `--ci-fuzz` for ASan corpus replay and bounded live fuzzing.
 
+- Every push to `main` runs on x86-64 and AArch64 Linux. It builds every fuzz target and
+  replays committed and restored inputs under ASan before fuzzing affected targets.
+  Separate pushes keep separate runs; a newer push cannot cancel an older push's checks.
 - Manual runs select x86-64, ARM64, or both, exact target names, and a duration for each target.
-- Pull-request campaigns use 60 seconds for each target.
-  Manual campaigns default to 120 seconds.
-- Both have a planned live-fuzzing budget of 30 minutes for each architecture,
-  for eight concurrent targets.
-  The selection must fit its budget before replay starts.
+- Push and pull-request campaigns use 60 seconds per selected target; manual campaigns
+  default to 120 seconds. All campaigns have a planned live-fuzzing budget of 30 minutes
+  per architecture, with eight concurrent package/target pairs.
+- Daily campaigns at 03:23 UTC rotate eight target names on both Linux architectures.
+  They divide the same 30-minute budget across the selected package/target batches,
+  then minimize those corpora and retain source and branch coverage for each one.
+  Every target enters the rotation; reports from earlier cohorts retain their original
+  source and corpus identities and do not qualify a newer build.
+  A manual run with `campaign=daily` exercises the same rotation, minimization, and coverage
+  without waiting for the schedule. The daily budget determines its per-target duration.
+- Successful `main` runs save a separate corpus checkpoint for each architecture.
+  Pull requests can restore checkpoints but cannot save them.
+  Checkpoints contain inputs only, never build outputs. GitHub caches can be evicted;
+  every run also uploads corpora, logs, and crash reproducers as 30-day artifacts.
+  Concurrent runs restore independent snapshots; the latest cache is a starting point,
+  while each run's artifact preserves its discoveries.
 - Manual fuzz jobs have a 90-minute limit, including installation, builds, corpus replay,
-  and live fuzzing.
+  and live fuzzing. Push and daily jobs have the same limit, including daily coverage.
   Pull-request and Miri jobs keep their 60-minute limit.
 - `--ci-miri` installs the pinned interpreter for an independent focused Miri row,
   including the RSA unsafe-boundary tests.
@@ -746,7 +776,8 @@ It does not run on pull requests or pushes.
 - Local `just ct-dudect --smoke` is a diagnostic shortcut outside this workflow.
 - Full CT evidence does not establish the complete secret-lifecycle claim by itself.
 
-The fuzz and CT workflows keep the final evidence for seven days, and run without caches.
+The CT workflow keeps final evidence for seven days and runs without caches.
+Fuzzing caches only its corpora; it retains evidence for 30 days.
 CT preparation archives are kept for two days.
 The CT, benchmark, and profile selection jobs validate requests
 and emit only the requested runner rows.

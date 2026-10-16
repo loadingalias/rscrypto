@@ -247,8 +247,8 @@ class LinuxInstall(unittest.TestCase):
 
     def test_focused_profiles_install_only_their_execution_dependencies(self):
         for platform, profile, components in (
-                ('x86_64-linux', 'ci-fuzz', ['rust-src']),
-                ('aarch64-linux', 'ci-fuzz', ['rust-src']),
+                ('x86_64-linux', 'ci-fuzz', ['rust-src', 'llvm-tools']),
+                ('aarch64-linux', 'ci-fuzz', ['rust-src', 'llvm-tools']),
                 ('x86_64-linux', 'ci-miri', ['miri', 'rust-src']),
                 ('x86_64-linux', 'ci-ct', ['llvm-tools']),
                 ('aarch64-linux', 'ci-ct', ['llvm-tools']),

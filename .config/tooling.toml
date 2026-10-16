@@ -60,7 +60,7 @@ cargo = ["just"]
 
 [ci-fuzz]
 cargo = ["just", "cargo-fuzz"]
-components = ["rust-src"]
+components = ["rust-src", "llvm-tools"]
 packages = ["build-essential", "ca-certificates", "curl", "git", "clang"]
 
 [ci-miri]

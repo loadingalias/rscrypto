@@ -56,6 +56,7 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
       'build': ['--exec', 'cargo', 'build', '--locked', '--workspace', '--all-targets', '--all-features'],
       'plan': ['rail', 'plan', '--explain'],
       'test': [], 'test-miri': [], 'test-fuzz': [], 'test-fuzz-asan': [],
+      'test-fuzz-ci': ['scripts/test/fuzz_ci.py'],
       'test-provider-interop': ['scripts/test/provider_interop.py'],
       'test-provider-quic': ['scripts/test/provider_quic.py'],
       'test-provider-quic-runner': ['scripts/test/provider_quic_runner.py'],

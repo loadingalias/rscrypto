@@ -6,6 +6,27 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-16: Continuous fuzzing and retained corpora
+
+Every push to `main` now builds every fuzz target and replays committed and
+restored inputs under ASan on x86-64 and AArch64 Linux. Conservative change
+selection bounds live fuzzing. Daily campaigns rotate target names, minimize
+their corpora, and retain source and branch coverage tied to the exact build.
+Successful main runs save input-only corpus checkpoints. Every run also retains
+corpora, logs and crash inputs as 30-day artifacts; caches remain evictable.
+
+Local acceptance passes `just ci-check`, `just test-scripts`, CT manifest
+validation and workflow linting. Production hex harnesses pass live ASan fuzzing,
+corpus restoration, minimization and branch-coverage export. Full-harness corpus
+coverage passes all 60 tests with 60 execution profiles and 514 committed inputs.
+The coverage runner now enables the internal fuzz entry points used by ASan.
+
+Record: `fuzz-ci-20261016/REPORT.md`, with compiler, source, binary and corpus
+identities and bounded coverage results. Final push and daily Fuzz workflow
+acceptance remains pending alongside the full Constant-Time qualification.
+No timing ran on the development Mac. OSS-Fuzz enrollment and attacker-shaped
+corpus expansion remain separate work.
+
 ## 2026-10-16: ML-DSA optimization qualification
 
 Final-source local checks pass at `9e8de3c6`, with `nightly-2026-10-14`, rustc

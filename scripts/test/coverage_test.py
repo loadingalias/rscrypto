@@ -49,6 +49,22 @@ class Coverage(unittest.TestCase):
     def write_record(self):
         (self.result / 'execution.json').write_text(json.dumps(self.record))
 
+    def test_fuzz_instrumentation_keeps_internal_entry_points_live(self):
+        (self.root / 'Cargo.toml').write_text('[package]\nname = "rscrypto"\n')
+        env = {'LLVM_PROFILE_FILE': 'actual-executions/%p.profraw'}
+        exports = 'export RUSTFLAGS="-C instrument-coverage"\nexport LLVM_PROFILE_FILE="discovery/%p.profraw"\n'
+        with patch.object(coverage, 'capture', return_value=exports):
+            native = coverage.instrument(self.root, env, self.root / 'Cargo.toml')
+            self.assertNotIn('rscrypto_internal_fuzzing', native['RUSTFLAGS'])
+            for manifest in ('fuzz/Cargo.toml', 'fuzz-packages/rsa/Cargo.toml'):
+                result = coverage.instrument(self.root, env, self.root / manifest)
+                self.assertEqual(result['RUSTFLAGS'], '-C instrument-coverage --cfg rscrypto_internal_fuzzing')
+                self.assertEqual(result['LLVM_PROFILE_FILE'], env['LLVM_PROFILE_FILE'])
+            encoded = {**env, 'CARGO_ENCODED_RUSTFLAGS': '-Cinstrument-coverage'}
+            result = coverage.instrument(self.root, encoded, self.root / 'fuzz/Cargo.toml')
+            self.assertEqual(result['CARGO_ENCODED_RUSTFLAGS'],
+                             '-Cinstrument-coverage\x1f--cfg\x1frscrypto_internal_fuzzing')
+
     def test_discovery_and_skipped_tests_do_not_count_as_executions(self):
         discovery = self.work / 'discovery'
         discovery.mkdir()

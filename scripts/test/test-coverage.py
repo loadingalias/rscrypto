@@ -64,6 +64,12 @@ def instrument(root, env, manifest):
             raise RuntimeError(f'unexpected cargo-llvm-cov environment output: {line}')
         key, value = words[1].split('=', 1)
         result[key] = value
+    if manifest.parent != root:
+        # Corpus replay must compile the same internal entry points as the ASan lane.
+        if 'CARGO_ENCODED_RUSTFLAGS' in result:
+            result['CARGO_ENCODED_RUSTFLAGS'] += '\x1f--cfg\x1frscrypto_internal_fuzzing'
+        else:
+            result['RUSTFLAGS'] = result.get('RUSTFLAGS', '') + ' --cfg rscrypto_internal_fuzzing'
     result['LLVM_PROFILE_FILE'] = env['LLVM_PROFILE_FILE']
     return result
 
