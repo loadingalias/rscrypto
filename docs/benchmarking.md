@@ -131,10 +131,14 @@ It does not select other targets.
 
 ### Runners
 
-A small planning job validates the request and splits it by catalog target.
-Each checked platform and selected target pair becomes one job.
-For example, `sha256,blake3` on `x86_64-linux` runs four jobs:
-`Measure x86_64-linux-intel / sha2`, `Measure x86_64-linux-amd / sha2`, and the same two for `blake3`.
+A small planning job validates the request and groups the selected targets by primitive family.
+The catalog gives each Criterion target one `family`:
+`checksum`, `hashes`, `aead`, or `auth`, after the root modules, or `tls` for the provider comparison.
+Each checked platform and selected family pair becomes one job.
+The job runs one `just bench` for each selected target of its family, one after another.
+For example, `sha256,blake3,crc32c` on `x86_64-linux` runs four jobs.
+`Measure x86_64-linux-intel / hashes` and `Measure x86_64-linux-amd / hashes` each run `sha2`, then `blake3`.
+The two `checksum` jobs run `crc`.
 The plan log prints the `just bench` command that each target runs.
 
 - AWS supplies fixed On-Demand instance types for Linux x86-64, Linux ARM64, and Windows x86-64.
@@ -147,12 +151,15 @@ The plan log prints the `just bench` command that each target runs.
 - IBM and RISE supply their existing native runners.
 - macOS benchmarks run locally on the Apple Silicon Mac.
 
-Jobs run in parallel, up to the workflow's `max-parallel` limits.
-The limits keep concurrent AWS builders and measurement hosts within the account's vCPU quotas,
-so a large selection runs in waves.
+All preparation jobs start together, then all measurement jobs.
+RunsOn starts an AWS host for every queued job and ignores `max-parallel`,
+so the number of family jobs bounds the concurrent hosts.
+Each RunsOn job has its own runner label, because a job can take any host whose label matches.
+`scripts/test/cross_workflow_test.py` checks the largest possible run
+against the account's Spot and On-Demand vCPU quotas.
 
-- RISC-V, POWER, and IBM Z compile each target on x86-64 with `--ci-cross-build TARGET`,
-  in a `Prepare PLATFORM / TARGET` job.
+- RISC-V, POWER, and IBM Z compile the selected targets of each family on x86-64
+  with `--ci-cross-build TARGET`, in a `Prepare PLATFORM / FAMILY` job.
   Their native jobs use `--ci-cross-run` with the verified tools archive,
   then discover and measure the transferred binaries.
 - Other Linux jobs use `--ci-bench`.
@@ -165,17 +172,19 @@ Use the recorded CPU topology to interpret parallel results.
 
 ### Artifacts and limits
 
-Each measurement job keeps `target/bench/` as the `bench-RUNNER-TARGET-RUN-ATTEMPT` artifact,
-for example `bench-x86_64-linux-intel-sha2-<run>-1`.
+Each measurement job keeps `target/bench/` as the `bench-RUNNER-FAMILY-RUN-ATTEMPT` artifact,
+for example `bench-x86_64-linux-intel-hashes-<run>-1`, with one run directory for each target.
 It includes failed-run evidence, source and machine identity, the resolved case plan, logs,
 and raw Criterion results.
-Preparation jobs keep their evidence as `bench-prepare-PLATFORM-TARGET-RUN-ATTEMPT`.
+Preparation jobs keep their evidence as `bench-prepare-PLATFORM-FAMILY-RUN-ATTEMPT`.
 
-Each preparation and measurement job runs one `just bench` for one target,
+Each target runs as its own `just bench`,
 so the ten-minute [time budget](#time-budget) applies to each target separately.
 A target can still exceed its budget; narrow it with a case filter or sampling settings.
+A job stops at its first failed target.
 Preparation jobs time out after 30 minutes.
 Measurement job timeouts (120 minutes, 180 on RISC-V) cover provisioning and transfer.
+Each further target in a family adds 10 minutes to either timeout.
 One failed job cancels the rest of the run.
 Manual dispatch is available after the workflow reaches the default branch.
 

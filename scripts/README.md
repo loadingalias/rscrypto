@@ -206,6 +206,7 @@ CI, CT, Bench, and Profile share two preparation actions:
   The other workflows keep compiler caching disabled.
 - [cross-build/upload](../.github/actions/cross-build/upload/action.yml) requires both the prepared suite and its runner-tools archive
   before uploading the target's existing artifact name for two days.
+  A Bench suite is a directory with one sealed archive per catalog target, and it must hold at least one.
   Diagnostic logs retain their separate failure handling and retention periods.
 
 Each workflow still owns its preparation command, runner selection, timeout, native execution,
@@ -792,12 +793,14 @@ They do not install Rust, build code, or call Cargo Rail.
 - Its form takes catalog names in `benchmarks`, an optional case `filter`,
   one checkbox per native CI platform, a diagnostic checkbox, and optional sampling overrides.
   The jobs read the form as one `DISPATCH_INPUTS` JSON value.
-- `bench/ci.py plan` splits the selection by catalog target and starts one job per platform and target,
-  so each job is one bounded `just bench` run.
-  It rejects targets with an `external` prerequisite before any runner starts.
+- `bench/ci.py plan` groups the selection by the catalog's primitive `family` and starts one job per platform and family.
+  Each job runs one bounded `just bench` per selected target, one after another.
+  The planner rejects targets with an `external` prerequisite before any runner starts.
 - Job labels use platform names, never target triples:
-  `Prepare PLATFORM / TARGET` and `Measure RUNNER / TARGET`.
-- `max-parallel` keeps concurrent builders and measurement hosts within the AWS vCPU quotas.
+  `Prepare PLATFORM / FAMILY` and `Measure RUNNER / FAMILY`.
+- RunsOn starts a host for every queued job and ignores `max-parallel`, so the job count bounds the AWS hosts.
+  Each RunsOn job has its own runner label, so no job takes a host started for another.
+  `test/cross_workflow_test.py` checks the largest run against the account's vCPU quotas.
 - The existing benchmark runner owns measurement and evidence.
 - `--ci-bench` (Linux) and `-CiBench` (Windows) install the native benchmark build prerequisites and Just, without test,
   profiling, or cross-target tools.

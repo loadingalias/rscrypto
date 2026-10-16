@@ -2,6 +2,7 @@
 """Exercise shared preparation actions and protect their qualification boundaries."""
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -65,13 +66,16 @@ class CrossWorkflow(unittest.TestCase):
             'if-no-files-found': 'error', 'retention-days': '2',
         })
         target = 'riscv64gc-unknown-linux-gnu'
-        cases = [('tests', 'tests.tar.xz', 'tests'), ('ct', 'ct.tar.gz', 'ct-prepared'),
-                 ('bench', 'bench.tar.gz', 'bench-prepared'), ('profile', 'profile.tar.gz', 'profile-prepared')]
+        # Benchmark preparation transfers a directory with one sealed archive per catalog target.
+        cases = [('tests', 'tests.tar.xz', 'tests.tar.xz', 'tests'), ('ct', 'ct.tar.gz', 'ct.tar.gz', 'ct-prepared'),
+                 ('bench', 'bench', 'bench/sha2.tar.gz', 'bench-prepared'),
+                 ('profile', 'profile.tar.gz', 'profile.tar.gz', 'profile-prepared')]
         (self.root / 'target').mkdir()
         tools = self.root / 'target' / f'{target}-tools.tar.gz'
-        for suite, filename, artifact in cases:
+        for suite, filename, prepared, artifact in cases:
             with self.subTest(suite=suite):
-                archive = self.root / 'target' / f'{target}-{filename}'
+                archive = self.root / 'target' / f'{target}-{prepared}'
+                archive.parent.mkdir(exist_ok=True)
                 archive.write_bytes(b'prepared suite')
                 tools.write_bytes(b'runner tools')
                 self.output.write_text('')
@@ -87,20 +91,20 @@ class CrossWorkflow(unittest.TestCase):
                     self.assertIn('Missing prepared artifact:', result.stderr)
                     self.assertEqual(self.output.read_text(), '')
                     missing.write_bytes(b'restored fixture')
-        archive = self.root / 'target' / f'{target}-bench.tar.gz'
+        archive = self.root / 'target' / f'{target}-bench' / 'sha2.tar.gz'
         archive.write_bytes(b'prepared suite')
         self.output.write_text('')
-        result = self.execute(require, TARGET=target, SUITE='bench', ARTIFACT='bench-prepared-riscv64-linux-sha2')
+        result = self.execute(require, TARGET=target, SUITE='bench', ARTIFACT='bench-prepared-riscv64-linux-hashes')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.output.read_text(),
-                         f'archive=target/{target}-bench.tar.gz\nartifact=bench-prepared-riscv64-linux-sha2\n')
+                         f'archive=target/{target}-bench\nartifact=bench-prepared-riscv64-linux-hashes\n')
         self.output.write_text('')
         result = self.execute(require, TARGET=target, SUITE='unknown')
         self.assertEqual(result.returncode, 2)
         self.assertEqual(self.output.read_text(), '')
 
     def test_callers_keep_preparation_separate_from_native_qualification(self):
-        bench_artifact = 'bench-prepared-${{ matrix.platform }}-${{ matrix.bench }}'
+        bench_artifact = 'bench-prepared-${{ matrix.platform }}-${{ matrix.family }}'
         for filename, producer, consumer, suite, command, artifact in (
             ('ci', 'cross-build', 'native', 'tests', 'just test-cross prepare', '${{ matrix.target }}-tests'),
             ('ct', 'cross-build', 'ct', 'ct', 'just ct-full --target', '${{ matrix.target }}-ct-prepared'),
@@ -119,7 +123,7 @@ class CrossWorkflow(unittest.TestCase):
                 self.assertEqual(setup['with'], {'target': target})
                 expected = {'target': target, 'suite': suite}
                 if suite == 'bench':
-                    # One transfer per platform and catalog target; the default name would collide.
+                    # One transfer per platform and primitive family; the default name would collide.
                     expected['artifact'] = bench_artifact
                 self.assertEqual(upload['with'], expected)
                 self.assertLess(steps.index(setup), steps.index(prepare))
@@ -149,16 +153,45 @@ class CrossWorkflow(unittest.TestCase):
         self.assertEqual([name for name in bench_ci.PLATFORMS if inputs[name].get('default') == 'true'],
                          ['x86_64-linux'])
         self.assertEqual(workflow['env']['DISPATCH_INPUTS'], '${{ toJSON(inputs) }}')
-        for job, label in (('cross-build', 'Prepare ${{ matrix.platform }} / ${{ matrix.bench }}'),
-                           ('bench', 'Measure ${{ matrix.name }} / ${{ matrix.bench }}')):
+        for job, label in (('cross-build', 'Prepare ${{ matrix.platform }} / ${{ matrix.family }}'),
+                           ('bench', 'Measure ${{ matrix.name }} / ${{ matrix.family }}')):
             with self.subTest(job=job):
                 self.assertEqual(workflow['jobs'][job]['name'], label)
-                self.assertEqual(workflow['jobs'][job]['env']['BENCHMARK'], '${{ matrix.bench }}')
-                self.assertTrue(int(workflow['jobs'][job]['strategy']['max-parallel']) > 0)
+                self.assertEqual(workflow['jobs'][job]['env']['FAMILY'], '${{ matrix.family }}')
+                self.assertEqual(workflow['jobs'][job]['timeout-minutes'], '${{ matrix.timeout }}')
+                # RunsOn ignores max-parallel when it starts hosts; the planner's job count bounds them.
+                self.assertNotIn('max-parallel', workflow['jobs'][job]['strategy'])
                 runs = [step['run'] for step in workflow['jobs'][job]['steps'] if 'scripts/bench/ci.py' in step.get('run', '')]
                 self.assertTrue(runs)
-                self.assertTrue(all('$BENCHMARK' in run or '$env:BENCHMARK' in run for run in runs))
+                self.assertTrue(all('$FAMILY' in run or '$env:FAMILY' in run for run in runs))
                 self.assertTrue(all('${{' not in run for run in runs))
+
+    def test_largest_bench_run_fits_aws_quotas_with_one_label_per_job(self):
+        # Standard-family vCPU quotas of the RunsOn AWS account in us-east-1, read 2026-10-16 from
+        # Service Quotas L-34B43A08 (Spot) and L-1216C47A (On-Demand). Update them when AWS changes them.
+        quotas = {'spot': 256, 'on-demand': 366}
+        runners = read_yaml('.github/runs-on.yml')['runners']
+        jobs = read_yaml('.github/workflows/bench.yml')['jobs']
+        benches = bench_ci.load_catalog()['benches']
+        # Every Criterion target that CI can run, on every platform.
+        names = [name for name, bench in benches.items() if 'family' in bench and 'external' not in bench]
+        inputs = {'benchmarks': ','.join(names), **{name: True for name in bench_ci.PLATFORMS}}
+        measurements, builds, _ = bench_ci.plan(inputs, '42')
+        for job, rows in (('cross-build', builds['include']), ('bench', measurements['include'])):
+            with self.subTest(job=job):
+                labels = [re.sub(r'\$\{\{ (?:github\.run_id|matrix\.(\w+)) \}\}',
+                                 lambda match: row[match[1]] if match[1] else '42', jobs[job]['runs-on'])
+                          for row in rows]
+                hosted = [label for label in labels if label.startswith('runs-on=')]
+                self.assertTrue(hosted)
+                # RunsOn starts a host for every queued job, and a shared label lets one job take another's host.
+                self.assertEqual(len(hosted), len(set(hosted)))
+                demand = dict.fromkeys(quotas, 0)
+                for label in hosted:
+                    runner = runners[re.fullmatch(r'runs-on=[^/]+/runner=([^/]+)/env=production', label)[1]]
+                    demand['on-demand' if runner['spot'] == 'false' else 'spot'] += int(runner['cpu'])
+                for pool, vcpus in demand.items():
+                    self.assertLessEqual(vcpus, quotas[pool], pool)
 
     def test_ct_preparation_failure_keeps_diagnostics_out_of_transfer(self):
         jobs = read_yaml('.github/workflows/ct.yml')['jobs']

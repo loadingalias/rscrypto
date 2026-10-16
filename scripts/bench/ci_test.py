@@ -45,13 +45,25 @@ class ManualBench(unittest.TestCase):
         everything = {name: True for name in ci.PLATFORMS}
         self.assertEqual(len(plan(**everything)[0]), 8)
 
-    def test_one_job_per_platform_and_target(self):
+    def test_one_job_per_platform_and_family(self):
         measurements, builds = plan('sha256,sha512,blake3,crc64', **{'riscv64-linux': True})
-        jobs = [(row['name'], row['bench']) for row in measurements]
-        self.assertEqual(jobs, [(name, bench) for bench in ('sha2', 'blake3', 'crc')
+        jobs = [(row['name'], row['family']) for row in measurements]
+        self.assertEqual(jobs, [(name, family) for family in ('hashes', 'checksum')
                                 for name in ('x86_64-linux-intel', 'x86_64-linux-amd', 'riscv64-linux')])
-        self.assertEqual([(row['target'], row['bench']) for row in builds],
-                         [('riscv64gc-unknown-linux-gnu', bench) for bench in ('sha2', 'blake3', 'crc')])
+        self.assertEqual([(row['target'], row['family'], row['timeout']) for row in builds],
+                         [('riscv64gc-unknown-linux-gnu', 'hashes', 40), ('riscv64gc-unknown-linux-gnu', 'checksum', 30)])
+        # Each further target adds its ten-minute budget to the job.
+        self.assertEqual([row['timeout'] for row in measurements], [130, 130, 190, 120, 120, 180])
+        # RunsOn lets a job take any host whose label matches, so each RunsOn job has its own label.
+        hosted = [row['runner'] for row in measurements if row['runner'].startswith('runs-on=')]
+        self.assertEqual(hosted, ['runs-on=42-hashes/runner=measure-x86_64-linux-intel/env=production',
+                                  'runs-on=42-hashes/runner=measure-x86_64-linux-amd/env=production',
+                                  'runs-on=42-checksum/runner=measure-x86_64-linux-intel/env=production',
+                                  'runs-on=42-checksum/runner=measure-x86_64-linux-amd/env=production'])
+        self.assertEqual({row['runner'] for row in measurements if row['name'] == 'riscv64-linux'}, {'ubuntu-24.04-riscv'})
+        families = ci.jobs(ci.dispatch_inputs(request('sha256,sha512,blake3,crc64')))
+        self.assertEqual({family: list(runs) for family, runs in families.items()},
+                         {'hashes': ['sha2', 'blake3'], 'checksum': ['crc']})
         runs = ci.selection('sha256,sha512,blake3,crc64')
         self.assertEqual(runs, {'sha2': ['sha256', 'sha512'], 'blake3': ['blake3'], 'crc': ['crc64-xz', 'crc64-nvme']})
         # A whole target subsumes the algorithms it contains.
@@ -63,11 +75,13 @@ class ManualBench(unittest.TestCase):
                     if bench['kind'] == 'criterion' and bench['required']]
         self.assertEqual(ci.selection('all'), {name: [name] for name in defaults})
         self.assertNotIn('tls_connections', defaults)
+        families = ci.jobs(ci.dispatch_inputs(request('all')))
+        self.assertEqual(list(families), ['auth', 'checksum', 'hashes', 'aead'])
+        self.assertEqual(sorted(bench for runs in families.values() for bench in runs), sorted(defaults))
         everything = {name: True for name in ci.PLATFORMS}
         measurements, builds = plan('all', **everything)
-        self.assertEqual(len(measurements), 8 * len(defaults))
-        self.assertEqual(len(builds), 3 * len(defaults))
-        self.assertLessEqual(len(measurements), ci.MAX_MATRIX)
+        self.assertEqual(len(measurements), 8 * len(families))
+        self.assertEqual(len(builds), 3 * len(families))
 
     def test_external_targets_fail_before_runners_start(self):
         for selection in ('tls-provider', 'tls_connections', 'sha256,tls-provider'):
@@ -99,30 +113,48 @@ class ManualBench(unittest.TestCase):
 
     def test_run_forwards_regex_literally_and_propagates_failure(self):
         env = request(filter="$(touch /tmp/not-executed);'|.*")
-        with patch.dict(os.environ, env, clear=True), patch.object(sys, 'argv', ['ci.py', 'run', 'sha2']), \
+        with patch.dict(os.environ, env, clear=True), patch.object(sys, 'argv', ['ci.py', 'run', 'hashes']), \
              patch.object(ci.subprocess, 'run', return_value=subprocess.CompletedProcess([], 7)) as execute:
             self.assertEqual(ci.main(), 7)
             command = execute.call_args.args[0]
             self.assertEqual(command[:3], ['just', 'bench', 'sha256'])
             self.assertIn('filter=' + json.loads(env['DISPATCH_INPUTS'])['filter'], command)
             self.assertNotIn('shell', execute.call_args.kwargs)
-        with patch.dict(os.environ, env, clear=True), patch.object(sys, 'argv', ['ci.py', 'run', 'blake3']), \
-             self.assertRaisesRegex(ValueError, 'not a target of this selection'):
-            ci.main()
+        for family in ('auth', 'sha2'):
+            with self.subTest(family=family), patch.dict(os.environ, env, clear=True), \
+                 patch.object(sys, 'argv', ['ci.py', 'run', family]), \
+                 self.assertRaisesRegex(ValueError, 'not a family of this selection'):
+                ci.main()
+
+    def test_family_runs_each_target_separately_and_stops_at_failure(self):
+        env = request('sha256,blake3,crc32c')
+        for statuses, expected in (([0, 0], 0), ([5, 0], 5)):
+            with self.subTest(statuses=statuses), patch.dict(os.environ, env, clear=True), \
+                 patch.object(sys, 'argv', ['ci.py', 'run', 'hashes']), \
+                 patch.object(ci.subprocess, 'run',
+                              side_effect=[subprocess.CompletedProcess([], status) for status in statuses]) as execute:
+                self.assertEqual(ci.main(), expected)
+                commands = [call.args[0][:3] for call in execute.call_args_list]
+                self.assertEqual(commands, [['just', 'bench', 'sha256'], ['just', 'bench', 'blake3']][:len(commands)])
+                self.assertEqual(len(commands), 2 if expected == 0 else 1)
 
     def test_transfer_dispatch_keeps_selection_and_separate_invocations(self):
         env = request('sha256,sha512,crc32c', filter='^sha256/rscrypto/64$', sample_size='24')
-        for operation, flag in (('prepare', 'prepare_archive'), ('measure', 'run_archive')):
-            with self.subTest(operation=operation), patch.dict(os.environ, env, clear=True), \
-                 patch.object(sys, 'argv', ['ci.py', operation, 'sha2', 's390x-unknown-linux-gnu', 'archive with spaces.tar.gz']), \
+        for operation, flag in (('measure', 'run_archive'), ('prepare', 'prepare_archive')):
+            with self.subTest(operation=operation), tempfile.TemporaryDirectory() as parent, \
+                 patch.dict(os.environ, env, clear=True), \
+                 patch.object(sys, 'argv', ['ci.py', operation, 'hashes', 's390x-unknown-linux-gnu',
+                                            str(Path(parent) / 'archives with spaces')]), \
                  patch.object(ci.subprocess, 'run', return_value=subprocess.CompletedProcess([], 9)) as execute:
                 self.assertEqual(ci.main(), 9)
                 command = execute.call_args.args[0]
                 self.assertEqual(command[:4], ['just', 'bench', 'sha256', 'sha512'])
                 self.assertNotIn('crc32c', command)
-                self.assertIn(flag + '=archive with spaces.tar.gz', command)
+                self.assertIn(f'{flag}={Path(parent) / "archives with spaces" / "sha2.tar.gz"}', command)
                 self.assertIn('sample_size=24', command)
                 self.assertIn('target=s390x-unknown-linux-gnu', command)
+                # Preparation creates the transfer directory; measurement only reads it.
+                self.assertEqual((Path(parent) / 'archives with spaces').is_dir(), operation == 'prepare')
         for name in ('riscv64-linux', 's390x-linux', 'powerpc64le-linux'):
             row, = ci.platforms(name, '42')['include']
             self.assertIn('target', row)
@@ -142,12 +174,13 @@ class ManualBench(unittest.TestCase):
                                     env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             values = dict(line.split('=', 1) for line in output.read_text().splitlines())
-            self.assertEqual(len(json.loads(values['measurements'])['include']), 16)
+            self.assertEqual(len(json.loads(values['measurements'])['include']), 8)
             self.assertEqual(values['cross'], 'true')
-            self.assertEqual({(row['target'], row['bench']) for row in json.loads(values['builds'])['include']},
-                             {(target, bench) for bench in ('sha2', 'blake3') for target in
+            self.assertEqual({(row['target'], row['family']) for row in json.loads(values['builds'])['include']},
+                             {(target, 'hashes') for target in
                               ('riscv64gc-unknown-linux-gnu', 'powerpc64le-unknown-linux-gnu', 's390x-unknown-linux-gnu')})
-            self.assertIn('sha2: just bench sha256 output_dir=target/bench diag=false', result.stdout)
+            self.assertIn('hashes / sha2: just bench sha256 output_dir=target/bench diag=false', result.stdout)
+            self.assertIn('hashes / blake3: just bench blake3 output_dir=target/bench diag=false', result.stdout)
 
 
 if __name__ == '__main__':

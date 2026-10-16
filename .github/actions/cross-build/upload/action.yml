@@ -23,12 +23,14 @@ runs:
         ARTIFACT: ${{ inputs.artifact }}
       run: |
         case "$SUITE" in
-          tests) archive="target/$TARGET-tests.tar.xz"; artifact="$TARGET-tests" ;;
-          ct|bench|profile) archive="target/$TARGET-$SUITE.tar.gz"; artifact="$TARGET-$SUITE-prepared" ;;
+          tests) archive="target/$TARGET-tests.tar.xz"; artifact="$TARGET-tests"; files=("$archive") ;;
+          ct|profile) archive="target/$TARGET-$SUITE.tar.gz"; artifact="$TARGET-$SUITE-prepared"; files=("$archive") ;;
+          # Benchmark preparation seals one archive per catalog target in this directory.
+          bench) archive="target/$TARGET-bench"; artifact="$TARGET-bench-prepared"; files=("$archive"/*.tar.gz) ;;
           *) echo "Unknown prepared suite: $SUITE" >&2; exit 2 ;;
         esac
         artifact="${ARTIFACT:-$artifact}"
-        for path in "$archive" "target/$TARGET-tools.tar.gz"; do
+        for path in "${files[@]}" "target/$TARGET-tools.tar.gz"; do
           if [[ ! -f "$path" ]]; then
             echo "Missing prepared artifact: $path" >&2
             exit 1

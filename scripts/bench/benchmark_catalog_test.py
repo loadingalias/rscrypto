@@ -97,6 +97,18 @@ def main() -> None:
       pass
     else:
       fail(f"catalog accepted an invalid external prerequisite: {change}")
+  for name, family in (("sha2", None), ("sha2", ""), ("sha2", "Hashes"), ("sha2", "hashes/x"),
+                       ("structural", "hashes")):
+    broken = copy.deepcopy(catalog)
+    broken["benches"][name]["family"] = family
+    if family is None:
+      del broken["benches"][name]["family"]
+    try:
+      validate_catalog(broken)
+    except CatalogError:
+      pass
+    else:
+      fail(f"catalog accepted family {family!r} for {name}")
   for members in ([], ["sha256", "sha256"], ["structural"], ["missing"]):
     broken = copy.deepcopy(catalog)
     broken["groups"]["hashes"] = members

@@ -5,6 +5,7 @@
       "binary": "tls_connections",
       "manifest": "tools/provider-bench/Cargo.toml",
       "kind": "criterion",
+      "family": "tls",
       "required": false,
       "external": "OpenSSL 4.0.3",
       "features": ["ml-dsa"]
@@ -12,108 +13,126 @@
     "poly1305": {
       "binary": "poly1305",
       "kind": "criterion",
+      "family": "auth",
       "required": true,
       "features": ["std", "poly1305"]
     },
     "crc": {
       "binary": "crc",
       "kind": "criterion",
+      "family": "checksum",
       "required": true,
       "features": ["std", "checksums"]
     },
     "sha2": {
       "binary": "sha2",
       "kind": "criterion",
+      "family": "hashes",
       "required": true,
       "features": ["std", "sha2", "diag"]
     },
     "sha3": {
       "binary": "sha3",
       "kind": "criterion",
+      "family": "hashes",
       "required": true,
       "features": ["std", "sha3"]
     },
     "websocket_sha1": {
       "binary": "websocket_sha1",
       "kind": "criterion",
+      "family": "hashes",
       "required": true,
       "features": ["std", "websocket-sha1"]
     },
     "kmac_cshake": {
       "binary": "kmac_cshake",
       "kind": "criterion",
+      "family": "auth",
       "required": true,
       "features": ["std", "sha3", "kmac", "hmac-sha3"]
     },
     "ascon": {
       "binary": "ascon",
       "kind": "criterion",
+      "family": "hashes",
       "required": true,
       "features": ["std", "ascon-hash"]
     },
     "xxh3": {
       "binary": "xxh3",
       "kind": "criterion",
+      "family": "hashes",
       "required": true,
       "features": ["std", "xxh3"]
     },
     "rapidhash": {
       "binary": "rapidhash",
       "kind": "criterion",
+      "family": "hashes",
       "required": true,
       "features": ["std", "rapidhash"]
     },
     "aead_kernels": {
       "binary": "aead_kernels",
       "kind": "criterion",
+      "family": "aead",
       "required": false,
       "features": ["std", "sha2", "chacha20poly1305", "diag"]
     },
     "blake2": {
       "binary": "blake2",
       "kind": "criterion",
+      "family": "hashes",
       "required": true,
       "features": ["std", "blake2b", "blake2s"]
     },
     "blake3": {
       "binary": "blake3",
       "kind": "criterion",
+      "family": "hashes",
       "required": true,
       "features": ["std", "blake3", "parallel"]
     },
     "blake3_file": {
       "binary": "blake3_file",
       "kind": "criterion",
+      "family": "hashes",
       "required": false,
       "features": ["std", "blake3", "parallel"]
     },
     "mldsa_portable": {
       "binary": "mldsa",
       "kind": "criterion",
+      "family": "auth",
       "required": false,
       "features": ["std", "ml-dsa", "portable-only"]
     },
     "mldsa": {
       "binary": "mldsa",
       "kind": "criterion",
+      "family": "auth",
       "required": true,
       "features": ["std", "ml-dsa"]
     },
     "slhdsa_portable": {
       "binary": "slhdsa",
       "kind": "criterion",
+      "family": "auth",
       "required": false,
       "features": ["std", "slh-dsa", "portable-only"]
     },
     "slhdsa": {
       "binary": "slhdsa",
       "kind": "criterion",
+      "family": "auth",
       "required": true,
       "features": ["std", "slh-dsa"]
     },
     "auth": {
       "binary": "auth",
       "kind": "criterion",
+      "family": "auth",
       "required": true,
       "features": [
         "std",
@@ -132,18 +151,21 @@
     "password_hashing": {
       "binary": "password_hashing",
       "kind": "criterion",
+      "family": "auth",
       "required": true,
       "features": ["std", "argon2", "scrypt", "phc-strings", "getrandom", "parallel"]
     },
     "rsa": {
       "binary": "rsa",
       "kind": "criterion",
+      "family": "auth",
       "required": true,
       "features": ["std", "rsa", "diag", "getrandom"]
     },
     "aead_diag": {
       "binary": "aead",
       "kind": "criterion",
+      "family": "aead",
       "required": false,
       "features": [
         "std",
@@ -161,6 +183,7 @@
     "aead": {
       "binary": "aead",
       "kind": "criterion",
+      "family": "aead",
       "required": true,
       "features": [
         "std",

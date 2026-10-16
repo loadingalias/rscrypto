@@ -55,9 +55,12 @@ runners:
     image: rscrypto-ci-linux-x64
     spot: price-capacity-optimized
     volume: 150gb:gp3
+  # The bench profile links each target with one codegen unit and fat LTO, so more cores add little.
+  # Bench starts one per cross target and primitive family at once;
+  # scripts/test/cross_workflow_test.py checks that total against the Spot vCPU quota.
   bench-cross-build:
-    family: [c7a.8xlarge, c7i.8xlarge, c8a.8xlarge, c8i.8xlarge]
-    cpu: 32
+    family: [c7a.4xlarge, c7i.4xlarge, c8a.4xlarge, c8i.4xlarge]
+    cpu: 16
     image: rscrypto-ci-linux-x64
     spot: price-capacity-optimized
     volume: 150gb:gp3

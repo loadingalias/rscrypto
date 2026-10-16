@@ -57,6 +57,12 @@ def validate_catalog(catalog: dict) -> None:
   for name, bench in benches.items():
     if bench.get("kind") not in valid_kinds:
       raise CatalogError(f"bench {name} has invalid kind {bench.get('kind')}")
+    # The Bench workflow runs each primitive family's selected Criterion targets in one job per platform.
+    family = bench.get("family")
+    if bench["kind"] == "criterion" and not (isinstance(family, str) and re.fullmatch(r"[a-z0-9-]+", family)):
+      raise CatalogError(f"bench {name} needs a primitive family")
+    if bench["kind"] != "criterion" and family is not None:
+      raise CatalogError(f"bench {name} is not a Criterion target, so it has no family")
     binary = bench.get("binary")
     if not isinstance(binary, str) or not binary:
       raise CatalogError(f"bench {name} needs a binary")
