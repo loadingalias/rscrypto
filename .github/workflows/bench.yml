@@ -55,6 +55,8 @@ permissions:
 env:
   CARGO_RAIL_CACHE: "off"
   # The planner and every job read the request from one JSON value; nothing interpolates it into a shell.
+  # toJSON spans lines, and Enter-VsDevShell keeps only the first line of a variable,
+  # so later jobs read the planner's one-line copy instead.
   DISPATCH_INPUTS: ${{ toJSON(inputs) }}
 
 defaults:
@@ -67,6 +69,7 @@ jobs:
     runs-on: runs-on=${{ github.run_id }}/runner=plan/env=production
     timeout-minutes: 5
     outputs:
+      request: ${{ steps.plan.outputs.request }}
       measurements: ${{ steps.plan.outputs.measurements }}
       cross: ${{ steps.plan.outputs.cross }}
       builds: ${{ steps.plan.outputs.builds }}
@@ -93,6 +96,7 @@ jobs:
       fail-fast: true
       matrix: ${{ fromJSON(needs.plan.outputs.builds) }}
     env:
+      DISPATCH_INPUTS: ${{ needs.plan.outputs.request }}
       TARGET: ${{ matrix.target }}
       FAMILY: ${{ matrix.family }}
     steps:
@@ -133,6 +137,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.timeout }}
     env:
+      DISPATCH_INPUTS: ${{ needs.plan.outputs.request }}
       FAMILY: ${{ matrix.family }}
     steps:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1

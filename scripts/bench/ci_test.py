@@ -168,18 +168,24 @@ class ManualBench(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / 'output'
-            inputs = {'benchmarks': 'sha256,blake3', **{name: True for name in ci.PLATFORMS}}
-            env = {**os.environ, 'DISPATCH_INPUTS': json.dumps(inputs), 'GITHUB_RUN_ID': '42', 'GITHUB_OUTPUT': str(output)}
+            inputs = {'benchmarks': 'sha256,blake3', 'filter': '"rscrypto" 64$',
+                      **{name: True for name in ci.PLATFORMS}}
+            # GitHub's toJSON spans lines, like this request.
+            env = {**os.environ, 'DISPATCH_INPUTS': json.dumps(inputs, indent=2), 'GITHUB_RUN_ID': '42',
+                   'GITHUB_OUTPUT': str(output)}
             result = subprocess.run([sys.executable, '-I', str(ROOT / 'scripts/bench/ci.py'), 'plan'],
                                     env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             values = dict(line.split('=', 1) for line in output.read_text().splitlines())
+            # Later jobs read this one-line copy; Enter-VsDevShell would keep only the first line of the original.
+            self.assertEqual(json.loads(values['request']), inputs)
             self.assertEqual(len(json.loads(values['measurements'])['include']), 8)
             self.assertEqual(values['cross'], 'true')
             self.assertEqual({(row['target'], row['family']) for row in json.loads(values['builds'])['include']},
                              {(target, 'hashes') for target in
                               ('riscv64gc-unknown-linux-gnu', 'powerpc64le-unknown-linux-gnu', 's390x-unknown-linux-gnu')})
-            self.assertIn('hashes / sha2: just bench sha256 output_dir=target/bench diag=false', result.stdout)
+            self.assertIn('hashes / sha2: just bench sha256 output_dir=target/bench diag=false filter="rscrypto" 64$',
+                          result.stdout)
             self.assertIn('hashes / blake3: just bench blake3 output_dir=target/bench diag=false', result.stdout)
 
 

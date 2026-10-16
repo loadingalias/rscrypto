@@ -153,11 +153,14 @@ class CrossWorkflow(unittest.TestCase):
         self.assertEqual([name for name in bench_ci.PLATFORMS if inputs[name].get('default') == 'true'],
                          ['x86_64-linux'])
         self.assertEqual(workflow['env']['DISPATCH_INPUTS'], '${{ toJSON(inputs) }}')
+        self.assertEqual(workflow['jobs']['plan']['outputs']['request'], '${{ steps.plan.outputs.request }}')
         for job, label in (('cross-build', 'Prepare ${{ matrix.platform }} / ${{ matrix.family }}'),
                            ('bench', 'Measure ${{ matrix.name }} / ${{ matrix.family }}')):
             with self.subTest(job=job):
                 self.assertEqual(workflow['jobs'][job]['name'], label)
                 self.assertEqual(workflow['jobs'][job]['env']['FAMILY'], '${{ matrix.family }}')
+                # Enter-VsDevShell keeps only the first line of toJSON's multi-line request.
+                self.assertEqual(workflow['jobs'][job]['env']['DISPATCH_INPUTS'], '${{ needs.plan.outputs.request }}')
                 self.assertEqual(workflow['jobs'][job]['timeout-minutes'], '${{ matrix.timeout }}')
                 # RunsOn ignores max-parallel when it starts hosts; the planner's job count bounds them.
                 self.assertNotIn('max-parallel', workflow['jobs'][job]['strategy'])

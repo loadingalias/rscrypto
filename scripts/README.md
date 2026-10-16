@@ -792,7 +792,8 @@ They do not install Rust, build code, or call Cargo Rail.
 
 - Its form takes catalog names in `benchmarks`, an optional case `filter`,
   one checkbox per native CI platform, a diagnostic checkbox, and optional sampling overrides.
-  The jobs read the form as one `DISPATCH_INPUTS` JSON value.
+  The planner reads the form as one `DISPATCH_INPUTS` JSON value and gives later jobs a one-line copy,
+  because `Enter-VsDevShell` keeps only the first line of a multi-line variable.
 - `bench/ci.py plan` groups the selection by the catalog's primitive `family` and starts one job per platform and family.
   Each job runs one bounded `just bench` per selected target, one after another.
   The planner rejects targets with an `external` prerequisite before any runner starts.

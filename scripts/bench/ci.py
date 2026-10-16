@@ -155,6 +155,7 @@ def main() -> int:
     if command == ['plan']:
         measurements, builds, families = plan(inputs, os.environ.get('GITHUB_RUN_ID', ''))
         with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
+            output.write('request=' + json.dumps(inputs, separators=(',', ':')) + '\n')
             output.write('measurements=' + json.dumps(measurements, separators=(',', ':')) + '\n')
             output.write('cross=' + str(bool(builds['include'])).lower() + '\n')
             output.write('builds=' + json.dumps(builds, separators=(',', ':')) + '\n')
