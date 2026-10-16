@@ -86,6 +86,12 @@ if [[ "$TARGET" != "$HOST" && "$TARGET" == *linux* ]]; then
 fi
 
 SYSROOT="$(rustc --print sysroot)"
+# Installed standard-library sources affect embedded inline source locations.
+# Require the configured component before replacing any retained evidence.
+if [[ ! -f "$SYSROOT/lib/rustlib/src/rust/library/std/src/lib.rs" ]]; then
+  echo "missing rust-src for $RUSTUP_TOOLCHAIN; run: rustup component add --toolchain $RUSTUP_TOOLCHAIN rust-src" >&2
+  exit 1
+fi
 LLVM_BIN="$SYSROOT/lib/rustlib/$HOST/bin"
 resolve_tool() {
   local tool="$1"

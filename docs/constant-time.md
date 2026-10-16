@@ -46,6 +46,10 @@ compiler, target flags, and native or GNU cross linker recorded with each artifa
 A Mac/Zig build or another checkout path can change embedded source locations,
 data placement, and function hashes. Reclassify those exact artifacts before
 rebinding a waiver; the review does not grant a portable hash exemption.
+Artifact builds require the configured `rust-src` component and record its
+source root and `std/src/lib.rs` digest. Rustc can translate standard-library
+source locations to installed sources, so component presence and path affect
+embedded diagnostic strings, linked addresses, and exact function identities.
 Waivers distinguish public operands from existing claim exclusions and allowed disclosures. The latter
 two require a reference to the existing `ct.toml` contract and do not classify the operand as public.
 An exclusion cites `primitive:<id>:notes`; an allowed disclosure cites

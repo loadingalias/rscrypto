@@ -2,6 +2,7 @@
 """Verify CT preparation preserves measurements and rejects unmatched selectors."""
 
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -34,12 +35,16 @@ class PreparationTests(unittest.TestCase):
     for target, failure in ((target, failure)
                             for target in (TARGET, "x86_64-pc-windows-msvc", "riscv64gc-unknown-linux-gnu",
                                            "s390x-unknown-linux-gnu")
-                            for failure in ("", "--lib", "--bin")):
+                            for failure in ("", "--lib", "--bin", "rust-src")):
       with self.subTest(target=target, failure=failure), tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary).resolve()
         commands = root / "commands"
         executable(commands / "git", f"#!/bin/sh\nprintf '%s\\n' '{root}'\n")
         sysroot = root / "sysroot"
+        rust_src = sysroot / "lib/rustlib/src/rust/library"
+        if failure != "rust-src":
+          (rust_src / "std/src").mkdir(parents=True)
+          (rust_src / "std/src/lib.rs").write_bytes(b"// fixture rust-src\n")
         host = TARGET if target.startswith(("riscv64", "s390x")) else target
         executable(commands / "rustc", f"#!/bin/sh\n" +
                    f"if [ \"$*\" = '--print sysroot' ]; then echo '{sysroot}'; else echo 'host: {host}'; fi\n")
@@ -121,6 +126,7 @@ if '--bin' in args:
         build = root / "target/ct-build" / target / "release"
         build.mkdir(parents=True)
         (build / "stale-build").write_text("stale")
+        before_preflight = snapshot(output)
         env = {key: value for key, value in os.environ.items()
                if key not in {"BASH_ENV", "ENV"} and not key.startswith("BASH_FUNC_")}
         env.update(PATH=str(commands) + os.pathsep + os.environ["PATH"], FAIL_BUILD=failure)
@@ -133,6 +139,14 @@ if '--bin' in args:
           [shutil.which("bash"), str(ROOT / "scripts/ct/artifacts.sh"), "--target", target],
           cwd=root, env=env, capture_output=True, text=True,
         )
+        if failure == "rust-src":
+          self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+          self.assertIn("missing rust-src", result.stderr)
+          self.assertIn("rustup component add", result.stderr)
+          self.assertEqual(snapshot(output), before_preflight)
+          self.assertTrue((build / "stale-build").is_file())
+          self.assertFalse((root / "objdump-calls.jsonl").exists())
+          continue
         self.assertEqual(result.returncode, 17 if failure else 0, result.stdout + result.stderr)
         self.assertFalse((artifacts / "stale-artifact").exists())
         self.assertFalse((build / "stale-build").exists())
@@ -152,7 +166,12 @@ if '--bin' in args:
             self.assertEqual("--mattr=+vector" in command, target == "s390x-unknown-linux-gnu", command)
           binary = "rscrypto-ct-evidence.exe" if "windows" in target else "rscrypto-ct-evidence"
           self.assertEqual((artifacts / binary).read_text(), "binary")
-          tools = json.loads((output / "provenance.json").read_text())["tools"]
+          provenance = json.loads((output / "provenance.json").read_text())
+          self.assertEqual(provenance["rust_src"], {
+            "path": str(rust_src),
+            "std_lib_sha256": hashlib.sha256(b"// fixture rust-src\n").hexdigest(),
+          })
+          tools = provenance["tools"]
           for tool, suffix, expected in (
             ("llvm_objdump", "disasm", "override objdump"),
             ("llvm_nm", "raw-symbols", "override nm"),

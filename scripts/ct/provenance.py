@@ -372,6 +372,7 @@ def main() -> int:
 
   rustc_verbose_text = run(["rustc", "-vV"], cwd=root)
   rustc_verbose = parse_rustc_verbose(rustc_verbose_text)
+  rust_src = Path(run(["rustc", "--print", "sysroot"], cwd=root).strip()) / "lib/rustlib/src/rust/library"
 
   configured_rustflags, environment_rustflags, effective_rustflags, rustflags_source = resolved_rustflags(
     root, args.target
@@ -413,6 +414,10 @@ def main() -> int:
     "rustc_commit_hash": rustc_verbose.get("commit_hash"),
     "rustc_commit_date": rustc_verbose.get("commit_date"),
     "rustc_host": rustc_verbose.get("host"),
+    "rust_src": {
+      "path": str(rust_src),
+      "std_lib_sha256": sha256_file(rust_src / "std/src/lib.rs"),
+    },
     "llvm_version": rustc_verbose.get("LLVM version"),
     "tools": {
       "python": sys.version,
