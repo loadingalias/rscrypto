@@ -6,10 +6,7 @@ use alloc::sync::Arc;
 use core::time::Duration;
 use rscrypto_provider_bench::{BACKENDS, CREDENTIALS, Fixture, GROUPS, Profile, SUITES};
 use serde_json::json;
-use std::{
-  sync::Barrier,
-  time::Instant,
-};
+use std::{sync::Barrier, time::Instant};
 
 #[cfg(unix)]
 fn usage() -> (u128, u64) {
@@ -82,8 +79,7 @@ fn main() {
           resumed,
         },
       );
-      let mut pair = fixture.connect();
-      pair.verify();
+      let pair = fixture.checked_connect();
       let wire = pair.wire_report();
       drop(pair);
       let mut samples = Vec::with_capacity(iterations);
@@ -123,6 +119,7 @@ fn main() {
     "openssl": openssl::version::version(),
     "openssl_compiler": openssl::version::c_flags(),
     "openssl_platform": openssl::version::platform(),
+    "provenance": rscrypto_provider_bench::provenance(),
   });
   #[cfg(unix)]
   {

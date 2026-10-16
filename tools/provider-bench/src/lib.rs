@@ -10,17 +10,41 @@ mod openssl_peer;
 
 use alloc::{collections::VecDeque, rc::Rc, sync::Arc};
 use core::cell::RefCell;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::{self, Read, Write};
 
+use rustls::client::{ClientSessionKey, ClientSessionMemoryCache, ClientSessionStore, Resumption, Tls12Resumption};
+use rustls::crypto::kx::NamedGroup;
+use rustls::crypto::{CipherSuite, Identity};
 use rustls::{ClientConfig, ClientSide, Connection, ServerConfig, ServerSide, SideData, Tcp, VecInput};
 use serde_json::{Value, json};
 
 mod credentials;
+mod provenance;
+
+pub use provenance::provenance;
 
 pub const CREDENTIALS: [&str; 7] = ["p256", "p384", "ed25519", "rsa3072", "mldsa44", "mldsa65", "mldsa87"];
 pub const GROUPS: [&str; 4] = ["X25519", "secp256r1", "secp384r1", "X25519MLKEM768"];
 pub const SUITES: [&str; 3] = ["AES128-GCM-SHA256", "AES256-GCM-SHA384", "CHACHA20-POLY1305-SHA256"];
-pub const BACKENDS: [&str; 3] = ["rscrypto", "aws-lc-rs", "openssl"];
+/// `rscrypto` installs the provider's prepared-anchor verifiers, its recommended
+/// configuration. `rscrypto-webpki` uses rustls's WebPKI verifiers, as `aws-lc-rs`
+/// and `ring` do.
+pub const BACKENDS: [&str; 5] = ["rscrypto", "rscrypto-webpki", "aws-lc-rs", "ring", "openssl"];
+
+/// Whether `backend` implements every algorithm `profile` needs. *ring* has no
+/// ML-KEM or ML-DSA, so those profiles have no `ring` row rather than a substitute.
+#[must_use]
+pub fn supports(backend: &str, profile: Profile<'_>) -> bool {
+  backend != "ring" || !(profile.group.contains("MLKEM") || profile.credential.starts_with("mldsa"))
+}
+
+/// Largest TLS 1.3 record plaintext.
+const MAX_PLAINTEXT: usize = 16_384;
+/// Each direction's preallocated bytes. The largest catalog flight and a full
+/// record fit without reallocating, so transport growth is equal on every stack.
+const QUEUE_CAPACITY: usize = 32 * 1024;
+const QUEUE_BOUND: usize = 1_048_576;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Profile<'a> {
@@ -30,10 +54,59 @@ pub struct Profile<'a> {
   pub resumed: bool,
 }
 
-#[derive(Default)]
+#[expect(clippy::panic, reason = "the benchmark catalog must select known workload values")]
+fn canonical(values: &[&'static str], value: &str) -> &'static str {
+  values
+    .iter()
+    .copied()
+    .find(|known| *known == value)
+    .unwrap_or_else(|| panic!("unknown workload value {value}"))
+}
+
+impl Profile<'_> {
+  fn canonical(self) -> Profile<'static> {
+    Profile {
+      credential: canonical(&CREDENTIALS, self.credential),
+      group: canonical(&GROUPS, self.group),
+      suite: canonical(&SUITES, self.suite),
+      resumed: self.resumed,
+    }
+  }
+}
+
+#[expect(clippy::panic, reason = "the benchmark catalog must select known workload values")]
+fn suite(name: &str) -> CipherSuite {
+  match name {
+    "AES128-GCM-SHA256" => CipherSuite::TLS13_AES_128_GCM_SHA256,
+    "AES256-GCM-SHA384" => CipherSuite::TLS13_AES_256_GCM_SHA384,
+    "CHACHA20-POLY1305-SHA256" => CipherSuite::TLS13_CHACHA20_POLY1305_SHA256,
+    _ => panic!("unknown suite"),
+  }
+}
+
+#[expect(clippy::panic, reason = "the benchmark catalog must select known workload values")]
+fn group(name: &str) -> NamedGroup {
+  match name {
+    "X25519" => NamedGroup::X25519,
+    "secp256r1" => NamedGroup::secp256r1,
+    "secp384r1" => NamedGroup::secp384r1,
+    "X25519MLKEM768" => NamedGroup::X25519MLKEM768,
+    _ => panic!("unknown group"),
+  }
+}
+
 struct Queue {
   bytes: VecDeque<u8>,
   written: usize,
+}
+
+impl Queue {
+  fn new() -> Self {
+    Self {
+      bytes: VecDeque::with_capacity(QUEUE_CAPACITY),
+      written: 0,
+    }
+  }
 }
 
 #[derive(Clone)]
@@ -44,8 +117,8 @@ pub(crate) struct Pipe {
 
 impl Pipe {
   fn pair() -> (Self, Self) {
-    let left = Rc::new(RefCell::new(Queue::default()));
-    let right = Rc::new(RefCell::new(Queue::default()));
+    let left = Rc::new(RefCell::new(Queue::new()));
+    let right = Rc::new(RefCell::new(Queue::new()));
     (
       Self {
         input: left.clone(),
@@ -72,18 +145,15 @@ impl Read for Pipe {
     if queue.bytes.is_empty() {
       return Err(io::ErrorKind::WouldBlock.into());
     }
-    let count = output.len().min(queue.bytes.len());
-    for byte in &mut output[..count] {
-      *byte = queue.bytes.pop_front().expect("queue length");
-    }
-    Ok(count)
+    // std copies the ring buffer's front slice with one memcpy, then drains it.
+    queue.bytes.read(output)
   }
 }
 
 impl Write for Pipe {
   fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
     let mut queue = self.output.borrow_mut();
-    if queue.bytes.len().strict_add(bytes.len()) > 1_048_576 {
+    if queue.bytes.len().strict_add(bytes.len()) > QUEUE_BOUND {
       return Err(io::Error::other("benchmark transport exceeded its byte bound"));
     }
     queue.bytes.extend(bytes);
@@ -92,6 +162,49 @@ impl Write for Pipe {
   }
   fn flush(&mut self) -> io::Result<()> {
     Ok(())
+  }
+}
+
+/// Client session storage that counts the TLS 1.3 tickets its client accepts.
+///
+/// With `inner`, it delegates to rustls's default in-memory store; without it,
+/// it stores nothing, as `Resumption::disabled()` does.
+#[derive(Debug)]
+struct CountingStore {
+  inner: Option<ClientSessionMemoryCache>,
+  tickets: Arc<AtomicUsize>,
+}
+
+impl ClientSessionStore for CountingStore {
+  fn set_kx_hint(&self, key: ClientSessionKey<'static>, group: NamedGroup) {
+    if let Some(inner) = &self.inner {
+      inner.set_kx_hint(key, group);
+    }
+  }
+  fn kx_hint(&self, key: &ClientSessionKey<'_>) -> Option<NamedGroup> {
+    self.inner.as_ref()?.kx_hint(key)
+  }
+  fn set_tls12_session(&self, key: ClientSessionKey<'static>, value: rustls::client::Tls12Session) {
+    if let Some(inner) = &self.inner {
+      inner.set_tls12_session(key, value);
+    }
+  }
+  fn tls12_session(&self, key: &ClientSessionKey<'_>) -> Option<rustls::client::Tls12Session> {
+    self.inner.as_ref()?.tls12_session(key)
+  }
+  fn remove_tls12_session(&self, key: &ClientSessionKey<'static>) {
+    if let Some(inner) = &self.inner {
+      inner.remove_tls12_session(key);
+    }
+  }
+  fn insert_tls13_ticket(&self, key: ClientSessionKey<'static>, value: rustls::client::Tls13Session) {
+    self.tickets.fetch_add(1, Ordering::Relaxed);
+    if let Some(inner) = &self.inner {
+      inner.insert_tls13_ticket(key, value);
+    }
+  }
+  fn take_tls13_ticket(&self, key: &ClientSessionKey<'static>) -> Option<rustls::client::Tls13Session> {
+    self.inner.as_ref()?.take_tls13_ticket(key)
   }
 }
 
@@ -172,10 +285,21 @@ impl<S: SideData> Endpoint<S> {
       Self::OpenSsl(peer) => peer.handshaking(),
     }
   }
-  fn resumed(&self) -> bool {
+  /// Fail unless this endpoint completed exactly the selected handshake.
+  /// rustls reports a HelloRetryRequest as its own kind; the flight count
+  /// catches one on every stack.
+  fn assert_kind(&self, resumed: bool, side: &str) {
     match self {
-      Self::Rustls(peer) => peer.connection.handshake_kind() == Some(rustls::HandshakeKind::Resumed),
-      Self::OpenSsl(peer) => peer.resumed(),
+      Self::Rustls(peer) => assert_eq!(
+        peer.connection.handshake_kind(),
+        Some(if resumed {
+          rustls::HandshakeKind::Resumed
+        } else {
+          rustls::HandshakeKind::Full
+        }),
+        "{side} handshake kind"
+      ),
+      Self::OpenSsl(peer) => assert_eq!(peer.resumed(), resumed, "{side} full/resumed workload"),
     }
   }
   fn exporter(&mut self) -> [u8; 32] {
@@ -193,6 +317,43 @@ impl<S: SideData> Endpoint<S> {
     }
     bytes
   }
+  /// Check the negotiated suite, group, ALPN and the peer's leaf-only chain.
+  #[expect(clippy::panic, reason = "a wrong negotiation invalidates this benchmark fixture")]
+  fn check(&self, profile: Profile<'_>, side: &str) {
+    let (_, leaf, _) = credentials::der(profile.credential);
+    match self {
+      Self::Rustls(peer) => {
+        let connection = &peer.connection;
+        assert_eq!(
+          connection
+            .negotiated_cipher_suite()
+            .map(|negotiated| negotiated.suite()),
+          Some(suite(profile.suite)),
+          "{side} cipher suite"
+        );
+        assert_eq!(
+          connection
+            .negotiated_key_exchange_group()
+            .map(|negotiated| negotiated.name()),
+          Some(group(profile.group)),
+          "{side} key exchange group"
+        );
+        assert_eq!(
+          connection.alpn_protocol(),
+          Some(&rustls::enums::ApplicationProtocol::from(credentials::ALPN.to_vec())),
+          "{side} ALPN"
+        );
+        match connection.peer_identity().map(|identity| identity.identity()) {
+          Some(Identity::X509(chain)) => {
+            assert!(chain.intermediates.is_empty(), "{side} received a leaf-only chain");
+            assert_eq!(chain.end_entity.as_ref(), leaf, "{side} peer leaf");
+          }
+          _ => panic!("{side} peer certificate identity"),
+        }
+      }
+      Self::OpenSsl(peer) => peer.check(profile, leaf, side),
+    }
+  }
   fn send(&mut self, bytes: &[u8]) {
     match self {
       Self::Rustls(peer) => peer
@@ -203,6 +364,8 @@ impl<S: SideData> Endpoint<S> {
     }
     self.step();
   }
+  /// Copy the decrypted bytes out of the endpoint's plaintext buffer. Every
+  /// stack makes two plaintext copies: into that buffer, then into `bytes`.
   fn receive(&mut self, bytes: &mut [u8]) {
     match self {
       Self::Rustls(peer) => {
@@ -228,7 +391,7 @@ impl Pair {
     clippy::panic,
     reason = "a stalled production handshake invalidates this bounded benchmark fixture"
   )]
-  fn handshake(mut self, resumed: bool) -> Self {
+  fn handshake(mut self, resumed: bool, flights: usize) -> Self {
     for _ in 0..64 {
       fn step<S: SideData>(endpoint: &mut Endpoint<S>, client: bool, flights: &mut Vec<(bool, usize)>) {
         let before = endpoint.pipe().written();
@@ -245,20 +408,15 @@ impl Pair {
         && !self.client.pipe().pending()
         && !self.server.pipe().pending()
       {
-        assert_eq!(self.client.resumed(), resumed, "client full/resumed workload");
-        assert_eq!(self.server.resumed(), resumed, "server full/resumed workload");
+        self.client.assert_kind(resumed, "client");
+        self.server.assert_kind(resumed, "server");
+        // ClientHello, server flight, client flight, then the ticket flight
+        // when tickets are issued. A HelloRetryRequest adds two flights.
+        assert_eq!(self.flights.len(), flights, "TLS flight count");
         return self;
       }
     }
     panic!("TLS fixture exceeded its flight bound");
-  }
-
-  pub fn verify(&mut self) {
-    assert_eq!(
-      self.client.exporter(),
-      self.server.exporter(),
-      "independent endpoint exporters"
-    );
   }
 
   /// Transfer application bytes in one direction, including both record endpoints.
@@ -283,33 +441,33 @@ enum Configs {
 /// Reusable production TLS configurations and a bounded session cache.
 pub struct Fixture {
   configs: Configs,
-  resumed: bool,
+  profile: Profile<'static>,
+  /// TLS 1.3 tickets the client has accepted, across all connections.
+  tickets: Arc<AtomicUsize>,
 }
 
 impl Fixture {
   #[expect(clippy::panic, reason = "the benchmark catalog must select known workload values")]
   pub fn new(backend: &str, profile: Profile<'_>) -> Self {
+    assert!(supports(backend, profile), "{backend} does not implement this profile");
+    let profile = profile.canonical();
+    let tickets = Arc::new(AtomicUsize::new(0));
     let configs = if backend == "openssl" {
-      Configs::OpenSsl(openssl_peer::Configs::new(profile))
+      Configs::OpenSsl(openssl_peer::Configs::new(profile, tickets.clone()))
     } else {
-      let mut provider = match backend {
-        "rscrypto" => rscrypto_rustls::default_provider(),
-        "aws-lc-rs" => rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER,
+      let (mut provider, all) = match backend {
+        "rscrypto" | "rscrypto-webpki" => (
+          rscrypto_rustls::default_provider(),
+          rscrypto_rustls::verify::ALL_ALGORITHMS,
+        ),
+        "aws-lc-rs" => (
+          rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER,
+          rustls_aws_lc_rs::ALL_VERIFICATION_ALGS,
+        ),
+        "ring" => (rustls_ring::DEFAULT_TLS13_PROVIDER, rustls_ring::ALL_VERIFICATION_ALGS),
         _ => panic!("unknown benchmark backend"),
       };
-      let group = match profile.group {
-        "X25519" => rustls::crypto::kx::NamedGroup::X25519,
-        "secp256r1" => rustls::crypto::kx::NamedGroup::secp256r1,
-        "secp384r1" => rustls::crypto::kx::NamedGroup::secp384r1,
-        "X25519MLKEM768" => rustls::crypto::kx::NamedGroup::X25519MLKEM768,
-        _ => panic!("unknown group"),
-      };
-      let suite = match profile.suite {
-        "AES128-GCM-SHA256" => rustls::crypto::CipherSuite::TLS13_AES_128_GCM_SHA256,
-        "AES256-GCM-SHA384" => rustls::crypto::CipherSuite::TLS13_AES_256_GCM_SHA384,
-        "CHACHA20-POLY1305-SHA256" => rustls::crypto::CipherSuite::TLS13_CHACHA20_POLY1305_SHA256,
-        _ => panic!("unknown suite"),
-      };
+      let (group, suite) = (group(profile.group), suite(profile.suite));
       provider.kx_groups.to_mut().retain(|entry| entry.name() == group);
       provider
         .tls13_cipher_suites
@@ -321,45 +479,68 @@ impl Fixture {
         .iter()
         .position(|(name, _)| *name == scheme)
         .expect("credential signature scheme");
-      let all = if backend == "rscrypto" {
-        rscrypto_rustls::verify::ALL_ALGORITHMS
-      } else {
-        rustls_aws_lc_rs::ALL_VERIFICATION_ALGS
-      };
       provider.signature_verification_algorithms =
         rustls::crypto::WebPkiSupportedAlgorithms::new(all, &mapping[index..index.strict_add(1)])
           .expect("selected signature scheme");
       assert_eq!(provider.kx_groups.len(), 1);
       assert_eq!(provider.tls13_cipher_suites.len(), 1);
+      let ticketer = provider.ticketer_factory;
       let (mut client, mut server) = credentials::configs(provider, profile.credential, backend == "rscrypto");
+      // rustls's default 256-entry store for resumed rows; no storage for full rows.
+      let store = Resumption::store(Arc::new(CountingStore {
+        inner: profile.resumed.then(|| ClientSessionMemoryCache::new(256)),
+        tickets: tickets.clone(),
+      }));
       if profile.resumed {
-        server.ticketer = Some(if backend == "rscrypto" {
-          rscrypto_rustls::ticket::ticketer().expect("ticket key")
-        } else {
-          rustls_aws_lc_rs::DEFAULT_TLS13_PROVIDER
-            .ticketer_factory
-            .ticketer()
-            .expect("ticket key")
-        });
+        client.resumption = store;
+        // Each stack's production ticketer. OpenSSL issues at most one ticket
+        // after a resumption, so every stack issues exactly one per connection.
+        server.ticketer = Some(ticketer.ticketer().expect("ticket key"));
+        server.send_tls13_tickets = rustls::server::Tls13Tickets { default: 1, max: 1 };
       } else {
-        client.resumption = rustls::client::Resumption::disabled();
+        client.resumption = store.tls12_resumption(Tls12Resumption::Disabled);
         server.send_tls13_tickets = rustls::server::Tls13Tickets { default: 0, max: 0 };
       }
       Configs::Rustls(Arc::new(client), Arc::new(server))
     };
     let fixture = Self {
       configs,
-      resumed: profile.resumed,
+      profile,
+      tickets,
     };
     // Seed the client cache once; every timed resumed connection must consume a
     // real ticket and process a replacement. Never time a disguised full handshake.
-    let mut first = fixture.connect_inner(false);
-    first.verify();
+    fixture.checked(false);
     fixture
   }
 
+  /// One timed-path connection: complete, of the selected kind, with the expected flights.
   pub fn connect(&self) -> Pair {
-    self.connect_inner(self.resumed)
+    self.connect_inner(self.profile.resumed)
+  }
+
+  /// A connection like [`Self::connect`], checked outside timing: ticket count,
+  /// exporter equality, negotiated suite, group and ALPN, and leaf-only chains.
+  pub fn checked_connect(&self) -> Pair {
+    self.checked(self.profile.resumed)
+  }
+
+  fn checked(&self, resumed: bool) -> Pair {
+    let before = self.tickets.load(Ordering::Relaxed);
+    let mut pair = self.connect_inner(resumed);
+    assert_eq!(
+      self.tickets.load(Ordering::Relaxed).strict_sub(before),
+      usize::from(self.profile.resumed),
+      "TLS 1.3 tickets accepted from one connection"
+    );
+    assert_eq!(
+      pair.client.exporter(),
+      pair.server.exporter(),
+      "independent endpoint exporters"
+    );
+    pair.client.check(self.profile, "client");
+    pair.server.check(self.profile, "server");
+    pair
   }
 
   fn connect_inner(&self, resumed: bool) -> Pair {
@@ -387,6 +568,6 @@ impl Fixture {
       server,
       flights: Vec::new(),
     }
-    .handshake(resumed)
+    .handshake(resumed, 3_usize.strict_add(usize::from(self.profile.resumed)))
   }
 }

@@ -1,14 +1,25 @@
-use crate::{Pipe, Profile, credentials};
-use alloc::{collections::VecDeque, sync::Arc};
+use crate::{MAX_PLAINTEXT, Pipe, Profile, credentials};
+use alloc::sync::Arc;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use openssl::{
   pkey::PKey,
   ssl::{
-    self, ErrorCode, Ssl, SslContext, SslContextBuilder, SslMethod, SslSession, SslSessionCacheMode, SslStream,
-    SslVerifyMode, SslVersion,
+    self, ErrorCode, Ssl, SslContext, SslContextBuilder, SslMethod, SslMode, SslSession, SslSessionCacheMode,
+    SslStream, SslVerifyMode, SslVersion,
   },
   x509::X509,
 };
 use std::{io::Write, sync::Mutex};
+
+#[expect(clippy::panic, reason = "the benchmark catalog must select known workload values")]
+fn standard_suite(name: &str) -> &'static str {
+  match name {
+    "AES128-GCM-SHA256" => "TLS_AES_128_GCM_SHA256",
+    "AES256-GCM-SHA384" => "TLS_AES_256_GCM_SHA384",
+    "CHACHA20-POLY1305-SHA256" => "TLS_CHACHA20_POLY1305_SHA256",
+    _ => panic!("unknown suite"),
+  }
+}
 
 pub(crate) struct Configs {
   client: SslContext,
@@ -18,7 +29,7 @@ pub(crate) struct Configs {
 
 impl Configs {
   #[expect(clippy::panic, reason = "the benchmark catalog must select known workload values")]
-  pub(crate) fn new(profile: Profile<'_>) -> Self {
+  pub(crate) fn new(profile: Profile<'_>, tickets: Arc<AtomicUsize>) -> Self {
     assert!(
       openssl::version::version().starts_with("OpenSSL 4.0.3 "),
       "benchmark peer requires OpenSSL 4.0.3"
@@ -37,13 +48,10 @@ impl Configs {
         .set_max_proto_version(Some(SslVersion::TLS1_3))
         .expect("TLS version");
       context
-        .set_ciphersuites(match profile.suite {
-          "AES128-GCM-SHA256" => "TLS_AES_128_GCM_SHA256",
-          "AES256-GCM-SHA384" => "TLS_AES_256_GCM_SHA384",
-          "CHACHA20-POLY1305-SHA256" => "TLS_CHACHA20_POLY1305_SHA256",
-          _ => panic!("unknown suite"),
-        })
+        .set_ciphersuites(standard_suite(profile.suite))
         .expect("cipher suite");
+      // One configured group: a completed handshake proves which group it used.
+      assert!(!profile.group.contains(':'), "one key exchange group");
       context.set_groups_list(profile.group).expect("group");
       context
         .set_sigalgs_list(match profile.credential {
@@ -60,6 +68,9 @@ impl Configs {
       context.set_certificate(&leaf).expect("certificate");
       context.set_private_key(&key).expect("private key");
       context.check_private_key().expect("matching key");
+      // Send the leaf alone, as the rustls endpoints do. Automatic chain
+      // building would verify the local chain on every connection and send the root.
+      context.set_mode(SslMode::NO_AUTO_CHAIN);
       context.cert_store_mut().add_cert(root.clone()).expect("trust root");
       context.set_verify(if server {
         SslVerifyMode::PEER | SslVerifyMode::FAIL_IF_NO_PEER_CERT
@@ -77,18 +88,20 @@ impl Configs {
         context
           .set_session_id_context(b"provider-bench")
           .expect("session scope");
+        // OpenSSL never issues more than one ticket after a resumption; every
+        // stack issues exactly one per resumed-workload connection.
         context
-          .set_num_tickets(if profile.resumed { 2 } else { 0 })
+          .set_num_tickets(usize::from(profile.resumed))
           .expect("ticket count");
         context.set_session_cache_mode(SslSessionCacheMode::SERVER);
       } else {
-        context.set_session_cache_mode(if profile.resumed {
-          SslSessionCacheMode::CLIENT
-        } else {
-          SslSessionCacheMode::OFF
-        });
+        // The callback alone keeps sessions, so the client holds one ticket at a
+        // time and every accepted ticket is counted, as in the rustls store.
+        context.set_session_cache_mode(SslSessionCacheMode::CLIENT | SslSessionCacheMode::NO_INTERNAL_STORE);
         let sessions = session.clone();
+        let tickets = tickets.clone();
         context.set_new_session_callback(move |_, ticket| {
+          tickets.fetch_add(1, Ordering::Relaxed);
           *sessions.lock().expect("ticket cache") = Some(ticket);
         });
       }
@@ -126,7 +139,10 @@ impl Configs {
 pub(crate) struct Endpoint {
   stream: SslStream<Pipe>,
   pub(crate) pipe: Pipe,
-  received: VecDeque<u8>,
+  /// Decrypted application bytes, retained across reads like the rustls endpoint's.
+  /// Allocated and zeroed once, so a timed read neither allocates nor clears memory.
+  plaintext: Vec<u8>,
+  filled: usize,
 }
 
 impl Endpoint {
@@ -140,7 +156,8 @@ impl Endpoint {
     Self {
       stream: SslStream::new(ssl, pipe.clone()).expect("memory BIO"),
       pipe,
-      received: VecDeque::new(),
+      plaintext: vec![0; MAX_PLAINTEXT],
+      filled: 0,
     }
   }
   pub(crate) fn handshaking(&self) -> bool {
@@ -149,42 +166,63 @@ impl Endpoint {
   pub(crate) fn resumed(&self) -> bool {
     self.stream.ssl().session_reused()
   }
-  #[expect(clippy::panic, reason = "an unexpected production TLS error invalidates this benchmark fixture")]
+  #[expect(
+    clippy::panic,
+    reason = "an unexpected production TLS error invalidates this benchmark fixture"
+  )]
   pub(crate) fn step(&mut self) {
     if self.handshaking()
       && let Err(error) = self.stream.do_handshake()
     {
       assert_eq!(error.code(), ErrorCode::WANT_READ, "OpenSSL handshake: {error}");
     }
-    if !self.handshaking() {
-      let mut bytes = [0; 16_384];
-      loop {
-        match self.stream.ssl_read(&mut bytes) {
-          Ok(count) => {
-            assert!(count > 0);
-            self.received.extend(&bytes[..count]);
-          }
-          Err(error) if error.code() == ErrorCode::WANT_READ => break,
-          Err(error) => panic!("OpenSSL application input: {error}"),
+    // Read only received records, as the rustls endpoint does. SSL_read
+    // decrypts into the retained buffer: the first of two plaintext copies.
+    while !self.handshaking() && self.pipe.pending() {
+      assert!(self.filled < self.plaintext.len(), "OpenSSL plaintext buffer is full");
+      match self.stream.ssl_read(&mut self.plaintext[self.filled..]) {
+        Ok(count) => {
+          assert!(count > 0);
+          self.filled = self.filled.strict_add(count);
         }
+        Err(error) if error.code() == ErrorCode::WANT_READ => break,
+        Err(error) => panic!("OpenSSL application input: {error}"),
       }
     }
   }
+  /// Copy the decrypted bytes out of the plaintext buffer: the second plaintext copy.
+  pub(crate) fn receive(&mut self, bytes: &mut [u8]) {
+    assert_eq!(self.filled, bytes.len(), "application length");
+    bytes.copy_from_slice(&self.plaintext[..self.filled]);
+    self.filled = 0;
+  }
   pub(crate) fn exporter(&self, bytes: &mut [u8]) {
-    assert_eq!(self.stream.ssl().selected_alpn_protocol(), Some(credentials::ALPN));
     self
       .stream
       .ssl()
       .export_keying_material(bytes, "provider-bench", Some(b"matched"))
       .expect("exporter");
   }
+  /// Check the negotiated suite, ALPN and the peer's leaf-only chain. The context
+  /// configures exactly one group, so the completed handshake used that group.
+  pub(crate) fn check(&self, profile: Profile<'_>, leaf: &[u8], side: &str) {
+    let ssl = self.stream.ssl();
+    assert_eq!(
+      ssl.current_cipher().and_then(|cipher| cipher.standard_name()),
+      Some(standard_suite(profile.suite)),
+      "{side} cipher suite"
+    );
+    assert_eq!(ssl.selected_alpn_protocol(), Some(credentials::ALPN), "{side} ALPN");
+    let peer = ssl.peer_certificate().expect("peer certificate");
+    assert_eq!(peer.to_der().expect("peer DER"), leaf, "{side} peer leaf");
+    // A client's chain includes the peer's leaf; a server's does not.
+    let client = side == "client";
+    assert!(
+      ssl.peer_cert_chain().map_or(0, |chain| chain.len()) <= usize::from(client),
+      "{side} received a leaf-only chain"
+    );
+  }
   pub(crate) fn send(&mut self, bytes: &[u8]) {
     self.stream.write_all(bytes).expect("OpenSSL application output");
-  }
-  pub(crate) fn receive(&mut self, output: &mut [u8]) {
-    assert!(self.received.len() >= output.len());
-    for byte in output {
-      *byte = self.received.pop_front().expect("decrypted application bytes");
-    }
   }
 }

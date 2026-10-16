@@ -5,7 +5,7 @@ mod bench_config;
 
 use core::hint::black_box;
 use criterion::{Criterion, Throughput};
-use rscrypto_provider_bench::{BACKENDS, CREDENTIALS, Fixture, GROUPS, Profile, SUITES};
+use rscrypto_provider_bench::{BACKENDS, CREDENTIALS, Fixture, GROUPS, Profile, SUITES, supports};
 
 fn connections(c: &mut Criterion) {
   for credential in CREDENTIALS {
@@ -29,13 +29,16 @@ fn connections(c: &mut Criterion) {
               suite,
               resumed,
             };
+            if !supports(backend, profile) {
+              continue;
+            }
             // Discovery registers names without running routines, so build and
             // check each fixture only when its case runs.
             let mut fixture = None;
             measured.bench_function(backend, |b| {
               let fixture = fixture.get_or_insert_with(|| {
                 let fixture = Fixture::new(backend, profile);
-                fixture.connect().verify();
+                drop(fixture.checked_connect());
                 fixture
               });
               b.iter(|| drop(black_box(fixture.connect())));
@@ -68,15 +71,16 @@ fn traffic(c: &mut Criterion) {
           let (_fixture, pair) = state.get_or_insert_with(|| {
             let fixture = Fixture::new(
               backend,
+              // The untimed handshake only derives record keys; X25519 lets every
+              // backend, including ring, protect records under the same suite.
               Profile {
                 credential: "p256",
-                group: "X25519MLKEM768",
+                group: "X25519",
                 suite,
                 resumed: false,
               },
             );
-            let mut pair = fixture.connect();
-            pair.verify();
+            let mut pair = fixture.checked_connect();
             pair.transfer(&bytes, &mut output);
             assert_eq!(bytes, output, "authenticated transfer before timing");
             (fixture, pair)
@@ -93,5 +97,14 @@ fn traffic(c: &mut Criterion) {
 }
 
 fn main() {
+  // Record the comparison libraries' identity in the run's output; discovery
+  // and case matching keep their exact output.
+  let first = std::env::args().nth(1);
+  if !std::env::args().any(|arg| arg == "--list") && first.as_deref() != Some("--rscrypto-filter-cases") {
+    eprintln!(
+      "{}",
+      serde_json::json!({"provider_bench_provenance": rscrypto_provider_bench::provenance()})
+    );
+  }
   bench_config::run(&[connections, traffic]);
 }
