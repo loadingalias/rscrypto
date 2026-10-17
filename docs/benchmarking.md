@@ -571,8 +571,12 @@ RustCrypto has no such API, so its `rustcrypto-composed` rows build the mask fro
   ring cannot import a scalar, so it is absent from `public-key-from-secret`.
 - The ChaCha diagnostic group `chacha20-copy-and-xor` restores the message and applies the keystream in the timed closure,
   with a reused allocated buffer.
-  Poly1305 reads immutable fixture bytes and returns a tag, without restoring a message buffer.
-  Neither is a complete AEAD operation.
+  It is not a complete AEAD operation.
+- Poly1305 `authenticate` reads immutable fixture bytes, sets up a one-time key, and returns a tag,
+  without restoring a message buffer.
+  RustCrypto `poly1305`, dryoc `crypto_onetimeauth`, and AWS-LC's public `CRYPTO_poly1305_*` API through aws-lc-sys
+  are the comparison rows. ring and aws-lc-rs expose no standalone Poly1305.
+  Cleanup policies differ: `rscrypto` clears its key and state, and AWS-LC leaves its caller's state uncleared.
 - BLAKE2 `short-oneshot` and `short-keyed` keep only the 16-byte and 128-byte inputs that the main size matrix does not have.
   `single-update` measures construction, one update, and finalization at the small sizes.
   It is different from the multi-chunk streaming workload.

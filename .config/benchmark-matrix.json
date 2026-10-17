@@ -707,6 +707,13 @@
       "headline": false,
       "task": "Insert or look up keys in a hash map built with the collection hasher."
     },
+    "poly1305": {
+      "family": "Poly1305",
+      "bench": "poly1305",
+      "cases": "^poly1305/authenticate/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Authenticate one message with a one-time key, including key setup and finalization."
+    },
     "websocket-accept": {
       "family": "WebSocket SHA-1",
       "bench": "websocket_sha1",

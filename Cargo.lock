@@ -2370,6 +2370,7 @@ dependencies = [
  "p256",
  "p384",
  "pbkdf2",
+ "poly1305",
  "proptest",
  "rapidhash",
  "rayon",

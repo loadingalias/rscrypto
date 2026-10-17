@@ -279,6 +279,7 @@ rustcrypto-ml-kem = { package = "ml-kem", version = "0.3.2", default-features = 
 hmac = "0.13.0"
 hkdf = "0.13.0"
 chacha20poly1305 = "0.11.0"
+poly1305 = "0.9.1"
 chacha20 = "0.10.2"
 aes-gcm = "0.11.1"
 aes-gcm-siv = "0.12.1"
