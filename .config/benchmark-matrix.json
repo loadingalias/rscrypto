@@ -728,6 +728,20 @@
       "headline": false,
       "task": "Key, then tag a message through updates of the named chunk size."
     },
+    "hmac-sha2-verify-reuse": {
+      "family": "HMAC-SHA-2",
+      "bench": "auth",
+      "cases": "^(?P<variant>hmac-sha256|hmac-sha384|hmac-sha512)/verify/reuse-key/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Verify one tag over a message with a key prepared once."
+    },
+    "hmac-sha2-verify-import": {
+      "family": "HMAC-SHA-2",
+      "bench": "auth",
+      "cases": "^(?P<variant>hmac-sha256|hmac-sha384|hmac-sha512)/verify/import-key/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Key from bytes, then verify one tag over a message."
+    },
     "hkdf-expand": {
       "family": "HKDF",
       "bench": "auth",
@@ -1126,6 +1140,13 @@
       "cases": "^(?P<variant>ecdsa-p256|ecdsa-p384)/public-key/(?P<implementation>[^/]+)(?P<input>)$",
       "headline": false,
       "task": "Derive the public key from a private key held by the caller."
+    },
+    "ecdsa-signature-der": {
+      "family": "ECDSA",
+      "bench": "auth",
+      "cases": "^(?P<variant>ecdsa-p(?:256|384)/signature-der/(?:encode|decode))/(?P<implementation>[^/]+)(?P<input>)$",
+      "headline": false,
+      "task": "Encode a parsed signature as DER, or parse and validate a DER signature."
     },
     "ed25519-sign": {
       "family": "Ed25519",

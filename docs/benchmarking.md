@@ -628,6 +628,15 @@ RustCrypto has no such API, so its `rustcrypto-composed` rows build the mask fro
   and expands a modulus-length substitute message, which it returns only for invalid padding.
   RustCrypto 0.9 and AWS-LC return an error for invalid padding, so they skip that work.
   The difference is a design result, and the group stays outside the headline as a legacy operation.
+- HMAC-SHA2 verification has two tasks, at 32 and 1,024 bytes.
+  `verify/reuse-key` prepares each key outside timing: `rscrypto` absorbs into its keyed state, verifies, and resets it;
+  RustCrypto clones its keyed state; aws-lc-rs and ring call `hmac::verify` with a prepared `hmac::Key`.
+  `verify/import-key` keys from bytes in every call; `rscrypto` calls `verify_tag`.
+  Each check also requires the timed path to reject the tag with its last bit flipped.
+- ECDSA `signature-der/encode` and `signature-der/decode` time the RFC 3279 `Ecdsa-Sig-Value` codec alone,
+  against RustCrypto. ring and aws-lc-rs parse DER only inside verification, so they are absent.
+  Every encoding must equal RustCrypto's and verify under ring's DER verifier.
+  Every decoding must return the fixed-width signature, and the timed path must reject the encoding without its last byte.
 - HMAC-SHA3 rows time one tag from a key set up once outside timing.
   `rscrypto` and `aws-lc` (AWS-LC's C `HMAC_CTX` through aws-lc-sys) both cache the Keccak states
   after the ipad and opad blocks. `aws-lc` reuses them through `HMAC_Init_ex` with a null key, inside timing.

@@ -477,6 +477,215 @@ fn hmac_sha256_internal(c: &mut Criterion) {
   g.finish();
 }
 
+/// Returns a tag-verification row. `verify` is the row's timed path: it must accept `tag`, and outside timing it must
+/// reject `changed`.
+fn tag_verification_row<'a, T: ?Sized>(
+  verify: impl FnMut(&T) -> bool + 'a,
+  tag: &'a T,
+  changed: &'a T,
+) -> impl FnMut(&mut criterion::Bencher<'_>) + 'a {
+  checked_routine(
+    verify,
+    move |verify| {
+      // The second acceptance follows one call that reused state has already served.
+      for _ in 0..2 {
+        assert!(verify(tag), "valid authentication benchmark verification must succeed");
+      }
+      assert!(!verify(changed), "a changed tag must fail");
+    },
+    move |b, verify| b.iter(|| verify(black_box(tag))),
+  )
+}
+
+/// Message lengths for HMAC verification: a short token and a typical request body. Verification adds a fixed-cost
+/// comparison to tagging, which the tag groups measure across the full size matrix.
+const HMAC_VERIFY_SIZES: [usize; 2] = [32, 1024];
+
+// HMAC tag verification over one message. Every row must accept RustCrypto's tag and reject it with its last bit
+// flipped. Each library compares the full tag in constant time.
+// - `verify/reuse-key`: each library prepares its key outside timing. Timed: message absorption, finalization, the
+//   comparison, and state reuse or destruction. rscrypto absorbs into its keyed state, calls `verify`, and resets
+//   the state. RustCrypto clones its keyed state and calls `verify_slice`. aws-lc-rs and ring copy the key's
+//   precomputed inner and outer states in `hmac::verify`.
+// - `verify/import-key`: every library receives the key bytes in each call. Timed: keying, absorption,
+//   finalization, the comparison, and destruction. rscrypto calls `verify_tag`. RustCrypto calls `new_from_slice`.
+//   aws-lc-rs and ring build an `hmac::Key`.
+macro_rules! hmac_verify_bench {
+  (
+    $name:ident,
+    $group:literal,
+    $rscrypto:ty,
+    $rustcrypto:ty,
+    $key_len:literal,
+    $aws_algorithm:path,
+    $ring_algorithm:path
+  ) => {
+    fn $name(c: &mut Criterion) {
+      if !bench_config::selected(concat!($group, "/verify/")) {
+        return;
+      }
+      print_auth_diag_once();
+
+      let key = [0x42u8; $key_len];
+      let rustcrypto =
+        <$rustcrypto>::new_from_slice(&key).expect("valid authentication benchmark operation must succeed");
+      aws_lc_bench! {
+        let aws_key = aws_lc_rs::hmac::Key::new($aws_algorithm, &key);
+      }
+      let ring_key = ring::hmac::Key::new($ring_algorithm, &key);
+      let inputs = HMAC_VERIFY_SIZES
+        .into_iter()
+        .map(|len| (len, common::random_bytes(len)))
+        .collect::<Vec<_>>();
+      let fixtures = inputs
+        .iter()
+        .map(|(len, data)| {
+          let tag = rustcrypto_hmac::<$rustcrypto>(&key, data);
+          let mut changed = tag.clone();
+          *changed.last_mut().expect("an HMAC tag is not empty") ^= 1;
+          let tag_rs = <<$rscrypto as rscrypto::Mac>::Tag>::try_from(tag.as_slice())
+            .expect("RustCrypto's tag has the HMAC output length");
+          let changed_rs = <<$rscrypto as rscrypto::Mac>::Tag>::try_from(changed.as_slice())
+            .expect("RustCrypto's tag has the HMAC output length");
+          (*len, data, tag, changed, tag_rs, changed_rs)
+        })
+        .collect::<Vec<_>>();
+
+      let mut g = c.benchmark_group(concat!($group, "/verify/reuse-key"));
+      for (len, data, tag, changed, tag_rs, changed_rs) in &fixtures {
+        common::set_throughput(&mut g, *len);
+        let mut mac = <$rscrypto>::new(&key);
+        g.bench_function(
+          BenchmarkId::new("rscrypto", len),
+          tag_verification_row(
+            move |tag| {
+              mac.update(black_box(data));
+              let verified = mac.verify(tag).is_ok();
+              mac.reset();
+              verified
+            },
+            tag_rs,
+            changed_rs,
+          ),
+        );
+        g.bench_function(
+          BenchmarkId::new("rustcrypto", len),
+          tag_verification_row(
+            |tag: &[u8]| {
+              use hmac::Mac as _;
+
+              let mut mac = rustcrypto.clone();
+              mac.update(black_box(data));
+              mac.verify_slice(tag).is_ok()
+            },
+            tag.as_slice(),
+            changed.as_slice(),
+          ),
+        );
+        aws_lc_bench! {
+          g.bench_function(
+            BenchmarkId::new("aws-lc-rs", len),
+            tag_verification_row(
+              |tag: &[u8]| aws_lc_rs::hmac::verify(&aws_key, black_box(data), tag).is_ok(),
+              tag.as_slice(),
+              changed.as_slice(),
+            ),
+          );
+        }
+        g.bench_function(
+          BenchmarkId::new("ring", len),
+          tag_verification_row(
+            |tag: &[u8]| ring::hmac::verify(&ring_key, black_box(data), tag).is_ok(),
+            tag.as_slice(),
+            changed.as_slice(),
+          ),
+        );
+      }
+      g.finish();
+
+      let mut g = c.benchmark_group(concat!($group, "/verify/import-key"));
+      for (len, data, tag, changed, tag_rs, changed_rs) in &fixtures {
+        common::set_throughput(&mut g, *len);
+        g.bench_function(
+          BenchmarkId::new("rscrypto", len),
+          tag_verification_row(
+            |tag| <$rscrypto>::verify_tag(black_box(&key), black_box(data), tag).is_ok(),
+            tag_rs,
+            changed_rs,
+          ),
+        );
+        g.bench_function(
+          BenchmarkId::new("rustcrypto", len),
+          tag_verification_row(
+            |tag: &[u8]| {
+              use hmac::Mac as _;
+
+              let mut mac = <$rustcrypto>::new_from_slice(black_box(&key))
+                .expect("valid authentication benchmark operation must succeed");
+              mac.update(black_box(data));
+              mac.verify_slice(tag).is_ok()
+            },
+            tag.as_slice(),
+            changed.as_slice(),
+          ),
+        );
+        aws_lc_bench! {
+          g.bench_function(
+            BenchmarkId::new("aws-lc-rs", len),
+            tag_verification_row(
+              |tag: &[u8]| {
+                aws_lc_rs::hmac::verify(&aws_lc_rs::hmac::Key::new($aws_algorithm, black_box(&key)), black_box(data), tag)
+                  .is_ok()
+              },
+              tag.as_slice(),
+              changed.as_slice(),
+            ),
+          );
+        }
+        g.bench_function(
+          BenchmarkId::new("ring", len),
+          tag_verification_row(
+            |tag: &[u8]| {
+              ring::hmac::verify(&ring::hmac::Key::new($ring_algorithm, black_box(&key)), black_box(data), tag).is_ok()
+            },
+            tag.as_slice(),
+            changed.as_slice(),
+          ),
+        );
+      }
+      g.finish();
+    }
+  };
+}
+
+hmac_verify_bench!(
+  hmac_sha256_verify,
+  "hmac-sha256",
+  HmacSha256,
+  RustCryptoHmacSha256,
+  32,
+  aws_lc_rs::hmac::HMAC_SHA256,
+  ring::hmac::HMAC_SHA256
+);
+hmac_verify_bench!(
+  hmac_sha384_verify,
+  "hmac-sha384",
+  HmacSha384,
+  RustCryptoHmacSha384,
+  48,
+  aws_lc_rs::hmac::HMAC_SHA384,
+  ring::hmac::HMAC_SHA384
+);
+hmac_verify_bench!(
+  hmac_sha512_verify,
+  "hmac-sha512",
+  HmacSha512,
+  RustCryptoHmacSha512,
+  64,
+  aws_lc_rs::hmac::HMAC_SHA512,
+  ring::hmac::HMAC_SHA512
+);
+
 // HKDF-Expand from a PRK that each library holds outside timing. Each row writes into a reused caller buffer. Salt
 // and IKM are HashLen bytes, and `info` keeps T(1) in one compression block while each later T(i) needs two.
 // Every row must return RustCrypto's output; the RustCrypto row must return ring's.
@@ -1478,6 +1687,115 @@ fn ecdsa_p384_public_key(c: &mut Criterion) {
   );
   g.finish();
 }
+
+// ECDSA signature DER codec (RFC 3279 `Ecdsa-Sig-Value`), the form that X.509 and TLS carry. The fixture is
+// RustCrypto's RFC 6979 signature of a 32-byte message, which ring must verify in both its fixed-width and DER
+// forms before any row runs.
+// - `encode`: timed encoding of a parsed signature. rscrypto writes into a reused buffer; RustCrypto returns its
+//   fixed-capacity `der::Signature`. Every encoding must equal RustCrypto's and verify under ring's DER verifier.
+// - `decode`: timed parsing and range validation of the DER bytes. Every row must return the fixed-width signature
+//   and reject the encoding with its last byte removed.
+// ring and aws-lc-rs have no standalone signature codec; they parse DER only inside verification.
+macro_rules! ecdsa_der_bench {
+  (
+    $name:ident,
+    $group:literal,
+    $signature:ty,
+    $oracle_signing_key:ty,
+    $oracle_signature:ty,
+    $secret_len:literal,
+    $ring_fixed:path,
+    $ring_der:path
+  ) => {
+    fn $name(c: &mut Criterion) {
+      if !bench_config::selected(concat!($group, "/signature-der/")) {
+        return;
+      }
+      let message = common::random_bytes(32);
+      let signing_key = <$oracle_signing_key>::from_slice(&[0x11u8; $secret_len])
+        .expect("valid authentication benchmark operation must succeed");
+      let sec1 = signing_key.verifying_key().to_sec1_point(false);
+      let signature: $oracle_signature = p256::ecdsa::signature::Signer::sign(&signing_key, &message);
+      let fixed = signature.to_bytes().to_vec();
+      let der = signature.to_der().as_bytes().to_vec();
+      let truncated = der[..der.len().strict_sub(1)].to_vec();
+      let ring_verifies_der = |encoding: &[u8]| {
+        ring::signature::UnparsedPublicKey::new(&$ring_der, sec1.as_bytes())
+          .verify(&message, encoding)
+          .expect("ring must verify the DER signature");
+      };
+      ring::signature::UnparsedPublicKey::new(&$ring_fixed, sec1.as_bytes())
+        .verify(&message, &fixed)
+        .expect("ring must verify the fixed-width signature");
+      ring_verifies_der(&der);
+      let parsed = <$signature>::from_bytes(fixed.as_slice().try_into().expect("fixed-width signature length"))
+        .expect("valid authentication benchmark operation must succeed");
+
+      let mut g = c.benchmark_group(concat!($group, "/signature-der/encode"));
+      g.bench_function(
+        "rscrypto",
+        checked_with(
+          [0u8; <$signature>::DER_MAX_LENGTH],
+          |out| black_box(&parsed).to_der_into(out).len(),
+          |len, out| {
+            assert_eq!(&out[..len], der.as_slice());
+            ring_verifies_der(&out[..len]);
+          },
+        ),
+      );
+      g.bench_function(
+        "rustcrypto",
+        checked(
+          || black_box(&signature).to_der(),
+          |encoding| ring_verifies_der(encoding.as_bytes()),
+        ),
+      );
+      g.finish();
+
+      let mut g = c.benchmark_group(concat!($group, "/signature-der/decode"));
+      g.bench_function(
+        "rscrypto",
+        validating_row(
+          |encoding: &Vec<u8>| <$signature>::from_der(encoding).ok(),
+          &der,
+          &truncated,
+          |decoded| assert_eq!(decoded.as_bytes().as_slice(), fixed.as_slice()),
+        ),
+      );
+      g.bench_function(
+        "rustcrypto",
+        validating_row(
+          |encoding: &Vec<u8>| <$oracle_signature>::from_der(encoding).ok(),
+          &der,
+          &truncated,
+          |decoded| assert_eq!(decoded.to_bytes().as_slice(), fixed.as_slice()),
+        ),
+      );
+      g.finish();
+    }
+  };
+}
+
+ecdsa_der_bench!(
+  ecdsa_p256_signature_der,
+  "ecdsa-p256",
+  EcdsaP256Signature,
+  P256OracleSigningKey,
+  P256OracleSignature,
+  32,
+  ring::signature::ECDSA_P256_SHA256_FIXED,
+  ring::signature::ECDSA_P256_SHA256_ASN1
+);
+ecdsa_der_bench!(
+  ecdsa_p384_signature_der,
+  "ecdsa-p384",
+  EcdsaP384Signature,
+  P384OracleSigningKey,
+  P384OracleSignature,
+  48,
+  ring::signature::ECDSA_P384_SHA384_FIXED,
+  ring::signature::ECDSA_P384_SHA384_ASN1
+);
 
 // Independent expectations for the diagnostic ECDSA component rows, from RustCrypto point arithmetic and
 // crypto-bigint modular arithmetic. Components return little-endian 64-bit limbs. A Montgomery value is
@@ -3916,6 +4234,9 @@ fn main() {
     hmac_sha256,
     hmac_sha384,
     hmac_sha512,
+    hmac_sha256_verify,
+    hmac_sha384_verify,
+    hmac_sha512_verify,
     hmac_sha256_streaming,
     hmac_sha256_internal,
     hkdf_sha256_expand,
@@ -3932,6 +4253,8 @@ fn main() {
     ecdsa_p384_public_key,
     ecdsa_p384_sign,
     ecdsa_p384_verify,
+    ecdsa_p256_signature_der,
+    ecdsa_p384_signature_der,
     #[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
     ecdsa_p384_internal,
     ed25519_public_key,
