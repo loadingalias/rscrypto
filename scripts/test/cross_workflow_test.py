@@ -166,7 +166,8 @@ class CrossWorkflow(unittest.TestCase):
                 self.assertNotIn('max-parallel', workflow['jobs'][job]['strategy'])
                 runs = [step['run'] for step in workflow['jobs'][job]['steps'] if 'scripts/bench/ci.py' in step.get('run', '')]
                 self.assertTrue(runs)
-                self.assertTrue(all('$FAMILY' in run or '$env:FAMILY' in run for run in runs))
+                # Every family command names its family; evidence packing names only its archive.
+                self.assertTrue(all('$FAMILY' in run or '$env:FAMILY' in run or 'ci.py evidence' in run for run in runs))
                 self.assertTrue(all('${{' not in run for run in runs))
 
     def test_bench_scorecard_reads_only_this_attempts_measurements(self):
@@ -177,20 +178,33 @@ class CrossWorkflow(unittest.TestCase):
         labels = [job['runs-on'] for job in jobs.values() if isinstance(job.get('runs-on'), str)]
         self.assertEqual(labels.count(score['runs-on']), 1)
         download, = [step for step in score['steps'] if 'download-artifact' in step.get('uses', '')]
-        self.assertEqual(download['with']['pattern'], 'bench-*-${{ github.run_id }}-${{ github.run_attempt }}')
+        self.assertEqual(download['with']['pattern'], 'bench-*-${{ github.run_id }}-${{ github.run_attempt }}.tar.gz')
         run, = [step['run'] for step in score['steps'] if 'scripts/bench/ci.py score' in step.get('run', '')]
         self.assertIn(download['with']['path'], run)
         self.assertIn('$GITHUB_STEP_SUMMARY', run)
 
-    def test_bench_evidence_keeps_each_transferred_binary_once(self):
+    def test_bench_evidence_is_one_raw_archive_per_job(self):
         jobs = read_yaml('.github/workflows/bench.yml')['jobs']
-        evidence, = [step for step in jobs['bench']['steps'] if step.get('name') == 'Retain benchmark evidence']
+        bench = jobs['bench']
+        self.assertEqual(bench['env']['EVIDENCE'],
+                         'bench-${{ matrix.name }}-${{ matrix.family }}-${{ github.run_id }}-${{ github.run_attempt }}.tar.gz')
+        steps = bench['steps']
+        packs = [step for step in steps if 'scripts/bench/ci.py evidence target/bench' in step.get('run', '')]
+        upload, = [step for step in steps if step.get('name') == 'Retain benchmark evidence']
+        # Both operating systems pack after any outcome, before the upload; zipped uploads crashed on RISC-V.
+        self.assertEqual(len(packs), 2)
+        self.assertTrue(all(step['if'].startswith('${{ always() && runner.os ==') for step in packs))
+        self.assertTrue(all(steps.index(step) < steps.index(upload) for step in packs))
+        self.assertEqual(upload['if'], '${{ always() }}')
+        self.assertEqual(upload['with'], {'path': 'target/${{ env.EVIDENCE }}', 'archive': 'false',
+                                          'if-no-files-found': 'warn', 'retention-days': '30'})
+        windows, = [step for step in steps if step.get('name') == 'Install tooling and measure (Windows)']
+        self.assertIn('$env:GITHUB_PATH', windows['run'])
+        # The archive omits the transferred binaries that the preparation artifact keeps for as long.
         preparation, = [step for step in jobs['cross-build']['steps']
                         if step.get('name') == 'Retain benchmark preparation evidence']
-        # The measurement artifact drops the unpacked transfer binaries that the preparation artifact keeps.
-        self.assertEqual(evidence['with']['path'].split(), ['target/bench/', '!target/bench/criterion/*/input/bin/**'])
         self.assertEqual(preparation['with']['path'], 'target/bench/preparation/')
-        self.assertEqual(evidence['with']['retention-days'], preparation['with']['retention-days'])
+        self.assertEqual(preparation['with']['retention-days'], upload['with']['retention-days'])
 
     def test_largest_bench_run_fits_aws_quotas_with_one_label_per_job(self):
         # Standard-family vCPU quotas of the RunsOn AWS account in us-east-1, read 2026-10-16 from

@@ -527,7 +527,9 @@ selects the first message index for reproducing a discovered rejection case.
   It fails on an incomplete comparison point, on a missing competitor build for the platform,
   and on a measured group that has external rows but no declaration.
   `--cases` checks the declarations against `just bench --list` output without measuring.
-  The Bench workflow's `Score comparisons` job runs it on the run's measurement artifacts.
+  The Bench workflow's `Score comparisons` job runs it on the run's extracted measurement archives.
+- `bench/ci.py evidence` packs one measurement job's `target/bench/` into the single raw archive that the job uploads,
+  without the transferred binaries that the preparation artifact keeps.
 - `.config/criterion.json` owns the shared Criterion defaults and the maximum run budget.
 - `benches/common/criterion.rs` applies them to every Criterion harness.
   `bench/settings.py` resolves overrides for one invocation.

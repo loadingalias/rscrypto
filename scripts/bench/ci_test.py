@@ -177,27 +177,54 @@ class ManualBench(unittest.TestCase):
             self.assertEqual(ci.main(), 0)
             self.assertEqual([call.args[0][2] for call in execute.call_args_list], ['xxh3'])
 
-    def test_score_reads_each_measurement_artifact_of_this_attempt(self):
+    def test_score_reads_each_measurement_archive_of_this_attempt(self):
         import compare
         for values, partial in (({}, []), ({'filter': '^sha256/'}, ['--partial'])):
             env = request('sha256', **values) | {'GITHUB_RUN_ID': '42', 'GITHUB_RUN_ATTEMPT': '1'}
             with self.subTest(values=values), tempfile.TemporaryDirectory() as directory, \
                  patch.dict(os.environ, env, clear=True), patch.object(compare, 'main', return_value=0) as score:
                 root = Path(directory)
+                source = root / 'source'
+                (source / 'criterion/run').mkdir(parents=True)
+                (source / 'criterion/run/status.txt').write_text('state=complete\n')
+                # download-artifact saves each raw archive inside a directory with the artifact's name.
                 for name in ('bench-x86_64-linux-intel-hashes-42-1', 'bench-aarch64-linux-auth-42-1',
                              'bench-prepare-riscv64-linux-hashes-42-1', 'bench-x86_64-linux-intel-hashes-42-2',
                              'bench-score-42-1'):
-                    (root / name / 'criterion/run').mkdir(parents=True)
-                    (root / name / 'criterion/run/status.txt').write_text('state=complete\n')
-                self.assertEqual(ci.score(root, root / 'score.json', ci.dispatch_inputs(env)), 0)
+                    (root / 'artifacts' / f'{name}.tar.gz').mkdir(parents=True)
+                    ci.evidence(source, root / 'artifacts' / f'{name}.tar.gz' / f'{name}.tar.gz')
+                artifacts = root / 'artifacts'
+                self.assertEqual(ci.score(artifacts, root / 'score.json', ci.dispatch_inputs(env)), 0)
                 self.assertEqual(score.call_args.args[0], [
-                    f'aarch64-linux={root}/bench-aarch64-linux-auth-42-1/criterion/run',
-                    f'x86_64-linux-intel={root}/bench-x86_64-linux-intel-hashes-42-1/criterion/run',
+                    f'aarch64-linux={artifacts}/bench-aarch64-linux-auth-42-1/criterion/run',
+                    f'x86_64-linux-intel={artifacts}/bench-x86_64-linux-intel-hashes-42-1/criterion/run',
                     '--json', str(root / 'score.json'), *partial])
         with tempfile.TemporaryDirectory() as directory, \
              patch.dict(os.environ, {'GITHUB_RUN_ID': '42', 'GITHUB_RUN_ATTEMPT': '1'}), \
              self.assertRaisesRegex(ValueError, 'no measurement artifacts'):
             ci.score(Path(directory), Path(directory) / 'score.json', {})
+
+    def test_evidence_archive_omits_only_transferred_binaries(self):
+        import tarfile
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'bench'
+            files = ['criterion/run/status.txt', 'criterion/run/input/bundle.json', 'criterion/run/input/bin/1/sha2',
+                     'criterion/run/criterion/sha256/new/estimates.json', 'preparation/riscv/bin/1/sha2']
+            for name in files:
+                (source / name).parent.mkdir(parents=True, exist_ok=True)
+                (source / name).write_text(name)
+            self.assertEqual(ci.evidence(source, root / 'evidence.tar.gz'), 0)
+            with tarfile.open(root / 'evidence.tar.gz') as archive:
+                self.assertEqual(archive.getnames(), sorted(set(files) - {'criterion/run/input/bin/1/sha2'}))
+                self.assertTrue(all(member.isfile() for member in archive.getmembers()))
+            # An existing archive is never replaced, and a missing or linked tree is an error.
+            for source_dir, archive in ((source, root / 'evidence.tar.gz'), (root / 'missing', root / 'other.tar.gz')):
+                with self.subTest(source=source_dir), self.assertRaises((FileExistsError, ValueError)):
+                    ci.evidence(source_dir, archive)
+            (source / 'criterion/run/link').symlink_to(source / 'criterion/run/status.txt')
+            with self.assertRaisesRegex(ValueError, 'unexpected link'):
+                ci.evidence(source, root / 'linked.tar.gz')
 
     def test_transfer_dispatch_keeps_selection_and_separate_invocations(self):
         env = request('sha256,sha512,crc32c', filter='^sha256/rscrypto/64$', sample_size='24')

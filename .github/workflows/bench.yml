@@ -139,6 +139,7 @@ jobs:
     env:
       DISPATCH_INPUTS: ${{ needs.plan.outputs.request }}
       FAMILY: ${{ matrix.family }}
+      EVIDENCE: bench-${{ matrix.name }}-${{ matrix.family }}-${{ github.run_id }}-${{ github.run_attempt }}.tar.gz
     steps:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
@@ -173,21 +174,34 @@ jobs:
         shell: powershell
         run: |
           ./scripts/tooling/x86_64-win.ps1 -CiBench
+          # The evidence step runs in a new process; GITHUB_PATH gives it this installer's uv.
+          Split-Path (Get-Command uv).Source | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           uv run python scripts/bench/ci.py run $env:FAMILY
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git diff --exit-code HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # Zipped uploads of target/bench crashed upload-artifact on the RISC-V runners
+      # (`source.copy is not a function`), so each job uploads one raw archive instead.
+      - name: Pack benchmark evidence (Linux)
+        if: ${{ always() && runner.os == 'Linux' }}
+        run: |
+          [[ -d target/bench ]] || exit 0
+          source "$HOME/.local/share/rscrypto-tooling/environment.sh"
+          scripts/lib/python.sh scripts/bench/ci.py evidence target/bench "target/$EVIDENCE"
+      - name: Pack benchmark evidence (Windows)
+        if: ${{ always() && runner.os == 'Windows' }}
+        shell: powershell
+        run: |
+          if (-not (Test-Path target/bench)) { exit 0 }
+          uv run python scripts/bench/ci.py evidence target/bench "target/$env:EVIDENCE"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Retain benchmark evidence
         if: ${{ always() }}
         uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
         with:
-          name: bench-${{ matrix.name }}-${{ matrix.family }}-${{ github.run_id }}-${{ github.run_attempt }}
-          # Transferred binaries are about 90% of a cross-target run. The preparation evidence keeps the
-          # same files, and input/bundle.json keeps their digests. Large uploads from the RISC-V runner
-          # have crashed upload-artifact's buffer scheduler (`source.copy is not a function`).
-          path: |
-            target/bench/
-            !target/bench/criterion/*/input/bin/**
+          # A raw upload takes the file name as the artifact name.
+          path: target/${{ env.EVIDENCE }}
+          archive: false
           if-no-files-found: warn
           retention-days: 30
 
@@ -209,7 +223,7 @@ jobs:
       - name: Download this attempt's measurement evidence
         uses: "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333" # v8.0.2
         with:
-          pattern: bench-*-${{ github.run_id }}-${{ github.run_attempt }}
+          pattern: bench-*-${{ github.run_id }}-${{ github.run_attempt }}.tar.gz
           path: target/bench-artifacts
       - name: Score catalog comparisons
         run: scripts/lib/python.sh scripts/bench/ci.py score target/bench-artifacts target/bench-score.json >>"$GITHUB_STEP_SUMMARY"

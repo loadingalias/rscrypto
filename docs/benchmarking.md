@@ -150,7 +150,7 @@ just bench-compare --cases cases.txt
   `--partial` reports the first kind as notes, for runs whose case filter omitted rows.
 - `--cases` checks the declarations against a case listing without measuring.
 
-The Bench workflow's `Score comparisons` job scores the run's own measurement artifacts.
+The Bench workflow's `Score comparisons` job extracts and scores the run's own measurement archives.
 It writes the tables to the job summary and keeps the JSON as the `bench-score-RUN-ATTEMPT` artifact.
 Published summaries come from that output.
 
@@ -252,8 +252,11 @@ Use the recorded CPU topology to interpret parallel results.
 
 ### Artifacts and limits
 
-Each measurement job keeps `target/bench/` as the `bench-RUNNER-FAMILY-RUN-ATTEMPT` artifact,
-for example `bench-x86_64-linux-intel-hashes-<run>-1`, with one run directory for each `just bench`.
+Each measurement job keeps `target/bench/` as one `bench-RUNNER-FAMILY-RUN-ATTEMPT.tar.gz` artifact,
+for example `bench-x86_64-linux-intel-hashes-<run>-1.tar.gz`, with one run directory for each `just bench`.
+GitHub stores the archive as uploaded, without zipping it;
+zipped uploads of these directories crashed `upload-artifact` on the RISC-V runners.
+The packing step runs after any job outcome, so failed and cancelled jobs keep their evidence.
 It includes failed-run evidence, source and machine identity, the resolved case plan, logs,
 and raw Criterion results.
 A cross-target run omits its transferred binaries; `input/bundle.json` keeps their digests,

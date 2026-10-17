@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tarfile
 
 # Embedded Windows Python omits the script directory from its import path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -165,23 +166,48 @@ def run(inputs: dict, family: str, transfer=lambda name: [], arch: str | None = 
     return 0
 
 
+def evidence(source: Path, archive: Path) -> int:
+    """Pack one measurement job's evidence into one file, which upload-artifact sends without zipping.
+
+    Zipped uploads of these directories crashed upload-artifact on the RISC-V runners
+    (`source.copy is not a function`). A raw file upload never enters that zip stream.
+    """
+    if not source.is_dir():
+        raise ValueError(f'no benchmark evidence at {source}')
+    with tarfile.open(archive, 'x:gz') as output:
+        for path in sorted(source.rglob('*')):
+            relative = path.relative_to(source)
+            # The preparation artifact keeps the transferred binaries; input/bundle.json keeps their digests.
+            if relative.parts[:1] == ('criterion',) and relative.parts[2:4] == ('input', 'bin'):
+                continue
+            if path.is_symlink():
+                raise ValueError(f'unexpected link in benchmark evidence: {relative.as_posix()}')
+            if path.is_file():
+                output.add(path, arcname=relative.as_posix(), recursive=False)
+    return 0
+
+
 def score(directory: Path, output: Path, inputs: dict) -> int:
-    """Score every measurement artifact of this run attempt; each artifact name carries its platform label."""
+    """Score every measurement archive of this run attempt; each archive name carries its platform label."""
     import compare
+    import evidence_bundle
     catalog = load_catalog()
     families = sorted({bench['family'] for bench in catalog['benches'].values() if 'family' in bench}, key=len, reverse=True)
     suffix = f"-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}"
     runs = []
-    for artifact in sorted(path for path in directory.iterdir() if path.is_dir()):
-        name = artifact.name
-        # Measurement artifacts are bench-PLATFORM-FAMILY-RUN-ATTEMPT; preparation evidence is scored nowhere.
+    # download-artifact saves each raw archive inside a directory with the artifact's name.
+    for archive in sorted(path for path in {*directory.glob('*.tar.gz'), *directory.glob('*/*.tar.gz')} if path.is_file()):
+        name = archive.name.removesuffix('.tar.gz')
+        # Measurement archives are bench-PLATFORM-FAMILY-RUN-ATTEMPT; preparation evidence is scored nowhere.
         if not (name.startswith('bench-') and name.endswith(suffix)) or name.startswith(('bench-prepare-', 'bench-score-')):
             continue
         stem = name[len('bench-'):-len(suffix)]
         family = next((family for family in families if stem.endswith('-' + family)), None)
         if family is None:
             raise ValueError(f'unexpected benchmark artifact: {name}')
-        runs += [f'{stem[:-len(family) - 1]}={status.parent}' for status in sorted(artifact.glob('criterion/*/status.txt'))]
+        extracted = directory / name
+        evidence_bundle.unpack(archive, extracted)
+        runs += [f'{stem[:-len(family) - 1]}={status.parent}' for status in sorted(extracted.glob('criterion/*/status.txt'))]
     if not runs:
         raise ValueError('no measurement artifacts to score')
     # A case filter can cut comparison groups, so its missing points are notes rather than errors.
@@ -208,6 +234,8 @@ def main() -> int:
         return run(inputs, command[1])
     if len(command) == 3 and command[0] == 'score':
         return score(Path(command[1]), Path(command[2]), inputs)
+    if len(command) == 3 and command[0] == 'evidence':
+        return evidence(Path(command[1]), Path(command[2]))
     if len(command) == 4 and command[0] in ('prepare', 'measure'):
         operation, family, target, directory = command
         if target not in TARGETS:
@@ -220,7 +248,7 @@ def main() -> int:
         return run(inputs, family, lambda name: ['target=' + target, flag + str(directory / f'{name}.tar.gz')],
                    architecture(target))
     raise ValueError('usage: scripts/bench/ci.py plan|run FAMILY|{prepare|measure} FAMILY TARGET DIRECTORY'
-                     '|score ARTIFACTS OUTPUT')
+                     '|score ARTIFACTS OUTPUT|evidence SOURCE ARCHIVE')
 
 
 if __name__ == '__main__':
