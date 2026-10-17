@@ -163,6 +163,9 @@ const BUILD: &str = if cfg!(feature = "parallel") {
 const KEY: [u8; 32] = [0x42; 32];
 const CONTEXT: &str = "rscrypto benchmark derive-key context";
 const XOF_LEN: usize = 64;
+/// One byte past one 64-byte block and one 1,024-byte chunk: the shortest messages that need a second compression
+/// and a second chunk.
+const BLOCK_BOUNDARIES: [usize; 2] = [65, 1025];
 
 /// Hash one message in one call.
 ///
@@ -189,7 +192,7 @@ fn hash(c: &mut Criterion) {
   print_blake3_diag_once();
 
   let mut g = c.benchmark_group(name);
-  for (len, data) in &common::comp_sizes() {
+  for (len, data) in &common::comp_sizes(&BLOCK_BOUNDARIES) {
     common::set_throughput(&mut g, *len);
     let upstream = *blake3::hash(data).as_bytes();
     let ours = rscrypto::Blake3::digest(data);
@@ -256,7 +259,7 @@ fn keyed(c: &mut Criterion) {
   print_blake3_diag_once();
 
   let mut g = c.benchmark_group(name);
-  for (len, data) in &common::comp_sizes() {
+  for (len, data) in &common::comp_sizes(&BLOCK_BOUNDARIES) {
     common::set_throughput(&mut g, *len);
     let upstream = *blake3::keyed_hash(&KEY, data).as_bytes();
     let ours = *rscrypto::Blake3::keyed_digest(&KEY, data).as_bytes();
@@ -330,7 +333,7 @@ fn derive_key_context(c: &mut Criterion) {
   print_blake3_diag_once();
 
   let mut g = c.benchmark_group(name);
-  for (len, data) in &common::comp_sizes() {
+  for (len, data) in &common::comp_sizes(&[]) {
     common::set_throughput(&mut g, *len);
     let upstream = blake3::derive_key(CONTEXT, data);
     let ours = rscrypto::Blake3::derive_key_with(&rscrypto::Blake3DeriveContext::new(CONTEXT), data);
@@ -393,7 +396,7 @@ fn derive_key_prepared_context(c: &mut Criterion) {
   let prepared = rscrypto::Blake3DeriveContext::new(CONTEXT);
   let context_key = blake3::hazmat::hash_derive_key_context(CONTEXT);
   let mut g = c.benchmark_group(NAME);
-  for (len, data) in &common::comp_sizes() {
+  for (len, data) in &common::comp_sizes(&[]) {
     common::set_throughput(&mut g, *len);
     let upstream = blake3::derive_key(CONTEXT, data);
     let ours = rscrypto::Blake3::derive_key_with(&prepared, data);
@@ -594,7 +597,7 @@ fn xof(c: &mut Criterion) {
   print_blake3_diag_once();
 
   let mut g = c.benchmark_group(name);
-  for (len, data) in &common::comp_sizes() {
+  for (len, data) in &common::comp_sizes(&[]) {
     common::set_throughput(&mut g, *len);
     let mut upstream = [0u8; XOF_LEN];
     upstream_xof(data, &mut upstream);

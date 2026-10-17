@@ -239,7 +239,7 @@ macro_rules! hmac_bench {
       }
       print_auth_diag_once();
 
-      let inputs = common::comp_sizes();
+      let inputs = common::comp_sizes(&[]);
       let key = [0x42u8; $key_len];
       let rustcrypto =
         <$rustcrypto>::new_from_slice(&key).expect("valid authentication benchmark operation must succeed");

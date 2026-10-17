@@ -544,6 +544,14 @@ RustCrypto has no such API, so its `rustcrypto-composed` rows build the mask fro
 
 ### Other primitive rows
 
+- Byte-oriented one-shot groups share one size matrix: 0 and 1 byte, 32 bytes, and powers of two from 64 bytes to 1 MiB.
+  Hash groups add the lengths at which their primitive changes regime, in the same group:
+  - SHA-224 and SHA-256: 55 and 56 bytes, the longest message whose padding fits one block and the shortest that does not.
+    SHA-384, SHA-512, and SHA-512/256: 111 and 112.
+  - SHA-3 and SHAKE: one byte below the rate, and the rate (143/144, 135/136, 103/104, 71/72, 167/168).
+  - XXH3-64 and XXH3-128: 16/17, 128/129, and 240/241, where the short-input algorithm changes.
+  - BLAKE2: 65 and 129, one byte past each block size. BLAKE3 `hash` and `keyed`: 65 and 1,025, one byte past a block
+    and a chunk.
 - Ed25519 and ECDSA verification has two tasks.
   - `verify/reuse-key` builds each library's key object outside timing and times verification.
     `rscrypto` and Dalek reuse the decoded Ed25519 point. `rscrypto` reuses its ECDSA verification table,

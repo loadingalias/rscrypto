@@ -180,7 +180,7 @@ fn sp800_185_group(
   rscrypto: impl Fn(&[u8], &[u8], &[u8]) -> [u8; OUTPUT_LEN],
   tiny_keccak: impl Fn(&[u8], &[u8], &[u8]) -> [u8; OUTPUT_LEN],
 ) {
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let mut g = c.benchmark_group(group);
 
   for (len, data) in &inputs {
@@ -329,7 +329,7 @@ fn hmac_sha3_group<Ours: Mac, Theirs: hmac::Mac + KeyInit + Clone, const TAG: us
   if !bench_config::selected(group) {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let key = vec![0x42u8; Ours::TAG_SIZE];
   let base_mac = Theirs::new_from_slice(&key).expect("valid authentication benchmark operation must succeed");
   let rscrypto_tag = |mac: &mut Ours, data: &[u8]| {

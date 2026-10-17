@@ -42,7 +42,7 @@ fn ascon_hash256(c: &mut Criterion) {
   if !bench_config::selected("ascon-hash256") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let mut g = c.benchmark_group("ascon-hash256");
 
   for (len, data) in &inputs {
@@ -153,7 +153,7 @@ fn ascon_xof128(c: &mut Criterion) {
   if !bench_config::selected("ascon-xof128") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let mut g = c.benchmark_group("ascon-xof128");
 
   for (len, data) in &inputs {
@@ -260,7 +260,7 @@ fn ascon_cxof128(c: &mut Criterion) {
   const CUSTOMIZATION: &[u8] = b"rscrypto-bench";
   const OUT_LEN: usize = 32;
 
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let mut g = c.benchmark_group("ascon-cxof128");
 
   for (len, data) in &inputs {

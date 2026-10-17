@@ -150,7 +150,7 @@ fn rapidhash_v3_64(c: &mut Criterion) {
   if !bench_config::selected("rapidhash-v3-64") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let secrets = rapidhash::v3::RapidSecrets::seed_cpp(0);
   let mut group = c.benchmark_group("rapidhash-v3-64");
 
@@ -181,7 +181,7 @@ fn rapidhash_seeded_state(c: &mut Criterion) {
   if !bench_config::selected("rapidhash-buildhasher") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let (ours, fast, quality) = collection_hashers();
   let mut group = c.benchmark_group("rapidhash-buildhasher");
 
@@ -290,7 +290,7 @@ fn rapidhash_streaming(c: &mut Criterion) {
   if !bench_config::selected("rapidhash-stream/") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let secrets = rapidhash::v3::RapidSecrets::seed_cpp(0);
 
   for (group_name, chunk_size) in [

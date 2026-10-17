@@ -62,15 +62,18 @@ fn print_sha2_diag_once() {
 #[inline]
 fn print_sha2_diag_once() {}
 
+/// One-shot hashing across the shared size matrix. `$boundaries` adds the longest message whose padding fits one compression
+/// block and the shortest that needs a second: 55 and 56 bytes for 64-byte
+/// blocks, 111 and 112 for 128-byte blocks.
 macro_rules! sha2_oneshot {
-  ($fn_name:ident, $group:literal, $ours:ty, $theirs:ty) => {
+  ($fn_name:ident, $group:literal, $ours:ty, $theirs:ty, $boundaries:expr) => {
     fn $fn_name(c: &mut Criterion) {
       if !bench_config::selected($group) {
         return;
       }
       print_sha2_diag_once();
 
-      let inputs = common::comp_sizes();
+      let inputs = common::comp_sizes(&$boundaries);
       let mut g = c.benchmark_group($group);
 
       for (len, data) in &inputs {
@@ -102,14 +105,14 @@ macro_rules! sha2_oneshot {
 /// Variant of `sha2_oneshot!` that also benches `aws-lc-rs` and `ring` — both
 /// expose SHA-256/384/512 but neither ships SHA-224 or SHA-512/256.
 macro_rules! sha2_oneshot_ietf {
-  ($fn_name:ident, $group:literal, $ours:ty, $theirs:ty, $aws_alg:expr, $ring_alg:expr) => {
+  ($fn_name:ident, $group:literal, $ours:ty, $theirs:ty, $boundaries:expr, $aws_alg:expr, $ring_alg:expr) => {
     fn $fn_name(c: &mut Criterion) {
       if !bench_config::selected($group) {
         return;
       }
       print_sha2_diag_once();
 
-      let inputs = common::comp_sizes();
+      let inputs = common::comp_sizes(&$boundaries);
       let mut g = c.benchmark_group($group);
 
       for (len, data) in &inputs {
@@ -156,12 +159,13 @@ macro_rules! sha2_oneshot_ietf {
   };
 }
 
-sha2_oneshot!(sha224, "sha224", rscrypto::Sha224, sha2::Sha224);
+sha2_oneshot!(sha224, "sha224", rscrypto::Sha224, sha2::Sha224, [55, 56]);
 sha2_oneshot_ietf!(
   sha256,
   "sha256",
   rscrypto::Sha256,
   sha2::Sha256,
+  [55, 56],
   &aws_lc_rs::digest::SHA256,
   &ring::digest::SHA256
 );
@@ -170,6 +174,7 @@ sha2_oneshot_ietf!(
   "sha384",
   rscrypto::Sha384,
   sha2::Sha384,
+  [111, 112],
   &aws_lc_rs::digest::SHA384,
   &ring::digest::SHA384
 );
@@ -178,10 +183,17 @@ sha2_oneshot_ietf!(
   "sha512",
   rscrypto::Sha512,
   sha2::Sha512,
+  [111, 112],
   &aws_lc_rs::digest::SHA512,
   &ring::digest::SHA512
 );
-sha2_oneshot!(sha512_256, "sha512-256", rscrypto::Sha512_256, sha2::Sha512_256);
+sha2_oneshot!(
+  sha512_256,
+  "sha512-256",
+  rscrypto::Sha512_256,
+  sha2::Sha512_256,
+  [111, 112]
+);
 
 /// Streams 1 MiB in fixed-size chunks.
 macro_rules! sha2_streaming {

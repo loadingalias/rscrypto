@@ -14,11 +14,14 @@ use bench_config::checked;
 use criterion::{BenchmarkId, Criterion};
 use rscrypto::FastHash;
 
+/// Lengths at which XXH3 changes its short-input algorithm: 16/17, 128/129, and 240/241 bytes.
+const REGIME_BOUNDARIES: [usize; 6] = [16, 17, 128, 129, 240, 241];
+
 fn xxh3_64(c: &mut Criterion) {
   if !bench_config::selected("xxh3-64") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&REGIME_BOUNDARIES);
   let mut g = c.benchmark_group("xxh3-64");
 
   for (len, data) in &inputs {
@@ -48,7 +51,7 @@ fn xxh3_128(c: &mut Criterion) {
   if !bench_config::selected("xxh3-128") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&REGIME_BOUNDARIES);
   let mut g = c.benchmark_group("xxh3-128");
 
   for (len, data) in &inputs {
@@ -78,7 +81,7 @@ fn xxh3_build_hasher(c: &mut Criterion) {
   if !bench_config::selected("xxh3-buildhasher") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let mut g = c.benchmark_group("xxh3-buildhasher");
   let ours = rscrypto::Xxh3BuildHasher::new();
   let upstream = xxhash_rust::xxh3::Xxh3DefaultBuilder::new();

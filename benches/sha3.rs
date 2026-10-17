@@ -14,13 +14,16 @@ use core::hint::black_box;
 use bench_config::{checked, checked_with};
 use criterion::{BenchmarkId, Criterion};
 
+/// One-shot hashing across the shared size matrix. `$boundaries` adds the
+/// longest message whose padding fits one absorption block and the shortest
+/// that needs a second: one byte below the rate, and the rate.
 macro_rules! sha3_oneshot {
-  ($fn_name:ident, $group:literal, $ours:ty, $theirs:ty) => {
+  ($fn_name:ident, $group:literal, $ours:ty, $theirs:ty, $boundaries:expr) => {
     fn $fn_name(c: &mut Criterion) {
       if !bench_config::selected($group) {
         return;
       }
-      let inputs = common::comp_sizes();
+      let inputs = common::comp_sizes(&$boundaries);
       let mut g = c.benchmark_group($group);
 
       for (len, data) in &inputs {
@@ -49,10 +52,10 @@ macro_rules! sha3_oneshot {
   };
 }
 
-sha3_oneshot!(sha3_224, "sha3-224", rscrypto::Sha3_224, sha3::Sha3_224);
-sha3_oneshot!(sha3_256, "sha3-256", rscrypto::Sha3_256, sha3::Sha3_256);
-sha3_oneshot!(sha3_384, "sha3-384", rscrypto::Sha3_384, sha3::Sha3_384);
-sha3_oneshot!(sha3_512, "sha3-512", rscrypto::Sha3_512, sha3::Sha3_512);
+sha3_oneshot!(sha3_224, "sha3-224", rscrypto::Sha3_224, sha3::Sha3_224, [143, 144]);
+sha3_oneshot!(sha3_256, "sha3-256", rscrypto::Sha3_256, sha3::Sha3_256, [135, 136]);
+sha3_oneshot!(sha3_384, "sha3-384", rscrypto::Sha3_384, sha3::Sha3_384, [103, 104]);
+sha3_oneshot!(sha3_512, "sha3-512", rscrypto::Sha3_512, sha3::Sha3_512, [71, 72]);
 
 /// Streams 1 MiB in fixed-size chunks.
 macro_rules! sha3_streaming {
@@ -132,7 +135,8 @@ fn shake128(c: &mut Criterion) {
   if !bench_config::selected("shake128") {
     return;
   }
-  let inputs = common::comp_sizes();
+  // The rate boundary: the longest message whose padding fits one block, and the shortest that needs a second.
+  let inputs = common::comp_sizes(&[167, 168]);
   let mut g = c.benchmark_group("shake128");
 
   let tiny_keccak = |data: &[u8]| {
@@ -177,7 +181,8 @@ fn shake256(c: &mut Criterion) {
   if !bench_config::selected("shake256") {
     return;
   }
-  let inputs = common::comp_sizes();
+  // The rate boundary: the longest message whose padding fits one block, and the shortest that needs a second.
+  let inputs = common::comp_sizes(&[135, 136]);
   let mut g = c.benchmark_group("shake256");
 
   let tiny_keccak = |data: &[u8]| {
@@ -310,7 +315,7 @@ fn sha3_256_digest_pair(c: &mut Criterion) {
   if !bench_config::selected("sha3-256/digest_pair") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let mut g = c.benchmark_group("sha3-256/digest_pair");
 
   for (len, first) in &inputs {

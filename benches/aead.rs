@@ -64,7 +64,7 @@ fn xchacha20_poly1305_encrypt(c: &mut Criterion) {
   if !bench_config::selected("xchacha20-poly1305/copy-and-encrypt") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let nonce_rs = rscrypto::aead::Nonce192::from_bytes(NONCE_24);
   let cipher_rs = rscrypto::XChaCha20Poly1305::new(&rscrypto::XChaCha20Poly1305Key::from_bytes(KEY_32));
   let cipher_rc = chacha20poly1305::XChaCha20Poly1305::new(&KEY_32.into());
@@ -122,7 +122,7 @@ fn xchacha20_poly1305_decrypt(c: &mut Criterion) {
   if !bench_config::selected("xchacha20-poly1305/copy-and-decrypt") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let nonce_rs = rscrypto::aead::Nonce192::from_bytes(NONCE_24);
   let cipher_rs = rscrypto::XChaCha20Poly1305::new(&rscrypto::XChaCha20Poly1305Key::from_bytes(KEY_32));
   let cipher_rc = chacha20poly1305::XChaCha20Poly1305::new(&KEY_32.into());
@@ -196,7 +196,7 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
   }
   use ring::aead as ring_aead;
 
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::ChaCha20Poly1305::new(&rscrypto::ChaCha20Poly1305Key::from_bytes(KEY_32));
   let cipher_rc = chacha20poly1305::ChaCha20Poly1305::new(&KEY_32.into());
@@ -350,7 +350,7 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
   }
   use ring::aead as ring_aead;
 
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::ChaCha20Poly1305::new(&rscrypto::ChaCha20Poly1305Key::from_bytes(KEY_32));
   let cipher_rc = chacha20poly1305::ChaCha20Poly1305::new(&KEY_32.into());
@@ -517,7 +517,7 @@ fn aes256_gcm_siv_encrypt(c: &mut Criterion) {
     use aws_lc_rs::aead as aws_aead;
   }
 
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::Aes256GcmSiv::new(&rscrypto::Aes256GcmSivKey::from_bytes(KEY_32));
   let cipher_rc = aes_gcm_siv::Aes256GcmSiv::new(&KEY_32.into());
@@ -605,7 +605,7 @@ fn aes256_gcm_siv_decrypt(c: &mut Criterion) {
     use aws_lc_rs::aead as aws_aead;
   }
 
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::Aes256GcmSiv::new(&rscrypto::Aes256GcmSivKey::from_bytes(KEY_32));
   let cipher_rc = aes_gcm_siv::Aes256GcmSiv::new(&KEY_32.into());
@@ -706,7 +706,7 @@ fn aes128_gcm_siv_encrypt(c: &mut Criterion) {
     use aws_lc_rs::aead as aws_aead;
   }
 
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::Aes128GcmSiv::new(&rscrypto::Aes128GcmSivKey::from_bytes(KEY_16));
   let cipher_rc = aes_gcm_siv::Aes128GcmSiv::new(&KEY_16.into());
@@ -794,7 +794,7 @@ fn aes128_gcm_siv_decrypt(c: &mut Criterion) {
     use aws_lc_rs::aead as aws_aead;
   }
 
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::Aes128GcmSiv::new(&rscrypto::Aes128GcmSivKey::from_bytes(KEY_16));
   let cipher_rc = aes_gcm_siv::Aes128GcmSiv::new(&KEY_16.into());
@@ -896,7 +896,7 @@ fn aes256_gcm_encrypt(c: &mut Criterion) {
   }
   use ring::aead as ring_aead;
 
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::Aes256Gcm::new(&rscrypto::Aes256GcmKey::from_bytes(KEY_32));
   let cipher_rc = aes_gcm::Aes256Gcm::new(&KEY_32.into());
@@ -1007,7 +1007,7 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
   }
   use ring::aead as ring_aead;
 
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::Aes256Gcm::new(&rscrypto::Aes256GcmKey::from_bytes(KEY_32));
   let cipher_rc = aes_gcm::Aes256Gcm::new(&KEY_32.into());
@@ -1133,7 +1133,7 @@ fn aes128_gcm_encrypt(c: &mut Criterion) {
   }
   use ring::aead as ring_aead;
 
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::Aes128Gcm::new(&rscrypto::Aes128GcmKey::from_bytes(KEY_16));
   let cipher_rc = aes_gcm::Aes128Gcm::new(&KEY_16.into());
@@ -1244,7 +1244,7 @@ fn aes128_gcm_decrypt(c: &mut Criterion) {
   }
   use ring::aead as ring_aead;
 
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::Aes128Gcm::new(&rscrypto::Aes128GcmKey::from_bytes(KEY_16));
   let cipher_rc = aes_gcm::Aes128Gcm::new(&KEY_16.into());
@@ -1365,7 +1365,7 @@ fn aegis256_encrypt(c: &mut Criterion) {
   if !bench_config::selected("aegis-256/copy-and-encrypt") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let nonce_rs = rscrypto::aead::Nonce256::from_bytes(NONCE_32);
   let cipher_rs = rscrypto::Aegis256::new(&rscrypto::Aegis256Key::from_bytes(KEY_32));
   // Timed: restore input into a preallocated buffer, encrypt, and handle/drop per-call outputs.
@@ -1414,7 +1414,7 @@ fn aegis256_decrypt(c: &mut Criterion) {
   if !bench_config::selected("aegis-256/copy-and-decrypt") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let nonce_rs = rscrypto::aead::Nonce256::from_bytes(NONCE_32);
   let cipher_rs = rscrypto::Aegis256::new(&rscrypto::Aegis256Key::from_bytes(KEY_32));
   // Timed: restore input into a preallocated buffer, decrypt, and handle/drop per-call outputs.
@@ -1477,7 +1477,7 @@ fn ascon_aead128_encrypt(c: &mut Criterion) {
   }
   use ascon_aead::aead::{AeadInOut as _, KeyInit as _, array::Array};
 
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let nonce_rs = rscrypto::aead::Nonce128::from_bytes(NONCE_16);
   let cipher_rs = rscrypto::AsconAead128::new(&rscrypto::AsconAead128Key::from_bytes(KEY_16));
   let cipher_ac = ascon_aead::AsconAead128::new(&Array(KEY_16));
@@ -1537,7 +1537,7 @@ fn ascon_aead128_decrypt(c: &mut Criterion) {
   }
   use ascon_aead::aead::{AeadInOut as _, KeyInit as _, array::Array};
 
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let nonce_rs = rscrypto::aead::Nonce128::from_bytes(NONCE_16);
   let cipher_rs = rscrypto::AsconAead128::new(&rscrypto::AsconAead128Key::from_bytes(KEY_16));
   let cipher_ac = ascon_aead::AsconAead128::new(&Array(KEY_16));

@@ -30,13 +30,17 @@ type RustCryptoBlake2sMac256 = Blake2sMac<U32>;
 type RustCryptoBlake2b256 = RustCryptoBlake2b<U32>;
 type RustCryptoBlake2s128 = RustCryptoBlake2s<U16>;
 
+/// One byte past one BLAKE2s block (64 bytes) and one BLAKE2b block (128 bytes): the shortest messages that need a
+/// second compression. The exact 128-byte block is in `short-oneshot` and `short-keyed`.
+const BLOCK_BOUNDARIES: [usize; 2] = [65, 129];
+
 fn oneshot(c: &mut Criterion) {
   if !bench_config::selected("blake2") {
     return;
   }
   use dryoc::classic::crypto_generichash::crypto_generichash;
 
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&BLOCK_BOUNDARIES);
   // Timed: complete one-shot hashing and output destruction.
   // Untimed: input/key fixtures and any typed-key validation.
   let mut g = c.benchmark_group("blake2");
@@ -296,7 +300,7 @@ fn keyed(c: &mut Criterion) {
   }
   use dryoc::classic::crypto_generichash::crypto_generichash;
 
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&BLOCK_BOUNDARIES);
   let key_b = [0x42u8; 64];
   let key_s = [0x24u8; 32];
   let key_b_256 = Blake2bKey::new(black_box(&key_b[..32])).expect("valid BLAKE2 benchmark operation must succeed");

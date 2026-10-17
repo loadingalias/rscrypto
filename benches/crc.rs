@@ -19,7 +19,7 @@ fn crc32_ieee(c: &mut Criterion) {
   if !bench_config::selected("crc32") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let mut g = c.benchmark_group("crc32");
 
   for (len, data) in &inputs {
@@ -53,7 +53,7 @@ fn crc32c(c: &mut Criterion) {
   if !bench_config::selected("crc32c") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let mut g = c.benchmark_group("crc32c");
 
   for (len, data) in &inputs {
@@ -87,7 +87,7 @@ fn crc64_xz(c: &mut Criterion) {
   if !bench_config::selected("crc64-xz") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let crc64fast = |data: &[u8]| {
     let mut h = crc64fast::Digest::new();
     h.write(data);
@@ -119,7 +119,7 @@ fn crc64_nvme(c: &mut Criterion) {
   if !bench_config::selected("crc64-nvme") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let mut g = c.benchmark_group("crc64-nvme");
 
   for (len, data) in &inputs {
@@ -149,7 +149,7 @@ fn crc16(c: &mut Criterion) {
   if !bench_config::selected("crc16-ccitt") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let crc_algo = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
   let mut g = c.benchmark_group("crc16-ccitt");
 
@@ -177,7 +177,7 @@ fn crc16_ibm(c: &mut Criterion) {
   if !bench_config::selected("crc16-ibm") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let crc_algo = crc::Crc::<u16>::new(&crc::CRC_16_ARC);
   let mut g = c.benchmark_group("crc16-ibm");
 
@@ -205,7 +205,7 @@ fn crc24(c: &mut Criterion) {
   if !bench_config::selected("crc24-openpgp") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   let crc_algo = crc::Crc::<u32>::new(&crc::CRC_24_OPENPGP);
   let mut g = c.benchmark_group("crc24-openpgp");
 

@@ -80,7 +80,7 @@ fn chacha20_xor_kernel(c: &mut Criterion) {
   if !bench_config::selected("aead-kernel/chacha20-copy-and-xor") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   // Timed: restore the input and XOR the keystream into the reused buffer.
   // Untimed: fixture generation and buffer allocation/destruction.
   let mut g = c.benchmark_group("aead-kernel/chacha20-copy-and-xor");
@@ -120,7 +120,7 @@ fn poly1305_auth_kernel(c: &mut Criterion) {
   if !bench_config::selected("aead-kernel/poly1305-auth") {
     return;
   }
-  let inputs = common::comp_sizes();
+  let inputs = common::comp_sizes(&[]);
   // Timed: authenticate immutable AAD/message bytes and return/drop the tag.
   // Untimed: fixtures; there is no per-iteration message restoration.
   let mut g = c.benchmark_group("aead-kernel/poly1305-auth");
