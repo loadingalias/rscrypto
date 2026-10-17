@@ -437,6 +437,10 @@ Two catalog targets build the same binary:
   `hash`, `keyed`, `derive-key/context`, `derive-key/prepared-context`, `xof`, `xof-output`, `ordered`,
   and `ordered-alignment`.
   `xof-output` squeezes 1 KiB, 16 KiB, and 1 MiB from a 32-byte seed into a reused buffer.
+  `bao-decode` verifies a whole Bao combined encoding of 1,024, 1,025, 65,536, or 1,048,576 bytes from memory
+  against bao 0.13.1, the format's reference. `bao` calls its one-shot `decode`, which returns a new `Vec`;
+  `bao-reader` and `rscrypto` read their decoders to EOF into a reused buffer.
+  Each check also requires the timed path to reject the encoding with its last byte changed.
   Upstream rows use its one-shot or `Hasher` APIs, which are single-threaded.
   The headline uses the `hash` and `keyed` groups, because a default install hashes on one thread.
 - **`blake3`, with `parallel`:** groups that allow threads, under `blake3/parallel/`:

@@ -945,6 +945,13 @@
       "headline": false,
       "task": "Absorb a 32-byte seed and squeeze the named output length on one thread."
     },
+    "blake3-bao-decode": {
+      "family": "BLAKE3",
+      "bench": "blake3_serial",
+      "cases": "^blake3/serial/bao-decode/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Verify and decode a whole Bao combined encoding from memory against a trusted root, on one thread."
+    },
     "blake3-ordered": {
       "family": "BLAKE3",
       "bench": "blake3_serial",

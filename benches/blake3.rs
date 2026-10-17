@@ -22,6 +22,7 @@ mod leaf_alignment;
 mod mixed_batches;
 
 use core::hint::black_box;
+use std::io::{self, Read as _};
 
 use bench_config::{checked, checked_with};
 use criterion::{BenchmarkId, Criterion};
@@ -750,6 +751,96 @@ fn xof_output(c: &mut Criterion) {
   g.finish();
 }
 
+/// Returns a Bao decoding row. `decode` is the row's timed path: it must decode `encoding` into its buffer and
+/// return the original input. Outside timing, it must reject `changed`.
+fn bao_decode_row<'a>(
+  decode: impl Fn(&[u8], &mut Vec<u8>) -> io::Result<()> + 'a,
+  encoding: &'a [u8],
+  changed: &'a [u8],
+  input: &'a [u8],
+) -> impl FnMut(&mut criterion::Bencher<'_>) + 'a {
+  checked_with(
+    (Vec::with_capacity(input.len()), decode),
+    move |(out, decode)| decode(black_box(encoding), out).expect("a valid Bao benchmark encoding must decode"),
+    move |(), (out, decode)| {
+      assert_eq!(out.as_slice(), input);
+      assert!(
+        decode(changed, &mut Vec::new()).is_err(),
+        "a changed Bao encoding must fail"
+      );
+    },
+  )
+}
+
+/// Verify a whole Bao combined encoding from memory against a trusted root, on one thread.
+///
+/// `blake3/serial/bao-decode` (build `blake3_serial`): rscrypto's streaming
+/// `hashes::expert::bao::Decoder` against the format's reference crate, bao
+/// 0.13.1. `bao` calls its one-shot `decode`, which returns a new `Vec`;
+/// `bao-reader` and `rscrypto` read their decoder to EOF into a reused
+/// buffer. Timed: decoder construction, every read and verification, the
+/// output, and destruction. The encoding and root are built outside timing.
+/// Lengths: one chunk, the first parent node, and 64 KiB and 1 MiB trees. Every
+/// row must return the original input and reject the encoding with its last
+/// byte changed.
+fn bao_decode(c: &mut Criterion) {
+  const INPUT_LENGTHS: [usize; 4] = [1024, 1025, 65536, 1048576];
+
+  let name = format!("blake3/{BUILD}/bao-decode");
+  if !bench_config::selected(&name) {
+    return;
+  }
+
+  let mut g = c.benchmark_group(name);
+  for len in INPUT_LENGTHS {
+    let input = common::random_bytes(len);
+    let (encoding, root) = bao::encode::encode(&input);
+    let mut changed = encoding.clone();
+    *changed.last_mut().expect("a Bao encoding is not empty") ^= 1;
+    common::set_throughput(&mut g, len);
+
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      bao_decode_row(
+        |encoding, out| {
+          out.clear();
+          rscrypto::hashes::expert::bao::Decoder::new(encoding, root.as_bytes())
+            .read_to_end(out)
+            .map(drop)
+        },
+        &encoding,
+        &changed,
+        &input,
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("bao", len),
+      bao_decode_row(
+        |encoding, out| {
+          *out = bao::decode::decode(encoding, &root)?;
+          Ok(())
+        },
+        &encoding,
+        &changed,
+        &input,
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("bao-reader", len),
+      bao_decode_row(
+        |encoding, out| {
+          out.clear();
+          bao::decode::Decoder::new(encoding, &root).read_to_end(out).map(drop)
+        },
+        &encoding,
+        &changed,
+        &input,
+      ),
+    );
+  }
+  g.finish();
+}
+
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 fn tail_diagnostics(c: &mut Criterion) {
   if !bench_config::selected("blake3/") {
@@ -891,6 +982,7 @@ fn main() {
       derive_key_prepared_context,
       xof,
       xof_output,
+      bao_decode,
       streaming_shapes::bench,
       streaming_shapes::alignment_bench,
     ]);
