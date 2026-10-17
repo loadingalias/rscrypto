@@ -3375,6 +3375,37 @@ The current [timed-boundary policy](../docs/benchmarking.md#timed-workload-bound
 No historical ratio was recomputed after these changes.
 The 2026-09-14 campaign uses the corrected workload identities.
 
+**Equal-task comparisons (2026-10-17).**
+A review found rows where the two sides did different work,
+or where a competitor did not use its best API or build.
+The benchmarks now follow the [comparison rules](../docs/benchmarking.md#comparison-rules),
+and the Bench workflow scores each run from its own artifacts.
+
+| Comparison | Defect | Favored | Published rows affected |
+| --- | --- | --- | --- |
+| BLAKE3 one-shot | `rscrypto` used Rayon threads above a CPU-specific size; upstream `blake3::hash` is single-threaded | `rscrypto` | 2026-10-03 BLAKE3 family: 256 KiB and 1 MiB on x86-64, from 64 KiB on Graviton5 |
+| BLAKE3 derive-key | `rscrypto` hit a warm per-thread context cache; upstream hashed the context in every call | `rscrypto` | Not in a summary |
+| XXH3 | xxhash-rust selects SIMD at compile time; builds without CPU flags ran its SSE2 code | `rscrypto` | 2026-10-03 XXH3 family, from 256 B, on the four x86-64 platforms |
+| RapidHash collection hashers | Compared only with upstream's quality hasher, which does more mixing | `rscrypto` | 2026-10-03 RapidHash family; fixed in `6a8754a5` |
+| HMAC-SHA3 | RustCrypto `SimpleHmac` absorbs the opad block in every tag; no AWS-LC row | `rscrypto` | Rows added after 2026-10-03 |
+| HKDF expand | aws-lc-rs `Salt::extract` defers extraction, so its timed `fill` ran Extract and Expand | `rscrypto` | Not in a summary; ring did less work in the same group |
+| RSA, Ed25519, ECDSA verify | `rscrypto` and some competitors reused a parsed key; others parsed it in every call, in one group | `rscrypto` | 2026-08-18 RSA (1.65x) and public-key aggregates, already withdrawn |
+| ML-DSA key generation | The RustCrypto row cloned its key and computed the public key twice | `rscrypto` | Not in a summary |
+| ML-KEM import | libcrux import rows skipped the FIPS 203 key checks that the other rows run | libcrux | Not in a summary |
+| QUIC header protection | Competitor rows composed raw primitives with unequal setup; no ring or aws-lc-rs rows | Mixed | Not in a summary |
+
+Older records in this file keep the case IDs of their run. The main renames are:
+`ed25519/verify/rscrypto` and `rscrypto-import` became `ed25519/verify/reuse-key/rscrypto` and `verify/import-key/rscrypto`;
+`ecdsa-p*/verify/*` split the same way;
+`p*-ecdh/agreement/rscrypto-selected` and `aws-lc-rs-native` became `agreement/parsed-peer/rscrypto` and `aws-lc-rs`;
+RSA `verify-*-<impl>` became `verify-*/reuse-key/<impl>`, and `-cold` became `verify-*/import-key/rscrypto`;
+and the one-shot BLAKE3 groups moved under `blake3/serial/` and `blake3/parallel/`.
+
+The 2026-10-03 summary stays as recorded.
+In the rows above, it overstates `rscrypto`.
+No historical ratio is recomputed.
+The next full Bench run's `Score comparisons` output replaces it.
+
 ## Sources
 
 - Full benchmark workflow run
@@ -3491,6 +3522,8 @@ This is one run on shared or cloud hosts, with short measurement windows.
 It is not a regression gate.
 Do not compare absolute times between platforms.
 It does not include macOS: the last macOS numbers are from 2026-07-04 (see the macOS local snapshot below).
+Its BLAKE3, XXH3, and RapidHash families include rows that favor `rscrypto` through unequal work;
+see the 2026-10-17 entry in [Corrections](#corrections).
 
 ## 2026-09-14 full benchmark run
 

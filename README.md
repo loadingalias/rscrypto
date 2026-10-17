@@ -160,6 +160,16 @@ A ratio above 1.00x means `rscrypto` is faster.
 These results are from one run on cloud and shared hosts.
 They do not include AEAD, signature, key-exchange, ML-KEM, ML-DSA, Argon2, or RSA cases,
 and they do not include macOS.
+On IBM Z, every comparison library is portable Rust, while `rscrypto` uses the CPACF hash instructions.
+
+Some rows in this run favor `rscrypto` through unequal work.
+On x86-64, the XXH3 rows from 256 B ran against xxhash-rust built for SSE2.
+The BLAKE3 rows used several threads against single-threaded upstream calls:
+at 256 KiB and 1 MiB on x86-64, and from 64 KiB on Graviton5.
+The RapidHash collection rows compared only with upstream's slower quality hasher.
+The benchmarks now follow [equal-task comparison rules](docs/benchmarking.md#comparison-rules),
+and the Bench workflow scores each run from its own artifacts.
+The next full run replaces this table; the [corrections](benchmark_results/OVERVIEW.md#corrections) list every affected comparison.
 The [benchmark overview](benchmark_results/OVERVIEW.md#2026-10-03-full-benchmark-run-v0100) gives the results by family,
 the method, and the limits.
 The [comparison contracts](docs/benchmarking.md#ml-kem-and-argon2-comparison-contracts) define equivalent ML-KEM and Argon2 workloads.
