@@ -155,7 +155,6 @@
         "std",
         "hmac",
         "hkdf",
-        "pbkdf2",
         "ecdsa",
         "ed25519",
         "x25519",
@@ -164,6 +163,14 @@
         "ml-kem",
         "diag"
       ]
+    },
+    "pbkdf2": {
+      "binary": "pbkdf2",
+      "kind": "criterion",
+      "family": "auth",
+      "split": "algorithms",
+      "required": true,
+      "features": ["std", "pbkdf2"]
     },
     "password_hashing": {
       "binary": "password_hashing",
@@ -256,8 +263,8 @@
     "hkdf-sha256": { "bench": "auth", "filter": "^hkdf-sha256" },
     "hkdf-sha384": { "bench": "auth", "filter": "hkdf-sha384" },
     "hkdf-sha512": { "bench": "auth", "filter": "^hkdf-sha512/" },
-    "pbkdf2-sha256": { "bench": "auth", "filter": "^pbkdf2-sha256(/|-state/)" },
-    "pbkdf2-sha512": { "bench": "auth", "filter": "^pbkdf2-sha512(/|-state/)" },
+    "pbkdf2-sha256": { "bench": "pbkdf2", "filter": "^pbkdf2-sha256(/|-state/)" },
+    "pbkdf2-sha512": { "bench": "pbkdf2", "filter": "^pbkdf2-sha512(/|-state/)" },
     "ecdsa-p256": { "bench": "auth", "filter": "^ecdsa-p256/" },
     "ecdsa-p384": { "bench": "auth", "filter": "^ecdsa-p384/" },
     "ed25519": { "bench": "auth", "filter": "ed25519" },
@@ -463,6 +470,11 @@
       "diagnostic": [
         "/internal/",
         "^ed25519/verify-phase/"
+      ]
+    },
+    "pbkdf2": {
+      "diagnostic": [
+        "/internal/"
       ],
       "expensive": [
         "^pbkdf2-"
@@ -731,10 +743,17 @@
     },
     "pbkdf2": {
       "family": "PBKDF2",
-      "bench": "auth",
+      "bench": "pbkdf2",
       "cases": "^(?P<variant>pbkdf2-sha(?:256|512)/iters=[0-9]+)/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
       "headline": true,
       "task": "Derive the named output length from a password and salt."
+    },
+    "pbkdf2-verify": {
+      "family": "PBKDF2",
+      "bench": "pbkdf2",
+      "cases": "^(?P<variant>pbkdf2-sha(?:256|512)/verify/iters=[0-9]+)/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Derive a key at the password-policy iteration count and compare it with a stored key."
     },
     "argon2": {
       "family": "Argon2",

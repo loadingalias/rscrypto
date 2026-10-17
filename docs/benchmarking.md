@@ -593,6 +593,15 @@ RustCrypto has no such API, so its `rustcrypto-composed` rows build the mask fro
   aws-lc-rs uses `Prk::new_less_safe`, because its `Salt::extract` only stores the inputs
   and would run Extract again inside every `fill`.
   AWS-LC's `HKDF_expand` still keys HMAC in each call: two more compressions than the libraries that keep a keyed state.
+- PBKDF2 rows derive into a reused output buffer and time password keying, every iteration, and the output.
+  Below the password policy (1, 100, and 1,000 iterations), `rscrypto` calls `derive_key_primitive`,
+  because the policy API rejects those counts.
+  At the policy minimum (600,000 iterations for SHA-256 and 220,000 for SHA-512) with one output block,
+  `rscrypto` calls the policy API `derive_key`, which also checks the iteration count and salt length.
+  The `verify` groups at the same counts also compare with a stored key: `rscrypto` calls `verify_password`,
+  which also bounds the work, and ring and aws-lc-rs call `pbkdf2::verify`, which check neither.
+  RustCrypto's `pbkdf2` has no raw-key verification API, so it is absent there.
+  Each verification check also requires the timed path to reject a stored key with one changed byte.
 - RSA `verify-*/reuse-key` prepares the key outside timing, and each call verifies one signature.
   `rscrypto` reuses a scratch that caches R²; `rscrypto-oneshot` rebuilds it in each call.
   aws-lc-rs reuses a `ParsedPublicKey`, which caches its Montgomery context, and builds an `EVP_PKEY_CTX` in each call.
@@ -793,6 +802,8 @@ A comparison is one Criterion benchmark group: one operation of one algorithm, a
 A catalog target marked `"split": "algorithms"` runs in CI as one `just bench` per catalog algorithm,
 which never divides a group.
 SLH-DSA uses this, because its 24 FIPS 205 algorithms do not fit one budget on the slower platforms.
+PBKDF2 uses it too: at the password-policy iteration count, one SHA-256 call takes about 1.25 s on the RISC-V runner,
+extrapolated from its 1,000-iteration rows.
 Every case of a split target must belong to exactly one of its algorithms; discovery fails otherwise.
 If required evidence cannot fit, record that requirement as unmet. A smaller future
 experiment needs a prospectively stated question and gates; it does not complete
