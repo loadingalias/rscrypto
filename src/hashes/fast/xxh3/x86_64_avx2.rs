@@ -10,8 +10,11 @@
 
 use core::arch::x86_64::*;
 
+// Only the 128-bit finalization uses PRIME64_2; see `xxh3_128_long_default`.
+#[cfg(any(not(target_feature = "avx512f"), all(test, not(miri))))]
+use super::PRIME64_2;
 use super::{
-  ACC_NB, DEFAULT_SECRET, DEFAULT_SECRET_SIZE, INITIAL_ACC, PRIME32_1, PRIME64_1, PRIME64_2, SECRET_CONSUME_RATE,
+  ACC_NB, DEFAULT_SECRET, DEFAULT_SECRET_SIZE, INITIAL_ACC, PRIME32_1, PRIME64_1, SECRET_CONSUME_RATE,
   SECRET_LASTACC_START, SECRET_MERGEACCS_START, STRIPE_LEN,
 };
 
@@ -302,12 +305,16 @@ pub(crate) fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
 }
 
 /// Long-path entry point (>240B) — no ≤240B branches.
+// With AVX-512 enabled at compile time, dispatch selects the AVX-512 128-bit kernel directly and the
+// runtime kernel table is not built, so these AVX2 128-bit entries are reachable only from tests.
+#[cfg(any(not(target_feature = "avx512f"), all(test, not(miri))))]
 pub(crate) fn xxh3_128_long_default(input: &[u8]) -> u128 {
   // SAFETY: Dispatcher verifies AVX2 before selecting this kernel.
   let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };
   xxh3_128_long_finalize(&acc, &DEFAULT_SECRET, input.len())
 }
 
+#[cfg(any(not(target_feature = "avx512f"), all(test, not(miri))))]
 pub(crate) fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
   if seed == 0 {
     xxh3_128_long_default(input)
@@ -319,6 +326,7 @@ pub(crate) fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
   }
 }
 
+#[cfg(any(not(target_feature = "avx512f"), all(test, not(miri))))]
 #[inline(always)]
 fn xxh3_128_long_finalize(acc: &[u64; ACC_NB], secret: &[u8], len: usize) -> u128 {
   let lo = super::merge_accs(
