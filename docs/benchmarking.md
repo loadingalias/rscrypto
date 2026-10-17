@@ -572,6 +572,11 @@ RustCrypto has no such API, so its `rustcrypto-composed` rows build the mask fro
 - The ChaCha diagnostic group `chacha20-copy-and-xor` restores the message and applies the keystream in the timed closure,
   with a reused allocated buffer.
   It is not a complete AEAD operation.
+- CRC `streaming` checksums 1 MiB through updates of 64 bytes or 4 KiB, with each library's incremental API.
+  CRC `combine` joins the checksums of a 1 KiB part and a second part of 64, 65,535, or 16,777,215 bytes.
+  Those lengths have every low bit set, which gives square-and-multiply combination its most multiplications.
+  crc32fast combines two hasher states built from each checksum and length; those constructions stay timed.
+  CRC-24/OpenPGP has no comparison library with combination, so its group has only the `rscrypto` row.
 - Poly1305 `authenticate` reads immutable fixture bytes, sets up a one-time key, and returns a tag,
   without restoring a message buffer.
   RustCrypto `poly1305`, dryoc `crypto_onetimeauth`, and AWS-LC's public `CRYPTO_poly1305_*` API through aws-lc-sys

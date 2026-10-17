@@ -529,6 +529,20 @@
       "headline": true,
       "task": "Checksum one buffer in one call."
     },
+    "crc-streaming": {
+      "family": "CRC",
+      "bench": "crc",
+      "cases": "^(?P<variant>crc16-ccitt|crc16-ibm|crc24-openpgp|crc32|crc32c|crc64-xz|crc64-nvme)/streaming/(?P<implementation>[^/]+)/(?P<input>[0-9]+B)$",
+      "headline": false,
+      "task": "Checksum 1 MiB through updates of the named chunk size."
+    },
+    "crc-combine": {
+      "family": "CRC",
+      "bench": "crc",
+      "cases": "^(?P<variant>crc16-ccitt|crc16-ibm|crc32|crc32c|crc64-xz|crc64-nvme)/combine/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Combine the checksums of two parts, given the length of the second part."
+    },
     "sha2": {
       "family": "SHA-2",
       "bench": "sha2",
