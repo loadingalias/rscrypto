@@ -854,6 +854,13 @@
       "headline": false,
       "task": "Construct a cipher, restore the input, and seal it."
     },
+    "aead-construct-encrypt": {
+      "family": "AEAD",
+      "bench": "aead",
+      "cases": "^(?P<variant>aes-128-gcm|aes-256-gcm|aes-128-gcm-siv|aes-256-gcm-siv|chacha20-poly1305|xchacha20-poly1305|aegis-256|ascon-aead128)/copy-and-construct-and-encrypt/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Encrypt one message under a new key: build a cipher from key bytes, restore the input, encrypt it, and destroy the cipher."
+    },
     "header-protection-mask": {
       "family": "QUIC header protection",
       "bench": "aead",

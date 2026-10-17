@@ -2099,6 +2099,264 @@ fn aes_siv_cmac256(c: &mut Criterion) {
   open.finish();
 }
 
+// One message per key
+
+/// Message lengths for one message per key: a short record and a typical one. Key setup is a fixed cost, so a longer
+/// message only dilutes it; its `copy-and-encrypt` row gives the remaining cost.
+const CONSTRUCT_SIZES: [usize; 2] = [64, 1024];
+
+fn construct_inputs() -> Vec<(usize, Vec<u8>)> {
+  CONSTRUCT_SIZES
+    .into_iter()
+    .map(|len| (len, common::random_bytes(len)))
+    .collect()
+}
+
+/// Registers `library`'s one-message-per-key row. `encrypt` builds a cipher from the key bytes, encrypts the buffer
+/// in place, and returns the detached tag; the cipher is destroyed inside the call. The ciphertext and tag must
+/// equal `expected`.
+fn construct_and_encrypt_row<T: AsRef<[u8]>>(
+  group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+  library: &str,
+  data: &[u8],
+  expected: &[u8],
+  mut encrypt: impl FnMut(&mut [u8]) -> T,
+) {
+  group.bench_function(
+    BenchmarkId::new(library, data.len()),
+    checked_with(
+      data.to_vec(),
+      |buf| {
+        buf.copy_from_slice(data);
+        encrypt(black_box(buf.as_mut_slice()))
+      },
+      |tag, buf| assert_eq!(sealed(buf, tag), expected),
+    ),
+  );
+}
+
+/// ring: build an `UnboundKey` and a `LessSafeKey` from key bytes, then seal in place with a detached tag.
+fn ring_construct_and_seal(algorithm: &'static ring::aead::Algorithm, key: &[u8], buf: &mut [u8]) -> ring::aead::Tag {
+  use ring::aead as ring_aead;
+
+  ring_aead::LessSafeKey::new(
+    ring_aead::UnboundKey::new(algorithm, key).expect("valid AEAD benchmark operation must succeed"),
+  )
+  .seal_in_place_separate_tag(
+    ring_aead::Nonce::assume_unique_for_key(NONCE_12),
+    ring_aead::Aad::from(AAD),
+    buf,
+  )
+  .expect("valid AEAD benchmark operation must succeed")
+}
+
+aws_lc_bench! {
+  /// aws-lc-rs: build an `UnboundKey` and a `LessSafeKey` from key bytes, then seal in place with a detached tag.
+  fn aws_construct_and_seal(
+    algorithm: &'static aws_lc_rs::aead::Algorithm,
+    key: &[u8],
+    buf: &mut [u8],
+  ) -> aws_lc_rs::aead::Tag {
+    use aws_lc_rs::aead as aws_aead;
+
+    aws_aead::LessSafeKey::new(
+      aws_aead::UnboundKey::new(algorithm, key).expect("valid AEAD benchmark operation must succeed"),
+    )
+    .seal_in_place_separate_tag(
+      aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+      aws_aead::Aad::from(AAD),
+      buf,
+    )
+    .expect("valid AEAD benchmark operation must succeed")
+  }
+}
+
+// One message per key: restore the input into a reused buffer, build a cipher from the key bytes, encrypt with a
+// detached tag, and destroy the cipher, in each timed call. This is the `copy-and-encrypt` workload plus key setup.
+// - rscrypto copies the key into its typed key, expands it, and zeroizes both on drop.
+// - RustCrypto builds its cipher with `KeyInit::new`; ring and aws-lc-rs build an `UnboundKey` and a `LessSafeKey`.
+// - The AES-GCM rows also derive the GHASH key, and each library precomputes what its GHASH backend needs.
+// Untimed: fixtures and the buffer allocation. Every row must produce RustCrypto's ciphertext and tag.
+macro_rules! construct_and_encrypt_bench {
+  (
+    $name:ident,
+    $group:literal,
+    rscrypto: $cipher:ty, $key:ty, $nonce:ty,
+    rustcrypto: $rustcrypto:ty, $rustcrypto_nonce:expr,
+    key: $key_bytes:expr,
+    nonce: $nonce_bytes:expr,
+    ring: [$($ring_algorithm:path)?],
+    aws_lc: [$($aws_algorithm:path)?] $(,)?
+  ) => {
+    fn $name(c: &mut Criterion) {
+      if !bench_config::selected($group) {
+        return;
+      }
+      let nonce_rs = <$nonce>::from_bytes($nonce_bytes);
+      let nonce_rc = $rustcrypto_nonce;
+      let mut g = c.benchmark_group($group);
+
+      for (len, data) in construct_inputs() {
+        common::set_throughput(&mut g, len);
+        let mut ciphertext = data.clone();
+        let tag = <$rustcrypto>::new(&$key_bytes.into())
+          .encrypt_inout_detached(&nonce_rc, AAD, ciphertext.as_mut_slice().into())
+          .expect("valid AEAD benchmark operation must succeed");
+        let expected = sealed(&ciphertext, tag);
+
+        construct_and_encrypt_row(&mut g, "rscrypto", &data, &expected, |buf| {
+          <$cipher>::new(&<$key>::from_bytes(black_box($key_bytes)))
+            .encrypt_in_place(black_box(&nonce_rs), black_box(AAD), buf)
+            .expect("valid AEAD benchmark operation must succeed")
+        });
+        construct_and_encrypt_row(&mut g, "rustcrypto", &data, &expected, |buf| {
+          <$rustcrypto>::new(&black_box($key_bytes).into())
+            .encrypt_inout_detached(black_box(&nonce_rc), black_box(AAD), buf.into())
+            .expect("valid AEAD benchmark operation must succeed")
+        });
+        $(
+          aws_lc_bench! {
+            construct_and_encrypt_row(&mut g, "aws-lc-rs", &data, &expected, |buf| {
+              aws_construct_and_seal(&$aws_algorithm, &black_box($key_bytes), buf)
+            });
+          }
+        )?
+        $(
+          construct_and_encrypt_row(&mut g, "ring", &data, &expected, |buf| {
+            ring_construct_and_seal(&$ring_algorithm, &black_box($key_bytes), buf)
+          });
+        )?
+      }
+
+      g.finish();
+    }
+  };
+}
+
+construct_and_encrypt_bench!(
+  aes128_gcm_construct_and_encrypt,
+  "aes-128-gcm/copy-and-construct-and-encrypt",
+  rscrypto: rscrypto::Aes128Gcm, rscrypto::Aes128GcmKey, rscrypto::aead::Nonce96,
+  rustcrypto: aes_gcm::Aes128Gcm, aes_gcm::Nonce::from(NONCE_12),
+  key: KEY_16,
+  nonce: NONCE_12,
+  ring: [ring::aead::AES_128_GCM],
+  aws_lc: [aws_lc_rs::aead::AES_128_GCM],
+);
+construct_and_encrypt_bench!(
+  aes256_gcm_construct_and_encrypt,
+  "aes-256-gcm/copy-and-construct-and-encrypt",
+  rscrypto: rscrypto::Aes256Gcm, rscrypto::Aes256GcmKey, rscrypto::aead::Nonce96,
+  rustcrypto: aes_gcm::Aes256Gcm, aes_gcm::Nonce::from(NONCE_12),
+  key: KEY_32,
+  nonce: NONCE_12,
+  ring: [ring::aead::AES_256_GCM],
+  aws_lc: [aws_lc_rs::aead::AES_256_GCM],
+);
+construct_and_encrypt_bench!(
+  aes128_gcm_siv_construct_and_encrypt,
+  "aes-128-gcm-siv/copy-and-construct-and-encrypt",
+  rscrypto: rscrypto::Aes128GcmSiv, rscrypto::Aes128GcmSivKey, rscrypto::aead::Nonce96,
+  rustcrypto: aes_gcm_siv::Aes128GcmSiv, aes_gcm_siv::Nonce::from(NONCE_12),
+  key: KEY_16,
+  nonce: NONCE_12,
+  ring: [],
+  aws_lc: [aws_lc_rs::aead::AES_128_GCM_SIV],
+);
+construct_and_encrypt_bench!(
+  aes256_gcm_siv_construct_and_encrypt,
+  "aes-256-gcm-siv/copy-and-construct-and-encrypt",
+  rscrypto: rscrypto::Aes256GcmSiv, rscrypto::Aes256GcmSivKey, rscrypto::aead::Nonce96,
+  rustcrypto: aes_gcm_siv::Aes256GcmSiv, aes_gcm_siv::Nonce::from(NONCE_12),
+  key: KEY_32,
+  nonce: NONCE_12,
+  ring: [],
+  aws_lc: [aws_lc_rs::aead::AES_256_GCM_SIV],
+);
+construct_and_encrypt_bench!(
+  chacha20_poly1305_construct_and_encrypt,
+  "chacha20-poly1305/copy-and-construct-and-encrypt",
+  rscrypto: rscrypto::ChaCha20Poly1305, rscrypto::ChaCha20Poly1305Key, rscrypto::aead::Nonce96,
+  rustcrypto: chacha20poly1305::ChaCha20Poly1305, chacha20poly1305::Nonce::from(NONCE_12),
+  key: KEY_32,
+  nonce: NONCE_12,
+  ring: [ring::aead::CHACHA20_POLY1305],
+  aws_lc: [aws_lc_rs::aead::CHACHA20_POLY1305],
+);
+construct_and_encrypt_bench!(
+  xchacha20_poly1305_construct_and_encrypt,
+  "xchacha20-poly1305/copy-and-construct-and-encrypt",
+  rscrypto: rscrypto::XChaCha20Poly1305, rscrypto::XChaCha20Poly1305Key, rscrypto::aead::Nonce192,
+  rustcrypto: chacha20poly1305::XChaCha20Poly1305, chacha20poly1305::XNonce::from(NONCE_24),
+  key: KEY_32,
+  nonce: NONCE_24,
+  ring: [],
+  aws_lc: [],
+);
+
+// AEGIS-256 one message per key: as above. The aegis crate binds the nonce when it builds its cipher, so its row
+// builds one in every call as well. Every row must produce the aegis crate's ciphertext and tag.
+fn aegis256_construct_and_encrypt(c: &mut Criterion) {
+  if !bench_config::selected("aegis-256/copy-and-construct-and-encrypt") {
+    return;
+  }
+  let nonce_rs = rscrypto::aead::Nonce256::from_bytes(NONCE_32);
+  let mut g = c.benchmark_group("aegis-256/copy-and-construct-and-encrypt");
+
+  for (len, data) in construct_inputs() {
+    common::set_throughput(&mut g, len);
+    let mut ciphertext = data.clone();
+    let tag = aegis::aegis256::Aegis256::<16>::new(&KEY_32, &NONCE_32).encrypt_in_place(&mut ciphertext, AAD);
+    let expected = sealed(&ciphertext, tag);
+
+    construct_and_encrypt_row(&mut g, "rscrypto", &data, &expected, |buf| {
+      rscrypto::Aegis256::new(&rscrypto::Aegis256Key::from_bytes(black_box(KEY_32)))
+        .encrypt_in_place(black_box(&nonce_rs), black_box(AAD), buf)
+        .expect("valid AEAD benchmark operation must succeed")
+    });
+    construct_and_encrypt_row(&mut g, "aegis-crate", &data, &expected, |buf| {
+      aegis::aegis256::Aegis256::<16>::new(&black_box(KEY_32), black_box(&NONCE_32))
+        .encrypt_in_place(buf, black_box(AAD))
+    });
+  }
+
+  g.finish();
+}
+
+// Ascon-AEAD128 one message per key: as above. Every row must produce the ascon-aead crate's ciphertext and tag.
+fn ascon_aead128_construct_and_encrypt(c: &mut Criterion) {
+  if !bench_config::selected("ascon-aead128/copy-and-construct-and-encrypt") {
+    return;
+  }
+  use ascon_aead::aead::{AeadInOut as _, KeyInit as _, array::Array};
+
+  let nonce_rs = rscrypto::aead::Nonce128::from_bytes(NONCE_16);
+  let nonce_ac = Array(NONCE_16);
+  let mut g = c.benchmark_group("ascon-aead128/copy-and-construct-and-encrypt");
+
+  for (len, data) in construct_inputs() {
+    common::set_throughput(&mut g, len);
+    let mut ciphertext = data.clone();
+    let tag = ascon_aead::AsconAead128::new(&Array(KEY_16))
+      .encrypt_inout_detached(&nonce_ac, AAD, ciphertext.as_mut_slice().into())
+      .expect("valid AEAD benchmark operation must succeed");
+    let expected = sealed(&ciphertext, tag);
+
+    construct_and_encrypt_row(&mut g, "rscrypto", &data, &expected, |buf| {
+      rscrypto::AsconAead128::new(&rscrypto::AsconAead128Key::from_bytes(black_box(KEY_16)))
+        .encrypt_in_place(black_box(&nonce_rs), black_box(AAD), buf)
+        .expect("valid AEAD benchmark operation must succeed")
+    });
+    construct_and_encrypt_row(&mut g, "ascon-aead", &data, &expected, |buf| {
+      ascon_aead::AsconAead128::new(&Array(black_box(KEY_16)))
+        .encrypt_inout_detached(black_box(&nonce_ac), black_box(AAD), buf.into())
+        .expect("valid AEAD benchmark operation must succeed")
+    });
+  }
+
+  g.finish();
+}
+
 // Criterion harness
 
 fn main() {
@@ -2119,6 +2377,14 @@ fn main() {
     aegis256_decrypt,
     ascon_aead128_encrypt,
     ascon_aead128_decrypt,
+    aes128_gcm_construct_and_encrypt,
+    aes256_gcm_construct_and_encrypt,
+    aes128_gcm_siv_construct_and_encrypt,
+    aes256_gcm_siv_construct_and_encrypt,
+    chacha20_poly1305_construct_and_encrypt,
+    xchacha20_poly1305_construct_and_encrypt,
+    aegis256_construct_and_encrypt,
+    ascon_aead128_construct_and_encrypt,
     header_protection,
     aes_siv_cmac256,
   ]);

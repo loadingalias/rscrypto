@@ -510,6 +510,10 @@ The AEAD `copy-and-encrypt`, `copy-and-decrypt`, `copy-and-seal`, and `copy-and-
   Other rows use detached tags.
 - Throughput counts message bytes, not restoration traffic or tag bytes.
 - AES-SIV `copy-and-construct-and-seal` also constructs and destroys a cipher in each iteration.
+- `copy-and-construct-and-encrypt` measures one message per key for the other AEADs, at 64 bytes and 1 KiB:
+  each call builds a cipher from the key bytes, restores the input, encrypts with a detached tag, and destroys the cipher.
+  ring and aws-lc-rs build an `UnboundKey` and a `LessSafeKey`; the aegis crate binds the nonce when it builds its cipher.
+  Decryption builds the same key schedule and has no separate group.
 
 These are not cryptography-only measurements,
 and they are not complete packet-processing measurements.
