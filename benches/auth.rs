@@ -12,7 +12,7 @@ use core::hint::black_box;
 
 use bench_config::{checked, checked_routine, checked_with};
 use criterion::{BatchSize, BenchmarkId, Criterion};
-use ed25519_dalek::{Signature as DalekSignature, Signer as _, SigningKey};
+use ed25519_dalek::{Signature as DalekSignature, Signer as _, SigningKey, VerifyingKey as DalekVerifyingKey};
 use fips203::{
   ml_kem_512 as FipsMlKem512, ml_kem_768 as FipsMlKem768, ml_kem_1024 as FipsMlKem1024,
   traits::{Decaps as _, Encaps as _, KeyGen as _, SerDes as _},
@@ -30,7 +30,7 @@ use rscrypto::{
   EcdsaP384SecretKey, EcdsaP384Signature, Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature,
   HkdfSha256, HkdfSha384, HkdfSha512, HmacSha256, HmacSha384, HmacSha512, Kem as _, Mac as _, MlKem512, MlKem768,
   MlKem1024, MlKemError, P256EphemeralSecret, P256PublicKey, P384EphemeralSecret, P384PublicKey, Pbkdf2Sha256,
-  Pbkdf2Sha512, X25519SecretKey,
+  Pbkdf2Sha512, X25519PublicKey, X25519SecretKey,
 };
 use rustcrypto_ml_kem::{
   DecapsulationKey as RustCryptoMlKemDecapsulationKey, MlKem512 as RustCryptoMlKem512, MlKem768 as RustCryptoMlKem768,
@@ -76,6 +76,60 @@ fn rustcrypto_hmac<M: hmac::Mac + KeyInit>(key: &[u8], message: &[u8]) -> Vec<u8
   let mut mac = <M as KeyInit>::new_from_slice(key).expect("valid authentication benchmark operation must succeed");
   mac.update(message);
   mac.finalize().into_bytes().to_vec()
+}
+
+/// `point` with the lowest bit of its last byte flipped. The caller must confirm that the result is off the curve.
+fn flip_last_bit<const N: usize>(mut point: [u8; N]) -> [u8; N] {
+  *point.last_mut().expect("a point encoding is not empty") ^= 1;
+  point
+}
+
+/// Returns a row whose timed path validates its encoded input. `operation` is that path: it must accept `input`, and
+/// `check` tests its output. Outside timing, the same path must reject `malformed` by returning `None`.
+fn validating_row<'a, I, T: 'a>(
+  operation: impl Fn(&I) -> Option<T> + 'a,
+  input: &'a I,
+  malformed: &'a I,
+  check: impl FnOnce(T) + 'a,
+) -> impl FnMut(&mut criterion::Bencher<'_>) + 'a {
+  checked_with(
+    operation,
+    move |operation| {
+      black_box(operation(black_box(input)).expect("valid authentication benchmark operation must succeed"))
+    },
+    move |output, operation| {
+      check(output);
+      assert!(operation(malformed).is_none(), "a malformed input must fail");
+    },
+  )
+}
+
+/// Returns an import-and-verify row. `verify` is the row's timed path and must accept the valid key, message, and
+/// signature. Outside timing, the same path must reject the changed signature and the malformed key.
+fn import_and_verify<'a, K, S>(
+  verify: impl Fn(&K, &[u8], &S) -> bool + 'a,
+  key: &'a K,
+  malformed_key: &'a K,
+  message: &'a [u8],
+  signature: &'a S,
+  tampered: &'a S,
+) -> impl FnMut(&mut criterion::Bencher<'_>) + 'a {
+  checked_with(
+    verify,
+    move |verify| {
+      assert!(
+        verify(black_box(key), black_box(message), black_box(signature)),
+        "valid authentication benchmark operation must succeed"
+      );
+    },
+    move |(), verify| {
+      assert!(!verify(key, message, tampered), "a changed signature must fail");
+      assert!(
+        !verify(malformed_key, message, signature),
+        "a malformed public key must fail"
+      );
+    },
+  )
 }
 
 #[cfg(all(
@@ -164,8 +218,11 @@ fn print_auth_diag_once() {
 #[inline]
 fn print_auth_diag_once() {}
 
-// Each HMAC row times message absorption, finalization, and state reuse or destruction; keying is untimed.
-// Every row must return RustCrypto's tag.
+// HMAC with a key that each library prepares outside timing. Timed: message absorption, finalization, and state
+// reuse or destruction.
+// - rscrypto resets its keyed state after each tag. RustCrypto clones its keyed state. aws-lc-rs and ring copy the
+//   key's precomputed inner and outer states in `sign`.
+// Every row must return RustCrypto's tag; the RustCrypto row must return ring's.
 macro_rules! hmac_bench {
   (
     $name:ident,
@@ -195,6 +252,7 @@ macro_rules! hmac_bench {
       for (len, data) in &inputs {
         common::set_throughput(&mut g, *len);
         let expected = rustcrypto_hmac::<$rustcrypto>(&key, data);
+        let ring_expected = ring::hmac::sign(&ring_key, data);
 
         let mut mac = <$rscrypto>::new(&key);
         g.bench_function(
@@ -220,7 +278,7 @@ macro_rules! hmac_bench {
               mac.update(black_box(data));
               black_box(mac.finalize().into_bytes())
             },
-            |tag| assert_eq!(tag.as_slice(), expected.as_slice()),
+            |tag| assert_eq!(tag.as_slice(), ring_expected.as_ref()),
           ),
         );
 
@@ -276,6 +334,9 @@ hmac_bench!(
   ring::hmac::HMAC_SHA512
 );
 
+// HMAC-SHA256 over 1 MiB in fixed-size updates. Timed: keying, every update, and finalization. aws-lc-rs and ring
+// have streaming APIs but no rows here. Every row must return RustCrypto's tag; the RustCrypto row must return
+// ring's.
 fn hmac_sha256_streaming(c: &mut Criterion) {
   if !bench_config::selected("hmac-sha256/streaming") {
     return;
@@ -285,6 +346,7 @@ fn hmac_sha256_streaming(c: &mut Criterion) {
   let data = common::random_bytes(1048576);
   let key = [0x24u8; 32];
   let expected = rustcrypto_hmac::<RustCryptoHmacSha256>(&key, &data);
+  let ring_expected = ring::hmac::sign(&ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &key), &data);
   let mut g = c.benchmark_group("hmac-sha256/streaming");
   g.throughput(criterion::Throughput::Bytes(data.len() as u64));
 
@@ -316,7 +378,7 @@ fn hmac_sha256_streaming(c: &mut Criterion) {
           }
           black_box(mac.finalize().into_bytes())
         },
-        |tag| assert_eq!(tag.as_slice(), expected.as_slice()),
+        |tag| assert_eq!(tag.as_slice(), ring_expected.as_ref()),
       ),
     );
   }
@@ -342,6 +404,7 @@ fn hmac_sha256_internal(c: &mut Criterion) {
     let msg = &data[..len];
     common::set_throughput(&mut g, len);
     let expected = rustcrypto_hmac::<RustCryptoHmacSha256>(&key, msg);
+    let ring_expected = ring::hmac::sign(&ring_key, msg);
 
     g.bench_function(
       BenchmarkId::new("rscrypto-oneshot", len),
@@ -388,7 +451,7 @@ fn hmac_sha256_internal(c: &mut Criterion) {
           mac.update(black_box(msg));
           black_box(mac.finalize().into_bytes())
         },
-        |tag| assert_eq!(tag.as_slice(), expected.as_slice()),
+        |tag| assert_eq!(tag.as_slice(), ring_expected.as_ref()),
       ),
     );
 
@@ -414,9 +477,13 @@ fn hmac_sha256_internal(c: &mut Criterion) {
   g.finish();
 }
 
-// HKDF-Expand rows write each library's output into a reused caller buffer, and every row must return
-// RustCrypto's output. Salt and IKM are HashLen bytes, and `info` keeps T(1) in one compression block while each
-// later T(i) needs two.
+// HKDF-Expand from a PRK that each library holds outside timing. Each row writes into a reused caller buffer. Salt
+// and IKM are HashLen bytes, and `info` keeps T(1) in one compression block while each later T(i) needs two.
+// Every row must return RustCrypto's output; the RustCrypto row must return ring's.
+// - rscrypto, RustCrypto, and ring hold the PRK as an HMAC key with its inner and outer states precomputed.
+// - aws-lc-rs holds the PRK bytes from `Prk::new_less_safe`, built from RustCrypto's PRK. A PRK from its
+//   `Salt::extract` only stores the salt and IKM, and `fill` would then run HKDF-Extract too. `fill` still keys
+//   HMAC from the PRK in each call: two more compression-function calls than the other rows.
 macro_rules! hkdf_expand_bench {
   (
     $name:ident,
@@ -442,7 +509,8 @@ macro_rules! hkdf_expand_bench {
       let hkdf = <$rscrypto>::new(&salt, &ikm);
       let rustcrypto = <$rustcrypto>::new(Some(&salt), &ikm);
       aws_lc_bench! {
-        let aws_prk = aws_lc_rs::hkdf::Salt::new($aws_algorithm, &salt).extract(&ikm);
+        let prk = <$rustcrypto>::extract(Some(&salt), &ikm).0;
+        let aws_prk = aws_lc_rs::hkdf::Prk::new_less_safe($aws_algorithm, prk.as_slice());
       }
       let ring_prk = ring::hkdf::Salt::new($ring_algorithm, &salt).extract(&ikm);
       let mut g = c.benchmark_group($group);
@@ -451,6 +519,12 @@ macro_rules! hkdf_expand_bench {
         let mut expected = vec![0u8; out_len];
         rustcrypto
           .expand(&info, &mut expected)
+          .expect("valid authentication benchmark operation must succeed");
+        let mut ring_expected = vec![0u8; out_len];
+        ring_prk
+          .expand(&[&info], RingHkdfLen(out_len))
+          .expect("valid authentication benchmark operation must succeed")
+          .fill(&mut ring_expected)
           .expect("valid authentication benchmark operation must succeed");
 
         g.throughput(criterion::Throughput::Bytes(out_len as u64));
@@ -480,7 +554,7 @@ macro_rules! hkdf_expand_bench {
                 .expect("valid authentication benchmark operation must succeed");
               black_box(out[0])
             },
-            |_, out| assert_eq!(out, &expected),
+            |_, out| assert_eq!(out, &ring_expected),
           ),
         );
 
@@ -564,6 +638,8 @@ hkdf_expand_bench!(
 // master-secret shape; SHA-256 adds the 64-byte X25519MLKEM768 shared secret,
 // which crosses the SHA-256 block boundary. aws-lc-rs has no row: its
 // `Salt::extract` only copies the IKM and defers HKDF-Extract to `Okm::fill`.
+// rscrypto must return RustCrypto's PRK. RustCrypto and ring must expand their
+// PRK state to each other's T(1), the first expanded block.
 macro_rules! hkdf_extract_bench {
   (
     $name:ident,
@@ -585,11 +661,17 @@ macro_rules! hkdf_extract_bench {
       let mut g = c.benchmark_group($group);
       for ikm_len in [$($ikm_len),+] {
         let ikm = vec![0x22u8; ikm_len];
-        // RustCrypto exposes the PRK. ring does not, so its row must reproduce T(1), the first expanded block.
         let (expected_prk, expected_hkdf) = <$rustcrypto>::extract(Some(&salt), &ikm);
         let mut expected_t1 = [0u8; $hash_len];
         expected_hkdf
           .expand(&[], &mut expected_t1)
+          .expect("valid authentication benchmark operation must succeed");
+        let mut ring_t1 = [0u8; $hash_len];
+        ring::hkdf::Salt::new($ring_algorithm, &salt)
+          .extract(&ikm)
+          .expand(&[], RingHkdfLen($hash_len))
+          .expect("valid authentication benchmark operation must succeed")
+          .fill(&mut ring_t1)
           .expect("valid authentication benchmark operation must succeed");
 
         g.bench_function(
@@ -605,7 +687,13 @@ macro_rules! hkdf_extract_bench {
           BenchmarkId::new("rustcrypto", ikm_len),
           checked(
             || black_box(<$rustcrypto>::extract(Some(black_box(&salt)), black_box(&ikm))),
-            |(prk, _)| assert_eq!(prk.as_slice(), expected_prk.as_slice()),
+            |(_, hkdf)| {
+              let mut t1 = [0u8; $hash_len];
+              hkdf
+                .expand(&[], &mut t1)
+                .expect("valid authentication benchmark operation must succeed");
+              assert_eq!(t1, ring_t1);
+            },
           ),
         );
         g.bench_function(
@@ -657,6 +745,8 @@ hkdf_extract_bench!(
   [64]
 );
 
+// PBKDF2 one-shot derivation into a reused output buffer. Timed: password keying, every iteration, and output.
+// `pbkdf2-sha256-state` is an rscrypto-only group that reuses a keyed password state built outside timing.
 fn pbkdf2_sha256_derive(c: &mut Criterion) {
   if !bench_config::selected("pbkdf2-sha256") {
     return;
@@ -666,10 +756,16 @@ fn pbkdf2_sha256_derive(c: &mut Criterion) {
   let password = [0x55u8; 32];
   let salt = [0x33u8; 16];
   let state = Pbkdf2Sha256::new(&password);
-  // Every row must write RustCrypto's derived key into its reused output buffer.
+  // Every row must write RustCrypto's derived key into its reused output buffer; the RustCrypto row must write
+  // ring's.
   let rustcrypto = |iterations: u32, len: usize| {
     let mut out = vec![0u8; len];
     pbkdf2::pbkdf2_hmac::<sha2::Sha256>(&password, &salt, iterations, &mut out);
+    out
+  };
+  let ring_expected = |iterations: core::num::NonZeroU32, len: usize| {
+    let mut out = vec![0u8; len];
+    ring::pbkdf2::derive(ring::pbkdf2::PBKDF2_HMAC_SHA256, iterations, &salt, &password, &mut out);
     out
   };
 
@@ -713,7 +809,7 @@ fn pbkdf2_sha256_derive(c: &mut Criterion) {
             );
             black_box(out[0])
           },
-          |_, out| assert_eq!(out, &expected),
+          |_, out| assert_eq!(out, &ring_expected(nz_iters, out_len)),
         ),
       );
 
@@ -789,10 +885,16 @@ fn pbkdf2_sha256_internal(c: &mut Criterion) {
   let password = [0x55u8; 32];
   let salt = [0x33u8; 16];
   let state = Pbkdf2Sha256::new(&password);
-  // Every row must write RustCrypto's derived key into its reused output buffer.
+  // Every row must write RustCrypto's derived key into its reused output buffer; the RustCrypto row must write
+  // ring's.
   let rustcrypto = |iterations: u32, len: usize| {
     let mut out = vec![0u8; len];
     pbkdf2::pbkdf2_hmac::<sha2::Sha256>(&password, &salt, iterations, &mut out);
+    out
+  };
+  let ring_expected = |iterations: core::num::NonZeroU32, len: usize| {
+    let mut out = vec![0u8; len];
+    ring::pbkdf2::derive(ring::pbkdf2::PBKDF2_HMAC_SHA256, iterations, &salt, &password, &mut out);
     out
   };
 
@@ -850,7 +952,7 @@ fn pbkdf2_sha256_internal(c: &mut Criterion) {
             );
             black_box(out[0])
           },
-          |_, out| assert_eq!(out, &expected),
+          |_, out| assert_eq!(out, &ring_expected(nz_iters, out_len)),
         ),
       );
 
@@ -897,6 +999,8 @@ fn pbkdf2_sha256_internal(c: &mut Criterion) {
   }
 }
 
+// PBKDF2 one-shot derivation into a reused output buffer. Timed: password keying, every iteration, and output.
+// `pbkdf2-sha512-state` is an rscrypto-only group that reuses a keyed password state built outside timing.
 fn pbkdf2_sha512_derive(c: &mut Criterion) {
   if !bench_config::selected("pbkdf2-sha512") {
     return;
@@ -906,10 +1010,16 @@ fn pbkdf2_sha512_derive(c: &mut Criterion) {
   let password = [0x66u8; 48];
   let salt = [0x44u8; 16];
   let state = Pbkdf2Sha512::new(&password);
-  // Every row must write RustCrypto's derived key into its reused output buffer.
+  // Every row must write RustCrypto's derived key into its reused output buffer; the RustCrypto row must write
+  // ring's.
   let rustcrypto = |iterations: u32, len: usize| {
     let mut out = vec![0u8; len];
     pbkdf2::pbkdf2_hmac::<sha2::Sha512>(&password, &salt, iterations, &mut out);
+    out
+  };
+  let ring_expected = |iterations: core::num::NonZeroU32, len: usize| {
+    let mut out = vec![0u8; len];
+    ring::pbkdf2::derive(ring::pbkdf2::PBKDF2_HMAC_SHA512, iterations, &salt, &password, &mut out);
     out
   };
 
@@ -953,7 +1063,7 @@ fn pbkdf2_sha512_derive(c: &mut Criterion) {
             );
             black_box(out[0])
           },
-          |_, out| assert_eq!(out, &expected),
+          |_, out| assert_eq!(out, &ring_expected(nz_iters, out_len)),
         ),
       );
 
@@ -1020,12 +1130,19 @@ fn pbkdf2_sha512_derive(c: &mut Criterion) {
   }
 }
 
+/// RFC 8032 Section 7.1 TEST 1 secret key and public key.
+const ED25519_RFC8032_SECRET: &str = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
+const ED25519_RFC8032_PUBLIC: &str = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+
+// Ed25519 public key from 32 secret-key bytes. Timed: secret import, SHA-512 key expansion, and the fixed-base
+// scalar multiplication. Dalek derives the public key while it constructs `SigningKey`. Every row must return
+// the RFC 8032 public key.
 fn ed25519_public_key(c: &mut Criterion) {
   if !bench_config::selected("ed25519/public-key-from-secret") {
     return;
   }
-  let secret_bytes = [7u8; 32];
-  let expected = SigningKey::from_bytes(&secret_bytes).verifying_key().to_bytes();
+  let secret_bytes = hex::<32>(ED25519_RFC8032_SECRET);
+  let expected = hex::<32>(ED25519_RFC8032_PUBLIC);
   let mut g = c.benchmark_group("ed25519/public-key-from-secret");
 
   g.bench_function(
@@ -1053,8 +1170,22 @@ fn ed25519_public_key(c: &mut Criterion) {
   g.finish();
 }
 
+// ECDSA P-256 verification. Every row verifies RustCrypto's fixed-width signature over the same message, and its
+// check requires a rejection once the last byte of r changes.
+//
+// `ecdsa-p256/verify/reuse-key`: each library's key object is built outside timing. Timed: verification.
+// - rscrypto reuses a parsed key with its precomputed verification table, and a parsed signature.
+// - RustCrypto reuses a `VerifyingKey` and a parsed signature.
+// - aws-lc-rs reuses a `ParsedPublicKey`. It takes the signature bytes and re-encodes them as DER in each call.
+// - ring is absent: it has no API that reuses a parsed key.
+//
+// `ecdsa-p256/verify/import-key`: every row gets the same 65-byte uncompressed SEC1 key and 64-byte signature.
+// Timed: key parsing and validation, signature parsing, verification, and drop of per-call objects.
+// - rscrypto also builds the verification table that key reuse amortizes.
+// - aws-lc-rs allocates an EVP_PKEY and re-encodes the signature as DER.
+// Each row's check also requires the same path to reject a key that is not on the curve.
 fn ecdsa_p256_verify(c: &mut Criterion) {
-  if !bench_config::selected("ecdsa-p256/verify") {
+  if !bench_config::selected("ecdsa-p256/verify/") {
     return;
   }
   let secret_bytes = [0x11u8; 32];
@@ -1065,31 +1196,35 @@ fn ecdsa_p256_verify(c: &mut Criterion) {
     .expect("valid authentication benchmark operation must succeed")
     .public_key()
     .to_sec1_bytes();
-  let public = EcdsaP256PublicKey::from_sec1_bytes(sec1.as_slice())
-    .expect("valid authentication benchmark operation must succeed");
-  let ring_upk = ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P256_SHA256_FIXED, sec1.as_slice());
+  let off_curve = flip_last_bit(sec1);
+  p256::PublicKey::from_sec1_bytes(&off_curve).expect_err("RustCrypto must reject the changed point");
+  let public =
+    EcdsaP256PublicKey::from_sec1_bytes(&sec1).expect("valid authentication benchmark operation must succeed");
   aws_lc_bench! {
-    let aws_upk =
-      aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ECDSA_P256_SHA256_FIXED, sec1.as_slice());
+    let aws_key = aws_lc_rs::signature::ParsedPublicKey::new(&aws_lc_rs::signature::ECDSA_P256_SHA256_FIXED, sec1)
+      .expect("valid authentication benchmark operation must succeed");
   }
-
   let inputs = [0usize, 32, 1024, 16384]
     .into_iter()
-    .map(|len| (len, common::random_bytes(len)))
+    .map(|len| {
+      let data = common::random_bytes(len);
+      let signature: P256OracleSignature = p256::ecdsa::signature::Signer::sign(&signing_key, &data);
+      let signature: [u8; 64] = array_from_slice(signature.to_bytes().as_ref());
+      let mut tampered = signature;
+      tampered[31] ^= 1;
+      (len, data, signature, tampered)
+    })
     .collect::<Vec<_>>();
-  let mut g = c.benchmark_group("ecdsa-p256/verify");
 
-  for (len, data) in &inputs {
+  let mut g = c.benchmark_group("ecdsa-p256/verify/reuse-key");
+  for (len, data, signature_bytes, tampered_bytes) in &inputs {
     common::set_throughput(&mut g, *len);
-    // Every row verifies RustCrypto's signature and must reject it once the last byte of r changes.
-    let oracle_signature: P256OracleSignature = p256::ecdsa::signature::Signer::sign(&signing_key, data);
-    let signature_bytes: [u8; 64] = array_from_slice(oracle_signature.to_bytes().as_ref());
     let signature =
-      EcdsaP256Signature::from_bytes(signature_bytes).expect("valid authentication benchmark operation must succeed");
-    let mut tampered_bytes = signature_bytes;
-    tampered_bytes[31] ^= 1;
-    let tampered = EcdsaP256Signature::from_bytes(tampered_bytes).expect("a changed r remains a valid scalar");
-    let oracle_tampered = P256OracleSignature::from_slice(&tampered_bytes).expect("a changed r remains a valid scalar");
+      EcdsaP256Signature::from_bytes(*signature_bytes).expect("valid authentication benchmark operation must succeed");
+    let tampered = EcdsaP256Signature::from_bytes(*tampered_bytes).expect("a changed r remains a valid scalar");
+    let oracle_signature =
+      P256OracleSignature::from_slice(signature_bytes).expect("valid authentication benchmark operation must succeed");
+    let oracle_tampered = P256OracleSignature::from_slice(tampered_bytes).expect("a changed r remains a valid scalar");
 
     g.bench_function(
       BenchmarkId::new("rscrypto", len),
@@ -1102,25 +1237,6 @@ fn ecdsa_p256_verify(c: &mut Criterion) {
         },
         |()| {
           public
-            .verify(data, &tampered)
-            .expect_err("a changed ECDSA P-256 signature must fail");
-        },
-      ),
-    );
-
-    g.bench_function(
-      BenchmarkId::new("rscrypto-import", len),
-      checked(
-        || {
-          EcdsaP256PublicKey::from_sec1_bytes(black_box(sec1.as_slice()))
-            .expect("valid authentication benchmark operation must succeed")
-            .verify(black_box(data), black_box(&signature))
-            .expect("valid authentication benchmark operation must succeed");
-          black_box(())
-        },
-        |()| {
-          EcdsaP256PublicKey::from_sec1_bytes(sec1.as_slice())
-            .expect("valid authentication benchmark operation must succeed")
             .verify(data, &tampered)
             .expect_err("a changed ECDSA P-256 signature must fail");
         },
@@ -1146,39 +1262,76 @@ fn ecdsa_p256_verify(c: &mut Criterion) {
       ),
     );
 
-    g.bench_function(
-      BenchmarkId::new("ring", len),
-      checked(
-        || {
-          ring_upk
-            .verify(black_box(data), black_box(signature.as_bytes()))
-            .expect("valid authentication benchmark operation must succeed");
-          black_box(())
-        },
-        |()| {
-          ring_upk
-            .verify(data, &tampered_bytes)
-            .expect_err("a changed ECDSA P-256 signature must fail");
-        },
-      ),
-    );
-
     aws_lc_bench! {
       g.bench_function(
         BenchmarkId::new("aws-lc-rs", len),
         checked(
           || {
-            aws_upk.verify(black_box(data), black_box(signature.as_bytes())).expect("valid authentication benchmark operation must succeed");
+            black_box(&aws_key)
+              .verify_sig(black_box(data), black_box(signature_bytes))
+              .expect("valid authentication benchmark operation must succeed");
             black_box(())
           },
           |()| {
-            aws_upk.verify(data, &tampered_bytes).expect_err("a changed ECDSA P-256 signature must fail");
+            aws_key.verify_sig(data, tampered_bytes).expect_err("a changed ECDSA P-256 signature must fail");
           },
         ),
       );
     }
   }
+  g.finish();
 
+  // Each closure is one row's timed import-and-verify path.
+  let rscrypto_import = |key: &[u8; 65], message: &[u8], signature: &[u8; 64]| {
+    let (Ok(key), Ok(signature)) = (
+      EcdsaP256PublicKey::from_sec1_bytes(key),
+      EcdsaP256Signature::from_bytes(*signature),
+    ) else {
+      return false;
+    };
+    key.verify(message, &signature).is_ok()
+  };
+  let rustcrypto_import = |key: &[u8; 65], message: &[u8], signature: &[u8; 64]| {
+    let (Ok(key), Ok(signature)) = (
+      p256::ecdsa::VerifyingKey::from_sec1_bytes(key),
+      P256OracleSignature::from_slice(signature),
+    ) else {
+      return false;
+    };
+    p256::ecdsa::signature::Verifier::verify(&key, message, &signature).is_ok()
+  };
+  let ring_import = |key: &[u8; 65], message: &[u8], signature: &[u8; 64]| {
+    ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P256_SHA256_FIXED, key)
+      .verify(message, signature)
+      .is_ok()
+  };
+  let mut g = c.benchmark_group("ecdsa-p256/verify/import-key");
+  for (len, data, signature, tampered) in &inputs {
+    common::set_throughput(&mut g, *len);
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      import_and_verify(rscrypto_import, &sec1, &off_curve, data, signature, tampered),
+    );
+    g.bench_function(
+      BenchmarkId::new("rustcrypto-p256", len),
+      import_and_verify(rustcrypto_import, &sec1, &off_curve, data, signature, tampered),
+    );
+    g.bench_function(
+      BenchmarkId::new("ring", len),
+      import_and_verify(ring_import, &sec1, &off_curve, data, signature, tampered),
+    );
+    aws_lc_bench! {
+      let aws_import = |key: &[u8; 65], message: &[u8], signature: &[u8; 64]| {
+        aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ECDSA_P256_SHA256_FIXED, key)
+          .verify(message, signature)
+          .is_ok()
+      };
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs", len),
+        import_and_verify(aws_import, &sec1, &off_curve, data, signature, tampered),
+      );
+    }
+  }
   g.finish();
 }
 
@@ -1212,8 +1365,14 @@ fn ecdsa_p256_sign(c: &mut Criterion) {
     )
     .expect("valid authentication benchmark operation must succeed");
   }
-  // rscrypto's deterministic nonce is not RFC 6979, and the competitors draw random nonces, so no row has a
-  // fixed signature. RustCrypto must verify every row's signature, and blinding must not change rscrypto's.
+  // ECDSA P-256 signing with a key held outside timing. Timed: hashing, nonce generation, signing, and the
+  // signature object. The nonce source differs by library and stays timed:
+  // - `rscrypto` is `try_sign`, the default API: a deterministic nonce that is not RFC 6979, with no entropy
+  //   source. `rscrypto-blinded` adds caller-supplied nonce blinding and must return the same signature.
+  // - RustCrypto derives the RFC 6979 nonce.
+  // - ring draws nonce randomness from `SystemRandom` in each call; aws-lc-rs uses AWS-LC's internal generator.
+  // No row has a fixed signature. RustCrypto must verify every other row's signature, and ring must verify
+  // RustCrypto's.
   let verifies = |data: &[u8], signature: &[u8]| {
     let signature = P256OracleSignature::from_slice(signature).expect("ECDSA P-256 signature must parse");
     p256::ecdsa::signature::Verifier::verify(verifying_key, data, &signature)
@@ -1230,7 +1389,7 @@ fn ecdsa_p256_sign(c: &mut Criterion) {
     common::set_throughput(&mut g, *len);
 
     g.bench_function(
-      BenchmarkId::new("rscrypto-deterministic", len),
+      BenchmarkId::new("rscrypto", len),
       checked(
         || {
           black_box(
@@ -1274,7 +1433,11 @@ fn ecdsa_p256_sign(c: &mut Criterion) {
             p256::ecdsa::signature::Signer::sign(black_box(&signing_key), black_box(data));
           black_box(signature)
         },
-        |signature| verifies(data, signature.to_bytes().as_slice()),
+        |signature| {
+          ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P256_SHA256_FIXED, &sec1)
+            .verify(data, signature.to_bytes().as_slice())
+            .expect("ring must verify RustCrypto's ECDSA P-256 signature");
+        },
       ),
     );
 
@@ -1306,19 +1469,28 @@ fn ecdsa_p256_sign(c: &mut Criterion) {
   g.finish();
 }
 
+// ECDSA P-256 public key from a secret key held outside timing. Timed: the fixed-base scalar multiplication and the
+// library's public-key object. rscrypto's object also precomputes its verification table; RustCrypto's holds
+// only the affine point. `rscrypto-blinded` adds caller-supplied scalar blinding. Every row must return the NIST
+// CAVP public key for the NIST private key.
 fn ecdsa_p256_public_key(c: &mut Criterion) {
   if !bench_config::selected("ecdsa-p256/public-key") {
     return;
   }
-  let secret_bytes = [0x11u8; 32];
   let secret =
-    EcdsaP256SecretKey::from_bytes(secret_bytes).expect("valid authentication benchmark operation must succeed");
+    EcdsaP256SecretKey::from_bytes(P256_NIST_PRIVATE).expect("valid authentication benchmark operation must succeed");
   let blind = [0x5cu8; 64];
   let oracle =
-    P256OracleSecretKey::from_slice(&secret_bytes).expect("valid authentication benchmark operation must succeed");
-  let expected = oracle.public_key().to_sec1_bytes();
+    P256OracleSecretKey::from_slice(&P256_NIST_PRIVATE).expect("valid authentication benchmark operation must succeed");
 
   let mut g = c.benchmark_group("ecdsa-p256/public-key");
+  g.bench_function(
+    "rscrypto",
+    checked(
+      || black_box(black_box(&secret).public_key()),
+      |public| assert_eq!(public.to_sec1_bytes(), P256_NIST_PUBLIC),
+    ),
+  );
   g.bench_function(
     "rscrypto-blinded",
     checked(
@@ -1332,21 +1504,35 @@ fn ecdsa_p256_public_key(c: &mut Criterion) {
             .expect("valid authentication benchmark operation must succeed"),
         )
       },
-      |public| assert_eq!(public.to_sec1_bytes().as_slice(), &*expected),
+      |public| assert_eq!(public.to_sec1_bytes(), P256_NIST_PUBLIC),
     ),
   );
   g.bench_function(
     "rustcrypto-p256",
     checked(
       || black_box(black_box(&oracle).public_key()),
-      |public| assert_eq!(public.to_sec1_bytes(), expected),
+      |public| assert_eq!(public.to_sec1_point(false).as_bytes(), P256_NIST_PUBLIC),
     ),
   );
   g.finish();
 }
 
+// ECDSA P-384 verification. Every row verifies RustCrypto's fixed-width signature over the same message, and its
+// check requires a rejection once the last byte of r changes.
+//
+// `ecdsa-p384/verify/reuse-key`: each library's key object is built outside timing. Timed: verification.
+// - rscrypto reuses a parsed key with its precomputed verification table, and a parsed signature.
+// - RustCrypto reuses a `VerifyingKey` and a parsed signature.
+// - aws-lc-rs reuses a `ParsedPublicKey`. It takes the signature bytes and re-encodes them as DER in each call.
+// - ring is absent: it has no API that reuses a parsed key.
+//
+// `ecdsa-p384/verify/import-key`: every row gets the same 97-byte uncompressed SEC1 key and 96-byte signature.
+// Timed: key parsing and validation, signature parsing, verification, and drop of per-call objects.
+// - rscrypto also builds the verification table that key reuse amortizes.
+// - aws-lc-rs allocates an EVP_PKEY and re-encodes the signature as DER.
+// Each row's check also requires the same path to reject a key that is not on the curve.
 fn ecdsa_p384_verify(c: &mut Criterion) {
-  if !bench_config::selected("ecdsa-p384/verify") {
+  if !bench_config::selected("ecdsa-p384/verify/") {
     return;
   }
   let secret_bytes = [0x31u8; 48];
@@ -1357,31 +1543,35 @@ fn ecdsa_p384_verify(c: &mut Criterion) {
     .expect("valid authentication benchmark operation must succeed")
     .public_key()
     .to_sec1_bytes();
-  let public = EcdsaP384PublicKey::from_sec1_bytes(sec1.as_slice())
-    .expect("valid authentication benchmark operation must succeed");
-  let ring_upk = ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P384_SHA384_FIXED, sec1.as_slice());
+  let off_curve = flip_last_bit(sec1);
+  p384::PublicKey::from_sec1_bytes(&off_curve).expect_err("RustCrypto must reject the changed point");
+  let public =
+    EcdsaP384PublicKey::from_sec1_bytes(&sec1).expect("valid authentication benchmark operation must succeed");
   aws_lc_bench! {
-    let aws_upk =
-      aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ECDSA_P384_SHA384_FIXED, sec1.as_slice());
+    let aws_key = aws_lc_rs::signature::ParsedPublicKey::new(&aws_lc_rs::signature::ECDSA_P384_SHA384_FIXED, sec1)
+      .expect("valid authentication benchmark operation must succeed");
   }
-
   let inputs = [0usize, 32, 1024, 16384]
     .into_iter()
-    .map(|len| (len, common::random_bytes(len)))
+    .map(|len| {
+      let data = common::random_bytes(len);
+      let signature: P384OracleSignature = p384::ecdsa::signature::Signer::sign(&signing_key, &data);
+      let signature: [u8; 96] = array_from_slice(signature.to_bytes().as_ref());
+      let mut tampered = signature;
+      tampered[47] ^= 1;
+      (len, data, signature, tampered)
+    })
     .collect::<Vec<_>>();
-  let mut g = c.benchmark_group("ecdsa-p384/verify");
 
-  for (len, data) in &inputs {
+  let mut g = c.benchmark_group("ecdsa-p384/verify/reuse-key");
+  for (len, data, signature_bytes, tampered_bytes) in &inputs {
     common::set_throughput(&mut g, *len);
-    // Every row verifies RustCrypto's signature and must reject it once the last byte of r changes.
-    let oracle_signature: P384OracleSignature = p384::ecdsa::signature::Signer::sign(&signing_key, data);
-    let signature_bytes: [u8; 96] = array_from_slice(oracle_signature.to_bytes().as_ref());
     let signature =
-      EcdsaP384Signature::from_bytes(signature_bytes).expect("valid authentication benchmark operation must succeed");
-    let mut tampered_bytes = signature_bytes;
-    tampered_bytes[47] ^= 1;
-    let tampered = EcdsaP384Signature::from_bytes(tampered_bytes).expect("a changed r remains a valid scalar");
-    let oracle_tampered = P384OracleSignature::from_slice(&tampered_bytes).expect("a changed r remains a valid scalar");
+      EcdsaP384Signature::from_bytes(*signature_bytes).expect("valid authentication benchmark operation must succeed");
+    let tampered = EcdsaP384Signature::from_bytes(*tampered_bytes).expect("a changed r remains a valid scalar");
+    let oracle_signature =
+      P384OracleSignature::from_slice(signature_bytes).expect("valid authentication benchmark operation must succeed");
+    let oracle_tampered = P384OracleSignature::from_slice(tampered_bytes).expect("a changed r remains a valid scalar");
 
     g.bench_function(
       BenchmarkId::new("rscrypto", len),
@@ -1394,25 +1584,6 @@ fn ecdsa_p384_verify(c: &mut Criterion) {
         },
         |()| {
           public
-            .verify(data, &tampered)
-            .expect_err("a changed ECDSA P-384 signature must fail");
-        },
-      ),
-    );
-
-    g.bench_function(
-      BenchmarkId::new("rscrypto-import", len),
-      checked(
-        || {
-          EcdsaP384PublicKey::from_sec1_bytes(black_box(sec1.as_slice()))
-            .expect("valid authentication benchmark operation must succeed")
-            .verify(black_box(data), black_box(&signature))
-            .expect("valid authentication benchmark operation must succeed");
-          black_box(())
-        },
-        |()| {
-          EcdsaP384PublicKey::from_sec1_bytes(sec1.as_slice())
-            .expect("valid authentication benchmark operation must succeed")
             .verify(data, &tampered)
             .expect_err("a changed ECDSA P-384 signature must fail");
         },
@@ -1438,39 +1609,76 @@ fn ecdsa_p384_verify(c: &mut Criterion) {
       ),
     );
 
-    g.bench_function(
-      BenchmarkId::new("ring", len),
-      checked(
-        || {
-          ring_upk
-            .verify(black_box(data), black_box(signature.as_bytes()))
-            .expect("valid authentication benchmark operation must succeed");
-          black_box(())
-        },
-        |()| {
-          ring_upk
-            .verify(data, &tampered_bytes)
-            .expect_err("a changed ECDSA P-384 signature must fail");
-        },
-      ),
-    );
-
     aws_lc_bench! {
       g.bench_function(
         BenchmarkId::new("aws-lc-rs", len),
         checked(
           || {
-            aws_upk.verify(black_box(data), black_box(signature.as_bytes())).expect("valid authentication benchmark operation must succeed");
+            black_box(&aws_key)
+              .verify_sig(black_box(data), black_box(signature_bytes))
+              .expect("valid authentication benchmark operation must succeed");
             black_box(())
           },
           |()| {
-            aws_upk.verify(data, &tampered_bytes).expect_err("a changed ECDSA P-384 signature must fail");
+            aws_key.verify_sig(data, tampered_bytes).expect_err("a changed ECDSA P-384 signature must fail");
           },
         ),
       );
     }
   }
+  g.finish();
 
+  // Each closure is one row's timed import-and-verify path.
+  let rscrypto_import = |key: &[u8; 97], message: &[u8], signature: &[u8; 96]| {
+    let (Ok(key), Ok(signature)) = (
+      EcdsaP384PublicKey::from_sec1_bytes(key),
+      EcdsaP384Signature::from_bytes(*signature),
+    ) else {
+      return false;
+    };
+    key.verify(message, &signature).is_ok()
+  };
+  let rustcrypto_import = |key: &[u8; 97], message: &[u8], signature: &[u8; 96]| {
+    let (Ok(key), Ok(signature)) = (
+      p384::ecdsa::VerifyingKey::from_sec1_bytes(key),
+      P384OracleSignature::from_slice(signature),
+    ) else {
+      return false;
+    };
+    p384::ecdsa::signature::Verifier::verify(&key, message, &signature).is_ok()
+  };
+  let ring_import = |key: &[u8; 97], message: &[u8], signature: &[u8; 96]| {
+    ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P384_SHA384_FIXED, key)
+      .verify(message, signature)
+      .is_ok()
+  };
+  let mut g = c.benchmark_group("ecdsa-p384/verify/import-key");
+  for (len, data, signature, tampered) in &inputs {
+    common::set_throughput(&mut g, *len);
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      import_and_verify(rscrypto_import, &sec1, &off_curve, data, signature, tampered),
+    );
+    g.bench_function(
+      BenchmarkId::new("rustcrypto-p384", len),
+      import_and_verify(rustcrypto_import, &sec1, &off_curve, data, signature, tampered),
+    );
+    g.bench_function(
+      BenchmarkId::new("ring", len),
+      import_and_verify(ring_import, &sec1, &off_curve, data, signature, tampered),
+    );
+    aws_lc_bench! {
+      let aws_import = |key: &[u8; 97], message: &[u8], signature: &[u8; 96]| {
+        aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ECDSA_P384_SHA384_FIXED, key)
+          .verify(message, signature)
+          .is_ok()
+      };
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs", len),
+        import_and_verify(aws_import, &sec1, &off_curve, data, signature, tampered),
+      );
+    }
+  }
   g.finish();
 }
 
@@ -1504,8 +1712,14 @@ fn ecdsa_p384_sign(c: &mut Criterion) {
     )
     .expect("valid authentication benchmark operation must succeed");
   }
-  // rscrypto's deterministic nonce is not RFC 6979, and the competitors draw random nonces, so no row has a
-  // fixed signature. RustCrypto must verify every row's signature, and blinding must not change rscrypto's.
+  // ECDSA P-384 signing with a key held outside timing. Timed: hashing, nonce generation, signing, and the
+  // signature object. The nonce source differs by library and stays timed:
+  // - `rscrypto` is `try_sign`, the default API: a deterministic nonce that is not RFC 6979, with no entropy
+  //   source. `rscrypto-blinded` adds caller-supplied nonce blinding and must return the same signature.
+  // - RustCrypto derives the RFC 6979 nonce.
+  // - ring draws nonce randomness from `SystemRandom` in each call; aws-lc-rs uses AWS-LC's internal generator.
+  // No row has a fixed signature. RustCrypto must verify every other row's signature, and ring must verify
+  // RustCrypto's.
   let verifies = |data: &[u8], signature: &[u8]| {
     let signature = P384OracleSignature::from_slice(signature).expect("ECDSA P-384 signature must parse");
     p384::ecdsa::signature::Verifier::verify(verifying_key, data, &signature)
@@ -1522,7 +1736,7 @@ fn ecdsa_p384_sign(c: &mut Criterion) {
     common::set_throughput(&mut g, *len);
 
     g.bench_function(
-      BenchmarkId::new("rscrypto-deterministic", len),
+      BenchmarkId::new("rscrypto", len),
       checked(
         || {
           black_box(
@@ -1566,7 +1780,11 @@ fn ecdsa_p384_sign(c: &mut Criterion) {
             p384::ecdsa::signature::Signer::sign(black_box(&signing_key), black_box(data));
           black_box(signature)
         },
-        |signature| verifies(data, signature.to_bytes().as_slice()),
+        |signature| {
+          ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P384_SHA384_FIXED, &sec1)
+            .verify(data, signature.to_bytes().as_slice())
+            .expect("ring must verify RustCrypto's ECDSA P-384 signature");
+        },
       ),
     );
 
@@ -1598,19 +1816,28 @@ fn ecdsa_p384_sign(c: &mut Criterion) {
   g.finish();
 }
 
+// ECDSA P-384 public key from a secret key held outside timing. Timed: the fixed-base scalar multiplication and the
+// library's public-key object. rscrypto's object also precomputes its verification table; RustCrypto's holds
+// only the affine point. `rscrypto-blinded` adds caller-supplied scalar blinding. Every row must return the NIST
+// CAVP public key for the NIST private key.
 fn ecdsa_p384_public_key(c: &mut Criterion) {
   if !bench_config::selected("ecdsa-p384/public-key") {
     return;
   }
-  let secret_bytes = [0x31u8; 48];
   let secret =
-    EcdsaP384SecretKey::from_bytes(secret_bytes).expect("valid authentication benchmark operation must succeed");
+    EcdsaP384SecretKey::from_bytes(P384_NIST_PRIVATE).expect("valid authentication benchmark operation must succeed");
   let blind = [0xa3u8; 96];
   let oracle =
-    P384OracleSecretKey::from_slice(&secret_bytes).expect("valid authentication benchmark operation must succeed");
-  let expected = oracle.public_key().to_sec1_bytes();
+    P384OracleSecretKey::from_slice(&P384_NIST_PRIVATE).expect("valid authentication benchmark operation must succeed");
 
   let mut g = c.benchmark_group("ecdsa-p384/public-key");
+  g.bench_function(
+    "rscrypto",
+    checked(
+      || black_box(black_box(&secret).public_key()),
+      |public| assert_eq!(public.to_sec1_bytes(), P384_NIST_PUBLIC),
+    ),
+  );
   g.bench_function(
     "rscrypto-blinded",
     checked(
@@ -1624,14 +1851,14 @@ fn ecdsa_p384_public_key(c: &mut Criterion) {
             .expect("valid authentication benchmark operation must succeed"),
         )
       },
-      |public| assert_eq!(public.to_sec1_bytes().as_slice(), &*expected),
+      |public| assert_eq!(public.to_sec1_bytes(), P384_NIST_PUBLIC),
     ),
   );
   g.bench_function(
     "rustcrypto-p384",
     checked(
       || black_box(black_box(&oracle).public_key()),
-      |public| assert_eq!(public.to_sec1_bytes(), expected),
+      |public| assert_eq!(public.to_sec1_point(false).as_bytes(), P384_NIST_PUBLIC),
     ),
   );
   g.finish();
@@ -2150,12 +2377,14 @@ fn ecdsa_p384_internal(c: &mut Criterion) {
   g.finish();
 }
 
+// Ed25519 signing keypair from 32 secret-key bytes. Timed: secret import, key expansion, public-key derivation,
+// and the keypair object. Every row must hold the RFC 8032 public key.
 fn ed25519_keypair_from_secret(c: &mut Criterion) {
   if !bench_config::selected("ed25519/keypair-from-secret") {
     return;
   }
-  let secret_bytes = [8u8; 32];
-  let expected = SigningKey::from_bytes(&secret_bytes).verifying_key().to_bytes();
+  let secret_bytes = hex::<32>(ED25519_RFC8032_SECRET);
+  let expected = hex::<32>(ED25519_RFC8032_PUBLIC);
   let mut g = c.benchmark_group("ed25519/keypair-from-secret");
 
   g.bench_function(
@@ -2180,6 +2409,9 @@ fn ed25519_keypair_from_secret(c: &mut Criterion) {
   g.finish();
 }
 
+// Ed25519 signing with a key object built outside timing. Timed: signing and the signature. Each library keeps
+// what its key object caches: `rscrypto` holds the expanded secret and public key; `rscrypto-direct-secret`
+// signs from the bare secret key and derives the public key in each call.
 fn ed25519_sign(c: &mut Criterion) {
   if !bench_config::selected("ed25519/sign") {
     return;
@@ -2204,7 +2436,8 @@ fn ed25519_sign(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
-    // RFC 8032 signing is deterministic, so every row must return Dalek's signature.
+    // RFC 8032 signing is deterministic, so every row must return Dalek's signature; the Dalek row must return
+    // ring's.
     let expected = || signing_key.sign(data).to_bytes();
 
     g.bench_function(
@@ -2227,7 +2460,7 @@ fn ed25519_sign(c: &mut Criterion) {
       BenchmarkId::new("dalek", len),
       checked(
         || black_box(black_box(&signing_key).sign(black_box(data))),
-        |signature| assert_eq!(signature.to_bytes(), expected()),
+        |signature| assert_eq!(signature.to_bytes().as_slice(), ring_kp.sign(data).as_ref()),
       ),
     );
 
@@ -2266,8 +2499,29 @@ fn ed25519_sign(c: &mut Criterion) {
   g.finish();
 }
 
+/// An encoded Ed25519 public key that is not a curve point: no x satisfies the curve equation for y = 2.
+const ED25519_OFF_CURVE_KEY: [u8; 32] = {
+  let mut key = [0u8; 32];
+  key[0] = 2;
+  key
+};
+
+// Ed25519 verification. Every row verifies Dalek's signature, which RFC 8032 makes every library's signature for
+// this key and message. Each row's check requires a rejection once one byte of R changes. Verification rules
+// differ: rscrypto and Dalek `verify_strict` reject small-order keys and R values; the other libraries apply
+// their own rules.
+//
+// `ed25519/verify/reuse-key`: each library's key object is built outside timing. Timed: verification.
+// - rscrypto and Dalek reuse the decoded public point.
+// - aws-lc-rs reuses a `ParsedPublicKey`, which saves parsing and allocation; AWS-LC still decodes the point in
+//   each call.
+// - ring and dryoc are absent: they have no API that reuses a parsed key.
+//
+// `ed25519/verify/import-key`: every row gets the same 32-byte key and 64-byte signature. Timed: key import and
+// point decoding, signature parsing, verification, and drop of per-call objects. aws-lc-rs allocates an EVP_PKEY.
+// Each row's check also requires the same path to reject an encoding that is not a curve point.
 fn ed25519_verify(c: &mut Criterion) {
-  if !bench_config::selected("ed25519/verify") {
+  if !bench_config::selected("ed25519/verify/") {
     return;
   }
   use dryoc::classic::crypto_sign::crypto_sign_verify_detached;
@@ -2278,26 +2532,27 @@ fn ed25519_verify(c: &mut Criterion) {
   let public_bytes = verifying_key.to_bytes();
   let public = Ed25519PublicKey::from_bytes(public_bytes);
   aws_lc_bench! {
-    let aws_upk = aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, public_bytes);
+    let aws_key = aws_lc_rs::signature::ParsedPublicKey::new(&aws_lc_rs::signature::ED25519, public_bytes)
+      .expect("valid authentication benchmark operation must succeed");
   }
-  let ring_upk = ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, public_bytes);
   let inputs = [0usize, 32, 1024, 16384]
     .into_iter()
-    .map(|len| (len, common::random_bytes(len)))
+    .map(|len| {
+      let data = common::random_bytes(len);
+      let signature = signing_key.sign(&data).to_bytes();
+      let mut tampered = signature;
+      tampered[0] ^= 1;
+      (len, data, signature, tampered)
+    })
     .collect::<Vec<_>>();
-  let mut g = c.benchmark_group("ed25519/verify");
 
-  for (len, data) in &inputs {
+  let mut g = c.benchmark_group("ed25519/verify/reuse-key");
+  for (len, data, signature_bytes, tampered_bytes) in &inputs {
     common::set_throughput(&mut g, *len);
-    // Every row verifies Dalek's signature, which RFC 8032 makes every library's signature for this key and
-    // message, and must reject it once one byte of R changes.
-    let signature_bytes = signing_key.sign(data).to_bytes();
-    let mut tampered_bytes = signature_bytes;
-    tampered_bytes[0] ^= 1;
-    let ours = Ed25519Signature::from_bytes(signature_bytes);
-    let tampered = Ed25519Signature::from_bytes(tampered_bytes);
-    let dalek = DalekSignature::from_bytes(&signature_bytes);
-    let dalek_tampered = DalekSignature::from_bytes(&tampered_bytes);
+    let ours = Ed25519Signature::from_bytes(*signature_bytes);
+    let tampered = Ed25519Signature::from_bytes(*tampered_bytes);
+    let dalek = DalekSignature::from_bytes(signature_bytes);
+    let dalek_tampered = DalekSignature::from_bytes(tampered_bytes);
 
     g.bench_function(
       BenchmarkId::new("rscrypto", len),
@@ -2310,23 +2565,6 @@ fn ed25519_verify(c: &mut Criterion) {
         },
         |()| {
           public
-            .verify(data, &tampered)
-            .expect_err("a changed Ed25519 signature must fail");
-        },
-      ),
-    );
-
-    g.bench_function(
-      BenchmarkId::new("rscrypto-import", len),
-      checked(
-        || {
-          Ed25519PublicKey::from_bytes(*black_box(&public_bytes))
-            .verify(black_box(data), black_box(&ours))
-            .expect("valid authentication benchmark operation must succeed");
-          black_box(())
-        },
-        |()| {
-          Ed25519PublicKey::from_bytes(public_bytes)
             .verify(data, &tampered)
             .expect_err("a changed Ed25519 signature must fail");
         },
@@ -2355,49 +2593,73 @@ fn ed25519_verify(c: &mut Criterion) {
         BenchmarkId::new("aws-lc-rs", len),
         checked(
           || {
-            aws_upk.verify(black_box(data), &signature_bytes).expect("valid authentication benchmark operation must succeed");
+            black_box(&aws_key)
+              .verify_sig(black_box(data), black_box(signature_bytes))
+              .expect("valid authentication benchmark operation must succeed");
             black_box(())
           },
           |()| {
-            aws_upk.verify(data, &tampered_bytes).expect_err("a changed Ed25519 signature must fail");
+            aws_key.verify_sig(data, tampered_bytes).expect_err("a changed Ed25519 signature must fail");
           },
         ),
       );
     }
+  }
+  g.finish();
 
+  // Each closure is one row's timed import-and-verify path.
+  let rscrypto_import = |key: &[u8; 32], message: &[u8], signature: &[u8; 64]| {
+    Ed25519PublicKey::from_bytes(*key)
+      .verify(message, &Ed25519Signature::from_bytes(*signature))
+      .is_ok()
+  };
+  let dalek_import = |key: &[u8; 32], message: &[u8], signature: &[u8; 64]| {
+    DalekVerifyingKey::from_bytes(key).is_ok_and(|key| {
+      key
+        .verify_strict(message, &DalekSignature::from_bytes(signature))
+        .is_ok()
+    })
+  };
+  let ring_import = |key: &[u8; 32], message: &[u8], signature: &[u8; 64]| {
+    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key)
+      .verify(message, signature)
+      .is_ok()
+  };
+  let dryoc_import =
+    |key: &[u8; 32], message: &[u8], signature: &[u8; 64]| crypto_sign_verify_detached(signature, message, key).is_ok();
+  let mut g = c.benchmark_group("ed25519/verify/import-key");
+  for (len, data, signature, tampered) in &inputs {
+    common::set_throughput(&mut g, *len);
+    let key = &public_bytes;
+    let malformed = &ED25519_OFF_CURVE_KEY;
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      import_and_verify(rscrypto_import, key, malformed, data, signature, tampered),
+    );
+    g.bench_function(
+      BenchmarkId::new("dalek", len),
+      import_and_verify(dalek_import, key, malformed, data, signature, tampered),
+    );
+    aws_lc_bench! {
+      let aws_import = |key: &[u8; 32], message: &[u8], signature: &[u8; 64]| {
+        aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, key)
+          .verify(message, signature)
+          .is_ok()
+      };
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs", len),
+        import_and_verify(aws_import, key, malformed, data, signature, tampered),
+      );
+    }
     g.bench_function(
       BenchmarkId::new("ring", len),
-      checked(
-        || {
-          ring_upk
-            .verify(black_box(data), &signature_bytes)
-            .expect("valid authentication benchmark operation must succeed");
-          black_box(())
-        },
-        |()| {
-          ring_upk
-            .verify(data, &tampered_bytes)
-            .expect_err("a changed Ed25519 signature must fail");
-        },
-      ),
+      import_and_verify(ring_import, key, malformed, data, signature, tampered),
     );
-
     g.bench_function(
       BenchmarkId::new("dryoc", len),
-      checked(
-        || {
-          crypto_sign_verify_detached(&signature_bytes, black_box(data), &public_bytes)
-            .expect("valid authentication benchmark operation must succeed");
-          black_box(())
-        },
-        |()| {
-          crypto_sign_verify_detached(&tampered_bytes, data, &public_bytes)
-            .expect_err("a changed Ed25519 signature must fail");
-        },
-      ),
+      import_and_verify(dryoc_import, key, malformed, data, signature, tampered),
     );
   }
-
   g.finish();
 }
 
@@ -2523,41 +2785,23 @@ fn ed25519_verify_phase(c: &mut Criterion) {
   g.finish();
 }
 
-/// RFC 7748 Section 6.1 X25519 vector through the public rscrypto API.
-fn x25519_rfc7748_check() {
-  let alice = X25519SecretKey::from_bytes(hex("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a"));
-  let bob = X25519SecretKey::from_bytes(hex("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb"));
-  assert_eq!(
-    alice.public_key().to_bytes(),
-    hex("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a")
-  );
-  assert_eq!(
-    bob.public_key().to_bytes(),
-    hex("de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f")
-  );
-  let shared = alice
-    .diffie_hellman(&bob.public_key())
-    .expect("the RFC 7748 public key is valid");
-  assert_eq!(
-    *shared.as_bytes(),
-    hex::<32>("4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742")
-  );
-}
+/// RFC 7748 Section 6.1 X25519 vectors: Alice's private and public keys, Bob's public key, and their shared secret.
+const X25519_RFC7748_ALICE_PRIVATE: &str = "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a";
+const X25519_RFC7748_ALICE_PUBLIC: &str = "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a";
+const X25519_RFC7748_BOB_PUBLIC: &str = "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f";
+const X25519_RFC7748_SHARED: &str = "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742";
 
-// `ring` is omitted from x25519 benches: ring 0.17 only exposes
-// `EphemeralPrivateKey` (consumed by `agree_ephemeral`) and provides no
-// reusable static-key API. Including it would force a full keygen-and-discard
-// per iteration, which is not apples-to-apples against the static-key DH
-// path that rscrypto / dalek / aws-lc-rs / dryoc all share.
+// X25519 public key from 32 secret-key bytes. Timed: secret import and the fixed-base scalar multiplication.
+// aws-lc-rs derives the public key while it imports the private key into an EVP_PKEY. Every row must return
+// RFC 7748 Alice's public key. ring is absent: it cannot import a caller secret.
 fn x25519_public_key(c: &mut Criterion) {
   if !bench_config::selected("x25519/public-key-from-secret") {
     return;
   }
   use dryoc::classic::crypto_core::crypto_scalarmult_base;
 
-  let secret_bytes = [0x2au8; 32];
-  // Every row must return Dalek's public key.
-  let expected = DalekX25519PublicKey::from(&DalekX25519Secret::from(secret_bytes)).to_bytes();
+  let secret_bytes = hex::<32>(X25519_RFC7748_ALICE_PRIVATE);
+  let expected = hex::<32>(X25519_RFC7748_ALICE_PUBLIC);
   let mut g = c.benchmark_group("x25519/public-key-from-secret");
 
   g.bench_function(
@@ -2612,104 +2856,77 @@ fn x25519_public_key(c: &mut Criterion) {
   g.finish();
 }
 
+// X25519 with a private key held outside timing and the peer's encoded 32-byte public key. Every row gets the same
+// peer bytes and must return the RFC 7748 shared secret. Timed: peer decoding, the Montgomery ladder, the check
+// that rejects an all-zero output, and the output. Each row's check also requires the same path to reject the
+// low-order peer u = 0.
+// - Dalek checks its output with `was_contributory`.
+// - aws-lc-rs parses the peer into an EVP_PKEY in each call. Its `ParsedPublicKey` would move that parse out of
+//   timing, but `agree` consumes the key, so reuse needs a clone in each call.
+// - ring is absent: its private keys are one-use, so it has no reusable private key.
 fn x25519_diffie_hellman(c: &mut Criterion) {
-  if !bench_config::selected("x25519/diffie-hellman") {
+  if !bench_config::selected("x25519/diffie-hellman/") {
     return;
   }
-  use dryoc::classic::crypto_core::{crypto_scalarmult, crypto_scalarmult_base};
+  use dryoc::classic::crypto_core::crypto_scalarmult;
 
-  let alice_bytes = [0x18u8; 32];
-  let bob_bytes = [0x34u8; 32];
-
+  let alice_bytes = hex::<32>(X25519_RFC7748_ALICE_PRIVATE);
+  let peer = hex::<32>(X25519_RFC7748_BOB_PUBLIC);
+  let low_order = [0u8; 32];
+  let expected = hex::<32>(X25519_RFC7748_SHARED);
   let alice = X25519SecretKey::from_bytes(alice_bytes);
-  let bob_public = X25519SecretKey::from_bytes(bob_bytes).public_key();
   let dalek_alice = DalekX25519Secret::from(alice_bytes);
-  let dalek_bob_public = DalekX25519PublicKey::from(&DalekX25519Secret::from(bob_bytes));
-  // Every row must return Dalek's shared secret; the rscrypto row also reproduces RFC 7748.
-  let expected = *dalek_alice.diffie_hellman(&dalek_bob_public).as_bytes();
   aws_lc_bench! {
-    let aws_alice =
-      aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, &alice_bytes).expect("valid authentication benchmark operation must succeed");
-    let aws_bob_pub_bytes: [u8; 32] = {
-      let bob_priv =
-        aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, &bob_bytes).expect("valid authentication benchmark operation must succeed");
-      let pk = bob_priv.compute_public_key().expect("valid authentication benchmark operation must succeed");
-      let mut out = [0u8; 32];
-      out.copy_from_slice(pk.as_ref());
-      out
+    let aws_alice = aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, &alice_bytes)
+      .expect("valid authentication benchmark operation must succeed");
+  }
+  // Each closure is one row's timed path. It returns the shared secret, or `None` when it rejects the peer.
+  let rscrypto_agree = |peer: &[u8; 32]| {
+    alice
+      .diffie_hellman(&X25519PublicKey::from_bytes(*peer))
+      .ok()
+      .map(|shared| *shared.as_bytes())
+  };
+  let dalek_agree = |peer: &[u8; 32]| {
+    let shared = dalek_alice.diffie_hellman(&DalekX25519PublicKey::from(*peer));
+    shared.was_contributory().then(|| *shared.as_bytes())
+  };
+  let dryoc_agree = |peer: &[u8; 32]| {
+    let mut shared = [0u8; 32];
+    crypto_scalarmult(&mut shared, &alice_bytes, peer).ok().map(|()| shared)
+  };
+  let mut g = c.benchmark_group("x25519/diffie-hellman/encoded-peer");
+  let matches = |shared: [u8; 32]| assert_eq!(shared, expected);
+  g.bench_function("rscrypto", validating_row(rscrypto_agree, &peer, &low_order, matches));
+  g.bench_function("dalek", validating_row(dalek_agree, &peer, &low_order, matches));
+  aws_lc_bench! {
+    let aws_agree = |peer: &[u8; 32]| {
+      aws_lc_rs::agreement::agree(
+        &aws_alice,
+        aws_lc_rs::agreement::UnparsedPublicKey::new(&aws_lc_rs::agreement::X25519, peer),
+        (),
+        |bytes| Ok::<[u8; 32], ()>(array_from_slice(bytes)),
+      )
+      .ok()
     };
-    let aws_bob_unparsed =
-      aws_lc_rs::agreement::UnparsedPublicKey::new(&aws_lc_rs::agreement::X25519, aws_bob_pub_bytes);
+    g.bench_function("aws-lc-rs", validating_row(aws_agree, &peer, &low_order, matches));
   }
-  let mut dryoc_bob_pub = [0u8; 32];
-  crypto_scalarmult_base(&mut dryoc_bob_pub, &bob_bytes);
-  let mut g = c.benchmark_group("x25519/diffie-hellman");
-
-  g.bench_function(
-    "rscrypto",
-    checked(
-      || {
-        black_box(
-          black_box(&alice)
-            .diffie_hellman(black_box(&bob_public))
-            .expect("valid authentication benchmark operation must succeed"),
-        )
-      },
-      |shared| {
-        assert_eq!(*shared.as_bytes(), expected);
-        x25519_rfc7748_check();
-      },
-    ),
-  );
-
-  g.bench_function(
-    "dalek",
-    checked(
-      || black_box(black_box(&dalek_alice).diffie_hellman(black_box(&dalek_bob_public))),
-      |shared| assert_eq!(*shared.as_bytes(), expected),
-    ),
-  );
-
-  aws_lc_bench! {
-    g.bench_function(
-      "aws-lc-rs",
-      checked(
-        || {
-          let shared = aws_lc_rs::agreement::agree(black_box(&aws_alice), black_box(&aws_bob_unparsed), (), |bytes| {
-            let mut out = [0u8; 32];
-            out.copy_from_slice(bytes);
-            Ok::<[u8; 32], ()>(out)
-          })
-          .expect("valid authentication benchmark operation must succeed");
-          black_box(shared)
-        },
-        |shared| assert_eq!(shared, expected),
-      ),
-    );
-  }
-
-  let mut shared = [0u8; 32];
-  g.bench_function(
-    "dryoc",
-    checked(
-      || {
-        crypto_scalarmult(&mut shared, black_box(&alice_bytes), black_box(&dryoc_bob_pub))
-          .expect("valid authentication benchmark operation must succeed");
-        black_box(shared)
-      },
-      |shared| assert_eq!(shared, expected),
-    ),
-  );
-
+  g.bench_function("dryoc", validating_row(dryoc_agree, &peer, &low_order, matches));
   g.finish();
 }
 
-fn p256_ephemeral(bytes: [u8; 32]) -> P256EphemeralSecret {
+/// Imports caller scalar bytes as a one-use P-256 secret, or returns `None` when the scalar is zero or at least
+/// the group order.
+fn try_p256_ephemeral(bytes: &[u8; 32]) -> Option<P256EphemeralSecret> {
   P256EphemeralSecret::try_generate_with(|candidate| {
-    candidate.copy_from_slice(&bytes);
+    candidate.copy_from_slice(bytes);
     Ok::<(), core::convert::Infallible>(())
   })
-  .expect("valid authentication benchmark scalar must be accepted")
+  .ok()
+}
+
+fn p256_ephemeral(bytes: [u8; 32]) -> P256EphemeralSecret {
+  try_p256_ephemeral(&bytes).expect("valid authentication benchmark scalar must be accepted")
 }
 
 const P256_NIST_PRIVATE: [u8; 32] = [
@@ -2739,136 +2956,87 @@ fn crrl_p256_scalar(bytes: [u8; 32]) -> crrl::p256::Scalar {
   crrl::p256::Scalar::decode(&little_endian).expect("valid CRRL benchmark scalar")
 }
 
-// Fixed-key rows must reproduce the NIST CAVP vector above. The parse rows must agree with RustCrypto when they
-// pair the parsed key with the NIST private key.
+/// The NIST P-256 peer key with its y-coordinate changed so that the point is off the curve.
+fn p256_off_curve_peer() -> [u8; 65] {
+  let off_curve = flip_last_bit(P256_NIST_PEER);
+  p256::PublicKey::from_sec1_bytes(&off_curve).expect_err("RustCrypto must reject the changed point");
+  off_curve
+}
+
+// P-256 ECDH private key from caller-filled scalar bytes. Timed: the scalar range check and the private-key object,
+// with no public-key derivation. Each row's check derives the public key outside timing and must reproduce the
+// NIST CAVP vector, and the same import path must reject the zero scalar.
+// - aws-lc-rs is absent: its import also derives the public point. `p256-ecdh/public-key-from-secret` times it.
 fn p256_ecdh_key_generation(c: &mut Criterion) {
   if !bench_config::selected("p256-ecdh/key-generation") {
     return;
   }
   let scalar = P256_NIST_PRIVATE;
+  let zero = [0u8; 32];
   let mut g = c.benchmark_group("p256-ecdh/key-generation");
   g.bench_function(
-    "rscrypto-caller-fill",
-    checked(
-      || black_box(p256_ephemeral(*black_box(&scalar))),
-      |secret| assert_eq!(secret.public_key().to_sec1_bytes(), P256_NIST_PUBLIC),
-    ),
+    "rscrypto",
+    validating_row(try_p256_ephemeral, &scalar, &zero, |secret| {
+      assert_eq!(secret.public_key().to_sec1_bytes(), P256_NIST_PUBLIC)
+    }),
   );
   g.bench_function(
-    "rustcrypto-p256-import",
-    checked(
-      || black_box(P256OracleSecretKey::from_slice(black_box(&scalar)).expect("valid oracle scalar")),
+    "rustcrypto-p256",
+    validating_row(
+      |scalar: &[u8; 32]| P256OracleSecretKey::from_slice(scalar).ok(),
+      &scalar,
+      &zero,
       |secret| assert_eq!(secret.public_key().to_sec1_point(false).as_bytes(), P256_NIST_PUBLIC),
     ),
   );
   g.bench_function(
-    "crrl-import",
-    checked(
-      || black_box(crrl::p256::PrivateKey::decode(black_box(&scalar)).expect("valid CRRL scalar")),
+    "crrl",
+    validating_row(
+      |scalar: &[u8; 32]| crrl::p256::PrivateKey::decode(scalar),
+      &scalar,
+      &zero,
       |secret| assert_eq!(secret.to_public_key().encode_uncompressed(), P256_NIST_PUBLIC),
     ),
   );
-  aws_lc_bench! {
-    g.bench_function(
-      "aws-lc-rs-native-import-and-precompute",
-      checked(
-        || {
-          black_box(
-            aws_lc_rs::agreement::PrivateKey::from_private_key(
-              &aws_lc_rs::agreement::ECDH_P256,
-              black_box(&scalar),
-            )
-            .expect("valid AWS-LC scalar"),
-          )
-        },
-        |secret| assert_eq!(secret.compute_public_key().expect("AWS-LC public derivation").as_ref(), P256_NIST_PUBLIC),
-      ),
-    );
-  }
   g.finish();
 }
 
+// P-256 ECDH public key from a private key held outside timing. Timed: the fixed-base scalar multiplication,
+// affine conversion, and the uncompressed SEC1 encoding. Fixed-key rows must reproduce the NIST CAVP vector.
+// - ring derives from a random one-use key generated outside timing. Its check pairs that key with the NIST public
+//   key and compares RustCrypto's agreement.
+// - aws-lc-rs is absent: `PrivateKey` derives the public point at import, and `compute_public_key` only copies
+//   it out. libcrux is absent: it has no private-key object. `p256-ecdh/public-key-from-secret` times both.
 fn p256_ecdh_public_key(c: &mut Criterion) {
-  if !bench_config::selected("p256-ecdh/public-key") {
+  if !bench_config::selected("p256-ecdh/public-key/") {
     return;
   }
   let scalar = P256_NIST_PRIVATE;
   let ours = p256_ephemeral(scalar);
   let rustcrypto = P256OracleSecretKey::from_slice(&scalar).expect("valid RustCrypto scalar");
   let crrl_scalar = crrl_p256_scalar(scalar);
-  aws_lc_bench! {
-    let aws_secret = aws_lc_rs::agreement::PrivateKey::from_private_key(
-      &aws_lc_rs::agreement::ECDH_P256,
-      &scalar,
-    )
-    .expect("valid AWS-LC scalar");
-  }
   let mut g = c.benchmark_group("p256-ecdh/public-key");
   g.bench_function(
-    "rscrypto-selected",
+    "rscrypto",
     checked(
-      || black_box(ours.public_key()),
+      || black_box(black_box(&ours).public_key()),
       |public| assert_eq!(public.to_sec1_bytes(), P256_NIST_PUBLIC),
     ),
   );
   g.bench_function(
-    "rscrypto-ecdsa-public-api",
+    "rustcrypto-p256",
     checked(
-      || {
-        let secret = EcdsaP256SecretKey::from_bytes(*black_box(&scalar)).expect("valid ECDSA benchmark scalar");
-        black_box(secret.public_key())
-      },
-      |public| assert_eq!(public.to_sec1_bytes(), P256_NIST_PUBLIC),
-    ),
-  );
-  g.bench_function(
-    "rustcrypto-p256-pure-rust",
-    checked(
-      || black_box(rustcrypto.public_key().to_sec1_point(false)),
+      || black_box(black_box(&rustcrypto).public_key().to_sec1_point(false)),
       |public| assert_eq!(public.as_bytes(), P256_NIST_PUBLIC),
     ),
   );
   g.bench_function(
-    "crrl-pure-rust",
+    "crrl",
     checked(
       || black_box(crrl::p256::Point::mulgen(black_box(&crrl_scalar)).encode_uncompressed()),
       |public| assert_eq!(public, P256_NIST_PUBLIC),
     ),
   );
-  g.bench_function(
-    "libcrux-hacl-pure-rust",
-    checked(
-      || {
-        let mut public = [0u8; 64];
-        assert!(libcrux_p256::dh_initiator(black_box(&mut public), black_box(&scalar)));
-        black_box(public)
-      },
-      |public| assert_eq!(public, P256_NIST_PUBLIC[1..]),
-    ),
-  );
-  aws_lc_bench! {
-    g.bench_function(
-      "aws-lc-rs-native-cached",
-      checked(
-        || black_box(aws_secret.compute_public_key().expect("AWS-LC public derivation")),
-        |public| assert_eq!(public.as_ref(), P256_NIST_PUBLIC),
-      ),
-    );
-    g.bench_function(
-      "aws-lc-rs-native-import-and-public",
-      checked(
-        || {
-          let secret = aws_lc_rs::agreement::PrivateKey::from_private_key(
-            &aws_lc_rs::agreement::ECDH_P256,
-            black_box(&scalar),
-          )
-          .expect("valid AWS-LC scalar");
-          black_box(secret.compute_public_key().expect("AWS-LC public derivation"))
-        },
-        |public| assert_eq!(public.as_ref(), P256_NIST_PUBLIC),
-      ),
-    );
-  }
   ring_p256_bench! {
     let rng = ring::rand::SystemRandom::new();
     let generate = || {
@@ -2876,12 +3044,10 @@ fn p256_ecdh_public_key(c: &mut Criterion) {
         .expect("ring scalar generation")
     };
     g.bench_function(
-      "ring-native",
+      "ring",
       checked_routine(
         (),
         |_| {
-          // A random key has no fixed public key: its agreement with the NIST public key must match
-          // RustCrypto's agreement between the NIST private key and the derived public key.
           let secret = generate();
           let public = secret.compute_public_key().expect("ring public derivation");
           let nist_public = ring::agreement::UnparsedPublicKey::new(&ring::agreement::ECDH_P256, P256_NIST_PUBLIC);
@@ -2904,26 +3070,93 @@ fn p256_ecdh_public_key(c: &mut Criterion) {
   g.finish();
 }
 
+// P-256 ECDH public key from caller scalar bytes. Every row gets the same 32-byte scalar. Timed: scalar validation,
+// any private-key object, the fixed-base scalar multiplication, and the public-key encoding. Each row must return
+// the NIST CAVP public key, and the same path must reject the zero scalar.
+// - aws-lc-rs allocates an EVP_PKEY and derives the public point in `PrivateKey::from_private_key`;
+//   `compute_public_key` copies it out.
+// - libcrux `dh_initiator` writes the 64 coordinate bytes without the 0x04 prefix.
+// - ring is absent: it cannot import a caller scalar for agreement.
+fn p256_ecdh_public_key_from_secret(c: &mut Criterion) {
+  if !bench_config::selected("p256-ecdh/public-key-from-secret") {
+    return;
+  }
+  let scalar = P256_NIST_PRIVATE;
+  let zero = [0u8; 32];
+  let mut g = c.benchmark_group("p256-ecdh/public-key-from-secret");
+  g.bench_function(
+    "rscrypto",
+    validating_row(
+      |scalar: &[u8; 32]| try_p256_ephemeral(scalar).map(|secret| secret.public_key()),
+      &scalar,
+      &zero,
+      |public| assert_eq!(public.to_sec1_bytes(), P256_NIST_PUBLIC),
+    ),
+  );
+  g.bench_function(
+    "rustcrypto-p256",
+    validating_row(
+      |scalar: &[u8; 32]| {
+        P256OracleSecretKey::from_slice(scalar)
+          .ok()
+          .map(|secret| secret.public_key().to_sec1_point(false))
+      },
+      &scalar,
+      &zero,
+      |public| assert_eq!(public.as_bytes(), P256_NIST_PUBLIC),
+    ),
+  );
+  g.bench_function(
+    "crrl",
+    validating_row(
+      |scalar: &[u8; 32]| {
+        crrl::p256::PrivateKey::decode(scalar).map(|secret| secret.to_public_key().encode_uncompressed())
+      },
+      &scalar,
+      &zero,
+      |public| assert_eq!(public, P256_NIST_PUBLIC),
+    ),
+  );
+  g.bench_function(
+    "libcrux",
+    validating_row(
+      |scalar: &[u8; 32]| {
+        let mut public = [0u8; 64];
+        libcrux_p256::dh_initiator(&mut public, scalar).then_some(public)
+      },
+      &scalar,
+      &zero,
+      |public| assert_eq!(public, P256_NIST_PUBLIC[1..]),
+    ),
+  );
+  aws_lc_bench! {
+    g.bench_function(
+      "aws-lc-rs",
+      validating_row(
+        |scalar: &[u8; 32]| {
+          aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::ECDH_P256, scalar)
+            .ok()
+            .and_then(|secret| secret.compute_public_key().ok())
+        },
+        &scalar,
+        &zero,
+        |public| assert_eq!(public.as_ref(), P256_NIST_PUBLIC),
+      ),
+    );
+  }
+  g.finish();
+}
+
+// P-256 public-key parsing. Every row gets the NIST CAVP peer key as 65 uncompressed SEC1 bytes. Timed: format,
+// range, and on-curve validation and the parsed-key object; aws-lc-rs also allocates an EVP_PKEY. Each row's
+// check pairs the parsed key with the NIST private key and must return the NIST shared secret, and the same path
+// must reject a point that is not on the curve.
 fn p256_ecdh_parse(c: &mut Criterion) {
   if !bench_config::selected("p256-ecdh/parse") {
     return;
   }
-  let encoded: [u8; 65] = array_from_slice(
-    P256OracleSecretKey::from_slice(&[0x24; 32])
-      .expect("valid RustCrypto scalar")
-      .public_key()
-      .to_sec1_point(false)
-      .as_bytes(),
-  );
+  let off_curve = p256_off_curve_peer();
   let rustcrypto_secret = P256OracleSecretKey::from_slice(&P256_NIST_PRIVATE).expect("valid RustCrypto scalar");
-  let rustcrypto_shared = |peer: &p256::PublicKey| -> [u8; 32] {
-    array_from_slice(
-      p256::ecdh::diffie_hellman(rustcrypto_secret.to_nonzero_scalar(), peer.as_affine())
-        .raw_secret_bytes()
-        .as_slice(),
-    )
-  };
-  let expected = rustcrypto_shared(&p256::PublicKey::from_sec1_bytes(&encoded).expect("valid oracle point"));
   aws_lc_bench! {
     let aws_secret = aws_lc_rs::agreement::PrivateKey::from_private_key(
       &aws_lc_rs::agreement::ECDH_P256,
@@ -2934,52 +3167,61 @@ fn p256_ecdh_parse(c: &mut Criterion) {
   let mut g = c.benchmark_group("p256-ecdh/parse");
   g.bench_function(
     "rscrypto",
-    checked(
-      || black_box(P256PublicKey::from_sec1_bytes(black_box(&encoded)).expect("valid benchmark point")),
+    validating_row(
+      |encoded: &[u8; 65]| P256PublicKey::from_sec1_bytes(encoded).ok(),
+      &P256_NIST_PEER,
+      &off_curve,
       |public| {
         assert_eq!(
           *p256_ephemeral(P256_NIST_PRIVATE).diffie_hellman(&public).as_bytes(),
-          expected
+          P256_NIST_SHARED
         )
       },
     ),
   );
   g.bench_function(
-    "rustcrypto-p256-pure-rust",
-    checked(
-      || black_box(p256::PublicKey::from_sec1_bytes(black_box(&encoded)).expect("valid oracle point")),
-      |public| assert_eq!(rustcrypto_shared(&public), expected),
+    "rustcrypto-p256",
+    validating_row(
+      |encoded: &[u8; 65]| p256::PublicKey::from_sec1_bytes(encoded).ok(),
+      &P256_NIST_PEER,
+      &off_curve,
+      |public| {
+        let shared = p256::ecdh::diffie_hellman(rustcrypto_secret.to_nonzero_scalar(), public.as_affine());
+        assert_eq!(shared.raw_secret_bytes().as_slice(), P256_NIST_SHARED);
+      },
     ),
   );
   g.bench_function(
-    "crrl-pure-rust",
-    checked(
-      || black_box(crrl::p256::Point::decode(black_box(&encoded)).expect("valid CRRL point")),
+    "crrl",
+    validating_row(
+      |encoded: &[u8; 65]| crrl::p256::Point::decode(encoded),
+      &P256_NIST_PEER,
+      &off_curve,
       |point| {
         let shared = core::ops::Mul::mul(point, crrl_p256_scalar(P256_NIST_PRIVATE)).encode_uncompressed();
-        assert_eq!(&shared[1..33], &expected);
+        assert_eq!(shared[1..33], P256_NIST_SHARED);
       },
     ),
   );
   aws_lc_bench! {
     g.bench_function(
-      "aws-lc-rs-native",
-      checked(
-        || {
-          let unparsed = aws_lc_rs::agreement::UnparsedPublicKey::new(
+      "aws-lc-rs",
+      validating_row(
+        |encoded: &[u8; 65]| {
+          aws_lc_rs::agreement::ParsedPublicKey::try_from(aws_lc_rs::agreement::UnparsedPublicKey::new(
             &aws_lc_rs::agreement::ECDH_P256,
-            black_box(encoded),
-          );
-          black_box(
-            aws_lc_rs::agreement::ParsedPublicKey::try_from(unparsed).expect("valid AWS-LC point"),
-          )
+            encoded,
+          ))
+          .ok()
         },
+        &P256_NIST_PEER,
+        &off_curve,
         |public| {
           let shared = aws_lc_rs::agreement::agree(&aws_secret, public, (), |bytes| {
             Ok::<[u8; 32], ()>(array_from_slice(bytes))
           })
           .expect("AWS-LC benchmark agreement");
-          assert_eq!(shared, expected);
+          assert_eq!(shared, P256_NIST_SHARED);
         },
       ),
     );
@@ -2987,17 +3229,34 @@ fn p256_ecdh_parse(c: &mut Criterion) {
   g.finish();
 }
 
+// P-256 ECDH agreement with the NIST CAVP key pair. Fixed-key rows must return the NIST shared secret. ring draws a
+// random one-use key outside timing, so its check pairs that key with the NIST public key and compares
+// RustCrypto's agreement.
+//
+// `p256-ecdh/agreement/parsed-peer`: the peer key is parsed and validated outside timing. Timed: the scalar
+// multiplication, the shared-secret output, and drop of per-call objects.
+// - rscrypto consumes a one-use secret built outside timing. RustCrypto and crrl reuse a scalar; crrl encodes both
+//   coordinates of the result.
+// - aws-lc-rs reuses a `PrivateKey`, but `agree` consumes the peer, so each call clones the `ParsedPublicKey`: an
+//   atomic reference-count increment and a 65-byte heap copy.
+// - ring and libcrux are absent: neither has a parsed-peer API.
+//
+// `p256-ecdh/agreement/encoded-peer`: every row gets the NIST peer key as 65 uncompressed SEC1 bytes. Timed: peer
+// parsing and validation, then the agreement as above. aws-lc-rs allocates an EVP_PKEY for the peer. libcrux
+// checks the 0x04 prefix with `uncompressed_to_raw`, validates the point and the scalar in `dh_responder`, and
+// writes both coordinates. Each row's check also requires the same path to reject a point that is not on the
+// curve.
 fn p256_ecdh_agreement(c: &mut Criterion) {
-  if !bench_config::selected("p256-ecdh/agreement") {
+  if !bench_config::selected("p256-ecdh/agreement/") {
     return;
   }
   let scalar = P256_NIST_PRIVATE;
+  let off_curve = p256_off_curve_peer();
   let peer = P256PublicKey::from_sec1_bytes(&P256_NIST_PEER).expect("valid benchmark peer point");
   let rustcrypto_secret = P256OracleSecretKey::from_slice(&scalar).expect("valid RustCrypto scalar");
   let rustcrypto_peer = p256::PublicKey::from_sec1_bytes(&P256_NIST_PEER).expect("valid RustCrypto peer point");
   let crrl_scalar = crrl_p256_scalar(scalar);
   let crrl_peer = crrl::p256::Point::decode(&P256_NIST_PEER).expect("valid CRRL peer point");
-  let libcrux_peer = array_from_slice::<64>(&P256_NIST_PEER[1..]);
   aws_lc_bench! {
     let aws_secret = aws_lc_rs::agreement::PrivateKey::from_private_key(
       &aws_lc_rs::agreement::ECDH_P256,
@@ -3009,9 +3268,10 @@ fn p256_ecdh_agreement(c: &mut Criterion) {
     )
     .expect("valid AWS-LC peer point");
   }
-  let mut g = c.benchmark_group("p256-ecdh/agreement");
+
+  let mut g = c.benchmark_group("p256-ecdh/agreement/parsed-peer");
   g.bench_function(
-    "rscrypto-selected",
+    "rscrypto",
     checked_routine(
       (),
       |_| {
@@ -3030,7 +3290,7 @@ fn p256_ecdh_agreement(c: &mut Criterion) {
     ),
   );
   g.bench_function(
-    "rustcrypto-p256-pure-rust",
+    "rustcrypto-p256",
     checked(
       || {
         black_box(p256::ecdh::diffie_hellman(
@@ -3042,30 +3302,15 @@ fn p256_ecdh_agreement(c: &mut Criterion) {
     ),
   );
   g.bench_function(
-    "crrl-pure-rust",
+    "crrl",
     checked(
       || black_box(core::ops::Mul::mul(black_box(crrl_peer), black_box(crrl_scalar)).encode_uncompressed()),
-      |shared| assert_eq!(&shared[1..33], &P256_NIST_SHARED),
-    ),
-  );
-  g.bench_function(
-    "libcrux-hacl-pure-rust",
-    checked(
-      || {
-        let mut shared = [0u8; 64];
-        assert!(libcrux_p256::dh_responder(
-          black_box(&mut shared),
-          black_box(&libcrux_peer),
-          black_box(&scalar),
-        ));
-        black_box(shared)
-      },
-      |shared| assert_eq!(shared[..32], P256_NIST_SHARED),
+      |shared| assert_eq!(shared[1..33], P256_NIST_SHARED),
     ),
   );
   aws_lc_bench! {
     g.bench_function(
-      "aws-lc-rs-native",
+      "aws-lc-rs",
       checked(
         || {
           black_box(
@@ -3079,15 +3324,109 @@ fn p256_ecdh_agreement(c: &mut Criterion) {
       ),
     );
   }
+  g.finish();
+
+  // Each closure is one row's timed path. It returns the shared secret, or `None` when it rejects the peer.
+  let rscrypto_agree = |secret: P256EphemeralSecret, peer: &[u8; 65]| {
+    P256PublicKey::from_sec1_bytes(peer)
+      .ok()
+      .map(|peer| secret.diffie_hellman(&peer))
+  };
+  let mut g = c.benchmark_group("p256-ecdh/agreement/encoded-peer");
+  g.bench_function(
+    "rscrypto",
+    checked_routine(
+      (),
+      |_| {
+        let shared = rscrypto_agree(p256_ephemeral(scalar), &P256_NIST_PEER).expect("valid benchmark peer point");
+        assert_eq!(shared.as_bytes(), &P256_NIST_SHARED);
+        assert!(
+          rscrypto_agree(p256_ephemeral(scalar), &off_curve).is_none(),
+          "an off-curve peer must fail"
+        );
+      },
+      |b, _| {
+        b.iter_batched(
+          || p256_ephemeral(scalar),
+          |secret| black_box(rscrypto_agree(secret, black_box(&P256_NIST_PEER)).expect("valid benchmark peer point")),
+          BatchSize::SmallInput,
+        )
+      },
+    ),
+  );
+  g.bench_function(
+    "rustcrypto-p256",
+    validating_row(
+      |peer: &[u8; 65]| {
+        p256::PublicKey::from_sec1_bytes(peer)
+          .ok()
+          .map(|peer| p256::ecdh::diffie_hellman(rustcrypto_secret.to_nonzero_scalar(), peer.as_affine()))
+      },
+      &P256_NIST_PEER,
+      &off_curve,
+      |shared| assert_eq!(shared.raw_secret_bytes().as_slice(), P256_NIST_SHARED),
+    ),
+  );
+  g.bench_function(
+    "crrl",
+    validating_row(
+      |peer: &[u8; 65]| {
+        crrl::p256::Point::decode(peer).map(|peer| core::ops::Mul::mul(peer, crrl_scalar).encode_uncompressed())
+      },
+      &P256_NIST_PEER,
+      &off_curve,
+      |shared| assert_eq!(shared[1..33], P256_NIST_SHARED),
+    ),
+  );
+  g.bench_function(
+    "libcrux",
+    validating_row(
+      |peer: &[u8; 65]| {
+        let mut raw = [0u8; 64];
+        let mut shared = [0u8; 64];
+        (libcrux_p256::uncompressed_to_raw(peer, &mut raw) && libcrux_p256::dh_responder(&mut shared, &raw, &scalar))
+          .then_some(shared)
+      },
+      &P256_NIST_PEER,
+      &off_curve,
+      |shared| assert_eq!(shared[..32], P256_NIST_SHARED),
+    ),
+  );
+  aws_lc_bench! {
+    g.bench_function(
+      "aws-lc-rs",
+      validating_row(
+        |peer: &[u8; 65]| {
+          aws_lc_rs::agreement::agree(
+            &aws_secret,
+            aws_lc_rs::agreement::UnparsedPublicKey::new(&aws_lc_rs::agreement::ECDH_P256, peer),
+            (),
+            |bytes| Ok::<[u8; 32], ()>(array_from_slice(bytes)),
+          )
+          .ok()
+        },
+        &P256_NIST_PEER,
+        &off_curve,
+        |shared| assert_eq!(shared, P256_NIST_SHARED),
+      ),
+    );
+  }
   ring_p256_bench! {
     let rng = ring::rand::SystemRandom::new();
-    let ring_peer = ring::agreement::UnparsedPublicKey::new(&ring::agreement::ECDH_P256, P256_NIST_PEER);
     let generate = || {
       ring::agreement::EphemeralPrivateKey::generate(&ring::agreement::ECDH_P256, &rng)
         .expect("ring scalar generation")
     };
+    let ring_agree = |secret: ring::agreement::EphemeralPrivateKey, peer: &[u8; 65]| {
+      ring::agreement::agree_ephemeral(
+        secret,
+        &ring::agreement::UnparsedPublicKey::new(&ring::agreement::ECDH_P256, peer),
+        array_from_slice::<32>,
+      )
+      .ok()
+    };
     g.bench_function(
-      "ring-native",
+      "ring",
       checked_routine(
         (),
         |_| {
@@ -3095,22 +3434,16 @@ fn p256_ecdh_agreement(c: &mut Criterion) {
           // key and compares RustCrypto's agreement between the NIST private key and the random public key.
           let secret = generate();
           let public = secret.compute_public_key().expect("ring public derivation");
-          let nist_public = ring::agreement::UnparsedPublicKey::new(&ring::agreement::ECDH_P256, P256_NIST_PUBLIC);
-          let shared = ring::agreement::agree_ephemeral(secret, &nist_public, array_from_slice::<32>)
-            .expect("ring benchmark agreement");
+          let shared = ring_agree(secret, &P256_NIST_PUBLIC).expect("ring benchmark agreement");
           let ring_public = p256::PublicKey::from_sec1_bytes(public.as_ref()).expect("valid ring public key");
           let expected = p256::ecdh::diffie_hellman(rustcrypto_secret.to_nonzero_scalar(), ring_public.as_affine());
           assert_eq!(shared.as_slice(), expected.raw_secret_bytes().as_slice());
+          assert!(ring_agree(generate(), &off_curve).is_none(), "an off-curve peer must fail");
         },
         |b, _| {
           b.iter_batched(
             &generate,
-            |secret| {
-              black_box(
-                ring::agreement::agree_ephemeral(secret, black_box(&ring_peer), array_from_slice::<32>)
-                  .expect("ring benchmark agreement"),
-              )
-            },
+            |secret| black_box(ring_agree(secret, black_box(&P256_NIST_PEER)).expect("ring benchmark agreement")),
             BatchSize::SmallInput,
           )
         },
@@ -3186,93 +3519,84 @@ const P384_NIST_SHARED: [u8; 48] = [
   0xa2, 0xe3, 0xd4, 0xd6, 0xa0, 0x4b, 0x25, 0xe5, 0x33, 0xf1,
 ];
 
-fn p384_ephemeral(bytes: [u8; 48]) -> P384EphemeralSecret {
+/// Imports caller scalar bytes as a one-use P-384 secret, or returns `None` when the scalar is zero or at least
+/// the group order.
+fn try_p384_ephemeral(bytes: &[u8; 48]) -> Option<P384EphemeralSecret> {
   P384EphemeralSecret::try_generate_with(|candidate| {
-    candidate.copy_from_slice(&bytes);
+    candidate.copy_from_slice(bytes);
     Ok::<(), core::convert::Infallible>(())
   })
-  .expect("valid authentication benchmark scalar must be accepted")
+  .ok()
 }
 
-// Fixed-key rows must reproduce the NIST CAVP vector above.
+fn p384_ephemeral(bytes: [u8; 48]) -> P384EphemeralSecret {
+  try_p384_ephemeral(&bytes).expect("valid authentication benchmark scalar must be accepted")
+}
+
+/// The NIST P-384 peer key with its y-coordinate changed so that the point is off the curve.
+fn p384_off_curve_peer() -> [u8; 97] {
+  let off_curve = flip_last_bit(P384_NIST_PEER);
+  p384::PublicKey::from_sec1_bytes(&off_curve).expect_err("RustCrypto must reject the changed point");
+  off_curve
+}
+
+// P-384 ECDH private key from caller-filled scalar bytes. Timed: the scalar range check and the private-key object,
+// with no public-key derivation. Each row's check derives the public key outside timing and must reproduce the
+// NIST CAVP vector, and the same import path must reject the zero scalar.
+// - aws-lc-rs is absent: its import also derives the public point. `p384-ecdh/public-key-from-secret` times it.
 fn p384_ecdh_key_generation(c: &mut Criterion) {
   if !bench_config::selected("p384-ecdh/key-generation") {
     return;
   }
   let scalar = P384_NIST_PRIVATE;
+  let zero = [0u8; 48];
   let mut g = c.benchmark_group("p384-ecdh/key-generation");
   g.bench_function(
-    "rscrypto-caller-fill",
-    checked(
-      || black_box(p384_ephemeral(*black_box(&scalar))),
-      |secret| assert_eq!(secret.public_key().to_sec1_bytes(), P384_NIST_PUBLIC),
-    ),
+    "rscrypto",
+    validating_row(try_p384_ephemeral, &scalar, &zero, |secret| {
+      assert_eq!(secret.public_key().to_sec1_bytes(), P384_NIST_PUBLIC)
+    }),
   );
   g.bench_function(
-    "rustcrypto-p384-import",
-    checked(
-      || black_box(P384OracleSecretKey::from_slice(black_box(&scalar)).expect("valid oracle scalar")),
+    "rustcrypto-p384",
+    validating_row(
+      |scalar: &[u8; 48]| P384OracleSecretKey::from_slice(scalar).ok(),
+      &scalar,
+      &zero,
       |secret| assert_eq!(secret.public_key().to_sec1_point(false).as_bytes(), P384_NIST_PUBLIC),
     ),
   );
-  aws_lc_bench! {
-    g.bench_function(
-      "aws-lc-rs-native-import-and-precompute",
-      checked(
-        || {
-          black_box(
-            aws_lc_rs::agreement::PrivateKey::from_private_key(
-              &aws_lc_rs::agreement::ECDH_P384,
-              black_box(&scalar),
-            )
-            .expect("valid AWS-LC scalar"),
-          )
-        },
-        |secret| assert_eq!(secret.compute_public_key().expect("AWS-LC public derivation").as_ref(), P384_NIST_PUBLIC),
-      ),
-    );
-  }
   g.finish();
 }
 
+// P-384 ECDH public key from a private key held outside timing. Timed: the fixed-base scalar multiplication,
+// affine conversion, and the uncompressed SEC1 encoding. Fixed-key rows must reproduce the NIST CAVP vector.
+// - ring derives from a random one-use key generated outside timing. Its check pairs that key with the NIST public
+//   key and compares RustCrypto's agreement.
+// - aws-lc-rs is absent: `PrivateKey` derives the public point at import, and `compute_public_key` only copies
+//   it out. `p384-ecdh/public-key-from-secret` times that import.
 fn p384_ecdh_public_key(c: &mut Criterion) {
-  if !bench_config::selected("p384-ecdh/public-key") {
+  if !bench_config::selected("p384-ecdh/public-key/") {
     return;
   }
   let scalar = P384_NIST_PRIVATE;
   let ours = p384_ephemeral(scalar);
   let rustcrypto = P384OracleSecretKey::from_slice(&scalar).expect("valid RustCrypto scalar");
-  aws_lc_bench! {
-    let aws_secret = aws_lc_rs::agreement::PrivateKey::from_private_key(
-      &aws_lc_rs::agreement::ECDH_P384,
-      &scalar,
-    )
-    .expect("valid AWS-LC scalar");
-  }
   let mut g = c.benchmark_group("p384-ecdh/public-key");
   g.bench_function(
-    "rscrypto-selected",
+    "rscrypto",
     checked(
-      || black_box(ours.public_key()),
+      || black_box(black_box(&ours).public_key()),
       |public| assert_eq!(public.to_sec1_bytes(), P384_NIST_PUBLIC),
     ),
   );
   g.bench_function(
-    "rustcrypto-p384-pure-rust",
+    "rustcrypto-p384",
     checked(
-      || black_box(rustcrypto.public_key().to_sec1_point(false)),
+      || black_box(black_box(&rustcrypto).public_key().to_sec1_point(false)),
       |public| assert_eq!(public.as_bytes(), P384_NIST_PUBLIC),
     ),
   );
-  aws_lc_bench! {
-    g.bench_function(
-      "aws-lc-rs-native-cached",
-      checked(
-        || black_box(aws_secret.compute_public_key().expect("AWS-LC public derivation")),
-        |public| assert_eq!(public.as_ref(), P384_NIST_PUBLIC),
-      ),
-    );
-  }
   ring_p256_bench! {
     let rng = ring::rand::SystemRandom::new();
     let generate = || {
@@ -3280,12 +3604,10 @@ fn p384_ecdh_public_key(c: &mut Criterion) {
         .expect("ring scalar generation")
     };
     g.bench_function(
-      "ring-native",
+      "ring",
       checked_routine(
         (),
         |_| {
-          // A random key has no fixed public key: its agreement with the NIST public key must match
-          // RustCrypto's agreement between the NIST private key and the derived public key.
           let secret = generate();
           let public = secret.compute_public_key().expect("ring public derivation");
           let nist_public = ring::agreement::UnparsedPublicKey::new(&ring::agreement::ECDH_P384, P384_NIST_PUBLIC);
@@ -3308,28 +3630,90 @@ fn p384_ecdh_public_key(c: &mut Criterion) {
   g.finish();
 }
 
+// P-384 ECDH public key from caller scalar bytes. Every row gets the same 48-byte scalar. Timed: scalar validation,
+// any private-key object, the fixed-base scalar multiplication, and the public-key encoding. Each row must return
+// the NIST CAVP public key, and the same path must reject the zero scalar.
+// - aws-lc-rs allocates an EVP_PKEY and derives the public point in `PrivateKey::from_private_key`;
+//   `compute_public_key` copies it out.
+// - ring is absent: it cannot import a caller scalar for agreement.
+fn p384_ecdh_public_key_from_secret(c: &mut Criterion) {
+  if !bench_config::selected("p384-ecdh/public-key-from-secret") {
+    return;
+  }
+  let scalar = P384_NIST_PRIVATE;
+  let zero = [0u8; 48];
+  let mut g = c.benchmark_group("p384-ecdh/public-key-from-secret");
+  g.bench_function(
+    "rscrypto",
+    validating_row(
+      |scalar: &[u8; 48]| try_p384_ephemeral(scalar).map(|secret| secret.public_key()),
+      &scalar,
+      &zero,
+      |public| assert_eq!(public.to_sec1_bytes(), P384_NIST_PUBLIC),
+    ),
+  );
+  g.bench_function(
+    "rustcrypto-p384",
+    validating_row(
+      |scalar: &[u8; 48]| {
+        P384OracleSecretKey::from_slice(scalar)
+          .ok()
+          .map(|secret| secret.public_key().to_sec1_point(false))
+      },
+      &scalar,
+      &zero,
+      |public| assert_eq!(public.as_bytes(), P384_NIST_PUBLIC),
+    ),
+  );
+  aws_lc_bench! {
+    g.bench_function(
+      "aws-lc-rs",
+      validating_row(
+        |scalar: &[u8; 48]| {
+          aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::ECDH_P384, scalar)
+            .ok()
+            .and_then(|secret| secret.compute_public_key().ok())
+        },
+        &scalar,
+        &zero,
+        |public| assert_eq!(public.as_ref(), P384_NIST_PUBLIC),
+      ),
+    );
+  }
+  g.finish();
+}
+
+// P-384 public-key parsing. Every row gets the NIST CAVP peer key as 97 uncompressed SEC1 bytes. Timed: format,
+// range, and on-curve validation and the parsed-key object. Each row's check pairs the parsed key with the NIST
+// private key and must return the NIST shared secret, and the same path must reject a point that is not on the
+// curve.
 fn p384_ecdh_parse(c: &mut Criterion) {
   if !bench_config::selected("p384-ecdh/parse") {
     return;
   }
+  let off_curve = p384_off_curve_peer();
   let rustcrypto_secret = P384OracleSecretKey::from_slice(&P384_NIST_PRIVATE).expect("valid RustCrypto scalar");
   let mut g = c.benchmark_group("p384-ecdh/parse");
   g.bench_function(
     "rscrypto",
-    checked(
-      || black_box(P384PublicKey::from_sec1_bytes(black_box(&P384_NIST_PEER)).expect("valid benchmark point")),
+    validating_row(
+      |encoded: &[u8; 97]| P384PublicKey::from_sec1_bytes(encoded).ok(),
+      &P384_NIST_PEER,
+      &off_curve,
       |public| {
         assert_eq!(
-          p384_ephemeral(P384_NIST_PRIVATE).diffie_hellman(&public).as_bytes(),
-          &P384_NIST_SHARED
+          *p384_ephemeral(P384_NIST_PRIVATE).diffie_hellman(&public).as_bytes(),
+          P384_NIST_SHARED
         )
       },
     ),
   );
   g.bench_function(
-    "rustcrypto-p384-pure-rust",
-    checked(
-      || black_box(p384::PublicKey::from_sec1_bytes(black_box(&P384_NIST_PEER)).expect("valid oracle point")),
+    "rustcrypto-p384",
+    validating_row(
+      |encoded: &[u8; 97]| p384::PublicKey::from_sec1_bytes(encoded).ok(),
+      &P384_NIST_PEER,
+      &off_curve,
       |public| {
         let shared = p384::ecdh::diffie_hellman(rustcrypto_secret.to_nonzero_scalar(), public.as_affine());
         assert_eq!(shared.raw_secret_bytes().as_slice(), P384_NIST_SHARED);
@@ -3339,11 +3723,26 @@ fn p384_ecdh_parse(c: &mut Criterion) {
   g.finish();
 }
 
+// P-384 ECDH agreement with the NIST CAVP key pair. Fixed-key rows must return the NIST shared secret. ring draws a
+// random one-use key outside timing, so its check pairs that key with the NIST public key and compares
+// RustCrypto's agreement.
+//
+// `p384-ecdh/agreement/parsed-peer`: the peer key is parsed and validated outside timing. Timed: the scalar
+// multiplication, the shared-secret output, and drop of per-call objects.
+// - rscrypto consumes a one-use secret built outside timing. RustCrypto reuses a scalar.
+// - aws-lc-rs reuses a `PrivateKey`, but `agree` consumes the peer, so each call clones the `ParsedPublicKey`: an
+//   atomic reference-count increment and a 97-byte heap copy.
+// - ring is absent: it has no parsed-peer API.
+//
+// `p384-ecdh/agreement/encoded-peer`: every row gets the NIST peer key as 97 uncompressed SEC1 bytes. Timed: peer
+// parsing and validation, then the agreement as above. aws-lc-rs allocates an EVP_PKEY for the peer. Each row's
+// check also requires the same path to reject a point that is not on the curve.
 fn p384_ecdh_agreement(c: &mut Criterion) {
-  if !bench_config::selected("p384-ecdh/agreement") {
+  if !bench_config::selected("p384-ecdh/agreement/") {
     return;
   }
   let scalar = P384_NIST_PRIVATE;
+  let off_curve = p384_off_curve_peer();
   let peer = P384PublicKey::from_sec1_bytes(&P384_NIST_PEER).expect("valid benchmark peer point");
   let rustcrypto_secret = P384OracleSecretKey::from_slice(&scalar).expect("valid RustCrypto scalar");
   let rustcrypto_peer = p384::PublicKey::from_sec1_bytes(&P384_NIST_PEER).expect("valid RustCrypto peer point");
@@ -3358,9 +3757,10 @@ fn p384_ecdh_agreement(c: &mut Criterion) {
     )
     .expect("valid AWS-LC peer point");
   }
-  let mut g = c.benchmark_group("p384-ecdh/agreement");
+
+  let mut g = c.benchmark_group("p384-ecdh/agreement/parsed-peer");
   g.bench_function(
-    "rscrypto-selected",
+    "rscrypto",
     checked_routine(
       (),
       |_| {
@@ -3379,7 +3779,7 @@ fn p384_ecdh_agreement(c: &mut Criterion) {
     ),
   );
   g.bench_function(
-    "rustcrypto-p384-pure-rust",
+    "rustcrypto-p384",
     checked(
       || {
         black_box(p384::ecdh::diffie_hellman(
@@ -3392,7 +3792,7 @@ fn p384_ecdh_agreement(c: &mut Criterion) {
   );
   aws_lc_bench! {
     g.bench_function(
-      "aws-lc-rs-native",
+      "aws-lc-rs",
       checked(
         || {
           black_box(
@@ -3406,15 +3806,84 @@ fn p384_ecdh_agreement(c: &mut Criterion) {
       ),
     );
   }
+  g.finish();
+
+  // Each closure is one row's timed path. It returns the shared secret, or `None` when it rejects the peer.
+  let rscrypto_agree = |secret: P384EphemeralSecret, peer: &[u8; 97]| {
+    P384PublicKey::from_sec1_bytes(peer)
+      .ok()
+      .map(|peer| secret.diffie_hellman(&peer))
+  };
+  let mut g = c.benchmark_group("p384-ecdh/agreement/encoded-peer");
+  g.bench_function(
+    "rscrypto",
+    checked_routine(
+      (),
+      |_| {
+        let shared = rscrypto_agree(p384_ephemeral(scalar), &P384_NIST_PEER).expect("valid benchmark peer point");
+        assert_eq!(shared.as_bytes(), &P384_NIST_SHARED);
+        assert!(
+          rscrypto_agree(p384_ephemeral(scalar), &off_curve).is_none(),
+          "an off-curve peer must fail"
+        );
+      },
+      |b, _| {
+        b.iter_batched(
+          || p384_ephemeral(scalar),
+          |secret| black_box(rscrypto_agree(secret, black_box(&P384_NIST_PEER)).expect("valid benchmark peer point")),
+          BatchSize::SmallInput,
+        )
+      },
+    ),
+  );
+  g.bench_function(
+    "rustcrypto-p384",
+    validating_row(
+      |peer: &[u8; 97]| {
+        p384::PublicKey::from_sec1_bytes(peer)
+          .ok()
+          .map(|peer| p384::ecdh::diffie_hellman(rustcrypto_secret.to_nonzero_scalar(), peer.as_affine()))
+      },
+      &P384_NIST_PEER,
+      &off_curve,
+      |shared| assert_eq!(shared.raw_secret_bytes().as_slice(), P384_NIST_SHARED),
+    ),
+  );
+  aws_lc_bench! {
+    g.bench_function(
+      "aws-lc-rs",
+      validating_row(
+        |peer: &[u8; 97]| {
+          aws_lc_rs::agreement::agree(
+            &aws_secret,
+            aws_lc_rs::agreement::UnparsedPublicKey::new(&aws_lc_rs::agreement::ECDH_P384, peer),
+            (),
+            |bytes| Ok::<[u8; 48], ()>(array_from_slice(bytes)),
+          )
+          .ok()
+        },
+        &P384_NIST_PEER,
+        &off_curve,
+        |shared| assert_eq!(shared, P384_NIST_SHARED),
+      ),
+    );
+  }
   ring_p256_bench! {
     let rng = ring::rand::SystemRandom::new();
-    let ring_peer = ring::agreement::UnparsedPublicKey::new(&ring::agreement::ECDH_P384, P384_NIST_PEER);
     let generate = || {
       ring::agreement::EphemeralPrivateKey::generate(&ring::agreement::ECDH_P384, &rng)
         .expect("ring scalar generation")
     };
+    let ring_agree = |secret: ring::agreement::EphemeralPrivateKey, peer: &[u8; 97]| {
+      ring::agreement::agree_ephemeral(
+        secret,
+        &ring::agreement::UnparsedPublicKey::new(&ring::agreement::ECDH_P384, peer),
+        array_from_slice::<48>,
+      )
+      .ok()
+    };
     g.bench_function(
-      "ring-native",
+      "ring",
       checked_routine(
         (),
         |_| {
@@ -3422,22 +3891,16 @@ fn p384_ecdh_agreement(c: &mut Criterion) {
           // key and compares RustCrypto's agreement between the NIST private key and the random public key.
           let secret = generate();
           let public = secret.compute_public_key().expect("ring public derivation");
-          let nist_public = ring::agreement::UnparsedPublicKey::new(&ring::agreement::ECDH_P384, P384_NIST_PUBLIC);
-          let shared = ring::agreement::agree_ephemeral(secret, &nist_public, array_from_slice::<48>)
-            .expect("ring benchmark agreement");
+          let shared = ring_agree(secret, &P384_NIST_PUBLIC).expect("ring benchmark agreement");
           let ring_public = p384::PublicKey::from_sec1_bytes(public.as_ref()).expect("valid ring public key");
           let expected = p384::ecdh::diffie_hellman(rustcrypto_secret.to_nonzero_scalar(), ring_public.as_affine());
           assert_eq!(shared.as_slice(), expected.raw_secret_bytes().as_slice());
+          assert!(ring_agree(generate(), &off_curve).is_none(), "an off-curve peer must fail");
         },
         |b, _| {
           b.iter_batched(
             &generate,
-            |secret| {
-              black_box(
-                ring::agreement::agree_ephemeral(secret, black_box(&ring_peer), array_from_slice::<48>)
-                  .expect("ring benchmark agreement"),
-              )
-            },
+            |secret| black_box(ring_agree(secret, black_box(&P384_NIST_PEER)).expect("ring benchmark agreement")),
             BatchSize::SmallInput,
           )
         },
@@ -3448,9 +3911,9 @@ fn p384_ecdh_agreement(c: &mut Criterion) {
 }
 
 // Every deterministic row must reproduce libcrux, an independent FIPS 203 implementation, from the same seed, key,
-// ciphertext, and randomness. AWS-LC rows draw internal entropy, so rscrypto and AWS-LC must instead open each
-// other's outputs. Fixtures are public deterministic benchmark data; output conversion and drop remain timed. See
-// docs/benchmarking.md for the comparison boundaries.
+// ciphertext, and randomness; the libcrux rows must reproduce fips203. AWS-LC rows draw internal entropy, so
+// rscrypto and AWS-LC must instead open each other's outputs. Fixtures are public deterministic benchmark data;
+// output conversion and drop remain timed. See docs/benchmarking.md for the comparison boundaries.
 macro_rules! mlkem_profile_benches {
   (
     $keygen_fn:ident,
@@ -3470,6 +3933,12 @@ macro_rules! mlkem_profile_benches {
         let keys = $libcrux::generate_key_pair(key_random);
         (*keys.public_key().as_slice(), *keys.private_key().as_slice())
       };
+      // The libcrux row must instead reproduce fips203.
+      let independent = || {
+        let (ek, dk) =
+          $fips::KG::keygen_from_seed(array_from_slice(&key_random[..32]), array_from_slice(&key_random[32..]));
+        (ek.into_bytes(), dk.into_bytes())
+      };
       let mut g = c.benchmark_group(concat!($group, "/keygen/derand-encoded"));
       g.bench_function("rscrypto", checked(|| {
         let (ek, dk) = <$profile>::generate_keypair(|out| {
@@ -3481,7 +3950,7 @@ macro_rules! mlkem_profile_benches {
       g.bench_function("libcrux", checked(|| {
         let keys = $libcrux::generate_key_pair(black_box(key_random));
         (*keys.public_key().as_slice(), *keys.private_key().as_slice())
-      }, |keys| assert_eq!(keys, expected())));
+      }, |keys| assert_eq!(keys, independent())));
       g.bench_function("fips203", checked(|| {
         let seed = black_box(&key_random);
         let (ek, dk) = $fips::KG::keygen_from_seed(array_from_slice(&seed[..32]), array_from_slice(&seed[32..]));
@@ -3512,31 +3981,63 @@ macro_rules! mlkem_profile_benches {
       if !bench_config::selected(concat!($group, "/encapsulate/")) { return; }
       let key_random = deterministic_bytes::<64>(0x20);
       let encaps_random = deterministic_bytes::<32>(0x80);
+      // Only the AWS-LC rows use the decapsulation key, so other targets leave it unused.
       let (ek, _dk) = <$profile>::generate_keypair(|out| {
         out.copy_from_slice(&key_random);
         Ok::<(), MlKemError>(())
       }).expect("ML-KEM fixture key generation");
       let ek_bytes = ek.to_bytes();
+      // Coefficient 0 becomes 4095, at least q = 3329, so the FIPS 203 Section 7.2 modulus check must fail.
+      let mut malformed_ek = ek_bytes;
+      malformed_ek[0] = 0xff;
+      malformed_ek[1] |= 0x0f;
       let prepared_ek = ek.prepare().expect("ML-KEM key preparation");
       let rustcrypto_ek = rustcrypto_ml_kem::EncapsulationKey::<$rustcrypto>::new(&ek_bytes.into()).expect("RustCrypto key import");
       let fips_ek = $fips::EncapsKey::try_from_bytes(ek_bytes).expect("fips203 key import");
       let libcrux_ek = libcrux_ml_kem::MlKemPublicKey::from(ek_bytes);
+      assert!($libcrux::validate_public_key(&libcrux_ek), "libcrux must accept the fixture key");
       let expected = || {
         let (ct, ss) = $libcrux::encapsulate(&libcrux_ek, encaps_random);
         (*ct.as_slice(), ss)
       };
-      let mut g = c.benchmark_group(concat!($group, "/encapsulate/derand-reuse-matrix-prepared"));
+      // The libcrux rows must instead reproduce fips203.
+      let independent = || {
+        let (ss, ct) = fips_ek.encaps_from_seed(&encaps_random);
+        (ct.into_bytes(), ss.into_bytes())
+      };
+      // Groups by key reuse. FIPS 203 Section 7.2 requires the modulus check on an encapsulation key.
+      // - `derand-reuse-key`: each library's best reusable key, built and checked once outside timing, with caller
+      //   randomness. The keys cache different work. rscrypto's prepared key holds the decoded key, the expanded
+      //   public matrix, and H(ek). RustCrypto's key holds the decoded key and H(ek), and samples the matrix in
+      //   each call. libcrux and fips203 keys hold the encoded bytes, so decoding, matrix sampling, and H(ek) stay
+      //   timed. AWS-LC is absent: it cannot take caller randomness.
+      // - `derand-reuse-encoded`: every row reuses an encoded-key wrapper, so decoding, matrix sampling, and H(ek)
+      //   stay timed. rscrypto also runs the modulus check in every `Kem::encapsulate`; libcrux and fips203
+      //   checked the key once outside timing.
+      // - `derand-import-encoded`: every row gets the same key bytes and runs the check inside timing. rscrypto runs
+      //   it twice, in `try_from_slice` and in `Kem::encapsulate`. libcrux import does not check, so its row calls
+      //   `validate_public_key`. Each row's check requires the same path to reject a key with a coefficient of at
+      //   least q.
+      // - `internal-entropy-import-encoded`: AWS-LC only. It imports the key bytes, checks the key in
+      //   encapsulation, and draws internal entropy.
+      let mut g = c.benchmark_group(concat!($group, "/encapsulate/derand-reuse-key"));
       g.bench_function("rscrypto", checked(|| {
         let (ct, ss) = black_box(&prepared_ek).encapsulate(|out| {
           out.copy_from_slice(black_box(&encaps_random)); Ok::<(), MlKemError>(())
         }).expect("ML-KEM encapsulation");
         (ct.to_bytes(), *ss.as_bytes())
       }, |output| assert_eq!(output, expected())));
-      g.finish();
-      let mut g = c.benchmark_group(concat!($group, "/encapsulate/derand-reuse-decoded"));
       g.bench_function("rustcrypto", checked(|| {
         let (ct, ss) = black_box(&rustcrypto_ek).encapsulate_deterministic(&(*black_box(&encaps_random)).into());
         (array_from_slice::<{ <$profile>::CIPHERTEXT_SIZE }>(ct.as_slice()), array_from_slice::<32>(ss.as_slice()))
+      }, |output| assert_eq!(output, expected())));
+      g.bench_function("libcrux", checked(|| {
+        let (ct, ss) = $libcrux::encapsulate(black_box(&libcrux_ek), *black_box(&encaps_random));
+        (*ct.as_slice(), ss)
+      }, |output| assert_eq!(output, independent())));
+      g.bench_function("fips203", checked(|| {
+        let (ss, ct) = black_box(&fips_ek).encaps_from_seed(black_box(&encaps_random));
+        (ct.into_bytes(), ss.into_bytes())
       }, |output| assert_eq!(output, expected())));
       g.finish();
       let mut g = c.benchmark_group(concat!($group, "/encapsulate/derand-reuse-encoded"));
@@ -3549,59 +4050,72 @@ macro_rules! mlkem_profile_benches {
       g.bench_function("libcrux", checked(|| {
         let (ct, ss) = $libcrux::encapsulate(black_box(&libcrux_ek), *black_box(&encaps_random));
         (*ct.as_slice(), ss)
-      }, |output| assert_eq!(output, expected())));
+      }, |output| assert_eq!(output, independent())));
       g.bench_function("fips203", checked(|| {
         let (ss, ct) = black_box(&fips_ek).encaps_from_seed(black_box(&encaps_random));
         (ct.into_bytes(), ss.into_bytes())
       }, |output| assert_eq!(output, expected())));
       g.finish();
 
-      let mut g = c.benchmark_group(concat!($group, "/encapsulate/derand-import-encoded"));
-      g.bench_function("rscrypto", checked(|| {
-        let ek = <<$profile as rscrypto::Kem>::EncapsulationKey>::try_from_slice(black_box(&ek_bytes)).expect("ML-KEM key import");
+      // Each closure is one row's timed import path. It returns `None` when it rejects the key.
+      let rscrypto_import = |ek_bytes: &[u8; <$profile>::ENCAPSULATION_KEY_SIZE]| -> Option<_> {
+        let ek = <<$profile as rscrypto::Kem>::EncapsulationKey>::try_from_slice(ek_bytes).ok()?;
         let (ct, ss) = <$profile>::encapsulate(&ek, |out| {
           out.copy_from_slice(black_box(&encaps_random)); Ok::<(), MlKemError>(())
-        }).expect("ML-KEM encapsulation");
-        (ct.to_bytes(), *ss.as_bytes())
-      }, |output| assert_eq!(output, expected())));
-      g.bench_function("rustcrypto", checked(|| {
-        let ek = rustcrypto_ml_kem::EncapsulationKey::<$rustcrypto>::new(&(*black_box(&ek_bytes)).into()).expect("RustCrypto key import");
-        let (ct, ss) = ek.encapsulate_deterministic(&(*black_box(&encaps_random)).into());
-        (array_from_slice::<{ <$profile>::CIPHERTEXT_SIZE }>(ct.as_slice()), array_from_slice::<32>(ss.as_slice()))
-      }, |output| assert_eq!(output, expected())));
-      g.bench_function("libcrux", checked(|| {
-        let ek = libcrux_ml_kem::MlKemPublicKey::from(*black_box(&ek_bytes));
-        let (ct, ss) = $libcrux::encapsulate(&ek, *black_box(&encaps_random));
-        (*ct.as_slice(), ss)
-      }, |output| assert_eq!(output, expected())));
-      g.bench_function("fips203", checked(|| {
-        let ek = $fips::EncapsKey::try_from_bytes(*black_box(&ek_bytes)).expect("fips203 key import");
-        let (ss, ct) = ek.encaps_from_seed(black_box(&encaps_random));
-        (ct.into_bytes(), ss.into_bytes())
-      }, |output| assert_eq!(output, expected())));
+        }).ok()?;
+        Some((ct.to_bytes(), *ss.as_bytes()))
+      };
+      let rustcrypto_import = |ek_bytes: &[u8; <$profile>::ENCAPSULATION_KEY_SIZE]| {
+        rustcrypto_ml_kem::EncapsulationKey::<$rustcrypto>::new(&(*ek_bytes).into()).ok().map(|ek| {
+          let (ct, ss) = ek.encapsulate_deterministic(&(*black_box(&encaps_random)).into());
+          (array_from_slice::<{ <$profile>::CIPHERTEXT_SIZE }>(ct.as_slice()), array_from_slice::<32>(ss.as_slice()))
+        })
+      };
+      let libcrux_import = |ek_bytes: &[u8; <$profile>::ENCAPSULATION_KEY_SIZE]| {
+        let ek = libcrux_ml_kem::MlKemPublicKey::from(*ek_bytes);
+        $libcrux::validate_public_key(&ek).then(|| {
+          let (ct, ss) = $libcrux::encapsulate(&ek, *black_box(&encaps_random));
+          (*ct.as_slice(), ss)
+        })
+      };
+      let fips_import = |ek_bytes: &[u8; <$profile>::ENCAPSULATION_KEY_SIZE]| {
+        $fips::EncapsKey::try_from_bytes(*ek_bytes).ok().map(|ek| {
+          let (ss, ct) = ek.encaps_from_seed(black_box(&encaps_random));
+          (ct.into_bytes(), ss.into_bytes())
+        })
+      };
+      let matches = |output| assert_eq!(output, expected());
+      let mut g = c.benchmark_group(concat!($group, "/encapsulate/derand-import-encoded"));
+      g.bench_function("rscrypto", validating_row(rscrypto_import, &ek_bytes, &malformed_ek, matches));
+      g.bench_function("rustcrypto", validating_row(rustcrypto_import, &ek_bytes, &malformed_ek, matches));
+      let reproduces_fips203 = |output| assert_eq!(output, independent());
+      g.bench_function("libcrux", validating_row(libcrux_import, &ek_bytes, &malformed_ek, reproduces_fips203));
+      g.bench_function("fips203", validating_row(fips_import, &ek_bytes, &malformed_ek, matches));
       g.finish();
 
       aws_lc_bench! {
-        let aws_ek = aws_lc_rs::kem::EncapsulationKey::new(&$aws_algorithm, &ek_bytes).expect("AWS-LC key import");
-        // Randomized rows cannot match a fixed ciphertext: rscrypto must open each AWS-LC ciphertext to its secret.
-        for import in [false, true] {
-          let group = if import { concat!($group, "/encapsulate/internal-entropy-import-encoded") }
-            else { concat!($group, "/encapsulate/internal-entropy-reuse-native") };
-          let mut g = c.benchmark_group(group);
-          g.bench_function("aws-lc-rs", checked(|| {
-            let imported;
-            let key = if import {
-              imported = aws_lc_rs::kem::EncapsulationKey::new(&$aws_algorithm, black_box(&ek_bytes)).expect("AWS-LC key import");
-              &imported
-            } else { black_box(&aws_ek) };
-            let (ct, ss) = key.encapsulate().expect("AWS-LC encapsulation");
+        let aws_encapsulate = |key: &aws_lc_rs::kem::EncapsulationKey| {
+          key.encapsulate().ok().map(|(ct, ss)| {
             (array_from_slice::<{ <$profile>::CIPHERTEXT_SIZE }>(ct.as_ref()), array_from_slice::<32>(ss.as_ref()))
-          }, |(ct_bytes, ss)| {
-            let ct = <<$profile as rscrypto::Kem>::Ciphertext>::try_from_slice(&ct_bytes).expect("AWS-LC ciphertext import");
-            assert_eq!(<$profile>::decapsulate(&_dk, &ct).expect("AWS-LC encapsulation interoperability").as_bytes(), &ss);
-          }));
-          g.finish();
-        }
+          })
+        };
+        // Randomized rows cannot match a fixed ciphertext: rscrypto must open each AWS-LC ciphertext to its secret.
+        let opens = |(ct_bytes, ss): ([u8; <$profile>::CIPHERTEXT_SIZE], [u8; 32])| {
+          let ct =
+            <<$profile as rscrypto::Kem>::Ciphertext>::try_from_slice(&ct_bytes).expect("AWS-LC ciphertext import");
+          let secret = <$profile>::decapsulate(&_dk, &ct).expect("AWS-LC encapsulation interoperability");
+          assert_eq!(secret.as_bytes(), &ss);
+        };
+        let mut g = c.benchmark_group(concat!($group, "/encapsulate/internal-entropy-import-encoded"));
+        g.bench_function("aws-lc-rs", validating_row(
+          |ek_bytes: &[u8; <$profile>::ENCAPSULATION_KEY_SIZE]| {
+            aws_lc_rs::kem::EncapsulationKey::new(&$aws_algorithm, ek_bytes).ok().and_then(|key| aws_encapsulate(&key))
+          },
+          &ek_bytes,
+          &malformed_ek,
+          opens,
+        ));
+        g.finish();
       }
     }
 
@@ -3616,6 +4130,10 @@ macro_rules! mlkem_profile_benches {
         out.copy_from_slice(&encaps_random); Ok::<(), MlKemError>(())
       }).expect("ML-KEM fixture encapsulation");
       let dk_bytes = *dk.as_bytes();
+      // The last 64 bytes of an expanded decapsulation key are H(ek) and z. A changed H(ek) must fail the FIPS 203
+      // Section 7.3 hash check.
+      let mut malformed_dk = dk_bytes;
+      malformed_dk[dk_bytes.len().strict_sub(64)] ^= 1;
       let ct_bytes = ct.to_bytes();
       let prepared_dk = dk.prepare().expect("ML-KEM key preparation");
       let rustcrypto_dk = RustCryptoMlKemDecapsulationKey::<$rustcrypto>::from_seed(RustCryptoMlKemSeed::from(key_random));
@@ -3624,24 +4142,54 @@ macro_rules! mlkem_profile_benches {
       let fips_ct = $fips::CipherText::try_from_bytes(ct_bytes).expect("fips203 ciphertext import");
       let libcrux_dk = libcrux_ml_kem::MlKemPrivateKey::from(dk_bytes);
       let libcrux_ct = libcrux_ml_kem::MlKemCiphertext::from(ct_bytes);
+      assert!($libcrux::validate_private_key(&libcrux_dk, &libcrux_ct), "libcrux must accept the fixture key");
       let expected = || $libcrux::decapsulate(&libcrux_dk, &libcrux_ct);
-      // Preparation decodes the key, expands the public matrix, and derives the
-      // decryption mask once; the reuse row below amortizes all of it.
+      // The libcrux rows must instead reproduce fips203.
+      let independent = || fips_dk.try_decaps(&fips_ct).expect("fips203 decapsulation").into_bytes();
+      // Groups by key reuse. FIPS 203 Section 7.3 requires the hash check on a decapsulation key.
+      // - `prepare-key`: rscrypto only. It times the preparation that its `reuse-key` row amortizes: decoding the
+      //   key, expanding the public matrix, deriving the decryption mask, and the hash check.
+      // - `reuse-key`: each library's best reusable key and ciphertext, built outside timing. The keys cache
+      //   different work. rscrypto's prepared key holds the result of `prepare-key`. RustCrypto's key, built from
+      //   the seed, holds the decoded keys and samples the matrix for re-encryption in each call. libcrux and
+      //   fips203 keys hold the encoded bytes and were checked once, so decoding and matrix sampling stay timed.
+      //   AWS-LC holds the encoded key, takes borrowed ciphertext bytes, and runs the hash check in each call.
+      // - `reuse-encoded`: every row reuses an encoded-key wrapper, so decoding and matrix sampling stay timed.
+      //   rscrypto also runs the hash check in every `Kem::decapsulate`; libcrux and fips203 checked the key once
+      //   outside timing.
+      // - `import-encoded`: every row gets the same key and ciphertext bytes and runs the check inside timing.
+      //   rscrypto runs it twice, in `try_from_slice` and in `Kem::decapsulate`; fips203 import also runs the
+      //   modulus check on the embedded encapsulation key; AWS-LC runs it in decapsulation. libcrux import does
+      //   not check, so its row calls `validate_private_key`. Each row's check requires the same path to reject a
+      //   key with a changed H(ek).
       let mut g = c.benchmark_group(concat!($group, "/decapsulate/prepare-key"));
       g.bench_function("rscrypto", checked(
         || black_box(black_box(&dk).prepare().expect("ML-KEM key preparation")),
         |prepared| assert_eq!(*prepared.decapsulate(&ct).expect("ML-KEM decapsulation").as_bytes(), expected()),
       ));
       g.finish();
-      let mut g = c.benchmark_group(concat!($group, "/decapsulate/reuse-matrix-prepared"));
+      let mut g = c.benchmark_group(concat!($group, "/decapsulate/reuse-key"));
       g.bench_function("rscrypto", checked(|| {
         *black_box(&prepared_dk).decapsulate(black_box(&ct)).expect("ML-KEM decapsulation").as_bytes()
       }, |secret| assert_eq!(secret, expected())));
-      g.finish();
-      let mut g = c.benchmark_group(concat!($group, "/decapsulate/reuse-decoded"));
       g.bench_function("rustcrypto", checked(|| {
         array_from_slice::<32>(black_box(&rustcrypto_dk).decapsulate(black_box(&rustcrypto_ct)).as_slice())
       }, |secret| assert_eq!(secret, expected())));
+      g.bench_function("libcrux", checked(|| {
+        $libcrux::decapsulate(black_box(&libcrux_dk), black_box(&libcrux_ct))
+      }, |secret| assert_eq!(secret, independent())));
+      g.bench_function("fips203", checked(|| {
+        black_box(&fips_dk).try_decaps(black_box(&fips_ct)).expect("fips203 decapsulation").into_bytes()
+      }, |secret| assert_eq!(secret, expected())));
+      aws_lc_bench! {
+        let aws_dk = AwsMlKemDecapsulationKey::new(&$aws_algorithm, &dk_bytes).expect("AWS-LC key import");
+        g.bench_function("aws-lc-rs", checked(|| {
+          let secret = black_box(&aws_dk)
+            .decapsulate(AwsMlKemCiphertext::from(black_box(ct_bytes.as_slice())))
+            .expect("AWS-LC decapsulation");
+          array_from_slice::<32>(secret.as_ref())
+        }, |secret| assert_eq!(secret, expected())));
+      }
       g.finish();
       let mut g = c.benchmark_group(concat!($group, "/decapsulate/reuse-encoded"));
       g.bench_function("rscrypto", checked(|| {
@@ -3649,40 +4197,45 @@ macro_rules! mlkem_profile_benches {
       }, |secret| assert_eq!(secret, expected())));
       g.bench_function("libcrux", checked(|| {
         $libcrux::decapsulate(black_box(&libcrux_dk), black_box(&libcrux_ct))
-      }, |secret| assert_eq!(secret, expected())));
+      }, |secret| assert_eq!(secret, independent())));
       g.bench_function("fips203", checked(|| {
         black_box(&fips_dk).try_decaps(black_box(&fips_ct)).expect("fips203 decapsulation").into_bytes()
       }, |secret| assert_eq!(secret, expected())));
       g.finish();
-      aws_lc_bench! {
-        let aws_dk = AwsMlKemDecapsulationKey::new(&$aws_algorithm, &dk_bytes).expect("AWS-LC key import");
-        let mut g = c.benchmark_group(concat!($group, "/decapsulate/reuse-native"));
-        g.bench_function("aws-lc-rs", checked(|| {
-          array_from_slice::<32>(black_box(&aws_dk).decapsulate(AwsMlKemCiphertext::from(black_box(ct_bytes.as_slice()))).expect("AWS-LC decapsulation").as_ref())
-        }, |secret| assert_eq!(secret, expected())));
-        g.finish();
-      }
-      let mut g = c.benchmark_group(concat!($group, "/decapsulate/import-encoded"));
-      g.bench_function("rscrypto", checked(|| {
-        let dk = <<$profile as rscrypto::Kem>::DecapsulationKey>::try_from_slice(black_box(&dk_bytes)).expect("ML-KEM key import");
-        let ct = <<$profile as rscrypto::Kem>::Ciphertext>::try_from_slice(black_box(&ct_bytes)).expect("ML-KEM ciphertext import");
-        *<$profile>::decapsulate(&dk, &ct).expect("ML-KEM decapsulation").as_bytes()
-      }, |secret| assert_eq!(secret, expected())));
-      g.bench_function("libcrux", checked(|| {
-        let dk = libcrux_ml_kem::MlKemPrivateKey::from(*black_box(&dk_bytes));
+
+      // Each closure is one row's timed import path. It returns `None` when it rejects the key.
+      let rscrypto_import = |dk_bytes: &[u8; <$profile>::DECAPSULATION_KEY_SIZE]| -> Option<[u8; 32]> {
+        let dk = <<$profile as rscrypto::Kem>::DecapsulationKey>::try_from_slice(dk_bytes).ok()?;
+        let ct = <<$profile as rscrypto::Kem>::Ciphertext>::try_from_slice(black_box(&ct_bytes)).ok()?;
+        <$profile>::decapsulate(&dk, &ct).ok().map(|secret| *secret.as_bytes())
+      };
+      let libcrux_import = |dk_bytes: &[u8; <$profile>::DECAPSULATION_KEY_SIZE]| {
+        let dk = libcrux_ml_kem::MlKemPrivateKey::from(*dk_bytes);
         let ct = libcrux_ml_kem::MlKemCiphertext::from(*black_box(&ct_bytes));
-        $libcrux::decapsulate(&dk, &ct)
-      }, |secret| assert_eq!(secret, expected())));
-      g.bench_function("fips203", checked(|| {
-        let dk = $fips::DecapsKey::try_from_bytes(*black_box(&dk_bytes)).expect("fips203 key import");
-        let ct = $fips::CipherText::try_from_bytes(*black_box(&ct_bytes)).expect("fips203 ciphertext import");
-        dk.try_decaps(&ct).expect("fips203 decapsulation").into_bytes()
-      }, |secret| assert_eq!(secret, expected())));
+        $libcrux::validate_private_key(&dk, &ct).then(|| $libcrux::decapsulate(&dk, &ct))
+      };
+      let fips_import = |dk_bytes: &[u8; <$profile>::DECAPSULATION_KEY_SIZE]| -> Option<[u8; 32]> {
+        let dk = $fips::DecapsKey::try_from_bytes(*dk_bytes).ok()?;
+        let ct = $fips::CipherText::try_from_bytes(*black_box(&ct_bytes)).ok()?;
+        dk.try_decaps(&ct).ok().map(|secret| secret.into_bytes())
+      };
+      let matches = |secret| assert_eq!(secret, expected());
+      let mut g = c.benchmark_group(concat!($group, "/decapsulate/import-encoded"));
+      g.bench_function("rscrypto", validating_row(rscrypto_import, &dk_bytes, &malformed_dk, matches));
+      let reproduces_fips203 = |secret| assert_eq!(secret, independent());
+      g.bench_function("libcrux", validating_row(libcrux_import, &dk_bytes, &malformed_dk, reproduces_fips203));
+      g.bench_function("fips203", validating_row(fips_import, &dk_bytes, &malformed_dk, matches));
       aws_lc_bench! {
-        g.bench_function("aws-lc-rs", checked(|| {
-          let dk = AwsMlKemDecapsulationKey::new(&$aws_algorithm, black_box(&dk_bytes)).expect("AWS-LC key import");
-          array_from_slice::<32>(dk.decapsulate(AwsMlKemCiphertext::from(black_box(ct_bytes.as_slice()))).expect("AWS-LC decapsulation").as_ref())
-        }, |secret| assert_eq!(secret, expected())));
+        g.bench_function("aws-lc-rs", validating_row(
+          |dk_bytes: &[u8; <$profile>::DECAPSULATION_KEY_SIZE]| -> Option<[u8; 32]> {
+            let dk = AwsMlKemDecapsulationKey::new(&$aws_algorithm, dk_bytes).ok()?;
+            let secret = dk.decapsulate(AwsMlKemCiphertext::from(black_box(ct_bytes.as_slice()))).ok()?;
+            Some(array_from_slice::<32>(secret.as_ref()))
+          },
+          &dk_bytes,
+          &malformed_dk,
+          matches,
+        ));
       }
       g.finish();
     }
@@ -3779,11 +4332,13 @@ fn main() {
     x25519_diffie_hellman,
     p256_ecdh_key_generation,
     p256_ecdh_public_key,
+    p256_ecdh_public_key_from_secret,
     p256_ecdh_parse,
     p256_ecdh_agreement,
     p256_ecdh_tls_roundtrip,
     p384_ecdh_key_generation,
     p384_ecdh_public_key,
+    p384_ecdh_public_key_from_secret,
     p384_ecdh_parse,
     p384_ecdh_agreement,
     mlkem512_keygen,

@@ -1600,190 +1600,348 @@ fn ascon_aead128_decrypt(c: &mut Criterion) {
   g.finish();
 }
 
-// Fixed-size header protection
+// Fixed-size header protection (RFC 9001 section 5.4)
+
+/// A header-protection vector: key, 16-byte sample, and five-byte mask.
+type MaskVector<const N: usize> = ([u8; N], [u8; 16], [u8; 5]);
+
+/// Decodes a fixed-length hexadecimal test vector.
+fn hex<const N: usize>(text: &str) -> [u8; N] {
+  assert_eq!(text.len(), N.strict_mul(2), "hex vector length");
+  let mut out = [0u8; N];
+  for (byte, pair) in out.iter_mut().zip(text.as_bytes().as_chunks::<2>().0) {
+    let pair = core::str::from_utf8(pair).expect("hex vector is ASCII");
+    *byte = u8::from_str_radix(pair, 16).expect("hex vector digit pair");
+  }
+  out
+}
+
+/// One library's header-protection API for one algorithm.
+struct MaskApi<New, Mask> {
+  /// Builds the reusable context from key bytes.
+  new: New,
+  /// Computes the mask of one sample with that context.
+  mask: Mask,
+}
+
+impl<New, Mask> MaskApi<New, Mask> {
+  /// The mask of `sample` under a new context for `key`.
+  fn mask_of<const N: usize, C>(&self, key: &[u8; N], sample: &[u8; 16]) -> [u8; 5]
+  where
+    New: Fn(&[u8; N]) -> C,
+    Mask: Fn(&C, &[u8; 16]) -> [u8; 5],
+  {
+    (self.mask)(&(self.new)(key), sample)
+  }
+}
+
+/// One algorithm's header-protection fixtures and expected masks.
+struct MaskCase<const N: usize> {
+  algorithm: &'static str,
+  key: [u8; N],
+  sample: [u8; 16],
+  /// The mask of `sample` under `key`.
+  expected: [u8; 5],
+  /// Published vectors that every row's API must reproduce.
+  published: Vec<MaskVector<N>>,
+}
+
+impl<const N: usize> MaskCase<N> {
+  /// Builds a case whose expected mask is the one that every library in
+  /// `independent` computed for `key` and `sample`.
+  fn agreed(
+    algorithm: &'static str,
+    key: [u8; N],
+    sample: [u8; 16],
+    published: Vec<MaskVector<N>>,
+    independent: &[[u8; 5]],
+  ) -> Self {
+    let expected = independent[0];
+    assert!(
+      independent.iter().all(|mask| *mask == expected),
+      "independent libraries disagree on the {algorithm} mask: {independent:02x?}"
+    );
+    Self {
+      algorithm,
+      key,
+      sample,
+      expected,
+      published,
+    }
+  }
+
+  /// Asserts that `mask`, computed for this case's key and sample, is the
+  /// expected mask, and that `api` reproduces every published vector.
+  fn check<C, New, Mask>(&self, api: &MaskApi<New, Mask>, mask: [u8; 5])
+  where
+    New: Fn(&[u8; N]) -> C,
+    Mask: Fn(&C, &[u8; 16]) -> [u8; 5],
+  {
+    assert_eq!(mask, self.expected, "{} mask of the bench sample", self.algorithm);
+    for (key, sample, published) in &self.published {
+      assert_eq!(
+        api.mask_of(key, sample),
+        *published,
+        "{} published mask",
+        self.algorithm
+      );
+    }
+  }
+}
+
+/// Registers `library`'s row that builds a context from key bytes, then destroys it.
+fn construct_row<const N: usize, C, New, Mask>(
+  group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+  library: &str,
+  case: &MaskCase<N>,
+  api: &MaskApi<New, Mask>,
+) where
+  New: Fn(&[u8; N]) -> C,
+  Mask: Fn(&C, &[u8; 16]) -> [u8; 5],
+{
+  group.bench_function(
+    BenchmarkId::new(library, case.algorithm),
+    checked(
+      || (api.new)(black_box(&case.key)),
+      |context| case.check(api, (api.mask)(&context, &case.sample)),
+    ),
+  );
+}
+
+/// Registers `library`'s row that computes one sample's mask with a reused context.
+fn mask_row<const N: usize, C, New, Mask>(
+  group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+  library: &str,
+  case: &MaskCase<N>,
+  api: &MaskApi<New, Mask>,
+) where
+  New: Fn(&[u8; N]) -> C,
+  Mask: Fn(&C, &[u8; 16]) -> [u8; 5],
+{
+  let context = (api.new)(&case.key);
+  group.bench_function(
+    BenchmarkId::new(library, case.algorithm),
+    checked(
+      || (api.mask)(black_box(&context), black_box(&case.sample)),
+      |mask| case.check(api, mask),
+    ),
+  );
+}
+
+/// RustCrypto's composed AES mask: encrypt the sample as one block, then keep
+/// its first five bytes.
+fn rustcrypto_aes_mask<B>(cipher: &B, sample: &[u8; 16]) -> [u8; 5]
+where
+  B: aes::cipher::BlockCipherEncrypt<BlockSize = aes::cipher::consts::U16>,
+{
+  let mut block = aes::cipher::Array::from(*sample);
+  cipher.encrypt_block(&mut block);
+  block[..5].try_into().expect("five-byte prefix has fixed length")
+}
+
+/// RustCrypto's composed ChaCha20 mask. RustCrypto has no key-only ChaCha20
+/// object, so each call keys a new core with the sample's nonce, sets the
+/// sample's block counter, and keeps the first five keystream bytes.
+fn rustcrypto_chacha20_mask(key: &[u8; 32], sample: &[u8; 16]) -> [u8; 5] {
+  use chacha20::cipher::{KeyIvInit as _, StreamCipherCore as _};
+  let counter = u32::from_le_bytes(sample[..4].try_into().expect("counter prefix has fixed length"));
+  let nonce: &[u8; 12] = sample[4..].try_into().expect("nonce suffix has fixed length");
+  let mut core = chacha20::ChaChaCore::<chacha20::R20, chacha20::variants::Ietf>::new(key.into(), nonce.into());
+  core.set_block_pos(counter);
+  let mut block = chacha20::cipher::array::Array::<u8, chacha20::cipher::consts::U64>::default();
+  core.write_keystream_block(&mut block);
+  block[..5].try_into().expect("five-byte prefix has fixed length")
+}
+
+/// ring's QUIC header-protection mask.
+fn ring_mask(key: &ring::aead::quic::HeaderProtectionKey, sample: &[u8; 16]) -> [u8; 5] {
+  key.new_mask(sample).expect("a 16-byte sample is valid")
+}
+
+aws_lc_bench! {
+  /// aws-lc-rs's QUIC header-protection mask.
+  fn aws_lc_mask(key: &aws_lc_rs::aead::quic::HeaderProtectionKey, sample: &[u8; 16]) -> [u8; 5] {
+    key.new_mask(sample).expect("a 16-byte sample is valid")
+  }
+}
 
 fn header_protection(c: &mut Criterion) {
   if !bench_config::selected("header-protection/") {
     return;
   }
-  use aes::cipher::{Array, BlockCipherEncrypt as _, KeyInit as _};
-  use chacha20::cipher::{KeyIvInit as _, StreamCipher as _, StreamCipherCore as _, StreamCipherSeek as _};
+  use aes::cipher::{Array, KeyInit as _};
+  aws_lc_bench! {
+    use aws_lc_rs::aead::quic as aws_quic;
+  }
+  use ring::aead::quic as ring_quic;
   use rscrypto::aead::expert::header_protection::{
     Aes128HeaderProtection, Aes128HeaderProtectionKey, Aes256HeaderProtection, Aes256HeaderProtectionKey,
     ChaCha20HeaderProtection, ChaCha20HeaderProtectionKey,
   };
 
-  // The sample's nonce is `NONCE_12`, which keys the RustCrypto ChaCha20 construction row.
-  let sample = [0x07; 16];
-  let counter = u32::from_le_bytes(sample[..4].try_into().expect("counter prefix has fixed length"));
-  let nonce: [u8; 12] = sample[4..].try_into().expect("nonce suffix has fixed length");
-  let aes128_rc = aes::Aes128::new(&Array::from(KEY_16));
-  let aes256_rc = aes::Aes256::new(&Array::from(KEY_32));
-  // Every row's mask, or its constructed context's mask for `sample`, must
-  // match RustCrypto's: AES encrypts the sample; ChaCha20 takes its counter
-  // and nonce from the sample.
-  let aes_mask = |block: Array<u8, aes::cipher::consts::U16>| {
-    <[u8; 5]>::try_from(&block[..5]).expect("five-byte prefix has fixed length")
+  // rscrypto, ring, and aws-lc-rs expose a header-protection key type. RustCrypto has none:
+  // its AES context is an encrypt-only block cipher, and its ChaCha20 context is the raw key.
+  let rscrypto_aes128 = MaskApi {
+    new: |key: &[u8; 16]| Aes128HeaderProtection::new(&Aes128HeaderProtectionKey::from_bytes(*key)),
+    mask: Aes128HeaderProtection::mask,
   };
-  let expected_aes128 = {
-    let mut block = Array::from(sample);
-    aes128_rc.encrypt_block(&mut block);
-    aes_mask(block)
+  let rscrypto_aes256 = MaskApi {
+    new: |key: &[u8; 32]| Aes256HeaderProtection::new(&Aes256HeaderProtectionKey::from_bytes(*key)),
+    mask: Aes256HeaderProtection::mask,
   };
-  let expected_aes256 = {
-    let mut block = Array::from(sample);
-    aes256_rc.encrypt_block(&mut block);
-    aes_mask(block)
+  let rscrypto_chacha20 = MaskApi {
+    new: |key: &[u8; 32]| ChaCha20HeaderProtection::new(&ChaCha20HeaderProtectionKey::from_bytes(*key)),
+    mask: ChaCha20HeaderProtection::mask,
   };
-  let expected_chacha = {
-    let mut mask = [0u8; 5];
-    let mut cipher = chacha20::ChaCha20::new(&KEY_32.into(), &nonce.into());
-    cipher.seek(u64::from(counter).strict_mul(64));
-    cipher.apply_keystream(&mut mask);
-    mask
+  let rustcrypto_aes128 = MaskApi {
+    new: |key: &[u8; 16]| aes::Aes128Enc::new(&Array::from(*key)),
+    mask: rustcrypto_aes_mask::<aes::Aes128Enc>,
   };
+  let rustcrypto_aes256 = MaskApi {
+    new: |key: &[u8; 32]| aes::Aes256Enc::new(&Array::from(*key)),
+    mask: rustcrypto_aes_mask::<aes::Aes256Enc>,
+  };
+  let rustcrypto_chacha20 = MaskApi {
+    new: |key: &[u8; 32]| *key,
+    mask: rustcrypto_chacha20_mask,
+  };
+  let ring_aes128 = MaskApi {
+    new: |key: &[u8; 16]| {
+      ring_quic::HeaderProtectionKey::new(&ring_quic::AES_128, key).expect("valid header-protection key")
+    },
+    mask: ring_mask,
+  };
+  let ring_aes256 = MaskApi {
+    new: |key: &[u8; 32]| {
+      ring_quic::HeaderProtectionKey::new(&ring_quic::AES_256, key).expect("valid header-protection key")
+    },
+    mask: ring_mask,
+  };
+  let ring_chacha20 = MaskApi {
+    new: |key: &[u8; 32]| {
+      ring_quic::HeaderProtectionKey::new(&ring_quic::CHACHA20, key).expect("valid header-protection key")
+    },
+    mask: ring_mask,
+  };
+  aws_lc_bench! {
+    let aws_aes128 = MaskApi {
+      new: |key: &[u8; 16]| {
+        aws_quic::HeaderProtectionKey::new(&aws_quic::AES_128, key).expect("valid header-protection key")
+      },
+      mask: aws_lc_mask,
+    };
+    let aws_aes256 = MaskApi {
+      new: |key: &[u8; 32]| {
+        aws_quic::HeaderProtectionKey::new(&aws_quic::AES_256, key).expect("valid header-protection key")
+      },
+      mask: aws_lc_mask,
+    };
+    let aws_chacha20 = MaskApi {
+      new: |key: &[u8; 32]| {
+        aws_quic::HeaderProtectionKey::new(&aws_quic::CHACHA20, key).expect("valid header-protection key")
+      },
+      mask: aws_lc_mask,
+    };
+  }
 
-  // Timed: construct and destroy each returned context; key fixtures are untimed.
+  // Before timing, every row's API must reproduce the RFC 9001 Appendix A.2 (client
+  // Initial) AES-128 mask and the A.5 (ChaCha20-Poly1305 short header) ChaCha20 mask.
+  // Its bench mask must also match the one on which RustCrypto and ring agree. That
+  // agreement is the only oracle for AES-256, which has no published vector.
+  let sample = [0x07; 16];
+  let aes128 = MaskCase::agreed(
+    "aes128",
+    KEY_16,
+    sample,
+    vec![(
+      hex("9f50449e04a0e810283a1e9933adedd2"),
+      hex("d1b1c98dd7689fb8ec11d242b123dc9b"),
+      hex("437b9aec36"),
+    )],
+    &[
+      rustcrypto_aes128.mask_of(&KEY_16, &sample),
+      ring_aes128.mask_of(&KEY_16, &sample),
+    ],
+  );
+  let aes256 = MaskCase::agreed(
+    "aes256",
+    KEY_32,
+    sample,
+    Vec::new(),
+    &[
+      rustcrypto_aes256.mask_of(&KEY_32, &sample),
+      ring_aes256.mask_of(&KEY_32, &sample),
+    ],
+  );
+  let chacha20 = MaskCase::agreed(
+    "chacha20",
+    KEY_32,
+    sample,
+    vec![(
+      hex("25a282b9e82f06f21f488917a4fc8f1b73573685608597d0efcb076b0ab7a7a4"),
+      hex("5e5cd55c41f69080575d7999c25a5bfb"),
+      hex("aefefe7d03"),
+    )],
+    &[
+      rustcrypto_chacha20.mask_of(&KEY_32, &sample),
+      ring_chacha20.mask_of(&KEY_32, &sample),
+    ],
+  );
+
+  // Task: build a reusable header-protection context from borrowed key bytes, then destroy it.
+  // Timed: construction and the context's drop. Untimed: key and sample fixtures.
+  // rscrypto copies the bytes into its typed key, expands an encrypt-only AES schedule or
+  // copies the ChaCha20 key, and zeroizes the typed key and the context on drop.
+  // ring builds an encrypt-only AES schedule or copies the ChaCha20 key. It does not zeroize.
+  // aws-lc-rs builds the AES encrypt schedule plus a decrypt schedule that masks never use.
+  // It zeroizes both AES schedules or the ChaCha20 key on drop. ring and aws-lc-rs return one enum for all three
+  // algorithms, so their ChaCha20 contexts are as large as their AES contexts.
+  // RustCrypto builds an encrypt-only `aes` cipher. This build does not enable the `aes`
+  // `zeroize` feature, so its drop leaves the schedule in memory. RustCrypto has no key-only
+  // ChaCha20 object, so it has no ChaCha20 row.
   let mut construction = c.benchmark_group("header-protection/construct");
-  construction.bench_function(
-    "rscrypto/aes128",
-    checked(
-      || {
-        let key = Aes128HeaderProtectionKey::from_bytes(black_box(KEY_16));
-        Aes128HeaderProtection::new(&key)
-      },
-      |context| assert_eq!(context.mask(&sample), expected_aes128),
-    ),
-  );
-  construction.bench_function(
-    "rustcrypto/aes128",
-    checked(
-      || aes::Aes128::new(black_box(&Array::from(KEY_16))),
-      |cipher| {
-        let mut block = Array::from(sample);
-        cipher.encrypt_block(&mut block);
-        assert_eq!(aes_mask(block), expected_aes128);
-      },
-    ),
-  );
-  construction.bench_function(
-    "rscrypto/aes256",
-    checked(
-      || {
-        let key = Aes256HeaderProtectionKey::from_bytes(black_box(KEY_32));
-        Aes256HeaderProtection::new(&key)
-      },
-      |context| assert_eq!(context.mask(&sample), expected_aes256),
-    ),
-  );
-  construction.bench_function(
-    "rustcrypto/aes256",
-    checked(
-      || aes::Aes256::new(black_box(&Array::from(KEY_32))),
-      |cipher| {
-        let mut block = Array::from(sample);
-        cipher.encrypt_block(&mut block);
-        assert_eq!(aes_mask(block), expected_aes256);
-      },
-    ),
-  );
-  construction.bench_function(
-    "rscrypto/chacha20",
-    checked(
-      || {
-        let key = ChaCha20HeaderProtectionKey::from_bytes(black_box(KEY_32));
-        ChaCha20HeaderProtection::new(&key)
-      },
-      |context| assert_eq!(context.mask(&sample), expected_chacha),
-    ),
-  );
-  construction.bench_function(
-    "rustcrypto/chacha20",
-    checked(
-      || {
-        chacha20::ChaChaCore::<chacha20::R20, chacha20::variants::Ietf>::new(
-          black_box(&KEY_32).into(),
-          black_box(&NONCE_12).into(),
-        )
-      },
-      |mut core| {
-        core.set_block_pos(counter);
-        let mut block = chacha20::cipher::array::Array::<u8, chacha20::cipher::consts::U64>::default();
-        core.write_keystream_block(&mut block);
-        assert_eq!(block[..5], expected_chacha);
-      },
-    ),
-  );
+  construct_row(&mut construction, "rscrypto", &aes128, &rscrypto_aes128);
+  construct_row(&mut construction, "rustcrypto-composed", &aes128, &rustcrypto_aes128);
+  construct_row(&mut construction, "ring", &aes128, &ring_aes128);
+  construct_row(&mut construction, "rscrypto", &aes256, &rscrypto_aes256);
+  construct_row(&mut construction, "rustcrypto-composed", &aes256, &rustcrypto_aes256);
+  construct_row(&mut construction, "ring", &aes256, &ring_aes256);
+  construct_row(&mut construction, "rscrypto", &chacha20, &rscrypto_chacha20);
+  construct_row(&mut construction, "ring", &chacha20, &ring_chacha20);
+  aws_lc_bench! {
+    construct_row(&mut construction, "aws-lc-rs", &aes128, &aws_aes128);
+    construct_row(&mut construction, "aws-lc-rs", &aes256, &aws_aes256);
+    construct_row(&mut construction, "aws-lc-rs", &chacha20, &aws_chacha20);
+  }
   construction.finish();
 
-  let aes128_rs = Aes128HeaderProtection::new(&Aes128HeaderProtectionKey::from_bytes(KEY_16));
-  let aes256_rs = Aes256HeaderProtection::new(&Aes256HeaderProtectionKey::from_bytes(KEY_32));
-  let chacha_rs = ChaCha20HeaderProtection::new(&ChaCha20HeaderProtectionKey::from_bytes(KEY_32));
-
-  // Timed: sample processing and mask generation, including local block/core setup.
-  // Untimed: reusable key contexts and the sample fixture.
+  // Task: compute the five-byte mask of one 16-byte sample with a reused context.
+  // Timed: one mask call through an opaque context reference. Untimed: fixtures, and context
+  // construction and destruction.
+  // rscrypto takes a sample array. ring and aws-lc-rs take a slice, check its length, and
+  // return a `Result`. rscrypto clears its temporary ChaCha20 block and, without AES-NI or
+  // AES-CE, its temporary AES block. ring's hardware AES path computes the block with its
+  // CTR routine over one zero block.
+  // RustCrypto composes primitives. Its AES row encrypts a full block and keeps five bytes.
+  // Its ChaCha20 row keys a new core with the sample's nonce on every call, and its SIMD
+  // backends compute a batch (eight blocks on NEON, four on SSE2 and AVX2) to return one
+  // block. This build does not enable the `chacha20` `zeroize` feature, so that core is not
+  // cleared.
   let mut mask = c.benchmark_group("header-protection/mask");
-  mask.bench_function(
-    "rscrypto/aes128",
-    checked(
-      || aes128_rs.mask(black_box(&sample)),
-      |output| assert_eq!(output, expected_aes128),
-    ),
-  );
-  mask.bench_function(
-    "rustcrypto/aes128",
-    checked(
-      || {
-        let mut block = Array::from(*black_box(&sample));
-        aes128_rc.encrypt_block(&mut block);
-        <[u8; 5]>::try_from(&block[..5]).expect("five-byte prefix has fixed length")
-      },
-      |output| assert_eq!(output, expected_aes128),
-    ),
-  );
-  mask.bench_function(
-    "rscrypto/aes256",
-    checked(
-      || aes256_rs.mask(black_box(&sample)),
-      |output| assert_eq!(output, expected_aes256),
-    ),
-  );
-  mask.bench_function(
-    "rustcrypto/aes256",
-    checked(
-      || {
-        let mut block = Array::from(*black_box(&sample));
-        aes256_rc.encrypt_block(&mut block);
-        <[u8; 5]>::try_from(&block[..5]).expect("five-byte prefix has fixed length")
-      },
-      |output| assert_eq!(output, expected_aes256),
-    ),
-  );
-  mask.bench_function(
-    "rscrypto/chacha20",
-    checked(
-      || chacha_rs.mask(black_box(&sample)),
-      |output| assert_eq!(output, expected_chacha),
-    ),
-  );
-  mask.bench_function(
-    "rustcrypto/chacha20",
-    checked(
-      || {
-        let counter = u32::from_le_bytes(sample[..4].try_into().expect("counter prefix has fixed length"));
-        let nonce: [u8; 12] = sample[4..].try_into().expect("nonce suffix has fixed length");
-        let mut core = chacha20::ChaChaCore::<chacha20::R20, chacha20::variants::Ietf>::new(
-          black_box(&KEY_32).into(),
-          black_box(&nonce).into(),
-        );
-        core.set_block_pos(counter);
-        let mut block = chacha20::cipher::array::Array::<u8, chacha20::cipher::consts::U64>::default();
-        core.write_keystream_block(&mut block);
-        <[u8; 5]>::try_from(&block[..5]).expect("five-byte prefix has fixed length")
-      },
-      |output| assert_eq!(output, expected_chacha),
-    ),
-  );
+  mask_row(&mut mask, "rscrypto", &aes128, &rscrypto_aes128);
+  mask_row(&mut mask, "rustcrypto-composed", &aes128, &rustcrypto_aes128);
+  mask_row(&mut mask, "ring", &aes128, &ring_aes128);
+  mask_row(&mut mask, "rscrypto", &aes256, &rscrypto_aes256);
+  mask_row(&mut mask, "rustcrypto-composed", &aes256, &rustcrypto_aes256);
+  mask_row(&mut mask, "ring", &aes256, &ring_aes256);
+  mask_row(&mut mask, "rscrypto", &chacha20, &rscrypto_chacha20);
+  mask_row(&mut mask, "rustcrypto-composed", &chacha20, &rustcrypto_chacha20);
+  mask_row(&mut mask, "ring", &chacha20, &ring_chacha20);
+  aws_lc_bench! {
+    mask_row(&mut mask, "aws-lc-rs", &aes128, &aws_aes128);
+    mask_row(&mut mask, "aws-lc-rs", &aes256, &aws_aes256);
+    mask_row(&mut mask, "aws-lc-rs", &chacha20, &aws_chacha20);
+  }
   mask.finish();
 }
 

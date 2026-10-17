@@ -10,9 +10,47 @@ mod bench_config;
 use core::hint::black_box;
 
 use bench_config::{checked, checked_routine};
-use criterion::{BenchmarkId, Criterion};
+use criterion::{BenchmarkGroup, BenchmarkId, Criterion, measurement::WallTime};
 use rscrypto::{MlDsa44, MlDsa65, MlDsa87};
 use rustcrypto_ml_dsa as oracle;
+
+/// Keeps its statements only on the `aws-lc-rs` dev-dependency targets of
+/// `Cargo.toml`.
+#[cfg(any(
+  all(
+    any(unix, windows),
+    not(target_arch = "wasm32"),
+    not(any(target_arch = "s390x", target_arch = "powerpc64"))
+  ),
+  all(
+    target_arch = "powerpc64",
+    target_endian = "little",
+    target_os = "linux",
+    target_env = "gnu"
+  )
+))]
+macro_rules! with_aws_lc {
+  ($($tokens:tt)*) => {
+    $($tokens)*
+  };
+}
+
+#[cfg(not(any(
+  all(
+    any(unix, windows),
+    not(target_arch = "wasm32"),
+    not(any(target_arch = "s390x", target_arch = "powerpc64"))
+  ),
+  all(
+    target_arch = "powerpc64",
+    target_endian = "little",
+    target_os = "linux",
+    target_env = "gnu"
+  )
+)))]
+macro_rules! with_aws_lc {
+  ($($tokens:tt)*) => {};
+}
 
 /// A well-formed signature that must not verify: `signature` with its
 /// commitment hash, the leading bytes, changed.
@@ -24,16 +62,40 @@ fn tampered<const N: usize, S>(
   parse(&signature).expect("a changed commitment hash keeps the signature well formed")
 }
 
+/// Registers a row that verifies encoded signatures. The check runs the same
+/// path: it must accept `signature` and reject `tampered` and `malformed`.
+fn verify_row(
+  group: &mut BenchmarkGroup<'_, WallTime>,
+  implementation: &str,
+  [signature, tampered, malformed]: [&[u8]; 3],
+  verify: impl Fn(&[u8]) -> bool + Copy,
+) {
+  group.bench_function(
+    implementation,
+    checked(
+      || verify(black_box(signature)),
+      |accepted| {
+        assert!(accepted, "{implementation} must accept the signature");
+        assert!(!verify(tampered), "{implementation} must reject a tampered signature");
+        assert!(!verify(malformed), "{implementation} must reject a malformed signature");
+      },
+    ),
+  );
+}
+
 macro_rules! profile {
   (
     $function:ident,
     $corpus:ident,
     $name:literal,
     $profile:ident,
+    $public:ident,
     $secret:ident,
     $signature:ident,
     $oracle:ident,
-    $libcrux:ident
+    $libcrux:ident,
+    $aws_signing:ident,
+    $aws_verification:ident
   ) => {
     fn $function(c: &mut Criterion) {
       if !bench_config::selected(concat!($name, "/")) {
@@ -79,7 +141,18 @@ macro_rules! profile {
       let libcrux = libcrux_ml_dsa::$libcrux::generate_key_pair(seed);
       let libcrux_signature =
         libcrux_ml_dsa::$libcrux::sign(&libcrux.signing_key, &message, context, [0; 32]).expect("libcrux signature");
-      // Seed expansion, output encoding and destruction are timed. No OS entropy.
+      // Seed to the encoded public key and the expanded FIPS 204 secret key.
+      // Timed: key generation, export of both encodings, and destruction. No
+      // OS entropy. Each library generates the key once:
+      // - rscrypto returns inline arrays and clears the secret on drop.
+      // - RustCrypto's `SigningKey` also builds its precomputed signing and
+      //   verifying keys and clears them on drop. Its doc-hidden
+      //   `expanded_key` is its only export that neither clones the key nor
+      //   recomputes the public key. The row clears the secret it exports.
+      // - libcrux returns plain arrays.
+      // - AWS-LC builds a heap EVP_PKEY and exports the secret into a heap
+      //   buffer; the row copies the public key into an array.
+      // Checks compare both keys with another library.
       let mut group = c.benchmark_group(concat!($name, "/keygen/seed-encoded"));
       group.bench_function(
         "rscrypto",
@@ -98,11 +171,11 @@ macro_rules! profile {
         "rustcrypto",
         checked(
           || {
-            let sk = oracle::ExpandedSigningKey::<oracle::$oracle>::from_seed(black_box(&seed.into()));
+            let sk = oracle::SigningKey::<oracle::$oracle>::from_seed(black_box(&seed.into()));
+            let pk = AsRef::<oracle::VerifyingKey<oracle::$oracle>>::as_ref(&sk).encode();
             #[expect(deprecated, reason = "the measured output is the standard expanded wire encoding")]
-            let encoded = sk.to_expanded();
-            let encoded = rscrypto::SecretBytes::<{ rscrypto::$secret::LENGTH }>::new(encoded.into());
-            (sk.verifying_key().encode(), encoded)
+            let encoded = sk.expanded_key().to_expanded();
+            (pk, rscrypto::SecretBytes::<{ rscrypto::$secret::LENGTH }>::new(encoded.into()))
           },
           |(pk, sk)| {
             assert_eq!(pk.as_slice(), libcrux.verification_key.as_ref().as_slice());
@@ -123,6 +196,29 @@ macro_rules! profile {
           },
         ),
       );
+      with_aws_lc! {
+        group.bench_function(
+          "aws-lc",
+          checked(
+            || {
+              use aws_lc_rs::encoding::AsRawBytes as _;
+
+              let key = aws_lc_rs::signature::PqdsaKeyPair::from_seed(
+                &aws_lc_rs::signature::$aws_signing,
+                black_box(&seed),
+              )
+              .expect("key generation");
+              let mut pk = [0u8; rscrypto::$public::LENGTH];
+              pk.copy_from_slice(aws_lc_rs::signature::KeyPair::public_key(&key).as_ref());
+              (pk, key.private_key().as_raw_bytes().expect("expanded key"))
+            },
+            |(pk, sk)| {
+              assert_eq!(pk.as_slice(), external_public.encode().as_slice());
+              assert_eq!(sk.as_ref(), expanded.as_slice());
+            },
+          ),
+        );
+      }
       group.finish();
       // Preparation fills reused caller-owned storage; the secret handle's drop
       // clears it. Keep the encoded key outside timing, as in the signing and
@@ -171,9 +267,13 @@ macro_rules! profile {
         ),
       );
       group.finish();
-      // Compact keys and explicit prepared keys have distinct memory contracts.
-      // Prepared rows retain transformed polynomials and a complete matrix;
-      // neither library's preparation is inside those timings.
+      // Compact keys and explicit prepared keys have distinct memory contracts,
+      // so each has its own groups. Sign and verify groups use the 32-byte
+      // message and the 18-byte context. Keys are built outside timing.
+      //
+      // Deterministic signing with a reused compact key. Each call decodes the
+      // secret key and expands the matrix: rscrypto per rejection attempt,
+      // libcrux once per call. Timed: signing and the signature array.
       let mut group = c.benchmark_group(concat!($name, "/sign/encoded-key-deterministic"));
       group.bench_function(
         "rscrypto",
@@ -203,6 +303,9 @@ macro_rules! profile {
         ),
       );
       group.finish();
+      // Deterministic signing with a reused prepared key. rscrypto's prepared
+      // key and RustCrypto's `ExpandedSigningKey` both cache the matrix and the
+      // transformed secret vectors. Timed: signing and signature encoding.
       let mut group = c.benchmark_group(concat!($name, "/sign/prepared-key-deterministic"));
       group.bench_function(
         "rscrypto",
@@ -228,8 +331,9 @@ macro_rules! profile {
         ),
       );
       group.finish();
-      // Signature parsing is outside timing; message hashing and matrix expansion
-      // are charged to the production verifier when its API performs them.
+      // Verification with a reused compact key: each call hashes the key into
+      // tr, expands the matrix, and transforms t1. Both libraries take a
+      // signature that holds its encoding; parsing it is outside timing.
       let mut group = c.benchmark_group(concat!($name, "/verify/encoded-key"));
       group.bench_function(
         "rscrypto",
@@ -257,10 +361,22 @@ macro_rules! profile {
           |result| {
             result.expect("verify");
             assert_eq!(libcrux_signature.as_ref().as_slice(), signature.as_bytes().as_slice());
+            libcrux_ml_dsa::$libcrux::verify(
+              &libcrux.verification_key,
+              &message,
+              context,
+              &libcrux_ml_dsa::MLDSASignature::new(tampered.to_bytes()),
+            )
+            .expect_err("tampered signature must not verify");
           },
         ),
       );
       group.finish();
+      // Verification with a reused prepared key. rscrypto's prepared key and
+      // RustCrypto's `VerifyingKey` both cache the matrix, NTT(t1·2^d), and tr.
+      // Signatures are parsed outside timing. RustCrypto's parsed signature
+      // holds the decoded response and hints, so its timing excludes that
+      // decoding; rscrypto's verifier decodes its signature bytes inside timing.
       let mut group = c.benchmark_group(concat!($name, "/verify/prepared-key"));
       group.bench_function(
         "rscrypto",
@@ -290,10 +406,302 @@ macro_rules! profile {
               black_box(&expected),
             ))
           },
-          |accepted| assert!(accepted),
+          |accepted| {
+            assert!(accepted);
+            assert_eq!(expected.encode().as_slice(), libcrux_signature.as_ref().as_slice());
+            let forged = oracle::Signature::<oracle::$oracle>::try_from(tampered.as_bytes().as_slice())
+              .expect("a changed commitment hash keeps the signature well formed");
+            assert!(
+              !external_public.verify_with_context(&message, context, &forged),
+              "tampered signature must not verify"
+            );
+          },
         ),
       );
       group.finish();
+
+      // Task-view groups: every library that has an API for the task, each
+      // with its best form. They use an empty context, the only context that
+      // aws-lc-rs takes. The `prepared-key` and `encoded-key` groups above
+      // compare equal cache depths instead.
+      let empty: &[u8] = &[];
+      let encoded_public = public.to_bytes();
+      assert_eq!(encoded_public.as_slice(), external_public.encode().as_slice());
+      let empty_signature = external
+        .sign_deterministic(&message, empty)
+        .expect("oracle signature")
+        .encode();
+      let libcrux_empty_signature =
+        libcrux_ml_dsa::$libcrux::sign(&libcrux.signing_key, &message, empty, [0; 32]).expect("libcrux signature");
+      assert_eq!(empty_signature.as_slice(), libcrux_empty_signature.as_ref().as_slice());
+      let mut empty_tampered = empty_signature.clone();
+      empty_tampered[0] ^= 1;
+      // The last hint count exceeds omega, so sigDecode rejects the encoding.
+      let mut empty_malformed = empty_signature.clone();
+      *empty_malformed.last_mut().expect("nonempty signature") = 0xff;
+      let signatures = [
+        empty_signature.as_slice(),
+        empty_tampered.as_slice(),
+        empty_malformed.as_slice(),
+      ];
+      with_aws_lc! {
+        let aws_secret = aws_lc_rs::signature::PqdsaKeyPair::from_seed(&aws_lc_rs::signature::$aws_signing, &seed)
+          .expect("AWS-LC key generation");
+        let aws_encoded_public = aws_lc_rs::signature::KeyPair::public_key(&aws_secret).as_ref();
+        assert_eq!(aws_encoded_public, encoded_public.as_slice());
+        let aws_public =
+          aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::$aws_verification, aws_encoded_public)
+            .parse()
+            .expect("AWS-LC public key");
+      }
+
+      // Verification of one received signature under a reused public key.
+      // Timed: signature parsing, verification, and destruction. Each
+      // library keeps its best reusable key, built outside timing:
+      // - rscrypto's prepared key caches tr, the matrix, and NTT(t1).
+      // - RustCrypto's `VerifyingKey` caches tr, the matrix, and NTT(t1·2^d).
+      // - libcrux's key holds the encoding, which is all it has; each call
+      //   hashes tr, expands the matrix, and transforms t1.
+      // - AWS-LC's `ParsedPublicKey` holds the decoded key and recomputes the
+      //   same values on each call.
+      // RustCrypto decodes the response and hints when it parses; the others
+      // decode them during verification. Checks: each row accepts the
+      // signature, which RustCrypto and libcrux both produce, and rejects a
+      // tampered and a malformed signature.
+      let mut group = c.benchmark_group(concat!($name, "/verify/reuse-key"));
+      verify_row(&mut group, "rscrypto", signatures, |signature| {
+        rscrypto::$signature::try_from_slice(signature)
+          .is_ok_and(|signature| prepared_public.verify(&message, &signature).is_ok())
+      });
+      verify_row(&mut group, "rustcrypto", signatures, |signature| {
+        oracle::Signature::<oracle::$oracle>::try_from(signature)
+          .is_ok_and(|signature| external_public.verify_with_context(&message, empty, &signature))
+      });
+      verify_row(&mut group, "libcrux", signatures, |signature| {
+        <[u8; rscrypto::$signature::LENGTH]>::try_from(signature).is_ok_and(|signature| {
+          libcrux_ml_dsa::$libcrux::verify(
+            &libcrux.verification_key,
+            &message,
+            empty,
+            &libcrux_ml_dsa::MLDSASignature::new(signature),
+          )
+          .is_ok()
+        })
+      });
+      with_aws_lc! {
+        verify_row(&mut group, "aws-lc", signatures, |signature| {
+          aws_public.verify_sig(&message, signature).is_ok()
+        });
+      }
+      group.finish();
+
+      // Verification from encoded bytes, as for a certificate signature.
+      // Timed: key import, signature parsing, verification, and destruction.
+      // - rscrypto copies the key, checks the signature structure, and
+      //   verifies with the compact key, which hashes tr, expands the matrix,
+      //   and transforms t1. Its verifier checks the structure again.
+      //   Preparing the key would do the same work and also store the matrix.
+      // - libcrux copies both encodings into its byte wrappers and decodes
+      //   them during verification.
+      // - AWS-LC tries SubjectPublicKeyInfo DER, falls back to the raw key,
+      //   allocates and frees an EVP_PKEY, and verifies.
+      // - RustCrypto decodes the key and precomputes the matrix, NTT(t1·2^d),
+      //   and tr, then decodes the response and hints.
+      // Checks as in `verify/reuse-key`.
+      let mut group = c.benchmark_group(concat!($name, "/verify/import-key"));
+      verify_row(&mut group, "rscrypto", signatures, |signature| {
+        let (Ok(public), Ok(signature)) = (
+          rscrypto::$public::try_from_slice(black_box(encoded_public.as_slice())),
+          rscrypto::$signature::try_from_slice(signature),
+        ) else {
+          return false;
+        };
+        public.verify(&message, &signature).is_ok()
+      });
+      verify_row(&mut group, "rustcrypto", signatures, |signature| {
+        let (Ok(public), Ok(signature)) = (
+          oracle::EncodedVerifyingKey::<oracle::$oracle>::try_from(black_box(encoded_public.as_slice())),
+          oracle::Signature::<oracle::$oracle>::try_from(signature),
+        ) else {
+          return false;
+        };
+        oracle::VerifyingKey::<oracle::$oracle>::decode(&public).verify_with_context(&message, empty, &signature)
+      });
+      verify_row(&mut group, "libcrux", signatures, |signature| {
+        let (Ok(public), Ok(signature)) = (
+          <[u8; rscrypto::$public::LENGTH]>::try_from(black_box(encoded_public.as_slice())),
+          <[u8; rscrypto::$signature::LENGTH]>::try_from(signature),
+        ) else {
+          return false;
+        };
+        libcrux_ml_dsa::$libcrux::verify(
+          &libcrux_ml_dsa::MLDSAVerificationKey::new(public),
+          &message,
+          empty,
+          &libcrux_ml_dsa::MLDSASignature::new(signature),
+        )
+        .is_ok()
+      });
+      with_aws_lc! {
+        verify_row(&mut group, "aws-lc", signatures, |signature| {
+          aws_lc_rs::signature::UnparsedPublicKey::new(
+            &aws_lc_rs::signature::$aws_verification,
+            black_box(encoded_public.as_slice()),
+          )
+          .verify(&message, signature)
+          .is_ok()
+        });
+      }
+      group.finish();
+
+      // Deterministic signing under a reused secret key. Timed: signing and
+      // the encoded signature. Each library keeps its best reusable key,
+      // built outside timing:
+      // - rscrypto's prepared key and RustCrypto's `ExpandedSigningKey` cache
+      //   the matrix and the transformed secret vectors.
+      // - libcrux's key holds the encoding, which is all it has; each call
+      //   decodes it and expands the matrix.
+      // AWS-LC has no deterministic signing API. Checks compare each
+      // signature with another library's.
+      let mut group = c.benchmark_group(concat!($name, "/sign/reuse-key-deterministic"));
+      group.bench_function(
+        "rscrypto",
+        checked(
+          || {
+            prepared_secret
+              .sign_deterministic(black_box(&message), black_box(empty))
+              .expect("sign")
+          },
+          |output| assert_eq!(output.as_bytes().as_slice(), empty_signature.as_slice()),
+        ),
+      );
+      group.bench_function(
+        "rustcrypto",
+        checked(
+          || {
+            external
+              .sign_deterministic(black_box(&message), black_box(empty))
+              .expect("sign")
+              .encode()
+          },
+          |output| assert_eq!(output.as_slice(), libcrux_empty_signature.as_ref().as_slice()),
+        ),
+      );
+      group.bench_function(
+        "libcrux",
+        checked(
+          || {
+            libcrux_ml_dsa::$libcrux::sign(
+              black_box(&libcrux.signing_key),
+              black_box(&message),
+              black_box(empty),
+              [0; 32],
+            )
+            .expect("sign")
+          },
+          |output| assert_eq!(output.as_ref().as_slice(), empty_signature.as_slice()),
+        ),
+      );
+      group.finish();
+
+      with_aws_lc! {
+        // Randomized signing under a reused secret key, with 32 fresh bytes
+        // from AWS-LC's RNG in every timed call. Keys are as in
+        // `sign/reuse-key-deterministic`, and:
+        // - AWS-LC's `PqdsaKeyPair` holds the encoded key; each call unpacks
+        //   it and expands the matrix.
+        // - `rscrypto-compact` decodes its compact key on each call, like
+        //   AWS-LC, and expands matrix rows on each rejection attempt.
+        // RustCrypto's randomized API needs its `rand_core` feature, which is
+        // off, so its row passes the randomness and the FIPS 204 prefix of an
+        // empty context to Sign_internal. libcrux takes the randomness as its
+        // signing input. Rejection counts vary with the randomness, so rows
+        // measure latency distributions. Each signature must verify under
+        // another library.
+        let fill =
+          |out: &mut [u8]| aws_lc_rs::rand::fill(out).map_err(|_| rscrypto::MlDsaError::RandomGenerationFailed);
+        let mut group = c.benchmark_group(concat!($name, "/sign/reuse-key-randomized"));
+        group.bench_function(
+          "rscrypto",
+          checked(
+            || black_box(prepared_secret.sign_with(black_box(&message), black_box(empty), fill).expect("sign")),
+            |output| {
+              aws_public
+                .verify_sig(&message, output.as_bytes())
+                .expect("AWS-LC verifies rscrypto");
+            },
+          ),
+        );
+        group.bench_function(
+          "rscrypto-compact",
+          checked(
+            || black_box(secret.sign_with(black_box(&message), black_box(empty), fill).expect("sign")),
+            |output| {
+              aws_public
+                .verify_sig(&message, output.as_bytes())
+                .expect("AWS-LC verifies rscrypto");
+            },
+          ),
+        );
+        group.bench_function(
+          "rustcrypto",
+          checked(
+            || {
+              let mut random = [0; 32];
+              aws_lc_rs::rand::fill(&mut random).expect("randomness");
+              let prefix = [0, 0];
+              black_box(
+                external
+                  .sign_internal(&[prefix.as_slice(), black_box(message.as_slice())], &random.into())
+                  .encode(),
+              )
+            },
+            |output| {
+              aws_public
+                .verify_sig(&message, output.as_slice())
+                .expect("AWS-LC verifies RustCrypto");
+            },
+          ),
+        );
+        group.bench_function(
+          "libcrux",
+          checked(
+            || {
+              let mut random = [0; 32];
+              aws_lc_rs::rand::fill(&mut random).expect("randomness");
+              libcrux_ml_dsa::$libcrux::sign(
+                black_box(&libcrux.signing_key),
+                black_box(&message),
+                black_box(empty),
+                random,
+              )
+              .expect("sign")
+            },
+            |output| {
+              aws_public
+                .verify_sig(&message, output.as_ref())
+                .expect("AWS-LC verifies libcrux");
+            },
+          ),
+        );
+        group.bench_function(
+          "aws-lc",
+          checked(
+            || {
+              let mut out = [0; rscrypto::$signature::LENGTH];
+              aws_secret.sign(black_box(&message), &mut out).expect("sign");
+              black_box(out)
+            },
+            |output| {
+              let parsed = rscrypto::$signature::try_from_slice(&output).expect("parse signature");
+              prepared_public
+                .verify(&message, &parsed)
+                .expect("rscrypto verifies AWS-LC");
+            },
+          ),
+        );
+        group.finish();
+      }
     }
 
     fn $corpus(c: &mut Criterion) {
@@ -383,30 +791,39 @@ profile!(
   corpus44,
   "mldsa44",
   MlDsa44,
+  MlDsa44PublicKey,
   MlDsa44SecretKey,
   MlDsa44Signature,
   MlDsa44,
-  ml_dsa_44
+  ml_dsa_44,
+  ML_DSA_44_SIGNING,
+  ML_DSA_44
 );
 profile!(
   mldsa65,
   corpus65,
   "mldsa65",
   MlDsa65,
+  MlDsa65PublicKey,
   MlDsa65SecretKey,
   MlDsa65Signature,
   MlDsa65,
-  ml_dsa_65
+  ml_dsa_65,
+  ML_DSA_65_SIGNING,
+  ML_DSA_65
 );
 profile!(
   mldsa87,
   corpus87,
   "mldsa87",
   MlDsa87,
+  MlDsa87PublicKey,
   MlDsa87SecretKey,
   MlDsa87Signature,
   MlDsa87,
-  ml_dsa_87
+  ml_dsa_87,
+  ML_DSA_87_SIGNING,
+  ML_DSA_87
 );
 
 /// DER OID of SHA-512, 2.16.840.1.101.3.4.2.3, as FIPS 204 Algorithm 4 binds it.
@@ -449,6 +866,20 @@ macro_rules! prehash_profile {
       let mut shake128_digest = [0; 32];
       Shake128::hash_into(&message, &mut shake128_digest);
       let shake128 = MlDsaPrehash::new(MlDsaPrehashAlgorithm::Shake128, &shake128_digest).expect("digest length");
+      // RustCrypto's Sign_internal over M', with tiny-keccak's SHAKE128, is
+      // independent of libcrux; it is the oracle of the libcrux rows.
+      let shake128_oracle = {
+        use tiny_keccak::{Hasher as _, Xof as _};
+
+        let mut digest = [0; 32];
+        let mut shake = tiny_keccak::Shake::v128();
+        shake.update(&message);
+        shake.squeeze(&mut digest);
+        let formatted = [&prefix[..], context, &SHAKE128_OID, &digest].concat();
+        external
+          .sign_internal(&[formatted.as_slice()], &[0; 32].into())
+          .encode()
+      };
 
       // NIST registers SHA-512 as the HashML-DSA prehash for all three sets.
       // No comparison library signs HashML-DSA with SHA-512, so RustCrypto's
@@ -499,19 +930,7 @@ macro_rules! prehash_profile {
               .expect("sign"),
             )
           },
-          |output| {
-            use tiny_keccak::{Hasher as _, Xof as _};
-
-            // RustCrypto's Sign_internal over M', with tiny-keccak's SHAKE128,
-            // is independent of libcrux.
-            let mut digest = [0; 32];
-            let mut shake = tiny_keccak::Shake::v128();
-            shake.update(&message);
-            shake.squeeze(&mut digest);
-            let formatted = [&prefix[..], context, &SHAKE128_OID, &digest].concat();
-            let expected = external.sign_internal(&[formatted.as_slice()], &[0; 32].into());
-            assert_eq!(output.as_ref().as_slice(), expected.encode().as_slice());
-          },
+          |output| assert_eq!(output.as_ref().as_slice(), shake128_oracle.as_slice()),
         ),
       );
       group.finish();
@@ -544,7 +963,17 @@ macro_rules! prehash_profile {
               black_box(&libcrux_signature),
             ))
           },
-          |result| result.expect("verify"),
+          |result| {
+            result.expect("verify");
+            assert_eq!(libcrux_signature.as_ref().as_slice(), shake128_oracle.as_slice());
+            libcrux_ml_dsa::$libcrux::verify_pre_hashed_shake128(
+              &libcrux.verification_key,
+              &message,
+              context,
+              &libcrux_ml_dsa::MLDSASignature::new(shake128_tampered.to_bytes()),
+            )
+            .expect_err("tampered signature must not verify");
+          },
         ),
       );
       group.finish();
@@ -593,195 +1022,6 @@ prehash_profile!(prehash44, "mldsa44", MlDsa44, MlDsa44Signature, ml_dsa_44);
 prehash_profile!(prehash65, "mldsa65", MlDsa65, MlDsa65Signature, ml_dsa_65);
 prehash_profile!(prehash87, "mldsa87", MlDsa87, MlDsa87Signature, ml_dsa_87);
 
-#[cfg(any(
-  all(
-    any(unix, windows),
-    not(target_arch = "wasm32"),
-    not(any(target_arch = "s390x", target_arch = "powerpc64"))
-  ),
-  all(
-    target_arch = "powerpc64",
-    target_endian = "little",
-    target_os = "linux",
-    target_env = "gnu"
-  )
-))]
-mod aws {
-  use super::{Criterion, MlDsa44, MlDsa65, MlDsa87, bench_config, black_box, checked, tampered};
-  // AWS-LC exposes randomized pure signing with empty context. Keep these rows
-  // separate from the fixed-randomness/deterministic comparisons above.
-  macro_rules! aws_profile {
-    ($function:ident, $name:literal, $profile:ident, $public:ident, $signature:ident, $sign:ident, $verify:ident) => {
-      fn $function(c: &mut Criterion) {
-        use aws_lc_rs::{
-          encoding::AsRawBytes,
-          signature::{KeyPair, PqdsaKeyPair, UnparsedPublicKey},
-        };
-        if !bench_config::selected(concat!($name, "/cross/")) {
-          return;
-        }
-        let seed = [0x42; 32];
-        let message = [0xa5; 32];
-        let (public, secret) = $profile::keypair_from_seed(&seed).expect("keygen");
-        let mut secret_storage = Default::default();
-        let prepared = secret.prepare(&mut secret_storage).expect("prepare secret");
-        let mut public_storage = Default::default();
-        let prepared_public = public.prepare(&mut public_storage).expect("prepare public");
-        let external = PqdsaKeyPair::from_seed(&aws_lc_rs::signature::$sign, &seed).expect("AWS-LC keygen");
-        let external_public = UnparsedPublicKey::new(&aws_lc_rs::signature::$verify, external.public_key().as_ref())
-          .parse()
-          .expect("parse public");
-        let signature = prepared.sign_deterministic(&message, &[]).expect("signature");
-        let tampered = tampered(signature.to_bytes(), rscrypto::$signature::try_from_slice);
-
-        // Both rows include seed expansion, expanded wire outputs, and key/output
-        // destruction. AWS-LC owns heap buffers; rscrypto owns inline arrays.
-        let mut group = c.benchmark_group(concat!($name, "/cross/keygen/seed-encoded"));
-        group.bench_function(
-          "rscrypto",
-          checked(
-            || {
-              let (pk, sk) = $profile::keypair_from_seed(black_box(&seed)).expect("keygen");
-              (pk.to_bytes(), sk.expose_secret())
-            },
-            |(pk, sk)| {
-              assert_eq!(external.public_key().as_ref(), pk.as_slice());
-              assert_eq!(
-                external
-                  .private_key()
-                  .as_raw_bytes()
-                  .expect("expanded key")
-                  .as_ref(),
-                sk.as_ref()
-              );
-            },
-          ),
-        );
-        group.bench_function(
-          "aws-lc",
-          checked(
-            || {
-              let key = PqdsaKeyPair::from_seed(&aws_lc_rs::signature::$sign, black_box(&seed)).expect("keygen");
-              let mut pk = [0u8; rscrypto::$public::LENGTH];
-              pk.copy_from_slice(key.public_key().as_ref());
-              (pk, key.private_key().as_raw_bytes().expect("expanded key"))
-            },
-            |(pk, sk)| {
-              assert_eq!(pk, public.to_bytes());
-              assert_eq!(sk.as_ref(), secret.expose_secret().as_ref());
-            },
-          ),
-        );
-        group.finish();
-
-        // Reusable key owners are prepared outside timing. Both request fresh
-        // 32-byte randomness from AWS-LC's RNG and return a complete signature.
-        // Random rejection counts vary; these rows measure latency distributions.
-        // Each randomized signature must verify under the other library.
-        let mut group = c.benchmark_group(concat!($name, "/cross/sign/reused-key-randomized-aws-rng"));
-        group.bench_function(
-          "rscrypto",
-          checked(
-            || {
-              black_box(
-                prepared
-                  .sign_with(black_box(&message), &[], |out| {
-                    aws_lc_rs::rand::fill(out).map_err(|_| rscrypto::MlDsaError::RandomGenerationFailed)
-                  })
-                  .expect("sign"),
-              )
-            },
-            |output| {
-              external_public
-                .verify_sig(&message, output.as_bytes())
-                .expect("AWS-LC verifies rscrypto");
-            },
-          ),
-        );
-        group.bench_function(
-          "aws-lc",
-          checked(
-            || {
-              let mut out = [0u8; rscrypto::$signature::LENGTH];
-              external.sign(black_box(&message), &mut out).expect("sign");
-              black_box(out)
-            },
-            |output| {
-              let parsed = rscrypto::$signature::try_from_slice(&output).expect("parse signature");
-              prepared_public
-                .verify(&message, &parsed)
-                .expect("rscrypto verifies AWS-LC");
-            },
-          ),
-        );
-        group.finish();
-
-        // Both retain their public-key owner outside timing and verify the same
-        // signature. AWS-LC's API takes encoded signatures; rscrypto takes its
-        // validated signature type. Internal work remains charged to each API.
-        let mut group = c.benchmark_group(concat!($name, "/cross/verify/reused-key"));
-        group.bench_function(
-          "rscrypto",
-          checked(
-            || black_box(prepared_public.verify(black_box(&message), black_box(&signature))),
-            |result| {
-              result.expect("verify");
-              prepared_public
-                .verify(&message, &tampered)
-                .expect_err("tampered signature must not verify");
-              external_public
-                .verify_sig(&message, signature.as_bytes())
-                .expect("AWS-LC accepts the verified signature");
-            },
-          ),
-        );
-        group.bench_function(
-          "aws-lc",
-          checked(
-            || black_box(external_public.verify_sig(black_box(&message), black_box(signature.as_bytes()))),
-            |result| result.expect("verify"),
-          ),
-        );
-        group.finish();
-      }
-    };
-  }
-
-  aws_profile!(
-    mldsa44,
-    "mldsa44",
-    MlDsa44,
-    MlDsa44PublicKey,
-    MlDsa44Signature,
-    ML_DSA_44_SIGNING,
-    ML_DSA_44
-  );
-  aws_profile!(
-    mldsa65,
-    "mldsa65",
-    MlDsa65,
-    MlDsa65PublicKey,
-    MlDsa65Signature,
-    ML_DSA_65_SIGNING,
-    ML_DSA_65
-  );
-  aws_profile!(
-    mldsa87,
-    "mldsa87",
-    MlDsa87,
-    MlDsa87PublicKey,
-    MlDsa87Signature,
-    ML_DSA_87_SIGNING,
-    ML_DSA_87
-  );
-
-  pub(super) fn run(c: &mut Criterion) {
-    mldsa44(c);
-    mldsa65(c);
-    mldsa87(c);
-  }
-}
-
 fn main() {
   // ML-DSA-87 fixtures and the RustCrypto oracle's key expansion overflow the
   // 1 MiB Windows main-thread stack; run on a thread with an explicit stack.
@@ -795,28 +1035,6 @@ fn main() {
 
 fn benchmarks() {
   bench_config::run(&[
-    mldsa44,
-    mldsa65,
-    mldsa87,
-    corpus44,
-    corpus65,
-    corpus87,
-    prehash44,
-    prehash65,
-    prehash87,
-    #[cfg(any(
-      all(
-        any(unix, windows),
-        not(target_arch = "wasm32"),
-        not(any(target_arch = "s390x", target_arch = "powerpc64"))
-      ),
-      all(
-        target_arch = "powerpc64",
-        target_endian = "little",
-        target_os = "linux",
-        target_env = "gnu"
-      )
-    ))]
-    aws::run,
+    mldsa44, mldsa65, mldsa87, corpus44, corpus65, corpus87, prehash44, prehash65, prehash87,
   ]);
 }

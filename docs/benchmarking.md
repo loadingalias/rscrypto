@@ -347,6 +347,28 @@ rscrypto's production reader uses ordinary reads. The benchmark source owns
 these boundaries. This target does not qualify short-prefix streaming or keyed
 file performance.
 
+### BLAKE3 threads and builds
+
+`rscrypto` BLAKE3 can use Rayon threads only with the `parallel` feature, which is not a default feature.
+Two catalog targets build the same binary:
+
+- **`blake3_serial`, without `parallel`:** single-thread groups under `blake3/serial/`:
+  `hash`, `keyed`, `derive-key/context`, `derive-key/prepared-context`, `xof`, `ordered`, and `ordered-alignment`.
+  Upstream rows use its one-shot or `Hasher` APIs, which are single-threaded.
+  The headline uses the `hash` and `keyed` groups, because a default install hashes on one thread.
+- **`blake3`, with `parallel`:** groups that allow threads, under `blake3/parallel/`:
+  `hash`, `keyed`, `derive-key/context`, and `xof`.
+  `rscrypto` threads when its CPU profile's cost model admits the input.
+  `blake3` is upstream's single-threaded API, and `blake3-rayon` is `Hasher::update_rayon`.
+  At each size, the faster upstream row counts.
+  Both libraries use the global Rayon pool, which starts before timing.
+  Report these results with the host's core and thread topology.
+- The `blake3` build also runs `batch`, `mixed-batch`, and `streaming`. No row of those groups uses threads.
+- `derive-key/context` hashes the context string in every timed call, on both sides.
+  `derive-key/prepared-context` hashes it before timing.
+  There, `rscrypto` passes a `Blake3DeriveContext`; `rscrypto-cached` calls `Blake3::derive_key`,
+  which reuses the context from a per-thread cache; and upstream builds a hazmat `Hasher` from the context key in each call.
+
 ### BLAKE3 mixed batches
 
 `just bench blake3-mixed` compares batch and serial rscrypto calls with locked
@@ -410,21 +432,58 @@ The AEAD `copy-and-encrypt`, `copy-and-decrypt`, `copy-and-seal`, and `copy-and-
 
 These are not cryptography-only measurements,
 and they are not complete packet-processing measurements.
-Construction-only and header-mask groups state their own boundaries next to their registrations.
+
+### QUIC header protection
+
+The groups compare the RFC 9001 header-protection APIs of `rscrypto`, ring, and aws-lc-rs.
+RustCrypto has no such API, so its `rustcrypto-composed` rows build the mask from `aes` and `chacha20`.
+
+- **`construct`:** build a reusable context from borrowed key bytes, then destroy it, in each timed call.
+  `rscrypto` also copies the bytes into its typed key, and zeroizes that key and the context.
+  ring does not zeroize.
+  aws-lc-rs builds an unused AES decrypt schedule and zeroizes both AES schedules.
+  RustCrypto `aes` is built without its `zeroize` feature.
+  RustCrypto has no ChaCha20 construct row, because it has no key-only ChaCha20 object.
+- **`mask`:** compute one five-byte mask with a context built outside timing.
+  ring and aws-lc-rs take a slice and return a `Result`.
+  The composed AES row encrypts a full block. The composed ChaCha20 row keys a new core on every call.
+- Every row must reproduce the RFC 9001 Appendix A.2 and A.5 masks before timing,
+  plus the bench-sample mask on which RustCrypto and ring agree.
+  AES-256 has no published vector, so that agreement is its only oracle.
 
 ### Other primitive rows
 
-- Ed25519 `verify/rscrypto` reuses a public key constructed outside timing.
-  `verify/rscrypto-import` imports the encoded public key and verifies one signature in each timed call.
-  Both rows use the same message and signature;
-  untimed checks compare the public key and signature with Dalek.
-  The import row exposes setup costs that key reuse can amortize.
-  The diagnostic `verify-phase/portable-double-scalar` and `verify-phase/aarch64-asm-double-scalar` rows include portable public-point decoding and result encoding;
-  they do not measure cached-key verification alone.
-- ECDSA P-256 and P-384 `verify/rscrypto` reuse a public key and its verification table built outside timing.
-  `verify/rscrypto-import` parses the uncompressed SEC1 key, builds that table, and verifies one signature
-  in each timed call, as a TLS certificate or handshake signature check does.
-  The ring and AWS-LC rows parse the same SEC1 bytes in each timed call.
+- Ed25519 and ECDSA verification has two tasks.
+  - `verify/reuse-key` builds each library's key object outside timing and times verification.
+    `rscrypto` and Dalek reuse the decoded Ed25519 point. `rscrypto` reuses its ECDSA verification table,
+    and RustCrypto reuses a `VerifyingKey`.
+    aws-lc-rs reuses a `ParsedPublicKey`, which saves parsing and allocation.
+    AWS-LC still decodes the Ed25519 point in each call, and re-encodes an ECDSA signature as DER in each call.
+    ring and dryoc have no API that reuses a parsed key, so they are absent.
+  - `verify/import-key` gives every library the same encoded key and signature bytes,
+    and times key import and validation, signature parsing, verification, and destruction,
+    as a TLS certificate or handshake check does.
+    `rscrypto` also builds the ECDSA verification table that key reuse amortizes. aws-lc-rs allocates an `EVP_PKEY`.
+  - Each check also requires the timed path to reject a key that is not a curve point.
+  - The diagnostic `verify-phase/portable-double-scalar` and `verify-phase/aarch64-asm-double-scalar` rows
+    include portable public-point decoding and result encoding; they do not measure cached-key verification alone.
+- ECDSA `sign/rscrypto` is the default `try_sign` API, which needs no entropy source.
+  `rscrypto-blinded` returns the same signature through the blinded path.
+- ECDH agreement has two tasks.
+  `agreement/parsed-peer` parses and validates the peer key outside timing, and times the scalar multiplication.
+  aws-lc-rs clones its `ParsedPublicKey` in each call, because `agree` consumes the peer.
+  ring and libcrux have no parsed-peer API, so they are absent.
+  `agreement/encoded-peer` gives every library the NIST peer key as identical uncompressed SEC1 bytes,
+  and also times parsing and validation.
+  X25519 `diffie-hellman/encoded-peer` builds the peer key from its 32 bytes inside timing in every row.
+  Dalek also runs its contributory check.
+  Each check also requires the timed path to reject an invalid peer.
+- ECDH `key-generation` turns a caller scalar into a private key, without deriving the public key.
+  `public-key` derives the public key from a private key that the caller holds.
+  `public-key-from-secret` imports the scalar bytes and derives the encoded public key.
+  aws-lc-rs takes part only in `public-key-from-secret`, because its key import already derives and caches
+  the public point. libcrux has no key object, so it is absent from `public-key`.
+  ring cannot import a scalar, so it is absent from `public-key-from-secret`.
 - The ChaCha diagnostic group `chacha20-copy-and-xor` restores the message and applies the keystream in the timed closure,
   with a reused allocated buffer.
   Poly1305 reads immutable fixture bytes and returns a tag, without restoring a message buffer.
@@ -438,8 +497,8 @@ Construction-only and header-mask groups state their own boundaries next to thei
 - BLAKE3 `ordered` rows compare identical ordered bytes through one-shot, one-update,
   and two-update calls. Prefix/bulk and bulk/suffix cases have separate inputs;
   reversing their byte order is not an equivalent comparison. Construction, output,
-  and destruction stay timed; fixture allocation does not. Derive rows use each
-  library's normal context setup, including rscrypto's warm context cache.
+  and destruction stay timed; fixture allocation does not. Derive rows hash the
+  context string in every call, on both sides. These groups run in `blake3_serial`.
   Upstream's `zeroize` feature is disabled, so cleanup costs are not equivalent.
   Every measured operation is checked against upstream before timing.
 - BLAKE3 `ordered-alignment` repeats selected ordered cases with identical bytes
@@ -449,6 +508,36 @@ Construction-only and header-mask groups state their own boundaries next to thei
   validation and consume every CV, with allocation outside timing. Every CV is
   checked against upstream's non-root hash at its chunk offset.
   These component rows do not measure public dispatch or complete hashing.
+- HKDF `expand` builds every pseudorandom key outside timing, from the same PRK bytes.
+  aws-lc-rs uses `Prk::new_less_safe`, because its `Salt::extract` only stores the inputs
+  and would run Extract again inside every `fill`.
+  AWS-LC's `HKDF_expand` still keys HMAC in each call: two more compressions than the libraries that keep a keyed state.
+- RSA `verify-*/reuse-key` prepares the key outside timing, and each call verifies one signature.
+  `rscrypto` reuses a scratch that caches R²; `rscrypto-oneshot` rebuilds it in each call.
+  aws-lc-rs reuses a `ParsedPublicKey`, which caches its Montgomery context, and builds an `EVP_PKEY_CTX` in each call.
+  RustCrypto keeps only n and e, and converts the signature in each call.
+  ring has no prepared-key API, so its `RsaPublicKeyComponents` row rebuilds the modulus in each call.
+- RSA `verify-*/import-key` parses identical PKCS#1 bytes, validates the key, and verifies, in each call.
+  All four libraries reject non-minimal DER and an even modulus.
+  `rscrypto` requires e = 65537 and its policy's size range.
+  ring, AWS-LC, and RustCrypto accept odd e from 3 to 2³³−1.
+  RustCrypto stops at 4096 bits; aws-lc-rs checks its 2048–8192-bit range only when it verifies.
+- RSA `parse-spki` parses and validates identical SPKI bytes. aws-lc-rs tries PKCS#1 first and copies the input.
+  ring has no SPKI parser.
+- RSA signing and OAEP name their entropy: `fixed` is a caller blinding pair,
+  `caller-entropy` is a fill closure or RNG that writes fixed bytes,
+  and `fresh-entropy` is new randomness in every call.
+  `rscrypto` and RustCrypto use `getrandom`. aws-lc-rs uses AWS-LC's DRBG and a cached blinding pair.
+  ring signs without blinding. RustCrypto and aws-lc-rs allocate their outputs inside timing.
+  Key generation stays outside the headline, because prime search makes its time vary widely.
+- HMAC-SHA3 rows time one tag from a key set up once outside timing.
+  `rscrypto` and `aws-lc` (AWS-LC's C `HMAC_CTX` through aws-lc-sys) both cache the Keccak states
+  after the ipad and opad blocks. `aws-lc` reuses them through `HMAC_Init_ex` with a null key, inside timing.
+  `rustcrypto-simplehmac` caches the ipad state and the raw opad block, and absorbs the opad block again for every tag.
+  That is one more Keccak permutation per tag: 1.5x the work below the rate, and under 1.01x from 16 KiB.
+  RustCrypto's `hmac::Hmac` would cache the opad state, but `sha3` 0.12 does not expose the block-level core it needs.
+  The aws-lc-rs and ring APIs have no HMAC-SHA3.
+  The `aws-lc` row exists only where aws-lc-sys is a dev-dependency.
 - Ascon's `rscrypto/scalar-loop` rows compare repeated calls to the `rscrypto` scalar API with its batch API.
   They do not compare with an external library.
 - RapidHash `rapidhash-v3-64` and `rapidhash-stream` rows compute the same C++ RapidHash V3 function in both libraries.
@@ -478,18 +567,28 @@ Each parameter set has its own groups.
 | --- | --- | --- |
 | `keygen/derand-encoded` | Seed from the caller; generation and export | Encoded public key and expanded secret key as fixed byte arrays |
 | `keygen/internal-entropy-encoded` | AWS-LC generation, internal entropy, and export | The same key encodings as fixed byte arrays |
-| `encapsulate/derand-reuse-matrix-prepared` | Reused `rscrypto` key with cached public matrix; randomness from the caller | Ciphertext array and 32-byte shared-secret array |
-| `encapsulate/derand-reuse-decoded` | Reused RustCrypto decoded key and cached key hash; matrix sampling and caller randomness stay timed | The same ciphertext and secret arrays |
+| `encapsulate/derand-reuse-key` | Each library's best reused key, checked once outside timing; randomness from the caller | Ciphertext array and 32-byte shared-secret array |
 | `encapsulate/derand-reuse-encoded` | Reused `rscrypto`, libcrux, or fips203 encoded-key wrapper; caller randomness; per-call decoding stays timed | The same ciphertext and secret arrays |
 | `encapsulate/derand-import-encoded` | Identical public-key bytes; each API's import, validation, and encapsulation with caller randomness | The same ciphertext and secret arrays |
-| `encapsulate/internal-entropy-reuse-native` | Reused AWS-LC key object; internal entropy | Ciphertext and secret converted to fixed arrays |
 | `encapsulate/internal-entropy-import-encoded` | The same public-key bytes; AWS-LC import and internal entropy | Ciphertext and secret converted to fixed arrays |
-| `decapsulate/reuse-matrix-prepared` | Reused `rscrypto` key with cached public matrix, and typed ciphertext | 32-byte shared-secret array |
-| `decapsulate/reuse-decoded` | Reused RustCrypto decoded key and typed ciphertext; re-encryption samples the public matrix inside timing | 32-byte shared-secret array |
+| `decapsulate/prepare-key` | `rscrypto` only: the preparation that its `reuse-key` row amortizes | A prepared key |
+| `decapsulate/reuse-key` | Each library's best reused key, and the ciphertext | 32-byte shared-secret array |
 | `decapsulate/reuse-encoded` | Reused `rscrypto`, libcrux, or fips203 encoded-key wrapper and typed ciphertext; per-call decoding stays timed | 32-byte shared-secret array |
-| `decapsulate/reuse-native` | Reused AWS-LC key object and borrowed ciphertext bytes | Shared secret converted to a 32-byte array |
 | `decapsulate/import-encoded` | Identical expanded secret-key and ciphertext bytes; each API's import, validation, and decapsulation | 32-byte shared-secret array |
 
+- The `reuse-key` groups are the task view: the keys cache different work, by design.
+  - `rscrypto`'s prepared key holds the decoded key, the expanded public matrix, and H(ek),
+    plus the decryption mask for decapsulation.
+  - RustCrypto's key holds the decoded key and H(ek), and samples the matrix in each call.
+  - libcrux and fips203 keys hold the encoded bytes, so decoding and matrix sampling stay timed.
+  - AWS-LC cannot take caller randomness, so it joins only decapsulation.
+    There it holds the encoded key and runs the hash check in each call.
+- The `reuse-encoded` groups compare equal key depth.
+  There, `rscrypto` also runs the FIPS 203 key check in every call, and libcrux and fips203 checked once outside timing.
+- Import rows run the FIPS 203 checks inside timing.
+  libcrux import does not check, so its rows call `validate_public_key` or `validate_private_key`.
+  `rscrypto` runs the check twice: in `try_from_slice`, and again in `Kem::encapsulate` or `Kem::decapsulate`.
+  Each import check also requires the timed path to reject a key with a coefficient of at least q, or a changed H(ek).
 - All ML-KEM rows include output conversion and the destruction of per-call objects.
   `Criterion::iter` includes the destruction of returned arrays.
 - Reused keys are constructed and destroyed outside timing.
@@ -500,7 +599,7 @@ Each parameter set has its own groups.
   and it does not equalize the cleanup policies of the libraries.
   The rows measure the selected APIs on valid inputs.
   They do not show identical validation or zeroization guarantees.
-- RustCrypto takes part in encapsulation and in reused decoded-key decapsulation.
+- RustCrypto takes part in encapsulation and in reused-key decapsulation.
   Its decoded secret key is built from the fixture seed outside timing.
 - Expanded-key generation and import rows use implementations that have expanded-key APIs.
 
@@ -541,6 +640,31 @@ The reused-memory groups (`argon2id-owasp/salt16-raw32-reused-memory` and `scryp
 - `rustcrypto/reused-memory` calls `hash_password_into_with_memory`, built without RustCrypto's `zeroize` feature.
   It does not clear its buffer, so the rows do not do equal cleanup.
 - Untimed checks compare all 32 output bytes with RustCrypto, after a call has already used the memory.
+
+## ML-DSA comparison contracts
+
+ML-DSA groups use a 32-byte message. Keys are built outside timing unless a group imports them.
+
+- **Task groups:** `sign/reuse-key-deterministic`, `sign/reuse-key-randomized`, `verify/reuse-key`, and `verify/import-key`.
+  They use an empty context, because aws-lc-rs takes none.
+  Each library uses its best API, so how much each key caches is a design difference.
+  - Verify rows parse the encoded signature inside timing. `import-key` also imports identical public-key bytes.
+  - Randomized rows take 32 bytes from AWS-LC's RNG in each call, in every library.
+    That group exists only where aws-lc-rs builds.
+    RustCrypto signs through `sign_internal` with the empty-context prefix,
+    because its randomized API needs a `rand_core` feature that the benchmarks do not enable.
+  - `rscrypto-compact` decodes its key in every call, as AWS-LC does.
+  - AWS-LC has no deterministic signing API, so it is absent from the deterministic group.
+  - Each verify check runs the timed path. It must accept the signature,
+    and reject a tampered and a malformed one.
+- **Equal key-depth groups:** `encoded-key` and `prepared-key`, with an 18-byte context.
+  Encoded-key rows decode the key in every call.
+  Prepared-key rows cache the matrix and the transformed vectors.
+  In `verify/prepared-key`, RustCrypto's signature is decoded outside timing, while `rscrypto` decodes inside.
+- **`keygen/seed-encoded`:** turns a seed into the encoded public key and the expanded secret key.
+  Generation, export, and destruction are timed.
+- There is no signing import group: `rscrypto` and AWS-LC validate an imported secret key by recomputing
+  the public key, and libcrux and RustCrypto do not. Such a group would compare validation policies.
 
 ## Measure locally
 
@@ -685,8 +809,8 @@ Target names, including unfiltered `sha2`, run without a scope override.
 
 - P-256 ECDH uses the `p256-ecdh` selector.
   Exact profiling uses the `auth` catalog target that owns it.
-  Its rows compare caller-filled generation, public derivation, canonical SEC1 parsing, agreement,
-  and a TLS-shaped two-party roundtrip.
+  Its rows compare caller-filled generation, public derivation, canonical SEC1 parsing,
+  agreement with a parsed or an encoded peer key, and a TLS-shaped two-party roundtrip.
 - P-384 ECDH uses the `p384-ecdh` selector, with caller-filled generation, public-derivation, parsing, and agreement rows.
 
 The raw target results and the overview are the only performance record.
@@ -764,7 +888,8 @@ Benchmarking and profiling share the Cargo command and the CPU-flag policy.
 - Each distinct target configuration is built once, before its selected cases run.
 - Profiling and code inspection use the same catalog target configuration.
   `--diag` enables the same feature and internal compiler cfg in each command.
-- Only the BLAKE3 and password-hashing targets enable `parallel`, where their workloads use it.
+- The `blake3`, `blake3_file`, and password-hashing targets enable `parallel`, where their workloads use it.
+  `blake3_serial` builds the same binary without it, for the single-thread BLAKE3 comparisons.
 - Cargo ignores the panic setting for benchmarks,
   so the release profile's `panic = "abort"` stays a difference
   ([Cargo profiles](https://doc.rust-lang.org/cargo/reference/profiles.html)).

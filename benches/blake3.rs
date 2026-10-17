@@ -1,4 +1,11 @@
-//! Blake3 comparison benchmarks: rscrypto vs official blake3 crate.
+//! BLAKE3 comparison benchmarks: rscrypto against the official `blake3` crate.
+//!
+//! Two catalog builds share this binary. `blake3_serial` (no `parallel`)
+//! registers the single-thread task groups under `blake3/serial/`.
+//! `blake3` (with `parallel`) registers the multi-thread-allowed task groups
+//! under `blake3/parallel/` and the groups in which no row threads. `main`
+//! lists each build's groups. Every rscrypto row is checked against upstream
+//! output, and every upstream row against rscrypto output, before timing.
 
 #[path = "common/criterion.rs"]
 mod bench_config;
@@ -144,127 +151,197 @@ fn upstream_chunk_cvs(data: &[u8]) -> Vec<u8> {
   cvs
 }
 
-fn oneshot(c: &mut Criterion) {
-  if !bench_config::selected("blake3") {
+/// Case-ID segment of the task groups that both builds register: `serial`
+/// without `parallel` (no row threads), `parallel` with it (threads allowed).
+const BUILD: &str = if cfg!(feature = "parallel") {
+  "parallel"
+} else {
+  "serial"
+};
+
+const KEY: [u8; 32] = [0x42; 32];
+const CONTEXT: &str = "rscrypto benchmark derive-key context";
+const XOF_LEN: usize = 64;
+
+/// Hash one message in one call.
+///
+/// `blake3/serial/hash` (build `blake3_serial`): rscrypto `Blake3::digest`
+/// against `blake3::hash`; neither threads. Diagnostic `rscrypto-<kernel>` rows
+/// force one kernel through the same one-shot path.
+///
+/// `blake3/parallel/hash` (build `blake3`): threads are allowed. `Blake3::digest`
+/// joins on the current Rayon pool once the cost model of the CPU profile
+/// admits the input: from 64 KiB on the AArch64 NEON profile and from 256 KiB
+/// on the x86 AVX-512 profile, for example. `blake3::hash` is always serial.
+/// `blake3-rayon` calls `Hasher::new().update_rayon(..)` and `finalize`; it
+/// joins above the SIMD degree with no size gate. A comparison takes the
+/// faster upstream row at each size.
+///
+/// Timed: the call and its 32-byte output. Untimed: inputs and expected
+/// outputs. Neither library keeps state between calls. Both libraries share
+/// one global Rayon pool, which starts during an output check, before timing.
+fn hash(c: &mut Criterion) {
+  let name = format!("blake3/{BUILD}/hash");
+  if !bench_config::selected(&name) {
     return;
   }
   print_blake3_diag_once();
 
-  let inputs = common::comp_sizes();
-  let mut g = c.benchmark_group("blake3");
-
-  for (len, data) in &inputs {
+  let mut g = c.benchmark_group(name);
+  for (len, data) in &common::comp_sizes() {
     common::set_throughput(&mut g, *len);
-    let expected = *blake3::hash(data).as_bytes();
+    let upstream = *blake3::hash(data).as_bytes();
+    let ours = rscrypto::Blake3::digest(data);
 
     g.bench_function(
       BenchmarkId::new("rscrypto", len),
       checked(
         || rscrypto::Blake3::digest(black_box(data)),
-        |out| assert_eq!(out, expected),
+        |out| assert_eq!(out, upstream),
       ),
     );
 
     #[cfg(all(rscrypto_internal, feature = "diag"))]
-    for &kernel in diag_kernels() {
-      if !diag_blake3_kernel_available(kernel) {
-        continue;
+    if !cfg!(feature = "parallel") {
+      for &kernel in diag_kernels() {
+        if !diag_blake3_kernel_available(kernel) {
+          continue;
+        }
+        g.bench_function(
+          BenchmarkId::new(format!("rscrypto-{}", kernel.label()), len),
+          checked(
+            || {
+              diag_blake3_digest_with_kernel(kernel, black_box(data))
+                .expect("selected BLAKE3 benchmark kernel must be available")
+            },
+            |out| assert_eq!(out, upstream),
+          ),
+        );
       }
-      g.bench_function(
-        BenchmarkId::new(format!("rscrypto-{}", kernel.label()), len),
-        checked(
-          || {
-            diag_blake3_digest_with_kernel(kernel, black_box(data))
-              .expect("selected BLAKE3 benchmark kernel must be available")
-          },
-          |out| assert_eq!(out, expected),
-        ),
-      );
     }
 
     g.bench_function(
       BenchmarkId::new("blake3", len),
       checked(
         || blake3::hash(black_box(data)),
-        |out| assert_eq!(out.as_bytes(), &expected),
+        |out| assert_eq!(out.as_bytes(), &ours),
       ),
     );
-  }
 
+    if cfg!(feature = "parallel") {
+      g.bench_function(
+        BenchmarkId::new("blake3-rayon", len),
+        checked(
+          || blake3::Hasher::new().update_rayon(black_box(data)).finalize(),
+          |out| assert_eq!(out.as_bytes(), &ours),
+        ),
+      );
+    }
+  }
   g.finish();
 }
 
+/// Keyed-hash one message in one call with a constant 32-byte key.
+///
+/// Builds, threading, rows, and timing match `hash`: rscrypto
+/// `Blake3::keyed_digest` against `blake3::keyed_hash`, plus `blake3-rayon`
+/// (`Hasher::new_keyed(..).update_rayon(..)`, `finalize`) in
+/// `blake3/parallel/keyed`. Neither library keeps key state between calls.
 fn keyed(c: &mut Criterion) {
-  if !bench_config::selected("blake3/keyed") {
+  let name = format!("blake3/{BUILD}/keyed");
+  if !bench_config::selected(&name) {
     return;
   }
   print_blake3_diag_once();
 
-  let inputs = common::comp_sizes();
-  let key = [0x42u8; 32];
-  let mut g = c.benchmark_group("blake3/keyed");
-
-  for (len, data) in &inputs {
+  let mut g = c.benchmark_group(name);
+  for (len, data) in &common::comp_sizes() {
     common::set_throughput(&mut g, *len);
-    let expected = *blake3::keyed_hash(&key, data).as_bytes();
+    let upstream = *blake3::keyed_hash(&KEY, data).as_bytes();
+    let ours = *rscrypto::Blake3::keyed_digest(&KEY, data).as_bytes();
 
     g.bench_function(
       BenchmarkId::new("rscrypto", len),
       checked(
-        || rscrypto::Blake3::keyed_digest(black_box(&key), black_box(data)),
-        |out| assert_eq!(out.as_bytes(), &expected),
+        || rscrypto::Blake3::keyed_digest(black_box(&KEY), black_box(data)),
+        |out| assert_eq!(out.as_bytes(), &upstream),
       ),
     );
 
     #[cfg(all(rscrypto_internal, feature = "diag"))]
-    for &kernel in diag_kernels() {
-      if !diag_blake3_kernel_available(kernel) {
-        continue;
+    if !cfg!(feature = "parallel") {
+      for &kernel in diag_kernels() {
+        if !diag_blake3_kernel_available(kernel) {
+          continue;
+        }
+        g.bench_function(
+          BenchmarkId::new(format!("rscrypto-{}", kernel.label()), len),
+          checked(
+            || {
+              diag_blake3_keyed_digest_with_kernel(kernel, black_box(&KEY), black_box(data))
+                .expect("selected BLAKE3 benchmark kernel must be available")
+            },
+            |out| assert_eq!(out.as_bytes(), &upstream),
+          ),
+        );
       }
-      g.bench_function(
-        BenchmarkId::new(format!("rscrypto-{}", kernel.label()), len),
-        checked(
-          || {
-            diag_blake3_keyed_digest_with_kernel(kernel, black_box(&key), black_box(data))
-              .expect("selected BLAKE3 benchmark kernel must be available")
-          },
-          |out| assert_eq!(out.as_bytes(), &expected),
-        ),
-      );
     }
 
     g.bench_function(
       BenchmarkId::new("blake3", len),
       checked(
-        || blake3::keyed_hash(black_box(&key), black_box(data)),
-        |out| assert_eq!(out.as_bytes(), &expected),
+        || blake3::keyed_hash(black_box(&KEY), black_box(data)),
+        |out| assert_eq!(out.as_bytes(), &ours),
       ),
     );
-  }
 
+    if cfg!(feature = "parallel") {
+      g.bench_function(
+        BenchmarkId::new("blake3-rayon", len),
+        checked(
+          || {
+            blake3::Hasher::new_keyed(black_box(&KEY))
+              .update_rayon(black_box(data))
+              .finalize()
+          },
+          |out| assert_eq!(out.as_bytes(), &ours),
+        ),
+      );
+    }
+  }
   g.finish();
 }
 
-fn derive_key(c: &mut Criterion) {
-  if !bench_config::selected("blake3/derive-key") {
+/// Derive a key when each call supplies the context string, so each call
+/// hashes the 37-byte context, then the key material.
+///
+/// rscrypto builds `Blake3DeriveContext::new` and calls `derive_key_with`;
+/// `blake3::derive_key` hashes the context internally. Both hashes are timed.
+/// `Blake3::derive_key` is left out: its per-thread cache skips the context
+/// hash after the first call, which `derive-key/prepared-context` measures.
+/// Builds and threading match `hash`; `blake3-rayon` calls
+/// `Hasher::new_derive_key(..).update_rayon(..)` and `finalize`.
+fn derive_key_context(c: &mut Criterion) {
+  let name = format!("blake3/{BUILD}/derive-key/context");
+  if !bench_config::selected(&name) {
     return;
   }
   print_blake3_diag_once();
 
-  const CONTEXT: &str = "rscrypto benchmark derive-key context";
-
-  let inputs = common::comp_sizes();
-  let mut g = c.benchmark_group("blake3/derive-key");
-
-  for (len, data) in &inputs {
+  let mut g = c.benchmark_group(name);
+  for (len, data) in &common::comp_sizes() {
     common::set_throughput(&mut g, *len);
-    let expected = blake3::derive_key(CONTEXT, data);
+    let upstream = blake3::derive_key(CONTEXT, data);
+    let ours = rscrypto::Blake3::derive_key_with(&rscrypto::Blake3DeriveContext::new(CONTEXT), data);
 
     g.bench_function(
       BenchmarkId::new("rscrypto", len),
       checked(
-        || rscrypto::Blake3::derive_key(black_box(CONTEXT), black_box(data)),
-        |out| assert_eq!(out, expected),
+        || {
+          let context = rscrypto::Blake3DeriveContext::new(black_box(CONTEXT));
+          rscrypto::Blake3::derive_key_with(&context, black_box(data))
+        },
+        |out| assert_eq!(out, upstream),
       ),
     );
 
@@ -272,11 +349,82 @@ fn derive_key(c: &mut Criterion) {
       BenchmarkId::new("blake3", len),
       checked(
         || blake3::derive_key(black_box(CONTEXT), black_box(data)),
-        |out| assert_eq!(out, expected),
+        |out| assert_eq!(out, ours),
+      ),
+    );
+
+    if cfg!(feature = "parallel") {
+      g.bench_function(
+        BenchmarkId::new("blake3-rayon", len),
+        checked(
+          || {
+            *blake3::Hasher::new_derive_key(black_box(CONTEXT))
+              .update_rayon(black_box(data))
+              .finalize()
+              .as_bytes()
+          },
+          |out| assert_eq!(out, ours),
+        ),
+      );
+    }
+  }
+  g.finish();
+}
+
+/// Derive a key from a context hashed once, before timing.
+///
+/// `rscrypto` passes a prepared `Blake3DeriveContext` to `derive_key_with`.
+/// `rscrypto-cached` passes the context string to `Blake3::derive_key`; its
+/// per-thread cache already holds that context, so each call compares 37 bytes
+/// instead of hashing them. Upstream has no one-shot form for a prepared
+/// context: `blake3` builds `hazmat::HasherExt::new_from_context_key`, updates,
+/// and finalizes in each timed call. Only `blake3_serial` registers this
+/// single-thread group.
+fn derive_key_prepared_context(c: &mut Criterion) {
+  use blake3::hazmat::HasherExt as _;
+
+  const NAME: &str = "blake3/serial/derive-key/prepared-context";
+  if !bench_config::selected(NAME) {
+    return;
+  }
+  print_blake3_diag_once();
+
+  let prepared = rscrypto::Blake3DeriveContext::new(CONTEXT);
+  let context_key = blake3::hazmat::hash_derive_key_context(CONTEXT);
+  let mut g = c.benchmark_group(NAME);
+  for (len, data) in &common::comp_sizes() {
+    common::set_throughput(&mut g, *len);
+    let upstream = blake3::derive_key(CONTEXT, data);
+    let ours = rscrypto::Blake3::derive_key_with(&prepared, data);
+
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked(
+        || rscrypto::Blake3::derive_key_with(black_box(&prepared), black_box(data)),
+        |out| assert_eq!(out, upstream),
+      ),
+    );
+
+    g.bench_function(
+      BenchmarkId::new("rscrypto-cached", len),
+      checked(
+        || rscrypto::Blake3::derive_key(black_box(CONTEXT), black_box(data)),
+        |out| assert_eq!(out, upstream),
+      ),
+    );
+
+    g.bench_function(
+      BenchmarkId::new("blake3", len),
+      checked(
+        || {
+          let mut hasher = blake3::Hasher::new_from_context_key(black_box(&context_key));
+          hasher.update(black_box(data));
+          *hasher.finalize().as_bytes()
+        },
+        |out| assert_eq!(out, ours),
       ),
     );
   }
-
   g.finish();
 }
 
@@ -284,8 +432,12 @@ fn derive_key(c: &mut Criterion) {
 ///
 /// 64 messages fill every lane width evenly. 21 bytes is a short fingerprint
 /// with a partial final block; 64, 256, and 1,024 bytes end on a block
-/// boundary. The `blake3` row hashes one message per call; the reference crate
-/// has no batch API.
+/// boundary. `blake3/batch`: rscrypto `Blake3::digest_batch` against one
+/// `blake3::hash` call per message; upstream has no batch API. The
+/// rscrypto-only `blake3/batch-serial` makes one `Blake3::digest` call per
+/// message. Timed: every hash and the writes into reused output storage. No
+/// row threads, because every message fits one chunk, so only the `blake3`
+/// build registers these groups.
 fn batch(c: &mut Criterion) {
   if !bench_config::selected("blake3/batch") {
     return;
@@ -302,7 +454,8 @@ fn batch(c: &mut Criterion) {
   for (len, data) in &cases {
     let len = *len;
     let inputs: Vec<&[u8]> = data.chunks_exact(len).collect();
-    let expected: Vec<[u8; 32]> = inputs.iter().map(|input| *blake3::hash(input).as_bytes()).collect();
+    let upstream: Vec<[u8; 32]> = inputs.iter().map(|input| *blake3::hash(input).as_bytes()).collect();
+    let ours: Vec<[u8; 32]> = inputs.iter().map(|input| rscrypto::Blake3::digest(input)).collect();
     common::set_throughput(&mut g, MESSAGES.strict_mul(len));
 
     g.bench_function(
@@ -310,7 +463,7 @@ fn batch(c: &mut Criterion) {
       checked_with(
         vec![[0u8; 32]; MESSAGES],
         |outputs| rscrypto::Blake3::digest_batch(black_box(&inputs), black_box(&mut **outputs)),
-        |(), outputs| assert_eq!(*outputs, expected, "batch output mismatch at len={len}"),
+        |(), outputs| assert_eq!(*outputs, upstream, "batch output mismatch at len={len}"),
       ),
     );
     g.bench_function(
@@ -323,7 +476,7 @@ fn batch(c: &mut Criterion) {
           }
           black_box(&**outputs);
         },
-        |(), outputs| assert_eq!(*outputs, expected),
+        |(), outputs| assert_eq!(*outputs, ours),
       ),
     );
   }
@@ -333,7 +486,7 @@ fn batch(c: &mut Criterion) {
   for (len, data) in &cases {
     let len = *len;
     let inputs: Vec<&[u8]> = data.chunks_exact(len).collect();
-    let expected: Vec<[u8; 32]> = inputs.iter().map(|input| *blake3::hash(input).as_bytes()).collect();
+    let upstream: Vec<[u8; 32]> = inputs.iter().map(|input| *blake3::hash(input).as_bytes()).collect();
     common::set_throughput(&mut g, MESSAGES.strict_mul(len));
 
     g.bench_function(
@@ -346,13 +499,20 @@ fn batch(c: &mut Criterion) {
           }
           black_box(&*outputs);
         },
-        |(), outputs| assert_eq!(*outputs, expected),
+        |(), outputs| assert_eq!(*outputs, upstream),
       ),
     );
   }
   g.finish();
 }
 
+/// Hash 1 MiB through `update` calls of 64 B to 64 KiB, then finalize.
+///
+/// Timed: construction, every update, and finalization. No row threads, so
+/// only the `blake3` build registers this group. rscrypto's streaming
+/// admission needs at least 128 KiB in one update on the CPU profiles that
+/// enable it, and is off on AVX-512, NEON, z15, and POWER10 profiles.
+/// Upstream `Hasher::update` is serial.
 fn streaming(c: &mut Criterion) {
   if !bench_config::selected("blake3/streaming") {
     return;
@@ -360,7 +520,8 @@ fn streaming(c: &mut Criterion) {
   print_blake3_diag_once();
 
   let data = common::random_bytes(1048576);
-  let expected = *blake3::hash(&data).as_bytes();
+  let upstream = *blake3::hash(&data).as_bytes();
+  let ours = rscrypto::Blake3::digest(&data);
   let mut g = c.benchmark_group("blake3/streaming");
   g.throughput(criterion::Throughput::Bytes(data.len() as u64));
 
@@ -376,7 +537,7 @@ fn streaming(c: &mut Criterion) {
           }
           h.finalize()
         },
-        |out| assert_eq!(out, expected),
+        |out| assert_eq!(out, upstream),
       ),
     );
 
@@ -392,7 +553,7 @@ fn streaming(c: &mut Criterion) {
             diag_blake3_streaming_digest_with_kernel(kernel, black_box(&data), chunk_size)
               .expect("selected BLAKE3 benchmark kernel must be available")
           },
-          |out| assert_eq!(out, expected),
+          |out| assert_eq!(out, upstream),
         ),
       );
     }
@@ -407,7 +568,7 @@ fn streaming(c: &mut Criterion) {
           }
           h.finalize()
         },
-        |out| assert_eq!(out.as_bytes(), &expected),
+        |out| assert_eq!(out.as_bytes(), &ours),
       ),
     );
   }
@@ -415,54 +576,62 @@ fn streaming(c: &mut Criterion) {
   g.finish();
 }
 
+/// Absorb one message and squeeze 64 output bytes.
+///
+/// rscrypto `Blake3::xof` and `squeeze` against upstream
+/// `Hasher::new().update(..)`, `finalize_xof`, and `fill`. Builds, threading,
+/// and diagnostic rows match `hash`; `blake3-rayon` replaces `update` with
+/// `update_rayon`. Timed: reader construction, the squeeze, and the stack
+/// output buffer.
 fn xof(c: &mut Criterion) {
-  if !bench_config::selected("blake3/xof") {
+  use rscrypto::Xof as _;
+
+  let name = format!("blake3/{BUILD}/xof");
+  if !bench_config::selected(&name) {
     return;
   }
   print_blake3_diag_once();
 
-  const OUT_LEN: usize = 64;
-
-  let inputs = common::comp_sizes();
-  let mut g = c.benchmark_group("blake3/xof");
-
-  for (len, data) in &inputs {
+  let mut g = c.benchmark_group(name);
+  for (len, data) in &common::comp_sizes() {
     common::set_throughput(&mut g, *len);
-    let mut expected = [0u8; OUT_LEN];
-    upstream_xof(data, &mut expected);
+    let mut upstream = [0u8; XOF_LEN];
+    upstream_xof(data, &mut upstream);
+    let mut ours = [0u8; XOF_LEN];
+    rscrypto::Blake3::xof(data).squeeze(&mut ours);
 
     g.bench_function(
       BenchmarkId::new("rscrypto", len),
       checked(
         || {
-          use rscrypto::Xof;
-
           let mut xof = rscrypto::Blake3::xof(black_box(data));
-          let mut out = [0u8; OUT_LEN];
+          let mut out = [0u8; XOF_LEN];
           xof.squeeze(&mut out);
           out
         },
-        |out| assert_eq!(out, expected),
+        |out| assert_eq!(out, upstream),
       ),
     );
 
     #[cfg(all(rscrypto_internal, feature = "diag"))]
-    for &kernel in diag_kernels() {
-      if !diag_blake3_kernel_available(kernel) {
-        continue;
+    if !cfg!(feature = "parallel") {
+      for &kernel in diag_kernels() {
+        if !diag_blake3_kernel_available(kernel) {
+          continue;
+        }
+        g.bench_function(
+          BenchmarkId::new(format!("rscrypto-{}", kernel.label()), len),
+          checked(
+            || {
+              let mut out = [0u8; XOF_LEN];
+              diag_blake3_xof_with_kernel(kernel, black_box(data), &mut out)
+                .expect("selected BLAKE3 benchmark kernel must be available");
+              out
+            },
+            |out| assert_eq!(out, upstream),
+          ),
+        );
       }
-      g.bench_function(
-        BenchmarkId::new(format!("rscrypto-{}", kernel.label()), len),
-        checked(
-          || {
-            let mut out = [0u8; OUT_LEN];
-            diag_blake3_xof_with_kernel(kernel, black_box(data), &mut out)
-              .expect("selected BLAKE3 benchmark kernel must be available");
-            out
-          },
-          |out| assert_eq!(out, expected),
-        ),
-      );
     }
 
     g.bench_function(
@@ -472,15 +641,31 @@ fn xof(c: &mut Criterion) {
           let mut hasher = blake3::Hasher::new();
           hasher.update(black_box(data));
           let mut reader = hasher.finalize_xof();
-          let mut out = [0u8; OUT_LEN];
+          let mut out = [0u8; XOF_LEN];
           reader.fill(&mut out);
           out
         },
-        |out| assert_eq!(out, expected),
+        |out| assert_eq!(out, ours),
       ),
     );
-  }
 
+    if cfg!(feature = "parallel") {
+      g.bench_function(
+        BenchmarkId::new("blake3-rayon", len),
+        checked(
+          || {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update_rayon(black_box(data));
+            let mut reader = hasher.finalize_xof();
+            let mut out = [0u8; XOF_LEN];
+            reader.fill(&mut out);
+            out
+          },
+          |out| assert_eq!(out, ours),
+        ),
+      );
+    }
+  }
   g.finish();
 }
 
@@ -503,6 +688,8 @@ fn xof_output(c: &mut Criterion) {
     common::set_throughput(&mut g, out_len);
     let mut expected = vec![0u8; out_len];
     upstream_xof(&data, &mut expected);
+    let mut ours = vec![0u8; out_len];
+    rscrypto::Blake3::xof(&data).squeeze(&mut ours);
 
     g.bench_function(
       BenchmarkId::new("rscrypto", out_len),
@@ -546,7 +733,7 @@ fn xof_output(c: &mut Criterion) {
           reader.fill(black_box(out.as_mut_slice()));
           black_box(out[0])
         },
-        |_, out| assert_eq!(*out, expected),
+        |_, out| assert_eq!(*out, ours),
       ),
     );
   }
@@ -568,6 +755,7 @@ fn tail_diagnostics(c: &mut Criterion) {
     let data = common::random_bytes(chunks.strict_mul(BLAKE3_CHUNK_LEN));
     common::set_throughput(&mut digest_group, data.len());
     let expected = *blake3::hash(&data).as_bytes();
+    let ours = rscrypto::Blake3::digest(&data);
 
     digest_group.bench_function(
       BenchmarkId::new("rscrypto", chunks),
@@ -597,7 +785,7 @@ fn tail_diagnostics(c: &mut Criterion) {
       BenchmarkId::new("blake3", chunks),
       checked(
         || blake3::hash(black_box(&data)),
-        |out| assert_eq!(out.as_bytes(), &expected),
+        |out| assert_eq!(out.as_bytes(), &ours),
       ),
     );
   }
@@ -670,21 +858,33 @@ fn tail_diagnostics(c: &mut Criterion) {
 
 fn main() {
   mixed_batches::configure_isa().expect("valid BLAKE3 benchmark dispatch request");
-  bench_config::run(&[
-    oneshot,
-    keyed,
-    derive_key,
-    batch,
-    mixed_batches::bench,
-    streaming,
-    streaming_shapes::bench,
-    streaming_shapes::alignment_bench,
-    xof,
-    #[cfg(all(rscrypto_internal, feature = "diag"))]
-    xof_output,
-    #[cfg(all(rscrypto_internal, feature = "diag"))]
-    tail_diagnostics,
-    #[cfg(all(rscrypto_internal, feature = "diag"))]
-    leaf_alignment::bench,
-  ]);
+  if cfg!(feature = "parallel") {
+    // Build `blake3`: threads allowed, plus the groups in which no row threads.
+    bench_config::run(&[
+      hash,
+      keyed,
+      derive_key_context,
+      xof,
+      batch,
+      mixed_batches::bench,
+      streaming,
+      #[cfg(all(rscrypto_internal, feature = "diag"))]
+      xof_output,
+      #[cfg(all(rscrypto_internal, feature = "diag"))]
+      tail_diagnostics,
+      #[cfg(all(rscrypto_internal, feature = "diag"))]
+      leaf_alignment::bench,
+    ]);
+  } else {
+    // Build `blake3_serial`: single-thread task groups only.
+    bench_config::run(&[
+      hash,
+      keyed,
+      derive_key_context,
+      derive_key_prepared_context,
+      xof,
+      streaming_shapes::bench,
+      streaming_shapes::alignment_bench,
+    ]);
+  }
 }

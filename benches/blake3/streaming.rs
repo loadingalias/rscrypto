@@ -1,9 +1,26 @@
-//! Equivalent ordered bytes across one-shot, one-update, and two-update calls.
+//! Equal ordered bytes through one-shot, one-update, and two-update calls.
+//!
+//! Case IDs: `blake3/serial/ordered[-alignment]/<mode>/<shape>/<implementation>/<input>`.
+//! Each (mode, shape) pair is one task. `plain` hashes; `derive-context`
+//! derives a key, and every call hashes the context string: rscrypto through
+//! `Blake3DeriveContext::new`, upstream inside `derive_key` and
+//! `Hasher::new_derive_key`. `oneshot` is one call, `single-update` is
+//! construction, one update and finalization, and `two-update` splits the
+//! bytes at the case's split point.
+//!
+//! Timed: construction, context hashing, updates, finalization, the 32-byte
+//! output, and destruction. Untimed: fixture allocation and expected outputs.
+//! Upstream's `zeroize` feature is off, so cleanup costs differ.
+//!
+//! Only `blake3_serial` registers these groups. With `parallel`, rscrypto's
+//! one-shot path threads from 64 KiB on the AArch64 NEON profile, so the
+//! 65,537- to 66,559-byte cases would compare threaded rscrypto with serial
+//! `blake3::hash`.
 
 use core::hint::black_box;
 
 use criterion::Criterion;
-use rscrypto::{Blake3, Digest as _};
+use rscrypto::{Blake3, Blake3DeriveContext, Digest as _};
 
 use super::bench_config::checked;
 
@@ -11,7 +28,7 @@ const CONTEXT: &str = "rscrypto benchmark derive-key context";
 
 fn ours_oneshot<const DERIVE: bool>(data: &[u8]) -> [u8; 32] {
   if DERIVE {
-    Blake3::derive_key(CONTEXT, data)
+    Blake3::derive_key_with(&Blake3DeriveContext::new(black_box(CONTEXT)), data)
   } else {
     Blake3::digest(data)
   }
@@ -19,7 +36,7 @@ fn ours_oneshot<const DERIVE: bool>(data: &[u8]) -> [u8; 32] {
 
 fn reference_oneshot<const DERIVE: bool>(data: &[u8]) -> [u8; 32] {
   if DERIVE {
-    blake3::derive_key(CONTEXT, data)
+    blake3::derive_key(black_box(CONTEXT), data)
   } else {
     *blake3::hash(data).as_bytes()
   }
@@ -27,7 +44,7 @@ fn reference_oneshot<const DERIVE: bool>(data: &[u8]) -> [u8; 32] {
 
 fn ours_update<const DERIVE: bool, const SPLIT: bool>(data: &[u8], split: usize) -> [u8; 32] {
   let mut h = if DERIVE {
-    Blake3::new_derive_key(CONTEXT)
+    Blake3::new_derive_key_from(&Blake3DeriveContext::new(black_box(CONTEXT)))
   } else {
     Blake3::new()
   };
@@ -42,7 +59,7 @@ fn ours_update<const DERIVE: bool, const SPLIT: bool>(data: &[u8], split: usize)
 
 fn reference_update<const DERIVE: bool, const SPLIT: bool>(data: &[u8], split: usize) -> [u8; 32] {
   let mut h = if DERIVE {
-    blake3::Hasher::new_derive_key(CONTEXT)
+    blake3::Hasher::new_derive_key(black_box(CONTEXT))
   } else {
     blake3::Hasher::new()
   };
@@ -55,160 +72,217 @@ fn reference_update<const DERIVE: bool, const SPLIT: bool>(data: &[u8], split: u
   *h.finalize().as_bytes()
 }
 
-fn case<const DERIVE: bool>(c: &mut Criterion, name: &str, len: usize, split: Option<usize>, single: bool) {
-  let mode = if DERIVE { "derive" } else { "plain" };
-  let group = format!("blake3/ordered/{mode}/{name}");
-  if !super::bench_config::selected(&group) {
-    return;
-  }
-  let storage: Vec<u8> = (0..len.strict_add(1))
-    .map(|i| u8::try_from(i % 251).expect("fixture remainder fits"))
-    .collect();
-  let data = &storage[1..];
-  measure::<DERIVE>(c, &group, name, data, split, single);
-}
-
-fn measure<const DERIVE: bool>(
-  c: &mut Criterion,
-  group: &str,
-  name: &str,
-  data: &[u8],
+/// One ordered input: its name in case IDs, its bytes, and the call shapes it uses.
+struct Case {
+  input: String,
+  storage: Vec<u8>,
+  range: core::ops::Range<usize>,
   split: Option<usize>,
   single: bool,
-) {
-  let expected = reference_oneshot::<DERIVE>(data);
-  let mut g = c.benchmark_group(group);
-  super::common::set_throughput(&mut g, data.len());
+}
 
-  g.bench_function(
-    "rscrypto/oneshot",
-    checked(
-      || ours_oneshot::<DERIVE>(black_box(data)),
-      |out| assert_eq!(out, expected, "{name} one-shot"),
-    ),
-  );
-  g.bench_function(
-    "blake3/oneshot",
-    checked(
-      || reference_oneshot::<DERIVE>(black_box(data)),
-      |out| assert_eq!(out, expected),
-    ),
-  );
+impl Case {
+  fn data(&self) -> &[u8] {
+    &self.storage[self.range.clone()]
+  }
+}
 
-  if single {
-    g.bench_function(
-      "rscrypto/single-update",
-      checked(
-        || ours_update::<DERIVE, false>(black_box(data), 0),
-        |out| assert_eq!(out, expected, "{name} one-update"),
-      ),
-    );
-    g.bench_function(
-      "blake3/single-update",
-      checked(
-        || reference_update::<DERIVE, false>(black_box(data), 0),
-        |out| assert_eq!(out, expected),
-      ),
-    );
+#[derive(Clone, Copy, PartialEq)]
+enum Shape {
+  Oneshot,
+  SingleUpdate,
+  TwoUpdate,
+}
+
+impl Shape {
+  const ALL: [Self; 3] = [Self::Oneshot, Self::SingleUpdate, Self::TwoUpdate];
+
+  fn name(self) -> &'static str {
+    match self {
+      Self::Oneshot => "oneshot",
+      Self::SingleUpdate => "single-update",
+      Self::TwoUpdate => "two-update",
+    }
   }
 
-  if let Some(split) = split {
-    g.bench_function(
-      "rscrypto/two-update",
-      checked(
-        || ours_update::<DERIVE, true>(black_box(data), split),
-        |out| assert_eq!(out, expected, "{name} two-update"),
-      ),
-    );
-    g.bench_function(
-      "blake3/two-update",
-      checked(
-        || reference_update::<DERIVE, true>(black_box(data), split),
-        |out| assert_eq!(out, expected),
-      ),
-    );
+  fn applies(self, case: &Case) -> bool {
+    match self {
+      Self::Oneshot => true,
+      Self::SingleUpdate => case.single,
+      Self::TwoUpdate => case.split.is_some(),
+    }
+  }
+}
+
+/// Register the rscrypto and upstream rows of one (mode, shape) task over every applicable case.
+fn group<const DERIVE: bool>(c: &mut Criterion, operation: &str, shape: Shape, cases: &[Case]) {
+  let mode = if DERIVE { "derive-context" } else { "plain" };
+  let name = format!("{operation}/{mode}/{}", shape.name());
+  if !super::bench_config::selected(&name) {
+    return;
+  }
+  let mut g = c.benchmark_group(name);
+  for case in cases.iter().filter(|case| shape.applies(case)) {
+    let data = case.data();
+    let split = case.split.unwrap_or(0);
+    let input = &case.input;
+    let upstream = reference_oneshot::<DERIVE>(data);
+    let ours = ours_oneshot::<DERIVE>(data);
+    super::common::set_throughput(&mut g, data.len());
+    match shape {
+      Shape::Oneshot => {
+        g.bench_function(
+          format!("rscrypto/{input}"),
+          checked(
+            || ours_oneshot::<DERIVE>(black_box(data)),
+            |out| assert_eq!(out, upstream, "{input} one-shot"),
+          ),
+        );
+        g.bench_function(
+          format!("blake3/{input}"),
+          checked(
+            || reference_oneshot::<DERIVE>(black_box(data)),
+            |out| assert_eq!(out, ours),
+          ),
+        );
+      }
+      Shape::SingleUpdate => {
+        g.bench_function(
+          format!("rscrypto/{input}"),
+          checked(
+            || ours_update::<DERIVE, false>(black_box(data), 0),
+            |out| assert_eq!(out, upstream, "{input} one-update"),
+          ),
+        );
+        g.bench_function(
+          format!("blake3/{input}"),
+          checked(
+            || reference_update::<DERIVE, false>(black_box(data), 0),
+            |out| assert_eq!(out, ours),
+          ),
+        );
+      }
+      Shape::TwoUpdate => {
+        g.bench_function(
+          format!("rscrypto/{input}"),
+          checked(
+            || ours_update::<DERIVE, true>(black_box(data), split),
+            |out| assert_eq!(out, upstream, "{input} two-update"),
+          ),
+        );
+        g.bench_function(
+          format!("blake3/{input}"),
+          checked(
+            || reference_update::<DERIVE, true>(black_box(data), split),
+            |out| assert_eq!(out, ours),
+          ),
+        );
+      }
+    }
   }
   g.finish();
 }
 
-fn alignment_case<const DERIVE: bool>(c: &mut Criterion, name: &str, len: usize, split: Option<usize>, single: bool) {
-  let mode = if DERIVE { "derive" } else { "plain" };
-  for offset in [0usize, 1] {
-    let group = format!("blake3/ordered-alignment/{mode}/{name}/in-{offset}");
-    if !super::bench_config::selected(&group) {
-      continue;
-    }
-    let (storage, range) = super::leaf_alignment::fixture(len, offset);
-    measure::<DERIVE>(c, &group, name, &storage[range], split, single);
+fn groups(c: &mut Criterion, operation: &str, plain: &[Case], derive: &[Case]) {
+  for shape in Shape::ALL {
+    group::<false>(c, operation, shape, plain);
+    group::<true>(c, operation, shape, derive);
   }
 }
 
+/// Bytes `(i + 1) % 251` after one leading byte, so the input starts one byte past the allocation.
+fn case(input: String, len: usize, split: Option<usize>, single: bool) -> Case {
+  let storage: Vec<u8> = (0..len.strict_add(1))
+    .map(|i| u8::try_from(i % 251).expect("fixture remainder fits"))
+    .collect();
+  Case {
+    input,
+    storage,
+    range: 1..len.strict_add(1),
+    split,
+    single,
+  }
+}
+
+/// `case` at an address congruent to `offset` modulo 64, for offsets 0 and 1.
+fn aligned(input: &str, len: usize, split: Option<usize>, single: bool) -> impl Iterator<Item = Case> {
+  [0usize, 1].into_iter().map(move |offset| {
+    let (storage, range) = super::leaf_alignment::fixture(len, offset);
+    Case {
+      input: format!("{input}/in-{offset}"),
+      storage,
+      range,
+      split,
+      single,
+    }
+  })
+}
+
+/// Selected ordered cases at addresses congruent to 0 and 1 modulo 64.
 pub(super) fn alignment_bench(c: &mut Criterion) {
-  if !super::bench_config::selected("blake3/ordered-alignment/") {
+  const OPERATION: &str = "blake3/serial/ordered-alignment";
+  if !super::bench_config::selected(OPERATION) {
     return;
   }
-  alignment_case::<false>(c, "prefix-70-bulk-4096", 4166, Some(70), false);
-  alignment_case::<false>(c, "prefix-24-bulk-3104", 3128, Some(24), false);
+  let mut plain: Vec<Case> = Vec::new();
+  plain.extend(aligned("prefix-70-bulk-4096", 4166, Some(70), false));
+  plain.extend(aligned("prefix-24-bulk-3104", 3128, Some(24), false));
   for chunks in [3usize, 5, 6, 7] {
-    alignment_case::<false>(
-      c,
+    plain.extend(aligned(
       &format!("chunks-{chunks}-tail-70"),
       chunks.strict_mul(1024).strict_add(70),
       None,
       true,
-    );
+    ));
   }
+  let mut derive: Vec<Case> = Vec::new();
   for bulk in [4052usize, 4096] {
-    alignment_case::<true>(
-      c,
+    derive.extend(aligned(
       &format!("bulk-{bulk}-suffix-60"),
       bulk.strict_add(60),
       Some(bulk),
       true,
-    );
+    ));
   }
+  groups(c, OPERATION, &plain, &derive);
 }
 
 pub(super) fn bench(c: &mut Criterion) {
-  if !super::bench_config::selected("blake3/ordered") {
+  const OPERATION: &str = "blake3/serial/ordered";
+  if !super::bench_config::selected(&format!("{OPERATION}/")) {
     return;
   }
+  let mut plain = Vec::new();
   for prefix in [1usize, 24, 70, 1023] {
     for bulk in [1024usize, 2048, 4096, 8192, 16384, 32768, 65536] {
-      case::<false>(
-        c,
-        &format!("prefix-{prefix}-bulk-{bulk}"),
+      plain.push(case(
+        format!("prefix-{prefix}-bulk-{bulk}"),
         prefix.strict_add(bulk),
         Some(prefix),
         false,
-      );
+      ));
     }
   }
-  case::<false>(c, "prefix-24-bulk-3104", 3128, Some(24), false);
-
-  // Suffix rows hash envelope || fields, never the prefix rows' reversed bytes.
-  for bulk in [980usize, 1000, 4000, 4052, 4095, 4096, 16340, 16384] {
-    case::<true>(
-      c,
-      &format!("bulk-{bulk}-suffix-60"),
-      bulk.strict_add(60),
-      Some(bulk),
-      true,
-    );
-  }
+  plain.push(case("prefix-24-bulk-3104".to_owned(), 3128, Some(24), false));
   for chunks in [3usize, 5, 6, 7] {
     for tail in [1usize, 70, 1023] {
-      case::<false>(
-        c,
-        &format!("chunks-{chunks}-tail-{tail}"),
+      plain.push(case(
+        format!("chunks-{chunks}-tail-{tail}"),
         chunks.strict_mul(1024).strict_add(tail),
         None,
         true,
-      );
+      ));
     }
   }
-  case::<false>(c, "chunks-4-tail-70", 4166, None, true);
+  plain.push(case("chunks-4-tail-70".to_owned(), 4166, None, true));
   for len in [64, 1024] {
-    case::<false>(c, &format!("single-chunk-{len}"), len, None, true);
+    plain.push(case(format!("single-chunk-{len}"), len, None, true));
   }
+
+  // Suffix cases hash envelope || fields, never the prefix cases' reversed bytes.
+  let derive: Vec<Case> = [980usize, 1000, 4000, 4052, 4095, 4096, 16340, 16384]
+    .into_iter()
+    .map(|bulk| case(format!("bulk-{bulk}-suffix-60"), bulk.strict_add(60), Some(bulk), true))
+    .collect();
+  groups(c, OPERATION, &plain, &derive);
 }

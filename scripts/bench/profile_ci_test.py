@@ -96,8 +96,8 @@ class ManualProfile(unittest.TestCase):
     for operation, flag in (('prepare', '--prepare-archive'), ('capture', '--run-archive')):
       with self.subTest(operation=operation):
         command = profile_ci.command(selection, operation, selection['target'], 'archive with spaces.tar.gz')
-        self.assertEqual(command[:3], ['just', 'profile', 'blake3'])
-        self.assertIn('blake3/rscrypto/4096', command)
+        self.assertEqual(command[:3], ['just', 'profile', 'blake3_serial'])
+        self.assertIn('blake3/serial/hash/rscrypto/4096', command)
         self.assertIn('--diag', command)
         self.assertIn(flag, command)
         self.assertEqual(command[-1], 'archive with spaces.tar.gz')

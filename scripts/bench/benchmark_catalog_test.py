@@ -161,7 +161,7 @@ def main() -> None:
     ("auth", "pbkdf2-sha256/internal/iters=1000/rscrypto-oneshot/32", "diagnostic"),
     ("password_hashing", "argon2id-owasp/rscrypto/m=19MiB_t=2_p=1", "expensive"),
     ("rsa", "rsa-2048-private-signing/blinding-inverse-scratch-rscrypto", "diagnostic"),
-    ("rsa", "rsa-2048-private-signing/sign-pss-sha256-caller-entropy-scratch-rscrypto", "expensive"),
+    ("rsa", "rsa-2048-private-signing/sign-pss-sha256/caller-entropy/rscrypto", "expensive"),
     ("aead_kernels", "aead-kernel/poly1305-auth/dispatched/64", "diagnostic"),
     ("aead", "chacha20-poly1305/copy-and-encrypt/rscrypto/64", "ordinary"),
     ("aead", "chacha20-poly1305/copy-and-encrypt/rscrypto-owned/64", "diagnostic"),
@@ -183,7 +183,7 @@ def main() -> None:
     if binary == 'structural':
       continue
     source = (ROOT / Path(manifest).parent / "benches" / f"{binary}.rs").read_text()
-    if 'bench_config::run(&[' not in source:
+    if not re.search(r'bench_config::run\(&', source):
       fail(f"{binary} does not use the shared Criterion configuration")
     if re.search(r"\.(sample_size|measurement_time|warm_up_time|nresamples|confidence_level|significance_level|noise_threshold)\s*\(", source):
       fail(f"{binary} overrides the shared Criterion configuration")

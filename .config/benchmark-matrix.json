@@ -94,6 +94,13 @@
       "required": true,
       "features": ["std", "blake3", "parallel"]
     },
+    "blake3_serial": {
+      "binary": "blake3",
+      "kind": "criterion",
+      "family": "hashes",
+      "required": true,
+      "features": ["std", "blake3"]
+    },
     "blake3_file": {
       "binary": "blake3_file",
       "kind": "criterion",
@@ -330,6 +337,7 @@
       "cshake256",
       "blake2",
       "blake3",
+      "blake3_serial",
       "xxh3",
       "rapidhash",
       "ascon-hash256",
@@ -366,17 +374,17 @@
     },
     "auth/p256-ecdh": {
       "bench": "auth",
-      "case": "p256-ecdh/public-key/rscrypto-selected",
+      "case": "p256-ecdh/public-key/rscrypto",
       "diagnostic": false
     },
     "auth/p384-ecdh": {
       "bench": "auth",
-      "case": "p384-ecdh/agreement/rscrypto-selected",
+      "case": "p384-ecdh/agreement/parsed-peer/rscrypto",
       "diagnostic": false
     },
     "auth/p384-sign": {
       "bench": "auth",
-      "case": "ecdsa-p384/sign/rscrypto-deterministic/32",
+      "case": "ecdsa-p384/sign/rscrypto/32",
       "diagnostic": false
     },
     "auth/argon2id": {
@@ -420,13 +428,13 @@
       "diagnostic": false
     },
     "hashes/blake3": {
-      "bench": "blake3",
-      "case": "blake3/rscrypto/4096",
+      "bench": "blake3_serial",
+      "case": "blake3/serial/hash/rscrypto/4096",
       "diagnostic": true
     },
     "hashes/blake3-keyed": {
-      "bench": "blake3",
-      "case": "blake3/keyed/rscrypto/64",
+      "bench": "blake3_serial",
+      "case": "blake3/serial/keyed/rscrypto/64",
       "diagnostic": true
     },
     "checksums/crc32c": {

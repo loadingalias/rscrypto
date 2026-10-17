@@ -165,6 +165,18 @@ const CASES: [(&str, [usize; 16]); 3] = [
   ),
 ];
 
+/// One ordered list of inputs, named `<length mix>/<count>` in case IDs.
+struct Fixture {
+  input: String,
+  storage: Vec<Vec<u8>>,
+}
+
+impl Fixture {
+  fn inputs(&self) -> Vec<&[u8]> {
+    self.storage.iter().map(|bytes| &bytes[1..]).collect()
+  }
+}
+
 fn serial_plain<const UPSTREAM: bool>(inputs: &[&[u8]], outputs: &mut [[u8; 32]]) {
   for (input, output) in inputs.iter().zip(outputs) {
     *output = if UPSTREAM {
@@ -201,48 +213,55 @@ fn upstream_derive(context_key: &[u8; 32], inputs: &[&[u8]], outputs: &mut [[u8;
   }
 }
 
-fn plain(c: &mut Criterion, case: &str, inputs: &[&[u8]], bytes: usize) {
-  let name = format!("blake3/mixed-batch/plain/{case}/{}", inputs.len());
-  if !super::bench_config::selected(&name) {
+/// `rscrypto` is the batch call, `rscrypto-serial` one rscrypto call per input,
+/// and `blake3-auto` one upstream call per input; upstream has no batch API.
+fn plain(c: &mut Criterion, fixtures: &[Fixture]) {
+  const NAME: &str = "blake3/mixed-batch/plain";
+  if !super::bench_config::selected(NAME) {
     return;
   }
-  let expected: Vec<_> = inputs.iter().map(|input| *blake3::hash(input).as_bytes()).collect();
-
-  let mut group = c.benchmark_group(name);
-  super::common::set_throughput(&mut group, bytes);
-  group.bench_function(
-    "rscrypto/batch",
-    checked_with(
-      vec![[0; 32]; inputs.len()],
-      |outputs| {
-        Blake3::digest_batch(black_box(inputs), black_box(&mut **outputs));
-        black_box(&**outputs);
-      },
-      |(), outputs| assert_eq!(*outputs, expected, "plain batch {case}"),
-    ),
-  );
-  group.bench_function(
-    "rscrypto/serial",
-    checked_with(
-      vec![[0; 32]; inputs.len()],
-      |outputs| {
-        serial_plain::<false>(black_box(inputs), black_box(&mut **outputs));
-        black_box(&**outputs);
-      },
-      |(), outputs| assert_eq!(*outputs, expected, "plain serial {case}"),
-    ),
-  );
-  group.bench_function(
-    "blake3-auto/serial",
-    checked_with(
-      vec![[0; 32]; inputs.len()],
-      |outputs| {
-        serial_plain::<true>(black_box(inputs), black_box(&mut **outputs));
-        black_box(&**outputs);
-      },
-      |(), outputs| assert_eq!(*outputs, expected, "plain upstream {case}"),
-    ),
-  );
+  let mut group = c.benchmark_group(NAME);
+  for fixture in fixtures {
+    let inputs = fixture.inputs();
+    let inputs = inputs.as_slice();
+    let case = &fixture.input;
+    let upstream: Vec<_> = inputs.iter().map(|input| *blake3::hash(input).as_bytes()).collect();
+    let ours: Vec<_> = inputs.iter().map(|input| Blake3::digest(input)).collect();
+    super::common::set_throughput(&mut group, total_len(inputs));
+    group.bench_function(
+      format!("rscrypto/{case}"),
+      checked_with(
+        vec![[0; 32]; inputs.len()],
+        |outputs| {
+          Blake3::digest_batch(black_box(inputs), black_box(&mut **outputs));
+          black_box(&**outputs);
+        },
+        |(), outputs| assert_eq!(*outputs, upstream, "plain batch {case}"),
+      ),
+    );
+    group.bench_function(
+      format!("rscrypto-serial/{case}"),
+      checked_with(
+        vec![[0; 32]; inputs.len()],
+        |outputs| {
+          serial_plain::<false>(black_box(inputs), black_box(&mut **outputs));
+          black_box(&**outputs);
+        },
+        |(), outputs| assert_eq!(*outputs, upstream, "plain serial {case}"),
+      ),
+    );
+    group.bench_function(
+      format!("blake3-auto/{case}"),
+      checked_with(
+        vec![[0; 32]; inputs.len()],
+        |outputs| {
+          serial_plain::<true>(black_box(inputs), black_box(&mut **outputs));
+          black_box(&**outputs);
+        },
+        |(), outputs| assert_eq!(*outputs, ours, "plain upstream {case}"),
+      ),
+    );
+  }
   group.finish();
 }
 
@@ -250,106 +269,132 @@ fn keyed_bytes(outputs: &[Blake3KeyedHash]) -> Vec<[u8; 32]> {
   outputs.iter().map(|output| *output.as_bytes()).collect()
 }
 
-fn keyed(c: &mut Criterion, case: &str, inputs: &[&[u8]], bytes: usize) {
-  let name = format!("blake3/mixed-batch/keyed/{case}/{}", inputs.len());
-  if !super::bench_config::selected(&name) {
+/// Rows as in `plain`, with one constant key for every input.
+fn keyed(c: &mut Criterion, fixtures: &[Fixture]) {
+  const NAME: &str = "blake3/mixed-batch/keyed";
+  if !super::bench_config::selected(NAME) {
     return;
   }
-  let expected: Vec<_> = inputs
-    .iter()
-    .map(|input| *blake3::keyed_hash(&KEY, input).as_bytes())
-    .collect();
-
-  let mut group = c.benchmark_group(name);
-  super::common::set_throughput(&mut group, bytes);
-  group.bench_function(
-    "rscrypto/batch",
-    checked_with(
-      vec![Blake3KeyedHash::default(); inputs.len()],
-      |outputs| {
-        Blake3::keyed_digest_batch(black_box(&KEY), black_box(inputs), black_box(&mut **outputs));
-        black_box(&**outputs);
-      },
-      |(), outputs| assert_eq!(keyed_bytes(outputs), expected, "keyed batch {case}"),
-    ),
-  );
-  group.bench_function(
-    "rscrypto/serial",
-    checked_with(
-      vec![Blake3KeyedHash::default(); inputs.len()],
-      |outputs| {
-        serial_keyed::<false>(black_box(&KEY), black_box(inputs), black_box(&mut **outputs));
-        black_box(&**outputs);
-      },
-      |(), outputs| assert_eq!(keyed_bytes(outputs), expected, "keyed serial {case}"),
-    ),
-  );
-  group.bench_function(
-    "blake3-auto/serial",
-    checked_with(
-      vec![Blake3KeyedHash::default(); inputs.len()],
-      |outputs| {
-        serial_keyed::<true>(black_box(&KEY), black_box(inputs), black_box(&mut **outputs));
-        black_box(&**outputs);
-      },
-      |(), outputs| assert_eq!(keyed_bytes(outputs), expected, "keyed upstream {case}"),
-    ),
-  );
+  let mut group = c.benchmark_group(NAME);
+  for fixture in fixtures {
+    let inputs = fixture.inputs();
+    let inputs = inputs.as_slice();
+    let case = &fixture.input;
+    let upstream: Vec<_> = inputs
+      .iter()
+      .map(|input| *blake3::keyed_hash(&KEY, input).as_bytes())
+      .collect();
+    let ours: Vec<_> = inputs
+      .iter()
+      .map(|input| *Blake3::keyed_digest(&KEY, input).as_bytes())
+      .collect();
+    super::common::set_throughput(&mut group, total_len(inputs));
+    group.bench_function(
+      format!("rscrypto/{case}"),
+      checked_with(
+        vec![Blake3KeyedHash::default(); inputs.len()],
+        |outputs| {
+          Blake3::keyed_digest_batch(black_box(&KEY), black_box(inputs), black_box(&mut **outputs));
+          black_box(&**outputs);
+        },
+        |(), outputs| assert_eq!(keyed_bytes(outputs), upstream, "keyed batch {case}"),
+      ),
+    );
+    group.bench_function(
+      format!("rscrypto-serial/{case}"),
+      checked_with(
+        vec![Blake3KeyedHash::default(); inputs.len()],
+        |outputs| {
+          serial_keyed::<false>(black_box(&KEY), black_box(inputs), black_box(&mut **outputs));
+          black_box(&**outputs);
+        },
+        |(), outputs| assert_eq!(keyed_bytes(outputs), upstream, "keyed serial {case}"),
+      ),
+    );
+    group.bench_function(
+      format!("blake3-auto/{case}"),
+      checked_with(
+        vec![Blake3KeyedHash::default(); inputs.len()],
+        |outputs| {
+          serial_keyed::<true>(black_box(&KEY), black_box(inputs), black_box(&mut **outputs));
+          black_box(&**outputs);
+        },
+        |(), outputs| assert_eq!(keyed_bytes(outputs), ours, "keyed upstream {case}"),
+      ),
+    );
+  }
   group.finish();
 }
 
-fn derive(c: &mut Criterion, case: &str, inputs: &[&[u8]], bytes: usize) {
-  let name = format!("blake3/mixed-batch/derive/{case}/{}", inputs.len());
-  if !super::bench_config::selected(&name) {
+/// Rows as in `plain`, from a context that both libraries hash before timing.
+fn derive(c: &mut Criterion, fixtures: &[Fixture]) {
+  const NAME: &str = "blake3/mixed-batch/derive";
+  if !super::bench_config::selected(NAME) {
     return;
   }
   let context = Blake3DeriveContext::new(CONTEXT);
   let context_key = blake3::hazmat::hash_derive_key_context(CONTEXT);
-  let expected: Vec<_> = inputs.iter().map(|input| blake3::derive_key(CONTEXT, input)).collect();
-
-  let mut group = c.benchmark_group(name);
-  super::common::set_throughput(&mut group, bytes);
-  group.bench_function(
-    "rscrypto/batch",
-    checked_with(
-      vec![[0; 32]; inputs.len()],
-      |outputs| {
-        black_box(&context).derive_key_batch(black_box(inputs), black_box(&mut **outputs));
-        black_box(&**outputs);
-      },
-      |(), outputs| assert_eq!(*outputs, expected, "derive batch {case}"),
-    ),
-  );
-  group.bench_function(
-    "rscrypto/serial",
-    checked_with(
-      vec![[0; 32]; inputs.len()],
-      |outputs| {
-        serial_derive(black_box(&context), black_box(inputs), black_box(&mut **outputs));
-        black_box(&**outputs);
-      },
-      |(), outputs| assert_eq!(*outputs, expected, "derive serial {case}"),
-    ),
-  );
-  group.bench_function(
-    "blake3-auto/serial",
-    checked_with(
-      vec![[0; 32]; inputs.len()],
-      |outputs| {
-        upstream_derive(black_box(&context_key), black_box(inputs), black_box(&mut **outputs));
-        black_box(&**outputs);
-      },
-      |(), outputs| assert_eq!(*outputs, expected, "derive upstream prehashed context {case}"),
-    ),
-  );
+  let mut group = c.benchmark_group(NAME);
+  for fixture in fixtures {
+    let inputs = fixture.inputs();
+    let inputs = inputs.as_slice();
+    let case = &fixture.input;
+    let upstream: Vec<_> = inputs.iter().map(|input| blake3::derive_key(CONTEXT, input)).collect();
+    let ours: Vec<_> = inputs
+      .iter()
+      .map(|input| Blake3::derive_key_with(&context, input))
+      .collect();
+    super::common::set_throughput(&mut group, total_len(inputs));
+    group.bench_function(
+      format!("rscrypto/{case}"),
+      checked_with(
+        vec![[0; 32]; inputs.len()],
+        |outputs| {
+          black_box(&context).derive_key_batch(black_box(inputs), black_box(&mut **outputs));
+          black_box(&**outputs);
+        },
+        |(), outputs| assert_eq!(*outputs, upstream, "derive batch {case}"),
+      ),
+    );
+    group.bench_function(
+      format!("rscrypto-serial/{case}"),
+      checked_with(
+        vec![[0; 32]; inputs.len()],
+        |outputs| {
+          serial_derive(black_box(&context), black_box(inputs), black_box(&mut **outputs));
+          black_box(&**outputs);
+        },
+        |(), outputs| assert_eq!(*outputs, upstream, "derive serial {case}"),
+      ),
+    );
+    group.bench_function(
+      format!("blake3-auto/{case}"),
+      checked_with(
+        vec![[0; 32]; inputs.len()],
+        |outputs| {
+          upstream_derive(black_box(&context_key), black_box(inputs), black_box(&mut **outputs));
+          black_box(&**outputs);
+        },
+        |(), outputs| assert_eq!(*outputs, ours, "derive upstream prehashed context {case}"),
+      ),
+    );
+  }
   group.finish();
 }
 
+fn total_len(inputs: &[&[u8]]) -> usize {
+  inputs.iter().fold(0usize, |total, input| total.strict_add(input.len()))
+}
+
+/// Case IDs: `blake3/mixed-batch/<mode>/<implementation>/<length mix>/<count>`.
+/// No row threads: every input is at most 16,385 bytes, below every one-shot
+/// parallel threshold, so only the `blake3` build registers these groups.
 pub(super) fn bench(c: &mut Criterion) {
   if !super::bench_config::selected("blake3/mixed-batch/") {
     return;
   }
   super::print_blake3_diag_once();
+  let mut fixtures = Vec::new();
   for (case, lengths) in CASES {
     for count in [16usize, 65] {
       let storage: Vec<Vec<u8>> = (0..count)
@@ -360,11 +405,13 @@ pub(super) fn bench(c: &mut Criterion) {
             .collect()
         })
         .collect();
-      let inputs: Vec<&[u8]> = storage.iter().map(|bytes| &bytes[1..]).collect();
-      let bytes = inputs.iter().fold(0usize, |total, input| total.strict_add(input.len()));
-      plain(c, case, &inputs, bytes);
-      keyed(c, case, &inputs, bytes);
-      derive(c, case, &inputs, bytes);
+      fixtures.push(Fixture {
+        input: format!("{case}/{count}"),
+        storage,
+      });
     }
   }
+  plain(c, &fixtures);
+  keyed(c, &fixtures);
+  derive(c, &fixtures);
 }
