@@ -591,9 +591,15 @@ RustCrypto has no such API, so its `rustcrypto-composed` rows build the mask fro
   Those lengths have every low bit set, which gives square-and-multiply combination its most multiplications.
   crc32fast combines two hasher states built from each checksum and length; those constructions stay timed.
   CRC-24/OpenPGP has no comparison library with combination, so its group has only the `rscrypto` row.
+- SHA-3 and SHAKE rows compare RustCrypto (`sha3`, and `shake` for SHAKE), AWS-LC, and tiny-keccak.
+  RustCrypto's Keccak selects the AArch64 SHA3 instructions at run time.
+  AWS-LC runs s2n-bignum Keccak assembly on x86-64 and AArch64, and portable C elsewhere.
+  `aws-lc-rs` rows use its digest API for SHA3-256, SHA3-384, and SHA3-512.
+  `aws-lc` rows call AWS-LC's one-call `EVP_Digest` through aws-lc-sys for SHA3-224 and SHAKE,
+  which aws-lc-rs does not expose; it allocates and frees its hash state in each call.
+  SHA3-224 streaming has no AWS-LC row.
 - SHAKE `xof-output` absorbs a 32-byte seed and squeezes 1 KiB, 16 KiB, and 1 MiB into a reused buffer.
-  The one-shot SHAKE groups squeeze 32 bytes. RustCrypto's `sha3` 0.12 has no SHAKE,
-  so tiny-keccak and dryoc are the comparison rows.
+  The one-shot SHAKE groups squeeze 32 bytes. dryoc also joins `xof-output`.
 - Poly1305 `authenticate` reads immutable fixture bytes, sets up a one-time key, and returns a tag,
   without restoring a message buffer.
   RustCrypto `poly1305`, dryoc `crypto_onetimeauth`, and AWS-LC's public `CRYPTO_poly1305_*` API through aws-lc-sys

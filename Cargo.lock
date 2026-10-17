@@ -2383,6 +2383,7 @@ dependencies = [
  "sha2 0.10.9",
  "sha2 0.11.1",
  "sha3 0.12.0",
+ "shake",
  "slh-dsa",
  "tiny-keccak",
  "x25519-dalek",
