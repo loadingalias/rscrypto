@@ -494,6 +494,7 @@
       "expensive": [
         "^rsa-[0-9]+-private-signing/",
         "^rsa-[0-9]+-oaep-sha256/decrypt/",
+        "^rsa-[0-9]+-pkcs1v15-encryption/decrypt/",
         "^rsa-[0-9]+-keygen/"
       ]
     },
@@ -1059,9 +1060,9 @@
     "rsa-sign": {
       "family": "RSA",
       "bench": "rsa",
-      "cases": "^(?P<variant>rsa-(?:2048|3072|4096|8192))-private-signing/(?P<input>sign-pss-sha256/fresh-entropy)/(?P<implementation>[^/]+)$",
+      "cases": "^(?P<variant>rsa-(?:2048|3072|4096|8192))-private-signing/(?P<input>sign-(?:pss|pkcs1v15)-sha256/fresh-entropy)/(?P<implementation>[^/]+)$",
       "headline": true,
-      "task": "Sign with PSS and SHA-256 using fresh randomness in each call, with a private key prepared once."
+      "task": "Sign with PSS or PKCS #1 v1.5 and SHA-256, using fresh salt or blinding randomness in each call, with a private key prepared once."
     },
     "rsa-oaep-encrypt": {
       "family": "RSA",
@@ -1083,6 +1084,13 @@
       "cases": "^(?P<variant>rsa-(?:2048|3072|4096|8192))-oaep-sha256/(?P<input>decrypt/fresh-entropy)/(?P<implementation>[^/]+)$",
       "headline": true,
       "task": "Decrypt one OAEP SHA-256 ciphertext with fresh blinding randomness in each call."
+    },
+    "rsa-pkcs1v15-decrypt": {
+      "family": "RSA",
+      "bench": "rsa",
+      "cases": "^(?P<variant>rsa-(?:2048|3072|4096|8192))-pkcs1v15-encryption/(?P<input>decrypt/fresh-entropy)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Decrypt one legacy RSAES-PKCS1-v1_5 ciphertext with fresh blinding randomness in each call."
     },
     "rsa-keygen": {
       "family": "RSA",

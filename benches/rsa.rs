@@ -1,5 +1,6 @@
 //! RSA benchmarks for rscrypto public APIs: verification, private signing,
-//! RSAES-OAEP encryption and decryption, and key generation.
+//! RSAES-OAEP encryption and decryption, legacy RSAES-PKCS1-v1_5 decryption,
+//! and key generation.
 //!
 //! Comparison case IDs have the shape `<operation path>/<implementation>`, and
 //! each group measures one task. The `rscrypto` row calls rscrypto's best
@@ -42,6 +43,13 @@ use aws_lc_rs::{rsa as aws_rsa, signature as aws_signature};
 use bench_config::{checked, checked_routine, checked_with};
 use criterion::{Bencher, Criterion};
 use ring::signature as ring_signature;
+#[cfg(feature = "getrandom")]
+use rsa::{
+  Pkcs1v15Encrypt as RustCryptoPkcs1v15Encrypt,
+  oaep::DecryptingKey as RustCryptoOaepDecryptingKey,
+  pss::BlindedSigningKey as RustCryptoBlindedPssSigningKey,
+  traits::{Decryptor as _, RandomizedDecryptor as _},
+};
 use rsa::{
   RsaPrivateKey as RustCryptoRsaPrivateKey, RsaPublicKey as RustCryptoRsaPublicKey,
   oaep::EncryptingKey as RustCryptoOaepEncryptingKey,
@@ -60,11 +68,7 @@ use rsa::{
   traits::RandomizedEncryptor as _,
 };
 #[cfg(feature = "getrandom")]
-use rsa::{
-  oaep::DecryptingKey as RustCryptoOaepDecryptingKey,
-  pss::BlindedSigningKey as RustCryptoBlindedPssSigningKey,
-  traits::{Decryptor as _, RandomizedDecryptor as _},
-};
+use rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt as _;
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 use rscrypto::auth::rsa::{
   diag_rsa_blinding_factor_inverse_with_scratch, diag_rsa_public_operation_bitserial, diag_rsa_public_operation_cios,
@@ -121,10 +125,15 @@ const OAEP_SEED_BYTE: u8 = 0xa5;
 const RSA2048_OAEP_SHA256: &str = include_str!("../testdata/rsa/wycheproof/rsa_oaep_2048_sha256_mgf1sha256_test.json");
 const RSA3072_OAEP_SHA256: &str = include_str!("../testdata/rsa/wycheproof/rsa_oaep_3072_sha256_mgf1sha256_test.json");
 const RSA4096_OAEP_SHA256: &str = include_str!("../testdata/rsa/wycheproof/rsa_oaep_4096_sha256_mgf1sha256_test.json");
-/// Wycheproof test with a 32-byte message, an empty label, and a valid
-/// ciphertext in each OAEP-SHA256 document: a symmetric-key transport shape.
-const OAEP_VECTOR_TC_ID: u64 = 7;
-const OAEP_MESSAGE_LEN: usize = 32;
+// Wycheproof RSAES-PKCS1-v1_5 decryption documents.
+const RSA2048_PKCS1V15_DECRYPT: &str = include_str!("../testdata/rsa/wycheproof/rsa_pkcs1_2048_test.json");
+const RSA3072_PKCS1V15_DECRYPT: &str = include_str!("../testdata/rsa/wycheproof/rsa_pkcs1_3072_test.json");
+const RSA4096_PKCS1V15_DECRYPT: &str = include_str!("../testdata/rsa/wycheproof/rsa_pkcs1_4096_test.json");
+/// Wycheproof test with a 32-byte message and a valid ciphertext in each
+/// OAEP-SHA256 and PKCS #1 v1.5 decryption document: a symmetric-key transport
+/// shape. The OAEP vectors also have an empty label.
+const DECRYPTION_VECTOR_TC_ID: u64 = 7;
+const DECRYPTION_MESSAGE_LEN: usize = 32;
 const OAEP_LABEL: &[u8] = b"";
 
 #[cfg(feature = "getrandom")]
@@ -519,53 +528,78 @@ fn key_policy(bits: usize) -> RsaPublicKeyPolicy {
   }
 }
 
-/// A Wycheproof RSAES-OAEP-SHA256 private key and one valid vector.
-struct OaepFixture {
+/// A Wycheproof RSA decryption private key and its valid vector
+/// [`DECRYPTION_VECTOR_TC_ID`].
+struct DecryptionFixture {
   private_key_pkcs8: Vec<u8>,
   message: Vec<u8>,
   ciphertext: Vec<u8>,
 }
 
-impl OaepFixture {
-  fn parse(document: &str, bits: usize) -> Self {
+impl DecryptionFixture {
+  /// The vector of an RSAES-OAEP document with SHA-256 for the label hash and MGF1.
+  fn oaep(document: &str, bits: usize) -> Self {
+    Self::parse(document, bits, "RsaesOaepDecrypt", |group, test| {
+      assert_eq!(
+        group["sha"], "SHA-256",
+        "Wycheproof RSA-OAEP fixture has the wrong hash"
+      );
+      assert_eq!(
+        group["mgfSha"], "SHA-256",
+        "Wycheproof RSA-OAEP fixture has the wrong MGF1 hash"
+      );
+      assert_eq!(
+        test["label"], "",
+        "Wycheproof RSA-OAEP benchmark vector must have an empty label"
+      );
+    })
+  }
+
+  /// The vector of an RSAES-PKCS1-v1_5 decryption document.
+  fn pkcs1v15(document: &str, bits: usize) -> Self {
+    Self::parse(document, bits, "RsaesPkcs1Decrypt", |_, _| {})
+  }
+
+  fn parse(
+    document: &str,
+    bits: usize,
+    group_type: &str,
+    check: impl FnOnce(&serde_json::Value, &serde_json::Value),
+  ) -> Self {
     let document: serde_json::Value =
-      serde_json::from_str(document).expect("Wycheproof RSA-OAEP fixture must be valid JSON");
+      serde_json::from_str(document).expect("Wycheproof RSA decryption fixture must be valid JSON");
     let group = &document["testGroups"][0];
-    assert_eq!(group["keySize"], bits, "Wycheproof RSA-OAEP fixture has the wrong size");
     assert_eq!(
-      group["sha"], "SHA-256",
-      "Wycheproof RSA-OAEP fixture has the wrong hash"
+      group["type"], group_type,
+      "Wycheproof RSA decryption fixture has the wrong type"
     );
     assert_eq!(
-      group["mgfSha"], "SHA-256",
-      "Wycheproof RSA-OAEP fixture has the wrong MGF1 hash"
+      group["keySize"], bits,
+      "Wycheproof RSA decryption fixture has the wrong size"
     );
     let test = group["tests"]
       .as_array()
-      .expect("Wycheproof RSA-OAEP fixture must list tests")
+      .expect("Wycheproof RSA decryption fixture must list tests")
       .iter()
-      .find(|test| test["tcId"] == OAEP_VECTOR_TC_ID)
-      .expect("Wycheproof RSA-OAEP fixture must contain the benchmark vector");
+      .find(|test| test["tcId"] == DECRYPTION_VECTOR_TC_ID)
+      .expect("Wycheproof RSA decryption fixture must contain the benchmark vector");
     assert_eq!(
       test["result"], "valid",
-      "Wycheproof RSA-OAEP benchmark vector must be valid"
+      "Wycheproof RSA decryption benchmark vector must be valid"
     );
-    assert_eq!(
-      test["label"], "",
-      "Wycheproof RSA-OAEP benchmark vector must have an empty label"
-    );
+    check(group, test);
     let hex = |value: &serde_json::Value| {
       hex_to_vec(
         value
           .as_str()
-          .expect("Wycheproof RSA-OAEP fixture fields must be hex strings"),
+          .expect("Wycheproof RSA decryption fixture fields must be hex strings"),
       )
     };
     let message = hex(&test["msg"]);
     assert_eq!(
       message.len(),
-      OAEP_MESSAGE_LEN,
-      "Wycheproof RSA-OAEP benchmark message length"
+      DECRYPTION_MESSAGE_LEN,
+      "Wycheproof RSA decryption benchmark message length"
     );
     Self {
       private_key_pkcs8: hex(&group["privateKeyPkcs8"]),
@@ -606,10 +640,10 @@ fn factor_two_and_inverse(modulus: &[u8]) -> (Vec<u8>, Vec<u8>) {
 fn rsa_private_signing(c: &mut Criterion) {
   rsa_private_signing_for_size(c, 2048, rsa2048_private_key);
   rsa_private_signing_for_size(c, 3072, || {
-    OaepFixture::parse(RSA3072_OAEP_SHA256, 3072).private_key(3072)
+    DecryptionFixture::oaep(RSA3072_OAEP_SHA256, 3072).private_key(3072)
   });
   rsa_private_signing_for_size(c, 4096, || {
-    OaepFixture::parse(RSA4096_OAEP_SHA256, 4096).private_key(4096)
+    DecryptionFixture::oaep(RSA4096_OAEP_SHA256, 4096).private_key(4096)
   });
 }
 
@@ -859,6 +893,15 @@ fn rsa_private_signing_for_size(c: &mut Criterion, bits: usize, load_key: impl F
   // rscrypto and RustCrypto must both verify every signature.
   #[cfg(feature = "getrandom")]
   {
+    aws_lc_bench! {
+      let aws_key_pair = aws_signature::RsaKeyPair::from_der(&private_key_der)
+        .expect("aws-lc-rs must import the RSA private benchmark fixture");
+      let aws_rng = aws_lc_rs::rand::SystemRandom::new();
+    }
+    let ring_key_pair = ring_signature::RsaKeyPair::from_der(&private_key_der)
+      .expect("ring must import the RSA private benchmark fixture");
+    let ring_rng = ring::rand::SystemRandom::new();
+
     let mut group = c.benchmark_group(format!("{name}/sign-pss-sha256/fresh-entropy"));
     group.bench_function(
       "rscrypto",
@@ -905,9 +948,6 @@ fn rsa_private_signing_for_size(c: &mut Criterion, bits: usize, load_key: impl F
       ),
     );
     aws_lc_bench! {
-      let aws_key_pair = aws_signature::RsaKeyPair::from_der(&private_key_der)
-        .expect("aws-lc-rs must import the RSA private benchmark fixture");
-      let aws_rng = aws_lc_rs::rand::SystemRandom::new();
       group.bench_function(
         "aws-lc-rs",
         checked_with(
@@ -926,9 +966,6 @@ fn rsa_private_signing_for_size(c: &mut Criterion, bits: usize, load_key: impl F
         ),
       );
     }
-    let ring_key_pair = ring_signature::RsaKeyPair::from_der(&private_key_der)
-      .expect("ring must import the RSA private benchmark fixture");
-    let ring_rng = ring::rand::SystemRandom::new();
     group.bench_function(
       "ring",
       checked_with(
@@ -944,6 +981,108 @@ fn rsa_private_signing_for_size(c: &mut Criterion, bits: usize, load_key: impl F
             .expect("valid ring RSA-PSS benchmark signing must succeed")
         },
         |(), signature| assert_private_pss_signature(&key, &rustcrypto_public_key, signature),
+      ),
+    );
+    group.finish();
+
+    // PKCS #1 v1.5-SHA256 with fresh blinding per call. Every library imports
+    // its key pair outside timing. rscrypto draws and inverts a blinding factor
+    // from `getrandom`; RustCrypto's `RandomizedSigner` blinds with a
+    // `getrandom` RNG and returns a new signature allocation inside timing.
+    // AWS-LC blinds with its cached blinding pair, and ring does not blind. The
+    // padding is deterministic, so every signature must equal RustCrypto's
+    // unblinded signature; the RustCrypto row must equal ring's.
+    let mut group = c.benchmark_group(format!("{name}/sign-pkcs1v15-sha256/fresh-entropy"));
+    group.bench_function(
+      "rscrypto",
+      checked_with(
+        buffers(),
+        |(signature, scratch)| {
+          key
+            .sign_pkcs1v15_with_scratch(
+              RsaPkcs1v15Profile::Sha256,
+              black_box(PRIVATE_SIGNING_MESSAGE),
+              black_box(signature),
+              black_box(scratch),
+            )
+            .expect("valid OS-random scratch-backed RSA-PKCS1-v1_5 benchmark signing must succeed")
+        },
+        |(), (signature, _)| assert_eq!(*signature, pkcs1v15()),
+      ),
+    );
+    group.bench_function(
+      "rscrypto-oneshot",
+      checked_with(
+        vec![0u8; key.signature_len()],
+        |signature| {
+          key
+            .sign_pkcs1v15(
+              RsaPkcs1v15Profile::Sha256,
+              black_box(PRIVATE_SIGNING_MESSAGE),
+              black_box(signature),
+            )
+            .expect("valid OS-random one-shot RSA-PKCS1-v1_5 benchmark signing must succeed")
+        },
+        |(), signature| assert_eq!(*signature, pkcs1v15()),
+      ),
+    );
+    let ring_pkcs1v15 = {
+      let mut signature = vec![0u8; key.signature_len()];
+      ring_key_pair
+        .sign(
+          &ring_signature::RSA_PKCS1_SHA256,
+          &ring_rng,
+          PRIVATE_SIGNING_MESSAGE,
+          &mut signature,
+        )
+        .expect("ring RSA-PKCS1-v1_5 signing must succeed");
+      signature
+    };
+    group.bench_function(
+      "rustcrypto-rsa-blinded",
+      checked(
+        || {
+          black_box(&rustcrypto_pkcs1v15_key)
+            .try_sign_with_rng(&mut GetrandomRng, black_box(PRIVATE_SIGNING_MESSAGE))
+            .expect("valid RustCrypto RSA-PKCS1-v1_5 benchmark signing must succeed")
+        },
+        |signature| assert_eq!(signature.to_vec(), ring_pkcs1v15),
+      ),
+    );
+    aws_lc_bench! {
+      group.bench_function(
+        "aws-lc-rs",
+        checked_with(
+          vec![0u8; key.signature_len()],
+          |signature| {
+            aws_key_pair
+              .sign(
+                &aws_signature::RSA_PKCS1_SHA256,
+                &aws_rng,
+                black_box(PRIVATE_SIGNING_MESSAGE),
+                black_box(signature),
+              )
+              .expect("valid aws-lc-rs RSA-PKCS1-v1_5 benchmark signing must succeed")
+          },
+          |(), signature| assert_eq!(*signature, pkcs1v15()),
+        ),
+      );
+    }
+    group.bench_function(
+      "ring",
+      checked_with(
+        vec![0u8; key.signature_len()],
+        |signature| {
+          ring_key_pair
+            .sign(
+              &ring_signature::RSA_PKCS1_SHA256,
+              &ring_rng,
+              black_box(PRIVATE_SIGNING_MESSAGE),
+              black_box(signature),
+            )
+            .expect("valid ring RSA-PKCS1-v1_5 benchmark signing must succeed")
+        },
+        |(), signature| assert_eq!(*signature, pkcs1v15()),
       ),
     );
     group.finish();
@@ -986,7 +1125,7 @@ fn rsa_oaep_for_size(c: &mut Criterion, bits: usize, document: &str) {
   if !bench_config::selected(&format!("{name}/")) {
     return;
   }
-  let fixture = OaepFixture::parse(document, bits);
+  let fixture = DecryptionFixture::oaep(document, bits);
   let message = fixture.message.as_slice();
   let key = fixture.private_key(bits);
   let public_key = key.public_key();
@@ -1267,6 +1406,106 @@ fn rsa_oaep_for_size(c: &mut Criterion, bits: usize, document: &str) {
               None,
             )
             .expect("valid aws-lc-rs RSA-OAEP benchmark decryption must succeed")
+            .len()
+        },
+        |len, plaintext| assert_eq!(&plaintext[..len], message),
+      ),
+    );
+  }
+  group.finish();
+}
+
+#[cfg(feature = "getrandom")]
+fn rsa_pkcs1v15_decryption(c: &mut Criterion) {
+  rsa_pkcs1v15_decryption_for_size(c, 2048, RSA2048_PKCS1V15_DECRYPT);
+  rsa_pkcs1v15_decryption_for_size(c, 3072, RSA3072_PKCS1V15_DECRYPT);
+  rsa_pkcs1v15_decryption_for_size(c, 4096, RSA4096_PKCS1V15_DECRYPT);
+}
+
+/// Legacy RSAES-PKCS1-v1_5 decryption of the 32-byte Wycheproof message with
+/// fresh blinding: blinding, the private operation, and padding decoding. Keys
+/// are imported outside timing. rscrypto and RustCrypto draw and invert a new
+/// blinding factor on every call; AWS-LC reuses its cached blinding pair (see
+/// the OAEP decryption groups). RustCrypto returns a new `Vec`, and aws-lc-rs
+/// builds an `EVP_PKEY_CTX` on every call; both stay timed. `rscrypto` reuses
+/// scratch; `rscrypto-oneshot` allocates it per call. ring has no RSA
+/// decryption.
+///
+/// The libraries handle invalid padding differently, and that design costs
+/// time on valid input too. rscrypto applies the implicit rejection of
+/// draft-irtf-cfrg-rsa-guidance: every call hashes the private exponent, keys
+/// HMAC-SHA256 with the ciphertext, and expands a modulus-length synthetic
+/// message, which it returns only when the padding is invalid. RustCrypto
+/// 0.9 and AWS-LC return an error instead.
+///
+/// Untimed check: every row recovers the Wycheproof message.
+#[cfg(feature = "getrandom")]
+fn rsa_pkcs1v15_decryption_for_size(c: &mut Criterion, bits: usize, document: &str) {
+  let name = format!("rsa-{bits}-pkcs1v15-encryption");
+  if !bench_config::selected(&format!("{name}/")) {
+    return;
+  }
+  let fixture = DecryptionFixture::pkcs1v15(document, bits);
+  let message = fixture.message.as_slice();
+  let key = fixture.private_key(bits);
+  let modulus_len = key.public_key().modulus().len();
+  let rustcrypto_private_key = RustCryptoRsaPrivateKey::from_pkcs8_der(&fixture.private_key_pkcs8)
+    .expect("RustCrypto must import the Wycheproof RSA private key");
+
+  let mut group = c.benchmark_group(format!("{name}/decrypt/fresh-entropy"));
+  group.bench_function(
+    "rscrypto",
+    checked_with(
+      (vec![0u8; modulus_len], key.private_scratch()),
+      |(plaintext, scratch)| {
+        key
+          .decrypt_pkcs1v15_with_scratch(black_box(&fixture.ciphertext), black_box(plaintext), black_box(scratch))
+          .expect("valid OS-random scratch-backed RSA-PKCS1-v1_5 benchmark decryption must succeed")
+      },
+      |len, (plaintext, _)| assert_eq!(&plaintext[..len], message),
+    ),
+  );
+  group.bench_function(
+    "rscrypto-oneshot",
+    checked_with(
+      vec![0u8; modulus_len],
+      |plaintext| {
+        key
+          .decrypt_pkcs1v15(black_box(&fixture.ciphertext), black_box(plaintext))
+          .expect("valid OS-random one-shot RSA-PKCS1-v1_5 benchmark decryption must succeed")
+      },
+      |len, plaintext| assert_eq!(&plaintext[..len], message),
+    ),
+  );
+  group.bench_function(
+    "rustcrypto-rsa-blinded",
+    checked(
+      || {
+        black_box(&rustcrypto_private_key)
+          .decrypt_blinded(
+            &mut GetrandomRng,
+            RustCryptoPkcs1v15Encrypt,
+            black_box(&fixture.ciphertext),
+          )
+          .expect("valid RustCrypto RSA-PKCS1-v1_5 benchmark decryption must succeed")
+      },
+      |plaintext| assert_eq!(plaintext, message),
+    ),
+  );
+  aws_lc_bench! {
+    let aws_decrypting_key = aws_rsa::Pkcs1PrivateDecryptingKey::new(
+      aws_rsa::PrivateDecryptingKey::from_pkcs8(&fixture.private_key_pkcs8)
+        .expect("aws-lc-rs must import the Wycheproof RSA private key"),
+    )
+    .expect("aws-lc-rs must build the RSA-PKCS1-v1_5 private key");
+    group.bench_function(
+      "aws-lc-rs",
+      checked_with(
+        vec![0u8; aws_decrypting_key.min_output_size()],
+        |plaintext| {
+          aws_decrypting_key
+            .decrypt(black_box(&fixture.ciphertext), black_box(plaintext))
+            .expect("valid aws-lc-rs RSA-PKCS1-v1_5 benchmark decryption must succeed")
             .len()
         },
         |len, plaintext| assert_eq!(&plaintext[..len], message),
@@ -2565,6 +2804,8 @@ fn main() {
     #[cfg(all(rscrypto_internal, feature = "diag"))]
     rsa_montgomery_thresholds,
     rsa_oaep,
+    #[cfg(feature = "getrandom")]
+    rsa_pkcs1v15_decryption,
     // Key generation runs last: it is the most expensive and variable target.
     #[cfg(feature = "getrandom")]
     rsa_keygen,

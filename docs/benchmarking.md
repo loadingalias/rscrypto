@@ -619,7 +619,15 @@ RustCrypto has no such API, so its `rustcrypto-composed` rows build the mask fro
   and `fresh-entropy` is new randomness in every call.
   `rscrypto` and RustCrypto use `getrandom`. aws-lc-rs uses AWS-LC's DRBG and a cached blinding pair.
   ring signs without blinding. RustCrypto and aws-lc-rs allocate their outputs inside timing.
+  PKCS #1 v1.5 signing pads deterministically, so its `fresh-entropy` group draws only blinding randomness,
+  and every row must produce RustCrypto's unblinded signature.
   Key generation stays outside the headline, because prime search makes its time vary widely.
+- RSA `pkcs1v15-encryption/decrypt/fresh-entropy` decrypts a valid Wycheproof RSAES-PKCS1-v1_5 vector
+  with fresh blinding. ring has no RSA decryption.
+  `rscrypto` applies implicit rejection: every call hashes the private exponent, keys HMAC-SHA256 with the ciphertext,
+  and expands a modulus-length substitute message, which it returns only for invalid padding.
+  RustCrypto 0.9 and AWS-LC return an error for invalid padding, so they skip that work.
+  The difference is a design result, and the group stays outside the headline as a legacy operation.
 - HMAC-SHA3 rows time one tag from a key set up once outside timing.
   `rscrypto` and `aws-lc` (AWS-LC's C `HMAC_CTX` through aws-lc-sys) both cache the Keccak states
   after the ipad and opad blocks. `aws-lc` reuses them through `HMAC_Init_ex` with a null key, inside timing.
