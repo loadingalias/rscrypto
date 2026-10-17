@@ -516,7 +516,7 @@
     "blake3": {
       "diagnostic": [
         "/rscrypto-[^/]+/",
-        "^blake3/(xof-output|chunk-tail-digest|chunk-tail-cvs|parent-tail-cvs|leaf-alignment-cvs)/"
+        "^blake3/(chunk-tail-digest|chunk-tail-cvs|parent-tail-cvs|leaf-alignment-cvs)/"
       ]
 
     }
@@ -577,6 +577,13 @@
       "cases": "^(?P<variant>shake128|shake256)/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
       "headline": true,
       "task": "Absorb one buffer and squeeze 32 bytes in one call."
+    },
+    "shake-xof-output": {
+      "family": "SHAKE",
+      "bench": "sha3",
+      "cases": "^(?P<variant>shake128|shake256)/xof-output/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Absorb a 32-byte seed and squeeze the named output length."
     },
     "kmac": {
       "family": "KMAC",
@@ -930,6 +937,13 @@
       "cases": "^blake3/serial/xof/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
       "headline": false,
       "task": "Absorb one buffer and squeeze 64 bytes on one thread."
+    },
+    "blake3-xof-output": {
+      "family": "BLAKE3",
+      "bench": "blake3_serial",
+      "cases": "^blake3/serial/xof-output/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Absorb a 32-byte seed and squeeze the named output length on one thread."
     },
     "blake3-ordered": {
       "family": "BLAKE3",

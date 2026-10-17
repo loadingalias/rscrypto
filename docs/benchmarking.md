@@ -434,7 +434,9 @@ file performance.
 Two catalog targets build the same binary:
 
 - **`blake3_serial`, without `parallel`:** single-thread groups under `blake3/serial/`:
-  `hash`, `keyed`, `derive-key/context`, `derive-key/prepared-context`, `xof`, `ordered`, and `ordered-alignment`.
+  `hash`, `keyed`, `derive-key/context`, `derive-key/prepared-context`, `xof`, `xof-output`, `ordered`,
+  and `ordered-alignment`.
+  `xof-output` squeezes 1 KiB, 16 KiB, and 1 MiB from a 32-byte seed into a reused buffer.
   Upstream rows use its one-shot or `Hasher` APIs, which are single-threaded.
   The headline uses the `hash` and `keyed` groups, because a default install hashes on one thread.
 - **`blake3`, with `parallel`:** groups that allow threads, under `blake3/parallel/`:
@@ -577,6 +579,9 @@ RustCrypto has no such API, so its `rustcrypto-composed` rows build the mask fro
   Those lengths have every low bit set, which gives square-and-multiply combination its most multiplications.
   crc32fast combines two hasher states built from each checksum and length; those constructions stay timed.
   CRC-24/OpenPGP has no comparison library with combination, so its group has only the `rscrypto` row.
+- SHAKE `xof-output` absorbs a 32-byte seed and squeezes 1 KiB, 16 KiB, and 1 MiB into a reused buffer.
+  The one-shot SHAKE groups squeeze 32 bytes. RustCrypto's `sha3` 0.12 has no SHAKE,
+  so tiny-keccak and dryoc are the comparison rows.
 - Poly1305 `authenticate` reads immutable fixture bytes, sets up a one-time key, and returns a tag,
   without restoring a message buffer.
   RustCrypto `poly1305`, dryoc `crypto_onetimeauth`, and AWS-LC's public `CRYPTO_poly1305_*` API through aws-lc-sys

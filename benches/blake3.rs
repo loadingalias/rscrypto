@@ -669,20 +669,28 @@ fn xof(c: &mut Criterion) {
   g.finish();
 }
 
-#[cfg(all(rscrypto_internal, feature = "diag"))]
+/// Absorb a 32-byte seed and squeeze long output into a reused buffer, on one thread.
+///
+/// `blake3/serial/xof-output` (build `blake3_serial`): rscrypto `Blake3::xof`
+/// and `squeeze` against upstream `Hasher::update`, `finalize_xof`, and `fill`.
+/// `xof` covers 64-byte output; these lengths measure the squeeze: 16 output
+/// blocks, 256 blocks, and 1 MiB. Timed: absorption, reader construction, and
+/// the squeeze. The output buffer is allocated outside timing. Diagnostic
+/// `rscrypto-<kernel>` rows force one kernel through the same path.
 fn xof_output(c: &mut Criterion) {
-  if !bench_config::selected("blake3/xof-output") {
+  use rscrypto::Xof as _;
+
+  const INPUT_LEN: usize = 32;
+  const OUTPUT_LENGTHS: [usize; 3] = [1024, 16384, 1048576];
+
+  let name = format!("blake3/{BUILD}/xof-output");
+  if !bench_config::selected(&name) {
     return;
   }
-  use rscrypto::Xof;
-
   print_blake3_diag_once();
 
-  const INPUT_LEN: usize = 4096;
-  const OUTPUT_LENGTHS: [usize; 6] = [64, 128, 256, 512, 1024, 4096];
-
   let data = common::random_bytes(INPUT_LEN);
-  let mut g = c.benchmark_group("blake3/xof-output");
+  let mut g = c.benchmark_group(name);
 
   for out_len in OUTPUT_LENGTHS {
     common::set_throughput(&mut g, out_len);
@@ -704,6 +712,7 @@ fn xof_output(c: &mut Criterion) {
       ),
     );
 
+    #[cfg(all(rscrypto_internal, feature = "diag"))]
     for &kernel in diag_kernels() {
       if !diag_blake3_kernel_available(kernel) {
         continue;
@@ -869,8 +878,6 @@ fn main() {
       mixed_batches::bench,
       streaming,
       #[cfg(all(rscrypto_internal, feature = "diag"))]
-      xof_output,
-      #[cfg(all(rscrypto_internal, feature = "diag"))]
       tail_diagnostics,
       #[cfg(all(rscrypto_internal, feature = "diag"))]
       leaf_alignment::bench,
@@ -883,6 +890,7 @@ fn main() {
       derive_key_context,
       derive_key_prepared_context,
       xof,
+      xof_output,
       streaming_shapes::bench,
       streaming_shapes::alignment_bench,
     ]);
