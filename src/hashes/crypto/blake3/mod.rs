@@ -118,10 +118,14 @@ impl core::fmt::Debug for Blake3KeyedHash {
 
 /// A BLAKE3 key-derivation context, hashed once.
 ///
-/// [`Blake3::derive_key`] and [`Blake3::new_derive_key`] hash the context
-/// string on every call. Build this value once, ideally as a constant, and
-/// pass it to [`Blake3::derive_key_with`] or [`Blake3::new_derive_key_from`]
-/// to skip that work. The output is identical.
+/// [`Blake3::derive_key`] and [`Blake3::new_derive_key`] take the context
+/// string. With the `std` feature, each thread caches the last context it
+/// used: a call with the same string compares it and reuses its hash, and a
+/// call with a different string hashes it, copies it into a new allocation,
+/// and replaces the entry. Without `std`, they hash the context on every call.
+/// Build this value once, ideally as a constant, and pass it to
+/// [`Blake3::derive_key_with`] or [`Blake3::new_derive_key_from`] to skip that
+/// per-call work. The output is identical.
 ///
 /// The context string is public, and so is this value. BLAKE3 expects a
 /// hardcoded, globally unique, application-specific context, such as
@@ -3412,9 +3416,10 @@ impl Blake3 {
 
   /// Compute the derived key for `key_material` under `context`, in one shot.
   ///
-  /// This uses context caching to avoid re-hashing the same context string
-  /// repeatedly, which is a common pattern in practice. Tiny key material
-  /// inputs (≤64B) also use dedicated fast paths to minimize latency.
+  /// With the `std` feature, this reuses the context hash when `context`
+  /// matches the last context used on the current thread; see
+  /// [`Blake3DeriveContext`]. Tiny key material inputs (≤64B) also use
+  /// dedicated fast paths to minimize latency.
   #[inline]
   #[must_use]
   pub fn derive_key(context: &str, key_material: &[u8]) -> [u8; OUT_LEN] {
