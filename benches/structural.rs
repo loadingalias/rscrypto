@@ -1,4 +1,7 @@
 //! Stable structural-cost benchmarks for representative public hash and checksum paths.
+//!
+//! Each benchmark's setup checks its public operation against an upstream crate
+//! outside collection.
 
 use core::hint::black_box;
 
@@ -49,23 +52,36 @@ fn toggle_fixture_collection() {
   panic!("BLAKE3 fixture structural benchmarks require Linux client requests");
 }
 
+fn sha256_input(input: &'static [u8]) -> &'static [u8] {
+  assert_eq!(
+    Sha256::digest(input).as_slice(),
+    <sha2::Sha256 as sha2::Digest>::digest(input).as_slice()
+  );
+  input
+}
+
 #[library_benchmark]
-#[bench::bytes_64(&INPUT_64)]
-#[bench::bytes_4096(&INPUT_4K)]
+#[bench::bytes_64(sha256_input(&INPUT_64))]
+#[bench::bytes_4096(sha256_input(&INPUT_4K))]
 fn sha256(input: &[u8]) {
   black_box(Sha256::digest(black_box(input)));
 }
 
+fn blake3_input(input: &'static [u8]) -> &'static [u8] {
+  assert_eq!(&Blake3::digest(input), upstream_blake3::hash(input).as_bytes());
+  input
+}
+
 #[library_benchmark(config = blake3_collection())]
-#[bench::bytes_64(&INPUT_64)]
-#[bench::bytes_4096(&INPUT_4K)]
-#[bench::bytes_16384(&INPUT_16K)]
+#[bench::bytes_64(blake3_input(&INPUT_64))]
+#[bench::bytes_4096(blake3_input(&INPUT_4K))]
+#[bench::bytes_16384(blake3_input(&INPUT_16K))]
 fn blake3(input: &[u8]) {
   black_box(Blake3::digest(black_box(input)));
 }
 
-// Setup validates the same public operation outside collection. The benchmark
-// includes construction, updates, finalization and destruction of its hasher.
+// The benchmark includes construction, updates, finalization and destruction
+// of its hasher.
 fn streaming_input(prefix: usize, bulk: usize) -> (&'static [u8], usize) {
   let input = &INPUT_16K[..prefix.strict_add(bulk)];
   let mut hasher = Blake3::new();
@@ -244,9 +260,14 @@ fn blake3_merge_level(mut fixture: Box<MergeFixture>) -> Box<MergeFixture> {
   black_box(fixture)
 }
 
+fn crc32_input(input: &'static [u8]) -> &'static [u8] {
+  assert_eq!(Crc32::checksum(input), crc32fast::hash(input));
+  input
+}
+
 #[library_benchmark]
-#[bench::bytes_64(&INPUT_64)]
-#[bench::bytes_4096(&INPUT_4K)]
+#[bench::bytes_64(crc32_input(&INPUT_64))]
+#[bench::bytes_4096(crc32_input(&INPUT_4K))]
 fn crc32(input: &[u8]) {
   black_box(Crc32::checksum(black_box(input)));
 }

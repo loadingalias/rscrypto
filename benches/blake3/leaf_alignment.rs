@@ -24,10 +24,11 @@ pub(super) fn fixture(len: usize, offset: usize) -> (Vec<u8>, Range<usize>) {
 pub(super) fn bench(c: &mut criterion::Criterion) {
   use core::hint::black_box;
 
-  use blake3::hazmat::HasherExt as _;
   use rscrypto::hashes::crypto::blake3::{
     Blake3DiagKernel, diag_blake3_chunk_cvs_with_kernel, diag_blake3_kernel_available,
   };
+
+  use super::bench_config::checked_with;
 
   if !super::bench_config::selected("blake3/leaf-alignment-cvs/") {
     return;
@@ -42,17 +43,7 @@ pub(super) fn bench(c: &mut criterion::Criterion) {
     for input_offset in [0usize, 1] {
       let (storage, input_range) = fixture(len, input_offset);
       let data = &storage[input_range];
-      let mut expected = Vec::with_capacity(chunks.strict_mul(32));
-      for (index, chunk) in data.chunks_exact(1024).enumerate() {
-        let mut hasher = blake3::Hasher::new();
-        let offset = u64::try_from(index.strict_mul(1024)).expect("fixture offset fits");
-        hasher.set_input_offset(offset).update(chunk);
-        expected.extend_from_slice(&hasher.finalize_non_root());
-      }
-      let mut portable = vec![0u8; expected.len()];
-      diag_blake3_chunk_cvs_with_kernel(Blake3DiagKernel::Portable, data, &mut portable)
-        .expect("portable kernel is available");
-      assert_eq!(portable, expected, "portable CV oracle, chunks={chunks}");
+      let expected = super::upstream_chunk_cvs(data);
 
       for output_offset in [0usize, 1] {
         let name = format!("blake3/leaf-alignment-cvs/chunks-{chunks}/in-{input_offset}/out-{output_offset}");
@@ -62,21 +53,27 @@ pub(super) fn bench(c: &mut criterion::Criterion) {
           if !diag_blake3_kernel_available(kernel) {
             continue;
           }
+          // Guard bytes on both sides of the aligned output detect writes outside it.
           let mut out = vec![0xa5; expected.len().strict_add(128)];
           let range = range_at_offset(&out, expected.len(), output_offset);
-          diag_blake3_chunk_cvs_with_kernel(kernel, data, &mut out[range.clone()])
-            .expect("selected kernel is available");
-          assert_eq!(out[range.clone()], expected, "{kernel:?}, chunks={chunks}");
-          assert!(out[..range.start].iter().all(|&byte| byte == 0xa5));
-          assert!(out[range.end..].iter().all(|&byte| byte == 0xa5));
-          let output = &mut out[range];
-          g.bench_function(format!("rscrypto-{}", kernel.label()), |b| {
-            b.iter(|| {
-              diag_blake3_chunk_cvs_with_kernel(kernel, black_box(data), black_box(&mut *output))
-                .expect("selected kernel is available");
-              black_box(&*output);
-            })
-          });
+          let (head, rest) = out.split_at_mut(range.start);
+          let (output, tail) = rest.split_at_mut(range.len());
+          g.bench_function(
+            format!("rscrypto-{}", kernel.label()),
+            checked_with(
+              output,
+              |output| {
+                diag_blake3_chunk_cvs_with_kernel(kernel, black_box(data), black_box(&mut **output))
+                  .expect("selected kernel is available");
+                black_box(&**output);
+              },
+              |(), output| {
+                assert_eq!(**output, *expected, "{kernel:?}, chunks={chunks}");
+                assert!(head.iter().all(|&byte| byte == 0xa5));
+                assert!(tail.iter().all(|&byte| byte == 0xa5));
+              },
+            ),
+          );
         }
         g.finish();
       }

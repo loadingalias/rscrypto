@@ -13,21 +13,34 @@
 //! whole hypertree layers, so those groups use flat sampling: every sample
 //! runs the same iteration count, instead of Criterion's linear ramp.
 //!
-//! Each algorithm builds its keys and reference signature, and checks every
-//! implementation against them, before its first case runs. Listing cases or
-//! measuring another algorithm skips that work.
+//! Each algorithm builds its keys and reference signature when its first case
+//! runs, and every row checks its output against another implementation before
+//! timing. Listing cases or measuring another algorithm skips that work.
 
 #[path = "common/criterion.rs"]
 mod bench_config;
 
 use core::hint::black_box;
-use criterion::{Criterion, SamplingMode};
+
+use bench_config::{checked, checked_with};
+use criterion::{Bencher, Criterion, SamplingMode};
 use fips205::{
   Ph,
-  traits::{SerDes as _, Signer as _, Verifier as _},
+  traits::{KeyGen as _, SerDes as _, Signer as _, Verifier as _},
 };
 
 const MESSAGE: [u8; 32] = [0xa5; 32];
+
+/// Builds a row's routine when Criterion first runs the row, so listing builds
+/// no fixture.
+fn deferred<R: FnMut(&mut Bencher<'_>)>(build: impl FnOnce() -> R) -> impl FnMut(&mut Bencher<'_>) {
+  let mut build = Some(build);
+  let mut routine = None;
+  move |b| {
+    let built = routine.get_or_insert_with(|| (build.take().expect("a row builds its routine once"))());
+    built(b);
+  }
+}
 
 macro_rules! parameter_set {
   ($function:ident, $name:literal, $profile:ident, $secret:ident, $rustcrypto:ident, $fips:ident, $n:literal) => {
@@ -47,6 +60,12 @@ macro_rules! parameter_set {
         })
         .expect("key generation")
       };
+      // fips205 checks both key-generation rows.
+      let reference_keys = || {
+        let (fields, _) = seeds.as_chunks::<$n>();
+        let (public, secret) = fips205::$fips::KG::keygen_with_seeds(&fields[0], &fields[1], &fields[2]);
+        (public.into_bytes(), secret.into_bytes())
+      };
       // Generic fields keep each library's key and signature types inferred.
       struct Fixture<Public, Secret, Encoded, External, ExternalPublic, ExternalSignature, FipsSecret, FipsPublic> {
         public: Public,
@@ -64,35 +83,21 @@ macro_rules! parameter_set {
         cell.get_or_init(|| {
           let (public, secret) = keygen();
           let encoded = secret.expose_secret();
-
-          // Every implementation must produce the same keys and deterministic
-          // signature, and accept that signature.
           let external = oracle::SigningKey::<oracle::$rustcrypto>::slh_keygen_internal(
             &seeds[..$n],
             &seeds[$n..2 * $n],
             &seeds[2 * $n..],
           );
-          assert_eq!(external.to_bytes().as_slice(), encoded.as_bytes());
           let external_public: oracle::VerifyingKey<oracle::$rustcrypto> = external.as_ref().clone();
           let fips_secret = fips205::$fips::PrivateKey::try_from_bytes(encoded.as_bytes()).expect("fips205 secret key");
           let fips_public = fips205::$fips::PublicKey::try_from_bytes(&public.to_bytes()).expect("fips205 public key");
-          let mut signature = [0; $profile::SIGNATURE_LENGTH];
-          secret
-            .sign_deterministic(&MESSAGE, b"", &mut signature)
-            .expect("signature");
+          // RustCrypto's deterministic signature is the reference of the
+          // signing rows and the input of the verification rows.
           let external_signature = external
             .try_sign_with_context(&MESSAGE, b"", None)
             .expect("RustCrypto signature");
-          assert_eq!(external_signature.to_bytes().as_slice(), signature.as_slice());
-          assert_eq!(
-            fips_secret.try_sign(&MESSAGE, b"", false).expect("fips205 signature"),
-            signature
-          );
-          public.verify(&MESSAGE, &signature).expect("verification");
-          external_public
-            .try_verify_with_context(&MESSAGE, b"", &external_signature)
-            .expect("RustCrypto verification");
-          assert!(fips_public.verify(&MESSAGE, &signature, b""));
+          let mut signature = [0; $profile::SIGNATURE_LENGTH];
+          signature.copy_from_slice(&external_signature.to_bytes());
           Fixture {
             public,
             secret,
@@ -111,86 +116,144 @@ macro_rules! parameter_set {
       // entropy. fips205 generates keys only from an RNG, so it has no row.
       let mut group = c.benchmark_group(concat!($name, "/keygen/fixed-seeds"));
       group.sampling_mode(SamplingMode::Flat);
-      group.bench_function("rscrypto", |b| {
-        fixture();
-        b.iter(|| black_box(keygen()))
-      });
-      group.bench_function("rustcrypto", |b| {
-        fixture();
-        b.iter(|| {
-          black_box(oracle::SigningKey::<oracle::$rustcrypto>::slh_keygen_internal(
-            black_box(&seeds[..$n]),
-            &seeds[$n..2 * $n],
-            &seeds[2 * $n..],
-          ))
-        })
-      });
+      group.bench_function(
+        "rscrypto",
+        checked(
+          || black_box(keygen()),
+          |(public, secret)| {
+            let (expected_public, expected_secret) = reference_keys();
+            assert_eq!(public.as_bytes().as_slice(), expected_public.as_slice());
+            assert_eq!(secret.expose_secret().as_bytes().as_slice(), expected_secret.as_slice());
+          },
+        ),
+      );
+      group.bench_function(
+        "rustcrypto",
+        checked(
+          || {
+            black_box(oracle::SigningKey::<oracle::$rustcrypto>::slh_keygen_internal(
+              black_box(&seeds[..$n]),
+              &seeds[$n..2 * $n],
+              &seeds[2 * $n..],
+            ))
+          },
+          |key| assert_eq!(key.to_bytes().as_slice(), reference_keys().1.as_slice()),
+        ),
+      );
       group.finish();
 
       // rscrypto writes into a caller buffer; the others return the signature
-      // by value.
+      // by value. fips205 checks RustCrypto, the reference.
       let mut group = c.benchmark_group(concat!($name, "/sign/deterministic-32"));
       group.sampling_mode(SamplingMode::Flat);
-      group.bench_function("rscrypto", |b| {
-        let secret = &fixture().secret;
-        let mut signature = [0; $profile::SIGNATURE_LENGTH];
-        b.iter(|| {
-          secret
-            .sign_deterministic(black_box(&MESSAGE), b"", &mut signature)
-            .expect("signature");
-          black_box(&signature);
-        })
-      });
-      group.bench_function("rustcrypto", |b| {
-        let external = &fixture().external;
-        b.iter(|| {
-          black_box(
-            external
-              .try_sign_with_context(black_box(&MESSAGE), b"", None)
-              .expect("signature"),
+      group.bench_function(
+        "rscrypto",
+        deferred(|| {
+          let Fixture {
+            secret,
+            signature: reference,
+            ..
+          } = fixture();
+          checked_with(
+            [0; $profile::SIGNATURE_LENGTH],
+            move |signature| {
+              secret
+                .sign_deterministic(black_box(&MESSAGE), b"", signature)
+                .expect("signature");
+              black_box(&*signature);
+            },
+            move |(), signature| assert_eq!(signature, reference),
           )
-        })
-      });
-      group.bench_function("fips205", |b| {
-        let fips_secret = &fixture().fips_secret;
-        b.iter(|| {
-          black_box(
-            fips_secret
-              .try_sign(black_box(&MESSAGE), b"", false)
-              .expect("signature"),
+        }),
+      );
+      group.bench_function(
+        "rustcrypto",
+        deferred(|| {
+          let Fixture {
+            external, fips_secret, ..
+          } = fixture();
+          checked(
+            move || {
+              black_box(
+                external
+                  .try_sign_with_context(black_box(&MESSAGE), b"", None)
+                  .expect("signature"),
+              )
+            },
+            move |signature| {
+              let expected = fips_secret.try_sign(&MESSAGE, b"", false).expect("fips205 signature");
+              assert_eq!(signature.to_bytes().as_slice(), expected.as_slice());
+            },
           )
-        })
-      });
+        }),
+      );
+      group.bench_function(
+        "fips205",
+        deferred(|| {
+          let Fixture {
+            fips_secret,
+            signature: reference,
+            ..
+          } = fixture();
+          checked(
+            move || {
+              black_box(
+                fips_secret
+                  .try_sign(black_box(&MESSAGE), b"", false)
+                  .expect("signature"),
+              )
+            },
+            move |signature| assert_eq!(&signature, reference),
+          )
+        }),
+      );
       group.finish();
 
       // RustCrypto's signature value is decoded outside timing.
       let mut group = c.benchmark_group(concat!($name, "/verify/32"));
-      group.bench_function("rscrypto", |b| {
-        let Fixture { public, signature, .. } = fixture();
-        b.iter(|| {
-          public
-            .verify(black_box(&MESSAGE), black_box(signature))
-            .expect("verification")
-        })
-      });
-      group.bench_function("rustcrypto", |b| {
-        let Fixture {
-          external_public,
-          external_signature,
-          ..
-        } = fixture();
-        b.iter(|| {
-          external_public
-            .try_verify_with_context(black_box(&MESSAGE), b"", black_box(external_signature))
-            .expect("verification")
-        })
-      });
-      group.bench_function("fips205", |b| {
-        let Fixture {
-          fips_public, signature, ..
-        } = fixture();
-        b.iter(|| assert!(fips_public.verify(black_box(&MESSAGE), black_box(signature), b"")))
-      });
+      group.bench_function(
+        "rscrypto",
+        deferred(|| {
+          let Fixture { public, signature, .. } = fixture();
+          checked(
+            move || public.verify(black_box(&MESSAGE), black_box(signature)),
+            move |result| {
+              result.expect("verification");
+              let mut tampered = *signature;
+              tampered[0] ^= 1;
+              public
+                .verify(&MESSAGE, &tampered)
+                .expect_err("tampered signature must not verify");
+            },
+          )
+        }),
+      );
+      group.bench_function(
+        "rustcrypto",
+        deferred(|| {
+          let Fixture {
+            external_public,
+            external_signature,
+            ..
+          } = fixture();
+          checked(
+            move || external_public.try_verify_with_context(black_box(&MESSAGE), b"", black_box(external_signature)),
+            |result| result.expect("verification"),
+          )
+        }),
+      );
+      group.bench_function(
+        "fips205",
+        deferred(|| {
+          let Fixture {
+            fips_public, signature, ..
+          } = fixture();
+          checked(
+            move || fips_public.verify(black_box(&MESSAGE), black_box(signature), b""),
+            |accepted| assert!(accepted),
+          )
+        }),
+      );
       group.finish();
 
       // Import regenerates PK.root (FIPS 205 Section 3.1), so it costs one key
@@ -198,10 +261,25 @@ macro_rules! parameter_set {
       // they have no equivalent row.
       let mut group = c.benchmark_group(concat!($name, "/import/raw-secret"));
       group.sampling_mode(SamplingMode::Flat);
-      group.bench_function("rscrypto", |b| {
-        let encoded = &fixture().encoded;
-        b.iter(|| black_box($secret::try_from_slice(black_box(encoded.as_bytes())).expect("import")))
-      });
+      group.bench_function(
+        "rscrypto",
+        deferred(|| {
+          let Fixture { encoded, external, .. } = fixture();
+          checked(
+            move || black_box($secret::try_from_slice(black_box(encoded.as_bytes())).expect("import")),
+            move |secret| {
+              assert_eq!(
+                secret.expose_secret().as_bytes().as_slice(),
+                external.to_bytes().as_slice()
+              );
+              // A PK.root that does not belong to SK.seed and PK.seed fails.
+              let mut tampered = *encoded.as_bytes();
+              *tampered.last_mut().expect("nonempty key") ^= 1;
+              $secret::try_from_slice(&tampered).expect_err("a foreign PK.root must be rejected");
+            },
+          )
+        }),
+      );
       group.finish();
     }
   };
@@ -344,21 +422,12 @@ macro_rules! prehash_set {
           let fips_secret =
             fips205::$fips::PrivateKey::try_from_bytes(secret.expose_secret().as_bytes()).expect("fips205 secret key");
           let fips_public = fips205::$fips::PublicKey::try_from_bytes(&public.to_bytes()).expect("fips205 public key");
-
-          // fips205 is an independent HashSLH-DSA: both must produce the same
-          // deterministic signature, so each verifier accepts the other's.
-          let mut signature = [0; $profile::SIGNATURE_LENGTH];
-          secret
-            .sign_deterministic(&MESSAGE, b"", &mut signature)
-            .expect("signature");
-          assert_eq!(
-            fips_secret
-              .try_hash_sign(&MESSAGE, b"", &Ph::$ph, false)
-              .expect("fips205 signature"),
-            signature
-          );
-          public.verify(&MESSAGE, &signature).expect("verification");
-          assert!(fips_public.hash_verify(&MESSAGE, &signature, b"", &Ph::$ph));
+          // fips205 is the only other HashSLH-DSA. Its deterministic signature
+          // is the reference of the rscrypto signing row and the input of both
+          // verification rows; rscrypto checks the fips205 signing row.
+          let signature = fips_secret
+            .try_hash_sign(&MESSAGE, b"", &Ph::$ph, false)
+            .expect("fips205 signature");
           Fixture {
             public,
             secret,
@@ -373,43 +442,82 @@ macro_rules! prehash_set {
       // returns the signature by value.
       let mut group = c.benchmark_group(concat!($name, "/hash-sign/", $prehash, "/deterministic-32"));
       group.sampling_mode(SamplingMode::Flat);
-      group.bench_function("rscrypto", |b| {
-        let secret = &fixture().secret;
-        let mut signature = [0; $profile::SIGNATURE_LENGTH];
-        b.iter(|| {
-          secret
-            .sign_deterministic(black_box(&MESSAGE), b"", &mut signature)
-            .expect("signature");
-          black_box(&signature);
-        })
-      });
-      group.bench_function("fips205", |b| {
-        let fips_secret = &fixture().fips_secret;
-        b.iter(|| {
-          black_box(
-            fips_secret
-              .try_hash_sign(black_box(&MESSAGE), b"", &Ph::$ph, false)
-              .expect("signature"),
+      group.bench_function(
+        "rscrypto",
+        deferred(|| {
+          let Fixture {
+            secret,
+            signature: reference,
+            ..
+          } = fixture();
+          checked_with(
+            [0; $profile::SIGNATURE_LENGTH],
+            move |signature| {
+              secret
+                .sign_deterministic(black_box(&MESSAGE), b"", signature)
+                .expect("signature");
+              black_box(&*signature);
+            },
+            move |(), signature| assert_eq!(signature, reference),
           )
-        })
-      });
+        }),
+      );
+      group.bench_function(
+        "fips205",
+        deferred(|| {
+          let Fixture {
+            secret, fips_secret, ..
+          } = fixture();
+          checked(
+            move || {
+              black_box(
+                fips_secret
+                  .try_hash_sign(black_box(&MESSAGE), b"", &Ph::$ph, false)
+                  .expect("signature"),
+              )
+            },
+            move |signature| {
+              let mut expected = [0; $profile::SIGNATURE_LENGTH];
+              secret
+                .sign_deterministic(&MESSAGE, b"", &mut expected)
+                .expect("signature");
+              assert_eq!(signature, expected);
+            },
+          )
+        }),
+      );
       group.finish();
 
       let mut group = c.benchmark_group(concat!($name, "/hash-verify/", $prehash, "/32"));
-      group.bench_function("rscrypto", |b| {
-        let Fixture { public, signature, .. } = fixture();
-        b.iter(|| {
-          public
-            .verify(black_box(&MESSAGE), black_box(signature))
-            .expect("verification")
-        })
-      });
-      group.bench_function("fips205", |b| {
-        let Fixture {
-          fips_public, signature, ..
-        } = fixture();
-        b.iter(|| assert!(fips_public.hash_verify(black_box(&MESSAGE), black_box(signature), b"", &Ph::$ph)))
-      });
+      group.bench_function(
+        "rscrypto",
+        deferred(|| {
+          let Fixture { public, signature, .. } = fixture();
+          checked(
+            move || public.verify(black_box(&MESSAGE), black_box(signature)),
+            move |result| {
+              result.expect("verification");
+              let mut tampered = *signature;
+              tampered[0] ^= 1;
+              public
+                .verify(&MESSAGE, &tampered)
+                .expect_err("tampered signature must not verify");
+            },
+          )
+        }),
+      );
+      group.bench_function(
+        "fips205",
+        deferred(|| {
+          let Fixture {
+            fips_public, signature, ..
+          } = fixture();
+          checked(
+            move || fips_public.hash_verify(black_box(&MESSAGE), black_box(signature), b"", &Ph::$ph),
+            |accepted| assert!(accepted),
+          )
+        }),
+      );
       group.finish();
     }
   };

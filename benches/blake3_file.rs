@@ -1,6 +1,7 @@
 //! Complete file hashing, with verified Linux page-cache preconditions.
 
 #[path = "common/criterion.rs"]
+#[expect(dead_code, reason = "file rows time a custom cache-conditioned loop")]
 mod bench_config;
 
 use core::{hint::black_box, time::Duration};
@@ -13,6 +14,7 @@ use std::{
   time::Instant,
 };
 
+use bench_config::checked_routine;
 use criterion::{BenchmarkId, Criterion, SamplingMode, Throughput};
 use rscrypto::{Blake3, Digest, hashes::expert::blake3_tree::Blake3Tree};
 
@@ -246,6 +248,7 @@ fn files(c: &mut Criterion) {
   let listing = std::env::args().any(|arg| arg == "--list");
   let directory = std::env::var_os("RSCRYPTO_BLAKE3_FILE_DIR").map(PathBuf::from);
   let logfile = std::env::var_os("RSCRYPTO_BLAKE3_FILE_CACHE_LOG").map(PathBuf::from);
+  let cache_log = || logfile.as_deref().expect("RSCRYPTO_BLAKE3_FILE_CACHE_LOG is required");
   if !listing {
     // The long-lived pool used by upstream and the Linux AArch64 reader is
     // untimed. Caller-scheduled subtree worker creation and destruction stay timed.
@@ -268,38 +271,44 @@ fn files(c: &mut Criterion) {
         if !bench_config::selected(&case) {
           continue;
         }
-        let fixture = OnceLock::new();
-        group.bench_function(BenchmarkId::new(name, format!("{len}B")), |b| {
-          // Criterion invokes this only for selected measurements, not listing
-          // or filtered rows. In particular, ordinary rows do not require b3sum.
-          let fixture = fixture.get_or_init(|| {
-            if name == B3SUM_OPERATION {
-              B3SUM.get_or_init(B3sum::load);
-            }
-            let fixture = Fixture::load(directory.as_deref().expect("RSCRYPTO_BLAKE3_FILE_DIR is required"), len);
-            // Validate once before the timed loop, including repeated samples.
-            assert_eq!(operation(&fixture), fixture.digest, "file output: {case}");
-            fixture
-          });
-          let logfile = logfile.as_deref().expect("RSCRYPTO_BLAKE3_FILE_CACHE_LOG is required");
-          // Timed: open/seek, construction, reader allocations and clears,
-          // hashing, caller threads, public merges, finalization and destruction.
-          // The b3sum row also includes command setup, process/worker startup,
-          // output capture and process exit; its build/version check is untimed.
-          // Untimed: fixture generation, validation and cache conditioning.
-          // Cold means page-cache cold; no EBS/controller-cache claim is made.
-          b.iter_custom(|iters| {
-            let mut elapsed = Duration::ZERO;
-            for _ in 0..iters {
-              fixture.condition(cache, logfile, &case);
-              let start = Instant::now();
-              let digest = black_box(operation(black_box(fixture)));
-              elapsed = elapsed.checked_add(start.elapsed()).expect("elapsed duration fits");
-              assert_eq!(digest, fixture.digest, "measured file output: {case}");
-            }
-            elapsed
-          });
-        });
+        // Criterion invokes the check and routine only for selected measurements,
+        // not listing or filtered rows. In particular, ordinary rows do not require b3sum.
+        group.bench_function(
+          BenchmarkId::new(name, format!("{len}B")),
+          checked_routine(
+            None::<Fixture>,
+            |fixture| {
+              if name == B3SUM_OPERATION {
+                B3SUM.get_or_init(B3sum::load);
+              }
+              let fixture = fixture.insert(Fixture::load(
+                directory.as_deref().expect("RSCRYPTO_BLAKE3_FILE_DIR is required"),
+                len,
+              ));
+              fixture.condition(cache, cache_log(), &case);
+              assert_eq!(operation(fixture), fixture.digest, "file output: {case}");
+            },
+            |b, fixture| {
+              let fixture = fixture.as_ref().expect("the output check loads the fixture");
+              // Timed: open/seek, construction, reader allocations and clears,
+              // hashing, caller threads, public merges, finalization and destruction.
+              // The b3sum row also includes command setup, process/worker startup,
+              // output capture and process exit; its build/version check is untimed.
+              // Untimed: fixture generation, the output check and cache conditioning.
+              // Cold means page-cache cold; no EBS/controller-cache claim is made.
+              b.iter_custom(|iters| {
+                let mut elapsed = Duration::ZERO;
+                for _ in 0..iters {
+                  fixture.condition(cache, cache_log(), &case);
+                  let start = Instant::now();
+                  black_box(operation(black_box(fixture)));
+                  elapsed = elapsed.checked_add(start.elapsed()).expect("elapsed duration fits");
+                }
+                elapsed
+              });
+            },
+          ),
+        );
       }
     }
     group.finish();

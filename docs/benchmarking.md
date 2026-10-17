@@ -273,6 +273,26 @@ Planning has a five-minute cap.
 A newer request for the same architecture cancels an older request that is still running.
 Inspect the uncertainty, and repeat matched measurements, before you make a performance claim.
 
+## Output checks
+
+Every Criterion row checks its output before Criterion times it.
+
+- Rows register through `checked`, `checked_with`, or `checked_routine` in
+  [`benches/common/criterion.rs`](../benches/common/criterion.rs).
+- The check runs once per row, outside timing, when Criterion first runs the row.
+  Listing runs no checks.
+- The check receives the operation's second output, so reused state has already served one call.
+- Every row, comparison rows included, must match an independent oracle:
+  another implementation or a published vector.
+  An independent verifier checks randomized outputs, such as hedged signatures and new keys.
+- Two row families have no independent implementation to compare with.
+  Ascon-CXOF128 rows reproduce a published vector and match rscrypto's incremental API.
+  RapidHash collection hashers, which no external specification defines, match pinned known answers.
+- A mismatch stops the run before that row is timed.
+- A planned run fails when a measured row skipped its check.
+  Each binary prints `Output checks: N of N measured rows passed`,
+  and the Bench workflow adds one such line per binary to its job summary.
+
 ## Timed workload boundaries
 
 ### BLAKE3 file inputs
@@ -427,7 +447,7 @@ Construction-only and header-mask groups state their own boundaries next to thei
   boundary. Diagnostic `leaf-alignment-cvs` rows call existing full-chunk workers
   with independently controlled input and output alignment. They include wrapper
   validation and consume every CV, with allocation outside timing. Every CV is
-  checked against upstream's non-root hash at its chunk offset and against Portable.
+  checked against upstream's non-root hash at its chunk offset.
   These component rows do not measure public dispatch or complete hashing.
 - Ascon's `rscrypto/scalar-loop` rows compare repeated calls to the `rscrypto` scalar API with its batch API.
   They do not compare with an external library.
@@ -502,8 +522,7 @@ Argon2 comparison groups include `salt16-raw32` in their IDs.
 - Each call includes the selected API's scratch allocation, computation, and scratch cleanup.
 - The output buffer is reused, and destroyed outside timing.
 - Each library keeps its own cleanup policy.
-- Untimed checks compare all 32 output bytes with RustCrypto and,
-  where its parameter limits allow the row, with dryoc.
+- Untimed checks compare all 32 output bytes of every row with RustCrypto.
 - Argon2 parallel-scaling rows use the same salt and output size, and change the lane count.
 - scrypt and PHC fixtures are separate workloads.
 
@@ -515,7 +534,7 @@ The reused-memory groups (`argon2id-owasp/salt16-raw32-reused-memory` and `scryp
   `rscrypto` still clears every block it used, inside timing.
 - `rustcrypto/reused-memory` calls `hash_password_into_with_memory`, built without RustCrypto's `zeroize` feature.
   It does not clear its buffer, so the rows do not do equal cleanup.
-- Untimed checks compare all 32 output bytes with `derive`.
+- Untimed checks compare all 32 output bytes with RustCrypto, after a call has already used the memory.
 
 ## Measure locally
 

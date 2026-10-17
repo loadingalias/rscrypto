@@ -16,6 +16,7 @@ mod mixed_batches;
 
 use core::hint::black_box;
 
+use bench_config::{checked, checked_with};
 use criterion::{BenchmarkId, Criterion};
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 use rscrypto::hashes::crypto::blake3::{
@@ -123,6 +124,26 @@ fn print_blake3_diag_once() {
 #[inline]
 fn print_blake3_diag_once() {}
 
+/// Upstream XOF output for `data`, filling `out`.
+fn upstream_xof(data: &[u8], out: &mut [u8]) {
+  blake3::Hasher::new().update(data).finalize_xof().fill(out);
+}
+
+/// Upstream non-root chaining values of every full chunk of `data`.
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+fn upstream_chunk_cvs(data: &[u8]) -> Vec<u8> {
+  use blake3::hazmat::HasherExt as _;
+
+  let mut cvs = Vec::new();
+  for (index, chunk) in data.as_chunks::<BLAKE3_CHUNK_LEN>().0.iter().enumerate() {
+    let offset = u64::try_from(index.strict_mul(BLAKE3_CHUNK_LEN)).expect("chunk offset fits u64");
+    let mut hasher = blake3::Hasher::new();
+    hasher.set_input_offset(offset).update(chunk);
+    cvs.extend_from_slice(&hasher.finalize_non_root());
+  }
+  cvs
+}
+
 fn oneshot(c: &mut Criterion) {
   if !bench_config::selected("blake3") {
     return;
@@ -134,33 +155,40 @@ fn oneshot(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
+    let expected = *blake3::hash(data).as_bytes();
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| black_box(rscrypto::Blake3::digest(black_box(d))))
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked(
+        || rscrypto::Blake3::digest(black_box(data)),
+        |out| assert_eq!(out, expected),
+      ),
+    );
 
     #[cfg(all(rscrypto_internal, feature = "diag"))]
     for &kernel in diag_kernels() {
       if !diag_blake3_kernel_available(kernel) {
         continue;
       }
-      g.bench_with_input(
+      g.bench_function(
         BenchmarkId::new(format!("rscrypto-{}", kernel.label()), len),
-        data,
-        |b, d| {
-          b.iter(|| {
-            black_box(
-              diag_blake3_digest_with_kernel(kernel, black_box(d))
-                .expect("selected BLAKE3 benchmark kernel must be available"),
-            )
-          })
-        },
+        checked(
+          || {
+            diag_blake3_digest_with_kernel(kernel, black_box(data))
+              .expect("selected BLAKE3 benchmark kernel must be available")
+          },
+          |out| assert_eq!(out, expected),
+        ),
       );
     }
 
-    g.bench_with_input(BenchmarkId::new("blake3", len), data, |b, d| {
-      b.iter(|| black_box(blake3::hash(black_box(d))))
-    });
+    g.bench_function(
+      BenchmarkId::new("blake3", len),
+      checked(
+        || blake3::hash(black_box(data)),
+        |out| assert_eq!(out.as_bytes(), &expected),
+      ),
+    );
   }
 
   g.finish();
@@ -178,33 +206,40 @@ fn keyed(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
+    let expected = *blake3::keyed_hash(&key, data).as_bytes();
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| black_box(rscrypto::Blake3::keyed_digest(black_box(&key), black_box(d))))
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked(
+        || rscrypto::Blake3::keyed_digest(black_box(&key), black_box(data)),
+        |out| assert_eq!(out.as_bytes(), &expected),
+      ),
+    );
 
     #[cfg(all(rscrypto_internal, feature = "diag"))]
     for &kernel in diag_kernels() {
       if !diag_blake3_kernel_available(kernel) {
         continue;
       }
-      g.bench_with_input(
+      g.bench_function(
         BenchmarkId::new(format!("rscrypto-{}", kernel.label()), len),
-        data,
-        |b, d| {
-          b.iter(|| {
-            black_box(
-              diag_blake3_keyed_digest_with_kernel(kernel, black_box(&key), black_box(d))
-                .expect("selected BLAKE3 benchmark kernel must be available"),
-            )
-          })
-        },
+        checked(
+          || {
+            diag_blake3_keyed_digest_with_kernel(kernel, black_box(&key), black_box(data))
+              .expect("selected BLAKE3 benchmark kernel must be available")
+          },
+          |out| assert_eq!(out.as_bytes(), &expected),
+        ),
       );
     }
 
-    g.bench_with_input(BenchmarkId::new("blake3", len), data, |b, d| {
-      b.iter(|| black_box(blake3::keyed_hash(black_box(&key), black_box(d))))
-    });
+    g.bench_function(
+      BenchmarkId::new("blake3", len),
+      checked(
+        || blake3::keyed_hash(black_box(&key), black_box(data)),
+        |out| assert_eq!(out.as_bytes(), &expected),
+      ),
+    );
   }
 
   g.finish();
@@ -223,14 +258,23 @@ fn derive_key(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
+    let expected = blake3::derive_key(CONTEXT, data);
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| black_box(rscrypto::Blake3::derive_key(black_box(CONTEXT), black_box(d))))
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked(
+        || rscrypto::Blake3::derive_key(black_box(CONTEXT), black_box(data)),
+        |out| assert_eq!(out, expected),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("blake3", len), data, |b, d| {
-      b.iter(|| black_box(blake3::derive_key(black_box(CONTEXT), black_box(d))))
-    });
+    g.bench_function(
+      BenchmarkId::new("blake3", len),
+      checked(
+        || blake3::derive_key(black_box(CONTEXT), black_box(data)),
+        |out| assert_eq!(out, expected),
+      ),
+    );
   }
 
   g.finish();
@@ -258,28 +302,30 @@ fn batch(c: &mut Criterion) {
   for (len, data) in &cases {
     let len = *len;
     let inputs: Vec<&[u8]> = data.chunks_exact(len).collect();
-    let mut outputs = vec![[0u8; 32]; MESSAGES];
-    rscrypto::Blake3::digest_batch(&inputs, &mut outputs);
-    for (input, output) in inputs.iter().zip(&outputs) {
-      assert_eq!(
-        output,
-        blake3::hash(input).as_bytes(),
-        "batch output mismatch at len={len}"
-      );
-    }
+    let expected: Vec<[u8; 32]> = inputs.iter().map(|input| *blake3::hash(input).as_bytes()).collect();
     common::set_throughput(&mut g, MESSAGES.strict_mul(len));
 
-    g.bench_function(BenchmarkId::new("rscrypto", len), |b| {
-      b.iter(|| rscrypto::Blake3::digest_batch(black_box(&inputs), black_box(&mut outputs)))
-    });
-    g.bench_function(BenchmarkId::new("blake3", len), |b| {
-      b.iter(|| {
-        for (input, output) in inputs.iter().zip(outputs.iter_mut()) {
-          *output = *blake3::hash(black_box(input)).as_bytes();
-        }
-        black_box(&outputs);
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        vec![[0u8; 32]; MESSAGES],
+        |outputs| rscrypto::Blake3::digest_batch(black_box(&inputs), black_box(&mut **outputs)),
+        |(), outputs| assert_eq!(*outputs, expected, "batch output mismatch at len={len}"),
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("blake3", len),
+      checked_with(
+        vec![[0u8; 32]; MESSAGES],
+        |outputs| {
+          for (input, output) in inputs.iter().zip(outputs.iter_mut()) {
+            *output = *blake3::hash(black_box(input)).as_bytes();
+          }
+          black_box(&**outputs);
+        },
+        |(), outputs| assert_eq!(*outputs, expected),
+      ),
+    );
   }
   g.finish();
 
@@ -287,17 +333,22 @@ fn batch(c: &mut Criterion) {
   for (len, data) in &cases {
     let len = *len;
     let inputs: Vec<&[u8]> = data.chunks_exact(len).collect();
-    let mut outputs = vec![[0u8; 32]; MESSAGES];
+    let expected: Vec<[u8; 32]> = inputs.iter().map(|input| *blake3::hash(input).as_bytes()).collect();
     common::set_throughput(&mut g, MESSAGES.strict_mul(len));
 
-    g.bench_function(BenchmarkId::new("rscrypto", len), |b| {
-      b.iter(|| {
-        for (input, output) in inputs.iter().zip(outputs.iter_mut()) {
-          *output = rscrypto::Blake3::digest(black_box(input));
-        }
-        black_box(&outputs);
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        vec![[0u8; 32]; MESSAGES],
+        |outputs| {
+          for (input, output) in inputs.iter().zip(outputs.iter_mut()) {
+            *output = rscrypto::Blake3::digest(black_box(input));
+          }
+          black_box(&*outputs);
+        },
+        |(), outputs| assert_eq!(*outputs, expected),
+      ),
+    );
   }
   g.finish();
 }
@@ -309,45 +360,56 @@ fn streaming(c: &mut Criterion) {
   print_blake3_diag_once();
 
   let data = common::random_bytes(1048576);
+  let expected = *blake3::hash(&data).as_bytes();
   let mut g = c.benchmark_group("blake3/streaming");
   g.throughput(criterion::Throughput::Bytes(data.len() as u64));
 
   for chunk_size in [64, 4096, 16384, 65536] {
-    g.bench_function(format!("rscrypto/{chunk_size}B"), |b| {
-      b.iter(|| {
-        use rscrypto::Digest;
-        let mut h = rscrypto::Blake3::new();
-        for chunk in data.chunks(chunk_size) {
-          h.update(black_box(chunk));
-        }
-        black_box(h.finalize())
-      })
-    });
+    g.bench_function(
+      format!("rscrypto/{chunk_size}B"),
+      checked(
+        || {
+          use rscrypto::Digest;
+          let mut h = rscrypto::Blake3::new();
+          for chunk in data.chunks(chunk_size) {
+            h.update(black_box(chunk));
+          }
+          h.finalize()
+        },
+        |out| assert_eq!(out, expected),
+      ),
+    );
 
     #[cfg(all(rscrypto_internal, feature = "diag"))]
     for &kernel in diag_kernels() {
       if !diag_blake3_kernel_available(kernel) || !kernel.supports_streaming() {
         continue;
       }
-      g.bench_function(format!("rscrypto-{}/{chunk_size}B", kernel.label()), |b| {
-        b.iter(|| {
-          black_box(
+      g.bench_function(
+        format!("rscrypto-{}/{chunk_size}B", kernel.label()),
+        checked(
+          || {
             diag_blake3_streaming_digest_with_kernel(kernel, black_box(&data), chunk_size)
-              .expect("selected BLAKE3 benchmark kernel must be available"),
-          )
-        })
-      });
+              .expect("selected BLAKE3 benchmark kernel must be available")
+          },
+          |out| assert_eq!(out, expected),
+        ),
+      );
     }
 
-    g.bench_function(format!("blake3/{chunk_size}B"), |b| {
-      b.iter(|| {
-        let mut h = blake3::Hasher::new();
-        for chunk in data.chunks(chunk_size) {
-          h.update(black_box(chunk));
-        }
-        black_box(h.finalize())
-      })
-    });
+    g.bench_function(
+      format!("blake3/{chunk_size}B"),
+      checked(
+        || {
+          let mut h = blake3::Hasher::new();
+          for chunk in data.chunks(chunk_size) {
+            h.update(black_box(chunk));
+          }
+          h.finalize()
+        },
+        |out| assert_eq!(out.as_bytes(), &expected),
+      ),
+    );
   }
 
   g.finish();
@@ -366,47 +428,57 @@ fn xof(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
+    let mut expected = [0u8; OUT_LEN];
+    upstream_xof(data, &mut expected);
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| {
-        use rscrypto::Xof;
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked(
+        || {
+          use rscrypto::Xof;
 
-        let mut xof = rscrypto::Blake3::xof(black_box(d));
-        let mut out = [0u8; OUT_LEN];
-        xof.squeeze(&mut out);
-        black_box(out)
-      })
-    });
+          let mut xof = rscrypto::Blake3::xof(black_box(data));
+          let mut out = [0u8; OUT_LEN];
+          xof.squeeze(&mut out);
+          out
+        },
+        |out| assert_eq!(out, expected),
+      ),
+    );
 
     #[cfg(all(rscrypto_internal, feature = "diag"))]
     for &kernel in diag_kernels() {
       if !diag_blake3_kernel_available(kernel) {
         continue;
       }
-      g.bench_with_input(
+      g.bench_function(
         BenchmarkId::new(format!("rscrypto-{}", kernel.label()), len),
-        data,
-        |b, d| {
-          b.iter(|| {
+        checked(
+          || {
             let mut out = [0u8; OUT_LEN];
-            diag_blake3_xof_with_kernel(kernel, black_box(d), &mut out)
+            diag_blake3_xof_with_kernel(kernel, black_box(data), &mut out)
               .expect("selected BLAKE3 benchmark kernel must be available");
-            black_box(out)
-          })
-        },
+            out
+          },
+          |out| assert_eq!(out, expected),
+        ),
       );
     }
 
-    g.bench_with_input(BenchmarkId::new("blake3", len), data, |b, d| {
-      b.iter(|| {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(black_box(d));
-        let mut reader = hasher.finalize_xof();
-        let mut out = [0u8; OUT_LEN];
-        reader.fill(&mut out);
-        black_box(out)
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("blake3", len),
+      checked(
+        || {
+          let mut hasher = blake3::Hasher::new();
+          hasher.update(black_box(data));
+          let mut reader = hasher.finalize_xof();
+          let mut out = [0u8; OUT_LEN];
+          reader.fill(&mut out);
+          out
+        },
+        |out| assert_eq!(out, expected),
+      ),
+    );
   }
 
   g.finish();
@@ -429,44 +501,54 @@ fn xof_output(c: &mut Criterion) {
 
   for out_len in OUTPUT_LENGTHS {
     common::set_throughput(&mut g, out_len);
+    let mut expected = vec![0u8; out_len];
+    upstream_xof(&data, &mut expected);
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
-      let mut out = vec![0u8; len];
-      b.iter(|| {
-        let mut xof = rscrypto::Blake3::xof(black_box(&data));
-        xof.squeeze(black_box(out.as_mut_slice()));
-        black_box(out[0])
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto", out_len),
+      checked_with(
+        vec![0u8; out_len],
+        |out| {
+          let mut xof = rscrypto::Blake3::xof(black_box(&data));
+          xof.squeeze(black_box(out.as_mut_slice()));
+          black_box(out[0])
+        },
+        |_, out| assert_eq!(*out, expected),
+      ),
+    );
 
     for &kernel in diag_kernels() {
       if !diag_blake3_kernel_available(kernel) {
         continue;
       }
-      g.bench_with_input(
+      g.bench_function(
         BenchmarkId::new(format!("rscrypto-{}", kernel.label()), out_len),
-        &out_len,
-        |b, &len| {
-          let mut out = vec![0u8; len];
-          b.iter(|| {
+        checked_with(
+          vec![0u8; out_len],
+          |out| {
             diag_blake3_xof_with_kernel(kernel, black_box(&data), black_box(out.as_mut_slice()))
               .expect("selected BLAKE3 benchmark kernel must be available");
             black_box(out[0])
-          })
-        },
+          },
+          |_, out| assert_eq!(*out, expected),
+        ),
       );
     }
 
-    g.bench_with_input(BenchmarkId::new("blake3", out_len), &out_len, |b, &len| {
-      let mut out = vec![0u8; len];
-      b.iter(|| {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(black_box(&data));
-        let mut reader = hasher.finalize_xof();
-        reader.fill(black_box(out.as_mut_slice()));
-        black_box(out[0])
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("blake3", out_len),
+      checked_with(
+        vec![0u8; out_len],
+        |out| {
+          let mut hasher = blake3::Hasher::new();
+          hasher.update(black_box(&data));
+          let mut reader = hasher.finalize_xof();
+          reader.fill(black_box(out.as_mut_slice()));
+          black_box(out[0])
+        },
+        |_, out| assert_eq!(*out, expected),
+      ),
+    );
   }
 
   g.finish();
@@ -485,32 +567,39 @@ fn tail_diagnostics(c: &mut Criterion) {
   for chunks in tail_counts.iter().copied() {
     let data = common::random_bytes(chunks.strict_mul(BLAKE3_CHUNK_LEN));
     common::set_throughput(&mut digest_group, data.len());
+    let expected = *blake3::hash(&data).as_bytes();
 
-    digest_group.bench_with_input(BenchmarkId::new("rscrypto", chunks), &data, |b, d| {
-      b.iter(|| black_box(rscrypto::Blake3::digest(black_box(d))))
-    });
+    digest_group.bench_function(
+      BenchmarkId::new("rscrypto", chunks),
+      checked(
+        || rscrypto::Blake3::digest(black_box(&data)),
+        |out| assert_eq!(out, expected),
+      ),
+    );
 
     for &kernel in chunk_tail_diag_kernels() {
       if !diag_blake3_kernel_available(kernel) {
         continue;
       }
-      digest_group.bench_with_input(
+      digest_group.bench_function(
         BenchmarkId::new(format!("rscrypto-{}", kernel.label()), chunks),
-        &data,
-        |b, d| {
-          b.iter(|| {
-            black_box(
-              diag_blake3_digest_with_kernel(kernel, black_box(d))
-                .expect("selected BLAKE3 benchmark kernel must be available"),
-            )
-          })
-        },
+        checked(
+          || {
+            diag_blake3_digest_with_kernel(kernel, black_box(&data))
+              .expect("selected BLAKE3 benchmark kernel must be available")
+          },
+          |out| assert_eq!(out, expected),
+        ),
       );
     }
 
-    digest_group.bench_with_input(BenchmarkId::new("blake3", chunks), &data, |b, d| {
-      b.iter(|| black_box(blake3::hash(black_box(d))))
-    });
+    digest_group.bench_function(
+      BenchmarkId::new("blake3", chunks),
+      checked(
+        || blake3::hash(black_box(&data)),
+        |out| assert_eq!(out.as_bytes(), &expected),
+      ),
+    );
   }
   digest_group.finish();
 
@@ -518,22 +607,23 @@ fn tail_diagnostics(c: &mut Criterion) {
   for chunks in tail_counts.iter().copied() {
     let data = common::random_bytes(chunks.strict_mul(BLAKE3_CHUNK_LEN));
     common::set_throughput(&mut chunk_group, data.len());
+    let expected = upstream_chunk_cvs(&data);
 
     for &kernel in chunk_tail_diag_kernels() {
       if !diag_blake3_kernel_available(kernel) {
         continue;
       }
-      let mut out = vec![0u8; chunks.strict_mul(BLAKE3_OUT_LEN)];
-      chunk_group.bench_with_input(
+      chunk_group.bench_function(
         BenchmarkId::new(format!("rscrypto-{}", kernel.label()), chunks),
-        &data,
-        |b, d| {
-          b.iter(|| {
-            diag_blake3_chunk_cvs_with_kernel(kernel, black_box(d), black_box(out.as_mut_slice()))
+        checked_with(
+          vec![0u8; chunks.strict_mul(BLAKE3_OUT_LEN)],
+          |out| {
+            diag_blake3_chunk_cvs_with_kernel(kernel, black_box(&data), black_box(out.as_mut_slice()))
               .expect("selected BLAKE3 benchmark kernel must be available");
             black_box(out[0])
-          })
-        },
+          },
+          |_, out| assert_eq!(*out, expected),
+        ),
       );
     }
   }
@@ -543,22 +633,35 @@ fn tail_diagnostics(c: &mut Criterion) {
   for parents in tail_counts {
     let children = common::random_bytes(parents.strict_mul(2).strict_mul(BLAKE3_OUT_LEN));
     common::set_throughput(&mut parent_group, children.len());
+    let expected: Vec<u8> = children
+      .as_chunks::<64>()
+      .0
+      .iter()
+      .flat_map(|pair| {
+        let (left, right) = pair.split_at(BLAKE3_OUT_LEN);
+        blake3::hazmat::merge_subtrees_non_root(
+          left.try_into().expect("left CV has 32 bytes"),
+          right.try_into().expect("right CV has 32 bytes"),
+          blake3::hazmat::Mode::Hash,
+        )
+      })
+      .collect();
 
     for &kernel in parent_tail_diag_kernels() {
       if !diag_blake3_kernel_available(kernel) {
         continue;
       }
-      let mut out = vec![0u8; parents.strict_mul(BLAKE3_OUT_LEN)];
-      parent_group.bench_with_input(
+      parent_group.bench_function(
         BenchmarkId::new(format!("rscrypto-{}", kernel.label()), parents),
-        &children,
-        |b, d| {
-          b.iter(|| {
-            diag_blake3_parent_cvs_with_kernel(kernel, black_box(d), black_box(out.as_mut_slice()))
+        checked_with(
+          vec![0u8; parents.strict_mul(BLAKE3_OUT_LEN)],
+          |out| {
+            diag_blake3_parent_cvs_with_kernel(kernel, black_box(&children), black_box(out.as_mut_slice()))
               .expect("selected BLAKE3 benchmark kernel must be available");
             black_box(out[0])
-          })
-        },
+          },
+          |_, out| assert_eq!(*out, expected),
+        ),
       );
     }
   }

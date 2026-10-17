@@ -5,6 +5,8 @@ use core::hint::black_box;
 use criterion::Criterion;
 use rscrypto::{Blake3, Digest as _};
 
+use super::bench_config::checked;
+
 const CONTEXT: &str = "rscrypto benchmark derive-key context";
 
 fn ours_oneshot<const DERIVE: bool>(data: &[u8]) -> [u8; 32] {
@@ -78,34 +80,53 @@ fn measure<const DERIVE: bool>(
   let mut g = c.benchmark_group(group);
   super::common::set_throughput(&mut g, data.len());
 
-  assert_eq!(ours_oneshot::<DERIVE>(data), expected, "{name} one-shot");
-  g.bench_function("rscrypto/oneshot", |b| {
-    b.iter(|| black_box(ours_oneshot::<DERIVE>(black_box(data))))
-  });
-  g.bench_function("blake3/oneshot", |b| {
-    b.iter(|| black_box(reference_oneshot::<DERIVE>(black_box(data))))
-  });
+  g.bench_function(
+    "rscrypto/oneshot",
+    checked(
+      || ours_oneshot::<DERIVE>(black_box(data)),
+      |out| assert_eq!(out, expected, "{name} one-shot"),
+    ),
+  );
+  g.bench_function(
+    "blake3/oneshot",
+    checked(
+      || reference_oneshot::<DERIVE>(black_box(data)),
+      |out| assert_eq!(out, expected),
+    ),
+  );
 
   if single {
-    assert_eq!(ours_update::<DERIVE, false>(data, 0), expected, "{name} one-update");
-    assert_eq!(reference_update::<DERIVE, false>(data, 0), expected);
-    g.bench_function("rscrypto/single-update", |b| {
-      b.iter(|| black_box(ours_update::<DERIVE, false>(black_box(data), 0)))
-    });
-    g.bench_function("blake3/single-update", |b| {
-      b.iter(|| black_box(reference_update::<DERIVE, false>(black_box(data), 0)))
-    });
+    g.bench_function(
+      "rscrypto/single-update",
+      checked(
+        || ours_update::<DERIVE, false>(black_box(data), 0),
+        |out| assert_eq!(out, expected, "{name} one-update"),
+      ),
+    );
+    g.bench_function(
+      "blake3/single-update",
+      checked(
+        || reference_update::<DERIVE, false>(black_box(data), 0),
+        |out| assert_eq!(out, expected),
+      ),
+    );
   }
 
   if let Some(split) = split {
-    assert_eq!(ours_update::<DERIVE, true>(data, split), expected, "{name} two-update");
-    assert_eq!(reference_update::<DERIVE, true>(data, split), expected);
-    g.bench_function("rscrypto/two-update", |b| {
-      b.iter(|| black_box(ours_update::<DERIVE, true>(black_box(data), split)))
-    });
-    g.bench_function("blake3/two-update", |b| {
-      b.iter(|| black_box(reference_update::<DERIVE, true>(black_box(data), split)))
-    });
+    g.bench_function(
+      "rscrypto/two-update",
+      checked(
+        || ours_update::<DERIVE, true>(black_box(data), split),
+        |out| assert_eq!(out, expected, "{name} two-update"),
+      ),
+    );
+    g.bench_function(
+      "blake3/two-update",
+      checked(
+        || reference_update::<DERIVE, true>(black_box(data), split),
+        |out| assert_eq!(out, expected),
+      ),
+    );
   }
   g.finish();
 }

@@ -1,4 +1,6 @@
 //! SHA-2 family comparison benchmarks: rscrypto vs sha2 crate.
+//!
+//! Before timing, every row must return the sha2 crate's digest of its input.
 
 #[path = "common/criterion.rs"]
 mod bench_config;
@@ -7,6 +9,7 @@ mod common;
 
 use core::hint::black_box;
 
+use bench_config::checked;
 use criterion::{BenchmarkId, Criterion};
 
 #[cfg(all(
@@ -72,17 +75,23 @@ macro_rules! sha2_oneshot {
 
       for (len, data) in &inputs {
         common::set_throughput(&mut g, *len);
+        let expected = <$theirs as sha2::Digest>::digest(data);
 
-        g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-          b.iter(|| black_box(<$ours>::digest(black_box(d))))
-        });
+        g.bench_function(
+          BenchmarkId::new("rscrypto", len),
+          checked(
+            || <$ours>::digest(black_box(data)),
+            |out| assert_eq!(out.as_ref(), expected.as_slice()),
+          ),
+        );
 
-        g.bench_with_input(BenchmarkId::new("sha2", len), data, |b, d| {
-          b.iter(|| {
-            use sha2::Digest as _;
-            black_box(<$theirs>::digest(black_box(d)))
-          })
-        });
+        g.bench_function(
+          BenchmarkId::new("sha2", len),
+          checked(
+            || <$theirs as sha2::Digest>::digest(black_box(data)),
+            |out| assert_eq!(out, expected),
+          ),
+        );
       }
 
       g.finish();
@@ -105,27 +114,41 @@ macro_rules! sha2_oneshot_ietf {
 
       for (len, data) in &inputs {
         common::set_throughput(&mut g, *len);
+        let expected = <$theirs as sha2::Digest>::digest(data);
 
-        g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-          b.iter(|| black_box(<$ours>::digest(black_box(d))))
-        });
+        g.bench_function(
+          BenchmarkId::new("rscrypto", len),
+          checked(
+            || <$ours>::digest(black_box(data)),
+            |out| assert_eq!(out.as_ref(), expected.as_slice()),
+          ),
+        );
 
-        g.bench_with_input(BenchmarkId::new("sha2", len), data, |b, d| {
-          b.iter(|| {
-            use sha2::Digest as _;
-            black_box(<$theirs>::digest(black_box(d)))
-          })
-        });
+        g.bench_function(
+          BenchmarkId::new("sha2", len),
+          checked(
+            || <$theirs as sha2::Digest>::digest(black_box(data)),
+            |out| assert_eq!(out, expected),
+          ),
+        );
 
         aws_lc_bench! {
-          g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-            b.iter(|| black_box(aws_lc_rs::digest::digest($aws_alg, black_box(d))))
-          });
+          g.bench_function(
+            BenchmarkId::new("aws-lc-rs", len),
+            checked(
+              || aws_lc_rs::digest::digest($aws_alg, black_box(data)),
+              |out| assert_eq!(out.as_ref(), expected.as_slice()),
+            ),
+          );
         }
 
-        g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
-          b.iter(|| black_box(ring::digest::digest($ring_alg, black_box(d))))
-        });
+        g.bench_function(
+          BenchmarkId::new("ring", len),
+          checked(
+            || ring::digest::digest($ring_alg, black_box(data)),
+            |out| assert_eq!(out.as_ref(), expected.as_slice()),
+          ),
+        );
       }
 
       g.finish();
@@ -160,8 +183,7 @@ sha2_oneshot_ietf!(
 );
 sha2_oneshot!(sha512_256, "sha512-256", rscrypto::Sha512_256, sha2::Sha512_256);
 
-/// Streams 1 MiB in fixed-size chunks. Before timing, each chunk size checks
-/// that the rscrypto and sha2 rows produce the same digest.
+/// Streams 1 MiB in fixed-size chunks.
 macro_rules! sha2_streaming {
   ($fn_name:ident, $group:literal, $ours:ty, $theirs:ty) => {
     fn $fn_name(c: &mut Criterion) {
@@ -190,21 +212,20 @@ macro_rules! sha2_streaming {
       let mut g = c.benchmark_group($group);
       g.throughput(criterion::Throughput::Bytes(data.len() as u64));
 
+      let expected = <$theirs as sha2::Digest>::digest(&data);
       for chunk_size in [64, 4096] {
-        assert_eq!(
-          rscrypto_digest(chunk_size).as_ref(),
-          sha2_digest(chunk_size).as_slice(),
-          "{}/{chunk_size}B: rscrypto digest must match sha2",
-          $group
+        g.bench_function(
+          format!("rscrypto/{chunk_size}B"),
+          checked(
+            || rscrypto_digest(chunk_size),
+            |out| assert_eq!(out.as_ref(), expected.as_slice()),
+          ),
         );
 
-        g.bench_function(format!("rscrypto/{chunk_size}B"), |b| {
-          b.iter(|| black_box(rscrypto_digest(chunk_size)))
-        });
-
-        g.bench_function(format!("sha2/{chunk_size}B"), |b| {
-          b.iter(|| black_box(sha2_digest(chunk_size)))
-        });
+        g.bench_function(
+          format!("sha2/{chunk_size}B"),
+          checked(|| sha2_digest(chunk_size), |out| assert_eq!(out, expected)),
+        );
       }
 
       g.finish();
@@ -231,29 +252,42 @@ fn sha256_internal(_c: &mut Criterion) {
 
   #[cfg(all(rscrypto_internal, feature = "diag"))]
   {
+    use bench_config::checked_with;
+
     let blocks = common::random_bytes(64 * 16);
     let mut g = _c.benchmark_group("sha256/internal/compress");
 
     for block_count in [1usize, 2, 16] {
       let len = block_count.strict_mul(64);
       common::set_throughput(&mut g, len);
-      g.bench_with_input(BenchmarkId::new("selected-kernel", format!("{len}B")), &len, |b, &n| {
-        let blocks = &blocks[..n];
-        let mut state = [
-          0x6a09e667u32,
-          0xbb67ae85,
-          0x3c6ef372,
-          0xa54ff53a,
-          0x510e527f,
-          0x9b05688c,
-          0x1f83d9ab,
-          0x5be0cd19,
-        ];
-        b.iter(|| {
-          rscrypto::hashes::introspect::sha256_compress_blocks_for_bench(black_box(&mut state), black_box(blocks));
-          black_box(state[0])
-        })
-      });
+      let blocks = &blocks[..len];
+      let initial = [
+        0x6a09e667u32,
+        0xbb67ae85,
+        0x3c6ef372,
+        0xa54ff53a,
+        0x510e527f,
+        0x9b05688c,
+        0x1f83d9ab,
+        0x5be0cd19,
+      ];
+      g.bench_function(
+        BenchmarkId::new("selected-kernel", format!("{len}B")),
+        checked_with(
+          initial,
+          |state| {
+            rscrypto::hashes::introspect::sha256_compress_blocks_for_bench(black_box(&mut *state), black_box(blocks));
+            state[0]
+          },
+          |_, state| {
+            // The check sees the state after two calls; sha2 compresses the same blocks twice.
+            let mut expected = initial;
+            sha2::block_api::compress256(&mut expected, blocks.as_chunks::<64>().0);
+            sha2::block_api::compress256(&mut expected, blocks.as_chunks::<64>().0);
+            assert_eq!(*state, expected);
+          },
+        ),
+      );
     }
 
     g.finish();

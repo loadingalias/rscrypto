@@ -15,6 +15,10 @@
 //!
 //! rscrypto private operations always blind. Comparison private rows are named
 //! `blinded` because their libraries also offer unblinded operations.
+//!
+//! Before timing, every row's output must match an independent oracle:
+//! RustCrypto, ring, or aws-lc-rs output, a Wycheproof vector, or RustCrypto
+//! big-integer arithmetic. Every verifier must also reject one flipped bit.
 
 #[path = "common/criterion.rs"]
 mod bench_config;
@@ -27,26 +31,31 @@ use core::hint::black_box;
   not(any(target_arch = "s390x", target_arch = "powerpc64"))
 ))]
 use aws_lc_rs::{rsa as aws_rsa, signature as aws_signature};
+use bench_config::{checked, checked_with};
 use criterion::Criterion;
 use ring::signature as ring_signature;
 use rsa::{
   RsaPrivateKey as RustCryptoRsaPrivateKey, RsaPublicKey as RustCryptoRsaPublicKey,
-  oaep::{DecryptingKey as RustCryptoOaepDecryptingKey, EncryptingKey as RustCryptoOaepEncryptingKey},
-  pkcs1::DecodeRsaPrivateKey,
+  oaep::EncryptingKey as RustCryptoOaepEncryptingKey,
+  pkcs1::{DecodeRsaPrivateKey, EncodeRsaPublicKey as _},
   pkcs1v15::{
     Signature as RustCryptoPkcs1v15Signature, SigningKey as RustCryptoPkcs1v15SigningKey,
     VerifyingKey as RustCryptoPkcs1v15VerifyingKey,
   },
   pkcs8::{DecodePrivateKey, DecodePublicKey},
-  pss::{Signature as RustCryptoPssSignature, VerifyingKey as RustCryptoPssVerifyingKey},
+  pss::{
+    Signature as RustCryptoPssSignature, SigningKey as RustCryptoPssSigningKey,
+    VerifyingKey as RustCryptoPssVerifyingKey,
+  },
   rand_core::{CryptoRng as RustCryptoCryptoRng, Error as RustCryptoRngError, RngCore as RustCryptoRngCore},
-  signature::{SignatureEncoding as _, Signer as _, Verifier as _},
-  traits::{Decryptor as _, RandomizedEncryptor as _},
+  signature::{RandomizedSigner as _, SignatureEncoding as _, Signer as _, Verifier as _},
+  traits::RandomizedEncryptor as _,
 };
 #[cfg(feature = "getrandom")]
 use rsa::{
-  pss::BlindedSigningKey as RustCryptoBlindedPssSigningKey, signature::RandomizedSigner as _,
-  traits::RandomizedDecryptor as _,
+  oaep::DecryptingKey as RustCryptoOaepDecryptingKey,
+  pss::BlindedSigningKey as RustCryptoBlindedPssSigningKey,
+  traits::{Decryptor as _, RandomizedDecryptor as _},
 };
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 use rscrypto::auth::rsa::{
@@ -93,6 +102,8 @@ const RSA8192_PSS_SHA256: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa81
 const RSA8192_PKCS1V15_SHA256: &[u8] = include_bytes!("../testdata/rsa/fixtures/rsa8192_pkcs1v15_sha256.sig");
 
 const PRIVATE_SIGNING_MESSAGE: &[u8] = b"rscrypto TLS-shaped RSA private signing benchmark";
+/// Every byte of the fixed PSS salt.
+const FIXED_SALT_BYTE: u8 = 0x5a;
 
 // Wycheproof RSAES-OAEP-SHA256 (MGF1-SHA256) documents. Each holds one private
 // key, which the OAEP rows use at every size and the 3072- and 4096-bit
@@ -188,6 +199,31 @@ impl RustCryptoRngCore for SeededRng {
 }
 
 impl RustCryptoCryptoRng for SeededRng {}
+
+/// RustCrypto RNG that repeats one byte. Unblinded RustCrypto PSS draws only
+/// its salt from the RNG, so this reproduces a fixed-salt signature.
+struct RepeatedByteRng(u8);
+
+impl RustCryptoRngCore for RepeatedByteRng {
+  fn next_u32(&mut self) -> u32 {
+    rsa::rand_core::impls::next_u32_via_fill(self)
+  }
+
+  fn next_u64(&mut self) -> u64 {
+    rsa::rand_core::impls::next_u64_via_fill(self)
+  }
+
+  fn fill_bytes(&mut self, dest: &mut [u8]) {
+    dest.fill(self.0);
+  }
+
+  fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), RustCryptoRngError> {
+    self.fill_bytes(dest);
+    Ok(())
+  }
+}
+
+impl RustCryptoCryptoRng for RepeatedByteRng {}
 
 fn hex_to_vec(hex: &str) -> Vec<u8> {
   let mut out = Vec::with_capacity(hex.len() / 2);
@@ -372,6 +408,29 @@ fn modulus_minus_one(key: &RsaPublicKey) -> Vec<u8> {
   value
 }
 
+/// `input^e mod n` with RustCrypto's big integers, left-padded to the modulus
+/// length: the oracle for every public-operation row.
+fn reference_public_operation(key: &RsaPublicKey, input: &[u8]) -> Vec<u8> {
+  let modulus = key.modulus();
+  let value = rsa::BigUint::from_bytes_be(input)
+    .modpow(
+      &rsa::BigUint::from(key.public_exponent().as_u64()),
+      &rsa::BigUint::from_bytes_be(modulus),
+    )
+    .to_bytes_be();
+  let mut out = vec![0u8; modulus.len().strict_sub(value.len())];
+  out.extend_from_slice(&value);
+  out
+}
+
+/// `bytes` with the low bit of its last byte flipped, for rejection checks.
+fn tampered(bytes: &[u8]) -> Vec<u8> {
+  let mut tampered = bytes.to_vec();
+  let last = tampered.last_mut().expect("RSA benchmark fixtures are non-empty");
+  *last ^= 1;
+  tampered
+}
+
 fn rsa2048_private_key() -> RsaPrivateKey {
   let modulus = hex_to_vec(
     "d397b84d98a4c26138ed1b695a8106ead91d553bf06041b62d3fdc50a041e222b8f4529689c1b82c5e71554f5dd69fa2f4b6158cf0dbeb57811a0fc327e1f28e74fe74d3bc166c1eabdc1b8b57b934ca8be5b00b4f29975bcc99acaf415b59bb28a6782bb41a2c3c2976b3c18dbadef62f00c6bb226640095096c0cc60d22fe7ef987d75c6a81b10d96bf292028af110dc7cc1bbc43d22adab379a0cd5d8078cc780ff5cd6209dea34c922cf784f7717e428d75b5aec8ff30e5f0141510766e2e0ab8d473c84e8710b2b98227c3db095337ad3452f19e2b9bfbccdd8148abf6776fa552775e6e75956e45229ae5a9c46949bab1e622f0e48f56524a84ed3483b",
@@ -516,6 +575,7 @@ fn rsa_private_signing(c: &mut Criterion) {
 
 /// Verify a PSS-SHA256 signature over [`PRIVATE_SIGNING_MESSAGE`] with rscrypto
 /// and RustCrypto.
+#[cfg(feature = "getrandom")]
 fn assert_private_pss_signature(key: &RsaPrivateKey, rustcrypto: &RustCryptoRsaPublicKey, signature: &[u8]) {
   key
     .public_key()
@@ -535,9 +595,7 @@ fn rsa_private_signing_for_size(c: &mut Criterion, bits: usize, load_key: impl F
     return;
   }
   let key = load_key();
-  let mut scratch = key.private_scratch();
-  let mut signature = vec![0u8; key.signature_len()];
-  let salt = [0x5au8; Sha256::OUTPUT_SIZE];
+  let salt = [FIXED_SALT_BYTE; Sha256::OUTPUT_SIZE];
   let (factor, inverse) = factor_two_and_inverse(key.public_key().modulus());
   let rustcrypto_private_key = {
     let private_key_der = key.to_pkcs1_der();
@@ -548,234 +606,221 @@ fn rsa_private_signing_for_size(c: &mut Criterion, bits: usize, load_key: impl F
       .expect("RustCrypto must precompute the RSA private benchmark fixture");
     private_key
   };
+  #[cfg(feature = "getrandom")]
   let rustcrypto_public_key = rustcrypto_private_key.to_public_key();
   #[cfg(feature = "getrandom")]
   let rustcrypto_signing_key = RustCryptoBlindedPssSigningKey::<rsa::sha2::Sha256>::new(rustcrypto_private_key.clone());
+  let rustcrypto_pkcs1v15_key = RustCryptoPkcs1v15SigningKey::<sha2_010::Sha256>::new(rustcrypto_private_key.clone());
+  let rustcrypto_pss_key = RustCryptoPssSigningKey::<sha2_010::Sha256>::new(rustcrypto_private_key);
 
-  // Untimed checks of every signing call timed below. The fixed-entropy and
-  // caller-entropy rows supply the same salt, so their four PSS signatures are
-  // identical. PKCS #1 v1.5 is deterministic, so rscrypto must match
-  // RustCrypto byte for byte.
-  let mut expected = vec![0u8; key.signature_len()];
-  key
-    .sign_pss_with_salt_and_blinding_factor_and_scratch(
-      RsaPssProfile::Sha256,
-      PRIVATE_SIGNING_MESSAGE,
-      &salt,
-      RsaBlindingPair::new(&factor, &inverse),
-      &mut expected,
-      &mut scratch,
-    )
-    .expect("valid scratch-backed RSA-PSS benchmark signing must succeed");
-  assert_private_pss_signature(&key, &rustcrypto_public_key, &expected);
-  key
-    .sign_pss_with_salt_and_blinding_factor(
-      RsaPssProfile::Sha256,
-      PRIVATE_SIGNING_MESSAGE,
-      &salt,
-      RsaBlindingPair::new(&factor, &inverse),
-      &mut signature,
-    )
-    .expect("valid one-shot RSA-PSS benchmark signing must succeed");
-  assert_eq!(signature, expected, "one-shot fixed-entropy RSA-PSS signature");
-  let fixed_fill = |out: &mut [u8]| {
-    if out.len() == salt.len() {
-      out.copy_from_slice(&salt);
-    } else {
-      out.copy_from_slice(&factor);
-    }
-    Ok::<(), ()>(())
+  // Untimed oracles. Unblinded RustCrypto PSS draws only its salt from the
+  // RNG, so with the fixed salt it reproduces the signature of all four
+  // fixed-salt rscrypto rows; blinding does not change a signature. PKCS #1
+  // v1.5 is deterministic. Randomized signatures must verify with RustCrypto.
+  let pss_with_fixed_salt = || {
+    rustcrypto_pss_key
+      .try_sign_with_rng(&mut RepeatedByteRng(FIXED_SALT_BYTE), PRIVATE_SIGNING_MESSAGE)
+      .expect("RustCrypto RSA-PSS signing must succeed")
+      .to_vec()
   };
-  key
-    .sign_pss_with_random_fill_and_scratch(
-      RsaPssProfile::Sha256,
-      PRIVATE_SIGNING_MESSAGE,
-      &mut signature,
-      &mut scratch,
-      fixed_fill,
-    )
-    .expect("valid caller-random scratch-backed RSA-PSS benchmark signing must succeed");
-  assert_eq!(signature, expected, "scratch-backed caller-entropy RSA-PSS signature");
-  key
-    .sign_pss_with_random_fill(
-      RsaPssProfile::Sha256,
-      PRIVATE_SIGNING_MESSAGE,
-      &mut signature,
-      fixed_fill,
-    )
-    .expect("valid caller-random one-shot RSA-PSS benchmark signing must succeed");
-  assert_eq!(signature, expected, "one-shot caller-entropy RSA-PSS signature");
-  key
-    .sign_pkcs1v15_with_blinding_factor_and_scratch(
-      RsaPkcs1v15Profile::Sha256,
-      PRIVATE_SIGNING_MESSAGE,
-      RsaBlindingPair::new(&factor, &inverse),
-      &mut signature,
-      &mut scratch,
-    )
-    .expect("valid scratch-backed RSA-PKCS1-v1_5 benchmark signing must succeed");
-  let rustcrypto_pkcs1v15 = RustCryptoPkcs1v15SigningKey::<sha2_010::Sha256>::new(rustcrypto_private_key)
-    .try_sign(PRIVATE_SIGNING_MESSAGE)
-    .expect("RustCrypto RSA-PKCS1-v1_5 signing must succeed");
-  assert_eq!(
-    signature,
-    rustcrypto_pkcs1v15.to_vec(),
-    "RSA-PKCS1-v1_5 signature must match RustCrypto"
-  );
-  #[cfg(feature = "getrandom")]
-  {
-    key
-      .sign_pss_with_scratch(
-        RsaPssProfile::Sha256,
-        PRIVATE_SIGNING_MESSAGE,
-        &mut signature,
-        &mut scratch,
-      )
-      .expect("valid OS-random scratch-backed RSA-PSS benchmark signing must succeed");
-    assert_private_pss_signature(&key, &rustcrypto_public_key, &signature);
-    key
-      .sign_pss(RsaPssProfile::Sha256, PRIVATE_SIGNING_MESSAGE, &mut signature)
-      .expect("valid OS-random one-shot RSA-PSS benchmark signing must succeed");
-    assert_private_pss_signature(&key, &rustcrypto_public_key, &signature);
-    let rustcrypto_signature = rustcrypto_signing_key
-      .try_sign_with_rng(&mut GetrandomRng, PRIVATE_SIGNING_MESSAGE)
-      .expect("valid RustCrypto RSA-PSS benchmark signing must succeed");
-    assert_private_pss_signature(&key, &rustcrypto_public_key, &rustcrypto_signature.to_vec());
-  }
+  let pkcs1v15 = || {
+    rustcrypto_pkcs1v15_key
+      .try_sign(PRIVATE_SIGNING_MESSAGE)
+      .expect("RustCrypto RSA-PKCS1-v1_5 signing must succeed")
+      .to_vec()
+  };
+  // Each row owns its signature buffer and scratch, allocated outside timing.
+  let buffers = || (vec![0u8; key.signature_len()], key.private_scratch());
 
   let mut group = c.benchmark_group(name);
   #[cfg(all(rscrypto_internal, feature = "diag"))]
-  {
-    let mut inverse_scratch = key.private_scratch();
-    let mut computed_inverse = vec![0u8; key.signature_len()];
-    group.bench_function("blinding-inverse-scratch-rscrypto", |b| {
-      b.iter(|| {
+  group.bench_function(
+    "blinding-inverse-scratch-rscrypto",
+    checked_with(
+      buffers(),
+      |(computed_inverse, inverse_scratch)| {
         diag_rsa_blinding_factor_inverse_with_scratch(
           black_box(&key),
           black_box(&factor),
-          black_box(&mut computed_inverse),
-          black_box(&mut inverse_scratch),
+          black_box(computed_inverse),
+          black_box(inverse_scratch),
         )
         .expect("valid scratch-backed RSA blinding-factor inversion must succeed")
-      })
-    });
-  }
-  group.bench_function("scratch-setup-rscrypto", |b| {
-    b.iter(|| black_box(key.private_scratch()))
-  });
-  group.bench_function("sign-pss-sha256-fixed-entropy-scratch-rscrypto", |b| {
-    b.iter(|| {
-      key
-        .sign_pss_with_salt_and_blinding_factor_and_scratch(
-          RsaPssProfile::Sha256,
-          black_box(PRIVATE_SIGNING_MESSAGE),
-          black_box(&salt),
-          RsaBlindingPair::new(black_box(&factor), black_box(&inverse)),
-          black_box(&mut signature),
-          black_box(&mut scratch),
-        )
-        .expect("valid scratch-backed RSA-PSS benchmark signing must succeed")
-    })
-  });
-  group.bench_function("sign-pss-sha256-fixed-entropy-oneshot-rscrypto", |b| {
-    b.iter(|| {
-      key
-        .sign_pss_with_salt_and_blinding_factor(
-          RsaPssProfile::Sha256,
-          black_box(PRIVATE_SIGNING_MESSAGE),
-          black_box(&salt),
-          RsaBlindingPair::new(black_box(&factor), black_box(&inverse)),
-          black_box(&mut signature),
-        )
-        .expect("valid one-shot RSA-PSS benchmark signing must succeed")
-    })
-  });
-  group.bench_function("sign-pss-sha256-caller-entropy-scratch-rscrypto", |b| {
-    b.iter(|| {
-      key
-        .sign_pss_with_random_fill_and_scratch(
-          RsaPssProfile::Sha256,
-          black_box(PRIVATE_SIGNING_MESSAGE),
-          black_box(&mut signature),
-          black_box(&mut scratch),
-          |out| {
-            if out.len() == salt.len() {
-              out.copy_from_slice(black_box(&salt));
-            } else {
-              out.copy_from_slice(black_box(&factor));
-            }
-            Ok::<(), ()>(())
-          },
-        )
-        .expect("valid caller-random scratch-backed RSA-PSS benchmark signing must succeed")
-    })
-  });
-  group.bench_function("sign-pss-sha256-caller-entropy-oneshot-rscrypto", |b| {
-    b.iter(|| {
-      key
-        .sign_pss_with_random_fill(
-          RsaPssProfile::Sha256,
-          black_box(PRIVATE_SIGNING_MESSAGE),
-          black_box(&mut signature),
-          |out| {
-            if out.len() == salt.len() {
-              out.copy_from_slice(black_box(&salt));
-            } else {
-              out.copy_from_slice(black_box(&factor));
-            }
-            Ok::<(), ()>(())
-          },
-        )
-        .expect("valid caller-random one-shot RSA-PSS benchmark signing must succeed")
-    })
-  });
-  group.bench_function("sign-pkcs1v15-sha256-fixed-entropy-scratch-rscrypto", |b| {
-    b.iter(|| {
-      key
-        .sign_pkcs1v15_with_blinding_factor_and_scratch(
-          RsaPkcs1v15Profile::Sha256,
-          black_box(PRIVATE_SIGNING_MESSAGE),
-          RsaBlindingPair::new(black_box(&factor), black_box(&inverse)),
-          black_box(&mut signature),
-          black_box(&mut scratch),
-        )
-        .expect("valid scratch-backed RSA-PKCS1-v1_5 benchmark signing must succeed")
-    })
-  });
+      },
+      // `factor_two_and_inverse` computes the inverse of 2 as (n + 1) / 2.
+      |(), (computed_inverse, _)| assert_eq!(*computed_inverse, inverse),
+    ),
+  );
+  group.bench_function(
+    "scratch-setup-rscrypto",
+    checked(
+      || black_box(key.private_scratch()),
+      |mut scratch| {
+        let mut signature = vec![0u8; key.signature_len()];
+        key
+          .sign_pkcs1v15_with_blinding_factor_and_scratch(
+            RsaPkcs1v15Profile::Sha256,
+            PRIVATE_SIGNING_MESSAGE,
+            RsaBlindingPair::new(&factor, &inverse),
+            &mut signature,
+            &mut scratch,
+          )
+          .expect("a fresh RSA private scratch must serve signing");
+        assert_eq!(signature, pkcs1v15());
+      },
+    ),
+  );
+  group.bench_function(
+    "sign-pss-sha256-fixed-entropy-scratch-rscrypto",
+    checked_with(
+      buffers(),
+      |(signature, scratch)| {
+        key
+          .sign_pss_with_salt_and_blinding_factor_and_scratch(
+            RsaPssProfile::Sha256,
+            black_box(PRIVATE_SIGNING_MESSAGE),
+            black_box(&salt),
+            RsaBlindingPair::new(black_box(&factor), black_box(&inverse)),
+            black_box(signature),
+            black_box(scratch),
+          )
+          .expect("valid scratch-backed RSA-PSS benchmark signing must succeed")
+      },
+      |(), (signature, _)| assert_eq!(*signature, pss_with_fixed_salt()),
+    ),
+  );
+  group.bench_function(
+    "sign-pss-sha256-fixed-entropy-oneshot-rscrypto",
+    checked_with(
+      vec![0u8; key.signature_len()],
+      |signature| {
+        key
+          .sign_pss_with_salt_and_blinding_factor(
+            RsaPssProfile::Sha256,
+            black_box(PRIVATE_SIGNING_MESSAGE),
+            black_box(&salt),
+            RsaBlindingPair::new(black_box(&factor), black_box(&inverse)),
+            black_box(signature),
+          )
+          .expect("valid one-shot RSA-PSS benchmark signing must succeed")
+      },
+      |(), signature| assert_eq!(*signature, pss_with_fixed_salt()),
+    ),
+  );
+  group.bench_function(
+    "sign-pss-sha256-caller-entropy-scratch-rscrypto",
+    checked_with(
+      buffers(),
+      |(signature, scratch)| {
+        key
+          .sign_pss_with_random_fill_and_scratch(
+            RsaPssProfile::Sha256,
+            black_box(PRIVATE_SIGNING_MESSAGE),
+            black_box(signature),
+            black_box(scratch),
+            |out| {
+              if out.len() == salt.len() {
+                out.copy_from_slice(black_box(&salt));
+              } else {
+                out.copy_from_slice(black_box(&factor));
+              }
+              Ok::<(), ()>(())
+            },
+          )
+          .expect("valid caller-random scratch-backed RSA-PSS benchmark signing must succeed")
+      },
+      |(), (signature, _)| assert_eq!(*signature, pss_with_fixed_salt()),
+    ),
+  );
+  group.bench_function(
+    "sign-pss-sha256-caller-entropy-oneshot-rscrypto",
+    checked_with(
+      vec![0u8; key.signature_len()],
+      |signature| {
+        key
+          .sign_pss_with_random_fill(
+            RsaPssProfile::Sha256,
+            black_box(PRIVATE_SIGNING_MESSAGE),
+            black_box(signature),
+            |out| {
+              if out.len() == salt.len() {
+                out.copy_from_slice(black_box(&salt));
+              } else {
+                out.copy_from_slice(black_box(&factor));
+              }
+              Ok::<(), ()>(())
+            },
+          )
+          .expect("valid caller-random one-shot RSA-PSS benchmark signing must succeed")
+      },
+      |(), signature| assert_eq!(*signature, pss_with_fixed_salt()),
+    ),
+  );
+  group.bench_function(
+    "sign-pkcs1v15-sha256-fixed-entropy-scratch-rscrypto",
+    checked_with(
+      buffers(),
+      |(signature, scratch)| {
+        key
+          .sign_pkcs1v15_with_blinding_factor_and_scratch(
+            RsaPkcs1v15Profile::Sha256,
+            black_box(PRIVATE_SIGNING_MESSAGE),
+            RsaBlindingPair::new(black_box(&factor), black_box(&inverse)),
+            black_box(signature),
+            black_box(scratch),
+          )
+          .expect("valid scratch-backed RSA-PKCS1-v1_5 benchmark signing must succeed")
+      },
+      |(), (signature, _)| assert_eq!(*signature, pkcs1v15()),
+    ),
+  );
   #[cfg(feature = "getrandom")]
-  group.bench_function("sign-pss-sha256-os-entropy-scratch-rscrypto", |b| {
-    b.iter(|| {
-      key
-        .sign_pss_with_scratch(
-          RsaPssProfile::Sha256,
-          black_box(PRIVATE_SIGNING_MESSAGE),
-          black_box(&mut signature),
-          black_box(&mut scratch),
-        )
-        .expect("valid OS-random scratch-backed RSA-PSS benchmark signing must succeed")
-    })
-  });
+  group.bench_function(
+    "sign-pss-sha256-os-entropy-scratch-rscrypto",
+    checked_with(
+      buffers(),
+      |(signature, scratch)| {
+        key
+          .sign_pss_with_scratch(
+            RsaPssProfile::Sha256,
+            black_box(PRIVATE_SIGNING_MESSAGE),
+            black_box(signature),
+            black_box(scratch),
+          )
+          .expect("valid OS-random scratch-backed RSA-PSS benchmark signing must succeed")
+      },
+      |(), (signature, _)| assert_private_pss_signature(&key, &rustcrypto_public_key, signature),
+    ),
+  );
   #[cfg(feature = "getrandom")]
-  group.bench_function("sign-pss-sha256-os-entropy-oneshot-rscrypto", |b| {
-    b.iter(|| {
-      key
-        .sign_pss(
-          RsaPssProfile::Sha256,
-          black_box(PRIVATE_SIGNING_MESSAGE),
-          black_box(&mut signature),
-        )
-        .expect("valid OS-random one-shot RSA-PSS benchmark signing must succeed")
-    })
-  });
+  group.bench_function(
+    "sign-pss-sha256-os-entropy-oneshot-rscrypto",
+    checked_with(
+      vec![0u8; key.signature_len()],
+      |signature| {
+        key
+          .sign_pss(
+            RsaPssProfile::Sha256,
+            black_box(PRIVATE_SIGNING_MESSAGE),
+            black_box(signature),
+          )
+          .expect("valid OS-random one-shot RSA-PSS benchmark signing must succeed")
+      },
+      |(), signature| assert_private_pss_signature(&key, &rustcrypto_public_key, signature),
+    ),
+  );
   #[cfg(feature = "getrandom")]
-  group.bench_function("sign-pss-sha256-os-entropy-oneshot-blinded-rustcrypto", |b| {
-    let mut rng = GetrandomRng;
-    b.iter(|| {
-      black_box(&rustcrypto_signing_key)
-        .try_sign_with_rng(&mut rng, black_box(PRIVATE_SIGNING_MESSAGE))
-        .expect("valid RustCrypto RSA-PSS benchmark signing must succeed")
-    })
-  });
+  group.bench_function(
+    "sign-pss-sha256-os-entropy-oneshot-blinded-rustcrypto",
+    checked(
+      || {
+        black_box(&rustcrypto_signing_key)
+          .try_sign_with_rng(&mut GetrandomRng, black_box(PRIVATE_SIGNING_MESSAGE))
+          .expect("valid RustCrypto RSA-PSS benchmark signing must succeed")
+      },
+      |signature| assert_private_pss_signature(&key, &rustcrypto_public_key, &signature.to_vec()),
+    ),
+  );
   group.finish();
 }
 
@@ -813,6 +858,10 @@ fn rscrypto_oaep_plaintext(key: &RsaPrivateKey, ciphertext: &[u8]) -> Vec<u8> {
 /// they are part of those APIs. rscrypto and RustCrypto draw a fresh blinding
 /// factor for every decryption. AWS-LC caches a blinding pair per key, squares
 /// it between uses, and draws a fresh one every 32 uses.
+///
+/// Untimed checks: every decryption recovers the Wycheproof message. The
+/// fixed-seed rscrypto ciphertext matches RustCrypto's with the same seed, and
+/// every randomized ciphertext decrypts to the message with another library.
 fn rsa_oaep_for_size(c: &mut Criterion, bits: usize, document: &str) {
   let name = format!("rsa-{bits}-oaep-sha256");
   if !bench_config::selected(&format!("{name}/")) {
@@ -822,10 +871,7 @@ fn rsa_oaep_for_size(c: &mut Criterion, bits: usize, document: &str) {
   let message = fixture.message.as_slice();
   let key = fixture.private_key(bits);
   let public_key = key.public_key();
-  let mut public_scratch = public_key.public_scratch();
-  let mut private_scratch = key.private_scratch();
-  let mut ciphertext = vec![0u8; public_key.modulus().len()];
-  let mut plaintext = vec![0u8; public_key.modulus().len()];
+  let modulus_len = public_key.modulus().len();
   let (factor, inverse) = factor_two_and_inverse(public_key.modulus());
   let seed_label = format!("{name} caller seed");
   let mut seed = [0u8; Sha256::OUTPUT_SIZE];
@@ -835,7 +881,18 @@ fn rsa_oaep_for_size(c: &mut Criterion, bits: usize, document: &str) {
     .expect("RustCrypto must import the Wycheproof RSA private key");
   let rustcrypto_encrypting_key =
     RustCryptoOaepEncryptingKey::<sha2_010::Sha256>::new(rustcrypto_private_key.to_public_key());
+  #[cfg(feature = "getrandom")]
   let rustcrypto_decrypting_key = RustCryptoOaepDecryptingKey::<sha2_010::Sha256>::new(rustcrypto_private_key);
+  #[cfg(feature = "getrandom")]
+  let rustcrypto_decrypts = |ciphertext: &[u8]| {
+    assert_eq!(
+      rustcrypto_decrypting_key
+        .decrypt(ciphertext)
+        .expect("RustCrypto must decrypt the rscrypto RSA-OAEP ciphertext"),
+      message,
+      "RustCrypto decryption of an rscrypto RSA-OAEP ciphertext"
+    );
+  };
   aws_lc_bench! {
     let aws_encrypting_key = aws_rsa::OaepPublicEncryptingKey::new(
       aws_rsa::PublicEncryptingKey::from_der(&public_key.to_spki_der())
@@ -847,266 +904,207 @@ fn rsa_oaep_for_size(c: &mut Criterion, bits: usize, document: &str) {
         .expect("aws-lc-rs must import the Wycheproof RSA private key"),
     )
     .expect("aws-lc-rs must build the RSA-OAEP private key");
-    let mut aws_ciphertext = vec![0u8; aws_encrypting_key.ciphertext_size()];
-    let mut aws_plaintext = vec![0u8; aws_decrypting_key.min_output_size()];
-  }
-
-  // Untimed checks of every call timed below. Each decryptor recovers the
-  // Wycheproof message from the Wycheproof ciphertext. Each rscrypto
-  // ciphertext decrypts with RustCrypto and aws-lc-rs, and each comparison
-  // ciphertext decrypts with rscrypto. With the same seed bytes, rscrypto and
-  // RustCrypto produce the same ciphertext.
-  let assert_decrypts_elsewhere = |candidate: &[u8]| {
-    assert_eq!(
-      rustcrypto_decrypting_key
-        .decrypt(candidate)
-        .expect("RustCrypto must decrypt the rscrypto RSA-OAEP ciphertext"),
-      message,
-      "RustCrypto decryption of an rscrypto RSA-OAEP ciphertext"
-    );
-    aws_lc_bench! {
-      let mut out = vec![0u8; aws_decrypting_key.min_output_size()];
-      let recovered = aws_decrypting_key
-        .decrypt(&aws_rsa::OAEP_SHA256_MGF1SHA256, candidate, &mut out, None)
-        .expect("aws-lc-rs must decrypt the rscrypto RSA-OAEP ciphertext");
-      assert_eq!(&*recovered, message, "aws-lc-rs decryption of an rscrypto RSA-OAEP ciphertext");
-    }
-  };
-  let len = key
-    .decrypt_oaep_with_blinding_factor_and_scratch(
-      RsaOaepProfile::Sha256,
-      OAEP_LABEL,
-      &fixture.ciphertext,
-      RsaBlindingPair::new(&factor, &inverse),
-      &mut plaintext,
-      &mut private_scratch,
-    )
-    .expect("valid fixed-blinding RSA-OAEP benchmark decryption must succeed");
-  assert_eq!(&plaintext[..len], message, "fixed-blinding RSA-OAEP decryption");
-  public_key
-    .encrypt_oaep_with_random_fill_and_scratch(
-      RsaOaepProfile::Sha256,
-      OAEP_LABEL,
-      message,
-      &mut ciphertext,
-      &mut public_scratch,
-      |out| {
-        out.copy_from_slice(&seed);
-        Ok(())
-      },
-    )
-    .expect("valid caller-random RSA-OAEP benchmark encryption must succeed");
-  let replayed = rustcrypto_encrypting_key
-    .encrypt_with_rng(&mut SeededRng::new(seed_label.as_bytes()), message)
-    .expect("RustCrypto RSA-OAEP encryption must succeed");
-  assert_eq!(ciphertext, replayed, "RSA-OAEP ciphertexts from the same seed");
-  assert_decrypts_elsewhere(&ciphertext);
-  assert_eq!(
-    rscrypto_oaep_plaintext(&key, &replayed),
-    message,
-    "rscrypto decryption of a RustCrypto RSA-OAEP ciphertext"
-  );
-  #[cfg(feature = "getrandom")]
-  {
-    let len = key
-      .decrypt_oaep_with_scratch(
-        RsaOaepProfile::Sha256,
-        OAEP_LABEL,
-        &fixture.ciphertext,
-        &mut plaintext,
-        &mut private_scratch,
-      )
-      .expect("valid OS-random scratch-backed RSA-OAEP benchmark decryption must succeed");
-    assert_eq!(
-      &plaintext[..len],
-      message,
-      "OS-random scratch-backed RSA-OAEP decryption"
-    );
-    let len = key
-      .decrypt_oaep(RsaOaepProfile::Sha256, OAEP_LABEL, &fixture.ciphertext, &mut plaintext)
-      .expect("valid OS-random one-shot RSA-OAEP benchmark decryption must succeed");
-    assert_eq!(&plaintext[..len], message, "OS-random one-shot RSA-OAEP decryption");
-    assert_eq!(
-      rustcrypto_decrypting_key
-        .decrypt_with_rng(&mut GetrandomRng, &fixture.ciphertext)
-        .expect("valid RustCrypto RSA-OAEP benchmark decryption must succeed"),
-      message,
-      "RustCrypto blinded RSA-OAEP decryption"
-    );
-    public_key
-      .encrypt_oaep_with_scratch(
-        RsaOaepProfile::Sha256,
-        OAEP_LABEL,
-        message,
-        &mut ciphertext,
-        &mut public_scratch,
-      )
-      .expect("valid OS-random scratch-backed RSA-OAEP benchmark encryption must succeed");
-    assert_decrypts_elsewhere(&ciphertext);
-    public_key
-      .encrypt_oaep(RsaOaepProfile::Sha256, OAEP_LABEL, message, &mut ciphertext)
-      .expect("valid OS-random one-shot RSA-OAEP benchmark encryption must succeed");
-    assert_decrypts_elsewhere(&ciphertext);
-    let rustcrypto_ciphertext = rustcrypto_encrypting_key
-      .encrypt_with_rng(&mut GetrandomRng, message)
-      .expect("valid RustCrypto RSA-OAEP benchmark encryption must succeed");
-    assert_eq!(
-      rscrypto_oaep_plaintext(&key, &rustcrypto_ciphertext),
-      message,
-      "rscrypto decryption of a RustCrypto RSA-OAEP ciphertext"
-    );
-  }
-  aws_lc_bench! {
-    let recovered = aws_decrypting_key
-      .decrypt(&aws_rsa::OAEP_SHA256_MGF1SHA256, &fixture.ciphertext, &mut aws_plaintext, None)
-      .expect("valid aws-lc-rs RSA-OAEP benchmark decryption must succeed");
-    assert_eq!(&*recovered, message, "aws-lc-rs RSA-OAEP decryption");
-    let encrypted = aws_encrypting_key
-      .encrypt(&aws_rsa::OAEP_SHA256_MGF1SHA256, message, &mut aws_ciphertext, None)
-      .expect("valid aws-lc-rs RSA-OAEP benchmark encryption must succeed");
-    assert_eq!(
-      rscrypto_oaep_plaintext(&key, encrypted),
-      message,
-      "rscrypto decryption of an aws-lc-rs RSA-OAEP ciphertext"
-    );
   }
 
   let mut group = c.benchmark_group(format!("{name}/encrypt"));
-  group.bench_function("caller-entropy-scratch-rscrypto", |b| {
-    b.iter(|| {
-      public_key
-        .encrypt_oaep_with_random_fill_and_scratch(
-          RsaOaepProfile::Sha256,
-          black_box(OAEP_LABEL),
-          black_box(message),
-          black_box(&mut ciphertext),
-          black_box(&mut public_scratch),
-          |out| {
-            out.copy_from_slice(black_box(&seed));
-            Ok(())
-          },
-        )
-        .expect("valid caller-random RSA-OAEP benchmark encryption must succeed")
-    })
-  });
-  #[cfg(feature = "getrandom")]
-  group.bench_function("os-entropy-scratch-rscrypto", |b| {
-    b.iter(|| {
-      public_key
-        .encrypt_oaep_with_scratch(
-          RsaOaepProfile::Sha256,
-          black_box(OAEP_LABEL),
-          black_box(message),
-          black_box(&mut ciphertext),
-          black_box(&mut public_scratch),
-        )
-        .expect("valid OS-random scratch-backed RSA-OAEP benchmark encryption must succeed")
-    })
-  });
-  #[cfg(feature = "getrandom")]
-  group.bench_function("os-entropy-oneshot-rscrypto", |b| {
-    b.iter(|| {
-      public_key
-        .encrypt_oaep(
-          RsaOaepProfile::Sha256,
-          black_box(OAEP_LABEL),
-          black_box(message),
-          black_box(&mut ciphertext),
-        )
-        .expect("valid OS-random one-shot RSA-OAEP benchmark encryption must succeed")
-    })
-  });
-  #[cfg(feature = "getrandom")]
-  group.bench_function("os-entropy-oneshot-rustcrypto", |b| {
-    let mut rng = GetrandomRng;
-    b.iter(|| {
-      black_box(&rustcrypto_encrypting_key)
-        .encrypt_with_rng(&mut rng, black_box(message))
-        .expect("valid RustCrypto RSA-OAEP benchmark encryption must succeed")
-    })
-  });
-  aws_lc_bench! {
-    group.bench_function("internal-drbg-oneshot-aws-lc-rs", |b| {
-      b.iter(|| {
-        let encrypted = aws_encrypting_key
-          .encrypt(
-            &aws_rsa::OAEP_SHA256_MGF1SHA256,
+  group.bench_function(
+    "caller-entropy-scratch-rscrypto",
+    checked_with(
+      (vec![0u8; modulus_len], public_key.public_scratch()),
+      |(ciphertext, scratch)| {
+        public_key
+          .encrypt_oaep_with_random_fill_and_scratch(
+            RsaOaepProfile::Sha256,
+            black_box(OAEP_LABEL),
             black_box(message),
-            black_box(&mut aws_ciphertext),
-            None,
+            black_box(ciphertext),
+            black_box(scratch),
+            |out| {
+              out.copy_from_slice(black_box(&seed));
+              Ok(())
+            },
           )
-          .expect("valid aws-lc-rs RSA-OAEP benchmark encryption must succeed");
-        black_box(encrypted);
-      })
-    });
+          .expect("valid caller-random RSA-OAEP benchmark encryption must succeed")
+      },
+      |(), (ciphertext, _)| {
+        let replayed = rustcrypto_encrypting_key
+          .encrypt_with_rng(&mut SeededRng::new(seed_label.as_bytes()), message)
+          .expect("RustCrypto RSA-OAEP encryption must succeed");
+        assert_eq!(*ciphertext, replayed, "RSA-OAEP ciphertexts from the same seed");
+      },
+    ),
+  );
+  #[cfg(feature = "getrandom")]
+  group.bench_function(
+    "os-entropy-scratch-rscrypto",
+    checked_with(
+      (vec![0u8; modulus_len], public_key.public_scratch()),
+      |(ciphertext, scratch)| {
+        public_key
+          .encrypt_oaep_with_scratch(
+            RsaOaepProfile::Sha256,
+            black_box(OAEP_LABEL),
+            black_box(message),
+            black_box(ciphertext),
+            black_box(scratch),
+          )
+          .expect("valid OS-random scratch-backed RSA-OAEP benchmark encryption must succeed")
+      },
+      |(), (ciphertext, _)| rustcrypto_decrypts(ciphertext),
+    ),
+  );
+  #[cfg(feature = "getrandom")]
+  group.bench_function(
+    "os-entropy-oneshot-rscrypto",
+    checked_with(
+      vec![0u8; modulus_len],
+      |ciphertext| {
+        public_key
+          .encrypt_oaep(
+            RsaOaepProfile::Sha256,
+            black_box(OAEP_LABEL),
+            black_box(message),
+            black_box(ciphertext),
+          )
+          .expect("valid OS-random one-shot RSA-OAEP benchmark encryption must succeed")
+      },
+      |(), ciphertext| rustcrypto_decrypts(ciphertext),
+    ),
+  );
+  #[cfg(feature = "getrandom")]
+  group.bench_function(
+    "os-entropy-oneshot-rustcrypto",
+    checked(
+      || {
+        black_box(&rustcrypto_encrypting_key)
+          .encrypt_with_rng(&mut GetrandomRng, black_box(message))
+          .expect("valid RustCrypto RSA-OAEP benchmark encryption must succeed")
+      },
+      |ciphertext| {
+        assert_eq!(
+          rscrypto_oaep_plaintext(&key, &ciphertext),
+          message,
+          "rscrypto decryption of a RustCrypto RSA-OAEP ciphertext"
+        )
+      },
+    ),
+  );
+  aws_lc_bench! {
+    group.bench_function(
+      "internal-drbg-oneshot-aws-lc-rs",
+      checked_with(
+        vec![0u8; aws_encrypting_key.ciphertext_size()],
+        |ciphertext| {
+          let encrypted = aws_encrypting_key
+            .encrypt(
+              &aws_rsa::OAEP_SHA256_MGF1SHA256,
+              black_box(message),
+              black_box(ciphertext),
+              None,
+            )
+            .expect("valid aws-lc-rs RSA-OAEP benchmark encryption must succeed");
+          black_box(encrypted);
+        },
+        |(), ciphertext| {
+          assert_eq!(
+            rscrypto_oaep_plaintext(&key, ciphertext),
+            message,
+            "rscrypto decryption of an aws-lc-rs RSA-OAEP ciphertext"
+          )
+        },
+      ),
+    );
   }
   group.finish();
 
   let mut group = c.benchmark_group(format!("{name}/decrypt"));
-  group.bench_function("fixed-entropy-scratch-rscrypto", |b| {
-    b.iter(|| {
-      key
-        .decrypt_oaep_with_blinding_factor_and_scratch(
-          RsaOaepProfile::Sha256,
-          black_box(OAEP_LABEL),
-          black_box(&fixture.ciphertext),
-          RsaBlindingPair::new(black_box(&factor), black_box(&inverse)),
-          black_box(&mut plaintext),
-          black_box(&mut private_scratch),
-        )
-        .expect("valid fixed-blinding RSA-OAEP benchmark decryption must succeed")
-    })
-  });
-  #[cfg(feature = "getrandom")]
-  group.bench_function("os-entropy-scratch-rscrypto", |b| {
-    b.iter(|| {
-      key
-        .decrypt_oaep_with_scratch(
-          RsaOaepProfile::Sha256,
-          black_box(OAEP_LABEL),
-          black_box(&fixture.ciphertext),
-          black_box(&mut plaintext),
-          black_box(&mut private_scratch),
-        )
-        .expect("valid OS-random scratch-backed RSA-OAEP benchmark decryption must succeed")
-    })
-  });
-  #[cfg(feature = "getrandom")]
-  group.bench_function("os-entropy-oneshot-rscrypto", |b| {
-    b.iter(|| {
-      key
-        .decrypt_oaep(
-          RsaOaepProfile::Sha256,
-          black_box(OAEP_LABEL),
-          black_box(&fixture.ciphertext),
-          black_box(&mut plaintext),
-        )
-        .expect("valid OS-random one-shot RSA-OAEP benchmark decryption must succeed")
-    })
-  });
-  #[cfg(feature = "getrandom")]
-  group.bench_function("os-entropy-oneshot-blinded-rustcrypto", |b| {
-    let mut rng = GetrandomRng;
-    b.iter(|| {
-      black_box(&rustcrypto_decrypting_key)
-        .decrypt_with_rng(&mut rng, black_box(&fixture.ciphertext))
-        .expect("valid RustCrypto RSA-OAEP benchmark decryption must succeed")
-    })
-  });
-  aws_lc_bench! {
-    group.bench_function("internal-drbg-oneshot-blinded-aws-lc-rs", |b| {
-      b.iter(|| {
-        let recovered = aws_decrypting_key
-          .decrypt(
-            &aws_rsa::OAEP_SHA256_MGF1SHA256,
+  group.bench_function(
+    "fixed-entropy-scratch-rscrypto",
+    checked_with(
+      (vec![0u8; modulus_len], key.private_scratch()),
+      |(plaintext, scratch)| {
+        key
+          .decrypt_oaep_with_blinding_factor_and_scratch(
+            RsaOaepProfile::Sha256,
+            black_box(OAEP_LABEL),
             black_box(&fixture.ciphertext),
-            black_box(&mut aws_plaintext),
-            None,
+            RsaBlindingPair::new(black_box(&factor), black_box(&inverse)),
+            black_box(plaintext),
+            black_box(scratch),
           )
-          .expect("valid aws-lc-rs RSA-OAEP benchmark decryption must succeed");
-        black_box(recovered);
-      })
-    });
+          .expect("valid fixed-blinding RSA-OAEP benchmark decryption must succeed")
+      },
+      |len, (plaintext, _)| assert_eq!(&plaintext[..len], message),
+    ),
+  );
+  #[cfg(feature = "getrandom")]
+  group.bench_function(
+    "os-entropy-scratch-rscrypto",
+    checked_with(
+      (vec![0u8; modulus_len], key.private_scratch()),
+      |(plaintext, scratch)| {
+        key
+          .decrypt_oaep_with_scratch(
+            RsaOaepProfile::Sha256,
+            black_box(OAEP_LABEL),
+            black_box(&fixture.ciphertext),
+            black_box(plaintext),
+            black_box(scratch),
+          )
+          .expect("valid OS-random scratch-backed RSA-OAEP benchmark decryption must succeed")
+      },
+      |len, (plaintext, _)| assert_eq!(&plaintext[..len], message),
+    ),
+  );
+  #[cfg(feature = "getrandom")]
+  group.bench_function(
+    "os-entropy-oneshot-rscrypto",
+    checked_with(
+      vec![0u8; modulus_len],
+      |plaintext| {
+        key
+          .decrypt_oaep(
+            RsaOaepProfile::Sha256,
+            black_box(OAEP_LABEL),
+            black_box(&fixture.ciphertext),
+            black_box(plaintext),
+          )
+          .expect("valid OS-random one-shot RSA-OAEP benchmark decryption must succeed")
+      },
+      |len, plaintext| assert_eq!(&plaintext[..len], message),
+    ),
+  );
+  #[cfg(feature = "getrandom")]
+  group.bench_function(
+    "os-entropy-oneshot-blinded-rustcrypto",
+    checked(
+      || {
+        black_box(&rustcrypto_decrypting_key)
+          .decrypt_with_rng(&mut GetrandomRng, black_box(&fixture.ciphertext))
+          .expect("valid RustCrypto RSA-OAEP benchmark decryption must succeed")
+      },
+      |plaintext| assert_eq!(plaintext, message),
+    ),
+  );
+  aws_lc_bench! {
+    group.bench_function(
+      "internal-drbg-oneshot-blinded-aws-lc-rs",
+      checked_with(
+        vec![0u8; aws_decrypting_key.min_output_size()],
+        |plaintext| {
+          let recovered = aws_decrypting_key
+            .decrypt(
+              &aws_rsa::OAEP_SHA256_MGF1SHA256,
+              black_box(&fixture.ciphertext),
+              black_box(plaintext),
+              None,
+            )
+            .expect("valid aws-lc-rs RSA-OAEP benchmark decryption must succeed");
+          black_box(recovered);
+        },
+        |(), plaintext| assert_eq!(&plaintext[..message.len()], message),
+      ),
+    );
   }
   group.finish();
 }
@@ -1142,53 +1140,17 @@ fn assert_generated_public_key(bits: usize, public_key_pkcs1: &[u8], signature: 
 /// checks, CRT precomputation, and destruction. RSA-2048 is a legacy size for
 /// rscrypto, so every size calls `generate_with_policy`;
 /// `RsaPrivateKey::generate` is that call with the modern policy.
+///
+/// Untimed checks: each row's key has the requested size and exponent, and
+/// signs a message that a different library verifies.
 #[cfg(feature = "getrandom")]
 fn rsa_keygen_for_size(c: &mut Criterion, bits: usize) {
-  use rsa::pkcs1::EncodeRsaPublicKey as _;
-
   let name = format!("rsa-{bits}-keygen");
   if !bench_config::selected(&format!("{name}/")) {
     return;
   }
   let policy = key_policy(bits);
   let mut rustcrypto_rng = SeededRng::new(name.as_bytes());
-
-  // Untimed checks: one key from each library has the requested size and
-  // exponent, and signs a message that a different library verifies.
-  let key = RsaPrivateKey::generate_with_policy(bits, &policy).expect("rscrypto RSA key generation must succeed");
-  assert_eq!(key.public_key().modulus_bits(), bits, "rscrypto RSA modulus size");
-  assert_eq!(
-    key.public_key().public_exponent().as_u64(),
-    65_537,
-    "rscrypto RSA public exponent"
-  );
-  let mut signature = vec![0u8; key.signature_len()];
-  key
-    .sign_pkcs1v15(RsaPkcs1v15Profile::Sha256, PRIVATE_SIGNING_MESSAGE, &mut signature)
-    .expect("a generated rscrypto RSA key must sign");
-  RustCryptoPkcs1v15VerifyingKey::<sha2_010::Sha256>::new(
-    RustCryptoRsaPublicKey::from_public_key_der(&key.public_key().to_spki_der())
-      .expect("RustCrypto must import the generated rscrypto RSA public key"),
-  )
-  .verify(
-    PRIVATE_SIGNING_MESSAGE,
-    &RustCryptoPkcs1v15Signature::try_from(signature.as_slice()).expect("RSA signature must have the modulus length"),
-  )
-  .expect("RustCrypto must verify a signature from a generated rscrypto RSA key");
-  let rustcrypto_key =
-    RustCryptoRsaPrivateKey::new(&mut rustcrypto_rng, bits).expect("RustCrypto RSA key generation must succeed");
-  let rustcrypto_signature = RustCryptoPkcs1v15SigningKey::<sha2_010::Sha256>::new(rustcrypto_key.clone())
-    .try_sign(PRIVATE_SIGNING_MESSAGE)
-    .expect("a generated RustCrypto RSA key must sign");
-  assert_generated_public_key(
-    bits,
-    rustcrypto_key
-      .to_public_key()
-      .to_pkcs1_der()
-      .expect("RustCrypto must encode the generated RSA public key")
-      .as_bytes(),
-    &rustcrypto_signature.to_vec(),
-  );
   aws_lc_bench! {
     use aws_signature::KeyPair as _;
 
@@ -1196,43 +1158,85 @@ fn rsa_keygen_for_size(c: &mut Criterion, bits: usize) {
       .into_iter()
       .find(|size| size.len() == bits / 8)
       .expect("aws-lc-rs must support the RSA key size");
-    let aws_key = aws_rsa::KeyPair::generate(aws_size).expect("aws-lc-rs RSA key generation must succeed");
-    let mut aws_key_signature = vec![0u8; aws_key.public_modulus_len()];
-    aws_key
-      .sign(
-        &aws_signature::RSA_PKCS1_SHA256,
-        &aws_lc_rs::rand::SystemRandom::new(),
-        PRIVATE_SIGNING_MESSAGE,
-        &mut aws_key_signature,
-      )
-      .expect("a generated aws-lc-rs RSA key must sign");
-    assert_generated_public_key(bits, aws_key.public_key().as_ref(), &aws_key_signature);
   }
 
   let mut group = c.benchmark_group(name);
   group.sampling_mode(criterion::SamplingMode::Flat);
-  group.bench_function("os-entropy-rscrypto", |b| {
-    b.iter(|| {
-      black_box(
-        RsaPrivateKey::generate_with_policy(black_box(bits), &policy)
-          .expect("rscrypto RSA key generation must succeed"),
-      )
-    })
-  });
-  group.bench_function("seeded-rng-rustcrypto", |b| {
-    b.iter(|| {
-      black_box(
-        RustCryptoRsaPrivateKey::new(&mut rustcrypto_rng, black_box(bits))
-          .expect("RustCrypto RSA key generation must succeed"),
-      )
-    })
-  });
+  group.bench_function(
+    "os-entropy-rscrypto",
+    checked(
+      || {
+        black_box(
+          RsaPrivateKey::generate_with_policy(black_box(bits), &policy)
+            .expect("rscrypto RSA key generation must succeed"),
+        )
+      },
+      |key| {
+        assert_eq!(key.public_key().modulus_bits(), bits, "rscrypto RSA modulus size");
+        assert_eq!(
+          key.public_key().public_exponent().as_u64(),
+          65_537,
+          "rscrypto RSA public exponent"
+        );
+        let mut signature = vec![0u8; key.signature_len()];
+        key
+          .sign_pkcs1v15(RsaPkcs1v15Profile::Sha256, PRIVATE_SIGNING_MESSAGE, &mut signature)
+          .expect("a generated rscrypto RSA key must sign");
+        RustCryptoPkcs1v15VerifyingKey::<sha2_010::Sha256>::new(
+          RustCryptoRsaPublicKey::from_public_key_der(&key.public_key().to_spki_der())
+            .expect("RustCrypto must import the generated rscrypto RSA public key"),
+        )
+        .verify(
+          PRIVATE_SIGNING_MESSAGE,
+          &RustCryptoPkcs1v15Signature::try_from(signature.as_slice())
+            .expect("RSA signature must have the modulus length"),
+        )
+        .expect("RustCrypto must verify a signature from a generated rscrypto RSA key");
+      },
+    ),
+  );
+  group.bench_function(
+    "seeded-rng-rustcrypto",
+    checked(
+      || {
+        black_box(
+          RustCryptoRsaPrivateKey::new(&mut rustcrypto_rng, black_box(bits))
+            .expect("RustCrypto RSA key generation must succeed"),
+        )
+      },
+      |key| {
+        let public_key = key
+          .to_public_key()
+          .to_pkcs1_der()
+          .expect("RustCrypto must encode the generated RSA public key");
+        let signature = RustCryptoPkcs1v15SigningKey::<sha2_010::Sha256>::new(key)
+          .try_sign(PRIVATE_SIGNING_MESSAGE)
+          .expect("a generated RustCrypto RSA key must sign");
+        assert_generated_public_key(bits, public_key.as_bytes(), &signature.to_vec());
+      },
+    ),
+  );
   aws_lc_bench! {
-    group.bench_function("internal-drbg-aws-lc-rs", |b| {
-      b.iter(|| {
-        black_box(aws_rsa::KeyPair::generate(black_box(aws_size)).expect("aws-lc-rs RSA key generation must succeed"))
-      })
-    });
+    group.bench_function(
+      "internal-drbg-aws-lc-rs",
+      checked(
+        || {
+          black_box(aws_rsa::KeyPair::generate(black_box(aws_size)).expect("aws-lc-rs RSA key generation must succeed"))
+        },
+        |aws_key| {
+          let mut signature = vec![0u8; aws_key.public_modulus_len()];
+          aws_key
+            .sign(
+              &aws_signature::RSA_PKCS1_SHA256,
+              &aws_lc_rs::rand::SystemRandom::new(),
+              PRIVATE_SIGNING_MESSAGE,
+              &mut signature,
+            )
+            .expect("a generated aws-lc-rs RSA key must sign");
+          assert_generated_public_key(bits, aws_key.public_key().as_ref(), &signature);
+        },
+      ),
+    );
   }
   group.finish();
 }
@@ -1258,7 +1262,7 @@ fn rsa_components_for_size(
   let pss_pkcs1 = pkcs1_der_from_key(&pss_key);
   let pkcs1_pkcs1 = pkcs1_der_from_key(&pkcs1_key);
   let representative = modulus_minus_one(&pss_key);
-  let mut out = vec![0u8; pss_key.modulus().len()];
+  let modulus_len = pss_key.modulus().len();
 
   #[cfg(all(rscrypto_internal, feature = "diag"))]
   let (pss_encoded, pss_em_bits, mut pss_db, mut pss_db_mask, pkcs1_encoded) = {
@@ -1304,199 +1308,384 @@ fn rsa_components_for_size(
   let rustcrypto_pkcs1_sig =
     RustCryptoPkcs1v15Signature::try_from(pkcs1_sig).expect("valid RSA benchmark fixture must succeed");
 
+  // Untimed oracles: the PKCS #1 key that RustCrypto's DER decoder finds in the
+  // SPKI; RustCrypto's modpow for public operations; and, for every verifier,
+  // acceptance of the fixture signature and rejection of one flipped bit.
+  let spki_pkcs1 = || {
+    rsa::pkcs8::SubjectPublicKeyInfoRef::try_from(pss_spki)
+      .expect("RustCrypto must decode the RSA SPKI fixture")
+      .subject_public_key
+      .raw_bytes()
+      .to_vec()
+  };
+  let public_operation_reference = || reference_public_operation(&pss_key, &representative);
+  let tampered_pss_sig = tampered(pss_sig);
+  let tampered_pkcs1_sig = tampered(pkcs1_sig);
+
   let mut group = c.benchmark_group(name);
 
-  group.bench_function("parse-spki-rscrypto", |b| {
-    b.iter(|| {
-      black_box(
-        RsaPublicKey::from_spki_der_with_policy(black_box(pss_spki), import_policy)
-          .expect("valid RSA benchmark fixture must succeed"),
-      )
-    })
-  });
-  if rustcrypto_pss_key.is_some() {
-    group.bench_function("parse-spki-rustcrypto-rsa", |b| {
-      b.iter(|| {
+  group.bench_function(
+    "parse-spki-rscrypto",
+    checked(
+      || {
         black_box(
-          RustCryptoRsaPublicKey::from_public_key_der(black_box(pss_spki))
+          RsaPublicKey::from_spki_der_with_policy(black_box(pss_spki), import_policy)
             .expect("valid RSA benchmark fixture must succeed"),
         )
-      })
-    });
+      },
+      |key| assert_eq!(key.to_pkcs1_der(), spki_pkcs1()),
+    ),
+  );
+  if rustcrypto_pss_key.is_some() {
+    group.bench_function(
+      "parse-spki-rustcrypto-rsa",
+      checked(
+        || {
+          black_box(
+            RustCryptoRsaPublicKey::from_public_key_der(black_box(pss_spki))
+              .expect("valid RSA benchmark fixture must succeed"),
+          )
+        },
+        |key| {
+          let encoded = key
+            .to_pkcs1_der()
+            .expect("RustCrypto must encode the parsed RSA public key");
+          assert_eq!(encoded.as_bytes(), spki_pkcs1());
+        },
+      ),
+    );
   }
-  group.bench_function("scratch-setup-rscrypto", |b| {
-    b.iter(|| black_box(pss_key.public_scratch()))
-  });
-  group.bench_function("public-op-e65537", |b| {
-    b.iter(|| {
-      pss_key
-        .public_operation_with_scratch(
-          black_box(&representative),
-          black_box(&mut out),
-          black_box(&mut pss_scratch),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
+  group.bench_function(
+    "scratch-setup-rscrypto",
+    checked(
+      || black_box(pss_key.public_scratch()),
+      |mut scratch| {
+        let mut out = vec![0u8; modulus_len];
+        pss_key
+          .public_operation_with_scratch(&representative, &mut out, &mut scratch)
+          .expect("a fresh RSA public scratch must serve the public operation");
+        assert_eq!(out, public_operation_reference());
+      },
+    ),
+  );
+  group.bench_function(
+    "public-op-e65537",
+    checked_with(
+      (vec![0u8; modulus_len], pss_key.public_scratch()),
+      |(out, scratch)| {
+        pss_key
+          .public_operation_with_scratch(black_box(&representative), black_box(out), black_box(scratch))
+          .expect("valid RSA benchmark fixture must succeed")
+      },
+      |(), (out, _)| assert_eq!(*out, public_operation_reference()),
+    ),
+  );
   #[cfg(all(rscrypto_internal, feature = "diag"))]
   {
-    let mut cios_scratch = pss_key.public_scratch();
-    let mut product_scratch = pss_key.public_scratch();
-    group.bench_function("public-op-e65537-product-montgomery", |b| {
-      b.iter(|| {
-        diag_rsa_public_operation_product(
-          black_box(&pss_key),
-          black_box(&representative),
-          black_box(&mut out),
-          black_box(&mut product_scratch),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-      })
-    });
-    group.bench_function("public-op-e65537-cios-candidate", |b| {
-      b.iter(|| {
-        diag_rsa_public_operation_cios(
-          black_box(&pss_key),
-          black_box(&representative),
-          black_box(&mut out),
-          black_box(&mut cios_scratch),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-      })
-    });
+    group.bench_function(
+      "public-op-e65537-product-montgomery",
+      checked_with(
+        (vec![0u8; modulus_len], pss_key.public_scratch()),
+        |(out, scratch)| {
+          diag_rsa_public_operation_product(
+            black_box(&pss_key),
+            black_box(&representative),
+            black_box(out),
+            black_box(scratch),
+          )
+          .expect("valid RSA benchmark fixture must succeed")
+        },
+        |(), (out, _)| assert_eq!(*out, public_operation_reference()),
+      ),
+    );
+    group.bench_function(
+      "public-op-e65537-cios-candidate",
+      checked_with(
+        (vec![0u8; modulus_len], pss_key.public_scratch()),
+        |(out, scratch)| {
+          diag_rsa_public_operation_cios(
+            black_box(&pss_key),
+            black_box(&representative),
+            black_box(out),
+            black_box(scratch),
+          )
+          .expect("valid RSA benchmark fixture must succeed")
+        },
+        |(), (out, _)| assert_eq!(*out, public_operation_reference()),
+      ),
+    );
   }
+  // The padding rows decode the encoded messages that the production public
+  // operation recovers from the fixture signatures.
   #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function("padding-pss-sha256-rscrypto", |b| {
-    b.iter(|| {
-      diag_rsa_verify_pss_encoded_with_scratch(
-        RsaPssProfile::Sha256,
-        black_box(MESSAGE_PSS),
-        black_box(&pss_encoded),
-        black_box(pss_em_bits),
-        black_box(&mut pss_db),
-        black_box(&mut pss_db_mask),
-      )
-      .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function("padding-pkcs1v15-sha256-rscrypto", |b| {
-    b.iter(|| {
-      diag_rsa_verify_pkcs1v15_encoded(
-        RsaPkcs1v15Profile::Sha256,
-        black_box(MESSAGE_PKCS1V15),
-        black_box(&pkcs1_encoded),
-      )
-      .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
-  group.bench_function("verify-pss-sha256-rscrypto", |b| {
-    b.iter(|| {
-      pss_key
-        .verify_pss_with_scratch(
+  group.bench_function(
+    "padding-pss-sha256-rscrypto",
+    checked(
+      || {
+        diag_rsa_verify_pss_encoded_with_scratch(
           RsaPssProfile::Sha256,
           black_box(MESSAGE_PSS),
-          black_box(pss_sig),
-          black_box(&mut pss_scratch),
+          black_box(&pss_encoded),
+          black_box(pss_em_bits),
+          black_box(&mut pss_db),
+          black_box(&mut pss_db_mask),
         )
         .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
-  group.bench_function("verify-pss-sha256-rscrypto-oneshot", |b| {
-    b.iter(|| {
-      pss_key
-        .verify_pss(RsaPssProfile::Sha256, black_box(MESSAGE_PSS), black_box(pss_sig))
+      },
+      |()| {
+        diag_rsa_verify_pss_encoded_with_scratch(
+          RsaPssProfile::Sha256,
+          MESSAGE_PSS,
+          &tampered(&pss_encoded),
+          pss_em_bits,
+          &mut vec![0u8; pss_encoded.len()],
+          &mut vec![0u8; pss_encoded.len()],
+        )
+        .expect_err("a tampered RSA-PSS encoded message must not verify");
+      },
+    ),
+  );
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
+  group.bench_function(
+    "padding-pkcs1v15-sha256-rscrypto",
+    checked(
+      || {
+        diag_rsa_verify_pkcs1v15_encoded(
+          RsaPkcs1v15Profile::Sha256,
+          black_box(MESSAGE_PKCS1V15),
+          black_box(&pkcs1_encoded),
+        )
         .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
-  group.bench_function("verify-pss-sha256-rscrypto-cold", |b| {
-    b.iter(|| {
-      RsaPublicKey::from_spki_der_with_policy(black_box(pss_spki), import_policy)
-        .expect("valid RSA benchmark fixture must succeed")
-        .verify_pss(RsaPssProfile::Sha256, black_box(MESSAGE_PSS), black_box(pss_sig))
-        .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
+      },
+      |()| {
+        diag_rsa_verify_pkcs1v15_encoded(RsaPkcs1v15Profile::Sha256, MESSAGE_PKCS1V15, &tampered(&pkcs1_encoded))
+          .expect_err("a tampered RSA-PKCS1-v1_5 encoded message must not verify");
+      },
+    ),
+  );
+  group.bench_function(
+    "verify-pss-sha256-rscrypto",
+    checked(
+      || {
+        pss_key
+          .verify_pss_with_scratch(
+            RsaPssProfile::Sha256,
+            black_box(MESSAGE_PSS),
+            black_box(pss_sig),
+            black_box(&mut pss_scratch),
+          )
+          .expect("valid RSA benchmark fixture must succeed")
+      },
+      |()| {
+        pss_key
+          .verify_pss_with_scratch(
+            RsaPssProfile::Sha256,
+            MESSAGE_PSS,
+            &tampered_pss_sig,
+            &mut pss_key.public_scratch(),
+          )
+          .expect_err("rscrypto must reject a tampered RSA-PSS signature");
+      },
+    ),
+  );
+  group.bench_function(
+    "verify-pss-sha256-rscrypto-oneshot",
+    checked(
+      || {
+        pss_key
+          .verify_pss(RsaPssProfile::Sha256, black_box(MESSAGE_PSS), black_box(pss_sig))
+          .expect("valid RSA benchmark fixture must succeed")
+      },
+      |()| {
+        pss_key
+          .verify_pss(RsaPssProfile::Sha256, MESSAGE_PSS, &tampered_pss_sig)
+          .expect_err("rscrypto must reject a tampered RSA-PSS signature");
+      },
+    ),
+  );
+  group.bench_function(
+    "verify-pss-sha256-rscrypto-cold",
+    checked(
+      || {
+        RsaPublicKey::from_spki_der_with_policy(black_box(pss_spki), import_policy)
+          .expect("valid RSA benchmark fixture must succeed")
+          .verify_pss(RsaPssProfile::Sha256, black_box(MESSAGE_PSS), black_box(pss_sig))
+          .expect("valid RSA benchmark fixture must succeed")
+      },
+      |()| {
+        RsaPublicKey::from_spki_der_with_policy(pss_spki, import_policy)
+          .expect("valid RSA benchmark fixture must succeed")
+          .verify_pss(RsaPssProfile::Sha256, MESSAGE_PSS, &tampered_pss_sig)
+          .expect_err("rscrypto must reject a tampered RSA-PSS signature");
+      },
+    ),
+  );
   if let Some(rustcrypto_pss_key) = rustcrypto_pss_key {
-    group.bench_function("verify-pss-sha256-rustcrypto-rsa", |b| {
-      b.iter(|| {
-        rustcrypto_pss_key
-          .verify(black_box(MESSAGE_PSS), black_box(&rustcrypto_pss_sig))
+    group.bench_function(
+      "verify-pss-sha256-rustcrypto-rsa",
+      checked(
+        || {
+          rustcrypto_pss_key
+            .verify(black_box(MESSAGE_PSS), black_box(&rustcrypto_pss_sig))
+            .expect("valid RSA benchmark fixture must succeed")
+        },
+        |()| {
+          let signature = RustCryptoPssSignature::try_from(tampered_pss_sig.as_slice())
+            .expect("a tampered RSA-PSS signature keeps the modulus length");
+          rustcrypto_pss_key
+            .verify(MESSAGE_PSS, &signature)
+            .expect_err("RustCrypto must reject a tampered RSA-PSS signature");
+        },
+      ),
+    );
+  }
+  group.bench_function(
+    "verify-pss-sha256-ring",
+    checked(
+      || {
+        ring_pss_key
+          .verify(black_box(MESSAGE_PSS), black_box(pss_sig))
           .expect("valid RSA benchmark fixture must succeed")
-      })
-    });
-  }
-  group.bench_function("verify-pss-sha256-ring", |b| {
-    b.iter(|| {
-      ring_pss_key
-        .verify(black_box(MESSAGE_PSS), black_box(pss_sig))
-        .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
+      },
+      |()| {
+        ring_pss_key
+          .verify(MESSAGE_PSS, &tampered_pss_sig)
+          .expect_err("ring must reject a tampered RSA-PSS signature");
+      },
+    ),
+  );
   aws_lc_bench! {
-    group.bench_function("verify-pss-sha256-aws-lc-rs", |b| {
-      b.iter(|| aws_pss_key.verify(black_box(MESSAGE_PSS), black_box(pss_sig)).expect("valid RSA benchmark fixture must succeed"))
-    });
+    group.bench_function(
+      "verify-pss-sha256-aws-lc-rs",
+      checked(
+        || {
+          aws_pss_key
+            .verify(black_box(MESSAGE_PSS), black_box(pss_sig))
+            .expect("valid RSA benchmark fixture must succeed")
+        },
+        |()| {
+          aws_pss_key
+            .verify(MESSAGE_PSS, &tampered_pss_sig)
+            .expect_err("aws-lc-rs must reject a tampered RSA-PSS signature");
+        },
+      ),
+    );
   }
-  group.bench_function("verify-pkcs1v15-sha256-rscrypto", |b| {
-    b.iter(|| {
-      pkcs1_key
-        .verify_pkcs1v15_with_scratch(
-          RsaPkcs1v15Profile::Sha256,
-          black_box(MESSAGE_PKCS1V15),
-          black_box(pkcs1_sig),
-          black_box(&mut pkcs1_scratch),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
-  group.bench_function("verify-pkcs1v15-sha256-rscrypto-oneshot", |b| {
-    b.iter(|| {
-      pkcs1_key
-        .verify_pkcs1v15(
-          RsaPkcs1v15Profile::Sha256,
-          black_box(MESSAGE_PKCS1V15),
-          black_box(pkcs1_sig),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
-  group.bench_function("verify-pkcs1v15-sha256-rscrypto-cold", |b| {
-    b.iter(|| {
-      RsaPublicKey::from_spki_der_with_policy(black_box(pkcs1_spki), import_policy)
-        .expect("valid RSA benchmark fixture must succeed")
-        .verify_pkcs1v15(
-          RsaPkcs1v15Profile::Sha256,
-          black_box(MESSAGE_PKCS1V15),
-          black_box(pkcs1_sig),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
+  group.bench_function(
+    "verify-pkcs1v15-sha256-rscrypto",
+    checked(
+      || {
+        pkcs1_key
+          .verify_pkcs1v15_with_scratch(
+            RsaPkcs1v15Profile::Sha256,
+            black_box(MESSAGE_PKCS1V15),
+            black_box(pkcs1_sig),
+            black_box(&mut pkcs1_scratch),
+          )
+          .expect("valid RSA benchmark fixture must succeed")
+      },
+      |()| {
+        pkcs1_key
+          .verify_pkcs1v15_with_scratch(
+            RsaPkcs1v15Profile::Sha256,
+            MESSAGE_PKCS1V15,
+            &tampered_pkcs1_sig,
+            &mut pkcs1_key.public_scratch(),
+          )
+          .expect_err("rscrypto must reject a tampered RSA-PKCS1-v1_5 signature");
+      },
+    ),
+  );
+  group.bench_function(
+    "verify-pkcs1v15-sha256-rscrypto-oneshot",
+    checked(
+      || {
+        pkcs1_key
+          .verify_pkcs1v15(
+            RsaPkcs1v15Profile::Sha256,
+            black_box(MESSAGE_PKCS1V15),
+            black_box(pkcs1_sig),
+          )
+          .expect("valid RSA benchmark fixture must succeed")
+      },
+      |()| {
+        pkcs1_key
+          .verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, MESSAGE_PKCS1V15, &tampered_pkcs1_sig)
+          .expect_err("rscrypto must reject a tampered RSA-PKCS1-v1_5 signature");
+      },
+    ),
+  );
+  group.bench_function(
+    "verify-pkcs1v15-sha256-rscrypto-cold",
+    checked(
+      || {
+        RsaPublicKey::from_spki_der_with_policy(black_box(pkcs1_spki), import_policy)
+          .expect("valid RSA benchmark fixture must succeed")
+          .verify_pkcs1v15(
+            RsaPkcs1v15Profile::Sha256,
+            black_box(MESSAGE_PKCS1V15),
+            black_box(pkcs1_sig),
+          )
+          .expect("valid RSA benchmark fixture must succeed")
+      },
+      |()| {
+        RsaPublicKey::from_spki_der_with_policy(pkcs1_spki, import_policy)
+          .expect("valid RSA benchmark fixture must succeed")
+          .verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, MESSAGE_PKCS1V15, &tampered_pkcs1_sig)
+          .expect_err("rscrypto must reject a tampered RSA-PKCS1-v1_5 signature");
+      },
+    ),
+  );
   if let Some(rustcrypto_pkcs1_key) = rustcrypto_pkcs1_key {
-    group.bench_function("verify-pkcs1v15-sha256-rustcrypto-rsa", |b| {
-      b.iter(|| {
-        rustcrypto_pkcs1_key
-          .verify(black_box(MESSAGE_PKCS1V15), black_box(&rustcrypto_pkcs1_sig))
-          .expect("valid RSA benchmark fixture must succeed")
-      })
-    });
+    group.bench_function(
+      "verify-pkcs1v15-sha256-rustcrypto-rsa",
+      checked(
+        || {
+          rustcrypto_pkcs1_key
+            .verify(black_box(MESSAGE_PKCS1V15), black_box(&rustcrypto_pkcs1_sig))
+            .expect("valid RSA benchmark fixture must succeed")
+        },
+        |()| {
+          let signature = RustCryptoPkcs1v15Signature::try_from(tampered_pkcs1_sig.as_slice())
+            .expect("a tampered RSA-PKCS1-v1_5 signature keeps the modulus length");
+          rustcrypto_pkcs1_key
+            .verify(MESSAGE_PKCS1V15, &signature)
+            .expect_err("RustCrypto must reject a tampered RSA-PKCS1-v1_5 signature");
+        },
+      ),
+    );
   }
-  group.bench_function("verify-pkcs1v15-sha256-ring", |b| {
-    b.iter(|| {
-      ring_pkcs1_key
-        .verify(black_box(MESSAGE_PKCS1V15), black_box(pkcs1_sig))
-        .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
-  aws_lc_bench! {
-    group.bench_function("verify-pkcs1v15-sha256-aws-lc-rs", |b| {
-      b.iter(|| {
-        aws_pkcs1_key
+  group.bench_function(
+    "verify-pkcs1v15-sha256-ring",
+    checked(
+      || {
+        ring_pkcs1_key
           .verify(black_box(MESSAGE_PKCS1V15), black_box(pkcs1_sig))
           .expect("valid RSA benchmark fixture must succeed")
-      })
-    });
+      },
+      |()| {
+        ring_pkcs1_key
+          .verify(MESSAGE_PKCS1V15, &tampered_pkcs1_sig)
+          .expect_err("ring must reject a tampered RSA-PKCS1-v1_5 signature");
+      },
+    ),
+  );
+  aws_lc_bench! {
+    group.bench_function(
+      "verify-pkcs1v15-sha256-aws-lc-rs",
+      checked(
+        || {
+          aws_pkcs1_key
+            .verify(black_box(MESSAGE_PKCS1V15), black_box(pkcs1_sig))
+            .expect("valid RSA benchmark fixture must succeed")
+        },
+        |()| {
+          aws_pkcs1_key
+            .verify(MESSAGE_PKCS1V15, &tampered_pkcs1_sig)
+            .expect_err("aws-lc-rs must reject a tampered RSA-PKCS1-v1_5 signature");
+        },
+      ),
+    );
   }
 
   group.finish();
@@ -1522,224 +1711,294 @@ fn rsa_public_exponents(c: &mut Criterion) {
     &policy.allow_legacy_odd_exponents(),
   )
   .expect("valid RSA benchmark fixture must succeed");
-
-  let mut scratch_e3 = key_e3.public_scratch();
-  let mut scratch_e17 = key_e17.public_scratch();
-  let mut scratch_e65537 = key_e65537.public_scratch();
-  let mut scratch_generic = key_generic.public_scratch();
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  let mut cios_scratch_e3 = key_e3.public_scratch();
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  let mut product_scratch_e3 = key_e3.public_scratch();
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  let mut generic_scratch_e3 = key_e3.public_scratch();
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  let mut cios_scratch_e17 = key_e17.public_scratch();
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  let mut product_scratch_e17 = key_e17.public_scratch();
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  let mut generic_scratch_e17 = key_e17.public_scratch();
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  let mut cios_scratch_e65537 = key_e65537.public_scratch();
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  let mut product_scratch_e65537 = key_e65537.public_scratch();
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  let mut generic_scratch_e65537 = key_e65537.public_scratch();
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  let mut cios_scratch_generic = key_generic.public_scratch();
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  let mut product_scratch_generic = key_generic.public_scratch();
-  let mut out = vec![0u8; modulus.len()];
+  // Each row owns its output and scratch. RustCrypto's modpow is the oracle.
+  let buffers = |key: &RsaPublicKey| (vec![0u8; key.modulus().len()], key.public_scratch());
+  let matches_reference = |key: &RsaPublicKey, out: &[u8]| assert_eq!(out, reference_public_operation(key, &input));
 
   let mut group = c.benchmark_group("rsa-2048-public-exponents");
-  group.bench_function("public-op-e3", |b| {
-    b.iter(|| {
-      key_e3
-        .public_operation_with_scratch(black_box(&input), black_box(&mut out), black_box(&mut scratch_e3))
+  group.bench_function(
+    "public-op-e3",
+    checked_with(
+      buffers(&key_e3),
+      |(out, scratch)| {
+        key_e3
+          .public_operation_with_scratch(black_box(&input), black_box(out), black_box(scratch))
+          .expect("valid RSA benchmark fixture must succeed")
+      },
+      |(), (out, _)| matches_reference(&key_e3, out),
+    ),
+  );
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
+  group.bench_function(
+    "public-op-e3-bitserial-baseline",
+    checked_with(
+      vec![0u8; modulus.len()],
+      |out| {
+        diag_rsa_public_operation_bitserial(black_box(&key_e3), black_box(&input), black_box(out))
+          .expect("valid RSA benchmark fixture must succeed")
+      },
+      |(), out| matches_reference(&key_e3, out),
+    ),
+  );
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
+  group.bench_function(
+    "public-op-e3-product-montgomery",
+    checked_with(
+      buffers(&key_e3),
+      |(out, scratch)| {
+        diag_rsa_public_operation_product(
+          black_box(&key_e3),
+          black_box(&input),
+          black_box(out),
+          black_box(scratch),
+        )
         .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
+      },
+      |(), (out, _)| matches_reference(&key_e3, out),
+    ),
+  );
   #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function("public-op-e3-bitserial-baseline", |b| {
-    b.iter(|| {
-      diag_rsa_public_operation_bitserial(black_box(&key_e3), black_box(&input), black_box(&mut out))
+  group.bench_function(
+    "public-op-e3-generic-exponent",
+    checked_with(
+      buffers(&key_e3),
+      |(out, scratch)| {
+        diag_rsa_public_operation_generic_exponent(
+          black_box(&key_e3),
+          black_box(&input),
+          black_box(out),
+          black_box(scratch),
+        )
         .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
+      },
+      |(), (out, _)| matches_reference(&key_e3, out),
+    ),
+  );
   #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function("public-op-e3-product-montgomery", |b| {
-    b.iter(|| {
-      diag_rsa_public_operation_product(
-        black_box(&key_e3),
-        black_box(&input),
-        black_box(&mut out),
-        black_box(&mut product_scratch_e3),
-      )
-      .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function("public-op-e3-generic-exponent", |b| {
-    b.iter(|| {
-      diag_rsa_public_operation_generic_exponent(
-        black_box(&key_e3),
-        black_box(&input),
-        black_box(&mut out),
-        black_box(&mut generic_scratch_e3),
-      )
-      .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function("public-op-e3-cios-candidate", |b| {
-    b.iter(|| {
-      diag_rsa_public_operation_cios(
-        black_box(&key_e3),
-        black_box(&input),
-        black_box(&mut out),
-        black_box(&mut cios_scratch_e3),
-      )
-      .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
-  group.bench_function("public-op-e17", |b| {
-    b.iter(|| {
-      key_e17
-        .public_operation_with_scratch(black_box(&input), black_box(&mut out), black_box(&mut scratch_e17))
+  group.bench_function(
+    "public-op-e3-cios-candidate",
+    checked_with(
+      buffers(&key_e3),
+      |(out, scratch)| {
+        diag_rsa_public_operation_cios(
+          black_box(&key_e3),
+          black_box(&input),
+          black_box(out),
+          black_box(scratch),
+        )
         .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
+      },
+      |(), (out, _)| matches_reference(&key_e3, out),
+    ),
+  );
+  group.bench_function(
+    "public-op-e17",
+    checked_with(
+      buffers(&key_e17),
+      |(out, scratch)| {
+        key_e17
+          .public_operation_with_scratch(black_box(&input), black_box(out), black_box(scratch))
+          .expect("valid RSA benchmark fixture must succeed")
+      },
+      |(), (out, _)| matches_reference(&key_e17, out),
+    ),
+  );
   #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function("public-op-e17-bitserial-baseline", |b| {
-    b.iter(|| {
-      diag_rsa_public_operation_bitserial(black_box(&key_e17), black_box(&input), black_box(&mut out))
+  group.bench_function(
+    "public-op-e17-bitserial-baseline",
+    checked_with(
+      vec![0u8; modulus.len()],
+      |out| {
+        diag_rsa_public_operation_bitserial(black_box(&key_e17), black_box(&input), black_box(out))
+          .expect("valid RSA benchmark fixture must succeed")
+      },
+      |(), out| matches_reference(&key_e17, out),
+    ),
+  );
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
+  group.bench_function(
+    "public-op-e17-product-montgomery",
+    checked_with(
+      buffers(&key_e17),
+      |(out, scratch)| {
+        diag_rsa_public_operation_product(
+          black_box(&key_e17),
+          black_box(&input),
+          black_box(out),
+          black_box(scratch),
+        )
         .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
+      },
+      |(), (out, _)| matches_reference(&key_e17, out),
+    ),
+  );
   #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function("public-op-e17-product-montgomery", |b| {
-    b.iter(|| {
-      diag_rsa_public_operation_product(
-        black_box(&key_e17),
-        black_box(&input),
-        black_box(&mut out),
-        black_box(&mut product_scratch_e17),
-      )
-      .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function("public-op-e17-generic-exponent", |b| {
-    b.iter(|| {
-      diag_rsa_public_operation_generic_exponent(
-        black_box(&key_e17),
-        black_box(&input),
-        black_box(&mut out),
-        black_box(&mut generic_scratch_e17),
-      )
-      .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function("public-op-e17-cios-candidate", |b| {
-    b.iter(|| {
-      diag_rsa_public_operation_cios(
-        black_box(&key_e17),
-        black_box(&input),
-        black_box(&mut out),
-        black_box(&mut cios_scratch_e17),
-      )
-      .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
-  group.bench_function("public-op-e65537", |b| {
-    b.iter(|| {
-      key_e65537
-        .public_operation_with_scratch(black_box(&input), black_box(&mut out), black_box(&mut scratch_e65537))
+  group.bench_function(
+    "public-op-e17-generic-exponent",
+    checked_with(
+      buffers(&key_e17),
+      |(out, scratch)| {
+        diag_rsa_public_operation_generic_exponent(
+          black_box(&key_e17),
+          black_box(&input),
+          black_box(out),
+          black_box(scratch),
+        )
         .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
+      },
+      |(), (out, _)| matches_reference(&key_e17, out),
+    ),
+  );
   #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function("public-op-e65537-bitserial-baseline", |b| {
-    b.iter(|| {
-      diag_rsa_public_operation_bitserial(black_box(&key_e65537), black_box(&input), black_box(&mut out))
+  group.bench_function(
+    "public-op-e17-cios-candidate",
+    checked_with(
+      buffers(&key_e17),
+      |(out, scratch)| {
+        diag_rsa_public_operation_cios(
+          black_box(&key_e17),
+          black_box(&input),
+          black_box(out),
+          black_box(scratch),
+        )
         .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
+      },
+      |(), (out, _)| matches_reference(&key_e17, out),
+    ),
+  );
+  group.bench_function(
+    "public-op-e65537",
+    checked_with(
+      buffers(&key_e65537),
+      |(out, scratch)| {
+        key_e65537
+          .public_operation_with_scratch(black_box(&input), black_box(out), black_box(scratch))
+          .expect("valid RSA benchmark fixture must succeed")
+      },
+      |(), (out, _)| matches_reference(&key_e65537, out),
+    ),
+  );
   #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function("public-op-e65537-product-montgomery", |b| {
-    b.iter(|| {
-      diag_rsa_public_operation_product(
-        black_box(&key_e65537),
-        black_box(&input),
-        black_box(&mut out),
-        black_box(&mut product_scratch_e65537),
-      )
-      .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
+  group.bench_function(
+    "public-op-e65537-bitserial-baseline",
+    checked_with(
+      vec![0u8; modulus.len()],
+      |out| {
+        diag_rsa_public_operation_bitserial(black_box(&key_e65537), black_box(&input), black_box(out))
+          .expect("valid RSA benchmark fixture must succeed")
+      },
+      |(), out| matches_reference(&key_e65537, out),
+    ),
+  );
   #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function("public-op-e65537-generic-exponent", |b| {
-    b.iter(|| {
-      diag_rsa_public_operation_generic_exponent(
-        black_box(&key_e65537),
-        black_box(&input),
-        black_box(&mut out),
-        black_box(&mut generic_scratch_e65537),
-      )
-      .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
-  #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function("public-op-e65537-cios-candidate", |b| {
-    b.iter(|| {
-      diag_rsa_public_operation_cios(
-        black_box(&key_e65537),
-        black_box(&input),
-        black_box(&mut out),
-        black_box(&mut cios_scratch_e65537),
-      )
-      .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
-  group.bench_function("public-op-e0x49d2a1-generic", |b| {
-    b.iter(|| {
-      key_generic
-        .public_operation_with_scratch(black_box(&input), black_box(&mut out), black_box(&mut scratch_generic))
+  group.bench_function(
+    "public-op-e65537-product-montgomery",
+    checked_with(
+      buffers(&key_e65537),
+      |(out, scratch)| {
+        diag_rsa_public_operation_product(
+          black_box(&key_e65537),
+          black_box(&input),
+          black_box(out),
+          black_box(scratch),
+        )
         .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
+      },
+      |(), (out, _)| matches_reference(&key_e65537, out),
+    ),
+  );
   #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function("public-op-e0x49d2a1-bitserial-baseline", |b| {
-    b.iter(|| {
-      diag_rsa_public_operation_bitserial(black_box(&key_generic), black_box(&input), black_box(&mut out))
+  group.bench_function(
+    "public-op-e65537-generic-exponent",
+    checked_with(
+      buffers(&key_e65537),
+      |(out, scratch)| {
+        diag_rsa_public_operation_generic_exponent(
+          black_box(&key_e65537),
+          black_box(&input),
+          black_box(out),
+          black_box(scratch),
+        )
         .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
+      },
+      |(), (out, _)| matches_reference(&key_e65537, out),
+    ),
+  );
   #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function("public-op-e0x49d2a1-product-montgomery", |b| {
-    b.iter(|| {
-      diag_rsa_public_operation_product(
-        black_box(&key_generic),
-        black_box(&input),
-        black_box(&mut out),
-        black_box(&mut product_scratch_generic),
-      )
-      .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
+  group.bench_function(
+    "public-op-e65537-cios-candidate",
+    checked_with(
+      buffers(&key_e65537),
+      |(out, scratch)| {
+        diag_rsa_public_operation_cios(
+          black_box(&key_e65537),
+          black_box(&input),
+          black_box(out),
+          black_box(scratch),
+        )
+        .expect("valid RSA benchmark fixture must succeed")
+      },
+      |(), (out, _)| matches_reference(&key_e65537, out),
+    ),
+  );
+  group.bench_function(
+    "public-op-e0x49d2a1-generic",
+    checked_with(
+      buffers(&key_generic),
+      |(out, scratch)| {
+        key_generic
+          .public_operation_with_scratch(black_box(&input), black_box(out), black_box(scratch))
+          .expect("valid RSA benchmark fixture must succeed")
+      },
+      |(), (out, _)| matches_reference(&key_generic, out),
+    ),
+  );
   #[cfg(all(rscrypto_internal, feature = "diag"))]
-  group.bench_function("public-op-e0x49d2a1-cios-candidate", |b| {
-    b.iter(|| {
-      diag_rsa_public_operation_cios(
-        black_box(&key_generic),
-        black_box(&input),
-        black_box(&mut out),
-        black_box(&mut cios_scratch_generic),
-      )
-      .expect("valid RSA benchmark fixture must succeed")
-    })
-  });
+  group.bench_function(
+    "public-op-e0x49d2a1-bitserial-baseline",
+    checked_with(
+      vec![0u8; modulus.len()],
+      |out| {
+        diag_rsa_public_operation_bitserial(black_box(&key_generic), black_box(&input), black_box(out))
+          .expect("valid RSA benchmark fixture must succeed")
+      },
+      |(), out| matches_reference(&key_generic, out),
+    ),
+  );
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
+  group.bench_function(
+    "public-op-e0x49d2a1-product-montgomery",
+    checked_with(
+      buffers(&key_generic),
+      |(out, scratch)| {
+        diag_rsa_public_operation_product(
+          black_box(&key_generic),
+          black_box(&input),
+          black_box(out),
+          black_box(scratch),
+        )
+        .expect("valid RSA benchmark fixture must succeed")
+      },
+      |(), (out, _)| matches_reference(&key_generic, out),
+    ),
+  );
+  #[cfg(all(rscrypto_internal, feature = "diag"))]
+  group.bench_function(
+    "public-op-e0x49d2a1-cios-candidate",
+    checked_with(
+      buffers(&key_generic),
+      |(out, scratch)| {
+        diag_rsa_public_operation_cios(
+          black_box(&key_generic),
+          black_box(&input),
+          black_box(out),
+          black_box(scratch),
+        )
+        .expect("valid RSA benchmark fixture must succeed")
+      },
+      |(), (out, _)| matches_reference(&key_generic, out),
+    ),
+  );
   group.finish();
 }
 
@@ -1749,24 +2008,79 @@ fn rsa_hash_components(c: &mut Criterion) {
   }
   let mut group = c.benchmark_group("rsa-hash-components");
 
-  group.bench_function("sha256-message-pss", |b| {
-    b.iter(|| black_box(Sha256::digest(black_box(MESSAGE_PSS))))
-  });
-  group.bench_function("sha384-message-pss", |b| {
-    b.iter(|| black_box(Sha384::digest(black_box(MESSAGE_PSS))))
-  });
-  group.bench_function("sha512-message-pss", |b| {
-    b.iter(|| black_box(Sha512::digest(black_box(MESSAGE_PSS))))
-  });
-  group.bench_function("sha256-message-pkcs1v15", |b| {
-    b.iter(|| black_box(Sha256::digest(black_box(MESSAGE_PKCS1V15))))
-  });
-  group.bench_function("sha384-message-pkcs1v15", |b| {
-    b.iter(|| black_box(Sha384::digest(black_box(MESSAGE_PKCS1V15))))
-  });
-  group.bench_function("sha512-message-pkcs1v15", |b| {
-    b.iter(|| black_box(Sha512::digest(black_box(MESSAGE_PKCS1V15))))
-  });
+  // RustCrypto `sha2` is the oracle for every digest.
+  group.bench_function(
+    "sha256-message-pss",
+    checked(
+      || black_box(Sha256::digest(black_box(MESSAGE_PSS))),
+      |digest| {
+        assert_eq!(
+          digest.as_ref(),
+          <sha2_010::Sha256 as sha2_010::Digest>::digest(MESSAGE_PSS).as_slice()
+        )
+      },
+    ),
+  );
+  group.bench_function(
+    "sha384-message-pss",
+    checked(
+      || black_box(Sha384::digest(black_box(MESSAGE_PSS))),
+      |digest| {
+        assert_eq!(
+          digest.as_ref(),
+          <sha2_010::Sha384 as sha2_010::Digest>::digest(MESSAGE_PSS).as_slice()
+        )
+      },
+    ),
+  );
+  group.bench_function(
+    "sha512-message-pss",
+    checked(
+      || black_box(Sha512::digest(black_box(MESSAGE_PSS))),
+      |digest| {
+        assert_eq!(
+          digest.as_ref(),
+          <sha2_010::Sha512 as sha2_010::Digest>::digest(MESSAGE_PSS).as_slice()
+        )
+      },
+    ),
+  );
+  group.bench_function(
+    "sha256-message-pkcs1v15",
+    checked(
+      || black_box(Sha256::digest(black_box(MESSAGE_PKCS1V15))),
+      |digest| {
+        assert_eq!(
+          digest.as_ref(),
+          <sha2_010::Sha256 as sha2_010::Digest>::digest(MESSAGE_PKCS1V15).as_slice()
+        )
+      },
+    ),
+  );
+  group.bench_function(
+    "sha384-message-pkcs1v15",
+    checked(
+      || black_box(Sha384::digest(black_box(MESSAGE_PKCS1V15))),
+      |digest| {
+        assert_eq!(
+          digest.as_ref(),
+          <sha2_010::Sha384 as sha2_010::Digest>::digest(MESSAGE_PKCS1V15).as_slice()
+        )
+      },
+    ),
+  );
+  group.bench_function(
+    "sha512-message-pkcs1v15",
+    checked(
+      || black_box(Sha512::digest(black_box(MESSAGE_PKCS1V15))),
+      |digest| {
+        assert_eq!(
+          digest.as_ref(),
+          <sha2_010::Sha512 as sha2_010::Digest>::digest(MESSAGE_PKCS1V15).as_slice()
+        )
+      },
+    ),
+  );
 
   group.finish();
 }
@@ -1793,59 +2107,60 @@ fn rsa_montgomery_thresholds(c: &mut Criterion) {
     )
     .expect("valid RSA benchmark fixture must succeed");
     let input = modulus_minus_one(&key);
-    let mut out_auto = vec![0u8; key.modulus().len()];
-    let mut out_product = vec![0u8; key.modulus().len()];
-    let mut out_cios = vec![0u8; key.modulus().len()];
-    let mut out_cios_portable = vec![0u8; key.modulus().len()];
-    let mut scratch_auto = key.public_scratch();
-    let mut scratch_product = key.public_scratch();
-    let mut scratch_cios = key.public_scratch();
-    let mut scratch_cios_portable = key.public_scratch();
+    // Each row owns its output and scratch. RustCrypto's modpow is the oracle.
+    let buffers = || (vec![0u8; key.modulus().len()], key.public_scratch());
+    let matches_reference = |out: &[u8]| assert_eq!(out, reference_public_operation(&key, &input));
 
-    group.bench_function(format!("{name}/auto"), |b| {
-      b.iter(|| {
-        key
-          .public_operation_with_scratch(
+    group.bench_function(
+      format!("{name}/auto"),
+      checked_with(
+        buffers(),
+        |(out, scratch)| {
+          key
+            .public_operation_with_scratch(black_box(&input), black_box(out), black_box(scratch))
+            .expect("valid RSA benchmark fixture must succeed")
+        },
+        |(), (out, _)| matches_reference(out),
+      ),
+    );
+    group.bench_function(
+      format!("{name}/product-montgomery"),
+      checked_with(
+        buffers(),
+        |(out, scratch)| {
+          diag_rsa_public_operation_product(black_box(&key), black_box(&input), black_box(out), black_box(scratch))
+            .expect("valid RSA benchmark fixture must succeed")
+        },
+        |(), (out, _)| matches_reference(out),
+      ),
+    );
+    group.bench_function(
+      format!("{name}/cios-candidate"),
+      checked_with(
+        buffers(),
+        |(out, scratch)| {
+          diag_rsa_public_operation_cios(black_box(&key), black_box(&input), black_box(out), black_box(scratch))
+            .expect("valid RSA benchmark fixture must succeed")
+        },
+        |(), (out, _)| matches_reference(out),
+      ),
+    );
+    group.bench_function(
+      format!("{name}/cios-portable"),
+      checked_with(
+        buffers(),
+        |(out, scratch)| {
+          diag_rsa_public_operation_cios_portable(
+            black_box(&key),
             black_box(&input),
-            black_box(&mut out_auto),
-            black_box(&mut scratch_auto),
+            black_box(out),
+            black_box(scratch),
           )
           .expect("valid RSA benchmark fixture must succeed")
-      })
-    });
-    group.bench_function(format!("{name}/product-montgomery"), |b| {
-      b.iter(|| {
-        diag_rsa_public_operation_product(
-          black_box(&key),
-          black_box(&input),
-          black_box(&mut out_product),
-          black_box(&mut scratch_product),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-      })
-    });
-    group.bench_function(format!("{name}/cios-candidate"), |b| {
-      b.iter(|| {
-        diag_rsa_public_operation_cios(
-          black_box(&key),
-          black_box(&input),
-          black_box(&mut out_cios),
-          black_box(&mut scratch_cios),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-      })
-    });
-    group.bench_function(format!("{name}/cios-portable"), |b| {
-      b.iter(|| {
-        diag_rsa_public_operation_cios_portable(
-          black_box(&key),
-          black_box(&input),
-          black_box(&mut out_cios_portable),
-          black_box(&mut scratch_cios_portable),
-        )
-        .expect("valid RSA benchmark fixture must succeed")
-      })
-    });
+        },
+        |(), (out, _)| matches_reference(out),
+      ),
+    );
   }
 
   group.finish();

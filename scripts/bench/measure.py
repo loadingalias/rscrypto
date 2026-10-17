@@ -104,3 +104,8 @@ def measure(root: Path, plan: list[dict], baseline: Path | None) -> None:
       "CRITERION_HOME": str(home), "RSCRYPTO_BENCH_CASES": str(cases),
     })
     unchanged(entry["artifact"])
+    # The binary exits nonzero unless every measured row passed its output check before timing.
+    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+      with open(summary, "a", encoding="utf-8") as output:
+        output.write(f"- Output checks: {entry['binary']}, {len(entry['cases'])} of {len(entry['cases'])}"
+                     " measured rows passed\n")

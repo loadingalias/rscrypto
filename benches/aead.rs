@@ -3,6 +3,8 @@
 //! Copy-plus-operation workloads over preallocated buffers and reusable keys.
 //! Input restoration is timed; initial allocation and fixture generation are not.
 //! `appended-tag` rows handle ciphertext || tag; other rows use detached tags.
+//! Before timing, every seal row must reproduce an independent library's
+//! ciphertext and tag, and every open row must recover the plaintext from them.
 //! See docs/benchmarking.md for the suite timing policy.
 
 #[path = "common/criterion.rs"]
@@ -13,6 +15,7 @@ mod common;
 use core::hint::black_box;
 
 use aes_gcm::aead::{AeadInOut as _, KeyInit as _};
+use bench_config::{checked, checked_with};
 use criterion::{BenchmarkId, Criterion};
 use rscrypto::aead::expert::AeadWithNonce;
 
@@ -46,6 +49,11 @@ const NONCE_24: [u8; 24] = [0x07u8; 24];
 const NONCE_32: [u8; 32] = [0x07u8; 32];
 const AAD: &[u8] = b"rscrypto-bench";
 
+/// The `ciphertext || tag` form in which every sealed output is compared.
+fn sealed(ciphertext: &[u8], tag: impl AsRef<[u8]>) -> Vec<u8> {
+  [ciphertext, tag.as_ref()].concat()
+}
+
 // XChaCha20-Poly1305
 
 // dryoc 0.7.2 does not expose `crypto_aead_xchacha20poly1305_ietf` as a single-shot AEAD;
@@ -67,29 +75,44 @@ fn xchacha20_poly1305_encrypt(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
-    let mut buf = data.clone();
+    // Every row must produce RustCrypto's ciphertext and tag.
+    let mut ciphertext = data.clone();
+    let tag = cipher_rc
+      .encrypt_inout_detached(&nonce_rc, AAD, ciphertext.as_mut_slice().into())
+      .expect("valid AEAD benchmark operation must succeed");
+    let expected = sealed(&ciphertext, tag);
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| {
-        buf.copy_from_slice(d);
-        black_box(cipher_rs.encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut buf)))
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        data.clone(),
+        |buf| {
+          buf.copy_from_slice(data);
+          cipher_rs
+            .encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut *buf))
+            .expect("valid AEAD benchmark operation must succeed")
+        },
+        |tag, buf| assert_eq!(sealed(buf, tag), expected),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
-      b.iter(|| {
-        buf.copy_from_slice(d);
-        black_box(
+    g.bench_function(
+      BenchmarkId::new("rustcrypto", len),
+      checked_with(
+        data.clone(),
+        |buf| {
+          buf.copy_from_slice(data);
           cipher_rc
             .encrypt_inout_detached(
               black_box(&nonce_rc),
               black_box(AAD),
               black_box(buf.as_mut_slice().into()),
             )
-            .expect("valid AEAD benchmark operation must succeed"),
-        )
-      })
-    });
+            .expect("valid AEAD benchmark operation must succeed")
+        },
+        |tag, buf| assert_eq!(sealed(buf, tag), expected),
+      ),
+    );
   }
 
   g.finish();
@@ -111,51 +134,52 @@ fn xchacha20_poly1305_decrypt(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
 
-    // Pre-encrypt with rscrypto to get valid ciphertext + tag.
+    // Every row opens RustCrypto's ciphertext and tag and must recover the input.
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs
-      .encrypt_in_place(&nonce_rs, AAD, &mut ciphertext)
-      .expect("valid AEAD benchmark operation must succeed");
-
-    // Pre-encrypt with RustCrypto to get its tag format.
-    let mut ct_rc = data.clone();
     let tag_rc = cipher_rc
-      .encrypt_inout_detached(&nonce_rc, AAD, ct_rc.as_mut_slice().into())
+      .encrypt_inout_detached(&nonce_rc, AAD, ciphertext.as_mut_slice().into())
       .expect("valid AEAD benchmark operation must succeed");
+    let tag_rs = rscrypto::XChaCha20Poly1305::tag_from_slice(&tag_rc).expect("AEAD tags have 16 bytes");
 
-    let mut buf = ciphertext.clone();
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        ciphertext.clone(),
+        |buf| {
+          buf.copy_from_slice(&ciphertext);
+          cipher_rs
+            .decrypt_in_place(
+              black_box(&nonce_rs),
+              black_box(AAD),
+              black_box(&mut *buf),
+              black_box(&tag_rs),
+            )
+            .expect("valid AEAD benchmark operation must succeed");
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(buf, data),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), &ciphertext, |b, ct| {
-      b.iter(|| {
-        buf.copy_from_slice(ct);
-        cipher_rs
-          .decrypt_in_place(
-            black_box(&nonce_rs),
-            black_box(AAD),
-            black_box(&mut buf),
-            black_box(&tag_rs),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf);
-      })
-    });
-
-    let mut buf_rc = ct_rc.clone();
-
-    g.bench_with_input(BenchmarkId::new("rustcrypto", len), &ct_rc, |b, ct| {
-      b.iter(|| {
-        buf_rc.copy_from_slice(ct);
-        cipher_rc
-          .decrypt_inout_detached(
-            black_box(&nonce_rc),
-            black_box(AAD),
-            black_box(buf_rc.as_mut_slice().into()),
-            black_box(&tag_rc),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf_rc);
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rustcrypto", len),
+      checked_with(
+        ciphertext.clone(),
+        |buf| {
+          buf.copy_from_slice(&ciphertext);
+          cipher_rc
+            .decrypt_inout_detached(
+              black_box(&nonce_rc),
+              black_box(AAD),
+              black_box(buf.as_mut_slice().into()),
+              black_box(&tag_rc),
+            )
+            .expect("valid AEAD benchmark operation must succeed");
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(buf, data),
+      ),
+    );
   }
 
   g.finish();
@@ -191,97 +215,127 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
-    let mut buf = data.clone();
-    #[cfg(all(rscrypto_internal, feature = "diag"))]
-    let mut buf_owned = data.clone();
-    #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
-    let mut buf_x86_asm = data.clone();
-    let mut buf_combined: Vec<u8> = Vec::with_capacity(data.len().strict_add(16));
+    // Every row must produce RustCrypto's ciphertext and tag.
+    let mut ciphertext = data.clone();
+    let tag = cipher_rc
+      .encrypt_inout_detached(&nonce_rc, AAD, ciphertext.as_mut_slice().into())
+      .expect("valid AEAD benchmark operation must succeed");
+    let expected = sealed(&ciphertext, tag);
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| {
-        buf.copy_from_slice(d);
-        black_box(cipher_rs.encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut buf)))
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        data.clone(),
+        |buf| {
+          buf.copy_from_slice(data);
+          cipher_rs
+            .encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut *buf))
+            .expect("valid AEAD benchmark operation must succeed")
+        },
+        |tag, buf| assert_eq!(sealed(buf, tag), expected),
+      ),
+    );
 
     #[cfg(all(rscrypto_internal, feature = "diag"))]
-    g.bench_with_input(BenchmarkId::new("rscrypto-owned", len), data, |b, d| {
-      b.iter(|| {
-        buf_owned.copy_from_slice(d);
-        black_box(rscrypto::aead::diag_chacha20poly1305_encrypt_in_place_owned(
-          black_box(&cipher_rs),
-          black_box(&nonce_rs),
-          black_box(AAD),
-          black_box(&mut buf_owned),
-        ))
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto-owned", len),
+      checked_with(
+        data.clone(),
+        |buf| {
+          buf.copy_from_slice(data);
+          rscrypto::aead::diag_chacha20poly1305_encrypt_in_place_owned(
+            black_box(&cipher_rs),
+            black_box(&nonce_rs),
+            black_box(AAD),
+            black_box(&mut *buf),
+          )
+          .expect("valid AEAD benchmark operation must succeed")
+        },
+        |tag, buf| assert_eq!(sealed(buf, tag), expected),
+      ),
+    );
 
     #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
     if *len != 0 {
-      g.bench_with_input(BenchmarkId::new("rscrypto-x86-asm", len), data, |b, d| {
-        b.iter(|| {
-          buf_x86_asm.copy_from_slice(d);
-          black_box(
+      g.bench_function(
+        BenchmarkId::new("rscrypto-x86-asm", len),
+        checked_with(
+          data.clone(),
+          |buf| {
+            buf.copy_from_slice(data);
             rscrypto::aead::diag_chacha20poly1305_encrypt_in_place_x86_64_asm(
               black_box(&cipher_rs),
               black_box(&nonce_rs),
               black_box(AAD),
-              black_box(&mut buf_x86_asm),
+              black_box(&mut *buf),
             )
-            .expect("x86 asm path must apply to benchmarked non-empty sizes"),
-          )
-        })
-      });
+            .expect("x86 asm path must apply to benchmarked non-empty sizes")
+            .expect("valid AEAD benchmark operation must succeed")
+          },
+          |tag, buf| assert_eq!(sealed(buf, tag), expected),
+        ),
+      );
     }
 
-    g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
-      b.iter(|| {
-        buf.copy_from_slice(d);
-        black_box(
+    g.bench_function(
+      BenchmarkId::new("rustcrypto", len),
+      checked_with(
+        data.clone(),
+        |buf| {
+          buf.copy_from_slice(data);
           cipher_rc
             .encrypt_inout_detached(
               black_box(&nonce_rc),
               black_box(AAD),
               black_box(buf.as_mut_slice().into()),
             )
-            .expect("valid AEAD benchmark operation must succeed"),
-        )
-      })
-    });
+            .expect("valid AEAD benchmark operation must succeed")
+        },
+        |tag, buf| assert_eq!(sealed(buf, tag), expected),
+      ),
+    );
 
     aws_lc_bench! {
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs-appended-tag", len), data, |b, d| {
-        b.iter(|| {
-          buf_combined.clear();
-          buf_combined.extend_from_slice(black_box(d));
-          aws_key
-            .seal_in_place_append_tag(
-              aws_aead::Nonce::assume_unique_for_key(NONCE_12),
-              aws_aead::Aad::from(AAD),
-              black_box(&mut buf_combined),
-            )
-            .expect("valid AEAD benchmark operation must succeed");
-          black_box(&buf_combined);
-        })
-      });
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs-appended-tag", len),
+        checked_with(
+          Vec::<u8>::with_capacity(data.len().strict_add(16)),
+          |buf| {
+            buf.clear();
+            buf.extend_from_slice(black_box(data));
+            aws_key
+              .seal_in_place_append_tag(
+                aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+                aws_aead::Aad::from(AAD),
+                black_box(&mut *buf),
+              )
+              .expect("valid AEAD benchmark operation must succeed");
+            black_box(&*buf);
+          },
+          |(), buf| assert_eq!(*buf, expected),
+        ),
+      );
     }
 
-    g.bench_with_input(BenchmarkId::new("ring-appended-tag", len), data, |b, d| {
-      b.iter(|| {
-        buf_combined.clear();
-        buf_combined.extend_from_slice(black_box(d));
-        ring_key
-          .seal_in_place_append_tag(
-            ring_aead::Nonce::assume_unique_for_key(NONCE_12),
-            ring_aead::Aad::from(AAD),
-            black_box(&mut buf_combined),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf_combined);
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("ring-appended-tag", len),
+      checked_with(
+        Vec::<u8>::with_capacity(data.len().strict_add(16)),
+        |buf| {
+          buf.clear();
+          buf.extend_from_slice(black_box(data));
+          ring_key
+            .seal_in_place_append_tag(
+              ring_aead::Nonce::assume_unique_for_key(NONCE_12),
+              ring_aead::Aad::from(AAD),
+              black_box(&mut *buf),
+            )
+            .expect("valid AEAD benchmark operation must succeed");
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(*buf, expected),
+      ),
+    );
   }
 
   g.finish();
@@ -316,142 +370,138 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
 
+    // Every row opens RustCrypto's ciphertext and tag and must recover the input.
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs
-      .encrypt_in_place(&nonce_rs, AAD, &mut ciphertext)
-      .expect("valid AEAD benchmark operation must succeed");
-
-    let mut ct_rc = data.clone();
     let tag_rc = cipher_rc
-      .encrypt_inout_detached(&nonce_rc, AAD, ct_rc.as_mut_slice().into())
+      .encrypt_inout_detached(&nonce_rc, AAD, ciphertext.as_mut_slice().into())
       .expect("valid AEAD benchmark operation must succeed");
+    let tag_rs = rscrypto::ChaCha20Poly1305::tag_from_slice(&tag_rc).expect("AEAD tags have 16 bytes");
+    let appended = sealed(&ciphertext, tag_rc);
 
-    aws_lc_bench! {
-      let mut ct_aws: Vec<u8> = data.clone();
-      aws_key
-        .seal_in_place_append_tag(
-          aws_aead::Nonce::assume_unique_for_key(NONCE_12),
-          aws_aead::Aad::from(AAD),
-          &mut ct_aws,
-        )
-        .expect("valid AEAD benchmark operation must succeed");
-    }
-
-    let mut ct_ring: Vec<u8> = data.clone();
-    ring_key
-      .seal_in_place_append_tag(
-        ring_aead::Nonce::assume_unique_for_key(NONCE_12),
-        ring_aead::Aad::from(AAD),
-        &mut ct_ring,
-      )
-      .expect("valid AEAD benchmark operation must succeed");
-
-    let mut buf = ciphertext.clone();
-    #[cfg(all(rscrypto_internal, feature = "diag"))]
-    let mut buf_owned = ciphertext.clone();
-    #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
-    let mut buf_x86_asm = ciphertext.clone();
-
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), &ciphertext, |b, ct| {
-      b.iter(|| {
-        buf.copy_from_slice(ct);
-        cipher_rs
-          .decrypt_in_place(
-            black_box(&nonce_rs),
-            black_box(AAD),
-            black_box(&mut buf),
-            black_box(&tag_rs),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf);
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        ciphertext.clone(),
+        |buf| {
+          buf.copy_from_slice(&ciphertext);
+          cipher_rs
+            .decrypt_in_place(
+              black_box(&nonce_rs),
+              black_box(AAD),
+              black_box(&mut *buf),
+              black_box(&tag_rs),
+            )
+            .expect("valid AEAD benchmark operation must succeed");
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(buf, data),
+      ),
+    );
 
     #[cfg(all(rscrypto_internal, feature = "diag"))]
-    g.bench_with_input(BenchmarkId::new("rscrypto-owned", len), &ciphertext, |b, ct| {
-      b.iter(|| {
-        buf_owned.copy_from_slice(ct);
-        rscrypto::aead::diag_chacha20poly1305_decrypt_in_place_owned(
-          black_box(&cipher_rs),
-          black_box(&nonce_rs),
-          black_box(AAD),
-          black_box(&mut buf_owned),
-          black_box(&tag_rs),
-        )
-        .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf_owned);
-      })
-    });
-
-    #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
-    if *len != 0 {
-      g.bench_with_input(BenchmarkId::new("rscrypto-x86-asm", len), &ciphertext, |b, ct| {
-        b.iter(|| {
-          buf_x86_asm.copy_from_slice(ct);
-          rscrypto::aead::diag_chacha20poly1305_decrypt_in_place_x86_64_asm(
+    g.bench_function(
+      BenchmarkId::new("rscrypto-owned", len),
+      checked_with(
+        ciphertext.clone(),
+        |buf| {
+          buf.copy_from_slice(&ciphertext);
+          rscrypto::aead::diag_chacha20poly1305_decrypt_in_place_owned(
             black_box(&cipher_rs),
             black_box(&nonce_rs),
             black_box(AAD),
-            black_box(&mut buf_x86_asm),
+            black_box(&mut *buf),
             black_box(&tag_rs),
           )
-          .expect("x86 asm path must apply to benchmarked non-empty sizes")
           .expect("valid AEAD benchmark operation must succeed");
-          black_box(&buf_x86_asm);
-        })
-      });
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(buf, data),
+      ),
+    );
+
+    #[cfg(all(rscrypto_internal, feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+    if *len != 0 {
+      g.bench_function(
+        BenchmarkId::new("rscrypto-x86-asm", len),
+        checked_with(
+          ciphertext.clone(),
+          |buf| {
+            buf.copy_from_slice(&ciphertext);
+            rscrypto::aead::diag_chacha20poly1305_decrypt_in_place_x86_64_asm(
+              black_box(&cipher_rs),
+              black_box(&nonce_rs),
+              black_box(AAD),
+              black_box(&mut *buf),
+              black_box(&tag_rs),
+            )
+            .expect("x86 asm path must apply to benchmarked non-empty sizes")
+            .expect("valid AEAD benchmark operation must succeed");
+            black_box(&*buf);
+          },
+          |(), buf| assert_eq!(buf, data),
+        ),
+      );
     }
 
-    let mut buf_rc = ct_rc.clone();
-
-    g.bench_with_input(BenchmarkId::new("rustcrypto", len), &ct_rc, |b, ct| {
-      b.iter(|| {
-        buf_rc.copy_from_slice(ct);
-        cipher_rc
-          .decrypt_inout_detached(
-            black_box(&nonce_rc),
-            black_box(AAD),
-            black_box(buf_rc.as_mut_slice().into()),
-            black_box(&tag_rc),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf_rc);
-      })
-    });
-
-    aws_lc_bench! {
-      let mut buf_aws = ct_aws.clone();
-
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs-appended-tag", len), &ct_aws, |b, ct| {
-        b.iter(|| {
-          buf_aws.copy_from_slice(ct);
-          aws_key
-            .open_in_place(
-              aws_aead::Nonce::assume_unique_for_key(NONCE_12),
-              aws_aead::Aad::from(AAD),
-              black_box(&mut buf_aws),
+    g.bench_function(
+      BenchmarkId::new("rustcrypto", len),
+      checked_with(
+        ciphertext.clone(),
+        |buf| {
+          buf.copy_from_slice(&ciphertext);
+          cipher_rc
+            .decrypt_inout_detached(
+              black_box(&nonce_rc),
+              black_box(AAD),
+              black_box(buf.as_mut_slice().into()),
+              black_box(&tag_rc),
             )
             .expect("valid AEAD benchmark operation must succeed");
-          black_box(&buf_aws);
-        })
-      });
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(buf, data),
+      ),
+    );
+
+    aws_lc_bench! {
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs-appended-tag", len),
+        checked_with(
+          appended.clone(),
+          |buf| {
+            buf.copy_from_slice(&appended);
+            aws_key
+              .open_in_place(
+                aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+                aws_aead::Aad::from(AAD),
+                black_box(&mut *buf),
+              )
+              .expect("valid AEAD benchmark operation must succeed");
+            black_box(&*buf);
+          },
+          |(), buf| assert_eq!(&buf[..*len], data.as_slice()),
+        ),
+      );
     }
 
-    let mut buf_ring = ct_ring.clone();
-
-    g.bench_with_input(BenchmarkId::new("ring-appended-tag", len), &ct_ring, |b, ct| {
-      b.iter(|| {
-        buf_ring.copy_from_slice(ct);
-        ring_key
-          .open_in_place(
-            ring_aead::Nonce::assume_unique_for_key(NONCE_12),
-            ring_aead::Aad::from(AAD),
-            black_box(&mut buf_ring),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf_ring);
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("ring-appended-tag", len),
+      checked_with(
+        appended.clone(),
+        |buf| {
+          buf.copy_from_slice(&appended);
+          ring_key
+            .open_in_place(
+              ring_aead::Nonce::assume_unique_for_key(NONCE_12),
+              ring_aead::Aad::from(AAD),
+              black_box(&mut *buf),
+            )
+            .expect("valid AEAD benchmark operation must succeed");
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(&buf[..*len], data.as_slice()),
+      ),
+    );
   }
 
   g.finish();
@@ -482,46 +532,65 @@ fn aes256_gcm_siv_encrypt(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
-    let mut buf = data.clone();
+    // Every row must produce RustCrypto's ciphertext and tag.
+    let mut ciphertext = data.clone();
+    let tag = cipher_rc
+      .encrypt_inout_detached(&nonce_rc, AAD, ciphertext.as_mut_slice().into())
+      .expect("valid AEAD benchmark operation must succeed");
+    let expected = sealed(&ciphertext, tag);
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| {
-        buf.copy_from_slice(d);
-        black_box(cipher_rs.encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut buf)))
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        data.clone(),
+        |buf| {
+          buf.copy_from_slice(data);
+          cipher_rs
+            .encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut *buf))
+            .expect("valid AEAD benchmark operation must succeed")
+        },
+        |tag, buf| assert_eq!(sealed(buf, tag), expected),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
-      b.iter(|| {
-        buf.copy_from_slice(d);
-        black_box(
+    g.bench_function(
+      BenchmarkId::new("rustcrypto", len),
+      checked_with(
+        data.clone(),
+        |buf| {
+          buf.copy_from_slice(data);
           cipher_rc
             .encrypt_inout_detached(
               black_box(&nonce_rc),
               black_box(AAD),
               black_box(buf.as_mut_slice()).into(),
             )
-            .expect("valid AEAD benchmark operation must succeed"),
-        )
-      })
-    });
+            .expect("valid AEAD benchmark operation must succeed")
+        },
+        |tag, buf| assert_eq!(sealed(buf, tag), expected),
+      ),
+    );
 
     aws_lc_bench! {
-      let mut buf_aws = data.clone();
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-        b.iter(|| {
-          buf_aws.copy_from_slice(black_box(d));
-          let tag = aws_key
-            .seal_in_place_separate_tag(
-              aws_aead::Nonce::assume_unique_for_key(NONCE_12),
-              aws_aead::Aad::from(AAD),
-              black_box(&mut buf_aws),
-            )
-            .expect("valid AEAD benchmark operation must succeed");
-          black_box(tag.as_ref());
-          black_box(&buf_aws);
-        })
-      });
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs", len),
+        checked_with(
+          data.clone(),
+          |buf| {
+            buf.copy_from_slice(black_box(data));
+            let tag = aws_key
+              .seal_in_place_separate_tag(
+                aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+                aws_aead::Aad::from(AAD),
+                black_box(&mut *buf),
+              )
+              .expect("valid AEAD benchmark operation must succeed");
+            black_box(&*buf);
+            tag
+          },
+          |tag, buf| assert_eq!(sealed(buf, tag), expected),
+        ),
+      );
     }
   }
 
@@ -552,79 +621,75 @@ fn aes256_gcm_siv_decrypt(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
 
+    // Every row opens RustCrypto's ciphertext and tag and must recover the input.
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs
-      .encrypt_in_place(&nonce_rs, AAD, &mut ciphertext)
-      .expect("valid AEAD benchmark operation must succeed");
-
-    let mut ct_rc = data.clone();
     let tag_rc = cipher_rc
-      .encrypt_inout_detached(&nonce_rc, AAD, ct_rc.as_mut_slice().into())
+      .encrypt_inout_detached(&nonce_rc, AAD, ciphertext.as_mut_slice().into())
       .expect("valid AEAD benchmark operation must succeed");
+    let tag_rs = rscrypto::Aes256GcmSiv::tag_from_slice(&tag_rc).expect("AEAD tags have 16 bytes");
 
-    aws_lc_bench! {
-      let mut ct_aws = data.clone();
-      let tag_aws = aws_key
-        .seal_in_place_separate_tag(
-          aws_aead::Nonce::assume_unique_for_key(NONCE_12),
-          aws_aead::Aad::from(AAD),
-          &mut ct_aws,
-        )
-        .expect("valid AEAD benchmark operation must succeed");
-      // AWS-LC exposes detached tags for seal, but its in-place open API takes ct||tag.
-      ct_aws.extend_from_slice(tag_aws.as_ref());
-    }
-
-    let mut buf = ciphertext.clone();
-
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), &ciphertext, |b, ct| {
-      b.iter(|| {
-        buf.copy_from_slice(ct);
-        cipher_rs
-          .decrypt_in_place(
-            black_box(&nonce_rs),
-            black_box(AAD),
-            black_box(&mut buf),
-            black_box(&tag_rs),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf);
-      })
-    });
-
-    let mut buf_rc = ct_rc.clone();
-
-    g.bench_with_input(BenchmarkId::new("rustcrypto", len), &ct_rc, |b, ct| {
-      b.iter(|| {
-        buf_rc.copy_from_slice(ct);
-        cipher_rc
-          .decrypt_inout_detached(
-            black_box(&nonce_rc),
-            black_box(AAD),
-            black_box(buf_rc.as_mut_slice()).into(),
-            black_box(&tag_rc),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf_rc);
-      })
-    });
-
-    aws_lc_bench! {
-      let mut buf_aws = ct_aws.clone();
-
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs-appended-tag", len), &ct_aws, |b, ct| {
-        b.iter(|| {
-          buf_aws.copy_from_slice(ct);
-          aws_key
-            .open_in_place(
-              aws_aead::Nonce::assume_unique_for_key(NONCE_12),
-              aws_aead::Aad::from(AAD),
-              black_box(&mut buf_aws),
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        ciphertext.clone(),
+        |buf| {
+          buf.copy_from_slice(&ciphertext);
+          cipher_rs
+            .decrypt_in_place(
+              black_box(&nonce_rs),
+              black_box(AAD),
+              black_box(&mut *buf),
+              black_box(&tag_rs),
             )
             .expect("valid AEAD benchmark operation must succeed");
-          black_box(&buf_aws);
-        })
-      });
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(buf, data),
+      ),
+    );
+
+    g.bench_function(
+      BenchmarkId::new("rustcrypto", len),
+      checked_with(
+        ciphertext.clone(),
+        |buf| {
+          buf.copy_from_slice(&ciphertext);
+          cipher_rc
+            .decrypt_inout_detached(
+              black_box(&nonce_rc),
+              black_box(AAD),
+              black_box(buf.as_mut_slice()).into(),
+              black_box(&tag_rc),
+            )
+            .expect("valid AEAD benchmark operation must succeed");
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(buf, data),
+      ),
+    );
+
+    aws_lc_bench! {
+      // AWS-LC exposes detached tags for seal, but its in-place open API takes ct||tag.
+      let appended = sealed(&ciphertext, tag_rc);
+
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs-appended-tag", len),
+        checked_with(
+          appended.clone(),
+          |buf| {
+            buf.copy_from_slice(&appended);
+            aws_key
+              .open_in_place(
+                aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+                aws_aead::Aad::from(AAD),
+                black_box(&mut *buf),
+              )
+              .expect("valid AEAD benchmark operation must succeed");
+            black_box(&*buf);
+          },
+          |(), buf| assert_eq!(&buf[..*len], data.as_slice()),
+        ),
+      );
     }
   }
 
@@ -656,46 +721,65 @@ fn aes128_gcm_siv_encrypt(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
-    let mut buf = data.clone();
+    // Every row must produce RustCrypto's ciphertext and tag.
+    let mut ciphertext = data.clone();
+    let tag = cipher_rc
+      .encrypt_inout_detached(&nonce_rc, AAD, ciphertext.as_mut_slice().into())
+      .expect("valid AEAD benchmark operation must succeed");
+    let expected = sealed(&ciphertext, tag);
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| {
-        buf.copy_from_slice(d);
-        black_box(cipher_rs.encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut buf)))
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        data.clone(),
+        |buf| {
+          buf.copy_from_slice(data);
+          cipher_rs
+            .encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut *buf))
+            .expect("valid AEAD benchmark operation must succeed")
+        },
+        |tag, buf| assert_eq!(sealed(buf, tag), expected),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
-      b.iter(|| {
-        buf.copy_from_slice(d);
-        black_box(
+    g.bench_function(
+      BenchmarkId::new("rustcrypto", len),
+      checked_with(
+        data.clone(),
+        |buf| {
+          buf.copy_from_slice(data);
           cipher_rc
             .encrypt_inout_detached(
               black_box(&nonce_rc),
               black_box(AAD),
               black_box(buf.as_mut_slice()).into(),
             )
-            .expect("valid AEAD benchmark operation must succeed"),
-        )
-      })
-    });
+            .expect("valid AEAD benchmark operation must succeed")
+        },
+        |tag, buf| assert_eq!(sealed(buf, tag), expected),
+      ),
+    );
 
     aws_lc_bench! {
-      let mut buf_aws = data.clone();
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-        b.iter(|| {
-          buf_aws.copy_from_slice(black_box(d));
-          let tag = aws_key
-            .seal_in_place_separate_tag(
-              aws_aead::Nonce::assume_unique_for_key(NONCE_12),
-              aws_aead::Aad::from(AAD),
-              black_box(&mut buf_aws),
-            )
-            .expect("valid AEAD benchmark operation must succeed");
-          black_box(tag.as_ref());
-          black_box(&buf_aws);
-        })
-      });
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs", len),
+        checked_with(
+          data.clone(),
+          |buf| {
+            buf.copy_from_slice(black_box(data));
+            let tag = aws_key
+              .seal_in_place_separate_tag(
+                aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+                aws_aead::Aad::from(AAD),
+                black_box(&mut *buf),
+              )
+              .expect("valid AEAD benchmark operation must succeed");
+            black_box(&*buf);
+            tag
+          },
+          |tag, buf| assert_eq!(sealed(buf, tag), expected),
+        ),
+      );
     }
   }
 
@@ -726,79 +810,75 @@ fn aes128_gcm_siv_decrypt(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
 
+    // Every row opens RustCrypto's ciphertext and tag and must recover the input.
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs
-      .encrypt_in_place(&nonce_rs, AAD, &mut ciphertext)
-      .expect("valid AEAD benchmark operation must succeed");
-
-    let mut ct_rc = data.clone();
     let tag_rc = cipher_rc
-      .encrypt_inout_detached(&nonce_rc, AAD, ct_rc.as_mut_slice().into())
+      .encrypt_inout_detached(&nonce_rc, AAD, ciphertext.as_mut_slice().into())
       .expect("valid AEAD benchmark operation must succeed");
+    let tag_rs = rscrypto::Aes128GcmSiv::tag_from_slice(&tag_rc).expect("AEAD tags have 16 bytes");
 
-    aws_lc_bench! {
-      let mut ct_aws = data.clone();
-      let tag_aws = aws_key
-        .seal_in_place_separate_tag(
-          aws_aead::Nonce::assume_unique_for_key(NONCE_12),
-          aws_aead::Aad::from(AAD),
-          &mut ct_aws,
-        )
-        .expect("valid AEAD benchmark operation must succeed");
-      // AWS-LC exposes detached tags for seal, but its in-place open API takes ct||tag.
-      ct_aws.extend_from_slice(tag_aws.as_ref());
-    }
-
-    let mut buf = ciphertext.clone();
-
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), &ciphertext, |b, ct| {
-      b.iter(|| {
-        buf.copy_from_slice(ct);
-        cipher_rs
-          .decrypt_in_place(
-            black_box(&nonce_rs),
-            black_box(AAD),
-            black_box(&mut buf),
-            black_box(&tag_rs),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf);
-      })
-    });
-
-    let mut buf_rc = ct_rc.clone();
-
-    g.bench_with_input(BenchmarkId::new("rustcrypto", len), &ct_rc, |b, ct| {
-      b.iter(|| {
-        buf_rc.copy_from_slice(ct);
-        cipher_rc
-          .decrypt_inout_detached(
-            black_box(&nonce_rc),
-            black_box(AAD),
-            black_box(buf_rc.as_mut_slice()).into(),
-            black_box(&tag_rc),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf_rc);
-      })
-    });
-
-    aws_lc_bench! {
-      let mut buf_aws = ct_aws.clone();
-
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs-appended-tag", len), &ct_aws, |b, ct| {
-        b.iter(|| {
-          buf_aws.copy_from_slice(ct);
-          aws_key
-            .open_in_place(
-              aws_aead::Nonce::assume_unique_for_key(NONCE_12),
-              aws_aead::Aad::from(AAD),
-              black_box(&mut buf_aws),
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        ciphertext.clone(),
+        |buf| {
+          buf.copy_from_slice(&ciphertext);
+          cipher_rs
+            .decrypt_in_place(
+              black_box(&nonce_rs),
+              black_box(AAD),
+              black_box(&mut *buf),
+              black_box(&tag_rs),
             )
             .expect("valid AEAD benchmark operation must succeed");
-          black_box(&buf_aws);
-        })
-      });
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(buf, data),
+      ),
+    );
+
+    g.bench_function(
+      BenchmarkId::new("rustcrypto", len),
+      checked_with(
+        ciphertext.clone(),
+        |buf| {
+          buf.copy_from_slice(&ciphertext);
+          cipher_rc
+            .decrypt_inout_detached(
+              black_box(&nonce_rc),
+              black_box(AAD),
+              black_box(buf.as_mut_slice()).into(),
+              black_box(&tag_rc),
+            )
+            .expect("valid AEAD benchmark operation must succeed");
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(buf, data),
+      ),
+    );
+
+    aws_lc_bench! {
+      // AWS-LC exposes detached tags for seal, but its in-place open API takes ct||tag.
+      let appended = sealed(&ciphertext, tag_rc);
+
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs-appended-tag", len),
+        checked_with(
+          appended.clone(),
+          |buf| {
+            buf.copy_from_slice(&appended);
+            aws_key
+              .open_in_place(
+                aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+                aws_aead::Aad::from(AAD),
+                black_box(&mut *buf),
+              )
+              .expect("valid AEAD benchmark operation must succeed");
+            black_box(&*buf);
+          },
+          |(), buf| assert_eq!(&buf[..*len], data.as_slice()),
+        ),
+      );
     }
   }
 
@@ -833,63 +913,86 @@ fn aes256_gcm_encrypt(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
-    let mut buf = data.clone();
+    // Every row must produce RustCrypto's ciphertext and tag.
+    let mut ciphertext = data.clone();
+    let tag = cipher_rc
+      .encrypt_inout_detached(&nonce_rc, AAD, ciphertext.as_mut_slice().into())
+      .expect("valid AEAD benchmark operation must succeed");
+    let expected = sealed(&ciphertext, tag);
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| {
-        buf.copy_from_slice(d);
-        black_box(cipher_rs.encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut buf)))
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        data.clone(),
+        |buf| {
+          buf.copy_from_slice(data);
+          cipher_rs
+            .encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut *buf))
+            .expect("valid AEAD benchmark operation must succeed")
+        },
+        |tag, buf| assert_eq!(sealed(buf, tag), expected),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
-      b.iter(|| {
-        buf.copy_from_slice(d);
-        black_box(
+    g.bench_function(
+      BenchmarkId::new("rustcrypto", len),
+      checked_with(
+        data.clone(),
+        |buf| {
+          buf.copy_from_slice(data);
           cipher_rc
             .encrypt_inout_detached(
               black_box(&nonce_rc),
               black_box(AAD),
               black_box(buf.as_mut_slice().into()),
             )
-            .expect("valid AEAD benchmark operation must succeed"),
-        )
-      })
-    });
+            .expect("valid AEAD benchmark operation must succeed")
+        },
+        |tag, buf| assert_eq!(sealed(buf, tag), expected),
+      ),
+    );
 
     aws_lc_bench! {
-      let mut buf_aws = data.clone();
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-        b.iter(|| {
-          buf_aws.copy_from_slice(black_box(d));
-          let tag = aws_key
-            .seal_in_place_separate_tag(
-              aws_aead::Nonce::assume_unique_for_key(NONCE_12),
-              aws_aead::Aad::from(AAD),
-              black_box(&mut buf_aws),
-            )
-            .expect("valid AEAD benchmark operation must succeed");
-          black_box(tag.as_ref());
-          black_box(&buf_aws);
-        })
-      });
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs", len),
+        checked_with(
+          data.clone(),
+          |buf| {
+            buf.copy_from_slice(black_box(data));
+            let tag = aws_key
+              .seal_in_place_separate_tag(
+                aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+                aws_aead::Aad::from(AAD),
+                black_box(&mut *buf),
+              )
+              .expect("valid AEAD benchmark operation must succeed");
+            black_box(&*buf);
+            tag
+          },
+          |tag, buf| assert_eq!(sealed(buf, tag), expected),
+        ),
+      );
     }
 
-    let mut buf_ring = data.clone();
-    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
-      b.iter(|| {
-        buf_ring.copy_from_slice(black_box(d));
-        let tag = ring_key
-          .seal_in_place_separate_tag(
-            ring_aead::Nonce::assume_unique_for_key(NONCE_12),
-            ring_aead::Aad::from(AAD),
-            black_box(&mut buf_ring),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(tag.as_ref());
-        black_box(&buf_ring);
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("ring", len),
+      checked_with(
+        data.clone(),
+        |buf| {
+          buf.copy_from_slice(black_box(data));
+          let tag = ring_key
+            .seal_in_place_separate_tag(
+              ring_aead::Nonce::assume_unique_for_key(NONCE_12),
+              ring_aead::Aad::from(AAD),
+              black_box(&mut *buf),
+            )
+            .expect("valid AEAD benchmark operation must succeed");
+          black_box(&*buf);
+          tag
+        },
+        |tag, buf| assert_eq!(sealed(buf, tag), expected),
+      ),
+    );
   }
 
   g.finish();
@@ -922,107 +1025,98 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
 
+    // Every row opens RustCrypto's ciphertext and tag and must recover the input.
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs
-      .encrypt_in_place(&nonce_rs, AAD, &mut ciphertext)
-      .expect("valid AEAD benchmark operation must succeed");
-
-    let mut ct_rc = data.clone();
     let tag_rc = cipher_rc
-      .encrypt_inout_detached(&nonce_rc, AAD, ct_rc.as_mut_slice().into())
+      .encrypt_inout_detached(&nonce_rc, AAD, ciphertext.as_mut_slice().into())
       .expect("valid AEAD benchmark operation must succeed");
+    let tag_rs = rscrypto::Aes256Gcm::tag_from_slice(&tag_rc).expect("AEAD tags have 16 bytes");
+    let tag_ring = ring_aead::Tag::try_from(&tag_rc[..]).expect("AEAD tags have 16 bytes");
 
-    aws_lc_bench! {
-      let mut ct_aws = data.clone();
-      let tag_aws = aws_key
-        .seal_in_place_separate_tag(
-          aws_aead::Nonce::assume_unique_for_key(NONCE_12),
-          aws_aead::Aad::from(AAD),
-          &mut ct_aws,
-        )
-        .expect("valid AEAD benchmark operation must succeed");
-      // AWS-LC exposes detached tags for seal, but its in-place open API takes ct||tag.
-      ct_aws.extend_from_slice(tag_aws.as_ref());
-    }
-
-    let mut ct_ring = data.clone();
-    let tag_ring = ring_key
-      .seal_in_place_separate_tag(
-        ring_aead::Nonce::assume_unique_for_key(NONCE_12),
-        ring_aead::Aad::from(AAD),
-        &mut ct_ring,
-      )
-      .expect("valid AEAD benchmark operation must succeed");
-
-    let mut buf = ciphertext.clone();
-
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), &ciphertext, |b, ct| {
-      b.iter(|| {
-        buf.copy_from_slice(ct);
-        cipher_rs
-          .decrypt_in_place(
-            black_box(&nonce_rs),
-            black_box(AAD),
-            black_box(&mut buf),
-            black_box(&tag_rs),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf);
-      })
-    });
-
-    let mut buf_rc = ct_rc.clone();
-
-    g.bench_with_input(BenchmarkId::new("rustcrypto", len), &ct_rc, |b, ct| {
-      b.iter(|| {
-        buf_rc.copy_from_slice(ct);
-        cipher_rc
-          .decrypt_inout_detached(
-            black_box(&nonce_rc),
-            black_box(AAD),
-            black_box(buf_rc.as_mut_slice().into()),
-            black_box(&tag_rc),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf_rc);
-      })
-    });
-
-    aws_lc_bench! {
-      let mut buf_aws = ct_aws.clone();
-
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs-appended-tag", len), &ct_aws, |b, ct| {
-        b.iter(|| {
-          buf_aws.copy_from_slice(ct);
-          aws_key
-            .open_in_place(
-              aws_aead::Nonce::assume_unique_for_key(NONCE_12),
-              aws_aead::Aad::from(AAD),
-              black_box(&mut buf_aws),
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        ciphertext.clone(),
+        |buf| {
+          buf.copy_from_slice(&ciphertext);
+          cipher_rs
+            .decrypt_in_place(
+              black_box(&nonce_rs),
+              black_box(AAD),
+              black_box(&mut *buf),
+              black_box(&tag_rs),
             )
             .expect("valid AEAD benchmark operation must succeed");
-          black_box(&buf_aws);
-        })
-      });
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(buf, data),
+      ),
+    );
+
+    g.bench_function(
+      BenchmarkId::new("rustcrypto", len),
+      checked_with(
+        ciphertext.clone(),
+        |buf| {
+          buf.copy_from_slice(&ciphertext);
+          cipher_rc
+            .decrypt_inout_detached(
+              black_box(&nonce_rc),
+              black_box(AAD),
+              black_box(buf.as_mut_slice().into()),
+              black_box(&tag_rc),
+            )
+            .expect("valid AEAD benchmark operation must succeed");
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(buf, data),
+      ),
+    );
+
+    aws_lc_bench! {
+      // AWS-LC exposes detached tags for seal, but its in-place open API takes ct||tag.
+      let appended = sealed(&ciphertext, tag_rc);
+
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs-appended-tag", len),
+        checked_with(
+          appended.clone(),
+          |buf| {
+            buf.copy_from_slice(&appended);
+            aws_key
+              .open_in_place(
+                aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+                aws_aead::Aad::from(AAD),
+                black_box(&mut *buf),
+              )
+              .expect("valid AEAD benchmark operation must succeed");
+            black_box(&*buf);
+          },
+          |(), buf| assert_eq!(&buf[..*len], data.as_slice()),
+        ),
+      );
     }
 
-    let mut buf_ring = ct_ring.clone();
-
-    g.bench_with_input(BenchmarkId::new("ring", len), &ct_ring, |b, ct| {
-      b.iter(|| {
-        buf_ring.copy_from_slice(ct);
-        ring_key
-          .open_in_place_separate_tag(
-            ring_aead::Nonce::assume_unique_for_key(NONCE_12),
-            ring_aead::Aad::from(AAD),
-            black_box(tag_ring),
-            black_box(&mut buf_ring),
-            0..,
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf_ring);
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("ring", len),
+      checked_with(
+        ciphertext.clone(),
+        |buf| {
+          buf.copy_from_slice(&ciphertext);
+          ring_key
+            .open_in_place_separate_tag(
+              ring_aead::Nonce::assume_unique_for_key(NONCE_12),
+              ring_aead::Aad::from(AAD),
+              black_box(tag_ring),
+              black_box(&mut *buf),
+              0..,
+            )
+            .expect("valid AEAD benchmark operation must succeed");
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(buf, data),
+      ),
+    );
   }
 
   g.finish();
@@ -1056,63 +1150,86 @@ fn aes128_gcm_encrypt(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
-    let mut buf = data.clone();
+    // Every row must produce RustCrypto's ciphertext and tag.
+    let mut ciphertext = data.clone();
+    let tag = cipher_rc
+      .encrypt_inout_detached(&nonce_rc, AAD, ciphertext.as_mut_slice().into())
+      .expect("valid AEAD benchmark operation must succeed");
+    let expected = sealed(&ciphertext, tag);
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| {
-        buf.copy_from_slice(d);
-        black_box(cipher_rs.encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut buf)))
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        data.clone(),
+        |buf| {
+          buf.copy_from_slice(data);
+          cipher_rs
+            .encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut *buf))
+            .expect("valid AEAD benchmark operation must succeed")
+        },
+        |tag, buf| assert_eq!(sealed(buf, tag), expected),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
-      b.iter(|| {
-        buf.copy_from_slice(d);
-        black_box(
+    g.bench_function(
+      BenchmarkId::new("rustcrypto", len),
+      checked_with(
+        data.clone(),
+        |buf| {
+          buf.copy_from_slice(data);
           cipher_rc
             .encrypt_inout_detached(
               black_box(&nonce_rc),
               black_box(AAD),
               black_box(buf.as_mut_slice().into()),
             )
-            .expect("valid AEAD benchmark operation must succeed"),
-        )
-      })
-    });
+            .expect("valid AEAD benchmark operation must succeed")
+        },
+        |tag, buf| assert_eq!(sealed(buf, tag), expected),
+      ),
+    );
 
     aws_lc_bench! {
-      let mut buf_aws = data.clone();
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-        b.iter(|| {
-          buf_aws.copy_from_slice(black_box(d));
-          let tag = aws_key
-            .seal_in_place_separate_tag(
-              aws_aead::Nonce::assume_unique_for_key(NONCE_12),
-              aws_aead::Aad::from(AAD),
-              black_box(&mut buf_aws),
-            )
-            .expect("valid AEAD benchmark operation must succeed");
-          black_box(tag.as_ref());
-          black_box(&buf_aws);
-        })
-      });
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs", len),
+        checked_with(
+          data.clone(),
+          |buf| {
+            buf.copy_from_slice(black_box(data));
+            let tag = aws_key
+              .seal_in_place_separate_tag(
+                aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+                aws_aead::Aad::from(AAD),
+                black_box(&mut *buf),
+              )
+              .expect("valid AEAD benchmark operation must succeed");
+            black_box(&*buf);
+            tag
+          },
+          |tag, buf| assert_eq!(sealed(buf, tag), expected),
+        ),
+      );
     }
 
-    let mut buf_ring = data.clone();
-    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
-      b.iter(|| {
-        buf_ring.copy_from_slice(black_box(d));
-        let tag = ring_key
-          .seal_in_place_separate_tag(
-            ring_aead::Nonce::assume_unique_for_key(NONCE_12),
-            ring_aead::Aad::from(AAD),
-            black_box(&mut buf_ring),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(tag.as_ref());
-        black_box(&buf_ring);
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("ring", len),
+      checked_with(
+        data.clone(),
+        |buf| {
+          buf.copy_from_slice(black_box(data));
+          let tag = ring_key
+            .seal_in_place_separate_tag(
+              ring_aead::Nonce::assume_unique_for_key(NONCE_12),
+              ring_aead::Aad::from(AAD),
+              black_box(&mut *buf),
+            )
+            .expect("valid AEAD benchmark operation must succeed");
+          black_box(&*buf);
+          tag
+        },
+        |tag, buf| assert_eq!(sealed(buf, tag), expected),
+      ),
+    );
   }
 
   g.finish();
@@ -1145,107 +1262,98 @@ fn aes128_gcm_decrypt(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
 
+    // Every row opens RustCrypto's ciphertext and tag and must recover the input.
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs
-      .encrypt_in_place(&nonce_rs, AAD, &mut ciphertext)
-      .expect("valid AEAD benchmark operation must succeed");
-
-    let mut ct_rc = data.clone();
     let tag_rc = cipher_rc
-      .encrypt_inout_detached(&nonce_rc, AAD, ct_rc.as_mut_slice().into())
+      .encrypt_inout_detached(&nonce_rc, AAD, ciphertext.as_mut_slice().into())
       .expect("valid AEAD benchmark operation must succeed");
+    let tag_rs = rscrypto::Aes128Gcm::tag_from_slice(&tag_rc).expect("AEAD tags have 16 bytes");
+    let tag_ring = ring_aead::Tag::try_from(&tag_rc[..]).expect("AEAD tags have 16 bytes");
 
-    aws_lc_bench! {
-      let mut ct_aws = data.clone();
-      let tag_aws = aws_key
-        .seal_in_place_separate_tag(
-          aws_aead::Nonce::assume_unique_for_key(NONCE_12),
-          aws_aead::Aad::from(AAD),
-          &mut ct_aws,
-        )
-        .expect("valid AEAD benchmark operation must succeed");
-      // AWS-LC exposes detached tags for seal, but its in-place open API takes ct||tag.
-      ct_aws.extend_from_slice(tag_aws.as_ref());
-    }
-
-    let mut ct_ring = data.clone();
-    let tag_ring = ring_key
-      .seal_in_place_separate_tag(
-        ring_aead::Nonce::assume_unique_for_key(NONCE_12),
-        ring_aead::Aad::from(AAD),
-        &mut ct_ring,
-      )
-      .expect("valid AEAD benchmark operation must succeed");
-
-    let mut buf = ciphertext.clone();
-
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), &ciphertext, |b, ct| {
-      b.iter(|| {
-        buf.copy_from_slice(ct);
-        cipher_rs
-          .decrypt_in_place(
-            black_box(&nonce_rs),
-            black_box(AAD),
-            black_box(&mut buf),
-            black_box(&tag_rs),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf);
-      })
-    });
-
-    let mut buf_rc = ct_rc.clone();
-
-    g.bench_with_input(BenchmarkId::new("rustcrypto", len), &ct_rc, |b, ct| {
-      b.iter(|| {
-        buf_rc.copy_from_slice(ct);
-        cipher_rc
-          .decrypt_inout_detached(
-            black_box(&nonce_rc),
-            black_box(AAD),
-            black_box(buf_rc.as_mut_slice().into()),
-            black_box(&tag_rc),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf_rc);
-      })
-    });
-
-    aws_lc_bench! {
-      let mut buf_aws = ct_aws.clone();
-
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs-appended-tag", len), &ct_aws, |b, ct| {
-        b.iter(|| {
-          buf_aws.copy_from_slice(ct);
-          aws_key
-            .open_in_place(
-              aws_aead::Nonce::assume_unique_for_key(NONCE_12),
-              aws_aead::Aad::from(AAD),
-              black_box(&mut buf_aws),
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        ciphertext.clone(),
+        |buf| {
+          buf.copy_from_slice(&ciphertext);
+          cipher_rs
+            .decrypt_in_place(
+              black_box(&nonce_rs),
+              black_box(AAD),
+              black_box(&mut *buf),
+              black_box(&tag_rs),
             )
             .expect("valid AEAD benchmark operation must succeed");
-          black_box(&buf_aws);
-        })
-      });
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(buf, data),
+      ),
+    );
+
+    g.bench_function(
+      BenchmarkId::new("rustcrypto", len),
+      checked_with(
+        ciphertext.clone(),
+        |buf| {
+          buf.copy_from_slice(&ciphertext);
+          cipher_rc
+            .decrypt_inout_detached(
+              black_box(&nonce_rc),
+              black_box(AAD),
+              black_box(buf.as_mut_slice().into()),
+              black_box(&tag_rc),
+            )
+            .expect("valid AEAD benchmark operation must succeed");
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(buf, data),
+      ),
+    );
+
+    aws_lc_bench! {
+      // AWS-LC exposes detached tags for seal, but its in-place open API takes ct||tag.
+      let appended = sealed(&ciphertext, tag_rc);
+
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs-appended-tag", len),
+        checked_with(
+          appended.clone(),
+          |buf| {
+            buf.copy_from_slice(&appended);
+            aws_key
+              .open_in_place(
+                aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+                aws_aead::Aad::from(AAD),
+                black_box(&mut *buf),
+              )
+              .expect("valid AEAD benchmark operation must succeed");
+            black_box(&*buf);
+          },
+          |(), buf| assert_eq!(&buf[..*len], data.as_slice()),
+        ),
+      );
     }
 
-    let mut buf_ring = ct_ring.clone();
-
-    g.bench_with_input(BenchmarkId::new("ring", len), &ct_ring, |b, ct| {
-      b.iter(|| {
-        buf_ring.copy_from_slice(ct);
-        ring_key
-          .open_in_place_separate_tag(
-            ring_aead::Nonce::assume_unique_for_key(NONCE_12),
-            ring_aead::Aad::from(AAD),
-            black_box(tag_ring),
-            black_box(&mut buf_ring),
-            0..,
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf_ring);
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("ring", len),
+      checked_with(
+        ciphertext.clone(),
+        |buf| {
+          buf.copy_from_slice(&ciphertext);
+          ring_key
+            .open_in_place_separate_tag(
+              ring_aead::Nonce::assume_unique_for_key(NONCE_12),
+              ring_aead::Aad::from(AAD),
+              black_box(tag_ring),
+              black_box(&mut *buf),
+              0..,
+            )
+            .expect("valid AEAD benchmark operation must succeed");
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(buf, data),
+      ),
+    );
   }
 
   g.finish();
@@ -1266,22 +1374,37 @@ fn aegis256_encrypt(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
-    let mut buf = data.clone();
     let cipher_ac = aegis::aegis256::Aegis256::<16>::new(&KEY_32, &NONCE_32);
+    // Every row must produce the aegis crate's ciphertext and tag.
+    let mut ciphertext = data.clone();
+    let tag = cipher_ac.encrypt_in_place(&mut ciphertext, AAD);
+    let expected = sealed(&ciphertext, tag);
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| {
-        buf.copy_from_slice(d);
-        black_box(cipher_rs.encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut buf)))
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        data.clone(),
+        |buf| {
+          buf.copy_from_slice(data);
+          cipher_rs
+            .encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut *buf))
+            .expect("valid AEAD benchmark operation must succeed")
+        },
+        |tag, buf| assert_eq!(sealed(buf, tag), expected),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("aegis-crate", len), data, |b, d| {
-      b.iter(|| {
-        buf.copy_from_slice(d);
-        black_box(cipher_ac.encrypt_in_place(black_box(&mut buf), black_box(AAD)))
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("aegis-crate", len),
+      checked_with(
+        data.clone(),
+        |buf| {
+          buf.copy_from_slice(data);
+          cipher_ac.encrypt_in_place(black_box(&mut *buf), black_box(AAD))
+        },
+        |tag, buf| assert_eq!(sealed(buf, tag), expected),
+      ),
+    );
   }
 
   g.finish();
@@ -1301,45 +1424,46 @@ fn aegis256_decrypt(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
 
-    // Pre-encrypt with rscrypto to get valid ciphertext + tag.
-    let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs
-      .encrypt_in_place(&nonce_rs, AAD, &mut ciphertext)
-      .expect("valid AEAD benchmark operation must succeed");
-
-    // Pre-encrypt with aegis crate to get its tag format.
-    let mut ct_ac = data.clone();
+    // Every row opens the aegis crate's ciphertext and tag and must recover the input.
     let cipher_ac = aegis::aegis256::Aegis256::<16>::new(&KEY_32, &NONCE_32);
-    let tag_ac = cipher_ac.encrypt_in_place(&mut ct_ac, AAD);
+    let mut ciphertext = data.clone();
+    let tag_ac = cipher_ac.encrypt_in_place(&mut ciphertext, AAD);
+    let tag_rs = rscrypto::Aegis256::tag_from_slice(&tag_ac).expect("AEAD tags have 16 bytes");
 
-    let mut buf = ciphertext.clone();
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        ciphertext.clone(),
+        |buf| {
+          buf.copy_from_slice(&ciphertext);
+          cipher_rs
+            .decrypt_in_place(
+              black_box(&nonce_rs),
+              black_box(AAD),
+              black_box(&mut *buf),
+              black_box(&tag_rs),
+            )
+            .expect("valid AEAD benchmark operation must succeed");
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(buf, data),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), &ciphertext, |b, ct| {
-      b.iter(|| {
-        buf.copy_from_slice(ct);
-        cipher_rs
-          .decrypt_in_place(
-            black_box(&nonce_rs),
-            black_box(AAD),
-            black_box(&mut buf),
-            black_box(&tag_rs),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf);
-      })
-    });
-
-    let mut buf_ac = ct_ac.clone();
-
-    g.bench_with_input(BenchmarkId::new("aegis-crate", len), &ct_ac, |b, ct| {
-      b.iter(|| {
-        buf_ac.copy_from_slice(ct);
-        cipher_ac
-          .decrypt_in_place(black_box(&mut buf_ac), black_box(&tag_ac), black_box(AAD))
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf_ac);
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("aegis-crate", len),
+      checked_with(
+        ciphertext.clone(),
+        |buf| {
+          buf.copy_from_slice(&ciphertext);
+          cipher_ac
+            .decrypt_in_place(black_box(&mut *buf), black_box(&tag_ac), black_box(AAD))
+            .expect("valid AEAD benchmark operation must succeed");
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(buf, data),
+      ),
+    );
   }
 
   g.finish();
@@ -1364,29 +1488,44 @@ fn ascon_aead128_encrypt(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
-    let mut buf = data.clone();
+    // Every row must produce the ascon-aead crate's ciphertext and tag.
+    let mut ciphertext = data.clone();
+    let tag = cipher_ac
+      .encrypt_inout_detached(&nonce_ac, AAD, ciphertext.as_mut_slice().into())
+      .expect("valid AEAD benchmark operation must succeed");
+    let expected = sealed(&ciphertext, tag);
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| {
-        buf.copy_from_slice(d);
-        black_box(cipher_rs.encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut buf)))
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        data.clone(),
+        |buf| {
+          buf.copy_from_slice(data);
+          cipher_rs
+            .encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut *buf))
+            .expect("valid AEAD benchmark operation must succeed")
+        },
+        |tag, buf| assert_eq!(sealed(buf, tag), expected),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("ascon-aead", len), data, |b, d| {
-      b.iter(|| {
-        buf.copy_from_slice(d);
-        black_box(
+    g.bench_function(
+      BenchmarkId::new("ascon-aead", len),
+      checked_with(
+        data.clone(),
+        |buf| {
+          buf.copy_from_slice(data);
           cipher_ac
             .encrypt_inout_detached(
               black_box(&nonce_ac),
               black_box(AAD),
               black_box(buf.as_mut_slice().into()),
             )
-            .expect("valid AEAD benchmark operation must succeed"),
-        )
-      })
-    });
+            .expect("valid AEAD benchmark operation must succeed")
+        },
+        |tag, buf| assert_eq!(sealed(buf, tag), expected),
+      ),
+    );
   }
 
   g.finish();
@@ -1410,49 +1549,52 @@ fn ascon_aead128_decrypt(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
 
+    // Every row opens the ascon-aead crate's ciphertext and tag and must recover the input.
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs
-      .encrypt_in_place(&nonce_rs, AAD, &mut ciphertext)
-      .expect("valid AEAD benchmark operation must succeed");
-
-    let mut ct_ac = data.clone();
     let tag_ac = cipher_ac
-      .encrypt_inout_detached(&nonce_ac, AAD, ct_ac.as_mut_slice().into())
+      .encrypt_inout_detached(&nonce_ac, AAD, ciphertext.as_mut_slice().into())
       .expect("valid AEAD benchmark operation must succeed");
+    let tag_rs = rscrypto::AsconAead128::tag_from_slice(&tag_ac).expect("AEAD tags have 16 bytes");
 
-    let mut buf = ciphertext.clone();
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        ciphertext.clone(),
+        |buf| {
+          buf.copy_from_slice(&ciphertext);
+          cipher_rs
+            .decrypt_in_place(
+              black_box(&nonce_rs),
+              black_box(AAD),
+              black_box(&mut *buf),
+              black_box(&tag_rs),
+            )
+            .expect("valid AEAD benchmark operation must succeed");
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(buf, data),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), &ciphertext, |b, ct| {
-      b.iter(|| {
-        buf.copy_from_slice(ct);
-        cipher_rs
-          .decrypt_in_place(
-            black_box(&nonce_rs),
-            black_box(AAD),
-            black_box(&mut buf),
-            black_box(&tag_rs),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf);
-      })
-    });
-
-    let mut buf_ac = ct_ac.clone();
-
-    g.bench_with_input(BenchmarkId::new("ascon-aead", len), &ct_ac, |b, ct| {
-      b.iter(|| {
-        buf_ac.copy_from_slice(ct);
-        cipher_ac
-          .decrypt_inout_detached(
-            black_box(&nonce_ac),
-            black_box(AAD),
-            black_box(buf_ac.as_mut_slice().into()),
-            black_box(&tag_ac),
-          )
-          .expect("valid AEAD benchmark operation must succeed");
-        black_box(&buf_ac);
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("ascon-aead", len),
+      checked_with(
+        ciphertext.clone(),
+        |buf| {
+          buf.copy_from_slice(&ciphertext);
+          cipher_ac
+            .decrypt_inout_detached(
+              black_box(&nonce_ac),
+              black_box(AAD),
+              black_box(buf.as_mut_slice().into()),
+              black_box(&tag_ac),
+            )
+            .expect("valid AEAD benchmark operation must succeed");
+          black_box(&*buf);
+        },
+        |(), buf| assert_eq!(buf, data),
+      ),
+    );
   }
 
   g.finish();
@@ -1465,95 +1607,183 @@ fn header_protection(c: &mut Criterion) {
     return;
   }
   use aes::cipher::{Array, BlockCipherEncrypt as _, KeyInit as _};
-  use chacha20::cipher::{KeyIvInit as _, StreamCipherCore as _};
+  use chacha20::cipher::{KeyIvInit as _, StreamCipher as _, StreamCipherCore as _, StreamCipherSeek as _};
   use rscrypto::aead::expert::header_protection::{
     Aes128HeaderProtection, Aes128HeaderProtectionKey, Aes256HeaderProtection, Aes256HeaderProtectionKey,
     ChaCha20HeaderProtection, ChaCha20HeaderProtectionKey,
   };
 
+  // The sample's nonce is `NONCE_12`, which keys the RustCrypto ChaCha20 construction row.
+  let sample = [0x07; 16];
+  let counter = u32::from_le_bytes(sample[..4].try_into().expect("counter prefix has fixed length"));
+  let nonce: [u8; 12] = sample[4..].try_into().expect("nonce suffix has fixed length");
+  let aes128_rc = aes::Aes128::new(&Array::from(KEY_16));
+  let aes256_rc = aes::Aes256::new(&Array::from(KEY_32));
+  // Every row's mask, or its constructed context's mask for `sample`, must
+  // match RustCrypto's: AES encrypts the sample; ChaCha20 takes its counter
+  // and nonce from the sample.
+  let aes_mask = |block: Array<u8, aes::cipher::consts::U16>| {
+    <[u8; 5]>::try_from(&block[..5]).expect("five-byte prefix has fixed length")
+  };
+  let expected_aes128 = {
+    let mut block = Array::from(sample);
+    aes128_rc.encrypt_block(&mut block);
+    aes_mask(block)
+  };
+  let expected_aes256 = {
+    let mut block = Array::from(sample);
+    aes256_rc.encrypt_block(&mut block);
+    aes_mask(block)
+  };
+  let expected_chacha = {
+    let mut mask = [0u8; 5];
+    let mut cipher = chacha20::ChaCha20::new(&KEY_32.into(), &nonce.into());
+    cipher.seek(u64::from(counter).strict_mul(64));
+    cipher.apply_keystream(&mut mask);
+    mask
+  };
+
   // Timed: construct and destroy each returned context; key fixtures are untimed.
   let mut construction = c.benchmark_group("header-protection/construct");
-  construction.bench_function("rscrypto/aes128", |b| {
-    b.iter(|| {
-      let key = Aes128HeaderProtectionKey::from_bytes(black_box(KEY_16));
-      black_box(Aes128HeaderProtection::new(&key))
-    })
-  });
-  construction.bench_function("rustcrypto/aes128", |b| {
-    b.iter(|| aes::Aes128::new(black_box(&Array::from(KEY_16))))
-  });
-  construction.bench_function("rscrypto/aes256", |b| {
-    b.iter(|| {
-      let key = Aes256HeaderProtectionKey::from_bytes(black_box(KEY_32));
-      black_box(Aes256HeaderProtection::new(&key))
-    })
-  });
-  construction.bench_function("rustcrypto/aes256", |b| {
-    b.iter(|| aes::Aes256::new(black_box(&Array::from(KEY_32))))
-  });
-  construction.bench_function("rscrypto/chacha20", |b| {
-    b.iter(|| {
-      let key = ChaCha20HeaderProtectionKey::from_bytes(black_box(KEY_32));
-      black_box(ChaCha20HeaderProtection::new(&key))
-    })
-  });
-  construction.bench_function("rustcrypto/chacha20", |b| {
-    b.iter(|| {
-      chacha20::ChaChaCore::<chacha20::R20, chacha20::variants::Ietf>::new(
-        black_box(&KEY_32).into(),
-        black_box(&NONCE_12).into(),
-      )
-    })
-  });
+  construction.bench_function(
+    "rscrypto/aes128",
+    checked(
+      || {
+        let key = Aes128HeaderProtectionKey::from_bytes(black_box(KEY_16));
+        Aes128HeaderProtection::new(&key)
+      },
+      |context| assert_eq!(context.mask(&sample), expected_aes128),
+    ),
+  );
+  construction.bench_function(
+    "rustcrypto/aes128",
+    checked(
+      || aes::Aes128::new(black_box(&Array::from(KEY_16))),
+      |cipher| {
+        let mut block = Array::from(sample);
+        cipher.encrypt_block(&mut block);
+        assert_eq!(aes_mask(block), expected_aes128);
+      },
+    ),
+  );
+  construction.bench_function(
+    "rscrypto/aes256",
+    checked(
+      || {
+        let key = Aes256HeaderProtectionKey::from_bytes(black_box(KEY_32));
+        Aes256HeaderProtection::new(&key)
+      },
+      |context| assert_eq!(context.mask(&sample), expected_aes256),
+    ),
+  );
+  construction.bench_function(
+    "rustcrypto/aes256",
+    checked(
+      || aes::Aes256::new(black_box(&Array::from(KEY_32))),
+      |cipher| {
+        let mut block = Array::from(sample);
+        cipher.encrypt_block(&mut block);
+        assert_eq!(aes_mask(block), expected_aes256);
+      },
+    ),
+  );
+  construction.bench_function(
+    "rscrypto/chacha20",
+    checked(
+      || {
+        let key = ChaCha20HeaderProtectionKey::from_bytes(black_box(KEY_32));
+        ChaCha20HeaderProtection::new(&key)
+      },
+      |context| assert_eq!(context.mask(&sample), expected_chacha),
+    ),
+  );
+  construction.bench_function(
+    "rustcrypto/chacha20",
+    checked(
+      || {
+        chacha20::ChaChaCore::<chacha20::R20, chacha20::variants::Ietf>::new(
+          black_box(&KEY_32).into(),
+          black_box(&NONCE_12).into(),
+        )
+      },
+      |mut core| {
+        core.set_block_pos(counter);
+        let mut block = chacha20::cipher::array::Array::<u8, chacha20::cipher::consts::U64>::default();
+        core.write_keystream_block(&mut block);
+        assert_eq!(block[..5], expected_chacha);
+      },
+    ),
+  );
   construction.finish();
 
-  let sample = [0x07; 16];
   let aes128_rs = Aes128HeaderProtection::new(&Aes128HeaderProtectionKey::from_bytes(KEY_16));
   let aes256_rs = Aes256HeaderProtection::new(&Aes256HeaderProtectionKey::from_bytes(KEY_32));
   let chacha_rs = ChaCha20HeaderProtection::new(&ChaCha20HeaderProtectionKey::from_bytes(KEY_32));
-  let aes128_rc = aes::Aes128::new(&Array::from(KEY_16));
-  let aes256_rc = aes::Aes256::new(&Array::from(KEY_32));
 
   // Timed: sample processing and mask generation, including local block/core setup.
   // Untimed: reusable key contexts and the sample fixture.
   let mut mask = c.benchmark_group("header-protection/mask");
-  mask.bench_function("rscrypto/aes128", |b| {
-    b.iter(|| black_box(aes128_rs.mask(black_box(&sample))))
-  });
-  mask.bench_function("rustcrypto/aes128", |b| {
-    b.iter(|| {
-      let mut block = Array::from(*black_box(&sample));
-      aes128_rc.encrypt_block(&mut block);
-      black_box(<[u8; 5]>::try_from(&block[..5]).expect("five-byte prefix has fixed length"))
-    })
-  });
-  mask.bench_function("rscrypto/aes256", |b| {
-    b.iter(|| black_box(aes256_rs.mask(black_box(&sample))))
-  });
-  mask.bench_function("rustcrypto/aes256", |b| {
-    b.iter(|| {
-      let mut block = Array::from(*black_box(&sample));
-      aes256_rc.encrypt_block(&mut block);
-      black_box(<[u8; 5]>::try_from(&block[..5]).expect("five-byte prefix has fixed length"))
-    })
-  });
-  mask.bench_function("rscrypto/chacha20", |b| {
-    b.iter(|| black_box(chacha_rs.mask(black_box(&sample))))
-  });
-  mask.bench_function("rustcrypto/chacha20", |b| {
-    b.iter(|| {
-      let counter = u32::from_le_bytes(sample[..4].try_into().expect("counter prefix has fixed length"));
-      let nonce: [u8; 12] = sample[4..].try_into().expect("nonce suffix has fixed length");
-      let mut core = chacha20::ChaChaCore::<chacha20::R20, chacha20::variants::Ietf>::new(
-        black_box(&KEY_32).into(),
-        black_box(&nonce).into(),
-      );
-      core.set_block_pos(counter);
-      let mut block = chacha20::cipher::array::Array::<u8, chacha20::cipher::consts::U64>::default();
-      core.write_keystream_block(&mut block);
-      black_box(<[u8; 5]>::try_from(&block[..5]).expect("five-byte prefix has fixed length"))
-    })
-  });
+  mask.bench_function(
+    "rscrypto/aes128",
+    checked(
+      || aes128_rs.mask(black_box(&sample)),
+      |output| assert_eq!(output, expected_aes128),
+    ),
+  );
+  mask.bench_function(
+    "rustcrypto/aes128",
+    checked(
+      || {
+        let mut block = Array::from(*black_box(&sample));
+        aes128_rc.encrypt_block(&mut block);
+        <[u8; 5]>::try_from(&block[..5]).expect("five-byte prefix has fixed length")
+      },
+      |output| assert_eq!(output, expected_aes128),
+    ),
+  );
+  mask.bench_function(
+    "rscrypto/aes256",
+    checked(
+      || aes256_rs.mask(black_box(&sample)),
+      |output| assert_eq!(output, expected_aes256),
+    ),
+  );
+  mask.bench_function(
+    "rustcrypto/aes256",
+    checked(
+      || {
+        let mut block = Array::from(*black_box(&sample));
+        aes256_rc.encrypt_block(&mut block);
+        <[u8; 5]>::try_from(&block[..5]).expect("five-byte prefix has fixed length")
+      },
+      |output| assert_eq!(output, expected_aes256),
+    ),
+  );
+  mask.bench_function(
+    "rscrypto/chacha20",
+    checked(
+      || chacha_rs.mask(black_box(&sample)),
+      |output| assert_eq!(output, expected_chacha),
+    ),
+  );
+  mask.bench_function(
+    "rustcrypto/chacha20",
+    checked(
+      || {
+        let counter = u32::from_le_bytes(sample[..4].try_into().expect("counter prefix has fixed length"));
+        let nonce: [u8; 12] = sample[4..].try_into().expect("nonce suffix has fixed length");
+        let mut core = chacha20::ChaChaCore::<chacha20::R20, chacha20::variants::Ietf>::new(
+          black_box(&KEY_32).into(),
+          black_box(&nonce).into(),
+        );
+        core.set_block_pos(counter);
+        let mut block = chacha20::cipher::array::Array::<u8, chacha20::cipher::consts::U64>::default();
+        core.write_keystream_block(&mut block);
+        <[u8; 5]>::try_from(&block[..5]).expect("five-byte prefix has fixed length")
+      },
+      |output| assert_eq!(output, expected_chacha),
+    ),
+  );
   mask.finish();
 }
 
@@ -1579,33 +1809,50 @@ fn aes_siv_cmac256(c: &mut Criterion) {
   let cipher_rs = AesSivCmac256::new(&key_rs);
   let mut cipher_rc = Aes128Siv::new(&key_rc);
   let headers: [&[u8]; 2] = [AAD, &NONCE_16];
+  // RustCrypto's ciphertext and tag for one input; every row must produce or open them.
+  let reference = |data: &[u8]| {
+    let mut ciphertext = data.to_vec();
+    let tag = Aes128Siv::new(&key_rc)
+      .encrypt_inout_detached(headers, ciphertext.as_mut_slice().into())
+      .expect("valid benchmark input must seal");
+    (ciphertext, tag)
+  };
 
   // Timed: restore plaintext, construct a cipher, seal, and destroy per-call objects.
   // Untimed: key/nonce fixtures and buffer allocation. This is one cipher lifecycle, not packet I/O.
   let mut construct_and_seal = c.benchmark_group("aes-siv-cmac-256/copy-and-construct-and-seal");
   for (len, data) in &inputs {
     common::set_throughput(&mut construct_and_seal, *len);
-    let mut buffer_rs = data.clone();
-    construct_and_seal.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, input| {
-      b.iter(|| {
-        buffer_rs.copy_from_slice(input);
-        let cipher = AesSivCmac256::new(black_box(&key_rs));
-        black_box(cipher.seal_in_place(black_box(nonce_rs), black_box(AAD), black_box(&mut buffer_rs)))
-      })
-    });
+    let (ciphertext, tag) = reference(data.as_slice());
+    let expected = sealed(&ciphertext, tag);
 
-    let mut buffer_rc = data.clone();
-    construct_and_seal.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, input| {
-      b.iter(|| {
-        buffer_rc.copy_from_slice(input);
-        let mut cipher = Aes128Siv::new(black_box(&key_rc));
-        black_box(
+    construct_and_seal.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        data.clone(),
+        |buffer| {
+          buffer.copy_from_slice(data);
+          let cipher = AesSivCmac256::new(black_box(&key_rs));
+          cipher.seal_in_place(black_box(nonce_rs), black_box(AAD), black_box(&mut *buffer))
+        },
+        |tag, buffer| assert_eq!(sealed(buffer, tag), expected),
+      ),
+    );
+
+    construct_and_seal.bench_function(
+      BenchmarkId::new("rustcrypto", len),
+      checked_with(
+        data.clone(),
+        |buffer| {
+          buffer.copy_from_slice(data);
+          let mut cipher = Aes128Siv::new(black_box(&key_rc));
           cipher
-            .encrypt_inout_detached(black_box(headers), black_box(buffer_rc.as_mut_slice().into()))
-            .expect("valid benchmark input must seal"),
-        )
-      })
-    });
+            .encrypt_inout_detached(black_box(headers), black_box(buffer.as_mut_slice().into()))
+            .expect("valid benchmark input must seal")
+        },
+        |tag, buffer| assert_eq!(sealed(buffer, tag), expected),
+      ),
+    );
   }
   construct_and_seal.finish();
 
@@ -1614,25 +1861,34 @@ fn aes_siv_cmac256(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut seal, *len);
-    let mut buffer_rs = data.clone();
-    seal.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, input| {
-      b.iter(|| {
-        buffer_rs.copy_from_slice(input);
-        black_box(cipher_rs.seal_in_place(black_box(nonce_rs), black_box(AAD), black_box(&mut buffer_rs)))
-      })
-    });
+    let (ciphertext, tag) = reference(data.as_slice());
+    let expected = sealed(&ciphertext, tag);
 
-    let mut buffer_rc = data.clone();
-    seal.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, input| {
-      b.iter(|| {
-        buffer_rc.copy_from_slice(input);
-        black_box(
+    seal.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        data.clone(),
+        |buffer| {
+          buffer.copy_from_slice(data);
+          cipher_rs.seal_in_place(black_box(nonce_rs), black_box(AAD), black_box(&mut *buffer))
+        },
+        |tag, buffer| assert_eq!(sealed(buffer, tag), expected),
+      ),
+    );
+
+    seal.bench_function(
+      BenchmarkId::new("rustcrypto", len),
+      checked_with(
+        data.clone(),
+        |buffer| {
+          buffer.copy_from_slice(data);
           cipher_rc
-            .encrypt_inout_detached(black_box(headers), black_box(buffer_rc.as_mut_slice().into()))
-            .expect("valid benchmark input must seal"),
-        )
-      })
-    });
+            .encrypt_inout_detached(black_box(headers), black_box(buffer.as_mut_slice().into()))
+            .expect("valid benchmark input must seal")
+        },
+        |tag, buffer| assert_eq!(sealed(buffer, tag), expected),
+      ),
+    );
   }
   seal.finish();
 
@@ -1640,43 +1896,47 @@ fn aes_siv_cmac256(c: &mut Criterion) {
   let mut open = c.benchmark_group("aes-siv-cmac-256/copy-and-open");
   for (len, data) in &inputs {
     common::set_throughput(&mut open, *len);
+    let (ciphertext, tag_rc) = reference(data.as_slice());
+    let tag_rs = AesSivCmac256::tag_from_slice(&tag_rc).expect("SIV tags have 16 bytes");
 
-    let mut ciphertext_rs = data.clone();
-    let tag_rs = cipher_rs.seal_in_place(nonce_rs, AAD, &mut ciphertext_rs);
-    let mut buffer_rs = ciphertext_rs.clone();
-    open.bench_with_input(BenchmarkId::new("rscrypto", len), &ciphertext_rs, |b, ciphertext| {
-      b.iter(|| {
-        buffer_rs.copy_from_slice(ciphertext);
-        cipher_rs
-          .open_in_place(
-            black_box(nonce_rs),
-            black_box(AAD),
-            black_box(&mut buffer_rs),
-            black_box(&tag_rs),
-          )
-          .expect("valid benchmark ciphertext must open");
-        black_box(&buffer_rs);
-      })
-    });
+    open.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked_with(
+        ciphertext.clone(),
+        |buffer| {
+          buffer.copy_from_slice(&ciphertext);
+          cipher_rs
+            .open_in_place(
+              black_box(nonce_rs),
+              black_box(AAD),
+              black_box(&mut *buffer),
+              black_box(&tag_rs),
+            )
+            .expect("valid benchmark ciphertext must open");
+          black_box(&*buffer);
+        },
+        |(), buffer| assert_eq!(buffer, data),
+      ),
+    );
 
-    let mut ciphertext_rc = data.clone();
-    let tag_rc = cipher_rc
-      .encrypt_inout_detached(headers, ciphertext_rc.as_mut_slice().into())
-      .expect("valid benchmark input must seal");
-    let mut buffer_rc = ciphertext_rc.clone();
-    open.bench_with_input(BenchmarkId::new("rustcrypto", len), &ciphertext_rc, |b, ciphertext| {
-      b.iter(|| {
-        buffer_rc.copy_from_slice(ciphertext);
-        cipher_rc
-          .decrypt_inout_detached(
-            black_box(headers),
-            black_box(buffer_rc.as_mut_slice().into()),
-            black_box(&tag_rc),
-          )
-          .expect("valid benchmark ciphertext must open");
-        black_box(&buffer_rc);
-      })
-    });
+    open.bench_function(
+      BenchmarkId::new("rustcrypto", len),
+      checked_with(
+        ciphertext.clone(),
+        |buffer| {
+          buffer.copy_from_slice(&ciphertext);
+          cipher_rc
+            .decrypt_inout_detached(
+              black_box(headers),
+              black_box(buffer.as_mut_slice().into()),
+              black_box(&tag_rc),
+            )
+            .expect("valid benchmark ciphertext must open");
+          black_box(&*buffer);
+        },
+        |(), buffer| assert_eq!(buffer, data),
+      ),
+    );
   }
   open.finish();
 }

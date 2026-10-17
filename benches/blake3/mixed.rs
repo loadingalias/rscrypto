@@ -2,8 +2,8 @@
 //!
 //! Timed: production calls, their construction/cleanup, and output writes into
 //! reusable caller storage. Untimed: deterministic fixtures, output allocation,
-//! correctness checks, context hashing, and final caller-output cleanup. Each
-//! row preserves its library's internal cleanup policy. Derived outputs remain
+//! correctness checks, and context hashing. Each row owns zeroed output storage
+//! and preserves its library's internal cleanup policy. Derived outputs remain
 //! live between iterations for every implementation.
 
 use core::hint::black_box;
@@ -11,6 +11,8 @@ use core::hint::black_box;
 use blake3::hazmat::HasherExt as _;
 use criterion::Criterion;
 use rscrypto::{Blake3, Blake3DeriveContext, Blake3KeyedHash};
+
+use super::bench_config::checked_with;
 
 const KEY: [u8; 32] = [0x42; 32];
 const CONTEXT: &str = "rscrypto benchmark mixed batch derive-key context";
@@ -205,33 +207,47 @@ fn plain(c: &mut Criterion, case: &str, inputs: &[&[u8]], bytes: usize) {
     return;
   }
   let expected: Vec<_> = inputs.iter().map(|input| *blake3::hash(input).as_bytes()).collect();
-  let mut outputs = vec![[0; 32]; inputs.len()];
-  Blake3::digest_batch(inputs, &mut outputs);
-  assert_eq!(outputs, expected, "plain batch {case}");
-  serial_plain::<false>(inputs, &mut outputs);
-  assert_eq!(outputs, expected, "plain serial {case}");
 
   let mut group = c.benchmark_group(name);
   super::common::set_throughput(&mut group, bytes);
-  group.bench_function("rscrypto/batch", |b| {
-    b.iter(|| {
-      Blake3::digest_batch(black_box(inputs), black_box(&mut outputs));
-      black_box(&outputs);
-    });
-  });
-  group.bench_function("rscrypto/serial", |b| {
-    b.iter(|| {
-      serial_plain::<false>(black_box(inputs), black_box(&mut outputs));
-      black_box(&outputs);
-    });
-  });
-  group.bench_function("blake3-auto/serial", |b| {
-    b.iter(|| {
-      serial_plain::<true>(black_box(inputs), black_box(&mut outputs));
-      black_box(&outputs);
-    });
-  });
+  group.bench_function(
+    "rscrypto/batch",
+    checked_with(
+      vec![[0; 32]; inputs.len()],
+      |outputs| {
+        Blake3::digest_batch(black_box(inputs), black_box(&mut **outputs));
+        black_box(&**outputs);
+      },
+      |(), outputs| assert_eq!(*outputs, expected, "plain batch {case}"),
+    ),
+  );
+  group.bench_function(
+    "rscrypto/serial",
+    checked_with(
+      vec![[0; 32]; inputs.len()],
+      |outputs| {
+        serial_plain::<false>(black_box(inputs), black_box(&mut **outputs));
+        black_box(&**outputs);
+      },
+      |(), outputs| assert_eq!(*outputs, expected, "plain serial {case}"),
+    ),
+  );
+  group.bench_function(
+    "blake3-auto/serial",
+    checked_with(
+      vec![[0; 32]; inputs.len()],
+      |outputs| {
+        serial_plain::<true>(black_box(inputs), black_box(&mut **outputs));
+        black_box(&**outputs);
+      },
+      |(), outputs| assert_eq!(*outputs, expected, "plain upstream {case}"),
+    ),
+  );
   group.finish();
+}
+
+fn keyed_bytes(outputs: &[Blake3KeyedHash]) -> Vec<[u8; 32]> {
+  outputs.iter().map(|output| *output.as_bytes()).collect()
 }
 
 fn keyed(c: &mut Criterion, case: &str, inputs: &[&[u8]], bytes: usize) {
@@ -243,36 +259,42 @@ fn keyed(c: &mut Criterion, case: &str, inputs: &[&[u8]], bytes: usize) {
     .iter()
     .map(|input| *blake3::keyed_hash(&KEY, input).as_bytes())
     .collect();
-  let mut outputs = vec![Blake3KeyedHash::default(); inputs.len()];
-  Blake3::keyed_digest_batch(&KEY, inputs, &mut outputs);
-  for (output, expected) in outputs.iter().zip(&expected) {
-    assert_eq!(output.as_bytes(), expected, "keyed batch {case}");
-  }
-  serial_keyed::<false>(&KEY, inputs, &mut outputs);
-  for (output, expected) in outputs.iter().zip(&expected) {
-    assert_eq!(output.as_bytes(), expected, "keyed serial {case}");
-  }
 
   let mut group = c.benchmark_group(name);
   super::common::set_throughput(&mut group, bytes);
-  group.bench_function("rscrypto/batch", |b| {
-    b.iter(|| {
-      Blake3::keyed_digest_batch(black_box(&KEY), black_box(inputs), black_box(&mut outputs));
-      black_box(&outputs);
-    });
-  });
-  group.bench_function("rscrypto/serial", |b| {
-    b.iter(|| {
-      serial_keyed::<false>(black_box(&KEY), black_box(inputs), black_box(&mut outputs));
-      black_box(&outputs);
-    });
-  });
-  group.bench_function("blake3-auto/serial", |b| {
-    b.iter(|| {
-      serial_keyed::<true>(black_box(&KEY), black_box(inputs), black_box(&mut outputs));
-      black_box(&outputs);
-    });
-  });
+  group.bench_function(
+    "rscrypto/batch",
+    checked_with(
+      vec![Blake3KeyedHash::default(); inputs.len()],
+      |outputs| {
+        Blake3::keyed_digest_batch(black_box(&KEY), black_box(inputs), black_box(&mut **outputs));
+        black_box(&**outputs);
+      },
+      |(), outputs| assert_eq!(keyed_bytes(outputs), expected, "keyed batch {case}"),
+    ),
+  );
+  group.bench_function(
+    "rscrypto/serial",
+    checked_with(
+      vec![Blake3KeyedHash::default(); inputs.len()],
+      |outputs| {
+        serial_keyed::<false>(black_box(&KEY), black_box(inputs), black_box(&mut **outputs));
+        black_box(&**outputs);
+      },
+      |(), outputs| assert_eq!(keyed_bytes(outputs), expected, "keyed serial {case}"),
+    ),
+  );
+  group.bench_function(
+    "blake3-auto/serial",
+    checked_with(
+      vec![Blake3KeyedHash::default(); inputs.len()],
+      |outputs| {
+        serial_keyed::<true>(black_box(&KEY), black_box(inputs), black_box(&mut **outputs));
+        black_box(&**outputs);
+      },
+      |(), outputs| assert_eq!(keyed_bytes(outputs), expected, "keyed upstream {case}"),
+    ),
+  );
   group.finish();
 }
 
@@ -284,36 +306,43 @@ fn derive(c: &mut Criterion, case: &str, inputs: &[&[u8]], bytes: usize) {
   let context = Blake3DeriveContext::new(CONTEXT);
   let context_key = blake3::hazmat::hash_derive_key_context(CONTEXT);
   let expected: Vec<_> = inputs.iter().map(|input| blake3::derive_key(CONTEXT, input)).collect();
-  let mut outputs = vec![[0; 32]; inputs.len()];
-  context.derive_key_batch(inputs, &mut outputs);
-  assert_eq!(outputs, expected, "derive batch {case}");
-  serial_derive(&context, inputs, &mut outputs);
-  assert_eq!(outputs, expected, "derive serial {case}");
-  upstream_derive(&context_key, inputs, &mut outputs);
-  assert_eq!(outputs, expected, "derive upstream prehashed context {case}");
 
   let mut group = c.benchmark_group(name);
   super::common::set_throughput(&mut group, bytes);
-  group.bench_function("rscrypto/batch", |b| {
-    b.iter(|| {
-      black_box(&context).derive_key_batch(black_box(inputs), black_box(&mut outputs));
-      black_box(&outputs);
-    });
-  });
-  group.bench_function("rscrypto/serial", |b| {
-    b.iter(|| {
-      serial_derive(black_box(&context), black_box(inputs), black_box(&mut outputs));
-      black_box(&outputs);
-    });
-  });
-  group.bench_function("blake3-auto/serial", |b| {
-    b.iter(|| {
-      upstream_derive(black_box(&context_key), black_box(inputs), black_box(&mut outputs));
-      black_box(&outputs);
-    });
-  });
+  group.bench_function(
+    "rscrypto/batch",
+    checked_with(
+      vec![[0; 32]; inputs.len()],
+      |outputs| {
+        black_box(&context).derive_key_batch(black_box(inputs), black_box(&mut **outputs));
+        black_box(&**outputs);
+      },
+      |(), outputs| assert_eq!(*outputs, expected, "derive batch {case}"),
+    ),
+  );
+  group.bench_function(
+    "rscrypto/serial",
+    checked_with(
+      vec![[0; 32]; inputs.len()],
+      |outputs| {
+        serial_derive(black_box(&context), black_box(inputs), black_box(&mut **outputs));
+        black_box(&**outputs);
+      },
+      |(), outputs| assert_eq!(*outputs, expected, "derive serial {case}"),
+    ),
+  );
+  group.bench_function(
+    "blake3-auto/serial",
+    checked_with(
+      vec![[0; 32]; inputs.len()],
+      |outputs| {
+        upstream_derive(black_box(&context_key), black_box(inputs), black_box(&mut **outputs));
+        black_box(&**outputs);
+      },
+      |(), outputs| assert_eq!(*outputs, expected, "derive upstream prehashed context {case}"),
+    ),
+  );
   group.finish();
-  rscrypto::ct::zeroize(outputs.as_flattened_mut());
 }
 
 pub(super) fn bench(c: &mut Criterion) {

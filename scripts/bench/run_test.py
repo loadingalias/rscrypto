@@ -165,7 +165,7 @@ class RunnerTests(unittest.TestCase):
     (self.root / "bin").mkdir()
     self.env = {key: value for key, value in os.environ.items()
                 if not key.startswith(("BENCH_", "CARGO_", "RUST", "DEV_MACHINE_", "RSCRYPTO_", "GIT_"))
-                and key not in {"BASH_ENV", "ENV"}}
+                and key not in {"BASH_ENV", "ENV", "GITHUB_STEP_SUMMARY"}}
     self.env.update(PATH=f"{self.root / 'bin'}:{os.environ['PATH']}", PYTHON=sys.executable,
                     GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
     self.tool("cargo", "with open('toolchains.jsonl', 'a') as log: log.write(json.dumps(os.environ.get('RUSTUP_TOOLCHAIN')) + '\\n')\n" + CARGO)
@@ -275,6 +275,11 @@ sys.exit(64)
     self.assertEqual(self.plan(current)[0]['baselines'], ['sha256/rscrypto/64', 'sha256/other/64'])
     self.assertEqual((current / 'output.txt').read_text().count('baseline=10.0'), 2)
     self.assertEqual(before, {str(path): path.read_bytes() for path in previous.rglob('*') if path.is_file()})
+
+  def test_step_summary_reports_checked_rows(self):
+    summary = self.root / 'summary.md'
+    self.ok(self.bench('sha256', GITHUB_STEP_SUMMARY=str(summary)))
+    self.assertEqual(summary.read_text(), '- Output checks: sha2, 2 of 2 measured rows passed\n')
 
   def test_configuration_and_runtime_compatibility(self):
     self.ok(self.bench('sha256'))

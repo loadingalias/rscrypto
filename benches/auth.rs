@@ -1,4 +1,7 @@
 //! Auth benchmarks for rscrypto public APIs.
+//!
+//! Before timing, each row's output must match an independent implementation or a published vector. Rows with
+//! randomized output must instead verify under an independent implementation.
 
 #[path = "common/criterion.rs"]
 mod bench_config;
@@ -7,8 +10,9 @@ mod common;
 
 use core::hint::black_box;
 
+use bench_config::{checked, checked_routine, checked_with};
 use criterion::{BatchSize, BenchmarkId, Criterion};
-use ed25519_dalek::{Signer as _, SigningKey};
+use ed25519_dalek::{Signature as DalekSignature, Signer as _, SigningKey};
 use fips203::{
   ml_kem_512 as FipsMlKem512, ml_kem_768 as FipsMlKem768, ml_kem_1024 as FipsMlKem1024,
   traits::{Decaps as _, Encaps as _, KeyGen as _, SerDes as _},
@@ -23,9 +27,10 @@ use p384::SecretKey as P384OracleSecretKey;
 use p384::ecdsa::{Signature as P384OracleSignature, SigningKey as P384OracleSigningKey};
 use rscrypto::{
   EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature, EcdsaP384Keypair, EcdsaP384PublicKey,
-  EcdsaP384SecretKey, EcdsaP384Signature, Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, HkdfSha256, HkdfSha384,
-  HkdfSha512, HmacSha256, HmacSha384, HmacSha512, Kem as _, Mac as _, MlKem512, MlKem768, MlKem1024, MlKemError,
-  P256EphemeralSecret, P256PublicKey, P384EphemeralSecret, P384PublicKey, Pbkdf2Sha256, Pbkdf2Sha512, X25519SecretKey,
+  EcdsaP384SecretKey, EcdsaP384Signature, Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature,
+  HkdfSha256, HkdfSha384, HkdfSha512, HmacSha256, HmacSha384, HmacSha512, Kem as _, Mac as _, MlKem512, MlKem768,
+  MlKem1024, MlKemError, P256EphemeralSecret, P256PublicKey, P384EphemeralSecret, P384PublicKey, Pbkdf2Sha256,
+  Pbkdf2Sha512, X25519SecretKey,
 };
 use rustcrypto_ml_kem::{
   DecapsulationKey as RustCryptoMlKemDecapsulationKey, MlKem512 as RustCryptoMlKem512, MlKem768 as RustCryptoMlKem768,
@@ -53,6 +58,24 @@ fn deterministic_bytes<const N: usize>(offset: u8) -> [u8; N] {
     *byte = offset.wrapping_add(low_index);
   }
   out
+}
+
+/// Decodes a fixed-length hexadecimal test vector.
+fn hex<const N: usize>(text: &str) -> [u8; N] {
+  assert_eq!(text.len(), N.strict_mul(2), "hex vector length");
+  let mut out = [0u8; N];
+  for (byte, pair) in out.iter_mut().zip(text.as_bytes().as_chunks::<2>().0) {
+    let pair = core::str::from_utf8(pair).expect("hex vector is ASCII");
+    *byte = u8::from_str_radix(pair, 16).expect("hex vector digit pair");
+  }
+  out
+}
+
+/// The RustCrypto HMAC tag of `message`.
+fn rustcrypto_hmac<M: hmac::Mac + KeyInit>(key: &[u8], message: &[u8]) -> Vec<u8> {
+  let mut mac = <M as KeyInit>::new_from_slice(key).expect("valid authentication benchmark operation must succeed");
+  mac.update(message);
+  mac.finalize().into_bytes().to_vec()
 }
 
 #[cfg(all(
@@ -141,164 +164,117 @@ fn print_auth_diag_once() {
 #[inline]
 fn print_auth_diag_once() {}
 
-fn hmac_sha256(c: &mut Criterion) {
-  if !bench_config::selected("hmac-sha256") {
-    return;
-  }
-  print_auth_diag_once();
+// Each HMAC row times message absorption, finalization, and state reuse or destruction; keying is untimed.
+// Every row must return RustCrypto's tag.
+macro_rules! hmac_bench {
+  (
+    $name:ident,
+    $group:literal,
+    $rscrypto:ty,
+    $rustcrypto:ty,
+    $key_len:literal,
+    $aws_algorithm:path,
+    $ring_algorithm:path
+  ) => {
+    fn $name(c: &mut Criterion) {
+      if !bench_config::selected($group) {
+        return;
+      }
+      print_auth_diag_once();
 
-  let inputs = common::comp_sizes();
-  let key = [0x42u8; 32];
-  aws_lc_bench! {
-    let aws_key = aws_lc_rs::hmac::Key::new(aws_lc_rs::hmac::HMAC_SHA256, &key);
-  }
-  let ring_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &key);
-  let mut g = c.benchmark_group("hmac-sha256");
+      let inputs = common::comp_sizes();
+      let key = [0x42u8; $key_len];
+      let rustcrypto =
+        <$rustcrypto>::new_from_slice(&key).expect("valid authentication benchmark operation must succeed");
+      aws_lc_bench! {
+        let aws_key = aws_lc_rs::hmac::Key::new($aws_algorithm, &key);
+      }
+      let ring_key = ring::hmac::Key::new($ring_algorithm, &key);
+      let mut g = c.benchmark_group($group);
 
-  for (len, data) in &inputs {
-    common::set_throughput(&mut g, *len);
+      for (len, data) in &inputs {
+        common::set_throughput(&mut g, *len);
+        let expected = rustcrypto_hmac::<$rustcrypto>(&key, data);
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      let mut mac = HmacSha256::new(&key);
-      b.iter(|| {
-        mac.update(black_box(d));
-        let tag = mac.finalize();
-        mac.reset();
-        black_box(tag)
-      })
-    });
+        let mut mac = <$rscrypto>::new(&key);
+        g.bench_function(
+          BenchmarkId::new("rscrypto", len),
+          checked(
+            || {
+              mac.update(black_box(data));
+              let tag = mac.finalize();
+              mac.reset();
+              black_box(tag)
+            },
+            |tag| assert_eq!(tag.as_bytes().as_slice(), expected.as_slice()),
+          ),
+        );
 
-    g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
-      let base_mac =
-        RustCryptoHmacSha256::new_from_slice(&key).expect("valid authentication benchmark operation must succeed");
-      b.iter(|| {
-        use hmac::Mac as _;
+        g.bench_function(
+          BenchmarkId::new("rustcrypto", len),
+          checked(
+            || {
+              use hmac::Mac as _;
 
-        let mut mac = base_mac.clone();
-        mac.update(black_box(d));
-        black_box(mac.finalize().into_bytes())
-      })
-    });
+              let mut mac = rustcrypto.clone();
+              mac.update(black_box(data));
+              black_box(mac.finalize().into_bytes())
+            },
+            |tag| assert_eq!(tag.as_slice(), expected.as_slice()),
+          ),
+        );
 
-    aws_lc_bench! {
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-        b.iter(|| black_box(aws_lc_rs::hmac::sign(&aws_key, black_box(d))))
-      });
+        aws_lc_bench! {
+          g.bench_function(
+            BenchmarkId::new("aws-lc-rs", len),
+            checked(
+              || black_box(aws_lc_rs::hmac::sign(&aws_key, black_box(data))),
+              |tag| assert_eq!(tag.as_ref(), expected.as_slice()),
+            ),
+          );
+        }
+
+        g.bench_function(
+          BenchmarkId::new("ring", len),
+          checked(
+            || black_box(ring::hmac::sign(&ring_key, black_box(data))),
+            |tag| assert_eq!(tag.as_ref(), expected.as_slice()),
+          ),
+        );
+      }
+
+      g.finish();
     }
-
-    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
-      b.iter(|| black_box(ring::hmac::sign(&ring_key, black_box(d))))
-    });
-  }
-
-  g.finish();
+  };
 }
 
-fn hmac_sha384(c: &mut Criterion) {
-  if !bench_config::selected("hmac-sha384") {
-    return;
-  }
-  print_auth_diag_once();
-
-  let inputs = common::comp_sizes();
-  let key = [0x42u8; 48];
-  aws_lc_bench! {
-    let aws_key = aws_lc_rs::hmac::Key::new(aws_lc_rs::hmac::HMAC_SHA384, &key);
-  }
-  let ring_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA384, &key);
-  let mut g = c.benchmark_group("hmac-sha384");
-
-  for (len, data) in &inputs {
-    common::set_throughput(&mut g, *len);
-
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      let mut mac = HmacSha384::new(&key);
-      b.iter(|| {
-        mac.update(black_box(d));
-        let tag = mac.finalize();
-        mac.reset();
-        black_box(tag)
-      })
-    });
-
-    g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
-      let base_mac =
-        RustCryptoHmacSha384::new_from_slice(&key).expect("valid authentication benchmark operation must succeed");
-      b.iter(|| {
-        use hmac::Mac as _;
-
-        let mut mac = base_mac.clone();
-        mac.update(black_box(d));
-        black_box(mac.finalize().into_bytes())
-      })
-    });
-
-    aws_lc_bench! {
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-        b.iter(|| black_box(aws_lc_rs::hmac::sign(&aws_key, black_box(d))))
-      });
-    }
-
-    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
-      b.iter(|| black_box(ring::hmac::sign(&ring_key, black_box(d))))
-    });
-  }
-
-  g.finish();
-}
-
-fn hmac_sha512(c: &mut Criterion) {
-  if !bench_config::selected("hmac-sha512") {
-    return;
-  }
-  print_auth_diag_once();
-
-  let inputs = common::comp_sizes();
-  let key = [0x42u8; 64];
-  aws_lc_bench! {
-    let aws_key = aws_lc_rs::hmac::Key::new(aws_lc_rs::hmac::HMAC_SHA512, &key);
-  }
-  let ring_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA512, &key);
-  let mut g = c.benchmark_group("hmac-sha512");
-
-  for (len, data) in &inputs {
-    common::set_throughput(&mut g, *len);
-
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      let mut mac = HmacSha512::new(&key);
-      b.iter(|| {
-        mac.update(black_box(d));
-        let tag = mac.finalize();
-        mac.reset();
-        black_box(tag)
-      })
-    });
-
-    g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
-      let base_mac =
-        RustCryptoHmacSha512::new_from_slice(&key).expect("valid authentication benchmark operation must succeed");
-      b.iter(|| {
-        use hmac::Mac as _;
-
-        let mut mac = base_mac.clone();
-        mac.update(black_box(d));
-        black_box(mac.finalize().into_bytes())
-      })
-    });
-
-    aws_lc_bench! {
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-        b.iter(|| black_box(aws_lc_rs::hmac::sign(&aws_key, black_box(d))))
-      });
-    }
-
-    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
-      b.iter(|| black_box(ring::hmac::sign(&ring_key, black_box(d))))
-    });
-  }
-
-  g.finish();
-}
+hmac_bench!(
+  hmac_sha256,
+  "hmac-sha256",
+  HmacSha256,
+  RustCryptoHmacSha256,
+  32,
+  aws_lc_rs::hmac::HMAC_SHA256,
+  ring::hmac::HMAC_SHA256
+);
+hmac_bench!(
+  hmac_sha384,
+  "hmac-sha384",
+  HmacSha384,
+  RustCryptoHmacSha384,
+  48,
+  aws_lc_rs::hmac::HMAC_SHA384,
+  ring::hmac::HMAC_SHA384
+);
+hmac_bench!(
+  hmac_sha512,
+  "hmac-sha512",
+  HmacSha512,
+  RustCryptoHmacSha512,
+  64,
+  aws_lc_rs::hmac::HMAC_SHA512,
+  ring::hmac::HMAC_SHA512
+);
 
 fn hmac_sha256_streaming(c: &mut Criterion) {
   if !bench_config::selected("hmac-sha256/streaming") {
@@ -308,32 +284,41 @@ fn hmac_sha256_streaming(c: &mut Criterion) {
 
   let data = common::random_bytes(1048576);
   let key = [0x24u8; 32];
+  let expected = rustcrypto_hmac::<RustCryptoHmacSha256>(&key, &data);
   let mut g = c.benchmark_group("hmac-sha256/streaming");
   g.throughput(criterion::Throughput::Bytes(data.len() as u64));
 
   for chunk_size in [64, 4096] {
-    g.bench_function(format!("rscrypto/{chunk_size}B"), |b| {
-      b.iter(|| {
-        let mut mac = HmacSha256::new(&key);
-        for chunk in data.chunks(chunk_size) {
-          mac.update(black_box(chunk));
-        }
-        black_box(mac.finalize())
-      })
-    });
+    g.bench_function(
+      format!("rscrypto/{chunk_size}B"),
+      checked(
+        || {
+          let mut mac = HmacSha256::new(&key);
+          for chunk in data.chunks(chunk_size) {
+            mac.update(black_box(chunk));
+          }
+          black_box(mac.finalize())
+        },
+        |tag| assert_eq!(tag.as_bytes().as_slice(), expected.as_slice()),
+      ),
+    );
 
-    g.bench_function(format!("rustcrypto/{chunk_size}B"), |b| {
-      b.iter(|| {
-        use hmac::Mac as _;
+    g.bench_function(
+      format!("rustcrypto/{chunk_size}B"),
+      checked(
+        || {
+          use hmac::Mac as _;
 
-        let mut mac =
-          RustCryptoHmacSha256::new_from_slice(&key).expect("valid authentication benchmark operation must succeed");
-        for chunk in data.chunks(chunk_size) {
-          mac.update(black_box(chunk));
-        }
-        black_box(mac.finalize().into_bytes())
-      })
-    });
+          let mut mac =
+            RustCryptoHmacSha256::new_from_slice(&key).expect("valid authentication benchmark operation must succeed");
+          for chunk in data.chunks(chunk_size) {
+            mac.update(black_box(chunk));
+          }
+          black_box(mac.finalize().into_bytes())
+        },
+        |tag| assert_eq!(tag.as_slice(), expected.as_slice()),
+      ),
+    );
   }
 
   g.finish();
@@ -356,369 +341,222 @@ fn hmac_sha256_internal(c: &mut Criterion) {
   for len in [32usize, 64, 256, 4096] {
     let msg = &data[..len];
     common::set_throughput(&mut g, len);
+    let expected = rustcrypto_hmac::<RustCryptoHmacSha256>(&key, msg);
 
-    g.bench_with_input(BenchmarkId::new("rscrypto-oneshot", len), msg, |b, d| {
-      b.iter(|| black_box(HmacSha256::mac(black_box(&key), black_box(d))))
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto-oneshot", len),
+      checked(
+        || black_box(HmacSha256::mac(black_box(&key), black_box(msg))),
+        |tag| assert_eq!(tag.as_bytes().as_slice(), expected.as_slice()),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("rscrypto-stream-new", len), msg, |b, d| {
-      b.iter(|| {
-        let mut mac = HmacSha256::new(black_box(&key));
-        mac.update(black_box(d));
-        black_box(mac.finalize())
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto-stream-new", len),
+      checked(
+        || {
+          let mut mac = HmacSha256::new(black_box(&key));
+          mac.update(black_box(msg));
+          black_box(mac.finalize())
+        },
+        |tag| assert_eq!(tag.as_bytes().as_slice(), expected.as_slice()),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("rscrypto-stream-reuse", len), msg, |b, d| {
-      let mut mac = HmacSha256::new(&key);
-      b.iter(|| {
-        mac.update(black_box(d));
-        let tag = mac.finalize();
-        mac.reset();
-        black_box(tag)
-      })
-    });
+    let mut mac = HmacSha256::new(&key);
+    g.bench_function(
+      BenchmarkId::new("rscrypto-stream-reuse", len),
+      checked(
+        || {
+          mac.update(black_box(msg));
+          let tag = mac.finalize();
+          mac.reset();
+          black_box(tag)
+        },
+        |tag| assert_eq!(tag.as_bytes().as_slice(), expected.as_slice()),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("rustcrypto-oneshot", len), msg, |b, d| {
-      b.iter(|| {
-        use hmac::Mac as _;
+    g.bench_function(
+      BenchmarkId::new("rustcrypto-oneshot", len),
+      checked(
+        || {
+          use hmac::Mac as _;
 
-        let mut mac = RustCryptoHmacSha256::new_from_slice(black_box(&key))
-          .expect("valid authentication benchmark operation must succeed");
-        mac.update(black_box(d));
-        black_box(mac.finalize().into_bytes())
-      })
-    });
-
-    aws_lc_bench! {
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), msg, |b, d| {
-        b.iter(|| black_box(aws_lc_rs::hmac::sign(&aws_key, black_box(d))))
-      });
-    }
-
-    g.bench_with_input(BenchmarkId::new("ring", len), msg, |b, d| {
-      b.iter(|| black_box(ring::hmac::sign(&ring_key, black_box(d))))
-    });
-  }
-
-  g.finish();
-}
-
-fn hkdf_sha256_expand(c: &mut Criterion) {
-  if !bench_config::selected("hkdf-sha256/expand") {
-    return;
-  }
-  print_auth_diag_once();
-  hkdf_sha256_rfc5869_check();
-
-  let salt = [0x11u8; 32];
-  let ikm = [0x22u8; 32];
-  let info = [0x33u8; 48];
-  let hkdf = HkdfSha256::new(&salt, &ikm);
-  let rustcrypto = RustCryptoHkdfSha256::new(Some(&salt), &ikm);
-  aws_lc_bench! {
-    let aws_prk = aws_lc_rs::hkdf::Salt::new(aws_lc_rs::hkdf::HKDF_SHA256, &salt).extract(&ikm);
-  }
-  let ring_prk = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA256, &salt).extract(&ikm);
-  let mut g = c.benchmark_group("hkdf-sha256/expand");
-
-  for out_len in [32usize, 64, 256, 1024] {
-    let mut expected = vec![0u8; out_len];
-    hkdf
-      .expand(&info, &mut expected)
-      .expect("valid authentication benchmark operation must succeed");
-    let mut actual = vec![0u8; out_len];
-    rustcrypto
-      .expand(&info, &mut actual)
-      .expect("valid authentication benchmark operation must succeed");
-    assert_eq!(actual, expected, "HKDF-SHA256 expand mismatch: rustcrypto/{out_len}");
-    ring_prk
-      .expand(&[&info], RingHkdfLen(out_len))
-      .expect("valid authentication benchmark operation must succeed")
-      .fill(&mut actual)
-      .expect("valid authentication benchmark operation must succeed");
-    assert_eq!(actual, expected, "HKDF-SHA256 expand mismatch: ring/{out_len}");
-    aws_lc_bench! {
-      aws_prk
-        .expand(&[&info], AwsHkdfLen(out_len))
-        .expect("valid authentication benchmark operation must succeed")
-        .fill(&mut actual)
-        .expect("valid authentication benchmark operation must succeed");
-      assert_eq!(actual, expected, "HKDF-SHA256 expand mismatch: aws-lc-rs/{out_len}");
-    }
-
-    g.throughput(criterion::Throughput::Bytes(out_len as u64));
-    g.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
-      let mut out = vec![0u8; len];
-      b.iter(|| {
-        hkdf
-          .expand(black_box(&info), black_box(&mut out))
-          .expect("valid authentication benchmark operation must succeed");
-        black_box(out[0])
-      })
-    });
-
-    g.bench_with_input(BenchmarkId::new("rustcrypto", out_len), &out_len, |b, &len| {
-      let mut out = vec![0u8; len];
-      b.iter(|| {
-        rustcrypto
-          .expand(black_box(&info), black_box(&mut out))
-          .expect("valid authentication benchmark operation must succeed");
-        black_box(out[0])
-      })
-    });
-
-    aws_lc_bench! {
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
-        let mut out = vec![0u8; len];
-        b.iter(|| {
-          aws_prk
-            .expand(&[black_box(&info)], AwsHkdfLen(len))
-            .expect("valid authentication benchmark operation must succeed")
-            .fill(black_box(&mut out))
+          let mut mac = RustCryptoHmacSha256::new_from_slice(black_box(&key))
             .expect("valid authentication benchmark operation must succeed");
-          black_box(out[0])
-        })
-      });
+          mac.update(black_box(msg));
+          black_box(mac.finalize().into_bytes())
+        },
+        |tag| assert_eq!(tag.as_slice(), expected.as_slice()),
+      ),
+    );
+
+    aws_lc_bench! {
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs", len),
+        checked(
+          || black_box(aws_lc_rs::hmac::sign(&aws_key, black_box(msg))),
+          |tag| assert_eq!(tag.as_ref(), expected.as_slice()),
+        ),
+      );
     }
 
-    g.bench_with_input(BenchmarkId::new("ring", out_len), &out_len, |b, &len| {
-      let mut out = vec![0u8; len];
-      b.iter(|| {
-        ring_prk
-          .expand(&[black_box(&info)], RingHkdfLen(len))
-          .expect("valid authentication benchmark operation must succeed")
-          .fill(black_box(&mut out))
-          .expect("valid authentication benchmark operation must succeed");
-        black_box(out[0])
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("ring", len),
+      checked(
+        || black_box(ring::hmac::sign(&ring_key, black_box(msg))),
+        |tag| assert_eq!(tag.as_ref(), expected.as_slice()),
+      ),
+    );
   }
 
   g.finish();
 }
 
-fn hkdf_sha384_expand(c: &mut Criterion) {
-  if !bench_config::selected("hkdf-sha384/expand") {
-    return;
-  }
-  print_auth_diag_once();
+// HKDF-Expand rows write each library's output into a reused caller buffer, and every row must return
+// RustCrypto's output. Salt and IKM are HashLen bytes, and `info` keeps T(1) in one compression block while each
+// later T(i) needs two.
+macro_rules! hkdf_expand_bench {
+  (
+    $name:ident,
+    $group:literal,
+    $rscrypto:ty,
+    $rustcrypto:ty,
+    $aws_algorithm:path,
+    $ring_algorithm:path,
+    $hash_len:literal,
+    $info_len:literal,
+    [$($out_len:literal),+]
+    $(,)?
+  ) => {
+    fn $name(c: &mut Criterion) {
+      if !bench_config::selected($group) {
+        return;
+      }
+      print_auth_diag_once();
 
-  let salt = [0x11u8; 48];
-  let ikm = [0x22u8; 48];
-  let info = [0x33u8; 80];
-  let hkdf = HkdfSha384::new(&salt, &ikm);
-  let rustcrypto = RustCryptoHkdfSha384::new(Some(&salt), &ikm);
-  aws_lc_bench! {
-    let aws_prk = aws_lc_rs::hkdf::Salt::new(aws_lc_rs::hkdf::HKDF_SHA384, &salt).extract(&ikm);
-  }
-  let ring_prk = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA384, &salt).extract(&ikm);
-  let mut g = c.benchmark_group("hkdf-sha384/expand");
+      let salt = [0x11u8; $hash_len];
+      let ikm = [0x22u8; $hash_len];
+      let info = [0x33u8; $info_len];
+      let hkdf = <$rscrypto>::new(&salt, &ikm);
+      let rustcrypto = <$rustcrypto>::new(Some(&salt), &ikm);
+      aws_lc_bench! {
+        let aws_prk = aws_lc_rs::hkdf::Salt::new($aws_algorithm, &salt).extract(&ikm);
+      }
+      let ring_prk = ring::hkdf::Salt::new($ring_algorithm, &salt).extract(&ikm);
+      let mut g = c.benchmark_group($group);
 
-  for out_len in [48usize, 96, 256, 1024] {
-    let mut expected = vec![0u8; out_len];
-    hkdf
-      .expand(&info, &mut expected)
-      .expect("valid authentication benchmark operation must succeed");
-    let mut actual = vec![0u8; out_len];
-    rustcrypto
-      .expand(&info, &mut actual)
-      .expect("valid authentication benchmark operation must succeed");
-    assert_eq!(actual, expected, "HKDF-SHA384 expand mismatch: rustcrypto/{out_len}");
-    ring_prk
-      .expand(&[&info], RingHkdfLen(out_len))
-      .expect("valid authentication benchmark operation must succeed")
-      .fill(&mut actual)
-      .expect("valid authentication benchmark operation must succeed");
-    assert_eq!(actual, expected, "HKDF-SHA384 expand mismatch: ring/{out_len}");
-    aws_lc_bench! {
-      aws_prk
-        .expand(&[&info], AwsHkdfLen(out_len))
-        .expect("valid authentication benchmark operation must succeed")
-        .fill(&mut actual)
-        .expect("valid authentication benchmark operation must succeed");
-      assert_eq!(actual, expected, "HKDF-SHA384 expand mismatch: aws-lc-rs/{out_len}");
-    }
-
-    g.throughput(criterion::Throughput::Bytes(out_len as u64));
-    g.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
-      let mut out = vec![0u8; len];
-      b.iter(|| {
-        hkdf
-          .expand(black_box(&info), black_box(&mut out))
-          .expect("valid authentication benchmark operation must succeed");
-        black_box(out[0])
-      })
-    });
-
-    g.bench_with_input(BenchmarkId::new("rustcrypto", out_len), &out_len, |b, &len| {
-      let mut out = vec![0u8; len];
-      b.iter(|| {
+      for out_len in [$($out_len),+] {
+        let mut expected = vec![0u8; out_len];
         rustcrypto
-          .expand(black_box(&info), black_box(&mut out))
+          .expand(&info, &mut expected)
           .expect("valid authentication benchmark operation must succeed");
-        black_box(out[0])
-      })
-    });
 
-    aws_lc_bench! {
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
-        let mut out = vec![0u8; len];
-        b.iter(|| {
-          aws_prk
-            .expand(&[black_box(&info)], AwsHkdfLen(len))
-            .expect("valid authentication benchmark operation must succeed")
-            .fill(black_box(&mut out))
-            .expect("valid authentication benchmark operation must succeed");
-          black_box(out[0])
-        })
-      });
+        g.throughput(criterion::Throughput::Bytes(out_len as u64));
+        g.bench_function(
+          BenchmarkId::new("rscrypto", out_len),
+          checked_with(
+            vec![0u8; out_len],
+            |out| {
+              hkdf
+                .expand(black_box(&info), black_box(out.as_mut_slice()))
+                .expect("valid authentication benchmark operation must succeed");
+              black_box(out[0])
+            },
+            |_, out| {
+              assert_eq!(out, &expected);
+            },
+          ),
+        );
+
+        g.bench_function(
+          BenchmarkId::new("rustcrypto", out_len),
+          checked_with(
+            vec![0u8; out_len],
+            |out| {
+              rustcrypto
+                .expand(black_box(&info), black_box(out.as_mut_slice()))
+                .expect("valid authentication benchmark operation must succeed");
+              black_box(out[0])
+            },
+            |_, out| assert_eq!(out, &expected),
+          ),
+        );
+
+        aws_lc_bench! {
+          g.bench_function(
+            BenchmarkId::new("aws-lc-rs", out_len),
+            checked_with(
+              vec![0u8; out_len],
+              |out| {
+                aws_prk
+                  .expand(&[black_box(&info)], AwsHkdfLen(out_len))
+                  .expect("valid authentication benchmark operation must succeed")
+                  .fill(black_box(out.as_mut_slice()))
+                  .expect("valid authentication benchmark operation must succeed");
+                black_box(out[0])
+              },
+              |_, out| assert_eq!(out, &expected),
+            ),
+          );
+        }
+
+        g.bench_function(
+          BenchmarkId::new("ring", out_len),
+          checked_with(
+            vec![0u8; out_len],
+            |out| {
+              ring_prk
+                .expand(&[black_box(&info)], RingHkdfLen(out_len))
+                .expect("valid authentication benchmark operation must succeed")
+                .fill(black_box(out.as_mut_slice()))
+                .expect("valid authentication benchmark operation must succeed");
+              black_box(out[0])
+            },
+            |_, out| assert_eq!(out, &expected),
+          ),
+        );
+      }
+
+      g.finish();
     }
-
-    g.bench_with_input(BenchmarkId::new("ring", out_len), &out_len, |b, &len| {
-      let mut out = vec![0u8; len];
-      b.iter(|| {
-        ring_prk
-          .expand(&[black_box(&info)], RingHkdfLen(len))
-          .expect("valid authentication benchmark operation must succeed")
-          .fill(black_box(&mut out))
-          .expect("valid authentication benchmark operation must succeed");
-        black_box(out[0])
-      })
-    });
-  }
-
-  g.finish();
+  };
 }
 
-fn hkdf_sha512_expand(c: &mut Criterion) {
-  if !bench_config::selected("hkdf-sha512/expand") {
-    return;
-  }
-  print_auth_diag_once();
-
-  // As in the SHA-256 and SHA-384 groups, salt and IKM are HashLen bytes, and
-  // `info` keeps T(1) in one compression block while each later T(i) needs two.
-  let salt = [0x11u8; 64];
-  let ikm = [0x22u8; 64];
-  let info = [0x33u8; 80];
-  let hkdf = HkdfSha512::new(&salt, &ikm);
-  let rustcrypto = RustCryptoHkdfSha512::new(Some(&salt), &ikm);
-  aws_lc_bench! {
-    let aws_prk = aws_lc_rs::hkdf::Salt::new(aws_lc_rs::hkdf::HKDF_SHA512, &salt).extract(&ikm);
-  }
-  let ring_prk = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA512, &salt).extract(&ikm);
-  let mut g = c.benchmark_group("hkdf-sha512/expand");
-
-  for out_len in [64usize, 128, 256, 1024] {
-    let mut expected = vec![0u8; out_len];
-    hkdf
-      .expand(&info, &mut expected)
-      .expect("valid authentication benchmark operation must succeed");
-    let mut actual = vec![0u8; out_len];
-    rustcrypto
-      .expand(&info, &mut actual)
-      .expect("valid authentication benchmark operation must succeed");
-    assert_eq!(actual, expected, "HKDF-SHA512 expand mismatch: rustcrypto/{out_len}");
-    ring_prk
-      .expand(&[&info], RingHkdfLen(out_len))
-      .expect("valid authentication benchmark operation must succeed")
-      .fill(&mut actual)
-      .expect("valid authentication benchmark operation must succeed");
-    assert_eq!(actual, expected, "HKDF-SHA512 expand mismatch: ring/{out_len}");
-    aws_lc_bench! {
-      aws_prk
-        .expand(&[&info], AwsHkdfLen(out_len))
-        .expect("valid authentication benchmark operation must succeed")
-        .fill(&mut actual)
-        .expect("valid authentication benchmark operation must succeed");
-      assert_eq!(actual, expected, "HKDF-SHA512 expand mismatch: aws-lc-rs/{out_len}");
-    }
-
-    g.throughput(criterion::Throughput::Bytes(out_len as u64));
-    g.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
-      let mut out = vec![0u8; len];
-      b.iter(|| {
-        hkdf
-          .expand(black_box(&info), black_box(&mut out))
-          .expect("valid authentication benchmark operation must succeed");
-        black_box(out[0])
-      })
-    });
-
-    g.bench_with_input(BenchmarkId::new("rustcrypto", out_len), &out_len, |b, &len| {
-      let mut out = vec![0u8; len];
-      b.iter(|| {
-        rustcrypto
-          .expand(black_box(&info), black_box(&mut out))
-          .expect("valid authentication benchmark operation must succeed");
-        black_box(out[0])
-      })
-    });
-
-    aws_lc_bench! {
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
-        let mut out = vec![0u8; len];
-        b.iter(|| {
-          aws_prk
-            .expand(&[black_box(&info)], AwsHkdfLen(len))
-            .expect("valid authentication benchmark operation must succeed")
-            .fill(black_box(&mut out))
-            .expect("valid authentication benchmark operation must succeed");
-          black_box(out[0])
-        })
-      });
-    }
-
-    g.bench_with_input(BenchmarkId::new("ring", out_len), &out_len, |b, &len| {
-      let mut out = vec![0u8; len];
-      b.iter(|| {
-        ring_prk
-          .expand(&[black_box(&info)], RingHkdfLen(len))
-          .expect("valid authentication benchmark operation must succeed")
-          .fill(black_box(&mut out))
-          .expect("valid authentication benchmark operation must succeed");
-        black_box(out[0])
-      })
-    });
-  }
-
-  g.finish();
-}
-
-/// RFC 5869 Appendix A.1 (Test Case 1) pseudorandom key.
-const HKDF_SHA256_RFC5869_A1_PRK: [u8; 32] = [
-  0x07, 0x77, 0x09, 0x36, 0x2c, 0x2e, 0x32, 0xdf, 0x0d, 0xdc, 0x3f, 0x0d, 0xc4, 0x7b, 0xba, 0x63, 0x90, 0xb6, 0xc7,
-  0x3b, 0xb5, 0x0f, 0x9c, 0x31, 0x22, 0xec, 0x84, 0x4a, 0xd7, 0xc2, 0xb3, 0xe5,
-];
-
-/// RFC 5869 Appendix A.1 (Test Case 1) output keying material.
-const HKDF_SHA256_RFC5869_A1_OKM: [u8; 42] = [
-  0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a, 0x90, 0x43, 0x4f, 0x64, 0xd0, 0x36, 0x2f, 0x2a, 0x2d, 0x2d, 0x0a,
-  0x90, 0xcf, 0x1a, 0x5a, 0x4c, 0x5d, 0xb0, 0x2d, 0x56, 0xec, 0xc4, 0xc5, 0xbf, 0x34, 0x00, 0x72, 0x08, 0xd5, 0xb8,
-  0x87, 0x18, 0x58, 0x65,
-];
-
-/// Check the timed HKDF-SHA256 extract and expand calls against RFC 5869 Appendix A.1.
-fn hkdf_sha256_rfc5869_check() {
-  let salt = deterministic_bytes::<13>(0x00);
-  let ikm = [0x0bu8; 22];
-  let info = deterministic_bytes::<10>(0xf0);
-  let hkdf = HkdfSha256::extract(&salt, &ikm);
-  assert_eq!(
-    hkdf.prk(),
-    &HKDF_SHA256_RFC5869_A1_PRK,
-    "HKDF-SHA256 extract does not match RFC 5869 A.1"
-  );
-  let mut okm = [0u8; 42];
-  hkdf
-    .expand(&info, &mut okm)
-    .expect("valid authentication benchmark operation must succeed");
-  assert_eq!(
-    okm, HKDF_SHA256_RFC5869_A1_OKM,
-    "HKDF-SHA256 expand does not match RFC 5869 A.1"
-  );
-}
+hkdf_expand_bench!(
+  hkdf_sha256_expand,
+  "hkdf-sha256/expand",
+  HkdfSha256,
+  RustCryptoHkdfSha256,
+  aws_lc_rs::hkdf::HKDF_SHA256,
+  ring::hkdf::HKDF_SHA256,
+  32,
+  48,
+  [32, 64, 256, 1024]
+);
+hkdf_expand_bench!(
+  hkdf_sha384_expand,
+  "hkdf-sha384/expand",
+  HkdfSha384,
+  RustCryptoHkdfSha384,
+  aws_lc_rs::hkdf::HKDF_SHA384,
+  ring::hkdf::HKDF_SHA384,
+  48,
+  80,
+  [48, 96, 256, 1024]
+);
+hkdf_expand_bench!(
+  hkdf_sha512_expand,
+  "hkdf-sha512/expand",
+  HkdfSha512,
+  RustCryptoHkdfSha512,
+  aws_lc_rs::hkdf::HKDF_SHA512,
+  ring::hkdf::HKDF_SHA512,
+  64,
+  80,
+  [64, 128, 256, 1024]
+);
 
 // HKDF-Extract rows time salt keying, HMAC(salt, IKM), the PRK HMAC key
 // schedule that each library builds for later expansion, and state drop.
@@ -735,7 +573,6 @@ macro_rules! hkdf_extract_bench {
     $ring_algorithm:path,
     $hash_len:literal,
     [$($ikm_len:literal),+]
-    $(, $vector_check:path)?
     $(,)?
   ) => {
     fn $name(c: &mut Criterion) {
@@ -743,42 +580,49 @@ macro_rules! hkdf_extract_bench {
         return;
       }
       print_auth_diag_once();
-      $($vector_check();)?
 
       let salt = [0x11u8; $hash_len];
       let mut g = c.benchmark_group($group);
       for ikm_len in [$($ikm_len),+] {
         let ikm = vec![0x22u8; ikm_len];
-        // RustCrypto exposes the PRK. ring does not, so compare T(1) from its PRK.
-        let ours = <$rscrypto>::extract(&salt, &ikm);
-        let (rustcrypto_prk, _) = <$rustcrypto>::extract(Some(&salt), &ikm);
-        assert_eq!(
-          ours.prk().as_slice(),
-          rustcrypto_prk.as_slice(),
-          concat!($group, " PRK mismatch: rustcrypto")
-        );
-        let mut expected = [0u8; $hash_len];
-        ours
-          .expand(&[], &mut expected)
+        // RustCrypto exposes the PRK. ring does not, so its row must reproduce T(1), the first expanded block.
+        let (expected_prk, expected_hkdf) = <$rustcrypto>::extract(Some(&salt), &ikm);
+        let mut expected_t1 = [0u8; $hash_len];
+        expected_hkdf
+          .expand(&[], &mut expected_t1)
           .expect("valid authentication benchmark operation must succeed");
-        let mut actual = [0u8; $hash_len];
-        ring::hkdf::Salt::new($ring_algorithm, &salt)
-          .extract(&ikm)
-          .expand(&[], RingHkdfLen($hash_len))
-          .expect("valid authentication benchmark operation must succeed")
-          .fill(&mut actual)
-          .expect("valid authentication benchmark operation must succeed");
-        assert_eq!(actual, expected, concat!($group, " PRK mismatch: ring"));
 
-        g.bench_with_input(BenchmarkId::new("rscrypto", ikm_len), &ikm, |b, ikm| {
-          b.iter(|| black_box(<$rscrypto>::extract(black_box(&salt), black_box(ikm))))
-        });
-        g.bench_with_input(BenchmarkId::new("rustcrypto", ikm_len), &ikm, |b, ikm| {
-          b.iter(|| black_box(<$rustcrypto>::extract(Some(black_box(&salt)), black_box(ikm))))
-        });
-        g.bench_with_input(BenchmarkId::new("ring", ikm_len), &ikm, |b, ikm| {
-          b.iter(|| black_box(ring::hkdf::Salt::new($ring_algorithm, black_box(&salt)).extract(black_box(ikm))))
-        });
+        g.bench_function(
+          BenchmarkId::new("rscrypto", ikm_len),
+          checked(
+            || black_box(<$rscrypto>::extract(black_box(&salt), black_box(&ikm))),
+            |hkdf| {
+              assert_eq!(hkdf.prk().as_slice(), expected_prk.as_slice());
+            },
+          ),
+        );
+        g.bench_function(
+          BenchmarkId::new("rustcrypto", ikm_len),
+          checked(
+            || black_box(<$rustcrypto>::extract(Some(black_box(&salt)), black_box(&ikm))),
+            |(prk, _)| assert_eq!(prk.as_slice(), expected_prk.as_slice()),
+          ),
+        );
+        g.bench_function(
+          BenchmarkId::new("ring", ikm_len),
+          checked(
+            || black_box(ring::hkdf::Salt::new($ring_algorithm, black_box(&salt)).extract(black_box(&ikm))),
+            |prk| {
+              let mut t1 = [0u8; $hash_len];
+              prk
+                .expand(&[], RingHkdfLen($hash_len))
+                .expect("valid authentication benchmark operation must succeed")
+                .fill(&mut t1)
+                .expect("valid authentication benchmark operation must succeed");
+              assert_eq!(t1, expected_t1);
+            },
+          ),
+        );
       }
       g.finish();
     }
@@ -792,8 +636,7 @@ hkdf_extract_bench!(
   RustCryptoHkdfSha256,
   ring::hkdf::HKDF_SHA256,
   32,
-  [32, 64],
-  hkdf_sha256_rfc5869_check
+  [32, 64]
 );
 hkdf_extract_bench!(
   hkdf_sha384_extract,
@@ -823,6 +666,12 @@ fn pbkdf2_sha256_derive(c: &mut Criterion) {
   let password = [0x55u8; 32];
   let salt = [0x33u8; 16];
   let state = Pbkdf2Sha256::new(&password);
+  // Every row must write RustCrypto's derived key into its reused output buffer.
+  let rustcrypto = |iterations: u32, len: usize| {
+    let mut out = vec![0u8; len];
+    pbkdf2::pbkdf2_hmac::<sha2::Sha256>(&password, &salt, iterations, &mut out);
+    out
+  };
 
   for &iterations in &[1u32, 100, 1000] {
     let nz_iters =
@@ -831,53 +680,80 @@ fn pbkdf2_sha256_derive(c: &mut Criterion) {
 
     for &out_len in &[32usize, 64] {
       g.throughput(criterion::Throughput::Bytes(out_len as u64));
+      let expected = rustcrypto(iterations, out_len);
 
-      g.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
-        let mut out = vec![0u8; len];
-        b.iter(|| {
-          Pbkdf2Sha256::derive_key_primitive(black_box(&password), black_box(&salt), iterations, black_box(&mut out))
+      g.bench_function(
+        BenchmarkId::new("rscrypto", out_len),
+        checked_with(
+          vec![0u8; out_len],
+          |out| {
+            Pbkdf2Sha256::derive_key_primitive(
+              black_box(&password),
+              black_box(&salt),
+              iterations,
+              black_box(out.as_mut_slice()),
+            )
             .expect("valid authentication benchmark operation must succeed");
-          black_box(out[0])
-        })
-      });
+            black_box(out[0])
+          },
+          |_, out| assert_eq!(out, &expected),
+        ),
+      );
 
-      g.bench_with_input(BenchmarkId::new("rustcrypto", out_len), &out_len, |b, &len| {
-        let mut out = vec![0u8; len];
-        b.iter(|| {
-          pbkdf2::pbkdf2_hmac::<sha2::Sha256>(black_box(&password), black_box(&salt), iterations, black_box(&mut out));
-          black_box(out[0])
-        })
-      });
+      g.bench_function(
+        BenchmarkId::new("rustcrypto", out_len),
+        checked_with(
+          vec![0u8; out_len],
+          |out| {
+            pbkdf2::pbkdf2_hmac::<sha2::Sha256>(
+              black_box(&password),
+              black_box(&salt),
+              iterations,
+              black_box(out.as_mut_slice()),
+            );
+            black_box(out[0])
+          },
+          |_, out| assert_eq!(out, &expected),
+        ),
+      );
 
       aws_lc_bench! {
-        g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
-          let mut out = vec![0u8; len];
-          b.iter(|| {
-            aws_lc_rs::pbkdf2::derive(
-              aws_lc_rs::pbkdf2::PBKDF2_HMAC_SHA256,
+        g.bench_function(
+          BenchmarkId::new("aws-lc-rs", out_len),
+          checked_with(
+            vec![0u8; out_len],
+            |out| {
+              aws_lc_rs::pbkdf2::derive(
+                aws_lc_rs::pbkdf2::PBKDF2_HMAC_SHA256,
+                nz_iters,
+                black_box(&salt),
+                black_box(&password),
+                black_box(out.as_mut_slice()),
+              );
+              black_box(out[0])
+            },
+            |_, out| assert_eq!(out, &expected),
+          ),
+        );
+      }
+
+      g.bench_function(
+        BenchmarkId::new("ring", out_len),
+        checked_with(
+          vec![0u8; out_len],
+          |out| {
+            ring::pbkdf2::derive(
+              ring::pbkdf2::PBKDF2_HMAC_SHA256,
               nz_iters,
               black_box(&salt),
               black_box(&password),
-              black_box(&mut out),
+              black_box(out.as_mut_slice()),
             );
             black_box(out[0])
-          })
-        });
-      }
-
-      g.bench_with_input(BenchmarkId::new("ring", out_len), &out_len, |b, &len| {
-        let mut out = vec![0u8; len];
-        b.iter(|| {
-          ring::pbkdf2::derive(
-            ring::pbkdf2::PBKDF2_HMAC_SHA256,
-            nz_iters,
-            black_box(&salt),
-            black_box(&password),
-            black_box(&mut out),
-          );
-          black_box(out[0])
-        })
-      });
+          },
+          |_, out| assert_eq!(out, &expected),
+        ),
+      );
     }
 
     g.finish();
@@ -885,15 +761,20 @@ fn pbkdf2_sha256_derive(c: &mut Criterion) {
     let mut g_state = c.benchmark_group(format!("pbkdf2-sha256-state/iters={iterations}"));
     for &out_len in &[32usize, 64] {
       g_state.throughput(criterion::Throughput::Bytes(out_len as u64));
-      g_state.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
-        let mut out = vec![0u8; len];
-        b.iter(|| {
-          state
-            .derive(black_box(&salt), iterations, black_box(&mut out))
-            .expect("valid authentication benchmark operation must succeed");
-          black_box(out[0])
-        })
-      });
+      let expected = rustcrypto(iterations, out_len);
+      g_state.bench_function(
+        BenchmarkId::new("rscrypto", out_len),
+        checked_with(
+          vec![0u8; out_len],
+          |out| {
+            state
+              .derive(black_box(&salt), iterations, black_box(out.as_mut_slice()))
+              .expect("valid authentication benchmark operation must succeed");
+            black_box(out[0])
+          },
+          |_, out| assert_eq!(out, &expected),
+        ),
+      );
     }
     g_state.finish();
   }
@@ -908,6 +789,12 @@ fn pbkdf2_sha256_internal(c: &mut Criterion) {
   let password = [0x55u8; 32];
   let salt = [0x33u8; 16];
   let state = Pbkdf2Sha256::new(&password);
+  // Every row must write RustCrypto's derived key into its reused output buffer.
+  let rustcrypto = |iterations: u32, len: usize| {
+    let mut out = vec![0u8; len];
+    pbkdf2::pbkdf2_hmac::<sha2::Sha256>(&password, &salt, iterations, &mut out);
+    out
+  };
 
   for &iterations in &[1u32, 100, 1000] {
     let nz_iters =
@@ -916,63 +803,94 @@ fn pbkdf2_sha256_internal(c: &mut Criterion) {
 
     for &out_len in &[32usize, 64] {
       g.throughput(criterion::Throughput::Bytes(out_len as u64));
+      let expected = rustcrypto(iterations, out_len);
 
-      g.bench_with_input(BenchmarkId::new("rscrypto-oneshot", out_len), &out_len, |b, &len| {
-        let mut out = vec![0u8; len];
-        b.iter(|| {
-          Pbkdf2Sha256::derive_key_primitive(black_box(&password), black_box(&salt), iterations, black_box(&mut out))
+      g.bench_function(
+        BenchmarkId::new("rscrypto-oneshot", out_len),
+        checked_with(
+          vec![0u8; out_len],
+          |out| {
+            Pbkdf2Sha256::derive_key_primitive(
+              black_box(&password),
+              black_box(&salt),
+              iterations,
+              black_box(out.as_mut_slice()),
+            )
             .expect("valid authentication benchmark operation must succeed");
-          black_box(out[0])
-        })
-      });
+            black_box(out[0])
+          },
+          |_, out| assert_eq!(out, &expected),
+        ),
+      );
 
-      g.bench_with_input(BenchmarkId::new("rscrypto-state", out_len), &out_len, |b, &len| {
-        let mut out = vec![0u8; len];
-        b.iter(|| {
-          state
-            .derive(black_box(&salt), iterations, black_box(&mut out))
-            .expect("valid authentication benchmark operation must succeed");
-          black_box(out[0])
-        })
-      });
+      g.bench_function(
+        BenchmarkId::new("rscrypto-state", out_len),
+        checked_with(
+          vec![0u8; out_len],
+          |out| {
+            state
+              .derive(black_box(&salt), iterations, black_box(out.as_mut_slice()))
+              .expect("valid authentication benchmark operation must succeed");
+            black_box(out[0])
+          },
+          |_, out| assert_eq!(out, &expected),
+        ),
+      );
 
-      g.bench_with_input(BenchmarkId::new("rustcrypto", out_len), &out_len, |b, &len| {
-        let mut out = vec![0u8; len];
-        b.iter(|| {
-          pbkdf2::pbkdf2_hmac::<sha2::Sha256>(black_box(&password), black_box(&salt), iterations, black_box(&mut out));
-          black_box(out[0])
-        })
-      });
+      g.bench_function(
+        BenchmarkId::new("rustcrypto", out_len),
+        checked_with(
+          vec![0u8; out_len],
+          |out| {
+            pbkdf2::pbkdf2_hmac::<sha2::Sha256>(
+              black_box(&password),
+              black_box(&salt),
+              iterations,
+              black_box(out.as_mut_slice()),
+            );
+            black_box(out[0])
+          },
+          |_, out| assert_eq!(out, &expected),
+        ),
+      );
 
       aws_lc_bench! {
-        g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
-          let mut out = vec![0u8; len];
-          b.iter(|| {
-            aws_lc_rs::pbkdf2::derive(
-              aws_lc_rs::pbkdf2::PBKDF2_HMAC_SHA256,
+        g.bench_function(
+          BenchmarkId::new("aws-lc-rs", out_len),
+          checked_with(
+            vec![0u8; out_len],
+            |out| {
+              aws_lc_rs::pbkdf2::derive(
+                aws_lc_rs::pbkdf2::PBKDF2_HMAC_SHA256,
+                nz_iters,
+                black_box(&salt),
+                black_box(&password),
+                black_box(out.as_mut_slice()),
+              );
+              black_box(out[0])
+            },
+            |_, out| assert_eq!(out, &expected),
+          ),
+        );
+      }
+
+      g.bench_function(
+        BenchmarkId::new("ring", out_len),
+        checked_with(
+          vec![0u8; out_len],
+          |out| {
+            ring::pbkdf2::derive(
+              ring::pbkdf2::PBKDF2_HMAC_SHA256,
               nz_iters,
               black_box(&salt),
               black_box(&password),
-              black_box(&mut out),
+              black_box(out.as_mut_slice()),
             );
             black_box(out[0])
-          })
-        });
-      }
-
-      g.bench_with_input(BenchmarkId::new("ring", out_len), &out_len, |b, &len| {
-        let mut out = vec![0u8; len];
-        b.iter(|| {
-          ring::pbkdf2::derive(
-            ring::pbkdf2::PBKDF2_HMAC_SHA256,
-            nz_iters,
-            black_box(&salt),
-            black_box(&password),
-            black_box(&mut out),
-          );
-          black_box(out[0])
-        })
-      });
+          },
+          |_, out| assert_eq!(out, &expected),
+        ),
+      );
     }
 
     g.finish();
@@ -988,6 +906,12 @@ fn pbkdf2_sha512_derive(c: &mut Criterion) {
   let password = [0x66u8; 48];
   let salt = [0x44u8; 16];
   let state = Pbkdf2Sha512::new(&password);
+  // Every row must write RustCrypto's derived key into its reused output buffer.
+  let rustcrypto = |iterations: u32, len: usize| {
+    let mut out = vec![0u8; len];
+    pbkdf2::pbkdf2_hmac::<sha2::Sha512>(&password, &salt, iterations, &mut out);
+    out
+  };
 
   for &iterations in &[1u32, 100, 1000] {
     let nz_iters =
@@ -996,53 +920,80 @@ fn pbkdf2_sha512_derive(c: &mut Criterion) {
 
     for &out_len in &[64usize, 128] {
       g.throughput(criterion::Throughput::Bytes(out_len as u64));
+      let expected = rustcrypto(iterations, out_len);
 
-      g.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
-        let mut out = vec![0u8; len];
-        b.iter(|| {
-          Pbkdf2Sha512::derive_key_primitive(black_box(&password), black_box(&salt), iterations, black_box(&mut out))
+      g.bench_function(
+        BenchmarkId::new("rscrypto", out_len),
+        checked_with(
+          vec![0u8; out_len],
+          |out| {
+            Pbkdf2Sha512::derive_key_primitive(
+              black_box(&password),
+              black_box(&salt),
+              iterations,
+              black_box(out.as_mut_slice()),
+            )
             .expect("valid authentication benchmark operation must succeed");
-          black_box(out[0])
-        })
-      });
+            black_box(out[0])
+          },
+          |_, out| assert_eq!(out, &expected),
+        ),
+      );
 
-      g.bench_with_input(BenchmarkId::new("rustcrypto", out_len), &out_len, |b, &len| {
-        let mut out = vec![0u8; len];
-        b.iter(|| {
-          pbkdf2::pbkdf2_hmac::<sha2::Sha512>(black_box(&password), black_box(&salt), iterations, black_box(&mut out));
-          black_box(out[0])
-        })
-      });
+      g.bench_function(
+        BenchmarkId::new("rustcrypto", out_len),
+        checked_with(
+          vec![0u8; out_len],
+          |out| {
+            pbkdf2::pbkdf2_hmac::<sha2::Sha512>(
+              black_box(&password),
+              black_box(&salt),
+              iterations,
+              black_box(out.as_mut_slice()),
+            );
+            black_box(out[0])
+          },
+          |_, out| assert_eq!(out, &expected),
+        ),
+      );
 
       aws_lc_bench! {
-        g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
-          let mut out = vec![0u8; len];
-          b.iter(|| {
-            aws_lc_rs::pbkdf2::derive(
-              aws_lc_rs::pbkdf2::PBKDF2_HMAC_SHA512,
+        g.bench_function(
+          BenchmarkId::new("aws-lc-rs", out_len),
+          checked_with(
+            vec![0u8; out_len],
+            |out| {
+              aws_lc_rs::pbkdf2::derive(
+                aws_lc_rs::pbkdf2::PBKDF2_HMAC_SHA512,
+                nz_iters,
+                black_box(&salt),
+                black_box(&password),
+                black_box(out.as_mut_slice()),
+              );
+              black_box(out[0])
+            },
+            |_, out| assert_eq!(out, &expected),
+          ),
+        );
+      }
+
+      g.bench_function(
+        BenchmarkId::new("ring", out_len),
+        checked_with(
+          vec![0u8; out_len],
+          |out| {
+            ring::pbkdf2::derive(
+              ring::pbkdf2::PBKDF2_HMAC_SHA512,
               nz_iters,
               black_box(&salt),
               black_box(&password),
-              black_box(&mut out),
+              black_box(out.as_mut_slice()),
             );
             black_box(out[0])
-          })
-        });
-      }
-
-      g.bench_with_input(BenchmarkId::new("ring", out_len), &out_len, |b, &len| {
-        let mut out = vec![0u8; len];
-        b.iter(|| {
-          ring::pbkdf2::derive(
-            ring::pbkdf2::PBKDF2_HMAC_SHA512,
-            nz_iters,
-            black_box(&salt),
-            black_box(&password),
-            black_box(&mut out),
-          );
-          black_box(out[0])
-        })
-      });
+          },
+          |_, out| assert_eq!(out, &expected),
+        ),
+      );
     }
 
     g.finish();
@@ -1050,15 +1001,20 @@ fn pbkdf2_sha512_derive(c: &mut Criterion) {
     let mut g_state = c.benchmark_group(format!("pbkdf2-sha512-state/iters={iterations}"));
     for &out_len in &[64usize, 128] {
       g_state.throughput(criterion::Throughput::Bytes(out_len as u64));
-      g_state.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
-        let mut out = vec![0u8; len];
-        b.iter(|| {
-          state
-            .derive(black_box(&salt), iterations, black_box(&mut out))
-            .expect("valid authentication benchmark operation must succeed");
-          black_box(out[0])
-        })
-      });
+      let expected = rustcrypto(iterations, out_len);
+      g_state.bench_function(
+        BenchmarkId::new("rscrypto", out_len),
+        checked_with(
+          vec![0u8; out_len],
+          |out| {
+            state
+              .derive(black_box(&salt), iterations, black_box(out.as_mut_slice()))
+              .expect("valid authentication benchmark operation must succeed");
+            black_box(out[0])
+          },
+          |_, out| assert_eq!(out, &expected),
+        ),
+      );
     }
     g_state.finish();
   }
@@ -1069,21 +1025,30 @@ fn ed25519_public_key(c: &mut Criterion) {
     return;
   }
   let secret_bytes = [7u8; 32];
+  let expected = SigningKey::from_bytes(&secret_bytes).verifying_key().to_bytes();
   let mut g = c.benchmark_group("ed25519/public-key-from-secret");
 
-  g.bench_function("rscrypto", |b| {
-    b.iter(|| {
-      let secret = Ed25519SecretKey::from_bytes(*black_box(&secret_bytes));
-      black_box(secret.public_key())
-    })
-  });
+  g.bench_function(
+    "rscrypto",
+    checked(
+      || {
+        let secret = Ed25519SecretKey::from_bytes(*black_box(&secret_bytes));
+        black_box(secret.public_key())
+      },
+      |public| assert_eq!(public.to_bytes(), expected),
+    ),
+  );
 
-  g.bench_function("dalek", |b| {
-    b.iter(|| {
-      let signing_key = SigningKey::from_bytes(black_box(&secret_bytes));
-      black_box(signing_key.verifying_key())
-    })
-  });
+  g.bench_function(
+    "dalek",
+    checked(
+      || {
+        let signing_key = SigningKey::from_bytes(black_box(&secret_bytes));
+        black_box(signing_key.verifying_key())
+      },
+      |public| assert_eq!(public.to_bytes(), expected),
+    ),
+  );
 
   g.finish();
 }
@@ -1116,53 +1081,101 @@ fn ecdsa_p256_verify(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
+    // Every row verifies RustCrypto's signature and must reject it once the last byte of r changes.
     let oracle_signature: P256OracleSignature = p256::ecdsa::signature::Signer::sign(&signing_key, data);
-    let signature = EcdsaP256Signature::from_bytes(array_from_slice(oracle_signature.to_bytes().as_ref()))
-      .expect("valid authentication benchmark operation must succeed");
+    let signature_bytes: [u8; 64] = array_from_slice(oracle_signature.to_bytes().as_ref());
+    let signature =
+      EcdsaP256Signature::from_bytes(signature_bytes).expect("valid authentication benchmark operation must succeed");
+    let mut tampered_bytes = signature_bytes;
+    tampered_bytes[31] ^= 1;
+    let tampered = EcdsaP256Signature::from_bytes(tampered_bytes).expect("a changed r remains a valid scalar");
+    let oracle_tampered = P256OracleSignature::from_slice(&tampered_bytes).expect("a changed r remains a valid scalar");
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| {
-        black_box(&public)
-          .verify(black_box(d), black_box(&signature))
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked(
+        || {
+          black_box(&public)
+            .verify(black_box(data), black_box(&signature))
+            .expect("valid authentication benchmark operation must succeed");
+          black_box(())
+        },
+        |()| {
+          public
+            .verify(data, &tampered)
+            .expect_err("a changed ECDSA P-256 signature must fail");
+        },
+      ),
+    );
+
+    g.bench_function(
+      BenchmarkId::new("rscrypto-import", len),
+      checked(
+        || {
+          EcdsaP256PublicKey::from_sec1_bytes(black_box(sec1.as_slice()))
+            .expect("valid authentication benchmark operation must succeed")
+            .verify(black_box(data), black_box(&signature))
+            .expect("valid authentication benchmark operation must succeed");
+          black_box(())
+        },
+        |()| {
+          EcdsaP256PublicKey::from_sec1_bytes(sec1.as_slice())
+            .expect("valid authentication benchmark operation must succeed")
+            .verify(data, &tampered)
+            .expect_err("a changed ECDSA P-256 signature must fail");
+        },
+      ),
+    );
+
+    g.bench_function(
+      BenchmarkId::new("rustcrypto-p256", len),
+      checked(
+        || {
+          p256::ecdsa::signature::Verifier::verify(
+            black_box(verifying_key),
+            black_box(data),
+            black_box(&oracle_signature),
+          )
           .expect("valid authentication benchmark operation must succeed");
-        black_box(())
-      })
-    });
+          black_box(())
+        },
+        |()| {
+          p256::ecdsa::signature::Verifier::verify(verifying_key, data, &oracle_tampered)
+            .expect_err("a changed ECDSA P-256 signature must fail");
+        },
+      ),
+    );
 
-    let verify_imported = || {
-      EcdsaP256PublicKey::from_sec1_bytes(black_box(sec1.as_slice()))
-        .expect("valid authentication benchmark operation must succeed")
-        .verify(black_box(data), black_box(&signature))
-        .expect("valid authentication benchmark operation must succeed");
-      black_box(())
-    };
-    verify_imported();
-    g.bench_function(BenchmarkId::new("rscrypto-import", len), |b| b.iter(verify_imported));
-
-    g.bench_with_input(BenchmarkId::new("rustcrypto-p256", len), data, |b, d| {
-      b.iter(|| {
-        p256::ecdsa::signature::Verifier::verify(black_box(verifying_key), black_box(d), black_box(&oracle_signature))
-          .expect("valid authentication benchmark operation must succeed");
-        black_box(())
-      })
-    });
-
-    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
-      b.iter(|| {
-        ring_upk
-          .verify(black_box(d), black_box(signature.as_bytes()))
-          .expect("valid authentication benchmark operation must succeed");
-        black_box(())
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("ring", len),
+      checked(
+        || {
+          ring_upk
+            .verify(black_box(data), black_box(signature.as_bytes()))
+            .expect("valid authentication benchmark operation must succeed");
+          black_box(())
+        },
+        |()| {
+          ring_upk
+            .verify(data, &tampered_bytes)
+            .expect_err("a changed ECDSA P-256 signature must fail");
+        },
+      ),
+    );
 
     aws_lc_bench! {
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-        b.iter(|| {
-          aws_upk.verify(black_box(d), black_box(signature.as_bytes())).expect("valid authentication benchmark operation must succeed");
-          black_box(())
-        })
-      });
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs", len),
+        checked(
+          || {
+            aws_upk.verify(black_box(data), black_box(signature.as_bytes())).expect("valid authentication benchmark operation must succeed");
+            black_box(())
+          },
+          |()| {
+            aws_upk.verify(data, &tampered_bytes).expect_err("a changed ECDSA P-256 signature must fail");
+          },
+        ),
+      );
     }
   }
 
@@ -1180,6 +1193,7 @@ fn ecdsa_p256_sign(c: &mut Criterion) {
   let blind = [0x5cu8; 64];
   let signing_key =
     P256OracleSigningKey::from_slice(&secret_bytes).expect("valid authentication benchmark operation must succeed");
+  let verifying_key = signing_key.verifying_key();
   let sec1 = keypair.public_key().to_sec1_bytes();
   let ring_rng = ring::rand::SystemRandom::new();
   let ring_key = ring::signature::EcdsaKeyPair::from_private_key_and_public_key(
@@ -1198,6 +1212,13 @@ fn ecdsa_p256_sign(c: &mut Criterion) {
     )
     .expect("valid authentication benchmark operation must succeed");
   }
+  // rscrypto's deterministic nonce is not RFC 6979, and the competitors draw random nonces, so no row has a
+  // fixed signature. RustCrypto must verify every row's signature, and blinding must not change rscrypto's.
+  let verifies = |data: &[u8], signature: &[u8]| {
+    let signature = P256OracleSignature::from_slice(signature).expect("ECDSA P-256 signature must parse");
+    p256::ecdsa::signature::Verifier::verify(verifying_key, data, &signature)
+      .expect("RustCrypto must verify the ECDSA P-256 signature");
+  };
 
   let inputs = [0usize, 32, 1024, 16384]
     .into_iter()
@@ -1208,51 +1229,77 @@ fn ecdsa_p256_sign(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
 
-    g.bench_with_input(BenchmarkId::new("rscrypto-deterministic", len), data, |b, d| {
-      b.iter(|| {
-        black_box(
-          black_box(&keypair)
-            .try_sign(black_box(d))
-            .expect("valid authentication benchmark operation must succeed"),
-        )
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto-deterministic", len),
+      checked(
+        || {
+          black_box(
+            black_box(&keypair)
+              .try_sign(black_box(data))
+              .expect("valid authentication benchmark operation must succeed"),
+          )
+        },
+        |signature| verifies(data, signature.as_bytes()),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("rscrypto-blinded", len), data, |b, d| {
-      b.iter(|| {
-        black_box(
-          black_box(&keypair)
-            .try_sign_blinded_with(black_box(d), |out| {
-              out.copy_from_slice(black_box(&blind));
-              Ok::<(), core::convert::Infallible>(())
-            })
-            .expect("valid authentication benchmark operation must succeed"),
-        )
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto-blinded", len),
+      checked(
+        || {
+          black_box(
+            black_box(&keypair)
+              .try_sign_blinded_with(black_box(data), |out| {
+                out.copy_from_slice(black_box(&blind));
+                Ok::<(), core::convert::Infallible>(())
+              })
+              .expect("valid authentication benchmark operation must succeed"),
+          )
+        },
+        |signature| {
+          let deterministic = keypair
+            .try_sign(data)
+            .expect("valid authentication benchmark operation must succeed");
+          assert_eq!(signature, deterministic);
+          verifies(data, signature.as_bytes());
+        },
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("rustcrypto-p256", len), data, |b, d| {
-      b.iter(|| {
-        let signature: P256OracleSignature =
-          p256::ecdsa::signature::Signer::sign(black_box(&signing_key), black_box(d));
-        black_box(signature)
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rustcrypto-p256", len),
+      checked(
+        || {
+          let signature: P256OracleSignature =
+            p256::ecdsa::signature::Signer::sign(black_box(&signing_key), black_box(data));
+          black_box(signature)
+        },
+        |signature| verifies(data, signature.to_bytes().as_slice()),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
-      b.iter(|| {
-        black_box(
-          ring_key
-            .sign(&ring_rng, black_box(d))
-            .expect("valid authentication benchmark operation must succeed"),
-        )
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("ring", len),
+      checked(
+        || {
+          black_box(
+            ring_key
+              .sign(&ring_rng, black_box(data))
+              .expect("valid authentication benchmark operation must succeed"),
+          )
+        },
+        |signature| verifies(data, signature.as_ref()),
+      ),
+    );
 
     aws_lc_bench! {
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-        b.iter(|| black_box(aws_key.sign(&aws_rng, black_box(d)).expect("valid authentication benchmark operation must succeed")))
-      });
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs", len),
+        checked(
+          || black_box(aws_key.sign(&aws_rng, black_box(data)).expect("valid authentication benchmark operation must succeed")),
+          |signature| verifies(data, signature.as_ref()),
+        ),
+      );
     }
   }
 
@@ -1269,25 +1316,32 @@ fn ecdsa_p256_public_key(c: &mut Criterion) {
   let blind = [0x5cu8; 64];
   let oracle =
     P256OracleSecretKey::from_slice(&secret_bytes).expect("valid authentication benchmark operation must succeed");
-  let expected = secret.public_key().to_sec1_bytes();
-  assert_eq!(oracle.public_key().to_sec1_bytes().as_ref(), expected);
+  let expected = oracle.public_key().to_sec1_bytes();
 
   let mut g = c.benchmark_group("ecdsa-p256/public-key");
-  g.bench_function("rscrypto-blinded", |b| {
-    b.iter(|| {
-      black_box(
-        black_box(&secret)
-          .try_public_key_blinded_with(|out| {
-            out.copy_from_slice(black_box(&blind));
-            Ok::<(), core::convert::Infallible>(())
-          })
-          .expect("valid authentication benchmark operation must succeed"),
-      )
-    })
-  });
-  g.bench_function("rustcrypto-p256", |b| {
-    b.iter(|| black_box(black_box(&oracle).public_key()))
-  });
+  g.bench_function(
+    "rscrypto-blinded",
+    checked(
+      || {
+        black_box(
+          black_box(&secret)
+            .try_public_key_blinded_with(|out| {
+              out.copy_from_slice(black_box(&blind));
+              Ok::<(), core::convert::Infallible>(())
+            })
+            .expect("valid authentication benchmark operation must succeed"),
+        )
+      },
+      |public| assert_eq!(public.to_sec1_bytes().as_slice(), &*expected),
+    ),
+  );
+  g.bench_function(
+    "rustcrypto-p256",
+    checked(
+      || black_box(black_box(&oracle).public_key()),
+      |public| assert_eq!(public.to_sec1_bytes(), expected),
+    ),
+  );
   g.finish();
 }
 
@@ -1319,53 +1373,101 @@ fn ecdsa_p384_verify(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
+    // Every row verifies RustCrypto's signature and must reject it once the last byte of r changes.
     let oracle_signature: P384OracleSignature = p384::ecdsa::signature::Signer::sign(&signing_key, data);
-    let signature = EcdsaP384Signature::from_bytes(array_from_slice(oracle_signature.to_bytes().as_ref()))
-      .expect("valid authentication benchmark operation must succeed");
+    let signature_bytes: [u8; 96] = array_from_slice(oracle_signature.to_bytes().as_ref());
+    let signature =
+      EcdsaP384Signature::from_bytes(signature_bytes).expect("valid authentication benchmark operation must succeed");
+    let mut tampered_bytes = signature_bytes;
+    tampered_bytes[47] ^= 1;
+    let tampered = EcdsaP384Signature::from_bytes(tampered_bytes).expect("a changed r remains a valid scalar");
+    let oracle_tampered = P384OracleSignature::from_slice(&tampered_bytes).expect("a changed r remains a valid scalar");
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| {
-        black_box(&public)
-          .verify(black_box(d), black_box(&signature))
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked(
+        || {
+          black_box(&public)
+            .verify(black_box(data), black_box(&signature))
+            .expect("valid authentication benchmark operation must succeed");
+          black_box(())
+        },
+        |()| {
+          public
+            .verify(data, &tampered)
+            .expect_err("a changed ECDSA P-384 signature must fail");
+        },
+      ),
+    );
+
+    g.bench_function(
+      BenchmarkId::new("rscrypto-import", len),
+      checked(
+        || {
+          EcdsaP384PublicKey::from_sec1_bytes(black_box(sec1.as_slice()))
+            .expect("valid authentication benchmark operation must succeed")
+            .verify(black_box(data), black_box(&signature))
+            .expect("valid authentication benchmark operation must succeed");
+          black_box(())
+        },
+        |()| {
+          EcdsaP384PublicKey::from_sec1_bytes(sec1.as_slice())
+            .expect("valid authentication benchmark operation must succeed")
+            .verify(data, &tampered)
+            .expect_err("a changed ECDSA P-384 signature must fail");
+        },
+      ),
+    );
+
+    g.bench_function(
+      BenchmarkId::new("rustcrypto-p384", len),
+      checked(
+        || {
+          p384::ecdsa::signature::Verifier::verify(
+            black_box(verifying_key),
+            black_box(data),
+            black_box(&oracle_signature),
+          )
           .expect("valid authentication benchmark operation must succeed");
-        black_box(())
-      })
-    });
+          black_box(())
+        },
+        |()| {
+          p384::ecdsa::signature::Verifier::verify(verifying_key, data, &oracle_tampered)
+            .expect_err("a changed ECDSA P-384 signature must fail");
+        },
+      ),
+    );
 
-    let verify_imported = || {
-      EcdsaP384PublicKey::from_sec1_bytes(black_box(sec1.as_slice()))
-        .expect("valid authentication benchmark operation must succeed")
-        .verify(black_box(data), black_box(&signature))
-        .expect("valid authentication benchmark operation must succeed");
-      black_box(())
-    };
-    verify_imported();
-    g.bench_function(BenchmarkId::new("rscrypto-import", len), |b| b.iter(verify_imported));
-
-    g.bench_with_input(BenchmarkId::new("rustcrypto-p384", len), data, |b, d| {
-      b.iter(|| {
-        p384::ecdsa::signature::Verifier::verify(black_box(verifying_key), black_box(d), black_box(&oracle_signature))
-          .expect("valid authentication benchmark operation must succeed");
-        black_box(())
-      })
-    });
-
-    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
-      b.iter(|| {
-        ring_upk
-          .verify(black_box(d), black_box(signature.as_bytes()))
-          .expect("valid authentication benchmark operation must succeed");
-        black_box(())
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("ring", len),
+      checked(
+        || {
+          ring_upk
+            .verify(black_box(data), black_box(signature.as_bytes()))
+            .expect("valid authentication benchmark operation must succeed");
+          black_box(())
+        },
+        |()| {
+          ring_upk
+            .verify(data, &tampered_bytes)
+            .expect_err("a changed ECDSA P-384 signature must fail");
+        },
+      ),
+    );
 
     aws_lc_bench! {
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-        b.iter(|| {
-          aws_upk.verify(black_box(d), black_box(signature.as_bytes())).expect("valid authentication benchmark operation must succeed");
-          black_box(())
-        })
-      });
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs", len),
+        checked(
+          || {
+            aws_upk.verify(black_box(data), black_box(signature.as_bytes())).expect("valid authentication benchmark operation must succeed");
+            black_box(())
+          },
+          |()| {
+            aws_upk.verify(data, &tampered_bytes).expect_err("a changed ECDSA P-384 signature must fail");
+          },
+        ),
+      );
     }
   }
 
@@ -1383,6 +1485,7 @@ fn ecdsa_p384_sign(c: &mut Criterion) {
   let blind = [0xa3u8; 96];
   let signing_key =
     P384OracleSigningKey::from_slice(&secret_bytes).expect("valid authentication benchmark operation must succeed");
+  let verifying_key = signing_key.verifying_key();
   let sec1 = keypair.public_key().to_sec1_bytes();
   let ring_rng = ring::rand::SystemRandom::new();
   let ring_key = ring::signature::EcdsaKeyPair::from_private_key_and_public_key(
@@ -1401,6 +1504,13 @@ fn ecdsa_p384_sign(c: &mut Criterion) {
     )
     .expect("valid authentication benchmark operation must succeed");
   }
+  // rscrypto's deterministic nonce is not RFC 6979, and the competitors draw random nonces, so no row has a
+  // fixed signature. RustCrypto must verify every row's signature, and blinding must not change rscrypto's.
+  let verifies = |data: &[u8], signature: &[u8]| {
+    let signature = P384OracleSignature::from_slice(signature).expect("ECDSA P-384 signature must parse");
+    p384::ecdsa::signature::Verifier::verify(verifying_key, data, &signature)
+      .expect("RustCrypto must verify the ECDSA P-384 signature");
+  };
 
   let inputs = [0usize, 32, 1024, 16384]
     .into_iter()
@@ -1411,51 +1521,77 @@ fn ecdsa_p384_sign(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
 
-    g.bench_with_input(BenchmarkId::new("rscrypto-deterministic", len), data, |b, d| {
-      b.iter(|| {
-        black_box(
-          black_box(&keypair)
-            .try_sign(black_box(d))
-            .expect("valid authentication benchmark operation must succeed"),
-        )
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto-deterministic", len),
+      checked(
+        || {
+          black_box(
+            black_box(&keypair)
+              .try_sign(black_box(data))
+              .expect("valid authentication benchmark operation must succeed"),
+          )
+        },
+        |signature| verifies(data, signature.as_bytes()),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("rscrypto-blinded", len), data, |b, d| {
-      b.iter(|| {
-        black_box(
-          black_box(&keypair)
-            .try_sign_blinded_with(black_box(d), |out| {
-              out.copy_from_slice(black_box(&blind));
-              Ok::<(), core::convert::Infallible>(())
-            })
-            .expect("valid authentication benchmark operation must succeed"),
-        )
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto-blinded", len),
+      checked(
+        || {
+          black_box(
+            black_box(&keypair)
+              .try_sign_blinded_with(black_box(data), |out| {
+                out.copy_from_slice(black_box(&blind));
+                Ok::<(), core::convert::Infallible>(())
+              })
+              .expect("valid authentication benchmark operation must succeed"),
+          )
+        },
+        |signature| {
+          let deterministic = keypair
+            .try_sign(data)
+            .expect("valid authentication benchmark operation must succeed");
+          assert_eq!(signature, deterministic);
+          verifies(data, signature.as_bytes());
+        },
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("rustcrypto-p384", len), data, |b, d| {
-      b.iter(|| {
-        let signature: P384OracleSignature =
-          p384::ecdsa::signature::Signer::sign(black_box(&signing_key), black_box(d));
-        black_box(signature)
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rustcrypto-p384", len),
+      checked(
+        || {
+          let signature: P384OracleSignature =
+            p384::ecdsa::signature::Signer::sign(black_box(&signing_key), black_box(data));
+          black_box(signature)
+        },
+        |signature| verifies(data, signature.to_bytes().as_slice()),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
-      b.iter(|| {
-        black_box(
-          ring_key
-            .sign(&ring_rng, black_box(d))
-            .expect("valid authentication benchmark operation must succeed"),
-        )
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("ring", len),
+      checked(
+        || {
+          black_box(
+            ring_key
+              .sign(&ring_rng, black_box(data))
+              .expect("valid authentication benchmark operation must succeed"),
+          )
+        },
+        |signature| verifies(data, signature.as_ref()),
+      ),
+    );
 
     aws_lc_bench! {
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-        b.iter(|| black_box(aws_key.sign(&aws_rng, black_box(d)).expect("valid authentication benchmark operation must succeed")))
-      });
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs", len),
+        checked(
+          || black_box(aws_key.sign(&aws_rng, black_box(data)).expect("valid authentication benchmark operation must succeed")),
+          |signature| verifies(data, signature.as_ref()),
+        ),
+      );
     }
   }
 
@@ -1472,33 +1608,248 @@ fn ecdsa_p384_public_key(c: &mut Criterion) {
   let blind = [0xa3u8; 96];
   let oracle =
     P384OracleSecretKey::from_slice(&secret_bytes).expect("valid authentication benchmark operation must succeed");
-  let expected = secret.public_key().to_sec1_bytes();
-  assert_eq!(oracle.public_key().to_sec1_bytes().as_ref(), expected);
+  let expected = oracle.public_key().to_sec1_bytes();
 
   let mut g = c.benchmark_group("ecdsa-p384/public-key");
-  g.bench_function("rscrypto-blinded", |b| {
-    b.iter(|| {
-      black_box(
-        black_box(&secret)
-          .try_public_key_blinded_with(|out| {
-            out.copy_from_slice(black_box(&blind));
-            Ok::<(), core::convert::Infallible>(())
-          })
-          .expect("valid authentication benchmark operation must succeed"),
-      )
-    })
-  });
-  g.bench_function("rustcrypto-p384", |b| {
-    b.iter(|| black_box(black_box(&oracle).public_key()))
-  });
+  g.bench_function(
+    "rscrypto-blinded",
+    checked(
+      || {
+        black_box(
+          black_box(&secret)
+            .try_public_key_blinded_with(|out| {
+              out.copy_from_slice(black_box(&blind));
+              Ok::<(), core::convert::Infallible>(())
+            })
+            .expect("valid authentication benchmark operation must succeed"),
+        )
+      },
+      |public| assert_eq!(public.to_sec1_bytes().as_slice(), &*expected),
+    ),
+  );
+  g.bench_function(
+    "rustcrypto-p384",
+    checked(
+      || black_box(black_box(&oracle).public_key()),
+      |public| assert_eq!(public.to_sec1_bytes(), expected),
+    ),
+  );
   g.finish();
 }
+
+// Independent expectations for the diagnostic ECDSA component rows, from RustCrypto point arithmetic and
+// crypto-bigint modular arithmetic. Components return little-endian 64-bit limbs. A Montgomery value is
+// multiplied by 2^(64 * limbs) modulo its field prime or group order. A nonce row passes only when the
+// x-coordinate of its k * G is the r of rscrypto's public signature.
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+macro_rules! ecdsa_component_oracle {
+  (
+    $module:ident,
+    $curve:ident,
+    $uint:ident,
+    $secret_key:ident,
+    $hash:ty,
+    $len:literal,
+    $words:literal,
+    $order:literal,
+    $field:literal,
+    $comb_width:literal,
+    $comb_rows:literal,
+    $comb_entries:literal
+  ) => {
+    mod $module {
+      use sha2::Digest as _;
+      use $curve::{
+        AffinePoint, ProjectivePoint, Scalar,
+        elliptic_curve::{bigint::NonZero, ops::Reduce, point::AffineCoordinates as _},
+        $uint,
+      };
+
+      const ORDER: NonZero<$uint> = NonZero::<$uint>::new_unwrap(<$uint>::from_be_hex($order));
+      const FIELD: NonZero<$uint> = NonZero::<$uint>::new_unwrap(<$uint>::from_be_hex($field));
+
+      /// The integer whose little-endian 64-bit limbs a component returned.
+      pub(super) fn from_limbs(limbs: &[u64]) -> $uint {
+        let bytes: Vec<u8> = limbs.iter().rev().flat_map(|limb| limb.to_be_bytes()).collect();
+        <$uint>::from_be_slice(&bytes)
+      }
+
+      /// The coordinate pair, or `r || s`, of a two-integer component.
+      pub(super) fn pair(limbs: &[u64]) -> ($uint, $uint) {
+        let (first, second) = limbs.split_at($words);
+        (from_limbs(first), from_limbs(second))
+      }
+
+      fn nonzero(value: $uint) -> $uint {
+        if value == <$uint>::ZERO { <$uint>::ONE } else { value }
+      }
+
+      fn reduce(bytes: &[u8]) -> $uint {
+        <$uint>::rem_wide((<$uint>::from_be_slice(bytes), <$uint>::ZERO), &ORDER)
+      }
+
+      fn mul(lhs: &$uint, rhs: &$uint) -> $uint {
+        lhs.mul_mod(rhs, &ORDER)
+      }
+
+      fn inverse(value: &$uint) -> $uint {
+        value.invert_mod(&ORDER).expect("a nonzero scalar is invertible")
+      }
+
+      /// Multiplies by 2^bits, which is 2^bits - modulus because each modulus exceeds 2^(bits - 1).
+      fn montgomery(value: &$uint, modulus: &NonZero<$uint>) -> $uint {
+        value.mul_mod(&<$uint>::ZERO.wrapping_sub(modulus.as_ref()), modulus)
+      }
+
+      /// Affine coordinates of `scalar * G`.
+      fn base_mul(scalar: &$uint) -> ($uint, $uint) {
+        let point =
+          core::ops::Mul::mul(ProjectivePoint::GENERATOR, <Scalar as Reduce<$uint>>::reduce(scalar)).to_affine();
+        (<$uint>::from_be_slice(&point.x()), <$uint>::from_be_slice(&point.y()))
+      }
+
+      /// rscrypto's nonzero reduction of a double-width big-endian value.
+      pub(super) fn reduce_wide(bytes: &[u8]) -> $uint {
+        let (high, low) = bytes.split_at($len);
+        nonzero(<$uint>::rem_wide(
+          (<$uint>::from_be_slice(low), <$uint>::from_be_slice(high)),
+          &ORDER,
+        ))
+      }
+
+      /// The nonce blind that rscrypto derives from caller bytes. s390x draws it from the second half, with
+      /// the top bit cleared; other targets reduce all of the bytes.
+      fn nonce_blind(blind: &[u8]) -> $uint {
+        if cfg!(target_arch = "s390x") {
+          let mut half = [0u8; $len];
+          half.copy_from_slice(&blind[$len..]);
+          half[0] &= 0x7f;
+          nonzero(<$uint>::from_be_slice(&half))
+        } else {
+          reduce_wide(blind)
+        }
+      }
+
+      /// The `r` of rscrypto's public deterministic signature.
+      pub(super) fn signature_r(secret: [u8; $len], message: &[u8]) -> $uint {
+        let signature = rscrypto::$secret_key::from_bytes(secret)
+          .expect("valid authentication benchmark operation must succeed")
+          .try_sign(message)
+          .expect("valid authentication benchmark operation must succeed")
+          .to_bytes();
+        <$uint>::from_be_slice(&signature[..$len])
+      }
+
+      /// The nonce in `limbs`, once its point reproduces the public signature for `message`.
+      pub(super) fn nonce(limbs: &[u64], secret: [u8; $len], message: &[u8]) -> $uint {
+        let nonce = from_limbs(limbs);
+        let (x, _) = base_mul(&nonce);
+        assert_eq!(
+          <$uint>::rem_wide((x, <$uint>::ZERO), &ORDER),
+          signature_r(secret, message),
+          "the component nonce must produce the public signature"
+        );
+        nonce
+      }
+
+      /// The fixed public `r` of the scalar rows: the generator's x-coordinate modulo n.
+      pub(super) fn fixed_r() -> $uint {
+        reduce(&AffinePoint::GENERATOR.x())
+      }
+
+      /// r * d mod n for the fixed `r`.
+      pub(super) fn r_times_secret(secret: [u8; $len]) -> $uint {
+        mul(&fixed_r(), &reduce(&secret))
+      }
+
+      /// k^-1 (z + r d) mod n for the fixed `r`, before low-s normalization.
+      pub(super) fn raw_s(secret: [u8; $len], nonce: &$uint, message: &[u8]) -> $uint {
+        let z = reduce(&<$hash>::digest(message));
+        mul(&inverse(nonce), &z.add_mod(&r_times_secret(secret), &ORDER))
+      }
+
+      pub(super) fn low_s(s: $uint) -> $uint {
+        if s > ORDER.as_ref().shr(1) {
+          s.neg_mod(&ORDER)
+        } else {
+          s
+        }
+      }
+
+      pub(super) fn montgomery_scalar(value: &$uint) -> $uint {
+        montgomery(value, &ORDER)
+      }
+
+      pub(super) fn montgomery_inverse(value: &$uint) -> $uint {
+        montgomery(&inverse(value), &ORDER)
+      }
+
+      /// The nonce times the blind that rscrypto derives from `blind`.
+      pub(super) fn blinded(nonce: &$uint, blind: &[u8]) -> $uint {
+        mul(nonce, &nonce_blind(blind))
+      }
+
+      /// Montgomery affine coordinates of `scalar * G`.
+      pub(super) fn montgomery_point(scalar: &$uint) -> ($uint, $uint) {
+        let (x, y) = base_mul(scalar);
+        (montgomery(&x, &FIELD), montgomery(&y, &FIELD))
+      }
+
+      /// The signing-comb entry for `digit`: digit bit `c` adds 2^(c * rows) G. Digit 0 and digits past the
+      /// table select entry 0, which holds G.
+      pub(super) fn comb_entry(digit: u8) -> ($uint, $uint) {
+        let mut scalar = <$uint>::ZERO;
+        if u32::from(digit) < $comb_entries {
+          for column in 0..$comb_width {
+            if u32::from(digit).checked_shr(column).expect("comb column is below 32") & 1 == 1 {
+              scalar = scalar.wrapping_add(&<$uint>::ONE.shl(column.strict_mul($comb_rows)));
+            }
+          }
+        }
+        montgomery_point(&nonzero(scalar))
+      }
+    }
+  };
+}
+
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
+ecdsa_component_oracle!(
+  p256_components,
+  p256,
+  U256,
+  EcdsaP256SecretKey,
+  sha2::Sha256,
+  32,
+  4,
+  "FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551",
+  "FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF",
+  7,
+  37,
+  128
+);
+
+#[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
+ecdsa_component_oracle!(
+  p384_components,
+  p384,
+  U384,
+  EcdsaP384SecretKey,
+  sha2::Sha384,
+  48,
+  6,
+  "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFC7634D81F4372DDF581A0DB248B0A77AECEC196ACCC52973",
+  "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFFFF0000000000000000FFFFFFFF",
+  8,
+  48,
+  256
+);
 
 #[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p256"))]
 fn ecdsa_p256_internal(c: &mut Criterion) {
   if !bench_config::selected("ecdsa-p256/internal") {
     return;
   }
+  use crate::p256_components as oracle;
   use rscrypto::auth::{
     diag_ecdsa_p256_basepoint_blinded_limb_digest, diag_ecdsa_p256_final_multiply_limb_digest,
     diag_ecdsa_p256_nonce_inverse_blinded_limb_digest, diag_ecdsa_p256_nonce_inverse_limb_digest,
@@ -1516,81 +1867,131 @@ fn ecdsa_p256_internal(c: &mut Criterion) {
     .collect::<Vec<_>>();
   let mut g = c.benchmark_group("ecdsa-p256/internal");
 
-  g.bench_function("select-generator-affine", |b| {
-    b.iter(|| {
-      black_box(diag_ecdsa_p256_select_signing_generator_affine_limb_digest(black_box(
-        173,
-      )))
-    })
-  });
-  g.bench_function("reduce-wide-order", |b| {
-    b.iter(|| black_box(diag_ecdsa_p256_reduce_wide_order_limb_digest(black_box(nonce_wide))))
-  });
-  g.bench_function("order-mul-fixed-r", |b| {
-    b.iter(|| black_box(diag_ecdsa_p256_order_mul_fixed_r_limb_digest(black_box(secret))))
-  });
-  g.bench_function("order-mul-blinded-fixed-r", |b| {
-    b.iter(|| {
-      black_box(diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest(
-        black_box(secret),
-        black_box(blind),
-      ))
-    })
-  });
+  g.bench_function(
+    "select-generator-affine",
+    checked(
+      || {
+        black_box(diag_ecdsa_p256_select_signing_generator_affine_limb_digest(black_box(
+          173,
+        )))
+      },
+      |limbs| assert_eq!(oracle::pair(&limbs), oracle::comb_entry(173)),
+    ),
+  );
+  g.bench_function(
+    "reduce-wide-order",
+    checked(
+      || black_box(diag_ecdsa_p256_reduce_wide_order_limb_digest(black_box(nonce_wide))),
+      |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::reduce_wide(&nonce_wide)),
+    ),
+  );
+  g.bench_function(
+    "order-mul-fixed-r",
+    checked(
+      || black_box(diag_ecdsa_p256_order_mul_fixed_r_limb_digest(black_box(secret))),
+      |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::r_times_secret(secret)),
+    ),
+  );
+  g.bench_function(
+    "order-mul-blinded-fixed-r",
+    checked(
+      || {
+        black_box(diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest(
+          black_box(secret),
+          black_box(blind),
+        ))
+      },
+      |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::r_times_secret(secret)),
+    ),
+  );
 
   for (len, data) in &inputs {
-    g.bench_with_input(BenchmarkId::new("nonce-reduce", len), data, |b, d| {
-      b.iter(|| {
-        black_box(diag_ecdsa_p256_nonce_reduce_limb_digest(
-          black_box(secret),
-          black_box(d),
-        ))
-      })
-    });
-    g.bench_with_input(BenchmarkId::new("basepoint-blinded", len), data, |b, d| {
-      b.iter(|| {
-        black_box(diag_ecdsa_p256_basepoint_blinded_limb_digest(
-          black_box(secret),
-          black_box(blind),
-          black_box(d),
-        ))
-      })
-    });
-    g.bench_with_input(BenchmarkId::new("scalar-finish", len), data, |b, d| {
-      b.iter(|| {
-        black_box(diag_ecdsa_p256_scalar_finish_limb_digest(
-          black_box(secret),
-          black_box(nonce_wide),
-          black_box(d),
-        ))
-      })
-    });
-    g.bench_with_input(BenchmarkId::new("nonce-inverse", len), data, |b, d| {
-      b.iter(|| {
-        black_box(diag_ecdsa_p256_nonce_inverse_limb_digest(
-          black_box(secret),
-          black_box(d),
-        ))
-      })
-    });
-    g.bench_with_input(BenchmarkId::new("nonce-inverse-blinded", len), data, |b, d| {
-      b.iter(|| {
-        black_box(diag_ecdsa_p256_nonce_inverse_blinded_limb_digest(
-          black_box(secret),
-          black_box(blind),
-          black_box(d),
-        ))
-      })
-    });
-    g.bench_with_input(BenchmarkId::new("final-multiply", len), data, |b, d| {
-      b.iter(|| {
-        black_box(diag_ecdsa_p256_final_multiply_limb_digest(
-          black_box(secret),
-          black_box(nonce_wide),
-          black_box(d),
-        ))
-      })
-    });
+    let nonce = || oracle::nonce(&diag_ecdsa_p256_nonce_reduce_limb_digest(secret, data), secret, data);
+    let wide_s = || oracle::raw_s(secret, &oracle::reduce_wide(&nonce_wide), data);
+
+    g.bench_function(
+      BenchmarkId::new("nonce-reduce", len),
+      checked(
+        || {
+          black_box(diag_ecdsa_p256_nonce_reduce_limb_digest(
+            black_box(secret),
+            black_box(data),
+          ))
+        },
+        |limbs| {
+          oracle::nonce(&limbs, secret, data);
+        },
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("basepoint-blinded", len),
+      checked(
+        || {
+          black_box(diag_ecdsa_p256_basepoint_blinded_limb_digest(
+            black_box(secret),
+            black_box(blind),
+            black_box(data),
+          ))
+        },
+        |limbs| assert_eq!(oracle::pair(&limbs), oracle::montgomery_point(&nonce())),
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("scalar-finish", len),
+      checked(
+        || {
+          black_box(diag_ecdsa_p256_scalar_finish_limb_digest(
+            black_box(secret),
+            black_box(nonce_wide),
+            black_box(data),
+          ))
+        },
+        |limbs| assert_eq!(oracle::pair(&limbs), (oracle::fixed_r(), oracle::low_s(wide_s()))),
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("nonce-inverse", len),
+      checked(
+        || {
+          black_box(diag_ecdsa_p256_nonce_inverse_limb_digest(
+            black_box(secret),
+            black_box(data),
+          ))
+        },
+        |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::montgomery_inverse(&nonce())),
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("nonce-inverse-blinded", len),
+      checked(
+        || {
+          black_box(diag_ecdsa_p256_nonce_inverse_blinded_limb_digest(
+            black_box(secret),
+            black_box(blind),
+            black_box(data),
+          ))
+        },
+        |limbs| {
+          assert_eq!(
+            oracle::from_limbs(&limbs),
+            oracle::montgomery_inverse(&oracle::blinded(&nonce(), &blind))
+          )
+        },
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("final-multiply", len),
+      checked(
+        || {
+          black_box(diag_ecdsa_p256_final_multiply_limb_digest(
+            black_box(secret),
+            black_box(nonce_wide),
+            black_box(data),
+          ))
+        },
+        |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::montgomery_scalar(&wide_s())),
+      ),
+    );
   }
 
   g.finish();
@@ -1601,6 +2002,7 @@ fn ecdsa_p384_internal(c: &mut Criterion) {
   if !bench_config::selected("ecdsa-p384/internal") {
     return;
   }
+  use crate::p384_components as oracle;
   use rscrypto::auth::{
     diag_ecdsa_p384_basepoint_blinded_limb_digest, diag_ecdsa_p384_basepoint_r_limb_digest,
     diag_ecdsa_p384_final_multiply_limb_digest, diag_ecdsa_p384_nonce_inverse_blinded_limb_digest,
@@ -1618,76 +2020,131 @@ fn ecdsa_p384_internal(c: &mut Criterion) {
     .collect::<Vec<_>>();
   let mut g = c.benchmark_group("ecdsa-p384/internal");
 
-  g.bench_function("select-generator-affine", |b| {
-    b.iter(|| {
-      black_box(diag_ecdsa_p384_select_signing_generator_affine_limb_digest(black_box(
-        173,
-      )))
-    })
-  });
-  g.bench_function("reduce-wide-order", |b| {
-    b.iter(|| black_box(diag_ecdsa_p384_reduce_wide_order_limb_digest(black_box(nonce_wide))))
-  });
-  g.bench_function("order-mul-fixed-r", |b| {
-    b.iter(|| black_box(diag_ecdsa_p384_order_mul_fixed_r_limb_digest(black_box(secret))))
-  });
+  g.bench_function(
+    "select-generator-affine",
+    checked(
+      || {
+        black_box(diag_ecdsa_p384_select_signing_generator_affine_limb_digest(black_box(
+          173,
+        )))
+      },
+      |limbs| assert_eq!(oracle::pair(&limbs), oracle::comb_entry(173)),
+    ),
+  );
+  g.bench_function(
+    "reduce-wide-order",
+    checked(
+      || black_box(diag_ecdsa_p384_reduce_wide_order_limb_digest(black_box(nonce_wide))),
+      |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::reduce_wide(&nonce_wide)),
+    ),
+  );
+  g.bench_function(
+    "order-mul-fixed-r",
+    checked(
+      || black_box(diag_ecdsa_p384_order_mul_fixed_r_limb_digest(black_box(secret))),
+      |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::r_times_secret(secret)),
+    ),
+  );
 
   for (len, data) in &inputs {
-    g.bench_with_input(BenchmarkId::new("nonce-reduce", len), data, |b, d| {
-      b.iter(|| {
-        black_box(diag_ecdsa_p384_nonce_reduce_limb_digest(
-          black_box(secret),
-          black_box(d),
-        ))
-      })
-    });
-    g.bench_with_input(BenchmarkId::new("basepoint-blinded", len), data, |b, d| {
-      b.iter(|| {
-        black_box(diag_ecdsa_p384_basepoint_blinded_limb_digest(
-          black_box(secret),
-          black_box(blind),
-          black_box(d),
-        ))
-      })
-    });
-    g.bench_with_input(BenchmarkId::new("basepoint-r", len), data, |b, d| {
-      b.iter(|| black_box(diag_ecdsa_p384_basepoint_r_limb_digest(black_box(secret), black_box(d))))
-    });
-    g.bench_with_input(BenchmarkId::new("scalar-finish", len), data, |b, d| {
-      b.iter(|| {
-        black_box(diag_ecdsa_p384_scalar_finish_limb_digest(
-          black_box(secret),
-          black_box(nonce_wide),
-          black_box(d),
-        ))
-      })
-    });
-    g.bench_with_input(BenchmarkId::new("nonce-inverse", len), data, |b, d| {
-      b.iter(|| {
-        black_box(diag_ecdsa_p384_nonce_inverse_limb_digest(
-          black_box(secret),
-          black_box(d),
-        ))
-      })
-    });
-    g.bench_with_input(BenchmarkId::new("nonce-inverse-blinded", len), data, |b, d| {
-      b.iter(|| {
-        black_box(diag_ecdsa_p384_nonce_inverse_blinded_limb_digest(
-          black_box(secret),
-          black_box(blind),
-          black_box(d),
-        ))
-      })
-    });
-    g.bench_with_input(BenchmarkId::new("final-multiply", len), data, |b, d| {
-      b.iter(|| {
-        black_box(diag_ecdsa_p384_final_multiply_limb_digest(
-          black_box(secret),
-          black_box(nonce_wide),
-          black_box(d),
-        ))
-      })
-    });
+    let nonce = || oracle::nonce(&diag_ecdsa_p384_nonce_reduce_limb_digest(secret, data), secret, data);
+    let wide_s = || oracle::raw_s(secret, &oracle::reduce_wide(&nonce_wide), data);
+
+    g.bench_function(
+      BenchmarkId::new("nonce-reduce", len),
+      checked(
+        || {
+          black_box(diag_ecdsa_p384_nonce_reduce_limb_digest(
+            black_box(secret),
+            black_box(data),
+          ))
+        },
+        |limbs| {
+          oracle::nonce(&limbs, secret, data);
+        },
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("basepoint-blinded", len),
+      checked(
+        || {
+          black_box(diag_ecdsa_p384_basepoint_blinded_limb_digest(
+            black_box(secret),
+            black_box(blind),
+            black_box(data),
+          ))
+        },
+        |limbs| assert_eq!(oracle::pair(&limbs), oracle::montgomery_point(&nonce())),
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("basepoint-r", len),
+      checked(
+        || {
+          black_box(diag_ecdsa_p384_basepoint_r_limb_digest(
+            black_box(secret),
+            black_box(data),
+          ))
+        },
+        |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::signature_r(secret, data)),
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("scalar-finish", len),
+      checked(
+        || {
+          black_box(diag_ecdsa_p384_scalar_finish_limb_digest(
+            black_box(secret),
+            black_box(nonce_wide),
+            black_box(data),
+          ))
+        },
+        |limbs| assert_eq!(oracle::pair(&limbs), (oracle::fixed_r(), oracle::low_s(wide_s()))),
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("nonce-inverse", len),
+      checked(
+        || {
+          black_box(diag_ecdsa_p384_nonce_inverse_limb_digest(
+            black_box(secret),
+            black_box(data),
+          ))
+        },
+        |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::montgomery_inverse(&nonce())),
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("nonce-inverse-blinded", len),
+      checked(
+        || {
+          black_box(diag_ecdsa_p384_nonce_inverse_blinded_limb_digest(
+            black_box(secret),
+            black_box(blind),
+            black_box(data),
+          ))
+        },
+        |limbs| {
+          assert_eq!(
+            oracle::from_limbs(&limbs),
+            oracle::montgomery_inverse(&oracle::blinded(&nonce(), &blind))
+          )
+        },
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("final-multiply", len),
+      checked(
+        || {
+          black_box(diag_ecdsa_p384_final_multiply_limb_digest(
+            black_box(secret),
+            black_box(nonce_wide),
+            black_box(data),
+          ))
+        },
+        |limbs| assert_eq!(oracle::from_limbs(&limbs), oracle::montgomery_scalar(&wide_s())),
+      ),
+    );
   }
 
   g.finish();
@@ -1698,18 +2155,27 @@ fn ed25519_keypair_from_secret(c: &mut Criterion) {
     return;
   }
   let secret_bytes = [8u8; 32];
+  let expected = SigningKey::from_bytes(&secret_bytes).verifying_key().to_bytes();
   let mut g = c.benchmark_group("ed25519/keypair-from-secret");
 
-  g.bench_function("rscrypto", |b| {
-    b.iter(|| {
-      let secret = Ed25519SecretKey::from_bytes(*black_box(&secret_bytes));
-      black_box(Ed25519Keypair::from_secret_key(secret))
-    })
-  });
+  g.bench_function(
+    "rscrypto",
+    checked(
+      || {
+        let secret = Ed25519SecretKey::from_bytes(*black_box(&secret_bytes));
+        black_box(Ed25519Keypair::from_secret_key(secret))
+      },
+      |keypair| assert_eq!(keypair.public_key().to_bytes(), expected),
+    ),
+  );
 
-  g.bench_function("dalek", |b| {
-    b.iter(|| black_box(SigningKey::from_bytes(black_box(&secret_bytes))))
-  });
+  g.bench_function(
+    "dalek",
+    checked(
+      || black_box(SigningKey::from_bytes(black_box(&secret_bytes))),
+      |signing_key| assert_eq!(signing_key.verifying_key().to_bytes(), expected),
+    ),
+  );
 
   g.finish();
 }
@@ -1730,7 +2196,6 @@ fn ed25519_sign(c: &mut Criterion) {
   let ring_kp = ring::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes)
     .expect("valid authentication benchmark operation must succeed");
   let (_dryoc_pk, dryoc_sk) = crypto_sign_seed_keypair(&secret_bytes);
-  let mut dryoc_sig: [u8; 64] = [0u8; 64];
   let inputs = [0usize, 32, 1024, 16384]
     .into_iter()
     .map(|len| (len, common::random_bytes(len)))
@@ -1739,36 +2204,63 @@ fn ed25519_sign(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
+    // RFC 8032 signing is deterministic, so every row must return Dalek's signature.
+    let expected = || signing_key.sign(data).to_bytes();
 
-    g.bench_with_input(BenchmarkId::new("rscrypto-direct-secret", len), data, |b, d| {
-      b.iter(|| black_box(black_box(&secret).sign(black_box(d))))
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto-direct-secret", len),
+      checked(
+        || black_box(black_box(&secret).sign(black_box(data))),
+        |signature| assert_eq!(signature.to_bytes(), expected()),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| black_box(black_box(&keypair).sign(black_box(d))))
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked(
+        || black_box(black_box(&keypair).sign(black_box(data))),
+        |signature| assert_eq!(signature.to_bytes(), expected()),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("dalek", len), data, |b, d| {
-      b.iter(|| black_box(black_box(&signing_key).sign(black_box(d))))
-    });
+    g.bench_function(
+      BenchmarkId::new("dalek", len),
+      checked(
+        || black_box(black_box(&signing_key).sign(black_box(data))),
+        |signature| assert_eq!(signature.to_bytes(), expected()),
+      ),
+    );
 
     aws_lc_bench! {
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-        b.iter(|| black_box(aws_kp.sign(black_box(d))))
-      });
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs", len),
+        checked(
+          || black_box(aws_kp.sign(black_box(data))),
+          |signature| assert_eq!(signature.as_ref(), expected().as_slice()),
+        ),
+      );
     }
 
-    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
-      b.iter(|| black_box(ring_kp.sign(black_box(d))))
-    });
+    g.bench_function(
+      BenchmarkId::new("ring", len),
+      checked(
+        || black_box(ring_kp.sign(black_box(data))),
+        |signature| assert_eq!(signature.as_ref(), expected().as_slice()),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("dryoc", len), data, |b, d| {
-      b.iter(|| {
-        crypto_sign_detached(&mut dryoc_sig, black_box(d), &dryoc_sk)
-          .expect("valid authentication benchmark operation must succeed");
-        black_box(&dryoc_sig);
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("dryoc", len),
+      checked_with(
+        [0u8; 64],
+        |signature| {
+          crypto_sign_detached(signature, black_box(data), &dryoc_sk)
+            .expect("valid authentication benchmark operation must succeed");
+          black_box(&*signature);
+        },
+        |(), signature| assert_eq!(*signature, expected()),
+      ),
+    );
   }
 
   g.finish();
@@ -1778,28 +2270,17 @@ fn ed25519_verify(c: &mut Criterion) {
   if !bench_config::selected("ed25519/verify") {
     return;
   }
-  aws_lc_bench! {
-    use aws_lc_rs::signature::KeyPair as _;
-  }
-  use dryoc::classic::crypto_sign::{crypto_sign_detached, crypto_sign_seed_keypair, crypto_sign_verify_detached};
-  use ring::signature::KeyPair as _;
+  use dryoc::classic::crypto_sign::crypto_sign_verify_detached;
 
   let secret_bytes = [13u8; 32];
-  let secret = Ed25519SecretKey::from_bytes(secret_bytes);
-  let keypair = Ed25519Keypair::from_secret_key(secret);
-  let public: Ed25519PublicKey = keypair.public_key();
   let signing_key = SigningKey::from_bytes(&secret_bytes);
   let verifying_key = signing_key.verifying_key();
+  let public_bytes = verifying_key.to_bytes();
+  let public = Ed25519PublicKey::from_bytes(public_bytes);
   aws_lc_bench! {
-    let aws_kp = aws_lc_rs::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes).expect("valid authentication benchmark operation must succeed");
-    let aws_pubkey: Vec<u8> = aws_kp.public_key().as_ref().to_vec();
-    let aws_upk = aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, aws_pubkey);
+    let aws_upk = aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, public_bytes);
   }
-  let ring_kp = ring::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes)
-    .expect("valid authentication benchmark operation must succeed");
-  let ring_pubkey: Vec<u8> = ring_kp.public_key().as_ref().to_vec();
-  let ring_upk = ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, ring_pubkey);
-  let (dryoc_pk, dryoc_sk) = crypto_sign_seed_keypair(&secret_bytes);
+  let ring_upk = ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, public_bytes);
   let inputs = [0usize, 32, 1024, 16384]
     .into_iter()
     .map(|len| (len, common::random_bytes(len)))
@@ -1808,73 +2289,132 @@ fn ed25519_verify(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
-    let ours = keypair.sign(data);
-    let dalek = signing_key.sign(data);
-    assert_eq!(ours.to_bytes(), dalek.to_bytes());
-    assert_eq!(public.to_bytes(), verifying_key.to_bytes());
-    aws_lc_bench! {
-      let aws_sig = aws_kp.sign(data);
-    }
-    let ring_sig = ring_kp.sign(data);
-    let mut dryoc_sig: [u8; 64] = [0u8; 64];
-    crypto_sign_detached(&mut dryoc_sig, data, &dryoc_sk)
-      .expect("valid authentication benchmark operation must succeed");
+    // Every row verifies Dalek's signature, which RFC 8032 makes every library's signature for this key and
+    // message, and must reject it once one byte of R changes.
+    let signature_bytes = signing_key.sign(data).to_bytes();
+    let mut tampered_bytes = signature_bytes;
+    tampered_bytes[0] ^= 1;
+    let ours = Ed25519Signature::from_bytes(signature_bytes);
+    let tampered = Ed25519Signature::from_bytes(tampered_bytes);
+    let dalek = DalekSignature::from_bytes(&signature_bytes);
+    let dalek_tampered = DalekSignature::from_bytes(&tampered_bytes);
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| {
-        black_box(&public)
-          .verify(black_box(d), black_box(&ours))
-          .expect("valid authentication benchmark operation must succeed");
-        black_box(())
-      })
-    });
-
-    let verify_imported = || {
-      Ed25519PublicKey::from_bytes(*black_box(public.as_bytes()))
-        .verify(black_box(data), black_box(&ours))
-        .expect("valid authentication benchmark operation must succeed");
-      black_box(())
-    };
-    verify_imported();
-    g.bench_function(BenchmarkId::new("rscrypto-import", len), |b| b.iter(verify_imported));
-
-    g.bench_with_input(BenchmarkId::new("dalek", len), data, |b, d| {
-      b.iter(|| {
-        black_box(&verifying_key)
-          .verify_strict(black_box(d), black_box(&dalek))
-          .expect("valid authentication benchmark operation must succeed");
-        black_box(())
-      })
-    });
-
-    aws_lc_bench! {
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-        b.iter(|| {
-          aws_upk.verify(black_box(d), aws_sig.as_ref()).expect("valid authentication benchmark operation must succeed");
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked(
+        || {
+          black_box(&public)
+            .verify(black_box(data), black_box(&ours))
+            .expect("valid authentication benchmark operation must succeed");
           black_box(())
-        })
-      });
+        },
+        |()| {
+          public
+            .verify(data, &tampered)
+            .expect_err("a changed Ed25519 signature must fail");
+        },
+      ),
+    );
+
+    g.bench_function(
+      BenchmarkId::new("rscrypto-import", len),
+      checked(
+        || {
+          Ed25519PublicKey::from_bytes(*black_box(&public_bytes))
+            .verify(black_box(data), black_box(&ours))
+            .expect("valid authentication benchmark operation must succeed");
+          black_box(())
+        },
+        |()| {
+          Ed25519PublicKey::from_bytes(public_bytes)
+            .verify(data, &tampered)
+            .expect_err("a changed Ed25519 signature must fail");
+        },
+      ),
+    );
+
+    g.bench_function(
+      BenchmarkId::new("dalek", len),
+      checked(
+        || {
+          black_box(&verifying_key)
+            .verify_strict(black_box(data), black_box(&dalek))
+            .expect("valid authentication benchmark operation must succeed");
+          black_box(())
+        },
+        |()| {
+          verifying_key
+            .verify_strict(data, &dalek_tampered)
+            .expect_err("a changed Ed25519 signature must fail");
+        },
+      ),
+    );
+
+    aws_lc_bench! {
+      g.bench_function(
+        BenchmarkId::new("aws-lc-rs", len),
+        checked(
+          || {
+            aws_upk.verify(black_box(data), &signature_bytes).expect("valid authentication benchmark operation must succeed");
+            black_box(())
+          },
+          |()| {
+            aws_upk.verify(data, &tampered_bytes).expect_err("a changed Ed25519 signature must fail");
+          },
+        ),
+      );
     }
 
-    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
-      b.iter(|| {
-        ring_upk
-          .verify(black_box(d), ring_sig.as_ref())
-          .expect("valid authentication benchmark operation must succeed");
-        black_box(())
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("ring", len),
+      checked(
+        || {
+          ring_upk
+            .verify(black_box(data), &signature_bytes)
+            .expect("valid authentication benchmark operation must succeed");
+          black_box(())
+        },
+        |()| {
+          ring_upk
+            .verify(data, &tampered_bytes)
+            .expect_err("a changed Ed25519 signature must fail");
+        },
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("dryoc", len), data, |b, d| {
-      b.iter(|| {
-        crypto_sign_verify_detached(&dryoc_sig, black_box(d), &dryoc_pk)
-          .expect("valid authentication benchmark operation must succeed");
-        black_box(())
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("dryoc", len),
+      checked(
+        || {
+          crypto_sign_verify_detached(&signature_bytes, black_box(data), &public_bytes)
+            .expect("valid authentication benchmark operation must succeed");
+          black_box(())
+        },
+        |()| {
+          crypto_sign_verify_detached(&tampered_bytes, data, &public_bytes)
+            .expect_err("a changed Ed25519 signature must fail");
+        },
+      ),
+    );
   }
 
   g.finish();
+}
+
+/// Adds two little-endian 256-bit integers whose sum fits in 256 bits.
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+fn add_le_256(lhs: &[u8; 32], rhs: &[u8; 32]) -> [u8; 32] {
+  let mut carry = 0u8;
+  let sum = core::array::from_fn(|index| {
+    let total = u16::from(lhs[index])
+      .strict_add(u16::from(rhs[index]))
+      .strict_add(u16::from(carry));
+    let [low, high] = total.to_le_bytes();
+    carry = high;
+    low
+  });
+  assert_eq!(carry, 0, "the sum must fit in 256 bits");
+  sum
 }
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
@@ -1889,10 +2429,11 @@ fn ed25519_verify_phase(c: &mut Criterion) {
 
   print_auth_diag_once();
 
-  let secret_bytes = [13u8; 32];
-  let secret = Ed25519SecretKey::from_bytes(secret_bytes);
-  let keypair = Ed25519Keypair::from_secret_key(secret);
-  let public = keypair.public_key();
+  // Dalek's signature satisfies [s]B + [-k]A = R. Decoded points must re-encode to their inputs, and the
+  // double-scalar rows must return R; with that equation, k + (-k) must equal the group order L.
+  let order = hex::<32>("edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010");
+  let signing_key = SigningKey::from_bytes(&[13u8; 32]);
+  let public = Ed25519PublicKey::from_bytes(signing_key.verifying_key().to_bytes());
   let inputs = [0usize, 32, 1024, 16384]
     .into_iter()
     .map(|len| (len, common::random_bytes(len)))
@@ -1901,37 +2442,62 @@ fn ed25519_verify_phase(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
-    let signature = keypair.sign(data);
+    let signature = Ed25519Signature::from_bytes(signing_key.sign(data).to_bytes());
     let scalars = diag_ed25519_verify_scalars(&public, &signature, data)
       .expect("valid authentication benchmark operation must succeed");
+    let r_bytes = scalars.r_bytes;
 
-    g.bench_with_input(BenchmarkId::new("challenge-reduce", len), data, |b, d| {
-      b.iter(|| {
-        black_box(diag_ed25519_verify_challenge_reduce_digest(
-          black_box(&public),
-          black_box(&signature),
-          black_box(d),
-        ))
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("challenge-reduce", len),
+      checked(
+        || {
+          black_box(diag_ed25519_verify_challenge_reduce_digest(
+            black_box(&public),
+            black_box(&signature),
+            black_box(data),
+          ))
+        },
+        |challenge| {
+          let point = diag_ed25519_verify_portable_double_scalar_digest(
+            &scalars.s_canonical,
+            &scalars.neg_challenge,
+            &scalars.public_key,
+          );
+          assert_eq!(point, r_bytes);
+          assert_eq!(add_le_256(&challenge, &scalars.neg_challenge), order);
+        },
+      ),
+    );
 
-    g.bench_function(BenchmarkId::new("public-decode", len), |b| {
-      b.iter(|| black_box(diag_ed25519_verify_public_decode_digest(black_box(&scalars.public_key))))
-    });
+    g.bench_function(
+      BenchmarkId::new("public-decode", len),
+      checked(
+        || black_box(diag_ed25519_verify_public_decode_digest(black_box(&scalars.public_key))),
+        |encoded| assert_eq!(encoded, *public.as_bytes()),
+      ),
+    );
 
-    g.bench_function(BenchmarkId::new("r-decode", len), |b| {
-      b.iter(|| black_box(diag_ed25519_verify_r_decode_digest(black_box(&scalars.r_bytes))))
-    });
+    g.bench_function(
+      BenchmarkId::new("r-decode", len),
+      checked(
+        || black_box(diag_ed25519_verify_r_decode_digest(black_box(&scalars.r_bytes))),
+        |encoded| assert_eq!(encoded, r_bytes),
+      ),
+    );
 
-    g.bench_function(BenchmarkId::new("portable-double-scalar", len), |b| {
-      b.iter(|| {
-        black_box(diag_ed25519_verify_portable_double_scalar_digest(
-          black_box(&scalars.s_canonical),
-          black_box(&scalars.neg_challenge),
-          black_box(&scalars.public_key),
-        ))
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("portable-double-scalar", len),
+      checked(
+        || {
+          black_box(diag_ed25519_verify_portable_double_scalar_digest(
+            black_box(&scalars.s_canonical),
+            black_box(&scalars.neg_challenge),
+            black_box(&scalars.public_key),
+          ))
+        },
+        |point| assert_eq!(point, r_bytes),
+      ),
+    );
 
     #[cfg(all(
       target_arch = "aarch64",
@@ -1939,18 +2505,43 @@ fn ed25519_verify_phase(c: &mut Criterion) {
       not(feature = "portable-only"),
       not(miri)
     ))]
-    g.bench_function(BenchmarkId::new("aarch64-asm-double-scalar", len), |b| {
-      b.iter(|| {
-        black_box(rscrypto::auth::diag_ed25519_verify_aarch64_asm_double_scalar_digest(
-          black_box(&scalars.s_canonical),
-          black_box(&scalars.neg_challenge),
-          black_box(&scalars.public_key),
-        ))
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("aarch64-asm-double-scalar", len),
+      checked(
+        || {
+          black_box(rscrypto::auth::diag_ed25519_verify_aarch64_asm_double_scalar_digest(
+            black_box(&scalars.s_canonical),
+            black_box(&scalars.neg_challenge),
+            black_box(&scalars.public_key),
+          ))
+        },
+        |point| assert_eq!(point, r_bytes),
+      ),
+    );
   }
 
   g.finish();
+}
+
+/// RFC 7748 Section 6.1 X25519 vector through the public rscrypto API.
+fn x25519_rfc7748_check() {
+  let alice = X25519SecretKey::from_bytes(hex("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a"));
+  let bob = X25519SecretKey::from_bytes(hex("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb"));
+  assert_eq!(
+    alice.public_key().to_bytes(),
+    hex("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a")
+  );
+  assert_eq!(
+    bob.public_key().to_bytes(),
+    hex("de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f")
+  );
+  let shared = alice
+    .diffie_hellman(&bob.public_key())
+    .expect("the RFC 7748 public key is valid");
+  assert_eq!(
+    *shared.as_bytes(),
+    hex::<32>("4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742")
+  );
 }
 
 // `ring` is omitted from x25519 benches: ring 0.17 only exposes
@@ -1965,40 +2556,58 @@ fn x25519_public_key(c: &mut Criterion) {
   use dryoc::classic::crypto_core::crypto_scalarmult_base;
 
   let secret_bytes = [0x2au8; 32];
+  // Every row must return Dalek's public key.
+  let expected = DalekX25519PublicKey::from(&DalekX25519Secret::from(secret_bytes)).to_bytes();
   let mut g = c.benchmark_group("x25519/public-key-from-secret");
 
-  g.bench_function("rscrypto", |b| {
-    b.iter(|| {
-      let secret = X25519SecretKey::from_bytes(*black_box(&secret_bytes));
-      black_box(secret.public_key())
-    })
-  });
+  g.bench_function(
+    "rscrypto",
+    checked(
+      || {
+        let secret = X25519SecretKey::from_bytes(*black_box(&secret_bytes));
+        black_box(secret.public_key())
+      },
+      |public| assert_eq!(public.to_bytes(), expected),
+    ),
+  );
 
-  g.bench_function("dalek", |b| {
-    b.iter(|| {
-      let secret = DalekX25519Secret::from(*black_box(&secret_bytes));
-      black_box(DalekX25519PublicKey::from(&secret))
-    })
-  });
+  g.bench_function(
+    "dalek",
+    checked(
+      || {
+        let secret = DalekX25519Secret::from(*black_box(&secret_bytes));
+        black_box(DalekX25519PublicKey::from(&secret))
+      },
+      |public| assert_eq!(public.to_bytes(), expected),
+    ),
+  );
 
   aws_lc_bench! {
-    g.bench_function("aws-lc-rs", |b| {
-      b.iter(|| {
-        let priv_key =
-          aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, black_box(&secret_bytes))
-            .expect("valid authentication benchmark operation must succeed");
-        black_box(priv_key.compute_public_key().expect("valid authentication benchmark operation must succeed"))
-      })
-    });
+    g.bench_function(
+      "aws-lc-rs",
+      checked(
+        || {
+          let priv_key =
+            aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, black_box(&secret_bytes))
+              .expect("valid authentication benchmark operation must succeed");
+          black_box(priv_key.compute_public_key().expect("valid authentication benchmark operation must succeed"))
+        },
+        |public| assert_eq!(public.as_ref(), expected.as_slice()),
+      ),
+    );
   }
 
-  g.bench_function("dryoc", |b| {
-    let mut public = [0u8; 32];
-    b.iter(|| {
-      crypto_scalarmult_base(&mut public, black_box(&secret_bytes));
-      black_box(public)
-    })
-  });
+  let mut public = [0u8; 32];
+  g.bench_function(
+    "dryoc",
+    checked(
+      || {
+        crypto_scalarmult_base(&mut public, black_box(&secret_bytes));
+        black_box(public)
+      },
+      |public| assert_eq!(public, expected),
+    ),
+  );
 
   g.finish();
 }
@@ -2016,6 +2625,8 @@ fn x25519_diffie_hellman(c: &mut Criterion) {
   let bob_public = X25519SecretKey::from_bytes(bob_bytes).public_key();
   let dalek_alice = DalekX25519Secret::from(alice_bytes);
   let dalek_bob_public = DalekX25519PublicKey::from(&DalekX25519Secret::from(bob_bytes));
+  // Every row must return Dalek's shared secret; the rscrypto row also reproduces RFC 7748.
+  let expected = *dalek_alice.diffie_hellman(&dalek_bob_public).as_bytes();
   aws_lc_bench! {
     let aws_alice =
       aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, &alice_bytes).expect("valid authentication benchmark operation must succeed");
@@ -2034,42 +2645,61 @@ fn x25519_diffie_hellman(c: &mut Criterion) {
   crypto_scalarmult_base(&mut dryoc_bob_pub, &bob_bytes);
   let mut g = c.benchmark_group("x25519/diffie-hellman");
 
-  g.bench_function("rscrypto", |b| {
-    b.iter(|| {
-      black_box(
-        black_box(&alice)
-          .diffie_hellman(black_box(&bob_public))
-          .expect("valid authentication benchmark operation must succeed"),
-      )
-    })
-  });
+  g.bench_function(
+    "rscrypto",
+    checked(
+      || {
+        black_box(
+          black_box(&alice)
+            .diffie_hellman(black_box(&bob_public))
+            .expect("valid authentication benchmark operation must succeed"),
+        )
+      },
+      |shared| {
+        assert_eq!(*shared.as_bytes(), expected);
+        x25519_rfc7748_check();
+      },
+    ),
+  );
 
-  g.bench_function("dalek", |b| {
-    b.iter(|| black_box(black_box(&dalek_alice).diffie_hellman(black_box(&dalek_bob_public))))
-  });
+  g.bench_function(
+    "dalek",
+    checked(
+      || black_box(black_box(&dalek_alice).diffie_hellman(black_box(&dalek_bob_public))),
+      |shared| assert_eq!(*shared.as_bytes(), expected),
+    ),
+  );
 
   aws_lc_bench! {
-    g.bench_function("aws-lc-rs", |b| {
-      b.iter(|| {
-        let shared = aws_lc_rs::agreement::agree(black_box(&aws_alice), black_box(&aws_bob_unparsed), (), |bytes| {
-          let mut out = [0u8; 32];
-          out.copy_from_slice(bytes);
-          Ok::<[u8; 32], ()>(out)
-        })
-        .expect("valid authentication benchmark operation must succeed");
-        black_box(shared)
-      })
-    });
+    g.bench_function(
+      "aws-lc-rs",
+      checked(
+        || {
+          let shared = aws_lc_rs::agreement::agree(black_box(&aws_alice), black_box(&aws_bob_unparsed), (), |bytes| {
+            let mut out = [0u8; 32];
+            out.copy_from_slice(bytes);
+            Ok::<[u8; 32], ()>(out)
+          })
+          .expect("valid authentication benchmark operation must succeed");
+          black_box(shared)
+        },
+        |shared| assert_eq!(shared, expected),
+      ),
+    );
   }
 
-  g.bench_function("dryoc", |b| {
-    let mut shared = [0u8; 32];
-    b.iter(|| {
-      crypto_scalarmult(&mut shared, black_box(&alice_bytes), black_box(&dryoc_bob_pub))
-        .expect("valid authentication benchmark operation must succeed");
-      black_box(shared)
-    })
-  });
+  let mut shared = [0u8; 32];
+  g.bench_function(
+    "dryoc",
+    checked(
+      || {
+        crypto_scalarmult(&mut shared, black_box(&alice_bytes), black_box(&dryoc_bob_pub))
+          .expect("valid authentication benchmark operation must succeed");
+        black_box(shared)
+      },
+      |shared| assert_eq!(shared, expected),
+    ),
+  );
 
   g.finish();
 }
@@ -2109,115 +2739,51 @@ fn crrl_p256_scalar(bytes: [u8; 32]) -> crrl::p256::Scalar {
   crrl::p256::Scalar::decode(&little_endian).expect("valid CRRL benchmark scalar")
 }
 
-fn p256_benchmark_preflight() {
-  use std::sync::Once;
-
-  static PREFLIGHT: Once = Once::new();
-  PREFLIGHT.call_once(|| {
-    let ours = p256_ephemeral(P256_NIST_PRIVATE);
-    assert_eq!(ours.public_key().to_sec1_bytes(), P256_NIST_PUBLIC);
-    let peer = P256PublicKey::from_sec1_bytes(&P256_NIST_PEER).expect("valid NIST benchmark peer");
-    assert_eq!(ours.diffie_hellman(&peer).as_bytes(), &P256_NIST_SHARED);
-
-    let rustcrypto = P256OracleSecretKey::from_slice(&P256_NIST_PRIVATE).expect("valid RustCrypto benchmark scalar");
-    assert_eq!(
-      rustcrypto.public_key().to_sec1_point(false).as_bytes(),
-      P256_NIST_PUBLIC
-    );
-    let rustcrypto_peer = p256::PublicKey::from_sec1_bytes(&P256_NIST_PEER).expect("valid RustCrypto benchmark peer");
-    assert_eq!(
-      p256::ecdh::diffie_hellman(rustcrypto.to_nonzero_scalar(), rustcrypto_peer.as_affine())
-        .raw_secret_bytes()
-        .as_slice(),
-      P256_NIST_SHARED
-    );
-
-    let crrl_scalar = crrl_p256_scalar(P256_NIST_PRIVATE);
-    assert_eq!(
-      crrl::p256::Point::mulgen(&crrl_scalar).encode_uncompressed(),
-      P256_NIST_PUBLIC
-    );
-    let crrl_peer = crrl::p256::Point::decode(&P256_NIST_PEER).expect("valid CRRL benchmark peer");
-    assert_eq!(
-      &core::ops::Mul::mul(crrl_peer, crrl_scalar).encode_uncompressed()[1..33],
-      &P256_NIST_SHARED
-    );
-
-    let mut libcrux_public = [0u8; 64];
-    assert!(libcrux_p256::dh_initiator(&mut libcrux_public, &P256_NIST_PRIVATE));
-    assert_eq!(libcrux_public, P256_NIST_PUBLIC[1..]);
-    let mut libcrux_shared = [0u8; 64];
-    assert!(libcrux_p256::dh_responder(
-      &mut libcrux_shared,
-      &P256_NIST_PEER[1..],
-      &P256_NIST_PRIVATE,
-    ));
-    assert_eq!(libcrux_shared[..32], P256_NIST_SHARED);
-
-    aws_lc_bench! {
-      let aws_secret = aws_lc_rs::agreement::PrivateKey::from_private_key(
-        &aws_lc_rs::agreement::ECDH_P256,
-        &P256_NIST_PRIVATE,
-      )
-      .expect("valid AWS-LC benchmark scalar");
-      assert_eq!(
-        aws_secret.compute_public_key().expect("AWS-LC public derivation").as_ref(),
-        P256_NIST_PUBLIC,
-      );
-      let aws_peer = aws_lc_rs::agreement::UnparsedPublicKey::new(
-        &aws_lc_rs::agreement::ECDH_P256,
-        P256_NIST_PEER,
-      );
-      let aws_shared = aws_lc_rs::agreement::agree(&aws_secret, aws_peer, (), |bytes| {
-        Ok::<[u8; 32], ()>(array_from_slice(bytes))
-      })
-      .expect("AWS-LC benchmark agreement");
-      assert_eq!(aws_shared, P256_NIST_SHARED);
-    }
-
-    ring_p256_bench! {
-      let rng = ring::rand::SystemRandom::new();
-      let ring_secret = ring::agreement::EphemeralPrivateKey::generate(&ring::agreement::ECDH_P256, &rng)
-        .expect("ring benchmark scalar generation");
-      let ring_public = ring_secret.compute_public_key().expect("ring benchmark public derivation");
-      let ours_peer = P256PublicKey::from_sec1_bytes(ring_public.as_ref()).expect("valid ring benchmark public key");
-      let ours_shared = p256_ephemeral(P256_NIST_PRIVATE).diffie_hellman(&ours_peer);
-      let ring_peer = ring::agreement::UnparsedPublicKey::new(&ring::agreement::ECDH_P256, P256_NIST_PUBLIC);
-      let ring_shared = ring::agreement::agree_ephemeral(ring_secret, &ring_peer, array_from_slice::<32>)
-        .expect("ring benchmark agreement");
-      assert_eq!(ours_shared.as_bytes(), &ring_shared);
-    }
-  });
-}
-
+// Fixed-key rows must reproduce the NIST CAVP vector above. The parse rows must agree with RustCrypto when they
+// pair the parsed key with the NIST private key.
 fn p256_ecdh_key_generation(c: &mut Criterion) {
   if !bench_config::selected("p256-ecdh/key-generation") {
     return;
   }
-  p256_benchmark_preflight();
   let scalar = P256_NIST_PRIVATE;
   let mut g = c.benchmark_group("p256-ecdh/key-generation");
-  g.bench_function("rscrypto-caller-fill", |b| {
-    b.iter(|| black_box(p256_ephemeral(*black_box(&scalar))))
-  });
-  g.bench_function("rustcrypto-p256-import", |b| {
-    b.iter(|| black_box(P256OracleSecretKey::from_slice(black_box(&scalar)).expect("valid oracle scalar")))
-  });
-  g.bench_function("crrl-import", |b| {
-    b.iter(|| black_box(crrl::p256::PrivateKey::decode(black_box(&scalar)).expect("valid CRRL scalar")))
-  });
+  g.bench_function(
+    "rscrypto-caller-fill",
+    checked(
+      || black_box(p256_ephemeral(*black_box(&scalar))),
+      |secret| assert_eq!(secret.public_key().to_sec1_bytes(), P256_NIST_PUBLIC),
+    ),
+  );
+  g.bench_function(
+    "rustcrypto-p256-import",
+    checked(
+      || black_box(P256OracleSecretKey::from_slice(black_box(&scalar)).expect("valid oracle scalar")),
+      |secret| assert_eq!(secret.public_key().to_sec1_point(false).as_bytes(), P256_NIST_PUBLIC),
+    ),
+  );
+  g.bench_function(
+    "crrl-import",
+    checked(
+      || black_box(crrl::p256::PrivateKey::decode(black_box(&scalar)).expect("valid CRRL scalar")),
+      |secret| assert_eq!(secret.to_public_key().encode_uncompressed(), P256_NIST_PUBLIC),
+    ),
+  );
   aws_lc_bench! {
-    g.bench_function("aws-lc-rs-native-import-and-precompute", |b| {
-      b.iter(|| {
-        black_box(
-          aws_lc_rs::agreement::PrivateKey::from_private_key(
-            &aws_lc_rs::agreement::ECDH_P256,
-            black_box(&scalar),
+    g.bench_function(
+      "aws-lc-rs-native-import-and-precompute",
+      checked(
+        || {
+          black_box(
+            aws_lc_rs::agreement::PrivateKey::from_private_key(
+              &aws_lc_rs::agreement::ECDH_P256,
+              black_box(&scalar),
+            )
+            .expect("valid AWS-LC scalar"),
           )
-          .expect("valid AWS-LC scalar"),
-        )
-      })
-    });
+        },
+        |secret| assert_eq!(secret.compute_public_key().expect("AWS-LC public derivation").as_ref(), P256_NIST_PUBLIC),
+      ),
+    );
   }
   g.finish();
 }
@@ -2226,7 +2792,6 @@ fn p256_ecdh_public_key(c: &mut Criterion) {
   if !bench_config::selected("p256-ecdh/public-key") {
     return;
   }
-  p256_benchmark_preflight();
   let scalar = P256_NIST_PRIVATE;
   let ours = p256_ephemeral(scalar);
   let rustcrypto = P256OracleSecretKey::from_slice(&scalar).expect("valid RustCrypto scalar");
@@ -2239,53 +2804,102 @@ fn p256_ecdh_public_key(c: &mut Criterion) {
     .expect("valid AWS-LC scalar");
   }
   let mut g = c.benchmark_group("p256-ecdh/public-key");
-  g.bench_function("rscrypto-selected", |b| b.iter(|| black_box(ours.public_key())));
-  g.bench_function("rscrypto-ecdsa-public-api", |b| {
-    b.iter(|| {
-      let secret = EcdsaP256SecretKey::from_bytes(*black_box(&scalar)).expect("valid ECDSA benchmark scalar");
-      black_box(secret.public_key())
-    })
-  });
-  g.bench_function("rustcrypto-p256-pure-rust", |b| {
-    b.iter(|| black_box(rustcrypto.public_key().to_sec1_point(false)))
-  });
-  g.bench_function("crrl-pure-rust", |b| {
-    b.iter(|| black_box(crrl::p256::Point::mulgen(black_box(&crrl_scalar)).encode_uncompressed()))
-  });
-  g.bench_function("libcrux-hacl-pure-rust", |b| {
-    b.iter(|| {
-      let mut public = [0u8; 64];
-      assert!(libcrux_p256::dh_initiator(black_box(&mut public), black_box(&scalar)));
-      black_box(public)
-    })
-  });
+  g.bench_function(
+    "rscrypto-selected",
+    checked(
+      || black_box(ours.public_key()),
+      |public| assert_eq!(public.to_sec1_bytes(), P256_NIST_PUBLIC),
+    ),
+  );
+  g.bench_function(
+    "rscrypto-ecdsa-public-api",
+    checked(
+      || {
+        let secret = EcdsaP256SecretKey::from_bytes(*black_box(&scalar)).expect("valid ECDSA benchmark scalar");
+        black_box(secret.public_key())
+      },
+      |public| assert_eq!(public.to_sec1_bytes(), P256_NIST_PUBLIC),
+    ),
+  );
+  g.bench_function(
+    "rustcrypto-p256-pure-rust",
+    checked(
+      || black_box(rustcrypto.public_key().to_sec1_point(false)),
+      |public| assert_eq!(public.as_bytes(), P256_NIST_PUBLIC),
+    ),
+  );
+  g.bench_function(
+    "crrl-pure-rust",
+    checked(
+      || black_box(crrl::p256::Point::mulgen(black_box(&crrl_scalar)).encode_uncompressed()),
+      |public| assert_eq!(public, P256_NIST_PUBLIC),
+    ),
+  );
+  g.bench_function(
+    "libcrux-hacl-pure-rust",
+    checked(
+      || {
+        let mut public = [0u8; 64];
+        assert!(libcrux_p256::dh_initiator(black_box(&mut public), black_box(&scalar)));
+        black_box(public)
+      },
+      |public| assert_eq!(public, P256_NIST_PUBLIC[1..]),
+    ),
+  );
   aws_lc_bench! {
-    g.bench_function("aws-lc-rs-native-cached", |b| {
-      b.iter(|| black_box(aws_secret.compute_public_key().expect("AWS-LC public derivation")))
-    });
-    g.bench_function("aws-lc-rs-native-import-and-public", |b| {
-      b.iter(|| {
-        let secret = aws_lc_rs::agreement::PrivateKey::from_private_key(
-          &aws_lc_rs::agreement::ECDH_P256,
-          black_box(&scalar),
-        )
-        .expect("valid AWS-LC scalar");
-        black_box(secret.compute_public_key().expect("AWS-LC public derivation"))
-      })
-    });
+    g.bench_function(
+      "aws-lc-rs-native-cached",
+      checked(
+        || black_box(aws_secret.compute_public_key().expect("AWS-LC public derivation")),
+        |public| assert_eq!(public.as_ref(), P256_NIST_PUBLIC),
+      ),
+    );
+    g.bench_function(
+      "aws-lc-rs-native-import-and-public",
+      checked(
+        || {
+          let secret = aws_lc_rs::agreement::PrivateKey::from_private_key(
+            &aws_lc_rs::agreement::ECDH_P256,
+            black_box(&scalar),
+          )
+          .expect("valid AWS-LC scalar");
+          black_box(secret.compute_public_key().expect("AWS-LC public derivation"))
+        },
+        |public| assert_eq!(public.as_ref(), P256_NIST_PUBLIC),
+      ),
+    );
   }
   ring_p256_bench! {
     let rng = ring::rand::SystemRandom::new();
-    g.bench_function("ring-native", |b| {
-      b.iter_batched(
-        || {
-          ring::agreement::EphemeralPrivateKey::generate(&ring::agreement::ECDH_P256, &rng)
-            .expect("ring scalar generation")
+    let generate = || {
+      ring::agreement::EphemeralPrivateKey::generate(&ring::agreement::ECDH_P256, &rng)
+        .expect("ring scalar generation")
+    };
+    g.bench_function(
+      "ring-native",
+      checked_routine(
+        (),
+        |_| {
+          // A random key has no fixed public key: its agreement with the NIST public key must match
+          // RustCrypto's agreement between the NIST private key and the derived public key.
+          let secret = generate();
+          let public = secret.compute_public_key().expect("ring public derivation");
+          let nist_public = ring::agreement::UnparsedPublicKey::new(&ring::agreement::ECDH_P256, P256_NIST_PUBLIC);
+          let shared = ring::agreement::agree_ephemeral(secret, &nist_public, array_from_slice::<32>)
+            .expect("ring benchmark agreement");
+          let ring_public = p256::PublicKey::from_sec1_bytes(public.as_ref()).expect("valid ring public key");
+          let expected = p256::ecdh::diffie_hellman(rustcrypto.to_nonzero_scalar(), ring_public.as_affine());
+          assert_eq!(shared.as_slice(), expected.raw_secret_bytes().as_slice());
         },
-        |secret| black_box(secret.compute_public_key().expect("ring public derivation")),
-        BatchSize::SmallInput,
-      )
-    });
+        |b, _| {
+          b.iter_batched(
+            &generate,
+            |secret| black_box(secret.compute_public_key().expect("ring public derivation")),
+            BatchSize::SmallInput,
+          )
+        },
+      ),
+    );
   }
   g.finish();
 }
@@ -2294,30 +2908,81 @@ fn p256_ecdh_parse(c: &mut Criterion) {
   if !bench_config::selected("p256-ecdh/parse") {
     return;
   }
-  p256_benchmark_preflight();
-  let encoded = p256_ephemeral([0x24; 32]).public_key().to_sec1_bytes();
-  let mut g = c.benchmark_group("p256-ecdh/parse");
-  g.bench_function("rscrypto", |b| {
-    b.iter(|| black_box(P256PublicKey::from_sec1_bytes(black_box(&encoded)).expect("valid benchmark point")))
-  });
-  g.bench_function("rustcrypto-p256-pure-rust", |b| {
-    b.iter(|| black_box(p256::PublicKey::from_sec1_bytes(black_box(&encoded)).expect("valid oracle point")))
-  });
-  g.bench_function("crrl-pure-rust", |b| {
-    b.iter(|| black_box(crrl::p256::Point::decode(black_box(&encoded)).expect("valid CRRL point")))
-  });
+  let encoded: [u8; 65] = array_from_slice(
+    P256OracleSecretKey::from_slice(&[0x24; 32])
+      .expect("valid RustCrypto scalar")
+      .public_key()
+      .to_sec1_point(false)
+      .as_bytes(),
+  );
+  let rustcrypto_secret = P256OracleSecretKey::from_slice(&P256_NIST_PRIVATE).expect("valid RustCrypto scalar");
+  let rustcrypto_shared = |peer: &p256::PublicKey| -> [u8; 32] {
+    array_from_slice(
+      p256::ecdh::diffie_hellman(rustcrypto_secret.to_nonzero_scalar(), peer.as_affine())
+        .raw_secret_bytes()
+        .as_slice(),
+    )
+  };
+  let expected = rustcrypto_shared(&p256::PublicKey::from_sec1_bytes(&encoded).expect("valid oracle point"));
   aws_lc_bench! {
-    g.bench_function("aws-lc-rs-native", |b| {
-      b.iter(|| {
-        let unparsed = aws_lc_rs::agreement::UnparsedPublicKey::new(
-          &aws_lc_rs::agreement::ECDH_P256,
-          black_box(encoded),
-        );
-        black_box(
-          aws_lc_rs::agreement::ParsedPublicKey::try_from(unparsed).expect("valid AWS-LC point"),
+    let aws_secret = aws_lc_rs::agreement::PrivateKey::from_private_key(
+      &aws_lc_rs::agreement::ECDH_P256,
+      &P256_NIST_PRIVATE,
+    )
+    .expect("valid AWS-LC scalar");
+  }
+  let mut g = c.benchmark_group("p256-ecdh/parse");
+  g.bench_function(
+    "rscrypto",
+    checked(
+      || black_box(P256PublicKey::from_sec1_bytes(black_box(&encoded)).expect("valid benchmark point")),
+      |public| {
+        assert_eq!(
+          *p256_ephemeral(P256_NIST_PRIVATE).diffie_hellman(&public).as_bytes(),
+          expected
         )
-      })
-    });
+      },
+    ),
+  );
+  g.bench_function(
+    "rustcrypto-p256-pure-rust",
+    checked(
+      || black_box(p256::PublicKey::from_sec1_bytes(black_box(&encoded)).expect("valid oracle point")),
+      |public| assert_eq!(rustcrypto_shared(&public), expected),
+    ),
+  );
+  g.bench_function(
+    "crrl-pure-rust",
+    checked(
+      || black_box(crrl::p256::Point::decode(black_box(&encoded)).expect("valid CRRL point")),
+      |point| {
+        let shared = core::ops::Mul::mul(point, crrl_p256_scalar(P256_NIST_PRIVATE)).encode_uncompressed();
+        assert_eq!(&shared[1..33], &expected);
+      },
+    ),
+  );
+  aws_lc_bench! {
+    g.bench_function(
+      "aws-lc-rs-native",
+      checked(
+        || {
+          let unparsed = aws_lc_rs::agreement::UnparsedPublicKey::new(
+            &aws_lc_rs::agreement::ECDH_P256,
+            black_box(encoded),
+          );
+          black_box(
+            aws_lc_rs::agreement::ParsedPublicKey::try_from(unparsed).expect("valid AWS-LC point"),
+          )
+        },
+        |public| {
+          let shared = aws_lc_rs::agreement::agree(&aws_secret, public, (), |bytes| {
+            Ok::<[u8; 32], ()>(array_from_slice(bytes))
+          })
+          .expect("AWS-LC benchmark agreement");
+          assert_eq!(shared, expected);
+        },
+      ),
+    );
   }
   g.finish();
 }
@@ -2326,7 +2991,6 @@ fn p256_ecdh_agreement(c: &mut Criterion) {
   if !bench_config::selected("p256-ecdh/agreement") {
     return;
   }
-  p256_benchmark_preflight();
   let scalar = P256_NIST_PRIVATE;
   let peer = P256PublicKey::from_sec1_bytes(&P256_NIST_PEER).expect("valid benchmark peer point");
   let rustcrypto_secret = P256OracleSecretKey::from_slice(&scalar).expect("valid RustCrypto scalar");
@@ -2346,65 +3010,112 @@ fn p256_ecdh_agreement(c: &mut Criterion) {
     .expect("valid AWS-LC peer point");
   }
   let mut g = c.benchmark_group("p256-ecdh/agreement");
-  g.bench_function("rscrypto-selected", |b| {
-    b.iter_batched(
-      || p256_ephemeral(scalar),
-      |secret| black_box(secret.diffie_hellman(black_box(&peer))),
-      BatchSize::SmallInput,
-    )
-  });
-  g.bench_function("rustcrypto-p256-pure-rust", |b| {
-    b.iter(|| {
-      black_box(p256::ecdh::diffie_hellman(
-        rustcrypto_secret.to_nonzero_scalar(),
-        black_box(rustcrypto_peer.as_affine()),
-      ))
-    })
-  });
-  g.bench_function("crrl-pure-rust", |b| {
-    b.iter(|| black_box(core::ops::Mul::mul(black_box(crrl_peer), black_box(crrl_scalar)).encode_uncompressed()))
-  });
-  g.bench_function("libcrux-hacl-pure-rust", |b| {
-    b.iter(|| {
-      let mut shared = [0u8; 64];
-      assert!(libcrux_p256::dh_responder(
-        black_box(&mut shared),
-        black_box(&libcrux_peer),
-        black_box(&scalar),
-      ));
-      black_box(shared)
-    })
-  });
-  aws_lc_bench! {
-    g.bench_function("aws-lc-rs-native", |b| {
-      b.iter(|| {
-        black_box(
-          aws_lc_rs::agreement::agree(&aws_secret, aws_peer.clone(), (), |bytes| {
-            Ok::<[u8; 32], ()>(array_from_slice(bytes))
-          })
-          .expect("AWS-LC benchmark agreement"),
+  g.bench_function(
+    "rscrypto-selected",
+    checked_routine(
+      (),
+      |_| {
+        assert_eq!(
+          p256_ephemeral(scalar).diffie_hellman(&peer).as_bytes(),
+          &P256_NIST_SHARED
         )
-      })
-    });
+      },
+      |b, _| {
+        b.iter_batched(
+          || p256_ephemeral(scalar),
+          |secret| black_box(secret.diffie_hellman(black_box(&peer))),
+          BatchSize::SmallInput,
+        )
+      },
+    ),
+  );
+  g.bench_function(
+    "rustcrypto-p256-pure-rust",
+    checked(
+      || {
+        black_box(p256::ecdh::diffie_hellman(
+          rustcrypto_secret.to_nonzero_scalar(),
+          black_box(rustcrypto_peer.as_affine()),
+        ))
+      },
+      |shared| assert_eq!(shared.raw_secret_bytes().as_slice(), P256_NIST_SHARED),
+    ),
+  );
+  g.bench_function(
+    "crrl-pure-rust",
+    checked(
+      || black_box(core::ops::Mul::mul(black_box(crrl_peer), black_box(crrl_scalar)).encode_uncompressed()),
+      |shared| assert_eq!(&shared[1..33], &P256_NIST_SHARED),
+    ),
+  );
+  g.bench_function(
+    "libcrux-hacl-pure-rust",
+    checked(
+      || {
+        let mut shared = [0u8; 64];
+        assert!(libcrux_p256::dh_responder(
+          black_box(&mut shared),
+          black_box(&libcrux_peer),
+          black_box(&scalar),
+        ));
+        black_box(shared)
+      },
+      |shared| assert_eq!(shared[..32], P256_NIST_SHARED),
+    ),
+  );
+  aws_lc_bench! {
+    g.bench_function(
+      "aws-lc-rs-native",
+      checked(
+        || {
+          black_box(
+            aws_lc_rs::agreement::agree(&aws_secret, aws_peer.clone(), (), |bytes| {
+              Ok::<[u8; 32], ()>(array_from_slice(bytes))
+            })
+            .expect("AWS-LC benchmark agreement"),
+          )
+        },
+        |shared| assert_eq!(shared, P256_NIST_SHARED),
+      ),
+    );
   }
   ring_p256_bench! {
     let rng = ring::rand::SystemRandom::new();
     let ring_peer = ring::agreement::UnparsedPublicKey::new(&ring::agreement::ECDH_P256, P256_NIST_PEER);
-    g.bench_function("ring-native", |b| {
-      b.iter_batched(
-        || {
-          ring::agreement::EphemeralPrivateKey::generate(&ring::agreement::ECDH_P256, &rng)
-            .expect("ring scalar generation")
+    let generate = || {
+      ring::agreement::EphemeralPrivateKey::generate(&ring::agreement::ECDH_P256, &rng)
+        .expect("ring scalar generation")
+    };
+    g.bench_function(
+      "ring-native",
+      checked_routine(
+        (),
+        |_| {
+          // The NIST peer has no published private key, so the check pairs a random key with the NIST public
+          // key and compares RustCrypto's agreement between the NIST private key and the random public key.
+          let secret = generate();
+          let public = secret.compute_public_key().expect("ring public derivation");
+          let nist_public = ring::agreement::UnparsedPublicKey::new(&ring::agreement::ECDH_P256, P256_NIST_PUBLIC);
+          let shared = ring::agreement::agree_ephemeral(secret, &nist_public, array_from_slice::<32>)
+            .expect("ring benchmark agreement");
+          let ring_public = p256::PublicKey::from_sec1_bytes(public.as_ref()).expect("valid ring public key");
+          let expected = p256::ecdh::diffie_hellman(rustcrypto_secret.to_nonzero_scalar(), ring_public.as_affine());
+          assert_eq!(shared.as_slice(), expected.raw_secret_bytes().as_slice());
         },
-        |secret| {
-          black_box(
-            ring::agreement::agree_ephemeral(secret, black_box(&ring_peer), array_from_slice::<32>)
-              .expect("ring benchmark agreement"),
+        |b, _| {
+          b.iter_batched(
+            &generate,
+            |secret| {
+              black_box(
+                ring::agreement::agree_ephemeral(secret, black_box(&ring_peer), array_from_slice::<32>)
+                  .expect("ring benchmark agreement"),
+              )
+            },
+            BatchSize::SmallInput,
           )
         },
-        BatchSize::SmallInput,
-      )
-    });
+      ),
+    );
   }
   g.finish();
 }
@@ -2415,20 +3126,36 @@ fn p256_ecdh_tls_roundtrip(c: &mut Criterion) {
   }
   let alice = [0x42; 32];
   let bob = [0x24; 32];
+  // Both parties must derive RustCrypto's shared secret.
+  let expected = {
+    let alice = P256OracleSecretKey::from_slice(&alice).expect("valid RustCrypto scalar");
+    let bob = P256OracleSecretKey::from_slice(&bob).expect("valid RustCrypto scalar");
+    p256::ecdh::diffie_hellman(alice.to_nonzero_scalar(), bob.public_key().as_affine())
+  };
   let mut g = c.benchmark_group("p256-ecdh/tls-shaped-roundtrip");
-  g.bench_function("rscrypto", |b| {
-    b.iter(|| {
-      let alice_secret = p256_ephemeral(*black_box(&alice));
-      let bob_secret = p256_ephemeral(*black_box(&bob));
-      let alice_public = alice_secret.public_key().to_sec1_bytes();
-      let bob_public = bob_secret.public_key().to_sec1_bytes();
-      let alice_peer = P256PublicKey::from_sec1_bytes(black_box(&bob_public)).expect("valid benchmark peer");
-      let bob_peer = P256PublicKey::from_sec1_bytes(black_box(&alice_public)).expect("valid benchmark peer");
-      let alice_shared = alice_secret.diffie_hellman(&alice_peer);
-      let bob_shared = bob_secret.diffie_hellman(&bob_peer);
-      black_box((alice_shared, bob_shared))
-    })
-  });
+  g.bench_function(
+    "rscrypto",
+    checked(
+      || {
+        let alice_secret = p256_ephemeral(*black_box(&alice));
+        let bob_secret = p256_ephemeral(*black_box(&bob));
+        let alice_public = alice_secret.public_key().to_sec1_bytes();
+        let bob_public = bob_secret.public_key().to_sec1_bytes();
+        let alice_peer = P256PublicKey::from_sec1_bytes(black_box(&bob_public)).expect("valid benchmark peer");
+        let bob_peer = P256PublicKey::from_sec1_bytes(black_box(&alice_public)).expect("valid benchmark peer");
+        let alice_shared = alice_secret.diffie_hellman(&alice_peer);
+        let bob_shared = bob_secret.diffie_hellman(&bob_peer);
+        black_box((alice_shared, bob_shared))
+      },
+      |(alice_shared, bob_shared)| {
+        assert_eq!(
+          alice_shared.as_bytes().as_slice(),
+          expected.raw_secret_bytes().as_slice()
+        );
+        assert_eq!(bob_shared.as_bytes().as_slice(), expected.raw_secret_bytes().as_slice());
+      },
+    ),
+  );
   g.finish();
 }
 
@@ -2467,73 +3194,43 @@ fn p384_ephemeral(bytes: [u8; 48]) -> P384EphemeralSecret {
   .expect("valid authentication benchmark scalar must be accepted")
 }
 
-fn p384_benchmark_preflight() {
-  use std::sync::Once;
-
-  static PREFLIGHT: Once = Once::new();
-  PREFLIGHT.call_once(|| {
-    let ours = p384_ephemeral(P384_NIST_PRIVATE);
-    assert_eq!(ours.public_key().to_sec1_bytes(), P384_NIST_PUBLIC);
-    let peer = P384PublicKey::from_sec1_bytes(&P384_NIST_PEER).expect("valid NIST benchmark peer");
-    assert_eq!(ours.diffie_hellman(&peer).as_bytes(), &P384_NIST_SHARED);
-
-    let rustcrypto = P384OracleSecretKey::from_slice(&P384_NIST_PRIVATE).expect("valid RustCrypto benchmark scalar");
-    assert_eq!(
-      rustcrypto.public_key().to_sec1_point(false).as_bytes(),
-      P384_NIST_PUBLIC
-    );
-    let rustcrypto_peer = p384::PublicKey::from_sec1_bytes(&P384_NIST_PEER).expect("valid RustCrypto benchmark peer");
-    let shared = p384::ecdh::diffie_hellman(rustcrypto.to_nonzero_scalar(), rustcrypto_peer.as_affine());
-    assert_eq!(shared.raw_secret_bytes().as_slice(), P384_NIST_SHARED);
-
-    aws_lc_bench! {
-      let aws_secret = aws_lc_rs::agreement::PrivateKey::from_private_key(
-        &aws_lc_rs::agreement::ECDH_P384,
-        &P384_NIST_PRIVATE,
-      )
-      .expect("valid AWS-LC benchmark scalar");
-      assert_eq!(
-        aws_secret.compute_public_key().expect("AWS-LC public derivation").as_ref(),
-        P384_NIST_PUBLIC,
-      );
-      let aws_peer = aws_lc_rs::agreement::UnparsedPublicKey::new(
-        &aws_lc_rs::agreement::ECDH_P384,
-        P384_NIST_PEER,
-      );
-      let aws_shared = aws_lc_rs::agreement::agree(&aws_secret, aws_peer, (), |bytes| {
-        Ok::<[u8; 48], ()>(array_from_slice(bytes))
-      })
-      .expect("AWS-LC benchmark agreement");
-      assert_eq!(aws_shared, P384_NIST_SHARED);
-    }
-  });
-}
-
+// Fixed-key rows must reproduce the NIST CAVP vector above.
 fn p384_ecdh_key_generation(c: &mut Criterion) {
   if !bench_config::selected("p384-ecdh/key-generation") {
     return;
   }
-  p384_benchmark_preflight();
   let scalar = P384_NIST_PRIVATE;
   let mut g = c.benchmark_group("p384-ecdh/key-generation");
-  g.bench_function("rscrypto-caller-fill", |b| {
-    b.iter(|| black_box(p384_ephemeral(*black_box(&scalar))))
-  });
-  g.bench_function("rustcrypto-p384-import", |b| {
-    b.iter(|| black_box(P384OracleSecretKey::from_slice(black_box(&scalar)).expect("valid oracle scalar")))
-  });
+  g.bench_function(
+    "rscrypto-caller-fill",
+    checked(
+      || black_box(p384_ephemeral(*black_box(&scalar))),
+      |secret| assert_eq!(secret.public_key().to_sec1_bytes(), P384_NIST_PUBLIC),
+    ),
+  );
+  g.bench_function(
+    "rustcrypto-p384-import",
+    checked(
+      || black_box(P384OracleSecretKey::from_slice(black_box(&scalar)).expect("valid oracle scalar")),
+      |secret| assert_eq!(secret.public_key().to_sec1_point(false).as_bytes(), P384_NIST_PUBLIC),
+    ),
+  );
   aws_lc_bench! {
-    g.bench_function("aws-lc-rs-native-import-and-precompute", |b| {
-      b.iter(|| {
-        black_box(
-          aws_lc_rs::agreement::PrivateKey::from_private_key(
-            &aws_lc_rs::agreement::ECDH_P384,
-            black_box(&scalar),
+    g.bench_function(
+      "aws-lc-rs-native-import-and-precompute",
+      checked(
+        || {
+          black_box(
+            aws_lc_rs::agreement::PrivateKey::from_private_key(
+              &aws_lc_rs::agreement::ECDH_P384,
+              black_box(&scalar),
+            )
+            .expect("valid AWS-LC scalar"),
           )
-          .expect("valid AWS-LC scalar"),
-        )
-      })
-    });
+        },
+        |secret| assert_eq!(secret.compute_public_key().expect("AWS-LC public derivation").as_ref(), P384_NIST_PUBLIC),
+      ),
+    );
   }
   g.finish();
 }
@@ -2542,7 +3239,6 @@ fn p384_ecdh_public_key(c: &mut Criterion) {
   if !bench_config::selected("p384-ecdh/public-key") {
     return;
   }
-  p384_benchmark_preflight();
   let scalar = P384_NIST_PRIVATE;
   let ours = p384_ephemeral(scalar);
   let rustcrypto = P384OracleSecretKey::from_slice(&scalar).expect("valid RustCrypto scalar");
@@ -2554,27 +3250,60 @@ fn p384_ecdh_public_key(c: &mut Criterion) {
     .expect("valid AWS-LC scalar");
   }
   let mut g = c.benchmark_group("p384-ecdh/public-key");
-  g.bench_function("rscrypto-selected", |b| b.iter(|| black_box(ours.public_key())));
-  g.bench_function("rustcrypto-p384-pure-rust", |b| {
-    b.iter(|| black_box(rustcrypto.public_key().to_sec1_point(false)))
-  });
+  g.bench_function(
+    "rscrypto-selected",
+    checked(
+      || black_box(ours.public_key()),
+      |public| assert_eq!(public.to_sec1_bytes(), P384_NIST_PUBLIC),
+    ),
+  );
+  g.bench_function(
+    "rustcrypto-p384-pure-rust",
+    checked(
+      || black_box(rustcrypto.public_key().to_sec1_point(false)),
+      |public| assert_eq!(public.as_bytes(), P384_NIST_PUBLIC),
+    ),
+  );
   aws_lc_bench! {
-    g.bench_function("aws-lc-rs-native-cached", |b| {
-      b.iter(|| black_box(aws_secret.compute_public_key().expect("AWS-LC public derivation")))
-    });
+    g.bench_function(
+      "aws-lc-rs-native-cached",
+      checked(
+        || black_box(aws_secret.compute_public_key().expect("AWS-LC public derivation")),
+        |public| assert_eq!(public.as_ref(), P384_NIST_PUBLIC),
+      ),
+    );
   }
   ring_p256_bench! {
     let rng = ring::rand::SystemRandom::new();
-    g.bench_function("ring-native", |b| {
-      b.iter_batched(
-        || {
-          ring::agreement::EphemeralPrivateKey::generate(&ring::agreement::ECDH_P384, &rng)
-            .expect("ring scalar generation")
+    let generate = || {
+      ring::agreement::EphemeralPrivateKey::generate(&ring::agreement::ECDH_P384, &rng)
+        .expect("ring scalar generation")
+    };
+    g.bench_function(
+      "ring-native",
+      checked_routine(
+        (),
+        |_| {
+          // A random key has no fixed public key: its agreement with the NIST public key must match
+          // RustCrypto's agreement between the NIST private key and the derived public key.
+          let secret = generate();
+          let public = secret.compute_public_key().expect("ring public derivation");
+          let nist_public = ring::agreement::UnparsedPublicKey::new(&ring::agreement::ECDH_P384, P384_NIST_PUBLIC);
+          let shared = ring::agreement::agree_ephemeral(secret, &nist_public, array_from_slice::<48>)
+            .expect("ring benchmark agreement");
+          let ring_public = p384::PublicKey::from_sec1_bytes(public.as_ref()).expect("valid ring public key");
+          let expected = p384::ecdh::diffie_hellman(rustcrypto.to_nonzero_scalar(), ring_public.as_affine());
+          assert_eq!(shared.as_slice(), expected.raw_secret_bytes().as_slice());
         },
-        |secret| black_box(secret.compute_public_key().expect("ring public derivation")),
-        BatchSize::SmallInput,
-      )
-    });
+        |b, _| {
+          b.iter_batched(
+            &generate,
+            |secret| black_box(secret.compute_public_key().expect("ring public derivation")),
+            BatchSize::SmallInput,
+          )
+        },
+      ),
+    );
   }
   g.finish();
 }
@@ -2583,14 +3312,30 @@ fn p384_ecdh_parse(c: &mut Criterion) {
   if !bench_config::selected("p384-ecdh/parse") {
     return;
   }
-  p384_benchmark_preflight();
+  let rustcrypto_secret = P384OracleSecretKey::from_slice(&P384_NIST_PRIVATE).expect("valid RustCrypto scalar");
   let mut g = c.benchmark_group("p384-ecdh/parse");
-  g.bench_function("rscrypto", |b| {
-    b.iter(|| black_box(P384PublicKey::from_sec1_bytes(black_box(&P384_NIST_PEER)).expect("valid benchmark point")))
-  });
-  g.bench_function("rustcrypto-p384-pure-rust", |b| {
-    b.iter(|| black_box(p384::PublicKey::from_sec1_bytes(black_box(&P384_NIST_PEER)).expect("valid oracle point")))
-  });
+  g.bench_function(
+    "rscrypto",
+    checked(
+      || black_box(P384PublicKey::from_sec1_bytes(black_box(&P384_NIST_PEER)).expect("valid benchmark point")),
+      |public| {
+        assert_eq!(
+          p384_ephemeral(P384_NIST_PRIVATE).diffie_hellman(&public).as_bytes(),
+          &P384_NIST_SHARED
+        )
+      },
+    ),
+  );
+  g.bench_function(
+    "rustcrypto-p384-pure-rust",
+    checked(
+      || black_box(p384::PublicKey::from_sec1_bytes(black_box(&P384_NIST_PEER)).expect("valid oracle point")),
+      |public| {
+        let shared = p384::ecdh::diffie_hellman(rustcrypto_secret.to_nonzero_scalar(), public.as_affine());
+        assert_eq!(shared.raw_secret_bytes().as_slice(), P384_NIST_SHARED);
+      },
+    ),
+  );
   g.finish();
 }
 
@@ -2598,7 +3343,6 @@ fn p384_ecdh_agreement(c: &mut Criterion) {
   if !bench_config::selected("p384-ecdh/agreement") {
     return;
   }
-  p384_benchmark_preflight();
   let scalar = P384_NIST_PRIVATE;
   let peer = P384PublicKey::from_sec1_bytes(&P384_NIST_PEER).expect("valid benchmark peer point");
   let rustcrypto_secret = P384OracleSecretKey::from_slice(&scalar).expect("valid RustCrypto scalar");
@@ -2615,70 +3359,98 @@ fn p384_ecdh_agreement(c: &mut Criterion) {
     .expect("valid AWS-LC peer point");
   }
   let mut g = c.benchmark_group("p384-ecdh/agreement");
-  g.bench_function("rscrypto-selected", |b| {
-    b.iter_batched(
-      || p384_ephemeral(scalar),
-      |secret| black_box(secret.diffie_hellman(black_box(&peer))),
-      BatchSize::SmallInput,
-    )
-  });
-  g.bench_function("rustcrypto-p384-pure-rust", |b| {
-    b.iter(|| {
-      black_box(p384::ecdh::diffie_hellman(
-        rustcrypto_secret.to_nonzero_scalar(),
-        black_box(rustcrypto_peer.as_affine()),
-      ))
-    })
-  });
-  aws_lc_bench! {
-    g.bench_function("aws-lc-rs-native", |b| {
-      b.iter(|| {
-        black_box(
-          aws_lc_rs::agreement::agree(&aws_secret, aws_peer.clone(), (), |bytes| {
-            Ok::<[u8; 48], ()>(array_from_slice(bytes))
-          })
-          .expect("AWS-LC benchmark agreement"),
+  g.bench_function(
+    "rscrypto-selected",
+    checked_routine(
+      (),
+      |_| {
+        assert_eq!(
+          p384_ephemeral(scalar).diffie_hellman(&peer).as_bytes(),
+          &P384_NIST_SHARED
         )
-      })
-    });
+      },
+      |b, _| {
+        b.iter_batched(
+          || p384_ephemeral(scalar),
+          |secret| black_box(secret.diffie_hellman(black_box(&peer))),
+          BatchSize::SmallInput,
+        )
+      },
+    ),
+  );
+  g.bench_function(
+    "rustcrypto-p384-pure-rust",
+    checked(
+      || {
+        black_box(p384::ecdh::diffie_hellman(
+          rustcrypto_secret.to_nonzero_scalar(),
+          black_box(rustcrypto_peer.as_affine()),
+        ))
+      },
+      |shared| assert_eq!(shared.raw_secret_bytes().as_slice(), P384_NIST_SHARED),
+    ),
+  );
+  aws_lc_bench! {
+    g.bench_function(
+      "aws-lc-rs-native",
+      checked(
+        || {
+          black_box(
+            aws_lc_rs::agreement::agree(&aws_secret, aws_peer.clone(), (), |bytes| {
+              Ok::<[u8; 48], ()>(array_from_slice(bytes))
+            })
+            .expect("AWS-LC benchmark agreement"),
+          )
+        },
+        |shared| assert_eq!(shared, P384_NIST_SHARED),
+      ),
+    );
   }
   ring_p256_bench! {
     let rng = ring::rand::SystemRandom::new();
     let ring_peer = ring::agreement::UnparsedPublicKey::new(&ring::agreement::ECDH_P384, P384_NIST_PEER);
-    g.bench_function("ring-native", |b| {
-      b.iter_batched(
-        || {
-          ring::agreement::EphemeralPrivateKey::generate(&ring::agreement::ECDH_P384, &rng)
-            .expect("ring scalar generation")
+    let generate = || {
+      ring::agreement::EphemeralPrivateKey::generate(&ring::agreement::ECDH_P384, &rng)
+        .expect("ring scalar generation")
+    };
+    g.bench_function(
+      "ring-native",
+      checked_routine(
+        (),
+        |_| {
+          // The NIST peer has no published private key, so the check pairs a random key with the NIST public
+          // key and compares RustCrypto's agreement between the NIST private key and the random public key.
+          let secret = generate();
+          let public = secret.compute_public_key().expect("ring public derivation");
+          let nist_public = ring::agreement::UnparsedPublicKey::new(&ring::agreement::ECDH_P384, P384_NIST_PUBLIC);
+          let shared = ring::agreement::agree_ephemeral(secret, &nist_public, array_from_slice::<48>)
+            .expect("ring benchmark agreement");
+          let ring_public = p384::PublicKey::from_sec1_bytes(public.as_ref()).expect("valid ring public key");
+          let expected = p384::ecdh::diffie_hellman(rustcrypto_secret.to_nonzero_scalar(), ring_public.as_affine());
+          assert_eq!(shared.as_slice(), expected.raw_secret_bytes().as_slice());
         },
-        |secret| {
-          black_box(
-            ring::agreement::agree_ephemeral(secret, black_box(&ring_peer), array_from_slice::<48>)
-              .expect("ring benchmark agreement"),
+        |b, _| {
+          b.iter_batched(
+            &generate,
+            |secret| {
+              black_box(
+                ring::agreement::agree_ephemeral(secret, black_box(&ring_peer), array_from_slice::<48>)
+                  .expect("ring benchmark agreement"),
+              )
+            },
+            BatchSize::SmallInput,
           )
         },
-        BatchSize::SmallInput,
-      )
-    });
+      ),
+    );
   }
   g.finish();
 }
 
-// Each selected row checks its actual timed closure before measurement.
-// Fixtures are public deterministic benchmark data; output conversion and drop
-// remain timed. See docs/benchmarking.md for the comparison boundaries.
-fn checked_mlkem_bench<T: Eq + core::fmt::Debug>(
-  g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-  name: &str,
-  expected: &T,
-  mut operation: impl FnMut() -> T,
-) {
-  g.bench_function(name, |b| {
-    assert_eq!(&operation(), expected, "ML-KEM comparison mismatch: {name}");
-    b.iter(&mut operation);
-  });
-}
-
+// Every deterministic row must reproduce libcrux, an independent FIPS 203 implementation, from the same seed, key,
+// ciphertext, and randomness. AWS-LC rows draw internal entropy, so rscrypto and AWS-LC must instead open each
+// other's outputs. Fixtures are public deterministic benchmark data; output conversion and drop remain timed. See
+// docs/benchmarking.md for the comparison boundaries.
 macro_rules! mlkem_profile_benches {
   (
     $keygen_fn:ident,
@@ -2694,43 +3466,44 @@ macro_rules! mlkem_profile_benches {
     fn $keygen_fn(c: &mut Criterion) {
       if !bench_config::selected(concat!($group, "/keygen/")) { return; }
       let key_random = deterministic_bytes::<64>(0x10);
-      let rs_keygen = || {
+      let expected = || {
+        let keys = $libcrux::generate_key_pair(key_random);
+        (*keys.public_key().as_slice(), *keys.private_key().as_slice())
+      };
+      let mut g = c.benchmark_group(concat!($group, "/keygen/derand-encoded"));
+      g.bench_function("rscrypto", checked(|| {
         let (ek, dk) = <$profile>::generate_keypair(|out| {
           out.copy_from_slice(black_box(&key_random));
           Ok::<(), MlKemError>(())
         }).expect("ML-KEM key generation");
         (ek.to_bytes(), *dk.as_bytes())
-      };
-      let expected = rs_keygen();
-      let mut g = c.benchmark_group(concat!($group, "/keygen/derand-encoded"));
-      checked_mlkem_bench(&mut g, "rscrypto", &expected, rs_keygen);
-      checked_mlkem_bench(&mut g, "libcrux", &expected, || {
+      }, |keys| assert_eq!(keys, expected())));
+      g.bench_function("libcrux", checked(|| {
         let keys = $libcrux::generate_key_pair(black_box(key_random));
         (*keys.public_key().as_slice(), *keys.private_key().as_slice())
-      });
-      checked_mlkem_bench(&mut g, "fips203", &expected, || {
+      }, |keys| assert_eq!(keys, expected())));
+      g.bench_function("fips203", checked(|| {
         let seed = black_box(&key_random);
         let (ek, dk) = $fips::KG::keygen_from_seed(array_from_slice(&seed[..32]), array_from_slice(&seed[32..]));
         (ek.into_bytes(), dk.into_bytes())
-      });
+      }, |keys| assert_eq!(keys, expected())));
       g.finish();
 
       aws_lc_bench! {
-        let operation = || {
+        let mut g = c.benchmark_group(concat!($group, "/keygen/internal-entropy-encoded"));
+        g.bench_function("aws-lc-rs", checked(|| {
           let dk = AwsMlKemDecapsulationKey::generate(&$aws_algorithm).expect("AWS-LC key generation");
           let ek = dk.encapsulation_key().expect("AWS-LC public key");
           (array_from_slice::<{ <$profile>::ENCAPSULATION_KEY_SIZE }>(ek.key_bytes().expect("AWS-LC key export").as_ref()),
            array_from_slice::<{ <$profile>::DECAPSULATION_KEY_SIZE }>(dk.key_bytes().expect("AWS-LC key export").as_ref()))
-        };
-        let (ek_bytes, dk_bytes) = operation();
-        let ek = <<$profile as rscrypto::Kem>::EncapsulationKey>::try_from_slice(&ek_bytes).expect("AWS-LC public key import");
-        let dk = <<$profile as rscrypto::Kem>::DecapsulationKey>::try_from_slice(&dk_bytes).expect("AWS-LC secret key import");
-        let (ct, ss) = <$profile>::encapsulate(&ek, |out| { out.fill(0x42); Ok::<(), MlKemError>(()) }).expect("AWS-LC key interoperability");
-        assert_eq!(<$profile>::decapsulate(&dk, &ct).expect("AWS-LC key interoperability").as_bytes(), ss.as_bytes());
-        let aws_dk = AwsMlKemDecapsulationKey::new(&$aws_algorithm, &dk_bytes).expect("AWS-LC key import");
-        assert_eq!(aws_dk.decapsulate(AwsMlKemCiphertext::from(ct.as_ref())).expect("AWS-LC key interoperability").as_ref(), ss.as_ref());
-        let mut g = c.benchmark_group(concat!($group, "/keygen/internal-entropy-encoded"));
-        g.bench_function("aws-lc-rs", |b| b.iter(operation));
+        }, |(ek_bytes, dk_bytes)| {
+          let ek = <<$profile as rscrypto::Kem>::EncapsulationKey>::try_from_slice(&ek_bytes).expect("AWS-LC public key import");
+          let dk = <<$profile as rscrypto::Kem>::DecapsulationKey>::try_from_slice(&dk_bytes).expect("AWS-LC secret key import");
+          let (ct, ss) = <$profile>::encapsulate(&ek, |out| { out.fill(0x42); Ok::<(), MlKemError>(()) }).expect("AWS-LC key interoperability");
+          assert_eq!(<$profile>::decapsulate(&dk, &ct).expect("AWS-LC key interoperability").as_bytes(), ss.as_bytes());
+          let aws_dk = AwsMlKemDecapsulationKey::new(&$aws_algorithm, &dk_bytes).expect("AWS-LC key import");
+          assert_eq!(aws_dk.decapsulate(AwsMlKemCiphertext::from(ct.as_ref())).expect("AWS-LC key interoperability").as_ref(), ss.as_ref());
+        }));
         g.finish();
       }
     }
@@ -2748,76 +3521,74 @@ macro_rules! mlkem_profile_benches {
       let rustcrypto_ek = rustcrypto_ml_kem::EncapsulationKey::<$rustcrypto>::new(&ek_bytes.into()).expect("RustCrypto key import");
       let fips_ek = $fips::EncapsKey::try_from_bytes(ek_bytes).expect("fips203 key import");
       let libcrux_ek = libcrux_ml_kem::MlKemPublicKey::from(ek_bytes);
-      let rs_encapsulate = || {
-        let (ct, ss) = prepared_ek.encapsulate(|out| {
-          out.copy_from_slice(black_box(&encaps_random));
-          Ok::<(), MlKemError>(())
-        }).expect("ML-KEM encapsulation");
-        (ct.to_bytes(), *ss.as_bytes())
+      let expected = || {
+        let (ct, ss) = $libcrux::encapsulate(&libcrux_ek, encaps_random);
+        (*ct.as_slice(), ss)
       };
-      let expected = rs_encapsulate();
       let mut g = c.benchmark_group(concat!($group, "/encapsulate/derand-reuse-matrix-prepared"));
-      checked_mlkem_bench(&mut g, "rscrypto", &expected, || {
+      g.bench_function("rscrypto", checked(|| {
         let (ct, ss) = black_box(&prepared_ek).encapsulate(|out| {
           out.copy_from_slice(black_box(&encaps_random)); Ok::<(), MlKemError>(())
         }).expect("ML-KEM encapsulation");
         (ct.to_bytes(), *ss.as_bytes())
-      });
+      }, |output| assert_eq!(output, expected())));
       g.finish();
       let mut g = c.benchmark_group(concat!($group, "/encapsulate/derand-reuse-decoded"));
-      checked_mlkem_bench(&mut g, "rustcrypto", &expected, || {
+      g.bench_function("rustcrypto", checked(|| {
         let (ct, ss) = black_box(&rustcrypto_ek).encapsulate_deterministic(&(*black_box(&encaps_random)).into());
-        (array_from_slice(ct.as_slice()), array_from_slice(ss.as_slice()))
-      });
+        (array_from_slice::<{ <$profile>::CIPHERTEXT_SIZE }>(ct.as_slice()), array_from_slice::<32>(ss.as_slice()))
+      }, |output| assert_eq!(output, expected())));
       g.finish();
       let mut g = c.benchmark_group(concat!($group, "/encapsulate/derand-reuse-encoded"));
-      checked_mlkem_bench(&mut g, "rscrypto", &expected, || {
+      g.bench_function("rscrypto", checked(|| {
         let (ct, ss) = <$profile>::encapsulate(black_box(&ek), |out| {
           out.copy_from_slice(black_box(&encaps_random)); Ok::<(), MlKemError>(())
         }).expect("ML-KEM encapsulation");
         (ct.to_bytes(), *ss.as_bytes())
-      });
-      checked_mlkem_bench(&mut g, "libcrux", &expected, || {
+      }, |output| assert_eq!(output, expected())));
+      g.bench_function("libcrux", checked(|| {
         let (ct, ss) = $libcrux::encapsulate(black_box(&libcrux_ek), *black_box(&encaps_random));
         (*ct.as_slice(), ss)
-      });
-      checked_mlkem_bench(&mut g, "fips203", &expected, || {
+      }, |output| assert_eq!(output, expected())));
+      g.bench_function("fips203", checked(|| {
         let (ss, ct) = black_box(&fips_ek).encaps_from_seed(black_box(&encaps_random));
         (ct.into_bytes(), ss.into_bytes())
-      });
+      }, |output| assert_eq!(output, expected())));
       g.finish();
 
       let mut g = c.benchmark_group(concat!($group, "/encapsulate/derand-import-encoded"));
-      checked_mlkem_bench(&mut g, "rscrypto", &expected, || {
+      g.bench_function("rscrypto", checked(|| {
         let ek = <<$profile as rscrypto::Kem>::EncapsulationKey>::try_from_slice(black_box(&ek_bytes)).expect("ML-KEM key import");
         let (ct, ss) = <$profile>::encapsulate(&ek, |out| {
           out.copy_from_slice(black_box(&encaps_random)); Ok::<(), MlKemError>(())
         }).expect("ML-KEM encapsulation");
         (ct.to_bytes(), *ss.as_bytes())
-      });
-      checked_mlkem_bench(&mut g, "rustcrypto", &expected, || {
+      }, |output| assert_eq!(output, expected())));
+      g.bench_function("rustcrypto", checked(|| {
         let ek = rustcrypto_ml_kem::EncapsulationKey::<$rustcrypto>::new(&(*black_box(&ek_bytes)).into()).expect("RustCrypto key import");
         let (ct, ss) = ek.encapsulate_deterministic(&(*black_box(&encaps_random)).into());
-        (array_from_slice(ct.as_slice()), array_from_slice(ss.as_slice()))
-      });
-      checked_mlkem_bench(&mut g, "libcrux", &expected, || {
+        (array_from_slice::<{ <$profile>::CIPHERTEXT_SIZE }>(ct.as_slice()), array_from_slice::<32>(ss.as_slice()))
+      }, |output| assert_eq!(output, expected())));
+      g.bench_function("libcrux", checked(|| {
         let ek = libcrux_ml_kem::MlKemPublicKey::from(*black_box(&ek_bytes));
         let (ct, ss) = $libcrux::encapsulate(&ek, *black_box(&encaps_random));
         (*ct.as_slice(), ss)
-      });
-      checked_mlkem_bench(&mut g, "fips203", &expected, || {
+      }, |output| assert_eq!(output, expected())));
+      g.bench_function("fips203", checked(|| {
         let ek = $fips::EncapsKey::try_from_bytes(*black_box(&ek_bytes)).expect("fips203 key import");
         let (ss, ct) = ek.encaps_from_seed(black_box(&encaps_random));
         (ct.into_bytes(), ss.into_bytes())
-      });
+      }, |output| assert_eq!(output, expected())));
       g.finish();
 
       aws_lc_bench! {
         let aws_ek = aws_lc_rs::kem::EncapsulationKey::new(&$aws_algorithm, &ek_bytes).expect("AWS-LC key import");
-        // Randomized rows cannot match a fixed ciphertext. Check their actual
-        // closures by cross-decapsulating each result before timing.
+        // Randomized rows cannot match a fixed ciphertext: rscrypto must open each AWS-LC ciphertext to its secret.
         for import in [false, true] {
-          let operation = || {
+          let group = if import { concat!($group, "/encapsulate/internal-entropy-import-encoded") }
+            else { concat!($group, "/encapsulate/internal-entropy-reuse-native") };
+          let mut g = c.benchmark_group(group);
+          g.bench_function("aws-lc-rs", checked(|| {
             let imported;
             let key = if import {
               imported = aws_lc_rs::kem::EncapsulationKey::new(&$aws_algorithm, black_box(&ek_bytes)).expect("AWS-LC key import");
@@ -2825,14 +3596,10 @@ macro_rules! mlkem_profile_benches {
             } else { black_box(&aws_ek) };
             let (ct, ss) = key.encapsulate().expect("AWS-LC encapsulation");
             (array_from_slice::<{ <$profile>::CIPHERTEXT_SIZE }>(ct.as_ref()), array_from_slice::<32>(ss.as_ref()))
-          };
-          let (ct_bytes, ss) = operation();
-          let ct = <<$profile as rscrypto::Kem>::Ciphertext>::try_from_slice(&ct_bytes).expect("AWS-LC ciphertext import");
-          assert_eq!(<$profile>::decapsulate(&_dk, &ct).expect("AWS-LC encapsulation interoperability").as_bytes(), &ss);
-          let group = if import { concat!($group, "/encapsulate/internal-entropy-import-encoded") }
-            else { concat!($group, "/encapsulate/internal-entropy-reuse-native") };
-          let mut g = c.benchmark_group(group);
-          g.bench_function("aws-lc-rs", |b| b.iter(operation));
+          }, |(ct_bytes, ss)| {
+            let ct = <<$profile as rscrypto::Kem>::Ciphertext>::try_from_slice(&ct_bytes).expect("AWS-LC ciphertext import");
+            assert_eq!(<$profile>::decapsulate(&_dk, &ct).expect("AWS-LC encapsulation interoperability").as_bytes(), &ss);
+          }));
           g.finish();
         }
       }
@@ -2845,10 +3612,9 @@ macro_rules! mlkem_profile_benches {
       let (ek, dk) = <$profile>::generate_keypair(|out| {
         out.copy_from_slice(&key_random); Ok::<(), MlKemError>(())
       }).expect("ML-KEM fixture key generation");
-      let (ct, ss) = <$profile>::encapsulate(&ek, |out| {
+      let (ct, _shared) = <$profile>::encapsulate(&ek, |out| {
         out.copy_from_slice(&encaps_random); Ok::<(), MlKemError>(())
       }).expect("ML-KEM fixture encapsulation");
-      let expected = *ss.as_bytes();
       let dk_bytes = *dk.as_bytes();
       let ct_bytes = ct.to_bytes();
       let prepared_dk = dk.prepare().expect("ML-KEM key preparation");
@@ -2858,63 +3624,65 @@ macro_rules! mlkem_profile_benches {
       let fips_ct = $fips::CipherText::try_from_bytes(ct_bytes).expect("fips203 ciphertext import");
       let libcrux_dk = libcrux_ml_kem::MlKemPrivateKey::from(dk_bytes);
       let libcrux_ct = libcrux_ml_kem::MlKemCiphertext::from(ct_bytes);
+      let expected = || $libcrux::decapsulate(&libcrux_dk, &libcrux_ct);
       // Preparation decodes the key, expands the public matrix, and derives the
       // decryption mask once; the reuse row below amortizes all of it.
       let mut g = c.benchmark_group(concat!($group, "/decapsulate/prepare-key"));
-      g.bench_function("rscrypto", |b| {
-        b.iter(|| black_box(black_box(&dk).prepare().expect("ML-KEM key preparation")))
-      });
+      g.bench_function("rscrypto", checked(
+        || black_box(black_box(&dk).prepare().expect("ML-KEM key preparation")),
+        |prepared| assert_eq!(*prepared.decapsulate(&ct).expect("ML-KEM decapsulation").as_bytes(), expected()),
+      ));
       g.finish();
       let mut g = c.benchmark_group(concat!($group, "/decapsulate/reuse-matrix-prepared"));
-      checked_mlkem_bench(&mut g, "rscrypto", &expected, || {
+      g.bench_function("rscrypto", checked(|| {
         *black_box(&prepared_dk).decapsulate(black_box(&ct)).expect("ML-KEM decapsulation").as_bytes()
-      });
+      }, |secret| assert_eq!(secret, expected())));
       g.finish();
       let mut g = c.benchmark_group(concat!($group, "/decapsulate/reuse-decoded"));
-      checked_mlkem_bench(&mut g, "rustcrypto", &expected, || {
-        array_from_slice(black_box(&rustcrypto_dk).decapsulate(black_box(&rustcrypto_ct)).as_slice())
-      });
+      g.bench_function("rustcrypto", checked(|| {
+        array_from_slice::<32>(black_box(&rustcrypto_dk).decapsulate(black_box(&rustcrypto_ct)).as_slice())
+      }, |secret| assert_eq!(secret, expected())));
       g.finish();
       let mut g = c.benchmark_group(concat!($group, "/decapsulate/reuse-encoded"));
-      checked_mlkem_bench(&mut g, "rscrypto", &expected, || {
+      g.bench_function("rscrypto", checked(|| {
         *<$profile>::decapsulate(black_box(&dk), black_box(&ct)).expect("ML-KEM decapsulation").as_bytes()
-      });
-      checked_mlkem_bench(&mut g, "libcrux", &expected, || {
+      }, |secret| assert_eq!(secret, expected())));
+      g.bench_function("libcrux", checked(|| {
         $libcrux::decapsulate(black_box(&libcrux_dk), black_box(&libcrux_ct))
-      });
-      checked_mlkem_bench(&mut g, "fips203", &expected, || {
+      }, |secret| assert_eq!(secret, expected())));
+      g.bench_function("fips203", checked(|| {
         black_box(&fips_dk).try_decaps(black_box(&fips_ct)).expect("fips203 decapsulation").into_bytes()
-      });
+      }, |secret| assert_eq!(secret, expected())));
       g.finish();
       aws_lc_bench! {
         let aws_dk = AwsMlKemDecapsulationKey::new(&$aws_algorithm, &dk_bytes).expect("AWS-LC key import");
         let mut g = c.benchmark_group(concat!($group, "/decapsulate/reuse-native"));
-        checked_mlkem_bench(&mut g, "aws-lc-rs", &expected, || {
-          array_from_slice(black_box(&aws_dk).decapsulate(AwsMlKemCiphertext::from(black_box(ct_bytes.as_slice()))).expect("AWS-LC decapsulation").as_ref())
-        });
+        g.bench_function("aws-lc-rs", checked(|| {
+          array_from_slice::<32>(black_box(&aws_dk).decapsulate(AwsMlKemCiphertext::from(black_box(ct_bytes.as_slice()))).expect("AWS-LC decapsulation").as_ref())
+        }, |secret| assert_eq!(secret, expected())));
         g.finish();
       }
       let mut g = c.benchmark_group(concat!($group, "/decapsulate/import-encoded"));
-      checked_mlkem_bench(&mut g, "rscrypto", &expected, || {
+      g.bench_function("rscrypto", checked(|| {
         let dk = <<$profile as rscrypto::Kem>::DecapsulationKey>::try_from_slice(black_box(&dk_bytes)).expect("ML-KEM key import");
         let ct = <<$profile as rscrypto::Kem>::Ciphertext>::try_from_slice(black_box(&ct_bytes)).expect("ML-KEM ciphertext import");
         *<$profile>::decapsulate(&dk, &ct).expect("ML-KEM decapsulation").as_bytes()
-      });
-      checked_mlkem_bench(&mut g, "libcrux", &expected, || {
+      }, |secret| assert_eq!(secret, expected())));
+      g.bench_function("libcrux", checked(|| {
         let dk = libcrux_ml_kem::MlKemPrivateKey::from(*black_box(&dk_bytes));
         let ct = libcrux_ml_kem::MlKemCiphertext::from(*black_box(&ct_bytes));
         $libcrux::decapsulate(&dk, &ct)
-      });
-      checked_mlkem_bench(&mut g, "fips203", &expected, || {
+      }, |secret| assert_eq!(secret, expected())));
+      g.bench_function("fips203", checked(|| {
         let dk = $fips::DecapsKey::try_from_bytes(*black_box(&dk_bytes)).expect("fips203 key import");
         let ct = $fips::CipherText::try_from_bytes(*black_box(&ct_bytes)).expect("fips203 ciphertext import");
         dk.try_decaps(&ct).expect("fips203 decapsulation").into_bytes()
-      });
+      }, |secret| assert_eq!(secret, expected())));
       aws_lc_bench! {
-        checked_mlkem_bench(&mut g, "aws-lc-rs", &expected, || {
+        g.bench_function("aws-lc-rs", checked(|| {
           let dk = AwsMlKemDecapsulationKey::new(&$aws_algorithm, black_box(&dk_bytes)).expect("AWS-LC key import");
-          array_from_slice(dk.decapsulate(AwsMlKemCiphertext::from(black_box(ct_bytes.as_slice()))).expect("AWS-LC decapsulation").as_ref())
-        });
+          array_from_slice::<32>(dk.decapsulate(AwsMlKemCiphertext::from(black_box(ct_bytes.as_slice()))).expect("AWS-LC decapsulation").as_ref())
+        }, |secret| assert_eq!(secret, expected())));
       }
       g.finish();
     }

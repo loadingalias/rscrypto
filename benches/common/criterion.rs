@@ -1,6 +1,63 @@
 //! Shared defaults for every Criterion harness, including direct Cargo invocations.
+//!
+//! Every measured row registers its routine through [`checked`], [`checked_with`],
+//! or [`checked_routine`]. Each checks the row's output once, outside timing,
+//! when Criterion first runs the row; listing runs no check. [`run`] fails a
+//! planned run in which a measured row skipped its check.
 
-use core::time::Duration;
+use core::{
+  sync::atomic::{AtomicUsize, Ordering},
+  time::Duration,
+};
+
+use criterion::Bencher;
+
+/// Rows of this process whose output passed its check.
+static CHECKED_ROWS: AtomicUsize = AtomicUsize::new(0);
+
+/// Returns a routine that times `operation` after `check` accepts its output.
+///
+/// The check receives the second output, so any state that the operation
+/// reuses has already served one call.
+pub(crate) fn checked<T>(mut operation: impl FnMut() -> T, check: impl FnOnce(T)) -> impl FnMut(&mut Bencher<'_>) {
+  checked_with((), move |_| operation(), move |output, _| check(output))
+}
+
+/// [`checked`] for an operation that writes into state the row owns, such as a
+/// restored buffer. The check also receives that state.
+pub(crate) fn checked_with<S, T>(
+  state: S,
+  operation: impl FnMut(&mut S) -> T,
+  check: impl FnOnce(T, &S),
+) -> impl FnMut(&mut Bencher<'_>) {
+  checked_routine(
+    (state, operation),
+    |(state, operation)| {
+      drop(operation(&mut *state));
+      let output = operation(&mut *state);
+      check(output, state);
+    },
+    |b, (state, operation)| b.iter(|| operation(&mut *state)),
+  )
+}
+
+/// Wraps a routine whose timing loop [`checked`] cannot express, such as
+/// `iter_batched`. `check` must run the routine's production operation; both
+/// share `state`.
+pub(crate) fn checked_routine<S>(
+  mut state: S,
+  check: impl FnOnce(&mut S),
+  mut routine: impl FnMut(&mut Bencher<'_>, &mut S),
+) -> impl FnMut(&mut Bencher<'_>) {
+  let mut check = Some(check);
+  move |b| {
+    if let Some(check) = check.take() {
+      check(&mut state);
+      CHECKED_ROWS.fetch_add(1, Ordering::Relaxed);
+    }
+    routine(b, &mut state);
+  }
+}
 
 fn criterion() -> criterion::Criterion {
   let config: serde_json::Value =
@@ -99,4 +156,12 @@ pub(crate) fn run(targets: &[fn(&mut criterion::Criterion)]) {
     target(&mut criterion);
   }
   criterion.final_summary();
+  let checked = CHECKED_ROWS.load(Ordering::Relaxed);
+  if let Some(cases) = cases() {
+    // The case filter is exact, so Criterion measured each listed case once.
+    println!("Output checks: {checked} of {} measured rows passed", cases.len());
+    assert_eq!(checked, cases.len(), "every measured row must check its output");
+  } else if checked != 0 {
+    println!("Output checks: {checked} rows passed");
+  }
 }

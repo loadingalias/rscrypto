@@ -1,4 +1,7 @@
 //! SHA-3 family comparison benchmarks: rscrypto vs sha3 crate.
+//!
+//! Before timing, SHA-3 rows must return the sha3 crate's digest and SHAKE rows
+//! tiny-keccak's output for their input.
 
 #[path = "common/criterion.rs"]
 mod bench_config;
@@ -7,6 +10,7 @@ mod common;
 
 use core::hint::black_box;
 
+use bench_config::checked;
 use criterion::{BenchmarkId, Criterion};
 
 macro_rules! sha3_oneshot {
@@ -20,18 +24,23 @@ macro_rules! sha3_oneshot {
 
       for (len, data) in &inputs {
         common::set_throughput(&mut g, *len);
+        let expected = <$theirs as sha3::Digest>::digest(data);
 
-        g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-          use rscrypto::Digest as _;
-          b.iter(|| black_box(<$ours>::digest(black_box(d))))
-        });
+        g.bench_function(
+          BenchmarkId::new("rscrypto", len),
+          checked(
+            || <$ours as rscrypto::Digest>::digest(black_box(data)),
+            |out| assert_eq!(out.as_ref(), expected.as_slice()),
+          ),
+        );
 
-        g.bench_with_input(BenchmarkId::new("sha3", len), data, |b, d| {
-          b.iter(|| {
-            use sha3::Digest as _;
-            black_box(<$theirs>::digest(black_box(d)))
-          })
-        });
+        g.bench_function(
+          BenchmarkId::new("sha3", len),
+          checked(
+            || <$theirs as sha3::Digest>::digest(black_box(data)),
+            |out| assert_eq!(out, expected),
+          ),
+        );
       }
 
       g.finish();
@@ -44,8 +53,7 @@ sha3_oneshot!(sha3_256, "sha3-256", rscrypto::Sha3_256, sha3::Sha3_256);
 sha3_oneshot!(sha3_384, "sha3-384", rscrypto::Sha3_384, sha3::Sha3_384);
 sha3_oneshot!(sha3_512, "sha3-512", rscrypto::Sha3_512, sha3::Sha3_512);
 
-/// Streams 1 MiB in fixed-size chunks. Before timing, each chunk size checks
-/// that the rscrypto and sha3 rows produce the same digest.
+/// Streams 1 MiB in fixed-size chunks.
 macro_rules! sha3_streaming {
   ($fn_name:ident, $group:literal, $ours:ty, $theirs:ty) => {
     fn $fn_name(c: &mut Criterion) {
@@ -73,21 +81,20 @@ macro_rules! sha3_streaming {
       let mut g = c.benchmark_group($group);
       g.throughput(criterion::Throughput::Bytes(data.len() as u64));
 
+      let expected = <$theirs as sha3::Digest>::digest(&data);
       for chunk_size in [64, 4096] {
-        assert_eq!(
-          rscrypto_digest(chunk_size).as_ref(),
-          sha3_digest(chunk_size).as_slice(),
-          "{}/{chunk_size}B: rscrypto digest must match sha3",
-          $group
+        g.bench_function(
+          format!("rscrypto/{chunk_size}B"),
+          checked(
+            || rscrypto_digest(chunk_size),
+            |out| assert_eq!(out.as_ref(), expected.as_slice()),
+          ),
         );
 
-        g.bench_function(format!("rscrypto/{chunk_size}B"), |b| {
-          b.iter(|| black_box(rscrypto_digest(chunk_size)))
-        });
-
-        g.bench_function(format!("sha3/{chunk_size}B"), |b| {
-          b.iter(|| black_box(sha3_digest(chunk_size)))
-        });
+        g.bench_function(
+          format!("sha3/{chunk_size}B"),
+          checked(|| sha3_digest(chunk_size), |out| assert_eq!(out, expected)),
+        );
       }
 
       g.finish();
@@ -127,31 +134,39 @@ fn shake128(c: &mut Criterion) {
   let inputs = common::comp_sizes();
   let mut g = c.benchmark_group("shake128");
 
+  let tiny_keccak = |data: &[u8]| {
+    use tiny_keccak::{Hasher as _, Xof as _};
+    let mut hasher = tiny_keccak::Shake::v128();
+    hasher.update(data);
+    let mut out = [0u8; 32];
+    hasher.squeeze(&mut out);
+    out
+  };
+
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
+    let expected = tiny_keccak(data);
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| {
-        use rscrypto::Xof;
-        let mut h = rscrypto::Shake128::new();
-        h.update(black_box(d));
-        let mut xof = h.finalize_xof();
-        let mut out = [0u8; 32];
-        xof.squeeze(&mut out);
-        black_box(out)
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked(
+        || {
+          use rscrypto::Xof;
+          let mut h = rscrypto::Shake128::new();
+          h.update(black_box(data));
+          let mut xof = h.finalize_xof();
+          let mut out = [0u8; 32];
+          xof.squeeze(&mut out);
+          out
+        },
+        |out| assert_eq!(out, expected),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("tiny-keccak", len), data, |b, d| {
-      b.iter(|| {
-        use tiny_keccak::{Hasher as _, Xof as _};
-        let mut hasher = tiny_keccak::Shake::v128();
-        hasher.update(black_box(d));
-        let mut out = [0u8; 32];
-        hasher.squeeze(&mut out);
-        black_box(out)
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("tiny-keccak", len),
+      checked(|| tiny_keccak(black_box(data)), |out| assert_eq!(out, expected)),
+    );
   }
 
   g.finish();
@@ -164,31 +179,39 @@ fn shake256(c: &mut Criterion) {
   let inputs = common::comp_sizes();
   let mut g = c.benchmark_group("shake256");
 
+  let tiny_keccak = |data: &[u8]| {
+    use tiny_keccak::{Hasher as _, Xof as _};
+    let mut hasher = tiny_keccak::Shake::v256();
+    hasher.update(data);
+    let mut out = [0u8; 32];
+    hasher.squeeze(&mut out);
+    out
+  };
+
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
+    let expected = tiny_keccak(data);
 
-    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| {
-        use rscrypto::Xof;
-        let mut h = rscrypto::Shake256::new();
-        h.update(black_box(d));
-        let mut xof = h.finalize_xof();
-        let mut out = [0u8; 32];
-        xof.squeeze(&mut out);
-        black_box(out)
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      checked(
+        || {
+          use rscrypto::Xof;
+          let mut h = rscrypto::Shake256::new();
+          h.update(black_box(data));
+          let mut xof = h.finalize_xof();
+          let mut out = [0u8; 32];
+          xof.squeeze(&mut out);
+          out
+        },
+        |out| assert_eq!(out, expected),
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("tiny-keccak", len), data, |b, d| {
-      b.iter(|| {
-        use tiny_keccak::{Hasher as _, Xof as _};
-        let mut hasher = tiny_keccak::Shake::v256();
-        hasher.update(black_box(d));
-        let mut out = [0u8; 32];
-        hasher.squeeze(&mut out);
-        black_box(out)
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("tiny-keccak", len),
+      checked(|| tiny_keccak(black_box(data)), |out| assert_eq!(out, expected)),
+    );
   }
 
   g.finish();
@@ -201,22 +224,40 @@ fn sha3_256_digest_pair(c: &mut Criterion) {
   let inputs = common::comp_sizes();
   let mut g = c.benchmark_group("sha3-256/digest_pair");
 
-  for (len, data) in &inputs {
-    // Throughput is 2× because we hash two messages.
+  for (len, first) in &inputs {
+    // Throughput is 2× because we hash two messages of the same length. Distinct
+    // messages let the check catch a swapped or mixed lane.
     g.throughput(criterion::Throughput::Bytes((*len as u64).strict_mul(2)));
+    let second: Vec<u8> = first.iter().map(|byte| byte ^ 0xa5).collect();
+    let expected = (
+      <sha3::Sha3_256 as sha3::Digest>::digest(first),
+      <sha3::Sha3_256 as sha3::Digest>::digest(&second),
+    );
+    let matches = |(a, b): ([u8; 32], [u8; 32])| {
+      assert_eq!(a.as_slice(), expected.0.as_slice());
+      assert_eq!(b.as_slice(), expected.1.as_slice());
+    };
 
-    g.bench_with_input(BenchmarkId::new("pair", len), data, |b, d| {
-      b.iter(|| black_box(rscrypto::Sha3_256::digest_pair(black_box(d), black_box(d))))
-    });
+    g.bench_function(
+      BenchmarkId::new("pair", len),
+      checked(
+        || rscrypto::Sha3_256::digest_pair(black_box(first), black_box(&second)),
+        matches,
+      ),
+    );
 
-    g.bench_with_input(BenchmarkId::new("2x_sequential", len), data, |b, d| {
-      use rscrypto::Digest as _;
-      b.iter(|| {
-        let a = rscrypto::Sha3_256::digest(black_box(d));
-        let b_ = rscrypto::Sha3_256::digest(black_box(d));
-        black_box((a, b_))
-      })
-    });
+    g.bench_function(
+      BenchmarkId::new("2x_sequential", len),
+      checked(
+        || {
+          use rscrypto::Digest as _;
+          let a = rscrypto::Sha3_256::digest(black_box(first));
+          let b = rscrypto::Sha3_256::digest(black_box(&second));
+          (a, b)
+        },
+        matches,
+      ),
+    );
   }
 
   g.finish();
