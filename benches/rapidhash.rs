@@ -7,7 +7,9 @@
 //! upstream `quality` adds them. `fast` does less work than rscrypto and
 //! `quality` more, so a claim cites both. No external specification defines
 //! these hashers, so pinned known answers check each one; map rows check their
-//! results.
+//! results. Upstream `RapidHasher` reads native-endian words, so its pinned
+//! answers hold only on little-endian targets; on big-endian targets its rows
+//! check that a second call returns the same hash.
 
 #[path = "common/criterion.rs"]
 mod bench_config;
@@ -60,11 +62,26 @@ fn collection_hashers() -> (
   )
 }
 
-/// A routine that times `state.hash_one(key)` after it returns its known answer.
-fn hash_one_row<S: BuildHasher, K: Hash + Copy>(state: S, key: K, answer: u64) -> impl FnMut(&mut Bencher<'_>) {
+/// The pinned answer of an upstream `RapidHasher` row, where it applies.
+///
+/// rapidhash 4.5.1 reads `RapidHasher` input with native-endian unaligned loads
+/// (`inner/read_np.rs`, "non-portable"), so its output differs on big-endian
+/// targets.
+const fn upstream(answer: u64) -> Option<u64> {
+  if cfg!(target_endian = "little") {
+    Some(answer)
+  } else {
+    None
+  }
+}
+
+/// A routine that times `state.hash_one(key)` after it checks the result:
+/// against a pinned answer, or without one, against a separate untimed call.
+fn hash_one_row<S: BuildHasher, K: Hash + Copy>(state: S, key: K, answer: Option<u64>) -> impl FnMut(&mut Bencher<'_>) {
+  let expected = answer.unwrap_or_else(|| state.hash_one(key));
   checked(
     move || state.hash_one(black_box(key)),
-    move |out| assert_eq!(out, answer),
+    move |out| assert_eq!(out, expected),
   )
 }
 
@@ -172,14 +189,17 @@ fn rapidhash_seeded_state(c: &mut Criterion) {
     assert_eq!(*len, answer_len, "known answers follow the size matrix");
     common::set_throughput(&mut group, *len);
     let key = data.as_slice();
-    group.bench_function(BenchmarkId::new("rscrypto", len), hash_one_row(ours, key, answers[0]));
+    group.bench_function(
+      BenchmarkId::new("rscrypto", len),
+      hash_one_row(ours, key, Some(answers[0])),
+    );
     group.bench_function(
       BenchmarkId::new("rapidhash-fast", len),
-      hash_one_row(fast, key, answers[1]),
+      hash_one_row(fast, key, upstream(answers[1])),
     );
     group.bench_function(
       BenchmarkId::new("rapidhash-quality", len),
-      hash_one_row(quality, key, answers[2]),
+      hash_one_row(quality, key, upstream(answers[2])),
     );
   }
   group.finish();
@@ -194,23 +214,35 @@ fn rapidhash_key_types(c: &mut Criterion) {
 
   let integer = 0xa5c3_17e9_6b4d_2f01u64;
   let mut group = c.benchmark_group("rapidhash-hash-one/u64");
-  group.bench_function("rscrypto", hash_one_row(ours, integer, integer_answers[0]));
-  group.bench_function("rapidhash-fast", hash_one_row(fast, integer, integer_answers[1]));
-  group.bench_function("rapidhash-quality", hash_one_row(quality, integer, integer_answers[2]));
+  group.bench_function("rscrypto", hash_one_row(ours, integer, Some(integer_answers[0])));
+  group.bench_function(
+    "rapidhash-fast",
+    hash_one_row(fast, integer, upstream(integer_answers[1])),
+  );
+  group.bench_function(
+    "rapidhash-quality",
+    hash_one_row(quality, integer, upstream(integer_answers[2])),
+  );
   group.finish();
 
   let bytes = collection_key(17);
   let mut group = c.benchmark_group("rapidhash-hash-one/array-32");
-  group.bench_function("rscrypto", hash_one_row(ours, bytes, bytes_answers[0]));
-  group.bench_function("rapidhash-fast", hash_one_row(fast, bytes, bytes_answers[1]));
-  group.bench_function("rapidhash-quality", hash_one_row(quality, bytes, bytes_answers[2]));
+  group.bench_function("rscrypto", hash_one_row(ours, bytes, Some(bytes_answers[0])));
+  group.bench_function("rapidhash-fast", hash_one_row(fast, bytes, upstream(bytes_answers[1])));
+  group.bench_function(
+    "rapidhash-quality",
+    hash_one_row(quality, bytes, upstream(bytes_answers[2])),
+  );
   group.finish();
 
   let text = "collection-key";
   let mut group = c.benchmark_group("rapidhash-hash-one/str-14");
-  group.bench_function("rscrypto", hash_one_row(ours, text, text_answers[0]));
-  group.bench_function("rapidhash-fast", hash_one_row(fast, text, text_answers[1]));
-  group.bench_function("rapidhash-quality", hash_one_row(quality, text, text_answers[2]));
+  group.bench_function("rscrypto", hash_one_row(ours, text, Some(text_answers[0])));
+  group.bench_function("rapidhash-fast", hash_one_row(fast, text, upstream(text_answers[1])));
+  group.bench_function(
+    "rapidhash-quality",
+    hash_one_row(quality, text, upstream(text_answers[2])),
+  );
   group.finish();
 }
 
