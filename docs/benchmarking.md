@@ -451,6 +451,12 @@ Construction-only and header-mask groups state their own boundaries next to thei
   These component rows do not measure public dispatch or complete hashing.
 - Ascon's `rscrypto/scalar-loop` rows compare repeated calls to the `rscrypto` scalar API with its batch API.
   They do not compare with an external library.
+- RapidHash `rapidhash-v3-64` and `rapidhash-stream` rows compute the same C++ RapidHash V3 function in both libraries.
+  The `rapidhash-buildhasher`, `rapidhash-hash-one`, and `rapidhash-hashmap` rows compare three different
+  collection hashers. rscrypto mixes buffered integer writes in before each byte write and ends with one mix.
+  Upstream `rapidhash-fast` keeps integers buffered and has no avalanche round, so it does less work.
+  Upstream `rapidhash-quality` adds avalanche rounds, so it does more.
+  Quote an rscrypto collection result against both rows.
 
 ## ML-KEM and Argon2 comparison contracts
 
