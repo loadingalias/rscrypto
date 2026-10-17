@@ -109,6 +109,16 @@ def main() -> None:
       pass
     else:
       fail(f"catalog accepted family {family!r} for {name}")
+  for name, split in (("slhdsa", "parameter-sets"), ("slhdsa", True), ("blake2", "algorithms"),
+                      ("structural", "algorithms")):
+    broken = copy.deepcopy(catalog)
+    broken["benches"][name]["split"] = split
+    try:
+      validate_catalog(broken)
+    except CatalogError:
+      pass
+    else:
+      fail(f"catalog accepted split {split!r} for {name}")
   for members in ([], ["sha256", "sha256"], ["structural"], ["missing"]):
     broken = copy.deepcopy(catalog)
     broken["groups"]["hashes"] = members

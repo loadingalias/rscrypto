@@ -23,8 +23,8 @@ from cross_build import TARGETS
 OPTIONS = ('filter', 'sample_size', 'warmup_ms', 'measure_ms')
 INPUTS = {'benchmarks', 'diagnostic', *OPTIONS, *PLATFORMS}
 PREPARE_MINUTES = 30
-# Each further target in a family job adds one bounded `just bench` run.
-TARGET_MINUTES = 10
+# Each further run in a family job adds one bounded `just bench`.
+RUN_MINUTES = 10
 
 
 def platforms(value: str, run_id: str) -> dict:
@@ -107,12 +107,20 @@ def arguments(names: list[str], common: list[str]) -> list[str]:
 
 
 def jobs(inputs: dict) -> dict[str, dict[str, list[str]]]:
-    """Group the selected targets and their `just bench` arguments by the primitive family that runs them."""
-    benches = load_catalog()['benches']
+    """Group the selected runs and their `just bench` arguments by the primitive family that runs them."""
+    catalog = load_catalog()
     common = options(inputs)
     grouped: dict[str, dict[str, list[str]]] = {}
     for bench, names in selection(inputs.get('benchmarks', '')).items():
-        grouped.setdefault(benches[bench]['family'], {})[bench] = arguments(names, common)
+        entry = catalog['benches'][bench]
+        if entry.get('split') == 'algorithms':
+            # Each algorithm of a split target is its own run; no benchmark group spans two runs.
+            if names == [bench]:
+                names = [name for name, algorithm in catalog['algorithms'].items() if algorithm['bench'] == bench]
+            runs = {name: arguments([name], common) for name in names}
+        else:
+            runs = {bench: arguments(names, common)}
+        grouped.setdefault(entry['family'], {}).update(runs)
     return grouped
 
 
@@ -127,22 +135,22 @@ def plan(inputs: dict, run_id: str) -> tuple[dict, dict, dict]:
     # RunsOn starts a host for every queued job, whatever `max-parallel` says, and a job can take any
     # host whose label matches. One job per family bounds the hosts; the family label keeps each job on its own.
     measurements = [{**row, 'family': family, 'runner': label(row['runner'], family),
-                     'timeout': row['timeout'] + TARGET_MINUTES * (len(runs) - 1)}
+                     'timeout': row['timeout'] + RUN_MINUTES * (len(runs) - 1)}
                     for family, runs in families.items() for row in rows]
     builds = [{'platform': row['platform'], 'target': row['target'], 'family': family,
-               'timeout': PREPARE_MINUTES + TARGET_MINUTES * (len(runs) - 1)}
+               'timeout': PREPARE_MINUTES + RUN_MINUTES * (len(runs) - 1)}
               for family, runs in families.items() for row in rows if 'target' in row]
     return {'include': measurements}, {'include': builds}, families
 
 
-def run(inputs: dict, family: str, transfer=lambda bench: []) -> int:
-    """Run each selected target of one family as its own `just bench`; the first failure ends the job."""
+def run(inputs: dict, family: str, transfer=lambda name: []) -> int:
+    """Run each selected run of one family as its own `just bench`; the first failure ends the job."""
     runs = jobs(inputs).get(family)
     if runs is None:
         raise ValueError(f'{family} is not a family of this selection')
-    for bench, args in runs.items():
-        args = [*args, *transfer(bench)]
-        print(f'{family} / {bench}: just bench ' + ' '.join(args), flush=True)
+    for name, args in runs.items():
+        args = [*args, *transfer(name)]
+        print(f'{family} / {name}: just bench ' + ' '.join(args), flush=True)
         status = subprocess.run(['just', 'bench', *args], check=False).returncode
         if status:
             return status
@@ -161,8 +169,8 @@ def main() -> int:
             output.write('builds=' + json.dumps(builds, separators=(',', ':')) + '\n')
         print('Platforms: ' + ', '.join(dict.fromkeys(row['name'] for row in measurements['include'])))
         for family, runs in families.items():
-            for bench, args in runs.items():
-                print(f'{family} / {bench}: just bench ' + ' '.join(args))
+            for name, args in runs.items():
+                print(f'{family} / {name}: just bench ' + ' '.join(args))
         print(f'Cross-builds: {len(builds["include"])}; measurements: {len(measurements["include"])}')
         return 0
     if len(command) == 2 and command[0] == 'run':
@@ -171,12 +179,12 @@ def main() -> int:
         operation, family, target, directory = command
         if target not in TARGETS:
             raise ValueError('unsupported cross-build target')
-        # One sealed archive per target, named for it, in the family's transfer directory.
+        # One sealed archive per run, named for its target or algorithm, in the family's transfer directory.
         directory = Path(directory)
         flag = 'prepare_archive=' if operation == 'prepare' else 'run_archive='
         if operation == 'prepare':
             directory.mkdir(parents=True, exist_ok=True)
-        return run(inputs, family, lambda bench: ['target=' + target, flag + str(directory / f'{bench}.tar.gz')])
+        return run(inputs, family, lambda name: ['target=' + target, flag + str(directory / f'{name}.tar.gz')])
     raise ValueError('usage: scripts/bench/ci.py plan|run FAMILY|{prepare|measure} FAMILY TARGET DIRECTORY')
 
 

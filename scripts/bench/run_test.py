@@ -63,6 +63,8 @@ cases = {
                        'argon2id-parallel/rscrypto/p=4'],
   'blake2': ['blake2/rscrypto/blake2b256/64', 'blake2/dryoc/blake2b256/64', 'blake2/keyed/dryoc/blake2b256/64'],
   'crc': [name + '/rscrypto/64' for name in ('crc16-ccitt', 'crc16-ibm', 'crc24-openpgp', 'crc32', 'crc32c', 'crc64-xz', 'crc64-nvme')],
+  'slhdsa': ['slhdsa-sha2-128s/sign/deterministic-32/rscrypto', 'slhdsa-sha2-128s/hash-sign/sha256/deterministic-32/fips205',
+             'slhdsa-shake-256f/verify/32/rustcrypto', *filter(None, [os.environ.get('EXTRA_CASE')])],
 }.get(binary, [binary + '/rscrypto/64'])
 if binary == 'blake3' and 'diag' in pathlib.Path(sys.argv[0]).with_suffix('.features').read_text().split(','):
   cases.append('blake3/rscrypto-scalar/64')
@@ -311,6 +313,24 @@ sys.exit(64)
       self.assertNotEqual(result.returncode, 0)
       self.assertIn('no matching', result.stderr)
       path.write_bytes(original)
+
+  def test_split_target_cases_each_belong_to_one_algorithm(self):
+    self.ok(self.bench('slhdsa-sha2-128s'))
+    self.assertEqual(self.plan()[0]['cases'], ['slhdsa-sha2-128s/sign/deterministic-32/rscrypto'])
+    self.ok(self.bench('hash-slhdsa-sha2-128s'))
+    self.assertEqual(self.plan()[0]['cases'], ['slhdsa-sha2-128s/hash-sign/sha256/deterministic-32/fips205'])
+    # CI runs each SLH-DSA algorithm on its own, so a case that no algorithm claims would never run there.
+    extra = 'slhdsa-sha2-128s/sign-randomized/32/rscrypto'
+    for selection in ('slhdsa-sha2-128s', 'slhdsa'):
+      with self.subTest(selection=selection):
+        result = self.bench(selection, '--list', EXTRA_CASE=extra)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f'exactly one algorithm: {extra} (no algorithm)', result.stderr)
+    self.ok(self.bench('sha256', '--list', EXTRA_CASE=extra))
+    # Overlapping filters would run a case twice.
+    import runner
+    with self.assertRaisesRegex(ValueError, 'case/x \\(first, second\\)'):
+      runner.require_partition(['case/x'], {'first': 'x', 'second': '/x'}, {'x': ['case/x'], '/x': ['case/x']})
 
   def test_literal_filters_and_zero_matches(self):
     for pattern in (r'^sha256/rscrypto/\d+$', r'^sha256/rscrypto/[0-9]{1,3}$'):

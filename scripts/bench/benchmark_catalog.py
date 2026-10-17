@@ -63,6 +63,11 @@ def validate_catalog(catalog: dict) -> None:
       raise CatalogError(f"bench {name} needs a primitive family")
     if bench["kind"] != "criterion" and family is not None:
       raise CatalogError(f"bench {name} is not a Criterion target, so it has no family")
+    # A split target runs each of its catalog algorithms as its own bounded `just bench` in CI.
+    split = bench.get("split")
+    if split is not None and not (split == "algorithms" and bench["kind"] == "criterion"
+                                  and any(entry["bench"] == name for entry in algorithms.values())):
+      raise CatalogError(f"bench {name} can split only into its own catalog algorithms")
     binary = bench.get("binary")
     if not isinstance(binary, str) or not binary:
       raise CatalogError(f"bench {name} needs a binary")

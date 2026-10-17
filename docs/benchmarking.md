@@ -136,6 +136,8 @@ The catalog gives each Criterion target one `family`:
 `checksum`, `hashes`, `aead`, or `auth`, after the root modules, or `tls` for the provider comparison.
 Each checked platform and selected family pair becomes one job.
 The job runs one `just bench` for each selected target of its family, one after another.
+A split target, such as `slhdsa`, runs one `just bench` for each of its catalog algorithms instead;
+see [Time budget](#time-budget).
 For example, `sha256,blake3,crc32c` on `x86_64-linux` runs four jobs.
 `Measure x86_64-linux-intel / hashes` and `Measure x86_64-linux-amd / hashes` each run `sha2`, then `blake3`.
 The two `checksum` jobs run `crc`.
@@ -173,18 +175,18 @@ Use the recorded CPU topology to interpret parallel results.
 ### Artifacts and limits
 
 Each measurement job keeps `target/bench/` as the `bench-RUNNER-FAMILY-RUN-ATTEMPT` artifact,
-for example `bench-x86_64-linux-intel-hashes-<run>-1`, with one run directory for each target.
+for example `bench-x86_64-linux-intel-hashes-<run>-1`, with one run directory for each `just bench`.
 It includes failed-run evidence, source and machine identity, the resolved case plan, logs,
 and raw Criterion results.
 Preparation jobs keep their evidence as `bench-prepare-PLATFORM-FAMILY-RUN-ATTEMPT`.
 
-Each target runs as its own `just bench`,
-so the ten-minute [time budget](#time-budget) applies to each target separately.
+Each target, or each algorithm of a split target, runs as its own `just bench`,
+so the ten-minute [time budget](#time-budget) applies to each one separately.
 A target can still exceed its budget; narrow it with a case filter or sampling settings.
-A job stops at its first failed target.
+A job stops at its first failed `just bench`.
 Preparation jobs time out after 30 minutes.
 Measurement job timeouts (120 minutes, 180 on RISC-V) cover provisioning and transfer.
-Each further target in a family adds 10 minutes to either timeout.
+Each further `just bench` in a family job adds 10 minutes to either timeout.
 One failed job cancels the rest of the run.
 Manual dispatch is available after the workflow reaches the default branch.
 
@@ -555,6 +557,11 @@ You can lower the limit, but it cannot be more than 600 seconds.
 
 A planned comparison must fit within this limit, including every repetition.
 Do not split an over-budget comparison across repeated invocations to bypass it.
+A comparison is one Criterion benchmark group: one operation of one algorithm, across its implementations.
+A catalog target marked `"split": "algorithms"` runs in CI as one `just bench` per catalog algorithm,
+which never divides a group.
+SLH-DSA uses this, because its 24 FIPS 205 algorithms do not fit one budget on the slower platforms.
+Every case of a split target must belong to exactly one of its algorithms; discovery fails otherwise.
 If required evidence cannot fit, record that requirement as unmet. A smaller future
 experiment needs a prospectively stated question and gates; it does not complete
 an older, larger qualification plan. Preserve historical frozen plans and failed
@@ -598,6 +605,8 @@ For example, `sha256 filter=rscrypto` stays within SHA-256, but `sha2 filter=rsc
 - An exact algorithm name selects only that algorithm.
   Use a group name, such as `crc64`, to select more than one.
 - `blake2` is a target name, so it includes all implementations and operations, including the dryoc one-shot and keyed cases.
+- SLH-DSA has one algorithm name for each FIPS 205 algorithm.
+  `slhdsa-shake-192s` selects pure SLH-DSA-SHAKE-192s, and `hash-slhdsa-shake-192s` selects its HashSLH-DSA variant.
 
 ### Discover cases
 

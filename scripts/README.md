@@ -796,6 +796,8 @@ They do not install Rust, build code, or call Cargo Rail.
   because `Enter-VsDevShell` keeps only the first line of a multi-line variable.
 - `bench/ci.py plan` groups the selection by the catalog's primitive `family` and starts one job per platform and family.
   Each job runs one bounded `just bench` per selected target, one after another.
+  A target marked `"split": "algorithms"`, such as `slhdsa`, runs one per catalog algorithm,
+  and the runner fails discovery unless each of its cases belongs to exactly one algorithm.
   The planner rejects targets with an `external` prerequisite before any runner starts.
 - Job labels use platform names, never target triples:
   `Prepare PLATFORM / FAMILY` and `Measure RUNNER / FAMILY`.

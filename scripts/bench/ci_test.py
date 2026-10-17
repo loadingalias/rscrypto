@@ -77,11 +77,33 @@ class ManualBench(unittest.TestCase):
         self.assertNotIn('tls_connections', defaults)
         families = ci.jobs(ci.dispatch_inputs(request('all')))
         self.assertEqual(list(families), ['auth', 'checksum', 'hashes', 'aead'])
-        self.assertEqual(sorted(bench for runs in families.values() for bench in runs), sorted(defaults))
+        # SLH-DSA runs one FIPS 205 algorithm at a time: 12 parameter sets and their 12 HashSLH-DSA variants.
+        split = [name for name, entry in catalog['algorithms'].items() if entry['bench'] == 'slhdsa']
+        self.assertEqual(len(split), 24)
+        expected = [run for name in defaults for run in (split if name == 'slhdsa' else [name])]
+        self.assertEqual(sorted(run for runs in families.values() for run in runs), sorted(expected))
         everything = {name: True for name in ci.PLATFORMS}
         measurements, builds = plan('all', **everything)
         self.assertEqual(len(measurements), 8 * len(families))
         self.assertEqual(len(builds), 3 * len(families))
+
+    def test_split_target_runs_each_algorithm_alone(self):
+        inputs = ci.dispatch_inputs(request('slhdsa-shake-192s,hash-slhdsa-shake-192s,mldsa65,mldsa87'))
+        self.assertEqual({name: args[:-2] for name, args in ci.jobs(inputs)['auth'].items()},
+                         {'slhdsa-shake-192s': ['slhdsa-shake-192s'], 'hash-slhdsa-shake-192s': ['hash-slhdsa-shake-192s'],
+                          'mldsa': ['mldsa65', 'mldsa87']})
+        env = request('slhdsa-shake-192s,hash-slhdsa-shake-192s')
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, env, clear=True), \
+             patch.object(sys, 'argv', ['ci.py', 'prepare', 'auth', 'riscv64gc-unknown-linux-gnu', directory]), \
+             patch.object(ci.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as execute:
+            self.assertEqual(ci.main(), 0)
+            self.assertEqual([[arg for arg in call.args[0] if arg.startswith('prepare_archive=')]
+                              for call in execute.call_args_list],
+                             [[f'prepare_archive={Path(directory) / name}.tar.gz']
+                              for name in ('slhdsa-shake-192s', 'hash-slhdsa-shake-192s')])
+        measurements, builds = plan('slhdsa', **{'riscv64-linux': True})
+        self.assertEqual({row['timeout'] for row in builds}, {30 + 10 * 23})
+        self.assertEqual([row['timeout'] for row in measurements], [120 + 10 * 23] * 2 + [180 + 10 * 23])
 
     def test_external_targets_fail_before_runners_start(self):
         for selection in ('tls-provider', 'tls_connections', 'sha256,tls-provider'):

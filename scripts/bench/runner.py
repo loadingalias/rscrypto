@@ -134,7 +134,27 @@ def requests(args, catalog) -> list[dict]:
           for name, case_scope, pattern in dict.fromkeys(rows)]
 
 
-def resolve(rows, effective, log, env, prepared=None) -> list[dict]:
+def partitions(catalog, diag: bool) -> dict[tuple, dict[str, str]]:
+  """Map the build of each split target to the algorithm filters that must partition its cases."""
+  result = {}
+  for name, bench in catalog["benches"].items():
+    if bench.get("split") == "algorithms":
+      entry = target(catalog, name, diag)
+      result[tuple(build_command(entry["binary"], entry["features"], entry.get("manifest")))] = {
+        algorithm: row["filter"] for algorithm, row in catalog["algorithms"].items() if row["bench"] == name}
+  return result
+
+
+def require_partition(cases: list[str], filters: dict[str, str], matches: dict[str, list[str]]) -> None:
+  # CI runs each algorithm of a split target on its own, so a case outside every algorithm would never run.
+  owners = {case: [name for name, pattern in filters.items() if case in matches[pattern]] for case in cases}
+  wrong = [f"{case} ({', '.join(names) or 'no algorithm'})" for case, names in owners.items() if len(names) != 1]
+  if wrong:
+    raise ValueError("each case of a split target must belong to exactly one algorithm: " + "; ".join(wrong[:5]))
+
+
+def resolve(rows, effective, log, env, prepared=None, split=None) -> list[dict]:
+  split = split or {}
   execution = prepared[1] if prepared is not None else build_identity()
   builds = {}
   matches = {}
@@ -147,7 +167,9 @@ def resolve(rows, effective, log, env, prepared=None) -> list[dict]:
       cases = discover(artifact, "", log, env)
       patterns = [pattern for request in rows if build_command(request["binary"], request["features"], request.get("manifest")) == command
                   for pattern in (request["scope"], request["pattern"])]
-      matches[key] = match_cases(artifact, cases, patterns, log, env)
+      matches[key] = match_cases(artifact, cases, [*patterns, *split.get(key, {}).values()], log, env)
+      if key in split:
+        require_partition(cases, split[key], matches[key])
       config = identity([command, execution, effective])
       builds[key] = {"id": config, "binary": row["binary"], "artifact": artifact,
                      "compatibility": execution, "settings": effective, "cases": [], "baselines": [],
@@ -204,7 +226,8 @@ def bench(args, catalog) -> None:
   if args.list:
     with tempfile.TemporaryDirectory(prefix="rscrypto-list-") as directory:
       root = Path(directory)
-      plan = resolve(rows, effective, root / "output.txt", dict(os.environ) | {"CRITERION_HOME": directory})
+      plan = resolve(rows, effective, root / "output.txt", dict(os.environ) | {"CRITERION_HOME": directory},
+                     split=partitions(catalog, args.diag))
       for entry in plan:
         for case in entry["cases"]:
           print(f"[{case_class(catalog, entry['binary'], case)}] {entry['binary']} {case}")
@@ -237,7 +260,7 @@ def bench(args, catalog) -> None:
       prepared = consume(ROOT, args.target, args.run_archive.resolve(), root / 'input', rows, effective)
       write_json(root / 'transfer.json', {'archive_sha256': digest(args.run_archive), 'target': args.target,
                                         'manifest': 'input/bundle.json'})
-    plan = resolve(rows, effective, root / "output.txt", env, prepared)
+    plan = resolve(rows, effective, root / "output.txt", env, prepared, partitions(catalog, args.diag))
     shutil.rmtree(root / "discovery", ignore_errors=True)
     write_json(root / "plan.json", plan)
     measure(root, plan, baseline)
