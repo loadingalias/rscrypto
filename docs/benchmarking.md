@@ -178,6 +178,8 @@ Each measurement job keeps `target/bench/` as the `bench-RUNNER-FAMILY-RUN-ATTEM
 for example `bench-x86_64-linux-intel-hashes-<run>-1`, with one run directory for each `just bench`.
 It includes failed-run evidence, source and machine identity, the resolved case plan, logs,
 and raw Criterion results.
+A cross-target run omits its transferred binaries; `input/bundle.json` keeps their digests,
+and the preparation artifact keeps the files.
 Preparation jobs keep their evidence as `bench-prepare-PLATFORM-FAMILY-RUN-ATTEMPT`.
 
 Each target, or each algorithm of a split target, runs as its own `just bench`,

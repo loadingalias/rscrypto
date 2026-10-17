@@ -169,6 +169,16 @@ class CrossWorkflow(unittest.TestCase):
                 self.assertTrue(all('$FAMILY' in run or '$env:FAMILY' in run for run in runs))
                 self.assertTrue(all('${{' not in run for run in runs))
 
+    def test_bench_evidence_keeps_each_transferred_binary_once(self):
+        jobs = read_yaml('.github/workflows/bench.yml')['jobs']
+        evidence, = [step for step in jobs['bench']['steps'] if step.get('name') == 'Retain benchmark evidence']
+        preparation, = [step for step in jobs['cross-build']['steps']
+                        if step.get('name') == 'Retain benchmark preparation evidence']
+        # The measurement artifact drops the unpacked transfer binaries that the preparation artifact keeps.
+        self.assertEqual(evidence['with']['path'].split(), ['target/bench/', '!target/bench/criterion/*/input/bin/**'])
+        self.assertEqual(preparation['with']['path'], 'target/bench/preparation/')
+        self.assertEqual(evidence['with']['retention-days'], preparation['with']['retention-days'])
+
     def test_largest_bench_run_fits_aws_quotas_with_one_label_per_job(self):
         # Standard-family vCPU quotas of the RunsOn AWS account in us-east-1, read 2026-10-16 from
         # Service Quotas L-34B43A08 (Spot) and L-1216C47A (On-Demand). Update them when AWS changes them.
