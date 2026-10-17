@@ -190,3 +190,34 @@ jobs:
             !target/bench/criterion/*/input/bin/**
           if-no-files-found: warn
           retention-days: 30
+
+  # The scorecard comes only from this run's retained measurements and the catalog comparisons.
+  score:
+    needs: [plan, bench]
+    if: ${{ !cancelled() && needs.bench.result == 'success' }}
+    name: Score comparisons
+    runs-on: runs-on=${{ github.run_id }}-score/runner=plan/env=production
+    timeout-minutes: 15
+    env:
+      DISPATCH_INPUTS: ${{ needs.plan.outputs.request }}
+    steps:
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned uv
+        run: scripts/tooling/uv.sh x86_64-linux >>"$GITHUB_PATH"
+      - name: Download this attempt's measurement evidence
+        uses: "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333" # v8.0.2
+        with:
+          pattern: bench-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/bench-artifacts
+      - name: Score catalog comparisons
+        run: scripts/lib/python.sh scripts/bench/ci.py score target/bench-artifacts target/bench-score.json >>"$GITHUB_STEP_SUMMARY"
+      - name: Retain the scorecard
+        if: ${{ !cancelled() }}
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
+        with:
+          name: bench-score-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/bench-score.json
+          if-no-files-found: warn
+          retention-days: 30

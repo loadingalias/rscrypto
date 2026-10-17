@@ -17,7 +17,7 @@ import tempfile
 # Embedded Windows Python omits the script directory from its import path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from benchmark_catalog import case_class, load_catalog, resolve_selector, scope
+from benchmark_catalog import applies, architecture, case_class, load_catalog, resolve_selector, scope
 from execution import enable_internal, build, build_command, build_environment, build_identity, digest, discover, match_cases, exit_code, identity, write_json, source_evidence
 from measure import measure, verify
 import settings
@@ -114,23 +114,38 @@ def target(catalog, name: str, diag: bool) -> dict:
   if diag and 'manifest' in entry:
     raise ValueError(f"diagnostics are not supported by independent benchmark target: {name}")
   features = sorted(set(entry["features"]) | ({"diag"} if diag else set()))
-  return {"binary": entry["binary"], "features": features, **({'manifest': entry['manifest']} if 'manifest' in entry else {})}
+  return {"binary": entry["binary"], "features": features, **({'manifest': entry['manifest']} if 'manifest' in entry else {}),
+          **({'rustflags': entry['rustflags']} if 'rustflags' in entry else {})}
 
 
-def requests(args, catalog) -> list[dict]:
+def configuration(row: dict) -> tuple:
+  """Identify one build: its Cargo command and any catalog code-generation flags."""
+  command = build_command(row["binary"], row["features"], row.get("manifest"))
+  return tuple(command), tuple(row.get("rustflags", ()))
+
+
+def requests(args, catalog, every_architecture=False) -> list[dict]:
+  """Resolve selectors to configurations that run on this host or on the transfer target."""
   names = []
   for selector in args.selectors or ["all"]:
     selected = resolve_selector(catalog, selector)
     if selected is None:
       raise ValueError(f"unknown selector: {selector}")
     names.extend(selected)
+  arch = architecture(getattr(args, "target", None))
   rows = []
+  skipped = []
   for name in dict.fromkeys(names):
     bench, case_scope = scope(catalog, name)
+    if not every_architecture and not applies(catalog["benches"][bench], arch):
+      skipped.append(name)
+      continue
     rows.extend((bench, case_scope, pattern) for pattern in (args.filter or [case_scope]))
   if not rows:
+    if skipped:
+      raise ValueError(f"{', '.join(skipped)} does not run on {arch}")
     raise ValueError("selection produced no benchmark configurations")
-  return [target(catalog, name, args.diag) | {"scope": case_scope, "pattern": pattern}
+  return [target(catalog, name, args.diag) | {"bench": name, "scope": case_scope, "pattern": pattern}
           for name, case_scope, pattern in dict.fromkeys(rows)]
 
 
@@ -139,8 +154,7 @@ def partitions(catalog, diag: bool) -> dict[tuple, dict[str, str]]:
   result = {}
   for name, bench in catalog["benches"].items():
     if bench.get("split") == "algorithms":
-      entry = target(catalog, name, diag)
-      result[tuple(build_command(entry["binary"], entry["features"], entry.get("manifest")))] = {
+      result[configuration(target(catalog, name, diag))] = {
         algorithm: row["filter"] for algorithm, row in catalog["algorithms"].items() if row["bench"] == name}
   return result
 
@@ -160,20 +174,25 @@ def resolve(rows, effective, log, env, prepared=None, split=None) -> list[dict]:
   matches = {}
   matched = dict.fromkeys((row["pattern"] for row in rows), False)
   for row in rows:
-    command = build_command(row["binary"], row["features"], row.get("manifest"))
-    key = tuple(command)
+    key = configuration(row)
+    command, rustflags = list(key[0]), list(key[1])
     if key not in builds:
-      artifact = prepared[0][key] if prepared is not None else build(command, log, env)
+      if prepared is not None and rustflags:
+        raise ValueError("transferred benchmarks cannot use catalog rustflags")
+      artifact = prepared[0][key[0]] if prepared is not None else build(command, log, env, rustflags)
       cases = discover(artifact, "", log, env)
-      patterns = [pattern for request in rows if build_command(request["binary"], request["features"], request.get("manifest")) == command
+      patterns = [pattern for request in rows if configuration(request) == key
                   for pattern in (request["scope"], request["pattern"])]
       matches[key] = match_cases(artifact, cases, [*patterns, *split.get(key, {}).values()], log, env)
       if key in split:
         require_partition(cases, split[key], matches[key])
-      config = identity([command, execution, effective])
+      # Configurations without catalog flags keep their earlier identity, so their baselines still match.
+      config = identity([command, execution, effective, *([{"rustflags": rustflags}] if rustflags else [])])
       builds[key] = {"id": config, "binary": row["binary"], "artifact": artifact,
                      "compatibility": execution, "settings": effective, "cases": [], "baselines": [],
-                     "home": "criterion/" + row["binary"] + "-" + config}
+                     "home": "criterion/" + row["binary"] + "-" + config,
+                     **({"bench": row["bench"]} if "bench" in row else {}),
+                     **({"rustflags": rustflags} if rustflags else {})}
     entry = builds[key]
 
     in_scope = set(matches[key][row["scope"]])
@@ -277,9 +296,19 @@ def bench(args, catalog) -> None:
     print(f"Results: {root}", flush=True)
 
 
+def inspectable(catalog, name: str, diag: bool) -> dict:
+  """Profiling and code inspection support only configurations without catalog code-generation flags."""
+  if name in catalog["benches"] and not applies(catalog["benches"][name], architecture()):
+    raise ValueError(f"{name} does not run on {architecture()}")
+  entry = target(catalog, name, diag)
+  if "rustflags" in entry:
+    raise ValueError(f"{name} uses catalog rustflags, which profiling and code inspection do not apply")
+  return entry
+
+
 def run_profile(args, catalog) -> None:
   from profile import profile
-  entry = target(catalog, args.benchmark, args.diag)
+  entry = inspectable(catalog, args.benchmark, args.diag)
   if not (args.prepare_archive or args.run_archive):
     enable_internal([entry])
   profile(args, entry)
@@ -299,7 +328,7 @@ def main() -> int:
   elif args.mode == "profile":
     run_profile(args, catalog)
   else:
-    entry = target(catalog, args.target, args.diag)
+    entry = inspectable(catalog, args.target, args.diag)
     enable_internal([entry])
     command = ["cargo", "asm" if args.mode == "codegen" else "llvm-lines", "--locked", "--lib", "--profile", "bench",
                "--no-default-features", "--features", ",".join(entry["features"])]

@@ -4,12 +4,18 @@
 from __future__ import annotations
 
 import json
+import platform
 import re
 import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG_PATH = ROOT / ".config" / "benchmark-matrix.json"
+# Rust `target_arch` names of the architectures that run benchmarks.
+ARCHITECTURES = {"x86_64", "aarch64", "powerpc64", "s390x", "riscv64"}
+# Host machine names (`uname -m`, Windows) and target-triple prefixes that differ from `target_arch`.
+MACHINES = {"amd64": "x86_64", "x64": "x86_64", "arm64": "aarch64", "ppc64le": "powerpc64", "ppc64": "powerpc64",
+            "powerpc64le": "powerpc64", "riscv64gc": "riscv64"}
 
 
 class CatalogError(ValueError):
@@ -18,6 +24,17 @@ class CatalogError(ValueError):
 
 def normalize(value: str) -> str:
   return re.sub(r"[^a-z0-9]", "", value.lower())
+
+
+def architecture(triple: str | None = None) -> str:
+  """Return the Rust architecture of a target triple, or of this host when no triple is given."""
+  name = (triple.split("-", 1)[0] if triple else platform.machine()).lower()
+  return MACHINES.get(name, name)
+
+
+def applies(bench: dict, arch: str) -> bool:
+  """A configuration without an architecture list runs everywhere."""
+  return arch in bench.get("architectures", sorted(ARCHITECTURES))
 
 
 def load_catalog() -> dict:
@@ -94,6 +111,17 @@ def validate_catalog(catalog: dict) -> None:
       raise CatalogError(f"bench {name} needs a non-empty external prerequisite")
     if external and bench["required"]:
       raise CatalogError(f"bench {name} needs {external}, so default runs cannot include it")
+    architectures = bench.get("architectures")
+    if architectures is not None and (not isinstance(architectures, list) or not architectures
+                                      or len(set(architectures)) != len(architectures)
+                                      or not set(architectures) <= ARCHITECTURES):
+      raise CatalogError(f"bench {name} needs distinct architectures from {sorted(ARCHITECTURES)}")
+    # Code-generation flags name CPU features, so they are valid only on the architectures that define them.
+    rustflags = bench.get("rustflags")
+    if rustflags is not None and (bench["kind"] != "criterion" or "manifest" in bench or architectures is None
+                                  or not isinstance(rustflags, list) or not rustflags
+                                  or any(not isinstance(flag, str) or not flag.strip() for flag in rustflags)):
+      raise CatalogError(f"bench {name} needs non-empty rustflags, an architecture list, and the root manifest")
 
   for group, members in groups.items():
     if (not isinstance(members, list) or not members or len(set(members)) != len(members)
@@ -132,6 +160,31 @@ def validate_catalog(catalog: dict) -> None:
           re.compile(pattern)
         except (TypeError, re.error) as error:
           raise CatalogError(f"invalid case classification pattern: {pattern}") from error
+
+  # Each comparison is one task; scripts/bench/compare.py pairs its canonical rscrypto row with external rows.
+  comparisons = catalog.get("comparisons")
+  if not isinstance(comparisons, dict) or not comparisons:
+    raise CatalogError("comparisons must be a non-empty object")
+  required = {"family", "bench", "cases", "headline", "task"}
+  for name, comparison in comparisons.items():
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name) or not isinstance(comparison, dict):
+      raise CatalogError(f"invalid comparison: {name}")
+    if not required <= set(comparison) <= required | {"competitor_benches"}:
+      raise CatalogError(f"comparison {name} needs exactly {sorted(required)} and optional competitor_benches")
+    if any(not isinstance(comparison[field], str) or not comparison[field].strip() for field in ("family", "task")):
+      raise CatalogError(f"comparison {name} needs a family and a task")
+    if not isinstance(comparison["headline"], bool):
+      raise CatalogError(f"comparison {name} needs a Boolean headline field")
+    sources = [comparison["bench"], *comparison.get("competitor_benches", [])]
+    if (not isinstance(comparison.get("competitor_benches", []), list) or len(set(sources)) != len(sources)
+        or any(benches.get(source, {}).get("kind") != "criterion" for source in sources)):
+      raise CatalogError(f"comparison {name} references unknown or repeated Criterion targets")
+    try:
+      groups = set(re.compile(comparison["cases"]).groupindex)
+    except (TypeError, re.error) as error:
+      raise CatalogError(f"comparison {name} has an invalid case pattern") from error
+    if not {"implementation", "input"} <= groups <= {"implementation", "input", "variant"}:
+      raise CatalogError(f"comparison {name} needs implementation and input groups, and optionally variant")
 
 
 def case_class(catalog: dict, binary: str, case: str) -> str:

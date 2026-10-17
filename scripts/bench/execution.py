@@ -133,8 +133,23 @@ def build_identity() -> dict:
   }
 
 
-def build(command: list[str], log: Path, env: dict) -> dict:
+def flagged(env: dict, rustflags: list[str]) -> dict:
+  """Append one configuration's code-generation flags to the inherited flags, at Cargo's highest precedence.
+
+  Cargo reads CARGO_ENCODED_RUSTFLAGS before RUSTFLAGS, and either one replaces configuration-file flags.
+  """
+  env = dict(env)
+  encoded = env.pop("CARGO_ENCODED_RUSTFLAGS", "")
+  inherited = env.pop("RUSTFLAGS", "")
+  base = encoded.split("\x1f") if encoded else inherited.split()
+  env["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join([*base, *rustflags])
+  return env
+
+
+def build(command: list[str], log: Path, env: dict, rustflags: list[str] | None = None) -> dict:
   binary = command[command.index("--bench") + 1]
+  if rustflags:
+    env = flagged(env, rustflags)
   messages = execute([*command, "--no-run", "--message-format=json"], log, env=env, capture=True)
   artifacts = [message for line in messages.splitlines() if
                (message := json.loads(line)).get("reason") == "compiler-artifact"
@@ -145,7 +160,8 @@ def build(command: list[str], log: Path, env: dict) -> dict:
   path = Path(artifacts[0]["executable"]).resolve()
   if not path.is_file() or not os.access(path, os.X_OK):
     raise ValueError(f"missing benchmark executable: {path}")
-  return {"path": str(path), "sha256": digest(path), "cargo": artifacts[0], "command": command}
+  return {"path": str(path), "sha256": digest(path), "cargo": artifacts[0], "command": command,
+          **({"rustflags": list(rustflags)} if rustflags else {})}
 
 
 def unchanged(artifact: dict) -> None:

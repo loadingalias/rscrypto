@@ -203,6 +203,7 @@ def main() -> None:
   subprocess.run([sys.executable, str(ROOT / "scripts/bench/profile_test.py")], check=True)
   subprocess.run([sys.executable, str(ROOT / "scripts/bench/profile_ci_test.py")], check=True)
   subprocess.run([sys.executable, str(ROOT / "scripts/bench/transfer_test.py")], check=True)
+  subprocess.run([sys.executable, str(ROOT / "scripts/bench/compare_test.py")], check=True)
   print("benchmark catalog and orchestration tests passed")
 
 

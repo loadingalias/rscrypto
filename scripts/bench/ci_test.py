@@ -160,6 +160,45 @@ class ManualBench(unittest.TestCase):
                 self.assertEqual(commands, [['just', 'bench', 'sha256'], ['just', 'bench', 'blake3']][:len(commands)])
                 self.assertEqual(len(commands), 2 if expected == 0 else 1)
 
+    def test_platform_jobs_skip_runs_for_other_architectures(self):
+        # Every platform receives the same plan; an x86-64-only configuration runs only on x86-64.
+        env = request('xxh3,xxh3_v4')
+        for machine, expected in (('x86_64', ['xxh3', 'xxh3_v4']), ('AMD64', ['xxh3', 'xxh3_v4']),
+                                  ('aarch64', ['xxh3'])):
+            with self.subTest(machine=machine), patch.dict(os.environ, env, clear=True), \
+                 patch.object(sys, 'argv', ['ci.py', 'run', 'hashes']), \
+                 patch('platform.machine', return_value=machine), \
+                 patch.object(ci.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as execute:
+                self.assertEqual(ci.main(), 0)
+                self.assertEqual([call.args[0][2] for call in execute.call_args_list], expected)
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, env, clear=True), \
+             patch.object(sys, 'argv', ['ci.py', 'prepare', 'hashes', 'riscv64gc-unknown-linux-gnu', directory]), \
+             patch.object(ci.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as execute:
+            self.assertEqual(ci.main(), 0)
+            self.assertEqual([call.args[0][2] for call in execute.call_args_list], ['xxh3'])
+
+    def test_score_reads_each_measurement_artifact_of_this_attempt(self):
+        import compare
+        for values, partial in (({}, []), ({'filter': '^sha256/'}, ['--partial'])):
+            env = request('sha256', **values) | {'GITHUB_RUN_ID': '42', 'GITHUB_RUN_ATTEMPT': '1'}
+            with self.subTest(values=values), tempfile.TemporaryDirectory() as directory, \
+                 patch.dict(os.environ, env, clear=True), patch.object(compare, 'main', return_value=0) as score:
+                root = Path(directory)
+                for name in ('bench-x86_64-linux-intel-hashes-42-1', 'bench-aarch64-linux-auth-42-1',
+                             'bench-prepare-riscv64-linux-hashes-42-1', 'bench-x86_64-linux-intel-hashes-42-2',
+                             'bench-score-42-1'):
+                    (root / name / 'criterion/run').mkdir(parents=True)
+                    (root / name / 'criterion/run/status.txt').write_text('state=complete\n')
+                self.assertEqual(ci.score(root, root / 'score.json', ci.dispatch_inputs(env)), 0)
+                self.assertEqual(score.call_args.args[0], [
+                    f'aarch64-linux={root}/bench-aarch64-linux-auth-42-1/criterion/run',
+                    f'x86_64-linux-intel={root}/bench-x86_64-linux-intel-hashes-42-1/criterion/run',
+                    '--json', str(root / 'score.json'), *partial])
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.dict(os.environ, {'GITHUB_RUN_ID': '42', 'GITHUB_RUN_ATTEMPT': '1'}), \
+             self.assertRaisesRegex(ValueError, 'no measurement artifacts'):
+            ci.score(Path(directory), Path(directory) / 'score.json', {})
+
     def test_transfer_dispatch_keeps_selection_and_separate_invocations(self):
         env = request('sha256,sha512,crc32c', filter='^sha256/rscrypto/64$', sample_size='24')
         for operation, flag in (('measure', 'run_archive'), ('prepare', 'prepare_archive')):

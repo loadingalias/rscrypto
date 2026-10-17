@@ -169,6 +169,19 @@ class CrossWorkflow(unittest.TestCase):
                 self.assertTrue(all('$FAMILY' in run or '$env:FAMILY' in run for run in runs))
                 self.assertTrue(all('${{' not in run for run in runs))
 
+    def test_bench_scorecard_reads_only_this_attempts_measurements(self):
+        jobs = read_yaml('.github/workflows/bench.yml')['jobs']
+        score = jobs['score']
+        self.assertEqual(score['needs'], ['plan', 'bench'])
+        self.assertEqual(score['env']['DISPATCH_INPUTS'], '${{ needs.plan.outputs.request }}')
+        labels = [job['runs-on'] for job in jobs.values() if isinstance(job.get('runs-on'), str)]
+        self.assertEqual(labels.count(score['runs-on']), 1)
+        download, = [step for step in score['steps'] if 'download-artifact' in step.get('uses', '')]
+        self.assertEqual(download['with']['pattern'], 'bench-*-${{ github.run_id }}-${{ github.run_attempt }}')
+        run, = [step['run'] for step in score['steps'] if 'scripts/bench/ci.py score' in step.get('run', '')]
+        self.assertIn(download['with']['path'], run)
+        self.assertIn('$GITHUB_STEP_SUMMARY', run)
+
     def test_bench_evidence_keeps_each_transferred_binary_once(self):
         jobs = read_yaml('.github/workflows/bench.yml')['jobs']
         evidence, = [step for step in jobs['bench']['steps'] if step.get('name') == 'Retain benchmark evidence']

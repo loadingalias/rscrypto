@@ -21,6 +21,8 @@ def prepare(root, target, archive, output, rows, settings):
         raise ValueError('benchmark preparation requires Linux x86-64')
     if archive.exists():
         raise ValueError(f'refusing to overwrite benchmark evidence: {archive}')
+    if any(row.get('rustflags') for row in rows):
+        raise ValueError('transferred benchmarks cannot use catalog rustflags')
     os.environ.update(environment(target))
     enable_internal(rows, target)
     source = bundle.source_identity(root)

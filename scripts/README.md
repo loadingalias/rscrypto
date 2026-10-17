@@ -512,10 +512,22 @@ selects the first message index for reproducing a discovered rejection case.
 | `bench/transfer.py`   | Compile-only preparation and verified native consumption for RISC-V, POWER, and IBM Z |
 | `bench/bounded.py`    | `just bench`, `just bench-structural`, `just profile`: process-tree deadline |
 | `bench/mldsa_tail.py` | `just bench-mldsa-tail`: ML-DSA signing-tail baseline |
+| `bench/compare.py`    | `just bench-compare`, Bench `Score comparisons` job: catalog comparison scorecard |
 | `update-all.sh`       | `just update` |
 
-- `bench/benchmark_catalog.py` owns the selector name space (targets, algorithms, groups, and `all`)
-  and curated profile-preset selection.
+- `bench/benchmark_catalog.py` owns the selector name space (targets, algorithms, groups, and `all`),
+  curated profile-preset selection, and the validation of comparison declarations.
+  A target's optional `architectures` limits where it runs: the runner skips it on other hosts and
+  transfer targets, and each Bench platform job skips it as well.
+  Optional `rustflags` build that target as its own configuration;
+  the runner appends them to the inherited flags as `CARGO_ENCODED_RUSTFLAGS`.
+  Profiling, code inspection, and cross builds reject targets with `rustflags`.
+- `bench/compare.py` pairs each declared comparison's canonical `rscrypto` row with the fastest external
+  row of the same task, on each platform, from retained runs.
+  It fails on an incomplete comparison point, on a missing competitor build for the platform,
+  and on a measured group that has external rows but no declaration.
+  `--cases` checks the declarations against `just bench --list` output without measuring.
+  The Bench workflow's `Score comparisons` job runs it on the run's measurement artifacts.
 - `.config/criterion.json` owns the shared Criterion defaults and the maximum run budget.
 - `benches/common/criterion.rs` applies them to every Criterion harness.
   `bench/settings.py` resolves overrides for one invocation.

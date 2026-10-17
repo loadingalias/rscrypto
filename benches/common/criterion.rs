@@ -128,7 +128,67 @@ fn match_cases(path: &std::ffi::OsStr) {
   println!("{}", serde_json::Value::Object(matches));
 }
 
+/// CPU features that this binary was compiled to assume but this host lacks.
+///
+/// A catalog configuration can compile every crate for a newer instruction-set
+/// level, such as `xxh3_v4`. Running that binary on an older CPU would fault
+/// partway through a run, so the harness refuses to start instead.
+fn missing_compiled_features() -> Vec<&'static str> {
+  #[cfg(target_arch = "x86_64")]
+  {
+    macro_rules! missing {
+      ($($feature:tt),+ $(,)?) => {
+        [$((cfg!(target_feature = $feature) && !std::arch::is_x86_feature_detected!($feature)).then_some($feature)),+]
+      };
+    }
+    missing!(
+      "cmpxchg16b",
+      "popcnt",
+      "sse3",
+      "ssse3",
+      "sse4.1",
+      "sse4.2",
+      "avx",
+      "avx2",
+      "bmi1",
+      "bmi2",
+      "f16c",
+      "fma",
+      "lzcnt",
+      "movbe",
+      "xsave",
+      "avx512f",
+      "avx512bw",
+      "avx512cd",
+      "avx512dq",
+      "avx512vl",
+      "aes",
+      "pclmulqdq",
+      "sha",
+      "adx",
+      "gfni",
+      "vaes",
+      "vpclmulqdq",
+      "avx512ifma",
+      "avx512vbmi",
+      "avx512vbmi2",
+      "avx512vnni",
+    )
+    .into_iter()
+    .flatten()
+    .collect()
+  }
+  #[cfg(not(target_arch = "x86_64"))]
+  Vec::new()
+}
+
 pub(crate) fn run(targets: &[fn(&mut criterion::Criterion)]) {
+  let missing = missing_compiled_features();
+  assert!(
+    missing.is_empty(),
+    "this benchmark binary was compiled for CPU features this host lacks: {}",
+    missing.join(", ")
+  );
   let mut args = std::env::args_os().skip(1);
   if args.next().is_some_and(|arg| arg == "--rscrypto-filter-cases") {
     match_cases(&args.next().expect("case matching request path"));

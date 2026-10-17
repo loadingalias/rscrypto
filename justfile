@@ -228,6 +228,7 @@ test-scripts:
     @scripts/lib/python.sh scripts/bench/ci_test.py
     @scripts/lib/python.sh scripts/bench/file_cache_test.py
     @scripts/lib/python.sh scripts/bench/profile_ci_test.py
+    @scripts/lib/python.sh scripts/bench/compare_test.py
     @scripts/lib/python.sh scripts/test/fuzz_features_test.py
     @scripts/lib/python.sh scripts/check/macos_test.py
     @scripts/lib/python.sh scripts/check/check_runner_test.py
@@ -368,6 +369,11 @@ perf-llvm-lines target *args:
 [group('benchmarks')]
 bench-export run:
     @scripts/lib/python.sh scripts/bench/runner.py export "$@"
+
+# Score retained runs as PLATFORM=RUN_DIRECTORY against catalog comparisons; --cases checks a --list output.
+[group('benchmarks')]
+bench-compare *args:
+    @scripts/lib/python.sh scripts/bench/compare.py "$@"
 
 # Update tool pins, stable Rust, and every Cargo manifest.
 [group('tooling')]

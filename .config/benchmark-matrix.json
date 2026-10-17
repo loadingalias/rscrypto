@@ -66,6 +66,15 @@
       "required": true,
       "features": ["std", "xxh3"]
     },
+    "xxh3_v4": {
+      "binary": "xxh3",
+      "kind": "criterion",
+      "family": "hashes",
+      "required": true,
+      "features": ["std", "xxh3"],
+      "architectures": ["x86_64"],
+      "rustflags": ["-C", "target-cpu=x86-64-v4"]
+    },
     "rapidhash": {
       "binary": "rapidhash",
       "kind": "criterion",
@@ -339,6 +348,7 @@
       "blake3",
       "blake3_serial",
       "xxh3",
+      "xxh3_v4",
       "rapidhash",
       "ascon-hash256",
       "ascon-xof128",
@@ -496,6 +506,725 @@
         "^blake3/(xof-output|chunk-tail-digest|chunk-tail-cvs|parent-tail-cvs|leaf-alignment-cvs)/"
       ]
 
+    }
+  },
+  "comparisons": {
+    "crc": {
+      "family": "CRC",
+      "bench": "crc",
+      "cases": "^(?P<variant>crc16-ccitt|crc16-ibm|crc24-openpgp|crc32|crc32c|crc64-xz|crc64-nvme)/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Checksum one buffer in one call."
+    },
+    "sha2": {
+      "family": "SHA-2",
+      "bench": "sha2",
+      "cases": "^(?P<variant>sha224|sha256|sha384|sha512|sha512-256)/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Hash one buffer in one call."
+    },
+    "sha2-streaming": {
+      "family": "SHA-2",
+      "bench": "sha2",
+      "cases": "^(?P<variant>sha224|sha256|sha384|sha512|sha512-256)/streaming/(?P<implementation>[^/]+)/(?P<input>[0-9]+B)$",
+      "headline": false,
+      "task": "Hash 1 MiB through updates of the named chunk size."
+    },
+    "sha3": {
+      "family": "SHA-3",
+      "bench": "sha3",
+      "cases": "^(?P<variant>sha3-224|sha3-256|sha3-384|sha3-512)/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Hash one buffer in one call."
+    },
+    "sha3-streaming": {
+      "family": "SHA-3",
+      "bench": "sha3",
+      "cases": "^(?P<variant>sha3-224|sha3-256|sha3-384|sha3-512)/streaming/(?P<implementation>[^/]+)/(?P<input>[0-9]+B)$",
+      "headline": false,
+      "task": "Hash 1 MiB through updates of the named chunk size."
+    },
+    "shake": {
+      "family": "SHAKE",
+      "bench": "sha3",
+      "cases": "^(?P<variant>shake128|shake256)/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Absorb one buffer and squeeze 32 bytes in one call."
+    },
+    "kmac": {
+      "family": "KMAC",
+      "bench": "kmac_cshake",
+      "cases": "^(?P<variant>kmac128|kmac256)/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Absorb the key, customization, and one message, then finalize a 32-byte tag."
+    },
+    "cshake": {
+      "family": "cSHAKE",
+      "bench": "kmac_cshake",
+      "cases": "^(?P<variant>cshake128|cshake256)/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Absorb the function name, customization, and one message, then squeeze 32 bytes."
+    },
+    "hmac-sha3": {
+      "family": "HMAC-SHA-3",
+      "bench": "kmac_cshake",
+      "cases": "^(?P<variant>hmac-sha3-224|hmac-sha3-256|hmac-sha3-384|hmac-sha3-512)/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Tag one message with a key prepared once."
+    },
+    "ascon-hash": {
+      "family": "Ascon",
+      "bench": "ascon",
+      "cases": "^(?P<variant>ascon-hash256|ascon-xof128)/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Hash one buffer in one call."
+    },
+    "blake2": {
+      "family": "BLAKE2",
+      "bench": "blake2",
+      "cases": "^blake2/(?P<implementation>[^/]+)/(?P<variant>blake2[bs][0-9]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Hash one buffer in one call."
+    },
+    "blake2-keyed": {
+      "family": "BLAKE2",
+      "bench": "blake2",
+      "cases": "^blake2/keyed/(?P<implementation>[^/]+)/(?P<variant>blake2[bs][0-9]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Keyed hash of one buffer in one call."
+    },
+    "blake2-short-oneshot": {
+      "family": "BLAKE2",
+      "bench": "blake2",
+      "cases": "^blake2/short-oneshot/(?P<implementation>[^/]+)/(?P<variant>blake2[bs][0-9]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Hash one short buffer in one call."
+    },
+    "blake2-short-keyed": {
+      "family": "BLAKE2",
+      "bench": "blake2",
+      "cases": "^blake2/short-keyed/(?P<implementation>[^/]+)/(?P<variant>blake2[bs][0-9]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Keyed hash of one short buffer in one call."
+    },
+    "blake2-single-update": {
+      "family": "BLAKE2",
+      "bench": "blake2",
+      "cases": "^blake2/single-update/(?P<implementation>[^/]+)/(?P<variant>blake2[bs][0-9]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Construct, update once, and finalize."
+    },
+    "blake2-streaming": {
+      "family": "BLAKE2",
+      "bench": "blake2",
+      "cases": "^blake2/streaming/(?P<implementation>[^/]+)/(?P<variant>blake2[bs][0-9]+)/(?P<input>[0-9]+B)$",
+      "headline": false,
+      "task": "Hash through updates of the named chunk size."
+    },
+    "xxh3": {
+      "family": "XXH3",
+      "bench": "xxh3",
+      "cases": "^(?P<variant>xxh3-64|xxh3-128)/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Hash one buffer in one call. Each competitor counts with its fastest supported build.",
+      "competitor_benches": ["xxh3_v4"]
+    },
+    "xxh3-baseline-build": {
+      "family": "XXH3 x86-64 baseline build",
+      "bench": "xxh3",
+      "cases": "^(?P<variant>xxh3-64|xxh3-128)/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Hash one buffer in one call. Every library uses the default build, so compile-time-only SIMD stays at the target baseline."
+    },
+    "xxh3-v4-build": {
+      "family": "XXH3 x86-64-v4 build",
+      "bench": "xxh3_v4",
+      "cases": "^(?P<variant>xxh3-64|xxh3-128)/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Hash one buffer in one call. Every crate is compiled for x86-64-v4."
+    },
+    "xxh3-buildhasher": {
+      "family": "XXH3",
+      "bench": "xxh3",
+      "cases": "^xxh3-buildhasher/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Hash one byte slice through the collection hasher.",
+      "competitor_benches": ["xxh3_v4"]
+    },
+    "xxh3-hashmap": {
+      "family": "XXH3",
+      "bench": "xxh3",
+      "cases": "^xxh3-hashmap/(?P<input>[^/]+)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Look up keys in a hash map built with the collection hasher.",
+      "competitor_benches": ["xxh3_v4"]
+    },
+    "rapidhash": {
+      "family": "RapidHash",
+      "bench": "rapidhash",
+      "cases": "^rapidhash-v3-64/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Hash one buffer in one call with RapidHash V3."
+    },
+    "rapidhash-stream": {
+      "family": "RapidHash",
+      "bench": "rapidhash",
+      "cases": "^rapidhash-stream/(?P<variant>one-write|chunk-64)/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Hash one buffer through the streaming hasher."
+    },
+    "rapidhash-buildhasher": {
+      "family": "RapidHash",
+      "bench": "rapidhash",
+      "cases": "^rapidhash-buildhasher/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Hash one byte slice through the collection hasher."
+    },
+    "rapidhash-hash-one": {
+      "family": "RapidHash",
+      "bench": "rapidhash",
+      "cases": "^rapidhash-hash-one/(?P<input>[^/]+)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Hash one value through the collection hasher."
+    },
+    "rapidhash-hashmap": {
+      "family": "RapidHash",
+      "bench": "rapidhash",
+      "cases": "^rapidhash-hashmap/(?P<input>[^/]+)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Insert or look up keys in a hash map built with the collection hasher."
+    },
+    "websocket-accept": {
+      "family": "WebSocket SHA-1",
+      "bench": "websocket_sha1",
+      "cases": "^websocket-accept-digest/(?P<input>[^/]+)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Compute one WebSocket accept digest."
+    },
+    "hmac-sha2": {
+      "family": "HMAC-SHA-2",
+      "bench": "auth",
+      "cases": "^(?P<variant>hmac-sha256|hmac-sha384|hmac-sha512)/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Tag one message with a key prepared once."
+    },
+    "hmac-sha2-streaming": {
+      "family": "HMAC-SHA-2",
+      "bench": "auth",
+      "cases": "^hmac-sha256/streaming/(?P<implementation>[^/]+)/(?P<input>[0-9]+B)$",
+      "headline": false,
+      "task": "Key, then tag a message through updates of the named chunk size."
+    },
+    "hkdf-expand": {
+      "family": "HKDF",
+      "bench": "auth",
+      "cases": "^(?P<variant>hkdf-sha256|hkdf-sha384|hkdf-sha512)/expand/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Expand a pseudorandom key prepared once to the named output length."
+    },
+    "hkdf-extract": {
+      "family": "HKDF",
+      "bench": "auth",
+      "cases": "^(?P<variant>hkdf-sha256|hkdf-sha384|hkdf-sha512)/extract/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Extract a pseudorandom key from a salt and input keying material of the named length."
+    },
+    "pbkdf2": {
+      "family": "PBKDF2",
+      "bench": "auth",
+      "cases": "^(?P<variant>pbkdf2-sha(?:256|512)/iters=[0-9]+)/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Derive the named output length from a password and salt."
+    },
+    "argon2": {
+      "family": "Argon2",
+      "bench": "password_hashing",
+      "cases": "^(?P<variant>argon2(?:d|i|id)-(?:small|owasp))/salt16-raw32/(?P<implementation>[^/]+)/(?P<input>[^/]+)$",
+      "headline": true,
+      "task": "Derive 32 raw bytes from a password and a 16-byte salt, with scratch allocation and cleanup timed."
+    },
+    "argon2-reused-memory": {
+      "family": "Argon2",
+      "bench": "password_hashing",
+      "cases": "^argon2id-owasp/salt16-raw32-reused-memory/(?P<implementation>[^/]+)/reused-memory/(?P<input>[^/]+)$",
+      "headline": false,
+      "task": "Derive 32 raw bytes into work memory allocated once outside timing."
+    },
+    "scrypt": {
+      "family": "scrypt",
+      "bench": "password_hashing",
+      "cases": "^(?P<variant>scrypt-(?:small|owasp))/(?P<implementation>[^/]+)/(?P<input>[^/]+)$",
+      "headline": true,
+      "task": "Derive raw bytes from a password and salt, with scratch allocation and cleanup timed."
+    },
+    "slhdsa-keygen": {
+      "family": "SLH-DSA",
+      "bench": "slhdsa",
+      "cases": "^(?P<variant>slhdsa-(?:sha2|shake)-(?:128|192|256)[sf])/keygen/(?P<input>[^/]+)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Generate a key pair from fixed seeds."
+    },
+    "slhdsa-sign": {
+      "family": "SLH-DSA",
+      "bench": "slhdsa",
+      "cases": "^(?P<variant>slhdsa-(?:sha2|shake)-(?:128|192|256)[sf])/sign/(?P<input>[^/]+)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Sign a 32-byte message deterministically with a reused key."
+    },
+    "slhdsa-verify": {
+      "family": "SLH-DSA",
+      "bench": "slhdsa",
+      "cases": "^(?P<variant>slhdsa-(?:sha2|shake)-(?:128|192|256)[sf])/verify/(?P<input>[0-9]+)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Verify one signature with a reused key."
+    },
+    "slhdsa-hash-sign": {
+      "family": "SLH-DSA",
+      "bench": "slhdsa",
+      "cases": "^(?P<variant>slhdsa-(?:sha2|shake)-(?:128|192|256)[sf]/hash-sign/[^/]+)/(?P<input>[^/]+)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "HashSLH-DSA: sign a 32-byte message deterministically with a reused key."
+    },
+    "slhdsa-hash-verify": {
+      "family": "SLH-DSA",
+      "bench": "slhdsa",
+      "cases": "^(?P<variant>slhdsa-(?:sha2|shake)-(?:128|192|256)[sf]/hash-verify/[^/]+)/(?P<input>[0-9]+)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "HashSLH-DSA: verify one signature with a reused key."
+    },
+    "aead-encrypt": {
+      "family": "AEAD",
+      "bench": "aead",
+      "cases": "^(?P<variant>aes-128-gcm|aes-256-gcm|aes-128-gcm-siv|aes-256-gcm-siv|chacha20-poly1305|xchacha20-poly1305|aegis-256|ascon-aead128)/copy-and-encrypt/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Restore the message into a reused buffer, then encrypt it with a reused cipher context."
+    },
+    "aead-decrypt": {
+      "family": "AEAD",
+      "bench": "aead",
+      "cases": "^(?P<variant>aes-128-gcm|aes-256-gcm|aes-128-gcm-siv|aes-256-gcm-siv|chacha20-poly1305|xchacha20-poly1305|aegis-256|ascon-aead128)/copy-and-decrypt/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Restore the ciphertext into a reused buffer, then decrypt and verify it with a reused cipher context."
+    },
+    "aes-siv": {
+      "family": "AEAD",
+      "bench": "aead",
+      "cases": "^aes-siv-cmac-256/(?P<variant>copy-and-seal|copy-and-open)/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Restore the input into a reused buffer, then seal or open it with a reused cipher."
+    },
+    "aes-siv-construct": {
+      "family": "AEAD",
+      "bench": "aead",
+      "cases": "^aes-siv-cmac-256/copy-and-construct-and-seal/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Construct a cipher, restore the input, and seal it."
+    },
+    "header-protection-mask": {
+      "family": "QUIC header protection",
+      "bench": "aead",
+      "cases": "^header-protection/mask/(?P<implementation>[^/]+)/(?P<input>aes128|aes256|chacha20)$",
+      "headline": false,
+      "task": "Compute one five-byte RFC 9001 header-protection mask with a context built once."
+    },
+    "header-protection-construct": {
+      "family": "QUIC header protection",
+      "bench": "aead",
+      "cases": "^header-protection/construct/(?P<implementation>[^/]+)/(?P<input>aes128|aes256|chacha20)$",
+      "headline": false,
+      "task": "Build a header-protection context from key bytes, then destroy it."
+    },
+    "blake3-hash": {
+      "family": "BLAKE3",
+      "bench": "blake3_serial",
+      "cases": "^blake3/serial/hash/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Hash one buffer in one call on one thread."
+    },
+    "blake3-keyed": {
+      "family": "BLAKE3",
+      "bench": "blake3_serial",
+      "cases": "^blake3/serial/keyed/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Keyed-hash one buffer in one call on one thread."
+    },
+    "blake3-derive-key": {
+      "family": "BLAKE3",
+      "bench": "blake3_serial",
+      "cases": "^blake3/serial/derive-key/context/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Derive a key, hashing the context string in each call, on one thread."
+    },
+    "blake3-derive-key-prepared": {
+      "family": "BLAKE3",
+      "bench": "blake3_serial",
+      "cases": "^blake3/serial/derive-key/prepared-context/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Derive a key from a context hashed before timing, on one thread."
+    },
+    "blake3-xof": {
+      "family": "BLAKE3",
+      "bench": "blake3_serial",
+      "cases": "^blake3/serial/xof/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Absorb one buffer and squeeze 64 bytes on one thread."
+    },
+    "blake3-ordered": {
+      "family": "BLAKE3",
+      "bench": "blake3_serial",
+      "cases": "^blake3/serial/ordered/(?P<variant>(?:plain|derive-context)/(?:oneshot|single-update|two-update))/(?P<implementation>[^/]+)/(?P<input>[^/]+)$",
+      "headline": false,
+      "task": "Hash or derive from one buffer through the named call shape, on one thread."
+    },
+    "blake3-ordered-alignment": {
+      "family": "BLAKE3",
+      "bench": "blake3_serial",
+      "cases": "^blake3/serial/ordered-alignment/(?P<variant>(?:plain|derive-context)/(?:oneshot|single-update|two-update))/(?P<implementation>[^/]+)/(?P<input>[^/]+/in-[01])$",
+      "headline": false,
+      "task": "The ordered task with input addresses congruent to 0 or 1 modulo 64."
+    },
+    "blake3-parallel-hash": {
+      "family": "BLAKE3 multi-thread",
+      "bench": "blake3",
+      "cases": "^blake3/parallel/hash/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Hash one buffer in one call; threads allowed."
+    },
+    "blake3-parallel-keyed": {
+      "family": "BLAKE3 multi-thread",
+      "bench": "blake3",
+      "cases": "^blake3/parallel/keyed/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Keyed-hash one buffer in one call; threads allowed."
+    },
+    "blake3-parallel-derive-key": {
+      "family": "BLAKE3 multi-thread",
+      "bench": "blake3",
+      "cases": "^blake3/parallel/derive-key/context/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Derive a key, hashing the context string in each call; threads allowed."
+    },
+    "blake3-parallel-xof": {
+      "family": "BLAKE3 multi-thread",
+      "bench": "blake3",
+      "cases": "^blake3/parallel/xof/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Absorb one buffer and squeeze 64 bytes; threads allowed."
+    },
+    "blake3-streaming": {
+      "family": "BLAKE3",
+      "bench": "blake3",
+      "cases": "^blake3/streaming/(?P<implementation>[^/]+)/(?P<input>[0-9]+B)$",
+      "headline": false,
+      "task": "Hash 1 MiB through updates of the named chunk size."
+    },
+    "blake3-batch": {
+      "family": "BLAKE3",
+      "bench": "blake3",
+      "cases": "^blake3/batch/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Hash 64 independent messages of the named length."
+    },
+    "blake3-mixed-batch": {
+      "family": "BLAKE3",
+      "bench": "blake3",
+      "cases": "^blake3/mixed-batch/(?P<variant>plain|keyed|derive)/(?P<implementation>[^/]+)/(?P<input>[a-z-]+/[0-9]+)$",
+      "headline": false,
+      "task": "Hash an ordered list of independent messages of mixed lengths."
+    },
+    "mldsa-keygen": {
+      "family": "ML-DSA",
+      "bench": "mldsa",
+      "cases": "^(?P<variant>mldsa(?:44|65|87))/keygen/(?P<input>seed-encoded)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Generate a key pair from a 32-byte seed and export both encoded keys."
+    },
+    "mldsa-sign-deterministic": {
+      "family": "ML-DSA",
+      "bench": "mldsa",
+      "cases": "^(?P<variant>mldsa(?:44|65|87))/sign/(?P<input>reuse-key-deterministic)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Sign a 32-byte message deterministically with an empty context and each library's best reused key."
+    },
+    "mldsa-sign-randomized": {
+      "family": "ML-DSA",
+      "bench": "mldsa",
+      "cases": "^(?P<variant>mldsa(?:44|65|87))/sign/(?P<input>reuse-key-randomized)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Sign a 32-byte message with 32 fresh random bytes, an empty context, and each library's best reused key."
+    },
+    "mldsa-verify-reuse": {
+      "family": "ML-DSA",
+      "bench": "mldsa",
+      "cases": "^(?P<variant>mldsa(?:44|65|87))/verify/(?P<input>reuse-key)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Parse and verify one signature with an empty context and each library's best reused key."
+    },
+    "mldsa-verify-import": {
+      "family": "ML-DSA",
+      "bench": "mldsa",
+      "cases": "^(?P<variant>mldsa(?:44|65|87))/verify/(?P<input>import-key)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Import identical public-key bytes, then parse and verify one signature with an empty context."
+    },
+    "mldsa-sign-encoded": {
+      "family": "ML-DSA equal key depth",
+      "bench": "mldsa",
+      "cases": "^(?P<variant>mldsa(?:44|65|87))/sign/(?P<input>encoded-key-deterministic)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Sign deterministically with an 18-byte context and a key that is decoded in each call."
+    },
+    "mldsa-sign-prepared": {
+      "family": "ML-DSA equal key depth",
+      "bench": "mldsa",
+      "cases": "^(?P<variant>mldsa(?:44|65|87))/sign/(?P<input>prepared-key-deterministic)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Sign deterministically with an 18-byte context and a key prepared once."
+    },
+    "mldsa-verify-encoded": {
+      "family": "ML-DSA equal key depth",
+      "bench": "mldsa",
+      "cases": "^(?P<variant>mldsa(?:44|65|87))/verify/(?P<input>encoded-key)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Verify with an 18-byte context and a key that is decoded in each call."
+    },
+    "mldsa-verify-prepared": {
+      "family": "ML-DSA equal key depth",
+      "bench": "mldsa",
+      "cases": "^(?P<variant>mldsa(?:44|65|87))/verify/(?P<input>prepared-key)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Verify with an 18-byte context and a key prepared once."
+    },
+    "mldsa-corpus": {
+      "family": "ML-DSA",
+      "bench": "mldsa",
+      "cases": "^(?P<variant>mldsa(?:44|65|87)/corpus/prepared-(?:deterministic|hedged))/(?P<implementation>[^/]+)/(?P<input>[^/]+)$",
+      "headline": false,
+      "task": "Sign each message of a fixed corpus with a prepared key, deterministically or hedged."
+    },
+    "mldsa-hash-sign": {
+      "family": "ML-DSA",
+      "bench": "mldsa",
+      "cases": "^(?P<variant>mldsa(?:44|65|87))/hash-sign/shake128/(?P<input>encoded-key-deterministic)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "HashML-DSA with SHAKE128: sign deterministically with a key decoded in each call."
+    },
+    "mldsa-hash-verify": {
+      "family": "ML-DSA",
+      "bench": "mldsa",
+      "cases": "^(?P<variant>mldsa(?:44|65|87))/hash-verify/shake128/(?P<input>encoded-key)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "HashML-DSA with SHAKE128: verify with a key decoded in each call."
+    },
+    "rsa-verify-reuse": {
+      "family": "RSA",
+      "bench": "rsa",
+      "cases": "^(?P<variant>rsa-(?:2048|3072|4096|8192))/(?P<input>verify-(?:pss|pkcs1v15)-sha256)/reuse-key/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Verify one SHA-256 signature with a public key prepared once, through each library's best reuse API."
+    },
+    "rsa-verify-import": {
+      "family": "RSA",
+      "bench": "rsa",
+      "cases": "^(?P<variant>rsa-(?:2048|3072|4096|8192))/(?P<input>verify-(?:pss|pkcs1v15)-sha256)/import-key/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Parse and validate identical PKCS#1 public-key bytes, then verify one SHA-256 signature."
+    },
+    "rsa-parse-spki": {
+      "family": "RSA",
+      "bench": "rsa",
+      "cases": "^(?P<variant>rsa-(?:2048|3072|4096|8192))/(?P<input>parse-spki)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Parse and validate identical SubjectPublicKeyInfo bytes."
+    },
+    "rsa-sign": {
+      "family": "RSA",
+      "bench": "rsa",
+      "cases": "^(?P<variant>rsa-(?:2048|3072|4096|8192))-private-signing/(?P<input>sign-pss-sha256/fresh-entropy)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Sign with PSS and SHA-256 using fresh randomness in each call, with a private key prepared once."
+    },
+    "rsa-oaep-encrypt": {
+      "family": "RSA",
+      "bench": "rsa",
+      "cases": "^(?P<variant>rsa-(?:2048|3072|4096|8192))-oaep-sha256/(?P<input>encrypt/fresh-entropy)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Encrypt one message with OAEP and SHA-256 using fresh randomness in each call."
+    },
+    "rsa-oaep-encrypt-caller-entropy": {
+      "family": "RSA",
+      "bench": "rsa",
+      "cases": "^(?P<variant>rsa-(?:2048|3072|4096|8192))-oaep-sha256/(?P<input>encrypt/caller-entropy)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Encrypt one message with OAEP and SHA-256 using a seed that the caller supplies."
+    },
+    "rsa-oaep-decrypt": {
+      "family": "RSA",
+      "bench": "rsa",
+      "cases": "^(?P<variant>rsa-(?:2048|3072|4096|8192))-oaep-sha256/(?P<input>decrypt/fresh-entropy)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Decrypt one OAEP SHA-256 ciphertext with fresh blinding randomness in each call."
+    },
+    "rsa-keygen": {
+      "family": "RSA",
+      "bench": "rsa",
+      "cases": "^(?P<variant>rsa-(?:2048|3072|4096|8192))-keygen/(?P<implementation>[^/]+)(?P<input>)$",
+      "headline": false,
+      "task": "Generate a key pair. Prime search makes the time vary widely between calls."
+    },
+    "ecdsa-sign": {
+      "family": "ECDSA",
+      "bench": "auth",
+      "cases": "^(?P<variant>ecdsa-p256|ecdsa-p384)/sign/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Sign a message of the named length with a private key prepared once."
+    },
+    "ecdsa-verify-reuse": {
+      "family": "ECDSA",
+      "bench": "auth",
+      "cases": "^(?P<variant>ecdsa-p256|ecdsa-p384)/verify/reuse-key/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Verify one signature with a public key parsed once, through each library's best reuse API."
+    },
+    "ecdsa-verify-import": {
+      "family": "ECDSA",
+      "bench": "auth",
+      "cases": "^(?P<variant>ecdsa-p256|ecdsa-p384)/verify/import-key/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Parse identical uncompressed SEC1 public-key bytes, then verify one signature."
+    },
+    "ecdsa-public-key": {
+      "family": "ECDSA",
+      "bench": "auth",
+      "cases": "^(?P<variant>ecdsa-p256|ecdsa-p384)/public-key/(?P<implementation>[^/]+)(?P<input>)$",
+      "headline": false,
+      "task": "Derive the public key from a private key held by the caller."
+    },
+    "ed25519-sign": {
+      "family": "Ed25519",
+      "bench": "auth",
+      "cases": "^ed25519/sign/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Sign a message of the named length with a key pair prepared once."
+    },
+    "ed25519-verify-reuse": {
+      "family": "Ed25519",
+      "bench": "auth",
+      "cases": "^ed25519/verify/reuse-key/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Verify one signature with a public key parsed once, through each library's best reuse API."
+    },
+    "ed25519-verify-import": {
+      "family": "Ed25519",
+      "bench": "auth",
+      "cases": "^ed25519/verify/import-key/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": true,
+      "task": "Import identical 32-byte public-key bytes, then verify one signature."
+    },
+    "ed25519-key-derivation": {
+      "family": "Ed25519",
+      "bench": "auth",
+      "cases": "^ed25519/(?P<variant>public-key-from-secret|keypair-from-secret)/(?P<implementation>[^/]+)(?P<input>)$",
+      "headline": false,
+      "task": "Derive the public key or the signing key pair from a 32-byte secret."
+    },
+    "x25519-diffie-hellman": {
+      "family": "X25519",
+      "bench": "auth",
+      "cases": "^x25519/diffie-hellman/encoded-peer/(?P<implementation>[^/]+)(?P<input>)$",
+      "headline": true,
+      "task": "Compute one shared secret from a reused secret key and the peer's encoded 32-byte public key."
+    },
+    "x25519-public-key": {
+      "family": "X25519",
+      "bench": "auth",
+      "cases": "^x25519/public-key-from-secret/(?P<implementation>[^/]+)(?P<input>)$",
+      "headline": true,
+      "task": "Derive the public key from a 32-byte secret key."
+    },
+    "ecdh-key-generation": {
+      "family": "ECDH",
+      "bench": "auth",
+      "cases": "^(?P<variant>p256-ecdh|p384-ecdh)/key-generation/(?P<implementation>[^/]+)(?P<input>)$",
+      "headline": true,
+      "task": "Generate a key pair from caller-supplied randomness."
+    },
+    "ecdh-agreement-parsed-peer": {
+      "family": "ECDH",
+      "bench": "auth",
+      "cases": "^(?P<variant>p256-ecdh|p384-ecdh)/agreement/parsed-peer/(?P<implementation>[^/]+)(?P<input>)$",
+      "headline": true,
+      "task": "Compute one shared secret from a reused private key and a peer public key parsed once."
+    },
+    "ecdh-agreement-encoded-peer": {
+      "family": "ECDH",
+      "bench": "auth",
+      "cases": "^(?P<variant>p256-ecdh|p384-ecdh)/agreement/encoded-peer/(?P<implementation>[^/]+)(?P<input>)$",
+      "headline": true,
+      "task": "Parse identical SEC1 peer bytes, then compute one shared secret with a reused private key."
+    },
+    "ecdh-public-key": {
+      "family": "ECDH",
+      "bench": "auth",
+      "cases": "^(?P<variant>p256-ecdh|p384-ecdh)/public-key/(?P<implementation>[^/]+)(?P<input>)$",
+      "headline": false,
+      "task": "Derive the public key from a private key held by the caller."
+    },
+    "ecdh-public-key-from-secret": {
+      "family": "ECDH",
+      "bench": "auth",
+      "cases": "^(?P<variant>p256-ecdh|p384-ecdh)/public-key-from-secret/(?P<implementation>[^/]+)(?P<input>)$",
+      "headline": false,
+      "task": "Import secret-key bytes, then derive the public key."
+    },
+    "ecdh-parse": {
+      "family": "ECDH",
+      "bench": "auth",
+      "cases": "^(?P<variant>p256-ecdh|p384-ecdh)/parse/(?P<implementation>[^/]+)(?P<input>)$",
+      "headline": false,
+      "task": "Parse and validate identical SEC1 public-key bytes."
+    },
+    "mlkem-keygen": {
+      "family": "ML-KEM",
+      "bench": "auth",
+      "cases": "^(?P<variant>mlkem512|mlkem768|mlkem1024)/keygen/(?P<input>derand-encoded)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Generate a key pair from a 64-byte seed and export both encoded keys."
+    },
+    "mlkem-encapsulate-reuse": {
+      "family": "ML-KEM",
+      "bench": "auth",
+      "cases": "^(?P<variant>mlkem512|mlkem768|mlkem1024)/encapsulate/(?P<input>derand-reuse-key)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Encapsulate with caller randomness and each library's best reused key."
+    },
+    "mlkem-encapsulate-import": {
+      "family": "ML-KEM",
+      "bench": "auth",
+      "cases": "^(?P<variant>mlkem512|mlkem768|mlkem1024)/encapsulate/(?P<input>derand-import-encoded)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Import and validate identical encapsulation-key bytes, then encapsulate with caller randomness."
+    },
+    "mlkem-decapsulate-reuse": {
+      "family": "ML-KEM",
+      "bench": "auth",
+      "cases": "^(?P<variant>mlkem512|mlkem768|mlkem1024)/decapsulate/(?P<input>reuse-key)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Decapsulate one ciphertext with each library's best reused key."
+    },
+    "mlkem-decapsulate-import": {
+      "family": "ML-KEM",
+      "bench": "auth",
+      "cases": "^(?P<variant>mlkem512|mlkem768|mlkem1024)/decapsulate/(?P<input>import-encoded)/(?P<implementation>[^/]+)$",
+      "headline": true,
+      "task": "Import and validate identical decapsulation-key bytes, then decapsulate one ciphertext."
+    },
+    "mlkem-reuse-encoded": {
+      "family": "ML-KEM equal key depth",
+      "bench": "auth",
+      "cases": "^(?P<variant>mlkem512|mlkem768|mlkem1024)/(?P<input>encapsulate/derand-reuse-encoded|decapsulate/reuse-encoded)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Encapsulate or decapsulate with a reused encoded-key wrapper that decodes the key in each call."
     }
   }
 }

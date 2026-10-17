@@ -506,6 +506,54 @@ sys.exit(64)
     self.assertTrue(self.runs())
     self.assertNotIn('state=complete', (self.runs()[0] / 'status.txt').read_text())
 
+  def test_catalog_rustflags_build_a_separate_configuration(self):
+    import runner
+    from benchmark_catalog import load_catalog
+    catalog = load_catalog()
+    rows = [runner.target(catalog, name, False) | {'bench': name, 'scope': '', 'pattern': ''} for name in ('xxh3', 'xxh3_v4')]
+    with patch.dict(os.environ, self.env, clear=True), contextlib.chdir(self.root), \
+         contextlib.redirect_stdout(io.StringIO()):
+      plan = runner.resolve(rows, {'sample_size': 10}, self.root / 'output.txt',
+                            self.env | {'CRITERION_HOME': str(self.root / 'discovery')})
+    self.assertEqual([entry['bench'] for entry in plan], ['xxh3', 'xxh3_v4'])
+    self.assertNotEqual(plan[0]['home'], plan[1]['home'])
+    self.assertNotIn('rustflags', plan[0])
+    self.assertEqual(plan[1]['rustflags'], ['-C', 'target-cpu=x86-64-v4'])
+    self.assertEqual(plan[1]['artifact']['rustflags'], ['-C', 'target-cpu=x86-64-v4'])
+    # A configuration without catalog flags keeps the identity that earlier baselines recorded.
+    command = plan[0]['artifact']['command']
+    self.assertEqual(plan[0]['id'], runner.identity([command, plan[0]['compatibility'], {'sample_size': 10}]))
+    flags = [json.loads(line) for line in (self.root / 'build-flags.jsonl').read_text().splitlines()]
+    self.assertEqual(flags, [[''], ['-C', 'target-cpu=x86-64-v4']])
+
+  def test_catalog_rustflags_extend_inherited_flags(self):
+    from execution import flagged
+    extra = ['-C', 'target-cpu=x86-64-v4']
+    self.assertEqual(flagged({'RUSTFLAGS': '-C  opt-level=3'}, extra), {'CARGO_ENCODED_RUSTFLAGS': '-C\x1fopt-level=3\x1f-C\x1ftarget-cpu=x86-64-v4'})
+    # Cargo ignores RUSTFLAGS when the encoded form is set, so only the encoded flags carry forward.
+    self.assertEqual(flagged({'RUSTFLAGS': '-C opt-level=1', 'CARGO_ENCODED_RUSTFLAGS': '--cfg\x1frscrypto_internal'}, extra),
+                     {'CARGO_ENCODED_RUSTFLAGS': '--cfg\x1frscrypto_internal\x1f-C\x1ftarget-cpu=x86-64-v4'})
+
+  def test_architecture_limited_configurations(self):
+    import runner
+    from benchmark_catalog import load_catalog
+    catalog = load_catalog()
+
+    def benches(*selectors, target, every=False):
+      args = runner.parse(['bench', *selectors, '--target', target])
+      return [row['bench'] for row in runner.requests(args, catalog, every_architecture=every)]
+
+    self.assertIn('xxh3_v4', benches('hashes', target='x86_64-unknown-linux-gnu'))
+    self.assertNotIn('xxh3_v4', benches('hashes', target='riscv64gc-unknown-linux-gnu'))
+    self.assertIn('xxh3_v4', benches('hashes', target='riscv64gc-unknown-linux-gnu', every=True))
+    with self.assertRaisesRegex(ValueError, 'xxh3_v4 does not run on powerpc64'):
+      benches('xxh3_v4', target='powerpc64le-unknown-linux-gnu')
+    for mode in ('profile', 'codegen'):
+      with self.subTest(mode=mode):
+        result = self.invoke(*((mode, 'xxh3_v4', '--list') if mode == 'profile' else (mode, 'xxh3_v4')))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertRegex(result.stderr, 'does not run on|catalog rustflags')
+
   def test_just_preserves_arguments(self):
     result = subprocess.run(['just', 'bench', 'sha256', r'filter=^sha256/rscrypto/\d+$'], cwd=self.root, env=self.env,
                             capture_output=True, text=True, timeout=30)

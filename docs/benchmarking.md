@@ -95,9 +95,83 @@ A value below `1.00x` favors the comparison.
 Summary tables treat `0.95x` through `1.05x` as a tie.
 
 [`.config/benchmark-matrix.json`](../.config/benchmark-matrix.json) owns the benchmark targets, required features,
-selector names, and filters.
+selector names, filters, and comparison declarations.
 The benchmark source owns each timed operation.
 Inspect both before you claim equivalent work.
+
+## Comparison rules
+
+A comparison measures one task, such as "verify a signature with a key parsed once".
+It does not compare code paths.
+Every comparison follows these rules:
+
+1. A group measures one task.
+   When an operation has more than one task, the group name says which one,
+   for example `ed25519/verify/reuse-key` and `ed25519/verify/import-key`.
+1. Each library joins a group with its best public API for that task, and with its best supported build.
+   A library that has no API for the task stays out of the group,
+   and the source comment at the group says so.
+1. `rscrypto` runs in its default build.
+   In each group and input, exactly one row is named `rscrypto`: its best public API for the task.
+   Rows named `rscrypto-<variant>` show other `rscrypto` APIs. They never enter a ratio.
+1. Differences that come from a library's design, such as what it caches or how it selects instructions, are results.
+   Differences that come from the harness, such as a weaker API, missing build flags, or skipped validation,
+   are defects.
+1. Every row checks its output against an independent oracle before it is timed; see [Output checks](#output-checks).
+   Where a task includes validation, the check also requires the timed code path to reject a malformed input,
+   when that is practical.
+
+The source comment at each group states the task, what is timed,
+what each library caches or validates, and any remaining API-cost difference.
+
+### Scorecard
+
+The catalog's `comparisons` map declares each comparison:
+its task, the target that measures it, a case pattern, a family, and whether it is in the headline.
+The headline holds each primitive's primary operations.
+Streaming, batch, collection-hasher, construction, and parsing comparisons are reported by family, outside the headline.
+
+```bash
+just bench-compare x86_64-linux-intel=benchmark_results/criterion/<run-id> --json scorecard.json
+just bench all --list > cases.txt
+just bench-compare --cases cases.txt
+```
+
+- Each argument is `PLATFORM=RUN_DIRECTORY`.
+  Repeat a label to combine runs from one host. The scorer rejects runs from different hosts under one label.
+- One comparison point is one comparison, variant, and input on one platform.
+  Its ratio divides the fastest external median by the `rscrypto` median.
+  The JSON output also gives an interval from the two medians' confidence intervals.
+- A comparison can name `competitor_benches`, which are other builds whose external rows also count.
+  The `rscrypto` row always comes from the comparison's own target.
+- The scorer fails when a point lacks its `rscrypto` row or an external row,
+  when a platform lacks a competitor build that applies to it,
+  and when a measured group has external rows but no declaration.
+  `--partial` reports the first kind as notes, for runs whose case filter omitted rows.
+- `--cases` checks the declarations against a case listing without measuring.
+
+The Bench workflow's `Score comparisons` job scores the run's own measurement artifacts.
+It writes the tables to the job summary and keeps the JSON as the `bench-score-RUN-ATTEMPT` artifact.
+Published summaries come from that output.
+
+### Competitor builds
+
+Some libraries choose their SIMD code only at compile time.
+xxhash-rust compiles its SSE2, AVX2, or AVX-512 code only when the build enables those target features.
+Default benchmark builds pass no CPU flags, so on x86-64 it would run SSE2,
+while `rscrypto` selects AVX2 or AVX-512 at run time.
+
+- The `xxh3_v4` target builds the same binary with `-C target-cpu=x86-64-v4`, on x86-64 only.
+- The `xxh3` comparison takes each competitor's fastest row from either build.
+  `rscrypto` stays in its default build.
+- `xxh3-baseline-build` keeps the default build only.
+  It shows what runtime dispatch gives a binary built for the x86-64 baseline.
+- `xxh3-v4-build` compares every library compiled for x86-64-v4.
+- A binary compiled for CPU features that the host lacks refuses to start.
+
+The catalog's `architectures` field limits a target to some architectures,
+and `rustflags` builds a target as its own configuration with extra flags.
+Profiling and code inspection do not apply catalog `rustflags`, so they reject those targets.
 
 ## Bench workflow
 
@@ -142,6 +216,10 @@ For example, `sha256,blake3,crc32c` on `x86_64-linux` runs four jobs.
 `Measure x86_64-linux-intel / hashes` and `Measure x86_64-linux-amd / hashes` each run `sha2`, then `blake3`.
 The two `checksum` jobs run `crc`.
 The plan log prints the `just bench` command that each target runs.
+Every platform receives the same plan.
+A job skips a target that the catalog limits to other architectures, such as `xxh3_v4` outside x86-64,
+and prints the skip.
+After every measurement job passes, the `Score comparisons` job scores the run; see [Scorecard](#scorecard).
 
 - AWS supplies fixed On-Demand instance types for Linux x86-64, Linux ARM64, and Windows x86-64.
   Both x86-64 operating systems run separate Intel and AMD jobs, with different artifact names.
@@ -883,6 +961,7 @@ Benchmarking and profiling share the Cargo command and the CPU-flag policy.
 - Explicit `RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS` take precedence.
   Otherwise, local macOS runs use `-C target-cpu=native`.
   Match these flags, the target, and the Cargo features when you compare with a deployment build.
+- A target with catalog `rustflags`, such as `xxh3_v4`, appends them to those flags for its own build only.
 - Each target uses its explicit catalog features with Cargo defaults disabled.
   Algorithm selectors, raw filters, and multi-target selection do not change this.
 - Each distinct target configuration is built once, before its selected cases run.

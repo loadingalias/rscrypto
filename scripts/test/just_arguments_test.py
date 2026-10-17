@@ -63,6 +63,7 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
       'test-provider-bogo': ['scripts/test/provider_bogo.py'],
       'bench-provider-scorecard': ['scripts/bench/provider_scorecard.py'],
       'bench-mldsa-tail': ['scripts/bench/mldsa_tail.py'],
+      'bench-compare': ['scripts/bench/compare.py'],
       'ct-dudect': [], 'ct-artifacts': [], 'update': [],
       'ct-full': ['scripts/ct/full.py'], 'ct-binsec': ['scripts/ct/binsec.py'],
       'ct-replay': ['scripts/ct/replay.py'],

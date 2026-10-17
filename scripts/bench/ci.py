@@ -12,7 +12,7 @@ import sys
 # Embedded Windows Python omits the script directory from its import path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from benchmark_catalog import load_catalog, resolve_selector, scope
+from benchmark_catalog import applies, architecture, load_catalog, resolve_selector, scope
 import runner
 import settings
 
@@ -100,7 +100,8 @@ def options(inputs: dict) -> list[str]:
 def arguments(names: list[str], common: list[str]) -> list[str]:
     args = [*names, *common]
     parsed = runner.parse(['bench', *args])
-    runner.requests(parsed, load_catalog())
+    # Every platform job receives the same plan; each job skips the runs its architecture cannot execute.
+    runner.requests(parsed, load_catalog(), every_architecture=True)
     settings.load({key: getattr(parsed, key) for key in ('sample_size', 'warmup_ms', 'measure_ms')
                    if getattr(parsed, key) is not None})
     return args
@@ -143,18 +144,48 @@ def plan(inputs: dict, run_id: str) -> tuple[dict, dict, dict]:
     return {'include': measurements}, {'include': builds}, families
 
 
-def run(inputs: dict, family: str, transfer=lambda name: []) -> int:
+def run(inputs: dict, family: str, transfer=lambda name: [], arch: str | None = None) -> int:
     """Run each selected run of one family as its own `just bench`; the first failure ends the job."""
     runs = jobs(inputs).get(family)
     if runs is None:
         raise ValueError(f'{family} is not a family of this selection')
+    catalog = load_catalog()
+    arch = arch or architecture()
     for name, args in runs.items():
+        bench, _ = scope(catalog, name)
+        if not applies(catalog['benches'][bench], arch):
+            print(f'{family} / {name}: skipped; it runs only on '
+                  + ', '.join(catalog['benches'][bench]['architectures']), flush=True)
+            continue
         args = [*args, *transfer(name)]
         print(f'{family} / {name}: just bench ' + ' '.join(args), flush=True)
         status = subprocess.run(['just', 'bench', *args], check=False).returncode
         if status:
             return status
     return 0
+
+
+def score(directory: Path, output: Path, inputs: dict) -> int:
+    """Score every measurement artifact of this run attempt; each artifact name carries its platform label."""
+    import compare
+    catalog = load_catalog()
+    families = sorted({bench['family'] for bench in catalog['benches'].values() if 'family' in bench}, key=len, reverse=True)
+    suffix = f"-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}"
+    runs = []
+    for artifact in sorted(path for path in directory.iterdir() if path.is_dir()):
+        name = artifact.name
+        # Measurement artifacts are bench-PLATFORM-FAMILY-RUN-ATTEMPT; preparation evidence is scored nowhere.
+        if not (name.startswith('bench-') and name.endswith(suffix)) or name.startswith(('bench-prepare-', 'bench-score-')):
+            continue
+        stem = name[len('bench-'):-len(suffix)]
+        family = next((family for family in families if stem.endswith('-' + family)), None)
+        if family is None:
+            raise ValueError(f'unexpected benchmark artifact: {name}')
+        runs += [f'{stem[:-len(family) - 1]}={status.parent}' for status in sorted(artifact.glob('criterion/*/status.txt'))]
+    if not runs:
+        raise ValueError('no measurement artifacts to score')
+    # A case filter can cut comparison groups, so its missing points are notes rather than errors.
+    return compare.main([*runs, '--json', str(output), *(['--partial'] if inputs.get('filter') else [])])
 
 
 def main() -> int:
@@ -175,6 +206,8 @@ def main() -> int:
         return 0
     if len(command) == 2 and command[0] == 'run':
         return run(inputs, command[1])
+    if len(command) == 3 and command[0] == 'score':
+        return score(Path(command[1]), Path(command[2]), inputs)
     if len(command) == 4 and command[0] in ('prepare', 'measure'):
         operation, family, target, directory = command
         if target not in TARGETS:
@@ -184,8 +217,10 @@ def main() -> int:
         flag = 'prepare_archive=' if operation == 'prepare' else 'run_archive='
         if operation == 'prepare':
             directory.mkdir(parents=True, exist_ok=True)
-        return run(inputs, family, lambda name: ['target=' + target, flag + str(directory / f'{name}.tar.gz')])
-    raise ValueError('usage: scripts/bench/ci.py plan|run FAMILY|{prepare|measure} FAMILY TARGET DIRECTORY')
+        return run(inputs, family, lambda name: ['target=' + target, flag + str(directory / f'{name}.tar.gz')],
+                   architecture(target))
+    raise ValueError('usage: scripts/bench/ci.py plan|run FAMILY|{prepare|measure} FAMILY TARGET DIRECTORY'
+                     '|score ARTIFACTS OUTPUT')
 
 
 if __name__ == '__main__':
