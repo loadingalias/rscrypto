@@ -150,6 +150,7 @@
       "binary": "auth",
       "kind": "criterion",
       "family": "auth",
+      "split": "algorithms",
       "required": true,
       "features": [
         "std",

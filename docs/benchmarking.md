@@ -857,6 +857,9 @@ which never divides a group.
 SLH-DSA uses this, because its 24 FIPS 205 algorithms do not fit one budget on the slower platforms.
 PBKDF2 uses it too: at the password-policy iteration count, one SHA-256 call takes about 1.25 s on the RISC-V runner,
 extrapolated from its 1,000-iteration rows.
+The `auth` target also splits by algorithm: its cold Windows build plus all 15 algorithms exceeded one budget
+in [Bench run 39091310295](https://github.com/loadingalias/rscrypto/actions/runs/39091310295).
+The invocations reuse the same compiled binary and preserve every case and sampling setting.
 Every case of a split target must belong to exactly one of its algorithms; discovery fails otherwise.
 If required evidence cannot fit, record that requirement as unmet. A smaller future
 experiment needs a prospectively stated question and gates; it does not complete

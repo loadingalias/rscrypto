@@ -77,11 +77,11 @@ class ManualBench(unittest.TestCase):
         self.assertNotIn('tls_connections', defaults)
         families = ci.jobs(ci.dispatch_inputs(request('all')))
         self.assertEqual(list(families), ['auth', 'checksum', 'hashes', 'aead'])
-        # A split target runs one catalog algorithm at a time. SLH-DSA has 12 FIPS 205 parameter sets and their 12
-        # HashSLH-DSA variants; PBKDF2 has SHA-256 and SHA-512.
+        # A split target runs one catalog algorithm at a time. Auth must not combine its 15 algorithms with a cold
+        # Windows build in one budget. SLH-DSA has 24 variants; PBKDF2 has SHA-256 and SHA-512.
         split = {name: [algorithm for algorithm, entry in catalog['algorithms'].items() if entry['bench'] == name]
                  for name in defaults if catalog['benches'][name].get('split') == 'algorithms'}
-        self.assertEqual({name: len(runs) for name, runs in split.items()}, {'slhdsa': 24, 'pbkdf2': 2})
+        self.assertEqual({name: len(runs) for name, runs in split.items()}, {'slhdsa': 24, 'auth': 15, 'pbkdf2': 2})
         expected = [run for name in defaults for run in split.get(name, [name])]
         self.assertEqual(sorted(run for runs in families.values() for run in runs), sorted(expected))
         everything = {name: True for name in ci.PLATFORMS}
