@@ -41,6 +41,7 @@ def parse(arguments: list[str]):
   bench.add_argument("--filter", action="append", default=[])
   bench.add_argument("--list", action="store_true")
   bench.add_argument("--diag", nargs="?", const=True, type=boolean, default=False)
+  bench.add_argument("--quick", nargs="?", const=True, type=boolean, default=False)
   bench.add_argument("--output-dir", default="benchmark_results")
   bench.add_argument("--baseline", type=Path)
   transfer = bench.add_mutually_exclusive_group()
@@ -68,9 +69,9 @@ def parse(arguments: list[str]):
   normalized = []
   value_follows = False
   for index, token in enumerate(arguments):
-    if not value_follows and arguments[0] == "bench" and token == "--diag":
+    if not value_follows and arguments[0] == "bench" and token in {"--diag", "--quick"}:
       value = arguments[index + 1].lower() if index + 1 < len(arguments) else ""
-      normalized.append(token if value in {"true", "false"} else "--diag=true")
+      normalized.append(token if value in {"true", "false"} else token + "=true")
     elif not value_follows and arguments[0] == "bench" and "=" in token and re.fullmatch(r"[a-z_]+", token.split("=", 1)[0]):
       key, value = token.split("=", 1)
       normalized.append("--" + key.replace("_", "-") + "=" + value)
@@ -86,7 +87,7 @@ def parse(arguments: list[str]):
   if args.mode == "bench":
     # Every accepted environment option has the same meaning as its CLI form.
     known = {"BENCH_FILTER", "BENCH_DIAG", "BENCH_LIST", "BENCH_OUTPUT_DIR", "BENCH_BASELINE",
-             "BENCH_WARMUP_MS", "BENCH_MEASURE_MS", "BENCH_SAMPLE_SIZE"}
+             "BENCH_WARMUP_MS", "BENCH_MEASURE_MS", "BENCH_SAMPLE_SIZE", "BENCH_QUICK"}
     unknown = set(key for key in os.environ if key.startswith("BENCH_")) - known
     if unknown:
       parser.error(f"unknown benchmark environment options: {', '.join(sorted(unknown))}")
@@ -99,7 +100,7 @@ def parse(arguments: list[str]):
       if name == "filter":
         getattr(args, name).insert(0, value)
       elif not explicit:
-        setattr(args, name, boolean(value) if name in {"diag", "list"} else
+        setattr(args, name, boolean(value) if name in {"diag", "list", "quick"} else
                 int(value) if name in {"warmup_ms", "measure_ms", "sample_size"} else
                 Path(value) if name == "baseline" else value)
     if any(not pattern for pattern in args.filter):
@@ -227,7 +228,7 @@ def export_run(root: Path) -> None:
 
 def bench(args, catalog) -> None:
   rows = requests(args, catalog)
-  effective = settings.load({name: value for name in ("warmup_ms", "measure_ms", "sample_size")
+  effective = settings.load({name: value for name in ("warmup_ms", "measure_ms", "sample_size", "quick")
                              if (value := getattr(args, name)) is not None})
   effective.pop("max_run_seconds")
   if args.prepare_archive or args.run_archive or args.target:
@@ -252,6 +253,8 @@ def bench(args, catalog) -> None:
           print(f"[{case_class(catalog, entry['binary'], case)}] {entry['binary']} {case}")
     return
   baseline = args.baseline.resolve() if args.baseline else None
+  if baseline and args.quick:
+    raise ValueError("quick mode does not compare performance baselines")
   if baseline and "state=complete" not in (baseline / "status.txt").read_text().splitlines():
     raise ValueError("baseline must be a completed run")
   parent = Path(args.output_dir).resolve() / "criterion"

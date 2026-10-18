@@ -92,11 +92,13 @@ for case in selected:
   value = float(os.environ.get('ESTIMATE', '10'))
   estimate = {'point_estimate': value, 'standard_error': 0.1,
               'confidence_interval': {'confidence_level': 0.95, 'lower_bound': value - 0.1, 'upper_bound': value + 0.1}}
-  count = int(sys.argv[sys.argv.index('--sample-size') + 1])
+  count = 2 if '--quick' in sys.argv else int(sys.argv[sys.argv.index('--sample-size') + 1])
   data = {'benchmark.json': {'full_id': case}, 'sample.json': {'iters': [1] * count, 'times': [value] * count},
           'estimates.json': {'mean': estimate, 'median': estimate}}
   if os.environ.get('WRONG_CASE'): data['benchmark.json']['full_id'] = 'wrong'
-  if os.environ.get('WRONG_SAMPLE_COUNT'): data['sample.json'] = {'iters': [1, 1], 'times': [value, value]}
+  if os.environ.get('WRONG_SAMPLE_COUNT'):
+    wrong = 3 if '--quick' in sys.argv else 2
+    data['sample.json'] = {'iters': [1] * wrong, 'times': [value] * wrong}
   if os.environ.get('EMPTY_SAMPLES'): data['sample.json'] = {'iters': [], 'times': []}
   if os.environ.get('BAD_ESTIMATE'): data['estimates.json']['mean']['point_estimate'] = None
   for name in ('new', 'base'):
@@ -452,6 +454,25 @@ sys.exit(64)
     self.assertEqual(self.plan()[0]['settings']['measure_ms'], 250)
     self.assertNotIn('max_run_seconds', self.plan()[0]['settings'])
 
+  def test_quick_mode_has_distinct_evidence_and_no_performance_baseline(self):
+    self.ok(self.bench('sha256', 'quick=false', BENCH_QUICK='true'))
+    regular = self.runs()[0]
+    original = self.plan()[0]
+    self.assertNotIn('quick', original['settings'])
+    self.ok(self.bench('--quick', 'sha256', 'measure_ms=10'))
+    quick = self.plan()[0]
+    self.assertTrue(quick['settings']['quick'])
+    self.assertNotIn('sample_size', quick['settings'])
+    self.assertNotIn('warmup_ms', quick['settings'])
+    self.assertIn('--quick', quick['command'])
+    self.assertNotIn('--sample-size', quick['command'])
+    self.assertNotEqual(quick['id'], original['id'])
+    result = self.bench('sha256', 'quick=true', f'baseline={regular}')
+    self.assertIn('quick mode does not compare performance baselines', result.stderr)
+    result = self.bench('sha256', '--quick', WRONG_SAMPLE_COUNT='1')
+    self.assertNotEqual(result.returncode, 0)
+    self.assertIn('observed sample count differs', result.stderr)
+
   def test_diagnostic_boolean_options(self):
     for option, enabled in ((['--diag'], True), (['--diag', 'false'], False), (['--diag', 'TRUE'], True)):
       for arguments in ((*option, 'blake3'), ('blake3', *option)):
@@ -463,7 +484,8 @@ sys.exit(64)
   def test_invalid_requests_do_not_build(self):
     # Target names are plain selectors; the old `bench=` and BENCH_BENCH forms must fail.
     for args in (('unknown-selector',), ('bench=sha2',), ('--bench', 'sha2'), ('sha256', 'filter='), ('sample_size=9',),
-                 ('diag=typo',), ('structural',), ('tls-provider', '--diag')):
+                 ('diag=typo',), ('quick=typo',), ('sha256', '--quick', 'sample_size=10'),
+                 ('sha256', 'quick=true', 'warmup_ms=10'), ('structural',), ('tls-provider', '--diag')):
       self.assertNotEqual(self.bench(*args).returncode, 0)
     for env in ({'BENCH_UNKNOWN': '1'}, {'BENCH_BENCH': 'sha2'}):
       self.assertNotEqual(self.bench('sha256', **env).returncode, 0)

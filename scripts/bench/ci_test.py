@@ -135,6 +135,18 @@ class ManualBench(unittest.TestCase):
             with self.subTest(inputs=inputs), self.assertRaises(ValueError):
                 ci.dispatch_inputs({'DISPATCH_INPUTS': json.dumps(inputs)})
 
+    def test_quick_mode_reaches_every_run_and_rejects_ignored_sampling(self):
+        inputs = ci.dispatch_inputs(request('sha256,ed25519', quick=True, measure_ms='10'))
+        for runs in ci.jobs(inputs).values():
+            for args in runs.values():
+                self.assertIn('quick=true', args)
+                self.assertIn('measure_ms=10', args)
+        for values in ({'sample_size': '10'}, {'warmup_ms': '10'}):
+            with self.subTest(values=values), self.assertRaisesRegex(ValueError, 'quick mode takes no'):
+                plan(quick=True, **values)
+        with self.assertRaisesRegex(ValueError, 'Boolean'):
+            ci.dispatch_inputs(request(quick='true'))
+
     def test_run_forwards_regex_literally_and_propagates_failure(self):
         env = request(filter="$(touch /tmp/not-executed);'|.*")
         with patch.dict(os.environ, env, clear=True), patch.object(sys, 'argv', ['ci.py', 'run', 'hashes']), \

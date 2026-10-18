@@ -44,7 +44,7 @@ def record(median: float, spread: float = 1.0) -> dict:
   return {"median": median, "lower": median - spread, "upper": median + spread}
 
 
-def write_run(root: Path, entries: dict[str, dict[str, float]], host=HOST, state="complete") -> Path:
+def write_run(root: Path, entries: dict[str, dict[str, float]], host=HOST, state="complete", quick=False) -> Path:
   """Write a completed run in the layout that `just bench` retains: one plan entry per build."""
   root.mkdir(parents=True)
   plan = []
@@ -53,7 +53,8 @@ def write_run(root: Path, entries: dict[str, dict[str, float]], host=HOST, state
     for case, median in cases.items():
       estimate = {"point_estimate": median, "standard_error": 0.1,
                   "confidence_interval": {"confidence_level": 0.95, "lower_bound": median - 1, "upper_bound": median + 1}}
-      files = {"benchmark.json": {"full_id": case}, "sample.json": {"iters": [1.0] * 10, "times": [median] * 10},
+      count = 2 if quick else 10
+      files = {"benchmark.json": {"full_id": case}, "sample.json": {"iters": [1.0] * count, "times": [median] * count},
                "estimates.json": {"mean": estimate, "median": estimate}}
       for name in ("new", "base"):
         directory = root / home / case / name
@@ -61,7 +62,8 @@ def write_run(root: Path, entries: dict[str, dict[str, float]], host=HOST, state
         for filename, contents in files.items():
           (directory / filename).write_text(json.dumps(contents))
     plan.append({"id": str(index), "bench": bench, "binary": "hashes", "home": home, "cases": list(cases),
-                 "baselines": [], "settings": {"sample_size": 10}, "compatibility": {"host": host},
+                 "baselines": [], "settings": {"quick": True} if quick else {"sample_size": 10},
+                 "compatibility": {"host": host},
                  "artifact": {"command": ["cargo", "bench", "--features", "std", "--bench", "hashes"]}})
   (root / "plan.json").write_text(json.dumps(plan))
   (root / "status.txt").write_text(f"state={state}\nexit_code=0\n")
@@ -163,6 +165,30 @@ class RunTests(unittest.TestCase):
                           ([first, duplicate], "more than one run")):
       with self.subTest(message=message), self.assertRaisesRegex(compare.ComparisonError, message):
         compare.load_platform(CATALOG, "x86", runs)
+
+  def test_quick_runs_report_coverage_without_performance_rankings(self):
+    entries = {"hashes": {"d1/rscrypto/64": 10.0, "d1/lib-a/64": 100.0},
+               "hashes_v4": {"d1/lib-a/64": 90.0}}
+    quick = write_run(self.root / "quick", entries, quick=True)
+    regular = write_run(self.root / "regular", entries)
+    output = self.root / "quick.json"
+    with mock.patch.object(compare, "load_catalog", return_value=CATALOG), \
+         contextlib.redirect_stdout(io.StringIO()) as stdout:
+      self.assertEqual(compare.main([f"x86={quick}", "--json", str(output)]), 0)
+      self.assertEqual(json.loads(output.read_text()), {
+        "mode": "quick", "partial": False,
+        "coverage": [{"platform": "x86", "cases": 3, "comparison_points": 1}],
+      })
+      self.assertIn("Quick benchmark validation", stdout.getvalue())
+      self.assertNotIn("Faster", stdout.getvalue())
+      with self.assertRaisesRegex(compare.ComparisonError, "cannot combine quick and regular"):
+        compare.main([f"quick={quick}", f"regular={regular}"])
+    # Quick mode still requires every competitor build in a comparison.
+    missing = write_run(self.root / "missing", {"hashes": entries["hashes"]}, quick=True)
+    with mock.patch.object(compare, "load_catalog", return_value=CATALOG), \
+         contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as stderr:
+      self.assertEqual(compare.main([f"x86={missing}"]), 1)
+      self.assertIn("needs the competitor build hashes_v4", stderr.getvalue())
 
   def test_missing_competitor_build_and_partial_runs(self):
     # x86-64 runs must include the competitor's x86-64-v4 build, or the fastest external is understated.

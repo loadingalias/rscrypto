@@ -61,8 +61,12 @@ def verify(root: Path) -> dict:
     records = measurements(home)
     if set(records) != set(entry["cases"]) or len(entry["cases"]) != len(records):
       raise ValueError("measurement artifacts do not match the execution plan")
+    quick = entry["settings"].get("quick", False)
+    if type(quick) is not bool:
+      raise ValueError("invalid quick mode in effective settings")
     for case, current in records.items():
-      if len(read_json(current / "sample.json")["iters"]) != entry["settings"]["sample_size"]:
+      expected_samples = 2 if quick else entry["settings"]["sample_size"]
+      if len(read_json(current / "sample.json")["iters"]) != expected_samples:
         raise ValueError(f"observed sample count differs from effective settings: {case}")
       if case in entry["baselines"]:
         estimates(current.parent / "change/estimates.json")
@@ -73,7 +77,7 @@ def verify(root: Path) -> dict:
 
 
 def measure(root: Path, plan: list[dict], baseline: Path | None) -> None:
-  nominal = sum(len(entry["cases"]) * (entry["settings"]["warmup_ms"] + entry["settings"]["measure_ms"]) / 1000
+  nominal = sum(len(entry["cases"]) * (entry["settings"].get("warmup_ms", 0) + entry["settings"]["measure_ms"]) / 1000
                 for entry in plan)
   budget = settings.load()["max_run_seconds"]
   if nominal >= budget - min(5, budget / 10):

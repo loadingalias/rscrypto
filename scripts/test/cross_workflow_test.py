@@ -149,7 +149,7 @@ class CrossWorkflow(unittest.TestCase):
         inputs = workflow['on']['workflow_dispatch']['inputs']
         self.assertEqual(set(inputs), bench_ci.INPUTS)
         self.assertEqual([name for name in inputs if inputs[name]['type'] == 'boolean'],
-                         [*bench_ci.PLATFORMS, 'diagnostic'])
+                         [*bench_ci.PLATFORMS, 'diagnostic', 'quick'])
         self.assertEqual([name for name in bench_ci.PLATFORMS if inputs[name].get('default') == 'true'],
                          ['x86_64-linux'])
         self.assertEqual(workflow['env']['DISPATCH_INPUTS'], '${{ toJSON(inputs) }}')

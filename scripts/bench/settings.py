@@ -17,6 +17,11 @@ def load(overrides=None) -> dict:
   settings = json.loads(CONFIG.read_text())
   if overrides:
     settings.update(overrides)
+  quick = settings.pop("quick", False)
+  if type(quick) is not bool:
+    raise ValueError("quick must be Boolean")
+  if quick and {"sample_size", "warmup_ms"} & set(overrides or {}):
+    raise ValueError("quick mode takes no sample_size or warmup_ms override")
   integers = {"sample_size": 10, "warmup_ms": 1, "measure_ms": 1, "nresamples": 1000, "max_run_seconds": 1}
   for key, minimum in integers.items():
     if type(settings[key]) is not int or settings[key] < minimum:
@@ -26,13 +31,19 @@ def load(overrides=None) -> dict:
   for key in ("confidence_level", "significance_level", "noise_threshold"):
     if type(settings[key]) not in (int, float) or not 0 < settings[key] < 1:
       raise ValueError(f"{CONFIG}: {key} must be between zero and one")
+  if quick:
+    settings.pop("sample_size")
+    settings.pop("warmup_ms")
+    settings["quick"] = True
   return settings
 
 
 def arguments(settings: dict) -> list[str]:
-  return ["--warm-up-time", f"{settings['warmup_ms'] / 1000:.3f}",
+  sampling = (["--quick"] if settings.get("quick") else
+              ["--warm-up-time", f"{settings['warmup_ms'] / 1000:.3f}", "--sample-size", str(settings["sample_size"])])
+  return [*sampling,
           "--measurement-time", f"{settings['measure_ms'] / 1000:.3f}",
-          "--sample-size", str(settings["sample_size"]), "--nresamples", str(settings["nresamples"]),
+          "--nresamples", str(settings["nresamples"]),
           "--confidence-level", str(settings["confidence_level"]),
           "--significance-level", str(settings["significance_level"]),
           "--noise-threshold", str(settings["noise_threshold"]), "--noplot"]

@@ -22,7 +22,7 @@ from ci_platforms import PLATFORMS, platforms as native_platforms
 from cross_build import TARGETS
 
 OPTIONS = ('filter', 'sample_size', 'warmup_ms', 'measure_ms')
-INPUTS = {'benchmarks', 'diagnostic', *OPTIONS, *PLATFORMS}
+INPUTS = {'benchmarks', 'diagnostic', 'quick', *OPTIONS, *PLATFORMS}
 PREPARE_MINUTES = 30
 # Each further run in a family job adds one bounded `just bench`.
 RUN_MINUTES = 10
@@ -55,8 +55,8 @@ def dispatch_inputs(env: dict) -> dict:
         raise ValueError('unexpected workflow inputs: ' + ', '.join(sorted(set(inputs) - INPUTS)))
     # An omitted optional input is blank.
     inputs = {name: value for name, value in inputs.items() if value is not None}
-    if any(type(inputs.get(name, False)) is not bool for name in ('diagnostic', *PLATFORMS)):
-        raise ValueError('platform and diagnostic inputs must be Boolean')
+    if any(type(inputs.get(name, False)) is not bool for name in ('diagnostic', 'quick', *PLATFORMS)):
+        raise ValueError('platform, diagnostic, and quick inputs must be Boolean')
     if any(type(inputs.get(name, '')) is not str for name in ('benchmarks', *OPTIONS)):
         raise ValueError('benchmarks and sampling inputs must be strings')
     return inputs
@@ -95,6 +95,8 @@ def selection(value: str) -> dict[str, list[str]]:
 def options(inputs: dict) -> list[str]:
     args = ['output_dir=target/bench', 'diag=' + str(inputs.get('diagnostic', False)).lower()]
     args += [name + '=' + inputs[name] for name in OPTIONS if inputs.get(name)]
+    if inputs.get('quick'):
+        args.append('quick=true')
     return args
 
 
@@ -103,7 +105,7 @@ def arguments(names: list[str], common: list[str]) -> list[str]:
     parsed = runner.parse(['bench', *args])
     # Every platform job receives the same plan; each job skips the runs its architecture cannot execute.
     runner.requests(parsed, load_catalog(), every_architecture=True)
-    settings.load({key: getattr(parsed, key) for key in ('sample_size', 'warmup_ms', 'measure_ms')
+    settings.load({key: getattr(parsed, key) for key in ('sample_size', 'warmup_ms', 'measure_ms', 'quick')
                    if getattr(parsed, key) is not None})
     return args
 

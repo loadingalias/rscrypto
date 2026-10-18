@@ -85,7 +85,8 @@ def load_platform(catalog: dict, label: str, roots: list[Path]) -> tuple[dict[tu
         if key in records:
           raise ComparisonError(f"{label}: {bench} {case} was measured by more than one run")
         records[key] = {"median": median["point_estimate"], "lower": interval["lower_bound"],
-                        "upper": interval["upper_bound"], "binary": entry["binary"], "run": str(root)}
+                        "upper": interval["upper_bound"], "binary": entry["binary"], "run": str(root),
+                        "quick": entry["settings"].get("quick", False)}
   if any(host != hosts[0] for host in hosts):
     raise ComparisonError(f"{label}: runs come from different hosts")
   machine = hosts[0]["machine"].lower()
@@ -275,19 +276,34 @@ def main(arguments: list[str]) -> int:
   runs = parse_runs(args.runs)
   platforms = list(runs)
   notes = []
+  modes = set()
+  coverage = []
   for label, roots in runs.items():
     records, arch = load_platform(catalog, label, roots)
+    modes.update(record["quick"] for record in records.values())
     for (bench, case), record in records.items():
       measured[record["binary"]].add(case)
     found, missing = points(catalog, label, records, arch)
+    coverage.append({"platform": label, "cases": len(records), "comparison_points": len(found)})
     rows += found
     for problem in missing:
       # A missing competitor build is never a filter artifact.
       (notes if args.partial and "needs one rscrypto row" in problem else problems).append(problem)
   problems += undeclared(catalog, measured)
+  if len(modes) != 1:
+    raise ComparisonError("cannot combine quick and regular benchmark runs")
+  quick = modes == {True}
+  result = ({"mode": "quick", "partial": args.partial, "coverage": coverage} if quick else
+            {"tie": TIE, "partial": args.partial, "points": rows})
   if args.json:
-    args.json.write_text(json.dumps({"tie": TIE, "partial": args.partial, "points": rows}, indent=2) + "\n")
-  print(report(rows, platforms), end="")
+    args.json.write_text(json.dumps(result, indent=2) + "\n")
+  if quick:
+    print("## Quick benchmark validation\n\nEvery selected row ran its output check. "
+          "Quick estimates do not establish performance rankings.\n")
+    print(table(["Platform", "Cases", "Comparison points"],
+                [[row["platform"], str(row["cases"]), str(row["comparison_points"])] for row in coverage]))
+  else:
+    print(report(rows, platforms), end="")
   if notes:
     print(f"\n{len(notes)} comparison points are incomplete because the run's case filter omitted rows.")
   for problem in problems:

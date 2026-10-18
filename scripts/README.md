@@ -817,7 +817,7 @@ They do not install Rust, build code, or call Cargo Rail.
 **`bench.yml`** runs only on manual request.
 
 - Its form takes catalog names in `benchmarks`, an optional case `filter`,
-  one checkbox per native CI platform, a diagnostic checkbox, and optional sampling overrides.
+  one checkbox per native CI platform, diagnostic and quick checkboxes, and optional sampling overrides.
   The planner reads the form as one `DISPATCH_INPUTS` JSON value and gives later jobs a one-line copy,
   because `Enter-VsDevShell` keeps only the first line of a multi-line variable.
 - `bench/ci.py plan` groups the selection by the catalog's primitive `family` and starts one job per platform and family.
@@ -831,6 +831,9 @@ They do not install Rust, build code, or call Cargo Rail.
   Each RunsOn job has its own runner label, so no job takes a host started for another.
   `test/cross_workflow_test.py` checks the largest run against the account's vCPU quotas.
 - The existing benchmark runner owns measurement and evidence.
+- Quick mode keeps every selected row and its output check, records Criterion's quick sampling in the sealed
+  settings, and reports coverage without performance rankings. It rejects sample-count and warmup overrides
+  and cannot compare performance baselines. Regular sampling and the invocation budget are unchanged.
 - `--ci-bench` (Linux) and `-CiBench` (Windows) install the native benchmark build prerequisites and Just, without test,
   profiling, or cross-target tools.
 

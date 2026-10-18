@@ -187,6 +187,7 @@ Select the revision with the GitHub branch selector, then fill in the form:
 | `benchmarks` | `all`                           | Every default target. |
 | `filter`     | `^sha256/rscrypto/64$`          | Limit each selected target to matching Criterion cases. |
 | Platforms    | `x86_64-linux`, `riscv64-linux` | Check one box for each platform. |
+| `quick`      | Checked                       | Run every selected case with Criterion's quick sampling and report coverage. |
 
 The platform checkboxes are `x86_64-linux`, `aarch64-linux`, `x86_64-win`, `s390x-linux`,
 `powerpc64le-linux`, and `riscv64-linux`. Only `x86_64-linux` is checked by default.
@@ -202,6 +203,14 @@ Optional sampling fields override the shared Criterion settings in
 [`.config/criterion.json`](../.config/criterion.json). Empty fields keep those settings.
 The diagnostic checkbox enables diagnostic features for the selected targets.
 It does not select other targets.
+
+Use `quick` for a short validation run. It keeps the selected cases, production operations,
+independent output checks, and ten-minute invocation limit. Leave `sample_size` and `warmup_ms`
+blank in this mode; `measure_ms` controls Criterion's quick measurement window.
+The local equivalent for one algorithm is `just bench hmac-sha256 quick=true measure_ms=10`.
+Quick artifacts record their sampling mode, and the report gives case and comparison coverage
+without performance rankings. Quick runs cannot be used as performance baselines or mixed with
+regular runs in one report.
 
 ### Runners
 
@@ -827,6 +836,12 @@ Inspect the confidence intervals.
 Repeat a focused selection when the uncertainty cannot support the claim you want to make.
 For slow operations, Criterion can extend the requested measurement window to collect the requested
 samples.
+For example, Criterion estimated about 34 seconds per RustCrypto SLH-DSA-SHAKE-192s signing iteration
+on RISC-V in [run 39100888583](https://github.com/loadingalias/rscrypto/actions/runs/39100888583).
+The full comparison exceeded the ten-minute limit even at ten samples and 10 ms sampling windows.
+Quick mode validates those cases with fewer iterations; it does not qualify the regular statistical campaign.
+Criterion 0.8.2 retains two quick samples and can derive the second from the first for a slow operation.
+Those estimates do not establish uncertainty or a performance winner.
 `argon2id` includes small, OWASP, and parallel workloads.
 No opt-in for expensive workloads is needed.
 
