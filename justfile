@@ -211,7 +211,7 @@ test *args:
 # Test script selection and failure handling without running cryptographic workloads.
 [group('tooling')]
 test-scripts:
-    @scripts/lib/python.sh scripts/release/release_test.py
+    @scripts/lib/python.sh --group tooling scripts/release/release_test.py
     @scripts/lib/python.sh scripts/check/qualified_test.py
     @scripts/lib/python.sh scripts/test/test_runner_test.py
     @scripts/lib/python.sh scripts/test/evidence_suite_test.py
