@@ -225,6 +225,13 @@ That run checks out the caller's commit and downloads the caller's prepared arch
   The dispatching job still stops after six hours, including the queue wait.
 - Fork pull requests skip RISC-V, because their read-only token cannot dispatch a run.
 
+Initial reads of the dispatched run and its jobs may return 404 before GitHub exposes them.
+The dispatcher retries those responses within its existing polling-error budget, only until a runner starts.
+A missing parent run and authorization failures remain fatal.
+Cancellation waits for a completed run; a 202 acknowledgment or 409 conflict is not proof that it stopped.
+If normal cancellation does not finish within a minute, cleanup tries force-cancel.
+If completion cannot be confirmed within the cancellation budget, cleanup fails and retains the run ID.
+
 Only the dispatching job holds `actions: write`; it runs no build or test tooling.
 `lib/dispatched_run_test.py` and `test/cross_workflow_test.py` check these outcomes and that wiring through `just test-scripts`.
 The actions do not select tests or qualify targets.
@@ -742,32 +749,37 @@ No package is published.
 
 **`fuzz.yml`** uses `--ci-fuzz` for ASan corpus replay and bounded live fuzzing.
 
-- Every push to `main` runs on x86-64 and AArch64 Linux. It builds every fuzz target and
-  replays committed and restored inputs under ASan before fuzzing affected targets.
-  Separate pushes keep separate runs; a newer push cannot cancel an older push's checks.
+- It runs only through an explicit manual dispatch of Fuzz.
+  Pushes, pull requests, schedules, and Release do not start it.
 - Manual runs select x86-64, ARM64, or both, exact target names, and a duration for each target.
-- Push and pull-request campaigns use 60 seconds per selected target; manual campaigns
-  default to 120 seconds. All campaigns have a planned live-fuzzing budget of 30 minutes
+  Blank target names select every target.
+  Every run builds all fuzz targets and replays committed and restored inputs under ASan
+  before live fuzzing.
+- Smoke campaigns default to 120 seconds per selected target.
+  All campaigns have a planned live-fuzzing budget of 30 minutes
   per architecture, with eight concurrent package/target pairs.
-- Daily campaigns at 03:23 UTC rotate eight target names on both Linux architectures.
+- Manual runs with `campaign=daily` rotate eight target names according to the UTC date.
   They divide the same 30-minute budget across the selected package/target batches,
   then minimize those corpora and retain source and branch coverage for each one.
-  Every target enters the rotation; reports from earlier cohorts retain their original
+  Repeated runs across dates cover the rotation; reports from earlier cohorts retain their original
   source and corpus identities and do not qualify a newer build.
-  A manual run with `campaign=daily` exercises the same rotation, minimization, and coverage
-  without waiting for the schedule. The daily budget determines its per-target duration.
+  The daily budget determines its per-target duration.
 - Successful `main` runs save a separate corpus checkpoint for each architecture.
-  Pull requests can restore checkpoints but cannot save them.
+  Runs on other branches can restore checkpoints but cannot save them.
   Checkpoints contain inputs only, never build outputs. GitHub caches can be evicted;
   every run also uploads corpora, logs, and crash reproducers as 30-day artifacts.
   Concurrent runs restore independent snapshots; the latest cache is a starting point,
   while each run's artifact preserves its discoveries.
-- Manual fuzz jobs have a 90-minute limit, including installation, builds, corpus replay,
-  and live fuzzing. Push and daily jobs have the same limit, including daily coverage.
-  Pull-request and Miri jobs keep their 60-minute limit.
+- Fuzz jobs have a 90-minute limit, including installation, builds, corpus replay,
+  live fuzzing, and daily coverage when selected. Miri jobs have a 60-minute limit.
 - `--ci-miri` installs the pinned interpreter for an independent focused Miri row,
   including the RSA unsafe-boundary tests.
 - All rows share fail-fast cancellation.
+- After those rows pass, `Release qualification` passes only for both architectures,
+  a smoke campaign, blank targets, and at least 120 seconds per target.
+  Release preflight requires this job to pass in the current attempt of the latest manual Fuzz run
+  on the exact source commit. A missing, failed, unfinished, or scoped run blocks release;
+  preflight does not fall back to an older success or dispatch Fuzz itself.
 
 **`ct.yml`** always runs full CT evidence, only through manual dispatch or a reusable workflow call.
 It does not run on pull requests or pushes.
@@ -916,14 +928,19 @@ Ordinary tests continue to check the application build without internal access.
 
 ## Release orchestration
 
-`.github/workflows/release.yml` calls CI, CT, and fuzz qualification before its release job.
+`.github/workflows/release.yml` checks prior Mac and manual Fuzz qualification,
+then calls CI and CT before its release job.
 That job runs `cargo rail release` through `cargo-rail-action/release`, which commits, tags, pushes,
 publishes to crates.io, and creates the GitHub Release.
 `scripts/release/release.py preflight` first requires the newest `rscrypto/macos` commit status of the source commit to pass.
 Its description binds the Git tree and a SHA-256 digest of `rustc -vV`, excluding only the host line
 so the Linux release runner can compare the same compiler distribution.
 An older successful status cannot override a newer failure or compiler mismatch.
-The preflight can read statuses but cannot write them.
+The preflight also reads the latest manually dispatched Fuzz run for the exact source commit.
+It requires a successful run and a successful `Release qualification` job in that run's current attempt.
+Only a full smoke campaign on both architectures, with Miri and at least 120 seconds per target,
+can pass that job. The default Fuzz inputs satisfy this contract.
+The preflight can read statuses and workflow runs but cannot write them or dispatch Fuzz.
 Its refusal tests run through `just test-scripts`.
 [CONTRIBUTING.md](../CONTRIBUTING.md#release) has the maintainer setup, check, deployment, and retry instructions.
 

@@ -62,7 +62,7 @@ class FakeGitHub:
             if payload.get('return_run_details') is not True:
                 return None
             return {'workflow_run_id': RUN, 'run_url': 'https://api.github.com/runs/7', 'html_url': URL}
-        if path == f'/actions/runs/{RUN}/cancel':
+        if path in (f'/actions/runs/{RUN}/cancel', f'/actions/runs/{RUN}/force-cancel'):
             self.cancelled_at = self.now
             return None
         if path == f'/actions/runs/{RUN}':
@@ -147,7 +147,7 @@ class DispatchedRun(unittest.TestCase):
                 status, output = self.run_with(github, queue_minutes=0)
                 self.assertEqual(status, 1)
                 self.assertEqual(github.cancelled_at, 10 * MINUTE)
-                self.assertIn('because x86_64-linux failed', output)
+                self.assertIn('stopped (cancelled) after x86_64-linux failed', output)
 
     def test_transient_api_failures_are_retried_and_others_are_not(self):
         github = FakeGitHub(started_at=0, completed_at=5 * MINUTE,
@@ -166,6 +166,120 @@ class DispatchedRun(unittest.TestCase):
         # The cleanup step still holds the recorded run.
         self.assertEqual(self.state.read_text(), f'{RUN}\n')
 
+    def test_new_child_run_and_jobs_can_be_temporarily_missing(self):
+        for missing in (f'/actions/runs/{RUN}', f'/actions/runs/{RUN}/jobs?per_page=100'):
+            with self.subTest(path=missing):
+                github = FakeGitHub(completed_at=MINUTE)
+                request = github.request
+                absent = [True]
+
+                def delayed(method, path, payload=None):
+                    if path == missing and absent:
+                        absent.pop()
+                        raise http_error(404)
+                    return request(method, path, payload)
+
+                github.request = delayed
+                status, output = self.run_with(github)
+                self.assertEqual(status, 0)
+                self.assertEqual(github.now, MINUTE)
+                self.assertEqual(output.count('::warning::'), 1)
+                self.assertEqual(github.cancels(), [])
+
+    def test_missing_child_retries_are_bounded_and_parent_errors_are_fatal(self):
+        for missing, expected_time in (
+                (f'/actions/runs/{RUN}', 9 * MINUTE),
+                (f'/actions/runs/{RUN}/jobs?per_page=100', 9 * MINUTE),
+                (f'/actions/runs/{PARENT}/jobs?per_page=100', 0)):
+            with self.subTest(path=missing):
+                github = FakeGitHub()
+                request = github.request
+
+                def absent(method, path, payload=None):
+                    if path == missing:
+                        raise http_error(404)
+                    return request(method, path, payload)
+
+                github.request = absent
+                with self.assertRaises(urllib.error.HTTPError):
+                    self.run_with(github)
+                self.assertEqual(github.now, expected_time)
+                self.assertEqual(self.state.read_text(), f'{RUN}\n')
+
+    def test_cancel_conflict_does_not_confirm_a_queued_run_stopped(self):
+        github = FakeGitHub()
+        request = github.request
+
+        def conflict(method, path, payload=None):
+            if path.endswith('/cancel') and not github.cancels():
+                github.calls.append((method, path, payload))
+                raise http_error(409)
+            return request(method, path, payload)
+
+        github.request = conflict
+        status, _ = self.run_with(github)
+        self.assertEqual(status, 0)
+        self.assertEqual(len(github.cancels()), 2)
+        self.assertIsNotNone(github.cancelled_at)
+        self.assertFalse(self.state.exists())
+
+    def test_started_child_cannot_disappear_silently(self):
+        github = FakeGitHub(started_at=0)
+        request = github.request
+
+        def disappear(method, path, payload=None):
+            if path == f'/actions/runs/{RUN}' and github.now:
+                raise http_error(404)
+            return request(method, path, payload)
+
+        github.request = disappear
+        with self.assertRaises(urllib.error.HTTPError):
+            self.run_with(github)
+        self.assertEqual(github.now, MINUTE)
+        self.assertEqual(self.state.read_text(), f'{RUN}\n')
+
+    def test_accepted_cancellation_waits_for_terminal_state(self):
+        github = FakeGitHub()
+        request = github.request
+        requested = []
+
+        def delayed(method, path, payload=None):
+            if path.endswith('/cancel'):
+                requested.append(github.now)
+                return None  # HTTP 202 acknowledges the request, not completion.
+            if path == f'/actions/runs/{RUN}' and requested:
+                self.assertTrue(self.state.exists())
+                if github.now >= requested[0] + 10:
+                    github.cancelled_at = github.now
+            return request(method, path, payload)
+
+        github.request = delayed
+        status, _ = self.run_with(github)
+        self.assertEqual(status, 0)
+        self.assertEqual(github.cancelled_at, 30 * MINUTE + 10)
+        self.assertFalse(self.state.exists())
+
+    def test_completion_racing_the_queue_timeout_keeps_its_actual_result(self):
+        for conclusion, expected in (('success', 0), ('failure', 1)):
+            with self.subTest(conclusion=conclusion):
+                github = FakeGitHub()
+                request = github.request
+                reads = []
+
+                def finish(method, path, payload=None):
+                    if path == f'/actions/runs/{RUN}' and github.now >= 30 * MINUTE:
+                        reads.append(path)
+                        if len(reads) > 1:
+                            return {'status': 'completed', 'conclusion': conclusion}
+                    return request(method, path, payload)
+
+                github.request = finish
+                status, output = self.run_with(github)
+                self.assertEqual(status, expected)
+                self.assertNotIn('skipped', output)
+                self.assertEqual(github.cancels(), [])
+                self.assertFalse(self.state.exists())
+
     def test_dispatch_without_a_run_id_fails(self):
         github = FakeGitHub()
         github.request = lambda method, path, payload=None: None
@@ -175,25 +289,65 @@ class DispatchedRun(unittest.TestCase):
 
     def test_stop_cancels_only_a_recorded_run(self):
         github = FakeGitHub()
-        dispatched_run.stop(github, self.state)
+        self.assertEqual(dispatched_run.stop(github, self.state), 0)
         self.assertEqual(github.calls, [])
         self.state.write_text(f'{RUN}\n')
         with contextlib.redirect_stdout(io.StringIO()):
-            dispatched_run.stop(github, self.state)
+            self.assertEqual(dispatched_run.stop(github, self.state,
+                             clock=lambda: github.now, sleep=github.sleep), 0)
         self.assertEqual(github.cancels(), [('POST', f'/actions/runs/{RUN}/cancel', None)])
         self.assertFalse(self.state.exists())
-        for error, cancelled in ((http_error(409), True), (http_error(500), False)):
-            with self.subTest(code=error.code):
+
+    def test_stop_accepts_an_already_completed_run_without_cancelling_it(self):
+        github = FakeGitHub(completed_at=0)
+        self.state.write_text(f'{RUN}\n')
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(dispatched_run.stop(github, self.state), 0)
+        self.assertEqual(github.cancels(), [])
+        self.assertFalse(self.state.exists())
+        self.assertIn('completed (success)', output.getvalue())
+
+    def test_stop_forces_unresponsive_cancellation_with_a_fixed_deadline(self):
+        for force_works, missing_reads in ((True, 0), (False, 0), (True, 3)):
+            with self.subTest(force_works=force_works, missing_reads=missing_reads):
                 self.state.write_text(f'{RUN}\n')
-                github = FakeGitHub()
-                def refuse(method, path, payload=None, error=error):
-                    raise error
-                github.request = refuse
+                github = FakeGitHub(failures=[http_error(404)] * missing_reads)
+                request = github.request
+                forced = []
+
+                def unresponsive(method, path, payload=None):
+                    self.assertTrue(self.state.exists())
+                    if path.endswith('/cancel'):
+                        return None
+                    if path.endswith('/force-cancel'):
+                        forced.append(github.now)
+                        if not force_works:
+                            return None
+                    return request(method, path, payload)
+
+                github.request = unresponsive
                 output = io.StringIO()
                 with contextlib.redirect_stdout(output):
-                    dispatched_run.stop(github, self.state)
-                self.assertEqual(self.state.exists(), not cancelled)
-                self.assertEqual('::warning::' in output.getvalue(), not cancelled)
+                    result = dispatched_run.stop(github, self.state,
+                                                 clock=lambda: github.now, sleep=github.sleep)
+                self.assertEqual(forced[0], MINUTE + 5 * missing_reads)
+                self.assertEqual(result, 0 if force_works else 1)
+                self.assertEqual(self.state.exists(), not force_works)
+                self.assertEqual('::error' in output.getvalue(), not force_works)
+                self.assertEqual(github.now, 65 + 5 * missing_reads if force_works else 120)
+
+    def test_cleanup_api_errors_keep_the_run_id_and_fail_within_the_budget(self):
+        for code, elapsed in ((403, 0), (404, 120), (503, 120)):
+            with self.subTest(code=code):
+                github = FakeGitHub(failures=[http_error(code)] * 30)
+                self.state.write_text(f'{RUN}\n')
+                with contextlib.redirect_stdout(io.StringIO()):
+                    result = dispatched_run.stop(github, self.state,
+                                                 clock=lambda: github.now, sleep=github.sleep)
+                self.assertEqual(result, 1)
+                self.assertEqual(github.now, elapsed)
+                self.assertEqual(self.state.read_text(), f'{RUN}\n')
 
 
 if __name__ == '__main__':

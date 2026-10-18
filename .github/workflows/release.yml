@@ -34,6 +34,7 @@ jobs:
     permissions:
       contents: read
       statuses: read
+      actions: read
     steps:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
@@ -44,7 +45,7 @@ jobs:
         run: scripts/tooling/uv.sh x86_64-linux >>"$GITHUB_PATH"
       - name: Install the compiler whose Mac qualification is required
         run: rustup toolchain install "$(scripts/lib/toolchain.sh)" --profile minimal --no-self-update
-      - name: Require the source commit's Mac qualification
+      - name: Require the source commit's Mac and manual Fuzz qualifications
         env:
           GH_TOKEN: ${{ github.token }}
         run: scripts/lib/python.sh scripts/release/release.py preflight
@@ -72,18 +73,11 @@ jobs:
       architectures: all
       require_riscv: true
 
-  fuzz:
-    needs: preflight
-    uses: ./.github/workflows/fuzz.yml
-    with:
-      architectures: all
-      duration: '120'
-
   # cargo-rail writes the release commit, tags v<version>, pushes both atomically,
   # publishes to crates.io, and creates the GitHub Release. Its checks gate requires
   # every check on the source commit to pass; this run's qualification jobs gate it here.
   release:
-    needs: [ci, ct, fuzz]
+    needs: [ci, ct]
     runs-on: runs-on=${{ github.run_id }}/runner=package/env=production
     timeout-minutes: 60
     environment: release

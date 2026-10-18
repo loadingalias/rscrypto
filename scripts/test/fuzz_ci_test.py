@@ -4,7 +4,6 @@
 from datetime import datetime, timedelta, timezone
 import hashlib
 import importlib.util
-import json
 import os
 from pathlib import Path
 import shutil
@@ -53,51 +52,29 @@ class FuzzCI(unittest.TestCase):
             corpus.mkdir(parents=True, exist_ok=True)
             (corpus / 'seed').write_bytes(b'abc')
 
-    def test_only_exact_harness_and_corpus_changes_narrow_selection(self):
-        rows = ci.inventory(self.root)
-        for path in ('src/auth/rsa.rs', 'src/traits/ct.rs', 'Cargo.lock', '.cargo/config.toml',
-                     'fuzz/support/src/lib.rs', 'fuzz/Cargo.toml', 'scripts/test/test-fuzz.sh',
-                     'fuzz/target_impls/deleted_target.rs', '.github/workflows/fuzz.yml'):
-            with self.subTest(path=path):
-                self.assertEqual(ci.affected(rows, [path]), ['decrypt', 'parser'])
-        for path in ('fuzz/target_impls/parser.rs', 'fuzz/fuzz_targets/parser.rs',
-                     'fuzz/corpus/parser/new-input', 'fuzz-packages/parser/corpus/parser/input'):
-            self.assertEqual(ci.affected(rows, [path]), ['parser'])
-        self.assertEqual(ci.affected(rows, ['README.md', 'docs/features.md', '.changes/fix.md']), [])
-        self.assertEqual(ci.affected(rows, ['docs/features.md', 'src/lib.rs']), ['decrypt', 'parser'])
-
-    def test_diff_uses_both_sides_of_renames_and_missing_base_falls_back(self):
-        event = self.root / 'event.json'
-        event.write_text(json.dumps({'before': 'c' * 40}))
-        env = {'GITHUB_EVENT_NAME': 'push', 'GITHUB_EVENT_PATH': str(event)}
-        with patch.object(ci.subprocess, 'check_output', return_value=b'fuzz/target_impls/parser.rs\0') as command:
-            plan = ci.plan(self.root, env, self.now)
-        self.assertIn('--no-renames', command.call_args.args[0])
-        self.assertEqual(plan['targets'], ['parser'])
-        self.assertEqual(len(plan['pairs']), 2)
-        with patch.object(ci.subprocess, 'check_output', side_effect=subprocess.CalledProcessError(128, 'git')):
-            self.assertEqual(ci.plan(self.root, env, self.now)['targets'], ['decrypt', 'parser'])
-        event.write_text(json.dumps({'before': '0' * 40}))
-        self.assertIsNone(ci.plan(self.root, env, self.now)['base'])
-        with patch.object(ci, 'git', return_value='d' * 40), \
-             patch.object(ci.subprocess, 'check_output', return_value=b''):
-            self.assertEqual(ci.changed_paths(self.root, 'pull_request',
-                             {'pull_request': {'base': {'sha': 'c' * 40}}}), ('d' * 40, []))
+    def test_manual_selection_covers_every_package_and_rejects_automatic_events(self):
+        env = {'GITHUB_EVENT_NAME': 'workflow_dispatch'}
+        self.assertEqual(ci.plan(self.root, env, self.now)['targets'], ['decrypt', 'parser'])
+        selected = ci.plan(self.root, {**env, 'FUZZ_TARGETS': 'parser'}, self.now)
+        self.assertEqual(selected['pairs'], [
+            {'package': 'fuzz', 'target': 'parser'},
+            {'package': 'fuzz-packages/parser', 'target': 'parser'},
+        ])
+        for event in ('push', 'pull_request', 'schedule', 'workflow_call'):
+            with self.subTest(event=event), self.assertRaisesRegex(ValueError, 'manual dispatch'):
+                ci.plan(self.root, {'GITHUB_EVENT_NAME': event}, self.now)
 
     def test_daily_rotation_covers_every_target_with_bounded_work(self):
         self.package('fuzz', [f'target_{i:02}' for i in range(67)])
         reached = set()
         for day in range(68):
-            plan = ci.plan(self.root, {'GITHUB_EVENT_NAME': 'schedule'}, self.now + timedelta(days=day))
+            plan = ci.plan(self.root, {'FUZZ_CAMPAIGN': 'daily'}, self.now + timedelta(days=day))
             reached.update(plan['targets'])
             self.assertEqual(len(plan['targets']), 8)
             self.assertLessEqual(plan['planned_live_seconds'], 1800)
             self.assertGreaterEqual(plan['duration_seconds'], 900)
         self.assertEqual(reached, {row['target'] for row in ci.inventory(self.root)})
-        scheduled = ci.plan(self.root, {'GITHUB_EVENT_NAME': 'schedule'}, self.now)
         manual = ci.plan(self.root, {'GITHUB_EVENT_NAME': 'workflow_dispatch', 'FUZZ_CAMPAIGN': 'daily'}, self.now)
-        self.assertEqual(manual['pairs'], scheduled['pairs'])
-        self.assertEqual(manual['duration_seconds'], scheduled['duration_seconds'])
         self.assertEqual(manual['campaign'], 'daily')
         with self.assertRaisesRegex(ValueError, 'campaign'):
             ci.plan(self.root, {'FUZZ_CAMPAIGN': 'unknown'}, self.now)
@@ -208,14 +185,17 @@ elif sys.argv[1:3] == ['fuzz', 'coverage']:
             self.assertFalse((self.logs / 'campaign.json').exists())
             self.assertEqual(ci.inputs(self.cache / 'fuzz/corpus/parser'), old)
 
-    def test_workflow_builds_and_replays_even_without_live_targets(self):
+    def test_only_explicit_manual_workflows_build_and_replay_before_fuzzing(self):
         workflow = yaml.load((ci.ROOT / '.github/workflows/fuzz.yml').read_text(), Loader=yaml.BaseLoader)
-        self.assertEqual(workflow['on']['push']['branches'], ['main'])
-        self.assertEqual(workflow['on']['schedule'], [{'cron': '23 3 * * *'}])
+        self.assertEqual(set(workflow['on']), {'workflow_dispatch'})
+        for path in (ci.ROOT / '.github/workflows').glob('*.yml'):
+            caller = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
+            self.assertFalse(any(job.get('uses') == './.github/workflows/fuzz.yml' for job in caller['jobs'].values()), path)
         self.assertEqual(workflow['on']['workflow_dispatch']['inputs']['campaign']['options'], ['smoke', 'daily'])
         job = workflow['jobs']['fuzz']
         self.assertEqual(job['strategy']['fail-fast'], 'true')
-        self.assertIn("github.event_name == 'schedule'", job['strategy']['matrix']['platform'])
+        self.assertIn("inputs.architectures == 'all'", job['strategy']['matrix']['platform'])
+        self.assertNotIn('github.event_name', job['strategy']['matrix']['platform'])
         steps = job['steps']
         build, = [step for step in steps if 'just test-fuzz --build --all' in step.get('run', '')]
         self.assertEqual(build['if'], "matrix.task == 'fuzz'")
@@ -227,7 +207,6 @@ elif sys.argv[1:3] == ['fuzz', 'coverage']:
         self.assertIn("steps.plan.outputs.retain == 'true'", retain['if'])
         save, = [step for step in steps if step.get('uses', '').startswith('actions/cache/save@')]
         self.assertIn("github.ref == 'refs/heads/main'", save['if'])
-        self.assertIn("github.event_name != 'pull_request'", save['if'])
         self.assertNotIn('always()', save['if'])
         upload, = [step for step in steps if step.get('uses', '').startswith('actions/upload-artifact@')]
         self.assertIn('always()', upload['if'])

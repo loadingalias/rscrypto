@@ -42,62 +42,17 @@ def inventory(root):
     return result
 
 
-def affected(rows, paths):
-    """Only exact harness/seed edits and documentation can narrow the selection.
-
-    Product, shared harness, dependency, build, and unknown changes select everything:
-    this deliberately avoids guessing Rust's transitive dependency graph.
-    """
-    names = {row['target'] for row in rows}
-    selected = set()
-    for path in paths:
-        parts = Path(path).parts
-        if (path.startswith(('docs/', 'benchmark_results/', '.changes/'))
-                or (len(parts) == 1 and path.endswith('.md'))):
-            continue
-        if path.startswith(('fuzz/target_impls/', 'fuzz/fuzz_targets/')) and path.endswith('.rs'):
-            name = Path(path).stem
-            if name in names:
-                selected.add(name)
-                continue
-        matches = [row['target'] for row in rows
-                   if path.startswith(f"{row['package']}/corpus/{row['target']}/")
-                   or path == f"{row['package']}/fuzz_targets/{row['target']}.rs"]
-        if matches:
-            selected.update(matches)
-        else:
-            return sorted(names)
-    return sorted(selected)
-
-
-def git(root, *args):
-    return subprocess.check_output(['git', *args], cwd=root, text=True).strip()
-
-
-def changed_paths(root, event, payload):
-    base = payload.get('before') if event == 'push' else payload.get('pull_request', {}).get('base', {}).get('sha')
-    if not base or not re.fullmatch(r'[0-9a-f]{40,64}', base) or not base.strip('0'):
-        return None, None
-    try:
-        if event == 'pull_request':
-            base = git(root, 'merge-base', base, 'HEAD')
-        paths = subprocess.check_output(
-            ['git', 'diff', '--name-only', '-z', '--no-renames', base, 'HEAD'], cwd=root).decode().split('\0')
-        return base, [path for path in paths if path]
-    except subprocess.CalledProcessError:
-        return None, None
-
-
 def plan(root, env, now):
     rows = inventory(root)
     names = sorted({row['target'] for row in rows})
     event = env.get('GITHUB_EVENT_NAME', 'workflow_dispatch')
+    if event != 'workflow_dispatch':
+        raise ValueError('fuzz campaigns require explicit manual dispatch')
     campaign = env.get('FUZZ_CAMPAIGN', '') or 'smoke'
     if campaign not in ('smoke', 'daily'):
         raise ValueError('campaign must be smoke or daily')
-    daily = event == 'schedule' or campaign == 'daily'
+    daily = campaign == 'daily'
     requested = env.get('FUZZ_TARGETS', '')
-    base, paths = None, None
     if requested:
         selected = requested.split(',')
         if len(selected) != len(set(selected)) or not set(selected) <= set(names):
@@ -105,10 +60,6 @@ def plan(root, env, now):
     elif daily:
         start = (now.date().toordinal() * DAILY_TARGETS) % len(names)
         selected = [names[(start + offset) % len(names)] for offset in range(min(DAILY_TARGETS, len(names)))]
-    elif event in ('push', 'pull_request'):
-        payload = json.loads(Path(env['GITHUB_EVENT_PATH']).read_text())
-        base, paths = changed_paths(root, event, payload)
-        selected = names if paths is None else affected(rows, paths)
     else:
         selected = names
     selected = sorted(selected)
@@ -119,7 +70,7 @@ def plan(root, env, now):
         raise ValueError(f'selection exceeds the {BUDGET}s live-fuzzing budget or has an invalid duration')
     return {
         'schema': 1, 'event': event, 'campaign': 'daily' if daily else 'smoke', 'source': bundle.source_identity(root),
-        'created_at_utc': now.isoformat(), 'base': base, 'changed_paths': paths,
+        'created_at_utc': now.isoformat(), 'base': None, 'changed_paths': None,
         'targets': selected, 'pairs': pairs, 'duration_seconds': duration,
         'concurrency': CONCURRENCY, 'budget_seconds': BUDGET,
         'planned_live_seconds': batches * duration,

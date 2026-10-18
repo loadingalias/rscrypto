@@ -329,7 +329,15 @@ The companion keeps its own version and is neither packaged nor published.
 
 ### Check
 
-Push the reviewed commits to `main`, run `just qualify-macos` on the physical Mac, and wait for CI.
+Push the reviewed commits to `main`, run `just qualify-macos` on the physical Mac,
+and explicitly start the Fuzz workflow with its default inputs:
+
+```bash
+gh workflow run fuzz.yml --ref main
+```
+
+Wait for CI, Mac qualification, and Fuzz to pass on that source commit.
+The default Fuzz campaign covers every target on x86-64 and ARM64 for 120 seconds per target, plus Miri.
 Then preview the release and run every release check without any effect:
 
 ```bash
@@ -368,9 +376,13 @@ The workflow also accepts `dry-run: true` to run every check in CI without any e
 
 - The preflight requires the newest `rscrypto/macos` status of the source commit to pass
   for its tree and compiler.
-- Three workflows then run at the same time against the source commit: CI with RISC-V,
-  full CT on all configured CI architectures, and fuzzing on both architectures plus Miri.
-  The release needs all three to pass.
+- It also requires the latest explicitly started Fuzz run on that exact source commit to pass,
+  including its `Release qualification` job in the current attempt.
+  That job requires both architectures, Miri, every target, and a smoke campaign of at least 120 seconds per target.
+  A scoped, shorter, daily, failed, or unfinished run cannot qualify a release.
+  Release checks the existing run; it never starts Fuzz.
+- CI with RISC-V and full CT on all configured CI architectures then run against the source commit.
+  The release needs both to pass.
 - Benchmarks are separate.
 - The final job runs `cargo rail release` through `cargo-rail-action/release`.
   It also requires every other check and status on the source commit to pass,

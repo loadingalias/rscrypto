@@ -18,6 +18,9 @@ API_VERSION = '2022-11-28'
 POLL_SECONDS = 60
 # Consecutive transient API failures to tolerate, about ten minutes of polling.
 MAX_POLL_ERRORS = 10
+CANCEL_SECONDS = 120
+FORCE_CANCEL_AFTER = 60
+CANCEL_POLL_SECONDS = 5
 FAILED = {'failure', 'timed_out'}
 
 
@@ -45,22 +48,55 @@ def annotate(level, message, title=None):
             file.write(message + '\n')
 
 
-def cancel(api, run_id):
-    try:
-        api.request('POST', f'/actions/runs/{run_id}/cancel')
-    except urllib.error.HTTPError as error:
-        if error.code != 409:  # 409: the run has already completed.
-            raise
+def cancel(api, run_id, *, clock=time.monotonic, sleep=time.sleep):
+    """Return the terminal run, or fail without claiming that cancellation finished."""
+    deadline = clock() + CANCEL_SECONDS
+    requested_at = None
+    while True:
+        try:
+            result = api.request('GET', f'/actions/runs/{run_id}')
+            if result['status'] == 'completed':
+                return result
+            if clock() >= deadline:
+                break
+            operation = ('force-cancel' if requested_at is not None and clock() - requested_at >= FORCE_CANCEL_AFTER
+                         else 'cancel')
+            if requested_at is None:
+                requested_at = clock()
+            try:
+                api.request('POST', f'/actions/runs/{run_id}/{operation}')
+            except urllib.error.HTTPError as error:
+                # A newly queued run can reject cancellation before it is ready.
+                # Neither 409 nor 202 establishes that the run has stopped.
+                if error.code != 409:
+                    raise
+        except Exception as error:
+            if not transient(error, allow_missing=True):
+                raise
+            print(f'::warning::Cancellation API request failed ({error}); retrying', flush=True)
+        remaining = deadline - clock()
+        if remaining <= 0:
+            break
+        sleep(min(CANCEL_POLL_SECONDS, remaining))
+    raise RuntimeError(f'dispatched run {run_id} did not stop within {CANCEL_SECONDS} seconds')
 
 
 def jobs(api, run_id):
     return api.request('GET', f'/actions/runs/{run_id}/jobs?per_page=100')['jobs']
 
 
-def transient(error):
+def transient(error, *, allow_missing=False):
     if isinstance(error, urllib.error.HTTPError):
-        return error.code == 429 or error.code >= 500
+        return (allow_missing and error.code == 404) or error.code == 429 or error.code >= 500
     return isinstance(error, (urllib.error.URLError, TimeoutError, ConnectionError))
+
+
+def report_conclusion(result, label, url):
+    if result['conclusion'] == 'success':
+        annotate('notice', f'{label} passed: {url}', title=f'{label} passed')
+        return 0
+    annotate('error', f'{label} concluded {result["conclusion"]}: {url}')
+    return 1
 
 
 def run(api, *, workflow, ref, inputs, queue_minutes, state, parent, label,
@@ -79,34 +115,36 @@ def run(api, *, workflow, ref, inputs, queue_minutes, state, parent, label,
     started = False
     errors = 0
     while True:
+        pending_child = False
         try:
+            failed = sorted(job['name'] for job in jobs(api, parent) if job['conclusion'] in FAILED)
+            if failed:
+                result = cancel(api, run_id, clock=clock, sleep=sleep)
+                state.unlink()
+                annotate('error', f'{label} stopped ({result["conclusion"]}) after {", ".join(failed)} failed: {url}')
+                return 1
+            # Only this known child's initial run/jobs reads may return a transient
+            # 404. A 404 from parent lookup, dispatch, or a started run remains fatal.
+            pending_child = not started
             dispatched_run = api.request('GET', f'/actions/runs/{run_id}')
             if dispatched_run['status'] == 'completed':
                 state.unlink()
-                if dispatched_run['conclusion'] == 'success':
-                    annotate('notice', f'{label} passed: {url}', title=f'{label} passed')
-                    return 0
-                annotate('error', f'{label} concluded {dispatched_run["conclusion"]}: {url}')
-                return 1
-            failed = sorted(job['name'] for job in jobs(api, parent) if job['conclusion'] in FAILED)
-            if failed:
-                cancel(api, run_id)
-                state.unlink()
-                annotate('error', f'Cancelled {label} because {", ".join(failed)} failed: {url}')
-                return 1
+                return report_conclusion(dispatched_run, label, url)
             if not started:
                 started = any(job['status'] in ('in_progress', 'completed') for job in jobs(api, run_id))
                 if started:
                     print(f'{label}: a runner started {url}', flush=True)
                 elif deadline is not None and clock() >= deadline:
-                    cancel(api, run_id)
+                    result = cancel(api, run_id, clock=clock, sleep=sleep)
                     state.unlink()
+                    if result['conclusion'] != 'cancelled':
+                        return report_conclusion(result, label, url)
                     annotate('notice', f'{label} skipped: no runner started {url} within {queue_minutes} minutes',
                              title=f'{label} skipped')
                     return 0
             errors = 0
         except Exception as error:
-            if not transient(error):
+            if not transient(error, allow_missing=pending_child):
                 raise
             errors += 1
             if errors >= MAX_POLL_ERRORS:
@@ -115,18 +153,19 @@ def run(api, *, workflow, ref, inputs, queue_minutes, state, parent, label,
         sleep(POLL_SECONDS)
 
 
-def stop(api, state):
+def stop(api, state, *, clock=time.monotonic, sleep=time.sleep):
     """Cancel a dispatched run whose caller stopped before it reported a result."""
     if not state.exists():
-        return
+        return 0
     run_id = int(state.read_text())
     try:
-        cancel(api, run_id)
-    except Exception as error:  # An orphaned run costs runner time, not correctness.
-        annotate('warning', f'Could not cancel dispatched run {run_id}: {error}')
-        return
+        result = cancel(api, run_id, clock=clock, sleep=sleep)
+    except Exception as error:
+        annotate('error', f'Could not confirm cancellation of dispatched run {run_id}: {error}')
+        return 1
     state.unlink()
-    print(f'Cancelled dispatched run {run_id}', flush=True)
+    print(f'Dispatched run {run_id} completed ({result["conclusion"]})', flush=True)
+    return 0
 
 
 def main():
@@ -145,8 +184,7 @@ def main():
     args = parser.parse_args()
     api = GitHub(os.environ['GITHUB_REPOSITORY'], os.environ['GH_TOKEN'])
     if args.command == 'cancel':
-        stop(api, args.state)
-        return 0
+        return stop(api, args.state)
     if args.queue_minutes < 0:
         parser.error('--queue-minutes must not be negative')
     if any('=' not in value for value in args.input):

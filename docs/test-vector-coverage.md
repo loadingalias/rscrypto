@@ -94,10 +94,14 @@ just test-fuzz --all
 
 `just --list` shows the specialized Miri, target, constant-time, and leakage recipes.
 
-The [Fuzz workflow](../.github/workflows/fuzz.yml) runs x86-64 fuzzing and focused Miri checks for pull requests.
-Release qualification selects both x86-64 and ARM64 fuzzing.
+The [Fuzz workflow](../.github/workflows/fuzz.yml) runs only when explicitly dispatched.
+Manual runs select x86-64, ARM64, or both.
+Each run also includes focused x86-64 Miri checks.
 Each fuzz job first replays the committed corpus under AddressSanitizer,
 then runs a bounded live campaign.
+Release requires a passing manual run on the exact source commit, covering both architectures,
+every target, and at least 120 seconds per target in a smoke campaign.
+It checks that run's `Release qualification` job without starting Fuzz.
 Runner profiles can change independently of target selection, concurrency, and sampling budgets.
 The same elapsed time does not mean the same fuzzing throughput.
 

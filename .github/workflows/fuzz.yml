@@ -1,29 +1,10 @@
 name: Fuzz
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-  schedule:
-    - cron: '23 3 * * *'
-  workflow_call:
-    inputs:
-      architectures:
-        type: string
-        default: all
-      duration:
-        type: string
-        default: '120'
-      campaign:
-        type: string
-        default: smoke
-      targets:
-        type: string
-        default: ''
   workflow_dispatch:
     inputs:
       campaign:
-        description: Smoke affected targets, or exercise the daily rotation with minimization and coverage
+        description: Smoke selected targets, or exercise the daily rotation with minimization and coverage
         type: choice
         options: [smoke, daily]
         default: smoke
@@ -48,10 +29,6 @@ env:
   RSCRYPTO_FUZZ_LOG_DIR: ${{ github.workspace }}/target/fuzz-logs
   RSCRYPTO_FUZZ_JOBS: "1"
 
-concurrency:
-  group: fuzz-${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 defaults:
   run:
     shell: bash
@@ -62,18 +39,17 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        platform: ${{ fromJSON((github.event_name == 'push' || github.event_name == 'schedule' || inputs.architectures == 'all') && '["x86_64-linux","aarch64-linux"]' || inputs.architectures == 'aarch64-linux' && '["aarch64-linux"]' || '["x86_64-linux"]') }}
+        platform: ${{ fromJSON(inputs.architectures == 'all' && '["x86_64-linux","aarch64-linux"]' || inputs.architectures == 'aarch64-linux' && '["aarch64-linux"]' || '["x86_64-linux"]') }}
         task: [fuzz]
         include:
           - platform: x86_64-linux
             task: miri
     runs-on: runs-on=${{ github.run_id }}/runner=${{ matrix.task == 'miri' && 'miri' || format('fuzz-{0}', matrix.platform) }}/env=production
-    timeout-minutes: ${{ (matrix.task == 'miri' || github.event_name == 'pull_request') && 60 || 90 }}
+    timeout-minutes: ${{ matrix.task == 'miri' && 60 || 90 }}
     steps:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0
       - name: Install tooling
         env:
           PLATFORM: ${{ matrix.platform }}
@@ -132,7 +108,7 @@ jobs:
           source "$HOME/.local/share/rscrypto-tooling/environment.sh"
           just test-fuzz-ci retain
       - name: Save corpus checkpoint
-        if: matrix.task == 'fuzz' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        if: matrix.task == 'fuzz' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
           path: target/fuzz-corpus/
@@ -151,3 +127,14 @@ jobs:
             fuzz-packages/*/corpus/
           if-no-files-found: ignore
           retention-days: 30
+
+  # Release reads this job from the successful run's current attempt. Scoped
+  # campaigns remain useful, but cannot replace the full release workload.
+  release-qualification:
+    name: Release qualification
+    needs: fuzz
+    if: inputs.architectures == 'all' && inputs.campaign == 'smoke' && inputs.targets == '' && inputs.duration >= 120
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - run: echo "Full Fuzz and Miri qualification passed for $GITHUB_SHA"

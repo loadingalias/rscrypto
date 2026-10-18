@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run python
-"""Require the release source commit's Mac qualification before cargo-rail releases it."""
+"""Require the release source commit's Mac and manual Fuzz qualifications."""
 import json
 import os
 from pathlib import Path
@@ -58,13 +58,42 @@ def require_macos(sha):
         page += 1
 
 
+def require_fuzz(sha):
+    result = github(f'/actions/workflows/fuzz.yml/runs?head_sha={sha}&event=workflow_dispatch&per_page=1') or {}
+    runs = result.get('workflow_runs', [])
+    if not runs:
+        raise ValueError('Missing manual Fuzz qualification; dispatch Fuzz on this commit with the default inputs')
+    # Never hide a newer failure, partial campaign, or unfinished rerun behind
+    # an older successful qualification for the same commit.
+    latest = runs[0]
+    if (latest['head_sha'] != sha or latest['event'] != 'workflow_dispatch'
+            or latest['path'] != '.github/workflows/fuzz.yml'):
+        raise ValueError('Fuzz qualification does not match the source commit and manual workflow')
+    if latest['status'] != 'completed' or latest['conclusion'] != 'success':
+        raise ValueError('The latest manual Fuzz run has not completed successfully')
+    page = 1
+    while True:
+        result = github(f'/actions/runs/{latest["id"]}/attempts/{latest["run_attempt"]}/jobs?per_page=100&page={page}') or {}
+        jobs = result.get('jobs', [])
+        for job in jobs:
+            if job['name'] == 'Release qualification':
+                if job['status'] != 'completed' or job['conclusion'] != 'success':
+                    raise ValueError('The latest manual Fuzz run did not pass the full release workload; use the default inputs')
+                print(f'Manual Fuzz qualification: {latest["html_url"]} (attempt {latest["run_attempt"]})')
+                return
+        if len(jobs) < 100:
+            raise ValueError('Missing full Fuzz release workload; dispatch Fuzz on this commit with the default inputs')
+        page += 1
+
+
 def main():
     operation, = sys.argv[1:]
     if operation != 'preflight':
         raise ValueError('usage: release.py preflight')
     sha = candidate()
     require_macos(sha)
-    print(f'Release source {sha} has its Mac qualification')
+    require_fuzz(sha)
+    print(f'Release source {sha} has its Mac and manual Fuzz qualifications')
 
 
 if __name__ == '__main__':
