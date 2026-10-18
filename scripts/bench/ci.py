@@ -22,7 +22,7 @@ from ci_platforms import PLATFORMS, platforms as native_platforms
 from cross_build import TARGETS
 
 OPTIONS = ('filter', 'sample_size', 'warmup_ms', 'measure_ms')
-INPUTS = {'benchmarks', 'diagnostic', 'quick', *OPTIONS, *PLATFORMS}
+INPUTS = {'benchmarks', 'diagnostic', 'quick', 'rescore', *OPTIONS, *PLATFORMS}
 PREPARE_MINUTES = 30
 # Each further run in a family job adds one bounded `just bench`.
 RUN_MINUTES = 10
@@ -57,8 +57,8 @@ def dispatch_inputs(env: dict) -> dict:
     inputs = {name: value for name, value in inputs.items() if value is not None}
     if any(type(inputs.get(name, False)) is not bool for name in ('diagnostic', 'quick', *PLATFORMS)):
         raise ValueError('platform, diagnostic, and quick inputs must be Boolean')
-    if any(type(inputs.get(name, '')) is not str for name in ('benchmarks', *OPTIONS)):
-        raise ValueError('benchmarks and sampling inputs must be strings')
+    if any(type(inputs.get(name, '')) is not str for name in ('benchmarks', 'rescore', *OPTIONS)):
+        raise ValueError('benchmarks, rescore, and sampling inputs must be strings')
     return inputs
 
 
@@ -189,13 +189,14 @@ def evidence(source: Path, archive: Path) -> int:
     return 0
 
 
-def score(directory: Path, output: Path, inputs: dict) -> int:
+def score(directory: Path, output: Path, inputs: dict, *, source: tuple[str, str] | None = None) -> int:
     """Score every measurement archive of this run attempt; each archive name carries its platform label."""
     import compare
     import evidence_bundle
     catalog = load_catalog()
     families = sorted({bench['family'] for bench in catalog['benches'].values() if 'family' in bench}, key=len, reverse=True)
-    suffix = f"-{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}"
+    run_id, attempt = source or (os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT'])
+    suffix = f'-{run_id}-{attempt}'
     runs = []
     # download-artifact saves each raw archive inside a directory with the artifact's name.
     for archive in sorted(path for path in {*directory.glob('*.tar.gz'), *directory.glob('*/*.tar.gz')} if path.is_file()):
@@ -216,9 +217,74 @@ def score(directory: Path, output: Path, inputs: dict) -> int:
     return compare.main([*runs, '--json', str(output), *(['--partial'] if inputs.get('filter') else [])])
 
 
+def rescore_source(value: str, api) -> dict:
+    """Accept only a completed Bench attempt whose entire native measurement matrix passed."""
+    if not re.fullmatch(r'[1-9][0-9]*/[1-9][0-9]*', value):
+        raise ValueError('rescore must be RUN_ID/ATTEMPT')
+    run_id, attempt = value.split('/')
+    path = f'/actions/runs/{run_id}/attempts/{attempt}'
+    run = api.request('GET', path)
+    if (run['path'] != '.github/workflows/bench.yml' or run['event'] != 'workflow_dispatch'
+            or run['repository']['full_name'] != api.repository or run['head_branch'] != 'main'
+            or run['status'] != 'completed' or run['run_attempt'] != int(attempt)):
+        raise ValueError('rescore needs a completed main-branch Bench attempt from this repository')
+    jobs = []
+    page = 1
+    while True:
+        result = api.request('GET', f'{path}/jobs?per_page=100&page={page}')
+        jobs.extend(result['jobs'])
+        if len(jobs) >= result['total_count']:
+            break
+        if not result['jobs']:
+            raise ValueError('incomplete source job listing')
+        page += 1
+    measured = [job for job in jobs if job['name'].startswith('Measure ')]
+    if not measured or any(job['conclusion'] != 'success' for job in measured):
+        raise ValueError('every source native measurement job must have passed')
+    if any(job['conclusion'] not in ('success', 'skipped') for job in jobs if job['name'] != 'Score comparisons'):
+        raise ValueError('only the source comparison report may have failed')
+    artifacts = []
+    for job in measured:
+        match = re.fullmatch(r'Measure ([A-Za-z0-9_-]+) / ([a-z0-9-]+)', job['name'])
+        if not match:
+            raise ValueError(f"unexpected measurement job: {job['name']}")
+        artifacts.append(f'bench-{match[1]}-{match[2]}-{run_id}-{attempt}.tar.gz')
+    if len(set(artifacts)) != len(artifacts):
+        raise ValueError('duplicate source measurement jobs')
+    return {'run_id': run_id, 'attempt': attempt, 'revision': run['head_sha'],
+            'url': run['html_url'], 'artifacts': sorted(artifacts)}
+
+
+def rescore(directory: Path, output: Path, source: dict) -> int:
+    """Re-score unchanged retained measurements, preserving their original run and source identity."""
+    archives = [path.name for path in {*directory.glob('*.tar.gz'), *directory.glob('*/*.tar.gz')} if path.is_file()]
+    if sorted(archives) != source['artifacts']:
+        raise ValueError('retained artifacts must match every successful source measurement job exactly')
+    print(f"Measurements: [{source['run_id']}, attempt {source['attempt']}]({source['url']}), "
+          f"revision `{source['revision']}`. This job re-scores retained evidence; it runs no benchmarks.\n")
+    # Re-scoring never permits incomplete comparison groups, even if the new dispatch supplied a filter.
+    status = score(directory, output, {}, source=(source['run_id'], source['attempt']))
+    report = json.loads(output.read_text())
+    report['measurement_source'] = source
+    report['report_revision'] = os.environ['GITHUB_SHA']
+    output.write_text(json.dumps(report, indent=2) + '\n')
+    return status
+
+
 def main() -> int:
     inputs = dispatch_inputs(os.environ)
     command = sys.argv[1:]
+    if len(command) == 2 and command[0] == 'rescore-source':
+        from dispatched_run import GitHub
+        source = rescore_source(inputs.get('rescore', ''), GitHub(os.environ['GITHUB_REPOSITORY'], os.environ['GH_TOKEN']))
+        path = Path(command[1])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(source, indent=2) + '\n')
+        with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
+            output.write(f"run={source['run_id']}\nattempt={source['attempt']}\n")
+        return 0
+    if len(command) == 4 and command[0] == 'rescore':
+        return rescore(Path(command[2]), Path(command[3]), json.loads(Path(command[1]).read_text()))
     if command == ['plan']:
         measurements, builds, families = plan(inputs, os.environ.get('GITHUB_RUN_ID', ''))
         with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:

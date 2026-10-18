@@ -71,6 +71,43 @@ def write_run(root: Path, entries: dict[str, dict[str, float]], host=HOST, state
 
 
 class PairingTests(unittest.TestCase):
+  def test_rsa_spki_comparisons_follow_available_public_parsers(self):
+    catalog = load_catalog()
+    records = {("rsa", case): record(10.0) for case in (
+      "rsa-4096/parse-spki/rscrypto", "rsa-4096/parse-spki/rustcrypto-rsa", "rsa-8192/parse-spki/rscrypto")}
+    for arch in ("powerpc64", "s390x"):
+      with self.subTest(arch=arch):
+        standalone = []
+        rows, problems = compare.points(catalog, arch, records, arch, standalone)
+        self.assertEqual(problems, [])
+        self.assertEqual([row["variant"] for row in rows], ["rsa-4096"])
+        self.assertEqual([row["case"] for row in standalone], ["rsa-8192/parse-spki/rscrypto"])
+        self.assertIn("4096", standalone[0]["reason"])
+    # AWS-LC supplies the 8192-bit parser on these architectures; a missing row still fails.
+    for arch in ("x86_64", "aarch64", "riscv64"):
+      with self.subTest(arch=arch):
+        self.assertTrue(compare.points(catalog, arch, records, arch)[1])
+        complete = records | {("rsa", "rsa-8192/parse-spki/aws-lc-rs"): record(20.0)}
+        rows, problems = compare.points(catalog, arch, complete, arch)
+        self.assertEqual(problems, [])
+        self.assertEqual({row["variant"] for row in rows}, {"rsa-4096", "rsa-8192"})
+    # A newly available parser must update the catalog, not silently disappear from the report.
+    self.assertTrue(compare.points(catalog, "powerpc64", complete, "powerpc64")[1])
+
+  def test_standalone_measurement_remains_in_quick_coverage(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      run = write_run(root / "run", {"rsa": {"rsa-8192/parse-spki/rscrypto": 10.0}},
+                      host=HOST | {"machine": "s390x"}, quick=True)
+      output = root / "report.json"
+      with contextlib.redirect_stdout(io.StringIO()) as stdout:
+        self.assertEqual(compare.main([f"ibmz={run}", "--json", str(output)]), 0)
+      report = json.loads(output.read_text())
+      self.assertEqual(report["coverage"], [{"platform": "ibmz", "cases": 1, "comparison_points": 0}])
+      self.assertEqual(report["standalone"][0]["case"], "rsa-8192/parse-spki/rscrypto")
+      self.assertIn("was measured without a comparison", stdout.getvalue())
+      self.assertNotIn("points", report)
+
   def test_fastest_external_across_builds_and_ignored_variants(self):
     records = {
       ("hashes", "d1/rscrypto/64"): record(10.0),
@@ -218,7 +255,9 @@ class CatalogTests(unittest.TestCase):
     catalog = load_catalog()
     for change in ({"headline": "yes"}, {"family": " "}, {"bench": "missing"}, {"competitor_benches": ["structural"]},
                    {"cases": "^(?P<implementation>x)$"}, {"cases": "("}, {"cases": "^(?P<impl>x)/(?P<input>y)$"},
-                   {"extra": True}):
+                   {"extra": True}, {"architectures": []}, {"architectures": ["x86"]},
+                   {"architectures": ["x86_64", "x86_64"]}, {"architectures": ["x86_64"]},
+                   {"architectures": ["x86_64"], "availability": " "}, {"availability": "No parser"}):
       broken = copy.deepcopy(catalog)
       broken["comparisons"]["sha2"].update(change)
       with self.subTest(change=change), self.assertRaises(CatalogError):

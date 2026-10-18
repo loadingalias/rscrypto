@@ -24,7 +24,7 @@ import sys
 # Embedded Windows Python omits the script directory from its import path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from benchmark_catalog import MACHINES, applies, case_class, load_catalog
+from benchmark_catalog import ARCHITECTURES, MACHINES, applies, architecture, case_class, load_catalog
 from execution import read_json
 from measure import verify
 
@@ -93,7 +93,8 @@ def load_platform(catalog: dict, label: str, roots: list[Path]) -> tuple[dict[tu
   return records, MACHINES.get(machine, machine)
 
 
-def points(catalog: dict, label: str, records: dict, arch: str | None = None) -> tuple[list[dict], list[str]]:
+def points(catalog: dict, label: str, records: dict, arch: str | None = None,
+           standalone: list[dict] | None = None) -> tuple[list[dict], list[str]]:
   """Pair each comparison point's canonical rscrypto row with its fastest external row.
 
   With an architecture, a competitor build that applies there but has no rows makes the
@@ -124,6 +125,13 @@ def points(catalog: dict, label: str, records: dict, arch: str | None = None) ->
         groups[key]["external"].append(record | {"case": case, "implementation": source})
     for (variant, item), group in sorted(groups.items()):
       where = f"{label}: {name} {variant + ' ' if variant else ''}{item}"
+      if arch and not applies(comparison, arch):
+        if group["external"] or len(group["rscrypto"]) != 1:
+          problems.append(f"{where} is declared standalone on {arch}; expected one rscrypto row and no external rows")
+        elif standalone is not None:
+          standalone.append({"platform": label, "comparison": name, "case": group["rscrypto"][0]["case"],
+                             "reason": comparison["availability"]})
+        continue
       if len(group["rscrypto"]) != 1 or not group["external"]:
         problems.append(f"{where} needs one rscrypto row and an external row; found "
                         f"{len(group['rscrypto'])} and {len(group['external'])}")
@@ -179,7 +187,7 @@ def listed_cases(path: Path) -> dict[str, set[str]]:
   return cases
 
 
-def validate_cases(catalog: dict, cases: dict[str, set[str]]) -> list[str]:
+def validate_cases(catalog: dict, cases: dict[str, set[str]], arch: str | None = None) -> list[str]:
   """Check declarations against discovered cases: every comparison matches, and every point is complete."""
   problems = undeclared(catalog, cases)
   binaries = {name: bench["binary"] for name, bench in catalog["benches"].items()}
@@ -195,7 +203,7 @@ def validate_cases(catalog: dict, cases: dict[str, set[str]]) -> list[str]:
       problems.append(f"{name} matches no {binary} case")
       continue
     single = {"comparisons": {name: comparison}, "benches": catalog["benches"]}
-    problems += points(single, "listing", records)[1]
+    problems += points(single, "listing", records, arch or architecture())[1]
   return problems
 
 
@@ -255,6 +263,8 @@ def main(arguments: list[str]) -> int:
   parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
   parser.add_argument("runs", nargs="*", metavar="PLATFORM=RUN_DIRECTORY")
   parser.add_argument("--cases", type=Path, help="validate declarations against `just bench --list` output")
+  parser.add_argument("--architecture", choices=sorted(ARCHITECTURES),
+                      help="architecture of --cases (default: this host); retained runs carry their own")
   parser.add_argument("--json", type=Path, help="write every comparison point as JSON")
   parser.add_argument("--partial", action="store_true",
                       help="report incomplete points as notes, for runs whose case filter cut comparison groups")
@@ -263,13 +273,15 @@ def main(arguments: list[str]) -> int:
   if args.cases:
     if args.runs or args.json:
       raise ComparisonError("--cases takes no runs and writes no JSON")
-    problems = validate_cases(catalog, listed_cases(args.cases))
+    problems = validate_cases(catalog, listed_cases(args.cases), args.architecture)
     for problem in problems:
       print(f"error: {problem}", file=sys.stderr)
     print(f"{len(catalog['comparisons'])} comparisons checked against {args.cases}")
     return 1 if problems else 0
   if not args.runs:
     raise ComparisonError("give at least one PLATFORM=RUN_DIRECTORY")
+  if args.architecture:
+    raise ComparisonError("--architecture applies only to --cases")
   rows = []
   problems = []
   measured = defaultdict(set)
@@ -278,12 +290,13 @@ def main(arguments: list[str]) -> int:
   notes = []
   modes = set()
   coverage = []
+  standalone = []
   for label, roots in runs.items():
     records, arch = load_platform(catalog, label, roots)
     modes.update(record["quick"] for record in records.values())
     for (bench, case), record in records.items():
       measured[record["binary"]].add(case)
-    found, missing = points(catalog, label, records, arch)
+    found, missing = points(catalog, label, records, arch, standalone)
     coverage.append({"platform": label, "cases": len(records), "comparison_points": len(found)})
     rows += found
     for problem in missing:
@@ -295,6 +308,8 @@ def main(arguments: list[str]) -> int:
   quick = modes == {True}
   result = ({"mode": "quick", "partial": args.partial, "coverage": coverage} if quick else
             {"tie": TIE, "partial": args.partial, "points": rows})
+  if standalone:
+    result["standalone"] = standalone
   if args.json:
     args.json.write_text(json.dumps(result, indent=2) + "\n")
   if quick:
@@ -304,6 +319,8 @@ def main(arguments: list[str]) -> int:
                 [[row["platform"], str(row["cases"]), str(row["comparison_points"])] for row in coverage]))
   else:
     print(report(rows, platforms), end="")
+  for row in standalone:
+    print(f"\n{row['platform']}: `{row['case']}` was measured without a comparison. {row['reason']}")
   if notes:
     print(f"\n{len(notes)} comparison points are incomplete because the run's case filter omitted rows.")
   for problem in problems:

@@ -1117,9 +1117,18 @@
     "rsa-parse-spki": {
       "family": "RSA",
       "bench": "rsa",
-      "cases": "^(?P<variant>rsa-(?:2048|3072|4096|8192))/(?P<input>parse-spki)/(?P<implementation>[^/]+)$",
+      "cases": "^(?P<variant>rsa-(?:2048|3072|4096))/(?P<input>parse-spki)/(?P<implementation>[^/]+)$",
       "headline": false,
       "task": "Parse and validate identical SubjectPublicKeyInfo bytes."
+    },
+    "rsa-parse-spki-8192": {
+      "family": "RSA",
+      "bench": "rsa",
+      "cases": "^(?P<variant>rsa-8192)/(?P<input>parse-spki)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Parse and validate identical 8192-bit SubjectPublicKeyInfo bytes.",
+      "architectures": ["x86_64", "aarch64", "riscv64"],
+      "availability": "Only AWS-LC supplies an external 8192-bit SPKI parser; this suite excludes it on POWER and IBM Z. RustCrypto's parser stops at 4096 bits, and ring has no public RSA SPKI parser."
     },
     "rsa-sign": {
       "family": "RSA",

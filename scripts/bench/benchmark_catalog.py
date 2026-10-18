@@ -169,8 +169,17 @@ def validate_catalog(catalog: dict) -> None:
   for name, comparison in comparisons.items():
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name) or not isinstance(comparison, dict):
       raise CatalogError(f"invalid comparison: {name}")
-    if not required <= set(comparison) <= required | {"competitor_benches"}:
-      raise CatalogError(f"comparison {name} needs exactly {sorted(required)} and optional competitor_benches")
+    if not required <= set(comparison) <= required | {"competitor_benches", "architectures", "availability"}:
+      raise CatalogError(f"comparison {name} has missing or unknown fields")
+    architectures = comparison.get("architectures")
+    if architectures is not None:
+      if (not isinstance(architectures, list) or not architectures or len(set(architectures)) != len(architectures)
+          or not set(architectures) <= ARCHITECTURES):
+        raise CatalogError(f"comparison {name} needs distinct architectures from {sorted(ARCHITECTURES)}")
+      if not isinstance(comparison.get("availability"), str) or not comparison["availability"].strip():
+        raise CatalogError(f"comparison {name} needs an availability explanation")
+    elif "availability" in comparison:
+      raise CatalogError(f"comparison {name} needs architectures with its availability explanation")
     if any(not isinstance(comparison[field], str) or not comparison[field].strip() for field in ("family", "task")):
       raise CatalogError(f"comparison {name} needs a family and a task")
     if not isinstance(comparison["headline"], bool):

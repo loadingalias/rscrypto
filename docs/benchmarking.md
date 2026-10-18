@@ -144,15 +144,29 @@ just bench-compare --cases cases.txt
   The JSON output also gives an interval from the two medians' confidence intervals.
 - A comparison can name `competitor_benches`, which are other builds whose external rows also count.
   The `rscrypto` row always comes from the comparison's own target.
+- A comparison can restrict `architectures` when no external library offers the operation elsewhere.
+  Its required `availability` explanation names that limit. The rscrypto case still runs on every supported target.
+  On an excluded architecture, the report retains it as a standalone measurement with the explanation, without a ratio.
+  An unexpected external row there fails the report so the catalog must be updated when support changes.
 - The scorer fails when a point lacks its `rscrypto` row or an external row,
   when a platform lacks a competitor build that applies to it,
   and when a measured group has external rows but no declaration.
   `--partial` reports the first kind as notes, for runs whose case filter omitted rows.
 - `--cases` checks the declarations against a case listing without measuring.
+  It uses this host's architecture; add `--architecture s390x`, for example, for a listing from another host.
 
 The Bench workflow's `Score comparisons` job extracts and scores the run's own measurement archives.
 It writes the tables to the job summary and keeps the JSON as the `bench-score-RUN-ATTEMPT` artifact.
 Published summaries come from that output.
+
+If only the comparison report failed after every native measurement job passed, dispatch Bench with
+`rescore=RUN_ID/ATTEMPT`, for example `rescore=39106333869/1`.
+This mode ignores the measurement inputs and starts only a report job.
+It requires a completed Bench attempt from this repository's `main`, successful native jobs,
+and exactly one retained archive for every such job. Only the source report may have failed.
+It revalidates every retained measurement and requires complete comparison groups.
+The summary identifies the measured revision. The JSON also records the revision of the corrected report.
+Re-scoring an older run does not measure the current source revision.
 
 ### Competitor builds
 
@@ -659,6 +673,9 @@ RustCrypto has no such API, so its `rustcrypto-composed` rows build the mask fro
   RustCrypto stops at 4096 bits; aws-lc-rs checks its 2048–8192-bit range only when it verifies.
 - RSA `parse-spki` parses and validates identical SPKI bytes. aws-lc-rs tries PKCS#1 first and copies the input.
   ring has no SPKI parser.
+  RustCrypto's parser stops at 4096 bits. At 8192 bits, AWS-LC is the only external parser in this suite.
+  The suite excludes AWS-LC on POWER and IBM Z, so those platforms retain the rscrypto 8192-bit measurement
+  without a comparison; the catalog still requires the external row on x86-64, ARM64, and RISC-V.
 - RSA signing and OAEP name their entropy: `fixed` is a caller blinding pair,
   `caller-entropy` is a fill closure or RNG that writes fixed bytes,
   and `fresh-entropy` is new randomness in every call.

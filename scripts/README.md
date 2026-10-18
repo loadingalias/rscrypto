@@ -531,10 +531,17 @@ selects the first message index for reproducing a discovered rejection case.
   Profiling, code inspection, and cross builds reject targets with `rustflags`.
 - `bench/compare.py` pairs each declared comparison's canonical `rscrypto` row with the fastest external
   row of the same task, on each platform, from retained runs.
+  A comparison's optional `architectures` and required `availability` explanation record where an external
+  implementation exists. Elsewhere, the measured rscrypto row remains in coverage and the report explains why
+  it has no comparison. Unexpected external rows on an excluded architecture fail validation.
   It fails on an incomplete comparison point, on a missing competitor build for the platform,
   and on a measured group that has external rows but no declaration.
   `--cases` checks the declarations against `just bench --list` output without measuring.
   The Bench workflow's `Score comparisons` job runs it on the run's extracted measurement archives.
+- Bench's `rescore=RUN_ID/ATTEMPT` mode runs only a report job and ignores measurement inputs.
+  `bench/ci.py rescore-source` verifies a completed main-branch Bench attempt and every native job's success.
+  `bench/ci.py rescore` requires its exact archive set, revalidates measurements, and records the source run,
+  attempt, measured revision, and report revision. It never permits partial comparisons or claims new measurements.
 - `bench/ci.py evidence` packs one measurement job's `target/bench/` into the single raw archive that the job uploads,
   without the transferred binaries that the preparation artifact keeps.
 - `.config/criterion.json` owns the shared Criterion defaults and the maximum run budget.

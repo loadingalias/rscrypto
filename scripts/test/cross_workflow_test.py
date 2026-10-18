@@ -183,6 +183,22 @@ class CrossWorkflow(unittest.TestCase):
         self.assertIn(download['with']['path'], run)
         self.assertIn('$GITHUB_STEP_SUMMARY', run)
 
+    def test_bench_rescore_validates_source_and_starts_no_measurement_plan(self):
+        jobs = read_yaml('.github/workflows/bench.yml')['jobs']
+        self.assertEqual(jobs['plan']['if'], "inputs.rescore == ''")
+        rescore = jobs['rescore']
+        self.assertEqual(rescore['if'], "inputs.rescore != ''")
+        self.assertEqual(rescore['permissions'], {'contents': 'read', 'actions': 'read'})
+        source, = [step for step in rescore['steps'] if step.get('id') == 'source']
+        download, = [step for step in rescore['steps'] if 'download-artifact' in step.get('uses', '')]
+        self.assertLess(rescore['steps'].index(source), rescore['steps'].index(download))
+        self.assertIn('ci.py rescore-source', source['run'])
+        self.assertEqual(download['with']['run-id'], '${{ steps.source.outputs.run }}')
+        self.assertEqual(download['with']['pattern'],
+                         'bench-*-${{ steps.source.outputs.run }}-${{ steps.source.outputs.attempt }}.tar.gz')
+        self.assertFalse(any('ci.py run ' in step.get('run', '') or 'ci.py measure ' in step.get('run', '')
+                             for step in rescore['steps']))
+
     def test_bench_evidence_is_one_raw_archive_per_job(self):
         jobs = read_yaml('.github/workflows/bench.yml')['jobs']
         bench = jobs['bench']

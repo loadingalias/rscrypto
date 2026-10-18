@@ -1,9 +1,12 @@
 name: Bench
-run-name: ${{ inputs.quick && 'Bench (quick validation)' || 'Bench' }}
+run-name: ${{ inputs.rescore && 'Bench (re-score retained measurements)' || inputs.quick && 'Bench (quick validation)' || 'Bench' }}
 
 on:
   workflow_dispatch:
     inputs:
+      rescore:
+        description: Re-score a completed Bench RUN_ID/ATTEMPT; ignores measurement inputs and runs no benchmarks
+        type: string
       benchmarks:
         description: Catalog algorithms, groups, or targets (comma-separated), or all
         type: string
@@ -70,6 +73,7 @@ defaults:
 
 jobs:
   plan:
+    if: inputs.rescore == ''
     name: Plan
     runs-on: runs-on=${{ github.run_id }}/runner=plan/env=production
     timeout-minutes: 5
@@ -129,6 +133,43 @@ jobs:
         with:
           name: bench-prepare-${{ matrix.platform }}-${{ matrix.family }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: target/bench/preparation/
+          if-no-files-found: warn
+          retention-days: 30
+
+  rescore:
+    if: inputs.rescore != ''
+    name: Re-score retained measurements
+    runs-on: runs-on=${{ github.run_id }}-rescore/runner=plan/env=production
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned uv
+        run: scripts/tooling/uv.sh x86_64-linux >>"$GITHUB_PATH"
+      - name: Require successful native measurements in the source attempt
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/lib/python.sh scripts/bench/ci.py rescore-source target/bench-source.json
+      - name: Download the source attempt's measurement evidence
+        uses: "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333" # v8.0.2
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.source.outputs.run }}
+          pattern: bench-*-${{ steps.source.outputs.run }}-${{ steps.source.outputs.attempt }}.tar.gz
+          path: target/bench-artifacts
+      - name: Re-score every retained measurement
+        run: scripts/lib/python.sh scripts/bench/ci.py rescore target/bench-source.json target/bench-artifacts target/bench-score.json >>"$GITHUB_STEP_SUMMARY"
+      - name: Retain the scorecard and measurement source
+        if: ${{ !cancelled() }}
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
+        with:
+          name: bench-score-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/bench-score.json
           if-no-files-found: warn
           retention-days: 30
 

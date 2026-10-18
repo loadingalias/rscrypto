@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ci
@@ -25,6 +25,65 @@ def plan(benchmarks='sha256', **values):
 
 
 class ManualBench(unittest.TestCase):
+    def test_rescore_requires_the_complete_successful_native_attempt(self):
+        source = {'path': '.github/workflows/bench.yml', 'event': 'workflow_dispatch',
+                  'repository': {'full_name': 'owner/repo'}, 'head_branch': 'main', 'status': 'completed',
+                  'run_attempt': 1, 'head_sha': 'a' * 40, 'html_url': 'https://github.com/owner/repo/actions/runs/42'}
+        jobs = [{'name': name, 'conclusion': conclusion} for name, conclusion in (
+            ('Plan', 'success'), ('Measure s390x-linux / auth', 'success'),
+            ('Measure x86_64-linux-intel / hashes', 'success'), ('Score comparisons', 'failure'))]
+        api = Mock(repository='owner/repo')
+        def prepare(run=source, rows=jobs):
+            api.request.side_effect = [run, {'jobs': rows[:2], 'total_count': len(rows)},
+                                      {'jobs': rows[2:], 'total_count': len(rows)}]
+            return ci.rescore_source('42/1', api)
+        result = prepare()
+        self.assertEqual(result['artifacts'], ['bench-s390x-linux-auth-42-1.tar.gz',
+                                               'bench-x86_64-linux-intel-hashes-42-1.tar.gz'])
+        self.assertEqual(result['revision'], 'a' * 40)
+        self.assertEqual(api.request.call_args.args[1], '/actions/runs/42/attempts/1/jobs?per_page=100&page=2')
+        for field, value in (('status', 'in_progress'), ('path', '.github/workflows/ct.yml'),
+                             ('head_branch', 'other'), ('run_attempt', 2),
+                             ('repository', {'full_name': 'other/repo'})):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                prepare(source | {field: value})
+        for conclusion in ('failure', 'cancelled', 'skipped', None):
+            with self.subTest(conclusion=conclusion), self.assertRaisesRegex(ValueError, 'native measurement'):
+                prepare(rows=[jobs[0], jobs[1] | {'conclusion': conclusion}, *jobs[2:]])
+        with self.assertRaisesRegex(ValueError, 'only the source comparison report'):
+            prepare(rows=[jobs[0] | {'conclusion': 'failure'}, *jobs[1:]])
+        with self.assertRaisesRegex(ValueError, 'native measurement'):
+            prepare(rows=[jobs[0], jobs[-1]])
+        for value in ('42', '0/1', '42/0', '42/1/2', '42/1\n', '../1', '42/1;true'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                ci.rescore_source(value, api)
+
+    def test_rescore_requires_every_artifact_and_preserves_source_identity(self):
+        source = {'run_id': '42', 'attempt': '1', 'revision': 'a' * 40, 'url': 'https://example.test/run/42',
+                  'artifacts': ['bench-s390x-linux-auth-42-1.tar.gz', 'bench-x86_64-linux-intel-hashes-42-1.tar.gz']}
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'GITHUB_SHA': 'b' * 40}):
+            root = Path(directory)
+            output = root / 'report.json'
+            for name in source['artifacts']:
+                (root / name).write_bytes(b'fixture')
+            def score(directory, output, inputs, **kwargs):
+                output.write_text('{"mode":"quick"}')
+                return 0
+            with patch.object(ci, 'score', side_effect=score) as scoring:
+                self.assertEqual(ci.rescore(root, output, source), 0)
+                scoring.assert_called_once_with(root, output, {}, source=('42', '1'))
+                report = json.loads(output.read_text())
+                self.assertEqual(report['measurement_source'], source)
+                self.assertEqual(report['report_revision'], 'b' * 40)
+                (root / source['artifacts'][0]).unlink()
+                with self.assertRaisesRegex(ValueError, 'every successful source measurement job'):
+                    ci.rescore(root, output, source)
+                (root / source['artifacts'][0]).write_bytes(b'fixture')
+                (root / 'bench-s390x-linux-auth-42-2.tar.gz').write_bytes(b'wrong attempt')
+                with self.assertRaisesRegex(ValueError, 'every successful source measurement job'):
+                    ci.rescore(root, output, source)
+                self.assertEqual(scoring.call_count, 1)
+
     def test_one_many_all_platforms(self):
         self.assertEqual([r['platform'] for r in ci.platforms('riscv64-linux', '42')['include']], ['riscv64-linux'])
         rows = ci.platforms('s390x-linux, x86_64-win s390x-linux', '42')['include']
