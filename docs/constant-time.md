@@ -97,6 +97,66 @@ so earlier proofs of the policy-rejecting hooks do not prove PBKDF2 verification
 Regression tests for the internal hooks check both successful and failed verification.
 Application password policies are separate and do not change.
 
+### Linked-artifact review, 2026-10-18
+
+The POWER and IBM Z preparation failures in [run 39091286840](https://github.com/loadingalias/rscrypto/actions/runs/39091286840)
+invalidated 84 and 63 exact waivers, respectively. Comparison with
+[passing run 38842297553](https://github.com/loadingalias/rscrypto/actions/runs/38842297553)
+bound the earlier reviews at `ed86bcb3` to the linked artifacts at `c19b49bb`.
+The builds used `nightly-2026-10-14`, GNU cross-linkers, and the checkout path
+`/home/runner/work/rscrypto/rscrypto`.
+
+All 84 POWER branch locators and their conditions were unchanged. The 13 enclosing
+functions differed at 36 address-loading instructions. The relocated data contained
+the same two 16-byte vector constants and the same panic source paths, lines, and
+columns. The comparison decoded those values from both linked ELF files; it did
+not infer equivalence from matching instruction counts. The existing public-input,
+claim-exclusion, and disclosure rationales therefore remain applicable.
+
+IBM Z was rebuilt in an Ubuntu 24.04 x86-64 container with the same compiler,
+installed Rust sources, checkout path, GNU cross-linker, and target flags.
+It reproduced the same 63 unmatched waivers as CI. All 63 locators were unchanged.
+The 12 enclosing functions differed only at 61 `larl` instructions referring to
+30 relocated data objects. Their complete referenced contents were identical,
+including all four 4,096-byte P-256 tables, field and SHA-256 constants, RSA policy,
+prime tables, DER bytes, domain strings, and panic text. No condition or index
+calculation changed.
+
+The original failure skipped the native lanes. Rebuilding Linux x86-64 at the
+same checkout path exposed 64 additional unmatched waivers. All their locators
+were unchanged. Seven enclosing functions differed only at 17 RIP-relative loads
+or address calculations. The ten referenced data ranges were byte-identical:
+RSA policy, domain strings, DER bytes, the complete small-prime table,
+Miller–Rabin bases, and the one-byte value used by key consistency checks.
+A fresh Linux AArch64 artifact build passed with its existing waivers.
+
+The Windows-only [run 39094250382](https://github.com/loadingalias/rscrypto/actions/runs/39094250382)
+exposed nine unmatched waivers at the same source revision. All nine locators were
+unchanged. Three enclosing functions differed only at eight `lea` instructions.
+The six referenced objects moved by 64 bytes: four panic locations retained their
+exact source paths, lines, and columns; an eight-byte zero constant and a one-byte
+value were identical. The checkout path was
+`C:\actions-runner\_work\rscrypto\rscrypto`.
+
+The reviewed linked binary SHA-256 values were:
+
+| Target | Source | SHA-256 |
+| --- | --- | --- |
+| POWER | `ed86bcb3` | `45d508d40f34612142749c14599bf2821fabf8e24479b167d49104b29d2a09d1` |
+| POWER | `c19b49bb` | `124bc2e4e19a03e4c0db7524ffda8acbf5a8d34a7032e8045ed96b750dce8a2d` |
+| IBM Z | `ed86bcb3` | `606c5dd9071c299f6031fc9cd8dbf5c9c55ae19d04b28f318c2338321fa54d60` |
+| IBM Z | `c19b49bb` | `9c4dd9424a3d479f16efedacc5ac1a513f4dfc07ff2176a259d0999b2f7d8335` |
+| Linux x86-64 | `ed86bcb3` | `0674d42597af5e2a7a966fc2accb8cf80cb492e0a4f136934429454dad57321d` |
+| Linux x86-64 | `c19b49bb` | `e4b65d2a609fc1d35e42696dd5dd8893872676a972989f450639736ac70d383f` |
+| Windows x86-64 | `ed86bcb3` | `1f1bfc89e4e185f484db6b2eea8faef6bb9c19fcd83d9045fe3a7b37d5ad46c9` |
+| Windows x86-64 | `c19b49bb` | `25e7076dd72f42a55773a8c4c9066ff29c53113a5140bdef179fba62c1a5ac40` |
+
+The refresh changes only the reviewed function hashes and review dates in `ct.toml`.
+Instruction locators, classifications, claim boundaries, and exact matching remain
+unchanged. The refreshed artifacts pass the assembly scanner with no
+unresolved failures. This review establishes artifact classification, not a new
+native timing result.
+
 ## Public decisions and exclusions
 
 Ordinary equality is allowed for public values, such as nonces, encoded public keys,
