@@ -893,6 +893,8 @@ The `auth` target also splits by algorithm: its cold Windows build plus all 15 a
 in [Bench run 39091310295](https://github.com/loadingalias/rscrypto/actions/runs/39091310295).
 The invocations reuse the same compiled binary and preserve every case and sampling setting.
 Every case of a split target must belong to exactly one of its algorithms; discovery fails otherwise.
+RSA key generation has its own `rsa_keygen` target, separate from `rsa` verification, signing, and encryption.
+CI runs `just bench rsa_keygen` with its own budget in the `auth` family job; its case IDs remain `rsa-{bits}-keygen/...`.
 If required evidence cannot fit, record that requirement as unmet. A smaller future
 experiment needs a prospectively stated question and gates; it does not complete
 an older, larger qualification plan. Preserve historical frozen plans and failed

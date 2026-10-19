@@ -187,6 +187,13 @@
       "required": true,
       "features": ["std", "rsa", "diag", "getrandom"]
     },
+    "rsa_keygen": {
+      "binary": "rsa_keygen",
+      "kind": "criterion",
+      "family": "auth",
+      "required": true,
+      "features": ["std", "rsa", "getrandom"]
+    },
     "aead_diag": {
       "binary": "aead",
       "kind": "criterion",
@@ -495,7 +502,11 @@
       "expensive": [
         "^rsa-[0-9]+-private-signing/",
         "^rsa-[0-9]+-oaep-sha256/decrypt/",
-        "^rsa-[0-9]+-pkcs1v15-encryption/decrypt/",
+        "^rsa-[0-9]+-pkcs1v15-encryption/decrypt/"
+      ]
+    },
+    "rsa_keygen": {
+      "expensive": [
         "^rsa-[0-9]+-keygen/"
       ]
     },
@@ -1167,7 +1178,7 @@
     },
     "rsa-keygen": {
       "family": "RSA",
-      "bench": "rsa",
+      "bench": "rsa_keygen",
       "cases": "^(?P<variant>rsa-(?:2048|3072|4096|8192))-keygen/(?P<implementation>[^/]+)(?P<input>)$",
       "headline": false,
       "task": "Generate a key pair. Prime search makes the time vary widely between calls."

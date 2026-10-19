@@ -478,6 +478,11 @@ harness = false
 required-features = ["rsa"]
 
 [[bench]]
+name = "rsa_keygen"
+harness = false
+required-features = ["std", "rsa", "getrandom"]
+
+[[bench]]
 name = "password_hashing"
 harness = false
 required-features = ["argon2", "scrypt", "phc-strings", "getrandom"]
