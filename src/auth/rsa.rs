@@ -4232,10 +4232,12 @@ impl Drop for SecretLimbs {
   }
 }
 
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 struct SecretI31 {
   words: Vec<u32>,
 }
 
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 impl SecretI31 {
   fn zeroed(len: usize) -> Self {
     Self { words: vec![0; len] }
@@ -4253,13 +4255,24 @@ impl SecretI31 {
   }
 }
 
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 impl Drop for SecretI31 {
   fn drop(&mut self) {
     ct::zeroize_words(&mut self.words);
   }
 }
 
-struct RsaPrivateInverseScratch {
+/// Blinding-inverse workspace for the selected inverse.
+///
+/// RISC-V and IBM Z keep the 31-bit batched inverse with its fixed-work multiplier, because their
+/// scalar multiply latency may depend on operands. Other targets use 62-bit batched divsteps.
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+type RsaPrivateInverseScratch = RsaPrivateI31InverseScratch;
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+type RsaPrivateInverseScratch = RsaPrivateS62InverseScratch;
+
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+struct RsaPrivateI31InverseScratch {
   a: SecretI31,
   b: SecretI31,
   u: SecretI31,
@@ -4268,7 +4281,8 @@ struct RsaPrivateInverseScratch {
   bit_len: usize,
 }
 
-struct RsaPrivateInverseWorkspace<'a> {
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+struct RsaPrivateI31InverseWorkspace<'a> {
   a: &'a mut [u32],
   b: &'a mut [u32],
   u: &'a mut [u32],
@@ -4276,7 +4290,8 @@ struct RsaPrivateInverseWorkspace<'a> {
   modulus: &'a mut [u32],
 }
 
-impl RsaPrivateInverseScratch {
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+impl RsaPrivateI31InverseScratch {
   fn new(bit_len: usize) -> Self {
     let word_count = private_i31_word_count(bit_len);
     Self {
@@ -4289,12 +4304,12 @@ impl RsaPrivateInverseScratch {
     }
   }
 
-  fn workspace(&mut self, bit_len: usize) -> Result<RsaPrivateInverseWorkspace<'_>, RsaPrivateOpError> {
+  fn workspace(&mut self, bit_len: usize) -> Result<RsaPrivateI31InverseWorkspace<'_>, RsaPrivateOpError> {
     if bit_len != self.bit_len {
       return Err(RsaPrivateOpError::InvalidScratch);
     }
     let word_count = private_i31_word_count(bit_len);
-    Ok(RsaPrivateInverseWorkspace {
+    Ok(RsaPrivateI31InverseWorkspace {
       a: private_i31_scratch_prefix(&mut self.a, word_count)?,
       b: private_i31_scratch_prefix(&mut self.b, word_count)?,
       u: private_i31_scratch_prefix(&mut self.u, word_count)?,
@@ -4303,11 +4318,81 @@ impl RsaPrivateInverseScratch {
     })
   }
 
+  #[cfg(test)]
+  fn is_cleared(&self) -> bool {
+    [&self.a, &self.b, &self.u, &self.v, &self.modulus]
+      .iter()
+      .all(|words| words.as_slice().iter().all(|&value| value == 0))
+  }
+
   fn clear(&mut self) {
     ct::zeroize_words(self.a.as_mut_slice());
     ct::zeroize_words(self.b.as_mut_slice());
     ct::zeroize_words(self.u.as_mut_slice());
     ct::zeroize_words(self.v.as_mut_slice());
+    ct::zeroize_words(self.modulus.as_mut_slice());
+  }
+}
+
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+struct RsaPrivateS62InverseScratch {
+  f: SecretLimbs,
+  g: SecretLimbs,
+  d: SecretLimbs,
+  e: SecretLimbs,
+  modulus: SecretLimbs,
+  bit_len: usize,
+}
+
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+struct RsaPrivateS62InverseWorkspace<'a> {
+  f: &'a mut [u64],
+  g: &'a mut [u64],
+  d: &'a mut [u64],
+  e: &'a mut [u64],
+  modulus: &'a mut [u64],
+}
+
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+impl RsaPrivateS62InverseScratch {
+  fn new(bit_len: usize) -> Self {
+    let limb_count = private_s62_limb_count(bit_len);
+    Self {
+      f: SecretLimbs::zeroed(limb_count),
+      g: SecretLimbs::zeroed(limb_count),
+      d: SecretLimbs::zeroed(limb_count),
+      e: SecretLimbs::zeroed(limb_count),
+      modulus: SecretLimbs::zeroed(limb_count),
+      bit_len,
+    }
+  }
+
+  fn workspace(&mut self, bit_len: usize) -> Result<RsaPrivateS62InverseWorkspace<'_>, RsaPrivateOpError> {
+    if bit_len != self.bit_len {
+      return Err(RsaPrivateOpError::InvalidScratch);
+    }
+    let limb_count = private_s62_limb_count(bit_len);
+    Ok(RsaPrivateS62InverseWorkspace {
+      f: private_scratch_prefix(&mut self.f, limb_count)?,
+      g: private_scratch_prefix(&mut self.g, limb_count)?,
+      d: private_scratch_prefix(&mut self.d, limb_count)?,
+      e: private_scratch_prefix(&mut self.e, limb_count)?,
+      modulus: private_scratch_prefix(&mut self.modulus, limb_count)?,
+    })
+  }
+
+  #[cfg(test)]
+  fn is_cleared(&self) -> bool {
+    [&self.f, &self.g, &self.d, &self.e, &self.modulus]
+      .iter()
+      .all(|limbs| limbs.as_slice().iter().all(|&value| value == 0))
+  }
+
+  fn clear(&mut self) {
+    ct::zeroize_words(self.f.as_mut_slice());
+    ct::zeroize_words(self.g.as_mut_slice());
+    ct::zeroize_words(self.d.as_mut_slice());
+    ct::zeroize_words(self.e.as_mut_slice());
     ct::zeroize_words(self.modulus.as_mut_slice());
   }
 }
@@ -4466,6 +4551,7 @@ fn private_scratch_prefix(limbs: &mut SecretLimbs, len: usize) -> Result<&mut [u
     .ok_or(RsaPrivateOpError::InvalidScratch)
 }
 
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 fn private_i31_scratch_prefix(words: &mut SecretI31, len: usize) -> Result<&mut [u32], RsaPrivateOpError> {
   words
     .as_mut_slice()
@@ -9463,64 +9549,10 @@ fn private_modular_inverse_odd(
     return Err(RsaPrivateOpError::InvalidBlindingFactor);
   }
 
-  let result = (|| {
-    let RsaPrivateInverseWorkspace {
-      a,
-      b,
-      u,
-      v,
-      modulus: modulus_i31,
-    } = scratch.workspace(modulus.bits)?;
-    private_be_to_i31(input, a);
-    private_be_to_i31(&modulus.bytes, modulus_i31);
-    b.copy_from_slice(modulus_i31);
-    u.fill(0);
-    v.fill(0);
-    *u.first_mut().ok_or(RsaPrivateOpError::InvalidScratch)? = 1;
-
-    // The extended-binary-GCD state maintains:
-    //   a ≡ input * u (mod modulus)
-    //   b ≡ input * v (mod modulus)
-    // starting from (a, b, u, v) = (input, modulus, 1, 0). Each batch
-    // simulates 31 binary steps from fixed low/high approximations, then
-    // applies the resulting matrix to the full-width values. The approximation
-    // guarantees at least 30 effective reductions per batch. Binary GCD needs
-    // at most 2*k - 2 reductions for a k-bit odd modulus, so this public-width
-    // schedule includes one conservative batch beyond 2*k/30.
-    let batch_count = modulus.bits.strict_mul(2).strict_add(30) / 30;
-    for _ in 0..batch_count {
-      let (pa, pb, qa, qb) = private_i31_reduction_factors(a, b);
-      let signs = private_i31_co_reduce(a, b, pa, pb, qa, qb);
-      let a_negative = i64::from(signs & 1);
-      let b_negative = i64::from((signs >> 1) & 1);
-      let pa = private_i31_cond_negate_factor(pa, a_negative);
-      let pb = private_i31_cond_negate_factor(pb, a_negative);
-      let qa = private_i31_cond_negate_factor(qa, b_negative);
-      let qb = private_i31_cond_negate_factor(qb, b_negative);
-      private_i31_co_reduce_mod(
-        u,
-        v,
-        pa,
-        pb,
-        qa,
-        qb,
-        modulus_i31,
-        private_i31_low_u32(modulus.n0) & PRIVATE_I31_MASK,
-      );
-    }
-
-    let mut gcd_difference = (a.first().copied().unwrap_or(0) | b.first().copied().unwrap_or(0)) ^ 1;
-    for index in 1..a.len() {
-      gcd_difference |= a[index] | b[index];
-      u[index] |= v[index];
-    }
-    if ct_nonzero_u64(u64::from(gcd_difference)) != 0 {
-      return Err(RsaPrivateOpError::InvalidBlindingFactor);
-    }
-    u[0] |= v[0];
-    private_i31_to_be(u, out);
-    Ok(())
-  })();
+  #[cfg(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+  let result = private_modular_inverse_odd_i31(modulus, input, out, scratch);
+  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+  let result = private_modular_inverse_odd_s62(modulus, input, out, scratch);
 
   scratch.clear();
   if result.is_err() {
@@ -9529,14 +9561,373 @@ fn private_modular_inverse_odd(
   result
 }
 
+/// Invert a valid blinding factor with the 31-bit batched extended binary GCD.
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+fn private_modular_inverse_odd_i31(
+  modulus: &RsaPublicModulus,
+  input: &[u8],
+  out: &mut [u8],
+  scratch: &mut RsaPrivateI31InverseScratch,
+) -> Result<(), RsaPrivateOpError> {
+  let RsaPrivateI31InverseWorkspace {
+    a,
+    b,
+    u,
+    v,
+    modulus: modulus_i31,
+  } = scratch.workspace(modulus.bits)?;
+  private_be_to_i31(input, a);
+  private_be_to_i31(&modulus.bytes, modulus_i31);
+  b.copy_from_slice(modulus_i31);
+  u.fill(0);
+  v.fill(0);
+  *u.first_mut().ok_or(RsaPrivateOpError::InvalidScratch)? = 1;
+
+  // The extended-binary-GCD state maintains:
+  //   a ≡ input * u (mod modulus)
+  //   b ≡ input * v (mod modulus)
+  // starting from (a, b, u, v) = (input, modulus, 1, 0). Each batch
+  // simulates 31 binary steps from fixed low/high approximations, then
+  // applies the resulting matrix to the full-width values. The approximation
+  // guarantees at least 30 effective reductions per batch. Binary GCD needs
+  // at most 2*k - 2 reductions for a k-bit odd modulus, so this public-width
+  // schedule includes one conservative batch beyond 2*k/30.
+  let batch_count = modulus.bits.strict_mul(2).strict_add(30) / 30;
+  for _ in 0..batch_count {
+    let (pa, pb, qa, qb) = private_i31_reduction_factors(a, b);
+    let signs = private_i31_co_reduce(a, b, pa, pb, qa, qb);
+    let a_negative = i64::from(signs & 1);
+    let b_negative = i64::from((signs >> 1) & 1);
+    let pa = private_i31_cond_negate_factor(pa, a_negative);
+    let pb = private_i31_cond_negate_factor(pb, a_negative);
+    let qa = private_i31_cond_negate_factor(qa, b_negative);
+    let qb = private_i31_cond_negate_factor(qb, b_negative);
+    private_i31_co_reduce_mod(
+      u,
+      v,
+      pa,
+      pb,
+      qa,
+      qb,
+      modulus_i31,
+      private_i31_low_u32(modulus.n0) & PRIVATE_I31_MASK,
+    );
+  }
+
+  let mut gcd_difference = (a.first().copied().unwrap_or(0) | b.first().copied().unwrap_or(0)) ^ 1;
+  for index in 1..a.len() {
+    gcd_difference |= a[index] | b[index];
+    u[index] |= v[index];
+  }
+  if ct_nonzero_u64(u64::from(gcd_difference)) != 0 {
+    return Err(RsaPrivateOpError::InvalidBlindingFactor);
+  }
+  u[0] |= v[0];
+  private_i31_to_be(u, out);
+  Ok(())
+}
+
+/// Invert a valid blinding factor with batches of 62 Bernstein–Yang divsteps.
+///
+/// The state follows Bernstein and Yang, "Fast constant-time gcd computation and modular
+/// inversion" (2019): `f` and `g` start at the modulus and the factor, and `d·x ≡ f`,
+/// `e·x ≡ g (mod n)` hold throughout, so `f = ±1` at the end gives `x⁻¹ = ±d`. Theorem 11.2
+/// bounds the public divstep count. Every batch, update and normalization runs a fixed number
+/// of limb steps, and selections use masks.
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+fn private_modular_inverse_odd_s62(
+  modulus: &RsaPublicModulus,
+  input: &[u8],
+  out: &mut [u8],
+  scratch: &mut RsaPrivateS62InverseScratch,
+) -> Result<(), RsaPrivateOpError> {
+  let RsaPrivateS62InverseWorkspace { f, g, d, e, modulus: n } = scratch.workspace(modulus.bits)?;
+  private_be_to_s62(&modulus.bytes, n);
+  f.copy_from_slice(n);
+  private_be_to_s62(input, g);
+  d.fill(0);
+  e.fill(0);
+  *e.first_mut().ok_or(RsaPrivateOpError::InvalidScratch)? = 1;
+  // `n0` is `-n⁻¹ mod 2^64`.
+  let n_inverse = modulus.n0.wrapping_neg() & PRIVATE_S62_MASK;
+
+  // Theorem 11.2: for odd f > g >= 0 below 2^bits, divsteps^m(1, f, g) has g = 0 once
+  // m >= floor((49 * bits + 57) / 17) for bits >= 46, or floor((49 * bits + 80) / 17) below.
+  let bits = modulus.bits;
+  let divsteps = bits.strict_mul(49).strict_add(if bits >= 46 { 57 } else { 80 }) / 17;
+  let mut delta = 1i64;
+  for _ in 0..divsteps.div_ceil(62) {
+    let (next_delta, transition) = private_s62_divsteps(delta, f[0], g[0]);
+    delta = next_delta;
+    private_s62_update_de(d, e, transition, n, n_inverse);
+    private_s62_update_fg(f, g, transition);
+  }
+
+  // f is now ±gcd(x, n). Lower limbs are 62-bit and the top limb is signed, so -1 is all
+  // lower limbs at the mask with a top limb of -1.
+  let last = f.len().strict_sub(1);
+  let mut not_one = f[0] ^ 1;
+  let mut not_minus_one = f[0] ^ PRIVATE_S62_MASK;
+  for &limb in &f[1..last] {
+    not_one |= limb;
+    not_minus_one |= limb ^ PRIVATE_S62_MASK;
+  }
+  not_one |= f[last];
+  not_minus_one |= f[last] ^ u64::MAX;
+  let is_minus_one = ct_nonzero_u64(not_minus_one) ^ 1;
+  if (ct_nonzero_u64(not_one) ^ 1) | is_minus_one == 0 {
+    return Err(RsaPrivateOpError::InvalidBlindingFactor);
+  }
+
+  // d is in (-2n, n); multiply by the sign of f, then map into [0, n).
+  private_s62_cond_negate(d, 0u64.wrapping_sub(is_minus_one));
+  for _ in 0..2 {
+    let negative = (d[last].cast_signed() >> 63).cast_unsigned();
+    private_s62_add_masked(d, n, negative);
+  }
+  private_s62_sub(d, n);
+  let negative = (d[last].cast_signed() >> 63).cast_unsigned();
+  private_s62_add_masked(d, n, negative);
+  private_s62_to_be(d, out);
+  Ok(())
+}
+
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+const PRIVATE_S62_MASK: u64 = u64::MAX >> 2;
+
+/// Signed 62-bit limbs for a `bit_len`-bit modulus, plus one limb of sign headroom.
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+fn private_s62_limb_count(bit_len: usize) -> usize {
+  bit_len.div_ceil(62).strict_add(1)
+}
+
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+#[inline(always)]
+fn private_s62_low_u64(value: i128) -> u64 {
+  let bytes = value.to_le_bytes();
+  u64::from_le_bytes([
+    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+  ])
+}
+
+/// Load big-endian bytes into non-negative 62-bit limbs.
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+fn private_be_to_s62(input: &[u8], out: &mut [u64]) {
+  out.fill(0);
+  let mut accumulator = 0u128;
+  let mut accumulator_bits = 0usize;
+  let mut limb_index = 0usize;
+  for &byte in input.iter().rev() {
+    accumulator |= u128::from(byte) << accumulator_bits;
+    accumulator_bits = accumulator_bits.strict_add(8);
+    if accumulator_bits >= 62 {
+      out[limb_index] = private_s62_low_u64(accumulator.cast_signed()) & PRIVATE_S62_MASK;
+      limb_index = limb_index.strict_add(1);
+      accumulator >>= 62;
+      accumulator_bits = accumulator_bits.strict_sub(62);
+    }
+  }
+  if limb_index < out.len() {
+    out[limb_index] = private_s62_low_u64(accumulator.cast_signed());
+  }
+}
+
+/// Store non-negative 62-bit limbs that fit `out` as big-endian bytes.
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+fn private_s62_to_be(input: &[u64], out: &mut [u8]) {
+  let mut accumulator = 0u128;
+  let mut accumulator_bits = 0usize;
+  let mut limb_index = 0usize;
+  for byte in out.iter_mut().rev() {
+    if accumulator_bits < 8 {
+      let limb = input.get(limb_index).copied().unwrap_or(0);
+      accumulator |= u128::from(limb) << accumulator_bits;
+      accumulator_bits = accumulator_bits.strict_add(62);
+      limb_index = limb_index.strict_add(1);
+    }
+    *byte = accumulator.to_le_bytes()[0];
+    accumulator >>= 8;
+    accumulator_bits = accumulator_bits.strict_sub(8);
+  }
+}
+
+/// Apply 62 divsteps to the low 62 bits of `f` and `g`.
+///
+/// Returns the next `delta` and the transition `[u, v, q, r]`: after the batch,
+/// `2^62·f' = u·f + v·g` and `2^62·g' = q·f + r·g`. Each step reads only bit 0 of `f` and `g`,
+/// which the low 62 bits determine for 62 steps. The row of `f` doubles every step, so
+/// `|u| + |v| <= 2^62` and `|q| + |r| <= 2^62`.
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+fn private_s62_divsteps(mut delta: i64, f0: u64, g0: u64) -> (i64, [i64; 4]) {
+  let mut f = f0.cast_signed();
+  let mut g = g0.cast_signed();
+  let (mut u, mut v, mut q, mut r) = (1i64, 0i64, 0i64, 1i64);
+  for _ in 0..62 {
+    // All ones when delta > 0, and when g is odd. |delta| stays below the step count.
+    let positive = delta.wrapping_neg() >> 63;
+    let odd = 0i64.wrapping_sub(g & 1);
+    // When g is odd, add f's row to g's row, negated when delta > 0.
+    g = g.wrapping_add((f ^ positive).wrapping_sub(positive) & odd);
+    q = q.wrapping_add((u ^ positive).wrapping_sub(positive) & odd);
+    r = r.wrapping_add((v ^ positive).wrapping_sub(positive) & odd);
+    // When both held, the old g (now f + g) becomes f and delta becomes 1 - delta.
+    let swap = positive & odd;
+    delta = (delta ^ swap).wrapping_sub(swap).wrapping_add(1);
+    f = f.wrapping_add(g & swap);
+    u = u.wrapping_add(q & swap);
+    v = v.wrapping_add(r & swap);
+    // g is even; halve it and double f's row.
+    g >>= 1;
+    u <<= 1;
+    v <<= 1;
+  }
+  (delta, [u, v, q, r])
+}
+
+/// Replace `(f, g)` by `((u·f + v·g) / 2^62, (q·f + r·g) / 2^62)`; both divisions are exact.
+///
+/// Lower limbs are below 2^62 and the transition rows sum to at most 2^62 in magnitude, so each
+/// accumulator stays below 2^126.
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+fn private_s62_update_fg(f: &mut [u64], g: &mut [u64], transition: [i64; 4]) {
+  let [u, v, q, r] = transition.map(i128::from);
+  let last = f.len().strict_sub(1);
+  let (f0, g0) = (i128::from(f[0].cast_signed()), i128::from(g[0].cast_signed()));
+  let mut cf = u.wrapping_mul(f0).wrapping_add(v.wrapping_mul(g0));
+  let mut cg = q.wrapping_mul(f0).wrapping_add(r.wrapping_mul(g0));
+  debug_assert_eq!(private_s62_low_u64(cf) & PRIVATE_S62_MASK, 0);
+  debug_assert_eq!(private_s62_low_u64(cg) & PRIVATE_S62_MASK, 0);
+  cf >>= 62;
+  cg >>= 62;
+  for index in 1..f.len() {
+    let (fi, gi) = (i128::from(f[index].cast_signed()), i128::from(g[index].cast_signed()));
+    cf = cf.wrapping_add(u.wrapping_mul(fi)).wrapping_add(v.wrapping_mul(gi));
+    cg = cg.wrapping_add(q.wrapping_mul(fi)).wrapping_add(r.wrapping_mul(gi));
+    f[index.strict_sub(1)] = private_s62_low_u64(cf) & PRIVATE_S62_MASK;
+    g[index.strict_sub(1)] = private_s62_low_u64(cg) & PRIVATE_S62_MASK;
+    cf >>= 62;
+    cg >>= 62;
+  }
+  f[last] = private_s62_low_u64(cf);
+  g[last] = private_s62_low_u64(cg);
+}
+
+/// Replace `(d, e)` by `((u·d + v·e) / 2^62, (q·d + r·e) / 2^62) mod n`.
+///
+/// For inputs in `(-2n, n)` the outputs stay in `(-2n, n)`: `md` and `me` start at the
+/// transition rows of the negative inputs, then subtract the residue that makes each numerator
+/// divisible by 2^62 (`n_inverse = n⁻¹ mod 2^62`). Accumulators stay below 2^127.
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+fn private_s62_update_de(d: &mut [u64], e: &mut [u64], transition: [i64; 4], modulus: &[u64], n_inverse: u64) {
+  let [u, v, q, r] = transition;
+  let last = d.len().strict_sub(1);
+  let d_negative = d[last].cast_signed() >> 63;
+  let e_negative = e[last].cast_signed() >> 63;
+  let mut md = (u & d_negative).wrapping_add(v & e_negative);
+  let mut me = (q & d_negative).wrapping_add(r & e_negative);
+  let (d0, e0) = (d[0].cast_signed(), e[0].cast_signed());
+  let cd = u.wrapping_mul(d0).wrapping_add(v.wrapping_mul(e0)).cast_unsigned();
+  let ce = q.wrapping_mul(d0).wrapping_add(r.wrapping_mul(e0)).cast_unsigned();
+  md = md.wrapping_sub((n_inverse.wrapping_mul(cd).wrapping_add(md.cast_unsigned()) & PRIVATE_S62_MASK).cast_signed());
+  me = me.wrapping_sub((n_inverse.wrapping_mul(ce).wrapping_add(me.cast_unsigned()) & PRIVATE_S62_MASK).cast_signed());
+
+  let [u, v, q, r, md, me] = [u, v, q, r, md, me].map(i128::from);
+  let (d0, e0, n0) = (i128::from(d0), i128::from(e0), i128::from(modulus[0].cast_signed()));
+  let mut cd = u
+    .wrapping_mul(d0)
+    .wrapping_add(v.wrapping_mul(e0))
+    .wrapping_add(md.wrapping_mul(n0));
+  let mut ce = q
+    .wrapping_mul(d0)
+    .wrapping_add(r.wrapping_mul(e0))
+    .wrapping_add(me.wrapping_mul(n0));
+  debug_assert_eq!(private_s62_low_u64(cd) & PRIVATE_S62_MASK, 0);
+  debug_assert_eq!(private_s62_low_u64(ce) & PRIVATE_S62_MASK, 0);
+  cd >>= 62;
+  ce >>= 62;
+  for index in 1..d.len() {
+    let di = i128::from(d[index].cast_signed());
+    let ei = i128::from(e[index].cast_signed());
+    let ni = i128::from(modulus[index].cast_signed());
+    cd = cd
+      .wrapping_add(u.wrapping_mul(di))
+      .wrapping_add(v.wrapping_mul(ei))
+      .wrapping_add(md.wrapping_mul(ni));
+    ce = ce
+      .wrapping_add(q.wrapping_mul(di))
+      .wrapping_add(r.wrapping_mul(ei))
+      .wrapping_add(me.wrapping_mul(ni));
+    d[index.strict_sub(1)] = private_s62_low_u64(cd) & PRIVATE_S62_MASK;
+    e[index.strict_sub(1)] = private_s62_low_u64(ce) & PRIVATE_S62_MASK;
+    cd >>= 62;
+    ce >>= 62;
+  }
+  d[last] = private_s62_low_u64(cd);
+  e[last] = private_s62_low_u64(ce);
+}
+
+/// Negate `value` when `mask` is all ones, keeping lower limbs in 62 bits.
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+fn private_s62_cond_negate(value: &mut [u64], mask: u64) {
+  let last = value.len().strict_sub(1);
+  let mut carry = 0i64;
+  for limb in &mut value[..last] {
+    let negated = carry.wrapping_sub(limb.cast_signed());
+    carry = negated >> 62;
+    *limb = (*limb & !mask) | (negated.cast_unsigned() & PRIVATE_S62_MASK & mask);
+  }
+  let negated = carry.wrapping_sub(value[last].cast_signed());
+  value[last] = (value[last] & !mask) | (negated.cast_unsigned() & mask);
+}
+
+/// Add `addend & mask` to `value`, keeping lower limbs in 62 bits.
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+fn private_s62_add_masked(value: &mut [u64], addend: &[u64], mask: u64) {
+  let last = value.len().strict_sub(1);
+  let mut carry = 0i64;
+  for (limb, &add) in value[..last].iter_mut().zip(addend) {
+    let sum = limb
+      .cast_signed()
+      .wrapping_add((add & mask).cast_signed())
+      .wrapping_add(carry);
+    carry = sum >> 62;
+    *limb = sum.cast_unsigned() & PRIVATE_S62_MASK;
+  }
+  value[last] = value[last]
+    .cast_signed()
+    .wrapping_add((addend[last] & mask).cast_signed())
+    .wrapping_add(carry)
+    .cast_unsigned();
+}
+
+/// Subtract `subtrahend` from `value`, keeping lower limbs in 62 bits.
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+fn private_s62_sub(value: &mut [u64], subtrahend: &[u64]) {
+  let last = value.len().strict_sub(1);
+  let mut carry = 0i64;
+  for (limb, &sub) in value[..last].iter_mut().zip(subtrahend) {
+    let difference = limb.cast_signed().wrapping_sub(sub.cast_signed()).wrapping_add(carry);
+    carry = difference >> 62;
+    *limb = difference.cast_unsigned() & PRIVATE_S62_MASK;
+  }
+  value[last] = value[last]
+    .cast_signed()
+    .wrapping_sub(subtrahend[last].cast_signed())
+    .wrapping_add(carry)
+    .cast_unsigned();
+}
+
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 const PRIVATE_I31_MASK: u32 = 0x7fff_ffff;
 
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 #[inline(always)]
 const fn private_i31_low_u32(value: u64) -> u32 {
   let bytes = value.to_le_bytes();
   u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
 }
 
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 #[inline(always)]
 fn private_i31_cond_negate_factor(value: i64, negate: i64) -> i64 {
   let mask = 0i64.wrapping_sub(negate);
@@ -9576,6 +9967,7 @@ fn private_i31_ct_mul_u32_low(lhs: u32, rhs: u32) -> u32 {
   product
 }
 
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 #[inline(always)]
 fn private_i31_mul_u64_low(lhs: u64, rhs: u64) -> u64 {
   #[cfg(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
@@ -9589,6 +9981,7 @@ fn private_i31_mul_u64_low(lhs: u64, rhs: u64) -> u64 {
   }
 }
 
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 #[inline(always)]
 fn private_i31_mul_u32_low(lhs: u32, rhs: u32) -> u32 {
   #[cfg(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
@@ -9617,11 +10010,13 @@ fn private_valid_blinding_factor(factor: &[u8], modulus: &[u8]) -> bool {
   ct_nonzero_u64(u64::from(nonzero)) & u64::from(borrow) == 1
 }
 
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 #[inline]
 fn private_i31_word_count(bit_len: usize) -> usize {
   bit_len.strict_add(30) / 31
 }
 
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 fn private_be_to_i31(input: &[u8], out: &mut [u32]) {
   out.fill(0);
   let mut accumulator = 0u64;
@@ -9642,6 +10037,7 @@ fn private_be_to_i31(input: &[u8], out: &mut [u32]) {
   }
 }
 
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 fn private_i31_to_be(input: &[u32], out: &mut [u8]) {
   let mut accumulator = 0u64;
   let mut accumulator_bits = 0usize;
@@ -9684,6 +10080,7 @@ fn private_i31_to_be(input: &[u32], out: &mut [u8]) {
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 fn private_i31_reduction_factors(a: &[u32], b: &[u32]) -> (i64, i64, i64, i64) {
   debug_assert_eq!(a.len(), b.len());
   let mut first_mask = u32::MAX;
@@ -9761,6 +10158,7 @@ fn private_i31_reduction_factors(a: &[u32], b: &[u32]) -> (i64, i64, i64, i64) {
   (pa, pb, qa, qb)
 }
 
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 fn private_i31_co_reduce(a: &mut [u32], b: &mut [u32], pa: i64, pb: i64, qa: i64, qb: i64) -> u32 {
   debug_assert_eq!(a.len(), b.len());
   let mut a_carry = 0i64;
@@ -9791,6 +10189,7 @@ fn private_i31_co_reduce(a: &mut [u32], b: &mut [u32], pa: i64, pb: i64, qa: i64
   a_negative | (b_negative << 1)
 }
 
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 fn private_i31_cond_negate(value: &mut [u32], negate: u32) {
   let mut carry = negate;
   let mask = 0u32.wrapping_sub(negate) >> 1;
@@ -9801,6 +10200,7 @@ fn private_i31_cond_negate(value: &mut [u32], negate: u32) {
   }
 }
 
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 #[expect(
   clippy::too_many_arguments,
   reason = "the two-row batched co-reduction matrix and immutable modulus are one arithmetic operation"
@@ -9855,6 +10255,7 @@ fn private_i31_co_reduce_mod(
   private_i31_finish_mod(v, modulus, private_i31_low_u32(v_carry.cast_unsigned() >> 63));
 }
 
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
 fn private_i31_finish_mod(value: &mut [u32], modulus: &[u32], negative: u32) {
   debug_assert_eq!(value.len(), modulus.len());
   let mut borrow = 0u32;
@@ -12235,15 +12636,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     ] {
       assert!(words.iter().all(|&word| word == 0));
     }
-    for words in [
-      scratch.inverse_scratch.a.as_slice(),
-      scratch.inverse_scratch.b.as_slice(),
-      scratch.inverse_scratch.u.as_slice(),
-      scratch.inverse_scratch.v.as_slice(),
-      scratch.inverse_scratch.modulus.as_slice(),
-    ] {
-      assert!(words.iter().all(|&word| word == 0));
-    }
+    assert!(scratch.inverse_scratch.is_cleared());
   }
 
   #[test]
@@ -14487,15 +14880,71 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
           );
           assert_eq!(out, [0]);
         }
-        for words in [
-          scratch.a.as_slice(),
-          scratch.b.as_slice(),
-          scratch.u.as_slice(),
-          scratch.v.as_slice(),
-          scratch.modulus.as_slice(),
-        ] {
-          assert!(words.iter().all(|&word| word == 0));
+        assert!(scratch.is_cleared());
+      }
+    }
+  }
+
+  // Widths straddle the 46-bit divstep bound and every 62-bit limb boundary; random odd
+  // moduli also produce non-invertible factors, whose rejection must match.
+  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+  #[test]
+  fn private_s62_inverse_matches_i31_inverse() {
+    let widths: &[usize] = if cfg!(miri) {
+      &[9, 64]
+    } else {
+      &[
+        9, 45, 46, 47, 61, 62, 63, 64, 65, 123, 124, 125, 1024, 2047, 2048, 3072, 4096, 8192,
+      ]
+    };
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    let mut random_bytes = |len: usize| {
+      (0..len)
+        .map(|_| {
+          state ^= state << 13;
+          state ^= state >> 7;
+          state ^= state << 17;
+          state.to_le_bytes()[0]
+        })
+        .collect::<Vec<u8>>()
+    };
+    for &bits in widths {
+      let len = bits.div_ceil(8);
+      let mut modulus_bytes = random_bytes(len);
+      let top_bits = bits.strict_sub(len.strict_sub(1).strict_mul(8));
+      modulus_bytes[0] =
+        (modulus_bytes[0] & (u8::MAX >> (8usize.strict_sub(top_bits)))) | (1 << (top_bits.strict_sub(1)));
+      *modulus_bytes.last_mut().expect("modulus width must be nonzero") |= 1;
+      let modulus = RsaPublicModulus::new(&modulus_bytes, unsigned_be_bit_len(&modulus_bytes));
+      assert_eq!(modulus.bits, bits);
+      let mut s62_scratch = RsaPrivateS62InverseScratch::new(bits);
+      let mut i31_scratch = RsaPrivateI31InverseScratch::new(bits);
+
+      let mut modulus_minus_one = modulus_bytes.clone();
+      *modulus_minus_one.last_mut().expect("modulus width must be nonzero") &= !1;
+      let mut one = vec![0u8; len];
+      *one.last_mut().expect("modulus width must be nonzero") = 1;
+      let mut factors = vec![one, modulus_minus_one];
+      for _ in 0..6 {
+        let mut factor = random_bytes(len);
+        factor[0] &= modulus_bytes[0] >> 1;
+        factors.push(factor);
+      }
+      for factor in factors {
+        if !private_valid_blinding_factor(&factor, &modulus_bytes) {
+          continue;
         }
+        let mut s62 = vec![0xa5u8; len];
+        let mut i31 = vec![0x5au8; len];
+        let s62_result = private_modular_inverse_odd_s62(&modulus, &factor, &mut s62, &mut s62_scratch);
+        let i31_result = private_modular_inverse_odd_i31(&modulus, &factor, &mut i31, &mut i31_scratch);
+        assert_eq!(s62_result, i31_result, "{bits}-bit result");
+        if s62_result.is_ok() {
+          assert_eq!(s62, i31, "{bits}-bit inverse");
+        }
+        s62_scratch.clear();
+        i31_scratch.clear();
+        assert!(s62_scratch.is_cleared() && i31_scratch.is_cleared());
       }
     }
   }
@@ -14523,15 +14972,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         .expect("a nonzero 64-bit factor cannot share either 1024-bit prime factor");
       let product = rsa::BigUint::from(candidate) * rsa::BigUint::from_bytes_be(&inverse);
       assert_eq!(product % &modulus_oracle, rsa::BigUint::from(1u8));
-      for words in [
-        scratch.a.as_slice(),
-        scratch.b.as_slice(),
-        scratch.u.as_slice(),
-        scratch.v.as_slice(),
-        scratch.modulus.as_slice(),
-      ] {
-        assert!(words.iter().all(|&word| word == 0));
-      }
+      assert!(scratch.is_cleared());
     }
 
     // Exercise modulus-width factors independently of the small-candidate
@@ -14549,15 +14990,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         .expect("n - 2^k must be invertible modulo an odd RSA modulus");
       let product = &candidate * rsa::BigUint::from_bytes_be(&inverse);
       assert_eq!(product % &modulus_oracle, rsa::BigUint::from(1u8));
-      for words in [
-        scratch.a.as_slice(),
-        scratch.b.as_slice(),
-        scratch.u.as_slice(),
-        scratch.v.as_slice(),
-        scratch.modulus.as_slice(),
-      ] {
-        assert!(words.iter().all(|&word| word == 0));
-      }
+      assert!(scratch.is_cleared());
     }
 
     factor.copy_from_slice(&modulus_bytes);
@@ -14581,15 +15014,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       Err(RsaPrivateOpError::InvalidBlindingFactor)
     );
     assert!(inverse.iter().all(|&byte| byte == 0));
-    for words in [
-      scratch.a.as_slice(),
-      scratch.b.as_slice(),
-      scratch.u.as_slice(),
-      scratch.v.as_slice(),
-      scratch.modulus.as_slice(),
-    ] {
-      assert!(words.iter().all(|&word| word == 0));
-    }
+    assert!(scratch.is_cleared());
   }
 
   #[cfg(feature = "getrandom")]
