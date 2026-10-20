@@ -4667,6 +4667,13 @@ fn montgomery_mul<const L: usize>(lhs: Uint<L>, rhs: Uint<L>, modulus: &'static 
 }
 
 fn montgomery_square<const L: usize>(value: Uint<L>, modulus: &'static Modulus<L>) -> Uint<L> {
+  if is_p256_field_modulus(modulus) {
+    let reduced = montgomery_square_p256_field([value.0[0], value.0[1], value.0[2], value.0[3]]);
+    let mut out = [0u64; L];
+    out.copy_from_slice(&reduced.0);
+    return Uint(out);
+  }
+
   if is_p384_field_modulus(modulus) {
     let value = [value.0[0], value.0[1], value.0[2], value.0[3], value.0[4], value.0[5]];
     #[cfg(any(
@@ -4908,31 +4915,95 @@ fn montgomery_mul_p256_field(lhs: [u64; 4], rhs: [u64; 4]) -> Uint<4> {
   montgomery_reduce_p256_field([w0, w1, w2, w3, w4, w5, w6, w7])
 }
 
+/// Montgomery-reduce a 512-bit product modulo the P-256 field prime.
+///
+/// `-p⁻¹ mod 2^64 = 1`, so each step's factor is the low limb itself, and the special limbs
+/// `p[0] = 2^64 - 1`, `p[1] = 2^32 - 1`, `p[2] = 0` and `p[3] = 2^64 - 2^32 + 1` turn every
+/// product into shifts and additions. Each helper returns exactly `mac_limb`'s value.
 fn montgomery_reduce_p256_field(limbs: [u64; 8]) -> Uint<4> {
   let [r0, r1, r2, r3, r4, r5, r6, r7] = limbs;
-  let p = P256_FIELD.0;
 
-  let (r1, carry) = mac_limb(r1, r0, p[1], r0);
+  let (r1, carry) = mac_p256_field_limb_1_plus_value(r1, r0);
   let (r2, carry) = adc_limb(r2, 0, carry);
-  let (r3, carry) = mac_limb(r3, r0, p[3], carry);
+  let (r3, carry) = mac_p256_field_limb_3(r3, r0, carry);
   let (r4, carry2) = adc_limb(r4, 0, carry);
 
-  let (r2, carry) = mac_limb(r2, r1, p[1], r1);
+  let (r2, carry) = mac_p256_field_limb_1_plus_value(r2, r1);
   let (r3, carry) = adc_limb(r3, 0, carry);
-  let (r4, carry) = mac_limb(r4, r1, p[3], carry);
+  let (r4, carry) = mac_p256_field_limb_3(r4, r1, carry);
   let (r5, carry2) = adc_limb(r5, carry2, carry);
 
-  let (r3, carry) = mac_limb(r3, r2, p[1], r2);
+  let (r3, carry) = mac_p256_field_limb_1_plus_value(r3, r2);
   let (r4, carry) = adc_limb(r4, 0, carry);
-  let (r5, carry) = mac_limb(r5, r2, p[3], carry);
+  let (r5, carry) = mac_p256_field_limb_3(r5, r2, carry);
   let (r6, carry2) = adc_limb(r6, carry2, carry);
 
-  let (r4, carry) = mac_limb(r4, r3, p[1], r3);
+  let (r4, carry) = mac_p256_field_limb_1_plus_value(r4, r3);
   let (r5, carry) = adc_limb(r5, 0, carry);
-  let (r6, carry) = mac_limb(r6, r3, p[3], carry);
+  let (r6, carry) = mac_p256_field_limb_3(r6, r3, carry);
   let (r7, r8) = adc_limb(r7, carry2, carry);
 
   sub_p256_field_once([r4, r5, r6, r7, r8])
+}
+
+/// `acc + value·p[1] + value` for `p[1] = 2^32 - 1`, which is `acc + value·2^32`.
+#[inline(always)]
+fn mac_p256_field_limb_1_plus_value(acc: u64, value: u64) -> (u64, u64) {
+  let (low, carry) = adc_limb(acc, value << 32, 0);
+  (low, (value >> 32).strict_add(carry))
+}
+
+/// `acc + value·p[3] + carry` for `p[3] = 2^64 - 2^32 + 1`.
+#[inline(always)]
+fn mac_p256_field_limb_3(acc: u64, value: u64, carry: u64) -> (u64, u64) {
+  // value·p[3] = value·2^64 - value·2^32 + value, as a 128-bit (high, low) pair.
+  let (product_low, borrow) = sbb_limb(0, value << 32, 0);
+  let product_high = value.wrapping_sub(value >> 32).wrapping_sub(borrow);
+  let (product_low, product_carry) = adc_limb(product_low, value, 0);
+  let product_high = product_high.wrapping_add(product_carry);
+  let (result, carry0) = adc_limb(product_low, acc, 0);
+  let (result, carry1) = adc_limb(result, carry, 0);
+  let (high, overflow0) = adc_limb(product_high, carry0, 0);
+  let (high, overflow1) = adc_limb(high, carry1, 0);
+  // value·p[3] + acc + carry is below 2^128, so the high limb cannot overflow.
+  debug_assert_eq!(overflow0 | overflow1, 0);
+  (result, high)
+}
+
+/// Montgomery square in the P-256 field: six cross products, doubled, plus four squares.
+fn montgomery_square_p256_field(value: [u64; 4]) -> Uint<4> {
+  let [a0, a1, a2, a3] = value;
+  let (w1, carry) = mac_limb(0, a0, a1, 0);
+  let (w2, carry) = mac_limb(0, a0, a2, carry);
+  let (w3, w4) = mac_limb(0, a0, a3, carry);
+  let (w3, carry) = mac_limb(w3, a1, a2, 0);
+  let (w4, w5) = mac_limb(w4, a1, a3, carry);
+  let (w5, w6) = mac_limb(w5, a2, a3, 0);
+
+  // The cross terms are below 2^448, so the doubled sum keeps its top bit in w7.
+  let w7 = w6 >> 63;
+  let w6 = (w6 << 1) | (w5 >> 63);
+  let w5 = (w5 << 1) | (w4 >> 63);
+  let w4 = (w4 << 1) | (w3 >> 63);
+  let w3 = (w3 << 1) | (w2 >> 63);
+  let w2 = (w2 << 1) | (w1 >> 63);
+  let w1 = w1 << 1;
+
+  let (s0_low, s0_high) = mul_u64_wide(a0, a0);
+  let (s1_low, s1_high) = mul_u64_wide(a1, a1);
+  let (s2_low, s2_high) = mul_u64_wide(a2, a2);
+  let (s3_low, s3_high) = mul_u64_wide(a3, a3);
+  let (w1, carry) = adc_limb(w1, s0_high, 0);
+  let (w2, carry) = adc_limb(w2, s1_low, carry);
+  let (w3, carry) = adc_limb(w3, s1_high, carry);
+  let (w4, carry) = adc_limb(w4, s2_low, carry);
+  let (w5, carry) = adc_limb(w5, s2_high, carry);
+  let (w6, carry) = adc_limb(w6, s3_low, carry);
+  let (w7, overflow) = adc_limb(w7, s3_high, carry);
+  // The square is below 2^512.
+  debug_assert_eq!(overflow, 0);
+
+  montgomery_reduce_p256_field([s0_low, w1, w2, w3, w4, w5, w6, w7])
 }
 
 fn sub_p256_field_once(limbs: [u64; 5]) -> Uint<4> {
@@ -5217,6 +5288,62 @@ mod tests {
         .strict_add(u128::from(acc))
         .strict_add(u128::from(carry));
       assert_eq!(mac_limb(acc, lhs, rhs, carry), split_u128(expected));
+    }
+  }
+
+  // The P-256 field multiply and square specialize the reduction and the squaring. The generic
+  // word-serial Montgomery loop, reached through a copy of the modulus at another address, is
+  // their oracle.
+  static P256_FIELD_MODULUS_GENERIC: Modulus<4> = Modulus {
+    value: P256_FIELD,
+    n0_inv: 0x0000_0000_0000_0001,
+    r2: Uint([
+      0x0000_0000_0000_0003,
+      0xffff_fffb_ffff_ffff,
+      0xffff_ffff_ffff_fffe,
+      0x0000_0004_ffff_fffd,
+    ]),
+  };
+
+  #[test]
+  fn p256_field_multiply_and_square_match_generic_montgomery() {
+    let generic = &P256_FIELD_MODULUS_GENERIC;
+    assert!(!is_p256_field_modulus(generic));
+    let p = P256_FIELD.0;
+    let edges = [
+      Uint::ZERO,
+      Uint::ONE,
+      Uint::from_u64(2),
+      Uint([p[0].strict_sub(1), p[1], p[2], p[3]]),
+      Uint([p[0].strict_sub(2), p[1], p[2], p[3]]),
+      Uint([u64::MAX, u64::MAX, u64::MAX, p[3].strict_sub(1)]),
+      Uint([0, 0, 0, 1u64 << 63]),
+      Uint([u64::MAX, 0, 0, 0]),
+      Uint([0, u64::MAX, 0, 0]),
+      Uint([0, 0, u64::MAX, 0]),
+      P256_FIELD_MODULUS.r2,
+    ];
+    let mut values = [Uint::ZERO; 267];
+    values[..edges.len()].copy_from_slice(&edges);
+    let mut state = 0x6a09_e667_f3bc_c908u64;
+    for value in &mut values[edges.len()..] {
+      let mut limbs = [0u64; 4];
+      for limb in &mut limbs {
+        state = state
+          .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+          .wrapping_add(0x632b_e59b_d9b4_e019);
+        *limb = state;
+      }
+      // A top limb below 2^63 keeps the value below p.
+      limbs[3] &= u64::MAX >> 1;
+      *value = Uint(limbs);
+    }
+    for &a in &values {
+      assert!(montgomery_square(a, &P256_FIELD_MODULUS) == montgomery_mul(a, a, generic));
+      for &b in values.iter().take(24) {
+        assert!(montgomery_mul(a, b, &P256_FIELD_MODULUS) == montgomery_mul(a, b, generic));
+        assert!(montgomery_mul(b, a, &P256_FIELD_MODULUS) == montgomery_mul(a, b, generic));
+      }
     }
   }
 
