@@ -1096,9 +1096,8 @@ pub fn diag_rsa_validate_spki_public_key_der(
 #[doc(hidden)]
 pub fn diag_rsa_precompute_public_montgomery_r2(modulus: &[u8]) -> Result<u64, RsaKeyError> {
   let policy = RsaPublicKeyPolicy::default();
-  validate_modulus(modulus, &policy)?;
-  let limbs = limbs_from_be(modulus);
-  let r2 = public_montgomery_r2(&limbs);
+  let modulus_bits = validate_modulus(modulus, &policy)?;
+  let r2 = public_montgomery_r2(&RsaPublicModulus::new(modulus, modulus_bits));
   Ok(limb_checksum(&r2))
 }
 
@@ -6104,16 +6103,17 @@ impl RsaPublicScratch {
     let mut montgomery = Vec::with_capacity(limbs.strict_mul(2));
     montgomery.extend_from_slice(&key.modulus.limbs);
     montgomery.resize(limbs.strict_mul(2), 0);
-    let mut montgomery = montgomery.into_boxed_slice();
-    let (_, r2) = montgomery.split_at_mut(limbs);
-    public_montgomery_r2_into(r2, &key.modulus.limbs);
-    Self {
-      montgomery,
+    let mut scratch = Self {
+      montgomery: montgomery.into_boxed_slice(),
       limbs: vec![0u64; limbs.strict_mul(6).strict_add(2)].into_boxed_slice(),
       bytes: vec![0u8; bytes.strict_mul(3)].into_boxed_slice(),
       limb_count: limbs,
       byte_count: bytes,
-    }
+    };
+    let RsaPublicArithmeticScratch { r2, t, tmp, .. } = scratch.arithmetic_scratch();
+    key.modulus.montgomery_r2_into(r2, tmp, t);
+    scratch.limbs.fill(0);
+    scratch
   }
 
   fn arithmetic_scratch(&mut self) -> RsaPublicArithmeticScratch<'_> {
@@ -6212,18 +6212,29 @@ impl RsaPublicModulus {
   fn new_inner(bytes: &[u8], bits: usize, precompute_r2: bool) -> Self {
     let limbs = limbs_from_be(bytes);
     let n0 = montgomery_n0(limbs.first().copied().unwrap_or(1));
-    let r2 = precompute_r2.then(|| public_montgomery_r2(&limbs));
-    Self {
+    let mut modulus = Self {
       bytes: Box::from(bytes),
       limbs: limbs.into_boxed_slice(),
-      r2,
+      r2: None,
       bits,
       n0,
+    };
+    if precompute_r2 {
+      modulus.r2 = Some(public_montgomery_r2(&modulus));
     }
+    modulus
   }
 
   fn montgomery_r2(&self) -> Option<&[u64]> {
     self.r2.as_deref()
+  }
+
+  /// Write `R² mod n` into `r2`, copying the precomputed value when this modulus has one.
+  fn montgomery_r2_into(&self, r2: &mut [u64], tmp: &mut [u64], t: &mut [u64]) {
+    match self.montgomery_r2() {
+      Some(precomputed) => r2.copy_from_slice(precomputed),
+      None => public_montgomery_r2_into(r2, self, tmp, t),
+    }
   }
 
   fn public_operation(
@@ -6382,7 +6393,7 @@ impl RsaPublicModulus {
       return Err(RsaPublicOpError::InvalidScratch);
     }
     if scratch.modulus != self.limbs.as_ref() {
-      public_montgomery_r2_into(scratch.r2, &self.limbs);
+      self.montgomery_r2_into(scratch.r2, scratch.tmp, scratch.t);
       scratch.modulus.copy_from_slice(&self.limbs);
     }
     Ok(())
@@ -10620,16 +10631,33 @@ fn limb_bit_len(limbs: &[u64]) -> usize {
   0
 }
 
-fn public_montgomery_r2(limbs: &[u64]) -> Box<[u64]> {
-  let mut r2 = vec![0u64; limbs.len()];
-  public_montgomery_r2_into(&mut r2, limbs);
+fn public_montgomery_r2(modulus: &RsaPublicModulus) -> Box<[u64]> {
+  let limbs = modulus.limbs.len();
+  let mut r2 = vec![0u64; limbs];
+  let mut tmp = vec![0u64; limbs];
+  let mut t = vec![0u64; limbs.strict_mul(2).strict_add(2)];
+  public_montgomery_r2_into(&mut r2, modulus, &mut tmp, &mut t);
   r2.into_boxed_slice()
 }
 
-fn public_montgomery_r2_into(r2: &mut [u64], limbs: &[u64]) {
-  debug_assert_eq!(r2.len(), limbs.len());
-  r2.fill(0);
-  pow2_mod_into(r2, limbs.len().strict_mul(128), limbs);
+/// Write `R² mod n` for `R = 2^(64·L)` and the odd `L`-limb public modulus `n`.
+///
+/// Doubling from `2^(bits(n) - 1)` reaches `2^(65·L) mod n`, the Montgomery form of `2^L`.
+/// A Montgomery squaring maps the Montgomery form of `2^k` to that of `2^(2·k)`, so six
+/// squarings reach the Montgomery form of `2^(64·L) = R`, which is `R² mod n`. For a modulus
+/// that fills its top limb, this takes `L + 1` doublings instead of `64·L + 1`.
+fn public_montgomery_r2_into(r2: &mut [u64], modulus: &RsaPublicModulus, tmp: &mut [u64], t: &mut [u64]) {
+  let limbs = modulus.limbs.len();
+  debug_assert_eq!(r2.len(), limbs);
+  debug_assert_eq!(modulus.limbs.first().copied().unwrap_or(0) & 1, 1);
+  pow2_mod_into(r2, limbs.strict_mul(65), &modulus.limbs);
+  for _ in 0..6 {
+    if use_public_cios_montgomery(modulus) {
+      mont_square_cios_in_place(r2, tmp, modulus, t);
+    } else {
+      mont_square_in_place(r2, tmp, modulus, t);
+    }
+  }
 }
 
 fn private_montgomery_r2(modulus: &[u8]) -> Result<Box<[u64]>, RsaKeyError> {
@@ -15909,7 +15937,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         let modulus = rsa_montgomery_test_modulus(words);
         let a = rsa_montgomery_test_limbs(words, 0x243f_6a88_85a3_08d3);
         let b = rsa_montgomery_test_limbs(words, 0x1319_8a2e_0370_7344);
-        let r2 = public_montgomery_r2(&modulus.limbs);
+        let r2 = public_montgomery_r2(&modulus);
         let scratch_words = $backend::bignum_mont_scratch_words(words);
         let mut asm_t = vec![0u64; scratch_words];
         let mut portable_t = vec![0u64; words.strict_mul(2).strict_add(2)];
@@ -16013,7 +16041,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       let modulus = rsa_montgomery_test_modulus(words);
       let a = rsa_montgomery_test_limbs(words, 0x243f_6a88_85a3_08d3);
       let b = rsa_montgomery_test_limbs(words, 0x1319_8a2e_0370_7344);
-      let r2 = public_montgomery_r2(&modulus.limbs);
+      let r2 = public_montgomery_r2(&modulus);
       let scratch_words = rsa_x86_64_asm::bignum_mont_scratch_words(words);
       let mut asm_t = vec![0u64; scratch_words];
       let mut portable_t = vec![0u64; words.strict_mul(2).strict_add(2)];
@@ -16142,6 +16170,60 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
           reference_double_mod_in_place(&mut naive, &modulus);
         }
         assert_eq!(optimized, naive, "pow2_mod_into mismatch at {bits} bits");
+      }
+    }
+  }
+
+  #[test]
+  fn public_montgomery_r2_matches_doubling_definition() {
+    // Widths cover every Montgomery assembly width, the portable CIOS widths around them,
+    // and the product-scanning path above 128 limbs. Short top limbs exercise extra doublings.
+    let widths: &[usize] = if cfg!(miri) {
+      &[1, 2, 3]
+    } else {
+      &[1, 2, 3, 15, 16, 24, 31, 32, 33, 48, 64, 65, 127, 128, 129]
+    };
+    let mut state = 0x6a09_e667_f3bc_c908u64;
+    for &words in widths {
+      for top in [0xffu8, 0x80, 0x01] {
+        let mut bytes = vec![0u8; words.strict_mul(8)];
+        for byte in &mut bytes {
+          state ^= state << 13;
+          state ^= state >> 7;
+          state ^= state << 17;
+          *byte = state.to_le_bytes()[0];
+        }
+        bytes[0] = top;
+        *bytes.last_mut().expect("modulus width must be nonzero") |= 1;
+        let modulus = RsaPublicModulus::new(&bytes, unsigned_be_bit_len(&bytes));
+
+        let mut expected = vec![0u64; words];
+        expected[0] = 1;
+        for _ in 0..words.strict_mul(128) {
+          reference_double_mod_in_place(&mut expected, &modulus.limbs);
+        }
+
+        assert_eq!(
+          &*public_montgomery_r2(&modulus),
+          expected.as_slice(),
+          "{words} limbs, top byte {top:#04x}"
+        );
+        let precomputed = RsaPublicModulus::new_with_montgomery_r2(&bytes, modulus.bits);
+        assert_eq!(
+          precomputed.montgomery_r2(),
+          Some(expected.as_slice()),
+          "precomputed R² for {words} limbs"
+        );
+        let key = RsaPublicKey {
+          modulus,
+          exponent: RsaPublicExponent(65_537),
+        };
+        let scratch = key.public_scratch();
+        assert_eq!(
+          &scratch.montgomery[words..],
+          expected.as_slice(),
+          "scratch R² for {words} limbs"
+        );
       }
     }
   }
