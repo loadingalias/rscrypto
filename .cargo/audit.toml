@@ -8,4 +8,11 @@ ignore = [
   # and P-256 oracles. It is absent from rscrypto's normal/build dependency
   # graph across all targets/features. Remove when upstream replaces it.
   "RUSTSEC-2026-0173",
+  # rustls-webpki 0.104.0-alpha.7 may accept paths through distrusted emSign
+  # intermediates. The pinned rustls 0.24.0-dev.2 (git and crates.io) requires
+  # exactly =0.104.0-alpha.7, so alpha.8 cannot enter the graph yet. The affected
+  # provider, rscrypto-rustls, is unpublished (publish = false). Added 2026-10-20;
+  # remove when upstream rustls adopts >=0.104.0-alpha.8, then move the pin and
+  # rscrypto-rustls's exact rustls-webpki requirement to that version.
+  "RUSTSEC-2026-0382",
 ]
