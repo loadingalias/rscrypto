@@ -10084,8 +10084,7 @@ fn private_exponentiate_window(
     selected,
   } = workspace;
   for _ in 0..4 {
-    private_mont_mul(squared, acc, acc, modulus, t);
-    acc.copy_from_slice(squared);
+    private_mont_square_in_place(acc, squared, modulus, t);
   }
 
   private_select_window_power(selected, table, window);
@@ -10274,6 +10273,17 @@ fn private_mont_mul(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicMo
     mont_mul_cios(out, a, b, modulus, t);
   } else {
     mont_mul(out, a, b, modulus, t);
+  }
+}
+
+/// Square `value` in place with the same width selection as `private_mont_mul`.
+///
+/// The square kernels compute exactly `value² · R⁻¹ mod n`; `tmp` is scratch.
+fn private_mont_square_in_place(value: &mut [u64], tmp: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
+  if use_cios_montgomery(modulus) {
+    mont_square_cios_in_place(value, tmp, modulus, t);
+  } else {
+    mont_square_in_place(value, tmp, modulus, t);
   }
 }
 
