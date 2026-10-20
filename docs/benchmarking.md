@@ -915,7 +915,10 @@ Matching ignores case and punctuation, so `password-hashing` selects the `passwo
 
 Default targets are the catalog's `required` Criterion targets.
 A target with an `external` prerequisite is never a default target.
-`tls_connections` needs OpenSSL 4.0.3, so select it, or its `tls-provider` algorithm, explicitly and run it locally.
+`tls_connections` needs OpenSSL 4.0.3 and is excluded from default runs.
+`tls-provider` is its umbrella group for discovery.
+Measure one `tls-handshake-<credential>` or scenario algorithm per invocation; the complete umbrella exceeds the run budget.
+The [TLS benchmark guide](../tools/provider-bench/README.md) defines every family and its comparison boundary.
 
 `filter=<pattern>` limits the selected algorithms or targets.
 For example, `sha256 filter=rscrypto` stays within SHA-256, but `sha2 filter=rscrypto` searches the whole SHA-2 target.

@@ -154,6 +154,10 @@ def partitions(catalog, diag: bool) -> dict[tuple, dict[str, str]]:
   """Map the build of each split target to the algorithm filters that must partition its cases."""
   result = {}
   for name, bench in catalog["benches"].items():
+    # Independent targets cannot be selected with diagnostics. Their partitions
+    # must not reject an unrelated root-workspace diagnostic selection.
+    if diag and "manifest" in bench:
+      continue
     if bench.get("split") == "algorithms":
       result[configuration(target(catalog, name, diag))] = {
         algorithm: row["filter"] for algorithm, row in catalog["algorithms"].items() if row["bench"] == name}

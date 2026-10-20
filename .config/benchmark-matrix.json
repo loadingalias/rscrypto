@@ -3,6 +3,7 @@
   "benches": {
     "tls_connections": {
       "binary": "tls_connections",
+      "split": "algorithms",
       "manifest": "tools/provider-bench/Cargo.toml",
       "kind": "criterion",
       "family": "tls",
@@ -236,7 +237,21 @@
     }
   },
   "algorithms": {
-    "tls-provider": { "bench": "tls_connections", "filter": "^tls13/" },
+    "tls-handshake-p256": { "bench": "tls_connections", "filter": "^tls13/handshake/p256/" },
+    "tls-handshake-p384": { "bench": "tls_connections", "filter": "^tls13/handshake/p384/" },
+    "tls-handshake-ed25519": { "bench": "tls_connections", "filter": "^tls13/handshake/ed25519/" },
+    "tls-handshake-rsa3072": { "bench": "tls_connections", "filter": "^tls13/handshake/rsa3072/" },
+    "tls-handshake-mldsa44": { "bench": "tls_connections", "filter": "^tls13/handshake/mldsa44/" },
+    "tls-handshake-mldsa65": { "bench": "tls_connections", "filter": "^tls13/handshake/mldsa65/" },
+    "tls-handshake-mldsa87": { "bench": "tls_connections", "filter": "^tls13/handshake/mldsa87/" },
+    "tls-server-auth": { "bench": "tls_connections", "filter": "^tls13/server-auth/" },
+    "tls-intermediate": { "bench": "tls_connections", "filter": "^tls13/intermediate/" },
+    "tls-stateful": { "bench": "tls_connections", "filter": "^tls13/stateful/" },
+    "tls-rsa": { "bench": "tls_connections", "filter": "^tls13/rsa/" },
+    "tls-hrr": { "bench": "tls_connections", "filter": "^tls13/hrr/" },
+    "tls-compact-key": { "bench": "tls_connections", "filter": "^tls13/compact-key/" },
+    "tls-traffic": { "bench": "tls_connections", "filter": "^tls13/traffic/" },
+    "tls-traffic-bidirectional": { "bench": "tls_connections", "filter": "^tls13/traffic-bidirectional/" },
     "crc16-ccitt": { "bench": "crc", "filter": "crc16-ccitt" },
     "crc16-ibm": { "bench": "crc", "filter": "crc16-ibm" },
     "crc24-openpgp": { "bench": "crc", "filter": "crc24-openpgp" },
@@ -332,6 +347,23 @@
     "chacha20-poly1305-diag": { "bench": "aead_diag", "filter": "chacha20-poly1305/copy-and-encrypt" }
   },
   "groups": {
+    "tls-provider": [
+      "tls-handshake-p256",
+      "tls-handshake-p384",
+      "tls-handshake-ed25519",
+      "tls-handshake-rsa3072",
+      "tls-handshake-mldsa44",
+      "tls-handshake-mldsa65",
+      "tls-handshake-mldsa87",
+      "tls-server-auth",
+      "tls-intermediate",
+      "tls-stateful",
+      "tls-rsa",
+      "tls-hrr",
+      "tls-compact-key",
+      "tls-traffic",
+      "tls-traffic-bidirectional"
+    ],
     "checksums": [
       "crc16-ccitt",
       "crc16-ibm",
@@ -534,6 +566,20 @@
     }
   },
   "comparisons": {
+    "tls-handshakes": {
+      "family": "TLS",
+      "bench": "tls_connections",
+      "cases": "^tls13/(?P<variant>handshake|server-auth|intermediate|stateful|rsa|hrr)/(?P<input>[^/]+/[^/]+/[^/]+/[^/]+)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Complete the named TLS 1.3 handshake on both endpoints, including connection construction, transport copies, ticket processing and destruction; configuration and key import are untimed."
+    },
+    "tls-traffic": {
+      "family": "TLS",
+      "bench": "tls_connections",
+      "cases": "^tls13/(?P<variant>traffic|traffic-bidirectional)/(?P<input>[^/]+/[0-9]+)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Encrypt, transport, authenticate and copy application bytes on a reused connection; the size is per direction, and bidirectional throughput counts both directions."
+    },
     "crc": {
       "family": "CRC",
       "bench": "crc",

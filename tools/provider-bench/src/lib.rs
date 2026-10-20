@@ -25,6 +25,13 @@ mod provenance;
 pub use provenance::provenance;
 
 pub const CREDENTIALS: [&str; 7] = ["p256", "p384", "ed25519", "rsa3072", "mldsa44", "mldsa65", "mldsa87"];
+pub const RSA_CREDENTIALS: [&str; 5] = [
+  "rsa3072-sha384",
+  "rsa3072-sha512",
+  "rsa4096",
+  "rsa4096-sha384",
+  "rsa4096-sha512",
+];
 pub const GROUPS: [&str; 4] = ["X25519", "secp256r1", "secp384r1", "X25519MLKEM768"];
 pub const SUITES: [&str; 3] = ["AES128-GCM-SHA256", "AES256-GCM-SHA384", "CHACHA20-POLY1305-SHA256"];
 /// `rscrypto` installs the provider's prepared-anchor verifiers, its recommended
@@ -54,6 +61,18 @@ pub struct Profile<'a> {
   pub resumed: bool,
 }
 
+/// One change from the original mutually authenticated, leaf-only workload.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Workload {
+  #[default]
+  Mutual,
+  ServerAuth,
+  Intermediate,
+  Stateful,
+  HelloRetryRequest,
+  CompactKey,
+}
+
 #[expect(clippy::panic, reason = "the benchmark catalog must select known workload values")]
 fn canonical(values: &[&'static str], value: &str) -> &'static str {
   values
@@ -66,7 +85,10 @@ fn canonical(values: &[&'static str], value: &str) -> &'static str {
 impl Profile<'_> {
   fn canonical(self) -> Profile<'static> {
     Profile {
-      credential: canonical(&CREDENTIALS, self.credential),
+      credential: canonical(
+        &CREDENTIALS.into_iter().chain(RSA_CREDENTIALS).collect::<Vec<_>>(),
+        self.credential,
+      ),
       group: canonical(&GROUPS, self.group),
       suite: canonical(&SUITES, self.suite),
       resumed: self.resumed,
@@ -288,12 +310,14 @@ impl<S: SideData> Endpoint<S> {
   /// Fail unless this endpoint completed exactly the selected handshake.
   /// rustls reports a HelloRetryRequest as its own kind; the flight count
   /// catches one on every stack.
-  fn assert_kind(&self, resumed: bool, side: &str) {
+  fn assert_kind(&self, resumed: bool, retry: bool, side: &str) {
     match self {
       Self::Rustls(peer) => assert_eq!(
         peer.connection.handshake_kind(),
         Some(if resumed {
           rustls::HandshakeKind::Resumed
+        } else if retry {
+          rustls::HandshakeKind::FullWithHelloRetryRequest
         } else {
           rustls::HandshakeKind::Full
         }),
@@ -317,10 +341,11 @@ impl<S: SideData> Endpoint<S> {
     }
     bytes
   }
-  /// Check the negotiated suite, group, ALPN and the peer's leaf-only chain.
+  /// Check the negotiated suite, group, ALPN and the expected peer identity.
   #[expect(clippy::panic, reason = "a wrong negotiation invalidates this benchmark fixture")]
-  fn check(&self, profile: Profile<'_>, side: &str) {
-    let (_, leaf, _) = credentials::der(profile.credential);
+  fn check(&self, profile: Profile<'_>, workload: Workload, side: &str) {
+    let credential = credentials::der(profile.credential, workload);
+    let authenticated = side == "client" || workload != Workload::ServerAuth;
     match self {
       Self::Rustls(peer) => {
         let connection = &peer.connection;
@@ -345,13 +370,20 @@ impl<S: SideData> Endpoint<S> {
         );
         match connection.peer_identity().map(|identity| identity.identity()) {
           Some(Identity::X509(chain)) => {
-            assert!(chain.intermediates.is_empty(), "{side} received a leaf-only chain");
-            assert_eq!(chain.end_entity.as_ref(), leaf, "{side} peer leaf");
+            assert!(authenticated, "{side} must have no peer identity");
+            assert_eq!(chain.end_entity.as_ref(), credential.leaf, "{side} peer leaf");
+            let expected = credential
+              .intermediate
+              .into_iter()
+              .map(rustls::pki_types::CertificateDer::from)
+              .collect::<Vec<_>>();
+            assert_eq!(chain.intermediates, expected, "{side} intermediate chain");
           }
+          None if !authenticated => {}
           _ => panic!("{side} peer certificate identity"),
         }
       }
-      Self::OpenSsl(peer) => peer.check(profile, leaf, side),
+      Self::OpenSsl(peer) => peer.check(profile, credential, authenticated, side),
     }
   }
   fn send(&mut self, bytes: &[u8]) {
@@ -391,7 +423,7 @@ impl Pair {
     clippy::panic,
     reason = "a stalled production handshake invalidates this bounded benchmark fixture"
   )]
-  fn handshake(mut self, resumed: bool, flights: usize) -> Self {
+  fn handshake(mut self, resumed: bool, retry: bool, flights: usize) -> Self {
     for _ in 0..64 {
       fn step<S: SideData>(endpoint: &mut Endpoint<S>, client: bool, flights: &mut Vec<(bool, usize)>) {
         let before = endpoint.pipe().written();
@@ -408,8 +440,8 @@ impl Pair {
         && !self.client.pipe().pending()
         && !self.server.pipe().pending()
       {
-        self.client.assert_kind(resumed, "client");
-        self.server.assert_kind(resumed, "server");
+        self.client.assert_kind(resumed, retry, "client");
+        self.server.assert_kind(resumed, retry, "server");
         // ClientHello, server flight, client flight, then the ticket flight
         // when tickets are issued. A HelloRetryRequest adds two flights.
         assert_eq!(self.flights.len(), flights, "TLS flight count");
@@ -422,9 +454,35 @@ impl Pair {
   /// Transfer application bytes in one direction, including both record endpoints.
   pub fn transfer(&mut self, bytes: &[u8], output: &mut [u8]) {
     assert_eq!(bytes.len(), output.len());
-    self.client.send(bytes);
-    self.server.step();
-    self.server.receive(output);
+    for (input, output) in bytes.chunks(MAX_PLAINTEXT).zip(output.chunks_mut(MAX_PLAINTEXT)) {
+      self.client.send(input);
+      self.server.step();
+      self.server.receive(output);
+    }
+  }
+
+  /// Send both directions before receiving each pair of records. `output` holds
+  /// client-to-server bytes followed by server-to-client bytes; inputs differ.
+  pub fn transfer_both(&mut self, client_bytes: &[u8], server_bytes: &[u8], output: &mut [u8]) {
+    assert_eq!(client_bytes.len(), server_bytes.len());
+    assert_eq!(output.len(), client_bytes.len().strict_mul(2));
+    let (server_output, client_output) = output.split_at_mut(client_bytes.len());
+    for ((client_input, server_input), (server_output, client_output)) in client_bytes
+      .chunks(MAX_PLAINTEXT)
+      .zip(server_bytes.chunks(MAX_PLAINTEXT))
+      .zip(
+        server_output
+          .chunks_mut(MAX_PLAINTEXT)
+          .zip(client_output.chunks_mut(MAX_PLAINTEXT)),
+      )
+    {
+      self.client.send(client_input);
+      self.server.send(server_input);
+      self.client.step();
+      self.server.step();
+      self.server.receive(server_output);
+      self.client.receive(client_output);
+    }
   }
 
   pub fn wire_report(&self) -> Value {
@@ -442,18 +500,36 @@ enum Configs {
 pub struct Fixture {
   configs: Configs,
   profile: Profile<'static>,
+  workload: Workload,
   /// TLS 1.3 tickets the client has accepted, across all connections.
   tickets: Arc<AtomicUsize>,
 }
 
 impl Fixture {
-  #[expect(clippy::panic, reason = "the benchmark catalog must select known workload values")]
   pub fn new(backend: &str, profile: Profile<'_>) -> Self {
+    Self::with_workload(backend, profile, Workload::Mutual)
+  }
+
+  #[expect(clippy::panic, reason = "the benchmark catalog must select known workload values")]
+  pub fn with_workload(backend: &str, profile: Profile<'_>, workload: Workload) -> Self {
     assert!(supports(backend, profile), "{backend} does not implement this profile");
+    assert!(
+      workload != Workload::Stateful || profile.resumed,
+      "stateful resumption needs a resumed profile"
+    );
+    assert!(
+      workload != Workload::HelloRetryRequest || (!profile.resumed && profile.group == "secp256r1"),
+      "retry requests P-256 after X25519"
+    );
+    assert!(
+      workload != Workload::CompactKey
+        || (backend.starts_with("rscrypto") && profile.credential.starts_with("mldsa") && !profile.resumed),
+      "compact signing is an rscrypto ML-DSA workload"
+    );
     let profile = profile.canonical();
     let tickets = Arc::new(AtomicUsize::new(0));
     let configs = if backend == "openssl" {
-      Configs::OpenSsl(openssl_peer::Configs::new(profile, tickets.clone()))
+      Configs::OpenSsl(openssl_peer::Configs::new(profile, workload, tickets.clone()))
     } else {
       let (mut provider, all) = match backend {
         "rscrypto" | "rscrypto-webpki" => (
@@ -468,6 +544,11 @@ impl Fixture {
         _ => panic!("unknown benchmark backend"),
       };
       let (group, suite) = (group(profile.group), suite(profile.suite));
+      let retry_group = provider
+        .kx_groups
+        .iter()
+        .find(|entry| entry.name() == NamedGroup::X25519)
+        .copied();
       provider.kx_groups.to_mut().retain(|entry| entry.name() == group);
       provider
         .tls13_cipher_suites
@@ -485,7 +566,30 @@ impl Fixture {
       assert_eq!(provider.kx_groups.len(), 1);
       assert_eq!(provider.tls13_cipher_suites.len(), 1);
       let ticketer = provider.ticketer_factory;
-      let (mut client, mut server) = credentials::configs(provider, profile.credential, backend == "rscrypto");
+      if workload == Workload::CompactKey {
+        #[cfg(feature = "ml-dsa")]
+        {
+          static COMPACT: rscrypto_rustls::sign::Provider =
+            rscrypto_rustls::sign::Provider::new(rscrypto_rustls::random::SECURE_RANDOM).compact();
+          provider.key_provider = &COMPACT;
+        }
+        #[cfg(not(feature = "ml-dsa"))]
+        panic!("compact ML-DSA requires the ml-dsa feature");
+      }
+      let mut client_provider = provider.clone();
+      if workload == Workload::HelloRetryRequest {
+        client_provider
+          .kx_groups
+          .to_mut()
+          .insert(0, retry_group.expect("initial X25519 share"));
+      }
+      let (mut client, mut server) = credentials::configs(
+        client_provider,
+        provider,
+        profile.credential,
+        backend == "rscrypto",
+        workload,
+      );
       // rustls's default 256-entry store for resumed rows; no storage for full rows.
       let store = Resumption::store(Arc::new(CountingStore {
         inner: profile.resumed.then(|| ClientSessionMemoryCache::new(256)),
@@ -495,7 +599,12 @@ impl Fixture {
         client.resumption = store;
         // Each stack's production ticketer. OpenSSL issues at most one ticket
         // after a resumption, so every stack issues exactly one per connection.
-        server.ticketer = Some(ticketer.ticketer().expect("ticket key"));
+        if workload == Workload::Stateful {
+          server.ticketer = None;
+          server.session_storage = rustls::server::ServerSessionMemoryCache::new(256);
+        } else {
+          server.ticketer = Some(ticketer.ticketer().expect("ticket key"));
+        }
         server.send_tls13_tickets = rustls::server::Tls13Tickets { default: 1, max: 1 };
       } else {
         client.resumption = store.tls12_resumption(Tls12Resumption::Disabled);
@@ -506,6 +615,7 @@ impl Fixture {
     let fixture = Self {
       configs,
       profile,
+      workload,
       tickets,
     };
     // Seed the client cache once; every timed resumed connection must consume a
@@ -520,7 +630,7 @@ impl Fixture {
   }
 
   /// A connection like [`Self::connect`], checked outside timing: ticket count,
-  /// exporter equality, negotiated suite, group and ALPN, and leaf-only chains.
+  /// exporter equality, negotiated suite, group and ALPN, and peer identities.
   pub fn checked_connect(&self) -> Pair {
     self.checked(self.profile.resumed)
   }
@@ -538,8 +648,8 @@ impl Fixture {
       pair.server.exporter(),
       "independent endpoint exporters"
     );
-    pair.client.check(self.profile, "client");
-    pair.server.check(self.profile, "server");
+    pair.client.check(self.profile, self.workload, "client");
+    pair.server.check(self.profile, self.workload, "server");
     pair
   }
 
@@ -568,6 +678,16 @@ impl Fixture {
       server,
       flights: Vec::new(),
     }
-    .handshake(resumed, 3_usize.strict_add(usize::from(self.profile.resumed)))
+    .handshake(
+      resumed,
+      self.workload == Workload::HelloRetryRequest,
+      3_usize.strict_add(usize::from(self.profile.resumed)).strict_add(
+        if self.workload == Workload::HelloRetryRequest {
+          2
+        } else {
+          0
+        },
+      ),
+    )
   }
 }

@@ -39,23 +39,32 @@ def generate(openssl, output, profile):
         ]
         if profile == 'mldsa':
             profiles = [(f'mldsa{size}', f'ML-DSA-{size}', []) for size in (44, 65, 87)]
+        if profile == 'tls-bench':
+            profiles += [(f'mldsa{size}', f'ML-DSA-{size}', []) for size in (44, 65, 87)]
+            profiles = [(kind + '-chain', algorithm, options) for kind, algorithm, options in profiles]
+            profiles += [('rsa4096', 'RSA', ['-pkeyopt', 'rsa_keygen_bits:4096'])]
         for kind, algorithm, options in profiles:
-            for role in ('root', 'leaf'):
+            chain = kind.endswith('-chain')
+            roles = ('root', 'intermediate', 'leaf') if chain else ('root', 'leaf')
+            for serial, role in enumerate(roles, 1):
                 root = role == 'root'
+                ca = role != 'leaf'
                 run('genpkey', '-algorithm', algorithm, *options,
                     '-out', f'{kind}-{role}-key.pem')
                 args = ['req', '-new', '-x509', '-key', f'{kind}-{role}-key.pem',
                         '-subj', f'/CN=rscrypto provider test {kind} {role}',
-                        '-set_serial', '1' if root else '2',
+                        '-set_serial', str(serial),
                         '-not_before', '20260101000000Z', '-not_after', '20360101000000Z',
-                        '-addext', 'basicConstraints=critical,CA:TRUE,pathlen:0' if root
+                        '-addext', f'basicConstraints=critical,CA:TRUE,pathlen:{int(root and chain)}' if ca
                         else 'basicConstraints=critical,CA:FALSE',
-                        '-addext', 'keyUsage=critical,keyCertSign,cRLSign' if root
+                        '-addext', 'keyUsage=critical,keyCertSign,cRLSign' if ca
                         else 'keyUsage=critical,digitalSignature',
                         '-out', f'{kind}-{role}.pem']
                 if not root:
-                    args += ['-CA', f'{kind}-root.pem', '-CAkey', f'{kind}-root-key.pem',
-                             '-addext', 'subjectAltName=DNS:localhost',
+                    issuer = 'intermediate' if chain and not ca else 'root'
+                    args += ['-CA', f'{kind}-{issuer}.pem', '-CAkey', f'{kind}-{issuer}-key.pem']
+                if not ca:
+                    args += ['-addext', 'subjectAltName=DNS:localhost',
                              '-addext', 'extendedKeyUsage=serverAuth,clientAuth']
                 run(*args)
                 run('x509', '-in', f'{kind}-{role}.pem', '-outform', 'DER',
@@ -64,8 +73,11 @@ def generate(openssl, output, profile):
             run('pkcs8', '-topk8', '-nocrypt', '-in', key, '-outform', 'DER',
                 '-out', f'{kind}-leaf-key.der')
             for purpose in ('sslserver', 'sslclient'):
+                intermediates = ['-untrusted', f'{kind}-intermediate.pem'] if chain else []
                 run('verify', '-CAfile', f'{kind}-root.pem', '-purpose', purpose,
-                    f'{kind}-leaf.pem')
+                    *intermediates, f'{kind}-leaf.pem')
+            if profile == 'tls-bench':
+                continue
             run('pkey', '-in', key, '-pubout', '-outform', 'DER', '-out', f'{kind}-spki.der')
             if kind in ('p256', 'p384'):
                 run('ec', '-in', key, '-outform', 'DER', '-out', f'{kind}-sec1.der')
@@ -102,7 +114,7 @@ def generate(openssl, output, profile):
             run('dgst', '-sha256', '-sign', 'rsa2048-key.pem', '-sigopt', 'rsa_padding_mode:pss',
                 '-sigopt', 'rsa_pss_saltlen:digest', '-out', 'rsa2048-pss-sha256.sig', 'message.txt')
         for path in sorted(work.iterdir()):
-            if path.suffix in ('.der', '.sig') or path.name == 'message.txt':
+            if path.suffix in ('.der', '.sig') or (path.name == 'message.txt' and profile != 'tls-bench'):
                 shutil.copyfile(path, output / path.name)
     (output / 'SHA256SUMS').write_text(''.join(
         hashlib.sha256(path.read_bytes()).hexdigest() + '  ' + path.name + '\n'
@@ -116,7 +128,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path)
     parser.add_argument('--openssl', default='openssl')
-    parser.add_argument('--profile', choices=('classical', 'mldsa'), default='classical')
+    parser.add_argument('--profile', choices=('classical', 'mldsa', 'tls-bench'), default='classical')
     args = parser.parse_args()
     generate(args.openssl, args.output, args.profile)
 

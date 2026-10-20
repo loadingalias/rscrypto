@@ -1,11 +1,11 @@
-use crate::{MAX_PLAINTEXT, Pipe, Profile, credentials};
+use crate::{MAX_PLAINTEXT, Pipe, Profile, Workload, credentials};
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use openssl::{
   pkey::PKey,
   ssl::{
-    self, ErrorCode, Ssl, SslContext, SslContextBuilder, SslMethod, SslMode, SslSession, SslSessionCacheMode,
-    SslStream, SslVerifyMode, SslVersion,
+    self, ErrorCode, Ssl, SslContext, SslContextBuilder, SslMethod, SslMode, SslOptions, SslSession,
+    SslSessionCacheMode, SslStream, SslVerifyMode, SslVersion,
   },
   x509::X509,
 };
@@ -29,12 +29,17 @@ pub(crate) struct Configs {
 
 impl Configs {
   #[expect(clippy::panic, reason = "the benchmark catalog must select known workload values")]
-  pub(crate) fn new(profile: Profile<'_>, tickets: Arc<AtomicUsize>) -> Self {
+  pub(crate) fn new(profile: Profile<'_>, workload: Workload, tickets: Arc<AtomicUsize>) -> Self {
     assert!(
       openssl::version::version().starts_with("OpenSSL 4.0.3 "),
       "benchmark peer requires OpenSSL 4.0.3"
     );
-    let (root, leaf, key) = credentials::der(profile.credential);
+    let credentials::Credential {
+      root,
+      leaf,
+      key,
+      intermediate,
+    } = credentials::der(profile.credential, workload);
     let root = X509::from_der(root).expect("root DER");
     let leaf = X509::from_der(leaf).expect("leaf DER");
     let key = PKey::private_key_from_der(key).expect("key DER");
@@ -52,27 +57,42 @@ impl Configs {
         .expect("cipher suite");
       // One configured group: a completed handshake proves which group it used.
       assert!(!profile.group.contains(':'), "one key exchange group");
-      context.set_groups_list(profile.group).expect("group");
+      let groups = if !server && workload == Workload::HelloRetryRequest {
+        "*X25519:secp256r1"
+      } else {
+        profile.group
+      };
+      context.set_groups_list(groups).expect("group");
       context
         .set_sigalgs_list(match profile.credential {
           "p256" => "ecdsa_secp256r1_sha256",
           "p384" => "ecdsa_secp384r1_sha384",
           "ed25519" => "ed25519",
-          "rsa3072" => "rsa_pss_rsae_sha256:rsa_pkcs1_sha256",
+          "rsa3072" | "rsa4096" => "rsa_pss_rsae_sha256:rsa_pkcs1_sha256",
+          "rsa3072-sha384" | "rsa4096-sha384" => "rsa_pss_rsae_sha384:rsa_pkcs1_sha256",
+          "rsa3072-sha512" | "rsa4096-sha512" => "rsa_pss_rsae_sha512:rsa_pkcs1_sha256",
           "mldsa44" => "mldsa44",
           "mldsa65" => "mldsa65",
           "mldsa87" => "mldsa87",
           _ => panic!("unknown credential"),
         })
         .expect("matched CertificateVerify scheme");
-      context.set_certificate(&leaf).expect("certificate");
-      context.set_private_key(&key).expect("private key");
-      context.check_private_key().expect("matching key");
-      // Send the leaf alone, as the rustls endpoints do. Automatic chain
-      // building would verify the local chain on every connection and send the root.
+      if server || workload != Workload::ServerAuth {
+        context.set_certificate(&leaf).expect("certificate");
+        context.set_private_key(&key).expect("private key");
+        context.check_private_key().expect("matching key");
+        if let Some(intermediate) = intermediate {
+          context
+            .add_extra_chain_cert(X509::from_der(intermediate).expect("intermediate DER"))
+            .expect("chain");
+        }
+      }
+      // Send exactly the configured chain, without verifying it locally on each connection.
       context.set_mode(SslMode::NO_AUTO_CHAIN);
       context.cert_store_mut().add_cert(root.clone()).expect("trust root");
-      context.set_verify(if server {
+      context.set_verify(if server && workload == Workload::ServerAuth {
+        SslVerifyMode::NONE
+      } else if server {
         SslVerifyMode::PEER | SslVerifyMode::FAIL_IF_NO_PEER_CERT
       } else {
         SslVerifyMode::PEER
@@ -94,6 +114,12 @@ impl Configs {
           .set_num_tickets(usize::from(profile.resumed))
           .expect("ticket count");
         context.set_session_cache_mode(SslSessionCacheMode::SERVER);
+        context.set_session_cache_size(256);
+        if workload == Workload::Stateful {
+          // In TLS 1.3 NO_TICKET selects opaque references to the server cache.
+          // NewSessionTicket is still sent once, just as in rustls's stateful mode.
+          context.set_options(SslOptions::NO_TICKET);
+        }
       } else {
         // The callback alone keeps sessions, so the client holds one ticket at a
         // time and every accepted ticket is counted, as in the rustls store.
@@ -203,9 +229,14 @@ impl Endpoint {
       .export_keying_material(bytes, "provider-bench", Some(b"matched"))
       .expect("exporter");
   }
-  /// Check the negotiated suite, ALPN and the peer's leaf-only chain. The context
-  /// configures exactly one group, so the completed handshake used that group.
-  pub(crate) fn check(&self, profile: Profile<'_>, leaf: &[u8], side: &str) {
+  /// The server permits one group even when the client offers two for a retry.
+  pub(crate) fn check(
+    &self,
+    profile: Profile<'_>,
+    credential: credentials::Credential,
+    authenticated: bool,
+    side: &str,
+  ) {
     let ssl = self.stream.ssl();
     assert_eq!(
       ssl.current_cipher().and_then(|cipher| cipher.standard_name()),
@@ -213,14 +244,38 @@ impl Endpoint {
       "{side} cipher suite"
     );
     assert_eq!(ssl.selected_alpn_protocol(), Some(credentials::ALPN), "{side} ALPN");
+    if !authenticated {
+      assert!(ssl.peer_certificate().is_none(), "{side} must have no peer identity");
+      assert_eq!(
+        ssl.peer_cert_chain().map_or(0, |chain| chain.len()),
+        0,
+        "{side} must have no peer chain"
+      );
+      return;
+    }
     let peer = ssl.peer_certificate().expect("peer certificate");
-    assert_eq!(peer.to_der().expect("peer DER"), leaf, "{side} peer leaf");
+    assert_eq!(peer.to_der().expect("peer DER"), credential.leaf, "{side} peer leaf");
     // A client's chain includes the peer's leaf; a server's does not.
     let client = side == "client";
-    assert!(
-      ssl.peer_cert_chain().map_or(0, |chain| chain.len()) <= usize::from(client),
-      "{side} received a leaf-only chain"
-    );
+    let chain = ssl
+      .peer_cert_chain()
+      .map(|chain| {
+        chain
+          .iter()
+          .map(|cert| cert.to_der().expect("peer DER"))
+          .collect::<Vec<_>>()
+      })
+      .unwrap_or_default();
+    let expected = if client { Some(credential.leaf) } else { None }
+      .into_iter()
+      .chain(credential.intermediate)
+      .map(<[u8]>::to_vec)
+      .collect::<Vec<_>>();
+    // OpenSSL restores the peer certificate but not the transmitted chain on resumption.
+    if profile.resumed && chain.is_empty() {
+      return;
+    }
+    assert_eq!(chain, expected, "{side} peer chain");
   }
   pub(crate) fn send(&mut self, bytes: &[u8]) {
     self.stream.write_all(bytes).expect("OpenSSL application output");
