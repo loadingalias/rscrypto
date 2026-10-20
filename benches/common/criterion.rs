@@ -65,11 +65,17 @@ fn criterion() -> criterion::Criterion {
   let integer = |name: &str| config[name].as_u64().expect("integer Criterion setting");
   let fraction = |name: &str| config[name].as_f64().expect("fractional Criterion setting");
   let count = |name: &str| usize::try_from(integer(name)).expect("Criterion count fits usize");
-  let budget = integer("max_run_seconds");
+  let default_budget = integer("max_run_seconds");
   assert!(
-    (1..=600).contains(&budget),
-    "benchmark budget must be at most 10 minutes"
+    (1..=600).contains(&default_budget),
+    "ordinary benchmark budget must be at most 10 minutes"
   );
+  let budget = case_plan().map_or(default_budget, |plan| plan.budget_seconds);
+  assert!(
+    (1..=integer("max_comparison_seconds")).contains(&budget),
+    "benchmark budget exceeds the configured comparison limit"
+  );
+  eprintln!("Benchmark harness budget: {budget}s");
   // The orchestration watchdog bounds the entire multi-binary run. This also
   // bounds an individual harness invoked directly through Cargo.
   // WASI has no thread spawn; its engine process needs the external watchdog.
@@ -89,18 +95,29 @@ fn criterion() -> criterion::Criterion {
     .noise_threshold(fraction("noise_threshold"))
 }
 
-fn cases() -> Option<&'static [String]> {
-  static CASES: std::sync::OnceLock<Option<Vec<String>>> = std::sync::OnceLock::new();
-  CASES
+struct CasePlan {
+  cases: Vec<String>,
+  budget_seconds: u64,
+}
+
+fn case_plan() -> Option<&'static CasePlan> {
+  static PLAN: std::sync::OnceLock<Option<CasePlan>> = std::sync::OnceLock::new();
+  PLAN
     .get_or_init(|| {
       std::env::var_os("RSCRYPTO_BENCH_CASES").map(|path| {
         let data = std::fs::read(path).expect("read resolved benchmark cases");
-        let cases: Vec<String> = serde_json::from_slice(&data).expect("resolved benchmark case list");
+        let plan: serde_json::Value = serde_json::from_slice(&data).expect("resolved benchmark case plan");
+        let cases: Vec<String> = serde_json::from_value(plan["cases"].clone()).expect("resolved benchmark case list");
         assert!(!cases.is_empty(), "resolved case list must not be empty");
-        cases
+        let budget_seconds = plan["budget_seconds"].as_u64().expect("resolved benchmark budget");
+        CasePlan { cases, budget_seconds }
       })
     })
-    .as_deref()
+    .as_ref()
+}
+
+fn cases() -> Option<&'static [String]> {
+  case_plan().map(|plan| plan.cases.as_slice())
 }
 
 pub(crate) fn selected(prefix: &str) -> bool {

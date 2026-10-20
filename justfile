@@ -341,7 +341,7 @@ test-coverage:
 # Measure Criterion cases, or discover them with --list; --diag enables diagnostics.
 [group('benchmarks')]
 bench *args:
-    @python="$(scripts/lib/python.sh --print)"; "$python" scripts/bench/bounded.py "$python" scripts/bench/runner.py bench "$@"
+    @python="$(scripts/lib/python.sh --print)"; "$python" scripts/bench/bounded.py --bench "$@"
 
 # Stable instruction/cache-cost benchmarks. Requires gungraun-runner and Valgrind.
 [group('benchmarks')]

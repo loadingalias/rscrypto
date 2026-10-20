@@ -63,7 +63,11 @@ cases = {
                        'argon2id-parallel/rscrypto/p=4'],
   'blake2': ['blake2/rscrypto/blake2b256/64', 'blake2/dryoc/blake2b256/64', 'blake2/keyed/dryoc/blake2b256/64'],
   'crc': [name + '/rscrypto/64' for name in ('crc16-ccitt', 'crc16-ibm', 'crc24-openpgp', 'crc32', 'crc32c', 'crc64-xz', 'crc64-nvme')],
-  'slhdsa': ['slhdsa-sha2-128s/sign/deterministic-32/rscrypto', 'slhdsa-sha2-128s/hash-sign/sha256/deterministic-32/fips205',
+  'slhdsa': ['slhdsa-sha2-128s/keygen/fixed-seeds/rscrypto',
+             'slhdsa-sha2-128s/sign/deterministic-32/rscrypto', 'slhdsa-sha2-128s/sign/deterministic-32/rustcrypto',
+             'slhdsa-sha2-128s/sign/deterministic-32/fips205', 'slhdsa-sha2-128s/verify/32/rscrypto',
+             'slhdsa-sha2-128s/import/raw-secret/rscrypto', 'slhdsa-sha2-128s/hash-sign/sha256/deterministic-32/fips205',
+             'slhdsa-sha2-128s/hash-verify/sha256/32/fips205',
              'slhdsa-shake-256f/verify/32/rustcrypto', *filter(None, [os.environ.get('EXTRA_CASE')])],
 }.get(binary, [binary + '/rscrypto/64'])
 if binary == 'blake3' and 'diag' in pathlib.Path(sys.argv[0]).with_suffix('.features').read_text().split(','):
@@ -79,7 +83,9 @@ if '--list' in sys.argv:
   if os.environ.get('DUPLICATE_CASES'): cases *= 2
   for case in cases: print(case + ': benchmark')
   sys.exit(0)
-selected = json.loads(pathlib.Path(os.environ['RSCRYPTO_BENCH_CASES']).read_text())
+plan = json.loads(pathlib.Path(os.environ['RSCRYPTO_BENCH_CASES']).read_text())
+selected = plan['cases']
+print(f"Benchmark harness budget: {plan['budget_seconds']}s", flush=True)
 assert set(selected) <= set(cases)
 if '--profile-time' in sys.argv: sys.exit(0)
 for case in selected:
@@ -247,7 +253,9 @@ sys.exit(64)
     path.chmod(0o755)
 
   def invoke(self, *args, **env):
-    return subprocess.run([sys.executable, "scripts/bench/bounded.py", sys.executable, "scripts/bench/runner.py", *args],
+    command = (["--bench", *args[1:]] if args[0] == "bench" else
+               [sys.executable, "scripts/bench/runner.py", *args])
+    return subprocess.run([sys.executable, "scripts/bench/bounded.py", *command],
                           cwd=self.root, env=self.env | env, text=True, capture_output=True, timeout=30)
 
   def bench(self, *args, **env):
@@ -322,10 +330,20 @@ sys.exit(64)
       path.write_bytes(original)
 
   def test_split_target_cases_each_belong_to_one_algorithm(self):
-    self.ok(self.bench('slhdsa-sha2-128s'))
-    self.assertEqual(self.plan()[0]['cases'], ['slhdsa-sha2-128s/sign/deterministic-32/rscrypto'])
-    self.ok(self.bench('hash-slhdsa-sha2-128s'))
-    self.assertEqual(self.plan()[0]['cases'], ['slhdsa-sha2-128s/hash-sign/sha256/deterministic-32/fips205'])
+    # Explicit run IDs avoid relying on the ordering of random suffixes within one timestamp second.
+    runs = self.root / 'benchmark_results/criterion'
+    self.ok(self.bench('slhdsa-sha2-128s', RSCRYPTO_BENCH_RUN_ID='pure'))
+    self.assertEqual(self.plan(runs / 'pure')[0]['cases'], [
+      'slhdsa-sha2-128s/keygen/fixed-seeds/rscrypto',
+      'slhdsa-sha2-128s/sign/deterministic-32/rscrypto', 'slhdsa-sha2-128s/sign/deterministic-32/rustcrypto',
+      'slhdsa-sha2-128s/sign/deterministic-32/fips205', 'slhdsa-sha2-128s/verify/32/rscrypto',
+      'slhdsa-sha2-128s/import/raw-secret/rscrypto'])
+    self.ok(self.bench('hash-slhdsa-sha2-128s', RSCRYPTO_BENCH_RUN_ID='hash'))
+    self.assertEqual(self.plan(runs / 'hash')[0]['cases'], ['slhdsa-sha2-128s/hash-sign/sha256/deterministic-32/fips205',
+                                                         'slhdsa-sha2-128s/hash-verify/sha256/32/fips205'])
+    self.ok(self.bench('slhdsa-sha2-128s-sign', RSCRYPTO_BENCH_RUN_ID='sign'))
+    self.assertEqual(self.plan(runs / 'sign')[0]['cases'], [f'slhdsa-sha2-128s/sign/deterministic-32/{implementation}'
+                                                         for implementation in ('rscrypto', 'rustcrypto', 'fips205')])
     # CI runs each SLH-DSA algorithm on its own, so a case that no algorithm claims would never run there.
     extra = 'slhdsa-sha2-128s/sign-randomized/32/rscrypto'
     for selection in ('slhdsa-sha2-128s', 'slhdsa'):
@@ -453,6 +471,7 @@ sys.exit(64)
     self.assertEqual(self.plan()[0]['settings']['sample_size'], 12)
     self.assertEqual(self.plan()[0]['settings']['measure_ms'], 250)
     self.assertNotIn('max_run_seconds', self.plan()[0]['settings'])
+    self.assertNotIn('max_comparison_seconds', self.plan()[0]['settings'])
 
   def test_quick_mode_has_distinct_evidence_and_no_performance_baseline(self):
     self.ok(self.bench('sha256', 'quick=false', BENCH_QUICK='true'))
@@ -507,6 +526,22 @@ sys.exit(64)
     self.assertIn('cannot exceed 10 minutes', result.stderr)
     self.assertFalse((self.root / 'builds.jsonl').exists())
     self.assertFalse(self.runs())
+
+  def test_slow_comparison_carries_budget_without_changing_samples_or_peers(self):
+    self.ok(self.bench('slhdsa-sha2-128s-sign', RSCRYPTO_BENCH_RUN_ID='slow'))
+    root = self.runs()[0]
+    entry, = self.plan(root)
+    cases = [f'slhdsa-sha2-128s/sign/deterministic-32/{peer}' for peer in ('rscrypto', 'rustcrypto', 'fips205')]
+    self.assertEqual(set(entry['cases']), set(cases))
+    self.assertEqual(json.loads((root / 'requests.json').read_text())['budget_seconds'], 1800)
+    self.assertEqual(json.loads((root / (entry['id'] + '.cases.json')).read_text()),
+                     {'cases': entry['cases'], 'budget_seconds': 1800})
+    self.assertIn('Benchmark harness budget: 1800s', (root / 'output.txt').read_text())
+    self.assertEqual(entry['settings']['sample_size'], 20)
+    self.assertFalse({'max_run_seconds', 'max_comparison_seconds'} & entry['settings'].keys())
+    samples = list((root / entry['home']).glob('**/new/sample.json'))
+    self.assertEqual(len(samples), 3)
+    self.assertTrue(all(len(json.loads(path.read_text())['iters']) == 20 for path in samples))
 
   def test_run_id_and_export_are_immutable(self):
     self.ok(self.bench('sha256', RSCRYPTO_BENCH_RUN_ID='fixed'))

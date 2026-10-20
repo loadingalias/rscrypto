@@ -76,7 +76,8 @@ class ProfileTests(unittest.TestCase):
     self.assertEqual(metadata['artifact']['sha256'], hashlib.sha256(Path(metadata['artifact']['path']).read_bytes()).hexdigest())
     self.assertEqual(metadata['command'], [metadata['artifact']['path'], '--bench', '--profile-time', '1.0', '--noplot'])
     root = next((self.root / 'target/profiles').iterdir())
-    self.assertEqual(json.loads((root / 'cases.json').read_text()), ['sha256/rscrypto/64'])
+    self.assertEqual(json.loads((root / 'cases.json').read_text()),
+                     {'cases': ['sha256/rscrypto/64'], 'budget_seconds': 600})
     for name in ('source.json', 'source-state.json', 'profile.json.gz', 'output.txt'):
       self.assertTrue((root / name).is_file())
     self.assertEqual(len(self.fixture.calls()), 2)
@@ -92,7 +93,7 @@ class ProfileTests(unittest.TestCase):
     root.mkdir(parents=True, exist_ok=True)
     case = 'criterion-fixture/rscrypto/64'
     cases = root / 'cases.json'
-    cases.write_text(json.dumps([case]))
+    cases.write_text(json.dumps({'cases': [case], 'budget_seconds': 600}))
     env = self.fixture.env | environment | {
       'CRITERION_HOME': str(root / 'criterion'),
       'RSCRYPTO_BENCH_CASES': str(cases),

@@ -34,9 +34,9 @@ def stop(process: subprocess.Popen, sig: int) -> None:
     pass
 
 
-def run(command: list[str], seconds: float) -> int:
-  if not 0 < seconds <= MAX_RUN_SECONDS:
-    raise ValueError("run budget must be positive and at most 10 minutes")
+def run(command: list[str], seconds: float, *, maximum: int = MAX_RUN_SECONDS) -> int:
+  if not 0 < seconds <= maximum <= load()["max_comparison_seconds"]:
+    raise ValueError(f"run budget must be positive and at most {maximum} seconds")
   grace = min(5.0, seconds / 10)
   with subprocess.Popen(command, start_new_session=os.name == "posix") as process:
     try:
@@ -59,10 +59,20 @@ def run(command: list[str], seconds: float) -> int:
     return status
 
 
+def main(arguments: list[str]) -> int:
+  if arguments[:1] == ["--bench"]:
+    import runner
+    args = runner.parse(["bench", *arguments[1:]])
+    budget = runner.run_budget(args, runner.load_catalog())
+    return run([sys.executable, str(Path(runner.__file__)), "bench", *arguments[1:]], budget,
+               maximum=load()["max_comparison_seconds"])
+  return run(arguments, load()["max_run_seconds"])
+
+
 if __name__ == "__main__":
   signal.signal(signal.SIGTERM, terminate)
   try:
-    raise SystemExit(run(sys.argv[1:], load()["max_run_seconds"]))
+    raise SystemExit(main(sys.argv[1:]))
   except (ValueError, OSError) as error:
     print(f"error: {error}", file=sys.stderr)
     raise SystemExit(2)

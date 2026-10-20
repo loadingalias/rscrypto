@@ -70,7 +70,7 @@ with open(os.environ['ARGUMENT_LOG'], 'a') as log:
       'ct-validate': ['scripts/ct/validate.py'],
       'stack-frames': ['scripts/stack/frames.py'],
       'stack-residue': ['scripts/stack/residue.py'],
-      'bench': ['scripts/bench/bounded.py', str(recorder), 'scripts/bench/runner.py', 'bench'],
+      'bench': ['scripts/bench/bounded.py', '--bench'],
       'bench-structural': ['scripts/bench/bounded.py', 'scripts/lib/toolchain.sh', '--exec', 'cargo', 'bench',
                            '--locked', '--profile', 'bench', '--features', 'checksums,sha2,blake3',
                            '--bench', 'structural'],

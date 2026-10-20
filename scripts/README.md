@@ -544,12 +544,17 @@ selects the first message index for reproducing a discovered rejection case.
   attempt, measured revision, and report revision. It never permits partial comparisons or claims new measurements.
 - `bench/ci.py evidence` packs one measurement job's `target/bench/` into the single raw archive that the job uploads,
   without the transferred binaries that the preparation artifact keeps.
-- `.config/criterion.json` owns the shared Criterion defaults and the maximum run budget.
+- `.config/criterion.json` owns the shared Criterion defaults, the ordinary run budget,
+  and the ceiling for catalog comparison exceptions.
 - `benches/common/criterion.rs` applies them to every Criterion harness.
   `bench/settings.py` resolves overrides for one invocation.
+- Catalog algorithms on split targets may declare `max_run_seconds` within that ceiling.
+  `bench/runner.py` grants it only to one complete operation without a filter; quick runs,
+  listing and preparation keep the ordinary budget.
 - `bench/bounded.py` stops the whole benchmark or profile process tree within the budget.
-- `bench/runner.py` resolves filters to unique cases.
+- `bench/runner.py` resolves filters to unique cases and records the budget in `requests.json`.
 - `bench/measure.py` runs one process for each configuration,
+  passes the cases and budget to the compiled harness through `RSCRYPTO_BENCH_CASES`,
   and verifies the statistical artifacts before the runner marks a run complete.
 - Export is a separate runner command.
 - `just bench --list` uses the same resolver to list the actual cases with their catalog work classes,
@@ -832,6 +837,15 @@ They do not install Rust, build code, or call Cargo Rail.
   A target marked `"split": "algorithms"`, such as `slhdsa`, runs one per catalog algorithm,
   and the runner fails discovery unless each of its cases belongs to exactly one algorithm.
   The planner rejects targets with an `external` prerequisite before any runner starts.
+- SLH-DSA selectors separate operations
+  while keeping every implementation of each comparison together.
+  Its existing parameter-set names expand to those selectors,
+  and the default `auth` schedule runs SLH-DSA after the other targets.
+  The 12 small-signature signing comparisons have a 30-minute catalog budget;
+  all other invocations retain the ordinary ten-minute limit.
+  The CI planner sums the selected measurement budgets
+  while preparation keeps ten minutes per invocation.
+  A failed invocation still ends its job.
 - Job labels use platform names, never target triples:
   `Prepare PLATFORM / FAMILY` and `Measure RUNNER / FAMILY`.
 - RunsOn starts a host for every queued job and ignores `max-parallel`, so the job count bounds the AWS hosts.
@@ -840,7 +854,7 @@ They do not install Rust, build code, or call Cargo Rail.
 - The existing benchmark runner owns measurement and evidence.
 - Quick mode keeps every selected row and its output check, records Criterion's quick sampling in the sealed
   settings, and reports coverage without performance rankings. It rejects sample-count and warmup overrides
-  and cannot compare performance baselines. Regular sampling and the invocation budget are unchanged.
+  and cannot compare performance baselines. Quick mode keeps the ten-minute invocation budget.
 - `--ci-bench` (Linux) and `-CiBench` (Windows) install the native benchmark build prerequisites and Just, without test,
   profiling, or cross-target tools.
 

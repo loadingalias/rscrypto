@@ -22,7 +22,8 @@ def load(overrides=None) -> dict:
     raise ValueError("quick must be Boolean")
   if quick and {"sample_size", "warmup_ms"} & set(overrides or {}):
     raise ValueError("quick mode takes no sample_size or warmup_ms override")
-  integers = {"sample_size": 10, "warmup_ms": 1, "measure_ms": 1, "nresamples": 1000, "max_run_seconds": 1}
+  integers = {"sample_size": 10, "warmup_ms": 1, "measure_ms": 1, "nresamples": 1000,
+              "max_run_seconds": 1, "max_comparison_seconds": MAX_RUN_SECONDS}
   for key, minimum in integers.items():
     if type(settings[key]) is not int or settings[key] < minimum:
       raise ValueError(f"{CONFIG}: {key} must be an integer >= {minimum}")

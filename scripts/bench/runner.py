@@ -150,6 +150,20 @@ def requests(args, catalog, every_architecture=False) -> list[dict]:
           for name, case_scope, pattern in dict.fromkeys(rows)]
 
 
+def run_budget(args, catalog, rows=None) -> int:
+  """Extend only one complete catalog comparison; all other invocations keep the ordinary bound."""
+  ordinary = settings.load()["max_run_seconds"]
+  if args.list or args.quick or args.prepare_archive or args.filter:
+    return ordinary
+  rows = requests(args, catalog) if rows is None else rows
+  if len(rows) == 1:
+    row = rows[0]
+    for algorithm in catalog["algorithms"].values():
+      if row["bench"] == algorithm["bench"] and row["scope"] == row["pattern"] == algorithm["filter"]:
+        return algorithm.get("max_run_seconds", ordinary)
+  return ordinary
+
+
 def partitions(catalog, diag: bool) -> dict[tuple, dict[str, str]]:
   """Map the build of each split target to the algorithm filters that must partition its cases."""
   result = {}
@@ -232,9 +246,11 @@ def export_run(root: Path) -> None:
 
 def bench(args, catalog) -> None:
   rows = requests(args, catalog)
+  budget = run_budget(args, catalog, rows)
   effective = settings.load({name: value for name in ("warmup_ms", "measure_ms", "sample_size", "quick")
                              if (value := getattr(args, name)) is not None})
   effective.pop("max_run_seconds")
+  effective.pop("max_comparison_seconds")
   if args.prepare_archive or args.run_archive or args.target:
     from cross_build import TARGETS
     if args.target not in TARGETS or not (args.prepare_archive or args.run_archive) or args.list:
@@ -277,7 +293,7 @@ def bench(args, catalog) -> None:
   (root / "status.txt").write_text("state=running\n")
   status = 1
   try:
-    write_json(root / "requests.json", {"configurations": rows, "budget_seconds": settings.load()["max_run_seconds"]})
+    write_json(root / "requests.json", {"configurations": rows, "budget_seconds": budget})
     source_evidence(root)
     env = dict(os.environ) | {"CRITERION_HOME": str(root / "discovery")}
     prepared = None
@@ -289,7 +305,7 @@ def bench(args, catalog) -> None:
     plan = resolve(rows, effective, root / "output.txt", env, prepared, partitions(catalog, args.diag))
     shutil.rmtree(root / "discovery", ignore_errors=True)
     write_json(root / "plan.json", plan)
-    measure(root, plan, baseline)
+    measure(root, plan, baseline, budget)
     verify(root)
     if args.run_archive:
       from transfer import bundle, KIND

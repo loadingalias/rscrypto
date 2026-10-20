@@ -223,7 +223,7 @@ def prepared_profile(args, entry) -> None:
     cases = discover(artifact, '', root / 'output.txt', env)
     if cases.count(args.case) != 1:
       raise ValueError('choose one exact case discovered from the native artifact')
-    write_json(root / 'cases.json', [args.case])
+    write_json(root / 'cases.json', {'cases': [args.case], 'budget_seconds': load()['max_run_seconds']})
     command = [artifact['path'], '--bench', '--profile-time', str(args.seconds), '--noplot']
     env |= {'RSCRYPTO_BENCH_CASES': str(root / 'cases.json')}
     metadata.update(artifact=artifact, compatibility=compatibility, command=command)
@@ -280,7 +280,7 @@ def local_profile(args, entry) -> None:
     root = Path(tempfile.mkdtemp(prefix=entry['binary'] + '-', dir=parent))
     shutil.copyfile(temporary / 'output.txt', root / 'output.txt')
     source_evidence(root)
-    write_json(root / 'cases.json', [args.case])
+    write_json(root / 'cases.json', {'cases': [args.case], 'budget_seconds': load()['max_run_seconds']})
     command = [artifact['path'], '--bench', '--profile-time', str(args.seconds), '--noplot']
     metadata = {'created': datetime.now(timezone.utc).isoformat(), 'case': args.case,
                 'artifact': artifact, 'compatibility': build_identity(), 'command': command, 'status': 'recording',

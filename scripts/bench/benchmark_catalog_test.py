@@ -78,6 +78,67 @@ def main() -> None:
     for name in catalog[kind]:
       if resolve_selector(catalog, name) != [name]:
         fail(f"exact name {name} selects other names")
+
+  # The existing SLH-DSA names retain their workloads while CI separates complete operation groups.
+  # Enumerate the harness's registered cases independently of the catalog filters: an omitted operation,
+  # overlapping filter, or split between implementations would silently lose or distort comparisons.
+  slhdsa = {name: re.compile(row["filter"]) for name, row in catalog["algorithms"].items()
+            if row["bench"] == "slhdsa"}
+  covered = set()
+  for family in ("sha2", "shake"):
+    for parameter in ("128s", "128f", "192s", "192f", "256s", "256f"):
+      name = f"slhdsa-{family}-{parameter}"
+      prehash = ("sha256" if parameter.startswith("128") else "sha512") if family == "sha2" else (
+        "shake128" if parameter.startswith("128") else "shake256")
+      operations = {
+        "keygen": ("fixed-seeds", ("rscrypto", "rustcrypto")),
+        "sign": ("deterministic-32", ("rscrypto", "rustcrypto", "fips205")),
+        "verify": ("32", ("rscrypto", "rustcrypto", "fips205")),
+        "import": ("raw-secret", ("rscrypto",)),
+        "hash-sign": (f"{prehash}/deterministic-32", ("rscrypto", "fips205")),
+        "hash-verify": (f"{prehash}/32", ("rscrypto", "fips205")),
+      }
+      for operation, (workload, implementations) in operations.items():
+        selector = f"hash-{name}-{operation.removeprefix('hash-')}" if operation.startswith("hash-") else f"{name}-{operation}"
+        for implementation in implementations:
+          case = f"{name}/{operation}/{workload}/{implementation}"
+          owners = [member for member, pattern in slhdsa.items() if pattern.search(case)]
+          if owners != [selector]:
+            fail(f"SLH-DSA comparison partition changed: {case} belongs to {owners}, expected {selector}")
+          covered.add(selector)
+      for alias, operations in ((name, ("keygen", "sign", "verify", "import")),
+                                ("hash-" + name, ("sign", "verify"))):
+        if resolve_selector(catalog, alias) != [f"{alias}-{operation}" for operation in operations]:
+          fail(f"SLH-DSA selector no longer preserves its complete workload: {alias}")
+  if covered != set(slhdsa):
+    fail("SLH-DSA catalog contains selectors outside the operation partition")
+
+  extended = {f'{prefix}-{family}-{parameter}-sign': 1800
+              for prefix in ('slhdsa', 'hash-slhdsa') for family in ('sha2', 'shake')
+              for parameter in ('128s', '192s', '256s')}
+  if {name: row['max_run_seconds'] for name, row in catalog['algorithms'].items()
+      if 'max_run_seconds' in row} != extended:
+    fail('extended budgets must cover exactly the twelve complete small-signature signing comparisons')
+  for kind, selector, budget in (('algorithms', 'slhdsa-sha2-128s-sign', value)
+                                for value in (True, 600, 1801, 1800.0, '1800')):
+    broken = copy.deepcopy(catalog)
+    broken[kind][selector]['max_run_seconds'] = budget
+    try:
+      validate_catalog(broken)
+    except CatalogError:
+      pass
+    else:
+      fail(f'catalog accepted invalid comparison budget: {budget}')
+  for kind, selector in (('algorithms', 'sha256'), ('benches', 'slhdsa')):
+    broken = copy.deepcopy(catalog)
+    broken[kind][selector]['max_run_seconds'] = 1800
+    try:
+      validate_catalog(broken)
+    except CatalogError:
+      pass
+    else:
+      fail(f'catalog accepted an extended budget outside a split algorithm: {selector}')
+
   for selector, collision in (("crc64nvme", "groups"), ("auth", "groups"), ("all", "groups"), ("blake3", "algorithms")):
     shadowed = copy.deepcopy(catalog)
     shadowed[collision][selector] = (["crc64-xz", "crc64-nvme"] if collision == "groups"

@@ -137,12 +137,14 @@ class ManualBench(unittest.TestCase):
         families = ci.jobs(ci.dispatch_inputs(request('all')))
         self.assertEqual(list(families), ['auth', 'checksum', 'hashes', 'aead'])
         # A split target runs one catalog algorithm at a time. Auth must not combine its 15 algorithms with a cold
-        # Windows build in one budget. SLH-DSA has 24 variants; PBKDF2 has SHA-256 and SHA-512.
+        # Windows build in one budget. SLH-DSA separates 72 operations; PBKDF2 has SHA-256 and SHA-512.
         split = {name: [algorithm for algorithm, entry in catalog['algorithms'].items() if entry['bench'] == name]
                  for name in defaults if catalog['benches'][name].get('split') == 'algorithms'}
-        self.assertEqual({name: len(runs) for name, runs in split.items()}, {'slhdsa': 24, 'auth': 15, 'pbkdf2': 2})
+        self.assertEqual({name: len(runs) for name, runs in split.items()}, {'slhdsa': 72, 'auth': 15, 'pbkdf2': 2})
         expected = [run for name in defaults for run in split.get(name, [name])]
         self.assertEqual(sorted(run for runs in families.values() for run in runs), sorted(expected))
+        # Slow SLH-DSA runs must not prevent PBKDF2, password hashing, or RSA from starting.
+        self.assertEqual(list(families['auth'])[-72:], split['slhdsa'])
         everything = {name: True for name in ci.PLATFORMS}
         measurements, builds = plan('all', **everything)
         self.assertEqual(len(measurements), 8 * len(families))
@@ -150,9 +152,10 @@ class ManualBench(unittest.TestCase):
 
     def test_split_target_runs_each_algorithm_alone(self):
         inputs = ci.dispatch_inputs(request('slhdsa-shake-192s,hash-slhdsa-shake-192s,mldsa65,mldsa87'))
+        selectors = ('slhdsa-shake-192s-keygen', 'slhdsa-shake-192s-sign', 'slhdsa-shake-192s-verify',
+                     'slhdsa-shake-192s-import', 'hash-slhdsa-shake-192s-sign', 'hash-slhdsa-shake-192s-verify')
         self.assertEqual({name: args[:-2] for name, args in ci.jobs(inputs)['auth'].items()},
-                         {'slhdsa-shake-192s': ['slhdsa-shake-192s'], 'hash-slhdsa-shake-192s': ['hash-slhdsa-shake-192s'],
-                          'mldsa': ['mldsa65', 'mldsa87']})
+                         {**{name: [name] for name in selectors}, 'mldsa': ['mldsa65', 'mldsa87']})
         env = request('slhdsa-shake-192s,hash-slhdsa-shake-192s')
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, env, clear=True), \
              patch.object(sys, 'argv', ['ci.py', 'prepare', 'auth', 'riscv64gc-unknown-linux-gnu', directory]), \
@@ -161,10 +164,25 @@ class ManualBench(unittest.TestCase):
             self.assertEqual([[arg for arg in call.args[0] if arg.startswith('prepare_archive=')]
                               for call in execute.call_args_list],
                              [[f'prepare_archive={Path(directory) / name}.tar.gz']
-                              for name in ('slhdsa-shake-192s', 'hash-slhdsa-shake-192s')])
+                              for name in selectors])
+        # A repeated member or the containing target cannot schedule the same comparison twice.
+        repeated = ci.dispatch_inputs(request('slhdsa-shake-192s,slhdsa-shake-192s-sign'))
+        self.assertEqual(list(ci.jobs(repeated)['auth']), list(selectors[:4]))
+        containing = ci.dispatch_inputs(request('slhdsa,slhdsa-shake-192s,slhdsa-shake-192s-sign'))
+        self.assertEqual(ci.jobs(containing), ci.jobs(ci.dispatch_inputs(request('slhdsa'))))
         measurements, builds = plan('slhdsa', **{'riscv64-linux': True})
-        self.assertEqual({row['timeout'] for row in builds}, {30 + 10 * 23})
-        self.assertEqual([row['timeout'] for row in measurements], [120 + 10 * 23] * 2 + [180 + 10 * 23])
+        self.assertEqual({row['timeout'] for row in builds}, {30 + 10 * 71})
+        self.assertEqual([row['timeout'] for row in measurements],
+                         [120 + 10 * 71 + 20 * 12] * 2 + [180 + 10 * 71 + 20 * 12])
+
+    def test_extended_measurement_budget_does_not_extend_preparation_or_quick_runs(self):
+        for selector, extra in (('slhdsa-shake-192s-sign', 20), ('slhdsa-shake-192s-verify', 0)):
+            measurements, builds = plan(selector, **{'riscv64-linux': True})
+            self.assertEqual([row['timeout'] for row in measurements], [120 + extra] * 2 + [180 + extra])
+            self.assertEqual([row['timeout'] for row in builds], [30])
+        measurements, builds = plan('slhdsa', quick=True, **{'riscv64-linux': True})
+        self.assertEqual([row['timeout'] for row in measurements], [120 + 10 * 71] * 2 + [180 + 10 * 71])
+        self.assertEqual([row['timeout'] for row in builds], [30 + 10 * 71])
 
     def test_external_targets_fail_before_runners_start(self):
         for selection in ('tls-provider', 'tls_connections', 'sha256,tls-provider'):

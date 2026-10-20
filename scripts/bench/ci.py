@@ -135,11 +135,19 @@ def label(runner: str, family: str) -> str:
 
 def plan(inputs: dict, run_id: str) -> tuple[dict, dict, dict]:
     families = jobs(inputs)
+    catalog = load_catalog()
+    minutes = {}
+    for family, runs in families.items():
+        minutes[family] = 0
+        for arguments in runs.values():
+            args = runner.parse(['bench', *arguments])
+            budget = runner.run_budget(args, catalog, runner.requests(args, catalog, every_architecture=True))
+            minutes[family] += (budget + 59) // 60
     rows = platforms(selected_platforms(inputs), run_id)['include']
     # RunsOn starts a host for every queued job, whatever `max-parallel` says, and a job can take any
     # host whose label matches. One job per family bounds the hosts; the family label keeps each job on its own.
     measurements = [{**row, 'family': family, 'runner': label(row['runner'], family),
-                     'timeout': row['timeout'] + RUN_MINUTES * (len(runs) - 1)}
+                     'timeout': row['timeout'] + minutes[family] - RUN_MINUTES}
                     for family, runs in families.items() for row in rows]
     builds = [{'platform': row['platform'], 'target': row['target'], 'family': family,
                'timeout': PREPARE_MINUTES + RUN_MINUTES * (len(runs) - 1)}

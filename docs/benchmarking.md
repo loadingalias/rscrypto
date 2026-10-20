@@ -287,12 +287,15 @@ and the preparation artifact keeps the files.
 Preparation jobs keep their evidence as `bench-prepare-PLATFORM-FAMILY-RUN-ATTEMPT`.
 
 Each target, or each algorithm of a split target, runs as its own `just bench`,
-so the ten-minute [time budget](#time-budget) applies to each one separately.
-A target can still exceed its budget; narrow it with a case filter or sampling settings.
+so its [time budget](#time-budget) applies separately.
+A target can still exceed its budget; a filtered or quick run checks only its stated scope.
 A job stops at its first failed `just bench`.
-Preparation jobs time out after 30 minutes.
-Measurement job timeouts (120 minutes, 180 on RISC-V) cover provisioning and transfer.
-Each further `just bench` in a family job adds 10 minutes to either timeout.
+Preparation jobs allow 30 minutes for one invocation,
+plus 10 minutes for each additional invocation.
+Measurement jobs allow 120 minutes, or 180 on RISC-V, for one ordinary invocation,
+provisioning and transfer.
+The planner adds 10 minutes for each additional invocation and 20 minutes
+for each extended comparison.
 One failed job cancels the rest of the run.
 Manual dispatch is available after the workflow reaches the default branch.
 
@@ -864,10 +867,21 @@ No opt-in for expensive workloads is needed.
 
 ### Time budget
 
-`just bench` limits the whole pipeline to 10 minutes: build, discovery, measurement, analysis,
+`just bench` normally limits the whole pipeline to 10 minutes: build, discovery, measurement, analysis,
 and result verification.
 `just bench-structural` and `just profile` use the same limit, including their builds.
-You can lower the limit, but it cannot be more than 600 seconds.
+The shared `max_run_seconds` setting can lower this ordinary limit; it cannot exceed 600 seconds.
+
+The catalog gives 30 minutes to the 12 complete signing comparisons for SLH-DSA
+and HashSLH-DSA with SHA-2 or SHAKE and the `128s`, `192s`, or `256s` parameter sets.
+Select one operation without a filter, for example `just bench slhdsa-shake-192s-sign`.
+The runner and compiled harness use the same resolved budget and retain every implementation
+and sampling setting.
+These exceptions use the catalog algorithm's `max_run_seconds`, bounded by `max_comparison_seconds` in `.config/criterion.json`;
+there is no invocation option to raise the limit.
+Quick runs, discovery, cross-build preparation, filters,
+and local selections spanning multiple operations keep the ordinary limit.
+CI expands umbrella selectors into separate operations before resolving their budgets.
 
 - Shutdown starts before the deadline.
   It keeps up to five seconds to save failed-run evidence, then stops the remaining child processes.
@@ -884,9 +898,15 @@ You can lower the limit, but it cannot be more than 600 seconds.
 A planned comparison must fit within this limit, including every repetition.
 Do not split an over-budget comparison across repeated invocations to bypass it.
 A comparison is one Criterion benchmark group: one operation of one algorithm, across its implementations.
-A catalog target marked `"split": "algorithms"` runs in CI as one `just bench` per catalog algorithm,
-which never divides a group.
-SLH-DSA uses this, because its 24 FIPS 205 algorithms do not fit one budget on the slower platforms.
+
+A catalog target marked `"split": "algorithms"` runs in CI as one `just bench` per catalog algorithm, which never divides a group.
+SLH-DSA uses 72 operation selectors: key generation, signing, verification,
+and secret-key import for each pure parameter set,
+plus signing and verification for each HashSLH-DSA parameter set.
+Each invocation keeps the complete comparison for that operation.
+The default `auth` schedule runs SLH-DSA after the other targets,
+so a slow SLH-DSA comparison does not prevent PBKDF2, password hashing, or RSA from starting.
+
 PBKDF2 uses it too: at the password-policy iteration count, one SHA-256 call takes about 1.25 s on the RISC-V runner,
 extrapolated from its 1,000-iteration rows.
 The `auth` target also splits by algorithm: its cold Windows build plus all 15 algorithms exceeded one budget
@@ -947,8 +967,12 @@ For example, `sha256 filter=rscrypto` stays within SHA-256, but `sha2 filter=rsc
 - An exact algorithm name selects only that algorithm.
   Use a group name, such as `crc64`, to select more than one.
 - `blake2` is a target name, so it includes all implementations and operations, including the dryoc one-shot and keyed cases.
-- SLH-DSA has one algorithm name for each FIPS 205 algorithm.
-  `slhdsa-shake-192s` selects pure SLH-DSA-SHAKE-192s, and `hash-slhdsa-shake-192s` selects its HashSLH-DSA variant.
+- SLH-DSA operation selectors include `slhdsa-shake-192s-keygen`, `slhdsa-shake-192s-sign`, `slhdsa-shake-192s-verify`, `slhdsa-shake-192s-import`, and the corresponding `hash-slhdsa-shake-192s-sign` and `hash-slhdsa-shake-192s-verify` names.
+  The existing `slhdsa-shake-192s` and `hash-slhdsa-shake-192s` names are umbrella groups that retain their complete pure
+  and HashSLH-DSA workloads.
+  The workflow expands those groups into separate operation runs;
+  local `just bench` combines the selected cases into one invocation,
+  so select one operation to use its separate budget.
 
 ### Discover cases
 

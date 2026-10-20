@@ -9,6 +9,8 @@ import re
 import tomllib
 from pathlib import Path
 
+import settings
+
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG_PATH = ROOT / ".config" / "benchmark-matrix.json"
 # Rust `target_arch` names of the architectures that run benchmarks.
@@ -63,15 +65,23 @@ def validate_catalog(catalog: dict) -> None:
         raise CatalogError(f"{kind} {name} has the same selector name as {names[key]}")
       names[key] = f"{kind} {name}"
 
+  limits = settings.load()
   for name, algorithm in algorithms.items():
     bench = algorithm.get("bench")
     if bench not in benches:
       raise CatalogError(f"algorithm {name} references unknown bench {bench}")
     if not isinstance(algorithm.get("filter"), str) or not algorithm["filter"]:
       raise CatalogError(f"algorithm {name} needs a non-empty filter")
+    if "max_run_seconds" in algorithm:
+      budget = algorithm["max_run_seconds"]
+      if (type(budget) is not int or not settings.MAX_RUN_SECONDS < budget <= limits["max_comparison_seconds"]
+          or benches[bench].get("split") != "algorithms" or benches[bench].get("kind") != "criterion"):
+        raise CatalogError(f"algorithm {name} needs a bounded comparison budget on a split Criterion target")
 
   valid_kinds = {"criterion", "gungraun"}
   for name, bench in benches.items():
+    if "max_run_seconds" in bench:
+      raise CatalogError(f"bench {name}: extended budgets belong to individual algorithms")
     if bench.get("kind") not in valid_kinds:
       raise CatalogError(f"bench {name} has invalid kind {bench.get('kind')}")
     # The Bench workflow runs each primitive family's selected Criterion targets in one job per platform.

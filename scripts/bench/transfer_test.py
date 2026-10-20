@@ -86,6 +86,22 @@ class TransferTests(unittest.TestCase):
         self.assertEqual(len(runner.verify(run)), 2)
         self.assertEqual((self.root / 'builds.jsonl').read_text().splitlines(), builds)
 
+    def test_slow_comparison_budget_survives_artifact_transfer(self):
+        self.selectors = ['slhdsa-sha2-128s-sign']
+        with patch.object(runner, 'discover', side_effect=AssertionError('foreign discovery')):
+            self.invoke('prepare')
+        with patch.object(runner, 'build', side_effect=AssertionError('native compilation')):
+            self.invoke('run')
+        root, = self.fixture.runs()
+        entry, = self.fixture.plan(root)
+        self.assertEqual(json.loads((root / 'requests.json').read_text())['budget_seconds'], 1800)
+        self.assertEqual(json.loads((root / (entry['id'] + '.cases.json')).read_text()),
+                         {'cases': entry['cases'], 'budget_seconds': 1800})
+        self.assertEqual(set(entry['cases']),
+                         {f'slhdsa-sha2-128s/sign/deterministic-32/{peer}'
+                          for peer in ('rscrypto', 'rustcrypto', 'fips205')})
+        self.assertEqual(entry['settings']['sample_size'], 20)
+
     def test_profile_reuses_verified_artifact_without_native_build(self):
         with patch.object(profile_runner, 'discover', side_effect=AssertionError('foreign discovery')):
             self.invoke_profile('prepare')
@@ -106,7 +122,8 @@ class TransferTests(unittest.TestCase):
         self.assertEqual(metadata['status'], 'complete')
         self.assertEqual(metadata['target'], self.target)
         self.assertEqual(metadata['request']['case'], 'sha256/other/64')
-        self.assertEqual(json.loads((result / 'cases.json').read_text()), ['sha256/other/64'])
+        self.assertEqual(json.loads((result / 'cases.json').read_text()),
+                         {'cases': ['sha256/other/64'], 'budget_seconds': 600})
         self.assertEqual(json.loads((result / 'bundle.json').read_text())['kind'], profile_runner.PROFILE_KIND)
         for name in ('perf.data', 'perf-report.txt', 'input/bundle.json'):
             self.assertTrue((result / name).is_file(), name)

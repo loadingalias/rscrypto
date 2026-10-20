@@ -76,10 +76,9 @@ def verify(root: Path) -> dict:
   return result
 
 
-def measure(root: Path, plan: list[dict], baseline: Path | None) -> None:
+def measure(root: Path, plan: list[dict], baseline: Path | None, budget: int) -> None:
   nominal = sum(len(entry["cases"]) * (entry["settings"].get("warmup_ms", 0) + entry["settings"]["measure_ms"]) / 1000
                 for entry in plan)
-  budget = settings.load()["max_run_seconds"]
   if nominal >= budget - min(5, budget / 10):
     raise ValueError("requested sampling windows exceed the run budget; narrow the selection")
   if baseline:
@@ -100,7 +99,7 @@ def measure(root: Path, plan: list[dict], baseline: Path | None) -> None:
     if list(home.glob("**/new/*")):
       raise ValueError(f"measurement directory is not fresh: {home}")
     cases = root / (entry["id"] + ".cases.json")
-    write_json(cases, entry["cases"])
+    write_json(cases, {"cases": entry["cases"], "budget_seconds": budget})
     command = [entry["artifact"]["path"], "--bench", *settings.arguments(entry["settings"])]
     entry["command"] = command
     write_json(root / "plan.json", plan)
