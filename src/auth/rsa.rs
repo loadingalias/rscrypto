@@ -3883,8 +3883,9 @@ impl RsaPrivateKeyComponents {
         .as_mut_slice()
         .get_mut(..prime_p.len())
         .ok_or(RsaPrivateOpError::InvalidScratch)?;
-      private_import_unsigned_be_mod_to_fixed(
+      private_reduce_unsigned_be_mod_to_fixed(
         scratch.blinded.as_slice(),
+        prime_q.len(),
         modulus_p,
         representative_p,
         &mut scratch.exponent_scratch,
@@ -3896,8 +3897,9 @@ impl RsaPrivateKeyComponents {
         .as_mut_slice()
         .get_mut(..prime_q.len())
         .ok_or(RsaPrivateOpError::InvalidScratch)?;
-      private_import_unsigned_be_mod_to_fixed(
+      private_reduce_unsigned_be_mod_to_fixed(
         scratch.blinded.as_slice(),
+        prime_p.len(),
         modulus_q,
         representative_q,
         &mut scratch.exponent_scratch,
@@ -3935,12 +3937,13 @@ impl RsaPrivateKeyComponents {
       &mut scratch.exponent_scratch,
     )?;
 
-    private_import_unsigned_be_mod_to_fixed(
+    private_reduce_unsigned_be_mod_to_fixed(
       scratch
         .blinded
         .as_slice()
         .get(..prime_q.len())
         .ok_or(RsaPrivateOpError::InvalidScratch)?,
+      prime_q.len(),
       modulus_p,
       scratch
         .blinding_power
@@ -10566,6 +10569,53 @@ fn private_import_unsigned_be_mod_to_fixed(
   Ok(())
 }
 
+/// Reduce `value` modulo `modulus` into the fixed-width `out`, given
+/// `value < modulus · 2^(8·cofactor_len)`.
+///
+/// When that bound is at most `modulus · R` for `R = 2^(64·L)` and `value` fits in `2·L` limbs,
+/// split `value = high·R + low`. The bound gives `high < modulus`, so one Montgomery reduction
+/// and one modular addition give `(low·R⁻¹ + high) mod modulus = value·R⁻¹ mod modulus`, and a
+/// Montgomery multiplication by `R² mod modulus` removes `R⁻¹`. Other shapes use the bit-serial
+/// reduction. The choice depends only on public lengths.
+fn private_reduce_unsigned_be_mod_to_fixed(
+  value: &[u8],
+  cofactor_len: usize,
+  modulus: &RsaPublicModulus,
+  out: &mut [u8],
+  scratch: &mut RsaPrivateExponentScratch,
+) -> Result<(), RsaPrivateOpError> {
+  let limbs = modulus.limbs.len();
+  let limb_bytes = limbs.strict_mul(8);
+  let max_value_len = limb_bytes.strict_mul(2);
+  if cofactor_len > limb_bytes || value.len() > max_value_len {
+    return private_import_unsigned_be_mod_to_fixed(value, modulus, out, scratch);
+  }
+  if out.len() != modulus.bytes.len() {
+    return Err(RsaPrivateOpError::InvalidLength);
+  }
+  let r2 = modulus
+    .montgomery_r2()
+    .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
+  let RsaPrivateExponentWorkspace {
+    t,
+    representative: low,
+    base: high,
+    reduced,
+    ..
+  } = scratch.workspace(limbs)?;
+
+  // A value no wider than one limb width has no high part.
+  let (high_bytes, low_bytes) = value.split_at(value.len().saturating_sub(limb_bytes));
+  limbs_from_be_into(low_bytes, low);
+  limbs_from_be_into(high_bytes, high);
+  private_mont_reduce(reduced, low, modulus, t);
+  add_mod_in_place(reduced, high, &modulus.limbs);
+  private_mont_mul(low, reduced, r2, modulus, t);
+
+  limbs_to_be(low, out);
+  Ok(())
+}
+
 fn add_bit_mod_in_place(value: &mut [u64], modulus: &[u64], bit: u8) {
   debug_assert_eq!(value.len(), modulus.len());
 
@@ -10719,7 +10769,6 @@ fn subtract_modulus_if_needed(value: &mut [u64], modulus: &[u64], extra: u64) {
   add_modulus_masked(value, modulus, restore);
 }
 
-#[cfg(all(rscrypto_internal, feature = "diag"))]
 fn add_mod_in_place(value: &mut [u64], addend: &[u64], modulus: &[u64]) {
   debug_assert_eq!(value.len(), addend.len());
   debug_assert_eq!(value.len(), modulus.len());
@@ -16223,6 +16272,70 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
           &scratch.montgomery[words..],
           expected.as_slice(),
           "scratch R² for {words} limbs"
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn private_montgomery_reduction_matches_bit_serial_reduction() {
+    // Widths cover the Montgomery assembly widths, portable CIOS widths, and the
+    // product-scanning widths. Values stay below modulus·R, the CRT input bound.
+    let widths: &[usize] = if cfg!(miri) {
+      &[1, 2]
+    } else {
+      &[1, 2, 3, 16, 24, 31, 32, 33, 48, 64, 65, 128, 129]
+    };
+    let mut state = 0xbb67_ae85_84ca_a73bu64;
+    let mut random_bytes = |len: usize| {
+      (0..len)
+        .map(|_| {
+          state ^= state << 13;
+          state ^= state >> 7;
+          state ^= state << 17;
+          state.to_le_bytes()[0]
+        })
+        .collect::<Vec<u8>>()
+    };
+    for &words in widths {
+      let limb_bytes = words.strict_mul(8);
+      let mut modulus_bytes = random_bytes(limb_bytes);
+      modulus_bytes[0] |= 0x80;
+      *modulus_bytes.last_mut().expect("modulus width must be nonzero") |= 1;
+      let modulus = private_component_modulus(&modulus_bytes).expect("odd test modulus must import");
+      let mut scratch = RsaPrivateExponentScratch::new(words);
+      let reduce_slow = |value: &[u8], scratch: &mut RsaPrivateExponentScratch| {
+        let mut out = vec![0u8; limb_bytes];
+        private_import_unsigned_be_mod_to_fixed(value, &modulus, &mut out, scratch)
+          .expect("bit-serial reduction must succeed");
+        out
+      };
+
+      let mut modulus_minus_one = modulus_bytes.clone();
+      *modulus_minus_one.last_mut().expect("modulus width must be nonzero") &= !1;
+      let mut cases = vec![
+        vec![0u8; limb_bytes.strict_mul(2)],
+        [modulus_minus_one.clone(), vec![0xff; limb_bytes]].concat(),
+        [modulus_minus_one, vec![0; limb_bytes]].concat(),
+        modulus_bytes,
+        vec![0xff; limb_bytes],
+        vec![1],
+        [vec![0x01, 0x02, 0x03], random_bytes(limb_bytes)].concat(),
+      ];
+      for _ in 0..4 {
+        let high = reduce_slow(&random_bytes(limb_bytes), &mut scratch);
+        cases.push([high, random_bytes(limb_bytes)].concat());
+      }
+
+      for value in cases {
+        let mut fast = vec![0u8; limb_bytes];
+        private_reduce_unsigned_be_mod_to_fixed(&value, limb_bytes, &modulus, &mut fast, &mut scratch)
+          .expect("Montgomery reduction must succeed");
+        assert_eq!(
+          fast,
+          reduce_slow(&value, &mut scratch),
+          "{words} limbs, {} value bytes",
+          value.len()
         );
       }
     }
