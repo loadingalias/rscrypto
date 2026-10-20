@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 
@@ -143,6 +144,34 @@ class CrossWorkflow(unittest.TestCase):
                     self.assertEqual(native['strategy']['fail-fast'], 'true')
                 if suite in ('tests', 'ct'):
                     self.assertIn('just test-transfer', prepare['run'])
+
+    def test_cross_execution_evidence_has_distinct_target_filenames(self):
+        ci = read_yaml('.github/workflows/ci.yml')
+        native = ci['jobs']['native']
+        riscv = read_yaml('.github/workflows/riscv.yml')
+        cases = [(ci, native, row['target']) for row in native['strategy']['matrix']['include'] if 'target' in row]
+        cases.append((riscv, riscv['jobs']['execute'], riscv['env']['TARGET']))
+        results = self.root / 'target/cross-results'
+        results.mkdir(parents=True)
+        names = set()
+        for workflow, job, target in cases:
+            with self.subTest(target=target):
+                pack, = [step for step in job['steps'] if step.get('name') == 'Package cross-compiled execution evidence']
+                upload, = [step for step in job['steps'] if step.get('name') == 'Retain cross-compiled execution evidence']
+                payload = f'{{"target": "{target}"}}\n'.encode()
+                (results / 'summary.json').write_bytes(payload)
+                environment = {**workflow.get('env', {}), **job.get('env', {}), **pack.get('env', {})}
+                result = self.execute(pack, TARGET=environment['TARGET'].replace('${{ matrix.target }}', target))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(upload['with']['archive'], 'false')
+                path = upload['with']['path'].replace('${{ matrix.target }}', target).replace('${{ env.TARGET }}', target)
+                archive = self.root / path
+                # Raw upload ignores `name`: the filename is the discoverable artifact identity.
+                self.assertEqual(archive.name, f'{target}-results.tar.gz')
+                self.assertNotIn(archive.name, names)
+                names.add(archive.name)
+                with tarfile.open(archive) as evidence:
+                    self.assertEqual(evidence.extractfile('cross-results/summary.json').read(), payload)
 
     def test_bench_form_matches_planner_inputs(self):
         workflow = read_yaml('.github/workflows/bench.yml')

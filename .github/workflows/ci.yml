@@ -269,16 +269,17 @@ jobs:
           git diff --exit-code HEAD
       - name: Package cross-compiled execution evidence
         if: ${{ !cancelled() && matrix.target }}
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           if [[ -d target/cross-results ]]; then
-            tar -czf target/cross-results.tar.gz -C target cross-results
+            tar -czf "target/$TARGET-results.tar.gz" -C target cross-results
           fi
       - name: Retain cross-compiled execution evidence
         if: ${{ !cancelled() && matrix.target }}
         uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
         with:
-          path: target/cross-results.tar.gz
-          name: ${{ matrix.target }}-results
+          path: target/${{ matrix.target }}-results.tar.gz
           archive: false
           if-no-files-found: warn
           retention-days: 7
