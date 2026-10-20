@@ -11,6 +11,7 @@ autobenches = false
 
 [features]
 ml-dsa = ["rscrypto-rustls/ml-dsa"]
+quinn = ["rscrypto-rustls/quinn", "dep:quinn-proto", "dep:bytes"]
 portable-only = ["rscrypto-rustls/portable-only"]
 # Cross-target lint jobs can compile without a target OpenSSL installation.
 # Measurements still require the linked OpenSSL 4.0.3 checked by the fixture.
@@ -24,6 +25,8 @@ rustls-ring = { version = "=0.1.0-dev.1", git = "https://github.com/rustls/rustl
 openssl = "=0.10.81"
 libc = "0.2.190"
 serde_json = "1.0.154"
+quinn-proto = { version = "=0.12.0", git = "https://github.com/quinn-rs/quinn", rev = "9d729c1b6b7ad30d45d40265037eeeb9d98a7420", default-features = false, features = ["bloom"], optional = true }
+bytes = { version = "1.12.1", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", default-features = false, features = ["html_reports", "plotters"] }
@@ -32,6 +35,11 @@ criterion = { version = "0.8.2", default-features = false, features = ["html_rep
 name = "tls_connections"
 harness = false
 required-features = ["ml-dsa"]
+
+[[bench]]
+name = "quic_connections"
+harness = false
+required-features = ["quinn"]
 
 [profile.release]
 opt-level = 3

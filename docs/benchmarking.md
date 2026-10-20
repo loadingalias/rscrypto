@@ -920,6 +920,12 @@ A target with an `external` prerequisite is never a default target.
 Measure one `tls-handshake-<credential>` or scenario algorithm per invocation; the complete umbrella exceeds the run budget.
 The [TLS benchmark guide](../tools/provider-bench/README.md) defines every family and its comparison boundary.
 
+`quic_connections` has the same external prerequisite and is also excluded from default runs.
+`quic-provider` lists its seven selectors: `quic-handshake`, `quic-packet`, `quic-header`, `quinn-connect`, `quinn-retry`, `quinn-address-token`, and `quinn-reset`.
+Measure one selector per invocation.
+The [QUIC benchmark guide](../tools/provider-bench/README.md#quic-and-quinn) separates TLS crypto,
+packet protection and complete in-memory Quinn connections.
+
 `filter=<pattern>` limits the selected algorithms or targets.
 For example, `sha256 filter=rscrypto` stays within SHA-256, but `sha2 filter=rscrypto` searches the whole SHA-2 target.
 

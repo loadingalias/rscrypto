@@ -22,6 +22,9 @@ use serde_json::{Value, json};
 mod credentials;
 mod provenance;
 
+#[cfg(feature = "quinn")]
+pub mod quic;
+
 pub use provenance::provenance;
 
 pub const CREDENTIALS: [&str; 7] = ["p256", "p384", "ed25519", "rsa3072", "mldsa44", "mldsa65", "mldsa87"];

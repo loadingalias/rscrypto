@@ -1,6 +1,16 @@
 {
   "schema": 2,
   "benches": {
+    "quic_connections": {
+      "binary": "quic_connections",
+      "split": "algorithms",
+      "manifest": "tools/provider-bench/Cargo.toml",
+      "kind": "criterion",
+      "family": "tls",
+      "required": false,
+      "external": "OpenSSL 4.0.3",
+      "features": ["quinn"]
+    },
     "tls_connections": {
       "binary": "tls_connections",
       "split": "algorithms",
@@ -237,6 +247,13 @@
     }
   },
   "algorithms": {
+    "quic-handshake": { "bench": "quic_connections", "filter": "^quic/handshake/" },
+    "quic-packet": { "bench": "quic_connections", "filter": "^quic/packet-" },
+    "quic-header": { "bench": "quic_connections", "filter": "^quic/header-" },
+    "quinn-connect": { "bench": "quic_connections", "filter": "^quinn/connect/" },
+    "quinn-retry": { "bench": "quic_connections", "filter": "^quinn/retry/" },
+    "quinn-address-token": { "bench": "quic_connections", "filter": "^quinn/address-token/" },
+    "quinn-reset": { "bench": "quic_connections", "filter": "^quinn/stateless-reset/" },
     "tls-handshake-p256": { "bench": "tls_connections", "filter": "^tls13/handshake/p256/" },
     "tls-handshake-p384": { "bench": "tls_connections", "filter": "^tls13/handshake/p384/" },
     "tls-handshake-ed25519": { "bench": "tls_connections", "filter": "^tls13/handshake/ed25519/" },
@@ -347,6 +364,7 @@
     "chacha20-poly1305-diag": { "bench": "aead_diag", "filter": "chacha20-poly1305/copy-and-encrypt" }
   },
   "groups": {
+    "quic-provider": ["quic-handshake", "quic-packet", "quic-header", "quinn-connect", "quinn-retry", "quinn-address-token", "quinn-reset"],
     "tls-provider": [
       "tls-handshake-p256",
       "tls-handshake-p384",
@@ -566,6 +584,34 @@
     }
   },
   "comparisons": {
+    "quic-handshakes": {
+      "family": "QUIC",
+      "bench": "quic_connections",
+      "cases": "^quic/(?P<variant>handshake)/(?P<input>[^/]+/[^/]+/[^/]+/[^/]+)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Complete both QUIC v1 TLS handshakes and traffic-key derivation through raw TLS events; include allocation, copies and destruction. Configuration and key import are untimed."
+    },
+    "quic-packets": {
+      "family": "QUIC",
+      "bench": "quic_connections",
+      "cases": "^quic/(?P<variant>packet-seal|packet-open)/(?P<input>[^/]+/[0-9]+)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Protect or authenticate one 1-RTT payload with retained keys and storage, including buffer restoration and packet-number handling. Sizes and throughput count plaintext bytes."
+    },
+    "quic-headers": {
+      "family": "QUIC",
+      "bench": "quic_connections",
+      "cases": "^quic/(?P<variant>header-protect|header-unprotect)/(?P<input>[^/]+/short-pn4)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Apply or remove production QUIC header protection for a short header, four-byte packet number and 16-byte sample using retained keys."
+    },
+    "quinn-connections": {
+      "family": "QUIC",
+      "bench": "quic_connections",
+      "cases": "^quinn/(?P<variant>connect|retry|address-token)/(?P<input>[^/]+/[^/]+/[^/]+/[^/]+)/(?P<implementation>[^/]+)$",
+      "headline": false,
+      "task": "Complete both Quinn endpoints through in-memory UDP, including allocation, immediate control traffic and destruction. TLS varies by provider; the shared adapter always uses rscrypto for Initial, Retry and token cryptography."
+    },
     "tls-handshakes": {
       "family": "TLS",
       "bench": "tls_connections",
