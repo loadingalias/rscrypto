@@ -849,6 +849,8 @@ They do not install Rust, build code, or call Cargo Rail.
   The CI planner sums the selected measurement budgets
   while preparation keeps ten minutes per invocation.
   A failed invocation still ends its job.
+- RSA key generation runs one key size per invocation.
+  `rsa-4096-keygen` also has the 30-minute catalog budget.
 - Job labels use platform names, never target triples:
   `Prepare PLATFORM / FAMILY` and `Measure RUNNER / FAMILY`.
 - RunsOn starts a host for every queued job and ignores `max-parallel`, so the job count bounds the AWS hosts.

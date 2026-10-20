@@ -30,6 +30,7 @@ class BudgetTests(unittest.TestCase):
     selector = 'slhdsa-sha2-128s-sign'
     for args, expected in (([selector], 1800), (['hash-slhdsa-shake-256s-sign'], 1800),
                            (['slhdsa-sha2-128s-verify'], 600), (['slhdsa-sha2-128f-sign'], 600),
+                           (['rsa-4096-keygen'], 1800), (['rsa-3072-keygen'], 600), (['rsa_keygen'], 600),
                            (['slhdsa'], 600), (['slhdsa-sha2-128s'], 600),
                            ([selector, 'slhdsa-sha2-128s-verify'], 600),
                            ([selector, '--filter', 'rscrypto'], 600),

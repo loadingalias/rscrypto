@@ -204,6 +204,7 @@
       "binary": "rsa_keygen",
       "kind": "criterion",
       "family": "auth",
+      "split": "algorithms",
       "required": true,
       "features": ["std", "rsa", "getrandom"]
     },
@@ -326,6 +327,9 @@
     "hkdf-sha512": { "bench": "auth", "filter": "^hkdf-sha512/" },
     "pbkdf2-sha256": { "bench": "pbkdf2", "filter": "^pbkdf2-sha256(/|-state/)" },
     "pbkdf2-sha512": { "bench": "pbkdf2", "filter": "^pbkdf2-sha512(/|-state/)" },
+    "rsa-2048-keygen": { "bench": "rsa_keygen", "filter": "^rsa-2048-keygen/" },
+    "rsa-3072-keygen": { "bench": "rsa_keygen", "filter": "^rsa-3072-keygen/" },
+    "rsa-4096-keygen": { "bench": "rsa_keygen", "filter": "^rsa-4096-keygen/", "max_run_seconds": 1800 },
     "ecdsa-p256": { "bench": "auth", "filter": "^ecdsa-p256/" },
     "ecdsa-p384": { "bench": "auth", "filter": "^ecdsa-p384/" },
     "ed25519": { "bench": "auth", "filter": "ed25519" },

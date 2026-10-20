@@ -140,7 +140,8 @@ class ManualBench(unittest.TestCase):
         # Windows build in one budget. SLH-DSA separates 72 operations; PBKDF2 has SHA-256 and SHA-512.
         split = {name: [algorithm for algorithm, entry in catalog['algorithms'].items() if entry['bench'] == name]
                  for name in defaults if catalog['benches'][name].get('split') == 'algorithms'}
-        self.assertEqual({name: len(runs) for name, runs in split.items()}, {'slhdsa': 72, 'auth': 15, 'pbkdf2': 2})
+        self.assertEqual({name: len(runs) for name, runs in split.items()},
+                         {'slhdsa': 72, 'auth': 15, 'pbkdf2': 2, 'rsa_keygen': 3})
         expected = [run for name in defaults for run in split.get(name, [name])]
         self.assertEqual(sorted(run for runs in families.values() for run in runs), sorted(expected))
         # Slow SLH-DSA runs must not prevent PBKDF2, password hashing, or RSA from starting.

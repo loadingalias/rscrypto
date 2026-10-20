@@ -935,6 +935,10 @@ The shared `max_run_seconds` setting can lower this ordinary limit; it cannot ex
 
 The catalog gives 30 minutes to the 12 complete signing comparisons for SLH-DSA
 and HashSLH-DSA with SHA-2 or SHAKE and the `128s`, `192s`, or `256s` parameter sets.
+It also gives 30 minutes to RSA-4096 key generation (`rsa-4096-keygen`): its rscrypto row alone
+ran longer than four minutes on the RISC-V runner in
+[Bench run 39463299690](https://github.com/loadingalias/rscrypto/actions/runs/39463299690),
+and the comparison adds two more implementations.
 Select one operation without a filter, for example `just bench slhdsa-shake-192s-sign`.
 The runner and compiled harness use the same resolved budget and retain every implementation
 and sampling setting.
@@ -975,7 +979,8 @@ in [Bench run 39091310295](https://github.com/loadingalias/rscrypto/actions/runs
 The invocations reuse the same compiled binary and preserve every case and sampling setting.
 Every case of a split target must belong to exactly one of its algorithms; discovery fails otherwise.
 RSA key generation has its own `rsa_keygen` target, separate from `rsa` verification, signing, and encryption.
-CI runs `just bench rsa_keygen` with its own budget in the `auth` family job; its case IDs remain `rsa-{bits}-keygen/...`.
+It splits by key size: CI runs `rsa-2048-keygen`, `rsa-3072-keygen` and `rsa-4096-keygen` as separate invocations
+in the `auth` family job. Its case IDs remain `rsa-{bits}-keygen/...`.
 If required evidence cannot fit, record that requirement as unmet. A smaller future
 experiment needs a prospectively stated question and gates; it does not complete
 an older, larger qualification plan. Preserve historical frozen plans and failed

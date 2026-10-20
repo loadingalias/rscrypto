@@ -113,12 +113,25 @@ def main() -> None:
   if covered != set(slhdsa):
     fail("SLH-DSA catalog contains selectors outside the operation partition")
 
+  # RSA key generation runs one key size per invocation; each selector keeps every implementation.
+  keygen = {name: re.compile(row["filter"]) for name, row in catalog["algorithms"].items()
+            if row["bench"] == "rsa_keygen"}
+  for bits in (2048, 3072, 4096):
+    for implementation in ("rscrypto", "rustcrypto-rsa", "aws-lc-rs"):
+      case = f"rsa-{bits}-keygen/{implementation}"
+      owners = [name for name, pattern in keygen.items() if pattern.search(case)]
+      if owners != [f"rsa-{bits}-keygen"]:
+        fail(f"RSA key generation partition changed: {case} belongs to {owners}")
+  if set(keygen) != {f"rsa-{bits}-keygen" for bits in (2048, 3072, 4096)}:
+    fail("RSA key generation catalog contains selectors outside the key-size partition")
+
   extended = {f'{prefix}-{family}-{parameter}-sign': 1800
               for prefix in ('slhdsa', 'hash-slhdsa') for family in ('sha2', 'shake')
-              for parameter in ('128s', '192s', '256s')}
+              for parameter in ('128s', '192s', '256s')} | {'rsa-4096-keygen': 1800}
   if {name: row['max_run_seconds'] for name, row in catalog['algorithms'].items()
       if 'max_run_seconds' in row} != extended:
-    fail('extended budgets must cover exactly the twelve complete small-signature signing comparisons')
+    fail('extended budgets must cover exactly the twelve small-signature SLH-DSA signing comparisons '
+         'and RSA-4096 key generation')
   for kind, selector, budget in (('algorithms', 'slhdsa-sha2-128s-sign', value)
                                 for value in (True, 600, 1801, 1800.0, '1800')):
     broken = copy.deepcopy(catalog)
