@@ -12,7 +12,7 @@ use crate::traits::ct;
   target_feature = "neon",
   not(feature = "portable-only")
 ))]
-mod aarch64;
+pub(super) mod aarch64;
 
 #[cfg(all(
   target_arch = "x86_64",
@@ -20,7 +20,7 @@ mod aarch64;
   not(miri),
   not(feature = "portable-only")
 ))]
-mod x86_64;
+pub(super) mod x86_64;
 
 #[cfg(all(
   any(target_arch = "s390x", all(target_arch = "powerpc64", target_endian = "little")),

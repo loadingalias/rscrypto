@@ -17,7 +17,26 @@ const NOISE_PLANE_BYTES: usize = 4 * 4 * 8;
 // their input/output planes. Helpers borrow these owners across calls.
 const NOISE_INPUT_BYTES: usize = NOISE_INPUT_PLANE_BYTES + 8;
 const NOISE_STATE_BYTES: usize = NOISE_PLANE_BYTES + 4;
-const CHALLENGE_BYTES: usize = 221;
+pub(super) const CHALLENGE_BYTES: usize = 221;
+/// Sixteen-byte windows over the challenge candidates `8..CHALLENGE_BYTES` for
+/// vector scans. The last window ends at the buffer end and overlaps its
+/// predecessor; a repeated candidate cannot change a minimum.
+#[cfg(any(
+  test,
+  all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ),
+  all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    target_feature = "neon",
+    not(feature = "portable-only")
+  )
+))]
+pub(super) const CHALLENGE_WINDOWS: [usize; 14] = [8, 24, 40, 56, 72, 88, 104, 120, 136, 152, 168, 184, 200, 205];
 
 /// Return one when `value` is non-zero and zero otherwise.
 #[inline]
@@ -355,8 +374,84 @@ fn challenge_from_bytes(bytes: &[u8; CHALLENGE_BYTES], tau: usize, out: &mut Pol
   }
 }
 
+/// Run the fixed candidate scan on NEON, which these targets require at compile time.
+#[cfg(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  target_feature = "neon",
+  not(feature = "portable-only")
+))]
+fn challenge_first_candidate(bytes: &[u8; CHALLENGE_BYTES], offset: u32, limit: u32) -> u32 {
+  // SAFETY: This configuration requires compile-time NEON on macOS/Linux AArch64.
+  unsafe { super::poly::aarch64::challenge_first_candidate(bytes, offset, limit) }
+}
+
+/// Run the fixed candidate scan on AVX2 when detected, otherwise portably.
+#[cfg(not(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  target_feature = "neon",
+  not(feature = "portable-only")
+)))]
+fn challenge_first_candidate(bytes: &[u8; CHALLENGE_BYTES], offset: u32, limit: u32) -> u32 {
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  if crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
+    // SAFETY: Cached capability detection establishes CPU and OS AVX2 support.
+    return unsafe { super::poly::x86_64::challenge_first_candidate(bytes, offset, limit) };
+  }
+  first_challenge_candidate(bytes, offset, limit)
+}
+
+/// Run the fixed placement scan on NEON, which these targets require at compile time.
+#[cfg(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  target_feature = "neon",
+  not(feature = "portable-only")
+))]
+fn challenge_place(coefficients: &mut [u32; N], j: u32, sign: u32) -> u32 {
+  // SAFETY: This configuration requires compile-time NEON on macOS/Linux AArch64.
+  unsafe { super::poly::aarch64::challenge_place(coefficients, j, sign) }
+}
+
+/// Run the fixed placement scan on AVX2 when detected, otherwise portably.
+#[cfg(not(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  target_feature = "neon",
+  not(feature = "portable-only")
+)))]
+fn challenge_place(coefficients: &mut [u32; N], j: u32, sign: u32) -> u32 {
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  if crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
+    // SAFETY: Cached capability detection establishes CPU and OS AVX2 support.
+    return unsafe { super::poly::x86_64::challenge_place(coefficients, j, sign) };
+  }
+  place_challenge_coefficient(coefficients, j, sign)
+}
+
 // Keep one fixed scan out of the outer tau loop. Inlining lets LLVM hoist
 // expanded secret bytes into many spill slots and greatly enlarges the frame.
+#[cfg_attr(
+  all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    target_feature = "neon",
+    not(feature = "portable-only"),
+    not(test)
+  ),
+  expect(dead_code, reason = "NEON targets always use the vector scan")
+)]
 #[inline(never)]
 fn first_challenge_candidate(bytes: &[u8; CHALLENGE_BYTES], offset: u32, limit: u32) -> u32 {
   // Pack position above value so an unsigned minimum chooses the first
@@ -386,6 +481,28 @@ fn first_challenge_candidate(bytes: &[u8; CHALLENGE_BYTES], offset: u32, limit: 
   first
 }
 
+/// Write `sign` at coefficient `j` and return the coefficient it replaces.
+#[cfg_attr(
+  all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    target_feature = "neon",
+    not(feature = "portable-only"),
+    not(test)
+  ),
+  expect(dead_code, reason = "NEON targets always use the vector scan")
+)]
+fn place_challenge_coefficient(coefficients: &mut [u32; N], j: u32, sign: u32) -> u32 {
+  let mut previous = 0;
+  for (index, coefficient) in coefficients.iter_mut().enumerate() {
+    let index = u32::try_from(index).expect("ML-DSA polynomial indices fit u32");
+    let hit = equal_bit(index, j);
+    previous |= select(0, *coefficient, hit);
+    *coefficient = select(*coefficient, sign, hit);
+  }
+  previous
+}
+
 fn challenge_from_bytes_valid(bytes: &[u8; CHALLENGE_BYTES], tau: usize, out: &mut Poly) -> u32 {
   let b = bytes;
   let mut signs = u64::from_le_bytes(b[..8].try_into().expect("fixed challenge sign prefix"));
@@ -394,7 +511,7 @@ fn challenge_from_bytes_valid(bytes: &[u8; CHALLENGE_BYTES], tau: usize, out: &m
   out.0.fill(0);
   for i in N.strict_sub(tau)..N {
     let i_u32 = u32::try_from(i).expect("ML-DSA polynomial indices fit u32");
-    let first = first_challenge_candidate(b, offset, i_u32);
+    let first = challenge_first_candidate(b, offset, i_u32);
     let found = nonzero_bit(first ^ u32::MAX);
     let j = select(0, first & 255, found);
     offset = select(offset, (first >> 8).strict_add(1), found);
@@ -403,13 +520,7 @@ fn challenge_from_bytes_valid(bytes: &[u8; CHALLENGE_BYTES], tau: usize, out: &m
     // accepted. Scan both the XOF buffer and polynomial instead of indexing
     // either one with secret-derived rejection state.
     let sign = select(1, Q.strict_sub(1), u32::from(signs & 1 != 0));
-    let mut previous = 0;
-    for (index, coefficient) in out.0.iter_mut().enumerate() {
-      let index = u32::try_from(index).expect("ML-DSA polynomial indices fit u32");
-      let hit = equal_bit(index, j);
-      previous |= select(0, *coefficient, hit);
-      *coefficient = select(*coefficient, sign, hit);
-    }
+    let previous = challenge_place(&mut out.0, j, sign);
     out.0[i] = select(previous, sign, equal_bit(i_u32, j));
     signs >>= 1;
   }
@@ -419,6 +530,71 @@ fn challenge_from_bytes_valid(bytes: &[u8; CHALLENGE_BYTES], tau: usize, out: &m
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn challenge_windows_cover_every_candidate_position() {
+    let mut covered = [false; CHALLENGE_BYTES];
+    for start in CHALLENGE_WINDOWS {
+      assert!(start >= 8 && start.strict_add(16) <= CHALLENGE_BYTES);
+      covered[start..start.strict_add(16)].fill(true);
+    }
+    assert!(covered[8..].iter().all(|&position| position));
+  }
+
+  #[test]
+  fn dispatched_challenge_scans_match_portable_scans() {
+    // The sampler requests offsets 8..=221 and limits 196..=255; lower limits
+    // and all-zero / all-0xff buffers also exercise the no-candidate sentinel.
+    let mut state = 0x3c6e_f372_fe94_f82bu64;
+    let mut next = || {
+      state ^= state << 13;
+      state ^= state >> 7;
+      state ^= state << 17;
+      state
+    };
+    let mut buffers = vec![[0u8; CHALLENGE_BYTES], [0xff; CHALLENGE_BYTES]];
+    for _ in 0..3 {
+      let mut bytes = [0u8; CHALLENGE_BYTES];
+      for byte in &mut bytes {
+        *byte = next().to_le_bytes()[0];
+      }
+      buffers.push(bytes);
+    }
+    let last_offset = u32::try_from(CHALLENGE_BYTES).expect("challenge length fits u32");
+    let limits: Vec<u32> = if cfg!(miri) {
+      vec![0, 196, 255]
+    } else {
+      [0, 1, 7, 100, 127, 128].into_iter().chain(190..=255).collect()
+    };
+    for bytes in &buffers {
+      for offset in 8..=last_offset {
+        for &limit in &limits {
+          assert_eq!(
+            challenge_first_candidate(bytes, offset, limit),
+            first_challenge_candidate(bytes, offset, limit),
+            "offset {offset}, limit {limit}"
+          );
+        }
+      }
+    }
+
+    let n = u32::try_from(N).expect("ML-DSA degree fits u32");
+    for j in 0..n {
+      for sign in [1, Q.strict_sub(1)] {
+        let mut dispatched = [0u32; N];
+        for coefficient in &mut dispatched {
+          *coefficient = u32::try_from(next() >> 32).expect("high half fits u32");
+        }
+        let mut portable = dispatched;
+        assert_eq!(
+          challenge_place(&mut dispatched, j, sign),
+          place_challenge_coefficient(&mut portable, j, sign),
+          "j {j}"
+        );
+        assert_eq!(dispatched, portable, "j {j}");
+      }
+    }
+  }
 
   #[test]
   fn hash_parts_match_independent_shake256_across_rate_boundaries() {

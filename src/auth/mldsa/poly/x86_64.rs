@@ -1,4 +1,4 @@
-//! Eight-lane canonical ML-DSA arithmetic for Linux AVX2.
+//! Eight-lane canonical ML-DSA arithmetic and challenge scans for Linux AVX2.
 //!
 //! This is the portable Montgomery arithmetic applied independently to lanes.
 //! Roots and polynomial layout remain unchanged. All shuffles and addresses
@@ -7,6 +7,7 @@
 use core::arch::x86_64::*;
 
 use super::{FIRST_FACTOR, INV_N, LAST_FACTOR, N, NEG_Q_INVERSE, Poly, Q, R2, ROOTS};
+use crate::auth::mldsa::sampling::{CHALLENGE_BYTES, CHALLENGE_WINDOWS};
 
 /// # Safety
 /// Calling outside an AVX2-enabled function requires AVX2 support.
@@ -239,4 +240,89 @@ pub(super) unsafe fn accumulate_product(out: &mut [u32; N], a: &[u32; N], b: &[u
       _mm256_storeu_si256(out.as_mut_ptr().cast(), sum);
     }
   }
+}
+
+/// Fixed-work search for the first eligible challenge byte.
+///
+/// Returns the minimum of `position << 8 | byte` over positions at or after
+/// `offset` whose byte is at most `limit`, or `u32::MAX` when none qualifies,
+/// as `sampling::first_challenge_candidate` does. Every window is read, and
+/// neither address nor control flow depends on a byte, offset or limit.
+///
+/// # Safety
+/// The caller must establish AVX2.
+#[target_feature(enable = "avx2")]
+pub(in crate::auth::mldsa) unsafe fn challenge_first_candidate(
+  bytes: &[u8; CHALLENGE_BYTES],
+  offset: u32,
+  limit: u32,
+) -> u32 {
+  // Offsets are at most 221 and limits at most 255. Masking first makes each
+  // conversion provably in range, so no check branches on the secret offset.
+  let offset = _mm256_set1_epi16(
+    u16::try_from(offset & 0xffff)
+      .expect("masked offsets fit u16")
+      .cast_signed(),
+  );
+  let limit = _mm256_set1_epi16(
+    u16::try_from(limit & 0xffff)
+      .expect("masked limits fit u16")
+      .cast_signed(),
+  );
+  let lanes = _mm256_setr_epi16(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+  let none = _mm256_set1_epi16(-1);
+  let mut first = none;
+  for start in CHALLENGE_WINDOWS {
+    let window: &[u8; 16] = bytes[start..start.strict_add(16)]
+      .try_into()
+      .expect("challenge windows have sixteen bytes");
+    // SAFETY: The unaligned load reads exactly the sixteen initialized bytes of `window`.
+    let candidates = _mm256_cvtepu8_epi16(unsafe { _mm_loadu_si128(window.as_ptr().cast()) });
+    let start = i16::try_from(start).expect("challenge positions fit i16");
+    let positions = _mm256_add_epi16(_mm256_set1_epi16(start), lanes);
+    // Unsigned comparisons as min/max equalities: position >= offset, byte <= limit.
+    let after_offset = _mm256_cmpeq_epi16(_mm256_max_epu16(positions, offset), positions);
+    let in_range = _mm256_cmpeq_epi16(_mm256_min_epu16(candidates, limit), candidates);
+    let packed = _mm256_or_si256(_mm256_slli_epi16::<8>(positions), candidates);
+    let eligible = _mm256_and_si256(after_offset, in_range);
+    first = _mm256_min_epu16(first, _mm256_or_si256(packed, _mm256_andnot_si256(eligible, none)));
+  }
+  let first = _mm_min_epu16(_mm256_castsi256_si128(first), _mm256_extracti128_si256::<1>(first));
+  let first = _mm_cvtsi128_si32(_mm_minpos_epu16(first)).cast_unsigned() & 0xffff;
+  // An eligible packed value is at most 220 << 8 | 255, so 0xffff means none.
+  let none = (first ^ 0xffff).wrapping_sub(1) >> 31;
+  first | super::opaque_mask(0u32.wrapping_sub(none))
+}
+
+/// Write `sign` at coefficient `j` and return the coefficient it replaces.
+///
+/// Every coefficient is read and written; the index comparison selects lanes
+/// without a secret-dependent address, as the portable placement scan does.
+///
+/// # Safety
+/// The caller must establish AVX2.
+#[target_feature(enable = "avx2")]
+pub(in crate::auth::mldsa) unsafe fn challenge_place(coefficients: &mut [u32; N], j: u32, sign: u32) -> u32 {
+  let target = _mm256_set1_epi32(j.cast_signed());
+  let sign = _mm256_set1_epi32(sign.cast_signed());
+  let mut index = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
+  let mut previous = _mm256_setzero_si256();
+  for chunk in coefficients.as_chunks_mut::<8>().0 {
+    // SAFETY: Each unaligned load and store covers exactly one uniquely borrowed
+    // eight-lane chunk. N has no vector tail. The caller establishes AVX2.
+    unsafe {
+      let value = _mm256_loadu_si256(chunk.as_ptr().cast());
+      let hit = _mm256_cmpeq_epi32(index, target);
+      previous = _mm256_or_si256(previous, _mm256_and_si256(value, hit));
+      _mm256_storeu_si256(chunk.as_mut_ptr().cast(), _mm256_blendv_epi8(value, sign, hit));
+    }
+    index = _mm256_add_epi32(index, _mm256_set1_epi32(8));
+  }
+  let previous = _mm_or_si128(
+    _mm256_castsi256_si128(previous),
+    _mm256_extracti128_si256::<1>(previous),
+  );
+  let previous = _mm_or_si128(previous, _mm_shuffle_epi32::<0x4e>(previous));
+  let previous = _mm_or_si128(previous, _mm_shuffle_epi32::<0xb1>(previous));
+  _mm_cvtsi128_si32(previous).cast_unsigned()
 }

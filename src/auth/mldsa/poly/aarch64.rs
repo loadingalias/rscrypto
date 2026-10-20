@@ -1,4 +1,4 @@
-//! Four-lane NTT transforms for the macOS and Linux AArch64 NEON baseline.
+//! Four-lane NTT transforms and challenge scans for the macOS and Linux AArch64 NEON baseline.
 //!
 //! Keep the portable canonical representation and Montgomery arithmetic. Every
 //! stage returns coefficients below q; no lane layout or secret owner changes.
@@ -6,6 +6,7 @@
 use core::arch::aarch64::*;
 
 use super::{FIRST_FACTOR, INV_N, LAST_FACTOR, N, NEG_Q_INVERSE, Poly, Q, R2, ROOTS};
+use crate::auth::mldsa::sampling::{CHALLENGE_BYTES, CHALLENGE_WINDOWS};
 
 /// One masked subtraction for lanes in [0, 2q).
 ///
@@ -217,4 +218,77 @@ pub(super) unsafe fn accumulate_product(out: &mut [u32; N], a: &[u32; N], b: &[u
       vst1q_u32(out.as_mut_ptr(), result);
     }
   }
+}
+
+/// Fixed-work search for the first eligible challenge byte.
+///
+/// Returns the minimum of `position << 8 | byte` over positions at or after
+/// `offset` whose byte is at most `limit`, or `u32::MAX` when none qualifies,
+/// as `sampling::first_challenge_candidate` does. Every window is read, and
+/// neither address nor control flow depends on a byte, offset or limit.
+///
+/// # Safety
+/// The caller must establish NEON support.
+#[target_feature(enable = "neon")]
+pub(in crate::auth::mldsa) unsafe fn challenge_first_candidate(
+  bytes: &[u8; CHALLENGE_BYTES],
+  offset: u32,
+  limit: u32,
+) -> u32 {
+  // Offsets are at most 221 and limits at most 255. Masking first makes each
+  // conversion provably in range, so no check branches on the secret offset.
+  let offset = vdupq_n_u16(u16::try_from(offset & 0xffff).expect("masked offsets fit u16"));
+  let limit = vdupq_n_u16(u16::try_from(limit & 0xffff).expect("masked limits fit u16"));
+  let lanes: [u16; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
+  // SAFETY: The load reads exactly the eight initialized lanes of `lanes`.
+  let lanes = unsafe { vld1q_u16(lanes.as_ptr()) };
+  let mut first = vdupq_n_u16(u16::MAX);
+  for start in CHALLENGE_WINDOWS {
+    let window: &[u8; 16] = bytes[start..start.strict_add(16)]
+      .try_into()
+      .expect("challenge windows have sixteen bytes");
+    // SAFETY: The load reads exactly the sixteen initialized bytes of `window`.
+    let window = unsafe { vld1q_u8(window.as_ptr()) };
+    let start = u16::try_from(start).expect("challenge positions fit u16");
+    for (half, candidates) in [(0, vmovl_u8(vget_low_u8(window))), (8, vmovl_high_u8(window))] {
+      let positions = vaddq_u16(vdupq_n_u16(start.strict_add(half)), lanes);
+      let eligible = vandq_u16(vcgeq_u16(positions, offset), vcleq_u16(candidates, limit));
+      let packed = vorrq_u16(vshlq_n_u16::<8>(positions), candidates);
+      first = vminq_u16(first, vorrq_u16(packed, vmvnq_u16(eligible)));
+    }
+  }
+  let first = u32::from(vminvq_u16(first));
+  // An eligible packed value is at most 220 << 8 | 255, so 0xffff means none.
+  let none = (first ^ 0xffff).wrapping_sub(1) >> 31;
+  first | super::opaque_mask(0u32.wrapping_sub(none))
+}
+
+/// Write `sign` at coefficient `j` and return the coefficient it replaces.
+///
+/// Every coefficient is read and written; the index comparison selects lanes
+/// without a secret-dependent address, as the portable placement scan does.
+///
+/// # Safety
+/// The caller must establish NEON support.
+#[target_feature(enable = "neon")]
+pub(in crate::auth::mldsa) unsafe fn challenge_place(coefficients: &mut [u32; N], j: u32, sign: u32) -> u32 {
+  let target = vdupq_n_u32(j);
+  let sign = vdupq_n_u32(sign);
+  let lanes: [u32; 4] = [0, 1, 2, 3];
+  // SAFETY: The load reads exactly the four initialized lanes of `lanes`.
+  let mut index = unsafe { vld1q_u32(lanes.as_ptr()) };
+  let mut previous = vdupq_n_u32(0);
+  for chunk in coefficients.as_chunks_mut::<4>().0 {
+    // SAFETY: Each load and store covers exactly one uniquely borrowed
+    // four-lane chunk and needs only u32 alignment. N has no vector tail.
+    unsafe {
+      let value = vld1q_u32(chunk.as_ptr());
+      let hit = vceqq_u32(index, target);
+      previous = vorrq_u32(previous, vandq_u32(value, hit));
+      vst1q_u32(chunk.as_mut_ptr(), vbslq_u32(hit, sign, value));
+    }
+    index = vaddq_u32(index, vdupq_n_u32(4));
+  }
+  let previous = vorr_u32(vget_low_u32(previous), vget_high_u32(previous));
+  vget_lane_u32::<0>(previous) | vget_lane_u32::<1>(previous)
 }
