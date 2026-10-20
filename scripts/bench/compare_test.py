@@ -249,6 +249,25 @@ class RunTests(unittest.TestCase):
       self.assertEqual(compare.main([f"x86={run}"]), 1)
     self.assertIn("d9/rscrypto/64 has external rows but no catalog comparison", stderr.getvalue())
 
+  def test_case_listing_must_name_cases_and_reports_checked_comparisons(self):
+    catalog = copy.deepcopy(CATALOG)
+    catalog["benches"]["macs"] = {"binary": "macs", "kind": "criterion"}
+    catalog["comparisons"]["mac"] = {**catalog["comparisons"]["stream"], "bench": "macs",
+                                     "cases": r"^m1/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$"}
+    path = self.root / "cases.txt"
+    with mock.patch.object(compare, "load_catalog", return_value=catalog):
+      # Without case lines, every comparison is skipped; the check must not report success.
+      for text in ("", "d1/rscrypto/64: benchmark\n"):
+        path.write_text(text)
+        with self.subTest(text=text), self.assertRaises(compare.ComparisonError):
+          compare.main(["--cases", str(path)])
+      path.write_text("".join(f"[ordinary] hashes {case}\n" for case in (
+        "d1/rscrypto/64", "d1/lib-a/64", "d2/rscrypto/64", "d2/lib-a/64",
+        "d1/streaming/rscrypto/64B", "d1/streaming/lib-a/64B")))
+      with contextlib.redirect_stdout(io.StringIO()) as stdout, contextlib.redirect_stderr(io.StringIO()) as stderr:
+        self.assertEqual(compare.main(["--cases", str(path), "--architecture", "x86_64"]), 0, stderr.getvalue())
+    self.assertIn("2 of 3 comparisons checked", stdout.getvalue())
+
 
 class CatalogTests(unittest.TestCase):
   def test_comparison_declarations_are_validated(self):

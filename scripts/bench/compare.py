@@ -273,10 +273,17 @@ def main(arguments: list[str]) -> int:
   if args.cases:
     if args.runs or args.json:
       raise ComparisonError("--cases takes no runs and writes no JSON")
-    problems = validate_cases(catalog, listed_cases(args.cases), args.architecture)
+    cases = listed_cases(args.cases)
+    # An empty or misformatted listing would otherwise skip every comparison and pass.
+    if not cases:
+      raise ComparisonError(f"{args.cases} lists no `[class] binary case` lines from `just bench --list`")
+    problems = validate_cases(catalog, cases, args.architecture)
     for problem in problems:
       print(f"error: {problem}", file=sys.stderr)
-    print(f"{len(catalog['comparisons'])} comparisons checked against {args.cases}")
+    binaries = {name: bench["binary"] for name, bench in catalog["benches"].items()}
+    checked = sum(binaries[comparison["bench"]] in cases for comparison in catalog["comparisons"].values())
+    print(f"{checked} of {len(catalog['comparisons'])} comparisons checked against {args.cases}; "
+          "the others measure binaries absent from the listing")
     return 1 if problems else 0
   if not args.runs:
     raise ComparisonError("give at least one PLATFORM=RUN_DIRECTORY")

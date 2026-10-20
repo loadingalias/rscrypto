@@ -537,6 +537,7 @@ selects the first message index for reproducing a discovered rejection case.
   It fails on an incomplete comparison point, on a missing competitor build for the platform,
   and on a measured group that has external rows but no declaration.
   `--cases` checks the declarations against `just bench --list` output without measuring.
+  It rejects a listing without case lines and reports how many comparisons the listed binaries cover.
   The Bench workflow's `Score comparisons` job runs it on the run's extracted measurement archives.
 - Bench's `rescore=RUN_ID/ATTEMPT` mode runs only a report job and ignores measurement inputs.
   `bench/ci.py rescore-source` verifies a completed main-branch Bench attempt and every native job's success.
@@ -552,6 +553,8 @@ selects the first message index for reproducing a discovered rejection case.
   `bench/runner.py` grants it only to one complete operation without a filter; quick runs,
   listing and preparation keep the ordinary budget.
 - `bench/bounded.py` stops the whole benchmark or profile process tree within the budget.
+  For `--list`, it runs one bounded runner invocation per selected target,
+  so each target's build and discovery has the ordinary budget.
 - `bench/runner.py` resolves filters to unique cases and records the budget in `requests.json`.
 - `bench/measure.py` runs one process for each configuration,
   passes the cases and budget to the compiled harness through `RSCRYPTO_BENCH_CASES`,

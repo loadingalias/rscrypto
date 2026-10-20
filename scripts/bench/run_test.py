@@ -26,6 +26,9 @@ if sys.argv[1:] == ['-V']:
   print('cargo fixture'); sys.exit(0)
 with open('builds.jsonl', 'a') as log:
   log.write(json.dumps(sys.argv[1:]) + '\n')
+if hasattr(os, 'getsid'):
+  # The watchdog starts each bounded invocation in its own session.
+  with open('sessions.jsonl', 'a') as log: log.write(json.dumps(os.getsid(0)) + '\n')
 assert '--no-run' in sys.argv and '--message-format=json' in sys.argv
 if os.environ.get('FAIL_BUILD'):
   print('fixture compiler detail: rejected benchmark source', file=sys.stderr)
@@ -465,6 +468,22 @@ sys.exit(64)
     self.assertNotIn('--', self.calls(listing=True)[0]['args'])
     self.ok(self.bench('sha2', 'crc', 'filter=rscrypto', 'filter=64', '--list'))
     self.assertEqual(len(self.calls(listing=True)), 3)
+
+  @unittest.skipUnless(os.name == 'posix', 'process sessions identify bounded invocations')
+  def test_listing_bounds_each_target_in_its_own_invocation(self):
+    # A cold listing builds every selected target; one shared budget could not cover all of them.
+    result = self.bench('sha2', 'crc', 'filter=rscrypto', '--list')
+    self.assertEqual(result.returncode, 0, result.stderr)
+    listed = [line.split()[1:] for line in result.stdout.splitlines() if line.startswith('[')]
+    self.assertEqual(list(dict.fromkeys(binary for binary, _ in listed)), ['sha2', 'crc'])
+    self.assertTrue(all('rscrypto' in case for _, case in listed))
+    sessions = [json.loads(line) for line in (self.root / 'sessions.jsonl').read_text().splitlines()]
+    self.assertEqual(len(sessions), 2)
+    self.assertEqual(len(set(sessions)), 2)
+    self.assertNotIn(os.getsid(0), sessions)
+    result = self.bench('sha2', '--list-target', 'sha2')
+    self.assertNotEqual(result.returncode, 0)
+    self.assertIn('--list-target applies only to --list', result.stderr)
 
   def test_explicit_options_override_environment(self):
     self.ok(self.bench('sha256', 'sample_size=12', 'measure_ms=250', BENCH_SAMPLE_SIZE='10', BENCH_MEASURE_MS='333'))

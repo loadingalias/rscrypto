@@ -153,6 +153,8 @@ just bench-compare --cases cases.txt
   and when a measured group has external rows but no declaration.
   `--partial` reports the first kind as notes, for runs whose case filter omitted rows.
 - `--cases` checks the declarations against a case listing without measuring.
+  It fails on a listing without case lines.
+  It checks only comparisons whose binaries appear in the listing, and reports how many that is.
   It uses this host's architecture; add `--architecture s390x`, for example, for a listing from another host.
 
 The Bench workflow's `Score comparisons` job extracts and scores the run's own measurement archives.
@@ -926,6 +928,8 @@ No opt-in for expensive workloads is needed.
 
 `just bench` normally limits the whole pipeline to 10 minutes: build, discovery, measurement, analysis,
 and result verification.
+`--list` runs one bounded invocation for each selected target, so each target's build and discovery
+has its own limit; a cold listing of many targets can take longer in total.
 `just bench-structural` and `just profile` use the same limit, including their builds.
 The shared `max_run_seconds` setting can lower this ordinary limit; it cannot exceed 600 seconds.
 

@@ -32,7 +32,7 @@ class BudgetTests(unittest.TestCase):
                            (['slhdsa-sha2-128s-verify'], 600), (['slhdsa-sha2-128f-sign'], 600),
                            (['slhdsa'], 600), (['slhdsa-sha2-128s'], 600),
                            ([selector, 'slhdsa-sha2-128s-verify'], 600),
-                           ([selector, '--filter', 'rscrypto'], 600), ([selector, '--list'], 600),
+                           ([selector, '--filter', 'rscrypto'], 600),
                            ([selector, '--quick'], 600),
                            ([selector, '--prepare-archive', 'fixture.tar'], 600),
                            ([selector, '--run-archive', 'fixture.tar'], 1800)):
@@ -44,6 +44,20 @@ class BudgetTests(unittest.TestCase):
     with patch.dict(os.environ, {'BENCH_QUICK': 'true'}, clear=True), patch('bounded.run', return_value=0) as execute:
       self.assertEqual(main(['--bench', selector]), 0)
       self.assertEqual(execute.call_args.args[1], 600)
+
+  def test_listing_bounds_each_target_separately(self):
+    # Listing builds every selected target, so each target's build and discovery gets the ordinary budget.
+    args = ['sha2', 'crc', 'slhdsa-sha2-128s-sign', '--list']
+    with patch.dict(os.environ, {}, clear=True), patch('bounded.run', return_value=0) as execute:
+      self.assertEqual(main(['--bench', *args]), 0)
+    self.assertEqual([call.args[0][2:] for call in execute.call_args_list],
+                     [['bench', *args, '--list-target', name] for name in ('sha2', 'crc', 'slhdsa')])
+    self.assertEqual([call.args[1] for call in execute.call_args_list], [600] * 3)
+    self.assertEqual([call.kwargs for call in execute.call_args_list], [{}] * 3)
+    # The first failed target ends the listing.
+    with patch.dict(os.environ, {}, clear=True), patch('bounded.run', side_effect=[0, 124, 0]) as execute:
+      self.assertEqual(main(['--bench', *args]), 124)
+    self.assertEqual(execute.call_count, 2)
 
   @unittest.skipUnless(os.name == "posix", "signal forwarding proof requires POSIX")
   def test_sigterm_stops_the_child(self):

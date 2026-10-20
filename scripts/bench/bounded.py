@@ -63,9 +63,17 @@ def main(arguments: list[str]) -> int:
   if arguments[:1] == ["--bench"]:
     import runner
     args = runner.parse(["bench", *arguments[1:]])
-    budget = runner.run_budget(args, runner.load_catalog())
-    return run([sys.executable, str(Path(runner.__file__)), "bench", *arguments[1:]], budget,
-               maximum=load()["max_comparison_seconds"])
+    catalog = runner.load_catalog()
+    command = [sys.executable, str(Path(runner.__file__)), "bench", *arguments[1:]]
+    if args.list and not args.list_target:
+      # Listing builds every selected target. Bound each target's build and discovery separately,
+      # as CI bounds each invocation, so a cold listing of many targets cannot exhaust one budget.
+      for bench in dict.fromkeys(row["bench"] for row in runner.requests(args, catalog)):
+        status = run([*command, "--list-target", bench], load()["max_run_seconds"])
+        if status:
+          return status
+      return 0
+    return run(command, runner.run_budget(args, catalog), maximum=load()["max_comparison_seconds"])
   return run(arguments, load()["max_run_seconds"])
 
 

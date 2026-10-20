@@ -40,6 +40,8 @@ def parse(arguments: list[str]):
   bench.add_argument("selectors", nargs="*")
   bench.add_argument("--filter", action="append", default=[])
   bench.add_argument("--list", action="store_true")
+  # The watchdog lists one target per bounded invocation.
+  bench.add_argument("--list-target", help=argparse.SUPPRESS)
   bench.add_argument("--diag", nargs="?", const=True, type=boolean, default=False)
   bench.add_argument("--quick", nargs="?", const=True, type=boolean, default=False)
   bench.add_argument("--output-dir", default="benchmark_results")
@@ -77,7 +79,7 @@ def parse(arguments: list[str]):
       normalized.append("--" + key.replace("_", "-") + "=" + value)
     else:
       normalized.append(token)
-    value_follows = token in {"--filter", "--output-dir", "--baseline", "--prepare-archive", "--run-archive", "--target", "--warmup-ms", "--measure-ms", "--sample-size"}
+    value_follows = token in {"--filter", "--output-dir", "--baseline", "--prepare-archive", "--run-archive", "--target", "--warmup-ms", "--measure-ms", "--sample-size", "--list-target"}
   if arguments[:1] in (["codegen"], ["llvm-lines"]):
     boundary = normalized.index("--") if "--" in normalized else len(normalized)
     args = parser.parse_args(normalized[:boundary])
@@ -138,6 +140,8 @@ def requests(args, catalog, every_architecture=False) -> list[dict]:
   skipped = []
   for name in dict.fromkeys(names):
     bench, case_scope = scope(catalog, name)
+    if getattr(args, "list_target", None) not in (None, bench):
+      continue
     if not every_architecture and not applies(catalog["benches"][bench], arch):
       skipped.append(name)
       continue
@@ -251,6 +255,8 @@ def bench(args, catalog) -> None:
                              if (value := getattr(args, name)) is not None})
   effective.pop("max_run_seconds")
   effective.pop("max_comparison_seconds")
+  if args.list_target and not args.list:
+    raise ValueError("--list-target applies only to --list")
   if args.prepare_archive or args.run_archive or args.target:
     from cross_build import TARGETS
     if args.target not in TARGETS or not (args.prepare_archive or args.run_archive) or args.list:
