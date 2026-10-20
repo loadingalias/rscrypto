@@ -1,4 +1,4 @@
-//! XXHash3 comparison benchmarks: rscrypto vs xxhash-rust crate.
+//! XXHash3 comparison benchmarks: rscrypto, xxhash-rust and runtime-dispatched twox-hash.
 //!
 //! Before timing, every row must return xxhash-rust's hash of its input.
 
@@ -17,6 +17,18 @@ use rscrypto::FastHash;
 /// Lengths at which XXH3 changes its short-input algorithm: 16/17, 128/129, and 240/241 bytes.
 const REGIME_BOUNDARIES: [usize; 6] = [16, 17, 128, 129, 240, 241];
 
+// The public RawHasher can borrow the default secret without allocating.
+// Keep construction timed, as for the other collection hashers.
+struct TwoxRawBuildHasher;
+
+impl BuildHasher for TwoxRawBuildHasher {
+  type Hasher = twox_hash::xxhash3_64::RawHasher<&'static [u8; twox_hash::xxhash3_64::DEFAULT_SECRET_LENGTH]>;
+
+  fn build_hasher(&self) -> Self::Hasher {
+    Self::Hasher::new(twox_hash::xxhash3_64::SecretBuffer::default())
+  }
+}
+
 fn xxh3_64(c: &mut Criterion) {
   if !bench_config::selected("xxh3-64") {
     return;
@@ -27,6 +39,13 @@ fn xxh3_64(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
     let expected = xxhash_rust::xxh3::xxh3_64(data);
+    g.bench_function(
+      BenchmarkId::new("twox-hash", len),
+      checked(
+        || twox_hash::XxHash3_64::oneshot(black_box(data)),
+        |out| assert_eq!(out, expected),
+      ),
+    );
 
     g.bench_function(
       BenchmarkId::new("rscrypto", len),
@@ -57,6 +76,13 @@ fn xxh3_128(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
     let expected = xxhash_rust::xxh3::xxh3_128(data);
+    g.bench_function(
+      BenchmarkId::new("twox-hash", len),
+      checked(
+        || twox_hash::XxHash3_128::oneshot(black_box(data)),
+        |out| assert_eq!(out, expected),
+      ),
+    );
 
     g.bench_function(
       BenchmarkId::new("rscrypto", len),
@@ -85,11 +111,27 @@ fn xxh3_build_hasher(c: &mut Criterion) {
   let mut g = c.benchmark_group("xxh3-buildhasher");
   let ours = rscrypto::Xxh3BuildHasher::new();
   let upstream = xxhash_rust::xxh3::Xxh3DefaultBuilder::new();
+  let dynamic = core::hash::BuildHasherDefault::<twox_hash::XxHash3_64>::default();
+  let raw = TwoxRawBuildHasher;
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
-    // Both builders stream the slice's length prefix and bytes into seed-0 XXH3-64.
+    // Each builder streams the slice's length prefix and bytes into seed-0 XXH3-64.
     let expected = upstream.hash_one(data.as_slice());
+    g.bench_function(
+      BenchmarkId::new("twox-hash-raw", len),
+      checked(
+        || raw.hash_one(black_box(data.as_slice())),
+        |out| assert_eq!(out, expected),
+      ),
+    );
+    g.bench_function(
+      BenchmarkId::new("twox-hash", len),
+      checked(
+        || dynamic.hash_one(black_box(data.as_slice())),
+        |out| assert_eq!(out, expected),
+      ),
+    );
     g.bench_function(
       BenchmarkId::new("rscrypto", len),
       checked(
@@ -115,10 +157,26 @@ fn xxh3_hashmap_lookup(c: &mut Criterion) {
   let key = common::random_bytes(32);
   let mut ours = HashMap::with_capacity_and_hasher(1, rscrypto::Xxh3BuildHasher::new());
   let mut upstream = HashMap::with_capacity_and_hasher(1, xxhash_rust::xxh3::Xxh3DefaultBuilder::new());
+  let mut dynamic =
+    HashMap::with_capacity_and_hasher(1, core::hash::BuildHasherDefault::<twox_hash::XxHash3_64>::default());
+  let mut raw = HashMap::with_capacity_and_hasher(1, TwoxRawBuildHasher);
+  raw.insert(key.as_slice(), 1u8);
+  dynamic.insert(key.as_slice(), 1u8);
   ours.insert(key.as_slice(), 1u8);
   upstream.insert(key.as_slice(), 1u8);
 
   let mut g = c.benchmark_group("xxh3-hashmap/lookup-32");
+  g.bench_function(
+    "twox-hash-raw",
+    checked(|| raw.get(black_box(key.as_slice())), |out| assert_eq!(out, Some(&1))),
+  );
+  g.bench_function(
+    "twox-hash",
+    checked(
+      || dynamic.get(black_box(key.as_slice())),
+      |out| assert_eq!(out, Some(&1)),
+    ),
+  );
   g.bench_function(
     "rscrypto",
     checked(|| ours.get(black_box(key.as_slice())), |out| assert_eq!(out, Some(&1))),

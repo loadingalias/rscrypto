@@ -7,50 +7,16 @@
 #[path = "common/criterion.rs"]
 mod bench_config;
 
+#[path = "common/aws_lc.rs"]
+mod aws_lc_support;
+use aws_lc_support::aws_lc_bench as with_aws_lc;
+
 use core::hint::black_box;
 
 use bench_config::{checked, checked_routine};
 use criterion::{BenchmarkGroup, BenchmarkId, Criterion, measurement::WallTime};
 use rscrypto::{MlDsa44, MlDsa65, MlDsa87};
 use rustcrypto_ml_dsa as oracle;
-
-/// Keeps its statements only on the `aws-lc-rs` dev-dependency targets of
-/// `Cargo.toml`.
-#[cfg(any(
-  all(
-    any(unix, windows),
-    not(target_arch = "wasm32"),
-    not(any(target_arch = "s390x", target_arch = "powerpc64"))
-  ),
-  all(
-    target_arch = "powerpc64",
-    target_endian = "little",
-    target_os = "linux",
-    target_env = "gnu"
-  )
-))]
-macro_rules! with_aws_lc {
-  ($($tokens:tt)*) => {
-    $($tokens)*
-  };
-}
-
-#[cfg(not(any(
-  all(
-    any(unix, windows),
-    not(target_arch = "wasm32"),
-    not(any(target_arch = "s390x", target_arch = "powerpc64"))
-  ),
-  all(
-    target_arch = "powerpc64",
-    target_endian = "little",
-    target_os = "linux",
-    target_env = "gnu"
-  )
-)))]
-macro_rules! with_aws_lc {
-  ($($tokens:tt)*) => {};
-}
 
 /// A well-formed signature that must not verify: `signature` with its
 /// commitment hash, the leading bytes, changed.

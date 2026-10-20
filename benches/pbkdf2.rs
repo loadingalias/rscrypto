@@ -10,31 +10,15 @@
 )]
 mod bench_config;
 
+#[path = "common/aws_lc.rs"]
+mod aws_lc_support;
+use aws_lc_support::aws_lc_bench;
+
 use core::{hint::black_box, num::NonZeroU32};
 
 use bench_config::checked_with;
 use criterion::{BenchmarkId, Criterion, Throughput};
 use rscrypto::{Pbkdf2Sha256, Pbkdf2Sha512};
-
-#[cfg(all(
-  any(unix, windows),
-  not(target_arch = "wasm32"),
-  not(any(target_arch = "s390x", target_arch = "powerpc64"))
-))]
-macro_rules! aws_lc_bench {
-  ($($tokens:tt)*) => {
-    $($tokens)*
-  };
-}
-
-#[cfg(not(all(
-  any(unix, windows),
-  not(target_arch = "wasm32"),
-  not(any(target_arch = "s390x", target_arch = "powerpc64"))
-)))]
-macro_rules! aws_lc_bench {
-  ($($tokens:tt)*) => {};
-}
 
 /// Iteration counts below the password policy, for the primitive API: one keying-dominated count and two
 /// iteration-dominated counts.

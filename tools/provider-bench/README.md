@@ -165,6 +165,41 @@ These measurements do not establish constant-time behavior, network latency,
 denial-of-service limits, or performance leadership by themselves.
 The normal benchmark artifact workflow retains source, commands, build identity and raw results.
 
+## OpenSSL primitive comparisons
+
+`openssl_primitives` also compares production SHA-2, SHA-3 and AES-GCM against OpenSSL 4.0.3.
+It provides the missing SHA3-224 streaming comparison and a native IBM Z measurement path
+for OpenSSL's CPACF dispatch.
+Run `just bench openssl_primitives --list` for discovery, then measure one `openssl-<algorithm>` selector, such as `just bench openssl-sha3-224` or `just bench openssl-aes128-gcm`.
+This optional target has the same external OpenSSL prerequisite and provenance output
+as the TLS target.
+It is excluded from default and hosted Bench runs.
+
+Hash rows time context construction, every update, finalization and destruction.
+Streaming absorbs 1 MiB in 64-byte or 4 KiB chunks.
+AES-GCM `new-key/seal` and `new-key/open` construct a fresh key/context for each message;
+they include the production API's input copies, authentication and destruction.
+Both sides receive immutable input and write into preallocated output.
+OpenSSL's EVP context allocation remains timed.
+The rows use a 96-bit nonce, the same AAD and a 128-bit tag.
+Repeated public fixture nonces protect no application data.
+
+Each hash output and sealed ciphertext/tag must equal the other implementation's output
+before timing.
+Open rows must recover the fixture plaintext and reject a changed tag.
+They call the same production operation that is measured.
+The suite adds no direct FFI or unsafe code.
+Its costs include the public API and cannot be interpreted as isolated compression
+or cipher-kernel timings.
+
+On IBM Z, build against target OpenSSL headers and libraries with assembly enabled,
+then run on native hardware and retain the loaded library identity and `OPENSSL_s390xcap` overrides.
+The workspace also generates its AWS-LC bindings on IBM Z and POWER64LE GNU,
+so these builds need libclang.
+Cross-compilation alone supplies no CPACF execution or performance evidence.
+The shipped provider's C-dependency prohibition remains unchanged;
+this independent measurement workspace owns the OpenSSL dependency.
+
 ## Competitor coverage and claims
 
 Use the fastest measured external backend for each exact workload,

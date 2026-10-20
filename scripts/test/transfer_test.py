@@ -239,6 +239,16 @@ class Bundles(unittest.TestCase):
                      patch.dict(os.environ, {'CARGO_RAIL_CACHE': policy}):
                     self.assertEqual(environment(target)['CARGO_RAIL_CACHE'], policy)
 
+    def test_power_aws_lc_cross_build_keeps_assembly(self):
+        # The pinned CMake helper reports ppc64 for this LE target; AWS-LC then
+        # omits AES/GHASH assembly and fails at link time. Select its cc builder.
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(environment('powerpc64le-unknown-linux-gnu')['AWS_LC_SYS_CMAKE_BUILDER'], '0')
+            for target in set(LINUX_TARGETS) - {'powerpc64le-unknown-linux-gnu'}:
+                self.assertNotIn('AWS_LC_SYS_CMAKE_BUILDER', environment(target))
+        with patch.dict(os.environ, {'AWS_LC_SYS_CMAKE_BUILDER': '1'}, clear=True):
+            self.assertEqual(environment('powerpc64le-unknown-linux-gnu')['AWS_LC_SYS_CMAKE_BUILDER'], '1')
+
     def test_prepare_keeps_both_full_release_modes_and_fails_closed(self):
         for target, (machine, _, _, _) in TARGETS.items():
             with self.subTest(target=target):

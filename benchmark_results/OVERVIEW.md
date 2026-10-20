@@ -6,6 +6,55 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-19: Competitor coverage audit
+
+The working tree based on `9a5d6cb3` adds BLAKE2 SIMD and runtime-dispatched XXH3 comparators,
+ECDSA DER verification with separate reused-key and imported-key workloads,
+and independent OpenSSL SHA/AES rows including SHA3-224 streaming.
+AWS-LC benchmark gates now include little-endian Linux POWER.
+The audit identified and corrected a cross-build configuration that omitted its POWER assembly.
+The retained source snapshots include concurrent TLS, QUIC and benchmark-tooling changes;
+the task remains uncommitted.
+
+Native validation passed 1,622 output checks, including 632 added rows,
+and native and portable Clippy.
+POWER cross-Clippy and 588 QEMU checks passed.
+IBM Z OpenSSL cross-Clippy passed with vendored OpenSSL 3.6.3.
+Neither cross-build evidence nor QEMU establishes native POWER performance or IBM Z CPACF execution.
+Full `just check` stopped at preflight because 13 Rust target standard libraries were absent.
+
+The final dataset contains 1,364 measured rows across 16 bounded selectors,
+each finishing in 18–399 seconds against the 600-second cap.
+Measurements used two successive c8i.8xlarge instances
+(Intel Xeon 6975P-C), CPU 2, nightly-2026-10-14 rustc `822182db4`, and OpenSSL 4.0.3 with assembly and `enable-ec_nistp_64_gcc_128`.
+Each workload compared implementations on one instance.
+Sampling used 20 samples, 100 ms warmup, 400 ms measurement and 10,000 resamples.
+
+| Workload                                  | rscrypto median | Competitor median |
+| ----------------------------------------- | --------------- | ----------------- |
+| P-256 DER verify, reused key, 32 B        | 36.32 µs        | AWS-LC 49.14 µs   |
+| P-256 DER verify, import key, 32 B        | 84.35 µs        | AWS-LC 50.04 µs   |
+| AES-128-GCM seal, fresh key, 16 KiB       | 3.31 µs         | OpenSSL 1.19 µs   |
+| SHA3-224 streaming, 1 MiB in 4 KiB chunks | 2.046 ms        | OpenSSL 1.786 ms  |
+
+These four directions repeated.
+All eight new DER reuse comparisons favored rscrypto;
+all eight DER import comparisons favored AWS-LC.
+Fresh-key AES-GCM is distinct from TLS record processing with a reused key.
+Those results identify profiling leads.
+Across 526 repeated rows, median absolute change was 0.12%, maximum change was 14.09%,
+and 17 rows changed by more than 5%.
+Seven of 172 repeated comparison classifications changed, all in XXH3;
+those points remain unsettled.
+Repeat binaries were identical, but some repeats used the replacement instance.
+Uncollected runs after the first instance's lease expired are excluded.
+
+Local record: `competitor-audit-20261019/findings.txt`, `comparisons.json`, `repeatability.json`, `qualification.json` and `validation.json`, with raw intervals, exact source snapshots,
+executables and OpenSSL libraries.
+Both instances and their EBS volumes are gone.
+No Rust build or benchmark ran on the development Mac.
+This campaign does not establish worldwide leadership or qualify unmeasured targets.
+
 ## 2026-10-16: Combined-source workflow acceptance
 
 At `ed86bcb3`, the full [Constant-Time run](https://github.com/loadingalias/rscrypto/actions/runs/38842297553)

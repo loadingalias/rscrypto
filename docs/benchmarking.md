@@ -568,6 +568,52 @@ RustCrypto has no such API, so its `rustcrypto-composed` rows build the mask fro
   plus the bench-sample mask on which RustCrypto and ring agree.
   AES-256 has no published vector, so that agreement is its only oracle.
 
+### Comparator coverage
+
+The suite retains multiple implementations and scores the fastest available external row
+for each exact workload.
+An added comparator is a candidate for measurement, not a claim that it wins on every CPU.
+
+- BLAKE2 includes [`blake2b_simd` and `blake2s_simd`](https://github.com/oconnor663/blake2_simd) with their default runtime CPU detection.
+  The rows call serial BLAKE2 with matching digest lengths, keys, salt and personalization;
+  BLAKE2bp/sp and parallel `many` APIs compute different workloads.
+  In the selected implementation, serial BLAKE2b can use AVX2, while serial BLAKE2s uses SSE4.1.
+  BLAKE2s's AVX2 path processes multiple independent inputs.
+- XXH3 includes [`twox-hash`](https://github.com/shepmaster/twox-hash) with `std` runtime dispatch: AVX2 or SSE2 on x86, NEON on AArch64,
+  and a portable fallback.
+  It joins one-shot, collection-hasher and lookup rows with the same default seed and input bytes.
+  Collection rows include both its allocating `Hasher` and its allocation-free `RawHasher`,
+  which borrows the default secret through `SecretBuffer::default()`.
+  Both time hasher construction, every update and finalization.
+  Keep the `xxhash-rust` comparison and the explicit x86-64-v4 build;
+  runtime dispatch and a build that assumes AVX-512 are distinct deployment choices.
+- AWS-LC's POWER64LE GNU dependency was restored for ML-DSA in `ecde7e65`.
+  The other benchmarks retained older gates and silently omitted their AWS-LC rows.
+  All AWS-LC benchmark gates now share [one target definition](../benches/common/aws_lc.rs),
+  matching the dev dependencies in `Cargo.toml`.
+  The POWER-only dependency enables the pinned AWS-LC's bindgen support
+  and needs libclang at build time.
+  Cross-builds select AWS-LC's `cc` builder:
+  the pinned CMake helper loses the target's little-endian identity and omits its POWER assembly,
+  causing link failures.
+  This enables the same production operations on POWER64LE;
+  native POWER measurements still determine their speed.
+- The optional `openssl_primitives` target compares SHA-2, SHA-3 and AES-GCM through OpenSSL EVP.
+  OpenSSL exposes [IBM Z capability detection for CPACF](https://docs.openssl.org/4.0/man3/OPENSSL_s390xcap/).
+  Use a native IBM Z run with assembly enabled,
+  the loaded library identity and capability overrides retained,
+  before drawing a conclusion about CPACF performance.
+  The [primitive guide](../tools/provider-bench/README.md#openssl-primitive-comparisons) defines its timing and setup.
+  Include these optional comparison results in SHA and AES assessments;
+  the default suite's scores do not include OpenSSL.
+
+The shipped provider rejects foreign C dependencies in its normal/build graph;
+that gate does not reject benchmark dev dependencies or independent comparison workspaces.
+Ordinary cross-target library linting avoids dev dependencies by selecting `--lib`.
+Benchmark transfer instead supplies target C compilers.
+An external OpenSSL comparison additionally needs target headers and libraries;
+the default Bench workflow does not provision them and excludes this optional target.
+
 ### Other primitive rows
 
 - Byte-oriented one-shot groups share one size matrix: 0 and 1 byte, 32 bytes, and powers of two from 64 bytes to 1 MiB.
@@ -624,6 +670,9 @@ RustCrypto has no such API, so its `rustcrypto-composed` rows build the mask fro
   `aws-lc` rows call AWS-LC's one-call `EVP_Digest` through aws-lc-sys for SHA3-224 and SHAKE,
   which aws-lc-rs does not expose; it allocates and frees its hash state in each call.
   SHA3-224 streaming has no AWS-LC row.
+  `just bench openssl-sha3-224` supplies an OpenSSL one-shot and streaming comparison through safe bindings,
+  including 1 MiB streamed in 64-byte and 4 KiB chunks.
+  It does not stand in for AWS-LC; adding AWS-LC streaming would require a new unsafe binding boundary.
 - SHAKE `xof-output` absorbs a 32-byte seed and squeezes 1 KiB, 16 KiB, and 1 MiB into a reused buffer.
   The one-shot SHAKE groups squeeze 32 bytes. dryoc also joins `xof-output`.
 - Poly1305 `authenticate` reads immutable fixture bytes, sets up a one-time key, and returns a tag,
@@ -677,8 +726,8 @@ RustCrypto has no such API, so its `rustcrypto-composed` rows build the mask fro
 - RSA `parse-spki` parses and validates identical SPKI bytes. aws-lc-rs tries PKCS#1 first and copies the input.
   ring has no SPKI parser.
   RustCrypto's parser stops at 4096 bits. At 8192 bits, AWS-LC is the only external parser in this suite.
-  The suite excludes AWS-LC on POWER and IBM Z, so those platforms retain the rscrypto 8192-bit measurement
-  without a comparison; the catalog still requires the external row on x86-64, ARM64, and RISC-V.
+  The root suite excludes AWS-LC on IBM Z, so that platform retains the rscrypto 8192-bit measurement
+  without a comparison; the catalog requires the external row on x86-64, ARM64, RISC-V and POWER64LE.
 - RSA signing and OAEP name their entropy: `fixed` is a caller blinding pair,
   `caller-entropy` is a fill closure or RNG that writes fixed bytes,
   and `fresh-entropy` is new randomness in every call.
@@ -702,6 +751,14 @@ RustCrypto has no such API, so its `rustcrypto-composed` rows build the mask fro
   against RustCrypto. ring and aws-lc-rs parse DER only inside verification, so they are absent.
   Every encoding must equal RustCrypto's and verify under ring's DER verifier.
   Every decoding must return the fixed-width signature, and the timed path must reject the encoding without its last byte.
+- ECDSA `verify-der/reuse-key` includes DER parsing, message hashing and verification with reused parsed keys in rscrypto,
+  RustCrypto and AWS-LC.
+  AWS-LC receives its native ASN.1 signature form,
+  so it does not convert fixed-width signatures to DER.
+  `verify-der/import-key` also imports the same uncompressed SEC1 key and includes ring's ASN.1 verifier.
+  Ring has no parsed-key reuse API and is absent from the reuse group.
+  Every row verifies an independently generated signature and rejects changed scalars
+  and truncated DER.
 - HMAC-SHA3 rows time one tag from a key set up once outside timing.
   `rscrypto` and `aws-lc` (AWS-LC's C `HMAC_CTX` through aws-lc-sys) both cache the Keccak states
   after the ipad and opad blocks. `aws-lc` reuses them through `HMAC_Init_ex` with a null key, inside timing.

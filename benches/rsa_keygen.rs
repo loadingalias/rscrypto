@@ -7,14 +7,15 @@
 #[path = "common/criterion.rs"]
 mod bench_config;
 
+#[path = "common/aws_lc.rs"]
+mod aws_lc_support;
+use aws_lc_support::aws_lc_bench;
+
 use core::hint::black_box;
 
-#[cfg(all(
-  any(unix, windows),
-  not(target_arch = "wasm32"),
-  not(any(target_arch = "s390x", target_arch = "powerpc64"))
-))]
-use aws_lc_rs::{rsa as aws_rsa, signature as aws_signature};
+aws_lc_bench! {
+  use aws_lc_rs::{rsa as aws_rsa, signature as aws_signature};
+}
 use bench_config::checked;
 use criterion::Criterion;
 use rsa::{
@@ -29,26 +30,6 @@ use rsa::{
   signature::{SignatureEncoding as _, Signer as _, Verifier as _},
 };
 use rscrypto::{RsaPkcs1v15Profile, RsaPrivateKey, RsaPublicKey, RsaPublicKeyPolicy};
-
-#[cfg(all(
-  any(unix, windows),
-  not(target_arch = "wasm32"),
-  not(any(target_arch = "s390x", target_arch = "powerpc64"))
-))]
-macro_rules! aws_lc_bench {
-  ($($tokens:tt)*) => {
-    $($tokens)*
-  };
-}
-
-#[cfg(not(all(
-  any(unix, windows),
-  not(target_arch = "wasm32"),
-  not(any(target_arch = "s390x", target_arch = "powerpc64"))
-)))]
-macro_rules! aws_lc_bench {
-  ($($tokens:tt)*) => {};
-}
 
 const PRIVATE_SIGNING_MESSAGE: &[u8] = b"rscrypto TLS-shaped RSA private signing benchmark";
 

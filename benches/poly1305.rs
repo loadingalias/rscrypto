@@ -5,6 +5,10 @@
 #[path = "common/criterion.rs"]
 mod bench_config;
 
+#[path = "common/aws_lc.rs"]
+mod aws_lc_support;
+use aws_lc_support::aws_lc_bench;
+
 use core::hint::black_box;
 
 use bench_config::checked;
@@ -12,26 +16,6 @@ use criterion::{BenchmarkId, Criterion, Throughput};
 use dryoc::classic::crypto_onetimeauth::crypto_onetimeauth;
 use poly1305::universal_hash::KeyInit as _;
 use rscrypto::{Poly1305, Poly1305OneTimeKey};
-
-#[cfg(all(
-  any(unix, windows),
-  not(target_arch = "wasm32"),
-  not(any(target_arch = "s390x", target_arch = "powerpc64"))
-))]
-macro_rules! aws_lc_bench {
-  ($($tokens:tt)*) => {
-    $($tokens)*
-  };
-}
-
-#[cfg(not(all(
-  any(unix, windows),
-  not(target_arch = "wasm32"),
-  not(any(target_arch = "s390x", target_arch = "powerpc64"))
-)))]
-macro_rules! aws_lc_bench {
-  ($($tokens:tt)*) => {};
-}
 
 aws_lc_bench! {
   use core::mem::MaybeUninit;

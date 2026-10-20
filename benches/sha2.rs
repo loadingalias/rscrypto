@@ -5,32 +5,16 @@
 #[path = "common/criterion.rs"]
 mod bench_config;
 
+#[path = "common/aws_lc.rs"]
+mod aws_lc_support;
+use aws_lc_support::aws_lc_bench;
+
 mod common;
 
 use core::hint::black_box;
 
 use bench_config::checked;
 use criterion::{BenchmarkId, Criterion};
-
-#[cfg(all(
-  any(unix, windows),
-  not(target_arch = "wasm32"),
-  not(any(target_arch = "s390x", target_arch = "powerpc64"))
-))]
-macro_rules! aws_lc_bench {
-  ($($tokens:tt)*) => {
-    $($tokens)*
-  };
-}
-
-#[cfg(not(all(
-  any(unix, windows),
-  not(target_arch = "wasm32"),
-  not(any(target_arch = "s390x", target_arch = "powerpc64"))
-)))]
-macro_rules! aws_lc_bench {
-  ($($tokens:tt)*) => {};
-}
 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 fn print_sha2_diag_once() {

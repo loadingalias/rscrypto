@@ -6,6 +6,10 @@
 #[path = "common/criterion.rs"]
 mod bench_config;
 
+#[path = "common/aws_lc.rs"]
+mod aws_lc_support;
+use aws_lc_support::aws_lc_bench;
+
 mod common;
 
 use core::hint::black_box;
@@ -130,26 +134,6 @@ fn import_and_verify<'a, K, S>(
       );
     },
   )
-}
-
-#[cfg(all(
-  any(unix, windows),
-  not(target_arch = "wasm32"),
-  not(any(target_arch = "s390x", target_arch = "powerpc64"))
-))]
-macro_rules! aws_lc_bench {
-  ($($tokens:tt)*) => {
-    $($tokens)*
-  };
-}
-
-#[cfg(not(all(
-  any(unix, windows),
-  not(target_arch = "wasm32"),
-  not(any(target_arch = "s390x", target_arch = "powerpc64"))
-)))]
-macro_rules! aws_lc_bench {
-  ($($tokens:tt)*) => {};
 }
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
@@ -1687,6 +1671,149 @@ fn ecdsa_p384_public_key(c: &mut Criterion) {
   );
   g.finish();
 }
+
+/// Verify the same DER bytes on the timed path; reject changed scalars and truncated DER outside timing.
+fn verify_der_row<'a>(
+  verify: impl Fn(&[u8], &[u8]) -> bool + 'a,
+  message: &'a [u8],
+  signature: &'a [u8],
+  tampered: &'a [u8],
+) -> impl FnMut(&mut criterion::Bencher<'_>) + 'a {
+  checked_with(
+    verify,
+    move |verify| assert!(verify(black_box(message), black_box(signature))),
+    move |(), verify| {
+      assert!(!verify(message, tampered), "a changed DER signature must fail");
+      assert!(
+        !verify(message, &signature[..signature.len().strict_sub(1)]),
+        "truncated DER must fail"
+      );
+    },
+  )
+}
+
+// DER signature parsing, message hashing and verification are timed in both groups.
+// Reuse amortizes each parsed key; ring only participates in import because its public API reparses the key.
+macro_rules! ecdsa_verify_der {
+  ($function:ident, $group:literal, $curve:ident, $public:ty, $signature:ty, $oracle:ty, $secret:expr, $algorithm:ident) => {
+    fn $function(c: &mut Criterion) {
+      if !bench_config::selected(concat!($group, "/verify-der/")) {
+        return;
+      }
+      let signing = $curve::ecdsa::SigningKey::from_slice(&$secret).expect("benchmark signing key");
+      let oracle = signing.verifying_key();
+      let sec1 = oracle.to_sec1_point(false);
+      let public = <$public>::from_sec1_bytes(sec1.as_bytes()).expect("benchmark public key");
+      aws_lc_bench! {
+        let aws = aws_lc_rs::signature::ParsedPublicKey::new(&aws_lc_rs::signature::$algorithm, sec1.as_bytes())
+          .expect("benchmark public key");
+      }
+      let inputs = [0usize, 32, 1024, 16384].map(|len| {
+        let data = common::random_bytes(len);
+        let signature: $oracle = $curve::ecdsa::signature::Signer::sign(&signing, &data);
+        let mut changed = signature.to_bytes();
+        changed[($secret).len().strict_sub(1)] ^= 1;
+        let changed = <$oracle>::from_slice(&changed).expect("changed r remains a valid scalar");
+        (len, data, signature.to_der(), changed.to_der())
+      });
+      let mut reuse = c.benchmark_group(concat!($group, "/verify-der/reuse-key"));
+      for (len, data, signature, tampered) in &inputs {
+        common::set_throughput(&mut reuse, *len);
+        reuse.bench_function(
+          BenchmarkId::new("rscrypto", len),
+          verify_der_row(
+            |message, bytes| <$signature>::from_der(bytes).is_ok_and(|sig| public.verify(message, &sig).is_ok()),
+            data, signature.as_bytes(), tampered.as_bytes(),
+          ),
+        );
+        reuse.bench_function(
+          BenchmarkId::new(concat!("rustcrypto-", stringify!($curve)), len),
+          verify_der_row(
+            |message, bytes| <$oracle>::from_der(bytes).is_ok_and(|sig| {
+              $curve::ecdsa::signature::Verifier::verify(oracle, message, &sig).is_ok()
+            }),
+            data, signature.as_bytes(), tampered.as_bytes(),
+          ),
+        );
+        aws_lc_bench! {
+          reuse.bench_function(
+            BenchmarkId::new("aws-lc-rs", len),
+            verify_der_row(|message, bytes| aws.verify_sig(message, bytes).is_ok(),
+              data, signature.as_bytes(), tampered.as_bytes()),
+          );
+        }
+      }
+      reuse.finish();
+
+      let mut import = c.benchmark_group(concat!($group, "/verify-der/import-key"));
+      for (len, data, signature, tampered) in &inputs {
+        common::set_throughput(&mut import, *len);
+        import.bench_function(
+          BenchmarkId::new("rscrypto", len),
+          verify_der_row(
+            |message, bytes| {
+              let key = <$public>::from_sec1_bytes(black_box(sec1.as_bytes())).expect("benchmark public key");
+              <$signature>::from_der(bytes).is_ok_and(|sig| key.verify(message, &sig).is_ok())
+            },
+            data, signature.as_bytes(), tampered.as_bytes(),
+          ),
+        );
+        import.bench_function(
+          BenchmarkId::new(concat!("rustcrypto-", stringify!($curve)), len),
+          verify_der_row(
+            |message, bytes| {
+              let key = $curve::ecdsa::VerifyingKey::from_sec1_bytes(black_box(sec1.as_bytes())).expect("benchmark public key");
+              <$oracle>::from_der(bytes).is_ok_and(|sig| {
+                $curve::ecdsa::signature::Verifier::verify(&key, message, &sig).is_ok()
+              })
+            },
+            data, signature.as_bytes(), tampered.as_bytes(),
+          ),
+        );
+        import.bench_function(
+          BenchmarkId::new("ring", len),
+          verify_der_row(
+            |message, bytes| ring::signature::UnparsedPublicKey::new(&ring::signature::$algorithm, black_box(sec1.as_bytes()))
+              .verify(message, bytes).is_ok(),
+            data, signature.as_bytes(), tampered.as_bytes(),
+          ),
+        );
+        aws_lc_bench! {
+          import.bench_function(
+            BenchmarkId::new("aws-lc-rs", len),
+            verify_der_row(
+              |message, bytes| aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::$algorithm, black_box(sec1.as_bytes()))
+                .verify(message, bytes).is_ok(),
+              data, signature.as_bytes(), tampered.as_bytes(),
+            ),
+          );
+        }
+      }
+      import.finish();
+    }
+  };
+}
+
+ecdsa_verify_der!(
+  ecdsa_p256_verify_der,
+  "ecdsa-p256",
+  p256,
+  EcdsaP256PublicKey,
+  EcdsaP256Signature,
+  P256OracleSignature,
+  [0x11u8; 32],
+  ECDSA_P256_SHA256_ASN1
+);
+ecdsa_verify_der!(
+  ecdsa_p384_verify_der,
+  "ecdsa-p384",
+  p384,
+  EcdsaP384PublicKey,
+  EcdsaP384Signature,
+  P384OracleSignature,
+  [0x31u8; 48],
+  ECDSA_P384_SHA384_ASN1
+);
 
 // ECDSA signature DER codec (RFC 3279 `Ecdsa-Sig-Value`), the form that X.509 and TLS carry. The fixture is
 // RustCrypto's RFC 6979 signature of a 32-byte message, which ring must verify in both its fixed-width and DER
@@ -4253,7 +4380,9 @@ fn main() {
     ecdsa_p384_public_key,
     ecdsa_p384_sign,
     ecdsa_p384_verify,
+    ecdsa_p256_verify_der,
     ecdsa_p256_signature_der,
+    ecdsa_p384_verify_der,
     ecdsa_p384_signature_der,
     #[cfg(all(rscrypto_internal, feature = "diag", feature = "ecdsa-p384"))]
     ecdsa_p384_internal,

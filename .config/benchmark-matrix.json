@@ -1,6 +1,16 @@
 {
   "schema": 2,
   "benches": {
+    "openssl_primitives": {
+      "binary": "openssl_primitives",
+      "split": "algorithms",
+      "manifest": "tools/provider-bench/Cargo.toml",
+      "kind": "criterion",
+      "family": "openssl",
+      "required": false,
+      "external": "OpenSSL 4.0.3",
+      "features": ["primitives"]
+    },
     "quic_connections": {
       "binary": "quic_connections",
       "split": "algorithms",
@@ -247,6 +257,17 @@
     }
   },
   "algorithms": {
+    "openssl-sha224": { "bench": "openssl_primitives", "filter": "^openssl-primitives/sha224/" },
+    "openssl-sha256": { "bench": "openssl_primitives", "filter": "^openssl-primitives/sha256/" },
+    "openssl-sha384": { "bench": "openssl_primitives", "filter": "^openssl-primitives/sha384/" },
+    "openssl-sha512": { "bench": "openssl_primitives", "filter": "^openssl-primitives/sha512/" },
+    "openssl-sha512-256": { "bench": "openssl_primitives", "filter": "^openssl-primitives/sha512-256/" },
+    "openssl-sha3-224": { "bench": "openssl_primitives", "filter": "^openssl-primitives/sha3-224/" },
+    "openssl-sha3-256": { "bench": "openssl_primitives", "filter": "^openssl-primitives/sha3-256/" },
+    "openssl-sha3-384": { "bench": "openssl_primitives", "filter": "^openssl-primitives/sha3-384/" },
+    "openssl-sha3-512": { "bench": "openssl_primitives", "filter": "^openssl-primitives/sha3-512/" },
+    "openssl-aes128-gcm": { "bench": "openssl_primitives", "filter": "^openssl-primitives/aes128-gcm/" },
+    "openssl-aes256-gcm": { "bench": "openssl_primitives", "filter": "^openssl-primitives/aes256-gcm/" },
     "quic-handshake": { "bench": "quic_connections", "filter": "^quic/handshake/" },
     "quic-packet": { "bench": "quic_connections", "filter": "^quic/packet-" },
     "quic-header": { "bench": "quic_connections", "filter": "^quic/header-" },
@@ -656,6 +677,48 @@
     }
   },
   "comparisons": {
+    "openssl-hashes": {
+      "family": "OpenSSL hashes",
+      "bench": "openssl_primitives",
+      "cases": "^openssl-primitives/(?P<variant>sha[^/]+)/oneshot/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Hash one buffer through the production one-shot API, including context construction and destruction."
+    },
+    "openssl-hashes-streaming": {
+      "family": "OpenSSL hashes",
+      "bench": "openssl_primitives",
+      "cases": "^openssl-primitives/(?P<variant>sha[^/]+)/streaming/(?P<implementation>[^/]+)/(?P<input>[0-9]+B)$",
+      "headline": false,
+      "task": "Construct a digest context, hash 1 MiB in the named chunk size, finalize and destroy the context."
+    },
+    "openssl-aes-gcm": {
+      "family": "OpenSSL AES-GCM",
+      "bench": "openssl_primitives",
+      "cases": "^openssl-primitives/(?P<variant>aes(?:128|256)-gcm/new-key/(?:seal|open))/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Construct a fresh key/context, then seal or authenticate and open one message into preallocated output; include production API copies and context destruction."
+    },
+    "ecdsa-verify-der-reuse": {
+      "family": "ECDSA",
+      "bench": "auth",
+      "cases": "^(?P<variant>ecdsa-p256|ecdsa-p384)/verify-der/reuse-key/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Parse the same DER signature, hash and verify the message with a parsed public key reused across calls; ring has no parsed-key API."
+    },
+    "ecdsa-verify-der-import": {
+      "family": "ECDSA",
+      "bench": "auth",
+      "cases": "^(?P<variant>ecdsa-p256|ecdsa-p384)/verify-der/import-key/(?P<implementation>[^/]+)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Import the same uncompressed SEC1 key, parse the same DER signature, hash and verify the message."
+    },
+    "blake2-params": {
+      "family": "BLAKE2",
+      "bench": "blake2",
+      "cases": "^blake2/params/(?P<implementation>[^/]+)/(?P<variant>blake2[bs]256/salt\\+personal)/(?P<input>[0-9]+)$",
+      "headline": false,
+      "task": "Construct parameters, then hash with the same salt, personalization and output length."
+    },
     "quic-handshakes": {
       "family": "QUIC",
       "bench": "quic_connections",
@@ -1302,8 +1365,8 @@
       "cases": "^(?P<variant>rsa-8192)/(?P<input>parse-spki)/(?P<implementation>[^/]+)$",
       "headline": false,
       "task": "Parse and validate identical 8192-bit SubjectPublicKeyInfo bytes.",
-      "architectures": ["x86_64", "aarch64", "riscv64"],
-      "availability": "Only AWS-LC supplies an external 8192-bit SPKI parser; this suite excludes it on POWER and IBM Z. RustCrypto's parser stops at 4096 bits, and ring has no public RSA SPKI parser."
+      "architectures": ["x86_64", "aarch64", "riscv64", "powerpc64"],
+      "availability": "Only AWS-LC supplies an external 8192-bit SPKI parser; this suite excludes it on IBM Z. RustCrypto's parser stops at 4096 bits, and ring has no public RSA SPKI parser."
     },
     "rsa-sign": {
       "family": "RSA",

@@ -12,12 +12,14 @@ autobenches = false
 [features]
 ml-dsa = ["rscrypto-rustls/ml-dsa"]
 quinn = ["rscrypto-rustls/quinn", "dep:quinn-proto", "dep:bytes"]
+primitives = ["dep:rscrypto"]
 portable-only = ["rscrypto-rustls/portable-only"]
 # Cross-target lint jobs can compile without a target OpenSSL installation.
 # Measurements still require the linked OpenSSL 4.0.3 checked by the fixture.
 vendored-openssl = ["openssl/vendored"]
 
 [dependencies]
+rscrypto = { path = "../..", default-features = false, features = ["std", "sha2", "sha3", "aes-gcm"], optional = true }
 rscrypto-rustls = { path = "../../rscrypto-rustls" }
 rustls = { version = "=0.24.0-dev.2", git = "https://github.com/rustls/rustls", rev = "7ebba67075b0c3c2b8fe20c470d5c53410866544", default-features = false, features = ["webpki"] }
 rustls-aws-lc-rs = { version = "=0.1.0-dev.1", git = "https://github.com/rustls/rustls", rev = "7ebba67075b0c3c2b8fe20c470d5c53410866544" }
@@ -27,6 +29,10 @@ libc = "0.2.190"
 serde_json = "1.0.154"
 quinn-proto = { version = "=0.12.0", git = "https://github.com/quinn-rs/quinn", rev = "9d729c1b6b7ad30d45d40265037eeeb9d98a7420", default-features = false, features = ["bloom"], optional = true }
 bytes = { version = "1.12.1", optional = true }
+
+[target.'cfg(all(target_os = "linux", target_env = "gnu", any(target_arch = "s390x", all(target_arch = "powerpc64", target_endian = "little"))))'.dependencies]
+# The pinned AWS-LC bindings must be generated for these comparison hosts.
+aws-lc-sys = { version = "0.46.0", features = ["bindgen"] }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", default-features = false, features = ["html_reports", "plotters"] }
@@ -40,6 +46,11 @@ required-features = ["ml-dsa"]
 name = "quic_connections"
 harness = false
 required-features = ["quinn"]
+
+[[bench]]
+name = "openssl_primitives"
+harness = false
+required-features = ["primitives"]
 
 [profile.release]
 opt-level = 3

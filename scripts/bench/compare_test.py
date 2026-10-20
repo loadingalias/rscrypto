@@ -75,7 +75,7 @@ class PairingTests(unittest.TestCase):
     catalog = load_catalog()
     records = {("rsa", case): record(10.0) for case in (
       "rsa-4096/parse-spki/rscrypto", "rsa-4096/parse-spki/rustcrypto-rsa", "rsa-8192/parse-spki/rscrypto")}
-    for arch in ("powerpc64", "s390x"):
+    for arch in ("s390x",):
       with self.subTest(arch=arch):
         standalone = []
         rows, problems = compare.points(catalog, arch, records, arch, standalone)
@@ -84,7 +84,7 @@ class PairingTests(unittest.TestCase):
         self.assertEqual([row["case"] for row in standalone], ["rsa-8192/parse-spki/rscrypto"])
         self.assertIn("4096", standalone[0]["reason"])
     # AWS-LC supplies the 8192-bit parser on these architectures; a missing row still fails.
-    for arch in ("x86_64", "aarch64", "riscv64"):
+    for arch in ("x86_64", "aarch64", "riscv64", "powerpc64"):
       with self.subTest(arch=arch):
         self.assertTrue(compare.points(catalog, arch, records, arch)[1])
         complete = records | {("rsa", "rsa-8192/parse-spki/aws-lc-rs"): record(20.0)}
@@ -92,7 +92,7 @@ class PairingTests(unittest.TestCase):
         self.assertEqual(problems, [])
         self.assertEqual({row["variant"] for row in rows}, {"rsa-4096", "rsa-8192"})
     # A newly available parser must update the catalog, not silently disappear from the report.
-    self.assertTrue(compare.points(catalog, "powerpc64", complete, "powerpc64")[1])
+    self.assertTrue(compare.points(catalog, "s390x", complete, "s390x")[1])
 
   def test_standalone_measurement_remains_in_quick_coverage(self):
     with tempfile.TemporaryDirectory() as directory:

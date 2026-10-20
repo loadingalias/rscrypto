@@ -1,4 +1,4 @@
-//! Blake2 comparison benchmarks: rscrypto vs RustCrypto blake2 crate.
+//! Blake2 comparison benchmarks: rscrypto, RustCrypto, dryoc and blake2{b,s}_simd.
 //!
 //! Before timing, every row must return RustCrypto blake2's output for its input.
 
@@ -34,6 +34,20 @@ type RustCryptoBlake2s128 = RustCryptoBlake2s<U16>;
 /// second compression. The exact 128-byte block is in `short-oneshot` and `short-keyed`.
 const BLOCK_BOUNDARIES: [usize; 2] = [65, 129];
 
+// Use the serial BLAKE2 API, with the same output length and key as each existing row.
+// Parameter construction and runtime SIMD selection stay inside the timed operation.
+macro_rules! simd_oneshot {
+  ($group:ident, $module:ident, $variant:literal, $len:expr, $output:expr, $data:expr, $expected:expr $(, $key:expr)?) => {
+    $group.bench_function(
+      BenchmarkId::new(concat!(stringify!($module), "/", $variant), $len),
+      checked(
+        || $module::Params::new().hash_length($output)$(.key(black_box($key)))?.hash(black_box($data)),
+        |out| assert_eq!(out.as_bytes(), $expected.as_slice()),
+      ),
+    );
+  };
+}
+
 fn oneshot(c: &mut Criterion) {
   if !bench_config::selected("blake2") {
     return;
@@ -48,9 +62,13 @@ fn oneshot(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
     let b256 = RustCryptoBlake2b256::digest(data);
+    simd_oneshot!(g, blake2b_simd, "blake2b256", len, 32, data, b256);
     let b512 = RustCryptoBlake2b512::digest(data);
+    simd_oneshot!(g, blake2b_simd, "blake2b512", len, 64, data, b512);
     let s128 = RustCryptoBlake2s128::digest(data);
+    simd_oneshot!(g, blake2s_simd, "blake2s128", len, 16, data, s128);
     let s256 = RustCryptoBlake2s256::digest(data);
+    simd_oneshot!(g, blake2s_simd, "blake2s256", len, 32, data, s256);
 
     g.bench_function(
       BenchmarkId::new("rscrypto/blake2b256", len),
@@ -168,7 +186,9 @@ fn short_messages(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut oneshot, *len);
     let b256 = RustCryptoBlake2b256::digest(data);
+    simd_oneshot!(oneshot, blake2b_simd, "blake2b256", len, 32, data, b256);
     let s256 = RustCryptoBlake2s256::digest(data);
+    simd_oneshot!(oneshot, blake2s_simd, "blake2s256", len, 32, data, s256);
 
     oneshot.bench_function(
       BenchmarkId::new("rscrypto/blake2b256", len),
@@ -208,7 +228,9 @@ fn short_messages(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut keyed, *len);
     let b256 = rustcrypto_b256_mac(data);
+    simd_oneshot!(keyed, blake2b_simd, "blake2b256", len, 32, data, b256, &key_b[..32]);
     let s256 = rustcrypto_s256_mac(data);
+    simd_oneshot!(keyed, blake2s_simd, "blake2s256", len, 32, data, s256, &key_s);
 
     keyed.bench_function(
       BenchmarkId::new("rscrypto/blake2b256", len),
@@ -243,7 +265,29 @@ fn short_messages(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut stream, *len);
     let b256 = RustCryptoBlake2b256::digest(data);
+    stream.bench_function(
+      BenchmarkId::new("blake2b_simd/blake2b256", len),
+      checked(
+        || {
+          let mut h = blake2b_simd::Params::new().hash_length(32).to_state();
+          h.update(black_box(data));
+          h.finalize()
+        },
+        |out| assert_eq!(out.as_bytes(), b256.as_slice()),
+      ),
+    );
     let s256 = RustCryptoBlake2s256::digest(data);
+    stream.bench_function(
+      BenchmarkId::new("blake2s_simd/blake2s256", len),
+      checked(
+        || {
+          let mut h = blake2s_simd::Params::new().hash_length(32).to_state();
+          h.update(black_box(data));
+          h.finalize()
+        },
+        |out| assert_eq!(out.as_bytes(), s256.as_slice()),
+      ),
+    );
 
     stream.bench_function(
       BenchmarkId::new("rscrypto/blake2b256", len),
@@ -338,9 +382,13 @@ fn keyed(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
     let b256 = rustcrypto_b256_mac(data);
+    simd_oneshot!(g, blake2b_simd, "blake2b256", len, 32, data, b256, &key_b[..32]);
     let b512 = rustcrypto_b512_mac(data);
+    simd_oneshot!(g, blake2b_simd, "blake2b512", len, 64, data, b512, &key_b);
     let s128 = rustcrypto_s128_mac(data);
+    simd_oneshot!(g, blake2s_simd, "blake2s128", len, 16, data, s128, &key_s[..16]);
     let s256 = rustcrypto_s256_mac(data);
+    simd_oneshot!(g, blake2s_simd, "blake2s256", len, 32, data, s256, &key_s);
 
     g.bench_function(
       BenchmarkId::new("rscrypto/blake2b256", len),
@@ -435,6 +483,34 @@ fn streaming(c: &mut Criterion) {
   g.throughput(criterion::Throughput::Bytes(data.len() as u64));
 
   for chunk_size in [64, 4096, 65536] {
+    g.bench_function(
+      format!("blake2b_simd/blake2b256/{chunk_size}B"),
+      checked(
+        || {
+          let mut h = blake2b_simd::Params::new().hash_length(32).to_state();
+          for chunk in data.chunks(chunk_size) {
+            h.update(black_box(chunk));
+          }
+          h.finalize()
+        },
+        |out| assert_eq!(out.as_bytes(), b256.as_slice()),
+      ),
+    );
+
+    g.bench_function(
+      format!("blake2s_simd/blake2s256/{chunk_size}B"),
+      checked(
+        || {
+          let mut h = blake2s_simd::Params::new().hash_length(32).to_state();
+          for chunk in data.chunks(chunk_size) {
+            h.update(black_box(chunk));
+          }
+          h.finalize()
+        },
+        |out| assert_eq!(out.as_bytes(), s256.as_slice()),
+      ),
+    );
+
     g.bench_function(
       format!("rscrypto/blake2b256/{chunk_size}B"),
       checked(
@@ -531,10 +607,36 @@ fn params(c: &mut Criterion) {
       .expect("valid BLAKE2 benchmark operation must succeed");
     b256.update(&data);
     let b256 = b256.finalize().into_bytes();
+    g.bench_function(
+      BenchmarkId::new("blake2b_simd/blake2b256/salt+personal", len),
+      checked(
+        || {
+          blake2b_simd::Params::new()
+            .hash_length(32)
+            .salt(black_box(&salt_b))
+            .personal(black_box(&personal_b))
+            .hash(black_box(&data))
+        },
+        |out| assert_eq!(out.as_bytes(), b256.as_slice()),
+      ),
+    );
     let mut s256 = RustCryptoBlake2sMac256::new_with_salt_and_personal(None, &salt_s, &personal_s)
       .expect("valid BLAKE2 benchmark operation must succeed");
     s256.update(&data);
     let s256 = s256.finalize().into_bytes();
+    g.bench_function(
+      BenchmarkId::new("blake2s_simd/blake2s256/salt+personal", len),
+      checked(
+        || {
+          blake2s_simd::Params::new()
+            .hash_length(32)
+            .salt(black_box(&salt_s))
+            .personal(black_box(&personal_s))
+            .hash(black_box(&data))
+        },
+        |out| assert_eq!(out.as_bytes(), s256.as_slice()),
+      ),
+    );
 
     g.bench_function(
       BenchmarkId::new("rscrypto/blake2b256/salt+personal", len),

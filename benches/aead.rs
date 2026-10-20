@@ -10,6 +10,10 @@
 #[path = "common/criterion.rs"]
 mod bench_config;
 
+#[path = "common/aws_lc.rs"]
+mod aws_lc_support;
+use aws_lc_support::aws_lc_bench;
+
 mod common;
 
 use core::hint::black_box;
@@ -18,26 +22,6 @@ use aes_gcm::aead::{AeadInOut as _, KeyInit as _};
 use bench_config::{checked, checked_with};
 use criterion::{BenchmarkId, Criterion};
 use rscrypto::aead::expert::AeadWithNonce;
-
-#[cfg(all(
-  any(unix, windows),
-  not(target_arch = "wasm32"),
-  not(any(target_arch = "s390x", target_arch = "powerpc64"))
-))]
-macro_rules! aws_lc_bench {
-  ($($tokens:tt)*) => {
-    $($tokens)*
-  };
-}
-
-#[cfg(not(all(
-  any(unix, windows),
-  not(target_arch = "wasm32"),
-  not(any(target_arch = "s390x", target_arch = "powerpc64"))
-)))]
-macro_rules! aws_lc_bench {
-  ($($tokens:tt)*) => {};
-}
 
 // Key / nonce material (deterministic, not secret for benchmarking)
 

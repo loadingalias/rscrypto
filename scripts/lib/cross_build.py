@@ -43,11 +43,17 @@ def environment(target):
     if conflicting:
         raise ValueError(f'unreviewed build/test overrides: {sorted(conflicting)}')
     normalized = target.replace('-', '_')
-    return {**os.environ, 'RUSTUP_TOOLCHAIN': toolchain.channel(),
-            f'CARGO_TARGET_{normalized.upper()}_LINKER': compiler + '-gcc',
-            f'CC_{normalized}': compiler + '-gcc',
-            f'CXX_{normalized}': compiler + '-g++',
-            f'AR_{normalized}': compiler + '-ar'}
+    env = {**os.environ, 'RUSTUP_TOOLCHAIN': toolchain.channel(),
+           f'CARGO_TARGET_{normalized.upper()}_LINKER': compiler + '-gcc',
+           f'CC_{normalized}': compiler + '-gcc',
+           f'CXX_{normalized}': compiler + '-g++',
+           f'AR_{normalized}': compiler + '-ar'}
+    if target == 'powerpc64le-unknown-linux-gnu':
+        # cmake 0.1.58 maps Cargo's powerpc64 arch to ppc64, losing little-endian
+        # identity and omitting AWS-LC's assembly. Its cc builder selects the
+        # shipped linux-ppc64le sources directly, including AES and GHASH.
+        env.setdefault('AWS_LC_SYS_CMAKE_BUILDER', '0')
+    return env
 
 
 if __name__ == '__main__':
