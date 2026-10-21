@@ -88,6 +88,15 @@ mod rsa_aarch64_linux_asm;
 #[path = "rsa_x86_64_asm.rs"]
 mod rsa_x86_64_asm;
 
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(feature = "portable-only"),
+  not(miri)
+))]
+#[path = "rsa_x86_64_ifma.rs"]
+mod rsa_x86_64_ifma;
+
 /// RSAES-PKCS1-v1_5 padding bytes: `0x00 0x02`, at least eight PS bytes, and `0x00` (RFC 8017 7.2.1).
 const RSAES_PKCS1V15_OVERHEAD: usize = 11;
 
@@ -3906,34 +3915,35 @@ impl RsaPrivateKeyComponents {
       )?;
     }
 
-    private_exponentiate_representative_with_scratch(
-      modulus_p,
-      self.exponent_p.as_bytes(),
-      scratch
-        .blinding_power
-        .as_slice()
-        .get(..prime_p.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      scratch
-        .blinded_private_result
-        .as_mut_slice()
-        .get_mut(..prime_p.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      &mut scratch.exponent_scratch,
-    )?;
-    private_exponentiate_representative_with_scratch(
-      modulus_q,
-      self.exponent_q.as_bytes(),
-      scratch
-        .checked
-        .as_slice()
-        .get(..prime_q.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      scratch
-        .blinded
-        .as_mut_slice()
-        .get_mut(..prime_q.len())
-        .ok_or(RsaPrivateOpError::InvalidScratch)?,
+    private_exponentiate_crt_with_scratch(
+      (
+        modulus_p,
+        self.exponent_p.as_bytes(),
+        scratch
+          .blinding_power
+          .as_slice()
+          .get(..prime_p.len())
+          .ok_or(RsaPrivateOpError::InvalidScratch)?,
+        scratch
+          .blinded_private_result
+          .as_mut_slice()
+          .get_mut(..prime_p.len())
+          .ok_or(RsaPrivateOpError::InvalidScratch)?,
+      ),
+      (
+        modulus_q,
+        self.exponent_q.as_bytes(),
+        scratch
+          .checked
+          .as_slice()
+          .get(..prime_q.len())
+          .ok_or(RsaPrivateOpError::InvalidScratch)?,
+        scratch
+          .blinded
+          .as_mut_slice()
+          .get_mut(..prime_q.len())
+          .ok_or(RsaPrivateOpError::InvalidScratch)?,
+      ),
       &mut scratch.exponent_scratch,
     )?;
 
@@ -4460,6 +4470,8 @@ struct RsaPrivateExponentScratch {
   selected: SecretLimbs,
   reduced: SecretLimbs,
   table: SecretLimbs,
+  // Radix-2^52 window table and digit buffers for the IFMA exponentiation; empty without it.
+  ifma: SecretLimbs,
   max_limb_count: usize,
 }
 
@@ -4474,6 +4486,7 @@ struct RsaPrivateExponentWorkspace<'a> {
   selected: &'a mut [u64],
   reduced: &'a mut [u64],
   table: &'a mut [u64],
+  ifma: &'a mut [u64],
 }
 
 impl RsaPrivateExponentScratch {
@@ -4489,6 +4502,7 @@ impl RsaPrivateExponentScratch {
       selected: SecretLimbs::zeroed(max_limb_count),
       reduced: SecretLimbs::zeroed(max_limb_count),
       table: SecretLimbs::zeroed(max_limb_count.strict_mul(PRIVATE_FIXED_WINDOW_TABLE_ENTRIES)),
+      ifma: SecretLimbs::zeroed(private_ifma_workspace_words(max_limb_count)),
       max_limb_count,
     }
   }
@@ -4527,6 +4541,7 @@ impl RsaPrivateExponentScratch {
       selected: private_scratch_prefix(&mut self.selected, limb_count)?,
       reduced: private_scratch_prefix(&mut self.reduced, limb_count)?,
       table: private_scratch_prefix(&mut self.table, table_len)?,
+      ifma: self.ifma.as_mut_slice(),
     })
   }
 
@@ -4541,6 +4556,7 @@ impl RsaPrivateExponentScratch {
     ct::zeroize_words(self.selected.as_mut_slice());
     ct::zeroize_words(self.reduced.as_mut_slice());
     ct::zeroize_words(self.table.as_mut_slice());
+    ct::zeroize_words(self.ifma.as_mut_slice());
   }
 }
 
@@ -10353,6 +10369,151 @@ fn private_exponentiate_representative(
   Ok(())
 }
 
+/// IFMA workspace words for CRT primes of up to `max_limb_count` limbs; zero without the backend.
+fn private_ifma_workspace_words(max_limb_count: usize) -> usize {
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  let words = rsa_x86_64_ifma::max_workspace_words(max_limb_count);
+  #[cfg(not(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(feature = "portable-only"),
+    not(miri)
+  )))]
+  let words = {
+    let _ = max_limb_count;
+    0
+  };
+  words
+}
+
+/// One CRT component's exponentiation: modulus, exponent, input and output.
+type RsaCrtExponentiation<'a> = (&'a RsaPublicModulus, &'a [u8], &'a [u8], &'a mut [u8]);
+
+/// Both CRT exponentiations, `input^exponent mod prime` for each component.
+///
+/// Equal-width primes with an IFMA kernel run as one interleaved pair. Otherwise each component
+/// runs [`private_exponentiate_representative_with_scratch`] in turn. Both paths validate the
+/// first component, then the second, so they return the same errors.
+fn private_exponentiate_crt_with_scratch(
+  first: RsaCrtExponentiation<'_>,
+  second: RsaCrtExponentiation<'_>,
+  scratch: &mut RsaPrivateExponentScratch,
+) -> Result<(), RsaPrivateOpError> {
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  if first.0.limbs.len() == second.0.limbs.len()
+    && first.0.bytes.len() == second.0.bytes.len()
+    && let Some(shape) = rsa_x86_64_ifma::shape(first.0.limbs.len())
+    && scratch.ifma.as_slice().len() >= rsa_x86_64_ifma::workspace_words(first.0.limbs.len())
+  {
+    return private_exponentiate_crt_pair_ifma(first, second, shape, scratch);
+  }
+  let (modulus, exponent, input, out) = first;
+  private_exponentiate_representative_with_scratch(modulus, exponent, input, out, scratch)?;
+  let (modulus, exponent, input, out) = second;
+  private_exponentiate_representative_with_scratch(modulus, exponent, input, out, scratch)
+}
+
+/// The CRT pair on the IFMA kernel. Both primes have `shape`'s limb count and byte width.
+#[cfg(all(
+  target_arch = "x86_64",
+  target_feature = "sse2",
+  not(feature = "portable-only"),
+  not(miri)
+))]
+fn private_exponentiate_crt_pair_ifma(
+  first: RsaCrtExponentiation<'_>,
+  second: RsaCrtExponentiation<'_>,
+  shape: (usize, usize),
+  scratch: &mut RsaPrivateExponentScratch,
+) -> Result<(), RsaPrivateOpError> {
+  let _dit = crate::traits::ct::DataIndependentTiming::enter();
+
+  let (modulus_p, exponent_p, input_p, out_p) = first;
+  let (modulus_q, exponent_q, input_q, out_q) = second;
+  let bytes = modulus_p.bytes.len();
+  let limbs = modulus_p.limbs.len();
+  if input_p.len() != bytes || out_p.len() != bytes || exponent_p.len() != bytes {
+    return Err(RsaPrivateOpError::InvalidLength);
+  }
+  let r2_p = modulus_p
+    .montgomery_r2()
+    .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
+  let RsaPrivateExponentWorkspace {
+    representative: base_p,
+    reduced: r2_ifma_p,
+    acc: result_p,
+    base: base_q,
+    squared: r2_ifma_q,
+    multiplied: result_q,
+    ifma,
+    ..
+  } = scratch.workspace(limbs)?;
+  limbs_from_be_into(input_p, base_p);
+  if !ct_limbs_lt(base_p, &modulus_p.limbs) {
+    return Err(RsaPrivateOpError::RepresentativeOutOfRange);
+  }
+  if input_q.len() != bytes || out_q.len() != bytes || exponent_q.len() != bytes {
+    return Err(RsaPrivateOpError::InvalidLength);
+  }
+  let r2_q = modulus_q
+    .montgomery_r2()
+    .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
+  limbs_from_be_into(input_q, base_q);
+  if !ct_limbs_lt(base_q, &modulus_q.limbs) {
+    return Err(RsaPrivateOpError::RepresentativeOutOfRange);
+  }
+
+  // R = 2^(52·digits) for the radix-2^52 kernel: R² mod m is the cached 2^(128·limbs) mod m
+  // doubled 2·(52·digits - 64·limbs) times.
+  let doublings = shape.0.strict_mul(52).strict_sub(limbs.strict_mul(64)).strict_mul(2);
+  for (r2_ifma, r2, modulus) in [(&mut *r2_ifma_p, r2_p, modulus_p), (&mut *r2_ifma_q, r2_q, modulus_q)] {
+    r2_ifma.copy_from_slice(r2);
+    for _ in 0..doublings {
+      double_mod_in_place(r2_ifma, &modulus.limbs);
+    }
+  }
+  // SAFETY: `shape` returned Some for the shared limb count, so AVX-512F and AVX-512 IFMA are
+  // present and the width has a kernel. Every limb slice has `limbs` limbs, both exponents have
+  // `bytes` bytes, and the caller checked that the workspace has `workspace_words(limbs)` words.
+  unsafe {
+    rsa_x86_64_ifma::exponentiate_pair(
+      [
+        rsa_x86_64_ifma::Operands {
+          out: &mut *result_p,
+          base: base_p,
+          exponent: exponent_p,
+          m: &modulus_p.limbs,
+          r2: r2_ifma_p,
+          k0: modulus_p.n0 & (u64::MAX >> 12),
+        },
+        rsa_x86_64_ifma::Operands {
+          out: &mut *result_q,
+          base: base_q,
+          exponent: exponent_q,
+          m: &modulus_q.limbs,
+          r2: r2_ifma_q,
+          k0: modulus_q.n0 & (u64::MAX >> 12),
+        },
+      ],
+      shape,
+      ifma,
+    );
+  }
+  limbs_to_be(result_p, out_p);
+  limbs_to_be(result_q, out_q);
+  Ok(())
+}
+
 fn private_exponentiate_representative_with_scratch(
   modulus: &RsaPublicModulus,
   exponent: &[u8],
@@ -10381,11 +10542,55 @@ fn private_exponentiate_representative_with_scratch(
     selected,
     reduced,
     table,
+    ifma: scratch_ifma,
   } = scratch.workspace(limbs)?;
+  #[cfg(not(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(feature = "portable-only"),
+    not(miri)
+  )))]
+  let _ = scratch_ifma;
 
   limbs_from_be_into(input, representative);
   if !ct_limbs_lt(representative, &modulus.limbs) {
     return Err(RsaPrivateOpError::RepresentativeOutOfRange);
+  }
+
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  if let Some(shape) = rsa_x86_64_ifma::shape(limbs)
+    && scratch_ifma.len() >= rsa_x86_64_ifma::workspace_words(limbs)
+  {
+    // R = 2^(52·digits) for the radix-2^52 kernel: R² mod m is the cached 2^(128·limbs) mod m
+    // doubled 2·(52·digits - 64·limbs) times.
+    reduced.copy_from_slice(r2);
+    for _ in 0..shape.0.strict_mul(52).strict_sub(limbs.strict_mul(64)).strict_mul(2) {
+      double_mod_in_place(reduced, &modulus.limbs);
+    }
+    // SAFETY: `shape` returned Some, so AVX-512F and AVX-512 IFMA are present and the limb count
+    // has a kernel. Every slice has `limbs` limbs, the exponent has `bytes` bytes, and the
+    // workspace has at least `workspace_words(limbs)` words.
+    unsafe {
+      rsa_x86_64_ifma::exponentiate(
+        rsa_x86_64_ifma::Operands {
+          out: &mut *acc,
+          base: representative,
+          exponent,
+          m: &modulus.limbs,
+          r2: reduced,
+          k0: modulus.n0 & (u64::MAX >> 12),
+        },
+        shape,
+        scratch_ifma,
+      );
+    }
+    limbs_to_be(acc, out);
+    return Ok(());
   }
 
   one.fill(0);
@@ -16708,6 +16913,162 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
           expected.as_slice(),
           "scratch R² for {words} limbs"
         );
+      }
+    }
+  }
+
+  // Private scratch is sized by the public modulus width. Its IFMA workspace must still cover
+  // each CRT prime width, or signing silently keeps the generic exponentiation.
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  #[test]
+  fn ifma_workspace_covers_crt_prime_widths() {
+    for prime_limbs in [16usize, 24, 32] {
+      if rsa_x86_64_ifma::shape(prime_limbs).is_none() {
+        continue;
+      }
+      let scratch = RsaPrivateExponentScratch::new(prime_limbs.strict_mul(2));
+      assert!(
+        scratch.ifma.as_slice().len() >= rsa_x86_64_ifma::workspace_words(prime_limbs),
+        "{prime_limbs}-limb primes"
+      );
+    }
+  }
+
+  // The IFMA kernel replaces the CRT exponentiation on AVX-512 IFMA hosts; the portable
+  // fixed-window exponentiation is the oracle. Hosts without IFMA have no second
+  // implementation to compare, so the cases run only where the kernel is selected.
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  #[test]
+  fn ifma_exponentiation_matches_portable_exponentiation() {
+    let mut state = 0x7f4a_7c15_9e37_79b9u64;
+    let mut random_bytes = |len: usize| {
+      (0..len)
+        .map(|_| {
+          state ^= state << 13;
+          state ^= state >> 7;
+          state ^= state << 17;
+          state.to_le_bytes()[0]
+        })
+        .collect::<Vec<u8>>()
+    };
+    for limbs in [16usize, 24, 32] {
+      if rsa_x86_64_ifma::shape(limbs).is_none() {
+        continue;
+      }
+      let bytes = limbs.strict_mul(8);
+      for top in [0xffu8, 0x80] {
+        let mut modulus_bytes = random_bytes(bytes);
+        modulus_bytes[0] |= top;
+        *modulus_bytes.last_mut().expect("modulus width must be nonzero") |= 1;
+        let modulus = private_component_modulus(&modulus_bytes).expect("odd test modulus must import");
+        let mut scratch = RsaPrivateExponentScratch::new(limbs);
+        let mut modulus_minus_one = modulus_bytes.clone();
+        *modulus_minus_one.last_mut().expect("modulus width must be nonzero") &= !1;
+        let mut one = vec![0u8; bytes];
+        *one.last_mut().expect("modulus width must be nonzero") = 1;
+        let mut bases = vec![vec![0u8; bytes], one, modulus_minus_one];
+        let mut exponents = vec![vec![0u8; bytes], vec![0xff; bytes]];
+        for _ in 0..3 {
+          let mut base = random_bytes(bytes);
+          base[0] &= modulus_bytes[0] >> 1;
+          bases.push(base);
+          exponents.push(random_bytes(bytes));
+        }
+        for base in &bases {
+          for exponent in &exponents {
+            let mut ifma = vec![0u8; bytes];
+            let mut portable = vec![0u8; bytes];
+            private_exponentiate_representative_with_scratch(&modulus, exponent, base, &mut ifma, &mut scratch)
+              .expect("IFMA exponentiation must succeed");
+            private_exponentiate_representative(&modulus, exponent, base, &mut portable)
+              .expect("portable exponentiation must succeed");
+            assert_eq!(ifma, portable, "{limbs} limbs");
+          }
+        }
+      }
+    }
+  }
+
+  // The CRT pair interleaves two primes of one width; each half must equal the portable
+  // exponentiation of its own prime, including when the halves' inputs differ in kind.
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  #[test]
+  fn ifma_crt_pair_matches_portable_exponentiation() {
+    let mut state = 0x2545_f491_4f6c_dd1du64;
+    let mut random_bytes = |len: usize| {
+      (0..len)
+        .map(|_| {
+          state ^= state << 13;
+          state ^= state >> 7;
+          state ^= state << 17;
+          state.to_le_bytes()[0]
+        })
+        .collect::<Vec<u8>>()
+    };
+    for limbs in [16usize, 24, 32] {
+      if rsa_x86_64_ifma::shape(limbs).is_none() {
+        continue;
+      }
+      let bytes = limbs.strict_mul(8);
+      let mut moduli = Vec::new();
+      for top in [0xffu8, 0x80] {
+        let mut modulus_bytes = random_bytes(bytes);
+        modulus_bytes[0] |= top;
+        *modulus_bytes.last_mut().expect("modulus width must be nonzero") |= 1;
+        moduli.push(modulus_bytes);
+      }
+      let components = moduli
+        .iter()
+        .map(|bytes| private_component_modulus(bytes).expect("odd test modulus must import"))
+        .collect::<Vec<_>>();
+      let mut operands = Vec::new();
+      for modulus_bytes in &moduli {
+        let mut modulus_minus_one = modulus_bytes.clone();
+        *modulus_minus_one.last_mut().expect("modulus width must be nonzero") &= !1;
+        let mut base = random_bytes(bytes);
+        base[0] &= modulus_bytes[0] >> 1;
+        let mut bases = vec![vec![0u8; bytes], modulus_minus_one, base];
+        let mut exponents = vec![vec![0u8; bytes], vec![0xff; bytes], random_bytes(bytes)];
+        // Pair every base kind with every exponent kind across the two halves.
+        bases.rotate_left(operands.len());
+        exponents.rotate_left(operands.len());
+        operands.push((bases, exponents));
+      }
+      let mut scratch = RsaPrivateExponentScratch::new(limbs);
+      for (base_p, base_q) in operands[0].0.iter().zip(&operands[1].0) {
+        for (exponent_p, exponent_q) in operands[0].1.iter().zip(&operands[1].1) {
+          let mut pair_p = vec![0u8; bytes];
+          let mut pair_q = vec![0u8; bytes];
+          private_exponentiate_crt_with_scratch(
+            (&components[0], exponent_p, base_p, &mut pair_p),
+            (&components[1], exponent_q, base_q, &mut pair_q),
+            &mut scratch,
+          )
+          .expect("IFMA CRT pair must succeed");
+          let mut portable_p = vec![0u8; bytes];
+          let mut portable_q = vec![0u8; bytes];
+          private_exponentiate_representative(&components[0], exponent_p, base_p, &mut portable_p)
+            .expect("portable exponentiation must succeed");
+          private_exponentiate_representative(&components[1], exponent_q, base_q, &mut portable_q)
+            .expect("portable exponentiation must succeed");
+          assert_eq!(pair_p, portable_p, "{limbs} limbs, first prime");
+          assert_eq!(pair_q, portable_q, "{limbs} limbs, second prime");
+        }
       }
     }
   }

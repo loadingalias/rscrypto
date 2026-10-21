@@ -9,4 +9,6 @@ longer repeats the computation. Private operations reduce their CRT inputs with 
 of a bit-serial reduction, so RSA-3072 and RSA-4096 signing is about 20% faster. On Linux x86-64 with BMI2 and
 ADX, private exponentiation now squares with the dedicated square kernel, a further 15–22% for signing.
 The per-signature blinding-factor inverse now runs batches of 62 Bernstein–Yang divsteps on every target except
-RISC-V and IBM Z, a further 5–10% for signing. Results are unchanged.
+RISC-V and IBM Z, a further 5–10% for signing. On x86-64 with AVX-512 IFMA, 2048-, 3072- and 4096-bit
+private operations run both CRT exponentiations together in radix 2^52. On Intel Granite Rapids this makes
+RSA-4096, RSA-3072 and RSA-2048 signing 66%, 61% and 49% faster. Results are unchanged.
