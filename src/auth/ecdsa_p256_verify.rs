@@ -31,11 +31,24 @@ fn sbb(lhs: u64, rhs: u64, borrow: u64) -> (u64, u64) {
   (difference, u64::from(overflow0 | overflow1))
 }
 
+/// The low and high words of a 128-bit value. Every input here is public, so the plain wide
+/// multiplication serves targets whose secret arithmetic avoids it.
+#[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
+#[inline(always)]
+fn split(value: u128) -> (u64, u64) {
+  let bytes = value.to_le_bytes();
+  let (low, high) = bytes.split_at(8);
+  (
+    u64::from_le_bytes(low.try_into().expect("eight low bytes")),
+    u64::from_le_bytes(high.try_into().expect("eight high bytes")),
+  )
+}
+
 /// `acc + lhs·rhs + carry` as `(low, high)`; the sum is at most `2^128 - 1`.
 #[cfg(any(test, not(all(target_arch = "aarch64", not(feature = "portable-only"), not(miri)))))]
 #[inline(always)]
 fn mac(acc: u64, lhs: u64, rhs: u64, carry: u64) -> (u64, u64) {
-  let (low, high) = super::split_u128(u128::from(lhs).strict_mul(u128::from(rhs)));
+  let (low, high) = split(u128::from(lhs).strict_mul(u128::from(rhs)));
   let (low, carry0) = adc(low, acc, 0);
   let (low, carry1) = adc(low, carry, 0);
   (low, high.wrapping_add(carry0).wrapping_add(carry1))
@@ -216,10 +229,10 @@ impl Fe {
     let w2 = (w2 << 1) | (w1 >> 63);
     let w1 = w1 << 1;
 
-    let (s0_low, s0_high) = super::split_u128(u128::from(a0).strict_mul(u128::from(a0)));
-    let (s1_low, s1_high) = super::split_u128(u128::from(a1).strict_mul(u128::from(a1)));
-    let (s2_low, s2_high) = super::split_u128(u128::from(a2).strict_mul(u128::from(a2)));
-    let (s3_low, s3_high) = super::split_u128(u128::from(a3).strict_mul(u128::from(a3)));
+    let (s0_low, s0_high) = split(u128::from(a0).strict_mul(u128::from(a0)));
+    let (s1_low, s1_high) = split(u128::from(a1).strict_mul(u128::from(a1)));
+    let (s2_low, s2_high) = split(u128::from(a2).strict_mul(u128::from(a2)));
+    let (s3_low, s3_high) = split(u128::from(a3).strict_mul(u128::from(a3)));
     let (w1, carry) = adc(w1, s0_high, 0);
     let (w2, carry) = adc(w2, s1_low, carry);
     let (w3, carry) = adc(w3, s1_high, carry);
