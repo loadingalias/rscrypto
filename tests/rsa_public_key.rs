@@ -34,6 +34,8 @@ use rsa::{
 };
 #[cfg(feature = "getrandom")]
 use rscrypto::RsaEncryptionError;
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+use rscrypto::auth::diag_rsa_private_component_validation_32;
 #[cfg(feature = "getrandom")]
 use rscrypto::auth::rsa::expert::RsaPkcs1v15Decrypt;
 #[cfg(all(rscrypto_internal, feature = "diag"))]
@@ -3656,6 +3658,61 @@ fn diagnostic_private_exponentiation_matches_independent_fixed_width_reference()
   let reference =
     BigUint::from_bytes_be(&component_input).modpow(&BigUint::from_bytes_be(&component_exponent), &component_modulus);
   assert_eq!(component_out, left_pad_to_len(&reference.to_bytes_be(), component_len));
+}
+
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+#[test]
+fn private_component_validation_leaf_requires_every_check() {
+  let mut upper = [0u8; 32];
+  upper[0] = 0x80;
+  let other = [0x22u8; 32];
+  let mut component = [0x11u8; 32];
+  component[31] = 0x13;
+  assert_eq!(diag_rsa_private_component_validation_32(&component, &upper, &other), 1);
+
+  // Each failed check alone rejects the component.
+  let mut leading_zero = component;
+  leading_zero[0] = 0;
+  assert_eq!(
+    diag_rsa_private_component_validation_32(&leading_zero, &upper, &other),
+    0
+  );
+  let mut even = component;
+  even[31] = 0x12;
+  assert_eq!(diag_rsa_private_component_validation_32(&even, &upper, &other), 0);
+  assert_eq!(
+    diag_rsa_private_component_validation_32(&component, &upper, &component),
+    0
+  );
+
+  // The bound comparison is strict, and the first differing byte decides it.
+  let mut at_bound = upper;
+  at_bound[31] = 1;
+  let mut bound = at_bound;
+  assert_eq!(diag_rsa_private_component_validation_32(&at_bound, &bound, &other), 0);
+  bound[31] = 3;
+  assert_eq!(diag_rsa_private_component_validation_32(&at_bound, &bound, &other), 1);
+  let mut low_first_byte = [0xffu8; 32];
+  low_first_byte[0] = 0x7f;
+  assert_eq!(
+    diag_rsa_private_component_validation_32(&low_first_byte, &upper, &other),
+    1
+  );
+  let mut high_first_byte = [0u8; 32];
+  high_first_byte[0] = 0x80;
+  high_first_byte[31] = 1;
+  bound = upper;
+  bound[1] = 0xff;
+  assert_eq!(
+    diag_rsa_private_component_validation_32(&high_first_byte, &bound, &other),
+    1
+  );
+  high_first_byte[1] = 0xff;
+  high_first_byte[2] = 1;
+  assert_eq!(
+    diag_rsa_private_component_validation_32(&high_first_byte, &bound, &other),
+    0
+  );
 }
 
 #[test]

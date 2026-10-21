@@ -9374,17 +9374,29 @@ fn ct_unsigned_be_lt_public_shape(left: &[u8], right: &[u8]) -> bool {
   match left.len().cmp(&right.len()) {
     core::cmp::Ordering::Less => true,
     core::cmp::Ordering::Greater => false,
-    core::cmp::Ordering::Equal => {
-      let mut lt = 0u8;
-      let mut gt = 0u8;
-      for (&left_byte, &right_byte) in left.iter().zip(right) {
-        let undecided = (lt | gt) ^ 1;
-        lt |= undecided & ct_lt_u8(left_byte, right_byte);
-        gt |= undecided & ct_lt_u8(right_byte, left_byte);
-      }
-      lt == 1
-    }
+    core::cmp::Ordering::Equal => ct_unsigned_be_lt_same_len(left, right) == 1,
   }
+}
+
+/// Return 1 when `left < right`, else 0, for big-endian values of one public length.
+///
+/// Every byte is compared, and the result is an arithmetic bit rather than a branch condition.
+fn ct_unsigned_be_lt_same_len(left: &[u8], right: &[u8]) -> u8 {
+  debug_assert_eq!(left.len(), right.len());
+  let mut lt = 0u8;
+  let mut gt = 0u8;
+  for (&left_byte, &right_byte) in left.iter().zip(right) {
+    let undecided = (lt | gt) ^ 1;
+    lt |= undecided & ct_lt_u8(left_byte, right_byte);
+    gt |= undecided & ct_lt_u8(right_byte, left_byte);
+  }
+  lt
+}
+
+/// Return 1 when `value` is nonzero, else 0, without a data-dependent comparison.
+#[cfg(all(rscrypto_internal, feature = "diag"))]
+fn ct_nonzero_u8(value: u8) -> u8 {
+  ((u16::from(value).wrapping_neg() >> 8) & 1) as u8
 }
 
 fn ct_slices_eq_public_shape(left: &[u8], right: &[u8]) -> bool {
@@ -10732,11 +10744,16 @@ pub fn diag_rsa_private_select_window_power_4(table: &[u64; 64], window: u8) -> 
 #[cfg(all(rscrypto_internal, feature = "diag"))]
 #[inline(always)]
 /// Evaluate the fixed-width RSA private-component checks used by diagnostic harnesses.
+///
+/// Returns 1 when `component` is canonical (nonzero first byte), below `upper_bound`, distinct
+/// from `other`, and odd, else 0. Each check is an arithmetic bit, and the bits pass through
+/// `black_box` before the conjunction: without conditional moves, as on IBM Z's baseline CPU,
+/// LLVM otherwise lowers the conjunction to branches on the secret checks.
 pub fn diag_rsa_private_component_validation_32(component: &[u8; 32], upper_bound: &[u8; 32], other: &[u8; 32]) -> u8 {
-  let canonical = u8::from(is_canonical_positive_unsigned_be(component));
-  let less_than_bound = u8::from(ct_unsigned_be_lt_public_shape(component, upper_bound));
-  let distinct = u8::from(!ct_slices_eq_public_shape(component, other));
-  let odd = component.last().copied().unwrap_or(0) & 1;
+  let canonical = core::hint::black_box(ct_nonzero_u8(component[0]));
+  let less_than_bound = core::hint::black_box(ct_unsigned_be_lt_same_len(component, upper_bound));
+  let distinct = core::hint::black_box(u8::from(!ct_slices_eq_public_shape(component, other)));
+  let odd = component[31] & 1;
   canonical & less_than_bound & distinct & odd
 }
 
