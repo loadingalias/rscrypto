@@ -6,6 +6,84 @@ The dated campaign records come first.
 The 2026-08-18 Linux snapshot near the end is historical:
 its aggregate ratios are withdrawn as performance claims (see [Corrections](#corrections)).
 
+## 2026-10-20: RSA and ML-DSA provider connection costs (Gap 1)
+
+Lead reruns at `3076bfae` on quiet c8i.xlarge (Intel Xeon 6975P-C, Granite Rapids) and
+c8g.xlarge (Neoverse-V2, Graviton4) hosts confirmed the expansion-matrix leads within about 1%,
+then profiled them. About 30% of each RSA connection was setup overhead: `R² mod n` by about
+4,100 modular doublings for every imported key and every new signing scratch, and bit-serial
+CRT input reductions. On x64 the CRT squarings also ran through the general multiply kernel.
+
+Three accepted changes, each measured by interleaved rounds on the same host with aws-lc-rs
+controls and protected rows, cut these medians:
+
+| Workload | x64 before → after | arm64 before → after | Fastest external |
+| --- | ---: | ---: | --- |
+| RSA-4096 full mutual TLS pair | 16.21 → 9.09 ms | 19.03 → 13.08 ms | AWS-LC 3.14 / 10.82 ms |
+| RSA-3072 full mutual TLS pair | 7.85 → 4.21 ms | 9.33 → 6.03 ms | AWS-LC 1.65 / 5.00 ms |
+| RSA-3072 server-authenticated pair | 3.97 → 2.14 ms | 4.71 → 3.07 ms | AWS-LC 0.91 / 2.55 ms |
+| RSA-3072 resumed pair | 346 → 105 µs | 408 → 115 µs | — |
+| RSA-4096 PSS signing | 6.81 → 4.30 ms | 7.69 → 6.26 ms | AWS-LC 1.42 / 5.17 ms |
+| RSA-2048 PSS signing | 1,109 → 676 µs | 1,325 → 965 µs | AWS-LC 255 / 720 µs |
+| RSA-2048 verification, imported key | 123 → 20 µs | 147 → 27 µs | AWS-LC 16.5 / 23.2 µs |
+
+The R² change (`91b4dd91`) also removes about 70% of a resumed RSA connection, because rustls
+asks the RSA signing key for a signer on every ClientHello before it accepts a ticket. That row
+was misclassified as protected in the first frozen plan, which therefore records a gate failure;
+a second, prospectively frozen campaign confirmed the change with the corrected classification
+on both hosts. The CRT reduction (`647e4e11`) and the x64 square kernel (`478c0dab`) passed
+every gate. Reused-key verification was already at parity and is unchanged.
+
+Four later candidates were each compared with the then-current `main` under a plan frozen before
+timing: three interleaved rounds on one host, gated rows with disjoint 95% intervals, and
+aws-lc-rs controls and protected rows within ±1.5%. Ratios are candidate / base medians over the
+valid rounds.
+
+| Candidate | Hosts | Gated rows (candidate / base) | Result |
+| --- | --- | --- | --- |
+| C: AVX2 and NEON ML-DSA challenge scans (`4801eb4c`) | x64, arm64 | ML-DSA-65 signing 0.77–0.81; ML-DSA-65 full pair 0.86–0.88 | accepted |
+| E: 62-bit Bernstein–Yang blinding inverse (`714f4477`) | x64, arm64 | RSA-4096 and RSA-3072 signing 0.93–0.95, RSA-2048 0.90–0.91; RSA-4096 and RSA-3072 full pairs 0.93–0.95 | accepted |
+| F: radix-2^52 AVX-512 IFMA exponentiation, one prime at a time | x64 | RSA-3072 signing 0.775, 0.784 and 0.812 against a 0.80 limit; RSA-4096 signing 0.61, full pair 0.63 | rejected in round 3 |
+| F+F2: F with both CRT exponentiations interleaved digit by digit (`929955e7`) | x64 | RSA-4096 signing 0.34, RSA-3072 0.39; RSA-4096 full pair 0.37, RSA-3072 0.44 | accepted |
+
+F+F2 had its own prospective plan against E; F's limit was not relaxed. Its first round is
+invalid under that plan, because two aws-lc-rs controls moved by −3.8% (RSA-3072 full pair) and
++1.6% (RSA-3072 signing). Its gated rows agree with rounds 2 and 3 within 1%, and those rounds
+passed every limit. Round-2 medians on x64:
+
+| Workload | E | E + F+F2 | AWS-LC |
+| --- | ---: | ---: | ---: |
+| RSA-4096 full mutual TLS pair | 8.55 ms | 3.16 ms | 3.33 ms |
+| RSA-3072 full mutual TLS pair | 3.91 ms | 1.71 ms | 1.75 ms |
+| RSA-3072 server-authenticated pair | 2.00 ms | 0.90 ms | — |
+| RSA-4096 PSS signing | 4.09 ms | 1.38 ms | 1.50 ms |
+| RSA-3072 PSS signing | 1.81 ms | 0.71 ms | 0.76 ms |
+| RSA-2048 PSS signing | 609 µs | 310 µs | 262 µs |
+
+On this Granite Rapids host, rscrypto is now faster than AWS-LC for RSA-3072 and RSA-4096
+signing and full pairs. RSA-2048 signing still trails by 18%. F+F2 applies only to x86-64 with
+AVX-512 IFMA; on Graviton4, the RSA-4096 full pair is 12.41 ms against AWS-LC's 10.82 ms after E.
+ML-DSA-65 still trails AWS-LC on both hosts: after C, the full pair is 0.92 against 0.48 ms on
+x64 and 1.17 against 0.58 ms on arm64.
+
+The P-256 field reduction and squaring (`208d0201`), the AES-GCM key setup, the AVX-512 IFMA
+Poly1305 authenticator and the ML-DSA kernel changes (signed-Montgomery NTT, paired ExpandMask,
+vector checks, paired matrix expansion on Linux) were committed without timing. Their frozen
+campaigns (`gap1-batch1-20261020/`, `gap1-chacha-ifma-20261020/`, `gap1-batch2-20261020/`) were
+stopped before timing, so this record makes no speed claim for them. Their evidence is native
+correctness on both hosts, including differential tests against portable code on AVX2, AVX-512
+IFMA and NEON.
+
+Constant-time requalification of the RSA private path is pending. Constant-Time run
+[39512794318](https://github.com/loadingalias/rscrypto/actions/runs/39512794318) on `714f4477`
+stopped in RISC-V preparation, because 120 exact asm waivers no longer matched the linked code.
+The IFMA path also needs DudeCT cases and a linked-binary review on an IFMA host.
+
+Local records: `gap1-baseline-20261020/REPORT.md`, `gap1-rsa-ab-20261020/REPORT.md`,
+`gap1-rsa-square-20261020/`, `gap1-mldsa-challenge-20261020/`, `gap1-rsa-inverse-20261020/`,
+`gap1-rsa-ifma-20261020/` and `gap1-rsa-ifma3-20261020/` (plans, frozen hashes, drivers, raw
+runs, analyses and host identity). No benchmark ran on the development Mac.
+
 ## 2026-10-19: Competitor coverage audit
 
 The working tree based on `9a5d6cb3` adds BLAKE2 SIMD and runtime-dispatched XXH3 comparators,
