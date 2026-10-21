@@ -461,12 +461,22 @@ fn prepare_encapsulation_key_into<const K: usize, const EK_BYTES: usize>(
 }
 
 fn prepare_matrix_transpose_into<const K: usize>(rho: &[u8; SEED_BYTES], a_transpose_hat: &mut PolyMatrix<K>) {
-  for (i, row) in a_transpose_hat.iter_mut().enumerate() {
-    for (j, poly) in row.iter_mut().enumerate() {
-      let i = u8::try_from(i).expect("ML-KEM matrix row fits in u8");
-      let j = u8::try_from(j).expect("ML-KEM matrix column fits in u8");
-      sample_ntt_into(rho, i, j, poly);
-    }
+  // Entries pair in row-major order across rows, so each stream shares a two-state
+  // permutation where the platform has one; an odd K leaves one single stream.
+  let position = |index: usize| {
+    let row = u8::try_from(index.strict_div(K)).expect("ML-KEM matrix row fits in u8");
+    let column = u8::try_from(index.strict_rem(K)).expect("ML-KEM matrix column fits in u8");
+    (row, column)
+  };
+  let (pairs, tail) = a_transpose_hat.as_flattened_mut().as_chunks_mut::<2>();
+  for (pair, [first, second]) in pairs.iter_mut().enumerate() {
+    let (i0, j0) = position(pair.strict_mul(2));
+    let (i1, j1) = position(pair.strict_mul(2).strict_add(1));
+    sample_ntt_pair_into(rho, i0, j0, i1, j1, first, second);
+  }
+  if let [last] = tail {
+    let (i, j) = position(K.strict_mul(K).strict_sub(1));
+    sample_ntt_into(rho, i, j, last);
   }
 }
 
@@ -2026,17 +2036,31 @@ fn sample_matrix_ntt_materialized_k3_rows(
   row1: &mut PolyVec<3>,
   row2: &mut PolyVec<3>,
 ) {
-  #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+  // Apple SHA3 runs four states as two two-state permutations and three as a two-state and a
+  // one-state permutation of the same cost, so two quads and one single beat three triples.
+  #[cfg(any(
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    all(target_arch = "aarch64", target_vendor = "apple", not(feature = "portable-only"))
+  ))]
   {
     sample_matrix_ntt_materialized_k3_rows_quad(rho, row0, row1, row2);
   }
-  #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
+  #[cfg(not(any(
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    all(target_arch = "aarch64", target_vendor = "apple", not(feature = "portable-only"))
+  )))]
   {
     sample_matrix_ntt_materialized_k3_rows_triple(rho, row0, row1, row2);
   }
 }
 
-#[cfg(any(test, not(all(target_arch = "x86_64", target_feature = "sse2"))))]
+#[cfg(any(
+  test,
+  not(any(
+    all(target_arch = "x86_64", target_feature = "sse2"),
+    all(target_arch = "aarch64", target_vendor = "apple", not(feature = "portable-only"))
+  ))
+))]
 #[inline(always)]
 fn sample_matrix_ntt_materialized_k3_rows_triple(
   rho: &[u8; SEED_BYTES],
@@ -2058,7 +2082,11 @@ fn sample_matrix_ntt_materialized_k3_rows_triple(
   }
 }
 
-#[cfg(any(test, all(target_arch = "x86_64", target_feature = "sse2")))]
+#[cfg(any(
+  test,
+  all(target_arch = "x86_64", target_feature = "sse2"),
+  all(target_arch = "aarch64", target_vendor = "apple", not(feature = "portable-only"))
+))]
 #[inline(always)]
 fn sample_matrix_ntt_materialized_k3_rows_quad(
   rho: &[u8; SEED_BYTES],
